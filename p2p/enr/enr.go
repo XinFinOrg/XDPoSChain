@@ -163,6 +163,16 @@ func (r *Record) invalidate() {
 	r.raw = nil
 }
 
+// Signature returns the signature of the record.
+func (r *Record) Signature() []byte {
+	if r.signature == nil {
+		return nil
+	}
+	cpy := make([]byte, len(r.signature))
+	copy(cpy, r.signature)
+	return cpy
+}
+
 // EncodeRLP implements rlp.Encoder. Encoding fails if
 // the record is unsigned.
 func (r Record) EncodeRLP(w io.Writer) error {
