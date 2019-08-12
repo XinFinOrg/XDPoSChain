@@ -35,7 +35,7 @@ type Iterator struct {
 	Err   error
 }
 
-// NewIterator creates a new key-value iterator from a Node iterator.
+// NewIterator creates a new key-value iterator from a node iterator.
 // Note that the value returned by the iterator is raw. If the content is encoded
 // (e.g. storage value is RLP-encoded), it's caller's duty to decode it.
 func NewIterator(it NodeIterator) *Iterator {
