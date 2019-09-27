@@ -38,7 +38,7 @@ import (
 // separate Msg with a bytes.Reader as Payload for each send.
 type Msg struct {
 	Code       uint64
-	Size       uint32 // size of the payload
+	Size       uint32 // Size of the raw payload
 	Payload    io.Reader
 	ReceivedAt time.Time
 

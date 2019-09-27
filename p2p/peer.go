@@ -439,6 +439,7 @@ func (rw *protoRW) WriteMsg(msg Msg) (err error) {
 	msg.meterCode = msg.Code
 
 	msg.Code += rw.offset
+
 	select {
 	case <-rw.wstart:
 		err = rw.w.WriteMsg(msg)
