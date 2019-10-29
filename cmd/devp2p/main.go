@@ -48,6 +48,7 @@ func init() {
 		enrdumpCommand,
 		discv4Command,
 		dnsCommand,
+		nodesetCommand,
 	}
 }
 

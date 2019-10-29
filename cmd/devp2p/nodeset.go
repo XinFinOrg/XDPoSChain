@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
@@ -36,6 +37,15 @@ type nodeSet map[enode.ID]nodeJSON
 type nodeJSON struct {
 	Seq uint64      `json:"seq"`
 	N   *enode.Node `json:"record"`
+
+	// The score tracks how many liveness checks were performed. It is incremented by one
+	// every time the node passes a check, and halved every time it doesn't.
+	Score int `json:"score,omitempty"`
+	// These two track the time of last successful contact.
+	FirstResponse time.Time `json:"firstResponse,omitempty"`
+	LastResponse  time.Time `json:"lastResponse,omitempty"`
+	// This one tracks the time of our last attempt to contact the node.
+	LastCheck time.Time `json:"lastCheck,omitempty"`
 }
 
 func loadNodesJSON(file string) nodeSet {
