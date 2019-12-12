@@ -25,6 +25,17 @@ import (
 	"github.com/davecgh/go-spew/spew"
 )
 
+func sameEntry(got, want entry) bool {
+	if gl, ok := got.(*linkEntry); ok {
+		wl, ok := want.(*linkEntry)
+		if !ok {
+			return false
+		}
+		return gl.str == wl.str && gl.domain == wl.domain
+	}
+	return reflect.DeepEqual(got, want)
+}
+
 func TestParseRoot(t *testing.T) {
 	tests := []struct {
 		input string
@@ -63,7 +74,6 @@ func TestParseRoot(t *testing.T) {
 func TestParseEntry(t *testing.T) {
 	testkey := testKey(signingKeySeed)
 	testNode1 := testNode(nodesSeed1)
-	testLinkRecord := (&linkEntry{"nodes.example.org", &testkey.PublicKey}).String()
 	testENRRecord := (&enrEntry{node: testNode1}).String()
 	tests := []struct {
 		input string
@@ -93,8 +103,8 @@ func TestParseEntry(t *testing.T) {
 		},
 		// Links
 		{
-			input: testLinkRecord,
-			e:     &linkEntry{"nodes.example.org", &testkey.PublicKey},
+			input: "enrtree://AKPYQIUQIL7PSIACI32J7FGZW56E5FKHEFCCOFHILBIMW3M6LWXS2@nodes.example.org",
+			e:     &linkEntry{"AKPYQIUQIL7PSIACI32J7FGZW56E5FKHEFCCOFHILBIMW3M6LWXS2@nodes.example.org", "nodes.example.org", &testkey.PublicKey},
 		},
 		{
 			input: "enrtree://nodes.example.org",
@@ -125,7 +135,7 @@ func TestParseEntry(t *testing.T) {
 	}
 	for i, test := range tests {
 		e, err := parseEntry(test.input, enode.ValidSchemes)
-		if !reflect.DeepEqual(e, test.e) {
+		if !sameEntry(e, test.e) {
 			t.Errorf("test %d: wrong entry %s, want %s", i, spew.Sdump(e), spew.Sdump(test.e))
 		}
 		if err != test.err {
