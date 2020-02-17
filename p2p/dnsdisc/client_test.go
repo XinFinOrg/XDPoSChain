@@ -19,11 +19,13 @@ package dnsdisc
 import (
 	"context"
 	"crypto/ecdsa"
+	"errors"
 	"math/rand"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/common/mclock"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/internal/testlog"
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -154,33 +156,79 @@ func TestIteratorLinks(t *testing.T) {
 // updates to nodes.
 func TestIteratorNodeUpdates(t *testing.T) {
 	var (
+		clock    = new(mclock.Simulated)
 		nodes    = testNodes(nodesSeed1, 30)
 		resolver = newMapResolver()
 		c        = NewClient(Config{
-			Resolver:  resolver,
-			Logger:    testlog.Logger(t, log.LevelError),
-			RateLimit: 500,
+			Resolver:        resolver,
+			Logger:          testlog.Logger(t, log.LvlTrace),
+			RecheckInterval: 20 * time.Minute,
+			RateLimit:       500,
 		})
 	)
+	c.clock = clock
 	tree1, url := makeTestTree("n", nodes[:25], nil)
-	resolver.add(tree1.ToTXT("n"))
-	resolver["n"] = tree1.root.String()
-	loc, err := parseLink(url)
+	it, err := c.NewIterator(url)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if _, err := parseAndVerifyRoot(resolver["n"], loc); err != nil {
-		t.Fatalf("initial root/url mismatch: %q (%v)", resolver["n"], err)
-	}
-	stree1, err := c.SyncTree(url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(stree1.Nodes()) != 25 {
-		t.Fatalf("initial tree node count mismatch, have %d want 25", len(stree1.Nodes()))
 	}
 
-	// Update some nodes and ensure RandomNode returns the new nodes as well.
+	// Sync the original tree.
+	resolver.add(tree1.ToTXT("n"))
+	checkIterator(t, it, nodes[:25])
+
+	// Ensure RandomNode returns the new nodes after the tree is updated.
+	updateSomeNodes(nodesSeed1, nodes)
+	tree2, _ := makeTestTree("n", nodes, nil)
+	resolver.clear()
+	resolver.add(tree2.ToTXT("n"))
+	t.Log("tree updated")
+
+	clock.Run(c.cfg.RecheckInterval + 1*time.Second)
+	checkIterator(t, it, nodes)
+}
+
+// This test checks that the tree root is rechecked when a couple of leaf
+// requests have failed. The test is just like TestIteratorNodeUpdates, but
+// without advancing the clock by recheckInterval after the tree update.
+func TestIteratorRootRecheckOnFail(t *testing.T) {
+	var (
+		clock    = new(mclock.Simulated)
+		nodes    = testNodes(nodesSeed1, 30)
+		resolver = newMapResolver()
+		c        = NewClient(Config{
+			Resolver:        resolver,
+			Logger:          testlog.Logger(t, log.LvlTrace),
+			RecheckInterval: 20 * time.Minute,
+			RateLimit:       500,
+			// Disabling the cache is required for this test because the client doesn't
+			// notice leaf failures if all records are cached.
+			CacheLimit: 1,
+		})
+	)
+	c.clock = clock
+	tree1, url := makeTestTree("n", nodes[:25], nil)
+	it, err := c.NewIterator(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Sync the original tree.
+	resolver.add(tree1.ToTXT("n"))
+	checkIterator(t, it, nodes[:25])
+
+	// Ensure RandomNode returns the new nodes after the tree is updated.
+	updateSomeNodes(nodesSeed1, nodes)
+	tree2, _ := makeTestTree("n", nodes, nil)
+	resolver.clear()
+	resolver.add(tree2.ToTXT("n"))
+	t.Log("tree updated")
+
+	checkIterator(t, it, nodes)
+}
+
+// updateSomeNodes applies ENR updates to some of the given nodes.
+func updateSomeNodes(keySeed int64, nodes []*enode.Node) {
 	keys := testKeys(nodesSeed1, len(nodes))
 	for i, n := range nodes[:len(nodes)/2] {
 		r := n.Record()
@@ -190,91 +238,54 @@ func TestIteratorNodeUpdates(t *testing.T) {
 		n2, _ := enode.New(enode.ValidSchemes, r)
 		nodes[i] = n2
 	}
-	tree2, _ := makeTestTree("n", nodes, nil)
-	resolver.clear()
-	resolver.add(tree2.ToTXT("n"))
-	resolver["n"] = tree2.root.String()
-	if _, err := parseAndVerifyRoot(resolver["n"], loc); err != nil {
-		t.Fatalf("updated root/url mismatch: %q (%v)", resolver["n"], err)
-	}
-	c.entries.Purge()
-	stree2, err := c.SyncTree(url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(stree2.Nodes()) != len(nodes) {
-		t.Fatalf("updated tree node count mismatch, have %d want %d", len(stree2.Nodes()), len(nodes))
-	}
-	updated := 0
-	for _, n := range stree2.Nodes() {
-		if n.Record().Seq() == 55 {
-			updated++
-		}
-	}
-	if updated < len(nodes)/2 {
-		t.Fatalf("updated nodes not visible after refresh, have %d want at least %d", updated, len(nodes)/2)
-	}
 }
 
 // This test verifies that randomIterator re-checks the root of the tree to catch
 // updates to links.
 func TestIteratorLinkUpdates(t *testing.T) {
 	var (
+		clock    = new(mclock.Simulated)
 		nodes    = testNodes(nodesSeed1, 30)
 		resolver = newMapResolver()
 		c        = NewClient(Config{
-			Resolver:  resolver,
-			Logger:    testlog.Logger(t, log.LevelError),
-			RateLimit: 500,
+			Resolver:        resolver,
+			Logger:          testlog.Logger(t, log.LvlTrace),
+			RecheckInterval: 20 * time.Minute,
+			RateLimit:       500,
 		})
 	)
+	c.clock = clock
 	tree3, url3 := makeTestTree("t3", nodes[20:30], nil)
 	tree2, url2 := makeTestTree("t2", nodes[10:20], nil)
 	tree1, url1 := makeTestTree("t1", nodes[0:10], []string{url2})
 	resolver.add(tree1.ToTXT("t1"))
 	resolver.add(tree2.ToTXT("t2"))
 	resolver.add(tree3.ToTXT("t3"))
-	resolver["t1"] = tree1.root.String()
-	resolver["t2"] = tree2.root.String()
-	resolver["t3"] = tree3.root.String()
-	loc1, err := parseLink(url1)
+
+	it, err := c.NewIterator(url1)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if _, err := parseAndVerifyRoot(resolver["t1"], loc1); err != nil {
-		t.Fatalf("initial tree1 root/url mismatch: %q (%v)", resolver["t1"], err)
 	}
 
-	before, err := c.SyncTree(url1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	beforeLinks := before.Links()
-	if len(beforeLinks) != 1 || beforeLinks[0] != url2 {
-		t.Fatalf("initial tree links mismatch, have %v want [%s]", beforeLinks, url2)
-	}
+	// Sync tree1 using RandomNode.
+	checkIterator(t, it, nodes[:20])
 
 	// Add link to tree3, remove link to tree2.
 	tree1, _ = makeTestTree("t1", nodes[:10], []string{url3})
-	resolver.clear()
 	resolver.add(tree1.ToTXT("t1"))
-	resolver.add(tree2.ToTXT("t2"))
-	resolver.add(tree3.ToTXT("t3"))
-	resolver["t1"] = tree1.root.String()
-	resolver["t2"] = tree2.root.String()
-	resolver["t3"] = tree3.root.String()
-	if _, err := parseAndVerifyRoot(resolver["t1"], loc1); err != nil {
-		t.Fatalf("updated tree1 root/url mismatch: %q (%v)", resolver["t1"], err)
-	}
-	c.entries.Purge()
 	t.Log("tree1 updated")
-	stree, err := c.SyncTree(url1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	links := stree.Links()
-	if len(links) != 1 || links[0] != url3 {
-		t.Fatalf("updated tree links mismatch, have %v want [%s]", links, url3)
+
+	clock.Run(c.cfg.RecheckInterval + 1*time.Second)
+
+	var wantNodes []*enode.Node
+	wantNodes = append(wantNodes, tree1.Nodes()...)
+	wantNodes = append(wantNodes, tree3.Nodes()...)
+	checkIterator(t, it, wantNodes)
+
+	// Check that linked trees are GCed when they're no longer referenced.
+	knownTrees := it.(*randomIterator).trees
+	if len(knownTrees) != 2 {
+		t.Errorf("client knows %d trees, want 2", len(knownTrees))
 	}
 }
 
@@ -405,5 +416,5 @@ func (mr mapResolver) LookupTXT(ctx context.Context, name string) ([]string, err
 	if record, ok := mr[name]; ok {
 		return []string{record}, nil
 	}
-	return nil, nil
+	return nil, errors.New("not found")
 }
