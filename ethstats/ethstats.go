@@ -393,9 +393,12 @@ func (s *Service) readLoop(conn *connWrapper) {
 			// Make sure the request is valid and doesn't crash us
 			request, ok := msg["emit"][1].(map[string]interface{})
 			if !ok {
-				log.Debug("Invalid stats history request", "msg", msg["emit"][1])
-				s.histCh <- nil
-				continue // Ethstats sometime sends invalid history requests, ignore those
+				log.Warn("Invalid stats history request", "msg", msg["emit"][1])
+				select {
+				case s.histCh <- nil: // Treat it as an no indexes request
+				default:
+				}
+				continue
 			}
 			list, ok := request["list"].([]interface{})
 			if !ok {
@@ -423,7 +426,7 @@ func (s *Service) readLoop(conn *connWrapper) {
 	}
 }
 
-// nodeInfo is the collection of metainformation about a node that is displayed
+// nodeInfo is the collection of meta information about a node that is displayed
 // on the monitoring page.
 type nodeInfo struct {
 	Name     string `json:"name"`
