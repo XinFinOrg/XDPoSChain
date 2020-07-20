@@ -372,8 +372,10 @@ func (s *Service) loop(chainHeadCh chan core.ChainHeadEvent, txEventCh chan core
 				}
 			}
 			fullReport.Stop()
-			// Make sure the connection is closed
+
+			// Close the current connection and establish a new one
 			conn.Close()
+			errTimer.Reset(0)
 		}
 	}
 }
