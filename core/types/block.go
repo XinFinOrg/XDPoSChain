@@ -153,6 +153,17 @@ func (h *Header) Size() common.StorageSize {
 	return common.StorageSize(unsafe.Sizeof(*h)) + common.StorageSize(len(h.Extra)+(h.Difficulty.BitLen()+h.Number.BitLen()+h.Time.BitLen())/8)
 }
 
+// EmptyBody returns true if there is no additional 'body' to complete the header
+// that is: no transactions and no uncles.
+func (h *Header) EmptyBody() bool {
+	return h.TxHash == EmptyRootHash && h.UncleHash == EmptyUncleHash
+}
+
+// EmptyReceipts returns true if there are no receipts for this header/block.
+func (h *Header) EmptyReceipts() bool {
+	return h.ReceiptHash == EmptyRootHash
+}
+
 // Body is a simple (mutable, non-safe) data container for storing and moving
 // a block's data contents (transactions and uncles) together.
 type Body struct {
