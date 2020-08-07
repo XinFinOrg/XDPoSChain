@@ -308,11 +308,11 @@ func (s *Service) loop(chainHeadCh chan core.ChainHeadEvent, txEventCh chan core
 			header.Set("origin", "http://localhost")
 			for _, url := range urls {
 				c, _, e := dialer.Dial(url, header)
-				if e == nil {
+				err = e
+				if err == nil {
 					conn = newConnectionWrapper(c)
 					break
 				}
-				err = e
 			}
 			if err != nil {
 				log.Warn("Stats server unreachable", "err", err)
@@ -327,7 +327,6 @@ func (s *Service) loop(chainHeadCh chan core.ChainHeadEvent, txEventCh chan core
 				continue
 			}
 			go s.readLoop(conn)
-
 			// Send the initial stats so our node looks decent from the get go
 			if err = s.report(conn); err != nil {
 				log.Warn("Initial stats report failed", "err", err)
