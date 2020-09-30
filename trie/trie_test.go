@@ -642,6 +642,56 @@ func TestCommitSequenceSmallRoot(t *testing.T) {
 	}
 }
 
+func TestCommitSequenceStackTrie(t *testing.T) {
+	for count := 1; count < 200; count++ {
+		prng := rand.New(rand.NewSource(int64(count)))
+		// This spongeDb is used to check the sequence of disk-db-writes
+		s := &spongeDb{sponge: sha3.NewLegacyKeccak256(), id: "a"}
+		db := NewDatabase(s)
+		trie, _ := New(common.Hash{}, db)
+		// Another sponge is used for the stacktrie commits
+		stackTrieSponge := &spongeDb{sponge: sha3.NewLegacyKeccak256(), id: "b"}
+		stTrie := NewStackTrie(stackTrieSponge)
+		// Fill the trie with elements
+		for i := 1; i < count; i++ {
+			// For the stack trie, we need to do inserts in proper order
+			key := make([]byte, 32)
+			binary.BigEndian.PutUint64(key, uint64(i))
+			var val []byte
+			// 50% short elements, 50% large elements
+			if prng.Intn(2) == 0 {
+				val = make([]byte, 1+prng.Intn(32))
+			} else {
+				val = make([]byte, 1+prng.Intn(1024))
+			}
+			prng.Read(val)
+			trie.TryUpdate(key, common.CopyBytes(val))
+			stTrie.TryUpdate(key, common.CopyBytes(val))
+		}
+		// Flush trie -> database
+		root, _ := trie.Commit(nil)
+		// Flush memdb -> disk (sponge)
+		db.Commit(root, false, nil)
+		// And flush stacktrie -> disk
+		stRoot := stTrie.Commit(stTrie.db)
+		if stRoot != root {
+			t.Fatalf("root wrong, got %x exp %x", stRoot, root)
+		}
+		if got, exp := stackTrieSponge.sponge.Sum(nil), s.sponge.Sum(nil); !bytes.Equal(got, exp) {
+			// Show the journal
+			t.Logf("Expected:")
+			for i, v := range s.journal {
+				t.Logf("op %d: %v", i, v)
+			}
+			t.Logf("Stacktrie:")
+			for i, v := range stackTrieSponge.journal {
+				t.Logf("op %d: %v", i, v)
+			}
+			t.Fatalf("test %d, disk write sequence wrong:\ngot %x exp %x\n", count, got, exp)
+		}
+	}
+}
+
 // BenchmarkCommitAfterHashFixedSize benchmarks the Commit (after Hash) of a fixed number of updates to a trie.
 // This benchmark is meant to capture the difference on efficiency of small versus large changes. Typically,
 // storage tries are small (a couple of entries), whereas the full post-block account trie update is large (a couple
