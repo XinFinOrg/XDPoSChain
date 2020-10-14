@@ -467,7 +467,11 @@ func listen(ln *enode.LocalNode, addr string) *net.UDPConn {
 		exit(err)
 	}
 	uaddr := socket.LocalAddr().(*net.UDPAddr)
-	ln.SetFallbackIP(net.IP{127, 0, 0, 1})
+	if uaddr.IP.IsUnspecified() {
+		ln.SetFallbackIP(net.IP{127, 0, 0, 1})
+	} else {
+		ln.SetFallbackIP(uaddr.IP)
+	}
 	ln.SetFallbackUDP(uaddr.Port)
 	return socket
 }
