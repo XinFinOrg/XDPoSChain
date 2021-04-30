@@ -28,8 +28,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 )
 
-var toAddr = common.BytesToAddress
-
 type stateTest struct {
 	db    ethdb.Database
 	state *StateDB
@@ -107,7 +105,7 @@ func TestNull(t *testing.T) {
 }
 
 func TestSnapshot(t *testing.T) {
-	stateobjaddr := toAddr([]byte("aa"))
+	stateobjaddr := common.BytesToAddress([]byte("aa"))
 	var storageaddr common.Hash
 	data1 := common.BytesToHash([]byte{42})
 	data2 := common.BytesToHash([]byte{43})
