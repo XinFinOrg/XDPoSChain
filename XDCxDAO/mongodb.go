@@ -860,6 +860,10 @@ func (db *MongoDatabase) TruncateAncients(items uint64) error {
 	return errNotSupported
 }
 
+func (db *MongoDatabase) ReadAncients(kind string, start, max, maxByteSize uint64) ([][]byte, error) {
+	return nil, errNotSupported
+}
+
 // Sync returns an error as we don't have a backing chain freezer.
 func (db *MongoDatabase) Sync() error {
 	return errNotSupported
