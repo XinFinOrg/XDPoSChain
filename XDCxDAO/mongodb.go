@@ -864,6 +864,10 @@ func (db *MongoDatabase) ReadAncients(kind string, start, max, maxByteSize uint6
 	return nil, errNotSupported
 }
 
+func (db *MongoDatabase) ModifyAncients(fn func(ethdb.AncientWriteOp) error) (writeSize int64, err error) {
+	return 0, errNotSupported
+}
+
 // Sync returns an error as we don't have a backing chain freezer.
 func (db *MongoDatabase) Sync() error {
 	return errNotSupported
