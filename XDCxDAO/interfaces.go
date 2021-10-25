@@ -45,7 +45,8 @@ type XDCXDAO interface {
 	AncientSize(kind string) (uint64, error)
 	AppendAncient(number uint64, hash, header, body, receipt, td []byte) error
 	TruncateAncients(n uint64) error
-	ReadAncients(kind string, start, count, maxBytes uint64) ([][]byte, error)
+	AncientRange(kind string, start, count, maxBytes uint64) ([][]byte, error)
+	ReadAncients(fn func(ethdb.AncientReader) error) (err error)
 	ModifyAncients(fn func(ethdb.AncientWriteOp) error) (writeSize int64, err error)
 	Sync() error
 	NewIterator(prefix []byte, start []byte) ethdb.Iterator

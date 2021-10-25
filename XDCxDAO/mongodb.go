@@ -860,8 +860,12 @@ func (db *MongoDatabase) TruncateAncients(items uint64) error {
 	return errNotSupported
 }
 
-func (db *MongoDatabase) ReadAncients(kind string, start, max, maxByteSize uint64) ([][]byte, error) {
+func (db *MongoDatabase) AncientRange(kind string, start, max, maxByteSize uint64) ([][]byte, error) {
 	return nil, errNotSupported
+}
+
+func (db *MongoDatabase) ReadAncients(fn func(ethdb.AncientReader) error) (err error) {
+	return fn(db)
 }
 
 func (db *MongoDatabase) ModifyAncients(fn func(ethdb.AncientWriteOp) error) (writeSize int64, err error) {

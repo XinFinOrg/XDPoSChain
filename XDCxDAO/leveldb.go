@@ -160,8 +160,12 @@ func (db *BatchDatabase) TruncateAncients(items uint64) error {
 	return errNotSupported
 }
 
-func (db *BatchDatabase) ReadAncients(kind string, start, max, maxByteSize uint64) ([][]byte, error) {
+func (db *BatchDatabase) AncientRange(kind string, start, max, maxByteSize uint64) ([][]byte, error) {
 	return nil, errNotSupported
+}
+
+func (db *BatchDatabase) ReadAncients(fn func(ethdb.AncientReader) error) (err error) {
+	return fn(db)
 }
 
 func (db *BatchDatabase) ModifyAncients(fn func(ethdb.AncientWriteOp) error) (writeSize int64, err error) {
