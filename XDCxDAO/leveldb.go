@@ -145,6 +145,11 @@ func (db *BatchDatabase) Ancients() (uint64, error) {
 	return 0, errNotSupported
 }
 
+// Tail returns an error as we don't have a backing chain freezer.
+func (db *BatchDatabase) Tail() (uint64, error) {
+	return 0, errNotSupported
+}
+
 // AncientSize returns an error as we don't have a backing chain freezer.
 func (db *BatchDatabase) AncientSize(kind string) (uint64, error) {
 	return 0, errNotSupported
@@ -155,8 +160,13 @@ func (db *BatchDatabase) AppendAncient(number uint64, hash, header, body, receip
 	return errNotSupported
 }
 
-// TruncateAncients returns an error as we don't have a backing chain freezer.
-func (db *BatchDatabase) TruncateAncients(items uint64) error {
+// TruncateHead returns an error as we don't have a backing chain freezer.
+func (db *BatchDatabase) TruncateHead(items uint64) error {
+	return errNotSupported
+}
+
+// TruncateTail returns an error as we don't have a backing chain freezer.
+func (db *BatchDatabase) TruncateTail(items uint64) error {
 	return errNotSupported
 }
 

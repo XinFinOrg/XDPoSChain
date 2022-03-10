@@ -845,6 +845,11 @@ func (db *MongoDatabase) Ancients() (uint64, error) {
 	return 0, errNotSupported
 }
 
+// Tail returns an error as we don't have a backing chain freezer.
+func (db *MongoDatabase) Tail() (uint64, error) {
+	return 0, errNotSupported
+}
+
 // AncientSize returns an error as we don't have a backing chain freezer.
 func (db *MongoDatabase) AncientSize(kind string) (uint64, error) {
 	return 0, errNotSupported
@@ -855,8 +860,13 @@ func (db *MongoDatabase) AppendAncient(number uint64, hash, header, body, receip
 	return errNotSupported
 }
 
-// TruncateAncients returns an error as we don't have a backing chain freezer.
-func (db *MongoDatabase) TruncateAncients(items uint64) error {
+// TruncateHead returns an error as we don't have a backing chain freezer.
+func (db *MongoDatabase) TruncateHead(items uint64) error {
+	return errNotSupported
+}
+
+// TruncateTail returns an error as we don't have a backing chain freezer.
+func (db *MongoDatabase) TruncateTail(items uint64) error {
 	return errNotSupported
 }
 
