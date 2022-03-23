@@ -178,6 +178,12 @@ func (db *BatchDatabase) ReadAncients(fn func(ethdb.AncientReader) error) (err e
 	return fn(db)
 }
 
+// MigrateTable processes the entries in a given table in sequence
+// converting them to a new format if they're of an old format.
+func (db *BatchDatabase) MigrateTable(kind string, convert func([]byte) ([]byte, error)) error {
+	return errNotSupported
+}
+
 func (db *BatchDatabase) ModifyAncients(fn func(ethdb.AncientWriteOp) error) (writeSize int64, err error) {
 	return 0, errNotSupported
 }

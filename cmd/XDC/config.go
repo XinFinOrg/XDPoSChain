@@ -243,6 +243,18 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend, XDCConfig) {
 		})
 	}
 
+	// Warn users to migrate if they have a legacy freezer format.
+	if eth != nil {
+		firstIdx := uint64(0)
+		isLegacy, _, err := dbHasLegacyReceipts(eth.ChainDb(), firstIdx)
+		if err != nil {
+			utils.Fatalf("Failed to check db for legacy receipts: %v", err)
+		}
+		if isLegacy {
+			log.Warn("Database has receipts with a legacy format. Please run `XDC db freezer-migrate`.")
+		}
+	}
+
 	// Add the Ethereum Stats daemon if requested.
 	if cfg.Ethstats.URL != "" {
 		utils.RegisterEthStatsService(stack, backend, cfg.Ethstats.URL)
