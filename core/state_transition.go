@@ -329,17 +329,22 @@ func (st *StateTransition) TransitionDb(owner common.Address) (*ExecutionResult,
 		return nil, err
 	}
 
+	if tracer := st.evm.Config.Tracer; tracer != nil {
+		st.evm.Config.Tracer.CaptureTxStart(st.initialGas)
+		defer func() {
+			st.evm.Config.Tracer.CaptureTxEnd(st.gas)
+		}()
+	}
+
 	var (
 		msg              = st.msg
 		sender           = st.from() // err checked in preCheck
 		rules            = st.evm.ChainConfig().Rules(st.evm.Context.BlockNumber)
-		homestead        = rules.IsHomestead
-		eip3529          = rules.IsEIP1559
 		contractCreation = msg.To() == nil
 	)
 
 	// Check clauses 4-5, subtract intrinsic gas if everything is correct
-	gas, err := IntrinsicGas(st.data, st.msg.AccessList(), contractCreation, homestead, rules.IsEIP1559)
+	gas, err := IntrinsicGas(st.data, st.msg.AccessList(), contractCreation, rules.IsHomestead, rules.IsEIP1559)
 	if err != nil {
 		return nil, err
 	}
@@ -378,7 +383,7 @@ func (st *StateTransition) TransitionDb(owner common.Address) (*ExecutionResult,
 		st.state.SetNonce(sender.Address(), st.state.GetNonce(sender.Address())+1)
 		ret, st.gas, vmerr = st.evm.Call(sender, st.to().Address(), st.data, st.gas, st.value)
 	}
-	if !eip3529 {
+	if !rules.IsEIP1559 {
 		// Before EIP-3529: refunds were capped to gasUsed / 2
 		st.refundGas(params.RefundQuotient)
 	} else {

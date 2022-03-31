@@ -60,6 +60,10 @@ func (t *contractTracer) CaptureStart(env *vm.EVM, from common.Address, to commo
 func (t *contractTracer) CaptureEnd(output []byte, gasUsed uint64, _ time.Duration, err error) {
 }
 
+func (*contractTracer) CaptureTxStart(gasLimit uint64) {}
+
+func (*contractTracer) CaptureTxEnd(restGas uint64) {}
+
 func (t *contractTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, scope *vm.ScopeContext, rData []byte, depth int, err error) {
 	// Skip if tracing was interrupted
 	if atomic.LoadUint32(&t.interrupt) > 0 {
