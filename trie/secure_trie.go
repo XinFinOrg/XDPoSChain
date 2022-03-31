@@ -185,8 +185,10 @@ func (t *SecureTrie) Hash() common.Hash {
 
 // Copy returns a copy of SecureTrie.
 func (t *SecureTrie) Copy() *SecureTrie {
-	cpy := *t
-	return &cpy
+	return &SecureTrie{
+		trie:        *t.trie.Copy(),
+		secKeyCache: t.secKeyCache,
+	}
 }
 
 // NodeIterator returns an iterator that returns nodes of the underlying trie. Iteration

@@ -31,6 +31,7 @@ import (
 	"testing/quick"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
@@ -52,7 +53,7 @@ func newEmpty() *Trie {
 }
 
 func TestEmptyTrie(t *testing.T) {
-	var trie Trie
+	trie, _ := New(common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase()))
 	res := trie.Hash()
 	exp := types.EmptyRootHash
 	if res != exp {
@@ -61,7 +62,7 @@ func TestEmptyTrie(t *testing.T) {
 }
 
 func TestNull(t *testing.T) {
-	var trie Trie
+	trie, _ := New(common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase()))
 	key := make([]byte, 32)
 	value := []byte("test")
 	trie.Update(key, value)
@@ -317,6 +318,7 @@ const (
 	opHash
 	opReset
 	opItercheckhash
+	opNodeDiff
 	opMax // boundary value, not an actual op
 )
 
@@ -368,10 +370,13 @@ func runRandTestBool(rt randTest) bool {
 }
 
 func runRandTest(rt randTest) error {
-	triedb := NewDatabase(memorydb.New())
-
-	tr, _ := New(common.Hash{}, triedb)
-	values := make(map[string]string) // tracks content of the trie
+	var (
+		triedb      = NewDatabase(memorydb.New())
+		tr, _       = New(common.Hash{}, triedb)
+		values      = make(map[string]string) // tracks content of the trie
+		origTrie, _ = New(common.Hash{}, triedb)
+	)
+	tr.tracer = newTracer()
 
 	for i, step := range rt {
 		fmt.Printf("{op: %d, key: common.Hex2Bytes(\"%x\"), value: common.Hex2Bytes(\"%x\")}, // step %d\n",
@@ -391,6 +396,7 @@ func runRandTest(rt randTest) error {
 			}
 		case opCommit:
 			_, _, rt[i].err = tr.Commit(nil)
+			origTrie = tr.Copy()
 		case opHash:
 			tr.Hash()
 		case opReset:
@@ -405,6 +411,9 @@ func runRandTest(rt randTest) error {
 				return err
 			}
 			tr = newtr
+			tr.tracer = newTracer()
+
+			origTrie = tr.Copy()
 		case opItercheckhash:
 			checktr, _ := New(common.Hash{}, triedb)
 			it := NewIterator(tr.NodeIterator(nil))
@@ -413,6 +422,59 @@ func runRandTest(rt randTest) error {
 			}
 			if tr.Hash() != checktr.Hash() {
 				rt[i].err = fmt.Errorf("hash mismatch in opItercheckhash")
+			}
+		case opNodeDiff:
+			var (
+				inserted = tr.tracer.insertList()
+				deleted  = tr.tracer.deleteList()
+				origIter = origTrie.NodeIterator(nil)
+				curIter  = tr.NodeIterator(nil)
+				origSeen = make(map[string]struct{})
+				curSeen  = make(map[string]struct{})
+			)
+			for origIter.Next(true) {
+				if origIter.Leaf() {
+					continue
+				}
+				origSeen[string(origIter.Path())] = struct{}{}
+			}
+			for curIter.Next(true) {
+				if curIter.Leaf() {
+					continue
+				}
+				curSeen[string(curIter.Path())] = struct{}{}
+			}
+			var (
+				insertExp = make(map[string]struct{})
+				deleteExp = make(map[string]struct{})
+			)
+			for path := range curSeen {
+				_, present := origSeen[path]
+				if !present {
+					insertExp[path] = struct{}{}
+				}
+			}
+			for path := range origSeen {
+				_, present := curSeen[path]
+				if !present {
+					deleteExp[path] = struct{}{}
+				}
+			}
+			if len(insertExp) != len(inserted) {
+				rt[i].err = fmt.Errorf("insert set mismatch")
+			}
+			if len(deleteExp) != len(deleted) {
+				rt[i].err = fmt.Errorf("delete set mismatch")
+			}
+			for _, insert := range inserted {
+				if _, present := insertExp[string(insert)]; !present {
+					rt[i].err = fmt.Errorf("missing inserted node")
+				}
+			}
+			for _, del := range deleted {
+				if _, present := deleteExp[string(del)]; !present {
+					rt[i].err = fmt.Errorf("missing deleted node")
+				}
 			}
 		}
 		// Abort the test on error.
