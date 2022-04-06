@@ -40,6 +40,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/eth/tracers/logger"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/internal/ethapi"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -224,11 +225,11 @@ func TestTraceCall(t *testing.T) {
 			},
 			config:    nil,
 			expectErr: nil,
-			expect: &ethapi.ExecutionResult{
+			expect: &logger.ExecutionResult{
 				Gas:         params.TxGas,
 				Failed:      false,
 				ReturnValue: "",
-				StructLogs:  []ethapi.StructLogRes{},
+				StructLogs:  []logger.StructLogRes{},
 			},
 		},
 		// Standard JSON trace upon the head, plain transfer.
@@ -241,11 +242,11 @@ func TestTraceCall(t *testing.T) {
 			},
 			config:    nil,
 			expectErr: nil,
-			expect: &ethapi.ExecutionResult{
+			expect: &logger.ExecutionResult{
 				Gas:         params.TxGas,
 				Failed:      false,
 				ReturnValue: "",
-				StructLogs:  []ethapi.StructLogRes{},
+				StructLogs:  []logger.StructLogRes{},
 			},
 		},
 		// Standard JSON trace upon the non-existent block, error expects
@@ -270,11 +271,11 @@ func TestTraceCall(t *testing.T) {
 			},
 			config:    nil,
 			expectErr: nil,
-			expect: &ethapi.ExecutionResult{
+			expect: &logger.ExecutionResult{
 				Gas:         params.TxGas,
 				Failed:      false,
 				ReturnValue: "",
-				StructLogs:  []ethapi.StructLogRes{},
+				StructLogs:  []logger.StructLogRes{},
 			},
 		},
 		// Tracing on 'pending' should fail
@@ -287,7 +288,6 @@ func TestTraceCall(t *testing.T) {
 			},
 			config:    nil,
 			expectErr: errors.New("tracing on top of pending is not supported"),
-			expect:    nil,
 		},
 	}
 	for _, testspec := range testSuite {
@@ -305,8 +305,12 @@ func TestTraceCall(t *testing.T) {
 				t.Errorf("Expect no error, get %v", err)
 				continue
 			}
-			if !reflect.DeepEqual(result, testspec.expect) {
-				t.Errorf("Result mismatch, want %v, get %v", testspec.expect, result)
+			var have *logger.ExecutionResult
+			if err := json.Unmarshal(result.(json.RawMessage), &have); err != nil {
+				t.Errorf("failed to unmarshal result %v", err)
+			}
+			if !reflect.DeepEqual(have, testspec.expect) {
+				t.Errorf("Result mismatch, want %v, get %v", testspec.expect, have)
 			}
 		}
 	}
@@ -339,11 +343,15 @@ func TestTraceTransaction(t *testing.T) {
 	if err != nil {
 		t.Errorf("Failed to trace transaction %v", err)
 	}
-	if !reflect.DeepEqual(result, &ethapi.ExecutionResult{
+	var have *logger.ExecutionResult
+	if err := json.Unmarshal(result.(json.RawMessage), &have); err != nil {
+		t.Errorf("failed to unmarshal result %v", err)
+	}
+	if !reflect.DeepEqual(have, &logger.ExecutionResult{
 		Gas:         params.TxGas,
 		Failed:      false,
 		ReturnValue: "",
-		StructLogs:  []ethapi.StructLogRes{},
+		StructLogs:  []logger.StructLogRes{},
 	}) {
 		t.Error("Transaction tracing result is different")
 	}
