@@ -48,8 +48,9 @@ type XDCXDAO interface {
 	TruncateHead(n uint64) error
 	TruncateTail(n uint64) error
 	AncientRange(kind string, start, count, maxBytes uint64) ([][]byte, error)
-	ReadAncients(fn func(ethdb.AncientReader) error) (err error)
+	ReadAncients(fn func(ethdb.AncientReaderOp) error) (err error)
 	MigrateTable(string, func([]byte) ([]byte, error)) error
+	AncientDatadir() (string, error)
 	ModifyAncients(fn func(ethdb.AncientWriteOp) error) (writeSize int64, err error)
 	Sync() error
 	NewIterator(prefix []byte, start []byte) ethdb.Iterator

@@ -174,7 +174,7 @@ func (db *BatchDatabase) AncientRange(kind string, start, max, maxByteSize uint6
 	return nil, errNotSupported
 }
 
-func (db *BatchDatabase) ReadAncients(fn func(ethdb.AncientReader) error) (err error) {
+func (db *BatchDatabase) ReadAncients(fn func(ethdb.AncientReaderOp) error) (err error) {
 	return fn(db)
 }
 
@@ -182,6 +182,11 @@ func (db *BatchDatabase) ReadAncients(fn func(ethdb.AncientReader) error) (err e
 // converting them to a new format if they're of an old format.
 func (db *BatchDatabase) MigrateTable(kind string, convert func([]byte) ([]byte, error)) error {
 	return errNotSupported
+}
+
+// AncientDatadir returns an error as we don't have a backing chain freezer.
+func (db *BatchDatabase) AncientDatadir() (string, error) {
+	return "", errNotSupported
 }
 
 func (db *BatchDatabase) ModifyAncients(fn func(ethdb.AncientWriteOp) error) (writeSize int64, err error) {
