@@ -25,7 +25,6 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
-	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/ethdb/memorydb"
@@ -298,7 +297,7 @@ func TestUnionIterator(t *testing.T) {
 }
 
 func TestIteratorNoDups(t *testing.T) {
-	tr, _ := New(common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase()))
+	tr := NewEmpty(NewDatabase(rawdb.NewMemoryDatabase()))
 	for _, val := range testdata1 {
 		tr.Update([]byte(val.k), []byte(val.v))
 	}
@@ -313,7 +312,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 	diskdb := memorydb.New()
 	triedb := NewDatabase(diskdb)
 
-	tr, _ := New(types.EmptyRootHash, triedb)
+	tr := NewEmpty(triedb)
 	for _, val := range testdata1 {
 		tr.Update([]byte(val.k), []byte(val.v))
 	}
@@ -338,7 +337,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 	}
 	for i := 0; i < 20; i++ {
 		// Create trie that will load all nodes from DB.
-		tr, _ := New(tr.Hash(), triedb)
+		tr, _ := New(common.Hash{}, tr.Hash(), triedb)
 
 		// Remove a random Node from the database. It can't be the root Node
 		// because that one is already loaded.
@@ -404,7 +403,7 @@ func testIteratorContinueAfterSeekError(t *testing.T, memonly bool) {
 	diskdb := memorydb.New()
 	triedb := NewDatabase(diskdb)
 
-	ctr, _ := New(types.EmptyRootHash, triedb)
+	ctr := NewEmpty(triedb)
 	for _, val := range testdata1 {
 		ctr.Update([]byte(val.k), []byte(val.v))
 	}
@@ -425,8 +424,8 @@ func testIteratorContinueAfterSeekError(t *testing.T, memonly bool) {
 		diskdb.Delete(barNodeHash[:])
 	}
 	// Create a new iterator that seeks to "bars". Seeking can't proceed because
-	// the Node is missing.
-	tr, _ := New(root, triedb)
+	// the node is missing.
+	tr, _ := New(common.Hash{}, root, triedb)
 	it := tr.NodeIterator([]byte("bars"))
 	missing, ok := it.Error().(*MissingNodeError)
 	if !ok {
@@ -510,7 +509,7 @@ func makeLargeTestTrie() (*Database, *SecureTrie, *loggingDb) {
 	// Create an empty trie
 	logDb := &loggingDb{0, memorydb.New()}
 	triedb := NewDatabase(logDb)
-	trie, _ := NewSecure(common.Hash{}, triedb)
+	trie, _ := NewSecure(common.Hash{}, common.Hash{}, triedb)
 
 	// Fill it with some arbitrary data
 	for i := 0; i < 10000; i++ {
@@ -543,9 +542,9 @@ func TestNodeIteratorLargeTrie(t *testing.T) {
 
 func TestIteratorNodeBlob(t *testing.T) {
 	var (
-		db      = memorydb.New()
-		triedb  = NewDatabase(db)
-		trie, _ = New(common.Hash{}, triedb)
+		db     = memorydb.New()
+		triedb = NewDatabase(db)
+		trie   = NewEmpty(triedb)
 	)
 	vals := []struct{ k, v string }{
 		{"do", "verb"},

@@ -42,22 +42,22 @@ type SecureTrie struct {
 	secKeyCacheOwner *SecureTrie // Pointer to self, replace the key Cache on mismatch
 }
 
-// NewSecure creates a trie with an existing root Node from a backing database
-// and optional intermediate in-memory Node pool.
+// NewSecure creates a trie with an existing root node from a backing database
+// and optional intermediate in-memory node pool.
 //
 // If root is the zero hash or the sha3 hash of an empty string, the
-// trie is initially empty. Otherwise, New will panic if Db is nil
-// and returns MissingNodeError if the root Node cannot be found.
+// trie is initially empty. Otherwise, New will panic if db is nil
+// and returns MissingNodeError if the root node cannot be found.
 //
-// Accessing the trie loads nodes from the database or Node pool on demand.
-// Loaded nodes are kept around until their 'Cache generation' expires.
-// A new Cache generation is created by each call to Commit.
-// cachelimit sets the number of past Cache generations to keep.
-func NewSecure(root common.Hash, db *Database) (*SecureTrie, error) {
+// Accessing the trie loads nodes from the database or node pool on demand.
+// Loaded nodes are kept around until their 'cache generation' expires.
+// A new cache generation is created by each call to Commit.
+// cachelimit sets the number of past cache generations to keep.
+func NewSecure(owner common.Hash, root common.Hash, db *Database) (*SecureTrie, error) {
 	if db == nil {
 		panic("trie.NewSecure called without a database")
 	}
-	trie, err := New(root, db)
+	trie, err := New(owner, root, db)
 	if err != nil {
 		return nil, err
 	}

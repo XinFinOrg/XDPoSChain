@@ -19,14 +19,12 @@ package trie
 import (
 	"testing"
 
-	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 )
 
 // Tests if the trie diffs are tracked correctly.
 func TestTrieTracer(t *testing.T) {
-	db := NewDatabase(rawdb.NewMemoryDatabase())
-	trie, _ := New(common.Hash{}, db)
+	trie := NewEmpty(NewDatabase(rawdb.NewMemoryDatabase()))
 	trie.tracer = newTracer()
 
 	// Insert a batch of entries, all the nodes should be marked as inserted
@@ -93,8 +91,7 @@ func TestTrieTracer(t *testing.T) {
 }
 
 func TestTrieTracerNoop(t *testing.T) {
-	db := NewDatabase(rawdb.NewMemoryDatabase())
-	trie, _ := New(common.Hash{}, db)
+	trie := NewEmpty(NewDatabase(rawdb.NewMemoryDatabase()))
 	trie.tracer = newTracer()
 
 	// Insert a batch of entries, all the nodes should be marked as inserted
