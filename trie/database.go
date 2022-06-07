@@ -304,7 +304,10 @@ func (db *Database) DiskDB() ethdb.KeyValueStore {
 // All nodes inserted by this function will be reference tracked
 // and in theory should only used for **trie nodes** insertion.
 func (db *Database) insert(hash common.Hash, size int, node node) {
-	// If the Node's already cached, skip
+	db.Lock.Lock()
+	defer db.Lock.Unlock()
+
+	// If the node's already cached, skip
 	if _, ok := db.dirties[hash]; ok {
 		return
 	}

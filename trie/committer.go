@@ -193,9 +193,7 @@ func (c *committer) store(n node, db *Database) node {
 	} else if db != nil {
 		// No leaf-callback used, but there's still a database. Do serial
 		// insertion
-		db.Lock.Lock()
 		db.insert(common.BytesToHash(hash), size, n)
-		db.Lock.Unlock()
 	}
 	return hash
 }
@@ -208,10 +206,8 @@ func (c *committer) commitLoop(db *Database) {
 			size = item.size
 			n    = item.node
 		)
-		// We are pooling the trie nodes into an intermediate memory Cache
-		db.Lock.Lock()
+		// We are pooling the trie nodes into an intermediate memory cache
 		db.insert(hash, size, n)
-		db.Lock.Unlock()
 
 		if c.onleaf != nil {
 			switch n := n.(type) {
