@@ -578,7 +578,7 @@ func (ls *LendingStateDB) Commit() (root common.Hash, err error) {
 		}
 	}
 	// Write trie changes.
-	root, err = ls.trie.Commit(func(_ [][]byte, _ []byte, leaf []byte, parent common.Hash) error {
+	root, err = ls.trie.Commit(func(_ [][]byte, _ []byte, leaf []byte, parent common.Hash, _ []byte) error {
 		var exchange lendingObject
 		if err := rlp.DecodeBytes(leaf, &exchange); err != nil {
 			return nil

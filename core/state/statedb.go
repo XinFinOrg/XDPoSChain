@@ -835,7 +835,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	// Write the account trie changes, measuing the amount of wasted time
 	start := time.Now()
 
-	root, accountCommitted, err := s.trie.Commit(func(_ [][]byte, _ []byte, leaf []byte, parent common.Hash) error {
+	root, accountCommitted, err := s.trie.Commit(func(_ [][]byte, _ []byte, leaf []byte, parent common.Hash, _ []byte) error {
 		var account types.StateAccount
 		if err := rlp.DecodeBytes(leaf, &account); err != nil {
 			return nil
