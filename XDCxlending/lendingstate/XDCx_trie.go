@@ -143,7 +143,7 @@ func (t *XDCXTrie) GetKey(shaKey []byte) []byte {
 	if key, ok := t.getSecKeyCache()[string(shaKey)]; ok {
 		return key
 	}
-	return t.trie.Db.Preimage(common.BytesToHash(shaKey))
+	return t.trie.Db().Preimage(common.BytesToHash(shaKey))
 }
 
 // Commit writes all nodes and the secure hash pre-images to the trie's database.
@@ -154,12 +154,7 @@ func (t *XDCXTrie) GetKey(shaKey []byte) []byte {
 func (t *XDCXTrie) Commit(onleaf trie.LeafCallback) (common.Hash, error) {
 	// Write all the pre-images to the actual disk database
 	if len(t.getSecKeyCache()) > 0 {
-		t.trie.Db.Lock.Lock()
-		for hk, key := range t.secKeyCache {
-			t.trie.Db.InsertPreimage(common.BytesToHash([]byte(hk)), key)
-		}
-		t.trie.Db.Lock.Unlock()
-
+		t.trie.Db().InsertPreimage(t.secKeyCache)
 		t.secKeyCache = make(map[string][]byte)
 	}
 	// Commit the trie to its intermediate node database

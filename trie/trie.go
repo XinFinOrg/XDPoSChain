@@ -52,7 +52,7 @@ type LeafCallback func(keys [][]byte, path []byte, leaf []byte, parent common.Ha
 //
 // Trie is not safe for concurrent use.
 type Trie struct {
-	Db    *Database
+	db    *Database
 	root  node
 	owner common.Hash
 
@@ -71,10 +71,14 @@ func (t *Trie) newFlag() nodeFlag {
 	return nodeFlag{dirty: true}
 }
 
+func (t *Trie) Db() *Database {
+	return t.db
+}
+
 // Copy returns a copy of Trie.
 func (t *Trie) Copy() *Trie {
 	return &Trie{
-		Db:       t.Db,
+		db:       t.db,
 		root:     t.root,
 		owner:    t.owner,
 		unhashed: t.unhashed,
@@ -105,7 +109,7 @@ func newWithRootNode(root node) *Trie {
 	return &Trie{
 		root: root,
 		//tracer: newTracer(),
-		Db: NewDatabase(rawdb.NewMemoryDatabase()),
+		db: NewDatabase(rawdb.NewMemoryDatabase()),
 	}
 }
 
@@ -115,7 +119,7 @@ func newTrie(owner common.Hash, root common.Hash, db *Database) (*Trie, error) {
 		panic("trie.New called without a database")
 	}
 	trie := &Trie{
-		Db:    db,
+		db:    db,
 		owner: owner,
 		//tracer: newTracer(),
 	}
@@ -227,7 +231,7 @@ func (t *Trie) tryGetNode(origNode node, path []byte, pos int) (item []byte, new
 		if hash == nil {
 			return nil, origNode, 0, errors.New("non-consensus node")
 		}
-		blob, err := t.Db.Node(common.BytesToHash(hash))
+		blob, err := t.db.Node(common.BytesToHash(hash))
 		return blob, origNode, 1, err
 	}
 	// Path still needs to be traversed, descend into children
@@ -729,7 +733,7 @@ func (t *Trie) resolve(n node, prefix []byte) (node, error) {
 
 func (t *Trie) resolveHash(n hashNode, prefix []byte) (node, error) {
 	hash := common.BytesToHash(n)
-	if node := t.Db.node(hash); node != nil {
+	if node := t.db.node(hash); node != nil {
 		return node, nil
 	}
 	return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix}
@@ -737,7 +741,7 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte) (node, error) {
 
 func (t *Trie) resolveBlob(n hashNode, prefix []byte) ([]byte, error) {
 	hash := common.BytesToHash(n)
-	blob, _ := t.Db.Node(hash)
+	blob, _ := t.db.Node(hash)
 	if len(blob) != 0 {
 		return blob, nil
 	}
@@ -755,7 +759,7 @@ func (t *Trie) Hash() common.Hash {
 // Commit writes all nodes to the trie's memory database, tracking the internal
 // and external (for account tries) references.
 func (t *Trie) Commit(onleaf LeafCallback) (common.Hash, int, error) {
-	if t.Db == nil {
+	if t.db == nil {
 		panic("commit called on trie with nil database")
 	}
 	defer t.tracer.reset()
@@ -785,10 +789,10 @@ func (t *Trie) Commit(onleaf LeafCallback) (common.Hash, int, error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			h.commitLoop(t.Db)
+			h.commitLoop(t.db)
 		}()
 	}
-	newRoot, committed, err := h.Commit(t.root, t.Db)
+	newRoot, committed, err := h.Commit(t.root, t.db)
 	if onleaf != nil {
 		// The leafch is created in newCommitter if there was an onleaf callback
 		// provided. The commitLoop only _reads_ from it, and the commit
