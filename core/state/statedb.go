@@ -537,21 +537,15 @@ func (s *StateDB) getDeletedStateObject(addr common.Address) *stateObject {
 	if obj := s.stateObjects[addr]; obj != nil {
 		return obj
 	}
-	// Track the amount of time wasted on loading the object from the database
-	start := time.Now()
 	// Load the object from the database
-	enc, err := s.trie.TryGet(addr.Bytes())
+	start := time.Now()
+	data, err := s.trie.TryGetAccount(addr.Bytes())
 	s.AccountReads += time.Since(start)
 	if err != nil {
-		s.setError(fmt.Errorf("getDeleteStateObject (%x) error: %v", addr.Bytes(), err))
+		s.setError(fmt.Errorf("getDeleteStateObject (%x) error: %w", addr.Bytes(), err))
 		return nil
 	}
-	if len(enc) == 0 {
-		return nil
-	}
-	data := new(types.StateAccount)
-	if err := rlp.DecodeBytes(enc, data); err != nil {
-		log.Error("Failed to decode state object", "addr", addr, "err", err)
+	if data == nil {
 		return nil
 	}
 	// Insert into the live set

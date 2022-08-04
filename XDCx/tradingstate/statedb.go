@@ -431,6 +431,7 @@ func (t *TradingStateDB) getStateExchangeObject(addr common.Hash) (stateObject *
 		return obj
 	}
 	// Load the object from the database.
+	// TODO(daniel): use trie.TryGetAccount, ref PR #25458
 	enc, err := t.trie.TryGet(addr[:])
 	if len(enc) == 0 {
 		t.setError(err)

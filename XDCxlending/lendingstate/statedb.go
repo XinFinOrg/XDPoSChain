@@ -416,6 +416,7 @@ func (ls *LendingStateDB) getLendingExchange(addr common.Hash) (stateObject *len
 		return obj
 	}
 	// Load the object from the database.
+	// TODO(daniel): use trie.TryGetAccount, ref PR #25458
 	enc, err := ls.trie.TryGet(addr[:])
 	if len(enc) == 0 {
 		ls.setError(err)
