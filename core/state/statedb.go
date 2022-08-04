@@ -757,7 +757,7 @@ func (s *StateDB) GetRefund() uint64 {
 	return s.refund
 }
 
-// Finalise finalises the state by removing the self destructed objects and clears
+// Finalise finalises the state by removing the destructed objects and clears
 // the journal as well as the refunds. Finalise, however, will not push any updates
 // into the tries just yet. Only IntermediateRoot or Commit will do that.
 func (s *StateDB) Finalise(deleteEmptyObjects bool) {
@@ -839,7 +839,11 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 		s.stateObjectsDirty[addr] = struct{}{}
 	}
 	// Commit objects to the trie, measuring the elapsed time
-	var storageCommitted int
+	var (
+		accountTrieNodes int
+		storageTrieNodes int
+		nodes            = trie.NewMergedNodeSet()
+	)
 	codeWriter := s.db.TrieDB().DiskDB().NewBatch()
 	for addr := range s.stateObjectsDirty {
 		if obj := s.stateObjects[addr]; !obj.deleted {
@@ -848,12 +852,18 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 				rawdb.WriteCode(codeWriter, common.BytesToHash(obj.CodeHash()), obj.code)
 				obj.dirtyCode = false
 			}
-			// Write any storage changes in the state object to its storage trie.
-			committed, err := obj.commitTrie(s.db)
+			// Write any storage changes in the state object to its storage trie
+			set, err := obj.commitTrie(s.db)
 			if err != nil {
 				return common.Hash{}, err
 			}
-			storageCommitted += committed
+			// Merge the dirty nodes of storage trie into global set
+			if set != nil {
+				if err := nodes.Merge(set); err != nil {
+					return common.Hash{}, err
+				}
+				storageTrieNodes += set.Len()
+			}
 		}
 		// If the contract is destructed, the storage is still left in the
 		// database as dangling data. Theoretically it's should be wiped from
@@ -873,18 +883,16 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	// Write the account trie changes, measuring the amount of wasted time
 	start := time.Now()
 
-	root, accountCommitted, err := s.trie.Commit(func(_ [][]byte, _ []byte, leaf []byte, parent common.Hash, _ []byte) error {
-		var account types.StateAccount
-		if err := rlp.DecodeBytes(leaf, &account); err != nil {
-			return nil
-		}
-		if account.Root != types.EmptyRootHash {
-			s.db.TrieDB().Reference(account.Root, parent)
-		}
-		return nil
-	})
+	root, set, err := s.trie.Commit(true)
 	if err != nil {
 		return common.Hash{}, err
+	}
+	// Merge the dirty nodes of account trie into global set
+	if set != nil {
+		if err := nodes.Merge(set); err != nil {
+			return common.Hash{}, err
+		}
+		accountTrieNodes = set.Len()
 	}
 	// Report the commit metrics
 	s.AccountCommits += time.Since(start)
@@ -893,13 +901,16 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	storageUpdatedMeter.Mark(int64(s.StorageUpdated))
 	accountDeletedMeter.Mark(int64(s.AccountDeleted))
 	storageDeletedMeter.Mark(int64(s.StorageDeleted))
-	accountCommittedMeter.Mark(int64(accountCommitted))
-	storageCommittedMeter.Mark(int64(storageCommitted))
+	accountTrieCommittedMeter.Mark(int64(accountTrieNodes))
+	storageTriesCommittedMeter.Mark(int64(storageTrieNodes))
 	s.AccountUpdated, s.AccountDeleted = 0, 0
 	s.StorageUpdated, s.StorageDeleted = 0, 0
 
 	if len(s.stateObjectsDestruct) > 0 {
 		s.stateObjectsDestruct = make(map[common.Address]struct{})
+	}
+	if err := s.db.TrieDB().Update(nodes); err != nil {
+		return common.Hash{}, err
 	}
 	return root, err
 }

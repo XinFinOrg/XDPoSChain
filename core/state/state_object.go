@@ -27,6 +27,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
+	"github.com/XinFinOrg/XDPoSChain/trie"
 )
 
 type Code []byte
@@ -315,22 +316,22 @@ func (s *stateObject) updateRoot(db Database) {
 
 // CommitTrie the storage trie of the object to dwb.
 // This updates the trie root.
-func (s *stateObject) commitTrie(db Database) (int, error) {
+func (s *stateObject) commitTrie(db Database) (*trie.NodeSet, error) {
 	// If nothing changed, don't bother with hashing anything
 	tr, err := s.updateTrie(db)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if s.dbErr != nil {
-		return 0, s.dbErr
+		return nil, s.dbErr
 	}
 	// If nothing changed, don't bother with hashing anything
 	if tr == nil {
-		return 0, nil
+		return nil, nil
 	}
 	// Track the amount of time wasted on committing the storage trie
 	defer func(start time.Time) { s.db.StorageCommits += time.Since(start) }(time.Now())
-	root, nodes, err := tr.Commit(nil)
+	root, nodes, err := tr.Commit(false)
 	if err == nil {
 		s.data.Root = root
 	}

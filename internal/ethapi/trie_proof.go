@@ -30,7 +30,7 @@ func (n *proofPairList) Delete(key []byte) error {
 // modified from core/types/derive_sha.go
 func deriveTrie(list types.DerivableList) *trie.Trie {
 	buf := new(bytes.Buffer)
-	trie := new(trie.Trie)
+	trie := trie.NewEmpty(nil)
 	for i := range list.Len() {
 		buf.Reset()
 		rlp.Encode(buf, uint(i))

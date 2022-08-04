@@ -158,7 +158,18 @@ func (t *XDCXTrie) Commit(onleaf trie.LeafCallback) (common.Hash, error) {
 		t.secKeyCache = make(map[string][]byte)
 	}
 	// Commit the trie to its intermediate node database
-	root, _, err := t.trie.Commit(onleaf)
+	// PR #1103 causes TestRevertStates and TestDumpState to fail,
+	// but we will not fix them since XDCx has been abandoned.
+	// TODO(daniel): The following code may be incorrect, ref PR #25320:
+	root, nodes, err := t.trie.Commit(false)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	if nodes != nil {
+		if err := t.trie.Db().Update(trie.NewWithNodeSet(nodes)); err != nil {
+			return common.Hash{}, err
+		}
+	}
 	return root, err
 }
 

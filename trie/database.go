@@ -27,6 +27,7 @@ import (
 	"github.com/VictoriaMetrics/fastcache"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/metrics"
@@ -320,14 +321,10 @@ func (db *Database) InsertPreimage(secKeyCache map[string][]byte) {
 	db.preimages.insertPreimage(preimages)
 }
 
-// insert inserts a collapsed trie node into the memory database.
-// The blob size must be specified to allow proper size tracking.
+// insert inserts a simplified trie node into the memory database.
 // All nodes inserted by this function will be reference tracked
 // and in theory should only used for **trie nodes** insertion.
 func (db *Database) insert(hash common.Hash, size int, node node) {
-	db.lock.Lock()
-	defer db.lock.Unlock()
-
 	// If the node's already cached, skip
 	if _, ok := db.dirties[hash]; ok {
 		return
@@ -336,7 +333,7 @@ func (db *Database) insert(hash common.Hash, size int, node node) {
 
 	// Create the cached entry for this Node
 	entry := &cachedNode{
-		node:      simplifyNode(node),
+		node:      node,
 		size:      uint16(size),
 		flushPrev: db.newest,
 	}
@@ -775,7 +772,42 @@ func (c *cleaner) Delete(key []byte) error {
 	panic("not implemented")
 }
 
-// Size returns the current storage size of the memory Cache in front of the
+// Update inserts the dirty nodes in provided nodeset into database and
+// link the account trie with multiple storage tries if necessary.
+func (db *Database) Update(nodes *MergedNodeSet) error {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	// Insert dirty nodes into the database. In the same tree, it must be
+	// ensured that children are inserted first, then parent so that children
+	// can be linked with their parent correctly. The order of writing between
+	// different tries(account trie, storage tries) is not required.
+	for owner, subset := range nodes.sets {
+		for _, path := range subset.paths {
+			n, ok := subset.nodes[path]
+			if !ok {
+				return fmt.Errorf("missing node %x %v", owner, path)
+			}
+			db.insert(n.hash, int(n.size), n.node)
+		}
+	}
+	// Link up the account trie and storage trie if the node points
+	// to an account trie leaf.
+	if set, present := nodes.sets[common.Hash{}]; present {
+		for _, n := range set.leaves {
+			var account types.StateAccount
+			if err := rlp.DecodeBytes(n.blob, &account); err != nil {
+				return err
+			}
+			if account.Root != types.EmptyRootHash {
+				db.reference(account.Root, n.parent)
+			}
+		}
+	}
+	return nil
+}
+
+// Size returns the current storage size of the memory cache in front of the
 // persistent database layer.
 func (db *Database) Size() (common.StorageSize, common.StorageSize) {
 	db.lock.RLock()
