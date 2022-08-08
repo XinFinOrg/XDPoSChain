@@ -577,24 +577,31 @@ func (n *Node) OpenDatabase(name string, cache, handles int, namespace string, r
 // also attaching a chain freezer to it that moves ancient chain data from the
 // database to immutable append-only files. If the node is an ephemeral one, a
 // memory database is returned.
-func (n *Node) OpenDatabaseWithFreezer(name string, cache, handles int, freezer, namespace string, readonly bool) (ethdb.Database, error) {
+func (n *Node) OpenDatabaseWithFreezer(name string, cache, handles int, ancient, namespace string, readonly bool) (ethdb.Database, error) {
+	var db ethdb.Database
+	var err error
 	if n.config.DataDir == "" {
-		return rawdb.NewMemoryDatabase(), nil
+		db = rawdb.NewMemoryDatabase()
+	} else {
+		db, err = rawdb.NewLevelDBDatabaseWithFreezer(n.ResolvePath(name), cache, handles, n.ResolveAncient(name, ancient), namespace, readonly)
 	}
-	root := n.config.ResolvePath(name)
-
-	switch {
-	case freezer == "":
-		freezer = filepath.Join(root, "ancient")
-	case !filepath.IsAbs(freezer):
-		freezer = n.config.ResolvePath(freezer)
-	}
-	return rawdb.NewLevelDBDatabaseWithFreezer(root, cache, handles, freezer, namespace, readonly)
+	return db, err
 }
 
 // ResolvePath returns the absolute path of a resource in the instance directory.
 func (n *Node) ResolvePath(x string) string {
 	return n.config.ResolvePath(x)
+}
+
+// ResolveAncient returns the absolute path of the root ancient directory.
+func (n *Node) ResolveAncient(name string, ancient string) string {
+	switch {
+	case ancient == "":
+		ancient = filepath.Join(n.ResolvePath(name), "ancient")
+	case !filepath.IsAbs(ancient):
+		ancient = n.ResolvePath(ancient)
+	}
+	return ancient
 }
 
 // closeTrackingDB wraps the Close method of a database. When the database is closed by the

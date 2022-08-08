@@ -88,7 +88,7 @@ var (
 	}
 	AncientFlag = &flags.DirectoryFlag{
 		Name:     "datadir.ancient",
-		Usage:    "Data directory for ancient chain segments (default = inside chaindata)",
+		Usage:    "Root directory for ancient data (default = inside chaindata)",
 		Category: flags.EthCategory,
 	}
 	KeyStoreDirFlag = &flags.DirectoryFlag{
