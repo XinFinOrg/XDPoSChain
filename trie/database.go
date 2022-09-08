@@ -577,7 +577,9 @@ func (db *Database) Cap(limit common.StorageSize) error {
 	// If the Preimage Cache got large enough, push to disk. If it's still small
 	// leave for later to deduplicate writes.
 	if db.preimages != nil {
-		db.preimages.commit(false)
+		if err := db.preimages.commit(false); err != nil {
+			return err
+		}
 	}
 	// Keep committing nodes from the flush-list until we're below allowance
 	oldest := db.oldest
@@ -655,7 +657,9 @@ func (db *Database) Commit(node common.Hash, report bool) error {
 
 	// Move all of the accumulated preimages into a write batch
 	if db.preimages != nil {
-		db.preimages.commit(true)
+		if err := db.preimages.commit(true); err != nil {
+			return err
+		}
 	}
 	// Move the trie itself into the batch, flushing if enough data is accumulated
 	nodes, storage := len(db.dirties), db.dirtiesSize
