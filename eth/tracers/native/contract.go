@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -107,4 +108,8 @@ func (t *contractTracer) GetResult() (json.RawMessage, error) {
 func (t *contractTracer) Stop(err error) {
 	t.reason = err
 	atomic.StoreUint32(&t.interrupt, 1)
+}
+
+func addrToHex(a common.Address) string {
+	return strings.ToLower(a.String0x())
 }
