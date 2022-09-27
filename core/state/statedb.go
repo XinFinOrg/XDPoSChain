@@ -50,6 +50,10 @@ type StateDB struct {
 	trie   Trie
 	logger *tracing.Hooks
 
+	// originalRoot is the pre-state root, before any changes were made.
+	// It will be updated when the Commit is called.
+	originalRoot common.Hash
+
 	// This map holds 'live' objects, which will get modified while processing a state transition.
 	stateObjects         map[common.Address]*stateObject
 	stateObjectsPending  map[common.Address]struct{} // State objects finalized but not yet written to the trie
@@ -96,6 +100,7 @@ type StateDB struct {
 	StorageHashes  time.Duration
 	StorageUpdates time.Duration
 	StorageCommits time.Duration
+	TrieDBCommits  time.Duration
 
 	AccountUpdated int
 	StorageUpdated int
@@ -120,6 +125,7 @@ func New(root common.Hash, db Database) (*StateDB, error) {
 	return &StateDB{
 		db:                   db,
 		trie:                 tr,
+		originalRoot:         root,
 		stateObjects:         make(map[common.Address]*stateObject),
 		stateObjectsPending:  make(map[common.Address]struct{}),
 		stateObjectsDirty:    make(map[common.Address]struct{}),
@@ -665,6 +671,7 @@ func (s *StateDB) Copy() *StateDB {
 	state := &StateDB{
 		db:                   s.db,
 		trie:                 s.db.CopyTrie(s.trie),
+		originalRoot:         s.originalRoot,
 		stateObjects:         make(map[common.Address]*stateObject, len(s.journal.dirties)),
 		stateObjectsPending:  make(map[common.Address]struct{}, len(s.stateObjectsPending)),
 		stateObjectsDirty:    make(map[common.Address]struct{}, len(s.journal.dirties)),
@@ -852,9 +859,11 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	}
 	// Commit objects to the trie, measuring the elapsed time
 	var (
-		accountTrieNodes int
-		storageTrieNodes int
-		nodes            = trie.NewMergedNodeSet()
+		accountTrieNodesUpdated int
+		accountTrieNodesDeleted int
+		storageTrieNodesUpdated int
+		storageTrieNodesDeleted int
+		nodes                   = trie.NewMergedNodeSet()
 	)
 	codeWriter := s.db.DiskDB().NewBatch()
 	for addr := range s.stateObjectsDirty {
@@ -874,7 +883,9 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 				if err := nodes.Merge(set); err != nil {
 					return common.Hash{}, err
 				}
-				storageTrieNodes += set.Len()
+				updates, deleted := set.Size()
+				storageTrieNodesUpdated += updates
+				storageTrieNodesDeleted += deleted
 			}
 		}
 		// If the contract is destructed, the storage is still left in the
@@ -904,7 +915,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 		if err := nodes.Merge(set); err != nil {
 			return common.Hash{}, err
 		}
-		accountTrieNodes = set.Len()
+		accountTrieNodesUpdated, accountTrieNodesDeleted = set.Size()
 	}
 	// Report the commit metrics
 	s.AccountCommits += time.Since(start)
@@ -913,18 +924,32 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	storageUpdatedMeter.Mark(int64(s.StorageUpdated))
 	accountDeletedMeter.Mark(int64(s.AccountDeleted))
 	storageDeletedMeter.Mark(int64(s.StorageDeleted))
-	accountTrieCommittedMeter.Mark(int64(accountTrieNodes))
-	storageTriesCommittedMeter.Mark(int64(storageTrieNodes))
+	accountTrieUpdatedMeter.Mark(int64(accountTrieNodesUpdated))
+	accountTrieDeletedMeter.Mark(int64(accountTrieNodesDeleted))
+	storageTriesUpdatedMeter.Mark(int64(storageTrieNodesUpdated))
+	storageTriesDeletedMeter.Mark(int64(storageTrieNodesDeleted))
 	s.AccountUpdated, s.AccountDeleted = 0, 0
 	s.StorageUpdated, s.StorageDeleted = 0, 0
 
 	if len(s.stateObjectsDestruct) > 0 {
 		s.stateObjectsDestruct = make(map[common.Address]struct{})
 	}
-	if err := s.db.TrieDB().Update(nodes); err != nil {
-		return common.Hash{}, err
+	if root == (common.Hash{}) {
+		root = types.EmptyRootHash
 	}
-	return root, err
+	origin := s.originalRoot
+	if origin == (common.Hash{}) {
+		origin = types.EmptyRootHash
+	}
+	if root != origin {
+		start := time.Now()
+		if err := s.db.TrieDB().Update(nodes); err != nil {
+			return common.Hash{}, err
+		}
+		s.originalRoot = root
+		s.TrieDBCommits += time.Since(start)
+	}
+	return root, nil
 }
 
 // Prepare handles the preparatory steps for executing a state transition with.

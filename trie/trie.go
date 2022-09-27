@@ -63,6 +63,9 @@ type Trie struct {
 	// only for reading purpose and not available for writing.
 	db *Database
 
+	// reader is the handler trie can retrieve nodes from.
+	reader *trieReader
+
 	// tracer is the tool to track the trie changes.
 	// It will be reset after each commit operation.
 	tracer *tracer
@@ -84,25 +87,30 @@ func (t *Trie) Copy() *Trie {
 		owner:    t.owner,
 		unhashed: t.unhashed,
 		db:       t.db,
+		reader:   t.reader,
 		tracer:   t.tracer.copy(),
 	}
 }
 
-// New creates a trie with an existing root node from db and an assigned
-// owner for storage proximity.
-//
-// If root is the zero hash or the sha3 hash of an empty string, the
-// trie is initially empty and does not require a database. Otherwise,
-// New will panic if db is nil and returns a MissingNodeError if root does
-// not exist in the database. Accessing the trie loads nodes from db on demand.
-func New(owner common.Hash, root common.Hash, db *Database) (*Trie, error) {
+// New creates the trie instance with provided trie id and the read-only
+// database. The state specified by trie id must be available, otherwise
+// an error will be returned. The trie root specified by trie id can be
+// zero hash or the sha3 hash of an empty string, then trie is initially
+// empty, otherwise, the root node must be present in database or returns
+// a MissingNodeError if not.
+func New(id *ID, db *Database) (*Trie, error) {
+	reader, err := newTrieReader(id.StateRoot, id.Owner, db)
+	if err != nil {
+		return nil, err
+	}
 	trie := &Trie{
-		owner: owner,
-		db:    db,
+		owner:  id.Owner,
+		db:     db,
+		reader: reader,
 		//tracer: newTracer(),
 	}
-	if root != (common.Hash{}) && root != types.EmptyRootHash {
-		rootnode, err := trie.resolveHash(root[:], nil)
+	if id.Root != (common.Hash{}) && id.Root != types.EmptyRootHash {
+		rootnode, err := trie.resolveAndTrack(id.Root[:], nil)
 		if err != nil {
 			return nil, err
 		}
@@ -113,7 +121,7 @@ func New(owner common.Hash, root common.Hash, db *Database) (*Trie, error) {
 
 // NewEmpty is a shortcut to create empty tree. It's mostly used in tests.
 func NewEmpty(db *Database) *Trie {
-	tr, _ := New(common.Hash{}, common.Hash{}, db)
+	tr, _ := New(TrieID(common.Hash{}), db)
 	return tr
 }
 
@@ -169,7 +177,7 @@ func (t *Trie) tryGet(origNode node, key []byte, pos int) (value []byte, newnode
 		}
 		return value, n, didResolve, err
 	case hashNode:
-		child, err := t.resolveHash(n, key[:pos])
+		child, err := t.resolveAndTrack(n, key[:pos])
 		if err != nil {
 			return nil, n, true, err
 		}
@@ -215,7 +223,7 @@ func (t *Trie) tryGetNode(origNode node, path []byte, pos int) (item []byte, new
 		if hash == nil {
 			return nil, origNode, 0, errors.New("non-consensus node")
 		}
-		blob, err := t.db.Node(common.BytesToHash(hash))
+		blob, err := t.reader.nodeBlob(path, common.BytesToHash(hash))
 		return blob, origNode, 1, err
 	}
 	// Path still needs to be traversed, descend into children
@@ -245,7 +253,7 @@ func (t *Trie) tryGetNode(origNode node, path []byte, pos int) (item []byte, new
 		return item, n, resolved, err
 
 	case hashNode:
-		child, err := t.resolveHash(n, path[:pos])
+		child, err := t.resolveAndTrack(n, path[:pos])
 		if err != nil {
 			return nil, n, 1, err
 		}
@@ -294,7 +302,7 @@ func (t *Trie) tryGetBestLeftKeyAndValue(origNode node, prefix []byte) (key []by
 			return key, value, n, didResolve, err
 		}
 	case hashNode:
-		child, err := t.resolveHash(n, nil)
+		child, err := t.resolveAndTrack(n, nil)
 		if err != nil {
 			return nil, nil, n, true, err
 		}
@@ -362,7 +370,7 @@ func (t *Trie) tryGetAllLeftKeyAndValue(origNode node, prefix []byte, limit []by
 		}
 		return keys, values, n, didResolve, err
 	case hashNode:
-		child, err := t.resolveHash(n, nil)
+		child, err := t.resolveAndTrack(n, nil)
 		if err != nil {
 			return nil, nil, n, true, err
 		}
@@ -410,7 +418,7 @@ func (t *Trie) tryGetBestRightKeyAndValue(origNode node, prefix []byte) (key []b
 			return key, value, n, didResolve, err
 		}
 	case hashNode:
-		child, err := t.resolveHash(n, nil)
+		child, err := t.resolveAndTrack(n, nil)
 		if err != nil {
 			return nil, nil, n, true, err
 		}
@@ -531,7 +539,7 @@ func (t *Trie) insert(n node, prefix, key []byte, value node) (bool, node, error
 		// We've hit a part of the trie that isn't loaded yet. Load
 		// the Node and insert into it. This leaves all child nodes on
 		// the path to the value in the trie.
-		rn, err := t.resolveHash(n, prefix)
+		rn, err := t.resolveAndTrack(n, prefix)
 		if err != nil {
 			return false, nil, err
 		}
@@ -685,7 +693,7 @@ func (t *Trie) delete(n node, prefix, key []byte) (bool, node, error) {
 		// We've hit a part of the trie that isn't loaded yet. Load
 		// the Node and delete from it. This leaves all child nodes on
 		// the path to the value in the trie.
-		rn, err := t.resolveHash(n, prefix)
+		rn, err := t.resolveAndTrack(n, prefix)
 		if err != nil {
 			return false, nil, err
 		}
@@ -709,30 +717,22 @@ func concat(s1 []byte, s2 ...byte) []byte {
 
 func (t *Trie) resolve(n node, prefix []byte) (node, error) {
 	if n, ok := n.(hashNode); ok {
-		return t.resolveHash(n, prefix)
+		return t.resolveAndTrack(n, prefix)
 	}
 	return n, nil
 }
 
-// resolveHash loads node from the underlying database with the provided
-// node hash and path prefix.
-func (t *Trie) resolveHash(n hashNode, prefix []byte) (node, error) {
-	hash := common.BytesToHash(n)
-	if node := t.db.node(hash); node != nil {
-		return node, nil
+// resolveAndTrack loads node from the underlying store with the given node hash
+// and path prefix and also tracks the loaded node blob in tracer treated as the
+// node's original value. The rlp-encoded blob is preferred to be loaded from
+// database because it's easy to decode node while complex to encode node to blob.
+func (t *Trie) resolveAndTrack(n hashNode, prefix []byte) (node, error) {
+	blob, err := t.reader.nodeBlob(prefix, common.BytesToHash(n))
+	if err != nil {
+		return nil, err
 	}
-	return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix}
-}
-
-// resolveHash loads rlp-encoded node blob from the underlying database
-// with the provided node hash and path prefix.
-func (t *Trie) resolveBlob(n hashNode, prefix []byte) ([]byte, error) {
-	hash := common.BytesToHash(n)
-	blob, _ := t.db.Node(hash)
-	if len(blob) != 0 {
-		return blob, nil
-	}
-	return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix}
+	t.tracer.onRead(prefix, blob)
+	return mustDecodeNode(n, blob), nil
 }
 
 // Hash returns the root hash of the trie. It does not write to the
@@ -750,9 +750,6 @@ func (t *Trie) Hash() common.Hash {
 // Once the trie is committed, it's not usable anymore. A new trie must
 // be created with new root and updated trie database for following usage
 func (t *Trie) Commit(collectLeaf bool) (common.Hash, *NodeSet, error) {
-	if t.db == nil {
-		panic("commit called on trie with nil database")
-	}
 	defer t.tracer.reset()
 
 	if t.root == nil {
@@ -770,7 +767,7 @@ func (t *Trie) Commit(collectLeaf bool) (common.Hash, *NodeSet, error) {
 		t.root = hashedNode
 		return rootHash, nil, nil
 	}
-	h := newCommitter(t.owner, collectLeaf)
+	h := newCommitter(t.owner, t.tracer, collectLeaf)
 	newRoot, nodes, err := h.Commit(t.root)
 	if err != nil {
 		return common.Hash{}, nil, err
@@ -797,6 +794,5 @@ func (t *Trie) Reset() {
 	t.root = nil
 	t.owner = common.Hash{}
 	t.unhashed = 0
-	//t.db = nil
 	t.tracer.reset()
 }

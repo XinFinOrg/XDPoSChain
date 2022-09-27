@@ -72,6 +72,8 @@ var (
 	storageUpdateTimer = metrics.NewRegisteredResettingTimer("chain/storage/updates", nil)
 	storageCommitTimer = metrics.NewRegisteredResettingTimer("chain/storage/commits", nil)
 
+	triedbCommitTimer = metrics.NewRegisteredTimer("chain/triedb/commits", nil)
+
 	blockInsertTimer     = metrics.NewRegisteredResettingTimer("chain/inserts", nil)
 	blockValidationTimer = metrics.NewRegisteredResettingTimer("chain/validation", nil)
 	blockExecutionTimer  = metrics.NewRegisteredResettingTimer("chain/execution", nil)
@@ -561,10 +563,10 @@ func (bc *BlockChain) FastSyncCommitHead(hash common.Hash) error {
 	if block == nil {
 		return fmt.Errorf("non existent block [%x..]", hash[:4])
 	}
-	if _, err := trie.NewStateTrie(common.Hash{}, block.Root(), bc.stateCache.TrieDB()); err != nil {
-		return err
+	root := block.Root()
+	if !bc.HasState(root) {
+		return fmt.Errorf("non existent state [%x..]", root[:4])
 	}
-
 	// If all checks out, manually set the head block.
 	if !bc.chainmu.TryLock() {
 		return errChainStopped
@@ -1932,6 +1934,7 @@ func (bc *BlockChain) processBlock(block *types.Block, parent *types.Header, sta
 	storageUpdateTimer.Update(statedb.StorageUpdates)                                 // Storage updates are complete(in validation)
 	accountHashTimer.Update(statedb.AccountHashes)                                    // Account hashes are complete(in validation)
 	storageHashTimer.Update(statedb.StorageHashes)                                    // Storage hashes are complete(in validation)
+	triedbCommitTimer.Update(statedb.TrieDBCommits)                                   // Triedb commits are complete, we can mark them
 	triehash := statedb.AccountHashes + statedb.StorageHashes                         // The time spent on tries hashing
 	trieUpdate := statedb.AccountUpdates + statedb.StorageUpdates                     // The time spent on tries update
 	blockExecutionTimer.Update(ptime - (statedb.AccountReads + statedb.StorageReads)) // The time spent on EVM processing

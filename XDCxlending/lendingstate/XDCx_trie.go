@@ -57,7 +57,7 @@ func NewXDCXTrie(root common.Hash, db *trie.Database) (*XDCXTrie, error) {
 	if db == nil {
 		panic("trie.NewXDCXTrie called without a database")
 	}
-	trie, err := trie.New(common.Hash{}, root, db)
+	trie, err := trie.New(trie.TrieID(root), db)
 	if err != nil {
 		return nil, err
 	}

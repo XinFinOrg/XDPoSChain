@@ -158,7 +158,7 @@ func (s *stateObject) touch() {
 // be loaded.
 func (s *stateObject) getTrie(db Database) (Trie, error) {
 	if s.trie == nil {
-		tr, err := db.OpenStorageTrie(s.addrHash, s.data.Root)
+		tr, err := db.OpenStorageTrie(s.db.originalRoot, s.addrHash, s.data.Root)
 		if err != nil {
 			return nil, err
 		}
