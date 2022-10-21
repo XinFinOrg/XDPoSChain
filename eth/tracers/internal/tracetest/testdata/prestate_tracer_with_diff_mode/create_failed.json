@@ -53,6 +53,7 @@
       "muirGlacierBlock": 9200000,
       "berlinBlock": 12244000,
       "londonBlock": 12965000,
+      "eip1559Block": 12965000,
       "arrowGlacierBlock": 13773000,
       "grayGlacierBlock": 15050000,
       "terminalTotalDifficultyPassed": true,
@@ -73,7 +74,7 @@
   "result": {
     "pre": {
       "0x808b4da0be6c9512e948521452227efc619bea52": {
-        "balance": "0x2cdb96c56db040b43",
+        "balance": "0x2cddf395ac4f56170",
         "nonce": 1223932
       },
       "0x8f03f1a3f10c05e7cccf75c1fd10168e06659be7": {
@@ -83,7 +84,7 @@
     },
     "post": {
       "0x808b4da0be6c9512e948521452227efc619bea52": {
-        "balance": "0x2cd72a36dd031f089",
+        "balance": "0x2cd987071ba2346b6",
         "nonce": 1223933
       },
       "0x8f03f1a3f10c05e7cccf75c1fd10168e06659be7": {
