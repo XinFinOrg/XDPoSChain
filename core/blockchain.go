@@ -167,10 +167,12 @@ type BlockChain struct {
 	chainConfig *params.ChainConfig // Chain & network configuration
 	cacheConfig *CacheConfig        // Cache configuration for pruning
 
-	db     ethdb.Database // Low level persistent database to store final content in
-	XDCxDb ethdb.XDCxDatabase
-	triegc *prque.Prque[int64, common.Hash] // Priority queue mapping block numbers to tries to gc
-	gcproc time.Duration                    // Accumulates canonical block processing for trie dumping
+	db         ethdb.Database                   // Low level persistent database to store final content in
+	XDCxDb     ethdb.XDCxDatabase               // XDCx database
+	triegc     *prque.Prque[int64, common.Hash] // Priority queue mapping block numbers to tries to gc
+	gcproc     time.Duration                    // Accumulates canonical block processing for trie dumping
+	triedb     *trie.Database                   // The database handler for maintaining trie nodes.
+	stateCache state.Database                   // State database to reuse between imports (contains state cache)
 
 	hc            *HeaderChain
 	rmLogsFeed    event.Feed
@@ -187,8 +189,6 @@ type BlockChain struct {
 
 	currentBlock     atomic.Value // Current head of the block chain
 	currentFastBlock atomic.Value // Current head of the fast-sync chain (may be above the block chain!)
-
-	stateCache state.Database // State database to reuse between imports (contains state cache)
 
 	bodyCache        *lru.Cache[common.Hash, *types.Body]         // Cache for the most recent block bodies
 	bodyRLPCache     *lru.Cache[common.Hash, rlp.RawValue]        // Cache for the most recent block bodies in RLP encoded format
@@ -239,10 +239,16 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		}
 	}
 
+	// Open trie database with provided config
+	triedb := trie.NewDatabaseWithConfig(db, &trie.Config{
+		Cache:     cacheConfig.TrieCleanLimit,
+		Preimages: cacheConfig.Preimages,
+	})
 	bc := &BlockChain{
 		chainConfig: chainConfig,
 		cacheConfig: cacheConfig,
 		db:          db,
+		triedb:      triedb,
 		triegc:      prque.New[int64, common.Hash](nil),
 		stateCache: state.NewDatabaseWithConfig(db, &trie.Config{
 			Cache:     cacheConfig.TrieCleanLimit,
@@ -268,6 +274,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		rejectedLendingItem: lru.NewCache[common.Hash, interface{}](tradingstate.OrderCacheLimit),
 		finalizedTrade:      lru.NewCache[common.Hash, interface{}](tradingstate.OrderCacheLimit),
 	}
+	bc.stateCache = state.NewDatabaseWithNodeDB(bc.db, bc.triedb)
 	bc.validator = NewBlockValidator(chainConfig, bc, engine)
 	bc.prefetcher = newStatePrefetcher(chainConfig, bc, engine)
 	bc.processor = NewStateProcessor(chainConfig, bc, engine)
@@ -373,8 +380,7 @@ func (bc *BlockChain) loadLastState() error {
 	}
 	// Make sure the state associated with the block is available
 	repair := false
-	_, err := state.New(currentBlock.Root(), bc.stateCache)
-	if err != nil {
+	if !bc.HasState(currentBlock.Root()) {
 		repair = true
 	} else {
 		engine, ok := bc.Engine().(*XDPoS.XDPoS)
@@ -487,7 +493,7 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64) error {
 			if newHeadBlock == nil {
 				newHeadBlock = bc.genesisBlock
 			} else {
-				if _, err := state.New(newHeadBlock.Root(), bc.stateCache); err != nil {
+				if !bc.HasState(newHeadBlock.Root()) {
 					// Rewound state missing, rolled back to before pivot, reset to genesis
 					newHeadBlock = bc.genesisBlock
 				}
@@ -712,7 +718,7 @@ func (bc *BlockChain) repair(head **types.Block) error {
 	for {
 		// Abort if we've rewound to a head block that does have associated state
 		if (common.RollbackNumber == 0) || ((*head).Number().Uint64() < common.RollbackNumber) {
-			if _, err := state.New((*head).Root(), bc.stateCache); err == nil {
+			if bc.HasState((*head).Root()) {
 				log.Info("Rewound blockchain to past state", "number", (*head).Number(), "hash", (*head).Hash())
 				engine, ok := bc.Engine().(*XDPoS.XDPoS)
 				if ok {
@@ -1082,10 +1088,10 @@ func (bc *BlockChain) saveData() {
 	if !bc.cacheConfig.TrieDirtyDisabled {
 		var tradingTriedb *trie.Database
 		var lendingTriedb *trie.Database
-		engine, _ := bc.Engine().(*XDPoS.XDPoS)
-		triedb := bc.stateCache.TrieDB()
 		var tradingService utils.TradingService
 		var lendingService utils.LendingService
+		triedb := bc.triedb
+		engine, _ := bc.Engine().(*XDPoS.XDPoS)
 		if bc.Config().IsTIPXDCX(bc.CurrentBlock().Number()) && bc.chainConfig.XDPoS != nil && bc.CurrentBlock().NumberU64() > bc.chainConfig.XDPoS.Epoch && engine != nil {
 			tradingService = engine.GetXDCXService()
 			if tradingService != nil && tradingService.GetStateCache() != nil {
@@ -1435,7 +1441,6 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	if err != nil {
 		return NonStatTy, err
 	}
-	triedb := bc.stateCache.TrieDB()
 
 	tradingRoot := common.Hash{}
 	if tradingState != nil {
@@ -1470,7 +1475,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 
 	// If we're running an archive node, always flush
 	if bc.cacheConfig.TrieDirtyDisabled {
-		if err := triedb.Commit(root, false); err != nil {
+		if err := bc.triedb.Commit(root, false); err != nil {
 			return NonStatTy, err
 		}
 		if tradingTrieDb != nil {
@@ -1485,7 +1490,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 		}
 	} else {
 		// Full but not archive node, do proper garbage collection
-		triedb.Reference(root, common.Hash{}) // metadata reference to keep trie alive
+		bc.triedb.Reference(root, common.Hash{}) // metadata reference to keep trie alive
 		bc.triegc.Push(root, -int64(block.NumberU64()))
 		if tradingTrieDb != nil {
 			tradingTrieDb.Reference(tradingRoot, common.Hash{})
@@ -1512,11 +1517,11 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 			//	size = size + lendingTrieDb.Size()
 			//}
 			var (
-				nodes, imgs = triedb.Size()
+				nodes, imgs = bc.triedb.Size()
 				limit       = common.StorageSize(bc.cacheConfig.TrieDirtyLimit) * 1024 * 1024
 			)
 			if nodes > limit || imgs > 4*1024*1024 {
-				triedb.Cap(limit - ethdb.IdealBatchSize)
+				bc.triedb.Cap(limit - ethdb.IdealBatchSize)
 			}
 			if bc.gcproc > bc.cacheConfig.TrieTimeLimit || chosen > lastWrite+triesInMemory {
 				// If the header is missing (canonical chain behind), we're reorging a low
@@ -1531,7 +1536,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 						log.Info("State in memory for too long, committing", "time", bc.gcproc, "allowance", bc.cacheConfig.TrieTimeLimit, "optimum", float64(chosen-lastWrite)/triesInMemory)
 					}
 					// Flush an entire trie and restart the counters
-					triedb.Commit(header.Root, true)
+					bc.triedb.Commit(header.Root, true)
 					lastWrite = chosen
 					bc.gcproc = 0
 					if tradingTrieDb != nil && lendingTrieDb != nil {
@@ -1551,7 +1556,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 					bc.triegc.Push(root, number)
 					break
 				}
-				triedb.Dereference(root)
+				bc.triedb.Dereference(root)
 			}
 			if tradingService != nil {
 				for !tradingService.GetTriegc().Empty() {
@@ -1830,7 +1835,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 			bc.UpdateBlocksHashCache(block)
 		}
 
-		dirty, _ := bc.stateCache.TrieDB().Size()
+		dirty, _ := bc.triedb.Size()
 		stats.report(chain, it.index, dirty)
 		if bc.chainConfig.XDPoS != nil {
 			engine, _ := bc.Engine().(*XDPoS.XDPoS)
@@ -2284,7 +2289,7 @@ func (bc *BlockChain) insertBlock(block *types.Block) ([]interface{}, []*types.L
 	}
 	stats.processed++
 	stats.usedGas += result.usedGas
-	dirty, _ := bc.stateCache.TrieDB().Size()
+	dirty, _ := bc.triedb.Size()
 	stats.report(types.Blocks{block}, 0, dirty)
 	if bc.chainConfig.XDPoS != nil {
 		// epoch block

@@ -39,6 +39,7 @@ import (
 	xdc_genesis "github.com/XinFinOrg/XDPoSChain/genesis"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/node"
+	"github.com/XinFinOrg/XDPoSChain/trie"
 	"github.com/urfave/cli/v2"
 )
 
@@ -48,7 +49,10 @@ var (
 		Name:      "init",
 		Usage:     "Bootstrap and initialize a new genesis block",
 		ArgsUsage: "<genesisPath>",
-		Flags:     slices.Concat(utils.NetworkFlags, utils.DatabaseFlags),
+		Flags: slices.Concat(
+			[]cli.Flag{utils.CachePreimagesFlag},
+			utils.NetworkFlags,
+			utils.DatabaseFlags),
 		Description: `
 The init command initializes a new genesis block and definition for the network.
 This is a destructive action and changes the network in which you will be
@@ -424,7 +428,10 @@ func dump(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	state, err := state.New(root, state.NewDatabase(db))
+	config := &trie.Config{
+		Preimages: true, // always enable preimage lookup
+	}
+	state, err := state.New(root, state.NewDatabaseWithConfig(db, config))
 	if err != nil {
 		return err
 	}

@@ -327,7 +327,7 @@ func TestIteratorContinueAfterErrorDisk(t *testing.T)    { testIteratorContinueA
 func TestIteratorContinueAfterErrorMemonly(t *testing.T) { testIteratorContinueAfterError(t, true) }
 
 func testIteratorContinueAfterError(t *testing.T, memonly bool) {
-	diskdb := memorydb.New()
+	diskdb := rawdb.NewMemoryDatabase()
 	triedb := NewDatabase(diskdb)
 
 	tr := NewEmpty(triedb)
@@ -418,8 +418,8 @@ func TestIteratorContinueAfterSeekErrorMemonly(t *testing.T) {
 }
 
 func testIteratorContinueAfterSeekError(t *testing.T, memonly bool) {
-	// Commit test trie to Db, then remove the Node containing "bars".
-	diskdb := memorydb.New()
+	// Commit test trie to db, then remove the node containing "bars".
+	diskdb := rawdb.NewMemoryDatabase()
 	triedb := NewDatabase(diskdb)
 
 	ctr := NewEmpty(triedb)
@@ -528,7 +528,7 @@ func (l *loggingDb) Close() error {
 func makeLargeTestTrie() (*Database, *StateTrie, *loggingDb) {
 	// Create an empty trie
 	logDb := &loggingDb{0, memorydb.New()}
-	triedb := NewDatabase(logDb)
+	triedb := NewDatabase(rawdb.NewDatabase(logDb))
 	trie, _ := NewStateTrie(TrieID(common.Hash{}), triedb)
 
 	// Fill it with some arbitrary data
@@ -563,7 +563,7 @@ func TestNodeIteratorLargeTrie(t *testing.T) {
 
 func TestIteratorNodeBlob(t *testing.T) {
 	var (
-		db     = memorydb.New()
+		db     = rawdb.NewMemoryDatabase()
 		triedb = NewDatabase(db)
 		trie   = NewEmpty(triedb)
 	)

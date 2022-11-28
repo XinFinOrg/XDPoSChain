@@ -291,18 +291,19 @@ type codeTask struct {
 // newStateSync creates a new state trie download scheduler. This method does not
 // yet start the sync. The user needs to call run to initiate.
 // only use fast sync but XDC only run full sync
+// TODO(daniel): remove field sched
 func newStateSync(d *Downloader, root common.Hash) *stateSync {
 	return &stateSync{
 		d:         d,
-		sched:     state.NewStateSync(root, d.stateDB, nil),
+		root:      root,
+		cancel:    make(chan struct{}),
+		done:      make(chan struct{}),
+		started:   make(chan struct{}),
+		sched:     state.NewStateSync(root, d.stateDB, nil, d.blockchain.TrieDB().Scheme()),
 		keccak:    sha3.NewLegacyKeccak256(),
 		trieTasks: make(map[string]*trieTask),
 		codeTasks: make(map[common.Hash]*codeTask),
 		deliver:   make(chan *stateReq),
-		cancel:    make(chan struct{}),
-		done:      make(chan struct{}),
-		started:   make(chan struct{}),
-		root:      root,
 	}
 }
 

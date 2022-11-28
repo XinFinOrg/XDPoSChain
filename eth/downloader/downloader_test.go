@@ -44,8 +44,10 @@ func init() {
 }
 
 // downloadTester is a test simulator for mocking out local block chain.
+// TODO(daniel): remove field triedb
 type downloadTester struct {
 	downloader *Downloader
+	triedb     *trie.Database
 
 	genesis *types.Block   // Genesis blocks used by the tester and peers
 	stateDb ethdb.Database // Database used by the tester for syncing from peers
@@ -74,9 +76,14 @@ func newTester() *downloadTester {
 		ownChainTd:  map[common.Hash]*big.Int{testGenesis.Hash(): testGenesis.Difficulty()},
 	}
 	tester.stateDb = rawdb.NewMemoryDatabase()
+	tester.triedb = trie.NewDatabase(tester.stateDb)
 	tester.stateDb.Put(testGenesis.Root().Bytes(), []byte{0x00})
 	tester.downloader = New(tester.stateDb, new(event.TypeMux), tester, nil, tester.dropPeer, tester.handleProposedBlock)
 	return tester
+}
+
+func (db *downloadTester) TrieDB() *trie.Database {
+	return db.triedb
 }
 
 // terminate aborts any operations on the embedded downloader and releases all
