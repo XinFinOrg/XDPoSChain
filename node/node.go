@@ -149,8 +149,6 @@ func New(conf *Config) (*Node, error) {
 		return nil, err
 	}
 
-	//make sure timeout values are meaningful
-	CheckTimeouts(&conf.HTTPTimeouts)
 	// Configure RPC servers.
 	node.http = newHTTPServer(node.log, conf.HTTPTimeouts)
 	node.ws = newHTTPServer(node.log, conf.HTTPTimeouts)
