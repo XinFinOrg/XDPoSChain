@@ -336,15 +336,18 @@ func (s *StateDB) Database() Database {
 	return s.db
 }
 
-// StorageTrie returns the storage trie of an account.
-// The return value is a copy and is nil for non-existent accounts.
-func (s *StateDB) StorageTrie(addr common.Address) Trie {
+// StorageTrie returns the storage trie of an account. The return value is a copy
+// and is nil for non-existent accounts. An error will be returned if storage trie
+// is existent but can't be loaded correctly.
+func (s *StateDB) StorageTrie(addr common.Address) (Trie, error) {
 	stateObject := s.getStateObject(addr)
 	if stateObject == nil {
-		return nil
+		return nil, nil
 	}
 	cpy := stateObject.deepCopy(s)
-	cpy.updateTrie(s.db)
+	if _, err := cpy.updateTrie(s.db); err != nil {
+		return nil, err
+	}
 	return cpy.getTrie(s.db)
 }
 
@@ -604,7 +607,11 @@ func (s *StateDB) ForEachStorage(addr common.Address, cb func(key, value common.
 	if so == nil {
 		return nil
 	}
-	it := trie.NewIterator(so.getTrie(s.db).NodeIterator(nil))
+	tr, err := so.getTrie(s.db)
+	if err != nil {
+		return err
+	}
+	it := trie.NewIterator(tr.NodeIterator(nil))
 
 	for it.Next() {
 		key := common.BytesToHash(s.trie.GetKey(it.Key))
