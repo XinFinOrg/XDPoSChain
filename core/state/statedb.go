@@ -537,7 +537,7 @@ func (s *StateDB) updateStateObject(obj *stateObject) {
 
 	// Encode the account and update the account trie
 	addr := obj.Address()
-	if err := s.trie.TryUpdateAccount(addr[:], &obj.data); err != nil {
+	if err := s.trie.TryUpdateAccount(addr, &obj.data); err != nil {
 		s.setError(fmt.Errorf("updateStateObject (%x) error: %v", addr[:], err))
 	}
 }
@@ -549,7 +549,7 @@ func (s *StateDB) deleteStateObject(obj *stateObject) {
 
 	// Delete the account from the trie
 	addr := obj.Address()
-	if err := s.trie.TryDeleteAccount(addr[:]); err != nil {
+	if err := s.trie.TryDeleteAccount(addr); err != nil {
 		s.setError(fmt.Errorf("deleteStateObject (%x) error: %v", addr[:], err))
 	}
 }
@@ -584,7 +584,7 @@ func (s *StateDB) getDeletedStateObject(addr common.Address) *stateObject {
 	}
 	// Load the object from the database
 	start := time.Now()
-	data, err := s.trie.TryGetAccount(addr.Bytes())
+	data, err := s.trie.TryGetAccount(addr)
 	s.AccountReads += time.Since(start)
 	if err != nil {
 		s.setError(fmt.Errorf("getDeleteStateObject (%x) error: %w", addr.Bytes(), err))
