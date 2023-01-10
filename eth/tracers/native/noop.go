@@ -26,7 +26,7 @@ import (
 )
 
 func init() {
-	register("noopTracer", newNoopTracer)
+	tracers.DefaultDirectory.Register("noopTracer", newNoopTracer, false)
 }
 
 type noopTracer struct{}

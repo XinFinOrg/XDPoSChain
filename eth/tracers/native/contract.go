@@ -13,7 +13,7 @@ import (
 )
 
 func init() {
-	register("contractTracer", NewContractTracer)
+	tracers.DefaultDirectory.Register("contractTracer", NewContractTracer, false)
 }
 
 type contractTracer struct {
