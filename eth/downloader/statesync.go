@@ -299,7 +299,7 @@ func newStateSync(d *Downloader, root common.Hash) *stateSync {
 		cancel:    make(chan struct{}),
 		done:      make(chan struct{}),
 		started:   make(chan struct{}),
-		sched:     state.NewStateSync(root, d.stateDB, nil, d.blockchain.TrieDB().Scheme()),
+		sched:     state.NewStateSync(root, d.stateDB, nil, rawdb.HashScheme),
 		keccak:    sha3.NewLegacyKeccak256(),
 		trieTasks: make(map[string]*trieTask),
 		codeTasks: make(map[common.Hash]*codeTask),
