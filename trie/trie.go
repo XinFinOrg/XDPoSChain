@@ -753,7 +753,7 @@ func (t *Trie) Hash() common.Hash {
 // The returned nodeset can be nil if the trie is clean (nothing to commit).
 // Once the trie is committed, it's not usable anymore. A new trie must
 // be created with new root and updated trie database for following usage
-func (t *Trie) Commit(collectLeaf bool) (common.Hash, *NodeSet, error) {
+func (t *Trie) Commit(collectLeaf bool) (common.Hash, *NodeSet) {
 	defer t.tracer.reset()
 
 	// Trie is empty and can be classified into two types of situations:
@@ -763,7 +763,7 @@ func (t *Trie) Commit(collectLeaf bool) (common.Hash, *NodeSet, error) {
 		// Wrap tracked deletions as the return
 		set := NewNodeSet(t.owner)
 		t.tracer.markDeletions(set)
-		return types.EmptyRootHash, set, nil
+		return types.EmptyRootHash, set
 	}
 	// Derive the hash for all dirty nodes first. We hold the assumption
 	// in the following procedure that all nodes are hashed.
@@ -775,15 +775,12 @@ func (t *Trie) Commit(collectLeaf bool) (common.Hash, *NodeSet, error) {
 		// Replace the root node with the origin hash in order to
 		// ensure all resolved nodes are dropped after the commit.
 		t.root = hashedNode
-		return rootHash, nil, nil
+		return rootHash, nil
 	}
 	h := newCommitter(t.owner, t.tracer, collectLeaf)
-	newRoot, nodes, err := h.Commit(t.root)
-	if err != nil {
-		return common.Hash{}, nil, err
-	}
+	newRoot, nodes := h.Commit(t.root)
 	t.root = newRoot
-	return rootHash, nodes, nil
+	return rootHash, nodes
 }
 
 // hashRoot calculates the root hash of the given trie
