@@ -417,6 +417,51 @@ func generateSteps(finished func() bool, r io.Reader) randTest {
 	return steps
 }
 
+func verifyAccessList(old *Trie, new *Trie, set *NodeSet) error {
+	deletes, inserts, updates := diffTries(old, new)
+
+	// Check insertion set
+	for path := range inserts {
+		n, ok := set.nodes[path]
+		if !ok || n.isDeleted() {
+			return errors.New("expect new node")
+		}
+		_, ok = set.accessList[path]
+		if ok {
+			return errors.New("unexpected origin value")
+		}
+	}
+	// Check deletion set
+	for path, blob := range deletes {
+		n, ok := set.nodes[path]
+		if !ok || !n.isDeleted() {
+			return errors.New("expect deleted node")
+		}
+		v, ok := set.accessList[path]
+		if !ok {
+			return errors.New("expect origin value")
+		}
+		if !bytes.Equal(v, blob) {
+			return errors.New("invalid origin value")
+		}
+	}
+	// Check update set
+	for path, blob := range updates {
+		n, ok := set.nodes[path]
+		if !ok || n.isDeleted() {
+			return errors.New("expect updated node")
+		}
+		v, ok := set.accessList[path]
+		if !ok {
+			return errors.New("expect origin value")
+		}
+		if !bytes.Equal(v, blob) {
+			return errors.New("invalid origin value")
+		}
+	}
+	return nil
+}
+
 // runRandTestBool coerces error to boolean, for use in quick.Check
 func runRandTestBool(rt randTest) bool {
 	return runRandTest(rt) == nil
@@ -429,8 +474,6 @@ func runRandTest(rt randTest) error {
 		values   = make(map[string]string) // tracks content of the trie
 		origTrie = NewEmpty(triedb)
 	)
-	tr.tracer = newTracer()
-
 	for i, step := range rt {
 		fmt.Printf("{op: %d, key: common.Hex2Bytes(\"%x\"), value: common.Hex2Bytes(\"%x\")}, // step %d\n",
 			step.op, step.key, step.value, i)
@@ -465,24 +508,6 @@ func runRandTest(rt randTest) error {
 			tr.Hash()
 		case opCommit:
 			root, nodes := tr.Commit(true)
-			// Validity the returned nodeset
-			if nodes != nil {
-				for path, node := range nodes.updates.nodes {
-					blob, _, _ := origTrie.TryGetNode(hexToCompact([]byte(path)))
-					got := node.prev
-					if !bytes.Equal(blob, got) {
-						rt[i].err = fmt.Errorf("prevalue mismatch for 0x%x, got 0x%x want 0x%x", path, got, blob)
-						panic(rt[i].err)
-					}
-				}
-				for path, prev := range nodes.deletes {
-					blob, _, _ := origTrie.TryGetNode(hexToCompact([]byte(path)))
-					if !bytes.Equal(blob, prev) {
-						rt[i].err = fmt.Errorf("prevalue mismatch for 0x%x, got 0x%x want 0x%x", path, prev, blob)
-						panic(rt[i].err)
-					}
-				}
-			}
 			if nodes != nil {
 				triedb.Update(NewWithNodeSet(nodes))
 			}
@@ -491,13 +516,13 @@ func runRandTest(rt randTest) error {
 				rt[i].err = err
 				return err
 			}
+			if nodes != nil {
+				if err := verifyAccessList(origTrie, newtr, nodes); err != nil {
+					rt[i].err = err
+					return err
+				}
+			}
 			tr = newtr
-
-			// Enable node tracing. Resolve the root node again explicitly
-			// since it's not captured at the beginning.
-			tr.tracer = newTracer()
-			tr.resolveAndTrack(root.Bytes(), nil)
-
 			origTrie = tr.Copy()
 		case opItercheckhash:
 			checktr := NewEmpty(triedb)
@@ -510,8 +535,6 @@ func runRandTest(rt randTest) error {
 			}
 		case opNodeDiff:
 			var (
-				inserted = tr.tracer.insertList()
-				deleted  = tr.tracer.deleteList()
 				origIter = origTrie.NodeIterator(nil)
 				curIter  = tr.NodeIterator(nil)
 				origSeen = make(map[string]struct{})
@@ -545,19 +568,19 @@ func runRandTest(rt randTest) error {
 					deleteExp[path] = struct{}{}
 				}
 			}
-			if len(insertExp) != len(inserted) {
+			if len(insertExp) != len(tr.tracer.inserts) {
 				rt[i].err = fmt.Errorf("insert set mismatch")
 			}
-			if len(deleteExp) != len(deleted) {
+			if len(deleteExp) != len(tr.tracer.deletes) {
 				rt[i].err = fmt.Errorf("delete set mismatch")
 			}
-			for _, insert := range inserted {
-				if _, present := insertExp[string(insert)]; !present {
+			for insert := range tr.tracer.inserts {
+				if _, present := insertExp[insert]; !present {
 					rt[i].err = fmt.Errorf("missing inserted node")
 				}
 			}
-			for _, del := range deleted {
-				if _, present := deleteExp[string(del)]; !present {
+			for del := range tr.tracer.deletes {
+				if _, present := deleteExp[del]; !present {
 					rt[i].err = fmt.Errorf("missing deleted node")
 				}
 			}
