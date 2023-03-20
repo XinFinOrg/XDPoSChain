@@ -20,6 +20,7 @@ import (
 	"bytes"
 	crand "crypto/rand"
 	"encoding/binary"
+	"fmt"
 	mrand "math/rand"
 	"slices"
 	"testing"
@@ -29,6 +30,24 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/ethdb/memorydb"
 )
+
+// Prng is a pseudo random number generator seeded by strong randomness.
+// The randomness is printed on startup in order to make failures reproducible.
+var prng = initRnd()
+
+func initRnd() *mrand.Rand {
+	var seed [8]byte
+	crand.Read(seed[:])
+	rnd := mrand.New(mrand.NewSource(int64(binary.LittleEndian.Uint64(seed[:]))))
+	fmt.Printf("Seed: %x\n", seed)
+	return rnd
+}
+
+func randBytes(n int) []byte {
+	r := make([]byte, n)
+	prng.Read(r)
+	return r
+}
 
 // makeProvers creates Merkle trie provers based on different implementations to
 // test all variations.
@@ -1033,12 +1052,6 @@ func randomTrie(n int) (*Trie, map[string]*kv) {
 		vals[string(value.k)] = value
 	}
 	return trie, vals
-}
-
-func randBytes(n int) []byte {
-	r := make([]byte, n)
-	crand.Read(r)
-	return r
 }
 
 func nonRandomTrie(n int) (*Trie, map[string]*kv) {
