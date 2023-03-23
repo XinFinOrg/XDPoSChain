@@ -199,7 +199,7 @@ func (s *stateObject) GetCommittedState(db Database, key common.Hash) common.Has
 		s.setError(err)
 		return common.Hash{}
 	}
-	enc, err := tr.TryGet(key.Bytes())
+	enc, err := tr.TryGetStorage(s.address, key.Bytes())
 	s.db.StorageReads += time.Since(start)
 	if err != nil {
 		s.setError(err)
@@ -275,7 +275,7 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 		s.originStorage[key] = value
 
 		if (value == common.Hash{}) {
-			if err := tr.TryDelete(key[:]); err != nil {
+			if err := tr.TryDeleteStorage(s.address, key[:]); err != nil {
 				s.setError(err)
 				return nil, err
 			}
@@ -283,7 +283,7 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 		} else {
 			// Encoding []byte cannot fail, ok to ignore the error.
 			v, _ := rlp.EncodeToBytes(common.TrimLeftZeroes(value[:]))
-			if err := tr.TryUpdate(key[:], v); err != nil {
+			if err := tr.TryUpdateStorage(s.address, key[:], v); err != nil {
 				s.setError(err)
 				return nil, err
 			}
