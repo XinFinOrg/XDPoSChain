@@ -30,6 +30,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
+	"github.com/XinFinOrg/XDPoSChain/trie/trienode"
 )
 
 var (
@@ -624,11 +625,11 @@ func (db *Database) Update(block uint64, nodes *MergedNodeSet) error {
 	}
 	for _, owner := range order {
 		subset := nodes.sets[owner]
-		subset.forEachWithOrder(func(path string, n *memoryNode) {
-			if n.isDeleted() {
+		subset.forEachWithOrder(func(path string, n *trienode.Node) {
+			if n.IsDeleted() {
 				return // ignore deletion
 			}
-			db.insert(n.hash, n.node)
+			db.insert(n.Hash, n.Blob)
 		})
 	}
 	// Link up the account trie and storage trie if the node points
