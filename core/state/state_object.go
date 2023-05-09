@@ -29,7 +29,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
-	"github.com/XinFinOrg/XDPoSChain/trie"
+	"github.com/XinFinOrg/XDPoSChain/trie/trienode"
 )
 
 type Code []byte
@@ -298,9 +298,9 @@ func (s *stateObject) updateRoot() {
 	s.data.Root = tr.Hash()
 }
 
-// CommitTrie the storage trie of the object to dwb.
+// commitTrie the storage trie of the object to dwb.
 // This updates the trie root.
-func (s *stateObject) commitTrie() (*trie.NodeSet, error) {
+func (s *stateObject) commitTrie() (*trienode.NodeSet, error) {
 	// If nothing changed, don't bother with hashing anything
 	tr, err := s.updateTrie()
 	if err != nil {

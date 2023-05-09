@@ -34,6 +34,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/XinFinOrg/XDPoSChain/trie"
+	"github.com/XinFinOrg/XDPoSChain/trie/trienode"
 )
 
 type revision struct {
@@ -900,7 +901,7 @@ func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool) (common.Hash, er
 		accountTrieNodesDeleted int
 		storageTrieNodesUpdated int
 		storageTrieNodesDeleted int
-		nodes                   = trie.NewMergedNodeSet()
+		nodes                   = trienode.NewMergedNodeSet()
 		codeWriter              = s.db.DiskDB().NewBatch()
 	)
 	for addr := range s.stateObjectsDirty {
@@ -915,7 +916,7 @@ func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool) (common.Hash, er
 			if err != nil {
 				return common.Hash{}, err
 			}
-			// Merge the dirty nodes of storage trie into global set
+			// Merge the dirty nodes of storage trie into global set.
 			if set != nil {
 				if err := nodes.Merge(set); err != nil {
 					return common.Hash{}, err
@@ -976,7 +977,7 @@ func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool) (common.Hash, er
 	}
 	if root != origin {
 		start := time.Now()
-		if err := s.db.TrieDB().Update(block, nodes); err != nil {
+		if err := s.db.TrieDB().Update(root, origin, block, nodes); err != nil {
 			return common.Hash{}, err
 		}
 		s.originalRoot = root

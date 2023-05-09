@@ -20,9 +20,11 @@ import (
 	"fmt"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/trie"
+	"github.com/XinFinOrg/XDPoSChain/trie/trienode"
 )
 
 // XDCXTrie wraps a trie with key hashing. In a secure trie, all
@@ -165,7 +167,7 @@ func (t *XDCXTrie) Commit(onleaf trie.LeafCallback) (common.Hash, error) {
 	// TODO(daniel): The following code may be incorrect, ref PR #25320:
 	root, nodes := t.trie.Commit(false)
 	if nodes != nil {
-		if err := t.trie.UpdateDb(trie.NewWithNodeSet(nodes)); err != nil {
+		if err := t.trie.UpdateDb(root, types.EmptyRootHash, 0, trienode.NewWithNodeSet(nodes)); err != nil {
 			return common.Hash{}, err
 		}
 	}

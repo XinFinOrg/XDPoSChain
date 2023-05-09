@@ -25,7 +25,9 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/trie/trienode"
 )
 
 func newEmptySecure() *StateTrie {
@@ -59,7 +61,7 @@ func makeTestStateTrie() (*Database, *StateTrie, map[string][]byte) {
 		}
 	}
 	root, nodes := trie.Commit(false)
-	if err := triedb.Update(0, NewWithNodeSet(nodes)); err != nil {
+	if err := triedb.Update(root, types.EmptyRootHash, 0, trienode.NewWithNodeSet(nodes)); err != nil {
 		panic(fmt.Errorf("failed to commit db %v", err))
 	}
 	// Re-create the trie based on the new state
