@@ -56,7 +56,7 @@ func TestTransactionProof(t *testing.T) {
 		if err := rlp.Encode(keybuf, uint(i)); err != nil {
 			t.Fatalf("rlp.Encode fail: %v", err)
 		}
-		if err := tr.Prove(keybuf.Bytes(), 0, &proof); err != nil {
+		if err := tr.Prove(keybuf.Bytes(), &proof); err != nil {
 			t.Fatal("Prove err:", err)
 		}
 		// verify the proof
@@ -91,7 +91,7 @@ func TestReceiptProof(t *testing.T) {
 		if err := rlp.Encode(keybuf, uint(i)); err != nil {
 			t.Fatalf("rlp.Encode fail: %v", err)
 		}
-		if err := tr.Prove(keybuf.Bytes(), 0, &proof); err != nil {
+		if err := tr.Prove(keybuf.Bytes(), &proof); err != nil {
 			t.Fatal("Prove err:", err)
 		}
 		// verify the proof

@@ -220,5 +220,5 @@ func (t *XDCXTrie) getSecKeyCache() map[string][]byte {
 // nodes of the longest existing prefix of the key (at least the root node), ending
 // with the node that proves the absence of the key.
 func (t *XDCXTrie) Prove(key []byte, fromLevel uint, proofDb ethdb.KeyValueWriter) error {
-	return t.trie.Prove(key, fromLevel, proofDb)
+	return t.trie.Prove(key, proofDb)
 }

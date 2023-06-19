@@ -340,7 +340,7 @@ func (api *BlockChainAPI) GetTransactionAndReceiptProof(ctx context.Context, has
 		return nil, err
 	}
 	var tx_proof proofPairList
-	if err := tx_tr.Prove(keybuf.Bytes(), 0, &tx_proof); err != nil {
+	if err := tx_tr.Prove(keybuf.Bytes(), &tx_proof); err != nil {
 		return nil, err
 	}
 	receipts, err := api.b.GetReceipts(ctx, blockHash)
@@ -352,7 +352,7 @@ func (api *BlockChainAPI) GetTransactionAndReceiptProof(ctx context.Context, has
 	}
 	receipt_tr := deriveTrie(receipts)
 	var receipt_proof proofPairList
-	if err := receipt_tr.Prove(keybuf.Bytes(), 0, &receipt_proof); err != nil {
+	if err := receipt_tr.Prove(keybuf.Bytes(), &receipt_proof); err != nil {
 		return nil, err
 	}
 	fields := map[string]interface{}{
