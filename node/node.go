@@ -458,15 +458,20 @@ func (n *Node) startRPC() error {
 		if err := server.setListenAddr(n.config.AuthHost, port); err != nil {
 			return err
 		}
-		sharedConfig := rpcConfig
-		sharedConfig.jwtSecret = secret
-		if err := server.enableRPC(apis, httpConfig{
+		sharedConfig := rpcEndpointConfig{
+			jwtSecret:              secret,
+			batchItemLimit:         engineAPIBatchItemLimit,
+			batchResponseSizeLimit: engineAPIBatchResponseSizeLimit,
+			httpBodyLimit:          engineAPIBodyLimit,
+		}
+		err := server.enableRPC(apis, httpConfig{
 			CorsAllowedOrigins: DefaultAuthCors,
 			Vhosts:             DefaultAuthVhosts,
 			Modules:            DefaultAuthModules,
 			prefix:             DefaultAuthPrefix,
 			rpcEndpointConfig:  sharedConfig,
-		}); err != nil {
+		})
+		if err != nil {
 			return err
 		}
 		servers = append(servers, server)
