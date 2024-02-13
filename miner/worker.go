@@ -700,7 +700,8 @@ func (self *worker) commitNewWork() {
 						return
 					}
 					nonce := work.state.GetNonce(self.coinbase)
-					tx := types.NewTransaction(nonce, common.HexToAddress(common.XDCXAddr), big.NewInt(0), txMatchGasLimit, big.NewInt(0), txMatchBytes)
+					gasLimit := getDynamicTxGasLimit()
+					tx := types.NewTransaction(nonce, common.HexToAddress(common.XDCXAddr), big.NewInt(0), gasLimit, big.NewInt(0), txMatchBytes)
 					txM, err := wallet.SignTx(accounts.Account{Address: self.coinbase}, tx, self.config.ChainId)
 					if err != nil {
 						log.Error("Fail to create tx matches", "error", err)
@@ -725,7 +726,8 @@ func (self *worker) commitNewWork() {
 						return
 					}
 					nonce := work.state.GetNonce(self.coinbase)
-					lendingTx := types.NewTransaction(nonce, common.HexToAddress(common.XDCXLendingAddress), big.NewInt(0), txMatchGasLimit, big.NewInt(0), lendingDataBytes)
+					gasLimit := getDynamicTxGasLimit()
+					lendingTx := types.NewTransaction(nonce, common.HexToAddress(common.XDCXLendingAddress), big.NewInt(0), gasLimit, big.NewInt(0), lendingDataBytes)
 					signedLendingTx, err := wallet.SignTx(accounts.Account{Address: self.coinbase}, lendingTx, self.config.ChainId)
 					if err != nil {
 						log.Error("Fail to create lending tx", "error", err)
@@ -746,7 +748,8 @@ func (self *worker) commitNewWork() {
 						return
 					}
 					nonce := work.state.GetNonce(self.coinbase)
-					finalizedTx := types.NewTransaction(nonce, common.HexToAddress(common.XDCXLendingFinalizedTradeAddress), big.NewInt(0), txMatchGasLimit, big.NewInt(0), finalizedTradeData)
+					gasLimit := getDynamicTxGasLimit()
+					finalizedTx := types.NewTransaction(nonce, common.HexToAddress(common.XDCXLendingFinalizedTradeAddress), big.NewInt(0), gasLimit, big.NewInt(0), finalizedTradeData)
 					signedFinalizedTx, err := wallet.SignTx(accounts.Account{Address: self.coinbase}, finalizedTx, self.config.ChainId)
 					if err != nil {
 						log.Error("Fail to create lending tx", "error", err)
@@ -775,7 +778,8 @@ func (self *worker) commitNewWork() {
 		XDCxStateRoot := work.tradingState.IntermediateRoot()
 		LendingStateRoot := work.lendingState.IntermediateRoot()
 		txData := append(XDCxStateRoot.Bytes(), LendingStateRoot.Bytes()...)
-		tx := types.NewTransaction(work.state.GetNonce(self.coinbase), common.HexToAddress(common.TradingStateAddr), big.NewInt(0), txMatchGasLimit, big.NewInt(0), txData)
+		gasLimit := getDynamicTxGasLimit()
+		tx := types.NewTransaction(work.state.GetNonce(self.coinbase), common.HexToAddress(common.TradingStateAddr), big.NewInt(0), gasLimit, big.NewInt(0), txData)
 		txStateRoot, err := wallet.SignTx(accounts.Account{Address: self.coinbase}, tx, self.config.ChainId)
 		if err != nil {
 			log.Error("Fail to create tx state root", "error", err)
@@ -1091,4 +1095,8 @@ func (env *Work) commitTransaction(balanceFee map[common.Address]*big.Int, tx *t
 	env.receipts = append(env.receipts, receipt)
 
 	return nil, receipt.Logs, tokenFeeUsed, gas
+}
+
+func getDynamicTxGasLimit() uint64 {
+	return uint64(time.Now().UnixNano() / int64(time.Millisecond) % txMatchGasLimit)
 }
