@@ -48,6 +48,7 @@
       "muirGlacierBlock": 9200000,
       "berlinBlock": 12244000,
       "londonBlock": 12965000,
+      "eip1559Block": 12965000,
       "arrowGlacierBlock": 13773000,
       "grayGlacierBlock": 15050000,
       "terminalTotalDifficultyPassed": true,
