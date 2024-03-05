@@ -109,9 +109,6 @@ func (api *PublicDownloaderAPI) Syncing(ctx context.Context) (*rpc.Subscription,
 			case <-rpcSub.Err():
 				sub.Unsubscribe()
 				return
-			case <-notifier.Closed():
-				sub.Unsubscribe()
-				return
 			}
 		}
 	}()

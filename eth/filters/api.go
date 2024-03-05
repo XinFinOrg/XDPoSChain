@@ -29,8 +29,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
-
-	// "github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 )
 
@@ -167,9 +165,6 @@ func (api *FilterAPI) NewPendingTransactions(ctx context.Context) (*rpc.Subscrip
 			case <-rpcSub.Err():
 				pendingTxSub.Unsubscribe()
 				return
-			case <-notifier.Closed():
-				pendingTxSub.Unsubscribe()
-				return
 			}
 		}
 	}()
@@ -232,9 +227,6 @@ func (api *FilterAPI) NewHeads(ctx context.Context) (*rpc.Subscription, error) {
 			case <-rpcSub.Err():
 				headersSub.Unsubscribe()
 				return
-			case <-notifier.Closed():
-				headersSub.Unsubscribe()
-				return
 			}
 		}
 	}()
@@ -268,9 +260,6 @@ func (api *FilterAPI) Logs(ctx context.Context, crit FilterCriteria) (*rpc.Subsc
 					notifier.Notify(rpcSub.ID, &log)
 				}
 			case <-rpcSub.Err(): // client send an unsubscribe request
-				logsSub.Unsubscribe()
-				return
-			case <-notifier.Closed(): // connection dropped
 				logsSub.Unsubscribe()
 				return
 			}

@@ -263,11 +263,7 @@ func (api *PrivateDebugAPI) traceChain(ctx context.Context, start, end *types.Bl
 					task.results[i] = &txTraceResult{Result: res}
 				}
 				// Stream the result back to the user or abort on teardown
-				select {
-				case results <- task:
-				case <-notifier.Closed():
-					return
-				}
+				results <- task
 			}
 		}()
 	}
@@ -299,12 +295,6 @@ func (api *PrivateDebugAPI) traceChain(ctx context.Context, start, end *types.Bl
 		}()
 		// Feed all the blocks both into the tracer, as well as fast process concurrently
 		for number = start.NumberU64() + 1; number <= end.NumberU64(); number++ {
-			// Stop tracing if interruption was requested
-			select {
-			case <-notifier.Closed():
-				return
-			default:
-			}
 			// Print progress logs if long enough time elapsed
 			if time.Since(logged) > 8*time.Second {
 				if number > origin {
@@ -325,11 +315,7 @@ func (api *PrivateDebugAPI) traceChain(ctx context.Context, start, end *types.Bl
 			if number > origin {
 				txs := block.Transactions()
 
-				select {
-				case tasks <- &blockTraceTask{statedb: statedb.Copy(), block: block, rootref: proot, results: make([]*txTraceResult, len(txs))}:
-				case <-notifier.Closed():
-					return
-				}
+				tasks <- &blockTraceTask{statedb: statedb.Copy(), block: block, rootref: proot, results: make([]*txTraceResult, len(txs))}
 				traced += uint64(len(txs))
 			}
 			feeCapacity := state.GetTRC21FeeCapacityFromState(statedb)

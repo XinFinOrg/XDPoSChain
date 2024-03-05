@@ -147,8 +147,6 @@ func (api *privateAdminAPI) PeerEvents(ctx context.Context) (*rpc.Subscription, 
 				return
 			case <-rpcSub.Err():
 				return
-			case <-notifier.Closed():
-				return
 			}
 		}
 	}()
