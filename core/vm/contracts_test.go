@@ -514,7 +514,7 @@ func testPrecompiled(addr string, test precompiledTest, t *testing.T) {
 	in := common.Hex2Bytes(test.input)
 	gas := p.RequiredGas(in)
 	t.Run(fmt.Sprintf("%s-Gas=%d", test.name, gas), func(t *testing.T) {
-		if res, _, err := RunPrecompiledContract(nil, p, in, gas); err != nil {
+		if res, _, err := RunPrecompiledContract(nil, p, in, gas, nil); err != nil {
 			t.Error(err)
 		} else if common.Bytes2Hex(res) != test.expected {
 			t.Errorf("Expected %v, got %v", test.expected, common.Bytes2Hex(res))
@@ -533,7 +533,7 @@ func testXDCxPrecompiled(addr string, test precompiledTest, t *testing.T) {
 	in := common.Hex2Bytes(test.input)
 	gas := p.RequiredGas(in)
 	t.Run(fmt.Sprintf("%s-Gas=%d", test.name, gas), func(t *testing.T) {
-		if res, _, err := RunPrecompiledContract(nil, p, in, gas); err != nil {
+		if res, _, err := RunPrecompiledContract(nil, p, in, gas, nil); err != nil {
 			t.Error(err)
 		} else if common.Bytes2Hex(res) != test.expected {
 			t.Errorf("Expected %v, got %v", test.expected, common.Bytes2Hex(res))
@@ -547,7 +547,7 @@ func testPrecompiledWithEmptyTradingState(addr string, test precompiledTest, t *
 	in := common.Hex2Bytes(test.input)
 	gas := p.RequiredGas(in)
 	t.Run(fmt.Sprintf("testPrecompiledWithEmptyTradingState-%s-Gas=%d", test.name, gas), func(t *testing.T) {
-		if res, _, err := RunPrecompiledContract(nil, p, in, gas); err != nil {
+		if res, _, err := RunPrecompiledContract(nil, p, in, gas, nil); err != nil {
 			t.Error(err)
 		} else if common.Bytes2Hex(res) != test.expected {
 			t.Errorf("Expected %v, got %v", test.expected, common.Bytes2Hex(res))
@@ -561,7 +561,7 @@ func testPrecompiledOOG(addr string, test precompiledTest, t *testing.T) {
 	gas := p.RequiredGas(in) - 1
 
 	t.Run(fmt.Sprintf("%s-Gas=%d", test.name, gas), func(t *testing.T) {
-		_, _, err := RunPrecompiledContract(nil, p, in, gas)
+		_, _, err := RunPrecompiledContract(nil, p, in, gas, nil)
 		if err.Error() != "out of gas" {
 			t.Errorf("Expected error [out of gas], got [%v]", err)
 		}
@@ -578,7 +578,7 @@ func testPrecompiledFailure(addr string, test precompiledFailureTest, t *testing
 	in := common.Hex2Bytes(test.input)
 	gas := p.RequiredGas(in)
 	t.Run(test.name, func(t *testing.T) {
-		_, _, err := RunPrecompiledContract(nil, p, in, gas)
+		_, _, err := RunPrecompiledContract(nil, p, in, gas, nil)
 		if err.Error() != test.expectedError.Error() {
 			t.Errorf("Expected error [%v], got [%v]", test.expectedError, err)
 		}
@@ -608,7 +608,7 @@ func benchmarkPrecompiled(addr string, test precompiledTest, bench *testing.B) {
 		bench.ResetTimer()
 		for i := 0; i < bench.N; i++ {
 			copy(data, in)
-			res, _, err = RunPrecompiledContract(nil, p, data, reqGas)
+			res, _, err = RunPrecompiledContract(nil, p, data, reqGas, nil)
 		}
 		bench.StopTimer()
 		//Check if it is correct

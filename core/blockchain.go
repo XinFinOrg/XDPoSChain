@@ -41,6 +41,7 @@ import (
 	contractValidator "github.com/XinFinOrg/XDPoSChain/contracts/validator/contract"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
+	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
@@ -211,6 +212,7 @@ type BlockChain struct {
 	prefetcher Prefetcher // Block state prefetcher interface
 	processor  Processor  // Block transaction processor interface
 	vmConfig   vm.Config
+	logger     *tracing.Hooks
 
 	IPCEndpoint string
 	Client      bind.ContractBackend // Global ipc client instance.
@@ -259,6 +261,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		downloadingBlock:    lru.NewCache[common.Hash, struct{}](blockCacheLimit),
 		engine:              engine,
 		vmConfig:            vmConfig,
+		logger:              vmConfig.Tracer,
 		badBlocks:           lru.NewCache[common.Hash, *types.Header](badBlockLimit),
 		blocksHashCache:     lru.NewCache[uint64, []common.Hash](blocksHashCacheLimit),
 		resultTrade:         lru.NewCache[common.Hash, interface{}](tradingstate.OrderCacheLimit),
@@ -303,6 +306,25 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 				bc.SetHead(header.Number.Uint64() - 1)
 				log.Error("Chain rewind was successful, resuming normal operation")
 			}
+		}
+	}
+
+	if bc.logger != nil && bc.logger.OnBlockchainInit != nil {
+		bc.logger.OnBlockchainInit(chainConfig)
+	}
+
+	if bc.logger != nil && bc.logger.OnGenesisBlock != nil {
+		if block := bc.CurrentBlock(); block.NumberU64() == 0 {
+			alloc, err := getGenesisState(bc.db, block.Hash())
+			if err != nil {
+				return nil, fmt.Errorf("failed to get genesis state: %w", err)
+			}
+
+			if alloc == nil {
+				return nil, fmt.Errorf("live blockchain tracer requires genesis alloc to be set")
+			}
+
+			bc.logger.OnGenesisBlock(bc.genesisBlock, alloc)
 		}
 	}
 
@@ -1727,7 +1749,6 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		}
 		// Retrieve the parent block and it's state to execute on top
 		start := time.Now()
-
 		parent := it.previous()
 		if parent == nil {
 			parent = bc.GetHeader(block.ParentHash(), block.NumberU64()-1)
@@ -1737,6 +1758,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		if err != nil {
 			return it.index, events, coalescedLogs, err
 		}
+		statedb.SetLogger(bc.logger)
 
 		// If we have a followup block, run that against the current state to pre-cache
 		// transactions and probabilistically some of the account/storage trie nodes.
@@ -1745,7 +1767,10 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 			if followup, err := it.peek(); followup != nil && err == nil {
 				go func(start time.Time) {
 					throwaway, _ := state.New(parent.Root, bc.stateCache)
-					bc.prefetcher.Prefetch(followup, throwaway, bc.vmConfig, &followupInterrupt)
+					// Disable tracing for prefetcher executions.
+					vmCfg := bc.vmConfig
+					vmCfg.Tracer = nil
+					bc.prefetcher.Prefetch(followup, throwaway, vmCfg, &followupInterrupt)
 
 					blockPrefetchExecuteTimer.Update(time.Since(start))
 					if followupInterrupt.Load() {
@@ -1755,70 +1780,27 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 			}
 		}
 
-		// Process block using the parent state as reference point.
-		t0 := time.Now()
-		isTIPXDCXReceiver := bc.Config().IsTIPXDCXReceiver(block.Number())
-		tradingState, lendingState, err := bc.processTradingAndLendingStates(isTIPXDCXReceiver, block, parent, statedb)
-		if err != nil {
-			bc.reportBlock(block, nil, err)
-			followupInterrupt.Store(true)
-			return it.index, events, coalescedLogs, err
-		}
-		feeCapacity := state.GetTRC21FeeCapacityFromStateWithCache(parent.Root, statedb)
-		receipts, logs, usedGas, err := bc.processor.Process(block, statedb, tradingState, bc.vmConfig, feeCapacity)
-		t1 := time.Now()
-		if err != nil {
-			bc.reportBlock(block, receipts, err)
-			followupInterrupt.Store(true)
-			return it.index, events, coalescedLogs, err
-		}
-		// Validate the state using the default validator
-		err = bc.validator.ValidateState(block, statedb, receipts, usedGas)
-		if err != nil {
-			bc.reportBlock(block, receipts, err)
-			return it.index, events, coalescedLogs, err
-		}
-		t2 := time.Now()
-		proctime := time.Since(start)
-
-		// Write the block to the chain and get the status.
-		status, err := bc.writeBlockWithState(block, receipts, statedb, tradingState, lendingState)
-		t3 := time.Now()
+		// The traced section of block import.
+		res, err := bc.processBlock(block, parent, statedb)
 		followupInterrupt.Store(true)
 		if err != nil {
 			return it.index, events, coalescedLogs, err
 		}
+		// Report the import stats before returning the various results
+		stats.processed++
+		stats.usedGas += res.usedGas
 
-		// Update the metrics subsystem with all the measurements
-		accountReadTimer.Update(statedb.AccountReads)
-		accountHashTimer.Update(statedb.AccountHashes)
-		accountUpdateTimer.Update(statedb.AccountUpdates)
-		accountCommitTimer.Update(statedb.AccountCommits)
-
-		storageReadTimer.Update(statedb.StorageReads)
-		storageHashTimer.Update(statedb.StorageHashes)
-		storageUpdateTimer.Update(statedb.StorageUpdates)
-		storageCommitTimer.Update(statedb.StorageCommits)
-
-		trieAccess := statedb.AccountReads + statedb.AccountHashes + statedb.AccountUpdates + statedb.AccountCommits
-		trieAccess += statedb.StorageReads + statedb.StorageHashes + statedb.StorageUpdates + statedb.StorageCommits
-
-		blockInsertTimer.UpdateSince(start)
-		blockExecutionTimer.Update(t1.Sub(t0) - trieAccess)
-		blockValidationTimer.Update(t2.Sub(t1))
-		blockWriteTimer.Update(t3.Sub(t2))
-
-		switch status {
+		switch res.status {
 		case CanonStatTy:
 			log.Debug("Inserted new block from downloader", "number", block.Number(), "hash", block.Hash(), "uncles", len(block.Uncles()),
 				"txs", len(block.Transactions()), "gas", block.GasUsed(), "elapsed", common.PrettyDuration(time.Since(start)))
 
-			coalescedLogs = append(coalescedLogs, logs...)
-			events = append(events, ChainEvent{block, block.Hash(), logs})
+			coalescedLogs = append(coalescedLogs, res.logs...)
+			events = append(events, ChainEvent{block, block.Hash(), res.logs})
 			lastCanon = block
 
 			// Only count canonical blocks for GC processing time
-			bc.gcproc += proctime
+			bc.gcproc += res.procTime
 			bc.UpdateBlocksHashCache(block)
 			if bc.chainConfig.IsTIPXDCX(block.Number()) && bc.chainConfig.XDPoS != nil && block.NumberU64() > bc.chainConfig.XDPoS.Epoch {
 				bc.logExchangeData(block)
@@ -1830,9 +1812,6 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 			events = append(events, ChainSideEvent{block})
 			bc.UpdateBlocksHashCache(block)
 		}
-		blockInsertTimer.UpdateSince(start)
-		stats.processed++
-		stats.usedGas += usedGas
 
 		dirty, _ := bc.stateCache.TrieDB().Size()
 		stats.report(chain, it.index, dirty)
@@ -1871,6 +1850,96 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		events = append(events, ChainHeadEvent{lastCanon})
 	}
 	return it.index, events, coalescedLogs, nil
+}
+
+// blockProcessingResult is a summary of block processing
+// used for updating the stats.
+type blockProcessingResult struct {
+	usedGas  uint64
+	procTime time.Duration
+	status   WriteStatus
+	logs     []*types.Log
+}
+
+// processBlock executes and validates the given block. If there was no error
+// it writes the block and associated state to database.
+func (bc *BlockChain) processBlock(block *types.Block, parent *types.Header, statedb *state.StateDB) (_ *blockProcessingResult, blockEndErr error) {
+	var (
+		err       error
+		startTime = time.Now()
+	)
+	// TODO(daniel): implement CurrentFinalBlock() and CurrentSafeBlock(), ref PR #29189
+	if bc.logger != nil && bc.logger.OnBlockStart != nil {
+		td := bc.GetTd(block.ParentHash(), block.NumberU64()-1)
+		bc.logger.OnBlockStart(tracing.BlockEvent{
+			Block: block,
+			TD:    td,
+			// Finalized: bc.CurrentFinalBlock(),
+			// Safe:      bc.CurrentSafeBlock(),
+		})
+	}
+	if bc.logger != nil && bc.logger.OnBlockEnd != nil {
+		defer func() {
+			bc.logger.OnBlockEnd(blockEndErr)
+		}()
+	}
+
+	// Process block using the parent state as reference point.
+	pstart := time.Now()
+	isTIPXDCXReceiver := bc.Config().IsTIPXDCXReceiver(block.Number())
+	tradingState, lendingState, err := bc.processTradingAndLendingStates(isTIPXDCXReceiver, block, parent, statedb)
+	if err != nil {
+		bc.reportBlock(block, nil, err)
+		return nil, err
+	}
+	feeCapacity := state.GetTRC21FeeCapacityFromStateWithCache(parent.Root, statedb)
+	receipts, logs, usedGas, err := bc.processor.Process(block, statedb, tradingState, bc.vmConfig, feeCapacity)
+	if err != nil {
+		bc.reportBlock(block, receipts, err)
+		return nil, err
+	}
+	ptime := time.Since(pstart)
+
+	vstart := time.Now()
+	// Validate the state using the default validator
+	err = bc.validator.ValidateState(block, statedb, receipts, usedGas)
+	if err != nil {
+		bc.reportBlock(block, receipts, err)
+		return nil, err
+	}
+	vtime := time.Since(vstart)
+	proctime := time.Since(startTime) // processing + validation
+
+	// Update the metrics touched during block processing and validation
+	accountReadTimer.Update(statedb.AccountReads)                                     // Account reads are complete(in processing)
+	storageReadTimer.Update(statedb.StorageReads)                                     // Storage reads are complete(in processing)
+	accountUpdateTimer.Update(statedb.AccountUpdates)                                 // Account updates are complete(in validation)
+	storageUpdateTimer.Update(statedb.StorageUpdates)                                 // Storage updates are complete(in validation)
+	accountHashTimer.Update(statedb.AccountHashes)                                    // Account hashes are complete(in validation)
+	storageHashTimer.Update(statedb.StorageHashes)                                    // Storage hashes are complete(in validation)
+	triehash := statedb.AccountHashes + statedb.StorageHashes                         // The time spent on tries hashing
+	trieUpdate := statedb.AccountUpdates + statedb.StorageUpdates                     // The time spent on tries update
+	blockExecutionTimer.Update(ptime - (statedb.AccountReads + statedb.StorageReads)) // The time spent on EVM processing
+	blockValidationTimer.Update(vtime - (triehash + trieUpdate))                      // The time spent on block validation
+
+	// Write the block to the chain and get the status.
+	var (
+		wstart = time.Now()
+		status WriteStatus
+	)
+	status, err = bc.writeBlockWithState(block, receipts, statedb, tradingState, lendingState)
+	if err != nil {
+		return nil, err
+	}
+	// Update the metrics touched during block commit
+	accountCommitTimer.Update(statedb.AccountCommits) // Account commits are complete, we can mark them
+	storageCommitTimer.Update(statedb.StorageCommits) // Storage commits are complete, we can mark them
+
+	blockWriteTimer.Update(time.Since(wstart) - statedb.AccountCommits - statedb.StorageCommits)
+	elapsed := time.Since(startTime) + 1 // prevent zero division
+	blockInsertTimer.Update(elapsed)
+
+	return &blockProcessingResult{usedGas: usedGas, procTime: proctime, status: status, logs: logs}, nil
 }
 
 // insertSidechain is called when an import batch hits upon a pruned ancestor

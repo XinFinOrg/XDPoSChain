@@ -17,6 +17,7 @@
 package tests
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"reflect"
@@ -76,23 +77,24 @@ func withTrace(t *testing.T, gasLimit uint64, test func(vm.Config) error) {
 	}
 
 	// Test failed, re-run with tracing enabled.
+	t.Error(err)
 	if gasLimit > traceErrorLimit {
 		t.Log("gas limit too high for EVM trace")
 		return
 	}
-	tracer := logger.NewStructLogger(nil)
-	config.Tracer = tracer
+	buf := new(bytes.Buffer)
+	w := bufio.NewWriter(buf)
+	config.Tracer = logger.NewJSONLogger(&logger.Config{}, w)
 	err2 := test(config)
 	if !reflect.DeepEqual(err, err2) {
 		t.Errorf("different error for second run: %v", err2)
 	}
-	buf := new(bytes.Buffer)
-	logger.WriteTrace(buf, tracer.StructLogs())
+	w.Flush()
 	if buf.Len() == 0 {
 		t.Log("no EVM operation logs generated")
 	} else {
 		t.Log("EVM operation log:\n" + buf.String())
 	}
-	t.Logf("EVM output: %#x", tracer.Output())
-	t.Logf("EVM error: %v", tracer.Error())
+	// t.Logf("EVM output: 0x%x", tracer.Output())
+	// t.Logf("EVM error: %v", tracer.Error())
 }

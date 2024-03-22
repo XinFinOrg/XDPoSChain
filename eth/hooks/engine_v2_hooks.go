@@ -13,6 +13,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/contracts"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
+	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/util"
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -299,7 +300,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				}
 				if len(rewards) > 0 {
 					for holder, reward := range rewards {
-						stateBlock.AddBalance(holder, reward)
+						stateBlock.AddBalance(holder, reward, tracing.BalanceIncreaseRewardMineBlock)
 					}
 				}
 				rewardResults[signer] = rewards
@@ -337,7 +338,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 					}
 					if len(rewards) > 0 {
 						for holder, reward := range rewards {
-							stateBlock.AddBalance(holder, reward)
+							stateBlock.AddBalance(holder, reward, tracing.BalanceIncreaseRewardMineBlock)
 							rewardSum.Add(rewardSum, reward)
 						}
 					}

@@ -103,22 +103,37 @@ func testPrestateDiffTracer(tracerName string, dirPath string, t *testing.T) {
 					GasLimit:    uint64(test.Context.GasLimit),
 					BaseFee:     test.Genesis.BaseFee,
 				}
-				statedb = tests.MakePreState(rawdb.NewMemoryDatabase(), test.Genesis.Alloc)
+				state = tests.MakePreState(rawdb.NewMemoryDatabase(), test.Genesis.Alloc)
 			)
+
 			tracer, err := tracers.DefaultDirectory.New(tracerName, new(tracers.Context), test.TracerConfig)
 			if err != nil {
 				t.Fatalf("failed to create call tracer: %v", err)
 			}
+			// msg, err := core.TransactionToMessage(tx, signer, nil, context.BlockNumber, context.BaseFee)
+			// if err != nil {
+			// 	t.Fatalf("failed to prepare transaction for tracing: %v", err)
+			// }
+			// evm := vm.NewEVM(context, core.NewEVMTxContext(msg), statedb, nil, test.Genesis.Config, vm.Config{Tracer: tracer})
+			// st := core.NewStateTransition(evm, msg, new(core.GasPool).AddGas(tx.Gas()))
+			// if _, err = st.TransitionDb(common.Address{}); err != nil {
+			// 	t.Fatalf("failed to execute transaction: %v", err)
+			// }
+			// // Retrieve the trace result and compare against the expected.
+
+			state.SetLogger(tracer.Hooks)
 			msg, err := core.TransactionToMessage(tx, signer, nil, context.BlockNumber, context.BaseFee)
 			if err != nil {
 				t.Fatalf("failed to prepare transaction for tracing: %v", err)
 			}
-			evm := vm.NewEVM(context, core.NewEVMTxContext(msg), statedb, nil, test.Genesis.Config, vm.Config{Tracer: tracer})
-			st := core.NewStateTransition(evm, msg, new(core.GasPool).AddGas(tx.Gas()))
-			if _, err = st.TransitionDb(common.Address{}); err != nil {
+			evm := vm.NewEVM(context, core.NewEVMTxContext(msg), state, nil, test.Genesis.Config, vm.Config{Tracer: tracer.Hooks})
+			tracer.OnTxStart(evm.GetVMContext(), tx, msg.From)
+			vmRet, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(tx.Gas()), common.Address{})
+			if err != nil {
 				t.Fatalf("failed to execute transaction: %v", err)
 			}
-			// Retrieve the trace result and compare against the expected.
+			tracer.OnTxEnd(&types.Receipt{GasUsed: vmRet.UsedGas}, nil)
+			// Retrieve the trace result and compare against the expected
 			res, err := tracer.GetResult()
 			if err != nil {
 				t.Fatalf("failed to retrieve trace result: %v", err)

@@ -19,6 +19,7 @@ package utils
 
 import (
 	"crypto/ecdsa"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/big"
@@ -375,8 +376,18 @@ var (
 		Usage:    "Record information useful for VM and contract debugging",
 		Category: flags.VMCategory,
 	}
+	VMTraceFlag = &cli.StringFlag{
+		Name:     "vmtrace",
+		Usage:    "Name of tracer which should record internal VM operations (costly)",
+		Category: flags.VMCategory,
+	}
+	VMTraceConfigFlag = &cli.StringFlag{
+		Name:     "vmtrace-config",
+		Usage:    "Tracer configuration (JSON)",
+		Category: flags.VMCategory,
+	}
 
-	// API options
+	// API options.
 	RPCGlobalGasCapFlag = &cli.Uint64Flag{
 		Name:     "rpc-gascap",
 		Usage:    "Sets a cap on gas that can be used in eth_call/estimateGas (0=infinite)",
@@ -1658,6 +1669,19 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 			cfg.GasPrice = big.NewInt(1)
 		}
 	}
+
+	// VM tracing config.
+	if ctx.IsSet(VMTraceFlag.Name) {
+		if name := ctx.String(VMTraceFlag.Name); name != "" {
+			var config string
+			if ctx.IsSet(VMTraceConfigFlag.Name) {
+				config = ctx.String(VMTraceConfigFlag.Name)
+			}
+
+			cfg.VMTrace = name
+			cfg.VMTraceConfig = config
+		}
+	}
 }
 
 // RegisterEthService adds an Ethereum client to the stack.
@@ -1836,10 +1860,25 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (chain *core.B
 		cache.TrieCleanLimit = ctx.Int(CacheFlag.Name) * ctx.Int(CacheGCFlag.Name) / 100
 	}
 	vmcfg := vm.Config{EnablePreimageRecording: ctx.Bool(VMEnableDebugFlag.Name)}
+	if ctx.IsSet(VMTraceFlag.Name) {
+		if name := ctx.String(VMTraceFlag.Name); name != "" {
+			var config json.RawMessage
+			if ctx.IsSet(VMTraceConfigFlag.Name) {
+				config = json.RawMessage(ctx.String(VMTraceConfigFlag.Name))
+			}
+			t, err := tracers.LiveDirectory.New(name, config)
+			if err != nil {
+				Fatalf("Failed to create tracer %q: %v", name, err)
+			}
+			vmcfg.Tracer = t
+		}
+	}
+	// Disable transaction indexing/unindexing by default.
 	chain, err = core.NewBlockChain(chainDb, cache, config, engine, vmcfg)
 	if err != nil {
 		Fatalf("Can't create BlockChain: %v", err)
 	}
+
 	return chain, chainDb
 }
 

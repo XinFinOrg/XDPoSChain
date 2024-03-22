@@ -11,6 +11,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
+	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
@@ -670,7 +671,7 @@ func DoSettleBalance(coinbase common.Address, takerOrder, makerOrder *lendingsta
 		mapBalances[settleBalance.Maker.OutToken][common.LendingLockAddressBinary] = newCollateralTokenLock
 	}
 	masternodeOwner := statedb.GetOwner(coinbase)
-	statedb.AddBalance(masternodeOwner, matchingFee)
+	statedb.AddBalance(masternodeOwner, matchingFee, tracing.BalanceChangeUnspecified)
 	for token, balances := range mapBalances {
 		for adrr, value := range balances {
 			err := lendingstate.SetTokenBalance(adrr, value, token, statedb)
@@ -747,7 +748,7 @@ func (l *Lending) ProcessCancelOrder(header *types.Header, lendingStateDB *lendi
 	// relayers pay XDC for masternode
 	lendingstate.SubRelayerFee(originOrder.Relayer, common.RelayerLendingCancelFee, statedb)
 	masternodeOwner := statedb.GetOwner(coinbase)
-	statedb.AddBalance(masternodeOwner, common.RelayerLendingCancelFee)
+	statedb.AddBalance(masternodeOwner, common.RelayerLendingCancelFee, tracing.BalanceChangeUnspecified)
 	relayerOwner := lendingstate.GetRelayerOwner(originOrder.Relayer, statedb)
 	switch originOrder.Side {
 	case lendingstate.Investing:

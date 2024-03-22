@@ -32,6 +32,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
+	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/core/vm/runtime"
@@ -80,7 +81,7 @@ func runCmd(ctx *cli.Context) error {
 	}
 
 	var (
-		tracer      vm.EVMLogger
+		tracer      *tracing.Hooks
 		debugLogger *logger.StructLogger
 		statedb     *state.StateDB
 		chainConfig *params.ChainConfig
@@ -91,7 +92,7 @@ func runCmd(ctx *cli.Context) error {
 		tracer = logger.NewJSONLogger(logconfig, os.Stdout)
 	} else if ctx.Bool(DebugFlag.Name) {
 		debugLogger = logger.NewStructLogger(logconfig)
-		tracer = debugLogger
+		tracer = debugLogger.Hooks()
 	} else {
 		debugLogger = logger.NewStructLogger(logconfig)
 	}
@@ -235,9 +236,7 @@ Gas used:           %d
 
 `, execTime, mem.HeapObjects, mem.Alloc, mem.TotalAlloc, mem.NumGC, initialGas-leftOverGas)
 	}
-	if tracer != nil {
-		tracer.CaptureEnd(ret, initialGas-leftOverGas, err)
-	} else {
+	if tracer == nil {
 		fmt.Printf("%#x\n", ret)
 		if err != nil {
 			fmt.Printf(" error: %v\n", err)

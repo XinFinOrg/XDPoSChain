@@ -27,6 +27,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
+	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/trie"
@@ -65,35 +66,37 @@ func (h resultHash) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
 func (h resultHash) Less(i, j int) bool { return bytes.Compare(h[i].Bytes(), h[j].Bytes()) < 0 }
 
 func TestAccountRange(t *testing.T) {
+	t.Parallel()
+
 	var (
-		statedb  = state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), &trie.Config{Preimages: true})
-		state, _ = state.New(common.Hash{}, statedb)
-		addrs    = [AccountRangeMaxResults * 2]common.Address{}
-		m        = map[common.Address]bool{}
+		statedb = state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), &trie.Config{Preimages: true})
+		sdb, _  = state.New(common.Hash{}, statedb)
+		addrs   = [AccountRangeMaxResults * 2]common.Address{}
+		m       = map[common.Address]bool{}
 	)
 
 	for i := range addrs {
 		hash := common.HexToHash(fmt.Sprintf("%x", i))
 		addr := common.BytesToAddress(crypto.Keccak256Hash(hash.Bytes()).Bytes())
 		addrs[i] = addr
-		state.SetBalance(addrs[i], big.NewInt(1))
+		sdb.SetBalance(addrs[i], big.NewInt(1), tracing.BalanceChangeUnspecified)
 		if _, ok := m[addr]; ok {
 			t.Fatalf("bad")
 		} else {
 			m[addr] = true
 		}
 	}
-	state.Commit(true)
-	root := state.IntermediateRoot(true)
+	sdb.Commit(true)
+	root := sdb.IntermediateRoot(true)
 
 	trie, err := statedb.OpenTrie(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	accountRangeTest(t, &trie, state, common.Hash{}, AccountRangeMaxResults/2, AccountRangeMaxResults/2)
+	accountRangeTest(t, &trie, sdb, common.Hash{}, AccountRangeMaxResults/2, AccountRangeMaxResults/2)
 	// test pagination
-	firstResult := accountRangeTest(t, &trie, state, common.Hash{}, AccountRangeMaxResults, AccountRangeMaxResults)
-	secondResult := accountRangeTest(t, &trie, state, common.BytesToHash(firstResult.Next), AccountRangeMaxResults, AccountRangeMaxResults)
+	firstResult := accountRangeTest(t, &trie, sdb, common.Hash{}, AccountRangeMaxResults, AccountRangeMaxResults)
+	secondResult := accountRangeTest(t, &trie, sdb, common.BytesToHash(firstResult.Next), AccountRangeMaxResults, AccountRangeMaxResults)
 
 	hList := make(resultHash, 0)
 	for addr1 := range firstResult.Accounts {
@@ -111,7 +114,7 @@ func TestAccountRange(t *testing.T) {
 	// set and get an even split between the first and second sets.
 	sort.Sort(hList)
 	middleH := hList[AccountRangeMaxResults/2]
-	middleResult := accountRangeTest(t, &trie, state, middleH, AccountRangeMaxResults, AccountRangeMaxResults)
+	middleResult := accountRangeTest(t, &trie, sdb, middleH, AccountRangeMaxResults, AccountRangeMaxResults)
 	missing, infirst, insecond := 0, 0, 0
 	for h := range middleResult.Accounts {
 		if _, ok := firstResult.Accounts[h]; ok {

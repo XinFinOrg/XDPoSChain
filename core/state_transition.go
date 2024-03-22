@@ -22,6 +22,7 @@ import (
 	"math/big"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -265,11 +266,15 @@ func (st *StateTransition) buyGas() error {
 	if err := st.gp.SubGas(st.msg.GasLimit); err != nil {
 		return err
 	}
+
+	if st.evm.Config.Tracer != nil && st.evm.Config.Tracer.OnGasChange != nil {
+		st.evm.Config.Tracer.OnGasChange(0, st.msg.GasLimit, tracing.GasChangeTxInitialBalance)
+	}
 	st.gasRemaining += st.msg.GasLimit
 
 	st.initialGas = st.msg.GasLimit
 	if st.msg.BalanceTokenFee == nil {
-		st.state.SubBalance(st.msg.From, mgval)
+		st.state.SubBalance(st.msg.From, mgval, tracing.BalanceDecreaseGasBuy)
 	}
 	return nil
 }
@@ -354,13 +359,6 @@ func (st *StateTransition) TransitionDb(owner common.Address) (*ExecutionResult,
 		return nil, err
 	}
 
-	if tracer := st.evm.Config.Tracer; tracer != nil {
-		st.evm.Config.Tracer.CaptureTxStart(st.initialGas)
-		defer func() {
-			st.evm.Config.Tracer.CaptureTxEnd(st.gasRemaining)
-		}()
-	}
-
 	var (
 		msg              = st.msg
 		sender           = vm.AccountRef(st.from())
@@ -375,6 +373,9 @@ func (st *StateTransition) TransitionDb(owner common.Address) (*ExecutionResult,
 	}
 	if st.gasRemaining < gas {
 		return nil, fmt.Errorf("%w: have %d, want %d", ErrIntrinsicGas, st.gasRemaining, gas)
+	}
+	if t := st.evm.Config.Tracer; t != nil && t.OnGasChange != nil {
+		t.OnGasChange(st.gasRemaining, st.gasRemaining-gas, tracing.GasChangeTxIntrinsicGas)
 	}
 	st.gasRemaining -= gas
 
@@ -418,7 +419,7 @@ func (st *StateTransition) TransitionDb(owner common.Address) (*ExecutionResult,
 
 	if st.evm.Context.BlockNumber.Cmp(common.TIPTRC21Fee) > 0 {
 		if (owner != common.Address{}) {
-			st.state.AddBalance(owner, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), msg.GasPrice))
+			st.state.AddBalance(owner, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), msg.GasPrice), tracing.BalanceIncreaseRewardTransactionFee)
 		}
 	} else {
 		effectiveTip := msg.GasPrice
@@ -428,7 +429,7 @@ func (st *StateTransition) TransitionDb(owner common.Address) (*ExecutionResult,
 				effectiveTip = msg.GasTipCap
 			}
 		}
-		st.state.AddBalance(st.evm.Context.Coinbase, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), effectiveTip))
+		st.state.AddBalance(st.evm.Context.Coinbase, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), effectiveTip), tracing.BalanceIncreaseRewardTransactionFee)
 	}
 
 	return &ExecutionResult{
@@ -444,13 +445,23 @@ func (st *StateTransition) refundGas(refundQuotient uint64) {
 	if refund > st.state.GetRefund() {
 		refund = st.state.GetRefund()
 	}
+
+	if st.evm.Config.Tracer != nil && st.evm.Config.Tracer.OnGasChange != nil && refund > 0 {
+		st.evm.Config.Tracer.OnGasChange(st.gasRemaining, st.gasRemaining+refund, tracing.GasChangeTxRefunds)
+	}
+
 	st.gasRemaining += refund
 
 	if st.msg.BalanceTokenFee == nil {
 		// Return ETH for remaining gas, exchanged at the original rate.
 		remaining := new(big.Int).Mul(new(big.Int).SetUint64(st.gasRemaining), st.msg.GasPrice)
-		st.state.AddBalance(st.from(), remaining)
+		st.state.AddBalance(st.from(), remaining, tracing.BalanceIncreaseGasReturn)
 	}
+
+	if st.evm.Config.Tracer != nil && st.evm.Config.Tracer.OnGasChange != nil && st.gasRemaining > 0 {
+		st.evm.Config.Tracer.OnGasChange(st.gasRemaining, 0, tracing.GasChangeTxLeftOverReturned)
+	}
+
 	// Also return remaining gas to the block gas counter so it is
 	// available for the next transaction.
 	st.gp.AddGas(st.gasRemaining)

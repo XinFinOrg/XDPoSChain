@@ -18,6 +18,7 @@
 package eth
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -47,6 +48,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/eth/filters"
 	"github.com/XinFinOrg/XDPoSChain/eth/gasprice"
 	"github.com/XinFinOrg/XDPoSChain/eth/hooks"
+	"github.com/XinFinOrg/XDPoSChain/eth/tracers"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/internal/ethapi"
@@ -184,6 +186,17 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 			Preimages:           config.Preimages,
 		}
 	)
+	if config.VMTrace != "" {
+		var traceConfig json.RawMessage
+		if config.VMTraceConfig != "" {
+			traceConfig = json.RawMessage(config.VMTraceConfig)
+		}
+		t, err := tracers.LiveDirectory.New(config.VMTrace, traceConfig)
+		if err != nil {
+			return nil, fmt.Errorf("Failed to create tracer %s: %v", config.VMTrace, err)
+		}
+		vmConfig.Tracer = t
+	}
 	if eth.chainConfig.XDPoS != nil {
 		c := eth.engine.(*XDPoS.XDPoS)
 		c.GetXDCXService = func() utils.TradingService {

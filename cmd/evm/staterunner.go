@@ -57,20 +57,13 @@ func stateTestCmd(ctx *cli.Context) error {
 		EnableReturnData: !ctx.Bool(DisableReturnDataFlag.Name),
 	}
 
-	var (
-		tracer   vm.EVMLogger
-		debugger *logger.StructLogger
-	)
+	var cfg vm.Config
 	switch {
 	case ctx.Bool(MachineFlag.Name):
-		tracer = logger.NewJSONLogger(config, os.Stderr)
+		cfg.Tracer = logger.NewJSONLogger(config, os.Stderr)
 
 	case ctx.Bool(DebugFlag.Name):
-		debugger = logger.NewStructLogger(config)
-		tracer = debugger
-
-	default:
-		debugger = logger.NewStructLogger(config)
+		cfg.Tracer = logger.NewStructLogger(config).Hooks()
 	}
 	// Load the test content from the input file
 	src, err := os.ReadFile(ctx.Args().First())
@@ -82,9 +75,6 @@ func stateTestCmd(ctx *cli.Context) error {
 		return err
 	}
 	// Iterate over all the tests, run them and aggregate the results
-	cfg := vm.Config{
-		Tracer: tracer,
-	}
 	results := make([]StatetestResult, 0, len(tests))
 	for key, test := range tests {
 		for _, st := range test.Subtests() {
@@ -103,16 +93,7 @@ func stateTestCmd(ctx *cli.Context) error {
 			if ctx.Bool(MachineFlag.Name) && s != nil {
 				fmt.Fprintf(os.Stderr, "{\"stateRoot\": \"%x\"}\n", s.IntermediateRoot(false))
 			}
-
 			results = append(results, *result)
-
-			// Print any structured logs collected
-			if ctx.Bool(DebugFlag.Name) {
-				if debugger != nil {
-					fmt.Fprintln(os.Stderr, "#### TRACE ####")
-					logger.WriteTrace(os.Stderr, debugger.StructLogs())
-				}
-			}
 		}
 	}
 	out, _ := json.MarshalIndent(results, "", "  ")

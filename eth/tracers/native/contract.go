@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/tracing"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/eth/tracers"
 )
@@ -17,7 +19,6 @@ func init() {
 }
 
 type contractTracer struct {
-	env       *vm.EVM
 	Addrs     map[string]string
 	config    contractTracerConfig
 	interrupt uint32 // Atomic flag to signal execution interruption
@@ -29,7 +30,7 @@ type contractTracerConfig struct {
 }
 
 // NewContractTracer returns a native go tracer which tracks the contracr was created
-func NewContractTracer(ctx *tracers.Context, cfg json.RawMessage) (tracers.Tracer, error) {
+func NewContractTracer(ctx *tracers.Context, cfg json.RawMessage) (*tracers.Tracer, error) {
 	var config contractTracerConfig
 	if cfg != nil {
 		if err := json.Unmarshal(cfg, &config); err != nil {
@@ -46,28 +47,28 @@ func NewContractTracer(ctx *tracers.Context, cfg json.RawMessage) (tracers.Trace
 		t.reason = fmt.Errorf("opcode %s not defined", t.config.OpCode)
 		return nil, t.reason
 	}
-	return t, nil
+	return &tracers.Tracer{
+		Hooks: &tracing.Hooks{
+			OnTxStart: t.OnTxStart,
+			OnTxEnd:   t.OnTxEnd,
+			OnEnter:   t.OnEnter,
+			OnExit:    t.OnExit,
+			OnOpcode:  t.OnOpcode,
+			OnFault:   t.OnFault,
+		},
+		GetResult: t.GetResult,
+		Stop:      t.Stop,
+	}, nil
 }
 
-func (t *contractTracer) CaptureStart(env *vm.EVM, from common.Address, to common.Address, create bool, input []byte, gas uint64, value *big.Int) {
-	t.env = env
-	// When not searching for opcodes, record the contract address.
-	if create && t.config.OpCode == "" {
-		t.Addrs[addrToHex(to)] = ""
-	}
+func (*contractTracer) OnTxStart(env *tracing.VMContext, tx *types.Transaction, from common.Address) {
 }
 
-func (t *contractTracer) CaptureEnd(output []byte, gasUsed uint64, err error) {
-}
+func (*contractTracer) OnTxEnd(receipt *types.Receipt, err error) {}
 
-func (*contractTracer) CaptureTxStart(gasLimit uint64) {}
-
-func (*contractTracer) CaptureTxEnd(restGas uint64) {}
-
-func (t *contractTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, scope *vm.ScopeContext, rData []byte, depth int, err error) {
+func (t *contractTracer) OnOpcode(pc uint64, opcode byte, gas, cost uint64, scope tracing.OpContext, rData []byte, depth int, err error) {
 	// Skip if tracing was interrupted
 	if atomic.LoadUint32(&t.interrupt) > 0 {
-		t.env.Cancel()
 		return
 	}
 	// If the OpCode is empty , exit early.
@@ -75,19 +76,24 @@ func (t *contractTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64,
 		return
 	}
 	targetOp := vm.StringToOp(t.config.OpCode)
+	op := vm.OpCode(opcode)
 	if op == targetOp {
-		addr := scope.Contract.Address()
+		addr := scope.Address()
 		t.Addrs[addrToHex(addr)] = ""
 	}
 }
 
-func (t *contractTracer) CaptureFault(pc uint64, op vm.OpCode, gas, cost uint64, _ *vm.ScopeContext, depth int, err error) {
+func (t *contractTracer) OnFault(pc uint64, op byte, gas, cost uint64, scope tracing.OpContext, depth int, err error) {
 }
 
-func (t *contractTracer) CaptureEnter(typ vm.OpCode, from common.Address, to common.Address, input []byte, gas uint64, value *big.Int) {
+func (t *contractTracer) OnEnter(depth int, typ byte, from common.Address, to common.Address, input []byte, gas uint64, value *big.Int) {
+	create := vm.OpCode(typ) == vm.CREATE
+	if create && t.config.OpCode == "" {
+		t.Addrs[addrToHex(to)] = ""
+	}
 }
 
-func (t *contractTracer) CaptureExit(output []byte, gasUsed uint64, err error) {
+func (t *contractTracer) OnExit(depth int, output []byte, gasUsed uint64, err error, reverted bool) {
 }
 
 func (t *contractTracer) GetResult() (json.RawMessage, error) {

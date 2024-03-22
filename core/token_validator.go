@@ -27,6 +27,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/contracts/XDCx/contract"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
+	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
@@ -57,7 +58,7 @@ func RunContract(chain consensus.ChainContext, statedb *state.StateDB, contractA
 		return nil, err
 	}
 	fakeCaller := common.HexToAddress("0x0000000000000000000000000000000000000001")
-	statedb.SetBalance(fakeCaller, common.BasePrice)
+	statedb.SetBalance(fakeCaller, common.BasePrice, tracing.BalanceChangeUnspecified)
 	msg := ethereum.CallMsg{To: &contractAddr, Data: input, From: fakeCaller}
 	result, err := CallContractWithState(msg, chain, statedb)
 	if err != nil {

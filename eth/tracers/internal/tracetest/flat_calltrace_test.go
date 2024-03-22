@@ -16,11 +16,9 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
+	"github.com/XinFinOrg/XDPoSChain/eth/tracers"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/XinFinOrg/XDPoSChain/tests"
-
-	// Force-load the native, to trigger registration
-	"github.com/XinFinOrg/XDPoSChain/eth/tracers"
 )
 
 // flatCallTrace is the result of a callTracerParity run.
@@ -95,23 +93,26 @@ func flatCallTracerTestRunner(tracerName string, filename string, dirPath string
 		Difficulty:  (*big.Int)(test.Context.Difficulty),
 		GasLimit:    uint64(test.Context.GasLimit),
 	}
-	statedb := tests.MakePreState(rawdb.NewMemoryDatabase(), test.Genesis.Alloc)
+	state := tests.MakePreState(rawdb.NewMemoryDatabase(), test.Genesis.Alloc)
 
 	// Create the tracer, the EVM environment and run it
 	tracer, err := tracers.DefaultDirectory.New(tracerName, new(tracers.Context), test.TracerConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create call tracer: %v", err)
 	}
+
+	state.SetLogger(tracer.Hooks)
 	msg, err := core.TransactionToMessage(tx, signer, nil, context.BlockNumber, context.BaseFee)
 	if err != nil {
 		return fmt.Errorf("failed to prepare transaction for tracing: %v", err)
 	}
-	evm := vm.NewEVM(context, core.NewEVMTxContext(msg), statedb, nil, test.Genesis.Config, vm.Config{Tracer: tracer})
-	st := core.NewStateTransition(evm, msg, new(core.GasPool).AddGas(tx.Gas()))
-
-	if _, err = st.TransitionDb(common.Address{}); err != nil {
+	evm := vm.NewEVM(context, core.NewEVMTxContext(msg), state, nil, test.Genesis.Config, vm.Config{Tracer: tracer.Hooks})
+	tracer.OnTxStart(evm.GetVMContext(), tx, msg.From)
+	vmRet, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(tx.Gas()), common.Address{})
+	if err != nil {
 		return fmt.Errorf("failed to execute transaction: %v", err)
 	}
+	tracer.OnTxEnd(&types.Receipt{GasUsed: vmRet.UsedGas}, nil)
 
 	// Retrieve the trace result and compare against the etalon
 	res, err := tracer.GetResult()
@@ -123,7 +124,7 @@ func flatCallTracerTestRunner(tracerName string, filename string, dirPath string
 		return fmt.Errorf("failed to unmarshal trace result: %v", err)
 	}
 	if !jsonEqualFlat(ret, test.Result) {
-		t.Logf("tracer name: %s", tracerName)
+		t.Logf("test %s failed", filename)
 
 		// uncomment this for easier debugging
 		// have, _ := json.MarshalIndent(ret, "", " ")

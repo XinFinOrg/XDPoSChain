@@ -6,6 +6,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/lru"
+	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 )
 
 var (
@@ -146,5 +147,5 @@ func UpdateTRC21Fee(statedb *StateDB, newBalance map[common.Address]*big.Int, to
 		balanceKey := GetLocMappingAtKey(token.Hash(), slotTokensState)
 		statedb.SetState(common.TRC21IssuerSMC, common.BigToHash(balanceKey), common.BigToHash(value))
 	}
-	statedb.SubBalance(common.TRC21IssuerSMC, totalFeeUsed)
+	statedb.SubBalance(common.TRC21IssuerSMC, totalFeeUsed, tracing.BalanceChangeUnspecified)
 }

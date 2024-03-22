@@ -44,6 +44,7 @@ import (
 
 	// Force-load the tracer engines to trigger registration
 	_ "github.com/XinFinOrg/XDPoSChain/eth/tracers/js"
+	_ "github.com/XinFinOrg/XDPoSChain/eth/tracers/live"
 	_ "github.com/XinFinOrg/XDPoSChain/eth/tracers/native"
 )
 
@@ -121,6 +122,8 @@ var (
 		//utils.VMEnableDebugFlag,
 		utils.Enable0xPrefixFlag,
 		utils.EnableXDCPrefixFlag,
+		utils.VMTraceFlag,
+		utils.VMTraceConfigFlag,
 		utils.NetworkIdFlag,
 		utils.HTTPCORSDomainFlag,
 		utils.AuthListenFlag,

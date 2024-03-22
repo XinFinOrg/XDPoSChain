@@ -31,6 +31,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
+	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/event"
@@ -229,7 +230,7 @@ func (c *testChain) State() (*state.StateDB, error) {
 		c.statedb, _ = state.New(types.EmptyRootHash, state.NewDatabase(db))
 		// simulate that the new head block included tx0 and tx1
 		c.statedb.SetNonce(c.address, 2)
-		c.statedb.SetBalance(c.address, new(big.Int).SetUint64(params.Ether))
+		c.statedb.SetBalance(c.address, new(big.Int).SetUint64(params.Ether), tracing.BalanceChangeUnspecified)
 		*c.trigger = false
 	}
 	return stdb, nil
@@ -250,7 +251,7 @@ func TestStateChangeDuringReset(t *testing.T) {
 	)
 
 	// setup pool with 2 transaction in it
-	statedb.SetBalance(address, new(big.Int).SetUint64(params.Ether))
+	statedb.SetBalance(address, new(big.Int).SetUint64(params.Ether), tracing.BalanceChangeUnspecified)
 	blockchain := &testChain{&testBlockChain{statedb, 1000000000, new(event.Feed)}, address, &trigger}
 
 	tx0 := transaction(0, 100000, key)
@@ -283,7 +284,7 @@ func TestStateChangeDuringReset(t *testing.T) {
 
 func testAddBalance(pool *TxPool, addr common.Address, amount *big.Int) {
 	pool.mu.Lock()
-	pool.currentState.AddBalance(addr, amount)
+	pool.currentState.AddBalance(addr, amount, tracing.BalanceChangeUnspecified)
 	pool.mu.Unlock()
 }
 
@@ -443,9 +444,8 @@ func TestChainFork(t *testing.T) {
 
 	addr := crypto.PubkeyToAddress(key.PublicKey)
 	resetState := func() {
-		db := rawdb.NewMemoryDatabase()
-		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(db))
-		statedb.AddBalance(addr, big.NewInt(100000000000000))
+		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
+		statedb.AddBalance(addr, big.NewInt(100000000000000), tracing.BalanceChangeUnspecified)
 
 		pool.chain = &testBlockChain{statedb, 1000000, new(event.Feed)}
 		<-pool.requestReset(nil, nil)
@@ -473,9 +473,8 @@ func TestDoubleNonce(t *testing.T) {
 
 	addr := crypto.PubkeyToAddress(key.PublicKey)
 	resetState := func() {
-		db := rawdb.NewMemoryDatabase()
-		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(db))
-		statedb.AddBalance(addr, big.NewInt(100000000000000))
+		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
+		statedb.AddBalance(addr, big.NewInt(100000000000000), tracing.BalanceChangeUnspecified)
 
 		pool.chain = &testBlockChain{statedb, 1000000, new(event.Feed)}
 		<-pool.requestReset(nil, nil)
@@ -2589,7 +2588,7 @@ func BenchmarkMultiAccountBatchInsert(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		key, _ := crypto.GenerateKey()
 		account := crypto.PubkeyToAddress(key.PublicKey)
-		pool.currentState.AddBalance(account, big.NewInt(1000000))
+		pool.currentState.AddBalance(account, big.NewInt(1000000), tracing.BalanceChangeUnspecified)
 		tx := transaction(uint64(0), 100000, key)
 		batches[i] = tx
 	}

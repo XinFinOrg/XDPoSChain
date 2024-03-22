@@ -18,7 +18,6 @@ package core
 
 import (
 	"fmt"
-
 	"math/big"
 	"runtime"
 	"strings"
@@ -29,6 +28,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/misc"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
+	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
@@ -66,7 +66,7 @@ func NewStateProcessor(config *params.ChainConfig, bc *BlockChain, engine consen
 // Process returns the receipts and logs accumulated during the process and
 // returns the amount of gas that was used in the process. If any of the
 // transactions failed to execute due to insufficient gas it will return an error.
-func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, cfg vm.Config, balanceFee map[common.Address]*big.Int) (types.Receipts, []*types.Log, uint64, error) {
+func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, cfg vm.Config, tokensFee map[common.Address]*big.Int) (types.Receipts, []*types.Log, uint64, error) {
 	var (
 		receipts    types.Receipts
 		usedGas     = new(uint64)
@@ -89,6 +89,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 	totalFeeUsed := big.NewInt(0)
 	blockContext := NewEVMBlockContext(header, p.bc, nil)
 	vmenv := vm.NewEVM(blockContext, vm.TxContext{}, statedb, tradingState, p.config, cfg)
+	signer := types.MakeSigner(p.config, blockNumber)
 	coinbaseOwner := getCoinbaseOwner(p.bc, statedb, header, nil)
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
@@ -117,8 +118,20 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 				return nil, nil, 0, err
 			}
 		}
+
+		var balanceFee *big.Int
+		if tx.To() != nil {
+			if value, ok := tokensFee[*tx.To()]; ok {
+				balanceFee = value
+			}
+		}
+		msg, err := TransactionToMessage(tx, signer, balanceFee, blockNumber, header.BaseFee)
+		if err != nil {
+			return nil, nil, 0, err
+		}
 		statedb.SetTxContext(tx.Hash(), i)
-		receipt, gas, err, tokenFeeUsed := applyTransaction(p.config, balanceFee, gp, statedb, coinbaseOwner, blockNumber, header.BaseFee, blockHash, tx, usedGas, vmenv)
+
+		receipt, gas, err, tokenFeeUsed := ApplyTransactionWithEVM(msg, p.config, gp, statedb, blockNumber, blockHash, tx, usedGas, vmenv, balanceFee, coinbaseOwner)
 		if err != nil {
 			return nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 		}
@@ -126,8 +139,8 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 		allLogs = append(allLogs, receipt.Logs...)
 		if tokenFeeUsed {
 			fee := common.GetGasFee(block.Header().Number.Uint64(), gas)
-			balanceFee[*tx.To()] = new(big.Int).Sub(balanceFee[*tx.To()], fee)
-			balanceUpdated[*tx.To()] = balanceFee[*tx.To()]
+			tokensFee[*tx.To()] = new(big.Int).Sub(tokensFee[*tx.To()], fee)
+			balanceUpdated[*tx.To()] = tokensFee[*tx.To()]
 			totalFeeUsed = totalFeeUsed.Add(totalFeeUsed, fee)
 		}
 	}
@@ -137,7 +150,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 	return receipts, allLogs, *usedGas, nil
 }
 
-func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, cfg vm.Config, balanceFee map[common.Address]*big.Int) (types.Receipts, []*types.Log, uint64, error) {
+func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, cfg vm.Config, tokensFee map[common.Address]*big.Int) (types.Receipts, []*types.Log, uint64, error) {
 	block := cBlock.block
 	var (
 		receipts    types.Receipts
@@ -168,6 +181,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 	}
 	blockContext := NewEVMBlockContext(header, p.bc, nil)
 	vmenv := vm.NewEVM(blockContext, vm.TxContext{}, statedb, tradingState, p.config, cfg)
+	signer := types.MakeSigner(p.config, blockNumber)
 	coinbaseOwner := getCoinbaseOwner(p.bc, statedb, header, nil)
 	// Iterate over and process the individual transactions
 	receipts = make([]*types.Receipt, block.Transactions().Len())
@@ -197,8 +211,18 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 				return nil, nil, 0, err
 			}
 		}
+		var balanceFee *big.Int
+		if tx.To() != nil {
+			if value, ok := tokensFee[*tx.To()]; ok {
+				balanceFee = value
+			}
+		}
+		msg, err := TransactionToMessage(tx, signer, balanceFee, blockNumber, header.BaseFee)
+		if err != nil {
+			return nil, nil, 0, err
+		}
 		statedb.SetTxContext(tx.Hash(), i)
-		receipt, gas, err, tokenFeeUsed := applyTransaction(p.config, balanceFee, gp, statedb, coinbaseOwner, blockNumber, header.BaseFee, blockHash, tx, usedGas, vmenv)
+		receipt, gas, err, tokenFeeUsed := ApplyTransactionWithEVM(msg, p.config, gp, statedb, blockNumber, blockHash, tx, usedGas, vmenv, balanceFee, coinbaseOwner)
 		if err != nil {
 			return nil, nil, 0, err
 		}
@@ -209,8 +233,8 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 		allLogs = append(allLogs, receipt.Logs...)
 		if tokenFeeUsed {
 			fee := common.GetGasFee(block.Header().Number.Uint64(), gas)
-			balanceFee[*tx.To()] = new(big.Int).Sub(balanceFee[*tx.To()], fee)
-			balanceUpdated[*tx.To()] = balanceFee[*tx.To()]
+			tokensFee[*tx.To()] = new(big.Int).Sub(tokensFee[*tx.To()], fee)
+			balanceUpdated[*tx.To()] = tokensFee[*tx.To()]
 			totalFeeUsed = totalFeeUsed.Add(totalFeeUsed, fee)
 		}
 	}
@@ -220,7 +244,10 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 	return receipts, allLogs, *usedGas, nil
 }
 
-func applyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*big.Int, gp *GasPool, statedb *state.StateDB, coinbaseOwner common.Address, blockNumber, baseFee *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM) (*types.Receipt, uint64, error, bool) {
+// ApplyTransactionWithEVM attempts to apply a transaction to the given state database
+// and uses the input parameters for its environment similar to ApplyTransaction. However,
+// this method takes an already created EVM instance as input.
+func ApplyTransactionWithEVM(msg *Message, config *params.ChainConfig, gp *GasPool, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM, balanceFee *big.Int, coinbaseOwner common.Address) (receipt *types.Receipt, gasUsed uint64, err error, tokenFeeUsed bool) {
 	to := tx.To()
 	if to != nil {
 		if *to == common.BlockSignersBinary && config.IsTIPSigning(blockNumber) {
@@ -240,17 +267,14 @@ func applyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 		return ApplyEmptyTransaction(config, statedb, blockNumber, blockHash, tx, usedGas)
 	}
 
-	var balanceFee *big.Int
-	if to != nil {
-		if value, ok := tokensFee[*to]; ok {
-			balanceFee = value
+	if evm.Config.Tracer != nil && evm.Config.Tracer.OnTxStart != nil {
+		evm.Config.Tracer.OnTxStart(evm.GetVMContext(), tx, msg.From)
+		if evm.Config.Tracer.OnTxEnd != nil {
+			defer func() {
+				evm.Config.Tracer.OnTxEnd(receipt, err)
+			}()
 		}
 	}
-	msg, err := TransactionToMessage(tx, types.MakeSigner(config, blockNumber), balanceFee, blockNumber, baseFee)
-	if err != nil {
-		return nil, 0, err, false
-	}
-
 	// Create a new context to be used in the EVM environment
 	txContext := NewEVMTxContext(msg)
 
@@ -395,7 +419,7 @@ func applyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 				hBalance.SetString(bal+"000000000000000000", 10)
 				log.Info("address", addr, "with_balance", bal, "XDC")
 				addrBin := common.HexToAddress(addr)
-				statedb.SetBalance(addrBin, hBalance)
+				statedb.SetBalance(addrBin, hBalance, tracing.BalanceChangeUnspecified)
 			}
 		}
 	}
@@ -403,7 +427,6 @@ func applyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 
 	// Apply the transaction to the current state (included in the env)
 	result, err := ApplyMessage(evm, msg, gp, coinbaseOwner)
-
 	if err != nil {
 		return nil, 0, err, false
 	}
@@ -419,7 +442,7 @@ func applyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 
 	// Create a new receipt for the transaction, storing the intermediate root and gas used
 	// by the tx.
-	receipt := &types.Receipt{Type: tx.Type(), PostState: root, CumulativeGasUsed: *usedGas}
+	receipt = &types.Receipt{Type: tx.Type(), PostState: root, CumulativeGasUsed: *usedGas}
 	if result.Failed() {
 		receipt.Status = types.ReceiptStatusFailed
 	} else {
@@ -461,11 +484,23 @@ func getCoinbaseOwner(bc *BlockChain, statedb *state.StateDB, header *types.Head
 // for the transaction, gas used and an error if the transaction failed,
 // indicating the block was invalid.
 func ApplyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*big.Int, bc *BlockChain, author *common.Address, gp *GasPool, statedb *state.StateDB, XDCxState *tradingstate.TradingStateDB, header *types.Header, tx *types.Transaction, usedGas *uint64, cfg vm.Config) (*types.Receipt, uint64, error, bool) {
+	var balanceFee *big.Int
+	if tx.To() != nil {
+		if value, ok := tokensFee[*tx.To()]; ok {
+			balanceFee = value
+		}
+	}
+
 	// Create a new context to be used in the EVM environment
 	blockContext := NewEVMBlockContext(header, bc, author)
 	vmenv := vm.NewEVM(blockContext, vm.TxContext{}, statedb, XDCxState, config, cfg)
+	signer := types.MakeSigner(config, header.Number)
+	msg, err := TransactionToMessage(tx, signer, balanceFee, header.Number, header.BaseFee)
+	if err != nil {
+		return nil, 0, err, false
+	}
 	coinbaseOwner := getCoinbaseOwner(bc, statedb, header, author)
-	return applyTransaction(config, tokensFee, gp, statedb, coinbaseOwner, header.Number, header.BaseFee, header.Hash(), tx, usedGas, vmenv)
+	return ApplyTransactionWithEVM(msg, config, gp, statedb, header.Number, header.Hash(), tx, usedGas, vmenv, balanceFee, coinbaseOwner)
 }
 
 func ApplySignTransaction(config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64) (*types.Receipt, uint64, error, bool) {

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 
 	"github.com/XinFinOrg/XDPoSChain/consensus"
@@ -591,7 +592,7 @@ func DoSettleBalance(coinbase common.Address, takerOrder, makerOrder *tradingsta
 	tradingstate.SetSubRelayerFee(makerOrder.ExchangeAddress, newRelayerMakerFee, common.RelayerFee, statedb)
 
 	masternodeOwner := statedb.GetOwner(coinbase)
-	statedb.AddBalance(masternodeOwner, matchingFee)
+	statedb.AddBalance(masternodeOwner, matchingFee, tracing.BalanceChangeUnspecified)
 
 	err = tradingstate.SetTokenBalance(takerOrder.UserAddress, newTakerInTotal, settleBalance.Taker.InToken, statedb)
 	if err != nil {
@@ -680,7 +681,7 @@ func (XDCx *XDCX) ProcessCancelOrder(header *types.Header, tradingStateDB *tradi
 	}
 	masternodeOwner := statedb.GetOwner(coinbase)
 	// relayers pay XDC for masternode
-	statedb.AddBalance(masternodeOwner, common.RelayerCancelFee)
+	statedb.AddBalance(masternodeOwner, common.RelayerCancelFee, tracing.BalanceChangeUnspecified)
 
 	relayerOwner := tradingstate.GetRelayerOwner(originOrder.ExchangeAddress, statedb)
 	switch originOrder.Side {
