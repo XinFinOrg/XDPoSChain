@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
@@ -528,13 +529,7 @@ func (t *jsTracer) setBuiltinFunctions() {
 			vm.Interrupt(err)
 			return false
 		}
-		addr := common.BytesToAddress(a)
-		for _, p := range t.activePrecompiles {
-			if p == addr {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(t.activePrecompiles, common.BytesToAddress(a))
 	})
 	vm.Set("slice", func(slice goja.Value, start, end int64) goja.Value {
 		b, err := t.fromBuf(vm, slice, false)
