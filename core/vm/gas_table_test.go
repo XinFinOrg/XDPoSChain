@@ -18,17 +18,17 @@ package vm
 
 import (
 	"bytes"
+	"errors"
 	"math"
 	"math/big"
 	"sort"
 	"testing"
 
-	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
-	"github.com/XinFinOrg/XDPoSChain/core/types"
-
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
@@ -98,7 +98,7 @@ func TestEIP2200(t *testing.T) {
 		vmenv := NewEVM(vmctx, TxContext{}, statedb, nil, params.AllEthashProtocolChanges, Config{ExtraEips: []int{2200}})
 
 		_, gas, err := vmenv.Call(AccountRef(common.Address{}), address, nil, tt.gaspool, new(big.Int))
-		if err != tt.failure {
+		if !errors.Is(err, tt.failure) {
 			t.Errorf("test %d: failure mismatch: have %v, want %v", i, err, tt.failure)
 		}
 		if used := tt.gaspool - gas; used != tt.used {

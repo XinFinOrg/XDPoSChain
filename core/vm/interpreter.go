@@ -17,6 +17,7 @@
 package vm
 
 import (
+	"fmt"
 	"math/big"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -260,7 +261,10 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 			var dynamicCost uint64
 			dynamicCost, err = operation.dynamicGas(in.evm, contract, stack, mem, memorySize)
 			cost += dynamicCost // for tracing
-			if err != nil || !contract.UseGas(dynamicCost, in.evm.Config.Tracer, tracing.GasChangeIgnored) {
+			if err != nil {
+				return nil, fmt.Errorf("%w: %v", ErrOutOfGas, err)
+			}
+			if !contract.UseGas(dynamicCost, in.evm.Config.Tracer, tracing.GasChangeIgnored) {
 				return nil, ErrOutOfGas
 			}
 
