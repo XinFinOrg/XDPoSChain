@@ -615,6 +615,9 @@ func (self *worker) commitNewWork() {
 		Extra:      self.extra,
 		Time:       big.NewInt(tstamp),
 	}
+	// Set baseFee if we are on an EIP-1559 chain
+	header.BaseFee = misc.CalcBaseFee(self.config, header)
+
 	// Only set the coinbase if we are mining (avoid spurious block rewards)
 	if atomic.LoadInt32(&self.mining) == 1 {
 		header.Coinbase = self.coinbase
