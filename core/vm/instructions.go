@@ -172,11 +172,7 @@ func opByte(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 
 func opAddmod(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	x, y, z := scope.Stack.pop(), scope.Stack.pop(), scope.Stack.peek()
-	if z.IsZero() {
-		z.Clear()
-	} else {
-		z.AddMod(&x, &y, z)
-	}
+	z.AddMod(&x, &y, z)
 	return nil, nil
 }
 
