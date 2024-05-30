@@ -679,11 +679,7 @@ func (self *worker) commitNewWork() {
 			log.Error("[commitNewWork] fail to check if block is epoch switch block when fetching pending transactions", "BlockNum", header.Number, "Hash", header.Hash())
 		}
 		if !isEpochSwitchBlock {
-			pending, err := self.eth.TxPool().Pending(true)
-			if err != nil {
-				log.Error("Failed to fetch pending transactions", "err", err)
-				return
-			}
+			pending := self.eth.TxPool().Pending(true)
 			txs, specialTxs = types.NewTransactionsByPriceAndNonce(self.current.signer, pending, signers, feeCapacity)
 		}
 	}
