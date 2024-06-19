@@ -778,3 +778,8 @@ func (m Message) CheckNonce() bool          { return m.checkNonce }
 func (m Message) AccessList() AccessList    { return m.accessList }
 
 func (m *Message) SetNonce(nonce uint64) { m.nonce = nonce }
+
+func (m *Message) SetBalanceTokenFeeForCall() {
+	m.balanceTokenFee = big.NewInt(0).SetUint64(m.gasLimit)
+	m.balanceTokenFee.Mul(m.balanceTokenFee, m.gasPrice)
+}
