@@ -40,7 +40,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/contracts"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/bloombits"
-	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	stateDatabase "github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -231,16 +230,7 @@ func (b *EthApiBackend) GetReceipts(ctx context.Context, blockHash common.Hash) 
 }
 
 func (b *EthApiBackend) GetLogs(ctx context.Context, blockHash common.Hash) ([][]*types.Log, error) {
-	db := b.eth.ChainDb()
-	number := rawdb.ReadHeaderNumber(db, blockHash)
-	if number == nil {
-		return nil, errors.New("failed to get block number from hash")
-	}
-	logs := rawdb.ReadLogs(db, blockHash, *number)
-	if logs == nil {
-		return nil, errors.New("failed to get logs for block")
-	}
-	return logs, nil
+	return b.eth.blockchain.GetLogsByHash(blockHash), nil
 }
 
 func (b *EthApiBackend) GetTd(blockHash common.Hash) *big.Int {
