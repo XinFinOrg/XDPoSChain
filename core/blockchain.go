@@ -39,7 +39,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	contractValidator "github.com/XinFinOrg/XDPoSChain/contracts/validator/contract"
-	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
@@ -69,7 +68,6 @@ var (
 const (
 	bodyCacheLimit      = 256
 	blockCacheLimit     = 256
-	logsCacheLimit      = 32
 	maxFutureBlocks     = 256
 	maxTimeFutureBlocks = 30
 	badBlockLimit       = 10
@@ -144,7 +142,6 @@ type BlockChain struct {
 	bodyCache        *lru.Cache    // Cache for the most recent block bodies
 	bodyRLPCache     *lru.Cache    // Cache for the most recent block bodies in RLP encoded format
 	blockCache       *lru.Cache    // Cache for the most recent entire blocks
-	logsCache        *lru.Cache    // Cache for the most recent logs per block
 	futureBlocks     *lru.Cache    // future blocks are blocks added for later processing
 	resultProcess    *lru.Cache    // Cache for processed blocks
 	calculatingBlock *lru.Cache    // Cache for processing blocks
@@ -187,7 +184,6 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	}
 	bodyCache, _ := lru.New(bodyCacheLimit)
 	bodyRLPCache, _ := lru.New(bodyCacheLimit)
-	logsCache, _ := lru.New(logsCacheLimit)
 	blockCache, _ := lru.New(blockCacheLimit)
 	blocksHashCache, _ := lru.New(blocksHashCacheLimit)
 	futureBlocks, _ := lru.New(maxFutureBlocks)
@@ -213,7 +209,6 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		quit:                make(chan struct{}),
 		bodyCache:           bodyCache,
 		bodyRLPCache:        bodyRLPCache,
-		logsCache:           logsCache,
 		blockCache:          blockCache,
 		futureBlocks:        futureBlocks,
 		resultProcess:       resultProcess,
@@ -415,7 +410,6 @@ func (bc *BlockChain) SetHead(head uint64) error {
 	// Clear out any stale content from the caches
 	bc.bodyCache.Purge()
 	bc.bodyRLPCache.Purge()
-	bc.logsCache.Purge()
 	bc.blockCache.Purge()
 	bc.futureBlocks.Purge()
 	bc.blocksHashCache.Purge()
@@ -872,23 +866,6 @@ func (bc *BlockChain) AreTwoBlockSamePath(bh1 common.Hash, bh2 common.Hash) bool
 	}
 
 	return (bl1.Hash() == bl2.Hash())
-}
-
-// GetLogsByHash retrieves the logs for all transactions in a given block.
-func (bc *BlockChain) GetLogsByHash(hash common.Hash) [][]*types.Log {
-	if logs, ok := bc.logsCache.Get(hash); ok {
-		return logs.([][]*types.Log)
-	}
-	number := rawdb.ReadHeaderNumber(bc.db, hash)
-	if number == nil {
-		return nil
-	}
-	logs := rawdb.ReadLogs(bc.db, hash, *number)
-	if logs == nil {
-		return nil
-	}
-	bc.logsCache.Add(hash, logs)
-	return logs
 }
 
 // GetUnclesInChain retrieves all the uncles from a given block backwards until
