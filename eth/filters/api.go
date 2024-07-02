@@ -59,7 +59,7 @@ type filter struct {
 // PublicFilterAPI offers support to create and manage filters. This will allow external clients to retrieve various
 // information related to the Ethereum protocol such als blocks, transactions and logs.
 type PublicFilterAPI struct {
-	backend   Backend
+	sys       *FilterSystem
 	mux       *event.TypeMux
 	quit      chan struct{}
 	chainDb   ethdb.Database
@@ -69,12 +69,12 @@ type PublicFilterAPI struct {
 }
 
 // NewPublicFilterAPI returns a new PublicFilterAPI instance.
-func NewPublicFilterAPI(backend Backend, lightMode bool) *PublicFilterAPI {
+func NewPublicFilterAPI(system *FilterSystem, lightMode bool) *PublicFilterAPI {
 	api := &PublicFilterAPI{
-		backend: backend,
-		mux:     backend.EventMux(),
-		chainDb: backend.ChainDb(),
-		events:  NewEventSystem(backend.EventMux(), backend, lightMode),
+		sys:     system,
+		mux:     system.backend.EventMux(),
+		chainDb: system.backend.ChainDb(),
+		events:  NewEventSystem(system.backend.EventMux(), system, lightMode),
 		filters: make(map[rpc.ID]*filter),
 	}
 	go api.timeoutLoop()
@@ -338,7 +338,7 @@ func (api *PublicFilterAPI) GetLogs(ctx context.Context, crit FilterCriteria) ([
 	var filter *Filter
 	if crit.BlockHash != nil {
 		// Block filter requested, construct a single-shot filter
-		filter = NewBlockFilter(api.backend, *crit.BlockHash, crit.Addresses, crit.Topics)
+		filter = api.sys.NewBlockFilter(*crit.BlockHash, crit.Addresses, crit.Topics)
 	} else {
 		// Convert the RPC block numbers into internal representations
 		begin := rpc.LatestBlockNumber.Int64()
@@ -350,7 +350,7 @@ func (api *PublicFilterAPI) GetLogs(ctx context.Context, crit FilterCriteria) ([
 			end = crit.ToBlock.Int64()
 		}
 		// Construct the range filter
-		filter = NewRangeFilter(api.backend, begin, end, crit.Addresses, crit.Topics)
+		filter = api.sys.NewRangeFilter(begin, end, crit.Addresses, crit.Topics)
 	}
 	// Run the filter and return all the logs
 	logs, err := filter.Logs(ctx)
@@ -393,7 +393,7 @@ func (api *PublicFilterAPI) GetFilterLogs(ctx context.Context, id rpc.ID) ([]*ty
 	var filter *Filter
 	if f.crit.BlockHash != nil {
 		// Block filter requested, construct a single-shot filter
-		filter = NewBlockFilter(api.backend, *f.crit.BlockHash, f.crit.Addresses, f.crit.Topics)
+		filter = api.sys.NewBlockFilter(*f.crit.BlockHash, f.crit.Addresses, f.crit.Topics)
 	} else {
 		// Convert the RPC block numbers into internal representations
 		begin := rpc.LatestBlockNumber.Int64()
@@ -405,7 +405,7 @@ func (api *PublicFilterAPI) GetFilterLogs(ctx context.Context, id rpc.ID) ([]*ty
 			end = f.crit.ToBlock.Int64()
 		}
 		// Construct the range filter
-		filter = NewRangeFilter(api.backend, begin, end, f.crit.Addresses, f.crit.Topics)
+		filter = api.sys.NewRangeFilter(begin, end, f.crit.Addresses, f.crit.Topics)
 	}
 	// Run the filter and return all the logs
 	logs, err := filter.Logs(ctx)

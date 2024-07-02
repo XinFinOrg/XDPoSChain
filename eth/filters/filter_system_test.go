@@ -79,14 +79,8 @@ func (b *testBackend) GetReceipts(ctx context.Context, blockHash common.Hash) (t
 	return core.GetBlockReceipts(b.db, blockHash, number), nil
 }
 
-func (b *testBackend) GetLogs(ctx context.Context, blockHash common.Hash) ([][]*types.Log, error) {
-	number := core.GetBlockNumber(b.db, blockHash)
-	receipts := core.GetBlockReceipts(b.db, blockHash, number)
-
-	logs := make([][]*types.Log, len(receipts))
-	for i, receipt := range receipts {
-		logs[i] = receipt.Logs
-	}
+func (b *testBackend) GetLogs(ctx context.Context, hash common.Hash, number uint64) ([][]*types.Log, error) {
+	logs := rawdb.ReadLogs(b.db, hash, number)
 	return logs, nil
 }
 
@@ -137,6 +131,19 @@ func (b *testBackend) ServiceFilter(ctx context.Context, session *bloombits.Matc
 	}()
 }
 
+func newTestFilterSystem(t testing.TB, db ethdb.Database, cfg Config) (*testBackend, *FilterSystem) {
+	var (
+		mux        = new(event.TypeMux)
+		txFeed     = new(event.Feed)
+		rmLogsFeed = new(event.Feed)
+		logsFeed   = new(event.Feed)
+		chainFeed  = new(event.Feed)
+	)
+	backend := &testBackend{mux, db, 0, txFeed, rmLogsFeed, logsFeed, chainFeed}
+	sys := NewFilterSystem(backend, cfg)
+	return backend, sys
+}
+
 // TestBlockSubscription tests if a block subscription returns block hashes for posted chain events.
 // It creates multiple subscriptions:
 // - one at the start and should receive all posted chain events and a second (blockHashes)
@@ -146,17 +153,23 @@ func TestBlockSubscription(t *testing.T) {
 	t.Parallel()
 
 	var (
-		mux         = new(event.TypeMux)
-		db          = rawdb.NewMemoryDatabase()
-		txFeed      = new(event.Feed)
-		rmLogsFeed  = new(event.Feed)
-		logsFeed    = new(event.Feed)
-		chainFeed   = new(event.Feed)
-		backend     = &testBackend{mux, db, 0, txFeed, rmLogsFeed, logsFeed, chainFeed}
-		api         = NewPublicFilterAPI(backend, false)
-		genesis     = new(core.Genesis).MustCommit(db)
-		chain, _    = core.GenerateChain(params.TestChainConfig, genesis, ethash.NewFaker(), db, 10, func(i int, gen *core.BlockGen) {})
-		chainEvents = []core.ChainEvent{}
+		// mux         = new(event.TypeMux)
+		// db          = rawdb.NewMemoryDatabase()
+		// txFeed      = new(event.Feed)
+		// rmLogsFeed  = new(event.Feed)
+		// logsFeed    = new(event.Feed)
+		// chainFeed   = new(event.Feed)
+		// backend     = &testBackend{mux, db, 0, txFeed, rmLogsFeed, logsFeed, chainFeed}
+		// api         = NewPublicFilterAPI(backend, false)
+		// genesis     = new(core.Genesis).MustCommit(db)
+		// chain, _    = core.GenerateChain(params.TestChainConfig, genesis, ethash.NewFaker(), db, 10, func(i int, gen *core.BlockGen) {})
+		// chainEvents = []core.ChainEvent{}
+		db           = rawdb.NewMemoryDatabase()
+		backend, sys = newTestFilterSystem(t, db, Config{})
+		api          = NewPublicFilterAPI(sys, false)
+		genesis      = new(core.Genesis).MustCommit(db)
+		chain, _     = core.GenerateChain(params.TestChainConfig, genesis, ethash.NewFaker(), db, 10, func(i int, gen *core.BlockGen) {})
+		chainEvents  = []core.ChainEvent{}
 	)
 
 	for _, blk := range chain {
@@ -191,7 +204,7 @@ func TestBlockSubscription(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 	for _, e := range chainEvents {
-		chainFeed.Send(e)
+		backend.chainFeed.Send(e)
 	}
 
 	<-sub0.Err()
@@ -203,14 +216,9 @@ func TestPendingTxFilter(t *testing.T) {
 	t.Parallel()
 
 	var (
-		mux        = new(event.TypeMux)
-		db         = rawdb.NewMemoryDatabase()
-		txFeed     = new(event.Feed)
-		rmLogsFeed = new(event.Feed)
-		logsFeed   = new(event.Feed)
-		chainFeed  = new(event.Feed)
-		backend    = &testBackend{mux, db, 0, txFeed, rmLogsFeed, logsFeed, chainFeed}
-		api        = NewPublicFilterAPI(backend, false)
+		db           = rawdb.NewMemoryDatabase()
+		backend, sys = newTestFilterSystem(t, db, Config{})
+		api          = NewPublicFilterAPI(sys, false)
 
 		transactions = []*types.Transaction{
 			types.NewTransaction(0, common.HexToAddress("0xb794f5ea0ba39494ce83a213fffba74279579268"), new(big.Int), 0, new(big.Int), nil),
@@ -226,7 +234,7 @@ func TestPendingTxFilter(t *testing.T) {
 	fid0 := api.NewPendingTransactionFilter()
 
 	time.Sleep(1 * time.Second)
-	txFeed.Send(core.NewTxsEvent{Txs: transactions})
+	backend.txFeed.Send(core.NewTxsEvent{Txs: transactions})
 
 	timeout := time.Now().Add(1 * time.Second)
 	for {
@@ -263,14 +271,9 @@ func TestPendingTxFilter(t *testing.T) {
 // If not it must return an error.
 func TestLogFilterCreation(t *testing.T) {
 	var (
-		mux        = new(event.TypeMux)
-		db         = rawdb.NewMemoryDatabase()
-		txFeed     = new(event.Feed)
-		rmLogsFeed = new(event.Feed)
-		logsFeed   = new(event.Feed)
-		chainFeed  = new(event.Feed)
-		backend    = &testBackend{mux, db, 0, txFeed, rmLogsFeed, logsFeed, chainFeed}
-		api        = NewPublicFilterAPI(backend, false)
+		db     = rawdb.NewMemoryDatabase()
+		_, sys = newTestFilterSystem(t, db, Config{})
+		api    = NewPublicFilterAPI(sys, false)
 
 		testCases = []struct {
 			crit    FilterCriteria
@@ -312,14 +315,9 @@ func TestInvalidLogFilterCreation(t *testing.T) {
 	t.Parallel()
 
 	var (
-		mux        = new(event.TypeMux)
-		db         = rawdb.NewMemoryDatabase()
-		txFeed     = new(event.Feed)
-		rmLogsFeed = new(event.Feed)
-		logsFeed   = new(event.Feed)
-		chainFeed  = new(event.Feed)
-		backend    = &testBackend{mux, db, 0, txFeed, rmLogsFeed, logsFeed, chainFeed}
-		api        = NewPublicFilterAPI(backend, false)
+		db     = rawdb.NewMemoryDatabase()
+		_, sys = newTestFilterSystem(t, db, Config{})
+		api    = NewPublicFilterAPI(sys, false)
 	)
 
 	// different situations where log filter creation should fail.
@@ -339,15 +337,10 @@ func TestInvalidLogFilterCreation(t *testing.T) {
 
 func TestInvalidGetLogsRequest(t *testing.T) {
 	var (
-		mux        = new(event.TypeMux)
-		db         = rawdb.NewMemoryDatabase()
-		txFeed     = new(event.Feed)
-		rmLogsFeed = new(event.Feed)
-		logsFeed   = new(event.Feed)
-		chainFeed  = new(event.Feed)
-		backend    = &testBackend{mux, db, 0, txFeed, rmLogsFeed, logsFeed, chainFeed}
-		api        = NewPublicFilterAPI(backend, false)
-		blockHash  = common.HexToHash("0x1111111111111111111111111111111111111111111111111111111111111111")
+		db        = rawdb.NewMemoryDatabase()
+		_, sys    = newTestFilterSystem(t, db, Config{})
+		api       = NewPublicFilterAPI(sys, false)
+		blockHash = common.HexToHash("0x1111111111111111111111111111111111111111111111111111111111111111")
 	)
 
 	// Reason: Cannot specify both BlockHash and FromBlock/ToBlock)
@@ -369,14 +362,9 @@ func TestLogFilter(t *testing.T) {
 	t.Parallel()
 
 	var (
-		mux        = new(event.TypeMux)
-		db         = rawdb.NewMemoryDatabase()
-		txFeed     = new(event.Feed)
-		rmLogsFeed = new(event.Feed)
-		logsFeed   = new(event.Feed)
-		chainFeed  = new(event.Feed)
-		backend    = &testBackend{mux, db, 0, txFeed, rmLogsFeed, logsFeed, chainFeed}
-		api        = NewPublicFilterAPI(backend, false)
+		db           = rawdb.NewMemoryDatabase()
+		backend, sys = newTestFilterSystem(t, db, Config{})
+		api          = NewPublicFilterAPI(sys, false)
 
 		firstAddr      = common.HexToAddress("0x1111111111111111111111111111111111111111")
 		secondAddr     = common.HexToAddress("0x2222222222222222222222222222222222222222")
@@ -439,10 +427,10 @@ func TestLogFilter(t *testing.T) {
 
 	// raise events
 	time.Sleep(1 * time.Second)
-	if nsend := logsFeed.Send(allLogs); nsend == 0 {
+	if nsend := backend.logsFeed.Send(allLogs); nsend == 0 {
 		t.Fatal("Shoud have at least one subscription")
 	}
-	if err := mux.Post(core.PendingLogsEvent{Logs: allLogs}); err != nil {
+	if err := backend.mux.Post(core.PendingLogsEvent{Logs: allLogs}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -488,14 +476,9 @@ func TestPendingLogsSubscription(t *testing.T) {
 	t.Parallel()
 
 	var (
-		mux        = new(event.TypeMux)
-		db         = rawdb.NewMemoryDatabase()
-		txFeed     = new(event.Feed)
-		rmLogsFeed = new(event.Feed)
-		logsFeed   = new(event.Feed)
-		chainFeed  = new(event.Feed)
-		backend    = &testBackend{mux, db, 0, txFeed, rmLogsFeed, logsFeed, chainFeed}
-		api        = NewPublicFilterAPI(backend, false)
+		db           = rawdb.NewMemoryDatabase()
+		backend, sys = newTestFilterSystem(t, db, Config{})
+		api          = NewPublicFilterAPI(sys, false)
 
 		firstAddr      = common.HexToAddress("0x1111111111111111111111111111111111111111")
 		secondAddr     = common.HexToAddress("0x2222222222222222222222222222222222222222")
@@ -595,7 +578,7 @@ func TestPendingLogsSubscription(t *testing.T) {
 	time.Sleep(1 * time.Second)
 	// allLogs are type of core.PendingLogsEvent
 	for _, l := range allLogs {
-		if err := mux.Post(l); err != nil {
+		if err := backend.mux.Post(l); err != nil {
 			t.Fatal(err)
 		}
 	}

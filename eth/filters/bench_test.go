@@ -125,20 +125,24 @@ func benchmarkBloomBits(b *testing.B, sectionSize uint64) {
 	b.Log("Running filter benchmarks...")
 	start = time.Now()
 	mux := new(event.TypeMux)
-	var backend *testBackend
+	var (
+		backend *testBackend
+		sys     *FilterSystem
+	)
 
 	for i := 0; i < benchFilterCnt; i++ {
 		if i%20 == 0 {
 			db.Close()
 			db, _ = rawdb.NewLevelDBDatabase(benchDataDir, 128, 1024, "")
 			backend = &testBackend{mux, db, cnt, new(event.Feed), new(event.Feed), new(event.Feed), new(event.Feed)}
+			sys = NewFilterSystem(backend, Config{})
 		}
 		var addr common.Address
 		addr[0] = byte(i)
 		addr[1] = byte(i / 256)
-		filter := NewRangeFilter(backend, 0, int64(cnt*sectionSize-1), []common.Address{addr}, nil)
+		filter := sys.NewRangeFilter(0, int64(cnt*sectionSize-1), []common.Address{addr}, nil)
 		if _, err := filter.Logs(context.Background()); err != nil {
-			b.Error("filter.Find error:", err)
+			b.Error("filter.Logs error:", err)
 		}
 	}
 	d = time.Since(start)
@@ -188,11 +192,14 @@ func BenchmarkNoBloomBits(b *testing.B) {
 
 	clearBloomBits(db)
 
+	_, sys := newTestFilterSystem(b, db, Config{})
+
 	b.Log("Running filter benchmarks...")
 	start := time.Now()
-	mux := new(event.TypeMux)
-	backend := &testBackend{mux, db, 0, new(event.Feed), new(event.Feed), new(event.Feed), new(event.Feed)}
-	filter := NewRangeFilter(backend, 0, int64(headNum), []common.Address{{}}, nil)
+	// mux := new(event.TypeMux)
+	// backend := &testBackend{mux, db, 0, new(event.Feed), new(event.Feed), new(event.Feed), new(event.Feed)}
+	// filter := NewRangeFilter(backend, 0, int64(headNum), []common.Address{{}}, nil)
+	filter := sys.NewRangeFilter(0, int64(headNum), []common.Address{{}}, nil)
 	filter.Logs(context.Background())
 	d := time.Since(start)
 	b.Log("Finished running filter benchmarks")
