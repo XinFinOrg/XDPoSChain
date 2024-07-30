@@ -94,7 +94,7 @@ type chainHeightFn func() uint64
 type chainInsertFn func(types.Blocks) (int, error)
 
 // blockInsertFn is a callback type to insert a batch of blocks into the local chain.
-type blockInsertFn func(types.Block) (error)
+type blockInsertFn func(types.Block) error
 
 type blockPrepareFn func(block *types.Block) error
 
@@ -383,6 +383,8 @@ func (f *BlockFetcher) loop() {
 				f.forgetBlock(hash)
 				continue
 			}
+			
+			log.Info("[2464] [loop] before f.insert", "peer", op.origin, "block", op.block.Number(), "hash", op.block.Hash())
 			f.insert(op.origin, op.block)
 		}
 
@@ -680,6 +682,7 @@ func (f *BlockFetcher) enqueue(peer string, block *types.Block) {
 	}
 	// Ensure the peer isn't DOSing us
 	count := f.queues[peer] + 1
+	log.Info("[2464] [enqueue]", "peer", peer, "number", block.Number(), "hash", hash, "count", count)
 	if count > blockLimit {
 		log.Debug("Discarded propagated block, exceeded allowance", "peer", peer, "number", block.Number(), "hash", hash, "limit", blockLimit)
 		blockBroadcastDOSMeter.Mark(1)
@@ -700,6 +703,7 @@ func (f *BlockFetcher) enqueue(peer string, block *types.Block) {
 			block:  block,
 		}
 		f.queues[peer] = count
+		log.Info("[2464] [enqueue] assign count", "peer", peer, "number", block.Number(), "hash", hash, "f.queues[peer]", f.queues[peer])
 		f.queued[hash] = op
 		f.knowns.Add(hash, true)
 		f.queue.Push(op, -int64(block.NumberU64()))
@@ -717,9 +721,15 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 	hash := block.Hash()
 
 	// Run the import on a new thread
-	log.Debug("Importing propagated block", "peer", peer, "number", block.Number(), "hash", hash)
+	log.Debug("Importing propagated block", "peer", peer, "number", block.Number(), "hash", hash) // for sure passed here
+	tstart := time.Now()
+	log.Info("[2464] [insert] start timer")
+	log.Info("[2464] [insert] blabla", "elapsed", common.PrettyDuration(time.Since(tstart)))
 	go func() {
-		defer func() { f.done <- hash }()
+		defer func() { 
+			log.Info("[2464] [insert] finish, sending to f.done channel", "elapsed", common.PrettyDuration(time.Since(tstart)))
+			f.done <- hash 
+			}() //this doesn't trigger!
 
 		// If the parent's unknown, abort insertion
 		parent := f.getBlock(block.ParentHash())
@@ -733,6 +743,7 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 		// Quickly validate the header and propagate the block if it passes
 		switch err {
 		case nil:
+			log.Info("[2464] [insert] err nil", "elapsed", common.PrettyDuration(time.Since(tstart)))
 			// All ok, quickly propagate to our peers
 			blockBroadcastOutTimer.UpdateSince(block.ReceivedAt)
 			if fastBroadCast {
@@ -740,11 +751,13 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 			}
 
 		case consensus.ErrFutureBlock:
+			log.Info("[2464] [insert] err ErrFutureBlock", "elapsed", common.PrettyDuration(time.Since(tstart)))
 			delay := time.Unix(block.Time().Int64(), 0).Sub(time.Now()) // nolint: gosimple
 			log.Info("Receive future block", "number", block.NumberU64(), "hash", block.Hash().Hex(), "delay", delay)
 			time.Sleep(delay)
 			goto again
 		case consensus.ErrNoValidatorSignature:
+			log.Info("[2464] [insert] err ErrNoValidatorSignature", "elapsed", common.PrettyDuration(time.Since(tstart)))
 			newBlock := block
 			var errM2 error
 			isM2 := false
@@ -771,6 +784,7 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 			fastBroadCast = false
 			goto again //TODO: doublecheck if goto again logic is required
 		default:
+			log.Info("[2464] [insert] err default", "elapsed", common.PrettyDuration(time.Since(tstart)))
 			// Something went very wrong, drop the peer
 			log.Warn("Propagated block verification failed", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
 			f.dropPeer(peer)
@@ -778,6 +792,7 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 		}
 		// Run the actual import and log any issues
 		if err := f.insertBlock(*block); err != nil {
+			log.Info("[2464] [insert] f.insertBlock ERROR", "elapsed", common.PrettyDuration(time.Since(tstart)))
 			log.Warn("Propagated block import failed", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
 			return
 		}
@@ -850,8 +865,11 @@ func (f *BlockFetcher) forgetHash(hash common.Hash) {
 // forgetBlock removes all traces of a queued block from the fetcher's internal
 // state.
 func (f *BlockFetcher) forgetBlock(hash common.Hash) {
-	if insert := f.queued[hash]; insert != nil {
+	insert := f.queued[hash]
+	log.Info("[2464] [forgetBlock]", "insert", insert)
+	if insert != nil {
 		f.queues[insert.origin]--
+		log.Info("[2464] [forgetBlock]", "hash", hash, "peer", insert.origin, "count", f.queues[insert.origin])
 		if f.queues[insert.origin] == 0 {
 			delete(f.queues, insert.origin)
 		}

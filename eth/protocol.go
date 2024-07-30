@@ -43,32 +43,13 @@ const (
 // try to follow the exact comparison from go-ethereum as much as possible (eg. version >= 63 <> isEth63OrHigher(version))
 
 func isEth63(version int) bool {
-	switch {
-	case version == 63:
-		return true
-	case version == 100:
-		return true
-	default:
-		return false
-	}
+	return version == xdpos2 || version == eth63
 }
 func isEth64(version int) bool {
-	switch {
-	case version == 64:
-		return true
-	default:
-		return false
-	}
+	return version == eth64
 }
 func isEth65(version int) bool {
-	switch {
-	case version == 65:
-		return true
-	case version == 101:
-		return true
-	default:
-		return false
-	}
+	return version == xdpos22 || version == eth65
 }
 
 func isEth63OrHigher(version int) bool {
@@ -86,7 +67,6 @@ func isEth65OrHigher(version int) bool {
 // protocolName is the official short name of the protocol used during capability negotiation.
 const protocolName = "eth"
 
-// ProtocolVersions are the supported versions of the eth protocol (first is primary).
 var ProtocolVersions = []uint{xdpos22, xdpos2, eth65, eth64, eth63}
 
 // protocolLengths are the number of implemented message corresponding to different protocol versions.

@@ -246,7 +246,7 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		return blockchain.CurrentBlock().NumberU64()
 	}
 
-	inserter := func(block types.Block) (error) {
+	inserter := func(block types.Block) error {
 		// If sync hasn't reached the checkpoint yet, deny importing weird blocks.
 		//
 		// Ideally we would also compare the head block's timestamp and similarly reject
@@ -925,7 +925,10 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			}
 
 		}
-		pm.txFetcher.Enqueue(p.id, txs, msg.Code == PooledTransactionsMsg)
+		tstart := time.Now()
+		pm.txpool.AddRemotes(txs)
+		log.Info("[2464] [handleMst] pm.txpool.AddRemotes", "elapsed", common.PrettyDuration(time.Since(tstart)))
+		// pm.txFetcher.Enqueue(p.id, txs, msg.Code == PooledTransactionsMsg)
 
 	case msg.Code == OrderTxMsg:
 		// Transactions arrived, make sure we have a valid and fresh chain to handle them
@@ -1003,7 +1006,8 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		if !exist {
 			go pm.bft.Vote(p.id, &vote)
 		} else {
-			log.Debug("Discarded vote, known vote", "vote hash", vote.Hash(), "voted block hash", vote.ProposedBlockInfo.Hash.Hex(), "number", vote.ProposedBlockInfo.Number, "round", vote.ProposedBlockInfo.Round)
+			//temp remove spam log
+			// log.Debug("Discarded vote, known vote", "vote hash", vote.Hash(), "voted block hash", vote.ProposedBlockInfo.Hash.Hex(), "number", vote.ProposedBlockInfo.Number, "round", vote.ProposedBlockInfo.Round)
 		}
 
 	case msg.Code == TimeoutMsg:
@@ -1128,11 +1132,34 @@ func (pm *ProtocolManager) BroadcastTransactions(txs types.Transactions, propaga
 		}
 	}
 	for peer, hashes := range annos {
-		if peer.version >= eth65 { //implement
+		if isEth65OrHigher(peer.version) {
 			peer.AsyncSendPooledTransactionHashes(hashes)
 		} else {
 			peer.AsyncSendTransactions(hashes)
 		}
+	}
+}
+
+// BroadcastTxs will propagate a batch of transactions to all peers which are not known to
+// already have the given transaction.
+func (pm *ProtocolManager) BroadcastTxs(txs types.Transactions) {
+	var txset = make(map[*peer]types.Transactions)
+
+	// Broadcast transactions to a batch of peers not knowing about it
+	for _, tx := range txs {
+		peers := pm.peers.PeersWithoutTx(tx.Hash())
+		for _, peer := range peers {
+			txset[peer] = append(txset[peer], tx)
+		}
+		log.Trace("Broadcast transaction", "hash", tx.Hash(), "recipients", len(peers))
+	}
+	// FIXME include this again: peers = peers[:int(math.Sqrt(float64(len(peers))))]
+	for peer, txs := range txset {
+		hashes := []common.Hash{}
+		for _, tx := range txs {
+			hashes = append(hashes, tx.Hash())
+		}
+		peer.AsyncSendTransactions(hashes)
 	}
 }
 
@@ -1225,17 +1252,28 @@ func (self *ProtocolManager) minedBroadcastLoop() {
 }
 
 func (pm *ProtocolManager) txBroadcastLoop() {
+	// for {
+	// 	select {
+	// 	case event := <-pm.txsCh:
+	// 		// For testing purpose only, disable propagation
+	// 		if pm.broadcastTxAnnouncesOnly {
+	// 			pm.BroadcastTransactions(event.Txs, false)
+	// 			continue
+	// 		}
+	// 		pm.BroadcastTransactions(event.Txs, true)  // First propagate transactions to peers
+	// 		pm.BroadcastTransactions(event.Txs, false) // Only then announce to the rest
+
+	// 	// Err() channel will be closed when unsubscribing.
+	// 	case <-pm.txsSub.Err():
+	// 		return
+	// 	}
+	// }
 	for {
 		select {
 		case event := <-pm.txsCh:
-			// For testing purpose only, disable propagation
-			if pm.broadcastTxAnnouncesOnly {
-				pm.BroadcastTransactions(event.Txs, false)
-				continue
-			}
-			pm.BroadcastTransactions(event.Txs, true)  // First propagate transactions to peers
-			pm.BroadcastTransactions(event.Txs, false) // Only then announce to the rest
-
+			tstart := time.Now()
+			pm.BroadcastTxs(event.Txs)
+			log.Info("[2464] [txBroadcastLoop] pm.BroadcastTxs", "elapsed", common.PrettyDuration(time.Since(tstart)))
 		// Err() channel will be closed when unsubscribing.
 		case <-pm.txsSub.Err():
 			return
