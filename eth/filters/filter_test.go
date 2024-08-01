@@ -144,6 +144,7 @@ func TestFilters(t *testing.T) {
 				},
 			}
 			gen.AddUncheckedReceipt(receipt)
+			
 		case 2:
 			receipt := types.NewReceipt(nil, false, 0)
 			receipt.Logs = []*types.Log{

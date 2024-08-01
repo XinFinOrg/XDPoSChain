@@ -131,6 +131,7 @@ type Context struct {
 	BlockNumber *big.Int       // Provides information for NUMBER
 	Time        *big.Int       // Provides information for TIME
 	Difficulty  *big.Int       // Provides information for DIFFICULTY
+	BaseFee     *big.Int       // Provides information for BASEFEE
 	Random      *common.Hash   // Provides information for PREVRANDAO
 }
 
@@ -160,7 +161,7 @@ type EVM struct {
 	chainRules params.Rules
 	// virtual machine configuration options used to initialise the
 	// evm.
-	vmConfig Config
+	Config Config
 	// global (to this context) ethereum virtual machine
 	// used throughout the execution of the tx.
 	interpreters []Interpreter
@@ -176,12 +177,12 @@ type EVM struct {
 
 // NewEVM returns a new EVM. The returned EVM is not thread safe and should
 // only ever be used *once*.
-func NewEVM(ctx Context, statedb StateDB, tradingStateDB *tradingstate.TradingStateDB, chainConfig *params.ChainConfig, vmConfig Config) *EVM {
+func NewEVM(ctx Context, statedb StateDB, tradingStateDB *tradingstate.TradingStateDB, chainConfig *params.ChainConfig, config Config) *EVM {
 	evm := &EVM{
 		Context:        ctx,
 		StateDB:        statedb,
 		tradingStateDB: tradingStateDB,
-		vmConfig:       vmConfig,
+		Config:         config,
 		chainConfig:    chainConfig,
 		chainRules:     chainConfig.Rules(ctx.BlockNumber),
 		interpreters:   make([]Interpreter, 0, 1),
@@ -189,7 +190,7 @@ func NewEVM(ctx Context, statedb StateDB, tradingStateDB *tradingstate.TradingSt
 
 	// vmConfig.EVMInterpreter will be used by EVM-C, it won't be checked here
 	// as we always want to have the built-in EVM as the failover option.
-	evm.interpreters = append(evm.interpreters, NewEVMInterpreter(evm, vmConfig))
+	evm.interpreters = append(evm.interpreters, NewEVMInterpreter(evm, config))
 	evm.interpreter = evm.interpreters[0]
 
 	return evm
@@ -232,9 +233,9 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 		_, isPrecompile := evm.precompile2(addr)
 		if !isPrecompile && evm.chainRules.IsEIP158 && value.Sign() == 0 {
 			// Calling a non existing account, don't do anything, but ping the tracer
-			if evm.vmConfig.Debug && evm.depth == 0 {
-				evm.vmConfig.Tracer.CaptureStart(evm, caller.Address(), addr, false, input, gas, value)
-				evm.vmConfig.Tracer.CaptureEnd(ret, 0, 0, nil)
+			if evm.Config.Debug && evm.depth == 0 {
+				evm.Config.Tracer.CaptureStart(evm, caller.Address(), addr, false, input, gas, value)
+				evm.Config.Tracer.CaptureEnd(ret, 0, 0, nil)
 			}
 			return nil, gas, nil
 		}
@@ -250,11 +251,11 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 	start := time.Now()
 
 	// Capture the tracer start/end events in debug mode
-	if evm.vmConfig.Debug && evm.depth == 0 {
-		evm.vmConfig.Tracer.CaptureStart(evm, caller.Address(), addr, false, input, gas, value)
+	if evm.Config.Debug && evm.depth == 0 {
+		evm.Config.Tracer.CaptureStart(evm, caller.Address(), addr, false, input, gas, value)
 
 		defer func() { // Lazy evaluation of the parameters
-			evm.vmConfig.Tracer.CaptureEnd(ret, gas-contract.Gas, time.Since(start), err)
+			evm.Config.Tracer.CaptureEnd(ret, gas-contract.Gas, time.Since(start), err)
 		}()
 	}
 	ret, err = run(evm, contract, input, false)
@@ -423,8 +424,8 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 	contract := NewContract(caller, AccountRef(address), value, gas)
 	contract.SetCodeOptionalHash(&address, codeAndHash)
 
-	if evm.vmConfig.Debug && evm.depth == 0 {
-		evm.vmConfig.Tracer.CaptureStart(evm, caller.Address(), address, true, codeAndHash.code, gas, value)
+	if evm.Config.Debug && evm.depth == 0 {
+		evm.Config.Tracer.CaptureStart(evm, caller.Address(), address, true, codeAndHash.code, gas, value)
 	}
 	start := time.Now()
 
@@ -458,8 +459,8 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 		}
 	}
 
-	if evm.vmConfig.Debug && evm.depth == 0 {
-		evm.vmConfig.Tracer.CaptureEnd(ret, gas-contract.Gas, time.Since(start), err)
+	if evm.Config.Debug && evm.depth == 0 {
+		evm.Config.Tracer.CaptureEnd(ret, gas-contract.Gas, time.Since(start), err)
 	}
 	return ret, address, contract.Gas, err
 }

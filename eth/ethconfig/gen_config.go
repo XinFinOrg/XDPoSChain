@@ -9,6 +9,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
+	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/eth/gasprice"
 )
@@ -32,7 +33,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		ExtraData               []byte         `toml:",omitempty"`
 		GasPrice                *big.Int
 		Ethash                  ethash.Config
-		TxPool                  core.TxPoolConfig
+		TxPool                  txpool.Config
 		GPO                     gasprice.Config
 		EnablePreimageRecording bool
 		DocRoot                 string `toml:"-"`
@@ -84,7 +85,7 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		ExtraData               []byte          `toml:",omitempty"`
 		GasPrice                *big.Int
 		Ethash                  *ethash.Config
-		TxPool                  *core.TxPoolConfig
+		TxPool                  *txpool.Config
 		GPO                     *gasprice.Config
 		EnablePreimageRecording *bool
 		DocRoot                 *string `toml:"-"`

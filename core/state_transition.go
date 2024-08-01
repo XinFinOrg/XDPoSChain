@@ -18,15 +18,20 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"math/big"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	cmath "github.com/XinFinOrg/XDPoSChain/common/math"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
+	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
+
+var emptyCodeHash = crypto.Keccak256Hash(nil)
 
 var (
 	errInsufficientBalanceForGas = errors.New("insufficient balance to pay for gas")
@@ -56,6 +61,8 @@ type StateTransition struct {
 	msg        Message
 	gas        uint64
 	gasPrice   *big.Int
+	gasFeeCap  *big.Int
+	gasTipCap  *big.Int
 	initialGas uint64
 	value      *big.Int
 	data       []byte
@@ -70,11 +77,13 @@ type Message interface {
 	To() *common.Address
 
 	GasPrice() *big.Int
+	GasFeeCap() *big.Int
+	GasTipCap() *big.Int
 	Gas() uint64
 	Value() *big.Int
 
 	Nonce() uint64
-	CheckNonce() bool
+	IsFake() bool
 	Data() []byte
 	BalanceTokenFee() *big.Int
 	AccessList() types.AccessList
@@ -120,13 +129,15 @@ func IntrinsicGas(data []byte, accessList types.AccessList, isContractCreation, 
 // NewStateTransition initialises and returns a new state transition object.
 func NewStateTransition(evm *vm.EVM, msg Message, gp *GasPool) *StateTransition {
 	return &StateTransition{
-		gp:       gp,
-		evm:      evm,
-		msg:      msg,
-		gasPrice: msg.GasPrice(),
-		value:    msg.Value(),
-		data:     msg.Data(),
-		state:    evm.StateDB,
+		gp:        gp,
+		evm:       evm,
+		msg:       msg,
+		gasPrice:  msg.GasPrice(),
+		gasFeeCap: msg.GasFeeCap(),
+		gasTipCap: msg.GasTipCap(),
+		value:     msg.Value(),
+		data:      msg.Data(),
+		state:     evm.StateDB,
 	}
 }
 
@@ -179,15 +190,18 @@ func (st *StateTransition) useGas(amount uint64) error {
 }
 
 func (st *StateTransition) buyGas() error {
-	var (
-		state           = st.state
-		balanceTokenFee = st.balanceTokenFee()
-		from            = st.from()
-	)
-	mgval := new(big.Int).Mul(new(big.Int).SetUint64(st.msg.Gas()), st.gasPrice)
+	mgval := new(big.Int).SetUint64(st.msg.Gas())
+	mgval = mgval.Mul(mgval, st.gasPrice)
+	balanceTokenFee := st.balanceTokenFee()
 	if balanceTokenFee == nil {
-		if state.GetBalance(from.Address()).Cmp(mgval) < 0 {
-			return errInsufficientBalanceForGas
+		balanceCheck := mgval
+		if st.gasFeeCap != nil {
+			balanceCheck = new(big.Int).SetUint64(st.msg.Gas())
+			balanceCheck = balanceCheck.Mul(balanceCheck, st.gasFeeCap)
+			balanceCheck.Add(balanceCheck, st.value)
+		}
+		if have, want := st.state.GetBalance(st.msg.From()), balanceCheck; have.Cmp(want) < 0 {
+			return fmt.Errorf("%w: address %v have %v want %v", ErrInsufficientFunds, st.msg.From().Hex(), have, want)
 		}
 	} else if balanceTokenFee.Cmp(mgval) < 0 {
 		return errInsufficientBalanceForGas
@@ -199,22 +213,51 @@ func (st *StateTransition) buyGas() error {
 
 	st.initialGas = st.msg.Gas()
 	if balanceTokenFee == nil {
-		state.SubBalance(from.Address(), mgval)
+		st.state.SubBalance(st.msg.From(), mgval)
 	}
 	return nil
 }
 
 func (st *StateTransition) preCheck() error {
-	msg := st.msg
-	sender := st.from()
-
-	// Make sure this transaction's nonce is correct
-	if msg.CheckNonce() {
-		nonce := st.state.GetNonce(sender.Address())
-		if nonce < msg.Nonce() {
-			return ErrNonceTooHigh
-		} else if nonce > msg.Nonce() {
-			return ErrNonceTooLow
+	// Only check transactions that are not fake
+	if !st.msg.IsFake() {
+		// Make sure this transaction's nonce is correct.
+		stNonce := st.state.GetNonce(st.msg.From())
+		if msgNonce := st.msg.Nonce(); stNonce < msgNonce {
+			return fmt.Errorf("%w: address %v, tx: %d state: %d", ErrNonceTooHigh,
+				st.msg.From().Hex(), msgNonce, stNonce)
+		} else if stNonce > msgNonce {
+			return fmt.Errorf("%w: address %v, tx: %d state: %d", ErrNonceTooLow,
+				st.msg.From().Hex(), msgNonce, stNonce)
+		}
+		// Make sure the sender is an EOA
+		if codeHash := st.state.GetCodeHash(st.msg.From()); codeHash != emptyCodeHash && codeHash != (common.Hash{}) {
+			return fmt.Errorf("%w: address %v, codehash: %s", ErrSenderNoEOA,
+				st.msg.From().Hex(), codeHash)
+		}
+	}
+	// Make sure that transaction gasFeeCap is greater than the baseFee (post london)
+	if st.evm.ChainConfig().IsEIP1559(st.evm.Context.BlockNumber) {
+		// Skip the checks if gas fields are zero and baseFee was explicitly disabled (eth_call)
+		if !st.evm.Config.NoBaseFee || st.gasFeeCap.BitLen() > 0 || st.gasTipCap.BitLen() > 0 {
+			if l := st.gasFeeCap.BitLen(); l > 256 {
+				return fmt.Errorf("%w: address %v, maxFeePerGas bit length: %d", ErrFeeCapVeryHigh,
+					st.msg.From().Hex(), l)
+			}
+			if l := st.gasTipCap.BitLen(); l > 256 {
+				return fmt.Errorf("%w: address %v, maxPriorityFeePerGas bit length: %d", ErrTipVeryHigh,
+					st.msg.From().Hex(), l)
+			}
+			if st.gasFeeCap.Cmp(st.gasTipCap) < 0 {
+				return fmt.Errorf("%w: address %v, maxPriorityFeePerGas: %s, maxFeePerGas: %s", ErrTipAboveFeeCap,
+					st.msg.From().Hex(), st.gasTipCap, st.gasFeeCap)
+			}
+			// This will panic if baseFee is nil, but basefee presence is verified
+			// as part of header validation.
+			if st.gasFeeCap.Cmp(st.evm.Context.BaseFee) < 0 {
+				return fmt.Errorf("%w: address %v, maxFeePerGas: %s baseFee: %s", ErrFeeCapTooLow,
+					st.msg.From().Hex(), st.gasFeeCap, st.evm.Context.BaseFee)
+			}
 		}
 	}
 	return st.buyGas()
@@ -225,15 +268,14 @@ func (st *StateTransition) preCheck() error {
 // failed. An error indicates a consensus issue.
 func (st *StateTransition) TransitionDb(owner common.Address) (ret []byte, usedGas uint64, failed bool, err error, vmErr error) {
 	if err = st.preCheck(); err != nil {
-		return
+		return nil, 0, false, err, nil
 	}
 	msg := st.msg
 	sender := st.from() // err checked in preCheck
-
 	homestead := st.evm.ChainConfig().IsHomestead(st.evm.BlockNumber)
 	contractCreation := msg.To() == nil
 
-	// Pay intrinsic gas
+	// Check clauses 4-5, subtract intrinsic gas if everything is correct
 	gas, err := IntrinsicGas(st.data, st.msg.AccessList(), contractCreation, homestead)
 	if err != nil {
 		return nil, 0, false, err, nil
@@ -283,7 +325,11 @@ func (st *StateTransition) TransitionDb(owner common.Address) (ret []byte, usedG
 			st.state.AddBalance(owner, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), st.gasPrice))
 		}
 	} else {
-		st.state.AddBalance(st.evm.Coinbase, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), st.gasPrice))
+		effectiveTip := st.gasPrice
+		if st.evm.ChainConfig().IsEIP1559(st.evm.Context.BlockNumber) {
+			effectiveTip = cmath.BigMin(st.gasTipCap, new(big.Int).Sub(st.gasFeeCap, st.evm.Context.BaseFee))
+		}
+		st.state.AddBalance(st.evm.Coinbase, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), effectiveTip))
 	}
 
 	return ret, st.gasUsed(), vmerr != nil, err, vmerr

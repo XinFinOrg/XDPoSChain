@@ -23,13 +23,13 @@ import (
 	"sort"
 	"time"
 
-	mapset "github.com/deckarep/golang-set"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/mclock"
-	"github.com/XinFinOrg/XDPoSChain/core"
+	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/metrics"
+	mapset "github.com/deckarep/golang-set"
 )
 
 const (
@@ -281,7 +281,7 @@ func (f *TxFetcher) Enqueue(peer string, txs []*types.Transaction, direct bool) 
 			// Track the transaction hash if the price is too low for us.
 			// Avoid re-request this transaction when we receive another
 			// announcement.
-			if err == core.ErrUnderpriced || err == core.ErrReplaceUnderpriced {
+			if err == txpool.ErrUnderpriced || err == txpool.ErrReplaceUnderpriced {
 				for f.underpriced.Cardinality() >= maxTxUnderpricedSetSize {
 					f.underpriced.Pop()
 				}
@@ -291,10 +291,10 @@ func (f *TxFetcher) Enqueue(peer string, txs []*types.Transaction, direct bool) 
 			switch err {
 			case nil: // Noop, but need to handle to not count these
 
-			case core.ErrAlreadyKnown:
+			case txpool.ErrAlreadyKnown:
 				duplicate++
 
-			case core.ErrUnderpriced, core.ErrReplaceUnderpriced:
+			case txpool.ErrUnderpriced, txpool.ErrReplaceUnderpriced:
 				underpriced++
 
 			default:

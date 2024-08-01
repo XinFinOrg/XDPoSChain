@@ -216,13 +216,13 @@ func (api *PrivateDebugAPI) traceChain(ctx context.Context, start, end *types.Bl
 				feeCapacity := state.GetTRC21FeeCapacityFromState(task.statedb)
 				// Trace all the transactions contained within
 				for i, tx := range task.block.Transactions() {
-					var balacne *big.Int
+					var balance *big.Int
 					if tx.To() != nil {
 						if value, ok := feeCapacity[*tx.To()]; ok {
-							balacne = value
+							balance = value
 						}
 					}
-					msg, _ := tx.AsMessage(signer, balacne, task.block.Number())
+					msg, _ := tx.AsMessage(signer, task.block.BaseFee(), balance, task.block.Number())
 					txctx := &txTraceContext{
 						index: i,
 						hash:  tx.Hash(),
@@ -462,13 +462,13 @@ func (api *PrivateDebugAPI) traceBlock(ctx context.Context, block *types.Block, 
 			// Fetch and execute the next transaction trace tasks
 			for task := range jobs {
 				feeCapacity := state.GetTRC21FeeCapacityFromState(task.statedb)
-				var balacne *big.Int
+				var balance *big.Int
 				if txs[task.index].To() != nil {
 					if value, ok := feeCapacity[*txs[task.index].To()]; ok {
-						balacne = value
+						balance = value
 					}
 				}
-				msg, _ := txs[task.index].AsMessage(signer, balacne, block.Number())
+				msg, _ := txs[task.index].AsMessage(signer, block.BaseFee(), balance, block.Number())
 				txctx := &txTraceContext{
 					index: task.index,
 					hash:  txs[task.index].Hash(),
@@ -491,18 +491,18 @@ func (api *PrivateDebugAPI) traceBlock(ctx context.Context, block *types.Block, 
 	for i, tx := range txs {
 		// Send the trace task over for execution
 		jobs <- &txTraceTask{statedb: statedb.Copy(), index: i}
-		var balacne *big.Int
+		var balance *big.Int
 		if tx.To() != nil {
 			// Bypass the validation for trading and lending transactions as their nonce are not incremented
 			if tx.IsSkipNonceTransaction() {
 				continue
 			}
 			if value, ok := feeCapacity[*tx.To()]; ok {
-				balacne = value
+				balance = value
 			}
 		}
 		// Generate the next state snapshot fast without tracing
-		msg, _ := tx.AsMessage(signer, balacne, block.Number())
+		msg, _ := tx.AsMessage(signer, block.BaseFee(), balance, block.Number())
 		statedb.Prepare(tx.Hash(), block.Hash(), i)
 		vmctx := core.NewEVMContext(msg, block.Header(), api.eth.blockchain, nil)
 
@@ -633,7 +633,7 @@ func (api *PrivateDebugAPI) TraceTransaction(ctx context.Context, hash common.Ha
 // created during the execution of EVM if the given transaction was added on
 // top of the provided block and returns them as a JSON object.
 // You can provide -2 as a block number to trace on top of the pending block.
-func (api *PrivateDebugAPI) TraceCall(ctx context.Context, args ethapi.CallArgs, blockNrOrHash rpc.BlockNumberOrHash, config *TraceCallConfig) (interface{}, error) {
+func (api *PrivateDebugAPI) TraceCall(ctx context.Context, args ethapi.TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, config *TraceCallConfig) (interface{}, error) {
 	// Try to retrieve the specified block
 	var (
 		err   error
@@ -673,7 +673,12 @@ func (api *PrivateDebugAPI) TraceCall(ctx context.Context, args ethapi.CallArgs,
 		}
 	}
 	// Execute the trace
-	msg := args.ToMessage(api.eth.ApiBackend, block.Number(), api.eth.ApiBackend.RPCGasCap())
+	// TODO: replace block.BaseFee() with vmctx.BaseFee
+	// reference: https://github.com/ethereum/go-ethereum/pull/29051
+	msg, err := args.ToMessage(api.eth.ApiBackend, block.Number(), api.eth.ApiBackend.RPCGasCap(), block.BaseFee())
+	if err != nil {
+		return nil, err
+	}
 	vmctx := core.NewEVMContext(msg, block.Header(), api.eth.blockchain, nil)
 	var traceConfig *TraceConfig
 	if config != nil {
@@ -719,7 +724,7 @@ func (api *PrivateDebugAPI) traceTx(ctx context.Context, message core.Message, t
 		tracer = vm.NewStructLogger(config.LogConfig)
 	}
 	// Run the transaction with tracing enabled.
-	vmenv := vm.NewEVM(vmctx, statedb, nil, api.config, vm.Config{Debug: true, Tracer: tracer})
+	vmenv := vm.NewEVM(vmctx, statedb, nil, api.config, vm.Config{Debug: true, Tracer: tracer, NoBaseFee: true})
 
 	// Call Prepare to clear out the statedb access list
 	statedb.Prepare(txctx.hash, txctx.block, txctx.index)
@@ -782,7 +787,7 @@ func (api *PrivateDebugAPI) computeTxEnv(blockHash common.Hash, txIndex int, ree
 					balanceFee = value
 				}
 			}
-			msg, err := tx.AsMessage(types.MakeSigner(api.config, block.Header().Number), balanceFee, block.Number())
+			msg, err := tx.AsMessage(types.MakeSigner(api.config, block.Header().Number), block.BaseFee(), balanceFee, block.Number())
 			if err != nil {
 				return nil, vm.Context{}, nil, fmt.Errorf("tx %x failed: %v", tx.Hash(), err)
 			}

@@ -25,7 +25,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/mclock"
-	"github.com/XinFinOrg/XDPoSChain/core"
+	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 )
 
@@ -451,7 +451,7 @@ func TestTransactionFetcherCleanupEmpty(t *testing.T) {
 
 // Tests that non-returned transactions are either re-sheduled from a
 // different peer, or self if they are after the cutoff point.
-func TestTransactionFetcherMissingRescheduling(t *testing.T) { 
+func TestTransactionFetcherMissingRescheduling(t *testing.T) {
 	testTransactionFetcherParallel(t, txFetcherTest{
 		init: func() *TxFetcher {
 			return NewTxFetcher(
@@ -870,9 +870,9 @@ func TestTransactionFetcherUnderpricedDedup(t *testing.T) {
 					errs := make([]error, len(txs))
 					for i := 0; i < len(errs); i++ {
 						if i%2 == 0 {
-							errs[i] = core.ErrUnderpriced
+							errs[i] = txpool.ErrUnderpriced
 						} else {
-							errs[i] = core.ErrReplaceUnderpriced
+							errs[i] = txpool.ErrReplaceUnderpriced
 						}
 					}
 					return errs
@@ -942,7 +942,7 @@ func TestTransactionFetcherUnderpricedDoSProtection(t *testing.T) {
 				func(txs []*types.Transaction) []error {
 					errs := make([]error, len(txs))
 					for i := 0; i < len(errs); i++ {
-						errs[i] = core.ErrUnderpriced
+						errs[i] = txpool.ErrUnderpriced
 					}
 					return errs
 				},

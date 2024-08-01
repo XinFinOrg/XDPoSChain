@@ -21,14 +21,14 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/XinFinOrg/XDPoSChain/XDCxlending"
-
 	"github.com/XinFinOrg/XDPoSChain/XDCx"
+	"github.com/XinFinOrg/XDPoSChain/XDCxlending"
 	"github.com/XinFinOrg/XDPoSChain/accounts"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
+	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
@@ -41,11 +41,11 @@ import (
 type Backend interface {
 	AccountManager() *accounts.Manager
 	BlockChain() *core.BlockChain
-	TxPool() *core.TxPool
+	TxPool() *txpool.TxPool
 	ChainDb() ethdb.Database
 	GetXDCX() *XDCx.XDCX
-	OrderPool() *core.OrderPool
-	LendingPool() *core.LendingPool
+	OrderPool() *txpool.OrderPool
+	LendingPool() *txpool.LendingPool
 	GetXDCXLending() *XDCxlending.Lending
 }
 
@@ -176,6 +176,11 @@ func (self *Miner) Pending() (*types.Block, *state.StateDB) {
 // change between multiple method calls
 func (self *Miner) PendingBlock() *types.Block {
 	return self.worker.pendingBlock()
+}
+
+// PendingBlockAndReceipts returns the currently pending block and corresponding receipts.
+func (miner *Miner) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
+	return miner.worker.pendingBlockAndReceipts()
 }
 
 func (self *Miner) SetEtherbase(addr common.Address) {
