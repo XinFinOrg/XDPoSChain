@@ -127,6 +127,15 @@ func (b *BlockGen) AddUncheckedReceipt(receipt *types.Receipt) {
 	b.receipts = append(b.receipts, receipt)
 }
 
+// AddUncheckedTx forcefully adds a transaction to the block without any
+// validation.
+//
+// AddUncheckedTx will cause consensus failures when used during real
+// chain processing. This is best used in conjunction with raw block insertion.
+func (b *BlockGen) AddUncheckedTx(tx *types.Transaction) {
+	b.txs = append(b.txs, tx)
+}
+
 // TxNonce returns the next valid transaction nonce for the
 // account at addr. It panics if the account does not exist.
 func (b *BlockGen) TxNonce(addr common.Address) uint64 {

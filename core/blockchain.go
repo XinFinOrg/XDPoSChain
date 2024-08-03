@@ -39,6 +39,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	contractValidator "github.com/XinFinOrg/XDPoSChain/contracts/validator/contract"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
@@ -74,7 +75,20 @@ const (
 	triesInMemory       = 128
 
 	// BlockChainVersion ensures that an incompatible database forces a resync from scratch.
-	BlockChainVersion = 3
+	//
+	// Changelog:
+	//
+	// - Version 4
+	//   The following incompatible database changes were added:
+	//   * the `BlockNumber`, `TxHash`, `TxIndex`, `BlockHash` and `Index` fields of log are deleted
+	//   * the `Bloom` field of receipt is deleted
+	//   * the `BlockIndex` and `TxIndex` fields of txlookup are deleted
+	// - Version 5
+	//  The following incompatible database changes were added:
+	//    * the `TxHash`, `GasCost`, and `ContractAddress` fields are no longer stored for a receipt
+	//    * the `TxHash`, `GasCost`, and `ContractAddress` fields are computed by looking up the
+	//      receipts' corresponding block
+	BlockChainVersion = 5
 
 	// Maximum length of chain to cache by block's number
 	blocksHashCacheLimit = 900
@@ -829,7 +843,8 @@ func (bc *BlockChain) GetBlockByNumber(number uint64) *types.Block {
 
 // GetReceiptsByHash retrieves the receipts for all transactions in a given block.
 func (bc *BlockChain) GetReceiptsByHash(hash common.Hash) types.Receipts {
-	return GetBlockReceipts(bc.db, hash, GetBlockNumber(bc.db, hash))
+	// return GetBlockReceipts(bc.db, hash, GetBlockNumber(bc.db, hash))
+	return rawdb.ReadReceipts(bc.db, hash, GetBlockNumber(bc.db, hash), bc.chainConfig)
 }
 
 // GetBlocksFromHash returns the block corresponding to hash and up to n-1 ancestors.
@@ -1049,49 +1064,6 @@ func (bc *BlockChain) Rollback(chain []common.Hash) {
 	}
 }
 
-// SetReceiptsData computes all the non-consensus fields of the receipts
-func SetReceiptsData(config *params.ChainConfig, block *types.Block, receipts types.Receipts) error {
-	signer := types.MakeSigner(config, block.Number())
-
-	transactions, logIndex := block.Transactions(), uint(0)
-	if len(transactions) != len(receipts) {
-		return errors.New("transaction and receipt count mismatch")
-	}
-
-	for j := 0; j < len(receipts); j++ {
-		// The transaction hash can be retrieved from the transaction itself
-		receipts[j].TxHash = transactions[j].Hash()
-
-		// block location fields
-		receipts[j].BlockHash = block.Hash()
-		receipts[j].BlockNumber = block.Number()
-		receipts[j].TransactionIndex = uint(j)
-
-		// The contract address can be derived from the transaction itself
-		if transactions[j].To() == nil {
-			// Deriving the signer is expensive, only do if it's actually needed
-			from, _ := types.Sender(signer, transactions[j])
-			receipts[j].ContractAddress = crypto.CreateAddress(from, transactions[j].Nonce())
-		}
-		// The used gas can be calculated based on previous receipts
-		if j == 0 {
-			receipts[j].GasUsed = receipts[j].CumulativeGasUsed
-		} else {
-			receipts[j].GasUsed = receipts[j].CumulativeGasUsed - receipts[j-1].CumulativeGasUsed
-		}
-		// The derived log fields can simply be set from the block and transaction
-		for k := 0; k < len(receipts[j].Logs); k++ {
-			receipts[j].Logs[k].BlockNumber = block.NumberU64()
-			receipts[j].Logs[k].BlockHash = block.Hash()
-			receipts[j].Logs[k].TxHash = receipts[j].TxHash
-			receipts[j].Logs[k].TxIndex = uint(j)
-			receipts[j].Logs[k].Index = logIndex
-			logIndex++
-		}
-	}
-	return nil
-}
-
 // InsertReceiptChain attempts to complete an already existing header chain with
 // transaction and receipt data.
 func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain []types.Receipts) (int, error) {
@@ -1130,8 +1102,8 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			continue
 		}
 		// Compute all the non-consensus fields of the receipts
-		if err := SetReceiptsData(bc.chainConfig, block, receipts); err != nil {
-			return i, fmt.Errorf("failed to set receipts data: %v", err)
+		if err := receipts.DeriveFields(bc.chainConfig, block.Hash(), block.NumberU64(), block.Transactions()); err != nil {
+			return i, fmt.Errorf("failed to derive receipts data: %v", err)
 		}
 		// Write all the data out into the database
 		if err := WriteBody(batch, block.Hash(), block.NumberU64(), block.Body()); err != nil {
@@ -2175,7 +2147,7 @@ func (bc *BlockChain) reorg(oldBlock, newBlock *types.Block) error {
 		// These logs are later announced as deleted.
 		collectLogs = func(h common.Hash) {
 			// Coalesce logs and set 'Removed'.
-			receipts := GetBlockReceipts(bc.db, h, bc.hc.GetBlockNumber(h))
+			receipts := rawdb.ReadReceipts(bc.db, h, bc.hc.GetBlockNumber(h), bc.chainConfig)
 			for _, receipt := range receipts {
 				for _, log := range receipt.Logs {
 					del := *log
