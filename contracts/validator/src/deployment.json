@@ -1,0 +1,15 @@
+{
+  "candidates": [
+    "0xf0AbABbb043792D8cDAf1961c96758932189965D",
+    "0xf43988206b1F23cBECe8EA835F31FA97EB1a73fd"
+  ],
+  "caps": ["10000000000000000000000000", "10000000000000000000000000"],
+  "firstOwner": "0x662696e1f7925b68b4f6f440977d1da2b1b8d3f6",
+  "minCandidateCap": "10000000000000000000000000",
+  "minVoterCap": "25000000000000000000000",
+  "maxValidatorNumber": 18,
+  "candidateWithdrawDelay": 1296000,
+  "voterWithdrawDelay": 432000,
+  "xdcdevnet": "https://devnetstats.apothem.network/devnet",
+  "xdcsubnet": "https://devnetstats.apothem.network/subnet"
+}
