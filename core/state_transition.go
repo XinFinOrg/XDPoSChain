@@ -261,13 +261,11 @@ func (st *StateTransition) TransitionDb(owner common.Address) (ret []byte, usedG
 		contractAction = "contract call"
 	}
 	if vmerr != nil {
-		// log.Debug("VM returned with error", "action", contractAction, "contract address", st.to().Address(), "gas", st.gas, "gasPrice", st.gasPrice, "nonce", nonce, "err", vmerr)
-		log.Info("TransitionDb", "action", contractAction, "contract address", st.to().Address(), "gas", st.gas, "gasPrice", st.gasPrice, "nonce", nonce, "err", vmerr)
+		log.Debug("VM returned with error", "action", contractAction, "contract address", st.to().Address(), "gas", st.gas, "gasPrice", st.gasPrice, "nonce", nonce, "err", vmerr)
 		// The only possible consensus-error would be if there wasn't
 		// sufficient balance to make the transfer happen. The first
 		// balance transfer may never fail.
 		if vmerr == vm.ErrInsufficientBalance {
-			log.Info("TransitionDb", "vmerr", "vm.ErrInsufficientBalance")
 			return nil, 0, false, vmerr, nil
 		}
 	}
