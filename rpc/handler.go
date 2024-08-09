@@ -388,8 +388,8 @@ func (h *handler) runMethod(ctx context.Context, msg *jsonrpcMessage, callb *cal
 	log.Info("runMethod", "Method", msg.Method, "msg", msg.String())
 	result, err := callb.call(ctx, msg.Method, args)
 	if err != nil {
-		log.Info("runMethod", "err", err)
-		log.Info("runMethod", "err.Error()", err.Error())
+		log.Info("runMethod", "Method", msg.Method, "err", err)
+		log.Info("runMethod", "Method", msg.Method, "err.Error()", err.Error())
 		return msg.errorResponse(err)
 	}
 	return msg.response(result)
