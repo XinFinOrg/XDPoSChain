@@ -51,42 +51,6 @@ type TransactionArgs struct {
 	ChainID    *hexutil.Big      `json:"chainId,omitempty"`
 }
 
-func (args *TransactionArgs) log() {
-	from := "nil"
-	if args.From != nil && *args.From != (common.Address{}) {
-		from = args.From.String()
-	}
-	to := "nil"
-	if args.To != nil && *args.To != (common.Address{}) {
-		to = args.To.String()
-	}
-	data := "nil"
-	if args.Data != nil {
-		data = common.ToHex(*args.Data)
-	}
-	input := "nil"
-	if args.Input != nil {
-		input = common.ToHex(*args.Input)
-	}
-	var gas uint64 = 0
-	if args.Gas != nil {
-		gas = *(*uint64)(args.Gas)
-	}
-	var nonce uint64 = 0
-	if args.Nonce != nil {
-		nonce = *(*uint64)(args.Nonce)
-	}
-	gasPrice := "nil"
-	if args.GasPrice != nil {
-		gasPrice = args.GasPrice.String()
-	}
-	value := "nil"
-	if args.Value != nil {
-		value = args.Value.String()
-	}
-	log.Info("DoCall", "from", from, "to", to, "data", data, "input", input, "gas", gas, "nonce", nonce, "gasPrice", gasPrice, "value", value)
-}
-
 // from retrieves the transaction sender address.
 func (arg *TransactionArgs) from() common.Address {
 	if arg.From == nil {
