@@ -27,6 +27,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
 const (
@@ -107,6 +109,8 @@ func (msg *jsonrpcMessage) response(result interface{}) *jsonrpcMessage {
 }
 
 func errorMessage(err error) *jsonrpcMessage {
+	log.Info("errorMessage", "err", err)
+	log.Info("errorMessage", "err.Error()", err.Error())
 	msg := &jsonrpcMessage{Version: vsn, ID: null, Error: &jsonError{
 		Code:    defaultErrorCode,
 		Message: err.Error(),
