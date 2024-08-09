@@ -529,7 +529,6 @@ func (s *PublicBlockChainAPI) GetRewardByHash(hash common.Hash) map[string]map[s
 // given block number. The rpc.LatestBlockNumber and rpc.PendingBlockNumber meta
 // block numbers are also allowed.
 func (s *PublicBlockChainAPI) GetBalance(ctx context.Context, address common.Address, blockNrOrHash rpc.BlockNumberOrHash) (*hexutil.Big, error) {
-	log.Info("GetBalance", "address", address, "blockNrOrHash", blockNrOrHash)
 	state, _, err := s.b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHash)
 	if state == nil || err != nil {
 		return nil, err
