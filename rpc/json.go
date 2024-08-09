@@ -94,6 +94,8 @@ func (msg *jsonrpcMessage) String() string {
 }
 
 func (msg *jsonrpcMessage) errorResponse(err error) *jsonrpcMessage {
+	log.Info("errorResponse", "err", err)
+	log.Info("errorResponse", "err.Error()", err.Error())
 	resp := errorMessage(err)
 	resp.ID = msg.ID
 	return resp
