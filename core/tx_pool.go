@@ -286,6 +286,7 @@ type TxPool struct {
 	initDoneCh      chan struct{}  // is closed once the pool is initialized (for tests)
 
 	eip2718          bool // Fork indicator whether we are using EIP-2718 type transactions.
+	eip1559          bool
 	IsSigner         func(address common.Address) bool
 	trc21FeeCapacity map[common.Address]*big.Int
 }
@@ -640,7 +641,7 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 
 	if tx.To() == nil || (tx.To() != nil && !tx.IsSpecialTransaction()) {
 		// Ensure the transaction has more gas than the basic tx fee.
-		intrGas, err := IntrinsicGas(tx.Data(), tx.AccessList(), tx.To() == nil, true)
+		intrGas, err := IntrinsicGas(tx.Data(), tx.AccessList(), tx.To() == nil, true, pool.eip1559)
 		if err != nil {
 			return err
 		}
@@ -1360,6 +1361,7 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 	// Update all fork indicator by next pending block number.
 	next := new(big.Int).Add(newHead.Number, big.NewInt(1))
 	pool.eip2718 = pool.chainconfig.IsEIP1559(next)
+	pool.eip1559 = pool.chainconfig.IsEIP1559(next)
 }
 
 // promoteExecutables moves transactions that have become processable from the
