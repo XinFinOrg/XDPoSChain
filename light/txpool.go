@@ -69,6 +69,7 @@ type TxPool struct {
 
 	homestead bool
 	eip2718   bool // Fork indicator whether we are in the eip2718 stage.
+	eip1559   bool // Fork indicator whether we are in the eip1559 stage.
 }
 
 // TxRelayBackend provides an interface to the mechanism that forwards transacions
@@ -317,6 +318,7 @@ func (pool *TxPool) setNewHead(head *types.Header) {
 	next := new(big.Int).Add(head.Number, big.NewInt(1))
 	pool.homestead = pool.config.IsHomestead(head.Number)
 	pool.eip2718 = pool.config.IsEIP1559(next)
+	pool.eip1559 = pool.config.IsEIP1559(next)
 }
 
 // Stop stops the light transaction pool
@@ -408,7 +410,7 @@ func (pool *TxPool) validateTx(ctx context.Context, tx *types.Transaction) error
 	}
 
 	// Should supply enough intrinsic gas
-	gas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.To() == nil, pool.homestead)
+	gas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.To() == nil, pool.homestead, pool.eip1559)
 	if err != nil {
 		return err
 	}
