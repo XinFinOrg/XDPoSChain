@@ -44,5 +44,6 @@ var makeTest = function(tx, traceConfig) {
         },
         input:  eth.getRawTransaction(tx),
         result: result,
+        tracerConfig: traceConfig.tracerConfig,
     }, null, 2));
 }
