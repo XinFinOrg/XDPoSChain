@@ -239,6 +239,13 @@ func WriteReceipts(db ethdb.KeyValueWriter, hash common.Hash, number uint64, rec
 	}
 }
 
+// DeleteReceipts removes all receipt data associated with a block hash.
+func DeleteReceipts(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
+	if err := db.Delete(blockReceiptsKey(number, hash)); err != nil {
+		log.Crit("Failed to delete block receipts", "err", err)
+	}
+}
+
 // storedReceiptRLP is the storage encoding of a receipt.
 // Re-definition in core/types/receipt.go.
 type storedReceiptRLP struct {

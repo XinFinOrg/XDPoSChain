@@ -64,7 +64,7 @@ func odrGetBlock(ctx context.Context, db ethdb.Database, config *params.ChainCon
 func odrGetReceipts(ctx context.Context, db ethdb.Database, config *params.ChainConfig, bc *core.BlockChain, lc *light.LightChain, bhash common.Hash) []byte {
 	var receipts types.Receipts
 	if bc != nil {
-		receipts = core.GetBlockReceipts(db, bhash, core.GetBlockNumber(db, bhash))
+		receipts = rawdb.ReadReceipts(db, bhash, core.GetBlockNumber(db, bhash), bc.Config())
 	} else {
 		receipts, _ = light.GetBlockReceipts(ctx, lc.Odr(), bhash, core.GetBlockNumber(db, bhash))
 	}
