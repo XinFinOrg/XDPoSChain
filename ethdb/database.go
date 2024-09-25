@@ -18,8 +18,9 @@
 package ethdb
 
 import (
-	"github.com/XinFinOrg/XDPoSChain/common"
 	"io"
+
+	"github.com/XinFinOrg/XDPoSChain/common"
 )
 
 // KeyValueReader wraps the Has and Get method of a backing data store.

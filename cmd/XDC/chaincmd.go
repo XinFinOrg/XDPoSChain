@@ -463,7 +463,7 @@ func dump(ctx *cli.Context) error {
 	stack, _ := makeFullNode(ctx)
 	chain, chainDb := utils.MakeChain(ctx, stack)
 	defer chainDb.Close()
-	
+
 	for _, arg := range ctx.Args() {
 		var block *types.Block
 		if hashish(arg) {

@@ -64,7 +64,7 @@ func odrGetBlock(ctx context.Context, db ethdb.Database, config *params.ChainCon
 func odrGetReceipts(ctx context.Context, db ethdb.Database, config *params.ChainConfig, bc *core.BlockChain, lc *light.LightChain, bhash common.Hash) []byte {
 	var receipts types.Receipts
 	if bc != nil {
-		receipts = core.GetBlockReceipts(db, bhash, core.GetBlockNumber(db, bhash))
+		receipts = rawdb.ReadReceipts(db, bhash, core.GetBlockNumber(db, bhash), config)
 	} else {
 		receipts, _ = light.GetBlockReceipts(ctx, lc.Odr(), bhash, core.GetBlockNumber(db, bhash))
 	}
@@ -191,6 +191,9 @@ func testOdr(t *testing.T, protocol int, expFail uint64, fn odrTestFn) {
 	lpm.synchronise(lpeer)
 
 	test := func(expFail uint64) {
+		// Mark this as a helper to put the failures at the correct lines
+		t.Helper()
+
 		for i := uint64(0); i <= pm.blockchain.CurrentHeader().Number.Uint64(); i++ {
 			bhash := core.GetCanonicalHash(db, i)
 			b1 := fn(light.NoOdr, db, pm.chainConfig, pm.blockchain.(*core.BlockChain), nil, bhash)
@@ -202,10 +205,10 @@ func testOdr(t *testing.T, protocol int, expFail uint64, fn odrTestFn) {
 			eq := bytes.Equal(b1, b2)
 			exp := i < expFail
 			if exp && !eq {
-				t.Errorf("odr mismatch")
+				t.Fatalf("odr mismatch: have %x, want %x", b2, b1)
 			}
 			if !exp && eq {
-				t.Errorf("unexpected odr match")
+				t.Fatalf("unexpected odr match")
 			}
 		}
 	}
@@ -215,6 +218,7 @@ func testOdr(t *testing.T, protocol int, expFail uint64, fn odrTestFn) {
 	peers.Unregister(lpeer.id)
 	time.Sleep(time.Millisecond * 10) // ensure that all peerSetNotify callbacks are executed
 	test(expFail)
+
 	// expect all retrievals to pass
 	peers.Register(lpeer)
 	time.Sleep(time.Millisecond * 10) // ensure that all peerSetNotify callbacks are executed
@@ -222,6 +226,7 @@ func testOdr(t *testing.T, protocol int, expFail uint64, fn odrTestFn) {
 	lpeer.hasBlock = func(common.Hash, uint64) bool { return true }
 	lpeer.lock.Unlock()
 	test(5)
+
 	// still expect all retrievals to pass, now data should be cached locally
 	peers.Unregister(lpeer.id)
 	time.Sleep(time.Millisecond * 10) // ensure that all peerSetNotify callbacks are executed
