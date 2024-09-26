@@ -115,7 +115,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 				return nil, nil, 0, err
 			}
 		}
-		statedb.Prepare(tx.Hash(), block.Hash(), i)
+		statedb.SetTxContext(tx.Hash(), block.Hash(), i)
 		receipt, gas, err, tokenFeeUsed := applyTransaction(p.config, balanceFee, p.bc, nil, gp, statedb, tradingState, header, tx, usedGas, vmenv)
 		if err != nil {
 			return nil, nil, 0, err
@@ -192,7 +192,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 				return nil, nil, 0, err
 			}
 		}
-		statedb.Prepare(tx.Hash(), block.Hash(), i)
+		statedb.SetTxContext(tx.Hash(), block.Hash(), i)
 		receipt, gas, err, tokenFeeUsed := applyTransaction(p.config, balanceFee, p.bc, nil, gp, statedb, tradingState, header, tx, usedGas, vmenv)
 		if err != nil {
 			return nil, nil, 0, err
@@ -457,7 +457,7 @@ func ApplyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 	// Create a new context to be used in the EVM environment
 	blockContext := NewEVMBlockContext(header, bc, author)
 	vmenv := vm.NewEVM(blockContext, vm.TxContext{}, statedb, XDCxState, config, cfg)
-	return applyTransaction(config, tokensFee, bc, author, gp, statedb, XDCxState, header, tx , usedGas, vmenv)
+	return applyTransaction(config, tokensFee, bc, author, gp, statedb, XDCxState, header, tx, usedGas, vmenv)
 }
 
 func ApplySignTransaction(config *params.ChainConfig, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64) (*types.Receipt, uint64, error, bool) {
