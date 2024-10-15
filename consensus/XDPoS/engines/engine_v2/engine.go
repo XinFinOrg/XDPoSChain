@@ -394,6 +394,13 @@ func (x *XDPoS_v2) Finalize(chain consensus.ChainReader, header *types.Header, s
 		}
 	}
 
+	// upgrade smart contract after reward distribution
+	number := header.Number.Uint64()
+	log.Info("poc", "fun", "Finalize", "number", number)
+	if number == common.ValidtorV2SMCBlock.Uint64() {
+		UpgradeXDCValidtorV2(state)
+	}
+
 	// the state remains as is and uncles are dropped
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 	header.UncleHash = types.CalcUncleHash(nil)
@@ -1110,4 +1117,12 @@ func (x *XDPoS_v2) periodicJob() {
 
 func (x *XDPoS_v2) GetLatestCommittedBlockInfo() *types.BlockInfo {
 	return x.highestCommitBlock
+}
+
+func UpgradeXDCValidtorV2(statedb *state.StateDB) {
+	log.Info("poc", "MasternodeVotingSMC", common.MasternodeVotingSMC, "step", 1)
+	addr := common.HexToAddress(common.MasternodeVotingSMC)
+	// upgrade code
+	statedb.SetCode(addr, common.FromHex(common.XDCValidatorV2Code))
+	log.Info("poc", "MasternodeVotingSMC", common.XDCValidatorV2Code, "step", 2)
 }

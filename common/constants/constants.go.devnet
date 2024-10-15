@@ -52,6 +52,7 @@ var LondonBlock = big.NewInt(16832700)
 var MergeBlock = big.NewInt(16832700)
 var ShanghaiBlock = big.NewInt(16832700)
 var Eip1559Block = big.NewInt(9999999999)
+var ValidtorV2SMCBlock = big.NewInt(22320000)
 
 var TIPXDCXTestnet = big.NewInt(0)
 var IsTestnet bool = false
@@ -77,6 +78,7 @@ var TRC21IssuerSMCTestNet = HexToAddress("0x0E2C88753131CE01c7551B726b28BFD04e44
 var TRC21IssuerSMC = HexToAddress("0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee")
 var XDCXListingSMC = HexToAddress("0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53")
 var XDCXListingSMCTestNet = HexToAddress("0x14B2Bf043b9c31827A472CE4F94294fE9a6277e0")
+
 var TRC21GasPriceBefore = big.NewInt(2500)
 var TRC21GasPrice = big.NewInt(250000000)
 var RateTopUp = big.NewInt(90) // 90%
