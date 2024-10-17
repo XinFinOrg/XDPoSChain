@@ -31,6 +31,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/eth/tracers"
 	"github.com/XinFinOrg/XDPoSChain/eth/tracers/internal"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
 //go:generate go run github.com/fjl/gencodec -type account -field-override accountMarshaling -out gen_account_json.go
@@ -76,12 +77,10 @@ type prestateTracerConfig struct {
 	DisableStorage bool `json:"disableStorage"` // If true, this tracer will not return the contract storage
 }
 
-func newPrestateTracer(ctx *tracers.Context, cfg json.RawMessage) (*tracers.Tracer, error) {
+func newPrestateTracer(ctx *tracers.Context, cfg json.RawMessage, chainConfig *params.ChainConfig) (*tracers.Tracer, error) {
 	var config prestateTracerConfig
-	if cfg != nil {
-		if err := json.Unmarshal(cfg, &config); err != nil {
-			return nil, err
-		}
+	if err := json.Unmarshal(cfg, &config); err != nil {
+		return nil, err
 	}
 	t := &prestateTracer{
 		pre:     stateMap{},

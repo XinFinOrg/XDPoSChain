@@ -187,7 +187,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 		}
 	)
 	if config.VMTrace != "" {
-		var traceConfig json.RawMessage
+		traceConfig := json.RawMessage("{}")
 		if config.VMTraceJsonConfig != "" {
 			traceConfig = json.RawMessage(config.VMTraceJsonConfig)
 		}

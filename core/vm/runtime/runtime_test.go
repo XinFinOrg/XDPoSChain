@@ -828,7 +828,7 @@ func TestRuntimeJSTracer(t *testing.T) {
 			statedb.SetCode(common.HexToAddress("0xee"), calleeCode)
 			statedb.SetCode(common.HexToAddress("0xff"), suicideCode)
 
-			tracer, err := tracers.DefaultDirectory.New(jsTracer, new(tracers.Context), nil)
+			tracer, err := tracers.DefaultDirectory.New(jsTracer, new(tracers.Context), nil, params.TestChainConfig)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -863,7 +863,7 @@ func TestJSTracerCreateTx(t *testing.T) {
 	code := []byte{byte(vm.PUSH1), 0, byte(vm.PUSH1), 0, byte(vm.RETURN)}
 
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
-	tracer, err := tracers.DefaultDirectory.New(jsTracer, new(tracers.Context), nil)
+	tracer, err := tracers.DefaultDirectory.New(jsTracer, new(tracers.Context), nil, params.TestChainConfig)
 	if err != nil {
 		t.Fatal(err)
 	}

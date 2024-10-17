@@ -24,6 +24,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/tracers"
+	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
 func init() {
@@ -33,7 +34,7 @@ func init() {
 type noopTracer struct{}
 
 // newNoopTracer returns a new noop tracer.
-func newNoopTracer(ctx *tracers.Context, _ json.RawMessage) (*tracers.Tracer, error) {
+func newNoopTracer(ctx *tracers.Context, cfg json.RawMessage, chainConfig *params.ChainConfig) (*tracers.Tracer, error) {
 	t := &noopTracer{}
 	return &tracers.Tracer{
 		Hooks: &tracing.Hooks{

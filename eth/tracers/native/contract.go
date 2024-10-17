@@ -12,6 +12,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/eth/tracers"
+	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
 func init() {
@@ -30,7 +31,7 @@ type contractTracerConfig struct {
 }
 
 // NewContractTracer returns a native go tracer which tracks the contractor was created
-func NewContractTracer(ctx *tracers.Context, cfg json.RawMessage) (*tracers.Tracer, error) {
+func NewContractTracer(ctx *tracers.Context, cfg json.RawMessage, _ *params.ChainConfig) (*tracers.Tracer, error) {
 	var config contractTracerConfig
 	if cfg != nil {
 		if err := json.Unmarshal(cfg, &config); err != nil {
