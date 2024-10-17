@@ -32,6 +32,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/misc"
+	"github.com/XinFinOrg/XDPoSChain/consensus/misc/eip1559"
 	"github.com/XinFinOrg/XDPoSChain/contracts"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
@@ -615,6 +616,9 @@ func (self *worker) commitNewWork() {
 		Extra:      self.extra,
 		Time:       big.NewInt(tstamp),
 	}
+	// Set baseFee if we are on an EIP-1559 chain
+	header.BaseFee = eip1559.CalcBaseFee(self.config, header)
+
 	// Only set the coinbase if we are mining (avoid spurious block rewards)
 	if atomic.LoadInt32(&self.mining) == 1 {
 		header.Coinbase = self.coinbase
@@ -676,11 +680,7 @@ func (self *worker) commitNewWork() {
 			log.Error("[commitNewWork] fail to check if block is epoch switch block when fetching pending transactions", "BlockNum", header.Number, "Hash", header.Hash())
 		}
 		if !isEpochSwitchBlock {
-			pending, err := self.eth.TxPool().Pending()
-			if err != nil {
-				log.Error("Failed to fetch pending transactions", "err", err)
-				return
-			}
+			pending := self.eth.TxPool().Pending(true)
 			txs, specialTxs = types.NewTransactionsByPriceAndNonce(self.current.signer, pending, signers, feeCapacity)
 		}
 	}
@@ -911,7 +911,7 @@ func (env *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Ad
 			}
 		}
 		// Start executing the transaction
-		env.state.Prepare(hash, common.Hash{}, env.tcount)
+		env.state.SetTxContext(hash, common.Hash{}, env.tcount)
 
 		nonce := env.state.GetNonce(from)
 		if nonce != tx.Nonce() && !tx.IsSkipNonceTransaction() {
@@ -1012,7 +1012,7 @@ func (env *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Ad
 			continue
 		}
 		// Start executing the transaction
-		env.state.Prepare(hash, common.Hash{}, env.tcount)
+		env.state.SetTxContext(hash, common.Hash{}, env.tcount)
 		nonce := env.state.GetNonce(from)
 		if nonce > tx.Nonce() {
 			// New head notification data race between the transaction pool and miner, shift
@@ -1049,7 +1049,7 @@ func (env *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Ad
 			env.tcount++
 			txs.Shift()
 
-		case errors.Is(err, core.ErrTxTypeNotSupported):
+		case errors.Is(err, types.ErrTxTypeNotSupported):
 			// Pop the unsupported transaction without shifting in the next from the account
 			log.Trace("Skipping unsupported transaction type", "sender", from, "type", tx.Type())
 			txs.Pop()
