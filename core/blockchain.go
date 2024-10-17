@@ -58,7 +58,6 @@ import (
 var (
 	blockInsertTimer = metrics.NewRegisteredTimer("chain/inserts", nil)
 	CheckpointCh     = make(chan int)
-	ErrNoGenesis     = errors.New("Genesis not found in chain")
 
 	blockReorgMeter         = metrics.NewRegisteredMeter("chain/reorg/executes", nil)
 	blockReorgAddMeter      = metrics.NewRegisteredMeter("chain/reorg/add", nil)

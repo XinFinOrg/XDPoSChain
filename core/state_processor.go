@@ -406,7 +406,7 @@ func applyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 	// End Bypass blacklist address
 
 	// Apply the transaction to the current state (included in the env)
-	_, gas, failed, err, _ := ApplyMessage(evm, msg, gp, coinbaseOwner)
+	result, err := ApplyMessage(evm, msg, gp, coinbaseOwner)
 
 	if err != nil {
 		return nil, 0, err, false
@@ -419,18 +419,18 @@ func applyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 	} else {
 		root = statedb.IntermediateRoot(config.IsEIP158(header.Number)).Bytes()
 	}
-	*usedGas += gas
+	*usedGas += result.UsedGas
 
 	// Create a new receipt for the transaction, storing the intermediate root and gas used
 	// by the tx.
 	receipt := &types.Receipt{Type: tx.Type(), PostState: root, CumulativeGasUsed: *usedGas}
-	if failed {
+	if result.Failed() {
 		receipt.Status = types.ReceiptStatusFailed
 	} else {
 		receipt.Status = types.ReceiptStatusSuccessful
 	}
 	receipt.TxHash = tx.Hash()
-	receipt.GasUsed = gas
+	receipt.GasUsed = result.UsedGas
 
 	// If the transaction created a contract, store the creation address in the receipt.
 	if msg.To() == nil {
@@ -443,10 +443,10 @@ func applyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 	receipt.BlockHash = statedb.BlockHash()
 	receipt.BlockNumber = header.Number
 	receipt.TransactionIndex = uint(statedb.TxIndex())
-	if balanceFee != nil && failed {
+	if balanceFee != nil && result.Failed() {
 		state.PayFeeWithTRC21TxFail(statedb, msg.From(), *to)
 	}
-	return receipt, gas, err, balanceFee != nil
+	return receipt, result.UsedGas, err, balanceFee != nil
 }
 
 // ApplyTransaction attempts to apply a transaction to the given state database
@@ -457,7 +457,7 @@ func ApplyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 	// Create a new context to be used in the EVM environment
 	blockContext := NewEVMBlockContext(header, bc, author)
 	vmenv := vm.NewEVM(blockContext, vm.TxContext{}, statedb, XDCxState, config, cfg)
-	return applyTransaction(config, tokensFee, bc, author, gp, statedb, XDCxState, header, tx , usedGas, vmenv)
+	return applyTransaction(config, tokensFee, bc, author, gp, statedb, XDCxState, header, tx, usedGas, vmenv)
 }
 
 func ApplySignTransaction(config *params.ChainConfig, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64) (*types.Receipt, uint64, error, bool) {

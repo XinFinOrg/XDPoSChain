@@ -29,6 +29,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/XDCx"
 	"github.com/XinFinOrg/XDPoSChain/XDCxlending"
 	"github.com/XinFinOrg/XDPoSChain/accounts"
+	"github.com/XinFinOrg/XDPoSChain/accounts/abi"
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/accounts/keystore"
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -53,7 +54,6 @@ import (
 var _ bind.ContractBackend = (*SimulatedBackend)(nil)
 
 var errBlockNumberUnsupported = errors.New("SimulatedBackend cannot access blocks other than the latest block")
-var errGasEstimationFailed = errors.New("gas required exceeds allowance or always failing transaction")
 
 // SimulatedBackend implements bind.ContractBackend, simulating a blockchain in
 // the background. Its main purpose is to allow easily testing contract bindings.
@@ -276,8 +276,11 @@ func (b *SimulatedBackend) CallContract(ctx context.Context, call XDPoSChain.Cal
 	if err != nil {
 		return nil, err
 	}
-	rval, _, _, err := b.callContract(ctx, call, b.blockchain.CurrentBlock(), state)
-	return rval, err
+	res, err := b.callContract(ctx, call, b.blockchain.CurrentBlock(), state)
+	if err != nil {
+		return nil, err
+	}
+	return res.Return(), nil
 }
 
 // PendingCallContract executes a contract call on the pending state.
@@ -286,8 +289,11 @@ func (b *SimulatedBackend) PendingCallContract(ctx context.Context, call XDPoSCh
 	defer b.mu.Unlock()
 	defer b.pendingState.RevertToSnapshot(b.pendingState.Snapshot())
 
-	rval, _, _, err := b.callContract(ctx, call, b.pendingBlock, b.pendingState)
-	return rval, err
+	res, err := b.callContract(ctx, call, b.pendingBlock, b.pendingState)
+	if err != nil {
+		return nil, err
+	}
+	return res.Return(), nil
 }
 
 // PendingNonceAt implements PendingStateReader.PendingNonceAt, retrieving
@@ -325,22 +331,33 @@ func (b *SimulatedBackend) EstimateGas(ctx context.Context, call XDPoSChain.Call
 	cap = hi
 
 	// Create a helper to check if a gas allowance results in an executable transaction
-	executable := func(gas uint64) bool {
+	executable := func(gas uint64) (bool, *core.ExecutionResult, error) {
 		call.Gas = gas
 
 		snapshot := b.pendingState.Snapshot()
-		_, _, failed, err := b.callContract(ctx, call, b.pendingBlock, b.pendingState)
+		res, err := b.callContract(ctx, call, b.pendingBlock, b.pendingState)
 		b.pendingState.RevertToSnapshot(snapshot)
 
-		if err != nil || failed {
-			return false
+		if err != nil {
+			if err == core.ErrIntrinsicGas {
+				return true, nil, nil // Special case, raise gas limit
+			}
+			return true, nil, err // Bail out
 		}
-		return true
+		return res.Failed(), res, nil
 	}
 	// Execute the binary search and hone in on an executable gas limit
 	for lo+1 < hi {
 		mid := (hi + lo) / 2
-		if !executable(mid) {
+		failed, _, err := executable(mid)
+
+		// If the error is not nil(consensus error), it means the provided message
+		// call or transaction will never be accepted no matter how much gas it is
+		// assigned. Return the error directly, don't struggle any more
+		if err != nil {
+			return 0, err
+		}
+		if failed {
 			lo = mid
 		} else {
 			hi = mid
@@ -348,8 +365,25 @@ func (b *SimulatedBackend) EstimateGas(ctx context.Context, call XDPoSChain.Call
 	}
 	// Reject the transaction as invalid if it still fails at the highest allowance
 	if hi == cap {
-		if !executable(hi) {
-			return 0, errGasEstimationFailed
+		failed, result, err := executable(hi)
+		if err != nil {
+			return 0, err
+		}
+		if failed {
+			if result != nil && result.Err != vm.ErrOutOfGas {
+				errMsg := fmt.Sprintf("always failing transaction (%v)", result.Err)
+				if len(result.Revert()) > 0 {
+					ret, err := abi.UnpackRevert(result.Revert())
+					if err != nil {
+						errMsg += fmt.Sprintf(" (%#x)", result.Revert())
+					} else {
+						errMsg += fmt.Sprintf(" (%s)", ret)
+					}
+				}
+				return 0, errors.New(errMsg)
+			}
+			// Otherwise, the specified gas cap is too low
+			return 0, fmt.Errorf("gas required exceeds allowance (%d)", cap)
 		}
 	}
 	return hi, nil
@@ -357,7 +391,7 @@ func (b *SimulatedBackend) EstimateGas(ctx context.Context, call XDPoSChain.Call
 
 // callContract implements common code between normal and pending contract calls.
 // state is modified during execution, make sure to copy it if necessary.
-func (b *SimulatedBackend) callContract(ctx context.Context, call XDPoSChain.CallMsg, block *types.Block, statedb *state.StateDB) (ret []byte, usedGas uint64, failed bool, err error) {
+func (b *SimulatedBackend) callContract(ctx context.Context, call XDPoSChain.CallMsg, block *types.Block, statedb *state.StateDB) (*core.ExecutionResult, error) {
 	// Ensure message is initialized properly.
 	if call.GasPrice == nil {
 		call.GasPrice = big.NewInt(1)
@@ -387,8 +421,7 @@ func (b *SimulatedBackend) callContract(ctx context.Context, call XDPoSChain.Cal
 	vmenv := vm.NewEVM(evmContext, txContext, statedb, nil, b.config, vm.Config{})
 	gaspool := new(core.GasPool).AddGas(math.MaxUint64)
 	owner := common.Address{}
-	ret, usedGas, failed, err, _ = core.NewStateTransition(vmenv, msg, gaspool).TransitionDb(owner)
-	return
+	return core.NewStateTransition(vmenv, msg, gaspool).TransitionDb(owner)
 }
 
 // SendTransaction updates the pending block to include the given transaction.
