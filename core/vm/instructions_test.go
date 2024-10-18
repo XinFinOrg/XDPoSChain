@@ -26,6 +26,8 @@ import (
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/holiman/uint256"
@@ -45,6 +47,14 @@ type twoOperandParams struct {
 var alphabetSoup = "ABCDEF090807060504030201ffffffffffffffffffffffffffffffffffffffff"
 var commonParams []*twoOperandParams
 var twoOpMethods map[string]executionFunc
+
+type contractRef struct {
+	addr common.Address
+}
+
+func (c contractRef) Address() common.Address {
+	return c.addr
+}
 
 func init() {
 	// Params is a list of common edgecases that should be used for some common tests
@@ -194,7 +204,7 @@ func TestAddMod(t *testing.T) {
 	var (
 		env            = NewEVM(BlockContext{}, TxContext{}, nil, nil, params.TestChainConfig, Config{})
 		stack          = newstack()
-		evmInterpreter = NewEVMInterpreter(env, env.vmConfig)
+		evmInterpreter = NewEVMInterpreter(env, env.Config)
 		pc             = uint64(0)
 	)
 	tests := []struct {
@@ -290,7 +300,7 @@ func opBenchmark(bench *testing.B, op executionFunc, args ...string) {
 		env            = NewEVM(BlockContext{}, TxContext{}, nil, nil, params.TestChainConfig, Config{})
 		stack          = newstack()
 		scope          = &ScopeContext{nil, stack, nil}
-		evmInterpreter = NewEVMInterpreter(env, env.vmConfig)
+		evmInterpreter = NewEVMInterpreter(env, env.Config)
 	)
 
 	env.interpreter = evmInterpreter
@@ -531,7 +541,7 @@ func TestOpMstore(t *testing.T) {
 		env            = NewEVM(BlockContext{}, TxContext{}, nil, nil, params.TestChainConfig, Config{})
 		stack          = newstack()
 		mem            = NewMemory()
-		evmInterpreter = NewEVMInterpreter(env, env.vmConfig)
+		evmInterpreter = NewEVMInterpreter(env, env.Config)
 	)
 
 	env.interpreter = evmInterpreter
@@ -557,7 +567,7 @@ func BenchmarkOpMstore(bench *testing.B) {
 		env            = NewEVM(BlockContext{}, TxContext{}, nil, nil, params.TestChainConfig, Config{})
 		stack          = newstack()
 		mem            = NewMemory()
-		evmInterpreter = NewEVMInterpreter(env, env.vmConfig)
+		evmInterpreter = NewEVMInterpreter(env, env.Config)
 	)
 
 	env.interpreter = evmInterpreter
@@ -574,12 +584,55 @@ func BenchmarkOpMstore(bench *testing.B) {
 	}
 }
 
+func TestOpTstore(t *testing.T) {
+	var (
+		statedb, _     = state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()))
+		env            = NewEVM(BlockContext{}, TxContext{}, statedb, nil, params.TestChainConfig, Config{})
+		stack          = newstack()
+		mem            = NewMemory()
+		evmInterpreter = NewEVMInterpreter(env, env.Config)
+		caller         = common.Address{}
+		to             = common.Address{1}
+		contractRef    = contractRef{caller}
+		contract       = NewContract(contractRef, AccountRef(to), new(big.Int), 0)
+		scopeContext   = ScopeContext{mem, stack, contract}
+		value          = common.Hex2Bytes("abcdef00000000000000abba000000000deaf000000c0de00100000000133700")
+	)
+
+	// Add a stateObject for the caller and the contract being called
+	statedb.CreateAccount(caller)
+	statedb.CreateAccount(to)
+
+	env.interpreter = evmInterpreter
+	pc := uint64(0)
+	// push the value to the stack
+	stack.push(new(uint256.Int).SetBytes(value))
+	// push the location to the stack
+	stack.push(new(uint256.Int))
+	opTstore(&pc, evmInterpreter, &scopeContext)
+	// there should be no elements on the stack after TSTORE
+	if stack.len() != 0 {
+		t.Fatal("stack wrong size")
+	}
+	// push the location to the stack
+	stack.push(new(uint256.Int))
+	opTload(&pc, evmInterpreter, &scopeContext)
+	// there should be one element on the stack after TLOAD
+	if stack.len() != 1 {
+		t.Fatal("stack wrong size")
+	}
+	val := stack.peek()
+	if !bytes.Equal(val.Bytes(), value) {
+		t.Fatal("incorrect element read from transient storage")
+	}
+}
+
 func BenchmarkOpKeccak256(bench *testing.B) {
 	var (
 		env            = NewEVM(BlockContext{}, TxContext{}, nil, nil, params.TestChainConfig, Config{})
 		stack          = newstack()
 		mem            = NewMemory()
-		evmInterpreter = NewEVMInterpreter(env, env.vmConfig)
+		evmInterpreter = NewEVMInterpreter(env, env.Config)
 	)
 	env.interpreter = evmInterpreter
 	mem.Resize(32)
@@ -683,7 +736,7 @@ func TestRandom(t *testing.T) {
 			env            = NewEVM(BlockContext{Random: &tt.random}, TxContext{}, nil, nil, params.TestChainConfig, Config{})
 			stack          = newstack()
 			pc             = uint64(0)
-			evmInterpreter = NewEVMInterpreter(env, env.vmConfig)
+			evmInterpreter = NewEVMInterpreter(env, env.Config)
 		)
 		opRandom(&pc, evmInterpreter, &ScopeContext{nil, stack, nil})
 		if len(stack.data) != 1 {
