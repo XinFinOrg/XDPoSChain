@@ -120,8 +120,8 @@ func newBerlinInstructionSet() JumpTable {
 	return validate(instructionSet)
 }
 
-// newIstanbulInstructionSet returns the frontier, homestead
-// byzantium, contantinople and petersburg instructions.
+// newIstanbulInstructionSet returns the frontier, homestead, byzantium,
+// constantinople, istanbul and petersburg instructions.
 func newIstanbulInstructionSet() JumpTable {
 	instructionSet := newConstantinopleInstructionSet()
 
@@ -132,8 +132,8 @@ func newIstanbulInstructionSet() JumpTable {
 	return validate(instructionSet)
 }
 
-// newConstantinopleInstructionSet returns the frontier, homestead
-// byzantium and contantinople instructions.
+// newConstantinopleInstructionSet returns the frontier, homestead,
+// byzantium and constantinople instructions.
 func newConstantinopleInstructionSet() JumpTable {
 	instructionSet := newByzantiumInstructionSet()
 	instructionSet[SHL] = &operation{

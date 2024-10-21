@@ -41,7 +41,6 @@ func (s Storage) String() (str string) {
 	for key, value := range s {
 		str += fmt.Sprintf("%X : %X\n", key, value)
 	}
-
 	return
 }
 
@@ -50,7 +49,6 @@ func (s Storage) Copy() Storage {
 	for key, value := range s {
 		cpy[key] = value
 	}
-
 	return cpy
 }
 
@@ -66,13 +64,6 @@ type stateObject struct {
 	data     Account
 	db       *StateDB
 
-	// DB error.
-	// State objects are used by the consensus core and VM which are
-	// unable to deal with database-level errors. Any error that occurs
-	// during a database read is memoized here and will eventually be returned
-	// by StateDB.Commit.
-	dbErr error
-
 	// Write caches.
 	trie Trie // storage trie, which becomes non-nil on first access
 	code Code // contract bytecode, which gets set when code is loaded
@@ -82,7 +73,7 @@ type stateObject struct {
 	fakeStorage   Storage // Fake storage which constructed by caller for debugging purpose.
 
 	// Cache flags.
-	// When an object is marked suicided it will be delete from the trie
+	// When an object is marked suicided it will be deleted from the trie
 	// during the "update" phase of the state transition.
 	dirtyCode bool // true if the code was updated
 	suicided  bool
@@ -129,13 +120,6 @@ func (s *stateObject) EncodeRLP(w io.Writer) error {
 	return rlp.Encode(w, s.data)
 }
 
-// setError remembers the first non-nil error it is called with.
-func (s *stateObject) setError(err error) {
-	if s.dbErr == nil {
-		s.dbErr = err
-	}
-}
-
 func (s *stateObject) markSuicided() {
 	s.suicided = true
 	if s.onDirty != nil {
@@ -163,7 +147,7 @@ func (s *stateObject) getTrie(db Database) Trie {
 		s.trie, err = db.OpenStorageTrie(s.addrHash, s.data.Root)
 		if err != nil {
 			s.trie, _ = db.OpenStorageTrie(s.addrHash, common.Hash{})
-			s.setError(fmt.Errorf("can't create storage trie: %v", err))
+			s.db.setError(fmt.Errorf("can't create storage trie: %v", err))
 		}
 	}
 	return s.trie
@@ -178,13 +162,13 @@ func (s *stateObject) GetCommittedState(db Database, key common.Hash) common.Has
 	// Load from DB in case it is missing.
 	enc, err := s.getTrie(db).TryGet(key[:])
 	if err != nil {
-		s.setError(err)
+		s.db.setError(err)
 		return common.Hash{}
 	}
 	if len(enc) > 0 {
 		_, content, _, err := rlp.Split(enc)
 		if err != nil {
-			s.setError(err)
+			s.db.setError(err)
 		}
 		value.SetBytes(content)
 	}
@@ -203,13 +187,13 @@ func (s *stateObject) GetState(db Database, key common.Hash) common.Hash {
 	// Load from DB in case it is missing.
 	enc, err := s.getTrie(db).TryGet(key[:])
 	if err != nil {
-		s.setError(err)
+		s.db.setError(err)
 		return common.Hash{}
 	}
 	if len(enc) > 0 {
 		_, content, _, err := rlp.Split(enc)
 		if err != nil {
-			s.setError(err)
+			s.db.setError(err)
 		}
 		value.SetBytes(content)
 	}
@@ -269,17 +253,21 @@ func (s *stateObject) setState(key, value common.Hash) {
 }
 
 // updateTrie writes cached storage modifications into the object's storage trie.
+// It will return nil if the trie has not been loaded and no changes have been
+// made. An error will be returned if the trie can't be loaded/updated correctly.
+// TODO: return error
+// func (s *stateObject) updateTrie(db Database) (Trie, error) {
 func (s *stateObject) updateTrie(db Database) Trie {
 	tr := s.getTrie(db)
 	for key, value := range s.dirtyStorage {
 		delete(s.dirtyStorage, key)
 		if (value == common.Hash{}) {
-			s.setError(tr.TryDelete(key[:]))
+			s.db.setError(tr.TryDelete(key[:]))
 			continue
 		}
 		// Encoding []byte cannot fail, ok to ignore the error.
 		v, _ := rlp.EncodeToBytes(bytes.TrimLeft(value[:], "\x00"))
-		s.setError(tr.TryUpdate(key[:], v))
+		s.db.setError(tr.TryUpdate(key[:], v))
 	}
 	return tr
 }
@@ -294,9 +282,6 @@ func (s *stateObject) updateRoot(db Database) {
 // This updates the trie root.
 func (s *stateObject) CommitTrie(db Database) error {
 	s.updateTrie(db)
-	if s.dbErr != nil {
-		return s.dbErr
-	}
 	root, err := s.trie.Commit(nil)
 	if err == nil {
 		s.data.Root = root
@@ -377,7 +362,7 @@ func (s *stateObject) Code(db Database) []byte {
 	}
 	code, err := db.ContractCode(s.addrHash, common.BytesToHash(s.CodeHash()))
 	if err != nil {
-		s.setError(fmt.Errorf("can't load code hash %x: %v", s.CodeHash(), err))
+		s.db.setError(fmt.Errorf("can't load code hash %x: %v", s.CodeHash(), err))
 	}
 	s.code = code
 	return code
@@ -433,11 +418,4 @@ func (s *stateObject) Nonce() uint64 {
 
 func (s *stateObject) Root() common.Hash {
 	return s.data.Root
-}
-
-// Never called, but must be present to allow stateObject to be used
-// as a vm.Account interface that also satisfies the vm.ContractRef
-// interface. Interfaces are awesome.
-func (s *stateObject) Value() *big.Int {
-	panic("Value on stateObject should never be called")
 }
