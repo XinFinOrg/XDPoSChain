@@ -61,10 +61,6 @@ func getNonce(t *testing.T, userAddress common.Address) (uint64, error) {
 		return 0, err
 	}
 	var result interface{}
-	if err != nil {
-
-		return 0, err
-	}
 	err = rpcClient.Call(&result, "XDCx_getOrderCount", userAddress)
 	if err != nil {
 		return 0, err

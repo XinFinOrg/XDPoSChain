@@ -1662,7 +1662,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 					}
 				}
 				//check
-				if tradingState != nil && tradingService != nil {
+				if tradingState != nil {
 					gotRoot := tradingState.IntermediateRoot()
 					expectRoot, _ := tradingService.GetTradingStateRoot(block, author)
 					parentRoot, _ := tradingService.GetTradingStateRoot(parent, parentAuthor)
@@ -1941,7 +1941,7 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 					}
 				}
 			}
-			if tradingState != nil && tradingService != nil {
+			if tradingState != nil {
 				gotRoot := tradingState.IntermediateRoot()
 				expectRoot, _ := tradingService.GetTradingStateRoot(block, author)
 				parentRoot, _ := tradingService.GetTradingStateRoot(parent, parentAuthor)
