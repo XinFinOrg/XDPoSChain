@@ -49,14 +49,13 @@ func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, header *types
 	if err != nil {
 		return nil, err
 	}
+	quorumCert, round, masternodes, err := x.getExtraFields(h)
+	if err != nil {
+		log.Error("[getEpochSwitchInfo] get extra field", "err", err, "number", h.Number.Uint64())
+		return nil, err
+	}
 	if isEpochSwitch {
 		log.Debug("[getEpochSwitchInfo] header is epoch switch", "hash", hash.Hex(), "number", h.Number.Uint64())
-		quorumCert, round, masternodes, err := x.getExtraFields(h)
-		if err != nil {
-			log.Error("[getEpochSwitchInfo] get extra field", "err", err, "number", h.Number.Uint64())
-			return nil, err
-		}
-
 		snap, err := x.getSnapshot(chain, h.Number.Uint64(), false)
 		if err != nil {
 			log.Error("[getEpochSwitchInfo] Adaptor v2 getSnapshot has error", "err", err)
@@ -87,6 +86,11 @@ func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, header *types
 		}
 
 		x.epochSwitches.Add(hash, epochSwitchInfo)
+		x.round2epochBlockInfo.Add(round, &types.BlockInfo{
+			Hash:   hash,
+			Number: h.Number,
+			// skip round since it is already the key
+		})
 		return epochSwitchInfo, nil
 	}
 	epochSwitchInfo, err := x.getEpochSwitchInfo(chain, nil, h.ParentHash)
@@ -175,6 +179,10 @@ func (x *XDPoS_v2) GetEpochSwitchInfoBetween(chain consensus.ChainReader, begin,
 			return nil, err
 		}
 		iteratorHeader = nil
+		// V2 switch epoch switch info has nil parent
+		if epochSwitchInfo.EpochSwitchParentBlockInfo == nil {
+			break
+		}
 		iteratorHash = epochSwitchInfo.EpochSwitchParentBlockInfo.Hash
 		iteratorNum = epochSwitchInfo.EpochSwitchBlockInfo.Number
 		if iteratorNum.Cmp(begin.Number) >= 0 {
