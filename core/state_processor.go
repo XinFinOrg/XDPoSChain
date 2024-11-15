@@ -117,7 +117,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 				return nil, nil, 0, err
 			}
 		}
-		statedb.Prepare(tx.Hash(), i)
+		statedb.SetTxContext(tx.Hash(), i)
 		receipt, gas, err, tokenFeeUsed := applyTransaction(p.config, balanceFee, gp, statedb, coinbaseOwner, blockNumber, blockHash, tx, usedGas, vmenv)
 		if err != nil {
 			return nil, nil, 0, err
@@ -197,7 +197,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 				return nil, nil, 0, err
 			}
 		}
-		statedb.Prepare(tx.Hash(), i)
+		statedb.SetTxContext(tx.Hash(), i)
 		receipt, gas, err, tokenFeeUsed := applyTransaction(p.config, balanceFee, gp, statedb, coinbaseOwner, blockNumber, blockHash, tx, usedGas, vmenv)
 		if err != nil {
 			return nil, nil, 0, err
