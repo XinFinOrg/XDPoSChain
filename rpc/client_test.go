@@ -37,8 +37,46 @@ import (
 	"github.com/davecgh/go-spew/spew"
 )
 
+func TestClientRequest(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServer()
+	defer server.Stop()
+	client := DialInProc(server)
+	defer client.Close()
+
+	var resp echoResult
+	if err := client.Call(&resp, "test_echo", "hello", 10, &echoArgs{"world"}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(resp, echoResult{"hello", 10, &echoArgs{"world"}}) {
+		t.Errorf("incorrect result %#v", resp)
+	}
+}
+
+func TestClientResponseType(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServer()
+	defer server.Stop()
+	client := DialInProc(server)
+	defer client.Close()
+
+	if err := client.Call(nil, "test_echo", "hello", 10, &echoArgs{"world"}); err != nil {
+		t.Errorf("Passing nil as result should be fine, but got an error: %v", err)
+	}
+	var resultVar echoResult
+	// Note: passing the var, not a ref
+	err := client.Call(resultVar, "test_echo", "hello", 10, &echoArgs{"world"})
+	if err == nil {
+		t.Error("Passing a var as result should be an error")
+	}
+}
+
 // This test checks calling a method that returns 'null'.
 func TestClientNullResponse(t *testing.T) {
+	t.Parallel()
+
 	server := newTestServer()
 	defer server.Stop()
 
@@ -57,40 +95,10 @@ func TestClientNullResponse(t *testing.T) {
 	}
 }
 
-func TestClientRequest(t *testing.T) {
-	server := newTestServer()
-	defer server.Stop()
-	client := DialInProc(server)
-	defer client.Close()
-
-	var resp echoResult
-	if err := client.Call(&resp, "test_echo", "hello", 10, &echoArgs{"world"}); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(resp, echoResult{"hello", 10, &echoArgs{"world"}}) {
-		t.Errorf("incorrect result %#v", resp)
-	}
-}
-
-func TestClientResponseType(t *testing.T) {
-	server := newTestServer()
-	defer server.Stop()
-	client := DialInProc(server)
-	defer client.Close()
-
-	if err := client.Call(nil, "test_echo", "hello", 10, &echoArgs{"world"}); err != nil {
-		t.Errorf("Passing nil as result should be fine, but got an error: %v", err)
-	}
-	var resultVar echoResult
-	// Note: passing the var, not a ref
-	err := client.Call(resultVar, "test_echo", "hello", 10, &echoArgs{"world"})
-	if err == nil {
-		t.Error("Passing a var as result should be an error")
-	}
-}
-
 // This test checks that server-returned errors with code and data come out of Client.Call.
 func TestClientErrorData(t *testing.T) {
+	t.Parallel()
+
 	server := newTestServer()
 	defer server.Stop()
 	client := DialInProc(server)
@@ -121,6 +129,8 @@ func TestClientErrorData(t *testing.T) {
 }
 
 func TestClientBatchRequest(t *testing.T) {
+	t.Parallel()
+
 	server := newTestServer()
 	defer server.Stop()
 	client := DialInProc(server)
@@ -172,6 +182,8 @@ func TestClientBatchRequest(t *testing.T) {
 // This checks that, for HTTP connections, the length of batch responses is validated to
 // match the request exactly.
 func TestClientBatchRequest_len(t *testing.T) {
+	t.Parallel()
+
 	b, err := json.Marshal([]jsonrpcMessage{
 		{Version: "2.0", ID: json.RawMessage("1"), Result: json.RawMessage(`"0x1"`)},
 		{Version: "2.0", ID: json.RawMessage("2"), Result: json.RawMessage(`"0x2"`)},
@@ -188,6 +200,8 @@ func TestClientBatchRequest_len(t *testing.T) {
 	t.Cleanup(s.Close)
 
 	t.Run("too-few", func(t *testing.T) {
+		t.Parallel()
+
 		client, err := Dial(s.URL)
 		if err != nil {
 			t.Fatal("failed to dial test server:", err)
@@ -218,6 +232,8 @@ func TestClientBatchRequest_len(t *testing.T) {
 	})
 
 	t.Run("too-many", func(t *testing.T) {
+		t.Parallel()
+
 		client, err := Dial(s.URL)
 		if err != nil {
 			t.Fatal("failed to dial test server:", err)
@@ -249,6 +265,8 @@ func TestClientBatchRequest_len(t *testing.T) {
 // This checks that the client can handle the case where the server doesn't
 // respond to all requests in a batch.
 func TestClientBatchRequestLimit(t *testing.T) {
+	t.Parallel()
+
 	server := newTestServer()
 	defer server.Stop()
 	server.SetBatchLimits(2, 100000)
@@ -285,6 +303,8 @@ func TestClientBatchRequestLimit(t *testing.T) {
 }
 
 func TestClientNotify(t *testing.T) {
+	t.Parallel()
+
 	server := newTestServer()
 	defer server.Stop()
 	client := DialInProc(server)
@@ -392,6 +412,8 @@ func testClientCancel(transport string, t *testing.T) {
 }
 
 func TestClientSubscribeInvalidArg(t *testing.T) {
+	t.Parallel()
+
 	server := newTestServer()
 	defer server.Stop()
 	client := DialInProc(server)
@@ -422,6 +444,8 @@ func TestClientSubscribeInvalidArg(t *testing.T) {
 }
 
 func TestClientSubscribe(t *testing.T) {
+	t.Parallel()
+
 	server := newTestServer()
 	defer server.Stop()
 	client := DialInProc(server)
@@ -454,6 +478,8 @@ func TestClientSubscribe(t *testing.T) {
 
 // In this test, the connection drops while Subscribe is waiting for a response.
 func TestClientSubscribeClose(t *testing.T) {
+	t.Parallel()
+
 	server := newTestServer()
 	service := &notificationTestService{
 		gotHangSubscriptionReq:  make(chan struct{}),
@@ -498,6 +524,8 @@ func TestClientSubscribeClose(t *testing.T) {
 // This test reproduces https://github.com/ethereum/go-ethereum/issues/17837 where the
 // client hangs during shutdown when Unsubscribe races with Client.Close.
 func TestClientCloseUnsubscribeRace(t *testing.T) {
+	t.Parallel()
+
 	server := newTestServer()
 	defer server.Stop()
 
@@ -540,6 +568,8 @@ func (b *unsubscribeBlocker) readBatch() ([]*jsonrpcMessage, bool, error) {
 // not respond.
 // It reproducers the issue https://github.com/ethereum/go-ethereum/issues/30156
 func TestUnsubscribeTimeout(t *testing.T) {
+	t.Parallel()
+
 	srv := NewServer()
 	srv.RegisterName("nftest", new(notificationTestService))
 
@@ -674,6 +704,8 @@ func TestClientSubscriptionChannelClose(t *testing.T) {
 // This test checks that Client doesn't lock up when a single subscriber
 // doesn't read subscription events.
 func TestClientNotificationStorm(t *testing.T) {
+	t.Parallel()
+
 	server := newTestServer()
 	defer server.Stop()
 
@@ -726,6 +758,8 @@ func TestClientNotificationStorm(t *testing.T) {
 }
 
 func TestClientSetHeader(t *testing.T) {
+	t.Parallel()
+
 	var gotHeader bool
 	srv := newTestServer()
 	httpsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -762,6 +796,8 @@ func TestClientSetHeader(t *testing.T) {
 }
 
 func TestClientHTTP(t *testing.T) {
+	t.Parallel()
+
 	server := newTestServer()
 	defer server.Stop()
 
@@ -804,6 +840,8 @@ func TestClientHTTP(t *testing.T) {
 }
 
 func TestClientReconnect(t *testing.T) {
+	t.Parallel()
+
 	startServer := func(addr string) (*Server, net.Listener) {
 		srv := newTestServer()
 		l, err := net.Listen("tcp", addr)
