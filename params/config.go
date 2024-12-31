@@ -472,6 +472,13 @@ type V2Config struct {
 	TimeoutSyncThreshold int     `json:"timeoutSyncThreshold"` // send syncInfo after number of timeout
 	TimeoutPeriod        int     `json:"timeoutPeriod"`        // Duration in ms
 	CertThreshold        float64 `json:"certificateThreshold"` // Necessary number of messages from master nodes to form a certificate
+
+	ExpTimeoutConfig ExpTimeoutConfig `json:"expTimeoutConfig"`
+}
+
+type ExpTimeoutConfig struct {
+	Base        float64 `json:"base"`        // base in base^exponent
+	MaxExponent uint8   `json:"maxExponent"` // max exponent in base^exponent
 }
 
 func (c *XDPoSConfig) String() string {

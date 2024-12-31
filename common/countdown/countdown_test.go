@@ -11,12 +11,12 @@ import (
 func TestCountdownWillCallback(t *testing.T) {
 	var fakeI interface{}
 	called := make(chan int)
-	OnTimeoutFn := func(time.Time, interface{}) error {
+	OnTimeoutFn := func(time.Time, ...interface{}) error {
 		called <- 1
 		return nil
 	}
 
-	countdown := NewCountDown(1000 * time.Millisecond)
+	countdown := NewConstCountDown(1000 * time.Millisecond)
 	countdown.OnTimeoutFn = OnTimeoutFn
 	countdown.Reset(fakeI)
 	<-called
@@ -26,12 +26,12 @@ func TestCountdownWillCallback(t *testing.T) {
 func TestCountdownShouldReset(t *testing.T) {
 	var fakeI interface{}
 	called := make(chan int)
-	OnTimeoutFn := func(time.Time, interface{}) error {
+	OnTimeoutFn := func(time.Time, ...interface{}) error {
 		called <- 1
 		return nil
 	}
 
-	countdown := NewCountDown(5000 * time.Millisecond)
+	countdown := NewConstCountDown(5000 * time.Millisecond)
 	countdown.OnTimeoutFn = OnTimeoutFn
 	// Check countdown did not start
 	assert.False(t, countdown.isInitilised())
@@ -74,12 +74,12 @@ firstReset:
 func TestCountdownShouldResetEvenIfErrored(t *testing.T) {
 	var fakeI interface{}
 	called := make(chan int)
-	OnTimeoutFn := func(time.Time, interface{}) error {
+	OnTimeoutFn := func(time.Time, ...interface{}) error {
 		called <- 1
 		return errors.New("ERROR!")
 	}
 
-	countdown := NewCountDown(5000 * time.Millisecond)
+	countdown := NewConstCountDown(5000 * time.Millisecond)
 	countdown.OnTimeoutFn = OnTimeoutFn
 	// Check countdown did not start
 	assert.False(t, countdown.isInitilised())
@@ -122,12 +122,12 @@ firstReset:
 func TestCountdownShouldBeAbleToStop(t *testing.T) {
 	var fakeI interface{}
 	called := make(chan int)
-	OnTimeoutFn := func(time.Time, interface{}) error {
+	OnTimeoutFn := func(time.Time, ...interface{}) error {
 		called <- 1
 		return nil
 	}
 
-	countdown := NewCountDown(5000 * time.Millisecond)
+	countdown := NewConstCountDown(5000 * time.Millisecond)
 	countdown.OnTimeoutFn = OnTimeoutFn
 	// Check countdown did not start
 	assert.False(t, countdown.isInitilised())
@@ -144,8 +144,8 @@ func TestCountdownShouldBeAbleToStop(t *testing.T) {
 func TestCountdownShouldAvoidDeadlock(t *testing.T) {
 	var fakeI interface{}
 	called := make(chan int)
-	countdown := NewCountDown(5000 * time.Millisecond)
-	OnTimeoutFn := func(time.Time, interface{}) error {
+	countdown := NewConstCountDown(5000 * time.Millisecond)
+	OnTimeoutFn := func(time.Time, ...interface{}) error {
 		countdown.Reset(fakeI)
 		called <- 1
 		return nil

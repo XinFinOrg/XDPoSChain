@@ -271,17 +271,17 @@ func (x *XDPoS_v2) sendTimeout(chain consensus.ChainReader) error {
 Function that will be called by timer when countdown reaches its threshold.
 In the engine v2, we would need to broadcast timeout messages to other peers
 */
-func (x *XDPoS_v2) OnCountdownTimeout(time time.Time, chain interface{}) error {
+func (x *XDPoS_v2) OnCountdownTimeout(time time.Time, chain ...interface{}) error {
 	x.lock.Lock()
 	defer x.lock.Unlock()
 
 	// Check if we are within the master node list
-	allow := x.allowedToSend(chain.(consensus.ChainReader), chain.(consensus.ChainReader).CurrentHeader(), "timeout")
+	allow := x.allowedToSend(chain[0].(consensus.ChainReader), chain[0].(consensus.ChainReader).CurrentHeader(), "timeout")
 	if !allow {
 		return nil
 	}
 
-	err := x.sendTimeout(chain.(consensus.ChainReader))
+	err := x.sendTimeout(chain[0].(consensus.ChainReader))
 	if err != nil {
 		log.Error("Error while sending out timeout message at time: ", "time", time, "err", err)
 		return err

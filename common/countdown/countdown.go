@@ -8,22 +8,36 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
-type CountdownTimer struct {
-	lock            sync.RWMutex // Protects the Initilised field
-	resetc          chan int
-	quitc           chan chan struct{}
-	initilised      bool
-	timeoutDuration time.Duration
-	// Triggered when the countdown timer timeout for the `timeoutDuration` period, it will pass current timestamp to the callback function
-	OnTimeoutFn func(time time.Time, i interface{}) error
+type TimeoutDurationHelper interface {
+	GetTimeoutDuration(inputs ...interface{}) time.Duration
+	SetParams(inputs ...interface{})
 }
 
-func NewCountDown(duration time.Duration) *CountdownTimer {
+type CountdownTimer struct {
+	lock           sync.RWMutex // Protects the Initilised field
+	resetc         chan int
+	quitc          chan chan struct{}
+	initilised     bool
+	durationHelper TimeoutDurationHelper
+	// Triggered when the countdown timer timeout for the `timeoutDuration` period, it will pass current timestamp to the callback function
+	OnTimeoutFn func(time time.Time, i ...interface{}) error
+}
+
+func NewConstCountDown(duration time.Duration) *CountdownTimer {
 	return &CountdownTimer{
-		resetc:          make(chan int),
-		quitc:           make(chan chan struct{}),
-		initilised:      false,
-		timeoutDuration: duration,
+		resetc:         make(chan int),
+		quitc:          make(chan chan struct{}),
+		initilised:     false,
+		durationHelper: NewConstTimeoutDuration(duration),
+	}
+}
+
+func NewExpCountDown(duration time.Duration, base float64, max_exponent uint8) *CountdownTimer {
+	return &CountdownTimer{
+		resetc:         make(chan int),
+		quitc:          make(chan chan struct{}),
+		initilised:     false,
+		durationHelper: NewExpTimeoutDuration(duration, base, max_exponent),
 	}
 }
 
@@ -34,25 +48,25 @@ func (t *CountdownTimer) StopTimer() {
 	<-q
 }
 
-func (t *CountdownTimer) SetTimeoutDuration(duration time.Duration) {
-	t.timeoutDuration = duration
+func (t *CountdownTimer) SetParams(inputs ...interface{}) {
+	t.durationHelper.SetParams(inputs...)
 }
 
 // Reset will start the countdown timer if it's already stopped, or simply reset the countdown time back to the defual `duration`
-func (t *CountdownTimer) Reset(i interface{}) {
+func (t *CountdownTimer) Reset(inputs ...interface{}) {
 	if !t.isInitilised() {
 		t.setInitilised(true)
-		go t.startTimer(i)
+		go t.startTimer(inputs...)
 	} else {
 		t.resetc <- 0
 	}
 }
 
 // A long running process that
-func (t *CountdownTimer) startTimer(i interface{}) {
+func (t *CountdownTimer) startTimer(inputs ...interface{}) {
 	// Make sure we mark Initilised to false when we quit the countdown
 	defer t.setInitilised(false)
-	timer := time.NewTimer(t.timeoutDuration)
+	timer := time.NewTimer(t.durationHelper.GetTimeoutDuration(inputs...))
 	// We start with a inf loop
 	for {
 		select {
@@ -63,16 +77,16 @@ func (t *CountdownTimer) startTimer(i interface{}) {
 		case <-timer.C:
 			log.Debug("Countdown time reached!")
 			go func() {
-				err := t.OnTimeoutFn(time.Now(), i)
+				err := t.OnTimeoutFn(time.Now(), inputs...)
 				if err != nil {
 					log.Error("OnTimeoutFn error", "error", err)
 				}
 				log.Debug("OnTimeoutFn processed")
 			}()
-			timer.Reset(t.timeoutDuration)
+			timer.Reset(t.durationHelper.GetTimeoutDuration(inputs...))
 		case <-t.resetc:
 			log.Debug("Reset countdown timer")
-			timer.Reset(t.timeoutDuration)
+			timer.Reset(t.durationHelper.GetTimeoutDuration(inputs...))
 		}
 	}
 }
