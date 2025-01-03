@@ -371,11 +371,6 @@ func WriteBlockReceipts(db ethdb.KeyValueWriter, hash common.Hash, number uint64
 	return nil
 }
 
-// DeleteBody removes all block body data associated with a hash.
-func DeleteBody(db rawdb.DatabaseDeleter, hash common.Hash, number uint64) {
-	db.Delete(append(append(bodyPrefix, encodeBlockNumber(number)...), hash.Bytes()...))
-}
-
 // DeleteTd removes all block total difficulty data associated with a hash.
 func DeleteTd(db rawdb.DatabaseDeleter, hash common.Hash, number uint64) {
 	db.Delete(append(append(append(headerPrefix, encodeBlockNumber(number)...), hash.Bytes()...), tdSuffix...))
@@ -385,7 +380,7 @@ func DeleteTd(db rawdb.DatabaseDeleter, hash common.Hash, number uint64) {
 func DeleteBlock(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
 	DeleteBlockReceipts(db, hash, number)
 	rawdb.DeleteHeader(db, hash, number)
-	DeleteBody(db, hash, number)
+	rawdb.DeleteBody(db, hash, number)
 	DeleteTd(db, hash, number)
 }
 
