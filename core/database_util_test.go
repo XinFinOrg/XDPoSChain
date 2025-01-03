@@ -237,7 +237,7 @@ func TestHeadStorage(t *testing.T) {
 	blockFast := types.NewBlockWithHeader(&types.Header{Extra: []byte("test block fast")})
 
 	// Check that no head entries are in a pristine database
-	if entry := ReadHeadHeaderHash(db); entry != (common.Hash{}) {
+	if entry := rawdb.ReadHeadHeaderHash(db); entry != (common.Hash{}) {
 		t.Fatalf("Non head header entry returned: %v", entry)
 	}
 	if entry := GetHeadBlockHash(db); entry != (common.Hash{}) {
@@ -251,7 +251,7 @@ func TestHeadStorage(t *testing.T) {
 	rawdb.WriteHeadBlockHash(db, blockFull.Hash())
 	rawdb.WriteHeadFastBlockHash(db, blockFast.Hash())
 	// Check that both heads are present, and different (i.e. two heads maintained)
-	if entry := ReadHeadHeaderHash(db); entry != blockHead.Hash() {
+	if entry := rawdb.ReadHeadHeaderHash(db); entry != blockHead.Hash() {
 		t.Fatalf("Head header hash mismatch: have %v, want %v", entry, blockHead.Hash())
 	}
 	if entry := GetHeadBlockHash(db); entry != blockFull.Hash() {
