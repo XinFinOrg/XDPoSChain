@@ -122,7 +122,7 @@ func WriteHeadBlockHash(db ethdb.KeyValueWriter, hash common.Hash) {
 // whereas the last block hash is only updated upon a full block import, the last
 // fast hash is updated when importing pre-processed blocks.
 func ReadHeadFastBlockHash(db DatabaseReader) common.Hash {
-	data, _ := db.Get(headFastKey)
+	data, _ := db.Get(headFastBlockKey)
 	if len(data) == 0 {
 		return common.Hash{}
 	}

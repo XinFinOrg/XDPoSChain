@@ -36,7 +36,6 @@ import (
 var (
 	headHeaderKey = []byte("LastHeader")
 	headBlockKey  = []byte("LastBlock")
-	headFastKey   = []byte("LastFast")
 	trieSyncKey   = []byte("TrieSync")
 
 	// Data item prefixes (use single byte to avoid mixing data types, avoid `i`).
