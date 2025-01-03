@@ -372,11 +372,6 @@ func WriteBlockReceipts(db ethdb.KeyValueWriter, hash common.Hash, number uint64
 	return nil
 }
 
-// DeleteCanonicalHash removes the number to hash canonical mapping.
-func DeleteCanonicalHash(db rawdb.DatabaseDeleter, number uint64) {
-	db.Delete(append(append(headerPrefix, encodeBlockNumber(number)...), numSuffix...))
-}
-
 // DeleteHeader removes all block header data associated with a hash.
 func DeleteHeader(db rawdb.DatabaseDeleter, hash common.Hash, number uint64) {
 	db.Delete(append(blockHashPrefix, hash.Bytes()...))
