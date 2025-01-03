@@ -413,22 +413,6 @@ func WriteBlockChainVersion(db ethdb.KeyValueWriter, vsn int) {
 	db.Put([]byte("BlockchainVersion"), enc)
 }
 
-// WriteChainConfig writes the chain config settings to the database.
-func WriteChainConfig(db ethdb.KeyValueWriter, hash common.Hash, cfg *params.ChainConfig) error {
-	// short circuit and ignore if nil config. GetChainConfig
-	// will return a default.
-	if cfg == nil {
-		return nil
-	}
-
-	jsonChainConfig, err := json.Marshal(cfg)
-	if err != nil {
-		return err
-	}
-
-	return db.Put(append(configPrefix, hash[:]...), jsonChainConfig)
-}
-
 // GetChainConfig will fetch the network settings based on the given hash.
 func GetChainConfig(db rawdb.DatabaseReader, hash common.Hash) (*params.ChainConfig, error) {
 	jsonChainConfig, _ := db.Get(append(configPrefix, hash[:]...))

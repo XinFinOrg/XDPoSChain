@@ -17,10 +17,29 @@
 package rawdb
 
 import (
+	"encoding/json"
+
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"github.com/XinFinOrg/XDPoSChain/params"
 )
+
+// WriteChainConfig writes the chain config settings to the database.
+func WriteChainConfig(db ethdb.KeyValueWriter, hash common.Hash, cfg *params.ChainConfig) error {
+	// short circuit and ignore if nil config. GetChainConfig
+	// will return a default.
+	if cfg == nil {
+		return nil
+	}
+
+	jsonChainConfig, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+
+	return db.Put(append(configPrefix, hash[:]...), jsonChainConfig)
+}
 
 // WritePreimages writes the provided set of preimages to the database.
 func WritePreimages(db ethdb.KeyValueWriter, preimages map[common.Hash][]byte) {
