@@ -55,7 +55,7 @@ func TestHeaderStorage(t *testing.T) {
 		}
 	}
 	// Delete the header and verify the execution
-	DeleteHeader(db, header.Hash(), header.Number.Uint64())
+	rawdb.DeleteHeader(db, header.Hash(), header.Number.Uint64())
 	if entry := GetHeader(db, header.Hash(), header.Number.Uint64()); entry != nil {
 		t.Fatalf("Deleted header returned: %v", entry)
 	}
@@ -163,7 +163,7 @@ func TestPartialBlockStorage(t *testing.T) {
 	if entry := GetBlock(db, block.Hash(), block.NumberU64()); entry != nil {
 		t.Fatalf("Non existent block returned: %v", entry)
 	}
-	DeleteHeader(db, block.Hash(), block.NumberU64())
+	rawdb.DeleteHeader(db, block.Hash(), block.NumberU64())
 
 	// Store a body and check that it's not recognized as a block
 	rawdb.WriteBody(db, block.Hash(), block.NumberU64(), block.Body())
