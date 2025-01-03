@@ -95,11 +95,11 @@ func GetHeadBlockHash(db rawdb.DatabaseReader) common.Hash {
 	return common.BytesToHash(data)
 }
 
-// GetHeadFastBlockHash retrieves the hash of the current canonical head block during
+// ReadHeadFastBlockHash retrieves the hash of the current canonical head block during
 // fast synchronization. The difference between this and GetHeadBlockHash is that
 // whereas the last block hash is only updated upon a full block import, the last
 // fast hash is updated when importing pre-processed blocks.
-func GetHeadFastBlockHash(db rawdb.DatabaseReader) common.Hash {
+func ReadHeadFastBlockHash(db rawdb.DatabaseReader) common.Hash {
 	data, _ := db.Get(headFastKey)
 	if len(data) == 0 {
 		return common.Hash{}
