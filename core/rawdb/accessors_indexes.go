@@ -90,3 +90,30 @@ func WriteBloomBits(db ethdb.KeyValueWriter, bit uint, section uint64, head comm
 		log.Crit("Failed to store bloom bits", "err", err)
 	}
 }
+
+// FindCommonAncestor returns the last common ancestor of two block headers
+func FindCommonAncestor(db ethdb.Reader, a, b *types.Header) *types.Header {
+	for bn := b.Number.Uint64(); a.Number.Uint64() > bn; {
+		a = ReadHeader(db, a.ParentHash, a.Number.Uint64()-1)
+		if a == nil {
+			return nil
+		}
+	}
+	for an := a.Number.Uint64(); an < b.Number.Uint64(); {
+		b = ReadHeader(db, b.ParentHash, b.Number.Uint64()-1)
+		if b == nil {
+			return nil
+		}
+	}
+	for a.Hash() != b.Hash() {
+		a = ReadHeader(db, a.ParentHash, a.Number.Uint64()-1)
+		if a == nil {
+			return nil
+		}
+		b = ReadHeader(db, b.ParentHash, b.Number.Uint64()-1)
+		if b == nil {
+			return nil
+		}
+	}
+	return a
+}

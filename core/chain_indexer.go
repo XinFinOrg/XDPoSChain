@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
@@ -207,7 +208,7 @@ func (c *ChainIndexer) eventLoop(currentHeader *types.Header, events chan ChainE
 
 				// TODO(karalabe): This operation is expensive and might block, causing the event system to
 				// potentially also lock up. We need to do with on a different thread somehow.
-				if h := FindCommonAncestor(c.chainDb, prevHeader, header); h != nil {
+				if h := rawdb.FindCommonAncestor(c.chainDb, prevHeader, header); h != nil {
 					c.newHead(h.Number.Uint64(), true)
 				}
 			}

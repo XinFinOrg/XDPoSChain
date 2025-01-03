@@ -422,30 +422,3 @@ func GetChainConfig(db rawdb.DatabaseReader, hash common.Hash) (*params.ChainCon
 
 	return &config, nil
 }
-
-// FindCommonAncestor returns the last common ancestor of two block headers
-func FindCommonAncestor(db rawdb.DatabaseReader, a, b *types.Header) *types.Header {
-	for bn := b.Number.Uint64(); a.Number.Uint64() > bn; {
-		a = GetHeader(db, a.ParentHash, a.Number.Uint64()-1)
-		if a == nil {
-			return nil
-		}
-	}
-	for an := a.Number.Uint64(); an < b.Number.Uint64(); {
-		b = GetHeader(db, b.ParentHash, b.Number.Uint64()-1)
-		if b == nil {
-			return nil
-		}
-	}
-	for a.Hash() != b.Hash() {
-		a = GetHeader(db, a.ParentHash, a.Number.Uint64()-1)
-		if a == nil {
-			return nil
-		}
-		b = GetHeader(db, b.ParentHash, b.Number.Uint64()-1)
-		if b == nil {
-			return nil
-		}
-	}
-	return a
-}
