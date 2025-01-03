@@ -630,7 +630,7 @@ func TestFastVsFullChains(t *testing.T) {
 	}
 	// Check that the canonical chains are the same between the databases
 	for i := 0; i < len(blocks)+1; i++ {
-		if fhash, ahash := ReadCanonicalHash(fastDb, uint64(i)), ReadCanonicalHash(archiveDb, uint64(i)); fhash != ahash {
+		if fhash, ahash := rawdb.ReadCanonicalHash(fastDb, uint64(i)), rawdb.ReadCanonicalHash(archiveDb, uint64(i)); fhash != ahash {
 			t.Errorf("block #%d: canonical hash mismatch: have %v, want %v", i, fhash, ahash)
 		}
 	}
@@ -986,7 +986,7 @@ func TestCanonicalBlockRetrieval(t *testing.T) {
 
 			// try to retrieve a block by its canonical hash and see if the block data can be retrieved.
 			for {
-				ch := ReadCanonicalHash(blockchain.db, block.NumberU64())
+				ch := rawdb.ReadCanonicalHash(blockchain.db, block.NumberU64())
 				if ch == (common.Hash{}) {
 					continue // busy wait for canonical hash to be written
 				}

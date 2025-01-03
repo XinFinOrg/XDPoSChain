@@ -72,15 +72,6 @@ func encodeBlockNumber(number uint64) []byte {
 	return enc
 }
 
-// ReadCanonicalHash retrieves a hash assigned to a canonical block number.
-func ReadCanonicalHash(db rawdb.DatabaseReader, number uint64) common.Hash {
-	data, _ := db.Get(append(append(headerPrefix, encodeBlockNumber(number)...), numSuffix...))
-	if len(data) == 0 {
-		return common.Hash{}
-	}
-	return common.BytesToHash(data)
-}
-
 // missingNumber is returned by GetBlockNumber if no header with the
 // given block hash has been stored in the database
 const missingNumber = uint64(0xffffffffffffffff)

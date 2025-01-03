@@ -380,7 +380,7 @@ func (hc *HeaderChain) HasHeader(hash common.Hash, number uint64) bool {
 // GetHeaderByNumber retrieves a block header from the database by number,
 // caching it (associated with its hash) if found.
 func (hc *HeaderChain) GetHeaderByNumber(number uint64) *types.Header {
-	hash := ReadCanonicalHash(hc.chainDb, number)
+	hash := rawdb.ReadCanonicalHash(hc.chainDb, number)
 	if hash == (common.Hash{}) {
 		return nil
 	}
@@ -388,8 +388,7 @@ func (hc *HeaderChain) GetHeaderByNumber(number uint64) *types.Header {
 }
 
 func (hc *HeaderChain) GetCanonicalHash(number uint64) common.Hash {
-	// TODO: return rawdb.ReadCanonicalHash(hc.chainDb, number)
-	return ReadCanonicalHash(hc.chainDb, number)
+	return rawdb.ReadCanonicalHash(hc.chainDb, number)
 }
 
 // CurrentHeader retrieves the current head header of the canonical chain. The
