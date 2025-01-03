@@ -85,15 +85,6 @@ func GetBlockNumber(db rawdb.DatabaseReader, hash common.Hash) uint64 {
 	return binary.BigEndian.Uint64(data)
 }
 
-// ReadHeadBlockHash retrieves the hash of the current canonical head block.
-func ReadHeadBlockHash(db rawdb.DatabaseReader) common.Hash {
-	data, _ := db.Get(headBlockKey)
-	if len(data) == 0 {
-		return common.Hash{}
-	}
-	return common.BytesToHash(data)
-}
-
 // GetTrieSyncProgress retrieves the number of tries nodes fast synced to allow
 // reportinc correct numbers across restarts.
 func GetTrieSyncProgress(db rawdb.DatabaseReader) uint64 {
