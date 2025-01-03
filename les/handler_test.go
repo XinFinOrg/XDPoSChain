@@ -556,7 +556,7 @@ func TestTransactionStatusLes2(t *testing.T) {
 	}
 
 	// check if their status is included now
-	block1hash := core.GetCanonicalHash(db, 1)
+	block1hash := core.ReadCanonicalHash(db, 1)
 	test(tx1, false, txStatus{Status: txpool.TxStatusIncluded, Lookup: &rawdb.TxLookupEntry{BlockHash: block1hash, BlockIndex: 1, Index: 0}})
 	test(tx2, false, txStatus{Status: txpool.TxStatusIncluded, Lookup: &rawdb.TxLookupEntry{BlockHash: block1hash, BlockIndex: 1, Index: 1}})
 

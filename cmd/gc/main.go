@@ -61,7 +61,7 @@ func main() {
 	cache = lru.NewCache[common.Hash, struct{}](*cacheSize)
 	go func() {
 		for i := uint64(1); i <= currentHeader.Number.Uint64(); i++ {
-			hash := core.GetCanonicalHash(lddb, i)
+			hash := core.ReadCanonicalHash(lddb, i)
 			root := core.GetHeader(lddb, hash, i).Root
 			trieRoot, err := trie.NewSecure(root, tridb)
 			if err != nil {

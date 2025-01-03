@@ -39,7 +39,7 @@ var errNonCanonicalHash = errors.New("hash is not currently canonical")
 // given number. The returned header is proven by local CHT.
 func GetHeaderByNumber(ctx context.Context, odr OdrBackend, number uint64) (*types.Header, error) {
 	db := odr.Database()
-	hash := core.GetCanonicalHash(db, number)
+	hash := core.ReadCanonicalHash(db, number)
 	if (hash != common.Hash{}) {
 		// if there is a canonical hash, there is a header too
 		header := core.GetHeader(db, hash, number)
@@ -55,14 +55,14 @@ func GetHeaderByNumber(ctx context.Context, odr OdrBackend, number uint64) (*typ
 	)
 	if odr.ChtIndexer() != nil {
 		chtCount, sectionHeadNum, sectionHead = odr.ChtIndexer().Sections()
-		canonicalHash := core.GetCanonicalHash(db, sectionHeadNum)
+		canonicalHash := core.ReadCanonicalHash(db, sectionHeadNum)
 		// if the CHT was injected as a trusted checkpoint, we have no canonical hash yet so we accept zero hash too
 		for chtCount > 0 && canonicalHash != sectionHead && canonicalHash != (common.Hash{}) {
 			chtCount--
 			if chtCount > 0 {
 				sectionHeadNum = chtCount*CHTFrequencyClient - 1
 				sectionHead = odr.ChtIndexer().SectionHead(chtCount - 1)
-				canonicalHash = core.GetCanonicalHash(db, sectionHeadNum)
+				canonicalHash = core.ReadCanonicalHash(db, sectionHeadNum)
 			}
 		}
 	}
@@ -77,7 +77,7 @@ func GetHeaderByNumber(ctx context.Context, odr OdrBackend, number uint64) (*typ
 }
 
 func GetCanonicalHash(ctx context.Context, odr OdrBackend, number uint64) (common.Hash, error) {
-	hash := core.GetCanonicalHash(odr.Database(), number)
+	hash := core.ReadCanonicalHash(odr.Database(), number)
 	if (hash != common.Hash{}) {
 		return hash, nil
 	}
@@ -156,7 +156,7 @@ func GetBlockReceipts(ctx context.Context, odr OdrBackend, hash common.Hash, num
 		if err != nil {
 			return nil, err
 		}
-		genesis := core.GetCanonicalHash(odr.Database(), 0)
+		genesis := core.ReadCanonicalHash(odr.Database(), 0)
 		config, _ := core.GetChainConfig(odr.Database(), genesis)
 
 		if err := receipts.DeriveFields(config, hash, number, block.BaseFee(), block.Transactions()); err != nil {
@@ -201,20 +201,20 @@ func GetBloomBits(ctx context.Context, odr OdrBackend, bitIdx uint, sectionIdxLi
 	)
 	if odr.BloomTrieIndexer() != nil {
 		bloomTrieCount, sectionHeadNum, sectionHead = odr.BloomTrieIndexer().Sections()
-		canonicalHash := core.GetCanonicalHash(db, sectionHeadNum)
+		canonicalHash := core.ReadCanonicalHash(db, sectionHeadNum)
 		// if the BloomTrie was injected as a trusted checkpoint, we have no canonical hash yet so we accept zero hash too
 		for bloomTrieCount > 0 && canonicalHash != sectionHead && canonicalHash != (common.Hash{}) {
 			bloomTrieCount--
 			if bloomTrieCount > 0 {
 				sectionHeadNum = bloomTrieCount*BloomTrieFrequency - 1
 				sectionHead = odr.BloomTrieIndexer().SectionHead(bloomTrieCount - 1)
-				canonicalHash = core.GetCanonicalHash(db, sectionHeadNum)
+				canonicalHash = core.ReadCanonicalHash(db, sectionHeadNum)
 			}
 		}
 	}
 
 	for i, sectionIdx := range sectionIdxList {
-		sectionHead := core.GetCanonicalHash(db, (sectionIdx+1)*BloomTrieFrequency-1)
+		sectionHead := core.ReadCanonicalHash(db, (sectionIdx+1)*BloomTrieFrequency-1)
 		// if we don't have the canonical hash stored for this section head number, we'll still look for
 		// an entry with a zero sectionHead (we store it with zero section head too if we don't know it
 		// at the time of the retrieval)
