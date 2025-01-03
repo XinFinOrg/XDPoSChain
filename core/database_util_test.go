@@ -251,9 +251,7 @@ func TestHeadStorage(t *testing.T) {
 	// Assign separate entries for the head header and block
 	rawdb.WriteHeadHeaderHash(db, blockHead.Hash())
 	rawdb.WriteHeadBlockHash(db, blockFull.Hash())
-	if err := WriteHeadFastBlockHash(db, blockFast.Hash()); err != nil {
-		t.Fatalf("Failed to write fast head block hash: %v", err)
-	}
+	rawdb.WriteHeadFastBlockHash(db, blockFast.Hash())
 	// Check that both heads are present, and different (i.e. two heads maintained)
 	if entry := GetHeadHeaderHash(db); entry != blockHead.Hash() {
 		t.Fatalf("Head header hash mismatch: have %v, want %v", entry, blockHead.Hash())

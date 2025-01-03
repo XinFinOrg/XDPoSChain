@@ -342,14 +342,6 @@ func GetBloomBits(db rawdb.DatabaseReader, bit uint, section uint64, head common
 	return db.Get(key)
 }
 
-// WriteHeadFastBlockHash stores the fast head block's hash.
-func WriteHeadFastBlockHash(db ethdb.KeyValueWriter, hash common.Hash) error {
-	if err := db.Put(headFastKey, hash.Bytes()); err != nil {
-		log.Crit("Failed to store last fast block's hash", "err", err)
-	}
-	return nil
-}
-
 // WriteTrieSyncProgress stores the fast sync trie process counter to support
 // retrieving it across restarts.
 func WriteTrieSyncProgress(db ethdb.KeyValueWriter, count uint64) error {
