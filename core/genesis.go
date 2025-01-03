@@ -198,7 +198,7 @@ func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig
 
 	// Check config compatibility and write the config. Compatibility errors
 	// are returned to the caller unless we're already at block zero.
-	height := GetBlockNumber(db, GetHeadHeaderHash(db))
+	height := GetBlockNumber(db, ReadHeadHeaderHash(db))
 	if height == missingNumber {
 		return newcfg, stored, errors.New("missing block number for head header hash")
 	}

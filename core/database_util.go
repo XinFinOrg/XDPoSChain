@@ -86,12 +86,12 @@ func GetBlockNumber(db rawdb.DatabaseReader, hash common.Hash) uint64 {
 	return binary.BigEndian.Uint64(data)
 }
 
-// GetHeadHeaderHash retrieves the hash of the current canonical head block's
+// ReadHeadHeaderHash retrieves the hash of the current canonical head block's
 // header. The difference between this and GetHeadBlockHash is that whereas the
 // last block hash is only updated upon a full block import, the last header
 // hash is updated already at header import, allowing head tracking for the
 // light synchronization mechanism.
-func GetHeadHeaderHash(db rawdb.DatabaseReader) common.Hash {
+func ReadHeadHeaderHash(db rawdb.DatabaseReader) common.Hash {
 	data, _ := db.Get(headHeaderKey)
 	if len(data) == 0 {
 		return common.Hash{}
