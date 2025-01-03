@@ -342,14 +342,6 @@ func GetBloomBits(db rawdb.DatabaseReader, bit uint, section uint64, head common
 	return db.Get(key)
 }
 
-// WriteHeadHeaderHash stores the head header's hash.
-func WriteHeadHeaderHash(db ethdb.KeyValueWriter, hash common.Hash) error {
-	if err := db.Put(headHeaderKey, hash.Bytes()); err != nil {
-		log.Crit("Failed to store last header's hash", "err", err)
-	}
-	return nil
-}
-
 // WriteHeadFastBlockHash stores the fast head block's hash.
 func WriteHeadFastBlockHash(db ethdb.KeyValueWriter, hash common.Hash) error {
 	if err := db.Put(headFastKey, hash.Bytes()); err != nil {

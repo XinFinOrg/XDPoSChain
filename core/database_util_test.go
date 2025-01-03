@@ -249,9 +249,7 @@ func TestHeadStorage(t *testing.T) {
 		t.Fatalf("Non fast head block entry returned: %v", entry)
 	}
 	// Assign separate entries for the head header and block
-	if err := WriteHeadHeaderHash(db, blockHead.Hash()); err != nil {
-		t.Fatalf("Failed to write head header hash: %v", err)
-	}
+	rawdb.WriteHeadHeaderHash(db, blockHead.Hash())
 	rawdb.WriteHeadBlockHash(db, blockFull.Hash())
 	if err := WriteHeadFastBlockHash(db, blockFast.Hash()); err != nil {
 		t.Fatalf("Failed to write fast head block hash: %v", err)
