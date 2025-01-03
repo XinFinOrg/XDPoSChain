@@ -138,7 +138,7 @@ func (b *BloomIndexer) Commit() error {
 		if err != nil {
 			return err
 		}
-		core.WriteBloomBits(batch, uint(i), b.section, b.head, bitutil.CompressBytes(bits))
+		rawdb.WriteBloomBits(batch, uint(i), b.section, b.head, bitutil.CompressBytes(bits))
 	}
 	return batch.Write()
 }

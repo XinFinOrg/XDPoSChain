@@ -372,19 +372,6 @@ func WriteBlockReceipts(db ethdb.KeyValueWriter, hash common.Hash, number uint64
 	return nil
 }
 
-// WriteBloomBits writes the compressed bloom bits vector belonging to the given
-// section and bit index.
-func WriteBloomBits(db ethdb.KeyValueWriter, bit uint, section uint64, head common.Hash, bits []byte) {
-	key := append(append(bloomBitsPrefix, make([]byte, 10)...), head.Bytes()...)
-
-	binary.BigEndian.PutUint16(key[1:], uint16(bit))
-	binary.BigEndian.PutUint64(key[3:], section)
-
-	if err := db.Put(key, bits); err != nil {
-		log.Crit("Failed to store bloom bits", "err", err)
-	}
-}
-
 // DeleteCanonicalHash removes the number to hash canonical mapping.
 func DeleteCanonicalHash(db rawdb.DatabaseDeleter, number uint64) {
 	db.Delete(append(append(headerPrefix, encodeBlockNumber(number)...), numSuffix...))

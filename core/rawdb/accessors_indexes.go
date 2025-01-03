@@ -17,6 +17,8 @@
 package rawdb
 
 import (
+	"encoding/binary"
+
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
@@ -74,4 +76,17 @@ func WriteTxLookupEntriesByBlock(db ethdb.KeyValueWriter, block *types.Block) {
 // DeleteTxLookupEntry removes all transaction data associated with a hash.
 func DeleteTxLookupEntry(db ethdb.KeyValueWriter, hash common.Hash) {
 	db.Delete(txLookupKey(hash))
+}
+
+// WriteBloomBits writes the compressed bloom bits vector belonging to the given
+// section and bit index.
+func WriteBloomBits(db ethdb.KeyValueWriter, bit uint, section uint64, head common.Hash, bits []byte) {
+	key := append(append(bloomBitsPrefix, make([]byte, 10)...), head.Bytes()...)
+
+	binary.BigEndian.PutUint16(key[1:], uint16(bit))
+	binary.BigEndian.PutUint64(key[3:], section)
+
+	if err := db.Put(key, bits); err != nil {
+		log.Crit("Failed to store bloom bits", "err", err)
+	}
 }

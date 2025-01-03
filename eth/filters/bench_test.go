@@ -109,7 +109,7 @@ func benchmarkBloomBits(b *testing.B, sectionSize uint64) {
 			comp := bitutil.CompressBytes(data)
 			dataSize += uint64(len(data))
 			compSize += uint64(len(comp))
-			core.WriteBloomBits(db, uint(i), sectionIdx, sectionHead, comp)
+			rawdb.WriteBloomBits(db, uint(i), sectionIdx, sectionHead, comp)
 		}
 		//if sectionIdx%50 == 0 {
 		//	b.Log(" section", sectionIdx, "/", cnt)
