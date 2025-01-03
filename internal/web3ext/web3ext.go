@@ -198,6 +198,16 @@ web3._extend({
 			params: 1
 		}),
 		new web3._extend.Method({
+			name: 'addTrustedPeer',
+			call: 'admin_addTrustedPeer',
+			params: 1
+		}),
+		new web3._extend.Method({
+			name: 'removeTrustedPeer',
+			call: 'admin_removeTrustedPeer',
+			params: 1
+		}),
+		new web3._extend.Method({
 			name: 'exportChain',
 			call: 'admin_exportChain',
 			params: 1,
@@ -289,11 +299,6 @@ web3._extend({
 		new web3._extend.Method({
 			name: 'chaindbCompact',
 			call: 'debug_chaindbCompact',
-		}),
-		new web3._extend.Method({
-			name: 'metrics',
-			call: 'debug_metrics',
-			params: 1
 		}),
 		new web3._extend.Method({
 			name: 'verbosity',
@@ -465,6 +470,11 @@ web3._extend({
 			params: 2,
 			inputFormatter:[null, null],
 		}),
+		new web3._extend.Method({
+			name: 'dbGet',
+			call: 'debug_dbGet',
+			params: 1
+		}),
 	],
 	properties: []
 });
@@ -539,6 +549,12 @@ web3._extend({
 			inputFormatter: [null, web3._extend.formatters.inputBlockNumberFormatter],
 		}),
 		new web3._extend.Method({
+			name: 'feeHistory',
+			call: 'eth_feeHistory',
+			params: 3,
+			inputFormatter: [null, web3._extend.formatters.inputBlockNumberFormatter, null]
+		}),
+		new web3._extend.Method({
 			name: 'getBlockReceipts',
 			call: 'eth_getBlockReceipts',
 			params: 1,
@@ -556,6 +572,11 @@ web3._extend({
 				}
 				return formatted;
 			}
+		}),
+		new web3._extend.Property({
+			name: 'maxPriorityFeePerGas',
+			getter: 'eth_maxPriorityFeePerGas',
+			outputFormatter: web3._extend.utils.toBigNumber
 		}),
 	]
 });
@@ -1059,6 +1080,11 @@ web3._extend({
 				status.queued = web3._extend.utils.toDecimal(status.queued);
 				return status;
 			}
+		}),
+		new web3._extend.Method({
+			name: 'contentFrom',
+			call: 'txpool_contentFrom',
+			params: 1,
 		}),
 	]
 });

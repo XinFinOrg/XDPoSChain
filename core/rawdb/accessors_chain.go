@@ -20,14 +20,35 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"math/big"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
+
+// ReadCanonicalHash retrieves the hash assigned to a canonical block number.
+func ReadCanonicalHash(db ethdb.Reader, number uint64) common.Hash {
+	data, _ := db.Ancient(freezerHashTable, number)
+	if len(data) == 0 {
+		data, _ = db.Get(headerHashKey(number))
+		// In the background freezer is moving data from leveldb to flatten files.
+		// So during the first check for ancient db, the data is not yet in there,
+		// but when we reach into leveldb, the data was already moved. That would
+		// result in a not found error.
+		if len(data) == 0 {
+			data, _ = db.Ancient(freezerHashTable, number)
+		}
+	}
+	if len(data) == 0 {
+		return common.Hash{}
+	}
+	return common.BytesToHash(data)
+}
 
 // WriteCanonicalHash stores the hash assigned to a canonical block number.
 func WriteCanonicalHash(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
@@ -36,12 +57,10 @@ func WriteCanonicalHash(db ethdb.KeyValueWriter, hash common.Hash, number uint64
 	}
 }
 
-// WriteHeaderNumber stores the hash->number mapping.
-func WriteHeaderNumber(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
-	key := headerNumberKey(hash)
-	enc := encodeBlockNumber(number)
-	if err := db.Put(key, enc); err != nil {
-		log.Crit("Failed to store hash to number mapping", "err", err)
+// DeleteCanonicalHash removes the number to hash canonical mapping.
+func DeleteCanonicalHash(db ethdb.KeyValueWriter, number uint64) {
+	if err := db.Delete(headerHashKey(number)); err != nil {
+		log.Crit("Failed to delete number to hash mapping", "err", err)
 	}
 }
 
@@ -55,11 +74,91 @@ func ReadHeaderNumber(db ethdb.KeyValueReader, hash common.Hash) *uint64 {
 	return &number
 }
 
+// WriteHeaderNumber stores the hash->number mapping.
+func WriteHeaderNumber(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
+	key := headerNumberKey(hash)
+	enc := encodeBlockNumber(number)
+	if err := db.Put(key, enc); err != nil {
+		log.Crit("Failed to store hash to number mapping", "err", err)
+	}
+}
+
+// DeleteHeaderNumber removes hash->number mapping.
+func DeleteHeaderNumber(db ethdb.KeyValueWriter, hash common.Hash) {
+	if err := db.Delete(headerNumberKey(hash)); err != nil {
+		log.Crit("Failed to delete hash to number mapping", "err", err)
+	}
+}
+
+// WriteHeadHeaderHash stores the hash of the current canonical head header.
+func WriteHeadHeaderHash(db ethdb.KeyValueWriter, hash common.Hash) {
+	if err := db.Put(headHeaderKey, hash.Bytes()); err != nil {
+		log.Crit("Failed to store last header's hash", "err", err)
+	}
+}
+
 // WriteHeadBlockHash stores the head block's hash.
 func WriteHeadBlockHash(db ethdb.KeyValueWriter, hash common.Hash) {
 	if err := db.Put(headBlockKey, hash.Bytes()); err != nil {
 		log.Crit("Failed to store last block's hash", "err", err)
 	}
+}
+
+// WriteHeadFastBlockHash stores the hash of the current fast-sync head block.
+func WriteHeadFastBlockHash(db ethdb.KeyValueWriter, hash common.Hash) {
+	if err := db.Put(headFastBlockKey, hash.Bytes()); err != nil {
+		log.Crit("Failed to store last fast block's hash", "err", err)
+	}
+}
+
+// ReadHeaderRLP retrieves a block header in its raw RLP database encoding.
+func ReadHeaderRLP(db ethdb.Reader, hash common.Hash, number uint64) rlp.RawValue {
+	// First try to look up the data in ancient database. Extra hash
+	// comparison is necessary since ancient database only maintains
+	// the canonical data.
+	data, _ := db.Ancient(freezerHeaderTable, number)
+	if len(data) > 0 && crypto.Keccak256Hash(data) == hash {
+		return data
+	}
+	// Then try to look up the data in leveldb.
+	data, _ = db.Get(headerKey(number, hash))
+	if len(data) > 0 {
+		return data
+	}
+	// In the background freezer is moving data from leveldb to flatten files.
+	// So during the first check for ancient db, the data is not yet in there,
+	// but when we reach into leveldb, the data was already moved. That would
+	// result in a not found error.
+	data, _ = db.Ancient(freezerHeaderTable, number)
+	if len(data) > 0 && crypto.Keccak256Hash(data) == hash {
+		return data
+	}
+	return nil // Can't find the data anywhere.
+}
+
+// HasHeader verifies the existence of a block header corresponding to the hash.
+func HasHeader(db ethdb.Reader, hash common.Hash, number uint64) bool {
+	if has, err := db.Ancient(freezerHashTable, number); err == nil && common.BytesToHash(has) == hash {
+		return true
+	}
+	if has, err := db.Has(headerKey(number, hash)); !has || err != nil {
+		return false
+	}
+	return true
+}
+
+// ReadHeader retrieves the block header corresponding to the hash.
+func ReadHeader(db ethdb.Reader, hash common.Hash, number uint64) *types.Header {
+	data := ReadHeaderRLP(db, hash, number)
+	if len(data) == 0 {
+		return nil
+	}
+	header := new(types.Header)
+	if err := rlp.Decode(bytes.NewReader(data), header); err != nil {
+		log.Error("Invalid block header RLP", "hash", hash, "err", err)
+		return nil
+	}
+	return header
 }
 
 // WriteHeader stores a block header into the database and also stores the hash-
@@ -80,6 +179,22 @@ func WriteHeader(db ethdb.KeyValueWriter, header *types.Header) {
 	key := headerKey(number, hash)
 	if err := db.Put(key, data); err != nil {
 		log.Crit("Failed to store header", "err", err)
+	}
+}
+
+// DeleteHeader removes all block header data associated with a hash.
+func DeleteHeader(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
+	deleteHeaderWithoutNumber(db, hash, number)
+	if err := db.Delete(headerNumberKey(hash)); err != nil {
+		log.Crit("Failed to delete hash to number mapping", "err", err)
+	}
+}
+
+// deleteHeaderWithoutNumber removes only the block header but does not remove
+// the hash to number mapping.
+func deleteHeaderWithoutNumber(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
+	if err := db.Delete(headerKey(number, hash)); err != nil {
+		log.Crit("Failed to delete header", "err", err)
 	}
 }
 
@@ -144,6 +259,31 @@ func WriteBody(db ethdb.KeyValueWriter, hash common.Hash, number uint64, body *t
 	WriteBodyRLP(db, hash, number, data)
 }
 
+// DeleteBody removes all block body data associated with a hash.
+func DeleteBody(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
+	if err := db.Delete(blockBodyKey(number, hash)); err != nil {
+		log.Crit("Failed to delete block body", "err", err)
+	}
+}
+
+// WriteTd stores the total difficulty of a block into the database.
+func WriteTd(db ethdb.KeyValueWriter, hash common.Hash, number uint64, td *big.Int) {
+	data, err := rlp.EncodeToBytes(td)
+	if err != nil {
+		log.Crit("Failed to RLP encode block total difficulty", "err", err)
+	}
+	if err := db.Put(headerTDKey(number, hash), data); err != nil {
+		log.Crit("Failed to store block total difficulty", "err", err)
+	}
+}
+
+// DeleteTd removes all block total difficulty data associated with a hash.
+func DeleteTd(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
+	if err := db.Delete(headerTDKey(number, hash)); err != nil {
+		log.Crit("Failed to delete block total difficulty", "err", err)
+	}
+}
+
 // ReadReceiptsRLP retrieves all the transaction receipts belonging to a block in RLP encoding.
 func ReadReceiptsRLP(db ethdb.Reader, hash common.Hash, number uint64) rlp.RawValue {
 	// First try to look up the data in ancient database. Extra hash
@@ -193,6 +333,9 @@ func ReadRawReceipts(db ethdb.Reader, hash common.Hash, number uint64) types.Rec
 	receipts := make(types.Receipts, len(storageReceipts))
 	for i, storageReceipt := range storageReceipts {
 		receipts[i] = (*types.Receipt)(storageReceipt)
+		receipts[i].BlockHash = hash
+		receipts[i].BlockNumber = new(big.Int).SetUint64(number)
+		receipts[i].TransactionIndex = uint(i)
 	}
 	return receipts
 }
@@ -215,7 +358,14 @@ func ReadReceipts(db ethdb.Reader, hash common.Hash, number uint64, config *para
 		log.Error("Missing body but have receipt", "hash", hash, "number", number)
 		return nil
 	}
-	if err := receipts.DeriveFields(config, hash, number, body.Transactions); err != nil {
+	header := ReadHeader(db, hash, number)
+	var baseFee *big.Int
+	if header == nil {
+		baseFee = big.NewInt(0)
+	} else {
+		baseFee = header.BaseFee
+	}
+	if err := receipts.DeriveFields(config, hash, number, baseFee, body.Transactions); err != nil {
 		log.Error("Failed to derive block receipts fields", "hash", hash, "number", number, "err", err)
 		return nil
 	}
@@ -236,6 +386,13 @@ func WriteReceipts(db ethdb.KeyValueWriter, hash common.Hash, number uint64, rec
 	// Store the flattened receipt slice
 	if err := db.Put(blockReceiptsKey(number, hash), bytes); err != nil {
 		log.Crit("Failed to store block receipts", "err", err)
+	}
+}
+
+// DeleteReceipts removes all receipt data associated with a block hash.
+func DeleteReceipts(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
+	if err := db.Delete(blockReceiptsKey(number, hash)); err != nil {
+		log.Crit("Failed to delete block receipts", "err", err)
 	}
 }
 

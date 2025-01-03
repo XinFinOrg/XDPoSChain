@@ -262,6 +262,10 @@ func GetBlockReceipts(db DatabaseReader, hash common.Hash, number uint64) types.
 		receipts[i].BlockHash = hash
 		receipts[i].BlockNumber = big.NewInt(0).SetUint64(number)
 		receipts[i].TransactionIndex = uint(i)
+		for _, log := range receipts[i].Logs {
+			// set BlockHash to fix #650
+			log.BlockHash = hash
+		}
 	}
 	return receipts
 }
@@ -481,11 +485,6 @@ func DeleteBlock(db DatabaseDeleter, hash common.Hash, number uint64) {
 // DeleteBlockReceipts removes all receipt data associated with a block hash.
 func DeleteBlockReceipts(db DatabaseDeleter, hash common.Hash, number uint64) {
 	db.Delete(append(append(blockReceiptsPrefix, encodeBlockNumber(number)...), hash.Bytes()...))
-}
-
-// DeleteTxLookupEntry removes all transaction data associated with a hash.
-func DeleteTxLookupEntry(db DatabaseDeleter, hash common.Hash) {
-	db.Delete(append(lookupPrefix, hash.Bytes()...))
 }
 
 // PreimageTable returns a Database instance with the key prefix for preimage entries.

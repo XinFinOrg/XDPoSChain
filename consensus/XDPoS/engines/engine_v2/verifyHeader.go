@@ -6,9 +6,11 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/consensus/misc"
+	"github.com/XinFinOrg/XDPoSChain/consensus/misc/eip1559"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
@@ -94,7 +96,10 @@ func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Heade
 	if header.UncleHash != utils.UncleHash {
 		return utils.ErrInvalidUncleHash
 	}
-
+	// Verify the header's EIP-1559 attributes.
+	if err := eip1559.VerifyEip1559Header(chain.Config(), header); err != nil {
+		return err
+	}
 	if header.Difficulty.Cmp(big.NewInt(1)) != 0 {
 		return utils.ErrInvalidDifficulty
 	}
@@ -109,7 +114,7 @@ func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Heade
 		if !bytes.Equal(header.Nonce[:], utils.NonceDropVote) {
 			return utils.ErrInvalidCheckpointVote
 		}
-		if header.Validators == nil || len(header.Validators) == 0 {
+		if len(header.Validators) == 0 {
 			return utils.ErrEmptyEpochSwitchValidators
 		}
 		if len(header.Validators)%common.AddressLength != 0 {
@@ -167,7 +172,7 @@ func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Heade
 		for index, mn := range masterNodes {
 			log.Error("[verifyHeader] masternode list during validator verification", "Masternode Address", mn.Hex(), "index", index)
 		}
-		log.Error("[verifyHeader] Error while verifying header validator signature", "BlockNumber", header.Number, "Hash", header.Hash().Hex(), "validator in hex", common.ToHex(header.Validator))
+		log.Error("[verifyHeader] Error while verifying header validator signature", "BlockNumber", header.Number, "Hash", header.Hash().Hex(), "validator in hex", hexutil.Encode(header.Validator))
 		return err
 	}
 	if !verified {
@@ -186,6 +191,6 @@ func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Heade
 		return utils.ErrNotItsTurn
 	}
 
-	x.verifiedHeaders.Add(header.Hash(), true)
+	x.verifiedHeaders.Add(header.Hash(), struct{}{})
 	return nil
 }

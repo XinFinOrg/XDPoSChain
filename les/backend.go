@@ -131,11 +131,7 @@ func New(ctx *node.ServiceContext, config *ethconfig.Config) (*LightEthereum, er
 		return nil, err
 	}
 	leth.ApiBackend = &LesApiBackend{leth, nil}
-	gpoParams := config.GPO
-	if gpoParams.Default == nil {
-		gpoParams.Default = config.GasPrice
-	}
-	leth.ApiBackend.gpo = gasprice.NewOracle(leth.ApiBackend, gpoParams)
+	leth.ApiBackend.gpo = gasprice.NewOracle(leth.ApiBackend, config.GPO, config.GasPrice)
 	return leth, nil
 }
 
@@ -147,7 +143,7 @@ func lesTopic(genesisHash common.Hash, protocolVersion uint) discv5.Topic {
 	case lpv2:
 		name = "LES2"
 	default:
-		panic(nil)
+		panic("lesTopic")
 	}
 	return discv5.Topic(name + "@" + common.Bytes2Hex(genesisHash.Bytes()[0:8]))
 }
@@ -230,10 +226,6 @@ func (s *LightEthereum) Start(srvr *p2p.Server) error {
 	s.serverPool.start(srvr, lesTopic(s.blockchain.Genesis().Hash(), protocolVersion))
 	s.protocolManager.Start(s.config.LightPeers)
 	return nil
-}
-
-func (s *LightEthereum) SaveData() {
-	s.blockchain.SaveData()
 }
 
 // Stop implements node.Service, terminating all internal goroutines used by the

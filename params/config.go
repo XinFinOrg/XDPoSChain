@@ -147,7 +147,7 @@ var (
 			SwitchRound:          13625855,
 			CertThreshold:        0.4,
 			TimeoutSyncThreshold: 3,
-			TimeoutPeriod:        30,
+			TimeoutPeriod:        60,
 			MinePeriod:           2,
 		},
 	}
@@ -196,6 +196,7 @@ var (
 			Gap:                 450,
 			FoudationWalletAddr: common.HexToAddress("xdc92a289fe95a85c53b8d0d113cbaef0c1ec98ac65"),
 			V2: &V2{
+				SwitchEpoch:   common.TIPV2SwitchBlock.Uint64() / 900,
 				SwitchBlock:   common.TIPV2SwitchBlock,
 				CurrentConfig: MainnetV2Configs[0],
 				AllConfigs:    MainnetV2Configs,
@@ -238,6 +239,7 @@ var (
 			Gap:                 450,
 			FoudationWalletAddr: common.HexToAddress("xdc746249c61f5832c5eed53172776b460491bdcd5c"),
 			V2: &V2{
+				SwitchEpoch:   common.TIPV2SwitchBlock.Uint64() / 900,
 				SwitchBlock:   common.TIPV2SwitchBlock,
 				CurrentConfig: TestnetV2Configs[0],
 				AllConfigs:    TestnetV2Configs,
@@ -262,6 +264,7 @@ var (
 			Gap:                 450,
 			FoudationWalletAddr: common.HexToAddress("0x746249c61f5832c5eed53172776b460491bdcd5c"),
 			V2: &V2{
+				SwitchEpoch:   common.TIPV2SwitchBlock.Uint64() / 900,
 				SwitchBlock:   common.TIPV2SwitchBlock,
 				CurrentConfig: DevnetV2Configs[0],
 				AllConfigs:    DevnetV2Configs,
@@ -285,6 +288,7 @@ var (
 			Period: 15,
 			Epoch:  900,
 			V2: &V2{
+				SwitchEpoch:   9999999999 / 900,
 				SwitchBlock:   big.NewInt(9999999999),
 				CurrentConfig: MainnetV2Configs[0],
 				AllConfigs:    MainnetV2Configs,
@@ -371,6 +375,7 @@ var (
 			FoudationWalletAddr: common.HexToAddress("0x0000000000000000000000000000000000000068"),
 			Reward:              250,
 			V2: &V2{
+				SwitchEpoch:   1,
 				SwitchBlock:   big.NewInt(900),
 				CurrentConfig: UnitTestV2Configs[0],
 				AllConfigs:    UnitTestV2Configs,
@@ -467,6 +472,7 @@ type XDPoSConfig struct {
 type V2 struct {
 	lock sync.RWMutex // Protects the signer fields
 
+	SwitchEpoch   uint64
 	SwitchBlock   *big.Int             `json:"switchBlock"`
 	CurrentConfig *V2Config            `json:"config"`
 	AllConfigs    map[uint64]*V2Config `json:"allConfigs"`
@@ -562,6 +568,26 @@ func (c *ChainConfig) String() string {
 	default:
 		engine = "unknown"
 	}
+	berlinBlock := common.BerlinBlock
+	if c.BerlinBlock != nil {
+		berlinBlock = c.BerlinBlock
+	}
+	londonBlock := common.LondonBlock
+	if c.LondonBlock != nil {
+		londonBlock = c.LondonBlock
+	}
+	mergeBlock := common.MergeBlock
+	if c.MergeBlock != nil {
+		mergeBlock = c.MergeBlock
+	}
+	shanghaiBlock := common.ShanghaiBlock
+	if c.ShanghaiBlock != nil {
+		shanghaiBlock = c.ShanghaiBlock
+	}
+	eip1559Block := common.Eip1559Block
+	if c.Eip1559Block != nil {
+		eip1559Block = c.Eip1559Block
+	}
 	return fmt.Sprintf("{ChainID: %v Homestead: %v DAO: %v DAOSupport: %v EIP150: %v EIP155: %v EIP158: %v Byzantium: %v Constantinople: %v Istanbul: %v  BerlinBlock: %v LondonBlock: %v MergeBlock: %v ShanghaiBlock: %v Eip1559Block: %v Engine: %v}",
 		c.ChainId,
 		c.HomesteadBlock,
@@ -573,11 +599,11 @@ func (c *ChainConfig) String() string {
 		c.ByzantiumBlock,
 		c.ConstantinopleBlock,
 		common.TIPXDCXCancellationFee,
-		common.BerlinBlock,
-		common.LondonBlock,
-		common.MergeBlock,
-		common.ShanghaiBlock,
-		common.Eip1559Block,
+		berlinBlock,
+		londonBlock,
+		mergeBlock,
+		shanghaiBlock,
+		eip1559Block,
 		engine,
 	)
 }

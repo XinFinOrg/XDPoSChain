@@ -29,16 +29,15 @@ import (
 // life cycle management.
 //
 // The following methods are needed to implement a node.Service:
-//  - Protocols() []p2p.Protocol - devp2p protocols the service can communicate on
-//  - APIs() []rpc.API           - api methods the service wants to expose on rpc channels
-//  - Start() error              - method invoked when the node is ready to start the service
-//  - Stop() error               - method invoked when the node terminates the service
+//   - Protocols() []p2p.Protocol - devp2p protocols the service can communicate on
+//   - APIs() []rpc.API           - api methods the service wants to expose on rpc channels
+//   - Start() error              - method invoked when the node is ready to start the service
+//   - Stop() error               - method invoked when the node terminates the service
 type SampleService struct{}
 
 func (s *SampleService) Protocols() []p2p.Protocol { return nil }
 func (s *SampleService) APIs() []rpc.API           { return nil }
 func (s *SampleService) Start(*p2p.Server) error   { fmt.Println("Service starting..."); return nil }
-func (s *SampleService) SaveData()                 {}
 func (s *SampleService) Stop() error               { fmt.Println("Service stopping..."); return nil }
 
 func ExampleService() {
@@ -47,6 +46,8 @@ func ExampleService() {
 	if err != nil {
 		log.Fatalf("Failed to create network node: %v", err)
 	}
+	defer stack.Close()
+
 	// Create and register a simple network service. This is done through the definition
 	// of a node.ServiceConstructor that will instantiate a node.Service. The reason for
 	// the factory method approach is to support service restarts without relying on the

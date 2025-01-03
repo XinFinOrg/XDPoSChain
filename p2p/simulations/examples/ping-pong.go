@@ -42,7 +42,7 @@ func main() {
 	flag.Parse()
 
 	// set the log level to Trace
-	log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(false))))
+	log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(os.Stderr, log.LevelTrace, false)))
 
 	// register a single ping-pong service
 	services := map[string]adapters.ServiceFunc{
@@ -125,9 +125,6 @@ func (p *pingPongService) APIs() []rpc.API {
 func (p *pingPongService) Start(server *p2p.Server) error {
 	p.log.Info("ping-pong service starting")
 	return nil
-}
-
-func (p *pingPongService) SaveData() {
 }
 
 func (p *pingPongService) Stop() error {
