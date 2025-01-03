@@ -34,16 +34,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
-// DatabaseReader wraps the Get method of a backing data store.
-type DatabaseReader interface {
-	Get(key []byte) (value []byte, err error)
-}
-
-// DatabaseDeleter wraps the Delete method of a backing data store.
-type DatabaseDeleter interface {
-	Delete(key []byte) error
-}
-
 var (
 	headHeaderKey = []byte("LastHeader")
 	headBlockKey  = []byte("LastBlock")
@@ -92,7 +82,7 @@ func encodeBlockNumber(number uint64) []byte {
 }
 
 // GetCanonicalHash retrieves a hash assigned to a canonical block number.
-func GetCanonicalHash(db DatabaseReader, number uint64) common.Hash {
+func GetCanonicalHash(db rawdb.DatabaseReader, number uint64) common.Hash {
 	data, _ := db.Get(append(append(headerPrefix, encodeBlockNumber(number)...), numSuffix...))
 	if len(data) == 0 {
 		return common.Hash{}
@@ -106,7 +96,7 @@ const missingNumber = uint64(0xffffffffffffffff)
 
 // GetBlockNumber returns the block number assigned to a block hash
 // if the corresponding header is present in the database
-func GetBlockNumber(db DatabaseReader, hash common.Hash) uint64 {
+func GetBlockNumber(db rawdb.DatabaseReader, hash common.Hash) uint64 {
 	data, _ := db.Get(append(blockHashPrefix, hash.Bytes()...))
 	if len(data) != 8 {
 		return missingNumber
@@ -119,7 +109,7 @@ func GetBlockNumber(db DatabaseReader, hash common.Hash) uint64 {
 // last block hash is only updated upon a full block import, the last header
 // hash is updated already at header import, allowing head tracking for the
 // light synchronization mechanism.
-func GetHeadHeaderHash(db DatabaseReader) common.Hash {
+func GetHeadHeaderHash(db rawdb.DatabaseReader) common.Hash {
 	data, _ := db.Get(headHeaderKey)
 	if len(data) == 0 {
 		return common.Hash{}
@@ -128,7 +118,7 @@ func GetHeadHeaderHash(db DatabaseReader) common.Hash {
 }
 
 // GetHeadBlockHash retrieves the hash of the current canonical head block.
-func GetHeadBlockHash(db DatabaseReader) common.Hash {
+func GetHeadBlockHash(db rawdb.DatabaseReader) common.Hash {
 	data, _ := db.Get(headBlockKey)
 	if len(data) == 0 {
 		return common.Hash{}
@@ -140,7 +130,7 @@ func GetHeadBlockHash(db DatabaseReader) common.Hash {
 // fast synchronization. The difference between this and GetHeadBlockHash is that
 // whereas the last block hash is only updated upon a full block import, the last
 // fast hash is updated when importing pre-processed blocks.
-func GetHeadFastBlockHash(db DatabaseReader) common.Hash {
+func GetHeadFastBlockHash(db rawdb.DatabaseReader) common.Hash {
 	data, _ := db.Get(headFastKey)
 	if len(data) == 0 {
 		return common.Hash{}
@@ -150,7 +140,7 @@ func GetHeadFastBlockHash(db DatabaseReader) common.Hash {
 
 // GetTrieSyncProgress retrieves the number of tries nodes fast synced to allow
 // reportinc correct numbers across restarts.
-func GetTrieSyncProgress(db DatabaseReader) uint64 {
+func GetTrieSyncProgress(db rawdb.DatabaseReader) uint64 {
 	data, _ := db.Get(trieSyncKey)
 	if len(data) == 0 {
 		return 0
@@ -160,14 +150,14 @@ func GetTrieSyncProgress(db DatabaseReader) uint64 {
 
 // GetHeaderRLP retrieves a block header in its raw RLP database encoding, or nil
 // if the header's not found.
-func GetHeaderRLP(db DatabaseReader, hash common.Hash, number uint64) rlp.RawValue {
+func GetHeaderRLP(db rawdb.DatabaseReader, hash common.Hash, number uint64) rlp.RawValue {
 	data, _ := db.Get(headerKey(hash, number))
 	return data
 }
 
 // GetHeader retrieves the block header corresponding to the hash, nil if none
 // found.
-func GetHeader(db DatabaseReader, hash common.Hash, number uint64) *types.Header {
+func GetHeader(db rawdb.DatabaseReader, hash common.Hash, number uint64) *types.Header {
 	data := GetHeaderRLP(db, hash, number)
 	if len(data) == 0 {
 		return nil
@@ -181,7 +171,7 @@ func GetHeader(db DatabaseReader, hash common.Hash, number uint64) *types.Header
 }
 
 // GetBodyRLP retrieves the block body (transactions and uncles) in RLP encoding.
-func GetBodyRLP(db DatabaseReader, hash common.Hash, number uint64) rlp.RawValue {
+func GetBodyRLP(db rawdb.DatabaseReader, hash common.Hash, number uint64) rlp.RawValue {
 	data, _ := db.Get(blockBodyKey(hash, number))
 	return data
 }
@@ -196,7 +186,7 @@ func blockBodyKey(hash common.Hash, number uint64) []byte {
 
 // GetBody retrieves the block body (transactons, uncles) corresponding to the
 // hash, nil if none found.
-func GetBody(db DatabaseReader, hash common.Hash, number uint64) *types.Body {
+func GetBody(db rawdb.DatabaseReader, hash common.Hash, number uint64) *types.Body {
 	data := GetBodyRLP(db, hash, number)
 	if len(data) == 0 {
 		return nil
@@ -211,7 +201,7 @@ func GetBody(db DatabaseReader, hash common.Hash, number uint64) *types.Body {
 
 // GetTd retrieves a block's total difficulty corresponding to the hash, nil if
 // none found.
-func GetTd(db DatabaseReader, hash common.Hash, number uint64) *big.Int {
+func GetTd(db rawdb.DatabaseReader, hash common.Hash, number uint64) *big.Int {
 	data, _ := db.Get(append(append(append(headerPrefix, encodeBlockNumber(number)...), hash[:]...), tdSuffix...))
 	if len(data) == 0 {
 		return nil
@@ -230,7 +220,7 @@ func GetTd(db DatabaseReader, hash common.Hash, number uint64) *big.Int {
 //
 // Note, due to concurrent download of header and block body the header and thus
 // canonical hash can be stored in the database but the body data not (yet).
-func GetBlock(db DatabaseReader, hash common.Hash, number uint64) *types.Block {
+func GetBlock(db rawdb.DatabaseReader, hash common.Hash, number uint64) *types.Block {
 	// Retrieve the block header and body contents
 	header := GetHeader(db, hash, number)
 	if header == nil {
@@ -246,7 +236,7 @@ func GetBlock(db DatabaseReader, hash common.Hash, number uint64) *types.Block {
 
 // GetBlockReceipts retrieves the receipts generated by the transactions included
 // in a block given by its hash.
-func GetBlockReceipts(db DatabaseReader, hash common.Hash, number uint64) types.Receipts {
+func GetBlockReceipts(db rawdb.DatabaseReader, hash common.Hash, number uint64) types.Receipts {
 	data, _ := db.Get(append(append(blockReceiptsPrefix, encodeBlockNumber(number)...), hash[:]...))
 	if len(data) == 0 {
 		return nil
@@ -272,7 +262,7 @@ func GetBlockReceipts(db DatabaseReader, hash common.Hash, number uint64) types.
 
 // GetTxLookupEntry retrieves the positional metadata associated with a transaction
 // hash to allow retrieving the transaction or receipt by hash.
-func GetTxLookupEntry(db DatabaseReader, hash common.Hash) (common.Hash, uint64, uint64) {
+func GetTxLookupEntry(db rawdb.DatabaseReader, hash common.Hash) (common.Hash, uint64, uint64) {
 	// Load the positional metadata from disk and bail if it fails
 	data, _ := db.Get(append(lookupPrefix, hash.Bytes()...))
 	if len(data) == 0 {
@@ -289,7 +279,7 @@ func GetTxLookupEntry(db DatabaseReader, hash common.Hash) (common.Hash, uint64,
 
 // GetTransaction retrieves a specific transaction from the database, along with
 // its added positional metadata.
-func GetTransaction(db DatabaseReader, hash common.Hash) (*types.Transaction, common.Hash, uint64, uint64) {
+func GetTransaction(db rawdb.DatabaseReader, hash common.Hash) (*types.Transaction, common.Hash, uint64, uint64) {
 	// Retrieve the lookup metadata and resolve the transaction from the body
 	blockHash, blockNumber, txIndex := GetTxLookupEntry(db, hash)
 
@@ -324,7 +314,7 @@ func GetTransaction(db DatabaseReader, hash common.Hash) (*types.Transaction, co
 
 // GetReceipt retrieves a specific transaction receipt from the database, along with
 // its added positional metadata.
-func GetReceipt(db DatabaseReader, hash common.Hash) (*types.Receipt, common.Hash, uint64, uint64) {
+func GetReceipt(db rawdb.DatabaseReader, hash common.Hash) (*types.Receipt, common.Hash, uint64, uint64) {
 	// Retrieve the lookup metadata and resolve the receipt from the receipts
 	blockHash, blockNumber, receiptIndex := GetTxLookupEntry(db, hash)
 
@@ -351,7 +341,7 @@ func GetReceipt(db DatabaseReader, hash common.Hash) (*types.Receipt, common.Has
 
 // GetBloomBits retrieves the compressed bloom bit vector belonging to the given
 // section and bit index from the.
-func GetBloomBits(db DatabaseReader, bit uint, section uint64, head common.Hash) ([]byte, error) {
+func GetBloomBits(db rawdb.DatabaseReader, bit uint, section uint64, head common.Hash) ([]byte, error) {
 	key := append(append(bloomBitsPrefix, make([]byte, 10)...), head.Bytes()...)
 
 	binary.BigEndian.PutUint16(key[1:], uint16(bit))
@@ -454,28 +444,28 @@ func WriteBloomBits(db ethdb.KeyValueWriter, bit uint, section uint64, head comm
 }
 
 // DeleteCanonicalHash removes the number to hash canonical mapping.
-func DeleteCanonicalHash(db DatabaseDeleter, number uint64) {
+func DeleteCanonicalHash(db rawdb.DatabaseDeleter, number uint64) {
 	db.Delete(append(append(headerPrefix, encodeBlockNumber(number)...), numSuffix...))
 }
 
 // DeleteHeader removes all block header data associated with a hash.
-func DeleteHeader(db DatabaseDeleter, hash common.Hash, number uint64) {
+func DeleteHeader(db rawdb.DatabaseDeleter, hash common.Hash, number uint64) {
 	db.Delete(append(blockHashPrefix, hash.Bytes()...))
 	db.Delete(append(append(headerPrefix, encodeBlockNumber(number)...), hash.Bytes()...))
 }
 
 // DeleteBody removes all block body data associated with a hash.
-func DeleteBody(db DatabaseDeleter, hash common.Hash, number uint64) {
+func DeleteBody(db rawdb.DatabaseDeleter, hash common.Hash, number uint64) {
 	db.Delete(append(append(bodyPrefix, encodeBlockNumber(number)...), hash.Bytes()...))
 }
 
 // DeleteTd removes all block total difficulty data associated with a hash.
-func DeleteTd(db DatabaseDeleter, hash common.Hash, number uint64) {
+func DeleteTd(db rawdb.DatabaseDeleter, hash common.Hash, number uint64) {
 	db.Delete(append(append(append(headerPrefix, encodeBlockNumber(number)...), hash.Bytes()...), tdSuffix...))
 }
 
 // DeleteBlock removes all block data associated with a hash.
-func DeleteBlock(db DatabaseDeleter, hash common.Hash, number uint64) {
+func DeleteBlock(db rawdb.DatabaseDeleter, hash common.Hash, number uint64) {
 	DeleteBlockReceipts(db, hash, number)
 	DeleteHeader(db, hash, number)
 	DeleteBody(db, hash, number)
@@ -483,7 +473,7 @@ func DeleteBlock(db DatabaseDeleter, hash common.Hash, number uint64) {
 }
 
 // DeleteBlockReceipts removes all receipt data associated with a block hash.
-func DeleteBlockReceipts(db DatabaseDeleter, hash common.Hash, number uint64) {
+func DeleteBlockReceipts(db rawdb.DatabaseDeleter, hash common.Hash, number uint64) {
 	db.Delete(append(append(blockReceiptsPrefix, encodeBlockNumber(number)...), hash.Bytes()...))
 }
 
@@ -515,7 +505,7 @@ func WritePreimages(db ethdb.Database, number uint64, preimages map[common.Hash]
 }
 
 // GetBlockChainVersion reads the version number from db.
-func GetBlockChainVersion(db DatabaseReader) int {
+func GetBlockChainVersion(db rawdb.DatabaseReader) int {
 	var vsn uint
 	enc, _ := db.Get([]byte("BlockchainVersion"))
 	rlp.DecodeBytes(enc, &vsn)
@@ -545,7 +535,7 @@ func WriteChainConfig(db ethdb.KeyValueWriter, hash common.Hash, cfg *params.Cha
 }
 
 // GetChainConfig will fetch the network settings based on the given hash.
-func GetChainConfig(db DatabaseReader, hash common.Hash) (*params.ChainConfig, error) {
+func GetChainConfig(db rawdb.DatabaseReader, hash common.Hash) (*params.ChainConfig, error) {
 	jsonChainConfig, _ := db.Get(append(configPrefix, hash[:]...))
 	if len(jsonChainConfig) == 0 {
 		return nil, ErrChainConfigNotFound
@@ -560,7 +550,7 @@ func GetChainConfig(db DatabaseReader, hash common.Hash) (*params.ChainConfig, e
 }
 
 // FindCommonAncestor returns the last common ancestor of two block headers
-func FindCommonAncestor(db DatabaseReader, a, b *types.Header) *types.Header {
+func FindCommonAncestor(db rawdb.DatabaseReader, a, b *types.Header) *types.Header {
 	for bn := b.Number.Uint64(); a.Number.Uint64() > bn; {
 		a = GetHeader(db, a.ParentHash, a.Number.Uint64()-1)
 		if a == nil {
