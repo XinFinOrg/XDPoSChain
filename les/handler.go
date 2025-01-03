@@ -1163,7 +1163,7 @@ func (pm *ProtocolManager) txStatus(hashes []common.Hash) []txStatus {
 		if stat == txpool.TxStatusUnknown {
 			if block, number, index := core.GetTxLookupEntry(pm.chainDb, hashes[i]); block != (common.Hash{}) {
 				stats[i].Status = txpool.TxStatusIncluded
-				stats[i].Lookup = &core.TxLookupEntry{BlockHash: block, BlockIndex: number, Index: index}
+				stats[i].Lookup = &rawdb.TxLookupEntry{BlockHash: block, BlockIndex: number, Index: index}
 			}
 		}
 	}
