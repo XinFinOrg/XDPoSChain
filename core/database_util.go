@@ -95,18 +95,6 @@ func GetHeadBlockHash(db rawdb.DatabaseReader) common.Hash {
 	return common.BytesToHash(data)
 }
 
-// ReadHeadFastBlockHash retrieves the hash of the current canonical head block during
-// fast synchronization. The difference between this and GetHeadBlockHash is that
-// whereas the last block hash is only updated upon a full block import, the last
-// fast hash is updated when importing pre-processed blocks.
-func ReadHeadFastBlockHash(db rawdb.DatabaseReader) common.Hash {
-	data, _ := db.Get(headFastKey)
-	if len(data) == 0 {
-		return common.Hash{}
-	}
-	return common.BytesToHash(data)
-}
-
 // GetTrieSyncProgress retrieves the number of tries nodes fast synced to allow
 // reportinc correct numbers across restarts.
 func GetTrieSyncProgress(db rawdb.DatabaseReader) uint64 {

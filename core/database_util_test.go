@@ -243,7 +243,7 @@ func TestHeadStorage(t *testing.T) {
 	if entry := GetHeadBlockHash(db); entry != (common.Hash{}) {
 		t.Fatalf("Non head block entry returned: %v", entry)
 	}
-	if entry := ReadHeadFastBlockHash(db); entry != (common.Hash{}) {
+	if entry := rawdb.ReadHeadFastBlockHash(db); entry != (common.Hash{}) {
 		t.Fatalf("Non fast head block entry returned: %v", entry)
 	}
 	// Assign separate entries for the head header and block
@@ -257,7 +257,7 @@ func TestHeadStorage(t *testing.T) {
 	if entry := GetHeadBlockHash(db); entry != blockFull.Hash() {
 		t.Fatalf("Head block hash mismatch: have %v, want %v", entry, blockFull.Hash())
 	}
-	if entry := ReadHeadFastBlockHash(db); entry != blockFast.Hash() {
+	if entry := rawdb.ReadHeadFastBlockHash(db); entry != blockFast.Hash() {
 		t.Fatalf("Fast head block hash mismatch: have %v, want %v", entry, blockFast.Hash())
 	}
 }

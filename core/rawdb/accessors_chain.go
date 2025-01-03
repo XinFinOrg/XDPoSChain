@@ -117,6 +117,18 @@ func WriteHeadBlockHash(db ethdb.KeyValueWriter, hash common.Hash) {
 	}
 }
 
+// ReadHeadFastBlockHash retrieves the hash of the current canonical head block during
+// fast synchronization. The difference between this and GetHeadBlockHash is that
+// whereas the last block hash is only updated upon a full block import, the last
+// fast hash is updated when importing pre-processed blocks.
+func ReadHeadFastBlockHash(db DatabaseReader) common.Hash {
+	data, _ := db.Get(headFastKey)
+	if len(data) == 0 {
+		return common.Hash{}
+	}
+	return common.BytesToHash(data)
+}
+
 // WriteHeadFastBlockHash stores the hash of the current fast-sync head block.
 func WriteHeadFastBlockHash(db ethdb.KeyValueWriter, hash common.Hash) {
 	if err := db.Put(headFastBlockKey, hash.Bytes()); err != nil {
