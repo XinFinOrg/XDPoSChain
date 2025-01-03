@@ -351,19 +351,6 @@ func WriteTrieSyncProgress(db ethdb.KeyValueWriter, count uint64) error {
 	return nil
 }
 
-// WriteTd serializes the total difficulty of a block into the database.
-func WriteTd(db ethdb.KeyValueWriter, hash common.Hash, number uint64, td *big.Int) error {
-	data, err := rlp.EncodeToBytes(td)
-	if err != nil {
-		return err
-	}
-	key := append(append(append(headerPrefix, encodeBlockNumber(number)...), hash.Bytes()...), tdSuffix...)
-	if err := db.Put(key, data); err != nil {
-		log.Crit("Failed to store block total difficulty", "err", err)
-	}
-	return nil
-}
-
 // WriteBlockReceipts stores all the transaction receipts belonging to a block
 // as a single receipt slice. This is used during chain reorganisations for
 // rescheduling dropped transactions.

@@ -144,7 +144,7 @@ func (req *ChtRequest) StoreResult(db ethdb.Database) {
 	// if there is a canonical hash, there is a header too
 	rawdb.WriteHeader(db, req.Header)
 	hash, num := req.Header.Hash(), req.Header.Number.Uint64()
-	core.WriteTd(db, hash, num, req.Td)
+	rawdb.WriteTd(db, hash, num, req.Td)
 	rawdb.WriteCanonicalHash(db, hash, num)
 }
 

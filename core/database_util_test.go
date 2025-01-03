@@ -192,9 +192,7 @@ func TestTdStorage(t *testing.T) {
 		t.Fatalf("Non existent TD returned: %v", entry)
 	}
 	// Write and verify the TD in the database
-	if err := WriteTd(db, hash, 0, td); err != nil {
-		t.Fatalf("Failed to write TD into database: %v", err)
-	}
+	rawdb.WriteTd(db, hash, 0, td)
 	if entry := GetTd(db, hash, 0); entry == nil {
 		t.Fatalf("Stored TD not found")
 	} else if entry.Cmp(td) != 0 {
