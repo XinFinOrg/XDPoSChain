@@ -60,7 +60,7 @@ func (b *testBackend) HeaderByNumber(ctx context.Context, blockNr rpc.BlockNumbe
 	var hash common.Hash
 	var num uint64
 	if blockNr == rpc.LatestBlockNumber {
-		hash = core.GetHeadBlockHash(b.db)
+		hash = core.ReadHeadBlockHash(b.db)
 		num = core.GetBlockNumber(b.db, hash)
 	} else {
 		num = uint64(blockNr)

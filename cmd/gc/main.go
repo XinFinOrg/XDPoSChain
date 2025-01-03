@@ -54,7 +54,7 @@ func main() {
 	flag.Parse()
 	db, _ := leveldb.New(*dir, ethconfig.Defaults.DatabaseCache, utils.MakeDatabaseHandles(0), "")
 	lddb := rawdb.NewDatabase(db)
-	head := core.GetHeadBlockHash(lddb)
+	head := core.ReadHeadBlockHash(lddb)
 	currentHeader := core.GetHeader(lddb, head, core.GetBlockNumber(lddb, head))
 	tridb := trie.NewDatabase(lddb)
 	catchEventInterupt(db)

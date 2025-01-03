@@ -100,7 +100,7 @@ func NewHeaderChain(chainDb ethdb.Database, config *params.ChainConfig, engine c
 	}
 
 	hc.currentHeader.Store(hc.genesisHeader)
-	if head := GetHeadBlockHash(chainDb); head != (common.Hash{}) {
+	if head := ReadHeadBlockHash(chainDb); head != (common.Hash{}) {
 		if chead := hc.GetHeaderByHash(head); chead != nil {
 			hc.currentHeader.Store(chead)
 		}

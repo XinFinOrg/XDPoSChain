@@ -71,7 +71,7 @@ func benchmarkBloomBits(b *testing.B, sectionSize uint64) {
 	if err != nil {
 		b.Fatalf("error opening database at %v: %v", benchDataDir, err)
 	}
-	head := core.GetHeadBlockHash(db)
+	head := core.ReadHeadBlockHash(db)
 	if head == (common.Hash{}) {
 		b.Fatalf("chain data not found at %v", benchDataDir)
 	}
@@ -183,7 +183,7 @@ func BenchmarkNoBloomBits(b *testing.B) {
 	if err != nil {
 		b.Fatalf("error opening database at %v: %v", benchDataDir, err)
 	}
-	head := core.GetHeadBlockHash(db)
+	head := core.ReadHeadBlockHash(db)
 	if head == (common.Hash{}) {
 		b.Fatalf("chain data not found at %v", benchDataDir)
 	}

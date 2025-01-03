@@ -174,7 +174,7 @@ func TestLastBlock(t *testing.T) {
 	if _, err := blockchain.InsertChain(blocks); err != nil {
 		t.Fatalf("Failed to insert block: %v", err)
 	}
-	if blocks[len(blocks)-1].Hash() != GetHeadBlockHash(blockchain.db) {
+	if blocks[len(blocks)-1].Hash() != ReadHeadBlockHash(blockchain.db) {
 		t.Fatalf("Write/Get HeadBlockHash failed")
 	}
 }

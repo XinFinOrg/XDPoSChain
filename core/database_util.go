@@ -85,8 +85,8 @@ func GetBlockNumber(db rawdb.DatabaseReader, hash common.Hash) uint64 {
 	return binary.BigEndian.Uint64(data)
 }
 
-// GetHeadBlockHash retrieves the hash of the current canonical head block.
-func GetHeadBlockHash(db rawdb.DatabaseReader) common.Hash {
+// ReadHeadBlockHash retrieves the hash of the current canonical head block.
+func ReadHeadBlockHash(db rawdb.DatabaseReader) common.Hash {
 	data, _ := db.Get(headBlockKey)
 	if len(data) == 0 {
 		return common.Hash{}
