@@ -90,6 +90,19 @@ func DeleteHeaderNumber(db ethdb.KeyValueWriter, hash common.Hash) {
 	}
 }
 
+// ReadHeadHeaderHash retrieves the hash of the current canonical head block's
+// header. The difference between this and GetHeadBlockHash is that whereas the
+// last block hash is only updated upon a full block import, the last header
+// hash is updated already at header import, allowing head tracking for the
+// light synchronization mechanism.
+func ReadHeadHeaderHash(db DatabaseReader) common.Hash {
+	data, _ := db.Get(headHeaderKey)
+	if len(data) == 0 {
+		return common.Hash{}
+	}
+	return common.BytesToHash(data)
+}
+
 // WriteHeadHeaderHash stores the hash of the current canonical head header.
 func WriteHeadHeaderHash(db ethdb.KeyValueWriter, hash common.Hash) {
 	if err := db.Put(headHeaderKey, hash.Bytes()); err != nil {
@@ -97,11 +110,32 @@ func WriteHeadHeaderHash(db ethdb.KeyValueWriter, hash common.Hash) {
 	}
 }
 
+// ReadHeadBlockHash retrieves the hash of the current canonical head block.
+func ReadHeadBlockHash(db DatabaseReader) common.Hash {
+	data, _ := db.Get(headBlockKey)
+	if len(data) == 0 {
+		return common.Hash{}
+	}
+	return common.BytesToHash(data)
+}
+
 // WriteHeadBlockHash stores the head block's hash.
 func WriteHeadBlockHash(db ethdb.KeyValueWriter, hash common.Hash) {
 	if err := db.Put(headBlockKey, hash.Bytes()); err != nil {
 		log.Crit("Failed to store last block's hash", "err", err)
 	}
+}
+
+// ReadHeadFastBlockHash retrieves the hash of the current canonical head block during
+// fast synchronization. The difference between this and GetHeadBlockHash is that
+// whereas the last block hash is only updated upon a full block import, the last
+// fast hash is updated when importing pre-processed blocks.
+func ReadHeadFastBlockHash(db DatabaseReader) common.Hash {
+	data, _ := db.Get(headFastBlockKey)
+	if len(data) == 0 {
+		return common.Hash{}
+	}
+	return common.BytesToHash(data)
 }
 
 // WriteHeadFastBlockHash stores the hash of the current fast-sync head block.

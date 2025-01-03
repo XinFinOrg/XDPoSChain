@@ -138,7 +138,7 @@ func (lc *LightChain) Odr() OdrBackend {
 // loadLastState loads the last known chain state from the database. This method
 // assumes that the chain manager mutex is held.
 func (lc *LightChain) loadLastState() error {
-	if head := core.GetHeadHeaderHash(lc.chainDb); head == (common.Hash{}) {
+	if head := rawdb.ReadHeadHeaderHash(lc.chainDb); head == (common.Hash{}) {
 		// Corrupt or empty database, init from scratch
 		lc.Reset()
 	} else {

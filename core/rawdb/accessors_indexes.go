@@ -17,6 +17,8 @@
 package rawdb
 
 import (
+	"encoding/binary"
+
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
@@ -28,6 +30,27 @@ type TxLookupEntry struct {
 	BlockHash  common.Hash
 	BlockIndex uint64
 	Index      uint64
+}
+
+// WriteTxLookupEntries stores a positional metadata for every transaction from
+// a block, enabling hash based transaction and receipt lookups.
+func WriteTxLookupEntries(db ethdb.KeyValueWriter, block *types.Block) error {
+	// Iterate over each transaction and encode its metadata
+	for i, tx := range block.Transactions() {
+		entry := TxLookupEntry{
+			BlockHash:  block.Hash(),
+			BlockIndex: block.NumberU64(),
+			Index:      uint64(i),
+		}
+		data, err := rlp.EncodeToBytes(entry)
+		if err != nil {
+			return err
+		}
+		if err := db.Put(append(txLookupPrefix, tx.Hash().Bytes()...), data); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // WriteTxLookupEntriesByBlock stores a positional metadata for every transaction from
@@ -53,4 +76,44 @@ func WriteTxLookupEntriesByBlock(db ethdb.KeyValueWriter, block *types.Block) {
 // DeleteTxLookupEntry removes all transaction data associated with a hash.
 func DeleteTxLookupEntry(db ethdb.KeyValueWriter, hash common.Hash) {
 	db.Delete(txLookupKey(hash))
+}
+
+// WriteBloomBits writes the compressed bloom bits vector belonging to the given
+// section and bit index.
+func WriteBloomBits(db ethdb.KeyValueWriter, bit uint, section uint64, head common.Hash, bits []byte) {
+	key := append(append(bloomBitsPrefix, make([]byte, 10)...), head.Bytes()...)
+
+	binary.BigEndian.PutUint16(key[1:], uint16(bit))
+	binary.BigEndian.PutUint64(key[3:], section)
+
+	if err := db.Put(key, bits); err != nil {
+		log.Crit("Failed to store bloom bits", "err", err)
+	}
+}
+
+// FindCommonAncestor returns the last common ancestor of two block headers
+func FindCommonAncestor(db ethdb.Reader, a, b *types.Header) *types.Header {
+	for bn := b.Number.Uint64(); a.Number.Uint64() > bn; {
+		a = ReadHeader(db, a.ParentHash, a.Number.Uint64()-1)
+		if a == nil {
+			return nil
+		}
+	}
+	for an := a.Number.Uint64(); an < b.Number.Uint64(); {
+		b = ReadHeader(db, b.ParentHash, b.Number.Uint64()-1)
+		if b == nil {
+			return nil
+		}
+	}
+	for a.Hash() != b.Hash() {
+		a = ReadHeader(db, a.ParentHash, a.Number.Uint64()-1)
+		if a == nil {
+			return nil
+		}
+		b = ReadHeader(db, b.ParentHash, b.Number.Uint64()-1)
+		if b == nil {
+			return nil
+		}
+	}
+	return a
 }
