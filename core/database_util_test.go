@@ -287,7 +287,7 @@ func TestLookupStorage(t *testing.T) {
 	}
 	// Insert all the transactions into the database, and verify contents
 	rawdb.WriteBlock(db, block)
-	if err := WriteTxLookupEntries(db, block); err != nil {
+	if err := rawdb.WriteTxLookupEntries(db, block); err != nil {
 		t.Fatalf("failed to write transactions: %v", err)
 	}
 	for i, tx := range txs {

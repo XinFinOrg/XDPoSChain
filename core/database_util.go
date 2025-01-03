@@ -401,27 +401,6 @@ func WriteBlockReceipts(db ethdb.KeyValueWriter, hash common.Hash, number uint64
 	return nil
 }
 
-// WriteTxLookupEntries stores a positional metadata for every transaction from
-// a block, enabling hash based transaction and receipt lookups.
-func WriteTxLookupEntries(db ethdb.KeyValueWriter, block *types.Block) error {
-	// Iterate over each transaction and encode its metadata
-	for i, tx := range block.Transactions() {
-		entry := rawdb.TxLookupEntry{
-			BlockHash:  block.Hash(),
-			BlockIndex: block.NumberU64(),
-			Index:      uint64(i),
-		}
-		data, err := rlp.EncodeToBytes(entry)
-		if err != nil {
-			return err
-		}
-		if err := db.Put(append(lookupPrefix, tx.Hash().Bytes()...), data); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // WriteBloomBits writes the compressed bloom bits vector belonging to the given
 // section and bit index.
 func WriteBloomBits(db ethdb.KeyValueWriter, bit uint, section uint64, head common.Hash, bits []byte) {

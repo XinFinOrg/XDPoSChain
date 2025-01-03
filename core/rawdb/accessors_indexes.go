@@ -30,6 +30,27 @@ type TxLookupEntry struct {
 	Index      uint64
 }
 
+// WriteTxLookupEntries stores a positional metadata for every transaction from
+// a block, enabling hash based transaction and receipt lookups.
+func WriteTxLookupEntries(db ethdb.KeyValueWriter, block *types.Block) error {
+	// Iterate over each transaction and encode its metadata
+	for i, tx := range block.Transactions() {
+		entry := TxLookupEntry{
+			BlockHash:  block.Hash(),
+			BlockIndex: block.NumberU64(),
+			Index:      uint64(i),
+		}
+		data, err := rlp.EncodeToBytes(entry)
+		if err != nil {
+			return err
+		}
+		if err := db.Put(append(txLookupPrefix, tx.Hash().Bytes()...), data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // WriteTxLookupEntriesByBlock stores a positional metadata for every transaction from
 // a block, enabling hash based transaction and receipt lookups.
 func WriteTxLookupEntriesByBlock(db ethdb.KeyValueWriter, block *types.Block) {

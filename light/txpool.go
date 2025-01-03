@@ -190,7 +190,7 @@ func (p *TxPool) checkMinedTxs(ctx context.Context, hash common.Hash, number uin
 		if _, err := GetBlockReceipts(ctx, p.odr, hash, number); err != nil { // ODR caches, ignore results
 			return err
 		}
-		if err := core.WriteTxLookupEntries(p.chainDb, block); err != nil {
+		if err := rawdb.WriteTxLookupEntries(p.chainDb, block); err != nil {
 			return err
 		}
 		// Update the transaction pool's state
