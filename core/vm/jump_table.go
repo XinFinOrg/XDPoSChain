@@ -55,10 +55,17 @@ var (
 	mergeInstructionSet            = newMergeInstructionSet()
 	shanghaiInstructionSet         = newShanghaiInstructionSet()
 	eip1559InstructionSet          = newEip1559InstructionSet()
+	cancunInstructionSet           = newCancunInstructionSet()
 )
 
 // JumpTable contains the EVM opcodes supported at a given fork.
 type JumpTable [256]*operation
+
+func newCancunInstructionSet() JumpTable {
+	instructionSet := newEip1559InstructionSet()
+	enable1153(&instructionSet) // EIP-1153 "Transient Storage"
+	return instructionSet
+}
 
 func newEip1559InstructionSet() JumpTable {
 	instructionSet := newShanghaiInstructionSet()

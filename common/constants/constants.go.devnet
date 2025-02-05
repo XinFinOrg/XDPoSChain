@@ -52,6 +52,7 @@ var LondonBlock = big.NewInt(16832700)
 var MergeBlock = big.NewInt(16832700)
 var ShanghaiBlock = big.NewInt(16832700)
 var Eip1559Block = big.NewInt(9999999999)
+var CancunBlock = big.NewInt(9999999999)
 
 var TIPXDCXTestnet = big.NewInt(0)
 var IsTestnet bool = false
