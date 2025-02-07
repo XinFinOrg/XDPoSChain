@@ -419,6 +419,17 @@ func (self *StateDB) Suicide(addr common.Address) bool {
 	return true
 }
 
+func (s *StateDB) Selfdestruct6780(addr common.Address) {
+	stateObject := s.getStateObject(addr)
+	if stateObject == nil {
+		return
+	}
+
+	if stateObject.created {
+		s.Suicide(addr)
+	}
+}
+
 // SetTransientState sets transient storage for a given account. It
 // adds the change to the journal so that it can be rolled back
 // to its previous value if there is a revert.
@@ -534,6 +545,9 @@ func (self *StateDB) createObject(addr common.Address) (newobj, prev *stateObjec
 	} else {
 		self.journal = append(self.journal, resetObjectChange{prev: prev})
 	}
+
+	newobj.created = true
+
 	self.setStateObject(newobj)
 	return newobj, prev
 }
@@ -670,6 +684,7 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 			stateObject.updateRoot(s.db)
 			s.updateStateObject(stateObject)
 		}
+		stateObject.created = false
 	}
 	// Invalidate journal because reverting across transactions is not allowed.
 	s.clearJournalAndRefund()

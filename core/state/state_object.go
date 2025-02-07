@@ -85,10 +85,22 @@ type stateObject struct {
 	// When an object is marked suicided it will be delete from the trie
 	// during the "update" phase of the state transition.
 	dirtyCode bool // true if the code was updated
-	suicided  bool
-	touched   bool
-	deleted   bool
-	onDirty   func(addr common.Address) // Callback method to mark a state object newly dirty
+
+	// Flag whether the account was marked as self-destructed. The self-destructed
+	// account is still accessible in the scope of same transaction.
+	suicided bool
+
+	// Flag whether the account was marked as deleted. A self-destructed account
+	// or an account that is considered as empty will be marked as deleted at
+	// the end of transaction and no longer accessible anymore.
+	deleted bool
+
+	// Flag whether the object was created in the current transaction
+	created bool
+
+	touched bool
+
+	onDirty func(addr common.Address) // Callback method to mark a state object newly dirty
 }
 
 // empty returns whether the account is considered empty.
