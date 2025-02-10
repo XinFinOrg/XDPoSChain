@@ -352,6 +352,10 @@ func (b *EthApiBackend) SuggestPrice(ctx context.Context) (*big.Int, error) {
 	return b.gpo.SuggestPrice(ctx)
 }
 
+func (b *EthApiBackend) BlobBaseFee(ctx context.Context) *big.Int {
+	return new(big.Int)
+}
+
 func (b *EthApiBackend) ChainDb() ethdb.Database {
 	return b.eth.ChainDb()
 }
