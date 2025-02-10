@@ -63,6 +63,7 @@ type JumpTable [256]*operation
 
 func newCancunInstructionSet() JumpTable {
 	instructionSet := newEip1559InstructionSet()
+	enable4844(&instructionSet) // EIP-4844 (BLOBHASH opcode)
 	enable7516(&instructionSet) // EIP-7516 (BLOBBASEFEE opcode)
 	enable1153(&instructionSet) // EIP-1153 "Transient Storage"
 	enable5656(&instructionSet) // EIP-5656 (MCOPY opcode)
