@@ -28,6 +28,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/holiman/uint256"
 )
 
 type account struct{}
@@ -36,9 +37,9 @@ func (account) SubBalance(amount *big.Int)                          {}
 func (account) AddBalance(amount *big.Int)                          {}
 func (account) SetAddress(common.Address)                           {}
 func (account) Value() *big.Int                                     { return nil }
-func (account) SetBalance(*big.Int)                                 {}
+func (account) SetBalance(*uint256.Int)                             {}
 func (account) SetNonce(uint64)                                     {}
-func (account) Balance() *big.Int                                   { return nil }
+func (account) Balance() *uint256.Int                               { return nil }
 func (account) Address() common.Address                             { return common.Address{} }
 func (account) SetCode(common.Hash, []byte)                         {}
 func (account) ForEachStorage(cb func(key, value common.Hash) bool) {}
@@ -47,8 +48,8 @@ type dummyStatedb struct {
 	state.StateDB
 }
 
-func (*dummyStatedb) GetRefund() uint64                       { return 1337 }
-func (*dummyStatedb) GetBalance(addr common.Address) *big.Int { return new(big.Int) }
+func (*dummyStatedb) GetRefund() uint64                           { return 1337 }
+func (*dummyStatedb) GetBalance(addr common.Address) *uint256.Int { return new(uint256.Int) }
 
 type vmContext struct {
 	ctx       vm.BlockContext
@@ -58,7 +59,7 @@ type vmContext struct {
 func runTrace(tracer Tracer, blockNumber *big.Int, chaincfg *params.ChainConfig) (json.RawMessage, error) {
 	var (
 		startGas  uint64 = 10000
-		value            = big.NewInt(0)
+		value            = uint256.NewInt(0)
 		ctx              = vm.BlockContext{BlockNumber: blockNumber}
 		txContext        = vm.TxContext{GasPrice: big.NewInt(100000)}
 	)
@@ -68,7 +69,7 @@ func runTrace(tracer Tracer, blockNumber *big.Int, chaincfg *params.ChainConfig)
 	contract := vm.NewContract(account{}, account{}, value, startGas)
 	contract.Code = []byte{byte(vm.PUSH1), 0x1, byte(vm.PUSH1), 0x1, 0x0}
 
-	tracer.CaptureStart(env, contract.Caller(), contract.Address(), false, []byte{}, startGas, value)
+	tracer.CaptureStart(env, contract.Caller(), contract.Address(), false, []byte{}, startGas, value.ToBig())
 	ret, err := env.Interpreter().Run(contract, []byte{}, false)
 	tracer.CaptureEnd(ret, startGas-contract.Gas, 1, err)
 	if err != nil {
@@ -151,7 +152,7 @@ func TestHaltBetweenSteps(t *testing.T) {
 	}
 	env := vm.NewEVM(vm.BlockContext{BlockNumber: big.NewInt(1)}, vm.TxContext{}, &dummyStatedb{}, nil, params.TestChainConfig, vm.Config{Tracer: tracer})
 	scope := &vm.ScopeContext{
-		Contract: vm.NewContract(&account{}, &account{}, big.NewInt(0), 0),
+		Contract: vm.NewContract(&account{}, &account{}, uint256.NewInt(0), 0),
 	}
 	tracer.CaptureState(env, 0, 0, 0, 0, scope, nil, 0, nil)
 	timeout := errors.New("stahp")
@@ -171,7 +172,7 @@ func TestNoStepExec(t *testing.T) {
 		txContext := vm.TxContext{GasPrice: big.NewInt(100000)}
 		env := vm.NewEVM(ctx, txContext, &dummyStatedb{}, nil, params.TestChainConfig, vm.Config{Tracer: tracer})
 		startGas := uint64(10000)
-		contract := vm.NewContract(account{}, account{}, big.NewInt(0), startGas)
+		contract := vm.NewContract(account{}, account{}, uint256.NewInt(0), startGas)
 		tracer.CaptureStart(env, contract.Caller(), contract.Address(), false, []byte{}, startGas, big.NewInt(0))
 		tracer.CaptureEnd(nil, startGas-contract.Gas, 1, nil)
 		return tracer.GetResult()
@@ -262,7 +263,7 @@ func TestEnterExit(t *testing.T) {
 	}
 
 	scope := &vm.ScopeContext{
-		Contract: vm.NewContract(&account{}, &account{}, big.NewInt(0), 0),
+		Contract: vm.NewContract(&account{}, &account{}, uint256.NewInt(0), 0),
 	}
 
 	tracer.CaptureEnter(vm.CALL, scope.Contract.Caller(), scope.Contract.Address(), []byte{}, 1000, new(big.Int))

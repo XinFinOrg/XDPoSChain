@@ -45,6 +45,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/light"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
+	"github.com/holiman/uint256"
 )
 
 type LesApiBackend struct {
@@ -188,7 +189,7 @@ func (b *LesApiBackend) GetEVM(ctx context.Context, msg core.Message, state *sta
 	if vmConfig == nil {
 		vmConfig = new(vm.Config)
 	}
-	state.SetBalance(msg.From(), math.MaxBig256)
+	state.SetBalance(msg.From(), uint256.MustFromBig(math.MaxBig256))
 	txContext := core.NewEVMTxContext(msg)
 	context := core.NewEVMBlockContext(header, b.eth.blockchain, nil)
 	return vm.NewEVM(context, txContext, state, XDCxState, b.eth.chainConfig, *vmConfig), state.Error, nil

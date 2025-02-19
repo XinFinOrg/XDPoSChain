@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/holiman/uint256"
 
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 
@@ -591,7 +592,7 @@ func DoSettleBalance(coinbase common.Address, takerOrder, makerOrder *tradingsta
 	tradingstate.SetSubRelayerFee(makerOrder.ExchangeAddress, newRelayerMakerFee, common.RelayerFee, statedb)
 
 	masternodeOwner := statedb.GetOwner(coinbase)
-	statedb.AddBalance(masternodeOwner, matchingFee)
+	statedb.AddBalance(masternodeOwner, uint256.MustFromBig(matchingFee))
 
 	err = tradingstate.SetTokenBalance(takerOrder.UserAddress, newTakerInTotal, settleBalance.Taker.InToken, statedb)
 	if err != nil {
@@ -680,13 +681,13 @@ func (XDCx *XDCX) ProcessCancelOrder(header *types.Header, tradingStateDB *tradi
 	}
 	masternodeOwner := statedb.GetOwner(coinbase)
 	// relayers pay XDC for masternode
-	statedb.AddBalance(masternodeOwner, common.RelayerCancelFee)
+	statedb.AddBalance(masternodeOwner, uint256.MustFromBig(common.RelayerCancelFee))
 
 	relayerOwner := tradingstate.GetRelayerOwner(originOrder.ExchangeAddress, statedb)
 	switch originOrder.Side {
 	case tradingstate.Ask:
 		// users pay token (which they have) for relayer
-		err := tradingstate.SubTokenBalance(originOrder.UserAddress, tokenCancelFee, originOrder.BaseToken, statedb)
+		err := tradingstate.SubTokenBalance(originOrder.UserAddress, uint256.MustFromBig(tokenCancelFee), originOrder.BaseToken, statedb)
 		if err != nil {
 			log.Warn("ProcessCancelOrder SubTokenBalance", "err", err, "originOrder.UserAddress", originOrder.UserAddress, "tokenCancelFee", *tokenCancelFee, "originOrder.BaseToken", originOrder.BaseToken)
 		}
@@ -696,7 +697,7 @@ func (XDCx *XDCX) ProcessCancelOrder(header *types.Header, tradingStateDB *tradi
 		}
 	case tradingstate.Bid:
 		// users pay token (which they have) for relayer
-		err := tradingstate.SubTokenBalance(originOrder.UserAddress, tokenCancelFee, originOrder.QuoteToken, statedb)
+		err := tradingstate.SubTokenBalance(originOrder.UserAddress, uint256.MustFromBig(tokenCancelFee), originOrder.QuoteToken, statedb)
 		if err != nil {
 			log.Warn("ProcessCancelOrder SubTokenBalance", "err", err, "originOrder.UserAddress", originOrder.UserAddress, "tokenCancelFee", *tokenCancelFee, "originOrder.QuoteToken", originOrder.QuoteToken)
 		}

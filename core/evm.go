@@ -24,6 +24,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/holiman/uint256"
 )
 
 // NewEVMBlockContext creates a new context for use in the EVM.
@@ -102,12 +103,12 @@ func GetHashFn(ref *types.Header, chain consensus.ChainContext) func(n uint64) c
 
 // CanTransfer checks wether there are enough funds in the address' account to make a transfer.
 // This does not take the necessary gas in to account to make the transfer valid.
-func CanTransfer(db vm.StateDB, addr common.Address, amount *big.Int) bool {
+func CanTransfer(db vm.StateDB, addr common.Address, amount *uint256.Int) bool {
 	return db.GetBalance(addr).Cmp(amount) >= 0
 }
 
 // Transfer subtracts amount from sender and adds amount to recipient using the given Db
-func Transfer(db vm.StateDB, sender, recipient common.Address, amount *big.Int) {
+func Transfer(db vm.StateDB, sender, recipient common.Address, amount *uint256.Int) {
 	db.SubBalance(sender, amount)
 	db.AddBalance(recipient, amount)
 }

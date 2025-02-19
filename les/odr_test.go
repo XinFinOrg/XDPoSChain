@@ -36,6 +36,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/light"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
+	"github.com/holiman/uint256"
 )
 
 type odrTestFn func(ctx context.Context, db ethdb.Database, config *params.ChainConfig, bc *core.BlockChain, lc *light.LightChain, bhash common.Hash) []byte
@@ -133,7 +134,7 @@ func odrContractCall(ctx context.Context, db ethdb.Database, config *params.Chai
 
 			if err == nil {
 				from := statedb.GetOrNewStateObject(testBankAddress)
-				from.SetBalance(math.MaxBig256)
+				from.SetBalance(uint256.MustFromBig(math.MaxBig256))
 				feeCapacity := state.GetTRC21FeeCapacityFromState(statedb)
 				var balanceTokenFee *big.Int
 				if value, ok := feeCapacity[testContractAddr]; ok {
@@ -154,7 +155,7 @@ func odrContractCall(ctx context.Context, db ethdb.Database, config *params.Chai
 		} else {
 			header := lc.GetHeaderByHash(bhash)
 			statedb := light.NewState(ctx, header, lc.Odr())
-			statedb.SetBalance(testBankAddress, math.MaxBig256)
+			statedb.SetBalance(testBankAddress, uint256.MustFromBig(math.MaxBig256))
 			feeCapacity := state.GetTRC21FeeCapacityFromState(statedb)
 			var balanceTokenFee *big.Int
 			if value, ok := feeCapacity[testContractAddr]; ok {

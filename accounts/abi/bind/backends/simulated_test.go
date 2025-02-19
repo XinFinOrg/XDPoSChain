@@ -34,6 +34,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/holiman/uint256"
 )
 
 func TestSimulatedBackend(t *testing.T) {
@@ -129,7 +130,7 @@ func simTestBackend(testAddr common.Address) *SimulatedBackend {
 func TestNewSimulatedBackend(t *testing.T) {
 	t.Parallel()
 	testAddr := crypto.PubkeyToAddress(testKey.PublicKey)
-	expectedBal := big.NewInt(100000000000000000)
+	expectedBal := uint256.NewInt(100000000000000000)
 	sim := simTestBackend(testAddr)
 	defer sim.Close()
 
@@ -1385,7 +1386,7 @@ func TestForkResendTx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("could not sign transaction: %v", err)
 	}
-	if err = sim.SendTransaction(context.Background(), tx);  err != nil {
+	if err = sim.SendTransaction(context.Background(), tx); err != nil {
 		t.Fatalf("sending transaction: %v", err)
 	}
 	sim.Commit()

@@ -33,6 +33,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/holiman/uint256"
 )
 
 func TestDefaults(t *testing.T) {
@@ -361,12 +362,12 @@ func benchmarkNonModifyingCode(gas uint64, code []byte, name string, b *testing.
 	//cfg.State.CreateAccount(cfg.Origin)
 	// set the receiver's (the executing contract) code for execution.
 	cfg.State.SetCode(destination, code)
-	vmenv.Call(sender, destination, nil, gas, cfg.Value)
+	vmenv.Call(sender, destination, nil, gas, uint256.MustFromBig(cfg.Value))
 
 	b.Run(name, func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			vmenv.Call(sender, destination, nil, gas, cfg.Value)
+			vmenv.Call(sender, destination, nil, gas, uint256.MustFromBig(cfg.Value))
 		}
 	})
 }

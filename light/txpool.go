@@ -33,6 +33,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/holiman/uint256"
 )
 
 const (
@@ -406,7 +407,7 @@ func (p *TxPool) validateTx(ctx context.Context, tx *types.Transaction) error {
 
 	// Transactor should have enough funds to cover the costs
 	// cost == V + GP * GL
-	if b := currentState.GetBalance(from); b.Cmp(tx.Cost()) < 0 {
+	if b := currentState.GetBalance(from); b.Cmp(uint256.MustFromBig(tx.Cost())) < 0 {
 		return core.ErrInsufficientFunds
 	}
 
