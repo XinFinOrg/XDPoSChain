@@ -49,6 +49,13 @@ var (
 	acc3Addr    = crypto.PubkeyToAddress(acc3Key.PublicKey)  //xdc71562b71999873DB5b286dF957af199Ec94617F7
 	voterAddr   = crypto.PubkeyToAddress(voterKey.PublicKey) //xdc5F74529C0338546f82389402a01c31fB52c6f434
 	chainID     = int64(1337)
+
+	protector1Key, _ = crypto.HexToECDSA("071c71a67e127fad4e901695e1b4b9ee04ae0e301d1e14474d32c45c72ce7b70")
+	protector1Addr   = crypto.PubkeyToAddress(protector1Key.PublicKey)
+	protector2Key, _ = crypto.HexToECDSA("1d1e144127fad4e9016a977b97b0c89921839df052d7adc2f789034678902378")
+	protector2Addr   = crypto.PubkeyToAddress(protector2Key.PublicKey)
+	observer1Key, _  = crypto.HexToECDSA("71a67e127fad4e9016a977b97b0c89921839df052d7adc2f7890346789023789")
+	observer1Addr    = crypto.PubkeyToAddress(observer1Key.PublicKey)
 )
 
 func SignHashByPK(pk *ecdsa.PrivateKey, itemToSign []byte) []byte {
@@ -246,6 +253,91 @@ func getMultiCandidatesBackend(t *testing.T, chainConfig *params.ChainConfig, n 
 
 	// Prepare Code and Storage
 	d := time.Now().Add(3000 * time.Millisecond)
+	ctx, cancel := context.WithDeadline(context.Background(), d)
+	defer cancel()
+
+	code, _ := contractBackendForSC.CodeAt(ctx, validatorSCAddr, nil)
+	storage := make(map[common.Hash]common.Hash)
+	f := func(key, val common.Hash) bool {
+		decode := []byte{}
+		trim := bytes.TrimLeft(val.Bytes(), "\x00")
+		err := rlp.DecodeBytes(trim, &decode)
+		if err != nil {
+			t.Fatalf("Failed while decode byte")
+		}
+		storage[key] = common.BytesToHash(decode)
+		log.Info("DecodeBytes", "value", val.String(), "decode", storage[key].String())
+		return true
+	}
+	err = contractBackendForSC.ForEachStorageAt(ctx, validatorSCAddr, nil, f)
+	if err != nil {
+		t.Fatalf("Failed while trying to read all keys from SC")
+	}
+
+	// create test backend with smart contract in it
+	contractBackend2 := backends.NewXDCSimulatedBackend(types.GenesisAlloc{
+		acc1Addr:                         {Balance: new(big.Int).SetUint64(10000000000)},
+		acc2Addr:                         {Balance: new(big.Int).SetUint64(10000000000)},
+		acc3Addr:                         {Balance: new(big.Int).SetUint64(10000000000)},
+		voterAddr:                        {Balance: new(big.Int).SetUint64(10000000000)},
+		common.MasternodeVotingSMCBinary: {Balance: new(big.Int).SetUint64(1), Code: code, Storage: storage}, // Binding the MasternodeVotingSMC with newly created 'code' for SC execution
+	}, 10000000, chainConfig)
+
+	return contractBackend2
+}
+
+func getProtectorObserverBackend(t *testing.T, chainConfig *params.ChainConfig) *backends.SimulatedBackend {
+
+	// initial helper backend
+	contractBackendForSC := backends.NewXDCSimulatedBackend(types.GenesisAlloc{
+		voterAddr: {Balance: new(big.Int).SetUint64(10000000000)},
+	}, 10000000, chainConfig)
+
+	transactOpts := bind.NewKeyedTransactor(voterKey)
+
+	var candidates []common.Address
+	var caps []*big.Int
+	defalutCap := new(big.Int)
+	defalutCap.SetString("1000000000", 10)
+
+	for i := 1; i <= 15; i++ {
+		addr := fmt.Sprintf("%02d", i)
+		candidates = append(candidates, common.StringToAddress(addr)) // StringToAddress does not exist
+		caps = append(caps, defalutCap)
+	}
+	candidates = append(candidates, protector1Addr, protector2Addr, observer1Addr)
+	caps = append(caps, defalutCap, defalutCap, big.NewInt(999999)) // 99..9 is a small cap
+
+	acc1Cap, acc2Cap, acc3Cap, voterCap := new(big.Int), new(big.Int), new(big.Int), new(big.Int)
+
+	acc1Cap.SetString("10000001", 10)
+	acc2Cap.SetString("10000002", 10)
+	acc3Cap.SetString("10000003", 10)
+	voterCap.SetString("1000000000", 10)
+
+	caps = append(caps, voterCap, acc1Cap, acc2Cap, acc3Cap)
+	candidates = append(candidates, voterAddr, acc1Addr, acc2Addr, acc3Addr)
+	// create validator smart contract
+	validatorSCAddr, _, _, err := contractValidator.DeployXDCValidator(
+		transactOpts,
+		contractBackendForSC,
+		candidates,
+		caps,
+		voterAddr, // first owner, not used
+		big.NewInt(50000),
+		big.NewInt(1),
+		big.NewInt(99),
+		big.NewInt(100),
+		big.NewInt(100),
+	)
+	if err != nil {
+		t.Fatalf("can't deploy root registry: %v", err)
+	}
+
+	contractBackendForSC.Commit() // Write into database(state)
+
+	// Prepare Code and Storage
+	d := time.Now().Add(1000 * time.Millisecond)
 	ctx, cancel := context.WithDeadline(context.Background(), d)
 	defer cancel()
 
@@ -562,6 +654,72 @@ func PrepareXDCTestBlockChainWith128Candidates(t *testing.T, numOfBlocks int, ch
 	}
 
 	return blockchain, backend, currentBlock, signer, signFn
+}
+
+// V2 concensus engine
+func PrepareXDCTestBlockChainWithProtectorObserver(t *testing.T, numOfBlocks int, chainConfig *params.ChainConfig) (*core.BlockChain, *backends.SimulatedBackend, *types.Block, common.Address, func(account accounts.Account, hash []byte) ([]byte, error), *types.Block) {
+	// Preparation
+	var err error
+	signer, signFn, err := backends.SimulateWalletAddressAndSignFn()
+	if err != nil {
+		panic(fmt.Errorf("error while creating simulated wallet for generating singer address and signer fn: %v", err))
+	}
+	backend := getProtectorObserverBackend(t, chainConfig)
+	blockchain := backend.BlockChain()
+	blockchain.Client = backend
+
+	engine := blockchain.Engine().(*XDPoS.XDPoS)
+
+	// Authorise
+	engine.Authorize(signer, signFn)
+
+	currentBlock := blockchain.Genesis()
+
+	var currentForkBlock *types.Block
+
+	go func() {
+		for range core.CheckpointCh {
+			checkpointChanMsg := <-core.CheckpointCh
+			log.Info("[V2] Got a message from core CheckpointChan!", "msg", checkpointChanMsg)
+		}
+	}()
+
+	// Insert initial blocks
+	for i := 1; i <= numOfBlocks; i++ {
+		blockCoinBase := fmt.Sprintf("0x111000000000000000000000000000000%03d", i)
+		// for v2 blocks, fill in correct coinbase
+		if int64(i) > chainConfig.XDPoS.V2.SwitchBlock.Int64() {
+			blockCoinBase = signer.Hex()
+		}
+		roundNumber := int64(i) - chainConfig.XDPoS.V2.SwitchBlock.Int64()
+		block := CreateBlock(blockchain, chainConfig, currentBlock, i, roundNumber, blockCoinBase, signer, signFn, nil, nil, "532f2c46eb3bc972c9638bafda99f5467d385ecd1074f7c2036b57d60724744e")
+
+		err = blockchain.InsertBlock(block)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// First v2 block
+		if (int64(i) - chainConfig.XDPoS.V2.SwitchBlock.Int64()) == 1 {
+			lastv1BlockNumber := block.Header().Number.Uint64() - 1
+			checkpointBlockNumber := lastv1BlockNumber - lastv1BlockNumber%chainConfig.XDPoS.Epoch
+			checkpointHeader := blockchain.GetHeaderByNumber(checkpointBlockNumber)
+			err := engine.EngineV2.Initial(blockchain, checkpointHeader)
+			if err != nil {
+				panic(err)
+			}
+		}
+
+		currentBlock = block
+	}
+
+	// Update Signer as there is no previous signer assigned
+	err = UpdateSigner(blockchain)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return blockchain, backend, currentBlock, signer, signFn, currentForkBlock
 }
 
 func CreateBlock(blockchain *core.BlockChain, chainConfig *params.ChainConfig, startingBlock *types.Block, blockNumber int, roundNumber int64, blockCoinBase string, signer common.Address, signFn func(account accounts.Account, hash []byte) ([]byte, error), penalties []byte, signersKey []*ecdsa.PrivateKey, merkleRoot string) *types.Block {
