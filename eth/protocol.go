@@ -32,6 +32,7 @@ import (
 const (
 	eth62  = 62
 	eth63  = 63
+	eth65  = 65
 	xdpos2 = 100
 )
 
@@ -39,10 +40,10 @@ const (
 var ProtocolName = "eth"
 
 // Supported versions of the eth protocol (first is primary).
-var ProtocolVersions = []uint{xdpos2, eth63, eth62}
+var ProtocolVersions = []uint{xdpos2, eth65, eth63, eth62}
 
 // Number of implemented message corresponding to different protocol versions.
-var ProtocolLengths = []uint64{227, 17, 8}
+var ProtocolLengths = []uint64{eth65: 17, 227, 17, 8}
 
 const ProtocolMaxMsgSize = 10 * 1024 * 1024 // Maximum cap on the size of a protocol message
 
@@ -51,7 +52,7 @@ const (
 	// Protocol messages belonging to eth/62
 	StatusMsg          = 0x00
 	NewBlockHashesMsg  = 0x01
-	TxMsg              = 0x02
+	TransactionMsg     = 0x02
 	GetBlockHeadersMsg = 0x03
 	BlockHeadersMsg    = 0x04
 	GetBlockBodiesMsg  = 0x05
@@ -59,11 +60,20 @@ const (
 	NewBlockMsg        = 0x07
 	OrderTxMsg         = 0x08
 	LendingTxMsg       = 0x09
+
+	// New protocol message codes introduced in eth65
+	//
+	// Previously these message ids were used by some legacy and unsupported
+	// eth protocols, reown them here.
+	NewPooledTransactionHashesMsg = 0x08
+	GetPooledTransactionsMsg      = 0x09
+
 	// Protocol messages belonging to eth/63
-	GetNodeDataMsg = 0x0d
-	NodeDataMsg    = 0x0e
-	GetReceiptsMsg = 0x0f
-	ReceiptsMsg    = 0x10
+	PooledTransactionsMsg = 0x0a
+	GetNodeDataMsg        = 0x0d
+	NodeDataMsg           = 0x0e
+	GetReceiptsMsg        = 0x0f
+	ReceiptsMsg           = 0x10
 
 	// Protocol messages belonging to xdpos2/100
 	VoteMsg     = 0xe0
@@ -103,6 +113,14 @@ var errorToString = map[int]string{
 }
 
 type txPool interface {
+	// Has returns an indicator whether txpool has a transaction
+	// cached with the given hash.
+	Has(hash common.Hash) bool
+
+	// Get retrieves the transaction from local txpool with given
+	// tx hash.
+	Get(hash common.Hash) *types.Transaction
+
 	// AddRemotes should add the given transactions to the pool.
 	AddRemotes([]*types.Transaction) []error
 
