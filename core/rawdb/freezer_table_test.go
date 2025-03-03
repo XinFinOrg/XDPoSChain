@@ -43,7 +43,7 @@ func TestFreezerBasics(t *testing.T) {
 	// set cutoff at 50 bytes
 	f, err := newCustomTable(os.TempDir(),
 		fmt.Sprintf("unittest-%d", rand.Uint64()),
-		metrics.NewMeter(), metrics.NewMeter(), metrics.NewCounter(), 50, true)
+		metrics.NewMeter(), metrics.NewMeter(), metrics.NewGauge(), 50, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,11 +86,11 @@ func TestFreezerBasicsClosing(t *testing.T) {
 	// set cutoff at 50 bytes
 	var (
 		fname      = fmt.Sprintf("basics-close-%d", rand.Uint64())
-		rm, wm, sc = metrics.NewMeter(), metrics.NewMeter(), metrics.NewCounter()
+		rm, wm, sg = metrics.NewMeter(), metrics.NewMeter(), metrics.NewGauge()
 		f          *freezerTable
 		err        error
 	)
-	f, err = newCustomTable(os.TempDir(), fname, rm, wm, sc, 50, true)
+	f, err = newCustomTable(os.TempDir(), fname, rm, wm, sg, 50, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestFreezerBasicsClosing(t *testing.T) {
 		data := getChunk(15, x)
 		f.Append(uint64(x), data)
 		f.Close()
-		f, err = newCustomTable(os.TempDir(), fname, rm, wm, sc, 50, true)
+		f, err = newCustomTable(os.TempDir(), fname, rm, wm, sg, 50, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -116,7 +116,7 @@ func TestFreezerBasicsClosing(t *testing.T) {
 			t.Fatalf("test %d, got \n%x != \n%x", y, got, exp)
 		}
 		f.Close()
-		f, err = newCustomTable(os.TempDir(), fname, rm, wm, sc, 50, true)
+		f, err = newCustomTable(os.TempDir(), fname, rm, wm, sg, 50, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -126,11 +126,11 @@ func TestFreezerBasicsClosing(t *testing.T) {
 // TestFreezerRepairDanglingHead tests that we can recover if index entries are removed
 func TestFreezerRepairDanglingHead(t *testing.T) {
 	t.Parallel()
-	rm, wm, sc := metrics.NewMeter(), metrics.NewMeter(), metrics.NewCounter()
+	rm, wm, sg := metrics.NewMeter(), metrics.NewMeter(), metrics.NewGauge()
 	fname := fmt.Sprintf("dangling_headtest-%d", rand.Uint64())
 
 	{ // Fill table
-		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sc, 50, true)
+		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sg, 50, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -159,7 +159,7 @@ func TestFreezerRepairDanglingHead(t *testing.T) {
 	idxFile.Close()
 	// Now open it again
 	{
-		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sc, 50, true)
+		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sg, 50, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -177,11 +177,11 @@ func TestFreezerRepairDanglingHead(t *testing.T) {
 // TestFreezerRepairDanglingHeadLarge tests that we can recover if very many index entries are removed
 func TestFreezerRepairDanglingHeadLarge(t *testing.T) {
 	t.Parallel()
-	rm, wm, sc := metrics.NewMeter(), metrics.NewMeter(), metrics.NewCounter()
+	rm, wm, sg := metrics.NewMeter(), metrics.NewMeter(), metrics.NewGauge()
 	fname := fmt.Sprintf("dangling_headtest-%d", rand.Uint64())
 
 	{ // Fill a table and close it
-		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sc, 50, true)
+		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sg, 50, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -209,7 +209,7 @@ func TestFreezerRepairDanglingHeadLarge(t *testing.T) {
 	idxFile.Close()
 	// Now open it again
 	{
-		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sc, 50, true)
+		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sg, 50, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -230,7 +230,7 @@ func TestFreezerRepairDanglingHeadLarge(t *testing.T) {
 	}
 	// And if we open it, we should now be able to read all of them (new values)
 	{
-		f, _ := newCustomTable(os.TempDir(), fname, rm, wm, sc, 50, true)
+		f, _ := newCustomTable(os.TempDir(), fname, rm, wm, sg, 50, true)
 		for y := 1; y < 255; y++ {
 			exp := getChunk(15, ^y)
 			got, err := f.Retrieve(uint64(y))
@@ -247,11 +247,11 @@ func TestFreezerRepairDanglingHeadLarge(t *testing.T) {
 // TestSnappyDetection tests that we fail to open a snappy database and vice versa
 func TestSnappyDetection(t *testing.T) {
 	t.Parallel()
-	rm, wm, sc := metrics.NewMeter(), metrics.NewMeter(), metrics.NewCounter()
+	rm, wm, sg := metrics.NewMeter(), metrics.NewMeter(), metrics.NewGauge()
 	fname := fmt.Sprintf("snappytest-%d", rand.Uint64())
 	// Open with snappy
 	{
-		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sc, 50, true)
+		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sg, 50, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -264,7 +264,7 @@ func TestSnappyDetection(t *testing.T) {
 	}
 	// Open without snappy
 	{
-		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sc, 50, false)
+		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sg, 50, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -276,7 +276,7 @@ func TestSnappyDetection(t *testing.T) {
 
 	// Open with snappy
 	{
-		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sc, 50, true)
+		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sg, 50, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -304,11 +304,11 @@ func assertFileSize(f string, size int64) error {
 // the index is repaired
 func TestFreezerRepairDanglingIndex(t *testing.T) {
 	t.Parallel()
-	rm, wm, sc := metrics.NewMeter(), metrics.NewMeter(), metrics.NewCounter()
+	rm, wm, sg := metrics.NewMeter(), metrics.NewMeter(), metrics.NewGauge()
 	fname := fmt.Sprintf("dangling_indextest-%d", rand.Uint64())
 
 	{ // Fill a table and close it
-		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sc, 50, true)
+		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sg, 50, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -344,7 +344,7 @@ func TestFreezerRepairDanglingIndex(t *testing.T) {
 	// 45, 45, 15
 	// with 3+3+1 items
 	{
-		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sc, 50, true)
+		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sg, 50, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -361,11 +361,11 @@ func TestFreezerRepairDanglingIndex(t *testing.T) {
 func TestFreezerTruncate(t *testing.T) {
 
 	t.Parallel()
-	rm, wm, sc := metrics.NewMeter(), metrics.NewMeter(), metrics.NewCounter()
+	rm, wm, sg := metrics.NewMeter(), metrics.NewMeter(), metrics.NewGauge()
 	fname := fmt.Sprintf("truncation-%d", rand.Uint64())
 
 	{ // Fill table
-		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sc, 50, true)
+		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sg, 50, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -382,7 +382,7 @@ func TestFreezerTruncate(t *testing.T) {
 	}
 	// Reopen, truncate
 	{
-		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sc, 50, true)
+		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sg, 50, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -404,10 +404,10 @@ func TestFreezerTruncate(t *testing.T) {
 // That will rewind the index, and _should_ truncate the head file
 func TestFreezerRepairFirstFile(t *testing.T) {
 	t.Parallel()
-	rm, wm, sc := metrics.NewMeter(), metrics.NewMeter(), metrics.NewCounter()
+	rm, wm, sg := metrics.NewMeter(), metrics.NewMeter(), metrics.NewGauge()
 	fname := fmt.Sprintf("truncationfirst-%d", rand.Uint64())
 	{ // Fill table
-		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sc, 50, true)
+		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sg, 50, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -435,7 +435,7 @@ func TestFreezerRepairFirstFile(t *testing.T) {
 	}
 	// Reopen
 	{
-		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sc, 50, true)
+		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sg, 50, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -460,10 +460,10 @@ func TestFreezerRepairFirstFile(t *testing.T) {
 // - check that we did not keep the rdonly file descriptors
 func TestFreezerReadAndTruncate(t *testing.T) {
 	t.Parallel()
-	rm, wm, sc := metrics.NewMeter(), metrics.NewMeter(), metrics.NewCounter()
+	rm, wm, sg := metrics.NewMeter(), metrics.NewMeter(), metrics.NewGauge()
 	fname := fmt.Sprintf("read_truncate-%d", rand.Uint64())
 	{ // Fill table
-		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sc, 50, true)
+		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sg, 50, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -480,7 +480,7 @@ func TestFreezerReadAndTruncate(t *testing.T) {
 	}
 	// Reopen and read all files
 	{
-		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sc, 50, true)
+		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sg, 50, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -506,10 +506,10 @@ func TestFreezerReadAndTruncate(t *testing.T) {
 
 func TestOffset(t *testing.T) {
 	t.Parallel()
-	rm, wm, sc := metrics.NewMeter(), metrics.NewMeter(), metrics.NewCounter()
+	rm, wm, sg := metrics.NewMeter(), metrics.NewMeter(), metrics.NewGauge()
 	fname := fmt.Sprintf("offset-%d", rand.Uint64())
 	{ // Fill table
-		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sc, 40, true)
+		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sg, 40, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -565,7 +565,7 @@ func TestOffset(t *testing.T) {
 	}
 	// Now open again
 	{
-		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sc, 40, true)
+		f, err := newCustomTable(os.TempDir(), fname, rm, wm, sg, 40, true)
 		if err != nil {
 			t.Fatal(err)
 		}
