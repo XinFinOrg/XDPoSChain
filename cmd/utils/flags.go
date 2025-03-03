@@ -85,6 +85,11 @@ var (
 		Value:    flags.DirectoryString(node.DefaultDataDir()),
 		Category: flags.EthCategory,
 	}
+	AncientFlag = &flags.DirectoryFlag{
+		Name:     "datadir.ancient",
+		Usage:    "Data directory for ancient chain segments (default = inside chaindata)",
+		Category: flags.EthCategory,
+	}
 	KeyStoreDirFlag = &flags.DirectoryFlag{
 		Name:     "keystore",
 		Usage:    "Directory for the keystore (default = inside the datadir)",
@@ -804,6 +809,7 @@ var (
 	DatabaseFlags = []cli.Flag{
 		DataDirFlag,
 		XDCXDataDirFlag,
+		AncientFlag,
 	}
 )
 
@@ -1418,6 +1424,9 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		cfg.DatabaseCache = ctx.Int(CacheFlag.Name) * ctx.Int(CacheDatabaseFlag.Name) / 100
 	}
 	cfg.DatabaseHandles = MakeDatabaseHandles(ctx.Int(FDLimitFlag.Name))
+	if ctx.IsSet(AncientFlag.Name) {
+		cfg.DatabaseFreezer = ctx.String(AncientFlag.Name)
+	}
 
 	if gcmode := ctx.String(GCModeFlag.Name); gcmode != "full" && gcmode != "archive" {
 		Fatalf("--%s must be either 'full' or 'archive'", GCModeFlag.Name)
@@ -1621,7 +1630,7 @@ func MakeChainDatabase(ctx *cli.Context, stack *node.Node, readonly bool) ethdb.
 		cache   = ctx.Int(CacheFlag.Name) * ctx.Int(CacheDatabaseFlag.Name) / 100
 		handles = MakeDatabaseHandles(ctx.Int(FDLimitFlag.Name))
 	)
-	chainDb, err := stack.OpenDatabase("chaindata", cache, handles, "", readonly)
+	chainDb, err := stack.OpenDatabaseWithFreezer("chaindata", cache, handles, ctx.String(AncientFlag.Name), "", readonly)
 	if err != nil {
 		Fatalf("Could not open database: %v", err)
 	}

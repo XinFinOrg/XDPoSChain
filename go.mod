@@ -55,6 +55,7 @@ require (
 	github.com/kevinburke/go-bindata v3.23.0+incompatible
 	github.com/kylelemons/godebug v1.1.0
 	github.com/mattn/go-isatty v0.0.17
+	github.com/prometheus/tsdb v0.10.0
 	github.com/protolambda/bls12-381-util v0.0.0-20220416220906-d8552aa452c7
 	github.com/shirou/gopsutil v3.21.4-0.20210419000835-c7a38de76ee5+incompatible
 	github.com/status-im/keycard-go v0.3.3

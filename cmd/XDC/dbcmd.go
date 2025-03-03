@@ -122,14 +122,30 @@ WARNING: This is a low-level operation which may cause database corruption!`,
 )
 
 func removeDB(ctx *cli.Context) error {
-	stack, _ := makeConfigNode(ctx)
-	name := "chaindata"
-	dbdir := stack.ResolvePath(name)
-	if common.FileExist(dbdir) {
-		confirmAndRemoveDB(dbdir, name)
+	stack, config := makeConfigNode(ctx)
+
+	// Remove the full node state database
+	path := stack.ResolvePath("chaindata")
+	if common.FileExist(path) {
+		confirmAndRemoveDB(path, "full node state database")
 	} else {
-		log.Info("Database doesn't exist, skipping", "path", dbdir)
+		log.Info("Full node state database missing", "path", path)
 	}
+
+	// Remove the full node ancient database
+	path = config.Eth.DatabaseFreezer
+	switch {
+	case path == "":
+		path = filepath.Join(stack.ResolvePath("chaindata"), "ancient")
+	case !filepath.IsAbs(path):
+		path = config.Node.ResolvePath(path)
+	}
+	if common.FileExist(path) {
+		confirmAndRemoveDB(path, "full node ancient database")
+	} else {
+		log.Info("Full node ancient database missing", "path", path)
+	}
+
 	return nil
 }
 

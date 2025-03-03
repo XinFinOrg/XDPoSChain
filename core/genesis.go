@@ -103,6 +103,10 @@ func (e *GenesisMismatchError) Error() string {
 //
 // The returned chain configuration is never nil.
 func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig, common.Hash, error) {
+	return SetupGenesisBlockWithOverride(db, genesis, nil)
+}
+
+func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, overrideBerlin *big.Int) (*params.ChainConfig, common.Hash, error) {
 	if genesis != nil && genesis.Config == nil {
 		return params.AllEthashProtocolChanges, common.Hash{}, errGenesisNoConfig
 	}
@@ -115,6 +119,22 @@ func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig
 			genesis = DefaultGenesisBlock()
 		} else {
 			log.Info("Writing custom genesis block")
+		}
+		block, err := genesis.Commit(db)
+		return genesis.Config, block.Hash(), err
+	}
+
+	// We have the genesis block in database(perhaps in ancient database)
+	// but the corresponding state is missing.
+	header := rawdb.ReadHeader(db, stored, 0)
+	if _, err := state.New(header.Root, state.NewDatabaseWithCache(db, 0)); err != nil {
+		if genesis == nil {
+			genesis = DefaultGenesisBlock()
+		}
+		// Ensure the stored genesis matches with the given one.
+		hash := genesis.ToBlock(nil).Hash()
+		if hash != stored {
+			return genesis.Config, hash, &GenesisMismatchError{stored, hash}
 		}
 		block, err := genesis.Commit(db)
 		return genesis.Config, block.Hash(), err

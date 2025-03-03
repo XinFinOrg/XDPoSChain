@@ -27,4 +27,10 @@ const (
 	// BloomConfirms is the number of confirmation blocks before a bloom section is
 	// considered probably final and its rotated bits are calculated.
 	BloomConfirms = 256
+
+	// ImmutabilityThreshold is the number of blocks after which a chain segment is
+	// considered immutable (i.e. soft finality). It is used by the downloader as a
+	// hard limit against deep ancestors, by the blockchain against deep reorgs, by
+	// the freezer as the cutoff treshold and by clique as the snapshot trust limit.
+	ImmutabilityThreshold = 90000
 )
