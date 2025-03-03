@@ -87,6 +87,7 @@ func newFreezer(datadir string, namespace string, readonly bool) (*freezer, erro
 	var (
 		readMeter  = metrics.NewRegisteredMeter(namespace+"ancient/read", nil)
 		writeMeter = metrics.NewRegisteredMeter(namespace+"ancient/write", nil)
+		sizeCounter = metrics.NewRegisteredCounter(namespace+"ancient/size", nil)
 	)
 	// Ensure the datadir is not a symbolic link if it exists.
 	if info, err := os.Lstat(datadir); !os.IsNotExist(err) {
@@ -108,7 +109,7 @@ func newFreezer(datadir string, namespace string, readonly bool) (*freezer, erro
 		instanceLock: lock,
 	}
 	for name, disableSnappy := range freezerNoSnappy {
-		table, err := newTable(datadir, name, readMeter, writeMeter, disableSnappy)
+		table, err := newTable(datadir, name, readMeter, writeMeter, sizeCounter, disableSnappy)
 		if err != nil {
 			for _, table := range freezer.tables {
 				table.Close()
