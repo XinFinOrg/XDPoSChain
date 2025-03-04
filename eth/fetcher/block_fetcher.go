@@ -170,7 +170,7 @@ type BlockFetcher struct {
 	dropPeer            peerDropFn // Drops a peer for misbehaving
 
 	// Testing hooks
-	announceChangeHook func(common.Hash, bool) // Method to call upon adding or deleting a hash from the announce list
+	announceChangeHook func(common.Hash, bool) // Method to call upon adding or deleting a hash from the blockAnnounce list
 	queueChangeHook    func(common.Hash, bool) // Method to call upon adding or deleting a block from the import queue
 	fetchingHook       func([]common.Hash)     // Method to call upon starting a block (eth/61) or header (eth/62) fetch
 	completingHook     func([]common.Hash)     // Method to call upon starting a block body fetch (eth/62)
