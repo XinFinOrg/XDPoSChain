@@ -90,6 +90,9 @@ func (pm *ProtocolManager) txsyncLoop() {
 
 	// send starts a sending a pack of transactions from the sync.
 	send := func(s *txsync) {
+		if s.p.version >= eth65 {
+			panic("initial transaction syncer running on eth/65+")
+		}
 		// Fill pack with transactions up to the target size.
 		size := common.StorageSize(0)
 		pack.p = s.p
@@ -106,7 +109,7 @@ func (pm *ProtocolManager) txsyncLoop() {
 		// Send the pack in the background.
 		s.p.Log().Trace("Sending batch of transactions", "count", len(pack.txs), "bytes", size)
 		sending = true
-		go func() { done <- pack.p.SendTransactions(pack.txs) }()
+		go func() { done <- pack.p.SendTransactions64(pack.txs) }()
 	}
 
 	// pick chooses the next pending sync.

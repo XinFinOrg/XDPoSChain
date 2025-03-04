@@ -387,6 +387,15 @@ func (p *peer) MarkSyncInfo(hash common.Hash) {
 	p.knownSyncInfo.Add(hash)
 }
 
+// SendTransactions64 sends transactions to the peer and includes the hashes
+// in its transaction hash set for future reference.
+//
+// This method is legacy support for initial transaction exchange in eth/64 and
+// prior. For eth/65 and higher use SendPooledTransactionHashes.
+func (p *peer) SendTransactions64(txs types.Transactions) error {
+	return p.sendTransactions(txs)
+}
+
 // SendTransactions sends transactions to the peer and includes the hashes
 // in its transaction hash set for future reference.
 func (p *peer) SendTransactions(txs types.Transactions) error {
