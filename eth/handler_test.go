@@ -475,7 +475,7 @@ func testDAOChallenge(t *testing.T, localForked, remoteForked bool, timeout bool
 		config        = &params.ChainConfig{DAOForkBlock: big.NewInt(1), DAOForkSupport: localForked}
 		gspec         = &core.Genesis{Config: config}
 		genesis       = gspec.MustCommit(db)
-		blockchain, _ = core.NewBlockChain(db, nil, config, pow, vm.Config{})
+		blockchain, _ = core.NewBlockChain(db, nil, config, pow, vm.Config{}, nil)
 	)
 	pm, err := NewProtocolManager(config, downloader.FullSync, ethconfig.Defaults.NetworkId, evmux, new(testTxPool), pow, blockchain, db)
 	if err != nil {

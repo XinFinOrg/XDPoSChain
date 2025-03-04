@@ -138,7 +138,7 @@ func NewXDCSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64, chainConf
 		return lendingServ
 	}
 
-	blockchain, _ := core.NewBlockChain(database, nil, genesis.Config, consensus, vm.Config{})
+	blockchain, _ := core.NewBlockChain(database, nil, genesis.Config, consensus, vm.Config{}, nil)
 
 	backend := &SimulatedBackend{
 		database:   database,
@@ -162,7 +162,7 @@ func NewSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64) *SimulatedBa
 	database := rawdb.NewMemoryDatabase()
 	genesis := core.Genesis{Config: params.AllEthashProtocolChanges, GasLimit: gasLimit, Alloc: alloc}
 	genesis.MustCommit(database)
-	blockchain, _ := core.NewBlockChain(database, nil, genesis.Config, ethash.NewFaker(), vm.Config{})
+	blockchain, _ := core.NewBlockChain(database, nil, genesis.Config, ethash.NewFaker(), vm.Config{}, nil)
 
 	backend := &SimulatedBackend{
 		database:   database,

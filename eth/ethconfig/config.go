@@ -102,7 +102,10 @@ type Config struct {
 	// zero, the chain ID is used as network ID.
 	NetworkId uint64
 	SyncMode  downloader.SyncMode
-	NoPruning bool
+
+	NoPruning bool // Whether to disable pruning and flush everything to disk
+
+	TxLookupLimit uint64 `toml:",omitempty"` // The maximum number of blocks from head whose tx indices are reserved.
 
 	// Light client options
 	LightServ  int `toml:",omitempty"` // Maximum percentage of time allowed for serving LES requests

@@ -154,7 +154,7 @@ func newTestBackend(t *testing.T, eip1559Block *big.Int, pending bool) *testBack
 	// Construct testing chain
 	diskdb := rawdb.NewMemoryDatabase()
 	gspec.Commit(diskdb)
-	chain, err := core.NewBlockChain(diskdb, nil, gspec.Config, engine, vm.Config{})
+	chain, err := core.NewBlockChain(diskdb, nil, gspec.Config, engine, vm.Config{}, nil)
 	if err != nil {
 		t.Fatalf("Failed to create local chain, %v", err)
 	}

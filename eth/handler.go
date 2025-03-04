@@ -75,6 +75,7 @@ type ProtocolManager struct {
 	orderpool   orderPool
 	lendingpool lendingPool
 	blockchain  *core.BlockChain
+	chaindb     ethdb.Database
 	chainconfig *params.ChainConfig
 	maxPeers    int
 
@@ -133,6 +134,7 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		eventMux:       mux,
 		txpool:         txpool,
 		blockchain:     blockchain,
+		chaindb:        chaindb,
 		chainconfig:    config,
 		peers:          newPeerSet(),
 		newPeerCh:      make(chan *peer),

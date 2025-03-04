@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -194,6 +195,22 @@ func (pm *ProtocolManager) synchronise(peer *peer) {
 		// Make sure the peer's total difficulty we are synchronizing is higher.
 		if pm.blockchain.GetTdByHash(pm.blockchain.CurrentFastBlock().Hash()).Cmp(pTd) >= 0 {
 			return
+		}
+		// Before launch the fast sync, we have to ensure user uses the same
+		// txlookup limit.
+		// The main concern here is: during the fast sync Geth won't index the
+		// block(generate tx indices) before the HEAD-limit. But if user changes
+		// the limit in the next fast sync(e.g. user kill Geth manually and
+		// restart) then it will be hard for Geth to figure out the oldest block
+		// has been indexed. So here for the user-experience wise, it's non-optimal
+		// that user can't change limit during the fast sync. If changed, Geth
+		// will just blindly use the original one.
+		limit := pm.blockchain.TxLookupLimit()
+		if stored := rawdb.ReadFastTxLookupLimit(pm.chaindb); stored == nil {
+			rawdb.WriteFastTxLookupLimit(pm.chaindb, limit)
+		} else if *stored != limit {
+			pm.blockchain.SetTxLookupLimit(*stored)
+			log.Warn("Update txLookup limit", "provided", limit, "updated", *stored)
 		}
 	}
 
