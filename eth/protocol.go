@@ -43,7 +43,7 @@ var ProtocolName = "eth"
 var ProtocolVersions = []uint{xdpos2, eth65, eth63, eth62}
 
 // Number of implemented message corresponding to different protocol versions.
-var ProtocolLengths = []uint64{eth65: 17, 227, 17, 8}
+var ProtocolLengths = []uint64{227, eth65: 17, 17, 8}
 
 const ProtocolMaxMsgSize = 10 * 1024 * 1024 // Maximum cap on the size of a protocol message
 
