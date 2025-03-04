@@ -99,7 +99,6 @@ func testStatusMsgErrors(t *testing.T, protocol int) {
 // This test checks that received transactions are added to the local pool.
 func TestRecvTransactions62(t *testing.T) { testRecvTransactions(t, 62) }
 func TestRecvTransactions63(t *testing.T) { testRecvTransactions(t, 63) }
-
 func TestRecvTransactions65(t *testing.T) { testRecvTransactions(t, 65) }
 
 func testRecvTransactions(t *testing.T, protocol int) {
