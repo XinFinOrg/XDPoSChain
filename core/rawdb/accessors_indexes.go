@@ -17,6 +17,7 @@
 package rawdb
 
 import (
+	"bytes"
 	"math/big"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -185,29 +186,23 @@ func WriteBloomBits(db ethdb.KeyValueWriter, bit uint, section uint64, head comm
 	}
 }
 
-// FindCommonAncestor returns the last common ancestor of two block headers
-func FindCommonAncestor(db ethdb.Reader, a, b *types.Header) *types.Header {
-	for bn := b.Number.Uint64(); a.Number.Uint64() > bn; {
-		a = ReadHeader(db, a.ParentHash, a.Number.Uint64()-1)
-		if a == nil {
-			return nil
+// DeleteBloombits removes all compressed bloom bits vector belonging to the
+// given section range and bit index.
+func DeleteBloombits(db ethdb.Database, bit uint, from uint64, to uint64) {
+	start, end := bloomBitsKey(bit, from, common.Hash{}), bloomBitsKey(bit, to, common.Hash{})
+	it := db.NewIterator(nil, start)
+	defer it.Release()
+
+	for it.Next() {
+		if bytes.Compare(it.Key(), end) >= 0 {
+			break
 		}
+		if len(it.Key()) != len(bloomBitsPrefix)+2+8+32 {
+			continue
+		}
+		db.Delete(it.Key())
 	}
-	for an := a.Number.Uint64(); an < b.Number.Uint64(); {
-		b = ReadHeader(db, b.ParentHash, b.Number.Uint64()-1)
-		if b == nil {
-			return nil
-		}
+	if it.Error() != nil {
+		log.Crit("Failed to delete bloom bits", "err", it.Error())
 	}
-	for a.Hash() != b.Hash() {
-		a = ReadHeader(db, a.ParentHash, a.Number.Uint64()-1)
-		if a == nil {
-			return nil
-		}
-		b = ReadHeader(db, b.ParentHash, b.Number.Uint64()-1)
-		if b == nil {
-			return nil
-		}
-	}
-	return a
 }

@@ -406,7 +406,7 @@ func (c *Clique) snapshot(chain consensus.ChainReader, number uint64, hash commo
 		// at a checkpoint block without a parent (light client CHT), or we have piled
 		// up more headers than allowed to be reorged (chain reinit from a freezer),
 		// consider the checkpoint trusted and snapshot it.
-		if number == 0 || (number%c.config.Epoch == 0 && (len(headers) > params.ImmutabilityThreshold || chain.GetHeaderByNumber(number-1) == nil)) {
+		if number == 0 || (number%c.config.Epoch == 0 && (len(headers) > params.FullImmutabilityThreshold || chain.GetHeaderByNumber(number-1) == nil)) {
 			genesis := chain.GetHeaderByNumber(0)
 			if err := c.VerifyHeader(chain, genesis, false); err != nil {
 				return nil, err
