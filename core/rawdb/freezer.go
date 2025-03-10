@@ -22,6 +22,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -79,6 +80,7 @@ type freezer struct {
 	tables       map[string]*freezerTable // Data tables for storing everything
 	instanceLock fileutil.Releaser        // File-system lock to prevent double opens
 	quit         chan struct{}
+	closeOnce    sync.Once
 }
 
 // newFreezer creates a chain freezer that moves ancient chain data into
@@ -134,16 +136,18 @@ func newFreezer(datadir string, namespace string, readonly bool) (*freezer, erro
 
 // Close terminates the chain freezer, unmapping all the data files.
 func (f *freezer) Close() error {
-	f.quit <- struct{}{}
 	var errs []error
-	for _, table := range f.tables {
-		if err := table.Close(); err != nil {
+	f.closeOnce.Do(func() {
+		f.quit <- struct{}{}
+		for _, table := range f.tables {
+			if err := table.Close(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if err := f.instanceLock.Release(); err != nil {
 			errs = append(errs, err)
 		}
-	}
-	if err := f.instanceLock.Release(); err != nil {
-		errs = append(errs, err)
-	}
+	})
 	if errs != nil {
 		return fmt.Errorf("%v", errs)
 	}
