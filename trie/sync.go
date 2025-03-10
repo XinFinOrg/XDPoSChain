@@ -156,7 +156,7 @@ func (s *Sync) AddCodeEntry(hash common.Hash, depth int, parent common.Hash) {
 	if s.membatch.hasCode(hash) {
 		return
 	}
-	if s.bloom.Contains(hash[:]) {
+	if s.bloom == nil || s.bloom.Contains(hash[:]) {
 		// Bloom filter says this might be a duplicate, double check.
 		// If database says yes, the blob is present for sure.
 		// Note we only check the existence with new code scheme, fast
