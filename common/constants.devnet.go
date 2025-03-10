@@ -29,6 +29,7 @@ var DevnetConstant = constant{
 	tipXDCXMinerDisable:           big.NewInt(0),
 	tipXDCXReceiverDisable:        big.NewInt(0),
 	tipUpgradeReward:              big.NewInt(1773000),
+	tipEpochHalving:               big.NewInt(9999999999),
 	eip1559Block:                  big.NewInt(0),
 	cancunBlock:                   big.NewInt(1702800),
 
