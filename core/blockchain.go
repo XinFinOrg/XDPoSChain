@@ -1357,16 +1357,17 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		}
 		defer bc.chainmu.Unlock()
 
-		var isCanonical bool
-		if td := bc.GetTd(head.Hash(), head.NumberU64()); td != nil { // Rewind may have occurred, skip in that case
-			currentFastBlock := bc.CurrentFastBlock()
+		// Rewind may have occurred, skip in that case.
+		if bc.CurrentHeader().Number.Cmp(head.Number()) >= 0 {
+			currentFastBlock, td := bc.CurrentFastBlock(), bc.GetTd(head.Hash(), head.NumberU64())
 			if bc.GetTd(currentFastBlock.Hash(), currentFastBlock.NumberU64()).Cmp(td) < 0 {
 				rawdb.WriteHeadFastBlockHash(bc.db, head.Hash())
 				bc.currentFastBlock.Store(head)
-				isCanonical = true
+				headFastBlockGauge.Update(int64(head.NumberU64()))
+				return true
 			}
 		}
-		return isCanonical
+		return false
 	}
 
 	// writeAncient writes blockchain and corresponding receipt chain into ancient store.
