@@ -523,7 +523,8 @@ func (p *peer) SendPooledTransactionsRLP(hashes []common.Hash, txs []rlp.RawValu
 // SendNewBlockHashes announces the availability of a number of blocks through
 // a hash notification.
 func (p *peer) SendNewBlockHashes(hashes []common.Hash, numbers []uint64) error {
-	for p.knownBlocks.Cardinality() >= maxKnownBlocks {
+	// Mark all the block hashes as known, but ensure we don't overflow our limits
+	for p.knownBlocks.Cardinality() > max(0, maxKnownBlocks-len(hashes)) {
 		p.knownBlocks.Pop()
 	}
 
