@@ -57,7 +57,10 @@ func (frdb *freezerdb) Close() error {
 // Freeze is a helper method used for external testing to trigger and block until
 // a freeze cycle completes, without having to sleep for a minute to trigger the
 // automatic background run.
-func (frdb *freezerdb) Freeze(threshold uint64) {
+func (frdb *freezerdb) Freeze(threshold uint64) error {
+	if frdb.AncientStore.(*freezer).readonly {
+		return errReadOnly
+	}
 	// Set the freezer threshold to a temporary value
 	defer func(old uint64) {
 		atomic.StoreUint64(&frdb.AncientStore.(*freezer).threshold, old)
@@ -68,6 +71,7 @@ func (frdb *freezerdb) Freeze(threshold uint64) {
 	trigger := make(chan struct{}, 1)
 	frdb.AncientStore.(*freezer).trigger <- trigger
 	<-trigger
+	return nil
 }
 
 // nofreezedb is a database wrapper that disables freezer data retrievals.

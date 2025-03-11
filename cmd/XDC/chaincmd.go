@@ -29,6 +29,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/cmd/utils"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	xdc_genesis "github.com/XinFinOrg/XDPoSChain/genesis"
@@ -202,7 +203,7 @@ func importChain(ctx *cli.Context) error {
 	// Start metrics export if enabled
 	utils.SetupMetrics(&cfg.Metrics)
 
-	chain, db := utils.MakeChain(ctx, stack, false)
+	chain, db := utils.MakeChain(ctx, stack)
 	defer db.Close()
 
 	// Start periodically gathering memory profiles
@@ -277,7 +278,7 @@ func exportChain(ctx *cli.Context) error {
 	stack, _, _ := makeFullNode(ctx)
 	defer stack.Close()
 
-	chain, db := utils.MakeChain(ctx, stack, true)
+	chain, db := utils.MakeChain(ctx, stack)
 	defer db.Close()
 	start := time.Now()
 
@@ -348,22 +349,27 @@ func dump(ctx *cli.Context) error {
 	stack, _, _ := makeFullNode(ctx)
 	defer stack.Close()
 
-	chain, chainDb := utils.MakeChain(ctx, stack, true)
-	defer chainDb.Close()
-
+	db := utils.MakeChainDatabase(ctx, stack, true)
 	for _, arg := range ctx.Args().Slice() {
-		var block *types.Block
+		var header *types.Header
 		if hashish(arg) {
-			block = chain.GetBlockByHash(common.HexToHash(arg))
+			hash := common.HexToHash(arg)
+			number := rawdb.ReadHeaderNumber(db, hash)
+			if number != nil {
+				header = rawdb.ReadHeader(db, hash, *number)
+			}
 		} else {
-			num, _ := strconv.Atoi(arg)
-			block = chain.GetBlockByNumber(uint64(num))
+			number, _ := strconv.Atoi(arg)
+			hash := rawdb.ReadCanonicalHash(db, uint64(number))
+			if hash != (common.Hash{}) {
+				header = rawdb.ReadHeader(db, hash, uint64(number))
+			}
 		}
-		if block == nil {
+		if header == nil {
 			fmt.Println("{}")
 			utils.Fatalf("block not found")
 		} else {
-			state, err := state.New(block.Root(), state.NewDatabase(chainDb))
+			state, err := state.New(header.Root, state.NewDatabase(db))
 			if err != nil {
 				utils.Fatalf("could not create new state: %v", err)
 			}

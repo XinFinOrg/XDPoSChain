@@ -1662,9 +1662,9 @@ func MakeGenesis(ctx *cli.Context) *core.Genesis {
 }
 
 // MakeChain creates a chain manager from set command line flags.
-func MakeChain(ctx *cli.Context, stack *node.Node, readOnly bool) (chain *core.BlockChain, chainDb ethdb.Database) {
+func MakeChain(ctx *cli.Context, stack *node.Node) (chain *core.BlockChain, chainDb ethdb.Database) {
 	var err error
-	chainDb = MakeChainDatabase(ctx, stack, readOnly)
+	chainDb = MakeChainDatabase(ctx, stack, false)
 
 	config, _, err := core.SetupGenesisBlock(chainDb, MakeGenesis(ctx))
 	if err != nil {
@@ -1699,12 +1699,10 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readOnly bool) (chain *core.B
 		cache.TrieNodeLimit = ctx.Int(CacheFlag.Name) * ctx.Int(CacheGCFlag.Name) / 100
 	}
 	vmcfg := vm.Config{EnablePreimageRecording: ctx.Bool(VMEnableDebugFlag.Name)}
-	var limit *uint64
-	if ctx.IsSet(TxLookupLimitFlag.Name) && !readOnly {
-		l := ctx.Uint64(TxLookupLimitFlag.Name)
-		limit = &l
-	}
-	chain, err = core.NewBlockChain(chainDb, cache, config, engine, vmcfg, limit)
+	
+	// TODO(rjl493456442) disable snapshot generation/wiping if the chain is read only.
+	// Disable transaction indexing/unindexing by default.
+	chain, err = core.NewBlockChain(chainDb, cache, config, engine, vmcfg, nil)
 	if err != nil {
 		Fatalf("Can't create BlockChain: %v", err)
 	}
