@@ -60,7 +60,7 @@ func inspectFreezers(db ethdb.Database) ([]freezerInfo, error) {
 			// with the key-value store, inspect the chain store directly.
 			info := freezerInfo{name: freezer}
 			// Retrieve storage size of every contained table.
-			for table := range chainFreezerNoSnappy {
+			for table := range chainFreezerTableConfigs {
 				size, err := db.AncientSize(table)
 				if err != nil {
 					return nil, err
@@ -96,11 +96,11 @@ func inspectFreezers(db ethdb.Database) ([]freezerInfo, error) {
 func InspectFreezerTable(ancient string, freezerName string, tableName string, start, end int64) error {
 	var (
 		path   string
-		tables map[string]bool
+		tables map[string]freezerTableConfig
 	)
 	switch freezerName {
 	case chainFreezerName:
-		path, tables = resolveChainFreezerDir(ancient), chainFreezerNoSnappy
+		path, tables = resolveChainFreezerDir(ancient), chainFreezerTableConfigs
 	default:
 		return fmt.Errorf("unknown freezer, supported ones: %v", freezers)
 	}

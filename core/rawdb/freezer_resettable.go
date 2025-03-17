@@ -49,7 +49,7 @@ type ResettableFreezer struct {
 //
 // The reset function will delete directory atomically and re-create the
 // freezer from scratch.
-func NewResettableFreezer(datadir string, namespace string, readonly bool, maxTableSize uint32, tables map[string]bool) (*ResettableFreezer, error) {
+func NewResettableFreezer(datadir string, namespace string, readonly bool, maxTableSize uint32, tables map[string]freezerTableConfig) (*ResettableFreezer, error) {
 	if err := cleanup(datadir); err != nil {
 		return nil, err
 	}
