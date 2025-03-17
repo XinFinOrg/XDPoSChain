@@ -59,7 +59,7 @@ func (s Storage) Copy() Storage {
 // The usage pattern is as follows:
 // First you need to obtain a state object.
 // Account values can be accessed and modified through the object.
-// Finally, call CommitTrie to write the modified storage trie into a database.
+// Finally, call commitTrie to write the modified storage trie into a database.
 type stateObject struct {
 	db       *StateDB
 	address  common.Address // address of ethereum account
@@ -335,9 +335,9 @@ func (s *stateObject) updateRoot(db Database) {
 	s.data.Root = s.trie.Hash()
 }
 
-// CommitTrie the storage trie of the object to dwb.
-// This updates the trie root.
-func (s *stateObject) CommitTrie(db Database) error {
+// commitTrie submits the storage changes into the storage trie and re-computes
+// the root. Besides, all trie changes will be collected in a nodeset and returned.
+func (s *stateObject) commitTrie(db Database) error {
 	// If nothing changed, don't bother with hashing anything
 	if s.updateTrie(db) == nil {
 		return nil
