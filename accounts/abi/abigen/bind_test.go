@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package bind
+package abigen
 
 import (
 	"fmt"
@@ -26,7 +26,6 @@ import (
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
-	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
 var bindTests = []struct {
@@ -545,7 +544,7 @@ var bindTests = []struct {
 				struct A {
 					bytes32 B;
 				}
-				
+
 				function F() public view returns (A[] memory a, uint256[] memory c, bool[] memory d) {
 					A[] memory a = new A[](2);
 					a[0].B = bytes32(uint256(1234) << 96);
@@ -553,7 +552,7 @@ var bindTests = []struct {
 					bool[] memory d;
 					return (a, c, d);
 				}
-			
+
 				function G() public view returns (A[] memory a) {
 					A[] memory a = new A[](2);
 					a[0].B = bytes32(uint256(1234) << 96);
@@ -576,10 +575,10 @@ var bindTests = []struct {
 			// Generate a new random account and a funded simulator
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
-		
+
 			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
 			defer sim.Close()
-		
+
 			// Deploy a structs method invoker contract and execute its default method
 			_, _, structs, err := DeployStructs(auth, sim)
 			if err != nil {
@@ -1651,13 +1650,13 @@ var bindTests = []struct {
 		`NewFallbacks`,
 		`
 		pragma solidity >=0.6.0 <0.7.0;
-	
+
 		contract NewFallbacks {
 			event Fallback(bytes data);
 			fallback() external {
 				emit Fallback(msg.data);
 			}
-	
+
 			event Received(address addr, uint value);
 			receive() external payable {
 				emit Received(msg.sender, msg.value);
@@ -1669,7 +1668,7 @@ var bindTests = []struct {
 		`
 			"bytes"
 			"math/big"
-	
+
 			"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 			"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind/backends"
 			"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -1679,22 +1678,22 @@ var bindTests = []struct {
 		`
 			key, _ := crypto.GenerateKey()
 			addr := crypto.PubkeyToAddress(key.PublicKey)
-	
+
 			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: big.NewInt(10000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
 			defer sim.Close()
-	
+
 			opts, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 			_, _, c, err := DeployNewFallbacks(opts, sim)
 			if err != nil {
 				t.Fatalf("Failed to deploy contract: %v", err)
 			}
 			sim.Commit()
-	
+
 			// Test receive function
 			opts.Value = big.NewInt(100)
 			c.Receive(opts)
 			sim.Commit()
-	
+
 			var gotEvent bool
 			iter, _ := c.FilterReceived(nil)
 			defer iter.Close()
@@ -1711,14 +1710,14 @@ var bindTests = []struct {
 			if !gotEvent {
 				t.Fatal("Expect to receive event emitted by receive")
 			}
-	
+
 			// Test fallback function
 			gotEvent = false
 			opts.Value = nil
 			calldata := []byte{0x01, 0x02, 0x03}
 			c.Fallback(opts, calldata)
 			sim.Commit()
-	
+
 			iter2, _ := c.FilterFallback(nil)
 			defer iter2.Close()
 			for iter2.Next() {
@@ -1813,7 +1812,7 @@ var bindTests = []struct {
 		`NewErrors`,
 		`
 		pragma solidity >0.8.4;
-	
+
 		contract NewErrors {
 			error MyError(uint256);
 			error MyError1(uint256);
@@ -1828,7 +1827,7 @@ var bindTests = []struct {
 		[]string{`[{"inputs":[{"internalType":"uint256","name":"","type":"uint256"}],"name":"MyError","type":"error"},{"inputs":[{"internalType":"uint256","name":"","type":"uint256"}],"name":"MyError1","type":"error"},{"inputs":[{"internalType":"uint256","name":"","type":"uint256"},{"internalType":"uint256","name":"","type":"uint256"}],"name":"MyError2","type":"error"},{"inputs":[{"internalType":"uint256","name":"a","type":"uint256"},{"internalType":"uint256","name":"b","type":"uint256"},{"internalType":"uint256","name":"c","type":"uint256"}],"name":"MyError3","type":"error"},{"inputs":[],"name":"Error","outputs":[],"stateMutability":"pure","type":"function"}]`},
 		`
 			"math/big"
-	
+
 			"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 			"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind/backends"
 			"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -1842,7 +1841,7 @@ var bindTests = []struct {
 				sim     = backends.NewXDCSimulatedBackend(types.GenesisAlloc{user.From: {Balance: big.NewInt(1000000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
 			)
 			defer sim.Close()
-	
+
 			_, tx, contract, err := DeployNewErrors(user, sim)
 			if err != nil {
 				t.Fatal(err)
@@ -1867,12 +1866,12 @@ var bindTests = []struct {
 		name: `ConstructorWithStructParam`,
 		contract: `
 		pragma solidity >=0.8.0 <0.9.0;
-		
+
 		contract ConstructorWithStructParam {
 			struct StructType {
 				uint256 field;
 			}
-		
+
 			constructor(StructType memory st) {}
 		}
 		`,
@@ -1900,7 +1899,7 @@ var bindTests = []struct {
 				t.Fatalf("DeployConstructorWithStructParam() got err %v; want nil err", err)
 			}
 			sim.Commit()
-			
+
 			if _, err = bind.WaitDeployed(nil, sim, tx); err != nil {
 				t.Logf("Deployment tx: %+v", tx)
 				t.Errorf("bind.WaitDeployed(nil, %T, <deployment tx>) got err %v; want nil err", sim, err)
@@ -1948,7 +1947,7 @@ var bindTests = []struct {
 				t.Fatalf("DeployNameConflict() got err %v; want nil err", err)
 			}
 			sim.Commit()
-			
+
 			if _, err = bind.WaitDeployed(nil, sim, tx); err != nil {
 				t.Logf("Deployment tx: %+v", tx)
 				t.Errorf("bind.WaitDeployed(nil, %T, <deployment tx>) got err %v; want nil err", sim, err)
@@ -2019,21 +2018,22 @@ var bindTests = []struct {
 
 // Tests that packages generated by the binder can be successfully compiled and
 // the requested tester run against it.
-func TestGolangBindings(t *testing.T) {
+func TestBindings(t *testing.T) {
 	t.Parallel()
 	// Skip the test if no Go command can be found
 	gocmd := runtime.GOROOT() + "/bin/go"
 	if !common.FileExist(gocmd) {
 		t.Skip("go sdk not found for testing")
 	}
-	t.Log("Using config", params.TestXDPoSMockChainConfig)
-	// Create a temporary workspace for the test suite
-	ws := t.TempDir()
 
-	pkg := filepath.Join(ws, "bindtest")
+	// Create a temporary workspace for the test suite
+	path := t.TempDir()
+	pkg := filepath.Join(path, "bindtest")
 	if err := os.MkdirAll(pkg, 0700); err != nil {
 		t.Fatalf("failed to create package: %v", err)
 	}
+	t.Log("tmpdir", pkg)
+
 	// Generate the test suite for all the contracts
 	for i, tt := range bindTests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2044,7 +2044,7 @@ func TestGolangBindings(t *testing.T) {
 				types = []string{tt.name}
 			}
 			// Generate the binding and create a Go source file in the workspace
-			bind, err := Bind(types, tt.abi, tt.bytecode, tt.fsigs, "bindtest", LangGo, tt.libs, tt.aliases)
+			bind, err := Bind(types, tt.abi, tt.bytecode, tt.fsigs, "bindtest", tt.libs, tt.aliases)
 			if err != nil {
 				t.Fatalf("test %d: failed to generate binding: %v", i, err)
 			}

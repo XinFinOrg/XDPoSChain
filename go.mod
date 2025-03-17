@@ -8,7 +8,6 @@ require (
 	github.com/cespare/cp v1.1.1
 	github.com/davecgh/go-spew v1.1.1
 	github.com/docker/docker v1.4.2-0.20180625184442-8e610b2b55bf
-	github.com/edsrzf/mmap-go v1.0.0
 	github.com/fatih/color v1.13.0
 	github.com/globalsign/mgo v0.0.0-20181015135952-eeefdecb41b8
 	github.com/golang/snappy v0.0.5-0.20220116011046-fa5810519dcb
@@ -46,7 +45,6 @@ require (
 	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/google/gofuzz v1.2.0
 	github.com/google/uuid v1.6.0
-	github.com/holiman/bloomfilter/v2 v2.0.3
 	github.com/influxdata/influxdb-client-go/v2 v2.4.0
 	github.com/influxdata/influxdb1-client v0.0.0-20220302092344-a9ab5670611c
 	github.com/karalabe/hid v1.0.1-0.20240306101548-573246063e52
@@ -57,6 +55,7 @@ require (
 	github.com/shirou/gopsutil v3.21.4-0.20210419000835-c7a38de76ee5+incompatible
 	github.com/status-im/keycard-go v0.3.3
 	github.com/urfave/cli/v2 v2.27.5
+	golang.org/x/exp v0.0.0-20230626212559-97b1e661b5df
 	golang.org/x/text v0.20.0
 	google.golang.org/protobuf v1.31.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1

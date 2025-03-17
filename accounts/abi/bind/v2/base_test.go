@@ -26,7 +26,7 @@ import (
 
 	ethereum "github.com/XinFinOrg/XDPoSChain"
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi"
-	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
+	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind/v2"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -315,7 +315,6 @@ func TestUnpackIndexedBytesTyLogIntoMap(t *testing.T) {
 	}
 	unpackAndCheck(t, bc, expectedReceivedMap, mockLog)
 }
-
 
 func TestTransactGasFee(t *testing.T) {
 	t.Parallel()
