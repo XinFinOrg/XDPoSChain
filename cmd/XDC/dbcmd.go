@@ -32,6 +32,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"github.com/olekukonko/tablewriter"
 	"github.com/urfave/cli/v2"
 )
 
@@ -57,6 +58,7 @@ Remove blockchain and state databases`,
 			dbDeleteCmd,
 			dbPutCmd,
 			dbDumpFreezerIndex,
+			dbMetadataCmd,
 		},
 	}
 	dbInspectCmd = &cli.Command{
@@ -131,6 +133,15 @@ WARNING: This is a low-level operation which may cause database corruption!`,
 			utils.SyncModeFlag,
 		}, utils.NetworkFlags, utils.DatabaseFlags),
 		Description: "This command displays information about the freezer index.",
+	}
+	dbMetadataCmd = &cli.Command{
+		Action: showMetaData,
+		Name:   "metadata",
+		Usage:  "Shows metadata about the chain status.",
+		Flags: slices.Concat([]cli.Flag{
+			utils.SyncModeFlag,
+		}, utils.NetworkFlags, utils.DatabaseFlags),
+		Description: "Shows metadata about the chain status.",
 	}
 )
 
@@ -395,5 +406,46 @@ func freezerInspect(ctx *cli.Context) error {
 	} else {
 		f.DumpIndex(start, end)
 	}
+	return nil
+}
+
+func showMetaData(ctx *cli.Context) error {
+	stack, _ := makeConfigNode(ctx)
+	defer stack.Close()
+	db := utils.MakeChainDatabase(ctx, stack, true)
+	ancients, err := db.Ancients()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error accessing ancients: %v", err)
+	}
+	pp := func(val *uint64) string {
+		if val == nil {
+			return "<nil>"
+		}
+		return fmt.Sprintf("%d (0x%x)", *val, *val)
+	}
+	data := [][]string{
+		{"databaseVersion", pp(rawdb.ReadDatabaseVersion(db))},
+		{"headBlockHash", fmt.Sprintf("%v", rawdb.ReadHeadBlockHash(db))},
+		{"headFastBlockHash", fmt.Sprintf("%v", rawdb.ReadHeadFastBlockHash(db))},
+		{"headHeaderHash", fmt.Sprintf("%v", rawdb.ReadHeadHeaderHash(db))}}
+	if b := rawdb.ReadHeadBlock(db); b != nil {
+		data = append(data, []string{"headBlock.Hash", fmt.Sprintf("%v", b.Hash())})
+		data = append(data, []string{"headBlock.Root", fmt.Sprintf("%v", b.Root())})
+		data = append(data, []string{"headBlock.Number", fmt.Sprintf("%d (0x%x)", b.Number(), b.Number())})
+	}
+	if h := rawdb.ReadHeadHeader(db); h != nil {
+		data = append(data, []string{"headHeader.Hash", fmt.Sprintf("%v", h.Hash())})
+		data = append(data, []string{"headHeader.Root", fmt.Sprintf("%v", h.Root)})
+		data = append(data, []string{"headHeader.Number", fmt.Sprintf("%d (0x%x)", h.Number, h.Number)})
+	}
+	data = append(data, [][]string{{"frozen", fmt.Sprintf("%d items", ancients)},
+		{"lastPivotNumber", pp(rawdb.ReadLastPivotNumber(db))},
+		{"txIndexTail", pp(rawdb.ReadTxIndexTail(db))},
+		{"fastTxLookupLimit", pp(rawdb.ReadFastTxLookupLimit(db))},
+	}...)
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Field", "Value"})
+	table.AppendBulk(data)
+	table.Render()
 	return nil
 }
