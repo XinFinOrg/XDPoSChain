@@ -200,6 +200,14 @@ func (f *ResettableFreezer) Sync() error {
 	return f.freezer.Sync()
 }
 
+// AncientDatadir returns the path of the ancient store.
+func (f *ResettableFreezer) AncientDatadir() (string, error) {
+	f.lock.RLock()
+	defer f.lock.RUnlock()
+
+	return f.freezer.AncientDatadir()
+}
+
 // MigrateTable processes the entries in a given table in sequence
 // converting them to a new format if they're of an old format.
 func (f *ResettableFreezer) MigrateTable(kind string, convert convertLegacyFn) error {

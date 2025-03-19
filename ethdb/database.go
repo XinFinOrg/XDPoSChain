@@ -18,8 +18,9 @@
 package ethdb
 
 import (
-	"github.com/XinFinOrg/XDPoSChain/common"
 	"io"
+
+	"github.com/XinFinOrg/XDPoSChain/common"
 )
 
 // KeyValueReader wraps the Has and Get method of a backing data store.
@@ -158,38 +159,20 @@ type Reader interface {
 	AncientReader
 }
 
-// Writer contains the methods required to write data to both key-value as well as
-// immutable ancient data.
-type Writer interface {
-	KeyValueWriter
-	AncientWriter
-}
-
-// Stater contains the methods required to retrieve states from both key-value as well as
-// immutable ancient data.
-type Stater interface {
-	KeyValueStater
-	AncientStater
-}
-
 // AncientStore contains all the methods required to allow handling different
 // ancient data stores backing immutable chain data store.
 type AncientStore interface {
 	AncientReader
 	AncientWriter
+	AncientStater
 	io.Closer
 }
 
 // Database contains all the methods required by the high level database to not
 // only access the key-value data store but also the chain freezer.
 type Database interface {
-	Reader
-	Writer
-	Batcher
-	Iteratee
-	Stater
-	Compacter
-	io.Closer
+	KeyValueStore
+	AncientStore
 }
 
 // XDCxDatabase interface
