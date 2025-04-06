@@ -180,7 +180,7 @@ var (
 			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
 			MasternodeReward:     500, // double as Reward
 			ProtectorReward:      400,
-			ObserverReward:       300,
+			ObserverReward:       300.125,
 		},
 	}
 
