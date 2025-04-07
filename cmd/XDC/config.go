@@ -205,19 +205,6 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, XDCConfig) {
 	return stack, cfg
 }
 
-func applyValues(values []string, params *[]string) {
-	data := []string{}
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			data = append(data, trimmed)
-		}
-	}
-	if len(data) > 0 {
-		*params = data
-	}
-
-}
-
 func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend, XDCConfig) {
 	stack, cfg := makeConfigNode(ctx)
 
