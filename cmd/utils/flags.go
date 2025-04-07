@@ -1542,12 +1542,6 @@ func RegisterXDCXService(stack *node.Node, cfg *XDCx.Config) (*XDCx.XDCX, *XDCxl
 	return XDCX, lendingServ
 }
 
-// SetupNetwork configures the system for either the main net or some test network.
-func SetupNetwork(ctx *cli.Context) {
-	// TODO(fjl): move target gas limit into config
-	params.TargetGasLimit = ctx.Uint64(MinerGasLimitFlag.Name)
-}
-
 // SetupMetrics configures the metrics system.
 func SetupMetrics(cfg *metrics.Config) {
 	if !cfg.Enabled {
