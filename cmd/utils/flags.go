@@ -875,11 +875,10 @@ func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 		if cfg.BootstrapNodes != nil {
 			return // Already set by config file, don't apply defaults.
 		}
-		networkID := ctx.Uint64(NetworkIdFlag.Name)
 		switch {
-		case ctx.Bool(TestnetFlag.Name) || networkID == 51:
+		case ctx.Bool(TestnetFlag.Name):
 			urls = params.TestnetBootnodes
-		case ctx.Bool(DevnetFlag.Name) || networkID == 551:
+		case ctx.Bool(DevnetFlag.Name):
 			urls = params.DevnetBootnodes
 		}
 	}
@@ -1395,24 +1394,6 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 			Fatalf("invalid --syncmode flag: %v", err)
 		}
 	}
-	if ctx.IsSet(NetworkIdFlag.Name) {
-		cfg.NetworkId = ctx.Uint64(NetworkIdFlag.Name)
-		switch cfg.NetworkId {
-		case 50:
-			if !ctx.IsSet(MainnetFlag.Name) {
-				ctx.Set(MainnetFlag.Name, "true")
-			}
-		case 51:
-			common.IsTestnet = true
-			if !ctx.IsSet(TestnetFlag.Name) {
-				ctx.Set(TestnetFlag.Name, "true")
-			}
-		case 551:
-			if !ctx.IsSet(DevnetFlag.Name) {
-				ctx.Set(DevnetFlag.Name, "true")
-			}
-		}
-	}
 
 	if ctx.IsSet(CacheFlag.Name) || ctx.IsSet(CacheDatabaseFlag.Name) {
 		cfg.DatabaseCache = ctx.Int(CacheFlag.Name) * ctx.Int(CacheDatabaseFlag.Name) / 100
@@ -1540,6 +1521,21 @@ func RegisterXDCXService(stack *node.Node, cfg *XDCx.Config) (*XDCx.XDCX, *XDCxl
 	// register XDCxlending service
 	lendingServ := XDCxlending.New(stack, XDCX)
 	return XDCX, lendingServ
+}
+
+func SetNetworkFlagById(ctx *cli.Context, cfg *ethconfig.Config) {
+	if ctx.IsSet(NetworkIdFlag.Name) {
+		cfg.NetworkId = ctx.Uint64(NetworkIdFlag.Name)
+		switch cfg.NetworkId {
+		case 50:
+			ctx.Set(MainnetFlag.Name, "true")
+		case 51:
+			common.IsTestnet = true
+			ctx.Set(TestnetFlag.Name, "true")
+		case 551:
+			ctx.Set(DevnetFlag.Name, "true")
+		}
+	}
 }
 
 // SetupMetrics configures the metrics system.

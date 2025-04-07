@@ -182,6 +182,8 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, XDCConfig) {
 	}
 	cfg.Account.Passwords = passwords
 
+	utils.SetNetworkFlagById(ctx, &cfg.Eth)
+
 	// Apply flags.
 	utils.SetNodeConfig(ctx, &cfg.Node)
 	stack, err := node.New(&cfg.Node)
