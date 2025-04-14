@@ -253,11 +253,11 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				// Add reward for coin holders.
 				rewardResults := make(map[common.Address]interface{})
 				for signer, calcReward := range rewardSigners {
-					rewards, err := contracts.CalculateRewardForHolders(foundationWalletAddr, parentState, signer, calcReward, number)
-					if err != nil {
-						log.Error("[HookReward] Fail to calculate reward for holders.", "error", err)
-						return nil, err
-					}
+					// give `calcReward` to owner 100%
+					owner := state.GetCandidateOwner(parentState, signer)
+					// map `rewards` is for type backward-compatibility
+					rewards := make(map[common.Address]*big.Int)
+					rewards[owner] = calcReward
 					if len(rewards) > 0 {
 						for holder, reward := range rewards {
 							stateBlock.AddBalance(holder, reward)
