@@ -346,7 +346,7 @@ func (b *backendMock) GetReceipts(ctx context.Context, hash common.Hash) (types.
 	return nil, nil
 }
 
-func (b *backendMock) GetTd(ctx context.Context, hash common.Hash) *big.Int {
+func (b *backendMock) GetTd(context.Context, common.Hash) *big.Int {
 	return nil
 }
 

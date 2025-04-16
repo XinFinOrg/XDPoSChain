@@ -145,6 +145,11 @@ func (db *BatchDatabase) Ancients() (uint64, error) {
 	return 0, errNotSupported
 }
 
+// Tail returns an error as we don't have a backing chain freezer.
+func (db *BatchDatabase) Tail() (uint64, error) {
+	return 0, errNotSupported
+}
+
 // AncientSize returns an error as we don't have a backing chain freezer.
 func (db *BatchDatabase) AncientSize(kind string) (uint64, error) {
 	return 0, errNotSupported
@@ -155,9 +160,37 @@ func (db *BatchDatabase) AppendAncient(number uint64, hash, header, body, receip
 	return errNotSupported
 }
 
-// TruncateAncients returns an error as we don't have a backing chain freezer.
-func (db *BatchDatabase) TruncateAncients(items uint64) error {
+// TruncateHead returns an error as we don't have a backing chain freezer.
+func (db *BatchDatabase) TruncateHead(items uint64) error {
 	return errNotSupported
+}
+
+// TruncateTail returns an error as we don't have a backing chain freezer.
+func (db *BatchDatabase) TruncateTail(items uint64) error {
+	return errNotSupported
+}
+
+func (db *BatchDatabase) AncientRange(kind string, start, max, maxByteSize uint64) ([][]byte, error) {
+	return nil, errNotSupported
+}
+
+func (db *BatchDatabase) ReadAncients(fn func(ethdb.AncientReaderOp) error) (err error) {
+	return fn(db)
+}
+
+// MigrateTable processes the entries in a given table in sequence
+// converting them to a new format if they're of an old format.
+func (db *BatchDatabase) MigrateTable(kind string, convert func([]byte) ([]byte, error)) error {
+	return errNotSupported
+}
+
+// AncientDatadir returns an error as we don't have a backing chain freezer.
+func (db *BatchDatabase) AncientDatadir() (string, error) {
+	return "", errNotSupported
+}
+
+func (db *BatchDatabase) ModifyAncients(fn func(ethdb.AncientWriteOp) error) (writeSize int64, err error) {
+	return 0, errNotSupported
 }
 
 // Sync returns an error as we don't have a backing chain freezer.

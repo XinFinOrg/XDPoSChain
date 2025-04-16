@@ -17,11 +17,13 @@
 package eth
 
 import (
+	"math/big"
 	"math/rand"
 	"sync/atomic"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -169,31 +171,34 @@ func (pm *ProtocolManager) synchronise(peer *peer) {
 		return
 	}
 	// Make sure the peer's TD is higher than our own
-	currentBlock := pm.blockchain.CurrentBlock()
-	td := pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.NumberU64())
+	mode, ourTD := pm.modeAndLocalHead()
+	// currentBlock := pm.blockchain.CurrentBlock()
+	// td := pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.NumberU64())
 	pHead, pTd := peer.Head()
-	if pTd.Cmp(td) <= 0 {
-		return
-	}
-	// Otherwise try to sync with the downloader
-	mode := downloader.FullSync
-	if atomic.LoadUint32(&pm.fastSync) == 1 {
-		// Fast sync was explicitly requested, and explicitly granted
-		mode = downloader.FastSync
-	} else if currentBlock.NumberU64() == 0 && pm.blockchain.CurrentFastBlock().NumberU64() > 0 {
-		// The database seems empty as the current block is the genesis. Yet the fast
-		// block is ahead, so fast sync was enabled for this node at a certain point.
-		// The only scenario where this can happen is if the user manually (or via a
-		// bad block) rolled back a fast sync node below the sync point. In this case
-		// however it's safe to reenable fast sync.
-		atomic.StoreUint32(&pm.fastSync, 1)
-		mode = downloader.FastSync
+	if pTd.Cmp(ourTD) <= 0 {
+		return // We're in sync.
 	}
 
 	if mode == downloader.FastSync {
 		// Make sure the peer's total difficulty we are synchronizing is higher.
 		if pm.blockchain.GetTdByHash(pm.blockchain.CurrentFastBlock().Hash()).Cmp(pTd) >= 0 {
 			return
+		}
+		// Before launch the fast sync, we have to ensure user uses the same
+		// txlookup limit.
+		// The main concern here is: during the fast sync Geth won't index the
+		// block(generate tx indices) before the HEAD-limit. But if user changes
+		// the limit in the next fast sync(e.g. user kill Geth manually and
+		// restart) then it will be hard for Geth to figure out the oldest block
+		// has been indexed. So here for the user-experience wise, it's non-optimal
+		// that user can't change limit during the fast sync. If changed, Geth
+		// will just blindly use the original one.
+		limit := pm.blockchain.TxLookupLimit()
+		if stored := rawdb.ReadFastTxLookupLimit(pm.chaindb); stored == nil {
+			rawdb.WriteFastTxLookupLimit(pm.chaindb, limit)
+		} else if *stored != limit {
+			pm.blockchain.SetTxLookupLimit(*stored)
+			log.Warn("Update txLookup limit", "provided", limit, "updated", *stored)
 		}
 	}
 
@@ -206,13 +211,40 @@ func (pm *ProtocolManager) synchronise(peer *peer) {
 		atomic.StoreUint32(&pm.fastSync, 0)
 	}
 	atomic.StoreUint32(&pm.acceptTxs, 1) // Mark initial sync done
-	//if head := pm.blockchain.CurrentBlock(); head.NumberU64() > 0 {
-	//	// We've completed a sync cycle, notify all peers of new state. This path is
-	//	// essential in star-topology networks where a gateway node needs to notify
-	//	// all its out-of-date peers of the availability of a new block. This failure
-	//	// scenario will most often crop up in private and hackathon networks with
-	//	// degenerate connectivity, but it should be healthy for the mainnet too to
-	//	// more reliably update peers or the local TD state.
-	//	go pm.BroadcastBlock(head, false)
-	//}
+}
+
+func (pm *ProtocolManager) modeAndLocalHead() (downloader.SyncMode, *big.Int) {
+	// If we're in fast sync mode, return that directly
+	if atomic.LoadUint32(&pm.fastSync) == 1 {
+		block := pm.blockchain.CurrentFastBlock()
+		td := pm.blockchain.GetTdByHash(block.Hash())
+		return downloader.FastSync, td
+	}
+
+	currentBlock := pm.blockchain.CurrentBlock()
+
+	// The database seems empty as the current block is the genesis. Yet the fast
+	// block is ahead, so fast sync was enabled for this node at a certain point.
+	// The only scenario where this can happen is if the user manually (or via a
+	// bad block) rolled back a fast sync node below the sync point. In this case
+	// however it's safe to reenable fast sync.
+	if currentBlock.NumberU64() == 0 && pm.blockchain.CurrentFastBlock().NumberU64() > 0 {
+		atomic.StoreUint32(&pm.fastSync, 1)
+		td := pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.NumberU64())
+		return downloader.FastSync, td
+	}
+
+	// We are probably in full sync, but we might have rewound to before the
+	// fast sync pivot, check if we should reenable
+	if pivot := rawdb.ReadLastPivotNumber(pm.chaindb); pivot != nil {
+		if currentBlock.NumberU64() < *pivot {
+			block := pm.blockchain.CurrentFastBlock()
+			td := pm.blockchain.GetTdByHash(block.Hash())
+			return downloader.FastSync, td
+		}
+	}
+
+	// Nope, we're really full syncing
+	td := pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.NumberU64())
+	return downloader.FullSync, td
 }

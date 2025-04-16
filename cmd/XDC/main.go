@@ -90,6 +90,7 @@ var (
 		utils.TxPoolLifetimeFlag,
 		utils.SyncModeFlag,
 		utils.GCModeFlag,
+		utils.TxLookupLimitFlag,
 		// utils.LightServFlag,  // deprecated
 		// utils.LightPeersFlag, // deprecated
 		//utils.LightKDFFlag,

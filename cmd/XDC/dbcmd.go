@@ -17,10 +17,12 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/cmd/utils"
@@ -28,8 +30,10 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/console"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"github.com/olekukonko/tablewriter"
 	"github.com/urfave/cli/v2"
 )
 
@@ -54,6 +58,9 @@ Remove blockchain and state databases`,
 			dbGetCmd,
 			dbDeleteCmd,
 			dbPutCmd,
+			dbDumpFreezerIndex,
+			dbMetadataCmd,
+			dbMigrateFreezerCmd,
 		},
 	}
 	dbInspectCmd = &cli.Command{
@@ -119,17 +126,63 @@ WARNING: This is a low-level operation which may cause database corruption!`,
 		Description: `This command sets a given database key to the given value.
 WARNING: This is a low-level operation which may cause database corruption!`,
 	}
+	dbDumpFreezerIndex = &cli.Command{
+		Action:    freezerInspect,
+		Name:      "freezer-index",
+		Usage:     "Dump out the index of a specific freezer table",
+		ArgsUsage: "<freezer-type> <table-type> <start (int)> <end (int)>",
+		Flags: slices.Concat([]cli.Flag{
+			utils.SyncModeFlag,
+		}, utils.NetworkFlags, utils.DatabaseFlags),
+		Description: "This command displays information about the freezer index.",
+	}
+	dbMetadataCmd = &cli.Command{
+		Action: showMetaData,
+		Name:   "metadata",
+		Usage:  "Shows metadata about the chain status.",
+		Flags: slices.Concat([]cli.Flag{
+			utils.SyncModeFlag,
+		}, utils.NetworkFlags, utils.DatabaseFlags),
+		Description: "Shows metadata about the chain status.",
+	}
+	dbMigrateFreezerCmd = &cli.Command{
+		Action:    freezerMigrate,
+		Name:      "freezer-migrate",
+		Usage:     "Migrate legacy parts of the freezer. (WARNING: may take a long time)",
+		ArgsUsage: "",
+		Flags: slices.Concat([]cli.Flag{
+			utils.SyncModeFlag,
+		}, utils.NetworkFlags, utils.DatabaseFlags),
+		Description: `The freezer-migrate command checks your database for receipts in a legacy format and updates those.
+WARNING: please back-up the receipt files in your ancients before running this command.`,
+	}
 )
 
 func removeDB(ctx *cli.Context) error {
-	stack, _ := makeConfigNode(ctx)
-	name := "chaindata"
-	dbdir := stack.ResolvePath(name)
-	if common.FileExist(dbdir) {
-		confirmAndRemoveDB(dbdir, name)
+	stack, config := makeConfigNode(ctx)
+
+	// Remove the full node state database
+	path := stack.ResolvePath("chaindata")
+	if common.FileExist(path) {
+		confirmAndRemoveDB(path, "full node state database")
 	} else {
-		log.Info("Database doesn't exist, skipping", "path", dbdir)
+		log.Info("Full node state database missing", "path", path)
 	}
+
+	// Remove the full node ancient database
+	path = config.Eth.DatabaseFreezer
+	switch {
+	case path == "":
+		path = filepath.Join(stack.ResolvePath("chaindata"), "ancient")
+	case !filepath.IsAbs(path):
+		path = config.Node.ResolvePath(path)
+	}
+	if common.FileExist(path) {
+		confirmAndRemoveDB(path, "full node ancient database")
+	} else {
+		log.Info("Full node ancient database missing", "path", path)
+	}
+
 	return nil
 }
 
@@ -197,7 +250,7 @@ func inspect(ctx *cli.Context) error {
 	return rawdb.InspectDatabase(db, prefix, start)
 }
 
-func showLeveldbStats(db ethdb.Stater) {
+func showLeveldbStats(db ethdb.KeyValueStater) {
 	if stats, err := db.Stat("leveldb.stats"); err != nil {
 		log.Warn("Failed to read database stats", "error", err)
 	} else {
@@ -327,4 +380,140 @@ func dbPut(ctx *cli.Context) error {
 		fmt.Printf("Previous value:\n%#x\n", data)
 	}
 	return db.Put(key, value)
+}
+
+func freezerInspect(ctx *cli.Context) error {
+	if ctx.NArg() < 4 {
+		return fmt.Errorf("required arguments: %v", ctx.Command.ArgsUsage)
+	}
+	var (
+		freezer = ctx.Args().Get(0)
+		table   = ctx.Args().Get(1)
+	)
+	start, err := strconv.ParseInt(ctx.Args().Get(2), 10, 64)
+	if err != nil {
+		log.Info("Could not read start-param", "err", err)
+		return err
+	}
+	end, err := strconv.ParseInt(ctx.Args().Get(3), 10, 64)
+	if err != nil {
+		log.Info("Could not read count param", "err", err)
+		return err
+	}
+	stack, _ := makeConfigNode(ctx)
+	ancient := stack.ResolveAncient("chaindata", ctx.String(utils.AncientFlag.Name))
+	stack.Close()
+	return rawdb.InspectFreezerTable(ancient, freezer, table, start, end)
+}
+
+func showMetaData(ctx *cli.Context) error {
+	stack, _ := makeConfigNode(ctx)
+	defer stack.Close()
+	db := utils.MakeChainDatabase(ctx, stack, true)
+	ancients, err := db.Ancients()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error accessing ancients: %v", err)
+	}
+	data := rawdb.ReadChainMetadata(db)
+	data = append(data, []string{"frozen", fmt.Sprintf("%d items", ancients)})
+	if b := rawdb.ReadHeadBlock(db); b != nil {
+		data = append(data, []string{"headBlock.Hash", fmt.Sprintf("%v", b.Hash())})
+		data = append(data, []string{"headBlock.Root", fmt.Sprintf("%v", b.Root())})
+		data = append(data, []string{"headBlock.Number", fmt.Sprintf("%d (%#x)", b.Number(), b.Number())})
+	}
+	if h := rawdb.ReadHeadHeader(db); h != nil {
+		data = append(data, []string{"headHeader.Hash", fmt.Sprintf("%v", h.Hash())})
+		data = append(data, []string{"headHeader.Root", fmt.Sprintf("%v", h.Root)})
+		data = append(data, []string{"headHeader.Number", fmt.Sprintf("%d (%#x)", h.Number, h.Number)})
+	}
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Field", "Value"})
+	table.AppendBulk(data)
+	table.Render()
+	return nil
+}
+
+func freezerMigrate(ctx *cli.Context) error {
+	stack, _ := makeConfigNode(ctx)
+	defer stack.Close()
+
+	db := utils.MakeChainDatabase(ctx, stack, false)
+	defer db.Close()
+
+	// Check first block for legacy receipt format
+	numAncients, err := db.Ancients()
+	if err != nil {
+		return err
+	}
+	if numAncients < 1 {
+		log.Info("No receipts in freezer to migrate")
+		return nil
+	}
+
+	isFirstLegacy, firstIdx, err := dbHasLegacyReceipts(db, 0)
+	if err != nil {
+		return err
+	}
+	if !isFirstLegacy {
+		log.Info("No legacy receipts to migrate")
+		return nil
+	}
+
+	log.Info("Starting migration", "ancients", numAncients, "firstLegacy", firstIdx)
+	start := time.Now()
+	if err := db.MigrateTable("receipts", types.ConvertLegacyStoredReceipts); err != nil {
+		return err
+	}
+	if err := db.Close(); err != nil {
+		return err
+	}
+	log.Info("Migration finished", "duration", time.Since(start))
+
+	return nil
+}
+
+// dbHasLegacyReceipts checks freezer entries for legacy receipts. It stops at the first
+// non-empty receipt and checks its format. The index of this first non-empty element is
+// the second return parameter.
+func dbHasLegacyReceipts(db ethdb.Database, firstIdx uint64) (bool, uint64, error) {
+	// Check first block for legacy receipt format
+	numAncients, err := db.Ancients()
+	if err != nil {
+		return false, 0, err
+	}
+	if numAncients < 1 {
+		return false, 0, nil
+	}
+	if firstIdx >= numAncients {
+		return false, firstIdx, nil
+	}
+	var (
+		legacy       bool
+		blob         []byte
+		emptyRLPList = []byte{192}
+	)
+	// Find first block with non-empty receipt, only if
+	// the index is not already provided.
+	if firstIdx == 0 {
+		for i := uint64(0); i < numAncients; i++ {
+			blob, err = db.Ancient("receipts", i)
+			if err != nil {
+				return false, 0, err
+			}
+			if len(blob) == 0 {
+				continue
+			}
+			if !bytes.Equal(blob, emptyRLPList) {
+				firstIdx = i
+				break
+			}
+		}
+	}
+	// Is first non-empty receipt legacy?
+	first, err := db.Ancient("receipts", firstIdx)
+	if err != nil {
+		return false, 0, err
+	}
+	legacy, err = types.IsLegacyStoredReceipts(first)
+	return legacy, firstIdx, err
 }

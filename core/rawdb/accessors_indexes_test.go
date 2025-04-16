@@ -18,12 +18,14 @@ package rawdb
 
 import (
 	"hash"
+	"bytes"
 	"math/big"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"golang.org/x/crypto/sha3"
 )
@@ -56,17 +58,17 @@ func (h *testHasher) Hash() common.Hash {
 func TestLookupStorage(t *testing.T) {
 	tests := []struct {
 		name                 string
-		writeTxLookupEntries func(ethdb.Writer, *types.Block)
+		writeTxLookupEntries func(ethdb.KeyValueWriter, *types.Block)
 	}{
 		{
 			"DatabaseV6",
-			func(db ethdb.Writer, block *types.Block) {
+			func(db ethdb.KeyValueWriter, block *types.Block) {
 				WriteTxLookupEntriesByBlock(db, block)
 			},
 		},
 		{
 			"DatabaseV4-V5",
-			func(db ethdb.Writer, block *types.Block) {
+			func(db ethdb.KeyValueWriter, block *types.Block) {
 				for _, tx := range block.Transactions() {
 					db.Put(txLookupKey(tx.Hash()), block.Hash().Bytes())
 				}
@@ -74,7 +76,7 @@ func TestLookupStorage(t *testing.T) {
 		},
 		{
 			"DatabaseV3",
-			func(db ethdb.Writer, block *types.Block) {
+			func(db ethdb.KeyValueWriter, block *types.Block) {
 				for index, tx := range block.Transactions() {
 					entry := LegacyTxLookupEntry{
 						BlockHash:  block.Hash(),
@@ -131,4 +133,47 @@ func TestLookupStorage(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDeleteBloomBits(t *testing.T) {
+	// Prepare testing data
+	db := NewMemoryDatabase()
+	for i := uint(0); i < 2; i++ {
+		for s := uint64(0); s < 2; s++ {
+			WriteBloomBits(db, i, s, params.MainnetGenesisHash, []byte{0x01, 0x02})
+			WriteBloomBits(db, i, s, params.TestnetGenesisHash, []byte{0x01, 0x02})
+		}
+	}
+	check := func(bit uint, section uint64, head common.Hash, exist bool) {
+		bits, _ := ReadBloomBits(db, bit, section, head)
+		if exist && !bytes.Equal(bits, []byte{0x01, 0x02}) {
+			t.Fatalf("Bloombits mismatch")
+		}
+		if !exist && len(bits) > 0 {
+			t.Fatalf("Bloombits should be removed")
+		}
+	}
+	// Check the existence of written data.
+	check(0, 0, params.MainnetGenesisHash, true)
+	check(0, 0, params.TestnetGenesisHash, true)
+
+	// Check the existence of deleted data.
+	DeleteBloombits(db, 0, 0, 1)
+	check(0, 0, params.MainnetGenesisHash, false)
+	check(0, 0, params.TestnetGenesisHash, false)
+	check(0, 1, params.MainnetGenesisHash, true)
+	check(0, 1, params.TestnetGenesisHash, true)
+
+	// Check the existence of deleted data.
+	DeleteBloombits(db, 0, 0, 2)
+	check(0, 0, params.MainnetGenesisHash, false)
+	check(0, 0, params.TestnetGenesisHash, false)
+	check(0, 1, params.MainnetGenesisHash, false)
+	check(0, 1, params.TestnetGenesisHash, false)
+
+	// Bit1 shouldn't be affect.
+	check(1, 0, params.MainnetGenesisHash, true)
+	check(1, 0, params.TestnetGenesisHash, true)
+	check(1, 1, params.MainnetGenesisHash, true)
+	check(1, 1, params.TestnetGenesisHash, true)
 }

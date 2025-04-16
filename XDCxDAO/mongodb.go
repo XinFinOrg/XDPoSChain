@@ -845,6 +845,11 @@ func (db *MongoDatabase) Ancients() (uint64, error) {
 	return 0, errNotSupported
 }
 
+// Tail returns an error as we don't have a backing chain freezer.
+func (db *MongoDatabase) Tail() (uint64, error) {
+	return 0, errNotSupported
+}
+
 // AncientSize returns an error as we don't have a backing chain freezer.
 func (db *MongoDatabase) AncientSize(kind string) (uint64, error) {
 	return 0, errNotSupported
@@ -855,9 +860,37 @@ func (db *MongoDatabase) AppendAncient(number uint64, hash, header, body, receip
 	return errNotSupported
 }
 
-// TruncateAncients returns an error as we don't have a backing chain freezer.
-func (db *MongoDatabase) TruncateAncients(items uint64) error {
+// TruncateHead returns an error as we don't have a backing chain freezer.
+func (db *MongoDatabase) TruncateHead(items uint64) error {
 	return errNotSupported
+}
+
+// TruncateTail returns an error as we don't have a backing chain freezer.
+func (db *MongoDatabase) TruncateTail(items uint64) error {
+	return errNotSupported
+}
+
+func (db *MongoDatabase) AncientRange(kind string, start, max, maxByteSize uint64) ([][]byte, error) {
+	return nil, errNotSupported
+}
+
+func (db *MongoDatabase) ReadAncients(fn func(ethdb.AncientReaderOp) error) (err error) {
+	return fn(db)
+}
+
+// MigrateTable processes the entries in a given table in sequence
+// converting them to a new format if they're of an old format.
+func (db *MongoDatabase) MigrateTable(kind string, convert func([]byte) ([]byte, error)) error {
+	return errNotSupported
+}
+
+// AncientDatadir returns an error as we don't have a backing chain freezer.
+func (db *MongoDatabase) AncientDatadir() (string, error) {
+	return "", errNotSupported
+}
+
+func (db *MongoDatabase) ModifyAncients(fn func(ethdb.AncientWriteOp) error) (writeSize int64, err error) {
+	return 0, errNotSupported
 }
 
 // Sync returns an error as we don't have a backing chain freezer.
