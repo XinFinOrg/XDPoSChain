@@ -176,10 +176,11 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	var (
 		vmConfig    = vm.Config{EnablePreimageRecording: config.EnablePreimageRecording}
 		cacheConfig = &core.CacheConfig{
-			Disabled:       config.NoPruning,
-			TrieCleanLimit: config.TrieCleanCache,
-			TrieDirtyLimit: config.TrieDirtyCache,
-			TrieTimeLimit:  config.TrieTimeout,
+			TrieCleanLimit:      config.TrieCleanCache,
+			TrieCleanNoPrefetch: config.NoPrefetch,
+			TrieDirtyLimit:      config.TrieDirtyCache,
+			TrieDirtyDisabled:   config.NoPruning,
+			TrieTimeLimit:       config.TrieTimeout,
 		}
 	)
 	if eth.chainConfig.XDPoS != nil {
