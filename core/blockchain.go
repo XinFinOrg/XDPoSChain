@@ -421,9 +421,9 @@ func (bc *BlockChain) loadLastState() error {
 	blockTd := bc.GetTd(currentBlock.Hash(), currentBlock.NumberU64())
 	fastTd := bc.GetTd(currentFastBlock.Hash(), currentFastBlock.NumberU64())
 
-	log.Info("Loaded most recent local header", "number", currentHeader.Number, "hash", currentHeader.Hash(), "td", headerTd)
-	log.Info("Loaded most recent local full block", "number", currentBlock.Number(), "hash", currentBlock.Hash(), "td", blockTd)
-	log.Info("Loaded most recent local fast block", "number", currentFastBlock.Number(), "hash", currentFastBlock.Hash(), "td", fastTd)
+	log.Info("Loaded most recent local header", "number", currentHeader.Number, "hash", currentHeader.Hash(), "td", headerTd, "age", common.PrettyAge(time.Unix(currentHeader.Time.Int64(), 0)))
+	log.Info("Loaded most recent local full block", "number", currentBlock.Number(), "hash", currentBlock.Hash(), "td", blockTd, "age", common.PrettyAge(time.Unix(currentBlock.Time().Int64(), 0)))
+	log.Info("Loaded most recent local fast block", "number", currentFastBlock.Number(), "hash", currentFastBlock.Hash(), "td", fastTd, "age", common.PrettyAge(time.Unix(currentFastBlock.Time().Int64(), 0)))
 
 	return nil
 }
@@ -1308,13 +1308,16 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 	}
 	bc.chainmu.Unlock()
 
-	log.Info("Imported new block receipts",
-		"count", stats.processed,
-		"elapsed", common.PrettyDuration(time.Since(start)),
-		"number", head.Number(),
-		"hash", head.Hash(),
+	context := []interface{}{
+		"count", stats.processed, "elapsed", common.PrettyDuration(time.Since(start)),
+		"number", head.Number(), "hash", head.Hash(), "age", common.PrettyAge(time.Unix(head.Time().Int64(), 0)),
 		"size", common.StorageSize(bytes),
-		"ignored", stats.ignored)
+	}
+	if stats.ignored > 0 {
+		context = append(context, []interface{}{"ignored", stats.ignored}...)
+	}
+	log.Info("Imported new block receipts", context...)
+
 	return 0, nil
 }
 
@@ -2288,8 +2291,13 @@ func (st *insertStats) report(chain []*types.Block, index int, dirty common.Stor
 		context := []interface{}{
 			"blocks", st.processed, "txs", txs, "mgas", float64(st.usedGas) / 1000000,
 			"elapsed", common.PrettyDuration(elapsed), "mgasps", float64(st.usedGas) * 1000 / float64(elapsed),
-			"number", end.Number(), "hash", end.Hash(), "dirty", dirty,
+			"number", end.Number(), "hash", end.Hash(),
 		}
+		if timestamp := time.Unix(end.Time().Int64(), 0); time.Since(timestamp) > time.Minute {
+			context = append(context, []interface{}{"age", common.PrettyAge(timestamp)}...)
+		}
+		context = append(context, []interface{}{"cache", dirty}...)
+
 		if st.queued > 0 {
 			context = append(context, []interface{}{"queued", st.queued}...)
 		}
@@ -2297,6 +2305,7 @@ func (st *insertStats) report(chain []*types.Block, index int, dirty common.Stor
 			context = append(context, []interface{}{"ignored", st.ignored}...)
 		}
 		log.Info("Imported new chain segment", context...)
+
 		*st = insertStats{startTime: now, lastIndex: index + 1}
 	}
 }
