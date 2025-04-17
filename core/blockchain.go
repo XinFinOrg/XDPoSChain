@@ -620,8 +620,7 @@ func (bc *BlockChain) OrderStateAt(block *types.Block) (*tradingstate.TradingSta
 			}
 		}
 	}
-	return nil, errors.New("Get XDCx state fail")
-
+	return nil, errors.New("fail to get trading state")
 }
 
 // LendingStateAt returns a new mutable state based on a particular point in time.
@@ -639,8 +638,7 @@ func (bc *BlockChain) LendingStateAt(block *types.Block) (*lendingstate.LendingS
 			return nil, err
 		}
 	}
-	return nil, errors.New("Get XDCx state fail")
-
+	return nil, errors.New("fail to et lending state")
 }
 
 // Reset purges the entire blockchain, restoring it to its genesis state.
@@ -1722,126 +1720,26 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 			bc.reportBlock(block, nil, err)
 			return i, events, coalescedLogs, err
 		}
-		// Create a new statedb using the parent block and report an
-		// error if it fails.
 		var parent *types.Block
 		if i == 0 {
 			parent = bc.GetBlock(block.ParentHash(), block.NumberU64()-1)
 		} else {
 			parent = chain[i-1]
 		}
+		// Create a new statedb using the parent block and report an error if it fails.
 		statedb, err := state.New(parent.Root(), bc.stateCache)
 		if err != nil {
 			return i, events, coalescedLogs, err
 		}
-		// clear the previous dry-run cache
-		var tradingState *tradingstate.TradingStateDB
-		var lendingState *lendingstate.LendingStateDB
-		var tradingService utils.TradingService
-		var lendingService utils.LendingService
-		isSDKNode := false
-		engine, _ := bc.Engine().(*XDPoS.XDPoS)
-		if bc.Config().IsTIPXDCXReceiver(block.Number()) && bc.chainConfig.XDPoS != nil && engine != nil && block.NumberU64() > bc.chainConfig.XDPoS.Epoch {
-			author, err := bc.Engine().Author(block.Header()) // Ignore error, we're past header validation
-			if err != nil {
-				bc.reportBlock(block, nil, err)
-				return i, events, coalescedLogs, err
-			}
-			parentAuthor, _ := bc.Engine().Author(parent.Header())
-			tradingService = engine.GetXDCXService()
-			lendingService = engine.GetLendingService()
-			if tradingService != nil && lendingService != nil {
-				isSDKNode = tradingService.IsSDKNode()
-				txMatchBatchData, err := ExtractTradingTransactions(block.Transactions())
-				if err != nil {
-					bc.reportBlock(block, nil, err)
-					return i, events, coalescedLogs, err
-				}
-				tradingState, err = tradingService.GetTradingState(parent, parentAuthor)
-				if err != nil {
-					bc.reportBlock(block, nil, err)
-					return i, events, coalescedLogs, err
-				}
-				lendingState, err = lendingService.GetLendingState(parent, parentAuthor)
-				if err != nil {
-					bc.reportBlock(block, nil, err)
-					return i, events, coalescedLogs, err
-				}
-				isEpochSwithBlock, epochNumber, err := engine.IsEpochSwitch(block.Header())
-				if err != nil {
-					log.Error("[insertChain] Error while checking if the incoming block is epoch switch block", "Hash", block.Hash(), "Number", block.Number())
-					bc.reportBlock(block, nil, err)
-				}
-				if isEpochSwithBlock {
-					if err := tradingService.UpdateMediumPriceBeforeEpoch(epochNumber, tradingState, statedb); err != nil {
-						return i, events, coalescedLogs, err
-					}
-				} else {
-					for _, txMatchBatch := range txMatchBatchData {
-						log.Debug("Verify matching transaction", "txHash", txMatchBatch.TxHash.Hex())
-						err := bc.Validator().ValidateTradingOrder(statedb, tradingState, txMatchBatch, author, block.Header())
-						if err != nil {
-							bc.reportBlock(block, nil, err)
-							return i, events, coalescedLogs, err
-						}
-					}
-					//
-					batches, err := ExtractLendingTransactions(block.Transactions())
-					if err != nil {
-						bc.reportBlock(block, nil, err)
-						return i, events, coalescedLogs, err
-					}
-					for _, batch := range batches {
-						log.Debug("Verify matching transaction", "txHash", batch.TxHash.Hex())
-						err := bc.Validator().ValidateLendingOrder(statedb, lendingState, tradingState, batch, author, block.Header())
-						if err != nil {
-							bc.reportBlock(block, nil, err)
-							return i, events, coalescedLogs, err
-						}
-					}
-					// liquidate / finalize open lendingTrades
-					if block.Number().Uint64()%bc.chainConfig.XDPoS.Epoch == common.LiquidateLendingTradeBlock {
-						finalizedTrades, _, _, _, _, err := lendingService.ProcessLiquidationData(block.Header(), bc, statedb, tradingState, lendingState)
-						if err != nil {
-							return i, events, coalescedLogs, fmt.Errorf("failed to ProcessLiquidationData. Err: %v", err)
-						}
-						if isSDKNode {
-							finalizedTx := lendingstate.FinalizedResult{}
-							if finalizedTx, err = ExtractLendingFinalizedTradeTransactions(block.Transactions()); err != nil {
-								return i, events, coalescedLogs, err
-							}
-							bc.AddFinalizedTrades(finalizedTx.TxHash, finalizedTrades)
-						}
-					}
-				}
-				//check
-				if tradingState != nil {
-					gotRoot := tradingState.IntermediateRoot()
-					expectRoot, _ := tradingService.GetTradingStateRoot(block, author)
-					parentRoot, _ := tradingService.GetTradingStateRoot(parent, parentAuthor)
-					if gotRoot != expectRoot {
-						err = fmt.Errorf("invalid XDCx trading state merke trie got : %s , expect : %s ,parent : %s", gotRoot.Hex(), expectRoot.Hex(), parentRoot.Hex())
-						bc.reportBlock(block, nil, err)
-						return i, events, coalescedLogs, err
-					}
-					log.Debug("XDCX Trading State Root", "number", block.NumberU64(), "parent", parentRoot.Hex(), "nextRoot", expectRoot.Hex())
-				}
-				if lendingState != nil && tradingState != nil {
-					gotRoot := lendingState.IntermediateRoot()
-					expectRoot, _ := lendingService.GetLendingStateRoot(block, author)
-					parentRoot, _ := lendingService.GetLendingStateRoot(parent, parentAuthor)
-					if gotRoot != expectRoot {
-						err = fmt.Errorf("invalid lending state merke trie got: %s, expect: %s, parent: %s", gotRoot.Hex(), expectRoot.Hex(), parentRoot.Hex())
-						bc.reportBlock(block, nil, err)
-						return i, events, coalescedLogs, err
-					}
-					log.Debug("XDCX Lending State Root", "number", block.NumberU64(), "parent", parentRoot.Hex(), "nextRoot", expectRoot.Hex())
-				}
-			}
-		}
-		feeCapacity := state.GetTRC21FeeCapacityFromStateWithCache(parent.Root(), statedb)
 		// Process block using the parent state as reference point.
 		t0 := time.Now()
+		isTIPXDCXReceiver := bc.Config().IsTIPXDCXReceiver(block.Number())
+		tradingState, lendingState, err := bc.processTradingAndLendingStates(isTIPXDCXReceiver, block, parent, statedb)
+		if err != nil {
+			bc.reportBlock(block, nil, err)
+			return i, events, coalescedLogs, err
+		}
+		feeCapacity := state.GetTRC21FeeCapacityFromStateWithCache(parent.Root(), statedb)
 		receipts, logs, usedGas, err := bc.processor.Process(block, statedb, tradingState, bc.vmConfig, feeCapacity)
 		t1 := time.Now()
 		if err != nil {
@@ -1910,8 +1808,8 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		dirty, _ := bc.stateCache.TrieDB().Size()
 		stats.report(chain, i, dirty)
 		if bc.chainConfig.XDPoS != nil {
-			// epoch block
-			isEpochSwithBlock, _, err := engine.IsEpochSwitch(chain[i].Header())
+			engine, _ := bc.Engine().(*XDPoS.XDPoS)
+			isEpochSwithBlock, _, err := engine.IsEpochSwitch(chain[i].Header()) // epoch block
 			if err != nil {
 				log.Error("[insertChain] Error while checking and notifying channel CheckpointCh if the incoming block is epoch switch block", "Hash", block.Hash(), "Number", block.Number())
 				bc.reportBlock(block, nil, err)
@@ -2028,120 +1926,20 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 		bc.reportBlock(block, nil, err)
 		return nil, err
 	}
-	// Create a new statedb using the parent block and report an
-	// error if it fails.
 	var parent = bc.GetBlock(block.ParentHash(), block.NumberU64()-1)
+	// Create a new statedb using the parent block and report an error if it fails.
 	statedb, err := state.New(parent.Root(), bc.stateCache)
 	if err != nil {
 		return nil, err
 	}
-	engine, _ := bc.Engine().(*XDPoS.XDPoS)
-	author, err := bc.Engine().Author(block.Header()) // Ignore error, we're past header validation
+	// Process block using the parent state as reference point.
+	isTIPXDCX := bc.Config().IsTIPXDCX(block.Number())
+	tradingState, lendingState, err := bc.processTradingAndLendingStates(isTIPXDCX, block, parent, statedb)
 	if err != nil {
 		bc.reportBlock(block, nil, err)
 		return nil, err
 	}
-	parentAuthor, _ := bc.Engine().Author(parent.Header())
-
-	var tradingState *tradingstate.TradingStateDB
-	var lendingState *lendingstate.LendingStateDB
-	var tradingService utils.TradingService
-	var lendingService utils.LendingService
-	isSDKNode := false
-	if bc.Config().IsTIPXDCX(block.Number()) && bc.chainConfig.XDPoS != nil && engine != nil && block.NumberU64() > bc.chainConfig.XDPoS.Epoch {
-		tradingService = engine.GetXDCXService()
-		lendingService = engine.GetLendingService()
-		if tradingService != nil && lendingService != nil {
-			isSDKNode = tradingService.IsSDKNode()
-			tradingState, err = tradingService.GetTradingState(parent, parentAuthor)
-			if err != nil {
-				bc.reportBlock(block, nil, err)
-				return nil, err
-			}
-			lendingState, err = lendingService.GetLendingState(parent, parentAuthor)
-			if err != nil {
-				bc.reportBlock(block, nil, err)
-				return nil, err
-			}
-
-			isEpochSwithBlock, epochNumber, err := engine.IsEpochSwitch(block.Header())
-			if err != nil {
-				log.Error("[getResultBlock] Error while checking block is epoch switch block", "Hash", block.Hash(), "Number", block.Number())
-				bc.reportBlock(block, nil, err)
-			}
-
-			if isEpochSwithBlock {
-				if err := tradingService.UpdateMediumPriceBeforeEpoch(epochNumber, tradingState, statedb); err != nil {
-					return nil, err
-				}
-			} else {
-				txMatchBatchData, err := ExtractTradingTransactions(block.Transactions())
-				if err != nil {
-					bc.reportBlock(block, nil, err)
-					return nil, err
-				}
-				for _, txMatchBatch := range txMatchBatchData {
-					log.Debug("Verify matching transaction", "txHash", txMatchBatch.TxHash.Hex())
-					err := bc.Validator().ValidateTradingOrder(statedb, tradingState, txMatchBatch, author, block.Header())
-					if err != nil {
-						bc.reportBlock(block, nil, err)
-						return nil, err
-					}
-				}
-				batches, err := ExtractLendingTransactions(block.Transactions())
-				if err != nil {
-					bc.reportBlock(block, nil, err)
-					return nil, err
-				}
-				for _, batch := range batches {
-					log.Debug("Lending Verify matching transaction", "txHash", batch.TxHash.Hex())
-					err := bc.Validator().ValidateLendingOrder(statedb, lendingState, tradingState, batch, author, block.Header())
-					if err != nil {
-						bc.reportBlock(block, nil, err)
-						return nil, err
-					}
-				}
-				// liquidate / finalize open lendingTrades
-				if block.Number().Uint64()%bc.chainConfig.XDPoS.Epoch == common.LiquidateLendingTradeBlock {
-					finalizedTrades, _, _, _, _, err := lendingService.ProcessLiquidationData(block.Header(), bc, statedb, tradingState, lendingState)
-					if err != nil {
-						return nil, fmt.Errorf("failed to ProcessLiquidationData. Err: %v", err)
-					}
-					if isSDKNode {
-						finalizedTx := lendingstate.FinalizedResult{}
-						if finalizedTx, err = ExtractLendingFinalizedTradeTransactions(block.Transactions()); err != nil {
-							return nil, err
-						}
-						bc.AddFinalizedTrades(finalizedTx.TxHash, finalizedTrades)
-					}
-				}
-			}
-			if tradingState != nil {
-				gotRoot := tradingState.IntermediateRoot()
-				expectRoot, _ := tradingService.GetTradingStateRoot(block, author)
-				parentRoot, _ := tradingService.GetTradingStateRoot(parent, parentAuthor)
-				if gotRoot != expectRoot {
-					err = fmt.Errorf("invalid XDCx trading state merke trie got : %s , expect : %s ,parent : %s", gotRoot.Hex(), expectRoot.Hex(), parentRoot.Hex())
-					bc.reportBlock(block, nil, err)
-					return nil, err
-				}
-				log.Debug("XDCX Trading State Root", "number", block.NumberU64(), "parent", parentRoot.Hex(), "nextRoot", expectRoot.Hex())
-			}
-			if lendingState != nil && tradingState != nil {
-				gotRoot := lendingState.IntermediateRoot()
-				expectRoot, _ := lendingService.GetLendingStateRoot(block, author)
-				parentRoot, _ := lendingService.GetLendingStateRoot(parent, parentAuthor)
-				if gotRoot != expectRoot {
-					err = fmt.Errorf("invalid lending state merke trie got: %s , expect : %s , parent : %s", gotRoot.Hex(), expectRoot.Hex(), parentRoot.Hex())
-					bc.reportBlock(block, nil, err)
-					return nil, err
-				}
-				log.Debug("XDCX Lending State Root", "number", block.NumberU64(), "parent", parentRoot.Hex(), "nextRoot", expectRoot.Hex())
-			}
-		}
-	}
 	feeCapacity := state.GetTRC21FeeCapacityFromStateWithCache(parent.Root(), statedb)
-	// Process block using the parent state as reference point.
 	receipts, logs, usedGas, err := bc.processor.ProcessBlockNoValidator(calculatedBlock, statedb, tradingState, bc.vmConfig, feeCapacity)
 	process := time.Since(bstart)
 	if err != nil {
@@ -2997,4 +2795,131 @@ func (bc *BlockChain) AddLendingResult(txHash common.Hash, lendingResults map[co
 
 func (bc *BlockChain) AddFinalizedTrades(txHash common.Hash, trades map[common.Hash]*lendingstate.LendingTrade) {
 	bc.finalizedTrade.Add(txHash, trades)
+}
+
+// processTradingAndLendingStates processes the trading and lending states for a given block in the blockchain.
+//
+// Parameters:
+//   - isValidBlockNumber: A boolean indicating whether the block number is valid for processing trading and lending states.
+//   - block: The current block being processed.
+//   - parent: The parent block of the current block.
+//   - statedb: The current state database for the blockchain.
+//
+// Returns:
+//   - *tradingstate.TradingStateDB: The updated trading state database, if applicable.
+//   - *lendingstate.LendingStateDB: The updated lending state database, if applicable.
+//   - error: An error if any issues occur during processing.
+//
+// The function performs the following operations:
+//  1. Validates if the block number is eligible for trading and lending state processing based on the blockchain configuration.
+//  2. Retrieves the block author and validates the block header.
+//  3. Fetches the trading and lending services from the consensus engine.
+//  4. Retrieves the trading and lending states of the parent block.
+//  5. Handles epoch switch logic, including updating medium prices for trading services if the block is an epoch switch block.
+//  6. Validates trading and lending orders using the block's transactions and state.
+//  7. Processes liquidation data for lending trades if the block is a liquidation block.
+//  8. Verifies the integrity of the trading and lending state roots by comparing the computed roots with the expected roots.
+func (bc *BlockChain) processTradingAndLendingStates(isValidBlockNumber bool, block *types.Block, parent *types.Block, statedb *state.StateDB) (*tradingstate.TradingStateDB, *lendingstate.LendingStateDB, error) {
+	if !isValidBlockNumber || bc.chainConfig.XDPoS == nil || block.NumberU64() <= bc.chainConfig.XDPoS.Epoch {
+		return nil, nil, nil
+	}
+
+	engine, _ := bc.Engine().(*XDPoS.XDPoS)
+	if engine == nil {
+		return nil, nil, nil
+	}
+
+	author, err := bc.Engine().Author(block.Header()) // Ignore error, we're past header validation
+	if err != nil {
+		return nil, nil, err
+	}
+
+	tradingService := engine.GetXDCXService()
+	lendingService := engine.GetLendingService()
+	if tradingService == nil || lendingService == nil {
+		return nil, nil, nil
+	}
+
+	parentAuthor, _ := bc.Engine().Author(parent.Header())
+	tradingState, err := tradingService.GetTradingState(parent, parentAuthor)
+	if err != nil {
+		return nil, nil, err
+	}
+	lendingState, err := lendingService.GetLendingState(parent, parentAuthor)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	isEpochSwithBlock, epochNumber, err := engine.IsEpochSwitch(block.Header())
+	if err != nil {
+		log.Error("[insertChain] Error while checking if the incoming block is epoch switch block", "Hash", block.Hash(), "Number", block.Number())
+		return tradingState, lendingState, err
+	}
+
+	if isEpochSwithBlock {
+		if err := tradingService.UpdateMediumPriceBeforeEpoch(epochNumber, tradingState, statedb); err != nil {
+			return tradingState, lendingState, err
+		}
+	} else {
+		txMatchBatchData, err := ExtractTradingTransactions(block.Transactions())
+		if err != nil {
+			return tradingState, lendingState, err
+		}
+		for _, txMatchBatch := range txMatchBatchData {
+			log.Debug("Verify matching transaction", "txHash", txMatchBatch.TxHash.Hex())
+			err := bc.Validator().ValidateTradingOrder(statedb, tradingState, txMatchBatch, author, block.Header())
+			if err != nil {
+				return tradingState, lendingState, err
+			}
+		}
+		batches, err := ExtractLendingTransactions(block.Transactions())
+		if err != nil {
+			return tradingState, lendingState, err
+		}
+		for _, batch := range batches {
+			log.Debug("Verify matching transaction", "txHash", batch.TxHash.Hex())
+			err := bc.Validator().ValidateLendingOrder(statedb, lendingState, tradingState, batch, author, block.Header())
+			if err != nil {
+				return tradingState, lendingState, err
+			}
+		}
+		// liquidate / finalize open lendingTrades
+		if block.Number().Uint64()%bc.chainConfig.XDPoS.Epoch == common.LiquidateLendingTradeBlock {
+			finalizedTrades, _, _, _, _, err := lendingService.ProcessLiquidationData(block.Header(), bc, statedb, tradingState, lendingState)
+			if err != nil {
+				return tradingState, lendingState, fmt.Errorf("failed to ProcessLiquidationData. Err: %v", err)
+			}
+			if tradingService.IsSDKNode() {
+				finalizedTx := lendingstate.FinalizedResult{}
+				if finalizedTx, err = ExtractLendingFinalizedTradeTransactions(block.Transactions()); err != nil {
+					return tradingState, lendingState, err
+				}
+				bc.AddFinalizedTrades(finalizedTx.TxHash, finalizedTrades)
+			}
+		}
+	}
+
+	if tradingState != nil {
+		gotRoot := tradingState.IntermediateRoot()
+		expectRoot, _ := tradingService.GetTradingStateRoot(block, author)
+		parentRoot, _ := tradingService.GetTradingStateRoot(parent, parentAuthor)
+		if gotRoot != expectRoot {
+			err = fmt.Errorf("invalid XDCx trading state merke trie got : %s , expect : %s ,parent : %s", gotRoot.Hex(), expectRoot.Hex(), parentRoot.Hex())
+			return tradingState, lendingState, err
+		}
+		log.Debug("XDCX Trading State Root", "number", block.NumberU64(), "parent", parentRoot.Hex(), "nextRoot", expectRoot.Hex())
+	}
+
+	if lendingState != nil && tradingState != nil {
+		gotRoot := lendingState.IntermediateRoot()
+		expectRoot, _ := lendingService.GetLendingStateRoot(block, author)
+		parentRoot, _ := lendingService.GetLendingStateRoot(parent, parentAuthor)
+		if gotRoot != expectRoot {
+			err = fmt.Errorf("invalid lending state merke trie got: %s, expect: %s, parent: %s", gotRoot.Hex(), expectRoot.Hex(), parentRoot.Hex())
+			return tradingState, lendingState, err
+		}
+		log.Debug("XDCX Lending State Root", "number", block.NumberU64(), "parent", parentRoot.Hex(), "nextRoot", expectRoot.Hex())
+	}
+
+	return tradingState, lendingState, nil
 }
