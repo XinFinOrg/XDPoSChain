@@ -202,8 +202,8 @@ type BlockChain struct {
 
 	wg            sync.WaitGroup
 	quit          chan struct{} // shutdown signal, closed in Stop.
-	running       int32         // 0 if chain is running, 1 when stopped
-	procInterrupt int32         // interrupt signaler for block processing
+	stopping      atomic.Bool   // false if chain is running, true when stopped
+	procInterrupt atomic.Bool   // interrupt signaler for block processing
 
 	engine     consensus.Engine
 	validator  Validator  // Block and state validator interface
@@ -1101,7 +1101,7 @@ func (bc *BlockChain) saveData() {
 // Stop stops the blockchain service. If any imports are currently in progress
 // it will abort them using the procInterrupt.
 func (bc *BlockChain) Stop() {
-	if !atomic.CompareAndSwapInt32(&bc.running, 0, 1) {
+	if !bc.stopping.CompareAndSwap(false, true) {
 		return
 	}
 
@@ -1128,12 +1128,12 @@ func (bc *BlockChain) Stop() {
 // errInsertionInterrupted as soon as possible. Insertion is permanently disabled after
 // calling this method.
 func (bc *BlockChain) StopInsert() {
-	atomic.StoreInt32(&bc.procInterrupt, 1)
+	bc.procInterrupt.Store(true)
 }
 
 // insertStopped returns true after StopInsert has been called.
 func (bc *BlockChain) insertStopped() bool {
-	return atomic.LoadInt32(&bc.procInterrupt) == 1
+	return bc.procInterrupt.Load()
 }
 
 func (bc *BlockChain) procFutureBlocks() {
@@ -1244,7 +1244,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 	for i, block := range blockChain {
 		receipts := receiptChain[i]
 		// Short circuit insertion if shutting down or processing failed
-		if atomic.LoadInt32(&bc.procInterrupt) == 1 {
+		if bc.insertStopped() {
 			return 0, nil
 		}
 		blockHash, blockNumber := block.Hash(), block.NumberU64()
@@ -1698,7 +1698,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 	// No validation errors for the first block (or chain prefix skipped)
 	for ; block != nil && err == nil; block, err = it.next() {
 		// If the chain is terminating, stop processing blocks
-		if atomic.LoadInt32(&bc.procInterrupt) == 1 {
+		if bc.insertStopped() {
 			log.Debug("Premature abort during blocks processing")
 			break
 		}
@@ -1722,7 +1722,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 
 		// If we have a followup block, run that against the current state to pre-cache
 		// transactions and probabilistically some of the account/storage trie nodes.
-		var followupInterrupt uint32
+		var followupInterrupt atomic.Bool
 		if !bc.cacheConfig.TrieCleanNoPrefetch {
 			if followup, err := it.peek(); followup != nil && err == nil {
 				go func(start time.Time) {
@@ -1730,7 +1730,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 					bc.prefetcher.Prefetch(followup, throwaway, bc.vmConfig, &followupInterrupt)
 
 					blockPrefetchExecuteTimer.Update(time.Since(start))
-					if atomic.LoadUint32(&followupInterrupt) == 1 {
+					if followupInterrupt.Load() {
 						blockPrefetchInterruptMeter.Mark(1)
 					}
 				}(time.Now())
@@ -1743,7 +1743,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		tradingState, lendingState, err := bc.processTradingAndLendingStates(isTIPXDCXReceiver, block, parent, statedb)
 		if err != nil {
 			bc.reportBlock(block, nil, err)
-			atomic.StoreUint32(&followupInterrupt, 1)
+			followupInterrupt.Store(true)
 			return it.index, events, coalescedLogs, err
 		}
 		feeCapacity := state.GetTRC21FeeCapacityFromStateWithCache(parent.Root, statedb)
@@ -1751,7 +1751,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		t1 := time.Now()
 		if err != nil {
 			bc.reportBlock(block, receipts, err)
-			atomic.StoreUint32(&followupInterrupt, 1)
+			followupInterrupt.Store(true)
 			return it.index, events, coalescedLogs, err
 		}
 		// Validate the state using the default validator
@@ -1766,7 +1766,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		// Write the block to the chain and get the status.
 		status, err := bc.writeBlockWithState(block, receipts, statedb, tradingState, lendingState)
 		t3 := time.Now()
-		atomic.StoreUint32(&followupInterrupt, 1)
+		followupInterrupt.Store(true)
 		if err != nil {
 			return it.index, events, coalescedLogs, err
 		}
@@ -1955,8 +1955,8 @@ func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (i
 			blocks, memory = blocks[:0], 0
 
 			// If the chain is terminating, stop processing blocks
-			if atomic.LoadInt32(&bc.procInterrupt) == 1 {
-				log.Debug("Premature abort during blocks processing")
+			if bc.insertStopped() {
+				log.Debug("Abort during blocks processing")
 				return 0, nil, nil, nil
 			}
 		}
@@ -2017,7 +2017,7 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 	bc.calculatingBlock.Add(block.HashNoValidator(), calculatedBlock)
 	// Start the parallel header verifier
 	// If the chain is terminating, stop processing blocks
-	if atomic.LoadInt32(&bc.procInterrupt) == 1 {
+	if bc.insertStopped() {
 		log.Debug("Premature abort during blocks processing")
 		return nil, ErrBlacklistedHash
 	}
