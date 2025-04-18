@@ -1726,10 +1726,10 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 
 		parent := it.previous()
 		if parent == nil {
-			parent = bc.GetBlock(block.ParentHash(), block.NumberU64()-1)
+			parent = bc.GetHeader(block.ParentHash(), block.NumberU64()-1)
 		}
 		// Create a new statedb using the parent block and report an error if it fails.
-		statedb, err := state.New(parent.Root(), bc.stateCache)
+		statedb, err := state.New(parent.Root, bc.stateCache)
 		if err != nil {
 			return it.index, events, coalescedLogs, err
 		}
@@ -1741,7 +1741,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 			bc.reportBlock(block, nil, err)
 			return it.index, events, coalescedLogs, err
 		}
-		feeCapacity := state.GetTRC21FeeCapacityFromStateWithCache(parent.Root(), statedb)
+		feeCapacity := state.GetTRC21FeeCapacityFromStateWithCache(parent.Root, statedb)
 		receipts, logs, usedGas, err := bc.processor.Process(block, statedb, tradingState, bc.vmConfig, feeCapacity)
 		t1 := time.Now()
 		if err != nil {
@@ -1749,7 +1749,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 			return it.index, events, coalescedLogs, err
 		}
 		// Validate the state using the default validator
-		err = bc.Validator().ValidateState(block, parent, statedb, receipts, usedGas)
+		err = bc.Validator().ValidateState(block, statedb, receipts, usedGas)
 		if err != nil {
 			bc.reportBlock(block, receipts, err)
 			return it.index, events, coalescedLogs, err
@@ -1907,7 +1907,7 @@ func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (i
 	// blocks to regenerate the required state
 	localTd := bc.GetTd(bc.CurrentBlock().Hash(), current)
 	if localTd.Cmp(externTd) > 0 {
-		log.Info("Sidechain written to disk", "start", it.first().NumberU64(), "end", it.previous().NumberU64(), "sidetd", externTd, "localtd", localTd)
+		log.Info("Sidechain written to disk", "start", it.first().NumberU64(), "end", it.previous().Number, "sidetd", externTd, "localtd", localTd)
 		return it.index, nil, nil, err
 	}
 	// Gather all the sidechain hashes (full blocks may be memory heavy)
@@ -1915,7 +1915,7 @@ func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (i
 		hashes  []common.Hash
 		numbers []uint64
 	)
-	parent := bc.GetHeader(it.previous().Hash(), it.previous().NumberU64())
+	parent := it.previous()
 	for parent != nil && !bc.HasState(parent.Root) {
 		hashes = append(hashes, parent.Hash())
 		numbers = append(numbers, parent.Number.Uint64())
@@ -2060,9 +2060,9 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 		bc.reportBlock(block, nil, err)
 		return nil, err
 	}
-	var parent = bc.GetBlock(block.ParentHash(), block.NumberU64()-1)
+	var parent = bc.GetHeader(block.ParentHash(), block.NumberU64()-1)
 	// Create a new statedb using the parent block and report an error if it fails.
-	statedb, err := state.New(parent.Root(), bc.stateCache)
+	statedb, err := state.New(parent.Root, bc.stateCache)
 	if err != nil {
 		return nil, err
 	}
@@ -2073,7 +2073,7 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 		bc.reportBlock(block, nil, err)
 		return nil, err
 	}
-	feeCapacity := state.GetTRC21FeeCapacityFromStateWithCache(parent.Root(), statedb)
+	feeCapacity := state.GetTRC21FeeCapacityFromStateWithCache(parent.Root, statedb)
 	receipts, logs, usedGas, err := bc.processor.ProcessBlockNoValidator(calculatedBlock, statedb, tradingState, bc.vmConfig, feeCapacity)
 	process := time.Since(bstart)
 	if err != nil {
@@ -2083,7 +2083,7 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 		return nil, err
 	}
 	// Validate the state using the default validator
-	err = bc.Validator().ValidateState(block, parent, statedb, receipts, usedGas)
+	err = bc.Validator().ValidateState(block, statedb, receipts, usedGas)
 	if err != nil {
 		bc.reportBlock(block, receipts, err)
 		return nil, err
@@ -2904,7 +2904,7 @@ func (bc *BlockChain) AddFinalizedTrades(txHash common.Hash, trades map[common.H
 //  6. Validates trading and lending orders using the block's transactions and state.
 //  7. Processes liquidation data for lending trades if the block is a liquidation block.
 //  8. Verifies the integrity of the trading and lending state roots by comparing the computed roots with the expected roots.
-func (bc *BlockChain) processTradingAndLendingStates(isValidBlockNumber bool, block *types.Block, parent *types.Block, statedb *state.StateDB) (*tradingstate.TradingStateDB, *lendingstate.LendingStateDB, error) {
+func (bc *BlockChain) processTradingAndLendingStates(isValidBlockNumber bool, block *types.Block, parent *types.Header, statedb *state.StateDB) (*tradingstate.TradingStateDB, *lendingstate.LendingStateDB, error) {
 	if !isValidBlockNumber || bc.chainConfig.XDPoS == nil || block.NumberU64() <= bc.chainConfig.XDPoS.Epoch {
 		return nil, nil, nil
 	}
@@ -2925,12 +2925,13 @@ func (bc *BlockChain) processTradingAndLendingStates(isValidBlockNumber bool, bl
 		return nil, nil, nil
 	}
 
-	parentAuthor, _ := bc.Engine().Author(parent.Header())
-	tradingState, err := tradingService.GetTradingState(parent, parentAuthor)
+	parentAuthor, _ := bc.Engine().Author(parent)
+	parentBlock := bc.GetBlock(parent.Hash(), parent.Number.Uint64())
+	tradingState, err := tradingService.GetTradingState(parentBlock, parentAuthor)
 	if err != nil {
 		return nil, nil, err
 	}
-	lendingState, err := lendingService.GetLendingState(parent, parentAuthor)
+	lendingState, err := lendingService.GetLendingState(parentBlock, parentAuthor)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2987,7 +2988,7 @@ func (bc *BlockChain) processTradingAndLendingStates(isValidBlockNumber bool, bl
 	if tradingState != nil {
 		gotRoot := tradingState.IntermediateRoot()
 		expectRoot, _ := tradingService.GetTradingStateRoot(block, author)
-		parentRoot, _ := tradingService.GetTradingStateRoot(parent, parentAuthor)
+		parentRoot, _ := tradingService.GetTradingStateRoot(parentBlock, parentAuthor)
 		if gotRoot != expectRoot {
 			err = fmt.Errorf("invalid XDCx trading state merke trie got : %s , expect : %s ,parent : %s", gotRoot.Hex(), expectRoot.Hex(), parentRoot.Hex())
 			return tradingState, lendingState, err
@@ -2998,7 +2999,7 @@ func (bc *BlockChain) processTradingAndLendingStates(isValidBlockNumber bool, bl
 	if lendingState != nil && tradingState != nil {
 		gotRoot := lendingState.IntermediateRoot()
 		expectRoot, _ := lendingService.GetLendingStateRoot(block, author)
-		parentRoot, _ := lendingService.GetLendingStateRoot(parent, parentAuthor)
+		parentRoot, _ := lendingService.GetLendingStateRoot(parentBlock, parentAuthor)
 		if gotRoot != expectRoot {
 			err = fmt.Errorf("invalid lending state merke trie got: %s, expect: %s, parent: %s", gotRoot.Hex(), expectRoot.Hex(), parentRoot.Hex())
 			return tradingState, lendingState, err

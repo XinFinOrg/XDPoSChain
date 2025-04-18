@@ -30,14 +30,13 @@ import (
 // Validator is an interface which defines the standard for block validation. It
 // is only responsible for validating block contents, as the header validation is
 // done by the specific consensus engines.
-//
 type Validator interface {
 	// ValidateBody validates the given block's content.
 	ValidateBody(block *types.Block) error
 
 	// ValidateState validates the given statedb and optionally the receipts and
 	// gas used.
-	ValidateState(block, parent *types.Block, state *state.StateDB, receipts types.Receipts, usedGas uint64) error
+	ValidateState(block *types.Block, state *state.StateDB, receipts types.Receipts, usedGas uint64) error
 
 	ValidateTradingOrder(statedb *state.StateDB, XDCxStatedb *tradingstate.TradingStateDB, txMatchBatch tradingstate.TxMatchBatch, coinbase common.Address, header *types.Header) error
 
@@ -52,5 +51,6 @@ type Validator interface {
 // failed.
 type Processor interface {
 	Process(block *types.Block, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, cfg vm.Config, balanceFee map[common.Address]*big.Int) (types.Receipts, []*types.Log, uint64, error)
+
 	ProcessBlockNoValidator(block *CalculatedBlock, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, cfg vm.Config, balanceFee map[common.Address]*big.Int) (types.Receipts, []*types.Log, uint64, error)
 }
