@@ -1766,11 +1766,10 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		// Write the block to the chain and get the status.
 		status, err := bc.writeBlockWithState(block, receipts, statedb, tradingState, lendingState)
 		t3 := time.Now()
+		atomic.StoreUint32(&followupInterrupt, 1)
 		if err != nil {
-			atomic.StoreUint32(&followupInterrupt, 1)
 			return it.index, events, coalescedLogs, err
 		}
-		atomic.StoreUint32(&followupInterrupt, 1)
 
 		// Update the metrics subsystem with all the measurements
 		accountReadTimer.Update(statedb.AccountReads)
