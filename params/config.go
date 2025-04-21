@@ -182,9 +182,9 @@ var (
 			TimeoutPeriod:        5,
 			MinePeriod:           2,
 			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
-			MasternodeReward:     500, // double as Reward
-			ProtectorReward:      400,
-			ObserverReward:       300.125,
+			MasternodeReward:     450,
+			ProtectorReward:      360,
+			ObserverReward:       270.125,
 		},
 	}
 

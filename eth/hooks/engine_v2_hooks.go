@@ -254,11 +254,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				// Add reward for coin holders.
 				rewardResults := make(map[common.Address]interface{})
 				for signer, calcReward := range rewardSigners {
-					rewards, err := contracts.CalculateRewardForHolders(foundationWalletAddr, parentState, signer, calcReward, number)
-					if err != nil {
-						log.Error("[HookReward] Fail to calculate reward for holders.", "error", err)
-						return nil, err
-					}
+					rewards := CalculateSplitOwnerFoundation(foundationWalletAddr, parentState, signer, calcReward)
 					if len(rewards) > 0 {
 						for holder, reward := range rewards {
 							stateBlock.AddBalance(holder, reward)
@@ -463,4 +459,14 @@ func CalculateRewardForSignerFixed(chainReward *big.Int, signers map[common.Addr
 	}
 
 	return resultSigners, nil
+}
+
+func CalculateSplitOwnerFoundation(foundationWalletAddr common.Address, parentState *state.StateDB, signer common.Address, calcReward *big.Int) map[common.Address]*big.Int {
+	owner := state.GetCandidateOwner(parentState, signer)
+	rewards := make(map[common.Address]*big.Int)
+	// give exact `calcReward` to owner
+	rewards[owner] = calcReward
+	// split to foundationWalletAddr according to split
+	rewards[foundationWalletAddr] = new(big.Int).Div(new(big.Int).Mul(calcReward, new(big.Int).SetInt64(common.RewardFoundationPercent)), new(big.Int).SetInt64(common.RewardMasterPercent))
+	return rewards
 }
