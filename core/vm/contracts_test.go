@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"math/big"
 	"os"
-	"reflect"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -580,7 +579,7 @@ func testPrecompiledFailure(addr string, test precompiledFailureTest, t *testing
 	gas := p.RequiredGas(in)
 	t.Run(test.name, func(t *testing.T) {
 		_, _, err := RunPrecompiledContract(nil, p, in, gas)
-		if !reflect.DeepEqual(err, test.expectedError) {
+		if err.Error() != test.expectedError.Error() {
 			t.Errorf("Expected error [%v], got [%v]", test.expectedError, err)
 		}
 		// Verify that the precompile did not touch the input buffer

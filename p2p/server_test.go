@@ -18,6 +18,7 @@ package p2p
 
 import (
 	"crypto/ecdsa"
+	"errors"
 	"math/rand"
 	"net"
 	"reflect"
@@ -563,7 +564,7 @@ func TestServerSetupConn(t *testing.T) {
 		}
 		p1, _ := net.Pipe()
 		srv.SetupConn(p1, test.flags, test.dialDest)
-		if !reflect.DeepEqual(test.tt.closeErr, test.wantCloseErr) {
+		if !errors.Is(test.tt.closeErr, test.wantCloseErr) {
 			t.Errorf("test %d: close error mismatch: got %q, want %q", i, test.tt.closeErr, test.wantCloseErr)
 		}
 		if test.tt.calls != test.wantCalls {
