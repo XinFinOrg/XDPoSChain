@@ -25,7 +25,9 @@ import (
 	"time"
 )
 
-func TestNewID2(t *testing.T) {
+func TestNewID(t *testing.T) {
+	t.Parallel()
+
 	hexchars := "0123456789ABCDEFabcdef"
 	for i := 0; i < 100; i++ {
 		id := string(NewID())
