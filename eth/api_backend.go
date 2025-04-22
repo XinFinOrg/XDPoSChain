@@ -54,9 +54,10 @@ import (
 
 // EthAPIBackend implements ethapi.Backend for full nodes
 type EthAPIBackend struct {
-	eth   *Ethereum
-	gpo   *gasprice.Oracle
-	XDPoS *XDPoS.XDPoS
+	allowUnprotectedTxs bool
+	eth                 *Ethereum
+	gpo                 *gasprice.Oracle
+	XDPoS               *XDPoS.XDPoS
 }
 
 func (b *EthAPIBackend) ChainConfig() *params.ChainConfig {
@@ -367,6 +368,10 @@ func (b *EthAPIBackend) ChainDb() ethdb.Database {
 
 func (b *EthAPIBackend) EventMux() *event.TypeMux {
 	return b.eth.EventMux()
+}
+
+func (b *EthAPIBackend) UnprotectedAllowed() bool {
+	return b.allowUnprotectedTxs
 }
 
 func (b *EthAPIBackend) RPCGasCap() uint64 {

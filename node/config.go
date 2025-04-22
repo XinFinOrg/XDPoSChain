@@ -171,6 +171,9 @@ type Config struct {
 	oldGethResourceWarning bool
 
 	AnnounceTxs bool `toml:",omitempty"`
+
+	// AllowUnprotectedTxs allows non EIP-155 protected transactions to be send over RPC.
+	AllowUnprotectedTxs bool `toml:",omitempty"`
 }
 
 // IPCEndpoint resolves an IPC endpoint based on a configured value, taking into

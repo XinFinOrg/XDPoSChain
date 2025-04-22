@@ -161,6 +161,7 @@ var (
 		utils.IPCDisabledFlag,
 		utils.IPCPathFlag,
 		utils.RPCGlobalTxFeeCap,
+		utils.AllowUnprotectedTxs,
 	}
 
 	metricsFlags = []cli.Flag{

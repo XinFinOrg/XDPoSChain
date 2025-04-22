@@ -546,6 +546,11 @@ var (
 		Usage:    "Comma separated list of JavaScript files to preload into the console",
 		Category: flags.APICategory,
 	}
+	AllowUnprotectedTxs = &cli.BoolFlag{
+		Name:     "rpc.allow-unprotected-txs",
+		Usage:    "Allow for unprotected (non EIP155 signed) transactions to be submitted via RPC",
+		Category: flags.APICategory,
+	}
 
 	// Network Settings
 	MaxPeersFlag = &cli.IntFlag{
@@ -1013,6 +1018,9 @@ func setHTTP(ctx *cli.Context, cfg *node.Config) {
 	}
 	if ctx.IsSet(HTTPIdleTimeoutFlag.Name) {
 		cfg.HTTPTimeouts.IdleTimeout = ctx.Duration(HTTPIdleTimeoutFlag.Name)
+	}
+	if ctx.IsSet(AllowUnprotectedTxs.Name) {
+		cfg.AllowUnprotectedTxs = ctx.Bool(AllowUnprotectedTxs.Name)
 	}
 	cfg.HTTPCors = SplitAndTrim(ctx.String(HTTPCORSDomainFlag.Name))
 	cfg.HTTPModules = SplitAndTrim(ctx.String(HTTPApiFlag.Name))

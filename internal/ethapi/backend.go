@@ -51,8 +51,10 @@ type Backend interface {
 	BlobBaseFee(ctx context.Context) *big.Int
 	ChainDb() ethdb.Database
 	AccountManager() *accounts.Manager
-	RPCGasCap() uint64    // global gas cap for eth_call over rpc: DoS protection
-	RPCTxFeeCap() float64 // global tx fee cap for all transaction related APIs
+	RPCGasCap() uint64        // global gas cap for eth_call over rpc: DoS protection
+	RPCTxFeeCap() float64     // global tx fee cap for all transaction related APIs
+	UnprotectedAllowed() bool // allows only for EIP155 transactions.
+
 	XDCxService() *XDCx.XDCX
 	LendingService() *XDCxlending.Lending
 
