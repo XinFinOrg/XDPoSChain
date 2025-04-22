@@ -21,7 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
+	gomath "math"
 	"math/big"
 	"strings"
 	"time"
@@ -34,6 +34,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/accounts/keystore"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
+	math "github.com/XinFinOrg/XDPoSChain/common/math"
 	"github.com/XinFinOrg/XDPoSChain/common/sort"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
@@ -111,7 +112,7 @@ type feeHistoryResult struct {
 }
 
 // FeeHistory returns the fee market history.
-func (s *PublicEthereumAPI) FeeHistory(ctx context.Context, blockCount hexutil.Uint, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*feeHistoryResult, error) {
+func (s *PublicEthereumAPI) FeeHistory(ctx context.Context, blockCount math.HexOrDecimal64, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*feeHistoryResult, error) {
 	oldest, reward, baseFee, gasUsed, err := s.b.FeeHistory(ctx, uint64(blockCount), lastBlock, rewardPercentiles)
 	if err != nil {
 		return nil, err
@@ -409,7 +410,7 @@ func (s *PrivateAccountAPI) ImportRawKey(privkey string, password string) (commo
 // the given password for duration seconds. If duration is nil it will use a
 // default of 300 seconds. It returns an indication if the account was unlocked.
 func (s *PrivateAccountAPI) UnlockAccount(addr common.Address, password string, duration *uint64) (bool, error) {
-	const max = uint64(time.Duration(math.MaxInt64) / time.Second)
+	const max = uint64(time.Duration(gomath.MaxInt64) / time.Second)
 	var d time.Duration
 	if duration == nil {
 		d = 300 * time.Second
@@ -1370,7 +1371,7 @@ func DoCall(ctx context.Context, b Backend, args TransactionArgs, blockNrOrHash 
 	}()
 
 	// Execute the message.
-	gp := new(core.GasPool).AddGas(math.MaxUint64)
+	gp := new(core.GasPool).AddGas(gomath.MaxUint64)
 	owner := common.Address{}
 	result, err := core.ApplyMessage(evm, msg, gp, owner)
 	if err := vmError(); err != nil {
