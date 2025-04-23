@@ -695,6 +695,5 @@ func (c *Clique) APIs(chain consensus.ChainReader) []rpc.API {
 		Namespace: "clique",
 		Version:   "1.0",
 		Service:   &API{chain: chain, clique: c},
-		Public:    false,
 	}}
 }

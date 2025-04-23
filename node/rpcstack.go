@@ -234,7 +234,7 @@ func (h *httpServer) enableRPC(apis []rpc.API, config httpConfig) error {
 
 	// Create RPC server and handler.
 	srv := rpc.NewServer()
-	if err := RegisterApisFromWhitelist(apis, config.Modules, srv, false); err != nil {
+	if err := RegisterApisFromWhitelist(apis, config.Modules, srv); err != nil {
 		return err
 	}
 	h.httpConfig = config
@@ -266,7 +266,7 @@ func (h *httpServer) enableWS(apis []rpc.API, config wsConfig) error {
 
 	// Create RPC server and handler.
 	srv := rpc.NewServer()
-	if err := RegisterApisFromWhitelist(apis, config.Modules, srv, false); err != nil {
+	if err := RegisterApisFromWhitelist(apis, config.Modules, srv); err != nil {
 		return err
 	}
 	h.wsConfig = config
@@ -479,7 +479,7 @@ func (is *ipcServer) stop() error {
 
 // RegisterApisFromWhitelist checks the given modules' availability, generates a whitelist based on the allowed modules,
 // and then registers all of the APIs exposed by the services.
-func RegisterApisFromWhitelist(apis []rpc.API, modules []string, srv *rpc.Server, exposeAll bool) error {
+func RegisterApisFromWhitelist(apis []rpc.API, modules []string, srv *rpc.Server) error {
 	if bad, available := checkModuleAvailability(modules, apis); len(bad) > 0 {
 		log.Error("Unavailable modules in HTTP API list", "unavailable", bad, "available", available)
 	}
@@ -490,7 +490,7 @@ func RegisterApisFromWhitelist(apis []rpc.API, modules []string, srv *rpc.Server
 	}
 	// Register all the APIs exposed by the services
 	for _, api := range apis {
-		if exposeAll || whitelist[api.Namespace] || (len(whitelist) == 0 && api.Public) {
+		if whitelist[api.Namespace] || len(whitelist) == 0 {
 			if err := srv.RegisterName(api.Namespace, api.Service); err != nil {
 				return err
 			}

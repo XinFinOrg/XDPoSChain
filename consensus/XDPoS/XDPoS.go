@@ -176,7 +176,6 @@ func (x *XDPoS) APIs(chain consensus.ChainReader) []rpc.API {
 		Namespace: "XDPoS",
 		Version:   "1.0",
 		Service:   &API{chain: chain, XDPoS: x},
-		Public:    true,
 	}}
 }
 

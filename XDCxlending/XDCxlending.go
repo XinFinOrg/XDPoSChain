@@ -92,7 +92,6 @@ func (l *Lending) APIs() []rpc.API {
 			Namespace: ProtocolName,
 			Version:   ProtocolVersionStr,
 			Service:   NewPublicXDCXLendingAPI(l),
-			Public:    true,
 		},
 	}
 }
