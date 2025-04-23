@@ -400,45 +400,36 @@ func (e *Ethereum) APIs() []rpc.API {
 	return append(apis, []rpc.API{
 		{
 			Namespace: "eth",
-			Version:   "1.0",
 			Service:   NewPublicEthereumAPI(e),
 			Public:    true,
 		}, {
 			Namespace: "eth",
-			Version:   "1.0",
 			Service:   NewPublicMinerAPI(e),
 			Public:    true,
 		}, {
 			Namespace: "eth",
-			Version:   "1.0",
 			Service:   downloader.NewPublicDownloaderAPI(e.protocolManager.downloader, e.eventMux),
 			Public:    true,
 		}, {
 			Namespace: "miner",
-			Version:   "1.0",
 			Service:   NewPrivateMinerAPI(e),
 			Public:    false,
 		}, {
 			Namespace: "eth",
-			Version:   "1.0",
 			Service:   filters.NewFilterAPI(filters.NewFilterSystem(e.ApiBackend, filters.Config{LogCacheSize: e.config.FilterLogCacheSize}), false),
 			Public:    true,
 		}, {
 			Namespace: "admin",
-			Version:   "1.0",
 			Service:   NewPrivateAdminAPI(e),
 		}, {
 			Namespace: "debug",
-			Version:   "1.0",
 			Service:   NewPublicDebugAPI(e),
 			Public:    true,
 		}, {
 			Namespace: "debug",
-			Version:   "1.0",
 			Service:   NewPrivateDebugAPI(e.chainConfig, e),
 		}, {
 			Namespace: "net",
-			Version:   "1.0",
 			Service:   e.netRPCService,
 			Public:    true,
 		},

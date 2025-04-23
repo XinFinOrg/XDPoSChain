@@ -174,7 +174,6 @@ func (x *XDPoS) Initial(chain consensus.ChainReader, header *types.Header) error
 func (x *XDPoS) APIs(chain consensus.ChainReader) []rpc.API {
 	return []rpc.API{{
 		Namespace: "XDPoS",
-		Version:   "1.0",
 		Service:   &API{chain: chain, XDPoS: x},
 		Public:    true,
 	}}

@@ -144,7 +144,6 @@ func (XDCx *XDCX) APIs() []rpc.API {
 	return []rpc.API{
 		{
 			Namespace: ProtocolName,
-			Version:   ProtocolVersionStr,
 			Service:   NewPublicXDCXAPI(XDCx),
 			Public:    true,
 		},
