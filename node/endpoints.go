@@ -48,6 +48,10 @@ func CheckTimeouts(timeouts *rpc.HTTPTimeouts) {
 		log.Warn("Sanitizing invalid HTTP read timeout", "provided", timeouts.ReadTimeout, "updated", rpc.DefaultHTTPTimeouts.ReadTimeout)
 		timeouts.ReadTimeout = rpc.DefaultHTTPTimeouts.ReadTimeout
 	}
+	if timeouts.ReadHeaderTimeout < time.Second {
+		log.Warn("Sanitizing invalid HTTP read header timeout", "provided", timeouts.ReadHeaderTimeout, "updated", rpc.DefaultHTTPTimeouts.ReadHeaderTimeout)
+		timeouts.ReadHeaderTimeout = rpc.DefaultHTTPTimeouts.ReadHeaderTimeout
+	}
 	if timeouts.WriteTimeout < 2*time.Second {
 		log.Warn("Sanitizing invalid HTTP write timeout", "provided", timeouts.WriteTimeout, "updated", rpc.DefaultHTTPTimeouts.WriteTimeout)
 		timeouts.WriteTimeout = rpc.DefaultHTTPTimeouts.WriteTimeout

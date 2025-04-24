@@ -470,6 +470,12 @@ var (
 		Value:    rpc.DefaultHTTPTimeouts.ReadTimeout,
 		Category: flags.APICategory,
 	}
+	HTTPReadHeaderTimeoutFlag = &cli.DurationFlag{
+		Name:     "http-readheadertimeout",
+		Usage:    "HTTP-RPC server read timeout",
+		Value:    rpc.DefaultHTTPTimeouts.ReadHeaderTimeout,
+		Category: flags.APICategory,
+	}
 	HTTPWriteTimeoutFlag = &cli.DurationFlag{
 		Name:     "http-writetimeout",
 		Aliases:  []string{"rpcwritetimeout"},
@@ -984,6 +990,9 @@ func setHTTP(ctx *cli.Context, cfg *node.Config) {
 	}
 	if ctx.IsSet(HTTPReadTimeoutFlag.Name) {
 		cfg.HTTPTimeouts.ReadTimeout = ctx.Duration(HTTPReadTimeoutFlag.Name)
+	}
+	if ctx.IsSet(HTTPReadHeaderTimeoutFlag.Name) {
+		cfg.HTTPTimeouts.ReadHeaderTimeout = ctx.Duration(HTTPReadHeaderTimeoutFlag.Name)
 	}
 	if ctx.IsSet(HTTPWriteTimeoutFlag.Name) {
 		cfg.HTTPTimeouts.WriteTimeout = ctx.Duration(HTTPWriteTimeoutFlag.Name)

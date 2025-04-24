@@ -123,10 +123,11 @@ func (h *httpServer) start() error {
 	h.server = &http.Server{Handler: h}
 	if h.timeouts != (rpc.HTTPTimeouts{}) {
 		h.server.ReadTimeout = h.timeouts.ReadTimeout
+		h.server.ReadHeaderTimeout = h.timeouts.ReadHeaderTimeout
 		h.server.WriteTimeout = h.timeouts.WriteTimeout
 		h.server.IdleTimeout = h.timeouts.IdleTimeout
 	}
-	log.Info("Start http server", "ReadTimeout", h.server.ReadTimeout, "WriteTimeout", h.server.WriteTimeout, "IdleTimeout", h.server.IdleTimeout)
+	log.Info("Start http server", "ReadTimeout", h.server.ReadTimeout, "ReadHeaderTimeout", h.server.ReadHeaderTimeout, "WriteTimeout", h.server.WriteTimeout, "IdleTimeout", h.server.IdleTimeout)
 	// Start the server.
 	listener, err := net.Listen("tcp", h.endpoint)
 	if err != nil {
