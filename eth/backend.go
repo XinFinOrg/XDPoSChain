@@ -244,21 +244,17 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	eth.miner = miner.New(eth, eth.chainConfig, eth.EventMux(), eth.engine, stack.Config().AnnounceTxs)
 	eth.miner.SetExtra(makeExtraData(config.ExtraData))
 
+	var xdpService *XDPoS.XDPoS
 	if eth.chainConfig.XDPoS != nil {
-		eth.ApiBackend = &EthAPIBackend{
-			allowUnprotectedTxs: stack.Config().AllowUnprotectedTxs,
-			eth:                 eth,
-			gpo:                 nil,
-			XDPoS:               eth.engine.(*XDPoS.XDPoS),
-		}
-	} else {
-		eth.ApiBackend = &EthAPIBackend{
-			allowUnprotectedTxs: stack.Config().AllowUnprotectedTxs,
-			eth:                 eth,
-			gpo:                 nil,
-			XDPoS:               nil,
-		}
+		xdpService = eth.engine.(*XDPoS.XDPoS)
 	}
+	eth.ApiBackend = &EthAPIBackend{
+		allowUnprotectedTxs: stack.Config().AllowUnprotectedTxs,
+		eth:                 eth,
+		gpo:                 nil,
+		XDPoS:               xdpService,
+	}
+
 	if eth.ApiBackend.allowUnprotectedTxs {
 		log.Info("Unprotected transactions allowed")
 	}
