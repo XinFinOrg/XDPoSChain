@@ -244,15 +244,15 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	eth.miner = miner.New(eth, eth.chainConfig, eth.EventMux(), eth.engine, stack.Config().AnnounceTxs)
 	eth.miner.SetExtra(makeExtraData(config.ExtraData))
 
-	var xdpService *XDPoS.XDPoS
+	var xdPoS *XDPoS.XDPoS = nil
 	if eth.chainConfig.XDPoS != nil {
-		xdpService = eth.engine.(*XDPoS.XDPoS)
+		xdPoS = eth.engine.(*XDPoS.XDPoS)
 	}
 	eth.ApiBackend = &EthAPIBackend{
 		allowUnprotectedTxs: stack.Config().AllowUnprotectedTxs,
 		eth:                 eth,
 		gpo:                 nil,
-		XDPoS:               xdpService,
+		XDPoS:               xdPoS,
 	}
 
 	if eth.ApiBackend.allowUnprotectedTxs {
