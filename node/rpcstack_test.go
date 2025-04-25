@@ -290,6 +290,7 @@ func baseRpcRequest(t *testing.T, url, bodyStr string, extraHeaders ...string) *
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { resp.Body.Close() })
 	return resp
 }
 
@@ -506,7 +507,6 @@ func TestHTTPWriteTimeout(t *testing.T) {
 	// Send normal request
 	t.Run("message", func(t *testing.T) {
 		resp := rpcRequest(t, url, "test_sleep")
-		defer resp.Body.Close()
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			t.Fatal(err)
@@ -520,7 +520,6 @@ func TestHTTPWriteTimeout(t *testing.T) {
 	t.Run("batch", func(t *testing.T) {
 		want := fmt.Sprintf("[%s,%s,%s]", greetRes, timeoutRes, timeoutRes)
 		resp := batchRpcRequest(t, url, []string{"test_greet", "test_sleep", "test_greet"})
-		defer resp.Body.Close()
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			t.Fatal(err)
