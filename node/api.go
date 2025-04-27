@@ -46,7 +46,6 @@ func (n *Node) apis() []rpc.API {
 			Service:   &publicWeb3API{n},
 		},
 	}
-
 }
 
 // privateAdminAPI is the collection of administrative API methods exposed only
