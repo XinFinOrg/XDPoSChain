@@ -427,7 +427,7 @@ func (n *Node) startRPC() error {
 		servers = append(servers, server)
 		return nil
 	}
-	initWS := func(apis []rpc.API, port int) error {
+	initWS := func(port int) error {
 		server := n.wsServerForPort(port, false)
 		if err := server.setListenAddr(n.config.WSHost, port); err != nil {
 			return err
@@ -485,7 +485,7 @@ func (n *Node) startRPC() error {
 	// Configure WebSocket.
 	if n.config.WSHost != "" {
 		// legacy unauthenticated
-		if err := initWS(open, n.config.WSPort); err != nil {
+		if err := initWS(n.config.WSPort); err != nil {
 			return err
 		}
 	}
