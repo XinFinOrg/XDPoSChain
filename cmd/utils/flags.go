@@ -392,6 +392,18 @@ var (
 		Value:    ethconfig.Defaults.RPCTxFeeCap,
 		Category: flags.APICategory,
 	}
+	// Authenticated port settings
+	AuthPortFlag = &cli.IntFlag{
+		Name:     "authrpc.port",
+		Usage:    "Listening port for authenticated APIs",
+		Value:    node.DefaultConfig.AuthPort,
+		Category: flags.APICategory,
+	}
+	JWTSecretFlag = &cli.StringFlag{
+		Name:     "authrpc.jwtsecret",
+		Usage:    "JWT secret (or path to a jwt secret) to use for authenticated RPC endpoints",
+		Category: flags.APICategory,
+	}
 
 	// Logging and debug settings
 	EthStatsURLFlag = &cli.StringFlag{
@@ -1004,6 +1016,9 @@ func setHTTP(ctx *cli.Context, cfg *node.Config) {
 	if ctx.IsSet(HTTPPortFlag.Name) {
 		cfg.HTTPPort = ctx.Int(HTTPPortFlag.Name)
 	}
+	if ctx.IsSet(AuthPortFlag.Name) {
+		cfg.AuthPort = ctx.Int(AuthPortFlag.Name)
+	}
 	if ctx.IsSet(HTTPPathPrefixFlag.Name) {
 		cfg.HTTPPathPrefix = ctx.String(HTTPPathPrefixFlag.Name)
 	}
@@ -1206,6 +1221,10 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	setNodeUserIdent(ctx, cfg)
 	setSmartCard(ctx, cfg)
 
+	if ctx.IsSet(JWTSecretFlag.Name) {
+		cfg.JWTSecret = ctx.String(JWTSecretFlag.Name)
+	}
+
 	switch {
 	case ctx.IsSet(DataDirFlag.Name):
 		cfg.DataDir = ctx.String(DataDirFlag.Name)
@@ -1232,6 +1251,7 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	if ctx.IsSet(AnnounceTxsFlag.Name) {
 		cfg.AnnounceTxs = ctx.Bool(AnnounceTxsFlag.Name)
 	}
+
 	// deprecation notice for log debug flags (TODO: find a more appropriate place to put these?)
 	if ctx.IsSet(LogBacktraceAtFlag.Name) {
 		log.Warn("log.backtrace flag is deprecated")

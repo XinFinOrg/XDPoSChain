@@ -123,6 +123,8 @@ var (
 		utils.EnableXDCPrefixFlag,
 		utils.NetworkIdFlag,
 		utils.HTTPCORSDomainFlag,
+		utils.AuthPortFlag,
+		utils.JWTSecretFlag,
 		utils.HTTPVirtualHostsFlag,
 		utils.EthStatsURLFlag,
 		//utils.FakePoWFlag,
