@@ -113,8 +113,6 @@ func (b *Bfter) Vote(peer string, vote *types.Vote) error {
 	return nil
 }
 func (b *Bfter) Timeout(peer string, timeout *types.Timeout) error {
-	log.Debug("Receive Timeout", "timeout", timeout)
-
 	gapNum := timeout.GapNumber
 
 	// dist times 3, ex: timeout message's gap number is based on block and find out it's epoch switch number, then mod 900 then minus 450
@@ -128,6 +126,7 @@ func (b *Bfter) Timeout(peer string, timeout *types.Timeout) error {
 		log.Error("Verify BFT Timeout", "timeoutRound", timeout.Round, "timeoutGapNum", gapNum, "error", err)
 		return err
 	}
+	log.Debug("Receive Timeout", "gap", timeout.GapNumber, "hash", timeout.Hash().Hex(), "round", timeout.Round, "signer", timeout.GetSigner().Hex()) //get signer after verifyTimeout
 
 	if verified {
 		b.broadcastCh <- timeout
