@@ -24,17 +24,17 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/p2p/netutil"
 )
 
-// ServeListener accepts connections on l, serving IPC-RPC on them.
+// ServeListener accepts connections on l, serving JSON-RPC on them.
 func (s *Server) ServeListener(l net.Listener) error {
 	for {
 		conn, err := l.Accept()
 		if netutil.IsTemporaryError(err) {
-			log.Warn("IPC accept error", "err", err)
+			log.Warn("RPC accept error", "err", err)
 			continue
 		} else if err != nil {
 			return err
 		}
-		log.Trace("IPC accepted connection")
+		log.Trace("Accepted RPC connection", "conn", conn.RemoteAddr())
 		go s.ServeCodec(NewCodec(conn), 0)
 	}
 }
@@ -46,7 +46,8 @@ func (s *Server) ServeListener(l net.Listener) error {
 // The context is used for the initial connection establishment. It does not
 // affect subsequent interactions with the client.
 func DialIPC(ctx context.Context, endpoint string) (*Client, error) {
-	return newClient(ctx, newClientTransportIPC(endpoint))
+	cfg := new(clientConfig)
+	return newClient(ctx, cfg, newClientTransportIPC(endpoint))
 }
 
 func newClientTransportIPC(endpoint string) reconnectFunc {

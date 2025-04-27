@@ -178,6 +178,10 @@ func (api *privateAdminAPI) StartRPC(host *string, port *int, cors *string, apis
 		CorsAllowedOrigins: api.node.config.HTTPCors,
 		Vhosts:             api.node.config.HTTPVirtualHosts,
 		Modules:            api.node.config.HTTPModules,
+		rpcEndpointConfig: rpcEndpointConfig{
+			batchItemLimit:         api.node.config.BatchRequestLimit,
+			batchResponseSizeLimit: api.node.config.BatchResponseMaxSize,
+		},
 	}
 	if cors != nil {
 		config.CorsAllowedOrigins = nil
@@ -237,6 +241,10 @@ func (api *privateAdminAPI) StartWS(host *string, port *int, allowedOrigins *str
 	config := wsConfig{
 		Modules: api.node.config.WSModules,
 		Origins: api.node.config.WSOrigins,
+		rpcEndpointConfig: rpcEndpointConfig{
+			batchItemLimit:         api.node.config.BatchRequestLimit,
+			batchResponseSizeLimit: api.node.config.BatchResponseMaxSize,
+		},
 	}
 
 	if apis != nil {
