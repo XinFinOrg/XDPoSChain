@@ -126,7 +126,7 @@ func (b *Bfter) Timeout(peer string, timeout *types.Timeout) error {
 		log.Error("Verify BFT Timeout", "timeoutRound", timeout.Round, "timeoutGapNum", gapNum, "error", err)
 		return err
 	}
-	log.Debug("Receive Timeout", "gap", timeout.GapNumber, "hash", timeout.Hash().Hex(), "round", timeout.Round, "signer", timeout.GetSigner().Hex()) //get signer after verifyTimeout
+	log.Debug("Receive Timeout", "gap", gapNum, "hash", timeout.Hash().Hex(), "round", timeout.Round, "signer", timeout.GetSigner().Hex()) //get signer after verifyTimeout
 
 	if verified {
 		b.broadcastCh <- timeout
