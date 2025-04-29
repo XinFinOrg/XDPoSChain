@@ -75,7 +75,6 @@ func testCallTracer(tracerName string, dirPath string, t *testing.T) {
 		if !strings.HasSuffix(file.Name(), ".json") {
 			continue
 		}
-		file := file // capture range variable
 		t.Run(camel(strings.TrimSuffix(file.Name(), ".json")), func(t *testing.T) {
 			t.Parallel()
 
@@ -180,7 +179,6 @@ func BenchmarkTracers(b *testing.B) {
 		if !strings.HasSuffix(file.Name(), ".json") {
 			continue
 		}
-		file := file // capture range variable
 		b.Run(camel(strings.TrimSuffix(file.Name(), ".json")), func(b *testing.B) {
 			blob, err := os.ReadFile(filepath.Join("..", "testdata", "call_tracer", file.Name()))
 			if err != nil {
@@ -259,7 +257,6 @@ func testContractTracer(tracerName string, dirPath string, t *testing.T) {
 		if !strings.HasSuffix(file.Name(), ".json") {
 			continue
 		}
-		file := file // capture range variable
 		t.Run(camel(strings.TrimSuffix(file.Name(), ".json")), func(t *testing.T) {
 			t.Parallel()
 

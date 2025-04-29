@@ -137,7 +137,6 @@ func TestBlockNumberOrHash_WithNumber_MarshalAndUnmarshal(t *testing.T) {
 		{"committed", int64(CommittedBlockNumber)},
 	}
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			bnh := BlockNumberOrHashWithNumber(BlockNumber(test.number))
 			marshalled, err := json.Marshal(bnh)
