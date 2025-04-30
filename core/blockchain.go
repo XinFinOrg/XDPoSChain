@@ -131,6 +131,8 @@ const (
 // that's resident in a blockchain.
 type CacheConfig struct {
 	TrieCleanLimit      int           // Memory allowance (MB) to use for caching trie nodes in memory
+	TrieCleanJournal    string        // Disk journal for saving clean cache entries.
+	TrieCleanRejournal  time.Duration // Time interval to dump clean cache to disk periodically
 	TrieCleanNoPrefetch bool          // Whether to disable heuristic state prefetching for followup blocks
 	TrieDirtyLimit      int           // Memory limit (MB) at which to start flushing dirty trie nodes to disk
 	TrieDirtyDisabled   bool          // Whether to disable trie write caching and GC altogether (archive node)
@@ -242,7 +244,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		cacheConfig:         cacheConfig,
 		db:                  db,
 		triegc:              prque.New[int64, common.Hash](nil),
-		stateCache:          state.NewDatabaseWithCache(db, cacheConfig.TrieCleanLimit),
+		stateCache:          state.NewDatabaseWithCache(db, cacheConfig.TrieCleanLimit, cacheConfig.TrieCleanJournal),
 		quit:                make(chan struct{}),
 		chainmu:             syncx.NewClosableMutex(),
 		bodyCache:           lru.NewCache[common.Hash, *types.Body](bodyCacheLimit),
@@ -306,6 +308,19 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	bc.wg.Add(1)
 	go bc.futureBlocksLoop()
 
+	// If periodic cache journal is required, spin it up.
+	if bc.cacheConfig.TrieCleanRejournal > 0 {
+		if bc.cacheConfig.TrieCleanRejournal < time.Minute {
+			log.Warn("Sanitizing invalid trie cache journal time", "provided", bc.cacheConfig.TrieCleanRejournal, "updated", time.Minute)
+			bc.cacheConfig.TrieCleanRejournal = time.Minute
+		}
+		triedb := bc.stateCache.TrieDB()
+		bc.wg.Add(1)
+		go func() {
+			defer bc.wg.Done()
+			triedb.SaveCachePeriodically(bc.cacheConfig.TrieCleanJournal, bc.cacheConfig.TrieCleanRejournal, bc.quit)
+		}()
+	}
 	return bc, nil
 }
 
@@ -1026,75 +1041,68 @@ func (bc *BlockChain) ContractCodeWithPrefix(hash common.Hash) ([]byte, error) {
 }
 
 func (bc *BlockChain) saveData() {
-	// Ensure the state of a recent block is also stored to disk before exiting.
-	// We're writing three different states to catch different restart scenarios:
-	//  - HEAD:     So we don't need to reprocess any blocks in the general case
-	//  - HEAD-1:   So we don't do large reorgs if our HEAD becomes an uncle
-	//  - HEAD-127: So we have a hard limit on the number of blocks reexecuted
-	if !bc.cacheConfig.TrieDirtyDisabled {
-		var tradingTriedb *trie.Database
-		var lendingTriedb *trie.Database
-		engine, _ := bc.Engine().(*XDPoS.XDPoS)
-		triedb := bc.stateCache.TrieDB()
-		var tradingService utils.TradingService
-		var lendingService utils.LendingService
-		if bc.Config().IsTIPXDCX(bc.CurrentBlock().Number()) && bc.chainConfig.XDPoS != nil && bc.CurrentBlock().NumberU64() > bc.chainConfig.XDPoS.Epoch && engine != nil {
-			tradingService = engine.GetXDCXService()
-			if tradingService != nil && tradingService.GetStateCache() != nil {
-				tradingTriedb = tradingService.GetStateCache().TrieDB()
-			}
-			lendingService = engine.GetLendingService()
-			if lendingService != nil && lendingService.GetStateCache() != nil {
-				lendingTriedb = lendingService.GetStateCache().TrieDB()
-			}
+	var tradingTriedb *trie.Database
+	var lendingTriedb *trie.Database
+	engine, _ := bc.Engine().(*XDPoS.XDPoS)
+	triedb := bc.stateCache.TrieDB()
+	var tradingService utils.TradingService
+	var lendingService utils.LendingService
+	if bc.Config().IsTIPXDCX(bc.CurrentBlock().Number()) && bc.chainConfig.XDPoS != nil && bc.CurrentBlock().NumberU64() > bc.chainConfig.XDPoS.Epoch && engine != nil {
+		tradingService = engine.GetXDCXService()
+		if tradingService != nil && tradingService.GetStateCache() != nil {
+			tradingTriedb = tradingService.GetStateCache().TrieDB()
 		}
-		for _, offset := range []uint64{0, 1, triesInMemory - 1} {
-			if number := bc.CurrentBlock().NumberU64(); number > offset {
-				recent := bc.GetBlockByNumber(number - offset)
+		lendingService = engine.GetLendingService()
+		if lendingService != nil && lendingService.GetStateCache() != nil {
+			lendingTriedb = lendingService.GetStateCache().TrieDB()
+		}
+	}
+	for _, offset := range []uint64{0, 1, triesInMemory - 1} {
+		if number := bc.CurrentBlock().NumberU64(); number > offset {
+			recent := bc.GetBlockByNumber(number - offset)
 
-				log.Info("Writing cached state to disk", "block", recent.Number(), "hash", recent.Hash(), "root", recent.Root())
-				if err := triedb.Commit(recent.Root(), true); err != nil {
-					log.Error("Failed to commit recent state trie", "err", err)
-				}
-				if bc.Config().IsTIPXDCXReceiver(recent.Number()) && bc.chainConfig.XDPoS != nil && recent.NumberU64() > bc.chainConfig.XDPoS.Epoch && engine != nil {
-					author, _ := bc.Engine().Author(recent.Header())
-					if tradingService != nil {
-						tradingRoot, _ := tradingService.GetTradingStateRoot(recent, author)
-						if !tradingRoot.IsZero() && tradingTriedb != nil {
-							if err := tradingTriedb.Commit(tradingRoot, true); err != nil {
-								log.Error("Failed to commit trading state recent state trie", "err", err)
-							}
-						}
-					}
-					if lendingService != nil {
-						lendingRoot, _ := lendingService.GetLendingStateRoot(recent, author)
-						if !lendingRoot.IsZero() && lendingTriedb != nil {
-							if err := lendingTriedb.Commit(lendingRoot, true); err != nil {
-								log.Error("Failed to commit lending state recent state trie", "err", err)
-							}
+			log.Info("Writing cached state to disk", "block", recent.Number(), "hash", recent.Hash(), "root", recent.Root())
+			if err := triedb.Commit(recent.Root(), true); err != nil {
+				log.Error("Failed to commit recent state trie", "err", err)
+			}
+			if bc.Config().IsTIPXDCXReceiver(recent.Number()) && bc.chainConfig.XDPoS != nil && recent.NumberU64() > bc.chainConfig.XDPoS.Epoch && engine != nil {
+				author, _ := bc.Engine().Author(recent.Header())
+				if tradingService != nil {
+					tradingRoot, _ := tradingService.GetTradingStateRoot(recent, author)
+					if !tradingRoot.IsZero() && tradingTriedb != nil {
+						if err := tradingTriedb.Commit(tradingRoot, true); err != nil {
+							log.Error("Failed to commit trading state recent state trie", "err", err)
 						}
 					}
 				}
-			}
-		}
-		for !bc.triegc.Empty() {
-			triedb.Dereference(bc.triegc.PopItem())
-		}
-		if tradingTriedb != nil && lendingTriedb != nil {
-			if tradingService.GetTriegc() != nil {
-				for !tradingService.GetTriegc().Empty() {
-					tradingTriedb.Dereference(tradingService.GetTriegc().PopItem())
-				}
-			}
-			if lendingService.GetTriegc() != nil {
-				for !lendingService.GetTriegc().Empty() {
-					lendingTriedb.Dereference(lendingService.GetTriegc().PopItem())
+				if lendingService != nil {
+					lendingRoot, _ := lendingService.GetLendingStateRoot(recent, author)
+					if !lendingRoot.IsZero() && lendingTriedb != nil {
+						if err := lendingTriedb.Commit(lendingRoot, true); err != nil {
+							log.Error("Failed to commit lending state recent state trie", "err", err)
+						}
+					}
 				}
 			}
 		}
-		if size, _ := triedb.Size(); size != 0 {
-			log.Error("Dangling trie nodes after full cleanup")
+	}
+	for !bc.triegc.Empty() {
+		triedb.Dereference(bc.triegc.PopItem())
+	}
+	if tradingTriedb != nil && lendingTriedb != nil {
+		if tradingService.GetTriegc() != nil {
+			for !tradingService.GetTriegc().Empty() {
+				tradingTriedb.Dereference(tradingService.GetTriegc().PopItem())
+			}
 		}
+		if lendingService.GetTriegc() != nil {
+			for !lendingService.GetTriegc().Empty() {
+				lendingTriedb.Dereference(lendingService.GetTriegc().PopItem())
+			}
+		}
+	}
+	if size, _ := triedb.Size(); size != 0 {
+		log.Error("Dangling trie nodes after full cleanup")
 	}
 }
 
@@ -1120,7 +1128,21 @@ func (bc *BlockChain) Stop() {
 	// returned.
 	bc.chainmu.Close()
 	bc.wg.Wait()
-	bc.saveData()
+
+	// Ensure the state of a recent block is also stored to disk before exiting.
+	// We're writing three different states to catch different restart scenarios:
+	//  - HEAD:     So we don't need to reprocess any blocks in the general case
+	//  - HEAD-1:   So we don't do large reorgs if our HEAD becomes an uncle
+	//  - HEAD-127: So we have a hard limit on the number of blocks reexecuted
+	if !bc.cacheConfig.TrieDirtyDisabled {
+		bc.saveData()
+	}
+	// Ensure all live cached entries be saved into disk, so that we can skip
+	// cache warmup when node restarts.
+	if bc.cacheConfig.TrieCleanJournal != "" {
+		triedb := bc.stateCache.TrieDB()
+		triedb.SaveCache(bc.cacheConfig.TrieCleanJournal)
+	}
 	log.Info("Blockchain manager stopped")
 }
 
