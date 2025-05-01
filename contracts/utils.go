@@ -466,7 +466,12 @@ func GetRewardBalancesRate(foundationWalletAddr common.Address, statedb *state.S
 
 	foundationReward := new(big.Int).Mul(totalReward, new(big.Int).SetInt64(common.RewardFoundationPercent))
 	foundationReward = new(big.Int).Div(foundationReward, new(big.Int).SetInt64(100))
-	balances[foundationWalletAddr] = foundationReward
+
+	if balances[foundationWalletAddr] != nil {
+		balances[foundationWalletAddr].Add(balances[foundationWalletAddr], foundationReward)
+	} else {
+		balances[foundationWalletAddr] = foundationReward
+	}
 
 	jsonHolders, err := json.Marshal(balances)
 	if err != nil {
