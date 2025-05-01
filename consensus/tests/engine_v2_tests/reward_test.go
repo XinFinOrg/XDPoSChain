@@ -175,6 +175,7 @@ func TestHookRewardAfterUpgrade(t *testing.T) {
 	assert.Nil(t, err)
 	// set switch to 1800, so that it covers 901-1799, 1800-2700 two epochs
 	config.XDPoS.V2.SwitchBlock.SetUint64(1800)
+	config.XDPoS.V2.SwitchEpoch = 2
 	// set upgrade number to 0
 	backup := common.TIPUpgradeReward
 	common.TIPUpgradeReward = big.NewInt(0)
@@ -296,6 +297,11 @@ func TestHookRewardAfterUpgrade(t *testing.T) {
 		b, _ := big.NewInt(0).SetString("30012500000000000000", 10) // this value tests the float64 reward
 		assert.Zero(t, b.Cmp(r[config.XDPoS.FoudationWalletAddr]), "real reward is", r[config.XDPoS.FoudationWalletAddr])
 	}
+	totalMinted := state.GetTotalMinted(statedb).Big()
+	totalExpect, _ := big.NewInt(0).SetString("2100125000000000000000", 10)
+	assert.Zero(t, totalMinted.Cmp(totalExpect), "statedb records wrong total minted")
+	lastEpochNum := state.GetLastEpochNum(statedb).Big().Int64()
+	assert.Equal(t, 3, int(lastEpochNum))
 	common.TIPUpgradeReward = backup
 }
 

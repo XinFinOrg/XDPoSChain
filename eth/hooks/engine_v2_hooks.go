@@ -190,6 +190,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 		start := time.Now()
 
 		round, err := adaptor.EngineV2.GetRoundNumber(header)
+		epochNum := chain.Config().XDPoS.V2.SwitchEpoch + uint64(round)/chain.Config().XDPoS.Epoch
 		if err != nil {
 			log.Error("[HookReward] Fail to get round", "error", err)
 			return nil, err
@@ -233,6 +234,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 		} else {
 			rewardsMap["signersProtector"] = signers[ProtectorNodeBeneficiary]
 			rewardsMap["signersObserver"] = signers[ObserverNodeBeneficiary]
+			rewardSum := new(big.Int)
 			type rewardWithType struct {
 				r   float64
 				t   Beneficiary
@@ -262,12 +264,32 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 					if len(rewards) > 0 {
 						for holder, reward := range rewards {
 							stateBlock.AddBalance(holder, reward)
+							rewardSum.Add(rewardSum, reward)
 						}
 					}
 					rewardResults[signer] = rewards
 				}
 				rewardsMap[rwt.key] = rewardResults
 			}
+			// record the total reward into state db
+			totalMinted := state.GetTotalMinted(stateBlock).Big()
+			lastEpochNum := state.GetLastEpochNum(stateBlock)
+			if lastEpochNum.IsZero() {
+				// if `lastEpochNum` is zero, the total minted has not included tokens before TIPUpgradeReward
+				// calculate the tokens before TIPUpgradeReward and set to totalMinted
+				// for now no-do
+			}
+			totalMinted.Add(totalMinted, rewardSum)
+			bigPower256 := new(big.Int).Lsh(big.NewInt(1), 256)
+			bigMaxU256 := new(big.Int).Sub(bigPower256, big.NewInt(1))
+			// if overflow, set to maxU256 and log a warning
+			if totalMinted.Cmp(bigMaxU256) >= 0 {
+				totalMinted.Set(bigMaxU256)
+				log.Warn("[HookReward] total minted overflow max u256")
+			}
+			log.Debug("[HookReward] total minted in hook", "value", totalMinted)
+			state.PutTotalMinted(stateBlock, common.BigToHash(totalMinted))
+			state.PutLastEpochNum(stateBlock, common.Uint64ToHash(epochNum))
 		}
 		log.Debug("Time Calculated HookReward ", "block", header.Number.Uint64(), "time", common.PrettyDuration(time.Since(start)))
 		return rewardsMap, nil

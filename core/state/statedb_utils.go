@@ -152,3 +152,30 @@ func GetVoterCap(statedb *StateDB, candidate, voter common.Address) *big.Int {
 	ret := statedb.GetState(common.MasternodeVotingSMCBinary, common.BytesToHash(retByte))
 	return ret.Big()
 }
+
+var (
+	slotMintedRecordTotalMinted  uint64 = 0
+	slotMintedRecordLastEpochNum uint64 = 1
+)
+
+func GetTotalMinted(statedb *StateDB) common.Hash {
+	hash := GetLocSimpleVariable(slotMintedRecordTotalMinted)
+	totalMinted := statedb.GetState(common.MintedRecordAddressBinary, hash)
+	return totalMinted
+}
+
+func PutTotalMinted(statedb *StateDB, value common.Hash) {
+	hash := GetLocSimpleVariable(slotMintedRecordTotalMinted)
+	statedb.SetState(common.MintedRecordAddressBinary, hash, value)
+}
+
+func GetLastEpochNum(statedb *StateDB) common.Hash {
+	hash := GetLocSimpleVariable(slotMintedRecordLastEpochNum)
+	totalMinted := statedb.GetState(common.MintedRecordAddressBinary, hash)
+	return totalMinted
+}
+
+func PutLastEpochNum(statedb *StateDB, value common.Hash) {
+	hash := GetLocSimpleVariable(slotMintedRecordLastEpochNum)
+	statedb.SetState(common.MintedRecordAddressBinary, hash, value)
+}
