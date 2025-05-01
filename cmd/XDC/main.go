@@ -98,7 +98,7 @@ var (
 		utils.CacheDatabaseFlag,
 		utils.CacheTrieFlag,
 		utils.CacheGCFlag,
-		utils.CacheNoPrefetchFlag,
+		utils.CachePrefetchFlag,
 		//utils.TrieCacheGenFlag,
 		utils.CacheLogSizeFlag,
 		utils.FDLimitFlag,

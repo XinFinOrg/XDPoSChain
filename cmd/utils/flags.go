@@ -290,7 +290,8 @@ var (
 		Category: flags.PerfCategory,
 	}
 	CacheTrieFlag = &cli.IntFlag{
-		Name:     "cache.trie",
+		Name:     "cache-trie",
+		Aliases:  []string{"cache.trie"},
 		Usage:    "Percentage of cache memory allowance to use for trie caching (default = 15% full mode, 30% archive mode)",
 		Value:    15,
 		Category: flags.PerfCategory,
@@ -302,9 +303,9 @@ var (
 		Value:    25,
 		Category: flags.PerfCategory,
 	}
-	CacheNoPrefetchFlag = &cli.BoolFlag{
-		Name:     "cache.noprefetch",
-		Usage:    "Disable heuristic state prefetch during block import (less CPU and disk IO, more time waiting for data)",
+	CachePrefetchFlag = &cli.BoolFlag{
+		Name:     "cache-prefetch",
+		Usage:    "Enable heuristic state prefetch during block import",
 		Category: flags.PerfCategory,
 	}
 	CacheLogSizeFlag = &cli.IntFlag{
@@ -1511,7 +1512,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		Fatalf("--%s must be either 'full' or 'archive'", GCModeFlag.Name)
 	}
 	cfg.NoPruning = ctx.String(GCModeFlag.Name) == "archive"
-	cfg.NoPrefetch = ctx.Bool(CacheNoPrefetchFlag.Name)
+	cfg.NoPrefetch = !ctx.Bool(CachePrefetchFlag.Name)
 
 	if ctx.IsSet(CacheFlag.Name) || ctx.IsSet(CacheTrieFlag.Name) {
 		cfg.TrieCleanCache = ctx.Int(CacheFlag.Name) * ctx.Int(CacheTrieFlag.Name) / 100
@@ -1775,7 +1776,7 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (chain *core.B
 	}
 	cache := &core.CacheConfig{
 		TrieCleanLimit:      ethconfig.Defaults.TrieCleanCache,
-		TrieCleanNoPrefetch: ctx.Bool(CacheNoPrefetchFlag.Name),
+		TrieCleanNoPrefetch: !ctx.Bool(CachePrefetchFlag.Name),
 		TrieDirtyLimit:      ethconfig.Defaults.TrieDirtyCache,
 		TrieDirtyDisabled:   ctx.String(GCModeFlag.Name) == "archive",
 		TrieTimeLimit:       ethconfig.Defaults.TrieTimeout,
