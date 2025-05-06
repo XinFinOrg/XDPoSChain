@@ -17,7 +17,7 @@ XinFin Hybrid Blockchain is an Enterprise ready Blockchain for global trade and 
 Visit: [XinFin.org](https://xinfin.org)
 Contribute: [Developer Docs](https://docs.xinfin.org)
 
-## XinFin Network XDPoS is community driven project to achieve the following 
+## XinFin Network XDPoS is community driven project to achieve the following
 
 - XinFin DPOS (XDPoS) consensus that selects 108 set of Masternodes to achieve a high throughput Energy efficient consensus with instant block finality
 
@@ -52,11 +52,15 @@ The contract is very strict in handing out penalty for invalid KYC, it results l
 For eg. say A proposes condidates B,C,D by paying for its proposal cost.
 If at a later stage if some predecided amount of owners ( investors ) vote that a KYC for a A is invalid then A & all of its candidates (B,C,D) will lose their position & all their funds will be lost ( will remain with contract wallet ).  
 
+### Documents
+
+[Document](./docs/README.md)
+
 ### For developers
 
 #### Continues integration & delivery
-See https://github.com/XinFinOrg/XDPoSChain/tree/dev-upgrade/cicd
 
+See <https://github.com/XinFinOrg/XDPoSChain/tree/dev-upgrade/cicd>
 
 ### To contribute
 
