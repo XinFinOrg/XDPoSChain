@@ -455,7 +455,7 @@ func (n *Node) startRPC() error {
 	initAuth := func(apis []rpc.API, port int, secret []byte) error {
 		// Enable auth via HTTP
 		server := n.httpAuth
-		if err := server.setListenAddr(n.config.AuthHost, port); err != nil {
+		if err := server.setListenAddr(n.config.AuthAddr, port); err != nil {
 			return err
 		}
 		sharedConfig := rpcEndpointConfig{
@@ -466,7 +466,7 @@ func (n *Node) startRPC() error {
 		}
 		err := server.enableRPC(apis, httpConfig{
 			CorsAllowedOrigins: DefaultAuthCors,
-			Vhosts:             DefaultAuthVhosts,
+			Vhosts:             n.config.AuthVirtualHosts,
 			Modules:            DefaultAuthModules,
 			prefix:             DefaultAuthPrefix,
 			rpcEndpointConfig:  sharedConfig,
@@ -478,7 +478,7 @@ func (n *Node) startRPC() error {
 
 		// Enable auth via WS
 		server = n.wsServerForPort(port, true)
-		if err := server.setListenAddr(n.config.AuthHost, port); err != nil {
+		if err := server.setListenAddr(n.config.AuthAddr, port); err != nil {
 			return err
 		}
 		if err := server.enableWS(apis, wsConfig{

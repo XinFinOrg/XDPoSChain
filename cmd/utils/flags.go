@@ -398,20 +398,26 @@ var (
 		Category: flags.APICategory,
 	}
 	// Authenticated RPC HTTP settings
-	AuthHostFlag = &cli.StringFlag{
-		Name:     "authrpc.host",
+	AuthListenFlag = &cli.StringFlag{
+		Name:     "authrpc-addr",
 		Usage:    "Listening address for authenticated APIs",
-		Value:    node.DefaultConfig.AuthHost,
+		Value:    node.DefaultConfig.AuthAddr,
 		Category: flags.APICategory,
 	}
 	AuthPortFlag = &cli.IntFlag{
-		Name:     "authrpc.port",
+		Name:     "authrpc-port",
 		Usage:    "Listening port for authenticated APIs",
 		Value:    node.DefaultConfig.AuthPort,
 		Category: flags.APICategory,
 	}
+	AuthVirtualHostsFlag = &cli.StringFlag{
+		Name:     "authrpc-vhosts",
+		Usage:    "Comma separated list of virtual hostnames from which to accept requests (server enforced). Accepts '*' wildcard.",
+		Value:    strings.Join(node.DefaultConfig.AuthVirtualHosts, ","),
+		Category: flags.APICategory,
+	}
 	JWTSecretFlag = &cli.StringFlag{
-		Name:     "authrpc.jwtsecret",
+		Name:     "authrpc-jwtsecret",
 		Usage:    "JWT secret (or path to a jwt secret) to use for authenticated RPC endpoints",
 		Category: flags.APICategory,
 	}
@@ -1040,11 +1046,14 @@ func setHTTP(ctx *cli.Context, cfg *node.Config) {
 		cfg.HTTPPort = ctx.Int(HTTPPortFlag.Name)
 	}
 
-	if ctx.IsSet(AuthHostFlag.Name) {
-		cfg.AuthHost = ctx.String(AuthHostFlag.Name)
+	if ctx.IsSet(AuthListenFlag.Name) {
+		cfg.AuthAddr = ctx.String(AuthListenFlag.Name)
 	}
 	if ctx.IsSet(AuthPortFlag.Name) {
 		cfg.AuthPort = ctx.Int(AuthPortFlag.Name)
+	}
+	if ctx.IsSet(AuthVirtualHostsFlag.Name) {
+		cfg.AuthVirtualHosts = SplitAndTrim(ctx.String(AuthVirtualHostsFlag.Name))
 	}
 
 	cfg.HTTPCors = SplitAndTrim(ctx.String(HTTPCORSDomainFlag.Name))
@@ -1054,7 +1063,6 @@ func setHTTP(ctx *cli.Context, cfg *node.Config) {
 	if ctx.IsSet(HTTPPathPrefixFlag.Name) {
 		cfg.HTTPPathPrefix = ctx.String(HTTPPathPrefixFlag.Name)
 	}
-
 	if ctx.IsSet(HTTPReadTimeoutFlag.Name) {
 		cfg.HTTPTimeouts.ReadTimeout = ctx.Duration(HTTPReadTimeoutFlag.Name)
 	}
