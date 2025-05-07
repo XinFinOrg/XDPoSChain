@@ -272,6 +272,10 @@ func (a Address) String() string {
 	return a.Hex()
 }
 
+func (a Address) String0x() string {
+	return string(a.checksumHex())
+}
+
 func (a *Address) checksumHex() []byte {
 	buf := a.hex()
 
