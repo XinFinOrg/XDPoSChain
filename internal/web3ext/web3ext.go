@@ -393,11 +393,6 @@ web3._extend({
 			params: 2
 		}),
 		new web3._extend.Method({
-			name: 'setMutexProfileRate',
-			call: 'debug_setMutexProfileRate',
-			params: 1
-		}),
-		new web3._extend.Method({
 			name: 'writeMutexProfile',
 			call: 'debug_writeMutexProfile',
 			params: 1
