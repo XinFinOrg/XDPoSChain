@@ -412,7 +412,7 @@ func TestJWT(t *testing.T) {
 
 		token = tokenFn()
 		resp := rpcRequest(t, htUrl, testMethod, "Authorization", token)
-		if resp.StatusCode != http.StatusForbidden {
+		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("tc %d-http, token '%v': expected not to allow,  got %v", i, token, resp.StatusCode)
 		}
 	}
