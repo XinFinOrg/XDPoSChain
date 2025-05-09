@@ -418,7 +418,7 @@ var (
 	}
 	JWTSecretFlag = &cli.StringFlag{
 		Name:     "authrpc-jwtsecret",
-		Usage:    "JWT secret (or path to a jwt secret) to use for authenticated RPC endpoints",
+		Usage:    "Path to a JWT secret to use for authenticated RPC endpoints",
 		Category: flags.APICategory,
 	}
 
