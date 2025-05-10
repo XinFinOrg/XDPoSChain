@@ -3639,3 +3639,26 @@ func (s *PublicBlockChainAPI) GetStakerROIMasternode(masternode common.Address) 
 
 	return 100.0 / float64(totalCap.Div(totalCap, voterRewardAYear).Uint64())
 }
+
+type currentTotalMinted struct {
+	TotalMinted  *hexutil.Big `json:"totalMinted"`
+	LastEpochNum *hexutil.Big `json:"lastEpochNum"`
+	BlockHash    common.Hash  `json:"blockHash"`
+	BlockNumber  *hexutil.Big `json:"blockNumber"`
+}
+
+func (s *PublicBlockChainAPI) GetCurrentTotalMinted(ctx context.Context) (*currentTotalMinted, error) {
+	statedb, header, err := s.b.StateAndHeaderByNumber(ctx, rpc.LatestBlockNumber)
+	if err != nil {
+		return nil, err
+	}
+	totalMinted := state.GetTotalMinted(statedb).Big()
+	lastEpochNum := state.GetLastEpochNum(statedb).Big()
+	result := &currentTotalMinted{
+		TotalMinted:  (*hexutil.Big)(totalMinted),
+		LastEpochNum: (*hexutil.Big)(lastEpochNum),
+		BlockHash:    header.Hash(),
+		BlockNumber:  (*hexutil.Big)(header.Number),
+	}
+	return result, nil
+}
