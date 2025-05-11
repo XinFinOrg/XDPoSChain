@@ -199,6 +199,8 @@ var (
 			MasternodeReward:     500, // double as Reward
 			ProtectorReward:      400,
 			ObserverReward:       300.125,
+			LimitPenaltyEpoch:    1,
+			MinimumSigningTx:     2,
 		},
 	}
 
@@ -484,6 +486,10 @@ type V2Config struct {
 	ProtectorReward  float64 `json:"protectorReward"`  // Block reward per protector - unit Ether
 	ObserverReward   float64 `json:"observerReward"`   // Block reward per observer - unit Ether
 
+	MinimumMinerBlockPerEpoch int `json:"minimumMinerBlockPerEpoch"` // Minimum block per epoch for a miner to not be penalized
+	LimitPenaltyEpoch         int `json:"limitPenaltyEpoch"`         // Epochs in a row that a penalty node needs to be penalized
+	MinimumSigningTx          int `json:"minimumSigningTx"`          // Signing txs that a node needs to produce to get out of penalty, after `LimitPenaltyEpoch`
+
 	ExpTimeoutConfig ExpTimeoutConfig `json:"expTimeoutConfig"`
 }
 
@@ -541,6 +547,14 @@ func (c *V2Config) Description(name string, indent int) string {
 	banner += fmt.Sprintf("%s- TimeoutSyncThreshold: %v\n", prefix, c.TimeoutSyncThreshold)
 	banner += fmt.Sprintf("%s- TimeoutPeriod: %v\n", prefix, c.TimeoutPeriod)
 	banner += fmt.Sprintf("%s- CertThreshold: %v", prefix, c.CertThreshold)
+	banner += fmt.Sprintf("%s- MasternodeReward: %v", prefix, c.MasternodeReward)
+	banner += fmt.Sprintf("%s- ProtectorReward: %v", prefix, c.ProtectorReward)
+	banner += fmt.Sprintf("%s- ObserverReward: %v", prefix, c.ObserverReward)
+	banner += fmt.Sprintf("%s- MinimumMinerBlockPerEpoch: %v", prefix, c.MinimumMinerBlockPerEpoch)
+	banner += fmt.Sprintf("%s- LimitPenaltyEpoch: %v", prefix, c.LimitPenaltyEpoch)
+	banner += fmt.Sprintf("%s- MinimumSigningTx: %v", prefix, c.MinimumSigningTx)
+	banner += fmt.Sprintf("%s- ExpTimeoutBase: %v", prefix, c.ExpTimeoutConfig.Base)
+	banner += fmt.Sprintf("%s- ExpTimeoutMaxExponent: %v", prefix, c.ExpTimeoutConfig.MaxExponent)
 	return banner
 }
 
@@ -784,6 +798,10 @@ func (c *ChainConfig) IsTIPXDCXCancellationFee(num *big.Int) bool {
 
 func (c *ChainConfig) IsTIPUpgradeReward(num *big.Int) bool {
 	return isForked(common.TIPUpgradeReward, num)
+}
+
+func (c *ChainConfig) IsTIPUpgradePenalty(num *big.Int) bool {
+	return isForked(common.TipUpgradePenalty, num)
 }
 
 func (c *ChainConfig) IsTIPEpochHalving(num *big.Int) bool {

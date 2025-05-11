@@ -578,6 +578,68 @@ func PrepareXDCTestBlockChainWithPenaltyForV2Engine(t *testing.T, numOfBlocks in
 	return blockchain, backend, currentBlock, signer, signFn
 }
 
+// V2 concensus engine, compared to PrepareXDCTestBlockChainForV2Engine: (1) no forking (2) add penalty
+func PrepareXDCTestBlockChainWithPenaltyCustomized(t *testing.T, numOfBlocks int, chainConfig *params.ChainConfig, penaltyOrNot []bool) (*core.BlockChain, *backends.SimulatedBackend, *types.Block, common.Address, func(account accounts.Account, hash []byte) ([]byte, error)) {
+	// Preparation
+	var err error
+	signer, signFn, err := backends.SimulateWalletAddressAndSignFn()
+	if err != nil {
+		t.Fatal("Error while creating simulated wallet for generating singer address and signer fn: ", err)
+	}
+	backend := getCommonBackend(t, chainConfig)
+	blockchain := backend.BlockChain()
+	blockchain.Client = backend
+
+	// Authorise
+	blockchain.Engine().(*XDPoS.XDPoS).Authorize(signer, signFn)
+
+	currentBlock := blockchain.Genesis()
+
+	go func() {
+		for range core.CheckpointCh {
+			checkpointChanMsg := <-core.CheckpointCh
+			log.Info("[V2] Got a message from core CheckpointChan!", "msg", checkpointChanMsg)
+		}
+	}()
+
+	penaltyCnt := 0
+	// Insert initial blocks
+	for i := 1; i <= numOfBlocks; i++ {
+		blockCoinBase := fmt.Sprintf("0x111000000000000000000000000000000%03d", i)
+		// for v2 blocks, fill in correct coinbase
+		if int64(i) > chainConfig.XDPoS.V2.SwitchBlock.Int64() {
+			blockCoinBase = signer.Hex()
+		}
+		roundNumber := int64(i) - chainConfig.XDPoS.V2.SwitchBlock.Int64()
+		// use signer itself as penalty
+		penalty := signer[:]
+		if roundNumber%int64(chainConfig.XDPoS.Epoch) != 0 {
+			penalty = nil
+		} else {
+			if len(penaltyOrNot) > penaltyCnt && !penaltyOrNot[penaltyCnt] {
+				penalty = nil
+				t.Log("nilnil penalty for block", i)
+			}
+			penaltyCnt++
+		}
+		block := CreateBlock(blockchain, chainConfig, currentBlock, i, roundNumber, blockCoinBase, signer, signFn, penalty, nil, "")
+
+		err = blockchain.InsertBlock(block)
+		if err != nil {
+			t.Fatal(err)
+		}
+		currentBlock = block
+	}
+
+	// Update Signer as there is no previous signer assigned
+	err = UpdateSigner(blockchain)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return blockchain, backend, currentBlock, signer, signFn
+}
+
 // V2 concensus engine, compared to PrepareXDCTestBlockChainForV2Engine: (1) no forking (2) 128 masternode candidates
 func PrepareXDCTestBlockChainWith128Candidates(t *testing.T, numOfBlocks int, chainConfig *params.ChainConfig) (*core.BlockChain, *backends.SimulatedBackend, *types.Block, common.Address, func(account accounts.Account, hash []byte) ([]byte, error)) {
 	// Preparation

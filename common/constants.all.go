@@ -42,27 +42,28 @@ type constant struct {
 	blackListHFNumber uint64
 	maxMasternodesV2  int // Last v1 masternodes
 
-	tip2019Block                  *big.Int
-	tipSigning                    *big.Int
-	tipRandomize                  *big.Int
-	tipNoHalvingMNReward          *big.Int // hard fork no halving masternodes reward
-	tipXDCX                       *big.Int
-	tipXDCXLending                *big.Int
-	tipXDCXCancellationFee        *big.Int
-	tipTRC21Fee                   *big.Int
-	tipIncreaseMasternodes        *big.Int // Upgrade MN Count at Block.
-	berlinBlock                   *big.Int
-	londonBlock                   *big.Int
-	mergeBlock                    *big.Int
-	shanghaiBlock                 *big.Int
-	blockNumberGas50x             *big.Int
-	TIPV2SwitchBlock              *big.Int
-	tipXDCXMinerDisable           *big.Int
-	tipXDCXReceiverDisable        *big.Int
-	tipUpgradeReward              *big.Int
-	tipEpochHalving               *big.Int
-	eip1559Block                  *big.Int
-	cancunBlock                   *big.Int
+	tip2019Block           *big.Int
+	tipSigning             *big.Int
+	tipRandomize           *big.Int
+	tipNoHalvingMNReward   *big.Int // hard fork no halving masternodes reward
+	tipXDCX                *big.Int
+	tipXDCXLending         *big.Int
+	tipXDCXCancellationFee *big.Int
+	tipTRC21Fee            *big.Int
+	tipIncreaseMasternodes *big.Int // Upgrade MN Count at Block.
+	berlinBlock            *big.Int
+	londonBlock            *big.Int
+	mergeBlock             *big.Int
+	shanghaiBlock          *big.Int
+	blockNumberGas50x      *big.Int
+	TIPV2SwitchBlock       *big.Int
+	tipXDCXMinerDisable    *big.Int
+	tipXDCXReceiverDisable *big.Int
+	tipUpgradeReward       *big.Int
+	tipUpgradePenalty      *big.Int
+	tipEpochHalving        *big.Int
+	eip1559Block           *big.Int
+	cancunBlock            *big.Int
 
 	trc21IssuerSMC         Address
 	xdcxListingSMC         Address
@@ -79,26 +80,27 @@ var (
 	BlackListHFNumber = MaintnetConstant.blackListHFNumber
 	MaxMasternodesV2  = MaintnetConstant.maxMasternodesV2 // Last v1 masternodes
 
-	TIP2019Block                  = MaintnetConstant.tip2019Block
-	TIPSigning                    = MaintnetConstant.tipSigning
-	TIPRandomize                  = MaintnetConstant.tipRandomize
-	TIPNoHalvingMNReward          = MaintnetConstant.tipNoHalvingMNReward
-	TIPXDCX                       = MaintnetConstant.tipXDCX
-	TIPXDCXLending                = MaintnetConstant.tipXDCXLending
-	TIPXDCXCancellationFee        = MaintnetConstant.tipXDCXCancellationFee
-	TIPTRC21Fee                   = MaintnetConstant.tipTRC21Fee
-	TIPIncreaseMasternodes        = MaintnetConstant.tipIncreaseMasternodes
-	BerlinBlock                   = MaintnetConstant.berlinBlock
-	LondonBlock                   = MaintnetConstant.londonBlock
-	MergeBlock                    = MaintnetConstant.mergeBlock
-	ShanghaiBlock                 = MaintnetConstant.shanghaiBlock
-	BlockNumberGas50x             = MaintnetConstant.blockNumberGas50x
-	TIPXDCXMinerDisable           = MaintnetConstant.tipXDCXMinerDisable
-	TIPXDCXReceiverDisable        = MaintnetConstant.tipXDCXReceiverDisable
-	Eip1559Block                  = MaintnetConstant.eip1559Block
-	CancunBlock                   = MaintnetConstant.cancunBlock
-	TIPUpgradeReward              = MaintnetConstant.tipUpgradeReward
-	TIPEpochHalving               = MaintnetConstant.tipEpochHalving
+	TIP2019Block           = MaintnetConstant.tip2019Block
+	TIPSigning             = MaintnetConstant.tipSigning
+	TIPRandomize           = MaintnetConstant.tipRandomize
+	TIPNoHalvingMNReward   = MaintnetConstant.tipNoHalvingMNReward
+	TIPXDCX                = MaintnetConstant.tipXDCX
+	TIPXDCXLending         = MaintnetConstant.tipXDCXLending
+	TIPXDCXCancellationFee = MaintnetConstant.tipXDCXCancellationFee
+	TIPTRC21Fee            = MaintnetConstant.tipTRC21Fee
+	TIPIncreaseMasternodes = MaintnetConstant.tipIncreaseMasternodes
+	BerlinBlock            = MaintnetConstant.berlinBlock
+	LondonBlock            = MaintnetConstant.londonBlock
+	MergeBlock             = MaintnetConstant.mergeBlock
+	ShanghaiBlock          = MaintnetConstant.shanghaiBlock
+	BlockNumberGas50x      = MaintnetConstant.blockNumberGas50x
+	TIPXDCXMinerDisable    = MaintnetConstant.tipXDCXMinerDisable
+	TIPXDCXReceiverDisable = MaintnetConstant.tipXDCXReceiverDisable
+	Eip1559Block           = MaintnetConstant.eip1559Block
+	CancunBlock            = MaintnetConstant.cancunBlock
+	TIPUpgradeReward       = MaintnetConstant.tipUpgradeReward
+	TipUpgradePenalty      = MaintnetConstant.tipUpgradePenalty
+	TIPEpochHalving        = MaintnetConstant.tipEpochHalving
 
 	TRC21IssuerSMC         = MaintnetConstant.trc21IssuerSMC
 	XDCXListingSMC         = MaintnetConstant.xdcxListingSMC
@@ -158,6 +160,7 @@ func CopyConstants(chainID uint64) {
 	Eip1559Block = c.eip1559Block
 	CancunBlock = c.cancunBlock
 	TIPUpgradeReward = c.tipUpgradeReward
+	TipUpgradePenalty = c.tipUpgradePenalty
 	TIPEpochHalving = c.tipEpochHalving
 
 	TRC21IssuerSMC = c.trc21IssuerSMC

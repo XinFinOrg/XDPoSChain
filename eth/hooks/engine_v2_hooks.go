@@ -45,11 +45,19 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 		parentNumber := number.Uint64() - 1
 		parentHash := currentHash
 
+		var round types.Round
 		// check and wait the latest block is already in the disk
 		// sometimes blocks are yet inserted into block
 		for timeout := 0; ; timeout++ {
 			parentHeader := chain.GetHeader(parentHash, parentNumber)
 			if parentHeader != nil { // found the latest block in the disk
+				// extract round number from the lastest block
+				r, err := adaptor.EngineV2.GetRoundNumber(parentHeader)
+				if err != nil {
+					log.Error("[V2 Hook Penalty] Fail to get round", "error", err)
+					return nil, err
+				}
+				round = r
 				break
 			}
 			log.Info("[V2 Hook Penalty] parentHeader is nil, wait block to be writen in disk", "parentNumber", parentNumber)
@@ -83,11 +91,16 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 			listBlockHash = append(listBlockHash, parentHash)
 		}
 
+		currentConfig := chain.Config().XDPoS.V2.Config(uint64(round))
 		// add list not miner to penalties
 		preMasternodes := adaptor.EngineV2.GetMasternodesByHash(chain, currentHash)
 		penalties := []common.Address{}
 		for miner, total := range statMiners {
-			if total < common.MinimunMinerBlockPerEpoch {
+			minimunMinerBlockPerEpoch := common.MinimunMinerBlockPerEpoch
+			if chain.Config().IsTIPUpgradePenalty(number) {
+				minimunMinerBlockPerEpoch = currentConfig.MinimumMinerBlockPerEpoch
+			}
+			if total < minimunMinerBlockPerEpoch {
 				log.Info("[HookPenalty] Find a node does not create enough block", "addr", miner.Hex(), "total", total, "require", common.MinimunMinerBlockPerEpoch)
 				penalties = append(penalties, miner)
 			}
@@ -101,69 +114,123 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 
 		// get list check penalties signing block & list master nodes wil comeback
 		// start to calc comeback at v2 block + limitPenaltyEpochV2 to avoid reading v1 blocks
-		comebackHeight := (common.LimitPenaltyEpochV2+1)*chain.Config().XDPoS.Epoch + chain.Config().XDPoS.V2.SwitchBlock.Uint64()
-		penComebacks := []common.Address{}
-		if number.Uint64() > comebackHeight {
-			pens := adaptor.EngineV2.GetPreviousPenaltyByHash(chain, currentHash, common.LimitPenaltyEpochV2)
-			for _, p := range pens {
-				for _, addr := range candidates {
-					if p == addr {
-						log.Info("[HookPenalty] get previous penalty node and add into comeback list", "addr", addr)
-						penComebacks = append(penComebacks, p)
-						break
-					}
-				}
-			}
-		}
 
-		// Loop for each block to check missing sign. with comeback nodes
-		mapBlockHash := map[common.Hash]bool{}
-		startRange := common.RangeReturnSigner - 1
-		// to prevent visiting outside index of listBlockHash
-		if startRange >= len(listBlockHash) {
-			startRange = len(listBlockHash) - 1
-		}
-		for i := startRange; i >= 0; i-- {
-			if len(penComebacks) == 0 {
-				break
-			}
-			blockNumber := number.Uint64() - uint64(i) - 1
-			bhash := listBlockHash[i]
-			if blockNumber%common.MergeSignRange == 0 {
-				mapBlockHash[bhash] = true
-			}
-			signingTxs, ok := adaptor.GetCachedSigningTxs(bhash)
-			if !ok {
-				block := chain.GetBlock(bhash, blockNumber)
-				txs := block.Transactions()
-				signingTxs = adaptor.CacheSigningTxs(bhash, txs)
-			}
-			// Check signer signed?
-			for _, tx := range signingTxs {
-				blkHash := common.BytesToHash(tx.Data()[len(tx.Data())-32:])
-				from := *tx.From()
-				if mapBlockHash[blkHash] {
-					for j, addr := range penComebacks {
-						if from == addr {
-							// Remove it from dupSigners.
-							penComebacks = append(penComebacks[:j], penComebacks[j+1:]...)
+		if !chain.Config().IsTIPUpgradePenalty(number) {
+			comebackHeight := (common.LimitPenaltyEpochV2+1)*chain.Config().XDPoS.Epoch + chain.Config().XDPoS.V2.SwitchBlock.Uint64()
+			penComebacks := []common.Address{}
+			if number.Uint64() > comebackHeight {
+				pens := adaptor.EngineV2.GetPreviousPenaltyByHash(chain, currentHash, common.LimitPenaltyEpochV2)
+				for _, p := range pens {
+					for _, addr := range candidates {
+						if p == addr {
+							log.Info("[HookPenalty] get previous penalty node and add into comeback list", "addr", addr)
+							penComebacks = append(penComebacks, p)
 							break
 						}
 					}
 				}
-			}
-		}
+				// Loop for each block to check missing sign. with comeback nodes
+				mapBlockHash := map[common.Hash]bool{}
+				startRange := common.RangeReturnSigner - 1
+				// to prevent visiting outside index of listBlockHash
+				if startRange >= len(listBlockHash) {
+					startRange = len(listBlockHash) - 1
+				}
+				for i := startRange; i >= 0; i-- {
+					if len(penComebacks) == 0 {
+						break
+					}
+					blockNumber := number.Uint64() - uint64(i) - 1
+					bhash := listBlockHash[i]
+					if blockNumber%common.MergeSignRange == 0 {
+						mapBlockHash[bhash] = true
+					}
+					signingTxs, ok := adaptor.GetCachedSigningTxs(bhash)
+					if !ok {
+						block := chain.GetBlock(bhash, blockNumber)
+						txs := block.Transactions()
+						signingTxs = adaptor.CacheSigningTxs(bhash, txs)
+					}
+					// Check signer signed?
+					for _, tx := range signingTxs {
+						blkHash := common.BytesToHash(tx.Data()[len(tx.Data())-32:])
+						from := *tx.From()
+						if mapBlockHash[blkHash] {
+							for j, addr := range penComebacks {
+								if from == addr {
+									// Remove it from dupSigners.
+									penComebacks = append(penComebacks[:j], penComebacks[j+1:]...)
+									break
+								}
+							}
+						}
+					}
+				}
 
-		for _, comeback := range penComebacks {
-			ok := true
-			for _, p := range penalties {
-				if p == comeback {
-					ok = false
-					break
+				for _, comeback := range penComebacks {
+					ok := true
+					for _, p := range penalties {
+						if p == comeback {
+							ok = false
+							break
+						}
+					}
+					if ok {
+						penalties = append(penalties, comeback)
+					}
 				}
 			}
-			if ok {
-				penalties = append(penalties, comeback)
+		} else { // after penalty upgrade
+			comebackHeight := (uint64(currentConfig.LimitPenaltyEpoch)+1)*chain.Config().XDPoS.Epoch + chain.Config().XDPoS.V2.SwitchBlock.Uint64()
+			if number.Uint64() > comebackHeight {
+				// penParolees record those who stayed enough epoch of LimitPenaltyEpoch
+				penParoleeMap := map[common.Address]int{}
+				for i := 0; i <= currentConfig.LimitPenaltyEpoch; i++ {
+					pens := adaptor.EngineV2.GetPreviousPenaltyByHash(chain, currentHash, i)
+					for _, p := range pens {
+						penParoleeMap[p] = penParoleeMap[p] + 1
+					}
+				}
+
+				// Loop for each block to check missing sign. with comeback nodes
+				mapBlockHash := map[common.Hash]bool{}
+				txSignerMap := map[common.Address]int{}
+				startRange := common.RangeReturnSigner - 1
+				// to prevent visiting outside index of listBlockHash
+				if startRange >= len(listBlockHash) {
+					startRange = len(listBlockHash) - 1
+				}
+				for i := startRange; i >= 0; i-- {
+					blockNumber := number.Uint64() - uint64(i) - 1
+					bhash := listBlockHash[i]
+					if blockNumber%common.MergeSignRange == 0 {
+						mapBlockHash[bhash] = true
+					}
+					signingTxs, ok := adaptor.GetCachedSigningTxs(bhash)
+					if !ok {
+						block := chain.GetBlock(bhash, blockNumber)
+						txs := block.Transactions()
+						signingTxs = adaptor.CacheSigningTxs(bhash, txs)
+					}
+					// Check signer signed?
+					for _, tx := range signingTxs {
+						blkHash := common.BytesToHash(tx.Data()[len(tx.Data())-32:])
+						from := *tx.From()
+						if mapBlockHash[blkHash] {
+							txSignerMap[from] = txSignerMap[from] + 1
+						}
+					}
+				}
+				for p, num := range penParoleeMap {
+					if num == currentConfig.LimitPenaltyEpoch+1 {
+						// check if this node signs enough
+						if txSignerMap[p] >= currentConfig.MinimumSigningTx {
+							continue
+						}
+					}
+					// reaches here means that the node should still stays in penalty list
+					penalties = append(penalties, p)
+				}
 			}
 		}
 
