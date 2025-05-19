@@ -3759,6 +3759,4 @@ Response:
 }
 ```
 
-## module shh
-
 ## module txpool
