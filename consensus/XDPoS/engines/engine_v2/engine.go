@@ -1089,12 +1089,25 @@ func (x *XDPoS_v2) GetMasternodesByHash(chain consensus.ChainReader, hash common
 
 // Given hash, get master node from the epoch switch block of the previous `limit` epoch
 func (x *XDPoS_v2) GetPreviousPenaltyByHash(chain consensus.ChainReader, hash common.Hash, limit int) []common.Address {
-	epochSwitchInfo, err := x.getPreviousEpochSwitchInfoByHash(chain, hash, limit)
+	currentEpochSwitchInfo, err := x.getEpochSwitchInfo(chain, nil, hash)
 	if err != nil {
 		log.Error("[GetPreviousPenaltyByHash] Adaptor v2 getPreviousEpochSwitchInfoByHash has error, potentially bug", "err", err)
 		return []common.Address{}
 	}
-	header := chain.GetHeaderByHash(epochSwitchInfo.EpochSwitchBlockInfo.Hash)
+	if limit == 0 {
+		return currentEpochSwitchInfo.Penalties
+	}
+	epochNum := x.config.V2.SwitchEpoch + uint64(currentEpochSwitchInfo.EpochSwitchBlockInfo.Round)/x.config.Epoch
+	if epochNum < uint64(limit) {
+		// avoid negative number
+		log.Error("[GetPreviousPenaltyByHash] Adaptor v2 getPreviousEpochSwitchInfoByHash has error, too large limit", "limit", limit)
+		return []common.Address{}
+	}
+	_, header, err := x.binarySearchBlockByEpochNumber(chain, epochNum-uint64(limit), currentEpochSwitchInfo.EpochSwitchBlockInfo.Number.Uint64()-x.config.Epoch*uint64(limit), currentEpochSwitchInfo.EpochSwitchParentBlockInfo.Number.Uint64())
+	if err != nil {
+		log.Error("[GetPreviousPenaltyByHash] Adaptor v2 getPreviousEpochSwitchInfoByHash has error, potentially bug", "err", err)
+		return []common.Address{}
+	}
 	return common.ExtractAddressFromBytes(header.Penalties)
 }
 

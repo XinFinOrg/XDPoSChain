@@ -246,28 +246,28 @@ func (x *XDPoS_v2) getBlockByEpochNumberInCache(chain consensus.ChainReader, est
 	return nil
 }
 
-func (x *XDPoS_v2) binarySearchBlockByEpochNumber(chain consensus.ChainReader, targetEpochNum uint64, start, end uint64) (*types.BlockInfo, error) {
+func (x *XDPoS_v2) binarySearchBlockByEpochNumber(chain consensus.ChainReader, targetEpochNum uint64, start, end uint64) (*types.BlockInfo, *types.Header, error) {
 	// `end` must be larger than the target and `start` could be the target
 	for start < end {
 		header := chain.GetHeaderByNumber((start + end) / 2)
 		if header == nil {
-			return nil, errors.New("header nil in binary search")
+			return nil, nil, errors.New("header nil in binary search")
 		}
 		isEpochSwitch, epochNum, err := x.IsEpochSwitch(header)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if epochNum == targetEpochNum {
 			_, round, _, err := x.getExtraFields(header)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if isEpochSwitch {
 				return &types.BlockInfo{
 					Hash:   header.Hash(),
 					Round:  round,
 					Number: header.Number,
-				}, nil
+				}, header, nil
 			} else {
 				end = header.Number.Uint64()
 				// trick to shorten the search
@@ -287,7 +287,7 @@ func (x *XDPoS_v2) binarySearchBlockByEpochNumber(chain consensus.ChainReader, t
 			start = nextStart
 		}
 	}
-	return nil, errors.New("no epoch switch header in binary search (all rounds in this epoch are missed, which is very rare)")
+	return nil, nil, errors.New("no epoch switch header in binary search (all rounds in this epoch are missed, which is very rare)")
 }
 
 func (x *XDPoS_v2) GetBlockByEpochNumber(chain consensus.ChainReader, targetEpochNum uint64) (*types.BlockInfo, error) {
@@ -337,5 +337,6 @@ func (x *XDPoS_v2) GetBlockByEpochNumber(chain consensus.ChainReader, targetEpoc
 		}
 	}
 	// else, we use binary search
-	return x.binarySearchBlockByEpochNumber(chain, targetEpochNum, estBlockNum.Uint64(), epochSwitchInfo.EpochSwitchBlockInfo.Number.Uint64())
+	blockInfo, _, err = x.binarySearchBlockByEpochNumber(chain, targetEpochNum, estBlockNum.Uint64(), epochSwitchInfo.EpochSwitchBlockInfo.Number.Uint64())
+	return blockInfo, err
 }
