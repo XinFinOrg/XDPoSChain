@@ -472,7 +472,7 @@ func (le *lendingExchangeState) CommitInvestingTrie(db Database) error {
 	if le.dbErr != nil {
 		return le.dbErr
 	}
-	root, err := le.investingTrie.Commit(func(leaf []byte, parent common.Hash) error {
+	root, err := le.investingTrie.Commit(func(path []byte, leaf []byte, parent common.Hash) error {
 		var orderList itemList
 		if err := rlp.DecodeBytes(leaf, &orderList); err != nil {
 			return nil
@@ -493,7 +493,7 @@ func (le *lendingExchangeState) CommitBorrowingTrie(db Database) error {
 	if le.dbErr != nil {
 		return le.dbErr
 	}
-	root, err := le.borrowingTrie.Commit(func(leaf []byte, parent common.Hash) error {
+	root, err := le.borrowingTrie.Commit(func(path []byte, leaf []byte, parent common.Hash) error {
 		var orderList itemList
 		if err := rlp.DecodeBytes(leaf, &orderList); err != nil {
 			return nil
@@ -514,7 +514,7 @@ func (le *lendingExchangeState) CommitLiquidationTimeTrie(db Database) error {
 	if le.dbErr != nil {
 		return le.dbErr
 	}
-	root, err := le.liquidationTimeTrie.Commit(func(leaf []byte, parent common.Hash) error {
+	root, err := le.liquidationTimeTrie.Commit(func(path []byte, leaf []byte, parent common.Hash) error {
 		var orderList itemList
 		if err := rlp.DecodeBytes(leaf, &orderList); err != nil {
 			return nil
