@@ -320,16 +320,22 @@ func (s *stateSync) Cancel() error {
 // receive data from peers, rather those are buffered up in the downloader and
 // pushed here async. The reason is to decouple processing from data receipt
 // and timeouts.
-func (s *stateSync) loop() error {
+func (s *stateSync) loop() (err error) {
 	close(s.started)
 	// Listen for new peer events to assign tasks to them
 	newPeer := make(chan *peerConnection, 1024)
 	peerSub := s.d.peers.SubscribeNewPeers(newPeer)
 	defer peerSub.Unsubscribe()
+	defer func() {
+		cerr := s.commit(true)
+		if err == nil {
+			err = cerr
+		}
+	}()
 
 	// Keep assigning new tasks until the sync completes or aborts
 	for s.sched.Pending() > 0 {
-		if err := s.commit(false); err != nil {
+		if err = s.commit(false); err != nil {
 			return err
 		}
 		s.assignTasks()
@@ -342,7 +348,7 @@ func (s *stateSync) loop() error {
 			return errCancelStateFetch
 
 		case <-s.d.cancelCh:
-			return errCancelStateFetch
+			return errCanceled
 
 		case req := <-s.deliver:
 			// Response, disconnect or timeout triggered, drop the peer if stalling
@@ -376,10 +382,9 @@ func (s *stateSync) loop() error {
 				log.Warn("Node data write error", "err", err)
 				return err
 			}
-			req.peer.SetNodeDataIdle(delivered)
 		}
 	}
-	return s.commit(true)
+	return nil
 }
 
 func (s *stateSync) commit(force bool) error {
@@ -388,7 +393,9 @@ func (s *stateSync) commit(force bool) error {
 	}
 	start := time.Now()
 	b := s.d.stateDB.NewBatch()
-	s.sched.Commit(b)
+	if err := s.sched.Commit(b); err != nil {
+		return err
+	}
 	if err := b.Write(); err != nil {
 		return fmt.Errorf("write DB error: %v", err)
 	}
