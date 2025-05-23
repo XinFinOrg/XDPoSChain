@@ -236,7 +236,7 @@ findFork:
 			if len(right)-pos < len(rn.Key) || !bytes.Equal(rn.Key, right[pos:pos+len(rn.Key)]) {
 				return errors.New("invalid edge path")
 			}
-			rn.flags = NodeFlag{dirty: true}
+			rn.flags = nodeFlag{dirty: true}
 			// Special case, the non-existent proof points to the same path
 			// as the existent proof, but the path of existent proof is longer.
 			// In this case, the fork point is this shortnode.
@@ -251,7 +251,7 @@ findFork:
 			if rightnode == nil {
 				return errors.New("invalid edge path")
 			}
-			rn.flags = NodeFlag{dirty: true}
+			rn.flags = nodeFlag{dirty: true}
 			if leftnode != rightnode {
 				break findFork
 			}
@@ -305,12 +305,12 @@ func unset(parent node, child node, key []byte, pos int, removeLeft bool) error 
 			for i := 0; i < int(key[pos]); i++ {
 				cld.Children[i] = nil
 			}
-			cld.flags = NodeFlag{dirty: true}
+			cld.flags = nodeFlag{dirty: true}
 		} else {
 			for i := key[pos] + 1; i < 16; i++ {
 				cld.Children[i] = nil
 			}
-			cld.flags = NodeFlag{dirty: true}
+			cld.flags = nodeFlag{dirty: true}
 		}
 		return unset(cld, cld.Children[key[pos]], key, pos+1, removeLeft)
 	case *shortNode:
@@ -337,7 +337,7 @@ func unset(parent node, child node, key []byte, pos int, removeLeft bool) error 
 			fn.Children[key[pos-1]] = nil
 			return nil
 		}
-		cld.flags = NodeFlag{dirty: true}
+		cld.flags = nodeFlag{dirty: true}
 		return unset(cld, cld.Val, key, pos+len(cld.Key), removeLeft)
 	case nil:
 		// If the Node is nil, it's a child of the fork point

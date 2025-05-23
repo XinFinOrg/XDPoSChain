@@ -233,7 +233,7 @@ func expandNode(hash hashNode, n node) node {
 		return &shortNode{
 			Key: compactToHex(n.Key),
 			Val: expandNode(nil, n.Val),
-			flags: NodeFlag{
+			flags: nodeFlag{
 				hash: hash,
 			},
 		}
@@ -241,7 +241,7 @@ func expandNode(hash hashNode, n node) node {
 	case rawFullNode:
 		// Full nodes need child expansion
 		node := &fullNode{
-			flags: NodeFlag{
+			flags: nodeFlag{
 				hash: hash,
 			},
 		}

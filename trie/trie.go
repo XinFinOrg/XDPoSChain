@@ -47,8 +47,8 @@ type Trie struct {
 }
 
 // newFlag returns the Cache flag value for a newly created Node.
-func (t *Trie) newFlag() NodeFlag {
-	return NodeFlag{dirty: true}
+func (t *Trie) newFlag() nodeFlag {
+	return nodeFlag{dirty: true}
 }
 
 // New creates a trie with an existing root Node from Db.

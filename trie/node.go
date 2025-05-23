@@ -36,12 +36,12 @@ type node interface {
 type (
 	fullNode struct {
 		Children [17]node // Actual trie Node data to encode/decode (needs custom encoder)
-		flags    NodeFlag
+		flags    nodeFlag
 	}
 	shortNode struct {
 		Key   []byte
 		Val   node
-		flags NodeFlag
+		flags nodeFlag
 	}
 	hashNode  []byte
 	valueNode []byte
@@ -61,8 +61,8 @@ func (n *fullNode) EncodeRLP(w io.Writer) error {
 func (n *fullNode) copy() *fullNode   { copy := *n; return &copy }
 func (n *shortNode) copy() *shortNode { copy := *n; return &copy }
 
-// NodeFlag contains caching-related metadata about a Node.
-type NodeFlag struct {
+// nodeFlag contains caching-related metadata about a Node.
+type nodeFlag struct {
 	hash  hashNode // cached hash of the Node (may be nil)
 	dirty bool     // whether the Node has changes that must be written to the database
 }
@@ -133,7 +133,7 @@ func decodeShort(hash, elems []byte) (node, error) {
 	if err != nil {
 		return nil, err
 	}
-	flag := NodeFlag{hash: hash}
+	flag := nodeFlag{hash: hash}
 	key := compactToHex(kbuf)
 	if hasTerm(key) {
 		// value Node
@@ -151,7 +151,7 @@ func decodeShort(hash, elems []byte) (node, error) {
 }
 
 func decodeFull(hash, elems []byte) (*fullNode, error) {
-	n := &fullNode{flags: NodeFlag{hash: hash}}
+	n := &fullNode{flags: nodeFlag{hash: hash}}
 	for i := 0; i < 16; i++ {
 		cld, rest, err := decodeRef(elems)
 		if err != nil {
