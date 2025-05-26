@@ -181,6 +181,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 			TrieDirtyLimit:      config.TrieDirtyCache,
 			TrieDirtyDisabled:   config.NoPruning,
 			TrieTimeLimit:       config.TrieTimeout,
+			Preimages:           config.Preimages,
 		}
 	)
 	if eth.chainConfig.XDPoS != nil {

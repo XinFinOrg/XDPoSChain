@@ -308,6 +308,12 @@ var (
 		Usage:    "Enable heuristic state prefetch during block import",
 		Category: flags.PerfCategory,
 	}
+	CachePreimagesFlag = &cli.BoolFlag{
+		Name:     "cache-preimages",
+		Usage:    "Enable recording the SHA3/keccak preimages of trie keys (default: true)",
+		Value:    true,
+		Category: flags.PerfCategory,
+	}
 	CacheLogSizeFlag = &cli.IntFlag{
 		Name:     "cache-blocklogs",
 		Aliases:  []string{"cache.blocklogs"},
@@ -1513,7 +1519,12 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	}
 	cfg.NoPruning = ctx.String(GCModeFlag.Name) == "archive"
 	cfg.NoPrefetch = !ctx.Bool(CachePrefetchFlag.Name)
-
+	// Read the value from the flag no matter if it's set or not.
+	cfg.Preimages = ctx.Bool(CachePreimagesFlag.Name)
+	if cfg.NoPruning && !cfg.Preimages {
+		cfg.Preimages = true
+		log.Info("Enabling recording of key preimages since archive mode is used")
+	}
 	if ctx.IsSet(CacheFlag.Name) || ctx.IsSet(CacheTrieFlag.Name) {
 		cfg.TrieCleanCache = ctx.Int(CacheFlag.Name) * ctx.Int(CacheTrieFlag.Name) / 100
 	}
@@ -1780,6 +1791,11 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (chain *core.B
 		TrieDirtyLimit:      ethconfig.Defaults.TrieDirtyCache,
 		TrieDirtyDisabled:   ctx.String(GCModeFlag.Name) == "archive",
 		TrieTimeLimit:       ethconfig.Defaults.TrieTimeout,
+		Preimages:           ctx.Bool(CachePreimagesFlag.Name),
+	}
+	if cache.TrieDirtyDisabled && !cache.Preimages {
+		cache.Preimages = true
+		log.Info("Enabling recording of key preimages since archive mode is used")
 	}
 	if ctx.IsSet(CacheFlag.Name) || ctx.IsSet(CacheTrieFlag.Name) {
 		cache.TrieCleanLimit = ctx.Int(CacheFlag.Name) * ctx.Int(CacheTrieFlag.Name) / 100

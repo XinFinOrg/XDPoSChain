@@ -118,6 +118,7 @@ type Config struct {
 	TrieCleanCache     int
 	TrieDirtyCache     int
 	TrieTimeout        time.Duration
+	Preimages          bool
 
 	// This is the number of blocks for which logs will be cached in the filter system.
 	FilterLogCacheSize int

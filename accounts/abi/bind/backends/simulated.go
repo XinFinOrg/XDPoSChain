@@ -138,7 +138,13 @@ func NewXDCSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64, chainConf
 		return lendingServ
 	}
 
-	blockchain, _ := core.NewBlockChain(database, nil, genesis.Config, consensus, vm.Config{})
+	cacheConfig := &core.CacheConfig{
+		TrieCleanLimit: 256,
+		TrieDirtyLimit: 256,
+		TrieTimeLimit:  5 * time.Minute,
+		Preimages:      true,
+	}
+	blockchain, _ := core.NewBlockChain(database, cacheConfig, genesis.Config, consensus, vm.Config{})
 
 	backend := &SimulatedBackend{
 		database:   database,

@@ -135,6 +135,7 @@ type CacheConfig struct {
 	TrieDirtyLimit      int           // Memory limit (MB) at which to start flushing dirty trie nodes to disk
 	TrieDirtyDisabled   bool          // Whether to disable trie write caching and GC altogether (archive node)
 	TrieTimeLimit       time.Duration // Time limit after which to flush the current in-memory trie to disk
+	Preimages           bool          // Whether to store preimage of trie key to the disk
 }
 
 type ResultProcessBlock struct {
@@ -238,11 +239,14 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	}
 
 	bc := &BlockChain{
-		chainConfig:         chainConfig,
-		cacheConfig:         cacheConfig,
-		db:                  db,
-		triegc:              prque.New[int64, common.Hash](nil),
-		stateCache:          state.NewDatabaseWithCache(db, cacheConfig.TrieCleanLimit),
+		chainConfig: chainConfig,
+		cacheConfig: cacheConfig,
+		db:          db,
+		triegc:      prque.New[int64, common.Hash](nil),
+		stateCache: state.NewDatabaseWithConfig(db, &trie.Config{
+			Cache:     cacheConfig.TrieCleanLimit,
+			Preimages: cacheConfig.Preimages,
+		}),
 		quit:                make(chan struct{}),
 		chainmu:             syncx.NewClosableMutex(),
 		bodyCache:           lru.NewCache[common.Hash, *types.Body](bodyCacheLimit),

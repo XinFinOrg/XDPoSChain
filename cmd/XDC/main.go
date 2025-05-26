@@ -100,6 +100,7 @@ var (
 		utils.CacheGCFlag,
 		utils.CachePrefetchFlag,
 		//utils.TrieCacheGenFlag,
+		utils.CachePreimagesFlag,
 		utils.CacheLogSizeFlag,
 		utils.FDLimitFlag,
 		utils.CryptoKZGFlag,

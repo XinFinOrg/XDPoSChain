@@ -58,7 +58,7 @@ func (eth *Ethereum) stateAtBlock(block *types.Block, reexec uint64, base *state
 
 		// Create an ephemeral trie.Database for isolating the live one. Otherwise
 		// the internal junks created by tracing will be persisted into the disk.
-		database = state.NewDatabaseWithCache(eth.chainDb, 16)
+		database = state.NewDatabaseWithConfig(eth.chainDb, &trie.Config{Cache: 16, Preimages: true})
 		// If we didn't check the dirty database, do check the clean one, otherwise
 		// we would rewind past a persisted block (specific corner case is chain
 		// tracing from the genesis).
