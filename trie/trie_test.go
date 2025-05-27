@@ -468,6 +468,24 @@ type account struct {
 	Code    []byte
 }
 
+// Benchmarks the trie Commit following a Hash. Since the trie caches the result of any operation,
+// we cannot use b.N as the number of hashing rouns, since all rounds apart from
+// the first one will be NOOP. As such, we'll use b.N as the number of account to
+// insert into the trie before measuring the hashing.
+func BenchmarkCommitAfterHash(b *testing.B) {
+	b.Run("no-onleaf", func(b *testing.B) {
+		benchmarkCommitAfterHash(b, nil)
+	})
+	var a account
+	onleaf := func(path []byte, leaf []byte, parent common.Hash) error {
+		rlp.DecodeBytes(leaf, &a)
+		return nil
+	}
+	b.Run("with-onleaf", func(b *testing.B) {
+		benchmarkCommitAfterHash(b, onleaf)
+	})
+}
+
 func TestCommitAfterHash(t *testing.T) {
 	// Create a realistic account trie to hash
 	addresses, accounts := makeAccounts(1000)
@@ -479,7 +497,7 @@ func TestCommitAfterHash(t *testing.T) {
 	trie.Hash()
 	trie.Commit(nil)
 	root := trie.Hash()
-	exp := common.HexToHash("e5e9c29bb50446a4081e6d1d748d2892c6101c1e883a1f77cf21d4094b697822")
+	exp := common.HexToHash("72f9d3f3fe1e1dd7b8936442e7642aef76371472d94319900790053c493f3fe6")
 	if exp != root {
 		t.Errorf("got %x, exp %x", root, exp)
 	}
@@ -489,25 +507,73 @@ func TestCommitAfterHash(t *testing.T) {
 	}
 }
 
+func TestTinyTrie(t *testing.T) {
+	// Create a realistic account trie to hash
+	_, accounts := makeAccounts(5)
+	trie := newEmpty()
+	trie.Update(common.Hex2Bytes("0000000000000000000000000000000000000000000000000000000000001337"), accounts[3])
+	if exp, root := common.HexToHash("8c6a85a4d9fda98feff88450299e574e5378e32391f75a055d470ac0653f1005"), trie.Hash(); exp != root {
+		t.Errorf("1: got %x, exp %x", root, exp)
+	}
+	trie.Update(common.Hex2Bytes("0000000000000000000000000000000000000000000000000000000000001338"), accounts[4])
+	if exp, root := common.HexToHash("ec63b967e98a5720e7f720482151963982890d82c9093c0d486b7eb8883a66b1"), trie.Hash(); exp != root {
+		t.Errorf("2: got %x, exp %x", root, exp)
+	}
+	trie.Update(common.Hex2Bytes("0000000000000000000000000000000000000000000000000000000000001339"), accounts[4])
+	if exp, root := common.HexToHash("0608c1d1dc3905fa22204c7a0e43644831c3b6d3def0f274be623a948197e64a"), trie.Hash(); exp != root {
+		t.Errorf("3: got %x, exp %x", root, exp)
+	}
+	checktr, _ := New(common.Hash{}, trie.Db)
+	it := NewIterator(trie.NodeIterator(nil))
+	for it.Next() {
+		checktr.Update(it.Key, it.Value)
+	}
+	if troot, itroot := trie.Hash(), checktr.Hash(); troot != itroot {
+		t.Fatalf("hash mismatch in opItercheckhash, trie: %x, check: %x", troot, itroot)
+	}
+}
+
+func benchmarkCommitAfterHash(b *testing.B, onleaf LeafCallback) {
+	// Make the random benchmark deterministic
+	addresses, accounts := makeAccounts(b.N)
+	trie := newEmpty()
+	for i := 0; i < len(addresses); i++ {
+		trie.Update(crypto.Keccak256(addresses[i][:]), accounts[i])
+	}
+	// Insert the accounts into the trie and hash it
+	trie.Hash()
+	b.ResetTimer()
+	b.ReportAllocs()
+	trie.Commit(onleaf)
+}
+
 func makeAccounts(size int) (addresses [][20]byte, accounts [][]byte) {
 	// Make the random benchmark deterministic
 	random := rand.New(rand.NewSource(0))
 	// Create a realistic account trie to hash
 	addresses = make([][20]byte, size)
 	for i := 0; i < len(addresses); i++ {
-		for j := 0; j < len(addresses[i]); j++ {
-			addresses[i][j] = byte(random.Intn(256))
-		}
+		data := make([]byte, 20)
+		random.Read(data)
+		copy(addresses[i][:], data)
 	}
 	accounts = make([][]byte, len(addresses))
 	for i := 0; i < len(accounts); i++ {
 		var (
-			nonce   = uint64(random.Int63())
-			balance = new(big.Int).Rand(random, new(big.Int).Exp(common.Big2, common.Big256, nil))
-			root    = types.EmptyRootHash
-			code    = crypto.Keccak256(nil)
+			nonce = uint64(random.Int63())
+			root  = types.EmptyRootHash
+			code  = crypto.Keccak256(nil)
 		)
-		accounts[i], _ = rlp.EncodeToBytes(&account{nonce, balance, root, code})
+		// The big.Rand function is not deterministic with regards to 64 vs 32 bit systems,
+		// and will consume different amount of data from the rand source.
+		//balance = new(big.Int).Rand(random, new(big.Int).Exp(common.Big2, common.Big256, nil))
+		// Therefore, we instead just read via byte buffer
+		numBytes := random.Uint32() % 33 // [0, 32] bytes
+		balanceBytes := make([]byte, numBytes)
+		random.Read(balanceBytes)
+		balance := new(big.Int).SetBytes(balanceBytes)
+		data, _ := rlp.EncodeToBytes(&account{nonce, balance, root, code})
+		accounts[i] = data
 	}
 	return addresses, accounts
 }

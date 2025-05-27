@@ -202,9 +202,9 @@ func TestUnlockFlag(t *testing.T) {
 	datadir := tmpDatadirWithKeystore(t)
 	defer os.RemoveAll(datadir)
 	XDC := runXDC(t,
-		"js", "--datadir", datadir, "--nat", "none", "--nodiscover", "--maxpeers", "0",
-		"--port", "0", "--unlock", "f466859ead1932d743d622cb74fc058882e8648a",
-		"testdata/empty.js")
+		"--nat", "none", "--nodiscover", "--maxpeers", "0", "--port", "0", "--nousb", "--cache", "256", "--ipcdisable",
+		"--datadir", datadir, "--unlock", "f466859ead1932d743d622cb74fc058882e8648a",
+		"js", "testdata/empty.js")
 	XDC.Expect(`
 Unlocking account f466859ead1932d743d622cb74fc058882e8648a | Attempt 1/3
 !! Unsupported terminal, password will be echoed.
@@ -227,8 +227,8 @@ func TestUnlockFlagWrongPassword(t *testing.T) {
 	datadir := tmpDatadirWithKeystore(t)
 	defer os.RemoveAll(datadir)
 	XDC := runXDC(t,
-		"--datadir", datadir, "--nat", "none", "--nodiscover", "--maxpeers", "0", "--port", "0",
-		"--unlock", "f466859ead1932d743d622cb74fc058882e8648a")
+		"--nat", "none", "--nodiscover", "--maxpeers", "0", "--port", "0", "--nousb", "--cache", "128", "--ipcdisable",
+		"--datadir", datadir, "--unlock", "f466859ead1932d743d622cb74fc058882e8648a")
 	defer XDC.ExpectExit()
 	XDC.Expect(`
 Unlocking account f466859ead1932d743d622cb74fc058882e8648a | Attempt 1/3
@@ -247,9 +247,8 @@ func TestUnlockFlagMultiIndex(t *testing.T) {
 	datadir := tmpDatadirWithKeystore(t)
 	defer os.RemoveAll(datadir)
 	XDC := runXDC(t,
-		"js", "--datadir", datadir, "--nat", "none", "--nodiscover",
-		"--maxpeers", "0", "--port", "0", "--unlock", "0,2",
-		"testdata/empty.js")
+		"--nat", "none", "--nodiscover", "--maxpeers", "0", "--port", "0", "--nousb", "--cache", "128", "--ipcdisable",
+		"--datadir", datadir, "--unlock", "0,2", "js", "testdata/empty.js")
 	XDC.Expect(`
 Unlocking account 0 | Attempt 1/3
 !! Unsupported terminal, password will be echoed.
@@ -275,9 +274,9 @@ func TestUnlockFlagPasswordFile(t *testing.T) {
 	datadir := tmpDatadirWithKeystore(t)
 	defer os.RemoveAll(datadir)
 	XDC := runXDC(t,
-		"js", "--datadir", datadir, "--nat", "none", "--nodiscover", "--maxpeers", "0",
-		"--port", "0", "--password", "testdata/passwords.txt", "--unlock", "0,2",
-		"testdata/empty.js")
+		"--nat", "none", "--nodiscover", "--maxpeers", "0", "--port", "0", "--nousb", "--cache", "128", "--ipcdisable",
+		"--datadir", datadir, "--password", "testdata/passwords.txt", "--unlock", "0,2",
+		"js", "testdata/empty.js")
 	XDC.ExpectExit()
 
 	wantMessages := []string{
@@ -296,8 +295,8 @@ func TestUnlockFlagPasswordFileWrongPassword(t *testing.T) {
 	datadir := tmpDatadirWithKeystore(t)
 	defer os.RemoveAll(datadir)
 	XDC := runXDC(t,
-		"--datadir", datadir, "--nat", "none", "--nodiscover", "--maxpeers", "0", "--port", "0",
-		"--password", "testdata/wrong-passwords.txt", "--unlock", "0,2")
+		"--nat", "none", "--nodiscover", "--maxpeers", "0", "--port", "0", "--nousb", "--cache", "128", "--ipcdisable",
+		"--datadir", datadir, "--password", "testdata/wrong-passwords.txt", "--unlock", "0,2")
 	defer XDC.ExpectExit()
 	XDC.Expect(`
 Fatal: Failed to unlock account 0 (could not decrypt key with given password)
@@ -307,9 +306,9 @@ Fatal: Failed to unlock account 0 (could not decrypt key with given password)
 func TestUnlockFlagAmbiguous(t *testing.T) {
 	store := filepath.Join("..", "..", "accounts", "keystore", "testdata", "dupes")
 	XDC := runXDC(t,
-		"js", "--keystore", store, "--nat", "none", "--nodiscover", "--maxpeers", "0",
-		"--port", "0", "--unlock", "f466859ead1932d743d622cb74fc058882e8648a",
-		"testdata/empty.js")
+		"--nat", "none", "--nodiscover", "--maxpeers", "0", "--port", "0", "--nousb", "--cache", "128", "--ipcdisable",
+		"--keystore", store, "--unlock", "f466859ead1932d743d622cb74fc058882e8648a",
+		"js", "testdata/empty.js")
 	defer XDC.ExpectExit()
 
 	// Helper for the expect template, returns absolute keystore path.
@@ -345,8 +344,8 @@ In order to avoid this warning, you need to remove the following duplicate key f
 func TestUnlockFlagAmbiguousWrongPassword(t *testing.T) {
 	store := filepath.Join("..", "..", "accounts", "keystore", "testdata", "dupes")
 	XDC := runXDC(t,
-		"--keystore", store, "--nat", "none", "--nodiscover", "--maxpeers", "0", "--port", "0",
-		"--unlock", "f466859ead1932d743d622cb74fc058882e8648a")
+		"--nat", "none", "--nodiscover", "--maxpeers", "0", "--port", "0", "--nousb", "--cache", "128", "--ipcdisable",
+		"--keystore", store, "--unlock", "f466859ead1932d743d622cb74fc058882e8648a")
 	defer XDC.ExpectExit()
 
 	// Helper for the expect template, returns absolute keystore path.
