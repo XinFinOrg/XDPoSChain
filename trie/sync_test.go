@@ -378,14 +378,13 @@ func TestIncompleteSync(t *testing.T) {
 
 	nodes, _, codes := sched.Missing(1)
 	queue := append(append([]common.Hash{}, nodes...), codes...)
-
 	for len(queue) > 0 {
 		// Fetch a batch of trie nodes
 		results := make([]SyncResult, len(queue))
 		for i, hash := range queue {
 			data, err := srcDb.Node(hash)
 			if err != nil {
-				t.Fatalf("failed to retrieve Node data for %x: %v", hash, err)
+				t.Fatalf("failed to retrieve node data for %x: %v", hash, err)
 			}
 			results[i] = SyncResult{hash, data}
 		}
@@ -402,10 +401,8 @@ func TestIncompleteSync(t *testing.T) {
 		batch.Write()
 		for _, result := range results {
 			added = append(added, result.Hash)
-		}
-		// Check that all known sub-tries in the synced trie are complete
-		for _, root := range added {
-			if err := checkTrieConsistency(triedb, root); err != nil {
+			// Check that all known sub-tries in the synced trie are complete
+			if err := checkTrieConsistency(triedb, result.Hash); err != nil {
 				t.Fatalf("trie inconsistent: %v", err)
 			}
 		}
@@ -413,7 +410,7 @@ func TestIncompleteSync(t *testing.T) {
 		nodes, _, codes = sched.Missing(1)
 		queue = append(append(queue[:0], nodes...), codes...)
 	}
-	// Sanity check that removing any Node from the database is detected
+	// Sanity check that removing any node from the database is detected
 	for _, node := range added[1:] {
 		key := node.Bytes()
 		value, _ := diskdb.Get(key)
