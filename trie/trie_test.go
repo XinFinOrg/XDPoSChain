@@ -477,7 +477,7 @@ func BenchmarkCommitAfterHash(b *testing.B) {
 		benchmarkCommitAfterHash(b, nil)
 	})
 	var a account
-	onleaf := func(path []byte, leaf []byte, parent common.Hash) error {
+	onleaf := func(_ [][]byte, _ []byte, leaf []byte, parent common.Hash) error {
 		rlp.DecodeBytes(leaf, &a)
 		return nil
 	}

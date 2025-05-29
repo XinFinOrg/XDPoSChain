@@ -136,7 +136,7 @@ func (l *liquidationPriceState) updateRoot(db Database) error {
 	if l.dbErr != nil {
 		return l.dbErr
 	}
-	root, err := l.trie.Commit(func(path []byte, leaf []byte, parent common.Hash) error {
+	root, err := l.trie.Commit(func(_ [][]byte, _ []byte, leaf []byte, parent common.Hash) error {
 		var orderList orderList
 		if err := rlp.DecodeBytes(leaf, &orderList); err != nil {
 			return nil

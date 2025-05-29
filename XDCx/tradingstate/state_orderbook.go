@@ -245,7 +245,7 @@ func (te *tradingExchanges) CommitAsksTrie(db Database) error {
 	if te.dbErr != nil {
 		return te.dbErr
 	}
-	root, err := te.asksTrie.Commit(func(path []byte, leaf []byte, parent common.Hash) error {
+	root, err := te.asksTrie.Commit(func(_ [][]byte, _ []byte, leaf []byte, parent common.Hash) error {
 		var orderList orderList
 		if err := rlp.DecodeBytes(leaf, &orderList); err != nil {
 			return nil
@@ -307,7 +307,7 @@ func (te *tradingExchanges) CommitBidsTrie(db Database) error {
 	if te.dbErr != nil {
 		return te.dbErr
 	}
-	root, err := te.bidsTrie.Commit(func(path []byte, leaf []byte, parent common.Hash) error {
+	root, err := te.bidsTrie.Commit(func(_ [][]byte, _ []byte, leaf []byte, parent common.Hash) error {
 		var orderList orderList
 		if err := rlp.DecodeBytes(leaf, &orderList); err != nil {
 			return nil
@@ -783,7 +783,7 @@ func (t *tradingExchanges) CommitLiquidationPriceTrie(db Database) error {
 	if t.dbErr != nil {
 		return t.dbErr
 	}
-	root, err := t.liquidationPriceTrie.Commit(func(path []byte, leaf []byte, parent common.Hash) error {
+	root, err := t.liquidationPriceTrie.Commit(func(_ [][]byte, _ []byte, leaf []byte, parent common.Hash) error {
 		var orderList orderList
 		if err := rlp.DecodeBytes(leaf, &orderList); err != nil {
 			return nil

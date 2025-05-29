@@ -283,7 +283,7 @@ type stateTask struct {
 func newStateSync(d *Downloader, root common.Hash) *stateSync {
 	return &stateSync{
 		d:       d,
-		sched:   state.NewStateSync(root, d.stateDB, trie.NewSyncBloom(1, memorydb.New())),
+		sched:   state.NewStateSync(root, d.stateDB, trie.NewSyncBloom(1, memorydb.New()), nil),
 		keccak:  sha3.NewLegacyKeccak256(),
 		tasks:   make(map[common.Hash]*stateTask),
 		deliver: make(chan *stateReq),
