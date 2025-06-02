@@ -95,13 +95,13 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 		// add list not miner to penalties
 		preMasternodes := adaptor.EngineV2.GetMasternodesByHash(chain, currentHash)
 		penalties := []common.Address{}
+		minimunMinerBlockPerEpoch := common.MinimunMinerBlockPerEpoch
+		if chain.Config().IsTIPUpgradePenalty(number) {
+			minimunMinerBlockPerEpoch = currentConfig.MinimumMinerBlockPerEpoch
+		}
 		for miner, total := range statMiners {
-			minimunMinerBlockPerEpoch := common.MinimunMinerBlockPerEpoch
-			if chain.Config().IsTIPUpgradePenalty(number) {
-				minimunMinerBlockPerEpoch = currentConfig.MinimumMinerBlockPerEpoch
-			}
 			if total < minimunMinerBlockPerEpoch {
-				log.Info("[HookPenalty] Find a node does not create enough block", "addr", miner.Hex(), "total", total, "require", common.MinimunMinerBlockPerEpoch)
+				log.Info("[HookPenalty] Find a node does not create enough block", "addr", miner.Hex(), "total", total, "require", minimunMinerBlockPerEpoch)
 				penalties = append(penalties, miner)
 			}
 		}
@@ -188,7 +188,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				for i := 0; i <= currentConfig.LimitPenaltyEpoch; i++ {
 					pens := adaptor.EngineV2.GetPreviousPenaltyByHash(chain, currentHash, i)
 					for _, p := range pens {
-						penParoleeMap[p] = penParoleeMap[p] + 1
+						penParoleeMap[p]++
 					}
 				}
 
@@ -217,7 +217,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 						blkHash := common.BytesToHash(tx.Data()[len(tx.Data())-32:])
 						from := *tx.From()
 						if mapBlockHash[blkHash] {
-							txSignerMap[from] = txSignerMap[from] + 1
+							txSignerMap[from]++
 						}
 					}
 				}
