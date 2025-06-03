@@ -575,7 +575,7 @@ func VerifyRangeProof(rootHash common.Hash, firstKey []byte, lastKey []byte, key
 		return nil, false, fmt.Errorf("invalid proof, want hash %x, got %x", rootHash, tr.Hash())
 	}
 	// Proof seems valid, serialize all the nodes into the database
-	if _, err := tr.Commit(nil); err != nil {
+	if _, _, err := tr.Commit(nil); err != nil {
 		return nil, false, err
 	}
 	if err := triedb.Commit(rootHash, false); err != nil {

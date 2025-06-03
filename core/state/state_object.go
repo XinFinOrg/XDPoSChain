@@ -296,11 +296,13 @@ func (s *stateObject) updateTrie(db Database) Trie {
 
 		if (value == common.Hash{}) {
 			s.setError(tr.TryDelete(key[:]))
+			s.db.StorageDeleted += 1
 			continue
 		}
 		// Encoding []byte cannot fail, ok to ignore the error.
 		v, _ := rlp.EncodeToBytes(common.TrimLeftZeroes(value[:]))
 		s.setError(tr.TryUpdate(key[:], v))
+		s.db.StorageUpdated += 1
 	}
 	if len(s.pendingStorage) > 0 {
 		s.pendingStorage = make(Storage)
@@ -320,24 +322,23 @@ func (s *stateObject) updateRoot(db Database) {
 	s.data.Root = s.trie.Hash()
 }
 
-// commitTrie submits the storage changes into the storage trie and re-computes
-// the root. Besides, all trie changes will be collected in a nodeset and returned.
-func (s *stateObject) commitTrie(db Database) error {
+// CommitTrie the storage trie of the object to dwb.
+// This updates the trie root.
+func (s *stateObject) commitTrie(db Database) (int, error) {
 	// If nothing changed, don't bother with hashing anything
 	if s.updateTrie(db) == nil {
-		return nil
+		return 0, nil
 	}
 	if s.dbErr != nil {
-		return s.dbErr
+		return 0, s.dbErr
 	}
 	// Track the amount of time wasted on committing the storage trie
 	defer func(start time.Time) { s.db.StorageCommits += time.Since(start) }(time.Now())
-
-	root, err := s.trie.Commit(nil)
+	root, committed, err := s.trie.Commit(nil)
 	if err == nil {
 		s.data.Root = root
 	}
-	return err
+	return committed, err
 }
 
 // AddBalance removes amount from c's balance.

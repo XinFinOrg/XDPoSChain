@@ -92,6 +92,11 @@ type StateDB struct {
 	StorageHashes  time.Duration
 	StorageUpdates time.Duration
 	StorageCommits time.Duration
+
+	AccountUpdated int
+	StorageUpdated int
+	AccountDeleted int
+	StorageDeleted int
 }
 
 type AccountInfo struct {
@@ -772,9 +777,11 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 		obj := s.stateObjects[addr]
 		if obj.deleted {
 			s.deleteStateObject(obj)
+			s.AccountDeleted += 1
 		} else {
 			obj.updateRoot(s.db)
 			s.updateStateObject(obj)
+			s.AccountUpdated += 1
 		}
 	}
 	if len(s.stateObjectsPending) > 0 {
@@ -809,6 +816,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 		s.stateObjectsDirty[addr] = struct{}{}
 	}
 	// Commit objects to the trie, measuring the elapsed time
+	var storageCommitted int
 	codeWriter := s.db.TrieDB().DiskDB().NewBatch()
 	for addr := range s.stateObjectsDirty {
 		if obj := s.stateObjects[addr]; !obj.deleted {
@@ -818,9 +826,11 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 				obj.dirtyCode = false
 			}
 			// Write any storage changes in the state object to its storage trie.
-			if err := obj.commitTrie(s.db); err != nil {
+			committed, err := obj.commitTrie(s.db)
+			if err != nil {
 				return common.Hash{}, err
 			}
+			storageCommitted += committed
 		}
 		// If the contract is destructed, the storage is still left in the
 		// database as dangling data. Theoretically it's should be wiped from
@@ -838,9 +848,9 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 		}
 	}
 	// Write the account trie changes, measuing the amount of wasted time
-	defer func(start time.Time) { s.AccountCommits += time.Since(start) }(time.Now())
+	start := time.Now()
 
-	return s.trie.Commit(func(_ [][]byte, _ []byte, leaf []byte, parent common.Hash) error {
+	root, accountCommitted, err := s.trie.Commit(func(_ [][]byte, _ []byte, leaf []byte, parent common.Hash) error {
 		var account Account
 		if err := rlp.DecodeBytes(leaf, &account); err != nil {
 			return nil
@@ -850,6 +860,22 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 		}
 		return nil
 	})
+	if err != nil {
+		return common.Hash{}, err
+	}
+	// Report the commit metrics
+	s.AccountCommits += time.Since(start)
+
+	accountUpdatedMeter.Mark(int64(s.AccountUpdated))
+	storageUpdatedMeter.Mark(int64(s.StorageUpdated))
+	accountDeletedMeter.Mark(int64(s.AccountDeleted))
+	storageDeletedMeter.Mark(int64(s.StorageDeleted))
+	accountCommittedMeter.Mark(int64(accountCommitted))
+	storageCommittedMeter.Mark(int64(storageCommitted))
+	s.AccountUpdated, s.AccountDeleted = 0, 0
+	s.StorageUpdated, s.StorageDeleted = 0, 0
+
+	return root, err
 }
 
 // Prepare handles the preparatory steps for executing a state transition with.

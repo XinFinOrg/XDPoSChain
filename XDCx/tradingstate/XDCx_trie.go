@@ -155,7 +155,7 @@ func (t *XDCXTrie) GetKey(shaKey []byte) []byte {
 //
 // Committing flushes nodes from memory. Subsequent Get calls will load nodes
 // from the database.
-func (t *XDCXTrie) Commit(onleaf trie.LeafCallback) (root common.Hash, err error) {
+func (t *XDCXTrie) Commit(onleaf trie.LeafCallback) (common.Hash, error) {
 	// Write all the pre-images to the actual disk database
 	if len(t.getSecKeyCache()) > 0 {
 		t.trie.Db.Lock.Lock()
@@ -167,7 +167,8 @@ func (t *XDCXTrie) Commit(onleaf trie.LeafCallback) (root common.Hash, err error
 		t.secKeyCache = make(map[string][]byte)
 	}
 	// Commit the trie to its intermediate node database
-	return t.trie.Commit(onleaf)
+	root, _, err := t.trie.Commit(onleaf)
+	return root, err
 }
 
 func (t *XDCXTrie) Hash() common.Hash {
