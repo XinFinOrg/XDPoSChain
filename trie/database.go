@@ -686,12 +686,6 @@ func (db *Database) Commit(node common.Hash, report bool) error {
 	// Move all of the accumulated preimages into a write batch
 	if db.preimages != nil {
 		rawdb.WritePreimages(batch, db.preimages)
-		if batch.ValueSize() > ethdb.IdealBatchSize {
-			if err := batch.Write(); err != nil {
-				return err
-			}
-			batch.Reset()
-		}
 		// Since we're going to replay trie Node writes into the clean Cache, flush out
 		// any batched pre-images before continuing.
 		if err := batch.Write(); err != nil {
