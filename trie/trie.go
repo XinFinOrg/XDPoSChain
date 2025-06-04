@@ -26,6 +26,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
 // LeafCallback is a callback type invoked when a trie operation reaches a leaf
@@ -400,6 +401,14 @@ func (t *Trie) Update(key, value []byte) {
 	if err := t.TryUpdate(key, value); err != nil {
 		log.Error(fmt.Sprintf("Unhandled trie error: %v", err))
 	}
+}
+
+func (t *Trie) TryUpdateAccount(key []byte, acc *types.StateAccount) error {
+	data, err := rlp.EncodeToBytes(acc)
+	if err != nil {
+		return fmt.Errorf("can't encode object at %x: %w", key[:], err)
+	}
+	return t.TryUpdate(key, data)
 }
 
 // TryUpdate associates key with value in the trie. Subsequent calls to

@@ -22,6 +22,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/XinFinOrg/XDPoSChain/trie"
@@ -91,7 +92,7 @@ func (s *StateDB) dump(c collector, excludeCode, excludeStorage, excludeMissingP
 	c.onRoot(s.trie.Hash())
 	it := trie.NewIterator(s.trie.NodeIterator(nil))
 	for it.Next() {
-		var data Account
+		var data types.StateAccount
 		if err := rlp.DecodeBytes(it.Value, &data); err != nil {
 			panic(err)
 		}

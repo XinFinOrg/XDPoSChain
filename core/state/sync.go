@@ -20,6 +20,7 @@ import (
 	"bytes"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/XinFinOrg/XDPoSChain/trie"
@@ -43,7 +44,7 @@ func NewStateSync(root common.Hash, database ethdb.KeyValueReader, bloom *trie.S
 				return err
 			}
 		}
-		var obj Account
+		var obj types.StateAccount
 		if err := rlp.Decode(bytes.NewReader(leaf), &obj); err != nil {
 			return err
 		}

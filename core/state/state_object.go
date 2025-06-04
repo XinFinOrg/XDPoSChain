@@ -62,9 +62,9 @@ func (s Storage) Copy() Storage {
 // Finally, call commitTrie to write the modified storage trie into a database.
 type stateObject struct {
 	db       *StateDB
-	address  common.Address // address of ethereum account
-	addrHash common.Hash    // hash of ethereum address of the account
-	data     Account        // Account data with all mutations applied in the scope of block
+	address  common.Address     // address of ethereum account
+	addrHash common.Hash        // hash of ethereum address of the account
+	data     types.StateAccount // Account data with all mutations applied in the scope of block
 
 	// DB error.
 	// State objects are used by the consensus core and VM which are
@@ -103,17 +103,8 @@ func (s *stateObject) empty() bool {
 	return s.data.Nonce == 0 && s.data.Balance.Sign() == 0 && bytes.Equal(s.data.CodeHash, types.EmptyCodeHash.Bytes())
 }
 
-// Account is the Ethereum consensus representation of accounts.
-// These objects are stored in the main account trie.
-type Account struct {
-	Nonce    uint64
-	Balance  *big.Int
-	Root     common.Hash // merkle root of the storage trie
-	CodeHash []byte
-}
-
 // newObject creates a state object.
-func newObject(db *StateDB, address common.Address, data Account) *stateObject {
+func newObject(db *StateDB, address common.Address, data types.StateAccount) *stateObject {
 	if data.Balance == nil {
 		data.Balance = new(big.Int)
 	}
@@ -136,7 +127,7 @@ func newObject(db *StateDB, address common.Address, data Account) *stateObject {
 
 // EncodeRLP implements rlp.Encoder.
 func (s *stateObject) EncodeRLP(w io.Writer) error {
-	return rlp.Encode(w, s.data)
+	return rlp.Encode(w, &s.data)
 }
 
 // setError remembers the first non-nil error it is called with.
