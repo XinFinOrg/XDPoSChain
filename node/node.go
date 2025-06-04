@@ -124,7 +124,7 @@ func New(conf *Config) (*Node, error) {
 		return nil, err
 	}
 
-	keyDir, isEphem, err := getKeyStoreDir(conf)
+	keyDir, isEphem, err := conf.GetKeyStoreDir()
 	if err != nil {
 		return nil, err
 	}
