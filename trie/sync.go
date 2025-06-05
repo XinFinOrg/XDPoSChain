@@ -198,7 +198,7 @@ func (s *Sync) AddCodeEntry(hash common.Hash, path []byte, parent common.Hash) {
 func (s *Sync) Missing(max int) []common.Hash {
 	var requests []common.Hash
 	for !s.queue.Empty() && (max == 0 || len(requests) < max) {
-		// Retrieve th enext item in line
+		// Retrieve the next item in line
 		item, prio := s.queue.Peek()
 
 		// If we have too many already-pending tasks for this depth, throttle
