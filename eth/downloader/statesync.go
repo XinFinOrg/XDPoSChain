@@ -26,7 +26,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
-	"github.com/XinFinOrg/XDPoSChain/ethdb/memorydb"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/trie"
 	"golang.org/x/crypto/sha3"
@@ -294,7 +293,7 @@ type codeTask struct {
 func newStateSync(d *Downloader, root common.Hash) *stateSync {
 	return &stateSync{
 		d:         d,
-		sched:     state.NewStateSync(root, d.stateDB, trie.NewSyncBloom(1, memorydb.New()), nil),
+		sched:     state.NewStateSync(root, d.stateDB, nil),
 		keccak:    sha3.NewLegacyKeccak256(),
 		trieTasks: make(map[common.Hash]*trieTask),
 		codeTasks: make(map[common.Hash]*codeTask),
