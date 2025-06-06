@@ -39,6 +39,7 @@ type XDCXDAO interface {
 	Has(key []byte) (bool, error)
 	Delete(key []byte) error
 	NewBatch() ethdb.Batch
+	NewBatchWithSize(size int) ethdb.Batch
 	HasAncient(kind string, number uint64) (bool, error)
 	Ancient(kind string, number uint64) ([]byte, error)
 	Ancients() (uint64, error)

@@ -882,6 +882,10 @@ func (db *MongoDatabase) NewBatch() ethdb.Batch {
 	return nil
 }
 
+func (db *MongoDatabase) NewBatchWithSize(size int) ethdb.Batch {
+	return nil
+}
+
 type keyvalue struct {
 	key   []byte
 	value []byte

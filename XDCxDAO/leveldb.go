@@ -103,6 +103,10 @@ func (db *BatchDatabase) NewBatch() ethdb.Batch {
 	return db.db.NewBatch()
 }
 
+func (db *BatchDatabase) NewBatchWithSize(size int) ethdb.Batch {
+	return db.db.NewBatch()
+}
+
 func (db *BatchDatabase) DeleteItemByTxHash(txhash common.Hash, val interface{}) {
 }
 
