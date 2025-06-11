@@ -31,7 +31,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
-	check "gopkg.in/check.v1"
 )
 
 // Tests that updating a state trie does not leak any database writes prior to
@@ -432,7 +431,8 @@ func (test *snapshotTest) checkEqual(state, checkstate *StateDB) error {
 	return nil
 }
 
-func (s *StateSuite) TestTouchDelete(c *check.C) {
+func TestTouchDelete(t *testing.T) {
+	s := newStateTest()
 	s.state.GetOrNewStateObject(common.Address{})
 	root, _ := s.state.Commit(false)
 	s.state.Reset(root)
@@ -440,11 +440,11 @@ func (s *StateSuite) TestTouchDelete(c *check.C) {
 	snapshot := s.state.Snapshot()
 	s.state.AddBalance(common.Address{}, new(big.Int))
 	if len(s.state.stateObjectsDirty) != 1 {
-		c.Fatal("expected one dirty state object")
+		t.Fatal("expected one dirty state object")
 	}
 	s.state.RevertToSnapshot(snapshot)
 	if len(s.state.stateObjectsDirty) != 0 {
-		c.Fatal("expected no dirty state object")
+		t.Fatal("expected no dirty state object")
 	}
 }
 
