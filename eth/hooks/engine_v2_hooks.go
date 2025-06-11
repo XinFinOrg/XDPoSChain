@@ -195,7 +195,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				// Loop for each block to check missing sign. with comeback nodes
 				mapBlockHash := map[common.Hash]bool{}
 				txSignerMap := map[common.Address]int{}
-				startRange := common.RangeReturnSigner - 1
+				startRange := int(chain.Config().XDPoS.Epoch) - 1
 				// to prevent visiting outside index of listBlockHash
 				if startRange >= len(listBlockHash) {
 					startRange = len(listBlockHash) - 1
