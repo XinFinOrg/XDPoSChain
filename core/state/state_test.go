@@ -36,15 +36,13 @@ type StateSuite struct {
 
 var _ = checker.Suite(&StateSuite{})
 
-var toAddr = common.BytesToAddress
-
 func (s *StateSuite) TestDump(c *checker.C) {
 	// generate a few entries
-	obj1 := s.state.GetOrNewStateObject(toAddr([]byte{0x01}))
+	obj1 := s.state.GetOrNewStateObject(common.BytesToAddress([]byte{0x01}))
 	obj1.AddBalance(big.NewInt(22))
-	obj2 := s.state.GetOrNewStateObject(toAddr([]byte{0x01, 0x02}))
+	obj2 := s.state.GetOrNewStateObject(common.BytesToAddress([]byte{0x01, 0x02}))
 	obj2.SetCode(crypto.Keccak256Hash([]byte{3, 3, 3, 3, 3, 3, 3}), []byte{3, 3, 3, 3, 3, 3, 3})
-	obj3 := s.state.GetOrNewStateObject(toAddr([]byte{0x02}))
+	obj3 := s.state.GetOrNewStateObject(common.BytesToAddress([]byte{0x02}))
 	obj3.SetBalance(big.NewInt(44))
 
 	// write some of them to the trie
@@ -111,7 +109,7 @@ func (s *StateSuite) TestNull(c *checker.C) {
 }
 
 func (s *StateSuite) TestSnapshot(c *checker.C) {
-	stateobjaddr := toAddr([]byte("aa"))
+	stateobjaddr := common.BytesToAddress([]byte("aa"))
 	var storageaddr common.Hash
 	data1 := common.BytesToHash([]byte{42})
 	data2 := common.BytesToHash([]byte{43})
@@ -146,8 +144,8 @@ func TestSnapshot2(t *testing.T) {
 	db := rawdb.NewMemoryDatabase()
 	state, _ := New(types.EmptyRootHash, NewDatabase(db))
 
-	stateobjaddr0 := toAddr([]byte("so0"))
-	stateobjaddr1 := toAddr([]byte("so1"))
+	stateobjaddr0 := common.BytesToAddress([]byte("so0"))
+	stateobjaddr1 := common.BytesToAddress([]byte("so1"))
 	var storageaddr common.Hash
 
 	data0 := common.BytesToHash([]byte{17})
