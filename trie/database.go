@@ -824,3 +824,16 @@ func (db *Database) Size() (common.StorageSize, common.StorageSize) {
 	}
 	return db.dirtiesSize + db.childrenSize + metadataSize - metarootRefs, preimageSize
 }
+
+// CommitPreimages flushes the dangling preimages to disk. It is meant to be
+// called when closing the blockchain object, so that preimages are persisted
+// to the database.
+func (db *Database) CommitPreimages() error {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	if db.preimages == nil {
+		return nil
+	}
+	return db.preimages.commit(true)
+}
