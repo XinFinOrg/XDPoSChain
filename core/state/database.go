@@ -53,6 +53,9 @@ type Database interface {
 	// ContractCodeSize retrieves a particular contracts code's size.
 	ContractCodeSize(addrHash, codeHash common.Hash) (int, error)
 
+	// DiskDB returns the underlying key-value disk database.
+	DiskDB() ethdb.KeyValueStore
+
 	// TrieDB retrieves the low level trie database used for data storage.
 	TrieDB() *trie.Database
 }
@@ -128,6 +131,7 @@ func NewDatabase(db ethdb.Database) Database {
 func NewDatabaseWithConfig(db ethdb.Database, config *trie.Config) Database {
 	return &cachingDB{
 		db:            trie.NewDatabaseWithConfig(db, config),
+		disk:          db,
 		codeCache:     lru.NewSizeConstrainedCache[common.Hash, []byte](codeCacheSize),
 		codeSizeCache: lru.NewCache[common.Hash, int](codeSizeCacheSize),
 	}
@@ -135,6 +139,7 @@ func NewDatabaseWithConfig(db ethdb.Database, config *trie.Config) Database {
 
 type cachingDB struct {
 	db            *trie.Database
+	disk          ethdb.KeyValueStore
 	codeCache     *lru.SizeConstrainedCache[common.Hash, []byte]
 	codeSizeCache *lru.Cache[common.Hash, int]
 }
@@ -172,7 +177,7 @@ func (db *cachingDB) ContractCode(addrHash, codeHash common.Hash) ([]byte, error
 	if code, _ := db.codeCache.Get(codeHash); len(code) > 0 {
 		return code, nil
 	}
-	code := rawdb.ReadCode(db.db.DiskDB(), codeHash)
+	code := rawdb.ReadCode(db.disk, codeHash)
 	if len(code) > 0 {
 		db.codeCache.Add(codeHash, code)
 		db.codeSizeCache.Add(codeHash, len(code))
@@ -188,7 +193,7 @@ func (db *cachingDB) ContractCodeWithPrefix(addrHash, codeHash common.Hash) ([]b
 	if code, _ := db.codeCache.Get(codeHash); len(code) > 0 {
 		return code, nil
 	}
-	code := rawdb.ReadCodeWithPrefix(db.db.DiskDB(), codeHash)
+	code := rawdb.ReadCodeWithPrefix(db.disk, codeHash)
 	if len(code) > 0 {
 		db.codeCache.Add(codeHash, code)
 		db.codeSizeCache.Add(codeHash, len(code))
@@ -204,6 +209,11 @@ func (db *cachingDB) ContractCodeSize(addrHash, codeHash common.Hash) (int, erro
 	}
 	code, err := db.ContractCode(addrHash, codeHash)
 	return len(code), err
+}
+
+// DiskDB returns the underlying key-value disk database.
+func (db *cachingDB) DiskDB() ethdb.KeyValueStore {
+	return db.disk
 }
 
 // TrieDB retrieves any intermediate trie-node caching layer.

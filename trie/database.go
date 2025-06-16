@@ -298,11 +298,6 @@ func NewDatabaseWithConfig(diskdb ethdb.KeyValueStore, config *Config) *Database
 	return db
 }
 
-// DiskDB retrieves the persistent storage backing the trie database.
-func (db *Database) DiskDB() ethdb.KeyValueStore {
-	return db.diskdb
-}
-
 // Preimage retrieves a cached trie Node pre-image from memory. If it cannot be
 // found cached, the method queries the persistent database for the content.
 func (db *Database) Preimage(hash common.Hash) []byte {
