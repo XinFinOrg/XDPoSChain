@@ -191,7 +191,7 @@ func (h *hasher) hashData(data []byte) hashNode {
 }
 
 // proofHash is used to construct trie proofs, and returns the 'collapsed'
-// Node (for later RLP encoding) aswell as the hashed Node -- unless the
+// Node (for later RLP encoding) as well as the hashed Node -- unless the
 // Node is smaller than 32 bytes, in which case it will be returned as is.
 // This method does not do anything on value- or hash-nodes.
 func (h *hasher) proofHash(original node) (collapsed, hashed node) {
