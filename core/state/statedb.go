@@ -45,8 +45,10 @@ type revision struct {
 // * Contracts
 // * Accounts
 type StateDB struct {
-	db   Database
-	trie Trie
+	db           Database
+	prefetcher   *triePrefetcher
+	originalRoot common.Hash // The pre-state root, before any changes were made
+	trie         Trie
 
 	// This map holds 'live' objects, which will get modified while processing a state transition.
 	stateObjects        map[common.Address]*stateObject
@@ -110,6 +112,7 @@ func New(root common.Hash, db Database) (*StateDB, error) {
 	return &StateDB{
 		db:                  db,
 		trie:                tr,
+		originalRoot:        root,
 		stateObjects:        make(map[common.Address]*stateObject),
 		stateObjectsPending: make(map[common.Address]struct{}),
 		stateObjectsDirty:   make(map[common.Address]struct{}),
@@ -121,6 +124,26 @@ func New(root common.Hash, db Database) (*StateDB, error) {
 	}, nil
 }
 
+// StartPrefetcher initializes a new trie prefetcher to pull in nodes from the
+// state trie concurrently while the state is mutated so that when we reach the
+// commit phase, most of the needed data is already hot.
+func (s *StateDB) StartPrefetcher(namespace string) {
+	if s.prefetcher != nil {
+		s.prefetcher.close()
+		s.prefetcher = nil
+	}
+	s.prefetcher = newTriePrefetcher(s.db, s.originalRoot, namespace)
+}
+
+// StopPrefetcher terminates a running prefetcher and reports any leftover stats
+// from the gathered metrics.
+func (s *StateDB) StopPrefetcher() {
+	if s.prefetcher != nil {
+		s.prefetcher.close()
+		s.prefetcher = nil
+	}
+}
+
 // setError remembers the first non-nil error it is called with.
 func (s *StateDB) setError(err error) {
 	if s.dbErr == nil {
@@ -130,27 +153,6 @@ func (s *StateDB) setError(err error) {
 
 func (s *StateDB) Error() error {
 	return s.dbErr
-}
-
-// Reset clears out all ephemeral state objects from the state db, but keeps
-// the underlying state trie to avoid reloading data for the next operations.
-func (s *StateDB) Reset(root common.Hash) error {
-	tr, err := s.db.OpenTrie(root)
-	if err != nil {
-		return err
-	}
-	s.trie = tr
-	s.stateObjects = make(map[common.Address]*stateObject)
-	s.stateObjectsPending = make(map[common.Address]struct{})
-	s.stateObjectsDirty = make(map[common.Address]struct{})
-	s.thash = common.Hash{}
-	s.txIndex = 0
-	s.logs = make(map[common.Hash][]*types.Log)
-	s.logSize = 0
-	s.preimages = make(map[common.Hash][]byte)
-	s.clearJournalAndRefund()
-	s.accessList = newAccessList()
-	return nil
 }
 
 func (s *StateDB) AddLog(log *types.Log) {
@@ -699,6 +701,12 @@ func (s *StateDB) Copy() *StateDB {
 
 	state.transientStorage = s.transientStorage.Copy()
 
+	// If there's a prefetcher running, make an inactive copy of it that can
+	// only access data but does not actively preload (since the user will not
+	// know that they need to explicitly terminate an active copy).
+	if s.prefetcher != nil {
+		state.prefetcher = s.prefetcher.copy()
+	}
 	return state
 }
 
@@ -735,6 +743,7 @@ func (s *StateDB) GetRefund() uint64 {
 // the journal as well as the refunds. Finalise, however, will not push any updates
 // into the tries just yet. Only IntermediateRoot or Commit will do that.
 func (s *StateDB) Finalise(deleteEmptyObjects bool) {
+	addressesToPrefetch := make([][]byte, 0, len(s.journal.dirties))
 	for addr := range s.journal.dirties {
 		obj, exist := s.stateObjects[addr]
 		if !exist {
@@ -744,11 +753,19 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 		if obj.selfDestructed || (deleteEmptyObjects && obj.empty()) {
 			obj.deleted = true
 		} else {
-			obj.finalise()
+			obj.finalise(true) // Prefetch slots in the background
 		}
 		obj.created = false
 		s.stateObjectsPending[addr] = struct{}{}
 		s.stateObjectsDirty[addr] = struct{}{}
+
+		// At this point, also ship the address off to the precacher. The precacher
+		// will start loading tries, and when the change is eventually committed,
+		// the commit-phase will be a lot faster
+		addressesToPrefetch = append(addressesToPrefetch, common.CopyBytes(addr[:])) // Copy needed for closure
+	}
+	if s.prefetcher != nil && len(addressesToPrefetch) > 0 {
+		s.prefetcher.prefetch(s.originalRoot, addressesToPrefetch)
 	}
 	// Invalidate journal because reverting across transactions is not allowed.
 	s.clearJournalAndRefund()
@@ -761,14 +778,49 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 	// Finalise all the dirty storage states and write them into the tries
 	s.Finalise(deleteEmptyObjects)
 
+	// If there was a trie prefetcher operating, it gets aborted and irrevocably
+	// modified after we start retrieving tries. Remove it from the statedb after
+	// this round of use.
+	//
+	// This is weird pre-byzantium since the first tx runs with a prefetcher and
+	// the remainder without, but pre-byzantium even the initial prefetcher is
+	// useless, so no sleep lost.
+	prefetcher := s.prefetcher
+	if s.prefetcher != nil {
+		defer func() {
+			s.prefetcher.close()
+			s.prefetcher = nil
+		}()
+	}
+	// Although naively it makes sense to retrieve the account trie and then do
+	// the contract storage and account updates sequentially, that short circuits
+	// the account prefetcher. Instead, let's process all the storage updates
+	// first, giving the account prefeches just a few more milliseconds of time
+	// to pull useful data from disk.
 	for addr := range s.stateObjectsPending {
-		obj := s.stateObjects[addr]
-		if obj.deleted {
+		if obj := s.stateObjects[addr]; !obj.deleted {
+			obj.updateRoot(s.db)
+		}
+	}
+	// Now we're about to start to write changes to the trie. The trie is so far
+	// _untouched_. We can check with the prefetcher, if it can give us a trie
+	// which has the same root, but also has some content loaded into it.
+	if prefetcher != nil {
+		if trie := prefetcher.trie(s.originalRoot); trie != nil {
+			s.trie = trie
+		}
+	}
+	usedAddrs := make([][]byte, 0, len(s.stateObjectsPending))
+	for addr := range s.stateObjectsPending {
+		if obj := s.stateObjects[addr]; obj.deleted {
 			s.deleteStateObject(obj)
 		} else {
-			obj.updateRoot(s.db)
 			s.updateStateObject(obj)
 		}
+		usedAddrs = append(usedAddrs, common.CopyBytes(addr[:])) // Copy needed for closure
+	}
+	if prefetcher != nil {
+		prefetcher.used(s.originalRoot, usedAddrs)
 	}
 	if len(s.stateObjectsPending) > 0 {
 		s.stateObjectsPending = make(map[common.Address]struct{})

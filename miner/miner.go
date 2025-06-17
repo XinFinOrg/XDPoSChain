@@ -51,15 +51,14 @@ type Backend interface {
 
 // Miner creates blocks and searches for proof-of-work values.
 type Miner struct {
-	mux *event.TypeMux
-
-	worker *worker
-
+	mux      *event.TypeMux
+	worker   *worker
 	coinbase common.Address
-	mining   int32
 	eth      Backend
 	engine   consensus.Engine
+	exitCh   chan struct{}
 
+	mining      int32
 	canStart    int32 // can start indicates whether we can start the mining operation
 	shouldStart int32 // should start indicates whether we should start after sync
 }
@@ -69,6 +68,7 @@ func New(eth Backend, config *params.ChainConfig, mux *event.TypeMux, engine con
 		eth:      eth,
 		mux:      mux,
 		engine:   engine,
+		exitCh:   make(chan struct{}),
 		worker:   newWorker(config, engine, common.Address{}, eth, mux, announceTxs),
 		canStart: 1,
 	}
@@ -84,23 +84,40 @@ func New(eth Backend, config *params.ChainConfig, mux *event.TypeMux, engine con
 // and halt your mining operation for as long as the DOS continues.
 func (m *Miner) update() {
 	events := m.mux.Subscribe(downloader.StartEvent{}, downloader.DoneEvent{}, downloader.FailedEvent{})
-	for ev := range events.Chan() {
-		switch ev.Data.(type) {
-		case downloader.StartEvent:
-			atomic.StoreInt32(&m.canStart, 0)
-			if m.Mining() {
-				m.Stop()
-				atomic.StoreInt32(&m.shouldStart, 1)
-				log.Info("Mining aborted due to sync")
-			}
-		case downloader.DoneEvent, downloader.FailedEvent:
-			shouldStart := atomic.LoadInt32(&m.shouldStart) == 1
+	defer func() {
+		if !events.Closed() {
+			events.Unsubscribe()
+		}
+	}()
 
-			atomic.StoreInt32(&m.canStart, 1)
-			atomic.StoreInt32(&m.shouldStart, 0)
-			if shouldStart {
-				m.Start(m.coinbase)
+	for {
+		select {
+		case ev := <-events.Chan():
+			if ev == nil {
+				return
 			}
+			switch ev.Data.(type) {
+			case downloader.StartEvent:
+				atomic.StoreInt32(&m.canStart, 0)
+				if m.Mining() {
+					m.Stop()
+					atomic.StoreInt32(&m.shouldStart, 1)
+					log.Info("Mining aborted due to sync")
+				}
+			case downloader.DoneEvent, downloader.FailedEvent:
+				shouldStart := atomic.LoadInt32(&m.shouldStart) == 1
+
+				atomic.StoreInt32(&m.canStart, 1)
+				atomic.StoreInt32(&m.shouldStart, 0)
+				if shouldStart {
+					m.Start(m.coinbase)
+				}
+				// stop immediately and ignore all further pending events
+				return
+			}
+		case <-m.exitCh:
+			m.worker.close()
+			return
 		}
 	}
 }
@@ -121,6 +138,7 @@ func (m *Miner) Start(coinbase common.Address) {
 }
 
 func (m *Miner) Stop() {
+	close(m.exitCh)
 	m.worker.stop()
 	atomic.StoreInt32(&m.mining, 0)
 	atomic.StoreInt32(&m.shouldStart, 0)

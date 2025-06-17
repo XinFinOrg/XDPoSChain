@@ -110,7 +110,7 @@ type worker struct {
 	// Feeds
 	pendingLogsFeed event.Feed
 
-	// update loop
+	// Subscriptions
 	mux          *event.TypeMux
 	txsCh        chan core.NewTxsEvent
 	txsSub       event.Subscription
@@ -251,6 +251,14 @@ func (w *worker) stop() {
 	}
 	atomic.StoreInt32(&w.mining, 0)
 	atomic.StoreInt32(&w.atWork, 0)
+}
+
+// close terminates all background threads maintained by the worker.
+// Note the worker does not support being closed multiple times.
+func (w *worker) close() {
+	if w.current != nil && w.current.state != nil {
+		w.current.state.StopPrefetcher()
+	}
 }
 
 func (w *worker) register(agent Agent) {
@@ -551,6 +559,7 @@ func (w *worker) makeCurrent(parent *types.Block, header *types.Header) error {
 	if err != nil {
 		return err
 	}
+	state.StartPrefetcher("miner")
 
 	author, _ := w.chain.Engine().Author(parent.Header())
 	var XDCxState *tradingstate.TradingStateDB
@@ -586,6 +595,12 @@ func (w *worker) makeCurrent(parent *types.Block, header *types.Header) error {
 
 	// Keep track of transactions which return errors so they can be removed
 	work.tcount = 0
+
+	// Swap out the old work with the new one, terminating any leftover prefetcher
+	// processes in the mean time and starting a new one.
+	if w.current != nil && w.current.state != nil {
+		w.current.state.StopPrefetcher()
+	}
 	w.current = work
 	return nil
 }

@@ -331,7 +331,8 @@ func (api *DebugAPI) traceChain(ctx context.Context, start, end *types.Block, co
 				failed = err
 				break
 			}
-			if err := statedb.Reset(root); err != nil {
+			statedb, err = state.New(root, database)
+			if err != nil {
 				failed = err
 				break
 			}
@@ -601,7 +602,8 @@ func (api *DebugAPI) computeStateDB(block *types.Block, reexec uint64) (*state.S
 		if err != nil {
 			return nil, nil, err
 		}
-		if err := statedb.Reset(root); err != nil {
+		statedb, err = state.New(root, database)
+		if err != nil {
 			return nil, nil, err
 		}
 		database.TrieDB().Reference(root, common.Hash{})

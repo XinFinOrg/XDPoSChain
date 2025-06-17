@@ -218,10 +218,9 @@ func (b *SimulatedBackend) Rollback() {
 
 func (b *SimulatedBackend) rollback(parent *types.Block) {
 	blocks, _ := core.GenerateChain(b.config, parent, b.blockchain.Engine(), b.database, 1, func(int, *core.BlockGen) {})
-	stateDB, _ := b.blockchain.State()
 
 	b.pendingBlock = blocks[0]
-	b.pendingState, _ = state.New(b.pendingBlock.Root(), stateDB.Database())
+	b.pendingState, _ = state.New(b.pendingBlock.Root(), b.blockchain.StateCache())
 }
 
 // Fork creates a side-chain that can be used to simulate reorgs.
