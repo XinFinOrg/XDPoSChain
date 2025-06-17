@@ -19,6 +19,7 @@ package tests
 import (
 	"bytes"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -53,6 +54,7 @@ func TestState(t *testing.T) {
 	st.fails(`^stCreateTest/TransactionCollisionToEmpty\.json/Byzantium/3`, "known bug ")
 
 	st.walk(t, stateTestDir, func(t *testing.T, name string, test *StateTest) {
+		fmt.Println("name", name)
 		for _, subtest := range test.Subtests() {
 			key := fmt.Sprintf("%s/%d", subtest.Fork, subtest.Index)
 			name := name + "/" + key
@@ -100,4 +102,62 @@ func withTrace(t *testing.T, gasLimit uint64, test func(vm.Config) error) {
 	}
 	t.Logf("EVM output: %#x", tracer.Output())
 	t.Logf("EVM error: %v", tracer.Error())
+}
+
+func TestExecutionSpecState(t *testing.T) {
+	executionSpecStateTestDir := filepath.Join("/Users/wp/Git/go/src/github.com/XinFinOrg/XDPoSChain", "tests", "fixtures", "state_tests", "frontier")
+	st := new(testMatcher)
+
+	st.walk(t, executionSpecStateTestDir, func(t *testing.T, name string, test *StateTest) {
+		execStateTest(t, st, test, name)
+	})
+}
+
+func execStateTest(t *testing.T, st *testMatcher, test *StateTest, name string) {
+	for _, subtest := range test.Subtests() {
+		key := fmt.Sprintf("%s/%d", subtest.Fork, subtest.Index)
+		fmt.Println(key, name)
+		t.Run(key+"/hash/trie", func(t *testing.T) {
+			withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
+				_, err := test.Run(subtest, vmconfig)
+				return st.checkFailure(t, name, err)
+			})
+		})
+		// t.Run(key+"/hash/snap", func(t *testing.T) {
+		// 	withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
+		// 		var result error
+		// 		test.Run(subtest, vmconfig, true, rawdb.HashScheme, func(err error, state *StateTestState) {
+		// 			if state.Snapshots != nil && state.StateDB != nil {
+		// 				if _, err := state.Snapshots.Journal(state.StateDB.IntermediateRoot(false)); err != nil {
+		// 					result = err
+		// 					return
+		// 				}
+		// 			}
+		// 			result = st.checkFailure(t, err)
+		// 		})
+		// 		return result
+		// 	})
+		// })
+		t.Run(key+"/path/trie", func(t *testing.T) {
+			withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
+				_, err := test.Run(subtest, vmconfig)
+				return st.checkFailure(t, name, err)
+			})
+		})
+		// t.Run(key+"/path/snap", func(t *testing.T) {
+		// 	withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
+		// 		var result error
+		// 		test.Run(subtest, vmconfig, true, rawdb.PathScheme, func(err error, state *StateTestState) {
+		// 			if state.Snapshots != nil && state.StateDB != nil {
+		// 				if _, err := state.Snapshots.Journal(state.StateDB.IntermediateRoot(false)); err != nil {
+		// 					result = err
+		// 					return
+		// 				}
+		// 			}
+		// 			result = st.checkFailure(t, err)
+		// 		})
+		// 		return result
+		// 	})
+		// })
+	}
 }

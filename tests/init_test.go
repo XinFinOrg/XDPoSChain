@@ -189,6 +189,7 @@ func (tm *testMatcher) walk(t *testing.T, dir string, runTest interface{}) {
 	// Walk the directory.
 	dirinfo, err := os.Stat(dir)
 	if os.IsNotExist(err) || !dirinfo.IsDir() {
+		fmt.Println(dirinfo)
 		fmt.Fprintf(os.Stderr, "can't find test files in %s, did you clone the tests submodule?\n", dir)
 		t.Skip("missing test files")
 	}

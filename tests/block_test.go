@@ -17,6 +17,8 @@
 package tests
 
 import (
+	"fmt"
+	"path/filepath"
 	"testing"
 )
 
@@ -41,4 +43,31 @@ func TestBlockchain(t *testing.T) {
 			t.Error(err)
 		}
 	})
+}
+func TestExecutionSpecBlocktests(t *testing.T) {
+	executionSpecBlockchainTestDir := filepath.Join("/Users/wp/Git/go/src/github.com/XinFinOrg/XDPoSChain", "tests", "fixtures", "blockchain_tests", "frontier")
+
+	bt := new(testMatcher)
+
+	bt.skipLoad(".*prague/eip7251_consolidations/contract_deployment/system_contract_deployment.json")
+	bt.skipLoad(".*prague/eip7002_el_triggerable_withdrawals/contract_deployment/system_contract_deployment.json")
+
+	bt.walk(t, executionSpecBlockchainTestDir, func(t *testing.T, name string, test *BlockTest) {
+		execBlockTest(t, bt, test, name)
+	})
+}
+
+func execBlockTest(t *testing.T, bt *testMatcher, test *BlockTest, name string) {
+	// Define all the different flag combinations we should run the tests with,
+	// picking only one for short tests.
+	//
+	// Note, witness building and self-testing is always enabled as it's a very
+	// good test to ensure that we don't break it.
+
+	if err := bt.checkFailure(t, name, test.Run()); err != nil {
+		t.Errorf("test failed: %v", err)
+		return
+	} else {
+		fmt.Println("test success:", name)
+	}
 }
