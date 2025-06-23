@@ -131,6 +131,7 @@ func (t *StateTest) Subtests() []StateSubtest {
 // Run executes a specific subtest.
 func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config) (*state.StateDB, error) {
 	config, ok := Forks[subtest.Fork]
+	fmt.Println("running test on Fork:", subtest.Fork)
 	if !ok {
 		return nil, UnsupportedForkError{subtest.Fork}
 	}
@@ -175,6 +176,7 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config) (*state.StateD
 
 	// Commit block
 	root, _ := statedb.Commit(config.IsEIP158(block.Number()))
+	fmt.Println("compare root", root, common.Hash(post.Root))	
 	if root != common.Hash(post.Root) {
 		return statedb, fmt.Errorf("post state root mismatch: got %x, want %x", root, post.Root)
 	}

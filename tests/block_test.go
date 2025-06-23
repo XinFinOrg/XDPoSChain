@@ -45,7 +45,7 @@ func TestBlockchain(t *testing.T) {
 	})
 }
 func TestExecutionSpecBlocktests(t *testing.T) {
-	executionSpecBlockchainTestDir := filepath.Join("/Users/wp/Git/go/src/github.com/XinFinOrg/XDPoSChain", "tests", "fixtures", "blockchain_tests", "frontier")
+	executionSpecBlockchainTestDir := filepath.Join("/Users/wp/Git/go/src/github.com/XinFinOrg/XDPoSChain", "tests", "fixtures-frontier", "blockchain_tests")
 
 	bt := new(testMatcher)
 
@@ -53,6 +53,7 @@ func TestExecutionSpecBlocktests(t *testing.T) {
 	bt.skipLoad(".*prague/eip7002_el_triggerable_withdrawals/contract_deployment/system_contract_deployment.json")
 
 	bt.walk(t, executionSpecBlockchainTestDir, func(t *testing.T, name string, test *BlockTest) {
+		fmt.Println("executing", name)
 		execBlockTest(t, bt, test, name)
 	})
 }

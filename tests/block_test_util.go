@@ -97,6 +97,7 @@ type btHeaderMarshaling struct {
 
 func (t *BlockTest) Run() error {
 	config, ok := Forks[t.json.Network]
+	fmt.Println("running test on Fork:", t.json.Network)
 	if !ok {
 		return UnsupportedForkError{t.json.Network}
 	}
@@ -125,6 +126,7 @@ func (t *BlockTest) Run() error {
 		return err
 	}
 	cmlast := chain.CurrentBlock().Hash()
+	fmt.Println("compare hash", cmlast, common.Hash(t.json.BestBlock))
 	if common.Hash(t.json.BestBlock) != cmlast {
 		return fmt.Errorf("last block hash validation mismatch: want: %x, have: %x", t.json.BestBlock, cmlast)
 	}

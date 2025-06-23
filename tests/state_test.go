@@ -17,6 +17,7 @@
 package tests
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"path/filepath"
@@ -72,7 +73,7 @@ func TestState(t *testing.T) {
 }
 
 // Transactions with gasLimit above this value will not get a VM trace on failure.
-const traceErrorLimit = 400000
+const traceErrorLimit = 40000000
 
 func withTrace(t *testing.T, gasLimit uint64, test func(vm.Config) error) {
 	// Use config from command line arguments.
@@ -83,43 +84,51 @@ func withTrace(t *testing.T, gasLimit uint64, test func(vm.Config) error) {
 	}
 
 	// Test failed, re-run with tracing enabled.
+	t.Error(err)
 	if gasLimit > traceErrorLimit {
 		t.Log("gas limit too high for EVM trace")
 		return
 	}
-	tracer := vm.NewStructLogger(nil)
-	config.Tracer = tracer
+	buf := new(bytes.Buffer)
+	w := bufio.NewWriter(buf)
+	// config.Tracer = logger.NewJSONLogger(&logger.Config{}, w)
 	err2 := test(config)
 	if !reflect.DeepEqual(err, err2) {
 		t.Errorf("different error for second run: %v", err2)
 	}
-	buf := new(bytes.Buffer)
-	vm.WriteTrace(buf, tracer.StructLogs())
+	w.Flush()
 	if buf.Len() == 0 {
 		t.Log("no EVM operation logs generated")
 	} else {
 		t.Log("EVM operation log:\n" + buf.String())
 	}
-	t.Logf("EVM output: %#x", tracer.Output())
-	t.Logf("EVM error: %v", tracer.Error())
+	// t.Logf("EVM output: 0x%x", tracer.Output())
+	// t.Logf("EVM error: %v", tracer.Error())
 }
 
 func TestExecutionSpecState(t *testing.T) {
-	executionSpecStateTestDir := filepath.Join("/Users/wp/Git/go/src/github.com/XinFinOrg/XDPoSChain", "tests", "fixtures", "state_tests", "frontier")
+	executionSpecStateTestDir := filepath.Join("/Users/wp/Git/go/src/github.com/XinFinOrg/XDPoSChain", "tests", "fixtures-frontier", "state_tests")
 	st := new(testMatcher)
 
 	st.walk(t, executionSpecStateTestDir, func(t *testing.T, name string, test *StateTest) {
+		fmt.Println("Executing:", name)
 		execStateTest(t, st, test, name)
 	})
 }
 
 func execStateTest(t *testing.T, st *testMatcher, test *StateTest, name string) {
+	fmt.Println(test.Subtests())
 	for _, subtest := range test.Subtests() {
 		key := fmt.Sprintf("%s/%d", subtest.Fork, subtest.Index)
-		fmt.Println(key, name)
 		t.Run(key+"/hash/trie", func(t *testing.T) {
 			withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
+				fmt.Println(vmconfig)
 				_, err := test.Run(subtest, vmconfig)
+				if err != nil {
+					fmt.Println("/hash/trie error:", st.checkFailure(t, name, err), "test name", name)
+				} else {
+					fmt.Println("/hash/trie success", "test name", name)
+				}
 				return st.checkFailure(t, name, err)
 			})
 		})
@@ -141,6 +150,11 @@ func execStateTest(t *testing.T, st *testMatcher, test *StateTest, name string) 
 		t.Run(key+"/path/trie", func(t *testing.T) {
 			withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
 				_, err := test.Run(subtest, vmconfig)
+				if err != nil {
+					fmt.Println("/path/trie error:", st.checkFailure(t, name, err), "test name", name)
+				} else {
+					fmt.Println("/path/trie success", "test name", name)
+				}
 				return st.checkFailure(t, name, err)
 			})
 		})
