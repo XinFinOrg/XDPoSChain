@@ -23,7 +23,6 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -116,7 +115,7 @@ func RunGit(args ...string) string {
 
 // readGitFile returns content of file in .git directory.
 func readGitFile(file string) string {
-	content, err := os.ReadFile(path.Join(".git", file))
+	content, err := os.ReadFile(filepath.Join(".git", file))
 	if err != nil {
 		return ""
 	}

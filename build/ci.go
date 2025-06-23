@@ -45,7 +45,6 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -377,7 +376,7 @@ func downloadProtocGenGo(cachedir string) string {
 
 	url := fmt.Sprintf("https://github.com/protocolbuffers/protobuf-go/releases/download/v%s/%s", version, archiveName)
 
-	archivePath := path.Join(cachedir, archiveName)
+	archivePath := filepath.Join(cachedir, archiveName)
 	if err := csdb.DownloadFile(url, archivePath); err != nil {
 		log.Fatal(err)
 	}
