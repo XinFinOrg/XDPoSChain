@@ -277,7 +277,7 @@ func baseRpcRequest(t *testing.T, url, bodyStr string, extraHeaders ...string) *
 	}
 	for i := 0; i < len(extraHeaders); i += 2 {
 		key, value := extraHeaders[i], extraHeaders[i+1]
-		if strings.ToLower(key) == "host" {
+		if strings.EqualFold(key, "host") {
 			req.Host = value
 		} else {
 			req.Header.Set(key, value)
