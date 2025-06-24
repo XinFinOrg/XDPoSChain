@@ -404,8 +404,8 @@ func (n *Node) startRPC() error {
 	}
 
 	var (
-		servers   []*httpServer
-		open, all = n.GetAPIs()
+		servers           []*httpServer
+		openAPIs, allAPIs = n.getAPIs()
 	)
 
 	rpcConfig := rpcEndpointConfig{
@@ -413,11 +413,11 @@ func (n *Node) startRPC() error {
 		batchResponseSizeLimit: n.config.BatchResponseMaxSize,
 	}
 
-	initHttp := func(server *httpServer, apis []rpc.API, port int) error {
+	initHttp := func(server *httpServer, port int) error {
 		if err := server.setListenAddr(n.config.HTTPHost, port); err != nil {
 			return err
 		}
-		if err := server.enableRPC(apis, httpConfig{
+		if err := server.enableRPC(openAPIs, httpConfig{
 			CorsAllowedOrigins: n.config.HTTPCors,
 			Vhosts:             n.config.HTTPVirtualHosts,
 			Modules:            n.config.HTTPModules,
@@ -435,7 +435,7 @@ func (n *Node) startRPC() error {
 		if err := server.setListenAddr(n.config.WSHost, port); err != nil {
 			return err
 		}
-		if err := server.enableWS(n.rpcAPIs, wsConfig{
+		if err := server.enableWS(openAPIs, wsConfig{
 			Modules:           n.config.WSModules,
 			Origins:           n.config.WSOrigins,
 			prefix:            n.config.WSPathPrefix,
@@ -447,7 +447,7 @@ func (n *Node) startRPC() error {
 		return nil
 	}
 
-	initAuth := func(apis []rpc.API, port int, secret []byte) error {
+	initAuth := func(port int, secret []byte) error {
 		// Enable auth via HTTP
 		server := n.httpAuth
 		if err := server.setListenAddr(n.config.AuthAddr, port); err != nil {
@@ -459,7 +459,7 @@ func (n *Node) startRPC() error {
 			batchResponseSizeLimit: engineAPIBatchResponseSizeLimit,
 			httpBodyLimit:          engineAPIBodyLimit,
 		}
-		err := server.enableRPC(apis, httpConfig{
+		err := server.enableRPC(allAPIs, httpConfig{
 			CorsAllowedOrigins: DefaultAuthCors,
 			Vhosts:             n.config.AuthVirtualHosts,
 			Modules:            DefaultAuthModules,
@@ -476,7 +476,7 @@ func (n *Node) startRPC() error {
 		if err := server.setListenAddr(n.config.AuthAddr, port); err != nil {
 			return err
 		}
-		if err := server.enableWS(apis, wsConfig{
+		if err := server.enableWS(allAPIs, wsConfig{
 			Modules:           DefaultAuthModules,
 			Origins:           DefaultAuthOrigins,
 			prefix:            DefaultAuthPrefix,
@@ -490,7 +490,7 @@ func (n *Node) startRPC() error {
 	// Set up HTTP.
 	if n.config.HTTPHost != "" {
 		// Configure legacy unauthenticated HTTP.
-		if err := initHttp(n.http, open, n.config.HTTPPort); err != nil {
+		if err := initHttp(n.http, n.config.HTTPPort); err != nil {
 			return err
 		}
 	}
@@ -502,12 +502,12 @@ func (n *Node) startRPC() error {
 		}
 	}
 	// Configure authenticated API
-	if len(open) != len(all) {
+	if len(openAPIs) != len(allAPIs) {
 		jwtSecret, err := n.obtainJWTSecret(n.config.JWTSecret)
 		if err != nil {
 			return err
 		}
-		if err := initAuth(all, n.config.AuthPort, jwtSecret); err != nil {
+		if err := initAuth(n.config.AuthPort, jwtSecret); err != nil {
 			return err
 		}
 	}
@@ -596,9 +596,9 @@ func (n *Node) RegisterAPIs(apis []rpc.API) {
 	n.rpcAPIs = append(n.rpcAPIs, apis...)
 }
 
-// GetAPIs return two sets of APIs, both the ones that do not require
+// getAPIs return two sets of APIs, both the ones that do not require
 // authentication, and the complete set
-func (n *Node) GetAPIs() (unauthenticated, all []rpc.API) {
+func (n *Node) getAPIs() (unauthenticated, all []rpc.API) {
 	for _, api := range n.rpcAPIs {
 		if !api.Authenticated {
 			unauthenticated = append(unauthenticated, api)
