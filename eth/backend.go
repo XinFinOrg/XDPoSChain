@@ -91,7 +91,7 @@ type Ethereum struct {
 	etherbase common.Address
 
 	networkId     uint64
-	netRPCService *ethapi.PublicNetAPI
+	netRPCService *ethapi.NetAPI
 
 	p2pServer *p2p.Server
 
@@ -341,7 +341,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 
 	}
 	// Start the RPC service
-	eth.netRPCService = ethapi.NewPublicNetAPI(eth.p2pServer, eth.NetVersion())
+	eth.netRPCService = ethapi.NewNetAPI(eth.p2pServer, eth.NetVersion())
 
 	// Register the backend on the node
 	stack.RegisterAPIs(eth.APIs())
@@ -411,28 +411,22 @@ func (e *Ethereum) APIs() []rpc.API {
 	return append(apis, []rpc.API{
 		{
 			Namespace: "eth",
-			Service:   NewPublicEthereumAPI(e),
-		}, {
-			Namespace: "eth",
-			Service:   NewPublicMinerAPI(e),
-		}, {
-			Namespace: "eth",
-			Service:   downloader.NewPublicDownloaderAPI(e.protocolManager.downloader, e.eventMux),
+			Service:   NewEthereumAPI(e),
 		}, {
 			Namespace: "miner",
-			Service:   NewPrivateMinerAPI(e),
+			Service:   NewMinerAPI(e),
+		}, {
+			Namespace: "eth",
+			Service:   downloader.NewDownloaderAPI(e.protocolManager.downloader, e.eventMux),
 		}, {
 			Namespace: "eth",
 			Service:   filters.NewFilterAPI(filters.NewFilterSystem(e.ApiBackend, filters.Config{LogCacheSize: e.config.FilterLogCacheSize}), false),
 		}, {
 			Namespace: "admin",
-			Service:   NewPrivateAdminAPI(e),
+			Service:   NewAdminAPI(e),
 		}, {
 			Namespace: "debug",
-			Service:   NewPublicDebugAPI(e),
-		}, {
-			Namespace: "debug",
-			Service:   NewPrivateDebugAPI(e.chainConfig, e),
+			Service:   NewDebugAPI(e.chainConfig, e),
 		}, {
 			Namespace: "net",
 			Service:   e.netRPCService,
