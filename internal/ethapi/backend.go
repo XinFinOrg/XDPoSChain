@@ -145,9 +145,6 @@ func GetAPIs(apiBackend Backend, chainReader consensus.ChainReader) []rpc.API {
 		}, {
 			Namespace: "eth",
 			Service:   NewEthereumAccountAPI(apiBackend.AccountManager()),
-		}, {
-			Namespace: "personal",
-			Service:   NewPersonalAccountAPI(apiBackend, nonceLock),
 		},
 	}
 }
