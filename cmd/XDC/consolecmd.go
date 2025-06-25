@@ -80,10 +80,7 @@ func localConsole(ctx *cli.Context) error {
 	defer stack.Close()
 
 	// Attach to the newly started node and start the JavaScript console
-	client, err := stack.Attach()
-	if err != nil {
-		utils.Fatalf("failed to attach to the inproc XDC: %v", err)
-	}
+	client := stack.Attach()
 	config := console.Config{
 		DataDir: utils.MakeDataDir(ctx),
 		DocRoot: ctx.String(utils.JSpathFlag.Name),
@@ -185,10 +182,7 @@ func ephemeralConsole(ctx *cli.Context) error {
 	defer stack.Close()
 
 	// Attach to the newly started node and start the JavaScript console
-	client, err := stack.Attach()
-	if err != nil {
-		utils.Fatalf("Failed to attach to the inproc XDC: %v", err)
-	}
+	client := stack.Attach()
 	config := console.Config{
 		DataDir: utils.MakeDataDir(ctx),
 		DocRoot: ctx.String(utils.JSpathFlag.Name),

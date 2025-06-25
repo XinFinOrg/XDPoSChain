@@ -306,10 +306,7 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, cfg X
 
 	go func() {
 		// Create an chain state reader for self-derivation
-		rpcClient, err := stack.Attach()
-		if err != nil {
-			utils.Fatalf("Failed to attach to self: %v", err)
-		}
+		rpcClient := stack.Attach()
 		stateReader := ethclient.NewClient(rpcClient)
 
 		// Open any wallets already attached
