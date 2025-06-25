@@ -280,7 +280,12 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, cfg X
 	utils.StartNode(stack)
 
 	// Unlock any account specifically requested
-	ks := stack.AccountManager().Backends(keystore.KeyStoreType)[0].(*keystore.KeyStore)
+	backends := stack.AccountManager().Backends(keystore.KeyStoreType)
+	if len(backends) == 0 {
+		log.Warn("Failed to unlock accounts, keystore is not available")
+		return
+	}
+	ks := backends[0].(*keystore.KeyStore)
 
 	if ctx.IsSet(utils.UnlockedAccountFlag.Name) {
 		cfg.Account.Unlocks = strings.Split(ctx.String(utils.UnlockedAccountFlag.Name), ",")
