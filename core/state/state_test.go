@@ -37,13 +37,13 @@ type stateTest struct {
 
 func newStateTest() *stateTest {
 	db := rawdb.NewMemoryDatabase()
-	sdb, _ := New(common.Hash{}, NewDatabase(db))
+	sdb, _ := New(types.EmptyRootHash, NewDatabase(db))
 	return &stateTest{db: db, state: sdb}
 }
 
 func TestDump(t *testing.T) {
 	db := rawdb.NewMemoryDatabase()
-	sdb, _ := New(common.Hash{}, NewDatabaseWithConfig(db, &trie.Config{Preimages: true}))
+	sdb, _ := New(types.EmptyRootHash, NewDatabaseWithConfig(db, &trie.Config{Preimages: true}))
 	s := &stateTest{db: db, state: sdb}
 
 	// generate a few entries

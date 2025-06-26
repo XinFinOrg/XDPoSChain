@@ -732,7 +732,7 @@ func TestStateDBTransientStorage(t *testing.T) {
 // first, but the journal wiped the entire state object on create-revert.
 func TestDeleteCreateRevert(t *testing.T) {
 	// Create an initial state with a single contract
-	state, _ := New(common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase()))
+	state, _ := New(types.EmptyRootHash, NewDatabase(rawdb.NewMemoryDatabase()))
 
 	addr := common.BytesToAddress([]byte("so"))
 	state.SetBalance(addr, big.NewInt(1), tracing.BalanceChangeUnspecified)
@@ -936,7 +936,7 @@ func TestFlushOrderDataLoss(t *testing.T) {
 	var (
 		memdb    = rawdb.NewMemoryDatabase()
 		statedb  = NewDatabase(memdb)
-		state, _ = New(common.Hash{}, statedb)
+		state, _ = New(types.EmptyRootHash, statedb)
 	)
 	for a := byte(0); a < 10; a++ {
 		state.CreateAccount(common.Address{a})
