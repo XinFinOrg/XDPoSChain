@@ -170,6 +170,7 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config) (*state.StateD
 	if _, err := core.ApplyMessage(evm, msg, gaspool, *coinbase); err != nil {
 		statedb.RevertToSnapshot(snapshot)
 	}
+	// fmt.Println("compare logs", rlpHash((statedb.Logs())), common.Hash(post.Logs))
 	if logs := rlpHash(statedb.Logs()); logs != common.Hash(post.Logs) {
 		return statedb, fmt.Errorf("post state logs hash mismatch: got %x, want %x", logs, post.Logs)
 	}

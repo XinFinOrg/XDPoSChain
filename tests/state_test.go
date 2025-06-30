@@ -73,7 +73,7 @@ func TestState(t *testing.T) {
 }
 
 // Transactions with gasLimit above this value will not get a VM trace on failure.
-const traceErrorLimit = 40000000
+const traceErrorLimit = 4000000000
 
 func withTrace(t *testing.T, gasLimit uint64, test func(vm.Config) error) {
 	// Use config from command line arguments.
@@ -107,7 +107,7 @@ func withTrace(t *testing.T, gasLimit uint64, test func(vm.Config) error) {
 }
 
 func TestExecutionSpecState(t *testing.T) {
-	executionSpecStateTestDir := filepath.Join("/Users/wp/Git/go/src/github.com/XinFinOrg/XDPoSChain", "tests", "fixtures-frontier", "state_tests")
+	executionSpecStateTestDir := filepath.Join("/Users/wp/Git/XDPoSChain", "tests", "fixtures-istanbul", "state_tests")
 	st := new(testMatcher)
 
 	st.walk(t, executionSpecStateTestDir, func(t *testing.T, name string, test *StateTest) {

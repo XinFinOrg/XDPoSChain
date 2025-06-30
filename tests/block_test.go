@@ -45,7 +45,7 @@ func TestBlockchain(t *testing.T) {
 	})
 }
 func TestExecutionSpecBlocktests(t *testing.T) {
-	executionSpecBlockchainTestDir := filepath.Join("/Users/wp/Git/go/src/github.com/XinFinOrg/XDPoSChain", "tests", "fixtures-frontier", "blockchain_tests")
+	executionSpecBlockchainTestDir := filepath.Join("/Users/wp/Git/XDPoSChain", "tests", "fixtures-frontier", "blockchain_tests")
 
 	bt := new(testMatcher)
 
