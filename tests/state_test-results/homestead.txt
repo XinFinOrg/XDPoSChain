@@ -1,0 +1,1262 @@
+Executing: homestead/coverage/coverage/coverage.json
+[{Homestead 0}]
+Executing: homestead/yul/yul_example/yul.json
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+{<nil> false false []}
+running test on Fork: Homestead
+Executing: frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-cdc 0 0 0]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x154f5935a676cbe98229394ce886e15212312de9a32076027fd4b77e79ad3d18 0x154f5935a676cbe98229394ce886e15212312de9a32076027fd4b77e79ad3d18
+/hash/trie success test name homestead/yul/yul_example/yul.json
+running test on Fork: Homestead
+compare root 0x62646e353b771ed32210f945879cb467778ab91b13a48e58d7b5455a91e6100a 0x62646e353b771ed32210f945879cb467778ab91b13a48e58d7b5455a91e6100a
+compare root 0x4636c1ba59c36274be2edcd4e6948ca50d3989c90730b6337088e96f66c50fbf 0x4636c1ba59c36274be2edcd4e6948ca50d3989c90730b6337088e96f66c50fbf
+/hash/trie success test name homestead/coverage/coverage/coverage.json
+/hash/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-cdc 0 0 0]
+Executing: frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Homestead-state_test-calldata_source_contract-34_bytes]
+[{Homestead 0}]
+running test on Fork: Homestead
+running test on Fork: Homestead
+Executing: frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_contract-args_size_0]
+{<nil> false false []}
+running test on Fork: Homestead
+[{Homestead 0}]
+compare root 0x154f5935a676cbe98229394ce886e15212312de9a32076027fd4b77e79ad3d18 0x154f5935a676cbe98229394ce886e15212312de9a32076027fd4b77e79ad3d18
+/path/trie success test name homestead/yul/yul_example/yul.json
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP10]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x83be35700d9474aaa79ed126310832ee3faeee020d3f000ec853db6be754bbd4 0x83be35700d9474aaa79ed126310832ee3faeee020d3f000ec853db6be754bbd4
+/hash/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Homestead-state_test-calldata_source_contract-34_bytes]
+running test on Fork: Homestead
+compare root 0x685c300f22be98efac3a9bce2e150dccdf02ffe50c8e0a56ef29f180ee55d159 0x685c300f22be98efac3a9bce2e150dccdf02ffe50c8e0a56ef29f180ee55d159
+/hash/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_contract-args_size_0]
+compare root 0x4636c1ba59c36274be2edcd4e6948ca50d3989c90730b6337088e96f66c50fbf 0x4636c1ba59c36274be2edcd4e6948ca50d3989c90730b6337088e96f66c50fbf
+/path/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-cdc 0 0 0]
+running test on Fork: Homestead
+Executing: frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-cdc 0 1 0]
+compare root 0x83be35700d9474aaa79ed126310832ee3faeee020d3f000ec853db6be754bbd4 0x83be35700d9474aaa79ed126310832ee3faeee020d3f000ec853db6be754bbd4
+/path/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Homestead-state_test-calldata_source_contract-34_bytes]
+compare root 0x62646e353b771ed32210f945879cb467778ab91b13a48e58d7b5455a91e6100a 0x62646e353b771ed32210f945879cb467778ab91b13a48e58d7b5455a91e6100a
+/path/trie success test name homestead/coverage/coverage/coverage.json
+[{Homestead 0}]
+Executing: frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Homestead-state_test-calldata_source_contract-two_bytes]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+Executing: frontier/create/create_one_byte/create_one_byte.json
+[{Homestead 0}]
+compare root 0xc75a571ad73ded754c209d5351e37352ab4a3ee9e380bc9e303fd3bf253e17e5 0xc75a571ad73ded754c209d5351e37352ab4a3ee9e380bc9e303fd3bf253e17e5
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP10]
+{<nil> false false []}
+running test on Fork: Homestead
+running test on Fork: Homestead
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x685c300f22be98efac3a9bce2e150dccdf02ffe50c8e0a56ef29f180ee55d159 0x685c300f22be98efac3a9bce2e150dccdf02ffe50c8e0a56ef29f180ee55d159
+/path/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_contract-args_size_0]
+Executing: frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_contract-args_size_16]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xa9ad1fefec1747bccbacdd6201774d7467e224cb9ae9360b6ebf014afe444d17 0xa9ad1fefec1747bccbacdd6201774d7467e224cb9ae9360b6ebf014afe444d17
+/hash/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-cdc 0 1 0]
+compare root 0xdd540834872276460fc4ba8a447b0e7bc8a2f6c0727a251bf1c77118f4eb8062 0xdd540834872276460fc4ba8a447b0e7bc8a2f6c0727a251bf1c77118f4eb8062
+/hash/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Homestead-state_test-calldata_source_contract-two_bytes]
+running test on Fork: Homestead
+running test on Fork: Homestead
+compare root 0xe97598d18d4e673f7a9d5e2b6d51efaf80042700ab945d9690911238d02dd01c 0xe97598d18d4e673f7a9d5e2b6d51efaf80042700ab945d9690911238d02dd01c
+/hash/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_contract-args_size_16]
+compare root 0xc75a571ad73ded754c209d5351e37352ab4a3ee9e380bc9e303fd3bf253e17e5 0xc75a571ad73ded754c209d5351e37352ab4a3ee9e380bc9e303fd3bf253e17e5
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP10]
+running test on Fork: Homestead
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP11]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH10]
+compare root 0xdd540834872276460fc4ba8a447b0e7bc8a2f6c0727a251bf1c77118f4eb8062 0xdd540834872276460fc4ba8a447b0e7bc8a2f6c0727a251bf1c77118f4eb8062
+/path/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Homestead-state_test-calldata_source_contract-two_bytes]
+Executing: frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Homestead-state_test-calldata_source_contract-word_n_byte]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xa9ad1fefec1747bccbacdd6201774d7467e224cb9ae9360b6ebf014afe444d17 0xa9ad1fefec1747bccbacdd6201774d7467e224cb9ae9360b6ebf014afe444d17
+/path/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-cdc 0 1 0]
+[{Homestead 0}]
+Executing: frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-cdc 0 1 1]
+compare root 0xe97598d18d4e673f7a9d5e2b6d51efaf80042700ab945d9690911238d02dd01c 0xe97598d18d4e673f7a9d5e2b6d51efaf80042700ab945d9690911238d02dd01c
+/path/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_contract-args_size_16]
+{<nil> false false []}
+running test on Fork: Homestead
+Executing: frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_contract-args_size_257]
+[{Homestead 0}]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xa175f92b2a02a0a22682ddf6bc725546b54ae737d75e498381bc07b97f58922d 0xa175f92b2a02a0a22682ddf6bc725546b54ae737d75e498381bc07b97f58922d
+/hash/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Homestead-state_test-calldata_source_contract-word_n_byte]
+compare root 0xf46a315769186c2fec2180c7348b2d13856f5df7da5755939ef4d73dfe2f894e 0xf46a315769186c2fec2180c7348b2d13856f5df7da5755939ef4d73dfe2f894e
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP11]
+running test on Fork: Homestead
+running test on Fork: Homestead
+compare root 0x6386c18f12f0ce2975ea18762e9d79295897a02bccf6d6a4b45ea7a48747b289 0x6386c18f12f0ce2975ea18762e9d79295897a02bccf6d6a4b45ea7a48747b289
+/hash/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_contract-args_size_257]
+running test on Fork: Homestead
+compare root 0xa175f92b2a02a0a22682ddf6bc725546b54ae737d75e498381bc07b97f58922d 0xa175f92b2a02a0a22682ddf6bc725546b54ae737d75e498381bc07b97f58922d
+/path/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Homestead-state_test-calldata_source_contract-word_n_byte]
+compare root 0x1bf026b543e1d59387a35928f05a6c29591228d27297f53d83a5484c2965dc00 0x1bf026b543e1d59387a35928f05a6c29591228d27297f53d83a5484c2965dc00
+/hash/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-cdc 0 1 1]
+compare root 0x93fa77e71879241717613d8b8ddb08c538ff3733adb25ffc384eab0fd0fde0c2 0x93fa77e71879241717613d8b8ddb08c538ff3733adb25ffc384eab0fd0fde0c2
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH10]
+running test on Fork: Homestead
+Executing: frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Homestead-state_test-calldata_source_tx-34_bytes]
+compare root 0xf46a315769186c2fec2180c7348b2d13856f5df7da5755939ef4d73dfe2f894e 0xf46a315769186c2fec2180c7348b2d13856f5df7da5755939ef4d73dfe2f894e
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP11]
+running test on Fork: Homestead
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP12]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x6386c18f12f0ce2975ea18762e9d79295897a02bccf6d6a4b45ea7a48747b289 0x6386c18f12f0ce2975ea18762e9d79295897a02bccf6d6a4b45ea7a48747b289
+/path/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_contract-args_size_257]
+compare root 0x1bf026b543e1d59387a35928f05a6c29591228d27297f53d83a5484c2965dc00 0x1bf026b543e1d59387a35928f05a6c29591228d27297f53d83a5484c2965dc00
+/path/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-cdc 0 1 1]
+Executing: frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_contract-args_size_2]
+Executing: frontier/opcodes/all_opcodes/all_opcodes.json
+[{Homestead 0}]
+Executing: frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-cdc 0 1 2]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xbdbe2d9797e089835b746e867b1b16eea2cf304a4bf33a439e4531b1e6370256 0xbdbe2d9797e089835b746e867b1b16eea2cf304a4bf33a439e4531b1e6370256
+/hash/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Homestead-state_test-calldata_source_tx-34_bytes]
+running test on Fork: Homestead
+compare root 0x93fa77e71879241717613d8b8ddb08c538ff3733adb25ffc384eab0fd0fde0c2 0x93fa77e71879241717613d8b8ddb08c538ff3733adb25ffc384eab0fd0fde0c2
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH10]
+[{Homestead 0}]
+[{Homestead 0}]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH11]
+{<nil> false false []}
+compare root 0xbdbe2d9797e089835b746e867b1b16eea2cf304a4bf33a439e4531b1e6370256 0xbdbe2d9797e089835b746e867b1b16eea2cf304a4bf33a439e4531b1e6370256
+/path/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Homestead-state_test-calldata_source_tx-34_bytes]
+compare root 0xfad127fa31fe3b8ee83303cdc5ac9e75f9bc7b26907caf111048a26fcc4e8460 0xfad127fa31fe3b8ee83303cdc5ac9e75f9bc7b26907caf111048a26fcc4e8460
+/hash/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_contract-args_size_2]
+running test on Fork: Homestead
+{<nil> false false []}
+running test on Fork: Homestead
+[{Homestead 0}]
+Executing: frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Homestead-state_test-calldata_source_tx-two_bytes]
+{<nil> false false []}
+running test on Fork: Homestead
+running test on Fork: Homestead
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xbe34dbd5affb9e4d1e1a43c56f50ff2d25158c89e7f3466e5c952d0af89142f0 0xbe34dbd5affb9e4d1e1a43c56f50ff2d25158c89e7f3466e5c952d0af89142f0
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP12]
+running test on Fork: Homestead
+compare root 0x826378416a570e7d23a924d9aa94bd0cd251ebdcb304358704f6e60c707edb0e 0x826378416a570e7d23a924d9aa94bd0cd251ebdcb304358704f6e60c707edb0e
+/hash/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-cdc 0 1 2]
+compare root 0xe649f74a8a5a363c39224cb42042d414682816116209e0b45105b595bd932868 0xe649f74a8a5a363c39224cb42042d414682816116209e0b45105b595bd932868
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH11]
+running test on Fork: Homestead
+running test on Fork: Homestead
+compare root 0xfad127fa31fe3b8ee83303cdc5ac9e75f9bc7b26907caf111048a26fcc4e8460 0xfad127fa31fe3b8ee83303cdc5ac9e75f9bc7b26907caf111048a26fcc4e8460
+/path/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_contract-args_size_2]
+compare root 0xb34db7d280be7a693eb083fcf77729545055a2dd39601ff12868832ba04984b2 0xb34db7d280be7a693eb083fcf77729545055a2dd39601ff12868832ba04984b2
+/hash/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Homestead-state_test-calldata_source_tx-two_bytes]
+Executing: frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_contract-args_size_33]
+[{Homestead 0}]
+running test on Fork: Homestead
+compare root 0xe649f74a8a5a363c39224cb42042d414682816116209e0b45105b595bd932868 0xe649f74a8a5a363c39224cb42042d414682816116209e0b45105b595bd932868
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH11]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH12]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xbe34dbd5affb9e4d1e1a43c56f50ff2d25158c89e7f3466e5c952d0af89142f0 0xbe34dbd5affb9e4d1e1a43c56f50ff2d25158c89e7f3466e5c952d0af89142f0
+compare root 0x826378416a570e7d23a924d9aa94bd0cd251ebdcb304358704f6e60c707edb0e 0x826378416a570e7d23a924d9aa94bd0cd251ebdcb304358704f6e60c707edb0e
+{<nil> false false []}
+running test on Fork: Homestead
+/path/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-cdc 0 1 2]
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP12]
+Executing: frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-cdc 0 neg6 9]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP13]
+[{Homestead 0}]
+compare root 0xeb580cd0e8ca927e4fab7dd72b74df26802cf42103a5f4d469bf99a7ec2f7285 0xeb580cd0e8ca927e4fab7dd72b74df26802cf42103a5f4d469bf99a7ec2f7285
+/hash/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_contract-args_size_33]
+running test on Fork: Homestead
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xbd04993128403850289bf839f87a76e2e6be8d56e4ecad5a7290581a111713c2 0xbd04993128403850289bf839f87a76e2e6be8d56e4ecad5a7290581a111713c2
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH12]
+running test on Fork: Homestead
+compare root 0xb34db7d280be7a693eb083fcf77729545055a2dd39601ff12868832ba04984b2 0xb34db7d280be7a693eb083fcf77729545055a2dd39601ff12868832ba04984b2
+/path/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Homestead-state_test-calldata_source_tx-two_bytes]
+Executing: frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Homestead-state_test-calldata_source_tx-word_n_byte]
+[{Homestead 0}]
+compare root 0xeb580cd0e8ca927e4fab7dd72b74df26802cf42103a5f4d469bf99a7ec2f7285 0xeb580cd0e8ca927e4fab7dd72b74df26802cf42103a5f4d469bf99a7ec2f7285
+/path/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_contract-args_size_33]
+{<nil> false false []}
+running test on Fork: Homestead
+Executing: frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_tx-args_size_0]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xb7efb9831a709620e1eb431eccfc9ff4f22b93685c0d54665a63e33e40797bc4 0xb7efb9831a709620e1eb431eccfc9ff4f22b93685c0d54665a63e33e40797bc4
+compare root 0xbd04993128403850289bf839f87a76e2e6be8d56e4ecad5a7290581a111713c2 0xbd04993128403850289bf839f87a76e2e6be8d56e4ecad5a7290581a111713c2
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH12]
+/hash/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-cdc 0 neg6 9]
+compare root 0xdaa047c233821c9d61cf824837c00277c4f73aa94407ae9f30a815b9123912db 0xdaa047c233821c9d61cf824837c00277c4f73aa94407ae9f30a815b9123912db
+/hash/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Homestead-state_test-calldata_source_tx-word_n_byte]
+running test on Fork: Homestead
+running test on Fork: Homestead
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH13]
+compare root 0x6518957fd60bc47b9879663f06db2d1af8f3295146903624b1914b1ee9638510 0x6518957fd60bc47b9879663f06db2d1af8f3295146903624b1914b1ee9638510
+/hash/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_tx-args_size_0]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xdaa047c233821c9d61cf824837c00277c4f73aa94407ae9f30a815b9123912db 0xdaa047c233821c9d61cf824837c00277c4f73aa94407ae9f30a815b9123912db
+/path/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Homestead-state_test-calldata_source_tx-word_n_byte]
+compare root 0xb7efb9831a709620e1eb431eccfc9ff4f22b93685c0d54665a63e33e40797bc4 0xb7efb9831a709620e1eb431eccfc9ff4f22b93685c0d54665a63e33e40797bc4
+/path/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-cdc 0 neg6 9]
+Executing: frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-cdc 0 neg6 ff]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+running test on Fork: Homestead
+compare root 0xa5be070af61c282d0edf6ab65cb23cd306b97085c180a18d06a2bbdb7ccb1160 0xa5be070af61c282d0edf6ab65cb23cd306b97085c180a18d06a2bbdb7ccb1160
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH13]
+running test on Fork: Homestead
+compare root 0x98600c3c70cf2365bc89a5f81f2978ea7dca23133e039f3721a61626b476137b 0x98600c3c70cf2365bc89a5f81f2978ea7dca23133e039f3721a61626b476137b
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP13]
+running test on Fork: Homestead
+compare root 0x6518957fd60bc47b9879663f06db2d1af8f3295146903624b1914b1ee9638510 0x6518957fd60bc47b9879663f06db2d1af8f3295146903624b1914b1ee9638510
+/path/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_tx-args_size_0]
+compare root 0xa5be070af61c282d0edf6ab65cb23cd306b97085c180a18d06a2bbdb7ccb1160 0xa5be070af61c282d0edf6ab65cb23cd306b97085c180a18d06a2bbdb7ccb1160
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH13]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH14]
+[{Homestead 0}]
+Executing: frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_tx-args_size_16]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x73a34ec2b1911c93fa0866dbd11cf55fd1fc6086b0e2e1bc4cba4f6eb18762fd 0x73a34ec2b1911c93fa0866dbd11cf55fd1fc6086b0e2e1bc4cba4f6eb18762fd
+/hash/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-cdc 0 neg6 ff]
+{<nil> false false []}
+compare root 0x98600c3c70cf2365bc89a5f81f2978ea7dca23133e039f3721a61626b476137b 0x98600c3c70cf2365bc89a5f81f2978ea7dca23133e039f3721a61626b476137b
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP13]
+running test on Fork: Homestead
+running test on Fork: Homestead
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP14]
+[{Homestead 0}]
+compare root 0x104242c28d77efa199d6f1265b10bfffa388ad748138f3f4541a1d268ad3a2b8 0x104242c28d77efa199d6f1265b10bfffa388ad748138f3f4541a1d268ad3a2b8
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH14]
+running test on Fork: Homestead
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x1d797232bb1a2766bdc2034e1ae23d88ba0aa730e6fde64173304195653b58e2 0x1d797232bb1a2766bdc2034e1ae23d88ba0aa730e6fde64173304195653b58e2
+/hash/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_tx-args_size_16]
+running test on Fork: Homestead
+compare root 0x73a34ec2b1911c93fa0866dbd11cf55fd1fc6086b0e2e1bc4cba4f6eb18762fd 0x73a34ec2b1911c93fa0866dbd11cf55fd1fc6086b0e2e1bc4cba4f6eb18762fd
+/path/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-cdc 0 neg6 ff]
+compare root 0x104242c28d77efa199d6f1265b10bfffa388ad748138f3f4541a1d268ad3a2b8 0x104242c28d77efa199d6f1265b10bfffa388ad748138f3f4541a1d268ad3a2b8
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH14]
+Executing: frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-sec]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH15]
+[{Homestead 0}]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x1d797232bb1a2766bdc2034e1ae23d88ba0aa730e6fde64173304195653b58e2 0x1d797232bb1a2766bdc2034e1ae23d88ba0aa730e6fde64173304195653b58e2
+/path/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_tx-args_size_16]
+Executing: frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_tx-args_size_257]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x0c47e037993172559a8235f1eb7530c08a69bd51fa3568a4a0885a275d639b1d 0x0c47e037993172559a8235f1eb7530c08a69bd51fa3568a4a0885a275d639b1d
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP14]
+compare root 0x3318c1c1e2e86c7cf60985e202e1157ac51646ee67d50452a9e171dcd880c2f2 0x3318c1c1e2e86c7cf60985e202e1157ac51646ee67d50452a9e171dcd880c2f2
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH15]
+running test on Fork: Homestead
+running test on Fork: Homestead
+compare root 0xfe91948bf7869ab638e09b243539c0850163de0bf776e2ba2b47f4d5d0b3f80b 0xfe91948bf7869ab638e09b243539c0850163de0bf776e2ba2b47f4d5d0b3f80b
+/hash/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-sec]
+running test on Fork: Homestead
+compare root 0x3318c1c1e2e86c7cf60985e202e1157ac51646ee67d50452a9e171dcd880c2f2 0x3318c1c1e2e86c7cf60985e202e1157ac51646ee67d50452a9e171dcd880c2f2
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH15]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH16]
+[{Homestead 0}]
+compare root 0x5f08842307def28a97bd6075da6649765d3e2c1ef0efb7648b61a7560742339a 0x5f08842307def28a97bd6075da6649765d3e2c1ef0efb7648b61a7560742339a
+/hash/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_tx-args_size_257]
+running test on Fork: Homestead
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xfe91948bf7869ab638e09b243539c0850163de0bf776e2ba2b47f4d5d0b3f80b 0xfe91948bf7869ab638e09b243539c0850163de0bf776e2ba2b47f4d5d0b3f80b
+/path/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-sec]
+Executing: frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-underflow]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x5f08842307def28a97bd6075da6649765d3e2c1ef0efb7648b61a7560742339a 0x5f08842307def28a97bd6075da6649765d3e2c1ef0efb7648b61a7560742339a
+/path/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_tx-args_size_257]
+compare root 0x646bbb19c838a080ce8c4086d24545ee592c950267a190c252f13674b642f2b7 0x646bbb19c838a080ce8c4086d24545ee592c950267a190c252f13674b642f2b7
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH16]
+compare root 0xf3372571ddb8948bd210005005821fe7df7b6fda5afb225e0bdecd91a214ac04 0xf3372571ddb8948bd210005005821fe7df7b6fda5afb225e0bdecd91a214ac04
+/hash/trie success test name frontier/create/create_one_byte/create_one_byte.json
+Executing: frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_tx-args_size_2]
+running test on Fork: Homestead
+[{Homestead 0}]
+compare root 0x0c47e037993172559a8235f1eb7530c08a69bd51fa3568a4a0885a275d639b1d 0x0c47e037993172559a8235f1eb7530c08a69bd51fa3568a4a0885a275d639b1d
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP14]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP15]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+{<nil> false false []}
+running test on Fork: Homestead
+running test on Fork: Homestead
+compare root 0x4417626d09cda2103aab03987be32a0986431f5caad3b71a0dfa8f31921da826 0x4417626d09cda2103aab03987be32a0986431f5caad3b71a0dfa8f31921da826
+/hash/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-underflow]
+compare root 0x18bbb1090d432669fdb057c8832c4ffebb0c2441c678f497e9d02198738db21d 0x18bbb1090d432669fdb057c8832c4ffebb0c2441c678f497e9d02198738db21d
+/hash/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_tx-args_size_2]
+compare root 0x646bbb19c838a080ce8c4086d24545ee592c950267a190c252f13674b642f2b7 0x646bbb19c838a080ce8c4086d24545ee592c950267a190c252f13674b642f2b7
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH16]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH17]
+[{Homestead 0}]
+running test on Fork: Homestead
+compare root 0xc5ea9df936c2b1e4f1d5bc6253997d0da33409162baeeaa51bda1e09d80e6344 0xc5ea9df936c2b1e4f1d5bc6253997d0da33409162baeeaa51bda1e09d80e6344
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP15]
+running test on Fork: Homestead
+running test on Fork: Homestead
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x18bbb1090d432669fdb057c8832c4ffebb0c2441c678f497e9d02198738db21d 0x18bbb1090d432669fdb057c8832c4ffebb0c2441c678f497e9d02198738db21d
+/path/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_tx-args_size_2]
+Executing: frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_tx-args_size_33]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x4417626d09cda2103aab03987be32a0986431f5caad3b71a0dfa8f31921da826 0x4417626d09cda2103aab03987be32a0986431f5caad3b71a0dfa8f31921da826
+/path/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Homestead-state_test-underflow]
+compare root 0x7ea9cb63956b4f7df9160d1f9564b581266126c74d1d286e44dbf9461401c3bc 0x7ea9cb63956b4f7df9160d1f9564b581266126c74d1d286e44dbf9461401c3bc
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH17]
+compare root 0xc5ea9df936c2b1e4f1d5bc6253997d0da33409162baeeaa51bda1e09d80e6344 0xc5ea9df936c2b1e4f1d5bc6253997d0da33409162baeeaa51bda1e09d80e6344
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP15]
+running test on Fork: Homestead
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP16]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xf35b031e8f9e092c72e9d83affc804a4aca271f6026f2d3cadd00dd1b39a373c 0xf35b031e8f9e092c72e9d83affc804a4aca271f6026f2d3cadd00dd1b39a373c
+/hash/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_tx-args_size_33]
+running test on Fork: Homestead
+compare root 0x7ea9cb63956b4f7df9160d1f9564b581266126c74d1d286e44dbf9461401c3bc 0x7ea9cb63956b4f7df9160d1f9564b581266126c74d1d286e44dbf9461401c3bc
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH17]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH18]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xf35b031e8f9e092c72e9d83affc804a4aca271f6026f2d3cadd00dd1b39a373c 0xf35b031e8f9e092c72e9d83affc804a4aca271f6026f2d3cadd00dd1b39a373c
+/path/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Homestead-state_test-calldata_source_tx-args_size_33]
+compare root 0x6652eb6a6a4200008f9082e6a6a2854fc830ee3ee1d45806409e4e2091445458 0x6652eb6a6a4200008f9082e6a6a2854fc830ee3ee1d45806409e4e2091445458
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP16]
+compare root 0xa07132ce024d251d95aa768958acefa04569e5e71fa49766026db1cc3cb8f3cb 0xa07132ce024d251d95aa768958acefa04569e5e71fa49766026db1cc3cb8f3cb
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH18]
+running test on Fork: Homestead
+running test on Fork: Homestead
+compare root 0xa07132ce024d251d95aa768958acefa04569e5e71fa49766026db1cc3cb8f3cb 0xa07132ce024d251d95aa768958acefa04569e5e71fa49766026db1cc3cb8f3cb
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH18]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH19]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x6652eb6a6a4200008f9082e6a6a2854fc830ee3ee1d45806409e4e2091445458 0x6652eb6a6a4200008f9082e6a6a2854fc830ee3ee1d45806409e4e2091445458
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP16]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP1]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xa3d9635c535667fd163295157f1adc24a936684f6f7e4b46373e18e60f04b379 0xa3d9635c535667fd163295157f1adc24a936684f6f7e4b46373e18e60f04b379
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH19]
+running test on Fork: Homestead
+compare root 0x9c6fe7ef1f25517f860299050e09f227d412eb4207d834d189090112b5e676a5 0x9c6fe7ef1f25517f860299050e09f227d412eb4207d834d189090112b5e676a5
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP1]
+compare root 0xa3d9635c535667fd163295157f1adc24a936684f6f7e4b46373e18e60f04b379 0xa3d9635c535667fd163295157f1adc24a936684f6f7e4b46373e18e60f04b379
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH19]
+running test on Fork: Homestead
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH1]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x91e0c260c66a56a44e9839a4ecd151b66b0043c433f0a34e2ffeb68875634e3d 0x91e0c260c66a56a44e9839a4ecd151b66b0043c433f0a34e2ffeb68875634e3d
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH1]
+running test on Fork: Homestead
+compare root 0x9c6fe7ef1f25517f860299050e09f227d412eb4207d834d189090112b5e676a5 0x9c6fe7ef1f25517f860299050e09f227d412eb4207d834d189090112b5e676a5
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP1]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP2]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x91e0c260c66a56a44e9839a4ecd151b66b0043c433f0a34e2ffeb68875634e3d 0x91e0c260c66a56a44e9839a4ecd151b66b0043c433f0a34e2ffeb68875634e3d
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH1]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH20]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xb45bb76ba917c7cb1821a05eb9d2fd3d8fc9b4ba08f25caf3f3f350fc9f3e43f 0xb45bb76ba917c7cb1821a05eb9d2fd3d8fc9b4ba08f25caf3f3f350fc9f3e43f
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP2]
+running test on Fork: Homestead
+compare root 0x478f1ee522b349cfc0656329c14541427d6cb1cf6febb0d26a60d497d0609a72 0x478f1ee522b349cfc0656329c14541427d6cb1cf6febb0d26a60d497d0609a72
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH20]
+running test on Fork: Homestead
+compare root 0x478f1ee522b349cfc0656329c14541427d6cb1cf6febb0d26a60d497d0609a72 0x478f1ee522b349cfc0656329c14541427d6cb1cf6febb0d26a60d497d0609a72
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH20]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH21]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xb45bb76ba917c7cb1821a05eb9d2fd3d8fc9b4ba08f25caf3f3f350fc9f3e43f 0xb45bb76ba917c7cb1821a05eb9d2fd3d8fc9b4ba08f25caf3f3f350fc9f3e43f
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP2]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP3]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xa65ba28a6d6cfb98e7bc0c723011cfbf55105dcbee55e1dda95b8045812ba645 0xa65ba28a6d6cfb98e7bc0c723011cfbf55105dcbee55e1dda95b8045812ba645
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH21]
+running test on Fork: Homestead
+compare root 0x6cc8ba8352df5f718eec8bf9751d73d3261fe1e79ac6dc5c6914480cc3ad17cb 0x6cc8ba8352df5f718eec8bf9751d73d3261fe1e79ac6dc5c6914480cc3ad17cb
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP3]
+compare root 0xa65ba28a6d6cfb98e7bc0c723011cfbf55105dcbee55e1dda95b8045812ba645 0xa65ba28a6d6cfb98e7bc0c723011cfbf55105dcbee55e1dda95b8045812ba645
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH21]
+running test on Fork: Homestead
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH22]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x9ccf98ebb7b637095bb4469f9627db33da50bf6545010c4cd1554ffe30b1587f 0x9ccf98ebb7b637095bb4469f9627db33da50bf6545010c4cd1554ffe30b1587f
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH22]
+running test on Fork: Homestead
+compare root 0x6cc8ba8352df5f718eec8bf9751d73d3261fe1e79ac6dc5c6914480cc3ad17cb 0x6cc8ba8352df5f718eec8bf9751d73d3261fe1e79ac6dc5c6914480cc3ad17cb
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP3]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP4]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x9ccf98ebb7b637095bb4469f9627db33da50bf6545010c4cd1554ffe30b1587f 0x9ccf98ebb7b637095bb4469f9627db33da50bf6545010c4cd1554ffe30b1587f
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH22]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH23]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xeff2f68475e15567a789281b5140eda315f2b5f85fb9442b9ece966b420a6c8e 0xeff2f68475e15567a789281b5140eda315f2b5f85fb9442b9ece966b420a6c8e
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP4]
+compare root 0x999afe9fd71f2175ad10bc0c07de7ead45abd226f07eeb91b156870bb7aba182 0x999afe9fd71f2175ad10bc0c07de7ead45abd226f07eeb91b156870bb7aba182
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH23]
+running test on Fork: Homestead
+running test on Fork: Homestead
+compare root 0x999afe9fd71f2175ad10bc0c07de7ead45abd226f07eeb91b156870bb7aba182 0x999afe9fd71f2175ad10bc0c07de7ead45abd226f07eeb91b156870bb7aba182
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH23]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH24]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xeff2f68475e15567a789281b5140eda315f2b5f85fb9442b9ece966b420a6c8e 0xeff2f68475e15567a789281b5140eda315f2b5f85fb9442b9ece966b420a6c8e
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP4]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP5]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x4f03839c08e7d4e6bcda0df9b6982467a1d464646353360333ea70c8b43caa25 0x4f03839c08e7d4e6bcda0df9b6982467a1d464646353360333ea70c8b43caa25
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH24]
+running test on Fork: Homestead
+compare root 0x4f03839c08e7d4e6bcda0df9b6982467a1d464646353360333ea70c8b43caa25 0x4f03839c08e7d4e6bcda0df9b6982467a1d464646353360333ea70c8b43caa25
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH24]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH25]
+[{Homestead 0}]
+compare root 0x065d08ac6619b8a9b394228273393e238134c4e13fc7257457e4746f40823f12 0x065d08ac6619b8a9b394228273393e238134c4e13fc7257457e4746f40823f12
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP5]
+running test on Fork: Homestead
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x244d366b4d69ed864acecfe3b679e2b40d120ceb83b904e47c2cac15acfb4df7 0x244d366b4d69ed864acecfe3b679e2b40d120ceb83b904e47c2cac15acfb4df7
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH25]
+running test on Fork: Homestead
+compare root 0x065d08ac6619b8a9b394228273393e238134c4e13fc7257457e4746f40823f12 0x065d08ac6619b8a9b394228273393e238134c4e13fc7257457e4746f40823f12
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP5]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP6]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x244d366b4d69ed864acecfe3b679e2b40d120ceb83b904e47c2cac15acfb4df7 0x244d366b4d69ed864acecfe3b679e2b40d120ceb83b904e47c2cac15acfb4df7
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH25]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH26]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x8208ae8c48930f1cfd572c6d14de1b52d7ddd64b2ef9668688e52f0a0573a4c2 0x8208ae8c48930f1cfd572c6d14de1b52d7ddd64b2ef9668688e52f0a0573a4c2
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP6]
+compare root 0x4e3a6287b17d371cad8646cad23a2be773eca9dc42c939243e77f3a6b308d436 0x4e3a6287b17d371cad8646cad23a2be773eca9dc42c939243e77f3a6b308d436
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH26]
+running test on Fork: Homestead
+running test on Fork: Homestead
+compare root 0x4e3a6287b17d371cad8646cad23a2be773eca9dc42c939243e77f3a6b308d436 0x4e3a6287b17d371cad8646cad23a2be773eca9dc42c939243e77f3a6b308d436
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH26]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH27]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xf3372571ddb8948bd210005005821fe7df7b6fda5afb225e0bdecd91a214ac04 0xf3372571ddb8948bd210005005821fe7df7b6fda5afb225e0bdecd91a214ac04
+/path/trie success test name frontier/create/create_one_byte/create_one_byte.json
+compare root 0x8208ae8c48930f1cfd572c6d14de1b52d7ddd64b2ef9668688e52f0a0573a4c2 0x8208ae8c48930f1cfd572c6d14de1b52d7ddd64b2ef9668688e52f0a0573a4c2
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP6]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP7]
+compare root 0x441a6fc4f85667417feb39b59c952e028b36309eb2a23586866837ba6ba599c8 0x441a6fc4f85667417feb39b59c952e028b36309eb2a23586866837ba6ba599c8
+/hash/trie success test name frontier/opcodes/all_opcodes/all_opcodes.json
+compare root 0xd6dc24840193ceb4ed1b9c5ff4b74e28a3a5cb739aebfc114232586449ad4109 0xd6dc24840193ceb4ed1b9c5ff4b74e28a3a5cb739aebfc114232586449ad4109
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH27]
+running test on Fork: Homestead
+running test on Fork: Homestead
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xd6dc24840193ceb4ed1b9c5ff4b74e28a3a5cb739aebfc114232586449ad4109 0xd6dc24840193ceb4ed1b9c5ff4b74e28a3a5cb739aebfc114232586449ad4109
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH27]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH28]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x57e9422f69c12374760e87ff83e846c1fee96da95152daeb0edd25c98ab3d3a0 0x57e9422f69c12374760e87ff83e846c1fee96da95152daeb0edd25c98ab3d3a0
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP7]
+compare root 0x56e75e22956817a58c9992fc9bac0127a98c912199baf0ca0fadc920708a68ad 0x56e75e22956817a58c9992fc9bac0127a98c912199baf0ca0fadc920708a68ad
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH28]
+running test on Fork: Homestead
+running test on Fork: Homestead
+compare root 0x56e75e22956817a58c9992fc9bac0127a98c912199baf0ca0fadc920708a68ad 0x56e75e22956817a58c9992fc9bac0127a98c912199baf0ca0fadc920708a68ad
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH28]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH29]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x57e9422f69c12374760e87ff83e846c1fee96da95152daeb0edd25c98ab3d3a0 0x57e9422f69c12374760e87ff83e846c1fee96da95152daeb0edd25c98ab3d3a0
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP7]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP8]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xdced2be04777106dae6f607791ec72f59f253c614bea542a2f9c04df42c653a2 0xdced2be04777106dae6f607791ec72f59f253c614bea542a2f9c04df42c653a2
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH29]
+running test on Fork: Homestead
+compare root 0x2a8de63be44e3cf1dc3fd1fd96b0655cf7ff2bb7f4271fd38d8b10ca5b608c5e 0x2a8de63be44e3cf1dc3fd1fd96b0655cf7ff2bb7f4271fd38d8b10ca5b608c5e
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP8]
+compare root 0xdced2be04777106dae6f607791ec72f59f253c614bea542a2f9c04df42c653a2 0xdced2be04777106dae6f607791ec72f59f253c614bea542a2f9c04df42c653a2
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH29]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH2]
+[{Homestead 0}]
+running test on Fork: Homestead
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xbd59bfc8590e76c191e6f8aa2a1e40ca47577bb3cba1f6cceb1558ae8499101f 0xbd59bfc8590e76c191e6f8aa2a1e40ca47577bb3cba1f6cceb1558ae8499101f
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH2]
+running test on Fork: Homestead
+compare root 0x2a8de63be44e3cf1dc3fd1fd96b0655cf7ff2bb7f4271fd38d8b10ca5b608c5e 0x2a8de63be44e3cf1dc3fd1fd96b0655cf7ff2bb7f4271fd38d8b10ca5b608c5e
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP8]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP9]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xbd59bfc8590e76c191e6f8aa2a1e40ca47577bb3cba1f6cceb1558ae8499101f 0xbd59bfc8590e76c191e6f8aa2a1e40ca47577bb3cba1f6cceb1558ae8499101f
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH2]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH30]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x16e305251154990e53ada3c461f5c56e62e3a9af14b2b4600d47598d5a5eda30 0x16e305251154990e53ada3c461f5c56e62e3a9af14b2b4600d47598d5a5eda30
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH30]
+running test on Fork: Homestead
+compare root 0x20d31221731028d38a9afe2c1e80677d3d1f8e3e023692ce79ac1fec2a945660 0x20d31221731028d38a9afe2c1e80677d3d1f8e3e023692ce79ac1fec2a945660
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP9]
+running test on Fork: Homestead
+compare root 0x16e305251154990e53ada3c461f5c56e62e3a9af14b2b4600d47598d5a5eda30 0x16e305251154990e53ada3c461f5c56e62e3a9af14b2b4600d47598d5a5eda30
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH30]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH31]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x20d31221731028d38a9afe2c1e80677d3d1f8e3e023692ce79ac1fec2a945660 0x20d31221731028d38a9afe2c1e80677d3d1f8e3e023692ce79ac1fec2a945660
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Homestead-evm_code_type_LEGACY-state_test-DUP9]
+compare root 0x1d6fcb3e535e045c8524f4b96b5c80bc2e8ef2f96d97d845de5fc77afd78b97b 0x1d6fcb3e535e045c8524f4b96b5c80bc2e8ef2f96d97d845de5fc77afd78b97b
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH31]
+running test on Fork: Homestead
+compare root 0x1d6fcb3e535e045c8524f4b96b5c80bc2e8ef2f96d97d845de5fc77afd78b97b 0x1d6fcb3e535e045c8524f4b96b5c80bc2e8ef2f96d97d845de5fc77afd78b97b
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH31]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH32]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x404ca5fef69721ca867027ca104a3cc92ca657edf4eec450b755cb745f753593 0x404ca5fef69721ca867027ca104a3cc92ca657edf4eec450b755cb745f753593
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH32]
+running test on Fork: Homestead
+compare root 0x404ca5fef69721ca867027ca104a3cc92ca657edf4eec450b755cb745f753593 0x404ca5fef69721ca867027ca104a3cc92ca657edf4eec450b755cb745f753593
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH32]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH3]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xc85ebdb16d3a6c7afa8729a3fd72e70b39c912e70d62aeec7f7951fec6fb7fcc 0xc85ebdb16d3a6c7afa8729a3fd72e70b39c912e70d62aeec7f7951fec6fb7fcc
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH3]
+running test on Fork: Homestead
+compare root 0xc85ebdb16d3a6c7afa8729a3fd72e70b39c912e70d62aeec7f7951fec6fb7fcc 0xc85ebdb16d3a6c7afa8729a3fd72e70b39c912e70d62aeec7f7951fec6fb7fcc
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH3]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH4]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x25fd235239a81afda200c1dc97b1e92da15ae37b85060154f99658d087302a88 0x25fd235239a81afda200c1dc97b1e92da15ae37b85060154f99658d087302a88
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH4]
+running test on Fork: Homestead
+compare root 0x25fd235239a81afda200c1dc97b1e92da15ae37b85060154f99658d087302a88 0x25fd235239a81afda200c1dc97b1e92da15ae37b85060154f99658d087302a88
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH4]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH5]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xde78fa1e8e2880fde78499cb7cdc5457461624fb6a99ca76e0f7fb67b77b6c0d 0xde78fa1e8e2880fde78499cb7cdc5457461624fb6a99ca76e0f7fb67b77b6c0d
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH5]
+running test on Fork: Homestead
+compare root 0xde78fa1e8e2880fde78499cb7cdc5457461624fb6a99ca76e0f7fb67b77b6c0d 0xde78fa1e8e2880fde78499cb7cdc5457461624fb6a99ca76e0f7fb67b77b6c0d
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH5]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH6]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xc312ce13d243744c2fe57b26006ed2ade7cfd657c3f62c811493bc8a71e822f2 0xc312ce13d243744c2fe57b26006ed2ade7cfd657c3f62c811493bc8a71e822f2
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH6]
+running test on Fork: Homestead
+compare root 0xc312ce13d243744c2fe57b26006ed2ade7cfd657c3f62c811493bc8a71e822f2 0xc312ce13d243744c2fe57b26006ed2ade7cfd657c3f62c811493bc8a71e822f2
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH6]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH7]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xdc60b67d1308446c69fa015c7e48939e487668df3c9bf57c1b17bd3ec437a6aa 0xdc60b67d1308446c69fa015c7e48939e487668df3c9bf57c1b17bd3ec437a6aa
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH7]
+running test on Fork: Homestead
+compare root 0xdc60b67d1308446c69fa015c7e48939e487668df3c9bf57c1b17bd3ec437a6aa 0xdc60b67d1308446c69fa015c7e48939e487668df3c9bf57c1b17bd3ec437a6aa
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH7]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH8]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xff28002593243a06225fad994e4eadd5a187f96c39e70f4752082b7cb0a4cbf0 0xff28002593243a06225fad994e4eadd5a187f96c39e70f4752082b7cb0a4cbf0
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH8]
+running test on Fork: Homestead
+compare root 0xff28002593243a06225fad994e4eadd5a187f96c39e70f4752082b7cb0a4cbf0 0xff28002593243a06225fad994e4eadd5a187f96c39e70f4752082b7cb0a4cbf0
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH8]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH9]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x00357af676739aed8fad3f9514bc1b5b97672bde5ff31faf98210be991bb6ff8 0x00357af676739aed8fad3f9514bc1b5b97672bde5ff31faf98210be991bb6ff8
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH9]
+running test on Fork: Homestead
+compare root 0x00357af676739aed8fad3f9514bc1b5b97672bde5ff31faf98210be991bb6ff8 0x00357af676739aed8fad3f9514bc1b5b97672bde5ff31faf98210be991bb6ff8
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Homestead-state_test-PUSH9]
+compare root 0x441a6fc4f85667417feb39b59c952e028b36309eb2a23586866837ba6ba599c8 0x441a6fc4f85667417feb39b59c952e028b36309eb2a23586866837ba6ba599c8
+/path/trie success test name frontier/opcodes/all_opcodes/all_opcodes.json
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH10]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x7b88913b22cfa4f6f101978ab4d188616aad04f0036e70f35edace50a7a0b906 0x7b88913b22cfa4f6f101978ab4d188616aad04f0036e70f35edace50a7a0b906
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH10]
+running test on Fork: Homestead
+compare root 0x7b88913b22cfa4f6f101978ab4d188616aad04f0036e70f35edace50a7a0b906 0x7b88913b22cfa4f6f101978ab4d188616aad04f0036e70f35edace50a7a0b906
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH10]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH11]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x569a2b6b63ff9be8fad14005bf253bcff90a82102e8f69c44e4749aacc50845b 0x569a2b6b63ff9be8fad14005bf253bcff90a82102e8f69c44e4749aacc50845b
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH11]
+running test on Fork: Homestead
+compare root 0x569a2b6b63ff9be8fad14005bf253bcff90a82102e8f69c44e4749aacc50845b 0x569a2b6b63ff9be8fad14005bf253bcff90a82102e8f69c44e4749aacc50845b
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH11]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH12]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x63a2cd1e73c1ba0692ee3c7e684af9fe3179c8285b735fb3b2f98b3b2a43431f 0x63a2cd1e73c1ba0692ee3c7e684af9fe3179c8285b735fb3b2f98b3b2a43431f
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH12]
+running test on Fork: Homestead
+compare root 0x63a2cd1e73c1ba0692ee3c7e684af9fe3179c8285b735fb3b2f98b3b2a43431f 0x63a2cd1e73c1ba0692ee3c7e684af9fe3179c8285b735fb3b2f98b3b2a43431f
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH12]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH13]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x140ba5a097450855e317c6ca8aa0c814a244126b7cacb4696e7ca4ce063ddb20 0x140ba5a097450855e317c6ca8aa0c814a244126b7cacb4696e7ca4ce063ddb20
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH13]
+running test on Fork: Homestead
+compare root 0x140ba5a097450855e317c6ca8aa0c814a244126b7cacb4696e7ca4ce063ddb20 0x140ba5a097450855e317c6ca8aa0c814a244126b7cacb4696e7ca4ce063ddb20
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH13]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH14]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x2f69a8182d3726447e55d334955196f6307cd135d3e83c8c675fca39e24111fb 0x2f69a8182d3726447e55d334955196f6307cd135d3e83c8c675fca39e24111fb
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH14]
+running test on Fork: Homestead
+compare root 0x2f69a8182d3726447e55d334955196f6307cd135d3e83c8c675fca39e24111fb 0x2f69a8182d3726447e55d334955196f6307cd135d3e83c8c675fca39e24111fb
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH14]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH15]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xbcdb657345c0afe4a757181303b0b865c4a471c1c6b1bb1ca895c7aba47b122b 0xbcdb657345c0afe4a757181303b0b865c4a471c1c6b1bb1ca895c7aba47b122b
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH15]
+running test on Fork: Homestead
+compare root 0xbcdb657345c0afe4a757181303b0b865c4a471c1c6b1bb1ca895c7aba47b122b 0xbcdb657345c0afe4a757181303b0b865c4a471c1c6b1bb1ca895c7aba47b122b
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH15]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH16]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x7f3783eb7a47e8ec1242197abf2c73034ef8adbaf3781c726a77a632283f3984 0x7f3783eb7a47e8ec1242197abf2c73034ef8adbaf3781c726a77a632283f3984
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH16]
+running test on Fork: Homestead
+compare root 0x7f3783eb7a47e8ec1242197abf2c73034ef8adbaf3781c726a77a632283f3984 0x7f3783eb7a47e8ec1242197abf2c73034ef8adbaf3781c726a77a632283f3984
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH16]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH17]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xc7788341542e3e73ba36f07cd6da1d6f676b44274ea22d4e89a05291e28b026d 0xc7788341542e3e73ba36f07cd6da1d6f676b44274ea22d4e89a05291e28b026d
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH17]
+running test on Fork: Homestead
+compare root 0xc7788341542e3e73ba36f07cd6da1d6f676b44274ea22d4e89a05291e28b026d 0xc7788341542e3e73ba36f07cd6da1d6f676b44274ea22d4e89a05291e28b026d
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH17]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH18]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x8ae8cc91cde04913099677ca4b041f7d8ee6554446f178a19cc6a497c082da64 0x8ae8cc91cde04913099677ca4b041f7d8ee6554446f178a19cc6a497c082da64
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH18]
+running test on Fork: Homestead
+compare root 0x8ae8cc91cde04913099677ca4b041f7d8ee6554446f178a19cc6a497c082da64 0x8ae8cc91cde04913099677ca4b041f7d8ee6554446f178a19cc6a497c082da64
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH18]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH19]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xad565acb157c2e2d86d3f81565ad02b18795a5196bb1c15f26feb0c36101be55 0xad565acb157c2e2d86d3f81565ad02b18795a5196bb1c15f26feb0c36101be55
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH19]
+running test on Fork: Homestead
+compare root 0xad565acb157c2e2d86d3f81565ad02b18795a5196bb1c15f26feb0c36101be55 0xad565acb157c2e2d86d3f81565ad02b18795a5196bb1c15f26feb0c36101be55
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH19]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH1]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x61b6548e6521adb8daf4aad77648a1bc5f482bd7c3d9fde58c971e814c271a81 0x61b6548e6521adb8daf4aad77648a1bc5f482bd7c3d9fde58c971e814c271a81
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH1]
+running test on Fork: Homestead
+compare root 0x61b6548e6521adb8daf4aad77648a1bc5f482bd7c3d9fde58c971e814c271a81 0x61b6548e6521adb8daf4aad77648a1bc5f482bd7c3d9fde58c971e814c271a81
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH1]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH20]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x7bebc8233f33ecb3b34b0e4a8ba59426fa61c7dd714e6f5d86601a060acfdf56 0x7bebc8233f33ecb3b34b0e4a8ba59426fa61c7dd714e6f5d86601a060acfdf56
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH20]
+running test on Fork: Homestead
+compare root 0x7bebc8233f33ecb3b34b0e4a8ba59426fa61c7dd714e6f5d86601a060acfdf56 0x7bebc8233f33ecb3b34b0e4a8ba59426fa61c7dd714e6f5d86601a060acfdf56
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH20]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH21]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x96dddca8f6278b685d02f4a517e6b6682d49b2b9e09d2fab1ba6bd1c7991aa6e 0x96dddca8f6278b685d02f4a517e6b6682d49b2b9e09d2fab1ba6bd1c7991aa6e
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH21]
+running test on Fork: Homestead
+compare root 0x96dddca8f6278b685d02f4a517e6b6682d49b2b9e09d2fab1ba6bd1c7991aa6e 0x96dddca8f6278b685d02f4a517e6b6682d49b2b9e09d2fab1ba6bd1c7991aa6e
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH21]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH22]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xd3c9d28a3982c219375740d5dcf2b47794c1faa8349d422604156799bceb4810 0xd3c9d28a3982c219375740d5dcf2b47794c1faa8349d422604156799bceb4810
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH22]
+running test on Fork: Homestead
+compare root 0xd3c9d28a3982c219375740d5dcf2b47794c1faa8349d422604156799bceb4810 0xd3c9d28a3982c219375740d5dcf2b47794c1faa8349d422604156799bceb4810
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH22]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH23]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x00b59b2a65343b2f13e496e0dfacff8c4e7c8631b9968c6d95facdb504be1794 0x00b59b2a65343b2f13e496e0dfacff8c4e7c8631b9968c6d95facdb504be1794
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH23]
+running test on Fork: Homestead
+compare root 0x00b59b2a65343b2f13e496e0dfacff8c4e7c8631b9968c6d95facdb504be1794 0x00b59b2a65343b2f13e496e0dfacff8c4e7c8631b9968c6d95facdb504be1794
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH23]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH24]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x5d53758761a8dc27d465c5a0196459c44fb89c84dd96cec6cab10b7ba5568a35 0x5d53758761a8dc27d465c5a0196459c44fb89c84dd96cec6cab10b7ba5568a35
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH24]
+running test on Fork: Homestead
+compare root 0x5d53758761a8dc27d465c5a0196459c44fb89c84dd96cec6cab10b7ba5568a35 0x5d53758761a8dc27d465c5a0196459c44fb89c84dd96cec6cab10b7ba5568a35
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH24]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH25]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x5daa2c95a5a851f3ca85927080d7e93f1533a82e4d565a1007238fb435ffaefa 0x5daa2c95a5a851f3ca85927080d7e93f1533a82e4d565a1007238fb435ffaefa
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH25]
+running test on Fork: Homestead
+compare root 0x5daa2c95a5a851f3ca85927080d7e93f1533a82e4d565a1007238fb435ffaefa 0x5daa2c95a5a851f3ca85927080d7e93f1533a82e4d565a1007238fb435ffaefa
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH25]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH26]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x46716a838d7b7cea6a5d4eb9d716d50ccda2412c2613a892f7a0b3035b35e41e 0x46716a838d7b7cea6a5d4eb9d716d50ccda2412c2613a892f7a0b3035b35e41e
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH26]
+running test on Fork: Homestead
+compare root 0x46716a838d7b7cea6a5d4eb9d716d50ccda2412c2613a892f7a0b3035b35e41e 0x46716a838d7b7cea6a5d4eb9d716d50ccda2412c2613a892f7a0b3035b35e41e
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH26]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH27]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xe8075b619fbe46ecc6fd889aa28836bd30d1e691edec26b085a88dea4838d477 0xe8075b619fbe46ecc6fd889aa28836bd30d1e691edec26b085a88dea4838d477
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH27]
+running test on Fork: Homestead
+compare root 0xe8075b619fbe46ecc6fd889aa28836bd30d1e691edec26b085a88dea4838d477 0xe8075b619fbe46ecc6fd889aa28836bd30d1e691edec26b085a88dea4838d477
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH27]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH28]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x046b74a8dc116c2a80f28e6f33b3351ac5c4e3afb7ab4d40195ea9f36526c600 0x046b74a8dc116c2a80f28e6f33b3351ac5c4e3afb7ab4d40195ea9f36526c600
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH28]
+running test on Fork: Homestead
+compare root 0x046b74a8dc116c2a80f28e6f33b3351ac5c4e3afb7ab4d40195ea9f36526c600 0x046b74a8dc116c2a80f28e6f33b3351ac5c4e3afb7ab4d40195ea9f36526c600
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH28]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH29]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x10322332c49135a05604e943ee07140b654299bc88a2143a942d84d57f716e29 0x10322332c49135a05604e943ee07140b654299bc88a2143a942d84d57f716e29
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH29]
+running test on Fork: Homestead
+compare root 0x10322332c49135a05604e943ee07140b654299bc88a2143a942d84d57f716e29 0x10322332c49135a05604e943ee07140b654299bc88a2143a942d84d57f716e29
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH29]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH2]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x8380600b32b8beee9976af80980fb19f1bfaf20e41eea9f97894d71a2ecc65c2 0x8380600b32b8beee9976af80980fb19f1bfaf20e41eea9f97894d71a2ecc65c2
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH2]
+running test on Fork: Homestead
+compare root 0x8380600b32b8beee9976af80980fb19f1bfaf20e41eea9f97894d71a2ecc65c2 0x8380600b32b8beee9976af80980fb19f1bfaf20e41eea9f97894d71a2ecc65c2
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH2]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH30]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x2307c9a52d2c05ac148267018b2deb9fad8943a106db0d0523cc1b9a83a1ca40 0x2307c9a52d2c05ac148267018b2deb9fad8943a106db0d0523cc1b9a83a1ca40
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH30]
+running test on Fork: Homestead
+compare root 0x2307c9a52d2c05ac148267018b2deb9fad8943a106db0d0523cc1b9a83a1ca40 0x2307c9a52d2c05ac148267018b2deb9fad8943a106db0d0523cc1b9a83a1ca40
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH30]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH31]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xf0ceaa574bf07cb154457f937af7a2b44cc680acc5ea6087bd68ab498e857dee 0xf0ceaa574bf07cb154457f937af7a2b44cc680acc5ea6087bd68ab498e857dee
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH31]
+running test on Fork: Homestead
+compare root 0xf0ceaa574bf07cb154457f937af7a2b44cc680acc5ea6087bd68ab498e857dee 0xf0ceaa574bf07cb154457f937af7a2b44cc680acc5ea6087bd68ab498e857dee
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH31]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH32]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x58af741081dedff88f2dd0a87a99879d844cf185f5359065bbf20cc09ecbd972 0x58af741081dedff88f2dd0a87a99879d844cf185f5359065bbf20cc09ecbd972
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH32]
+running test on Fork: Homestead
+compare root 0x58af741081dedff88f2dd0a87a99879d844cf185f5359065bbf20cc09ecbd972 0x58af741081dedff88f2dd0a87a99879d844cf185f5359065bbf20cc09ecbd972
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH32]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH3]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x9a0b22a2344f16c91235d703c5aec71d4e25d0ebcb9d44a365d4fef93f9ce1e9 0x9a0b22a2344f16c91235d703c5aec71d4e25d0ebcb9d44a365d4fef93f9ce1e9
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH3]
+running test on Fork: Homestead
+compare root 0x9a0b22a2344f16c91235d703c5aec71d4e25d0ebcb9d44a365d4fef93f9ce1e9 0x9a0b22a2344f16c91235d703c5aec71d4e25d0ebcb9d44a365d4fef93f9ce1e9
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH3]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH4]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x0317dbe8d15b559d30e0a45facc13aab89ce3777bac6e83530e5eb3c4c23af8f 0x0317dbe8d15b559d30e0a45facc13aab89ce3777bac6e83530e5eb3c4c23af8f
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH4]
+running test on Fork: Homestead
+compare root 0x0317dbe8d15b559d30e0a45facc13aab89ce3777bac6e83530e5eb3c4c23af8f 0x0317dbe8d15b559d30e0a45facc13aab89ce3777bac6e83530e5eb3c4c23af8f
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH4]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH5]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x038c4af9252411bb5e2183e645881cb9e3402c0fe17bb56de1d6e24424d189bc 0x038c4af9252411bb5e2183e645881cb9e3402c0fe17bb56de1d6e24424d189bc
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH5]
+running test on Fork: Homestead
+compare root 0x038c4af9252411bb5e2183e645881cb9e3402c0fe17bb56de1d6e24424d189bc 0x038c4af9252411bb5e2183e645881cb9e3402c0fe17bb56de1d6e24424d189bc
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH5]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH6]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xf765e8afb4d2b8b6e3a40dd9f9fec501abca4f4ec535c23278a6101d6e91c1d6 0xf765e8afb4d2b8b6e3a40dd9f9fec501abca4f4ec535c23278a6101d6e91c1d6
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH6]
+running test on Fork: Homestead
+compare root 0xf765e8afb4d2b8b6e3a40dd9f9fec501abca4f4ec535c23278a6101d6e91c1d6 0xf765e8afb4d2b8b6e3a40dd9f9fec501abca4f4ec535c23278a6101d6e91c1d6
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH6]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH7]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x25cbc0e5763b4b64884778daffa9f3e83cc4bfca09cee6077833fc5642a162db 0x25cbc0e5763b4b64884778daffa9f3e83cc4bfca09cee6077833fc5642a162db
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH7]
+running test on Fork: Homestead
+compare root 0x25cbc0e5763b4b64884778daffa9f3e83cc4bfca09cee6077833fc5642a162db 0x25cbc0e5763b4b64884778daffa9f3e83cc4bfca09cee6077833fc5642a162db
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH7]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH8]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x1072935285c48a9e9009b6c8d32713bedde18aa8bf90861c50ae108d71b6e59e 0x1072935285c48a9e9009b6c8d32713bedde18aa8bf90861c50ae108d71b6e59e
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH8]
+running test on Fork: Homestead
+compare root 0x1072935285c48a9e9009b6c8d32713bedde18aa8bf90861c50ae108d71b6e59e 0x1072935285c48a9e9009b6c8d32713bedde18aa8bf90861c50ae108d71b6e59e
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH8]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH9]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x6759bd4390389fbad68c246c22320ab9e90051044874ced00a1863b2c85fb61e 0x6759bd4390389fbad68c246c22320ab9e90051044874ced00a1863b2c85fb61e
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH9]
+running test on Fork: Homestead
+compare root 0x6759bd4390389fbad68c246c22320ab9e90051044874ced00a1863b2c85fb61e 0x6759bd4390389fbad68c246c22320ab9e90051044874ced00a1863b2c85fb61e
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1024-PUSH9]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH10]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x36e01254392977bd5765febbc650b7602273e6dcabe7a4367f1d6d3b48b0186e 0x36e01254392977bd5765febbc650b7602273e6dcabe7a4367f1d6d3b48b0186e
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH10]
+running test on Fork: Homestead
+compare root 0x36e01254392977bd5765febbc650b7602273e6dcabe7a4367f1d6d3b48b0186e 0x36e01254392977bd5765febbc650b7602273e6dcabe7a4367f1d6d3b48b0186e
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH10]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH11]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xd0cd01244cdca8d9d4eb959f6c9530b6a744d6ea21536e2ad9ae846561640455 0xd0cd01244cdca8d9d4eb959f6c9530b6a744d6ea21536e2ad9ae846561640455
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH11]
+running test on Fork: Homestead
+compare root 0xd0cd01244cdca8d9d4eb959f6c9530b6a744d6ea21536e2ad9ae846561640455 0xd0cd01244cdca8d9d4eb959f6c9530b6a744d6ea21536e2ad9ae846561640455
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH11]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH12]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x61158951aff69de8a9792df5fd4042c28b373084f50c0e417f8b43ed152432fa 0x61158951aff69de8a9792df5fd4042c28b373084f50c0e417f8b43ed152432fa
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH12]
+running test on Fork: Homestead
+compare root 0x61158951aff69de8a9792df5fd4042c28b373084f50c0e417f8b43ed152432fa 0x61158951aff69de8a9792df5fd4042c28b373084f50c0e417f8b43ed152432fa
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH12]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH13]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xffe95e63c8f52d676321faff0b2703cafd6bd81a2337a494a74c89f4748ed3bc 0xffe95e63c8f52d676321faff0b2703cafd6bd81a2337a494a74c89f4748ed3bc
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH13]
+running test on Fork: Homestead
+compare root 0xffe95e63c8f52d676321faff0b2703cafd6bd81a2337a494a74c89f4748ed3bc 0xffe95e63c8f52d676321faff0b2703cafd6bd81a2337a494a74c89f4748ed3bc
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH13]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH14]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xc930787f692278aa51a4a813487cf174ba2ae2268c86881118d38707fbc8866a 0xc930787f692278aa51a4a813487cf174ba2ae2268c86881118d38707fbc8866a
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH14]
+running test on Fork: Homestead
+compare root 0xc930787f692278aa51a4a813487cf174ba2ae2268c86881118d38707fbc8866a 0xc930787f692278aa51a4a813487cf174ba2ae2268c86881118d38707fbc8866a
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH14]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH15]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x4cde3a3a500d85d8e137ce208ea1cb0d3b0b728661c1b0e6c4d37c80e6c11012 0x4cde3a3a500d85d8e137ce208ea1cb0d3b0b728661c1b0e6c4d37c80e6c11012
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH15]
+running test on Fork: Homestead
+compare root 0x4cde3a3a500d85d8e137ce208ea1cb0d3b0b728661c1b0e6c4d37c80e6c11012 0x4cde3a3a500d85d8e137ce208ea1cb0d3b0b728661c1b0e6c4d37c80e6c11012
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH15]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH16]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xfca2431906904eeeae264f1dedc064d696c21c87faba6a43f86e0a2547e15ac3 0xfca2431906904eeeae264f1dedc064d696c21c87faba6a43f86e0a2547e15ac3
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH16]
+running test on Fork: Homestead
+compare root 0xfca2431906904eeeae264f1dedc064d696c21c87faba6a43f86e0a2547e15ac3 0xfca2431906904eeeae264f1dedc064d696c21c87faba6a43f86e0a2547e15ac3
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH16]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH17]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xf0a8f1a5f050bd7ec5869927c91bef02dd7db081ece23a065a884a7bde034708 0xf0a8f1a5f050bd7ec5869927c91bef02dd7db081ece23a065a884a7bde034708
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH17]
+running test on Fork: Homestead
+compare root 0xf0a8f1a5f050bd7ec5869927c91bef02dd7db081ece23a065a884a7bde034708 0xf0a8f1a5f050bd7ec5869927c91bef02dd7db081ece23a065a884a7bde034708
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH17]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH18]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xb1f47b2c2d84717917e84037803da6d2b9178df014e43ccfa1f042e6afd18776 0xb1f47b2c2d84717917e84037803da6d2b9178df014e43ccfa1f042e6afd18776
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH18]
+running test on Fork: Homestead
+compare root 0xb1f47b2c2d84717917e84037803da6d2b9178df014e43ccfa1f042e6afd18776 0xb1f47b2c2d84717917e84037803da6d2b9178df014e43ccfa1f042e6afd18776
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH18]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH19]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x87b79bdb26626ec4752069811a7e597539b14b85bd837475b1ec0c2170c4bcee 0x87b79bdb26626ec4752069811a7e597539b14b85bd837475b1ec0c2170c4bcee
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH19]
+running test on Fork: Homestead
+compare root 0x87b79bdb26626ec4752069811a7e597539b14b85bd837475b1ec0c2170c4bcee 0x87b79bdb26626ec4752069811a7e597539b14b85bd837475b1ec0c2170c4bcee
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH19]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH1]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xae2e8acd7255182b1fe56d72418a4fc8d1b329aa30c639e6d29a50d42052ffca 0xae2e8acd7255182b1fe56d72418a4fc8d1b329aa30c639e6d29a50d42052ffca
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH1]
+running test on Fork: Homestead
+compare root 0xae2e8acd7255182b1fe56d72418a4fc8d1b329aa30c639e6d29a50d42052ffca 0xae2e8acd7255182b1fe56d72418a4fc8d1b329aa30c639e6d29a50d42052ffca
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH1]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH20]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x6675af5ea34ce63e2e1f179b696c9d83fb9e09ddf03d2ac274ec2dc9b68e7492 0x6675af5ea34ce63e2e1f179b696c9d83fb9e09ddf03d2ac274ec2dc9b68e7492
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH20]
+running test on Fork: Homestead
+compare root 0x6675af5ea34ce63e2e1f179b696c9d83fb9e09ddf03d2ac274ec2dc9b68e7492 0x6675af5ea34ce63e2e1f179b696c9d83fb9e09ddf03d2ac274ec2dc9b68e7492
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH20]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH21]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xdbb5e2f9e98970f45b0b1c8e2720848a7dcd5cad9a914eb97b7c4cfaa3e9a980 0xdbb5e2f9e98970f45b0b1c8e2720848a7dcd5cad9a914eb97b7c4cfaa3e9a980
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH21]
+running test on Fork: Homestead
+compare root 0xdbb5e2f9e98970f45b0b1c8e2720848a7dcd5cad9a914eb97b7c4cfaa3e9a980 0xdbb5e2f9e98970f45b0b1c8e2720848a7dcd5cad9a914eb97b7c4cfaa3e9a980
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH21]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH22]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x71b2c24df56c45edf4d8baa9722418df36659c4c6e251313a32bd8ca4153a130 0x71b2c24df56c45edf4d8baa9722418df36659c4c6e251313a32bd8ca4153a130
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH22]
+running test on Fork: Homestead
+compare root 0x71b2c24df56c45edf4d8baa9722418df36659c4c6e251313a32bd8ca4153a130 0x71b2c24df56c45edf4d8baa9722418df36659c4c6e251313a32bd8ca4153a130
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH22]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH23]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x432bdc7582881af2871a0c9c1ddeebdca831d551df46b4a9bbce2b586dee2443 0x432bdc7582881af2871a0c9c1ddeebdca831d551df46b4a9bbce2b586dee2443
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH23]
+running test on Fork: Homestead
+compare root 0x432bdc7582881af2871a0c9c1ddeebdca831d551df46b4a9bbce2b586dee2443 0x432bdc7582881af2871a0c9c1ddeebdca831d551df46b4a9bbce2b586dee2443
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH23]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH24]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xda91739489e9f12f54672acf6a416109814faf072e1e4b12956d50fe6ca43ad8 0xda91739489e9f12f54672acf6a416109814faf072e1e4b12956d50fe6ca43ad8
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH24]
+running test on Fork: Homestead
+compare root 0xda91739489e9f12f54672acf6a416109814faf072e1e4b12956d50fe6ca43ad8 0xda91739489e9f12f54672acf6a416109814faf072e1e4b12956d50fe6ca43ad8
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH24]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH25]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x899c25a8dcaf673c1315c0372a45703b520ad5331c2b4bdf65a6f02fb134868d 0x899c25a8dcaf673c1315c0372a45703b520ad5331c2b4bdf65a6f02fb134868d
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH25]
+running test on Fork: Homestead
+compare root 0x899c25a8dcaf673c1315c0372a45703b520ad5331c2b4bdf65a6f02fb134868d 0x899c25a8dcaf673c1315c0372a45703b520ad5331c2b4bdf65a6f02fb134868d
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH25]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH26]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x97caa3ecb38cb90ce421b7be1c239a6b12958da7dda6d0635dcb34a68b2b6f22 0x97caa3ecb38cb90ce421b7be1c239a6b12958da7dda6d0635dcb34a68b2b6f22
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH26]
+running test on Fork: Homestead
+compare root 0x97caa3ecb38cb90ce421b7be1c239a6b12958da7dda6d0635dcb34a68b2b6f22 0x97caa3ecb38cb90ce421b7be1c239a6b12958da7dda6d0635dcb34a68b2b6f22
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH26]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH27]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xbdfdfbe07fa71a44b1118ceb34b8a44af110dbd6ab5d5e4242d51b28f2be5d8f 0xbdfdfbe07fa71a44b1118ceb34b8a44af110dbd6ab5d5e4242d51b28f2be5d8f
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH27]
+running test on Fork: Homestead
+compare root 0xbdfdfbe07fa71a44b1118ceb34b8a44af110dbd6ab5d5e4242d51b28f2be5d8f 0xbdfdfbe07fa71a44b1118ceb34b8a44af110dbd6ab5d5e4242d51b28f2be5d8f
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH27]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH28]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xf2481824271ffccc34ed1bf28dca0a01d4a33d0081284fec91b763127f1e06b1 0xf2481824271ffccc34ed1bf28dca0a01d4a33d0081284fec91b763127f1e06b1
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH28]
+running test on Fork: Homestead
+compare root 0xf2481824271ffccc34ed1bf28dca0a01d4a33d0081284fec91b763127f1e06b1 0xf2481824271ffccc34ed1bf28dca0a01d4a33d0081284fec91b763127f1e06b1
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH28]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH29]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x1d6d2484276688f902bd567f355cc47c157a4d295df8e66fe0fd03e327374c2d 0x1d6d2484276688f902bd567f355cc47c157a4d295df8e66fe0fd03e327374c2d
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH29]
+running test on Fork: Homestead
+compare root 0x1d6d2484276688f902bd567f355cc47c157a4d295df8e66fe0fd03e327374c2d 0x1d6d2484276688f902bd567f355cc47c157a4d295df8e66fe0fd03e327374c2d
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH29]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH2]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xce26e242247c3fa1d0bef86524c04b263e762a84bdf389b95b93b62b8d2634b8 0xce26e242247c3fa1d0bef86524c04b263e762a84bdf389b95b93b62b8d2634b8
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH2]
+running test on Fork: Homestead
+compare root 0xce26e242247c3fa1d0bef86524c04b263e762a84bdf389b95b93b62b8d2634b8 0xce26e242247c3fa1d0bef86524c04b263e762a84bdf389b95b93b62b8d2634b8
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH2]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH30]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x5de1c3cead7d9b32c186598d14e0877bef52040d16f13712b522d98ecb7e8021 0x5de1c3cead7d9b32c186598d14e0877bef52040d16f13712b522d98ecb7e8021
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH30]
+running test on Fork: Homestead
+compare root 0x5de1c3cead7d9b32c186598d14e0877bef52040d16f13712b522d98ecb7e8021 0x5de1c3cead7d9b32c186598d14e0877bef52040d16f13712b522d98ecb7e8021
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH30]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH31]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xc075b77e7b9790ca3836fd86d0b4a871606d040f435cabb0fb972cde4cfb6611 0xc075b77e7b9790ca3836fd86d0b4a871606d040f435cabb0fb972cde4cfb6611
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH31]
+running test on Fork: Homestead
+compare root 0xc075b77e7b9790ca3836fd86d0b4a871606d040f435cabb0fb972cde4cfb6611 0xc075b77e7b9790ca3836fd86d0b4a871606d040f435cabb0fb972cde4cfb6611
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH31]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH32]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x2b4a4dd6e6eb0c18c500d909b86e3552027a532deeeec3b9d640631117876e8f 0x2b4a4dd6e6eb0c18c500d909b86e3552027a532deeeec3b9d640631117876e8f
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH32]
+running test on Fork: Homestead
+compare root 0x2b4a4dd6e6eb0c18c500d909b86e3552027a532deeeec3b9d640631117876e8f 0x2b4a4dd6e6eb0c18c500d909b86e3552027a532deeeec3b9d640631117876e8f
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH32]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH3]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xa8c630ea34105fa478f95596da3aff454cda834329ff3ce32afdc382cc893be4 0xa8c630ea34105fa478f95596da3aff454cda834329ff3ce32afdc382cc893be4
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH3]
+running test on Fork: Homestead
+compare root 0xa8c630ea34105fa478f95596da3aff454cda834329ff3ce32afdc382cc893be4 0xa8c630ea34105fa478f95596da3aff454cda834329ff3ce32afdc382cc893be4
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH3]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH4]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x5f5bed126d4bde13fbe2fb45dd96bb1569943e4555a8c90d84f91ec160a2feb0 0x5f5bed126d4bde13fbe2fb45dd96bb1569943e4555a8c90d84f91ec160a2feb0
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH4]
+running test on Fork: Homestead
+compare root 0x5f5bed126d4bde13fbe2fb45dd96bb1569943e4555a8c90d84f91ec160a2feb0 0x5f5bed126d4bde13fbe2fb45dd96bb1569943e4555a8c90d84f91ec160a2feb0
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH4]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH5]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xe213d915f6fcc0bc44e623f4d5df973b438a6a549400f1ab2c6c09b081ee497b 0xe213d915f6fcc0bc44e623f4d5df973b438a6a549400f1ab2c6c09b081ee497b
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH5]
+running test on Fork: Homestead
+compare root 0xe213d915f6fcc0bc44e623f4d5df973b438a6a549400f1ab2c6c09b081ee497b 0xe213d915f6fcc0bc44e623f4d5df973b438a6a549400f1ab2c6c09b081ee497b
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH5]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH6]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0xdf94500393b2137024284aa749c51135abfc0e726e4a90b91738b3e397852b29 0xdf94500393b2137024284aa749c51135abfc0e726e4a90b91738b3e397852b29
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH6]
+running test on Fork: Homestead
+compare root 0xdf94500393b2137024284aa749c51135abfc0e726e4a90b91738b3e397852b29 0xdf94500393b2137024284aa749c51135abfc0e726e4a90b91738b3e397852b29
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH6]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH7]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x1dbaec7968f4ad1b6ddf90ba654df4b691c663e30578827cd59da39a02722a75 0x1dbaec7968f4ad1b6ddf90ba654df4b691c663e30578827cd59da39a02722a75
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH7]
+running test on Fork: Homestead
+compare root 0x1dbaec7968f4ad1b6ddf90ba654df4b691c663e30578827cd59da39a02722a75 0x1dbaec7968f4ad1b6ddf90ba654df4b691c663e30578827cd59da39a02722a75
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH7]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH8]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x01538f596de3325497057aa332111d06b5c1e37082a210b657848c655b5b8da4 0x01538f596de3325497057aa332111d06b5c1e37082a210b657848c655b5b8da4
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH8]
+running test on Fork: Homestead
+compare root 0x01538f596de3325497057aa332111d06b5c1e37082a210b657848c655b5b8da4 0x01538f596de3325497057aa332111d06b5c1e37082a210b657848c655b5b8da4
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH8]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH9]
+[{Homestead 0}]
+{<nil> false false []}
+running test on Fork: Homestead
+compare root 0x05185720572025aea5194c0e13637c2c7844cb8bf3bdf7efc30111818727ce1e 0x05185720572025aea5194c0e13637c2c7844cb8bf3bdf7efc30111818727ce1e
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH9]
+running test on Fork: Homestead
+compare root 0x05185720572025aea5194c0e13637c2c7844cb8bf3bdf7efc30111818727ce1e 0x05185720572025aea5194c0e13637c2c7844cb8bf3bdf7efc30111818727ce1e
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Homestead-state_test-stack_height_1025-PUSH9]
+PASS
+ok  	github.com/XinFinOrg/XDPoSChain/tests	0.627s

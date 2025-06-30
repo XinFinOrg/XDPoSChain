@@ -1,0 +1,1721 @@
+Executing: homestead/coverage/coverage/coverage.json
+[{Byzantium 0}]
+Executing: homestead/yul/yul_example/yul.json
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+Executing: frontier/identity_precompile/identity_returndatasize/identity_precompile_returndata.json/tests/frontier/identity_precompile/test_identity_returndatasize.py::test_identity_precompile_returndata[fork_Byzantium-state_test-output_size_greater_than_input]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+Executing: frontier/identity_precompile/identity/call_identity_precompile_large_params.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile_large_params[fork_Byzantium-state_test-tx_gas_limit_10000000-identity_5-call_type_CALLCODE]
+{<nil> false false []}
+running test on Fork: Byzantium
+[{Byzantium 0}]
+Executing: frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Byzantium-state_test-calldata_source_contract-34_bytes]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x55a79b85de5be85987be190e436eaf6d4b41f8366e551a53bf4c1ad1cc3081dc 0x55a79b85de5be85987be190e436eaf6d4b41f8366e551a53bf4c1ad1cc3081dc
+/hash/trie success test name homestead/coverage/coverage/coverage.json
+Executing: frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_contract-args_size_0]
+[{Byzantium 0}]
+compare root 0x98f825d53db6b96bb1b6fab70080252618cc0138dfe192404e1570408341faad 0x98f825d53db6b96bb1b6fab70080252618cc0138dfe192404e1570408341faad
+/hash/trie success test name frontier/identity_precompile/identity_returndatasize/identity_precompile_returndata.json/tests/frontier/identity_precompile/test_identity_returndatasize.py::test_identity_precompile_returndata[fork_Byzantium-state_test-output_size_greater_than_input]
+compare root 0xaf2f2e51528628fae45973dc4e776809682115e04740e8b87ffe08451f005484 0xaf2f2e51528628fae45973dc4e776809682115e04740e8b87ffe08451f005484
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile_large_params.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile_large_params[fork_Byzantium-state_test-tx_gas_limit_10000000-identity_5-call_type_CALLCODE]
+compare root 0x7dc61640680eaa1caf8d8f7458872c370a6c31cec9983d5b8a591c3a89b58cfb 0x7dc61640680eaa1caf8d8f7458872c370a6c31cec9983d5b8a591c3a89b58cfb
+/hash/trie success test name homestead/yul/yul_example/yul.json
+compare root 0xe33e135592583b041b30311f17c88177e240bb5511cb09f389f6106611819a84 0xe33e135592583b041b30311f17c88177e240bb5511cb09f389f6106611819a84
+/hash/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Byzantium-state_test-calldata_source_contract-34_bytes]
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0x55a79b85de5be85987be190e436eaf6d4b41f8366e551a53bf4c1ad1cc3081dc 0x55a79b85de5be85987be190e436eaf6d4b41f8366e551a53bf4c1ad1cc3081dc
+/path/trie success test name homestead/coverage/coverage/coverage.json
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0x98f825d53db6b96bb1b6fab70080252618cc0138dfe192404e1570408341faad 0x98f825d53db6b96bb1b6fab70080252618cc0138dfe192404e1570408341faad
+running test on Fork: Byzantium
+/path/trie success test name frontier/identity_precompile/identity_returndatasize/identity_precompile_returndata.json/tests/frontier/identity_precompile/test_identity_returndatasize.py::test_identity_precompile_returndata[fork_Byzantium-state_test-output_size_greater_than_input]
+Executing: frontier/identity_precompile/identity_returndatasize/identity_precompile_returndata.json/tests/frontier/identity_precompile/test_identity_returndatasize.py::test_identity_precompile_returndata[fork_Byzantium-state_test-output_size_less_than_input]
+[{Byzantium 0}]
+compare root 0xdccbb01f1e4200c5136a2762c4dd0e1e8e3eb8e9c1173a4c46b2cbf43e4e0b8f 0xdccbb01f1e4200c5136a2762c4dd0e1e8e3eb8e9c1173a4c46b2cbf43e4e0b8f
+/hash/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_contract-args_size_0]
+compare root 0xe33e135592583b041b30311f17c88177e240bb5511cb09f389f6106611819a84 0xe33e135592583b041b30311f17c88177e240bb5511cb09f389f6106611819a84
+/path/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Byzantium-state_test-calldata_source_contract-34_bytes]
+running test on Fork: Byzantium
+Executing: frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_0-call_type_CALLCODE]
+[{Byzantium 0}]
+Executing: frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Byzantium-state_test-calldata_source_contract-two_bytes]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+Executing: byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-EIP-198-case1]
+[{Byzantium 0}]
+compare root 0x7dc61640680eaa1caf8d8f7458872c370a6c31cec9983d5b8a591c3a89b58cfb 0x7dc61640680eaa1caf8d8f7458872c370a6c31cec9983d5b8a591c3a89b58cfb
+/path/trie success test name homestead/yul/yul_example/yul.json
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP10]
+[{Byzantium 0}]
+compare root 0xaf2f2e51528628fae45973dc4e776809682115e04740e8b87ffe08451f005484 0xaf2f2e51528628fae45973dc4e776809682115e04740e8b87ffe08451f005484
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile_large_params.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile_large_params[fork_Byzantium-state_test-tx_gas_limit_10000000-identity_5-call_type_CALLCODE]
+Executing: frontier/identity_precompile/identity/call_identity_precompile_large_params.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile_large_params[fork_Byzantium-state_test-tx_gas_limit_10000000-identity_5-call_type_CALL]
+[{Byzantium 0}]
+compare root 0xdccbb01f1e4200c5136a2762c4dd0e1e8e3eb8e9c1173a4c46b2cbf43e4e0b8f 0xdccbb01f1e4200c5136a2762c4dd0e1e8e3eb8e9c1173a4c46b2cbf43e4e0b8f
+/path/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_contract-args_size_0]
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x837acff952d81eead1c9e8a12ddf37b4525f2d7d6e593b1a8fcd80162f85d76a 0x837acff952d81eead1c9e8a12ddf37b4525f2d7d6e593b1a8fcd80162f85d76a
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_0-call_type_CALLCODE]
+Executing: frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_contract-args_size_16]
+compare root 0xf7e27907b4d38bf51a4c137d2f150d8354e3ec161db1d875129feaa3cb6161b1 0xf7e27907b4d38bf51a4c137d2f150d8354e3ec161db1d875129feaa3cb6161b1
+/hash/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Byzantium-state_test-calldata_source_contract-two_bytes]
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xc75a571ad73ded754c209d5351e37352ab4a3ee9e380bc9e303fd3bf253e17e5 0xc75a571ad73ded754c209d5351e37352ab4a3ee9e380bc9e303fd3bf253e17e5
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP10]
+compare root 0x6988c88345c4f91a43fcdcd22acdd8c3246efb493ae5c4e5b37b4b6c9dfcf8bb 0x6988c88345c4f91a43fcdcd22acdd8c3246efb493ae5c4e5b37b4b6c9dfcf8bb
+/hash/trie success test name frontier/identity_precompile/identity_returndatasize/identity_precompile_returndata.json/tests/frontier/identity_precompile/test_identity_returndatasize.py::test_identity_precompile_returndata[fork_Byzantium-state_test-output_size_less_than_input]
+compare root 0x3fca0bde01fad1737b33e9fe78d7de0e7751815572b12459766e06af145dd379 0x3fca0bde01fad1737b33e9fe78d7de0e7751815572b12459766e06af145dd379
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile_large_params.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile_large_params[fork_Byzantium-state_test-tx_gas_limit_10000000-identity_5-call_type_CALL]
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0xb1acebdfa48c568eca09e2e1d9257bfe590fb42e6640be0d52fb2a3d12ae9713 0xb1acebdfa48c568eca09e2e1d9257bfe590fb42e6640be0d52fb2a3d12ae9713
+/hash/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-EIP-198-case1]
+running test on Fork: Byzantium
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH10]
+[{Byzantium 0}]
+compare root 0x837acff952d81eead1c9e8a12ddf37b4525f2d7d6e593b1a8fcd80162f85d76a 0x837acff952d81eead1c9e8a12ddf37b4525f2d7d6e593b1a8fcd80162f85d76a
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_0-call_type_CALLCODE]
+{<nil> false false []}
+compare root 0xf7e27907b4d38bf51a4c137d2f150d8354e3ec161db1d875129feaa3cb6161b1 0xf7e27907b4d38bf51a4c137d2f150d8354e3ec161db1d875129feaa3cb6161b1
+/path/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Byzantium-state_test-calldata_source_contract-two_bytes]
+running test on Fork: Byzantium
+Executing: frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Byzantium-state_test-calldata_source_contract-word_n_byte]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+Executing: frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_0-call_type_CALL]
+compare root 0x6988c88345c4f91a43fcdcd22acdd8c3246efb493ae5c4e5b37b4b6c9dfcf8bb 0x6988c88345c4f91a43fcdcd22acdd8c3246efb493ae5c4e5b37b4b6c9dfcf8bb
+[{Byzantium 0}]
+/path/trie success test name frontier/identity_precompile/identity_returndatasize/identity_precompile_returndata.json/tests/frontier/identity_precompile/test_identity_returndatasize.py::test_identity_precompile_returndata[fork_Byzantium-state_test-output_size_less_than_input]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x2e3770618ad191c6b9b147c9d46f2150bf3c4bc6860bac363d58877b3f062ed5 0x2e3770618ad191c6b9b147c9d46f2150bf3c4bc6860bac363d58877b3f062ed5
+/hash/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Byzantium-state_test-calldata_source_contract-word_n_byte]
+compare root 0x3fca0bde01fad1737b33e9fe78d7de0e7751815572b12459766e06af145dd379 0x3fca0bde01fad1737b33e9fe78d7de0e7751815572b12459766e06af145dd379
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile_large_params.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile_large_params[fork_Byzantium-state_test-tx_gas_limit_10000000-identity_5-call_type_CALL]
+compare root 0x93fa77e71879241717613d8b8ddb08c538ff3733adb25ffc384eab0fd0fde0c2 0x93fa77e71879241717613d8b8ddb08c538ff3733adb25ffc384eab0fd0fde0c2
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH10]
+compare root 0xdc4e79f15cc1c604061f4aee9a4ca9f21442f77a28315458360437758e49e09e 0xdc4e79f15cc1c604061f4aee9a4ca9f21442f77a28315458360437758e49e09e
+/hash/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_contract-args_size_16]
+compare root 0xc75a571ad73ded754c209d5351e37352ab4a3ee9e380bc9e303fd3bf253e17e5 0xc75a571ad73ded754c209d5351e37352ab4a3ee9e380bc9e303fd3bf253e17e5
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP10]
+compare root 0xb1acebdfa48c568eca09e2e1d9257bfe590fb42e6640be0d52fb2a3d12ae9713 0xb1acebdfa48c568eca09e2e1d9257bfe590fb42e6640be0d52fb2a3d12ae9713
+/path/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-EIP-198-case1]
+compare root 0x56ab1e76fc7326c91b6814375149d2f65e146c7fd8fc7169ec2a53f9157dc09e 0x56ab1e76fc7326c91b6814375149d2f65e146c7fd8fc7169ec2a53f9157dc09e
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_0-call_type_CALL]
+running test on Fork: Byzantium
+Executing: frontier/identity_precompile/identity/call_identity_precompile_large_params.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile_large_params[fork_Byzantium-state_test-tx_gas_limit_10000000-identity_6-call_type_CALLCODE]
+[{Byzantium 0}]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP11]
+[{Byzantium 0}]
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+Executing: frontier/create/create_one_byte/create_one_byte.json
+[{Byzantium 0}]
+Executing: byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-EIP-198-case2]
+compare root 0x2e3770618ad191c6b9b147c9d46f2150bf3c4bc6860bac363d58877b3f062ed5 0x2e3770618ad191c6b9b147c9d46f2150bf3c4bc6860bac363d58877b3f062ed5
+/path/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Byzantium-state_test-calldata_source_contract-word_n_byte]
+{<nil> false false []}
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+Executing: frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Byzantium-state_test-calldata_source_tx-34_bytes]
+[{Byzantium 0}]
+compare root 0x93fa77e71879241717613d8b8ddb08c538ff3733adb25ffc384eab0fd0fde0c2 0x93fa77e71879241717613d8b8ddb08c538ff3733adb25ffc384eab0fd0fde0c2
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH10]
+compare root 0xdc4e79f15cc1c604061f4aee9a4ca9f21442f77a28315458360437758e49e09e 0xdc4e79f15cc1c604061f4aee9a4ca9f21442f77a28315458360437758e49e09e
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x56ab1e76fc7326c91b6814375149d2f65e146c7fd8fc7169ec2a53f9157dc09e 0x56ab1e76fc7326c91b6814375149d2f65e146c7fd8fc7169ec2a53f9157dc09e
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_0-call_type_CALL]
+[{Byzantium 0}]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH11]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+/path/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_contract-args_size_16]
+compare root 0xa374152c379066ff1ef1ea61f3483273bb71e5e19a05c96803bd87a6f16d7033 0xa374152c379066ff1ef1ea61f3483273bb71e5e19a05c96803bd87a6f16d7033
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile_large_params.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile_large_params[fork_Byzantium-state_test-tx_gas_limit_10000000-identity_6-call_type_CALLCODE]
+Executing: frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_contract-args_size_257]
+[{Byzantium 0}]
+running test on Fork: Byzantium
+Executing: frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_1-call_type_CALLCODE]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xbdbe2d9797e089835b746e867b1b16eea2cf304a4bf33a439e4531b1e6370256 0xbdbe2d9797e089835b746e867b1b16eea2cf304a4bf33a439e4531b1e6370256
+/hash/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Byzantium-state_test-calldata_source_tx-34_bytes]
+running test on Fork: Byzantium
+compare root 0xa374152c379066ff1ef1ea61f3483273bb71e5e19a05c96803bd87a6f16d7033 0xa374152c379066ff1ef1ea61f3483273bb71e5e19a05c96803bd87a6f16d7033
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile_large_params.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile_large_params[fork_Byzantium-state_test-tx_gas_limit_10000000-identity_6-call_type_CALLCODE]
+Executing: frontier/identity_precompile/identity/call_identity_precompile_large_params.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile_large_params[fork_Byzantium-state_test-tx_gas_limit_10000000-identity_6-call_type_CALL]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x19909c2bd91dae238bf25607be0927c21168410c44af69430960935e50e2252e 0x19909c2bd91dae238bf25607be0927c21168410c44af69430960935e50e2252e
+/hash/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_contract-args_size_257]
+{<nil> false false []}
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0xbdbe2d9797e089835b746e867b1b16eea2cf304a4bf33a439e4531b1e6370256 0xbdbe2d9797e089835b746e867b1b16eea2cf304a4bf33a439e4531b1e6370256
+/path/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Byzantium-state_test-calldata_source_tx-34_bytes]
+Executing: frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Byzantium-state_test-calldata_source_tx-two_bytes]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x69bc168060100619100b97aa16b165df5e5feb11a4ac911f844bd242c8cfae8d 0x69bc168060100619100b97aa16b165df5e5feb11a4ac911f844bd242c8cfae8d
+/hash/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-EIP-198-case2]
+compare root 0x78bb133548f842a6c9cc47f2cdc5437606a16d6d827dc7bc02dc2a0d97b80d3e 0x78bb133548f842a6c9cc47f2cdc5437606a16d6d827dc7bc02dc2a0d97b80d3e
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_1-call_type_CALLCODE]
+compare root 0xe649f74a8a5a363c39224cb42042d414682816116209e0b45105b595bd932868 0xe649f74a8a5a363c39224cb42042d414682816116209e0b45105b595bd932868
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH11]
+compare root 0x19909c2bd91dae238bf25607be0927c21168410c44af69430960935e50e2252e 0x19909c2bd91dae238bf25607be0927c21168410c44af69430960935e50e2252e
+/path/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_contract-args_size_257]
+running test on Fork: Byzantium
+Executing: frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_contract-args_size_2]
+[{Byzantium 0}]
+Executing: frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-31_bytes]
+[{Byzantium 0}]
+Executing: frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-cdc 0 0 0]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+compare root 0xb34db7d280be7a693eb083fcf77729545055a2dd39601ff12868832ba04984b2 0xb34db7d280be7a693eb083fcf77729545055a2dd39601ff12868832ba04984b2
+/hash/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Byzantium-state_test-calldata_source_tx-two_bytes]
+running test on Fork: Byzantium
+Executing: zkevm/worst_compute/worst_calldataload.json/tests/zkevm/test_worst_compute.py::test_worst_calldataload[fork_Byzantium-state_test-empty]
+[{Byzantium 0}]
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xe649f74a8a5a363c39224cb42042d414682816116209e0b45105b595bd932868 0xe649f74a8a5a363c39224cb42042d414682816116209e0b45105b595bd932868
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH11]
+compare root 0xf46a315769186c2fec2180c7348b2d13856f5df7da5755939ef4d73dfe2f894e 0xf46a315769186c2fec2180c7348b2d13856f5df7da5755939ef4d73dfe2f894e
+running test on Fork: Byzantium
+compare root 0xc362ec227bc4ee0bbe562873e099ce512ae8e2366ecb3a383ca9d695966fc5af 0xc362ec227bc4ee0bbe562873e099ce512ae8e2366ecb3a383ca9d695966fc5af
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile_large_params.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile_large_params[fork_Byzantium-state_test-tx_gas_limit_10000000-identity_6-call_type_CALL]
+running test on Fork: Byzantium
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP11]
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0xb34db7d280be7a693eb083fcf77729545055a2dd39601ff12868832ba04984b2 0xb34db7d280be7a693eb083fcf77729545055a2dd39601ff12868832ba04984b2
+/path/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Byzantium-state_test-calldata_source_tx-two_bytes]
+compare root 0xa94b21c86af99f1344c9091787a3e0d10cddbece4e5f01988faed5c8f01520cd 0xa94b21c86af99f1344c9091787a3e0d10cddbece4e5f01988faed5c8f01520cd
+/hash/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-cdc 0 0 0]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH12]
+[{Byzantium 0}]
+Executing: frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Byzantium-state_test-calldata_source_tx-word_n_byte]
+{<nil> false false []}
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x69bc168060100619100b97aa16b165df5e5feb11a4ac911f844bd242c8cfae8d 0x69bc168060100619100b97aa16b165df5e5feb11a4ac911f844bd242c8cfae8d
+/path/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-EIP-198-case2]
+compare root 0x7493c893e96144f2bb3fc4bb19efc800f13f69df2ed31d17ac3bc38cfcb1a7c7 0x7493c893e96144f2bb3fc4bb19efc800f13f69df2ed31d17ac3bc38cfcb1a7c7
+/hash/trie success test name zkevm/worst_compute/worst_calldataload.json/tests/zkevm/test_worst_compute.py::test_worst_calldataload[fork_Byzantium-state_test-empty]
+compare root 0x78bb133548f842a6c9cc47f2cdc5437606a16d6d827dc7bc02dc2a0d97b80d3e 0x78bb133548f842a6c9cc47f2cdc5437606a16d6d827dc7bc02dc2a0d97b80d3e
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_1-call_type_CALLCODE]
+Executing: byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-EIP-198-case3-raw-input-out-of-gas]
+[{Byzantium 0}]
+Executing: frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_1-call_type_CALL]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0x92e0507a00f34452a1e82d1058102ac0f56a60542024997de16b6570b64ac938 0x92e0507a00f34452a1e82d1058102ac0f56a60542024997de16b6570b64ac938
+/hash/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_contract-args_size_2]
+compare root 0xa94b21c86af99f1344c9091787a3e0d10cddbece4e5f01988faed5c8f01520cd 0xa94b21c86af99f1344c9091787a3e0d10cddbece4e5f01988faed5c8f01520cd
+/path/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-cdc 0 0 0]
+compare root 0xbd04993128403850289bf839f87a76e2e6be8d56e4ecad5a7290581a111713c2 0xbd04993128403850289bf839f87a76e2e6be8d56e4ecad5a7290581a111713c2
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH12]
+compare root 0xdaa047c233821c9d61cf824837c00277c4f73aa94407ae9f30a815b9123912db 0xdaa047c233821c9d61cf824837c00277c4f73aa94407ae9f30a815b9123912db
+/hash/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Byzantium-state_test-calldata_source_tx-word_n_byte]
+running test on Fork: Byzantium
+compare root 0x92bac57718d48bf1fe9e21c79d550a20127420e82a09ad0a486150b6301093a3 0x92bac57718d48bf1fe9e21c79d550a20127420e82a09ad0a486150b6301093a3
+/hash/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-EIP-198-case3-raw-input-out-of-gas]
+compare root 0xf46a315769186c2fec2180c7348b2d13856f5df7da5755939ef4d73dfe2f894e 0xf46a315769186c2fec2180c7348b2d13856f5df7da5755939ef4d73dfe2f894e
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP11]
+compare root 0xc362ec227bc4ee0bbe562873e099ce512ae8e2366ecb3a383ca9d695966fc5af 0xc362ec227bc4ee0bbe562873e099ce512ae8e2366ecb3a383ca9d695966fc5af
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile_large_params.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile_large_params[fork_Byzantium-state_test-tx_gas_limit_10000000-identity_6-call_type_CALL]
+Executing: frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-cdc 0 1 0]
+running test on Fork: Byzantium
+compare root 0x728ca55d1a33497bf7494a192eed748cfa34964a043b15f135a5214067029af8 0x728ca55d1a33497bf7494a192eed748cfa34964a043b15f135a5214067029af8
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_1-call_type_CALL]
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0x7493c893e96144f2bb3fc4bb19efc800f13f69df2ed31d17ac3bc38cfcb1a7c7 0x7493c893e96144f2bb3fc4bb19efc800f13f69df2ed31d17ac3bc38cfcb1a7c7
+/path/trie success test name zkevm/worst_compute/worst_calldataload.json/tests/zkevm/test_worst_compute.py::test_worst_calldataload[fork_Byzantium-state_test-empty]
+running test on Fork: Byzantium
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x92e0507a00f34452a1e82d1058102ac0f56a60542024997de16b6570b64ac938 0x92e0507a00f34452a1e82d1058102ac0f56a60542024997de16b6570b64ac938
+/path/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_contract-args_size_2]
+compare root 0xdaa047c233821c9d61cf824837c00277c4f73aa94407ae9f30a815b9123912db 0xdaa047c233821c9d61cf824837c00277c4f73aa94407ae9f30a815b9123912db
+compare root 0x728ca55d1a33497bf7494a192eed748cfa34964a043b15f135a5214067029af8 0x728ca55d1a33497bf7494a192eed748cfa34964a043b15f135a5214067029af8
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_1-call_type_CALL]
+Executing: frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_1_nonzerovalue-call_type_CALLCODE]
+[{Byzantium 0}]
+compare root 0xbd04993128403850289bf839f87a76e2e6be8d56e4ecad5a7290581a111713c2 0xbd04993128403850289bf839f87a76e2e6be8d56e4ecad5a7290581a111713c2
+Executing: frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_contract-args_size_33]
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH12]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH13]
+[{Byzantium 0}]
+/path/trie success test name frontier/opcodes/calldataload/calldataload.json/tests/frontier/opcodes/test_calldataload.py::test_calldataload[fork_Byzantium-state_test-calldata_source_tx-word_n_byte]
+Executing: zkevm/worst_compute/worst_calldataload.json/tests/zkevm/test_worst_compute.py::test_worst_calldataload[fork_Byzantium-state_test-one-loop]
+[{Byzantium 0}]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP12]
+[{Byzantium 0}]
+compare root 0x92bac57718d48bf1fe9e21c79d550a20127420e82a09ad0a486150b6301093a3 0x92bac57718d48bf1fe9e21c79d550a20127420e82a09ad0a486150b6301093a3
+/path/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-EIP-198-case3-raw-input-out-of-gas]
+[{Byzantium 0}]
+{<nil> false false []}
+compare root 0x0a15a82c08b96b28af06aa10299e4eb0ad0c47f0edb3b9df6c44cd9e24ec2298 0x0a15a82c08b96b28af06aa10299e4eb0ad0c47f0edb3b9df6c44cd9e24ec2298
+/hash/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-cdc 0 1 0]
+Executing: byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-EIP-198-case4-extra-data_07]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xa5be070af61c282d0edf6ab65cb23cd306b97085c180a18d06a2bbdb7ccb1160 0xa5be070af61c282d0edf6ab65cb23cd306b97085c180a18d06a2bbdb7ccb1160
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH13]
+running test on Fork: Byzantium
+compare root 0x0298265e903251ab6763e26ca0ac0105f42e0695f8f467787f4207029518433c 0x0298265e903251ab6763e26ca0ac0105f42e0695f8f467787f4207029518433c
+/hash/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-EIP-198-case4-extra-data_07]
+running test on Fork: Byzantium
+compare root 0xa8f11f7dcf4d8415fc00f0e0d08ef3872c215519e7d79c7c82247b8a2b12e4a7 0xa8f11f7dcf4d8415fc00f0e0d08ef3872c215519e7d79c7c82247b8a2b12e4a7
+/hash/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_contract-args_size_33]
+compare root 0xc10901c3359bb5629461abe48f83d190ebd9d2d652f6c2d309ab998652d44fde 0xc10901c3359bb5629461abe48f83d190ebd9d2d652f6c2d309ab998652d44fde
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_1_nonzerovalue-call_type_CALLCODE]
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0x7493c893e96144f2bb3fc4bb19efc800f13f69df2ed31d17ac3bc38cfcb1a7c7 0x7493c893e96144f2bb3fc4bb19efc800f13f69df2ed31d17ac3bc38cfcb1a7c7
+/hash/trie success test name zkevm/worst_compute/worst_calldataload.json/tests/zkevm/test_worst_compute.py::test_worst_calldataload[fork_Byzantium-state_test-one-loop]
+compare root 0x0a15a82c08b96b28af06aa10299e4eb0ad0c47f0edb3b9df6c44cd9e24ec2298 0x0a15a82c08b96b28af06aa10299e4eb0ad0c47f0edb3b9df6c44cd9e24ec2298
+/path/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-cdc 0 1 0]
+running test on Fork: Byzantium
+Executing: frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-cdc 0 1 1]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x0298265e903251ab6763e26ca0ac0105f42e0695f8f467787f4207029518433c 0x0298265e903251ab6763e26ca0ac0105f42e0695f8f467787f4207029518433c
+/path/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-EIP-198-case4-extra-data_07]
+compare root 0xa5be070af61c282d0edf6ab65cb23cd306b97085c180a18d06a2bbdb7ccb1160 0xa5be070af61c282d0edf6ab65cb23cd306b97085c180a18d06a2bbdb7ccb1160
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH13]
+Executing: byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-EIP-198-case5-raw-input]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH14]
+[{Byzantium 0}]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xc10901c3359bb5629461abe48f83d190ebd9d2d652f6c2d309ab998652d44fde 0xc10901c3359bb5629461abe48f83d190ebd9d2d652f6c2d309ab998652d44fde
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_1_nonzerovalue-call_type_CALLCODE]
+{<nil> false false []}
+compare root 0xa8f11f7dcf4d8415fc00f0e0d08ef3872c215519e7d79c7c82247b8a2b12e4a7 0xa8f11f7dcf4d8415fc00f0e0d08ef3872c215519e7d79c7c82247b8a2b12e4a7
+/path/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_contract-args_size_33]
+Executing: frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_1_nonzerovalue-call_type_CALL]
+Executing: frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_tx-args_size_0]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+[{Byzantium 0}]
+compare root 0xbe34dbd5affb9e4d1e1a43c56f50ff2d25158c89e7f3466e5c952d0af89142f0 0xbe34dbd5affb9e4d1e1a43c56f50ff2d25158c89e7f3466e5c952d0af89142f0
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP12]
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0x7493c893e96144f2bb3fc4bb19efc800f13f69df2ed31d17ac3bc38cfcb1a7c7 0x7493c893e96144f2bb3fc4bb19efc800f13f69df2ed31d17ac3bc38cfcb1a7c7
+/path/trie success test name zkevm/worst_compute/worst_calldataload.json/tests/zkevm/test_worst_compute.py::test_worst_calldataload[fork_Byzantium-state_test-one-loop]
+{<nil> false false []}
+Executing: zkevm/worst_compute/worst_calldataload.json/tests/zkevm/test_worst_compute.py::test_worst_calldataload[fork_Byzantium-state_test-zero-loop]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x288bdb0f7882fe6046227b1c7cbdabd6ad6827bd345ba17bd7bbed6d8cf9ffbe 0x288bdb0f7882fe6046227b1c7cbdabd6ad6827bd345ba17bd7bbed6d8cf9ffbe
+/hash/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-EIP-198-case5-raw-input]
+compare root 0xf903175a101be6e6f6e8aa2e06c229edee426a082cbfa86007ce8c738d4ede2f 0xf903175a101be6e6f6e8aa2e06c229edee426a082cbfa86007ce8c738d4ede2f
+/hash/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-cdc 0 1 1]
+compare root 0x104242c28d77efa199d6f1265b10bfffa388ad748138f3f4541a1d268ad3a2b8 0x104242c28d77efa199d6f1265b10bfffa388ad748138f3f4541a1d268ad3a2b8
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH14]
+compare root 0xbe34dbd5affb9e4d1e1a43c56f50ff2d25158c89e7f3466e5c952d0af89142f0 0xbe34dbd5affb9e4d1e1a43c56f50ff2d25158c89e7f3466e5c952d0af89142f0
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP12]
+running test on Fork: Byzantium
+compare root 0x5eb14b07b4e6219c5870d4e09d568196b198e4298727e50e786a9aa6c7b563e3 0x5eb14b07b4e6219c5870d4e09d568196b198e4298727e50e786a9aa6c7b563e3
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_1_nonzerovalue-call_type_CALL]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP13]
+compare root 0x6518957fd60bc47b9879663f06db2d1af8f3295146903624b1914b1ee9638510 0x6518957fd60bc47b9879663f06db2d1af8f3295146903624b1914b1ee9638510
+/hash/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_tx-args_size_0]
+running test on Fork: Byzantium
+compare root 0xf903175a101be6e6f6e8aa2e06c229edee426a082cbfa86007ce8c738d4ede2f 0xf903175a101be6e6f6e8aa2e06c229edee426a082cbfa86007ce8c738d4ede2f
+/path/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-cdc 0 1 1]
+compare root 0x104242c28d77efa199d6f1265b10bfffa388ad748138f3f4541a1d268ad3a2b8 0x104242c28d77efa199d6f1265b10bfffa388ad748138f3f4541a1d268ad3a2b8
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH14]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH15]
+[{Byzantium 0}]
+{<nil> false false []}
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x5eb14b07b4e6219c5870d4e09d568196b198e4298727e50e786a9aa6c7b563e3 0x5eb14b07b4e6219c5870d4e09d568196b198e4298727e50e786a9aa6c7b563e3
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_1_nonzerovalue-call_type_CALL]
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+Executing: frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-cdc 0 1 2]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x3318c1c1e2e86c7cf60985e202e1157ac51646ee67d50452a9e171dcd880c2f2 0x3318c1c1e2e86c7cf60985e202e1157ac51646ee67d50452a9e171dcd880c2f2
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH15]
+Executing: frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_1_nonzerovalue_insufficient_balance-call_type_CALLCODE]
+[{Byzantium 0}]
+compare root 0x288bdb0f7882fe6046227b1c7cbdabd6ad6827bd345ba17bd7bbed6d8cf9ffbe 0x288bdb0f7882fe6046227b1c7cbdabd6ad6827bd345ba17bd7bbed6d8cf9ffbe
+/path/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-EIP-198-case5-raw-input]
+compare root 0x6518957fd60bc47b9879663f06db2d1af8f3295146903624b1914b1ee9638510 0x6518957fd60bc47b9879663f06db2d1af8f3295146903624b1914b1ee9638510
+/path/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_tx-args_size_0]
+compare root 0x257c912e1eb840772d2dba6de48b3afa9613405fbdd576298618980f18328fe2 0x257c912e1eb840772d2dba6de48b3afa9613405fbdd576298618980f18328fe2
+/hash/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-cdc 0 1 2]
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+Executing: byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x-modulus_0x-ModExpOutput_returned_data_0x]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x7493c893e96144f2bb3fc4bb19efc800f13f69df2ed31d17ac3bc38cfcb1a7c7 0x7493c893e96144f2bb3fc4bb19efc800f13f69df2ed31d17ac3bc38cfcb1a7c7
+/hash/trie success test name zkevm/worst_compute/worst_calldataload.json/tests/zkevm/test_worst_compute.py::test_worst_calldataload[fork_Byzantium-state_test-zero-loop]
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0xa00375c91047e1eb67a5766b7da2cb17da0ce1cce5be40e6cdbe21c2f9017e28 0xa00375c91047e1eb67a5766b7da2cb17da0ce1cce5be40e6cdbe21c2f9017e28
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_1_nonzerovalue_insufficient_balance-call_type_CALLCODE]
+running test on Fork: Byzantium
+compare root 0x98600c3c70cf2365bc89a5f81f2978ea7dca23133e039f3721a61626b476137b 0x98600c3c70cf2365bc89a5f81f2978ea7dca23133e039f3721a61626b476137b
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP13]
+Executing: frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_tx-args_size_16]
+compare root 0x257c912e1eb840772d2dba6de48b3afa9613405fbdd576298618980f18328fe2 0x257c912e1eb840772d2dba6de48b3afa9613405fbdd576298618980f18328fe2
+/path/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-cdc 0 1 2]
+running test on Fork: Byzantium
+compare root 0x3318c1c1e2e86c7cf60985e202e1157ac51646ee67d50452a9e171dcd880c2f2 0x3318c1c1e2e86c7cf60985e202e1157ac51646ee67d50452a9e171dcd880c2f2
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH15]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH16]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xa00375c91047e1eb67a5766b7da2cb17da0ce1cce5be40e6cdbe21c2f9017e28 0xa00375c91047e1eb67a5766b7da2cb17da0ce1cce5be40e6cdbe21c2f9017e28
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_1_nonzerovalue_insufficient_balance-call_type_CALLCODE]
+Executing: frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-cdc 0 neg6 9]
+compare root 0x7493c893e96144f2bb3fc4bb19efc800f13f69df2ed31d17ac3bc38cfcb1a7c7 0x7493c893e96144f2bb3fc4bb19efc800f13f69df2ed31d17ac3bc38cfcb1a7c7
+/path/trie success test name zkevm/worst_compute/worst_calldataload.json/tests/zkevm/test_worst_compute.py::test_worst_calldataload[fork_Byzantium-state_test-zero-loop]
+[{Byzantium 0}]
+compare root 0x646bbb19c838a080ce8c4086d24545ee592c950267a190c252f13674b642f2b7 0x646bbb19c838a080ce8c4086d24545ee592c950267a190c252f13674b642f2b7
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH16]
+{<nil> false false []}
+running test on Fork: Byzantium
+Executing: frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_1_nonzerovalue_insufficient_balance-call_type_CALL]
+[{Byzantium 0}]
+{<nil> false false []}
+compare root 0x84ca6de881c53bbdf2a50f491e31d3a2c21548e9f48cf08ca6279ec60a6c5eae 0x84ca6de881c53bbdf2a50f491e31d3a2c21548e9f48cf08ca6279ec60a6c5eae
+/hash/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x-modulus_0x-ModExpOutput_returned_data_0x]
+running test on Fork: Byzantium
+compare root 0x1d797232bb1a2766bdc2034e1ae23d88ba0aa730e6fde64173304195653b58e2 0x1d797232bb1a2766bdc2034e1ae23d88ba0aa730e6fde64173304195653b58e2
+/hash/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_tx-args_size_16]
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0x847da8acc90cec14fae72eeab1af0e9c38c868c826371efedfbd03fd87ba8e0b 0x847da8acc90cec14fae72eeab1af0e9c38c868c826371efedfbd03fd87ba8e0b
+/hash/trie success test name frontier/create/create_one_byte/create_one_byte.json
+[{Byzantium 0}]
+compare root 0x98600c3c70cf2365bc89a5f81f2978ea7dca23133e039f3721a61626b476137b 0x98600c3c70cf2365bc89a5f81f2978ea7dca23133e039f3721a61626b476137b
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP13]
+compare root 0x646bbb19c838a080ce8c4086d24545ee592c950267a190c252f13674b642f2b7 0x646bbb19c838a080ce8c4086d24545ee592c950267a190c252f13674b642f2b7
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH16]
+{<nil> false false []}
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH17]
+[{Byzantium 0}]
+compare root 0x1d797232bb1a2766bdc2034e1ae23d88ba0aa730e6fde64173304195653b58e2 0x1d797232bb1a2766bdc2034e1ae23d88ba0aa730e6fde64173304195653b58e2
+/path/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_tx-args_size_16]
+{<nil> false false []}
+running test on Fork: Byzantium
+Executing: frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_tx-args_size_257]
+compare root 0x84ca6de881c53bbdf2a50f491e31d3a2c21548e9f48cf08ca6279ec60a6c5eae 0x84ca6de881c53bbdf2a50f491e31d3a2c21548e9f48cf08ca6279ec60a6c5eae
+/path/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x-modulus_0x-ModExpOutput_returned_data_0x]
+compare root 0x92274a33635a3d3b334e73eeb7d7f638690b8033b007d7c3279098cf093de4aa 0x92274a33635a3d3b334e73eeb7d7f638690b8033b007d7c3279098cf093de4aa
+compare root 0xec37d6a1a21ff0e3f53d541a5f0c7aef381ad286a0ecf54097c9bf4fbecdc939 0xec37d6a1a21ff0e3f53d541a5f0c7aef381ad286a0ecf54097c9bf4fbecdc939
+/hash/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-cdc 0 neg6 9]
+Executing: byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x-modulus_0x00-ModExpOutput_returned_data_0x00]
+[{Byzantium 0}]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP14]
+compare root 0x7ea9cb63956b4f7df9160d1f9564b581266126c74d1d286e44dbf9461401c3bc 0x7ea9cb63956b4f7df9160d1f9564b581266126c74d1d286e44dbf9461401c3bc
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH17]
+running test on Fork: Byzantium
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_1_nonzerovalue_insufficient_balance-call_type_CALL]
+compare root 0xd4790739a4ca144a26a16e12d15942c78116aed3d722c818239e73c6e51cadcd 0xd4790739a4ca144a26a16e12d15942c78116aed3d722c818239e73c6e51cadcd
+[{Byzantium 0}]
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+/hash/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x-modulus_0x00-ModExpOutput_returned_data_0x00]
+compare root 0x5f08842307def28a97bd6075da6649765d3e2c1ef0efb7648b61a7560742339a 0x5f08842307def28a97bd6075da6649765d3e2c1ef0efb7648b61a7560742339a
+/hash/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_tx-args_size_257]
+compare root 0xec37d6a1a21ff0e3f53d541a5f0c7aef381ad286a0ecf54097c9bf4fbecdc939 0xec37d6a1a21ff0e3f53d541a5f0c7aef381ad286a0ecf54097c9bf4fbecdc939
+/path/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-cdc 0 neg6 9]
+Executing: frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-cdc 0 neg6 ff]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0x92274a33635a3d3b334e73eeb7d7f638690b8033b007d7c3279098cf093de4aa 0x92274a33635a3d3b334e73eeb7d7f638690b8033b007d7c3279098cf093de4aa
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_1_nonzerovalue_insufficient_balance-call_type_CALL]
+running test on Fork: Byzantium
+compare root 0x0c47e037993172559a8235f1eb7530c08a69bd51fa3568a4a0885a275d639b1d 0x0c47e037993172559a8235f1eb7530c08a69bd51fa3568a4a0885a275d639b1d
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP14]
+running test on Fork: Byzantium
+compare root 0x7ea9cb63956b4f7df9160d1f9564b581266126c74d1d286e44dbf9461401c3bc 0x7ea9cb63956b4f7df9160d1f9564b581266126c74d1d286e44dbf9461401c3bc
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH17]
+compare root 0x91817e65d7dc5f5633eb5d74b8547a6ace2944d4fdc3427d8f38147ab2dba5ea 0x91817e65d7dc5f5633eb5d74b8547a6ace2944d4fdc3427d8f38147ab2dba5ea
+/hash/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-cdc 0 neg6 ff]
+compare root 0x5f08842307def28a97bd6075da6649765d3e2c1ef0efb7648b61a7560742339a 0x5f08842307def28a97bd6075da6649765d3e2c1ef0efb7648b61a7560742339a
+/path/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_tx-args_size_257]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH18]
+[{Byzantium 0}]
+Executing: frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_tx-args_size_2]
+[{Byzantium 0}]
+Executing: frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_2-call_type_CALLCODE]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x0c47e037993172559a8235f1eb7530c08a69bd51fa3568a4a0885a275d639b1d 0x0c47e037993172559a8235f1eb7530c08a69bd51fa3568a4a0885a275d639b1d
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP14]
+compare root 0x6d6c7cb24217d9b431d5d5a34ce28686414b2b92896ab1c30123211279c85211 0x6d6c7cb24217d9b431d5d5a34ce28686414b2b92896ab1c30123211279c85211
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_2-call_type_CALLCODE]
+running test on Fork: Byzantium
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP15]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x91817e65d7dc5f5633eb5d74b8547a6ace2944d4fdc3427d8f38147ab2dba5ea 0x91817e65d7dc5f5633eb5d74b8547a6ace2944d4fdc3427d8f38147ab2dba5ea
+/path/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-cdc 0 neg6 ff]
+compare root 0xd4790739a4ca144a26a16e12d15942c78116aed3d722c818239e73c6e51cadcd 0xd4790739a4ca144a26a16e12d15942c78116aed3d722c818239e73c6e51cadcd
+/path/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x-modulus_0x00-ModExpOutput_returned_data_0x00]
+compare root 0x18bbb1090d432669fdb057c8832c4ffebb0c2441c678f497e9d02198738db21d 0x18bbb1090d432669fdb057c8832c4ffebb0c2441c678f497e9d02198738db21d
+/hash/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_tx-args_size_2]
+compare root 0x6d6c7cb24217d9b431d5d5a34ce28686414b2b92896ab1c30123211279c85211 0x6d6c7cb24217d9b431d5d5a34ce28686414b2b92896ab1c30123211279c85211
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_2-call_type_CALLCODE]
+compare root 0xa07132ce024d251d95aa768958acefa04569e5e71fa49766026db1cc3cb8f3cb 0xa07132ce024d251d95aa768958acefa04569e5e71fa49766026db1cc3cb8f3cb
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH18]
+Executing: byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x-modulus_0x0001-ModExpOutput_returned_data_0x0000]
+Executing: frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-sec]
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+Executing: frontier/opcodes/all_opcodes/all_opcodes.json
+[{Byzantium 0}]
+[{Byzantium 0}]
+compare root 0xc5ea9df936c2b1e4f1d5bc6253997d0da33409162baeeaa51bda1e09d80e6344 0xc5ea9df936c2b1e4f1d5bc6253997d0da33409162baeeaa51bda1e09d80e6344
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP15]
+Executing: frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_2-call_type_CALL]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0xa07132ce024d251d95aa768958acefa04569e5e71fa49766026db1cc3cb8f3cb 0xa07132ce024d251d95aa768958acefa04569e5e71fa49766026db1cc3cb8f3cb
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH18]
+compare root 0xa9717d558abd7df2c8670f2563fed2de6573b9ee0ea48d7674c4b8db89d05628 0xed24e3361b383b80c97aeb237b9b6153c7d52cdb7354d0006a959c495b872912
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH19]
+[{Byzantium 0}]
+/hash/trie error: post state root mismatch: got a9717d558abd7df2c8670f2563fed2de6573b9ee0ea48d7674c4b8db89d05628, want ed24e3361b383b80c97aeb237b9b6153c7d52cdb7354d0006a959c495b872912 test name frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-31_bytes]
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0x18bbb1090d432669fdb057c8832c4ffebb0c2441c678f497e9d02198738db21d 0x18bbb1090d432669fdb057c8832c4ffebb0c2441c678f497e9d02198738db21d
+/path/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_tx-args_size_2]
+compare root 0xb102938a70bf72a4cc949efe4ca2dbe6ddd8b4091c5d9f26d760990d31a52805 0xb102938a70bf72a4cc949efe4ca2dbe6ddd8b4091c5d9f26d760990d31a52805
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_2-call_type_CALL]
+Executing: frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_tx-args_size_33]
+running test on Fork: Byzantium
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x3e14445dd3ba760ad98499510b61ad1887e434e6277b5d0b4b27fda74506432f 0x3e14445dd3ba760ad98499510b61ad1887e434e6277b5d0b4b27fda74506432f
+/hash/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-sec]
+compare root 0xc5ea9df936c2b1e4f1d5bc6253997d0da33409162baeeaa51bda1e09d80e6344 0xc5ea9df936c2b1e4f1d5bc6253997d0da33409162baeeaa51bda1e09d80e6344
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP15]
+compare root 0xf35b031e8f9e092c72e9d83affc804a4aca271f6026f2d3cadd00dd1b39a373c 0xf35b031e8f9e092c72e9d83affc804a4aca271f6026f2d3cadd00dd1b39a373c
+/hash/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_tx-args_size_33]
+running test on Fork: Byzantium
+compare root 0x6b9e4473c57a7260b584ecdbe74389dd6978422c1ed35cc3fcb4e623132de1cd 0x6b9e4473c57a7260b584ecdbe74389dd6978422c1ed35cc3fcb4e623132de1cd
+/hash/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x-modulus_0x0001-ModExpOutput_returned_data_0x0000]
+compare root 0xa3d9635c535667fd163295157f1adc24a936684f6f7e4b46373e18e60f04b379 0xa3d9635c535667fd163295157f1adc24a936684f6f7e4b46373e18e60f04b379
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH19]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP16]
+[{Byzantium 0}]
+compare root 0xb102938a70bf72a4cc949efe4ca2dbe6ddd8b4091c5d9f26d760990d31a52805 0xb102938a70bf72a4cc949efe4ca2dbe6ddd8b4091c5d9f26d760990d31a52805
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_2-call_type_CALL]
+{<nil> false false []}
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0x3e14445dd3ba760ad98499510b61ad1887e434e6277b5d0b4b27fda74506432f 0x3e14445dd3ba760ad98499510b61ad1887e434e6277b5d0b4b27fda74506432f
+/path/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-sec]
+Executing: frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-underflow]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+Executing: frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_3-call_type_CALLCODE]
+[{Byzantium 0}]
+compare root 0x6652eb6a6a4200008f9082e6a6a2854fc830ee3ee1d45806409e4e2091445458 0x6652eb6a6a4200008f9082e6a6a2854fc830ee3ee1d45806409e4e2091445458
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP16]
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0xa3d9635c535667fd163295157f1adc24a936684f6f7e4b46373e18e60f04b379 0xa3d9635c535667fd163295157f1adc24a936684f6f7e4b46373e18e60f04b379
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH19]
+compare root 0x4417626d09cda2103aab03987be32a0986431f5caad3b71a0dfa8f31921da826 0x4417626d09cda2103aab03987be32a0986431f5caad3b71a0dfa8f31921da826
+/hash/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-underflow]
+{<nil> false false []}
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0x6b9e4473c57a7260b584ecdbe74389dd6978422c1ed35cc3fcb4e623132de1cd 0x6b9e4473c57a7260b584ecdbe74389dd6978422c1ed35cc3fcb4e623132de1cd
+/path/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x-modulus_0x0001-ModExpOutput_returned_data_0x0000]
+compare root 0x6652eb6a6a4200008f9082e6a6a2854fc830ee3ee1d45806409e4e2091445458 0x6652eb6a6a4200008f9082e6a6a2854fc830ee3ee1d45806409e4e2091445458
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP16]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH1]
+[{Byzantium 0}]
+Executing: byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x-modulus_0x0002-ModExpOutput_returned_data_0x0001]
+{<nil> false false []}
+[{Byzantium 0}]
+compare root 0x6d6c7cb24217d9b431d5d5a34ce28686414b2b92896ab1c30123211279c85211 0x6d6c7cb24217d9b431d5d5a34ce28686414b2b92896ab1c30123211279c85211
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_3-call_type_CALLCODE]
+running test on Fork: Byzantium
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP1]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xf35b031e8f9e092c72e9d83affc804a4aca271f6026f2d3cadd00dd1b39a373c 0xf35b031e8f9e092c72e9d83affc804a4aca271f6026f2d3cadd00dd1b39a373c
+/path/trie success test name frontier/opcodes/calldatasize/calldatasize.json/tests/frontier/opcodes/test_calldatasize.py::test_calldatasize[fork_Byzantium-state_test-calldata_source_tx-args_size_33]
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0x6d6c7cb24217d9b431d5d5a34ce28686414b2b92896ab1c30123211279c85211 0x6d6c7cb24217d9b431d5d5a34ce28686414b2b92896ab1c30123211279c85211
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_3-call_type_CALLCODE]
+Executing: frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_3-call_type_CALL]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x4417626d09cda2103aab03987be32a0986431f5caad3b71a0dfa8f31921da826 0x4417626d09cda2103aab03987be32a0986431f5caad3b71a0dfa8f31921da826
+/path/trie success test name frontier/opcodes/calldatacopy/calldatacopy.json/tests/frontier/opcodes/test_calldatacopy.py::test_calldatacopy[fork_Byzantium-state_test-underflow]
+compare root 0x91e0c260c66a56a44e9839a4ecd151b66b0043c433f0a34e2ffeb68875634e3d 0x91e0c260c66a56a44e9839a4ecd151b66b0043c433f0a34e2ffeb68875634e3d
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH1]
+running test on Fork: Byzantium
+compare root 0xba8df660b3c4cf4f55261d508da222c4a117b309d624f9c273e200ffdb3e0f2d 0xba8df660b3c4cf4f55261d508da222c4a117b309d624f9c273e200ffdb3e0f2d
+/hash/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x-modulus_0x0002-ModExpOutput_returned_data_0x0001]
+running test on Fork: Byzantium
+compare root 0x9c6fe7ef1f25517f860299050e09f227d412eb4207d834d189090112b5e676a5 0x9c6fe7ef1f25517f860299050e09f227d412eb4207d834d189090112b5e676a5
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP1]
+running test on Fork: Byzantium
+compare root 0x91e0c260c66a56a44e9839a4ecd151b66b0043c433f0a34e2ffeb68875634e3d 0x91e0c260c66a56a44e9839a4ecd151b66b0043c433f0a34e2ffeb68875634e3d
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH1]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH20]
+[{Byzantium 0}]
+compare root 0xba8df660b3c4cf4f55261d508da222c4a117b309d624f9c273e200ffdb3e0f2d 0xba8df660b3c4cf4f55261d508da222c4a117b309d624f9c273e200ffdb3e0f2d
+/path/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x-modulus_0x0002-ModExpOutput_returned_data_0x0001]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xb102938a70bf72a4cc949efe4ca2dbe6ddd8b4091c5d9f26d760990d31a52805 0xb102938a70bf72a4cc949efe4ca2dbe6ddd8b4091c5d9f26d760990d31a52805
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_3-call_type_CALL]
+running test on Fork: Byzantium
+Executing: byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x-modulus_0x01-ModExpOutput_returned_data_0x00]
+[{Byzantium 0}]
+compare root 0x9c6fe7ef1f25517f860299050e09f227d412eb4207d834d189090112b5e676a5 0x9c6fe7ef1f25517f860299050e09f227d412eb4207d834d189090112b5e676a5
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP1]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP2]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xb102938a70bf72a4cc949efe4ca2dbe6ddd8b4091c5d9f26d760990d31a52805 0xb102938a70bf72a4cc949efe4ca2dbe6ddd8b4091c5d9f26d760990d31a52805
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_3-call_type_CALL]
+Executing: frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_4-call_type_CALLCODE]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x478f1ee522b349cfc0656329c14541427d6cb1cf6febb0d26a60d497d0609a72 0x478f1ee522b349cfc0656329c14541427d6cb1cf6febb0d26a60d497d0609a72
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH20]
+running test on Fork: Byzantium
+compare root 0x3074bce41e545d67a8407d455c27f0826998417476798692db276c8d1a6df384 0x3074bce41e545d67a8407d455c27f0826998417476798692db276c8d1a6df384
+/hash/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x-modulus_0x01-ModExpOutput_returned_data_0x00]
+running test on Fork: Byzantium
+compare root 0x34dc985dd3fb5e92b090111babc9df0ed14ecbbcbeac53aacf3a9374743efbe9 0x34dc985dd3fb5e92b090111babc9df0ed14ecbbcbeac53aacf3a9374743efbe9
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_4-call_type_CALLCODE]
+running test on Fork: Byzantium
+compare root 0x478f1ee522b349cfc0656329c14541427d6cb1cf6febb0d26a60d497d0609a72 0x478f1ee522b349cfc0656329c14541427d6cb1cf6febb0d26a60d497d0609a72
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH20]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH21]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xb45bb76ba917c7cb1821a05eb9d2fd3d8fc9b4ba08f25caf3f3f350fc9f3e43f 0xb45bb76ba917c7cb1821a05eb9d2fd3d8fc9b4ba08f25caf3f3f350fc9f3e43f
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP2]
+compare root 0x34dc985dd3fb5e92b090111babc9df0ed14ecbbcbeac53aacf3a9374743efbe9 0x34dc985dd3fb5e92b090111babc9df0ed14ecbbcbeac53aacf3a9374743efbe9
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_4-call_type_CALLCODE]
+Executing: frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_4-call_type_CALL]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0x3074bce41e545d67a8407d455c27f0826998417476798692db276c8d1a6df384 0x3074bce41e545d67a8407d455c27f0826998417476798692db276c8d1a6df384
+/path/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x-modulus_0x01-ModExpOutput_returned_data_0x00]
+compare root 0xa65ba28a6d6cfb98e7bc0c723011cfbf55105dcbee55e1dda95b8045812ba645 0xa65ba28a6d6cfb98e7bc0c723011cfbf55105dcbee55e1dda95b8045812ba645
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH21]
+Executing: byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x-modulus_0x02-ModExpOutput_returned_data_0x01]
+[{Byzantium 0}]
+running test on Fork: Byzantium
+compare root 0x49a3e2a48439c33e2b2857270940b0168acac84c964498650d9fb4707d8c36f6 0x49a3e2a48439c33e2b2857270940b0168acac84c964498650d9fb4707d8c36f6
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_4-call_type_CALL]
+{<nil> false false []}
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0xb45bb76ba917c7cb1821a05eb9d2fd3d8fc9b4ba08f25caf3f3f350fc9f3e43f 0xb45bb76ba917c7cb1821a05eb9d2fd3d8fc9b4ba08f25caf3f3f350fc9f3e43f
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP2]
+compare root 0xa65ba28a6d6cfb98e7bc0c723011cfbf55105dcbee55e1dda95b8045812ba645 0xa65ba28a6d6cfb98e7bc0c723011cfbf55105dcbee55e1dda95b8045812ba645
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH21]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH22]
+[{Byzantium 0}]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP3]
+{<nil> false false []}
+running test on Fork: Byzantium
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xbfaed40a37bbcfefe7d0d1eaaf8fd993898913dd614ff08e9f532f942e6b3bf8 0xbfaed40a37bbcfefe7d0d1eaaf8fd993898913dd614ff08e9f532f942e6b3bf8
+/hash/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x-modulus_0x02-ModExpOutput_returned_data_0x01]
+running test on Fork: Byzantium
+compare root 0x9ccf98ebb7b637095bb4469f9627db33da50bf6545010c4cd1554ffe30b1587f 0x9ccf98ebb7b637095bb4469f9627db33da50bf6545010c4cd1554ffe30b1587f
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH22]
+compare root 0x49a3e2a48439c33e2b2857270940b0168acac84c964498650d9fb4707d8c36f6 0x49a3e2a48439c33e2b2857270940b0168acac84c964498650d9fb4707d8c36f6
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_4-call_type_CALL]
+Executing: frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_4_exact_gas-call_type_CALLCODE]
+[{Byzantium 0}]
+running test on Fork: Byzantium
+compare root 0xbfaed40a37bbcfefe7d0d1eaaf8fd993898913dd614ff08e9f532f942e6b3bf8 0xbfaed40a37bbcfefe7d0d1eaaf8fd993898913dd614ff08e9f532f942e6b3bf8
+/path/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x-modulus_0x02-ModExpOutput_returned_data_0x01]
+Executing: byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x01-modulus_0x02-ModExpOutput_returned_data_0x00]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x6cc8ba8352df5f718eec8bf9751d73d3261fe1e79ac6dc5c6914480cc3ad17cb 0x6cc8ba8352df5f718eec8bf9751d73d3261fe1e79ac6dc5c6914480cc3ad17cb
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP3]
+[{Byzantium 0}]
+running test on Fork: Byzantium
+compare root 0x9ccf98ebb7b637095bb4469f9627db33da50bf6545010c4cd1554ffe30b1587f 0x9ccf98ebb7b637095bb4469f9627db33da50bf6545010c4cd1554ffe30b1587f
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH22]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH23]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x847da8acc90cec14fae72eeab1af0e9c38c868c826371efedfbd03fd87ba8e0b 0x847da8acc90cec14fae72eeab1af0e9c38c868c826371efedfbd03fd87ba8e0b
+/path/trie success test name frontier/create/create_one_byte/create_one_byte.json
+compare root 0x999afe9fd71f2175ad10bc0c07de7ead45abd226f07eeb91b156870bb7aba182 0x999afe9fd71f2175ad10bc0c07de7ead45abd226f07eeb91b156870bb7aba182
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH23]
+running test on Fork: Byzantium
+compare root 0x6cc8ba8352df5f718eec8bf9751d73d3261fe1e79ac6dc5c6914480cc3ad17cb 0x6cc8ba8352df5f718eec8bf9751d73d3261fe1e79ac6dc5c6914480cc3ad17cb
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP3]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP4]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xe23afcf69775bcaf82c11b2f998ec96199047fa16a2043f851c6a770c2409fde 0xe23afcf69775bcaf82c11b2f998ec96199047fa16a2043f851c6a770c2409fde
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_4_exact_gas-call_type_CALLCODE]
+running test on Fork: Byzantium
+compare root 0x0b2ae6c474d9372886a63ba5f029cd9751b4715fc28b8ab9ad1fc1a75c4d624f 0x0b2ae6c474d9372886a63ba5f029cd9751b4715fc28b8ab9ad1fc1a75c4d624f
+/hash/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x01-modulus_0x02-ModExpOutput_returned_data_0x00]
+compare root 0x999afe9fd71f2175ad10bc0c07de7ead45abd226f07eeb91b156870bb7aba182 0x999afe9fd71f2175ad10bc0c07de7ead45abd226f07eeb91b156870bb7aba182
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH23]
+running test on Fork: Byzantium
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH24]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xe23afcf69775bcaf82c11b2f998ec96199047fa16a2043f851c6a770c2409fde 0xe23afcf69775bcaf82c11b2f998ec96199047fa16a2043f851c6a770c2409fde
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_4_exact_gas-call_type_CALLCODE]
+compare root 0xeff2f68475e15567a789281b5140eda315f2b5f85fb9442b9ece966b420a6c8e 0xeff2f68475e15567a789281b5140eda315f2b5f85fb9442b9ece966b420a6c8e
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP4]
+running test on Fork: Byzantium
+Executing: frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_4_exact_gas-call_type_CALL]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x4f03839c08e7d4e6bcda0df9b6982467a1d464646353360333ea70c8b43caa25 0x4f03839c08e7d4e6bcda0df9b6982467a1d464646353360333ea70c8b43caa25
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH24]
+running test on Fork: Byzantium
+compare root 0x0b2ae6c474d9372886a63ba5f029cd9751b4715fc28b8ab9ad1fc1a75c4d624f 0x0b2ae6c474d9372886a63ba5f029cd9751b4715fc28b8ab9ad1fc1a75c4d624f
+/path/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x-exponent_0x01-modulus_0x02-ModExpOutput_returned_data_0x00]
+Executing: byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x00-exponent_0x00-modulus_0x02-ModExpOutput_returned_data_0x01]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x50eb8891d55a9f030258efa73ecdf4b1233ef37d46b3899ba2a4fa835c6af6b7 0x50eb8891d55a9f030258efa73ecdf4b1233ef37d46b3899ba2a4fa835c6af6b7
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_4_exact_gas-call_type_CALL]
+compare root 0x4f03839c08e7d4e6bcda0df9b6982467a1d464646353360333ea70c8b43caa25 0x4f03839c08e7d4e6bcda0df9b6982467a1d464646353360333ea70c8b43caa25
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH24]
+running test on Fork: Byzantium
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH25]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xeff2f68475e15567a789281b5140eda315f2b5f85fb9442b9ece966b420a6c8e 0xeff2f68475e15567a789281b5140eda315f2b5f85fb9442b9ece966b420a6c8e
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP4]
+compare root 0x7cc6a0ceb73beee2ea7edc3e70fb86a06ba1647d3e8247d1426d821144265308 0x7cc6a0ceb73beee2ea7edc3e70fb86a06ba1647d3e8247d1426d821144265308
+/hash/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x00-exponent_0x00-modulus_0x02-ModExpOutput_returned_data_0x01]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP5]
+[{Byzantium 0}]
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x50eb8891d55a9f030258efa73ecdf4b1233ef37d46b3899ba2a4fa835c6af6b7 0x50eb8891d55a9f030258efa73ecdf4b1233ef37d46b3899ba2a4fa835c6af6b7
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_4_exact_gas-call_type_CALL]
+compare root 0x244d366b4d69ed864acecfe3b679e2b40d120ceb83b904e47c2cac15acfb4df7 0x244d366b4d69ed864acecfe3b679e2b40d120ceb83b904e47c2cac15acfb4df7
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH25]
+Executing: frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_4_insufficient_gas-call_type_CALLCODE]
+[{Byzantium 0}]
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x7cc6a0ceb73beee2ea7edc3e70fb86a06ba1647d3e8247d1426d821144265308 0x7cc6a0ceb73beee2ea7edc3e70fb86a06ba1647d3e8247d1426d821144265308
+/path/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x00-exponent_0x00-modulus_0x02-ModExpOutput_returned_data_0x01]
+Executing: byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x01-exponent_0x01-modulus_0x02-ModExpOutput_returned_data_0x01]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x244d366b4d69ed864acecfe3b679e2b40d120ceb83b904e47c2cac15acfb4df7 0x244d366b4d69ed864acecfe3b679e2b40d120ceb83b904e47c2cac15acfb4df7
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH25]
+compare root 0x89ac4f2deaf963d72aa7b1781a93c6d98d244c61ff56a5686d543340072dc0ae 0x89ac4f2deaf963d72aa7b1781a93c6d98d244c61ff56a5686d543340072dc0ae
+compare root 0x065d08ac6619b8a9b394228273393e238134c4e13fc7257457e4746f40823f12 0x065d08ac6619b8a9b394228273393e238134c4e13fc7257457e4746f40823f12
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP5]
+running test on Fork: Byzantium
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_4_insufficient_gas-call_type_CALLCODE]
+running test on Fork: Byzantium
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH26]
+[{Byzantium 0}]
+compare root 0x7431d7c3f2dd6eb3e23f32118028501a6fd422d013c28b548f5383e2b08e4b95 0x7431d7c3f2dd6eb3e23f32118028501a6fd422d013c28b548f5383e2b08e4b95
+/hash/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x01-exponent_0x01-modulus_0x02-ModExpOutput_returned_data_0x01]
+{<nil> false false []}
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0x89ac4f2deaf963d72aa7b1781a93c6d98d244c61ff56a5686d543340072dc0ae 0x89ac4f2deaf963d72aa7b1781a93c6d98d244c61ff56a5686d543340072dc0ae
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_4_insufficient_gas-call_type_CALLCODE]
+Executing: frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_4_insufficient_gas-call_type_CALL]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x4e3a6287b17d371cad8646cad23a2be773eca9dc42c939243e77f3a6b308d436 0x4e3a6287b17d371cad8646cad23a2be773eca9dc42c939243e77f3a6b308d436
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH26]
+compare root 0x065d08ac6619b8a9b394228273393e238134c4e13fc7257457e4746f40823f12 0x065d08ac6619b8a9b394228273393e238134c4e13fc7257457e4746f40823f12
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP5]
+compare root 0x7431d7c3f2dd6eb3e23f32118028501a6fd422d013c28b548f5383e2b08e4b95 0x7431d7c3f2dd6eb3e23f32118028501a6fd422d013c28b548f5383e2b08e4b95
+/path/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x01-exponent_0x01-modulus_0x02-ModExpOutput_returned_data_0x01]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP6]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x7c99d24c8af9e6ace80f76d2ee58324b53ab5363cf8184c193c507f1185ed597 0x7c99d24c8af9e6ace80f76d2ee58324b53ab5363cf8184c193c507f1185ed597
+/hash/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_4_insufficient_gas-call_type_CALL]
+running test on Fork: Byzantium
+Executing: byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x02-exponent_0x01-modulus_0x03-ModExpOutput_returned_data_0x02]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0x4e3a6287b17d371cad8646cad23a2be773eca9dc42c939243e77f3a6b308d436 0x4e3a6287b17d371cad8646cad23a2be773eca9dc42c939243e77f3a6b308d436
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH26]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH27]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x8208ae8c48930f1cfd572c6d14de1b52d7ddd64b2ef9668688e52f0a0573a4c2 0x8208ae8c48930f1cfd572c6d14de1b52d7ddd64b2ef9668688e52f0a0573a4c2
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP6]
+compare root 0x7c99d24c8af9e6ace80f76d2ee58324b53ab5363cf8184c193c507f1185ed597 0x7c99d24c8af9e6ace80f76d2ee58324b53ab5363cf8184c193c507f1185ed597
+/path/trie success test name frontier/identity_precompile/identity/call_identity_precompile.json/tests/frontier/identity_precompile/test_identity.py::test_call_identity_precompile[fork_Byzantium-state_test-identity_4_insufficient_gas-call_type_CALL]
+compare root 0x6e9918ddfd932bbdca6fb49a7b998e9079e7e3c8550a4cb789c43e5c57efb7e4 0x6e9918ddfd932bbdca6fb49a7b998e9079e7e3c8550a4cb789c43e5c57efb7e4
+/hash/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x02-exponent_0x01-modulus_0x03-ModExpOutput_returned_data_0x02]
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0xd6dc24840193ceb4ed1b9c5ff4b74e28a3a5cb739aebfc114232586449ad4109 0xd6dc24840193ceb4ed1b9c5ff4b74e28a3a5cb739aebfc114232586449ad4109
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH27]
+running test on Fork: Byzantium
+compare root 0x6e9918ddfd932bbdca6fb49a7b998e9079e7e3c8550a4cb789c43e5c57efb7e4 0x6e9918ddfd932bbdca6fb49a7b998e9079e7e3c8550a4cb789c43e5c57efb7e4
+/path/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x02-exponent_0x01-modulus_0x03-ModExpOutput_returned_data_0x02]
+Executing: byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x02-exponent_0x02-modulus_0x05-ModExpOutput_returned_data_0x04]
+compare root 0x8208ae8c48930f1cfd572c6d14de1b52d7ddd64b2ef9668688e52f0a0573a4c2 0x8208ae8c48930f1cfd572c6d14de1b52d7ddd64b2ef9668688e52f0a0573a4c2
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP6]
+compare root 0xd6dc24840193ceb4ed1b9c5ff4b74e28a3a5cb739aebfc114232586449ad4109 0xd6dc24840193ceb4ed1b9c5ff4b74e28a3a5cb739aebfc114232586449ad4109
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH27]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP7]
+[{Byzantium 0}]
+[{Byzantium 0}]
+compare root 0xa9717d558abd7df2c8670f2563fed2de6573b9ee0ea48d7674c4b8db89d05628 0xed24e3361b383b80c97aeb237b9b6153c7d52cdb7354d0006a959c495b872912
+{<nil> false false []}
+running test on Fork: Byzantium
+{<nil> false false []}
+running test on Fork: Byzantium
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH28]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+/hash/trie error: post state root mismatch: got a9717d558abd7df2c8670f2563fed2de6573b9ee0ea48d7674c4b8db89d05628, want ed24e3361b383b80c97aeb237b9b6153c7d52cdb7354d0006a959c495b872912 test name frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-31_bytes]
+running test on Fork: Byzantium
+compare root 0x56e75e22956817a58c9992fc9bac0127a98c912199baf0ca0fadc920708a68ad 0x56e75e22956817a58c9992fc9bac0127a98c912199baf0ca0fadc920708a68ad
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH28]
+running test on Fork: Byzantium
+compare root 0xe48b6db6f19837f1ffe2840a3c89db9138abd64b1bedc8346745d776f734b9e4 0xe48b6db6f19837f1ffe2840a3c89db9138abd64b1bedc8346745d776f734b9e4
+/hash/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x02-exponent_0x02-modulus_0x05-ModExpOutput_returned_data_0x04]
+running test on Fork: Byzantium
+compare root 0x57e9422f69c12374760e87ff83e846c1fee96da95152daeb0edd25c98ab3d3a0 0x57e9422f69c12374760e87ff83e846c1fee96da95152daeb0edd25c98ab3d3a0
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP7]
+running test on Fork: Byzantium
+compare root 0x56e75e22956817a58c9992fc9bac0127a98c912199baf0ca0fadc920708a68ad 0x56e75e22956817a58c9992fc9bac0127a98c912199baf0ca0fadc920708a68ad
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH28]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH29]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xe48b6db6f19837f1ffe2840a3c89db9138abd64b1bedc8346745d776f734b9e4 0xe48b6db6f19837f1ffe2840a3c89db9138abd64b1bedc8346745d776f734b9e4
+/path/trie success test name byzantium/eip198_modexp_precompile/modexp/modexp.json/tests/byzantium/eip198_modexp_precompile/test_modexp.py::test_modexp[fork_Byzantium-state_test-ModExpInput_base_0x02-exponent_0x02-modulus_0x05-ModExpOutput_returned_data_0x04]
+compare root 0x57e9422f69c12374760e87ff83e846c1fee96da95152daeb0edd25c98ab3d3a0 0x57e9422f69c12374760e87ff83e846c1fee96da95152daeb0edd25c98ab3d3a0
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP7]
+compare root 0xdced2be04777106dae6f607791ec72f59f253c614bea542a2f9c04df42c653a2 0xdced2be04777106dae6f607791ec72f59f253c614bea542a2f9c04df42c653a2
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH29]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP8]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+running test on Fork: Byzantium
+compare root 0xdced2be04777106dae6f607791ec72f59f253c614bea542a2f9c04df42c653a2 0xdced2be04777106dae6f607791ec72f59f253c614bea542a2f9c04df42c653a2
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH29]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH2]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x2a8de63be44e3cf1dc3fd1fd96b0655cf7ff2bb7f4271fd38d8b10ca5b608c5e 0x2a8de63be44e3cf1dc3fd1fd96b0655cf7ff2bb7f4271fd38d8b10ca5b608c5e
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP8]
+running test on Fork: Byzantium
+compare root 0xbd59bfc8590e76c191e6f8aa2a1e40ca47577bb3cba1f6cceb1558ae8499101f 0xbd59bfc8590e76c191e6f8aa2a1e40ca47577bb3cba1f6cceb1558ae8499101f
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH2]
+running test on Fork: Byzantium
+compare root 0x2a8de63be44e3cf1dc3fd1fd96b0655cf7ff2bb7f4271fd38d8b10ca5b608c5e 0x2a8de63be44e3cf1dc3fd1fd96b0655cf7ff2bb7f4271fd38d8b10ca5b608c5e
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP8]
+Executing: frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP9]
+compare root 0xbd59bfc8590e76c191e6f8aa2a1e40ca47577bb3cba1f6cceb1558ae8499101f 0xbd59bfc8590e76c191e6f8aa2a1e40ca47577bb3cba1f6cceb1558ae8499101f
+[{Byzantium 0}]
+{<nil> false false []}
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH2]
+running test on Fork: Byzantium
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH30]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x16e305251154990e53ada3c461f5c56e62e3a9af14b2b4600d47598d5a5eda30 0x16e305251154990e53ada3c461f5c56e62e3a9af14b2b4600d47598d5a5eda30
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH30]
+running test on Fork: Byzantium
+compare root 0x20d31221731028d38a9afe2c1e80677d3d1f8e3e023692ce79ac1fec2a945660 0x20d31221731028d38a9afe2c1e80677d3d1f8e3e023692ce79ac1fec2a945660
+/hash/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP9]
+running test on Fork: Byzantium
+compare root 0x16e305251154990e53ada3c461f5c56e62e3a9af14b2b4600d47598d5a5eda30 0x16e305251154990e53ada3c461f5c56e62e3a9af14b2b4600d47598d5a5eda30
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH30]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH31]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x20d31221731028d38a9afe2c1e80677d3d1f8e3e023692ce79ac1fec2a945660 0x20d31221731028d38a9afe2c1e80677d3d1f8e3e023692ce79ac1fec2a945660
+/path/trie success test name frontier/opcodes/dup/dup.json/tests/frontier/opcodes/test_dup.py::test_dup[fork_Byzantium-evm_code_type_LEGACY-state_test-DUP9]
+compare root 0x1d6fcb3e535e045c8524f4b96b5c80bc2e8ef2f96d97d845de5fc77afd78b97b 0x1d6fcb3e535e045c8524f4b96b5c80bc2e8ef2f96d97d845de5fc77afd78b97b
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH31]
+running test on Fork: Byzantium
+compare root 0xe6769d225d1b827c4e4a33886c84fff956e3847e913f2603041c24db69a81ebb 0xe6769d225d1b827c4e4a33886c84fff956e3847e913f2603041c24db69a81ebb
+/hash/trie success test name frontier/opcodes/all_opcodes/all_opcodes.json
+running test on Fork: Byzantium
+compare root 0x1d6fcb3e535e045c8524f4b96b5c80bc2e8ef2f96d97d845de5fc77afd78b97b 0x1d6fcb3e535e045c8524f4b96b5c80bc2e8ef2f96d97d845de5fc77afd78b97b
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH31]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH32]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x404ca5fef69721ca867027ca104a3cc92ca657edf4eec450b755cb745f753593 0x404ca5fef69721ca867027ca104a3cc92ca657edf4eec450b755cb745f753593
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH32]
+running test on Fork: Byzantium
+compare root 0x404ca5fef69721ca867027ca104a3cc92ca657edf4eec450b755cb745f753593 0x404ca5fef69721ca867027ca104a3cc92ca657edf4eec450b755cb745f753593
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH32]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH3]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xc85ebdb16d3a6c7afa8729a3fd72e70b39c912e70d62aeec7f7951fec6fb7fcc 0xc85ebdb16d3a6c7afa8729a3fd72e70b39c912e70d62aeec7f7951fec6fb7fcc
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH3]
+running test on Fork: Byzantium
+compare root 0xc85ebdb16d3a6c7afa8729a3fd72e70b39c912e70d62aeec7f7951fec6fb7fcc 0xc85ebdb16d3a6c7afa8729a3fd72e70b39c912e70d62aeec7f7951fec6fb7fcc
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH3]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH4]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x25fd235239a81afda200c1dc97b1e92da15ae37b85060154f99658d087302a88 0x25fd235239a81afda200c1dc97b1e92da15ae37b85060154f99658d087302a88
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH4]
+running test on Fork: Byzantium
+compare root 0x25fd235239a81afda200c1dc97b1e92da15ae37b85060154f99658d087302a88 0x25fd235239a81afda200c1dc97b1e92da15ae37b85060154f99658d087302a88
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH4]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH5]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xde78fa1e8e2880fde78499cb7cdc5457461624fb6a99ca76e0f7fb67b77b6c0d 0xde78fa1e8e2880fde78499cb7cdc5457461624fb6a99ca76e0f7fb67b77b6c0d
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH5]
+running test on Fork: Byzantium
+compare root 0xde78fa1e8e2880fde78499cb7cdc5457461624fb6a99ca76e0f7fb67b77b6c0d 0xde78fa1e8e2880fde78499cb7cdc5457461624fb6a99ca76e0f7fb67b77b6c0d
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH5]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH6]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xc312ce13d243744c2fe57b26006ed2ade7cfd657c3f62c811493bc8a71e822f2 0xc312ce13d243744c2fe57b26006ed2ade7cfd657c3f62c811493bc8a71e822f2
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH6]
+running test on Fork: Byzantium
+compare root 0xc312ce13d243744c2fe57b26006ed2ade7cfd657c3f62c811493bc8a71e822f2 0xc312ce13d243744c2fe57b26006ed2ade7cfd657c3f62c811493bc8a71e822f2
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH6]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH7]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xdc60b67d1308446c69fa015c7e48939e487668df3c9bf57c1b17bd3ec437a6aa 0xdc60b67d1308446c69fa015c7e48939e487668df3c9bf57c1b17bd3ec437a6aa
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH7]
+running test on Fork: Byzantium
+compare root 0xdc60b67d1308446c69fa015c7e48939e487668df3c9bf57c1b17bd3ec437a6aa 0xdc60b67d1308446c69fa015c7e48939e487668df3c9bf57c1b17bd3ec437a6aa
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH7]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH8]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xff28002593243a06225fad994e4eadd5a187f96c39e70f4752082b7cb0a4cbf0 0xff28002593243a06225fad994e4eadd5a187f96c39e70f4752082b7cb0a4cbf0
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH8]
+running test on Fork: Byzantium
+compare root 0xff28002593243a06225fad994e4eadd5a187f96c39e70f4752082b7cb0a4cbf0 0xff28002593243a06225fad994e4eadd5a187f96c39e70f4752082b7cb0a4cbf0
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH8]
+Executing: frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH9]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xa9717d558abd7df2c8670f2563fed2de6573b9ee0ea48d7674c4b8db89d05628 0xed24e3361b383b80c97aeb237b9b6153c7d52cdb7354d0006a959c495b872912
+/path/trie error: post state root mismatch: got a9717d558abd7df2c8670f2563fed2de6573b9ee0ea48d7674c4b8db89d05628, want ed24e3361b383b80c97aeb237b9b6153c7d52cdb7354d0006a959c495b872912 test name frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-31_bytes]
+running test on Fork: Byzantium
+compare root 0x00357af676739aed8fad3f9514bc1b5b97672bde5ff31faf98210be991bb6ff8 0x00357af676739aed8fad3f9514bc1b5b97672bde5ff31faf98210be991bb6ff8
+/hash/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH9]
+running test on Fork: Byzantium
+compare root 0x00357af676739aed8fad3f9514bc1b5b97672bde5ff31faf98210be991bb6ff8 0x00357af676739aed8fad3f9514bc1b5b97672bde5ff31faf98210be991bb6ff8
+/path/trie success test name frontier/opcodes/push/push.json/tests/frontier/opcodes/test_push.py::test_push[fork_Byzantium-state_test-PUSH9]
+compare root 0xe6769d225d1b827c4e4a33886c84fff956e3847e913f2603041c24db69a81ebb 0xe6769d225d1b827c4e4a33886c84fff956e3847e913f2603041c24db69a81ebb
+/path/trie success test name frontier/opcodes/all_opcodes/all_opcodes.json
+compare root 0xa9717d558abd7df2c8670f2563fed2de6573b9ee0ea48d7674c4b8db89d05628 0xed24e3361b383b80c97aeb237b9b6153c7d52cdb7354d0006a959c495b872912
+/path/trie error: post state root mismatch: got a9717d558abd7df2c8670f2563fed2de6573b9ee0ea48d7674c4b8db89d05628, want ed24e3361b383b80c97aeb237b9b6153c7d52cdb7354d0006a959c495b872912 test name frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-31_bytes]
+Executing: frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-32_bytes]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x496f05d10eea673212196bae97afeb8d3acdabf9dd9e52f1683005a85a89a66f 0xe57c501de77d2f59dfa65a68aef4b64380025f3cd36b5e7183a7a793dd4c735b
+/hash/trie error: post state root mismatch: got 496f05d10eea673212196bae97afeb8d3acdabf9dd9e52f1683005a85a89a66f, want e57c501de77d2f59dfa65a68aef4b64380025f3cd36b5e7183a7a793dd4c735b test name frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-32_bytes]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x496f05d10eea673212196bae97afeb8d3acdabf9dd9e52f1683005a85a89a66f 0xe57c501de77d2f59dfa65a68aef4b64380025f3cd36b5e7183a7a793dd4c735b
+/hash/trie error: post state root mismatch: got 496f05d10eea673212196bae97afeb8d3acdabf9dd9e52f1683005a85a89a66f, want e57c501de77d2f59dfa65a68aef4b64380025f3cd36b5e7183a7a793dd4c735b test name frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-32_bytes]
+running test on Fork: Byzantium
+compare root 0x496f05d10eea673212196bae97afeb8d3acdabf9dd9e52f1683005a85a89a66f 0xe57c501de77d2f59dfa65a68aef4b64380025f3cd36b5e7183a7a793dd4c735b
+/path/trie error: post state root mismatch: got 496f05d10eea673212196bae97afeb8d3acdabf9dd9e52f1683005a85a89a66f, want e57c501de77d2f59dfa65a68aef4b64380025f3cd36b5e7183a7a793dd4c735b test name frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-32_bytes]
+running test on Fork: Byzantium
+compare root 0x496f05d10eea673212196bae97afeb8d3acdabf9dd9e52f1683005a85a89a66f 0xe57c501de77d2f59dfa65a68aef4b64380025f3cd36b5e7183a7a793dd4c735b
+/path/trie error: post state root mismatch: got 496f05d10eea673212196bae97afeb8d3acdabf9dd9e52f1683005a85a89a66f, want e57c501de77d2f59dfa65a68aef4b64380025f3cd36b5e7183a7a793dd4c735b test name frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-32_bytes]
+Executing: frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-empty_calldata]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x69328bf6ed749e73ab4cccbc5d871ebe600ef8e94c20e6df6e41fabeb0a0fff8 0x478e9ca915e194d9a129ee1505df2a9403b9dccb92c0c3a56084fcb88f180272
+/hash/trie error: post state root mismatch: got 69328bf6ed749e73ab4cccbc5d871ebe600ef8e94c20e6df6e41fabeb0a0fff8, want 478e9ca915e194d9a129ee1505df2a9403b9dccb92c0c3a56084fcb88f180272 test name frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-empty_calldata]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x69328bf6ed749e73ab4cccbc5d871ebe600ef8e94c20e6df6e41fabeb0a0fff8 0x478e9ca915e194d9a129ee1505df2a9403b9dccb92c0c3a56084fcb88f180272
+/hash/trie error: post state root mismatch: got 69328bf6ed749e73ab4cccbc5d871ebe600ef8e94c20e6df6e41fabeb0a0fff8, want 478e9ca915e194d9a129ee1505df2a9403b9dccb92c0c3a56084fcb88f180272 test name frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-empty_calldata]
+running test on Fork: Byzantium
+compare root 0x69328bf6ed749e73ab4cccbc5d871ebe600ef8e94c20e6df6e41fabeb0a0fff8 0x478e9ca915e194d9a129ee1505df2a9403b9dccb92c0c3a56084fcb88f180272
+/path/trie error: post state root mismatch: got 69328bf6ed749e73ab4cccbc5d871ebe600ef8e94c20e6df6e41fabeb0a0fff8, want 478e9ca915e194d9a129ee1505df2a9403b9dccb92c0c3a56084fcb88f180272 test name frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-empty_calldata]
+running test on Fork: Byzantium
+compare root 0x69328bf6ed749e73ab4cccbc5d871ebe600ef8e94c20e6df6e41fabeb0a0fff8 0x478e9ca915e194d9a129ee1505df2a9403b9dccb92c0c3a56084fcb88f180272
+/path/trie error: post state root mismatch: got 69328bf6ed749e73ab4cccbc5d871ebe600ef8e94c20e6df6e41fabeb0a0fff8, want 478e9ca915e194d9a129ee1505df2a9403b9dccb92c0c3a56084fcb88f180272 test name frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-empty_calldata]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH10]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x7b88913b22cfa4f6f101978ab4d188616aad04f0036e70f35edace50a7a0b906 0x7b88913b22cfa4f6f101978ab4d188616aad04f0036e70f35edace50a7a0b906
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH10]
+running test on Fork: Byzantium
+compare root 0x7b88913b22cfa4f6f101978ab4d188616aad04f0036e70f35edace50a7a0b906 0x7b88913b22cfa4f6f101978ab4d188616aad04f0036e70f35edace50a7a0b906
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH10]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH11]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x569a2b6b63ff9be8fad14005bf253bcff90a82102e8f69c44e4749aacc50845b 0x569a2b6b63ff9be8fad14005bf253bcff90a82102e8f69c44e4749aacc50845b
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH11]
+running test on Fork: Byzantium
+compare root 0x569a2b6b63ff9be8fad14005bf253bcff90a82102e8f69c44e4749aacc50845b 0x569a2b6b63ff9be8fad14005bf253bcff90a82102e8f69c44e4749aacc50845b
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH11]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH12]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x63a2cd1e73c1ba0692ee3c7e684af9fe3179c8285b735fb3b2f98b3b2a43431f 0x63a2cd1e73c1ba0692ee3c7e684af9fe3179c8285b735fb3b2f98b3b2a43431f
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH12]
+running test on Fork: Byzantium
+compare root 0x63a2cd1e73c1ba0692ee3c7e684af9fe3179c8285b735fb3b2f98b3b2a43431f 0x63a2cd1e73c1ba0692ee3c7e684af9fe3179c8285b735fb3b2f98b3b2a43431f
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH12]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH13]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x140ba5a097450855e317c6ca8aa0c814a244126b7cacb4696e7ca4ce063ddb20 0x140ba5a097450855e317c6ca8aa0c814a244126b7cacb4696e7ca4ce063ddb20
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH13]
+running test on Fork: Byzantium
+compare root 0x140ba5a097450855e317c6ca8aa0c814a244126b7cacb4696e7ca4ce063ddb20 0x140ba5a097450855e317c6ca8aa0c814a244126b7cacb4696e7ca4ce063ddb20
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH13]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH14]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x2f69a8182d3726447e55d334955196f6307cd135d3e83c8c675fca39e24111fb 0x2f69a8182d3726447e55d334955196f6307cd135d3e83c8c675fca39e24111fb
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH14]
+running test on Fork: Byzantium
+compare root 0x2f69a8182d3726447e55d334955196f6307cd135d3e83c8c675fca39e24111fb 0x2f69a8182d3726447e55d334955196f6307cd135d3e83c8c675fca39e24111fb
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH14]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH15]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xbcdb657345c0afe4a757181303b0b865c4a471c1c6b1bb1ca895c7aba47b122b 0xbcdb657345c0afe4a757181303b0b865c4a471c1c6b1bb1ca895c7aba47b122b
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH15]
+running test on Fork: Byzantium
+compare root 0xbcdb657345c0afe4a757181303b0b865c4a471c1c6b1bb1ca895c7aba47b122b 0xbcdb657345c0afe4a757181303b0b865c4a471c1c6b1bb1ca895c7aba47b122b
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH15]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH16]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x7f3783eb7a47e8ec1242197abf2c73034ef8adbaf3781c726a77a632283f3984 0x7f3783eb7a47e8ec1242197abf2c73034ef8adbaf3781c726a77a632283f3984
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH16]
+running test on Fork: Byzantium
+compare root 0x7f3783eb7a47e8ec1242197abf2c73034ef8adbaf3781c726a77a632283f3984 0x7f3783eb7a47e8ec1242197abf2c73034ef8adbaf3781c726a77a632283f3984
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH16]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH17]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xc7788341542e3e73ba36f07cd6da1d6f676b44274ea22d4e89a05291e28b026d 0xc7788341542e3e73ba36f07cd6da1d6f676b44274ea22d4e89a05291e28b026d
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH17]
+running test on Fork: Byzantium
+compare root 0xc7788341542e3e73ba36f07cd6da1d6f676b44274ea22d4e89a05291e28b026d 0xc7788341542e3e73ba36f07cd6da1d6f676b44274ea22d4e89a05291e28b026d
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH17]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH18]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x8ae8cc91cde04913099677ca4b041f7d8ee6554446f178a19cc6a497c082da64 0x8ae8cc91cde04913099677ca4b041f7d8ee6554446f178a19cc6a497c082da64
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH18]
+running test on Fork: Byzantium
+compare root 0x8ae8cc91cde04913099677ca4b041f7d8ee6554446f178a19cc6a497c082da64 0x8ae8cc91cde04913099677ca4b041f7d8ee6554446f178a19cc6a497c082da64
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH18]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH19]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xad565acb157c2e2d86d3f81565ad02b18795a5196bb1c15f26feb0c36101be55 0xad565acb157c2e2d86d3f81565ad02b18795a5196bb1c15f26feb0c36101be55
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH19]
+running test on Fork: Byzantium
+compare root 0xad565acb157c2e2d86d3f81565ad02b18795a5196bb1c15f26feb0c36101be55 0xad565acb157c2e2d86d3f81565ad02b18795a5196bb1c15f26feb0c36101be55
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH19]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH1]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x61b6548e6521adb8daf4aad77648a1bc5f482bd7c3d9fde58c971e814c271a81 0x61b6548e6521adb8daf4aad77648a1bc5f482bd7c3d9fde58c971e814c271a81
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH1]
+running test on Fork: Byzantium
+compare root 0x61b6548e6521adb8daf4aad77648a1bc5f482bd7c3d9fde58c971e814c271a81 0x61b6548e6521adb8daf4aad77648a1bc5f482bd7c3d9fde58c971e814c271a81
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH1]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH20]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x7bebc8233f33ecb3b34b0e4a8ba59426fa61c7dd714e6f5d86601a060acfdf56 0x7bebc8233f33ecb3b34b0e4a8ba59426fa61c7dd714e6f5d86601a060acfdf56
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH20]
+running test on Fork: Byzantium
+compare root 0x7bebc8233f33ecb3b34b0e4a8ba59426fa61c7dd714e6f5d86601a060acfdf56 0x7bebc8233f33ecb3b34b0e4a8ba59426fa61c7dd714e6f5d86601a060acfdf56
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH20]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH21]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x96dddca8f6278b685d02f4a517e6b6682d49b2b9e09d2fab1ba6bd1c7991aa6e 0x96dddca8f6278b685d02f4a517e6b6682d49b2b9e09d2fab1ba6bd1c7991aa6e
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH21]
+running test on Fork: Byzantium
+compare root 0x96dddca8f6278b685d02f4a517e6b6682d49b2b9e09d2fab1ba6bd1c7991aa6e 0x96dddca8f6278b685d02f4a517e6b6682d49b2b9e09d2fab1ba6bd1c7991aa6e
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH21]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH22]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xd3c9d28a3982c219375740d5dcf2b47794c1faa8349d422604156799bceb4810 0xd3c9d28a3982c219375740d5dcf2b47794c1faa8349d422604156799bceb4810
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH22]
+running test on Fork: Byzantium
+compare root 0xd3c9d28a3982c219375740d5dcf2b47794c1faa8349d422604156799bceb4810 0xd3c9d28a3982c219375740d5dcf2b47794c1faa8349d422604156799bceb4810
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH22]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH23]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x00b59b2a65343b2f13e496e0dfacff8c4e7c8631b9968c6d95facdb504be1794 0x00b59b2a65343b2f13e496e0dfacff8c4e7c8631b9968c6d95facdb504be1794
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH23]
+running test on Fork: Byzantium
+compare root 0x00b59b2a65343b2f13e496e0dfacff8c4e7c8631b9968c6d95facdb504be1794 0x00b59b2a65343b2f13e496e0dfacff8c4e7c8631b9968c6d95facdb504be1794
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH23]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH24]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x5d53758761a8dc27d465c5a0196459c44fb89c84dd96cec6cab10b7ba5568a35 0x5d53758761a8dc27d465c5a0196459c44fb89c84dd96cec6cab10b7ba5568a35
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH24]
+running test on Fork: Byzantium
+compare root 0x5d53758761a8dc27d465c5a0196459c44fb89c84dd96cec6cab10b7ba5568a35 0x5d53758761a8dc27d465c5a0196459c44fb89c84dd96cec6cab10b7ba5568a35
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH24]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH25]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x5daa2c95a5a851f3ca85927080d7e93f1533a82e4d565a1007238fb435ffaefa 0x5daa2c95a5a851f3ca85927080d7e93f1533a82e4d565a1007238fb435ffaefa
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH25]
+running test on Fork: Byzantium
+compare root 0x5daa2c95a5a851f3ca85927080d7e93f1533a82e4d565a1007238fb435ffaefa 0x5daa2c95a5a851f3ca85927080d7e93f1533a82e4d565a1007238fb435ffaefa
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH25]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH26]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x46716a838d7b7cea6a5d4eb9d716d50ccda2412c2613a892f7a0b3035b35e41e 0x46716a838d7b7cea6a5d4eb9d716d50ccda2412c2613a892f7a0b3035b35e41e
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH26]
+running test on Fork: Byzantium
+compare root 0x46716a838d7b7cea6a5d4eb9d716d50ccda2412c2613a892f7a0b3035b35e41e 0x46716a838d7b7cea6a5d4eb9d716d50ccda2412c2613a892f7a0b3035b35e41e
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH26]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH27]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xe8075b619fbe46ecc6fd889aa28836bd30d1e691edec26b085a88dea4838d477 0xe8075b619fbe46ecc6fd889aa28836bd30d1e691edec26b085a88dea4838d477
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH27]
+running test on Fork: Byzantium
+compare root 0xe8075b619fbe46ecc6fd889aa28836bd30d1e691edec26b085a88dea4838d477 0xe8075b619fbe46ecc6fd889aa28836bd30d1e691edec26b085a88dea4838d477
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH27]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH28]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x046b74a8dc116c2a80f28e6f33b3351ac5c4e3afb7ab4d40195ea9f36526c600 0x046b74a8dc116c2a80f28e6f33b3351ac5c4e3afb7ab4d40195ea9f36526c600
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH28]
+running test on Fork: Byzantium
+compare root 0x046b74a8dc116c2a80f28e6f33b3351ac5c4e3afb7ab4d40195ea9f36526c600 0x046b74a8dc116c2a80f28e6f33b3351ac5c4e3afb7ab4d40195ea9f36526c600
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH28]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH29]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x10322332c49135a05604e943ee07140b654299bc88a2143a942d84d57f716e29 0x10322332c49135a05604e943ee07140b654299bc88a2143a942d84d57f716e29
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH29]
+running test on Fork: Byzantium
+compare root 0x10322332c49135a05604e943ee07140b654299bc88a2143a942d84d57f716e29 0x10322332c49135a05604e943ee07140b654299bc88a2143a942d84d57f716e29
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH29]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH2]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x8380600b32b8beee9976af80980fb19f1bfaf20e41eea9f97894d71a2ecc65c2 0x8380600b32b8beee9976af80980fb19f1bfaf20e41eea9f97894d71a2ecc65c2
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH2]
+running test on Fork: Byzantium
+compare root 0x8380600b32b8beee9976af80980fb19f1bfaf20e41eea9f97894d71a2ecc65c2 0x8380600b32b8beee9976af80980fb19f1bfaf20e41eea9f97894d71a2ecc65c2
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH2]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH30]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x2307c9a52d2c05ac148267018b2deb9fad8943a106db0d0523cc1b9a83a1ca40 0x2307c9a52d2c05ac148267018b2deb9fad8943a106db0d0523cc1b9a83a1ca40
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH30]
+running test on Fork: Byzantium
+compare root 0x2307c9a52d2c05ac148267018b2deb9fad8943a106db0d0523cc1b9a83a1ca40 0x2307c9a52d2c05ac148267018b2deb9fad8943a106db0d0523cc1b9a83a1ca40
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH30]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH31]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xf0ceaa574bf07cb154457f937af7a2b44cc680acc5ea6087bd68ab498e857dee 0xf0ceaa574bf07cb154457f937af7a2b44cc680acc5ea6087bd68ab498e857dee
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH31]
+running test on Fork: Byzantium
+compare root 0xf0ceaa574bf07cb154457f937af7a2b44cc680acc5ea6087bd68ab498e857dee 0xf0ceaa574bf07cb154457f937af7a2b44cc680acc5ea6087bd68ab498e857dee
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH31]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH32]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x58af741081dedff88f2dd0a87a99879d844cf185f5359065bbf20cc09ecbd972 0x58af741081dedff88f2dd0a87a99879d844cf185f5359065bbf20cc09ecbd972
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH32]
+running test on Fork: Byzantium
+compare root 0x58af741081dedff88f2dd0a87a99879d844cf185f5359065bbf20cc09ecbd972 0x58af741081dedff88f2dd0a87a99879d844cf185f5359065bbf20cc09ecbd972
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH32]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH3]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x9a0b22a2344f16c91235d703c5aec71d4e25d0ebcb9d44a365d4fef93f9ce1e9 0x9a0b22a2344f16c91235d703c5aec71d4e25d0ebcb9d44a365d4fef93f9ce1e9
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH3]
+running test on Fork: Byzantium
+compare root 0x9a0b22a2344f16c91235d703c5aec71d4e25d0ebcb9d44a365d4fef93f9ce1e9 0x9a0b22a2344f16c91235d703c5aec71d4e25d0ebcb9d44a365d4fef93f9ce1e9
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH3]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH4]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x0317dbe8d15b559d30e0a45facc13aab89ce3777bac6e83530e5eb3c4c23af8f 0x0317dbe8d15b559d30e0a45facc13aab89ce3777bac6e83530e5eb3c4c23af8f
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH4]
+running test on Fork: Byzantium
+compare root 0x0317dbe8d15b559d30e0a45facc13aab89ce3777bac6e83530e5eb3c4c23af8f 0x0317dbe8d15b559d30e0a45facc13aab89ce3777bac6e83530e5eb3c4c23af8f
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH4]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH5]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x038c4af9252411bb5e2183e645881cb9e3402c0fe17bb56de1d6e24424d189bc 0x038c4af9252411bb5e2183e645881cb9e3402c0fe17bb56de1d6e24424d189bc
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH5]
+running test on Fork: Byzantium
+compare root 0x038c4af9252411bb5e2183e645881cb9e3402c0fe17bb56de1d6e24424d189bc 0x038c4af9252411bb5e2183e645881cb9e3402c0fe17bb56de1d6e24424d189bc
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH5]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH6]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xf765e8afb4d2b8b6e3a40dd9f9fec501abca4f4ec535c23278a6101d6e91c1d6 0xf765e8afb4d2b8b6e3a40dd9f9fec501abca4f4ec535c23278a6101d6e91c1d6
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH6]
+running test on Fork: Byzantium
+compare root 0xf765e8afb4d2b8b6e3a40dd9f9fec501abca4f4ec535c23278a6101d6e91c1d6 0xf765e8afb4d2b8b6e3a40dd9f9fec501abca4f4ec535c23278a6101d6e91c1d6
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH6]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH7]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x25cbc0e5763b4b64884778daffa9f3e83cc4bfca09cee6077833fc5642a162db 0x25cbc0e5763b4b64884778daffa9f3e83cc4bfca09cee6077833fc5642a162db
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH7]
+running test on Fork: Byzantium
+compare root 0x25cbc0e5763b4b64884778daffa9f3e83cc4bfca09cee6077833fc5642a162db 0x25cbc0e5763b4b64884778daffa9f3e83cc4bfca09cee6077833fc5642a162db
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH7]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH8]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x1072935285c48a9e9009b6c8d32713bedde18aa8bf90861c50ae108d71b6e59e 0x1072935285c48a9e9009b6c8d32713bedde18aa8bf90861c50ae108d71b6e59e
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH8]
+running test on Fork: Byzantium
+compare root 0x1072935285c48a9e9009b6c8d32713bedde18aa8bf90861c50ae108d71b6e59e 0x1072935285c48a9e9009b6c8d32713bedde18aa8bf90861c50ae108d71b6e59e
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH8]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH9]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x6759bd4390389fbad68c246c22320ab9e90051044874ced00a1863b2c85fb61e 0x6759bd4390389fbad68c246c22320ab9e90051044874ced00a1863b2c85fb61e
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH9]
+running test on Fork: Byzantium
+compare root 0x6759bd4390389fbad68c246c22320ab9e90051044874ced00a1863b2c85fb61e 0x6759bd4390389fbad68c246c22320ab9e90051044874ced00a1863b2c85fb61e
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1024-PUSH9]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH10]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x36e01254392977bd5765febbc650b7602273e6dcabe7a4367f1d6d3b48b0186e 0x36e01254392977bd5765febbc650b7602273e6dcabe7a4367f1d6d3b48b0186e
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH10]
+running test on Fork: Byzantium
+compare root 0x36e01254392977bd5765febbc650b7602273e6dcabe7a4367f1d6d3b48b0186e 0x36e01254392977bd5765febbc650b7602273e6dcabe7a4367f1d6d3b48b0186e
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH10]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH11]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xd0cd01244cdca8d9d4eb959f6c9530b6a744d6ea21536e2ad9ae846561640455 0xd0cd01244cdca8d9d4eb959f6c9530b6a744d6ea21536e2ad9ae846561640455
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH11]
+running test on Fork: Byzantium
+compare root 0xd0cd01244cdca8d9d4eb959f6c9530b6a744d6ea21536e2ad9ae846561640455 0xd0cd01244cdca8d9d4eb959f6c9530b6a744d6ea21536e2ad9ae846561640455
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH11]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH12]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x61158951aff69de8a9792df5fd4042c28b373084f50c0e417f8b43ed152432fa 0x61158951aff69de8a9792df5fd4042c28b373084f50c0e417f8b43ed152432fa
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH12]
+running test on Fork: Byzantium
+compare root 0x61158951aff69de8a9792df5fd4042c28b373084f50c0e417f8b43ed152432fa 0x61158951aff69de8a9792df5fd4042c28b373084f50c0e417f8b43ed152432fa
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH12]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH13]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xffe95e63c8f52d676321faff0b2703cafd6bd81a2337a494a74c89f4748ed3bc 0xffe95e63c8f52d676321faff0b2703cafd6bd81a2337a494a74c89f4748ed3bc
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH13]
+running test on Fork: Byzantium
+compare root 0xffe95e63c8f52d676321faff0b2703cafd6bd81a2337a494a74c89f4748ed3bc 0xffe95e63c8f52d676321faff0b2703cafd6bd81a2337a494a74c89f4748ed3bc
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH13]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH14]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xc930787f692278aa51a4a813487cf174ba2ae2268c86881118d38707fbc8866a 0xc930787f692278aa51a4a813487cf174ba2ae2268c86881118d38707fbc8866a
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH14]
+running test on Fork: Byzantium
+compare root 0xc930787f692278aa51a4a813487cf174ba2ae2268c86881118d38707fbc8866a 0xc930787f692278aa51a4a813487cf174ba2ae2268c86881118d38707fbc8866a
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH14]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH15]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x4cde3a3a500d85d8e137ce208ea1cb0d3b0b728661c1b0e6c4d37c80e6c11012 0x4cde3a3a500d85d8e137ce208ea1cb0d3b0b728661c1b0e6c4d37c80e6c11012
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH15]
+running test on Fork: Byzantium
+compare root 0x4cde3a3a500d85d8e137ce208ea1cb0d3b0b728661c1b0e6c4d37c80e6c11012 0x4cde3a3a500d85d8e137ce208ea1cb0d3b0b728661c1b0e6c4d37c80e6c11012
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH15]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH16]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xfca2431906904eeeae264f1dedc064d696c21c87faba6a43f86e0a2547e15ac3 0xfca2431906904eeeae264f1dedc064d696c21c87faba6a43f86e0a2547e15ac3
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH16]
+running test on Fork: Byzantium
+compare root 0xfca2431906904eeeae264f1dedc064d696c21c87faba6a43f86e0a2547e15ac3 0xfca2431906904eeeae264f1dedc064d696c21c87faba6a43f86e0a2547e15ac3
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH16]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH17]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xf0a8f1a5f050bd7ec5869927c91bef02dd7db081ece23a065a884a7bde034708 0xf0a8f1a5f050bd7ec5869927c91bef02dd7db081ece23a065a884a7bde034708
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH17]
+running test on Fork: Byzantium
+compare root 0xf0a8f1a5f050bd7ec5869927c91bef02dd7db081ece23a065a884a7bde034708 0xf0a8f1a5f050bd7ec5869927c91bef02dd7db081ece23a065a884a7bde034708
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH17]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH18]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xb1f47b2c2d84717917e84037803da6d2b9178df014e43ccfa1f042e6afd18776 0xb1f47b2c2d84717917e84037803da6d2b9178df014e43ccfa1f042e6afd18776
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH18]
+running test on Fork: Byzantium
+compare root 0xb1f47b2c2d84717917e84037803da6d2b9178df014e43ccfa1f042e6afd18776 0xb1f47b2c2d84717917e84037803da6d2b9178df014e43ccfa1f042e6afd18776
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH18]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH19]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x87b79bdb26626ec4752069811a7e597539b14b85bd837475b1ec0c2170c4bcee 0x87b79bdb26626ec4752069811a7e597539b14b85bd837475b1ec0c2170c4bcee
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH19]
+running test on Fork: Byzantium
+compare root 0x87b79bdb26626ec4752069811a7e597539b14b85bd837475b1ec0c2170c4bcee 0x87b79bdb26626ec4752069811a7e597539b14b85bd837475b1ec0c2170c4bcee
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH19]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH1]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xae2e8acd7255182b1fe56d72418a4fc8d1b329aa30c639e6d29a50d42052ffca 0xae2e8acd7255182b1fe56d72418a4fc8d1b329aa30c639e6d29a50d42052ffca
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH1]
+running test on Fork: Byzantium
+compare root 0xae2e8acd7255182b1fe56d72418a4fc8d1b329aa30c639e6d29a50d42052ffca 0xae2e8acd7255182b1fe56d72418a4fc8d1b329aa30c639e6d29a50d42052ffca
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH1]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH20]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x6675af5ea34ce63e2e1f179b696c9d83fb9e09ddf03d2ac274ec2dc9b68e7492 0x6675af5ea34ce63e2e1f179b696c9d83fb9e09ddf03d2ac274ec2dc9b68e7492
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH20]
+running test on Fork: Byzantium
+compare root 0x6675af5ea34ce63e2e1f179b696c9d83fb9e09ddf03d2ac274ec2dc9b68e7492 0x6675af5ea34ce63e2e1f179b696c9d83fb9e09ddf03d2ac274ec2dc9b68e7492
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH20]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH21]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xdbb5e2f9e98970f45b0b1c8e2720848a7dcd5cad9a914eb97b7c4cfaa3e9a980 0xdbb5e2f9e98970f45b0b1c8e2720848a7dcd5cad9a914eb97b7c4cfaa3e9a980
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH21]
+running test on Fork: Byzantium
+compare root 0xdbb5e2f9e98970f45b0b1c8e2720848a7dcd5cad9a914eb97b7c4cfaa3e9a980 0xdbb5e2f9e98970f45b0b1c8e2720848a7dcd5cad9a914eb97b7c4cfaa3e9a980
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH21]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH22]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x71b2c24df56c45edf4d8baa9722418df36659c4c6e251313a32bd8ca4153a130 0x71b2c24df56c45edf4d8baa9722418df36659c4c6e251313a32bd8ca4153a130
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH22]
+running test on Fork: Byzantium
+compare root 0x71b2c24df56c45edf4d8baa9722418df36659c4c6e251313a32bd8ca4153a130 0x71b2c24df56c45edf4d8baa9722418df36659c4c6e251313a32bd8ca4153a130
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH22]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH23]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x432bdc7582881af2871a0c9c1ddeebdca831d551df46b4a9bbce2b586dee2443 0x432bdc7582881af2871a0c9c1ddeebdca831d551df46b4a9bbce2b586dee2443
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH23]
+running test on Fork: Byzantium
+compare root 0x432bdc7582881af2871a0c9c1ddeebdca831d551df46b4a9bbce2b586dee2443 0x432bdc7582881af2871a0c9c1ddeebdca831d551df46b4a9bbce2b586dee2443
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH23]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH24]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xda91739489e9f12f54672acf6a416109814faf072e1e4b12956d50fe6ca43ad8 0xda91739489e9f12f54672acf6a416109814faf072e1e4b12956d50fe6ca43ad8
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH24]
+running test on Fork: Byzantium
+compare root 0xda91739489e9f12f54672acf6a416109814faf072e1e4b12956d50fe6ca43ad8 0xda91739489e9f12f54672acf6a416109814faf072e1e4b12956d50fe6ca43ad8
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH24]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH25]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x899c25a8dcaf673c1315c0372a45703b520ad5331c2b4bdf65a6f02fb134868d 0x899c25a8dcaf673c1315c0372a45703b520ad5331c2b4bdf65a6f02fb134868d
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH25]
+running test on Fork: Byzantium
+compare root 0x899c25a8dcaf673c1315c0372a45703b520ad5331c2b4bdf65a6f02fb134868d 0x899c25a8dcaf673c1315c0372a45703b520ad5331c2b4bdf65a6f02fb134868d
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH25]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH26]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x97caa3ecb38cb90ce421b7be1c239a6b12958da7dda6d0635dcb34a68b2b6f22 0x97caa3ecb38cb90ce421b7be1c239a6b12958da7dda6d0635dcb34a68b2b6f22
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH26]
+running test on Fork: Byzantium
+compare root 0x97caa3ecb38cb90ce421b7be1c239a6b12958da7dda6d0635dcb34a68b2b6f22 0x97caa3ecb38cb90ce421b7be1c239a6b12958da7dda6d0635dcb34a68b2b6f22
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH26]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH27]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xbdfdfbe07fa71a44b1118ceb34b8a44af110dbd6ab5d5e4242d51b28f2be5d8f 0xbdfdfbe07fa71a44b1118ceb34b8a44af110dbd6ab5d5e4242d51b28f2be5d8f
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH27]
+running test on Fork: Byzantium
+compare root 0xbdfdfbe07fa71a44b1118ceb34b8a44af110dbd6ab5d5e4242d51b28f2be5d8f 0xbdfdfbe07fa71a44b1118ceb34b8a44af110dbd6ab5d5e4242d51b28f2be5d8f
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH27]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH28]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xf2481824271ffccc34ed1bf28dca0a01d4a33d0081284fec91b763127f1e06b1 0xf2481824271ffccc34ed1bf28dca0a01d4a33d0081284fec91b763127f1e06b1
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH28]
+running test on Fork: Byzantium
+compare root 0xf2481824271ffccc34ed1bf28dca0a01d4a33d0081284fec91b763127f1e06b1 0xf2481824271ffccc34ed1bf28dca0a01d4a33d0081284fec91b763127f1e06b1
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH28]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH29]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x1d6d2484276688f902bd567f355cc47c157a4d295df8e66fe0fd03e327374c2d 0x1d6d2484276688f902bd567f355cc47c157a4d295df8e66fe0fd03e327374c2d
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH29]
+running test on Fork: Byzantium
+compare root 0x1d6d2484276688f902bd567f355cc47c157a4d295df8e66fe0fd03e327374c2d 0x1d6d2484276688f902bd567f355cc47c157a4d295df8e66fe0fd03e327374c2d
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH29]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH2]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xce26e242247c3fa1d0bef86524c04b263e762a84bdf389b95b93b62b8d2634b8 0xce26e242247c3fa1d0bef86524c04b263e762a84bdf389b95b93b62b8d2634b8
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH2]
+running test on Fork: Byzantium
+compare root 0xce26e242247c3fa1d0bef86524c04b263e762a84bdf389b95b93b62b8d2634b8 0xce26e242247c3fa1d0bef86524c04b263e762a84bdf389b95b93b62b8d2634b8
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH2]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH30]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x5de1c3cead7d9b32c186598d14e0877bef52040d16f13712b522d98ecb7e8021 0x5de1c3cead7d9b32c186598d14e0877bef52040d16f13712b522d98ecb7e8021
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH30]
+running test on Fork: Byzantium
+compare root 0x5de1c3cead7d9b32c186598d14e0877bef52040d16f13712b522d98ecb7e8021 0x5de1c3cead7d9b32c186598d14e0877bef52040d16f13712b522d98ecb7e8021
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH30]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH31]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xc075b77e7b9790ca3836fd86d0b4a871606d040f435cabb0fb972cde4cfb6611 0xc075b77e7b9790ca3836fd86d0b4a871606d040f435cabb0fb972cde4cfb6611
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH31]
+running test on Fork: Byzantium
+compare root 0xc075b77e7b9790ca3836fd86d0b4a871606d040f435cabb0fb972cde4cfb6611 0xc075b77e7b9790ca3836fd86d0b4a871606d040f435cabb0fb972cde4cfb6611
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH31]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH32]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x2b4a4dd6e6eb0c18c500d909b86e3552027a532deeeec3b9d640631117876e8f 0x2b4a4dd6e6eb0c18c500d909b86e3552027a532deeeec3b9d640631117876e8f
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH32]
+running test on Fork: Byzantium
+compare root 0x2b4a4dd6e6eb0c18c500d909b86e3552027a532deeeec3b9d640631117876e8f 0x2b4a4dd6e6eb0c18c500d909b86e3552027a532deeeec3b9d640631117876e8f
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH32]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH3]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xa8c630ea34105fa478f95596da3aff454cda834329ff3ce32afdc382cc893be4 0xa8c630ea34105fa478f95596da3aff454cda834329ff3ce32afdc382cc893be4
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH3]
+running test on Fork: Byzantium
+compare root 0xa8c630ea34105fa478f95596da3aff454cda834329ff3ce32afdc382cc893be4 0xa8c630ea34105fa478f95596da3aff454cda834329ff3ce32afdc382cc893be4
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH3]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH4]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x5f5bed126d4bde13fbe2fb45dd96bb1569943e4555a8c90d84f91ec160a2feb0 0x5f5bed126d4bde13fbe2fb45dd96bb1569943e4555a8c90d84f91ec160a2feb0
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH4]
+running test on Fork: Byzantium
+compare root 0x5f5bed126d4bde13fbe2fb45dd96bb1569943e4555a8c90d84f91ec160a2feb0 0x5f5bed126d4bde13fbe2fb45dd96bb1569943e4555a8c90d84f91ec160a2feb0
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH4]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH5]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xe213d915f6fcc0bc44e623f4d5df973b438a6a549400f1ab2c6c09b081ee497b 0xe213d915f6fcc0bc44e623f4d5df973b438a6a549400f1ab2c6c09b081ee497b
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH5]
+running test on Fork: Byzantium
+compare root 0xe213d915f6fcc0bc44e623f4d5df973b438a6a549400f1ab2c6c09b081ee497b 0xe213d915f6fcc0bc44e623f4d5df973b438a6a549400f1ab2c6c09b081ee497b
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH5]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH6]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0xdf94500393b2137024284aa749c51135abfc0e726e4a90b91738b3e397852b29 0xdf94500393b2137024284aa749c51135abfc0e726e4a90b91738b3e397852b29
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH6]
+running test on Fork: Byzantium
+compare root 0xdf94500393b2137024284aa749c51135abfc0e726e4a90b91738b3e397852b29 0xdf94500393b2137024284aa749c51135abfc0e726e4a90b91738b3e397852b29
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH6]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH7]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x1dbaec7968f4ad1b6ddf90ba654df4b691c663e30578827cd59da39a02722a75 0x1dbaec7968f4ad1b6ddf90ba654df4b691c663e30578827cd59da39a02722a75
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH7]
+running test on Fork: Byzantium
+compare root 0x1dbaec7968f4ad1b6ddf90ba654df4b691c663e30578827cd59da39a02722a75 0x1dbaec7968f4ad1b6ddf90ba654df4b691c663e30578827cd59da39a02722a75
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH7]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH8]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x01538f596de3325497057aa332111d06b5c1e37082a210b657848c655b5b8da4 0x01538f596de3325497057aa332111d06b5c1e37082a210b657848c655b5b8da4
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH8]
+running test on Fork: Byzantium
+compare root 0x01538f596de3325497057aa332111d06b5c1e37082a210b657848c655b5b8da4 0x01538f596de3325497057aa332111d06b5c1e37082a210b657848c655b5b8da4
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH8]
+Executing: frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH9]
+[{Byzantium 0}]
+{<nil> false false []}
+running test on Fork: Byzantium
+compare root 0x05185720572025aea5194c0e13637c2c7844cb8bf3bdf7efc30111818727ce1e 0x05185720572025aea5194c0e13637c2c7844cb8bf3bdf7efc30111818727ce1e
+/hash/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH9]
+running test on Fork: Byzantium
+compare root 0x05185720572025aea5194c0e13637c2c7844cb8bf3bdf7efc30111818727ce1e 0x05185720572025aea5194c0e13637c2c7844cb8bf3bdf7efc30111818727ce1e
+/path/trie success test name frontier/opcodes/push/stack_overflow.json/tests/frontier/opcodes/test_push.py::test_stack_overflow[fork_Byzantium-state_test-stack_height_1025-PUSH9]
+--- FAIL: TestExecutionSpecState (0.00s)
+    --- FAIL: TestExecutionSpecState/frontier/precompiles/precompile_absence/precompile_absence.json (0.06s)
+        --- FAIL: TestExecutionSpecState/frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-31_bytes] (0.02s)
+            --- FAIL: TestExecutionSpecState/frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-31_bytes]/Byzantium/0/hash/trie (0.01s)
+                state_test.go:87: post state root mismatch: got a9717d558abd7df2c8670f2563fed2de6573b9ee0ea48d7674c4b8db89d05628, want ed24e3361b383b80c97aeb237b9b6153c7d52cdb7354d0006a959c495b872912
+                state_test.go:101: no EVM operation logs generated
+            --- FAIL: TestExecutionSpecState/frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-31_bytes]/Byzantium/0/path/trie (0.01s)
+                state_test.go:87: post state root mismatch: got a9717d558abd7df2c8670f2563fed2de6573b9ee0ea48d7674c4b8db89d05628, want ed24e3361b383b80c97aeb237b9b6153c7d52cdb7354d0006a959c495b872912
+                state_test.go:101: no EVM operation logs generated
+        --- FAIL: TestExecutionSpecState/frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-32_bytes] (0.01s)
+            --- FAIL: TestExecutionSpecState/frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-32_bytes]/Byzantium/0/hash/trie (0.01s)
+                state_test.go:87: post state root mismatch: got 496f05d10eea673212196bae97afeb8d3acdabf9dd9e52f1683005a85a89a66f, want e57c501de77d2f59dfa65a68aef4b64380025f3cd36b5e7183a7a793dd4c735b
+                state_test.go:101: no EVM operation logs generated
+            --- FAIL: TestExecutionSpecState/frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-32_bytes]/Byzantium/0/path/trie (0.01s)
+                state_test.go:87: post state root mismatch: got 496f05d10eea673212196bae97afeb8d3acdabf9dd9e52f1683005a85a89a66f, want e57c501de77d2f59dfa65a68aef4b64380025f3cd36b5e7183a7a793dd4c735b
+                state_test.go:101: no EVM operation logs generated
+        --- FAIL: TestExecutionSpecState/frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-empty_calldata] (0.01s)
+            --- FAIL: TestExecutionSpecState/frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-empty_calldata]/Byzantium/0/hash/trie (0.01s)
+                state_test.go:87: post state root mismatch: got 69328bf6ed749e73ab4cccbc5d871ebe600ef8e94c20e6df6e41fabeb0a0fff8, want 478e9ca915e194d9a129ee1505df2a9403b9dccb92c0c3a56084fcb88f180272
+                state_test.go:101: no EVM operation logs generated
+            --- FAIL: TestExecutionSpecState/frontier/precompiles/precompile_absence/precompile_absence.json/tests/frontier/precompiles/test_precompile_absence.py::test_precompile_absence[fork_Byzantium-state_test-empty_calldata]/Byzantium/0/path/trie (0.01s)
+                state_test.go:87: post state root mismatch: got 69328bf6ed749e73ab4cccbc5d871ebe600ef8e94c20e6df6e41fabeb0a0fff8, want 478e9ca915e194d9a129ee1505df2a9403b9dccb92c0c3a56084fcb88f180272
+                state_test.go:101: no EVM operation logs generated
+FAIL
+exit status 1
+FAIL	github.com/XinFinOrg/XDPoSChain/tests	0.513s

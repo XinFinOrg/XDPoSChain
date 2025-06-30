@@ -1,0 +1,4 @@
+<nil>
+can't find test files in /Users/wp/Git/XDPoSChain/tests/fixtures-constantinople/state_tests, did you clone the tests submodule?
+PASS
+ok  	github.com/XinFinOrg/XDPoSChain/tests	0.564s
