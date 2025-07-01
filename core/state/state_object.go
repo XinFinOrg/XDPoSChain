@@ -96,10 +96,6 @@ type stateObject struct {
 
 	// Flag whether the object was created in the current transaction
 	created bool
-
-	touched bool
-
-	onDirty func(addr common.Address) // Callback method to mark a state object newly dirty
 }
 
 // empty returns whether the account is considered empty.
@@ -117,7 +113,7 @@ type Account struct {
 }
 
 // newObject creates a state object.
-func newObject(db *StateDB, address common.Address, data Account, onDirty func(addr common.Address)) *stateObject {
+func newObject(db *StateDB, address common.Address, data Account) *stateObject {
 	if data.Balance == nil {
 		data.Balance = new(big.Int)
 	}
@@ -135,7 +131,6 @@ func newObject(db *StateDB, address common.Address, data Account, onDirty func(a
 		originStorage:  make(Storage),
 		pendingStorage: make(Storage),
 		dirtyStorage:   make(Storage),
-		onDirty:        onDirty,
 	}
 }
 
@@ -153,23 +148,17 @@ func (s *stateObject) setError(err error) {
 
 func (s *stateObject) markSelfdestructed() {
 	s.selfDestructed = true
-	if s.onDirty != nil {
-		s.onDirty(s.Address())
-		s.onDirty = nil
-	}
 }
 
 func (s *stateObject) touch() {
-	s.db.journal = append(s.db.journal, touchChange{
-		account:   &s.address,
-		prev:      s.touched,
-		prevDirty: s.onDirty == nil,
+	s.db.journal.append(touchChange{
+		account: &s.address,
 	})
-	if s.onDirty != nil {
-		s.onDirty(s.Address())
-		s.onDirty = nil
+	if s.address == ripemd {
+		// Explicitly put it in the dirty-cache, which is otherwise generated from
+		// flattened journals.
+		s.db.journal.dirty(s.address)
 	}
-	s.touched = true
 }
 
 func (s *stateObject) getTrie(db Database) Trie {
@@ -244,7 +233,7 @@ func (s *stateObject) SetState(db Database, key, value common.Hash) {
 		return
 	}
 	// New value is different, update and journal the change
-	s.db.journal = append(s.db.journal, storageChange{
+	s.db.journal.append(storageChange{
 		account:  &s.address,
 		key:      key,
 		prevalue: prev,
@@ -272,11 +261,6 @@ func (s *stateObject) SetStorage(storage map[common.Hash]common.Hash) {
 
 func (s *stateObject) setState(key, value common.Hash) {
 	s.dirtyStorage[key] = value
-
-	if s.onDirty != nil {
-		s.onDirty(s.Address())
-		s.onDirty = nil
-	}
 }
 
 // finalise moves all dirty storage slots into the pending area to be hashed or
@@ -380,7 +364,7 @@ func (s *stateObject) SubBalance(amount *big.Int) {
 }
 
 func (s *stateObject) SetBalance(amount *big.Int) {
-	s.db.journal = append(s.db.journal, balanceChange{
+	s.db.journal.append(balanceChange{
 		account: &s.address,
 		prev:    new(big.Int).Set(s.data.Balance),
 	})
@@ -389,14 +373,10 @@ func (s *stateObject) SetBalance(amount *big.Int) {
 
 func (s *stateObject) setBalance(amount *big.Int) {
 	s.data.Balance = amount
-	if s.onDirty != nil {
-		s.onDirty(s.Address())
-		s.onDirty = nil
-	}
 }
 
-func (s *stateObject) deepCopy(db *StateDB, onDirty func(addr common.Address)) *stateObject {
-	stateObject := newObject(db, s.address, s.data, onDirty)
+func (s *stateObject) deepCopy(db *StateDB) *stateObject {
+	stateObject := newObject(db, s.address, s.data)
 	if s.trie != nil {
 		stateObject.trie = db.db.CopyTrie(s.trie)
 	}
@@ -436,7 +416,7 @@ func (s *stateObject) Code(db Database) []byte {
 
 func (s *stateObject) SetCode(codeHash common.Hash, code []byte) {
 	prevcode := s.Code(s.db.db)
-	s.db.journal = append(s.db.journal, codeChange{
+	s.db.journal.append(codeChange{
 		account:  &s.address,
 		prevhash: s.CodeHash(),
 		prevcode: prevcode,
@@ -448,14 +428,10 @@ func (s *stateObject) setCode(codeHash common.Hash, code []byte) {
 	s.code = code
 	s.data.CodeHash = codeHash[:]
 	s.dirtyCode = true
-	if s.onDirty != nil {
-		s.onDirty(s.Address())
-		s.onDirty = nil
-	}
 }
 
 func (s *stateObject) SetNonce(nonce uint64) {
-	s.db.journal = append(s.db.journal, nonceChange{
+	s.db.journal.append(nonceChange{
 		account: &s.address,
 		prev:    s.data.Nonce,
 	})
@@ -464,10 +440,6 @@ func (s *stateObject) SetNonce(nonce uint64) {
 
 func (s *stateObject) setNonce(nonce uint64) {
 	s.data.Nonce = nonce
-	if s.onDirty != nil {
-		s.onDirty(s.Address())
-		s.onDirty = nil
-	}
 }
 
 func (s *stateObject) CodeHash() []byte {
