@@ -259,7 +259,7 @@ func (api *DebugAPI) traceChain(ctx context.Context, start, end *types.Block, co
 						log.Warn("Tracing failed", "hash", tx.Hash(), "block", task.block.NumberU64(), "err", err)
 						break
 					}
-					task.statedb.DeleteSuicides()
+					task.statedb.Finalise(true)
 					task.results[i] = &txTraceResult{Result: res}
 				}
 				// Stream the result back to the user or abort on teardown
@@ -818,6 +818,7 @@ func (api *DebugAPI) computeTxEnv(blockHash common.Hash, txIndex int, reexec uin
 			totalFeeUsed = totalFeeUsed.Add(totalFeeUsed, fee)
 		}
 	}
-	statedb.DeleteSuicides()
+	// Ensure any modifications are committed to the state
+	statedb.Finalise(true)
 	return nil, vm.BlockContext{}, nil, fmt.Errorf("tx index %d out of range for block %x", txIndex, blockHash)
 }
