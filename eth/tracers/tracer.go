@@ -552,7 +552,7 @@ func NewJsTracer(code string, ctx *Context) (*JsTracer, error) {
 	hasExit := tracer.vm.GetPropString(tracer.tracerObject, "exit")
 	tracer.vm.Pop()
 	if hasEnter != hasExit {
-		return nil, fmt.Errorf("trace object must expose either both or none of enter() and exit()")
+		return nil, errors.New("trace object must expose either both or none of enter() and exit()")
 	}
 	tracer.traceCallFrames = hasEnter && hasExit
 	tracer.traceSteps = hasStep
