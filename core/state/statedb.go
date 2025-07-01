@@ -19,6 +19,7 @@ package state
 
 import (
 	"fmt"
+	"maps"
 	"math/big"
 	"sort"
 	"time"
@@ -637,7 +638,7 @@ func (s *StateDB) Copy() *StateDB {
 		refund:              s.refund,
 		logs:                make(map[common.Hash][]*types.Log, len(s.logs)),
 		logSize:             s.logSize,
-		preimages:           make(map[common.Hash][]byte),
+		preimages:           maps.Clone(s.preimages),
 		journal:             newJournal(),
 	}
 	// Copy the dirty states, logs, and preimages
@@ -683,9 +684,6 @@ func (s *StateDB) Copy() *StateDB {
 		state.logs[hash] = cpy
 	}
 
-	for hash, preimage := range s.preimages {
-		state.preimages[hash] = preimage
-	}
 	// Do we need to copy the access list? In practice: No. At the start of a
 	// transaction, the access list is empty. In practice, we only ever copy state
 	// _between_ transactions/blocks, never in the middle of a transaction.
