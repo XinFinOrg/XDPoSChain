@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -81,8 +80,6 @@ type StateDB struct {
 	journal        journal
 	validRevisions []revision
 	nextRevisionId int
-
-	lock sync.Mutex
 
 	// Measurements gathered during execution for debugging purposes
 	AccountReads   time.Duration
@@ -637,9 +634,6 @@ func (db *StateDB) ForEachStorage(addr common.Address, cb func(key, value common
 // Copy creates a deep, independent copy of the state.
 // Snapshots of the copied state cannot be applied to the copy.
 func (s *StateDB) Copy() *StateDB {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
 	// Copy all the basic fields, initialize the memory ones
 	state := &StateDB{
 		db:                  s.db,
