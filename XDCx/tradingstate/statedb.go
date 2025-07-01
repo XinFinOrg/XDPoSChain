@@ -424,7 +424,7 @@ func (t *TradingStateDB) updateStateExchangeObject(stateObject *tradingExchanges
 	t.setError(t.trie.TryUpdate(addr[:], data))
 }
 
-// Retrieve a state object given my the address. Returns nil if not found.
+// Retrieve a state object given by the address. Returns nil if not found.
 func (t *TradingStateDB) getStateExchangeObject(addr common.Hash) (stateObject *tradingExchanges) {
 	// Prefer 'live' objects.
 	if obj := t.stateExhangeObjects[addr]; obj != nil {

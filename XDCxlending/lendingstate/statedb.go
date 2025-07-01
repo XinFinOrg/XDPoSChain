@@ -409,7 +409,7 @@ func (ls *LendingStateDB) updateLendingExchange(stateObject *lendingExchangeStat
 	ls.setError(ls.trie.TryUpdate(addr[:], data))
 }
 
-// Retrieve a state object given my the address. Returns nil if not found.
+// Retrieve a state object given by the address. Returns nil if not found.
 func (ls *LendingStateDB) getLendingExchange(addr common.Hash) (stateObject *lendingExchangeState) {
 	// Prefer 'live' objects.
 	if obj := ls.lendingExchangeStates[addr]; obj != nil {

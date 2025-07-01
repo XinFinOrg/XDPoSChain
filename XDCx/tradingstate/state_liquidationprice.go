@@ -166,7 +166,7 @@ func (l *liquidationPriceState) deepCopy(db *TradingStateDB, onDirty func(liquid
 	return stateOrderList
 }
 
-// Retrieve a state object given my the address. Returns nil if not found.
+// Retrieve a state object given by the address. Returns nil if not found.
 func (l *liquidationPriceState) getStateLendingBook(db Database, lendingBook common.Hash) (stateObject *stateLendingBook) {
 	// Prefer 'live' objects.
 	if obj := l.stateLendingBooks[lendingBook]; obj != nil {

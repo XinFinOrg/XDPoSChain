@@ -335,7 +335,7 @@ func (s *stateObject) updateRoot(db Database) {
 	s.data.Root = s.trie.Hash()
 }
 
-// CommitTrie the storage trie of the object to dwb.
+// CommitTrie the storage trie of the object to db.
 // This updates the trie root.
 func (s *stateObject) CommitTrie(db Database) error {
 	// If nothing changed, don't bother with hashing anything

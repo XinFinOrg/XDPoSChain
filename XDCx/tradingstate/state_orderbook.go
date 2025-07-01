@@ -227,7 +227,7 @@ func (te *tradingExchanges) updateAsksTrie(db Database) Trie {
 	return tr
 }
 
-// CommitAskTrie the storage trie of the object to dwb.
+// CommitAskTrie the storage trie of the object to db.
 // This updates the trie root.
 func (te *tradingExchanges) updateAsksRoot(db Database) error {
 	te.updateAsksTrie(db)
@@ -238,7 +238,7 @@ func (te *tradingExchanges) updateAsksRoot(db Database) error {
 	return nil
 }
 
-// CommitAskTrie the storage trie of the object to dwb.
+// CommitAskTrie the storage trie of the object to db.
 // This updates the trie root.
 func (te *tradingExchanges) CommitAsksTrie(db Database) error {
 	te.updateAsksTrie(db)
@@ -300,7 +300,7 @@ func (te *tradingExchanges) updateBidsRoot(db Database) {
 	te.data.BidRoot = te.bidsTrie.Hash()
 }
 
-// CommitAskTrie the storage trie of the object to dwb.
+// CommitAskTrie the storage trie of the object to db.
 // This updates the trie root.
 func (te *tradingExchanges) CommitBidsTrie(db Database) error {
 	te.updateBidsTrie(db)
@@ -417,7 +417,7 @@ func (te *tradingExchanges) removeStateOrderListBidObject(db Database, stateOrde
 	te.setError(te.bidsTrie.TryDelete(stateOrderList.price[:]))
 }
 
-// Retrieve a state object given my the address. Returns nil if not found.
+// Retrieve a state object given by the address. Returns nil if not found.
 func (te *tradingExchanges) getStateOrderListAskObject(db Database, price common.Hash) (stateOrderList *stateOrderList) {
 	// Prefer 'live' objects.
 	if obj := te.stateAskObjects[price]; obj != nil {
@@ -469,7 +469,7 @@ func (te *tradingExchanges) createStateOrderListAskObject(db Database, price com
 	return newobj
 }
 
-// Retrieve a state object given my the address. Returns nil if not found.
+// Retrieve a state object given by the address. Returns nil if not found.
 func (te *tradingExchanges) getStateBidOrderListObject(db Database, price common.Hash) (stateOrderList *stateOrderList) {
 	// Prefer 'live' objects.
 	if obj := te.stateBidObjects[price]; obj != nil {
@@ -521,7 +521,7 @@ func (te *tradingExchanges) createStateBidOrderListObject(db Database, price com
 	return newobj
 }
 
-// Retrieve a state object given my the address. Returns nil if not found.
+// Retrieve a state object given by the address. Returns nil if not found.
 func (te *tradingExchanges) getStateOrderObject(db Database, orderId common.Hash) (stateOrderItem *stateOrderItem) {
 	// Prefer 'live' objects.
 	if obj := te.stateOrderObjects[orderId]; obj != nil {
@@ -587,14 +587,14 @@ func (t *tradingExchanges) updateOrdersTrie(db Database) Trie {
 	return tr
 }
 
-// CommitAskTrie the storage trie of the object to dwb.
+// CommitAskTrie the storage trie of the object to db.
 // This updates the trie root.
 func (t *tradingExchanges) updateOrdersRoot(db Database) {
 	t.updateOrdersTrie(db)
 	t.data.OrderRoot = t.ordersTrie.Hash()
 }
 
-// CommitAskTrie the storage trie of the object to dwb.
+// CommitAskTrie the storage trie of the object to db.
 // This updates the trie root.
 func (t *tradingExchanges) CommitOrdersTrie(db Database) error {
 	t.updateOrdersTrie(db)

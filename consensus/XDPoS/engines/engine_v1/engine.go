@@ -482,7 +482,7 @@ func (x *XDPoS_v1) snapshot(chain consensus.ChainReader, number uint64, hash com
 		// checkpoint snapshot = checkpoint - gap
 		if (number+x.config.Gap)%x.config.Epoch == 0 {
 			if s, err := loadSnapshot(x.config, x.signatures, x.db, hash); err == nil {
-				log.Trace("Loaded voting snapshot form disk", "number", number, "hash", hash)
+				log.Trace("Loaded voting snapshot from disk", "number", number, "hash", hash)
 				snap = s
 				break
 			}
