@@ -691,3 +691,18 @@ func TestDeleteCreateRevert(t *testing.T) {
 		t.Fatalf("self-destructed contract came alive")
 	}
 }
+
+// TestCopyOfCopy tests that modified objects are carried over to the copy, and the copy of the copy.
+// See https://github.com/ethereum/go-ethereum/pull/15225#issuecomment-380191512
+func TestCopyOfCopy(t *testing.T) {
+	state, _ := New(types.EmptyRootHash, NewDatabase(rawdb.NewMemoryDatabase()))
+	addr := common.HexToAddress("aaaa")
+	state.SetBalance(addr, big.NewInt(42))
+
+	if got := state.Copy().GetBalance(addr).Uint64(); got != 42 {
+		t.Fatalf("1st copy fail, expected 42, got %v", got)
+	}
+	if got := state.Copy().Copy().GetBalance(addr).Uint64(); got != 42 {
+		t.Fatalf("2nd copy fail, expected 42, got %v", got)
+	}
+}
