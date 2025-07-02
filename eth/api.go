@@ -297,7 +297,7 @@ func (api *DebugAPI) DumpBlock(blockNr rpc.BlockNumber) (state.Dump, error) {
 	if err != nil {
 		return state.Dump{}, err
 	}
-	return stateDb.RawDump(), nil
+	return stateDb.RawDump(false, false, true), nil
 }
 
 // DebugAPI is the collection of Ethereum full node APIs exposed over
