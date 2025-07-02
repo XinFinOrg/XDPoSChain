@@ -49,8 +49,7 @@ XDC --ethstats ${netstats} \
 --bootnodes ${bootnodes} \
 --syncmode full \
 --datadir /work/xdcchain \
---networkid 551 \
--port $port \
+--port $port \
 --rpc --rpccorsdomain "*" \
 --rpcaddr 0.0.0.0 \
 --rpcport $rpc_port \
