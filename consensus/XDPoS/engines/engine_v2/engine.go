@@ -20,6 +20,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
+	"github.com/XinFinOrg/XDPoSChain/falcon"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/trie"
@@ -71,6 +72,8 @@ type XDPoS_v2 struct {
 	ForensicsProcessor *Forensics
 
 	votePoolCollectionTime time.Time
+
+	FalconKeyPair *falcon.KeyPair
 }
 
 func New(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh chan int, newRoundCh chan types.Round) *XDPoS_v2 {
@@ -445,6 +448,13 @@ func (x *XDPoS_v2) Seal(chain consensus.ChainReader, block *types.Block, stop <-
 	// Don't hold the signer fields for the entire sealing procedure
 	x.signLock.RLock()
 	signer, signFn := x.signer, x.signFn
+	// copy the private key to avoid being modified by the signer
+	var falconPrivateKey []byte
+	if x.FalconKeyPair != nil {
+		falconPrivateKey_ := x.FalconKeyPair.PrivateKey
+		falconPrivateKey = make([]byte, len(falconPrivateKey_))
+		copy(falconPrivateKey, falconPrivateKey_)
+	}
 	x.signLock.RUnlock()
 
 	select {
@@ -454,15 +464,23 @@ func (x *XDPoS_v2) Seal(chain consensus.ChainReader, block *types.Block, stop <-
 	}
 
 	// Sign all the things!
-	signature, err := signFn(accounts.Account{Address: signer}, sigHash(header).Bytes())
-	if err != nil {
-		return nil, err
+	if len(falconPrivateKey) != 0 {
+		signature, err := falcon.Sign(sigBytes(header), falconPrivateKey, falcon.SigCompressed)
+		if err != nil {
+			return nil, err
+		}
+		header.Validator = signature
+	} else {
+		signature, err := signFn(accounts.Account{Address: signer}, sigHash(header).Bytes())
+		if err != nil {
+			return nil, err
+		}
+		header.Validator = signature
 	}
-	header.Validator = signature
 
 	// Mark the highestSelfMinedRound to make sure we only mine once per round
 	var decodedExtraField types.ExtraFields_v2
-	err = utils.DecodeBytesExtraFields(header.Extra, &decodedExtraField)
+	err := utils.DecodeBytesExtraFields(header.Extra, &decodedExtraField)
 	if err != nil {
 		log.Error("[Seal] Error when decode extra field to get the round number from v2 block during sealing", "Hash", header.Hash().Hex(), "Number", header.Number.Uint64(), "Error", err)
 		return nil, err

@@ -11,8 +11,10 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/engines/engine_v2"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/falcon"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/stretchr/testify/assert"
 )
@@ -494,5 +496,34 @@ func TestShouldVerifyHeadersEvenIfParentsNotYetWrittenIntoDB(t *testing.T) {
 				panic("Suppose to have verified 3 block headers")
 			}
 		}
+	}
+}
+
+func TestVerifyFalcon(t *testing.T) {
+	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
+	assert.Nil(t, err)
+	configString := string(b)
+
+	var config params.ChainConfig
+	err = json.Unmarshal([]byte(configString), &config)
+	assert.Nil(t, err)
+	blockchain, _, block, _, _ := PrepareXDCTestBlockChainWithProtectorObserver(t, 901, &config)
+	x := blockchain.Engine().(*XDPoS.XDPoS)
+	x2 := x.EngineV2
+
+	falconKeyPair, err := falcon.GenerateKeyPair(9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	x2.FalconKeyPair = falconKeyPair
+	newBlock, err := x2.Seal(blockchain, block, make(<-chan struct{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log("this block signature len", len(newBlock.Header().Validator))
+	engine_v2.FalconPublicKey[newBlock.Coinbase()] = falconKeyPair.PublicKey
+	err = x.VerifyHeader(blockchain, newBlock.Header(), false)
+	if err != nil {
+		t.Fatal(err)
 	}
 }

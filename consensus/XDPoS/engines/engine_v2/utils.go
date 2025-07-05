@@ -1,6 +1,7 @@
 package engine_v2
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"math/big"
@@ -44,6 +45,34 @@ func sigHash(header *types.Header) (hash common.Hash) {
 	rlp.Encode(hasher, enc)
 	hasher.Sum(hash[:0])
 	return hash
+}
+
+func sigBytes(header *types.Header) []byte {
+	enc := []interface{}{
+		header.ParentHash,
+		header.UncleHash,
+		header.Coinbase,
+		header.Root,
+		header.TxHash,
+		header.ReceiptHash,
+		header.Bloom,
+		header.Difficulty,
+		header.Number,
+		header.GasLimit,
+		header.GasUsed,
+		header.Time,
+		header.Extra,
+		header.MixDigest,
+		header.Nonce,
+		header.Validators,
+		header.Penalties,
+	}
+	if header.BaseFee != nil {
+		enc = append(enc, header.BaseFee)
+	}
+	buf := new(bytes.Buffer)
+	rlp.Encode(buf, enc)
+	return buf.Bytes()
 }
 
 func ecrecover(header *types.Header, sigcache *utils.SigLRU) (common.Address, error) {

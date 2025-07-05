@@ -11,8 +11,11 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/consensus/misc/eip1559"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/falcon"
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
+
+var FalconPublicKey = make(map[common.Address][]byte)
 
 // Verify individual header
 func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Header, parents []*types.Header, fullVerify bool) error {
@@ -161,28 +164,39 @@ func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Heade
 		masterNodes = x.GetMasternodes(chain, header)
 	}
 
-	verified, validatorAddress, err := x.verifyMsgSignature(sigHash(header), header.Validator, masterNodes)
-	if err != nil {
-		for index, mn := range masterNodes {
-			log.Error("[verifyHeader] masternode list during validator verification", "Masternode Address", mn.Hex(), "index", index)
+	if len(header.Validator) <= utils.ExtraSeal {
+		verified, validatorAddress, err := x.verifyMsgSignature(sigHash(header), header.Validator, masterNodes)
+		if err != nil {
+			for index, mn := range masterNodes {
+				log.Error("[verifyHeader] masternode list during validator verification", "Masternode Address", mn.Hex(), "index", index)
+			}
+			log.Error("[verifyHeader] Error while verifying header validator signature", "BlockNumber", header.Number, "Hash", header.Hash().Hex(), "validator in hex", hexutil.Encode(header.Validator))
+			return err
 		}
-		log.Error("[verifyHeader] Error while verifying header validator signature", "BlockNumber", header.Number, "Hash", header.Hash().Hex(), "validator in hex", hexutil.Encode(header.Validator))
-		return err
-	}
-	if !verified {
-		log.Warn("[verifyHeader] Fail to verify the block validator as the validator address not within the masternode list", "BlockNumber", header.Number, "Hash", header.Hash().Hex(), "validatorAddress", validatorAddress.Hex())
-		return utils.ErrValidatorNotWithinMasternodes
-	}
-	if validatorAddress != header.Coinbase {
-		log.Warn("[verifyHeader] Header validator and coinbase address not match", "BlockNumber", header.Number, "Hash", header.Hash().Hex(), "validatorAddress", validatorAddress.Hex(), "coinbase", header.Coinbase.Hex())
-		return utils.ErrCoinbaseAndValidatorMismatch
-	}
-	// Check the proposer is the leader
-	curIndex := utils.Position(masterNodes, validatorAddress)
-	leaderIndex := uint64(round) % x.config.Epoch % uint64(len(masterNodes))
-	if masterNodes[leaderIndex] != validatorAddress {
-		log.Warn("[verifyHeader] Invalid blocker proposer, not its turn", "curIndex", curIndex, "leaderIndex", leaderIndex, "Hash", header.Hash().Hex(), "masterNodes[leaderIndex]", masterNodes[leaderIndex], "validatorAddress", validatorAddress)
-		return utils.ErrNotItsTurn
+		if !verified {
+			log.Warn("[verifyHeader] Fail to verify the block validator as the validator address not within the masternode list", "BlockNumber", header.Number, "Hash", header.Hash().Hex(), "validatorAddress", validatorAddress.Hex())
+			return utils.ErrValidatorNotWithinMasternodes
+		}
+		if validatorAddress != header.Coinbase {
+			log.Warn("[verifyHeader] Header validator and coinbase address not match", "BlockNumber", header.Number, "Hash", header.Hash().Hex(), "validatorAddress", validatorAddress.Hex(), "coinbase", header.Coinbase.Hex())
+			return utils.ErrCoinbaseAndValidatorMismatch
+		}
+		// Check the proposer is the leader
+		curIndex := utils.Position(masterNodes, validatorAddress)
+		leaderIndex := uint64(round) % x.config.Epoch % uint64(len(masterNodes))
+		if masterNodes[leaderIndex] != validatorAddress {
+			log.Warn("[verifyHeader] Invalid blocker proposer, not its turn", "curIndex", curIndex, "leaderIndex", leaderIndex, "Hash", header.Hash().Hex(), "masterNodes[leaderIndex]", masterNodes[leaderIndex], "validatorAddress", validatorAddress)
+			return utils.ErrNotItsTurn
+		}
+	} else {
+		signer := header.Coinbase
+		// get signer's public key from a global map
+		signerPublicKey := FalconPublicKey[signer]
+		err = falcon.Verify(header.Validator, sigBytes(header), signerPublicKey, falcon.SigCompressed)
+		if err != nil {
+			return err
+		}
+		log.Info("Falcon verify success!")
 	}
 
 	x.verifiedHeaders.Add(header.Hash(), struct{}{})
