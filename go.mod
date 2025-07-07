@@ -30,7 +30,7 @@ require (
 	golang.org/x/sync v0.9.0
 	golang.org/x/sys v0.27.0
 	golang.org/x/tools v0.21.1-0.20240508182429-e35e4ccd0d2d
-	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c
+	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/olebedev/go-duktape.v3 v3.0.0-20200619000410-60c24ae608a6
 )
 
@@ -77,13 +77,11 @@ require (
 	github.com/influxdata/line-protocol v0.0.0-20200327222509-2487e7298839 // indirect
 	github.com/kilic/bls12-381 v0.1.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-runewidth v0.0.13 // indirect
 	github.com/mmcloughlin/addchain v0.4.0 // indirect
 	github.com/naoina/go-stringutil v0.1.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
-	github.com/rogpeppe/go-internal v1.9.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/tklauser/go-sysconf v0.3.14 // indirect
 	github.com/tklauser/numcpus v0.8.0 // indirect

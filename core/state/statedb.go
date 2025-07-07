@@ -521,7 +521,7 @@ func (s *StateDB) getStateObject(addr common.Address) *stateObject {
 
 // getDeletedStateObject is similar to getStateObject, but instead of returning
 // nil for a deleted state object, it returns the actual object with the deleted
-// flag set. This is needed by the state journal to revert to the correct self-
+// flag set. This is needed by the state journal to revert to the correct s-
 // destructed object instead of wiping all knowledge about the state object.
 func (s *StateDB) getDeletedStateObject(addr common.Address) *stateObject {
 	// Prefer live objects if any is available
