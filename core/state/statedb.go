@@ -18,6 +18,7 @@
 package state
 
 import (
+	"bytes"
 	"fmt"
 	"maps"
 	"math/big"
@@ -275,9 +276,12 @@ func (s *StateDB) GetCodeSize(addr common.Address) int {
 	if stateObject.code != nil {
 		return len(stateObject.code)
 	}
+	if bytes.Equal(stateObject.CodeHash(), types.EmptyCodeHash[:]) {
+		return 0
+	}
 	size, err := s.db.ContractCodeSize(stateObject.addrHash, common.BytesToHash(stateObject.CodeHash()))
 	if err != nil {
-		s.setError(err)
+		s.setError(fmt.Errorf("GetCodeSize (%x) error: %v", addr[:], err))
 	}
 	return size
 }
@@ -487,7 +491,9 @@ func (s *StateDB) updateStateObject(obj *stateObject) {
 	if err != nil {
 		panic(fmt.Errorf("can't encode object at %x: %v", addr[:], err))
 	}
-	s.setError(s.trie.TryUpdate(addr[:], data))
+	if err = s.trie.TryUpdate(addr[:], data); err != nil {
+		s.setError(fmt.Errorf("updateStateObject (%x) error: %v", addr[:], err))
+	}
 }
 
 // deleteStateObject removes the given object from the state trie.
@@ -497,7 +503,9 @@ func (s *StateDB) deleteStateObject(obj *stateObject) {
 
 	// Delete the account from the trie
 	addr := obj.Address()
-	s.setError(s.trie.TryDelete(addr[:]))
+	if err := s.trie.TryDelete(addr[:]); err != nil {
+		s.setError(fmt.Errorf("deleteStateObject (%x) error: %v", addr[:], err))
+	}
 }
 
 // DeleteAddress removes the address from the state trie.
@@ -538,7 +546,6 @@ func (s *StateDB) getDeletedStateObject(addr common.Address) *stateObject {
 		return nil
 	}
 	if len(enc) == 0 {
-		s.setError(err)
 		return nil
 	}
 	var data Account
