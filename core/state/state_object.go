@@ -201,9 +201,10 @@ func (s *stateObject) GetCommittedState(db Database, key common.Hash) common.Has
 		return value
 	}
 	// Track the amount of time wasted on reading the storage trie
-	defer func(start time.Time) { s.db.StorageReads += time.Since(start) }(time.Now())
+	start := time.Now()
 	// Otherwise load the value from the database
-	enc, err := s.getTrie(db).TryGet(key[:])
+	enc, err := s.getTrie(db).TryGet(key.Bytes())
+	s.db.StorageReads += time.Since(start)
 	if err != nil {
 		s.setError(err)
 		return common.Hash{}

@@ -526,10 +526,14 @@ func (s *StateDB) getDeletedStateObject(addr common.Address) *stateObject {
 		return obj
 	}
 	// Track the amount of time wasted on loading the object from the database
-	defer func(start time.Time) { s.AccountReads += time.Since(start) }(time.Now())
-
+	start := time.Now()
 	// Load the object from the database
-	enc, err := s.trie.TryGet(addr[:])
+	enc, err := s.trie.TryGet(addr.Bytes())
+	s.AccountReads += time.Since(start)
+	if err != nil {
+		s.setError(fmt.Errorf("getDeleteStateObject (%x) error: %v", addr.Bytes(), err))
+		return nil
+	}
 	if len(enc) == 0 {
 		s.setError(err)
 		return nil
