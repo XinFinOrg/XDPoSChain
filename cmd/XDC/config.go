@@ -215,6 +215,7 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, XDCConfig) {
 	return stack, cfg
 }
 
+// makeFullNode loads geth configuration and creates the Ethereum backend.
 func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend, XDCConfig) {
 	stack, cfg := makeConfigNode(ctx)
 

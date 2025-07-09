@@ -151,13 +151,14 @@ func initGenesis(ctx *cli.Context) error {
 	var err error
 	genesis := new(core.Genesis)
 	genesisPath := ctx.Args().First()
-	if genesisPath == "mainnet" || genesisPath == "xinfin" {
+	switch genesisPath {
+	case "mainnet", "xinfin":
 		err = json.Unmarshal(xdc_genesis.MainnetGenesis, genesis)
-	} else if genesisPath == "testnet" || genesisPath == "apothem" {
+	case "testnet", "apothem":
 		err = json.Unmarshal(xdc_genesis.TestnetGenesis, genesis)
-	} else if genesisPath == "devnet" {
+	case "devnet":
 		err = json.Unmarshal(xdc_genesis.DevnetGenesis, genesis)
-	} else {
+	default:
 		if len(genesisPath) == 0 {
 			utils.Fatalf("invalid path to genesis file")
 		}
@@ -177,7 +178,7 @@ func initGenesis(ctx *cli.Context) error {
 		common.CopyConstants(genesis.Config.ChainId.Uint64())
 	}
 
-	// Open an initialise both full and light databases
+	// Open and initialise both full and light databases
 	stack, _ := makeConfigNode(ctx)
 	defer stack.Close()
 
@@ -314,7 +315,7 @@ func importPreimages(ctx *cli.Context) error {
 		utils.Fatalf("This command requires an argument.")
 	}
 
-	stack, _, _ := makeFullNode(ctx)
+	stack, _ := makeConfigNode(ctx)
 	defer stack.Close()
 
 	db := utils.MakeChainDatabase(ctx, stack, false)
@@ -333,7 +334,8 @@ func exportPreimages(ctx *cli.Context) error {
 	if ctx.Args().Len() < 1 {
 		utils.Fatalf("This command requires an argument.")
 	}
-	stack, _, _ := makeFullNode(ctx)
+
+	stack, _ := makeConfigNode(ctx)
 	defer stack.Close()
 
 	db := utils.MakeChainDatabase(ctx, stack, true)
@@ -348,7 +350,7 @@ func exportPreimages(ctx *cli.Context) error {
 }
 
 func dump(ctx *cli.Context) error {
-	stack, _, _ := makeFullNode(ctx)
+	stack, _ := makeConfigNode(ctx)
 	defer stack.Close()
 
 	chain, chainDb := utils.MakeChain(ctx, stack, true)
