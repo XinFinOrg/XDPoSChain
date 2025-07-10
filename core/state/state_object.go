@@ -46,7 +46,7 @@ func (s Storage) String() (str string) {
 }
 
 func (s Storage) Copy() Storage {
-	cpy := make(Storage)
+	cpy := make(Storage, len(s))
 	for key, value := range s {
 		cpy[key] = value
 	}
@@ -251,7 +251,7 @@ func (s *stateObject) SetState(db Database, key, value common.Hash) {
 func (s *stateObject) SetStorage(storage map[common.Hash]common.Hash) {
 	// Allocate fake storage if it's nil.
 	if s.fakeStorage == nil {
-		s.fakeStorage = make(Storage)
+		s.fakeStorage = make(Storage, len(storage))
 	}
 	for key, value := range storage {
 		s.fakeStorage[key] = value
