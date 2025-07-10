@@ -40,7 +40,6 @@ import (
 	randomizeContract "github.com/XinFinOrg/XDPoSChain/contracts/randomize"
 	validatorContract "github.com/XinFinOrg/XDPoSChain/contracts/validator"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
-	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
 // makeGenesis creates a new genesis struct based on some user input.
@@ -218,10 +217,7 @@ func (w *wizard) makeGenesis() {
 		code, _ := contractBackend.CodeAt(ctx, validatorAddress, nil)
 		storage := make(map[common.Hash]common.Hash)
 		f := func(key, val common.Hash) bool {
-			decode := []byte{}
-			trim := bytes.TrimLeft(val.Bytes(), "\x00")
-			rlp.DecodeBytes(trim, &decode)
-			storage[key] = common.BytesToHash(decode)
+			storage[key] = common.BytesToHash(val.Bytes())
 			log.Info("DecodeBytes", "value", val.String(), "decode", storage[key].String())
 			return true
 		}
