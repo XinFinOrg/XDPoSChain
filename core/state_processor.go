@@ -435,7 +435,7 @@ func applyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 	}
 
 	// Set the receipt logs and create the bloom filter.
-	receipt.Logs = statedb.GetLogs(tx.Hash(), blockHash)
+	receipt.Logs = statedb.GetLogs(tx.Hash(), blockNumber.Uint64(), blockHash)
 	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
 	receipt.BlockHash = blockHash
 	receipt.BlockNumber = blockNumber
@@ -500,7 +500,7 @@ func ApplySignTransaction(config *params.ChainConfig, statedb *state.StateDB, bl
 	log.Address = common.BlockSignersBinary
 	log.BlockNumber = blockNumber.Uint64()
 	statedb.AddLog(log)
-	receipt.Logs = statedb.GetLogs(tx.Hash(), blockHash)
+	receipt.Logs = statedb.GetLogs(tx.Hash(), blockNumber.Uint64(), blockHash)
 	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
 	receipt.BlockHash = blockHash
 	receipt.BlockNumber = blockNumber
@@ -527,7 +527,7 @@ func ApplyEmptyTransaction(config *params.ChainConfig, statedb *state.StateDB, b
 	log.Address = *tx.To()
 	log.BlockNumber = blockNumber.Uint64()
 	statedb.AddLog(log)
-	receipt.Logs = statedb.GetLogs(tx.Hash(), blockHash)
+	receipt.Logs = statedb.GetLogs(tx.Hash(), blockNumber.Uint64(), blockHash)
 	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
 	receipt.BlockHash = blockHash
 	receipt.BlockNumber = blockNumber
