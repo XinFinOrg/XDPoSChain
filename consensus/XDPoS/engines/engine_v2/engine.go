@@ -1042,6 +1042,7 @@ func (x *XDPoS_v2) calcMasternodes(chain consensus.ChainReader, blockNum *big.In
 	// using new max masterndoes
 	maxMasternodes := x.config.V2.Config(uint64(round)).MaxMasternodes
 	snap, err := x.getSnapshot(chain, blockNum.Uint64(), false)
+	log.Info("[calcMasternodes] getSnapshot", "blockNum", blockNum.Uint64(), "snap", snap)
 	if err != nil {
 		log.Error("[calcMasternodes] Adaptor v2 getSnapshot has error", "err", err)
 		return nil, nil, err

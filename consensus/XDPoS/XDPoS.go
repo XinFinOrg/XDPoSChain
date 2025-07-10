@@ -372,7 +372,6 @@ func (x *XDPoS) GetValidator(creator common.Address, chain consensus.ChainReader
 }
 
 func (x *XDPoS) UpdateMasternodes(chain consensus.ChainReader, header *types.Header, ms []utils.Masternode) error {
-	// fmt.Println("UpdateMasternodes")
 	switch x.config.BlockConsensusVersion(header.Number, header.Extra, ExtraFieldCheck) {
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.UpdateMasternodes(chain, header, ms)
