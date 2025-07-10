@@ -47,7 +47,7 @@ func ReadCode(db ethdb.KeyValueReader, hash common.Hash) []byte {
 	if len(data) != 0 {
 		return data
 	}
-	data, _ = db.Get(hash[:])
+	data, _ = db.Get(hash.Bytes())
 	return data
 }
 
@@ -57,6 +57,18 @@ func ReadCode(db ethdb.KeyValueReader, hash common.Hash) []byte {
 func ReadCodeWithPrefix(db ethdb.KeyValueReader, hash common.Hash) []byte {
 	data, _ := db.Get(codeKey(hash))
 	return data
+}
+
+// HasCode checks if the contract code corresponding to the
+// provided code hash is present in the db.
+func HasCode(db ethdb.KeyValueReader, hash common.Hash) bool {
+	// Try with the prefixed code scheme first, if not then try with legacy
+	// scheme.
+	if ok := HasCodeWithPrefix(db, hash); ok {
+		return true
+	}
+	ok, _ := db.Has(hash.Bytes())
+	return ok
 }
 
 // HasCodeWithPrefix checks if the contract code corresponding to the
