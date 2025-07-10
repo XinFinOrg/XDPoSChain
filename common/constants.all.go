@@ -3,6 +3,8 @@ package common
 import (
 	"maps"
 	"math/big"
+
+	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
 // non-const variables for all network.
@@ -128,15 +130,20 @@ func IsInBlacklist(address *Address) bool {
 // It skips mainnet since the default value is from mainnet.
 func CopyConstants(chainID uint64) {
 	var c *constant
-	if chainID == TestnetConstant.chainID {
+	if chainID == MaintnetConstant.chainID {
+		log.Info("[CopyConstants] ChainID is mainnet")
+		return
+	} else if chainID == TestnetConstant.chainID {
+		log.Info("[CopyConstants] ChainID is testnet")
 		c = &TestnetConstant
 		IsTestnet = true
 	} else if chainID == DevnetConstant.chainID {
+		log.Info("[CopyConstants] ChainID is devnet")
 		c = &DevnetConstant
-	} else if chainID == localConstant.chainID {
+	} else { // If chainID is not matched with any known constants, use localConstant.
+		log.Info("[CopyConstants] ChainID is local or unknown, using local constants")
 		c = &localConstant
-	} else {
-		return
+		localConstant.chainID = chainID //apply custom chainID
 	}
 
 	MaxMasternodesV2 = c.maxMasternodesV2

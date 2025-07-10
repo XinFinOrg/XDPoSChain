@@ -398,6 +398,8 @@ func (bc *BlockChain) loadLastState() error {
 			return err
 		}
 	}
+	log.Warn("[loadLastState] currentBlock", "number", currentBlock.Number(), "hash", currentBlock.Hash(), "tx", currentBlock.Transactions())
+
 	// Everything seems to be fine, set as the head block
 	bc.currentBlock.Store(currentBlock)
 	headBlockGauge.Update(int64(currentBlock.NumberU64()))
@@ -2668,12 +2670,21 @@ func (bc *BlockChain) GetClient() (bind.ContractBackend, error) {
 	return bc.Client, nil
 }
 
+func (bc *BlockChain) CheckStateCandidates() error {
+	stateDB, _ := bc.State()
+	candidates := state.GetCandidates(stateDB)
+	log.Debug("[CheckStateCandidates] Candidates in stateDB", "len(candidates)", len(candidates), "candidates", candidates)
+	log.Debug("[CheckStateCandidates]", "bc.chainConfig", bc.chainConfig, "bc.chainConfig.XDPoS", bc.chainConfig.XDPoS)
+
+	return nil
+}
+
 func (bc *BlockChain) UpdateM1() error {
 	engine, ok := bc.Engine().(*XDPoS.XDPoS)
 	if bc.Config().XDPoS == nil || !ok {
 		return ErrNotXDPoS
 	}
-	log.Info("It's time to update new set of masternodes for the next epoch...")
+	log.Info("[UpdateM1] It's time to update new set of masternodes for the next epoch...")
 	// get masternodes information from smart contract
 	client, err := bc.GetClient()
 	if err != nil {
@@ -2691,7 +2702,8 @@ func (bc *BlockChain) UpdateM1() error {
 	// if can't get anything, request from contracts
 	stateDB, err := bc.State()
 	if err != nil {
-		candidates, err = validator.GetCandidates(opts)
+		candidates, err = validator.GetCandidates(opts) //possibly could break chain state?
+		log.Info("[UpdateM1] Get candidates from contract", "candidates", candidates, "err", err)
 		if err != nil {
 			return err
 		}
@@ -2699,11 +2711,14 @@ func (bc *BlockChain) UpdateM1() error {
 		return errors.New("nil stateDB in UpdateM1")
 	} else {
 		candidates = state.GetCandidates(stateDB)
+		log.Info("[UpdateM1] Get candidates from stateDB", "candidates", candidates)
 	}
+	log.Info("[UpdateM1]", "len(candidates)", len(candidates), "candidates", candidates)
 
 	var ms []utils.Masternode
 	for _, candidate := range candidates {
 		v, err := validator.GetCandidateCap(opts, candidate)
+		log.Info("[UpdateM1]", "v", v, "candidate", candidate.String())
 		if err != nil {
 			return err
 		}
@@ -2713,26 +2728,26 @@ func (bc *BlockChain) UpdateM1() error {
 		}
 	}
 	if len(ms) == 0 {
-		log.Error("No masternode found. Stopping node")
+		log.Error("[UpdateM1] No masternode found. Stopping node")
 		os.Exit(1)
 	} else {
 		sort.Slice(ms, func(i, j int) bool {
 			return ms[i].Stake.Cmp(ms[j].Stake) >= 0
 		})
-		log.Info("Ordered list of masternode candidates")
+		log.Info("[UpdateM1] Ordered list of masternode candidates")
 		for _, m := range ms {
 			log.Info("", "address", m.Address.String(), "stake", m.Stake)
 		}
 		// update masternodes
 
-		log.Info("Updating new set of masternodes")
+		log.Info("[UpdateM1] Updating new set of masternodes")
 		// get block header
 		header := bc.CurrentHeader()
 		err = engine.UpdateMasternodes(bc, header, ms)
 		if err != nil {
 			return err
 		}
-		log.Info("Masternodes are ready for the next epoch")
+		log.Info("[UpdateM1] Masternodes are ready for the next epoch")
 	}
 	return nil
 }

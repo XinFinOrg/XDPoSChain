@@ -109,6 +109,7 @@ func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig
 
 	// Just commit the new block if there is no stored genesis block.
 	stored := rawdb.ReadCanonicalHash(db, 0)
+	log.Info("[SetupGenesisBlock] stored genesis block hash", "stored", stored)
 	if (stored == common.Hash{}) {
 		if genesis == nil {
 			log.Info("Writing default main-net genesis block")
@@ -132,7 +133,7 @@ func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig
 	newcfg := genesis.configOrDefault(stored)
 	storedcfg, _ := rawdb.ReadChainConfig(db, stored)
 	if storedcfg == nil {
-		log.Warn("Found genesis block without chain config")
+		log.Warn("[SetupGenesisBlock] Found genesis block without chain config")
 		rawdb.WriteChainConfig(db, stored, newcfg)
 		return newcfg, stored, nil
 	}
@@ -141,6 +142,7 @@ func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig
 	// config is supplied. These chains would get AllProtocolChanges (and a compat error)
 	// if we just continued here.
 	if genesis == nil && newcfg == params.AllEthashProtocolChanges {
+		log.Warn("[SetupGenesisBlock] genesis == nil && newcfg == params.AllEthashProtocolChanges")
 		return storedcfg, stored, nil
 	}
 
@@ -148,14 +150,17 @@ func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig
 	// are returned to the caller unless we're already at block zero.
 	height := rawdb.ReadHeaderNumber(db, rawdb.ReadHeadHeaderHash(db))
 	if height == nil {
+		log.Warn("[SetupGenesisBlock] height is nil")
 		return newcfg, stored, errors.New("missing block number for head header hash")
 	}
 	compatErr := storedcfg.CheckCompatible(newcfg, *height)
 	if compatErr != nil && *height != 0 && compatErr.RewindTo != 0 {
+		log.Warn("[SetupGenesisBlock] compatErr", "compatErr", compatErr)
 		return newcfg, stored, compatErr
 	}
-	rawdb.WriteChainConfig(db, stored, newcfg)
-	return newcfg, stored, nil
+
+	log.Warn("[SetupGenesisBlock] last return")
+	return newcfg, stored, rawdb.WriteChainConfig(db, stored, newcfg)
 }
 
 func (g *Genesis) configOrDefault(ghash common.Hash) *params.ChainConfig {
@@ -185,7 +190,9 @@ func (g *Genesis) ToBlock(db ethdb.Database) *types.Block {
 		db = rawdb.NewMemoryDatabase()
 	}
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(db))
+	log.Info("[ToBlock] begin alloc")
 	for addr, account := range g.Alloc {
+		log.Info("[ToBlock] allocing", "addr", addr, "balance", account.Balance, "nonce", account.Nonce, "storage", account.Storage)
 		statedb.AddBalance(addr, account.Balance)
 		statedb.SetCode(addr, account.Code)
 		statedb.SetNonce(addr, account.Nonce)
