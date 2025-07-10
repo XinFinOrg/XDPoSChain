@@ -127,7 +127,7 @@ const (
 	blocksHashCacheLimit = 900
 )
 
-// CacheConfig contains the configuration values for the trie caching/pruning
+// CacheConfig contains the configuration values for the trie database
 // that's resident in a blockchain.
 type CacheConfig struct {
 	TrieCleanLimit      int           // Memory allowance (MB) to use for caching trie nodes in memory
@@ -1193,7 +1193,7 @@ func (bc *BlockChain) Rollback(chain []common.Hash) {
 		hash := chain[i]
 
 		// Degrade the chain markers if they are explicitly reverted.
-		// In theory we should update all in-memory markers in the
+		// In theory, we should update all in-memory markers in the
 		// last step, however the direction of rollback is from high
 		// to low, so it's safe the update in-memory markers directly.
 		currentHeader := bc.hc.CurrentHeader()
