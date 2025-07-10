@@ -44,7 +44,7 @@ func newOrderTxJournal(path string) *ordertxJournal {
 // the specified pool.
 func (journal *ordertxJournal) load(add func(*types.OrderTransaction) error) error {
 	// Skip the parsing if the journal file doens't exist at all
-	if _, err := os.Stat(journal.path); os.IsNotExist(err) {
+	if !common.FileExist(journal.path) {
 		return nil
 	}
 	// Open the journal for loading any past transactions

@@ -1565,7 +1565,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	}
 	if ctx.IsSet(StoreRewardFlag.Name) {
 		common.StoreRewardFolder = filepath.Join(stack.DataDir(), "XDC", "rewards")
-		if _, err := os.Stat(common.StoreRewardFolder); os.IsNotExist(err) {
+		if !common.FileExist(common.StoreRewardFolder) {
 			os.Mkdir(common.StoreRewardFolder, os.ModePerm)
 		}
 	}
