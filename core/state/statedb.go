@@ -49,9 +49,10 @@ type StateDB struct {
 	trie Trie
 
 	// This map holds 'live' objects, which will get modified while processing a state transition.
-	stateObjects        map[common.Address]*stateObject
-	stateObjectsPending map[common.Address]struct{} // State objects finalized but not yet written to the trie
-	stateObjectsDirty   map[common.Address]struct{} // State objects modified in the current execution
+	stateObjects         map[common.Address]*stateObject
+	stateObjectsPending  map[common.Address]struct{} // State objects finalized but not yet written to the trie
+	stateObjectsDirty    map[common.Address]struct{} // State objects modified in the current execution
+	stateObjectsDestruct map[common.Address]struct{} // State objects destructed in the block
 
 	// DB error.
 	// State objects are used by the consensus core and VM which are
@@ -115,16 +116,17 @@ func New(root common.Hash, db Database) (*StateDB, error) {
 		return nil, err
 	}
 	return &StateDB{
-		db:                  db,
-		trie:                tr,
-		stateObjects:        make(map[common.Address]*stateObject),
-		stateObjectsPending: make(map[common.Address]struct{}),
-		stateObjectsDirty:   make(map[common.Address]struct{}),
-		logs:                make(map[common.Hash][]*types.Log),
-		preimages:           make(map[common.Hash][]byte),
-		journal:             newJournal(),
-		accessList:          newAccessList(),
-		transientStorage:    newTransientStorage(),
+		db:                   db,
+		trie:                 tr,
+		stateObjects:         make(map[common.Address]*stateObject),
+		stateObjectsPending:  make(map[common.Address]struct{}),
+		stateObjectsDirty:    make(map[common.Address]struct{}),
+		stateObjectsDestruct: make(map[common.Address]struct{}),
+		logs:                 make(map[common.Hash][]*types.Log),
+		preimages:            make(map[common.Hash][]byte),
+		journal:              newJournal(),
+		accessList:           newAccessList(),
+		transientStorage:     newTransientStorage(),
 	}, nil
 }
 
@@ -569,11 +571,19 @@ func (s *StateDB) GetOrNewStateObject(addr common.Address) *stateObject {
 // the given address, it is overwritten and returned as the second return value.
 func (s *StateDB) createObject(addr common.Address) (newobj, prev *stateObject) {
 	prev = s.getDeletedStateObject(addr) // Note, prev might have been deleted, we need that!
+
+	var prevdestruct bool
+	if prev != nil {
+		_, prevdestruct = s.stateObjectsDestruct[prev.address]
+		if !prevdestruct {
+			s.stateObjectsDestruct[prev.address] = struct{}{}
+		}
+	}
 	newobj = newObject(s, addr, types.StateAccount{})
 	if prev == nil {
 		s.journal.append(createObjectChange{account: &addr})
 	} else {
-		s.journal.append(resetObjectChange{prev: prev})
+		s.journal.append(resetObjectChange{prev: prev, prevdestruct: prevdestruct})
 	}
 
 	newobj.created = true
@@ -640,16 +650,17 @@ func (s *StateDB) ForEachStorage(addr common.Address, cb func(key, value common.
 func (s *StateDB) Copy() *StateDB {
 	// Copy all the basic fields, initialize the memory ones
 	state := &StateDB{
-		db:                  s.db,
-		trie:                s.db.CopyTrie(s.trie),
-		stateObjects:        make(map[common.Address]*stateObject, len(s.journal.dirties)),
-		stateObjectsPending: make(map[common.Address]struct{}, len(s.stateObjectsPending)),
-		stateObjectsDirty:   make(map[common.Address]struct{}, len(s.journal.dirties)),
-		refund:              s.refund,
-		logs:                make(map[common.Hash][]*types.Log, len(s.logs)),
-		logSize:             s.logSize,
-		preimages:           maps.Clone(s.preimages),
-		journal:             newJournal(),
+		db:                   s.db,
+		trie:                 s.db.CopyTrie(s.trie),
+		stateObjects:         make(map[common.Address]*stateObject, len(s.journal.dirties)),
+		stateObjectsPending:  make(map[common.Address]struct{}, len(s.stateObjectsPending)),
+		stateObjectsDirty:    make(map[common.Address]struct{}, len(s.journal.dirties)),
+		stateObjectsDestruct: make(map[common.Address]struct{}, len(s.stateObjectsDestruct)),
+		refund:               s.refund,
+		logs:                 make(map[common.Hash][]*types.Log, len(s.logs)),
+		logSize:              s.logSize,
+		preimages:            maps.Clone(s.preimages),
+		journal:              newJournal(),
 	}
 	// Copy the dirty states, logs, and preimages
 	for addr := range s.journal.dirties {
@@ -683,7 +694,10 @@ func (s *StateDB) Copy() *StateDB {
 		}
 		state.stateObjectsDirty[addr] = struct{}{}
 	}
-
+	// Deep copy the destruction flag.
+	for addr := range s.stateObjectsDestruct {
+		state.stateObjectsDestruct[addr] = struct{}{}
+	}
 	// Deep copy the logs occurred in the scope of block
 	for hash, logs := range s.logs {
 		cpy := make([]*types.Log, len(logs))
@@ -693,14 +707,16 @@ func (s *StateDB) Copy() *StateDB {
 		}
 		state.logs[hash] = cpy
 	}
-
-	// Do we need to copy the access list? In practice: No. At the start of a
-	// transaction, the access list is empty. In practice, we only ever copy state
-	// _between_ transactions/blocks, never in the middle of a transaction.
-	// However, it doesn't cost us much to copy an empty list, so we do it anyway
-	// to not blow up if we ever decide copy it in the middle of a transaction
+	for hash, preimage := range s.preimages {
+		state.preimages[hash] = preimage
+	}
+	// Do we need to copy the access list and transient storage?
+	// In practice: No. At the start of a transaction, these two lists are empty.
+	// In practice, we only ever copy state _between_ transactions/blocks, never
+	// in the middle of a transaction. However, it doesn't cost us much to copy
+	// empty lists, so we do it anyway to not blow up if we ever decide copy them
+	// in the middle of a transaction.
 	state.accessList = s.accessList.Copy()
-
 	state.transientStorage = s.transientStorage.Copy()
 
 	return state
@@ -747,6 +763,10 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 
 		if obj.selfDestructed || (deleteEmptyObjects && obj.empty()) {
 			obj.deleted = true
+
+			// We need to maintain account deletions explicitly (will remain
+			// set indefinitely).
+			s.stateObjectsDestruct[obj.address] = struct{}{}
 		} else {
 			obj.finalise()
 		}
@@ -765,6 +785,11 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 	// Finalise all the dirty storage states and write them into the tries
 	s.Finalise(deleteEmptyObjects)
 
+	// Although naively it makes sense to retrieve the account trie and then do
+	// the contract storage and account updates sequentially, that short circuits
+	// the account prefetcher. Instead, let's process all the storage updates
+	// first, giving the account prefetches just a few more milliseconds of time
+	// to pull useful data from disk.
 	for addr := range s.stateObjectsPending {
 		obj := s.stateObjects[addr]
 		if obj.deleted {
@@ -867,6 +892,9 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	s.AccountUpdated, s.AccountDeleted = 0, 0
 	s.StorageUpdated, s.StorageDeleted = 0, 0
 
+	if len(s.stateObjectsDestruct) > 0 {
+		s.stateObjectsDestruct = make(map[common.Address]struct{})
+	}
 	return root, err
 }
 
