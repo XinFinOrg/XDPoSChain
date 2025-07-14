@@ -37,11 +37,9 @@ require (
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/consensys/gnark-crypto v0.10.0
-	github.com/crate-crypto/go-kzg-4844 v1.0.0
 	github.com/deckarep/golang-set/v2 v2.7.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1
 	github.com/dop251/goja v0.0.0-20200721192441-a695b0cdd498
-	github.com/ethereum/c-kzg-4844 v1.0.0
 	github.com/fjl/gencodec v0.0.0-20230517082657-f9840df7b83e
 	github.com/fsnotify/fsnotify v1.8.0
 	github.com/gballet/go-libpcsclite v0.0.0-20191108122812-4678299bea08
@@ -87,7 +85,6 @@ require (
 	github.com/rivo/uniseg v0.2.0 // indirect
 	github.com/rogpeppe/go-internal v1.9.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
-	github.com/supranational/blst v0.3.11 // indirect
 	github.com/tklauser/go-sysconf v0.3.14 // indirect
 	github.com/tklauser/numcpus v0.8.0 // indirect
 	github.com/xrash/smetrics v0.0.0-20240521201337-686a1a2994c1 // indirect
