@@ -17,6 +17,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/eth/util"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/holiman/uint256"
 )
 
 // Declaring an enum type Beneficiary of reward
@@ -299,7 +300,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				}
 				if len(rewards) > 0 {
 					for holder, reward := range rewards {
-						stateBlock.AddBalance(holder, reward)
+						stateBlock.AddBalance(holder, uint256.MustFromBig(reward))
 					}
 				}
 				rewardResults[signer] = rewards
@@ -337,7 +338,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 					}
 					if len(rewards) > 0 {
 						for holder, reward := range rewards {
-							stateBlock.AddBalance(holder, reward)
+							stateBlock.AddBalance(holder, uint256.MustFromBig(reward))
 							rewardSum.Add(rewardSum, reward)
 						}
 					}

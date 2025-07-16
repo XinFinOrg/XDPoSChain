@@ -135,7 +135,7 @@ func TestNewSimulatedBackend(t *testing.T) {
 
 	stateDB, _ := sim.blockchain.State()
 	bal := stateDB.GetBalance(testAddr)
-	if bal.Cmp(expectedBal) != 0 {
+	if bal.ToBig().Cmp(expectedBal) != 0 {
 		t.Errorf("expected balance for test address not received. expected: %v actual: %v", expectedBal, bal)
 	}
 }
@@ -1385,7 +1385,7 @@ func TestForkResendTx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("could not sign transaction: %v", err)
 	}
-	if err = sim.SendTransaction(context.Background(), tx);  err != nil {
+	if err = sim.SendTransaction(context.Background(), tx); err != nil {
 		t.Fatalf("sending transaction: %v", err)
 	}
 	sim.Commit()

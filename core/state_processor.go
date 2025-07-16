@@ -34,6 +34,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/holiman/uint256"
 )
 
 // StateProcessor is a basic Processor, which takes care of transitioning
@@ -396,7 +397,7 @@ func applyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 				hBalance.SetString(bal+"000000000000000000", 10)
 				log.Info("address", addr, "with_balance", bal, "XDC")
 				addrBin := common.HexToAddress(addr)
-				statedb.SetBalance(addrBin, hBalance)
+				statedb.SetBalance(addrBin, uint256.MustFromBig(hBalance))
 			}
 		}
 	}

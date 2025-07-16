@@ -27,6 +27,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
+	"github.com/holiman/uint256"
 )
 
 type Code []byte
@@ -107,7 +108,7 @@ func (s *stateObject) empty() bool {
 // These objects are stored in the main account trie.
 type Account struct {
 	Nonce    uint64
-	Balance  *big.Int
+	Balance  *uint256.Int
 	Root     common.Hash // merkle root of the storage trie
 	CodeHash []byte
 }
@@ -115,7 +116,7 @@ type Account struct {
 // newObject creates a state object.
 func newObject(db *StateDB, address common.Address, data Account) *stateObject {
 	if data.Balance == nil {
-		data.Balance = new(big.Int)
+		data.Balance = new(uint256.Int)
 	}
 	if data.CodeHash == nil {
 		data.CodeHash = types.EmptyCodeHash.Bytes()
@@ -342,7 +343,7 @@ func (s *stateObject) commitTrie(db Database) error {
 
 // AddBalance removes amount from c's balance.
 // It is used to add funds to the destination account of a transfer.
-func (s *stateObject) AddBalance(amount *big.Int) {
+func (s *stateObject) AddBalance(amount *uint256.Int) {
 	// EIP158: We must check emptiness for the objects such that the account
 	// clearing (0,0,0 objects) can take effect.
 	if amount.Sign() == 0 {
@@ -352,27 +353,27 @@ func (s *stateObject) AddBalance(amount *big.Int) {
 
 		return
 	}
-	s.SetBalance(new(big.Int).Add(s.Balance(), amount))
+	s.SetBalance(new(uint256.Int).Add(s.Balance(), amount))
 }
 
 // SubBalance removes amount from c's balance.
 // It is used to remove funds from the origin account of a transfer.
-func (s *stateObject) SubBalance(amount *big.Int) {
+func (s *stateObject) SubBalance(amount *uint256.Int) {
 	if amount.Sign() == 0 {
 		return
 	}
-	s.SetBalance(new(big.Int).Sub(s.Balance(), amount))
+	s.SetBalance(new(uint256.Int).Sub(s.Balance(), amount))
 }
 
-func (s *stateObject) SetBalance(amount *big.Int) {
+func (s *stateObject) SetBalance(amount *uint256.Int) {
 	s.db.journal.append(balanceChange{
 		account: &s.address,
-		prev:    new(big.Int).Set(s.data.Balance),
+		prev:    new(uint256.Int).Set(s.data.Balance),
 	})
 	s.setBalance(amount)
 }
 
-func (s *stateObject) setBalance(amount *big.Int) {
+func (s *stateObject) setBalance(amount *uint256.Int) {
 	s.data.Balance = amount
 }
 
@@ -448,7 +449,7 @@ func (s *stateObject) CodeHash() []byte {
 	return s.data.CodeHash
 }
 
-func (s *stateObject) Balance() *big.Int {
+func (s *stateObject) Balance() *uint256.Int {
 	return s.data.Balance
 }
 

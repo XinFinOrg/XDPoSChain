@@ -9,6 +9,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -403,7 +404,7 @@ func TestStatesShouldBeUpdatedWhenForkedBlockBecameMainChainAtGapBlock(t *testin
 	}
 	t.Log("After transfer transaction at block 450 A, Account 1 have balance of: ", state.GetBalance(acc1Addr))
 
-	if state.GetBalance(acc1Addr).Cmp(new(big.Int).SetUint64(10000000999)) != 0 {
+	if state.GetBalance(acc1Addr).Cmp(new(uint256.Int).SetUint64(10000000999)) != 0 {
 		t.Fatalf("account 1 should have 10000000999 in balance")
 	}
 
@@ -445,7 +446,7 @@ func TestStatesShouldBeUpdatedWhenForkedBlockBecameMainChainAtGapBlock(t *testin
 	if err != nil {
 		t.Fatalf("Failed while trying to get blockchain state")
 	}
-	if state.GetBalance(acc1Addr).Cmp(new(big.Int).SetUint64(10000000999)) != 0 {
+	if state.GetBalance(acc1Addr).Cmp(new(uint256.Int).SetUint64(10000000999)) != 0 {
 		t.Fatalf("account 1 should have 10000000999 in balance as the block is forked, not on the main chain")
 	}
 
@@ -513,7 +514,7 @@ func TestStatesShouldBeUpdatedWhenForkedBlockBecameMainChainAtGapBlock(t *testin
 	}
 	t.Log("After transfer transaction at block 450 B and the B fork has been merged into main chain, Account 1 have balance of: ", state.GetBalance(acc1Addr))
 
-	if state.GetBalance(acc1Addr).Cmp(new(big.Int).SetUint64(10000000888)) != 0 {
+	if state.GetBalance(acc1Addr).Cmp(new(uint256.Int).SetUint64(10000000888)) != 0 {
 		t.Fatalf("account 1 should have 10000000888 in balance")
 	}
 }

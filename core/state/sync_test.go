@@ -18,7 +18,6 @@ package state
 
 import (
 	"bytes"
-	"math/big"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -29,12 +28,13 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/ethdb/memorydb"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/XinFinOrg/XDPoSChain/trie"
+	"github.com/holiman/uint256"
 )
 
 // testAccount is the data associated with an account used by the state tests.
 type testAccount struct {
 	address common.Address
-	balance *big.Int
+	balance *uint256.Int
 	nonce   uint64
 	code    []byte
 }
@@ -51,8 +51,8 @@ func makeTestState() (Database, common.Hash, []*testAccount) {
 		obj := state.GetOrNewStateObject(common.BytesToAddress([]byte{i}))
 		acc := &testAccount{address: common.BytesToAddress([]byte{i})}
 
-		obj.AddBalance(big.NewInt(int64(11 * i)))
-		acc.balance = big.NewInt(int64(11 * i))
+		obj.AddBalance(uint256.NewInt(uint64(11 * i)))
+		acc.balance = uint256.NewInt(uint64(11 * i))
 
 		obj.SetNonce(uint64(42 * i))
 		acc.nonce = uint64(42 * i)

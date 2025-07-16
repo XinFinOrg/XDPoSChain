@@ -20,12 +20,17 @@ package math
 import (
 	"fmt"
 	"math/big"
+
+	"github.com/holiman/uint256"
 )
 
 var (
 	tt256     = BigPow(2, 256)
 	tt256m1   = new(big.Int).Sub(tt256, big.NewInt(1))
 	MaxBig256 = new(big.Int).Set(tt256m1)
+
+	// MaxUint256 is the maximum value of a 256 bit unsigned integer.
+	MaxUint256 = uint256.MustFromDecimal("115792089237316195423570985008687907853269984665640564039457584007913129639935")
 )
 
 const (
