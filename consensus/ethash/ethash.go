@@ -37,7 +37,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
-	mmap "github.com/edsrzf/mmap-go"
+	"github.com/edsrzf/mmap-go"
 )
 
 var ErrInvalidDumpMagic = errors.New("invalid dump magic")

@@ -31,7 +31,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/log"
-	duktape "gopkg.in/olebedev/go-duktape.v3"
+	"gopkg.in/olebedev/go-duktape.v3"
 )
 
 // bigIntegerJS is the minified version of https://github.com/peterolson/BigInteger.js.
