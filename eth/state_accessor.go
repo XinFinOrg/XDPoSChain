@@ -19,9 +19,11 @@ package eth
 import (
 	"errors"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
@@ -59,6 +61,7 @@ func (eth *Ethereum) stateAtBlock(block *types.Block, reexec uint64, base *state
 		// Create an ephemeral trie.Database for isolating the live one. Otherwise
 		// the internal junks created by tracing will be persisted into the disk.
 		database = state.NewDatabaseWithConfig(eth.chainDb, &trie.Config{Cache: 16, Preimages: true})
+
 		// If we didn't check the dirty database, do check the clean one, otherwise
 		// we would rewind past a persisted block (specific corner case is chain
 		// tracing from the genesis).
@@ -117,7 +120,8 @@ func (eth *Ethereum) stateAtBlock(block *types.Block, reexec uint64, base *state
 		// Finalize the state so any modifications are written to the trie
 		root, err := statedb.Commit(eth.blockchain.Config().IsEIP158(current.Number()))
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("stateAtBlock commit failed, number %d root %v: %w",
+				current.NumberU64(), current.Root().Hex(), err)
 		}
 		statedb, err = state.New(root, database)
 		if err != nil {
@@ -134,4 +138,55 @@ func (eth *Ethereum) stateAtBlock(block *types.Block, reexec uint64, base *state
 		log.Info("Historical state regenerated", "block", current.NumberU64(), "elapsed", time.Since(start), "nodes", nodes, "preimages", imgs)
 	}
 	return statedb, nil
+}
+
+// stateAtTransaction returns the execution environment of a certain transaction.
+func (eth *Ethereum) stateAtTransaction(block *types.Block, txIndex int, reexec uint64) (core.Message, vm.BlockContext, *state.StateDB, error) {
+	// Short circuit if it's genesis block.
+	if block.NumberU64() == 0 {
+		return nil, vm.BlockContext{}, nil, errors.New("no transaction in genesis")
+	}
+	// Create the parent state database
+	parent := eth.blockchain.GetBlock(block.ParentHash(), block.NumberU64()-1)
+	if parent == nil {
+		return nil, vm.BlockContext{}, nil, fmt.Errorf("parent %#x not found", block.ParentHash())
+	}
+	// Lookup the statedb of parent block from the live database,
+	// otherwise regenerate it on the flight.
+	statedb, err := eth.stateAtBlock(parent, reexec, nil, true)
+	if err != nil {
+		return nil, vm.BlockContext{}, nil, err
+	}
+	if txIndex == 0 && len(block.Transactions()) == 0 {
+		return nil, vm.BlockContext{}, statedb, nil
+	}
+	// Recompute transactions up to the target index.
+	signer := types.MakeSigner(eth.blockchain.Config(), block.Number())
+	feeCapacity := state.GetTRC21FeeCapacityFromState(statedb)
+	for idx, tx := range block.Transactions() {
+		var balance *big.Int
+		if tx.To() != nil {
+			if value, ok := feeCapacity[*tx.To()]; ok {
+				balance = value
+			}
+		}
+		// Assemble the transaction call message and return if the requested offset
+		msg, _ := tx.AsMessage(signer, balance, block.Number(), block.BaseFee())
+		txContext := core.NewEVMTxContext(msg)
+		context := core.NewEVMBlockContext(block.Header(), eth.blockchain, nil)
+		if idx == txIndex {
+			return msg, context, statedb, nil
+		}
+		// Not yet the searched for transaction, execute on top of the current state
+		vmenv := vm.NewEVM(context, txContext, statedb, nil, eth.blockchain.Config(), vm.Config{})
+		statedb.SetTxContext(tx.Hash(), idx)
+		owner := common.Address{}
+		if _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(tx.Gas()), owner); err != nil {
+			return nil, vm.BlockContext{}, nil, fmt.Errorf("transaction %#x failed: %v", tx.Hash(), err)
+		}
+		// Ensure any modifications are committed to the state
+		// Only delete empty objects if EIP158/161 (a.k.a Spurious Dragon) is in effect
+		statedb.Finalise(vmenv.ChainConfig().IsEIP158(block.Number()))
+	}
+	return nil, vm.BlockContext{}, nil, fmt.Errorf("transaction index %d out of range for block %#x", txIndex, block.Hash())
 }

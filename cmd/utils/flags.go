@@ -49,6 +49,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/eth/ethconfig"
 	"github.com/XinFinOrg/XDPoSChain/eth/filters"
 	"github.com/XinFinOrg/XDPoSChain/eth/gasprice"
+	"github.com/XinFinOrg/XDPoSChain/eth/tracers"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/ethstats"
 	"github.com/XinFinOrg/XDPoSChain/internal/ethapi"
@@ -1644,14 +1645,13 @@ func RegisterEthService(stack *node.Node, cfg *ethconfig.Config, XDCXServ *XDCx.
 	if cfg.SyncMode == downloader.LightSync {
 		Fatalf("can't register eth service in light sync mode, light mode has been deprecated")
 		return nil, nil
-	} else {
-		backend, err := eth.New(stack, cfg, XDCXServ, lendingServ)
-		if err != nil {
-			Fatalf("Failed to register the Ethereum service: %v", err)
-		}
-
-		return backend.ApiBackend, backend
 	}
+	backend, err := eth.New(stack, cfg, XDCXServ, lendingServ)
+	if err != nil {
+		Fatalf("Failed to register the Ethereum service: %v", err)
+	}
+	stack.RegisterAPIs(tracers.APIs(backend.ApiBackend))
+	return backend.ApiBackend, backend
 }
 
 // RegisterEthStatsService configures the Ethereum Stats daemon and adds it to the node.
