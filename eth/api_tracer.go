@@ -718,7 +718,7 @@ func (api *DebugAPI) traceTx(ctx context.Context, message core.Message, txctx *t
 				return nil, err
 			}
 		}
-		if t, err := tracers.New(*config.Tracer, txctx, config.TracerConfig); err != nil {
+		if t, err := tracers.New(*config.Tracer, txContext, txctx, config.TracerConfig); err != nil {
 			return nil, err
 		} else {
 			deadlineCtx, cancel := context.WithTimeout(ctx, timeout)

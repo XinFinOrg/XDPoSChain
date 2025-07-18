@@ -411,7 +411,7 @@ type Context struct {
 // which must evaluate to an expression returning an object with 'step', 'fault'
 // and 'result' functions.
 // TODO gerui rename to private func
-func NewJsTracer(code string, ctx *Context) (*JsTracer, error) {
+func NewJsTracer(code string, txCtx vm.TxContext, ctx *Context) (*JsTracer, error) {
 	tracer := &JsTracer{
 		vm:              duktape.New(),
 		ctx:             make(map[string]interface{}),
@@ -428,6 +428,8 @@ func NewJsTracer(code string, ctx *Context) (*JsTracer, error) {
 		frame:           newFrame(),
 		frameResult:     newFrameResult(),
 	}
+	tracer.ctx["gasPrice"] = txCtx.GasPrice
+
 	if ctx.BlockHash != (common.Hash{}) {
 		tracer.ctx["blockHash"] = ctx.BlockHash
 

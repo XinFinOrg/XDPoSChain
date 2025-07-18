@@ -57,7 +57,7 @@ func RegisterNativeTracer(name string, ctor ctorFn) {
 //     instantiated and returned
 //  3. Otherwise, the code is interpreted as the js code of a js-tracer, and
 //     is evaluated and returned.
-func New(code string, ctx *Context, cfg json.RawMessage) (Tracer, error) {
+func New(code string, txCtx vm.TxContext, ctx *Context, cfg json.RawMessage) (Tracer, error) {
 	// Resolve native tracer
 	if fn, ok := nativeTracers[code]; ok {
 		return fn(cfg)
@@ -66,7 +66,7 @@ func New(code string, ctx *Context, cfg json.RawMessage) (Tracer, error) {
 	if tracer, ok := jsTracers[code]; ok {
 		code = tracer
 	}
-	return NewJsTracer(code, ctx)
+	return NewJsTracer(code, txCtx, ctx)
 }
 
 // camel converts a snake cased input string into a camel cased output.
