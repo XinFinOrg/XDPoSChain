@@ -259,7 +259,8 @@ func (api *DebugAPI) traceChain(ctx context.Context, start, end *types.Block, co
 						log.Warn("Tracing failed", "hash", tx.Hash(), "block", task.block.NumberU64(), "err", err)
 						break
 					}
-					task.statedb.Finalise(true)
+					// Only delete empty objects if EIP158/161 (a.k.a Spurious Dragon) is in effect
+					task.statedb.Finalise(api.eth.blockchain.Config().IsEIP158(task.block.Number()))
 					task.results[i] = &txTraceResult{Result: res}
 				}
 				// Stream the result back to the user or abort on teardown
@@ -523,7 +524,8 @@ func (api *DebugAPI) traceBlock(ctx context.Context, block *types.Block, config 
 			break
 		}
 		// Finalize the state so any modifications are written to the trie
-		statedb.Finalise(true)
+		// Only delete empty objects if EIP158/161 (a.k.a Spurious Dragon) is in effect
+		statedb.Finalise(vmenv.ChainConfig().IsEIP158(block.Number()))
 	}
 	close(jobs)
 	pend.Wait()
@@ -820,6 +822,7 @@ func (api *DebugAPI) computeTxEnv(blockHash common.Hash, txIndex int, reexec uin
 		}
 	}
 	// Ensure any modifications are committed to the state
-	statedb.Finalise(true)
+	// Only delete empty objects if EIP158/161 (a.k.a Spurious Dragon) is in effect
+	statedb.Finalise(api.eth.blockchain.Config().IsEIP158(block.Number()))
 	return nil, vm.BlockContext{}, nil, fmt.Errorf("tx index %d out of range for block %x", txIndex, blockHash)
 }
