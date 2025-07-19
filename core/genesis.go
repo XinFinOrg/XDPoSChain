@@ -132,6 +132,7 @@ func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig
 	// Get the existing chain configuration.
 	newcfg := genesis.configOrDefault(stored)
 	storedcfg, _ := rawdb.ReadChainConfig(db, stored)
+
 	if storedcfg == nil {
 		log.Warn("[SetupGenesisBlock] Found genesis block without chain config")
 		rawdb.WriteChainConfig(db, stored, newcfg)
@@ -142,7 +143,12 @@ func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig
 	// config is supplied. These chains would get AllProtocolChanges (and a compat error)
 	// if we just continued here.
 	if genesis == nil && newcfg == params.AllEthashProtocolChanges {
-		log.Warn("[SetupGenesisBlock] genesis == nil && newcfg == params.AllEthashProtocolChanges")
+		log.Info("[SetupGenesisBlock] genesis == nil && newcfg == params.AllEthashProtocolChanges, this is custom chain")
+		if storedcfg.XDPoS != nil && storedcfg.XDPoS.V2 != nil {
+			storedcfg.XDPoS.V2.SwitchEpoch = storedcfg.XDPoS.V2.SwitchBlock.Uint64() / storedcfg.XDPoS.Epoch
+			log.Info("SetupGenesisBlock] setting SwitchEpoch based on SwitchBlock config", "SwitchBlock", storedcfg.XDPoS.V2.SwitchBlock.Uint64(), "storedcfg.XDPoS.V2.SwitchEpoch", storedcfg.XDPoS.V2.SwitchEpoch)
+			//this is for custom net, for mainnet and testnet, SwitchEpoch is already set in configOrDefault
+		}
 		return storedcfg, stored, nil
 	}
 
