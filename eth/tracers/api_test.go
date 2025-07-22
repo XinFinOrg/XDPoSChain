@@ -60,8 +60,10 @@ type testBackend struct {
 }
 
 func newTestBackend(t *testing.T, n int, gspec *core.Genesis, generator func(i int, b *core.BlockGen)) *testBackend {
+	config := *params.TestChainConfig
+	config.Eip1559Block = big.NewInt(0)
 	backend := &testBackend{
-		chainConfig: params.TestChainConfig,
+		chainConfig: &config,
 		engine:      ethash.NewFaker(),
 		chaindb:     rawdb.NewMemoryDatabase(),
 	}
@@ -186,18 +188,22 @@ func TestTraceCall(t *testing.T) {
 
 	// Initialize test accounts
 	accounts := newAccounts(3)
-	genesis := &core.Genesis{Alloc: types.GenesisAlloc{
-		accounts[0].addr: {Balance: big.NewInt(9000000000000000000)},
-		accounts[1].addr: {Balance: big.NewInt(9000000000000000000)},
-		accounts[2].addr: {Balance: big.NewInt(9000000000000000000)},
-	}}
+	config := *params.TestChainConfig
+	config.Eip1559Block = big.NewInt(0)
+	genesis := &core.Genesis{
+		Config: &config,
+		Alloc: types.GenesisAlloc{
+			accounts[0].addr: {Balance: big.NewInt(params.Ether)},
+			accounts[1].addr: {Balance: big.NewInt(params.Ether)},
+			accounts[2].addr: {Balance: big.NewInt(params.Ether)},
+		}}
 	genBlocks := 10
-	signer := types.HomesteadSigner{}
+	signer := types.LatestSigner(&config)
 	api := NewAPI(newTestBackend(t, genBlocks, genesis, func(i int, b *core.BlockGen) {
 		// Transfer from account[0] to account[1]
 		//    value: 1000 wei
 		//    fee:   0 wei
-		tx, _ := types.SignTx(types.NewTransaction(uint64(i), accounts[1].addr, big.NewInt(1000), params.TxGas, big.NewInt(0), nil), signer, accounts[0].key)
+		tx, _ := types.SignTx(types.NewTransaction(uint64(i), accounts[1].addr, big.NewInt(1000), params.TxGas, b.BaseFee(), nil), signer, accounts[0].key)
 		b.AddTx(tx)
 	}))
 
@@ -311,6 +317,8 @@ func TestOverridenTraceCall(t *testing.T) {
 
 	// Initialize test accounts
 	accounts := newAccounts(3)
+	config := *params.TestChainConfig
+	config.Eip1559Block = big.NewInt(0)
 	genesis := &core.Genesis{
 		Alloc: types.GenesisAlloc{
 			accounts[0].addr: {Balance: big.NewInt(params.Ether)},
@@ -319,12 +327,12 @@ func TestOverridenTraceCall(t *testing.T) {
 		},
 	}
 	genBlocks := 10
-	signer := types.HomesteadSigner{}
+	signer := types.LatestSigner(&config)
 	api := NewAPI(newTestBackend(t, genBlocks, genesis, func(i int, b *core.BlockGen) {
 		// Transfer from account[0] to account[1]
 		//    value: 1000 wei
 		//    fee:   0 wei
-		tx, _ := types.SignTx(types.NewTransaction(uint64(i), accounts[1].addr, big.NewInt(1000), params.TxGas, big.NewInt(0), nil), signer, accounts[0].key)
+		tx, _ := types.SignTx(types.NewTransaction(uint64(i), accounts[1].addr, big.NewInt(1000), params.TxGas, b.BaseFee(), nil), signer, accounts[0].key)
 		b.AddTx(tx)
 	}))
 	randomAccounts, tracer := newAccounts(3), "callTracer"
@@ -347,7 +355,7 @@ func TestOverridenTraceCall(t *testing.T) {
 			config: &TraceCallConfig{
 				TraceConfig: TraceConfig{Tracer: &tracer},
 				StateOverrides: &ethapi.StateOverride{
-					randomAccounts[0].addr: ethapi.OverrideAccount{Balance: newRPCBalance(big.NewInt(9000000000000000000))},
+					randomAccounts[0].addr: ethapi.OverrideAccount{Balance: newRPCBalance(big.NewInt(1000))},
 				},
 			},
 			expectErr: nil,
@@ -371,7 +379,7 @@ func TestOverridenTraceCall(t *testing.T) {
 			config: &TraceCallConfig{
 				TraceConfig: TraceConfig{Tracer: &tracer},
 				StateOverrides: &ethapi.StateOverride{
-					randomAccounts[0].addr: ethapi.OverrideAccount{Balance: newRPCBalance(big.NewInt(1250000000000000000))},
+					randomAccounts[0].addr: ethapi.OverrideAccount{Balance: newRPCBalance(big.NewInt(1))},
 				},
 			},
 			expectErr: core.ErrInsufficientFunds,
@@ -413,17 +421,21 @@ func TestTraceTransaction(t *testing.T) {
 
 	// Initialize test accounts
 	accounts := newAccounts(2)
-	genesis := &core.Genesis{Alloc: types.GenesisAlloc{
-		accounts[0].addr: {Balance: big.NewInt(9000000000000000000)},
-		accounts[1].addr: {Balance: big.NewInt(9000000000000000000)},
-	}}
+	config := *params.TestChainConfig
+	config.Eip1559Block = big.NewInt(0)
+	genesis := &core.Genesis{
+		Config: &config,
+		Alloc: types.GenesisAlloc{
+			accounts[0].addr: {Balance: big.NewInt(9000000000000000000)},
+			accounts[1].addr: {Balance: big.NewInt(9000000000000000000)},
+		}}
 	target := common.Hash{}
-	signer := types.HomesteadSigner{}
+	signer := types.LatestSigner(&config)
 	api := NewAPI(newTestBackend(t, 1, genesis, func(i int, b *core.BlockGen) {
 		// Transfer from account[0] to account[1]
 		//    value: 1000 wei
 		//    fee:   0 wei
-		tx, _ := types.SignTx(types.NewTransaction(uint64(i), accounts[1].addr, big.NewInt(1000), params.TxGas, big.NewInt(0), nil), signer, accounts[0].key)
+		tx, _ := types.SignTx(types.NewTransaction(uint64(i), accounts[1].addr, big.NewInt(1000), params.TxGas, b.BaseFee(), nil), signer, accounts[0].key)
 		b.AddTx(tx)
 		target = tx.Hash()
 	}))
@@ -446,18 +458,22 @@ func TestTraceBlock(t *testing.T) {
 
 	// Initialize test accounts
 	accounts := newAccounts(3)
-	genesis := &core.Genesis{Alloc: types.GenesisAlloc{
-		accounts[0].addr: {Balance: big.NewInt(9000000000000000000)},
-		accounts[1].addr: {Balance: big.NewInt(9000000000000000000)},
-		accounts[2].addr: {Balance: big.NewInt(9000000000000000000)},
-	}}
+	config := *params.TestChainConfig
+	config.Eip1559Block = big.NewInt(0)
+	genesis := &core.Genesis{
+		Config: &config,
+		Alloc: types.GenesisAlloc{
+			accounts[0].addr: {Balance: big.NewInt(9000000000000000000)},
+			accounts[1].addr: {Balance: big.NewInt(9000000000000000000)},
+			accounts[2].addr: {Balance: big.NewInt(9000000000000000000)},
+		}}
 	genBlocks := 10
-	signer := types.HomesteadSigner{}
+	signer := types.LatestSigner(&config)
 	api := NewAPI(newTestBackend(t, genBlocks, genesis, func(i int, b *core.BlockGen) {
 		// Transfer from account[0] to account[1]
 		//    value: 1000 wei
 		//    fee:   0 wei
-		tx, _ := types.SignTx(types.NewTransaction(uint64(i), accounts[1].addr, big.NewInt(1000), params.TxGas, big.NewInt(0), nil), signer, accounts[0].key)
+		tx, _ := types.SignTx(types.NewTransaction(uint64(i), accounts[1].addr, big.NewInt(1000), params.TxGas, b.BaseFee(), nil), signer, accounts[0].key)
 		b.AddTx(tx)
 	}))
 
