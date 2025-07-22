@@ -671,7 +671,7 @@ func (api *API) traceTx(ctx context.Context, message core.Message, txctx *Contex
 	owner := common.Address{}
 	result, err := core.ApplyMessage(vmenv, message, new(core.GasPool).AddGas(message.Gas()), owner)
 	if err != nil {
-		return nil, fmt.Errorf("tracing failed: %v", err)
+		return nil, fmt.Errorf("tracing failed: %w", err)
 	}
 
 	// Depending on the tracer type, format and return the output
