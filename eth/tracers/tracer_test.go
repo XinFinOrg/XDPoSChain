@@ -80,10 +80,13 @@ func runTrace(tracer Tracer, vmctx *vmContext, chaincfg *params.ChainConfig) (js
 func TestTracer(t *testing.T) {
 	execTracer := func(code string) ([]byte, string) {
 		t.Helper()
-		ctx := &vmContext{ctx: vm.BlockContext{BlockNumber: big.NewInt(1)}, txContext: vm.TxContext{GasPrice: big.NewInt(100000)}}
-		tracer, err := New(code, ctx.txContext, new(Context), nil)
+		tracer, err := New(code, new(Context), nil)
 		if err != nil {
 			t.Fatal(err)
+		}
+		ctx := &vmContext{
+			ctx:       vm.BlockContext{BlockNumber: big.NewInt(1)},
+			txContext: vm.TxContext{GasPrice: big.NewInt(100000)},
 		}
 		ret, err := runTrace(tracer, ctx, params.TestChainConfig)
 		if err != nil {
@@ -132,8 +135,7 @@ func TestHalt(t *testing.T) {
 	t.Skip("duktape doesn't support abortion")
 
 	timeout := errors.New("stahp")
-	vmctx := testCtx()
-	tracer, err := New("{step: function() { while(1); }, result: function() { return null; }}", vmctx.txContext, new(Context), nil)
+	tracer, err := New("{step: function() { while(1); }, result: function() { return null; }}", new(Context), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,14 +143,13 @@ func TestHalt(t *testing.T) {
 		time.Sleep(1 * time.Second)
 		tracer.Stop(timeout)
 	}()
-	if _, err = runTrace(tracer, vmctx, params.TestChainConfig); err.Error() != "stahp    in server-side tracer function 'step'" {
+	if _, err = runTrace(tracer, testCtx(), params.TestChainConfig); err.Error() != "stahp    in server-side tracer function 'step'" {
 		t.Errorf("Expected timeout error, got %v", err)
 	}
 }
 
 func TestHaltBetweenSteps(t *testing.T) {
-	vmctx := testCtx()
-	tracer, err := New("{step: function() {}, fault: function() {}, result: function() { return null; }}", vmctx.txContext, new(Context), nil)
+	tracer, err := New("{step: function() {}, fault: function() {}, result: function() { return null; }}", new(Context), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,13 +172,13 @@ func TestHaltBetweenSteps(t *testing.T) {
 func TestNoStepExec(t *testing.T) {
 	execTracer := func(code string) []byte {
 		t.Helper()
-		txContext := vm.TxContext{GasPrice: big.NewInt(100000)}
-		tracer, err := New(code, txContext, new(Context), nil)
+		tracer, err := New(code, new(Context), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		ctx := vm.BlockContext{BlockNumber: big.NewInt(1)}
-		env := vm.NewEVM(ctx, txContext, &dummyStatedb{}, nil, params.TestChainConfig, vm.Config{Tracer: tracer})
+		txCtx := vm.TxContext{GasPrice: big.NewInt(100000)}
+		blockCtx := vm.BlockContext{BlockNumber: big.NewInt(1)}
+		env := vm.NewEVM(blockCtx, txCtx, &dummyStatedb{}, nil, params.TestChainConfig, vm.Config{Tracer: tracer})
 		tracer.CaptureStart(env, common.Address{}, common.Address{}, false, []byte{}, 1000, big.NewInt(0))
 		tracer.CaptureEnd(nil, 0, 1, nil)
 		ret, err := tracer.GetResult()
@@ -224,7 +225,7 @@ func TestIsPrecompile(t *testing.T) {
 	chaincfg.BerlinBlock = big.NewInt(300)
 	txCtx := vm.TxContext{GasPrice: big.NewInt(100000)}
 
-	tracer, err := New("{addr: toAddress('0000000000000000000000000000000000000009'), res: null, step: function() { this.res = isPrecompiled(this.addr); }, fault: function() {}, result: function() { return this.res; }}", txCtx, new(Context), nil)
+	tracer, err := New("{addr: toAddress('0000000000000000000000000000000000000009'), res: null, step: function() { this.res = isPrecompiled(this.addr); }, fault: function() {}, result: function() { return this.res; }}", new(Context), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +240,7 @@ func TestIsPrecompile(t *testing.T) {
 	}
 
 	blockCtx = vm.BlockContext{BlockNumber: big.NewInt(250)}
-	tracer, _ = New("{addr: toAddress('0000000000000000000000000000000000000009'), res: null, step: function() { this.res = isPrecompiled(this.addr); }, fault: function() {}, result: function() { return this.res; }}", txCtx, new(Context), nil)
+	tracer, _ = New("{addr: toAddress('0000000000000000000000000000000000000009'), res: null, step: function() { this.res = isPrecompiled(this.addr); }, fault: function() {}, result: function() { return this.res; }}", new(Context), nil)
 	res, err = runTrace(tracer, &vmContext{blockCtx, txCtx}, chaincfg)
 	if err != nil {
 		t.Error(err)
@@ -250,18 +251,16 @@ func TestIsPrecompile(t *testing.T) {
 }
 
 func TestEnterExit(t *testing.T) {
-	txCtx := vm.TxContext{GasPrice: big.NewInt(100000)}
-
 	// test that either both or none of enter() and exit() are defined
-	if _, err := New("{step: function() {}, fault: function() {}, result: function() { return null; }, enter: function() {}}", txCtx, new(Context), nil); err == nil {
+	if _, err := New("{step: function() {}, fault: function() {}, result: function() { return null; }, enter: function() {}}", new(Context), nil); err == nil {
 		t.Fatal("tracer creation should've failed without exit() definition")
 	}
-	if _, err := New("{step: function() {}, fault: function() {}, result: function() { return null; }, enter: function() {}, exit: function() {}}", txCtx, new(Context), nil); err != nil {
+	if _, err := New("{step: function() {}, fault: function() {}, result: function() { return null; }, enter: function() {}, exit: function() {}}", new(Context), nil); err != nil {
 		t.Fatal(err)
 	}
 
 	// test that the enter and exit method are correctly invoked and the values passed
-	tracer, err := New("{enters: 0, exits: 0, enterGas: 0, gasUsed: 0, step: function() {}, fault: function() {}, result: function() { return {enters: this.enters, exits: this.exits, enterGas: this.enterGas, gasUsed: this.gasUsed} }, enter: function(frame) { this.enters++; this.enterGas = frame.getGas(); }, exit: function(res) { this.exits++; this.gasUsed = res.getGasUsed(); }}", txCtx, new(Context), nil)
+	tracer, err := New("{enters: 0, exits: 0, enterGas: 0, gasUsed: 0, step: function() {}, fault: function() {}, result: function() { return {enters: this.enters, exits: this.exits, enterGas: this.enterGas, gasUsed: this.gasUsed} }, enter: function(frame) { this.enters++; this.enterGas = frame.getGas(); }, exit: function(res) { this.exits++; this.gasUsed = res.getGasUsed(); }}", new(Context), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

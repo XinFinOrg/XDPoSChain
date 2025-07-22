@@ -411,7 +411,7 @@ type Context struct {
 // which must evaluate to an expression returning an object with 'step', 'fault'
 // and 'result' functions.
 // TODO gerui rename to private func
-func NewJsTracer(code string, txCtx vm.TxContext, ctx *Context) (*JsTracer, error) {
+func NewJsTracer(code string, ctx *Context) (*JsTracer, error) {
 	tracer := &JsTracer{
 		vm:              duktape.New(),
 		ctx:             make(map[string]interface{}),
@@ -428,7 +428,6 @@ func NewJsTracer(code string, txCtx vm.TxContext, ctx *Context) (*JsTracer, erro
 		frame:           newFrame(),
 		frameResult:     newFrameResult(),
 	}
-	tracer.ctx["gasPrice"] = txCtx.GasPrice
 
 	if ctx.BlockHash != (common.Hash{}) {
 		tracer.ctx["blockHash"] = ctx.BlockHash
@@ -678,6 +677,7 @@ func (jst *JsTracer) CaptureStart(env *vm.EVM, from common.Address, to common.Ad
 	// Initialize the context
 	jst.ctx["block"] = env.Context.BlockNumber.Uint64()
 	jst.dbWrapper.db = env.StateDB
+
 	// Update list of precompiles based on current block
 	rules := env.ChainConfig().Rules(env.Context.BlockNumber)
 	jst.activePrecompiles = vm.ActivePrecompiles(rules)

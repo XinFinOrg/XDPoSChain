@@ -646,7 +646,7 @@ func (api *API) traceTx(ctx context.Context, message core.Message, txctx *Contex
 				return nil, err
 			}
 		}
-		if t, err := New(*config.Tracer, txContext, txctx, config.TracerConfig); err != nil {
+		if t, err := New(*config.Tracer, txctx, config.TracerConfig); err != nil {
 			return nil, err
 		} else {
 			deadlineCtx, cancel := context.WithTimeout(ctx, timeout)
