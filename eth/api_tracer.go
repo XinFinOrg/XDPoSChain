@@ -432,10 +432,10 @@ func (api *DebugAPI) TraceBlockFromFile(ctx context.Context, file string, config
 // executes all the transactions contained within. The return value will be one item
 // per transaction, dependent on the requestd tracer.
 func (api *DebugAPI) traceBlock(ctx context.Context, block *types.Block, config *TraceConfig) ([]*txTraceResult, error) {
-	// skip verify signer list on checkpoint block to fix #1185
-	if err := api.eth.engine.VerifyHeader(api.eth.blockchain, block.Header(), true, false); err != nil {
-		return nil, err
-	}
+	// Skip VerifyHeader to fix #1185
+	// if err := api.eth.engine.VerifyHeader(api.eth.blockchain, block.Header(), true); err != nil {
+	// 	return nil, err
+	// }
 	// Create the parent state database
 	parent := api.eth.blockchain.GetBlock(block.ParentHash(), block.NumberU64()-1)
 	if parent == nil {
