@@ -66,7 +66,7 @@ func New(code string, ctx *Context, cfg json.RawMessage) (Tracer, error) {
 	if tracer, ok := jsTracers[code]; ok {
 		code = tracer
 	}
-	return NewJsTracer(code, ctx)
+	return newJsTracer(code, ctx)
 }
 
 // camel converts a snake cased input string into a camel cased output.
@@ -83,6 +83,5 @@ func init() {
 	for _, file := range tracers.AssetNames() {
 		name := camel(strings.TrimSuffix(file, ".js"))
 		jsTracers[name] = string(tracers.MustAsset(file))
-
 	}
 }
