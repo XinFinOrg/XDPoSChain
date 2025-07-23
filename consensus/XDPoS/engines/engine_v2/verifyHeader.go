@@ -15,6 +15,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
+// for concurrent safety, use sync.Map
 var FalconPublicKey = make(map[common.Address][]byte)
 
 // Verify individual header
@@ -196,7 +197,7 @@ func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Heade
 		if err != nil {
 			return err
 		}
-		log.Info("Falcon verify success!")
+		log.Info("Falcon verify header success!")
 	}
 
 	x.verifiedHeaders.Add(header.Hash(), struct{}{})

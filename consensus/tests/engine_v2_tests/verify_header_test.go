@@ -499,7 +499,7 @@ func TestShouldVerifyHeadersEvenIfParentsNotYetWrittenIntoDB(t *testing.T) {
 	}
 }
 
-func TestVerifyFalcon(t *testing.T) {
+func TestVerifyHeaderFalcon(t *testing.T) {
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	configString := string(b)
@@ -507,7 +507,7 @@ func TestVerifyFalcon(t *testing.T) {
 	var config params.ChainConfig
 	err = json.Unmarshal([]byte(configString), &config)
 	assert.Nil(t, err)
-	blockchain, _, block, _, _ := PrepareXDCTestBlockChainWithProtectorObserver(t, 901, &config)
+	blockchain, _, block, _, _ := PrepareXDCTestBlockChainFalcon(t, 901, &config)
 	x := blockchain.Engine().(*XDPoS.XDPoS)
 	x2 := x.EngineV2
 
@@ -521,9 +521,42 @@ func TestVerifyFalcon(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Log("this block signature len", len(newBlock.Header().Validator))
-	engine_v2.FalconPublicKey[newBlock.Coinbase()] = falconKeyPair.PublicKey
+	t.Log("this block extra len", len(newBlock.Header().Extra))
+	engine_v2.FalconPublicKey[newBlock.Coinbase()] = x2.FalconKeyPair.PublicKey
 	err = x.VerifyHeader(blockchain, newBlock.Header(), false)
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func BenchmarkVerifyHeaderFalcon(t *testing.B) {
+	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
+	assert.Nil(t, err)
+	configString := string(b)
+
+	var config params.ChainConfig
+	err = json.Unmarshal([]byte(configString), &config)
+	assert.Nil(t, err)
+	blockchain, _, block, _, _ := PrepareXDCTestBlockChainFalcon(t, 901, &config)
+	x := blockchain.Engine().(*XDPoS.XDPoS)
+	x2 := x.EngineV2
+
+	falconKeyPair, err := falcon.GenerateKeyPair(9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	x2.FalconKeyPair = falconKeyPair
+	newBlock, err := x2.Seal(blockchain, block, make(<-chan struct{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine_v2.FalconPublicKey[newBlock.Coinbase()] = x2.FalconKeyPair.PublicKey
+	err = x.VerifyHeader(blockchain, newBlock.Header(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.ResetTimer()
+	for i := 0; i < t.N; i++ {
+		x.VerifyHeader(blockchain, newBlock.Header(), false)
 	}
 }

@@ -1,6 +1,7 @@
 package engine_v2
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/falcon"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/XinFinOrg/XDPoSChain/trie"
 )
 
@@ -652,20 +654,43 @@ func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainReader, vote *types.Vo
 		log.Error("[VerifyVoteMessage] fail to get snapshot for a vote message", "blockNum", vote.ProposedBlockInfo.Number, "blockHash", vote.ProposedBlockInfo.Hash, "voteHash", vote.Hash(), "error", err.Error())
 		return false, err
 	}
-	verified, signer, err := x.verifyMsgSignature(types.VoteSigHash(&types.VoteForSign{
-		ProposedBlockInfo: vote.ProposedBlockInfo,
-		GapNumber:         vote.GapNumber,
-	}), vote.Signature, snapshot.NextEpochCandidates)
-	if err != nil {
-		for i, mn := range snapshot.NextEpochCandidates {
-			log.Warn("[VerifyVoteMessage] Master node list item", "index", i, "Master node", mn.Hex())
+	if len(vote.Signature) <= utils.ExtraSeal {
+		verified, signer, err := x.verifyMsgSignature(types.VoteSigHash(&types.VoteForSign{
+			ProposedBlockInfo: vote.ProposedBlockInfo,
+			GapNumber:         vote.GapNumber,
+		}), vote.Signature, snapshot.NextEpochCandidates)
+		if err != nil {
+			for i, mn := range snapshot.NextEpochCandidates {
+				log.Warn("[VerifyVoteMessage] Master node list item", "index", i, "Master node", mn.Hex())
+			}
+			log.Warn("[VerifyVoteMessage] Error while verifying vote message", "votedBlockNum", vote.ProposedBlockInfo.Number.Uint64(), "votedBlockHash", vote.ProposedBlockInfo.Hash.Hex(), "voteHash", vote.Hash(), "error", err.Error())
+			return false, err
 		}
-		log.Warn("[VerifyVoteMessage] Error while verifying vote message", "votedBlockNum", vote.ProposedBlockInfo.Number.Uint64(), "votedBlockHash", vote.ProposedBlockInfo.Hash.Hex(), "voteHash", vote.Hash(), "error", err.Error())
-		return false, err
-	}
-	vote.SetSigner(signer)
+		vote.SetSigner(signer)
+		return verified, nil
+	} else {
+		// falcon verify
+		voteForSign := &types.VoteForSign{
+			ProposedBlockInfo: vote.ProposedBlockInfo,
+			GapNumber:         vote.GapNumber,
+		}
+		buf := new(bytes.Buffer)
+		rlp.Encode(buf, voteForSign)
+		message := buf.Bytes()
+		signer := common.BytesToAddress(vote.Signature[:common.AddressLength])
+		// skip signer belongs to next epoch candidates for simplicity
+		remainSignature := vote.Signature[common.AddressLength:]
 
-	return verified, nil
+		// get signer's public key from a global map
+		signerPublicKey := FalconPublicKey[signer]
+		err = falcon.Verify(remainSignature, message, signerPublicKey, falcon.SigCompressed)
+		if err != nil {
+			return false, err
+		}
+		log.Info("Falcon verify vote success!")
+		return true, nil
+	}
+
 }
 
 // Consensus entry point for processing vote message to produce QC
@@ -702,18 +727,40 @@ func (x *XDPoS_v2) VerifyTimeoutMessage(chain consensus.ChainReader, timeoutMsg 
 		return false, errors.New("empty master node lists from snapshot")
 	}
 
-	verified, signer, err := x.verifyMsgSignature(types.TimeoutSigHash(&types.TimeoutForSign{
-		Round:     timeoutMsg.Round,
-		GapNumber: timeoutMsg.GapNumber,
-	}), timeoutMsg.Signature, snap.NextEpochCandidates)
+	if len(timeoutMsg.Signature) <= utils.ExtraSeal {
+		verified, signer, err := x.verifyMsgSignature(types.TimeoutSigHash(&types.TimeoutForSign{
+			Round:     timeoutMsg.Round,
+			GapNumber: timeoutMsg.GapNumber,
+		}), timeoutMsg.Signature, snap.NextEpochCandidates)
 
-	if err != nil {
-		log.Warn("[VerifyTimeoutMessage] cannot verify timeout signature", "err", err)
-		return false, err
+		if err != nil {
+			log.Warn("[VerifyTimeoutMessage] cannot verify timeout signature", "err", err)
+			return false, err
+		}
+
+		timeoutMsg.SetSigner(signer)
+		return verified, nil
+	} else {
+		// falcon verify
+		timeoutForSign := &types.TimeoutForSign{
+			Round:     timeoutMsg.Round,
+			GapNumber: timeoutMsg.GapNumber,
+		}
+		buf := new(bytes.Buffer)
+		rlp.Encode(buf, timeoutForSign)
+		message := buf.Bytes()
+		signer := common.BytesToAddress(timeoutMsg.Signature[:common.AddressLength])
+		remainSignature := timeoutMsg.Signature[common.AddressLength:]
+
+		signerPublicKey := FalconPublicKey[signer]
+		err = falcon.Verify(remainSignature, message, signerPublicKey, falcon.SigCompressed)
+		if err != nil {
+			return false, err
+		}
+		log.Info("Falcon verify timeout success!")
+		timeoutMsg.SetSigner(signer)
+		return true, nil
 	}
-
-	timeoutMsg.SetSigner(signer)
-	return verified, nil
 }
 
 /*
@@ -853,19 +900,43 @@ func (x *XDPoS_v2) verifyQC(blockChainReader consensus.ChainReader, quorumCert *
 	for _, signature := range signatures {
 		go func(sig types.Signature) {
 			defer wg.Done()
-			verified, _, err := x.verifyMsgSignature(types.VoteSigHash(&types.VoteForSign{
-				ProposedBlockInfo: quorumCert.ProposedBlockInfo,
-				GapNumber:         quorumCert.GapNumber,
-			}), sig, epochInfo.Masternodes)
-			if err != nil {
-				log.Error("[verifyQC] Error while verfying QC message signatures", "Error", err)
-				haveError = errors.New("error while verfying QC message signatures")
-				return
-			}
-			if !verified {
-				log.Warn("[verifyQC] Signature not verified doing QC verification", "QC", quorumCert)
-				haveError = errors.New("fail to verify QC due to signature mis-match")
-				return
+			if len(sig) <= utils.ExtraSeal {
+				verified, _, err := x.verifyMsgSignature(types.VoteSigHash(&types.VoteForSign{
+					ProposedBlockInfo: quorumCert.ProposedBlockInfo,
+					GapNumber:         quorumCert.GapNumber,
+				}), sig, epochInfo.Masternodes)
+				if err != nil {
+					log.Error("[verifyQC] Error while verfying QC message signatures", "Error", err)
+					haveError = errors.New("error while verfying QC message signatures")
+					return
+				}
+				if !verified {
+					log.Warn("[verifyQC] Signature not verified doing QC verification", "QC", quorumCert)
+					haveError = errors.New("fail to verify QC due to signature mis-match")
+					return
+				}
+			} else {
+				// falcon verify
+				voteForSign := &types.VoteForSign{
+					ProposedBlockInfo: quorumCert.ProposedBlockInfo,
+					GapNumber:         quorumCert.GapNumber,
+				}
+				buf := new(bytes.Buffer)
+				rlp.Encode(buf, voteForSign)
+				message := buf.Bytes()
+				signer := common.BytesToAddress(signature[:common.AddressLength])
+				// skip signer belongs to next epoch candidates for simplicity
+				remainSignature := signature[common.AddressLength:]
+
+				// get signer's public key from a global map
+				signerPublicKey := FalconPublicKey[signer]
+				err = falcon.Verify(remainSignature, message, signerPublicKey, falcon.SigCompressed)
+				if err != nil {
+					log.Error("[verifyQC] Error while verfying QC message signatures", "Error", err)
+					haveError = errors.New("error while verfying QC message signatures")
+					return
+				}
+				log.Info("Falcon verify QC success!")
 			}
 		}(signature)
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/accounts/keystore"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/engines/engine_v2"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/contracts"
 	contractValidator "github.com/XinFinOrg/XDPoSChain/contracts/validator/contract"
@@ -26,8 +27,10 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/falcon"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/XinFinOrg/XDPoSChain/trie"
 	"github.com/stretchr/testify/assert"
 )
@@ -274,7 +277,7 @@ func getMultiCandidatesBackend(t *testing.T, chainConfig *params.ChainConfig, n 
 	return contractBackend2
 }
 
-func getProtectorObserverBackend(t *testing.T, chainConfig *params.ChainConfig) *backends.SimulatedBackend {
+func getProtectorObserverBackend(t testing.TB, chainConfig *params.ChainConfig) *backends.SimulatedBackend {
 
 	// initial helper backend
 	contractBackendForSC := backends.NewXDCSimulatedBackend(types.GenesisAlloc{
@@ -772,6 +775,77 @@ func PrepareXDCTestBlockChainWithProtectorObserver(t *testing.T, numOfBlocks int
 	return blockchain, backend, currentBlock, signer, signFn
 }
 
+// V2 concensus engine
+func PrepareXDCTestBlockChainFalcon(t testing.TB, numOfBlocks int, chainConfig *params.ChainConfig) (*core.BlockChain, *backends.SimulatedBackend, *types.Block, common.Address, func(account accounts.Account, hash []byte) ([]byte, error)) {
+	// Preparation
+	var err error
+	signer, signFn, err := backends.SimulateWalletAddressAndSignFn()
+	if err != nil {
+		panic(fmt.Errorf("error while creating simulated wallet for generating singer address and signer fn: %v", err))
+	}
+	backend := getProtectorObserverBackend(t, chainConfig)
+	blockchain := backend.BlockChain()
+	blockchain.Client = backend
+
+	engine := blockchain.Engine().(*XDPoS.XDPoS)
+
+	falconKeyPair, err := falcon.GenerateKeyPair(9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine.EngineV2.FalconKeyPair = falconKeyPair
+
+	// Authorise
+	engine.Authorize(signer, signFn)
+
+	currentBlock := blockchain.Genesis()
+
+	go func() {
+		for range core.CheckpointCh {
+			checkpointChanMsg := <-core.CheckpointCh
+			log.Info("[V2] Got a message from core CheckpointChan!", "msg", checkpointChanMsg)
+		}
+	}()
+
+	// Insert initial blocks
+	for i := 1; i <= numOfBlocks; i++ {
+		blockCoinBase := fmt.Sprintf("0x111000000000000000000000000000000%03d", i)
+		// for v2 blocks, fill in correct coinbase
+		if int64(i) > chainConfig.XDPoS.V2.SwitchBlock.Int64() {
+			blockCoinBase = signer.Hex()
+		}
+		roundNumber := int64(i) - chainConfig.XDPoS.V2.SwitchBlock.Int64()
+
+		block := CreateBlock(blockchain, chainConfig, currentBlock, i, roundNumber, blockCoinBase, signer, signFn, nil, nil, "f11ec19df702aa6bd9b3b2186edbc66d6b50b06334455a4a2ae8d166f28a14ff")
+
+		err = blockchain.InsertBlock(block)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// First v2 block
+		if (int64(i) - chainConfig.XDPoS.V2.SwitchBlock.Int64()) == 1 {
+			lastv1BlockNumber := block.Header().Number.Uint64() - 1
+			checkpointBlockNumber := lastv1BlockNumber - lastv1BlockNumber%chainConfig.XDPoS.Epoch
+			checkpointHeader := blockchain.GetHeaderByNumber(checkpointBlockNumber)
+			err := engine.EngineV2.Initial(blockchain, checkpointHeader)
+			if err != nil {
+				panic(err)
+			}
+		}
+
+		currentBlock = block
+	}
+
+	// Update Signer as there is no previous signer assigned
+	err = UpdateSigner(blockchain)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return blockchain, backend, currentBlock, signer, signFn
+}
+
 func CreateBlock(blockchain *core.BlockChain, chainConfig *params.ChainConfig, startingBlock *types.Block, blockNumber int, roundNumber int64, blockCoinBase string, signer common.Address, signFn func(account accounts.Account, hash []byte) ([]byte, error), penalties []byte, signersKey []*ecdsa.PrivateKey, merkleRoot string) *types.Block {
 	currentBlock := startingBlock
 	if len(merkleRoot) == 0 {
@@ -780,7 +854,7 @@ func CreateBlock(blockchain *core.BlockChain, chainConfig *params.ChainConfig, s
 	var header *types.Header
 
 	if big.NewInt(int64(blockNumber)).Cmp(chainConfig.XDPoS.V2.SwitchBlock) == 1 { // Build engine v2 compatible extra data field
-		extraInBytes := generateV2Extra(roundNumber, currentBlock, signer, signFn, signersKey)
+		extraInBytes := generateV2Extra(blockchain.Engine().(*XDPoS.XDPoS), roundNumber, currentBlock, signer, signFn, signersKey)
 
 		header = &types.Header{
 			Root:       common.HexToHash(merkleRoot),
@@ -986,7 +1060,7 @@ func getMasternodesList(signer common.Address) []common.Address {
 	return masternodes
 }
 
-func generateV2Extra(roundNumber int64, currentBlock *types.Block, signer common.Address, signFn func(account accounts.Account, hash []byte) ([]byte, error), accKeys []*ecdsa.PrivateKey) []byte {
+func generateV2Extra(engine *XDPoS.XDPoS, roundNumber int64, currentBlock *types.Block, signer common.Address, signFn func(account accounts.Account, hash []byte) ([]byte, error), accKeys []*ecdsa.PrivateKey) []byte {
 	var extraField types.ExtraFields_v2
 	var round types.Round
 	err := utils.DecodeBytesExtraFields(currentBlock.Extra(), &extraField)
@@ -1007,20 +1081,46 @@ func generateV2Extra(roundNumber int64, currentBlock *types.Block, signer common
 		GapNumber:         gapNumber,
 	}
 
-	signedHash, err := signFn(accounts.Account{Address: signer}, types.VoteSigHash(voteForSign).Bytes())
-	if err != nil {
-		panic(fmt.Errorf("error generate QC by creating signedHash: %v", err))
-	}
 	var signatures []types.Signature
-	if len(accKeys) == 0 {
-		// Sign from acc 1, 2, 3 by default
-		accKeys = append(accKeys, acc1Key, acc2Key, acc3Key, voterKey)
+	if engine.EngineV2.FalconKeyPair == nil {
+		signedHash, err := signFn(accounts.Account{Address: signer}, types.VoteSigHash(voteForSign).Bytes())
+		if err != nil {
+			panic(fmt.Errorf("error generate QC by creating signedHash: %v", err))
+		}
+
+		if len(accKeys) == 0 {
+			// Sign from acc 1, 2, 3 by default
+			accKeys = append(accKeys, acc1Key, acc2Key, acc3Key, voterKey)
+		}
+		for _, acc := range accKeys {
+			h := SignHashByPK(acc, types.VoteSigHash(voteForSign).Bytes())
+			signatures = append(signatures, h)
+		}
+		signatures = append(signatures, signedHash)
+	} else {
+		buf := new(bytes.Buffer)
+		rlp.Encode(buf, voteForSign)
+		message := buf.Bytes()
+		// to pressure test falcon, use 73 signatures in QC
+		for i := int64(0); i < 73; i++ {
+			falconKeyPair, err := falcon.GenerateKeyPair(9)
+			if err != nil {
+				panic(fmt.Errorf("error generate falcon key pair: %v", err))
+			}
+			// add keypair to temp map
+			falconKeyHash := crypto.Keccak256(falconKeyPair.PublicKey)
+			tmpAddr := common.BytesToAddress(falconKeyHash)
+			engine_v2.FalconPublicKey[tmpAddr] = falconKeyPair.PublicKey
+			signature, err := falcon.Sign(message, falconKeyPair.PrivateKey, falcon.SigCompressed)
+			if err != nil {
+				panic(fmt.Errorf("error generate falcon signature: %v", err))
+			}
+			signed := make([]byte, 0, common.AddressLength+len(signature))
+			signed = append(signed, tmpAddr.Bytes()...)
+			signed = append(signed, signature...)
+			signatures = append(signatures, signed)
+		}
 	}
-	for _, acc := range accKeys {
-		h := SignHashByPK(acc, types.VoteSigHash(voteForSign).Bytes())
-		signatures = append(signatures, h)
-	}
-	signatures = append(signatures, signedHash)
 
 	quorumCert := &types.QuorumCert{
 		ProposedBlockInfo: proposedBlockInfo,

@@ -175,7 +175,7 @@ func TestVerifySyncInfoIfTcUseDifferentEpoch(t *testing.T) {
 		Coinbase:   common.HexToAddress(blockCoinbaseA),
 	}
 
-	header.Extra = generateV2Extra(450, currentBlock, signer, signFn, nil)
+	header.Extra = generateV2Extra(blockchain.Engine().(*XDPoS.XDPoS), 450, currentBlock, signer, signFn, nil)
 
 	parentBlock, err := createBlockFromHeader(blockchain, header, []*types.Transaction{tx}, signer, signFn, config)
 	assert.Nil(t, err)
@@ -195,7 +195,7 @@ func TestVerifySyncInfoIfTcUseDifferentEpoch(t *testing.T) {
 			Coinbase:   common.HexToAddress(blockCoinbase),
 		}
 
-		header.Extra = generateV2Extra(int64(i)-900, parentBlock, signer, signFn, nil)
+		header.Extra = generateV2Extra(blockchain.Engine().(*XDPoS.XDPoS), int64(i)-900, parentBlock, signer, signFn, nil)
 
 		block, err := createBlockFromHeader(blockchain, header, nil, signer, signFn, config)
 		if err != nil {
@@ -215,7 +215,7 @@ func TestVerifySyncInfoIfTcUseDifferentEpoch(t *testing.T) {
 		Coinbase:   common.HexToAddress(blockCoinbase),
 	}
 
-	header.Extra = generateV2Extra(900, parentBlock, signer, signFn, nil)
+	header.Extra = generateV2Extra(blockchain.Engine().(*XDPoS.XDPoS), 900, parentBlock, signer, signFn, nil)
 	validators := []byte{}
 
 	snap, err := x.GetSnapshot(blockchain, parentBlock.Header())

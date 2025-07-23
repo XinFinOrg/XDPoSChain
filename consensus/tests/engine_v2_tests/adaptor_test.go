@@ -38,7 +38,7 @@ func TestAdaptorShouldGetAuthorForDifferentConsensusVersion(t *testing.T) {
 		Coinbase:   signer,
 	}
 
-	header.Extra = generateV2Extra(1, currentBlock, signer, signFn, nil)
+	header.Extra = generateV2Extra(blockchain.Engine().(*XDPoS.XDPoS), 1, currentBlock, signer, signFn, nil)
 
 	block901, err := createBlockFromHeader(blockchain, header, nil, signer, signFn, blockchain.Config())
 	if err != nil {

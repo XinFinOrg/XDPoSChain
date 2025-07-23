@@ -151,6 +151,7 @@ func (x *XDPoS_v2) verifyVotes(chain consensus.ChainReader, votes map[common.Has
 				ProposedBlockInfo: v.ProposedBlockInfo,
 				GapNumber:         v.GapNumber,
 			})
+			// here also need to change to falcon, but in PoC just skip
 			verified, masterNode, err := x.verifyMsgSignature(signedVote, v.Signature, masternodes)
 			if err != nil {
 				log.Warn("[verifyVotes] error while verifying vote signature", "error", err.Error())
