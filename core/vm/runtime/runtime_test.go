@@ -33,6 +33,9 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/params"
+
+	// force-load js tracers to trigger registration
+	_ "github.com/XinFinOrg/XDPoSChain/eth/tracers/js"
 )
 
 func TestDefaults(t *testing.T) {
@@ -486,7 +489,7 @@ func BenchmarkSimpleLoop(b *testing.B) {
 // TestEip2929Cases contains various testcases that are used for
 // EIP-2929 about gas repricings
 func TestEip2929Cases(t *testing.T) {
-
+	t.Skip("Test only useful for generating documentation")
 	id := 1
 	prettyPrint := func(comment string, code []byte) {
 

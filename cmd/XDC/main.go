@@ -42,7 +42,8 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/urfave/cli/v2"
 
-	// Force-load the native, to trigger registration
+	// Force-load the tracer engines to trigger registration
+	_ "github.com/XinFinOrg/XDPoSChain/eth/tracers/js"
 	_ "github.com/XinFinOrg/XDPoSChain/eth/tracers/native"
 )
 
