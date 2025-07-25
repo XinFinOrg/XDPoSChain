@@ -24,6 +24,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
+	"github.com/XinFinOrg/XDPoSChain/eth/tracers/logger"
 	"github.com/XinFinOrg/XDPoSChain/tests"
 	"github.com/urfave/cli/v2"
 )
@@ -49,7 +50,7 @@ func stateTestCmd(ctx *cli.Context) error {
 	}
 
 	// Configure the EVM logger
-	config := &vm.LogConfig{
+	config := &logger.Config{
 		EnableMemory:     !ctx.Bool(DisableMemoryFlag.Name),
 		DisableStack:     ctx.Bool(DisableStackFlag.Name),
 		DisableStorage:   ctx.Bool(DisableStorageFlag.Name),
@@ -58,18 +59,18 @@ func stateTestCmd(ctx *cli.Context) error {
 
 	var (
 		tracer   vm.EVMLogger
-		debugger *vm.StructLogger
+		debugger *logger.StructLogger
 	)
 	switch {
 	case ctx.Bool(MachineFlag.Name):
-		tracer = vm.NewJSONLogger(config, os.Stderr)
+		tracer = logger.NewJSONLogger(config, os.Stderr)
 
 	case ctx.Bool(DebugFlag.Name):
-		debugger = vm.NewStructLogger(config)
+		debugger = logger.NewStructLogger(config)
 		tracer = debugger
 
 	default:
-		debugger = vm.NewStructLogger(config)
+		debugger = logger.NewStructLogger(config)
 	}
 	// Load the test content from the input file
 	src, err := os.ReadFile(ctx.Args().First())
@@ -109,7 +110,7 @@ func stateTestCmd(ctx *cli.Context) error {
 			if ctx.Bool(DebugFlag.Name) {
 				if debugger != nil {
 					fmt.Fprintln(os.Stderr, "#### TRACE ####")
-					vm.WriteTrace(os.Stderr, debugger.StructLogs())
+					logger.WriteTrace(os.Stderr, debugger.StructLogs())
 				}
 			}
 		}

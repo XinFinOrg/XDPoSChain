@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
+	"github.com/XinFinOrg/XDPoSChain/eth/tracers/logger"
 )
 
 func TestState(t *testing.T) {
@@ -79,14 +80,14 @@ func withTrace(t *testing.T, gasLimit uint64, test func(vm.Config) error) {
 		t.Log("gas limit too high for EVM trace")
 		return
 	}
-	tracer := vm.NewStructLogger(nil)
+	tracer := logger.NewStructLogger(nil)
 	config.Tracer = tracer
 	err2 := test(config)
 	if !reflect.DeepEqual(err, err2) {
 		t.Errorf("different error for second run: %v", err2)
 	}
 	buf := new(bytes.Buffer)
-	vm.WriteTrace(buf, tracer.StructLogs())
+	logger.WriteTrace(buf, tracer.StructLogs())
 	if buf.Len() == 0 {
 		t.Log("no EVM operation logs generated")
 	} else {

@@ -35,6 +35,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/core/vm/runtime"
+	"github.com/XinFinOrg/XDPoSChain/eth/tracers/logger"
 	"github.com/XinFinOrg/XDPoSChain/internal/flags"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/urfave/cli/v2"
@@ -70,7 +71,7 @@ func readGenesis(genesisPath string) *core.Genesis {
 }
 
 func runCmd(ctx *cli.Context) error {
-	logconfig := &vm.LogConfig{
+	logconfig := &logger.Config{
 		EnableMemory:     !ctx.Bool(DisableMemoryFlag.Name),
 		DisableStack:     ctx.Bool(DisableStackFlag.Name),
 		DisableStorage:   ctx.Bool(DisableStorageFlag.Name),
@@ -80,19 +81,19 @@ func runCmd(ctx *cli.Context) error {
 
 	var (
 		tracer      vm.EVMLogger
-		debugLogger *vm.StructLogger
+		debugLogger *logger.StructLogger
 		statedb     *state.StateDB
 		chainConfig *params.ChainConfig
 		sender      = common.StringToAddress("sender")
 		receiver    = common.StringToAddress("receiver")
 	)
 	if ctx.Bool(MachineFlag.Name) {
-		tracer = vm.NewJSONLogger(logconfig, os.Stdout)
+		tracer = logger.NewJSONLogger(logconfig, os.Stdout)
 	} else if ctx.Bool(DebugFlag.Name) {
-		debugLogger = vm.NewStructLogger(logconfig)
+		debugLogger = logger.NewStructLogger(logconfig)
 		tracer = debugLogger
 	} else {
-		debugLogger = vm.NewStructLogger(logconfig)
+		debugLogger = logger.NewStructLogger(logconfig)
 	}
 
 	if ctx.String(GenesisFlag.Name) != "" {
@@ -216,10 +217,10 @@ func runCmd(ctx *cli.Context) error {
 	if ctx.Bool(DebugFlag.Name) {
 		if debugLogger != nil {
 			fmt.Fprintln(os.Stderr, "#### TRACE ####")
-			vm.WriteTrace(os.Stderr, debugLogger.StructLogs())
+			logger.WriteTrace(os.Stderr, debugLogger.StructLogs())
 		}
 		fmt.Fprintln(os.Stderr, "#### LOGS ####")
-		vm.WriteLogs(os.Stderr, statedb.Logs())
+		logger.WriteLogs(os.Stderr, statedb.Logs())
 	}
 
 	if ctx.Bool(StatDumpFlag.Name) {
