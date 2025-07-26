@@ -24,11 +24,26 @@ func TestSyncInfoShouldSuccessfullyUpdateByQC(t *testing.T) {
 		t.Fatal("Fail to decode extra data", err)
 	}
 
+	timeoutForSign := &types.TimeoutForSign{
+		Round:     types.Round(2),
+		GapNumber: 450,
+	}
+
+	// Sign from acc 1, 2, 3 and voter
+	acc1SignedHash := SignHashByPK(acc1Key, types.TimeoutSigHash(timeoutForSign).Bytes())
+	acc2SignedHash := SignHashByPK(acc2Key, types.TimeoutSigHash(timeoutForSign).Bytes())
+	acc3SignedHash := SignHashByPK(acc3Key, types.TimeoutSigHash(timeoutForSign).Bytes())
+	voterSignedHash := SignHashByPK(voterKey, types.TimeoutSigHash(timeoutForSign).Bytes())
+
+	var signatures []types.Signature
+	signatures = append(signatures, acc1SignedHash, acc2SignedHash, acc3SignedHash, voterSignedHash)
+
 	syncInfoMsg := &types.SyncInfo{
 		HighestQuorumCert: extraField.QuorumCert,
 		HighestTimeoutCert: &types.TimeoutCert{
 			Round:      types.Round(2),
-			Signatures: []types.Signature{},
+			Signatures: signatures,
+			GapNumber:  450,
 		},
 	}
 
@@ -55,9 +70,24 @@ func TestSyncInfoShouldSuccessfullyUpdateByTC(t *testing.T) {
 		t.Fatal("Fail to decode extra data", err)
 	}
 
+	timeoutForSign := &types.TimeoutForSign{
+		Round:     types.Round(6),
+		GapNumber: 450,
+	}
+
+	// Sign from acc 1, 2, 3 and voter
+	acc1SignedHash := SignHashByPK(acc1Key, types.TimeoutSigHash(timeoutForSign).Bytes())
+	acc2SignedHash := SignHashByPK(acc2Key, types.TimeoutSigHash(timeoutForSign).Bytes())
+	acc3SignedHash := SignHashByPK(acc3Key, types.TimeoutSigHash(timeoutForSign).Bytes())
+	voterSignedHash := SignHashByPK(voterKey, types.TimeoutSigHash(timeoutForSign).Bytes())
+
+	var signatures []types.Signature
+	signatures = append(signatures, acc1SignedHash, acc2SignedHash, acc3SignedHash, voterSignedHash)
+
 	highestTC := &types.TimeoutCert{
 		Round:      types.Round(6),
-		Signatures: []types.Signature{},
+		Signatures: signatures,
+		GapNumber:  450,
 	}
 
 	syncInfoMsg := &types.SyncInfo{
@@ -115,11 +145,6 @@ func TestVerifySyncInfoIfTCRoundIsAtNextEpoch(t *testing.T) {
 		t.Fatal("Fail to decode extra data", err)
 	}
 
-	highestTC := &types.TimeoutCert{
-		Round:      types.Round(899),
-		Signatures: []types.Signature{},
-	}
-
 	timeoutForSign := &types.TimeoutForSign{
 		Round:     types.Round(900),
 		GapNumber: 450,
@@ -144,8 +169,6 @@ func TestVerifySyncInfoIfTCRoundIsAtNextEpoch(t *testing.T) {
 		HighestQuorumCert:  extraField.QuorumCert,
 		HighestTimeoutCert: syncInfoTC,
 	}
-
-	engineV2.SetPropertiesFaker(syncInfoMsg.HighestQuorumCert, highestTC)
 
 	verified, err := engineV2.VerifySyncInfoMessage(blockchain, syncInfoMsg)
 	assert.True(t, verified)
@@ -266,12 +289,7 @@ func TestVerifySyncInfoIfTcUseDifferentEpoch(t *testing.T) {
 		HighestTimeoutCert: newTC,
 	}
 
-	x.SetPropertiesFaker(syncInfoMsg.HighestQuorumCert, &types.TimeoutCert{
-		Round:      types.Round(898),
-		Signatures: []types.Signature{},
-	})
-
 	verified, err := x.VerifySyncInfoMessage(blockchain, syncInfoMsg)
-	assert.True(t, verified)
 	assert.Nil(t, err)
+	assert.True(t, verified)
 }

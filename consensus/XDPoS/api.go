@@ -119,7 +119,19 @@ const (
 	statusObservernode  AccountRewardStatus = "ObserverNode"
 )
 
-type MessageStatus map[string]map[string]SignerTypes
+type MessageStatus map[string]map[string]interface{}
+
+type SyncInfoTypes struct {
+	Hash      common.Hash `json:"hash"`
+	QCSigners int         `json:"qcSigners"`
+	TCSigners int         `json:"tcSigners"`
+}
+
+type PoolStatus struct {
+	Vote     map[string]SignerTypes   `json:"vote"`
+	Timeout  map[string]SignerTypes   `json:"timeout"`
+	SyncInfo map[string]SyncInfoTypes `json:"syncInfo"`
+}
 
 // GetSnapshot retrieves the state snapshot at a given block.
 func (api *API) GetSnapshot(number *rpc.BlockNumber) (*utils.PublicApiSnapshot, error) {
@@ -210,18 +222,40 @@ func (api *API) GetMasternodesByNumber(number *rpc.BlockNumber) MasternodesStatu
 }
 
 // Get current vote pool and timeout pool content and missing messages
-func (api *API) GetLatestPoolStatus() MessageStatus {
+func (api *API) GetLatestPoolStatus() PoolStatus {
 	header := api.chain.CurrentHeader()
 	masternodes := api.XDPoS.EngineV2.GetMasternodes(api.chain, header)
 
 	receivedVotes := api.XDPoS.EngineV2.ReceivedVotes()
 	receivedTimeouts := api.XDPoS.EngineV2.ReceivedTimeouts()
-	info := make(MessageStatus)
-	info["vote"] = make(map[string]SignerTypes)
-	info["timeout"] = make(map[string]SignerTypes)
+	receivedSyncInfo := api.XDPoS.EngineV2.ReceivedSyncInfo()
 
-	calculateSigners(info["vote"], receivedVotes, masternodes)
-	calculateSigners(info["timeout"], receivedTimeouts, masternodes)
+	info := PoolStatus{}
+	info.Vote = make(map[string]SignerTypes)
+	info.Timeout = make(map[string]SignerTypes)
+	info.SyncInfo = make(map[string]SyncInfoTypes)
+
+	calculateSigners(info.Vote, receivedVotes, masternodes)
+	calculateSigners(info.Timeout, receivedTimeouts, masternodes)
+
+	for name, objs := range receivedSyncInfo {
+		for _, obj := range objs {
+			syncInfo := obj.(*types.SyncInfo)
+			hash := syncInfo.Hash()
+			key := name + ":" + hash.Hex()
+
+			qcSigners := len(syncInfo.HighestQuorumCert.Signatures)
+			tcSigners := 0
+			if syncInfo.HighestTimeoutCert != nil {
+				tcSigners = len(syncInfo.HighestTimeoutCert.Signatures)
+			}
+			info.SyncInfo[key] = SyncInfoTypes{
+				Hash:      hash,
+				QCSigners: qcSigners,
+				TCSigners: tcSigners,
+			}
+		}
+	}
 
 	return info
 }

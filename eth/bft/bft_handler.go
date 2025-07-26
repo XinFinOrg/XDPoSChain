@@ -78,18 +78,18 @@ func (b *Bfter) SetConsensusFuns(engine consensus.Engine) {
 }
 
 func (b *Bfter) Vote(peer string, vote *types.Vote) error {
-	log.Trace("Receive Vote", "hash", vote.Hash().Hex(), "voted block hash", vote.ProposedBlockInfo.Hash.Hex(), "number", vote.ProposedBlockInfo.Number, "round", vote.ProposedBlockInfo.Round)
+	log.Trace("[Vote] Receive Vote", "hash", vote.Hash().Hex(), "voted block hash", vote.ProposedBlockInfo.Hash.Hex(), "number", vote.ProposedBlockInfo.Number, "round", vote.ProposedBlockInfo.Round)
 
 	voteBlockNum := vote.ProposedBlockInfo.Number.Int64()
 	if dist := voteBlockNum - int64(b.chainHeight()); dist < -maxBlockDist || dist > maxBlockDist {
-		log.Debug("Discarded propagated vote, too far away", "peer", peer, "number", voteBlockNum, "hash", vote.ProposedBlockInfo.Hash, "distance", dist)
+		log.Debug("[Vote] Discarded propagated vote, too far away", "peer", peer, "number", voteBlockNum, "hash", vote.ProposedBlockInfo.Hash, "distance", dist)
 		return nil
 	}
 
 	verified, err := b.consensus.verifyVote(b.blockChainReader, vote)
 
 	if err != nil {
-		log.Error("Verify BFT Vote", "error", err)
+		log.Error("[Vote] Verify BFT Vote", "error", err)
 		return err
 	}
 
@@ -98,14 +98,14 @@ func (b *Bfter) Vote(peer string, vote *types.Vote) error {
 		err = b.consensus.voteHandler(b.blockChainReader, vote)
 		if err != nil {
 			if _, ok := err.(*utils.ErrIncomingMessageRoundTooFarFromCurrentRound); ok {
-				log.Debug("vote round not equal", "error", err, "vote", vote.Hash())
+				log.Debug("[Vote] vote round not equal", "error", err, "vote", vote.Hash())
 				return err
 			}
 			if _, ok := err.(*utils.ErrIncomingMessageBlockNotFound); ok {
-				log.Debug("vote proposed block not found", "error", err, "vote", vote.Hash())
+				log.Debug("[Vote] vote proposed block not found", "error", err, "vote", vote.Hash())
 				return err
 			}
-			log.Error("handle BFT Vote", "error", err)
+			log.Error("[Vote] handle BFT Vote", "error", err)
 			return err
 		}
 	}
@@ -117,26 +117,26 @@ func (b *Bfter) Timeout(peer string, timeout *types.Timeout) error {
 
 	// dist times 3, ex: timeout message's gap number is based on block and find out it's epoch switch number, then mod 900 then minus 450
 	if dist := int64(gapNum) - int64(b.chainHeight()); dist < -int64(b.epoch)*3 || dist > int64(b.epoch)*3 {
-		log.Debug("Discarded propagated timeout, too far away", "peer", peer, "gapNumber", gapNum, "hash", timeout.Hash, "distance", dist)
+		log.Debug("[Timeout] Discarded propagated timeout, too far away", "peer", peer, "gapNumber", gapNum, "hash", timeout.Hash, "distance", dist)
 		return nil
 	}
 
 	verified, err := b.consensus.verifyTimeout(b.blockChainReader, timeout)
 	if err != nil {
-		log.Error("Verify BFT Timeout", "timeoutRound", timeout.Round, "timeoutGapNum", gapNum, "error", err)
+		log.Error("[Timeout] Verify BFT Timeout", "timeoutRound", timeout.Round, "timeoutGapNum", gapNum, "error", err)
 		return err
 	}
-	log.Debug("Receive Timeout", "gap", gapNum, "hash", timeout.Hash().Hex(), "round", timeout.Round, "signer", timeout.GetSigner().Hex()) //get signer after verifyTimeout
+	log.Debug("[Timeout] Receive Timeout", "gap", gapNum, "hash", timeout.Hash().Hex(), "round", timeout.Round, "signer", timeout.GetSigner().Hex()) //get signer after verifyTimeout
 
 	if verified {
 		b.broadcastCh <- timeout
 		err = b.consensus.timeoutHandler(b.blockChainReader, timeout)
 		if err != nil {
 			if _, ok := err.(*utils.ErrIncomingMessageRoundNotEqualCurrentRound); ok {
-				log.Debug("timeout round not equal", "error", err)
+				log.Debug("[Timeout] timeout round not equal", "error", err)
 				return err
 			}
-			log.Error("handle BFT Timeout", "error", err)
+			log.Error("[Timeout] handle BFT Timeout", "error", err)
 			return err
 		}
 	}
@@ -144,17 +144,22 @@ func (b *Bfter) Timeout(peer string, timeout *types.Timeout) error {
 	return nil
 }
 func (b *Bfter) SyncInfo(peer string, syncInfo *types.SyncInfo) error {
-	log.Debug("Receive SyncInfo", "syncInfo", syncInfo)
+	log.Debug("[SyncInfo] Receive SyncInfo")
+
+	if syncInfo == nil || syncInfo.HighestQuorumCert == nil {
+		log.Warn("[SyncInfo] Received nil SyncInfo or missing QC", "syncInfo", syncInfo)
+		return nil
+	}
 
 	qcBlockNum := syncInfo.HighestQuorumCert.ProposedBlockInfo.Number.Int64()
 	if dist := qcBlockNum - int64(b.chainHeight()); dist < -maxBlockDist || dist > maxBlockDist {
-		log.Debug("Discarded propagated syncInfo, too far away", "peer", peer, "blockNum", qcBlockNum, "hash", syncInfo.Hash, "distance", dist)
+		log.Debug("[SyncInfo] Discarded propagated syncInfo, too far away", "peer", peer, "blockNum", syncInfo.HighestQuorumCert.ProposedBlockInfo.Number, "hash", syncInfo.Hash, "qcRound", syncInfo.HighestQuorumCert.ProposedBlockInfo.Round, "distance", dist)
 		return nil
 	}
 
 	verified, err := b.consensus.verifySyncInfo(b.blockChainReader, syncInfo)
 	if err != nil {
-		log.Error("Verify BFT SyncInfo", "error", err)
+		log.Error("[SyncInfo] Verify BFT SyncInfo", "error", err)
 		return err
 	}
 
@@ -163,7 +168,7 @@ func (b *Bfter) SyncInfo(peer string, syncInfo *types.SyncInfo) error {
 		b.broadcastCh <- syncInfo
 		err = b.consensus.syncInfoHandler(b.blockChainReader, syncInfo)
 		if err != nil {
-			log.Error("handle BFT SyncInfo", "error", err)
+			log.Error("[SyncInfo] handle BFT SyncInfo", "error", err)
 			return err
 		}
 	}

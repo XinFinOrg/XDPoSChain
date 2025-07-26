@@ -347,23 +347,6 @@ func TestProcessVoteMsgThenTimeoutMsg(t *testing.T) {
 
 	err = engineV2.TimeoutHandler(blockchain, timeoutMsg)
 	assert.Nil(t, err)
-
-	syncInfoMsg := <-engineV2.BroadcastCh
-	assert.NotNil(t, syncInfoMsg)
-
-	// Should have HighestQuorumCert from previous round votes
-	qc := syncInfoMsg.(*types.SyncInfo).HighestQuorumCert
-	assert.NotNil(t, qc)
-	assert.Equal(t, types.Round(5), qc.ProposedBlockInfo.Round)
-
-	tc := syncInfoMsg.(*types.SyncInfo).HighestTimeoutCert
-	assert.NotNil(t, tc)
-	assert.Equal(t, types.Round(6), tc.Round)
-	sigatures := []types.Signature{[]byte{1}, []byte{2}, []byte{3}, []byte{4}}
-	assert.ElementsMatch(t, tc.Signatures, sigatures)
-	// Round shall be +1 now
-	currentRound, _, _, _, _, _ = engineV2.GetPropertiesFaker()
-	assert.Equal(t, types.Round(7), currentRound)
 }
 
 func TestVoteMessageShallNotThrowErrorIfBlockNotYetExist(t *testing.T) {

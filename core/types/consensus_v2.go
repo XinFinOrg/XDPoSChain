@@ -79,6 +79,27 @@ func (s *SyncInfo) Hash() common.Hash {
 	return rlpHash(s)
 }
 
+// Key format: qcRound:qcGapNum:qcBlockNum:timeoutRound:timeoutGapNum:qcBlockHash
+func (s *SyncInfo) PoolKey() string {
+	qcRound := s.HighestQuorumCert.ProposedBlockInfo.Round
+	qcGapNum := s.HighestQuorumCert.GapNumber
+	qcBlockNum := s.HighestQuorumCert.ProposedBlockInfo.Number
+	qcBlockHash := s.HighestQuorumCert.ProposedBlockInfo.Hash
+	timeoutRound := Round(0)
+	timeoutGapNum := uint64(0)
+	if s.HighestTimeoutCert != nil {
+		timeoutRound = s.HighestTimeoutCert.Round
+		timeoutGapNum = s.HighestTimeoutCert.GapNumber
+	}
+
+	return fmt.Sprint(qcRound, ":", qcGapNum, ":", qcBlockNum, ":", timeoutRound, ":", timeoutGapNum, ":", qcBlockHash.Hex())
+}
+
+func (s *SyncInfo) GetSigner() common.Address {
+	// SyncInfo does not have a signer, so we return an empty address
+	return common.Address{}
+}
+
 // Quorum Certificate struct in XDPoS 2.0
 type QuorumCert struct {
 	ProposedBlockInfo *BlockInfo  `json:"proposedBlockInfo"`
