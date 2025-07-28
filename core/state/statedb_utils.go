@@ -5,6 +5,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/log"
 
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 )
@@ -161,21 +162,25 @@ var (
 func GetTotalMinted(statedb *StateDB) common.Hash {
 	hash := GetLocSimpleVariable(slotMintedRecordTotalMinted)
 	totalMinted := statedb.GetState(common.MintedRecordAddressBinary, hash)
+	log.Debug("[GetTotalMinted]", "totalMinted", totalMinted, "key", hash)
 	return totalMinted
 }
 
 func PutTotalMinted(statedb *StateDB, value common.Hash) {
 	hash := GetLocSimpleVariable(slotMintedRecordTotalMinted)
 	statedb.SetState(common.MintedRecordAddressBinary, hash, value)
+	log.Debug("[PutTotalMinted]", "totalMinted", value, "key", hash)
 }
 
 func GetLastEpochNum(statedb *StateDB) common.Hash {
 	hash := GetLocSimpleVariable(slotMintedRecordLastEpochNum)
-	totalMinted := statedb.GetState(common.MintedRecordAddressBinary, hash)
-	return totalMinted
+	lastEpochNum := statedb.GetState(common.MintedRecordAddressBinary, hash)
+	log.Debug("[GetLastEpochNum]", "lastEpochNum", lastEpochNum, "key", hash)
+	return lastEpochNum
 }
 
 func PutLastEpochNum(statedb *StateDB, value common.Hash) {
 	hash := GetLocSimpleVariable(slotMintedRecordLastEpochNum)
 	statedb.SetState(common.MintedRecordAddressBinary, hash, value)
+	log.Debug("[PutLastEpochNum]", "lastEpochNum", value, "key", hash)
 }
