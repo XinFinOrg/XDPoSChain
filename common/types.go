@@ -69,6 +69,7 @@ var (
 	XDCNativeAddressBinary                 = HexToAddress("0x0000000000000000000000000000000000000001")
 	LendingLockAddressBinary               = HexToAddress("0x0000000000000000000000000000000000000011")
 	MintedRecordAddressBinary              = HexToAddress("0x000000000000000000000000000000000000009a")
+	SwapAddressBinary                     = HexToAddress("0x000000000000000000000000000000000000008e") //confirm Address
 )
 
 var (

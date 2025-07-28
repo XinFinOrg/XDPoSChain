@@ -3,6 +3,9 @@ FROM golang:1.23-alpine AS builder
 RUN apk add make build-base linux-headers
 
 COPY . /builder
+
+RUN cd /builder && make puppeth
+
 RUN cd /builder && make && mv /builder/build/bin/XDC /builder/build/bin/XDC-mainnet
 
 RUN mv /builder/common/constants/constants.go.testnet /builder/common/constants.go
@@ -21,6 +24,8 @@ WORKDIR /work
 
 RUN apk add --no-cache bash curl
 
+
+COPY --from=builder /builder/build/bin/puppeth /usr/bin
 COPY --from=builder /builder/build/bin/XDC-local /usr/bin
 COPY --from=builder /builder/build/bin/XDC-devnet /usr/bin
 COPY --from=builder /builder/build/bin/XDC-testnet /usr/bin
@@ -31,7 +36,8 @@ ADD cicd/local /work/local
 ADD cicd/devnet /work/devnet
 ADD cicd/testnet /work/testnet
 ADD cicd/mainnet /work/mainnet
-ADD cicd/entry.sh /work/
+ADD cicd/entry.sh /work/entry.sh
+ADD cicd/puppeth.sh /work/puppeth.sh
 
 # Create an empty pwd file
 RUN touch /work/.pwd

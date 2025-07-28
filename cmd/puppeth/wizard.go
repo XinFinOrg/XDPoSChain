@@ -38,7 +38,8 @@ import (
 // config contains all the configurations needed by puppeth that should be saved
 // between sessions.
 type config struct {
-	path      string   // File containing the configuration values
+	path      string   // Output file containing the configuration values
+	inpath		string  // Input file to read genesis generation parameters (optional)
 	bootnodes []string // Bootnodes to always connect to by all nodes
 	ethstats  string   // Ethstats settings to cache for node deploys
 
@@ -62,6 +63,7 @@ func (c config) flush() {
 	os.MkdirAll(filepath.Dir(c.path), 0755)
 
 	out, _ := json.MarshalIndent(c.Genesis, "", "  ")
+	log.Warn("writing to file", "filename", c.path)
 	if err := os.WriteFile(c.path, out, 0644); err != nil {
 		log.Warn("Failed to save puppeth configs", "file", c.path, "err", err)
 	}

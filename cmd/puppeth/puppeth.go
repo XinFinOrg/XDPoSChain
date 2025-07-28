@@ -42,6 +42,16 @@ func main() {
 			Value: 3,
 			Usage: "log level to emit to the screen",
 		},
+		&cli.StringFlag{
+			Name:  "outpath",
+			Value: "",
+			Usage: "output genesis file path",
+		},
+		&cli.StringFlag{
+			Name:  "inpath",
+			Value: "",
+			Usage: "input file to generate genesis file (optional)",
+		},
 	}
 	app.Action = func(c *cli.Context) error {
 		// Set up the logger to print everything and the random generator
@@ -53,7 +63,7 @@ func main() {
 			log.Crit("No spaces or hyphens allowed in network name")
 		}
 		// Start the wizard and relinquish control
-		makeWizard(c.String("network")).run()
+		makeWizard(c.String("network"), c.String("inpath"), c.String("outpath")).run()
 		return nil
 	}
 	app.Run(os.Args)

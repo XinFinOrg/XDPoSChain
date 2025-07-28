@@ -18,23 +18,31 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
 // makeWizard creates and returns a new puppeth wizard.
-func makeWizard(network string) *wizard {
+func makeWizard(network string, inputPath string, outputPath string) *wizard {
+	conf := config{
+		Servers: make(map[string][]byte),
+	}
+	if inputPath != "" {
+		conf.inpath = inputPath
+	}
+	if outputPath != "" {
+		conf.path = outputPath
+	} else {
+		conf.path = filepath.Join(os.Getenv("HOME"), ".puppeth", network)
+	}
+
 	return &wizard{
-		network: network,
-		conf: config{
-			Servers: make(map[string][]byte),
-		},
+		network:  network,
+		conf:     conf,
 		servers:  make(map[string]*sshClient),
 		services: make(map[string][]string),
 		in:       bufio.NewReader(os.Stdin),
@@ -44,6 +52,10 @@ func makeWizard(network string) *wizard {
 // run displays some useful infos to the user, starting on the journey of
 // setting up a new or managing an existing Ethereum private network.
 func (w *wizard) run() {
+	if w.conf.inpath != "" { //don't use interactive mode if run with input option
+		w.makeGenesis()
+		return
+	}
 	fmt.Println("+-----------------------------------------------------------+")
 	fmt.Println("| Welcome to puppeth, your Ethereum private network manager |")
 	fmt.Println("|                                                           |")
@@ -72,36 +84,6 @@ func (w *wizard) run() {
 	}
 	log.Info("Administering Ethereum network", "name", w.network)
 
-	// Load initial configurations and connect to all live servers
-	w.conf.path = filepath.Join(os.Getenv("HOME"), ".puppeth", w.network)
-
-	blob, err := os.ReadFile(w.conf.path)
-	if err != nil {
-		log.Warn("No previous configurations found", "path", w.conf.path)
-	} else if err := json.Unmarshal(blob, &w.conf); err != nil {
-		log.Crit("Previous configuration corrupted", "path", w.conf.path, "err", err)
-	} else {
-		// Dial all previously known servers concurrently
-		var pend sync.WaitGroup
-		for server, pubkey := range w.conf.Servers {
-			pend.Add(1)
-
-			go func(server string, pubkey []byte) {
-				defer pend.Done()
-
-				log.Info("Dialing previously configured server", "server", server)
-				client, err := dial(server, pubkey)
-				if err != nil {
-					log.Error("Previous server unreachable", "server", server, "err", err)
-				}
-				w.lock.Lock()
-				w.servers[server] = client
-				w.lock.Unlock()
-			}(server, pubkey)
-		}
-		pend.Wait()
-		w.networkStats()
-	}
 	// Basics done, loop ad infinitum about what to do
 	for {
 		fmt.Println()
