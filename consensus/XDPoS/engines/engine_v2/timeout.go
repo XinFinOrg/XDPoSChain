@@ -324,8 +324,8 @@ func (x *XDPoS_v2) OnCountdownTimeout(time time.Time, chain interface{}) error {
 
 	x.timeoutCount++
 	if x.timeoutCount%x.config.V2.CurrentConfig.TimeoutSyncThreshold == 0 {
-		log.Warn("[OnCountdownTimeout] timeout sync threadhold reached, send syncInfo message")
 		syncInfo := x.getSyncInfo()
+		log.Info("[OnCountdownTimeout] timeout sync threshold reached, send syncInfo message", "QC round", syncInfo.HighestQuorumCert.ProposedBlockInfo.Round, "QC num", syncInfo.HighestQuorumCert.ProposedBlockInfo.Number, "QC sigs", len(syncInfo.HighestQuorumCert.Signatures), "TC round", x.highestTimeoutCert.Round, "TC sigs", len(x.highestTimeoutCert.Signatures))
 		x.broadcastToBftChannel(syncInfo)
 	}
 

@@ -110,7 +110,9 @@ func (x *XDPoS_v2) voteHandler(chain consensus.ChainReader, voteMsg *types.Vote)
 
 	// Collect vote
 	numberOfVotesInPool, pooledVotes := x.votePool.Add(voteMsg)
+	log.Trace("[voteHandler] new vote", "signer", voteMsg.GetSigner().Hex(), "proposedBlockInfoRound", voteMsg.ProposedBlockInfo.Round, "proposedBlockInfoNumber", voteMsg.ProposedBlockInfo.Number.Uint64(), "proposedBlockInfoHash", voteMsg.ProposedBlockInfo.Hash.Hex())
 	log.Debug("[voteHandler] collect votes", "number", numberOfVotesInPool)
+
 	go x.ForensicsProcessor.DetectEquivocationInVotePool(voteMsg, x.votePool)
 	go x.ForensicsProcessor.ProcessVoteEquivocation(chain, x, voteMsg)
 
