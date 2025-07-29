@@ -17,13 +17,15 @@ import (
 // Verify syncInfo and trigger process QC or TC if successful
 func (x *XDPoS_v2) VerifySyncInfoMessage(chain consensus.ChainReader, syncInfo *types.SyncInfo) (bool, error) {
 	qc := syncInfo.HighestQuorumCert
+	tc := syncInfo.HighestTimeoutCert
+
 	if qc == nil {
 		log.Warn("[VerifySyncInfoMessage] SyncInfo message is missing QC", "highestQC", qc)
 		return false, nil
 	}
 
-	if x.highestQuorumCert.ProposedBlockInfo.Round >= qc.ProposedBlockInfo.Round {
-		log.Debug("[VerifySyncInfoMessage] Round from incoming syncInfo message is equal or smaller then local round", "highestQCRound", x.highestQuorumCert.ProposedBlockInfo.Round, "incomingSyncInfoQCRound", qc.ProposedBlockInfo.Round)
+	if x.highestQuorumCert.ProposedBlockInfo.Round > qc.ProposedBlockInfo.Round && (tc == nil || x.highestTimeoutCert.Round > tc.Round) {
+		log.Debug("[VerifySyncInfoMessage] Round from incoming syncInfo message is equal or smaller then local round", "highestQCRound", x.highestQuorumCert.ProposedBlockInfo.Round, "highestTCRound", x.highestTimeoutCert.Round, "incomingSyncInfoQCRound", qc.ProposedBlockInfo.Round, "incomingSyncInfoTCRound", tc.Round)
 		return false, nil
 	}
 
@@ -43,7 +45,6 @@ func (x *XDPoS_v2) VerifySyncInfoMessage(chain consensus.ChainReader, syncInfo *
 		return false, err
 	}
 
-	tc := syncInfo.HighestTimeoutCert
 	if tc != nil { // tc is optional, when the node is starting up there is no TC at the memory
 		snapshot, err = x.getSnapshot(chain, tc.GapNumber, true)
 		if err != nil {
@@ -73,28 +74,31 @@ func (x *XDPoS_v2) SyncInfoHandler(chain consensus.ChainReader, syncInfo *types.
 }
 
 func (x *XDPoS_v2) syncInfoHandler(chain consensus.ChainReader, syncInfo *types.SyncInfo) error {
-	if x.highestQuorumCert.ProposedBlockInfo.Round >= syncInfo.HighestQuorumCert.ProposedBlockInfo.Round {
-		log.Debug("[syncInfoHandler] Round from incoming syncInfo message is equal or smaller then local round, skip process message", "highestQCRound", x.highestQuorumCert.ProposedBlockInfo.Round, "incomingSyncInfoQCRound", syncInfo.HighestQuorumCert.ProposedBlockInfo.Round)
+	qc := syncInfo.HighestQuorumCert
+	tc := syncInfo.HighestTimeoutCert
+
+	if x.highestQuorumCert.ProposedBlockInfo.Round > qc.ProposedBlockInfo.Round && (tc == nil || x.highestTimeoutCert.Round > tc.Round) {
+		log.Debug("[syncInfoHandler] Round from incoming syncInfo message is equal or smaller then local round, skip process message", "highestQCRound", x.highestQuorumCert.ProposedBlockInfo.Round, "highestTCRound", x.highestTimeoutCert.Round, "incomingSyncInfoQCRound", qc.ProposedBlockInfo.Round, "incomingSyncInfoTCRound", tc.Round)
 		return nil
 	}
 
-	if err := x.verifyQC(chain, syncInfo.HighestQuorumCert, nil); err != nil {
+	if err := x.verifyQC(chain, qc, nil); err != nil {
 		return fmt.Errorf("[syncInfoHandler] Failed to verify QC, err %s", err)
 	}
-	if err := x.processQC(chain, syncInfo.HighestQuorumCert); err != nil {
+	if err := x.processQC(chain, qc); err != nil {
 		return fmt.Errorf("[syncInfoHandler] Failed to process QC, err %s", err)
 	}
 
-	if syncInfo.HighestTimeoutCert != nil {
-		if x.highestTimeoutCert.Round >= syncInfo.HighestTimeoutCert.Round {
-			log.Debug("[syncInfoHandler] Round from incoming syncInfo message is equal or smaller then local TC round, skip process message", "highestTCRound", x.highestTimeoutCert.Round, "incomingSyncInfoTCRound", syncInfo.HighestTimeoutCert.Round)
+	if tc != nil {
+		if x.highestTimeoutCert.Round >= tc.Round {
+			log.Debug("[syncInfoHandler] Round from incoming syncInfo message is equal or smaller then local TC round, skip process message", "highestTCRound", x.highestTimeoutCert.Round, "incomingSyncInfoTCRound", tc.Round)
 			return nil
 		}
-		if err := x.verifyTC(chain, syncInfo.HighestTimeoutCert); err != nil {
+		if err := x.verifyTC(chain, tc); err != nil {
 			return fmt.Errorf("[syncInfoHandler] Failed to verify TC, err %s", err)
 		}
 
-		if err := x.processTC(chain, syncInfo.HighestTimeoutCert); err != nil {
+		if err := x.processTC(chain, tc); err != nil {
 			return fmt.Errorf("[syncInfoHandler] Failed to process TC, err %s", err)
 		}
 	}
@@ -105,19 +109,6 @@ func (x *XDPoS_v2) syncInfoHandler(chain consensus.ChainReader, syncInfo *types.
 func (x *XDPoS_v2) processSyncInfoPool(chain consensus.ChainReader) {
 	syncInfo := x.syncInfoPool.PoolObjKeysList()
 	for _, key := range syncInfo {
-		// Key format: qcRound:qcGapNum:qcBlockNum:timeoutRound:timeoutGapNum:qcBlockHash
-		// Get QC Round and needs to lower or equal to x.currentRound
-		qcRound, qcErr := strconv.ParseInt(strings.Split(key, ":")[0], 10, 64)
-		if qcErr != nil {
-			log.Warn("[processSyncInfoPool] Failed to parse QC round", "key", key, "error", qcErr)
-			continue
-		}
-		if int64(x.currentRound) < qcRound {
-			log.Info("[processSyncInfoPool] Sync QC round is higher than current round, need to sync from other nodes", "qcRound", qcRound, "currentRound", x.currentRound)
-			continue
-		}
-
-		// Optimize TODO: Check TC Round
 		log.Debug("[processSyncInfoPool] Processing syncInfo message from pool", "key", key)
 		for _, obj := range x.syncInfoPool.Get()[key] {
 			if syncInfoObj, ok := obj.(*types.SyncInfo); ok {
