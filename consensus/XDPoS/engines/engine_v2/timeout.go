@@ -132,6 +132,15 @@ func (x *XDPoS_v2) getTCEpochInfo(chain consensus.ChainReader, timeoutCert *type
 	}
 	log.Info("[getTCEpochInfo] Init epochInfo", "number", epochBlockInfo.Number, "round", epochRound, "tcRound", timeoutCert.Round, "tcEpoch", tempTCEpoch)
 	for epochBlockInfo.Round > timeoutCert.Round {
+		if tempTCEpoch == x.config.V2.SwitchEpoch { //prevent underflow when SwitchEpoch is 0 
+			log.Info("[getTCEpochInfo] tempTCEpoch is V2 switch epoch", "tempTCEpoch", tempTCEpoch) 
+			epochInfo, err := x.getEpochSwitchInfo(chain, nil, epochBlockInfo.Hash)
+			if err != nil {
+				log.Error("[getTCEpochInfo] Error when getting epoch switch info", "error", err)
+				return nil, fmt.Errorf("fail on getTCEpochInfo due to failure in getting epoch switch info, %s", err)
+			}
+			return epochInfo, nil
+		}
 		tempTCEpoch--
 		epochBlockInfo, err = x.GetBlockByEpochNumber(chain, tempTCEpoch)
 		if err != nil {
