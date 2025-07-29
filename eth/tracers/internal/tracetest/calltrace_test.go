@@ -135,6 +135,10 @@ func TestCallTracer(t *testing.T) {
 	testCallTracer("callTracer", "call_tracer", t)
 }
 
+func TestCallTracerLegacyDuktape(t *testing.T) {
+	testCallTracer("callTracerLegacyDuktape", "call_tracer_legacy", t)
+}
+
 func testCallTracer(tracerName string, dirPath string, t *testing.T) {
 	files, err := os.ReadDir(filepath.Join("testdata", dirPath))
 	if err != nil {
