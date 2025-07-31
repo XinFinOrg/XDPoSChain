@@ -138,7 +138,7 @@ func testCallTracer(tracerName string, dirPath string, t *testing.T) {
 			if _, err = st.TransitionDb(common.Address{}); err != nil {
 				t.Fatalf("failed to execute transaction: %v", err)
 			}
-			// Retrieve the trace result and compare against the etalon
+			// Retrieve the trace result and compare against the expected.
 			res, err := tracer.GetResult()
 			if err != nil {
 				t.Fatalf("failed to retrieve trace result: %v", err)
@@ -291,7 +291,7 @@ func TestZeroValueToNotExitCall(t *testing.T) {
 	if _, err = st.TransitionDb(common.Address{}); err != nil {
 		t.Fatalf("failed to execute transaction: %v", err)
 	}
-	// Retrieve the trace result and compare against the etalon
+	// Retrieve the trace result and compare against the expected.
 	res, err := tracer.GetResult()
 	if err != nil {
 		t.Fatalf("failed to retrieve trace result: %v", err)
@@ -373,7 +373,7 @@ func testContractTracer(tracerName string, dirPath string, t *testing.T) {
 			if _, err = st.TransitionDb(common.Address{}); err != nil {
 				t.Fatalf("failed to execute transaction: %v", err)
 			}
-			// Retrieve the trace result and compare against the etalon
+			// Retrieve the trace result and compare against the expected.
 			res, err := tracer.GetResult()
 			if err != nil {
 				t.Fatalf("failed to retrieve trace result: %v", err)
