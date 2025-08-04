@@ -19,7 +19,6 @@ package native
 import (
 	"encoding/json"
 	"math/big"
-	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
@@ -39,7 +38,8 @@ func newNoopTracer(ctx *tracers.Context, _ json.RawMessage) (tracers.Tracer, err
 func (t *noopTracer) CaptureStart(env *vm.EVM, from common.Address, to common.Address, create bool, input []byte, gas uint64, value *big.Int) {
 }
 
-func (t *noopTracer) CaptureEnd(output []byte, gasUsed uint64, _ time.Duration, err error) {
+// CaptureEnd is called after the call finishes to finalize the tracing.
+func (t *noopTracer) CaptureEnd(output []byte, gasUsed uint64, err error) {
 }
 
 func (t *noopTracer) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, scope *vm.ScopeContext, rData []byte, depth int, err error) {

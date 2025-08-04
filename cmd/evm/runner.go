@@ -236,7 +236,7 @@ Gas used:           %d
 `, execTime, mem.HeapObjects, mem.Alloc, mem.TotalAlloc, mem.NumGC, initialGas-leftOverGas)
 	}
 	if tracer != nil {
-		tracer.CaptureEnd(ret, initialGas-leftOverGas, execTime, err)
+		tracer.CaptureEnd(ret, initialGas-leftOverGas, err)
 	} else {
 		fmt.Printf("%#x\n", ret)
 		if err != nil {

@@ -6,7 +6,6 @@ import (
 	"math/big"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
@@ -58,7 +57,7 @@ func (t *contractTracer) CaptureStart(env *vm.EVM, from common.Address, to commo
 	}
 }
 
-func (t *contractTracer) CaptureEnd(output []byte, gasUsed uint64, _ time.Duration, err error) {
+func (t *contractTracer) CaptureEnd(output []byte, gasUsed uint64, err error) {
 }
 
 func (*contractTracer) CaptureTxStart(gasLimit uint64) {}
