@@ -24,8 +24,8 @@ func (x *XDPoS_v2) VerifySyncInfoMessage(chain consensus.ChainReader, syncInfo *
 		return false, nil
 	}
 
-	if x.highestQuorumCert.ProposedBlockInfo.Round > qc.ProposedBlockInfo.Round && (tc == nil || x.highestTimeoutCert.Round > tc.Round) {
-		log.Debug("[VerifySyncInfoMessage] Round from incoming syncInfo message is equal or smaller then local round", "highestQCRound", x.highestQuorumCert.ProposedBlockInfo.Round, "highestTCRound", x.highestTimeoutCert.Round, "incomingSyncInfoQCRound", qc.ProposedBlockInfo.Round, "incomingSyncInfoTCRound", tc.Round)
+	if x.highestQuorumCert.ProposedBlockInfo.Round >= qc.ProposedBlockInfo.Round && (tc == nil || x.highestTimeoutCert.Round >= tc.Round) {
+		log.Debug("[VerifySyncInfoMessage] Local Round is larger or equal than syncinfo round", "highestQCRound", x.highestQuorumCert.ProposedBlockInfo.Round, "highestTCRound", x.highestTimeoutCert.Round, "incomingSyncInfoQCRound", qc.ProposedBlockInfo.Round, "incomingSyncInfoTCRound", tc.Round)
 		return false, nil
 	}
 
