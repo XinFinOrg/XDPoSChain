@@ -53,7 +53,7 @@ func TestShouldVerifyBlock(t *testing.T) {
 	assert.Equal(t, consensus.ErrNoValidatorSignatureV2, err)
 
 	blockFromFuture := blockchain.GetBlockByNumber(902).Header()
-	blockFromFuture.Time = big.NewInt(time.Now().Unix() + 10000)
+	blockFromFuture.Time = uint64(time.Now().Unix() + 10000)
 	err = adaptor.VerifyHeader(blockchain, blockFromFuture, true)
 	assert.Equal(t, consensus.ErrFutureBlock, err)
 
@@ -97,7 +97,7 @@ func TestShouldVerifyBlock(t *testing.T) {
 
 	block901 := blockchain.GetBlockByNumber(901).Header()
 	tooFastMinedBlock := blockchain.GetBlockByNumber(902).Header()
-	tooFastMinedBlock.Time = big.NewInt(block901.Time.Int64() - 10)
+	tooFastMinedBlock.Time = block901.Time - 10
 	err = adaptor.VerifyHeader(blockchain, tooFastMinedBlock, true)
 	assert.Equal(t, utils.ErrInvalidTimestamp, err)
 
@@ -351,7 +351,7 @@ func TestConfigSwitchOnDifferentMindPeriod(t *testing.T) {
 	// after 910 require 5 signs, but we only give 3 signs
 	block911 := blockchain.GetBlockByNumber(911).Header()
 	block911.Extra = extraInBytes
-	block911.Time = big.NewInt(blockchain.GetBlockByNumber(910).Time().Int64() + 2) //2 is previous config, should get the right config from round
+	block911.Time = blockchain.GetBlockByNumber(910).Time() + 2 // 2 is previous config, should get the right config from round
 	err = adaptor.VerifyHeader(blockchain, block911, true)
 
 	assert.Equal(t, utils.ErrInvalidTimestamp, err)

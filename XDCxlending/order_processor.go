@@ -347,7 +347,7 @@ func (l *Lending) processOrderList(header *types.Header, coinbase common.Address
 			log.Debug("Update quantity for orderId", "orderId", orderId.Hex())
 			log.Debug("LEND", "lendingOrderBook", lendingOrderBook.Hex(), "Taker Interest", Interest, "maker Interest", order.Interest, "Amount", tradedQuantity, "orderId", orderId, "side", side)
 			tradingId := lendingStateDB.GetTradeNonce(lendingOrderBook) + 1
-			liquidationTime := header.Time.Uint64() + order.Term
+			liquidationTime := header.Time + order.Term
 			liquidationPrice := new(big.Int).Mul(collateralPrice, liquidationRate)
 			liquidationPrice = new(big.Int).Div(liquidationPrice, depositRate)
 			lendingTrade := lendingstate.LendingTrade{
@@ -841,7 +841,7 @@ func (l *Lending) LiquidationExpiredTrade(header *types.Header, chain consensus.
 		_, liquidationRate, _ := lendingstate.GetCollateralDetail(statedb, lendingTrade.CollateralToken)
 		collateralAmount := new(big.Int).Mul(repayAmount, big.NewInt(100))
 		collateralAmount = new(big.Int).Div(collateralAmount, liquidationRate)
-		totalCollateralAmount := lendingstate.CalculateTotalRepayValue(header.Time.Uint64(), lendingTrade.LiquidationTime, lendingTrade.Term, lendingTrade.Interest, collateralAmount)
+		totalCollateralAmount := lendingstate.CalculateTotalRepayValue(header.Time, lendingTrade.LiquidationTime, lendingTrade.Term, lendingTrade.Interest, collateralAmount)
 		interestAmount := new(big.Int).Sub(totalCollateralAmount, collateralAmount)
 		repayAmount = new(big.Int).Add(repayAmount, interestAmount)
 	}
@@ -1159,7 +1159,7 @@ func (l *Lending) ProcessRepayLendingTrade(header *types.Header, chain consensus
 	if lendingTrade == lendingstate.EmptyLendingTrade {
 		return nil, fmt.Errorf("ProcessRepayLendingTrade for emptyLendingTrade is not allowed. lendingTradeId: %v", lendingTradeId)
 	}
-	time := header.Time.Uint64()
+	time := header.Time
 	tokenBalance := lendingstate.GetTokenBalance(lendingTrade.Borrower, lendingTrade.LendingToken, statedb)
 	paymentBalance := lendingstate.CalculateTotalRepayValue(time, lendingTrade.LiquidationTime, lendingTrade.Term, lendingTrade.Interest, lendingTrade.Amount)
 	log.Debug("ProcessRepay", "totalInterest", new(big.Int).Sub(paymentBalance, lendingTrade.Amount), "totalRepayValue", paymentBalance, "token", lendingTrade.LendingToken.Hex())

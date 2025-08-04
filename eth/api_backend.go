@@ -568,7 +568,7 @@ func (b *EthAPIBackend) GetEpochDuration() *big.Int {
 	secondToLastCheckpointNumber := lastCheckpointNumber - b.ChainConfig().XDPoS.Epoch
 	secondToLastCheckpointBlockTime := chain.GetBlockByNumber(secondToLastCheckpointNumber).Time()
 
-	return secondToLastCheckpointBlockTime.Add(secondToLastCheckpointBlockTime, lastCheckpointBlockTime.Mul(lastCheckpointBlockTime, new(big.Int).SetInt64(-1)))
+	return new(big.Int).SetInt64(int64(secondToLastCheckpointBlockTime) - int64(lastCheckpointBlockTime))
 }
 
 // GetMasternodesCap return a cap of all masternode at a checkpoint

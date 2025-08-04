@@ -145,13 +145,13 @@ func TestPrepareFail(t *testing.T) {
 	blockchain, _, currentBlock, signer, _, _ := PrepareXDCTestBlockChainForV2Engine(t, int(config.XDPoS.Epoch), config, nil)
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
 
-	tstamp := time.Now().Unix()
+	tstamp := uint64(time.Now().Unix())
 
 	notReadyToProposeHeader := &types.Header{
 		ParentHash: currentBlock.Hash(),
 		Number:     big.NewInt(int64(901)),
 		GasLimit:   params.TargetGasLimit,
-		Time:       big.NewInt(tstamp),
+		Time:       tstamp,
 		Coinbase:   signer,
 	}
 
@@ -162,7 +162,7 @@ func TestPrepareFail(t *testing.T) {
 		ParentHash: currentBlock.Hash(),
 		Number:     big.NewInt(int64(901)),
 		GasLimit:   params.TargetGasLimit,
-		Time:       big.NewInt(tstamp),
+		Time:       tstamp,
 		Coinbase:   signer,
 	}
 	// trigger initial which will set the highestQC
@@ -176,7 +176,7 @@ func TestPrepareFail(t *testing.T) {
 		ParentHash: currentBlock.Hash(),
 		Number:     big.NewInt(int64(901)),
 		GasLimit:   params.TargetGasLimit,
-		Time:       big.NewInt(tstamp),
+		Time:       tstamp,
 	}
 
 	err = adaptor.Prepare(blockchain, header901WithoutCoinbase)
@@ -191,13 +191,13 @@ func TestPrepareHappyPath(t *testing.T) {
 	_, err := adaptor.YourTurn(blockchain, currentBlock.Header(), signer)
 	assert.Nil(t, err)
 
-	tstamp := time.Now().Unix()
+	tstamp := uint64(time.Now().Unix())
 
 	header901 := &types.Header{
 		ParentHash: currentBlock.Hash(),
 		Number:     big.NewInt(int64(901)),
 		GasLimit:   params.TargetGasLimit,
-		Time:       big.NewInt(tstamp),
+		Time:       tstamp,
 		Coinbase:   signer,
 	}
 
@@ -271,13 +271,13 @@ func TestUpdateMultipleMasterNodes(t *testing.T) {
 		}
 	}
 
-	tstamp := time.Now().Unix()
+	tstamp := uint64(time.Now().Unix())
 
 	header1800 := &types.Header{
 		ParentHash: parentBlock.Hash(),
 		Number:     big.NewInt(int64(1800)),
 		GasLimit:   params.TargetGasLimit,
-		Time:       big.NewInt(tstamp),
+		Time:       tstamp,
 		Coinbase:   voterAddr,
 	}
 

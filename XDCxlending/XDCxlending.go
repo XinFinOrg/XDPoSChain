@@ -280,7 +280,7 @@ func (l *Lending) SyncDataToSDKNode(chain consensus.ChainContext, statedb *state
 				updatedTakerLendingItem.AutoTopUp = false
 			case lendingstate.Repay:
 				updatedTakerLendingItem.Status = lendingstate.Repay
-				paymentBalance := lendingstate.CalculateTotalRepayValue(block.Time().Uint64(), tradeRecord.LiquidationTime, tradeRecord.Term, tradeRecord.Interest, tradeRecord.Amount)
+				paymentBalance := lendingstate.CalculateTotalRepayValue(block.Time(), tradeRecord.LiquidationTime, tradeRecord.Term, tradeRecord.Interest, tradeRecord.Amount)
 				updatedTakerLendingItem.Quantity = paymentBalance
 				updatedTakerLendingItem.FilledAmount = paymentBalance
 				// manual repay item
@@ -811,7 +811,7 @@ func (l *Lending) RollbackLendingData(txhash common.Hash) error {
 }
 
 func (l *Lending) ProcessLiquidationData(header *types.Header, chain consensus.ChainContext, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, lendingState *lendingstate.LendingStateDB) (updatedTrades map[common.Hash]*lendingstate.LendingTrade, liquidatedTrades, autoRepayTrades, autoTopUpTrades, autoRecallTrades []*lendingstate.LendingTrade, err error) {
-	time := header.Time
+	time := new(big.Int).SetUint64(header.Time)
 	updatedTrades = map[common.Hash]*lendingstate.LendingTrade{} // sum of liquidatedTrades, autoRepayTrades, autoTopUpTrades, autoRecallTrades
 	liquidatedTrades = []*lendingstate.LendingTrade{}
 	autoRepayTrades = []*lendingstate.LendingTrade{}

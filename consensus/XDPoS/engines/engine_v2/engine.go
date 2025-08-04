@@ -283,7 +283,7 @@ func (x *XDPoS_v2) YourTurn(chain consensus.ChainReader, parent *types.Header, s
 		}
 	}
 
-	waitedTime := time.Now().Unix() - parent.Time.Int64()
+	waitedTime := time.Now().Unix() - int64(parent.Time)
 	minePeriod := x.config.V2.Config(uint64(x.currentRound)).MinePeriod
 	if waitedTime < int64(minePeriod) {
 		log.Trace("[YourTurn] wait after mine period", "minePeriod", minePeriod, "waitedTime", waitedTime)
@@ -374,9 +374,9 @@ func (x *XDPoS_v2) Prepare(chain consensus.ChainReader, header *types.Header) er
 	// Ensure the timestamp has the correct delay
 	// TODO: Proper deal with time
 	// TODO: if timestamp > current time, how to deal with future timestamp
-	header.Time = new(big.Int).Add(parent.Time, new(big.Int).SetUint64(x.config.Period))
-	if header.Time.Int64() < time.Now().Unix() {
-		header.Time = big.NewInt(time.Now().Unix())
+	header.Time = parent.Time + x.config.Period
+	if timeNow := uint64(time.Now().Unix()); header.Time < timeNow {
+		header.Time = timeNow
 	}
 
 	if header.Coinbase != signer {

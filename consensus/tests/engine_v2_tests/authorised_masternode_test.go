@@ -1,7 +1,6 @@
 package engine_v2_tests
 
 import (
-	"math/big"
 	"testing"
 	"time"
 
@@ -41,7 +40,7 @@ func TestIsYourTurnConsensusV2(t *testing.T) {
 	blockCoinBase := "0x111000000000000000000000000000000123"
 	currentBlock = CreateBlock(blockchain, params.TestXDPoSMockChainConfig, currentBlock, blockNum, 1, blockCoinBase, signer, signFn, nil, nil, "")
 	currentBlockHeader := currentBlock.Header()
-	currentBlockHeader.Time = big.NewInt(time.Now().Unix())
+	currentBlockHeader.Time = uint64(time.Now().Unix())
 	err := blockchain.InsertBlock(currentBlock)
 	assert.Nil(t, err)
 	adaptor.Initial(blockchain, currentBlockHeader)
@@ -94,7 +93,7 @@ func TestIsYourTurnConsensusV2CrossConfig(t *testing.T) {
 	blockCoinBase := "0x111000000000000000000000000000000123"
 	currentBlock = CreateBlock(blockchain, params.TestXDPoSMockChainConfig, currentBlock, blockNum, 10, blockCoinBase, signer, signFn, nil, nil, "")
 	currentBlockHeader := currentBlock.Header()
-	currentBlockHeader.Time = big.NewInt(time.Now().Unix())
+	currentBlockHeader.Time = uint64(time.Now().Unix())
 	err := blockchain.InsertBlock(currentBlock)
 	adaptor.EngineV2.SetNewRoundFaker(blockchain, types.Round(10), false)
 	assert.Nil(t, err)

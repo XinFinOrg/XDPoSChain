@@ -149,11 +149,11 @@ func TestAdjustTime(t *testing.T) {
 	)
 	defer sim.Close()
 
-	prevTime := sim.pendingBlock.Time().Uint64()
+	prevTime := sim.pendingBlock.Time()
 	if err := sim.AdjustTime(time.Second); err != nil {
 		t.Error(err)
 	}
-	newTime := sim.pendingBlock.Time().Uint64()
+	newTime := sim.pendingBlock.Time()
 
 	if newTime-prevTime != uint64(time.Second.Seconds()) {
 		t.Errorf("adjusted time not equal to a second. prev: %v, new: %v", prevTime, newTime)
@@ -182,11 +182,11 @@ func TestNewAdjustTimeFail(t *testing.T) {
 	}
 	sim.Commit()
 
-	prevTime := sim.pendingBlock.Time().Uint64()
+	prevTime := sim.pendingBlock.Time()
 	if err := sim.AdjustTime(time.Minute); err != nil {
 		t.Error(err)
 	}
-	newTime := sim.pendingBlock.Time().Uint64()
+	newTime := sim.pendingBlock.Time()
 	if newTime-prevTime != uint64(time.Minute.Seconds()) {
 		t.Errorf("adjusted time not equal to a minute. prev: %v, new: %v", prevTime, newTime)
 	}
@@ -198,7 +198,7 @@ func TestNewAdjustTimeFail(t *testing.T) {
 	}
 	sim.SendTransaction(context.Background(), signedTx2)
 	sim.Commit()
-	newTime = sim.pendingBlock.Time().Uint64()
+	newTime = sim.pendingBlock.Time()
 	if newTime-prevTime >= uint64(time.Minute.Seconds()) {
 		t.Errorf("time adjusted, but shouldn't be: prev: %v, new: %v", prevTime, newTime)
 	}
@@ -1385,7 +1385,7 @@ func TestForkResendTx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("could not sign transaction: %v", err)
 	}
-	if err = sim.SendTransaction(context.Background(), tx);  err != nil {
+	if err = sim.SendTransaction(context.Background(), tx); err != nil {
 		t.Fatalf("sending transaction: %v", err)
 	}
 	sim.Commit()

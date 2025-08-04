@@ -166,7 +166,7 @@ func (x *XDPoS_v1) verifyHeader(chain consensus.ChainReader, header *types.Heade
 			return consensus.ErrNoValidatorSignature
 		}
 		// Don't waste time checking blocks from the future
-		if header.Time.Cmp(big.NewInt(time.Now().Unix())) > 0 {
+		if header.Time > uint64(time.Now().Unix()) {
 			return consensus.ErrFutureBlock
 		}
 	}
@@ -230,7 +230,7 @@ func (x *XDPoS_v1) verifyCascadingFields(chain consensus.ChainReader, header *ty
 	if parent == nil || parent.Number.Uint64() != number-1 || parent.Hash() != header.ParentHash {
 		return consensus.ErrUnknownAncestor
 	}
-	if parent.Time.Uint64()+x.config.Period > header.Time.Uint64() {
+	if parent.Time+x.config.Period > header.Time {
 		return utils.ErrInvalidTimestamp
 	}
 	// Verify the header's EIP-1559 attributes.
@@ -423,7 +423,7 @@ func (x *XDPoS_v1) YourTurn(chain consensus.ChainReader, parent *types.Header, s
 			gap = minePeriodCheckpoint * int64(h)
 		}
 		log.Info("Distance from the parent block", "seconds", gap, "hops", h)
-		waitedTime := time.Now().Unix() - parent.Time.Int64()
+		waitedTime := time.Now().Unix() - int64(parent.Time)
 		if gap > waitedTime {
 			return false, nil
 		}
@@ -775,9 +775,9 @@ func (x *XDPoS_v1) Prepare(chain consensus.ChainReader, header *types.Header) er
 
 	// Ensure the timestamp has the correct delay
 
-	header.Time = new(big.Int).Add(parent.Time, new(big.Int).SetUint64(x.config.Period))
-	if header.Time.Int64() < time.Now().Unix() {
-		header.Time = big.NewInt(time.Now().Unix())
+	header.Time = parent.Time + x.config.Period
+	if timeNow := uint64(time.Now().Unix()); header.Time < timeNow {
+		header.Time = timeNow
 	}
 	return nil
 }

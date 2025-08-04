@@ -261,7 +261,7 @@ func newBackendMock() *backendMock {
 			Number:     big.NewInt(1100),
 			GasLimit:   8_000_000,
 			GasUsed:    8_000_000,
-			Time:       big.NewInt(555),
+			Time:       555,
 			Extra:      make([]byte, 32),
 			BaseFee:    big.NewInt(10),
 		},

@@ -297,7 +297,7 @@ func (api *API) GetV2BlockByHeader(header *types.Header, uncle bool) *V2BlockInf
 		Round:      round,
 		Committed:  committed,
 		Miner:      header.Coinbase.Hash(),
-		Timestamp:  header.Time,
+		Timestamp:  new(big.Int).SetUint64(header.Time),
 		EncodedRLP: base64.StdEncoding.EncodeToString(encodeBytes),
 	}
 	return block

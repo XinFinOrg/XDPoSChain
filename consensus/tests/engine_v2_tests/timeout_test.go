@@ -1,7 +1,6 @@
 package engine_v2_tests
 
 import (
-	"math/big"
 	"strconv"
 	"strings"
 	"testing"
@@ -111,7 +110,7 @@ func TestTimeoutPeriodAndThreadholdConfigChange(t *testing.T) {
 	blockCoinBase := "0x111000000000000000000000000000000123"
 	currentBlock = CreateBlock(blockchain, params.TestXDPoSMockChainConfig, currentBlock, blockNum, 900, blockCoinBase, signer, signFn, nil, nil, "")
 	currentBlockHeader := currentBlock.Header()
-	currentBlockHeader.Time = big.NewInt(time.Now().Unix())
+	currentBlockHeader.Time = uint64(time.Now().Unix())
 	err := blockchain.InsertBlock(currentBlock)
 	assert.Nil(t, err)
 

@@ -383,7 +383,7 @@ func (w *worker) update() {
 
 func getResetTime(chain *core.BlockChain, minePeriod int) time.Duration {
 	minePeriodDuration := time.Duration(minePeriod) * time.Second
-	currentBlockTime := chain.CurrentBlock().Time().Int64()
+	currentBlockTime := int64(chain.CurrentBlock().Time())
 	nowTime := time.Now().UnixMilli()
 	resetTime := time.Duration(currentBlockTime)*time.Second + minePeriodDuration - time.Duration(nowTime)*time.Millisecond
 	// in case the current block time is not very accurate
@@ -639,8 +639,8 @@ func (w *worker) commitNewWork() {
 		}
 	}
 	tstamp := tstart.Unix()
-	if parent.Time().Cmp(new(big.Int).SetInt64(tstamp)) >= 0 {
-		tstamp = parent.Time().Int64() + 1
+	if parent.Time() >= uint64(tstamp) {
+		tstamp = int64(parent.Time() + 1)
 	}
 	// this will ensure we're not going off too far in the future
 	if now := time.Now().Unix(); tstamp > now {
@@ -655,7 +655,7 @@ func (w *worker) commitNewWork() {
 		Number:     num.Add(num, common.Big1),
 		GasLimit:   params.TargetGasLimit,
 		Extra:      w.extra,
-		Time:       big.NewInt(tstamp),
+		Time:       uint64(tstamp),
 	}
 	// Set baseFee if we are on an EIP-1559 chain
 	header.BaseFee = eip1559.CalcBaseFee(w.config, header)

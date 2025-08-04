@@ -256,7 +256,7 @@ func GenerateBadBlock(t *testing.T, parent *types.Block, engine consensus.Engine
 	header := &types.Header{
 		ParentHash: parent.Hash(),
 		Coinbase:   parent.Coinbase(),
-		Difficulty: engine.CalcDifficulty(&fakeChainReader{config}, parent.Time().Uint64()+10, &types.Header{
+		Difficulty: engine.CalcDifficulty(&fakeChainReader{config}, parent.Time()+10, &types.Header{
 			Number:     parent.Number(),
 			Time:       parent.Time(),
 			Difficulty: parent.Difficulty(),
@@ -264,7 +264,7 @@ func GenerateBadBlock(t *testing.T, parent *types.Block, engine consensus.Engine
 		}),
 		GasLimit:  parent.GasLimit(),
 		Number:    new(big.Int).Add(parent.Number(), common.Big1),
-		Time:      new(big.Int).SetUint64(parent.Time().Uint64() + 10),
+		Time:      parent.Time() + 10,
 		UncleHash: types.EmptyUncleHash,
 	}
 	if config.IsEIP1559(header.Number) {

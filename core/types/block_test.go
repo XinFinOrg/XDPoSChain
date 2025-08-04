@@ -52,7 +52,7 @@ func TestBlockEncoding(t *testing.T) {
 	check("Root", block.Root().String(), common.HexToHash("ef1552a40b7165c3cd773806b9e0c165b75356e0314bf0706f279c729f51e017").String())
 	check("Hash", block.Hash().String(), common.HexToHash("e8d9d473fdeddd3079988fa7be58f582b7b2800e90917d4bb6f11155ce4dba30").String())
 	check("Nonce", block.Nonce(), uint64(0xa13a5a8c8f2bb1c4))
-	check("Time", block.Time(), big.NewInt(1426516743))
+	check("Time", block.Time(), uint64(1426516743))
 	check("Size", block.Size(), common.StorageSize(len(blockEnc)))
 
 	ourBlockEnc, err := rlp.EncodeToBytes(&block)
@@ -84,7 +84,7 @@ func TestEIP2718BlockEncoding(t *testing.T) {
 	check("MixDigest", block.MixDigest(), common.HexToHash("bd4472abb6659ebe3ee06ee4d7b72a00a9f4d001caca51342001075469aff498"))
 	check("Root", block.Root(), common.HexToHash("ef1552a40b7165c3cd773806b9e0c165b75356e0314bf0706f279c729f51e017"))
 	check("Nonce", block.Nonce(), uint64(0xa13a5a8c8f2bb1c4))
-	check("Time", block.Time().Uint64(), uint64(1426516743))
+	check("Time", block.Time(), uint64(1426516743))
 	check("Size", block.Size(), common.StorageSize(len(blockEnc)))
 
 	// Create legacy tx.
@@ -186,7 +186,7 @@ func makeBenchBlock() *Block {
 		Number:     math.BigPow(2, 9),
 		GasLimit:   12345678,
 		GasUsed:    1476322,
-		Time:       big.NewInt(9876543),
+		Time:       9876543,
 		Extra:      []byte("coolest block on chain"),
 	}
 	for i := range txs {
@@ -207,7 +207,7 @@ func makeBenchBlock() *Block {
 			Number:     math.BigPow(2, 9),
 			GasLimit:   12345678,
 			GasUsed:    1476322,
-			Time:       big.NewInt(9876543),
+			Time:       9876543,
 			Extra:      []byte("benchmark uncle"),
 		}
 	}

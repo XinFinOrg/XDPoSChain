@@ -217,7 +217,7 @@ func fakeHeader(n uint64, parentHash common.Hash) *types.Header {
 		Coinbase:   common.HexToAddress("0x00000000000000000000000000000000deadbeef"),
 		Number:     big.NewInt(int64(n)),
 		ParentHash: parentHash,
-		Time:       big.NewInt(1000),
+		Time:       1000,
 		Nonce:      types.BlockNonce{0x1},
 		Extra:      []byte{},
 		Difficulty: big.NewInt(0),
