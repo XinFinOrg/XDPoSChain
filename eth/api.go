@@ -404,7 +404,7 @@ func (api *DebugAPI) StorageRangeAt(ctx context.Context, blockHash common.Hash, 
 	if block == nil {
 		return StorageRangeResult{}, fmt.Errorf("block %#x not found", blockHash)
 	}
-	_, _, statedb, release, err := api.eth.stateAtTransaction(block, txIndex, 0)
+	_, _, statedb, release, err := api.eth.stateAtTransaction(ctx, block, txIndex, 0)
 	if err != nil {
 		return StorageRangeResult{}, err
 	}
