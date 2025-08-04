@@ -77,8 +77,8 @@ func (x *XDPoS_v2) syncInfoHandler(chain consensus.ChainReader, syncInfo *types.
 	qc := syncInfo.HighestQuorumCert
 	tc := syncInfo.HighestTimeoutCert
 
-	if x.highestQuorumCert.ProposedBlockInfo.Round > qc.ProposedBlockInfo.Round && (tc == nil || x.highestTimeoutCert.Round > tc.Round) {
-		log.Debug("[syncInfoHandler] Round from incoming syncInfo message is equal or smaller then local round, skip process message", "highestQCRound", x.highestQuorumCert.ProposedBlockInfo.Round, "highestTCRound", x.highestTimeoutCert.Round, "incomingSyncInfoQCRound", qc.ProposedBlockInfo.Round, "incomingSyncInfoTCRound", tc.Round)
+	if x.highestQuorumCert.ProposedBlockInfo.Round >= qc.ProposedBlockInfo.Round && (tc == nil || x.highestTimeoutCert.Round >= tc.Round) {
+		log.Debug("[syncInfoHandler] Local Round is larger or equal than syncinfo round, skip process message", "highestQCRound", x.highestQuorumCert.ProposedBlockInfo.Round, "highestTCRound", x.highestTimeoutCert.Round, "incomingSyncInfoQCRound", qc.ProposedBlockInfo.Round, "incomingSyncInfoTCRound", tc.Round)
 		return nil
 	}
 
