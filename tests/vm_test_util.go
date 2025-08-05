@@ -143,7 +143,7 @@ func (t *VMTest) newEVM(statedb *state.StateDB, vmconfig vm.Config) *vm.EVM {
 		GetHash:     vmTestBlockHash,
 		Coinbase:    t.json.Env.Coinbase,
 		BlockNumber: new(big.Int).SetUint64(t.json.Env.Number),
-		Time:        new(big.Int).SetUint64(t.json.Env.Timestamp),
+		Time:        t.json.Env.Timestamp,
 		GasLimit:    t.json.Env.GasLimit,
 		Difficulty:  t.json.Env.Difficulty,
 	}

@@ -127,7 +127,7 @@ func TestZeroValueToNotExitCall(t *testing.T) {
 		Transfer:    core.Transfer,
 		Coinbase:    common.Address{},
 		BlockNumber: new(big.Int).SetUint64(8000000),
-		Time:        new(big.Int).SetUint64(5),
+		Time:        5,
 		Difficulty:  big.NewInt(0x30000),
 		GasLimit:    uint64(6000000),
 	}
@@ -211,7 +211,7 @@ func TestPrestateTracerCreate2(t *testing.T) {
 		Transfer:    core.Transfer,
 		Coinbase:    common.Address{},
 		BlockNumber: new(big.Int).SetUint64(8000000),
-		Time:        new(big.Int).SetUint64(5),
+		Time:        5,
 		Difficulty:  big.NewInt(0x30000),
 		GasLimit:    uint64(6000000),
 	}
@@ -304,7 +304,7 @@ func BenchmarkTransactionTrace(b *testing.B) {
 		Transfer:    core.Transfer,
 		Coinbase:    common.Address{},
 		BlockNumber: new(big.Int).SetUint64(uint64(5)),
-		Time:        new(big.Int).SetUint64(uint64(5)),
+		Time:        5,
 		Difficulty:  big.NewInt(0xffffffff),
 		GasLimit:    gas,
 		BaseFee:     big.NewInt(8),
