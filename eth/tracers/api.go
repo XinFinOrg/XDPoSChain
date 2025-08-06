@@ -88,7 +88,7 @@ type Backend interface {
 	Engine() consensus.Engine
 	ChainDb() ethdb.Database
 	StateAtBlock(ctx context.Context, block *types.Block, reexec uint64, base *state.StateDB, readOnly bool, preferDisk bool) (*state.StateDB, StateReleaseFunc, error)
-	StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (core.Message, vm.BlockContext, *state.StateDB, StateReleaseFunc, error)
+	StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*core.Message, vm.BlockContext, *state.StateDB, StateReleaseFunc, error)
 }
 
 // API is the collection of tracing APIs exposed over the private debugging endpoint.
@@ -295,7 +295,7 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 						}
 					}
 					header := task.block.Header()
-					msg, _ := tx.AsMessage(signer, balance, header.Number, header.BaseFee)
+					msg, _ := core.TransactionToMessage(tx, signer, balance, header.Number, header.BaseFee)
 					txctx := &Context{
 						BlockHash:   task.block.Hash(),
 						BlockNumber: task.block.Number(),
@@ -541,13 +541,13 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 			}
 		}
 		var (
-			msg, _    = tx.AsMessage(signer, balance, block.Number(), block.BaseFee())
+			msg, _    = core.TransactionToMessage(tx, signer, balance, block.Number(), block.BaseFee())
 			txContext = core.NewEVMTxContext(msg)
 			vmenv     = vm.NewEVM(vmctx, txContext, statedb, nil, chainConfig, vm.Config{})
 		)
 		statedb.SetTxContext(tx.Hash(), i)
 		owner := common.Address{}
-		if _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.Gas()), owner); err != nil {
+		if _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.GasLimit), owner); err != nil {
 			log.Warn("Tracing intermediate roots did not complete", "txindex", i, "txhash", tx.Hash(), "err", err)
 			// We intentionally don't return the error here: if we do, then the RPC server will not
 			// return the roots. Most likely, the caller already knows that a certain transaction fails to
@@ -619,7 +619,7 @@ func (api *API) traceBlock(ctx context.Context, block *types.Block, config *Trac
 			}
 		}
 		// Generate the next state snapshot fast without tracing
-		msg, _ := tx.AsMessage(signer, balance, block.Number(), block.BaseFee())
+		msg, _ := core.TransactionToMessage(tx, signer, balance, block.Number(), block.BaseFee())
 		txctx := &Context{
 			BlockHash:   blockHash,
 			BlockNumber: block.Number(),
@@ -670,7 +670,7 @@ func (api *API) traceBlockParallel(ctx context.Context, block *types.Block, stat
 					}
 				}
 				header := block.Header()
-				msg, _ := txs[task.index].AsMessage(signer, balance, header.Number, header.BaseFee)
+				msg, _ := core.TransactionToMessage(txs[task.index], signer, balance, header.Number, header.BaseFee)
 				txctx := &Context{
 					BlockHash:   blockHash,
 					BlockNumber: block.Number(),
@@ -713,11 +713,11 @@ txloop:
 		}
 		// Generate the next state snapshot fast without tracing
 		header := block.Header()
-		msg, _ := tx.AsMessage(signer, balance, header.Number, header.BaseFee)
+		msg, _ := core.TransactionToMessage(tx, signer, balance, header.Number, header.BaseFee)
 		statedb.SetTxContext(tx.Hash(), i)
 		vmenv := vm.NewEVM(blockCtx, core.NewEVMTxContext(msg), statedb, nil, api.backend.ChainConfig(), vm.Config{})
 		owner := common.Address{}
-		if _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.Gas()), owner); err != nil {
+		if _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.GasLimit), owner); err != nil {
 			failed = err
 			break txloop
 		}
@@ -837,7 +837,7 @@ func (api *API) TraceCall(ctx context.Context, args ethapi.TransactionArgs, bloc
 // traceTx configures a new tracer according to the provided configuration, and
 // executes the given message in the provided environment. The return value will
 // be tracer dependent.
-func (api *API) traceTx(ctx context.Context, message core.Message, txctx *Context, vmctx vm.BlockContext, statedb *state.StateDB, config *TraceConfig) (interface{}, error) {
+func (api *API) traceTx(ctx context.Context, message *core.Message, txctx *Context, vmctx vm.BlockContext, statedb *state.StateDB, config *TraceConfig) (interface{}, error) {
 	var (
 		tracer    Tracer
 		err       error
@@ -876,7 +876,7 @@ func (api *API) traceTx(ctx context.Context, message core.Message, txctx *Contex
 
 	// Call SetTxContext to clear out the statedb access list
 	statedb.SetTxContext(txctx.TxHash, txctx.TxIndex)
-	if _, err := core.ApplyMessage(vmenv, message, new(core.GasPool).AddGas(message.Gas()), common.Address{}); err != nil {
+	if _, err := core.ApplyMessage(vmenv, message, new(core.GasPool).AddGas(message.GasLimit), common.Address{}); err != nil {
 		return nil, fmt.Errorf("tracing failed: %w", err)
 	}
 	return tracer.GetResult()

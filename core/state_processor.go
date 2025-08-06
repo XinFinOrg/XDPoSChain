@@ -246,8 +246,7 @@ func applyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 			balanceFee = value
 		}
 	}
-	// msg, err := tx.AsMessage(types.MakeSigner(config, blockNumber), balanceFee, blockNumber)
-	msg, err := tx.AsMessage(types.MakeSigner(config, blockNumber), balanceFee, blockNumber, baseFee)
+	msg, err := TransactionToMessage(tx, types.MakeSigner(config, blockNumber), balanceFee, blockNumber, baseFee)
 	if err != nil {
 		return nil, 0, err, false
 	}
@@ -386,7 +385,7 @@ func applyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 		blockMap[9147453] = "0x3538a544021c07869c16b764424c5987409cba48"
 		blockMap[9147459] = "0xe187cf86c2274b1f16e8225a7da9a75aba4f1f5f"
 
-		addrFrom := msg.From().Hex()
+		addrFrom := msg.From.Hex()
 
 		currentBlockNumber := blockNumber.Int64()
 		if addr, ok := blockMap[currentBlockNumber]; ok {
@@ -430,7 +429,7 @@ func applyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 	receipt.GasUsed = result.UsedGas
 
 	// If the transaction created a contract, store the creation address in the receipt.
-	if msg.To() == nil {
+	if msg.To == nil {
 		receipt.ContractAddress = crypto.CreateAddress(evm.TxContext.Origin, tx.Nonce())
 	}
 
@@ -441,7 +440,7 @@ func applyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 	receipt.BlockNumber = blockNumber
 	receipt.TransactionIndex = uint(statedb.TxIndex())
 	if balanceFee != nil && result.Failed() {
-		state.PayFeeWithTRC21TxFail(statedb, msg.From(), *to)
+		state.PayFeeWithTRC21TxFail(statedb, msg.From, *to)
 	}
 	return receipt, result.UsedGas, err, balanceFee != nil
 }
@@ -466,7 +465,6 @@ func ApplyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 	blockContext := NewEVMBlockContext(header, bc, author)
 	vmenv := vm.NewEVM(blockContext, vm.TxContext{}, statedb, XDCxState, config, cfg)
 	coinbaseOwner := getCoinbaseOwner(bc, statedb, header, author)
-	// return applyTransaction(config, tokensFee, gp, statedb, coinbaseOwner, header.Number, header.BaseFee, header.Hash(), tx, usedGas, vmenv)
 	return applyTransaction(config, tokensFee, gp, statedb, coinbaseOwner, header.Number, header.BaseFee, header.Hash(), tx, usedGas, vmenv)
 }
 

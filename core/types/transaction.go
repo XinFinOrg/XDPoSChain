@@ -424,45 +424,6 @@ func (tx *Transaction) EffectiveGasPrice(dst *big.Int, baseFee *big.Int) *big.In
 	return tx.inner.effectiveGasPrice(dst, baseFee)
 }
 
-// AsMessage returns the transaction as a core.Message.
-func (tx *Transaction) AsMessage(s Signer, balanceFee, blockNumber, baseFee *big.Int) (Message, error) {
-	msg := Message{
-		nonce:           tx.Nonce(),
-		gasLimit:        tx.Gas(),
-		gasPrice:        new(big.Int).Set(tx.GasPrice()),
-		gasFeeCap:       new(big.Int).Set(tx.GasFeeCap()),
-		gasTipCap:       new(big.Int).Set(tx.GasTipCap()),
-		to:              tx.To(),
-		amount:          tx.Value(),
-		data:            tx.Data(),
-		accessList:      tx.AccessList(),
-		isFake:          false,
-		balanceTokenFee: balanceFee,
-	}
-
-	if balanceFee != nil {
-		if blockNumber != nil {
-			if blockNumber.Cmp(common.BlockNumberGas50x) >= 0 {
-				msg.gasPrice = common.GasPrice50x
-			} else if blockNumber.Cmp(common.TIPTRC21Fee) > 0 {
-				msg.gasPrice = common.TRC21GasPrice
-			} else {
-				msg.gasPrice = common.TRC21GasPriceBefore
-			}
-		}
-	} else if baseFee != nil {
-		// If baseFee provided, set gasPrice to effectiveGasPrice.
-		msg.gasPrice = msg.gasPrice.Add(msg.gasTipCap, baseFee)
-		if msg.gasPrice.Cmp(msg.gasFeeCap) > 0 {
-			msg.gasPrice.Set(msg.gasFeeCap)
-		}
-	}
-
-	var err error
-	msg.from, err = Sender(s, tx)
-	return msg, err
-}
-
 // WithSignature returns a new transaction with the given signature.
 // This signature needs to be in the [R || S || V] format where V is 0 or 1.
 func (tx *Transaction) WithSignature(signer Signer, sig []byte) (*Transaction, error) {
@@ -816,68 +777,6 @@ func (t *TransactionsByPriceAndNonce) Shift() {
 // and hence all subsequent ones should be discarded from the same account.
 func (t *TransactionsByPriceAndNonce) Pop() {
 	heap.Pop(&t.heads)
-}
-
-// Message is a fully derived transaction and implements core.Message
-//
-// NOTE: In a future PR this will be removed.
-type Message struct {
-	to              *common.Address
-	from            common.Address
-	nonce           uint64
-	amount          *big.Int
-	gasLimit        uint64
-	gasPrice        *big.Int
-	gasFeeCap       *big.Int
-	gasTipCap       *big.Int
-	data            []byte
-	accessList      AccessList
-	isFake          bool
-	balanceTokenFee *big.Int
-}
-
-func NewMessage(from common.Address, to *common.Address, nonce uint64, amount *big.Int, gasLimit uint64, gasPrice, gasFeeCap, gasTipCap *big.Int, data []byte, accessList AccessList, isFake bool, balanceTokenFee *big.Int, number *big.Int) Message {
-	if balanceTokenFee != nil {
-		gasPrice = common.GetGasPrice(number)
-	}
-	return Message{
-		from:            from,
-		to:              to,
-		nonce:           nonce,
-		amount:          amount,
-		gasLimit:        gasLimit,
-		gasPrice:        gasPrice,
-		gasFeeCap:       gasFeeCap,
-		gasTipCap:       gasTipCap,
-		data:            data,
-		accessList:      accessList,
-		isFake:          isFake,
-		balanceTokenFee: balanceTokenFee,
-	}
-}
-
-func (m Message) From() common.Address      { return m.from }
-func (m Message) BalanceTokenFee() *big.Int { return m.balanceTokenFee }
-func (m Message) To() *common.Address       { return m.to }
-func (m Message) GasPrice() *big.Int        { return m.gasPrice }
-func (m Message) GasFeeCap() *big.Int       { return m.gasFeeCap }
-func (m Message) GasTipCap() *big.Int       { return m.gasTipCap }
-func (m Message) Value() *big.Int           { return m.amount }
-func (m Message) Gas() uint64               { return m.gasLimit }
-func (m Message) Nonce() uint64             { return m.nonce }
-func (m Message) Data() []byte              { return m.data }
-func (m Message) IsFake() bool              { return m.isFake }
-func (m Message) AccessList() AccessList    { return m.accessList }
-
-func (m *Message) SetNonce(nonce uint64) { m.nonce = nonce }
-
-func (m *Message) SetBalanceTokenFeeForCall() {
-	m.balanceTokenFee = new(big.Int).SetUint64(m.gasLimit)
-	m.balanceTokenFee.Mul(m.balanceTokenFee, m.gasPrice)
-}
-
-func (m *Message) SetBalanceTokenFee(balanceTokenFee *big.Int) {
-	m.balanceTokenFee = balanceTokenFee
 }
 
 // copyAddressPtr copies an address.

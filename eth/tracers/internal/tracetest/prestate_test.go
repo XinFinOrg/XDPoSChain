@@ -115,7 +115,7 @@ func testPrestateDiffTracer(tracerName string, dirPath string, t *testing.T) {
 				t.Fatalf("failed to create call tracer: %v", err)
 			}
 			evm := vm.NewEVM(context, txContext, statedb, nil, test.Genesis.Config, vm.Config{Tracer: tracer})
-			msg, err := tx.AsMessage(signer, nil, context.BlockNumber, context.BaseFee)
+			msg, err := core.TransactionToMessage(tx, signer, nil, context.BlockNumber, context.BaseFee)
 			if err != nil {
 				t.Fatalf("failed to prepare transaction for tracing: %v", err)
 			}

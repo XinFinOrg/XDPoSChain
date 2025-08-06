@@ -27,7 +27,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/contracts/XDCx/contract"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
-	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
@@ -37,24 +36,6 @@ const (
 	minFeeFunction     = "minFee"
 	getDecimalFunction = "decimals"
 )
-
-// callMsg implements core.Message to allow passing it as a transaction simulator.
-type callMsg struct {
-	ethereum.CallMsg
-}
-
-func (m callMsg) From() common.Address         { return m.CallMsg.From }
-func (m callMsg) Nonce() uint64                { return 0 }
-func (m callMsg) IsFake() bool                 { return true }
-func (m callMsg) To() *common.Address          { return m.CallMsg.To }
-func (m callMsg) GasPrice() *big.Int           { return m.CallMsg.GasPrice }
-func (m callMsg) GasFeeCap() *big.Int          { return m.CallMsg.GasFeeCap }
-func (m callMsg) GasTipCap() *big.Int          { return m.CallMsg.GasTipCap }
-func (m callMsg) Gas() uint64                  { return m.CallMsg.Gas }
-func (m callMsg) Value() *big.Int              { return m.CallMsg.Value }
-func (m callMsg) Data() []byte                 { return m.CallMsg.Data }
-func (m callMsg) BalanceTokenFee() *big.Int    { return m.CallMsg.BalanceTokenFee }
-func (m callMsg) AccessList() types.AccessList { return m.CallMsg.AccessList }
 
 type SimulatedBackend interface {
 	CallContractWithState(call ethereum.CallMsg, chain consensus.ChainContext, statedb *state.StateDB) ([]byte, error)
@@ -102,18 +83,31 @@ func CallContractWithState(call ethereum.CallMsg, chain consensus.ChainContext, 
 	if call.Value == nil {
 		call.Value = new(big.Int)
 	}
+
 	// Execute the call.
-	msg := callMsg{call}
+	msg := &Message{
+		From:              call.From,
+		To:                call.To,
+		Value:             call.Value,
+		GasLimit:          call.Gas,
+		GasPrice:          call.GasPrice,
+		GasFeeCap:         call.GasFeeCap,
+		GasTipCap:         call.GasTipCap,
+		Data:              call.Data,
+		AccessList:        call.AccessList,
+		SkipAccountChecks: true,
+	}
 	feeCapacity := state.GetTRC21FeeCapacityFromState(statedb)
-	if msg.To() != nil {
-		if value, ok := feeCapacity[*msg.To()]; ok {
-			msg.CallMsg.BalanceTokenFee = value
+	if msg.To != nil {
+		if value, ok := feeCapacity[*msg.To]; ok {
+			msg.BalanceTokenFee = value
 		}
 	}
-	txContext := NewEVMTxContext(msg)
-	evmContext := NewEVMBlockContext(chain.CurrentHeader(), chain, nil)
+
 	// Create a new environment which holds all relevant information
 	// about the transaction and calling mechanisms.
+	txContext := NewEVMTxContext(msg)
+	evmContext := NewEVMBlockContext(chain.CurrentHeader(), chain, nil)
 	vmenv := vm.NewEVM(evmContext, txContext, statedb, nil, chain.Config(), vm.Config{})
 	gaspool := new(GasPool).AddGas(1000000)
 	owner := common.Address{}

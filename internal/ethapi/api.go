@@ -1127,7 +1127,8 @@ func DoCall(ctx context.Context, b Backend, args TransactionArgs, blockNrOrHash 
 	if err != nil {
 		return nil, err
 	}
-	msg.SetBalanceTokenFeeForCall()
+	msg.BalanceTokenFee = new(big.Int).SetUint64(msg.GasLimit)
+	msg.BalanceTokenFee.Mul(msg.BalanceTokenFee, msg.GasPrice)
 
 	// Get a new instance of the EVM.
 	evm, vmError, err := b.GetEVM(ctx, msg, statedb, XDCxState, header, &vm.Config{NoBaseFee: true})
@@ -1154,7 +1155,7 @@ func DoCall(ctx context.Context, b Backend, args TransactionArgs, blockNrOrHash 
 		return nil, fmt.Errorf("execution aborted (timeout = %v)", timeout)
 	}
 	if err != nil {
-		return result, fmt.Errorf("err: %w (supplied gas %d)", err, msg.Gas())
+		return result, fmt.Errorf("err: %w (supplied gas %d)", err, msg.GasLimit)
 	}
 	return result, err
 }
@@ -1776,7 +1777,7 @@ func AccessList(ctx context.Context, b Backend, blockNrOrHash rpc.BlockNumberOrH
 		if value, ok := feeCapacity[to]; ok {
 			balanceTokenFee = value
 		}
-		msg.SetBalanceTokenFee(balanceTokenFee)
+		msg.BalanceTokenFee = balanceTokenFee
 
 		// Apply the transaction with the access list tracer
 		tracer := logger.NewAccessListTracer(accessList, args.from(), to, precompiles)
@@ -1786,7 +1787,7 @@ func AccessList(ctx context.Context, b Backend, blockNrOrHash rpc.BlockNumberOrH
 			return nil, 0, nil, err
 		}
 		// TODO: determine the value of owner
-		res, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.Gas()), owner)
+		res, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(msg.GasLimit), owner)
 		if err != nil {
 			return nil, 0, nil, fmt.Errorf("failed to apply transaction: %v err: %v", args.toTransaction().Hash(), err)
 		}
