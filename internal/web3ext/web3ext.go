@@ -570,6 +570,7 @@ web3._extend({
 			name: 'call',
 			call: 'eth_call',
 			params: 3,
+			inputFormatter: [formatters.inputCallFormatter, formatters.inputDefaultBlockNumberFormatter, null],
 		}),
 		new web3._extend.Method({
 			name: 'getBlockReceipts',
