@@ -562,6 +562,11 @@ web3._extend({
 			inputFormatter: [null, web3._extend.formatters.inputBlockNumberFormatter, null]
 		}),
 		new web3._extend.Method({
+			name: 'getLogs',
+			call: 'eth_getLogs',
+			params: 1,
+		}),
+		new web3._extend.Method({
 			name: 'getBlockReceipts',
 			call: 'eth_getBlockReceipts',
 			params: 1,
@@ -711,7 +716,7 @@ web3._extend({
             call: 'XDCx_sendLendingRawTransaction',
             params: 1
 		}),
-		
+
 		new web3._extend.Method({
             name: 'sendOrderTransaction',
             call: 'XDCx_sendOrder',
