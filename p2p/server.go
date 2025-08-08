@@ -87,6 +87,11 @@ type Config struct {
 	// Name sets the node name of this server.
 	Name string `toml:"-"`
 
+	// Whitelist for peers
+	WhitePeers map[discover.NodeID]struct{}
+	// Blacklist for peers.
+	BlackPeers map[discover.NodeID]struct{}
+
 	// BootstrapNodes are used to establish connectivity
 	// with the rest of the network.
 	BootstrapNodes []*discover.Node
@@ -892,7 +897,19 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *discover.Node) e
 		srv.log.Trace("Failed RLPx handshake", "addr", c.fd.RemoteAddr(), "conn", c.flags, "err", err)
 		return err
 	}
-	clog := srv.log.New("id", c.id, "addr", c.fd.RemoteAddr(), "conn", c.flags)
+	clog := srv.log.New("id", c.id.String(), "addr", c.fd.RemoteAddr(), "conn", c.flags)
+	if len(srv.WhitePeers) > 0 {
+		if _, ok := srv.WhitePeers[c.id]; !ok {
+			clog.Debug("Reject non-whitelisted peer")
+			return DiscNonWhitelistedPeer
+		}
+	}
+	if len(srv.BlackPeers) > 0 {
+		if _, ok := srv.BlackPeers[c.id]; ok {
+			clog.Debug("Reject blacklisted peer")
+			return DiscBlacklistedPeer
+		}
+	}
 	// For dialed connections, check that the remote public key matches.
 	if dialDest != nil && c.id != dialDest.ID {
 		clog.Trace("Dialed identity mismatch", "want", c, dialDest.ID)
@@ -921,7 +938,7 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *discover.Node) e
 	}
 	// If the checks completed successfully, runPeer has now been
 	// launched by run.
-	clog.Trace("connection set up", "inbound", dialDest == nil)
+	clog.Debug("Setup connection")
 	return nil
 }
 

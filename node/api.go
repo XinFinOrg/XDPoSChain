@@ -65,6 +65,18 @@ func (api *adminAPI) AddPeer(url string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("invalid enode: %v", err)
 	}
+	// only accept the node which is in peer whitelist if the list is not empty
+	if len(server.WhitePeers) > 0 {
+		if _, ok := server.WhitePeers[node.ID]; !ok {
+			return false, fmt.Errorf("peer is not in whitelist: %v, ID: %s", url, node.ID)
+		}
+	}
+	// reject the node which is in peer blacklist
+	if len(server.BlackPeers) > 0 {
+		if _, ok := server.BlackPeers[node.ID]; ok {
+			return false, fmt.Errorf("peer is in blacklist: %v, ID: %s", url, node.ID)
+		}
+	}
 	server.AddPeer(node)
 	return true, nil
 }
@@ -95,6 +107,18 @@ func (api *adminAPI) AddTrustedPeer(url string) (bool, error) {
 	node, err := discover.ParseNode(url)
 	if err != nil {
 		return false, fmt.Errorf("invalid enode: %v", err)
+	}
+	// only accept the node which is in peer whitelist if the list is not empty
+	if len(server.WhitePeers) > 0 {
+		if _, ok := server.WhitePeers[node.ID]; !ok {
+			return false, fmt.Errorf("trusted peer is not in whitelist: %v, ID: %s", url, node.ID)
+		}
+	}
+	// reject the node which is in peer blacklist
+	if len(server.BlackPeers) > 0 {
+		if _, ok := server.BlackPeers[node.ID]; ok {
+			return false, fmt.Errorf("trusted peer is in blacklist: %v, ID: %s", url, node.ID)
+		}
 	}
 	server.AddTrustedPeer(node)
 	return true, nil

@@ -72,7 +72,9 @@ const (
 	DiscSelf
 	DiscReadTimeout
 	DiscPairPeerStop
-	DiscSubprotocolError = 0x10
+	DiscNonWhitelistedPeer
+	DiscBlacklistedPeer
+	DiscSubprotocolError = DiscReason(0x10)
 )
 
 var discReasonToString = [...]string{
@@ -89,11 +91,13 @@ var discReasonToString = [...]string{
 	DiscSelf:                "connected to self",
 	DiscReadTimeout:         "read timeout",
 	DiscPairPeerStop:        "pair peer connection stop",
+	DiscNonWhitelistedPeer:  "disconnect non-whitelisted peer",
+	DiscBlacklistedPeer:     "disconnect blacklisted peer",
 	DiscSubprotocolError:    "subprotocol error",
 }
 
 func (d DiscReason) String() string {
-	if len(discReasonToString) <= int(d) || int(d) < 0 {
+	if len(discReasonToString) <= int(d) || int(d) < 0 || discReasonToString[int(d)] == "" {
 		return fmt.Sprintf("unknown disconnect reason %d", d)
 	}
 	return discReasonToString[int(d)]
@@ -107,7 +111,7 @@ func discReasonForError(err error) DiscReason {
 	if reason, ok := err.(DiscReason); ok {
 		return reason
 	}
-	if err == errProtocolReturned {
+	if errors.Is(err, errProtocolReturned) {
 		return DiscQuitting
 	}
 	peerError, ok := err.(*peerError)
