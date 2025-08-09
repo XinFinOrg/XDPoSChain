@@ -560,3 +560,37 @@ func BenchmarkVerifyHeaderFalcon(t *testing.B) {
 		x.VerifyHeader(blockchain, newBlock.Header(), false)
 	}
 }
+
+// PrepareXDCTestBlockChainCompareToFalcon
+func BenchmarkVerifyHeader(t *testing.B) {
+	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
+	assert.Nil(t, err)
+	configString := string(b)
+
+	var config params.ChainConfig
+	err = json.Unmarshal([]byte(configString), &config)
+	assert.Nil(t, err)
+	blockchain, _, block, _, _ := PrepareXDCTestBlockChainCompareToFalcon(t, 901, &config)
+	x := blockchain.Engine().(*XDPoS.XDPoS)
+	// x2 := x.EngineV2
+	// // ad-hoc to add all masternodes into epoch switch cache
+	// masterNodes := []common.Address{}
+	// for i := int64(0); i < 73; i++ {
+	// 	key, _ := crypto.HexToECDSA(fmt.Sprintf("%064d", i+1))
+	// 	masterNodes = append(masterNodes, crypto.PubkeyToAddress(key.PublicKey))
+	// }
+	// parent := blockchain.GetBlockByNumber(901)
+	// x2.InsertMasternodesIntoEPochSwitch(parent.Number(), parent.Hash(), masterNodes)
+
+	err = x.VerifyHeader(blockchain, block.Header(), false)
+	if err != nil {
+		t.Log(err)
+
+	}
+	t.Log("this block signature len", len(block.Header().Validator))
+	t.Log("this block extra len", len(block.Header().Extra))
+	t.ResetTimer()
+	for i := 0; i < t.N; i++ {
+		x.VerifyHeader(blockchain, block.Header(), false)
+	}
+}

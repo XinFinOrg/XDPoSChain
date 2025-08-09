@@ -846,6 +846,80 @@ func PrepareXDCTestBlockChainFalcon(t testing.TB, numOfBlocks int, chainConfig *
 	return blockchain, backend, currentBlock, signer, signFn
 }
 
+// V2 concensus engine
+func PrepareXDCTestBlockChainCompareToFalcon(t testing.TB, numOfBlocks int, chainConfig *params.ChainConfig) (*core.BlockChain, *backends.SimulatedBackend, *types.Block, common.Address, func(account accounts.Account, hash []byte) ([]byte, error)) {
+	// Preparation
+	var err error
+	signer, signFn, err := backends.SimulateWalletAddressAndSignFn()
+	if err != nil {
+		panic(fmt.Errorf("error while creating simulated wallet for generating singer address and signer fn: %v", err))
+	}
+	// backend := getMultiCandidatesWithPrivKeyBackend(t, chainConfig, 108)
+	backend := getProtectorObserverBackend(t, chainConfig)
+
+	blockchain := backend.BlockChain()
+	blockchain.Client = backend
+
+	engine := blockchain.Engine().(*XDPoS.XDPoS)
+
+	// Authorise
+	engine.Authorize(signer, signFn)
+
+	currentBlock := blockchain.Genesis()
+
+	go func() {
+		for range core.CheckpointCh {
+			checkpointChanMsg := <-core.CheckpointCh
+			log.Info("[V2] Got a message from core CheckpointChan!", "msg", checkpointChanMsg)
+		}
+	}()
+	// generate 73 ecdsa keys to compare to falcon
+	signersKey := []*ecdsa.PrivateKey{}
+
+	for i := int64(0); i < 73; i++ {
+		key, _ := crypto.HexToECDSA(fmt.Sprintf("%064d", i+1))
+
+		signersKey = append(signersKey, key)
+	}
+	// Insert initial blocks
+	for i := 1; i <= numOfBlocks; i++ {
+		blockCoinBase := fmt.Sprintf("0x111000000000000000000000000000000%03d", i)
+		// for v2 blocks, fill in correct coinbase
+		if int64(i) > chainConfig.XDPoS.V2.SwitchBlock.Int64() {
+			blockCoinBase = signer.Hex()
+		}
+		roundNumber := int64(i) - chainConfig.XDPoS.V2.SwitchBlock.Int64()
+
+		block := CreateBlock(blockchain, chainConfig, currentBlock, i, roundNumber, blockCoinBase, signer, signFn, nil, signersKey, "f11ec19df702aa6bd9b3b2186edbc66d6b50b06334455a4a2ae8d166f28a14ff")
+
+		err = blockchain.InsertBlock(block)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// First v2 block
+		if (int64(i) - chainConfig.XDPoS.V2.SwitchBlock.Int64()) == 1 {
+			lastv1BlockNumber := block.Header().Number.Uint64() - 1
+			checkpointBlockNumber := lastv1BlockNumber - lastv1BlockNumber%chainConfig.XDPoS.Epoch
+			checkpointHeader := blockchain.GetHeaderByNumber(checkpointBlockNumber)
+			err := engine.EngineV2.Initial(blockchain, checkpointHeader)
+			if err != nil {
+				panic(err)
+			}
+		}
+
+		currentBlock = block
+	}
+
+	// Update Signer as there is no previous signer assigned
+	err = UpdateSigner(blockchain)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return blockchain, backend, currentBlock, signer, signFn
+}
+
 func CreateBlock(blockchain *core.BlockChain, chainConfig *params.ChainConfig, startingBlock *types.Block, blockNumber int, roundNumber int64, blockCoinBase string, signer common.Address, signFn func(account accounts.Account, hash []byte) ([]byte, error), penalties []byte, signersKey []*ecdsa.PrivateKey, merkleRoot string) *types.Block {
 	currentBlock := startingBlock
 	if len(merkleRoot) == 0 {
