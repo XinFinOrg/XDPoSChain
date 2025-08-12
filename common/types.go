@@ -251,6 +251,11 @@ func (a Address) IsZero() bool { return a == Address{} }
 // Str gets the string representation of the underlying address
 func (a Address) Str() string { return string(a[:]) }
 
+// Cmp compares two addresses.
+func (a Address) Cmp(other Address) int {
+	return bytes.Compare(a[:], other[:])
+}
+
 // Bytes gets the string representation of the underlying address.
 func (a Address) Bytes() []byte { return a[:] }
 
