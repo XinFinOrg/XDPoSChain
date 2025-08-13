@@ -1153,20 +1153,18 @@ func DoCall(ctx context.Context, b Backend, args TransactionArgs, blockNrOrHash 
 		return nil, err
 	}
 
-	// TODO: replace header.BaseFee with blockCtx.BaseFee
-	// reference: https://github.com/ethereum/go-ethereum/pull/29051
-	msg, err := args.ToMessage(b, header.Number, globalGasCap, header.BaseFee)
+	// Get a new instance of the EVM.
+	blockCtx := core.NewEVMBlockContext(header, NewChainContext(ctx, b), nil)
+	if blockOverrides != nil {
+		blockOverrides.Apply(&blockCtx)
+	}
+	msg, err := args.ToMessage(b, header.Number, globalGasCap, blockCtx.BaseFee)
 	if err != nil {
 		return nil, err
 	}
 	msg.BalanceTokenFee = new(big.Int).SetUint64(msg.GasLimit)
 	msg.BalanceTokenFee.Mul(msg.BalanceTokenFee, msg.GasPrice)
 
-	// Get a new instance of the EVM.
-	blockCtx := core.NewEVMBlockContext(header, NewChainContext(ctx, b), nil)
-	if blockOverrides != nil {
-		blockOverrides.Apply(&blockCtx)
-	}
 	evm, vmError, err := b.GetEVM(ctx, msg, statedb, XDCxState, header, &vm.Config{NoBaseFee: true}, &blockCtx)
 	if err != nil {
 		return nil, err

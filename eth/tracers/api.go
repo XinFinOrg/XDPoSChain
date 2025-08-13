@@ -810,9 +810,7 @@ func (api *API) TraceCall(ctx context.Context, args ethapi.TransactionArgs, bloc
 		config.BlockOverrides.Apply(&vmctx)
 	}
 	// Execute the trace
-	// TODO(daniel): replace block.BaseFee() with vmctx.BaseFee
-	// reference: https://github.com/ethereum/go-ethereum/pull/29051
-	msg, err := args.ToMessage(api.backend, block.Number(), api.backend.RPCGasCap(), block.BaseFee())
+	msg, err := args.ToMessage(api.backend, block.Number(), api.backend.RPCGasCap(), vmctx.BaseFee)
 	if err != nil {
 		return nil, err
 	}
