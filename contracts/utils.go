@@ -467,7 +467,7 @@ func GetRewardBalancesRate(foundationWalletAddr common.Address, statedb *state.S
 	foundationReward := new(big.Int).Mul(totalReward, new(big.Int).SetInt64(common.RewardFoundationPercent))
 	foundationReward = new(big.Int).Div(foundationReward, new(big.Int).SetInt64(100))
 
-	if balances[foundationWalletAddr] != nil {
+	if blockNumber >= common.TIPUpgradeReward.Uint64() && balances[foundationWalletAddr] != nil {
 		balances[foundationWalletAddr].Add(balances[foundationWalletAddr], foundationReward)
 	} else {
 		balances[foundationWalletAddr] = foundationReward
