@@ -306,6 +306,11 @@ func NewBlockChainAPI(b Backend, chainReader consensus.ChainReader) *BlockChainA
 	}
 }
 
+// ChainId returns the chainID value for transaction replay protection.
+func (s *BlockChainAPI) ChainId() *hexutil.Big {
+	return (*hexutil.Big)(s.b.ChainConfig().ChainId)
+}
+
 // BlockNumber returns the block number of the chain head.
 func (s *BlockChainAPI) BlockNumber() hexutil.Uint64 {
 	header, _ := s.b.HeaderByNumber(context.Background(), rpc.LatestBlockNumber) // latest header should always be available
