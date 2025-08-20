@@ -39,7 +39,12 @@ type Client struct {
 
 // Dial connects a client to the given URL.
 func Dial(rawurl string) (*Client, error) {
-	c, err := rpc.Dial(rawurl)
+	return DialContext(context.Background(), rawurl)
+}
+
+// DialContext connects a client to the given URL with context.
+func DialContext(ctx context.Context, rawurl string) (*Client, error) {
+	c, err := rpc.DialContext(ctx, rawurl)
 	if err != nil {
 		return nil, err
 	}
@@ -49,6 +54,11 @@ func Dial(rawurl string) (*Client, error) {
 // NewClient creates a client that uses the given RPC client.
 func NewClient(c *rpc.Client) *Client {
 	return &Client{c}
+}
+
+// Close closes the underlying RPC connection.
+func (ec *Client) Close() {
+	ec.c.Close()
 }
 
 // Blockchain Access
