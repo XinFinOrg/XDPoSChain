@@ -39,7 +39,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common/fdlimit"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
-	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
@@ -179,49 +178,6 @@ var (
 		Name:     "lightkdf",
 		Usage:    "Reduce key-derivation RAM & CPU usage at some expense of KDF strength",
 		Category: flags.AccountCategory,
-	}
-
-	// Ethash settings
-	EthashCacheDirFlag = &flags.DirectoryFlag{
-		Name:     "ethash-cachedir",
-		Aliases:  []string{"ethash.cachedir"},
-		Usage:    "Directory to store the ethash verification caches (default = inside the datadir)",
-		Category: flags.EthashCategory,
-	}
-	EthashCachesInMemoryFlag = &cli.IntFlag{
-		Name:     "ethash-cachesinmem",
-		Aliases:  []string{"ethash.cachesinmem"},
-		Usage:    "Number of recent ethash caches to keep in memory (16MB each)",
-		Value:    ethconfig.Defaults.Ethash.CachesInMem,
-		Category: flags.EthashCategory,
-	}
-	EthashCachesOnDiskFlag = &cli.IntFlag{
-		Name:     "ethash-cachesondisk",
-		Aliases:  []string{"ethash.cachesondisk"},
-		Usage:    "Number of recent ethash caches to keep on disk (16MB each)",
-		Value:    ethconfig.Defaults.Ethash.CachesOnDisk,
-		Category: flags.EthashCategory,
-	}
-	EthashDatasetDirFlag = &flags.DirectoryFlag{
-		Name:     "ethash-dagdir",
-		Aliases:  []string{"ethash.dagdir"},
-		Usage:    "Directory to store the ethash mining DAGs (default = inside home folder)",
-		Value:    flags.DirectoryString(ethconfig.Defaults.Ethash.DatasetDir),
-		Category: flags.EthashCategory,
-	}
-	EthashDatasetsInMemoryFlag = &cli.IntFlag{
-		Name:     "ethash-dagsinmem",
-		Aliases:  []string{"ethash.dagsinmem"},
-		Usage:    "Number of recent ethash mining DAGs to keep in memory (1+GB each)",
-		Value:    ethconfig.Defaults.Ethash.DatasetsInMem,
-		Category: flags.EthashCategory,
-	}
-	EthashDatasetsOnDiskFlag = &cli.IntFlag{
-		Name:     "ethash-dagsondisk",
-		Aliases:  []string{"ethash.dagsondisk"},
-		Usage:    "Number of recent ethash mining DAGs to keep on disk (1+GB each)",
-		Value:    ethconfig.Defaults.Ethash.DatasetsOnDisk,
-		Category: flags.EthashCategory,
 	}
 
 	// Transaction pool settings
@@ -454,11 +410,6 @@ var (
 		Name:     "ethstats",
 		Usage:    "Reporting URL of a ethstats service (nodename:secret@host:port)",
 		Category: flags.MetricsCategory,
-	}
-	FakePoWFlag = &cli.BoolFlag{
-		Name:     "fakepow",
-		Usage:    "Disables proof-of-work verification",
-		Category: flags.LoggingCategory,
 	}
 	NoCompactionFlag = &cli.BoolFlag{
 		Name:     "nocompaction",
@@ -1487,27 +1438,6 @@ func setTxPool(ctx *cli.Context, cfg *txpool.Config) {
 	}
 }
 
-func setEthash(ctx *cli.Context, cfg *ethconfig.Config) {
-	if ctx.IsSet(EthashCacheDirFlag.Name) {
-		cfg.Ethash.CacheDir = ctx.String(EthashCacheDirFlag.Name)
-	}
-	if ctx.IsSet(EthashDatasetDirFlag.Name) {
-		cfg.Ethash.DatasetDir = ctx.String(EthashDatasetDirFlag.Name)
-	}
-	if ctx.IsSet(EthashCachesInMemoryFlag.Name) {
-		cfg.Ethash.CachesInMem = ctx.Int(EthashCachesInMemoryFlag.Name)
-	}
-	if ctx.IsSet(EthashCachesOnDiskFlag.Name) {
-		cfg.Ethash.CachesOnDisk = ctx.Int(EthashCachesOnDiskFlag.Name)
-	}
-	if ctx.IsSet(EthashDatasetsInMemoryFlag.Name) {
-		cfg.Ethash.DatasetsInMem = ctx.Int(EthashDatasetsInMemoryFlag.Name)
-	}
-	if ctx.IsSet(EthashDatasetsOnDiskFlag.Name) {
-		cfg.Ethash.DatasetsOnDisk = ctx.Int(EthashDatasetsOnDiskFlag.Name)
-	}
-}
-
 // CheckExclusive verifies that only a single isntance of the provided flags was
 // set by the user. Each flag might optionally be followed by a string type to
 // specialize it further.
@@ -1585,7 +1515,6 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	setEtherbase(ctx, ks, cfg)
 	setGPO(ctx, &cfg.GPO)
 	setTxPool(ctx, &cfg.TxPool)
-	setEthash(ctx, cfg)
 	setLes(ctx, cfg)
 
 	// Cap the cache allowance and tune the garbage collector
@@ -1873,17 +1802,6 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (chain *core.B
 	if config.XDPoS != nil {
 		engine = XDPoS.New(config, chainDb)
 	} else {
-		engine = ethash.NewFaker()
-		if !ctx.Bool(FakePoWFlag.Name) {
-			engine = ethash.New(ethash.Config{
-				CacheDir:       stack.ResolvePath(ethconfig.Defaults.Ethash.CacheDir),
-				CachesInMem:    ethconfig.Defaults.Ethash.CachesInMem,
-				CachesOnDisk:   ethconfig.Defaults.Ethash.CachesOnDisk,
-				DatasetDir:     stack.ResolvePath(ethconfig.Defaults.Ethash.DatasetDir),
-				DatasetsInMem:  ethconfig.Defaults.Ethash.DatasetsInMem,
-				DatasetsOnDisk: ethconfig.Defaults.Ethash.DatasetsOnDisk,
-			})
-		}
 		Fatalf("Only support XDPoS consensus")
 	}
 	if gcmode := ctx.String(GCModeFlag.Name); gcmode != "full" && gcmode != "archive" {

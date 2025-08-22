@@ -28,7 +28,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/XDCxlending"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
-	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/eth"
 	"github.com/XinFinOrg/XDPoSChain/eth/ethconfig"
@@ -97,9 +96,6 @@ func newTester(t *testing.T, confOverride func(*ethconfig.Config)) *tester {
 	ethConf := &ethconfig.Config{
 		Genesis:   core.DeveloperGenesisBlock(15, common.Address{}),
 		Etherbase: common.HexToAddress(testAddress),
-		Ethash: ethash.Config{
-			PowMode: ethash.ModeTest,
-		},
 	}
 	if confOverride != nil {
 		confOverride(ethConf)
