@@ -436,11 +436,25 @@ func (bc *BlockChain) loadLastState() error {
 	return nil
 }
 
-// SetHead rewinds the local chain to a new head. In the case of headers, everything
-// above the new head will be deleted and the new one set. In the case of blocks
-// though, the head may be further rewound if block bodies are missing (non-archive
-// nodes after a fast sync).
+// SetHead rewinds the local chain to a new head. Depending on whether the node
+// was fast synced or full synced and in which state, the method will try to
+// delete minimal data from disk whilst retaining chain consistency.
 func (bc *BlockChain) SetHead(head uint64) error {
+	if err := bc.setHeadBeyondRoot(head); err != nil {
+		return err
+	}
+	// Send chain head event to update the transaction pool
+	bc.chainHeadFeed.Send(ChainHeadEvent{Block: bc.CurrentBlock()})
+	return nil
+}
+
+// setHeadBeyondRoot rewinds the local chain to a new head with the extra condition
+// that the rewind must pass the specified state root. This method is meant to be
+// used when rewinding with snapshots enabled to ensure that we go back further than
+// persistent disk layer. Depending on whether the node was fast synced or full, and
+// in which state, the method will try to delete minimal data from disk whilst
+// retaining chain consistency.
+func (bc *BlockChain) setHeadBeyondRoot(head uint64) error {
 	if !bc.chainmu.TryLock() {
 		return errChainStopped
 	}
