@@ -308,6 +308,8 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 		} else {
 			rewardsMap["signersProtector"] = signers[ProtectorNodeBeneficiary]
 			rewardsMap["signersObserver"] = signers[ObserverNodeBeneficiary]
+			epochRewardTotalFloat := new(big.Float).SetFloat64(currentConfig.MasternodeReward + currentConfig.ProtectorReward + currentConfig.ObserverReward)
+			epochRewardTotal, _ := epochRewardTotalFloat.Int(nil) // TODO remove this, and make correct count (use e.g. rewardSum)
 			rewardSum := new(big.Int)
 			type rewardWithType struct {
 				r   float64
@@ -321,7 +323,19 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 			} {
 				originalRewardFloat := new(big.Float).Mul(new(big.Float).SetFloat64(rwt.r), new(big.Float).SetUint64(params.Ether))
 				originalReward, _ := originalRewardFloat.Int(nil)
-				chainReward := util.RewardInflation(chain, originalReward, number, common.BlocksPerYear)
+				chainReward := new(big.Int)
+				if !chain.Config().IsTIPEpochHalving(header.Number) {
+					chainReward = util.RewardInflation(chain, originalReward, number, common.BlocksPerYear)
+				} else {
+					halvingSupply := big.NewInt(9000000000) // TODO use config.halvingSupply
+					_, epochNum, err := adaptor.EngineV2.IsEpochSwitch(header)
+					if err != nil {
+						return nil, err
+					}
+					epochSinceHalving := epochNum // TODO Minus config.epochHalvingOnset
+					// TODO this function should use: originalReward(for this addr), rewardSum(for everyone), halvingSupply, epochSinceHalving
+					chainReward = util.RewardHalving(originalReward, epochRewardTotal, halvingSupply, epochSinceHalving)
+				}
 				rewardSigners, err := CalculateRewardForSignerFixed(chainReward, signers[rwt.t])
 				if err != nil {
 					log.Error("[HookReward] Fail to calculate reward type 0 for masternode, 1 for protector, 2 for observer", "error", err, "type", rwt.t)
@@ -345,6 +359,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				}
 				rewardsMap[rwt.key] = rewardResults
 			}
+			// TODO: after rewardSum, go again the for loop of 3 types, "halve" everyone's rewards
 			// record the total reward into state db
 			totalMinted := state.GetTotalMinted(stateBlock).Big()
 			lastEpochNum := state.GetLastEpochNum(stateBlock)

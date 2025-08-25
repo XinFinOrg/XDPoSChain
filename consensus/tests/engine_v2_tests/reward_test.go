@@ -321,7 +321,16 @@ func TestRewardHalvingVanishing(t *testing.T) {
 	sum := big.NewInt(0)
 	iterMax := uint64(30000000)
 	for i := uint64(0); i < iterMax; i++ {
+		// remove after check TODO run this
+		if i == iterMax-1 {
+			epochRewardTotal.Mul(epochRewardTotal, big.NewInt(100))
+			epochReward1.Mul(epochReward1, big.NewInt(100))
+			epochReward2.Mul(epochReward2, big.NewInt(100))
+			epochReward3.Mul(epochReward3, big.NewInt(100))
+		}
+
 		r := new(big.Int).Add(util.RewardHalving(epochReward1, epochRewardTotal, halvingSupply, i), util.RewardHalving(epochReward2, epochRewardTotal, halvingSupply, i))
+		// TODO if we change epochRewardTotal, will the result still be less than total supply?
 		r.Add(r, util.RewardHalving(epochReward3, epochRewardTotal, halvingSupply, i))
 		if r.BitLen() == 0 {
 			t.Log("reward be 0 at i=", i) // reward be 0 at i= 11225088, wich is more than 200 years in the future
