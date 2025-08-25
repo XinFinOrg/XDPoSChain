@@ -290,20 +290,11 @@ func (w *wizard) makeGenesis() {
 
 		fmt.Println()
 		fmt.Println("What is minimum staking threshold to become a Validator? (default = 10M)")
-		threshold := new(big.Int)
+		var threshold uint64
 		if input != nil {
-			threshold.SetString("10000000000000000000", 10) // 10M
+			threshold = input.StakingThreshold
 		} else {
-			threshold.SetString("10000000000000000000", 10) // 10M
-		}
-
-		validatorCap := new(big.Int)
-		validatorCap.SetString("50000000000000000000000", 10)
-		var validatorCaps []*big.Int
-		genesis.ExtraData = make([]byte, 32+len(signers)*common.AddressLength+crypto.SignatureLength)
-		for i, signer := range signers {
-			validatorCaps = append(validatorCaps, validatorCap)
-			copy(genesis.ExtraData[32+i*common.AddressLength:], signer[:])
+			threshold = uint64(w.readDefaultInt(10000000))
 		}
 
 		fmt.Println()
@@ -317,11 +308,12 @@ func (w *wizard) makeGenesis() {
 		}
 		blocksPerYear := uint64(31536000 / genesis.Config.XDPoS.Period)
 		epochsPerYear := blocksPerYear / genesis.Config.XDPoS.Epoch
-		rewardsPerYear := float64(threshold.Uint64()) * (float64(yield) / float64(100))
-		rewardPerEpoch := uint64(rewardsPerYear / float64(epochsPerYear))
+		rewardsPerYear := float64(threshold) * (float64(yield) / float64(100))
+		rewardPerEpochPerMN := uint64(rewardsPerYear / float64(epochsPerYear))
+		totalRewardPerEpoch := rewardPerEpochPerMN * uint64(len(signers))
 		fmt.Println()
-		fmt.Println("Calculated Masternode reward per epoch based on yield: ", rewardPerEpoch)
-		genesis.Config.XDPoS.Reward = rewardPerEpoch
+		fmt.Println("Calculated Total Masternode rewards per epoch based on yield: ", totalRewardPerEpoch)
+		genesis.Config.XDPoS.Reward = totalRewardPerEpoch
 
 		fmt.Println()
 		fmt.Println("What is foundation wallet address (collect 10% of all rewards)? (default = xdc0000000000000000000000000000000000000068)")
@@ -337,7 +329,16 @@ func (w *wizard) makeGenesis() {
 		contractBackend := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: big.NewInt(1000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
 		transactOpts := bind.NewKeyedTransactor(pKey)
 
-		validatorAddress, _, err := validatorContract.DeployValidator(transactOpts, contractBackend, signers, validatorCaps, owner)
+		minDeposit := new(big.Int).SetUint64(threshold)
+		minDeposit.Mul(minDeposit, big.NewInt(1e18)) //convert to wei
+		validatorCap := new(big.Int).Set(minDeposit)
+		var validatorCaps []*big.Int
+		genesis.ExtraData = make([]byte, 32+len(signers)*common.AddressLength+crypto.SignatureLength)
+		for i, signer := range signers {
+			validatorCaps = append(validatorCaps, validatorCap)
+			copy(genesis.ExtraData[32+i*common.AddressLength:], signer[:])
+		}
+		validatorAddress, _, err := validatorContract.DeployValidator(transactOpts, contractBackend, signers, validatorCaps, owner, minDeposit, nil)
 		if err != nil {
 			fmt.Println("Can't deploy root registry")
 		}
@@ -505,8 +506,8 @@ func (w *wizard) makeGenesis() {
 	}
 	for _, address := range addresses {
 		baseBalance := big.NewInt(0) // 21m
-		baseBalance.Add(baseBalance, big.NewInt(21*1000*1000))
-		baseBalance.Mul(baseBalance, big.NewInt(1000000000000000000))
+		baseBalance.Add(baseBalance, big.NewInt(21_000_000))
+		baseBalance.Mul(baseBalance, big.NewInt(1e18))
 		genesis.Alloc[address] = types.Account{
 			Balance: baseBalance,
 		}

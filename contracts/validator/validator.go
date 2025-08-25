@@ -43,17 +43,23 @@ func NewValidator(transactOpts *bind.TransactOpts, contractAddr common.Address, 
 	}, nil
 }
 
-func DeployValidator(transactOpts *bind.TransactOpts, contractBackend bind.ContractBackend, validatorAddress []common.Address, caps []*big.Int, ownerAddress common.Address) (common.Address, *Validator, error) {
-	minDeposit := new(big.Int)
-	minDeposit.SetString("10000000000000000000000000", 10)
-	minVoterCap := new(big.Int)
-	minVoterCap.SetString("25000000000000000000000", 10)
-	// Deposit 50K XDC
-	// Min Voter Cap 10 XDC
-	// 150 masternodes
+func DeployValidator(transactOpts *bind.TransactOpts, contractBackend bind.ContractBackend, validatorAddress []common.Address, caps []*big.Int, ownerAddress common.Address, minDeposit *big.Int, minVoterCap *big.Int) (common.Address, *Validator, error) {
+	if minDeposit == nil {
+		minDeposit = new(big.Int)
+		minDeposit.SetString("10000000", 10) // 10M
+		minDeposit.Mul(minDeposit, big.NewInt(1e18)) //convert to wei
+	}
+	if minVoterCap == nil {
+		minVoterCap = new(big.Int).Set(minDeposit)
+		minVoterCap.Div(minVoterCap, big.NewInt(400)) //set votercap to 0.25% of candidate deposit (25K XDC)
+	}
+
+	// Deposit 10M XDC
+	// Min Voter Cap 25K XDC
+	// 108 masternodes
 	// Candidate Delay Withdraw 30 days = 1296000 blocks
 	// Voter Delay Withdraw 10 days = 432000 blocks
-	validatorAddr, _, _, err := contract.DeployXDCValidator(transactOpts, contractBackend, validatorAddress, caps, ownerAddress, minDeposit, minVoterCap, big.NewInt(18), big.NewInt(1296000), big.NewInt(432000))
+	validatorAddr, _, _, err := contract.DeployXDCValidator(transactOpts, contractBackend, validatorAddress, caps, ownerAddress, minDeposit, minVoterCap, big.NewInt(108), big.NewInt(1296000), big.NewInt(432000))
 	if err != nil {
 		return validatorAddr, nil, err
 	}

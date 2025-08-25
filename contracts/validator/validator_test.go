@@ -56,7 +56,7 @@ func TestValidator(t *testing.T) {
 
 	validatorCap := new(big.Int)
 	validatorCap.SetString("50000000000000000000000", 10)
-	validatorAddress, validator, err := DeployValidator(transactOpts, contractBackend, []common.Address{addr}, []*big.Int{validatorCap}, addr)
+	validatorAddress, validator, err := DeployValidator(transactOpts, contractBackend, []common.Address{addr}, []*big.Int{validatorCap}, addr, nil, nil)
 	if err != nil {
 		t.Fatalf("can't deploy root registry: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestStatedbUtils(t *testing.T) {
 	contractBackend := backends.NewXDCSimulatedBackend(genesisAlloc, 10000000, params.TestXDPoSMockChainConfig)
 	transactOpts := bind.NewKeyedTransactor(key)
 
-	validatorAddress, _, err := DeployValidator(transactOpts, contractBackend, []common.Address{addr, acc3Addr}, []*big.Int{validatorCap, validatorCap}, addr)
+	validatorAddress, _, err := DeployValidator(transactOpts, contractBackend, []common.Address{addr, acc3Addr}, []*big.Int{validatorCap, validatorCap}, addr, nil, nil)
 	if err != nil {
 		t.Fatalf("can't deploy root registry: %v", err)
 	}
