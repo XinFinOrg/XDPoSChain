@@ -1134,31 +1134,6 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
-### debug_seedHash
-
-The `seedHash` method retrieves the seed hash of a block.
-
-Parameters:
-
-- number: uint64, required, block number
-
-Returns:
-
-result: string
-
-Example:
-
-```shell
-curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
-  "jsonrpc": "2.0",
-  "id": 1001,
-  "method": "debug_seedHash",
-  "params": [
-    0
-  ]
-}' | jq
-```
-
 ### debug_setBlockProfileRate
 
 The `setBlockProfileRate` method sets the rate (in samples/sec) of goroutine block profile data collection. A non-zero rate enables block profiling, setting it to zero stops the profile. Collected profile data can be written using `debug_writeBlockProfile`.
@@ -1980,7 +1955,7 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   "id": 1003,
   "method": "eth_getBalance",
   "params": [
-    "0xD4CE02705041F04135f1949Bc835c1Fe0885513c", 
+    "0xD4CE02705041F04135f1949Bc835c1Fe0885513c",
     "latest"
   ]
 }' | jq
@@ -1994,7 +1969,7 @@ Parameters:
 
 - blockHash: hash, required, block hash
 - fullTx: bool, required, if true returns the full transaction objects, if false returns only the hashes of the transactions
-  
+
 Returns:
 
 result: object
@@ -2007,7 +1982,7 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   "id": 1003,
   "method": "eth_getBlockByHash",
   "params": [
-    "0xb6fbeabaa5682445b825c5bb02faf9290a38be44d9a47834b65224478923ebce", 
+    "0xb6fbeabaa5682445b825c5bb02faf9290a38be44d9a47834b65224478923ebce",
     true
   ]
 }' | jq
@@ -2894,7 +2869,7 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   "id": 1001,
   "method": "eth_sign",
   "params":[
-    "0xD4CE02705041F04135f1949Bc835c1Fe0885513c", 
+    "0xD4CE02705041F04135f1949Bc835c1Fe0885513c",
     "0x1234abcd"
   ]
 }' | jq
@@ -2919,7 +2894,7 @@ Parameters:
   - maxFeePerGas: big.Int, optional, maximum total fee (base fee + priority fee), in wei, the sender is willing to pay per gas.
   - accessList: array of object, optional, list of addresses and storage keys the transaction plans to access
   - chainId: big.Int, optional, chain ID
-  
+
 Returns:
 
 result: object SignTransactionResult
@@ -2968,7 +2943,7 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   "id": 1001,
   "method": "eth_submitWork",
   "params": [
-   "0x0000000000000001", 
+   "0x0000000000000001",
    "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
    "0xD1FE5700000000000000000000000000D1FE5700000000000000000000000000"
   ]
