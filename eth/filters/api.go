@@ -33,6 +33,8 @@ import (
 )
 
 var (
+	errInvalidTopic    = errors.New("invalid topic(s)")
+	errFilterNotFound  = errors.New("filter not found")
 	errExceedMaxTopics = errors.New("exceed max topics")
 )
 
@@ -384,7 +386,7 @@ func (api *FilterAPI) GetFilterLogs(ctx context.Context, id rpc.ID) ([]*types.Lo
 	api.filtersMu.Unlock()
 
 	if !found || f.typ != LogsSubscription {
-		return nil, errors.New("filter not found")
+		return nil, errFilterNotFound
 	}
 
 	var filter *Filter
@@ -447,7 +449,7 @@ func (api *FilterAPI) GetFilterChanges(id rpc.ID) (interface{}, error) {
 		}
 	}
 
-	return []interface{}{}, errors.New("filter not found")
+	return []interface{}{}, errFilterNotFound
 }
 
 // returnHashes is a helper that will return an empty hash array case the given hash array is nil,
@@ -559,11 +561,11 @@ func (args *FilterCriteria) UnmarshalJSON(data []byte) error {
 						}
 						args.Topics[i] = append(args.Topics[i], parsed)
 					} else {
-						return errors.New("invalid topic(s)")
+						return errInvalidTopic
 					}
 				}
 			default:
-				return errors.New("invalid topic(s)")
+				return errInvalidTopic
 			}
 		}
 	}
