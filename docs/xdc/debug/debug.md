@@ -103,6 +103,17 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": null
+}
+```
+
+
 ## Method debug_dbGet
 
 The `dbGet` method returns the raw value of a key stored in the database.
@@ -153,6 +164,11 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+See [debug_dumpBlock.json](./debug_dumpBlock_response.json) 
+
+
 ## Method debug_getBadBlocks
 
 The `getBadBlocks` method returns a list of the last 'bad blocks' that the client has seen on the network and returns them as a JSON list of block-hashes.
@@ -174,6 +190,17 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   "method": "debug_getBadBlocks"
 }' | jq
 ```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": []
+}
+```
+
 
 ## Method debug_gcStats
 
@@ -199,6 +226,11 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+See [debug_gcStats.json](./debug_gcStats_response.json) 
+
+
 ## Method debug_getBlockRlp
 
 The `getBlockRlp` retrieves the RLP encoded for of a single block.
@@ -223,6 +255,17 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   ]
 }' | jq
 ```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": "f9029af90295a00000000000000000000000000000000000000000000000000000000000000000a01dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347940000000000000000000000000000000000000000a049be235b0098b048f9805aed38a279d8c189b469ff9ba307b39c7ad3a3bc55aea056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421b901000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001808347b76080845cefae27b89d000000000000000000000000000000000000000000000000000000000000000025c65b4b379ac37cf78357c4915f73677022eaffc7d49d0a2cf198deebd6ce581af465944ec8b2bbcfccdea1006a5cfa7d9484b5b293b46964c265c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000880000000000000000808080c0c0"
+}
+```
+
 
 ## Method debug_getModifiedAccountsByHash
 
@@ -277,6 +320,17 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": null
+}
+```
+
+
 ## Method debug_goTrace
 
 The `goTrace` method turns on Go runtime tracing for the given duration and writes trace data to disk.
@@ -326,6 +380,17 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": null
+}
+```
+
+
 ## Method debug_memStats
 
 The `memStats` method returns detailed runtime memory statistics.
@@ -347,6 +412,11 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   "method": "debug_memStats"
 }' | jq
 ```
+
+Response:
+
+See [debug_memStats_response.json](./debug_memStats_response.json)
+
 
 ## Method debug_mutexProfile
 
@@ -425,6 +495,53 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": "Block(#0): Size: 669.00 B {\nMinerHash: 5b1ad24d49ce2360509d0c13fd05358abbab323bf6021d8e85ebcc2b2ec7841f\nHeader(4a9d748bd78a8d0385b67788c2435dcdb914f98a96250b68863a1f8b7642d6b1):\n[\n\tParentHash:\t    0000000000000000000000000000000000000000000000000000000000000000\n\tUncleHash:\t    1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347\n\tCoinbase:\t    0000000000000000000000000000000000000000\n\tRoot:\t\t    49be235b0098b048f9805aed38a279d8c189b469ff9ba307b39c7ad3a3bc55ae\n\tTxSha\t\t    56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\n\tReceiptSha:\t    56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\n\tBloom:\t\t    00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\n\tDifficulty:\t    1\n\tNumber:\t\t    0\n\tGasLimit:\t    4700000\n\tGasUsed:\t    0\n\tTime:\t\t    1559211559\n\tExtra:\t\t    \u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000%ĸ[K7ĸĸ|ĸĸWsŐ_sgp\"ĸĸĸĸԝ\n,ĸĸĸĸĸĸX\u001aĸeĸNȲĸĸĸޡ\u0000j\\ĸ}ĸĸĸĸĸĸidbĸe\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\n\tMixDigest:      0000000000000000000000000000000000000000000000000000000000000000\n\tNonce:\t\t    0000000000000000\n]\nTransactions:\n[]\nUncles:\n[]\n}\n"
+}
+```
+
+
+## Method debug_seedHash
+
+The `seedHash` method retrieves the seed hash of a block.
+
+Parameters:
+
+- number: uint64, required, block number
+
+Returns:
+
+result: string
+
+Example:
+
+```shell
+curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "method": "debug_seedHash",
+  "params": [
+    0
+  ]
+}' | jq
+```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": "0x0000000000000000000000000000000000000000000000000000000000000000"
+}
+```
+
+
 ## Method debug_setBlockProfileRate
 
 The `setBlockProfileRate` method sets the rate (in samples/sec) of goroutine block profile data collection. A non-zero rate enables block profiling, setting it to zero stops the profile. Collected profile data can be written using `debug_writeBlockProfile`.
@@ -449,6 +566,17 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   ]
 }' | jq
 ```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": null
+}
+```
+
 
 ## Method debug_setGCPercent
 
@@ -475,6 +603,17 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": 100
+}
+```
+
+
 ## Method debug_setHead
 
 The `setHead` method sets the current head of the local chain by block number. Note, this is a destructive action and may severely damage your chain. Use with extreme caution.
@@ -500,6 +639,17 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": null
+}
+```
+
+
 ## Method debug_stacks
 
 The `stacks` method returns a printed representation of the stacks of all goroutines. Note that the web3 wrapper for this method takes care of the printing and does not return the string.
@@ -521,6 +671,11 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   "method": "debug_stacks"
 }' | jq
 ```
+
+Response:
+
+See [debug_stacks_response.json](./debug_stacks_response.json)
+
 
 ## Method debug_startCPUProfile
 
@@ -547,6 +702,50 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": null
+}
+```
+
+
+## Method debug_stopCPUProfile
+
+The `stopCPUProfile` method stops an ongoing CPU profile.
+
+Parameters:
+
+None
+
+Returns:
+
+result: error
+
+Example:
+
+```shell
+curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "method": "debug_stopCPUProfile"
+}' | jq
+```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": null
+}
+```
+
+
 ## Method debug_startGoTrace
 
 The `startGoTrace` starts writing a Go runtime trace to the given file.
@@ -572,27 +771,16 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
-## Method debug_stopCPUProfile
+Response:
 
-The `stopCPUProfile` method stops an ongoing CPU profile.
-
-Parameters:
-
-None
-
-Returns:
-
-result: error
-
-Example:
-
-```shell
-curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
+```json
+{
   "jsonrpc": "2.0",
   "id": 1001,
-  "method": "debug_stopCPUProfile"
-}' | jq
+  "result": null
+}
 ```
+
 
 ## Method debug_stopGoTrace
 
@@ -615,6 +803,17 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   "method": "debug_stopGoTrace"
 }' | jq
 ```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": null
+}
+```
+
 
 ## Method debug_storageRangeAt
 
@@ -644,7 +843,7 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 
 ## Method debug_traceBlock
 
-The `traceBlock` method will return a full stack trace of all invoked opcodes of all transaction that were included in this block. Note, the parent of this block must be present or it will fail. For the second parameter see TraceConfig reference.
+The `debug_traceBlock` method will return a full stack trace of all invoked opcodes of all transaction that were included in this block. Note, the parent of this block must be present or it will fail. For the second parameter see TraceConfig reference.
 
 Parameters:
 
@@ -661,9 +860,9 @@ Example:
 curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   "jsonrpc": "2.0",
   "id": 1001,
-  "method": "debug_writeMemProfile",
+  "method": "debug_traceBlock",
   "params": [
-    "memory-profile.bin",
+    "RLP_ENCODED_BLOCK"
   ]
 }' | jq
 ```
@@ -696,7 +895,7 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 
 ## Method debug_traceBlockByNumber
 
-The `traceBlockByNumber` method accepts a block number and will replay the block that is already present in the database.
+The `debug_traceBlockByNumber` method accepts a block number and will replay the block that is already present in the database.
 
 Parameters:
 
@@ -713,12 +912,17 @@ Example:
 curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   "jsonrpc": "2.0",
   "id": 1001,
-  "method": "traceBlockByNumber",
+  "method": "debug_traceBlockByNumber",
   "params": [
     "latest"
   ]
 }' | jq
 ```
+
+Response:
+
+See [debug_traceBlockByNumber_response.json](./debug_traceBlockByNumber_response.json)
+
 
 ## Method debug_traceBlockFromFile
 
@@ -777,6 +981,22 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": {
+    "gas": 21528,
+    "failed": false,
+    "returnValue": "",
+    "structLogs": []
+  }
+}
+```
+
+
 ## Method debug_traceTransaction
 
 The `traceTransaction` method debugging method will attempt to run the transaction in the exact same manner as it was executed on the network. It will replay any transaction that may have been executed prior to this one before it will finally attempt to execute the transaction that corresponds to the given hash.
@@ -828,6 +1048,17 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": null
+}
+```
+
+
 ## Method debug_vmodule
 
 The `vmodule` method sets the logging verbosity pattern.
@@ -852,6 +1083,17 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   ]
 }' | jq
 ```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": null
+}
+```
+
 
 ## Method debug_writeBlockProfile
 
@@ -878,6 +1120,17 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": null
+}
+```
+
+
 ## Method debug_writeMemProfile
 
 The `writeMemProfile` method writes an allocation profile to the given file. Note that the profiling rate cannot be set through the API, it must be set on the command line using the `--pprof-memprofilerate` flag.
@@ -903,6 +1156,17 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": null
+}
+```
+
+
 ## Method debug_writeMutexProfile
 
 The `writeMutexProfile` method writes a goroutine blocking profile to the given file.
@@ -927,3 +1191,14 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   ]
 }' | jq
 ```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": null
+}
+```
+
