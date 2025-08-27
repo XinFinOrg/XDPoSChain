@@ -25,6 +25,17 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": true
+}
+```
+
+
 ## Method net_peerCount
 
 The `peerCount` method returns the number of connected peers.
@@ -47,6 +58,17 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": "0x10"
+}
+```
+
+
 ## Method net_version
 
 The `version` method returns the devp2p network ID
@@ -68,3 +90,14 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   "method": "net_version"
 }' | jq
 ```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": "50"
+}
+```
+
