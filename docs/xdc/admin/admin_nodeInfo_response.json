@@ -1,0 +1,187 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": {
+    "id": "419f0320b0048b7b8e446b0bbba724928a6703a545cb2dea841957fb830ec938acdd8b5ee03a30a3a7f0f3eb413bcd4ac3d873b9861fc6aab01344eeedfd58ea",
+    "name": "XDC/v2.6.1-beta-3ca2ff4f/linux-amd64/go1.23.6",
+    "enode": "enode://419f0320b0048b7b8e446b0bbba724928a6703a545cb2dea841957fb830ec938acdd8b5ee03a30a3a7f0f3eb413bcd4ac3d873b9861fc6aab01344eeedfd58ea@[::]:35348",
+    "ip": "::",
+    "ports": {
+      "discovery": 35348,
+      "listener": 35348
+    },
+    "listenAddr": "[::]:35348",
+    "protocols": {
+      "eth": {
+        "network": 50,
+        "difficulty": 15254612,
+        "genesis": "0x4a9d748bd78a8d0385b67788c2435dcdb914f98a96250b68863a1f8b7642d6b1",
+        "config": {
+          "chainId": 50,
+          "homesteadBlock": 1,
+          "eip150Block": 2,
+          "eip155Block": 3,
+          "eip158Block": 3,
+          "byzantiumBlock": 4,
+          "XDPoS": {
+            "period": 2,
+            "epoch": 900,
+            "reward": 5000,
+            "rewardCheckpoint": 900,
+            "gap": 450,
+            "foudationWalletAddr": "0x92a289fe95a85c53b8d0d113cbaef0c1ec98ac65",
+            "SkipV1Validation": false,
+            "v2": {
+              "SwitchEpoch": 89300,
+              "switchBlock": 80370000,
+              "config": {
+                "maxMasternodes": 108,
+                "maxProtectorNodes": 0,
+                "maxObserverNodes": 0,
+                "switchRound": 0,
+                "minePeriod": 2,
+                "timeoutSyncThreshold": 3,
+                "timeoutPeriod": 30,
+                "certificateThreshold": 0.667,
+                "masternodeReward": 0,
+                "protectorReward": 0,
+                "observerReward": 0,
+                "minimumMinerBlockPerEpoch": 0,
+                "limitPenaltyEpoch": 0,
+                "minimumSigningTx": 0,
+                "expTimeoutConfig": {
+                  "base": 1,
+                  "maxExponent": 0
+                }
+              },
+              "allConfigs": {
+                "0": {
+                  "maxMasternodes": 108,
+                  "maxProtectorNodes": 0,
+                  "maxObserverNodes": 0,
+                  "switchRound": 0,
+                  "minePeriod": 2,
+                  "timeoutSyncThreshold": 3,
+                  "timeoutPeriod": 30,
+                  "certificateThreshold": 0.667,
+                  "masternodeReward": 0,
+                  "protectorReward": 0,
+                  "observerReward": 0,
+                  "minimumMinerBlockPerEpoch": 0,
+                  "limitPenaltyEpoch": 0,
+                  "minimumSigningTx": 0,
+                  "expTimeoutConfig": {
+                    "base": 1,
+                    "maxExponent": 0
+                  }
+                },
+                "2000": {
+                  "maxMasternodes": 108,
+                  "maxProtectorNodes": 0,
+                  "maxObserverNodes": 0,
+                  "switchRound": 2000,
+                  "minePeriod": 2,
+                  "timeoutSyncThreshold": 2,
+                  "timeoutPeriod": 600,
+                  "certificateThreshold": 0.667,
+                  "masternodeReward": 0,
+                  "protectorReward": 0,
+                  "observerReward": 0,
+                  "minimumMinerBlockPerEpoch": 0,
+                  "limitPenaltyEpoch": 0,
+                  "minimumSigningTx": 0,
+                  "expTimeoutConfig": {
+                    "base": 1,
+                    "maxExponent": 0
+                  }
+                },
+                "220000": {
+                  "maxMasternodes": 108,
+                  "maxProtectorNodes": 0,
+                  "maxObserverNodes": 0,
+                  "switchRound": 220000,
+                  "minePeriod": 2,
+                  "timeoutSyncThreshold": 2,
+                  "timeoutPeriod": 30,
+                  "certificateThreshold": 0.667,
+                  "masternodeReward": 0,
+                  "protectorReward": 0,
+                  "observerReward": 0,
+                  "minimumMinerBlockPerEpoch": 0,
+                  "limitPenaltyEpoch": 0,
+                  "minimumSigningTx": 0,
+                  "expTimeoutConfig": {
+                    "base": 1,
+                    "maxExponent": 0
+                  }
+                },
+                "3200000": {
+                  "maxMasternodes": 108,
+                  "maxProtectorNodes": 0,
+                  "maxObserverNodes": 0,
+                  "switchRound": 3200000,
+                  "minePeriod": 2,
+                  "timeoutSyncThreshold": 3,
+                  "timeoutPeriod": 10,
+                  "certificateThreshold": 0.667,
+                  "masternodeReward": 0,
+                  "protectorReward": 0,
+                  "observerReward": 0,
+                  "minimumMinerBlockPerEpoch": 0,
+                  "limitPenaltyEpoch": 0,
+                  "minimumSigningTx": 0,
+                  "expTimeoutConfig": {
+                    "base": 1,
+                    "maxExponent": 0
+                  }
+                },
+                "460000": {
+                  "maxMasternodes": 108,
+                  "maxProtectorNodes": 0,
+                  "maxObserverNodes": 0,
+                  "switchRound": 460000,
+                  "minePeriod": 2,
+                  "timeoutSyncThreshold": 2,
+                  "timeoutPeriod": 20,
+                  "certificateThreshold": 0.667,
+                  "masternodeReward": 0,
+                  "protectorReward": 0,
+                  "observerReward": 0,
+                  "minimumMinerBlockPerEpoch": 0,
+                  "limitPenaltyEpoch": 0,
+                  "minimumSigningTx": 0,
+                  "expTimeoutConfig": {
+                    "base": 1,
+                    "maxExponent": 0
+                  }
+                },
+                "8000": {
+                  "maxMasternodes": 108,
+                  "maxProtectorNodes": 0,
+                  "maxObserverNodes": 0,
+                  "switchRound": 8000,
+                  "minePeriod": 2,
+                  "timeoutSyncThreshold": 2,
+                  "timeoutPeriod": 60,
+                  "certificateThreshold": 0.667,
+                  "masternodeReward": 0,
+                  "protectorReward": 0,
+                  "observerReward": 0,
+                  "minimumMinerBlockPerEpoch": 0,
+                  "limitPenaltyEpoch": 0,
+                  "minimumSigningTx": 0,
+                  "expTimeoutConfig": {
+                    "base": 1,
+                    "maxExponent": 0
+                  }
+                }
+              },
+              "SkipV2Validation": false
+            }
+          }
+        },
+        "head": "0xac9bb1fbf52d95d672952a3242b5b6bec360b967ce7ed903e1190c5815d05f23"
+      }
+    }
+  }
+}

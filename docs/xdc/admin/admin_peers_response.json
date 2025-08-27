@@ -1,0 +1,466 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": [
+    {
+      "id": "0eb3dcc3ffdfd8a48de5b5b08d09d7d745ab45bd29f18df74329c6628c754a919ab0a7f9c869ef3ae71977e7a6de41cd99c42c02fe3b09a711413714c8f8df8d",
+      "name": "XDC/v2.4.0-stable/linux-amd64/go1.21.13",
+      "caps": [
+        "eth/62",
+        "eth/63",
+        "eth/100"
+      ],
+      "network": {
+        "localAddress": "80.243.180.176:35348",
+        "remoteAddress": "54.169.143.138:61539",
+        "inbound": true,
+        "trusted": false,
+        "static": false
+      },
+      "protocols": {
+        "eth": {
+          "version": 100,
+          "difficulty": 7436213129,
+          "head": "0x27a832028f6903a6ff4818f43c728feaefe320975107ff04880a3b1989f0da2f"
+        }
+      }
+    },
+    {
+      "id": "0f166e7c0b16c09eaaef63bad04e4ad9c0bda45727c146915e998a75985c58c78eb10553139c200a556ec5accce49eb40d7dd79d1f437bfe8f1fe8338d1069b5",
+      "name": "XDC/v2.4.0-stable/linux-amd64/go1.21.13",
+      "caps": [
+        "eth/62",
+        "eth/63",
+        "eth/100"
+      ],
+      "network": {
+        "localAddress": "80.243.180.176:35348",
+        "remoteAddress": "3.1.211.70:50661",
+        "inbound": true,
+        "trusted": false,
+        "static": false
+      },
+      "protocols": {
+        "eth": {
+          "version": 100,
+          "difficulty": 7436213120,
+          "head": "0x32910f20fa33c85fd0b5374ae4112d5d139a45da119185d72520ef14891411aa"
+        }
+      }
+    },
+    {
+      "id": "12711126475d7924af98d359e178f71c5d9607de32d2c5b4ab1afff4b0bb16b793b4bbda0a42bf41a309e5349b6106d053ae4ae92aa848b5879e3ef3687c6203",
+      "name": "XDC/v2.4.2-stable/linux-amd64/go1.21.13",
+      "caps": [
+        "eth/62",
+        "eth/63",
+        "eth/100"
+      ],
+      "network": {
+        "localAddress": "80.243.180.176:47282",
+        "remoteAddress": "89.117.49.48:30303",
+        "inbound": false,
+        "trusted": false,
+        "static": false
+      },
+      "protocols": {
+        "eth": {
+          "version": 100,
+          "difficulty": 7436213510,
+          "head": "0x04b4469429b813e6cfe5b7e9462b61e5df079c385a2674d0c279f913b18623d3"
+        }
+      }
+    },
+    {
+      "id": "1fae843082602b086ff76c1add20c648ba19be76864488ab2c1e74ed38a44318b9e1b864c46037973ef6e1d897ce72ea92ca0717d634459f9662de2f61236114",
+      "name": "XDC/v2.4.2-stable/linux-amd64/go1.21.13",
+      "caps": [
+        "eth/62",
+        "eth/63",
+        "eth/100"
+      ],
+      "network": {
+        "localAddress": "80.243.180.176:35348",
+        "remoteAddress": "152.114.194.219:54846",
+        "inbound": true,
+        "trusted": false,
+        "static": false
+      },
+      "protocols": {
+        "eth": {
+          "version": 100,
+          "difficulty": 7436213111,
+          "head": "0xb052c4d7a5afe8ef7c7ace29647b124306618ce4b0a8f497ac572634994b4d66"
+        }
+      }
+    },
+    {
+      "id": "3ba77849e19902881c7465befdb81d03f9fc624fe052999cc02b3449a80343c7022c70b76dd3b84dbbb4086862f15506359ed776f6438856f58363e8ed648537",
+      "name": "XDC/v2.4.0-stable/linux-amd64/go1.21.13",
+      "caps": [
+        "eth/62",
+        "eth/63",
+        "eth/100"
+      ],
+      "network": {
+        "localAddress": "80.243.180.176:35348",
+        "remoteAddress": "3.0.202.44:27331",
+        "inbound": true,
+        "trusted": false,
+        "static": false
+      },
+      "protocols": {
+        "eth": {
+          "version": 100,
+          "difficulty": 7436213135,
+          "head": "0xe052c3187e3f9a3a1d246603ce549706d6ca4fddf7d333a78e0b023a1e5ae65d"
+        }
+      }
+    },
+    {
+      "id": "46a9045d80495f64005a69de91fba356308b095f47f75e1c5ff49a0cec789fb04012bda1ab84c9544c68a474605741316a5764917a96e9d9d8ec3f0c592e82a2",
+      "name": "XDC/v2.4.2-stable/linux-amd64/go1.21.13",
+      "caps": [
+        "eth/62",
+        "eth/63",
+        "eth/100"
+      ],
+      "network": {
+        "localAddress": "80.243.180.176:35348",
+        "remoteAddress": "52.58.199.226:33031",
+        "inbound": true,
+        "trusted": false,
+        "static": false
+      },
+      "protocols": {
+        "eth": {
+          "version": 100,
+          "difficulty": 7436213137,
+          "head": "0xee58a4ecc984e48758f52cdbce8d05c7bab17d819c3ded896505bdfbda9058dd"
+        }
+      }
+    },
+    {
+      "id": "4b1a1252749376b332bff17643a58008e5fe61713320f03009783ed6a4f7e2ae32a6bde4c683b7b7d4bd337a453c936b38959aeac9955b325a9ea2a70a3d907c",
+      "name": "XDC/v2.6.2-beta/linux-amd64/go1.23.9",
+      "caps": [
+        "eth/62",
+        "eth/63",
+        "eth/100"
+      ],
+      "network": {
+        "localAddress": "80.243.180.176:35348",
+        "remoteAddress": "157.173.195.189:37952",
+        "inbound": true,
+        "trusted": false,
+        "static": false
+      },
+      "protocols": {
+        "eth": {
+          "version": 100,
+          "difficulty": 2623725301,
+          "head": "0xd6036fb87803d44b03abf0d4de01ca84f5a013383589346ba7abc6d1ae554d9d"
+        }
+      }
+    },
+    {
+      "id": "4c658e248c59a874e373198fa3dacd3c7d1210265f147bab0c9dccb8411ddbe4d866c3d73b7383ce3f463183f1ad35f4dbf0c7bc2abca8600ec3bd68d270064f",
+      "name": "XDC/v2.4.0-stable/linux-amd64/go1.21.13",
+      "caps": [
+        "eth/62",
+        "eth/63",
+        "eth/100"
+      ],
+      "network": {
+        "localAddress": "80.243.180.176:35348",
+        "remoteAddress": "18.142.119.111:54288",
+        "inbound": true,
+        "trusted": false,
+        "static": false
+      },
+      "protocols": {
+        "eth": {
+          "version": 100,
+          "difficulty": 7436213147,
+          "head": "0x4bf71c6281ea0f3498db0516ca4f2543775928c975b324a9a9e093d62ad820f8"
+        }
+      }
+    },
+    {
+      "id": "4e29358a897b264ef8d4c7b9857cb995e76439ba07c06ad6e1d7dd0e4ec19661c449e1a56d722c77d0a5c87eede3a3a8bf9eedb81acdbe459055178016720c6a",
+      "name": "XDC/v2.4.2-stable/linux-amd64/go1.22.12",
+      "caps": [
+        "eth/62",
+        "eth/63",
+        "eth/100"
+      ],
+      "network": {
+        "localAddress": "80.243.180.176:35348",
+        "remoteAddress": "44.252.103.194:25820",
+        "inbound": true,
+        "trusted": false,
+        "static": false
+      },
+      "protocols": {
+        "eth": {
+          "version": 100,
+          "difficulty": 7436213132,
+          "head": "0xba6e8562d6f62feca1c0374a95a422125af8111521694e49a2f40075233c3b3d"
+        }
+      }
+    },
+    {
+      "id": "54f91c1ec709862cb56593de401c1354b52e3383f6d063696e8bcc6464ad45b85ce973730cc92acd46835f4d2c0742512312fff55bdf92748172060cbb72ecb2",
+      "name": "XDC/v2.4.2-stable/linux-amd64/go1.21.13",
+      "caps": [
+        "eth/62",
+        "eth/63",
+        "eth/100"
+      ],
+      "network": {
+        "localAddress": "80.243.180.176:35348",
+        "remoteAddress": "18.157.253.143:16205",
+        "inbound": true,
+        "trusted": false,
+        "static": false
+      },
+      "protocols": {
+        "eth": {
+          "version": 100,
+          "difficulty": 7436213124,
+          "head": "0xb5de61e11908cf960328dd61b520a30a03b92828c47a6f6e1f7bd4b2f502bb42"
+        }
+      }
+    },
+    {
+      "id": "568b64deae2a2c49589220b90a664f61981fa042bd806fc405fed36eb821baee360038b56e76c6d17a30ced1090619b61c8dca173119b591eb1b6ba132dfe06e",
+      "name": "XDC/bd-d2ir75p8hlcs73bjkdsg-2/v2.4.2-stable/linux-amd64/go1.24.1",
+      "caps": [
+        "eth/62",
+        "eth/63",
+        "eth/100"
+      ],
+      "network": {
+        "localAddress": "80.243.180.176:35348",
+        "remoteAddress": "108.130.22.31:41572",
+        "inbound": true,
+        "trusted": false,
+        "static": false
+      },
+      "protocols": {
+        "eth": {
+          "version": 100,
+          "difficulty": 47016937,
+          "head": "0x41bbb14d8b5ee5c740730137b15866335ceeb7b5c3ef3c8076ace0d616d343f0"
+        }
+      }
+    },
+    {
+      "id": "5d0ceb92dfdc50deb77d7cdf8212ac91bd07370e18ebdae754bc3403230cc976701eb0b17dd01a3b81aed8ee19db3382e3337c6c818df77083de96b55ec7e3de",
+      "name": "XDC/v2.4.0-stable/linux-amd64/go1.21.13",
+      "caps": [
+        "eth/62",
+        "eth/63",
+        "eth/100"
+      ],
+      "network": {
+        "localAddress": "80.243.180.176:35348",
+        "remoteAddress": "13.250.38.209:57405",
+        "inbound": true,
+        "trusted": false,
+        "static": false
+      },
+      "protocols": {
+        "eth": {
+          "version": 100,
+          "difficulty": 7436213145,
+          "head": "0x372f5bd5c3c511c6e2fe09e3ea1bcbe96d6d8b306cf765e93592d169f2cb3b58"
+        }
+      }
+    },
+    {
+      "id": "6432d945b879cec90b594944bbae28d292bb582606a83b6165184ee1935bc875499ce31ff65a5523beb6cfc60d7c958d081844cfa7a8f9a3a5394cd0f6e0f2f0",
+      "name": "XDC/v2.6.2-beta/linux-amd64/go1.23.9",
+      "caps": [
+        "eth/62",
+        "eth/63",
+        "eth/100"
+      ],
+      "network": {
+        "localAddress": "80.243.180.176:35348",
+        "remoteAddress": "158.255.6.148:49422",
+        "inbound": true,
+        "trusted": false,
+        "static": false
+      },
+      "protocols": {
+        "eth": {
+          "version": 100,
+          "difficulty": 7436213139,
+          "head": "0xf269967148e85cd7bdb4ed9b24e6d5f85a971e3d2d563282ae7514888115370a"
+        }
+      }
+    },
+    {
+      "id": "71dd373d0a8d2b461e82741815cba05893a023b364fe3ea6efa6008c6143b4822acc3670d6113652bdb6db916bec189020e71241d08967cdf58ed4cf765df0be",
+      "name": "XDC/v2.4.2-stable/linux-amd64/go1.21.13",
+      "caps": [
+        "eth/62",
+        "eth/63",
+        "eth/100"
+      ],
+      "network": {
+        "localAddress": "80.243.180.176:35348",
+        "remoteAddress": "18.157.253.143:15190",
+        "inbound": true,
+        "trusted": false,
+        "static": false
+      },
+      "protocols": {
+        "eth": {
+          "version": 100,
+          "difficulty": 7436213137,
+          "head": "0xee58a4ecc984e48758f52cdbce8d05c7bab17d819c3ded896505bdfbda9058dd"
+        }
+      }
+    },
+    {
+      "id": "83869a09d134a9e30bcd0041c009d79566fcfea253fc0174df01112455318463762ddf4870f0cb10bf724f91f1f7852f2b4ea8f26ac07e9b092b150ce3f92fd0",
+      "name": "XDC/v2.4.0-stable/linux-amd64/go1.21.13",
+      "caps": [
+        "eth/62",
+        "eth/63",
+        "eth/100"
+      ],
+      "network": {
+        "localAddress": "80.243.180.176:35348",
+        "remoteAddress": "3.0.49.113:16574",
+        "inbound": true,
+        "trusted": false,
+        "static": false
+      },
+      "protocols": {
+        "eth": {
+          "version": 100,
+          "difficulty": 7436213144,
+          "head": "0x1e360948f58d31c66e895ed7444bcf1a496666b1a72341f9f8aaafb0b81eaf74"
+        }
+      }
+    },
+    {
+      "id": "b634c06bbe0c69cf2d5823d2e2b8b9853bd52cd246551ee37b974383ec70db4319caed47f88c1513a686d01f1e0a032eef486745bb11da6159e62904029e2edf",
+      "name": "XDC/v2.4.2-stable/linux-amd64/go1.21.13",
+      "caps": [
+        "eth/62",
+        "eth/63",
+        "eth/100"
+      ],
+      "network": {
+        "localAddress": "80.243.180.176:35078",
+        "remoteAddress": "103.7.54.106:30303",
+        "inbound": false,
+        "trusted": false,
+        "static": false
+      },
+      "protocols": {
+        "eth": {
+          "version": 100,
+          "difficulty": 7436198024,
+          "head": "0x6483f0aa3da10d50a84cede5dd9e8481f637225597f11470111bbc9bea35a2ca"
+        }
+      }
+    },
+    {
+      "id": "d838ae731fa6849b3418947a2a50d79e5aa3f76db016084b00a13484e74553568c3ad9a976e9c183232c0875caf84d8de8bf138d438d522ce04dc819f3012eb3",
+      "name": "XDC/v2.4.2-stable/linux-amd64/go1.24.2",
+      "caps": [
+        "eth/62",
+        "eth/63",
+        "eth/100"
+      ],
+      "network": {
+        "localAddress": "80.243.180.176:53716",
+        "remoteAddress": "46.23.75.37:41210",
+        "inbound": false,
+        "trusted": false,
+        "static": false
+      },
+      "protocols": {
+        "eth": {
+          "version": 100,
+          "difficulty": 7436213365,
+          "head": "0x827daed8099aa6aa0f8af70e417a5ef234e1d9707c14f95c219dc9a5a866d503"
+        }
+      }
+    },
+    {
+      "id": "f593b08ed50a5872ad5a454286ef9083ddf6b55f25a9d9944bdd39b3a15db39228f5a19e95f81a11d511eff8b1e4b509bf29b7c1c289a42a2cf4dc08e0181262",
+      "name": "XDC/v2.4.2-stable/linux-amd64/go1.21.13",
+      "caps": [
+        "eth/62",
+        "eth/63",
+        "eth/100"
+      ],
+      "network": {
+        "localAddress": "80.243.180.176:35348",
+        "remoteAddress": "18.157.253.143:50540",
+        "inbound": true,
+        "trusted": false,
+        "static": false
+      },
+      "protocols": {
+        "eth": {
+          "version": 100,
+          "difficulty": 7436213112,
+          "head": "0x30db54e1bc26b28e5c44d34a65148f34f6bf8a2b384ce32c49d04c9368364ce5"
+        }
+      }
+    },
+    {
+      "id": "f8ba2cb7f31eb94d71f109a61f3c271f11b4ae4e7e6ded685b030998bdb9d31f596ff6b8014d763abe925a61e85fadc2037847a9a6691e7fe5bb92d4e85171e6",
+      "name": "XDC/v2.4.2-stable/linux-amd64/go1.21.13",
+      "caps": [
+        "eth/62",
+        "eth/63",
+        "eth/100"
+      ],
+      "network": {
+        "localAddress": "80.243.180.176:35348",
+        "remoteAddress": "193.247.81.143:64604",
+        "inbound": true,
+        "trusted": false,
+        "static": false
+      },
+      "protocols": {
+        "eth": {
+          "version": 100,
+          "difficulty": 3085111624,
+          "head": "0xaf961221b0e78055711e0a3d353838ad8e66433d33318c07a9c4e575d68be2cc"
+        }
+      }
+    },
+    {
+      "id": "fa6e5c8824b85706ad51456f2e1a2e722448959405d39f2020e16a59a096fd50a74edf879d7c166f5ac409688c4e41b33011f7f6611ce2b5b6a15399a2c16613",
+      "name": "XDC/v2.4.2-stable/linux-amd64/go1.24.2",
+      "caps": [
+        "eth/62",
+        "eth/63",
+        "eth/100"
+      ],
+      "network": {
+        "localAddress": "80.243.180.176:35348",
+        "remoteAddress": "103.50.32.50:55342",
+        "inbound": true,
+        "trusted": false,
+        "static": false
+      },
+      "protocols": {
+        "eth": {
+          "version": 100,
+          "difficulty": 7436213111,
+          "head": "0xb052c4d7a5afe8ef7c7ace29647b124306618ce4b0a8f497ac572634994b4d66"
+        }
+      }
+    }
+  ]
+}

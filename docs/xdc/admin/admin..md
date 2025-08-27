@@ -27,6 +27,16 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": true
+}
+```
+
 ## Method admin_addTrustedPeer
 
 The `addTrustedPeer` method allows a remote node to always connect, even if slots are full.
@@ -52,6 +62,16 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": true
+}
+```
+
 ## Method admin_datadir
 
 The `datadir` administrative property can be queried for the absolute path the running Geth node currently uses to store all its databases.
@@ -72,6 +92,16 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   "id": 1001,
   "method": "admin_datadir"
 }' | jq
+```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": "/home/node/xdc_chain/mainnet_2"
+}
 ```
 
 ## Method admin_exportChain
@@ -99,6 +129,16 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": true
+}
+```
+
 ## Method admin_importChain
 
 The `importChain` method imports an exported list of blocks from a local file. Importing involves processing the blocks and inserting them into the canonical chain. The state from the parent block of this range is required. It returns a boolean indicating whether the operation succeeded.
@@ -122,6 +162,16 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
     "filename"
   ]
 }' | jq
+```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": true
+}
 ```
 
 ## Method admin_nodeInfo
@@ -155,6 +205,10 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   "method": "admin_nodeInfo"
 }' | jq
 ```
+
+Response:
+
+See [admin_nodeInfo_response.json](./admin_nodeInfo_response.json)
 
 ## Method admin_peerEvents
 
@@ -216,6 +270,10 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+See [admin_peers_response.json](./admin_peers_response.json)
+
 ## Method admin_removePeer
 
 The `removePeer` method disconnects from a remote node if the connection exists. It returns a boolean indicating validations succeeded. Note a true value doesn't necessarily mean that there was a connection which was disconnected.
@@ -241,6 +299,16 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": true
+}
+```
+
 ## Method admin_removeTrustedPeer
 
 The `removeTrustedPeer` method removes a remote node from the trusted peer set, but it does not disconnect it automatically.
@@ -264,6 +332,16 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
     "enode://1f5a9bd8bd4abb4ecec8812f0f440fec30dd745c91871ac57ebbadcd23ceafbdf7035f29bf0092feb5087ad72ad208dd12966bfcb88b339884e08cff4d167d87@194.180.176.105:38645"
   ]
 }' | jq
+```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": true
+}
 ```
 
 ## Method admin_startRPC
@@ -317,6 +395,16 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": true
+}
+```
+
 ## Method admin_stopRPC
 
 The `stopRPC` method shuts down the HTTP server.
@@ -360,3 +448,14 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   "method": "admin_stopWS"
 }' | jq
 ```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": true
+}
+```
+
