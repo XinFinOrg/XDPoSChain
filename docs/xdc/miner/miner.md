@@ -3,28 +3,6 @@
 
 The `miner` API is now deprecated because mining was switched off at the transition to proof-of-stake. It existed to provide remote control the node's mining operation and set various mining specific settings. It is provided here for historical interest!
 
-## Method miner_getHashrate
-
-The `getHashrate` method get hashrate in H/s (Hash operations per second).
-
-Parameters:
-
-None
-
-Returns:
-
-result: uint64
-
-Example:
-
-```shell
-curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
-  "jsonrpc": "2.0",
-  "id": 1001,
-  "method": "miner_getHashrate"
-}' | jq
-```
-
 ## Method miner_setEtherbase
 
 The `getHashrate` method get hashrate in H/s (Hash operations per second).
@@ -49,6 +27,17 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   ]
 }' | jq
 ```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": true
+}
+```
+
 
 ## Method miner_setExtra
 
@@ -75,6 +64,17 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": true
+}
+```
+
+
 ## Method miner_setGasPrice
 
 The `setGasPrice` method sets the minimal accepted gas price when mining transactions. Any transactions that are below this limit are excluded from the mining process.
@@ -99,6 +99,17 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   ]
 }' | jq
 ```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": true
+}
+```
+
 
 ## Method miner_start
 
@@ -125,6 +136,17 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 }' | jq
 ```
 
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": true
+}
+```
+
+
 ## Method miner_stop
 
 The `stop` method stop the CPU mining operation.
@@ -146,3 +168,14 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   "method": "miner_stop"
 }' | jq
 ```
+
+Response:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": true
+}
+```
+
