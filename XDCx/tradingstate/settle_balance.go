@@ -52,7 +52,7 @@ func GetSettleBalance(quotePrice *big.Int, takerSide string, takerFeeRate *big.I
 			log.Debug("quantity trade too small", "quoteTokenQuantity", quoteTokenQuantity, "makerFee", makerFee, "defaultFee", defaultFee)
 			return result, ErrQuantityTradeTooSmall
 		}
-		if quoteToken != common.XDCNativeAddressBinary && quotePrice != nil && quotePrice.Cmp(common.Big0) > 0 {
+		if quoteToken != common.XDCNativeAddressBinary && quotePrice != nil && quotePrice.Sign() > 0 {
 			// defaultFeeInXDC
 			defaultFeeInXDC := new(big.Int).Mul(defaultFee, quotePrice)
 			defaultFeeInXDC = new(big.Int).Div(defaultFeeInXDC, quoteTokenDecimal)
@@ -108,7 +108,7 @@ func GetSettleBalance(quotePrice *big.Int, takerSide string, takerFeeRate *big.I
 			log.Debug("quantity trade too small", "quoteTokenQuantity", quoteTokenQuantity, "takerFee", takerFee)
 			return result, ErrQuantityTradeTooSmall
 		}
-		if quoteToken != common.XDCNativeAddressBinary && quotePrice != nil && quotePrice.Cmp(common.Big0) > 0 {
+		if quoteToken != common.XDCNativeAddressBinary && quotePrice != nil && quotePrice.Sign() > 0 {
 			// defaultFeeInXDC
 			defaultFeeInXDC := new(big.Int).Mul(defaultFee, quotePrice)
 			defaultFeeInXDC = new(big.Int).Div(defaultFeeInXDC, quoteTokenDecimal)

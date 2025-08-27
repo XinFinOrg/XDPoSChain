@@ -336,7 +336,7 @@ func TestStatedbUtils(t *testing.T) {
 		if cap.Cmp(cap_statedb) != 0 {
 			t.Fatalf("cap not equal, statedb utils is wrong")
 		}
-		if cap.Cmp(big.NewInt(0)) == 0 {
+		if cap.Sign() == 0 {
 			t.Fatalf("cap should not be zero")
 		}
 		owner, err := validator.GetCandidateOwner(it)
@@ -368,7 +368,7 @@ func TestStatedbUtils(t *testing.T) {
 		if cap.Cmp(cap_statedb) != 0 {
 			t.Fatalf("cap not equal, statedb utils is wrong")
 		}
-		if cap.Cmp(big.NewInt(0)) == 0 {
+		if cap.Sign() == 0 {
 			t.Fatalf("cap should not be zero")
 		}
 	}

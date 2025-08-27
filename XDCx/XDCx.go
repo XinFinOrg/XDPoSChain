@@ -372,7 +372,7 @@ func (XDCx *XDCX) SyncDataToSDKNode(takerOrderInTx *tradingstate.OrderItem, txHa
 		tradeRecord := &tradingstate.Trade{}
 		quantity := tradingstate.ToBigInt(trade[tradingstate.TradeQuantity])
 		price := tradingstate.ToBigInt(trade[tradingstate.TradePrice])
-		if price.Cmp(big.NewInt(0)) <= 0 || quantity.Cmp(big.NewInt(0)) <= 0 {
+		if price.Sign() <= 0 || quantity.Sign() <= 0 {
 			return fmt.Errorf("trade misses important information. tradedPrice %v, tradedQuantity %v", price, quantity)
 		}
 		tradeRecord.Amount = quantity

@@ -288,7 +288,7 @@ func (o *OrderItem) encodedSide() *big.Int {
 
 // verifyPrice make sure price is a positive number
 func (o *OrderItem) verifyPrice() error {
-	if o.Price == nil || o.Price.Cmp(big.NewInt(0)) <= 0 {
+	if o.Price == nil || o.Price.Sign() <= 0 {
 		log.Debug("Invalid price", "price", o.Price.String())
 		return ErrInvalidPrice
 	}
@@ -297,7 +297,7 @@ func (o *OrderItem) verifyPrice() error {
 
 // verifyQuantity make sure quantity is a positive number
 func (o *OrderItem) verifyQuantity() error {
-	if o.Quantity == nil || o.Quantity.Cmp(big.NewInt(0)) <= 0 {
+	if o.Quantity == nil || o.Quantity.Sign() <= 0 {
 		log.Debug("Invalid quantity", "quantity", o.Quantity.String())
 		return ErrInvalidQuantity
 	}

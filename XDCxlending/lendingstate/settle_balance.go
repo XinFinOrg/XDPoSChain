@@ -72,7 +72,7 @@ func GetSettleBalance(isXDCXLendingFork bool,
 				log.Debug("quantity lending too small", "quantityToLend", quantityToLend, "takerFee", takerFee)
 				return result, ErrQuantityTradeTooSmall
 			}
-			if lendingToken != common.XDCNativeAddressBinary && lendTokenXDCPrice != nil && lendTokenXDCPrice.Cmp(common.Big0) > 0 {
+			if lendingToken != common.XDCNativeAddressBinary && lendTokenXDCPrice != nil && lendTokenXDCPrice.Sign() > 0 {
 				exTakerReceivedFee := new(big.Int).Mul(takerFee, lendTokenXDCPrice)
 				exTakerReceivedFee = new(big.Int).Div(exTakerReceivedFee, lendTokenDecimal)
 
@@ -122,7 +122,7 @@ func GetSettleBalance(isXDCXLendingFork bool,
 				log.Debug("quantity lending too small", "quantityToLend", quantityToLend, "makerFee", makerFee)
 				return result, ErrQuantityTradeTooSmall
 			}
-			if lendingToken != common.XDCNativeAddressBinary && lendTokenXDCPrice != nil && lendTokenXDCPrice.Cmp(common.Big0) > 0 {
+			if lendingToken != common.XDCNativeAddressBinary && lendTokenXDCPrice != nil && lendTokenXDCPrice.Sign() > 0 {
 				exMakerReceivedFee := new(big.Int).Mul(makerFee, lendTokenXDCPrice)
 				exMakerReceivedFee = new(big.Int).Div(exMakerReceivedFee, lendTokenDecimal)
 
@@ -172,7 +172,7 @@ func GetSettleBalance(isXDCXLendingFork bool,
 			log.Debug("quantity lending too small", "quantityToLend", quantityToLend, "borrowFee", borrowFee)
 			return result, ErrQuantityTradeTooSmall
 		}
-		if lendingToken != common.XDCNativeAddressBinary && lendTokenXDCPrice != nil && lendTokenXDCPrice.Cmp(common.Big0) > 0 {
+		if lendingToken != common.XDCNativeAddressBinary && lendTokenXDCPrice != nil && lendTokenXDCPrice.Sign() > 0 {
 			// exReceivedFee: the fee amount which borrowingRelayer will receive
 			exReceivedFee := new(big.Int).Mul(borrowFee, lendTokenXDCPrice)
 			exReceivedFee = new(big.Int).Div(exReceivedFee, lendTokenDecimal)

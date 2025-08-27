@@ -755,7 +755,7 @@ func (ipp *InnerProdArg) Serialize() []byte {
 	spa = serializePointArray(ipp.R, false)
 	proof = append(proof, spa[:]...)
 
-	if ipp.A.Cmp(big.NewInt(0)) < 0 {
+	if ipp.A.Sign() < 0 {
 		ipp.A.Mod(ipp.A, EC.N)
 	}
 	sp := PadTo32Bytes(ipp.A.Bytes())
@@ -833,7 +833,7 @@ func (mrp *MultiRangeProof) Serialize() []byte {
 	sp = PadTo32Bytes(mrp.Tau.Bytes())
 	proof = append(proof, sp[:]...)
 
-	if mrp.Th.Cmp(big.NewInt(0)) < 0 {
+	if mrp.Th.Sign() < 0 {
 		mrp.Th.Mod(mrp.Th, EC.N)
 	}
 	sp = PadTo32Bytes(mrp.Th.Bytes())
@@ -975,7 +975,7 @@ func MRPProve(values []*big.Int) (MultiRangeProof, error) {
 
 	for j := range values {
 		v := values[j]
-		if v.Cmp(big.NewInt(0)) == -1 {
+		if v.Sign() == -1 {
 			return MultiRangeProof{}, errors.New("value is below range! Not proving")
 		}
 

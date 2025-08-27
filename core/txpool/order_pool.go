@@ -443,11 +443,11 @@ func (pool *OrderPool) validateOrder(tx *types.OrderTransaction) error {
 	cloneXDCXStateDb := pool.currentOrderState.Copy()
 
 	if !tx.IsCancelledOrder() {
-		if quantity == nil || quantity.Cmp(big.NewInt(0)) <= 0 {
+		if quantity == nil || quantity.Sign() <= 0 {
 			return ErrInvalidOrderQuantity
 		}
 		if orderType != OrderTypeMarket {
-			if price == nil || price.Cmp(big.NewInt(0)) <= 0 {
+			if price == nil || price.Sign() <= 0 {
 				return ErrInvalidOrderPrice
 			}
 		}
