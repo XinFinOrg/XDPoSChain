@@ -413,10 +413,13 @@ func (x *XDPoS_v2) Finalize(chain consensus.ChainReader, header *types.Header, s
 		}
 	}
 
+
+	log.Warn("[Finalize] Check Hash 1", "number", header.Number, "hash", header.Hash().Hex(), "hashnovalidator", header.HashNoValidator().Hex(), "hashnononce", header.HashNoNonce().Hex())
 	// the state remains as is and uncles are dropped
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 	header.UncleHash = types.CalcUncleHash(nil)
-
+	
+	log.Warn("[Finalize] Check Hash 2", "number", header.Number, "hash", header.Hash().Hex(), "hashnovalidator", header.HashNoValidator().Hex(), "hashnononce", header.HashNoNonce().Hex())
 	// Assemble and return the final block for sealing
 	return types.NewBlock(header, txs, nil, receipts, trie.NewStackTrie(nil)), nil
 }
