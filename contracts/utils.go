@@ -279,7 +279,7 @@ func BuildValidatorFromM2(listM2 []int64) []byte {
 	var validatorBytes []byte
 	for _, numberM2 := range listM2 {
 		// Convert number to byte.
-		m2Byte := common.LeftPadBytes([]byte(fmt.Sprintf("%d", numberM2)), utils.M2ByteLength)
+		m2Byte := common.LeftPadBytes(fmt.Appendf(nil, "%d", numberM2), utils.M2ByteLength)
 		validatorBytes = append(validatorBytes, m2Byte...)
 	}
 
