@@ -272,17 +272,19 @@ func (s *Service) loop() {
 		case <-errTimer.C:
 			// Establish a websocket connection to the server on any supported URL
 			var (
-				conn *websocket.Conn
+				conn *connWrapper
 				err  error
 			)
 			dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second}
 			header := make(http.Header)
 			header.Set("origin", "http://localhost")
 			for _, url := range urls {
-				conn, _, err = dialer.Dial(url, header)
-				if err == nil {
+				c, _, e := dialer.Dial(url, header)
+				if e == nil {
+					conn = newConnectionWrapper(c)
 					break
 				}
+				err = e
 			}
 			if err != nil {
 				log.Warn("Stats server unreachable", "err", err)
