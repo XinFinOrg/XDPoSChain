@@ -440,7 +440,7 @@ type nodeInfo struct {
 
 // authMsg is the authentication infos needed to login to a monitoring server.
 type authMsg struct {
-	Id     string   `json:"id"`
+	ID     string   `json:"id"`
 	Info   nodeInfo `json:"info"`
 	Secret string   `json:"secret"`
 }
@@ -458,7 +458,7 @@ func (s *Service) login(conn *connWrapper) error {
 		return errors.New("no eth protocol available")
 	}
 	auth := &authMsg{
-		Id: s.node,
+		ID: s.node,
 		Info: nodeInfo{
 			Name:     s.node,
 			Node:     infos.Name,
