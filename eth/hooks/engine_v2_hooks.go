@@ -364,6 +364,8 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 			log.Debug("[HookReward] total minted in hook", "value", totalMinted)
 			state.PutTotalMinted(stateBlock, common.BigToHash(totalMinted))
 			state.PutLastEpochNum(stateBlock, common.Uint64ToHash(epochNum))
+			// Increment nonce so that statedb does not treat it as empty account
+			state.IncrementMintedRecordNonce(stateBlock)
 		}
 		log.Debug("Time Calculated HookReward ", "block", header.Number.Uint64(), "time", common.PrettyDuration(time.Since(start)))
 		return rewardsMap, nil

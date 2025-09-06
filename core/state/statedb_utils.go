@@ -179,3 +179,8 @@ func PutLastEpochNum(statedb *StateDB, value common.Hash) {
 	hash := GetLocSimpleVariable(slotMintedRecordLastEpochNum)
 	statedb.SetState(common.MintedRecordAddressBinary, hash, value)
 }
+
+func IncrementMintedRecordNonce(statedb *StateDB) {
+	nonce := statedb.GetNonce(common.MintedRecordAddressBinary)
+	statedb.SetNonce(common.MintedRecordAddressBinary, nonce+1)
+}

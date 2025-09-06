@@ -305,6 +305,74 @@ func TestHookRewardAfterUpgrade(t *testing.T) {
 	common.TIPUpgradeReward = backup
 }
 
+func TestFinalizeAfterUpgrade(t *testing.T) {
+	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
+	assert.Nil(t, err)
+	configString := string(b)
+
+	var config params.ChainConfig
+	err = json.Unmarshal([]byte(configString), &config)
+	assert.Nil(t, err)
+	// set switch to 1800, so that it covers 901-1799, 1800-2700 two epochs
+	config.XDPoS.V2.SwitchBlock.SetUint64(1800)
+	config.XDPoS.V2.SwitchEpoch = 2
+	// set upgrade number to 0
+	backup := common.TIPUpgradeReward
+	common.TIPUpgradeReward = big.NewInt(0)
+
+	blockchain, _, _, signer, signFn := PrepareXDCTestBlockChainWithProtectorObserver(t, int(config.XDPoS.Epoch)*3+10, &config)
+
+	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
+	hooks.AttachConsensusV2Hooks(adaptor, blockchain, &config)
+	assert.NotNil(t, adaptor.EngineV2.HookReward)
+	// forcely insert signing tx into cache, to give rewards.
+	header915 := blockchain.GetHeaderByNumber(config.XDPoS.Epoch + 15)
+	header916 := blockchain.GetHeaderByNumber(config.XDPoS.Epoch + 16)
+	header1785 := blockchain.GetHeaderByNumber(config.XDPoS.Epoch*2 - 15)
+	header1799 := blockchain.GetHeaderByNumber(config.XDPoS.Epoch*2 - 1)
+	tx, err := signingTxWithSignerFn(header915, 0, signer, signFn)
+	assert.Nil(t, err)
+	adaptor.CacheSigningTxs(header916.Hash(), []*types.Transaction{tx})
+	tx2, err := signingTxWithKey(header915, 0, acc1Key)
+	assert.Nil(t, err)
+	tx3, err := signingTxWithKey(header1785, 0, acc1Key)
+	assert.Nil(t, err)
+	tx4, err := signingTxWithKey(header1785, 0, protector1Key)
+	assert.Nil(t, err)
+	tx5, err := signingTxWithKey(header1785, 0, observer1Key)
+	assert.Nil(t, err)
+	tx6, err := signingTxWithKey(header915, 0, protector2Key)
+	assert.Nil(t, err)
+	tx7, err := signingTxWithKey(header1785, 0, protector2Key)
+	assert.Nil(t, err)
+	tx8, err := signingTxWithKey(header1785, 0, observer2Key)
+	assert.Nil(t, err)
+	adaptor.CacheSigningTxs(header1799.Hash(), []*types.Transaction{tx2, tx3, tx4, tx5, tx6, tx7, tx8})
+
+	header2700 := blockchain.GetHeaderByNumber(config.XDPoS.Epoch * 3)
+	header2699 := blockchain.GetHeaderByNumber(config.XDPoS.Epoch*3 - 1)
+	statedb, err := blockchain.StateAt(header2700.Root)
+	assert.Nil(t, err)
+	parentstatedb, err := blockchain.StateAt(header2699.Root)
+	assert.Nil(t, err)
+
+	blockAfterFinalize, err := adaptor.Finalize(blockchain, header2700, statedb, parentstatedb, nil, nil, nil)
+	assert.Nil(t, err)
+
+	_, err = blockchain.WriteBlockWithState(blockAfterFinalize, nil, statedb, nil, nil)
+	assert.Nil(t, err)
+
+	statedbAfterFinalize, err := blockchain.StateAt(blockAfterFinalize.Header().Root)
+	assert.Nil(t, err)
+
+	// the recorded reward cannot be zero
+	minted := state.GetTotalMinted(statedbAfterFinalize)
+	assert.False(t, minted.IsZero())
+	t.Log("total minted", minted)
+
+	common.TIPUpgradeReward = backup
+}
+
 func TestRewardHalvingVanishing(t *testing.T) {
 	billion := big.NewInt(1000000000)
 	epochRewardTotal := big.NewInt(16000)
