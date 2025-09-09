@@ -42,9 +42,9 @@ func MakeSigner(config *params.ChainConfig, blockNumber *big.Int) Signer {
 	var signer Signer
 	switch {
 	case config.IsEIP1559(blockNumber):
-		signer = NewLondonSigner(config.ChainId)
+		signer = NewLondonSigner(config.ChainID)
 	case config.IsEIP155(blockNumber):
-		signer = NewEIP155Signer(config.ChainId)
+		signer = NewEIP155Signer(config.ChainID)
 	case config.IsHomestead(blockNumber):
 		signer = HomesteadSigner{}
 	default:
@@ -61,12 +61,12 @@ func MakeSigner(config *params.ChainConfig, blockNumber *big.Int) Signer {
 // Use this in transaction-handling code where the current block number is unknown. If you
 // have the current block number available, use MakeSigner instead.
 func LatestSigner(config *params.ChainConfig) Signer {
-	if config.ChainId != nil {
+	if config.ChainID != nil {
 		if common.Eip1559Block.Uint64() != 9999999999 || config.Eip1559Block != nil {
-			return NewLondonSigner(config.ChainId)
+			return NewLondonSigner(config.ChainID)
 		}
 		if config.EIP155Block != nil {
-			return NewEIP155Signer(config.ChainId)
+			return NewEIP155Signer(config.ChainID)
 		}
 	}
 	return HomesteadSigner{}

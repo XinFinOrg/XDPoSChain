@@ -309,7 +309,7 @@ func NewBlockChainAPI(b Backend, chainReader consensus.ChainReader) *BlockChainA
 
 // ChainId returns the chainID value for transaction replay protection.
 func (s *BlockChainAPI) ChainId() *hexutil.Big {
-	return (*hexutil.Big)(s.b.ChainConfig().ChainId)
+	return (*hexutil.Big)(s.b.ChainConfig().ChainID)
 }
 
 // BlockNumber returns the block number of the chain head.
@@ -1159,7 +1159,7 @@ func DoCall(ctx context.Context, b Backend, args TransactionArgs, blockNrOrHash 
 	if blockOverrides != nil {
 		blockOverrides.Apply(&blockCtx)
 	}
-	if err := args.CallDefaults(globalGasCap, blockCtx.BaseFee, b.ChainConfig().ChainId); err != nil {
+	if err := args.CallDefaults(globalGasCap, blockCtx.BaseFee, b.ChainConfig().ChainID); err != nil {
 		return nil, err
 	}
 	msg := args.ToMessage(b, blockCtx.BaseFee)
@@ -2029,7 +2029,7 @@ func (s *TransactionAPI) sign(addr common.Address, tx *types.Transaction) (*type
 	// Request the wallet to sign the transaction
 	var chainID *big.Int
 	if config := s.b.ChainConfig(); config.IsEIP155(s.b.CurrentBlock().Number()) {
-		chainID = config.ChainId
+		chainID = config.ChainID
 	}
 	return wallet.SignTx(account, tx, chainID)
 }
@@ -2115,7 +2115,7 @@ func (s *TransactionAPI) SendTransaction(ctx context.Context, args TransactionAr
 
 	var chainID *big.Int
 	if config := s.b.ChainConfig(); config.IsEIP155(s.b.CurrentBlock().Number()) {
-		chainID = config.ChainId
+		chainID = config.ChainID
 	}
 	signed, err := wallet.SignTx(account, tx, chainID)
 	if err != nil {

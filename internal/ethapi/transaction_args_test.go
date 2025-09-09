@@ -241,7 +241,7 @@ type backendMock struct {
 
 func newBackendMock() *backendMock {
 	config := &params.ChainConfig{
-		ChainId:             big.NewInt(42),
+		ChainID:             big.NewInt(42),
 		HomesteadBlock:      big.NewInt(0),
 		DAOForkBlock:        nil,
 		DAOForkSupport:      true,

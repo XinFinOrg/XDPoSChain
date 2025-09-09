@@ -233,7 +233,7 @@ func TestNoStepExec(t *testing.T) {
 
 func TestIsPrecompile(t *testing.T) {
 	chaincfg := &params.ChainConfig{
-		ChainId:             big.NewInt(1),
+		ChainID:             big.NewInt(1),
 		HomesteadBlock:      big.NewInt(0),
 		DAOForkBlock:        nil,
 		DAOForkSupport:      false,

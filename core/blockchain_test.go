@@ -1058,7 +1058,7 @@ func TestEIP155Transition(t *testing.T) {
 		funds      = big.NewInt(1000000000)
 		deleteAddr = common.Address{1}
 		gspec      = &Genesis{
-			Config: &params.ChainConfig{ChainId: big.NewInt(1), EIP150Block: big.NewInt(0), EIP155Block: big.NewInt(2), HomesteadBlock: new(big.Int)},
+			Config: &params.ChainConfig{ChainID: big.NewInt(1), EIP150Block: big.NewInt(0), EIP155Block: big.NewInt(2), HomesteadBlock: new(big.Int)},
 			Alloc:  types.GenesisAlloc{address: {Balance: funds}, deleteAddr: {Balance: new(big.Int)}},
 		}
 		genesis = gspec.MustCommit(db)
@@ -1129,7 +1129,7 @@ func TestEIP155Transition(t *testing.T) {
 	}
 
 	// generate an invalid chain id transaction
-	config := &params.ChainConfig{ChainId: big.NewInt(2), EIP150Block: big.NewInt(0), EIP155Block: big.NewInt(2), HomesteadBlock: new(big.Int)}
+	config := &params.ChainConfig{ChainID: big.NewInt(2), EIP150Block: big.NewInt(0), EIP155Block: big.NewInt(2), HomesteadBlock: new(big.Int)}
 	blocks, _ = GenerateChain(config, blocks[len(blocks)-1], ethash.NewFaker(), db, 4, func(i int, block *BlockGen) {
 		var (
 			tx      *types.Transaction
@@ -1162,7 +1162,7 @@ func TestEIP161AccountRemoval(t *testing.T) {
 		theAddr = common.Address{1}
 		gspec   = &Genesis{
 			Config: &params.ChainConfig{
-				ChainId:        big.NewInt(1),
+				ChainID:        big.NewInt(1),
 				HomesteadBlock: new(big.Int),
 				EIP155Block:    new(big.Int),
 				EIP158Block:    big.NewInt(2),
@@ -1600,7 +1600,7 @@ func TestEIP2718Transition(t *testing.T) {
 		funds = big.NewInt(1000000000000000)
 		gspec = &Genesis{
 			Config: &params.ChainConfig{
-				ChainId:             new(big.Int).SetBytes([]byte("eip1559")),
+				ChainID:             new(big.Int).SetBytes([]byte("eip1559")),
 				HomesteadBlock:      big.NewInt(0),
 				DAOForkBlock:        nil,
 				DAOForkSupport:      true,
@@ -1637,7 +1637,7 @@ func TestEIP2718Transition(t *testing.T) {
 		// One transaction to 0xAAAA
 		signer := types.LatestSigner(gspec.Config)
 		tx, _ := types.SignNewTx(key, signer, &types.AccessListTx{
-			ChainID:  gspec.Config.ChainId,
+			ChainID:  gspec.Config.ChainID,
 			Nonce:    0,
 			To:       &aa,
 			Gas:      30000,
@@ -1826,7 +1826,7 @@ func TestEIP3651(t *testing.T) {
 		b.SetCoinbase(aa)
 		// One transaction to Coinbase
 		txdata := &types.DynamicFeeTx{
-			ChainID:    gspec.Config.ChainId,
+			ChainID:    gspec.Config.ChainID,
 			Nonce:      0,
 			To:         &bb,
 			Gas:        500000,

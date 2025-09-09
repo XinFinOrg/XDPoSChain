@@ -124,7 +124,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 
 	networkID := config.NetworkId
 	if networkID == 0 {
-		networkID = chainConfig.ChainId.Uint64()
+		networkID = chainConfig.ChainID.Uint64()
 	}
 	common.CopyConstants(networkID)
 

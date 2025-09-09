@@ -338,7 +338,7 @@ func (api *API) GetV2BlockByHash(blockHash common.Hash) *V2BlockInfo {
 
 func (api *API) NetworkInformation() NetworkInformation {
 	info := NetworkInformation{}
-	info.NetworkId = api.chain.Config().ChainId
+	info.NetworkId = api.chain.Config().ChainID
 	info.XDCValidatorAddress = common.MasternodeVotingSMCBinary
 	info.LendingAddress = common.LendingRegistrationSMC
 	info.RelayerRegistrationAddress = common.RelayerRegistrationSMC

@@ -224,7 +224,7 @@ var (
 
 	// XDPoSChain mainnet config
 	XDCMainnetChainConfig = &ChainConfig{
-		ChainId:        big.NewInt(50),
+		ChainID:        big.NewInt(50),
 		HomesteadBlock: big.NewInt(1),
 		EIP150Block:    big.NewInt(2),
 		EIP155Block:    big.NewInt(3),
@@ -248,7 +248,7 @@ var (
 
 	// MainnetChainConfig is the chain parameters to run a node on the main network.
 	MainnetChainConfig = &ChainConfig{
-		ChainId:             big.NewInt(1),
+		ChainID:             big.NewInt(1),
 		HomesteadBlock:      big.NewInt(1150000),
 		DAOForkBlock:        big.NewInt(1920000),
 		DAOForkSupport:      true,
@@ -262,7 +262,7 @@ var (
 
 	// TestnetChainConfig contains the chain parameters to run a node on the Ropsten test network.
 	TestnetChainConfig = &ChainConfig{
-		ChainId:             big.NewInt(51),
+		ChainID:             big.NewInt(51),
 		HomesteadBlock:      big.NewInt(1),
 		DAOForkBlock:        nil,
 		DAOForkSupport:      false,
@@ -289,7 +289,7 @@ var (
 
 	// DevnetChainConfig contains the chain parameters to run a node on the Ropsten test network.
 	DevnetChainConfig = &ChainConfig{
-		ChainId:        big.NewInt(551),
+		ChainID:        big.NewInt(551),
 		HomesteadBlock: big.NewInt(0),
 		EIP150Block:    big.NewInt(0),
 		EIP155Block:    big.NewInt(0),
@@ -317,7 +317,7 @@ var (
 	// This configuration is intentionally not using keyed fields to force anyone
 	// adding flags to the config to also have to set these fields.
 	AllEthashProtocolChanges = &ChainConfig{
-		ChainId:             big.NewInt(1337),
+		ChainID:             big.NewInt(1337),
 		HomesteadBlock:      big.NewInt(0),
 		DAOForkBlock:        nil,
 		DAOForkSupport:      false,
@@ -337,7 +337,7 @@ var (
 	// This configuration is intentionally not using keyed fields to force anyone
 	// adding flags to the config to also have to set these fields.
 	AllXDPoSProtocolChanges = &ChainConfig{
-		ChainId:             big.NewInt(89),
+		ChainID:             big.NewInt(89),
 		HomesteadBlock:      big.NewInt(0),
 		DAOForkBlock:        nil,
 		DAOForkSupport:      false,
@@ -352,7 +352,7 @@ var (
 	}
 
 	AllCliqueProtocolChanges = &ChainConfig{
-		ChainId:             big.NewInt(1337),
+		ChainID:             big.NewInt(1337),
 		HomesteadBlock:      big.NewInt(0),
 		DAOForkBlock:        nil,
 		DAOForkSupport:      false,
@@ -368,7 +368,7 @@ var (
 
 	// XDPoS config with v2 engine after block 901
 	TestXDPoSMockChainConfig = &ChainConfig{
-		ChainId:             big.NewInt(1337),
+		ChainID:             big.NewInt(1337),
 		HomesteadBlock:      big.NewInt(0),
 		DAOForkBlock:        nil,
 		DAOForkSupport:      false,
@@ -395,7 +395,7 @@ var (
 	}
 
 	TestChainConfig = &ChainConfig{
-		ChainId:             big.NewInt(1),
+		ChainID:             big.NewInt(1),
 		HomesteadBlock:      big.NewInt(0),
 		DAOForkBlock:        nil,
 		DAOForkSupport:      false,
@@ -417,7 +417,7 @@ var (
 // that any network, identified by its genesis block, can have its own
 // set of configuration options.
 type ChainConfig struct {
-	ChainId *big.Int `json:"chainId"` // Chain id identifies the current chain and is used for replay protection
+	ChainID *big.Int `json:"chainId"` // Chain id identifies the current chain and is used for replay protection
 
 	HomesteadBlock *big.Int `json:"homesteadBlock,omitempty"` // Homestead switch block (nil = no fork, 0 = already homestead)
 
@@ -676,7 +676,7 @@ func (c *ChainConfig) Description() string {
 	}
 
 	var banner = "Chain configuration:\n"
-	banner += fmt.Sprintf("  - ChainID:                     %-8v\n", c.ChainId)
+	banner += fmt.Sprintf("  - ChainID:                     %-8v\n", c.ChainID)
 	banner += fmt.Sprintf("  - Homestead:                   %-8v\n", c.HomesteadBlock)
 	banner += fmt.Sprintf("  - DAO Fork:                    %-8v\n", c.DAOForkBlock)
 	banner += fmt.Sprintf("  - DAO Support:                 %-8v\n", c.DAOForkSupport)
@@ -880,7 +880,7 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, head *big.Int) *Confi
 	if isForkIncompatible(c.EIP158Block, newcfg.EIP158Block, head) {
 		return newCompatError("EIP158 fork block", c.EIP158Block, newcfg.EIP158Block)
 	}
-	if c.IsEIP158(head) && !configNumEqual(c.ChainId, newcfg.ChainId) {
+	if c.IsEIP158(head) && !configNumEqual(c.ChainID, newcfg.ChainID) {
 		return newCompatError("EIP158 chain ID", c.EIP158Block, newcfg.EIP158Block)
 	}
 	if isForkIncompatible(c.ByzantiumBlock, newcfg.ByzantiumBlock, head) {
@@ -986,7 +986,7 @@ type Rules struct {
 }
 
 func (c *ChainConfig) Rules(num *big.Int) Rules {
-	chainId := c.ChainId
+	chainId := c.ChainID
 	if chainId == nil {
 		chainId = new(big.Int)
 	}

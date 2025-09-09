@@ -183,8 +183,8 @@ func initGenesis(ctx *cli.Context) error {
 		utils.Fatalf("invalid genesis json: %v", err)
 	}
 
-	if genesis.Config.ChainId != nil {
-		common.CopyConstants(genesis.Config.ChainId.Uint64())
+	if genesis.Config.ChainID != nil {
+		common.CopyConstants(genesis.Config.ChainID.Uint64())
 	}
 
 	// Open and initialise both full and light databases

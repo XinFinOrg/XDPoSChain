@@ -131,7 +131,7 @@ func newTestBackend(t *testing.T, eip1559Block *big.Int, pending bool) *testBack
 		var txdata types.TxData
 		if eip1559Block != nil && b.Number().Cmp(eip1559Block) >= 0 {
 			txdata = &types.DynamicFeeTx{
-				ChainID:   gspec.Config.ChainId,
+				ChainID:   gspec.Config.ChainID,
 				Nonce:     b.TxNonce(addr),
 				To:        &common.Address{},
 				Gas:       30000,

@@ -780,7 +780,7 @@ func (w *worker) commitNewWork() {
 					}
 					nonce := work.state.GetNonce(w.coinbase)
 					tx := types.NewTransaction(nonce, common.XDCXAddrBinary, big.NewInt(0), txMatchGasLimit, big.NewInt(0), txMatchBytes)
-					txM, err := wallet.SignTx(accounts.Account{Address: w.coinbase}, tx, w.config.ChainId)
+					txM, err := wallet.SignTx(accounts.Account{Address: w.coinbase}, tx, w.config.ChainID)
 					if err != nil {
 						log.Error("Fail to create tx matches", "error", err)
 						return
@@ -810,7 +810,7 @@ func (w *worker) commitNewWork() {
 					}
 					nonce := work.state.GetNonce(w.coinbase)
 					lendingTx := types.NewTransaction(nonce, common.XDCXLendingAddressBinary, big.NewInt(0), txMatchGasLimit, big.NewInt(0), lendingDataBytes)
-					signedLendingTx, err := wallet.SignTx(accounts.Account{Address: w.coinbase}, lendingTx, w.config.ChainId)
+					signedLendingTx, err := wallet.SignTx(accounts.Account{Address: w.coinbase}, lendingTx, w.config.ChainID)
 					if err != nil {
 						log.Error("Fail to create lending tx", "error", err)
 						return
@@ -834,7 +834,7 @@ func (w *worker) commitNewWork() {
 					}
 					nonce := work.state.GetNonce(w.coinbase)
 					finalizedTx := types.NewTransaction(nonce, common.XDCXLendingFinalizedTradeAddressBinary, big.NewInt(0), txMatchGasLimit, big.NewInt(0), finalizedTradeData)
-					signedFinalizedTx, err := wallet.SignTx(accounts.Account{Address: w.coinbase}, finalizedTx, w.config.ChainId)
+					signedFinalizedTx, err := wallet.SignTx(accounts.Account{Address: w.coinbase}, finalizedTx, w.config.ChainID)
 					if err != nil {
 						log.Error("Fail to create lending tx", "error", err)
 						return
@@ -853,7 +853,7 @@ func (w *worker) commitNewWork() {
 			LendingStateRoot := work.lendingState.IntermediateRoot()
 			txData := append(XDCxStateRoot.Bytes(), LendingStateRoot.Bytes()...)
 			tx := types.NewTransaction(work.state.GetNonce(w.coinbase), common.TradingStateAddrBinary, big.NewInt(0), txMatchGasLimit, big.NewInt(0), txData)
-			txStateRoot, err := wallet.SignTx(accounts.Account{Address: w.coinbase}, tx, w.config.ChainId)
+			txStateRoot, err := wallet.SignTx(accounts.Account{Address: w.coinbase}, tx, w.config.ChainID)
 			if err != nil {
 				log.Error("Fail to create tx state root", "error", err)
 				return

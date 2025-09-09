@@ -87,7 +87,7 @@ func CreateTransactionSign(chainConfig *params.ChainConfig, pool *txpool.TxPool,
 		// Create and send tx to smart contract for sign validate block.
 		nonce := pool.Nonce(account.Address)
 		tx := CreateTxSign(block.Number(), block.Hash(), nonce, common.BlockSignersBinary)
-		txSigned, err := wallet.SignTx(account, tx, chainConfig.ChainId)
+		txSigned, err := wallet.SignTx(account, tx, chainConfig.ChainID)
 		if err != nil {
 			log.Error("Fail to create tx sign", "error", err)
 			return err
@@ -116,7 +116,7 @@ func CreateTransactionSign(chainConfig *params.ChainConfig, pool *txpool.TxPool,
 				log.Error("Fail to get tx opening for randomize", "error", err)
 				return err
 			}
-			txSigned, err := wallet.SignTx(account, tx, chainConfig.ChainId)
+			txSigned, err := wallet.SignTx(account, tx, chainConfig.ChainID)
 			if err != nil {
 				log.Error("Fail to create tx secret", "error", err)
 				return err
@@ -145,7 +145,7 @@ func CreateTransactionSign(chainConfig *params.ChainConfig, pool *txpool.TxPool,
 				log.Error("Fail to get tx opening for randomize", "error", err)
 				return err
 			}
-			txSigned, err := wallet.SignTx(account, tx, chainConfig.ChainId)
+			txSigned, err := wallet.SignTx(account, tx, chainConfig.ChainID)
 			if err != nil {
 				log.Error("Fail to create tx opening", "error", err)
 				return err

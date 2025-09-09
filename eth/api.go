@@ -530,7 +530,7 @@ func (api *DebugAPI) getModifiedAccounts(startBlock, endBlock *types.Block) ([]c
 func (api *EthereumAPI) ChainId() hexutil.Uint64 {
 	chainID := new(big.Int)
 	if config := api.e.chainConfig; config.IsEIP155(api.e.blockchain.CurrentBlock().Number()) {
-		chainID = config.ChainId
+		chainID = config.ChainID
 	}
 	return (hexutil.Uint64)(chainID.Uint64())
 }

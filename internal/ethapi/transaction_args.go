@@ -130,7 +130,7 @@ func (args *TransactionArgs) setDefaults(ctx context.Context, b Backend, skipGas
 
 	// If chain id is provided, ensure it matches the local chain id. Otherwise, set the local
 	// chain id as the default.
-	want := b.ChainConfig().ChainId
+	want := b.ChainConfig().ChainID
 	if args.ChainID != nil {
 		if have := (*big.Int)(args.ChainID); have.Cmp(want) != 0 {
 			return fmt.Errorf("chainId does not match node's (have=%v, want=%v)", have, want)
