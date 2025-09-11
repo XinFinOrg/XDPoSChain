@@ -1161,6 +1161,10 @@ func (bc *BlockChain) Stop() {
 	bc.chainmu.Close()
 	bc.wg.Wait()
 	bc.saveData()
+	// Allow tracers to clean-up and release resources.
+	if bc.logger != nil && bc.logger.OnClose != nil {
+		bc.logger.OnClose()
+	}
 	// Flush the collected preimages to disk
 	if err := bc.stateCache.TrieDB().CommitPreimages(); err != nil {
 		log.Error("Failed to commit trie preimages", "err", err)
