@@ -7,7 +7,7 @@
 .PHONY: XDC-darwin XDC-darwin-386 XDC-darwin-amd64
 
 GOBIN = $(shell pwd)/build/bin
-GO ?= 1.23.6
+GO ?= 1.25.1
 GORUN = go run
 
 #? XDC: Build XDC.
