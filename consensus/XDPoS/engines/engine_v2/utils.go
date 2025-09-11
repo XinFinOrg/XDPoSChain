@@ -271,7 +271,13 @@ func (x *XDPoS_v2) binarySearchBlockByEpochNumber(chain consensus.ChainReader, t
 			} else {
 				end = header.Number.Uint64()
 				// trick to shorten the search
-				estStart := end - uint64(round)%x.config.Epoch
+				estStart := uint64(0)
+				// if statement to avoid negative underflow
+				roundModEpoch := uint64(round) % x.config.Epoch
+				if end >= roundModEpoch {
+					estStart = end - roundModEpoch
+				}
+
 				if start < estStart {
 					start = estStart
 				}
