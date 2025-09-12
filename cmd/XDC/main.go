@@ -123,7 +123,7 @@ var (
 		utils.Enable0xPrefixFlag,
 		utils.EnableXDCPrefixFlag,
 		utils.VMTraceFlag,
-		utils.VMTraceConfigFlag,
+		utils.VMTraceJsonConfigFlag,
 		utils.NetworkIdFlag,
 		utils.HTTPCORSDomainFlag,
 		utils.AuthListenFlag,

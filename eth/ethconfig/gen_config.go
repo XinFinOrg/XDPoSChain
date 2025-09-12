@@ -23,6 +23,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		NetworkId               uint64
 		SyncMode                downloader.SyncMode
 		NoPruning               bool
+		NoPrefetch              bool
 		LightServ               int  `toml:",omitempty"`
 		LightPeers              int  `toml:",omitempty"`
 		SkipBcVersionCheck      bool `toml:"-"`
@@ -40,6 +41,8 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		TxPool                  txpool.Config
 		GPO                     gasprice.Config
 		EnablePreimageRecording bool
+		VMTrace                 string
+		VMTraceJsonConfig       string
 		RPCGasCap               uint64
 		RPCTxFeeCap             float64
 	}
@@ -48,6 +51,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.NetworkId = c.NetworkId
 	enc.SyncMode = c.SyncMode
 	enc.NoPruning = c.NoPruning
+	enc.NoPrefetch = c.NoPrefetch
 	enc.LightServ = c.LightServ
 	enc.LightPeers = c.LightPeers
 	enc.SkipBcVersionCheck = c.SkipBcVersionCheck
@@ -65,6 +69,8 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.TxPool = c.TxPool
 	enc.GPO = c.GPO
 	enc.EnablePreimageRecording = c.EnablePreimageRecording
+	enc.VMTrace = c.VMTrace
+	enc.VMTraceJsonConfig = c.VMTraceJsonConfig
 	enc.RPCGasCap = c.RPCGasCap
 	enc.RPCTxFeeCap = c.RPCTxFeeCap
 	return &enc, nil
@@ -77,6 +83,7 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		NetworkId               *uint64
 		SyncMode                *downloader.SyncMode
 		NoPruning               *bool
+		NoPrefetch              *bool
 		LightServ               *int  `toml:",omitempty"`
 		LightPeers              *int  `toml:",omitempty"`
 		SkipBcVersionCheck      *bool `toml:"-"`
@@ -94,6 +101,8 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		TxPool                  *txpool.Config
 		GPO                     *gasprice.Config
 		EnablePreimageRecording *bool
+		VMTrace                 *string
+		VMTraceJsonConfig       *string
 		RPCGasCap               *uint64
 		RPCTxFeeCap             *float64
 	}
@@ -112,6 +121,9 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	}
 	if dec.NoPruning != nil {
 		c.NoPruning = *dec.NoPruning
+	}
+	if dec.NoPrefetch != nil {
+		c.NoPrefetch = *dec.NoPrefetch
 	}
 	if dec.LightServ != nil {
 		c.LightServ = *dec.LightServ
@@ -163,6 +175,12 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	}
 	if dec.EnablePreimageRecording != nil {
 		c.EnablePreimageRecording = *dec.EnablePreimageRecording
+	}
+	if dec.VMTrace != nil {
+		c.VMTrace = *dec.VMTrace
+	}
+	if dec.VMTraceJsonConfig != nil {
+		c.VMTraceJsonConfig = *dec.VMTraceJsonConfig
 	}
 	if dec.RPCGasCap != nil {
 		c.RPCGasCap = *dec.RPCGasCap

@@ -80,7 +80,7 @@ It expects the genesis file or the network name [ mainnet | testnet | devnet ] a
 			utils.MetricsInfluxDBBucketFlag,
 			utils.MetricsInfluxDBOrganizationFlag,
 			utils.VMTraceFlag,
-			utils.VMTraceConfigFlag,
+			utils.VMTraceJsonConfigFlag,
 		}, utils.DatabaseFlags),
 		Description: `
 The import command imports blocks from an RLP-encoded form. The form can be one file

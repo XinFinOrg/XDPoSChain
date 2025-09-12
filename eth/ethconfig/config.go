@@ -106,8 +106,8 @@ type Config struct {
 	EnablePreimageRecording bool
 
 	// Enables VM tracing
-	VMTrace       string
-	VMTraceConfig string
+	VMTrace           string
+	VMTraceJsonConfig string
 
 	// RPCGasCap is the global gas cap for eth-call variants.
 	RPCGasCap uint64
