@@ -1,5 +1,7 @@
 FROM golang:1.25-alpine AS builder
 
+ENV GODEBUG=randseednop=0
+
 RUN apk add make build-base linux-headers
 
 COPY . /builder
