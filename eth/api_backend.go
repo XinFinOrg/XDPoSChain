@@ -442,8 +442,8 @@ func (b *EthAPIBackend) CurrentHeader() *types.Header {
 	return b.eth.blockchain.CurrentHeader()
 }
 
-func (s *EthAPIBackend) GetRewardByHash(hash common.Hash) map[string]map[string]map[string]*big.Int {
-	header := s.eth.blockchain.GetHeaderByHash(hash)
+func (b *EthAPIBackend) GetRewardByHash(hash common.Hash) map[string]map[string]map[string]*big.Int {
+	header := b.eth.blockchain.GetHeaderByHash(hash)
 	if header != nil {
 		data, err := os.ReadFile(filepath.Join(common.StoreRewardFolder, header.Number.String()+"."+header.Hash().Hex()))
 		if err == nil {

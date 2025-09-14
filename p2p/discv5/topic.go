@@ -90,70 +90,70 @@ func newTopicTable(db *nodeDB, self *Node) *topicTable {
 	}
 }
 
-func (t *topicTable) getOrNewTopic(topic Topic) *topicInfo {
-	ti := t.topics[topic]
+func (topictab *topicTable) getOrNewTopic(topic Topic) *topicInfo {
+	ti := topictab.topics[topic]
 	if ti == nil {
 		rqItem := &topicRequestQueueItem{
 			topic:    topic,
-			priority: t.requestCnt,
+			priority: topictab.requestCnt,
 		}
 		ti = &topicInfo{
 			entries: make(map[uint64]*topicEntry),
 			rqItem:  rqItem,
 		}
-		t.topics[topic] = ti
-		heap.Push(&t.requested, rqItem)
+		topictab.topics[topic] = ti
+		heap.Push(&topictab.requested, rqItem)
 	}
 	return ti
 }
 
-func (t *topicTable) checkDeleteTopic(topic Topic) {
-	ti := t.topics[topic]
+func (topictab *topicTable) checkDeleteTopic(topic Topic) {
+	ti := topictab.topics[topic]
 	if ti == nil {
 		return
 	}
 	if len(ti.entries) == 0 && ti.wcl.hasMinimumWaitPeriod() {
-		delete(t.topics, topic)
-		heap.Remove(&t.requested, ti.rqItem.index)
+		delete(topictab.topics, topic)
+		heap.Remove(&topictab.requested, ti.rqItem.index)
 	}
 }
 
-func (t *topicTable) getOrNewNode(node *Node) *nodeInfo {
-	n := t.nodes[node]
+func (topictab *topicTable) getOrNewNode(node *Node) *nodeInfo {
+	n := topictab.nodes[node]
 	if n == nil {
 		//fmt.Printf("newNode %016x %016x\n", t.self.sha[:8], node.sha[:8])
 		var issued, used uint32
-		if t.db != nil {
-			issued, used = t.db.fetchTopicRegTickets(node.ID)
+		if topictab.db != nil {
+			issued, used = topictab.db.fetchTopicRegTickets(node.ID)
 		}
 		n = &nodeInfo{
 			entries:          make(map[Topic]*topicEntry),
 			lastIssuedTicket: issued,
 			lastUsedTicket:   used,
 		}
-		t.nodes[node] = n
+		topictab.nodes[node] = n
 	}
 	return n
 }
 
-func (t *topicTable) checkDeleteNode(node *Node) {
-	if n, ok := t.nodes[node]; ok && len(n.entries) == 0 && n.noRegUntil < mclock.Now() {
+func (topictab *topicTable) checkDeleteNode(node *Node) {
+	if n, ok := topictab.nodes[node]; ok && len(n.entries) == 0 && n.noRegUntil < mclock.Now() {
 		//fmt.Printf("deleteNode %016x %016x\n", t.self.sha[:8], node.sha[:8])
-		delete(t.nodes, node)
+		delete(topictab.nodes, node)
 	}
 }
 
-func (t *topicTable) storeTicketCounters(node *Node) {
-	n := t.getOrNewNode(node)
-	if t.db != nil {
-		t.db.updateTopicRegTickets(node.ID, n.lastIssuedTicket, n.lastUsedTicket)
+func (topictab *topicTable) storeTicketCounters(node *Node) {
+	n := topictab.getOrNewNode(node)
+	if topictab.db != nil {
+		topictab.db.updateTopicRegTickets(node.ID, n.lastIssuedTicket, n.lastUsedTicket)
 	}
 }
 
-func (t *topicTable) getEntries(topic Topic) []*Node {
-	t.collectGarbage()
+func (topictab *topicTable) getEntries(topic Topic) []*Node {
+	topictab.collectGarbage()
 
-	te := t.topics[topic]
+	te := topictab.topics[topic]
 	if te == nil {
 		return nil
 	}
@@ -163,29 +163,29 @@ func (t *topicTable) getEntries(topic Topic) []*Node {
 		nodes[i] = e.node
 		i++
 	}
-	t.requestCnt++
-	t.requested.update(te.rqItem, t.requestCnt)
+	topictab.requestCnt++
+	topictab.requested.update(te.rqItem, topictab.requestCnt)
 	return nodes
 }
 
-func (t *topicTable) addEntry(node *Node, topic Topic) {
-	n := t.getOrNewNode(node)
+func (topictab *topicTable) addEntry(node *Node, topic Topic) {
+	n := topictab.getOrNewNode(node)
 	// clear previous entries by the same node
 	for _, e := range n.entries {
-		t.deleteEntry(e)
+		topictab.deleteEntry(e)
 	}
 	// ***
-	n = t.getOrNewNode(node)
+	n = topictab.getOrNewNode(node)
 
 	tm := mclock.Now()
-	te := t.getOrNewTopic(topic)
+	te := topictab.getOrNewTopic(topic)
 
 	if len(te.entries) == maxEntriesPerTopic {
-		t.deleteEntry(te.getFifoTail())
+		topictab.deleteEntry(te.getFifoTail())
 	}
 
-	if t.globalEntries == maxEntries {
-		t.deleteEntry(t.leastRequested()) // not empty, no need to check for nil
+	if topictab.globalEntries == maxEntries {
+		topictab.deleteEntry(topictab.leastRequested()) // not empty, no need to check for nil
 	}
 
 	fifoIdx := te.fifoHead
@@ -197,50 +197,50 @@ func (t *topicTable) addEntry(node *Node, topic Topic) {
 		expire:  tm.Add(fallbackRegistrationExpiry),
 	}
 	if printTestImgLogs {
-		fmt.Printf("*+ %d %v %016x %016x\n", tm/1000000, topic, t.self.sha[:8], node.sha[:8])
+		fmt.Printf("*+ %d %v %016x %016x\n", tm/1000000, topic, topictab.self.sha[:8], node.sha[:8])
 	}
 	te.entries[fifoIdx] = entry
 	n.entries[topic] = entry
-	t.globalEntries++
+	topictab.globalEntries++
 	te.wcl.registered(tm)
 }
 
 // removes least requested element from the fifo
-func (t *topicTable) leastRequested() *topicEntry {
-	for t.requested.Len() > 0 && t.topics[t.requested[0].topic] == nil {
-		heap.Pop(&t.requested)
+func (topictab *topicTable) leastRequested() *topicEntry {
+	for topictab.requested.Len() > 0 && topictab.topics[topictab.requested[0].topic] == nil {
+		heap.Pop(&topictab.requested)
 	}
-	if t.requested.Len() == 0 {
+	if topictab.requested.Len() == 0 {
 		return nil
 	}
-	return t.topics[t.requested[0].topic].getFifoTail()
+	return topictab.topics[topictab.requested[0].topic].getFifoTail()
 }
 
 // entry should exist
-func (t *topicTable) deleteEntry(e *topicEntry) {
+func (topictab *topicTable) deleteEntry(e *topicEntry) {
 	if printTestImgLogs {
-		fmt.Printf("*- %d %v %016x %016x\n", mclock.Now()/1000000, e.topic, t.self.sha[:8], e.node.sha[:8])
+		fmt.Printf("*- %d %v %016x %016x\n", mclock.Now()/1000000, e.topic, topictab.self.sha[:8], e.node.sha[:8])
 	}
-	ne := t.nodes[e.node].entries
+	ne := topictab.nodes[e.node].entries
 	delete(ne, e.topic)
 	if len(ne) == 0 {
-		t.checkDeleteNode(e.node)
+		topictab.checkDeleteNode(e.node)
 	}
-	te := t.topics[e.topic]
+	te := topictab.topics[e.topic]
 	delete(te.entries, e.fifoIdx)
 	if len(te.entries) == 0 {
-		t.checkDeleteTopic(e.topic)
+		topictab.checkDeleteTopic(e.topic)
 	}
-	t.globalEntries--
+	topictab.globalEntries--
 }
 
 // It is assumed that topics and waitPeriods have the same length.
-func (t *topicTable) useTicket(node *Node, serialNo uint32, topics []Topic, idx int, issueTime uint64, waitPeriods []uint32) (registered bool) {
+func (topictab *topicTable) useTicket(node *Node, serialNo uint32, topics []Topic, idx int, issueTime uint64, waitPeriods []uint32) (registered bool) {
 	log.Trace("Using discovery ticket", "serial", serialNo, "topics", topics, "waits", waitPeriods)
 	//fmt.Println("useTicket", serialNo, topics, waitPeriods)
-	t.collectGarbage()
+	topictab.collectGarbage()
 
-	n := t.getOrNewNode(node)
+	n := topictab.getOrNewNode(node)
 	if serialNo < n.lastUsedTicket {
 		return false
 	}
@@ -252,7 +252,7 @@ func (t *topicTable) useTicket(node *Node, serialNo uint32, topics []Topic, idx 
 	if serialNo != n.lastUsedTicket {
 		n.lastUsedTicket = serialNo
 		n.noRegUntil = tm.Add(noRegTimeout())
-		t.storeTicketCounters(node)
+		topictab.storeTicketCounters(node)
 	}
 
 	currTime := uint64(tm / mclock.AbsTime(time.Second))
@@ -260,7 +260,7 @@ func (t *topicTable) useTicket(node *Node, serialNo uint32, topics []Topic, idx 
 	relTime := int64(currTime - regTime)
 	if relTime >= -1 && relTime <= regTimeWindow+1 { // give clients a little security margin on both ends
 		if e := n.entries[topics[idx]]; e == nil {
-			t.addEntry(node, topics[idx])
+			topictab.addEntry(node, topics[idx])
 		} else {
 			// if there is an active entry, don't move to the front of the FIFO but prolong expire time
 			e.expire = tm.Add(fallbackRegistrationExpiry)
@@ -300,25 +300,25 @@ func (topictab *topicTable) getTicket(node *Node, topics []Topic) *ticket {
 
 const gcInterval = time.Minute
 
-func (t *topicTable) collectGarbage() {
+func (topictab *topicTable) collectGarbage() {
 	tm := mclock.Now()
-	if time.Duration(tm-t.lastGarbageCollection) < gcInterval {
+	if time.Duration(tm-topictab.lastGarbageCollection) < gcInterval {
 		return
 	}
-	t.lastGarbageCollection = tm
+	topictab.lastGarbageCollection = tm
 
-	for node, n := range t.nodes {
+	for node, n := range topictab.nodes {
 		for _, e := range n.entries {
 			if e.expire <= tm {
-				t.deleteEntry(e)
+				topictab.deleteEntry(e)
 			}
 		}
 
-		t.checkDeleteNode(node)
+		topictab.checkDeleteNode(node)
 	}
 
-	for topic := range t.topics {
-		t.checkDeleteTopic(topic)
+	for topic := range topictab.topics {
+		topictab.checkDeleteTopic(topic)
 	}
 }
 

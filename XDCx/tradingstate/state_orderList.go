@@ -87,16 +87,16 @@ func (s *stateOrderList) setError(err error) {
 	}
 }
 
-func (c *stateOrderList) getTrie(db Database) Trie {
-	if c.trie == nil {
+func (s *stateOrderList) getTrie(db Database) Trie {
+	if s.trie == nil {
 		var err error
-		c.trie, err = db.OpenStorageTrie(c.price, c.data.Root)
+		s.trie, err = db.OpenStorageTrie(s.price, s.data.Root)
 		if err != nil {
-			c.trie, _ = db.OpenStorageTrie(c.price, types.EmptyRootHash)
-			c.setError(fmt.Errorf("can't create storage trie: %v", err))
+			s.trie, _ = db.OpenStorageTrie(s.price, types.EmptyRootHash)
+			s.setError(fmt.Errorf("can't create storage trie: %v", err))
 		}
 	}
-	return c.trie
+	return s.trie
 }
 
 // GetState returns a value in orderId storage.

@@ -69,54 +69,54 @@ func newLiquidationPriceState(db *TradingStateDB, orderBook common.Hash, price c
 }
 
 // EncodeRLP implements rlp.Encoder.
-func (l *liquidationPriceState) EncodeRLP(w io.Writer) error {
-	return rlp.Encode(w, l.data)
+func (s *liquidationPriceState) EncodeRLP(w io.Writer) error {
+	return rlp.Encode(w, s.data)
 }
 
 // setError remembers the first non-nil error it is called with.
-func (l *liquidationPriceState) setError(err error) {
-	if l.dbErr == nil {
-		l.dbErr = err
+func (s *liquidationPriceState) setError(err error) {
+	if s.dbErr == nil {
+		s.dbErr = err
 	}
 }
 
-func (l *liquidationPriceState) MarkStateLendingBookDirty(price common.Hash) {
-	l.stateLendingBooksDirty[price] = struct{}{}
-	if l.onDirty != nil {
-		l.onDirty(l.liquidationPrice)
-		l.onDirty = nil
+func (s *liquidationPriceState) MarkStateLendingBookDirty(price common.Hash) {
+	s.stateLendingBooksDirty[price] = struct{}{}
+	if s.onDirty != nil {
+		s.onDirty(s.liquidationPrice)
+		s.onDirty = nil
 	}
 }
 
-func (l *liquidationPriceState) createLendingBook(db Database, lendingBook common.Hash) (newobj *stateLendingBook) {
-	newobj = newStateLendingBook(l.orderBook, l.liquidationPrice, lendingBook, orderList{Volume: Zero}, l.MarkStateLendingBookDirty)
-	l.stateLendingBooks[lendingBook] = newobj
-	l.stateLendingBooksDirty[lendingBook] = struct{}{}
-	if l.onDirty != nil {
-		l.onDirty(l.liquidationPrice)
-		l.onDirty = nil
+func (s *liquidationPriceState) createLendingBook(db Database, lendingBook common.Hash) (newobj *stateLendingBook) {
+	newobj = newStateLendingBook(s.orderBook, s.liquidationPrice, lendingBook, orderList{Volume: Zero}, s.MarkStateLendingBookDirty)
+	s.stateLendingBooks[lendingBook] = newobj
+	s.stateLendingBooksDirty[lendingBook] = struct{}{}
+	if s.onDirty != nil {
+		s.onDirty(s.liquidationPrice)
+		s.onDirty = nil
 	}
 	return newobj
 }
 
-func (l *liquidationPriceState) getTrie(db Database) Trie {
-	if l.trie == nil {
+func (s *liquidationPriceState) getTrie(db Database) Trie {
+	if s.trie == nil {
 		var err error
-		l.trie, err = db.OpenStorageTrie(l.liquidationPrice, l.data.Root)
+		s.trie, err = db.OpenStorageTrie(s.liquidationPrice, s.data.Root)
 		if err != nil {
-			l.trie, _ = db.OpenStorageTrie(l.liquidationPrice, types.EmptyRootHash)
-			l.setError(fmt.Errorf("can't create storage trie: %v", err))
+			s.trie, _ = db.OpenStorageTrie(s.liquidationPrice, types.EmptyRootHash)
+			s.setError(fmt.Errorf("can't create storage trie: %v", err))
 		}
 	}
-	return l.trie
+	return s.trie
 }
 
-func (l *liquidationPriceState) updateTrie(db Database) Trie {
-	tr := l.getTrie(db)
-	for lendingId, stateObject := range l.stateLendingBooks {
-		delete(l.stateLendingBooksDirty, lendingId)
+func (s *liquidationPriceState) updateTrie(db Database) Trie {
+	tr := s.getTrie(db)
+	for lendingId, stateObject := range s.stateLendingBooks {
+		delete(s.stateLendingBooksDirty, lendingId)
 		if stateObject.empty() {
-			l.setError(tr.TryDelete(lendingId[:]))
+			s.setError(tr.TryDelete(lendingId[:]))
 			continue
 		}
 		err := stateObject.updateRoot(db)
@@ -126,17 +126,17 @@ func (l *liquidationPriceState) updateTrie(db Database) Trie {
 
 		// Encoding []byte cannot fail, ok to ignore the error.
 		v, _ := rlp.EncodeToBytes(stateObject)
-		l.setError(tr.TryUpdate(lendingId[:], v))
+		s.setError(tr.TryUpdate(lendingId[:], v))
 	}
 	return tr
 }
 
-func (l *liquidationPriceState) updateRoot(db Database) error {
-	l.updateTrie(db)
-	if l.dbErr != nil {
-		return l.dbErr
+func (s *liquidationPriceState) updateRoot(db Database) error {
+	s.updateTrie(db)
+	if s.dbErr != nil {
+		return s.dbErr
 	}
-	root, err := l.trie.Commit(func(_ [][]byte, _ []byte, leaf []byte, parent common.Hash, _ []byte) error {
+	root, err := s.trie.Commit(func(_ [][]byte, _ []byte, leaf []byte, parent common.Hash, _ []byte) error {
 		var orderList orderList
 		if err := rlp.DecodeBytes(leaf, &orderList); err != nil {
 			return nil
@@ -147,57 +147,57 @@ func (l *liquidationPriceState) updateRoot(db Database) error {
 		return nil
 	})
 	if err == nil {
-		l.data.Root = root
+		s.data.Root = root
 	}
 	return err
 }
 
-func (l *liquidationPriceState) deepCopy(db *TradingStateDB, onDirty func(liquidationPrice common.Hash)) *liquidationPriceState {
-	stateOrderList := newLiquidationPriceState(db, l.orderBook, l.liquidationPrice, l.data, onDirty)
-	if l.trie != nil {
-		stateOrderList.trie = db.db.CopyTrie(l.trie)
+func (s *liquidationPriceState) deepCopy(db *TradingStateDB, onDirty func(liquidationPrice common.Hash)) *liquidationPriceState {
+	stateOrderList := newLiquidationPriceState(db, s.orderBook, s.liquidationPrice, s.data, onDirty)
+	if s.trie != nil {
+		stateOrderList.trie = db.db.CopyTrie(s.trie)
 	}
-	for key, value := range l.stateLendingBooks {
-		stateOrderList.stateLendingBooks[key] = value.deepCopy(db, l.MarkStateLendingBookDirty)
+	for key, value := range s.stateLendingBooks {
+		stateOrderList.stateLendingBooks[key] = value.deepCopy(db, s.MarkStateLendingBookDirty)
 	}
-	for key, value := range l.stateLendingBooksDirty {
+	for key, value := range s.stateLendingBooksDirty {
 		stateOrderList.stateLendingBooksDirty[key] = value
 	}
 	return stateOrderList
 }
 
 // Retrieve a state object given by the address. Returns nil if not found.
-func (l *liquidationPriceState) getStateLendingBook(db Database, lendingBook common.Hash) (stateObject *stateLendingBook) {
+func (s *liquidationPriceState) getStateLendingBook(db Database, lendingBook common.Hash) (stateObject *stateLendingBook) {
 	// Prefer 'live' objects.
-	if obj := l.stateLendingBooks[lendingBook]; obj != nil {
+	if obj := s.stateLendingBooks[lendingBook]; obj != nil {
 		return obj
 	}
 
 	// Load the object from the database.
-	enc, err := l.getTrie(db).TryGet(lendingBook[:])
+	enc, err := s.getTrie(db).TryGet(lendingBook[:])
 	if len(enc) == 0 {
-		l.setError(err)
+		s.setError(err)
 		return nil
 	}
 	var data orderList
 	if err := rlp.DecodeBytes(enc, &data); err != nil {
-		log.Error("Failed to decode state lending book ", "orderbook", l.orderBook, "liquidation price", l.liquidationPrice, "lendingBook", lendingBook, "err", err)
+		log.Error("Failed to decode state lending book ", "orderbook", s.orderBook, "liquidation price", s.liquidationPrice, "lendingBook", lendingBook, "err", err)
 		return nil
 	}
 	// Insert into the live set.
-	obj := newStateLendingBook(l.orderBook, l.liquidationPrice, lendingBook, data, l.MarkStateLendingBookDirty)
-	l.stateLendingBooks[lendingBook] = obj
+	obj := newStateLendingBook(s.orderBook, s.liquidationPrice, lendingBook, data, s.MarkStateLendingBookDirty)
+	s.stateLendingBooks[lendingBook] = obj
 	return obj
 }
 
-func (l *liquidationPriceState) getAllLiquidationData(db Database) map[common.Hash][]common.Hash {
+func (s *liquidationPriceState) getAllLiquidationData(db Database) map[common.Hash][]common.Hash {
 	liquidationData := map[common.Hash][]common.Hash{}
-	lendingBookTrie := l.getTrie(db)
+	lendingBookTrie := s.getTrie(db)
 	if lendingBookTrie == nil {
 		return liquidationData
 	}
 	lendingBooks := []common.Hash{}
-	for id, stateLendingBook := range l.stateLendingBooks {
+	for id, stateLendingBook := range s.stateLendingBooks {
 		if !stateLendingBook.empty() {
 			lendingBooks = append(lendingBooks, id)
 		}
@@ -205,13 +205,13 @@ func (l *liquidationPriceState) getAllLiquidationData(db Database) map[common.Ha
 	lendingBookListIt := trie.NewIterator(lendingBookTrie.NodeIterator(nil))
 	for lendingBookListIt.Next() {
 		id := common.BytesToHash(lendingBookListIt.Key)
-		if _, exist := l.stateLendingBooks[id]; exist {
+		if _, exist := s.stateLendingBooks[id]; exist {
 			continue
 		}
 		lendingBooks = append(lendingBooks, id)
 	}
 	for _, lendingBook := range lendingBooks {
-		stateLendingBook := l.getStateLendingBook(db, lendingBook)
+		stateLendingBook := s.getStateLendingBook(db, lendingBook)
 		if stateLendingBook != nil {
 			liquidationData[lendingBook] = stateLendingBook.getAllTradeIds(db)
 		}
@@ -219,22 +219,22 @@ func (l *liquidationPriceState) getAllLiquidationData(db Database) map[common.Ha
 	return liquidationData
 }
 
-func (l *liquidationPriceState) AddVolume(amount *big.Int) {
-	l.setVolume(new(big.Int).Add(l.data.Volume, amount))
+func (s *liquidationPriceState) AddVolume(amount *big.Int) {
+	s.setVolume(new(big.Int).Add(s.data.Volume, amount))
 }
 
-func (c *liquidationPriceState) subVolume(amount *big.Int) {
-	c.setVolume(new(big.Int).Sub(c.data.Volume, amount))
+func (s *liquidationPriceState) subVolume(amount *big.Int) {
+	s.setVolume(new(big.Int).Sub(s.data.Volume, amount))
 }
 
-func (l *liquidationPriceState) setVolume(volume *big.Int) {
-	l.data.Volume = volume
-	if l.onDirty != nil {
-		l.onDirty(l.liquidationPrice)
-		l.onDirty = nil
+func (s *liquidationPriceState) setVolume(volume *big.Int) {
+	s.data.Volume = volume
+	if s.onDirty != nil {
+		s.onDirty(s.liquidationPrice)
+		s.onDirty = nil
 	}
 }
 
-func (l *liquidationPriceState) Volume() *big.Int {
-	return l.data.Volume
+func (s *liquidationPriceState) Volume() *big.Int {
+	return s.data.Volume
 }

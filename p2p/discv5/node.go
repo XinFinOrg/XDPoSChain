@@ -133,8 +133,8 @@ var incompleteNodeURL = regexp.MustCompile("(?i)^(?:enode://)?([0-9a-f]+)$")
 //
 // For incomplete nodes, the designator must look like one of these
 //
-//    enode://<hex node id>
-//    <hex node id>
+//	enode://<hex node id>
+//	<hex node id>
 //
 // For complete nodes, the node ID is encoded in the username portion
 // of the URL, separated from the host by an @ sign. The hostname can
@@ -147,7 +147,7 @@ var incompleteNodeURL = regexp.MustCompile("(?i)^(?:enode://)?([0-9a-f]+)$")
 // a node with IP address 10.3.58.6, TCP listening port 30303
 // and UDP discovery port 30301.
 //
-//    enode://<hex node id>@10.3.58.6:30303?discport=30301
+//	enode://<hex node id>@10.3.58.6:30303?discport=30301
 func ParseNode(rawurl string) (*Node, error) {
 	if m := incompleteNodeURL.FindStringSubmatch(rawurl); m != nil {
 		id, err := HexID(m[1])
@@ -315,19 +315,19 @@ func PubkeyID(pub *ecdsa.PublicKey) NodeID {
 
 // Pubkey returns the public key represented by the node ID.
 // It returns an error if the ID is not a point on the curve.
-func (id NodeID) Pubkey() (*ecdsa.PublicKey, error) {
+func (n NodeID) Pubkey() (*ecdsa.PublicKey, error) {
 	p := &ecdsa.PublicKey{Curve: crypto.S256(), X: new(big.Int), Y: new(big.Int)}
-	half := len(id) / 2
-	p.X.SetBytes(id[:half])
-	p.Y.SetBytes(id[half:])
+	half := len(n) / 2
+	p.X.SetBytes(n[:half])
+	p.Y.SetBytes(n[half:])
 	if !p.Curve.IsOnCurve(p.X, p.Y) {
 		return nil, errors.New("id is invalid secp256k1 curve point")
 	}
 	return p, nil
 }
 
-func (id NodeID) mustPubkey() ecdsa.PublicKey {
-	pk, err := id.Pubkey()
+func (n NodeID) mustPubkey() ecdsa.PublicKey {
+	pk, err := n.Pubkey()
 	if err != nil {
 		panic(err)
 	}
