@@ -583,42 +583,42 @@ func (c *XDPoSConfig) BlockConsensusVersion(num *big.Int, extraByte []byte, extr
 	return ConsensusEngineVersion1
 }
 
-func (v *V2) UpdateConfig(round uint64) {
-	v.lock.Lock()
-	defer v.lock.Unlock()
+func (v2 *V2) UpdateConfig(round uint64) {
+	v2.lock.Lock()
+	defer v2.lock.Unlock()
 
 	var index uint64
 
 	//find the right config
-	for i := range v.configIndex {
-		if v.configIndex[i] <= round {
-			index = v.configIndex[i]
+	for i := range v2.configIndex {
+		if v2.configIndex[i] <= round {
+			index = v2.configIndex[i]
 			break
 		}
 	}
 	// update to current config
-	log.Info("[updateV2Config] Update config", "index", index, "round", round, "SwitchRound", v.AllConfigs[index].SwitchRound)
-	v.CurrentConfig = v.AllConfigs[index]
+	log.Info("[updateV2Config] Update config", "index", index, "round", round, "SwitchRound", v2.AllConfigs[index].SwitchRound)
+	v2.CurrentConfig = v2.AllConfigs[index]
 }
 
-func (v *V2) Config(round uint64) *V2Config {
+func (v2 *V2) Config(round uint64) *V2Config {
 	configRound := round
 	var index uint64
 
 	//find the right config
-	for i := range v.configIndex {
-		if v.configIndex[i] <= configRound {
-			index = v.configIndex[i]
+	for i := range v2.configIndex {
+		if v2.configIndex[i] <= configRound {
+			index = v2.configIndex[i]
 			break
 		}
 	}
-	return v.AllConfigs[index]
+	return v2.AllConfigs[index]
 }
 
-func (v *V2) BuildConfigIndex() {
+func (v2 *V2) BuildConfigIndex() {
 	var list []uint64
 
-	for i := range v.AllConfigs {
+	for i := range v2.AllConfigs {
 		list = append(list, i)
 	}
 
@@ -632,11 +632,11 @@ func (v *V2) BuildConfigIndex() {
 		}
 	}
 	log.Info("[BuildConfigIndex] config list", "list", list)
-	v.configIndex = list
+	v2.configIndex = list
 }
 
-func (v *V2) ConfigIndex() []uint64 {
-	return v.configIndex
+func (v2 *V2) ConfigIndex() []uint64 {
+	return v2.configIndex
 }
 
 // Description returns a human-readable description of ChainConfig.

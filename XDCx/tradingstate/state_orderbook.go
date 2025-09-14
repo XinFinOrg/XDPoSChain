@@ -557,31 +557,31 @@ func (te *tradingExchanges) MarkStateOrderObjectDirty(orderId common.Hash) {
 
 // createStateOrderListObject creates a new state object. If there is an existing orderId with
 // the given address, it is overwritten and returned as the second return value.
-func (t *tradingExchanges) createStateOrderObject(db Database, orderId common.Hash, order OrderItem) (newobj *stateOrderItem) {
-	newobj = newStateOrderItem(t.orderBookHash, orderId, order, t.MarkStateOrderObjectDirty)
+func (te *tradingExchanges) createStateOrderObject(db Database, orderId common.Hash, order OrderItem) (newobj *stateOrderItem) {
+	newobj = newStateOrderItem(te.orderBookHash, orderId, order, te.MarkStateOrderObjectDirty)
 	orderIdHash := common.BigToHash(new(big.Int).SetUint64(order.OrderID))
-	t.stateOrderObjects[orderIdHash] = newobj
-	t.stateOrderObjectsDirty[orderIdHash] = struct{}{}
-	if t.onDirty != nil {
-		t.onDirty(t.orderBookHash)
-		t.onDirty = nil
+	te.stateOrderObjects[orderIdHash] = newobj
+	te.stateOrderObjectsDirty[orderIdHash] = struct{}{}
+	if te.onDirty != nil {
+		te.onDirty(te.orderBookHash)
+		te.onDirty = nil
 	}
 	return newobj
 }
 
 // updateAskTrie writes cached storage modifications into the object's storage trie.
-func (t *tradingExchanges) updateOrdersTrie(db Database) Trie {
-	tr := t.getOrdersTrie(db)
-	for orderId, orderItem := range t.stateOrderObjects {
-		if _, isDirty := t.stateOrderObjectsDirty[orderId]; isDirty {
-			delete(t.stateOrderObjectsDirty, orderId)
+func (te *tradingExchanges) updateOrdersTrie(db Database) Trie {
+	tr := te.getOrdersTrie(db)
+	for orderId, orderItem := range te.stateOrderObjects {
+		if _, isDirty := te.stateOrderObjectsDirty[orderId]; isDirty {
+			delete(te.stateOrderObjectsDirty, orderId)
 			if orderItem.empty() {
-				t.setError(tr.TryDelete(orderId[:]))
+				te.setError(tr.TryDelete(orderId[:]))
 				continue
 			}
 			// Encoding []byte cannot fail, ok to ignore the error.
 			v, _ := rlp.EncodeToBytes(orderItem)
-			t.setError(tr.TryUpdate(orderId[:], v))
+			te.setError(tr.TryUpdate(orderId[:], v))
 		}
 	}
 	return tr
@@ -589,71 +589,71 @@ func (t *tradingExchanges) updateOrdersTrie(db Database) Trie {
 
 // CommitAskTrie the storage trie of the object to db.
 // This updates the trie root.
-func (t *tradingExchanges) updateOrdersRoot(db Database) {
-	t.updateOrdersTrie(db)
-	t.data.OrderRoot = t.ordersTrie.Hash()
+func (te *tradingExchanges) updateOrdersRoot(db Database) {
+	te.updateOrdersTrie(db)
+	te.data.OrderRoot = te.ordersTrie.Hash()
 }
 
 // CommitAskTrie the storage trie of the object to db.
 // This updates the trie root.
-func (t *tradingExchanges) CommitOrdersTrie(db Database) error {
-	t.updateOrdersTrie(db)
-	if t.dbErr != nil {
-		return t.dbErr
+func (te *tradingExchanges) CommitOrdersTrie(db Database) error {
+	te.updateOrdersTrie(db)
+	if te.dbErr != nil {
+		return te.dbErr
 	}
-	root, err := t.ordersTrie.Commit(nil)
+	root, err := te.ordersTrie.Commit(nil)
 	if err == nil {
-		t.data.OrderRoot = root
+		te.data.OrderRoot = root
 	}
 	return err
 }
 
-func (t *tradingExchanges) MarkStateLiquidationPriceDirty(price common.Hash) {
-	t.liquidationPriceStatesDirty[price] = struct{}{}
-	if t.onDirty != nil {
-		t.onDirty(t.Hash())
-		t.onDirty = nil
+func (te *tradingExchanges) MarkStateLiquidationPriceDirty(price common.Hash) {
+	te.liquidationPriceStatesDirty[price] = struct{}{}
+	if te.onDirty != nil {
+		te.onDirty(te.Hash())
+		te.onDirty = nil
 	}
 }
 
-func (t *tradingExchanges) createStateLiquidationPrice(db Database, liquidationPrice common.Hash) (newobj *liquidationPriceState) {
-	newobj = newLiquidationPriceState(t.db, t.orderBookHash, liquidationPrice, orderList{Volume: Zero}, t.MarkStateLiquidationPriceDirty)
-	t.liquidationPriceStates[liquidationPrice] = newobj
-	t.liquidationPriceStatesDirty[liquidationPrice] = struct{}{}
+func (te *tradingExchanges) createStateLiquidationPrice(db Database, liquidationPrice common.Hash) (newobj *liquidationPriceState) {
+	newobj = newLiquidationPriceState(te.db, te.orderBookHash, liquidationPrice, orderList{Volume: Zero}, te.MarkStateLiquidationPriceDirty)
+	te.liquidationPriceStates[liquidationPrice] = newobj
+	te.liquidationPriceStatesDirty[liquidationPrice] = struct{}{}
 	data, err := rlp.EncodeToBytes(newobj)
 	if err != nil {
 		panic(fmt.Errorf("can't encode liquidation price object at %x: %v", liquidationPrice[:], err))
 	}
-	t.setError(t.getLiquidationPriceTrie(db).TryUpdate(liquidationPrice[:], data))
-	if t.onDirty != nil {
-		t.onDirty(t.Hash())
-		t.onDirty = nil
+	te.setError(te.getLiquidationPriceTrie(db).TryUpdate(liquidationPrice[:], data))
+	if te.onDirty != nil {
+		te.onDirty(te.Hash())
+		te.onDirty = nil
 	}
 	return newobj
 }
 
-func (t *tradingExchanges) getLiquidationPriceTrie(db Database) Trie {
-	if t.liquidationPriceTrie == nil {
+func (te *tradingExchanges) getLiquidationPriceTrie(db Database) Trie {
+	if te.liquidationPriceTrie == nil {
 		var err error
-		t.liquidationPriceTrie, err = db.OpenStorageTrie(t.orderBookHash, t.data.LiquidationPriceRoot)
+		te.liquidationPriceTrie, err = db.OpenStorageTrie(te.orderBookHash, te.data.LiquidationPriceRoot)
 		if err != nil {
-			t.liquidationPriceTrie, _ = db.OpenStorageTrie(t.orderBookHash, types.EmptyRootHash)
-			t.setError(fmt.Errorf("can't create liquidation liquidationPrice trie: %v", err))
+			te.liquidationPriceTrie, _ = db.OpenStorageTrie(te.orderBookHash, types.EmptyRootHash)
+			te.setError(fmt.Errorf("can't create liquidation liquidationPrice trie: %v", err))
 		}
 	}
-	return t.liquidationPriceTrie
+	return te.liquidationPriceTrie
 }
 
-func (t *tradingExchanges) getStateLiquidationPrice(db Database, price common.Hash) (stateObject *liquidationPriceState) {
+func (te *tradingExchanges) getStateLiquidationPrice(db Database, price common.Hash) (stateObject *liquidationPriceState) {
 	// Prefer 'live' objects.
-	if obj := t.liquidationPriceStates[price]; obj != nil {
+	if obj := te.liquidationPriceStates[price]; obj != nil {
 		return obj
 	}
 
 	// Load the object from the database.
-	enc, err := t.getLiquidationPriceTrie(db).TryGet(price[:])
+	enc, err := te.getLiquidationPriceTrie(db).TryGet(price[:])
 	if len(enc) == 0 {
-		t.setError(err)
+		te.setError(err)
 		return nil
 	}
 	var data orderList
@@ -662,16 +662,16 @@ func (t *tradingExchanges) getStateLiquidationPrice(db Database, price common.Ha
 		return nil
 	}
 	// Insert into the live set.
-	obj := newLiquidationPriceState(t.db, t.orderBookHash, price, data, t.MarkStateLiquidationPriceDirty)
-	t.liquidationPriceStates[price] = obj
+	obj := newLiquidationPriceState(te.db, te.orderBookHash, price, data, te.MarkStateLiquidationPriceDirty)
+	te.liquidationPriceStates[price] = obj
 	return obj
 }
 
-func (t *tradingExchanges) getLowestLiquidationPrice(db Database) (common.Hash, *liquidationPriceState) {
-	trie := t.getLiquidationPriceTrie(db)
+func (te *tradingExchanges) getLowestLiquidationPrice(db Database) (common.Hash, *liquidationPriceState) {
+	trie := te.getLiquidationPriceTrie(db)
 	encKey, encValue, err := trie.TryGetBestLeftKeyAndValue()
 	if err != nil {
-		log.Error("Failed find best liquidationPrice ask trie ", "orderbook", t.orderBookHash.Hex())
+		log.Error("Failed find best liquidationPrice ask trie ", "orderbook", te.orderBookHash.Hex())
 		return EmptyHash, nil
 	}
 	if len(encKey) == 0 || len(encValue) == 0 {
@@ -679,25 +679,25 @@ func (t *tradingExchanges) getLowestLiquidationPrice(db Database) (common.Hash, 
 		return EmptyHash, nil
 	}
 	price := common.BytesToHash(encKey)
-	obj := t.liquidationPriceStates[price]
+	obj := te.liquidationPriceStates[price]
 	if obj == nil {
 		var data orderList
 		if err := rlp.DecodeBytes(encValue, &data); err != nil {
 			log.Error("Failed to decode state get best ask trie", "err", err)
 			return EmptyHash, nil
 		}
-		obj = newLiquidationPriceState(t.db, t.orderBookHash, price, data, t.MarkStateLiquidationPriceDirty)
-		t.liquidationPriceStates[price] = obj
+		obj = newLiquidationPriceState(te.db, te.orderBookHash, price, data, te.MarkStateLiquidationPriceDirty)
+		te.liquidationPriceStates[price] = obj
 	}
 	return price, obj
 }
 
-func (t *tradingExchanges) getAllLowerLiquidationPrice(db Database, limit common.Hash) map[common.Hash]*liquidationPriceState {
-	trie := t.getLiquidationPriceTrie(db)
+func (te *tradingExchanges) getAllLowerLiquidationPrice(db Database, limit common.Hash) map[common.Hash]*liquidationPriceState {
+	trie := te.getLiquidationPriceTrie(db)
 	encKeys, encValues, err := trie.TryGetAllLeftKeyAndValue(limit.Bytes())
 	result := map[common.Hash]*liquidationPriceState{}
 	if err != nil || len(encKeys) != len(encValues) {
-		log.Error("Failed get lower liquidation price trie ", "orderbook", t.orderBookHash.Hex(), "encKeys", len(encKeys), "encValues", len(encValues))
+		log.Error("Failed get lower liquidation price trie ", "orderbook", te.orderBookHash.Hex(), "encKeys", len(encKeys), "encValues", len(encValues))
 		return result
 	}
 	if len(encKeys) == 0 || len(encValues) == 0 {
@@ -706,15 +706,15 @@ func (t *tradingExchanges) getAllLowerLiquidationPrice(db Database, limit common
 	}
 	for i := range encKeys {
 		price := common.BytesToHash(encKeys[i])
-		obj := t.liquidationPriceStates[price]
+		obj := te.liquidationPriceStates[price]
 		if obj == nil {
 			var data orderList
 			if err := rlp.DecodeBytes(encValues[i], &data); err != nil {
 				log.Error("Failed to decode state get all lower liquidation price trie", "price", price, "encValues", encValues[i], "err", err)
 				return result
 			}
-			obj = newLiquidationPriceState(t.db, t.orderBookHash, price, data, t.MarkStateLiquidationPriceDirty)
-			t.liquidationPriceStates[price] = obj
+			obj = newLiquidationPriceState(te.db, te.orderBookHash, price, data, te.MarkStateLiquidationPriceDirty)
+			te.liquidationPriceStates[price] = obj
 		}
 		if obj.empty() {
 			continue
@@ -724,11 +724,11 @@ func (t *tradingExchanges) getAllLowerLiquidationPrice(db Database, limit common
 	return result
 }
 
-func (t *tradingExchanges) getHighestLiquidationPrice(db Database) (common.Hash, *liquidationPriceState) {
-	trie := t.getLiquidationPriceTrie(db)
+func (te *tradingExchanges) getHighestLiquidationPrice(db Database) (common.Hash, *liquidationPriceState) {
+	trie := te.getLiquidationPriceTrie(db)
 	encKey, encValue, err := trie.TryGetBestRightKeyAndValue()
 	if err != nil {
-		log.Error("Failed find best liquidationPrice ask trie ", "orderbook", t.orderBookHash.Hex())
+		log.Error("Failed find best liquidationPrice ask trie ", "orderbook", te.orderBookHash.Hex())
 		return EmptyHash, nil
 	}
 	if len(encKey) == 0 || len(encValue) == 0 {
@@ -736,15 +736,15 @@ func (t *tradingExchanges) getHighestLiquidationPrice(db Database) (common.Hash,
 		return EmptyHash, nil
 	}
 	price := common.BytesToHash(encKey)
-	obj := t.liquidationPriceStates[price]
+	obj := te.liquidationPriceStates[price]
 	if obj == nil {
 		var data orderList
 		if err := rlp.DecodeBytes(encValue, &data); err != nil {
 			log.Error("Failed to decode state get best ask trie", "err", err)
 			return EmptyHash, nil
 		}
-		obj = newLiquidationPriceState(t.db, t.orderBookHash, price, data, t.MarkStateLiquidationPriceDirty)
-		t.liquidationPriceStates[price] = obj
+		obj = newLiquidationPriceState(te.db, te.orderBookHash, price, data, te.MarkStateLiquidationPriceDirty)
+		te.liquidationPriceStates[price] = obj
 	}
 	if obj.empty() {
 		return EmptyHash, nil
@@ -752,13 +752,13 @@ func (t *tradingExchanges) getHighestLiquidationPrice(db Database) (common.Hash,
 	return price, obj
 }
 
-func (t *tradingExchanges) updateLiquidationPriceTrie(db Database) Trie {
-	tr := t.getLiquidationPriceTrie(db)
-	for price, stateObject := range t.liquidationPriceStates {
-		if _, isDirty := t.liquidationPriceStatesDirty[price]; isDirty {
-			delete(t.liquidationPriceStatesDirty, price)
+func (te *tradingExchanges) updateLiquidationPriceTrie(db Database) Trie {
+	tr := te.getLiquidationPriceTrie(db)
+	for price, stateObject := range te.liquidationPriceStates {
+		if _, isDirty := te.liquidationPriceStatesDirty[price]; isDirty {
+			delete(te.liquidationPriceStatesDirty, price)
 			if stateObject.empty() {
-				t.setError(tr.TryDelete(price[:]))
+				te.setError(tr.TryDelete(price[:]))
 				continue
 			}
 			err := stateObject.updateRoot(db)
@@ -767,23 +767,23 @@ func (t *tradingExchanges) updateLiquidationPriceTrie(db Database) Trie {
 			}
 			// Encoding []byte cannot fail, ok to ignore the error.
 			v, _ := rlp.EncodeToBytes(stateObject)
-			t.setError(tr.TryUpdate(price[:], v))
+			te.setError(tr.TryUpdate(price[:], v))
 		}
 	}
 	return tr
 }
 
-func (t *tradingExchanges) updateLiquidationPriceRoot(db Database) {
-	t.updateLiquidationPriceTrie(db)
-	t.data.LiquidationPriceRoot = t.liquidationPriceTrie.Hash()
+func (te *tradingExchanges) updateLiquidationPriceRoot(db Database) {
+	te.updateLiquidationPriceTrie(db)
+	te.data.LiquidationPriceRoot = te.liquidationPriceTrie.Hash()
 }
 
-func (t *tradingExchanges) CommitLiquidationPriceTrie(db Database) error {
-	t.updateLiquidationPriceTrie(db)
-	if t.dbErr != nil {
-		return t.dbErr
+func (te *tradingExchanges) CommitLiquidationPriceTrie(db Database) error {
+	te.updateLiquidationPriceTrie(db)
+	if te.dbErr != nil {
+		return te.dbErr
 	}
-	root, err := t.liquidationPriceTrie.Commit(func(_ [][]byte, _ []byte, leaf []byte, parent common.Hash, _ []byte) error {
+	root, err := te.liquidationPriceTrie.Commit(func(_ [][]byte, _ []byte, leaf []byte, parent common.Hash, _ []byte) error {
 		var orderList orderList
 		if err := rlp.DecodeBytes(leaf, &orderList); err != nil {
 			return nil
@@ -794,23 +794,23 @@ func (t *tradingExchanges) CommitLiquidationPriceTrie(db Database) error {
 		return nil
 	})
 	if err == nil {
-		t.data.LiquidationPriceRoot = root
+		te.data.LiquidationPriceRoot = root
 	}
 	return err
 }
 
-func (t *tradingExchanges) addLendingCount(amount *big.Int) {
-	t.setLendingCount(new(big.Int).Add(t.data.LendingCount, amount))
+func (te *tradingExchanges) addLendingCount(amount *big.Int) {
+	te.setLendingCount(new(big.Int).Add(te.data.LendingCount, amount))
 }
 
-func (t *tradingExchanges) subLendingCount(amount *big.Int) {
-	t.setLendingCount(new(big.Int).Sub(t.data.LendingCount, amount))
+func (te *tradingExchanges) subLendingCount(amount *big.Int) {
+	te.setLendingCount(new(big.Int).Sub(te.data.LendingCount, amount))
 }
 
-func (t *tradingExchanges) setLendingCount(volume *big.Int) {
-	t.data.LendingCount = volume
-	if t.onDirty != nil {
-		t.onDirty(t.orderBookHash)
-		t.onDirty = nil
+func (te *tradingExchanges) setLendingCount(volume *big.Int) {
+	te.data.LendingCount = volume
+	if te.onDirty != nil {
+		te.onDirty(te.orderBookHash)
+		te.onDirty = nil
 	}
 }

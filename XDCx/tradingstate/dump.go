@@ -306,26 +306,26 @@ func (s *stateLendingBook) DumpOrderList(db Database) DumpOrderList {
 	return mapResult
 }
 
-func (l *liquidationPriceState) DumpLendingBook(db Database) (DumpLendingBook, error) {
-	result := DumpLendingBook{Volume: l.Volume(), LendingBooks: map[common.Hash]DumpOrderList{}}
-	it := trie.NewIterator(l.getTrie(db).NodeIterator(nil))
+func (s *liquidationPriceState) DumpLendingBook(db Database) (DumpLendingBook, error) {
+	result := DumpLendingBook{Volume: s.Volume(), LendingBooks: map[common.Hash]DumpOrderList{}}
+	it := trie.NewIterator(s.getTrie(db).NodeIterator(nil))
 	for it.Next() {
 		lendingBook := common.BytesToHash(it.Key)
 		if lendingBook.IsZero() {
 			continue
 		}
-		if _, exist := l.stateLendingBooks[lendingBook]; exist {
+		if _, exist := s.stateLendingBooks[lendingBook]; exist {
 			continue
 		} else {
 			var data orderList
 			if err := rlp.DecodeBytes(it.Value, &data); err != nil {
-				return result, fmt.Errorf("failed to decode state lending book orderbook: %s, liquidation price: %s , lendingBook: %s , err: %v", l.orderBook, l.liquidationPrice, lendingBook, err)
+				return result, fmt.Errorf("failed to decode state lending book orderbook: %s, liquidation price: %s , lendingBook: %s , err: %v", s.orderBook, s.liquidationPrice, lendingBook, err)
 			}
-			stateLendingBook := newStateLendingBook(l.orderBook, l.liquidationPrice, lendingBook, data, nil)
+			stateLendingBook := newStateLendingBook(s.orderBook, s.liquidationPrice, lendingBook, data, nil)
 			result.LendingBooks[lendingBook] = stateLendingBook.DumpOrderList(db)
 		}
 	}
-	for lendingBook, stateLendingBook := range l.stateLendingBooks {
+	for lendingBook, stateLendingBook := range s.stateLendingBooks {
 		if !lendingBook.IsZero() {
 			result.LendingBooks[lendingBook] = stateLendingBook.DumpOrderList(db)
 		}
