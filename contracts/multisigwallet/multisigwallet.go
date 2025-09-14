@@ -16,10 +16,11 @@
 package multisigwallet
 
 import (
+	"math/big"
+
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/contracts/multisigwallet/contract"
-	"math/big"
 )
 
 type MultiSigWallet struct {
