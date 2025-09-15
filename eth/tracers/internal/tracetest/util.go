@@ -1,8 +1,14 @@
 package tracetest
 
 import (
+	"math/big"
 	"strings"
 	"unicode"
+
+	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/common/math"
+	"github.com/XinFinOrg/XDPoSChain/core"
+	"github.com/XinFinOrg/XDPoSChain/core/vm"
 
 	// Force-load native and js packages, to trigger registration
 	_ "github.com/XinFinOrg/XDPoSChain/eth/tracers/js"
@@ -16,4 +22,30 @@ func camel(str string) string {
 		pieces[i] = string(unicode.ToUpper(rune(pieces[i][0]))) + pieces[i][1:]
 	}
 	return strings.Join(pieces, "")
+}
+
+type callContext struct {
+	Number     math.HexOrDecimal64   `json:"number"`
+	Difficulty *math.HexOrDecimal256 `json:"difficulty"`
+	Time       math.HexOrDecimal64   `json:"timestamp"`
+	GasLimit   math.HexOrDecimal64   `json:"gasLimit"`
+	Miner      common.Address        `json:"miner"`
+	BaseFee    *math.HexOrDecimal256 `json:"baseFeePerGas"`
+}
+
+func (c *callContext) toBlockContext(genesis *core.Genesis) vm.BlockContext {
+	context := vm.BlockContext{
+		CanTransfer: core.CanTransfer,
+		Transfer:    core.Transfer,
+		Coinbase:    c.Miner,
+		BlockNumber: new(big.Int).SetUint64(uint64(c.Number)),
+		Time:        uint64(c.Time),
+		Difficulty:  (*big.Int)(c.Difficulty),
+		GasLimit:    uint64(c.GasLimit),
+	}
+	if genesis.Config.IsLondon(context.BlockNumber) {
+		context.BaseFee = (*big.Int)(c.BaseFee)
+	}
+
+	return context
 }

@@ -28,7 +28,6 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
-	"github.com/XinFinOrg/XDPoSChain/common/math"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -39,14 +38,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/XinFinOrg/XDPoSChain/tests"
 )
-
-type callContext struct {
-	Number     math.HexOrDecimal64   `json:"number"`
-	Difficulty *math.HexOrDecimal256 `json:"difficulty"`
-	Time       math.HexOrDecimal64   `json:"timestamp"`
-	GasLimit   math.HexOrDecimal64   `json:"gasLimit"`
-	Miner      common.Address        `json:"miner"`
-}
 
 // callLog is the result of LOG opCode
 type callLog struct {
@@ -217,7 +208,7 @@ func BenchmarkTracers(b *testing.B) {
 func benchTracer(tracerName string, test *callTracerTest, b *testing.B) {
 	// Configure a blockchain with the given prestate
 	tx := new(types.Transaction)
-	if err := rlp.DecodeBytes(common.FromHex(test.Input), tx); err != nil {
+	if err := tx.UnmarshalBinary(common.FromHex(test.Input)); err != nil {
 		b.Fatalf("failed to parse testcase input: %v", err)
 	}
 	signer := types.MakeSigner(test.Genesis.Config, new(big.Int).SetUint64(uint64(test.Context.Number)))
@@ -226,15 +217,7 @@ func benchTracer(tracerName string, test *callTracerTest, b *testing.B) {
 		Origin:   origin,
 		GasPrice: tx.GasPrice(),
 	}
-	context := vm.BlockContext{
-		CanTransfer: core.CanTransfer,
-		Transfer:    core.Transfer,
-		Coinbase:    test.Context.Miner,
-		BlockNumber: new(big.Int).SetUint64(uint64(test.Context.Number)),
-		Time:        uint64(test.Context.Time),
-		Difficulty:  (*big.Int)(test.Context.Difficulty),
-		GasLimit:    uint64(test.Context.GasLimit),
-	}
+	context := test.Context.toBlockContext(test.Genesis)
 	msg, err := core.TransactionToMessage(tx, signer, nil, nil, context.BaseFee)
 	if err != nil {
 		b.Fatalf("failed to prepare transaction for tracing: %v", err)
