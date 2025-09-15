@@ -1092,7 +1092,7 @@ func testQueueTimeLimiting(t *testing.T, nolocals bool) {
 		t.Fatalf("pending transactions mismatched: have %d, want %d", pending, 2)
 	}
 	if queued != 2 {
-		t.Fatalf("queued transactions mismatched: have %d, want %d", queued, 3)
+		t.Fatalf("queued transactions mismatched: have %d, want %d", queued, 2)
 	}
 	if err := validatePoolInternals(pool); err != nil {
 		t.Fatalf("pool internal state corrupted: %v", err)
