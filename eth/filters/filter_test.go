@@ -74,7 +74,6 @@ func BenchmarkFilters(b *testing.B) {
 		case 99999:
 			receipt := makeReceipt(addr4)
 			gen.AddUncheckedReceipt(receipt)
-
 		}
 	})
 	for i, block := range chain {

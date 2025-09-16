@@ -381,7 +381,6 @@ func importWallet(ctx *cli.Context) error {
 	backends := am.Backends(keystore.KeyStoreType)
 	if len(backends) == 0 {
 		utils.Fatalf("Keystore is not available")
-
 	}
 	ks := backends[0].(*keystore.KeyStore)
 	passphrase := getPassPhrase("", false, 0, utils.MakePasswordList(ctx))
