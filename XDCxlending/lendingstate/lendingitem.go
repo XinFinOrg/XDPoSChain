@@ -177,7 +177,7 @@ func (l *LendingItem) SetBSON(raw bson.Raw) error {
 
 	if decoded.Signature != nil {
 		l.Signature = &Signature{
-			V: byte(decoded.Signature.V),
+			V: decoded.Signature.V,
 			R: common.HexToHash(decoded.Signature.R),
 			S: common.HexToHash(decoded.Signature.S),
 		}
