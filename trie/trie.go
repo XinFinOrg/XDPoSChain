@@ -320,6 +320,7 @@ func (t *Trie) TryGetAllLeftKeyAndValue(limit []byte) ([][]byte, [][]byte, error
 	}
 	return keys, values, err
 }
+
 func (t *Trie) tryGetAllLeftKeyAndValue(origNode node, prefix []byte, limit []byte) (keys [][]byte, values [][]byte, newnode node, didResolve bool, err error) {
 	switch n := (origNode).(type) {
 	case nil:
@@ -370,8 +371,8 @@ func (t *Trie) tryGetAllLeftKeyAndValue(origNode node, prefix []byte, limit []by
 	default:
 		return nil, nil, nil, false, fmt.Errorf("%T: invalid Node: %v", origNode, origNode)
 	}
-	return nil, nil, nil, false, fmt.Errorf("%T: invalid Node: %v", origNode, origNode)
 }
+
 func (t *Trie) TryGetBestRightKeyAndValue() ([]byte, []byte, error) {
 	key, value, newroot, didResolve, err := t.tryGetBestRightKeyAndValue(t.root, []byte{})
 	if err == nil && didResolve {

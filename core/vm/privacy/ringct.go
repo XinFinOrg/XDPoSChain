@@ -111,7 +111,11 @@ func DeserializeCompressed(curve elliptic.Curve, b []byte) *ecdsa.PublicKey {
 	if ybit != isOdd(y) {
 		return nil
 	}
-	return &ecdsa.PublicKey{curve, x, y}
+	return &ecdsa.PublicKey{
+		Curve: curve,
+		X:     x,
+		Y:     y,
+	}
 }
 
 // bytes returns the public key ring as a byte slice.
@@ -426,13 +430,21 @@ func Sign(m [32]byte, rings []Ring, privkeys []*ecdsa.PrivateKey, s int) (*RingS
 		// start at secret index s/PI
 		// compute L_s = u*G
 		l_x, l_y := curve.ScalarBaseMult(PadTo32Bytes(alpha[i].Bytes()))
-		L[i][s] = &ecdsa.PublicKey{curve, l_x, l_y}
+		L[i][s] = &ecdsa.PublicKey{
+			Curve: curve,
+			X:     l_x,
+			Y:     l_y,
+		}
 		lT := append(PadTo32Bytes(l_x.Bytes()), PadTo32Bytes(l_y.Bytes())...)
 		l = append(l, lT...)
 		// compute R_s = u*H_p(P[s])
 		h_x, h_y := HashPoint(pubkeys[i])
 		r_x, r_y := curve.ScalarMult(h_x, h_y, PadTo32Bytes(alpha[i].Bytes()))
-		R[i][s] = &ecdsa.PublicKey{curve, r_x, r_y}
+		R[i][s] = &ecdsa.PublicKey{
+			Curve: curve,
+			X:     r_x,
+			Y:     r_y,
+		}
 		rT := append(PadTo32Bytes(r_x.Bytes()), PadTo32Bytes(r_y.Bytes())...)
 		l = append(l, rT...)
 	}

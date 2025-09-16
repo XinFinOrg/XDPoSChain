@@ -35,7 +35,11 @@ type ECPoint struct {
 }
 
 func (p *ECPoint) toECPubKey() *ecdsa.PublicKey {
-	return &ecdsa.PublicKey{curve, p.X, p.Y}
+	return &ecdsa.PublicKey{
+		Curve: curve,
+		X:     p.X,
+		Y:     p.Y,
+	}
 }
 
 func toECPoint(key *ecdsa.PublicKey) *ECPoint {
