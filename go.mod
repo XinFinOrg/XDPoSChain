@@ -47,7 +47,6 @@ require (
 	github.com/influxdata/influxdb-client-go/v2 v2.4.0
 	github.com/influxdata/influxdb1-client v0.0.0-20220302092344-a9ab5670611c
 	github.com/karalabe/hid v1.0.1-0.20240306101548-573246063e52
-	github.com/kevinburke/go-bindata v3.23.0+incompatible
 	github.com/kylelemons/godebug v1.1.0
 	github.com/mattn/go-isatty v0.0.17
 	github.com/protolambda/bls12-381-util v0.0.0-20220416220906-d8552aa452c7

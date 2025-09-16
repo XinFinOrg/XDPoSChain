@@ -22,7 +22,6 @@ package tools
 import (
 	// Tool imports for go:generate.
 	_ "github.com/fjl/gencodec"
-	_ "github.com/kevinburke/go-bindata/go-bindata"
 	_ "golang.org/x/tools/cmd/stringer"
 	_ "google.golang.org/protobuf/cmd/protoc-gen-go"
 )
