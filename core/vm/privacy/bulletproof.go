@@ -919,7 +919,6 @@ func (mrp *MultiRangeProof) Deserialize(proof []byte) error {
 	offset += 32
 
 	mrp.Cx = new(big.Int).SetBytes(proof[offset : offset+32])
-	offset += 32
 
 	return nil
 }

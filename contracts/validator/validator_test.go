@@ -244,7 +244,6 @@ func GetRewardBalancesRate(foudationWalletAddr common.Address, masterAddr common
 }
 
 func GetCandidatesOwnerBySigner(validator *contractValidator.XDCValidator, signerAddr common.Address) common.Address {
-	owner := signerAddr
 	opts := new(bind.CallOpts)
 	owner, err := validator.GetCandidateOwner(opts, signerAddr)
 	if err != nil {
@@ -254,6 +253,7 @@ func GetCandidatesOwnerBySigner(validator *contractValidator.XDCValidator, signe
 
 	return owner
 }
+
 func toyVoteTx(t *testing.T, nonce uint64, amount *big.Int, to, addr common.Address) *types.Transaction {
 	vote := "6dd7d8ea" // VoteMethod = "0x6dd7d8ea"
 	action := fmt.Sprintf("%s%s%s", vote, "000000000000000000000000", addr.String()[3:])

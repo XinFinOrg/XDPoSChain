@@ -3078,8 +3078,8 @@ func (bc *BlockChain) processTradingAndLendingStates(isValidBlockNumber bool, bl
 				return tradingState, lendingState, fmt.Errorf("failed to ProcessLiquidationData. Err: %v", err)
 			}
 			if tradingService.IsSDKNode() {
-				finalizedTx := lendingstate.FinalizedResult{}
-				if finalizedTx, err = ExtractLendingFinalizedTradeTransactions(block.Transactions()); err != nil {
+				finalizedTx, err := ExtractLendingFinalizedTradeTransactions(block.Transactions())
+				if err != nil {
 					return tradingState, lendingState, err
 				}
 				bc.AddFinalizedTrades(finalizedTx.TxHash, finalizedTrades)

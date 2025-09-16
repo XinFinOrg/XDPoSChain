@@ -253,7 +253,6 @@ func GenM2FromRandomize(randomizes []int64, lenSigners int64) ([]int64, error) {
 	blockValidator := NewSlice(int64(0), lenSigners, 1)
 	randIndexs := make([]int64, lenSigners)
 	total := int64(0)
-	var temp int64 = 0
 	for _, j := range randomizes {
 		total += j
 	}
@@ -264,7 +263,7 @@ func GenM2FromRandomize(randomizes []int64, lenSigners int64) ([]int64, error) {
 			blockLength = 1
 		}
 		randomIndex := int64(rand.Intn(blockLength))
-		temp = blockValidator[randomIndex]
+		temp := blockValidator[randomIndex]
 		blockValidator[randomIndex] = blockValidator[i]
 		blockValidator[i] = temp
 		blockValidator = append(blockValidator[:i], blockValidator[i+1:]...)
