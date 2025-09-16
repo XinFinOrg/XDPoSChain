@@ -29,7 +29,7 @@ type contractTracerConfig struct {
 	OpCode string `json:"opCode"` // Target opcode to trace
 }
 
-// NewContractTracer returns a native go tracer which tracks the contracr was created
+// NewContractTracer returns a native go tracer which tracks the contractor was created
 func NewContractTracer(ctx *tracers.Context, cfg json.RawMessage) (*tracers.Tracer, error) {
 	var config contractTracerConfig
 	if cfg != nil {

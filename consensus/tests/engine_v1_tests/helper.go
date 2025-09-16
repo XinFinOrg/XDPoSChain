@@ -149,7 +149,7 @@ func getCommonBackend(t *testing.T, chainConfig *params.ChainConfig) *backends.S
 }
 
 func transferTx(t *testing.T, to common.Address, transferAmount int64) *types.Transaction {
-	t.Logf("Transfering %v to address: %v", transferAmount, to.String())
+	t.Logf("Transferring %v to address: %v", transferAmount, to.String())
 	data := []byte{}
 	gasPrice := big.NewInt(int64(0))
 	gasLimit := uint64(21000)

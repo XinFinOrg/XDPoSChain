@@ -822,13 +822,13 @@ var (
 	// XDC settings
 	Enable0xPrefixFlag = &cli.BoolFlag{
 		Name:     "enable-0x-prefix",
-		Usage:    "Addres use 0x-prefix (Deprecated: this is on by default, to use xdc prefix use --enable-xdc-prefix)",
+		Usage:    "Address use 0x-prefix (Deprecated: this is on by default, to use xdc prefix use --enable-xdc-prefix)",
 		Value:    true,
 		Category: flags.XdcCategory,
 	}
 	EnableXDCPrefixFlag = &cli.BoolFlag{
 		Name:     "enable-xdc-prefix",
-		Usage:    "Addres use xdc-prefix (default = false)",
+		Usage:    "Address use xdc-prefix (default = false)",
 		Value:    false,
 		Category: flags.XdcCategory,
 	}

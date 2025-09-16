@@ -818,7 +818,7 @@ func (x *XDPoS_v2) commitBlocks(blockChainReader consensus.ChainReader, proposed
 
 	_, round, _, err := x.getExtraFields(parentBlock)
 	if err != nil {
-		log.Error("Fail to execute first DecodeBytesExtraFields for commiting block", "ProposedBlockHash", proposedBlockHeader.Hash())
+		log.Error("Fail to execute first DecodeBytesExtraFields for committing block", "ProposedBlockHash", proposedBlockHeader.Hash())
 		return false, err
 	}
 	if *proposedBlockRound-1 != round {
@@ -830,7 +830,7 @@ func (x *XDPoS_v2) commitBlocks(blockChainReader consensus.ChainReader, proposed
 	grandParentBlock := blockChainReader.GetHeaderByHash(parentBlock.ParentHash)
 	_, round, _, err = x.getExtraFields(grandParentBlock)
 	if err != nil {
-		log.Error("Fail to execute second DecodeBytesExtraFields for commiting block", "parentBlockHash", parentBlock.Hash())
+		log.Error("Fail to execute second DecodeBytesExtraFields for committing block", "parentBlockHash", parentBlock.Hash())
 		return false, err
 	}
 	if *proposedBlockRound-2 != round {

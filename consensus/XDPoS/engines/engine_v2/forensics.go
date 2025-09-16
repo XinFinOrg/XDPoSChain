@@ -83,7 +83,7 @@ func (f *Forensics) SetCommittedQCs(headers []types.Header, incomingQC types.Quo
 /*
 Entry point for processing forensics.
 Triggered once processQC is successfully.
-Forensics runs in a seperate go routine as its no system critical
+Forensics runs in a separate go routine as its no system critical
 Link to the flow diagram: https://hashlabs.atlassian.net/wiki/spaces/HASHLABS/pages/97878029/Forensics+Diagram+flow
 */
 func (f *Forensics) ProcessForensics(chain consensus.ChainReader, engine *XDPoS_v2, incomingQC types.QuorumCert) error {
@@ -105,8 +105,8 @@ func (f *Forensics) ProcessForensics(chain consensus.ChainReader, engine *XDPoS_
 		return err
 	}
 	if isOnTheChain {
-		// Passed the checking, nothing suspecious.
-		log.Debug("[ProcessForensics] Passed forensics checking, nothing suspecious need to be reported", "incomingQcProposedBlockHash", incomingQC.ProposedBlockInfo.Hash, "incomingQcProposedBlockNumber", incomingQC.ProposedBlockInfo.Number.Uint64(), "incomingQcProposedBlockRound", incomingQC.ProposedBlockInfo.Round)
+		// Passed the checking, nothing suspicious.
+		log.Debug("[ProcessForensics] Passed forensics checking, nothing suspicious need to be reported", "incomingQcProposedBlockHash", incomingQC.ProposedBlockInfo.Hash, "incomingQcProposedBlockNumber", incomingQC.ProposedBlockInfo.Number.Uint64(), "incomingQcProposedBlockRound", incomingQC.ProposedBlockInfo.Round)
 		return nil
 	}
 	// Trigger the safety Alarm if failed
@@ -391,7 +391,7 @@ func generateVoteEquivocationId(signer common.Address, round1, round2 types.Roun
 /*
 Entry point for processing vote equivocation.
 Triggered once handle vote is successfully.
-Forensics runs in a seperate go routine as its no system critical
+Forensics runs in a separate go routine as its no system critical
 Link to the flow diagram: https://hashlabs.atlassian.net/wiki/spaces/HASHLABS/pages/99516417/Vote+Equivocation+detection+specification
 */
 func (f *Forensics) ProcessVoteEquivocation(chain consensus.ChainReader, engine *XDPoS_v2, incomingVote *types.Vote) error {
@@ -413,7 +413,7 @@ func (f *Forensics) ProcessVoteEquivocation(chain consensus.ChainReader, engine 
 		return err
 	}
 	if isOnTheChain {
-		// Passed the checking, nothing suspecious.
+		// Passed the checking, nothing suspicious.
 		log.Debug("[ProcessVoteEquivocation] Passed forensics checking, nothing suspecious need to be reported", "incomingVoteProposedBlockHash", incomingVote.ProposedBlockInfo.Hash, "incomingVoteProposedBlockNumber", incomingVote.ProposedBlockInfo.Number.Uint64(), "incomingVoteProposedBlockRound", incomingVote.ProposedBlockInfo.Round)
 		return nil
 	}

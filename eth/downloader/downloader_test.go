@@ -1427,7 +1427,7 @@ func testFakedSyncProgress(t *testing.T, protocol int, mode SyncMode) {
 // This test reproduces an issue where unexpected deliveries would
 // block indefinitely if they arrived at the right time.
 func TestDeliverHeadersHang(t *testing.T) {
-	t.Skip("This test failed sometimes and is inconsistant result. Disable for now.")
+	t.Skip("This test failed sometimes and is inconsistent result. Disable for now.")
 	t.Parallel()
 
 	testCases := []struct {

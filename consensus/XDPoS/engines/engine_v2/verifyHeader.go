@@ -61,7 +61,7 @@ func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Heade
 		return consensus.ErrUnknownAncestor
 	}
 
-	// Verify this is truely a v2 block first
+	// Verify this is truly a v2 block first
 	quorumCert, round, _, err := x.getExtraFields(header)
 	if err != nil {
 		log.Warn("[verifyHeader] decode extra field error", "err", err)

@@ -94,7 +94,7 @@ func TestSequentialVotes(t *testing.T) {
 	}
 }
 
-// Test that avoid boardcast if there is bad vote
+// Test that avoid broadcast if there is bad vote
 func TestNotBoardcastInvalidVote(t *testing.T) {
 	tester := newTester()
 	handlerCounter := uint32(0)

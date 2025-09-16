@@ -11,7 +11,7 @@ import (
 
 const maxBlockDist = 7 // Maximum allowed backward distance from the chain head, 7 is just a magic number indicate very close block
 
-// Define Boradcast Group functions
+// Define Broadcast Group functions
 type broadcastVoteFn func(*types.Vote)
 type broadcastTimeoutFn func(*types.Timeout)
 type broadcastSyncInfoFn func(*types.SyncInfo)

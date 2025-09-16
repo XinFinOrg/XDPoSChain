@@ -433,7 +433,7 @@ type ForkedBlockOptions struct {
 	signersKey            []*ecdsa.PrivateKey
 }
 
-// V2 concensus engine
+// V2 consensus engine
 func PrepareXDCTestBlockChainForV2Engine(t *testing.T, numOfBlocks int, chainConfig *params.ChainConfig, forkedBlockOptions *ForkedBlockOptions) (*core.BlockChain, *backends.SimulatedBackend, *types.Block, common.Address, func(account accounts.Account, hash []byte) ([]byte, error), *types.Block) {
 	// Preparation
 	var err error
@@ -523,7 +523,7 @@ func PrepareXDCTestBlockChainForV2Engine(t *testing.T, numOfBlocks int, chainCon
 	return blockchain, backend, currentBlock, signer, signFn, currentForkBlock
 }
 
-// V2 concensus engine, compared to PrepareXDCTestBlockChainForV2Engine: (1) no forking (2) add penalty
+// V2 consensus engine, compared to PrepareXDCTestBlockChainForV2Engine: (1) no forking (2) add penalty
 func PrepareXDCTestBlockChainWithPenaltyForV2Engine(t *testing.T, numOfBlocks int, chainConfig *params.ChainConfig) (*core.BlockChain, *backends.SimulatedBackend, *types.Block, common.Address, func(account accounts.Account, hash []byte) ([]byte, error)) {
 	// Preparation
 	var err error
@@ -578,7 +578,7 @@ func PrepareXDCTestBlockChainWithPenaltyForV2Engine(t *testing.T, numOfBlocks in
 	return blockchain, backend, currentBlock, signer, signFn
 }
 
-// V2 concensus engine, compared to PrepareXDCTestBlockChainForV2Engine: (1) no forking (2) add penalty
+// V2 consensus engine, compared to PrepareXDCTestBlockChainForV2Engine: (1) no forking (2) add penalty
 func PrepareXDCTestBlockChainWithPenaltyCustomized(t *testing.T, numOfBlocks int, chainConfig *params.ChainConfig, penaltyOrNot []bool) (*core.BlockChain, *backends.SimulatedBackend, *types.Block, common.Address, func(account accounts.Account, hash []byte) ([]byte, error)) {
 	// Preparation
 	var err error

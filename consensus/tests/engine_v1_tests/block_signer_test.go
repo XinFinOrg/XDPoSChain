@@ -286,7 +286,7 @@ func TestCallUpdateM1WhenForkedBlockBackToMainChain(t *testing.T) {
 	// Should not run the `updateM1` for forked chain, hence account3 still exit
 	if signers[acc3Addr.Hex()] != true {
 		debugMessage(backend, signers, t)
-		t.Fatalf("account 3 should sit in the signer list as previos block result")
+		t.Fatalf("account 3 should sit in the signer list as previous block result")
 	}
 	if (signers[acc1Addr.Hex()] == true) || (signers[acc2Addr.Hex()] == true) {
 		debugMessage(backend, signers, t)
@@ -457,7 +457,7 @@ func TestStatesShouldBeUpdatedWhenForkedBlockBecameMainChainAtGapBlock(t *testin
 	// Should not run the `updateM1` for forked chain, hence account3 still exit
 	if signers[acc3Addr.Hex()] != true {
 		debugMessage(backend, signers, t)
-		t.Fatalf("account 3 should sit in the signer list as previos block result")
+		t.Fatalf("account 3 should sit in the signer list as previous block result")
 	}
 
 	//Insert block 451 parent is 451 B
@@ -641,6 +641,6 @@ func TestVoteShouldNotBeAffectedByFork(t *testing.T) {
 	// Should run the `updateM1` for forked chain, but it should not be affected by the voted block 451A which is not on the mainchain anymore
 	if signers[acc3Addr.Hex()] != true {
 		debugMessage(backend, signers, t)
-		t.Fatalf("account 3 should sit in the signer list as previos block result")
+		t.Fatalf("account 3 should sit in the signer list as previous block result")
 	}
 }

@@ -324,7 +324,7 @@ func TestRewardHalvingVanishing(t *testing.T) {
 		r := new(big.Int).Add(util.RewardHalving(epochReward1, epochRewardTotal, halvingSupply, i), util.RewardHalving(epochReward2, epochRewardTotal, halvingSupply, i))
 		r.Add(r, util.RewardHalving(epochReward3, epochRewardTotal, halvingSupply, i))
 		if r.BitLen() == 0 {
-			t.Log("reward be 0 at i=", i) // reward be 0 at i= 11225088, wich is more than 200 years in the future
+			t.Log("reward be 0 at i=", i) // reward be 0 at i= 11225088, which is more than 200 years in the future
 			break
 		}
 		sum.Add(sum, r)

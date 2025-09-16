@@ -274,7 +274,7 @@ func (w *worker) update() {
 	defer w.chainHeadSub.Unsubscribe()
 	defer w.chainSideSub.Unsubscribe()
 
-	// timeout waiting for v1 inital value
+	// timeout waiting for v1 initial value
 	minePeriod := 2
 	MinePeriodCh := w.engine.(*XDPoS.XDPoS).MinePeriodCh
 	defer close(MinePeriodCh)
