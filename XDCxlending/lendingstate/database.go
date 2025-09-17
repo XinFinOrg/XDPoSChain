@@ -18,7 +18,6 @@ package lendingstate
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
@@ -27,12 +26,6 @@ import (
 
 // Trie cache generation limit after which to evic trie nodes from memory.
 var MaxTrieCacheGen = uint16(120)
-
-const (
-	// Number of past tries to keep. This value is chosen such that
-	// reasonable chain reorg depths will hit an existing trie.
-	maxPastTries = 12
-)
 
 // Database wraps access to tries and contract code.
 type Database interface {
@@ -81,25 +74,12 @@ func NewDatabase(db ethdb.Database) Database {
 }
 
 type cachingDB struct {
-	db        *trie.Database
-	mu        sync.Mutex
-	pastTries []*XDCXTrie
+	db *trie.Database
 }
 
 // OpenTrie opens the main account trie.
 func (db *cachingDB) OpenTrie(root common.Hash) (Trie, error) {
 	return NewXDCXTrie(root, db.db)
-}
-
-func (db *cachingDB) pushTrie(t *XDCXTrie) {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-	if len(db.pastTries) >= maxPastTries {
-		copy(db.pastTries, db.pastTries[1:])
-		db.pastTries[len(db.pastTries)-1] = t
-	} else {
-		db.pastTries = append(db.pastTries, t)
-	}
 }
 
 // OpenStorageTrie opens the storage trie of an account.

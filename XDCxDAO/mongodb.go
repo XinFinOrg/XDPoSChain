@@ -886,19 +886,8 @@ func (db *MongoDatabase) NewBatchWithSize(size int) ethdb.Batch {
 	return nil
 }
 
-type keyvalue struct {
-	key   []byte
-	value []byte
-}
 type Batch struct {
-	db         *MongoDatabase
 	collection string
-	b          []keyvalue
-	size       int
-}
-
-func (b *Batch) SetCollection(collection string) {
-	// for levelDB only
 }
 
 func (b *Batch) Put(key, value []byte) error {

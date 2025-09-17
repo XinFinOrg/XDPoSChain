@@ -279,13 +279,6 @@ func (o *OrderItem) verifyOrderSide() error {
 	return nil
 }
 
-func (o *OrderItem) encodedSide() *big.Int {
-	if o.Side == Bid {
-		return big.NewInt(0)
-	}
-	return big.NewInt(1)
-}
-
 // verifyPrice make sure price is a positive number
 func (o *OrderItem) verifyPrice() error {
 	if o.Price == nil || o.Price.Sign() <= 0 {

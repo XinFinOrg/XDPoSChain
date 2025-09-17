@@ -38,7 +38,6 @@ import (
 // XDCXTrie is not safe for concurrent use.
 type XDCXTrie struct {
 	trie             trie.Trie
-	hashKeyBuf       [common.HashLength]byte
 	secKeyCache      map[string][]byte
 	secKeyCacheOwner *XDCXTrie // Pointer to self, replace the key cache on mismatch
 }
