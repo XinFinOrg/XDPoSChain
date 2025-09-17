@@ -509,7 +509,7 @@ func (r *receiptLogs) DecodeRLP(s *rlp.Stream) error {
 	}
 	r.Logs = make([]*types.Log, len(stored.Logs))
 	for i, log := range stored.Logs {
-		r.Logs[i] = (*types.Log)(log)
+		r.Logs[i] = log
 	}
 	return nil
 }

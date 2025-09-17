@@ -24,7 +24,7 @@ func TestGetM1M2FromCheckpointHeader(t *testing.T) {
 	epoch := uint64(900)
 	config := &params.ChainConfig{
 		XDPoS: &params.XDPoSConfig{
-			Epoch: uint64(epoch),
+			Epoch: epoch,
 		},
 	}
 	testMoveM2 := []uint64{0, 0, 0, 1, 1, 1, 2, 2, 2, 0, 0, 0, 1, 1, 1, 2, 2, 2}

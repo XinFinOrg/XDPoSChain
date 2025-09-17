@@ -416,7 +416,7 @@ func parseTestData(filePath string) MultiRangeProof {
 	// var result map[string]interface{}
 	result := BulletProof{}
 
-	json.Unmarshal([]byte(byteValue), &result)
+	json.Unmarshal(byteValue, &result)
 
 	fmt.Println("result ", result.Tau)
 	fmt.Println("result ", result.Th)
