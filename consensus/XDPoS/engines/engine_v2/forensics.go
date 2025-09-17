@@ -418,7 +418,7 @@ func (f *Forensics) ProcessVoteEquivocation(chain consensus.ChainReader, engine 
 	}
 	if isOnTheChain {
 		// Passed the checking, nothing suspicious.
-		log.Debug("[ProcessVoteEquivocation] Passed forensics checking, nothing suspecious need to be reported", "incomingVoteProposedBlockHash", incomingVote.ProposedBlockInfo.Hash, "incomingVoteProposedBlockNumber", incomingVote.ProposedBlockInfo.Number.Uint64(), "incomingVoteProposedBlockRound", incomingVote.ProposedBlockInfo.Round)
+		log.Debug("[ProcessVoteEquivocation] Passed forensics checking, nothing suspicious need to be reported", "incomingVoteProposedBlockHash", incomingVote.ProposedBlockInfo.Hash, "incomingVoteProposedBlockNumber", incomingVote.ProposedBlockInfo.Number.Uint64(), "incomingVoteProposedBlockRound", incomingVote.ProposedBlockInfo.Round)
 		return nil
 	}
 	// Trigger the safety Alarm if failed
