@@ -49,6 +49,9 @@ func newBridge(client *rpc.Client, prompter UserPrompter, printer io.Writer) *br
 
 // Sleep will block the console for the specified number of seconds.
 func (b *bridge) Sleep(call jsre.Call) (goja.Value, error) {
+	if nArgs := len(call.Arguments); nArgs < 1 {
+		return nil, errors.New("usage: sleep(<number of seconds>)")
+	}
 	if !isNumber(call.Argument(0)) {
 		return nil, errors.New("usage: sleep(<number of seconds>)")
 	}
@@ -76,7 +79,7 @@ func (b *bridge) SleepBlocks(call jsre.Call) (goja.Value, error) {
 		blocks = call.Argument(0).ToInteger()
 	}
 	if nArgs >= 2 {
-		if isNumber(call.Argument(1)) {
+		if !isNumber(call.Argument(1)) {
 			return nil, errors.New("expected number as second argument")
 		}
 		sleep = call.Argument(1).ToInteger()
