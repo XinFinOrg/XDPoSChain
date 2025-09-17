@@ -200,7 +200,6 @@ func (lendingsign LendingTxSigner) Hash(tx *LendingTransaction) common.Hash {
 
 // Sender get signer from
 func (lendingsign LendingTxSigner) Sender(tx *LendingTransaction) (common.Address, error) {
-
 	message := crypto.Keccak256(
 		[]byte("\x19Ethereum Signed Message:\n32"),
 		lendingsign.Hash(tx).Bytes(),

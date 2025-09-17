@@ -307,7 +307,6 @@ func (srv *Server) PeerCount() int {
 // server is shut down. If the connection fails for any reason, the server will
 // attempt to reconnect the peer.
 func (srv *Server) AddPeer(node *discover.Node) {
-
 	select {
 	case srv.addstatic <- node:
 	case <-srv.quit:
