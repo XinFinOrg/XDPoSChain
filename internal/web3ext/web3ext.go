@@ -18,23 +18,23 @@
 package web3ext
 
 var Modules = map[string]string{
-	"admin":       Admin_JS,
-	"chequebook":  Chequebook_JS,
-	"clique":      Clique_JS,
-	"XDPoS":       XDPoS_JS,
-	"debug":       Debug_JS,
-	"eth":         Eth_JS,
-	"miner":       Miner_JS,
-	"net":         Net_JS,
-	"rpc":         RPC_JS,
-	"shh":         Shh_JS,
-	"XDCx":        XDCX_JS,
-	"XDCxlending": XDCXLending_JS,
-	"swarmfs":     SWARMFS_JS,
-	"txpool":      TxPool_JS,
+	"admin":       AdminJs,
+	"chequebook":  ChequebookJs,
+	"clique":      CliqueJs,
+	"XDPoS":       XdposJs,
+	"debug":       DebugJs,
+	"eth":         EthJs,
+	"miner":       MinerJs,
+	"net":         NetJs,
+	"rpc":         RpcJs,
+	"shh":         ShhJs,
+	"XDCx":        XdcxJs,
+	"XDCxlending": XdcxLendingJs,
+	"swarmfs":     SwarmfsJs,
+	"txpool":      TxpoolJs,
 }
 
-const Chequebook_JS = `
+const ChequebookJs = `
 web3._extend({
 	property: 'chequebook',
 	methods: [
@@ -65,7 +65,7 @@ web3._extend({
 });
 `
 
-const Clique_JS = `
+const CliqueJs = `
 web3._extend({
 	property: 'clique',
 	methods: [
@@ -111,7 +111,7 @@ web3._extend({
 });
 `
 
-const XDPoS_JS = `
+const XdposJs = `
 web3._extend({
 	property: 'XDPoS',
 	methods: [
@@ -188,7 +188,7 @@ web3._extend({
 });
 `
 
-const Admin_JS = `
+const AdminJs = `
 web3._extend({
 	property: 'admin',
 	methods: [
@@ -278,7 +278,7 @@ web3._extend({
 });
 `
 
-const Debug_JS = `
+const DebugJs = `
 web3._extend({
 	property: 'debug',
 	methods: [
@@ -488,7 +488,7 @@ web3._extend({
 });
 `
 
-const Eth_JS = `
+const EthJs = `
 web3._extend({
 	property: 'eth',
 	methods: [
@@ -606,7 +606,7 @@ web3._extend({
 });
 `
 
-const Miner_JS = `
+const MinerJs = `
 web3._extend({
 	property: 'miner',
 	methods: [
@@ -646,7 +646,7 @@ web3._extend({
 });
 `
 
-const Net_JS = `
+const NetJs = `
 web3._extend({
 	property: 'net',
 	methods: [],
@@ -659,7 +659,7 @@ web3._extend({
 });
 `
 
-const RPC_JS = `
+const RpcJs = `
 web3._extend({
 	property: 'rpc',
 	methods: [],
@@ -672,7 +672,7 @@ web3._extend({
 });
 `
 
-const Shh_JS = `
+const ShhJs = `
 web3._extend({
 	property: 'shh',
 	methods: [
@@ -692,7 +692,7 @@ web3._extend({
 });
 `
 
-const XDCX_JS = `
+const XdcxJs = `
 web3._extend({
 	property: 'XDCx',
 	methods: [
@@ -893,7 +893,7 @@ web3._extend({
 });
 `
 
-const XDCXLending_JS = `
+const XdcxLendingJs = `
 web3._extend({
 	property: 'XDCxlending',
 	methods: [
@@ -1012,7 +1012,7 @@ web3._extend({
    });
 */
 
-const SWARMFS_JS = `
+const SwarmfsJs = `
 web3._extend({
 	property: 'swarmfs',
 	methods:
@@ -1036,7 +1036,7 @@ web3._extend({
 });
 `
 
-const TxPool_JS = `
+const TxpoolJs = `
 web3._extend({
 	property: 'txpool',
 	methods: [],
