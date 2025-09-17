@@ -3,14 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
+	"math/big"
+	"time"
+
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/contracts/trc21issuer"
 	"github.com/XinFinOrg/XDPoSChain/contracts/trc21issuer/simulation"
 	"github.com/XinFinOrg/XDPoSChain/ethclient"
-	"log"
-	"math/big"
-	"time"
 )
 
 func main() {
