@@ -264,7 +264,7 @@ func main() {
 func XDC(ctx *cli.Context) error {
 	stack, backend, cfg := makeFullNode(ctx)
 	defer stack.Close()
-	startNode(ctx, stack, backend, cfg)
+	startNode(ctx, stack, backend, cfg, false)
 	stack.Wait()
 	return nil
 }
@@ -272,9 +272,9 @@ func XDC(ctx *cli.Context) error {
 // startNode boots up the system node and all registered protocols, after which
 // it unlocks any requested accounts, and starts the RPC/IPC interfaces and the
 // miner.
-func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, cfg XDCConfig) {
+func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, cfg XDCConfig, isConsole bool) {
 	// Start up the node itself
-	utils.StartNode(stack)
+	utils.StartNode(stack, isConsole)
 
 	// Unlock any account specifically requested
 	backends := stack.AccountManager().Backends(keystore.KeyStoreType)
