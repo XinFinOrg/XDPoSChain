@@ -378,7 +378,7 @@ func (c *Console) StopInteractive() {
 	}
 }
 
-// Interactive starts an interactive user session, where in.put is propted from
+// Interactive starts an interactive user session, where input is prompted from
 // the configured user prompter.
 func (c *Console) Interactive() {
 	var (
@@ -468,7 +468,7 @@ func (c *Console) readLines(input chan<- string, errc chan<- error, prompt <-cha
 	}
 }
 
-// countIndents returns the number of identations for the given input.
+// countIndents returns the number of indentations for the given input.
 // In case of invalid input such as var a = } the result can be negative.
 func countIndents(input string) int {
 	var (
