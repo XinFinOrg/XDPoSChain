@@ -30,6 +30,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/internal/jsre"
 	"github.com/XinFinOrg/XDPoSChain/internal/jsre/deps"
 	"github.com/XinFinOrg/XDPoSChain/internal/web3ext"
+	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 	"github.com/dop251/goja"
 	"github.com/mattn/go-colorable"
@@ -178,13 +179,22 @@ func (c *Console) initWeb3(bridge *bridge) error {
 	return err
 }
 
+var defaultAPIs = map[string]string{"eth": "1.0", "net": "1.0", "debug": "1.0"}
+
 // initExtensions loads and registers web3.js extensions.
 func (c *Console) initExtensions() error {
-	// Compute aliases from server-provided modules.
+	const methodNotFound = -32601
 	apis, err := c.client.SupportedModules()
 	if err != nil {
-		return fmt.Errorf("api modules: %v", err)
+		if rpcErr, ok := err.(rpc.Error); ok && rpcErr.ErrorCode() == methodNotFound {
+			log.Warn("Server does not support method rpc_modules, using default API list.")
+			apis = defaultAPIs
+		} else {
+			return err
+		}
 	}
+
+	// Compute aliases from server-provided modules.
 	aliases := map[string]struct{}{"eth": {}}
 	for api := range apis {
 		if api == "web3" {
