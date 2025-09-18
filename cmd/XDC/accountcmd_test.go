@@ -204,11 +204,12 @@ func TestUnlockFlag(t *testing.T) {
 	XDC := runXDC(t,
 		"--nat", "none", "--nodiscover", "--maxpeers", "0", "--port", "0", "--nousb", "--cache", "256", "--ipcdisable",
 		"--datadir", datadir, "--unlock", "f466859ead1932d743d622cb74fc058882e8648a",
-		"js", "testdata/empty.js")
+		"console", "--exec", "loadScript('testdata/empty.js')")
 	XDC.Expect(`
 Unlocking account f466859ead1932d743d622cb74fc058882e8648a | Attempt 1/3
 !! Unsupported terminal, password will be echoed.
 Password: {{.InputLine "foobar"}}
+undefined
 `)
 	XDC.ExpectExit()
 
@@ -248,13 +249,14 @@ func TestUnlockFlagMultiIndex(t *testing.T) {
 	defer os.RemoveAll(datadir)
 	XDC := runXDC(t,
 		"--nat", "none", "--nodiscover", "--maxpeers", "0", "--port", "0", "--nousb", "--cache", "128", "--ipcdisable",
-		"--datadir", datadir, "--unlock", "0,2", "js", "testdata/empty.js")
+		"--datadir", datadir, "--unlock", "0,2", "console", "--exec", "loadScript('testdata/empty.js')")
 	XDC.Expect(`
 Unlocking account 0 | Attempt 1/3
 !! Unsupported terminal, password will be echoed.
 Password: {{.InputLine "foobar"}}
 Unlocking account 2 | Attempt 1/3
 Password: {{.InputLine "foobar"}}
+undefined
 `)
 	XDC.ExpectExit()
 
@@ -276,7 +278,10 @@ func TestUnlockFlagPasswordFile(t *testing.T) {
 	XDC := runXDC(t,
 		"--nat", "none", "--nodiscover", "--maxpeers", "0", "--port", "0", "--nousb", "--cache", "128", "--ipcdisable",
 		"--datadir", datadir, "--password", "testdata/passwords.txt", "--unlock", "0,2",
-		"js", "testdata/empty.js")
+		"console", "--exec", "loadScript('testdata/empty.js')")
+	XDC.Expect(`
+undefined
+`)
 	XDC.ExpectExit()
 
 	wantMessages := []string{
@@ -308,7 +313,7 @@ func TestUnlockFlagAmbiguous(t *testing.T) {
 	XDC := runXDC(t,
 		"--nat", "none", "--nodiscover", "--maxpeers", "0", "--port", "0", "--nousb", "--cache", "128", "--ipcdisable",
 		"--keystore", store, "--unlock", "f466859ead1932d743d622cb74fc058882e8648a",
-		"js", "testdata/empty.js")
+		"console", "--exec", "loadScript('testdata/empty.js')")
 	defer XDC.ExpectExit()
 
 	// Helper for the expect template, returns absolute keystore path.
@@ -327,6 +332,7 @@ Testing your password against all of them...
 Your password unlocked keystore://{{keypath "1"}}
 In order to avoid this warning, you need to remove the following duplicate key files:
    keystore://{{keypath "2"}}
+undefined
 `)
 	XDC.ExpectExit()
 

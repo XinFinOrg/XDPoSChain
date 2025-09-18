@@ -1346,6 +1346,7 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	setHTTP(ctx, cfg)
 	setWS(ctx, cfg)
 	setNodeUserIdent(ctx, cfg)
+	SetDataDir(ctx, cfg)
 	setSmartCard(ctx, cfg)
 
 	if ctx.IsSet(JWTSecretFlag.Name) {
@@ -1354,17 +1355,6 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 
 	if ctx.IsSet(EnablePersonal.Name) {
 		log.Warn(fmt.Sprintf("Option --%s is deprecated. The 'personal' RPC namespace has been removed.", EnablePersonal.Name))
-	}
-
-	switch {
-	case ctx.IsSet(DataDirFlag.Name):
-		cfg.DataDir = ctx.String(DataDirFlag.Name)
-	case ctx.Bool(DeveloperFlag.Name):
-		cfg.DataDir = "" // unless explicitly requested, use memory databases
-	case ctx.Bool(TestnetFlag.Name):
-		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "testnet")
-	case ctx.Bool(DevnetFlag.Name):
-		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "devnet")
 	}
 
 	if ctx.IsSet(KeyStoreDirFlag.Name) {
@@ -1410,6 +1400,19 @@ func setSmartCard(ctx *cli.Context, cfg *node.Config) {
 	}
 	// Smartcard daemon path exists and is a socket, enable it
 	cfg.SmartCardDaemonPath = path
+}
+
+func SetDataDir(ctx *cli.Context, cfg *node.Config) {
+	switch {
+	case ctx.IsSet(DataDirFlag.Name):
+		cfg.DataDir = ctx.String(DataDirFlag.Name)
+	case ctx.Bool(DeveloperFlag.Name):
+		cfg.DataDir = "" // unless explicitly requested, use memory databases
+	case ctx.Bool(TestnetFlag.Name) && cfg.DataDir == node.DefaultDataDir():
+		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "testnet")
+	case ctx.Bool(DevnetFlag.Name) && cfg.DataDir == node.DefaultDataDir():
+		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "devnet")
+	}
 }
 
 func setGPO(ctx *cli.Context, cfg *gasprice.Config) {

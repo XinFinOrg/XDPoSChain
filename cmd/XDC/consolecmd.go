@@ -18,7 +18,6 @@ package main
 
 import (
 	"fmt"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -59,7 +58,7 @@ This command allows to open a console on a running XDC node.`,
 	javascriptCommand = &cli.Command{
 		Action:    ephemeralConsole,
 		Name:      "js",
-		Usage:     "Execute the specified JavaScript files",
+		Usage:     "(DEPRECATED) Execute the specified JavaScript files",
 		ArgsUsage: "<jsfile> [jsfile...]",
 		Flags:     slices.Concat(nodeFlags, consoleFlags),
 		Description: `
@@ -118,18 +117,21 @@ func remoteConsole(ctx *cli.Context) error {
 
 	endpoint := ctx.Args().First()
 	if endpoint == "" {
-		path := node.DefaultDataDir()
-		if ctx.IsSet(utils.DataDirFlag.Name) {
-			path = ctx.String(utils.DataDirFlag.Name)
-		}
-		if path != "" {
-			if ctx.Bool(utils.TestnetFlag.Name) {
-				path = filepath.Join(path, "testnet")
-			} else if ctx.Bool(utils.DevnetFlag.Name) {
-				path = filepath.Join(path, "devnet")
-			}
-		}
-		endpoint = fmt.Sprintf("%s/XDC.ipc", path)
+		// path := node.DefaultDataDir()
+		// if ctx.IsSet(utils.DataDirFlag.Name) {
+		// 	path = ctx.String(utils.DataDirFlag.Name)
+		// }
+		// if path != "" {
+		// 	if ctx.Bool(utils.TestnetFlag.Name) {
+		// 		path = filepath.Join(path, "testnet")
+		// 	} else if ctx.Bool(utils.DevnetFlag.Name) {
+		// 		path = filepath.Join(path, "devnet")
+		// 	}
+		// }
+		// endpoint = fmt.Sprintf("%s/XDC.ipc", path)
+		cfg := defaultNodeConfig()
+		utils.SetDataDir(ctx, &cfg)
+		endpoint = cfg.IPCEndpoint()
 	}
 
 	client, err := dialRPC(endpoint)
@@ -159,6 +161,19 @@ func remoteConsole(ctx *cli.Context) error {
 	return nil
 }
 
+// ephemeralConsole starts a new geth node, attaches an ephemeral JavaScript
+// console to it, executes each of the files specified as arguments and tears
+// everything down.
+func ephemeralConsole(ctx *cli.Context) error {
+	var b strings.Builder
+	for _, file := range ctx.Args().Slice() {
+		b.Write([]byte(fmt.Sprintf("loadScript('%s');", file)))
+	}
+	utils.Fatalf(`The "js" command is deprecated. Please use the following instead:
+geth --exec "%s" console`, b.String())
+	return nil
+}
+
 // dialRPC returns a RPC client which connects to the given endpoint.
 // The check for empty endpoint implements the defaulting logic
 // for "XDC attach" and "XDC monitor" with no argument.
@@ -171,46 +186,4 @@ func dialRPC(endpoint string) (*rpc.Client, error) {
 		endpoint = endpoint[4:]
 	}
 	return rpc.Dial(endpoint)
-}
-
-// ephemeralConsole starts a new XDC node, attaches an ephemeral JavaScript
-// console to it, executes each of the files specified as arguments and tears
-// everything down.
-func ephemeralConsole(ctx *cli.Context) error {
-	// Create and start the node based on the CLI flags
-	stack, backend, cfg := makeFullNode(ctx)
-	startNode(ctx, stack, backend, cfg, false)
-	defer stack.Close()
-
-	// Attach to the newly started node and start the JavaScript console
-	client := stack.Attach()
-	config := console.Config{
-		DataDir: utils.MakeDataDir(ctx),
-		DocRoot: ctx.String(utils.JSpathFlag.Name),
-		Client:  client,
-		Preload: utils.MakeConsolePreloads(ctx),
-	}
-
-	console, err := console.New(config)
-	if err != nil {
-		return fmt.Errorf("failed to start the JavaScript console: %v", err)
-	}
-	defer console.Stop(false)
-
-	// Interrupt the JS interpreter when node is stopped.
-	go func() {
-		stack.Wait()
-		console.Stop(false)
-	}()
-
-	// Evaluate each of the specified JavaScript files.
-	for _, file := range ctx.Args().Slice() {
-		if err = console.Execute(file); err != nil {
-			return fmt.Errorf("failed to execute %s: %v", file, err)
-		}
-	}
-
-	// The main script is now done, but keep running timers/callbacks.
-	console.Stop(true)
-	return nil
 }
