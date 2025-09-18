@@ -217,7 +217,7 @@ var (
 			MasternodeReward:     500, // double as Reward
 			ProtectorReward:      400,
 			ObserverReward:       300.125,
-			LimitPenaltyEpoch:    1,
+			LimitPenaltyEpoch:    2,
 			MinimumSigningTx:     2,
 		},
 	}

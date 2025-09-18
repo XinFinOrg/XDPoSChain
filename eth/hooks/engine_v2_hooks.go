@@ -182,13 +182,18 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				}
 			}
 		} else { // after penalty upgrade
-			comebackHeight := (uint64(currentConfig.LimitPenaltyEpoch)+1)*chain.Config().XDPoS.Epoch + chain.Config().XDPoS.V2.SwitchBlock.Uint64()
+			limitPenaltyEpoch := 1
+			if currentConfig.LimitPenaltyEpoch > 0 {
+				// if non-zero parameter, use it
+				limitPenaltyEpoch = currentConfig.LimitPenaltyEpoch
+			}
+			comebackHeight := uint64(limitPenaltyEpoch)*chain.Config().XDPoS.Epoch + chain.Config().XDPoS.V2.SwitchBlock.Uint64()
 			if number.Uint64() > comebackHeight {
 				// penParolees record those who stayed enough epoch of LimitPenaltyEpoch
 				penParoleeMap := map[common.Address]int{}
 				// lastPenalty record the last epoch penalties
 				lastPenalty := []common.Address{}
-				for i := 0; i <= currentConfig.LimitPenaltyEpoch; i++ {
+				for i := 0; i < limitPenaltyEpoch; i++ {
 					pens := adaptor.EngineV2.GetPreviousPenaltyByHash(chain, currentHash, i)
 					for _, p := range pens {
 						penParoleeMap[p]++
@@ -230,7 +235,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				}
 				// check addr in lastPenalty, and if they does not meet condition, add them to penalty
 				for _, p := range lastPenalty {
-					if penParoleeMap[p] == currentConfig.LimitPenaltyEpoch+1 {
+					if penParoleeMap[p] == limitPenaltyEpoch {
 						// check if this node signs enough
 						if txSignerMap[p] >= currentConfig.MinimumSigningTx {
 							continue
