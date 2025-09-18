@@ -29,32 +29,32 @@ import (
 )
 
 // getPassPhrase obtains a passphrase given by the user.  It first checks the
-// --passphrase command line flag and ultimately prompts the user for a
+// --passfile command line flag and ultimately prompts the user for a
 // passphrase.
 func getPassPhrase(ctx *cli.Context, confirmation bool) string {
-	// Look for the --passphrase flag.
+	// Look for the --passwordfile flag.
 	passphraseFile := ctx.String(passphraseFlag.Name)
 	if passphraseFile != "" {
 		content, err := os.ReadFile(passphraseFile)
 		if err != nil {
-			utils.Fatalf("Failed to read passphrase file '%s': %v",
+			utils.Fatalf("Failed to read password file '%s': %v",
 				passphraseFile, err)
 		}
 		return strings.TrimRight(string(content), "\r\n")
 	}
 
 	// Otherwise prompt the user for the passphrase.
-	passphrase, err := prompt.Stdin.PromptPassword("Passphrase: ")
+	passphrase, err := prompt.Stdin.PromptPassword("Password: ")
 	if err != nil {
-		utils.Fatalf("Failed to read passphrase: %v", err)
+		utils.Fatalf("Failed to read password: %v", err)
 	}
 	if confirmation {
-		confirm, err := prompt.Stdin.PromptPassword("Repeat passphrase: ")
+		confirm, err := prompt.Stdin.PromptPassword("Repeat password: ")
 		if err != nil {
-			utils.Fatalf("Failed to read passphrase confirmation: %v", err)
+			utils.Fatalf("Failed to read password confirmation: %v", err)
 		}
 		if passphrase != confirm {
-			utils.Fatalf("Passphrases do not match")
+			utils.Fatalf("Passwords do not match")
 		}
 	}
 	return passphrase
