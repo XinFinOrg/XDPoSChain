@@ -298,9 +298,9 @@ func TestShouldNotSendVoteMsgIfBlockInfoRoundNotEqualCurrentRound(t *testing.T) 
 }
 
 /*
-	Block and round relationship diagram for this test
-	... - 13(3) - 14(4) - 15(5) - 16(6)
-            \ 14'(7)
+		Block and round relationship diagram for this test
+		... - 13(3) - 14(4) - 15(5) - 16(6)
+	            \ 14'(7)
 */
 func TestShouldNotSendVoteMsgIfBlockNotExtendedFromAncestor(t *testing.T) {
 	// Block number 905, 906 have forks and forkedBlock is the 906th

@@ -489,7 +489,7 @@ func (h *priceHeap) Pop() interface{} {
 // better candidates for inclusion while in other cases (at the top of the baseFee peak)
 // the floating heap is better. When baseFee is decreasing they behave similarly.
 type pricedList struct {
-	all              *lookup  // Pointer to the map of all transactions
+	all              *lookup    // Pointer to the map of all transactions
 	urgent, floating priceHeap  // Heaps of prices of all the stored **remote** transactions
 	stales           int64      // Number of stale price points to (re-heap trigger)
 	reheapMu         sync.Mutex // Mutex asserts that only one routine is reheaping the list

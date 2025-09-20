@@ -113,7 +113,7 @@ func (Failure_FailureType) EnumDescriptor() ([]byte, []int) {
 	return file_messages_common_proto_rawDescGZIP(), []int{1, 0}
 }
 
-//*
+// *
 // Type of button request
 type ButtonRequest_ButtonRequestType int32
 
@@ -210,7 +210,7 @@ func (ButtonRequest_ButtonRequestType) EnumDescriptor() ([]byte, []int) {
 	return file_messages_common_proto_rawDescGZIP(), []int{2, 0}
 }
 
-//*
+// *
 // Type of PIN request
 type PinMatrixRequest_PinMatrixRequestType int32
 
@@ -271,7 +271,7 @@ func (PinMatrixRequest_PinMatrixRequestType) EnumDescriptor() ([]byte, []int) {
 	return file_messages_common_proto_rawDescGZIP(), []int{4, 0}
 }
 
-//*
+// *
 // Response: Success of the previous request
 // @end
 type Success struct {
@@ -321,7 +321,7 @@ func (x *Success) GetMessage() string {
 	return ""
 }
 
-//*
+// *
 // Response: Failure of the previous request
 // @end
 type Failure struct {
@@ -379,7 +379,7 @@ func (x *Failure) GetMessage() string {
 	return ""
 }
 
-//*
+// *
 // Response: Device is waiting for HW button press.
 // @auxstart
 // @next ButtonAck
@@ -438,7 +438,7 @@ func (x *ButtonRequest) GetData() string {
 	return ""
 }
 
-//*
+// *
 // Request: Computer agrees to wait for HW button press
 // @auxend
 type ButtonAck struct {
@@ -530,7 +530,7 @@ func (x *PinMatrixRequest) GetType() PinMatrixRequest_PinMatrixRequestType {
 	return PinMatrixRequest_PinMatrixRequestType_Current
 }
 
-//*
+// *
 // Request: Computer responds with encoded PIN
 // @auxend
 type PinMatrixAck struct {
@@ -580,7 +580,7 @@ func (x *PinMatrixAck) GetPin() string {
 	return ""
 }
 
-//*
+// *
 // Response: Device awaits encryption passphrase
 // @auxstart
 // @next PassphraseAck
@@ -631,7 +631,7 @@ func (x *PassphraseRequest) GetOnDevice() bool {
 	return false
 }
 
-//*
+// *
 // Request: Send passphrase back
 // @next PassphraseStateRequest
 type PassphraseAck struct {
@@ -689,7 +689,7 @@ func (x *PassphraseAck) GetState() []byte {
 	return nil
 }
 
-//*
+// *
 // Response: Device awaits passphrase state
 // @next PassphraseStateAck
 type PassphraseStateRequest struct {
@@ -739,7 +739,7 @@ func (x *PassphraseStateRequest) GetState() []byte {
 	return nil
 }
 
-//*
+// *
 // Request: Send passphrase state back
 // @auxend
 type PassphraseStateAck struct {

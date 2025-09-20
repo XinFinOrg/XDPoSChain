@@ -19,4 +19,3 @@ import (
 	_ "github.com/XinFinOrg/XDPoSChain/crypto/secp256k1/libsecp256k1/src"
 	_ "github.com/XinFinOrg/XDPoSChain/crypto/secp256k1/libsecp256k1/src/modules/recovery"
 )
-
