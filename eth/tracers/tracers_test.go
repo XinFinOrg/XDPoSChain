@@ -93,10 +93,9 @@ func BenchmarkTransactionTrace(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to prepare transaction for tracing: %v", err)
 	}
-	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		snap := state.Snapshot()
 		tracer.OnTxStart(evm.GetVMContext(), tx, msg.From)
 		st := core.NewStateTransition(evm, msg, new(core.GasPool).AddGas(tx.Gas()))

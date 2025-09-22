@@ -225,8 +225,7 @@ func benchTracer(tracerName string, test *callTracerTest, b *testing.B) {
 	state := tests.MakePreState(rawdb.NewMemoryDatabase(), test.Genesis.Alloc)
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		tracer, err := tracers.DefaultDirectory.New(tracerName, new(tracers.Context), nil, test.Genesis.Config)
 		if err != nil {
 			b.Fatalf("failed to create call tracer: %v", err)
