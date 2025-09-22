@@ -56,6 +56,7 @@ require (
 	golang.org/x/text v0.29.0
 	google.golang.org/protobuf v1.31.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -87,7 +88,6 @@ require (
 	golang.org/x/net v0.44.0 // indirect
 	golang.org/x/term v0.35.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gotest.tools v2.2.0+incompatible // indirect
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
