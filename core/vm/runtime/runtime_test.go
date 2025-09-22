@@ -149,8 +149,7 @@ func BenchmarkCall(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		for j := 0; j < 400; j++ {
 			Execute(code, cpurchase, nil)
 			Execute(code, creceived, nil)
@@ -190,11 +189,9 @@ func benchmarkEVM_Create(bench *testing.B, code string) {
 		EVMConfig: vm.Config{},
 	}
 	// Warm up the intpools and stuff
-	bench.ResetTimer()
-	for i := 0; i < bench.N; i++ {
+	for bench.Loop() {
 		Call(receiver, []byte{}, &runtimeConfig)
 	}
-	bench.StopTimer()
 }
 
 func BenchmarkEVM_CREATE_500(bench *testing.B) {

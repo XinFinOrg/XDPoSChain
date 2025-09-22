@@ -605,12 +605,10 @@ func benchmarkPrecompiled(addr string, test precompiledTest, bench *testing.B) {
 	)
 
 	bench.Run(fmt.Sprintf("%s-Gas=%d", test.name, reqGas), func(bench *testing.B) {
-		bench.ResetTimer()
-		for i := 0; i < bench.N; i++ {
+		for bench.Loop() {
 			copy(data, in)
 			res, _, err = RunPrecompiledContract(nil, p, data, reqGas, nil)
 		}
-		bench.StopTimer()
 		//Check if it is correct
 		if err != nil {
 			bench.Error(err)
