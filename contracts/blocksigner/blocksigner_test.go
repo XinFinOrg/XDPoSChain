@@ -81,7 +81,6 @@ func randomHash() common.Hash {
 	letterBytes := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ123456789"
 	var b common.Hash
 	for i := range b {
-		rand.Seed(time.Now().UnixNano())
 		b[i] = letterBytes[rand.Intn(len(letterBytes))]
 	}
 	return b

@@ -131,7 +131,6 @@ func TestRewardBalance(t *testing.T) {
 	}
 	logCaps := make(map[int]*logCap)
 	for i := 0; i <= 10; i++ {
-		rand.Seed(time.Now().UTC().UnixNano())
 		randIndex := rand.Intn(len(accounts))
 		randCap := rand.Intn(10) * 1000
 		if randCap <= 0 {

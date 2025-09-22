@@ -3,7 +3,6 @@ package lendingstate
 import (
 	"fmt"
 	"math/big"
-	"math/rand"
 	"os"
 	"testing"
 	"time"
@@ -521,7 +520,6 @@ func sendOrder(nonce uint64) {
 		os.Exit(1)
 	}
 	defer rpcClient.Close()
-	rand.Seed(time.Now().UTC().UnixNano())
 	item := &LendingOrderMsg{
 		AccountNonce:    nonce,
 		Quantity:        EtherToWei(big.NewInt(1000)),

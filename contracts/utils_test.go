@@ -22,7 +22,6 @@ import (
 	"math/big"
 	"math/rand"
 	"testing"
-	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind/backends"
@@ -121,7 +120,6 @@ func randomHash() common.Hash {
 	letterBytes := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ123456789"
 	var b common.Hash
 	for i := range b {
-		rand.Seed(time.Now().UnixNano())
 		b[i] = letterBytes[rand.Intn(len(letterBytes))]
 	}
 	return b
@@ -170,7 +168,6 @@ func isArrayEqual(a [][]int64, b [][]int64) bool {
 func TestGenM2FromRandomize(t *testing.T) {
 	var a []int64
 	for i := 0; i <= 10; i++ {
-		rand.Seed(time.Now().UTC().UnixNano())
 		a = append(a, int64(rand.Intn(9999)))
 	}
 	b, err := GenM2FromRandomize(a, common.MaxMasternodes)
