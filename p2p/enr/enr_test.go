@@ -310,9 +310,8 @@ func TestSignEncodeAndDecodeRandom(t *testing.T) {
 
 func BenchmarkDecode(b *testing.B) {
 	var r Record
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		rlp.DecodeBytes(pyRecord, &r)
 	}
-	b.StopTimer()
 	r.NodeAddr()
 }
