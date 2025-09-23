@@ -470,7 +470,12 @@ func Sign(m [32]byte, rings []Ring, privkeys []*ecdsa.PrivateKey, s int) (*RingS
 				return nil, errors.New("could not create ring signature")
 			}
 			l_x, l_y := curve.Add(sx, sy, px, py)
-			L[j][idx] = &ecdsa.PublicKey{curve, l_x, l_y}
+			L[j][idx] = &ecdsa.PublicKey{
+				Curve: curve,
+				X:     l_x,
+				Y:     l_y,
+			}
+
 			lT := append(PadTo32Bytes(l_x.Bytes()), PadTo32Bytes(l_y.Bytes())...)
 			l = append(l, lT...)
 
@@ -482,7 +487,12 @@ func Sign(m [32]byte, rings []Ring, privkeys []*ecdsa.PrivateKey, s int) (*RingS
 				return nil, errors.New("could not create ring signature")
 			}
 			r_x, r_y := curve.Add(sx, sy, px, py)
-			R[j][idx] = &ecdsa.PublicKey{curve, r_x, r_y}
+			R[j][idx] = &ecdsa.PublicKey{
+				Curve: curve,
+				X:     r_x,
+				Y:     r_y,
+			}
+
 			rT := append(PadTo32Bytes(r_x.Bytes()), PadTo32Bytes(r_y.Bytes())...)
 			l = append(l, rT...)
 		}
