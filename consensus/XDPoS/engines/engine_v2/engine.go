@@ -207,7 +207,6 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 		// can not call processQC because round is equal to default
 		x.currentRound = 1
 		x.highestQuorumCert = quorumCert
-
 	} else {
 		log.Info("[initial] highest QC from current header")
 		quorumCert, _, _, err = x.getExtraFields(header)
@@ -302,7 +301,6 @@ func (x *XDPoS_v2) YourTurn(chain consensus.ChainReader, parent *types.Header, s
 // Prepare implements consensus.Engine, preparing all the consensus fields of the
 // header for running the transactions on top.
 func (x *XDPoS_v2) Prepare(chain consensus.ChainReader, header *types.Header) error {
-
 	x.lock.RLock()
 	currentRound := x.currentRound
 	highestQC := x.highestQuorumCert

@@ -396,7 +396,6 @@ func VerifyBalance(isXDCXLendingFork bool, statedb *state.StateDB, lendingStateD
 			return fmt.Errorf("VerifyBalance: not enough balance to process payment for lendingTrade."+
 				"lendingTradeId: %v. Token: %s. ExpectedBalance: %s. ActualBalance: %s",
 				lendingTradeId, lendingTrade.LendingToken.Hex(), paymentBalance.String(), tokenBalance.String())
-
 		}
 	case Market, Limit:
 		switch side {
@@ -421,7 +420,6 @@ func VerifyBalance(isXDCXLendingFork bool, statedb *state.StateDB, lendingStateD
 					if defaultFeeInXDC.Cmp(common.RelayerLendingFee) <= 0 {
 						return ErrQuantityTradeTooSmall
 					}
-
 				}
 
 			case LendingStatusCancelled:

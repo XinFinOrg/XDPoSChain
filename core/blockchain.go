@@ -2917,7 +2917,6 @@ func (bc *BlockChain) logLendingData(block *types.Block) {
 	}()
 
 	for _, batch := range batches {
-
 		dirtyOrderCount := uint64(0)
 		for _, item := range batch.Data {
 			var (

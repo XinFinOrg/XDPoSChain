@@ -2071,7 +2071,6 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 
 // SubmitTransaction is a helper function that submits tx to txPool and logs a message.
 func submitOrderTransaction(ctx context.Context, b Backend, tx *types.OrderTransaction) (common.Hash, error) {
-
 	if err := b.SendOrderTx(ctx, tx); err != nil {
 		return common.Hash{}, err
 	}

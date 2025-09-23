@@ -240,7 +240,6 @@ func (sn *SimNode) Start(snapshots map[string][]byte) error {
 			serviceFunc := sn.adapter.lifecycles[name]
 			service, err := serviceFunc(ctx, sn.node)
 			if err != nil {
-
 				regErr = err
 				return
 			}

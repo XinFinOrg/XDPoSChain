@@ -234,7 +234,6 @@ func (net *Network) watchPeerEvents(id discover.NodeID, events chan *p2p.PeerEve
 			}
 			peer := event.Peer
 			switch event.Type {
-
 			case p2p.PeerEventTypeAdd:
 				net.DidConnect(id, peer)
 

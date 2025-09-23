@@ -172,7 +172,6 @@ func MarshalSignature(R, S, V *big.Int) ([]byte, error) {
 
 // Sender get signer from
 func (ordersign OrderTxSigner) Sender(tx *OrderTransaction) (common.Address, error) {
-
 	message := crypto.Keccak256(
 		[]byte("\x19Ethereum Signed Message:\n32"),
 		ordersign.Hash(tx).Bytes(),

@@ -159,7 +159,6 @@ func GetSettleBalance(isXDCXLendingFork bool,
 			}
 		}
 	} else {
-
 		collateralQuantity := new(big.Int).Mul(quantityToLend, collateralTokenDecimal)
 		collateralQuantity = new(big.Int).Mul(collateralQuantity, depositRate) // eg: depositRate = 150%
 		collateralQuantity = new(big.Int).Div(collateralQuantity, big.NewInt(100))

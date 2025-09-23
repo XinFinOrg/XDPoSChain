@@ -209,7 +209,6 @@ func (x *XDPoS_v2) GetEpochSwitchInfoBetween(chain consensus.ChainReader, begin,
 		if iteratorNum.Cmp(begin.Number) >= 0 {
 			infos = append(infos, epochSwitchInfo)
 		}
-
 	}
 	// reverse the array
 	for i := 0; i < len(infos)/2; i++ {

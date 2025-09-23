@@ -873,7 +873,6 @@ func TestChainTxReorgs(t *testing.T) {
 }
 
 func TestLogReorgs(t *testing.T) {
-
 	var (
 		key1, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 		addr1   = crypto.PubkeyToAddress(key1.PublicKey)
@@ -1436,7 +1435,6 @@ func benchmarkLargeNumberOfValueToNonexisting(b *testing.B, numTxs, numBlocks in
 		b.StopTimer()
 		if got := chain.CurrentBlock().Transactions().Len(); got != numTxs*numBlocks {
 			b.Fatalf("Transactions were not included, expected %d, got %d", (numTxs * numBlocks), got)
-
 		}
 	}
 }
@@ -1577,7 +1575,6 @@ func TestAreTwoBlocksSamePath(t *testing.T) {
 			t.Error("Failed")
 		}
 	})
-
 }
 
 // TestEIP2718Transition tests that an EIP-2718 transaction will be accepted

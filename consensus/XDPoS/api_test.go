@@ -11,7 +11,6 @@ import (
 )
 
 func TestCalculateSignersVote(t *testing.T) {
-
 	info := make(map[string]SignerTypes)
 	votes := utils.NewPool()
 	masternodes := []common.Address{{1}, {2}, {3}}
@@ -46,7 +45,6 @@ func TestCalculateSignersVote(t *testing.T) {
 }
 
 func TestCalculateSignersTimeout(t *testing.T) {
-
 	info := make(map[string]SignerTypes)
 	timeouts := utils.NewPool()
 	masternodes := []common.Address{{1}, {2}, {3}}

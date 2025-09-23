@@ -63,7 +63,6 @@ func ecrecover(header *types.Header, sigcache *utils.SigLRU) (common.Address, er
 
 	sigcache.Add(hash, signer)
 	return signer, nil
-
 }
 
 // Get masternodes address from checkpoint Header. Only used for v1 last block

@@ -214,7 +214,6 @@ func (tx *LendingTransaction) WithSignature(signer LendingSigner, sig []byte) (*
 
 // ImportSignature make lending tx with specific signature
 func (tx *LendingTransaction) ImportSignature(V, R, S *big.Int) *LendingTransaction {
-
 	if V != nil {
 		tx.data.V = V
 	}

@@ -127,7 +127,6 @@ func (x *XDPoS_v2) processSyncInfoPool(chain consensus.ChainReader) {
 }
 
 func (x *XDPoS_v2) verifySignatures(messageHash common.Hash, signatures []types.Signature, candidates []common.Address) error {
-
 	var wg sync.WaitGroup
 	wg.Add(len(signatures))
 	var haveError error
