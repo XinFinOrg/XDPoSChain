@@ -291,7 +291,7 @@ func (w *wizard) makeGenesis() {
 		fmt.Println()
 		fmt.Println("How many blocks before checkpoint need to prepare new set of masternodes? (default = 450)")
 		if input != nil {
-			genesis.Config.XDPoS.Gap = uint64(input.Gap)
+			genesis.Config.XDPoS.Gap = input.Gap
 		} else {
 			genesis.Config.XDPoS.Gap = uint64(w.readDefaultInt(450))
 		}
@@ -314,7 +314,7 @@ func (w *wizard) makeGenesis() {
 		} else {
 			yield = uint64(w.readDefaultInt(10))
 		}
-		blocksPerYear := uint64(31536000 / genesis.Config.XDPoS.Period)
+		blocksPerYear := 31536000 / genesis.Config.XDPoS.Period
 		epochsPerYear := blocksPerYear / genesis.Config.XDPoS.Epoch
 		rewardsPerYear := float64(threshold) * (float64(yield) / float64(100))
 		rewardPerEpochPerMN := uint64(rewardsPerYear / float64(epochsPerYear))

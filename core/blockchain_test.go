@@ -130,7 +130,7 @@ func testFork(t *testing.T, blockchain *BlockChain, i, n int, full bool, compara
 
 func printChain(bc *BlockChain) {
 	for i := bc.CurrentBlock().Number().Uint64(); i > 0; i-- {
-		b := bc.GetBlockByNumber(uint64(i))
+		b := bc.GetBlockByNumber(i)
 		fmt.Printf("\t%x %v\n", b.Hash(), b.Difficulty())
 	}
 }

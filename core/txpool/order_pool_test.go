@@ -67,7 +67,7 @@ func getNonce(t *testing.T, userAddress common.Address) (uint64, error) {
 	s := result.(string)
 	s = strings.TrimPrefix(s, "0x")
 	n, err := strconv.ParseUint(s, 16, 32)
-	return uint64(n), err
+	return n, err
 }
 func testSendOrder(t *testing.T, amount, price *big.Int, side string, status string, orderID uint64) {
 
