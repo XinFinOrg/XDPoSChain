@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/XinFinOrg/XDPoSChain/contracts/XDCx/simulation"
 	"math/big"
 	"os"
 	"strconv"
@@ -12,6 +11,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/contracts/XDCx"
+	"github.com/XinFinOrg/XDPoSChain/contracts/XDCx/simulation"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/ethclient"
 )

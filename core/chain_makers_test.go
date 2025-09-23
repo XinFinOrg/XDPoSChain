@@ -18,10 +18,10 @@ package core
 
 import (
 	"fmt"
-	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"math/big"
 
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"

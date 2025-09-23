@@ -1,10 +1,11 @@
 package XDCx
 
 import (
+	"math/big"
+
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/contracts/XDCx/contract"
-	"math/big"
 )
 
 type TRC21Issuer struct {

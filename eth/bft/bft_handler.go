@@ -153,7 +153,7 @@ func (b *Bfter) SyncInfo(peer string, syncInfo *types.SyncInfo) error {
 		log.Debug("[SyncInfo] Received SyncInfo", "qcRound", syncInfo.HighestQuorumCert.ProposedBlockInfo.Round, "qcBlocknum", syncInfo.HighestQuorumCert.ProposedBlockInfo.Number, "qcBlockhash", syncInfo.HighestQuorumCert.ProposedBlockInfo.Hash.Hex())
 	}
 	if syncInfo.HighestTimeoutCert != nil {
-		log.Debug("[SyncInfo] Received SyncInfo", "tcRound", syncInfo.HighestTimeoutCert.Round) 
+		log.Debug("[SyncInfo] Received SyncInfo", "tcRound", syncInfo.HighestTimeoutCert.Round)
 	}
 
 	qcBlockNum := syncInfo.HighestQuorumCert.ProposedBlockInfo.Number.Int64()

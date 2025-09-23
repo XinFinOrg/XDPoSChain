@@ -1,10 +1,11 @@
 package trc21issuer
 
 import (
+	"math/big"
+
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/contracts/trc21issuer/contract"
-	"math/big"
 )
 
 type TRC21Issuer struct {

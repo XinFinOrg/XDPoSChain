@@ -17,10 +17,10 @@
 package tests
 
 import (
-	"github.com/XinFinOrg/XDPoSChain/common"
 	"math/big"
 	"testing"
 
+	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 )
 

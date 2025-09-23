@@ -1,8 +1,9 @@
 package simulation
 
 import (
-	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"math/big"
+
+	"github.com/XinFinOrg/XDPoSChain/crypto"
 )
 
 var (
