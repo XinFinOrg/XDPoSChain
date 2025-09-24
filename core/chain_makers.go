@@ -87,7 +87,7 @@ func (b *BlockGen) addTx(bc *BlockChain, vmConfig vm.Config, tx *types.Transacti
 	}
 	feeCapacity := state.GetTRC21FeeCapacityFromState(b.statedb)
 	b.statedb.SetTxContext(tx.Hash(), len(b.txs))
-	receipt, gas, err, tokenFeeUsed := ApplyTransaction(b.config, feeCapacity, bc, &b.header.Coinbase, b.gasPool, b.statedb, nil, b.header, tx, &b.header.GasUsed, vmConfig)
+	receipt, gas, tokenFeeUsed, err := ApplyTransaction(b.config, feeCapacity, bc, &b.header.Coinbase, b.gasPool, b.statedb, nil, b.header, tx, &b.header.GasUsed, vmConfig)
 	if err != nil {
 		panic(err)
 	}

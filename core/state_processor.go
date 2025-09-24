@@ -131,7 +131,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 		}
 		statedb.SetTxContext(tx.Hash(), i)
 
-		receipt, gas, err, tokenFeeUsed := ApplyTransactionWithEVM(msg, p.config, gp, statedb, blockNumber, blockHash, tx, usedGas, vmenv, balanceFee, coinbaseOwner)
+		receipt, gas, tokenFeeUsed, err := ApplyTransactionWithEVM(msg, p.config, gp, statedb, blockNumber, blockHash, tx, usedGas, vmenv, balanceFee, coinbaseOwner)
 		if err != nil {
 			return nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 		}
@@ -222,7 +222,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 			return nil, nil, 0, err
 		}
 		statedb.SetTxContext(tx.Hash(), i)
-		receipt, gas, err, tokenFeeUsed := ApplyTransactionWithEVM(msg, p.config, gp, statedb, blockNumber, blockHash, tx, usedGas, vmenv, balanceFee, coinbaseOwner)
+		receipt, gas, tokenFeeUsed, err := ApplyTransactionWithEVM(msg, p.config, gp, statedb, blockNumber, blockHash, tx, usedGas, vmenv, balanceFee, coinbaseOwner)
 		if err != nil {
 			return nil, nil, 0, err
 		}
@@ -247,7 +247,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 // ApplyTransactionWithEVM attempts to apply a transaction to the given state database
 // and uses the input parameters for its environment similar to ApplyTransaction. However,
 // this method takes an already created EVM instance as input.
-func ApplyTransactionWithEVM(msg *Message, config *params.ChainConfig, gp *GasPool, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM, balanceFee *big.Int, coinbaseOwner common.Address) (receipt *types.Receipt, gasUsed uint64, err error, tokenFeeUsed bool) {
+func ApplyTransactionWithEVM(msg *Message, config *params.ChainConfig, gp *GasPool, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM, balanceFee *big.Int, coinbaseOwner common.Address) (receipt *types.Receipt, gasUsed uint64, tokenFeeUsed bool, err error) {
 	to := tx.To()
 	if to != nil {
 		if *to == common.BlockSignersBinary && config.IsTIPSigning(blockNumber) {
@@ -428,7 +428,7 @@ func ApplyTransactionWithEVM(msg *Message, config *params.ChainConfig, gp *GasPo
 	// Apply the transaction to the current state (included in the env)
 	result, err := ApplyMessage(evm, msg, gp, coinbaseOwner)
 	if err != nil {
-		return nil, 0, err, false
+		return nil, 0, false, err
 	}
 
 	// Update the state with pending changes.
@@ -465,7 +465,7 @@ func ApplyTransactionWithEVM(msg *Message, config *params.ChainConfig, gp *GasPo
 	if balanceFee != nil && result.Failed() {
 		state.PayFeeWithTRC21TxFail(statedb, msg.From, *to)
 	}
-	return receipt, result.UsedGas, err, balanceFee != nil
+	return receipt, result.UsedGas, balanceFee != nil, nil
 }
 
 func getCoinbaseOwner(bc *BlockChain, statedb *state.StateDB, header *types.Header, author *common.Address) common.Address {
@@ -483,7 +483,7 @@ func getCoinbaseOwner(bc *BlockChain, statedb *state.StateDB, header *types.Head
 // and uses the input parameters for its environment. It returns the receipt
 // for the transaction, gas used and an error if the transaction failed,
 // indicating the block was invalid.
-func ApplyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*big.Int, bc *BlockChain, author *common.Address, gp *GasPool, statedb *state.StateDB, XDCxState *tradingstate.TradingStateDB, header *types.Header, tx *types.Transaction, usedGas *uint64, cfg vm.Config) (*types.Receipt, uint64, error, bool) {
+func ApplyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*big.Int, bc *BlockChain, author *common.Address, gp *GasPool, statedb *state.StateDB, XDCxState *tradingstate.TradingStateDB, header *types.Header, tx *types.Transaction, usedGas *uint64, cfg vm.Config) (*types.Receipt, uint64, bool, error) {
 	var balanceFee *big.Int
 	if tx.To() != nil {
 		if value, ok := tokensFee[*tx.To()]; ok {
@@ -497,13 +497,13 @@ func ApplyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 	signer := types.MakeSigner(config, header.Number)
 	msg, err := TransactionToMessage(tx, signer, balanceFee, header.Number, header.BaseFee)
 	if err != nil {
-		return nil, 0, err, false
+		return nil, 0, false, err
 	}
 	coinbaseOwner := getCoinbaseOwner(bc, statedb, header, author)
 	return ApplyTransactionWithEVM(msg, config, gp, statedb, header.Number, header.Hash(), tx, usedGas, vmenv, balanceFee, coinbaseOwner)
 }
 
-func ApplySignTransaction(config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64) (*types.Receipt, uint64, error, bool) {
+func ApplySignTransaction(config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64) (*types.Receipt, uint64, bool, error) {
 	// Update the state with pending changes
 	var root []byte
 	if config.IsByzantium(blockNumber) {
@@ -513,13 +513,13 @@ func ApplySignTransaction(config *params.ChainConfig, statedb *state.StateDB, bl
 	}
 	from, err := types.Sender(types.MakeSigner(config, blockNumber), tx)
 	if err != nil {
-		return nil, 0, err, false
+		return nil, 0, false, err
 	}
 	nonce := statedb.GetNonce(from)
 	if nonce < tx.Nonce() {
-		return nil, 0, ErrNonceTooHigh, false
+		return nil, 0, false, ErrNonceTooHigh
 	} else if nonce > tx.Nonce() {
-		return nil, 0, ErrNonceTooLow, false
+		return nil, 0, false, ErrNonceTooLow
 	}
 	statedb.SetNonce(from, nonce+1)
 	// Create a new receipt for the transaction, storing the intermediate root and gas used by the tx
@@ -538,10 +538,10 @@ func ApplySignTransaction(config *params.ChainConfig, statedb *state.StateDB, bl
 	receipt.BlockHash = blockHash
 	receipt.BlockNumber = blockNumber
 	receipt.TransactionIndex = uint(statedb.TxIndex())
-	return receipt, 0, nil, false
+	return receipt, 0, false, nil
 }
 
-func ApplyEmptyTransaction(config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64) (*types.Receipt, uint64, error, bool) {
+func ApplyEmptyTransaction(config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64) (*types.Receipt, uint64, bool, error) {
 	// Update the state with pending changes
 	var root []byte
 	if config.IsByzantium(blockNumber) {
@@ -565,7 +565,7 @@ func ApplyEmptyTransaction(config *params.ChainConfig, statedb *state.StateDB, b
 	receipt.BlockHash = blockHash
 	receipt.BlockNumber = blockNumber
 	receipt.TransactionIndex = uint(statedb.TxIndex())
-	return receipt, 0, nil, false
+	return receipt, 0, false, nil
 }
 
 func InitSignerInTransactions(config *params.ChainConfig, header *types.Header, txs types.Transactions) {

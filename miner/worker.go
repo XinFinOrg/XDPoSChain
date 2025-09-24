@@ -1134,7 +1134,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 func (w *Work) commitTransaction(balanceFee map[common.Address]*big.Int, tx *types.Transaction, bc *core.BlockChain, coinbase common.Address, gp *core.GasPool) ([]*types.Log, bool, uint64, error) {
 	snap := w.state.Snapshot()
 
-	receipt, gas, err, tokenFeeUsed := core.ApplyTransaction(w.config, balanceFee, bc, &coinbase, gp, w.state, w.tradingState, w.header, tx, &w.header.GasUsed, vm.Config{})
+	receipt, gas, tokenFeeUsed, err := core.ApplyTransaction(w.config, balanceFee, bc, &coinbase, gp, w.state, w.tradingState, w.header, tx, &w.header.GasUsed, vm.Config{})
 	if err != nil {
 		w.state.RevertToSnapshot(snap)
 		return nil, false, 0, err
