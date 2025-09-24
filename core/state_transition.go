@@ -379,6 +379,15 @@ func (st *StateTransition) TransitionDb(owner common.Address) (*ExecutionResult,
 	}
 	st.gasRemaining -= gas
 
+	// Check clause 6
+	value, overflow := uint256.FromBig(msg.Value)
+	if overflow {
+		return nil, fmt.Errorf("%w: address %v", ErrInsufficientFundsForTransfer, msg.From.Hex())
+	}
+	if !value.IsZero() && !st.evm.Context.CanTransfer(st.state, msg.From, value.ToBig()) {
+		return nil, fmt.Errorf("%w: address %v", ErrInsufficientFundsForTransfer, msg.From.Hex())
+	}
+
 	// Check whether the init code size has been exceeded.
 	if rules.IsEIP1559 && contractCreation && len(msg.Data) > params.MaxInitCodeSize {
 		return nil, fmt.Errorf("%w: code size %v limit %v", ErrMaxInitCodeSizeExceeded, len(msg.Data), params.MaxInitCodeSize)
@@ -388,15 +397,6 @@ func (st *StateTransition) TransitionDb(owner common.Address) (*ExecutionResult,
 	// - prepare accessList(post-berlin)
 	// - reset transient storage(eip 1153)
 	st.state.Prepare(rules, msg.From, st.evm.Context.Coinbase, msg.To, vm.ActivePrecompiles(rules), msg.AccessList)
-
-	// Check clause 6
-	value, overflow := uint256.FromBig(msg.Value)
-	if overflow {
-		return nil, fmt.Errorf("%w: address %v", ErrInsufficientFundsForTransfer, msg.From.Hex())
-	}
-	if !value.IsZero() && !st.evm.Context.CanTransfer(st.state, msg.From, value.ToBig()) {
-		return nil, fmt.Errorf("%w: address %v", ErrInsufficientFundsForTransfer, msg.From.Hex())
-	}
 
 	var (
 		ret   []byte
@@ -409,6 +409,7 @@ func (st *StateTransition) TransitionDb(owner common.Address) (*ExecutionResult,
 		st.state.SetNonce(sender.Address(), st.state.GetNonce(sender.Address())+1)
 		ret, st.gasRemaining, vmerr = st.evm.Call(sender, st.to(), msg.Data, st.gasRemaining, msg.Value)
 	}
+
 	if !rules.IsEIP1559 {
 		// Before EIP-3529: refunds were capped to gasUsed / 2
 		st.refundGas(params.RefundQuotient)
