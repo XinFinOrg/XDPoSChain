@@ -87,16 +87,17 @@ func CallContractWithState(call ethereum.CallMsg, chain consensus.ChainContext, 
 
 	// Execute the call.
 	msg := &Message{
-		From:              call.From,
-		To:                call.To,
-		Value:             call.Value,
-		GasLimit:          call.Gas,
-		GasPrice:          call.GasPrice,
-		GasFeeCap:         call.GasFeeCap,
-		GasTipCap:         call.GasTipCap,
-		Data:              call.Data,
-		AccessList:        call.AccessList,
-		SkipAccountChecks: true,
+		From:             call.From,
+		To:               call.To,
+		Value:            call.Value,
+		GasLimit:         call.Gas,
+		GasPrice:         call.GasPrice,
+		GasFeeCap:        call.GasFeeCap,
+		GasTipCap:        call.GasTipCap,
+		Data:             call.Data,
+		AccessList:       call.AccessList,
+		SkipNonceChecks:  true,
+		SkipFromEOACheck: true,
 	}
 	feeCapacity := state.GetTRC21FeeCapacityFromState(statedb)
 	if msg.To != nil {

@@ -170,8 +170,13 @@ func run(ctx context.Context, call *core.Message, opts *Options) (*core.Executio
 		evmContext = core.NewEVMBlockContext(opts.Header, opts.Chain, nil)
 
 		dirtyState = opts.State.Copy()
-		evm        = vm.NewEVM(evmContext, msgContext, dirtyState, nil, opts.Config, vm.Config{NoBaseFee: true})
 	)
+	// Lower the basefee to 0 to avoid breaking EVM
+	// invariants (basefee < feecap).
+	if msgContext.GasPrice.Sign() == 0 {
+		evmContext.BaseFee = new(big.Int)
+	}
+	evm := vm.NewEVM(evmContext, msgContext, dirtyState, nil, opts.Config, vm.Config{NoBaseFee: true})
 	// Monitor the outer context and interrupt the EVM upon cancellation. To avoid
 	// a dangling goroutine until the outer estimation finishes, create an internal
 	// context for the lifetime of this method call.

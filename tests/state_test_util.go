@@ -286,17 +286,18 @@ func (tx *stTransaction) toMessage(ps stPostState, number *big.Int, baseFee *big
 	}
 
 	msg := &core.Message{
-		From:              from,
-		To:                to,
-		Nonce:             tx.Nonce,
-		Value:             value,
-		GasLimit:          gasLimit,
-		GasPrice:          tx.GasPrice,
-		GasFeeCap:         tx.MaxFeePerGas,
-		GasTipCap:         tx.MaxPriorityFeePerGas,
-		Data:              data,
-		AccessList:        accessList,
-		SkipAccountChecks: false,
+		From:             from,
+		To:               to,
+		Nonce:            tx.Nonce,
+		Value:            value,
+		GasLimit:         gasLimit,
+		GasPrice:         tx.GasPrice,
+		GasFeeCap:        tx.MaxFeePerGas,
+		GasTipCap:        tx.MaxPriorityFeePerGas,
+		Data:             data,
+		AccessList:       accessList,
+		SkipNonceChecks:  false,
+		SkipFromEOACheck: false,
 	}
 	return msg, nil
 }

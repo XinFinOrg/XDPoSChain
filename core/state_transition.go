@@ -128,26 +128,30 @@ type Message struct {
 	Data            []byte
 	AccessList      types.AccessList
 
-	// When SkipAccountCheckss is true, the message nonce is not checked against the
-	// account nonce in state. It also disables checking that the sender is an EOA.
+	// When SkipNonceChecks is true, the message nonce is not checked against the
+	// account nonce in state.
 	// This field will be set to true for operations like RPC eth_call.
-	SkipAccountChecks bool
+	SkipNonceChecks bool
+
+	// When SkipFromEOACheck is true, the message sender is not checked to be an EOA.
+	SkipFromEOACheck bool
 }
 
 // TransactionToMessage converts a transaction into a Message.
 func TransactionToMessage(tx *types.Transaction, s types.Signer, balanceFee, blockNumber, baseFee *big.Int) (*Message, error) {
 	msg := &Message{
-		Nonce:             tx.Nonce(),
-		GasLimit:          tx.Gas(),
-		GasPrice:          new(big.Int).Set(tx.GasPrice()),
-		GasFeeCap:         new(big.Int).Set(tx.GasFeeCap()),
-		GasTipCap:         new(big.Int).Set(tx.GasTipCap()),
-		To:                tx.To(),
-		Value:             tx.Value(),
-		Data:              tx.Data(),
-		AccessList:        tx.AccessList(),
-		SkipAccountChecks: false,
-		BalanceTokenFee:   balanceFee,
+		Nonce:            tx.Nonce(),
+		GasLimit:         tx.Gas(),
+		GasPrice:         new(big.Int).Set(tx.GasPrice()),
+		GasFeeCap:        new(big.Int).Set(tx.GasFeeCap()),
+		GasTipCap:        new(big.Int).Set(tx.GasTipCap()),
+		To:               tx.To(),
+		Value:            tx.Value(),
+		Data:             tx.Data(),
+		AccessList:       tx.AccessList(),
+		SkipNonceChecks:  false,
+		SkipFromEOACheck: false,
+		BalanceTokenFee:  balanceFee,
 	}
 
 	if balanceFee != nil {
@@ -282,7 +286,7 @@ func (st *StateTransition) buyGas() error {
 func (st *StateTransition) preCheck() error {
 	// Only check transactions that are not fake
 	msg := st.msg
-	if !msg.SkipAccountChecks {
+	if !msg.SkipNonceChecks {
 		// Make sure this transaction's nonce is correct.
 		stNonce := st.state.GetNonce(msg.From)
 		if msgNonce := msg.Nonce; stNonce < msgNonce {
@@ -295,13 +299,15 @@ func (st *StateTransition) preCheck() error {
 			return fmt.Errorf("%w: address %v, nonce: %d", ErrNonceMax,
 				msg.From.Hex(), stNonce)
 		}
+	}
+	if !msg.SkipFromEOACheck {
 		// Make sure the sender is an EOA
-		if codeHash := st.state.GetCodeHash(msg.From); codeHash != types.EmptyCodeHash && codeHash != (common.Hash{}) {
+		codeHash := st.state.GetCodeHash(msg.From)
+		if codeHash != (common.Hash{}) && codeHash != types.EmptyCodeHash {
 			return fmt.Errorf("%w: address %v, codehash: %s", ErrSenderNoEOA,
 				msg.From.Hex(), codeHash)
 		}
 	}
-
 	// Make sure that transaction gasFeeCap is greater than the baseFee (post london)
 	if st.evm.ChainConfig().IsEIP1559(st.evm.Context.BlockNumber) {
 		// Skip the checks if gas fields are zero and baseFee was explicitly disabled (eth_call)
