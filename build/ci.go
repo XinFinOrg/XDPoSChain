@@ -24,9 +24,9 @@ Usage: go run build/ci.go <command> <command flags/arguments>
 
 Available commands are:
 
-	lint           -- runs certain pre-selected linters
-	check_tidy     -- verifies that everything is 'go mod tidy'-ed
-	check_generate -- verifies that everything is 'go generate'-ed
+	lint        -- runs certain pre-selected linters
+	tidy        -- verifies that everything is 'go mod tidy'-ed
+	generate    -- verifies that everything is 'go generate'-ed
 
 	install    [ -arch architecture ] [ -cc compiler ] [ packages... ]                          -- builds packages and executables
 	test       [ -coverage ] [ packages... ]                                                    -- runs the tests
@@ -93,10 +93,10 @@ func main() {
 		doTest(os.Args[2:])
 	case "lint":
 		doLint(os.Args[2:])
-	case "check_tidy":
-		doCheckTidy()
-	case "check_generate":
-		doCheckGenerate()
+	case "tidy":
+		doTidy()
+	case "generate":
+		doGenerate()
 	case "xgo":
 		doXgo(os.Args[2:])
 	default:
@@ -254,8 +254,8 @@ func doTest(cmdline []string) {
 	build.MustRun(gotest)
 }
 
-// doCheckTidy assets that the Go modules files are tidied already.
-func doCheckTidy() {
+// doTidy assets that the Go modules files are tidied already.
+func doTidy() {
 	targets := []string{"go.mod", "go.sum"}
 
 	hashes, err := build.HashFiles(targets)
@@ -274,9 +274,9 @@ func doCheckTidy() {
 	fmt.Println("No untidy module files detected.")
 }
 
-// doCheckGenerate ensures that re-generating generated files does not cause
+// doGenerate ensures that re-generating generated files does not cause
 // any mutations in the source file tree.
-func doCheckGenerate() {
+func doGenerate() {
 	var (
 		cachedir = flag.String("cachedir", "./build/cache", "directory for caching binaries.")
 	)

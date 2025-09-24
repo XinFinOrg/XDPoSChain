@@ -53,13 +53,13 @@ quick-test: all
 lint: ## Run linters.
 	$(GORUN) build/ci.go lint
 
-#? check_tidy: Verify go.mod and go.sum by 'go mod tidy'
-check_tidy: ## Run 'go mod tidy'.
-	$(GORUN) build/ci.go check_tidy
+#? tidy: Verify go.mod and go.sum by 'go mod tidy'
+tidy: ## Run 'go mod tidy'.
+	$(GORUN) build/ci.go tidy
 
-#? check_generate: Verify everything is 'go generate'-ed
-check_generate: ## Run 'go generate ./...'.
-	$(GORUN) build/ci.go check_generate
+#? generate: Verify everything is 'go generate'-ed
+generate: ## Run 'go generate ./...'.
+	$(GORUN) build/ci.go generate
 
 #? fmt: Ensure consistent code formatting.
 fmt:
