@@ -449,7 +449,7 @@ func (w *wizard) makeGenesis() {
 		fmt.Println("Which accounts are allowed to confirm in Team MultiSignWallet?")
 		var teams []common.Address
 		if input != nil {
-			owners = append(owners, input.MasternodesOwner)
+			teams = append(teams, input.MasternodesOwner)
 		} else {
 			for {
 				if address := w.readAddress(); address != nil {
