@@ -205,7 +205,6 @@ func (o *OrderItem) VerifyOrder(state *state.StateDB) error {
 
 // VerifyBasicOrderInfo verify basic info
 func (o *OrderItem) VerifyBasicOrderInfo() error {
-
 	if o.Status == OrderNew {
 		if o.Type == Limit {
 			if err := o.verifyPrice(); err != nil {
@@ -271,7 +270,6 @@ func (o *OrderItem) verifyOrderType() error {
 
 // verify order side
 func (o *OrderItem) verifyOrderSide() error {
-
 	if o.Side != Bid && o.Side != Ask {
 		log.Debug("Invalid orderSide", "side", o.Side)
 		return ErrInvalidOrderSide
@@ -392,7 +390,6 @@ func (s *Signature) MarshalSignature() ([]byte, error) {
 
 // Verify returns the address that corresponds to the given signature and signed message
 func (s *Signature) Verify(hash common.Hash) (common.Address, error) {
-
 	hashBytes := hash.Bytes()
 	sigBytes, err := s.MarshalSignature()
 	if err != nil {

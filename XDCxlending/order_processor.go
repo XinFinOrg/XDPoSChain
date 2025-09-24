@@ -1054,7 +1054,6 @@ func (l *Lending) GetCollateralPrices(header *types.Header, chain consensus.Chai
 }
 
 func (l *Lending) GetXDCBasePrices(header *types.Header, chain consensus.ChainContext, statedb *state.StateDB, tradingStateDb *tradingstate.TradingStateDB, token common.Address) (*big.Int, error) {
-
 	tokenXDCPriceFromContract, updatedBlock := lendingstate.GetCollateralPrice(statedb, token, common.XDCNativeAddressBinary)
 	tokenXDCPriceUpdatedFromContract := updatedBlock.Uint64()/chain.Config().XDPoS.Epoch == header.Number.Uint64()/chain.Config().XDPoS.Epoch
 

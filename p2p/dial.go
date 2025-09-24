@@ -413,7 +413,6 @@ func (h dialHistory) min() pastDial {
 }
 func (h *dialHistory) add(id discover.NodeID, exp time.Time) {
 	heap.Push(h, pastDial{id, exp})
-
 }
 func (h *dialHistory) remove(id discover.NodeID) bool {
 	for i, v := range *h {

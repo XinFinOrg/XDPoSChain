@@ -2079,7 +2079,6 @@ func submitOrderTransaction(ctx context.Context, b Backend, tx *types.OrderTrans
 
 // submitLendingTransaction is a helper function that submits tx to txPool and logs a message.
 func submitLendingTransaction(ctx context.Context, b Backend, tx *types.LendingTransaction) (common.Hash, error) {
-
 	if err := b.SendLendingTx(ctx, tx); err != nil {
 		return common.Hash{}, err
 	}
@@ -2089,7 +2088,6 @@ func submitLendingTransaction(ctx context.Context, b Backend, tx *types.LendingT
 // SendTransaction creates a transaction for the given argument, sign it and submit it to the
 // transaction pool.
 func (s *TransactionAPI) SendTransaction(ctx context.Context, args TransactionArgs) (common.Hash, error) {
-
 	// Look up the wallet containing the requested signer
 	account := accounts.Account{Address: args.from()}
 
@@ -2192,7 +2190,6 @@ func (s *PublicXDCXTransactionPoolAPI) GetOrderTxMatchByHash(ctx context.Context
 		orders = append(orders, order)
 	}
 	return orders, nil
-
 }
 
 // GetOrderPoolContent return pending, queued content
@@ -2345,7 +2342,6 @@ func (s *PublicXDCXTransactionPoolAPI) SendLending(ctx context.Context, msg Lend
 
 // GetOrderCount returns the number of transactions the given address has sent for the given block number
 func (s *PublicXDCXTransactionPoolAPI) GetOrderCount(ctx context.Context, addr common.Address) (*hexutil.Uint64, error) {
-
 	nonce, err := s.b.GetOrderNonce(addr.Hash())
 	if err != nil {
 		return (*hexutil.Uint64)(&nonce), err

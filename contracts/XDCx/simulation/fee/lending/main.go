@@ -48,5 +48,4 @@ func main() {
 		fmt.Println("UpdateFee: Get receipt failed", err)
 	}
 	fmt.Println("UpdateFee: Done receipt status", r.Status)
-
 }

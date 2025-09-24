@@ -530,7 +530,6 @@ func (pool *OrderPool) validateOrder(tx *types.OrderTransaction) error {
 // validateTx checks whether a transaction is valid according to the consensus
 // rules and adheres to some heuristic limits of the local node (price and size).
 func (pool *OrderPool) validateTx(tx *types.OrderTransaction, local bool) error {
-
 	// check if sender is in black list
 	if common.IsInBlacklist(tx.From()) {
 		return fmt.Errorf("reject transaction with sender in black-list: %v", tx.From().Hex())

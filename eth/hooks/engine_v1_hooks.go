@@ -66,7 +66,6 @@ func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 		}
 		log.Debug("Time Calculated HookPenalty ", "block", blockNumberEpoc, "time", common.PrettyDuration(time.Since(start)))
 		return penSigners, nil
-
 	}
 
 	// Hook scans for bad masternodes and decide to penalty them

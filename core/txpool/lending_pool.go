@@ -621,7 +621,6 @@ func (pool *LendingPool) validateLending(tx *types.LendingTransaction) error {
 // validateTx checks whether a transaction is valid according to the consensus
 // rules and adheres to some heuristic limits of the local node (price and size).
 func (pool *LendingPool) validateTx(tx *types.LendingTransaction, local bool) error {
-
 	// check if sender is in black list
 	if common.IsInBlacklist(tx.From()) {
 		return fmt.Errorf("reject transaction with sender in black-list: %v", tx.From().Hex())
