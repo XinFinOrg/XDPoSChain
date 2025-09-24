@@ -30,9 +30,9 @@ var DevnetConstant = constant{
 	eip1559Block:           big.NewInt(32400),
 	cancunBlock:            big.NewInt(43200),
 	pragueBlock:            big.NewInt(math.MaxInt64),
-	tipUpgradeReward:       big.NewInt(9999999999),
-	tipUpgradePenalty:      big.NewInt(9999999999),
-	tipEpochHalving:        big.NewInt(9999999999),
+	tipUpgradeReward:       big.NewInt(math.MaxInt64),
+	tipUpgradePenalty:      big.NewInt(math.MaxInt64),
+	tipEpochHalving:        big.NewInt(math.MaxInt64),
 
 	trc21IssuerSMC:         HexToAddress("0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee"),
 	xdcxListingSMC:         HexToAddress("0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53"),

@@ -687,7 +687,7 @@ func (pool *TxPool) validateTxBasics(tx *types.Transaction, local bool) error {
 		return nil
 	}
 	// Ensure the transaction has more gas than the basic tx fee.
-	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.To() == nil, true, pool.eip1559.Load())
+	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.AuthList(), tx.To() == nil, true, pool.eip1559.Load())
 	if err != nil {
 		return err
 	}

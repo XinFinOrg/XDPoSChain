@@ -31,6 +31,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
+	"github.com/holiman/uint256"
 )
 
 // TransactionArgs represents the arguments to construct a new transaction
@@ -54,6 +55,9 @@ type TransactionArgs struct {
 	// Introduced by AccessListTxType transaction.
 	AccessList *types.AccessList `json:"accessList,omitempty"`
 	ChainID    *hexutil.Big      `json:"chainId,omitempty"`
+
+	// For SetCodeTxType
+	AuthorizationList []types.Authorization `json:"authorizationList"`
 }
 
 // from retrieves the transaction sender address.
@@ -93,8 +97,15 @@ func (args *TransactionArgs) setDefaults(ctx context.Context, b Backend, skipGas
 	if args.Data != nil && args.Input != nil && !bytes.Equal(*args.Data, *args.Input) {
 		return errors.New(`both "data" and "input" are set and not equal. Please use "input" to pass transaction call data`)
 	}
-	if args.To == nil && len(args.data()) == 0 {
-		return errors.New(`contract creation without any data provided`)
+
+	// create check
+	if args.To == nil {
+		if args.AuthorizationList != nil {
+			return errors.New("eip7702 set code transaction requires a destination address")
+		}
+		if len(args.data()) == 0 {
+			return errors.New(`contract creation without any data provided`)
+		}
 	}
 
 	if args.Gas == nil {
@@ -343,6 +354,8 @@ func (args *TransactionArgs) ToMessage(b AccountBackend, baseFee *big.Int, skipN
 func (args *TransactionArgs) ToTransaction(defaultType int) *types.Transaction {
 	usedType := types.LegacyTxType
 	switch {
+	case args.AuthorizationList != nil || defaultType == types.SetCodeTxType:
+		usedType = types.SetCodeTxType
 	case args.MaxFeePerGas != nil || defaultType == types.DynamicFeeTxType:
 		usedType = types.DynamicFeeTxType
 	case args.AccessList != nil || defaultType == types.AccessListTxType:
@@ -354,6 +367,28 @@ func (args *TransactionArgs) ToTransaction(defaultType int) *types.Transaction {
 	}
 	var data types.TxData
 	switch usedType {
+	case types.SetCodeTxType:
+		al := types.AccessList{}
+		if args.AccessList != nil {
+			al = *args.AccessList
+		}
+		authList := []types.Authorization{}
+		if args.AuthorizationList != nil {
+			authList = args.AuthorizationList
+		}
+		data = &types.SetCodeTx{
+			To:         *args.To,
+			ChainID:    args.ChainID.ToInt().Uint64(),
+			Nonce:      uint64(*args.Nonce),
+			Gas:        uint64(*args.Gas),
+			GasFeeCap:  uint256.MustFromBig((*big.Int)(args.MaxFeePerGas)),
+			GasTipCap:  uint256.MustFromBig((*big.Int)(args.MaxPriorityFeePerGas)),
+			Value:      uint256.MustFromBig((*big.Int)(args.Value)),
+			Data:       args.data(),
+			AccessList: al,
+			AuthList:   authList,
+		}
+
 	case types.DynamicFeeTxType:
 		al := types.AccessList{}
 		if args.AccessList != nil {
@@ -370,6 +405,7 @@ func (args *TransactionArgs) ToTransaction(defaultType int) *types.Transaction {
 			Data:       args.data(),
 			AccessList: al,
 		}
+
 	case types.AccessListTxType:
 		data = &types.AccessListTx{
 			To:         args.To,
@@ -381,6 +417,7 @@ func (args *TransactionArgs) ToTransaction(defaultType int) *types.Transaction {
 			Data:       args.data(),
 			AccessList: *args.AccessList,
 		}
+
 	default:
 		data = &types.LegacyTx{
 			To:       args.To,

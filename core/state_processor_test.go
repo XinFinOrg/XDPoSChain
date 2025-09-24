@@ -30,6 +30,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/trie"
+	"github.com/holiman/uint256"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -51,15 +52,18 @@ func TestStateProcessorErrors(t *testing.T) {
 			IstanbulBlock:       big.NewInt(0),
 			BerlinBlock:         big.NewInt(0),
 			LondonBlock:         big.NewInt(0),
+			ShanghaiBlock:       big.NewInt(0),
 			Eip1559Block:        big.NewInt(0),
+			CancunBlock:         big.NewInt(0),
+			PragueBlock:         big.NewInt(0),
 			Ethash:              new(params.EthashConfig),
 		}
-		signer     = types.LatestSigner(config)
-		testKey, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		signer  = types.LatestSigner(config)
+		key1, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 	)
 	var makeTx = func(nonce uint64, to common.Address, amount *big.Int, gasLimit uint64, gasPrice *big.Int, data []byte) *types.Transaction {
 		tx := types.NewTransaction(nonce, to, amount, gasLimit, gasPrice, data)
-		signedTx, err := types.SignTx(tx, signer, testKey)
+		signedTx, err := types.SignTx(tx, signer, key1)
 		if err != nil {
 			t.Fatalf("fail to sign tx: %v, err: %v", tx, err)
 		}
@@ -73,9 +77,36 @@ func TestStateProcessorErrors(t *testing.T) {
 			Gas:       gasLimit,
 			To:        &to,
 			Value:     big.NewInt(0),
-		}), signer, testKey)
+		}), signer, key1)
 		return tx
 	}
+	var mkDynamicCreationTx = func(nonce uint64, gasLimit uint64, gasTipCap, gasFeeCap *big.Int, data []byte) *types.Transaction {
+		tx, _ := types.SignTx(types.NewTx(&types.DynamicFeeTx{
+			Nonce:     nonce,
+			GasTipCap: gasTipCap,
+			GasFeeCap: gasFeeCap,
+			Gas:       gasLimit,
+			Value:     big.NewInt(0),
+			Data:      data,
+		}), signer, key1)
+		return tx
+	}
+	var mkSetCodeTx = func(nonce uint64, to common.Address, gasLimit uint64, gasTipCap, gasFeeCap *big.Int, authlist []types.Authorization) *types.Transaction {
+		tx, err := types.SignTx(types.NewTx(&types.SetCodeTx{
+			Nonce:     nonce,
+			GasTipCap: uint256.MustFromBig(gasTipCap),
+			GasFeeCap: uint256.MustFromBig(gasFeeCap),
+			Gas:       gasLimit,
+			To:        to,
+			Value:     new(uint256.Int),
+			AuthList:  authlist,
+		}), signer, key1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tx
+	}
+
 	{ // Tests against a 'recent' chain definition
 		var (
 			db    = rawdb.NewMemoryDatabase()
@@ -88,8 +119,9 @@ func TestStateProcessorErrors(t *testing.T) {
 					},
 				},
 			}
-			genesis       = gspec.MustCommit(db)
-			blockchain, _ = NewBlockChain(db, nil, gspec.Config, ethash.NewFaker(), vm.Config{})
+			genesis        = gspec.MustCommit(db)
+			blockchain, _  = NewBlockChain(db, nil, gspec.Config, ethash.NewFaker(), vm.Config{})
+			tooBigInitCode = [params.MaxInitCodeSize + 1]byte{}
 		)
 		defer blockchain.Stop()
 		bigNumber := new(big.Int).SetBytes(common.MaxHash.Bytes())
@@ -101,34 +133,34 @@ func TestStateProcessorErrors(t *testing.T) {
 		}{
 			{ // ErrNonceTooLow
 				txs: []*types.Transaction{
-					makeTx(0, common.Address{}, big.NewInt(0), params.TxGas, big.NewInt(875000000), nil),
-					makeTx(0, common.Address{}, big.NewInt(0), params.TxGas, big.NewInt(875000000), nil),
+					makeTx(0, common.Address{}, big.NewInt(0), params.TxGas, big.NewInt(12500000000), nil),
+					makeTx(0, common.Address{}, big.NewInt(0), params.TxGas, big.NewInt(12500000000), nil),
 				},
-				want: "nonce too low: address xdc71562b71999873DB5b286dF957af199Ec94617F7, tx: 0 state: 1",
+				want: "could not apply tx 1 [0xecd6a889a307155b3562cd64c86957e36fa58267cb4efbbe39aa692fd7aab09a]: nonce too low: address xdc71562b71999873DB5b286dF957af199Ec94617F7, tx: 0 state: 1",
 			},
 			{ // ErrNonceTooHigh
 				txs: []*types.Transaction{
 					makeTx(100, common.Address{}, big.NewInt(0), params.TxGas, big.NewInt(875000000), nil),
 				},
-				want: "nonce too high: address xdc71562b71999873DB5b286dF957af199Ec94617F7, tx: 100 state: 0",
+				want: "could not apply tx 0 [0xdebad714ca7f363bd0d8121c4518ad48fa469ca81b0a081be3d10c17460f751b]: nonce too high: address xdc71562b71999873DB5b286dF957af199Ec94617F7, tx: 100 state: 0",
 			},
 			{ // ErrGasLimitReached
 				txs: []*types.Transaction{
-					makeTx(0, common.Address{}, big.NewInt(0), 21000000, big.NewInt(875000000), nil),
+					makeTx(0, common.Address{}, big.NewInt(0), 21000000, big.NewInt(12500000000), nil),
 				},
-				want: "gas limit reached",
+				want: "could not apply tx 0 [0x062b0e84f2d48f09f91e434fca8cb1fb864c4fb82f8bf27d58879ebe60c9f773]: gas limit reached",
 			},
 			{ // ErrInsufficientFundsForTransfer
 				txs: []*types.Transaction{
-					makeTx(0, common.Address{}, big.NewInt(1000000000000000000), params.TxGas, big.NewInt(875000000), nil),
+					makeTx(0, common.Address{}, big.NewInt(1000000000000000000), params.TxGas, big.NewInt(12500000000), nil),
 				},
-				want: "insufficient funds for gas * price + value: address xdc71562b71999873DB5b286dF957af199Ec94617F7",
+				want: "could not apply tx 0 [0x50f89093bf5ad7f4ae6f9e3bad44d4dc130247ea0429df0cf78873584a76dfa1]: insufficient funds for gas * price + value: address xdc71562b71999873DB5b286dF957af199Ec94617F7 have 1000000000000000000 want 1000262500000000000",
 			},
 			{ // ErrInsufficientFunds
 				txs: []*types.Transaction{
 					makeTx(0, common.Address{}, big.NewInt(0), params.TxGas, big.NewInt(900000000000000000), nil),
 				},
-				want: "insufficient funds for gas * price + value: address xdc71562b71999873DB5b286dF957af199Ec94617F7 have 1000000000000000000 want 18900000000000000000000",
+				want: "could not apply tx 0 [0x4a69690c4b0cd85e64d0d9ea06302455b01e10a83db964d60281739752003440]: insufficient funds for gas * price + value: address xdc71562b71999873DB5b286dF957af199Ec94617F7 have 1000000000000000000 want 18900000000000000000000",
 			},
 			// ErrGasUintOverflow
 			// One missing 'core' error is ErrGasUintOverflow: "gas uint64 overflow",
@@ -136,21 +168,21 @@ func TestStateProcessorErrors(t *testing.T) {
 			// multiplication len(data) +gas_per_byte overflows uint64. Not testable at the moment
 			{ // ErrIntrinsicGas
 				txs: []*types.Transaction{
-					makeTx(0, common.Address{}, big.NewInt(0), params.TxGas-1000, big.NewInt(875000000), nil),
+					makeTx(0, common.Address{}, big.NewInt(0), params.TxGas-1000, big.NewInt(12500000000), nil),
 				},
-				want: "intrinsic gas too low: have 20000, want 21000",
+				want: "could not apply tx 0 [0xa3484a466ffa8a88dc95e6ff520c853659dfc5507039c0b1452c2b845438771b]: intrinsic gas too low: have 20000, want 21000",
 			},
 			{ // ErrGasLimitReached
 				txs: []*types.Transaction{
-					makeTx(0, common.Address{}, big.NewInt(0), params.TxGas*1000, big.NewInt(875000000), nil),
+					makeTx(0, common.Address{}, big.NewInt(0), params.TxGas*1000, big.NewInt(12500000000), nil),
 				},
-				want: "gas limit reached",
+				want: "could not apply tx 0 [0x062b0e84f2d48f09f91e434fca8cb1fb864c4fb82f8bf27d58879ebe60c9f773]: gas limit reached",
 			},
 			{ // ErrFeeCapTooLow
 				txs: []*types.Transaction{
 					mkDynamicTx(0, common.Address{}, params.TxGas, big.NewInt(0), big.NewInt(0)),
 				},
-				want: "fee cap less than block base fee: address xdc71562b71999873DB5b286dF957af199Ec94617F7, maxFeePerGas: 0 baseFee: 875000000",
+				want: "could not apply tx 0 [0xc4ab868fef0c82ae0387b742aee87907f2d0fc528fc6ea0a021459fb0fc4a4a8]: max fee per gas less than block base fee: address xdc71562b71999873DB5b286dF957af199Ec94617F7, maxFeePerGas: 0 baseFee: 12500000000",
 			},
 			{ // ErrTipVeryHigh
 				txs: []*types.Transaction{
@@ -187,7 +219,26 @@ func TestStateProcessorErrors(t *testing.T) {
 				},
 				want: "could not apply tx 0 [0xd82a0c2519acfeac9a948258c47e784acd20651d9d80f9a1c67b4137651c3a24]: insufficient funds for gas * price + value: address xdc71562b71999873DB5b286dF957af199Ec94617F7 have 1000000000000000000 want 2431633873983640103894990685182446064918669677978451844828609264166175722438635000",
 			},
-		}[8:] {
+			{ // ErrMaxInitCodeSizeExceeded
+				txs: []*types.Transaction{
+					mkDynamicCreationTx(0, 500000, common.Big0, big.NewInt(params.InitialBaseFee), tooBigInitCode[:]),
+				},
+				want: "could not apply tx 0 [0x42c498ac252e8943de9e8ab3267113b0a0cde54543df1ab0711b0d87ccca3e03]: max initcode size exceeded: code size 49153 limit 49152",
+			},
+			{ // ErrIntrinsicGas: Not enough gas to cover init code
+				txs: []*types.Transaction{
+					mkDynamicCreationTx(0, 54299, common.Big0, big.NewInt(params.InitialBaseFee), make([]byte, 320)),
+				},
+				want: "could not apply tx 0 [0x83f0bd65f2c2ad82de0da306aa93dea5e47d4ba0cd9f23ec4ce3fd0a3246da1c]: intrinsic gas too low: have 54299, want 54300",
+			},
+			{ // ErrEmptyAuthList
+				txs: []*types.Transaction{
+					mkSetCodeTx(0, common.Address{}, params.TxGas, big.NewInt(params.InitialBaseFee), big.NewInt(params.InitialBaseFee), nil),
+				},
+				want: "could not apply tx 0 [0x2fadb4fa7ccf8564edc21590f8d94a5b93a981b2bb2de8256978cb7361bc69de]: EIP-7702 transaction with empty auth list (sender 0x71562b71999873DB5b286dF957af199Ec94617F7)",
+			},
+			// ErrSetCodeTxCreate cannot be tested: it is impossible to create a SetCode-tx with nil `to`.
+		} {
 			block := GenerateBadBlock(t, genesis, ethash.NewFaker(), tt.txs, gspec.Config)
 			_, err := blockchain.InsertChain(types.Blocks{block})
 			if err == nil {

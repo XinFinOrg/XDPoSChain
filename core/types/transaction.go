@@ -45,9 +45,10 @@ var (
 
 // Transaction types.
 const (
-	LegacyTxType = iota
-	AccessListTxType
-	DynamicFeeTxType
+	LegacyTxType     = 0x00
+	AccessListTxType = 0x01
+	DynamicFeeTxType = 0x02
+	SetCodeTxType    = 0x04
 )
 
 // Transaction is an Ethereum transaction.
@@ -195,6 +196,8 @@ func (tx *Transaction) decodeTyped(b []byte) (TxData, error) {
 		inner = new(AccessListTx)
 	case DynamicFeeTxType:
 		inner = new(DynamicFeeTx)
+	case SetCodeTxType:
+		inner = new(SetCodeTx)
 	default:
 		return nil, ErrTxTypeNotSupported
 	}
@@ -387,6 +390,15 @@ func (tx *Transaction) EffectiveGasTipIntCmp(other *big.Int, baseFee *big.Int) i
 		return tx.GasTipCapIntCmp(other)
 	}
 	return tx.EffectiveGasTipValue(baseFee).Cmp(other)
+}
+
+// AuthList returns the authorizations list of the transaction.
+func (tx *Transaction) AuthList() []Authorization {
+	setcodetx, ok := tx.inner.(*SetCodeTx)
+	if !ok {
+		return nil
+	}
+	return setcodetx.AuthList
 }
 
 // Hash returns the transaction hash.

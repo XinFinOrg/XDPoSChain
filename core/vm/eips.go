@@ -18,8 +18,11 @@ package vm
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/holiman/uint256"
 )
@@ -36,6 +39,7 @@ var activators = map[int]func(*JumpTable){
 	1884: enable1884,
 	1344: enable1344,
 	1153: enable1153,
+	7702: enable7702,
 }
 
 // EnableEIP enables the given EIP on the config.
@@ -307,4 +311,69 @@ func enable6780(jt *JumpTable) {
 		minStack:    minStack(1, 0),
 		maxStack:    maxStack(1, 0),
 	}
+}
+
+// opExtCodeCopyEIP7702 implements the EIP-7702 variation of opExtCodeCopy.
+func opExtCodeCopyEIP7702(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+	var (
+		stack      = scope.Stack
+		a          = stack.pop()
+		memOffset  = stack.pop()
+		codeOffset = stack.pop()
+		length     = stack.pop()
+	)
+	uint64CodeOffset, overflow := codeOffset.Uint64WithOverflow()
+	if overflow {
+		uint64CodeOffset = math.MaxUint64
+	}
+	code := evm.StateDB.GetCode(common.Address(a.Bytes20()))
+	if _, ok := types.ParseDelegation(code); ok {
+		code = types.DelegationPrefix[:2]
+	}
+	codeCopy := getData(code, uint64CodeOffset, length.Uint64())
+	scope.Memory.Set(memOffset.Uint64(), length.Uint64(), codeCopy)
+
+	return nil, nil
+}
+
+// opExtCodeSizeEIP7702 implements the EIP-7702 variation of opExtCodeSize.
+func opExtCodeSizeEIP7702(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+	slot := scope.Stack.peek()
+	code := evm.StateDB.GetCode(common.Address(slot.Bytes20()))
+	if _, ok := types.ParseDelegation(code); ok {
+		code = types.DelegationPrefix[:2]
+	}
+	slot.SetUint64(uint64(len(code)))
+	return nil, nil
+}
+
+// opExtCodeHashEIP7702 implements the EIP-7702 variation of opExtCodeHash.
+func opExtCodeHashEIP7702(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+	slot := scope.Stack.peek()
+	addr := common.Address(slot.Bytes20())
+	if evm.StateDB.Empty(addr) {
+		slot.Clear()
+		return nil, nil
+	}
+	code := evm.StateDB.GetCode(addr)
+	if _, ok := types.ParseDelegation(code); ok {
+		// If the code is a delegation, return the prefix without version.
+		slot.SetBytes(crypto.Keccak256(types.DelegationPrefix[:2]))
+	} else {
+		// Otherwise, return normal code hash.
+		slot.SetBytes(evm.StateDB.GetCodeHash(addr).Bytes())
+	}
+	return nil, nil
+}
+
+// enable7702 enables the EIP-7702 changes to support delegation designators.
+func enable7702(jt *JumpTable) {
+	jt[EXTCODECOPY].execute = opExtCodeCopyEIP7702
+	jt[EXTCODESIZE].execute = opExtCodeSizeEIP7702
+	jt[EXTCODEHASH].execute = opExtCodeHashEIP7702
+
+	jt[CALL].dynamicGas = gasCallEIP7702
+	jt[CALLCODE].dynamicGas = gasCallCodeEIP7702
+	jt[STATICCALL].dynamicGas = gasStaticCallEIP7702
+	jt[DELEGATECALL].dynamicGas = gasDelegateCallEIP7702
 }

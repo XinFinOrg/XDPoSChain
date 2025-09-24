@@ -434,6 +434,31 @@ var (
 		Clique:              nil,
 		XDPoS:               nil,
 	}
+
+	// MergedTestChainConfig contains every protocol change (EIPs) introduced
+	// and accepted by the Ethereum core developers for testing purposes.
+	MergedTestChainConfig = &ChainConfig{
+		ChainID:             big.NewInt(1),
+		HomesteadBlock:      big.NewInt(0),
+		DAOForkBlock:        nil,
+		DAOForkSupport:      false,
+		EIP150Block:         big.NewInt(0),
+		EIP155Block:         big.NewInt(0),
+		EIP158Block:         big.NewInt(0),
+		ByzantiumBlock:      big.NewInt(0),
+		ConstantinopleBlock: big.NewInt(0),
+		PetersburgBlock:     big.NewInt(0),
+		IstanbulBlock:       big.NewInt(0),
+		BerlinBlock:         big.NewInt(0),
+		LondonBlock:         big.NewInt(0),
+		ShanghaiBlock:       big.NewInt(0),
+		Eip1559Block:        big.NewInt(0),
+		CancunBlock:         big.NewInt(0),
+		PragueBlock:         big.NewInt(0),
+		Ethash:              new(EthashConfig),
+		Clique:              nil,
+		XDPoS:               nil,
+	}
 	TestRules = TestChainConfig.Rules(new(big.Int))
 )
 
@@ -982,9 +1007,11 @@ func (c *ChainConfig) IsTIPIncreaseMasternodes(num *big.Int) bool {
 func (c *ChainConfig) IsTIPNoHalvingMNReward(num *big.Int) bool {
 	return isForked(common.TIPNoHalvingMNReward, num)
 }
+
 func (c *ChainConfig) IsTIPXDCX(num *big.Int) bool {
 	return isForked(common.TIPXDCX, num)
 }
+
 func (c *ChainConfig) IsTIPXDCXMiner(num *big.Int) bool {
 	return isForked(common.TIPXDCX, num) && !isForked(common.TIPXDCXMinerDisable, num)
 }

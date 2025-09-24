@@ -30,9 +30,9 @@ var TestnetConstant = constant{
 	eip1559Block:           big.NewInt(71550000), // Target 14th Feb 2025
 	cancunBlock:            big.NewInt(71551800),
 	pragueBlock:            big.NewInt(math.MaxInt64),
-	tipUpgradeReward:       big.NewInt(9999999999),
-	tipUpgradePenalty:      big.NewInt(9999999999),
-	tipEpochHalving:        big.NewInt(9999999999),
+	tipUpgradeReward:       big.NewInt(math.MaxInt64),
+	tipUpgradePenalty:      big.NewInt(math.MaxInt64),
+	tipEpochHalving:        big.NewInt(math.MaxInt64),
 
 	trc21IssuerSMC:         HexToAddress("0x0E2C88753131CE01c7551B726b28BFD04e44003F"),
 	xdcxListingSMC:         HexToAddress("0x14B2Bf043b9c31827A472CE4F94294fE9a6277e0"),

@@ -89,6 +89,13 @@ func (j *journal) createContract(addr common.Address) {
 	j.append(createContractChange{account: addr})
 }
 
+func (j *journal) setCode(address common.Address, prevCode []byte) {
+	j.append(codeChange{
+		account:  address,
+		prevCode: prevCode,
+	})
+}
+
 type (
 	// Changes to the account trie.
 	createObjectChange struct {

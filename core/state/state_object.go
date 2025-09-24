@@ -22,6 +22,7 @@ import (
 	"io"
 	"maps"
 	"math/big"
+	"slices"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -421,13 +422,11 @@ func (s *stateObject) CodeSize(db Database) int {
 	return size
 }
 
-func (s *stateObject) SetCode(codeHash common.Hash, code []byte) {
-	prevCode := s.Code(s.db.db)
-	s.db.journal.append(codeChange{
-		account:  s.address,
-		prevCode: prevCode,
-	})
+func (s *stateObject) SetCode(codeHash common.Hash, code []byte) []byte {
+	prevCode := slices.Clone(s.code)
+	s.db.journal.setCode(s.address, prevCode)
 	s.setCode(codeHash, code)
+	return prevCode
 }
 
 func (s *stateObject) setCode(codeHash common.Hash, code []byte) {

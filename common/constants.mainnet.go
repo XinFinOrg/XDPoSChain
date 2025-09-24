@@ -27,12 +27,12 @@ var MainnetConstant = constant{
 	TIPV2SwitchBlock:       big.NewInt(80370000), // Target 2nd Oct 2024
 	tipXDCXMinerDisable:    big.NewInt(80370000), // Target 2nd Oct 2024
 	tipXDCXReceiverDisable: big.NewInt(80370900), // Target 2nd Oct 2024, safer to release after disable miner
-	eip1559Block:           big.NewInt(9999999999),
-	cancunBlock:            big.NewInt(9999999999),
+	eip1559Block:           big.NewInt(math.MaxInt64),
+	cancunBlock:            big.NewInt(math.MaxInt64),
 	pragueBlock:            big.NewInt(math.MaxInt64),
-	tipUpgradeReward:       big.NewInt(9999999999),
-	tipUpgradePenalty:      big.NewInt(9999999999),
-	tipEpochHalving:        big.NewInt(9999999999),
+	tipUpgradeReward:       big.NewInt(math.MaxInt64),
+	tipUpgradePenalty:      big.NewInt(math.MaxInt64),
+	tipEpochHalving:        big.NewInt(math.MaxInt64),
 
 	trc21IssuerSMC:         HexToAddress("0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee"),
 	xdcxListingSMC:         HexToAddress("0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53"),
