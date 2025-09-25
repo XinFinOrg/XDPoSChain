@@ -322,7 +322,6 @@ func (args *TransactionArgs) ToMessage(b AccountBackend, baseFee *big.Int) *core
 			}
 		}
 	}
-
 	return &core.Message{
 		From:              addr,
 		To:                args.To,

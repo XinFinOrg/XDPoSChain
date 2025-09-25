@@ -47,6 +47,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/eth/gasestimator"
 	"github.com/XinFinOrg/XDPoSChain/eth/tracers/logger"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
@@ -1203,15 +1204,16 @@ func doCall(ctx context.Context, b Backend, args TransactionArgs, state *state.S
 	return result, err
 }
 
-func newRevertError(result *core.ExecutionResult) *revertError {
-	reason, errUnpack := abi.UnpackRevert(result.Revert())
-	err := errors.New("execution reverted")
+func newRevertError(revert []byte) *revertError {
+	err := vm.ErrExecutionReverted
+
+	reason, errUnpack := abi.UnpackRevert(revert)
 	if errUnpack == nil {
-		err = fmt.Errorf("execution reverted: %v", reason)
+		err = fmt.Errorf("%w: %v", vm.ErrExecutionReverted, reason)
 	}
 	return &revertError{
 		error:  err,
-		reason: hexutil.Encode(result.Revert()),
+		reason: hexutil.Encode(revert),
 	}
 }
 
@@ -1250,116 +1252,50 @@ func (s *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockNrO
 	}
 	// If the result contains a revert reason, try to unpack and return it.
 	if len(result.Revert()) > 0 {
-		return nil, newRevertError(result)
+		return nil, newRevertError(result.Revert())
 	}
 	return result.Return(), result.Err
 }
 
+// DoEstimateGas returns the lowest possible gas limit that allows the transaction to run
+// successfully at block `blockNrOrHash`. It returns error if the transaction would revert, or if
+// there are unexpected failures. The gas limit is capped by both `args.Gas` (if non-nil &
+// non-zero) and `gasCap` (if non-zero).
 func DoEstimateGas(ctx context.Context, b Backend, args TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, overrides *StateOverride, gasCap uint64) (hexutil.Uint64, error) {
 	// Retrieve the base state and mutate it with any overrides
-	state, _, err := b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHash)
+	state, header, err := b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHash)
 	if state == nil || err != nil {
 		return 0, err
 	}
 	if err = overrides.Apply(state); err != nil {
 		return 0, err
 	}
-	// Binary search the gas requirement, as it may be higher than the amount used
-	var (
-		lo  uint64 = params.TxGas - 1
-		hi  uint64
-		cap uint64
-	)
-	// Use zero address if sender unspecified.
-	if args.From == nil {
-		args.From = new(common.Address)
+	// Construct the gas estimator option from the user input
+	opts := &gasestimator.Options{
+		Config: b.ChainConfig(),
+		Chain:  NewChainContext(ctx, b),
+		Header: header,
+		State:  state,
 	}
-	// Determine the highest gas limit can be used during the estimation.
-	if args.Gas != nil && uint64(*args.Gas) >= params.TxGas {
-		hi = uint64(*args.Gas)
-	} else {
-		// Retrieve the current pending block to act as the gas ceiling
-		block, err := b.BlockByNumberOrHash(ctx, blockNrOrHash)
-		if err != nil {
-			return 0, err
-		}
-		if block == nil {
-			return 0, errors.New("block not found")
-		}
-		hi = block.GasLimit()
+	// Set any required transaction default, but make sure the gas cap itself is not messed with
+	// if it was not specified in the original argument list.
+	if args.Gas == nil {
+		args.Gas = new(hexutil.Uint64)
 	}
-	// Recap the highest gas allowance with specified gascap.
-	if gasCap != 0 && hi > gasCap {
-		log.Warn("Caller gas above allowance, capping", "requested", hi, "cap", gasCap)
-		hi = gasCap
+	if err := args.CallDefaults(gasCap, header.BaseFee, b.ChainConfig().ChainID); err != nil {
+		return 0, err
 	}
-	cap = hi
+	call := args.ToMessage(b, header.BaseFee)
 
-	// Create a helper to check if a gas allowance results in an executable transaction
-	executable := func(gas uint64) (bool, *core.ExecutionResult, error) {
-		args.Gas = (*hexutil.Uint64)(&gas)
-
-		result, err := DoCall(ctx, b, args, blockNrOrHash, nil, nil, 0, gasCap)
-		if err != nil {
-			if errors.Is(err, vm.ErrOutOfGas) || errors.Is(err, core.ErrIntrinsicGas) {
-				return true, nil, nil // Special case, raise gas limit
-			}
-			return true, nil, err // Bail out
+	// Run the gas estimation andwrap any revertals into a custom return
+	estimate, revert, err := gasestimator.Estimate(ctx, call, opts, gasCap)
+	if err != nil {
+		if len(revert) > 0 {
+			return 0, newRevertError(revert)
 		}
-		return result.Failed(), result, nil
+		return 0, err
 	}
-
-	// If the transaction is a plain value transfer, short circuit estimation and
-	// directly try 21000. Returning 21000 without any execution is dangerous as
-	// some tx field combos might bump the price up even for plain transfers (e.g.
-	// unused access list items). Ever so slightly wasteful, but safer overall.
-	if args.Data == nil || len(*args.Data) == 0 {
-		if args.To != nil && state.GetCodeSize(*args.To) == 0 {
-			ok, _, err := executable(params.TxGas)
-			if ok && err == nil {
-				return hexutil.Uint64(params.TxGas), nil
-			}
-		}
-	}
-
-	// Execute the binary search and hone in on an executable gas limit
-	for lo+1 < hi {
-		mid := (hi + lo) / 2
-		failed, _, err := executable(mid)
-
-		// If the error is not nil(consensus error), it means the provided message
-		// call or transaction will never be accepted no matter how much gas it is
-		// assigned. Return the error directly, don't struggle any more.
-		if err != nil {
-			return 0, err
-		}
-
-		if failed {
-			lo = mid
-		} else {
-			hi = mid
-		}
-	}
-
-	// Reject the transaction as invalid if it still fails at the highest allowance
-	if hi == cap {
-		failed, result, err := executable(hi)
-		if err != nil {
-			return 0, err
-		}
-
-		if failed {
-			if result != nil && !errors.Is(result.Err, vm.ErrOutOfGas) {
-				if len(result.Revert()) > 0 {
-					return 0, newRevertError(result)
-				}
-				return 0, result.Err
-			}
-			// Otherwise, the specified gas cap is too low
-			return 0, fmt.Errorf("gas required exceeds allowance (%d)", cap)
-		}
-	}
-	return hexutil.Uint64(hi), nil
+	return hexutil.Uint64(estimate), nil
 }
 
 // EstimateGas returns an estimate of the amount of gas needed to execute the
@@ -1778,6 +1714,15 @@ func AccessList(ctx context.Context, b Backend, blockNrOrHash rpc.BlockNumberOrH
 	if err := args.setDefaults(ctx, b, true); err != nil {
 		return nil, 0, nil, err
 	}
+	if args.Nonce == nil {
+		nonce := hexutil.Uint64(db.GetNonce(args.from()))
+		args.Nonce = &nonce
+	}
+	blockCtx := core.NewEVMBlockContext(header, NewChainContext(ctx, b), nil)
+	if err = args.CallDefaults(b.RPCGasCap(), blockCtx.BaseFee, b.ChainConfig().ChainID); err != nil {
+		return nil, 0, nil, err
+	}
+
 	var to common.Address
 	if args.To != nil {
 		to = *args.To
