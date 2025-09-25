@@ -1115,14 +1115,26 @@ func (context *ChainContext) GetHeader(hash common.Hash, number uint64) *types.H
 func DoCall(ctx context.Context, b Backend, args TransactionArgs, blockNrOrHash rpc.BlockNumberOrHash, overrides *StateOverride, blockOverrides *BlockOverrides, timeout time.Duration, globalGasCap uint64) (*core.ExecutionResult, error) {
 	defer func(start time.Time) { log.Debug("Executing EVM call finished", "runtime", time.Since(start)) }(time.Now())
 
-	statedb, header, err := b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHash)
-	if statedb == nil || err != nil {
+	state, header, err := b.StateAndHeaderByNumberOrHash(ctx, blockNrOrHash)
+	if state == nil || err != nil {
 		return nil, err
 	}
 	if header == nil {
 		return nil, errors.New("nil header in DoCall")
 	}
-	if err := overrides.Apply(statedb); err != nil {
+	block, err := b.BlockByNumberOrHash(ctx, blockNrOrHash)
+	if err != nil {
+		return nil, err
+	}
+	if block == nil {
+		return nil, fmt.Errorf("nil block in DoCall: number=%d, hash=%s", header.Number.Uint64(), header.Hash().Hex())
+	}
+
+	return doCall(ctx, b, args, state, block, overrides, blockOverrides, timeout, globalGasCap)
+}
+
+func doCall(ctx context.Context, b Backend, args TransactionArgs, state *state.StateDB, block *types.Block, overrides *StateOverride, blockOverrides *BlockOverrides, timeout time.Duration, globalGasCap uint64) (*core.ExecutionResult, error) {
+	if err := overrides.Apply(state); err != nil {
 		return nil, err
 	}
 
@@ -1138,14 +1150,8 @@ func DoCall(ctx context.Context, b Backend, args TransactionArgs, blockNrOrHash 
 	// this makes sure resources are cleaned up.
 	defer cancel()
 
-	block, err := b.BlockByNumberOrHash(ctx, blockNrOrHash)
-	if err != nil {
-		return nil, err
-	}
-	if block == nil {
-		return nil, fmt.Errorf("nil block in DoCall: number=%d, hash=%s", header.Number.Uint64(), header.Hash().Hex())
-	}
-	author, err := b.Engine().Author(block.Header())
+	header := block.Header()
+	author, err := b.Engine().Author(header)
 	if err != nil {
 		return nil, err
 	}
@@ -1165,7 +1171,7 @@ func DoCall(ctx context.Context, b Backend, args TransactionArgs, blockNrOrHash 
 	msg := args.ToMessage(b, blockCtx.BaseFee)
 	msg.BalanceTokenFee = new(big.Int).SetUint64(msg.GasLimit)
 	msg.BalanceTokenFee.Mul(msg.BalanceTokenFee, msg.GasPrice)
-	evm, vmError, err := b.GetEVM(ctx, msg, statedb, XDCxState, header, &vm.Config{NoBaseFee: true}, &blockCtx)
+	evm, vmError, err := b.GetEVM(ctx, msg, state, XDCxState, header, &vm.Config{NoBaseFee: true}, &blockCtx)
 	if err != nil {
 		return nil, err
 	}
