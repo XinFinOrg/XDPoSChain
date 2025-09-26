@@ -32,6 +32,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/internal/ethapi"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/miner"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -325,10 +326,34 @@ func (api *DebugAPI) Preimage(ctx context.Context, hash common.Hash) (hexutil.By
 	return nil, errors.New("unknown preimage")
 }
 
+// BadBlockArgs represents the entries in the list returned when bad blocks are queried.
+type BadBlockArgs struct {
+	Hash  common.Hash            `json:"hash"`
+	Block map[string]interface{} `json:"block"`
+	RLP   string                 `json:"rlp"`
+}
+
 // GetBadBLocks returns a list of the last 'bad blocks' that the client has seen on the network
 // and returns them as a JSON list of block-hashes
-func (api *DebugAPI) GetBadBlocks(ctx context.Context) ([]core.BadBlockArgs, error) {
-	return api.eth.BlockChain().BadBlocks()
+func (api *DebugAPI) GetBadBlocks(ctx context.Context) ([]*BadBlockArgs, error) {
+	blocks := api.eth.BlockChain().BadBlocks()
+	results := make([]*BadBlockArgs, len(blocks))
+
+	var err error
+	for i, block := range blocks {
+		results[i] = &BadBlockArgs{
+			Hash: block.Hash(),
+		}
+		if rlpBytes, err := rlp.EncodeToBytes(block); err != nil {
+			results[i].RLP = err.Error() // Hacky, but hey, it works
+		} else {
+			results[i].RLP = fmt.Sprintf("0x%x", rlpBytes)
+		}
+		if results[i].Block, err = ethapi.RPCMarshalBlock(block, true, true); err != nil {
+			results[i].Block = map[string]interface{}{"error": err.Error()}
+		}
+	}
+	return results, nil
 }
 
 // AccountRangeMaxResults is the maximum number of results to be returned per call

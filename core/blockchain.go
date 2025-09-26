@@ -197,7 +197,7 @@ type BlockChain struct {
 	resultProcess    *lru.Cache[common.Hash, *ResultProcessBlock] // Cache for processed blocks
 	calculatingBlock *lru.Cache[common.Hash, *CalculatedBlock]    // Cache for processing blocks
 	downloadingBlock *lru.Cache[common.Hash, struct{}]            // Cache for downloading blocks (avoid duplication from fetcher)
-	badBlocks        *lru.Cache[common.Hash, *types.Header]       // Bad block cache
+	badBlocks        *lru.Cache[common.Hash, *types.Block]        // Bad block cache
 
 	// future blocks are blocks added for later processing
 	futureBlocks *lru.Cache[common.Hash, *types.Block]
@@ -262,7 +262,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		engine:              engine,
 		vmConfig:            vmConfig,
 		logger:              vmConfig.Tracer,
-		badBlocks:           lru.NewCache[common.Hash, *types.Header](badBlockLimit),
+		badBlocks:           lru.NewCache[common.Hash, *types.Block](badBlockLimit),
 		blocksHashCache:     lru.NewCache[uint64, []common.Hash](blocksHashCacheLimit),
 		resultTrade:         lru.NewCache[common.Hash, interface{}](tradingstate.OrderCacheLimit),
 		rejectedOrders:      lru.NewCache[common.Hash, interface{}](tradingstate.OrderCacheLimit),
@@ -2574,26 +2574,20 @@ func (bc *BlockChain) futureBlocksLoop() {
 	}
 }
 
-// BadBlockArgs represents the entries in the list returned when bad blocks are queried.
-type BadBlockArgs struct {
-	Hash   common.Hash   `json:"hash"`
-	Header *types.Header `json:"header"`
-}
-
 // BadBlocks returns a list of the last 'bad blocks' that the client has seen on the network
-func (bc *BlockChain) BadBlocks() ([]BadBlockArgs, error) {
-	headers := make([]BadBlockArgs, 0, bc.badBlocks.Len())
+func (bc *BlockChain) BadBlocks() []*types.Block {
+	blocks := make([]*types.Block, 0, bc.badBlocks.Len())
 	for _, hash := range bc.badBlocks.Keys() {
-		if header, exist := bc.badBlocks.Peek(hash); exist {
-			headers = append(headers, BadBlockArgs{header.Hash(), header})
+		if blk, exist := bc.badBlocks.Peek(hash); exist {
+			blocks = append(blocks, blk)
 		}
 	}
-	return headers, nil
+	return blocks
 }
 
 // addBadBlock adds a bad block to the bad-block LRU cache
 func (bc *BlockChain) addBadBlock(block *types.Block) {
-	bc.badBlocks.Add(block.Header().Hash(), block.Header())
+	bc.badBlocks.Add(block.Hash(), block)
 }
 
 // reportBlock logs a bad block error.

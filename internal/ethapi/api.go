@@ -382,7 +382,7 @@ func (s *BlockChainAPI) GetTransactionAndReceiptProof(ctx context.Context, hash 
 func (s *BlockChainAPI) GetBlockByNumber(ctx context.Context, blockNr rpc.BlockNumber, fullTx bool) (map[string]interface{}, error) {
 	block, err := s.b.BlockByNumber(ctx, blockNr)
 	if block != nil {
-		response, err := s.rpcOutputBlock(block, true, fullTx, ctx)
+		response, err := s.rpcOutputBlock(block, true, fullTx)
 		if err == nil && blockNr == rpc.PendingBlockNumber {
 			// Pending blocks need to nil out a few fields
 			for _, field := range []string{"hash", "nonce", "miner"} {
@@ -399,7 +399,7 @@ func (s *BlockChainAPI) GetBlockByNumber(ctx context.Context, blockNr rpc.BlockN
 func (s *BlockChainAPI) GetBlockByHash(ctx context.Context, blockHash common.Hash, fullTx bool) (map[string]interface{}, error) {
 	block, err := s.b.GetBlock(ctx, blockHash)
 	if block != nil {
-		return s.rpcOutputBlock(block, true, fullTx, ctx)
+		return s.rpcOutputBlock(block, true, fullTx)
 	}
 	return nil, err
 }
@@ -415,7 +415,7 @@ func (s *BlockChainAPI) GetUncleByBlockNumberAndIndex(ctx context.Context, block
 			return nil, nil
 		}
 		block = types.NewBlockWithHeader(uncles[index])
-		return s.rpcOutputBlock(block, false, false, ctx)
+		return s.rpcOutputBlock(block, false, false)
 	}
 	return nil, err
 }
@@ -432,7 +432,7 @@ func (s *BlockChainAPI) GetUncleByBlockHashAndIndex(ctx context.Context, blockHa
 			return nil, nil
 		}
 		block = types.NewBlockWithHeader(uncles[index])
-		return s.rpcOutputBlock(block, false, false, ctx)
+		return s.rpcOutputBlock(block, false, false)
 	}
 	return nil, err
 }
@@ -1411,29 +1411,26 @@ func RPCMarshalHeader(head *types.Header) map[string]interface{} {
 	return result
 }
 
-// rpcOutputBlock converts the given block to the RPC output which depends on fullTx. If inclTx is true transactions are
+// RPCMarshalBlock converts the given block to the RPC output which depends on fullTx. If inclTx is true transactions are
 // returned. When fullTx is true the returned block contains full transaction details, otherwise it will only contain
 // transaction hashes.
-func (s *BlockChainAPI) rpcOutputBlock(b *types.Block, inclTx bool, fullTx bool, ctx context.Context) (map[string]interface{}, error) {
+func RPCMarshalBlock(b *types.Block, inclTx bool, fullTx bool) (map[string]interface{}, error) {
 	fields := RPCMarshalHeader(b.Header())
 	fields["size"] = hexutil.Uint64(b.Size())
-	fields["totalDifficulty"] = (*hexutil.Big)(s.b.GetTd(context.Background(), b.Hash()))
 
 	if inclTx {
 		formatTx := func(tx *types.Transaction) (interface{}, error) {
 			return tx.Hash(), nil
 		}
-
 		if fullTx {
 			formatTx = func(tx *types.Transaction) (interface{}, error) {
 				return newRPCTransactionFromBlockHash(b, tx.Hash()), nil
 			}
 		}
-
 		txs := b.Transactions()
 		transactions := make([]interface{}, len(txs))
 		var err error
-		for i, tx := range b.Transactions() {
+		for i, tx := range txs {
 			if transactions[i], err = formatTx(tx); err != nil {
 				return nil, err
 			}
@@ -1447,7 +1444,19 @@ func (s *BlockChainAPI) rpcOutputBlock(b *types.Block, inclTx bool, fullTx bool,
 		uncleHashes[i] = uncle.Hash()
 	}
 	fields["uncles"] = uncleHashes
+
 	return fields, nil
+}
+
+// rpcOutputBlock uses the generalized output filler, then adds the total difficulty field, which requires
+// a `BlockChainAPI`.
+func (s *BlockChainAPI) rpcOutputBlock(b *types.Block, inclTx bool, fullTx bool) (map[string]interface{}, error) {
+	fields, err := RPCMarshalBlock(b, inclTx, fullTx)
+	if err != nil {
+		return nil, err
+	}
+	fields["totalDifficulty"] = (*hexutil.Big)(s.b.GetTd(context.Background(), b.Hash()))
+	return fields, err
 }
 
 // findNearestSignedBlock finds the nearest checkpoint from input block
