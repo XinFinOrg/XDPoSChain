@@ -1230,7 +1230,7 @@ func (s *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockNrO
 		latest := rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber)
 		blockNrOrHash = &latest
 	}
-	timeout := 5 * time.Second
+	timeout := s.b.RPCEVMTimeout()
 	if args.To != nil && *args.To == common.MasternodeVotingSMCBinary {
 		timeout = 0
 	}

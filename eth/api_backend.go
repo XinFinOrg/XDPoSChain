@@ -23,6 +23,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/XDCx"
 	"github.com/XinFinOrg/XDPoSChain/XDCx/tradingstate"
@@ -391,6 +392,10 @@ func (b *EthAPIBackend) UnprotectedAllowed() bool {
 
 func (b *EthAPIBackend) RPCGasCap() uint64 {
 	return b.eth.config.RPCGasCap
+}
+
+func (b *EthAPIBackend) RPCEVMTimeout() time.Duration {
+	return b.eth.config.RPCEVMTimeout
 }
 
 func (b *EthAPIBackend) AccountManager() *accounts.Manager {

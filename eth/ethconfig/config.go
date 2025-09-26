@@ -52,10 +52,11 @@ var Defaults = Config{
 	FilterLogCacheSize: 32,
 	GasPrice:           big.NewInt(0.25 * params.Shannon),
 
-	TxPool:      txpool.DefaultConfig,
-	RPCGasCap:   50000000,
-	GPO:         FullNodeGPO,
-	RPCTxFeeCap: 1, // 1 ether
+	TxPool:        txpool.DefaultConfig,
+	RPCGasCap:     50000000,
+	RPCEVMTimeout: 5 * time.Second,
+	GPO:           FullNodeGPO,
+	RPCTxFeeCap:   1, // 1 ether
 }
 
 //go:generate go run github.com/fjl/gencodec -type Config -field-override configMarshaling -formats toml -out gen_config.go
@@ -111,6 +112,9 @@ type Config struct {
 
 	// RPCGasCap is the global gas cap for eth-call variants.
 	RPCGasCap uint64
+
+	// RPCEVMTimeout is the global timeout for eth-call.
+	RPCEVMTimeout time.Duration
 
 	// RPCTxFeeCap is the global transaction fee(price * gaslimit) cap for
 	// send-transction variants. The unit is ether.

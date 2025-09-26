@@ -395,6 +395,12 @@ var (
 		Value:    ethconfig.Defaults.RPCGasCap,
 		Category: flags.APICategory,
 	}
+	RPCGlobalEVMTimeoutFlag = &cli.DurationFlag{
+		Name:     "rpc-evmtimeout",
+		Usage:    "Sets a timeout used for eth_call (0=infinite)",
+		Value:    ethconfig.Defaults.RPCEVMTimeout,
+		Category: flags.APICategory,
+	}
 	RPCGlobalTxFeeCap = &cli.Float64Flag{
 		Name:     "rpc-txfeecap",
 		Aliases:  []string{"rpc.txfeecap"},
@@ -1617,6 +1623,9 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		log.Info("Set global gas cap", "cap", cfg.RPCGasCap)
 	} else {
 		log.Info("Global gas cap disabled")
+	}
+	if ctx.IsSet(RPCGlobalEVMTimeoutFlag.Name) {
+		cfg.RPCEVMTimeout = ctx.Duration(RPCGlobalEVMTimeoutFlag.Name)
 	}
 	if ctx.IsSet(StoreRewardFlag.Name) {
 		common.StoreRewardFolder = filepath.Join(stack.DataDir(), "XDC", "rewards")

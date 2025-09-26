@@ -150,6 +150,7 @@ var (
 	rpcFlags = []cli.Flag{
 		utils.HTTPEnabledFlag,
 		utils.RPCGlobalGasCapFlag,
+		utils.RPCGlobalEVMTimeoutFlag,
 		utils.HTTPListenAddrFlag,
 		utils.HTTPPortFlag,
 		utils.HTTPReadTimeoutFlag,
