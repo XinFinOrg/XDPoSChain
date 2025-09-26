@@ -195,23 +195,17 @@ func (ks *KeyStore) Subscribe(sink chan<- accounts.WalletEvent) event.Subscripti
 // forces a manual refresh (only triggers for systems where the filesystem notifier
 // is not running).
 func (ks *KeyStore) updater() {
-	// Create a timer for the wallet refresh cycle
-	timer := time.NewTimer(walletRefreshCycle)
-	defer timer.Stop()
+	ticker := time.NewTicker(walletRefreshCycle)
+	defer ticker.Stop()
 
 	for {
 		// Wait for an account update or a refresh timeout
 		select {
 		case <-ks.changes:
-			// Stop the timer if we receive an account update before the timer fires
-			if !timer.Stop() {
-				<-timer.C
-			}
-		case <-timer.C:
+		case <-ticker.C:
 		}
 		// Run the wallet refresher
 		ks.refreshWallets()
-
 		// If all our subscribers left, stop the updater
 		ks.mu.Lock()
 		if ks.updateScope.Count() == 0 {
@@ -220,9 +214,6 @@ func (ks *KeyStore) updater() {
 			return
 		}
 		ks.mu.Unlock()
-
-		// Reset the timer for the next cycle
-		timer.Reset(walletRefreshCycle)
 	}
 }
 
