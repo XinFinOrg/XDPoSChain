@@ -663,6 +663,10 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 	if err != nil {
 		return ErrInvalidSender
 	}
+	// Limit nonce to 2^64-1 per EIP-2681
+	if tx.Nonce()+1 < tx.Nonce() {
+		return core.ErrNonceMax
+	}
 	// Drop non-local transactions under our own minimal accepted gas price or tip
 	if !local {
 		isUnderpriced := false

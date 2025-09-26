@@ -18,7 +18,9 @@ package txpool
 
 import (
 	"crypto/ecdsa"
+	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"math/rand"
 	"os"
@@ -400,6 +402,53 @@ func TestNegativeValue(t *testing.T) {
 	testAddBalance(pool, from, big.NewInt(1))
 	if err := pool.AddRemote(tx); err != ErrNegativeValue {
 		t.Error("expected", ErrNegativeValue, "got", err)
+	}
+}
+
+// TestValidateTransactionEIP2681 tests that the pool correctly validates transactions
+// according to EIP-2681, which limits the nonce to a maximum value of 2^64 - 1.
+func TestValidateTransactionEIP2681(t *testing.T) {
+	t.Parallel()
+
+	pool, key := setupPool()
+	defer pool.Stop()
+
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	testAddBalance(pool, addr, big.NewInt(2e18))
+
+	to := common.HexToAddress("0x0000000000000000000000000000000000000001")
+
+	tests := []struct {
+		name     string
+		nonce    uint64
+		value    *big.Int
+		gas      uint64
+		gasPrice *big.Int
+		wantErr  error
+	}{
+		{"nonce 0", 0, big.NewInt(1e18), 21000, big.NewInt(2e10), nil},
+		{"nonce 1", 1, big.NewInt(1e18), 21000, big.NewInt(2e10), nil},
+		{"EIP-2681 overflow", math.MaxUint64, big.NewInt(1e18), 21000, big.NewInt(2e10), core.ErrNonceMax},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tx := types.NewTx(&types.LegacyTx{
+				Nonce:    tt.nonce,
+				To:       &to,
+				Value:    tt.value,
+				Gas:      tt.gas,
+				GasPrice: tt.gasPrice,
+			})
+			signedTx, _ := types.SignTx(tx, types.HomesteadSigner{}, key)
+			err := pool.validateTx(signedTx, true)
+
+			if tt.wantErr == nil && err != nil {
+				t.Errorf("expected nil, got %v", err)
+			} else if tt.wantErr != nil && !errors.Is(err, tt.wantErr) {
+				t.Errorf("expected %v, got %v", tt.wantErr, err)
+			}
+		})
 	}
 }
 
