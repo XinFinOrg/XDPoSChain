@@ -333,7 +333,7 @@ type BadBlockArgs struct {
 	RLP   string                 `json:"rlp"`
 }
 
-// GetBadBLocks returns a list of the last 'bad blocks' that the client has seen on the network
+// GetBadBlocks returns a list of the last 'bad blocks' that the client has seen on the network
 // and returns them as a JSON list of block-hashes
 func (api *DebugAPI) GetBadBlocks(ctx context.Context) ([]*BadBlockArgs, error) {
 	blocks := api.eth.BlockChain().BadBlocks()
@@ -349,7 +349,7 @@ func (api *DebugAPI) GetBadBlocks(ctx context.Context) ([]*BadBlockArgs, error) 
 		} else {
 			results[i].RLP = fmt.Sprintf("0x%x", rlpBytes)
 		}
-		if results[i].Block, err = ethapi.RPCMarshalBlock(block, true, true); err != nil {
+		if results[i].Block, err = ethapi.RPCMarshalBlock(block, true, true, api.eth.ApiBackend.ChainConfig()); err != nil {
 			results[i].Block = map[string]interface{}{"error": err.Error()}
 		}
 	}
