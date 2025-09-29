@@ -55,7 +55,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 )
 
-// EthAPIBackend implements ethapi.Backend for full nodes
+// EthAPIBackend implements ethapi.Backend and tracers.Backend for full nodes
 type EthAPIBackend struct {
 	allowUnprotectedTxs bool
 	eth                 *Ethereum
