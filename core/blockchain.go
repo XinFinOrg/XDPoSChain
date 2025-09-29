@@ -99,7 +99,6 @@ const (
 	receiptsCacheLimit  = 32
 	maxFutureBlocks     = 256
 	maxTimeFutureBlocks = 30
-	badBlockLimit       = 10
 	triesInMemory       = 128
 
 	// BlockChainVersion ensures that an incompatible database forces a resync from scratch.
@@ -197,7 +196,6 @@ type BlockChain struct {
 	resultProcess    *lru.Cache[common.Hash, *ResultProcessBlock] // Cache for processed blocks
 	calculatingBlock *lru.Cache[common.Hash, *CalculatedBlock]    // Cache for processing blocks
 	downloadingBlock *lru.Cache[common.Hash, struct{}]            // Cache for downloading blocks (avoid duplication from fetcher)
-	badBlocks        *lru.Cache[common.Hash, *types.Block]        // Bad block cache
 
 	// future blocks are blocks added for later processing
 	futureBlocks *lru.Cache[common.Hash, *types.Block]
@@ -262,7 +260,6 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		engine:              engine,
 		vmConfig:            vmConfig,
 		logger:              vmConfig.Tracer,
-		badBlocks:           lru.NewCache[common.Hash, *types.Block](badBlockLimit),
 		blocksHashCache:     lru.NewCache[uint64, []common.Hash](blocksHashCacheLimit),
 		resultTrade:         lru.NewCache[common.Hash, interface{}](tradingstate.OrderCacheLimit),
 		rejectedOrders:      lru.NewCache[common.Hash, interface{}](tradingstate.OrderCacheLimit),
@@ -2574,25 +2571,9 @@ func (bc *BlockChain) futureBlocksLoop() {
 	}
 }
 
-// BadBlocks returns a list of the last 'bad blocks' that the client has seen on the network
-func (bc *BlockChain) BadBlocks() []*types.Block {
-	blocks := make([]*types.Block, 0, bc.badBlocks.Len())
-	for _, hash := range bc.badBlocks.Keys() {
-		if blk, exist := bc.badBlocks.Peek(hash); exist {
-			blocks = append(blocks, blk)
-		}
-	}
-	return blocks
-}
-
-// addBadBlock adds a bad block to the bad-block LRU cache
-func (bc *BlockChain) addBadBlock(block *types.Block) {
-	bc.badBlocks.Add(block.Hash(), block)
-}
-
 // reportBlock logs a bad block error.
 func (bc *BlockChain) reportBlock(block *types.Block, receipts types.Receipts, err error) {
-	bc.addBadBlock(block)
+	rawdb.WriteBadBlock(bc.db, block)
 
 	var roundNumber = types.Round(0)
 	engine, ok := bc.Engine().(*XDPoS.XDPoS)
