@@ -414,7 +414,7 @@ func (s *BlockChainAPI) GetBlockByNumber(ctx context.Context, number rpc.BlockNu
 		response, err := s.rpcMarshalBlock(block, true, fullTx)
 		if err == nil && number == rpc.PendingBlockNumber {
 			// Pending blocks need to nil out a few fields
-			for _, field := range []string{"hash", "nonce", "miner"} {
+			for _, field := range []string{"hash", "nonce", "miner", "number"} {
 				response[field] = nil
 			}
 		}
@@ -1379,7 +1379,9 @@ func (s *BlockChainAPI) rpcMarshalBlock(b *types.Block, inclTx bool, fullTx bool
 	if err != nil {
 		return nil, err
 	}
-	fields["totalDifficulty"] = (*hexutil.Big)(s.b.GetTd(context.Background(), b.Hash()))
+	if inclTx {
+		fields["totalDifficulty"] = (*hexutil.Big)(s.b.GetTd(context.Background(), b.Hash()))
+	}
 	return fields, err
 }
 
