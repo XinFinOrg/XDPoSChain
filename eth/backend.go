@@ -325,7 +325,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 					return block, false, err
 				}
 				header.Validator = sighash
-				return types.NewBlockWithHeader(header).WithBody(block.Transactions(), block.Uncles()), true, nil
+				return types.NewBlockWithHeader(header).WithBody(*block.Body()), true, nil
 			}
 			return block, false, nil
 		}

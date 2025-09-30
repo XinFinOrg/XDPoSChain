@@ -86,7 +86,7 @@ func (bc *testBlockChain) CurrentBlock() *types.Block {
 	return types.NewBlock(&types.Header{
 		Root:     types.EmptyRootHash,
 		GasLimit: atomic.LoadUint64(&bc.gasLimit),
-	}, nil, nil, nil, trie.NewStackTrie(nil))
+	}, nil, nil, trie.NewStackTrie(nil))
 }
 
 func (bc *testBlockChain) GetBlock(hash common.Hash, number uint64) *types.Block {
