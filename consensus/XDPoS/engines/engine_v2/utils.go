@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sync"
 
 	"github.com/XinFinOrg/XDPoSChain/accounts"
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -76,22 +77,6 @@ func decodeMasternodesFromHeaderExtra(checkpointHeader *types.Header) []common.A
 	return masternodes
 }
 
-func UniqueSignatures(signatureSlice []types.Signature) ([]types.Signature, []types.Signature) {
-	keys := make(map[string]bool)
-	list := []types.Signature{}
-	duplicates := []types.Signature{}
-	for _, signature := range signatureSlice {
-		hexOfSig := common.Bytes2Hex(signature)
-		if _, value := keys[hexOfSig]; !value {
-			keys[hexOfSig] = true
-			list = append(list, signature)
-		} else {
-			duplicates = append(duplicates, signature)
-		}
-	}
-	return list, duplicates
-}
-
 func (x *XDPoS_v2) signSignature(signingHash common.Hash) (types.Signature, error) {
 	// Don't hold the signFn for the whole signing operation
 	x.signLock.RLock()
@@ -106,6 +91,63 @@ func (x *XDPoS_v2) signSignature(signingHash common.Hash) (types.Signature, erro
 		return nil, fmt.Errorf("error %v while signing hash", err)
 	}
 	return signedHash, nil
+}
+
+func (x *XDPoS_v2) countValidSignatures(messageHash common.Hash, signatures []types.Signature, candidates []common.Address) (int, error) {
+	type Message struct {
+		verified bool
+		pubkey   common.Address
+		sig      types.Signature
+		err      error
+	}
+	result := make(chan Message, len(signatures))
+
+	var wg sync.WaitGroup
+	wg.Add(len(signatures))
+	for _, signature := range signatures {
+		go func(sig types.Signature) {
+			defer wg.Done()
+			verified, signerAddress, err := x.verifyMsgSignature(messageHash, sig, candidates)
+			if err != nil {
+				log.Error("[verifySignatures] Error while verfying QC message signatures", "error", err)
+				result <- Message{err: err}
+				return
+			}
+
+			result <- Message{verified: verified, pubkey: signerAddress, sig: sig}
+		}(signature)
+	}
+	wg.Wait()
+	close(result)
+
+	signatureList := []types.Signature{}
+	pubkeys := []common.Address{}
+	verifies := []bool{}
+	for r := range result {
+		if r.err != nil {
+			return 0, r.err
+		}
+		if !r.verified {
+			return 0, fmt.Errorf("signature verification failed, signer is not part of masternode list. Signature: %v, SignedMessage: %v, SignerAddress: %v, Masternodes: %v", common.Bytes2Hex(r.sig), messageHash.Hex(), r.pubkey, candidates)
+		}
+		signatureList = append(signatureList, r.sig)
+		pubkeys = append(pubkeys, r.pubkey)
+		verifies = append(verifies, r.verified)
+	}
+
+	//check uniqueness
+	keys := make(map[string]bool)
+	for i, sig := range signatureList {
+		pubkeyHex := pubkeys[i].Hex()
+		if _, ok := keys[pubkeyHex]; !ok {
+			keys[pubkeyHex] = true
+		} else {
+			log.Warn("[verifySignatures] duplicate signing found", "pubkey", pubkeyHex, "signedMessage", messageHash.Hex(), "signature", sig)
+			return 0, fmt.Errorf("duplicate signing found, pubkey: %v, message: %v, signature: %v", pubkeyHex, messageHash.Hex(), common.Bytes2Hex(sig))
+		}
+	}
+
+	return len(keys), nil
 }
 
 func (x *XDPoS_v2) verifyMsgSignature(signedHashToBeVerified common.Hash, signature types.Signature, masternodes []common.Address) (bool, common.Address, error) {
@@ -126,7 +168,7 @@ func (x *XDPoS_v2) verifyMsgSignature(signedHashToBeVerified common.Hash, signat
 		}
 	}
 
-	log.Warn("[verifyMsgSignature] signer is not part of masternode list", "signer", signerAddress, "masternodes", masternodes)
+	log.Warn("[verifyMsgSignature] signer is not part of masternode list", "signer", signerAddress, "masternodes", masternodes, "signature", common.Bytes2Hex(signature), "signedMessage", signedHashToBeVerified.Hex())
 	return false, signerAddress, nil
 }
 
