@@ -121,6 +121,9 @@ func (x *XDPoS_v1) VerifyHeader(chain consensus.ChainReader, header *types.Heade
 // retrieve the async verifications (the order is that of the input slice).
 func (x *XDPoS_v1) VerifyHeaders(chain consensus.ChainReader, headers []*types.Header, fullVerifies []bool, abort <-chan struct{}, results chan<- error) {
 	go func() {
+		if len(headers) != len(fullVerifies) {
+			// TODO: 
+		}
 		for i, header := range headers {
 			err := x.verifyHeaderWithCache(chain, header, headers[:i], fullVerifies[i], true)
 
