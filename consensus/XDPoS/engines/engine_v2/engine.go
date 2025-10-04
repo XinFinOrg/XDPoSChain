@@ -812,7 +812,16 @@ func (x *XDPoS_v2) verifyQC(blockChainReader consensus.ChainReader, quorumCert *
 		return errors.New("fail to verify QC due to failure in getting epoch switch info")
 	}
 
-	signatures, duplicates := UniqueSignatures(quorumCert.Signatures)
+	signedVoteObj := types.VoteSigHash(&types.VoteForSign{
+		ProposedBlockInfo: quorumCert.ProposedBlockInfo,
+		GapNumber:         quorumCert.GapNumber,
+	})
+
+	signatures, duplicates, err := UniqueSignatures(signedVoteObj, quorumCert.Signatures)
+	if err != nil {
+		// TODO:
+	}
+
 	if len(duplicates) != 0 {
 		for _, d := range duplicates {
 			log.Warn("[verifyQC] duplicated signature in QC", "duplicate", common.Bytes2Hex(d))
@@ -835,10 +844,7 @@ func (x *XDPoS_v2) verifyQC(blockChainReader consensus.ChainReader, quorumCert *
 	for _, signature := range signatures {
 		go func(sig types.Signature) {
 			defer wg.Done()
-			verified, _, err := x.verifyMsgSignature(types.VoteSigHash(&types.VoteForSign{
-				ProposedBlockInfo: quorumCert.ProposedBlockInfo,
-				GapNumber:         quorumCert.GapNumber,
-			}), sig, epochInfo.Masternodes)
+			verified, _, err := x.verifyMsgSignature(signedVoteObj, sig, epochInfo.Masternodes)
 			if err != nil {
 				log.Error("[verifyQC] Error while verfying QC message signatures", "Error", err)
 				haveError = errors.New("error while verfying QC message signatures")
