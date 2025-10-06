@@ -17,6 +17,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/consensus/clique"
+	"github.com/XinFinOrg/XDPoSChain/consensus/misc"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
@@ -326,6 +327,14 @@ func (x *XDPoS_v2) Prepare(chain consensus.ChainReader, header *types.Header) er
 	number := header.Number.Uint64()
 	parent := chain.GetHeader(header.ParentHash, number-1)
 
+	// Ensure gas settings are bounded
+	if err := misc.VerifyGaslimit(parent.GasLimit, header.GasLimit); err != nil {
+		return err
+	}
+	if header.GasUsed > header.GasLimit {
+		return fmt.Errorf("gas used exceeded gaslimit, gas used: %d, gas limit: %d", header.GasUsed, header.GasLimit)
+	}
+
 	log.Info("Preparing new block!", "Number", number, "Parent Hash", parent.Hash())
 	if parent == nil {
 		return consensus.ErrUnknownAncestor
@@ -408,6 +417,14 @@ func (x *XDPoS_v2) Finalize(chain consensus.ChainReader, header *types.Header, s
 				log.Error("Error when save reward info ", "number", header.Number, "hash", header.Hash().Hex(), "err", err)
 			}
 		}
+	}
+	// Ensure gas settings are bounded
+	parentHeader := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1)
+	if err := misc.VerifyGaslimit(parentHeader.GasLimit, header.GasLimit); err != nil {
+		return nil, err
+	}
+	if header.GasUsed > header.GasLimit {
+		return nil, fmt.Errorf("gas used exceeded gaslimit, gas used: %d, gas limit: %d", header.GasUsed, header.GasLimit)
 	}
 
 	// the state remains as is and uncles are dropped

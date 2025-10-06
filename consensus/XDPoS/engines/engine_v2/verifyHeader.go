@@ -2,6 +2,7 @@ package engine_v2
 
 import (
 	"bytes"
+	"fmt"
 	"math/big"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
+	"github.com/XinFinOrg/XDPoSChain/consensus/misc"
 	"github.com/XinFinOrg/XDPoSChain/consensus/misc/eip1559"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -59,6 +61,15 @@ func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Heade
 	}
 	if parent == nil || parent.Number.Uint64() != number-1 || parent.Hash() != header.ParentHash {
 		return consensus.ErrUnknownAncestor
+	}
+
+	// Ensure gas limit is consistent with parent
+	if err := misc.VerifyGaslimit(parent.GasLimit, header.GasLimit); err != nil {
+		return err
+	}
+	// Ensure gas used is less than or equal to gas limit
+	if header.GasUsed > header.GasLimit {
+		return fmt.Errorf("gas used exceeded gaslimit, gas used: %d, gas limit: %d", header.GasUsed, header.GasLimit)
 	}
 
 	// Verify this is truely a v2 block first
