@@ -3359,25 +3359,48 @@ func (s *BlockChainAPI) GetStakerROIMasternode(masternode common.Address) float6
 	return 100.0 / float64(totalCap.Div(totalCap, voterRewardAYear).Uint64())
 }
 
-type currentTotalMinted struct {
-	TotalMinted  *hexutil.Big `json:"totalMinted"`
-	LastEpochNum *hexutil.Big `json:"lastEpochNum"`
-	BlockHash    common.Hash  `json:"blockHash"`
-	BlockNumber  *hexutil.Big `json:"blockNumber"`
+type tokenSupply struct {
+	TotalMinted *hexutil.Big `json:"totalMinted"`
+	EpochNum    *hexutil.Big `json:"epochNum"`
+	BlockHash   common.Hash  `json:"blockHash"`
+	BlockNumber *hexutil.Big `json:"blockNumber"`
 }
 
-func (s *BlockChainAPI) GetCurrentTotalMinted(ctx context.Context) (*currentTotalMinted, error) {
+func (s *BlockChainAPI) GetTokenSupply(ctx context.Context, epochNr rpc.EpochNumber) (*tokenSupply, error) {
+	engine, ok := s.b.Engine().(*XDPoS.XDPoS)
+	if !ok {
+		return nil, errors.New("Undefined XDPoS consensus engine")
+	}
 	statedb, header, err := s.b.StateAndHeaderByNumber(ctx, rpc.LatestBlockNumber)
+	currentRound, err := engine.EngineV2.GetRoundNumber(header)
+	currentEpoch := s.b.ChainConfig().XDPoS.V2.SwitchEpoch + uint64(currentRound)/s.b.ChainConfig().XDPoS.Epoch
 	if err != nil {
 		return nil, err
 	}
-	totalMinted := state.GetTotalMinted(statedb).Big()
-	lastEpochNum := state.GetLastEpochNum(statedb).Big()
-	result := &currentTotalMinted{
-		TotalMinted:  (*hexutil.Big)(totalMinted),
-		LastEpochNum: (*hexutil.Big)(lastEpochNum),
-		BlockHash:    header.Hash(),
-		BlockNumber:  (*hexutil.Big)(header.Number),
+	onsetEpoch := state.GetOnsetEpoch(statedb).Big().Uint64()
+	if epochNr >= 0 {
+		if uint64(epochNr) < onsetEpoch {
+			return nil, errors.New("epoch number is before reward upgrade")
+		}
+		if uint64(epochNr) > currentEpoch {
+			return nil, errors.New("epoch number is after current epoch")
+		}
+	}
+	epochNum := uint64(epochNr)
+	if epochNr == rpc.LatestEpochNumber {
+		epochNum = currentEpoch
+	}
+	totalMinted := state.GetPostTotalMinted(statedb, epochNum).Big()
+	number := state.GetPostRewardBlock(statedb, epochNum).Big()
+	targetHeader, err := s.b.HeaderByNumber(ctx, rpc.BlockNumber(number.Int64()))
+	if err != nil {
+		return nil, err
+	}
+	result := &tokenSupply{
+		TotalMinted: (*hexutil.Big)(totalMinted),
+		EpochNum:    (*hexutil.Big)(new(big.Int).SetUint64(epochNum)),
+		BlockHash:   targetHeader.Hash(),
+		BlockNumber: (*hexutil.Big)(number),
 	}
 	return result, nil
 }
