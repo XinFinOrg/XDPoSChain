@@ -502,10 +502,7 @@ func PrepareXDCTestBlockChainForV2Engine(t *testing.T, numOfBlocks int, chainCon
 
 		// First v2 block
 		if (int64(i) - chainConfig.XDPoS.V2.SwitchBlock.Int64()) == 1 {
-			lastv1BlockNumber := block.Header().Number.Uint64() - 1
-			checkpointBlockNumber := lastv1BlockNumber - lastv1BlockNumber%chainConfig.XDPoS.Epoch
-			checkpointHeader := blockchain.GetHeaderByNumber(checkpointBlockNumber)
-			err := engine.EngineV2.Initial(blockchain, checkpointHeader)
+			err := engine.EngineV2.Initial(blockchain, blockchain.GetHeaderByNumber(uint64(i)))
 			if err != nil {
 				panic(err)
 			}
@@ -682,10 +679,7 @@ func PrepareXDCTestBlockChainWith128Candidates(t *testing.T, numOfBlocks int, ch
 
 		// First v2 block
 		if (int64(i) - chainConfig.XDPoS.V2.SwitchBlock.Int64()) == 1 {
-			lastv1BlockNumber := block.Header().Number.Uint64() - 1
-			checkpointBlockNumber := lastv1BlockNumber - lastv1BlockNumber%chainConfig.XDPoS.Epoch
-			checkpointHeader := blockchain.GetHeaderByNumber(checkpointBlockNumber)
-			err := engine.EngineV2.Initial(blockchain, checkpointHeader)
+			err := engine.EngineV2.Initial(blockchain, block.Header())
 			if err != nil {
 				panic(err)
 			}
@@ -751,10 +745,7 @@ func PrepareXDCTestBlockChainWithProtectorObserver(t *testing.T, numOfBlocks int
 
 		// First v2 block
 		if (int64(i) - chainConfig.XDPoS.V2.SwitchBlock.Int64()) == 1 {
-			lastv1BlockNumber := block.Header().Number.Uint64() - 1
-			checkpointBlockNumber := lastv1BlockNumber - lastv1BlockNumber%chainConfig.XDPoS.Epoch
-			checkpointHeader := blockchain.GetHeaderByNumber(checkpointBlockNumber)
-			err := engine.EngineV2.Initial(blockchain, checkpointHeader)
+			err := engine.EngineV2.Initial(blockchain, blockchain.GetHeaderByNumber(uint64(i)))
 			if err != nil {
 				panic(err)
 			}

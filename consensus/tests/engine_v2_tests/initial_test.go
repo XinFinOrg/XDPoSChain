@@ -13,17 +13,23 @@ import (
 )
 
 func TestInitialFirstV2Block(t *testing.T) {
-	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 900, params.TestXDPoSMockChainConfig, nil)
+	blockchain, _, block900, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 900, params.TestXDPoSMockChainConfig, nil)
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
-	header := currentBlock.Header()
 
 	// snapshot should not be created before initial
-	snap, _ := adaptor.EngineV2.GetSnapshot(blockchain, currentBlock.Header())
+	snap, _ := adaptor.EngineV2.GetSnapshot(blockchain, block900.Header())
 	assert.Nil(t, snap)
 
-	err := adaptor.EngineV2.Initial(blockchain, header)
+	blockNum := 901
+	blockCoinBase := "0x111000000000000000000000000000000123"
+	block901 := CreateBlock(blockchain, params.TestXDPoSMockChainConfig, block900, blockNum, 1, blockCoinBase, signer, signFn, nil, nil, "")
+	err := blockchain.InsertBlock(block901)
 	assert.Nil(t, err)
 
+	err = adaptor.EngineV2.Initial(blockchain, block901.Header())
+	assert.Nil(t, err)
+
+	header := block901.Header()
 	round, _, highQC, _, _, _ := adaptor.EngineV2.GetPropertiesFaker()
 	blockInfo := &types.BlockInfo{
 		Hash:   header.Hash(),
@@ -33,13 +39,13 @@ func TestInitialFirstV2Block(t *testing.T) {
 	expectedQuorumCert := &types.QuorumCert{
 		ProposedBlockInfo: blockInfo,
 		Signatures:        nil,
-		GapNumber:         blockchain.Config().XDPoS.V2.SwitchBlock.Uint64() - blockchain.Config().XDPoS.Gap,
+		GapNumber:         blockchain.Config().XDPoS.V2.SwitchBlock.Uint64() + 1 - blockchain.Config().XDPoS.Gap,
 	}
 	assert.Equal(t, types.Round(1), round)
 	assert.Equal(t, expectedQuorumCert, highQC)
 
 	// Test snapshot
-	snap, err = adaptor.EngineV2.GetSnapshot(blockchain, currentBlock.Header())
+	snap, err = adaptor.EngineV2.GetSnapshot(blockchain, block900.Header())
 	assert.Nil(t, err)
 	assert.Equal(t, uint64(450), snap.Number)
 
@@ -135,7 +141,7 @@ func TestInitialWithWrongSwitchNumber(t *testing.T) {
 	err = json.Unmarshal([]byte(configString), &config)
 	assert.Nil(t, err)
 
-	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 800, &config, nil)
+	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 799, &config, nil)
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
 	header := currentBlock.Header()
 	config.XDPoS.V2.SwitchBlock = big.NewInt(800) // not epoch number

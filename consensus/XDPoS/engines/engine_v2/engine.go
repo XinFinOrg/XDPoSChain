@@ -192,7 +192,7 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 	var quorumCert *types.QuorumCert
 	var err error
 
-	if header.Number.Int64() == x.config.V2.SwitchBlock.Int64() {
+	if header.Number.Int64() == x.config.V2.SwitchBlock.Int64()+1 {
 		log.Info("[initial] highest QC for consensus v2 first block")
 		blockInfo := &types.BlockInfo{
 			Hash:   header.Hash(),
