@@ -183,3 +183,61 @@ func (s *StateDB) IncrementMintedRecordNonce() {
 	nonce := s.GetNonce(common.MintedRecordAddressBinary)
 	s.SetNonce(common.MintedRecordAddressBinary, nonce+1)
 }
+
+var (
+	// Storage slot locations (32-byte keys) within MintedRecord SMC
+	slotMintedRecordOnsetEpoch             = common.HexToHash("0000000000000000000000000000000000000000000000000000000000000001")
+	slotMintedRecordOnsetBlock             = common.HexToHash("0000000000000000000000000000000000000000000000000000000000000002")
+	slotMintedRecordPostTotalMintedBase, _ = new(big.Int).SetString("0100000000000000000000000000000000000000000000000000000000000000", 16)
+	slotMintedRecordPostTotalBurnedBase, _ = new(big.Int).SetString("0200000000000000000000000000000000000000000000000000000000000000", 16)
+	slotMintedRecordPostRewardBlockBase, _ = new(big.Int).SetString("0300000000000000000000000000000000000000000000000000000000000000", 16)
+)
+
+func GetOnsetEpoch(statedb *StateDB) common.Hash {
+	return statedb.GetState(common.MintedRecordAddressBinary, slotMintedRecordOnsetEpoch)
+}
+
+func PutOnsetEpoch(statedb *StateDB, value common.Hash) {
+	statedb.SetState(common.MintedRecordAddressBinary, slotMintedRecordOnsetEpoch, value)
+}
+
+func GetOnsetBlock(statedb *StateDB) common.Hash {
+	return statedb.GetState(common.MintedRecordAddressBinary, slotMintedRecordOnsetBlock)
+}
+
+func PutOnsetBlock(statedb *StateDB, value common.Hash) {
+	statedb.SetState(common.MintedRecordAddressBinary, slotMintedRecordOnsetBlock, value)
+}
+
+func GetPostTotalMinted(statedb *StateDB, epoch uint64) common.Hash {
+	hash := common.BigToHash(new(big.Int).Add(slotMintedRecordPostTotalMintedBase, new(big.Int).SetUint64(epoch)))
+	v := statedb.GetState(common.MintedRecordAddressBinary, hash)
+	return v
+}
+
+func PutPostTotalMinted(statedb *StateDB, epoch uint64, value common.Hash) {
+	hash := common.BigToHash(new(big.Int).Add(slotMintedRecordPostTotalMintedBase, new(big.Int).SetUint64(epoch)))
+	statedb.SetState(common.MintedRecordAddressBinary, hash, value)
+}
+
+func GetPostTotalBurned(statedb *StateDB, epoch uint64) common.Hash {
+	hash := common.BigToHash(new(big.Int).Add(slotMintedRecordPostTotalBurnedBase, new(big.Int).SetUint64(epoch)))
+	v := statedb.GetState(common.MintedRecordAddressBinary, hash)
+	return v
+}
+
+func PutPostTotalBurned(statedb *StateDB, epoch uint64, value common.Hash) {
+	hash := common.BigToHash(new(big.Int).Add(slotMintedRecordPostTotalBurnedBase, new(big.Int).SetUint64(epoch)))
+	statedb.SetState(common.MintedRecordAddressBinary, hash, value)
+}
+
+func GetPostRewardBlock(statedb *StateDB, epoch uint64) common.Hash {
+	hash := common.BigToHash(new(big.Int).Add(slotMintedRecordPostRewardBlockBase, new(big.Int).SetUint64(epoch)))
+	v := statedb.GetState(common.MintedRecordAddressBinary, hash)
+	return v
+}
+
+func PutPostRewardBlock(statedb *StateDB, epoch uint64, value common.Hash) {
+	hash := common.BigToHash(new(big.Int).Add(slotMintedRecordPostRewardBlockBase, new(big.Int).SetUint64(epoch)))
+	statedb.SetState(common.MintedRecordAddressBinary, hash, value)
+}
