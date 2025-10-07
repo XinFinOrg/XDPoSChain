@@ -292,7 +292,7 @@ func DecodeValidatorsHexData(validatorsStr string) ([]int64, error) {
 		return nil, err
 	}
 
-	return utils.ExtractValidatorsFromBytes(validatorsByte), nil
+	return utils.ExtractValidatorsFromBytes(validatorsByte)
 }
 
 // Decrypt randomize from secrets and opening.
