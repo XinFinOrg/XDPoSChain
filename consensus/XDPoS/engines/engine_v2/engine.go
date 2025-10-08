@@ -327,6 +327,9 @@ func (x *XDPoS_v2) Prepare(chain consensus.ChainReader, header *types.Header) er
 	number := header.Number.Uint64()
 	parent := chain.GetHeader(header.ParentHash, number-1)
 
+	if parent == nil {
+		return consensus.ErrUnknownAncestor
+	}
 	// Ensure gas settings are bounded
 	if err := misc.VerifyGaslimit(parent.GasLimit, header.GasLimit); err != nil {
 		return err
@@ -336,10 +339,6 @@ func (x *XDPoS_v2) Prepare(chain consensus.ChainReader, header *types.Header) er
 	}
 
 	log.Info("Preparing new block!", "Number", number, "Parent Hash", parent.Hash())
-	if parent == nil {
-		return consensus.ErrUnknownAncestor
-	}
-
 	x.signLock.RLock()
 	signer := x.signer
 	x.signLock.RUnlock()
@@ -418,8 +417,11 @@ func (x *XDPoS_v2) Finalize(chain consensus.ChainReader, header *types.Header, s
 			}
 		}
 	}
-	// Ensure gas settings are bounded
 	parentHeader := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1)
+	if parentHeader == nil {
+		return nil, consensus.ErrUnknownAncestor
+	}
+	// Ensure gas settings are bounded
 	if err := misc.VerifyGaslimit(parentHeader.GasLimit, header.GasLimit); err != nil {
 		return nil, err
 	}
