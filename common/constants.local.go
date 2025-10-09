@@ -28,7 +28,7 @@ var localConstant = constant{
 	tipXDCXReceiverDisable: big.NewInt(0),
 	eip1559Block:           big.NewInt(0),
 	cancunBlock:            big.NewInt(0),
-	tipUpgradeReward:       big.NewInt(999999999),
+	tipUpgradeReward:       big.NewInt(0),
 	tipUpgradePenalty:      big.NewInt(999999999),
 	tipEpochHalving:        big.NewInt(999999999),
 
