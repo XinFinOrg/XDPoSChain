@@ -287,13 +287,17 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 				return fmt.Errorf("etherbase missing: %v", err)
 			}
 			ok := eth.txPool.IsSigner != nil && eth.txPool.IsSigner(eb)
+			log.Info("[signhook]EB is checking signer", "eb", eb, "ok", ok)
 			if !ok {
 				return nil
 			}
 			if block.NumberU64()%common.MergeSignRange == 0 || !eth.chainConfig.IsTIP2019(block.Number()) {
+				log.Info("[signhook]create tx sign for importing block", "number", block.NumberU64())
 				if err := contracts.CreateTransactionSign(chainConfig, eth.txPool, eth.accountManager, block, chainDb, eb); err != nil {
 					return fmt.Errorf("fail to create tx sign for importing block: %v", err)
 				}
+			} else {
+				log.Info("[signhook]skip create tx sign for importing block", "number", block.NumberU64())
 			}
 			return nil
 		}
