@@ -126,7 +126,6 @@ func (x *XDPoS_v2) verifyMsgSignature(signedHashToBeVerified common.Hash, signat
 }
 
 func (x *XDPoS_v2) getExtraFields(header *types.Header) (*types.QuorumCert, types.Round, []common.Address, error) {
-
 	var masternodes []common.Address
 
 	// last v1 block

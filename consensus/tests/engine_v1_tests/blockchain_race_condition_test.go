@@ -12,9 +12,7 @@ import (
 
 // Snapshot try to read before blockchain is written
 func TestRaceConditionOnBlockchainReadAndWrite(t *testing.T) {
-
 	blockchain, backend, parentBlock, signer, signFn := PrepareXDCTestBlockChain(t, GAP-1, params.TestXDPoSMockChainConfig)
-
 	state, err := blockchain.State()
 	if err != nil {
 		t.Fatalf("Failed while trying to get blockchain state")

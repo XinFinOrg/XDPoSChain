@@ -50,7 +50,6 @@ func TestSign(t *testing.T) {
 	if !verified {
 		t.Error("Failed to verify Ring signature")
 	}
-
 }
 
 func TestDeserialize(t *testing.T) {

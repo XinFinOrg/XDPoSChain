@@ -129,9 +129,7 @@ func (ms *LendingManagedState) getAccount(addr common.Hash) *exchanges {
 		if so != nil && uint64(len(account.nonces))+account.nstart < so.Nonce() {
 			ms.lenddinges[addr] = newAccount(so)
 		}
-
 	}
-
 	return ms.lenddinges[addr]
 }
 

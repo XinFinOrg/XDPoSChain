@@ -146,7 +146,6 @@ func TestInnerProductProveLen64Rand(t *testing.T) {
 		t.Error("Inner Product Proof incorrect")
 		fmt.Printf("Values Used: \n\ta = %s\n\tb = %s\n", a, b)
 	}
-
 }
 
 func TestInnerProductVerifyFastLen1(t *testing.T) {

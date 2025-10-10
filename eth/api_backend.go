@@ -549,9 +549,7 @@ func (b *EthAPIBackend) GetVotersRewards(masternodeAddr common.Address) map[comm
 			break
 		}
 	}
-
 	return voterResults
-
 }
 
 // GetVotersCap return all voters's capability at a checkpoint

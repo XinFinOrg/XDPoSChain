@@ -1292,7 +1292,6 @@ func NewECPrimeGroupKey(n int) CryptoParams {
 				//fmt.Println("Got that U value")
 			} else if confirmed == 2*n+1 {
 				cg = ECPoint{gen2.X(), gen2.Y()}
-
 			} else if confirmed == 2*n+2 {
 				ch = ECPoint{gen2.X(), gen2.Y()}
 			} else {

@@ -160,7 +160,6 @@ func (db *MongoDatabase) HasObject(hash common.Hash, val interface{}) (bool, err
 }
 
 func (db *MongoDatabase) GetObject(hash common.Hash, val interface{}) (interface{}, error) {
-
 	if db.IsEmptyKey(hash.Bytes()) {
 		return nil, nil
 	}

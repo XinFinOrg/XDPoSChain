@@ -122,7 +122,6 @@ func voteTX(gasLimit uint64, nonce uint64, addr string) (*types.Transaction, err
 }
 
 func getCommonBackend(t *testing.T, chainConfig *params.ChainConfig) *backends.SimulatedBackend {
-
 	// initial helper backend
 	contractBackendForSC := backends.NewXDCSimulatedBackend(types.GenesisAlloc{
 		voterAddr: {Balance: new(big.Int).SetUint64(10000000000)},

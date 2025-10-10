@@ -252,7 +252,6 @@ func (s *simulation) printStats() {
 		fmt.Printf("*** Node %x\n", n.tab.self.ID[:8])
 		n.log.printLogs()
 	}*/
-
 }
 
 func (s *simulation) randomNode() *Network {

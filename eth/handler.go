@@ -778,7 +778,6 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			} else {
 				pm.knownTxs.Add(tx.Hash(), struct{}{})
 			}
-
 		}
 		pm.txpool.AddRemotes(txs)
 

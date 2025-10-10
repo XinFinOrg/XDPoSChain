@@ -94,7 +94,6 @@ func TestNotChangeSingerListIfNothingProposedOrVoted(t *testing.T) {
 
 // Should call updateM1 at gap block, and update the snapshot if there are SM transactions involved
 func TestUpdateSignerListIfVotedBeforeGap(t *testing.T) {
-
 	blockchain, backend, parentBlock, signer, signFn := PrepareXDCTestBlockChain(t, GAP-2, params.TestXDPoSMockChainConfig)
 	// Insert first Block 449
 	t.Logf("Inserting block with propose at 449...")
@@ -168,7 +167,6 @@ func TestUpdateSignerListIfVotedBeforeGap(t *testing.T) {
 
 // Should call updateM1 before gap block, and update the snapshot if there are SM transactions involved
 func TestCallUpdateM1WithSmartContractTranscation(t *testing.T) {
-
 	blockchain, backend, currentBlock, signer, signFn := PrepareXDCTestBlockChain(t, GAP-1, params.TestXDPoSMockChainConfig)
 	// Insert first Block 450 A
 	t.Logf("Inserting block with propose at 450 A...")
@@ -205,7 +203,6 @@ func TestCallUpdateM1WithSmartContractTranscation(t *testing.T) {
 
 // Should call updateM1 and update snapshot when a forked block(at gap block number) is inserted back into main chain (Edge case)
 func TestCallUpdateM1WhenForkedBlockBackToMainChain(t *testing.T) {
-
 	blockchain, backend, currentBlock, signer, signFn := PrepareXDCTestBlockChain(t, GAP-1, params.TestXDPoSMockChainConfig)
 	// Check initial signer, by default, acc3 is in the signerList
 	signers, err := GetSnapshotSigner(blockchain, blockchain.CurrentBlock().Header())
@@ -356,9 +353,7 @@ func TestCallUpdateM1WhenForkedBlockBackToMainChain(t *testing.T) {
 }
 
 func TestStatesShouldBeUpdatedWhenForkedBlockBecameMainChainAtGapBlock(t *testing.T) {
-
 	blockchain, backend, parentBlock, signer, signFn := PrepareXDCTestBlockChain(t, GAP-1, params.TestXDPoSMockChainConfig)
-
 	state, err := blockchain.State()
 	if err != nil {
 		t.Fatalf("Failed while trying to get blockchain state")
