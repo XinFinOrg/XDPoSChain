@@ -876,7 +876,7 @@ func createBlockFromHeader(bc *core.BlockChain, customHeader *types.Header, txs 
 		Coinbase:    customHeader.Coinbase,
 		Difficulty:  difficulty,
 		Number:      customHeader.Number,
-		GasLimit:    1200000000,
+		GasLimit:    params.V2TestsGasLimit,
 		Time:        uint64(time.Now().Unix() - 1000000 + int64(customHeader.Number.Uint64()*10)),
 		Extra:       customHeader.Extra,
 		Validator:   customHeader.Validator,
