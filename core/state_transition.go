@@ -418,19 +418,22 @@ func (st *StateTransition) TransitionDb(owner common.Address) (*ExecutionResult,
 		st.refundGas(params.RefundQuotientEIP3529)
 	}
 
-	if st.evm.Context.BlockNumber.Cmp(common.TIPTRC21Fee) > 0 {
-		if (owner != common.Address{}) {
-			st.state.AddBalance(owner, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), msg.GasPrice), tracing.BalanceIncreaseRewardTransactionFee)
-		}
-	} else {
-		effectiveTip := msg.GasPrice
-		if st.evm.ChainConfig().IsEIP1559(st.evm.Context.BlockNumber) {
-			effectiveTip = new(big.Int).Sub(msg.GasFeeCap, st.evm.Context.BaseFee)
-			if effectiveTip.Cmp(msg.GasTipCap) > 0 {
-				effectiveTip = msg.GasTipCap
+	// GasPrice of special tx is always 0, so we can skip AddBalance
+	if !types.IsSpecialTx(msg.To) {
+		if st.evm.Context.BlockNumber.Cmp(common.TIPTRC21Fee) > 0 {
+			if (owner != common.Address{}) {
+				st.state.AddBalance(owner, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), msg.GasPrice), tracing.BalanceIncreaseRewardTransactionFee)
 			}
+		} else {
+			effectiveTip := msg.GasPrice
+			if rules.IsEIP1559 {
+				effectiveTip = new(big.Int).Sub(msg.GasFeeCap, st.evm.Context.BaseFee)
+				if effectiveTip.Cmp(msg.GasTipCap) > 0 {
+					effectiveTip = msg.GasTipCap
+				}
+			}
+			st.state.AddBalance(st.evm.Context.Coinbase, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), effectiveTip), tracing.BalanceIncreaseRewardTransactionFee)
 		}
-		st.state.AddBalance(st.evm.Context.Coinbase, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), effectiveTip), tracing.BalanceIncreaseRewardTransactionFee)
 	}
 
 	return &ExecutionResult{
