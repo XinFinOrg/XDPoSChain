@@ -3,6 +3,7 @@ package engine_v2
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -74,7 +75,13 @@ func (x *XDPoS_v2) timeoutHandler(blockChainReader consensus.ChainReader, timeou
 
 	// Threshold reached
 	certThreshold := x.config.V2.Config(uint64(timeout.Round)).CertThreshold
-	isThresholdReached := float64(numberOfTimeoutsInPool) >= float64(epochInfo.MasternodesLen)*certThreshold
+	required := int(math.Ceil(certThreshold * float64(epochInfo.MasternodesLen)))
+	if required <= 0 {
+		log.Error("[timeoutHandler] Invalid certThreshold or masternodesLen", "certThreshold", certThreshold, "masternodesLen", epochInfo.MasternodesLen, "required", required)
+		return utils.ErrInvalidThreshold
+	}
+
+	isThresholdReached := numberOfTimeoutsInPool >= required
 	if isThresholdReached {
 		log.Info(fmt.Sprintf("Timeout pool threashold reached: %v, number of items in the pool: %v", isThresholdReached, numberOfTimeoutsInPool))
 		err := x.onTimeoutPoolThresholdReached(blockChainReader, pooledTimeouts, timeout, timeout.GapNumber)
@@ -180,7 +187,13 @@ func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.Time
 	}
 
 	certThreshold := x.config.V2.Config(uint64(timeoutCert.Round)).CertThreshold
-	if float64(len(signatures)) < float64(epochInfo.MasternodesLen)*certThreshold {
+	required := int(math.Ceil(certThreshold * float64(epochInfo.MasternodesLen)))
+	if required <= 0 {
+		log.Error("[verifyTC] Invalid certThreshold or masternodesLen", "certThreshold", certThreshold, "masternodesLen", epochInfo.MasternodesLen, "required", required)
+		return utils.ErrInvalidThreshold
+	}
+
+	if len(signatures) < required {
 		log.Warn("[verifyTC] Invalid TC Signature is less or empty", "tcRound", timeoutCert.Round, "tcGapNumber", timeoutCert.GapNumber, "tcSignLen", len(timeoutCert.Signatures), "certThreshold", float64(epochInfo.MasternodesLen)*certThreshold)
 		return utils.ErrInvalidTCSignatures
 	}

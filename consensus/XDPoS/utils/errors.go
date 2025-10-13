@@ -97,6 +97,7 @@ var (
 	ErrValidatorNotWithinMasternodes = errors.New("validator address is not in the master node list")
 	ErrCoinbaseAndValidatorMismatch  = errors.New("validator and coinbase address in header does not match")
 	ErrNotItsTurn                    = errors.New("not validator's turn to mine this block")
+	ErrInvalidThreshold							 = errors.New("invalid calculated threshold")
 
 	ErrRoundInvalid = errors.New("invalid Round, it shall be bigger than QC round")
 

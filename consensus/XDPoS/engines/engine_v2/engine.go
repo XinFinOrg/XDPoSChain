@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -723,7 +724,13 @@ func (x *XDPoS_v2) verifyQC(blockChainReader consensus.ChainReader, quorumCert *
 
 	qcRound := quorumCert.ProposedBlockInfo.Round
 	certThreshold := x.config.V2.Config(uint64(qcRound)).CertThreshold
-	if (qcRound > 0) && (signatures == nil || float64(len(signatures)) < float64(epochInfo.MasternodesLen)*certThreshold) {
+	required := int(math.Ceil(certThreshold * float64(epochInfo.MasternodesLen)))
+	if required <= 0 {
+		log.Error("[verifyQC] Invalid certThreshold or masternodesLen", "certThreshold", certThreshold, "masternodesLen", epochInfo.MasternodesLen, "required", required)
+		return utils.ErrInvalidThreshold
+	}
+
+	if (qcRound > 0) && (signatures == nil || len(signatures) < required) {
 		//First V2 Block QC, QC Signatures is initial nil
 		log.Warn("[verifyHeader] Invalid QC Signature is nil or less then config", "QCNumber", quorumCert.ProposedBlockInfo.Number, "LenSignatures", len(signatures), "CertThreshold", float64(epochInfo.MasternodesLen)*certThreshold)
 		return utils.ErrInvalidQCSignatures
