@@ -819,7 +819,8 @@ func (x *XDPoS_v2) verifyQC(blockChainReader consensus.ChainReader, quorumCert *
 
 	signatures, duplicates, err := UniqueSignatures(signedVoteObj, quorumCert.Signatures)
 	if err != nil {
-		// TODO:
+		log.Error("[verifyQC] Error while getting unique signatures from QC", "qcBlockNum", quorumCert.ProposedBlockInfo.Number, "qcRound", quorumCert.ProposedBlockInfo.Round, "qcBlockHash", quorumCert.ProposedBlockInfo.Hash, "qcSignLen", len(quorumCert.Signatures), "error", err)
+		return err
 	}
 
 	if len(duplicates) != 0 {

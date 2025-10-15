@@ -83,8 +83,7 @@ func UniqueSignatures(signedHash common.Hash, signatureList []types.Signature) (
 	for _, signature := range signatureList {
 		pubkey, err := crypto.Ecrecover(signedHash.Bytes(), signature)
 		if err != nil {
-			// TODO: err handling
-			log.Error("")
+			log.Error("[UniqueSignatures] error while recovering public key", "error", err, "signature", common.Bytes2Hex(signature), "signedHash", signedHash.Hex())
 			return nil, nil, fmt.Errorf("error while recovering public key: %v", err)
 		}
 
@@ -95,15 +94,10 @@ func UniqueSignatures(signedHash common.Hash, signatureList []types.Signature) (
 			pubkeys = append(pubkeys, pubkeyHex)
 		} else {
 			duplicates = append(duplicates, signature)
+			log.Warn("[UniqueSignatures] duplicate signature detected", "pubkey", pubkeyHex, "signature", common.Bytes2Hex(signature), "signedHash", signedHash.Hex())
 		}
 	}
 
-	if len(duplicates) > 0 {
-		log.Warn("[UniqueSignaturesNew] duplicate signatures found", "duplicates", duplicates)
-		// TODO: error?
-	}
-
-	//return list, pubkeys, duplicates, nil
 	return list, duplicates, nil
 }
 
@@ -121,7 +115,6 @@ func (x *XDPoS_v2) signSignature(signingHash common.Hash) (types.Signature, erro
 }
 
 func (x *XDPoS_v2) verifyMsgSignature(signedHashToBeVerified common.Hash, signature types.Signature, masternodes []common.Address) (bool, common.Address, error) {
-	// TODO: reuse recovered singers from unique signatures
 	var signerAddress common.Address
 	if len(masternodes) == 0 {
 		return false, signerAddress, errors.New("empty masternode list detected when verifying message signatures")
