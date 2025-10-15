@@ -19,7 +19,6 @@ package params
 import (
 	"fmt"
 	"math/big"
-	"reflect"
 	"strings"
 	"sync"
 
@@ -531,10 +530,13 @@ func V2Equal(a, b *V2) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	if a.SwitchEpoch != b.SwitchEpoch || a.SkipV2Validation != b.SkipV2Validation || !configNumEqual(a.SwitchBlock, b.SwitchBlock) || !reflect.DeepEqual(a.configIndex, b.configIndex) || len(a.AllConfigs) != len(b.AllConfigs) {
+	if a.SwitchEpoch != b.SwitchEpoch || a.SkipV2Validation != b.SkipV2Validation || !configNumEqual(a.SwitchBlock, b.SwitchBlock) || len(a.configIndex) != len(b.configIndex) || len(a.configIndex) != len(a.AllConfigs) || len(b.configIndex) != len(b.AllConfigs) {
 		return false
 	}
-	for _, idx := range a.configIndex {
+	for i, idx := range a.configIndex {
+		if idx != b.configIndex[i] {
+			return false
+		}
 		if !V2ConfigEqual(a.AllConfigs[idx], b.AllConfigs[idx]) {
 			return false
 		}
@@ -543,10 +545,7 @@ func V2Equal(a, b *V2) bool {
 }
 
 func V2ConfigEqual(a, b *V2Config) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return *a == *b
+	return a != nil && b != nil && *a == *b
 }
 
 func (c *XDPoSConfig) String() string {
