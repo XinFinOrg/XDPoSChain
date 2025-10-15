@@ -947,7 +947,15 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, head *big.Int) *Confi
 		return newCompatError("Cancun fork block", c.CancunBlock, newcfg.CancunBlock)
 	}
 	if !XDPoSConfigEqual(c.XDPoS, newcfg.XDPoS) {
-		return newCompatError("XDPoS not equal", nil, nil)
+		storedblock := big.NewInt(1)
+		if c.XDPoS != nil && c.XDPoS.V2 != nil && c.XDPoS.V2.SwitchBlock != nil {
+			storedblock = c.XDPoS.V2.SwitchBlock
+		}
+		newblock := big.NewInt(1)
+		if newcfg.XDPoS != nil && newcfg.XDPoS.V2 != nil && newcfg.XDPoS.V2.SwitchBlock != nil {
+			newblock = newcfg.XDPoS.V2.SwitchBlock
+		}
+		return newCompatError("XDPoS not equal", storedblock, newblock)
 	}
 	if c.XDPoS != nil && newcfg.XDPoS != nil && c.XDPoS.V2 != nil && newcfg.XDPoS.V2 != nil && isForkIncompatible(c.XDPoS.V2.SwitchBlock, newcfg.XDPoS.V2.SwitchBlock, head) {
 		return newCompatError("XDPoS.V2.SwitchBlock", c.XDPoS.V2.SwitchBlock, newcfg.XDPoS.V2.SwitchBlock)
