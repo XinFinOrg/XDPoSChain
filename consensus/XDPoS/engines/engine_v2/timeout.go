@@ -3,7 +3,6 @@ package engine_v2
 import (
 	"errors"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -75,15 +74,9 @@ func (x *XDPoS_v2) timeoutHandler(blockChainReader consensus.ChainReader, timeou
 
 	// Threshold reached
 	certThreshold := x.config.V2.Config(uint64(timeout.Round)).CertThreshold
-	required := int(math.Ceil(certThreshold * float64(epochInfo.MasternodesLen)))
-	if required <= 0 {
-		log.Error("[timeoutHandler] Invalid certThreshold or masternodesLen", "certThreshold", certThreshold, "masternodesLen", epochInfo.MasternodesLen, "required", required)
-		return utils.ErrInvalidThreshold
-	}
-
-	isThresholdReached := numberOfTimeoutsInPool >= required
-	if isThresholdReached {
-		log.Info(fmt.Sprintf("Timeout pool threashold reached: %v, number of items in the pool: %v", isThresholdReached, numberOfTimeoutsInPool))
+	reachedThreshold := x.IsThresholdReached(certThreshold, epochInfo.MasternodesLen, numberOfTimeoutsInPool)
+	if reachedThreshold {
+		log.Info(fmt.Sprintf("Timeout pool threashold reached: %v, number of items in the pool: %v", reachedThreshold, numberOfTimeoutsInPool))
 		err := x.onTimeoutPoolThresholdReached(blockChainReader, pooledTimeouts, timeout, timeout.GapNumber)
 		if err != nil {
 			return err
@@ -187,13 +180,8 @@ func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.Time
 	}
 
 	certThreshold := x.config.V2.Config(uint64(timeoutCert.Round)).CertThreshold
-	required := int(math.Ceil(certThreshold * float64(epochInfo.MasternodesLen)))
-	if required <= 0 {
-		log.Error("[verifyTC] Invalid certThreshold or masternodesLen", "certThreshold", certThreshold, "masternodesLen", epochInfo.MasternodesLen, "required", required)
-		return utils.ErrInvalidThreshold
-	}
-
-	if len(signatures) < required {
+	reachedThreshold := x.IsThresholdReached(certThreshold, epochInfo.MasternodesLen, len(signatures))
+	if !reachedThreshold {
 		log.Warn("[verifyTC] Invalid TC Signature is less or empty", "tcRound", timeoutCert.Round, "tcGapNumber", timeoutCert.GapNumber, "tcSignLen", len(timeoutCert.Signatures), "certThreshold", float64(epochInfo.MasternodesLen)*certThreshold)
 		return utils.ErrInvalidTCSignatures
 	}

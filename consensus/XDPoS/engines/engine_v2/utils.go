@@ -348,3 +348,8 @@ func (x *XDPoS_v2) GetBlockByEpochNumber(chain consensus.ChainReader, targetEpoc
 	blockInfo, _, err = x.binarySearchBlockByEpochNumber(chain, targetEpochNum, estBlockNum.Uint64(), epochSwitchInfo.EpochSwitchBlockInfo.Number.Uint64())
 	return blockInfo, err
 }
+
+// Use integer arithmetic to avoid float precision issue
+func (x *XDPoS_v2) IsThresholdReached(certThreshold float64, numMax int, numCurrent int) (bool) {
+	return numCurrent*1000 >= int(certThreshold*1000)*numMax
+}

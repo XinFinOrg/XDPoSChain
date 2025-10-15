@@ -3,7 +3,6 @@ package engine_v2
 import (
 	"errors"
 	"fmt"
-	"math"
 	"math/big"
 	"strconv"
 	"strings"
@@ -128,15 +127,9 @@ func (x *XDPoS_v2) voteHandler(chain consensus.ChainReader, voteMsg *types.Vote)
 	}
 
 	certThreshold := x.config.V2.Config(uint64(voteMsg.ProposedBlockInfo.Round)).CertThreshold
-	required := int(math.Ceil(certThreshold * float64(epochInfo.MasternodesLen)))
-	if required <= 0 {
-		log.Error("[voteHandler] Invalid certThreshold or masternodesLen", "certThreshold", certThreshold, "masternodesLen", epochInfo.MasternodesLen, "required", required)
-		return utils.ErrInvalidThreshold
-	}
-
-	thresholdReached := numberOfVotesInPool >= required
-	if thresholdReached {
-		log.Info(fmt.Sprintf("[voteHandler] Vote pool threashold reached: %v, number of items in the pool: %v", thresholdReached, numberOfVotesInPool))
+	reachedThreshold := x.IsThresholdReached(certThreshold, epochInfo.MasternodesLen, numberOfVotesInPool)
+	if reachedThreshold {
+		log.Info(fmt.Sprintf("[voteHandler] Vote pool threashold reached: %v, number of items in the pool: %v", reachedThreshold, numberOfVotesInPool))
 
 		// Check if the block already exist, otherwise we try luck with the next vote
 		proposedBlockHeader := chain.GetHeaderByHash(voteMsg.ProposedBlockInfo.Hash)
@@ -234,13 +227,8 @@ func (x *XDPoS_v2) onVotePoolThresholdReached(chain consensus.ChainReader, poole
 
 	// Skip and wait for the next vote to process again if valid votes is less than what we required
 	certThreshold := x.config.V2.Config(uint64(currentVoteMsg.(*types.Vote).ProposedBlockInfo.Round)).CertThreshold
-	required := int(math.Ceil(certThreshold * float64(epochInfo.MasternodesLen)))
-	if required <= 0 {
-		log.Error("[onVotePoolThresholdReached] Invalid certThreshold or masternodesLen", "certThreshold", certThreshold, "masternodesLen", epochInfo.MasternodesLen, "required", required)
-		return utils.ErrInvalidThreshold
-	}
-
-	if len(validSignatures) < required{
+	reachedThreshold := x.IsThresholdReached(certThreshold, epochInfo.MasternodesLen, len(validSignatures))
+	if !reachedThreshold {
 		log.Warn("[onVotePoolThresholdReached] Not enough valid signatures to generate QC", "VotesSignaturesAfterFilter", validSignatures, "NumberOfValidVotes", len(validSignatures), "NumberOfVotes", len(pooledVotes))
 		return nil
 	}
