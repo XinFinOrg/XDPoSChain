@@ -121,7 +121,7 @@ jobs:
           echo "Masternodes: $masternodes"
           echo "RPCs: $rpcs"
 
-          skip_names=("devnet1" "devnet2" "devnet3" "devnet4" "devnet9" "devnet10" "devnet11" "devnet12" "devnetrpc" "devnetrpc2")
+          skip_names=( "devnetrpc" "devnetrpc2" )
           while read -r name; do
             if [[ " ${skip_names[@]} " =~ " ${name} " ]]; then
               echo "Skipping deployment: $name"
