@@ -64,7 +64,8 @@ func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Heade
 	}
 
 	// Ensure gas limit is consistent with parent
-	if err := misc.VerifyGaslimit(parent.GasLimit, header.GasLimit); err != nil {
+	err := misc.VerifyGaslimit(parent.GasLimit, header.GasLimit)
+	if err != nil && parent.Number.Uint64() != 0 { // skip genesis block
 		return err
 	}
 	// Ensure gas used is less than or equal to gas limit
