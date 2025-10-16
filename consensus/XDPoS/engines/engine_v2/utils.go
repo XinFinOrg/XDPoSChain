@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sync"
 
 	"github.com/XinFinOrg/XDPoSChain/accounts"
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -74,27 +75,54 @@ func decodeMasternodesFromHeaderExtra(checkpointHeader *types.Header) []common.A
 	}
 	return masternodes
 }
-
 func UniqueSignatures(signedHash common.Hash, signatureList []types.Signature) ([]types.Signature, []types.Signature, error) {
+	if (signedHash == common.Hash{}) {
+		return nil, nil, errors.New("signedHash cannot be empty")
+	}
+	if len(signatureList) == 0 {
+		return []types.Signature{}, []types.Signature{}, nil
+	}
+
+	type Message struct {
+		pubkey common.Address
+		sig    types.Signature
+		err    error
+	}
+	result := make(chan Message, len(signatureList))
+	var wg sync.WaitGroup
+	wg.Add(len(signatureList))
+	for _, signature := range signatureList {
+		go func(sig types.Signature) {
+			defer wg.Done()
+			pubkey, err := crypto.Ecrecover(signedHash.Bytes(), signature)
+			if err != nil {
+				log.Error("[UniqueSignatures] error while recovering public key", "error", err, "signature", common.Bytes2Hex(signature), "signedHash", signedHash.Hex())
+				result <- Message{err: err}
+				return
+			}
+			var signerAddress common.Address
+			copy(signerAddress[:], crypto.Keccak256(pubkey[1:])[12:])
+			result <- Message{pubkey: signerAddress, sig: sig}
+		}(signature)
+	}
+	wg.Wait()
+	close(result)
+
 	keys := make(map[string]bool)
 	list := []types.Signature{}
 	duplicates := []types.Signature{}
-	pubkeys := []string{}
-	for _, signature := range signatureList {
-		pubkey, err := crypto.Ecrecover(signedHash.Bytes(), signature)
-		if err != nil {
-			log.Error("[UniqueSignatures] error while recovering public key", "error", err, "signature", common.Bytes2Hex(signature), "signedHash", signedHash.Hex())
-			return nil, nil, fmt.Errorf("error while recovering public key: %v", err)
+	for r := range result {
+		if r.err != nil {
+			return nil, nil, r.err
 		}
 
-		pubkeyHex := common.Bytes2Hex(pubkey)
+		pubkeyHex := r.pubkey.Hex()
 		if _, ok := keys[pubkeyHex]; !ok {
 			keys[pubkeyHex] = true
-			list = append(list, signature)
-			pubkeys = append(pubkeys, pubkeyHex)
+			list = append(list, r.sig)
 		} else {
-			duplicates = append(duplicates, signature)
-			log.Warn("[UniqueSignatures] duplicate signature detected", "pubkey", pubkeyHex, "signature", common.Bytes2Hex(signature), "signedHash", signedHash.Hex())
+			log.Warn("[UniqueSignatures] duplicate signing found", "pubkey", pubkeyHex, "signedMessage", signedHash.Hex(), "signature", r.sig)
+			duplicates = append(duplicates, r.sig)
 		}
 	}
 
