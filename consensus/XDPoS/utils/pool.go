@@ -1,9 +1,11 @@
 package utils
 
 import (
+	"encoding/json"
 	"sync"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
 type PoolObj interface {
@@ -21,8 +23,9 @@ func NewPool() *Pool {
 		objList: make(map[string]map[common.Hash]PoolObj),
 	}
 }
+
 func (p *Pool) Get() map[string]map[common.Hash]PoolObj {
-	return p.objList
+	return p.getSnapshot()
 }
 
 func (p *Pool) Add(obj PoolObj) (int, map[common.Hash]PoolObj) {
@@ -36,10 +39,13 @@ func (p *Pool) Add(obj PoolObj) (int, map[common.Hash]PoolObj) {
 	}
 	objListKeyed[obj.Hash()] = obj
 	numOfItems := len(objListKeyed)
-	return numOfItems, objListKeyed
+	safeCopy := p.getSafePoolObjMap(objListKeyed)
+	return numOfItems, safeCopy
 }
 
 func (p *Pool) Size(obj PoolObj) int {
+	p.lock.Lock()
+	defer p.lock.Unlock()
 	poolKey := obj.PoolKey()
 	objListKeyed, ok := p.objList[poolKey]
 	if !ok {
@@ -84,8 +90,8 @@ func (p *Pool) Clear() {
 }
 
 func (p *Pool) GetObjsByKey(poolKey string) []PoolObj {
-	p.lock.Lock()
-	defer p.lock.Unlock()
+	p.lock.RLock()
+	defer p.lock.RUnlock()
 
 	objListKeyed, ok := p.objList[poolKey]
 	if !ok {
@@ -95,7 +101,48 @@ func (p *Pool) GetObjsByKey(poolKey string) []PoolObj {
 	cnt := 0
 	for _, obj := range objListKeyed {
 		objList[cnt] = obj
-		cnt += 1
+		cnt++
 	}
 	return objList
+}
+
+func (p *Pool) getSnapshot() map[string]map[common.Hash]PoolObj {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+
+	data, err := json.Marshal(p.objList)
+	if err != nil {
+		// This should never happen
+		log.Error("[getSafeCopy] Error while marshalling pool object list", "error", err)
+		return make(map[string]map[common.Hash]PoolObj)
+	}
+
+	var dataCopy map[string]map[common.Hash]PoolObj
+	err = json.Unmarshal(data, &dataCopy)
+	if err != nil {
+		// This should never happen
+		log.Error("[getSafeCopy] Error while unmarshalling pool object list", "error", err)
+		return make(map[string]map[common.Hash]PoolObj)
+	}
+
+	return dataCopy
+}
+
+func (p *Pool) getSafePoolObjMap(objMap map[common.Hash]PoolObj) map[common.Hash]PoolObj {
+	data, err := json.Marshal(objMap)
+	if err != nil {
+		// This should never happen
+		log.Error("[getSafeCopy] Error while marshalling pool object list", "error", err)
+		return make(map[common.Hash]PoolObj)
+	}
+
+	var dataCopy map[common.Hash]PoolObj
+	err = json.Unmarshal(data, &dataCopy)
+	if err != nil {
+		// This should never happen
+		log.Error("[getSafeCopy] Error while unmarshalling pool object list", "error", err)
+		return make(map[common.Hash]PoolObj)
+	}
+
+	return dataCopy	
 }
