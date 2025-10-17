@@ -517,7 +517,11 @@ type ExpTimeoutConfig struct {
 }
 
 func (c *XDPoSConfig) String() string {
-	return "XDPoS"
+	if c == nil {
+		return "XDPoSConfig: <nil>"
+	}
+
+	return fmt.Sprintf("XDPoSConfig{Period: %v, Epoch: %v, Reward: %v, RewardCheckpoint: %v, Gap: %v, FoudationWalletAddr: %v, SkipV1Validation: %v, V2: %s}", c.Period, c.Epoch, c.Reward, c.RewardCheckpoint, c.Gap, c.FoudationWalletAddr.String0x(), c.SkipV1Validation, c.V2.String())
 }
 
 func (c *XDPoSConfig) Description(indent int) string {
@@ -538,6 +542,14 @@ func (c *XDPoSConfig) Description(indent int) string {
 	return banner
 }
 
+func (v2 *V2) String() string {
+	if v2 == nil {
+		return "V2: <nil>"
+	}
+
+	return fmt.Sprintf("V2{SwitchEpoch: %v, SwitchBlock: %v, SkipV2Validation: %v, %s}", v2.SwitchEpoch, v2.SwitchBlock, v2.SkipV2Validation, v2.CurrentConfig.String())
+}
+
 func (v2 *V2) Description(indent int) string {
 	if v2 == nil {
 		return "V2: <nil>"
@@ -550,6 +562,14 @@ func (v2 *V2) Description(indent int) string {
 	banner += fmt.Sprintf("%s- SkipV2Validation: %v\n", prefix, v2.SkipV2Validation)
 	banner += fmt.Sprintf("%s- %s", prefix, v2.CurrentConfig.Description("CurrentConfig", indent+2))
 	return banner
+}
+
+func (c *V2Config) String() string {
+	if c == nil {
+		return "V2Config: <nil>"
+	}
+
+	return fmt.Sprintf("V2{MaxMasternodes: %v, MaxProtectorNodes: %v, MaxObverserNodes: %v, SwitchRound: %v, MinePeriod: %v, TimeoutSyncThreshold: %v, TimeoutPeriod: %v, CertThreshold: %v, MasternodeReward: %v, ProtectorReward: %v, ObserverReward: %v, MinimumMinerBlockPerEpoch: %v, LimitPenaltyEpoch: %v, MinimumSigningTx: %v, %s}", c.MaxMasternodes, c.MaxProtectorNodes, c.MaxObverserNodes, c.SwitchRound, c.MinePeriod, c.TimeoutSyncThreshold, c.TimeoutPeriod, c.CertThreshold, c.MasternodeReward, c.ProtectorReward, c.ObserverReward, c.MinimumMinerBlockPerEpoch, c.LimitPenaltyEpoch, c.MinimumSigningTx, c.ExpTimeoutConfig.String())
 }
 
 func (c *V2Config) Description(name string, indent int) string {
@@ -574,6 +594,10 @@ func (c *V2Config) Description(name string, indent int) string {
 	banner += fmt.Sprintf("%s- ExpTimeoutBase: %v\n", prefix, c.ExpTimeoutConfig.Base)
 	banner += fmt.Sprintf("%s- ExpTimeoutMaxExponent: %v", prefix, c.ExpTimeoutConfig.MaxExponent)
 	return banner
+}
+
+func (c ExpTimeoutConfig) String() string {
+	return fmt.Sprintf("ExpTimeoutConfig{Base: %v, MaxExponent: %v}", c.Base, c.MaxExponent)
 }
 
 func (c *XDPoSConfig) BlockConsensusVersion(num *big.Int) string {
@@ -637,6 +661,61 @@ func (v2 *V2) BuildConfigIndex() {
 
 func (v2 *V2) ConfigIndex() []uint64 {
 	return v2.configIndex
+}
+
+// String implements the fmt.Stringer interface, returning a string representation
+// of ChainConfig.
+func (c *ChainConfig) String() string {
+	result := fmt.Sprintf("ChainConfig{ChainID: %v", c.ChainID)
+
+	// Add block-based forks
+	if c.HomesteadBlock != nil {
+		result += fmt.Sprintf(", HomesteadBlock: %v", c.HomesteadBlock)
+	}
+	if c.DAOForkBlock != nil {
+		result += fmt.Sprintf(", DAOForkBlock: %v", c.DAOForkBlock)
+	}
+	if c.EIP150Block != nil {
+		result += fmt.Sprintf(", EIP150Block: %v", c.EIP150Block)
+	}
+	if c.EIP155Block != nil {
+		result += fmt.Sprintf(", EIP155Block: %v", c.EIP155Block)
+	}
+	if c.EIP158Block != nil {
+		result += fmt.Sprintf(", EIP158Block: %v", c.EIP158Block)
+	}
+	if c.ByzantiumBlock != nil {
+		result += fmt.Sprintf(", ByzantiumBlock: %v", c.ByzantiumBlock)
+	}
+	if c.ConstantinopleBlock != nil {
+		result += fmt.Sprintf(", ConstantinopleBlock: %v", c.ConstantinopleBlock)
+	}
+	if c.PetersburgBlock != nil {
+		result += fmt.Sprintf(", PetersburgBlock: %v", c.PetersburgBlock)
+	}
+	if c.IstanbulBlock != nil {
+		result += fmt.Sprintf(", IstanbulBlock: %v", c.IstanbulBlock)
+	}
+	if c.BerlinBlock != nil {
+		result += fmt.Sprintf(", BerlinBlock: %v", c.BerlinBlock)
+	}
+	if c.LondonBlock != nil {
+		result += fmt.Sprintf(", LondonBlock: %v", c.LondonBlock)
+	}
+	if c.MergeBlock != nil {
+		result += fmt.Sprintf(", MergeBlock: %v", c.MergeBlock)
+	}
+	if c.ShanghaiBlock != nil {
+		result += fmt.Sprintf(", ShanghaiBlock: %v", c.ShanghaiBlock)
+	}
+	if c.CancunBlock != nil {
+		result += fmt.Sprintf(", CancunBlock: %v", c.CancunBlock)
+	}
+	if c.XDPoS != nil {
+		result += fmt.Sprintf(", %s", c.XDPoS.String())
+	}
+	result += "}"
+	return result
 }
 
 // Description returns a human-readable description of ChainConfig.
