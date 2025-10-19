@@ -153,33 +153,6 @@ func GetVoterCap(statedb *StateDB, candidate, voter common.Address) *big.Int {
 	return ret.Big()
 }
 
-var (
-	slotMintedRecordTotalMinted  uint64 = 0
-	slotMintedRecordLastEpochNum uint64 = 1
-)
-
-func GetTotalMinted(statedb *StateDB) common.Hash {
-	hash := GetLocSimpleVariable(slotMintedRecordTotalMinted)
-	totalMinted := statedb.GetState(common.MintedRecordAddressBinary, hash)
-	return totalMinted
-}
-
-func PutTotalMinted(statedb *StateDB, value common.Hash) {
-	hash := GetLocSimpleVariable(slotMintedRecordTotalMinted)
-	statedb.SetState(common.MintedRecordAddressBinary, hash, value)
-}
-
-func GetLastEpochNum(statedb *StateDB) common.Hash {
-	hash := GetLocSimpleVariable(slotMintedRecordLastEpochNum)
-	totalMinted := statedb.GetState(common.MintedRecordAddressBinary, hash)
-	return totalMinted
-}
-
-func PutLastEpochNum(statedb *StateDB, value common.Hash) {
-	hash := GetLocSimpleVariable(slotMintedRecordLastEpochNum)
-	statedb.SetState(common.MintedRecordAddressBinary, hash, value)
-}
-
 func IncrementMintedRecordNonce(statedb *StateDB) {
 	nonce := statedb.GetNonce(common.MintedRecordAddressBinary)
 	statedb.SetNonce(common.MintedRecordAddressBinary, nonce+1)
@@ -194,19 +167,19 @@ var (
 	slotMintedRecordPostRewardBlockBase, _ = new(big.Int).SetString("0300000000000000000000000000000000000000000000000000000000000000", 16)
 )
 
-func GetOnsetEpoch(statedb *StateDB) common.Hash {
+func GetMintedRecordOnsetEpoch(statedb *StateDB) common.Hash {
 	return statedb.GetState(common.MintedRecordAddressBinary, slotMintedRecordOnsetEpoch)
 }
 
-func PutOnsetEpoch(statedb *StateDB, value common.Hash) {
+func PutMintedRecordOnsetEpoch(statedb *StateDB, value common.Hash) {
 	statedb.SetState(common.MintedRecordAddressBinary, slotMintedRecordOnsetEpoch, value)
 }
 
-func GetOnsetBlock(statedb *StateDB) common.Hash {
+func GetMintedRecordOnsetBlock(statedb *StateDB) common.Hash {
 	return statedb.GetState(common.MintedRecordAddressBinary, slotMintedRecordOnsetBlock)
 }
 
-func PutOnsetBlock(statedb *StateDB, value common.Hash) {
+func PutMintedRecordOnsetBlock(statedb *StateDB, value common.Hash) {
 	statedb.SetState(common.MintedRecordAddressBinary, slotMintedRecordOnsetBlock, value)
 }
 
