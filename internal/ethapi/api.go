@@ -2599,10 +2599,14 @@ func (api *BlockChainAPI) GetStakerROIMasternode(masternode common.Address) floa
 }
 
 type tokenSupply struct {
-	TotalMinted *hexutil.Big `json:"totalMinted"`
-	EpochNum    *hexutil.Big `json:"epochNum"`
-	BlockHash   common.Hash  `json:"blockHash"`
-	BlockNumber *hexutil.Big `json:"blockNumber"`
+	PostUpgradeTotalMinted *hexutil.Big `json:"postUpgradeTotalMinted"`
+	PreUpgradeTotalMinted  *hexutil.Big `json:"preUpgradeTotalMinted"`
+	PostUpgradeTotalBurned *hexutil.Big `json:"postUpgradeTotalBurned"`
+	TotalMinted            *hexutil.Big `json:"totalMinted"`
+	UpgradeEpochNum        *hexutil.Big `json:"upgradeEpochNum"`
+	EpochNum               *hexutil.Big `json:"epochNum"`
+	BlockHash              common.Hash  `json:"blockHash"`
+	BlockNumber            *hexutil.Big `json:"blockNumber"`
 }
 
 func (s *BlockChainAPI) GetTokenSupply(ctx context.Context, epochNr rpc.EpochNumber) (*tokenSupply, error) {
@@ -2611,12 +2615,16 @@ func (s *BlockChainAPI) GetTokenSupply(ctx context.Context, epochNr rpc.EpochNum
 		return nil, errors.New("Undefined XDPoS consensus engine")
 	}
 	statedb, header, err := s.b.StateAndHeaderByNumber(ctx, rpc.LatestBlockNumber)
+	nonce := statedb.GetNonce(common.MintedRecordAddressBinary)
+	if nonce == 0 {
+		return nil, errors.New("MintedRecordAddress is not initialized due to Reward Upgrade is not applied")
+	}
 	currentRound, err := engine.EngineV2.GetRoundNumber(header)
 	currentEpoch := s.b.ChainConfig().XDPoS.V2.SwitchEpoch + uint64(currentRound)/s.b.ChainConfig().XDPoS.Epoch
 	if err != nil {
 		return nil, err
 	}
-	onsetEpoch := state.GetOnsetEpoch(statedb).Big().Uint64()
+	onsetEpoch := state.GetMintedRecordOnsetEpoch(statedb).Big().Uint64()
 	if epochNr >= 0 {
 		if uint64(epochNr) < onsetEpoch {
 			return nil, errors.New("epoch number is before reward upgrade")
@@ -2629,17 +2637,28 @@ func (s *BlockChainAPI) GetTokenSupply(ctx context.Context, epochNr rpc.EpochNum
 	if epochNr == rpc.LatestEpochNumber {
 		epochNum = currentEpoch
 	}
-	totalMinted := state.GetPostTotalMinted(statedb, epochNum).Big()
+	postTotalMinted := state.GetPostTotalMinted(statedb, epochNum).Big()
 	number := state.GetPostRewardBlock(statedb, epochNum).Big()
 	targetHeader, err := s.b.HeaderByNumber(ctx, rpc.BlockNumber(number.Int64()))
 	if err != nil {
 		return nil, err
 	}
+	config := s.b.ChainConfig().XDPoS
+	if config == nil {
+		return nil, errors.New("XDPoS config is nil")
+	}
+	preEpochMinted := new(big.Int).Mul(new(big.Int).SetUint64(config.Reward), new(big.Int).SetUint64(params.Ether))
+	preTotalMinted := new(big.Int).Mul(preEpochMinted, new(big.Int).SetUint64(onsetEpoch))
+	postTotalBurned := state.GetPostTotalBurned(statedb, epochNum).Big()
 	result := &tokenSupply{
-		TotalMinted: (*hexutil.Big)(totalMinted),
-		EpochNum:    (*hexutil.Big)(new(big.Int).SetUint64(epochNum)),
-		BlockHash:   targetHeader.Hash(),
-		BlockNumber: (*hexutil.Big)(number),
+		PostUpgradeTotalMinted: (*hexutil.Big)(postTotalMinted),
+		PreUpgradeTotalMinted:  (*hexutil.Big)(preTotalMinted),
+		PostUpgradeTotalBurned: (*hexutil.Big)(postTotalBurned),
+		TotalMinted:            (*hexutil.Big)(new(big.Int).Add(postTotalMinted, preTotalMinted)),
+		UpgradeEpochNum:        (*hexutil.Big)(new(big.Int).SetUint64(onsetEpoch)),
+		EpochNum:               (*hexutil.Big)(new(big.Int).SetUint64(epochNum)),
+		BlockHash:              targetHeader.Hash(),
+		BlockNumber:            (*hexutil.Big)(number),
 	}
 	return result, nil
 }

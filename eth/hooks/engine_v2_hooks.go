@@ -367,8 +367,8 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 			nonce := stateBlock.GetNonce(common.MintedRecordAddressBinary)
 			if nonce == 0 {
 				// initialize MintedRecordAddress
-				state.PutOnsetEpoch(stateBlock, common.Uint64ToHash(epochNum))
-				state.PutOnsetBlock(stateBlock, common.Uint64ToHash(number))
+				state.PutMintedRecordOnsetEpoch(stateBlock, common.Uint64ToHash(epochNum))
+				state.PutMintedRecordOnsetBlock(stateBlock, common.Uint64ToHash(number))
 			} else {
 				epochNumIter := epochNum
 				for epochNumIter > 0 {

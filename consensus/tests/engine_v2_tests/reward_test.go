@@ -306,7 +306,7 @@ func TestHookRewardAfterUpgrade(t *testing.T) {
 	assert.Zero(t, totalMinted.Cmp(expectMinted), "statedb records wrong total minted")
 	blockNum := state.GetPostRewardBlock(statedb, epochNum).Big().Int64()
 	assert.Equal(t, 2700, int(blockNum))
-	onsetBlock := state.GetOnsetBlock(statedb).Big().Int64()
+	onsetBlock := state.GetMintedRecordOnsetBlock(statedb).Big().Int64()
 	assert.Equal(t, 2700, int(onsetBlock))
 	totalBurned := state.GetPostTotalBurned(statedb, epochNum).Big().Int64()
 	// since no EIP 1559, so no burned
