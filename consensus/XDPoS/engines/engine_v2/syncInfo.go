@@ -129,7 +129,7 @@ func (x *XDPoS_v2) processSyncInfoPool(chain consensus.ChainReader) {
 func (x *XDPoS_v2) verifySignatures(messageHash common.Hash, signatures []types.Signature, candidates []common.Address) error {
 	var wg sync.WaitGroup
 	wg.Add(len(signatures))
-	var haveError error
+	errorCh := make(chan error, len(signatures))
 
 	for _, signature := range signatures {
 		go func(sig types.Signature) {
@@ -137,19 +137,19 @@ func (x *XDPoS_v2) verifySignatures(messageHash common.Hash, signatures []types.
 			verified, _, err := x.verifyMsgSignature(messageHash, sig, candidates)
 			if err != nil {
 				log.Error("[verifySignatures] Error while verfying QC message signatures", "error", err)
-				haveError = errors.New("error while verfying QC message signatures")
+				errorCh <- errors.New("error while verfying QC message signatures")
 				return
 			}
 			if !verified {
 				log.Error("[verifySignatures] Signature not verified doing signature verification")
-				haveError = errors.New("fail to verify QC due to signature mismatch")
+				errorCh <- errors.New("fail to verify QC due to signature mismatch")
 				return
 			}
 		}(signature)
 	}
 	wg.Wait()
-	if haveError != nil {
-		return haveError
+	if len(errorCh) > 0 {
+		return <-errorCh
 	}
 	return nil
 }
