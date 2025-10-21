@@ -511,7 +511,7 @@ func (api *BlockChainAPI) GetAccountInfo(ctx context.Context, address common.Add
 		"nonce":       info.Nonce,
 		"storageHash": info.StorageHash,
 	}
-	return result, nil
+	return result, state.Error()
 }
 
 // GetStorageAt returns the storage from the state at the given address, key and
