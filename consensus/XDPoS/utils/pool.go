@@ -25,6 +25,8 @@ func NewPool() *Pool {
 }
 
 func (p *Pool) Get() map[string]map[common.Hash]PoolObj {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
 	return p.getSnapshot()
 }
 
@@ -100,16 +102,14 @@ func (p *Pool) GetObjsByKey(poolKey string) []PoolObj {
 	objList := make([]PoolObj, len(objListKeyed))
 	cnt := 0
 	for _, obj := range objListKeyed {
-		objList[cnt] = obj
+		objList[cnt] = p.getSafePoolObj(obj)
 		cnt++
 	}
 	return objList
 }
 
+// caller should hold lock
 func (p *Pool) getSnapshot() map[string]map[common.Hash]PoolObj {
-	p.lock.RLock()
-	defer p.lock.RUnlock()
-
 	data, err := json.Marshal(p.objList)
 	if err != nil {
 		// This should never happen
@@ -128,6 +128,7 @@ func (p *Pool) getSnapshot() map[string]map[common.Hash]PoolObj {
 	return dataCopy
 }
 
+// caller should hold lock
 func (p *Pool) getSafePoolObjMap(objMap map[common.Hash]PoolObj) map[common.Hash]PoolObj {
 	data, err := json.Marshal(objMap)
 	if err != nil {
@@ -144,5 +145,25 @@ func (p *Pool) getSafePoolObjMap(objMap map[common.Hash]PoolObj) map[common.Hash
 		return make(map[common.Hash]PoolObj)
 	}
 
-	return dataCopy	
+	return dataCopy
+}
+
+// caller should hold lock
+func (p *Pool) getSafePoolObj(obj PoolObj) PoolObj {
+	data, err := json.Marshal(obj)
+	if err != nil {
+		// This should never happen
+		log.Error("[getSafeCopy] Error while marshalling pool object list", "error", err)
+		return nil
+	}
+
+	var dataCopy PoolObj
+	err = json.Unmarshal(data, &dataCopy)
+	if err != nil {
+		// This should never happen
+		log.Error("[getSafeCopy] Error while unmarshalling pool object list", "error", err)
+		return nil
+	}
+
+	return dataCopy
 }
