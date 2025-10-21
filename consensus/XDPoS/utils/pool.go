@@ -21,13 +21,24 @@ func NewPool() *Pool {
 		objList: make(map[string]map[common.Hash]PoolObj),
 	}
 }
+
+func (p *Pool) ensureInit() {
+	if p != nil && p.objList == nil {
+		panic("Pool must be inited by NewPool()")
+	}
+}
+
 func (p *Pool) Get() map[string]map[common.Hash]PoolObj {
+	p.ensureInit()
+
 	return p.objList
 }
 
 func (p *Pool) Add(obj PoolObj) (int, map[common.Hash]PoolObj) {
+	p.ensureInit()
 	p.lock.Lock()
 	defer p.lock.Unlock()
+
 	poolKey := obj.PoolKey()
 	objListKeyed, ok := p.objList[poolKey]
 	if !ok {
@@ -40,6 +51,8 @@ func (p *Pool) Add(obj PoolObj) (int, map[common.Hash]PoolObj) {
 }
 
 func (p *Pool) Size(obj PoolObj) int {
+	p.ensureInit()
+
 	poolKey := obj.PoolKey()
 	objListKeyed, ok := p.objList[poolKey]
 	if !ok {
@@ -49,6 +62,7 @@ func (p *Pool) Size(obj PoolObj) int {
 }
 
 func (p *Pool) PoolObjKeysList() []string {
+	p.ensureInit()
 	p.lock.RLock()
 	defer p.lock.RUnlock()
 
@@ -61,6 +75,7 @@ func (p *Pool) PoolObjKeysList() []string {
 
 // Given the pool object, clear all object under the same pool key
 func (p *Pool) ClearPoolKeyByObj(obj PoolObj) {
+	p.ensureInit()
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -70,6 +85,7 @@ func (p *Pool) ClearPoolKeyByObj(obj PoolObj) {
 
 // Given the pool key, clean its content
 func (p *Pool) ClearByPoolKey(poolKey string) {
+	p.ensureInit()
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -77,6 +93,7 @@ func (p *Pool) ClearByPoolKey(poolKey string) {
 }
 
 func (p *Pool) Clear() {
+	p.ensureInit()
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -84,6 +101,7 @@ func (p *Pool) Clear() {
 }
 
 func (p *Pool) GetObjsByKey(poolKey string) []PoolObj {
+	p.ensureInit()
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
