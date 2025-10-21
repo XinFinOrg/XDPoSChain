@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	dc "github.com/tiendc/go-deepcopy"
 )
 
 type PoolObj interface {
@@ -21,8 +22,17 @@ func NewPool() *Pool {
 		objList: make(map[string]map[common.Hash]PoolObj),
 	}
 }
+
 func (p *Pool) Get() map[string]map[common.Hash]PoolObj {
-	return p.objList
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+	var dataCopy map[string]map[common.Hash]PoolObj
+	err := dc.Copy(&dataCopy, &p.objList)
+	if err != nil {
+		// TODO:
+	}
+
+	return dataCopy
 }
 
 func (p *Pool) Add(obj PoolObj) (int, map[common.Hash]PoolObj) {
@@ -36,10 +46,19 @@ func (p *Pool) Add(obj PoolObj) (int, map[common.Hash]PoolObj) {
 	}
 	objListKeyed[obj.Hash()] = obj
 	numOfItems := len(objListKeyed)
-	return numOfItems, objListKeyed
+
+	var dataCopy map[common.Hash]PoolObj
+	err := dc.Copy(&dataCopy, &objListKeyed)
+	if err != nil {
+		// TODO:
+	}
+
+	return numOfItems, dataCopy
 }
 
 func (p *Pool) Size(obj PoolObj) int {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
 	poolKey := obj.PoolKey()
 	objListKeyed, ok := p.objList[poolKey]
 	if !ok {
@@ -84,18 +103,23 @@ func (p *Pool) Clear() {
 }
 
 func (p *Pool) GetObjsByKey(poolKey string) []PoolObj {
-	p.lock.Lock()
-	defer p.lock.Unlock()
+	p.lock.RLock()
+	defer p.lock.RUnlock()
 
 	objListKeyed, ok := p.objList[poolKey]
 	if !ok {
 		return []PoolObj{}
 	}
+
 	objList := make([]PoolObj, len(objListKeyed))
 	cnt := 0
 	for _, obj := range objListKeyed {
-		objList[cnt] = obj
+		err := dc.Copy(&objList[cnt], &obj)
+		if err != nil {
+			// TODO:
+		}
 		cnt += 1
 	}
+
 	return objList
 }

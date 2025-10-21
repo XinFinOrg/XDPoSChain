@@ -22,7 +22,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/prometheus v1.7.2-0.20170814170113-3101606756c5
 	github.com/rs/cors v1.7.0
-	github.com/stretchr/testify v1.8.4
+	github.com/stretchr/testify v1.11.1
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
 	golang.org/x/crypto v0.42.0
 	golang.org/x/sync v0.17.0
@@ -51,6 +51,7 @@ require (
 	github.com/protolambda/bls12-381-util v0.0.0-20220416220906-d8552aa452c7
 	github.com/shirou/gopsutil v3.21.4-0.20210419000835-c7a38de76ee5+incompatible
 	github.com/status-im/keycard-go v0.3.3
+	github.com/tiendc/go-deepcopy v1.7.1
 	github.com/urfave/cli/v2 v2.27.5
 	golang.org/x/exp v0.0.0-20230626212559-97b1e661b5df
 	golang.org/x/text v0.29.0
