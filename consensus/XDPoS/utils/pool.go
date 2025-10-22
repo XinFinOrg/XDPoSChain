@@ -11,6 +11,8 @@ type PoolObj interface {
 	PoolKey() string
 	GetSigner() common.Address
 }
+
+// Note: must use `NewPool()` to create `Pool` since field `objList` is a map
 type Pool struct {
 	objList map[string]map[common.Hash]PoolObj
 	lock    sync.RWMutex // Protects the pool fields
@@ -21,6 +23,7 @@ func NewPool() *Pool {
 		objList: make(map[string]map[common.Hash]PoolObj),
 	}
 }
+
 func (p *Pool) Get() map[string]map[common.Hash]PoolObj {
 	return p.objList
 }
