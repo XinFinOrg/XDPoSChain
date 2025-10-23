@@ -560,7 +560,6 @@ func (d *Downloader) Terminate() {
 // fetchHeight retrieves the head header of the remote peer to aid in estimating
 // the total time a pending synchronisation would take.
 func (d *Downloader) fetchHeight(p *peerConnection, hash common.Hash) (*types.Header, error) {
-
 	// Request the advertised remote head block and wait for the response
 	go p.peer.RequestHeadersByHash(hash, 1, 0, false)
 
@@ -1121,7 +1120,6 @@ func (d *Downloader) fetchParts(deliveryCh chan dataPack, deliver func(dataPack)
 	expire func() map[string]int, pending func() int, inFlight func() bool, reserve func(*peerConnection, int) (*fetchRequest, bool, bool),
 	fetchHook func([]*types.Header), fetch func(*peerConnection, *fetchRequest) error, cancel func(*fetchRequest), capacity func(*peerConnection) int,
 	idle func() ([]*peerConnection, int), setIdle func(*peerConnection, int, time.Time), kind string) error {
-
 	// Create a ticker to detect expired retrieval tasks
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()

@@ -63,6 +63,7 @@ func airDropTokenToAccountNoXDC() {
 		log.Fatal("can't execute transferAmount in tr21:", err)
 	}
 }
+
 func testTransferTRC21TokenWithAccountNoXDC() {
 	client, err := ethclient.Dial(simulation.RpcEndpoint)
 	if err != nil {
@@ -127,6 +128,7 @@ func testTransferTRC21TokenWithAccountNoXDC() {
 		log.Fatal("can't get balance token fee in  smart contract: ", err, "got", balanceIssuerFee, "wanted", remainFee)
 	}
 }
+
 func testTransferTrc21Fail() {
 	client, err := ethclient.Dial(simulation.RpcEndpoint)
 	if err != nil {
@@ -192,8 +194,8 @@ func testTransferTrc21Fail() {
 	if err != nil || balance.Cmp(remainFee) != 0 {
 		log.Fatal("can't get balance token fee in  smart contract: ", err, "got", balanceIssuerFee, "wanted", remainFee)
 	}
-
 }
+
 func main() {
 	fmt.Println("========================")
 	fmt.Println("airdropAddr", simulation.AirdropAddr.Hex())

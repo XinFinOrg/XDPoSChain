@@ -351,7 +351,6 @@ func Test_getCancelFee(t *testing.T) {
 	if fee, _ := XDCx.getCancelFee(nil, nil, tradingStateDb, tokenDOrder.order, tokenDOrder.feeRate); fee != nil && fee.Sign() != 0 {
 		t.Errorf("getCancelFee() = %v, want %v", fee, common.Big0)
 	}
-
 }
 
 func TestGetTradeQuantity(t *testing.T) {

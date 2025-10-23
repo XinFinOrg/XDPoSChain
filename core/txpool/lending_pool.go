@@ -964,7 +964,6 @@ func (pool *LendingPool) promoteExecutables(accounts []common.Address) {
 			hash := tx.Hash()
 			log.Trace("Removed old queued transaction", "hash", hash)
 			delete(pool.all, hash)
-
 		}
 
 		// Gather all executable transactions and promote them

@@ -144,7 +144,6 @@ func getCommonBackend(t *testing.T, chainConfig *params.ChainConfig) *backends.S
 	}, 10000000, chainConfig)
 
 	return contractBackend2
-
 }
 
 func transferTx(t *testing.T, to common.Address, transferAmount int64) *types.Transaction {
@@ -201,7 +200,6 @@ func GetSnapshotSigner(bc *core.BlockChain, header *types.Header) (signersList, 
 		ms[addr.Hex()] = true
 	}
 	return ms, nil
-
 }
 
 func GetCandidateFromCurrentSmartContract(backend bind.ContractBackend, t *testing.T) masterNodes {

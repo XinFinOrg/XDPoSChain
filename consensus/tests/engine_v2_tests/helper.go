@@ -274,7 +274,6 @@ func getMultiCandidatesBackend(t *testing.T, chainConfig *params.ChainConfig, n 
 }
 
 func getProtectorObserverBackend(t *testing.T, chainConfig *params.ChainConfig) *backends.SimulatedBackend {
-
 	// initial helper backend
 	contractBackendForSC := backends.NewXDCSimulatedBackend(types.GenesisAlloc{
 		voterAddr: {Balance: new(big.Int).SetUint64(10000000000)},

@@ -178,7 +178,6 @@ func TestRewardBalance(t *testing.T) {
 
 		t.Errorf("reward total %v - %v", totalReward, afterReward)
 	}
-
 }
 
 func GetRewardBalancesRate(foudationWalletAddr common.Address, masterAddr common.Address, totalReward *big.Int, validator *contractValidator.XDCValidator) (map[common.Address]*big.Int, error) {

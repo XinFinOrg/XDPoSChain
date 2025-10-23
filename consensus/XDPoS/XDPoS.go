@@ -211,7 +211,6 @@ func (x *XDPoS) VerifyHeader(chain consensus.ChainReader, header *types.Header, 
 // method returns a quit channel to abort the operations and a results channel to
 // retrieve the async verifications (the order is that of the input slice).
 func (x *XDPoS) VerifyHeaders(chain consensus.ChainReader, headers []*types.Header, fullVerifies []bool) (chan<- struct{}, <-chan error) {
-
 	abort := make(chan struct{})
 	results := make(chan error, len(headers))
 

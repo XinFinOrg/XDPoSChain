@@ -110,5 +110,4 @@ func (l *LendingMsg) computeHash() common.Hash {
 	}
 
 	return common.BytesToHash(sha.Sum(nil))
-
 }

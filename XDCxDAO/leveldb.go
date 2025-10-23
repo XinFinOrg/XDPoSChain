@@ -45,7 +45,6 @@ func NewBatchDatabaseWithEncode(datadir string, cacheLimit int) *BatchDatabase {
 	}
 
 	return batchDB
-
 }
 
 func (db *BatchDatabase) IsEmptyKey(key []byte) bool {

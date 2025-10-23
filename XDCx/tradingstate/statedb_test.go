@@ -66,7 +66,6 @@ func TestEchangeStates(t *testing.T) {
 			mapPriceBuy[amount] = old + amount
 		default:
 		}
-
 	}
 	statedb.SetLastPrice(orderBook, price)
 	statedb.InsertLiquidationPrice(orderBook, big.NewInt(1), orderBook, 2)

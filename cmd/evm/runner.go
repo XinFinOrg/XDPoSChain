@@ -140,7 +140,6 @@ func runCmd(ctx *cli.Context) error {
 			}
 		}
 		code = common.Hex2Bytes(string(bytes.TrimRight(hexcode, "\n")))
-
 	} else if ctx.String(CodeFlag.Name) != "" {
 		code = common.Hex2Bytes(ctx.String(CodeFlag.Name))
 	} else if fn := ctx.Args().First(); len(fn) > 0 {

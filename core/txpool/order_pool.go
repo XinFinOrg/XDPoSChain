@@ -483,7 +483,6 @@ func (pool *OrderPool) validateOrder(tx *types.OrderTransaction) error {
 				return err
 			}
 		}
-
 	}
 
 	if orderStatus != OrderStatusNew && orderStatus != OrderStatusCancle {

@@ -129,7 +129,6 @@ func (ms *XDCXManagedState) getAccount(addr common.Hash) *exchanges {
 		if so != nil && uint64(len(account.nonces))+account.nstart < so.Nonce() {
 			ms.exchanges[addr] = newAccount(so)
 		}
-
 	}
 
 	return ms.exchanges[addr]
