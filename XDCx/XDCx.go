@@ -17,8 +17,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/node"
-	"github.com/XinFinOrg/XDPoSChain/p2p"
-	"github.com/XinFinOrg/XDPoSChain/rpc"
 	"golang.org/x/sync/syncmap"
 )
 
@@ -64,18 +62,6 @@ type XDCX struct {
 	orderCache        *lru.Cache[common.Hash, map[common.Hash]tradingstate.OrderHistoryItem]
 }
 
-func (XDCx *XDCX) Protocols() []p2p.Protocol {
-	return []p2p.Protocol{}
-}
-
-func (XDCx *XDCX) Start() error {
-	return nil
-}
-
-func (XDCx *XDCX) Stop() error {
-	return nil
-}
-
 func NewLDBEngine(cfg *Config) *XDCxDAO.BatchDatabase {
 	datadir := cfg.DataDir
 	batchDB := XDCxDAO.NewBatchDatabaseWithEncode(datadir, 0)
@@ -112,9 +98,6 @@ func New(stack *node.Node, cfg *Config) *XDCX {
 	XDCX.StateCache = tradingstate.NewDatabase(XDCX.db)
 	XDCX.settings.Store(overflowIdx, false)
 
-	stack.RegisterAPIs(XDCX.APIs())
-	stack.RegisterProtocols(XDCX.Protocols())
-	stack.RegisterLifecycle(XDCX)
 	return XDCX
 }
 
@@ -137,21 +120,6 @@ func (XDCx *XDCX) GetLevelDB() XDCxDAO.XDCXDAO {
 
 func (XDCx *XDCX) GetMongoDB() XDCxDAO.XDCXDAO {
 	return XDCx.mongodb
-}
-
-// APIs returns the RPC descriptors the XDCX implementation offers
-func (XDCx *XDCX) APIs() []rpc.API {
-	return []rpc.API{
-		{
-			Namespace: ProtocolName,
-			Service:   NewPublicXDCXAPI(XDCx),
-		},
-	}
-}
-
-// Version returns the XDCX sub-protocols version number.
-func (XDCx *XDCX) Version() uint64 {
-	return ProtocolVersion
 }
 
 func (XDCx *XDCX) ProcessOrderPending(header *types.Header, coinbase common.Address, chain consensus.ChainContext, pending map[common.Address]types.OrderTransactions, statedb *state.StateDB, XDCXstatedb *tradingstate.TradingStateDB) ([]tradingstate.TxDataMatch, map[common.Hash]tradingstate.MatchingResult) {

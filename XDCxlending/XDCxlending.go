@@ -20,8 +20,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/node"
-	"github.com/XinFinOrg/XDPoSChain/p2p"
-	"github.com/XinFinOrg/XDPoSChain/rpc"
 )
 
 const (
@@ -47,18 +45,6 @@ type Lending struct {
 	lendingTradeHistory *lru.Cache[common.Hash, map[common.Hash]lendingstate.LendingTradeHistoryItem]
 }
 
-func (l *Lending) Protocols() []p2p.Protocol {
-	return []p2p.Protocol{}
-}
-
-func (l *Lending) Start() error {
-	return nil
-}
-
-func (l *Lending) Stop() error {
-	return nil
-}
-
 func New(stack *node.Node, XDCx *XDCx.XDCX) *Lending {
 	lending := &Lending{
 		orderNonce:          make(map[common.Address]*big.Int),
@@ -69,11 +55,6 @@ func New(stack *node.Node, XDCx *XDCx.XDCX) *Lending {
 	lending.StateCache = lendingstate.NewDatabase(XDCx.GetLevelDB())
 	lending.XDCx = XDCx
 
-	// Register the backend on the node
-	stack.RegisterAPIs(lending.APIs())
-	stack.RegisterProtocols(lending.Protocols())
-	stack.RegisterLifecycle(lending)
-
 	return lending
 }
 
@@ -83,21 +64,6 @@ func (l *Lending) GetLevelDB() XDCxDAO.XDCXDAO {
 
 func (l *Lending) GetMongoDB() XDCxDAO.XDCXDAO {
 	return l.XDCx.GetMongoDB()
-}
-
-// APIs returns the RPC descriptors the Lending implementation offers
-func (l *Lending) APIs() []rpc.API {
-	return []rpc.API{
-		{
-			Namespace: ProtocolName,
-			Service:   NewPublicXDCXLendingAPI(l),
-		},
-	}
-}
-
-// Version returns the Lending sub-protocols version number.
-func (l *Lending) Version() uint64 {
-	return ProtocolVersion
 }
 
 func (l *Lending) ProcessOrderPending(header *types.Header, coinbase common.Address, chain consensus.ChainContext, pending map[common.Address]types.LendingTransactions, statedb *state.StateDB, lendingStatedb *lendingstate.LendingStateDB, tradingStateDb *tradingstate.TradingStateDB) ([]*lendingstate.LendingItem, map[common.Hash]lendingstate.MatchingResult) {
