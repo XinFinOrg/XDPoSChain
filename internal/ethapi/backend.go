@@ -136,9 +136,6 @@ func GetAPIs(apiBackend Backend, chainReader consensus.ChainReader) []rpc.API {
 			Namespace: "eth",
 			Service:   NewTransactionAPI(apiBackend, nonceLock),
 		}, {
-			Namespace: "XDCx",
-			Service:   NewPublicXDCXTransactionPoolAPI(apiBackend, nonceLock),
-		}, {
 			Namespace: "txpool",
 			Service:   NewTxPoolAPI(apiBackend),
 		}, {
