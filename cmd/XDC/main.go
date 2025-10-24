@@ -73,7 +73,6 @@ var (
 		utils.USBFlag,
 		utils.SmartCardDaemonPathFlag,
 		utils.EnablePersonal,
-		utils.XDCXEnabledFlag,
 		utils.XDCXDBNameFlag,
 		utils.TxPoolNoLocalsFlag,
 		utils.TxPoolJournalFlag,

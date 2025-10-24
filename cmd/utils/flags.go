@@ -845,11 +845,6 @@ var (
 	}
 
 	// XDCX settings
-	XDCXEnabledFlag = &cli.BoolFlag{
-		Name:     "XDCx",
-		Usage:    "Enable the XDCX protocol",
-		Category: flags.XdcxCategory,
-	}
 	XDCXDBNameFlag = &cli.StringFlag{
 		Name:     "XDCx-dbName",
 		Aliases:  []string{"XDCx.dbName"},
