@@ -52,24 +52,8 @@ func (db *BatchDatabase) IsEmptyKey(key []byte) bool {
 	return len(key) == 0 || bytes.Equal(key, db.emptyKey)
 }
 
-func (db *BatchDatabase) HasObject(hash common.Hash, val interface{}) (bool, error) {
-	// for mongodb only
-	return false, nil
-}
-
 func (db *BatchDatabase) GetObject(hash common.Hash, val interface{}) (interface{}, error) {
-	// for mongodb only
 	return nil, nil
-}
-
-func (db *BatchDatabase) PutObject(hash common.Hash, val interface{}) error {
-	// for mongodb only
-	return nil
-}
-
-func (db *BatchDatabase) DeleteObject(hash common.Hash, val interface{}) error {
-	// for mongodb only
-	return nil
 }
 
 func (db *BatchDatabase) Put(key []byte, val []byte) error {

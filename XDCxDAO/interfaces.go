@@ -2,6 +2,7 @@
 // This file is part of the Core XDPoSChain infrastructure
 // https://XDPoSChain.com
 // Package XDCxDAO provides an interface to work with XDCx database, including leveldb for masternode and mongodb for SDK node
+
 package XDCxDAO
 
 import (
@@ -15,15 +16,7 @@ type XDCXDAO interface {
 	// for both leveldb and mongodb
 	IsEmptyKey(key []byte) bool
 	Close() error
-
-	// mongodb methods
-	HasObject(hash common.Hash, val interface{}) (bool, error)
 	GetObject(hash common.Hash, val interface{}) (interface{}, error)
-	PutObject(hash common.Hash, val interface{}) error
-	DeleteObject(hash common.Hash, val interface{}) error // won't return error if key not found
-	GetListItemByTxHash(txhash common.Hash, val interface{}) interface{}
-	GetListItemByHashes(hashes []string, val interface{}) interface{}
-	DeleteItemByTxHash(txhash common.Hash, val interface{})
 
 	// basic XDCx
 	InitBulk()

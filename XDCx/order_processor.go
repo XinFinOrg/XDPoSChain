@@ -786,30 +786,3 @@ func (XDCx *XDCX) UpdateMediumPriceBeforeEpoch(epochNumber uint64, tradingStateD
 	}
 	return nil
 }
-
-// put average price of epoch to mongodb for tracking liquidation trades
-// epochPriceResult: a map of epoch average price, key is orderbook hash , value is epoch average price
-// orderbook hash genereted from baseToken, quoteToken at XDPoSChain/XDCx/tradingstate/common.go:214
-func (XDCx *XDCX) LogEpochPrice(epochNumber uint64, epochPriceResult map[common.Hash]*big.Int) error {
-	db := XDCx.GetMongoDB()
-	db.InitBulk()
-
-	for orderbook, price := range epochPriceResult {
-		if price.Sign() <= 0 {
-			continue
-		}
-		epochPriceItem := &tradingstate.EpochPriceItem{
-			Epoch:     epochNumber,
-			Orderbook: orderbook,
-			Price:     price,
-		}
-		epochPriceItem.Hash = epochPriceItem.ComputeHash()
-		if err := db.PutObject(epochPriceItem.Hash, epochPriceItem); err != nil {
-			return err
-		}
-	}
-	if err := db.CommitBulk(); err != nil {
-		return err
-	}
-	return nil
-}
