@@ -3409,7 +3409,13 @@ func (s *BlockChainAPI) GetTokenSupply(ctx context.Context, epochNr rpc.EpochNum
 		return nil, errors.New("XDPoS config is nil")
 	}
 	preEpochMinted := new(big.Int).Mul(new(big.Int).SetUint64(config.Reward), new(big.Int).SetUint64(params.Ether))
-	preTotalMinted := new(big.Int).Mul(preEpochMinted, new(big.Int).SetUint64(onsetEpoch))
+	onsetEpochMinus := onsetEpoch
+	if onsetEpochMinus > 0 {
+		onsetEpochMinus -= 1
+	} else {
+		log.Warn("onsetEpoch is 0 which could not happen", epochNum)
+	}
+	preTotalMinted := new(big.Int).Mul(preEpochMinted, new(big.Int).SetUint64(onsetEpochMinus))
 	postTotalBurned := state.GetPostTotalBurned(statedb, epochNum).Big()
 	result := &tokenSupply{
 		PostUpgradeTotalMinted: (*hexutil.Big)(postTotalMinted),
