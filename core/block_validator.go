@@ -138,9 +138,6 @@ func (v *BlockValidator) ValidateTradingOrder(statedb *state.StateDB, XDCxStated
 			Rejects: newRejectedOrders,
 		}
 	}
-	if XDCXService.IsSDKNode() {
-		v.bc.AddMatchingResult(txMatchBatch.TxHash, tradingResult)
-	}
 	return nil
 }
 
@@ -172,9 +169,6 @@ func (v *BlockValidator) ValidateLendingOrder(statedb *state.StateDB, lendingSta
 			Trades:  newTrades,
 			Rejects: newRejectedOrders,
 		}
-	}
-	if XDCXService.IsSDKNode() {
-		v.bc.AddLendingResult(batch.TxHash, lendingResult)
 	}
 	return nil
 }

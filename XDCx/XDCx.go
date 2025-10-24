@@ -79,20 +79,10 @@ func New(stack *node.Node, cfg *Config) *XDCX {
 
 	// default DBEngine: levelDB
 	XDCX.db = NewLDBEngine(cfg)
-	XDCX.sdkNode = false
-
-	if cfg.DBEngine == "mongodb" { // this is an add-on DBEngine for SDK nodes
-		XDCX.mongodb = NewMongoDBEngine(cfg)
-		XDCX.sdkNode = true
-	}
 
 	XDCX.StateCache = tradingstate.NewDatabase(XDCX.db)
 
 	return XDCX
-}
-
-func (XDCx *XDCX) IsSDKNode() bool {
-	return XDCx.sdkNode
 }
 
 func (XDCx *XDCX) GetLevelDB() XDCxDAO.XDCXDAO {

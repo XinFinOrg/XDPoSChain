@@ -784,11 +784,6 @@ func (XDCx *XDCX) UpdateMediumPriceBeforeEpoch(epochNumber uint64, tradingStateD
 		}
 		tradingStateDB.SetMediumPrice(orderbook, tradingstate.Zero, tradingstate.Zero)
 	}
-	if XDCx.IsSDKNode() {
-		if err := XDCx.LogEpochPrice(epochNumber, epochPriceResult); err != nil {
-			log.Error("failed to update epochPrice", "err", err)
-		}
-	}
 	return nil
 }
 

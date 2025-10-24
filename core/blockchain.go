@@ -1820,10 +1820,6 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 			// Only count canonical blocks for GC processing time
 			bc.gcproc += res.procTime
 			bc.UpdateBlocksHashCache(block)
-			if bc.chainConfig.IsTIPXDCX(block.Number()) && bc.chainConfig.XDPoS != nil && block.NumberU64() > bc.chainConfig.XDPoS.Epoch {
-				bc.logExchangeData(block)
-				bc.logLendingData(block)
-			}
 		case SideStatTy:
 			log.Debug("Inserted forked block from downloader", "number", block.Number(), "hash", block.Hash(), "diff", block.Difficulty(), "elapsed",
 				common.PrettyDuration(time.Since(start)), "txs", len(block.Transactions()), "gas", block.GasUsed(), "uncles", len(block.Uncles()))
@@ -2278,10 +2274,6 @@ func (bc *BlockChain) insertBlock(block *types.Block) ([]interface{}, []*types.L
 		// Only count canonical blocks for GC processing time
 		bc.gcproc += result.proctime
 		bc.UpdateBlocksHashCache(block)
-		if bc.chainConfig.IsTIPXDCXReceiver(block.Number()) && bc.chainConfig.XDPoS != nil && block.NumberU64() > bc.chainConfig.XDPoS.Epoch {
-			bc.logExchangeData(block)
-			bc.logLendingData(block)
-		}
 	case SideStatTy:
 		log.Debug("Inserted forked block from fetcher", "number", block.Number(), "hash", block.Hash(), "diff", block.Difficulty(), "elapsed",
 			common.PrettyDuration(time.Since(block.ReceivedAt)), "txs", len(block.Transactions()), "gas", block.GasUsed(), "uncles", len(block.Uncles()))
@@ -2826,146 +2818,6 @@ func (bc *BlockChain) UpdateM1() error {
 	return nil
 }
 
-func (bc *BlockChain) logExchangeData(block *types.Block) {
-	engine, ok := bc.Engine().(*XDPoS.XDPoS)
-	if !ok || engine == nil {
-		return
-	}
-	XDCXService := engine.GetXDCXService()
-	if XDCXService == nil || !XDCXService.IsSDKNode() {
-		return
-	}
-	txMatchBatchData, err := ExtractTradingTransactions(block.Transactions())
-	if err != nil {
-		log.Error("failed to extract matching transaction", "err", err)
-		return
-	}
-	if len(txMatchBatchData) == 0 {
-		return
-	}
-	currentState, err := bc.State()
-	if err != nil {
-		log.Crit("logExchangeData: failed to get current state", "err", err)
-		return
-	}
-	start := time.Now()
-	defer func() {
-		//The deferred call's arguments are evaluated immediately, but the function call is not executed until the surrounding function returns
-		// That's why we should put this log statement in an anonymous function
-		log.Debug("logExchangeData takes", "time", common.PrettyDuration(time.Since(start)), "blockNumber", block.NumberU64())
-	}()
-
-	for _, txMatchBatch := range txMatchBatchData {
-		dirtyOrderCount := uint64(0)
-		for _, txMatch := range txMatchBatch.Data {
-			var (
-				takerOrderInTx *tradingstate.OrderItem
-				trades         []map[string]string
-				rejectedOrders []*tradingstate.OrderItem
-			)
-
-			if takerOrderInTx, err = txMatch.DecodeOrder(); err != nil {
-				log.Error("SDK node decode takerOrderInTx failed", "txDataMatch", txMatch)
-				return
-			}
-			cacheKey := crypto.Keccak256Hash(txMatchBatch.TxHash.Bytes(), tradingstate.GetMatchingResultCacheKey(takerOrderInTx).Bytes())
-			// getTrades from cache
-			resultTrades, ok := bc.resultTrade.Get(cacheKey)
-			if ok && resultTrades != nil {
-				trades = resultTrades.([]map[string]string)
-			}
-
-			// getRejectedOrder from cache
-			rejected, ok := bc.rejectedOrders.Get(cacheKey)
-			if ok && rejected != nil {
-				rejectedOrders = rejected.([]*tradingstate.OrderItem)
-			}
-
-			txMatchTime := time.Unix(int64(block.Header().Time), 0).UTC()
-			if err := XDCXService.SyncDataToSDKNode(takerOrderInTx, txMatchBatch.TxHash, txMatchTime, currentState, trades, rejectedOrders, &dirtyOrderCount); err != nil {
-				log.Error("failed to SyncDataToSDKNode ", "blockNumber", block.Number(), "err", err)
-				return
-			}
-		}
-	}
-}
-
-func (bc *BlockChain) logLendingData(block *types.Block) {
-	engine, ok := bc.Engine().(*XDPoS.XDPoS)
-	if !ok || engine == nil {
-		return
-	}
-	XDCXService := engine.GetXDCXService()
-	if XDCXService == nil || !XDCXService.IsSDKNode() {
-		return
-	}
-	lendingService := engine.GetLendingService()
-	if lendingService == nil {
-		return
-	}
-	batches, err := ExtractLendingTransactions(block.Transactions())
-	if err != nil {
-		log.Error("failed to extract lending transaction", "err", err)
-		return
-	}
-	start := time.Now()
-	defer func() {
-		//The deferred call's arguments are evaluated immediately, but the function call is not executed until the surrounding function returns
-		// That's why we should put this log statement in an anonymous function
-		log.Debug("logLendingData takes", "time", common.PrettyDuration(time.Since(start)), "blockNumber", block.NumberU64())
-	}()
-
-	for _, batch := range batches {
-		dirtyOrderCount := uint64(0)
-		for _, item := range batch.Data {
-			var (
-				trades         []*lendingstate.LendingTrade
-				rejectedOrders []*lendingstate.LendingItem
-			)
-			// getTrades from cache
-			resultLendingTrades, ok := bc.resultLendingTrade.Get(crypto.Keccak256Hash(batch.TxHash.Bytes(), lendingstate.GetLendingCacheKey(item).Bytes()))
-
-			if ok && resultLendingTrades != nil {
-				trades = resultLendingTrades.([]*lendingstate.LendingTrade)
-			}
-
-			// getRejectedOrder from cache
-			rejected, ok := bc.rejectedLendingItem.Get(crypto.Keccak256Hash(batch.TxHash.Bytes(), lendingstate.GetLendingCacheKey(item).Bytes()))
-			if ok && rejected != nil {
-				rejectedOrders = rejected.([]*lendingstate.LendingItem)
-			}
-
-			txMatchTime := time.Unix(int64(block.Header().Time), 0).UTC()
-			statedb, _ := bc.State()
-
-			if err := lendingService.SyncDataToSDKNode(bc, statedb.Copy(), block, item, batch.TxHash, txMatchTime, trades, rejectedOrders, &dirtyOrderCount); err != nil {
-				log.Error("lending: failed to SyncDataToSDKNode ", "blockNumber", block.Number(), "err", err)
-				return
-			}
-		}
-	}
-
-	// update finalizedTrades
-	if block.Number().Uint64()%bc.chainConfig.XDPoS.Epoch == common.LiquidateLendingTradeBlock {
-		finalizedTx, err := ExtractLendingFinalizedTradeTransactions(block.Transactions())
-		if err != nil {
-			log.Error("failed to extract finalizedTrades transaction", "err", err)
-			return
-		}
-		finalizedTrades := map[common.Hash]*lendingstate.LendingTrade{}
-		finalizedData, ok := bc.finalizedTrade.Get(finalizedTx.TxHash)
-		if ok && finalizedData != nil {
-			finalizedTrades = finalizedData.(map[common.Hash]*lendingstate.LendingTrade)
-		}
-		if len(finalizedTrades) > 0 {
-			if err := lendingService.UpdateLiquidatedTrade(block.Time(), finalizedTx, finalizedTrades); err != nil {
-				log.Error("lending: failed to UpdateLiquidatedTrade ", "blockNumber", block.Number(), "err", err)
-				return
-			}
-		}
-	}
-}
-
 func (bc *BlockChain) AddMatchingResult(txHash common.Hash, matchingResults map[common.Hash]tradingstate.MatchingResult) {
 	for hash, result := range matchingResults {
 		cacheKey := crypto.Keccak256Hash(txHash.Bytes(), hash.Bytes())
@@ -3074,16 +2926,9 @@ func (bc *BlockChain) processTradingAndLendingStates(isValidBlockNumber bool, bl
 		}
 		// liquidate / finalize open lendingTrades
 		if block.Number().Uint64()%bc.chainConfig.XDPoS.Epoch == common.LiquidateLendingTradeBlock {
-			finalizedTrades, _, _, _, _, err := lendingService.ProcessLiquidationData(block.Header(), bc, statedb, tradingState, lendingState)
+			_, _, _, _, _, err := lendingService.ProcessLiquidationData(block.Header(), bc, statedb, tradingState, lendingState)
 			if err != nil {
 				return tradingState, lendingState, fmt.Errorf("failed to ProcessLiquidationData. Err: %v", err)
-			}
-			if tradingService.IsSDKNode() {
-				finalizedTx, err := ExtractLendingFinalizedTradeTransactions(block.Transactions())
-				if err != nil {
-					return tradingState, lendingState, err
-				}
-				bc.AddFinalizedTrades(finalizedTx.TxHash, finalizedTrades)
 			}
 		}
 	}

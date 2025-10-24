@@ -752,15 +752,11 @@ func (w *worker) commitNewWork() {
 	var (
 		txs                                                                  *types.TransactionsByPriceAndNonce
 		specialTxs                                                           types.Transactions
-		tradingTransaction                                                   *types.Transaction
-		lendingTransaction                                                   *types.Transaction
 		tradingTxMatches                                                     []tradingstate.TxDataMatch
-		tradingMatchingResults                                               map[common.Hash]tradingstate.MatchingResult
 		lendingMatchingResults                                               map[common.Hash]lendingstate.MatchingResult
 		lendingInput                                                         []*lendingstate.LendingItem
 		updatedTrades                                                        map[common.Hash]*lendingstate.LendingTrade
 		liquidatedTrades, autoRepayTrades, autoTopUpTrades, autoRecallTrades []*lendingstate.LendingTrade
-		lendingFinalizedTradeTransaction                                     *types.Transaction
 	)
 	feeCapacity := state.GetTRC21FeeCapacityFromStateWithCache(parent.Root(), work.state)
 	if w.config.XDPoS != nil {
@@ -801,7 +797,7 @@ func (w *worker) commitNewWork() {
 					log.Debug("Start processing order pending")
 					tradingOrderPending, _ := w.eth.OrderPool().Pending()
 					log.Debug("Start processing order pending", "len", len(tradingOrderPending))
-					tradingTxMatches, tradingMatchingResults = XDCX.ProcessOrderPending(header, w.coinbase, w.chain, tradingOrderPending, work.state, work.tradingState)
+					tradingTxMatches, _ = XDCX.ProcessOrderPending(header, w.coinbase, w.chain, tradingOrderPending, work.state, work.tradingState)
 					log.Debug("trading transaction matches found", "tradingTxMatches", len(tradingTxMatches))
 
 					lendingOrderPending, _ := w.eth.LendingPool().Pending()
@@ -833,15 +829,10 @@ func (w *worker) commitNewWork() {
 					if err != nil {
 						log.Error("Fail to create tx matches", "error", err)
 						return
-					} else {
-						tradingTransaction = txM
-						if XDCX.IsSDKNode() {
-							w.chain.AddMatchingResult(tradingTransaction.Hash(), tradingMatchingResults)
-						}
-						// force adding trading, lending transaction to this block
-						if tradingTransaction != nil {
-							specialTxs = append(specialTxs, tradingTransaction)
-						}
+					}
+					// force adding trading, lending transaction to this block
+					if txM != nil {
+						specialTxs = append(specialTxs, txM)
 					}
 				}
 
@@ -863,14 +854,9 @@ func (w *worker) commitNewWork() {
 					if err != nil {
 						log.Error("Fail to create lending tx", "error", err)
 						return
-					} else {
-						lendingTransaction = signedLendingTx
-						if XDCX.IsSDKNode() {
-							w.chain.AddLendingResult(lendingTransaction.Hash(), lendingMatchingResults)
-						}
-						if lendingTransaction != nil {
-							specialTxs = append(specialTxs, lendingTransaction)
-						}
+					}
+					if signedLendingTx != nil {
+						specialTxs = append(specialTxs, signedLendingTx)
 					}
 				}
 
@@ -887,14 +873,9 @@ func (w *worker) commitNewWork() {
 					if err != nil {
 						log.Error("Fail to create lending tx", "error", err)
 						return
-					} else {
-						lendingFinalizedTradeTransaction = signedFinalizedTx
-						if XDCX.IsSDKNode() {
-							w.chain.AddFinalizedTrades(lendingFinalizedTradeTransaction.Hash(), updatedTrades)
-						}
-						if lendingFinalizedTradeTransaction != nil {
-							specialTxs = append(specialTxs, lendingFinalizedTradeTransaction)
-						}
+					}
+					if signedFinalizedTx != nil {
+						specialTxs = append(specialTxs, signedFinalizedTx)
 					}
 				}
 			}
