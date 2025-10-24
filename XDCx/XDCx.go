@@ -30,9 +30,8 @@ var (
 )
 
 type Config struct {
-	DataDir       string `toml:",omitempty"`
-	DBName        string `toml:",omitempty"`
-	ConnectionUrl string `toml:",omitempty"`
+	DataDir string `toml:",omitempty"`
+	DBName  string `toml:",omitempty"`
 }
 
 // DefaultConfig represents (shocker!) the default configuration.
