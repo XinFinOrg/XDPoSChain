@@ -30,10 +30,9 @@ var (
 )
 
 type Config struct {
-	DataDir        string `toml:",omitempty"`
-	DBName         string `toml:",omitempty"`
-	ConnectionUrl  string `toml:",omitempty"`
-	ReplicaSetName string `toml:",omitempty"`
+	DataDir       string `toml:",omitempty"`
+	DBName        string `toml:",omitempty"`
+	ConnectionUrl string `toml:",omitempty"`
 }
 
 // DefaultConfig represents (shocker!) the default configuration.
@@ -57,16 +56,6 @@ func NewLDBEngine(cfg *Config) *XDCxDAO.BatchDatabase {
 	datadir := cfg.DataDir
 	batchDB := XDCxDAO.NewBatchDatabaseWithEncode(datadir, 0)
 	return batchDB
-}
-
-func NewMongoDBEngine(cfg *Config) *XDCxDAO.MongoDatabase {
-	mongoDB, err := XDCxDAO.NewMongoDatabase(nil, cfg.DBName, cfg.ConnectionUrl, cfg.ReplicaSetName, 0)
-
-	if err != nil {
-		log.Crit("Failed to init mongodb engine", "err", err)
-	}
-
-	return mongoDB
 }
 
 func New(stack *node.Node, cfg *Config) *XDCX {

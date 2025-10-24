@@ -74,7 +74,6 @@ var (
 		utils.SmartCardDaemonPathFlag,
 		utils.EnablePersonal,
 		utils.XDCXEnabledFlag,
-		utils.XDCXDBReplicaSetNameFlag,
 		utils.XDCXDBNameFlag,
 		utils.TxPoolNoLocalsFlag,
 		utils.TxPoolJournalFlag,

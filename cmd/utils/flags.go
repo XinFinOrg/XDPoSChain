@@ -857,12 +857,6 @@ var (
 		Value:    "XDCdex",
 		Category: flags.XdcxCategory,
 	}
-	XDCXDBReplicaSetNameFlag = &cli.StringFlag{
-		Name:     "XDCx-dbReplicaSetName",
-		Aliases:  []string{"XDCx.dbReplicaSetName"},
-		Usage:    "ReplicaSetName if Master-Slave is setup",
-		Category: flags.XdcxCategory,
-	}
 )
 
 var (
@@ -1506,9 +1500,6 @@ func SetXDCXConfig(ctx *cli.Context, cfg *XDCx.Config, XDCDataDir string) {
 		cfg.DBName = ctx.String(XDCXDBNameFlag.Name)
 	} else {
 		cfg.DBName = XDCXDBNameFlag.Value
-	}
-	if ctx.IsSet(XDCXDBReplicaSetNameFlag.Name) {
-		cfg.ReplicaSetName = ctx.String(XDCXDBReplicaSetNameFlag.Name)
 	}
 }
 
