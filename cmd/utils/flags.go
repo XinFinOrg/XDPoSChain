@@ -857,13 +857,6 @@ var (
 		Value:    "XDCdex",
 		Category: flags.XdcxCategory,
 	}
-	XDCXDBConnectionUrlFlag = &cli.StringFlag{
-		Name:     "XDCx-dbConnectionUrl",
-		Aliases:  []string{"XDCx.dbConnectionUrl"},
-		Usage:    "ConnectionUrl to database if dbEngine is mongodb. Host:port. If there are multiple instances, separated by comma. Eg: localhost:27017,localhost:27018",
-		Value:    "localhost:27017",
-		Category: flags.XdcxCategory,
-	}
 	XDCXDBReplicaSetNameFlag = &cli.StringFlag{
 		Name:     "XDCx-dbReplicaSetName",
 		Aliases:  []string{"XDCx.dbReplicaSetName"},
@@ -1513,11 +1506,6 @@ func SetXDCXConfig(ctx *cli.Context, cfg *XDCx.Config, XDCDataDir string) {
 		cfg.DBName = ctx.String(XDCXDBNameFlag.Name)
 	} else {
 		cfg.DBName = XDCXDBNameFlag.Value
-	}
-	if ctx.IsSet(XDCXDBConnectionUrlFlag.Name) {
-		cfg.ConnectionUrl = ctx.String(XDCXDBConnectionUrlFlag.Name)
-	} else {
-		cfg.ConnectionUrl = XDCXDBConnectionUrlFlag.Value
 	}
 	if ctx.IsSet(XDCXDBReplicaSetNameFlag.Name) {
 		cfg.ReplicaSetName = ctx.String(XDCXDBReplicaSetNameFlag.Name)
