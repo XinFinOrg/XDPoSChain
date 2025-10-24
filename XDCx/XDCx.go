@@ -31,7 +31,6 @@ var (
 
 type Config struct {
 	DataDir        string `toml:",omitempty"`
-	DBEngine       string `toml:",omitempty"`
 	DBName         string `toml:",omitempty"`
 	ConnectionUrl  string `toml:",omitempty"`
 	ReplicaSetName string `toml:",omitempty"`

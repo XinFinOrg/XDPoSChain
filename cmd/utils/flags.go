@@ -850,13 +850,6 @@ var (
 		Usage:    "Enable the XDCX protocol",
 		Category: flags.XdcxCategory,
 	}
-	XDCXDBEngineFlag = &cli.StringFlag{
-		Name:     "XDCx-dbengine",
-		Aliases:  []string{"XDCx.dbengine"},
-		Usage:    "Database engine for XDCX (leveldb, mongodb)",
-		Value:    "leveldb",
-		Category: flags.XdcxCategory,
-	}
 	XDCXDBNameFlag = &cli.StringFlag{
 		Name:     "XDCx-dbName",
 		Aliases:  []string{"XDCx.dbName"},
@@ -1516,11 +1509,6 @@ func SetXDCXConfig(ctx *cli.Context, cfg *XDCx.Config, XDCDataDir string) {
 	// XDCx datadir: XDCDataDir/XDCx
 	cfg.DataDir = filepath.Join(XDCDataDir, "XDCx")
 	log.Info("XDCX datadir", "path", cfg.DataDir)
-	if ctx.IsSet(XDCXDBEngineFlag.Name) {
-		cfg.DBEngine = ctx.String(XDCXDBEngineFlag.Name)
-	} else {
-		cfg.DBEngine = XDCXDBEngineFlag.Value
-	}
 	if ctx.IsSet(XDCXDBNameFlag.Name) {
 		cfg.DBName = ctx.String(XDCXDBNameFlag.Name)
 	} else {
