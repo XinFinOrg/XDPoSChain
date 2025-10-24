@@ -17,14 +17,9 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/node"
-	"golang.org/x/sync/syncmap"
 )
 
 const (
-	ProtocolName       = "XDCx"
-	ProtocolVersion    = uint64(1)
-	ProtocolVersionStr = "1.0"
-	overflowIdx        // Indicator of message queue overflow
 	defaultCacheLimit  = 1024
 	MaximumTxMatchSize = 1000
 )
@@ -54,10 +49,7 @@ type XDCX struct {
 	Triegc     *prque.Prque[int64, common.Hash] // Priority queue mapping block numbers to tries to gc
 	StateCache tradingstate.Database            // State database to reuse between imports (contains state cache)    *XDCx_state.TradingStateDB
 
-	orderNonce map[common.Address]*big.Int
-
 	sdkNode           bool
-	settings          syncmap.Map // holds configuration settings that can be dynamically changed
 	tokenDecimalCache *lru.Cache[common.Address, *big.Int]
 	orderCache        *lru.Cache[common.Hash, map[common.Hash]tradingstate.OrderHistoryItem]
 }
@@ -80,7 +72,6 @@ func NewMongoDBEngine(cfg *Config) *XDCxDAO.MongoDatabase {
 
 func New(stack *node.Node, cfg *Config) *XDCX {
 	XDCX := &XDCX{
-		orderNonce:        make(map[common.Address]*big.Int),
 		Triegc:            prque.New[int64, common.Hash](nil),
 		tokenDecimalCache: lru.NewCache[common.Address, *big.Int](defaultCacheLimit),
 		orderCache:        lru.NewCache[common.Hash, map[common.Hash]tradingstate.OrderHistoryItem](tradingstate.OrderCacheLimit),
@@ -96,18 +87,8 @@ func New(stack *node.Node, cfg *Config) *XDCX {
 	}
 
 	XDCX.StateCache = tradingstate.NewDatabase(XDCX.db)
-	XDCX.settings.Store(overflowIdx, false)
 
 	return XDCX
-}
-
-// Overflow returns an indication if the message queue is full.
-func (XDCx *XDCX) Overflow() bool {
-	val, ok := XDCx.settings.Load(overflowIdx)
-	if !ok {
-		log.Warn("[XDCx-Overflow] fail to load overflow index")
-	}
-	return val.(bool)
 }
 
 func (XDCx *XDCX) IsSDKNode() bool {

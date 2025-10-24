@@ -23,10 +23,7 @@ import (
 )
 
 const (
-	ProtocolName       = "XDCxlending"
-	ProtocolVersion    = uint64(1)
-	ProtocolVersionStr = "1.0"
-	defaultCacheLimit  = 1024
+	defaultCacheLimit = 1024
 )
 
 var (
@@ -38,8 +35,6 @@ type Lending struct {
 	Triegc     *prque.Prque[int64, common.Hash] // Priority queue mapping block numbers to tries to gc
 	StateCache lendingstate.Database            // State database to reuse between imports (contains state cache)    *lendingstate.TradingStateDB
 
-	orderNonce map[common.Address]*big.Int
-
 	XDCx                *XDCx.XDCX
 	lendingItemHistory  *lru.Cache[common.Hash, map[common.Hash]lendingstate.LendingItemHistoryItem]
 	lendingTradeHistory *lru.Cache[common.Hash, map[common.Hash]lendingstate.LendingTradeHistoryItem]
@@ -47,7 +42,6 @@ type Lending struct {
 
 func New(stack *node.Node, XDCx *XDCx.XDCX) *Lending {
 	lending := &Lending{
-		orderNonce:          make(map[common.Address]*big.Int),
 		Triegc:              prque.New[int64, common.Hash](nil),
 		lendingItemHistory:  lru.NewCache[common.Hash, map[common.Hash]lendingstate.LendingItemHistoryItem](defaultCacheLimit),
 		lendingTradeHistory: lru.NewCache[common.Hash, map[common.Hash]lendingstate.LendingTradeHistoryItem](defaultCacheLimit),
