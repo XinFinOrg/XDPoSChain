@@ -16,6 +16,12 @@
 
 package trie
 
+import (
+	"maps"
+
+	"github.com/XinFinOrg/XDPoSChain/common"
+)
+
 // tracer tracks the changes of trie nodes. During the trie operations,
 // some nodes can be deleted from the trie, while these deleted nodes
 // won't be captured by trie.Hasher or trie.Committer. Thus, these deleted
@@ -141,24 +147,19 @@ func (t *tracer) reset() {
 
 // copy returns a deep copied tracer instance.
 func (t *tracer) copy() *tracer {
-	// Tracer isn't used right now, remove this check later.
 	if t == nil {
 		return nil
 	}
-	var (
-		insert = make(map[string]struct{})
-		delete = make(map[string]struct{})
-		origin = make(map[string][]byte)
-	)
-	for key := range t.insert {
-		insert[key] = struct{}{}
+
+	insert := maps.Clone(t.insert)
+	delete := maps.Clone(t.delete)
+
+	origin := make(map[string][]byte, len(t.origin))
+	for k, v := range t.origin {
+		// `common.CopyBytes` ensures deep copy according to comment
+		origin[k] = common.CopyBytes(v)
 	}
-	for key := range t.delete {
-		delete[key] = struct{}{}
-	}
-	for key, val := range t.origin {
-		origin[key] = val
-	}
+
 	return &tracer{
 		insert: insert,
 		delete: delete,

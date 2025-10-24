@@ -19,6 +19,8 @@ package clique
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
+	"slices"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/lru"
@@ -104,28 +106,16 @@ func (s *Snapshot) store(db ethdb.Database) error {
 
 // copy creates a deep copy of the snapshot, though not the individual votes.
 func (s *Snapshot) copy() *Snapshot {
-	cpy := &Snapshot{
+	return &Snapshot{
 		config:   s.config,
 		sigcache: s.sigcache,
 		Number:   s.Number,
 		Hash:     s.Hash,
-		Signers:  make(map[common.Address]struct{}),
-		Recents:  make(map[uint64]common.Address),
-		Votes:    make([]*Vote, len(s.Votes)),
-		Tally:    make(map[common.Address]Tally),
+		Signers:  maps.Clone(s.Signers),
+		Recents:  maps.Clone(s.Recents),
+		Votes:    slices.Clone(s.Votes),
+		Tally:    maps.Clone(s.Tally),
 	}
-	for signer := range s.Signers {
-		cpy.Signers[signer] = struct{}{}
-	}
-	for block, signer := range s.Recents {
-		cpy.Recents[block] = signer
-	}
-	for address, tally := range s.Tally {
-		cpy.Tally[address] = tally
-	}
-	copy(cpy.Votes, s.Votes)
-
-	return cpy
 }
 
 // validVote returns whether it makes sense to cast the specified vote in the
