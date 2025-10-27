@@ -10,7 +10,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
-	"golang.org/x/crypto/sha3"
 )
 
 func Position(list []common.Address, x common.Address) int {
@@ -92,14 +91,4 @@ func DecodeBytesExtraFields(b []byte, val interface{}) error {
 	default:
 		return fmt.Errorf("consensus version %d is not defined, or this block is v1 block", b[0])
 	}
-}
-
-func rlpHash(x interface{}) (h common.Hash) {
-	hw := sha3.NewLegacyKeccak256()
-	err := rlp.Encode(hw, x)
-	if err != nil {
-		log.Error("[rlpHash] Fail to hash item", "Error", err)
-	}
-	hw.Sum(h[:0])
-	return h
 }
