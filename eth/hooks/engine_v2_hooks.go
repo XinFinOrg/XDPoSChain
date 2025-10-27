@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"errors"
+	"fmt"
 	"math/big"
 	"time"
 
@@ -72,6 +73,10 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 
 		for i := uint64(1); ; i++ {
 			parentHeader := chain.GetHeader(parentHash, parentNumber)
+			if parentHeader == nil {
+				log.Error("[HookPenalty] fail to get parent header")
+				return []common.Address{}, fmt.Errorf("hook penalty fail to get parent header at number: %v, hash: %v", parentNumber, parentHash)
+			}
 			isEpochSwitch, _, err := adaptor.EngineV2.IsEpochSwitch(parentHeader)
 			if err != nil {
 				log.Error("[HookPenalty] isEpochSwitch", "err", err)
@@ -149,8 +154,10 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 					signingTxs, ok := adaptor.GetCachedSigningTxs(bhash)
 					if !ok {
 						block := chain.GetBlock(bhash, blockNumber)
-						txs := block.Transactions()
-						signingTxs = adaptor.CacheSigningTxs(bhash, txs)
+						if block != nil {
+							txs := block.Transactions()
+							signingTxs = adaptor.CacheSigningTxs(bhash, txs)
+						}
 					}
 					// Check signer signed?
 					for _, tx := range signingTxs {
@@ -221,8 +228,10 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 					signingTxs, ok := adaptor.GetCachedSigningTxs(bhash)
 					if !ok {
 						block := chain.GetBlock(bhash, blockNumber)
-						txs := block.Transactions()
-						signingTxs = adaptor.CacheSigningTxs(bhash, txs)
+						if block != nil {
+							txs := block.Transactions()
+							signingTxs = adaptor.CacheSigningTxs(bhash, txs)
+						}
 					}
 					// Check signer signed?
 					for _, tx := range signingTxs {
@@ -404,7 +413,12 @@ func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *type
 
 	h := header
 	for i := number - 1; ; i-- {
-		h = chain.GetHeader(h.ParentHash, i)
+		parentHash := h.ParentHash
+		h = chain.GetHeader(parentHash, i)
+		if h == nil {
+			log.Error("[GetSigningTxCount] fail to get header", "number", i, "hash", parentHash)
+			return nil, fmt.Errorf("fail to get header in GetSigningTxCount at number: %v, hash: %v", i, parentHash)
+		}
 		isEpochSwitch, _, err := c.IsEpochSwitch(h)
 		if err != nil {
 			return nil, err
@@ -464,8 +478,10 @@ func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *type
 		if !ok {
 			log.Debug("Failed get from cached", "hash", h.Hash().String(), "number", i)
 			block := chain.GetBlock(h.Hash(), i)
-			txs := block.Transactions()
-			signingTxs = c.CacheSigningTxs(h.Hash(), txs)
+			if block != nil {
+				txs := block.Transactions()
+				signingTxs = c.CacheSigningTxs(h.Hash(), txs)
+			}
 		}
 		for _, tx := range signingTxs {
 			blkHash := common.BytesToHash(tx.Data()[len(tx.Data())-32:])
