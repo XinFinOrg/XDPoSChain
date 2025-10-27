@@ -2081,16 +2081,18 @@ func (bc *BlockChain) PrepareBlock(block *types.Block) (err error) {
 		return err
 	}
 	result, err := bc.getResultBlock(block, false)
-	if err == nil {
+	switch err {
+	case nil:
 		bc.resultProcess.Add(block.Hash(), result)
 		return nil
-	} else if err == ErrKnownBlock {
+	case ErrKnownBlock:
 		return nil
-	} else if err == ErrStopPreparingBlock {
+	case ErrStopPreparingBlock:
 		log.Debug("Stop prepare a block because calculating", "number", block.NumberU64(), "hash", block.Hash(), "validator", block.Header().Validator)
 		return nil
+	default:
+		return err
 	}
-	return err
 }
 
 func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*ResultProcessBlock, error) {
