@@ -561,6 +561,8 @@ func (c *XDPoSConfig) String() string {
 	return fmt.Sprintf("XDPoSConfig{Period: %v, Epoch: %v, Reward: %v, RewardCheckpoint: %v, Gap: %v, FoudationWalletAddr: %v, SkipV1Validation: %v, V2: %s}", c.Period, c.Epoch, c.Reward, c.RewardCheckpoint, c.Gap, c.FoudationWalletAddr.String0x(), c.SkipV1Validation, c.V2.String())
 }
 
+// Description returns a human-readable description of XDPoSConfig
+// NOTE: don't append "\n" to end
 func (c *XDPoSConfig) Description(indent int) string {
 	if c == nil {
 		return "XDPoS: <nil>"
@@ -587,6 +589,8 @@ func (v2 *V2) String() string {
 	return fmt.Sprintf("V2{SwitchEpoch: %v, SwitchBlock: %v, %s}", v2.SwitchEpoch, v2.SwitchBlock, v2.CurrentConfig.String())
 }
 
+// Description returns a human-readable description of V2
+// NOTE: don't append "\n" to end
 func (v2 *V2) Description(indent int) string {
 	if v2 == nil {
 		return "V2: <nil>"
@@ -608,6 +612,8 @@ func (c *V2Config) String() string {
 	return fmt.Sprintf("V2{MaxMasternodes: %v, MaxProtectorNodes: %v, MaxObverserNodes: %v, SwitchRound: %v, MinePeriod: %v, TimeoutSyncThreshold: %v, TimeoutPeriod: %v, CertThreshold: %v, MasternodeReward: %v, ProtectorReward: %v, ObserverReward: %v, MinimumMinerBlockPerEpoch: %v, LimitPenaltyEpoch: %v, MinimumSigningTx: %v, %s}", c.MaxMasternodes, c.MaxProtectorNodes, c.MaxObverserNodes, c.SwitchRound, c.MinePeriod, c.TimeoutSyncThreshold, c.TimeoutPeriod, c.CertThreshold, c.MasternodeReward, c.ProtectorReward, c.ObserverReward, c.MinimumMinerBlockPerEpoch, c.LimitPenaltyEpoch, c.MinimumSigningTx, c.ExpTimeoutConfig.String())
 }
 
+// Description returns a human-readable description of V2Config
+// NOTE: don't append "\n" to end
 func (c *V2Config) Description(name string, indent int) string {
 	if c == nil {
 		return name + ": <nil>"
@@ -769,11 +775,12 @@ func (c *ChainConfig) String() string {
 }
 
 // Description returns a human-readable description of ChainConfig.
+// NOTE: don't append "\n" to end
 func (c *ChainConfig) Description() string {
-	var engine interface{}
+	var engine string
 	switch {
 	case c.Ethash != nil:
-		engine = c.Ethash
+		engine = c.Ethash.String()
 	case c.XDPoS != nil:
 		engine = c.XDPoS.Description(4)
 	default:
@@ -815,13 +822,27 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - Constantinople:              %-8v\n", c.ConstantinopleBlock)
 	banner += fmt.Sprintf("  - Petersburg:                  %-8v\n", c.PetersburgBlock)
 	banner += fmt.Sprintf("  - Istanbul:                    %-8v\n", c.IstanbulBlock)
+	banner += fmt.Sprintf("  - TIP2019Block:                %-8v\n", common.TIP2019Block)
+	banner += fmt.Sprintf("  - TIPSigning:                  %-8v\n", common.TIPSigning)
+	banner += fmt.Sprintf("  - TIPRandomize:                %-8v\n", common.TIPRandomize)
+	banner += fmt.Sprintf("  - TIPIncreaseMasternodes:      %-8v\n", common.TIPIncreaseMasternodes)
+	banner += fmt.Sprintf("  - BlackListHFNumber:           %-8v\n", common.BlackListHFNumber)
+	banner += fmt.Sprintf("  - TIPNoHalvingMNReward:        %-8v\n", common.TIPNoHalvingMNReward)
+	banner += fmt.Sprintf("  - TIPXDCX:                     %-8v\n", common.TIPXDCX)
+	banner += fmt.Sprintf("  - TIPXDCXLending:              %-8v\n", common.TIPXDCXLending)
+	banner += fmt.Sprintf("  - TIPXDCXCancellationFee:      %-8v\n", common.TIPXDCXCancellationFee)
+	banner += fmt.Sprintf("  - TIPTRC21Fee:                 %-8v\n", common.TIPTRC21Fee)
 	banner += fmt.Sprintf("  - Berlin:                      %-8v\n", berlinBlock)
 	banner += fmt.Sprintf("  - London:                      %-8v\n", londonBlock)
 	banner += fmt.Sprintf("  - Merge:                       %-8v\n", mergeBlock)
 	banner += fmt.Sprintf("  - Shanghai:                    %-8v\n", shanghaiBlock)
+	banner += fmt.Sprintf("  - BlockNumberGas50x:           %-8v\n", common.BlockNumberGas50x)
+	banner += fmt.Sprintf("  - TIPXDCXMinerDisable:         %-8v\n", common.TIPXDCXMinerDisable)
+	banner += fmt.Sprintf("  - TIPXDCXReceiverDisable:      %-8v\n", common.TIPXDCXReceiverDisable)
 	banner += fmt.Sprintf("  - Eip1559:                     %-8v\n", eip1559Block)
 	banner += fmt.Sprintf("  - Cancun:                      %-8v\n", cancunBlock)
 	banner += fmt.Sprintf("  - TIPUpgradeReward:            %-8v\n", common.TIPUpgradeReward)
+	banner += fmt.Sprintf("  - TipUpgradePenalty:           %-8v\n", common.TipUpgradePenalty)
 	banner += fmt.Sprintf("  - TIPEpochHalving:             %-8v\n", common.TIPEpochHalving)
 	banner += fmt.Sprintf("  - Engine:                      %v", engine)
 	return banner
