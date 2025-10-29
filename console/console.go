@@ -119,8 +119,7 @@ func New(config Config) (*Console, error) {
 		return nil, err
 	}
 
-	console.wg.Add(1)
-	go console.interruptHandler()
+	console.wg.Go(console.interruptHandler)
 
 	return console, nil
 }
@@ -341,8 +340,6 @@ func (c *Console) Evaluate(statement string) {
 // interruptHandler runs in its own goroutine and waits for signals.
 // When a signal is received, it interrupts the JS interpreter.
 func (c *Console) interruptHandler() {
-	defer c.wg.Done()
-
 	// During Interactive, liner inhibits the signal while it is prompting for
 	// input. However, the signal will be received while evaluating JS.
 	//

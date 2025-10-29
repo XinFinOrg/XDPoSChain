@@ -195,9 +195,8 @@ func (p *Peer) run() (remoteRequested bool, err error) {
 		readErr    = make(chan error, 1)
 		reason     DiscReason // sent to the peer
 	)
-	p.wg.Add(2)
-	go p.readLoop(readErr)
-	go p.pingLoop()
+	p.wg.Go(func() { p.readLoop(readErr) })
+	p.wg.Go(p.pingLoop)
 
 	// Start all protocol handlers.
 	writeStart <- struct{}{}
@@ -240,8 +239,6 @@ loop:
 }
 
 func (p *Peer) pingLoop() {
-	defer p.wg.Done()
-
 	ping := time.NewTimer(pingInterval)
 	defer ping.Stop()
 
@@ -264,7 +261,6 @@ func (p *Peer) pingLoop() {
 }
 
 func (p *Peer) readLoop(errc chan<- error) {
-	defer p.wg.Done()
 	for {
 		msg, err := p.rw.ReadMsg()
 		if err != nil {
@@ -353,7 +349,6 @@ outer:
 }
 
 func (p *Peer) startProtocols(writeStart <-chan struct{}, writeErr chan<- error) {
-	p.wg.Add(len(p.running))
 	for _, proto := range p.running {
 		proto.closed = p.closed
 		proto.wstart = writeStart
@@ -363,8 +358,7 @@ func (p *Peer) startProtocols(writeStart <-chan struct{}, writeErr chan<- error)
 			rw = newMsgEventer(rw, p.events, p.ID(), proto.Name)
 		}
 		p.log.Trace(fmt.Sprintf("Starting protocol %s/%d", proto.Name, proto.Version))
-
-		go func() {
+		p.wg.Go(func() {
 			err := proto.Run(p, rw)
 			if err == nil {
 				p.log.Trace(fmt.Sprintf("Protocol %s/%d returned", proto.Name, proto.Version))
@@ -373,8 +367,7 @@ func (p *Peer) startProtocols(writeStart <-chan struct{}, writeErr chan<- error)
 				p.log.Trace(fmt.Sprintf("Protocol %s/%d failed", proto.Name, proto.Version), "err", err)
 			}
 			p.protoErr <- err
-			p.wg.Done()
-		}()
+		})
 	}
 }
 

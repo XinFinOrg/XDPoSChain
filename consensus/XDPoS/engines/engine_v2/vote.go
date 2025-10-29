@@ -164,10 +164,9 @@ func (x *XDPoS_v2) verifyVotes(chain consensus.ChainReader, votes map[common.Has
 	emptySigner := common.Address{}
 	// Filter out non-Master nodes signatures
 	var wg sync.WaitGroup
-	wg.Add(len(votes))
-	for h, vote := range votes {
-		go func(hash common.Hash, v *types.Vote) {
-			defer wg.Done()
+	for _, vote := range votes {
+		wg.Go(func() {
+			v := vote.(*types.Vote)
 			signerAddress := v.GetSigner()
 			if signerAddress != emptySigner {
 				// verify that signer belongs to the final masternodes, we have not do so in previous steps
@@ -199,7 +198,7 @@ func (x *XDPoS_v2) verifyVotes(chain consensus.ChainReader, votes map[common.Has
 				return
 			}
 			v.SetSigner(masterNode)
-		}(h, vote.(*types.Vote))
+		})
 	}
 	wg.Wait()
 	elapsed := time.Since(start)

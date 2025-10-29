@@ -62,9 +62,8 @@ func (s *scheduler) run(sections chan uint64, dist chan *request, done chan []by
 	pend := make(chan uint64, cap(dist))
 
 	// Start the pipeline schedulers to forward between user -> distributor -> user
-	wg.Add(2)
-	go s.scheduleRequests(sections, dist, pend, quit, wg)
-	go s.scheduleDeliveries(pend, done, quit, wg)
+	wg.Go(func() { s.scheduleRequests(sections, dist, pend, quit) })
+	wg.Go(func() { s.scheduleDeliveries(pend, done, quit) })
 }
 
 // reset cleans up any leftovers from previous runs. This is required before a
@@ -84,9 +83,8 @@ func (s *scheduler) reset() {
 // scheduleRequests reads section retrieval requests from the input channel,
 // deduplicates the stream and pushes unique retrieval tasks into the distribution
 // channel for a database or network layer to honour.
-func (s *scheduler) scheduleRequests(reqs chan uint64, dist chan *request, pend chan uint64, quit chan struct{}, wg *sync.WaitGroup) {
+func (s *scheduler) scheduleRequests(reqs chan uint64, dist chan *request, pend chan uint64, quit chan struct{}) {
 	// Clean up the goroutine and pipeline when done
-	defer wg.Done()
 	defer close(pend)
 
 	// Keep reading and scheduling section requests
@@ -131,9 +129,8 @@ func (s *scheduler) scheduleRequests(reqs chan uint64, dist chan *request, pend 
 
 // scheduleDeliveries reads section acceptance notifications and waits for them
 // to be delivered, pushing them into the output data buffer.
-func (s *scheduler) scheduleDeliveries(pend chan uint64, done chan []byte, quit chan struct{}, wg *sync.WaitGroup) {
+func (s *scheduler) scheduleDeliveries(pend chan uint64, done chan []byte, quit chan struct{}) {
 	// Clean up the goroutine and pipeline when done
-	defer wg.Done()
 	defer close(done)
 
 	// Keep reading notifications and scheduling deliveries

@@ -47,10 +47,9 @@ var testChainForkLightA, testChainForkLightB, testChainForkHeavy *testChain
 func init() {
 	var forkLen = int(MaxForkAncestry + 50)
 	var wg sync.WaitGroup
-	wg.Add(3)
-	go func() { testChainForkLightA = testChainBase.makeFork(forkLen, false, 1); wg.Done() }()
-	go func() { testChainForkLightB = testChainBase.makeFork(forkLen, false, 2); wg.Done() }()
-	go func() { testChainForkHeavy = testChainBase.makeFork(forkLen, true, 3); wg.Done() }()
+	wg.Go(func() { testChainForkLightA = testChainBase.makeFork(forkLen, false, 1) })
+	wg.Go(func() { testChainForkLightB = testChainBase.makeFork(forkLen, false, 2) })
+	wg.Go(func() { testChainForkHeavy = testChainBase.makeFork(forkLen, true, 3) })
 	wg.Wait()
 }
 

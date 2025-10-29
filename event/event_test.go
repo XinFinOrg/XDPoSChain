@@ -190,11 +190,9 @@ func BenchmarkPostConcurrent(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			mux.Post(testEvent(0))
 		}
-		wg.Done()
 	}
-	wg.Add(5)
 	for i := 0; i < 5; i++ {
-		go poster()
+		wg.Go(poster)
 	}
 	wg.Wait()
 }

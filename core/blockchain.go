@@ -334,8 +334,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	}
 
 	// Start future block processor.
-	bc.wg.Add(1)
-	go bc.futureBlocksLoop()
+	bc.wg.Go(bc.futureBlocksLoop)
 
 	return bc, nil
 }
@@ -2580,8 +2579,6 @@ func (bc *BlockChain) PostChainEvents(events []interface{}, logs []*types.Log) {
 
 // futureBlocksLoop processes the 'future block' queue.
 func (bc *BlockChain) futureBlocksLoop() {
-	defer bc.wg.Done()
-
 	futureTimer := time.NewTicker(100 * time.Millisecond)
 	defer futureTimer.Stop()
 

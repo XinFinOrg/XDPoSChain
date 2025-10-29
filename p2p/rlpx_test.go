@@ -163,9 +163,7 @@ func TestProtocolHandshake(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		defer fd0.Close()
 		rlpx := newRLPX(fd0)
 		remid, err := rlpx.doEncHandshake(prv0, node1)
@@ -189,9 +187,8 @@ func TestProtocolHandshake(t *testing.T) {
 			return
 		}
 		rlpx.close(DiscQuitting)
-	}()
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		defer fd1.Close()
 		rlpx := newRLPX(fd1)
 		remid, err := rlpx.doEncHandshake(prv1, nil)
@@ -218,7 +215,7 @@ func TestProtocolHandshake(t *testing.T) {
 		if err := ExpectMsg(rlpx, discMsg, []DiscReason{DiscQuitting}); err != nil {
 			t.Errorf("error receiving disconnect: %v", err)
 		}
-	}()
+	})
 	wg.Wait()
 }
 

@@ -79,9 +79,7 @@ func TestLazyQueue(t *testing.T) {
 		stopCh = make(chan chan struct{})
 	)
 	defer wg.Wait()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			select {
 			case <-clock.After(testQueueRefresh):
@@ -92,7 +90,7 @@ func TestLazyQueue(t *testing.T) {
 				return
 			}
 		}
-	}()
+	})
 
 	for c := 0; c < testSteps; c++ {
 		i := rand.Intn(testItems)

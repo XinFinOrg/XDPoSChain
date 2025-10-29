@@ -191,8 +191,7 @@ func NewOrderPool(chainconfig *params.ChainConfig, chain blockChainXDCx) *OrderP
 	pool.chainHeadSub = pool.chain.SubscribeChainHeadEvent(pool.chainHeadCh)
 
 	// Start the event loop and return
-	pool.wg.Add(1)
-	go pool.loop()
+	pool.wg.Go(pool.loop)
 
 	return pool
 }
@@ -201,8 +200,6 @@ func NewOrderPool(chainconfig *params.ChainConfig, chain blockChainXDCx) *OrderP
 // outside blockchain events as well as for various reporting and transaction
 // eviction events.
 func (pool *OrderPool) loop() {
-	defer pool.wg.Done()
-
 	// Start the stats reporting and transaction eviction tickers
 
 	report := time.NewTicker(statsReportInterval)

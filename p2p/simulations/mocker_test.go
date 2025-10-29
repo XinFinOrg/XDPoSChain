@@ -86,10 +86,7 @@ func TestMocker(t *testing.T) {
 	nodemap := make(map[discover.NodeID]bool)
 	nodesComplete := false
 	connCount := 0
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
+	wg.Go(func() {
 		for connCount < (nodeCount-1)*2 {
 			select {
 			case event := <-events:
@@ -111,7 +108,7 @@ func TestMocker(t *testing.T) {
 				return
 			}
 		}
-	}()
+	})
 
 	//take the last element of the mockerlist as the default mocker-type to ensure one is enabled
 	mockertype := mockerlist[len(mockerlist)-1]

@@ -182,16 +182,10 @@ func TestCopy(t *testing.T) {
 	}
 
 	// Finalise the changes on all concurrently
-	finalise := func(wg *sync.WaitGroup, db *StateDB) {
-		defer wg.Done()
-		db.Finalise(true)
-	}
-
 	var wg sync.WaitGroup
-	wg.Add(3)
-	go finalise(&wg, orig)
-	go finalise(&wg, copy)
-	go finalise(&wg, ccopy)
+	wg.Go(func() { orig.Finalise(true) })
+	wg.Go(func() { copy.Finalise(true) })
+	wg.Go(func() { ccopy.Finalise(true) })
 	wg.Wait()
 
 	// Verify that the three states have been updated independently

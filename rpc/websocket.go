@@ -318,8 +318,7 @@ func newWebsocketCodec(conn *websocket.Conn, host string, req http.Header, readL
 		}
 		return nil
 	})
-	wc.wg.Add(1)
-	go wc.pingLoop()
+	wc.wg.Go(wc.pingLoop)
 	return wc
 }
 
@@ -347,7 +346,6 @@ func (wc *websocketCodec) writeJSON(ctx context.Context, v interface{}, isError 
 // pingLoop sends periodic ping frames when the connection is idle.
 func (wc *websocketCodec) pingLoop() {
 	var pingTimer = time.NewTimer(wsPingInterval)
-	defer wc.wg.Done()
 	defer pingTimer.Stop()
 
 	for {

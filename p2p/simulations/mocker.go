@@ -131,8 +131,6 @@ func probabilistic(net *Network, quit chan struct{}, nodeCount int) {
 			lowid = rand1
 			highid = rand2
 		}
-		var steps = highid - lowid
-		wg.Add(steps)
 		for i := lowid; i < highid; i++ {
 			select {
 			case <-quit:
@@ -144,17 +142,16 @@ func probabilistic(net *Network, quit chan struct{}, nodeCount int) {
 			err := net.Stop(nodes[i])
 			if err != nil {
 				log.Error(fmt.Sprintf("Error stopping node %s", nodes[i]))
-				wg.Done()
 				continue
 			}
-			go func(id discover.NodeID) {
+			wg.Go(func() {
+				id := nodes[i]
 				time.Sleep(randWait)
 				err := net.Start(id)
 				if err != nil {
 					log.Error(fmt.Sprintf("Error starting node %s", id))
 				}
-				wg.Done()
-			}(nodes[i])
+			})
 		}
 		wg.Wait()
 	}

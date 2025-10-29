@@ -248,10 +248,8 @@ func XTestDelivery(t *testing.T) {
 	q := newQueue(10, 10)
 	var wg sync.WaitGroup
 	q.Prepare(1, FastSync)
-	wg.Add(1)
-	go func() {
+	wg.Go(func() {
 		// deliver headers
-		defer wg.Done()
 		c := 1
 		for {
 			//fmt.Printf("getting headers from %d\n", c)
@@ -262,11 +260,9 @@ func XTestDelivery(t *testing.T) {
 			q.Schedule(hdrs, uint64(c))
 			c += l
 		}
-	}()
-	wg.Add(1)
-	go func() {
+	})
+	wg.Go(func() {
 		// collect results
-		defer wg.Done()
 		tot := 0
 		for {
 			res := q.Results(true)
@@ -276,10 +272,8 @@ func XTestDelivery(t *testing.T) {
 			world.forget(res[len(res)-1].Header.Number.Uint64())
 
 		}
-	}()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		// reserve body fetch
 		i := 4
 		for {
@@ -304,10 +298,8 @@ func XTestDelivery(t *testing.T) {
 				time.Sleep(200 * time.Millisecond)
 			}
 		}
-	}()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		// reserve receiptfetch
 		peer := dummyPeer("peer-3")
 		for {
@@ -326,10 +318,8 @@ func XTestDelivery(t *testing.T) {
 				time.Sleep(200 * time.Millisecond)
 			}
 		}
-	}()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		for i := 0; i < 50; i++ {
 			time.Sleep(300 * time.Millisecond)
 			//world.tick()
@@ -340,17 +330,15 @@ func XTestDelivery(t *testing.T) {
 			time.Sleep(2990 * time.Millisecond)
 
 		}
-	}()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	})
+	wg.Go(func() {
 		for {
 			time.Sleep(990 * time.Millisecond)
 			fmt.Printf("world block tip is %d\n",
 				world.chain[len(world.chain)-1].Header().Number.Uint64())
 			fmt.Println(q.Stats())
 		}
-	}()
+	})
 	wg.Wait()
 }
 

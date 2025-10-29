@@ -585,19 +585,17 @@ func InitSignerInTransactions(config *params.ChainConfig, header *types.Header, 
 		chunkSize++
 	}
 	wg := sync.WaitGroup{}
-	wg.Add(nWorker)
 	for i := 0; i < nWorker; i++ {
 		from := i * chunkSize
 		to := from + chunkSize
 		if to > txs.Len() {
 			to = txs.Len()
 		}
-		go func(from int, to int) {
+		wg.Go(func() {
 			for j := from; j < to; j++ {
 				types.CacheSigner(signer, txs[j])
 			}
-			wg.Done()
-		}(from, to)
+		})
 	}
 	wg.Wait()
 }

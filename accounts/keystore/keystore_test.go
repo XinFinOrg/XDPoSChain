@@ -406,14 +406,12 @@ func TestImportRace(t *testing.T) {
 	_, ks2 := tmpKeyStore(t)
 	var atom atomic.Uint32
 	var wg sync.WaitGroup
-	wg.Add(2)
 	for i := 0; i < 2; i++ {
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if _, err := ks2.Import(json, "new", "new"); err != nil {
 				atom.Add(1)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if atom.Load() != 1 {

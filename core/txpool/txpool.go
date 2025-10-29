@@ -334,8 +334,7 @@ func NewTxPool(config Config, chainconfig *params.ChainConfig, chain blockChain)
 	pool.reset(nil, chain.CurrentBlock().Header())
 
 	// Start the reorg loop early so it can handle requests generated during journal loading.
-	pool.wg.Add(1)
-	go pool.scheduleReorgLoop()
+	pool.wg.Go(pool.scheduleReorgLoop)
 
 	// If local transactions and journaling is enabled, load from disk
 	if !config.NoLocals && config.Journal != "" {
@@ -351,8 +350,7 @@ func NewTxPool(config Config, chainconfig *params.ChainConfig, chain blockChain)
 
 	// Subscribe events from blockchain and start the main event loop.
 	pool.chainHeadSub = pool.chain.SubscribeChainHeadEvent(pool.chainHeadCh)
-	pool.wg.Add(1)
-	go pool.loop()
+	pool.wg.Go(pool.loop)
 
 	return pool
 }
@@ -361,8 +359,6 @@ func NewTxPool(config Config, chainconfig *params.ChainConfig, chain blockChain)
 // outside blockchain events as well as for various reporting and transaction
 // eviction events.
 func (pool *TxPool) loop() {
-	defer pool.wg.Done()
-
 	var (
 		prevPending, prevQueued, prevStales int
 		// Start the stats reporting and transaction eviction tickers
@@ -1224,8 +1220,6 @@ func (pool *TxPool) queueTxEvent(tx *types.Transaction) {
 // call those methods directly, but request them being run using requestReset and
 // requestPromoteExecutables instead.
 func (pool *TxPool) scheduleReorgLoop() {
-	defer pool.wg.Done()
-
 	var (
 		curDone       chan struct{} // non-nil while runReorg is active
 		nextDone      = make(chan struct{})

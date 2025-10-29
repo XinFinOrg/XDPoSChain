@@ -182,8 +182,7 @@ func NewLendingPool(chainconfig *params.ChainConfig, chain blockChainLending) *L
 	pool.chainHeadSub = pool.chain.SubscribeChainHeadEvent(pool.chainHeadCh)
 
 	// Start the event loop and return
-	pool.wg.Add(1)
-	go pool.loop()
+	pool.wg.Go(pool.loop)
 
 	return pool
 }
@@ -192,8 +191,6 @@ func NewLendingPool(chainconfig *params.ChainConfig, chain blockChainLending) *L
 // outside blockchain events as well as for various reporting and transaction
 // eviction events.
 func (pool *LendingPool) loop() {
-	defer pool.wg.Done()
-
 	// Start the stats reporting and transaction eviction tickers
 	var prevPending, prevQueued int
 

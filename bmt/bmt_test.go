@@ -263,23 +263,21 @@ func TestHasherConcurrency(t *testing.T) {
 	defer pool.Drain(0)
 	wg := sync.WaitGroup{}
 	cycles := 100
-	wg.Add(maxproccnt * cycles)
 	errc := make(chan error)
 
 	for p := 0; p < maxproccnt; p++ {
 		for i := 0; i < cycles; i++ {
-			go func() {
+			wg.Go(func() {
 				bmt := New(pool)
 				n := rand.Intn(4096)
 				tdata := testDataReader(n)
 				data := make([]byte, n)
 				tdata.Read(data)
 				err := testHasherCorrectness(bmt, hasher, data, n, 128)
-				wg.Done()
 				if err != nil {
 					errc <- err
 				}
-			}()
+			})
 		}
 	}
 	go func() {
@@ -386,18 +384,16 @@ func benchmarkBMTBaseline(n int, t *testing.B) {
 	for i := 0; i < t.N; i++ {
 		count := int32((n-1)/hasher().Size() + 1)
 		wg := sync.WaitGroup{}
-		wg.Add(maxproccnt)
 		var i int32
 		for j := 0; j < maxproccnt; j++ {
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				h := hasher()
 				for atomic.AddInt32(&i, 1) < count {
 					h.Reset()
 					h.Write(data)
 					h.Sum(nil)
 				}
-			}()
+			})
 		}
 		wg.Wait()
 	}
@@ -437,15 +433,13 @@ func benchmarkHasherReuse(poolsize, n int, t *testing.B) {
 	t.ResetTimer()
 	for i := 0; i < t.N; i++ {
 		wg := sync.WaitGroup{}
-		wg.Add(cycles)
 		for j := 0; j < cycles; j++ {
-			bmt := New(pool)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
+				bmt := New(pool)
 				bmt.Reset()
 				bmt.Write(data)
 				bmt.Sum(nil)
-			}()
+			})
 		}
 		wg.Wait()
 	}
