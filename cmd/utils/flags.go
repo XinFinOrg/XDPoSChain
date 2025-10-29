@@ -1826,7 +1826,7 @@ func MakeConsolePreloads(ctx *cli.Context) []string {
 	preloads := []string{}
 
 	assets := ctx.String(JSpathFlag.Name)
-	for _, file := range strings.Split(ctx.String(PreloadJSFlag.Name), ",") {
+	for file := range strings.SplitSeq(ctx.String(PreloadJSFlag.Name), ",") {
 		preloads = append(preloads, common.AbsolutePath(assets, strings.TrimSpace(file)))
 	}
 	return preloads
