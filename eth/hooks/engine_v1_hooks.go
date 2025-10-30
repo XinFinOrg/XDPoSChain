@@ -8,7 +8,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/common"
-	"github.com/XinFinOrg/XDPoSChain/common/sort"
+	xdc_sort "github.com/XinFinOrg/XDPoSChain/common/sort"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
@@ -241,7 +241,7 @@ func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 			candidates = append(candidates, utils.Masternode{Address: address, Stake: v})
 		}
 		// sort candidates by stake descending
-		sort.Slice(candidates, func(i, j int) bool {
+		xdc_sort.Slice(candidates, func(i, j int) bool {
 			return candidates[i].Stake.Cmp(candidates[j].Stake) >= 0
 		})
 		if len(candidates) > 150 {
