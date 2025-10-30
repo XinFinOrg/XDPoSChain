@@ -41,7 +41,7 @@ import (
 // mutations to the binding code.
 func TestBindingGeneration(t *testing.T) {
 	matches, _ := filepath.Glob("internal/contracts/*")
-	var dirs []string
+	dirs := make([]string, 0, len(matches))
 	for _, match := range matches {
 		f, _ := os.Stat(match)
 		if f.IsDir() {
@@ -50,12 +50,6 @@ func TestBindingGeneration(t *testing.T) {
 	}
 
 	for _, dir := range dirs {
-		var (
-			abis  []string
-			bins  []string
-			types []string
-			libs  = make(map[string]string)
-		)
 		basePath := filepath.Join("internal/contracts", dir)
 		combinedJsonPath := filepath.Join(basePath, "combined-abi.json")
 		abiBytes, err := os.ReadFile(combinedJsonPath)
@@ -67,6 +61,10 @@ func TestBindingGeneration(t *testing.T) {
 			t.Fatalf("Failed to read contract information from json output: %v", err)
 		}
 
+		abis := make([]string, 0, len(contracts))
+		bins := make([]string, 0, len(contracts))
+		types := make([]string, 0, len(contracts))
+		libs := make(map[string]string, len(contracts))
 		for name, contract := range contracts {
 			// fully qualified name is of the form <solFilePath>:<type>
 			nameParts := strings.Split(name, ":")

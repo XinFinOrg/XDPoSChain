@@ -166,7 +166,7 @@ func isArrayEqual(a [][]int64, b [][]int64) bool {
 
 // Unit test for
 func TestGenM2FromRandomize(t *testing.T) {
-	var a []int64
+	a := make([]int64, 0, 11)
 	for i := 0; i <= 10; i++ {
 		a = append(a, int64(rand.Intn(9999)))
 	}

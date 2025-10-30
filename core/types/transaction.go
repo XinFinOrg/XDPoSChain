@@ -609,7 +609,7 @@ func (s Transactions) EncodeIndex(i int, w *bytes.Buffer) {
 func TxDifference(a, b Transactions) (keep Transactions) {
 	keep = make(Transactions, 0, len(a))
 
-	remove := make(map[common.Hash]struct{})
+	remove := make(map[common.Hash]struct{}, len(b))
 	for _, tx := range b {
 		remove[tx.Hash()] = struct{}{}
 	}
@@ -627,7 +627,7 @@ func TxDifference(a, b Transactions) (keep Transactions) {
 func HashDifference(a, b []common.Hash) []common.Hash {
 	keep := make([]common.Hash, 0, len(a))
 
-	remove := make(map[common.Hash]struct{})
+	remove := make(map[common.Hash]struct{}, len(b))
 	for _, hash := range b {
 		remove[hash] = struct{}{}
 	}

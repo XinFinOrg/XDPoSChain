@@ -384,7 +384,7 @@ func TestDuplicateAvoidanceSync(t *testing.T) {
 	// The code requests are ignored here since there is no code
 	// at the testing trie.
 	paths, nodes, _ := sched.Missing(0)
-	var elements []trieElement
+	elements := make([]trieElement, 0, len(paths))
 	for i := 0; i < len(paths); i++ {
 		elements = append(elements, trieElement{
 			path:     paths[i],
