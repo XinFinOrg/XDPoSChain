@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"math/big"
 	"reflect"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -59,12 +59,6 @@ func accountRangeTest(t *testing.T, trie *state.Trie, statedb *state.StateDB, st
 	return result
 }
 
-type resultHash []common.Hash
-
-func (h resultHash) Len() int           { return len(h) }
-func (h resultHash) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
-func (h resultHash) Less(i, j int) bool { return bytes.Compare(h[i].Bytes(), h[j].Bytes()) < 0 }
-
 func TestAccountRange(t *testing.T) {
 	t.Parallel()
 
@@ -98,7 +92,7 @@ func TestAccountRange(t *testing.T) {
 	firstResult := accountRangeTest(t, &trie, sdb, common.Hash{}, AccountRangeMaxResults, AccountRangeMaxResults)
 	secondResult := accountRangeTest(t, &trie, sdb, common.BytesToHash(firstResult.Next), AccountRangeMaxResults, AccountRangeMaxResults)
 
-	hList := make(resultHash, 0)
+	hList := make([]common.Hash, 0)
 	for addr1 := range firstResult.Accounts {
 		// If address is empty, then it makes no sense to compare
 		// them as they might be two different accounts.
@@ -112,7 +106,7 @@ func TestAccountRange(t *testing.T) {
 	}
 	// Test to see if it's possible to recover from the middle of the previous
 	// set and get an even split between the first and second sets.
-	sort.Sort(hList)
+	slices.SortFunc(hList, common.Hash.Cmp)
 	middleH := hList[AccountRangeMaxResults/2]
 	middleResult := accountRangeTest(t, &trie, sdb, middleH, AccountRangeMaxResults, AccountRangeMaxResults)
 	missing, infirst, insecond := 0, 0, 0
