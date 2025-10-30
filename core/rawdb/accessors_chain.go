@@ -676,8 +676,8 @@ func WriteBadBlock(db ethdb.KeyValueStore, block *types.Block) {
 		Body:   block.Body(),
 	})
 	slices.SortFunc(badBlocks, func(a, b *badBlock) int {
-		// Note: sorting in descending number order.
-		return -a.Header.Number.Cmp(b.Header.Number)
+		// NOTE: sorting in descending number order.
+		return b.Header.Number.Cmp(a.Header.Number)
 	})
 	if len(badBlocks) > badBlockToKeep {
 		badBlocks = badBlocks[:badBlockToKeep]
