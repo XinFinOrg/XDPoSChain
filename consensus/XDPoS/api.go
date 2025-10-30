@@ -23,7 +23,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -534,8 +534,11 @@ func (api *API) getRewardFileNamesInRange(begin, end *rpc.BlockNumber) ([]reward
 	if err != nil {
 		return nil, err
 	}
+	if len(files) == 0 {
+		return nil, errors.New("no file in rewards folder")
+	}
 
-	var rewardFileNames = []rewardFileName{}
+	rewardFileNames := make([]rewardFileName, 0, len(files))
 	for _, file := range files {
 		if !file.IsDir() {
 			filePrefix, fileSuffix, found := strings.Cut(file.Name(), ".")
@@ -554,27 +557,30 @@ func (api *API) getRewardFileNamesInRange(begin, end *rpc.BlockNumber) ([]reward
 			}
 		}
 	}
+	if len(rewardFileNames) == 0 {
+		return nil, errors.New("no reward file in rewards folder")
+	}
 
-	sort.Slice(rewardFileNames, func(i, j int) bool {
-		return rewardFileNames[i].epochBlockNum < rewardFileNames[j].epochBlockNum
+	slices.SortFunc(rewardFileNames, func(a, b rewardFileName) int {
+		return a.epochBlockNum - b.epochBlockNum
 	})
-
-	epochNumbers := make([]int, len(rewardFileNames))
-	for i, obj := range rewardFileNames {
-		epochNumbers[i] = obj.epochBlockNum
+	startIndex, _ := slices.BinarySearchFunc(rewardFileNames, int(beginHeader.Number.Int64()), func(rfn rewardFileName, number int) int {
+		return rfn.epochBlockNum - number
+	})
+	if startIndex == len(rewardFileNames) {
+		// retrun early if startIndex is out of bounds
+		return []rewardFileName{}, nil
+	}
+	endIndex, _ := slices.BinarySearchFunc(rewardFileNames, int(endHeader.Number.Int64()), func(rfn rewardFileName, number int) int {
+		return rfn.epochBlockNum - number
+	})
+	if endIndex != len(rewardFileNames) {
+		endIndex++ // include the endIndex file
 	}
 
-	startIndex := sort.SearchInts(epochNumbers, int(beginHeader.Number.Int64()))
-	endIndex := sort.SearchInts(epochNumbers, int(endHeader.Number.Int64()))
-	if endIndex == len(epochNumbers) {
-		endIndex-- //this is to prevent endIndex out of bounds when endInput is higher than last reward(epoch) block but lower than latest block
-	}
-
-	var rewardfileNamesInRange []rewardFileName
-	for i := startIndex; i <= endIndex; i++ {
-		rewardfileNamesInRange = append(rewardfileNamesInRange, rewardFileNames[i])
-	}
-	return rewardfileNamesInRange, nil
+	// compact the slice's memory
+	ret := rewardFileNames[startIndex:endIndex]
+	return ret[:len(ret):len(ret)], nil
 }
 
 func getEpochReward(account common.Address, header *types.Header) (AccountEpochReward, error) {
