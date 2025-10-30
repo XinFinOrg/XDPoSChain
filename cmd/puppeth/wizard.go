@@ -24,7 +24,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,7 +53,7 @@ func (c config) servers() []string {
 	for server := range c.Servers {
 		servers = append(servers, server)
 	}
-	sort.Strings(servers)
+	slices.Sort(servers)
 
 	return servers
 }

@@ -19,7 +19,7 @@ package dbtest
 import (
 	"bytes"
 	"reflect"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
@@ -133,7 +133,7 @@ func TestDatabaseSuite(t *testing.T, New func() ethdb.KeyValueStore) {
 		defer db.Close()
 
 		keys := []string{"1", "2", "3", "4", "6", "10", "11", "12", "20", "21", "22"}
-		sort.Strings(keys) // 1, 10, 11, etc
+		slices.Sort(keys) // 1, 10, 11, etc
 
 		for _, k := range keys {
 			if err := db.Put([]byte(k), nil); err != nil {
@@ -319,7 +319,7 @@ func iterateKeys(it ethdb.Iterator) []string {
 	for it.Next() {
 		keys = append(keys, string(it.Key()))
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	it.Release()
 	return keys
 }

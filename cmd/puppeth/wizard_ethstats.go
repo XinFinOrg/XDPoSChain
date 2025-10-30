@@ -18,7 +18,7 @@ package main
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
@@ -98,7 +98,7 @@ func (w *wizard) deployEthstats() {
 				}
 				break
 			}
-			sort.Strings(infos.banned)
+			slices.Sort(infos.banned)
 		}
 	}
 	// Try to deploy the ethstats server on the host
