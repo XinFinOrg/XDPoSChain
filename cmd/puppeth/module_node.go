@@ -28,6 +28,8 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // nodeDockerfile is the Dockerfile required to run an Ethereum node.
@@ -241,7 +243,8 @@ func checkNode(client *sshClient, network string, boot bool) (*nodeInfos, error)
 	// Run a sanity check to see if the devp2p is reachable
 	port := infos.portmap[infos.envvars["PORT"]]
 	if err = checkPort(client.server, port); err != nil {
-		log.Warn(fmt.Sprintf("%s devp2p port seems unreachable", strings.Title(kind)), "server", client.server, "port", port, "err", err)
+		caser := cases.Title(language.English)
+		log.Warn(fmt.Sprintf("%s devp2p port seems unreachable", caser.String(kind)), "server", client.server, "port", port, "err", err)
 	}
 	// Assemble and return the useful infos
 	stats := &nodeInfos{

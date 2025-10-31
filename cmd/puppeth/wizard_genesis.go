@@ -256,9 +256,7 @@ func (w *wizard) makeGenesis() {
 
 		var signers []common.Address
 		if input != nil {
-			for _, addr := range input.Masternodes {
-				signers = append(signers, addr)
-			}
+			signers = append(signers, input.Masternodes...)
 		} else {
 			for {
 				if address := w.readAddress(); address != nil {
@@ -335,6 +333,7 @@ func (w *wizard) makeGenesis() {
 		pKey, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 		addr := crypto.PubkeyToAddress(pKey.PublicKey)
 		contractBackend := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: big.NewInt(1000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
+		//lint:ignore SA1019 chainID is not determined at this time
 		transactOpts := bind.NewKeyedTransactor(pKey)
 
 		minDeposit := new(big.Int).SetUint64(threshold)

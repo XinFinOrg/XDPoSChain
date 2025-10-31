@@ -28,6 +28,8 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // faucetDockerfile is the Dockerfile required to build an faucet container to
@@ -89,6 +91,7 @@ func deployFaucet(client *sshClient, network string, bootnodes []string, config 
 	files := make(map[string][]byte)
 
 	dockerfile := new(bytes.Buffer)
+	caser := cases.Title(language.English)
 	template.Must(template.New("").Parse(faucetDockerfile)).Execute(dockerfile, map[string]interface{}{
 		"NetworkID":     config.node.network,
 		"Bootnodes":     strings.Join(bootnodes, ","),
@@ -96,7 +99,7 @@ func deployFaucet(client *sshClient, network string, bootnodes []string, config 
 		"EthPort":       config.node.port,
 		"CaptchaToken":  config.captchaToken,
 		"CaptchaSecret": config.captchaSecret,
-		"FaucetName":    strings.Title(network),
+		"FaucetName":    caser.String(network),
 		"FaucetAmount":  config.amount,
 		"FaucetMinutes": config.minutes,
 		"FaucetTiers":   config.tiers,

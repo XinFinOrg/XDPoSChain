@@ -122,24 +122,6 @@ func tearDown(client *sshClient, network string, service string, purge bool) ([]
 	return nil, nil
 }
 
-// resolve retrieves the hostname a service is running on either by returning the
-// actual server name and port, or preferably an nginx virtual host if available.
-func resolve(client *sshClient, network string, service string, port int) (string, error) {
-	// Inspect the service to get various configurations from it
-	infos, err := inspectContainer(client, fmt.Sprintf("%s_%s_1", network, service))
-	if err != nil {
-		return "", err
-	}
-	if !infos.running {
-		return "", ErrServiceOffline
-	}
-	// Container online, extract any environmental variables
-	if vhost := infos.envvars["VIRTUAL_HOST"]; vhost != "" {
-		return vhost, nil
-	}
-	return fmt.Sprintf("%s:%d", client.server, port), nil
-}
-
 // checkPort tries to connect to a remote host on a given
 func checkPort(host string, port int) error {
 	log.Trace("Verifying remote TCP connectivity", "server", host, "port", port)

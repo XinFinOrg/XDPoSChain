@@ -56,6 +56,7 @@ func main() {
 	app.Action = func(c *cli.Context) error {
 		// Set up the logger to print everything and the random generator
 		log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(os.Stdout, log.FromLegacyLevel(c.Int("loglevel")), true)))
+		//lint:ignore SA1019 set GODEBUG=randseednop=0 to restore old behavior of `rand.Seed()`
 		rand.Seed(time.Now().UnixNano())
 
 		network := c.String("network")

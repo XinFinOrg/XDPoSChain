@@ -18,9 +18,10 @@ package main
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // manageServers displays a list of servers the user can disconnect from, and an
@@ -123,8 +124,8 @@ func (w *wizard) manageComponents() {
 		for _, service := range services {
 			serviceHosts = append(serviceHosts, server)
 			serviceNames = append(serviceNames, service)
-
-			fmt.Printf(" %d. Tear down %s on %s\n", len(serviceHosts), strings.Title(service), server)
+			caser := cases.Title(language.English)
+			fmt.Printf(" %d. Tear down %s on %s\n", len(serviceHosts), caser.String(service), server)
 		}
 	}
 	fmt.Printf(" %d. Deploy new network component\n", len(serviceHosts)+1)
