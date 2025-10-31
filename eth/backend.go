@@ -178,12 +178,12 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	var (
 		vmConfig    = vm.Config{EnablePreimageRecording: config.EnablePreimageRecording}
 		cacheConfig = &core.CacheConfig{
-			TrieCleanLimit:      config.TrieCleanCache,
-			TrieCleanNoPrefetch: config.NoPrefetch,
-			TrieDirtyLimit:      config.TrieDirtyCache,
-			TrieDirtyDisabled:   config.NoPruning,
-			TrieTimeLimit:       config.TrieTimeout,
-			Preimages:           config.Preimages,
+			TrieCleanLimit:    config.TrieCleanCache,
+			TrieCleanPrefetch: config.Prefetch,
+			TrieDirtyLimit:    config.TrieDirtyCache,
+			TrieDirtyDisabled: config.NoPruning,
+			TrieTimeLimit:     config.TrieTimeout,
+			Preimages:         config.Preimages,
 		}
 	)
 	if config.VMTrace != "" {

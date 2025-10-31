@@ -23,7 +23,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		NetworkId               uint64
 		SyncMode                downloader.SyncMode
 		NoPruning               bool
-		NoPrefetch              bool
+		Prefetch                bool
 		LightServ               int  `toml:",omitempty"`
 		LightPeers              int  `toml:",omitempty"`
 		SkipBcVersionCheck      bool `toml:"-"`
@@ -44,6 +44,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		VMTrace                 string
 		VMTraceJsonConfig       string
 		RPCGasCap               uint64
+		RPCEVMTimeout           time.Duration
 		RPCTxFeeCap             float64
 	}
 	var enc Config
@@ -51,7 +52,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.NetworkId = c.NetworkId
 	enc.SyncMode = c.SyncMode
 	enc.NoPruning = c.NoPruning
-	enc.NoPrefetch = c.NoPrefetch
+	enc.Prefetch = c.Prefetch
 	enc.LightServ = c.LightServ
 	enc.LightPeers = c.LightPeers
 	enc.SkipBcVersionCheck = c.SkipBcVersionCheck
@@ -72,6 +73,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.VMTrace = c.VMTrace
 	enc.VMTraceJsonConfig = c.VMTraceJsonConfig
 	enc.RPCGasCap = c.RPCGasCap
+	enc.RPCEVMTimeout = c.RPCEVMTimeout
 	enc.RPCTxFeeCap = c.RPCTxFeeCap
 	return &enc, nil
 }
@@ -83,7 +85,7 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		NetworkId               *uint64
 		SyncMode                *downloader.SyncMode
 		NoPruning               *bool
-		NoPrefetch              *bool
+		Prefetch                *bool
 		LightServ               *int  `toml:",omitempty"`
 		LightPeers              *int  `toml:",omitempty"`
 		SkipBcVersionCheck      *bool `toml:"-"`
@@ -104,6 +106,7 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		VMTrace                 *string
 		VMTraceJsonConfig       *string
 		RPCGasCap               *uint64
+		RPCEVMTimeout           *time.Duration
 		RPCTxFeeCap             *float64
 	}
 	var dec Config
@@ -122,8 +125,8 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	if dec.NoPruning != nil {
 		c.NoPruning = *dec.NoPruning
 	}
-	if dec.NoPrefetch != nil {
-		c.NoPrefetch = *dec.NoPrefetch
+	if dec.Prefetch != nil {
+		c.Prefetch = *dec.Prefetch
 	}
 	if dec.LightServ != nil {
 		c.LightServ = *dec.LightServ
@@ -184,6 +187,9 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	}
 	if dec.RPCGasCap != nil {
 		c.RPCGasCap = *dec.RPCGasCap
+	}
+	if dec.RPCEVMTimeout != nil {
+		c.RPCEVMTimeout = *dec.RPCEVMTimeout
 	}
 	if dec.RPCTxFeeCap != nil {
 		c.RPCTxFeeCap = *dec.RPCTxFeeCap

@@ -1582,7 +1582,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		Fatalf("--%s must be either 'full' or 'archive'", GCModeFlag.Name)
 	}
 	cfg.NoPruning = ctx.String(GCModeFlag.Name) == "archive"
-	cfg.NoPrefetch = !ctx.Bool(CachePrefetchFlag.Name)
+	cfg.Prefetch = ctx.Bool(CachePrefetchFlag.Name)
 	// Read the value from the flag no matter if it's set or not.
 	cfg.Preimages = ctx.Bool(CachePreimagesFlag.Name)
 	if cfg.NoPruning && !cfg.Preimages {
@@ -1849,12 +1849,12 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (chain *core.B
 		Fatalf("--%s must be either 'full' or 'archive'", GCModeFlag.Name)
 	}
 	cache := &core.CacheConfig{
-		TrieCleanLimit:      ethconfig.Defaults.TrieCleanCache,
-		TrieCleanNoPrefetch: !ctx.Bool(CachePrefetchFlag.Name),
-		TrieDirtyLimit:      ethconfig.Defaults.TrieDirtyCache,
-		TrieDirtyDisabled:   ctx.String(GCModeFlag.Name) == "archive",
-		TrieTimeLimit:       ethconfig.Defaults.TrieTimeout,
-		Preimages:           ctx.Bool(CachePreimagesFlag.Name),
+		TrieCleanLimit:    ethconfig.Defaults.TrieCleanCache,
+		TrieCleanPrefetch: ctx.Bool(CachePrefetchFlag.Name),
+		TrieDirtyLimit:    ethconfig.Defaults.TrieDirtyCache,
+		TrieDirtyDisabled: ctx.String(GCModeFlag.Name) == "archive",
+		TrieTimeLimit:     ethconfig.Defaults.TrieTimeout,
+		Preimages:         ctx.Bool(CachePreimagesFlag.Name),
 	}
 	if cache.TrieDirtyDisabled && !cache.Preimages {
 		cache.Preimages = true

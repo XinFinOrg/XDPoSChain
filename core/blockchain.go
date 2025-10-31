@@ -130,12 +130,12 @@ const (
 // CacheConfig contains the configuration values for the trie database
 // that's resident in a blockchain.
 type CacheConfig struct {
-	TrieCleanLimit      int           // Memory allowance (MB) to use for caching trie nodes in memory
-	TrieCleanNoPrefetch bool          // Whether to disable heuristic state prefetching for followup blocks
-	TrieDirtyLimit      int           // Memory limit (MB) at which to start flushing dirty trie nodes to disk
-	TrieDirtyDisabled   bool          // Whether to disable trie write caching and GC altogether (archive node)
-	TrieTimeLimit       time.Duration // Time limit after which to flush the current in-memory trie to disk
-	Preimages           bool          // Whether to store preimage of trie key to the disk
+	TrieCleanLimit    int           // Memory allowance (MB) to use for caching trie nodes in memory
+	TrieCleanPrefetch bool          // Whether to enable heuristic state prefetching for followup blocks
+	TrieDirtyLimit    int           // Memory limit (MB) at which to start flushing dirty trie nodes to disk
+	TrieDirtyDisabled bool          // Whether to disable trie write caching and GC altogether (archive node)
+	TrieTimeLimit     time.Duration // Time limit after which to flush the current in-memory trie to disk
+	Preimages         bool          // Whether to store preimage of trie key to the disk
 }
 
 type ResultProcessBlock struct {
@@ -1779,7 +1779,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		// If we have a followup block, run that against the current state to pre-cache
 		// transactions and probabilistically some of the account/storage trie nodes.
 		var followupInterrupt atomic.Bool
-		if !bc.cacheConfig.TrieCleanNoPrefetch {
+		if bc.cacheConfig.TrieCleanPrefetch {
 			if followup, err := it.peek(); followup != nil && err == nil {
 				go func(start time.Time) {
 					throwaway, _ := state.New(parent.Root, bc.stateCache)
