@@ -93,7 +93,6 @@ type Backend interface {
 	// Order Pool Transaction
 	SendOrderTx(ctx context.Context, signedTx *types.OrderTransaction) error
 	OrderTxPoolContent() (map[common.Address]types.OrderTransactions, map[common.Address]types.OrderTransactions)
-	OrderStats() (pending int, queued int)
 	SendLendingTx(ctx context.Context, signedTx *types.LendingTransaction) error
 
 	ChainConfig() *params.ChainConfig
