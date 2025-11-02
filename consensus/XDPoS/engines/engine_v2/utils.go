@@ -169,6 +169,37 @@ func (x *XDPoS_v2) GetSignersFromSnapshot(chain consensus.ChainReader, header *t
 	return snap.NextEpochCandidates, err
 }
 
+func (x *XDPoS_v2) GetMasternodesFromGapNumber(chain consensus.ChainReader, gapNum uint64) ([]common.Address, error) {
+	snap, err := x.getSnapshot(chain, gapNum, true)
+	if err != nil {
+		return nil, err
+	}
+	candidates := snap.NextEpochCandidates
+
+	// Search forward up to one epoch to find the next epoch switch block
+	for i := uint64(1); i <= x.config.Epoch; i++ {
+		nextHeader := chain.GetHeaderByNumber(gapNum + i)
+		if nextHeader == nil {
+			break
+		}
+
+		isEpochSwitch, _, err := x.IsEpochSwitch(nextHeader); 
+		if err != nil {
+			return nil, err
+		}	
+		if isEpochSwitch {
+			epochInfo, err := x.getEpochSwitchInfo(chain, nextHeader, nextHeader.Hash())
+			if err != nil {
+				return nil, err
+			}
+			return epochInfo.Masternodes, nil
+		}
+	}
+
+	// No epoch switch found, return candidates
+	return candidates, nil
+}
+
 func (x *XDPoS_v2) CalculateMissingRounds(chain consensus.ChainReader, header *types.Header) (*utils.PublicApiMissedRoundsMetadata, error) {
 	var missedRounds []utils.MissedRoundInfo
 	switchInfo, err := x.getEpochSwitchInfo(chain, header, header.Hash())

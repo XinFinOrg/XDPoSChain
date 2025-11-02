@@ -629,17 +629,18 @@ func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainReader, vote *types.Vo
 		return false, nil
 	}
 
-	snapshot, err := x.getSnapshot(chain, vote.GapNumber, true)
+	masternodes, err:= x.GetMasternodesFromGapNumber(chain, vote.GapNumber)
 	if err != nil {
-		log.Error("[VerifyVoteMessage] fail to get snapshot for a vote message", "blockNum", vote.ProposedBlockInfo.Number, "blockHash", vote.ProposedBlockInfo.Hash, "voteHash", vote.Hash(), "error", err.Error())
+		log.Error("[VerifyVoteMessage] fail to get masternodes for a vote message", "blockNum", vote.ProposedBlockInfo.Number, "blockHash", vote.ProposedBlockInfo.Hash, "voteHash", vote.Hash(), "error", err.Error())
 		return false, err
 	}
+
 	verified, signer, err := x.verifyMsgSignature(types.VoteSigHash(&types.VoteForSign{
 		ProposedBlockInfo: vote.ProposedBlockInfo,
 		GapNumber:         vote.GapNumber,
-	}), vote.Signature, snapshot.NextEpochCandidates)
+	}), vote.Signature, masternodes)
 	if err != nil {
-		for i, mn := range snapshot.NextEpochCandidates {
+		for i, mn := range masternodes{
 			log.Warn("[VerifyVoteMessage] Master node list item", "index", i, "Master node", mn.Hex())
 		}
 		log.Warn("[VerifyVoteMessage] Error while verifying vote message", "votedBlockNum", vote.ProposedBlockInfo.Number.Uint64(), "votedBlockHash", vote.ProposedBlockInfo.Hash.Hex(), "voteHash", vote.Hash(), "error", err.Error())
@@ -674,20 +675,22 @@ func (x *XDPoS_v2) VerifyTimeoutMessage(chain consensus.ChainReader, timeoutMsg 
 		log.Debug("[VerifyTimeoutMessage] Disqualified timeout message as the proposed round does not match currentRound", "timeoutHash", timeoutMsg.Hash(), "timeoutRound", timeoutMsg.Round, "currentRound", x.currentRound)
 		return false, nil
 	}
-	snap, err := x.getSnapshot(chain, timeoutMsg.GapNumber, true)
-	if err != nil || snap == nil {
-		log.Error("[VerifyTimeoutMessage] Fail to get snapshot when verifying timeout message!", "messageGapNumber", timeoutMsg.GapNumber, "err", err)
+	
+	masternodes, err := x.GetMasternodesFromGapNumber(chain, timeoutMsg.GapNumber)
+	if err != nil {
+		log.Error("[VerifyTimeoutMessage] fail to get masternodes for a timeout message", "messageGapNumber", timeoutMsg.GapNumber, "err", err)
 		return false, err
 	}
-	if len(snap.NextEpochCandidates) == 0 {
-		log.Error("[VerifyTimeoutMessage] cannot find NextEpochCandidates from snapshot", "messageGapNumber", timeoutMsg.GapNumber)
+
+	if len(masternodes) == 0 {
+		log.Error("[VerifyTimeoutMessage] cannot find masternodes from snapshot", "messageGapNumber", timeoutMsg.GapNumber)
 		return false, errors.New("empty master node lists from snapshot")
 	}
 
 	verified, signer, err := x.verifyMsgSignature(types.TimeoutSigHash(&types.TimeoutForSign{
 		Round:     timeoutMsg.Round,
 		GapNumber: timeoutMsg.GapNumber,
-	}), timeoutMsg.Signature, snap.NextEpochCandidates)
+	}), timeoutMsg.Signature, masternodes)
 
 	if err != nil {
 		log.Warn("[VerifyTimeoutMessage] cannot verify timeout signature", "err", err)
