@@ -10,6 +10,7 @@ type PoolObj interface {
 	Hash() common.Hash
 	PoolKey() string
 	GetSigner() common.Address
+	DeepCopy() interface{}
 }
 type Pool struct {
 	objList map[string]map[common.Hash]PoolObj
