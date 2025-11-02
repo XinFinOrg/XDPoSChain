@@ -12,6 +12,12 @@ import (
 type Round uint64
 type Signature []byte
 
+func (s Signature) DeepCopy() interface{} {
+	cpy := make([]byte, len(s))
+	copy(cpy, s)
+	return s
+}
+
 // Block Info struct in XDPoS 2.0, used for vote message, etc.
 type BlockInfo struct {
 	Hash   common.Hash `json:"hash"`
@@ -36,7 +42,7 @@ func (v *Vote) DeepCopy() interface{} {
 	return &Vote{
 		signer:            v.signer,
 		ProposedBlockInfo: proposedBlockInfoCopy,
-		Signature:         append([]byte(nil), v.Signature...),
+		Signature:         v.Signature.DeepCopy().(Signature),
 		GapNumber:         v.GapNumber,
 	}
 }
@@ -70,7 +76,7 @@ func (t *Timeout) DeepCopy() interface{} {
 	return &Timeout{
 		signer:    t.signer,
 		Round:     t.Round,
-		Signature: append([]byte(nil), t.Signature...),
+		Signature: t.Signature.DeepCopy().(Signature),
 		GapNumber: t.GapNumber,
 	}
 }
@@ -103,7 +109,7 @@ func (s *SyncInfo) DeepCopy() interface{} {
 	if s.HighestQuorumCert != nil {
 		sigsCopy := make([]Signature, len(s.HighestQuorumCert.Signatures))
 		for i, sig := range s.HighestQuorumCert.Signatures {
-			sigsCopy[i] = append([]byte(nil), sig...)
+			sigsCopy[i] = sig.DeepCopy().(Signature)
 		}
 		highestQCCopy = &QuorumCert{
 			ProposedBlockInfo: &BlockInfo{
@@ -120,7 +126,7 @@ func (s *SyncInfo) DeepCopy() interface{} {
 	if s.HighestTimeoutCert != nil {
 		sigsCopy := make([]Signature, len(s.HighestTimeoutCert.Signatures))
 		for i, sig := range s.HighestTimeoutCert.Signatures {
-			sigsCopy[i] = append([]byte(nil), sig...)
+			sigsCopy[i] = sig.DeepCopy().(Signature)
 		}
 		highestTimeoutCopy = &TimeoutCert{
 			Round:      s.HighestTimeoutCert.Round,
