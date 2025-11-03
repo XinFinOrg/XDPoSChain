@@ -360,8 +360,8 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				for epochNumIter > 0 {
 					totalMinted = state.GetPostTotalMinted(stateBlock, epochNumIter-1).Big()
 					totalBurned = state.GetPostTotalBurned(stateBlock, epochNumIter-1).Big()
-					if totalMinted.BitLen() != 0 {
-						// if previous epoch has non-zero total minted, break the loop
+					if totalMinted.BitLen() != 0 || totalBurned.BitLen() != 0 {
+						// if previous epoch has non-zero total minted or non-zero total burned, break the loop
 						break
 					}
 					epochNumIter--
