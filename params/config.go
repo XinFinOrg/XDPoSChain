@@ -488,8 +488,6 @@ type V2 struct {
 	CurrentConfig *V2Config            `json:"config"`
 	AllConfigs    map[uint64]*V2Config `json:"allConfigs"`
 	configIndex   []uint64             //list of switch block of configs
-
-	SkipV2Validation bool //Skip Block Validation for testing purpose, V2 consensus only
 }
 
 type V2Config struct {
@@ -574,7 +572,7 @@ func (v2 *V2) String() string {
 		return "V2: <nil>"
 	}
 
-	return fmt.Sprintf("V2{SwitchEpoch: %v, SwitchBlock: %v, SkipV2Validation: %v, %s}", v2.SwitchEpoch, v2.SwitchBlock, v2.SkipV2Validation, v2.CurrentConfig.String())
+	return fmt.Sprintf("V2{SwitchEpoch: %v, SwitchBlock: %v, %s}", v2.SwitchEpoch, v2.SwitchBlock, v2.CurrentConfig.String())
 }
 
 func (v2 *V2) Description(indent int) string {
@@ -586,7 +584,6 @@ func (v2 *V2) Description(indent int) string {
 	prefix := strings.Repeat(" ", indent)
 	banner += fmt.Sprintf("%s- SwitchEpoch: %v\n", prefix, v2.SwitchEpoch)
 	banner += fmt.Sprintf("%s- SwitchBlock: %v\n", prefix, v2.SwitchBlock)
-	banner += fmt.Sprintf("%s- SkipV2Validation: %v\n", prefix, v2.SkipV2Validation)
 	banner += fmt.Sprintf("%s- %s", prefix, v2.GetCurrentConfig().Description("CurrentConfig", indent+2))
 	return banner
 }
