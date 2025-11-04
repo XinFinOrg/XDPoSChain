@@ -626,13 +626,6 @@ func (w *worker) makeCurrent(parent *types.Block, header *types.Header) error {
 	return nil
 }
 
-func abs(x int64) int64 {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
-
 func (w *worker) checkPreCommitWithLock() (*types.Block, bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
