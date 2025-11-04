@@ -109,7 +109,7 @@ func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Heade
 	if header.MixDigest != (common.Hash{}) {
 		return utils.ErrInvalidMixDigest
 	}
-	// Ensure that the block doesn't contain any uncles which are meaningless in XDPoS_v1
+	// Ensure that the block doesn't contain any uncles which are meaningless in XDPoS_v2.
 	if header.UncleHash != utils.UncleHash {
 		return utils.ErrInvalidUncleHash
 	}

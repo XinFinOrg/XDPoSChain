@@ -106,11 +106,11 @@ func (x *XDPoS_v2) onTimeoutPoolThresholdReached(blockChainReader consensus.Chai
 	// Process TC
 	err := x.processTC(blockChainReader, timeoutCert)
 	if err != nil {
-		log.Error("[onTimeoutPoolThresholdReached] Error while processing TC in the Timeout handler after reaching pool threshold", "TcRound", timeoutCert.Round, "NumberOfTcSig", len(timeoutCert.Signatures), "GapNumber", gapNumber, "Error", err)
+		log.Error("[onTimeoutPoolThresholdReached] Fail to process TC", "TcRound", timeoutCert.Round, "NumberOfTcSig", len(timeoutCert.Signatures), "GapNumber", gapNumber, "Error", err)
 		return err
 	}
 
-	log.Info("[onTimeoutPoolThresholdReached] Successfully processed the timeout message and produced TC!", "TcRound", timeoutCert.Round, "NumberOfTcSig", len(timeoutCert.Signatures))
+	log.Info("[onTimeoutPoolThresholdReached] process TC successfully", "TcRound", timeoutCert.Round, "NumberOfTcSig", len(timeoutCert.Signatures))
 	return nil
 }
 
