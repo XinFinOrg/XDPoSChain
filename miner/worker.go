@@ -352,7 +352,7 @@ func (w *worker) update() {
 					txs[acc] = append(txs[acc], tx)
 				}
 				feeCapacity := state.GetTRC21FeeCapacityFromState(w.current.state)
-				txset, specialTxs := types.NewTransactionsByPriceAndNonce(w.current.signer, txs, nil, feeCapacity)
+				txset, specialTxs := types.NewTransactionsByPriceAndNonce(w.current.signer, txs, feeCapacity)
 
 				tcount := w.current.tcount
 				w.current.commitTransactions(w.mux, feeCapacity, txset, specialTxs, w.chain, w.coinbase, &w.pendingLogsFeed)
@@ -780,9 +780,8 @@ func (w *worker) commitNewWork() {
 			log.Error("[commitNewWork] fail to check if block is epoch switch block when fetching pending transactions", "BlockNum", header.Number, "Hash", header.Hash())
 		}
 		if !isEpochSwitchBlock {
-			var signers map[common.Address]struct{}
 			pending := w.eth.TxPool().Pending(true)
-			txs, specialTxs = types.NewTransactionsByPriceAndNonce(w.current.signer, pending, signers, feeCapacity)
+			txs, specialTxs = types.NewTransactionsByPriceAndNonce(w.current.signer, pending, feeCapacity)
 		}
 	}
 	if atomic.LoadInt32(&w.mining) == 1 {

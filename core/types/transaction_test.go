@@ -281,7 +281,7 @@ func TestTransactionPriceNonceSort(t *testing.T) {
 		}
 	}
 	// Sort the transactions and cross check the nonce ordering
-	txset, _ := NewTransactionsByPriceAndNonce(signer, groups, nil, map[common.Address]*big.Int{})
+	txset, _ := NewTransactionsByPriceAndNonce(signer, groups, map[common.Address]*big.Int{})
 
 	txs := Transactions{}
 	for tx := txset.Peek(); tx != nil; tx = txset.Peek() {
@@ -392,7 +392,7 @@ func TestTransactionTimeSort(t *testing.T) {
 		groups[addr] = append(groups[addr], tx)
 	}
 	// Sort the transactions and cross check the nonce ordering
-	txset, _ := NewTransactionsByPriceAndNonce(signer, groups, nil, map[common.Address]*big.Int{})
+	txset, _ := NewTransactionsByPriceAndNonce(signer, groups, map[common.Address]*big.Int{})
 
 	txs := Transactions{}
 	for tx := txset.Peek(); tx != nil; tx = txset.Peek() {
