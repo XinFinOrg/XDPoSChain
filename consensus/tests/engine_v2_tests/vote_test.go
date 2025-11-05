@@ -577,7 +577,7 @@ func TestVoteMsgMissingSnapshot(t *testing.T) {
 	engineV2.SetNewRoundFaker(blockchain, types.Round(14), false)
 	verified, err := engineV2.VerifyVoteMessage(blockchain, voteMsg)
 	assert.False(t, verified)
-	assert.NotNil(t, err)
+	assert.Nil(t, err)
 }
 
 func TestVoteMessageHandlerWrongGapNumber(t *testing.T) {
