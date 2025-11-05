@@ -223,6 +223,7 @@ func doTest(cmdline []string) {
 	coverage := flag.Bool("coverage", false, "Whether to record code coverage")
 	verbose := flag.Bool("v", false, "Whether to log verbosely")
 	quick := flag.Bool("quick", false, "Whether to skip long time test")
+	failfast := flag.Bool("failfast", false, "Do not start new tests after the first test failure")
 	flag.CommandLine.Parse(cmdline)
 	env := build.Env()
 
@@ -248,6 +249,9 @@ func doTest(cmdline []string) {
 	}
 	if *verbose {
 		gotest.Args = append(gotest.Args, "-v")
+	}
+	if *failfast {
+		gotest.Args = append(gotest.Args, "-failfast")
 	}
 
 	gotest.Args = append(gotest.Args, packages...)

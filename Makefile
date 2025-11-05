@@ -43,11 +43,11 @@ all:
 
 #? test: Run the tests.
 test: all
-	go run build/ci.go test
+	go run build/ci.go test -failfast
 
 #? quick-test: Run the tests except time-consuming tests.
 quick-test: all
-	go run build/ci.go test --quick
+	go run build/ci.go test --quick -failfast
 
 #? lint: Run certain pre-selected linters.
 lint: ## Run linters.
