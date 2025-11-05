@@ -183,10 +183,14 @@ func (x *XDPoS_v2) GetMasternodesFromGapNumber(chain consensus.ChainReader, gapN
 			break
 		}
 
-		isEpochSwitch, _, err := x.IsEpochSwitch(nextHeader); 
+		isEpochSwitch, _, err := x.IsEpochSwitch(nextHeader)
 		if err != nil {
+			if err == utils.ErrUnsupportedConsensusVersion {
+				// continue searching past v1 blocks
+				continue
+			}
 			return nil, err
-		}	
+		}
 		if isEpochSwitch {
 			epochInfo, err := x.getEpochSwitchInfo(chain, nextHeader, nextHeader.Hash())
 			if err != nil {

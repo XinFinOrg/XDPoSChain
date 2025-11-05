@@ -3,7 +3,6 @@ package utils
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"reflect"
 	"sort"
 	"strconv"
@@ -86,7 +85,8 @@ func DecodeBytesExtraFields(b []byte, val interface{}) error {
 	case 2:
 		return rlp.DecodeBytes(b[1:], val)
 	default:
-		return fmt.Errorf("consensus version %d is not defined, or this block is v1 block", b[0])
+		log.Error("[DecodeBytesExtraFields] consensus version is not defined, or this block is v1 block", "consensus version", b[0])
+		return ErrUnsupportedConsensusVersion
 	}
 }
 

@@ -101,6 +101,8 @@ var (
 	ErrRoundInvalid = errors.New("invalid Round, it shall be bigger than QC round")
 
 	ErrAlreadyMined = errors.New("already mined")
+
+	ErrUnsupportedConsensusVersion = errors.New("consensus version is not defined, or this block is v1 block")
 )
 
 type ErrIncomingMessageRoundNotEqualCurrentRound struct {
