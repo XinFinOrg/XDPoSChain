@@ -628,19 +628,23 @@ func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainReader, vote *types.Vo
 		log.Debug("[VerifyVoteMessage] Disqualified vote message as the proposed round does not match currentRound", "voteHash", vote.Hash(), "voteProposedBlockInfoRound", vote.ProposedBlockInfo.Round, "currentRound", x.currentRound)
 		return false, nil
 	}
-
-	masternodes, err:= x.GetMasternodesFromGapNumber(chain, vote.GapNumber)
+	prevBlockHeader := chain.GetHeaderByNumber(vote.ProposedBlockInfo.Number.Uint64()-1)
+	if prevBlockHeader == nil{
+		log.Error("[VerifyVoteMessage] fail to get previous block header for a vote message", "blockNum", vote.ProposedBlockInfo.Number, "blockHash", vote.ProposedBlockInfo.Hash, "voteHash", vote.Hash())
+		return false, fmt.Errorf("prevBlockHeader is nil")
+	}
+	epochInfo, err := x.getEpochSwitchInfo(chain, prevBlockHeader, prevBlockHeader.Hash())
 	if err != nil {
-		log.Error("[VerifyVoteMessage] fail to get masternodes for a vote message", "blockNum", vote.ProposedBlockInfo.Number, "blockHash", vote.ProposedBlockInfo.Hash, "voteHash", vote.Hash(), "error", err.Error())
+		log.Error("[VerifyVoteMessage] fail to get epochInfo for a vote message", "blockNum", vote.ProposedBlockInfo.Number, "blockHash", vote.ProposedBlockInfo.Hash, "voteHash", vote.Hash(), "error", err.Error())
 		return false, err
 	}
 
 	verified, signer, err := x.verifyMsgSignature(types.VoteSigHash(&types.VoteForSign{
 		ProposedBlockInfo: vote.ProposedBlockInfo,
 		GapNumber:         vote.GapNumber,
-	}), vote.Signature, masternodes)
+	}), vote.Signature, epochInfo.Masternodes)
 	if err != nil {
-		for i, mn := range masternodes{
+		for i, mn := range epochInfo.Masternodes {
 			log.Warn("[VerifyVoteMessage] Master node list item", "index", i, "Master node", mn.Hex())
 		}
 		log.Warn("[VerifyVoteMessage] Error while verifying vote message", "votedBlockNum", vote.ProposedBlockInfo.Number.Uint64(), "votedBlockHash", vote.ProposedBlockInfo.Hash.Hex(), "voteHash", vote.Hash(), "error", err.Error())
