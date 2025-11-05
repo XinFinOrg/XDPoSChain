@@ -340,10 +340,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 		hooks.AttachConsensusV2Hooks(c, eth.blockchain, chainConfig)
 
 		eth.txPool.IsSigner = func(address common.Address) bool {
-			currentHeader := eth.blockchain.CurrentHeader()
-			header := currentHeader
-
-			return c.IsAuthorisedAddress(eth.blockchain, header, address)
+			return c.IsAuthorisedAddress(eth.blockchain, eth.blockchain.CurrentHeader(), address)
 		}
 
 	}
