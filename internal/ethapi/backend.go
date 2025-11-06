@@ -90,11 +90,6 @@ type Backend interface {
 	TxPoolContentFrom(addr common.Address) (types.Transactions, types.Transactions)
 	SubscribeNewTxsEvent(chan<- core.NewTxsEvent) event.Subscription
 
-	// Order Pool Transaction
-	SendOrderTx(ctx context.Context, signedTx *types.OrderTransaction) error
-	OrderTxPoolContent() (map[common.Address]types.OrderTransactions, map[common.Address]types.OrderTransactions)
-	SendLendingTx(ctx context.Context, signedTx *types.LendingTransaction) error
-
 	ChainConfig() *params.ChainConfig
 	Engine() consensus.Engine
 	CurrentBlock() *types.Block
@@ -107,7 +102,6 @@ type Backend interface {
 	GetMasternodesCap(checkpoint uint64) map[common.Address]*big.Int
 	GetBlocksHashCache(blockNr uint64) []common.Hash
 	AreTwoBlockSamePath(newBlock common.Hash, oldBlock common.Hash) bool
-	GetOrderNonce(address common.Hash) (uint64, error)
 
 	// This is copied from filters.Backend
 	// eth/filters needs to be initialized from this backend type, so methods needed by

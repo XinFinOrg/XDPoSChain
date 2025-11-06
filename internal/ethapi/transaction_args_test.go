@@ -424,10 +424,6 @@ func (b *backendMock) GetMasternodesCap(uint64) map[common.Address]*big.Int {
 	return nil
 }
 
-func (b *backendMock) GetOrderNonce(common.Hash) (uint64, error) {
-	return 0, nil
-}
-
 func (b *backendMock) GetBody(ctx context.Context, hash common.Hash, number rpc.BlockNumber) (*types.Body, error) {
 	return nil, nil
 }
@@ -448,20 +444,8 @@ func (b *backendMock) LendingService() *XDCxlending.Lending {
 	return nil
 }
 
-func (b *backendMock) OrderTxPoolContent() (map[common.Address]types.OrderTransactions, map[common.Address]types.OrderTransactions) {
-	return nil, nil
-}
-
 func (b *backendMock) ProtocolVersion() int {
 	return 0
-}
-
-func (b *backendMock) SendLendingTx(context.Context, *types.LendingTransaction) error {
-	return nil
-}
-
-func (b *backendMock) SendOrderTx(context.Context, *types.OrderTransaction) error {
-	return nil
 }
 
 func (b *backendMock) XDCxService() *XDCx.XDCX {

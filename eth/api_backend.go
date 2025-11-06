@@ -299,16 +299,6 @@ func (b *EthAPIBackend) SendTx(ctx context.Context, signedTx *types.Transaction)
 	return b.eth.txPool.AddLocal(signedTx)
 }
 
-// SendOrderTx send order via backend
-func (b *EthAPIBackend) SendOrderTx(ctx context.Context, signedTx *types.OrderTransaction) error {
-	return b.eth.orderPool.AddLocal(signedTx)
-}
-
-// SendLendingTx send order via backend
-func (b *EthAPIBackend) SendLendingTx(ctx context.Context, signedTx *types.LendingTransaction) error {
-	return b.eth.lendingPool.AddLocal(signedTx)
-}
-
 func (b *EthAPIBackend) GetPoolTransactions() (types.Transactions, error) {
 	pending := b.eth.txPool.Pending(false)
 	var txs types.Transactions
@@ -341,10 +331,6 @@ func (b *EthAPIBackend) TxPoolContent() (map[common.Address]types.Transactions, 
 
 func (b *EthAPIBackend) TxPoolContentFrom(addr common.Address) (types.Transactions, types.Transactions) {
 	return b.eth.TxPool().ContentFrom(addr)
-}
-
-func (b *EthAPIBackend) OrderTxPoolContent() (map[common.Address]types.OrderTransactions, map[common.Address]types.OrderTransactions) {
-	return b.eth.OrderPool().Content()
 }
 
 func (b *EthAPIBackend) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
@@ -615,23 +601,6 @@ func (b *EthAPIBackend) GetBlocksHashCache(blockNr uint64) []common.Hash {
 
 func (b *EthAPIBackend) AreTwoBlockSamePath(bh1 common.Hash, bh2 common.Hash) bool {
 	return b.eth.blockchain.AreTwoBlockSamePath(bh1, bh2)
-}
-
-// GetOrderNonce get order nonce
-func (b *EthAPIBackend) GetOrderNonce(address common.Hash) (uint64, error) {
-	XDCxService := b.eth.GetXDCX()
-	if XDCxService != nil {
-		author, err := b.Engine().Author(b.CurrentBlock().Header())
-		if err != nil {
-			return 0, err
-		}
-		XDCxState, err := XDCxService.GetTradingState(b.CurrentBlock(), author)
-		if err != nil {
-			return 0, err
-		}
-		return XDCxState.GetNonce(address), nil
-	}
-	return 0, errors.New("cannot find XDCx service")
 }
 
 func (b *EthAPIBackend) XDCxService() *XDCx.XDCX {

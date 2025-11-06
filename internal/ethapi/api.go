@@ -1976,22 +1976,6 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 	return tx.Hash(), nil
 }
 
-// SubmitTransaction is a helper function that submits tx to txPool and logs a message.
-func submitOrderTransaction(ctx context.Context, b Backend, tx *types.OrderTransaction) (common.Hash, error) {
-	if err := b.SendOrderTx(ctx, tx); err != nil {
-		return common.Hash{}, err
-	}
-	return tx.Hash(), nil
-}
-
-// submitLendingTransaction is a helper function that submits tx to txPool and logs a message.
-func submitLendingTransaction(ctx context.Context, b Backend, tx *types.LendingTransaction) (common.Hash, error) {
-	if err := b.SendLendingTx(ctx, tx); err != nil {
-		return common.Hash{}, err
-	}
-	return tx.Hash(), nil
-}
-
 // SendTransaction creates a transaction for the given argument, sign it and submit it to the
 // transaction pool.
 func (s *TransactionAPI) SendTransaction(ctx context.Context, args TransactionArgs) (common.Hash, error) {
