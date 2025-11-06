@@ -24,14 +24,15 @@ Usage: go run build/ci.go <command> <command flags/arguments>
 
 Available commands are:
 
-	lint        -- runs certain pre-selected linters
-	tidy        -- verifies that everything is 'go mod tidy'-ed
-	generate    -- verifies that everything is 'go generate'-ed
+	lint      -- runs certain pre-selected linters
+	tidy      -- verifies that everything is 'go mod tidy'-ed
+	generate  -- verifies that everything is 'go generate'-ed
+	baddeps   -- verifies that certain dependencies are avoided
 
-	install    [ -arch architecture ] [ -cc compiler ] [ packages... ]                          -- builds packages and executables
-	test       [ -coverage ] [ packages... ]                                                    -- runs the tests
-	importkeys                                                                                  -- imports signing keys from env
-	xgo        [ -alltools ] [ options ]                                                        -- cross builds according to options
+	install    [ -arch architecture ] [ -cc compiler ] [ packages... ]  -- builds packages and executables
+	test       [ -coverage ] [ packages... ]                            -- runs the tests
+	importkeys                                                          -- imports signing keys from env
+	xgo        [ -alltools ] [ options ]                                -- cross builds according to options
 
 For all commands, -n prevents execution of external programs (dry run mode).
 */
@@ -40,31 +41,36 @@ package main
 import (
 	"flag"
 	"fmt"
-	"go/parser"
-	"go/token"
 	"log"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/internal/build"
+	"github.com/XinFinOrg/XDPoSChain/internal/download"
 )
 
 var (
+	goModules = []string{
+		".",
+	}
+
 	// Files that end up in the geth-alltools*.zip archive.
 	allToolsArchiveFiles = []string{
 		"COPYING",
 		executablePath("abigen"),
 		executablePath("bootnode"),
+		executablePath("ethkey"),
 		executablePath("evm"),
-		executablePath("geth"),
+		executablePath("p2psim"),
 		executablePath("puppeth"),
 		executablePath("rlpdump"),
-		executablePath("swarm"),
-		executablePath("wnode"),
+		executablePath("XDC"),
 	}
 )
 
@@ -97,6 +103,8 @@ func main() {
 		doTidy()
 	case "generate":
 		doGenerate()
+	case "baddeps":
+		doBadDeps()
 	case "xgo":
 		doXgo(os.Args[2:])
 	default:
@@ -108,145 +116,131 @@ func main() {
 
 func doInstall(cmdline []string) {
 	var (
-		arch = flag.String("arch", "", "Architecture to cross build for")
-		cc   = flag.String("cc", "", "C compiler to cross build with")
+		dlgo       = flag.Bool("dlgo", false, "Download Go and build with it")
+		arch       = flag.String("arch", "", "Architecture to cross build for")
+		cc         = flag.String("cc", "", "C compiler to cross build with")
+		staticlink = flag.Bool("static", false, "Create statically-linked executable")
 	)
 	flag.CommandLine.Parse(cmdline)
 	env := build.Env()
 
-	// Check Go version. People regularly open issues about compilation
-	// failure with outdated Go. This should save them the trouble.
-	if !strings.Contains(runtime.Version(), "devel") {
-		// Figure out the minor version number since we can't textually compare (1.10 < 1.9)
-		var minor int
-		fmt.Sscanf(strings.TrimPrefix(runtime.Version(), "go1."), "%d", &minor)
+	// Configure the toolchain.
+	tc := build.GoToolchain{GOARCH: *arch, CC: *cc}
+	if *dlgo {
+		csdb := download.MustLoadChecksums("build/checksums.txt")
+		tc.Root = build.DownloadGo(csdb)
+	}
+	// Disable CLI markdown doc generation in release builds.
+	buildTags := []string{"urfave_cli_no_docs"}
 
-		if minor < 25 {
-			log.Println("You have Go version", runtime.Version())
-			log.Println("XDC requires at least Go version 1.25 and cannot")
-			log.Println("be compiled with an earlier version. Please upgrade your Go installation.")
-			os.Exit(1)
-		}
-	}
-	// Compile packages given as arguments, or everything if there are no arguments.
-	packages := []string{"./..."}
-	if flag.NArg() > 0 {
-		packages = flag.Args()
-	}
-	// packages = build.ExpandPackagesNoVendor(packages)
+	// Configure the build.
+	gobuild := tc.Go("build", buildFlags(env, *staticlink, buildTags)...)
 
-	if *arch == "" || *arch == runtime.GOARCH {
-		goinstall := goTool("install", buildFlags(env)...)
-		goinstall.Args = append(goinstall.Args, "-v")
-		goinstall.Args = append(goinstall.Args, packages...)
-		build.MustRun(goinstall)
-		return
-	}
-	// If we are cross compiling to ARMv5 ARMv6 or ARMv7, clean any previous builds
-	if *arch == "arm" {
-		os.RemoveAll(filepath.Join(runtime.GOROOT(), "pkg", runtime.GOOS+"_arm"))
-		for _, path := range filepath.SplitList(build.GOPATH()) {
-			os.RemoveAll(filepath.Join(path, "pkg", runtime.GOOS+"_arm"))
-		}
-	}
-	// Seems we are cross compiling, work around forbidden GOBIN
-	goinstall := goToolArch(*arch, *cc, "install", buildFlags(env)...)
-	goinstall.Args = append(goinstall.Args, "-v")
-	goinstall.Args = append(goinstall.Args, []string{"-buildmode", "archive"}...)
-	goinstall.Args = append(goinstall.Args, packages...)
-	build.MustRun(goinstall)
+	// Show packages during build.
+	gobuild.Args = append(gobuild.Args, "-v")
 
-	if cmds, err := os.ReadDir("cmd"); err == nil {
-		for _, cmd := range cmds {
-			pkgs, err := parser.ParseDir(token.NewFileSet(), filepath.Join(".", "cmd", cmd.Name()), nil, parser.PackageClauseOnly)
-			if err != nil {
-				log.Fatal(err)
-			}
-			for name := range pkgs {
-				if name == "main" {
-					gobuild := goToolArch(*arch, *cc, "build", buildFlags(env)...)
-					gobuild.Args = append(gobuild.Args, "-v")
-					gobuild.Args = append(gobuild.Args, []string{"-o", executablePath(cmd.Name())}...)
-					gobuild.Args = append(gobuild.Args, "."+string(filepath.Separator)+filepath.Join("cmd", cmd.Name()))
-					build.MustRun(gobuild)
-					break
-				}
-			}
-		}
+	// Now we choose what we're even building.
+	// Default: collect all 'main' packages in cmd/ and build those.
+	packages := flag.Args()
+	if len(packages) == 0 {
+		// NOTE: to collect all main packages, use:
+		// packages = build.FindMainPackages(&tc, "./...")
+		packages = build.FindMainPackages(&tc, "./cmd/...")
+	}
+
+	// Do the build!
+	for _, pkg := range packages {
+		args := slices.Clone(gobuild.Args)
+		args = append(args, "-o", executablePath(path.Base(pkg)))
+		args = append(args, pkg)
+		build.MustRun(&exec.Cmd{Path: gobuild.Path, Args: args, Env: gobuild.Env})
 	}
 }
 
-func buildFlags(env build.Environment) (flags []string) {
+// buildFlags returns the go tool flags for building.
+func buildFlags(env build.Environment, staticLinking bool, buildTags []string) (flags []string) {
 	var ld []string
+	// See https://github.com/golang/go/issues/33772#issuecomment-528176001
+	// We need to set --buildid to the linker here, and also pass --build-id to the
+	// cgo-linker further down.
+	ld = append(ld, "--buildid=none")
 	if env.Commit != "" {
 		ld = append(ld, "-X", "github.com/XinFinOrg/XDPoSChain/internal/version.gitCommit="+env.Commit)
 		ld = append(ld, "-X", "github.com/XinFinOrg/XDPoSChain/internal/version.gitDate="+env.Date)
 	}
+	// Strip DWARF on darwin. This used to be required for certain things,
+	// and there is no downside to this, so we just keep doing it.
 	if runtime.GOOS == "darwin" {
 		ld = append(ld, "-s")
 	}
-
+	if runtime.GOOS == "linux" {
+		// Enforce the stacksize to 8M, which is the case on most platforms apart from
+		// alpine Linux.
+		// See https://sourceware.org/binutils/docs-2.23.1/ld/Options.html#Options
+		// regarding the options --build-id=none and --strip-all. It is needed for
+		// reproducible builds; removing references to temporary files in C-land, and
+		// making build-id reproducibly absent.
+		extld := []string{"-Wl,-z,stack-size=0x800000,--build-id=none,--strip-all"}
+		if staticLinking {
+			extld = append(extld, "-static")
+			// Under static linking, use of certain glibc features must be
+			// disabled to avoid shared library dependencies.
+			buildTags = append(buildTags, "osusergo", "netgo")
+		}
+		ld = append(ld, "-extldflags", "'"+strings.Join(extld, " ")+"'")
+	}
 	if len(ld) > 0 {
 		flags = append(flags, "-ldflags", strings.Join(ld, " "))
 	}
+	if len(buildTags) > 0 {
+		flags = append(flags, "-tags", strings.Join(buildTags, ","))
+	}
+	// We use -trimpath to avoid leaking local paths into the built executables.
+	flags = append(flags, "-trimpath")
 	return flags
-}
-
-func goTool(subcmd string, args ...string) *exec.Cmd {
-	return goToolArch(runtime.GOARCH, os.Getenv("CC"), subcmd, args...)
-}
-
-func goToolArch(arch string, cc string, subcmd string, args ...string) *exec.Cmd {
-	cmd := build.GoTool(subcmd, args...)
-	cmd.Env = []string{"GOPATH=" + build.GOPATH()}
-	if arch == "" || arch == runtime.GOARCH {
-		cmd.Env = append(cmd.Env, "GOBIN="+GOBIN)
-	} else {
-		cmd.Env = append(cmd.Env, "CGO_ENABLED=1")
-		cmd.Env = append(cmd.Env, "GOARCH="+arch)
-	}
-	if cc != "" {
-		cmd.Env = append(cmd.Env, "CC="+cc)
-	}
-	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "GOPATH=") || strings.HasPrefix(e, "GOBIN=") {
-			continue
-		}
-		cmd.Env = append(cmd.Env, e)
-	}
-	return cmd
 }
 
 // Running The Tests
 //
 // "tests" also includes static analysis tools such as vet.
-func doTest(cmdline []string) {
-	coverage := flag.Bool("coverage", false, "Whether to record code coverage")
-	verbose := flag.Bool("v", false, "Whether to log verbosely")
-	quick := flag.Bool("quick", false, "Whether to skip long time test")
-	failfast := flag.Bool("failfast", false, "Do not start new tests after the first test failure")
-	flag.CommandLine.Parse(cmdline)
-	env := build.Env()
 
-	packages := []string{"./..."} // if a package has no test files, the lines in that package are not added to the total line count
-	if len(flag.CommandLine.Args()) > 0 {
-		packages = flag.CommandLine.Args()
-	} else {
-		// added all files in all packages (except vendor) to coverage report files count, even there is no test file in the package
-		packages = build.ExpandPackages(packages, *quick)
+func doTest(cmdline []string) {
+	var (
+		dlgo     = flag.Bool("dlgo", false, "Download Go and build with it")
+		arch     = flag.String("arch", "", "Run tests for given architecture")
+		cc       = flag.String("cc", "", "Sets C compiler binary")
+		coverage = flag.Bool("coverage", false, "Whether to record code coverage")
+		verbose  = flag.Bool("v", false, "Whether to log verbosely")
+		race     = flag.Bool("race", false, "Execute the race detector")
+		short    = flag.Bool("short", false, "Pass the 'short'-flag to go test")
+		threads  = flag.Int("p", 1, "Number of CPU threads to use for testing")
+		quick    = flag.Bool("quick", false, "Whether to skip long time test")
+		failfast = flag.Bool("failfast", false, "Do not start new tests after the first test failure")
+	)
+	flag.CommandLine.Parse(cmdline)
+
+	// Load checksums file (needed for both spec tests and dlgo)
+	csdb := download.MustLoadChecksums("build/checksums.txt")
+
+	// Configure the toolchain.
+	tc := build.GoToolchain{GOARCH: *arch, CC: *cc}
+	if *dlgo {
+		tc.Root = build.DownloadGo(csdb)
 	}
 
-	// Run analysis tools before the tests.
-	// build.MustRun(goTool("vet", packages...))
+	gotest := tc.Go("test")
 
-	// Run the actual tests.
-	// gotest := goTool("test", buildFlags(env)...)
+	// CI needs a bit more time for the statetests (default 45m).
+	gotest.Args = append(gotest.Args, "-timeout=45m")
+
+	// Enable integration-tests
+	gotest.Args = append(gotest.Args, "-tags=integrationtests")
+
 	// Test a single package at a time. CI builders are slow
 	// and some tests run into timeouts under load.
-	gotest := goTool("test", buildFlags(env)...)
-	gotest.Args = append(gotest.Args, "-p", "1")
+	gotest.Args = append(gotest.Args, "-p", fmt.Sprintf("%d", *threads))
 	if *coverage {
-		gotest.Args = append(gotest.Args, "-covermode=atomic", "-cover", "-coverprofile=coverage.txt")
+		gotest.Args = append(gotest.Args, "-covermode=atomic", "-cover")
 	}
 	if *verbose {
 		gotest.Args = append(gotest.Args, "-v")
@@ -254,27 +248,59 @@ func doTest(cmdline []string) {
 	if *failfast {
 		gotest.Args = append(gotest.Args, "-failfast")
 	}
+	if *race {
+		gotest.Args = append(gotest.Args, "-race")
+	}
+	if *short {
+		gotest.Args = append(gotest.Args, "-short")
+	}
 
+	packages := flag.CommandLine.Args()
+	if len(packages) > 0 {
+		if *quick {
+			packages = filterPackages(packages)
+		}
+		gotest.Args = append(gotest.Args, packages...)
+		build.MustRun(gotest)
+		return
+	}
+
+	// No packages specified, run all tests for all modules.
+	if *quick {
+		packages = filterPackages(build.FindAllPackages(&tc))
+	} else {
+		packages = []string{"./..."}
+	}
 	gotest.Args = append(gotest.Args, packages...)
-	build.MustRun(gotest)
+	for _, mod := range goModules {
+		test := *gotest
+		test.Dir = mod
+		build.MustRun(&test)
+	}
 }
 
-// doTidy assets that the Go modules files are tidied already.
+// filterPackages removes time-consuming packages.
+func filterPackages(packages []string) []string {
+	var filtered []string
+
+	for _, pkg := range packages {
+		if strings.Contains(pkg, "/consensus/tests/engine_v2_tests") {
+			continue
+		}
+		filtered = append(filtered, pkg)
+	}
+
+	return filtered
+}
+
+// doTidy runs go mod tidy check.
 func doTidy() {
-	targets := []string{"go.mod", "go.sum"}
+	var tc = new(build.GoToolchain)
 
-	hashes, err := build.HashFiles(targets)
-	if err != nil {
-		log.Fatalf("failed to hash go.mod/go.sum: %v", err)
-	}
-	build.MustRun(new(build.GoToolchain).Go("mod", "tidy"))
-
-	tidied, err := build.HashFiles(targets)
-	if err != nil {
-		log.Fatalf("failed to rehash go.mod/go.sum: %v", err)
-	}
-	if updates := build.DiffHashes(hashes, tidied); len(updates) > 0 {
-		log.Fatalf("files changed on running 'go mod tidy': %v", updates)
+	for _, mod := range goModules {
+		tidy := tc.Go("mod", "tidy", "-diff")
+		tidy.Dir = mod
+		build.MustRun(tidy)
 	}
 	fmt.Println("No untidy module files detected.")
 }
@@ -284,38 +310,79 @@ func doTidy() {
 func doGenerate() {
 	var (
 		cachedir = flag.String("cachedir", "./build/cache", "directory for caching binaries.")
+		tc       = new(build.GoToolchain)
 	)
-	// Compute the origin hashes of all the files
-	var hashes map[string][32]byte
 
-	var err error
-	hashes, err = build.HashFolder(".", []string{"tests/testdata", "build/cache"})
-	if err != nil {
-		log.Fatal("Error computing hashes", "err", err)
-	}
 	// Run any go generate steps we might be missing
 	var (
 		protocPath      = downloadProtoc(*cachedir)
 		protocGenGoPath = downloadProtocGenGo(*cachedir)
 	)
-	c := new(build.GoToolchain).Go("generate", "./...")
 	pathList := []string{filepath.Join(protocPath, "bin"), protocGenGoPath, os.Getenv("PATH")}
-	c.Env = append(c.Env, "PATH="+strings.Join(pathList, string(os.PathListSeparator)))
-	build.MustRun(c)
 
-	// Check if generate file hashes have changed
-	generated, err := build.HashFolder(".", []string{"tests/testdata", "build/cache"})
-	if err != nil {
-		log.Fatalf("Error re-computing hashes: %v", err)
-	}
-	updates := build.DiffHashes(hashes, generated)
-	for _, file := range updates {
-		log.Printf("File changed: %s", file)
-	}
-	if len(updates) != 0 {
-		log.Fatal("One or more generated files were updated by running 'go generate ./...'")
+	for _, mod := range goModules {
+		// Compute the origin hashes of all the files
+		hashes, err := build.HashFolder(mod, []string{"tests/testdata", "build/cache", ".git"})
+		if err != nil {
+			log.Fatal("Error computing hashes", "err", err)
+		}
+
+		c := tc.Go("generate", "./...")
+		c.Env = append(c.Env, "PATH="+strings.Join(pathList, string(os.PathListSeparator)))
+		c.Dir = mod
+		build.MustRun(c)
+		// Check if generate file hashes have changed
+		generated, err := build.HashFolder(mod, []string{"tests/testdata", "build/cache", ".git"})
+		if err != nil {
+			log.Fatalf("Error re-computing hashes: %v", err)
+		}
+		updates := build.DiffHashes(hashes, generated)
+		for _, file := range updates {
+			log.Printf("File changed: %s", file)
+		}
+		if len(updates) != 0 {
+			log.Fatal("One or more generated files were updated by running 'go generate ./...'")
+		}
 	}
 	fmt.Println("No stale files detected.")
+
+	// Run go mod tidy check.
+	for _, mod := range goModules {
+		tidy := tc.Go("mod", "tidy", "-diff")
+		tidy.Dir = mod
+		build.MustRun(tidy)
+	}
+	fmt.Println("No untidy module files detected.")
+}
+
+// doBadDeps verifies whether certain unintended dependencies between some
+// packages leak into the codebase due to a refactor. This is not an exhaustive
+// list, rather something we build up over time at sensitive places.
+func doBadDeps() {
+	baddeps := [][2]string{
+		// Rawdb tends to be a dumping ground for db utils, sometimes leaking the db itself
+		{"github.com/XinFinOrg/XDPoSChain/core/rawdb", "github.com/XinFinOrg/XDPoSChain/ethdb/leveldb"},
+		{"github.com/XinFinOrg/XDPoSChain/core/rawdb", "github.com/XinFinOrg/XDPoSChain/ethdb/pebbledb"},
+	}
+	tc := new(build.GoToolchain)
+
+	var failed bool
+	for _, rule := range baddeps {
+		out, err := tc.Go("list", "-deps", rule[0]).CombinedOutput()
+		if err != nil {
+			log.Fatalf("Failed to list '%s' dependencies: %v", rule[0], err)
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.TrimSpace(line) == rule[1] {
+				log.Printf("Found bad dependency '%s' -> '%s'", rule[0], rule[1])
+				failed = true
+			}
+		}
+	}
+	if failed {
+		log.Fatalf("Bad dependencies detected.")
+	}
+	fmt.Println("No bad dependencies detected.")
 }
 
 // doLint runs golangci-lint on requested packages.
@@ -324,27 +391,42 @@ func doLint(cmdline []string) {
 		cachedir = flag.String("cachedir", "./build/cache", "directory for caching golangci-lint binary.")
 	)
 	flag.CommandLine.Parse(cmdline)
-	packages := []string{"./..."}
-	if len(flag.CommandLine.Args()) > 0 {
-		packages = flag.CommandLine.Args()
-	}
 
 	linter := downloadLinter(*cachedir)
-	lflags := []string{"run", "--config", ".golangci.yml"}
-	build.MustRunCommandWithOutput(linter, append(lflags, packages...)...)
+	linter, err := filepath.Abs(linter)
+	if err != nil {
+		log.Fatal(err)
+	}
+	config, err := filepath.Abs(".golangci.yml")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	lflags := []string{"run", "--config", config}
+	packages := flag.CommandLine.Args()
+	if len(packages) > 0 {
+		build.MustRunCommandWithOutput(linter, append(lflags, packages...)...)
+	} else {
+		// Run for all modules in workspace.
+		for _, mod := range goModules {
+			args := append(lflags, "./...")
+			lintcmd := exec.Command(linter, args...)
+			lintcmd.Dir = mod
+			build.MustRunWithOutput(lintcmd)
+		}
+	}
 	fmt.Println("You have achieved perfection.")
 }
 
 // downloadLinter downloads and unpacks golangci-lint.
 func downloadLinter(cachedir string) string {
-	csdb := build.MustLoadChecksums("build/checksums.txt")
-	version, err := build.Version(csdb, "golangci")
+	csdb := download.MustLoadChecksums("build/checksums.txt")
+	version, err := csdb.FindVersion("golangci")
 	if err != nil {
 		log.Fatal(err)
 	}
 	arch := runtime.GOARCH
 	ext := ".tar.gz"
-
 	if runtime.GOOS == "windows" {
 		ext = ".zip"
 	}
@@ -352,49 +434,14 @@ func downloadLinter(cachedir string) string {
 		arch += "v" + os.Getenv("GOARM")
 	}
 	base := fmt.Sprintf("golangci-lint-%s-%s-%s", version, runtime.GOOS, arch)
-	url := fmt.Sprintf("https://github.com/golangci/golangci-lint/releases/download/v%s/%s%s", version, base, ext)
 	archivePath := filepath.Join(cachedir, base+ext)
-	if err := csdb.DownloadFile(url, archivePath); err != nil {
+	if err := csdb.DownloadFileFromKnownURL(archivePath); err != nil {
 		log.Fatal(err)
 	}
 	if err := build.ExtractArchive(archivePath, cachedir); err != nil {
 		log.Fatal(err)
 	}
 	return filepath.Join(cachedir, base, "golangci-lint")
-}
-
-// downloadProtocGenGo downloads protoc-gen-go, which is used by protoc
-// in the generate command.  It returns the full path of the directory
-// containing the 'protoc-gen-go' executable.
-func downloadProtocGenGo(cachedir string) string {
-	csdb := build.MustLoadChecksums("build/checksums.txt")
-	version, err := build.Version(csdb, "protoc-gen-go")
-	if err != nil {
-		log.Fatal(err)
-	}
-	baseName := fmt.Sprintf("protoc-gen-go.v%s.%s.%s", version, runtime.GOOS, runtime.GOARCH)
-	archiveName := baseName
-	if runtime.GOOS == "windows" {
-		archiveName += ".zip"
-	} else {
-		archiveName += ".tar.gz"
-	}
-
-	url := fmt.Sprintf("https://github.com/protocolbuffers/protobuf-go/releases/download/v%s/%s", version, archiveName)
-
-	archivePath := filepath.Join(cachedir, archiveName)
-	if err := csdb.DownloadFile(url, archivePath); err != nil {
-		log.Fatal(err)
-	}
-	extractDest := filepath.Join(cachedir, baseName)
-	if err := build.ExtractArchive(archivePath, extractDest); err != nil {
-		log.Fatal(err)
-	}
-	extractDest, err = filepath.Abs(extractDest)
-	if err != nil {
-		log.Fatal("error resolving absolute path for protoc", "err", err)
-	}
-	return extractDest
 }
 
 // protocArchiveBaseName returns the name of the protoc archive file for
@@ -420,12 +467,44 @@ func protocArchiveBaseName() (string, error) {
 	}
 }
 
+// downloadProtocGenGo downloads protoc-gen-go, which is used by protoc
+// in the generate command.  It returns the full path of the directory
+// containing the 'protoc-gen-go' executable.
+func downloadProtocGenGo(cachedir string) string {
+	csdb := download.MustLoadChecksums("build/checksums.txt")
+	version, err := csdb.FindVersion("protoc-gen-go")
+	if err != nil {
+		log.Fatal(err)
+	}
+	baseName := fmt.Sprintf("protoc-gen-go.v%s.%s.%s", version, runtime.GOOS, runtime.GOARCH)
+	archiveName := baseName
+	if runtime.GOOS == "windows" {
+		archiveName += ".zip"
+	} else {
+		archiveName += ".tar.gz"
+	}
+
+	archivePath := path.Join(cachedir, archiveName)
+	if err := csdb.DownloadFileFromKnownURL(archivePath); err != nil {
+		log.Fatal(err)
+	}
+	extractDest := filepath.Join(cachedir, baseName)
+	if err := build.ExtractArchive(archivePath, extractDest); err != nil {
+		log.Fatal(err)
+	}
+	extractDest, err = filepath.Abs(extractDest)
+	if err != nil {
+		log.Fatal("error resolving absolute path for protoc", "err", err)
+	}
+	return extractDest
+}
+
 // downloadProtoc downloads the prebuilt protoc binary used to lint generated
 // files as a CI step.  It returns the full path to the directory containing
 // the protoc executable.
 func downloadProtoc(cachedir string) string {
-	csdb := build.MustLoadChecksums("build/checksums.txt")
-	version, err := build.Version(csdb, "protoc")
+	csdb := download.MustLoadChecksums("build/checksums.txt")
+	version, err := csdb.FindVersion("protoc")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -436,10 +515,8 @@ func downloadProtoc(cachedir string) string {
 
 	fileName := fmt.Sprintf("protoc-%s-%s", version, baseName)
 	archiveFileName := fileName + ".zip"
-	url := fmt.Sprintf("https://github.com/protocolbuffers/protobuf/releases/download/v%s/%s", version, archiveFileName)
 	archivePath := filepath.Join(cachedir, archiveFileName)
-
-	if err := csdb.DownloadFile(url, archivePath); err != nil {
+	if err := csdb.DownloadFileFromKnownURL(archivePath); err != nil {
 		log.Fatal(err)
 	}
 	extractDest := filepath.Join(cachedir, fileName)
@@ -462,11 +539,12 @@ func doXgo(cmdline []string) {
 	env := build.Env()
 
 	// Make sure xgo is available for cross compilation
-	gogetxgo := goTool("get", "github.com/karalabe/xgo")
+	tc := build.GoToolchain{}
+	gogetxgo := tc.Go("get", "github.com/karalabe/xgo")
 	build.MustRun(gogetxgo)
 
 	// If all tools building is requested, build everything the builder wants
-	args := append(buildFlags(env), flag.Args()...)
+	args := append(buildFlags(env, false, nil), flag.Args()...)
 
 	if *alltools {
 		args = append(args, []string{"--dest", GOBIN}...)

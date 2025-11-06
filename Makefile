@@ -45,7 +45,7 @@ all:
 test: all
 	go run build/ci.go test -failfast
 
-#? quick-test: Run the tests except time-consuming tests.
+#? quick-test: Run the tests except time-consuming packages.
 quick-test: all
 	go run build/ci.go test --quick -failfast
 
@@ -53,13 +53,17 @@ quick-test: all
 lint: ## Run linters.
 	$(GORUN) build/ci.go lint
 
-#? tidy: Verify go.mod and go.sum by 'go mod tidy'
+#? tidy: Verify go.mod and go.sum are updated.
 tidy: ## Run 'go mod tidy'.
 	$(GORUN) build/ci.go tidy
 
-#? generate: Verify everything is 'go generate'-ed
+#? generate: Verify everything is 'go generate'.
 generate: ## Run 'go generate ./...'.
 	$(GORUN) build/ci.go generate
+
+#? baddeps: Verify certain dependencies are avoided.
+baddeps:
+	$(GORUN) build/ci.go baddeps
 
 #? fmt: Ensure consistent code formatting.
 fmt:
