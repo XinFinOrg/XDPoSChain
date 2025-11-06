@@ -1781,18 +1781,19 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		var followupInterrupt atomic.Bool
 		if !bc.cacheConfig.TrieCleanNoPrefetch {
 			if followup, err := it.peek(); followup != nil && err == nil {
-				go func(start time.Time) {
-					throwaway, _ := state.New(parent.Root, bc.stateCache)
+				throwaway, _ := state.New(parent.Root, bc.stateCache)
+
+				go func(start time.Time, followup *types.Block, throwaway *state.StateDB, interrupt *atomic.Bool) {
 					// Disable tracing for prefetcher executions.
 					vmCfg := bc.vmConfig
 					vmCfg.Tracer = nil
-					bc.prefetcher.Prefetch(followup, throwaway, vmCfg, &followupInterrupt)
+					bc.prefetcher.Prefetch(followup, throwaway, vmCfg, interrupt)
 
 					blockPrefetchExecuteTimer.Update(time.Since(start))
-					if followupInterrupt.Load() {
+					if interrupt.Load() {
 						blockPrefetchInterruptMeter.Mark(1)
 					}
-				}(time.Now())
+				}(time.Now(), followup, throwaway, &followupInterrupt)
 			}
 		}
 
