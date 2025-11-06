@@ -27,9 +27,7 @@ import (
 )
 
 var (
-	gitCommit = "" // Git SHA1 commit hash of the release (set via linker flags)
-
-	app = flags.NewApp(gitCommit, "the evm command line interface")
+	app = flags.NewApp("the evm command line interface")
 )
 
 var (

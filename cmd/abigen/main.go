@@ -73,7 +73,7 @@ var (
 	}
 )
 
-var app = flags.NewApp("", "XDC ABI wrapper code generator")
+var app = flags.NewApp("XDC ABI wrapper code generator")
 
 func init() {
 	app.Name = "abigen"

@@ -27,7 +27,7 @@ import (
 	"strings"
 
 	"github.com/XinFinOrg/XDPoSChain/cmd/internal/browser"
-	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/XinFinOrg/XDPoSChain/internal/version"
 	"github.com/urfave/cli/v2"
 )
 
@@ -47,7 +47,7 @@ func reportBug(ctx *cli.Context) error {
 	var buff bytes.Buffer
 
 	fmt.Fprintln(&buff, header)
-	fmt.Fprintln(&buff, "Version:", params.Version)
+	fmt.Fprintln(&buff, "Version:", version.WithMeta)
 	fmt.Fprintln(&buff, "Go Version:", runtime.Version())
 	fmt.Fprintln(&buff, "OS:", runtime.GOOS)
 	printOSDetails(&buff)
@@ -97,9 +97,9 @@ func printCmdOut(w io.Writer, prefix, path string, args ...string) {
 const header = `Please answer these questions before submitting your issue. Thanks!
 
 #### What did you do?
- 
+
 #### What did you expect to see?
- 
+
 #### What did you see instead?
- 
+
 #### System details`

@@ -23,8 +23,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/XinFinOrg/XDPoSChain/internal/version"
 	"github.com/XinFinOrg/XDPoSChain/log"
-	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/mattn/go-isatty"
 	"github.com/urfave/cli/v2"
 )
@@ -34,12 +34,13 @@ import (
 var usecolor = (isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())) && os.Getenv("TERM") != "dumb"
 
 // NewApp creates an app with sane defaults.
-func NewApp(gitCommit, usage string) *cli.App {
+func NewApp(usage string) *cli.App {
+	git, _ := version.VCS()
 	app := cli.NewApp()
 	app.EnableBashCompletion = true
-	app.Version = params.VersionWithCommit(gitCommit)
+	app.Version = version.WithCommit(git.Commit, git.Date)
 	app.Usage = usage
-	app.Copyright = "Copyright 2024 XDPoSChain"
+	app.Copyright = "Copyright 2025 XDPoSChain"
 	app.Before = func(ctx *cli.Context) error {
 		MigrateGlobalFlags(ctx)
 		return nil
@@ -104,7 +105,7 @@ func doMigrateFlags(ctx *cli.Context) {
 		for _, parent := range ctx.Lineage()[1:] {
 			if parent.IsSet(name) {
 				// When iterating across the lineage, we will be served both
-				// the 'canon' and alias formats of all commmands. In most cases,
+				// the 'canon' and alias formats of all commands. In most cases,
 				// it's fine to set it in the ctx multiple times (one for each
 				// name), however, the Slice-flags are not fine.
 				// The slice-flags accumulate, so if we set it once as

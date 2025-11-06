@@ -1,4 +1,4 @@
-// Copyright 2016 The go-ethereum Authors
+// Copyright 2022 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -14,32 +14,39 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package params
+// Package version implements reading of build version information.
+package version
 
 import (
 	"fmt"
+
+	"github.com/XinFinOrg/XDPoSChain/version"
 )
 
-const (
-	VersionMajor = 2      // Major version component of the current release
-	VersionMinor = 6      // Minor version component of the current release
-	VersionPatch = 1      // Patch version component of the current release
-	VersionMeta  = "beta" // Version metadata to append to the version string
-)
+const ourPath = "github.com/XinFinOrg/XDPoSChain" // Path to our module
 
-// Version holds the textual version string.
-var Version = func() string {
-	v := fmt.Sprintf("%d.%d.%d", VersionMajor, VersionMinor, VersionPatch)
-	if VersionMeta != "" {
-		v += "-" + VersionMeta
+// Family holds the textual version string for major.minor
+var Family = fmt.Sprintf("%d.%d", version.Major, version.Minor)
+
+// Semantic holds the textual version string for major.minor.patch.
+var Semantic = fmt.Sprintf("%d.%d.%d", version.Major, version.Minor, version.Patch)
+
+// WithMeta holds the textual version string including the metadata.
+var WithMeta = func() string {
+	v := Semantic
+	if version.Meta != "" {
+		v += "-" + version.Meta
 	}
 	return v
 }()
 
-func VersionWithCommit(gitCommit string) string {
-	vsn := Version
+func WithCommit(gitCommit, gitDate string) string {
+	vsn := WithMeta
 	if len(gitCommit) >= 8 {
 		vsn += "-" + gitCommit[:8]
+	}
+	if (version.Meta != "stable") && (gitDate != "") {
+		vsn += "-" + gitDate
 	}
 	return vsn
 }

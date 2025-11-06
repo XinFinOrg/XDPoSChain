@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/XinFinOrg/XDPoSChain/internal/version"
 )
 
 const (
@@ -50,7 +50,10 @@ func TestConsoleWelcome(t *testing.T) {
 	XDC.SetTemplateFunc("goos", func() string { return runtime.GOOS })
 	XDC.SetTemplateFunc("goarch", func() string { return runtime.GOARCH })
 	XDC.SetTemplateFunc("gover", runtime.Version)
-	XDC.SetTemplateFunc("XDCver", func() string { return params.Version })
+	XDC.SetTemplateFunc("XDCver", func() string {
+		git, _ := version.VCS()
+		return version.WithCommit(git.Commit, git.Date)
+	})
 	XDC.SetTemplateFunc("niltime", func() string {
 		return time.Unix(1559211559, 0).Format("Mon Jan 02 2006 15:04:05 GMT-0700 (MST)")
 	})
@@ -137,7 +140,10 @@ func testAttachWelcome(t *testing.T, XDC *testXDC, endpoint, apis string) {
 	attach.SetTemplateFunc("goos", func() string { return runtime.GOOS })
 	attach.SetTemplateFunc("goarch", func() string { return runtime.GOARCH })
 	attach.SetTemplateFunc("gover", runtime.Version)
-	attach.SetTemplateFunc("XDCver", func() string { return params.Version })
+	attach.SetTemplateFunc("XDCver", func() string {
+		git, _ := version.VCS()
+		return version.WithCommit(git.Commit, git.Date)
+	})
 	attach.SetTemplateFunc("etherbase", func() string { return XDC.Etherbase })
 	attach.SetTemplateFunc("niltime", func() string {
 		return time.Unix(1559211559, 0).Format("Mon Jan 02 2006 15:04:05 GMT-0700 (MST)")

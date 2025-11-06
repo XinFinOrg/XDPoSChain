@@ -24,13 +24,13 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/eth"
 	"github.com/XinFinOrg/XDPoSChain/eth/ethconfig"
-	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/XinFinOrg/XDPoSChain/internal/version"
 	"github.com/urfave/cli/v2"
 )
 
 var (
 	versionCommand = &cli.Command{
-		Action:    version,
+		Action:    printVersion,
 		Name:      "version",
 		Usage:     "Print version numbers",
 		ArgsUsage: " ",
@@ -46,11 +46,16 @@ The output of this command is supposed to be machine-readable.
 	}
 )
 
-func version(ctx *cli.Context) error {
+func printVersion(ctx *cli.Context) error {
+	git, _ := version.VCS()
+
 	fmt.Println(strings.Title(clientIdentifier))
-	fmt.Println("Version:", params.Version)
-	if gitCommit != "" {
-		fmt.Println("Git Commit:", gitCommit)
+	fmt.Println("Version:", version.WithMeta)
+	if git.Commit != "" {
+		fmt.Println("Git Commit:", git.Commit)
+	}
+	if git.Date != "" {
+		fmt.Println("Git Commit Date:", git.Date)
 	}
 	fmt.Println("Architecture:", runtime.GOARCH)
 	fmt.Println("Protocol Versions:", eth.ProtocolVersions)

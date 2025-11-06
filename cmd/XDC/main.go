@@ -53,10 +53,8 @@ const (
 )
 
 var (
-	// Git SHA1 commit hash of the release (set via linker flags)
-	gitCommit = ""
 	// The app that holds all commands and flags.
-	app = flags.NewApp(gitCommit, "the XDPoSChain command line interface")
+	app = flags.NewApp("the XDPoSChain command line interface")
 
 	// The app that holds all commands and flags.
 	nodeFlags = slices.Concat([]cli.Flag{
@@ -194,7 +192,7 @@ var (
 func init() {
 	// Initialize the CLI app and start XDC
 	app.Action = XDC
-	app.Copyright = "Copyright (c) 2024 XDPoSChain"
+	app.Copyright = "Copyright (c) 2025 XDPoSChain"
 	app.Commands = []*cli.Command{
 		// See chaincmd.go:
 		initCommand,

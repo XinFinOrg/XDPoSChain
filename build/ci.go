@@ -179,7 +179,8 @@ func doInstall(cmdline []string) {
 func buildFlags(env build.Environment) (flags []string) {
 	var ld []string
 	if env.Commit != "" {
-		ld = append(ld, "-X", "main.gitCommit="+env.Commit)
+		ld = append(ld, "-X", "github.com/XinFinOrg/XDPoSChain/internal/version.gitCommit="+env.Commit)
+		ld = append(ld, "-X", "github.com/XinFinOrg/XDPoSChain/internal/version.gitDate="+env.Date)
 	}
 	if runtime.GOOS == "darwin" {
 		ld = append(ld, "-s")
