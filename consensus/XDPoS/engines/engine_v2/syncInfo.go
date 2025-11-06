@@ -1,17 +1,19 @@
 package engine_v2
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"golang.org/x/sync/errgroup"
 )
 
 // Verify syncInfo and trigger process QC or TC if successful
@@ -127,31 +129,30 @@ func (x *XDPoS_v2) processSyncInfoPool(chain consensus.ChainReader) {
 }
 
 func (x *XDPoS_v2) verifySignatures(messageHash common.Hash, signatures []types.Signature, candidates []common.Address) error {
-	var wg sync.WaitGroup
-	wg.Add(len(signatures))
-	var haveError error
+	eg, ctx := errgroup.WithContext(context.Background())
+	eg.SetLimit(runtime.NumCPU())
 
-	for _, signature := range signatures {
-		go func(sig types.Signature) {
-			defer wg.Done()
-			verified, _, err := x.verifyMsgSignature(messageHash, sig, candidates)
-			if err != nil {
-				log.Error("[verifySignatures] Error while verfying QC message signatures", "error", err)
-				haveError = errors.New("error while verfying QC message signatures")
-				return
+	for _, sig := range signatures {
+		eg.Go(func() error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				verified, _, err := x.verifyMsgSignature(messageHash, sig, candidates)
+				if err != nil {
+					log.Error("[verifySignatures] Error while verifying message signatures", "error", err)
+					return errors.New("error while verifying QC message signatures")
+				}
+				if !verified {
+					log.Error("[verifySignatures] Signature not verified during signature verification")
+					return errors.New("fail to verify QC due to signature mismatch")
+				}
+				return nil
 			}
-			if !verified {
-				log.Error("[verifySignatures] Signature not verified doing signature verification")
-				haveError = errors.New("fail to verify QC due to signature mismatch")
-				return
-			}
-		}(signature)
+		})
 	}
-	wg.Wait()
-	if haveError != nil {
-		return haveError
-	}
-	return nil
+
+	return eg.Wait()
 }
 
 func (x *XDPoS_v2) hygieneSyncInfoPool() {

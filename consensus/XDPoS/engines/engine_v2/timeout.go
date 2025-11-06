@@ -1,11 +1,12 @@
 package engine_v2
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -13,6 +14,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"golang.org/x/sync/errgroup"
 )
 
 func (x *XDPoS_v2) VerifyTimeoutMessage(chain consensus.ChainReader, timeoutMsg *types.Timeout) (bool, error) {
@@ -184,42 +186,42 @@ func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.Time
 		return utils.ErrInvalidTCSignatures
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(len(signatures))
-
-	var mutex sync.Mutex
-	var haveError error
-
 	signedTimeoutObj := types.TimeoutSigHash(&types.TimeoutForSign{
 		Round:     timeoutCert.Round,
 		GapNumber: timeoutCert.GapNumber,
 	})
 
-	for _, signature := range signatures {
-		go func(sig types.Signature) {
-			defer wg.Done()
-			verified, _, err := x.verifyMsgSignature(signedTimeoutObj, sig, snap.NextEpochCandidates)
-			if err != nil || !verified {
-				log.Error("[verifyTC] Error or verification failure", "signature", sig, "error", err)
-				mutex.Lock() // Lock before accessing haveError
-				if haveError == nil {
-					if err != nil {
-						log.Error("[verifyTC] Error while verfying TC message signatures", "tcRound", timeoutCert.Round, "tcGapNumber", timeoutCert.GapNumber, "tcSignLen", len(signatures), "error", err)
-						haveError = fmt.Errorf("error while verifying TC message signatures, %s", err)
-					} else {
-						log.Warn("[verifyTC] Signature not verified doing TC verification", "tcRound", timeoutCert.Round, "tcGapNumber", timeoutCert.GapNumber, "tcSignLen", len(signatures))
-						haveError = errors.New("fail to verify TC due to signature mis-match")
-					}
+	eg, ctx := errgroup.WithContext(context.Background())
+	eg.SetLimit(runtime.NumCPU())
+
+	for _, sig := range signatures {
+		eg.Go(func() error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				verified, _, err := x.verifyMsgSignature(signedTimeoutObj, sig, snap.NextEpochCandidates)
+				if err != nil {
+					log.Error("[verifyTC] Error while verifying TC message signatures",
+						"tcRound", timeoutCert.Round,
+						"tcGapNumber", timeoutCert.GapNumber,
+						"tcSignLen", len(signatures),
+						"error", err)
+					return fmt.Errorf("error while verifying TC message signatures: %w", err)
 				}
-				mutex.Unlock() // Unlock after modifying haveError
+				if !verified {
+					log.Warn("[verifyTC] Signature not verified during TC verification",
+						"tcRound", timeoutCert.Round,
+						"tcGapNumber", timeoutCert.GapNumber,
+						"tcSignLen", len(signatures))
+					return errors.New("fail to verify TC due to signature mis-match")
+				}
+				return nil
 			}
-		}(signature)
+		})
 	}
-	wg.Wait()
-	if haveError != nil {
-		return haveError
-	}
-	return nil
+
+	return eg.Wait()
 }
 
 /*
