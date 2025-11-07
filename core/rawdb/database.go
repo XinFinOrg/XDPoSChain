@@ -18,7 +18,6 @@ package rawdb
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"time"
 
@@ -29,28 +28,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/olekukonko/tablewriter"
 )
-
-// freezerdb is a database wrapper that enabled freezer data retrievals.
-type freezerdb struct {
-	ethdb.KeyValueStore
-	ethdb.AncientStore
-}
-
-// Close implements io.Closer, closing both the fast key-value store as well as
-// the slow ancient tables.
-func (frdb *freezerdb) Close() error {
-	errs := make([]error, 0, 2)
-	if err := frdb.AncientStore.Close(); err != nil {
-		errs = append(errs, err)
-	}
-	if err := frdb.KeyValueStore.Close(); err != nil {
-		errs = append(errs, err)
-	}
-	if len(errs) != 0 {
-		return fmt.Errorf("%v", errs)
-	}
-	return nil
-}
 
 // nofreezedb is a database wrapper that disables freezer data retrievals.
 type nofreezedb struct {
