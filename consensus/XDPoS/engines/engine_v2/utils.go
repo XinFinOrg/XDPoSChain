@@ -75,7 +75,8 @@ func decodeMasternodesFromHeaderExtra(checkpointHeader *types.Header) []common.A
 	}
 	return masternodes
 }
-func UniqueSignatures(signedHash common.Hash, signatureList []types.Signature) ([]types.Signature, []types.Signature, error) {
+
+func RecoverUniqueSigners(signedHash common.Hash, signatureList []types.Signature) ([]types.Signature, []types.Signature, error) {
 	if (signedHash == common.Hash{}) {
 		return nil, nil, errors.New("signedHash cannot be empty")
 	}
@@ -86,9 +87,10 @@ func UniqueSignatures(signedHash common.Hash, signatureList []types.Signature) (
 	type Message struct {
 		pubkey common.Address
 		sig    types.Signature
-		err    error
 	}
+
 	result := make(chan Message, len(signatureList))
+	errCh := make(chan error, len(signatureList))
 	var wg sync.WaitGroup
 	wg.Add(len(signatureList))
 	for _, signature := range signatureList {
@@ -97,7 +99,7 @@ func UniqueSignatures(signedHash common.Hash, signatureList []types.Signature) (
 			pubkey, err := crypto.Ecrecover(signedHash.Bytes(), signature)
 			if err != nil {
 				log.Error("[UniqueSignatures] error while recovering public key", "error", err, "signature", common.Bytes2Hex(signature), "signedHash", signedHash.Hex())
-				result <- Message{err: err}
+				errCh <- err
 				return
 			}
 			var signerAddress common.Address
@@ -107,26 +109,27 @@ func UniqueSignatures(signedHash common.Hash, signatureList []types.Signature) (
 	}
 	wg.Wait()
 	close(result)
+	close(errCh)
 
-	keys := make(map[string]bool)
-	list := []types.Signature{}
-	duplicates := []types.Signature{}
+	if len(errCh) > 0 {
+		return nil, nil, <-errCh
+	}
+
+	keys := make(map[string]struct{})
+	uniqueSigners := make([]types.Signature, 0, len(result))
+	duplicates := make([]types.Signature, 0, len(result))
 	for r := range result {
-		if r.err != nil {
-			return nil, nil, r.err
-		}
-
 		pubkeyHex := r.pubkey.Hex()
 		if _, ok := keys[pubkeyHex]; !ok {
-			keys[pubkeyHex] = true
-			list = append(list, r.sig)
+			keys[pubkeyHex] = struct{}{}
+			uniqueSigners = append(uniqueSigners, r.sig)
 		} else {
 			log.Warn("[UniqueSignatures] duplicate signing found", "pubkey", pubkeyHex, "signedMessage", signedHash.Hex(), "signature", r.sig)
 			duplicates = append(duplicates, r.sig)
 		}
 	}
 
-	return list, duplicates, nil
+	return uniqueSigners, duplicates, nil
 }
 
 func (x *XDPoS_v2) signSignature(signingHash common.Hash) (types.Signature, error) {

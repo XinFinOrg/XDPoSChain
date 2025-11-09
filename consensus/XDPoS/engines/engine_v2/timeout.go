@@ -144,7 +144,7 @@ func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.Time
 		Round:     timeoutCert.Round,
 		GapNumber: timeoutCert.GapNumber,
 	})
-	signatures, duplicates, err := UniqueSignatures(signedTimeoutObj, timeoutCert.Signatures)
+	signatures, duplicates, err := RecoverUniqueSigners(signedTimeoutObj, timeoutCert.Signatures)
 	if err != nil {
 		log.Error("[verifyTC] Error while getting unique signatures", "tcRound", timeoutCert.Round, "tcGapNumber", timeoutCert.GapNumber, "tcSignLen", len(timeoutCert.Signatures), "error", err)
 		return err
