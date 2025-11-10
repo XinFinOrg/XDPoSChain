@@ -1,12 +1,11 @@
 package engine_v2
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -14,7 +13,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/log"
-	"golang.org/x/sync/errgroup"
 )
 
 func (x *XDPoS_v2) timeoutHandler(blockChainReader consensus.ChainReader, timeout *types.Timeout) error {
@@ -141,7 +139,16 @@ func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.Time
 		return errors.New("empty master node lists from snapshot")
 	}
 
-	signatures, duplicates := UniqueSignatures(timeoutCert.Signatures)
+	signedTimeoutObj := types.TimeoutSigHash(&types.TimeoutForSign{
+		Round:     timeoutCert.Round,
+		GapNumber: timeoutCert.GapNumber,
+	})
+	signatures, duplicates, err := RecoverUniqueSigners(signedTimeoutObj, timeoutCert.Signatures)
+	if err != nil {
+		log.Error("[verifyTC] Error while getting unique signatures", "tcRound", timeoutCert.Round, "tcGapNumber", timeoutCert.GapNumber, "tcSignLen", len(timeoutCert.Signatures), "error", err)
+		return err
+	}
+
 	if len(duplicates) != 0 {
 		for _, d := range duplicates {
 			log.Warn("[verifyQC] duplicated signature in QC", "duplicate", common.Bytes2Hex(d))
@@ -159,42 +166,37 @@ func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.Time
 		return utils.ErrInvalidTCSignatures
 	}
 
-	signedTimeoutObj := types.TimeoutSigHash(&types.TimeoutForSign{
-		Round:     timeoutCert.Round,
-		GapNumber: timeoutCert.GapNumber,
-	})
+	var wg sync.WaitGroup
+	wg.Add(len(signatures))
 
-	eg, ctx := errgroup.WithContext(context.Background())
-	eg.SetLimit(runtime.NumCPU())
+	var mutex sync.Mutex
+	var haveError error
 
-	for _, sig := range signatures {
-		eg.Go(func() error {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-				verified, _, err := x.verifyMsgSignature(signedTimeoutObj, sig, snap.NextEpochCandidates)
-				if err != nil {
-					log.Error("[verifyTC] Error while verifying TC message signatures",
-						"tcRound", timeoutCert.Round,
-						"tcGapNumber", timeoutCert.GapNumber,
-						"tcSignLen", len(signatures),
-						"error", err)
-					return fmt.Errorf("error while verifying TC message signatures: %w", err)
+	for _, signature := range signatures {
+		go func(sig types.Signature) {
+			defer wg.Done()
+			verified, _, err := x.verifyMsgSignature(signedTimeoutObj, sig, snap.NextEpochCandidates)
+			if err != nil || !verified {
+				log.Error("[verifyTC] Error or verification failure", "signature", sig, "error", err)
+				mutex.Lock() // Lock before accessing haveError
+				if haveError == nil {
+					if err != nil {
+						log.Error("[verifyTC] Error while verfying TC message signatures", "tcRound", timeoutCert.Round, "tcGapNumber", timeoutCert.GapNumber, "tcSignLen", len(signatures), "error", err)
+						haveError = fmt.Errorf("error while verifying TC message signatures, %s", err)
+					} else {
+						log.Warn("[verifyTC] Signature not verified doing TC verification", "tcRound", timeoutCert.Round, "tcGapNumber", timeoutCert.GapNumber, "tcSignLen", len(signatures))
+						haveError = errors.New("fail to verify TC due to signature mis-match")
+					}
 				}
-				if !verified {
-					log.Warn("[verifyTC] Signature not verified during TC verification",
-						"tcRound", timeoutCert.Round,
-						"tcGapNumber", timeoutCert.GapNumber,
-						"tcSignLen", len(signatures))
-					return errors.New("fail to verify TC due to signature mis-match")
-				}
-				return nil
+				mutex.Unlock() // Unlock after modifying haveError
 			}
-		})
+		}(signature)
 	}
-
-	return eg.Wait()
+	wg.Wait()
+	if haveError != nil {
+		return haveError
+	}
+	return nil
 }
 
 /*
