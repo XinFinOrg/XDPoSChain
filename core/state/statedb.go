@@ -449,7 +449,7 @@ func (s *StateDB) SelfDestruct(addr common.Address) {
 		n    = new(big.Int)
 	)
 	s.journal.append(selfDestructChange{
-		account:     &addr,
+		account:     addr,
 		prev:        stateObject.selfDestructed,
 		prevbalance: prev,
 	})
@@ -480,7 +480,7 @@ func (s *StateDB) SetTransientState(addr common.Address, key, value common.Hash)
 		return
 	}
 	s.journal.append(transientStorageChange{
-		account:  &addr,
+		account:  addr,
 		key:      key,
 		prevalue: prev,
 	})
@@ -590,13 +590,13 @@ func (s *StateDB) createObject(addr common.Address) (newobj, prev *stateObject) 
 	prev = s.getDeletedStateObject(addr) // Note, prev might have been deleted, we need that!
 	newobj = newObject(s, addr, types.StateAccount{})
 	if prev == nil {
-		s.journal.append(createObjectChange{account: &addr})
+		s.journal.append(createObjectChange{account: addr})
 	} else {
 		_, prevdestruct := s.stateObjectsDestruct[prev.address]
 		if !prevdestruct {
 			s.stateObjectsDestruct[prev.address] = struct{}{}
 		}
-		s.journal.append(resetObjectChange{account: &addr, prev: prev, prevdestruct: prevdestruct})
+		s.journal.append(resetObjectChange{account: addr, prev: prev, prevdestruct: prevdestruct})
 	}
 
 	newobj.created = true
@@ -970,7 +970,7 @@ func (s *StateDB) Prepare(rules params.Rules, sender, coinbase common.Address, d
 // AddAddressToAccessList adds the given address to the access list
 func (s *StateDB) AddAddressToAccessList(addr common.Address) {
 	if s.accessList.AddAddress(addr) {
-		s.journal.append(accessListAddAccountChange{&addr})
+		s.journal.append(accessListAddAccountChange{addr})
 	}
 }
 
@@ -982,12 +982,12 @@ func (s *StateDB) AddSlotToAccessList(addr common.Address, slot common.Hash) {
 		// scope of 'address' without having the 'address' become already added
 		// to the access list (via call-variant, create, etc).
 		// Better safe than sorry, though
-		s.journal.append(accessListAddAccountChange{&addr})
+		s.journal.append(accessListAddAccountChange{addr})
 	}
 	if slotMod {
 		s.journal.append(accessListAddSlotChange{
-			address: &addr,
-			slot:    &slot,
+			address: addr,
+			slot:    slot,
 		})
 	}
 }

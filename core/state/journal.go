@@ -20,6 +20,7 @@ import (
 	"math/big"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/crypto"
 )
 
 // journalEntry is a modification entry in the state change journal that can be
@@ -87,35 +88,35 @@ func (j *journal) length() int {
 type (
 	// Changes to the account trie.
 	createObjectChange struct {
-		account *common.Address
+		account common.Address
 	}
 	resetObjectChange struct {
-		account      *common.Address
+		account      common.Address
 		prev         *stateObject
 		prevdestruct bool
 	}
 	selfDestructChange struct {
-		account     *common.Address
+		account     common.Address
 		prev        bool // whether account had already self-destructed
 		prevbalance *big.Int
 	}
 
 	// Changes to individual accounts.
 	balanceChange struct {
-		account *common.Address
+		account common.Address
 		prev    *big.Int
 	}
 	nonceChange struct {
-		account *common.Address
+		account common.Address
 		prev    uint64
 	}
 	storageChange struct {
-		account       *common.Address
+		account       common.Address
 		key, prevalue common.Hash
 	}
 	codeChange struct {
-		account            *common.Address
-		prevcode, prevhash []byte
+		account  common.Address
+		prevCode []byte
 	}
 
 	// Changes to other state values.
@@ -129,30 +130,30 @@ type (
 		hash common.Hash
 	}
 	touchChange struct {
-		account *common.Address
+		account common.Address
 	}
 	// Changes to the access list
 	accessListAddAccountChange struct {
-		address *common.Address
+		address common.Address
 	}
 	accessListAddSlotChange struct {
-		address *common.Address
-		slot    *common.Hash
+		address common.Address
+		slot    common.Hash
 	}
 
 	transientStorageChange struct {
-		account       *common.Address
+		account       common.Address
 		key, prevalue common.Hash
 	}
 )
 
 func (ch createObjectChange) revert(s *StateDB) {
-	delete(s.stateObjects, *ch.account)
-	delete(s.stateObjectsDirty, *ch.account)
+	delete(s.stateObjects, ch.account)
+	delete(s.stateObjectsDirty, ch.account)
 }
 
 func (ch createObjectChange) dirtied() *common.Address {
-	return ch.account
+	return &ch.account
 }
 
 func (ch resetObjectChange) revert(s *StateDB) {
@@ -163,11 +164,11 @@ func (ch resetObjectChange) revert(s *StateDB) {
 }
 
 func (ch resetObjectChange) dirtied() *common.Address {
-	return ch.account
+	return &ch.account
 }
 
 func (ch selfDestructChange) revert(s *StateDB) {
-	obj := s.getStateObject(*ch.account)
+	obj := s.getStateObject(ch.account)
 	if obj != nil {
 		obj.selfDestructed = ch.prev
 		obj.setBalance(ch.prevbalance)
@@ -175,7 +176,7 @@ func (ch selfDestructChange) revert(s *StateDB) {
 }
 
 func (ch selfDestructChange) dirtied() *common.Address {
-	return ch.account
+	return &ch.account
 }
 
 var ripemd = common.HexToAddress("0000000000000000000000000000000000000003")
@@ -184,43 +185,43 @@ func (ch touchChange) revert(s *StateDB) {
 }
 
 func (ch touchChange) dirtied() *common.Address {
-	return ch.account
+	return &ch.account
 }
 
 func (ch balanceChange) revert(s *StateDB) {
-	s.getStateObject(*ch.account).setBalance(ch.prev)
+	s.getStateObject(ch.account).setBalance(ch.prev)
 }
 
 func (ch balanceChange) dirtied() *common.Address {
-	return ch.account
+	return &ch.account
 }
 
 func (ch nonceChange) revert(s *StateDB) {
-	s.getStateObject(*ch.account).setNonce(ch.prev)
+	s.getStateObject(ch.account).setNonce(ch.prev)
 }
 
 func (ch nonceChange) dirtied() *common.Address {
-	return ch.account
+	return &ch.account
 }
 
 func (ch codeChange) revert(s *StateDB) {
-	s.getStateObject(*ch.account).setCode(common.BytesToHash(ch.prevhash), ch.prevcode)
+	s.getStateObject(ch.account).setCode(crypto.Keccak256Hash(ch.prevCode), ch.prevCode)
 }
 
 func (ch codeChange) dirtied() *common.Address {
-	return ch.account
+	return &ch.account
 }
 
 func (ch storageChange) revert(s *StateDB) {
-	s.getStateObject(*ch.account).setState(ch.key, ch.prevalue)
+	s.getStateObject(ch.account).setState(ch.key, ch.prevalue)
 }
 
 func (ch storageChange) dirtied() *common.Address {
-	return ch.account
+	return &ch.account
 }
 
 func (ch transientStorageChange) revert(s *StateDB) {
-	s.setTransientState(*ch.account, ch.key, ch.prevalue)
+	s.setTransientState(ch.account, ch.key, ch.prevalue)
 }
 
 func (ch transientStorageChange) dirtied() *common.Address {
@@ -267,7 +268,7 @@ func (ch accessListAddAccountChange) revert(s *StateDB) {
 		(addr) at this point, since no storage adds can remain when come upon
 		a single (addr) change.
 	*/
-	s.accessList.DeleteAddress(*ch.address)
+	s.accessList.DeleteAddress(ch.address)
 }
 
 func (ch accessListAddAccountChange) dirtied() *common.Address {
@@ -275,7 +276,7 @@ func (ch accessListAddAccountChange) dirtied() *common.Address {
 }
 
 func (ch accessListAddSlotChange) revert(s *StateDB) {
-	s.accessList.DeleteSlot(*ch.address, *ch.slot)
+	s.accessList.DeleteSlot(ch.address, ch.slot)
 }
 
 func (ch accessListAddSlotChange) dirtied() *common.Address {
