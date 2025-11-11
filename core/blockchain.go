@@ -2158,6 +2158,10 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 			winner = append(winner, parent)
 			parent = bc.GetBlock(parent.ParentHash(), parent.NumberU64()-1)
 		}
+		// fix issue #1765, return at once if winner is empty
+		if len(winner) == 0 {
+			return nil, errors.New("winner is empty")
+		}
 		for j := 0; j < len(winner)/2; j++ {
 			winner[j], winner[len(winner)-1-j] = winner[len(winner)-1-j], winner[j]
 		}
