@@ -19,11 +19,10 @@ package tradingstate
 import (
 	"fmt"
 
-	"github.com/XinFinOrg/XDPoSChain/ethdb"
-	"github.com/XinFinOrg/XDPoSChain/trie"
-
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"github.com/XinFinOrg/XDPoSChain/trie"
 )
 
 // XDCXTrie wraps a trie with key hashing. In a secure trie, all
@@ -146,7 +145,7 @@ func (t *XDCXTrie) GetKey(shaKey []byte) []byte {
 	if key, ok := t.getSecKeyCache()[string(shaKey)]; ok {
 		return key
 	}
-	return t.trie.Db().Preimage(common.BytesToHash(shaKey))
+	return t.trie.Preimage(common.BytesToHash(shaKey))
 }
 
 // Commit writes all nodes and the secure hash pre-images to the trie's database.
@@ -157,7 +156,7 @@ func (t *XDCXTrie) GetKey(shaKey []byte) []byte {
 func (t *XDCXTrie) Commit(onleaf trie.LeafCallback) (common.Hash, error) {
 	// Write all the pre-images to the actual disk database
 	if len(t.getSecKeyCache()) > 0 {
-		t.trie.Db().InsertPreimage(t.secKeyCache)
+		t.trie.InsertPreimage(t.secKeyCache)
 		t.secKeyCache = make(map[string][]byte)
 	}
 	// Commit the trie to its intermediate node database
@@ -169,7 +168,7 @@ func (t *XDCXTrie) Commit(onleaf trie.LeafCallback) (common.Hash, error) {
 		return common.Hash{}, err
 	}
 	if nodes != nil {
-		if err := t.trie.Db().Update(trie.NewWithNodeSet(nodes)); err != nil {
+		if err := t.trie.UpdateDb(trie.NewWithNodeSet(nodes)); err != nil {
 			return common.Hash{}, err
 		}
 	}

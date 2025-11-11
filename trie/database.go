@@ -298,21 +298,23 @@ func NewDatabaseWithConfig(diskdb ethdb.KeyValueStore, config *Config) *Database
 	return db
 }
 
-// Preimage retrieves a cached trie Node pre-image from memory. If it cannot be
+// preimage retrieves a cached trie Node pre-image from memory. If it cannot be
 // found cached, the method queries the persistent database for the content.
-func (db *Database) Preimage(hash common.Hash) []byte {
+// NOTE: preimage is only used by XDCx and XDCxlending
+func (db *Database) preimage(hash common.Hash) []byte {
 	if db.preimages == nil {
 		return nil
 	}
 	return db.preimages.preimage(hash)
 }
 
-func (db *Database) InsertPreimage(secKeyCache map[string][]byte) {
+// NOTE: insertPreimage is only used by XDCx and XDCxlending
+func (db *Database) insertPreimage(secKeyCache map[string][]byte) {
 	if db.preimages == nil {
 		return
 	}
 
-	preimages := make(map[common.Hash][]byte)
+	preimages := make(map[common.Hash][]byte, len(secKeyCache))
 	for hk, key := range secKeyCache {
 		preimages[common.BytesToHash([]byte(hk))] = key
 	}

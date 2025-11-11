@@ -73,8 +73,28 @@ func (t *Trie) newFlag() nodeFlag {
 	return nodeFlag{dirty: true}
 }
 
-func (t *Trie) Db() *Database {
-	return t.db
+// NOTE: Preimage is only used by XDCx and XDCxlending
+func (t *Trie) Preimage(hash common.Hash) []byte {
+	if t.db == nil {
+		return nil
+	}
+	return t.db.preimage(hash)
+}
+
+// NOTE: InsertPreimage is only used by XDCx and XDCxlending
+func (t *Trie) InsertPreimage(secKeyCache map[string][]byte) {
+	if t.db == nil {
+		return
+	}
+	t.db.insertPreimage(secKeyCache)
+}
+
+// NOTE: UpdateDb is only used by XDCx and XDCxlending
+func (t *Trie) UpdateDb(nodes *MergedNodeSet) error {
+	if t.db == nil {
+		return errors.New("database is nil in trie")
+	}
+	return t.db.Update(nodes)
 }
 
 // Copy returns a copy of Trie.
