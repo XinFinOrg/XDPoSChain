@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
-	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
@@ -218,11 +217,12 @@ func (s *stateObject) GetCommittedState(db Database, key common.Hash) common.Has
 }
 
 // SetState updates a value in account storage.
-func (s *stateObject) SetState(db Database, key, value common.Hash) {
-	// If the new value is the same as old, don't set
+func (s *stateObject) SetState(db Database, key, value common.Hash) common.Hash {
+	// If the new value is the same as old, don't set. Otherwise, track only the
+	// dirty changes, supporting reverting all of it back to no change.
 	prev := s.GetState(db, key)
 	if prev == value {
-		return
+		return prev
 	}
 	// New value is different, update and journal the change
 	s.db.journal.append(storageChange{
@@ -230,10 +230,8 @@ func (s *stateObject) SetState(db Database, key, value common.Hash) {
 		key:      key,
 		prevalue: prev,
 	})
-	if s.db.logger != nil && s.db.logger.OnStorageChange != nil {
-		s.db.logger.OnStorageChange(s.address, key, prev, value)
-	}
 	s.setState(key, value)
+	return prev
 }
 
 func (s *stateObject) setState(key, value common.Hash) {
@@ -338,36 +336,28 @@ func (s *stateObject) commitTrie(db Database) (*trie.NodeSet, error) {
 
 // AddBalance adds amount to s's balance.
 // It is used to add funds to the destination account of a transfer.
-func (s *stateObject) AddBalance(amount *big.Int, reason tracing.BalanceChangeReason) {
+// returns the previous balance
+func (s *stateObject) AddBalance(amount *big.Int) *big.Int {
 	// EIP161: We must check emptiness for the objects such that the account
 	// clearing (0,0,0 objects) can take effect.
 	if amount.Sign() == 0 {
 		if s.empty() {
 			s.touch()
 		}
-		return
+		return new(big.Int).Set(s.Balance())
 	}
-	s.SetBalance(new(big.Int).Add(s.Balance(), amount), reason)
+	return s.SetBalance(new(big.Int).Add(s.Balance(), amount))
 }
 
-// SubBalance removes amount from s's balance.
-// It is used to remove funds from the origin account of a transfer.
-func (s *stateObject) SubBalance(amount *big.Int, reason tracing.BalanceChangeReason) {
-	if amount.Sign() == 0 {
-		return
-	}
-	s.SetBalance(new(big.Int).Sub(s.Balance(), amount), reason)
-}
-
-func (s *stateObject) SetBalance(amount *big.Int, reason tracing.BalanceChangeReason) {
+// SetBalance sets the balance for the object, and returns the previous balance.
+func (s *stateObject) SetBalance(amount *big.Int) *big.Int {
+	prev := new(big.Int).Set(s.data.Balance)
 	s.db.journal.append(balanceChange{
 		account: s.address,
 		prev:    new(big.Int).Set(s.data.Balance),
 	})
-	if s.db.logger != nil && s.db.logger.OnBalanceChange != nil {
-		s.db.logger.OnBalanceChange(s.address, s.Balance(), amount, reason)
-	}
 	s.setBalance(amount)
+	return prev
 }
 
 func (s *stateObject) setBalance(amount *big.Int) {
@@ -437,9 +427,6 @@ func (s *stateObject) SetCode(codeHash common.Hash, code []byte) {
 		account:  s.address,
 		prevCode: prevCode,
 	})
-	if s.db.logger != nil && s.db.logger.OnCodeChange != nil {
-		s.db.logger.OnCodeChange(s.address, common.BytesToHash(s.CodeHash()), prevCode, codeHash, code)
-	}
 	s.setCode(codeHash, code)
 }
 
@@ -454,9 +441,6 @@ func (s *stateObject) SetNonce(nonce uint64) {
 		account: s.address,
 		prev:    s.data.Nonce,
 	})
-	if s.db.logger != nil && s.db.logger.OnNonceChange != nil {
-		s.db.logger.OnNonceChange(s.address, s.data.Nonce, nonce)
-	}
 	s.setNonce(nonce)
 }
 

@@ -18,6 +18,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/eth/util"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -255,7 +256,7 @@ func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 	}
 
 	// Hook calculates reward for masternodes
-	adaptor.EngineV1.HookReward = func(chain consensus.ChainReader, stateBlock *state.StateDB, parentState *state.StateDB, header *types.Header) (map[string]interface{}, error) {
+	adaptor.EngineV1.HookReward = func(chain consensus.ChainReader, stateBlock vm.StateDB, parentState *state.StateDB, header *types.Header) (map[string]interface{}, error) {
 		number := header.Number.Uint64()
 		rCheckpoint := chain.Config().XDPoS.RewardCheckpoint
 		foundationWalletAddr := chain.Config().XDPoS.FoudationWalletAddr

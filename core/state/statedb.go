@@ -47,9 +47,8 @@ type revision struct {
 // * Contracts
 // * Accounts
 type StateDB struct {
-	db     Database
-	trie   Trie
-	logger *tracing.Hooks
+	db   Database
+	trie Trie
 
 	// originalRoot is the pre-state root, before any changes were made.
 	// It will be updated when the Commit is called.
@@ -139,11 +138,6 @@ func New(root common.Hash, db Database) (*StateDB, error) {
 	}, nil
 }
 
-// SetLogger sets the logger for account update hooks.
-func (s *StateDB) SetLogger(l *tracing.Hooks) {
-	s.logger = l
-}
-
 // setError remembers the first non-nil error it is called with.
 func (s *StateDB) setError(err error) {
 	if s.dbErr == nil {
@@ -183,9 +177,6 @@ func (s *StateDB) AddLog(log *types.Log) {
 	log.TxHash = s.thash
 	log.TxIndex = uint(s.txIndex)
 	log.Index = s.logSize
-	if s.logger != nil && s.logger.OnLog != nil {
-		s.logger.OnLog(log)
-	}
 	s.logs[s.thash] = append(s.logs[s.thash], log)
 	s.logSize++
 }
@@ -390,25 +381,31 @@ func (s *StateDB) HasSelfDestructed(addr common.Address) bool {
  */
 
 // AddBalance adds amount to the account associated with addr.
-func (s *StateDB) AddBalance(addr common.Address, amount *big.Int, reason tracing.BalanceChangeReason) {
+func (s *StateDB) AddBalance(addr common.Address, amount *big.Int, _ tracing.BalanceChangeReason) *big.Int {
 	stateObject := s.GetOrNewStateObject(addr)
-	if stateObject != nil {
-		stateObject.AddBalance(amount, reason)
+	if stateObject == nil {
+		return new(big.Int)
 	}
+	return stateObject.AddBalance(amount)
 }
 
 // SubBalance subtracts amount from the account associated with addr.
-func (s *StateDB) SubBalance(addr common.Address, amount *big.Int, reason tracing.BalanceChangeReason) {
+func (s *StateDB) SubBalance(addr common.Address, amount *big.Int, _ tracing.BalanceChangeReason) *big.Int {
 	stateObject := s.GetOrNewStateObject(addr)
-	if stateObject != nil {
-		stateObject.SubBalance(amount, reason)
+	if stateObject == nil {
+		return new(big.Int)
 	}
+	prev := stateObject.Balance()
+	if amount.Sign() == 0 {
+		return new(big.Int).Set(prev)
+	}
+	return stateObject.SetBalance(new(big.Int).Sub(prev, amount))
 }
 
-func (s *StateDB) SetBalance(addr common.Address, amount *big.Int, reason tracing.BalanceChangeReason) {
+func (s *StateDB) SetBalance(addr common.Address, amount *big.Int, _ tracing.BalanceChangeReason) {
 	stateObject := s.GetOrNewStateObject(addr)
 	if stateObject != nil {
-		stateObject.SetBalance(amount, reason)
+		stateObject.SetBalance(amount)
 	}
 }
 
@@ -426,11 +423,11 @@ func (s *StateDB) SetCode(addr common.Address, code []byte) {
 	}
 }
 
-func (s *StateDB) SetState(addr common.Address, key, value common.Hash) {
-	stateObject := s.GetOrNewStateObject(addr)
-	if stateObject != nil {
-		stateObject.SetState(s.db, key, value)
+func (s *StateDB) SetState(addr common.Address, key, value common.Hash) common.Hash {
+	if stateObject := s.GetOrNewStateObject(addr); stateObject != nil {
+		return stateObject.SetState(s.db, key, value)
 	}
+	return common.Hash{}
 }
 
 // SetStorage replaces the entire storage for the specified account with given
@@ -458,7 +455,7 @@ func (s *StateDB) SetStorage(addr common.Address, storage map[common.Hash]common
 	if obj != nil {
 		newObj.SetCode(common.BytesToHash(obj.CodeHash()), obj.code)
 		newObj.SetNonce(obj.Nonce())
-		newObj.SetBalance(obj.Balance(), tracing.BalanceChangeUnspecified)
+		newObj.SetBalance(obj.Balance())
 	}
 }
 
@@ -467,36 +464,40 @@ func (s *StateDB) SetStorage(addr common.Address, storage map[common.Hash]common
 //
 // The account's state object is still available until the state is committed,
 // getStateObject will return a non-nil account after SelfDestruct.
-func (s *StateDB) SelfDestruct(addr common.Address) {
+func (s *StateDB) SelfDestruct(addr common.Address) *big.Int {
 	stateObject := s.getStateObject(addr)
+	prevBalance := new(big.Int)
 	if stateObject == nil {
-		return
+		return prevBalance
 	}
-	var (
-		prev = new(big.Int).Set(stateObject.Balance())
-		n    = new(big.Int)
-	)
-	s.journal.append(selfDestructChange{
-		account:     addr,
-		prev:        stateObject.selfDestructed,
-		prevbalance: prev,
-	})
-	if s.logger != nil && s.logger.OnBalanceChange != nil && prev.Sign() > 0 {
-		s.logger.OnBalanceChange(addr, prev, n, tracing.BalanceDecreaseSelfdestruct)
+	prevBalance.Set(stateObject.Balance())
+	// Regardless of whether it is already destructed or not, we do have to
+	// journal the balance-change, if we set it to zero here.
+	if prevBalance.Sign() != 0 {
+		stateObject.SetBalance(new(big.Int))
 	}
-	stateObject.markSelfdestructed()
-	stateObject.data.Balance = n
+	// If it is already marked as self-destructed, we do not need to add it
+	// for journalling a second time.
+	if !stateObject.selfDestructed {
+		s.journal.append(selfDestructChange{
+			account:     addr,
+			prev:        stateObject.selfDestructed,
+			prevbalance: prevBalance,
+		})
+		stateObject.markSelfdestructed()
+	}
+	return prevBalance
 }
 
-func (s *StateDB) Selfdestruct6780(addr common.Address) {
+func (s *StateDB) SelfDestruct6780(addr common.Address) (*big.Int, bool) {
 	stateObject := s.getStateObject(addr)
 	if stateObject == nil {
-		return
+		return new(big.Int), false
 	}
-
 	if stateObject.created {
-		s.SelfDestruct(addr)
+		return s.SelfDestruct(addr), true
 	}
+	return new(big.Int).Set(stateObject.Balance()), false
 }
 
 // SetTransientState sets transient storage for a given account. It
@@ -653,6 +654,19 @@ func (s *StateDB) CreateAccount(addr common.Address) {
 	}
 }
 
+// CreateContract is used whenever a contract is created. This may be preceded
+// by CreateAccount, but that is not required if it already existed in the
+// state due to funds sent beforehand.
+// This operation sets the 'newContract'-flag, which is required in order to
+// correctly handle EIP-6780 'delete-in-same-transaction' logic.
+func (s *StateDB) CreateContract(addr common.Address) {
+	obj := s.getStateObject(addr)
+	if obj != nil && !obj.created {
+		obj.created = true
+		s.journal.createContract(addr)
+	}
+}
+
 func (s *StateDB) ForEachStorage(addr common.Address, cb func(key, value common.Hash) bool) error {
 	so := s.getStateObject(addr)
 	if so == nil {
@@ -801,14 +815,11 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 
 		if obj.selfDestructed || (deleteEmptyObjects && obj.empty()) {
 			obj.deleted = true
-
 			// We need to maintain account deletions explicitly (will remain
-			// set indefinitely).
-			s.stateObjectsDestruct[obj.address] = struct{}{}
-
-			// If ether was sent to account post-selfdestruct it is burnt.
-			if bal := obj.Balance(); s.logger != nil && s.logger.OnBalanceChange != nil && obj.selfDestructed && bal.Sign() != 0 {
-				s.logger.OnBalanceChange(obj.address, bal, new(big.Int), tracing.BalanceDecreaseSelfdestructBurn)
+			// set indefinitely). Note only the first occurred self-destruct
+			// event is tracked.
+			if _, ok := s.stateObjectsDestruct[obj.address]; !ok {
+				s.stateObjectsDestruct[obj.address] = struct{}{}
 			}
 		} else {
 			obj.finalise()

@@ -23,7 +23,6 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
-	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
@@ -52,7 +51,7 @@ func makeTestState() (ethdb.Database, Database, common.Hash, []*testAccount) {
 		obj := state.GetOrNewStateObject(common.BytesToAddress([]byte{i}))
 		acc := &testAccount{address: common.BytesToAddress([]byte{i})}
 
-		obj.AddBalance(big.NewInt(11*int64(i)), tracing.BalanceChangeUnspecified)
+		obj.AddBalance(big.NewInt(11 * int64(i)))
 		acc.balance = big.NewInt(11 * int64(i))
 
 		obj.SetNonce(uint64(42 * i))

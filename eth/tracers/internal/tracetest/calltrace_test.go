@@ -30,6 +30,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
@@ -126,20 +127,22 @@ func testCallTracer(tracerName string, dirPath string, t *testing.T) {
 					GasLimit:    uint64(test.Context.GasLimit),
 					BaseFee:     test.Genesis.BaseFee,
 				}
-				state = tests.MakePreState(rawdb.NewMemoryDatabase(), test.Genesis.Alloc)
+				st = tests.MakePreState(rawdb.NewMemoryDatabase(), test.Genesis.Alloc)
 			)
 
 			tracer, err := tracers.DefaultDirectory.New(tracerName, new(tracers.Context), test.TracerConfig, test.Genesis.Config)
 			if err != nil {
 				t.Fatalf("failed to create call tracer: %v", err)
 			}
-
-			state.SetLogger(tracer.Hooks)
+			logState := vm.StateDB(st)
+			if tracer.Hooks != nil {
+				logState = state.NewHookedState(st, tracer.Hooks)
+			}
 			msg, err := core.TransactionToMessage(tx, signer, nil, nil, context.BaseFee)
 			if err != nil {
 				t.Fatalf("failed to prepare transaction for tracing: %v", err)
 			}
-			evm := vm.NewEVM(context, core.NewEVMTxContext(msg), state, nil, test.Genesis.Config, vm.Config{Tracer: tracer.Hooks})
+			evm := vm.NewEVM(context, core.NewEVMTxContext(msg), logState, nil, test.Genesis.Config, vm.Config{Tracer: tracer.Hooks})
 			tracer.OnTxStart(evm.GetVMContext(), tx, msg.From)
 			vmRet, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(tx.Gas()), common.Address{})
 			if err != nil {
@@ -348,7 +351,7 @@ func TestInternals(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			state := tests.MakePreState(rawdb.NewMemoryDatabase(),
+			st := tests.MakePreState(rawdb.NewMemoryDatabase(),
 				types.GenesisAlloc{
 					to: types.Account{
 						Code: tc.code,
@@ -357,7 +360,12 @@ func TestInternals(t *testing.T) {
 						Balance: big.NewInt(500000000000000),
 					},
 				})
-			state.SetLogger(tc.tracer.Hooks)
+
+			logState := vm.StateDB(st)
+			if hooks := tc.tracer.Hooks; hooks != nil {
+				logState = state.NewHookedState(st, hooks)
+			}
+
 			tx, err := types.SignNewTx(key, signer, &types.LegacyTx{
 				To:       &to,
 				Value:    big.NewInt(0),
@@ -371,7 +379,7 @@ func TestInternals(t *testing.T) {
 				Origin:   origin,
 				GasPrice: tx.GasPrice(),
 			}
-			evm := vm.NewEVM(context, txContext, state, nil, config, vm.Config{Tracer: tc.tracer.Hooks})
+			evm := vm.NewEVM(context, txContext, logState, nil, config, vm.Config{Tracer: tc.tracer.Hooks})
 			msg, err := core.TransactionToMessage(tx, signer, nil, nil, big.NewInt(0))
 			if err != nil {
 				t.Fatalf("test %v: failed to create message: %v", tc.name, err)

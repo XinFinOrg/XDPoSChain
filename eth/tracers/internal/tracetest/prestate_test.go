@@ -109,18 +109,7 @@ func testPrestateDiffTracer(tracerName string, dirPath string, t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to create call tracer: %v", err)
 			}
-			// msg, err := core.TransactionToMessage(tx, signer, nil, context.BlockNumber, context.BaseFee)
-			// if err != nil {
-			// 	t.Fatalf("failed to prepare transaction for tracing: %v", err)
-			// }
-			// evm := vm.NewEVM(context, core.NewEVMTxContext(msg), statedb, nil, test.Genesis.Config, vm.Config{Tracer: tracer})
-			// st := core.NewStateTransition(evm, msg, new(core.GasPool).AddGas(tx.Gas()))
-			// if _, err = st.TransitionDb(common.Address{}); err != nil {
-			// 	t.Fatalf("failed to execute transaction: %v", err)
-			// }
-			// // Retrieve the trace result and compare against the expected.
 
-			state.SetLogger(tracer.Hooks)
 			msg, err := core.TransactionToMessage(tx, signer, nil, context.BlockNumber, context.BaseFee)
 			if err != nil {
 				t.Fatalf("failed to prepare transaction for tracing: %v", err)

@@ -76,9 +76,15 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 		allLogs     []*types.Log
 		gp          = new(GasPool).AddGas(block.GasLimit())
 	)
+
+	var tracingStateDB = vm.StateDB(statedb)
+	if hooks := cfg.Tracer; hooks != nil {
+		tracingStateDB = state.NewHookedState(statedb, hooks)
+	}
+
 	// Mutate the block and state according to any hard-fork specs
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
-		misc.ApplyDAOHardFork(statedb)
+		misc.ApplyDAOHardFork(tracingStateDB)
 	}
 	if common.TIPSigning.Cmp(blockNumber) == 0 {
 		statedb.DeleteAddress(common.BlockSignersBinary)
@@ -87,10 +93,13 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 	InitSignerInTransactions(p.config, header, block.Transactions())
 	balanceUpdated := map[common.Address]*big.Int{}
 	totalFeeUsed := big.NewInt(0)
+
+	// Apply pre-execution system calls.
 	blockContext := NewEVMBlockContext(header, p.bc, nil)
-	vmenv := vm.NewEVM(blockContext, vm.TxContext{}, statedb, tradingState, p.config, cfg)
+	vmenv := vm.NewEVM(blockContext, vm.TxContext{}, tracingStateDB, tradingState, p.config, cfg)
 	signer := types.MakeSigner(p.config, blockNumber)
 	coinbaseOwner := getCoinbaseOwner(p.bc, statedb, header, nil)
+
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
 		// check black-list txs after hf
@@ -144,9 +153,11 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 			totalFeeUsed = totalFeeUsed.Add(totalFeeUsed, fee)
 		}
 	}
-	statedb.UpdateTRC21Fee(balanceUpdated, totalFeeUsed)
+	tracingStateDB.UpdateTRC21Fee(balanceUpdated, totalFeeUsed)
+
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
-	p.engine.Finalize(p.bc, header, statedb, parentState, block.Transactions(), block.Uncles(), receipts)
+	p.engine.Finalize(p.bc, header, tracingStateDB, parentState, block.Transactions(), block.Uncles(), receipts)
+
 	return receipts, allLogs, *usedGas, nil
 }
 
@@ -161,9 +172,15 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 		allLogs     []*types.Log
 		gp          = new(GasPool).AddGas(block.GasLimit())
 	)
+
+	var tracingStateDB = vm.StateDB(statedb)
+	if hooks := cfg.Tracer; hooks != nil {
+		tracingStateDB = state.NewHookedState(statedb, hooks)
+	}
+
 	// Mutate the block and state according to any hard-fork specs
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
-		misc.ApplyDAOHardFork(statedb)
+		misc.ApplyDAOHardFork(tracingStateDB)
 	}
 	if common.TIPSigning.Cmp(blockNumber) == 0 {
 		statedb.DeleteAddress(common.BlockSignersBinary)
@@ -179,10 +196,13 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 	if cBlock.stop {
 		return nil, nil, 0, ErrStopPreparingBlock
 	}
+
+	// Apply pre-execution system calls.
 	blockContext := NewEVMBlockContext(header, p.bc, nil)
-	vmenv := vm.NewEVM(blockContext, vm.TxContext{}, statedb, tradingState, p.config, cfg)
+	vmenv := vm.NewEVM(blockContext, vm.TxContext{}, tracingStateDB, tradingState, p.config, cfg)
 	signer := types.MakeSigner(p.config, blockNumber)
 	coinbaseOwner := getCoinbaseOwner(p.bc, statedb, header, nil)
+
 	// Iterate over and process the individual transactions
 	receipts = make([]*types.Receipt, block.Transactions().Len())
 	for i, tx := range block.Transactions() {
@@ -222,6 +242,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 			return nil, nil, 0, err
 		}
 		statedb.SetTxContext(tx.Hash(), i)
+
 		receipt, gas, tokenFeeUsed, err := ApplyTransactionWithEVM(msg, p.config, gp, statedb, blockNumber, blockHash, tx, usedGas, vmenv, balanceFee, coinbaseOwner)
 		if err != nil {
 			return nil, nil, 0, err
@@ -238,9 +259,10 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 			totalFeeUsed = totalFeeUsed.Add(totalFeeUsed, fee)
 		}
 	}
-	statedb.UpdateTRC21Fee(balanceUpdated, totalFeeUsed)
+	tracingStateDB.UpdateTRC21Fee(balanceUpdated, totalFeeUsed)
+
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
-	p.engine.Finalize(p.bc, header, statedb, parentState, block.Transactions(), block.Uncles(), receipts)
+	p.engine.Finalize(p.bc, header, tracingStateDB, parentState, block.Transactions(), block.Uncles(), receipts)
 	return receipts, allLogs, *usedGas, nil
 }
 
@@ -250,39 +272,39 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 func ApplyTransactionWithEVM(msg *Message, config *params.ChainConfig, gp *GasPool, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM, balanceFee *big.Int, coinbaseOwner common.Address) (receipt *types.Receipt, gasUsed uint64, tokenFeeUsed bool, err error) {
 	// Initialize tracer at the beginning to ensure all transaction types
 	// (including non-EVM special transactions) are properly traced.
-	if evm.Config.Tracer != nil && evm.Config.Tracer.OnTxStart != nil {
-		evm.Config.Tracer.OnTxStart(evm.GetVMContext(), tx, msg.From)
-		if evm.Config.Tracer.OnTxEnd != nil {
-			defer func() {
-				evm.Config.Tracer.OnTxEnd(receipt, err)
-			}()
+	var tracingStateDB = vm.StateDB(statedb)
+	if hooks := evm.Config.Tracer; hooks != nil {
+		tracingStateDB = state.NewHookedState(statedb, hooks)
+		if hooks.OnTxStart != nil {
+			hooks.OnTxStart(evm.GetVMContext(), tx, msg.From)
+		}
+		if hooks.OnTxEnd != nil {
+			defer func() { hooks.OnTxEnd(receipt, err) }()
 		}
 	}
 
 	to := tx.To()
 	if to != nil {
 		if *to == common.BlockSignersBinary && config.IsTIPSigning(blockNumber) {
-			return ApplySignTransaction(config, statedb, blockNumber, blockHash, tx, usedGas)
+			return ApplySignTransaction(msg, config, statedb, blockNumber, blockHash, tx, usedGas, evm)
 		}
 		if *to == common.TradingStateAddrBinary && config.IsTIPXDCXReceiver(blockNumber) {
-			return ApplyEmptyTransaction(config, statedb, blockNumber, blockHash, tx, usedGas)
+			return ApplyEmptyTransaction(msg, config, statedb, blockNumber, blockHash, tx, usedGas, evm)
 		}
 		if *to == common.XDCXLendingAddressBinary && config.IsTIPXDCXReceiver(blockNumber) {
-			return ApplyEmptyTransaction(config, statedb, blockNumber, blockHash, tx, usedGas)
+			return ApplyEmptyTransaction(msg, config, statedb, blockNumber, blockHash, tx, usedGas, evm)
 		}
 	}
 	if tx.IsTradingTransaction() && config.IsTIPXDCXReceiver(blockNumber) {
-		return ApplyEmptyTransaction(config, statedb, blockNumber, blockHash, tx, usedGas)
+		return ApplyEmptyTransaction(msg, config, statedb, blockNumber, blockHash, tx, usedGas, evm)
 	}
 	if tx.IsLendingFinalizedTradeTransaction() && config.IsTIPXDCXReceiver(blockNumber) {
-		return ApplyEmptyTransaction(config, statedb, blockNumber, blockHash, tx, usedGas)
+		return ApplyEmptyTransaction(msg, config, statedb, blockNumber, blockHash, tx, usedGas, evm)
 	}
 
 	// Create a new context to be used in the EVM environment
 	txContext := NewEVMTxContext(msg)
-
-	// Update the evm with the new transaction context.
-	evm.Reset(txContext, statedb)
+	evm.Reset(txContext, tracingStateDB)
 
 	// Bypass blacklist address
 	maxBlockNumber := new(big.Int).SetInt64(9147459)
@@ -437,7 +459,7 @@ func ApplyTransactionWithEVM(msg *Message, config *params.ChainConfig, gp *GasPo
 	// Update the state with pending changes.
 	var root []byte
 	if config.IsByzantium(blockNumber) {
-		statedb.Finalise(true)
+		tracingStateDB.Finalise(true)
 	} else {
 		root = statedb.IntermediateRoot(config.IsEIP158(blockNumber)).Bytes()
 	}
@@ -512,7 +534,7 @@ func ApplyTransaction(config *params.ChainConfig, tokensFee map[common.Address]*
 	return ApplyTransactionWithEVM(msg, config, gp, statedb, header.Number, header.Hash(), tx, usedGas, vmenv, balanceFee, coinbaseOwner)
 }
 
-func ApplySignTransaction(config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64) (*types.Receipt, uint64, bool, error) {
+func ApplySignTransaction(msg *Message, config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM) (receipt *types.Receipt, gasUsed uint64, tokenFeeUsed bool, err error) {
 	// Update the state with pending changes
 	var root []byte
 	if config.IsByzantium(blockNumber) {
@@ -532,8 +554,8 @@ func ApplySignTransaction(config *params.ChainConfig, statedb *state.StateDB, bl
 	}
 	statedb.SetNonce(from, nonce+1)
 	// Create a new receipt for the transaction, storing the intermediate root and gas used by the tx
-	// based on the eip phase, we're passing wether the root touch-delete accounts.
-	receipt := types.NewReceipt(root, false, *usedGas)
+	// based on the eip phase, we're passing whether the root touch-delete accounts.
+	receipt = types.NewReceipt(root, false, *usedGas)
 	receipt.TxHash = tx.Hash()
 	receipt.GasUsed = 0
 	// if the transaction created a contract, store the creation address in the receipt.
@@ -550,7 +572,7 @@ func ApplySignTransaction(config *params.ChainConfig, statedb *state.StateDB, bl
 	return receipt, 0, false, nil
 }
 
-func ApplyEmptyTransaction(config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64) (*types.Receipt, uint64, bool, error) {
+func ApplyEmptyTransaction(msg *Message, config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM) (receipt *types.Receipt, gasUsed uint64, tokenFeeUsed bool, err error) {
 	// Update the state with pending changes
 	var root []byte
 	if config.IsByzantium(blockNumber) {
@@ -559,8 +581,8 @@ func ApplyEmptyTransaction(config *params.ChainConfig, statedb *state.StateDB, b
 		root = statedb.IntermediateRoot(config.IsEIP158(blockNumber)).Bytes()
 	}
 	// Create a new receipt for the transaction, storing the intermediate root and gas used by the tx
-	// based on the eip phase, we're passing wether the root touch-delete accounts.
-	receipt := types.NewReceipt(root, false, *usedGas)
+	// based on the eip phase, we're passing whether the root touch-delete accounts.
+	receipt = types.NewReceipt(root, false, *usedGas)
 	receipt.TxHash = tx.Hash()
 	receipt.GasUsed = 0
 	// if the transaction created a contract, store the creation address in the receipt.

@@ -29,8 +29,8 @@ import (
 type StateDB interface {
 	CreateAccount(common.Address)
 
-	SubBalance(common.Address, *big.Int, tracing.BalanceChangeReason)
-	AddBalance(common.Address, *big.Int, tracing.BalanceChangeReason)
+	SubBalance(common.Address, *big.Int, tracing.BalanceChangeReason) *big.Int
+	AddBalance(common.Address, *big.Int, tracing.BalanceChangeReason) *big.Int
 	GetBalance(common.Address) *big.Int
 
 	GetNonce(common.Address) uint64
@@ -47,16 +47,21 @@ type StateDB interface {
 
 	GetCommittedState(common.Address, common.Hash) common.Hash
 	GetState(common.Address, common.Hash) common.Hash
-	SetState(common.Address, common.Hash, common.Hash)
+	SetState(common.Address, common.Hash, common.Hash) common.Hash
 	GetStorageRoot(addr common.Address) common.Hash
 
 	GetTransientState(addr common.Address, key common.Hash) common.Hash
 	SetTransientState(addr common.Address, key, value common.Hash)
 
-	SelfDestruct(common.Address)
+	SelfDestruct(common.Address) *big.Int
 	HasSelfDestructed(common.Address) bool
 
-	Selfdestruct6780(common.Address)
+	// SelfDestruct6780 is post-EIP6780 selfdestruct, which means that it's a
+	// send-all-to-beneficiary, unless the contract was created in this same
+	// transaction, in which case it will be destructed.
+	// This method returns the prior balance, along with a boolean which is
+	// true iff the object was indeed destructed.
+	SelfDestruct6780(common.Address) (*big.Int, bool)
 
 	// Exist reports whether the given account exists in state.
 	// Notably this should also return true for self-destructed accounts.
@@ -80,6 +85,26 @@ type StateDB interface {
 
 	AddLog(*types.Log)
 	AddPreimage(common.Hash, []byte)
+
+	// Finalise must be invoked at the end of a transaction
+	Finalise(bool)
+
+	IntermediateRoot(deleteEmptyObjects bool) common.Hash
+
+	UpdateTRC21Fee(newBalance map[common.Address]*big.Int, totalFeeUsed *big.Int)
+
+	PutMintedRecordOnsetBlock(value common.Hash)
+	PutMintedRecordOnsetEpoch(value common.Hash)
+
+	GetPostBurned(epoch uint64) common.Hash
+	PutPostBurned(epoch uint64, value common.Hash)
+
+	GetPostMinted(epoch uint64) common.Hash
+	PutPostMinted(epoch uint64, value common.Hash)
+
+	PutPostRewardBlock(epoch uint64, value common.Hash)
+
+	IncrementMintedRecordNonce()
 }
 
 // CallContext provides a basic interface for the EVM calling conventions. The EVM

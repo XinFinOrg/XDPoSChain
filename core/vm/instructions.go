@@ -859,7 +859,7 @@ func opSelfdestruct6780(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, erro
 	balance := evm.StateDB.GetBalance(scope.Contract.Address())
 	evm.StateDB.SubBalance(scope.Contract.Address(), balance, tracing.BalanceDecreaseSelfdestruct)
 	evm.StateDB.AddBalance(beneficiary.Bytes20(), balance, tracing.BalanceIncreaseSelfdestruct)
-	evm.StateDB.Selfdestruct6780(scope.Contract.Address())
+	evm.StateDB.SelfDestruct6780(scope.Contract.Address())
 	if tracer := evm.Config.Tracer; tracer != nil {
 		if tracer.OnEnter != nil {
 			tracer.OnEnter(evm.depth, byte(SELFDESTRUCT), scope.Contract.Address(), beneficiary.Bytes20(), []byte{}, 0, balance)

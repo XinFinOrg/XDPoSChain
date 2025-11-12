@@ -155,7 +155,7 @@ func TestCopy(t *testing.T) {
 
 	for i := byte(0); i < 255; i++ {
 		obj := orig.GetOrNewStateObject(common.BytesToAddress([]byte{i}))
-		obj.AddBalance(big.NewInt(int64(i)), tracing.BalanceChangeUnspecified)
+		obj.AddBalance(big.NewInt(int64(i)))
 		orig.updateStateObject(obj)
 	}
 	orig.Finalise(false)
@@ -172,9 +172,9 @@ func TestCopy(t *testing.T) {
 		copyObj := copy.GetOrNewStateObject(common.BytesToAddress([]byte{i}))
 		ccopyObj := ccopy.GetOrNewStateObject(common.BytesToAddress([]byte{i}))
 
-		origObj.AddBalance(big.NewInt(2*int64(i)), tracing.BalanceChangeUnspecified)
-		copyObj.AddBalance(big.NewInt(3*int64(i)), tracing.BalanceChangeUnspecified)
-		ccopyObj.AddBalance(big.NewInt(4*int64(i)), tracing.BalanceChangeUnspecified)
+		origObj.AddBalance(big.NewInt(2 * int64(i)))
+		copyObj.AddBalance(big.NewInt(3 * int64(i)))
+		ccopyObj.AddBalance(big.NewInt(4 * int64(i)))
 
 		orig.updateStateObject(origObj)
 		copy.updateStateObject(copyObj)
@@ -290,6 +290,27 @@ func newTestAction(addr common.Address, r *rand.Rand) testAction {
 			name: "CreateAccount",
 			fn: func(a testAction, s *StateDB) {
 				s.CreateAccount(addr)
+			},
+		},
+		{
+			name: "CreateContract",
+			fn: func(a testAction, s *StateDB) {
+				if !s.Exist(addr) {
+					s.CreateAccount(addr)
+				}
+				contractHash := s.GetCodeHash(addr)
+				emptyCode := contractHash == (common.Hash{}) || contractHash == types.EmptyCodeHash
+				storageRoot := s.GetStorageRoot(addr)
+				emptyStorage := storageRoot == (common.Hash{}) || storageRoot == types.EmptyRootHash
+				if s.GetNonce(addr) == 0 && emptyCode && emptyStorage {
+					s.CreateContract(addr)
+					// We also set some code here, to prevent the
+					// CreateContract action from being performed twice in a row,
+					// which would cause a difference in state when unrolling
+					// the journal. (CreateContract assumes created was false prior to
+					// invocation, and the journal rollback sets it to false).
+					s.SetCode(addr, []byte{1})
+				}
 			},
 		},
 		{

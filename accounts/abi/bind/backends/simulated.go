@@ -43,7 +43,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/bloombits"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
-	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
@@ -738,7 +737,7 @@ func (b *SimulatedBackend) callContract(ctx context.Context, call ethereum.CallM
 
 	// Set infinite balance to the fake caller account.
 	from := stateDB.GetOrNewStateObject(call.From)
-	from.SetBalance(math.MaxBig256, tracing.BalanceChangeUnspecified)
+	from.SetBalance(math.MaxBig256)
 
 	// Execute the call.
 	msg := &core.Message{
