@@ -81,6 +81,7 @@ type Config struct {
 
 	// Database options
 	SkipBcVersionCheck bool `toml:"-"`
+	DeleteAllBadBlocks bool `toml:"-"`
 	DatabaseHandles    int  `toml:"-"`
 	DatabaseCache      int
 	TrieCleanCache     int

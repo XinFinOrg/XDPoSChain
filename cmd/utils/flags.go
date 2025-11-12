@@ -806,6 +806,11 @@ var (
 	}
 
 	// MISC settings
+	DeleteAllBadBlocksFlag = &cli.BoolFlag{
+		Name:     "delete-all-bad-blocks",
+		Usage:    "Delete all bad blocks in the database",
+		Category: flags.MiscCategory,
+	}
 	SetHeadFlag = &cli.Uint64Flag{
 		Name:     "set-head",
 		Usage:    "Rollback chain to block number",
@@ -1631,6 +1636,9 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		if !common.FileExist(common.StoreRewardFolder) {
 			os.Mkdir(common.StoreRewardFolder, os.ModePerm)
 		}
+	}
+	if ctx.Bool(DeleteAllBadBlocksFlag.Name) {
+		cfg.DeleteAllBadBlocks = true
 	}
 	if ctx.IsSet(SetHeadFlag.Name) {
 		common.RollbackNumber = ctx.Uint64(SetHeadFlag.Name)

@@ -144,6 +144,7 @@ var (
 		utils.AnnounceTxsFlag,
 		utils.StoreRewardFlag,
 		utils.SetHeadFlag,
+		utils.DeleteAllBadBlocksFlag,
 		utils.XDCSlaveModeFlag,
 	}, utils.NetworkFlags, utils.DatabaseFlags)
 

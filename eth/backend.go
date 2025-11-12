@@ -175,6 +175,20 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 		}
 	}
 
+	badBlocks := rawdb.ReadAllBadBlocks(chainDb)
+	log.Info("Bad blocks in db", "count", len(badBlocks))
+	for i, block := range badBlocks {
+		log.Info("Bad block in db", "i", i, "number", block.Number(), "hash", block.Hash().Hex())
+	}
+	if config.DeleteAllBadBlocks {
+		if len(badBlocks) == 0 {
+			log.Warn("No bad blocks in db to delete")
+		} else {
+			rawdb.DeleteBadBlocks(chainDb)
+			log.Info(fmt.Sprintf("Deleted %d bad blocks in db", len(badBlocks)))
+		}
+	}
+
 	var (
 		vmConfig    = vm.Config{EnablePreimageRecording: config.EnablePreimageRecording}
 		cacheConfig = &core.CacheConfig{
