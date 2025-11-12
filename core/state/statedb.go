@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"maps"
 	"math/big"
+	"slices"
 	"sort"
 	"time"
 
@@ -199,6 +200,9 @@ func (s *StateDB) Logs() []*types.Log {
 	for _, lgs := range s.logs {
 		logs = append(logs, lgs...)
 	}
+	slices.SortFunc(logs, func(a, b *types.Log) int {
+		return int(a.Index) - int(b.Index)
+	})
 	return logs
 }
 
