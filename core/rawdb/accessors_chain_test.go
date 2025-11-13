@@ -221,8 +221,8 @@ func TestBadBlockStorage(t *testing.T) {
 		Number:      big.NewInt(1),
 		Extra:       []byte("bad block"),
 		UncleHash:   types.EmptyUncleHash,
-		TxHash:      types.EmptyRootHash,
-		ReceiptHash: types.EmptyRootHash,
+		TxHash:      types.EmptyTxsHash,
+		ReceiptHash: types.EmptyReceiptsHash,
 	})
 	if entry := ReadBadBlock(db, block.Hash()); entry != nil {
 		t.Fatalf("Non existent block returned: %v", entry)
@@ -239,8 +239,8 @@ func TestBadBlockStorage(t *testing.T) {
 		Number:      big.NewInt(2),
 		Extra:       []byte("bad block two"),
 		UncleHash:   types.EmptyUncleHash,
-		TxHash:      types.EmptyRootHash,
-		ReceiptHash: types.EmptyRootHash,
+		TxHash:      types.EmptyTxsHash,
+		ReceiptHash: types.EmptyReceiptsHash,
 	})
 	WriteBadBlock(db, blockTwo)
 
@@ -258,8 +258,8 @@ func TestBadBlockStorage(t *testing.T) {
 			Number:      big.NewInt(int64(n)),
 			Extra:       []byte("bad block"),
 			UncleHash:   types.EmptyUncleHash,
-			TxHash:      types.EmptyRootHash,
-			ReceiptHash: types.EmptyRootHash,
+			TxHash:      types.EmptyTxsHash,
+			ReceiptHash: types.EmptyReceiptsHash,
 		})
 		WriteBadBlock(db, block)
 	}
@@ -269,7 +269,7 @@ func TestBadBlockStorage(t *testing.T) {
 	}
 	for i := 0; i < len(badBlocks)-1; i++ {
 		if badBlocks[i].NumberU64() < badBlocks[i+1].NumberU64() {
-			t.Fatalf("The bad blocks are not sorted #[%d](%d) < #[%d](%d)", i, i+1, badBlocks[i].NumberU64(), badBlocks[i+1].NumberU64())
+			t.Fatalf("The bad blocks are not sorted #[%d](%d) < #[%d](%d)", i, badBlocks[i].NumberU64(), i+1, badBlocks[i+1].NumberU64())
 		}
 	}
 

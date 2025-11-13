@@ -33,6 +33,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/core"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
@@ -456,6 +457,17 @@ func (api *API) TraceBlock(ctx context.Context, blob hexutil.Bytes, config *Trac
 	block := new(types.Block)
 	if err := rlp.Decode(bytes.NewReader(blob), block); err != nil {
 		return nil, fmt.Errorf("could not decode block: %v", err)
+	}
+	return api.traceBlock(ctx, block, config)
+}
+
+// TraceBadBlock returns the structured logs created during the execution of
+// EVM against a block pulled from the pool of bad ones and returns them as a JSON
+// object.
+func (api *API) TraceBadBlock(ctx context.Context, hash common.Hash, config *TraceConfig) ([]*txTraceResult, error) {
+	block := rawdb.ReadBadBlock(api.backend.ChainDb(), hash)
+	if block == nil {
+		return nil, fmt.Errorf("bad block %#x not found", hash)
 	}
 	return api.traceBlock(ctx, block, config)
 }

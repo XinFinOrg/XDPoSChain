@@ -87,7 +87,7 @@ type BadBlockArgs struct {
 }
 
 // GetBadBlocks returns a list of the last 'bad blocks' that the client has seen on the network
-// and returns them as a JSON list of block-hashes
+// and returns them as a JSON list of block hashes.
 func (api *DebugAPI) GetBadBlocks(ctx context.Context) ([]*BadBlockArgs, error) {
 	var (
 		blocks  = rawdb.ReadAllBadBlocks(api.eth.chainDb)
