@@ -1842,7 +1842,7 @@ func AccessList(ctx context.Context, b Backend, blockNrOrHash rpc.BlockNumberOrH
 		args.AccessList = &accessList
 		msg := args.ToMessage(b, header.BaseFee, true, true)
 
-		feeCapacity := state.GetTRC21FeeCapacityFromState(statedb)
+		feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 		var balanceTokenFee *big.Int
 		if value, ok := feeCapacity[to]; ok {
 			balanceTokenFee = value

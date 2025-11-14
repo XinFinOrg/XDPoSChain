@@ -211,7 +211,7 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 	}
 	// Recompute transactions up to the target index.
 	signer := types.MakeSigner(eth.blockchain.Config(), block.Number())
-	feeCapacity := state.GetTRC21FeeCapacityFromState(statedb)
+	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	for idx, tx := range block.Transactions() {
 		var balance *big.Int
 		if tx.To() != nil {

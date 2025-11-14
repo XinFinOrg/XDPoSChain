@@ -264,7 +264,7 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 					signer   = types.MakeSigner(api.backend.ChainConfig(), task.block.Number())
 					blockCtx = core.NewEVMBlockContext(task.block.Header(), api.chainContext(ctx), nil)
 				)
-				feeCapacity := state.GetTRC21FeeCapacityFromState(task.statedb)
+				feeCapacity := task.statedb.GetTRC21FeeCapacityFromState()
 				// Trace all the transactions contained within
 				for i, tx := range task.block.Transactions() {
 					var balance *big.Int
@@ -513,7 +513,7 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 		vmctx              = core.NewEVMBlockContext(block.Header(), api.chainContext(ctx), nil)
 		deleteEmptyObjects = chainConfig.IsEIP158(block.Number())
 	)
-	feeCapacity := state.GetTRC21FeeCapacityFromState(statedb)
+	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	for i, tx := range block.Transactions() {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -593,7 +593,7 @@ func (api *API) traceBlock(ctx context.Context, block *types.Block, config *Trac
 		signer    = types.MakeSigner(api.backend.ChainConfig(), block.Number())
 		results   = make([]*txTraceResult, len(txs))
 	)
-	feeCapacity := state.GetTRC21FeeCapacityFromState(statedb)
+	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	for i, tx := range txs {
 		var balance *big.Int
 		if tx.To() != nil {
@@ -644,7 +644,7 @@ func (api *API) traceBlockParallel(ctx context.Context, block *types.Block, stat
 			defer pend.Done()
 			// Fetch and execute the next transaction trace tasks
 			for task := range jobs {
-				feeCapacity := state.GetTRC21FeeCapacityFromState(task.statedb)
+				feeCapacity := task.statedb.GetTRC21FeeCapacityFromState()
 				var balance *big.Int
 				if txs[task.index].To() != nil {
 					if value, ok := feeCapacity[*txs[task.index].To()]; ok {
@@ -675,7 +675,7 @@ func (api *API) traceBlockParallel(ctx context.Context, block *types.Block, stat
 	}
 
 	// Feed the transactions into the tracers and return
-	feeCapacity := state.GetTRC21FeeCapacityFromState(statedb)
+	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	var failed error
 	blockCtx := core.NewEVMBlockContext(block.Header(), api.chainContext(ctx), nil)
 txloop:
@@ -751,7 +751,7 @@ func (api *API) TraceTransaction(ctx context.Context, hash common.Hash, config *
 		return nil, err
 	}
 	defer release()
-	feeCapacity := state.GetTRC21FeeCapacityFromState(statedb)
+	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	var balance *big.Int
 	if tx.To() != nil {
 		if value, ok := feeCapacity[*tx.To()]; ok {
@@ -900,7 +900,7 @@ func (api *API) traceTx(ctx context.Context, tx *types.Transaction, message *cor
 	}()
 	defer cancel()
 
-	feeCapacity := state.GetTRC21FeeCapacityFromState(statedb)
+	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	var balance *big.Int
 	if tx.To() != nil {
 		if value, ok := feeCapacity[*tx.To()]; ok {

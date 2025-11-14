@@ -351,7 +351,7 @@ func (w *worker) update() {
 					acc, _ := types.Sender(w.current.signer, tx)
 					txs[acc] = append(txs[acc], tx)
 				}
-				feeCapacity := state.GetTRC21FeeCapacityFromState(w.current.state)
+				feeCapacity := w.current.state.GetTRC21FeeCapacityFromState()
 				txset, specialTxs := types.NewTransactionsByPriceAndNonce(w.current.signer, txs, feeCapacity)
 
 				tcount := w.current.tcount
@@ -758,7 +758,7 @@ func (w *worker) commitNewWork() {
 		updatedTrades                                                        map[common.Hash]*lendingstate.LendingTrade
 		liquidatedTrades, autoRepayTrades, autoTopUpTrades, autoRecallTrades []*lendingstate.LendingTrade
 	)
-	feeCapacity := state.GetTRC21FeeCapacityFromStateWithCache(parent.Root(), work.state)
+	feeCapacity := work.state.GetTRC21FeeCapacityFromStateWithCache(parent.Root())
 	if w.config.XDPoS != nil {
 		isEpochSwitchBlock, _, err := w.engine.(*XDPoS.XDPoS).IsEpochSwitch(header)
 		if err != nil {
@@ -1135,7 +1135,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			totalFeeUsed = totalFeeUsed.Add(totalFeeUsed, fee)
 		}
 	}
-	state.UpdateTRC21Fee(w.state, balanceUpdated, totalFeeUsed)
+	w.state.UpdateTRC21Fee(balanceUpdated, totalFeeUsed)
 	// make a copy, the state caches the logs and these logs get "upgraded" from pending to mined
 	// logs by filling in the block hash when the block was mined by the local miner. This can
 	// cause a race condition if a log was "upgraded" before the PendingLogsEvent is processed.

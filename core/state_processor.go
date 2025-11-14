@@ -144,7 +144,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 			totalFeeUsed = totalFeeUsed.Add(totalFeeUsed, fee)
 		}
 	}
-	state.UpdateTRC21Fee(statedb, balanceUpdated, totalFeeUsed)
+	statedb.UpdateTRC21Fee(balanceUpdated, totalFeeUsed)
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
 	p.engine.Finalize(p.bc, header, statedb, parentState, block.Transactions(), block.Uncles(), receipts)
 	return receipts, allLogs, *usedGas, nil
@@ -238,7 +238,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 			totalFeeUsed = totalFeeUsed.Add(totalFeeUsed, fee)
 		}
 	}
-	state.UpdateTRC21Fee(statedb, balanceUpdated, totalFeeUsed)
+	statedb.UpdateTRC21Fee(balanceUpdated, totalFeeUsed)
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
 	p.engine.Finalize(p.bc, header, statedb, parentState, block.Transactions(), block.Uncles(), receipts)
 	return receipts, allLogs, *usedGas, nil
@@ -441,7 +441,7 @@ func ApplyTransactionWithEVM(msg *Message, config *params.ChainConfig, gp *GasPo
 	*usedGas += result.UsedGas
 
 	if balanceFee != nil && result.Failed() {
-		state.PayFeeWithTRC21TxFail(statedb, msg.From, *to)
+		statedb.PayFeeWithTRC21TxFail(msg.From, *to)
 	}
 
 	return MakeReceipt(evm, result, statedb, blockNumber, blockHash, tx, *usedGas, root), result.UsedGas, balanceFee != nil, nil

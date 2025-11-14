@@ -1915,7 +1915,7 @@ func (bc *BlockChain) processBlock(block *types.Block, parent *types.Header, sta
 		bc.reportBlock(block, nil, err)
 		return nil, err
 	}
-	feeCapacity := state.GetTRC21FeeCapacityFromStateWithCache(parent.Root, statedb)
+	feeCapacity := statedb.GetTRC21FeeCapacityFromStateWithCache(parent.Root)
 	receipts, logs, usedGas, err := bc.processor.Process(block, statedb, tradingState, bc.vmConfig, feeCapacity)
 	if err != nil {
 		bc.reportBlock(block, receipts, err)
@@ -2200,7 +2200,7 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 		bc.reportBlock(block, nil, err)
 		return nil, err
 	}
-	feeCapacity := state.GetTRC21FeeCapacityFromStateWithCache(parent.Root, statedb)
+	feeCapacity := statedb.GetTRC21FeeCapacityFromStateWithCache(parent.Root)
 	receipts, logs, usedGas, err := bc.processor.ProcessBlockNoValidator(calculatedBlock, statedb, tradingState, bc.vmConfig, feeCapacity)
 	process := time.Since(bstart)
 	if err != nil {

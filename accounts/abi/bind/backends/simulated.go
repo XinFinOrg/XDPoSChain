@@ -754,7 +754,7 @@ func (b *SimulatedBackend) callContract(ctx context.Context, call ethereum.CallM
 		SkipNonceChecks:  true,
 		SkipFromEOACheck: true,
 	}
-	feeCapacity := state.GetTRC21FeeCapacityFromState(stateDB)
+	feeCapacity := stateDB.GetTRC21FeeCapacityFromState()
 	if msg.To != nil {
 		if value, ok := feeCapacity[*msg.To]; ok {
 			msg.BalanceTokenFee = value

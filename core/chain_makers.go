@@ -85,7 +85,7 @@ func (b *BlockGen) addTx(bc *BlockChain, vmConfig vm.Config, tx *types.Transacti
 	if b.gasPool == nil {
 		b.SetCoinbase(common.Address{})
 	}
-	feeCapacity := state.GetTRC21FeeCapacityFromState(b.statedb)
+	feeCapacity := b.statedb.GetTRC21FeeCapacityFromState()
 	b.statedb.SetTxContext(tx.Hash(), len(b.txs))
 	receipt, gas, tokenFeeUsed, err := ApplyTransaction(b.config, feeCapacity, bc, &b.header.Coinbase, b.gasPool, b.statedb, nil, b.header, tx, &b.header.GasUsed, vmConfig)
 	if err != nil {
@@ -95,7 +95,7 @@ func (b *BlockGen) addTx(bc *BlockChain, vmConfig vm.Config, tx *types.Transacti
 	b.receipts = append(b.receipts, receipt)
 	if tokenFeeUsed {
 		fee := common.GetGasFee(b.header.Number.Uint64(), gas)
-		state.UpdateTRC21Fee(b.statedb, map[common.Address]*big.Int{*tx.To(): new(big.Int).Sub(feeCapacity[*tx.To()], new(big.Int).SetUint64(gas))}, fee)
+		b.statedb.UpdateTRC21Fee(map[common.Address]*big.Int{*tx.To(): new(big.Int).Sub(feeCapacity[*tx.To()], new(big.Int).SetUint64(gas))}, fee)
 	}
 }
 

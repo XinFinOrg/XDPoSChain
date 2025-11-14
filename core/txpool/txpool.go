@@ -701,7 +701,7 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 	if tx.To() != nil {
 		if value, ok := pool.trc21FeeCapacity[*tx.To()]; ok {
 			feeCapacity = value
-			if !state.ValidateTRC21Tx(pool.currentState, from, *tx.To(), tx.Data()) {
+			if !pool.currentState.ValidateTRC21Tx(from, *tx.To(), tx.Data()) {
 				return core.ErrInsufficientFunds
 			}
 			cost = tx.TxCost(number)
@@ -1442,7 +1442,7 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 		return
 	}
 	pool.currentState = statedb
-	pool.trc21FeeCapacity = state.GetTRC21FeeCapacityFromStateWithCache(newHead.Root, statedb)
+	pool.trc21FeeCapacity = statedb.GetTRC21FeeCapacityFromStateWithCache(newHead.Root)
 	pool.pendingNonces = newNoncer(statedb)
 	pool.currentMaxGas = newHead.GasLimit
 
