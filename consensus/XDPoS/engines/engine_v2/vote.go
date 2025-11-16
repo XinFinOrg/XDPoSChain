@@ -22,17 +22,18 @@ func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainReader, vote *types.Vo
 		return false, nil
 	}
 
-	snapshot, err := x.getSnapshot(chain, vote.GapNumber, true)
+	epochInfo, err := x.getEpochSwitchInfo(chain, chain.CurrentHeader(), chain.CurrentHeader().Hash())
 	if err != nil {
-		log.Error("[VerifyVoteMessage] fail to get snapshot for a vote message", "blockNum", vote.ProposedBlockInfo.Number, "blockHash", vote.ProposedBlockInfo.Hash, "voteHash", vote.Hash(), "error", err.Error())
+		log.Error("[VerifyVoteMessage] Fail to get epochInfo when verifying vote message!", "blockNum", vote.ProposedBlockInfo.Number, "blockHash", vote.ProposedBlockInfo.Hash, "voteHash", vote.Hash(), "voteGapNumber", vote.GapNumber, "err", err)
 		return false, err
 	}
+
 	verified, signer, err := x.verifyMsgSignature(types.VoteSigHash(&types.VoteForSign{
 		ProposedBlockInfo: vote.ProposedBlockInfo,
 		GapNumber:         vote.GapNumber,
-	}), vote.Signature, snapshot.NextEpochCandidates)
+	}), vote.Signature, epochInfo.Masternodes)
 	if err != nil {
-		for i, mn := range snapshot.NextEpochCandidates {
+		for i, mn := range epochInfo.Masternodes {
 			log.Warn("[VerifyVoteMessage] Master node list item", "index", i, "Master node", mn.Hex())
 		}
 		log.Warn("[VerifyVoteMessage] Error while verifying vote message", "votedBlockNum", vote.ProposedBlockInfo.Number.Uint64(), "votedBlockHash", vote.ProposedBlockInfo.Hash.Hex(), "voteHash", vote.Hash(), "error", err.Error())

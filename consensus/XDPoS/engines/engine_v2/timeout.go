@@ -22,12 +22,15 @@ func (x *XDPoS_v2) VerifyTimeoutMessage(chain consensus.ChainReader, timeoutMsg 
 		log.Debug("[VerifyTimeoutMessage] Disqualified timeout message as the proposed round does not match currentRound", "timeoutHash", timeoutMsg.Hash(), "timeoutRound", timeoutMsg.Round, "currentRound", x.currentRound)
 		return false, nil
 	}
-	snap, err := x.getSnapshot(chain, timeoutMsg.GapNumber, true)
-	if err != nil || snap == nil {
-		log.Error("[VerifyTimeoutMessage] Fail to get snapshot when verifying timeout message!", "messageGapNumber", timeoutMsg.GapNumber, "err", err)
+
+	epochInfo, err := x.getTCEpochInfo(chain, timeoutMsg.Round)
+	if err != nil {
+		log.Error("[VerifyTimeoutMessage] Fail to get epochInfo for timeout message", "tcGapNumber", timeoutMsg.GapNumber, "tcRound", timeoutMsg.Round, "error", err)
 		return false, err
 	}
-	if len(snap.NextEpochCandidates) == 0 {
+
+	if len(epochInfo.Masternodes) == 0 {
+		// TODO: why this check is needed here? how about other places for epochInfo.Masternodes?
 		log.Error("[VerifyTimeoutMessage] cannot find NextEpochCandidates from snapshot", "messageGapNumber", timeoutMsg.GapNumber)
 		return false, errors.New("empty master node lists from snapshot")
 	}
@@ -35,7 +38,7 @@ func (x *XDPoS_v2) VerifyTimeoutMessage(chain consensus.ChainReader, timeoutMsg 
 	verified, signer, err := x.verifyMsgSignature(types.TimeoutSigHash(&types.TimeoutForSign{
 		Round:     timeoutMsg.Round,
 		GapNumber: timeoutMsg.GapNumber,
-	}), timeoutMsg.Signature, snap.NextEpochCandidates)
+	}), timeoutMsg.Signature, epochInfo.Masternodes)
 
 	if err != nil {
 		log.Warn("[VerifyTimeoutMessage] cannot verify timeout signature", "err", err)
@@ -116,7 +119,7 @@ func (x *XDPoS_v2) onTimeoutPoolThresholdReached(blockChainReader consensus.Chai
 	return nil
 }
 
-func (x *XDPoS_v2) getTCEpochInfo(chain consensus.ChainReader, timeoutCert *types.TimeoutCert) (*types.EpochSwitchInfo, error) {
+func (x *XDPoS_v2) getTCEpochInfo(chain consensus.ChainReader, timeoutRound types.Round) (*types.EpochSwitchInfo, error) {
 	epochSwitchInfo, err := x.getEpochSwitchInfo(chain, (chain.CurrentHeader()), (chain.CurrentHeader()).Hash())
 	if err != nil {
 		log.Error("[getTCEpochInfo] Error when getting epoch switch info", "error", err)
@@ -131,18 +134,18 @@ func (x *XDPoS_v2) getTCEpochInfo(chain consensus.ChainReader, timeoutCert *type
 		Round:  epochRound,
 		Number: epochSwitchInfo.EpochSwitchBlockInfo.Number,
 	}
-	log.Info("[getTCEpochInfo] Init epochInfo", "number", epochBlockInfo.Number, "round", epochRound, "tcRound", timeoutCert.Round, "tcEpoch", tempTCEpoch)
-	for epochBlockInfo.Round > timeoutCert.Round {
+	log.Info("[getTCEpochInfo] Init epochInfo", "number", epochBlockInfo.Number, "round", epochRound, "tcRound", timeoutRound, "tcEpoch", tempTCEpoch)
+	for epochBlockInfo.Round > timeoutRound {
 		tempTCEpoch--
 		epochBlockInfo, err = x.GetBlockByEpochNumber(chain, tempTCEpoch)
 		if err != nil {
 			log.Error("[getTCEpochInfo] Error when getting epoch block info by tc round", "error", err)
 			return nil, fmt.Errorf("fail on getTCEpochInfo due to failure in getting epoch block info tc round, %s", err)
 		}
-		log.Debug("[getTCEpochInfo] Loop to get right epochInfo", "number", epochBlockInfo.Number, "round", epochBlockInfo.Round, "tcRound", timeoutCert.Round, "tcEpoch", tempTCEpoch)
+		log.Debug("[getTCEpochInfo] Loop to get right epochInfo", "number", epochBlockInfo.Number, "round", epochBlockInfo.Round, "tcRound", timeoutRound, "tcEpoch", tempTCEpoch)
 	}
 	tcEpoch := tempTCEpoch
-	log.Info("[getTCEpochInfo] Final TC epochInfo", "number", epochBlockInfo.Number, "round", epochBlockInfo.Round, "tcRound", timeoutCert.Round, "tcEpoch", tcEpoch)
+	log.Info("[getTCEpochInfo] Final TC epochInfo", "number", epochBlockInfo.Number, "round", epochBlockInfo.Round, "tcRound", timeoutRound, "tcEpoch", tcEpoch)
 
 	epochInfo, err := x.getEpochSwitchInfo(chain, nil, epochBlockInfo.Hash)
 	if err != nil {
@@ -175,7 +178,7 @@ func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.Time
 		}
 	}
 
-	epochInfo, err := x.getTCEpochInfo(chain, timeoutCert)
+	epochInfo, err := x.getTCEpochInfo(chain, timeoutCert.Round)
 	if err != nil {
 		return err
 	}

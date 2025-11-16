@@ -31,9 +31,9 @@ func (x *XDPoS_v2) VerifySyncInfoMessage(chain consensus.ChainReader, syncInfo *
 		return false, nil
 	}
 
-	snapshot, err := x.getSnapshot(chain, qc.GapNumber, true)
+	epochInfo, err := x.getEpochSwitchInfo(chain, nil, qc.ProposedBlockInfo.Hash)
 	if err != nil {
-		log.Error("[VerifySyncInfoMessage] fail to get snapshot for a syncInfo message", "blockNum", qc.ProposedBlockInfo.Number, "blockHash", qc.ProposedBlockInfo.Hash, "error", err)
+		log.Error("[VerifySyncInfoMessage] fail to get epochInfo for qc syncInfo message", "blockNum", qc.ProposedBlockInfo.Number, "blockHash", qc.ProposedBlockInfo.Hash, "error", err)
 		return false, err
 	}
 
@@ -42,16 +42,16 @@ func (x *XDPoS_v2) VerifySyncInfoMessage(chain consensus.ChainReader, syncInfo *
 		GapNumber:         qc.GapNumber,
 	})
 
-	if err := x.verifySignatures(voteSigHash, qc.Signatures, snapshot.NextEpochCandidates); err != nil {
+	if err := x.verifySignatures(voteSigHash, qc.Signatures, epochInfo.Masternodes); err != nil {
 		log.Warn("[VerifySyncInfoMessage] SyncInfo message verification failed due to QC", "blockNum", qc.ProposedBlockInfo.Number, "gapNum", qc.GapNumber, "round", qc.ProposedBlockInfo.Round, "error", err)
 		return false, err
 	}
 
 	if tc != nil { // tc is optional, when the node is starting up there is no TC at the memory
-		snapshot, err = x.getSnapshot(chain, tc.GapNumber, true)
+		epochInfo, err := x.getTCEpochInfo(chain, tc.Round)
 		if err != nil {
-			log.Error("[VerifySyncInfoMessage] Fail to get snapshot when verifying TC!", "tcGapNumber", tc.GapNumber)
-			return false, fmt.Errorf("[VerifySyncInfoMessage] Unable to get snapshot, %s", err)
+			log.Error("[VerifySyncInfoMessage] Fail to get epochInfo for tc syncInfo message", "tcRound", tc.Round, "error", err)
+			return false, err
 		}
 
 		signedTimeoutObj := types.TimeoutSigHash(&types.TimeoutForSign{
@@ -59,7 +59,7 @@ func (x *XDPoS_v2) VerifySyncInfoMessage(chain consensus.ChainReader, syncInfo *
 			GapNumber: tc.GapNumber,
 		})
 
-		if err := x.verifySignatures(signedTimeoutObj, tc.Signatures, snapshot.NextEpochCandidates); err != nil {
+		if err := x.verifySignatures(signedTimeoutObj, tc.Signatures, epochInfo.Masternodes); err != nil {
 			log.Warn("[VerifySyncInfoMessage] SyncInfo message verification failed due to TC", "gapNum", tc.GapNumber, "round", tc.Round, "error", err)
 			return false, err
 		}
