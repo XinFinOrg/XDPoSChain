@@ -2598,26 +2598,34 @@ func (api *BlockChainAPI) GetStakerROIMasternode(masternode common.Address) floa
 	return 100.0 / float64(totalCap.Div(totalCap, voterRewardAYear).Uint64())
 }
 
+type supplyV1 struct {
+	Minted *hexutil.Big `json:"minted"`
+}
+
+type supplyV2 struct {
+	Minted *hexutil.Big `json:"minted"`
+	Burned *hexutil.Big `json:"burned"`
+}
+
 type tokenSupply struct {
-	PostUpgradeTotalMinted *hexutil.Big `json:"postUpgradeTotalMinted"`
-	PreUpgradeTotalMinted  *hexutil.Big `json:"preUpgradeTotalMinted"`
-	PostUpgradeTotalBurned *hexutil.Big `json:"postUpgradeTotalBurned"`
-	TotalMinted            *hexutil.Big `json:"totalMinted"`
-	UpgradeEpochNum        *hexutil.Big `json:"upgradeEpochNum"`
-	EpochNum               *hexutil.Big `json:"epochNum"`
-	BlockHash              common.Hash  `json:"blockHash"`
-	BlockNumber            *hexutil.Big `json:"blockNumber"`
+	V1              *supplyV1    `json:"v1"`
+	V2              *supplyV2    `json:"v2"`
+	Minted          *hexutil.Big `json:"minted"`
+	UpgradeEpochNum *hexutil.Big `json:"upgradeEpochNum"`
+	EpochNum        *hexutil.Big `json:"epochNum"`
+	BlockHash       common.Hash  `json:"blockHash"`
+	BlockNumber     *hexutil.Big `json:"blockNumber"`
 }
 
 func (s *BlockChainAPI) GetTokenSupply(ctx context.Context, epochNr rpc.EpochNumber) (*tokenSupply, error) {
 	engine, ok := s.b.Engine().(*XDPoS.XDPoS)
 	if !ok {
-		return nil, errors.New("Undefined XDPoS consensus engine")
+		return nil, errors.New("undefined XDPoS consensus engine")
 	}
 	statedb, header, err := s.b.StateAndHeaderByNumber(ctx, rpc.LatestBlockNumber)
 	nonce := statedb.GetNonce(common.MintedRecordAddressBinary)
 	if nonce == 0 {
-		return nil, errors.New("MintedRecordAddress is not initialized due to Reward Upgrade is not applied")
+		return nil, errors.New("mintedRecordAddress is not initialized due to Reward Upgrade is not applied")
 	}
 	currentRound, err := engine.EngineV2.GetRoundNumber(header)
 	currentEpoch := s.b.ChainConfig().XDPoS.V2.SwitchEpoch + uint64(currentRound)/s.b.ChainConfig().XDPoS.Epoch
@@ -2637,7 +2645,7 @@ func (s *BlockChainAPI) GetTokenSupply(ctx context.Context, epochNr rpc.EpochNum
 	if epochNr == rpc.LatestEpochNumber {
 		epochNum = currentEpoch
 	}
-	postTotalMinted := state.GetPostTotalMinted(statedb, epochNum).Big()
+	postMinted := state.GetPostMinted(statedb, epochNum).Big()
 	number := state.GetPostRewardBlock(statedb, epochNum).Big()
 	targetHeader, err := s.b.HeaderByNumber(ctx, rpc.BlockNumber(number.Int64()))
 	if err != nil {
@@ -2645,26 +2653,30 @@ func (s *BlockChainAPI) GetTokenSupply(ctx context.Context, epochNr rpc.EpochNum
 	}
 	config := s.b.ChainConfig().XDPoS
 	if config == nil {
-		return nil, errors.New("XDPoS config is nil")
+		return nil, errors.New("xdpos config is nil")
 	}
 	preEpochMinted := new(big.Int).Mul(new(big.Int).SetUint64(config.Reward), new(big.Int).SetUint64(params.Ether))
 	onsetEpochMinus := onsetEpoch
 	if onsetEpochMinus > 0 {
-		onsetEpochMinus -= 1
+		onsetEpochMinus--
 	} else {
-		log.Warn("onsetEpoch is 0 which could not happen", epochNum)
+		log.Warn("OnsetEpoch is 0 which could not happen", epochNum)
 	}
-	preTotalMinted := new(big.Int).Mul(preEpochMinted, new(big.Int).SetUint64(onsetEpochMinus))
-	postTotalBurned := state.GetPostTotalBurned(statedb, epochNum).Big()
+	preMinted := new(big.Int).Mul(preEpochMinted, new(big.Int).SetUint64(onsetEpochMinus))
+	postBurned := state.GetPostBurned(statedb, epochNum).Big()
 	result := &tokenSupply{
-		PostUpgradeTotalMinted: (*hexutil.Big)(postTotalMinted),
-		PreUpgradeTotalMinted:  (*hexutil.Big)(preTotalMinted),
-		PostUpgradeTotalBurned: (*hexutil.Big)(postTotalBurned),
-		TotalMinted:            (*hexutil.Big)(new(big.Int).Add(postTotalMinted, preTotalMinted)),
-		UpgradeEpochNum:        (*hexutil.Big)(new(big.Int).SetUint64(onsetEpoch)),
-		EpochNum:               (*hexutil.Big)(new(big.Int).SetUint64(epochNum)),
-		BlockHash:              targetHeader.Hash(),
-		BlockNumber:            (*hexutil.Big)(number),
+		V1: &supplyV1{
+			Minted: (*hexutil.Big)(preMinted),
+		},
+		V2: &supplyV2{
+			Minted: (*hexutil.Big)(postMinted),
+			Burned: (*hexutil.Big)(postBurned),
+		},
+		Minted:          (*hexutil.Big)(new(big.Int).Add(postMinted, preMinted)),
+		UpgradeEpochNum: (*hexutil.Big)(new(big.Int).SetUint64(onsetEpoch)),
+		EpochNum:        (*hexutil.Big)(new(big.Int).SetUint64(epochNum)),
+		BlockHash:       targetHeader.Hash(),
+		BlockNumber:     (*hexutil.Big)(number),
 	}
 	return result, nil
 }

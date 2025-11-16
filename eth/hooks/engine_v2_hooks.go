@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/common/math"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
@@ -361,8 +362,8 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				rewardsMap[rwt.key] = rewardResults
 			}
 			// record the total reward into state db
-			totalMinted := big.NewInt(0)
-			totalBurned := big.NewInt(0)
+			totalMinted := new(big.Int)
+			totalBurned := new(big.Int)
 
 			nonce := stateBlock.GetNonce(common.MintedRecordAddressBinary)
 			if nonce == 0 {
@@ -372,9 +373,9 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 			} else {
 				epochNumIter := epochNum
 				for epochNumIter > 0 {
-					totalMinted = state.GetPostTotalMinted(stateBlock, epochNumIter-1).Big()
-					totalBurned = state.GetPostTotalBurned(stateBlock, epochNumIter-1).Big()
-					if totalMinted.BitLen() != 0 || totalBurned.BitLen() != 0 {
+					totalMinted = state.GetPostMinted(stateBlock, epochNumIter-1).Big()
+					totalBurned = state.GetPostBurned(stateBlock, epochNumIter-1).Big()
+					if totalMinted.Sign() != 0 || totalBurned.Sign() != 0 {
 						// if previous epoch has non-zero total minted or non-zero total burned, break the loop
 						break
 					}
@@ -382,24 +383,22 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				}
 			}
 			totalMinted.Add(totalMinted, rewardSum)
-			bigPower256 := new(big.Int).Lsh(big.NewInt(1), 256)
-			bigMaxU256 := new(big.Int).Sub(bigPower256, big.NewInt(1))
 			// if overflow, set to maxU256 and log a warning
-			if totalMinted.Cmp(bigMaxU256) > 0 {
-				totalMinted.Set(bigMaxU256)
+			if totalMinted.Cmp(math.MaxBig256) > 0 {
+				totalMinted.Set(math.MaxBig256)
 				log.Warn("[HookReward] total minted overflow max u256")
 			}
 			log.Debug("[HookReward] total minted in hook", "value", totalMinted)
-			state.PutPostTotalMinted(stateBlock, epochNum, common.BigToHash(totalMinted))
+			state.PutPostMinted(stateBlock, epochNum, common.BigToHash(totalMinted))
 			state.PutPostRewardBlock(stateBlock, epochNum, common.Uint64ToHash(number))
 			// Record total burned into statedb
 			totalBurned.Add(totalBurned, burnedInOneEpoch)
 			// if overflow, set to maxU256 and log a warning
-			if totalBurned.Cmp(bigMaxU256) > 0 {
-				totalBurned.Set(bigMaxU256)
+			if totalBurned.Cmp(math.MaxBig256) > 0 {
+				totalBurned.Set(math.MaxBig256)
 				log.Warn("[HookReward] total burned overflow max u256")
 			}
-			state.PutPostTotalBurned(stateBlock, epochNum, common.BigToHash(totalBurned))
+			state.PutPostBurned(stateBlock, epochNum, common.BigToHash(totalBurned))
 			// Increment nonce so that statedb does not treat it as empty account
 			stateBlock.IncrementMintedRecordNonce()
 		}
@@ -421,7 +420,7 @@ func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *type
 
 	mapBlkHash := map[uint64]common.Hash{}
 
-	burnedInOneEpoch := big.NewInt(0)
+	burnedInOneEpoch := new(big.Int)
 
 	// prevent overflow
 	if number == 0 {
