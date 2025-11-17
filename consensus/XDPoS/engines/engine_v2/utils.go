@@ -1,10 +1,11 @@
 package engine_v2
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math/big"
-	"sync"
+	"runtime"
 
 	"github.com/XinFinOrg/XDPoSChain/accounts"
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -15,6 +16,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"golang.org/x/crypto/sha3"
+	"golang.org/x/sync/errgroup"
 )
 
 func sigHash(header *types.Header) (hash common.Hash) {
@@ -98,35 +100,38 @@ func (x *XDPoS_v2) countValidSignatures(messageHash common.Hash, signatures []ty
 		verified bool
 		pubkey   common.Address
 		sig      types.Signature
-		err      error
 	}
 	result := make(chan Message, len(signatures))
 
-	var wg sync.WaitGroup
-	wg.Add(len(signatures))
+	eg, ctx := errgroup.WithContext(context.Background())
+	eg.SetLimit(runtime.NumCPU())
 	for _, signature := range signatures {
-		go func(sig types.Signature) {
-			defer wg.Done()
-			verified, signerAddress, err := x.verifyMsgSignature(messageHash, sig, candidates)
-			if err != nil {
-				log.Error("[verifySignatures] Error while verfying QC message signatures", "error", err)
-				result <- Message{err: err}
-				return
+		sig := signature
+		eg.Go(func() error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				verified, signerAddress, err := x.verifyMsgSignature(messageHash, sig, candidates)
+				if err != nil {
+					log.Error("[verifySignatures] Error while verfying QC message signatures", "error", err)
+					return err
+				}
+				result <- Message{verified: verified, pubkey: signerAddress, sig: sig}
+				return nil
 			}
-
-			result <- Message{verified: verified, pubkey: signerAddress, sig: sig}
-		}(signature)
+		})
 	}
-	wg.Wait()
+	err := eg.Wait()
 	close(result)
+	if err != nil {
+		return 0, err
+	}
 
 	signatureList := []types.Signature{}
 	pubkeys := []common.Address{}
 	verifies := []bool{}
 	for r := range result {
-		if r.err != nil {
-			return 0, r.err
-		}
 		if !r.verified {
 			return 0, fmt.Errorf("signature verification failed, signer is not part of masternode list. Signature: %v, SignedMessage: %v, SignerAddress: %v, Masternodes: %v", common.Bytes2Hex(r.sig), messageHash.Hex(), r.pubkey, candidates)
 		}
