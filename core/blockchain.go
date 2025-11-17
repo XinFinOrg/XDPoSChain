@@ -2788,7 +2788,7 @@ func (bc *BlockChain) UpdateM1() error {
 	} else if stateDB == nil {
 		return errors.New("nil stateDB in UpdateM1")
 	} else {
-		candidates = state.GetCandidates(stateDB)
+		candidates = stateDB.GetCandidates()
 	}
 
 	var ms []utils.Masternode

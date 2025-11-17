@@ -557,7 +557,7 @@ func (b *EthAPIBackend) GetVotersCap(checkpoint *big.Int, masterAddr common.Addr
 
 	voterCaps := make(map[common.Address]*big.Int)
 	for _, voteAddr := range voters {
-		voterCap := state.GetVoterCap(statedb, masterAddr, voteAddr)
+		voterCap := statedb.GetVoterCap(masterAddr, voteAddr)
 		voterCaps[voteAddr] = voterCap
 	}
 	return voterCaps
@@ -590,11 +590,11 @@ func (b *EthAPIBackend) GetMasternodesCap(checkpoint uint64) map[common.Address]
 		return nil
 	}
 
-	candicates := state.GetCandidates(statedb)
+	candicates := statedb.GetCandidates()
 
 	masternodesCap := map[common.Address]*big.Int{}
 	for _, candicate := range candicates {
-		masternodesCap[candicate] = state.GetCandidateCap(statedb, candicate)
+		masternodesCap[candicate] = statedb.GetCandidateCap(candicate)
 	}
 
 	return masternodesCap

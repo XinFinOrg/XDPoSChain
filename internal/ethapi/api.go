@@ -837,10 +837,10 @@ func (api *BlockChainAPI) GetCandidateStatus(ctx context.Context, coinbaseAddres
 			result[fieldSuccess] = false
 			return result, errors.New("nil statedb in GetCandidateStatus")
 		}
-		candidatesAddresses := state.GetCandidates(statedb)
+		candidatesAddresses := statedb.GetCandidates()
 		candidates = make([]utils.Masternode, 0, len(candidatesAddresses))
 		for _, address := range candidatesAddresses {
-			v := state.GetCandidateCap(statedb, address)
+			v := statedb.GetCandidateCap(address)
 			candidates = append(candidates, utils.Masternode{Address: address, Stake: v})
 		}
 	}
@@ -996,10 +996,10 @@ func (api *BlockChainAPI) GetCandidates(ctx context.Context, epoch rpc.EpochNumb
 			result[fieldSuccess] = false
 			return result, errors.New("nil statedb in GetCandidates")
 		}
-		candidatesAddresses := state.GetCandidates(statedb)
+		candidatesAddresses := statedb.GetCandidates()
 		candidates = make([]utils.Masternode, 0, len(candidatesAddresses))
 		for _, address := range candidatesAddresses {
-			v := state.GetCandidateCap(statedb, address)
+			v := statedb.GetCandidateCap(address)
 			candidates = append(candidates, utils.Masternode{Address: address, Stake: v})
 		}
 	}
@@ -2610,8 +2610,8 @@ func (api *BlockChainAPI) GetCurrentTotalMinted(ctx context.Context) (*currentTo
 	if err != nil {
 		return nil, err
 	}
-	totalMinted := state.GetTotalMinted(statedb).Big()
-	lastEpochNum := state.GetLastEpochNum(statedb).Big()
+	totalMinted := statedb.GetTotalMinted().Big()
+	lastEpochNum := statedb.GetLastEpochNum().Big()
 	result := &currentTotalMinted{
 		TotalMinted:  (*hexutil.Big)(totalMinted),
 		LastEpochNum: (*hexutil.Big)(lastEpochNum),

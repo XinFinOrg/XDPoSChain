@@ -7,7 +7,6 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
-	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/hooks"
 	"github.com/XinFinOrg/XDPoSChain/eth/util"
@@ -52,7 +51,7 @@ func TestHookRewardV2(t *testing.T) {
 	parentState = statedb.Copy()
 	reward, err = adaptor.EngineV2.HookReward(blockchain, statedb, parentState, header2700)
 	assert.Nil(t, err)
-	owner := state.GetCandidateOwner(parentState, signer)
+	owner := parentState.GetCandidateOwner(signer)
 	result := reward["rewards"].(map[common.Address]interface{})
 	assert.Equal(t, 1, len(result))
 	for _, x := range result {
@@ -147,14 +146,14 @@ func TestHookRewardV2SplitReward(t *testing.T) {
 	for addr, x := range result {
 		if addr == acc1Addr {
 			r := x.(map[common.Address]*big.Int)
-			owner := state.GetCandidateOwner(parentState, addr)
+			owner := parentState.GetCandidateOwner(addr)
 			a, _ := big.NewInt(0).SetString("149999999999999999999", 10)
 			assert.Zero(t, a.Cmp(r[owner]))
 			b, _ := big.NewInt(0).SetString("16666666666666666666", 10)
 			assert.Zero(t, b.Cmp(r[config.XDPoS.FoudationWalletAddr]))
 		} else if addr == signer {
 			r := x.(map[common.Address]*big.Int)
-			owner := state.GetCandidateOwner(parentState, addr)
+			owner := parentState.GetCandidateOwner(addr)
 			a, _ := big.NewInt(0).SetString("74999999999999999999", 10)
 			assert.Zero(t, a.Cmp(r[owner]))
 			b, _ := big.NewInt(0).SetString("8333333333333333333", 10)
@@ -229,14 +228,14 @@ func TestHookRewardAfterUpgrade(t *testing.T) {
 	for addr, x := range result {
 		if addr == acc1Addr {
 			r := x.(map[common.Address]*big.Int)
-			owner := state.GetCandidateOwner(parentState, addr)
+			owner := parentState.GetCandidateOwner(addr)
 			a, _ := big.NewInt(0).SetString("450000000000000000000", 10)
 			assert.Zero(t, a.Cmp(r[owner]), "real reward is", r[owner])
 			b, _ := big.NewInt(0).SetString("50000000000000000000", 10)
 			assert.Zero(t, b.Cmp(r[config.XDPoS.FoudationWalletAddr]), "real reward is", r[config.XDPoS.FoudationWalletAddr])
 		} else if addr == signer {
 			r := x.(map[common.Address]*big.Int)
-			owner := state.GetCandidateOwner(parentState, addr)
+			owner := parentState.GetCandidateOwner(addr)
 			a, _ := big.NewInt(0).SetString("450000000000000000000", 10)
 			assert.Zero(t, a.Cmp(r[owner]), "real reward is", r[owner])
 			b, _ := big.NewInt(0).SetString("50000000000000000000", 10)
@@ -268,14 +267,14 @@ func TestHookRewardAfterUpgrade(t *testing.T) {
 	for addr, x := range resultProtector {
 		if addr == protector1Addr {
 			r := x.(map[common.Address]*big.Int)
-			owner := state.GetCandidateOwner(parentState, addr)
+			owner := parentState.GetCandidateOwner(addr)
 			a, _ := big.NewInt(0).SetString("360000000000000000000", 10)
 			assert.Zero(t, a.Cmp(r[owner]), "real reward is", r[owner])
 			b, _ := big.NewInt(0).SetString("40000000000000000000", 10)
 			assert.Zero(t, b.Cmp(r[config.XDPoS.FoudationWalletAddr]), "real reward is", r[config.XDPoS.FoudationWalletAddr])
 		} else if addr == protector2Addr {
 			r := x.(map[common.Address]*big.Int)
-			owner := state.GetCandidateOwner(parentState, addr)
+			owner := parentState.GetCandidateOwner(addr)
 			a, _ := big.NewInt(0).SetString("360000000000000000000", 10)
 			assert.Zero(t, a.Cmp(r[owner]), "real reward is", r[owner])
 			b, _ := big.NewInt(0).SetString("40000000000000000000", 10)
@@ -291,16 +290,16 @@ func TestHookRewardAfterUpgrade(t *testing.T) {
 	for addr, x := range resultObserver {
 		assert.Equal(t, addr, observer1Addr)
 		r := x.(map[common.Address]*big.Int)
-		owner := state.GetCandidateOwner(parentState, addr)
+		owner := parentState.GetCandidateOwner(addr)
 		a, _ := big.NewInt(0).SetString("270112500000000000000", 10) // this value tests the float64 reward
 		assert.Zero(t, a.Cmp(r[owner]), "real reward is", r[owner])
 		b, _ := big.NewInt(0).SetString("30012500000000000000", 10) // this value tests the float64 reward
 		assert.Zero(t, b.Cmp(r[config.XDPoS.FoudationWalletAddr]), "real reward is", r[config.XDPoS.FoudationWalletAddr])
 	}
-	totalMinted := state.GetTotalMinted(statedb).Big()
+	totalMinted := statedb.GetTotalMinted().Big()
 	totalExpect, _ := big.NewInt(0).SetString("2100125000000000000000", 10)
 	assert.Zero(t, totalMinted.Cmp(totalExpect), "statedb records wrong total minted")
-	lastEpochNum := state.GetLastEpochNum(statedb).Big().Int64()
+	lastEpochNum := statedb.GetLastEpochNum().Big().Int64()
 	assert.Equal(t, 3, int(lastEpochNum))
 	common.TIPUpgradeReward = backup
 }
@@ -366,7 +365,7 @@ func TestFinalizeAfterUpgrade(t *testing.T) {
 	assert.Nil(t, err)
 
 	// the recorded reward cannot be zero
-	minted := state.GetTotalMinted(statedbAfterFinalize)
+	minted := statedbAfterFinalize.GetTotalMinted()
 	assert.False(t, minted.IsZero())
 	t.Log("total minted", minted)
 

@@ -30,7 +30,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	contractValidator "github.com/XinFinOrg/XDPoSChain/contracts/validator/contract"
-	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -318,7 +317,7 @@ func TestStatedbUtils(t *testing.T) {
 	if err != nil {
 		t.Fatalf("can't get candidates: %v", err)
 	}
-	candidates_statedb := state.GetCandidates(statedb)
+	candidates_statedb := statedb.GetCandidates()
 	if !reflect.DeepEqual(candidates, candidates_statedb) {
 		t.Fatalf("candidates not equal, statedb utils is wrong,\nbind calling result\n%v\nstatedb result\n%v", candidates, candidates_statedb)
 	}
@@ -330,7 +329,7 @@ func TestStatedbUtils(t *testing.T) {
 		if err != nil {
 			t.Fatalf("can't get candidate cap: %v", err)
 		}
-		cap_statedb := state.GetCandidateCap(statedb, it)
+		cap_statedb := statedb.GetCandidateCap(it)
 		if cap.Cmp(cap_statedb) != 0 {
 			t.Fatalf("cap not equal, statedb utils is wrong")
 		}
@@ -341,7 +340,7 @@ func TestStatedbUtils(t *testing.T) {
 		if err != nil {
 			t.Fatalf("can't get candidate owner: %v", err)
 		}
-		owner_statedb := state.GetCandidateOwner(statedb, it)
+		owner_statedb := statedb.GetCandidateOwner(it)
 		if !reflect.DeepEqual(owner, owner_statedb) {
 			t.Fatalf("owner not equal, statedb utils is wrong")
 		}
@@ -350,7 +349,7 @@ func TestStatedbUtils(t *testing.T) {
 	if err != nil {
 		t.Fatalf("can't get voters: %v", err)
 	}
-	voters_statedb := state.GetVoters(statedb, acc3Addr)
+	voters_statedb := statedb.GetVoters(acc3Addr)
 	if !reflect.DeepEqual(voters, voters_statedb) {
 		t.Fatalf("voters not equal, statedb utils is wrong,\nbind calling result\n%v\nstatedb result\n%v", voters, voters_statedb)
 	}
@@ -362,7 +361,7 @@ func TestStatedbUtils(t *testing.T) {
 		if err != nil {
 			t.Fatalf("can't get voter cap: %v", err)
 		}
-		cap_statedb := state.GetVoterCap(statedb, acc3Addr, it)
+		cap_statedb := statedb.GetVoterCap(acc3Addr, it)
 		if cap.Cmp(cap_statedb) != 0 {
 			t.Fatalf("cap not equal, statedb utils is wrong")
 		}

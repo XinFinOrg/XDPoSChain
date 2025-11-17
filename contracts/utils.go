@@ -210,7 +210,7 @@ func BuildTxOpeningRandomize(nonce uint64, randomizeAddr common.Address, randomi
 
 // Get signers signed for blockNumber from blockSigner contract.
 func GetSignersFromContract(statedb *state.StateDB, block *types.Block) ([]common.Address, error) {
-	return state.GetSigners(statedb, block), nil
+	return statedb.GetSigners(block), nil
 }
 
 // Get signers signed for blockNumber from blockSigner contract.
@@ -412,8 +412,7 @@ func CalculateRewardForSigner(chainReward *big.Int, signers map[common.Address]*
 
 // Get candidate owner by address.
 func GetCandidatesOwnerBySigner(statedb *state.StateDB, signerAddr common.Address) common.Address {
-	owner := state.GetCandidateOwner(statedb, signerAddr)
-	return owner
+	return statedb.GetCandidateOwner(signerAddr)
 }
 
 func CalculateRewardForHolders(foundationWalletAddr common.Address, state *state.StateDB, signer common.Address, calcReward *big.Int, blockNumber uint64) (map[common.Address]*big.Int, error) {
@@ -431,7 +430,7 @@ func GetRewardBalancesRate(foundationWalletAddr common.Address, statedb *state.S
 	rewardMaster = new(big.Int).Div(rewardMaster, new(big.Int).SetInt64(100))
 	balances[owner] = rewardMaster
 	// Get voters for masternode.
-	voters := state.GetVoters(statedb, masterAddr)
+	voters := statedb.GetVoters(masterAddr)
 
 	if len(voters) > 0 {
 		totalVoterReward := new(big.Int).Mul(totalReward, new(big.Int).SetUint64(common.RewardVoterPercent))
@@ -443,7 +442,7 @@ func GetRewardBalancesRate(foundationWalletAddr common.Address, statedb *state.S
 			if _, ok := voterCaps[voteAddr]; ok && common.TIP2019Block.Uint64() <= blockNumber {
 				continue
 			}
-			voterCap := state.GetVoterCap(statedb, masterAddr, voteAddr)
+			voterCap := statedb.GetVoterCap(masterAddr, voteAddr)
 			totalCap.Add(totalCap, voterCap)
 			voterCaps[voteAddr] = voterCap
 		}

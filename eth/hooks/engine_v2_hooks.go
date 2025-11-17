@@ -361,8 +361,8 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				rewardsMap[rwt.key] = rewardResults
 			}
 			// record the total reward into state db
-			totalMinted := state.GetTotalMinted(stateBlock).Big()
-			lastEpochNum := state.GetLastEpochNum(stateBlock)
+			totalMinted := stateBlock.GetTotalMinted().Big()
+			lastEpochNum := stateBlock.GetLastEpochNum()
 			if lastEpochNum.IsZero() {
 				// if `lastEpochNum` is zero, the total minted has not included tokens before TIPUpgradeReward
 				// calculate the tokens before TIPUpgradeReward and set to totalMinted
@@ -377,10 +377,10 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				log.Warn("[HookReward] total minted overflow max u256")
 			}
 			log.Debug("[HookReward] total minted in hook", "value", totalMinted)
-			state.PutTotalMinted(stateBlock, common.BigToHash(totalMinted))
-			state.PutLastEpochNum(stateBlock, common.Uint64ToHash(epochNum))
+			stateBlock.PutTotalMinted(common.BigToHash(totalMinted))
+			stateBlock.PutLastEpochNum(common.Uint64ToHash(epochNum))
 			// Increment nonce so that statedb does not treat it as empty account
-			state.IncrementMintedRecordNonce(stateBlock)
+			stateBlock.IncrementMintedRecordNonce()
 		}
 		log.Debug("Time Calculated HookReward ", "block", header.Number.Uint64(), "time", common.PrettyDuration(time.Since(start)))
 		return rewardsMap, nil
@@ -433,12 +433,12 @@ func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *type
 				nodesToKeep[MasterNodeBeneficiary] = c.GetMasternodesFromCheckpointHeader(h)
 				// in reward upgrade, add protector and observer nodes
 				if chain.Config().IsTIPUpgradeReward(header.Number) {
-					candidates := state.GetCandidates(parentState)
+					candidates := parentState.GetCandidates()
 					var ms []utils.Masternode
 					for _, candidate := range candidates {
 						// ignore "0x0000000000000000000000000000000000000000"
 						if !candidate.IsZero() {
-							v := state.GetCandidateCap(parentState, candidate)
+							v := parentState.GetCandidateCap(candidate)
 							ms = append(ms, utils.Masternode{Address: candidate, Stake: v})
 						}
 					}
