@@ -1293,12 +1293,17 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 	defer bc.wg.Done()
 
 	// Do a sanity check that the provided chain is actually ordered and linked
-	for i := 1; i < len(blockChain); i++ {
-		if blockChain[i].NumberU64() != blockChain[i-1].NumberU64()+1 || blockChain[i].ParentHash() != blockChain[i-1].Hash() {
-			log.Error("Non contiguous receipt insert", "number", blockChain[i].Number(), "hash", blockChain[i].Hash(), "parent", blockChain[i].ParentHash(),
-				"prevnumber", blockChain[i-1].Number(), "prevhash", blockChain[i-1].Hash())
-			return 0, fmt.Errorf("non contiguous insert: item %d is #%d [%x..], item %d is #%d [%x..] (parent [%x..])", i-1, blockChain[i-1].NumberU64(),
-				blockChain[i-1].Hash().Bytes()[:4], i, blockChain[i].NumberU64(), blockChain[i].Hash().Bytes()[:4], blockChain[i].ParentHash().Bytes()[:4])
+	for i, block := range blockChain {
+		if i != 0 {
+			prev := blockChain[i-1]
+			if block.NumberU64() != prev.NumberU64()+1 || block.ParentHash() != prev.Hash() {
+				log.Error("Non contiguous receipt insert",
+					"number", block.Number(), "hash", block.Hash(), "parent", block.ParentHash(),
+					"prevnumber", prev.Number(), "prevhash", prev.Hash())
+				return 0, fmt.Errorf("non contiguous insert: item %d is #%d [%x..], item %d is #%d [%x..] (parent [%x..])",
+					i-1, prev.NumberU64(), prev.Hash().Bytes()[:4],
+					i, block.NumberU64(), block.Hash().Bytes()[:4], blockChain[i].ParentHash().Bytes()[:4])
+			}
 		}
 	}
 

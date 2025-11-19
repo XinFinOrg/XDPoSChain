@@ -100,6 +100,9 @@ type TxData interface {
 	// copy of the computed value, i.e. callers are allowed to mutate the result.
 	// Method implementations can use 'dst' to store the result.
 	effectiveGasPrice(dst *big.Int, baseFee *big.Int) *big.Int
+
+	encode(*bytes.Buffer) error
+	decode([]byte) error
 }
 
 // EncodeRLP implements rlp.Encoder
@@ -120,7 +123,7 @@ func (tx *Transaction) EncodeRLP(w io.Writer) error {
 // encodeTyped writes the canonical encoding of a typed transaction to w.
 func (tx *Transaction) encodeTyped(w *bytes.Buffer) error {
 	w.WriteByte(tx.Type())
-	return rlp.Encode(w, tx.inner)
+	return tx.inner.encode(w)
 }
 
 // MarshalBinary returns the canonical encoding of the transaction.
@@ -190,18 +193,17 @@ func (tx *Transaction) decodeTyped(b []byte) (TxData, error) {
 	if len(b) <= 1 {
 		return nil, errShortTypedTx
 	}
+	var inner TxData
 	switch b[0] {
 	case AccessListTxType:
-		var inner AccessListTx
-		err := rlp.DecodeBytes(b[1:], &inner)
-		return &inner, err
+		inner = new(AccessListTx)
 	case DynamicFeeTxType:
-		var inner DynamicFeeTx
-		err := rlp.DecodeBytes(b[1:], &inner)
-		return &inner, err
+		inner = new(DynamicFeeTx)
 	default:
 		return nil, ErrTxTypeNotSupported
 	}
+	err := inner.decode(b[1:])
+	return inner, err
 }
 
 // setDecoded sets the inner transaction and size after decoding.
