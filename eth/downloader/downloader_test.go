@@ -82,8 +82,8 @@ func newTester() *downloadTester {
 	return tester
 }
 
-func (db *downloadTester) TrieDB() *trie.Database {
-	return db.triedb
+func (dl *downloadTester) TrieDB() *trie.Database {
+	return dl.triedb
 }
 
 // terminate aborts any operations on the embedded downloader and releases all
@@ -342,7 +342,7 @@ func (dl *downloadTester) Config() *params.ChainConfig {
 	return &config
 }
 
-func (bc *downloadTester) InterruptInsert(on bool) {
+func (dl *downloadTester) InterruptInsert(on bool) {
 }
 
 type downloadTesterPeer struct {
