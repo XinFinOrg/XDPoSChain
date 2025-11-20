@@ -20,7 +20,7 @@ package web3ext
 var Modules = map[string]string{
 	"admin":  AdminJs,
 	"clique": CliqueJs,
-		"XDPoS":  XdposJs,
+	"XDPoS":  XdposJs,
 	"debug":  DebugJs,
 	"eth":    EthJs,
 	"miner":  MinerJs,
