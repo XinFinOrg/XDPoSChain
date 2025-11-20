@@ -93,17 +93,17 @@ func New(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh chan i
 		db:           db,
 		isInitilised: false,
 
-		signatures: lru.NewCache[common.Hash, common.Address](utils.InmemorySnapshots),
+		signatures: lru.NewCache[common.Hash, common.Address](utils.InMemorySnapshots),
 
-		verifiedHeaders: lru.NewCache[common.Hash, struct{}](utils.InmemorySnapshots),
-		snapshots:       lru.NewCache[common.Hash, *SnapshotV2](utils.InmemorySnapshots),
-		epochSwitches:   lru.NewCache[common.Hash, *types.EpochSwitchInfo](int(utils.InmemoryEpochs)),
+		verifiedHeaders: lru.NewCache[common.Hash, struct{}](utils.InMemorySnapshots),
+		snapshots:       lru.NewCache[common.Hash, *SnapshotV2](utils.InMemorySnapshots),
+		epochSwitches:   lru.NewCache[common.Hash, *types.EpochSwitchInfo](int(utils.InMemorySnapshots)),
 		timeoutWorker:   timeoutTimer,
 		BroadcastCh:     make(chan interface{}),
 		minePeriodCh:    minePeriodCh,
 		newRoundCh:      newRoundCh,
 
-		round2epochBlockInfo: lru.NewCache[types.Round, *types.BlockInfo](utils.InmemoryRound2Epochs),
+		round2epochBlockInfo: lru.NewCache[types.Round, *types.BlockInfo](utils.InMemorySnapshots),
 
 		timeoutPool:  timeoutPool,
 		votePool:     votePool,
@@ -418,7 +418,7 @@ func (x *XDPoS_v2) Finalize(chain consensus.ChainReader, header *types.Header, s
 	header.UncleHash = types.CalcUncleHash(nil)
 
 	// Assemble and return the final block for sealing
-	return types.NewBlock(header, txs, nil, receipts, trie.NewStackTrie(nil)), nil
+	return types.NewBlock(header, &types.Body{Transactions: txs}, receipts, trie.NewStackTrie(nil)), nil
 }
 
 // Authorize injects a private key into the consensus engine to mint new blocks with.
