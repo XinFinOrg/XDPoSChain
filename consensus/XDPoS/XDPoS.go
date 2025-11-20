@@ -26,6 +26,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/engines/engine_v1"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/engines/engine_v2"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/engines/engine_v2_subnet"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/consensus/clique"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
@@ -45,6 +46,8 @@ const (
 
 func (x *XDPoS) SigHash(header *types.Header) (hash common.Hash) {
 	switch x.config.BlockConsensusVersion(header.Number) {
+	case params.ConsensusEngineVersion2Subnet:
+		return x.EngineV2Subnet.SignHash(header)
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.SignHash(header)
 	default: // Default "v1"
@@ -71,8 +74,9 @@ type XDPoS struct {
 	GetLendingService func() utils.LendingService
 
 	// The exact consensus engine with different versions
-	EngineV1 *engine_v1.XDPoS_v1
-	EngineV2 *engine_v2.XDPoS_v2
+	EngineV1       *engine_v1.XDPoS_v1
+	EngineV2       *engine_v2.XDPoS_v2
+	EngineV2Subnet *engine_v2_subnet.XDPoS_v2
 }
 
 // Subscribe to consensus engines forensics events. Currently only exist for engine v2
@@ -157,6 +161,9 @@ func NewFaker(db ethdb.Database, chainConfig *params.ChainConfig) *XDPoS {
 // Reset parameters after checkpoint due to config may change
 func (x *XDPoS) UpdateParams(header *types.Header) {
 	switch x.config.BlockConsensusVersion(header.Number) {
+	case params.ConsensusEngineVersion2Subnet:
+		x.EngineV2Subnet.UpdateParams(header)
+		return
 	case params.ConsensusEngineVersion2:
 		x.EngineV2.UpdateParams(header)
 		return
@@ -167,6 +174,8 @@ func (x *XDPoS) UpdateParams(header *types.Header) {
 
 func (x *XDPoS) Initial(chain consensus.ChainReader, header *types.Header) error {
 	switch x.config.BlockConsensusVersion(header.Number) {
+	case params.ConsensusEngineVersion2Subnet:
+		return x.EngineV2Subnet.Initial(chain, header)
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.Initial(chain, header)
 	default: // Default "v1"
@@ -190,6 +199,8 @@ func (x *XDPoS) APIs(chain consensus.ChainReader) []rpc.API {
 // from the signature in the header's extra-data section.
 func (x *XDPoS) Author(header *types.Header) (common.Address, error) {
 	switch x.config.BlockConsensusVersion(header.Number) {
+	case params.ConsensusEngineVersion2Subnet:
+		return x.EngineV2Subnet.Author(header)
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.Author(header)
 	default: // Default "v1"
@@ -200,6 +211,8 @@ func (x *XDPoS) Author(header *types.Header) (common.Address, error) {
 // VerifyHeader checks whether a header conforms to the consensus rules.
 func (x *XDPoS) VerifyHeader(chain consensus.ChainReader, header *types.Header, fullVerify bool) error {
 	switch x.config.BlockConsensusVersion(header.Number) {
+	case params.ConsensusEngineVersion2Subnet:
+		return x.EngineV2Subnet.VerifyHeader(chain, header, fullVerify)
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.VerifyHeader(chain, header, fullVerify)
 	default: // Default "v1"
@@ -222,6 +235,8 @@ func (x *XDPoS) VerifyHeaders(chain consensus.ChainReader, headers []*types.Head
 
 	for i, header := range headers {
 		switch x.config.BlockConsensusVersion(header.Number) {
+		case params.ConsensusEngineVersion2Subnet:
+			v2headers = append(v2headers, header)
 		case params.ConsensusEngineVersion2:
 			v2headers = append(v2headers, header)
 			v2fullVerifies = append(v2fullVerifies, fullVerifies[i])
@@ -245,6 +260,8 @@ func (x *XDPoS) VerifyHeaders(chain consensus.ChainReader, headers []*types.Head
 // uncles as this consensus mechanism doesn't permit uncles.
 func (x *XDPoS) VerifyUncles(chain consensus.ChainReader, block *types.Block) error {
 	switch x.config.BlockConsensusVersion(block.Number()) {
+	case params.ConsensusEngineVersion2Subnet:
+		return x.EngineV2Subnet.VerifyUncles(chain, block)
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.VerifyUncles(chain, block)
 	default: // Default "v1"
@@ -256,6 +273,8 @@ func (x *XDPoS) VerifyUncles(chain consensus.ChainReader, block *types.Block) er
 // in the header satisfies the consensus protocol requirements.
 func (x *XDPoS) VerifySeal(chain consensus.ChainReader, header *types.Header) error {
 	switch x.config.BlockConsensusVersion(header.Number) {
+	case params.ConsensusEngineVersion2Subnet:
+		return nil
 	case params.ConsensusEngineVersion2:
 		return nil
 	default: // Default "v1"
@@ -267,6 +286,9 @@ func (x *XDPoS) VerifySeal(chain consensus.ChainReader, header *types.Header) er
 // header for running the transactions on top.
 func (x *XDPoS) Prepare(chain consensus.ChainReader, header *types.Header) error {
 	switch x.config.BlockConsensusVersion(header.Number) {
+	case params.ConsensusEngineVersion2Subnet:
+		log.Warn("[TESTLOG][Prepare] Using EngineV2Subnet")
+		return x.EngineV2Subnet.Prepare(chain, header)
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.Prepare(chain, header)
 	default: // Default "v1"
@@ -278,6 +300,8 @@ func (x *XDPoS) Prepare(chain consensus.ChainReader, header *types.Header) error
 // rewards given, and returns the final block.
 func (x *XDPoS) Finalize(chain consensus.ChainReader, header *types.Header, state *state.StateDB, parentState *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
 	switch x.config.BlockConsensusVersion(header.Number) {
+	case params.ConsensusEngineVersion2Subnet:
+		return x.EngineV2Subnet.Finalize(chain, header, state, parentState, txs, uncles, receipts)
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.Finalize(chain, header, state, parentState, txs, uncles, receipts)
 	default: // Default "v1"
@@ -289,6 +313,8 @@ func (x *XDPoS) Finalize(chain consensus.ChainReader, header *types.Header, stat
 // the local signing credentials.
 func (x *XDPoS) Seal(chain consensus.ChainReader, block *types.Block, stop <-chan struct{}) (*types.Block, error) {
 	switch x.config.BlockConsensusVersion(block.Number()) {
+	case params.ConsensusEngineVersion2Subnet:
+		return x.EngineV2Subnet.Seal(chain, block, stop)
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.Seal(chain, block, stop)
 	default: // Default "v1"
@@ -301,6 +327,8 @@ func (x *XDPoS) Seal(chain consensus.ChainReader, block *types.Block, stop <-cha
 // current signer.
 func (x *XDPoS) CalcDifficulty(chain consensus.ChainReader, time uint64, parent *types.Header) *big.Int {
 	switch x.config.BlockConsensusVersion(parent.Number) {
+	case params.ConsensusEngineVersion2Subnet:
+		return x.EngineV2Subnet.CalcDifficulty(chain, time, parent)
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.CalcDifficulty(chain, time, parent)
 	default: // Default "v1"
@@ -310,6 +338,8 @@ func (x *XDPoS) CalcDifficulty(chain consensus.ChainReader, time uint64, parent 
 
 func (x *XDPoS) HandleProposedBlock(chain consensus.ChainReader, header *types.Header) error {
 	switch x.config.BlockConsensusVersion(header.Number) {
+	case params.ConsensusEngineVersion2Subnet:
+		return x.EngineV2Subnet.ProposedBlockHandler(chain, header)
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.ProposedBlockHandler(chain, header)
 	default: // Default "v1"
@@ -327,6 +357,7 @@ func (x *XDPoS) Authorize(signer common.Address, signFn clique.SignerFn) {
 	// Authorize each consensus individually
 	x.EngineV1.Authorize(signer, signFn)
 	x.EngineV2.Authorize(signer, signFn)
+	x.EngineV2Subnet.Authorize(signer, signFn)
 }
 
 func (x *XDPoS) GetPeriod() uint64 {
@@ -335,6 +366,8 @@ func (x *XDPoS) GetPeriod() uint64 {
 
 func (x *XDPoS) IsAuthorisedAddress(chain consensus.ChainReader, header *types.Header, address common.Address) bool {
 	switch x.config.BlockConsensusVersion(header.Number) {
+	case params.ConsensusEngineVersion2Subnet:
+		return x.EngineV2Subnet.IsAuthorisedAddress(chain, header, address)
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.IsAuthorisedAddress(chain, header, address)
 	default: // Default "v1"
@@ -344,6 +377,8 @@ func (x *XDPoS) IsAuthorisedAddress(chain consensus.ChainReader, header *types.H
 
 func (x *XDPoS) GetMasternodes(chain consensus.ChainReader, header *types.Header) []common.Address {
 	switch x.config.BlockConsensusVersion(header.Number) {
+	case params.ConsensusEngineVersion2Subnet:
+		return x.EngineV2Subnet.GetMasternodes(chain, header)
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.GetMasternodes(chain, header)
 	default: // Default "v1"
@@ -358,6 +393,8 @@ func (x *XDPoS) GetMasternodesByNumber(chain consensus.ChainReader, blockNumber 
 		return []common.Address{}
 	}
 	switch x.config.BlockConsensusVersion(big.NewInt(int64(blockNumber))) {
+	case params.ConsensusEngineVersion2Subnet:
+		return x.EngineV2Subnet.GetMasternodes(chain, blockHeader)
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.GetMasternodes(chain, blockHeader)
 	default: // Default "v1"
@@ -367,6 +404,9 @@ func (x *XDPoS) GetMasternodesByNumber(chain consensus.ChainReader, blockNumber 
 
 func (x *XDPoS) YourTurn(chain consensus.ChainReader, parent *types.Header, signer common.Address) (bool, error) {
 	switch x.config.BlockConsensusVersion(big.NewInt(parent.Number.Int64() + 1)) {
+	case params.ConsensusEngineVersion2Subnet:
+		log.Warn("[TESTLOG][YourTurn] Using EngineV2Subnet")
+		return x.EngineV2Subnet.YourTurn(chain, parent, signer)
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.YourTurn(chain, parent, signer)
 	default: // Default "v1"
@@ -384,6 +424,8 @@ func (x *XDPoS) GetValidator(creator common.Address, chain consensus.ChainReader
 func (x *XDPoS) UpdateMasternodes(chain consensus.ChainReader, header *types.Header, ms []utils.Masternode) error {
 	// fmt.Println("UpdateMasternodes")
 	switch x.config.BlockConsensusVersion(header.Number) {
+	case params.ConsensusEngineVersion2Subnet:
+		return x.EngineV2Subnet.UpdateMasternodes(chain, header, ms)
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.UpdateMasternodes(chain, header, ms)
 	default: // Default "v1"
@@ -393,6 +435,8 @@ func (x *XDPoS) UpdateMasternodes(chain consensus.ChainReader, header *types.Hea
 
 func (x *XDPoS) RecoverSigner(header *types.Header) (common.Address, error) {
 	switch x.config.BlockConsensusVersion(header.Number) {
+	case params.ConsensusEngineVersion2Subnet:
+		return common.Address{}, nil
 	case params.ConsensusEngineVersion2:
 		return common.Address{}, nil
 	default: // Default "v1"
@@ -402,6 +446,8 @@ func (x *XDPoS) RecoverSigner(header *types.Header) (common.Address, error) {
 
 func (x *XDPoS) RecoverValidator(header *types.Header) (common.Address, error) {
 	switch x.config.BlockConsensusVersion(header.Number) {
+	case params.ConsensusEngineVersion2Subnet:
+		return common.Address{}, nil
 	case params.ConsensusEngineVersion2:
 		return common.Address{}, nil
 	default: // Default "v1"
@@ -412,6 +458,8 @@ func (x *XDPoS) RecoverValidator(header *types.Header) (common.Address, error) {
 // Get master nodes over extra data of previous checkpoint block.
 func (x *XDPoS) GetMasternodesFromCheckpointHeader(checkpointHeader *types.Header) []common.Address {
 	switch x.config.BlockConsensusVersion(checkpointHeader.Number) {
+	case params.ConsensusEngineVersion2Subnet:
+		return x.EngineV2Subnet.GetMasternodesFromEpochSwitchHeader(checkpointHeader)
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.GetMasternodesFromEpochSwitchHeader(checkpointHeader)
 	default: // Default "v1"
@@ -422,6 +470,8 @@ func (x *XDPoS) GetMasternodesFromCheckpointHeader(checkpointHeader *types.Heade
 // Check is epoch switch (checkpoint) block
 func (x *XDPoS) IsEpochSwitch(header *types.Header) (bool, uint64, error) {
 	switch x.config.BlockConsensusVersion(header.Number) {
+	case params.ConsensusEngineVersion2Subnet:
+		return x.EngineV2Subnet.IsEpochSwitch(header)
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.IsEpochSwitch(header)
 	default: // Default "v1"
@@ -431,6 +481,8 @@ func (x *XDPoS) IsEpochSwitch(header *types.Header) (bool, uint64, error) {
 
 func (x *XDPoS) GetCurrentEpochSwitchBlock(chain consensus.ChainReader, blockNumber *big.Int) (uint64, uint64, error) {
 	switch x.config.BlockConsensusVersion(blockNumber) {
+	case params.ConsensusEngineVersion2Subnet:
+		return x.EngineV2Subnet.GetCurrentEpochSwitchBlock(chain, blockNumber)
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.GetCurrentEpochSwitchBlock(chain, blockNumber)
 	default: // Default "v1"
@@ -440,6 +492,8 @@ func (x *XDPoS) GetCurrentEpochSwitchBlock(chain consensus.ChainReader, blockNum
 
 func (x *XDPoS) CalculateMissingRounds(chain consensus.ChainReader, header *types.Header) (*utils.PublicApiMissedRoundsMetadata, error) {
 	switch x.config.BlockConsensusVersion(header.Number) {
+	case params.ConsensusEngineVersion2Subnet:
+		return x.EngineV2Subnet.CalculateMissingRounds(chain, header)
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.CalculateMissingRounds(chain, header)
 	default: // Default "v1"
@@ -449,11 +503,22 @@ func (x *XDPoS) CalculateMissingRounds(chain consensus.ChainReader, header *type
 
 // Same DB across all consensus engines
 func (x *XDPoS) GetDb() ethdb.Database {
+	// TODO: check if engine switch required
 	return x.db
 }
 
 func (x *XDPoS) GetSnapshot(chain consensus.ChainReader, header *types.Header) (*utils.PublicApiSnapshot, error) {
 	switch x.config.BlockConsensusVersion(header.Number) {
+	case params.ConsensusEngineVersion2Subnet:
+		sp, err := x.EngineV2Subnet.GetSnapshot(chain, header)
+		if err != nil {
+			return nil, err
+		}
+		return &utils.PublicApiSnapshot{
+			Number:  sp.Number,
+			Hash:    sp.Hash,
+			Signers: sp.GetMappedCandidates(),
+		}, err
 	case params.ConsensusEngineVersion2:
 		sp, err := x.EngineV2.GetSnapshot(chain, header)
 		if err != nil {
@@ -483,6 +548,8 @@ func (x *XDPoS) GetSnapshot(chain consensus.ChainReader, header *types.Header) (
 
 func (x *XDPoS) GetAuthorisedSignersFromSnapshot(chain consensus.ChainReader, header *types.Header) ([]common.Address, error) {
 	switch x.config.BlockConsensusVersion(header.Number) {
+	case params.ConsensusEngineVersion2Subnet:
+		return x.EngineV2Subnet.GetSignersFromSnapshot(chain, header)
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.GetSignersFromSnapshot(chain, header)
 	default: // Default "v1"
@@ -492,6 +559,12 @@ func (x *XDPoS) GetAuthorisedSignersFromSnapshot(chain consensus.ChainReader, he
 
 func (x *XDPoS) FindParentBlockToAssign(chain consensus.ChainReader, currentBlock *types.Block) *types.Block {
 	switch x.config.BlockConsensusVersion(currentBlock.Number()) {
+	case params.ConsensusEngineVersion2Subnet:
+		block := x.EngineV2Subnet.FindParentBlockToAssign(chain)
+		if block == nil {
+			return currentBlock
+		}
+		return block
 	case params.ConsensusEngineVersion2:
 		block := x.EngineV2.FindParentBlockToAssign(chain)
 		if block == nil {
@@ -509,6 +582,7 @@ Caching
 
 // Cache signing transaction data into BlockSingers cache object
 func (x *XDPoS) CacheNoneTIPSigningTxs(header *types.Header, txs []*types.Transaction, receipts []*types.Receipt) []*types.Transaction {
+	// TODO: check if engine switch required
 	signTxs := []*types.Transaction{}
 	for _, tx := range txs {
 		if tx.IsSigningTransaction() {
@@ -540,6 +614,7 @@ func (x *XDPoS) CacheNoneTIPSigningTxs(header *types.Header, txs []*types.Transa
 
 // Cache
 func (x *XDPoS) CacheSigningTxs(hash common.Hash, txs []*types.Transaction) []*types.Transaction {
+	// TODO: check if engine switch required
 	signTxs := []*types.Transaction{}
 	for _, tx := range txs {
 		if tx.IsSigningTransaction() {
@@ -552,10 +627,12 @@ func (x *XDPoS) CacheSigningTxs(hash common.Hash, txs []*types.Transaction) []*t
 }
 
 func (x *XDPoS) GetCachedSigningTxs(hash common.Hash) ([]*types.Transaction, bool) {
+	// TODO: check if engine switch required
 	return x.signingTxsCache.Get(hash)
 }
 
 func (x *XDPoS) GetEpochSwitchInfoBetween(chain consensus.ChainReader, begin, end *types.Header) ([]*types.EpochSwitchInfo, error) {
+	// TODO: enginev2subnet
 	beginBlockVersion := x.config.BlockConsensusVersion(begin.Number)
 	endBlockVersion := x.config.BlockConsensusVersion(end.Number)
 	if beginBlockVersion == params.ConsensusEngineVersion2 && endBlockVersion == params.ConsensusEngineVersion2 {

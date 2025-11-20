@@ -65,15 +65,26 @@ func (b *Bfter) InitEpochNumber() {
 
 func (b *Bfter) SetConsensusFuns(engine consensus.Engine) {
 	e := engine.(*XDPoS.XDPoS)
-	b.broadcastCh = e.EngineV2.BroadcastCh
-	b.consensus = ConsensusFns{
-		verifySyncInfo: e.EngineV2.VerifySyncInfoMessage,
-		verifyVote:     e.EngineV2.VerifyVoteMessage,
-		verifyTimeout:  e.EngineV2.VerifyTimeoutMessage,
+	// TODO: proper inject consensus version
+	// b.broadcastCh = e.EngineV2.BroadcastCh
+	// b.consensus = ConsensusFns{
+	// 	verifySyncInfo: e.EngineV2.VerifySyncInfoMessage,
+	// 	verifyVote:     e.EngineV2.VerifyVoteMessage,
+	// 	verifyTimeout:  e.EngineV2.VerifyTimeoutMessage,
 
-		voteHandler:     e.EngineV2.VoteHandler,
-		timeoutHandler:  e.EngineV2.TimeoutHandler,
-		syncInfoHandler: e.EngineV2.SyncInfoHandler,
+	// 	voteHandler:     e.EngineV2.VoteHandler,
+	// 	timeoutHandler:  e.EngineV2.TimeoutHandler,
+	// 	syncInfoHandler: e.EngineV2.SyncInfoHandler,
+	// }
+	b.broadcastCh = e.EngineV2Subnet.BroadcastCh
+	b.consensus = ConsensusFns{
+		verifySyncInfo: e.EngineV2Subnet.VerifySyncInfoMessage,
+		verifyVote:     e.EngineV2Subnet.VerifyVoteMessage,
+		verifyTimeout:  e.EngineV2Subnet.VerifyTimeoutMessage,
+
+		voteHandler:     e.EngineV2Subnet.VoteHandler,
+		timeoutHandler:  e.EngineV2Subnet.TimeoutHandler,
+		syncInfoHandler: e.EngineV2Subnet.SyncInfoHandler,
 	}
 }
 
