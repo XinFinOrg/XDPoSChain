@@ -368,18 +368,18 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 			nonce := stateBlock.GetNonce(common.MintedRecordAddressBinary)
 			if nonce == 0 {
 				// initialize MintedRecordAddress
-				state.PutMintedRecordOnsetEpoch(stateBlock, common.Uint64ToHash(epochNum))
-				state.PutMintedRecordOnsetBlock(stateBlock, common.Uint64ToHash(number))
+				stateBlock.PutMintedRecordOnsetEpoch(common.Uint64ToHash(epochNum))
+				stateBlock.PutMintedRecordOnsetBlock(common.Uint64ToHash(number))
 			} else {
 				epochNumIter := epochNum
 				for epochNumIter > 0 {
-					totalMinted = state.GetPostMinted(stateBlock, epochNumIter-1).Big()
-					totalBurned = state.GetPostBurned(stateBlock, epochNumIter-1).Big()
+					epochNumIter--
+					totalMinted = stateBlock.GetPostMinted(epochNumIter).Big()
+					totalBurned = stateBlock.GetPostBurned(epochNumIter).Big()
 					if totalMinted.Sign() != 0 || totalBurned.Sign() != 0 {
 						// if previous epoch has non-zero total minted or non-zero total burned, break the loop
 						break
 					}
-					epochNumIter--
 				}
 			}
 			totalMinted.Add(totalMinted, rewardSum)
@@ -389,8 +389,8 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				log.Warn("[HookReward] total minted overflow max u256")
 			}
 			log.Debug("[HookReward] total minted in hook", "value", totalMinted)
-			state.PutPostMinted(stateBlock, epochNum, common.BigToHash(totalMinted))
-			state.PutPostRewardBlock(stateBlock, epochNum, common.Uint64ToHash(number))
+			stateBlock.PutPostMinted(epochNum, common.BigToHash(totalMinted))
+			stateBlock.PutPostRewardBlock(epochNum, common.Uint64ToHash(number))
 			// Record total burned into statedb
 			totalBurned.Add(totalBurned, burnedInOneEpoch)
 			// if overflow, set to maxU256 and log a warning
@@ -398,7 +398,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				totalBurned.Set(math.MaxBig256)
 				log.Warn("[HookReward] total burned overflow max u256")
 			}
-			state.PutPostBurned(stateBlock, epochNum, common.BigToHash(totalBurned))
+			stateBlock.PutPostBurned(epochNum, common.BigToHash(totalBurned))
 			// Increment nonce so that statedb does not treat it as empty account
 			stateBlock.IncrementMintedRecordNonce()
 		}

@@ -2617,7 +2617,7 @@ type tokenSupply struct {
 	BlockNumber     *hexutil.Big `json:"blockNumber"`
 }
 
-func (s *BlockChainAPI) GetTokenSupply(ctx context.Context, epochNr rpc.EpochNumber) (*tokenSupply, error) {
+func (s *BlockChainAPI) GetTokenStats(ctx context.Context, epochNr rpc.EpochNumber) (*tokenSupply, error) {
 	engine, ok := s.b.Engine().(*XDPoS.XDPoS)
 	if !ok {
 		return nil, errors.New("undefined XDPoS consensus engine")
@@ -2632,7 +2632,7 @@ func (s *BlockChainAPI) GetTokenSupply(ctx context.Context, epochNr rpc.EpochNum
 	if err != nil {
 		return nil, err
 	}
-	onsetEpoch := state.GetMintedRecordOnsetEpoch(statedb).Big().Uint64()
+	onsetEpoch := statedb.GetMintedRecordOnsetEpoch().Big().Uint64()
 	if epochNr >= 0 {
 		if uint64(epochNr) < onsetEpoch {
 			return nil, errors.New("epoch number is before reward upgrade")
@@ -2645,8 +2645,8 @@ func (s *BlockChainAPI) GetTokenSupply(ctx context.Context, epochNr rpc.EpochNum
 	if epochNr == rpc.LatestEpochNumber {
 		epochNum = currentEpoch
 	}
-	postMinted := state.GetPostMinted(statedb, epochNum).Big()
-	number := state.GetPostRewardBlock(statedb, epochNum).Big()
+	postMinted := statedb.GetPostMinted(epochNum).Big()
+	number := statedb.GetPostRewardBlock(epochNum).Big()
 	targetHeader, err := s.b.HeaderByNumber(ctx, rpc.BlockNumber(number.Int64()))
 	if err != nil {
 		return nil, err
@@ -2663,7 +2663,7 @@ func (s *BlockChainAPI) GetTokenSupply(ctx context.Context, epochNr rpc.EpochNum
 		log.Warn("OnsetEpoch is 0 which could not happen", epochNum)
 	}
 	preMinted := new(big.Int).Mul(preEpochMinted, new(big.Int).SetUint64(onsetEpochMinus))
-	postBurned := state.GetPostBurned(statedb, epochNum).Big()
+	postBurned := statedb.GetPostBurned(epochNum).Big()
 	result := &tokenSupply{
 		V1: &supplyV1{
 			Minted: (*hexutil.Big)(preMinted),

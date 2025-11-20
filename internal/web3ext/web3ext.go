@@ -578,8 +578,8 @@ web3._extend({
 			params: 1,
 		}),
 		new web3._extend.Method({
-			name: 'getTokenSupply',
-			call: 'eth_getTokenSupply',
+			name: 'getTokenStats',
+			call: 'eth_getTokenStats',
 			params: 1,
 		}),
 	],
