@@ -692,7 +692,6 @@ func (pool *LendingPool) add(tx *types.LendingTransaction, local bool) (bool, er
 
 		log.Debug("Lending Pooled new executable transaction", "hash", hash, "useraddress", tx.UserAddress(), "nonce", tx.Nonce(), "status", tx.Status(), "lendingid", tx.LendingId())
 		return old != nil, nil
-
 	}
 	// New transaction isn't replacing a pending one, push into queue
 	replace, err := pool.enqueueTx(hash, tx)

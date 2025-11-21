@@ -80,7 +80,6 @@ func TestIsYourTurnConsensusV2(t *testing.T) {
 
 	isYourTurn, _ = adaptor.YourTurn(blockchain, currentBlock.Header(), common.HexToAddress("xdc5F74529C0338546f82389402a01c31fB52c6f434"))
 	assert.False(t, isYourTurn)
-
 }
 
 func TestIsYourTurnConsensusV2CrossConfig(t *testing.T) {

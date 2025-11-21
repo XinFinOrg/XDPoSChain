@@ -514,7 +514,6 @@ func (tx *Transaction) IsVotingTransaction() (bool, *common.Address) {
 	addr := data[end-20 : end]
 	m := common.BytesToAddress(addr)
 	return true, &m
-
 }
 
 func (tx *Transaction) IsXDCXApplyTransaction() bool {

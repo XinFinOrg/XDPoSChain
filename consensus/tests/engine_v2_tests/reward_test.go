@@ -282,7 +282,6 @@ func TestHookRewardAfterUpgrade(t *testing.T) {
 		} else {
 			assert.Fail(t, "wrong reward")
 		}
-
 	}
 	resultObserver := reward["rewardsObserver"].(map[common.Address]interface{})
 	// observer1 and it signs one tx, observer2 is inside penalty so no reward

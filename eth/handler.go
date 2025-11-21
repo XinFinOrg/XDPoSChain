@@ -996,7 +996,6 @@ func (pm *ProtocolManager) BroadcastSyncInfo(syncInfo *types.SyncInfo) {
 		}
 		log.Trace("Propagated SyncInfo", "hash", hash, "recipients", len(peers))
 	}
-
 }
 
 // OrderBroadcastTx will propagate a transaction to all peers which are not known to

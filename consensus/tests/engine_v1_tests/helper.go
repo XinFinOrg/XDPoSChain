@@ -192,7 +192,6 @@ func GetSnapshotSigner(bc *core.BlockChain, header *types.Header) (signersList, 
 	snap, err := engine.GetSnapshot(bc, header)
 	if err != nil {
 		return nil, err
-
 	}
 	ms := make(signersList)
 

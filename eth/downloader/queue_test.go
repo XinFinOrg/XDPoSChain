@@ -168,7 +168,6 @@ func TestBasics(t *testing.T) {
 		if got, exp := fetchReq.Headers[0].Number.Uint64(), uint64(1); got != exp {
 			t.Fatalf("expected header %d, got %d", exp, got)
 		}
-
 	}
 	//fmt.Printf("blockTaskQueue len: %d\n", q.blockTaskQueue.Size())
 	//fmt.Printf("receiptTaskQueue len: %d\n", q.receiptTaskQueue.Size())
@@ -208,7 +207,6 @@ func TestEmptyBlocks(t *testing.T) {
 		if fetchReq != nil {
 			t.Fatal("there should be no body fetch tasks remaining")
 		}
-
 	}
 	if q.blockTaskQueue.Size() != len(emptyChain.blocks)-10 {
 		t.Errorf("expected block task queue to be 0, got %d", q.blockTaskQueue.Size())
@@ -270,7 +268,6 @@ func XTestDelivery(t *testing.T) {
 			fmt.Printf("got %d results, %d tot\n", len(res), tot)
 			// Now we can forget about these
 			world.forget(res[len(res)-1].Header.Number.Uint64())
-
 		}
 	})
 	wg.Go(func() {
@@ -328,7 +325,6 @@ func XTestDelivery(t *testing.T) {
 		}
 		for i := 0; i < 50; i++ {
 			time.Sleep(2990 * time.Millisecond)
-
 		}
 	})
 	wg.Go(func() {

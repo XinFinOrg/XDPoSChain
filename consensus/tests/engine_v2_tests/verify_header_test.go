@@ -395,7 +395,6 @@ func TestShouldFailIfNotEnoughQCSignatures(t *testing.T) {
 	// Happy path
 	err = adaptor.VerifyHeader(blockchain, headerWithDuplicatedSignatures, true)
 	assert.Equal(t, utils.ErrInvalidQCSignatures, err)
-
 }
 
 func TestShouldVerifyHeaders(t *testing.T) {

@@ -174,7 +174,6 @@ func TestShouldNotCommitIfRoundsNotContinousFor3Rounds(t *testing.T) {
 	assert.Equal(t, grandGrandParentBlock.Hash(), highestCommitBlock.Hash)
 	assert.Equal(t, grandGrandParentBlock.Number(), highestCommitBlock.Number)
 	assert.Equal(t, types.Round(3), highestCommitBlock.Round)
-
 }
 
 func TestProposedBlockMessageHandlerSuccessfullyGenerateVote(t *testing.T) {

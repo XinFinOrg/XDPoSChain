@@ -188,7 +188,6 @@ func (ordersign OrderTxSigner) Sender(tx *OrderTransaction) (common.Address, err
 	}
 	address := crypto.PubkeyToAddress(*pubKey)
 	return address, nil
-
 }
 
 // CacheOrderSigner cache signed order

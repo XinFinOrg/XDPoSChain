@@ -46,5 +46,4 @@ func TestPriceFeed(t *testing.T) {
 		t.Fatal("can't run function Foo() in  smart contract: ", err)
 	}
 	fmt.Println("tx", tx)
-
 }

@@ -495,7 +495,6 @@ func (pool *OrderPool) validateOrder(tx *types.OrderTransaction) error {
 		} else {
 			tx.SetOrderHash(signer.Hash(tx))
 		}
-
 	} else {
 		if tx.OrderID() == 0 {
 			return ErrInvalidCancelledOrder
@@ -601,7 +600,6 @@ func (pool *OrderPool) add(tx *types.OrderTransaction, local bool) (bool, error)
 		log.Debug("Pooled new executable transaction", "hash", hash, "useraddress", tx.UserAddress().Hex(), "nonce", tx.Nonce(), "status", tx.Status(), "orderid", tx.OrderID())
 		go pool.txFeed.Send(core.OrderTxPreEvent{Tx: tx})
 		return old != nil, nil
-
 	}
 	// New transaction isn't replacing a pending one, push into queue
 	replace, err := pool.enqueueTx(hash, tx)
@@ -876,7 +874,6 @@ func (pool *OrderPool) promoteExecutables(accounts []common.Address) {
 			hash := tx.Hash()
 			log.Debug("Removed old queued transaction", "addr", tx.UserAddress().Hex(), "nonce", tx.Nonce(), "ohash", tx.OrderHash().Hex(), "status", tx.Status(), "orderid", tx.OrderID())
 			delete(pool.all, hash)
-
 		}
 
 		// Gather all executable transactions and promote them

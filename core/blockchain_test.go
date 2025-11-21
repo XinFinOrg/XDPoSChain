@@ -1547,7 +1547,6 @@ func TestBlocksHashCacheUpdate(t *testing.T) {
 			t.Error("BlocksHashCache doesn't work when inserting block solely")
 		}
 	})
-
 }
 
 func TestAreTwoBlocksSamePath(t *testing.T) {

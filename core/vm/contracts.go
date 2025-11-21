@@ -717,5 +717,4 @@ func (c *blake2F) Run(input []byte) ([]byte, error) {
 		binary.LittleEndian.PutUint64(output[offset:offset+8], h[i])
 	}
 	return output, nil
-
 }

@@ -385,7 +385,6 @@ func GetSnapshotSigner(bc *core.BlockChain, header *types.Header) (signersList, 
 	snap, err := engine.GetSnapshot(bc, header)
 	if err != nil {
 		return nil, err
-
 	}
 	ms := make(signersList)
 
@@ -393,7 +392,6 @@ func GetSnapshotSigner(bc *core.BlockChain, header *types.Header) (signersList, 
 		ms[addr.Hex()] = true
 	}
 	return ms, nil
-
 }
 
 func GetCandidateFromCurrentSmartContract(backend bind.ContractBackend, t *testing.T) masterNodes {

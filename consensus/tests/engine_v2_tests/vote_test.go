@@ -225,7 +225,6 @@ func TestThrowErrorIfVoteMsgRoundIsMoreThanOneRoundAwayFromCurrentRound(t *testi
 	err = engineV2.VoteHandler(blockchain, voteMsg)
 	assert.NotNil(t, err)
 	assert.Equal(t, "vote message round number: 6 is too far away from currentRound: 4", err.Error())
-
 }
 
 func TestProcessVoteMsgThenTimeoutMsg(t *testing.T) {

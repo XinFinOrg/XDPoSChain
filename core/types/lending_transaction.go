@@ -194,10 +194,8 @@ func (tx *LendingTransaction) From() *common.Address {
 		} else {
 			return &f
 		}
-
 	}
 	return nil
-
 }
 
 // WithSignature returns a new transaction with the given signature.

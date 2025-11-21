@@ -245,7 +245,6 @@ func (net *Network) watchPeerEvents(id discover.NodeID, events chan *p2p.PeerEve
 
 			case p2p.PeerEventTypeMsgRecv:
 				net.DidReceive(peer, id, event.Protocol, *event.MsgCode)
-
 			}
 
 		case err := <-sub.Err():

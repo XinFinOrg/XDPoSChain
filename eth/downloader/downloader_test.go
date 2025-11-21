@@ -537,7 +537,6 @@ func testThrottling(t *testing.T, protocol int, mode SyncMode) {
 				tester.downloader.queue.resultCache.lock.Unlock()
 				frozen = int(atomic.LoadUint32(&blocked))
 				retrieved = len(tester.ownBlocks)
-
 			}
 			tester.lock.Unlock()
 
@@ -569,7 +568,6 @@ func testThrottling(t *testing.T, protocol int, mode SyncMode) {
 		t.Fatalf("block synchronization failed: %v", err)
 	}
 	tester.terminate()
-
 }
 
 // Tests that simple synchronization against a forked chain works correctly. In

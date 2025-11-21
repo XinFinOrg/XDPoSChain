@@ -653,7 +653,6 @@ func (rewardObj *AccountEpochReward) getRewardAndStatus(account string, data map
 			}
 			return
 		}
-
 	}
 
 	if signersData, exists := data["signersObserver"]; exists {

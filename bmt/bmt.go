@@ -469,7 +469,6 @@ func (ha *Hasher) run(n *Node, h hash.Hash, d int, i int, s []byte) {
 			h.Write(n.left)
 			h.Write(n.right)
 			s = h.Sum(nil)
-
 		} else {
 			s = append(n.left, n.right...)
 		}

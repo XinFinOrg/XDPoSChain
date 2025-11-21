@@ -1152,7 +1152,6 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 				log.Warn("[commitTransactions] Error when sending PendingStateEvent", "tcount", tcount)
 			}
 		}(w.tcount)
-
 	}
 }
 
