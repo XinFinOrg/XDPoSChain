@@ -39,7 +39,7 @@ import (
 func TestSimulatedBackend(t *testing.T) {
 	t.Parallel()
 	var gasLimit uint64 = 8000029
-	key, _ := crypto.GenerateKey() // nolint: gosec
+	key, _ := crypto.GenerateKey() //nolint:gosec
 	auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 	genAlloc := make(types.GenesisAlloc)
 	genAlloc[auth.From] = types.Account{Balance: big.NewInt(9223372036854775807)}
