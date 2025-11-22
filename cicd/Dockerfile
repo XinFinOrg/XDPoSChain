@@ -1,6 +1,6 @@
 FROM golang:1.25-alpine AS builder
 
-RUN apk add make build-base linux-headers
+RUN apk add make build-base linux-headers git
 
 COPY . /builder
 

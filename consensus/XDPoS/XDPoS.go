@@ -120,6 +120,7 @@ func New(chainConfig *params.ChainConfig, db ethdb.Database) *XDPoS {
 		signingTxsCache: lru.NewCache[common.Hash, []*types.Transaction](utils.BlockSignersCacheLimit),
 		EngineV1:        engine_v1.New(chainConfig, db),
 		EngineV2:        engine_v2.New(chainConfig, db, minePeriodCh, newRoundCh),
+		EngineV2Subnet:  engine_v2_subnet.New(chainConfig, db, minePeriodCh, newRoundCh),
 	}
 }
 
