@@ -344,7 +344,6 @@ func (x *XDPoS_v2) Prepare(chain consensus.ChainReader, header *types.Header) er
 	}
 	// Ensure gas limit is consistent with parent
 	err = misc.VerifyGaslimit(parent.GasLimit, header.GasLimit)
-	// if err != nil && parent.Number.Uint64() != 0 { // skip genesis block
 	if err != nil && parent.Number.Uint64() != 0 { // skip genesis block
 		return err
 	}
