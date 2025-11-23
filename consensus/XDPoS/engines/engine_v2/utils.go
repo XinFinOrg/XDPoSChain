@@ -96,59 +96,46 @@ func (x *XDPoS_v2) signSignature(signingHash common.Hash) (types.Signature, erro
 }
 
 func (x *XDPoS_v2) countValidSignatures(messageHash common.Hash, signatures []types.Signature, candidates []common.Address) (int, error) {
-	type Message struct {
-		verified bool
-		pubkey   common.Address
-		sig      types.Signature
-	}
-	result := make(chan Message, len(signatures))
+	signatureList := make([]types.Signature, len(signatures))
+	pubkeys := make([]common.Address, len(signatures))
 
 	eg, ctx := errgroup.WithContext(context.Background())
 	eg.SetLimit(runtime.NumCPU())
-	for _, signature := range signatures {
-		sig := signature
+	for i, signature := range signatures {
 		eg.Go(func() error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			default:
-				verified, signerAddress, err := x.verifyMsgSignature(messageHash, sig, candidates)
+				verified, signerAddress, err := x.verifyMsgSignature(messageHash, signature, candidates)
 				if err != nil {
 					log.Error("[verifySignatures] Error while verfying QC message signatures", "error", err)
 					return err
 				}
-				result <- Message{verified: verified, pubkey: signerAddress, sig: sig}
+				if !verified {
+					return fmt.Errorf("signature verification failed, signer is not part of masternode list. Signature: %v, SignedMessage: %v, SignerAddress: %v, Masternodes: %v", signature, messageHash.Hex(), signerAddress, candidates)
+				}
+				signatureList[i] = signature
+				pubkeys[i] = signerAddress
+				
 				return nil
 			}
 		})
 	}
 	err := eg.Wait()
-	close(result)
 	if err != nil {
 		return 0, err
 	}
 
-	signatureList := []types.Signature{}
-	pubkeys := []common.Address{}
-	verifies := []bool{}
-	for r := range result {
-		if !r.verified {
-			return 0, fmt.Errorf("signature verification failed, signer is not part of masternode list. Signature: %v, SignedMessage: %v, SignerAddress: %v, Masternodes: %v", common.Bytes2Hex(r.sig), messageHash.Hex(), r.pubkey, candidates)
-		}
-		signatureList = append(signatureList, r.sig)
-		pubkeys = append(pubkeys, r.pubkey)
-		verifies = append(verifies, r.verified)
-	}
-
-	//check uniqueness
-	keys := make(map[string]bool)
-	for i, sig := range signatureList {
-		pubkeyHex := pubkeys[i].Hex()
+	// check uniqueness
+	keys := make(map[common.Address]struct{}, len(signatureList))
+	for i := range signatureList {
+		pubkeyHex := pubkeys[i]
 		if _, ok := keys[pubkeyHex]; !ok {
-			keys[pubkeyHex] = true
+			keys[pubkeyHex] = struct{}{}
 		} else {
-			log.Warn("[verifySignatures] duplicate signing found", "pubkey", pubkeyHex, "signedMessage", messageHash.Hex(), "signature", sig)
-			return 0, fmt.Errorf("duplicate signing found, pubkey: %v, message: %v, signature: %v", pubkeyHex, messageHash.Hex(), common.Bytes2Hex(sig))
+			log.Warn("[verifySignatures] duplicate signing found", "pubkey", pubkeyHex, "signedMessage", messageHash.Hex(), "signature", signatureList[i])
+			return 0, fmt.Errorf("duplicate signing found, pubkey: %v, message: %v, signature: %v", pubkeyHex, messageHash.Hex(), common.Bytes2Hex(signatureList[i]))
 		}
 	}
 
