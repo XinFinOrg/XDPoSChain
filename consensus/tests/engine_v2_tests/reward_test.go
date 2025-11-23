@@ -7,7 +7,6 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
-	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/hooks"
 	"github.com/XinFinOrg/XDPoSChain/eth/util"
@@ -301,14 +300,14 @@ func TestHookRewardAfterUpgrade(t *testing.T) {
 		assert.Zero(t, b.Cmp(r[config.XDPoS.FoudationWalletAddr]), "real reward is", r[config.XDPoS.FoudationWalletAddr])
 	}
 	epochNum := uint64(3)
-	totalMinted := state.GetPostMinted(statedb, epochNum).Big()
+	totalMinted := statedb.GetPostMinted(epochNum).Big()
 	expectMinted, _ := big.NewInt(0).SetString("2100125000000000000000", 10)
 	assert.Zero(t, totalMinted.Cmp(expectMinted), "statedb records wrong total minted")
-	blockNum := state.GetPostRewardBlock(statedb, epochNum).Big().Int64()
+	blockNum := statedb.GetPostRewardBlock(epochNum).Big().Int64()
 	assert.Equal(t, 2700, int(blockNum))
-	onsetBlock := state.GetMintedRecordOnsetBlock(statedb).Big().Int64()
+	onsetBlock := statedb.GetMintedRecordOnsetBlock().Big().Int64()
 	assert.Equal(t, 2700, int(onsetBlock))
-	totalBurned := state.GetPostBurned(statedb, epochNum).Big().Int64()
+	totalBurned := statedb.GetPostBurned(epochNum).Big().Int64()
 	// since no EIP 1559, so no burned
 	assert.Zero(t, totalBurned, "statedb records wrong total burned")
 	common.TIPUpgradeReward = backup
@@ -376,7 +375,7 @@ func TestFinalizeAfterUpgrade(t *testing.T) {
 
 	// the recorded reward cannot be zero
 	epochNum := uint64(3)
-	minted := state.GetPostMinted(statedbAfterFinalize, epochNum)
+	minted := statedbAfterFinalize.GetPostMinted(epochNum)
 	assert.False(t, minted.IsZero())
 
 	common.TIPUpgradeReward = backup
