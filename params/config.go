@@ -18,7 +18,6 @@ package params
 
 import (
 	"fmt"
-	"maps"
 	"math/big"
 	"slices"
 	"strings"
@@ -530,15 +529,28 @@ func V2Equal(a, b *V2) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-
-	return a.SwitchEpoch == b.SwitchEpoch && configNumEqual(a.SwitchBlock, b.SwitchBlock) && slices.Equal(a.configIndex, b.configIndex) && maps.EqualFunc(a.AllConfigs, b.AllConfigs, V2ConfigEqual)
+	if a.SwitchEpoch != b.SwitchEpoch || !configNumEqual(a.SwitchBlock, b.SwitchBlock) || !slices.Equal(a.configIndex, b.configIndex) {
+		return false
+	}
+	// compare AllConfigs according to smaller map
+	smallerMap, largerMap := a.AllConfigs, b.AllConfigs
+	if len(smallerMap) > len(largerMap) {
+		smallerMap, largerMap = largerMap, smallerMap
+	}
+	for key, cfg1 := range smallerMap {
+		cfg2, ok := largerMap[key]
+		if !ok || !V2ConfigEqual(cfg1, cfg2) {
+			return false
+		}
+	}
+	return true
 }
 
 func V2ConfigEqual(a, b *V2Config) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	return *a == *b
+	return a.MaxMasternodes == b.MaxMasternodes && a.SwitchRound == b.SwitchRound && a.CertThreshold == b.CertThreshold
 }
 
 func (c *XDPoSConfig) String() string {
