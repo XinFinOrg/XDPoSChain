@@ -82,6 +82,7 @@ var (
 	xdposV1Prefix = []byte("XDPoS-")
 	xdposV2Prefix = []byte("XDPoS-V2-")
 
+	randomizeKey         = []byte("randomizeKey")
 	sectionHeadKeyPrefix = []byte("shead")
 	validSectionsKey     = []byte("count")
 

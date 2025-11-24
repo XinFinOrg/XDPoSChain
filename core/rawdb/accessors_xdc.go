@@ -82,6 +82,37 @@ func DeleteectionHead(db ethdb.KeyValueWriter, section uint64) {
 	}
 }
 
+// HasRandomize verifies the existence of randomize.
+func HasRandomize(db ethdb.KeyValueReader) bool {
+	if has, err := db.Has(randomizeKey); !has || err != nil {
+		return false
+	}
+	return true
+}
+
+// ReadRandomize retrieves the randomiz from database.
+func ReadRandomize(db ethdb.KeyValueReader) ([]byte, error) {
+	data, err := db.Get(randomizeKey)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// WriteRandomize writes the randomize into database.
+func WriteRandomize(db ethdb.KeyValueWriter, data []byte) {
+	if err := db.Put(randomizeKey, data); err != nil {
+		log.Crit("Failed to store randomizeKey", "err", err)
+	}
+}
+
+// DeleteRandomize deletes the randomize from database.
+func DeleteRandomize(db ethdb.KeyValueWriter) {
+	if err := db.Delete(randomizeKey); err != nil {
+		log.Crit("Failed to delete randomizeKey", "err", err)
+	}
+}
+
 // ReadValidSections retrieves the number of valid sections from database.
 func ReadValidSections(db ethdb.KeyValueReader) *uint64 {
 	data, err := db.Get(validSectionsKey)

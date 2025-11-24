@@ -103,8 +103,7 @@ func CreateTransactionSign(chainConfig *params.ChainConfig, pool *txpool.TxPool,
 		blockNumber := block.Number().Uint64()
 		checkNumber := blockNumber % chainConfig.XDPoS.Epoch
 		// Generate random private key and save into chaindb.
-		randomizeKeyName := []byte("randomizeKey")
-		exist, _ := chainDb.Has(randomizeKeyName)
+		exist := rawdb.HasRandomize(chainDb)
 
 		// Set secret for randomize.
 		if !exist && checkNumber > 0 && common.EpocBlockSecret <= checkNumber && common.EpocBlockOpening > checkNumber {
@@ -129,12 +128,12 @@ func CreateTransactionSign(chainConfig *params.ChainConfig, pool *txpool.TxPool,
 			}
 
 			// Put randomize key into chainDb.
-			chainDb.Put(randomizeKeyName, randomizeKeyValue)
+			rawdb.WriteRandomize(chainDb, randomizeKeyValue)
 		}
 
 		// Set opening for randomize.
 		if exist && checkNumber > 0 && common.EpocBlockOpening <= checkNumber && common.EpocBlockRandomize >= checkNumber {
-			randomizeKeyValue, err := chainDb.Get(randomizeKeyName)
+			randomizeKeyValue, err := rawdb.ReadRandomize(chainDb)
 			if err != nil {
 				log.Error("Fail to get randomize key from state db.", "error", err)
 				return err
@@ -158,7 +157,7 @@ func CreateTransactionSign(chainConfig *params.ChainConfig, pool *txpool.TxPool,
 			}
 
 			// Clear randomize key in state db.
-			chainDb.Delete(randomizeKeyName)
+			rawdb.DeleteRandomize(chainDb)
 		}
 	}
 
