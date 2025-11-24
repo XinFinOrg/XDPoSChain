@@ -34,8 +34,6 @@ import (
 type nullTransport struct{}
 
 func (nullTransport) sendPing(remote *Node, remoteAddr *net.UDPAddr) []byte { return []byte{1} }
-func (nullTransport) sendPong(remote *Node, pingHash []byte)                {}
-func (nullTransport) sendFindnode(remote *Node, target NodeID)              {}
 func (nullTransport) sendNeighbours(remote *Node, nodes []*Node)            {}
 func (nullTransport) localAddr() *net.UDPAddr                               { return new(net.UDPAddr) }
 func (nullTransport) Close()                                                {}
@@ -157,28 +155,6 @@ func nodeAtDistance(base common.Hash, ld int) (n *Node) {
 	n.sha = hashAtDistance(base, ld)
 	copy(n.ID[:], n.sha[:]) // ensure the node still has a unique ID
 	return n
-}
-
-type pingRecorder struct{ responding, pinged map[NodeID]bool }
-
-func newPingRecorder() *pingRecorder {
-	return &pingRecorder{make(map[NodeID]bool), make(map[NodeID]bool)}
-}
-
-func (t *pingRecorder) findnode(toid NodeID, toaddr *net.UDPAddr, target NodeID) ([]*Node, error) {
-	panic("findnode called on pingRecorder")
-}
-func (t *pingRecorder) close() {}
-func (t *pingRecorder) waitping(from NodeID) error {
-	return nil // remote always pings
-}
-func (t *pingRecorder) ping(toid NodeID, toaddr *net.UDPAddr) error {
-	t.pinged[toid] = true
-	if t.responding[toid] {
-		return nil
-	} else {
-		return errTimeout
-	}
 }
 
 func TestTable_closest(t *testing.T) {
