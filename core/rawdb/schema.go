@@ -78,6 +78,10 @@ var (
 	// used by old db, now only used for conversion
 	oldTxMetaSuffix = []byte{0x01}
 
+	// XDPoS snapshot prefix
+	xdposV1Prefix = []byte("XDPoS-")
+	xdposV2Prefix = []byte("XDPoS-V2-")
+
 	sectionHeadKeyPrefix = []byte("shead")
 
 	preimageCounter    = metrics.NewRegisteredCounter("db/preimage/total", nil)
@@ -203,6 +207,16 @@ func accountTrieNodeKey(path []byte) []byte {
 // storageTrieNodeKey = trieNodeStoragePrefix + accountHash + nodePath.
 func storageTrieNodeKey(accountHash common.Hash, path []byte) []byte {
 	return append(append(trieNodeStoragePrefix, accountHash.Bytes()...), path...)
+}
+
+// xdposV1Key = xdposV1Prefix + hash
+func xdposV1Key(hash common.Hash) []byte {
+	return append(xdposV1Prefix, hash.Bytes()...)
+}
+
+// xdposV2Key = xdposV2Prefix + hash
+func xdposV2Key(hash common.Hash) []byte {
+	return append(xdposV2Prefix, hash.Bytes()...)
 }
 
 // sectionHeadKey = sectionHeadKeyPrefix + section (uint64 big endian)

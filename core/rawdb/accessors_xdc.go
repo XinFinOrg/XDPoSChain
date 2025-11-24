@@ -22,6 +22,40 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
+// ReadXdposV1Snapshot retrieves an existing snapshot from the database.
+func ReadXdposV1Snapshot(db ethdb.KeyValueReader, hash common.Hash) ([]byte, error) {
+	data, err := db.Get(xdposV1Key(hash))
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// WriteXdposV1Snapshot writes the SnapshotV2 into the database.
+func WriteXdposV1Snapshot(db ethdb.KeyValueWriter, hash common.Hash, blob []byte) error {
+	if err := db.Put(xdposV1Key(hash), blob); err != nil {
+		log.Crit("Failed to store SnapshotV2", "err", err)
+	}
+	return nil
+}
+
+// ReadXdposV2Snapshot retrieves an existing snapshot from the database.
+func ReadXdposV2Snapshot(db ethdb.KeyValueReader, hash common.Hash) ([]byte, error) {
+	data, err := db.Get(xdposV2Key(hash))
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// WriteXdposV2Snapshot writes the SnapshotV2 into the database.
+func WriteXdposV2Snapshot(db ethdb.KeyValueWriter, hash common.Hash, blob []byte) error {
+	if err := db.Put(xdposV2Key(hash), blob); err != nil {
+		log.Crit("Failed to store SnapshotV2", "err", err)
+	}
+	return nil
+}
+
 // ReadSectionHead retrieves the last block hash of a processed section
 // from the database.
 func ReadSectionHead(db ethdb.KeyValueReader, section uint64) common.Hash {

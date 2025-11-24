@@ -6,6 +6,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
@@ -34,7 +35,7 @@ func newSnapshot(number uint64, hash common.Hash, candidates []common.Address) *
 
 // loadSnapshot loads an existing snapshot from the database.
 func loadSnapshot(db ethdb.Database, hash common.Hash) (*SnapshotV2, error) {
-	blob, err := db.Get(append([]byte("XDPoS-V2-"), hash[:]...))
+	blob, err := rawdb.ReadXdposV2Snapshot(db, hash)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +53,7 @@ func storeSnapshot(s *SnapshotV2, db ethdb.Database) error {
 	if err != nil {
 		return err
 	}
-	return db.Put(append([]byte("XDPoS-V2-"), s.Hash[:]...), blob)
+	return rawdb.WriteXdposV2Snapshot(db, s.Hash, blob)
 }
 
 // retrieves candidates nodes list in map type

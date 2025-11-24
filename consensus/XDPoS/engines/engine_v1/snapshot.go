@@ -7,6 +7,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/consensus/clique"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -62,7 +63,7 @@ func newSnapshot(config *params.XDPoSConfig, sigcache *utils.SigLRU, number uint
 
 // loadSnapshot loads an existing snapshot from the database.
 func loadSnapshot(config *params.XDPoSConfig, sigcache *utils.SigLRU, db ethdb.Database, hash common.Hash) (*SnapshotV1, error) {
-	blob, err := db.Get(append([]byte("XDPoS-"), hash[:]...))
+	blob, err := rawdb.ReadXdposV1Snapshot(db, hash)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +83,7 @@ func (s *SnapshotV1) store(db ethdb.Database) error {
 	if err != nil {
 		return err
 	}
-	return db.Put(append([]byte("XDPoS-"), s.Hash[:]...), blob)
+	return rawdb.WriteXdposV1Snapshot(db, s.Hash, blob)
 }
 
 // copy creates a deep copy of the SnapshotV1, though not the individual votes.
