@@ -18,7 +18,6 @@ package core
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"sync"
@@ -410,18 +409,15 @@ func (c *ChainIndexer) AddChildIndexer(indexer *ChainIndexer) {
 // loadValidSections reads the number of valid sections from the index database
 // and caches is into the local state.
 func (c *ChainIndexer) loadValidSections() {
-	data, _ := c.indexDb.Get([]byte("count"))
-	if len(data) == 8 {
-		c.storedSections = binary.BigEndian.Uint64(data[:])
+	storedSections := rawdb.ReadValidSections(c.indexDb)
+	if storedSections != nil {
+		c.storedSections = *storedSections
 	}
 }
 
 // setValidSections writes the number of valid sections to the index database
 func (c *ChainIndexer) setValidSections(sections uint64) {
-	// Set the current number of valid sections in the database
-	var data [8]byte
-	binary.BigEndian.PutUint64(data[:], sections)
-	c.indexDb.Put([]byte("count"), data[:])
+	rawdb.WriteValidSections(c.indexDb, sections)
 
 	// Remove any reorged sections, caching the valids in the mean time
 	for c.storedSections > sections {

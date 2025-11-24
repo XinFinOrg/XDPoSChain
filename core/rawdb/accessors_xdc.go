@@ -17,6 +17,8 @@
 package rawdb
 
 import (
+	"encoding/binary"
+
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -43,5 +45,25 @@ func WriteSectionHead(db ethdb.KeyValueWriter, section uint64, hash common.Hash)
 func DeleteectionHead(db ethdb.KeyValueWriter, section uint64) {
 	if err := db.Delete(sectionHeadKey(section)); err != nil {
 		log.Crit("Failed to delete section head", "err", err)
+	}
+}
+
+// ReadValidSections retrieves the number of valid sections from database.
+func ReadValidSections(db ethdb.KeyValueReader) *uint64 {
+	data, err := db.Get(validSectionsKey)
+	if err != nil || len(data) != 8 {
+		return nil
+	}
+	storedSections := binary.BigEndian.Uint64(data[:])
+	return &storedSections
+}
+
+// WriteValidSections writes the number of valid sections into database
+func WriteValidSections(db ethdb.KeyValueWriter, sections uint64) {
+	// Set the current number of valid sections in the database
+	var data [8]byte
+	binary.BigEndian.PutUint64(data[:], sections)
+	if err := db.Put(validSectionsKey, data[:]); err != nil {
+		log.Crit("Failed to store valid sections", "err", err)
 	}
 }

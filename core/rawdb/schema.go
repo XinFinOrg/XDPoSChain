@@ -79,6 +79,7 @@ var (
 	oldTxMetaSuffix = []byte{0x01}
 
 	sectionHeadKeyPrefix = []byte("shead")
+	validSectionsKey     = []byte("count")
 
 	preimageCounter    = metrics.NewRegisteredCounter("db/preimage/total", nil)
 	preimageHitCounter = metrics.NewRegisteredCounter("db/preimage/hits", nil)
