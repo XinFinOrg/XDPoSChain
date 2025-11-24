@@ -434,30 +434,17 @@ func (c *ChainIndexer) setValidSections(sections uint64) {
 // SectionHead retrieves the last block hash of a processed section from the
 // index database.
 func (c *ChainIndexer) SectionHead(section uint64) common.Hash {
-	var data [8]byte
-	binary.BigEndian.PutUint64(data[:], section)
-
-	hash, _ := c.indexDb.Get(append([]byte("shead"), data[:]...))
-	if len(hash) == len(common.Hash{}) {
-		return common.BytesToHash(hash)
-	}
-	return common.Hash{}
+	return rawdb.ReadSectionHead(c.indexDb, section)
 }
 
 // setSectionHead writes the last block hash of a processed section to the index
 // database.
 func (c *ChainIndexer) setSectionHead(section uint64, hash common.Hash) {
-	var data [8]byte
-	binary.BigEndian.PutUint64(data[:], section)
-
-	c.indexDb.Put(append([]byte("shead"), data[:]...), hash.Bytes())
+	rawdb.WriteSectionHead(c.indexDb, section, hash)
 }
 
 // removeSectionHead removes the reference to a processed section from the index
 // database.
 func (c *ChainIndexer) removeSectionHead(section uint64) {
-	var data [8]byte
-	binary.BigEndian.PutUint64(data[:], section)
-
-	c.indexDb.Delete(append([]byte("shead"), data[:]...))
+	rawdb.DeleteectionHead(c.indexDb, section)
 }
