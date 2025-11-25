@@ -249,13 +249,3 @@ func FindAllPackages(tc *GoToolchain) []string {
 	}
 	return result
 }
-
-// GOPATH returns the value that the GOPATH environment
-// variable should be set to.
-func GOPATH() string {
-	gopath := os.Getenv("GOPATH")
-	if gopath == "" {
-		log.Fatal("GOPATH is not set")
-	}
-	return gopath
-}
