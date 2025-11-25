@@ -216,7 +216,6 @@ func (lendingsign LendingTxSigner) Sender(tx *LendingTransaction) (common.Addres
 	}
 	address := crypto.PubkeyToAddress(*pubKey)
 	return address, nil
-
 }
 
 // CacheLendingSigner cache signed lending transaction
