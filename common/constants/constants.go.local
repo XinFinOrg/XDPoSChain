@@ -1,34 +1,43 @@
-// Notice: this file only saves const variables for all network.
-// Please run the following commands after modify this file:
-//     cp common/constants.go common/constants/constants.go.testnet
-//     cp common/constants.go common/constants/constants.go.devnet
-//     cp common/constants.go common/constants/constants.go.local
-
 package common
 
-// const variables for all network.
-const (
-	RewardMasterPercent        = 90
-	RewardVoterPercent         = 0
-	RewardFoundationPercent    = 10
-	EpocBlockSecret            = 800
-	EpocBlockOpening           = 850
-	EpocBlockRandomize         = 900
-	MaxMasternodes             = 18
-	LimitPenaltyEpoch          = 4
-	LimitPenaltyEpochV2        = 0
-	LimitThresholdNonceInQueue = 10
-	DefaultMinGasPrice         = 250000000
-	MergeSignRange             = 15
-	RangeReturnSigner          = 150
-	MinimunMinerBlockPerEpoch  = 1
-	BlocksPerYearTest          = uint64(200000)
-	BlocksPerYear              = uint64(15768000)
-	OneYear                    = uint64(365 * 86400)
-	LiquidateLendingTradeBlock = uint64(100)
-	LimitTimeFinality          = uint64(30) // limit in 30 block
-
-	HexSignMethod = "e341eaa4"
-	HexSetSecret  = "34d38600"
-	HexSetOpening = "e11f5ba2"
+import (
+	"math/big"
 )
+
+var localConstant = constant{
+	chainID:           5151,
+	maxMasternodesV2:  108,
+	blackListHFNumber: 0,
+
+	tip2019Block:           big.NewInt(0),
+	tipSigning:             big.NewInt(0),
+	tipRandomize:           big.NewInt(0),
+	tipNoHalvingMNReward:   big.NewInt(0),
+	tipXDCX:                big.NewInt(0),
+	tipXDCXLending:         big.NewInt(0),
+	tipXDCXCancellationFee: big.NewInt(0),
+	tipTRC21Fee:            big.NewInt(0),
+	tipIncreaseMasternodes: big.NewInt(0),
+	berlinBlock:            big.NewInt(0),
+	londonBlock:            big.NewInt(0),
+	mergeBlock:             big.NewInt(0),
+	shanghaiBlock:          big.NewInt(0),
+	blockNumberGas50x:      big.NewInt(0),
+	TIPV2SwitchBlock:       big.NewInt(0),
+	tipXDCXMinerDisable:    big.NewInt(0),
+	tipXDCXReceiverDisable: big.NewInt(0),
+	eip1559Block:           big.NewInt(0),
+	cancunBlock:            big.NewInt(0),
+	tipUpgradeReward:       big.NewInt(999999999),
+	tipUpgradePenalty:      big.NewInt(999999999),
+	tipEpochHalving:        big.NewInt(999999999),
+
+	trc21IssuerSMC:         HexToAddress("0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee"),
+	xdcxListingSMC:         HexToAddress("0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53"),
+	relayerRegistrationSMC: HexToAddress("0x16c63b79f9C8784168103C0b74E6A59EC2de4a02"),
+	lendingRegistrationSMC: HexToAddress("0x7d761afd7ff65a79e4173897594a194e3c506e57"),
+
+	ignoreSignerCheckBlockArray: map[uint64]struct{}{},
+
+	blacklist: map[Address]struct{}{},
+}
