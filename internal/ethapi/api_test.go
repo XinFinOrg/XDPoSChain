@@ -189,25 +189,26 @@ func TestRPCMarshalBlock(t *testing.T) {
 						"value":"0x6f",
 						"type":"0x1",
 						"accessList":[],
-						"chainId": "0x539",
 						"chainId":"0x539",
 						"v":"0x0",
 						"r":"0x0",
-						"s":"0x0"
+						"s":"0x0",
+						"yParity":"0x0"
 					},
 					{
 						"blockHash":"0x2cb4e4b5b5be5a2520377e87e8d7d2cf83fc0783fa6518d67b9606d3c5317b50",
 						"blockNumber":"0x64",
 						"from":"0x0000000000000000000000000000000000000000",
 						"gas":"0x457",
-						"gasPrice":"0x2b67","hash":"0x9bba4c34e57c875ff57ac8d172805a26ae912006985395dc1bdf8f44140a7bf4",
+						"gasPrice":"0x2b67",
+						"hash":"0x9bba4c34e57c875ff57ac8d172805a26ae912006985395dc1bdf8f44140a7bf4",
 						"input":"0x111111",
 						"nonce":"0x2",
 						"to":"0x0000000000000000000000000000000000000011",
 						"transactionIndex":"0x1",
 						"value":"0x6f",
 						"type":"0x0",
-						"chainId": "0x7fffffffffffffee",
+						"chainId":"0x7fffffffffffffee",
 						"v":"0x0",
 						"r":"0x0",
 						"s":"0x0"
@@ -229,7 +230,8 @@ func TestRPCMarshalBlock(t *testing.T) {
 						"chainId":"0x539",
 						"v":"0x0",
 						"r":"0x0",
-						"s":"0x0"
+						"s":"0x0",
+						"yParity":"0x0"
 					},
 					{
 						"blockHash":"0x2cb4e4b5b5be5a2520377e87e8d7d2cf83fc0783fa6518d67b9606d3c5317b50",
@@ -244,7 +246,7 @@ func TestRPCMarshalBlock(t *testing.T) {
 						"transactionIndex":"0x3",
 						"value":"0x6f",
 						"type":"0x0",
-						"chainId": "0x7fffffffffffffee",
+						"chainId":"0x7fffffffffffffee",
 						"v":"0x0",
 						"r":"0x0",
 						"s":"0x0"
