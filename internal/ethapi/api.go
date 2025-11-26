@@ -1711,17 +1711,24 @@ func newRPCTransaction(tx *types.Transaction, blockHash common.Hash, blockNumber
 		// if the transaction has been mined, compute the effective gas price
 		if baseFee != nil && blockHash != (common.Hash{}) {
 			// price = min(tip, gasFeeCap - baseFee) + baseFee
-			price := new(big.Int).Add(tx.GasTipCap(), baseFee)
-			txGasFeeCap := tx.GasFeeCap()
-			if price.Cmp(txGasFeeCap) > 0 {
-				price = txGasFeeCap
-			}
-			result.GasPrice = (*hexutil.Big)(price)
+			result.GasPrice = (*hexutil.Big)(effectiveGasPrice(tx, baseFee))
 		} else {
 			result.GasPrice = (*hexutil.Big)(tx.GasFeeCap())
 		}
 	}
 	return result
+}
+
+// effectiveGasPrice computes the transaction gas fee, based on the given basefee value.
+//
+//	price = min(gasTipCap + baseFee, gasFeeCap)
+func effectiveGasPrice(tx *types.Transaction, baseFee *big.Int) *big.Int {
+	fee := tx.GasTipCap()
+	fee = fee.Add(fee, baseFee)
+	if tx.GasFeeCapIntCmp(fee) < 0 {
+		return tx.GasFeeCap()
+	}
+	return fee
 }
 
 // newRPCPendingTransaction returns a pending transaction that will serialize to the RPC representation
