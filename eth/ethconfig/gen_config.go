@@ -27,6 +27,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		LightServ               int  `toml:",omitempty"`
 		LightPeers              int  `toml:",omitempty"`
 		SkipBcVersionCheck      bool `toml:"-"`
+		DeleteAllBadBlocks      bool `toml:"-"`
 		DatabaseHandles         int  `toml:"-"`
 		DatabaseCache           int
 		TrieCleanCache          int
@@ -56,6 +57,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.LightServ = c.LightServ
 	enc.LightPeers = c.LightPeers
 	enc.SkipBcVersionCheck = c.SkipBcVersionCheck
+	enc.DeleteAllBadBlocks = c.DeleteAllBadBlocks
 	enc.DatabaseHandles = c.DatabaseHandles
 	enc.DatabaseCache = c.DatabaseCache
 	enc.TrieCleanCache = c.TrieCleanCache
@@ -89,6 +91,7 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		LightServ               *int  `toml:",omitempty"`
 		LightPeers              *int  `toml:",omitempty"`
 		SkipBcVersionCheck      *bool `toml:"-"`
+		DeleteAllBadBlocks      *bool `toml:"-"`
 		DatabaseHandles         *int  `toml:"-"`
 		DatabaseCache           *int
 		TrieCleanCache          *int
@@ -136,6 +139,9 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	}
 	if dec.SkipBcVersionCheck != nil {
 		c.SkipBcVersionCheck = *dec.SkipBcVersionCheck
+	}
+	if dec.DeleteAllBadBlocks != nil {
+		c.DeleteAllBadBlocks = *dec.DeleteAllBadBlocks
 	}
 	if dec.DatabaseHandles != nil {
 		c.DatabaseHandles = *dec.DatabaseHandles
