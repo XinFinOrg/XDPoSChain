@@ -843,11 +843,6 @@ var (
 		Value:    false,
 		Category: flags.XdcCategory,
 	}
-	XDCSlaveModeFlag = &cli.BoolFlag{
-		Name:     "slave",
-		Usage:    "Enable slave mode",
-		Category: flags.XdcCategory,
-	}
 
 	// XDCX settings
 	XDCXDBNameFlag = &cli.StringFlag{
