@@ -318,9 +318,14 @@ func doGenerate() {
 	)
 	pathList := []string{filepath.Join(protocPath, "bin"), protocGenGoPath, os.Getenv("PATH")}
 
+	excludes := []string{"tests/testdata", "build/cache", ".git"}
+	for i := range excludes {
+		excludes[i] = filepath.FromSlash(excludes[i])
+	}
+
 	for _, mod := range goModules {
 		// Compute the origin hashes of all the files
-		hashes, err := build.HashFolder(mod, []string{"tests/testdata", "build/cache", ".git"})
+		hashes, err := build.HashFolder(mod, excludes)
 		if err != nil {
 			log.Fatal("Error computing hashes", "err", err)
 		}
@@ -330,7 +335,7 @@ func doGenerate() {
 		c.Dir = mod
 		build.MustRun(c)
 		// Check if generate file hashes have changed
-		generated, err := build.HashFolder(mod, []string{"tests/testdata", "build/cache", ".git"})
+		generated, err := build.HashFolder(mod, excludes)
 		if err != nil {
 			log.Fatalf("Error re-computing hashes: %v", err)
 		}

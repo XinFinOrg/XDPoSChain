@@ -22,19 +22,19 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 )
 
 // HashFolder iterates all files under the given directory, computing the hash
 // of each.
-func HashFolder(folder string, exlude []string) (map[string][32]byte, error) {
+func HashFolder(folder string, excludes []string) (map[string][32]byte, error) {
 	res := make(map[string][32]byte)
 	err := filepath.WalkDir(folder, func(path string, d os.DirEntry, _ error) error {
-		// Skip anything that's exluded or not a regular file
-		for _, skip := range exlude {
-			if strings.HasPrefix(path, filepath.FromSlash(skip)) {
+		// Skip anything that's excluded or not a regular file
+		if slices.Contains(excludes, path) {
+			if d.IsDir() {
 				return filepath.SkipDir
 			}
+			return nil
 		}
 		if !d.Type().IsRegular() {
 			return nil
