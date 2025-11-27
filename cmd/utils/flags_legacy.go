@@ -38,6 +38,7 @@ var DeprecatedFlags = []cli.Flag{
 	LogDebugFlag,
 	MiningEnabledFlag,
 	XDCXDataDirFlag,
+	XDCXDBNameFlag,
 	LightServFlag,
 	LightPeersFlag,
 	Enable0xPrefixFlag,
@@ -84,21 +85,29 @@ var (
 	LightServFlag = &cli.IntFlag{
 		Name:     "light-serv",
 		Aliases:  []string{"lightserv"},
-		Usage:    "Maximum percentage of time allowed for serving LES requests (0-90)",
+		Usage:    "Maximum percentage of time allowed for serving LES requests (0-90) (deprecated)",
 		Value:    ethconfig.Defaults.LightServ,
 		Category: flags.DeprecatedCategory,
 	}
 	LightPeersFlag = &cli.IntFlag{
 		Name:     "light-peers",
 		Aliases:  []string{"lightpeers"},
-		Usage:    "Maximum number of LES client peers",
+		Usage:    "Maximum number of LES client peers (deprecated)",
 		Value:    ethconfig.Defaults.LightPeers,
 		Category: flags.DeprecatedCategory,
 	}
-	// Deprecated Oct 2024
+	// Deprecated July 2025
 	EnablePersonal = &cli.BoolFlag{
 		Name:     "rpc.enabledeprecatedpersonal",
-		Usage:    "This used to enable the 'personal' namespace.",
+		Usage:    "This used to enable the 'personal' namespace (deprecated)",
+		Category: flags.DeprecatedCategory,
+	}
+	// Deprecated November 2025
+	XDCXDBNameFlag = &cli.StringFlag{
+		Name:     "XDCx-dbName",
+		Aliases:  []string{"XDCx.dbName"},
+		Usage:    "Database name for XDCX (deprecated)",
+		Value:    "XDCdex",
 		Category: flags.DeprecatedCategory,
 	}
 	// Deprecated November 2025

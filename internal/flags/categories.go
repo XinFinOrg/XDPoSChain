@@ -35,7 +35,6 @@ const (
 	MiscCategory       = "MISC"
 	DeprecatedCategory = "ALIASED (deprecated)"
 	XdcCategory        = "XDC"
-	XdcxCategory       = "XDCx"
 )
 
 func init() {

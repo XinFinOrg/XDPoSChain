@@ -837,15 +837,6 @@ var (
 		Value:    false,
 		Category: flags.XdcCategory,
 	}
-
-	// XDCX settings
-	XDCXDBNameFlag = &cli.StringFlag{
-		Name:     "XDCx-dbName",
-		Aliases:  []string{"XDCx.dbName"},
-		Usage:    "Database name for XDCX",
-		Value:    "XDCdex",
-		Category: flags.XdcxCategory,
-	}
 )
 
 var (
@@ -1444,14 +1435,13 @@ func SetXDCXConfig(ctx *cli.Context, cfg *XDCx.Config, XDCDataDir string) {
 	if ctx.IsSet(XDCXDataDirFlag.Name) {
 		log.Warn("The flag XDCx-datadir or XDCx.datadir is deprecated, please remove this flag")
 	}
+	if ctx.IsSet(XDCXDBNameFlag.Name) {
+		log.Warn("The flag XDCx-dbName or XDCx.dbName is deprecated, please remove this flag")
+	}
 	// XDCx datadir: XDCDataDir/XDCx
 	cfg.DataDir = filepath.Join(XDCDataDir, "XDCx")
-	log.Info("XDCX datadir", "path", cfg.DataDir)
-	if ctx.IsSet(XDCXDBNameFlag.Name) {
-		cfg.DBName = ctx.String(XDCXDBNameFlag.Name)
-	} else {
-		cfg.DBName = XDCXDBNameFlag.Value
-	}
+	cfg.DBName = "XDCdex"
+	log.Info("Set XDCX config", "DataDir", cfg.DataDir, "DBName", cfg.DBName)
 }
 
 // SetEthConfig applies eth-related command line flags to the config.
