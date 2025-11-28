@@ -57,7 +57,7 @@ type TransactionArgs struct {
 	ChainID    *hexutil.Big      `json:"chainId,omitempty"`
 
 	// For SetCodeTxType
-	AuthorizationList []types.Authorization `json:"authorizationList"`
+	AuthorizationList []types.SetCodeAuthorization `json:"authorizationList"`
 }
 
 // from retrieves the transaction sender address.
@@ -373,7 +373,7 @@ func (args *TransactionArgs) ToTransaction(defaultType int) *types.Transaction {
 		if args.AccessList != nil {
 			al = *args.AccessList
 		}
-		authList := []types.Authorization{}
+		authList := []types.SetCodeAuthorization{}
 		if args.AuthorizationList != nil {
 			authList = args.AuthorizationList
 		}

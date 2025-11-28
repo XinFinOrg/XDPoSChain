@@ -393,7 +393,7 @@ func (tx *Transaction) EffectiveGasTipIntCmp(other *big.Int, baseFee *big.Int) i
 }
 
 // AuthList returns the authorizations list of the transaction.
-func (tx *Transaction) AuthList() []Authorization {
+func (tx *Transaction) AuthList() []SetCodeAuthorization {
 	setcodetx, ok := tx.inner.(*SetCodeTx)
 	if !ok {
 		return nil

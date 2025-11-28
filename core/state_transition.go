@@ -59,7 +59,7 @@ func (result *ExecutionResult) Revert() []byte {
 }
 
 // IntrinsicGas computes the 'intrinsic gas' for a message with the given data.
-func IntrinsicGas(data []byte, accessList types.AccessList, authList []types.Authorization, isContractCreation, isHomestead bool, isEIP3860 bool) (uint64, error) {
+func IntrinsicGas(data []byte, accessList types.AccessList, authList []types.SetCodeAuthorization, isContractCreation, isHomestead bool, isEIP3860 bool) (uint64, error) {
 	// Set the starting gas for the raw transaction
 	var gas uint64
 	if isContractCreation && isHomestead {
@@ -130,7 +130,7 @@ type Message struct {
 	BalanceTokenFee *big.Int
 	Data            []byte
 	AccessList      types.AccessList
-	AuthList        []types.Authorization
+	AuthList        []types.SetCodeAuthorization
 
 	// When SkipNonceChecks is true, the message nonce is not checked against the
 	// account nonce in state.
@@ -483,7 +483,7 @@ func (st *StateTransition) TransitionDb(owner common.Address) (*ExecutionResult,
 }
 
 // validateAuthorization validates an EIP-7702 authorization against the state.
-func (st *StateTransition) validateAuthorization(auth *types.Authorization) (authority common.Address, err error) {
+func (st *StateTransition) validateAuthorization(auth *types.SetCodeAuthorization) (authority common.Address, err error) {
 	// Verify chain ID is 0 or equal to current chain ID.
 	if auth.ChainID != 0 && st.evm.ChainConfig().ChainID.Uint64() != auth.ChainID {
 		return authority, ErrAuthorizationWrongChainID
@@ -514,7 +514,7 @@ func (st *StateTransition) validateAuthorization(auth *types.Authorization) (aut
 }
 
 // applyAuthorization applies an EIP-7702 code delegation to the state.
-func (st *StateTransition) applyAuthorization(msg *Message, auth *types.Authorization) error {
+func (st *StateTransition) applyAuthorization(msg *Message, auth *types.SetCodeAuthorization) error {
 	authority, err := st.validateAuthorization(auth)
 	if err != nil {
 		return err
