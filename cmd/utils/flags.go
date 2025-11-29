@@ -831,12 +831,6 @@ var (
 	}
 
 	// XDC settings
-	Enable0xPrefixFlag = &cli.BoolFlag{
-		Name:     "enable-0x-prefix",
-		Usage:    "Address use 0x-prefix (Deprecated: this is on by default, to use xdc prefix use --enable-xdc-prefix)",
-		Value:    true,
-		Category: flags.XdcCategory,
-	}
 	EnableXDCPrefixFlag = &cli.BoolFlag{
 		Name:     "enable-xdc-prefix",
 		Usage:    "Address use xdc-prefix (default = false)",
@@ -1325,7 +1319,10 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 
 // SetNodeConfig applies node-related command line flags to the config.
 func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
-	flags.CheckExclusive(ctx, Enable0xPrefixFlag, EnableXDCPrefixFlag)
+	if ctx.IsSet(Enable0xPrefixFlag.Name) {
+		log.Warn("The flag enable-0x-prefix is deprecated, please remove this flag")
+		flags.CheckExclusive(ctx, Enable0xPrefixFlag, EnableXDCPrefixFlag)
+	}
 	SetP2PConfig(ctx, &cfg.P2P)
 	setIPC(ctx, cfg)
 	setHTTP(ctx, cfg)
