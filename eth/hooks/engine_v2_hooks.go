@@ -387,6 +387,11 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 	}
 }
 
+func AttachConsensusV2SubnetHooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConfig *params.ChainConfig) {
+
+}
+
+
 // get signing transaction sender count
 func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *types.Header, parentState *state.StateDB, currentConfig *params.V2Config) (map[Beneficiary]map[common.Address]*RewardLog, error) {
 	// header should be a new epoch switch block

@@ -38,7 +38,7 @@ type XDPoS_v2 struct {
 	isInitilised bool                // status of v2 variables
 	whosTurn     common.Address      // Record waiting for who to mine
 
-	snapshots       *lru.Cache[common.Hash, *SnapshotV2]            // Snapshots for gap block
+	snapshots       *lru.Cache[common.Hash, *SnapshotV2Subnet]      // Snapshots for gap block
 	signatures      *utils.SigLRU                                   // Signatures of recent blocks to speed up mining
 	epochSwitches   *lru.Cache[common.Hash, *types.EpochSwitchInfo] // infos of epoch: master nodes, epoch switch block info, parent of that info
 	verifiedHeaders *lru.Cache[common.Hash, struct{}]
@@ -104,7 +104,7 @@ func New(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh chan i
 		signatures: lru.NewCache[common.Hash, common.Address](utils.InMemorySnapshots),
 
 		verifiedHeaders: lru.NewCache[common.Hash, struct{}](utils.InMemorySnapshots),
-		snapshots:       lru.NewCache[common.Hash, *SnapshotV2](utils.InMemorySnapshots),
+		snapshots:       lru.NewCache[common.Hash, *SnapshotV2Subnet](utils.InMemorySnapshots),
 		epochSwitches:   lru.NewCache[common.Hash, *types.EpochSwitchInfo](int(utils.InMemoryEpochs)),
 		timeoutWorker:   timeoutTimer,
 		BroadcastCh:     make(chan interface{}),
@@ -255,7 +255,7 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 			return fmt.Errorf("masternodes are empty v2 switch number: %d", x.config.V2.SwitchBlock.Uint64())
 		}
 
-		snap := newSnapshot(lastGapNum, lastGapHeader.Hash(), masternodes)
+		snap := newSnapshot(lastGapNum, lastGapHeader.Hash(), masternodes, []common.Address{})
 		x.snapshots.Add(snap.Hash, snap)
 		err = storeSnapshot(snap, x.db)
 		if err != nil {
@@ -375,15 +375,34 @@ func (x *XDPoS_v2) Prepare(chain consensus.ChainReader, header *types.Header) er
 		return err
 	}
 	if isEpochSwitchBlock {
-		masterNodes, penalties, err := x.calcMasternodes(chain, header.Number, header.ParentHash, currentRound)
+		masterNodes, _, err := x.calcMasternodes(chain, header.Number, header.ParentHash, currentRound)
 		if err != nil {
 			return err
 		}
 		for _, v := range masterNodes {
 			header.Validators = append(header.Validators, v[:]...)
 		}
-		for _, v := range penalties {
-			header.Penalties = append(header.Penalties, v[:]...)
+		// for _, v := range penalties {
+		// 	header.Penalties = append(header.Penalties, v[:]...)
+		// }
+	}
+
+	isGapPlusOneBlock := x.IsGapPlusOneBlock(header)
+	if isGapPlusOneBlock {
+		// prepare next epoch masternodes
+		snapshot, err := x.getSnapshotByHash(header.ParentHash)
+		if err != nil {
+			log.Error("[Prepare] fail to get snapshot for parent at gap number", "blockNum", header.Number, "parentHash", header.ParentHash, "error", err.Error())
+			return err
+		}
+		// header.NextValidators = snapshot.NextEpochMasterNodes
+		// header.Penalties = snapshot.NextEpochPenalties
+
+		for _, v := range snapshot.NextEpochCandidates {
+			header.SubnetNextValidators = append(header.SubnetNextValidators, v[:]...)
+		}
+		for _, v := range snapshot.NextEpochPenalties {
+			header.SubnetPenalties = append(header.SubnetPenalties, v[:]...)
 		}
 	}
 
@@ -566,7 +585,7 @@ func (x *XDPoS_v2) IsAuthorisedAddress(chain consensus.ChainReader, header *type
 	return false
 }
 
-func (x *XDPoS_v2) GetSnapshot(chain consensus.ChainReader, header *types.Header) (*SnapshotV2, error) {
+func (x *XDPoS_v2) GetSnapshot(chain consensus.ChainReader, header *types.Header) (*SnapshotV2Subnet, error) {
 	number := header.Number.Uint64()
 	log.Trace("get snapshot", "number", number)
 	snap, err := x.getSnapshot(chain, number, false)
@@ -588,8 +607,20 @@ func (x *XDPoS_v2) UpdateMasternodes(chain consensus.ChainReader, header *types.
 		masterNodes = append(masterNodes, m.Address)
 	}
 
+	// subnet only!
+	// TODO: switch hook to subnet hook
+	penalties := []common.Address{}
+	if x.HookPenalty != nil {
+		var err error
+		penalties, err = x.HookPenalty(chain, header.Number, header.ParentHash, masterNodes)
+		if err != nil {
+			log.Error("[UpdateMasternodes] Adaptor v2 HookPenalty has error", "err", err)
+			return err
+		}
+	}
+
 	x.lock.RLock()
-	snap := newSnapshot(number, header.Hash(), masterNodes)
+	snap := newSnapshot(number, header.Hash(), masterNodes, penalties)
 	log.Info("[UpdateMasternodes] take snapshot", "number", number, "hash", header.Hash())
 	x.lock.RUnlock()
 

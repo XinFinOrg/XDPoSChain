@@ -174,6 +174,53 @@ func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Heade
 		masterNodes = x.GetMasternodes(chain, header)
 	}
 
+	// Verify v2 block that is gap plus one
+	if x.IsGapPlusOneBlock(header) {
+		// validatorsAddress := header.SubnetNextValidators
+
+		// this header number == gap + 1, so should use parent hash to get snapshot
+		snapshot, err := x.getSnapshotByHash(header.ParentHash)
+		if err != nil {
+			log.Error("[verifyHeader] fail to get snapshot for parent at gap number", "blockNum", header.Number, "parentHash", header.ParentHash, "error", err.Error())
+			return err
+		}
+		// if !utils.CompareSignersLists(snapshot.NextEpochMasterNodes, validatorsAddress) {
+		// 	return utils.ErrNextEpochValidatorsNotLegit
+		// }
+		// if !utils.CompareSignersLists(snapshot.NextEpochPenalties, header.Penalties) {
+		// 	return utils.ErrPenaltiesNotLegit
+		// }
+	
+		validatorsAddress := make([]common.Address, len(header.SubnetNextValidators)/common.AddressLength)
+		for i := 0; i < len(header.SubnetNextValidators); i += common.AddressLength {
+			addr := common.BytesToAddress(header.SubnetNextValidators[i : i+common.AddressLength])
+			validatorsAddress = append(validatorsAddress, addr)
+		}
+		penaltiesAddress := make([]common.Address, len(header.SubnetPenalties)/common.AddressLength)
+		for i := 0; i < len(header.SubnetPenalties); i += common.AddressLength {
+			addr := common.BytesToAddress(header.SubnetPenalties[i : i+common.AddressLength])
+			penaltiesAddress = append(penaltiesAddress, addr)
+		}
+		
+		if !utils.CompareSignersLists(snapshot.NextEpochCandidates, validatorsAddress) {
+			return utils.ErrNextEpochValidatorsNotLegit
+		}
+		if !utils.CompareSignersLists(snapshot.NextEpochPenalties, penaltiesAddress) {
+			return utils.ErrPenaltiesNotLegit
+		}
+
+	} else {
+		if len(header.SubnetNextValidators) != 0 {
+			log.Warn("[verifyHeader] Validators.NextEpoch shall not have values in non-gapPlusOne block", "Hash", header.Hash(), "Number", header.Number, "header.Validators", header.SubnetNextValidators)
+			return utils.ErrInvalidFieldInNonGapPlusOneSwitch
+		}
+		if len(header.SubnetPenalties) != 0 {
+			log.Warn("[verifyHeader] Penalties shall not have values in non-gapPlusOne block", "Hash", header.Hash(), "Number", header.Number, "header.Penalties", header.SubnetPenalties)
+			return utils.ErrInvalidFieldInNonGapPlusOneSwitch
+		}
+	}
+
+
 	verified, validatorAddress, err := x.verifyMsgSignature(sigHash(header), header.Validator, masterNodes)
 	if err != nil {
 		for index, mn := range masterNodes {

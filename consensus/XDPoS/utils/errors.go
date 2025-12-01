@@ -51,6 +51,7 @@ var (
 
 	ErrValidatorsNotLegit = errors.New("validators does not match what's stored in snapshot minus its penalty")
 	ErrPenaltiesNotLegit  = errors.New("penalties does not match")
+	ErrNextEpochValidatorsNotLegit = errors.New("next epoch validators does not match what's stored in snapshot")
 
 	// errInvalidMixDigest is returned if a block's mix digest is non-zero.
 	ErrInvalidMixDigest = errors.New("non-zero mix digest")
@@ -94,6 +95,8 @@ var (
 	ErrValidatorNotWithinMasternodes = errors.New("validator address is not in the master node list")
 	ErrCoinbaseAndValidatorMismatch  = errors.New("validator and coinbase address in header does not match")
 	ErrNotItsTurn                    = errors.New("not validator's turn to mine this block")
+
+	ErrInvalidFieldInNonGapPlusOneSwitch = errors.New("invalid field exist in a non-gapPlusOne swtich block")
 
 	ErrRoundInvalid = errors.New("invalid Round, it shall be bigger than QC round")
 

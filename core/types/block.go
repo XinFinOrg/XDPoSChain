@@ -83,6 +83,9 @@ type Header struct {
 	Validator   []byte         `json:"validator"        gencodec:"required"`
 	Penalties   []byte         `json:"penalties"        gencodec:"required"`
 
+	SubnetNextValidators []byte `json:"SubnetNextValidators"`
+	SubnetPenalties      []byte `json:"SubnetPenalties"`
+
 	// BaseFee was added by EIP-1559 and is ignored in legacy headers.
 	BaseFee *big.Int `json:"baseFeePerGas" rlp:"optional"`
 }
@@ -314,6 +317,16 @@ func CopyHeader(h *Header) *Header {
 		cpy.Penalties = make([]byte, len(h.Penalties))
 		copy(cpy.Penalties, h.Penalties)
 	}
+
+	if len(h.SubnetNextValidators) > 0 {
+		cpy.SubnetNextValidators = make([]byte, len(h.SubnetNextValidators))
+		copy(cpy.SubnetNextValidators, h.SubnetNextValidators)
+	}
+	if len(h.SubnetPenalties) > 0 {
+		cpy.SubnetPenalties = make([]byte, len(h.SubnetPenalties))
+		copy(cpy.SubnetPenalties, h.SubnetPenalties)
+	}	
+	
 	return &cpy
 }
 
