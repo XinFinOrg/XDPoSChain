@@ -457,7 +457,7 @@ func (x *XDPoS_v1) yourTurn(chain consensus.ChainReader, parent *types.Header, s
 		log.Debug("Masternodes cycle info", "number of masternodes", len(masternodes), "previous", pre, "position", preIndex, "current", signer, "position", curIndex)
 	}
 	for i, s := range masternodes {
-		log.Debug("Masternode:", "index", i, "address", s.String())
+		log.Debug("Masternode:", "index", i, "address", s)
 	}
 	if (preIndex+1)%len(masternodes) == curIndex {
 		return len(masternodes), preIndex, curIndex, true, nil
@@ -616,7 +616,7 @@ func (x *XDPoS_v1) verifySeal(chain consensus.ChainReader, header *types.Header,
 			}
 		}
 		if !valid {
-			log.Debug("Unauthorized creator found", "block number", number, "creator", creator.String(), "masternodes", mstring, "snapshot from parent block", nstring)
+			log.Debug("Unauthorized creator found", "block number", number, "creator", creator, "masternodes", mstring, "snapshot from parent block", nstring)
 			return utils.ErrUnauthorized
 		}
 	}

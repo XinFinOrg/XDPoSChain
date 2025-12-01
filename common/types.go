@@ -245,6 +245,10 @@ func IsHexAddress(s string) bool {
 	return len(s) == 2*AddressLength && isHex(s)
 }
 
+func (a Address) TerminalString() string {
+	return string(a.checksumHex())
+}
+
 // IsZero returns if a address is empty
 func (a Address) IsZero() bool { return a == Address{} }
 

@@ -636,7 +636,7 @@ func (XDCx *XDCX) ProcessCancelOrder(header *types.Header, tradingStateDB *tradi
 	}
 	baseTokenDecimal, err := XDCx.GetTokenDecimal(chain, statedb, order.BaseToken)
 	if err != nil || baseTokenDecimal.Sign() == 0 {
-		log.Debug("Fail to get tokenDecimal ", "Token", order.BaseToken.String(), "err", err)
+		log.Debug("Fail to get tokenDecimal ", "Token", order.BaseToken, "err", err)
 		return err, false
 	}
 	// order: basic order information (includes orderId, orderHash, baseToken, quoteToken) which user send to XDCx to cancel order

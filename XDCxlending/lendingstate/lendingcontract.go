@@ -57,7 +57,7 @@ func IsValidRelayer(statedb *state.StateDB, coinbase common.Address) bool {
 		balance := statedb.GetState(common.RelayerRegistrationSMC, locHashDeposit).Big()
 		expectedFund := new(big.Int).Mul(common.BasePrice, common.RelayerLockedFund)
 		if balance.Cmp(expectedFund) <= 0 {
-			log.Debug("Relayer is not in relayer list", "relayer", coinbase.String(), "balance", balance, "expected", expectedFund)
+			log.Debug("Relayer is not in relayer list", "relayer", coinbase, "balance", balance, "expected", expectedFund)
 			return false
 		}
 		return true

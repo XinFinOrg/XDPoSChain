@@ -41,7 +41,7 @@ func (x *XDPoS_v2) yourturn(chain consensus.ChainReader, round types.Round, pare
 	}
 
 	for i, s := range masterNodes {
-		log.Debug("[yourturn] Masternode:", "index", i, "address", s.String(), "parentBlockNum", parent.Number)
+		log.Debug("[yourturn] Masternode:", "index", i, "address", s, "parentBlockNum", parent.Number)
 	}
 
 	curIndex := utils.Position(masterNodes, signer)

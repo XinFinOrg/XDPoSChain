@@ -897,7 +897,7 @@ func (api *BlockChainAPI) GetCandidateStatus(ctx context.Context, coinbaseAddres
 			result[fieldStatus] = statusMasternode
 			if !isCandidate {
 				result[fieldCapacity] = -1
-				log.Warn("Find non-candidate masternode", "masternode", masternode.String(), "checkpointNumber", checkpointNumber, "epoch", epoch, "epochNumber", epochNumber)
+				log.Warn("Find non-candidate masternode", "masternode", masternode, "checkpointNumber", checkpointNumber, "epoch", epoch, "epochNumber", epochNumber)
 			}
 			return result, nil
 		}

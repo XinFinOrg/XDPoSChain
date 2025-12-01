@@ -700,7 +700,7 @@ func (l *Lending) ProcessCancelOrder(header *types.Header, lendingStateDB *lendi
 	}
 	lendTokenDecimal, err := l.XDCx.GetTokenDecimal(chain, statedb, originOrder.LendingToken)
 	if err != nil || lendTokenDecimal == nil || lendTokenDecimal.Sign() <= 0 {
-		log.Debug("Fail to get tokenDecimal ", "Token", originOrder.LendingToken.String(), "err", err)
+		log.Debug("Fail to get tokenDecimal ", "Token", originOrder.LendingToken, "err", err)
 		return err, false
 	}
 	var tokenBalance *big.Int
@@ -723,7 +723,7 @@ func (l *Lending) ProcessCancelOrder(header *types.Header, lendingStateDB *lendi
 		}
 		collateralTokenDecimal, err = l.XDCx.GetTokenDecimal(chain, statedb, originOrder.CollateralToken)
 		if err != nil || collateralTokenDecimal == nil || collateralTokenDecimal.Sign() <= 0 {
-			log.Debug("Fail to get tokenDecimal ", "Token", originOrder.LendingToken.String(), "err", err)
+			log.Debug("Fail to get tokenDecimal ", "Token", originOrder.LendingToken, "err", err)
 			return err, false
 		}
 	}
