@@ -273,7 +273,11 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 	}()
 
 	// Kick-off the countdown timer
-	x.timeoutWorker.Reset(chain, 0, 0)
+	// Only kick-off if it is V2 switch block
+	// Otherwise it is a lagging node, already kick-off in `processQC`
+	if header.Number.Int64() == x.config.V2.SwitchBlock.Int64() {
+		x.timeoutWorker.Reset(chain, 0, 0)
+	}
 	x.isInitilised = true
 
 	log.Warn("[initial] finish initialisation")
