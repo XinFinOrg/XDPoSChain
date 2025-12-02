@@ -314,9 +314,6 @@ var (
 
 	// AllEthashProtocolChanges contains every protocol change (EIPs) introduced
 	// and accepted by the Ethereum core developers into the Ethash consensus.
-	//
-	// This configuration is intentionally not using keyed fields to force anyone
-	// adding flags to the config to also have to set these fields.
 	AllEthashProtocolChanges = &ChainConfig{
 		ChainID:             big.NewInt(1337),
 		HomesteadBlock:      big.NewInt(0),
@@ -326,7 +323,15 @@ var (
 		EIP155Block:         big.NewInt(0),
 		EIP158Block:         big.NewInt(0),
 		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: nil,
+		ConstantinopleBlock: big.NewInt(0),
+		PetersburgBlock:     big.NewInt(0),
+		IstanbulBlock:       big.NewInt(0),
+		BerlinBlock:         big.NewInt(0),
+		LondonBlock:         big.NewInt(0),
+		ShanghaiBlock:       big.NewInt(0),
+		Eip1559Block:        nil,
+		CancunBlock:         nil,
+		PragueBlock:         nil,
 		Ethash:              new(EthashConfig),
 		Clique:              nil,
 		XDPoS:               nil,
@@ -352,6 +357,8 @@ var (
 		XDPoS:               &XDPoSConfig{Period: 0, Epoch: 900},
 	}
 
+	// AllCliqueProtocolChanges contains every protocol change (EIPs) introduced
+	// and accepted by the Ethereum core developers into the Clique consensus.
 	AllCliqueProtocolChanges = &ChainConfig{
 		ChainID:             big.NewInt(1337),
 		HomesteadBlock:      big.NewInt(0),
@@ -361,7 +368,15 @@ var (
 		EIP155Block:         big.NewInt(0),
 		EIP158Block:         big.NewInt(0),
 		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: nil,
+		ConstantinopleBlock: big.NewInt(0),
+		PetersburgBlock:     big.NewInt(0),
+		IstanbulBlock:       big.NewInt(0),
+		BerlinBlock:         big.NewInt(0),
+		LondonBlock:         big.NewInt(0),
+		ShanghaiBlock:       big.NewInt(0),
+		Eip1559Block:        nil,
+		CancunBlock:         nil,
+		PragueBlock:         nil,
 		Ethash:              nil,
 		Clique:              &CliqueConfig{Period: 0, Epoch: 900},
 		XDPoS:               nil,
@@ -395,6 +410,8 @@ var (
 		},
 	}
 
+	// TestChainConfig contains every protocol change (EIPs) introduced
+	// and accepted by the Ethereum core developers for testing purposes.
 	TestChainConfig = &ChainConfig{
 		ChainID:             big.NewInt(1),
 		HomesteadBlock:      big.NewInt(0),
@@ -404,7 +421,15 @@ var (
 		EIP155Block:         big.NewInt(0),
 		EIP158Block:         big.NewInt(0),
 		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: nil,
+		ConstantinopleBlock: big.NewInt(0),
+		PetersburgBlock:     big.NewInt(0),
+		IstanbulBlock:       big.NewInt(0),
+		BerlinBlock:         big.NewInt(0),
+		LondonBlock:         big.NewInt(0),
+		ShanghaiBlock:       big.NewInt(0),
+		Eip1559Block:        nil,
+		CancunBlock:         nil,
+		PragueBlock:         nil,
 		Ethash:              new(EthashConfig),
 		Clique:              nil,
 		XDPoS:               nil,
@@ -441,6 +466,7 @@ type ChainConfig struct {
 	ShanghaiBlock   *big.Int `json:"shanghaiBlock,omitempty"`
 	Eip1559Block    *big.Int `json:"eip1559Block,omitempty"`
 	CancunBlock     *big.Int `json:"cancunBlock,omitempty"`
+	PragueBlock     *big.Int `json:"pragueBlock,omitempty"`
 
 	// Various consensus engines
 	Ethash *EthashConfig `json:"ethash,omitempty"`
@@ -761,6 +787,9 @@ func (c *ChainConfig) String() string {
 	if c.CancunBlock != nil {
 		result += fmt.Sprintf(", CancunBlock: %v", c.CancunBlock)
 	}
+	if c.PragueBlock != nil {
+		result += fmt.Sprintf(", PragueBlock: %v", c.PragueBlock)
+	}
 	if c.XDPoS != nil {
 		result += fmt.Sprintf(", %s", c.XDPoS.String())
 	}
@@ -803,6 +832,10 @@ func (c *ChainConfig) Description() string {
 	if c.CancunBlock != nil {
 		cancunBlock = c.CancunBlock
 	}
+	pragueBlock := common.PragueBlock
+	if c.PragueBlock != nil {
+		pragueBlock = c.PragueBlock
+	}
 
 	var banner = "Chain configuration:\n"
 	banner += fmt.Sprintf("  - ChainID:                     %-8v\n", c.ChainID)
@@ -821,6 +854,7 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - Shanghai:                    %-8v\n", shanghaiBlock)
 	banner += fmt.Sprintf("  - Eip1559:                     %-8v\n", eip1559Block)
 	banner += fmt.Sprintf("  - Cancun:                      %-8v\n", cancunBlock)
+	banner += fmt.Sprintf("  - Prague:                      %-8v\n", pragueBlock)
 	banner += fmt.Sprintf("  - TIPUpgradeReward:            %-8v\n", common.TIPUpgradeReward)
 	banner += fmt.Sprintf("  - TIPEpochHalving:             %-8v\n", common.TIPEpochHalving)
 	banner += fmt.Sprintf("  - Engine:                      %v", engine)
@@ -890,12 +924,19 @@ func (c *ChainConfig) IsShanghai(num *big.Int) bool {
 	return isForked(common.ShanghaiBlock, num) || isForked(c.ShanghaiBlock, num)
 }
 
+// IsEIP1559 returns whether num is either equal to the EIP1559 fork block or greater.
 func (c *ChainConfig) IsEIP1559(num *big.Int) bool {
 	return isForked(common.Eip1559Block, num) || isForked(c.Eip1559Block, num)
 }
 
+// IsCancun returns whether num is either equal to the Cancun fork block or greater.
 func (c *ChainConfig) IsCancun(num *big.Int) bool {
 	return isForked(common.CancunBlock, num) || isForked(c.CancunBlock, num)
+}
+
+// IsPrague returns whether num is either equal to the Prague fork block or greater.
+func (c *ChainConfig) IsPrague(num *big.Int) bool {
+	return isForked(common.PragueBlock, num) || isForked(c.PragueBlock, num)
 }
 
 func (c *ChainConfig) IsTIP2019(num *big.Int) bool {
@@ -1043,6 +1084,9 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, head *big.Int) *Confi
 	if isForkIncompatible(c.CancunBlock, newcfg.CancunBlock, head) {
 		return newCompatError("Cancun fork block", c.CancunBlock, newcfg.CancunBlock)
 	}
+	if isForkIncompatible(c.PragueBlock, newcfg.PragueBlock, head) {
+		return newCompatError("Prague fork block", c.PragueBlock, newcfg.PragueBlock)
+	}
 	if !XDPoSConfigEqual(c.XDPoS, newcfg.XDPoS) {
 		storedblock := big.NewInt(1)
 		if c.XDPoS != nil && c.XDPoS.V2 != nil && c.XDPoS.V2.SwitchBlock != nil {
@@ -1118,14 +1162,23 @@ func (err *ConfigCompatError) Error() string {
 // Rules is a one time interface meaning that it shouldn't be used in between transition
 // phases.
 type Rules struct {
-	ChainId                                                 *big.Int
-	IsHomestead, IsEIP150, IsEIP155, IsEIP158               bool
-	IsByzantium, IsConstantinople, IsPetersburg, IsIstanbul bool
-	IsBerlin, IsLondon                                      bool
-	IsMerge, IsShanghai                                     bool
-	IsXDCxDisable                                           bool
-	IsEIP1559                                               bool
-	IsCancun                                                bool
+	ChainId          *big.Int
+	IsHomestead      bool
+	IsEIP150         bool
+	IsEIP155         bool
+	IsEIP158         bool
+	IsByzantium      bool
+	IsConstantinople bool
+	IsPetersburg     bool
+	IsIstanbul       bool
+	IsBerlin         bool
+	IsLondon         bool
+	IsMerge          bool
+	IsShanghai       bool
+	IsXDCxDisable    bool
+	IsEIP1559        bool
+	IsCancun         bool
+	IsPrague         bool
 }
 
 func (c *ChainConfig) Rules(num *big.Int) Rules {
@@ -1150,5 +1203,6 @@ func (c *ChainConfig) Rules(num *big.Int) Rules {
 		IsXDCxDisable:    c.IsXDCxDisable(num),
 		IsEIP1559:        c.IsEIP1559(num),
 		IsCancun:         c.IsCancun(num),
+		IsPrague:         c.IsPrague(num),
 	}
 }

@@ -1,6 +1,7 @@
 package common
 
 import (
+	"math"
 	"math/big"
 )
 
@@ -28,6 +29,7 @@ var DevnetConstant = constant{
 	tipXDCXReceiverDisable: big.NewInt(0),
 	eip1559Block:           big.NewInt(32400),
 	cancunBlock:            big.NewInt(43200),
+	pragueBlock:            big.NewInt(math.MaxInt64),
 	tipUpgradeReward:       big.NewInt(9999999999),
 	tipUpgradePenalty:      big.NewInt(9999999999),
 	tipEpochHalving:        big.NewInt(9999999999),

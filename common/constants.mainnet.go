@@ -1,6 +1,7 @@
 package common
 
 import (
+	"math"
 	"math/big"
 )
 
@@ -28,6 +29,7 @@ var MainnetConstant = constant{
 	tipXDCXReceiverDisable: big.NewInt(80370900), // Target 2nd Oct 2024, safer to release after disable miner
 	eip1559Block:           big.NewInt(9999999999),
 	cancunBlock:            big.NewInt(9999999999),
+	pragueBlock:            big.NewInt(math.MaxInt64),
 	tipUpgradeReward:       big.NewInt(9999999999),
 	tipUpgradePenalty:      big.NewInt(9999999999),
 	tipEpochHalving:        big.NewInt(9999999999),
