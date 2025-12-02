@@ -136,7 +136,7 @@ func SubRelayerFee(relayer common.Address, fee *big.Int, statedb *state.StateDB)
 	balance := statedb.GetState(common.RelayerRegistrationSMC, locHashDeposit).Big()
 	log.Debug("ApplyXDCXMatchedTransaction settle balance: SubRelayerFee BEFORE", "relayer", relayer, "balance", balance)
 	if balance.Cmp(fee) < 0 {
-		return errors.Errorf("relayer %s isn't enough XDC fee", relayer.String())
+		return errors.Errorf("relayer %s isn't enough XDC fee", relayer)
 	} else {
 		balance = new(big.Int).Sub(balance, fee)
 		statedb.SetState(common.RelayerRegistrationSMC, locHashDeposit, common.BigToHash(balance))
@@ -181,7 +181,7 @@ func AddTokenBalance(addr common.Address, value *big.Int, token common.Address, 
 		log.Debug("ApplyXDCXMatchedTransaction settle balance: ADD TOKEN BALANCE AFTER", "token", token, "address", addr, "balance", balance, "orderValue", value)
 		return nil
 	} else {
-		return errors.Errorf("token %s isn't exist", token.String())
+		return errors.Errorf("token %s isn't exist", token)
 	}
 }
 
@@ -213,7 +213,7 @@ func SubTokenBalance(addr common.Address, value *big.Int, token common.Address, 
 		log.Debug("ApplyXDCXMatchedTransaction settle balance: SUB TOKEN BALANCE AFTER", "token", token, "address", addr, "balance", balance, "orderValue", value)
 		return nil
 	} else {
-		return errors.Errorf("token %s isn't exist", token.String())
+		return errors.Errorf("token %s isn't exist", token)
 	}
 }
 
@@ -227,7 +227,7 @@ func CheckSubTokenBalance(addr common.Address, value *big.Int, token common.Addr
 			balance = statedb.GetBalance(addr)
 		}
 		if balance.Cmp(value) < 0 {
-			return nil, errors.Errorf("value %s in token %s not enough , have : %s , want : %s  ", addr.String(), token.String(), balance, value)
+			return nil, errors.Errorf("value %s in token %s not enough , have : %s , want : %s  ", addr, token, balance, value)
 		}
 		newBalance := new(big.Int).Sub(balance, value)
 		log.Debug("CheckSubTokenBalance settle balance: SUB XDC NATIVE BALANCE ", "token", token, "address", addr, "balance", balance, "value", value, "newBalance", newBalance)
@@ -250,7 +250,7 @@ func CheckSubTokenBalance(addr common.Address, value *big.Int, token common.Addr
 		log.Debug("CheckSubTokenBalance settle balance: SUB TOKEN BALANCE ", "token", token, "address", addr, "balance", balance, "value", value, "newBalance", newBalance)
 		return newBalance, nil
 	} else {
-		return nil, errors.Errorf("token %s isn't exist", token.String())
+		return nil, errors.Errorf("token %s isn't exist", token)
 	}
 }
 
@@ -285,7 +285,7 @@ func CheckAddTokenBalance(addr common.Address, value *big.Int, token common.Addr
 			return newBalance, nil
 		}
 	} else {
-		return nil, errors.Errorf("token %s isn't exist", token.String())
+		return nil, errors.Errorf("token %s isn't exist", token)
 	}
 }
 
@@ -335,7 +335,7 @@ func SetTokenBalance(addr common.Address, balance *big.Int, token common.Address
 		statedb.SetState(token, locHash, common.BigToHash(balance))
 		return nil
 	} else {
-		return errors.Errorf("token %s isn't exist", token.String())
+		return errors.Errorf("token %s isn't exist", token)
 	}
 }
 

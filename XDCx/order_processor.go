@@ -244,7 +244,7 @@ func (XDCx *XDCX) processOrderList(coinbase common.Address, chain consensus.Chai
 				inversePrice := tradingStateDB.GetLastPrice(tradingstate.GetTradingOrderBookHash(common.XDCNativeAddressBinary, oldestOrder.QuoteToken))
 				quoteTokenDecimal, err := XDCx.GetTokenDecimal(chain, statedb, oldestOrder.QuoteToken)
 				if err != nil || quoteTokenDecimal.Sign() == 0 {
-					return nil, nil, nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", oldestOrder.QuoteToken.String(), err)
+					return nil, nil, nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", oldestOrder.QuoteToken, err)
 				}
 				log.Debug("TryGet inversePrice XDC/QuoteToken", "inversePrice", inversePrice)
 				if inversePrice != nil && inversePrice.Sign() > 0 {
@@ -369,11 +369,11 @@ func (XDCx *XDCX) processOrderList(coinbase common.Address, chain consensus.Chai
 func (XDCx *XDCX) getTradeQuantity(quotePrice *big.Int, coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, takerOrder *tradingstate.OrderItem, makerOrder *tradingstate.OrderItem, quantityToTrade *big.Int) (*big.Int, bool, *tradingstate.SettleBalance, error) {
 	baseTokenDecimal, err := XDCx.GetTokenDecimal(chain, statedb, makerOrder.BaseToken)
 	if err != nil || baseTokenDecimal.Sign() == 0 {
-		return tradingstate.Zero, false, nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", makerOrder.BaseToken.String(), err)
+		return tradingstate.Zero, false, nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", makerOrder.BaseToken, err)
 	}
 	quoteTokenDecimal, err := XDCx.GetTokenDecimal(chain, statedb, makerOrder.QuoteToken)
 	if err != nil || quoteTokenDecimal.Sign() == 0 {
-		return tradingstate.Zero, false, nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", makerOrder.QuoteToken.String(), err)
+		return tradingstate.Zero, false, nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", makerOrder.QuoteToken, err)
 	}
 	if makerOrder.QuoteToken == common.XDCNativeAddressBinary {
 		quotePrice = quoteTokenDecimal

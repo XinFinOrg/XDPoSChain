@@ -187,11 +187,11 @@ func (XDCx *XDCX) GetAveragePriceLastEpoch(chain consensus.ChainContext, statedb
 		if inversePrice != nil && inversePrice.Sign() > 0 {
 			quoteTokenDecimal, err := XDCx.GetTokenDecimal(chain, statedb, quoteToken)
 			if err != nil || quoteTokenDecimal.Sign() == 0 {
-				return nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", quoteToken.String(), err)
+				return nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", quoteToken, err)
 			}
 			baseTokenDecimal, err := XDCx.GetTokenDecimal(chain, statedb, baseToken)
 			if err != nil || baseTokenDecimal.Sign() == 0 {
-				return nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", baseToken.String(), err)
+				return nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", baseToken, err)
 			}
 			price = new(big.Int).Mul(baseTokenDecimal, quoteTokenDecimal)
 			price = new(big.Int).Div(price, inversePrice)
@@ -214,7 +214,7 @@ func (XDCx *XDCX) ConvertXDCToToken(chain consensus.ChainContext, statedb *state
 
 	tokenDecimal, err := XDCx.GetTokenDecimal(chain, statedb, token)
 	if err != nil || tokenDecimal.Sign() == 0 {
-		return common.Big0, common.Big0, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", token.String(), err)
+		return common.Big0, common.Big0, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", token, err)
 	}
 	tokenQuantity := new(big.Int).Mul(quantity, tokenDecimal)
 	tokenQuantity = new(big.Int).Div(tokenQuantity, tokenPriceInXDC)

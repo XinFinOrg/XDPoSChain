@@ -439,7 +439,7 @@ func (l *Lending) getLendQuantity(
 	}
 	LendingTokenDecimal, err := l.XDCx.GetTokenDecimal(chain, statedb, makerOrder.LendingToken)
 	if err != nil || LendingTokenDecimal.Sign() == 0 {
-		return lendingstate.Zero, lendingstate.Zero, false, nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", makerOrder.LendingToken.String(), err)
+		return lendingstate.Zero, lendingstate.Zero, false, nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", makerOrder.LendingToken, err)
 	}
 	collateralToken := makerOrder.CollateralToken
 	if takerOrder.Side == lendingstate.Borrowing {
@@ -447,7 +447,7 @@ func (l *Lending) getLendQuantity(
 	}
 	collateralTokenDecimal, err := l.XDCx.GetTokenDecimal(chain, statedb, collateralToken)
 	if err != nil || collateralTokenDecimal.Sign() == 0 {
-		return lendingstate.Zero, lendingstate.Zero, false, nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", collateralToken.String(), err)
+		return lendingstate.Zero, lendingstate.Zero, false, nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", collateralToken, err)
 	}
 	if takerOrder.Relayer == makerOrder.Relayer {
 		if err := lendingstate.CheckRelayerFee(takerOrder.Relayer, new(big.Int).Mul(common.RelayerLendingFee, big.NewInt(2)), statedb); err != nil {
@@ -973,7 +973,7 @@ func (l *Lending) GetMediumTradePriceBeforeEpoch(chain consensus.ChainContext, s
 		if inversePrice != nil && inversePrice.Sign() > 0 {
 			quoteTokenDecimal, err := l.XDCx.GetTokenDecimal(chain, statedb, quoteToken)
 			if err != nil || quoteTokenDecimal.Sign() == 0 {
-				return nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", quoteToken.String(), err)
+				return nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", quoteToken, err)
 			}
 			baseTokenDecimal, err := l.XDCx.GetTokenDecimal(chain, statedb, baseToken)
 			if err != nil || baseTokenDecimal.Sign() == 0 {

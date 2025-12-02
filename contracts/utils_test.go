@@ -106,7 +106,7 @@ func TestSendTxSign(t *testing.T) {
 		}
 
 		if signers[0] != oldBlocks[blockHash] {
-			t.Errorf("Tx sign for block signer not match %v - %v", signers[0].String(), oldBlocks[blockHash].String())
+			t.Errorf("Tx sign for block signer not match %v - %v", signers[0], oldBlocks[blockHash])
 		}
 
 		if len(signers) != len(keys) {

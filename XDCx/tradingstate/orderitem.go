@@ -370,7 +370,7 @@ func VerifyBalance(statedb *state.StateDB, XDCxStateDb *TradingStateDB, order *t
 	expectedBalance := balanceResult.Taker.OutTotal
 	actualBalance := GetTokenBalance(order.UserAddress(), balanceResult.Taker.OutToken, statedb)
 	if actualBalance.Cmp(expectedBalance) < 0 {
-		return fmt.Errorf("token: %s . ExpectedBalance: %s . ActualBalance: %s", balanceResult.Taker.OutToken.Hex(), expectedBalance.String(), actualBalance.String())
+		return fmt.Errorf("token: %s . ExpectedBalance: %s . ActualBalance: %s", balanceResult.Taker.OutToken.Hex(), expectedBalance, actualBalance)
 	}
 	return nil
 }
