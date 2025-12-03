@@ -63,7 +63,7 @@ func testCtx() *vmContext {
 
 func runTrace(tracer *tracers.Tracer, vmctx *vmContext, chaincfg *params.ChainConfig, contractCode []byte) (json.RawMessage, error) {
 	var (
-		env             = vm.NewEVM(vmctx.ctx, vmctx.txContext, &dummyStatedb{}, nil, chaincfg, vm.Config{Tracer: tracer.Hooks})
+		evm             = vm.NewEVM(vmctx.ctx, vmctx.txContext, &dummyStatedb{}, nil, chaincfg, vm.Config{Tracer: tracer.Hooks})
 		gasLimit uint64 = 31000
 		startGas uint64 = 10000
 		value           = big.NewInt(0)
@@ -74,9 +74,9 @@ func runTrace(tracer *tracers.Tracer, vmctx *vmContext, chaincfg *params.ChainCo
 		contract.Code = contractCode
 	}
 
-	tracer.OnTxStart(env.GetVMContext(), types.NewTx(&types.LegacyTx{Gas: gasLimit}), contract.Caller())
+	tracer.OnTxStart(evm.GetVMContext(), types.NewTx(&types.LegacyTx{Gas: gasLimit}), contract.Caller())
 	tracer.OnEnter(0, byte(vm.CALL), contract.Caller(), contract.Address(), []byte{}, startGas, value)
-	ret, err := env.Interpreter().Run(contract, []byte{}, false)
+	ret, err := evm.Run(contract, []byte{}, false)
 	tracer.OnExit(0, ret, startGas-contract.Gas, err, true)
 	// Rest gas assumes no refund
 	tracer.OnTxEnd(&types.Receipt{GasUsed: gasLimit - contract.Gas}, nil)

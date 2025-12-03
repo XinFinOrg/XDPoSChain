@@ -26,6 +26,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/holiman/uint256"
 )
@@ -92,6 +93,9 @@ type EVM struct {
 
 	tradingStateDB *tradingstate.TradingStateDB
 
+	// table holds the opcode specific handlers
+	table *JumpTable
+
 	// Depth is the current call stack
 	depth int
 
@@ -102,17 +106,23 @@ type EVM struct {
 	// virtual machine configuration options used to initialise the
 	// evm.
 	Config Config
-	// global (to this context) ethereum virtual machine
-	// used throughout the execution of the tx.
-	interpreter *EVMInterpreter
+
 	// abort is used to abort the EVM calling operations
 	abort atomic.Bool
+
 	// callGasTemp holds the gas available for the current call. This is needed because the
 	// available gas is calculated in gasCall* according to the 63/64 rule and later
 	// applied in opCall*.
 	callGasTemp uint64
+
 	// precompiles holds the precompiled contracts for the current epoch
 	precompiles map[common.Address]PrecompiledContract
+
+	hasher    crypto.KeccakState // Keccak256 hasher instance shared across opcodes
+	hasherBuf common.Hash        // Keccak256 hasher result array shared across opcodes
+
+	readOnly   bool   // Whether to throw on stateful modifications
+	returnData []byte // Last CALL's return data for subsequent reuse
 }
 
 // NewEVM returns a new EVM. The returned EVM is not thread safe and should
@@ -126,9 +136,56 @@ func NewEVM(blockCtx BlockContext, txCtx TxContext, statedb StateDB, tradingStat
 		Config:         config,
 		chainConfig:    chainConfig,
 		chainRules:     chainConfig.Rules(blockCtx.BlockNumber),
+		hasher:         crypto.NewKeccakState(),
 	}
 	evm.precompiles = activePrecompiledContracts(evm.chainRules)
-	evm.interpreter = NewEVMInterpreter(evm)
+
+	switch {
+	// TODO(daniel): define pragueInstructionSet
+	// case evm.chainRules.IsPrague:
+	// 	evm.table = &pragueInstructionSet
+	case evm.chainRules.IsCancun:
+		evm.table = &cancunInstructionSet
+	case evm.chainRules.IsEIP1559:
+		evm.table = &eip1559InstructionSet
+	case evm.chainRules.IsShanghai:
+		evm.table = &shanghaiInstructionSet
+	case evm.chainRules.IsMerge:
+		evm.table = &mergeInstructionSet
+	case evm.chainRules.IsLondon:
+		evm.table = &londonInstructionSet
+	case evm.chainRules.IsBerlin:
+		evm.table = &berlinInstructionSet
+	case evm.chainRules.IsIstanbul:
+		evm.table = &istanbulInstructionSet
+	case evm.chainRules.IsConstantinople:
+		evm.table = &constantinopleInstructionSet
+	case evm.chainRules.IsByzantium:
+		evm.table = &byzantiumInstructionSet
+	case evm.chainRules.IsEIP158:
+		evm.table = &spuriousDragonInstructionSet
+	case evm.chainRules.IsEIP150:
+		evm.table = &tangerineWhistleInstructionSet
+	case evm.chainRules.IsHomestead:
+		evm.table = &homesteadInstructionSet
+	default:
+		evm.table = &frontierInstructionSet
+	}
+	if len(evm.Config.ExtraEips) > 0 {
+		// Deep-copy jumptable to prevent modification of opcodes in other tables
+		evm.table = copyJumpTable(evm.table)
+	}
+	extraEips := make([]int, 0, len(evm.Config.ExtraEips))
+	for _, eip := range evm.Config.ExtraEips {
+		if err := EnableEIP(eip, evm.table); err != nil {
+			// Disable it, so caller can check if it's activated or not
+			log.Error("EIP activation failed", "eip", eip, "error", err)
+		} else {
+			extraEips = append(extraEips, eip)
+		}
+	}
+	evm.Config.ExtraEips = extraEips[0:len(extraEips):len(extraEips)]
+
 	return evm
 }
 
@@ -155,11 +212,6 @@ func (evm *EVM) Cancel() {
 // Cancelled returns true if Cancel has been called
 func (evm *EVM) Cancelled() bool {
 	return evm.abort.Load()
-}
-
-// Interpreter returns the current interpreter
-func (evm *EVM) Interpreter() *EVMInterpreter {
-	return evm.interpreter
 }
 
 // Call executes the contract associated with the addr with the given input as
@@ -208,7 +260,7 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 			// The depth-check is already done, and precompiles handled above
 			contract := NewContract(caller, AccountRef(addrCopy), value, gas)
 			contract.SetCallCode(&addrCopy, evm.StateDB.GetCodeHash(addrCopy), code)
-			ret, err = evm.interpreter.Run(contract, input, false)
+			ret, err = evm.Run(contract, input, false)
 			gas = contract.Gas
 		}
 	}
@@ -268,7 +320,7 @@ func (evm *EVM) CallCode(caller ContractRef, addr common.Address, input []byte, 
 		// The contract is a scoped environment for this execution context only.
 		contract := NewContract(caller, AccountRef(caller.Address()), value, gas)
 		contract.SetCallCode(&addrCopy, evm.StateDB.GetCodeHash(addrCopy), evm.StateDB.GetCode(addrCopy))
-		ret, err = evm.interpreter.Run(contract, input, false)
+		ret, err = evm.Run(contract, input, false)
 		gas = contract.Gas
 	}
 	if err != nil {
@@ -315,7 +367,7 @@ func (evm *EVM) DelegateCall(caller ContractRef, addr common.Address, input []by
 		// Initialise a new contract and make initialise the delegate values
 		contract := NewContract(caller, AccountRef(caller.Address()), nil, gas).AsDelegate()
 		contract.SetCallCode(&addrCopy, evm.StateDB.GetCodeHash(addrCopy), evm.StateDB.GetCode(addrCopy))
-		ret, err = evm.interpreter.Run(contract, input, false)
+		ret, err = evm.Run(contract, input, false)
 		gas = contract.Gas
 	}
 	if err != nil {
@@ -376,7 +428,7 @@ func (evm *EVM) StaticCall(caller ContractRef, addr common.Address, input []byte
 		// above we revert to the snapshot and consume any gas remaining. Additionally
 		// when we're in Homestead this also counts for code storage gas errors.
 		readOnly := evm.ChainConfig().IsTIPXDCXCancellationFee(evm.Context.BlockNumber)
-		ret, err = evm.interpreter.Run(contract, input, readOnly)
+		ret, err = evm.Run(contract, input, readOnly)
 		gas = contract.Gas
 	}
 	if err != nil {
@@ -458,7 +510,7 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 	contract := NewContract(caller, AccountRef(address), value, gas)
 	contract.SetCodeOptionalHash(&address, codeAndHash)
 
-	ret, err = evm.interpreter.Run(contract, nil, false)
+	ret, err = evm.Run(contract, nil, false)
 
 	// Check whether the max code size has been exceeded, assign err if the case.
 	if err == nil && evm.chainRules.IsEIP158 && len(ret) > params.MaxCodeSize {
