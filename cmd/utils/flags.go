@@ -1509,8 +1509,9 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	}
 	cfg.NoPruning = ctx.String(GCModeFlag.Name) == "archive"
 	cfg.Prefetch = ctx.Bool(CachePrefetchFlag.Name)
-	// Read the value from the flag no matter if it's set or not.
-	cfg.Preimages = ctx.Bool(CachePreimagesFlag.Name)
+	if ctx.IsSet(CachePreimagesFlag.Name) {
+		cfg.Preimages = ctx.Bool(CachePreimagesFlag.Name)
+	}
 	if cfg.NoPruning && !cfg.Preimages {
 		cfg.Preimages = true
 		log.Info("Enabling recording of key preimages since archive mode is used")
