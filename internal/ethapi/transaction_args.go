@@ -344,6 +344,7 @@ func (args *TransactionArgs) ToMessage(b AccountBackend, baseFee *big.Int, skipN
 		GasTipCap:        gasTipCap,
 		Data:             args.data(),
 		AccessList:       accessList,
+		AuthList:         args.AuthorizationList,
 		SkipNonceChecks:  skipNonceCheck,
 		SkipFromEOACheck: skipEoACheck,
 	}
