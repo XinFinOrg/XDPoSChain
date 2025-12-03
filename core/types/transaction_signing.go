@@ -240,7 +240,7 @@ func (s pragueSigner) Hash(tx *Transaction) common.Hash {
 			tx.Value(),
 			tx.Data(),
 			tx.AccessList(),
-			tx.AuthList(),
+			tx.SetCodeAuthorizations(),
 		})
 }
 

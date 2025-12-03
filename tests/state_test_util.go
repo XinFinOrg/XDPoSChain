@@ -333,7 +333,7 @@ func (tx *stTransaction) toMessage(ps stPostState, baseFee *big.Int) (*core.Mess
 		GasTipCap:        tx.MaxPriorityFeePerGas,
 		Data:             data,
 		AccessList:       accessList,
-		AuthList:         authList,
+		SetCodeAuthorizations:         authList,
 		SkipNonceChecks:  false,
 		SkipFromEOACheck: false,
 	}
