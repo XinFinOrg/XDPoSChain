@@ -626,6 +626,10 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 	if tx.Size() > txMaxSize {
 		return ErrOversizedData
 	}
+	// Check whether the init code size has been exceeded.
+	if pool.eip1559 && tx.To() == nil && len(tx.Data()) > params.MaxInitCodeSize {
+		return fmt.Errorf("%w: code size %v limit %v", core.ErrMaxInitCodeSizeExceeded, len(tx.Data()), params.MaxInitCodeSize)
+	}
 	// Get current block number
 	var number *big.Int = nil
 	if pool.chain.CurrentHeader() != nil {
