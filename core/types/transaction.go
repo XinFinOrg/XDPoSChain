@@ -704,6 +704,7 @@ func (s *TxByPriceAndTime) Pop() interface{} {
 	old := s.txs
 	n := len(old)
 	x := old[n-1]
+	old[n-1] = nil // avoid memory leak
 	s.txs = old[0 : n-1]
 	return x
 }
