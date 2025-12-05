@@ -78,6 +78,10 @@ func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, header *types
 			log.Error("[getEpochSwitchInfo] get extra field", "err", err, "number", h.Number.Uint64())
 			return nil, err
 		}
+		if len(masternodes) == 0 {
+			return nil, fmt.Errorf("masternodes list is empty at epoch switch block %v", h.Number.Uint64())
+		}
+
 		snap, err := x.getSnapshot(chain, h.Number.Uint64(), false)
 		if err != nil {
 			log.Error("[getEpochSwitchInfo] Adaptor v2 getSnapshot has error", "err", err)
@@ -110,11 +114,13 @@ func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, header *types
 		x.epochSwitches.Add(hash, epochSwitchInfo)
 		return epochSwitchInfo, nil
 	}
+
 	epochSwitchInfo, err = x.getEpochSwitchInfo(chain, nil, h.ParentHash)
 	if err != nil {
 		log.Error("[getEpochSwitchInfo] recursive error", "err", err, "hash", hash.Hex(), "number", h.Number.Uint64())
 		return nil, err
 	}
+
 	log.Debug("[getEpochSwitchInfo] get epoch switch info recursively", "hash", hash.Hex(), "number", h.Number.Uint64())
 	x.epochSwitches.Add(hash, epochSwitchInfo)
 	return epochSwitchInfo, nil

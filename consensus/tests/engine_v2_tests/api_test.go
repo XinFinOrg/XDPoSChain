@@ -172,11 +172,11 @@ func TestGetBlockByEpochNumber(t *testing.T) {
 	blockchain, _, currentBlock, signer, signFn := PrepareXDCTestBlockChainWithPenaltyForV2Engine(t, 1802, params.TestXDPoSMockChainConfig)
 
 	blockCoinBase := "0x111000000000000000000000000000000123"
-	largeRound := int64(1802)
+	largeRound := int64(1800)
 	newBlock := CreateBlock(blockchain, params.TestXDPoSMockChainConfig, currentBlock, int(currentBlock.NumberU64())+1, largeRound, blockCoinBase, signer, signFn, nil, nil, currentBlock.Header().Root.Hex())
 	err := blockchain.InsertBlock(newBlock)
 	assert.Nil(t, err)
-	largeRound2 := int64(3603)
+	largeRound2 := int64(3600)
 	newBlock2 := CreateBlock(blockchain, params.TestXDPoSMockChainConfig, newBlock, int(newBlock.NumberU64())+1, largeRound2, blockCoinBase, signer, signFn, nil, nil, newBlock.Header().Root.Hex())
 	err = blockchain.InsertBlock(newBlock2)
 	assert.Nil(t, err)
@@ -189,9 +189,9 @@ func TestGetBlockByEpochNumber(t *testing.T) {
 	// 1800,900,2 (2nd epoch switch block)
 	// 1801,901,2
 	// 1802,902,2
-	// 1803,1802,3 (epoch switch)
+	// 1803,1800,3 (epoch switch)
 	// epoch 4 has no block
-	// 1804,3603,5 (epoch switch)
+	// 1804,3600,5 (epoch switch)
 	engine := blockchain.Engine().(*XDPoS.XDPoS)
 
 	// init the snapshot, otherwise getEpochSwitchInfo would return error

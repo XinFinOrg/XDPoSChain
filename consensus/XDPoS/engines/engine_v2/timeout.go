@@ -29,12 +29,6 @@ func (x *XDPoS_v2) VerifyTimeoutMessage(chain consensus.ChainReader, timeoutMsg 
 		return false, err
 	}
 
-	if len(epochInfo.Masternodes) == 0 {
-		// TODO: why this check is needed here? how about other places for epochInfo.Masternodes?
-		log.Error("[VerifyTimeoutMessage] cannot find NextEpochCandidates from snapshot", "messageGapNumber", timeoutMsg.GapNumber)
-		return false, errors.New("empty master node lists from snapshot")
-	}
-
 	verified, signer, err := x.verifyMsgSignature(types.TimeoutSigHash(&types.TimeoutForSign{
 		Round:     timeoutMsg.Round,
 		GapNumber: timeoutMsg.GapNumber,
