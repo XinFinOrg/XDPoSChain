@@ -300,13 +300,13 @@ func TestFilters(t *testing.T) {
 			f:    sys.NewRangeFilter(int64(rpc.LatestBlockNumber), int64(rpc.LatestBlockNumber), nil, nil),
 			want: `[{"address":"0xfe00000000000000000000000000000000000000","topics":["0x0000000000000000000000000000000000000000000000000000746f70696334"],"data":"0x","blockNumber":"0x3e8","transactionHash":"0x21fd39694cbcc8cc5046b3b7d5200101edf9c85218da613a8851eb5e3d195241","transactionIndex":"0x0","blockHash":"0x8a956d79ca6468ff23c97615a4aa24a55bdaff78767ee28d3e2e02ecb407a0de","logIndex":"0x0","removed":false}]`,
 		}, {
-			f:   sys.NewRangeFilter(int64(rpc.CommittedBlockNumber), int64(rpc.LatestBlockNumber), nil, nil),
+			f:   sys.NewRangeFilter(int64(rpc.FinalizedBlockNumber), int64(rpc.LatestBlockNumber), nil, nil),
 			err: "committed header not found",
 		}, {
-			f:   sys.NewRangeFilter(int64(rpc.CommittedBlockNumber), int64(rpc.CommittedBlockNumber), nil, nil),
+			f:   sys.NewRangeFilter(int64(rpc.FinalizedBlockNumber), int64(rpc.FinalizedBlockNumber), nil, nil),
 			err: "committed header not found",
 		}, {
-			f:   sys.NewRangeFilter(int64(rpc.LatestBlockNumber), int64(rpc.CommittedBlockNumber), nil, nil),
+			f:   sys.NewRangeFilter(int64(rpc.LatestBlockNumber), int64(rpc.FinalizedBlockNumber), nil, nil),
 			err: "committed header not found",
 		}, {
 			f:    sys.NewRangeFilter(int64(rpc.PendingBlockNumber), int64(rpc.PendingBlockNumber), nil, nil),

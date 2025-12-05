@@ -65,7 +65,7 @@ type BlockNumber int64
 type EpochNumber int64
 
 const (
-	CommittedBlockNumber = BlockNumber(-3)
+	FinalizedBlockNumber = BlockNumber(-3)
 	LatestBlockNumber    = BlockNumber(-2)
 	PendingBlockNumber   = BlockNumber(-1)
 	EarliestBlockNumber  = BlockNumber(0)
@@ -96,29 +96,30 @@ func (bn *BlockNumber) UnmarshalJSON(data []byte) error {
 		*bn = PendingBlockNumber
 		return nil
 	case "committed", "finalized":
-		*bn = CommittedBlockNumber
+		*bn = FinalizedBlockNumber
 		return nil
 	}
 
-	var blckNum uint64
 	var err error
-
-	//Check if input is valid hex string before converting.
+	var number uint64
 	if hexutil.Has0xPrefix(input) {
-		blckNum, err = hexutil.DecodeUint64(input)
+		// Convert input to hexadecimal integer.
+		number, err = hexutil.DecodeUint64(input)
+		if err != nil {
+			return fmt.Errorf("fail to decode %s, err: %v", input, err)
+		}
 	} else {
-		//Else try converting input directly into uint64 value
-		blckNum, err = strconv.ParseUint(input, 10, 64)
+		// Convert input to decimal uint64.
+		number, err = strconv.ParseUint(input, 10, 64)
+		if err != nil {
+			return fmt.Errorf("fail to parse %s, err: %v", input, err)
+		}
 	}
 
-	if err != nil {
-		return err
+	if number > math.MaxInt64 {
+		return fmt.Errorf("block number %s is larger than MaxInt64", input)
 	}
-
-	if blckNum > math.MaxInt64 {
-		return errors.New("block number larger than int64")
-	}
-	*bn = BlockNumber(blckNum)
+	*bn = BlockNumber(number)
 	return nil
 }
 
@@ -142,7 +143,7 @@ func (bn BlockNumber) String() string {
 		return "latest"
 	case PendingBlockNumber:
 		return "pending"
-	case CommittedBlockNumber:
+	case FinalizedBlockNumber:
 		return "committed"
 	default:
 		if bn < 0 {
@@ -213,7 +214,7 @@ func (bnh *BlockNumberOrHash) UnmarshalJSON(data []byte) error {
 		bnh.BlockNumber = &bn
 		return nil
 	case "committed", "finalized":
-		bn := CommittedBlockNumber
+		bn := FinalizedBlockNumber
 		bnh.BlockNumber = &bn
 		return nil
 	default:

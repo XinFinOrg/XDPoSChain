@@ -79,7 +79,7 @@ func (b *testBackend) HeaderByNumber(ctx context.Context, blockNr rpc.BlockNumbe
 			return nil, nil
 		}
 		num = *number
-	case rpc.CommittedBlockNumber:
+	case rpc.FinalizedBlockNumber:
 		return nil, nil
 	default:
 		num = uint64(blockNr)

@@ -47,8 +47,8 @@ func TestBlockNumberJSONUnmarshal(t *testing.T) {
 		11: {`"pending"`, false, PendingBlockNumber},
 		12: {`"latest"`, false, LatestBlockNumber},
 		13: {`"earliest"`, false, EarliestBlockNumber},
-		14: {`"committed"`, false, CommittedBlockNumber},
-		15: {`"finalized"`, false, CommittedBlockNumber},
+		14: {`"committed"`, false, FinalizedBlockNumber},
+		15: {`"finalized"`, false, FinalizedBlockNumber},
 		16: {`someString`, true, BlockNumber(0)},
 		17: {`""`, true, BlockNumber(0)},
 		18: {``, true, BlockNumber(0)},
@@ -98,8 +98,8 @@ func TestBlockNumberOrHash_UnmarshalJSON(t *testing.T) {
 		11: {`"pending"`, false, BlockNumberOrHashWithNumber(PendingBlockNumber)},
 		12: {`"latest"`, false, BlockNumberOrHashWithNumber(LatestBlockNumber)},
 		13: {`"earliest"`, false, BlockNumberOrHashWithNumber(EarliestBlockNumber)},
-		14: {`"committed"`, false, BlockNumberOrHashWithNumber(CommittedBlockNumber)},
-		15: {`"finalized"`, false, BlockNumberOrHashWithNumber(CommittedBlockNumber)},
+		14: {`"committed"`, false, BlockNumberOrHashWithNumber(FinalizedBlockNumber)},
+		15: {`"finalized"`, false, BlockNumberOrHashWithNumber(FinalizedBlockNumber)},
 		16: {`someString`, true, BlockNumberOrHash{}},
 		17: {`""`, true, BlockNumberOrHash{}},
 		18: {``, true, BlockNumberOrHash{}},
@@ -111,8 +111,8 @@ func TestBlockNumberOrHash_UnmarshalJSON(t *testing.T) {
 		24: {`{"blockNumber":"pending"}`, false, BlockNumberOrHashWithNumber(PendingBlockNumber)},
 		25: {`{"blockNumber":"latest"}`, false, BlockNumberOrHashWithNumber(LatestBlockNumber)},
 		26: {`{"blockNumber":"earliest"}`, false, BlockNumberOrHashWithNumber(EarliestBlockNumber)},
-		27: {`{"blockNumber":"committed"}`, false, BlockNumberOrHashWithNumber(CommittedBlockNumber)},
-		28: {`{"blockNumber":"finalized"}`, false, BlockNumberOrHashWithNumber(CommittedBlockNumber)},
+		27: {`{"blockNumber":"committed"}`, false, BlockNumberOrHashWithNumber(FinalizedBlockNumber)},
+		28: {`{"blockNumber":"finalized"}`, false, BlockNumberOrHashWithNumber(FinalizedBlockNumber)},
 		29: {`{"blockNumber":"0x1", "blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000"}`, true, BlockNumberOrHash{}},
 	}
 
@@ -150,8 +150,8 @@ func TestBlockNumberOrHash_WithNumber_MarshalAndUnmarshal(t *testing.T) {
 		{"pending", int64(PendingBlockNumber)},
 		{"latest", int64(LatestBlockNumber)},
 		{"earliest", int64(EarliestBlockNumber)},
-		{"committed", int64(CommittedBlockNumber)},
-		{"finalized", int64(CommittedBlockNumber)},
+		{"committed", int64(FinalizedBlockNumber)},
+		{"finalized", int64(FinalizedBlockNumber)},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -182,7 +182,7 @@ func TestBlockNumberOrHash_StringAndUnmarshal(t *testing.T) {
 		BlockNumberOrHashWithNumber(PendingBlockNumber),
 		BlockNumberOrHashWithNumber(LatestBlockNumber),
 		BlockNumberOrHashWithNumber(EarliestBlockNumber),
-		BlockNumberOrHashWithNumber(CommittedBlockNumber),
+		BlockNumberOrHashWithNumber(FinalizedBlockNumber),
 		BlockNumberOrHashWithNumber(32),
 		BlockNumberOrHashWithHash(common.Hash{0xaa}, false),
 	}

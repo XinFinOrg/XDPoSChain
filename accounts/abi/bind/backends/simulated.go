@@ -955,7 +955,7 @@ func (fb *filterBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNum
 		return nil, nil
 	case rpc.LatestBlockNumber:
 		return fb.bc.CurrentHeader(), nil
-	case rpc.CommittedBlockNumber:
+	case rpc.FinalizedBlockNumber:
 		if fb.bc.Config().XDPoS == nil {
 			return nil, errors.New("only XDPoS v2 supports committed block lookup")
 		}

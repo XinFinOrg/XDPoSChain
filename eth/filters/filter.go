@@ -131,8 +131,8 @@ func (f *Filter) Logs(ctx context.Context) ([]*types.Log, error) {
 			if hdr == nil {
 				return 0, errors.New("latest header not found")
 			}
-		case rpc.CommittedBlockNumber.Int64():
-			hdr, _ = f.sys.backend.HeaderByNumber(ctx, rpc.CommittedBlockNumber)
+		case rpc.FinalizedBlockNumber.Int64():
+			hdr, _ = f.sys.backend.HeaderByNumber(ctx, rpc.FinalizedBlockNumber)
 			if hdr == nil {
 				return 0, errors.New("committed header not found")
 			}

@@ -192,7 +192,7 @@ func (api *API) GetMasternodesByNumber(number *rpc.BlockNumber) MasternodesStatu
 	var header *types.Header
 	if number == nil || *number == rpc.LatestBlockNumber {
 		header = api.chain.CurrentHeader()
-	} else if *number == rpc.CommittedBlockNumber {
+	} else if *number == rpc.FinalizedBlockNumber {
 		if info := api.XDPoS.EngineV2.GetLatestCommittedBlockInfo(); info != nil {
 			header = api.chain.GetHeaderByHash(info.Hash)
 		}
@@ -403,7 +403,7 @@ func (api *API) getHeaderFromApiBlockNum(number *rpc.BlockNumber) (*types.Header
 	var header *types.Header
 	if number == nil || *number == rpc.LatestBlockNumber {
 		header = api.chain.CurrentHeader()
-	} else if *number == rpc.CommittedBlockNumber {
+	} else if *number == rpc.FinalizedBlockNumber {
 		if info := api.XDPoS.EngineV2.GetLatestCommittedBlockInfo(); info != nil {
 			header = api.chain.GetHeaderByHash(info.Hash)
 		}

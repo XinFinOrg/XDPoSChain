@@ -48,7 +48,7 @@ func (b *testBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNumber
 	if number == rpc.EarliestBlockNumber {
 		number = 0
 	}
-	if number == rpc.CommittedBlockNumber {
+	if number == rpc.FinalizedBlockNumber {
 		return b.chain.CurrentBlock().Header(), nil
 	}
 	if number == rpc.LatestBlockNumber {
@@ -71,7 +71,7 @@ func (b *testBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumber)
 	if number == rpc.EarliestBlockNumber {
 		number = 0
 	}
-	if number == rpc.CommittedBlockNumber {
+	if number == rpc.FinalizedBlockNumber {
 		return b.chain.CurrentBlock(), nil
 	}
 	if number == rpc.LatestBlockNumber {
