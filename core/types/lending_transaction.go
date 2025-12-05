@@ -242,7 +242,7 @@ func (tx *LendingTransaction) CacheHash() {
 }
 
 // Size returns the true RLP encoded storage size of the transaction, either by
-// encoding and returning it, or returning a previsouly cached value.
+// encoding and returning it, or returning a previously cached value.
 func (tx *LendingTransaction) Size() common.StorageSize {
 	if size := tx.size.Load(); size != nil {
 		return size.(common.StorageSize)

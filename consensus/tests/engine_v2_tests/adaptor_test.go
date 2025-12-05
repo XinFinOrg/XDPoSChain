@@ -241,11 +241,12 @@ func TestGetParentBlock(t *testing.T) {
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
 
 	// V1
-	block := adaptor.FindParentBlockToAssign(blockchain, block900)
-	assert.Equal(t, block, block900)
+	block := adaptor.FindParentBlockToAssign(blockchain, block900.Header())
+	assert.Equal(t, block.Number(), block900.Number())
+	assert.Equal(t, block.Hash(), block900.Hash())
 
 	// Initialise
-	err := adaptor.EngineV2.Initial(blockchain, block.Header())
+	err := adaptor.EngineV2.Initial(blockchain, block900.Header())
 	assert.Nil(t, err)
 
 	// V2
@@ -260,7 +261,7 @@ func TestGetParentBlock(t *testing.T) {
 	block902 := CreateBlock(blockchain, params.TestXDPoSMockChainConfig, block901, blockNum, 1, blockCoinBase, signer, signFn, nil, nil, "")
 	err = blockchain.InsertBlock(block902)
 	assert.Nil(t, err)
-	block = adaptor.FindParentBlockToAssign(blockchain, block902)
-
-	assert.Equal(t, block900.Hash(), block.Hash())
+	block = adaptor.FindParentBlockToAssign(blockchain, block902.Header())
+	assert.Equal(t, block.Number(), block900.Number())
+	assert.Equal(t, block.Hash(), block900.Hash())
 }

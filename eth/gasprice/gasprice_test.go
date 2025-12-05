@@ -49,7 +49,7 @@ func (b *testBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNumber
 		number = 0
 	}
 	if number == rpc.FinalizedBlockNumber {
-		return b.chain.CurrentBlock().Header(), nil
+		return b.chain.CurrentBlock(), nil
 	}
 	if number == rpc.LatestBlockNumber {
 		number = testHead
@@ -72,7 +72,7 @@ func (b *testBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumber)
 		number = 0
 	}
 	if number == rpc.FinalizedBlockNumber {
-		return b.chain.CurrentBlock(), nil
+		number = rpc.BlockNumber(b.chain.CurrentBlock().Number.Uint64())
 	}
 	if number == rpc.LatestBlockNumber {
 		number = testHead

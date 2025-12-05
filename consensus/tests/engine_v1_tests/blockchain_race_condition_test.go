@@ -19,7 +19,7 @@ func TestRaceConditionOnBlockchainReadAndWrite(t *testing.T) {
 	}
 	t.Logf("Account %v have balance of: %v", acc1Addr.String(), state.GetBalance(acc1Addr))
 	// Check initial signer
-	signers, err := GetSnapshotSigner(blockchain, blockchain.CurrentBlock().Header())
+	signers, err := GetSnapshotSigner(blockchain, blockchain.CurrentBlock())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestRaceConditionOnBlockchainReadAndWrite(t *testing.T) {
 		t.Fatalf("account 2 should sit in the signer list")
 	}
 
-	signers, err = GetSnapshotSigner(blockchain, blockchain.CurrentBlock().Header())
+	signers, err = GetSnapshotSigner(blockchain, blockchain.CurrentBlock())
 	if err != nil {
 		t.Fatal(err)
 	}

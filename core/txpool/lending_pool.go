@@ -72,7 +72,7 @@ type LendingPoolConfig struct {
 
 // blockChain_XDCx add order state
 type blockChainLending interface {
-	CurrentBlock() *types.Block
+	CurrentBlock() *types.Header
 	GetBlock(hash common.Hash, number uint64) *types.Block
 	LendingStateAt(block *types.Block) (*lendingstate.LendingStateDB, error)
 	StateAt(root common.Hash) (*state.StateDB, error)
@@ -151,7 +151,7 @@ type LendingPool struct {
 func NewLendingPool(chainconfig *params.ChainConfig, chain blockChainLending) *LendingPool {
 	// Sanitize the input to ensure no vulnerable gas prices are set
 	config := (&DefaultLendingPoolConfig).sanitize()
-	log.Debug("NewLendingPool start...", "current block", chain.CurrentBlock().Header().Number)
+	log.Debug("NewLendingPool start...", "current block", chain.CurrentBlock().Number)
 	// Create the transaction pool with its initial settings
 	pool := &LendingPool{
 		config:      config,
@@ -165,7 +165,7 @@ func NewLendingPool(chainconfig *params.ChainConfig, chain blockChainLending) *L
 		chainHeadCh: make(chan core.ChainHeadEvent, chainHeadChanSize),
 	}
 	pool.locals = newLendingAccountSet(pool.signer)
-	pool.reset(nil, chain.CurrentBlock())
+	pool.reset(chain.CurrentBlock())
 
 	// If local transactions and journaling is enabled, load from disk
 	if !config.NoLocals && config.Journal != "" {
@@ -216,9 +216,13 @@ func (pool *LendingPool) loop() {
 				if pool.chainconfig.IsHomestead(ev.Block.Number()) {
 					pool.homestead = true
 				}
-				log.Debug("LendingPool new chain header reset pool", "old", head.Header().Number, "new", ev.Block.Header().Number)
-				pool.reset(head, ev.Block)
-				head = ev.Block
+				if head != nil {
+					log.Debug("LendingPool new chain header reset pool", "old", head.Number, "new", ev.Block.Header().Number)
+				} else {
+					log.Debug("LendingPool new chain header reset pool", "old", "nil", "new", ev.Block.Header().Number)
+				}
+				pool.reset(ev.Block.Header())
+				head = ev.Block.Header()
 
 				pool.mu.Unlock()
 			}
@@ -268,19 +272,23 @@ func (pool *LendingPool) loop() {
 
 // reset retrieves the current state of the blockchain and ensures the content
 // of the transaction pool is valid with regard to the chain state.
-func (pool *LendingPool) reset(oldHead, newblock *types.Block) {
-	if !pool.chainconfig.IsTIPXDCXReceiver(pool.chain.CurrentBlock().Number()) || pool.chain.Config().XDPoS == nil || pool.chain.CurrentBlock().NumberU64() <= pool.chain.Config().XDPoS.Epoch {
+func (pool *LendingPool) reset(newHead *types.Header) {
+	if !pool.chainconfig.IsTIPXDCXReceiver(pool.chain.CurrentBlock().Number) || pool.chain.Config().XDPoS == nil || pool.chain.CurrentBlock().Number.Uint64() <= pool.chain.Config().XDPoS.Epoch {
 		return
 	}
 	// If we're reorging an old state, reinject all dropped transactions
 	var reinject types.LendingTransactions
 
 	// Initialize the internal state to the current head
-	if newblock == nil {
-		newblock = pool.chain.CurrentBlock()
+	if newHead == nil {
+		newHead = pool.chain.CurrentBlock()
 	}
-	newHead := newblock.Header()
-	lendingState, err := pool.chain.LendingStateAt(newblock)
+	newBlock := pool.chain.GetBlock(newHead.Hash(), newHead.Number.Uint64())
+	if newBlock == nil {
+		log.Error("Not find block to reset LendingPool state", "number", newHead.Number, "hash", newHead.Hash())
+		return
+	}
+	lendingState, err := pool.chain.LendingStateAt(newBlock)
 	if err != nil {
 		log.Error("Failed to reset LendingPool state", "err", err)
 		return
@@ -527,7 +535,12 @@ func (pool *LendingPool) validateBalance(cloneStateDb *state.StateDB, cloneLendi
 	if err != nil {
 		return err
 	}
-	tradingStateDb, err := XDCXServ.GetTradingState(pool.chain.CurrentBlock(), author)
+	newHead := pool.chain.CurrentBlock()
+	newBlock := pool.chain.GetBlock(newHead.Hash(), newHead.Number.Uint64())
+	if newBlock == nil {
+		return fmt.Errorf("not find block to validate balance, number: %d, hash: %s", newHead.Number, newHead.Hash().Hex())
+	}
+	tradingStateDb, err := XDCXServ.GetTradingState(newBlock, author)
 	if err != nil {
 		return fmt.Errorf("validateLending: failed to get tradingStateDb. Error: %v", err)
 	}
@@ -808,7 +821,7 @@ func (pool *LendingPool) AddRemotes(txs []*types.LendingTransaction) []error {
 
 // addTx enqueues a single transaction into the pool if it is valid.
 func (pool *LendingPool) addTx(tx *types.LendingTransaction, local bool) error {
-	if !pool.chainconfig.IsTIPXDCXReceiver(pool.chain.CurrentBlock().Number()) {
+	if !pool.chainconfig.IsTIPXDCXReceiver(pool.chain.CurrentBlock().Number) {
 		return nil
 	}
 	tx.CacheHash()

@@ -157,7 +157,11 @@ func NewXDCSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64, chainConf
 	backend.events = filters.NewEventSystem(backend.filterSystem, false)
 
 	blockchain.Client = backend
-	backend.rollback(blockchain.CurrentBlock())
+
+	header := backend.blockchain.CurrentBlock()
+	block := backend.blockchain.GetBlock(header.Hash(), header.Number.Uint64())
+
+	backend.rollback(block)
 	return backend
 }
 
@@ -180,7 +184,10 @@ func NewSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64) *SimulatedBa
 	backend.filterSystem = filters.NewFilterSystem(filterBackend, filters.Config{})
 	backend.events = filters.NewEventSystem(backend.filterSystem, false)
 
-	backend.rollback(blockchain.CurrentBlock())
+	header := backend.blockchain.CurrentBlock()
+	block := backend.blockchain.GetBlock(header.Hash(), header.Number.Uint64())
+
+	backend.rollback(block)
 	return backend
 }
 
@@ -213,7 +220,10 @@ func (b *SimulatedBackend) Rollback() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	b.rollback(b.blockchain.CurrentBlock())
+	header := b.blockchain.CurrentBlock()
+	block := b.blockchain.GetBlock(header.Hash(), header.Number.Uint64())
+
+	b.rollback(block)
 }
 
 func (b *SimulatedBackend) rollback(parent *types.Block) {
@@ -253,7 +263,7 @@ func (b *SimulatedBackend) Fork(ctx context.Context, parent common.Hash) error {
 
 // stateByBlockNumber retrieves a state by a given blocknumber.
 func (b *SimulatedBackend) stateByBlockNumber(ctx context.Context, blockNumber *big.Int) (*state.StateDB, error) {
-	if blockNumber == nil || blockNumber.Cmp(b.blockchain.CurrentBlock().Number()) == 0 {
+	if blockNumber == nil || blockNumber.Cmp(b.blockchain.CurrentBlock().Number) == 0 {
 		return b.blockchain.State()
 	}
 	block, err := b.blockByNumber(ctx, blockNumber)
@@ -335,7 +345,7 @@ func (b *SimulatedBackend) ForEachStorageAt(ctx context.Context, contract common
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if blockNumber != nil && blockNumber.Cmp(b.blockchain.CurrentBlock().Number()) != 0 {
+	if blockNumber != nil && blockNumber.Cmp(b.blockchain.CurrentBlock().Number) != 0 {
 		return errBlockNumberUnsupported
 	}
 	stateDB, _ := b.blockchain.State()
@@ -409,7 +419,7 @@ func (b *SimulatedBackend) BlockByNumber(ctx context.Context, number *big.Int) (
 // (associated with its hash) if found without Lock.
 func (b *SimulatedBackend) blockByNumber(ctx context.Context, number *big.Int) (*types.Block, error) {
 	if number == nil || number.Cmp(b.pendingBlock.Number()) == 0 {
-		return b.blockchain.CurrentBlock(), nil
+		return b.blockByHash(ctx, b.blockchain.CurrentBlock().Hash())
 	}
 
 	block := b.blockchain.GetBlockByNumber(uint64(number.Int64()))
@@ -541,7 +551,7 @@ func (b *SimulatedBackend) CallContract(ctx context.Context, call ethereum.CallM
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if blockNumber != nil && blockNumber.Cmp(b.blockchain.CurrentBlock().Number()) != 0 {
+	if blockNumber != nil && blockNumber.Cmp(b.blockchain.CurrentBlock().Number) != 0 {
 		return nil, errBlockNumberUnsupported
 	}
 	return b.callContractAtHead(ctx, call)
@@ -564,7 +574,8 @@ func (b *SimulatedBackend) callContractAtHead(ctx context.Context, call ethereum
 	if err != nil {
 		return nil, err
 	}
-	res, err := b.callContract(ctx, call, b.blockchain.CurrentBlock(), stateDB)
+	header := b.blockchain.CurrentBlock()
+	res, err := b.callContract(ctx, call, header, stateDB)
 	if err != nil {
 		return nil, err
 	}
@@ -581,7 +592,7 @@ func (b *SimulatedBackend) PendingCallContract(ctx context.Context, call ethereu
 	defer b.mu.Unlock()
 	defer b.pendingState.RevertToSnapshot(b.pendingState.Snapshot())
 
-	res, err := b.callContract(ctx, call, b.pendingBlock, b.pendingState)
+	res, err := b.callContract(ctx, call, b.pendingBlock.Header(), b.pendingState)
 	if err != nil {
 		return nil, err
 	}
@@ -643,7 +654,7 @@ func (b *SimulatedBackend) EstimateGas(ctx context.Context, call ethereum.CallMs
 		call.Gas = gas
 
 		snapshot := b.pendingState.Snapshot()
-		res, err := b.callContract(ctx, call, b.pendingBlock, b.pendingState)
+		res, err := b.callContract(ctx, call, b.pendingBlock.Header(), b.pendingState)
 		b.pendingState.RevertToSnapshot(snapshot)
 
 		if err != nil {
@@ -693,7 +704,7 @@ func (b *SimulatedBackend) EstimateGas(ctx context.Context, call ethereum.CallMs
 
 // callContract implements common code between normal and pending contract calls.
 // state is modified during execution, make sure to copy it if necessary.
-func (b *SimulatedBackend) callContract(ctx context.Context, call ethereum.CallMsg, block *types.Block, stateDB *state.StateDB) (*core.ExecutionResult, error) {
+func (b *SimulatedBackend) callContract(ctx context.Context, call ethereum.CallMsg, block *types.Header, stateDB *state.StateDB) (*core.ExecutionResult, error) {
 	// Gas prices post 1559 need to be initialized
 	if call.GasPrice != nil && (call.GasFeeCap != nil || call.GasTipCap != nil) {
 		return nil, errors.New("both gasPrice and (maxFeePerGas or maxPriorityFeePerGas) specified")
@@ -764,7 +775,7 @@ func (b *SimulatedBackend) callContract(ctx context.Context, call ethereum.CallM
 	// Create a new environment which holds all relevant information
 	// about the transaction and calling mechanisms.
 	txContext := core.NewEVMTxContext(msg)
-	evmContext := core.NewEVMBlockContext(block.Header(), b.blockchain, nil)
+	evmContext := core.NewEVMBlockContext(block, b.blockchain, nil)
 	// Create a new environment which holds all relevant information
 	// about the transaction and calling mechanisms.
 	vmenv := vm.NewEVM(evmContext, txContext, stateDB, nil, b.config, vm.Config{NoBaseFee: true})
@@ -959,7 +970,7 @@ func (fb *filterBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNum
 		if fb.bc.Config().XDPoS == nil {
 			return nil, errors.New("only XDPoS v2 supports committed block lookup")
 		}
-		current := fb.bc.CurrentBlock().Header()
+		current := fb.bc.CurrentBlock()
 		if fb.bc.Config().XDPoS.BlockConsensusVersion(current.Number) == params.ConsensusEngineVersion2 {
 			confirmedHash := fb.bc.Engine().(*XDPoS.XDPoS).EngineV2.GetLatestCommittedBlockInfo().Hash
 			return fb.bc.GetHeaderByHash(confirmedHash), nil

@@ -402,7 +402,7 @@ func TestApplyTransactionWithEVMTracer(t *testing.T) {
 			blockNumber := big.NewInt(1)
 			blockHash := genesis.Hash()
 
-			vmContext := NewEVMBlockContext(blockchain.CurrentBlock().Header(), blockchain, nil)
+			vmContext := NewEVMBlockContext(blockchain.CurrentBlock(), blockchain, nil)
 			evm := vm.NewEVM(vmContext, vm.TxContext{}, statedb, nil, blockchain.Config(), vmConfig)
 
 			// Apply transaction

@@ -490,17 +490,15 @@ func (x *XDPoS) GetAuthorisedSignersFromSnapshot(chain consensus.ChainReader, he
 	}
 }
 
-func (x *XDPoS) FindParentBlockToAssign(chain consensus.ChainReader, currentBlock *types.Block) *types.Block {
-	switch x.config.BlockConsensusVersion(currentBlock.Number()) {
-	case params.ConsensusEngineVersion2:
-		block := x.EngineV2.FindParentBlockToAssign(chain)
-		if block == nil {
-			return currentBlock
-		}
-		return block
-	default: // Default "v1"
-		return currentBlock
+func (x *XDPoS) FindParentBlockToAssign(chain consensus.ChainReader, currentBlock *types.Header) *types.Block {
+	var parent *types.Block = nil
+	if x.config.BlockConsensusVersion(currentBlock.Number) == params.ConsensusEngineVersion2 {
+		parent = x.EngineV2.FindParentBlockToAssign(chain)
 	}
+	if parent == nil {
+		parent = chain.GetBlock(currentBlock.Hash(), currentBlock.Number.Uint64())
+	}
+	return parent
 }
 
 /**

@@ -140,7 +140,7 @@ func (d *Downloader) runStateSync(s *stateSync) *stateSync {
 
 		// Handle incoming state packs:
 		case pack := <-d.stateCh:
-			// Discard any data not requested (or previsouly timed out)
+			// Discard any data not requested (or previously timed out)
 			req := active[pack.PeerId()]
 			if req == nil {
 				log.Debug("Unrequested node data", "peer", pack.PeerId(), "len", pack.Items())

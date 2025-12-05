@@ -132,20 +132,20 @@ func testGetBlockHeaders(t *testing.T, protocol int) {
 			&getBlockHeadersData{Origin: hashOrNumber{Number: 0}, Amount: 1},
 			[]common.Hash{pm.blockchain.GetBlockByNumber(0).Hash()},
 		}, {
-			&getBlockHeadersData{Origin: hashOrNumber{Number: pm.blockchain.CurrentBlock().NumberU64()}, Amount: 1},
+			&getBlockHeadersData{Origin: hashOrNumber{Number: pm.blockchain.CurrentBlock().Number.Uint64()}, Amount: 1},
 			[]common.Hash{pm.blockchain.CurrentBlock().Hash()},
 		},
 		// Ensure protocol limits are honored
 		{
-			&getBlockHeadersData{Origin: hashOrNumber{Number: pm.blockchain.CurrentBlock().NumberU64() - 1}, Amount: limit + 10, Reverse: true},
+			&getBlockHeadersData{Origin: hashOrNumber{Number: pm.blockchain.CurrentBlock().Number.Uint64() - 1}, Amount: limit + 10, Reverse: true},
 			pm.blockchain.GetBlockHashesFromHash(pm.blockchain.CurrentBlock().Hash(), limit),
 		},
 		// Check that requesting more than available is handled gracefully
 		{
-			&getBlockHeadersData{Origin: hashOrNumber{Number: pm.blockchain.CurrentBlock().NumberU64() - 4}, Skip: 3, Amount: 3},
+			&getBlockHeadersData{Origin: hashOrNumber{Number: pm.blockchain.CurrentBlock().Number.Uint64() - 4}, Skip: 3, Amount: 3},
 			[]common.Hash{
-				pm.blockchain.GetBlockByNumber(pm.blockchain.CurrentBlock().NumberU64() - 4).Hash(),
-				pm.blockchain.GetBlockByNumber(pm.blockchain.CurrentBlock().NumberU64()).Hash(),
+				pm.blockchain.GetBlockByNumber(pm.blockchain.CurrentBlock().Number.Uint64() - 4).Hash(),
+				pm.blockchain.GetBlockByNumber(pm.blockchain.CurrentBlock().Number.Uint64()).Hash(),
 			},
 		}, {
 			&getBlockHeadersData{Origin: hashOrNumber{Number: 4}, Skip: 3, Amount: 3, Reverse: true},
@@ -156,10 +156,10 @@ func testGetBlockHeaders(t *testing.T, protocol int) {
 		},
 		// Check that requesting more than available is handled gracefully, even if mid skip
 		{
-			&getBlockHeadersData{Origin: hashOrNumber{Number: pm.blockchain.CurrentBlock().NumberU64() - 4}, Skip: 2, Amount: 3},
+			&getBlockHeadersData{Origin: hashOrNumber{Number: pm.blockchain.CurrentBlock().Number.Uint64() - 4}, Skip: 2, Amount: 3},
 			[]common.Hash{
-				pm.blockchain.GetBlockByNumber(pm.blockchain.CurrentBlock().NumberU64() - 4).Hash(),
-				pm.blockchain.GetBlockByNumber(pm.blockchain.CurrentBlock().NumberU64() - 1).Hash(),
+				pm.blockchain.GetBlockByNumber(pm.blockchain.CurrentBlock().Number.Uint64() - 4).Hash(),
+				pm.blockchain.GetBlockByNumber(pm.blockchain.CurrentBlock().Number.Uint64() - 1).Hash(),
 			},
 		}, {
 			&getBlockHeadersData{Origin: hashOrNumber{Number: 4}, Skip: 2, Amount: 3, Reverse: true},
@@ -196,7 +196,7 @@ func testGetBlockHeaders(t *testing.T, protocol int) {
 			&getBlockHeadersData{Origin: hashOrNumber{Hash: unknown}, Amount: 1},
 			[]common.Hash{},
 		}, {
-			&getBlockHeadersData{Origin: hashOrNumber{Number: pm.blockchain.CurrentBlock().NumberU64() + 1}, Amount: 1},
+			&getBlockHeadersData{Origin: hashOrNumber{Number: pm.blockchain.CurrentBlock().Number.Uint64() + 1}, Amount: 1},
 			[]common.Hash{},
 		},
 	}
@@ -270,7 +270,7 @@ func testGetBlockBodies(t *testing.T, protocol int) {
 
 		for j := 0; j < tt.random; j++ {
 			for {
-				num := rand.Int63n(int64(pm.blockchain.CurrentBlock().NumberU64()))
+				num := rand.Int63n(int64(pm.blockchain.CurrentBlock().Number.Uint64()))
 				if !seen[num] {
 					seen[num] = true
 
@@ -374,7 +374,7 @@ func testGetNodeData(t *testing.T, protocol int) {
 		statedb.Put(hashes[i].Bytes(), data[i])
 	}
 	accounts := []common.Address{testBank, acc1Addr, acc2Addr}
-	for i := uint64(0); i <= pm.blockchain.CurrentBlock().NumberU64(); i++ {
+	for i := uint64(0); i <= pm.blockchain.CurrentBlock().Number.Uint64(); i++ {
 		trie, _ := state.New(pm.blockchain.GetBlockByNumber(i).Root(), state.NewDatabase(statedb))
 
 		for j, acc := range accounts {
@@ -438,7 +438,7 @@ func testGetReceipt(t *testing.T, protocol int) {
 
 	// Collect the hashes to request, and the response to expect
 	hashes, receipts := []common.Hash{}, []types.Receipts{}
-	for i := uint64(0); i <= pm.blockchain.CurrentBlock().NumberU64(); i++ {
+	for i := uint64(0); i <= pm.blockchain.CurrentBlock().Number.Uint64(); i++ {
 		block := pm.blockchain.GetBlockByNumber(i)
 
 		hashes = append(hashes, block.Hash())

@@ -92,7 +92,7 @@ type Backend interface {
 
 	ChainConfig() *params.ChainConfig
 	Engine() consensus.Engine
-	CurrentBlock() *types.Block
+	CurrentBlock() *types.Header
 	GetIPCClient() (bind.ContractBackend, error)
 	GetRewardByHash(hash common.Hash) map[string]map[string]map[string]*big.Int
 

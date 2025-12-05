@@ -411,7 +411,7 @@ func (b *Block) HashNoValidator() common.Hash {
 }
 
 // Size returns the true RLP encoded storage size of the block, either by encoding
-// and returning it, or returning a previsouly cached value.
+// and returning it, or returning a previously cached value.
 func (b *Block) Size() uint64 {
 	if size := b.size.Load(); size > 0 {
 		return size

@@ -773,7 +773,7 @@ func (api *BlockChainAPI) GetMasternodes(ctx context.Context, b *types.Block) ([
 	if b.Number().Int64() >= 0 {
 		curBlockNumber := b.Number().Uint64()
 		prevBlockNumber := curBlockNumber + (common.MergeSignRange - (curBlockNumber % common.MergeSignRange))
-		latestBlockNumber := api.b.CurrentBlock().Number().Uint64()
+		latestBlockNumber := api.b.CurrentBlock().Number.Uint64()
 		if prevBlockNumber >= latestBlockNumber || !api.b.ChainConfig().IsTIP2019(b.Number()) {
 			prevBlockNumber = curBlockNumber
 		}
@@ -1122,7 +1122,7 @@ func (api *BlockChainAPI) GetCheckpointFromEpoch(ctx context.Context, epochNum r
 	epoch := api.b.ChainConfig().XDPoS.Epoch
 
 	if epochNum == rpc.LatestEpochNumber {
-		blockNumer := api.b.CurrentBlock().Number()
+		blockNumer := api.b.CurrentBlock().Number
 		if engine, ok := api.b.Engine().(*XDPoS.XDPoS); ok {
 			var err error
 			var currentEpoch uint64
@@ -1509,7 +1509,7 @@ func (api *BlockChainAPI) findNearestSignedBlock(ctx context.Context, b *types.B
 
 	blockNumber := b.Number().Uint64()
 	signedBlockNumber := blockNumber + (common.MergeSignRange - (blockNumber % common.MergeSignRange))
-	latestBlockNumber := api.b.CurrentBlock().Number()
+	latestBlockNumber := api.b.CurrentBlock().Number
 
 	if signedBlockNumber >= latestBlockNumber.Uint64() || !api.b.ChainConfig().IsTIPSigning(b.Number()) {
 		signedBlockNumber = blockNumber
@@ -2080,7 +2080,7 @@ func (s *TransactionAPI) sign(addr common.Address, tx *types.Transaction) (*type
 	}
 	// Request the wallet to sign the transaction
 	var chainID *big.Int
-	if config := s.b.ChainConfig(); config.IsEIP155(s.b.CurrentBlock().Number()) {
+	if config := s.b.ChainConfig(); config.IsEIP155(s.b.CurrentBlock().Number) {
 		chainID = config.ChainID
 	}
 	return wallet.SignTx(account, tx, chainID)
@@ -2106,7 +2106,7 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 	}
 
 	// Print a log with full tx details for manual investigations and interventions
-	signer := types.MakeSigner(b.ChainConfig(), b.CurrentBlock().Number())
+	signer := types.MakeSigner(b.ChainConfig(), b.CurrentBlock().Number)
 	from, err := types.Sender(signer, tx)
 	if err != nil {
 		return common.Hash{}, err
@@ -2147,7 +2147,7 @@ func (s *TransactionAPI) SendTransaction(ctx context.Context, args TransactionAr
 	tx := args.ToTransaction(types.LegacyTxType)
 
 	var chainID *big.Int
-	if config := s.b.ChainConfig(); config.IsEIP155(s.b.CurrentBlock().Number()) {
+	if config := s.b.ChainConfig(); config.IsEIP155(s.b.CurrentBlock().Number) {
 		chainID = config.ChainID
 	}
 	signed, err := wallet.SignTx(account, tx, chainID)
@@ -2519,7 +2519,7 @@ func GetSignersFromBlocks(b Backend, blockNumber uint64, blockHash common.Hash, 
 	signer := types.MakeSigner(b.ChainConfig(), new(big.Int).SetUint64(blockNumber))
 	if engine, ok := b.Engine().(*XDPoS.XDPoS); ok {
 		limitNumber := blockNumber + common.LimitTimeFinality
-		currentNumber := b.CurrentBlock().NumberU64()
+		currentNumber := b.CurrentBlock().Number.Uint64()
 		if limitNumber > currentNumber {
 			limitNumber = currentNumber
 		}
@@ -2561,7 +2561,7 @@ func GetSignersFromBlocks(b Backend, blockNumber uint64, blockHash common.Hash, 
 //
 //	ROI = average_latest_epoch_reward_for_voters*number_of_epoch_per_year/latest_total_cap*100
 func (api *BlockChainAPI) GetStakerROI() float64 {
-	blockNumber := api.b.CurrentBlock().Number().Uint64()
+	blockNumber := api.b.CurrentBlock().Number.Uint64()
 	lastCheckpointNumber := blockNumber - (blockNumber % api.b.ChainConfig().XDPoS.Epoch) - api.b.ChainConfig().XDPoS.Epoch // calculate for 2 epochs ago
 	totalCap := new(big.Int).SetUint64(0)
 
@@ -2600,7 +2600,7 @@ func (api *BlockChainAPI) GetStakerROIMasternode(masternode common.Address) floa
 		masternodeReward.Add(masternodeReward, reward)
 	}
 
-	blockNumber := api.b.CurrentBlock().Number().Uint64()
+	blockNumber := api.b.CurrentBlock().Number.Uint64()
 	lastCheckpointNumber := blockNumber - blockNumber%api.b.ChainConfig().XDPoS.Epoch
 	totalCap := new(big.Int).SetUint64(0)
 	votersCap := api.b.GetVotersCap(new(big.Int).SetUint64(lastCheckpointNumber), masternode, voters)

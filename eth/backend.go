@@ -235,7 +235,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 		if currentBlock == nil {
 			return nil, fmt.Errorf("not find current block when rollback to %d", common.RollbackNumber)
 		}
-		currentNumber := currentBlock.NumberU64()
+		currentNumber := currentBlock.Number.Uint64()
 		if target > currentNumber {
 			return nil, fmt.Errorf("can't rollback to %d which is greater than current %d", target, currentNumber)
 		}

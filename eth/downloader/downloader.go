@@ -189,11 +189,11 @@ type BlockChain interface {
 	// GetBlockByHash retrieves a block from the local chain.
 	GetBlockByHash(common.Hash) *types.Block
 
-	// CurrentBlock retrieves the head block from the local chain.
-	CurrentBlock() *types.Block
+	// CurrentBlock retrieves the header of the head block from the local chain.
+	CurrentBlock() *types.Header
 
-	// CurrentFastBlock retrieves the head fast block from the local chain.
-	CurrentFastBlock() *types.Block
+	// CurrentSnapBlock retrieves the header of the head snap block from the local chain.
+	CurrentSnapBlock() *types.Header
 
 	// FastSyncCommitHead directly commits the head block to a certain entity.
 	FastSyncCommitHead(common.Hash) error
@@ -264,9 +264,9 @@ func (d *Downloader) Progress() XDPoSChain.SyncProgress {
 	mode := d.getMode()
 	switch {
 	case d.blockchain != nil && mode == FullSync:
-		current = d.blockchain.CurrentBlock().NumberU64()
+		current = d.blockchain.CurrentBlock().Number.Uint64()
 	case d.blockchain != nil && mode == FastSync:
-		current = d.blockchain.CurrentFastBlock().NumberU64()
+		current = d.blockchain.CurrentSnapBlock().Number.Uint64()
 	case d.lightchain != nil:
 		current = d.lightchain.CurrentHeader().Number.Uint64()
 	default:
@@ -671,9 +671,9 @@ func (d *Downloader) findAncestor(p *peerConnection, remoteHeader *types.Header)
 	mode := d.getMode()
 	switch mode {
 	case FullSync:
-		localHeight = d.blockchain.CurrentBlock().NumberU64()
+		localHeight = d.blockchain.CurrentBlock().Number.Uint64()
 	case FastSync:
-		localHeight = d.blockchain.CurrentFastBlock().NumberU64()
+		localHeight = d.blockchain.CurrentSnapBlock().Number.Uint64()
 	default:
 		localHeight = d.lightchain.CurrentHeader().Number.Uint64()
 	}
@@ -943,8 +943,8 @@ func (d *Downloader) fetchHeaders(p *peerConnection, from uint64, pivot uint64) 
 					if mode == LightSync {
 						head = d.lightchain.CurrentHeader().Number.Uint64()
 					} else {
-						head = d.blockchain.CurrentFastBlock().NumberU64()
-						if full := d.blockchain.CurrentBlock().NumberU64(); head < full {
+						head = d.blockchain.CurrentSnapBlock().Number.Uint64()
+						if full := d.blockchain.CurrentBlock().Number.Uint64(); head < full {
 							head = full
 						}
 					}
@@ -1311,14 +1311,14 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 			}
 			lastHeader, lastFastBlock, lastBlock := d.lightchain.CurrentHeader().Number, common.Big0, common.Big0
 			if mode != LightSync {
-				lastFastBlock = d.blockchain.CurrentFastBlock().Number()
-				lastBlock = d.blockchain.CurrentBlock().Number()
+				lastFastBlock = d.blockchain.CurrentSnapBlock().Number
+				lastBlock = d.blockchain.CurrentBlock().Number
 			}
 			d.lightchain.Rollback(hashes)
 			curFastBlock, curBlock := common.Big0, common.Big0
 			if mode != LightSync {
-				curFastBlock = d.blockchain.CurrentFastBlock().Number()
-				curBlock = d.blockchain.CurrentBlock().Number()
+				curFastBlock = d.blockchain.CurrentSnapBlock().Number
+				curBlock = d.blockchain.CurrentBlock().Number
 			}
 			log.Warn("Rolled back headers", "count", len(hashes),
 				"header", fmt.Sprintf("%d->%d", lastHeader, d.lightchain.CurrentHeader().Number),
@@ -1360,7 +1360,7 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 				// R: Nothing to give
 				if mode != LightSync {
 					head := d.blockchain.CurrentBlock()
-					if !gotHeaders && td.Cmp(d.blockchain.GetTd(head.Hash(), head.NumberU64())) > 0 {
+					if !gotHeaders && td.Cmp(d.blockchain.GetTd(head.Hash(), head.Number.Uint64())) > 0 {
 						return errStallingPeer
 					}
 				}

@@ -81,7 +81,7 @@ type OrderPoolConfig struct {
 
 // blockChain_XDCx add order state
 type blockChainXDCx interface {
-	CurrentBlock() *types.Block
+	CurrentBlock() *types.Header
 	GetBlock(hash common.Hash, number uint64) *types.Block
 	OrderStateAt(block *types.Block) (*tradingstate.TradingStateDB, error)
 	StateAt(root common.Hash) (*state.StateDB, error)
@@ -160,7 +160,7 @@ type OrderPool struct {
 func NewOrderPool(chainconfig *params.ChainConfig, chain blockChainXDCx) *OrderPool {
 	// Sanitize the input to ensure no vulnerable gas prices are set
 	config := (&DefaultOrderPoolConfig).sanitize()
-	log.Debug("NewOrderPool start...", "current block", chain.CurrentBlock().Header().Number)
+	log.Debug("NewOrderPool start...", "current block", chain.CurrentBlock().Number)
 	// Create the transaction pool with its initial settings
 	pool := &OrderPool{
 		config:      config,
@@ -174,7 +174,7 @@ func NewOrderPool(chainconfig *params.ChainConfig, chain blockChainXDCx) *OrderP
 		chainHeadCh: make(chan core.ChainHeadEvent, chainHeadChanSize),
 	}
 	pool.locals = newOrderAccountSet(pool.signer)
-	pool.reset(nil, chain.CurrentBlock())
+	pool.reset(chain.CurrentBlock())
 
 	// If local transactions and journaling is enabled, load from disk
 	if !config.NoLocals && config.Journal != "" {
@@ -224,9 +224,13 @@ func (pool *OrderPool) loop() {
 				if pool.chainconfig.IsHomestead(ev.Block.Number()) {
 					pool.homestead = true
 				}
-				log.Debug("OrderPool new chain header reset pool", "old", head.Header().Number, "new", ev.Block.Header().Number)
-				pool.reset(head, ev.Block)
-				head = ev.Block
+				if head != nil {
+					log.Debug("OrderPool new chain header reset pool", "old", head.Number, "new", ev.Block.Header().Number)
+				} else {
+					log.Debug("OrderPool new chain header reset pool", "old", "nil", "new", ev.Block.Header().Number)
+				}
+				pool.reset(ev.Block.Header())
+				head = ev.Block.Header()
 
 				pool.mu.Unlock()
 			}
@@ -274,19 +278,23 @@ func (pool *OrderPool) loop() {
 
 // reset retrieves the current state of the blockchain and ensures the content
 // of the transaction pool is valid with regard to the chain state.
-func (pool *OrderPool) reset(oldHead, newblock *types.Block) {
-	if !pool.chainconfig.IsTIPXDCXReceiver(pool.chain.CurrentBlock().Number()) || pool.chain.Config().XDPoS == nil || pool.chain.CurrentBlock().NumberU64() <= pool.chain.Config().XDPoS.Epoch {
+func (pool *OrderPool) reset(newHead *types.Header) {
+	if !pool.chainconfig.IsTIPXDCXReceiver(pool.chain.CurrentBlock().Number) || pool.chain.Config().XDPoS == nil || pool.chain.CurrentBlock().Number.Uint64() <= pool.chain.Config().XDPoS.Epoch {
 		return
 	}
 	// If we're reorging an old state, reinject all dropped transactions
 	var reinject types.OrderTransactions
 
 	// Initialize the internal state to the current head
-	if newblock == nil {
-		newblock = pool.chain.CurrentBlock()
+	if newHead == nil {
+		newHead = pool.chain.CurrentBlock()
 	}
-	newHead := newblock.Header()
-	orderstate, err := pool.chain.OrderStateAt(newblock)
+	newBlock := pool.chain.GetBlock(newHead.Hash(), newHead.Number.Uint64())
+	if newBlock == nil {
+		log.Error("Not find block to reset OrderPool state", "number", newHead.Number, "hash", newHead.Hash())
+		return
+	}
+	orderstate, err := pool.chain.OrderStateAt(newBlock)
 	if err != nil {
 		log.Error("Failed to reset OrderPool state", "err", err)
 		return
@@ -722,7 +730,7 @@ func (pool *OrderPool) AddRemotes(txs []*types.OrderTransaction) []error {
 
 // addTx enqueues a single transaction into the pool if it is valid.
 func (pool *OrderPool) addTx(tx *types.OrderTransaction, local bool) error {
-	if !pool.chainconfig.IsTIPXDCXReceiver(pool.chain.CurrentBlock().Number()) {
+	if !pool.chainconfig.IsTIPXDCXReceiver(pool.chain.CurrentBlock().Number) {
 		return nil
 	}
 	tx.CacheHash()

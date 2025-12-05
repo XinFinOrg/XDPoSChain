@@ -205,7 +205,7 @@ func TestCallUpdateM1WithSmartContractTranscation(t *testing.T) {
 func TestCallUpdateM1WhenForkedBlockBackToMainChain(t *testing.T) {
 	blockchain, backend, currentBlock, signer, signFn := PrepareXDCTestBlockChain(t, GAP-1, params.TestXDPoSMockChainConfig)
 	// Check initial signer, by default, acc3 is in the signerList
-	signers, err := GetSnapshotSigner(blockchain, blockchain.CurrentBlock().Header())
+	signers, err := GetSnapshotSigner(blockchain, blockchain.CurrentBlock())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +337,7 @@ func TestCallUpdateM1WhenForkedBlockBackToMainChain(t *testing.T) {
 		t.Fatalf("acc1,3should NOT sit in the signer list")
 	}
 
-	signers, err = GetSnapshotSigner(blockchain, blockchain.CurrentBlock().Header())
+	signers, err = GetSnapshotSigner(blockchain, blockchain.CurrentBlock())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +360,7 @@ func TestStatesShouldBeUpdatedWhenForkedBlockBecameMainChainAtGapBlock(t *testin
 	}
 	t.Logf("Account %v have balance of: %v", acc1Addr.String(), state.GetBalance(acc1Addr))
 	// Check initial signer
-	signers, err := GetSnapshotSigner(blockchain, blockchain.CurrentBlock().Header())
+	signers, err := GetSnapshotSigner(blockchain, blockchain.CurrentBlock())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +493,7 @@ func TestStatesShouldBeUpdatedWhenForkedBlockBecameMainChainAtGapBlock(t *testin
 		t.Fatalf("account 2 should sit in the signer list")
 	}
 
-	signers, err = GetSnapshotSigner(blockchain, blockchain.CurrentBlock().Header())
+	signers, err = GetSnapshotSigner(blockchain, blockchain.CurrentBlock())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -516,7 +516,7 @@ func TestStatesShouldBeUpdatedWhenForkedBlockBecameMainChainAtGapBlock(t *testin
 func TestVoteShouldNotBeAffectedByFork(t *testing.T) {
 	blockchain, backend, parentBlock, signer, signFn := PrepareXDCTestBlockChain(t, GAP-1, params.TestXDPoSMockChainConfig)
 	// Check initial signer, by default, acc3 is in the signerList
-	signers, err := GetSnapshotSigner(blockchain, blockchain.CurrentBlock().Header())
+	signers, err := GetSnapshotSigner(blockchain, blockchain.CurrentBlock())
 	if err != nil {
 		t.Fatal(err)
 	}

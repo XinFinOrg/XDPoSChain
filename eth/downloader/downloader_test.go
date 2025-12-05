@@ -168,31 +168,31 @@ func (dl *downloadTester) CurrentHeader() *types.Header {
 }
 
 // CurrentBlock retrieves the current head block from the canonical chain.
-func (dl *downloadTester) CurrentBlock() *types.Block {
+func (dl *downloadTester) CurrentBlock() *types.Header {
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
 	for i := len(dl.ownHashes) - 1; i >= 0; i-- {
 		if block := dl.ownBlocks[dl.ownHashes[i]]; block != nil {
 			if _, err := dl.stateDb.Get(block.Root().Bytes()); err == nil {
-				return block
+				return block.Header()
 			}
 		}
 	}
-	return dl.genesis
+	return dl.genesis.Header()
 }
 
 // CurrentFastBlock retrieves the current head fast-sync block from the canonical chain.
-func (dl *downloadTester) CurrentFastBlock() *types.Block {
+func (dl *downloadTester) CurrentSnapBlock() *types.Header {
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
 	for i := len(dl.ownHashes) - 1; i >= 0; i-- {
 		if block := dl.ownBlocks[dl.ownHashes[i]]; block != nil {
-			return block
+			return block.Header()
 		}
 	}
-	return dl.genesis
+	return dl.genesis.Header()
 }
 
 // FastSyncCommitHead manually sets the head block to a given hash.
@@ -1002,7 +1002,7 @@ func testInvalidHeaderRollback(t *testing.T, protocol int, mode SyncMode) {
 		t.Errorf("rollback head mismatch: have %v, want at most %v", head, 2*fsHeaderSafetyNet+MaxHeaderFetch)
 	}
 	if mode == FastSync {
-		if head := tester.CurrentBlock().NumberU64(); head != 0 {
+		if head := tester.CurrentBlock().Number.Uint64(); head != 0 {
 			t.Errorf("fast sync pivot block #%d not rolled back", head)
 		}
 	}
@@ -1025,7 +1025,7 @@ func testInvalidHeaderRollback(t *testing.T, protocol int, mode SyncMode) {
 		t.Errorf("rollback head mismatch: have %v, want at most %v", head, 2*fsHeaderSafetyNet+MaxHeaderFetch)
 	}
 	if mode == FastSync {
-		if head := tester.CurrentBlock().NumberU64(); head != 0 {
+		if head := tester.CurrentBlock().Number.Uint64(); head != 0 {
 			t.Errorf("fast sync pivot block #%d not rolled back", head)
 		}
 	}

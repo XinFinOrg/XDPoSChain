@@ -393,10 +393,18 @@ func (w *worker) getHashrate() int64 {
 }
 
 func getResetTime(chain *core.BlockChain, minePeriod int) time.Duration {
-	minePeriodDuration := time.Duration(minePeriod) * time.Second
-	currentBlockTime := int64(chain.CurrentBlock().Time())
-	nowTime := time.Now().UnixMilli()
-	resetTime := time.Duration(currentBlockTime)*time.Second + minePeriodDuration - time.Duration(nowTime)*time.Millisecond
+	var (
+		currentBlockTime   int64         = 0
+		nowTime            int64         = 0
+		resetTime          time.Duration = 0
+		minePeriodDuration time.Duration = time.Duration(minePeriod) * time.Second
+		header             *types.Header = chain.CurrentBlock()
+	)
+	if header != nil {
+		currentBlockTime = int64(header.Time)
+		nowTime = time.Now().UnixMilli()
+		resetTime = time.Duration(currentBlockTime)*time.Second + minePeriodDuration - time.Duration(nowTime)*time.Millisecond
+	}
 	// in case the current block time is not very accurate
 	if resetTime > minePeriodDuration || resetTime <= 0 {
 		resetTime = minePeriodDuration
@@ -622,6 +630,8 @@ func (w *worker) makeCurrent(parent *types.Block, header *types.Header) error {
 	return nil
 }
 
+// checkPreCommitWithLock checks whether a new work commit is needed with locks,
+// returns the parent block and shouldReturn.
 func (w *worker) checkPreCommitWithLock() (*types.Block, bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -633,15 +643,24 @@ func (w *worker) checkPreCommitWithLock() (*types.Block, bool) {
 	return w.checkPreCommit()
 }
 
+// checkPreCommit checks whether a new work commit is needed,
+// returns the parent block and shouldReturn.
 func (w *worker) checkPreCommit() (*types.Block, bool) {
 	c := w.engine.(*XDPoS.XDPoS)
 	var parent *types.Block
-	if c != nil {
-		parent = c.FindParentBlockToAssign(w.chain, w.chain.CurrentBlock())
-	} else {
-		parent = w.chain.CurrentBlock()
+	currentHeader := w.chain.CurrentBlock()
+	// Guard against nil header (early startup or uninitialised chain).
+	if currentHeader == nil {
+		return nil, true
 	}
-
+	if c != nil {
+		parent = c.FindParentBlockToAssign(w.chain, currentHeader)
+	} else {
+		parent = w.chain.GetBlock(currentHeader.Hash(), currentHeader.Number.Uint64())
+	}
+	if parent == nil {
+		return nil, true
+	}
 	if parent.Hash().Hex() == w.lastParentBlockCommit {
 		return parent, true
 	}
@@ -670,7 +689,7 @@ func (w *worker) checkPreCommit() (*types.Block, bool) {
 
 func (w *worker) commitNewWork() {
 	parent, shouldReturn := w.checkPreCommitWithLock()
-	if shouldReturn {
+	if parent == nil || shouldReturn {
 		return
 	}
 	tstart := time.Now()
@@ -693,7 +712,7 @@ func (w *worker) commitNewWork() {
 	defer w.currentMu.Unlock()
 
 	parent, shouldReturn = w.checkPreCommit()
-	if shouldReturn {
+	if parent == nil || shouldReturn {
 		return
 	}
 

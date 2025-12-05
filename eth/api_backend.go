@@ -68,7 +68,7 @@ func (b *EthAPIBackend) ChainConfig() *params.ChainConfig {
 	return b.eth.chainConfig
 }
 
-func (b *EthAPIBackend) CurrentBlock() *types.Block {
+func (b *EthAPIBackend) CurrentBlock() *types.Header {
 	return b.eth.blockchain.CurrentBlock()
 }
 
@@ -84,13 +84,13 @@ func (b *EthAPIBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNumb
 	}
 	// Otherwise resolve and return the block
 	if number == rpc.LatestBlockNumber {
-		return b.eth.blockchain.CurrentBlock().Header(), nil
+		return b.eth.blockchain.CurrentBlock(), nil
 	}
 	if number == rpc.FinalizedBlockNumber {
 		if b.eth.chainConfig.XDPoS == nil {
 			return nil, errors.New("PoW does not support confirmed block lookup")
 		}
-		current := b.eth.blockchain.CurrentBlock().Header()
+		current := b.eth.blockchain.CurrentBlock()
 		if b.eth.blockchain.Config().XDPoS.BlockConsensusVersion(current.Number) == params.ConsensusEngineVersion2 {
 			// TO CHECK: why calling config in XDPoS is blocked (not field and method)
 			confirmedHash := b.XDPoS.EngineV2.GetLatestCommittedBlockInfo().Hash
@@ -136,13 +136,17 @@ func (b *EthAPIBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumbe
 	}
 	// Otherwise resolve and return the block
 	if number == rpc.LatestBlockNumber {
-		return b.eth.blockchain.CurrentBlock(), nil
+		header := b.eth.blockchain.CurrentBlock()
+		return b.eth.blockchain.GetBlock(header.Hash(), header.Number.Uint64()), nil
 	}
 	if number == rpc.FinalizedBlockNumber {
 		if b.eth.chainConfig.XDPoS == nil {
 			return nil, errors.New("PoW does not support confirmed block lookup")
 		}
-		current := b.eth.blockchain.CurrentBlock().Header()
+		current := b.eth.blockchain.CurrentBlock()
+		if current == nil {
+			return nil, errors.New("current block is nil")
+		}
 		if b.eth.blockchain.Config().XDPoS.BlockConsensusVersion(current.Number) == params.ConsensusEngineVersion2 {
 			// TO CHECK: why calling config in XDPoS is blocked (not field and method)
 			confirmedHash := b.XDPoS.EngineV2.GetLatestCommittedBlockInfo().Hash
@@ -465,19 +469,19 @@ func (b *EthAPIBackend) GetRewardByHash(hash common.Hash) map[string]map[string]
 // 4. Calculate voters's rewards for input masternode
 func (b *EthAPIBackend) GetVotersRewards(masternodeAddr common.Address) map[common.Address]*big.Int {
 	chain := b.eth.blockchain
-	block := chain.CurrentBlock()
-	number := block.Number().Uint64()
+	header := chain.CurrentBlock()
+	number := header.Number.Uint64()
 	engine := b.Engine().(*XDPoS.XDPoS)
 	foundationWalletAddr := chain.Config().XDPoS.FoudationWalletAddr
 
 	// calculate for 2 epochs ago
-	currentCheckpointNumber, _, err := engine.GetCurrentEpochSwitchBlock(chain, block.Number())
+	currentCheckpointNumber, _, err := engine.GetCurrentEpochSwitchBlock(chain, header.Number)
 	if err != nil {
-		log.Error("[GetVotersRewards] Fail to get GetCurrentEpochSwitchBlock for current checkpoint block", "block", block.Number(), "err", err)
+		log.Error("[GetVotersRewards] Fail to get GetCurrentEpochSwitchBlock for current checkpoint block", "block", header.Number, "err", err)
 	}
 	lastCheckpointNumber, _, err := engine.GetCurrentEpochSwitchBlock(chain, big.NewInt(int64(currentCheckpointNumber-1)))
 	if err != nil {
-		log.Error("[GetVotersRewards] Fail to get GetCurrentEpochSwitchBlock for last checkpoint block", "block", block.Number(), "err", err)
+		log.Error("[GetVotersRewards] Fail to get GetCurrentEpochSwitchBlock for last checkpoint block", "block", header.Number, "err", err)
 	}
 
 	lastCheckpointBlock := chain.GetBlockByNumber(lastCheckpointNumber)
@@ -567,8 +571,8 @@ func (b *EthAPIBackend) GetVotersCap(checkpoint *big.Int, masterAddr common.Addr
 // ie 30min for each epoch
 func (b *EthAPIBackend) GetEpochDuration() *big.Int {
 	chain := b.eth.blockchain
-	block := chain.CurrentBlock()
-	number := block.Number().Uint64()
+	header := chain.CurrentBlock()
+	number := header.Number.Uint64()
 	lastCheckpointNumber := number - (number % b.ChainConfig().XDPoS.Epoch)
 	lastCheckpointBlockTime := chain.GetBlockByNumber(lastCheckpointNumber).Time()
 	secondToLastCheckpointNumber := lastCheckpointNumber - b.ChainConfig().XDPoS.Epoch

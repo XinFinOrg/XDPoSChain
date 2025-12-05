@@ -68,7 +68,7 @@ func errResp(code errCode, format string, v ...interface{}) error {
 type ProtocolManager struct {
 	networkId uint64
 
-	fastSync  uint32 // Flag whether fast sync is enabled (gets disabled if we already have blocks)
+	snapSync  uint32 // Flag whether snap sync is enabled (gets disabled if we already have blocks)
 	acceptTxs uint32 // Flag whether we're considered synchronised (enables transaction processing)
 
 	txpool      txPool
@@ -151,12 +151,12 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		lendingTxSub:   nil,
 	}
 	// Figure out whether to allow fast sync or not
-	if mode == downloader.FastSync && blockchain.CurrentBlock().NumberU64() > 0 {
+	if mode == downloader.FastSync && blockchain.CurrentBlock().Number.Uint64() > 0 {
 		log.Warn("Blockchain not empty, fast sync disabled")
 		mode = downloader.FullSync
 	}
 	if mode == downloader.FastSync {
-		manager.fastSync = uint32(1)
+		manager.snapSync = uint32(1)
 	}
 	// Initiate a sub-protocol for every implemented version we can handle
 	manager.SubProtocols = make([]p2p.Protocol, 0, len(ProtocolVersions))
@@ -215,12 +215,12 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 	}
 
 	heighter := func() uint64 {
-		return blockchain.CurrentBlock().NumberU64()
+		return blockchain.CurrentBlock().Number.Uint64()
 	}
 
 	inserter := func(block *types.Block) error {
 		// If fast sync is running, deny importing weird blocks
-		if atomic.LoadUint32(&manager.fastSync) == 1 {
+		if atomic.LoadUint32(&manager.snapSync) == 1 {
 			log.Warn("Discarded bad propagated block", "number", block.Number(), "hash", block.Hash())
 			return nil
 		}
@@ -230,7 +230,7 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 
 	prepare := func(block *types.Block) error {
 		// If fast sync is running, deny importing weird blocks
-		if atomic.LoadUint32(&manager.fastSync) == 1 {
+		if atomic.LoadUint32(&manager.snapSync) == 1 {
 			log.Warn("Discarded bad propagated block", "number", block.Number(), "hash", block.Hash())
 			return nil
 		}
@@ -751,7 +751,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			// a singe block (as the true TD is below the propagated block), however this
 			// scenario should easily be covered by the fetcher.
 			currentBlock := pm.blockchain.CurrentBlock()
-			if trueTD.Cmp(pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.NumberU64())) > 0 {
+			if trueTD.Cmp(pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64())) > 0 {
 				go pm.synchronise(p)
 			}
 		}
@@ -1096,7 +1096,7 @@ func (pm *ProtocolManager) NodeInfo() *NodeInfo {
 	currentBlock := pm.blockchain.CurrentBlock()
 	return &NodeInfo{
 		Network:    pm.networkId,
-		Difficulty: pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.NumberU64()),
+		Difficulty: pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64()),
 		Genesis:    pm.blockchain.Genesis().Hash(),
 		Config:     pm.blockchain.Config(),
 		Head:       currentBlock.Hash(),

@@ -55,16 +55,20 @@ func (api *DebugAPI) DumpBlock(blockNr rpc.BlockNumber) (state.Dump, error) {
 	if blockNr == rpc.PendingBlockNumber {
 		blockNr = rpc.LatestBlockNumber
 	}
-	var block *types.Block
+	var header *types.Header
 	if blockNr == rpc.LatestBlockNumber {
-		block = api.eth.blockchain.CurrentBlock()
+		header = api.eth.blockchain.CurrentBlock()
 	} else {
-		block = api.eth.blockchain.GetBlockByNumber(uint64(blockNr))
+		block := api.eth.blockchain.GetBlockByNumber(uint64(blockNr))
+		if block == nil {
+			return state.Dump{}, fmt.Errorf("block #%d not found", blockNr)
+		}
+		header = block.Header()
 	}
-	if block == nil {
+	if header == nil {
 		return state.Dump{}, fmt.Errorf("block #%d not found", blockNr)
 	}
-	stateDb, err := api.eth.BlockChain().StateAt(block.Root())
+	stateDb, err := api.eth.BlockChain().StateAt(header.Root)
 	if err != nil {
 		return state.Dump{}, err
 	}
@@ -128,16 +132,20 @@ func (api *DebugAPI) AccountRange(blockNrOrHash rpc.BlockNumberOrHash, start []b
 			// the miner and operate on those
 			_, stateDb = api.eth.miner.Pending()
 		} else {
-			var block *types.Block
+			var header *types.Header
 			if number == rpc.LatestBlockNumber {
-				block = api.eth.blockchain.CurrentBlock()
+				header = api.eth.blockchain.CurrentBlock()
 			} else {
-				block = api.eth.blockchain.GetBlockByNumber(uint64(number))
+				block := api.eth.blockchain.GetBlockByNumber(uint64(number))
+				if block == nil {
+					return state.IteratorDump{}, fmt.Errorf("block #%d not found", number)
+				}
+				header = block.Header()
 			}
-			if block == nil {
+			if header == nil {
 				return state.IteratorDump{}, fmt.Errorf("block #%d not found", number)
 			}
-			stateDb, err = api.eth.BlockChain().StateAt(block.Root())
+			stateDb, err = api.eth.BlockChain().StateAt(header.Root)
 			if err != nil {
 				return state.IteratorDump{}, err
 			}
