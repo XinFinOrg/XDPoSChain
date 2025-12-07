@@ -22,7 +22,7 @@ func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainReader, vote *types.Vo
 		return false, nil
 	}
 
-	epochInfo, err := x.getEpochSwitchInfo(chain, chain.CurrentHeader(), chain.CurrentHeader().Hash())
+	epochInfo, err := x.getEpochSwitchInfo(chain, nil, vote.ProposedBlockInfo.Hash)
 	if err != nil {
 		log.Error("[VerifyVoteMessage] Fail to get epochInfo when verifying vote message!", "blockNum", vote.ProposedBlockInfo.Number, "blockHash", vote.ProposedBlockInfo.Hash, "voteHash", vote.Hash(), "voteGapNumber", vote.GapNumber, "err", err)
 		return false, err
