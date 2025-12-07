@@ -332,7 +332,7 @@ func (w *wizard) makeGenesis() {
 		// Validator Smart Contract Code
 		pKey, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 		addr := crypto.PubkeyToAddress(pKey.PublicKey)
-		contractBackend := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: big.NewInt(1000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
+		contractBackend := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: big.NewInt(1000000000)}}, 10_000_000_000, params.TestXDPoSMockChainConfig)
 		//lint:ignore SA1019 chainID is not determined at this time
 		transactOpts := bind.NewKeyedTransactor(pKey)
 
