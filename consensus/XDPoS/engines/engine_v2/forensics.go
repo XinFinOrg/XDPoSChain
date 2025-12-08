@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"reflect"
 	"strings"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -201,65 +200,6 @@ func (f *Forensics) SendForensicProof(chain consensus.ChainReader, engine *XDPoS
 	return nil
 }
 
-// Utils function to help find the n-th previous QC. It returns an array of QC in ascending order including the currentQc as the last item in the array
-func (f *Forensics) findAncestorQCs(chain consensus.ChainReader, currentQc types.QuorumCert, distanceFromCurrrentQc int) ([]types.QuorumCert, error) {
-	var quorumCerts []types.QuorumCert
-	quorumCertificate := currentQc
-	// Append the initial value
-	quorumCerts = append(quorumCerts, quorumCertificate)
-	// Append the parents
-	for i := 0; i < distanceFromCurrrentQc; i++ {
-		parentHash := quorumCertificate.ProposedBlockInfo.Hash
-		parentHeader := chain.GetHeaderByHash(parentHash)
-		if parentHeader == nil {
-			log.Error("[findAncestorQCs] Forensics findAncestorQCs unable to find its parent block header", "ParentHash", parentHash.Hex())
-			return nil, errors.New("unable to find parent block header in forensics")
-		}
-		var decodedExtraField types.ExtraFields_v2
-		err := utils.DecodeBytesExtraFields(parentHeader.Extra, &decodedExtraField)
-		if err != nil {
-			log.Error("[findAncestorQCs] Error while trying to decode from parent block extra", "BlockNum", parentHeader.Number.Int64(), "ParentHash", parentHash.Hex())
-		}
-		quorumCertificate = *decodedExtraField.QuorumCert
-		quorumCerts = append(quorumCerts, quorumCertificate)
-	}
-	// The quorumCerts is in the reverse order, we need to flip it
-	var quorumCertsInAscendingOrder []types.QuorumCert
-	for i := len(quorumCerts) - 1; i >= 0; i-- {
-		quorumCertsInAscendingOrder = append(quorumCertsInAscendingOrder, quorumCerts[i])
-	}
-	return quorumCertsInAscendingOrder, nil
-}
-
-// Check whether two provided QC set are on the same chain
-func (f *Forensics) checkQCsOnTheSameChain(chain consensus.ChainReader, highestCommittedQCs []types.QuorumCert, incomingQCandItsParents []types.QuorumCert) (bool, error) {
-	// Re-order two sets of QCs by block Number
-	lowerBlockNumQCs := highestCommittedQCs
-	higherBlockNumQCs := incomingQCandItsParents
-	if incomingQCandItsParents[0].ProposedBlockInfo.Number.Cmp(highestCommittedQCs[0].ProposedBlockInfo.Number) == -1 {
-		lowerBlockNumQCs = incomingQCandItsParents
-		higherBlockNumQCs = highestCommittedQCs
-	}
-
-	proposedBlockInfo := higherBlockNumQCs[0].ProposedBlockInfo
-	for i := 0; i < int((big.NewInt(0).Sub(higherBlockNumQCs[0].ProposedBlockInfo.Number, lowerBlockNumQCs[0].ProposedBlockInfo.Number)).Int64()); i++ {
-		parentHeader := chain.GetHeaderByHash(proposedBlockInfo.Hash)
-		var decodedExtraField types.ExtraFields_v2
-		err := utils.DecodeBytesExtraFields(parentHeader.Extra, &decodedExtraField)
-		if err != nil {
-			log.Error("[checkQCsOnTheSameChain] Fail to decode extra when checking the two QCs set on the same chain", "err", err)
-			return false, err
-		}
-		proposedBlockInfo = decodedExtraField.QuorumCert.ProposedBlockInfo
-	}
-	// Check the final proposed blockInfo is the same as what we have from lowerBlockNumQCs[0]
-	if reflect.DeepEqual(proposedBlockInfo, lowerBlockNumQCs[0].ProposedBlockInfo) {
-		return true, nil
-	}
-
-	return false, nil
-}
-
 // Given the two QCs set, find if there are any QC that have the same round
 func (f *Forensics) findQCsInSameRound(quorumCerts1 []types.QuorumCert, quorumCerts2 []types.QuorumCert) (bool, types.QuorumCert, types.QuorumCert) {
 	for _, quorumCert1 := range quorumCerts1 {
@@ -292,37 +232,6 @@ func (f *Forensics) getQcSignerAddresses(quorumCert types.QuorumCert) []string {
 		signerList = append(signerList, signerAddress.Hex())
 	}
 	return signerList
-}
-
-// Check whether the given QCs are on the same chain as the stored committed QCs(f.HighestCommittedQCs) regardless their orders
-func (f *Forensics) findAncestorQcThroughRound(chain consensus.ChainReader, highestCommittedQCs []types.QuorumCert, incomingQCandItsParents []types.QuorumCert) (types.QuorumCert, []types.QuorumCert, []types.QuorumCert, error) {
-	/*
-		Re-order two sets of QCs by Round number
-	*/
-	lowerRoundQCs := highestCommittedQCs
-	higherRoundQCs := incomingQCandItsParents
-	if incomingQCandItsParents[0].ProposedBlockInfo.Round < highestCommittedQCs[0].ProposedBlockInfo.Round {
-		lowerRoundQCs = incomingQCandItsParents
-		higherRoundQCs = highestCommittedQCs
-	}
-
-	// Find the ancestorFromIncomingQC1 that matches round number < lowerRoundQCs3
-	ancestorQC := higherRoundQCs[0]
-	for ancestorQC.ProposedBlockInfo.Round >= lowerRoundQCs[NUM_OF_FORENSICS_QC-1].ProposedBlockInfo.Round {
-		proposedBlock := chain.GetHeaderByHash(ancestorQC.ProposedBlockInfo.Hash)
-		var decodedExtraField types.ExtraFields_v2
-		err := utils.DecodeBytesExtraFields(proposedBlock.Extra, &decodedExtraField)
-		if err != nil {
-			log.Error("[findAncestorQcThroughRound] Error while trying to decode extra field", "ProposedBlockInfo.Hash", ancestorQC.ProposedBlockInfo.Hash)
-			return ancestorQC, lowerRoundQCs, higherRoundQCs, err
-		}
-		// Found the ancestor QC
-		if decodedExtraField.QuorumCert.ProposedBlockInfo.Round < lowerRoundQCs[NUM_OF_FORENSICS_QC-1].ProposedBlockInfo.Round {
-			return ancestorQC, lowerRoundQCs, higherRoundQCs, nil
-		}
-		ancestorQC = *decodedExtraField.QuorumCert
-	}
-	return ancestorQC, lowerRoundQCs, higherRoundQCs, errors.New("[findAncestorQcThroughRound] Could not find ancestor QC")
 }
 
 func (f *Forensics) FindAncestorBlockHash(chain consensus.ChainReader, firstBlockInfo *types.BlockInfo, secondBlockInfo *types.BlockInfo) (common.Hash, []string, []string, error) {
@@ -454,41 +363,6 @@ func (f *Forensics) ProcessVoteEquivocation(chain consensus.ChainReader, engine 
 	return nil
 }
 */
-
-func (f *Forensics) isExtendingFromAncestor(blockChainReader consensus.ChainReader, currentBlock *types.BlockInfo, ancestorBlock *types.BlockInfo) (bool, error) {
-	blockNumDiff := int(big.NewInt(0).Sub(currentBlock.Number, ancestorBlock.Number).Int64())
-
-	nextBlockHash := currentBlock.Hash
-	for i := 0; i < blockNumDiff; i++ {
-		parentBlock := blockChainReader.GetHeaderByHash(nextBlockHash)
-		if parentBlock == nil {
-			return false, fmt.Errorf("could not find its parent block when checking whether currentBlock %v with hash %v is extending from the ancestorBlock %v", currentBlock.Number, currentBlock.Hash, ancestorBlock.Number)
-		} else {
-			nextBlockHash = parentBlock.ParentHash
-		}
-		log.Debug("[isExtendingFromAncestor] Found parent block", "CurrentBlockHash", currentBlock.Hash, "ParentHash", nextBlockHash)
-	}
-
-	if nextBlockHash == ancestorBlock.Hash {
-		return true, nil
-	}
-	return false, nil
-}
-
-func (f *Forensics) isVoteBlamed(chain consensus.ChainReader, highestCommittedQCs []types.QuorumCert, incomingVote *types.Vote) (bool, *types.QuorumCert, error) {
-	proposedBlock := chain.GetHeaderByHash(incomingVote.ProposedBlockInfo.Hash)
-	var decodedExtraField types.ExtraFields_v2
-	err := utils.DecodeBytesExtraFields(proposedBlock.Extra, &decodedExtraField)
-	if err != nil {
-		log.Error("[findAncestorVoteThroughRound] Error while trying to decode extra field", "ProposedBlockInfo.Hash", incomingVote.ProposedBlockInfo.Hash)
-		return false, nil, err
-	}
-	// Found the parent QC, if its round < hcqc3's round, return true
-	if decodedExtraField.QuorumCert.ProposedBlockInfo.Round < highestCommittedQCs[NUM_OF_FORENSICS_QC-1].ProposedBlockInfo.Round {
-		return true, decodedExtraField.QuorumCert, nil
-	}
-	return false, decodedExtraField.QuorumCert, nil
-}
 
 func (f *Forensics) DetectEquivocationInVotePool(vote *types.Vote, votePool *utils.Pool) {
 	return

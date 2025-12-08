@@ -139,7 +139,6 @@ var (
 		utils.StoreRewardFlag,
 		utils.SetHeadFlag,
 		utils.DeleteAllBadBlocksFlag,
-		utils.XDCSlaveModeFlag,
 	}, utils.NetworkFlags, utils.DatabaseFlags)
 
 	rpcFlags = []cli.Flag{
@@ -346,35 +345,29 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, cfg X
 		go func() {
 			started := false
 			ok := false
-			slaveMode := ctx.IsSet(utils.XDCSlaveModeFlag.Name)
 			var err error
 			ok, err = ethBackend.ValidateMasternode()
 			if err != nil {
 				utils.Fatalf("Can't verify masternode permission: %v", err)
 			}
 			if ok {
-				if slaveMode {
-					log.Info("Masternode slave mode found.")
-					started = false
-				} else {
-					log.Info("Masternode found. Enabling staking mode...")
-					// Use a reduced number of threads if requested
-					if threads := ctx.Int(utils.MinerThreadsFlag.Name); threads > 0 {
-						type threaded interface {
-							SetThreads(threads int)
-						}
-						if th, ok := ethBackend.Engine().(threaded); ok {
-							th.SetThreads(threads)
-						}
+				log.Info("Masternode found. Enabling staking mode...")
+				// Use a reduced number of threads if requested
+				if threads := ctx.Int(utils.MinerThreadsFlag.Name); threads > 0 {
+					type threaded interface {
+						SetThreads(threads int)
 					}
-					// Set the gas price to the limits from the CLI and start mining
-					ethBackend.TxPool().SetGasPrice(cfg.Eth.GasPrice)
-					if err := ethBackend.StartStaking(true); err != nil {
-						utils.Fatalf("Failed to start staking: %v", err)
+					if th, ok := ethBackend.Engine().(threaded); ok {
+						th.SetThreads(threads)
 					}
-					started = true
-					log.Info("Enabled staking node!!!")
 				}
+				// Set the gas price to the limits from the CLI and start mining
+				ethBackend.TxPool().SetGasPrice(cfg.Eth.GasPrice)
+				if err := ethBackend.StartStaking(true); err != nil {
+					utils.Fatalf("Failed to start staking: %v", err)
+				}
+				started = true
+				log.Info("Enabled staking node!!!")
 			}
 			defer close(core.CheckpointCh)
 			for range core.CheckpointCh {
@@ -395,28 +388,23 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, cfg X
 						log.Info("Cancelled mining mode!!!")
 					}
 				} else if !started {
-					if slaveMode {
-						log.Info("Masternode slave mode found.")
-						started = false
-					} else {
-						log.Info("Masternode found. Enabling staking mode...")
-						// Use a reduced number of threads if requested
-						if threads := ctx.Int(utils.MinerThreadsFlag.Name); threads > 0 {
-							type threaded interface {
-								SetThreads(threads int)
-							}
-							if th, ok := ethBackend.Engine().(threaded); ok {
-								th.SetThreads(threads)
-							}
+					log.Info("Masternode found. Enabling staking mode...")
+					// Use a reduced number of threads if requested
+					if threads := ctx.Int(utils.MinerThreadsFlag.Name); threads > 0 {
+						type threaded interface {
+							SetThreads(threads int)
 						}
-						// Set the gas price to the limits from the CLI and start mining
-						ethBackend.TxPool().SetGasPrice(cfg.Eth.GasPrice)
-						if err := ethBackend.StartStaking(true); err != nil {
-							utils.Fatalf("Failed to start staking: %v", err)
+						if th, ok := ethBackend.Engine().(threaded); ok {
+							th.SetThreads(threads)
 						}
-						started = true
-						log.Info("Enabled staking node!!!")
 					}
+					// Set the gas price to the limits from the CLI and start mining
+					ethBackend.TxPool().SetGasPrice(cfg.Eth.GasPrice)
+					if err := ethBackend.StartStaking(true); err != nil {
+						utils.Fatalf("Failed to start staking: %v", err)
+					}
+					started = true
+					log.Info("Enabled staking node!!!")
 				}
 			}
 		}()

@@ -31,7 +31,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	math "github.com/XinFinOrg/XDPoSChain/common/math"
-	"github.com/XinFinOrg/XDPoSChain/common/sort"
+	xdc_sort "github.com/XinFinOrg/XDPoSChain/common/sort"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
@@ -897,7 +897,7 @@ func (api *BlockChainAPI) GetCandidateStatus(ctx context.Context, coinbaseAddres
 			result[fieldStatus] = statusMasternode
 			if !isCandidate {
 				result[fieldCapacity] = -1
-				log.Warn("Find non-candidate masternode", "masternode", masternode.String(), "checkpointNumber", checkpointNumber, "epoch", epoch, "epochNumber", epochNumber)
+				log.Warn("Find non-candidate masternode", "masternode", masternode, "checkpointNumber", checkpointNumber, "epoch", epoch, "epochNumber", epochNumber)
 			}
 			return result, nil
 		}
@@ -908,7 +908,7 @@ func (api *BlockChainAPI) GetCandidateStatus(ctx context.Context, coinbaseAddres
 	}
 
 	if len(candidates) > maxMasternodes {
-		sort.Slice(candidates, func(i, j int) bool {
+		xdc_sort.Slice(candidates, func(i, j int) bool {
 			return candidates[i].Stake.Cmp(candidates[j].Stake) > 0
 		})
 	}
@@ -1068,7 +1068,7 @@ func (api *BlockChainAPI) GetCandidates(ctx context.Context, epoch rpc.EpochNumb
 	}
 
 	if len(candidates) > maxMasternodes {
-		sort.Slice(candidates, func(i, j int) bool {
+		xdc_sort.Slice(candidates, func(i, j int) bool {
 			return candidates[i].Stake.Cmp(candidates[j].Stake) > 0
 		})
 	}
@@ -1698,6 +1698,11 @@ func newRPCTransaction(tx *types.Transaction, blockHash common.Hash, blockNumber
 		result.TransactionIndex = (*hexutil.Uint64)(&index)
 	}
 	switch tx.Type() {
+	case types.LegacyTxType:
+		// if a legacy transaction has an EIP-155 chain id, include it explicitly
+		if id := tx.ChainId(); id.Sign() > 0 {
+			result.ChainID = (*hexutil.Big)(id)
+		}
 	case types.AccessListTxType:
 		al := tx.AccessList()
 		result.Accesses = &al
@@ -1711,17 +1716,24 @@ func newRPCTransaction(tx *types.Transaction, blockHash common.Hash, blockNumber
 		// if the transaction has been mined, compute the effective gas price
 		if baseFee != nil && blockHash != (common.Hash{}) {
 			// price = min(tip, gasFeeCap - baseFee) + baseFee
-			price := new(big.Int).Add(tx.GasTipCap(), baseFee)
-			txGasFeeCap := tx.GasFeeCap()
-			if price.Cmp(txGasFeeCap) > 0 {
-				price = txGasFeeCap
-			}
-			result.GasPrice = (*hexutil.Big)(price)
+			result.GasPrice = (*hexutil.Big)(effectiveGasPrice(tx, baseFee))
 		} else {
 			result.GasPrice = (*hexutil.Big)(tx.GasFeeCap())
 		}
 	}
 	return result
+}
+
+// effectiveGasPrice computes the transaction gas fee, based on the given basefee value.
+//
+//	price = min(gasTipCap + baseFee, gasFeeCap)
+func effectiveGasPrice(tx *types.Transaction, baseFee *big.Int) *big.Int {
+	fee := tx.GasTipCap()
+	fee = fee.Add(fee, baseFee)
+	if tx.GasFeeCapIntCmp(fee) < 0 {
+		return tx.GasFeeCap()
+	}
+	return fee
 }
 
 // newRPCPendingTransaction returns a pending transaction that will serialize to the RPC representation

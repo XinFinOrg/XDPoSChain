@@ -19,7 +19,7 @@ package main
 import (
 	"encoding/json"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
@@ -226,7 +226,7 @@ func (stats serverStats) render() {
 	for server := range stats {
 		servers = append(servers, server)
 	}
-	sort.Strings(servers)
+	slices.Sort(servers)
 
 	for i, server := range servers {
 		// Add a separator between all servers
@@ -238,7 +238,7 @@ func (stats serverStats) render() {
 		for service := range stats[server].services {
 			services = append(services, service)
 		}
-		sort.Strings(services)
+		slices.Sort(services)
 
 		if len(services) == 0 {
 			table.Append([]string{server, stats[server].address, "", "", ""})
@@ -253,7 +253,7 @@ func (stats serverStats) render() {
 			for service := range stats[server].services[service] {
 				configs = append(configs, service)
 			}
-			sort.Strings(configs)
+			slices.Sort(configs)
 
 			for k, config := range configs {
 				switch {

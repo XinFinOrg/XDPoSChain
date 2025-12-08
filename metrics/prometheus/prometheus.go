@@ -20,7 +20,7 @@ package prometheus
 import (
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/metrics"
@@ -34,7 +34,7 @@ func Handler(reg metrics.Registry) http.Handler {
 		reg.Each(func(name string, i interface{}) {
 			names = append(names, name)
 		})
-		sort.Strings(names)
+		slices.Sort(names)
 
 		// Aggregate all the metrics into a Prometheus collector
 		c := newCollector()

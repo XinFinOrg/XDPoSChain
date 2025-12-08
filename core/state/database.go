@@ -132,6 +132,12 @@ func NewDatabase(db ethdb.Database) Database {
 	return NewDatabaseWithConfig(db, nil)
 }
 
+// NewDatabaseForTesting is similar to NewDatabase, but it initializes the caching
+// db by using an ephemeral memory db with default config for testing.
+func NewDatabaseForTesting() Database {
+	return NewDatabase(rawdb.NewMemoryDatabase())
+}
+
 // NewDatabaseWithConfig creates a backing store for state. The returned database
 // is safe for concurrent use and retains a lot of collapsed RLP trie nodes in a
 // large memory cache.

@@ -742,7 +742,6 @@ func TestPostponing(t *testing.T) {
 	// Add a batch consecutive pending transactions for validation
 	txs := []*types.Transaction{}
 	for i, key := range keys {
-
 		for j := 0; j < 10; j++ {
 			var tx *types.Transaction
 			if (i+j)%2 == 0 {

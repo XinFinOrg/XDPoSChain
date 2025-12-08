@@ -64,6 +64,7 @@ type constant struct {
 	tipEpochHalving        *big.Int
 	eip1559Block           *big.Int
 	cancunBlock            *big.Int
+	pragueBlock            *big.Int
 
 	trc21IssuerSMC         Address
 	xdcxListingSMC         Address
@@ -98,6 +99,7 @@ var (
 	TIPXDCXReceiverDisable = MainnetConstant.tipXDCXReceiverDisable
 	Eip1559Block           = MainnetConstant.eip1559Block
 	CancunBlock            = MainnetConstant.cancunBlock
+	PragueBlock            = MainnetConstant.pragueBlock
 	TIPUpgradeReward       = MainnetConstant.tipUpgradeReward
 	TipUpgradePenalty      = MainnetConstant.tipUpgradePenalty
 	TIPEpochHalving        = MainnetConstant.tipEpochHalving
@@ -160,6 +162,7 @@ func CopyConstants(chainID uint64) {
 	TIPXDCXReceiverDisable = c.tipXDCXReceiverDisable
 	Eip1559Block = c.eip1559Block
 	CancunBlock = c.cancunBlock
+	PragueBlock = c.pragueBlock
 	TIPUpgradeReward = c.tipUpgradeReward
 	TipUpgradePenalty = c.tipUpgradePenalty
 	TIPEpochHalving = c.tipEpochHalving

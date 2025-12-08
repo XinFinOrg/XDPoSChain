@@ -40,6 +40,7 @@ var DeprecatedFlags = []cli.Flag{
 	XDCXDataDirFlag,
 	LightServFlag,
 	LightPeersFlag,
+	Enable0xPrefixFlag,
 }
 
 var (
@@ -98,6 +99,13 @@ var (
 	EnablePersonal = &cli.BoolFlag{
 		Name:     "rpc.enabledeprecatedpersonal",
 		Usage:    "This used to enable the 'personal' namespace.",
+		Category: flags.DeprecatedCategory,
+	}
+	// Deprecated November 2025
+	Enable0xPrefixFlag = &cli.BoolFlag{
+		Name:     "enable-0x-prefix",
+		Usage:    "Address use 0x-prefix (Deprecated: this is on by default, to use xdc prefix use --enable-xdc-prefix)",
+		Value:    true,
 		Category: flags.DeprecatedCategory,
 	}
 )

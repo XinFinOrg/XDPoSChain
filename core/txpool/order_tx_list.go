@@ -18,6 +18,7 @@ package txpool
 
 import (
 	"container/heap"
+	"slices"
 	"sort"
 
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -108,13 +109,14 @@ func (m *ordertxSortedMap) Cap(threshold int) types.OrderTransactions {
 	// Otherwise gather and drop the highest nonce'd transactions
 	var drops types.OrderTransactions
 
-	sort.Sort(*m.index)
+	slices.Sort(*m.index)
 	for size := len(m.items); size > threshold; size-- {
 		drops = append(drops, m.items[(*m.index)[size-1]])
 		delete(m.items, (*m.index)[size-1])
 	}
 	*m.index = (*m.index)[:threshold]
-	heap.Init(m.index)
+	// The sorted m.index slice is still a valid heap, so there is no need to
+	// reheap after deleting tail items.
 
 	// If we had a cache, shift the back
 	if m.cache != nil {

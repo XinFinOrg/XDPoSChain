@@ -100,6 +100,9 @@ type TxData interface {
 	// copy of the computed value, i.e. callers are allowed to mutate the result.
 	// Method implementations can use 'dst' to store the result.
 	effectiveGasPrice(dst *big.Int, baseFee *big.Int) *big.Int
+
+	encode(*bytes.Buffer) error
+	decode([]byte) error
 }
 
 // EncodeRLP implements rlp.Encoder
@@ -120,7 +123,7 @@ func (tx *Transaction) EncodeRLP(w io.Writer) error {
 // encodeTyped writes the canonical encoding of a typed transaction to w.
 func (tx *Transaction) encodeTyped(w *bytes.Buffer) error {
 	w.WriteByte(tx.Type())
-	return rlp.Encode(w, tx.inner)
+	return tx.inner.encode(w)
 }
 
 // MarshalBinary returns the canonical encoding of the transaction.
@@ -146,7 +149,7 @@ func (tx *Transaction) DecodeRLP(s *rlp.Stream) error {
 		var inner LegacyTx
 		err := s.Decode(&inner)
 		if err == nil {
-			tx.setDecoded(&inner, int(rlp.ListSize(size)))
+			tx.setDecoded(&inner, rlp.ListSize(size))
 		}
 		return err
 	default:
@@ -157,7 +160,7 @@ func (tx *Transaction) DecodeRLP(s *rlp.Stream) error {
 		}
 		inner, err := tx.decodeTyped(b)
 		if err == nil {
-			tx.setDecoded(inner, len(b))
+			tx.setDecoded(inner, uint64(len(b)))
 		}
 		return err
 	}
@@ -173,7 +176,7 @@ func (tx *Transaction) UnmarshalBinary(b []byte) error {
 		if err != nil {
 			return err
 		}
-		tx.setDecoded(&data, len(b))
+		tx.setDecoded(&data, uint64(len(b)))
 		return nil
 	}
 	// It's an EIP2718 typed transaction envelope.
@@ -181,7 +184,7 @@ func (tx *Transaction) UnmarshalBinary(b []byte) error {
 	if err != nil {
 		return err
 	}
-	tx.setDecoded(inner, len(b))
+	tx.setDecoded(inner, uint64(len(b)))
 	return nil
 }
 
@@ -190,26 +193,25 @@ func (tx *Transaction) decodeTyped(b []byte) (TxData, error) {
 	if len(b) <= 1 {
 		return nil, errShortTypedTx
 	}
+	var inner TxData
 	switch b[0] {
 	case AccessListTxType:
-		var inner AccessListTx
-		err := rlp.DecodeBytes(b[1:], &inner)
-		return &inner, err
+		inner = new(AccessListTx)
 	case DynamicFeeTxType:
-		var inner DynamicFeeTx
-		err := rlp.DecodeBytes(b[1:], &inner)
-		return &inner, err
+		inner = new(DynamicFeeTx)
 	default:
 		return nil, ErrTxTypeNotSupported
 	}
+	err := inner.decode(b[1:])
+	return inner, err
 }
 
 // setDecoded sets the inner transaction and size after decoding.
-func (tx *Transaction) setDecoded(inner TxData, size int) {
+func (tx *Transaction) setDecoded(inner TxData, size uint64) {
 	tx.inner = inner
 	tx.time = time.Now()
 	if size > 0 {
-		tx.size.Store(common.StorageSize(size))
+		tx.size.Store(size)
 	}
 }
 
@@ -407,16 +409,26 @@ func (tx *Transaction) Hash() common.Hash {
 	return h
 }
 
-// Size returns the true RLP encoded storage size of the transaction, either by
-// encoding and returning it, or returning a previously cached value.
-func (tx *Transaction) Size() common.StorageSize {
+// Size returns the true encoded storage size of the transaction, either by encoding
+// and returning it, or returning a previously cached value.
+func (tx *Transaction) Size() uint64 {
 	if size := tx.size.Load(); size != nil {
-		return size.(common.StorageSize)
+		return size.(uint64)
 	}
+
+	// Cache miss, encode and cache.
+	// Note we rely on the assumption that all tx.inner values are RLP-encoded
 	c := writeCounter(0)
 	rlp.Encode(&c, &tx.inner)
-	tx.size.Store(common.StorageSize(c))
-	return common.StorageSize(c)
+	size := uint64(c)
+
+	// For typed transactions, the encoding also includes the leading type byte.
+	if tx.Type() != LegacyTxType {
+		size++
+	}
+
+	tx.size.Store(size)
+	return size
 }
 
 func (tx *Transaction) EffectiveGasPrice(dst *big.Int, baseFee *big.Int) *big.Int {

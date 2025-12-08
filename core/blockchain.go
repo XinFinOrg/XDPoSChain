@@ -33,7 +33,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common/lru"
 	"github.com/XinFinOrg/XDPoSChain/common/mclock"
 	"github.com/XinFinOrg/XDPoSChain/common/prque"
-	"github.com/XinFinOrg/XDPoSChain/common/sort"
+	xdc_sort "github.com/XinFinOrg/XDPoSChain/common/sort"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
@@ -1292,12 +1292,17 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 	defer bc.wg.Done()
 
 	// Do a sanity check that the provided chain is actually ordered and linked
-	for i := 1; i < len(blockChain); i++ {
-		if blockChain[i].NumberU64() != blockChain[i-1].NumberU64()+1 || blockChain[i].ParentHash() != blockChain[i-1].Hash() {
-			log.Error("Non contiguous receipt insert", "number", blockChain[i].Number(), "hash", blockChain[i].Hash(), "parent", blockChain[i].ParentHash(),
-				"prevnumber", blockChain[i-1].Number(), "prevhash", blockChain[i-1].Hash())
-			return 0, fmt.Errorf("non contiguous insert: item %d is #%d [%x..], item %d is #%d [%x..] (parent [%x..])", i-1, blockChain[i-1].NumberU64(),
-				blockChain[i-1].Hash().Bytes()[:4], i, blockChain[i].NumberU64(), blockChain[i].Hash().Bytes()[:4], blockChain[i].ParentHash().Bytes()[:4])
+	for i, block := range blockChain {
+		if i != 0 {
+			prev := blockChain[i-1]
+			if block.NumberU64() != prev.NumberU64()+1 || block.ParentHash() != prev.Hash() {
+				log.Error("Non contiguous receipt insert",
+					"number", block.Number(), "hash", block.Hash(), "parent", block.ParentHash(),
+					"prevnumber", prev.Number(), "prevhash", prev.Hash())
+				return 0, fmt.Errorf("non contiguous insert: item %d is #%d [%x..], item %d is #%d [%x..] (parent [%x..])",
+					i-1, prev.NumberU64(), prev.Hash().Bytes()[:4],
+					i, block.NumberU64(), block.Hash().Bytes()[:4], blockChain[i].ParentHash().Bytes()[:4])
+			}
 		}
 	}
 
@@ -2045,7 +2050,7 @@ func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (i
 	// Import all the pruned blocks to make the state available
 	var (
 		blocks []*types.Block
-		memory common.StorageSize
+		memory uint64
 	)
 	for i := len(hashes) - 1; i >= 0; i-- {
 		// Append the next block to our batch
@@ -2803,12 +2808,12 @@ func (bc *BlockChain) UpdateM1() error {
 		log.Error("No masternode found. Stopping node")
 		return errors.New("no masternode found")
 	} else {
-		sort.Slice(ms, func(i, j int) bool {
+		xdc_sort.Slice(ms, func(i, j int) bool {
 			return ms[i].Stake.Cmp(ms[j].Stake) >= 0
 		})
 		log.Info("Ordered list of masternode candidates")
 		for _, m := range ms {
-			log.Info("", "address", m.Address.String(), "stake", m.Stake)
+			log.Info("", "address", m.Address, "stake", m.Stake)
 		}
 		// update masternodes
 

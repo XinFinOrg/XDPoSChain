@@ -78,6 +78,8 @@ var (
 	// used by old db, now only used for conversion
 	oldTxMetaSuffix = []byte{0x01}
 
+	sectionHeadKeyPrefix = []byte("shead")
+
 	preimageCounter    = metrics.NewRegisteredCounter("db/preimage/total", nil)
 	preimageHitCounter = metrics.NewRegisteredCounter("db/preimage/hits", nil)
 )
@@ -201,4 +203,11 @@ func accountTrieNodeKey(path []byte) []byte {
 // storageTrieNodeKey = trieNodeStoragePrefix + accountHash + nodePath.
 func storageTrieNodeKey(accountHash common.Hash, path []byte) []byte {
 	return append(append(trieNodeStoragePrefix, accountHash.Bytes()...), path...)
+}
+
+// sectionHeadKey = sectionHeadKeyPrefix + section (uint64 big endian)
+func sectionHeadKey(section uint64) []byte {
+	var data [8]byte
+	binary.BigEndian.PutUint64(data[:], section)
+	return append(sectionHeadKeyPrefix, data[:]...)
 }

@@ -10,23 +10,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
-// get epoch switch of the previous `limit` epoch
-func (x *XDPoS_v2) getPreviousEpochSwitchInfoByHash(chain consensus.ChainReader, hash common.Hash, limit int) (*types.EpochSwitchInfo, error) {
-	epochSwitchInfo, err := x.getEpochSwitchInfo(chain, nil, hash)
-	if err != nil {
-		log.Error("[getPreviousEpochSwitchInfoByHash] Adaptor v2 getEpochSwitchInfo has error, potentially bug", "err", err)
-		return nil, err
-	}
-	for i := 0; i < limit; i++ {
-		epochSwitchInfo, err = x.getEpochSwitchInfo(chain, nil, epochSwitchInfo.EpochSwitchParentBlockInfo.Hash)
-		if err != nil {
-			log.Error("[getPreviousEpochSwitchInfoByHash] Adaptor v2 getEpochSwitchInfo has error, potentially bug", "err", err)
-			return nil, err
-		}
-	}
-	return epochSwitchInfo, nil
-}
-
 // Given header and its hash, get epoch switch info from the epoch switch block of that epoch,
 // header is allow to be nil.
 func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, header *types.Header, hash common.Hash) (*types.EpochSwitchInfo, error) {

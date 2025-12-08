@@ -36,7 +36,6 @@ import (
 var (
 	errInvalidEvent = errors.New("invalid in current state")
 	errNoQuery      = errors.New("no pending query")
-	errWrongAddress = errors.New("unknown sender address")
 )
 
 const (
@@ -78,14 +77,6 @@ type Network struct {
 	nursery       []*Node
 	nodes         map[NodeID]*Node // tracks active nodes with state != known
 	timeoutTimers map[timeoutEvent]*time.Timer
-
-	// Revalidation queues.
-	// Nodes put on these queues will be pinged eventually.
-	slowRevalidateQueue []*Node
-	fastRevalidateQueue []*Node
-
-	// Buffers for state transition.
-	sendBuf []*ingressPacket
 }
 
 // transport is implemented by the UDP transport.

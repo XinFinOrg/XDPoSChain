@@ -1,6 +1,7 @@
 package common
 
 import (
+	"math"
 	"math/big"
 )
 
@@ -28,6 +29,7 @@ var TestnetConstant = constant{
 	tipXDCXReceiverDisable: big.NewInt(66825000), // Target 26 Aug 2024
 	eip1559Block:           big.NewInt(71550000), // Target 14th Feb 2025
 	cancunBlock:            big.NewInt(71551800),
+	pragueBlock:            big.NewInt(math.MaxInt64),
 	tipUpgradeReward:       big.NewInt(9999999999),
 	tipUpgradePenalty:      big.NewInt(9999999999),
 	tipEpochHalving:        big.NewInt(9999999999),

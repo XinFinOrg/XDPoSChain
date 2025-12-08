@@ -88,7 +88,7 @@ func testMissingNode(t *testing.T, memonly bool) {
 	root, nodes, _ := trie.Commit(false)
 	triedb.Update(NewWithNodeSet(nodes))
 	if !memonly {
-		triedb.Commit(root, true)
+		triedb.Commit(root, false)
 	}
 
 	trie, _ = New(TrieID(root), triedb)
@@ -808,6 +808,80 @@ func (b *spongeBatch) ValueSize() int                      { return 100 }
 func (b *spongeBatch) Write() error                        { return nil }
 func (b *spongeBatch) Reset()                              {}
 func (b *spongeBatch) Replay(w ethdb.KeyValueWriter) error { return nil }
+
+// TestCommitSequence tests that the trie.Commit operation writes the elements of the trie
+// in the expected order.
+// The test data was based on the 'master' code, and is basically random. It can be used
+// to check whether changes to the trie modifies the write order or data in any way.
+func TestCommitSequence(t *testing.T) {
+	for i, tc := range []struct {
+		count           int
+		expWriteSeqHash []byte
+	}{
+		{20, common.FromHex("873c78df73d60e59d4a2bcf3716e8bfe14554549fea2fc147cb54129382a8066")},
+		{200, common.FromHex("ba03d891bb15408c940eea5ee3d54d419595102648d02774a0268d892add9c8e")},
+		{2000, common.FromHex("f7a184f20df01c94f09537401d11e68d97ad0c00115233107f51b9c287ce60c7")},
+	} {
+		addresses, accounts := makeAccounts(tc.count)
+		// This spongeDb is used to check the sequence of disk-db-writes
+		s := &spongeDb{sponge: sha3.NewLegacyKeccak256()}
+		db := NewDatabase(rawdb.NewDatabase(s))
+		trie := NewEmpty(db)
+		// Fill the trie with elements
+		for i := 0; i < tc.count; i++ {
+			trie.Update(crypto.Keccak256(addresses[i][:]), accounts[i])
+		}
+		// Flush trie -> database
+		root, nodes, _ := trie.Commit(false)
+		db.Update(NewWithNodeSet(nodes))
+		// Flush memdb -> disk (sponge)
+		db.Commit(root, false)
+		if got, exp := s.sponge.Sum(nil), tc.expWriteSeqHash; !bytes.Equal(got, exp) {
+			t.Errorf("test %d, disk write sequence wrong:\ngot %x exp %x\n", i, got, exp)
+		}
+	}
+}
+
+// TestCommitSequenceRandomBlobs is identical to TestCommitSequence
+// but uses random blobs instead of 'accounts'
+func TestCommitSequenceRandomBlobs(t *testing.T) {
+	for i, tc := range []struct {
+		count           int
+		expWriteSeqHash []byte
+	}{
+		{20, common.FromHex("8e4a01548551d139fa9e833ebc4e66fc1ba40a4b9b7259d80db32cff7b64ebbc")},
+		{200, common.FromHex("6869b4e7b95f3097a19ddb30ff735f922b915314047e041614df06958fc50554")},
+		{2000, common.FromHex("444200e6f4e2df49f77752f629a96ccf7445d4698c164f962bbd85a0526ef424")},
+	} {
+		prng := rand.New(rand.NewSource(int64(i)))
+		// This spongeDb is used to check the sequence of disk-db-writes
+		s := &spongeDb{sponge: sha3.NewLegacyKeccak256()}
+		db := NewDatabase(rawdb.NewDatabase(s))
+		trie := NewEmpty(db)
+		// Fill the trie with elements
+		for i := 0; i < tc.count; i++ {
+			key := make([]byte, 32)
+			var val []byte
+			// 50% short elements, 50% large elements
+			if prng.Intn(2) == 0 {
+				val = make([]byte, 1+prng.Intn(32))
+			} else {
+				val = make([]byte, 1+prng.Intn(4096))
+			}
+			prng.Read(key)
+			prng.Read(val)
+			trie.Update(key, val)
+		}
+		// Flush trie -> database
+		root, nodes, _ := trie.Commit(false)
+		db.Update(NewWithNodeSet(nodes))
+		// Flush memdb -> disk (sponge)
+		db.Commit(root, false)
+		if got, exp := s.sponge.Sum(nil), tc.expWriteSeqHash; !bytes.Equal(got, exp) {
+			t.Fatalf("test %d, disk write sequence wrong:\ngot %x exp %x\n", i, got, exp)
+		}
+	}
+}
 
 func TestCommitSequenceStackTrie(t *testing.T) {
 	for count := 1; count < 200; count++ {

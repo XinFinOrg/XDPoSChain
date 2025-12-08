@@ -167,7 +167,7 @@ func remoteConsole(ctx *cli.Context) error {
 func ephemeralConsole(ctx *cli.Context) error {
 	var b strings.Builder
 	for _, file := range ctx.Args().Slice() {
-		b.WriteString(fmt.Sprintf("loadScript('%s');", file))
+		fmt.Fprintf(&b, "loadScript('%s');", file)
 	}
 	utils.Fatalf(`The "js" command is deprecated. Please use the following instead:
 XDC --exec "%s" console`, b.String())

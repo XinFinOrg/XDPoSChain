@@ -62,19 +62,6 @@ type RingSignature struct {
 	SerializedRing []byte //temporary memory stored the raw ring ct used in case of verifying ringCT with message verification
 }
 
-func (p *PrivateSendVerifier) verify() bool {
-	return false
-}
-
-func (p *PrivateSendVerifier) deserialize() {
-
-}
-
-// helper function, returns type of v
-func typeof(v interface{}) string {
-	return fmt.Sprintf("%T", v)
-}
-
 func isOdd(a *big.Int) bool {
 	return a.Bit(0) == 1
 }
@@ -195,7 +182,6 @@ func computeSignatureSize(numRing int, ringSize int) int {
 	if term < 0 || term < numRing || term < ringSize {
 		return -1
 	}
-
 	return 8 + 8 + 32 + 32 + numRing*ringSize*32 + numRing*ringSize*33 + numRing*33
 }
 

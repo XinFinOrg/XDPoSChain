@@ -314,9 +314,6 @@ var (
 
 	// AllEthashProtocolChanges contains every protocol change (EIPs) introduced
 	// and accepted by the Ethereum core developers into the Ethash consensus.
-	//
-	// This configuration is intentionally not using keyed fields to force anyone
-	// adding flags to the config to also have to set these fields.
 	AllEthashProtocolChanges = &ChainConfig{
 		ChainID:             big.NewInt(1337),
 		HomesteadBlock:      big.NewInt(0),
@@ -326,7 +323,15 @@ var (
 		EIP155Block:         big.NewInt(0),
 		EIP158Block:         big.NewInt(0),
 		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: nil,
+		ConstantinopleBlock: big.NewInt(0),
+		PetersburgBlock:     big.NewInt(0),
+		IstanbulBlock:       big.NewInt(0),
+		BerlinBlock:         big.NewInt(0),
+		LondonBlock:         big.NewInt(0),
+		ShanghaiBlock:       big.NewInt(0),
+		Eip1559Block:        nil,
+		CancunBlock:         nil,
+		PragueBlock:         nil,
 		Ethash:              new(EthashConfig),
 		Clique:              nil,
 		XDPoS:               nil,
@@ -352,6 +357,8 @@ var (
 		XDPoS:               &XDPoSConfig{Period: 0, Epoch: 900},
 	}
 
+	// AllCliqueProtocolChanges contains every protocol change (EIPs) introduced
+	// and accepted by the Ethereum core developers into the Clique consensus.
 	AllCliqueProtocolChanges = &ChainConfig{
 		ChainID:             big.NewInt(1337),
 		HomesteadBlock:      big.NewInt(0),
@@ -361,7 +368,15 @@ var (
 		EIP155Block:         big.NewInt(0),
 		EIP158Block:         big.NewInt(0),
 		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: nil,
+		ConstantinopleBlock: big.NewInt(0),
+		PetersburgBlock:     big.NewInt(0),
+		IstanbulBlock:       big.NewInt(0),
+		BerlinBlock:         big.NewInt(0),
+		LondonBlock:         big.NewInt(0),
+		ShanghaiBlock:       big.NewInt(0),
+		Eip1559Block:        nil,
+		CancunBlock:         nil,
+		PragueBlock:         nil,
 		Ethash:              nil,
 		Clique:              &CliqueConfig{Period: 0, Epoch: 900},
 		XDPoS:               nil,
@@ -395,6 +410,8 @@ var (
 		},
 	}
 
+	// TestChainConfig contains every protocol change (EIPs) introduced
+	// and accepted by the Ethereum core developers for testing purposes.
 	TestChainConfig = &ChainConfig{
 		ChainID:             big.NewInt(1),
 		HomesteadBlock:      big.NewInt(0),
@@ -404,7 +421,15 @@ var (
 		EIP155Block:         big.NewInt(0),
 		EIP158Block:         big.NewInt(0),
 		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: nil,
+		ConstantinopleBlock: big.NewInt(0),
+		PetersburgBlock:     big.NewInt(0),
+		IstanbulBlock:       big.NewInt(0),
+		BerlinBlock:         big.NewInt(0),
+		LondonBlock:         big.NewInt(0),
+		ShanghaiBlock:       big.NewInt(0),
+		Eip1559Block:        nil,
+		CancunBlock:         nil,
+		PragueBlock:         nil,
 		Ethash:              new(EthashConfig),
 		Clique:              nil,
 		XDPoS:               nil,
@@ -441,6 +466,7 @@ type ChainConfig struct {
 	ShanghaiBlock   *big.Int `json:"shanghaiBlock,omitempty"`
 	Eip1559Block    *big.Int `json:"eip1559Block,omitempty"`
 	CancunBlock     *big.Int `json:"cancunBlock,omitempty"`
+	PragueBlock     *big.Int `json:"pragueBlock,omitempty"`
 
 	// Various consensus engines
 	Ethash *EthashConfig `json:"ethash,omitempty"`
@@ -561,6 +587,8 @@ func (c *XDPoSConfig) String() string {
 	return fmt.Sprintf("XDPoSConfig{Period: %v, Epoch: %v, Reward: %v, RewardCheckpoint: %v, Gap: %v, FoudationWalletAddr: %v, SkipV1Validation: %v, V2: %s}", c.Period, c.Epoch, c.Reward, c.RewardCheckpoint, c.Gap, c.FoudationWalletAddr.String0x(), c.SkipV1Validation, c.V2.String())
 }
 
+// Description returns a human-readable description of XDPoSConfig
+// NOTE: don't append "\n" to end
 func (c *XDPoSConfig) Description(indent int) string {
 	if c == nil {
 		return "XDPoS: <nil>"
@@ -587,6 +615,8 @@ func (v2 *V2) String() string {
 	return fmt.Sprintf("V2{SwitchEpoch: %v, SwitchBlock: %v, %s}", v2.SwitchEpoch, v2.SwitchBlock, v2.CurrentConfig.String())
 }
 
+// Description returns a human-readable description of V2
+// NOTE: don't append "\n" to end
 func (v2 *V2) Description(indent int) string {
 	if v2 == nil {
 		return "V2: <nil>"
@@ -608,6 +638,8 @@ func (c *V2Config) String() string {
 	return fmt.Sprintf("V2{MaxMasternodes: %v, MaxProtectorNodes: %v, MaxObverserNodes: %v, SwitchRound: %v, MinePeriod: %v, TimeoutSyncThreshold: %v, TimeoutPeriod: %v, CertThreshold: %v, MasternodeReward: %v, ProtectorReward: %v, ObserverReward: %v, MinimumMinerBlockPerEpoch: %v, LimitPenaltyEpoch: %v, MinimumSigningTx: %v, %s}", c.MaxMasternodes, c.MaxProtectorNodes, c.MaxObverserNodes, c.SwitchRound, c.MinePeriod, c.TimeoutSyncThreshold, c.TimeoutPeriod, c.CertThreshold, c.MasternodeReward, c.ProtectorReward, c.ObserverReward, c.MinimumMinerBlockPerEpoch, c.LimitPenaltyEpoch, c.MinimumSigningTx, c.ExpTimeoutConfig.String())
 }
 
+// Description returns a human-readable description of V2Config
+// NOTE: don't append "\n" to end
 func (c *V2Config) Description(name string, indent int) string {
 	if c == nil {
 		return name + ": <nil>"
@@ -761,6 +793,9 @@ func (c *ChainConfig) String() string {
 	if c.CancunBlock != nil {
 		result += fmt.Sprintf(", CancunBlock: %v", c.CancunBlock)
 	}
+	if c.PragueBlock != nil {
+		result += fmt.Sprintf(", PragueBlock: %v", c.PragueBlock)
+	}
 	if c.XDPoS != nil {
 		result += fmt.Sprintf(", %s", c.XDPoS.String())
 	}
@@ -769,11 +804,12 @@ func (c *ChainConfig) String() string {
 }
 
 // Description returns a human-readable description of ChainConfig.
+// NOTE: don't append "\n" to end
 func (c *ChainConfig) Description() string {
-	var engine interface{}
+	var engine string
 	switch {
 	case c.Ethash != nil:
-		engine = c.Ethash
+		engine = c.Ethash.String()
 	case c.XDPoS != nil:
 		engine = c.XDPoS.Description(4)
 	default:
@@ -803,6 +839,10 @@ func (c *ChainConfig) Description() string {
 	if c.CancunBlock != nil {
 		cancunBlock = c.CancunBlock
 	}
+	pragueBlock := common.PragueBlock
+	if c.PragueBlock != nil {
+		pragueBlock = c.PragueBlock
+	}
 
 	var banner = "Chain configuration:\n"
 	banner += fmt.Sprintf("  - ChainID:                     %-8v\n", c.ChainID)
@@ -815,13 +855,28 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - Constantinople:              %-8v\n", c.ConstantinopleBlock)
 	banner += fmt.Sprintf("  - Petersburg:                  %-8v\n", c.PetersburgBlock)
 	banner += fmt.Sprintf("  - Istanbul:                    %-8v\n", c.IstanbulBlock)
+	banner += fmt.Sprintf("  - TIP2019Block:                %-8v\n", common.TIP2019Block)
+	banner += fmt.Sprintf("  - TIPSigning:                  %-8v\n", common.TIPSigning)
+	banner += fmt.Sprintf("  - TIPRandomize:                %-8v\n", common.TIPRandomize)
+	banner += fmt.Sprintf("  - TIPIncreaseMasternodes:      %-8v\n", common.TIPIncreaseMasternodes)
+	banner += fmt.Sprintf("  - BlackListHFNumber:           %-8v\n", common.BlackListHFNumber)
+	banner += fmt.Sprintf("  - TIPNoHalvingMNReward:        %-8v\n", common.TIPNoHalvingMNReward)
+	banner += fmt.Sprintf("  - TIPXDCX:                     %-8v\n", common.TIPXDCX)
+	banner += fmt.Sprintf("  - TIPXDCXLending:              %-8v\n", common.TIPXDCXLending)
+	banner += fmt.Sprintf("  - TIPXDCXCancellationFee:      %-8v\n", common.TIPXDCXCancellationFee)
+	banner += fmt.Sprintf("  - TIPTRC21Fee:                 %-8v\n", common.TIPTRC21Fee)
 	banner += fmt.Sprintf("  - Berlin:                      %-8v\n", berlinBlock)
 	banner += fmt.Sprintf("  - London:                      %-8v\n", londonBlock)
 	banner += fmt.Sprintf("  - Merge:                       %-8v\n", mergeBlock)
 	banner += fmt.Sprintf("  - Shanghai:                    %-8v\n", shanghaiBlock)
+	banner += fmt.Sprintf("  - BlockNumberGas50x:           %-8v\n", common.BlockNumberGas50x)
+	banner += fmt.Sprintf("  - TIPXDCXMinerDisable:         %-8v\n", common.TIPXDCXMinerDisable)
+	banner += fmt.Sprintf("  - TIPXDCXReceiverDisable:      %-8v\n", common.TIPXDCXReceiverDisable)
 	banner += fmt.Sprintf("  - Eip1559:                     %-8v\n", eip1559Block)
 	banner += fmt.Sprintf("  - Cancun:                      %-8v\n", cancunBlock)
+	banner += fmt.Sprintf("  - Prague:                      %-8v\n", pragueBlock)
 	banner += fmt.Sprintf("  - TIPUpgradeReward:            %-8v\n", common.TIPUpgradeReward)
+	banner += fmt.Sprintf("  - TipUpgradePenalty:           %-8v\n", common.TipUpgradePenalty)
 	banner += fmt.Sprintf("  - TIPEpochHalving:             %-8v\n", common.TIPEpochHalving)
 	banner += fmt.Sprintf("  - Engine:                      %v", engine)
 	return banner
@@ -890,12 +945,19 @@ func (c *ChainConfig) IsShanghai(num *big.Int) bool {
 	return isForked(common.ShanghaiBlock, num) || isForked(c.ShanghaiBlock, num)
 }
 
+// IsEIP1559 returns whether num is either equal to the EIP1559 fork block or greater.
 func (c *ChainConfig) IsEIP1559(num *big.Int) bool {
 	return isForked(common.Eip1559Block, num) || isForked(c.Eip1559Block, num)
 }
 
+// IsCancun returns whether num is either equal to the Cancun fork block or greater.
 func (c *ChainConfig) IsCancun(num *big.Int) bool {
 	return isForked(common.CancunBlock, num) || isForked(c.CancunBlock, num)
+}
+
+// IsPrague returns whether num is either equal to the Prague fork block or greater.
+func (c *ChainConfig) IsPrague(num *big.Int) bool {
+	return isForked(common.PragueBlock, num) || isForked(c.PragueBlock, num)
 }
 
 func (c *ChainConfig) IsTIP2019(num *big.Int) bool {
@@ -1043,6 +1105,9 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, head *big.Int) *Confi
 	if isForkIncompatible(c.CancunBlock, newcfg.CancunBlock, head) {
 		return newCompatError("Cancun fork block", c.CancunBlock, newcfg.CancunBlock)
 	}
+	if isForkIncompatible(c.PragueBlock, newcfg.PragueBlock, head) {
+		return newCompatError("Prague fork block", c.PragueBlock, newcfg.PragueBlock)
+	}
 	if !XDPoSConfigEqual(c.XDPoS, newcfg.XDPoS) {
 		storedblock := big.NewInt(1)
 		if c.XDPoS != nil && c.XDPoS.V2 != nil && c.XDPoS.V2.SwitchBlock != nil {
@@ -1118,14 +1183,23 @@ func (err *ConfigCompatError) Error() string {
 // Rules is a one time interface meaning that it shouldn't be used in between transition
 // phases.
 type Rules struct {
-	ChainId                                                 *big.Int
-	IsHomestead, IsEIP150, IsEIP155, IsEIP158               bool
-	IsByzantium, IsConstantinople, IsPetersburg, IsIstanbul bool
-	IsBerlin, IsLondon                                      bool
-	IsMerge, IsShanghai                                     bool
-	IsXDCxDisable                                           bool
-	IsEIP1559                                               bool
-	IsCancun                                                bool
+	ChainId          *big.Int
+	IsHomestead      bool
+	IsEIP150         bool
+	IsEIP155         bool
+	IsEIP158         bool
+	IsByzantium      bool
+	IsConstantinople bool
+	IsPetersburg     bool
+	IsIstanbul       bool
+	IsBerlin         bool
+	IsLondon         bool
+	IsMerge          bool
+	IsShanghai       bool
+	IsXDCxDisable    bool
+	IsEIP1559        bool
+	IsCancun         bool
+	IsPrague         bool
 }
 
 func (c *ChainConfig) Rules(num *big.Int) Rules {
@@ -1150,5 +1224,6 @@ func (c *ChainConfig) Rules(num *big.Int) Rules {
 		IsXDCxDisable:    c.IsXDCxDisable(num),
 		IsEIP1559:        c.IsEIP1559(num),
 		IsCancun:         c.IsCancun(num),
+		IsPrague:         c.IsPrague(num),
 	}
 }

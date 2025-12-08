@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 
@@ -325,7 +325,7 @@ func countMatchingProtocols(protocols []Protocol, caps []Cap) int {
 
 // matchProtocols creates structures for matching named subprotocols.
 func matchProtocols(protocols []Protocol, caps []Cap, rw MsgReadWriter) map[string]*protoRW {
-	sort.Sort(capsByNameAndVersion(caps))
+	slices.SortFunc(caps, Cap.Cmp)
 	offset := baseProtocolLength
 	result := make(map[string]*protoRW)
 

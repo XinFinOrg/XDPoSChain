@@ -53,7 +53,7 @@ func TestBlockEncoding(t *testing.T) {
 	check("Hash", block.Hash().String(), common.HexToHash("e8d9d473fdeddd3079988fa7be58f582b7b2800e90917d4bb6f11155ce4dba30").String())
 	check("Nonce", block.Nonce(), uint64(0xa13a5a8c8f2bb1c4))
 	check("Time", block.Time(), uint64(1426516743))
-	check("Size", block.Size(), common.StorageSize(len(blockEnc)))
+	check("Size", block.Size(), uint64(len(blockEnc)))
 
 	ourBlockEnc, err := rlp.EncodeToBytes(&block)
 	if err != nil {
@@ -85,7 +85,7 @@ func TestEIP2718BlockEncoding(t *testing.T) {
 	check("Root", block.Root(), common.HexToHash("ef1552a40b7165c3cd773806b9e0c165b75356e0314bf0706f279c729f51e017"))
 	check("Nonce", block.Nonce(), uint64(0xa13a5a8c8f2bb1c4))
 	check("Time", block.Time(), uint64(1426516743))
-	check("Size", block.Size(), common.StorageSize(len(blockEnc)))
+	check("Size", block.Size(), uint64(len(blockEnc)))
 
 	// Create legacy tx.
 	to := common.HexToAddress("095e7baea6a6c7c4c2dfeb977efac326af552d87")

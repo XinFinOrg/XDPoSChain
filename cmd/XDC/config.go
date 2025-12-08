@@ -176,7 +176,7 @@ func loadBaseConfig(ctx *cli.Context) XDCConfig {
 	for _, env := range cfg.Account.Passwords {
 		if trimmed := strings.TrimSpace(env); trimmed != "" {
 			value := os.Getenv(trimmed)
-			for _, info := range strings.Split(value, ",") {
+			for info := range strings.SplitSeq(value, ",") {
 				if trimmed2 := strings.TrimSpace(info); trimmed2 != "" {
 					passwords = append(passwords, trimmed2)
 				}

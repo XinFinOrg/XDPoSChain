@@ -105,8 +105,6 @@ func main() {
 		doGenerate()
 	case "baddeps":
 		doBadDeps()
-	case "xgo":
-		doXgo(os.Args[2:])
 	default:
 		log.Fatal("unknown command ", os.Args[1])
 	}
@@ -528,56 +526,4 @@ func downloadProtoc(cachedir string) string {
 		log.Fatal("error resolving absolute path for protoc", "err", err)
 	}
 	return extractDest
-}
-
-// Cross compilation
-func doXgo(cmdline []string) {
-	var (
-		alltools = flag.Bool("alltools", false, `Flag whether we're building all known tools, or only on in particular`)
-	)
-	flag.CommandLine.Parse(cmdline)
-	env := build.Env()
-
-	// Make sure xgo is available for cross compilation
-	tc := build.GoToolchain{}
-	gogetxgo := tc.Go("get", "github.com/karalabe/xgo")
-	build.MustRun(gogetxgo)
-
-	// If all tools building is requested, build everything the builder wants
-	args := append(buildFlags(env, false, nil), flag.Args()...)
-
-	if *alltools {
-		args = append(args, []string{"--dest", GOBIN}...)
-		for _, res := range allToolsArchiveFiles {
-			if strings.HasPrefix(res, GOBIN) {
-				// Binary tool found, cross build it explicitly
-				args = append(args, "./"+filepath.Join("cmd", filepath.Base(res)))
-				xgo := xgoTool(args)
-				build.MustRun(xgo)
-				args = args[:len(args)-1]
-			}
-		}
-		return
-	}
-	// Otherwise xxecute the explicit cross compilation
-	path := args[len(args)-1]
-	args = append(args[:len(args)-1], []string{"--dest", GOBIN, path}...)
-
-	xgo := xgoTool(args)
-	build.MustRun(xgo)
-}
-
-func xgoTool(args []string) *exec.Cmd {
-	cmd := exec.Command(filepath.Join(GOBIN, "xgo"), args...)
-	cmd.Env = []string{
-		"GOPATH=" + build.GOPATH(),
-		"GOBIN=" + GOBIN,
-	}
-	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "GOPATH=") || strings.HasPrefix(e, "GOBIN=") {
-			continue
-		}
-		cmd.Env = append(cmd.Env, e)
-	}
-	return cmd
 }

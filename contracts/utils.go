@@ -476,7 +476,7 @@ func GetRewardBalancesRate(foundationWalletAddr common.Address, statedb *state.S
 		log.Error("Fail to parse json holders", "error", err)
 		return nil, err
 	}
-	log.Trace("Holders reward", "holders", string(jsonHolders), "masternode", masterAddr.String())
+	log.Trace("Holders reward", "holders", string(jsonHolders), "masternode", masterAddr)
 
 	return balances, nil
 }

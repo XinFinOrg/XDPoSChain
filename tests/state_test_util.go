@@ -149,7 +149,7 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config) (*state.StateD
 		}
 	}
 	post := t.json.Post[subtest.Fork][subtest.Index]
-	msg, err := t.json.Tx.toMessage(post, block.Number(), baseFee)
+	msg, err := t.json.Tx.toMessage(post, baseFee)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +215,7 @@ func (t *StateTest) genesis(config *params.ChainConfig) *core.Genesis {
 	}
 }
 
-func (tx *stTransaction) toMessage(ps stPostState, number *big.Int, baseFee *big.Int) (*core.Message, error) {
+func (tx *stTransaction) toMessage(ps stPostState, baseFee *big.Int) (*core.Message, error) {
 	// Derive sender from private key if present.
 	var from common.Address
 	if len(tx.PrivateKey) > 0 {
