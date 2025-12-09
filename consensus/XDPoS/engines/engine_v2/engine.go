@@ -200,7 +200,7 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 	var quorumCert *types.QuorumCert
 	var err error
 
-	if header.Number.Int64() == x.config.V2.SwitchBlock.Int64() {
+	if header.Number.Cmp(x.config.V2.SwitchBlock) == 0 {
 		log.Info("[initial] highest QC for consensus v2 first block")
 		blockInfo := &types.BlockInfo{
 			Hash:   header.Hash(),
@@ -275,7 +275,7 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 	// Kick-off the countdown timer
 	// Only kick-off if it is V2 switch block
 	// Otherwise it is a lagging node, already kick-off in `processQC`
-	if header.Number.Int64() == x.config.V2.SwitchBlock.Int64() {
+	if header.Number.Cmp(x.config.V2.SwitchBlock) == 0 {
 		x.timeoutWorker.Reset(chain, 0, 0)
 	}
 	x.isInitilised = true
@@ -993,7 +993,7 @@ func (x *XDPoS_v2) calcMasternodes(chain consensus.ChainReader, blockNum *big.In
 	}
 	candidates := snap.NextEpochCandidates
 
-	if blockNum.Uint64() == x.config.V2.SwitchBlock.Uint64()+1 {
+	if blockNum.Cmp(new(big.Int).Add(x.config.V2.SwitchBlock, big.NewInt(1))) == 0 {
 		log.Info("[calcMasternodes] examing first v2 block")
 		if len(candidates) > maxMasternodes {
 			candidates = candidates[:maxMasternodes]
