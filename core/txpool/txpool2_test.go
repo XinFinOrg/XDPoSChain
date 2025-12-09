@@ -80,7 +80,7 @@ func TestTransactionFutureAttack(t *testing.T) {
 
 	// Create the pool to test the limit enforcement with
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
-	blockchain := &testBlockChain{statedb, 1000000, new(event.Feed)}
+	blockchain := newTestBlockChain(1000000, statedb, new(event.Feed))
 	config := testTxPoolConfig
 	config.GlobalQueue = 100
 	config.GlobalSlots = 100
@@ -116,7 +116,7 @@ func TestTransactionFuture1559(t *testing.T) {
 	t.Parallel()
 	// Create the pool to test the pricing enforcement with
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
-	blockchain := &testBlockChain{statedb, 1000000, new(event.Feed)}
+	blockchain := newTestBlockChain(1000000, statedb, new(event.Feed))
 	pool := NewTxPool(testTxPoolConfig, eip1559Config, blockchain)
 	defer pool.Stop()
 
@@ -148,7 +148,7 @@ func TestTransactionZAttack(t *testing.T) {
 	t.Parallel()
 	// Create the pool to test the pricing enforcement with
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
-	blockchain := &testBlockChain{statedb, 1000000, new(event.Feed)}
+	blockchain := newTestBlockChain(1000000, statedb, new(event.Feed))
 	pool := NewTxPool(testTxPoolConfig, eip1559Config, blockchain)
 	defer pool.Stop()
 	// Create a number of test accounts, fund them and make transactions
