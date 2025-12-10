@@ -43,7 +43,7 @@ func count(t *testing.T, pool *TxPool) (pending int, queued int) {
 	return pending, queued
 }
 
-func fillPool(t *testing.T, pool *TxPool) {
+func fillPool(t testing.TB, pool *TxPool) {
 	t.Helper()
 	// Create a number of test accounts, fund them and make transactions
 	executableTxs := types.Transactions{}
@@ -190,7 +190,7 @@ func TestTransactionZAttack(t *testing.T) {
 		key, _ := crypto.GenerateKey()
 		pool.currentState.AddBalance(crypto.PubkeyToAddress(key.PublicKey), big.NewInt(100000000000), tracing.BalanceChangeUnspecified)
 		for j := 0; j < int(pool.config.GlobalSlots); j++ {
-			overDraftTxs = append(overDraftTxs, pricedValuedTransaction(uint64(j), 60000000000, 21000, big.NewInt(500), key))
+			overDraftTxs = append(overDraftTxs, pricedValuedTransaction(uint64(j), 600000000000, 21000, big.NewInt(500), key))
 		}
 	}
 	pool.AddRemotesSync(overDraftTxs)
@@ -212,5 +212,29 @@ func TestTransactionZAttack(t *testing.T) {
 	if delta < 0 || delta > common.LimitThresholdNonceInQueue {
 		t.Errorf("Wrong invalid pending-count, have %d, want %d (delta %d, allowed %d) (GlobalSlots: %d, queued: %d)",
 			newIvPending, ivPending, delta, common.LimitThresholdNonceInQueue, pool.config.GlobalSlots, newQueued)
+	}
+}
+
+func BenchmarkFutureAttack(b *testing.B) {
+	// Create the pool to test the limit enforcement with
+	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()))
+	blockchain := newTestBlockChain(1000000, statedb, new(event.Feed))
+	config := testTxPoolConfig
+	config.GlobalQueue = 100
+	config.GlobalSlots = 100
+	pool := NewTxPool(config, eip1559Config, blockchain)
+	defer pool.Stop()
+	fillPool(b, pool)
+
+	key, _ := crypto.GenerateKey()
+	pool.currentState.AddBalance(crypto.PubkeyToAddress(key.PublicKey), big.NewInt(100000000000), tracing.BalanceChangeUnspecified)
+	futureTxs := types.Transactions{}
+
+	for n := 0; n < b.N; n++ {
+		futureTxs = append(futureTxs, pricedTransaction(1000+uint64(n), 100000, big.NewInt(500), key))
+	}
+	b.ResetTimer()
+	for i := 0; i < 5; i++ {
+		pool.AddRemotesSync(futureTxs)
 	}
 }
