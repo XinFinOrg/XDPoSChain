@@ -1280,7 +1280,7 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 		cfg.MaxPendingPeers = ctx.Int(MaxPendingPeersFlag.Name)
 	}
 	if ctx.IsSet(NoDiscoverFlag.Name) {
-		cfg.NoDiscovery = true
+		cfg.NoDiscovery = ctx.Bool(NoDiscoverFlag.Name)
 	}
 
 	flags.CheckExclusive(ctx, DiscoveryV5Flag, NoDiscoverFlag)
