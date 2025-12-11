@@ -28,9 +28,10 @@ import (
 )
 
 const (
-	ConsensusEngineVersion1 = "v1"
-	ConsensusEngineVersion2 = "v2"
-	Default                 = 0
+	ConsensusEngineVersion1       = "v1"
+	ConsensusEngineVersion2       = "v2"
+	ConsensusEngineVersion2Subnet = "v2subnet"
+	Default                       = 0
 )
 
 var (
@@ -495,6 +496,7 @@ func (c *CliqueConfig) String() string {
 
 // XDPoSConfig is the consensus engine configs for delegated-proof-of-stake based sealing.
 type XDPoSConfig struct {
+	IsSubnet            bool           `json:"isSubnet"`            // Is this subnet chain
 	Period              uint64         `json:"period"`              // Number of seconds between blocks to enforce
 	Epoch               uint64         `json:"epoch"`               // Epoch length to reset votes and checkpoint
 	Reward              uint64         `json:"reward"`              // Block reward - unit Ether
@@ -596,6 +598,7 @@ func (c *XDPoSConfig) Description(indent int) string {
 
 	banner := "XDPoS\n"
 	prefix := strings.Repeat(" ", indent)
+	banner += fmt.Sprintf("%s- IsSubnet: %v\n", prefix, c.IsSubnet)
 	banner += fmt.Sprintf("%s- Period: %v\n", prefix, c.Period)
 	banner += fmt.Sprintf("%s- Epoch: %v\n", prefix, c.Epoch)
 	banner += fmt.Sprintf("%s- Reward: %v\n", prefix, c.Reward)
@@ -669,6 +672,9 @@ func (c ExpTimeoutConfig) String() string {
 }
 
 func (c *XDPoSConfig) BlockConsensusVersion(num *big.Int) string {
+	if c.IsSubnet {
+		return ConsensusEngineVersion2Subnet
+	}
 	if c.V2 != nil && c.V2.SwitchBlock != nil && num.Cmp(c.V2.SwitchBlock) > 0 {
 		return ConsensusEngineVersion2
 	}
