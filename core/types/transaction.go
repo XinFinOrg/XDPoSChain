@@ -490,6 +490,39 @@ func (tx *Transaction) IsSkipNonceTransaction() bool {
 	}
 }
 
+// IsNonEVMTx returns true if the transaction is a "special transaction" that
+// does not execute EVM code, but is instead handled by native code.
+// Returns false if `tx` is nil or if `tx.To()` is nil.
+//
+// "Special transactions" are those sent to specific system addresses, which are:
+//   - common.BlockSignersBinary
+//   - common.XDCXAddrBinary
+//   - common.TradingStateAddrBinary
+//   - common.XDCXLendingAddressBinary
+//   - common.XDCXLendingFinalizedTradeAddressBinary
+//
+// These addresses are defined in the `common` package.
+func (tx *Transaction) IsNonEVMTx() bool {
+	if tx == nil {
+		return false
+	}
+	to := tx.To()
+	if to == nil {
+		return false
+	}
+
+	switch *to {
+	case common.BlockSignersBinary,
+		common.XDCXAddrBinary,
+		common.TradingStateAddrBinary,
+		common.XDCXLendingAddressBinary,
+		common.XDCXLendingFinalizedTradeAddressBinary:
+		return true
+	default:
+		return false
+	}
+}
+
 func (tx *Transaction) IsSigningTransaction() bool {
 	to := tx.To()
 	if to == nil || *to != common.BlockSignersBinary {

@@ -609,3 +609,112 @@ func TestTransactionSizes(t *testing.T) {
 		}
 	}
 }
+
+// TestIsNonEVMTx tests the IsNonEVMTx method to ensure it correctly identifies
+// transactions that are handled by native code rather than EVM execution.
+func TestIsNonEVMTx(t *testing.T) {
+	tests := []struct {
+		name     string
+		tx       *Transaction
+		expected bool
+	}{
+		{
+			name:     "nil transaction",
+			tx:       nil,
+			expected: false,
+		},
+		{
+			name:     "contract creation (nil to)",
+			expected: false,
+		},
+		{
+			name: "regular transaction",
+			tx: NewTransaction(
+				0,
+				common.HexToAddress("0x1234567890123456789012345678901234567890"),
+				big.NewInt(0),
+				0,
+				big.NewInt(0),
+				nil,
+			),
+			expected: false,
+		},
+		{
+			name: "BlockSignersBinary transaction",
+			tx: NewTransaction(
+				0,
+				common.BlockSignersBinary,
+				big.NewInt(0),
+				0,
+				big.NewInt(0),
+				nil,
+			),
+			expected: true,
+		},
+		{
+			name: "XDCXAddrBinary transaction",
+			tx: NewTransaction(
+				0,
+				common.XDCXAddrBinary,
+				big.NewInt(0),
+				0,
+				big.NewInt(0),
+				nil,
+			),
+			expected: true,
+		},
+		{
+			name: "TradingStateAddrBinary transaction",
+			tx: NewTransaction(
+				0,
+				common.TradingStateAddrBinary,
+				big.NewInt(0),
+				0,
+				big.NewInt(0),
+				nil,
+			),
+			expected: true,
+		},
+		{
+			name: "XDCXLendingAddressBinary transaction",
+			tx: NewTransaction(
+				0,
+				common.XDCXLendingAddressBinary,
+				big.NewInt(0),
+				0,
+				big.NewInt(0),
+				nil,
+			),
+			expected: true,
+		},
+		{
+			name: "XDCXLendingFinalizedTradeAddressBinary transaction",
+			tx: NewTransaction(
+				0,
+				common.XDCXLendingFinalizedTradeAddressBinary,
+				big.NewInt(0),
+				0,
+				big.NewInt(0),
+				nil,
+			),
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Handle the contract creation case separately
+			var tx *Transaction
+			if tt.name == "contract creation (nil to)" {
+				tx = NewContractCreation(0, big.NewInt(0), 0, big.NewInt(0), nil)
+			} else {
+				tx = tt.tx
+			}
+
+			result := tx.IsNonEVMTx()
+			if result != tt.expected {
+				t.Errorf("IsNonEVMTx() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}

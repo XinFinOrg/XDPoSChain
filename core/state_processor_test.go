@@ -24,6 +24,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
@@ -288,4 +289,142 @@ func GenerateBadBlock(t *testing.T, parent *types.Block, engine consensus.Engine
 	header.Root = common.BytesToHash(hasher.Sum(nil))
 	// Assemble and return the final block for sealing
 	return types.NewBlock(header, &types.Body{Transactions: txs}, receipts, trie.NewStackTrie(nil))
+}
+
+// TestApplyTransactionWithEVMTracer tests that tracer's OnTxStart and OnTxEnd
+// are called for all transaction types, including non-EVM special transactions.
+func TestApplyTransactionWithEVMTracer(t *testing.T) {
+	var (
+		config = &params.ChainConfig{
+			ChainID:             big.NewInt(1),
+			HomesteadBlock:      big.NewInt(0),
+			EIP150Block:         big.NewInt(0),
+			EIP155Block:         big.NewInt(0),
+			EIP158Block:         big.NewInt(0),
+			ByzantiumBlock:      big.NewInt(0),
+			ConstantinopleBlock: big.NewInt(0),
+			PetersburgBlock:     big.NewInt(0),
+			IstanbulBlock:       big.NewInt(0),
+			BerlinBlock:         big.NewInt(0),
+			LondonBlock:         big.NewInt(0),
+			Eip1559Block:        big.NewInt(0),
+			Ethash:              new(params.EthashConfig),
+		}
+		signer     = types.LatestSigner(config)
+		testKey, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		testAddr   = crypto.PubkeyToAddress(testKey.PublicKey)
+	)
+
+	tests := []struct {
+		name       string
+		to         *common.Address
+		expectOnTx bool // expect OnTxStart/OnTxEnd to be called
+	}{
+		{
+			name:       "BlockSignersBinary transaction",
+			to:         &common.BlockSignersBinary,
+			expectOnTx: true,
+		},
+		{
+			name:       "XDCXAddrBinary transaction",
+			to:         &common.XDCXAddrBinary,
+			expectOnTx: true,
+		},
+		{
+			name: "Regular transaction",
+			to: func() *common.Address {
+				addr := common.HexToAddress("0x1234567890123456789012345678901234567890")
+				return &addr
+			}(),
+			expectOnTx: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a test database and genesis
+			db := rawdb.NewMemoryDatabase()
+			gspec := &Genesis{
+				Config: config,
+				Alloc: types.GenesisAlloc{
+					testAddr: types.Account{
+						Balance: big.NewInt(1000000000000000000), // 1 ether
+						Nonce:   0,
+					},
+				},
+			}
+			genesis := gspec.MustCommit(db)
+			blockchain, _ := NewBlockChain(db, nil, gspec.Config, ethash.NewFaker(), vm.Config{})
+			defer blockchain.Stop()
+
+			// Create state database
+			statedb, err := blockchain.State()
+			if err != nil {
+				t.Fatalf("Failed to get state: %v", err)
+			}
+
+			// Create a transaction with sufficient gas price to avoid base fee errors
+			tx := types.NewTransaction(0, *tt.to, big.NewInt(0), 100000, big.NewInt(20000000000), nil)
+			signedTx, err := types.SignTx(tx, signer, testKey)
+			if err != nil {
+				t.Fatalf("Failed to sign transaction: %v", err)
+			}
+
+			// Create a mock tracer
+			onTxStartCalled := false
+			onTxEndCalled := false
+			mockTracer := &tracing.Hooks{
+				OnTxStart: func(vmContext *tracing.VMContext, tx *types.Transaction, from common.Address) {
+					onTxStartCalled = true
+					if tx == nil {
+						t.Error("OnTxStart called with nil transaction")
+					}
+					if from != testAddr {
+						t.Errorf("OnTxStart called with wrong from address: got %v, want %v", from, testAddr)
+					}
+				},
+				OnTxEnd: func(receipt *types.Receipt, err error) {
+					onTxEndCalled = true
+				},
+			}
+
+			// Create EVM with tracer
+			vmConfig := vm.Config{
+				Tracer: mockTracer,
+			}
+
+			msg, err := TransactionToMessage(signedTx, signer, nil, nil, nil)
+			if err != nil {
+				t.Fatalf("Failed to create message: %v", err)
+			}
+
+			gasPool := new(GasPool).AddGas(1000000)
+			blockNumber := big.NewInt(1)
+			blockHash := genesis.Hash()
+
+			vmContext := NewEVMBlockContext(blockchain.CurrentBlock().Header(), blockchain, nil)
+			evm := vm.NewEVM(vmContext, vm.TxContext{}, statedb, nil, blockchain.Config(), vmConfig)
+
+			// Apply transaction
+			var usedGas uint64
+			_, _, _, err = ApplyTransactionWithEVM(msg, config, gasPool, statedb, blockNumber, blockHash, signedTx, &usedGas, evm, big.NewInt(0), common.Address{})
+			// NOTE: Some special transactions (like BlockSignersBinary or XDCXAddrBinary)
+			// may fail in test environment due to missing configuration or state, but
+			// the tracer should still be called at the beginning of ApplyTransactionWithEVM.
+			// We don't fail the test on transaction execution error as long as tracer was invoked.
+			if err != nil {
+				t.Logf("Transaction execution returned error (expected for some special txs): %v", err)
+			}
+
+			// Verify tracer was called
+			if tt.expectOnTx {
+				if !onTxStartCalled {
+					t.Error("OnTxStart was not called")
+				}
+				if !onTxEndCalled {
+					t.Error("OnTxEnd was not called")
+				}
+			}
+		})
+	}
 }

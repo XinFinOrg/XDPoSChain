@@ -117,6 +117,16 @@ type callTracer struct {
 	depth     int
 	interrupt atomic.Bool // Atomic flag to signal execution interruption
 	reason    error       // Textual reason for the interruption
+
+	// `isNonEVMTx` marks transactions that do not execute EVM opcodes and
+	// therefore require the tracer to return a synthetic top-level call
+	// frame instead of relying on the EVM callstack.
+	isNonEVMTx bool
+
+	// `nonEVMCall` holds the prepared virtual top-level callFrame for
+	// non-EVM special transactions. It is marshalled directly by
+	// `GetResult()` to preserve debug API compatibility.
+	nonEVMCall callFrame
 }
 
 type callTracerConfig struct {
@@ -208,6 +218,10 @@ func (t *callTracer) OnExit(depth int, output []byte, gasUsed uint64, err error,
 	t.callstack[size-1].Calls = append(t.callstack[size-1].Calls, call)
 }
 
+// captureEnd is called after a transaction execution completes and processes
+// the final output for the top-level call frame. This method is only applicable
+// to normal EVM transactions where the callstack has exactly one frame. For
+// non-EVM special transactions, the callstack is empty and this becomes a no-op.
 func (t *callTracer) captureEnd(output []byte, gasUsed uint64, err error, reverted bool) {
 	if len(t.callstack) != 1 {
 		return
@@ -216,7 +230,38 @@ func (t *callTracer) captureEnd(output []byte, gasUsed uint64, err error, revert
 }
 
 func (t *callTracer) OnTxStart(env *tracing.VMContext, tx *types.Transaction, from common.Address) {
+	// Reset any previous non-EVM call state to ensure tracer is clean
+	// for the new transaction, preventing state leakage between txs.
+	t.isNonEVMTx = false
+	t.nonEVMCall = callFrame{}
+	t.callstack = make([]callFrame, 0, 1)
+
+	if tx == nil {
+		return
+	}
 	t.gasLimit = tx.Gas()
+
+	// Detect non-EVM special transactions so GetResult can return a virtual
+	// top-level call when the EVM did not execute any opcodes for this tx.
+	if tx.IsNonEVMTx() {
+		t.isNonEVMTx = true
+		t.nonEVMCall.Type = vm.CALL // synthetic for compatibility
+		t.nonEVMCall.From = from
+		if to := tx.To(); to != nil {
+			addr := *to // intentional copy
+			t.nonEVMCall.To = &addr
+		}
+		t.nonEVMCall.Gas = tx.Gas()
+		t.nonEVMCall.Value = tx.Value()
+		t.nonEVMCall.GasUsed = 0
+		t.nonEVMCall.Input = common.CopyBytes(tx.Data())
+		// Non-EVM transactions don't produce output or errors
+		t.nonEVMCall.Output = nil
+		t.nonEVMCall.Error = ""
+		// Initialize to nil to avoid heap allocation for empty slices
+		t.nonEVMCall.Calls = nil
+		t.nonEVMCall.Logs = nil
+	}
 }
 
 func (t *callTracer) OnTxEnd(receipt *types.Receipt, err error) {
@@ -224,6 +269,21 @@ func (t *callTracer) OnTxEnd(receipt *types.Receipt, err error) {
 	if err != nil {
 		return
 	}
+
+	// Handle non-EVM special tx: update the synthetic call frame.
+	if t.isNonEVMTx {
+		if receipt != nil {
+			t.nonEVMCall.GasUsed = receipt.GasUsed
+		}
+		return
+	}
+
+	// Handle normal EVM tx: update the top-level call frame.
+	if len(t.callstack) == 0 {
+		// Guard against empty callstack to avoid panic.
+		return
+	}
+
 	if receipt != nil {
 		t.callstack[0].GasUsed = receipt.GasUsed
 	}
@@ -246,18 +306,48 @@ func (t *callTracer) OnLog(log *types.Log) {
 	if t.interrupt.Load() {
 		return
 	}
+	// If this is a non-EVM transaction, append to nonEVMCall.Logs
+	if t.isNonEVMTx {
+		l := callLog{
+			Address:  log.Address,
+			Topics:   log.Topics,
+			Data:     log.Data,
+			Position: hexutil.Uint(len(t.nonEVMCall.Calls)),
+		}
+		t.nonEVMCall.Logs = append(t.nonEVMCall.Logs, l)
+		return
+	}
+	// Skip if callstack is empty
+	if len(t.callstack) == 0 {
+		return
+	}
+	// Cache the index of the current frame to avoid repeated calculations
+	lastIdx := len(t.callstack) - 1
 	l := callLog{
 		Address:  log.Address,
 		Topics:   log.Topics,
 		Data:     log.Data,
-		Position: hexutil.Uint(len(t.callstack[len(t.callstack)-1].Calls)),
+		Position: hexutil.Uint(len(t.callstack[lastIdx].Calls)),
 	}
-	t.callstack[len(t.callstack)-1].Logs = append(t.callstack[len(t.callstack)-1].Logs, l)
+	t.callstack[lastIdx].Logs = append(t.callstack[lastIdx].Logs, l)
 }
 
 // GetResult returns the json-encoded nested list of call traces, and any
 // error arising from the encoding or forceful termination (via `Stop`).
+// For non-EVM transactions, a synthetic virtual frame is returned to maintain
+// debug API compatibility even though the EVM did not execute opcodes.
 func (t *callTracer) GetResult() (json.RawMessage, error) {
+	// For non-EVM special transactions (e.g. BlockSignersBinary) the EVM
+	// did not execute opcodes, so return the prepared virtual top-level
+	// callFrame directly without mutating the tracer state.
+	if t.isNonEVMTx {
+		res, err := json.Marshal(t.nonEVMCall)
+		if err != nil {
+			return nil, err
+		}
+		return res, t.reason
+	}
+
 	if len(t.callstack) != 1 {
 		return nil, errors.New("incorrect number of top-level calls")
 	}
