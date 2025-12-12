@@ -159,7 +159,7 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 		}
 	}
 	blockContext := core.NewEVMBlockContext(header, sim.newSimulatedChainContext(ctx, headers), nil)
-	precompiles := sim.activePrecompiles(sim.base)
+	precompiles := sim.activePrecompiles(header)
 	// State overrides are applied prior to execution of a block
 	if err := block.StateOverrides.Apply(sim.state, precompiles); err != nil {
 		return nil, nil, err
