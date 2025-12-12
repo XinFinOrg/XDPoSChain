@@ -41,13 +41,6 @@ var (
 	errInvalidYParity       = errors.New("'yParity' field must be 0 or 1")
 	errVYParityMismatch     = errors.New("'v' and 'yParity' fields do not match")
 	errVYParityMissing      = errors.New("missing 'yParity' or 'v' field in transaction")
-
-	skipNonceDestinationAddress = map[common.Address]bool{
-		common.XDCXAddrBinary:                         true,
-		common.TradingStateAddrBinary:                 true,
-		common.XDCXLendingAddressBinary:               true,
-		common.XDCXLendingFinalizedTradeAddressBinary: true,
-	}
 )
 
 // Transaction types.
@@ -482,7 +475,19 @@ func (tx *Transaction) IsLendingFinalizedTradeTransaction() bool {
 
 func (tx *Transaction) IsSkipNonceTransaction() bool {
 	to := tx.To()
-	return to != nil && skipNonceDestinationAddress[*to]
+	if to == nil {
+		return false
+	}
+
+	switch *to {
+	case common.XDCXAddrBinary,
+		common.TradingStateAddrBinary,
+		common.XDCXLendingAddressBinary,
+		common.XDCXLendingFinalizedTradeAddressBinary:
+		return true
+	default:
+		return false
+	}
 }
 
 func (tx *Transaction) IsSigningTransaction() bool {
