@@ -506,11 +506,13 @@ func (tx *Transaction) IsVotingTransaction() (bool, *common.Address) {
 	var end int
 	data := tx.Data()
 	method := hexutil.Encode(data[0:4])
-	if method == common.VoteMethod || method == common.ProposeMethod || method == common.ResignMethod {
+
+	switch method {
+	case common.VoteMethod, common.ProposeMethod, common.ResignMethod:
 		end = len(data)
-	} else if method == common.UnvoteMethod {
+	case common.UnvoteMethod:
 		end = len(data) - 32
-	} else {
+	default:
 		return false, nil
 	}
 
