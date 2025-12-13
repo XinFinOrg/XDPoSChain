@@ -151,7 +151,7 @@ func setupPoolWithConfig(config *params.ChainConfig) (*TxPool, *ecdsa.PrivateKey
 	blockchain := newTestBlockChain(10000000, statedb, new(event.Feed))
 
 	key, _ := crypto.GenerateKey()
-	pool := NewTxPool(testTxPoolConfig, config, blockchain)
+	pool := New(testTxPoolConfig, config, blockchain)
 
 	// wait for the pool to initialize
 	<-pool.initDoneCh
@@ -270,7 +270,7 @@ func TestStateChangeDuringReset(t *testing.T) {
 	tx0 := pricedTransaction(0, 100000, big.NewInt(250000000), key)
 	tx1 := pricedTransaction(1, 100000, big.NewInt(250000000), key)
 
-	pool := NewTxPool(testTxPoolConfig, params.TestChainConfig, blockchain)
+	pool := New(testTxPoolConfig, params.TestChainConfig, blockchain)
 	defer pool.Stop()
 
 	nonce := pool.Nonce(address)
@@ -335,11 +335,15 @@ func TestInvalidTransactions(t *testing.T) {
 		t.Errorf("want %v have %v", want, err)
 	}
 
+	// Test underpriced: set pool gasTip first, then create transaction with lower gas price
+	// MinGasPrice is 250000000 (0.25 Gwei), so use gas price 300000000 (0.3 Gwei)
+	// which is higher than MinGasPrice but lower than pool's gasTip (1 Gwei)
+	pool.gasTip.Store(big.NewInt(1000000000)) // Set pool gasTip to 1 Gwei (1000000000)
 	tx = pricedTransaction(1, 100000, big.NewInt(300000000), key)
-	pool.gasPrice = big.NewInt(1000000000)
 	if err, want := pool.AddRemote(tx), ErrUnderpriced; !errors.Is(err, want) {
 		t.Errorf("want %v have %v", want, err)
 	}
+	// Local transactions should be accepted even if underpriced
 	if err := pool.AddLocal(tx); err != nil {
 		t.Error("expected", nil, "got", err)
 	}
@@ -761,7 +765,7 @@ func TestPostponing(t *testing.T) {
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(db))
 	blockchain := newTestBlockChain(1000000, statedb, new(event.Feed))
 
-	pool := NewTxPool(testTxPoolConfig, params.TestChainConfig, blockchain)
+	pool := New(testTxPoolConfig, params.TestChainConfig, blockchain)
 	defer pool.Stop()
 
 	// Create two test accounts to produce different gap profiles with
@@ -979,7 +983,7 @@ func testQueueGlobalLimiting(t *testing.T, nolocals bool) {
 	config.AccountQueue = 1
 	config.GlobalQueue = config.AccountQueue*3 - 1 // reduce the queue limits to shorten test time (-1 to make it non divisible)
 
-	pool := NewTxPool(config, params.TestChainConfig, blockchain)
+	pool := New(config, params.TestChainConfig, blockchain)
 	defer pool.Stop()
 
 	// Create a number of test accounts and fund them (last one will be the local)
@@ -1070,7 +1074,7 @@ func testQueueTimeLimiting(t *testing.T, nolocals bool) {
 	config.Lifetime = time.Second
 	config.NoLocals = nolocals
 
-	pool := NewTxPool(config, params.TestChainConfig, blockchain)
+	pool := New(config, params.TestChainConfig, blockchain)
 	defer pool.Stop()
 
 	// Create two test accounts to ensure remotes expire but locals do not
@@ -1256,7 +1260,7 @@ func TestPendingGlobalLimiting(t *testing.T) {
 	config := testTxPoolConfig
 	config.GlobalSlots = config.AccountSlots * 10
 
-	pool := NewTxPool(config, params.TestChainConfig, blockchain)
+	pool := New(config, params.TestChainConfig, blockchain)
 	defer pool.Stop()
 
 	// Create a number of test accounts and fund them
@@ -1308,7 +1312,7 @@ func TestAllowedTxSize(t *testing.T) {
 	//
 	// It is assumed the fields in the transaction (except of the data) are:
 	//   - nonce     <= 32 bytes
-	//   - gasPrice  <= 32 bytes
+	//   - gasTip  <= 32 bytes
 	//   - gasLimit  <= 32 bytes
 	//   - recipient == 20 bytes
 	//   - value     <= 32 bytes
@@ -1316,22 +1320,21 @@ func TestAllowedTxSize(t *testing.T) {
 	// All those fields are summed up to at most 213 bytes.
 	baseSize := uint64(213)
 	dataSize := txMaxSize - baseSize
-	maxGas := pool.currentMaxGas.Load()
 	// Try adding a transaction with maximal allowed size
-	tx := pricedDataTransaction(0, pool.currentMaxGas.Load(), big.NewInt(300000000), key, dataSize)
+	tx := pricedDataTransaction(0, pool.currentHead.Load().GasLimit, big.NewInt(300000000), key, dataSize)
 	if err := pool.addRemoteSync(tx); err != nil {
 		t.Fatalf("failed to add transaction of size %d, close to maximal: %v", int(tx.Size()), err)
 	}
 	// Try adding a transaction with random allowed size
-	if err := pool.addRemoteSync(pricedDataTransaction(1, maxGas, big.NewInt(300000000), key, uint64(rand.Intn(int(dataSize))))); err != nil {
+	if err := pool.addRemoteSync(pricedDataTransaction(1, pool.currentHead.Load().GasLimit, big.NewInt(300000000), key, uint64(rand.Intn(int(dataSize))))); err != nil {
 		t.Fatalf("failed to add transaction of random allowed size: %v", err)
 	}
 	// Try adding a transaction of minimal not allowed size
-	if err := pool.addRemoteSync(pricedDataTransaction(2, maxGas, big.NewInt(300000000), key, txMaxSize)); err == nil {
+	if err := pool.addRemoteSync(pricedDataTransaction(2, pool.currentHead.Load().GasLimit, big.NewInt(300000000), key, txMaxSize)); err == nil {
 		t.Fatalf("expected rejection on slightly oversize transaction")
 	}
 	// Try adding a transaction of random not allowed size
-	if err := pool.addRemoteSync(pricedDataTransaction(2, maxGas, big.NewInt(300000000), key, dataSize+1+uint64(rand.Intn(int(10*txMaxSize))))); err == nil {
+	if err := pool.addRemoteSync(pricedDataTransaction(2, pool.currentHead.Load().GasLimit, big.NewInt(300000000), key, dataSize+1+uint64(rand.Intn(int(10*txMaxSize))))); err == nil {
 		t.Fatalf("expected rejection on oversize transaction")
 	}
 	// Run some sanity checks on the pool internals
@@ -1361,7 +1364,7 @@ func TestCapClearsFromAll(t *testing.T) {
 	config.AccountQueue = 2
 	config.GlobalSlots = 8
 
-	pool := NewTxPool(config, params.TestChainConfig, blockchain)
+	pool := New(config, params.TestChainConfig, blockchain)
 	defer pool.Stop()
 
 	// Create a number of test accounts and fund them
@@ -1394,7 +1397,7 @@ func TestPendingMinimumAllowance(t *testing.T) {
 	config := testTxPoolConfig
 	config.AccountSlots = 5
 	config.GlobalSlots = 1
-	pool := NewTxPool(config, params.TestChainConfig, blockchain)
+	pool := New(config, params.TestChainConfig, blockchain)
 	defer pool.Stop()
 
 	// Create a number of test accounts and fund them
@@ -1440,7 +1443,7 @@ func TestRepricing(t *testing.T) {
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(db))
 	blockchain := newTestBlockChain(1000000, statedb, new(event.Feed))
 
-	pool := NewTxPool(testTxPoolConfig, params.TestChainConfig, blockchain)
+	pool := New(testTxPoolConfig, params.TestChainConfig, blockchain)
 	defer pool.Stop()
 
 	// Keep track of transaction events to ensure all executables get announced
@@ -1489,7 +1492,7 @@ func TestRepricing(t *testing.T) {
 		t.Fatalf("pool internal state corrupted: %v", err)
 	}
 	// Reprice the pool and check that underpriced transactions get dropped
-	pool.SetGasPrice(big.NewInt(500000000))
+	pool.SetGasTip(big.NewInt(500000000))
 
 	pending, queued = pool.Stats()
 	if pending != 2 {
@@ -1505,13 +1508,13 @@ func TestRepricing(t *testing.T) {
 		t.Fatalf("pool internal state corrupted: %v", err)
 	}
 	// Check that we can't add the old transactions back
-	if err := pool.AddRemote(pricedTransaction(1, 100000, big.NewInt(250000000), keys[0])); err != ErrUnderpriced {
+	if err := pool.AddRemote(pricedTransaction(1, 100000, big.NewInt(250000000), keys[0])); !errors.Is(err, ErrUnderpriced) {
 		t.Fatalf("adding underpriced pending transaction error mismatch: have %v, want %v", err, ErrUnderpriced)
 	}
-	if err := pool.AddRemote(pricedTransaction(0, 100000, big.NewInt(250000000), keys[1])); err != ErrUnderpriced {
+	if err := pool.AddRemote(pricedTransaction(0, 100000, big.NewInt(250000000), keys[1])); !errors.Is(err, ErrUnderpriced) {
 		t.Fatalf("adding underpriced pending transaction error mismatch: have %v, want %v", err, ErrUnderpriced)
 	}
-	if err := pool.AddRemote(pricedTransaction(2, 100000, big.NewInt(250000000), keys[2])); err != ErrUnderpriced {
+	if err := pool.AddRemote(pricedTransaction(2, 100000, big.NewInt(250000000), keys[2])); !errors.Is(err, ErrUnderpriced) {
 		t.Fatalf("adding underpriced queued transaction error mismatch: have %v, want %v", err, ErrUnderpriced)
 	}
 	if err := validateEvents(events, 0); err != nil {
@@ -1610,7 +1613,7 @@ func TestRepricingDynamicFee(t *testing.T) {
 		t.Fatalf("pool internal state corrupted: %v", err)
 	}
 	// Reprice the pool and check that underpriced transactions get dropped
-	pool.SetGasPrice(big.NewInt(350000000))
+	pool.SetGasTip(big.NewInt(350000000))
 
 	pending, queued = pool.Stats()
 	if pending != 2 {
@@ -1627,15 +1630,15 @@ func TestRepricingDynamicFee(t *testing.T) {
 	}
 	// Check that we can't add the old transactions back
 	tx := pricedTransaction(1, 100000, big.NewInt(300000000), keys[0])
-	if err := pool.AddRemote(tx); err != ErrUnderpriced {
+	if err := pool.AddRemote(tx); !errors.Is(err, ErrUnderpriced) {
 		t.Fatalf("adding underpriced pending transaction error mismatch: have %v, want %v", err, ErrUnderpriced)
 	}
 	tx = dynamicFeeTx(0, 100000, big.NewInt(350000000), big.NewInt(300000000), keys[1])
-	if err := pool.AddRemote(tx); err != ErrUnderpriced {
+	if err := pool.AddRemote(tx); !errors.Is(err, ErrUnderpriced) {
 		t.Fatalf("adding underpriced pending transaction error mismatch: have %v, want %v", err, ErrUnderpriced)
 	}
 	tx = dynamicFeeTx(2, 100000, big.NewInt(300000000), big.NewInt(300000000), keys[2])
-	if err := pool.AddRemote(tx); err != ErrUnderpriced {
+	if err := pool.AddRemote(tx); !errors.Is(err, ErrUnderpriced) {
 		t.Fatalf("adding underpriced queued transaction error mismatch: have %v, want %v", err, ErrUnderpriced)
 	}
 	if err := validateEvents(events, 0); err != nil {
@@ -1689,7 +1692,7 @@ func TestRepricingKeepsLocals(t *testing.T) {
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(db))
 	blockchain := newTestBlockChain(1000000, statedb, new(event.Feed))
 
-	pool := NewTxPool(testTxPoolConfig, eip1559Config, blockchain)
+	pool := New(testTxPoolConfig, eip1559Config, blockchain)
 	defer pool.Stop()
 
 	// Create a number of test accounts and fund them
@@ -1741,13 +1744,13 @@ func TestRepricingKeepsLocals(t *testing.T) {
 	validate()
 
 	// Reprice the pool and check that nothing is dropped
-	pool.SetGasPrice(big.NewInt(500000000))
+	pool.SetGasTip(big.NewInt(500000000))
 	validate()
 
-	pool.SetGasPrice(big.NewInt(500000000))
-	pool.SetGasPrice(big.NewInt(1000000000))
-	pool.SetGasPrice(big.NewInt(2000000000))
-	pool.SetGasPrice(big.NewInt(25000000000))
+	pool.SetGasTip(big.NewInt(500000000))
+	pool.SetGasTip(big.NewInt(1000000000))
+	pool.SetGasTip(big.NewInt(2000000000))
+	pool.SetGasTip(big.NewInt(25000000000))
 	validate()
 }
 
@@ -1768,7 +1771,7 @@ func TestPoolUnderpricing(t *testing.T) {
 	config.GlobalSlots = 2
 	config.GlobalQueue = 2
 
-	pool := NewTxPool(config, params.TestChainConfig, blockchain)
+	pool := New(config, params.TestChainConfig, blockchain)
 	defer pool.Stop()
 
 	// Keep track of transaction events to ensure all executables get announced
@@ -1813,7 +1816,7 @@ func TestPoolUnderpricing(t *testing.T) {
 		t.Fatalf("pool internal state corrupted: %v", err)
 	}
 	// Ensure that adding an underpriced transaction on block limit fails
-	if err := pool.AddRemote(pricedTransaction(0, 100000, big.NewInt(250000000), keys[1])); err != ErrUnderpriced {
+	if err := pool.AddRemote(pricedTransaction(0, 100000, big.NewInt(250000000), keys[1])); !errors.Is(err, ErrUnderpriced) {
 		t.Fatalf("adding underpriced pending transaction error mismatch: have %v, want %v", err, ErrUnderpriced)
 	}
 	// Replace a future transaction with a future transaction
@@ -1887,7 +1890,7 @@ func TestPoolStableUnderpricing(t *testing.T) {
 	config.GlobalQueue = 0
 	config.AccountSlots = config.GlobalSlots - 1
 
-	pool := NewTxPool(config, params.TestChainConfig, blockchain)
+	pool := New(config, params.TestChainConfig, blockchain)
 	defer pool.Stop()
 
 	// Keep track of transaction events to ensure all executables get announced
@@ -1995,7 +1998,7 @@ func TestUnderpricingDynamicFee(t *testing.T) {
 
 	// Ensure that adding an underpriced transaction fails
 	tx := dynamicFeeTx(0, 100000, big.NewInt(260000000), big.NewInt(250000000), keys[1])
-	if err := pool.AddRemote(tx); err != ErrUnderpriced { // Pend K0:0, K0:1, K2:0; Que K1:1
+	if err := pool.AddRemote(tx); !errors.Is(err, ErrUnderpriced) { // Pend K0:0, K0:1, K2:0; Que K1:1
 		t.Fatalf("adding underpriced pending transaction error mismatch: have %v, want %v", err, ErrUnderpriced)
 	}
 
@@ -2115,7 +2118,7 @@ func TestDeduplication(t *testing.T) {
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
 	blockchain := newTestBlockChain(1000000, statedb, new(event.Feed))
 
-	pool := NewTxPool(testTxPoolConfig, params.TestChainConfig, blockchain)
+	pool := New(testTxPoolConfig, params.TestChainConfig, blockchain)
 	defer pool.Stop()
 
 	// Create a test account to add transactions with
@@ -2182,7 +2185,7 @@ func TestReplacement(t *testing.T) {
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(db))
 	blockchain := newTestBlockChain(1000000, statedb, new(event.Feed))
 
-	pool := NewTxPool(testTxPoolConfig, params.TestChainConfig, blockchain)
+	pool := New(testTxPoolConfig, params.TestChainConfig, blockchain)
 	defer pool.Stop()
 
 	// Keep track of transaction events to ensure all executables get announced
@@ -2394,7 +2397,7 @@ func testTransactionJournaling(t *testing.T, nolocals bool) {
 	config.Journal = journal
 	config.Rejournal = time.Second
 
-	pool := NewTxPool(config, params.TestChainConfig, blockchain)
+	pool := New(config, params.TestChainConfig, blockchain)
 
 	// Create two test accounts to ensure remotes expire but locals do not
 	local, _ := crypto.GenerateKey()
@@ -2431,7 +2434,7 @@ func testTransactionJournaling(t *testing.T, nolocals bool) {
 	statedb.SetNonce(crypto.PubkeyToAddress(local.PublicKey), 1)
 	blockchain = newTestBlockChain(1000000, statedb, new(event.Feed))
 
-	pool = NewTxPool(config, params.TestChainConfig, blockchain)
+	pool = New(config, params.TestChainConfig, blockchain)
 
 	pending, queued = pool.Stats()
 	if queued != 0 {
@@ -2457,7 +2460,7 @@ func testTransactionJournaling(t *testing.T, nolocals bool) {
 
 	statedb.SetNonce(crypto.PubkeyToAddress(local.PublicKey), 1)
 	blockchain = newTestBlockChain(1000000, statedb, new(event.Feed))
-	pool = NewTxPool(config, params.TestChainConfig, blockchain)
+	pool = New(config, params.TestChainConfig, blockchain)
 
 	pending, queued = pool.Stats()
 	if pending != 0 {
@@ -2488,7 +2491,7 @@ func TestStatusCheck(t *testing.T) {
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(db))
 	blockchain := newTestBlockChain(1000000, statedb, new(event.Feed))
 
-	pool := NewTxPool(testTxPoolConfig, params.TestChainConfig, blockchain)
+	pool := New(testTxPoolConfig, params.TestChainConfig, blockchain)
 	defer pool.Stop()
 
 	// Create the test accounts to check various transaction statuses with
@@ -2698,75 +2701,75 @@ func BenchmarkMultiAccountBatchInsert(b *testing.B) {
 func TestSetGasPrice(t *testing.T) {
 	testCases := []struct {
 		name        string
-		price       *big.Int
+		tip         *big.Int
 		wantErr     error
 		description string
 	}{
 		// Invalid cases - should be rejected
 		{
-			name:        "nil gas price",
-			price:       nil,
-			wantErr:     errors.New("reject nil gas price"),
+			name:        "nil gas tip",
+			tip:         nil,
+			wantErr:     errors.New("reject nil gas tip"),
 			description: "nil pointer should be rejected gracefully",
 		},
 		{
-			name:        "negative gas price",
-			price:       big.NewInt(-1),
-			wantErr:     fmt.Errorf("reject negative gas price: %v", big.NewInt(-1)),
+			name:        "negative gas tip",
+			tip:         big.NewInt(-1),
+			wantErr:     fmt.Errorf("reject negative gas tip: %v", big.NewInt(-1)),
 			description: "negative value should be rejected",
 		},
 		{
 			name:        "exceeds maximum by 1",
-			price:       new(big.Int).Add(defaultMaxPrice, big.NewInt(1)),
-			wantErr:     fmt.Errorf("reject too high gas price: %v, maximum: %v", new(big.Int).Add(defaultMaxPrice, big.NewInt(1)), defaultMaxPrice),
+			tip:         new(big.Int).Add(defaultMaxTip, big.NewInt(1)),
+			wantErr:     fmt.Errorf("reject too high gas tip: %v, maximum: %v", new(big.Int).Add(defaultMaxTip, big.NewInt(1)), defaultMaxTip),
 			description: "value exceeding 1000 GWei should be rejected",
 		},
 		{
 			name:        "exceeds maximum significantly",
-			price:       big.NewInt(10000 * params.GWei),
-			wantErr:     fmt.Errorf("reject too high gas price: %v, maximum: %v", big.NewInt(10000*params.GWei), defaultMaxPrice),
+			tip:         big.NewInt(10000 * params.GWei),
+			wantErr:     fmt.Errorf("reject too high gas tip: %v, maximum: %v", big.NewInt(10000*params.GWei), defaultMaxTip),
 			description: "value far exceeding maximum should be rejected",
 		},
 		// Valid cases - should be accepted
 		{
-			name:        "zero gas price",
-			price:       big.NewInt(0),
+			name:        "zero gas tip",
+			tip:         big.NewInt(0),
 			wantErr:     nil,
 			description: "zero is valid as it's not negative",
 		},
 		{
 			name:        "minimum positive value",
-			price:       big.NewInt(1),
+			tip:         big.NewInt(1),
 			wantErr:     nil,
 			description: "minimum positive value should be accepted",
 		},
 		{
 			name:        "1 GWei",
-			price:       big.NewInt(params.GWei),
+			tip:         big.NewInt(params.GWei),
 			wantErr:     nil,
 			description: "1 GWei should be accepted",
 		},
 		{
 			name:        "100 GWei",
-			price:       big.NewInt(100 * params.GWei),
+			tip:         big.NewInt(100 * params.GWei),
 			wantErr:     nil,
 			description: "100 GWei should be accepted",
 		},
 		{
 			name:        "500 GWei",
-			price:       big.NewInt(500 * params.GWei),
+			tip:         big.NewInt(500 * params.GWei),
 			wantErr:     nil,
 			description: "500 GWei should be accepted",
 		},
 		{
 			name:        "just below maximum",
-			price:       new(big.Int).Sub(defaultMaxPrice, big.NewInt(1)),
+			tip:         new(big.Int).Sub(defaultMaxTip, big.NewInt(1)),
 			wantErr:     nil,
 			description: "value just below maximum should be accepted",
 		},
 		{
 			name:        "exactly at maximum",
-			price:       defaultMaxPrice,
+			tip:         defaultMaxTip,
 			wantErr:     nil,
 			description: "exactly 1000 GWei should be accepted",
 		},
@@ -2778,9 +2781,9 @@ func TestSetGasPrice(t *testing.T) {
 			pool, _ := setupPool()
 			defer pool.Stop()
 
-			oldPrice := pool.GasPrice()
-			haveErr := pool.SetGasPrice(tc.price)
-			newPrice := pool.GasPrice()
+			oldPrice := pool.gasTip.Load()
+			haveErr := pool.SetGasTip(tc.tip)
+			newPrice := pool.gasTip.Load()
 
 			if tc.wantErr != nil {
 				// Invalid case: should return error and price should remain unchanged
@@ -2797,8 +2800,8 @@ func TestSetGasPrice(t *testing.T) {
 				if haveErr != nil {
 					t.Errorf("%s: Expected no error, got: %v", tc.description, haveErr)
 				}
-				if newPrice.Cmp(tc.price) != 0 {
-					t.Errorf("%s: Expected gas price to be set to %v, got %v", tc.description, tc.price, newPrice)
+				if newPrice.Cmp(tc.tip) != 0 {
+					t.Errorf("%s: Expected gas price to be set to %v, got %v", tc.description, tc.tip, newPrice)
 				}
 			}
 		})

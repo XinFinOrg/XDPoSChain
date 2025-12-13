@@ -62,10 +62,11 @@ func (api *MinerAPI) Start(threads *int) error {
 	if !api.e.IsStaking() {
 		// Propagate the initial price point to the transaction pool
 		api.e.lock.RLock()
+		// api.e.gasPrice is from MinerGasPriceFlag
 		price := api.e.gasPrice
 		api.e.lock.RUnlock()
 
-		api.e.txPool.SetGasPrice(price)
+		api.e.txPool.SetGasTip(price)
 		return api.e.StartStaking(true)
 	}
 	return nil
@@ -97,7 +98,7 @@ func (api *MinerAPI) SetGasPrice(gasPrice hexutil.Big) bool {
 	api.e.gasPrice = (*big.Int)(&gasPrice)
 	api.e.lock.Unlock()
 
-	err := api.e.txPool.SetGasPrice((*big.Int)(&gasPrice))
+	err := api.e.txPool.SetGasTip((*big.Int)(&gasPrice))
 	return err == nil
 }
 

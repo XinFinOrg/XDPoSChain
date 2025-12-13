@@ -265,7 +265,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	if config.TxPool.Journal != "" {
 		config.TxPool.Journal = stack.ResolvePath(config.TxPool.Journal)
 	}
-	eth.txPool = txpool.NewTxPool(config.TxPool, eth.chainConfig, eth.blockchain)
+	eth.txPool = txpool.New(config.TxPool, eth.chainConfig, eth.blockchain)
 	eth.orderPool = txpool.NewOrderPool(eth.chainConfig, eth.blockchain)
 	eth.lendingPool = txpool.NewLendingPool(eth.chainConfig, eth.blockchain)
 

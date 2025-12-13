@@ -1589,9 +1589,6 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		log.Info("Using developer account", "address", developer.Address)
 
 		cfg.Genesis = core.DeveloperGenesisBlock(uint64(ctx.Int(DeveloperPeriodFlag.Name)), developer.Address)
-		if !ctx.IsSet(MinerGasPriceFlag.Name) {
-			cfg.GasPrice = big.NewInt(1)
-		}
 	}
 
 	// VM tracing config.
