@@ -112,7 +112,7 @@ func RunGit(args ...string) string {
 			}
 			return ""
 		}
-		log.Fatal(strings.Join(cmd.Args, " "), ": ", err, "\n", stderr.String())
+		log.Fatal(strings.Join(cmd.Args, " "), ": ", err, "\n", stderr)
 	}
 	return strings.TrimSpace(stdout.String())
 }

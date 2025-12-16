@@ -502,7 +502,7 @@ func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *type
 		mapBlkHash[i] = h.Hash()
 		signingTxs, ok := c.GetCachedSigningTxs(h.Hash())
 		if !ok {
-			log.Debug("Failed get from cached", "hash", h.Hash().String(), "number", i)
+			log.Debug("Failed get from cached", "hash", h.Hash(), "number", i)
 			block := chain.GetBlock(h.Hash(), i)
 			if block != nil {
 				txs := block.Transactions()

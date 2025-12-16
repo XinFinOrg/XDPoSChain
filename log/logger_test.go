@@ -64,7 +64,7 @@ func TestJSONHandler(t *testing.T) {
 	logger = slog.New(handler)
 	logger.Debug("hi there")
 	if len(out.String()) != 0 {
-		t.Errorf("expected empty debug log output, but got: %v", out.String())
+		t.Errorf("expected empty debug log output, but got: %v", out)
 	}
 }
 

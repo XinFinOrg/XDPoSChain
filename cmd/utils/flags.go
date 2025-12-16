@@ -916,13 +916,13 @@ func setWhiteBlackListPeers(ctx *cli.Context, cfg *p2p.Config) {
 				node1, err1 := discover.HexID(url)
 				if err1 == nil {
 					cfg.WhitePeers[node1] = struct{}{}
-					log.Info("Add peer to whitelist", "id", node1.String())
+					log.Info("Add peer to whitelist", "id", node1)
 					continue
 				}
 				node2, err2 := discover.ParseNode(url)
 				if err2 == nil {
 					cfg.WhitePeers[node2.ID] = struct{}{}
-					log.Info("Add peer to whitelist", "enode", url, "id", node2.ID.String())
+					log.Info("Add peer to whitelist", "enode", url, "id", node2.ID)
 					continue
 				}
 				log.Crit("Invalid peer id for whitelist", "url", url, "err1", err1, "err2", err2)
@@ -939,13 +939,13 @@ func setWhiteBlackListPeers(ctx *cli.Context, cfg *p2p.Config) {
 				node1, err1 := discover.HexID(url)
 				if err1 == nil {
 					cfg.BlackPeers[node1] = struct{}{}
-					log.Info("Add peer to blacklsit", "id", node1.String())
+					log.Info("Add peer to blacklist", "id", node1)
 					continue
 				}
 				node2, err2 := discover.ParseNode(url)
 				if err2 == nil {
 					cfg.BlackPeers[node2.ID] = struct{}{}
-					log.Info("Add peer to blacklsit", "enode", url, "id", node2.ID.String())
+					log.Info("Add peer to blacklist", "enode", url, "id", node2.ID)
 					continue
 				}
 				log.Crit("Invalid peer id for blacklist", "url", url, "err1", err1, "err2", err2)
@@ -963,7 +963,7 @@ func removeBlackPeers(cfg *p2p.Config) {
 	filteredNodes := make([]*discover.Node, 0, len(cfg.BootstrapNodes))
 	for _, node := range cfg.BootstrapNodes {
 		if _, ok := cfg.BlackPeers[node.ID]; ok {
-			log.Info("Remove black peer", "enode", node.String(), "id", node.ID)
+			log.Info("Remove black peer", "enode", node, "id", node.ID)
 			continue
 		}
 		filteredNodes = append(filteredNodes, node)
@@ -1363,7 +1363,7 @@ func setSmartCard(ctx *cli.Context, cfg *node.Config) {
 		return
 	}
 	if fi.Mode()&os.ModeType != os.ModeSocket {
-		log.Error("Invalid smartcard daemon path", "path", path, "type", fi.Mode().String())
+		log.Error("Invalid smartcard daemon path", "path", path, "type", fi.Mode())
 		return
 	}
 	// Smartcard daemon path exists and is a socket, enable it

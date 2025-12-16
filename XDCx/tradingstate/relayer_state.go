@@ -165,7 +165,7 @@ func AddTokenBalance(addr common.Address, value *big.Int, token common.Address, 
 		log.Debug("ApplyXDCXMatchedTransaction settle balance: ADD TOKEN XDC NATIVE BEFORE", "token", common.XDCNativeAddress, "address", addr, "balance", balance, "orderValue", value)
 		statedb.AddBalance(addr, value, tracing.BalanceChangeUnspecified)
 		balance = statedb.GetBalance(addr)
-		log.Debug("ApplyXDCXMatchedTransaction settle balance: ADD XDC NATIVE BALANCE AFTER", "token", token.String(), "address", addr, "balance", balance, "orderValue", value)
+		log.Debug("ApplyXDCXMatchedTransaction settle balance: ADD XDC NATIVE BALANCE AFTER", "token", token, "address", addr, "balance", balance, "orderValue", value)
 
 		return nil
 	}
@@ -195,7 +195,7 @@ func SubTokenBalance(addr common.Address, value *big.Int, token common.Address, 
 		}
 		statedb.SubBalance(addr, value, tracing.BalanceChangeUnspecified)
 		balance = statedb.GetBalance(addr)
-		log.Debug("ApplyXDCXMatchedTransaction settle balance: SUB XDC NATIVE BALANCE AFTER", "token", token.String(), "address", addr, "balance", balance, "orderValue", value)
+		log.Debug("ApplyXDCXMatchedTransaction settle balance: SUB XDC NATIVE BALANCE AFTER", "token", token, "address", addr, "balance", balance, "orderValue", value)
 		return nil
 	}
 
@@ -204,13 +204,13 @@ func SubTokenBalance(addr common.Address, value *big.Int, token common.Address, 
 		slot := TokenMappingSlot["balances"]
 		locHash := common.BigToHash(GetLocMappingAtKey(addr.Hash(), slot))
 		balance := statedb.GetState(token, locHash).Big()
-		log.Debug("ApplyXDCXMatchedTransaction settle balance: SUB TOKEN BALANCE BEFORE", "token", token.String(), "address", addr, "balance", balance, "orderValue", value)
+		log.Debug("ApplyXDCXMatchedTransaction settle balance: SUB TOKEN BALANCE BEFORE", "token", token, "address", addr, "balance", balance, "orderValue", value)
 		if balance.Cmp(value) < 0 {
 			return errors.Errorf("value %s in token %s not enough , have : %s , want : %s  ", addr.String(), token.String(), balance, value)
 		}
 		balance = new(big.Int).Sub(balance, value)
 		statedb.SetState(token, locHash, common.BigToHash(balance))
-		log.Debug("ApplyXDCXMatchedTransaction settle balance: SUB TOKEN BALANCE AFTER", "token", token.String(), "address", addr, "balance", balance, "orderValue", value)
+		log.Debug("ApplyXDCXMatchedTransaction settle balance: SUB TOKEN BALANCE AFTER", "token", token, "address", addr, "balance", balance, "orderValue", value)
 		return nil
 	} else {
 		return errors.Errorf("token %s isn't exist", token.String())
@@ -230,7 +230,7 @@ func CheckSubTokenBalance(addr common.Address, value *big.Int, token common.Addr
 			return nil, errors.Errorf("value %s in token %s not enough , have : %s , want : %s  ", addr.String(), token.String(), balance, value)
 		}
 		newBalance := new(big.Int).Sub(balance, value)
-		log.Debug("CheckSubTokenBalance settle balance: SUB XDC NATIVE BALANCE ", "token", token, "address", addr.String(), "balance", balance, "value", value, "newBalance", newBalance)
+		log.Debug("CheckSubTokenBalance settle balance: SUB XDC NATIVE BALANCE ", "token", token, "address", addr, "balance", balance, "value", value, "newBalance", newBalance)
 		return newBalance, nil
 	}
 	// TRC tokens

@@ -912,7 +912,7 @@ func (x *XDPoS_v1) Seal(chain consensus.ChainReader, block *types.Block, stop <-
 				if limit := uint64(2); number < limit || seen > number-limit {
 					// Only take into account the non-epoch blocks
 					if number%x.config.Epoch != 0 {
-						log.Info("Signed recently, must wait for others ", "len(masternodes)", len(masternodes), "number", number, "limit", limit, "seen", seen, "recent", recent.String(), "snap.Recents", snap.Recents)
+						log.Info("Signed recently, must wait for others ", "len(masternodes)", len(masternodes), "number", number, "limit", limit, "seen", seen, "recent", recent, "snap.Recents", snap.Recents)
 						<-stop
 						return nil, nil
 					}

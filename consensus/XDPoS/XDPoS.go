@@ -532,7 +532,7 @@ func (x *XDPoS) CacheNoneTIPSigningTxs(header *types.Header, txs []*types.Transa
 		}
 	}
 
-	log.Debug("Save tx signers to cache", "hash", header.Hash().String(), "number", header.Number, "len(txs)", len(signTxs))
+	log.Debug("Save tx signers to cache", "hash", header.Hash(), "number", header.Number, "len(txs)", len(signTxs))
 	x.signingTxsCache.Add(header.Hash(), signTxs)
 
 	return signTxs
@@ -546,7 +546,7 @@ func (x *XDPoS) CacheSigningTxs(hash common.Hash, txs []*types.Transaction) []*t
 			signTxs = append(signTxs, tx)
 		}
 	}
-	log.Debug("Save tx signers to cache", "hash", hash.String(), "len(txs)", len(signTxs))
+	log.Debug("Save tx signers to cache", "hash", hash, "len(txs)", len(signTxs))
 	x.signingTxsCache.Add(hash, signTxs)
 	return signTxs
 }

@@ -358,7 +358,7 @@ func (w *wizard) makeGenesis() {
 		storage := make(map[common.Hash]common.Hash)
 		f := func(key, val common.Hash) bool {
 			storage[key] = common.BytesToHash(val.Bytes())
-			log.Info("DecodeBytes", "value", val.String(), "decode", storage[key].String())
+			log.Info("DecodeBytes", "value", val, "decode", storage[key])
 			return true
 		}
 		contractBackend.ForEachStorageAt(ctx, validatorAddress, nil, f)

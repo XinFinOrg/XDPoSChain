@@ -331,7 +331,7 @@ func GetRewardForCheckpoint(c *XDPoS.XDPoS, chain consensus.ChainReader, header 
 		mapBlkHash[i] = header.Hash()
 		signingTxs, ok := c.GetCachedSigningTxs(header.Hash())
 		if !ok {
-			log.Debug("Failed get from cached", "hash", header.Hash().String(), "number", i)
+			log.Debug("Failed get from cached", "hash", header.Hash(), "number", i)
 			block := chain.GetBlock(header.Hash(), i)
 			txs := block.Transactions()
 			if !chain.Config().IsTIPSigning(header.Number) {
