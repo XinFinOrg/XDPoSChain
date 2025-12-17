@@ -340,17 +340,17 @@ var testCases = []struct {
 	bin Address
 	str string
 }{
-	{BlockSignersBinary, BlockSigners},
-	{MasternodeVotingSMCBinary, MasternodeVotingSMC},
-	{RandomizeSMCBinary, RandomizeSMC},
-	{FoudationAddrBinary, FoudationAddr},
-	{TeamAddrBinary, TeamAddr},
-	{XDCXAddrBinary, XDCXAddr},
-	{TradingStateAddrBinary, TradingStateAddr},
-	{XDCXLendingAddressBinary, XDCXLendingAddress},
-	{XDCXLendingFinalizedTradeAddressBinary, XDCXLendingFinalizedTradeAddress},
-	{XDCNativeAddressBinary, XDCNativeAddress},
-	{LendingLockAddressBinary, LendingLockAddress},
+	{BlockSignersBinary, "xdc0000000000000000000000000000000000000089"},
+	{MasternodeVotingSMCBinary, "xdc0000000000000000000000000000000000000088"},
+	{RandomizeSMCBinary, "xdc0000000000000000000000000000000000000090"},
+	{FoudationAddrBinary, "xdc0000000000000000000000000000000000000068"},
+	{TeamAddrBinary, "xdc0000000000000000000000000000000000000099"},
+	{XDCXAddrBinary, "xdc0000000000000000000000000000000000000091"},
+	{TradingStateAddrBinary, "xdc0000000000000000000000000000000000000092"},
+	{XDCXLendingAddressBinary, "xdc0000000000000000000000000000000000000093"},
+	{XDCXLendingFinalizedTradeAddressBinary, "xdc0000000000000000000000000000000000000094"},
+	{XDCNativeAddressBinary, "xdc0000000000000000000000000000000000000001"},
+	{LendingLockAddressBinary, "xdc0000000000000000000000000000000000000011"},
 }
 
 func TestBinaryAddressToString(t *testing.T) {

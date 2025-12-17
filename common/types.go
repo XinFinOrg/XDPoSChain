@@ -33,17 +33,6 @@ import (
 const (
 	HashLength                       = 32
 	AddressLength                    = 20
-	BlockSigners                     = "xdc0000000000000000000000000000000000000089"
-	MasternodeVotingSMC              = "xdc0000000000000000000000000000000000000088"
-	RandomizeSMC                     = "xdc0000000000000000000000000000000000000090"
-	FoudationAddr                    = "xdc0000000000000000000000000000000000000068"
-	TeamAddr                         = "xdc0000000000000000000000000000000000000099"
-	XDCXAddr                         = "xdc0000000000000000000000000000000000000091"
-	TradingStateAddr                 = "xdc0000000000000000000000000000000000000092"
-	XDCXLendingAddress               = "xdc0000000000000000000000000000000000000093"
-	XDCXLendingFinalizedTradeAddress = "xdc0000000000000000000000000000000000000094"
-	XDCNativeAddress                 = "xdc0000000000000000000000000000000000000001"
-	LendingLockAddress               = "xdc0000000000000000000000000000000000000011"
 	VoteMethod                       = "0x6dd7d8ea"
 	UnvoteMethod                     = "0x02aa9be2"
 	ProposeMethod                    = "0x01267951"
