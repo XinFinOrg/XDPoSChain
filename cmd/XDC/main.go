@@ -361,8 +361,6 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, cfg X
 						th.SetThreads(threads)
 					}
 				}
-				// Set the gas price to the limits from the CLI and start mining
-				ethBackend.TxPool().SetGasPrice(cfg.Eth.GasPrice)
 				if err := ethBackend.StartStaking(true); err != nil {
 					utils.Fatalf("Failed to start staking: %v", err)
 				}
@@ -398,8 +396,6 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, cfg X
 							th.SetThreads(threads)
 						}
 					}
-					// Set the gas price to the limits from the CLI and start mining
-					ethBackend.TxPool().SetGasPrice(cfg.Eth.GasPrice)
 					if err := ethBackend.StartStaking(true); err != nil {
 						utils.Fatalf("Failed to start staking: %v", err)
 					}
