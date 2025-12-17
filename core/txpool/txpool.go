@@ -204,7 +204,7 @@ var DefaultConfig = Config{
 	Journal:   "transactions.rlp",
 	Rejournal: time.Hour,
 
-	PriceLimit: 1,
+	PriceLimit: 0,
 	PriceBump:  10,
 
 	AccountSlots: 16,
@@ -222,10 +222,6 @@ func (config *Config) sanitize() Config {
 	if conf.Rejournal < time.Second {
 		log.Warn("Sanitizing invalid txpool journal time", "provided", conf.Rejournal, "updated", time.Second)
 		conf.Rejournal = time.Second
-	}
-	if conf.PriceLimit < 1 {
-		log.Warn("Sanitizing invalid txpool price limit", "provided", conf.PriceLimit, "updated", DefaultConfig.PriceLimit)
-		conf.PriceLimit = DefaultConfig.PriceLimit
 	}
 	if conf.PriceBump < 1 {
 		log.Warn("Sanitizing invalid txpool price bump", "provided", conf.PriceBump, "updated", DefaultConfig.PriceBump)
@@ -572,9 +568,9 @@ func (pool *TxPool) Pending(enforceTips bool) map[common.Address]types.Transacti
 		txs := list.Flatten()
 
 		// If the miner requests tip enforcement, cap the lists now
-		if enforceTips && pool.priced.urgent.baseFee != nil && !pool.locals.contains(addr) {
+		if enforceTips && !pool.locals.contains(addr) {
 			for i, tx := range txs {
-				if !tx.IsSpecialTransaction() && tx.GasPrice().Cmp(pool.priced.urgent.baseFee) < 0 {
+				if !tx.IsSpecialTransaction() && tx.EffectiveGasTipIntCmp(pool.gasPrice, pool.priced.urgent.baseFee) < 0 {
 					txs = txs[:i]
 					break
 				}
@@ -670,15 +666,8 @@ func (pool *TxPool) validateTxBasics(tx *types.Transaction, local bool) error {
 		return core.ErrNonceMax
 	}
 	// Drop non-local transactions under our own minimal accepted gas price or tip
-	if !local {
-		isUnderpriced := false
-		if pool.priced.urgent.baseFee != nil {
-			// check tx.GasPrice() when GasTipCap() == 0
-			isUnderpriced = tx.GasPrice().Cmp(pool.priced.urgent.baseFee) < 0
-		} else {
-			isUnderpriced = tx.GasTipCapIntCmp(pool.gasPrice) < 0
-		}
-		if isUnderpriced && (!tx.IsSpecialTransaction() || (pool.IsSigner != nil && !pool.IsSigner(from))) {
+	if !local && tx.GasTipCapIntCmp(pool.gasPrice) < 0 {
+		if !tx.IsSpecialTransaction() || (pool.IsSigner != nil && !pool.IsSigner(from)) {
 			return ErrUnderpriced
 		}
 	}
