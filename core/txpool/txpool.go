@@ -215,6 +215,8 @@ var DefaultConfig = Config{
 	Lifetime: 3 * time.Hour,
 }
 
+var defaultMaxPrice = big.NewInt(1000 * params.GWei)
+
 // sanitize checks the provided user configurations and changes anything that's
 // unreasonable or unworkable.
 func (config *Config) sanitize() Config {
@@ -466,10 +468,25 @@ func (pool *TxPool) GasPrice() *big.Int {
 }
 
 // SetGasPrice updates the minimum price required by the transaction pool for a
-// new transaction, and drops all transactions below this threshold.
-func (pool *TxPool) SetGasPrice(price *big.Int) {
+// new transaction, and drops all transactions below this threshold. Negative
+// gas prices and prices exceeding 1000 GWei are considered invalid and will be
+// rejected without updating the threshold.
+func (pool *TxPool) SetGasPrice(price *big.Int) error {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
+
+	if price == nil {
+		log.Warn("Reject nil gas price")
+		return errors.New("reject nil gas price")
+	}
+	if price.Sign() < 0 {
+		log.Warn("Reject invalid gas price", "price", price)
+		return fmt.Errorf("reject negative gas price: %v", price)
+	}
+	if price.Cmp(defaultMaxPrice) > 0 {
+		log.Warn("Reject invalid gas price", "price", price, "max", defaultMaxPrice)
+		return fmt.Errorf("reject too high gas price: %v, maximum: %v", price, defaultMaxPrice)
+	}
 
 	old := pool.gasPrice
 	pool.gasPrice = price
@@ -484,6 +501,7 @@ func (pool *TxPool) SetGasPrice(price *big.Int) {
 	}
 
 	log.Info("Transaction pool price threshold updated", "price", price)
+	return nil
 }
 
 // Nonce returns the next nonce of an account, with all transactions executable

@@ -97,8 +97,8 @@ func (api *MinerAPI) SetGasPrice(gasPrice hexutil.Big) bool {
 	api.e.gasPrice = (*big.Int)(&gasPrice)
 	api.e.lock.Unlock()
 
-	api.e.txPool.SetGasPrice((*big.Int)(&gasPrice))
-	return true
+	err := api.e.txPool.SetGasPrice((*big.Int)(&gasPrice))
+	return err == nil
 }
 
 // SetEtherbase sets the etherbase of the miner

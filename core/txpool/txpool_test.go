@@ -2693,3 +2693,114 @@ func BenchmarkMultiAccountBatchInsert(b *testing.B) {
 		pool.AddRemotesSync([]*types.Transaction{tx})
 	}
 }
+
+// TestSetGasPrice tests the SetGasPrice validation logic using table-driven tests
+func TestSetGasPrice(t *testing.T) {
+	testCases := []struct {
+		name        string
+		price       *big.Int
+		wantErr     error
+		description string
+	}{
+		// Invalid cases - should be rejected
+		{
+			name:        "nil gas price",
+			price:       nil,
+			wantErr:     errors.New("reject nil gas price"),
+			description: "nil pointer should be rejected gracefully",
+		},
+		{
+			name:        "negative gas price",
+			price:       big.NewInt(-1),
+			wantErr:     fmt.Errorf("reject negative gas price: %v", big.NewInt(-1)),
+			description: "negative value should be rejected",
+		},
+		{
+			name:        "exceeds maximum by 1",
+			price:       new(big.Int).Add(defaultMaxPrice, big.NewInt(1)),
+			wantErr:     fmt.Errorf("reject too high gas price: %v, maximum: %v", new(big.Int).Add(defaultMaxPrice, big.NewInt(1)), defaultMaxPrice),
+			description: "value exceeding 1000 GWei should be rejected",
+		},
+		{
+			name:        "exceeds maximum significantly",
+			price:       big.NewInt(10000 * params.GWei),
+			wantErr:     fmt.Errorf("reject too high gas price: %v, maximum: %v", big.NewInt(10000*params.GWei), defaultMaxPrice),
+			description: "value far exceeding maximum should be rejected",
+		},
+		// Valid cases - should be accepted
+		{
+			name:        "zero gas price",
+			price:       big.NewInt(0),
+			wantErr:     nil,
+			description: "zero is valid as it's not negative",
+		},
+		{
+			name:        "minimum positive value",
+			price:       big.NewInt(1),
+			wantErr:     nil,
+			description: "minimum positive value should be accepted",
+		},
+		{
+			name:        "1 GWei",
+			price:       big.NewInt(params.GWei),
+			wantErr:     nil,
+			description: "1 GWei should be accepted",
+		},
+		{
+			name:        "100 GWei",
+			price:       big.NewInt(100 * params.GWei),
+			wantErr:     nil,
+			description: "100 GWei should be accepted",
+		},
+		{
+			name:        "500 GWei",
+			price:       big.NewInt(500 * params.GWei),
+			wantErr:     nil,
+			description: "500 GWei should be accepted",
+		},
+		{
+			name:        "just below maximum",
+			price:       new(big.Int).Sub(defaultMaxPrice, big.NewInt(1)),
+			wantErr:     nil,
+			description: "value just below maximum should be accepted",
+		},
+		{
+			name:        "exactly at maximum",
+			price:       defaultMaxPrice,
+			wantErr:     nil,
+			description: "exactly 1000 GWei should be accepted",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a fresh pool instance for each test case to ensure isolation
+			pool, _ := setupPool()
+			defer pool.Stop()
+
+			oldPrice := pool.GasPrice()
+			haveErr := pool.SetGasPrice(tc.price)
+			newPrice := pool.GasPrice()
+
+			if tc.wantErr != nil {
+				// Invalid case: should return error and price should remain unchanged
+				if haveErr == nil {
+					t.Errorf("%s: Expected error %q, got nil", tc.description, tc.wantErr)
+				} else if haveErr.Error() != tc.wantErr.Error() {
+					t.Errorf("%s: Expected error %q, got %q", tc.description, tc.wantErr, haveErr)
+				}
+				if newPrice.Cmp(oldPrice) != 0 {
+					t.Errorf("%s: Gas price should not change. Expected %v, got %v", tc.description, oldPrice, newPrice)
+				}
+			} else {
+				// Valid case: should return nil error and price should be updated
+				if haveErr != nil {
+					t.Errorf("%s: Expected no error, got: %v", tc.description, haveErr)
+				}
+				if newPrice.Cmp(tc.price) != 0 {
+					t.Errorf("%s: Expected gas price to be set to %v, got %v", tc.description, tc.price, newPrice)
+				}
+			}
+		})
+	}
+}
