@@ -23,16 +23,13 @@ var (
 	subKey, _ = crypto.HexToECDSA("5bb98c5f937d176aa399ea6e6541f4db8f8db5a4ee1a8b56fb8beb41f2d755e3")
 	subAddr   = crypto.PubkeyToAddress(subKey.PublicKey) //0x21292d56E2a8De3cC4672dB039AAA27f9190B1f6
 
-	token = common.HexToAddress("0000000000000000000000000000000000000089")
-
-	delay    = big.NewInt(30 * 48)
 	minApply = big.NewInt(0).Mul(big.NewInt(1000), big.NewInt(100000000000000000)) // 100 XDC
 )
 
 func TestFeeTxWithTRC21Token(t *testing.T) {
-	oldTRC21GasPriceBefore := new(big.Int).Set(common.TIPTRC21Fee)
+	oldTRC21GasPriceBefore := new(big.Int).Set(common.TRC21GasPriceBefore)
 	defer func() {
-		common.TIPTRC21Fee = oldTRC21GasPriceBefore
+		common.TRC21GasPriceBefore = oldTRC21GasPriceBefore
 	}()
 	common.TRC21GasPriceBefore = big.NewInt(1)
 
@@ -54,7 +51,12 @@ func TestFeeTxWithTRC21Token(t *testing.T) {
 	contractBackend.Commit()
 
 	// set contract address to config
+	oldTRC21IssuerSMC := common.TRC21IssuerSMC
+	defer func() {
+		common.TRC21IssuerSMC = oldTRC21IssuerSMC
+	}()
 	common.TRC21IssuerSMC = trc21IssuerAddr
+
 	cap := big.NewInt(0).Mul(big.NewInt(10000000), big.NewInt(10000000000000))
 	TRC21fee := big.NewInt(100)
 

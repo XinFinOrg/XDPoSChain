@@ -25,8 +25,11 @@ import (
 )
 
 func TestVM(t *testing.T) {
+	oldTIPXDCXCancellationFee := new(big.Int).Set(common.TIPXDCXCancellationFee)
+	defer func() {
+		common.TIPXDCXCancellationFee = oldTIPXDCXCancellationFee
+	}()
 	common.TIPXDCXCancellationFee = big.NewInt(100000000)
-	t.Parallel()
 	vmt := new(testMatcher)
 	vmt.fails("^vmSystemOperationsTest.json/createNameRegistrator$", "fails without parallel execution")
 

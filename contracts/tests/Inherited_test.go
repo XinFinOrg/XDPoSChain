@@ -25,7 +25,12 @@ func TestPriceFeed(t *testing.T) {
 	glogger.Verbosity(log.LevelTrace)
 	log.SetDefault(log.NewLogger(glogger))
 
+	oldTIPXDCXCancellationFee := new(big.Int).Set(common.TIPXDCXCancellationFee)
+	defer func() {
+		common.TIPXDCXCancellationFee = oldTIPXDCXCancellationFee
+	}()
 	common.TIPXDCXCancellationFee = big.NewInt(0)
+
 	// init genesis
 	contractBackend := backends.NewXDCSimulatedBackend(
 		types.GenesisAlloc{
