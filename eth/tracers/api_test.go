@@ -25,6 +25,7 @@ import (
 	"math/big"
 	"reflect"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -247,8 +248,6 @@ func TestTraceCall(t *testing.T) {
 			nonce++
 		}
 	})
-
-	uintPtr := func(i int) *hexutil.Uint { x := hexutil.Uint(i); return &x }
 
 	defer backend.teardown()
 	api := NewAPI(backend)
@@ -837,4 +836,175 @@ func TestTraceChain(t *testing.T) {
 			t.Errorf("Ref and deref actions are not equal, ref %d rel %d", nref, nrel)
 		}
 	}
+}
+
+// TestTraceCallBlockSigners tests tracing calls to the BlockSignersBinary contract (0x89)
+// This regression test ensures that debug_traceCall works for calls to system contracts
+// that previously failed with "invalid transaction v, r, s values" error.
+func TestTraceCallBlockSigners(t *testing.T) {
+	t.Parallel()
+
+	// Initialize test accounts
+	accounts := newAccounts(1)
+	config := *params.TestChainConfig
+	genesis := &core.Genesis{
+		Config: &config,
+		Alloc: types.GenesisAlloc{
+			accounts[0].addr:          {Balance: big.NewInt(params.Ether)},
+			common.BlockSignersBinary: {Balance: big.NewInt(0)}, // System contract
+		},
+	}
+	backend := newTestBackend(t, 1, genesis, func(i int, b *core.BlockGen) {
+		// Just create an empty block
+	})
+	defer backend.teardown()
+
+	api := NewAPI(backend)
+	blockSignersAddr := common.BlockSignersBinary
+
+	// Test data: e341eaa4 is a function selector + some data (from the bug report)
+	testData := hexutil.MustDecode("0xe341eaa40000000000000000000000000000000000000000000000000000000005c9212eaa6f69addff0a2d21ec701940a81975992a67dc4b01aa89e039795852705edb1")
+
+	testCases := []struct {
+		name      string
+		call      ethapi.TransactionArgs
+		config    *TraceCallConfig
+		expectErr bool
+	}{
+		{
+			name: "Call to BlockSignersBinary with default tracer",
+			call: ethapi.TransactionArgs{
+				From:  &accounts[0].addr,
+				To:    &blockSignersAddr,
+				Value: (*hexutil.Big)(big.NewInt(0)),
+				Gas:   uint64Ptr(200000),
+				Data:  (*hexutil.Bytes)(&testData),
+			},
+			config:    nil,
+			expectErr: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			blockNum := rpc.BlockNumber(1)
+			result, err := api.TraceCall(context.Background(), tc.call, rpc.BlockNumberOrHash{BlockNumber: &blockNum}, tc.config)
+
+			if tc.expectErr {
+				if err == nil {
+					t.Errorf("expected error but got none")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				} else if result == nil {
+					t.Errorf("expected result but got nil")
+				}
+			}
+		})
+	}
+}
+
+// TestTraceCallBlockSignersNonceValidation tests that traceCall skips nonce validation
+// This regression test ensures that debug_traceCall works even when the account nonce
+// doesn't match the transaction nonce (which would fail with "nonce too low" in real execution).
+func TestTraceCallBlockSignersNonceValidation(t *testing.T) {
+	t.Parallel()
+
+	// Initialize test accounts
+	accounts := newAccounts(1)
+	config := *params.TestChainConfig
+	genesis := &core.Genesis{
+		Config: &config,
+		Alloc: types.GenesisAlloc{
+			accounts[0].addr:          {Balance: big.NewInt(params.Ether), Nonce: 5}, // Account has nonce 5
+			common.BlockSignersBinary: {Balance: big.NewInt(0)},                      // System contract
+		},
+	}
+	backend := newTestBackend(t, 1, genesis, func(i int, b *core.BlockGen) {
+		// Just create an empty block
+	})
+	defer backend.teardown()
+
+	api := NewAPI(backend)
+	blockSignersAddr := common.BlockSignersBinary
+	testData := hexutil.MustDecode("0xe341eaa40000000000000000000000000000000000000000000000000000000005c9212eaa6f69addff0a2d21ec701940a81975992a67dc4b01aa89e039795852705edb1")
+
+	testCases := []struct {
+		name      string
+		call      ethapi.TransactionArgs
+		expectErr bool
+		errMsg    string
+	}{
+		{
+			name: "TraceCall with nonce=0 (lower than account nonce=5) should succeed",
+			call: ethapi.TransactionArgs{
+				From:  &accounts[0].addr,
+				To:    &blockSignersAddr,
+				Value: (*hexutil.Big)(big.NewInt(0)),
+				Gas:   uint64Ptr(200000),
+				Nonce: uint64Ptr(0), // Nonce 0, but account has nonce 5
+				Data:  (*hexutil.Bytes)(&testData),
+			},
+			expectErr: false,
+			errMsg:    "",
+		},
+		{
+			name: "TraceCall with nonce=10 (higher than account nonce=5) should succeed",
+			call: ethapi.TransactionArgs{
+				From:  &accounts[0].addr,
+				To:    &blockSignersAddr,
+				Value: (*hexutil.Big)(big.NewInt(0)),
+				Gas:   uint64Ptr(200000),
+				Nonce: uint64Ptr(10), // Nonce 10, but account has nonce 5
+				Data:  (*hexutil.Bytes)(&testData),
+			},
+			expectErr: false,
+			errMsg:    "",
+		},
+		{
+			name: "TraceCall without explicit nonce should succeed",
+			call: ethapi.TransactionArgs{
+				From:  &accounts[0].addr,
+				To:    &blockSignersAddr,
+				Value: (*hexutil.Big)(big.NewInt(0)),
+				Gas:   uint64Ptr(200000),
+				// Nonce not specified - will use 0
+				Data: (*hexutil.Bytes)(&testData),
+			},
+			expectErr: false,
+			errMsg:    "",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			blockNum := rpc.BlockNumber(1)
+			result, err := api.TraceCall(context.Background(), tc.call, rpc.BlockNumberOrHash{BlockNumber: &blockNum}, nil)
+
+			if tc.expectErr {
+				if err == nil {
+					t.Errorf("expected error but got none")
+				} else if tc.errMsg != "" && !strings.Contains(err.Error(), tc.errMsg) {
+					t.Errorf("expected error containing %q, got: %v", tc.errMsg, err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				} else if result == nil {
+					t.Errorf("expected result but got nil")
+				}
+			}
+		})
+	}
+}
+
+func uintPtr(i int) *hexutil.Uint {
+	x := hexutil.Uint(i)
+	return &x
+}
+
+func uint64Ptr(u uint64) *hexutil.Uint64 {
+	ret := hexutil.Uint64(u)
+	return &ret
 }

@@ -542,17 +542,32 @@ func ApplySignTransaction(msg *Message, config *params.ChainConfig, statedb *sta
 	} else {
 		root = statedb.IntermediateRoot(config.IsEIP158(blockNumber)).Bytes()
 	}
-	from, err := types.Sender(types.MakeSigner(config, blockNumber), tx)
-	if err != nil {
-		return nil, 0, false, err
+	// Defensive fallback: msg.From should already be populated by the caller through one of these paths:
+	// 1. Normal block processing: TransactionToMessage recovers from via signature (types.Sender)
+	// 2. TraceCall/debug_traceCall: args.ToMessage directly uses the provided args.From parameter
+	// This zero-check should rarely execute. If it does, signature recovery is attempted as a last resort,
+	// which will fail if the transaction lacks a valid signature (e.g., unsigned simulation transactions).
+	from := msg.From
+	if from.IsZero() {
+		var err error
+		from, err = types.Sender(types.MakeSigner(config, blockNumber), tx)
+		if err != nil {
+			return nil, 0, false, err
+		}
 	}
 	nonce := statedb.GetNonce(from)
-	if nonce < tx.Nonce() {
-		return nil, 0, false, ErrNonceTooHigh
-	} else if nonce > tx.Nonce() {
-		return nil, 0, false, ErrNonceTooLow
+	// For tracing/simulation calls (e.g., debug_traceCall), SkipNonceChecks is true,
+	// so nonce checks and incrementing are skipped, allowing the transaction to be processed
+	// regardless of the current account nonce. For regular transactions, nonce checks are enforced.
+	if !msg.SkipNonceChecks {
+		if nonce < tx.Nonce() {
+			return nil, 0, false, ErrNonceTooHigh
+		} else if nonce > tx.Nonce() {
+			return nil, 0, false, ErrNonceTooLow
+		}
+		// Only increment the nonce for real transactions.
+		statedb.SetNonce(from, nonce+1)
 	}
-	statedb.SetNonce(from, nonce+1)
 	// Create a new receipt for the transaction, storing the intermediate root and gas used by the tx
 	// based on the eip phase, we're passing whether the root touch-delete accounts.
 	receipt = types.NewReceipt(root, false, *usedGas)
