@@ -17,6 +17,8 @@
 package core
 
 import (
+	"crypto/ecdsa"
+	"math"
 	"math/big"
 	"testing"
 
@@ -60,14 +62,11 @@ func TestStateProcessorErrors(t *testing.T) {
 		}
 		signer  = types.LatestSigner(config)
 		key1, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		key2, _ = crypto.HexToECDSA("0202020202020202020202020202020202020202020202020202002020202020")
 	)
-	var makeTx = func(nonce uint64, to common.Address, amount *big.Int, gasLimit uint64, gasPrice *big.Int, data []byte) *types.Transaction {
-		tx := types.NewTransaction(nonce, to, amount, gasLimit, gasPrice, data)
-		signedTx, err := types.SignTx(tx, signer, key1)
-		if err != nil {
-			t.Fatalf("fail to sign tx: %v, err: %v", tx, err)
-		}
-		return signedTx
+	var makeTx = func(key *ecdsa.PrivateKey, nonce uint64, to common.Address, amount *big.Int, gasLimit uint64, gasPrice *big.Int, data []byte) *types.Transaction {
+		tx, _ := types.SignTx(types.NewTransaction(nonce, to, amount, gasLimit, gasPrice, data), signer, key)
+		return tx
 	}
 	var mkDynamicTx = func(nonce uint64, to common.Address, gasLimit uint64, gasTipCap, gasFeeCap *big.Int) *types.Transaction {
 		tx, _ := types.SignTx(types.NewTx(&types.DynamicFeeTx{
@@ -117,12 +116,17 @@ func TestStateProcessorErrors(t *testing.T) {
 						Balance: big.NewInt(1000000000000000000), // 1 ether
 						Nonce:   0,
 					},
+					common.HexToAddress("0xfd0810DD14796680f72adf1a371963d0745BCc64"): types.Account{
+						Balance: big.NewInt(1000000000000000000), // 1 ether
+						Nonce:   math.MaxUint64,
+					},
 				},
 			}
 			genesis        = gspec.MustCommit(db)
 			blockchain, _  = NewBlockChain(db, nil, gspec.Config, ethash.NewFaker(), vm.Config{})
 			tooBigInitCode = [params.MaxInitCodeSize + 1]byte{}
 		)
+
 		defer blockchain.Stop()
 		bigNumber := new(big.Int).SetBytes(common.MaxHash.Bytes())
 		tooBigNumber := new(big.Int).Set(bigNumber)
@@ -133,32 +137,38 @@ func TestStateProcessorErrors(t *testing.T) {
 		}{
 			{ // ErrNonceTooLow
 				txs: []*types.Transaction{
-					makeTx(0, common.Address{}, big.NewInt(0), params.TxGas, big.NewInt(12500000000), nil),
-					makeTx(0, common.Address{}, big.NewInt(0), params.TxGas, big.NewInt(12500000000), nil),
+					makeTx(key1, 0, common.Address{}, big.NewInt(0), params.TxGas, big.NewInt(12500000000), nil),
+					makeTx(key1, 0, common.Address{}, big.NewInt(0), params.TxGas, big.NewInt(12500000000), nil),
 				},
 				want: "could not apply tx 1 [0xecd6a889a307155b3562cd64c86957e36fa58267cb4efbbe39aa692fd7aab09a]: nonce too low: address xdc71562b71999873DB5b286dF957af199Ec94617F7, tx: 0 state: 1",
 			},
 			{ // ErrNonceTooHigh
 				txs: []*types.Transaction{
-					makeTx(100, common.Address{}, big.NewInt(0), params.TxGas, big.NewInt(875000000), nil),
+					makeTx(key1, 100, common.Address{}, big.NewInt(0), params.TxGas, big.NewInt(875000000), nil),
 				},
 				want: "could not apply tx 0 [0xdebad714ca7f363bd0d8121c4518ad48fa469ca81b0a081be3d10c17460f751b]: nonce too high: address xdc71562b71999873DB5b286dF957af199Ec94617F7, tx: 100 state: 0",
 			},
+			{ // ErrNonceMax
+				txs: []*types.Transaction{
+					makeTx(key2, math.MaxUint64, common.Address{}, big.NewInt(0), params.TxGas, big.NewInt(875000000), nil),
+				},
+				want: "could not apply tx 0 [0x84ea18d60eb2bb3b040e3add0eb72f757727122cc257dd858c67cb6591a85986]: nonce has max value: address xdcfd0810DD14796680f72adf1a371963d0745BCc64, nonce: 18446744073709551615",
+			},
 			{ // ErrGasLimitReached
 				txs: []*types.Transaction{
-					makeTx(0, common.Address{}, big.NewInt(0), 21000000, big.NewInt(12500000000), nil),
+					makeTx(key1, 0, common.Address{}, big.NewInt(0), 21000000, big.NewInt(12500000000), nil),
 				},
 				want: "could not apply tx 0 [0x062b0e84f2d48f09f91e434fca8cb1fb864c4fb82f8bf27d58879ebe60c9f773]: gas limit reached",
 			},
 			{ // ErrInsufficientFundsForTransfer
 				txs: []*types.Transaction{
-					makeTx(0, common.Address{}, big.NewInt(1000000000000000000), params.TxGas, big.NewInt(12500000000), nil),
+					makeTx(key1, 0, common.Address{}, big.NewInt(1000000000000000000), params.TxGas, big.NewInt(12500000000), nil),
 				},
 				want: "could not apply tx 0 [0x50f89093bf5ad7f4ae6f9e3bad44d4dc130247ea0429df0cf78873584a76dfa1]: insufficient funds for gas * price + value: address xdc71562b71999873DB5b286dF957af199Ec94617F7 have 1000000000000000000 want 1000262500000000000",
 			},
 			{ // ErrInsufficientFunds
 				txs: []*types.Transaction{
-					makeTx(0, common.Address{}, big.NewInt(0), params.TxGas, big.NewInt(900000000000000000), nil),
+					makeTx(key1, 0, common.Address{}, big.NewInt(0), params.TxGas, big.NewInt(900000000000000000), nil),
 				},
 				want: "could not apply tx 0 [0x4a69690c4b0cd85e64d0d9ea06302455b01e10a83db964d60281739752003440]: insufficient funds for gas * price + value: address xdc71562b71999873DB5b286dF957af199Ec94617F7 have 1000000000000000000 want 18900000000000000000000",
 			},
@@ -168,13 +178,13 @@ func TestStateProcessorErrors(t *testing.T) {
 			// multiplication len(data) +gas_per_byte overflows uint64. Not testable at the moment
 			{ // ErrIntrinsicGas
 				txs: []*types.Transaction{
-					makeTx(0, common.Address{}, big.NewInt(0), params.TxGas-1000, big.NewInt(12500000000), nil),
+					makeTx(key1, 0, common.Address{}, big.NewInt(0), params.TxGas-1000, big.NewInt(12500000000), nil),
 				},
 				want: "could not apply tx 0 [0xa3484a466ffa8a88dc95e6ff520c853659dfc5507039c0b1452c2b845438771b]: intrinsic gas too low: have 20000, want 21000",
 			},
 			{ // ErrGasLimitReached
 				txs: []*types.Transaction{
-					makeTx(0, common.Address{}, big.NewInt(0), params.TxGas*1000, big.NewInt(12500000000), nil),
+					makeTx(key1, 0, common.Address{}, big.NewInt(0), params.TxGas*1000, big.NewInt(12500000000), nil),
 				},
 				want: "could not apply tx 0 [0x062b0e84f2d48f09f91e434fca8cb1fb864c4fb82f8bf27d58879ebe60c9f773]: gas limit reached",
 			},
@@ -250,7 +260,7 @@ func TestStateProcessorErrors(t *testing.T) {
 		}
 	}
 
-	// One final error is ErrTxTypeNotSupported. For this, we need an older chain
+	// ErrTxTypeNotSupported, For this, we need an older chain
 	{
 		var (
 			db    = rawdb.NewMemoryDatabase()
