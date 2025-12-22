@@ -405,15 +405,6 @@ func (pool *LendingPool) local() map[common.Address]types.LendingTransactions {
 	return txs
 }
 
-// GetSender get sender from transaction
-func (pool *LendingPool) GetSender(tx *types.LendingTransaction) (common.Address, error) {
-	from, err := types.LendingSender(pool.signer, tx)
-	if err != nil {
-		return common.Address{}, ErrInvalidSender
-	}
-	return from, nil
-}
-
 func (pool *LendingPool) validateNewLending(cloneStateDb *state.StateDB, cloneLendingStateDb *lendingstate.LendingStateDB, tx *types.LendingTransaction) error {
 	lendingSide := tx.Side()
 	lendingType := tx.Type()

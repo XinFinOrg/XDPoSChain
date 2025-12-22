@@ -611,14 +611,6 @@ func (pool *TxPool) local() map[common.Address]types.Transactions {
 	return txs
 }
 
-func (pool *TxPool) GetSender(tx *types.Transaction) (common.Address, error) {
-	from, err := types.Sender(pool.signer, tx)
-	if err != nil {
-		return common.Address{}, ErrInvalidSender
-	}
-	return from, nil
-}
-
 // validateTxBasics checks whether a transaction is valid according to the consensus
 // rules, but does not check state-dependent validation such as sufficient balance.
 // This check is meant as an early check which only needs to be performed once,

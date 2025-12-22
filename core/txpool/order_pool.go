@@ -428,15 +428,6 @@ func (pool *OrderPool) local() map[common.Address]types.OrderTransactions {
 	return txs
 }
 
-// GetSender get sender from transaction
-func (pool *OrderPool) GetSender(tx *types.OrderTransaction) (common.Address, error) {
-	from, err := types.OrderSender(pool.signer, tx)
-	if err != nil {
-		return common.Address{}, ErrInvalidSender
-	}
-	return from, nil
-}
-
 func (pool *OrderPool) validateOrder(tx *types.OrderTransaction) error {
 	orderSide := tx.Side()
 	orderType := tx.Type()
