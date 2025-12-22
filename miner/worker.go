@@ -356,7 +356,7 @@ func (w *worker) update() {
 			// be automatically eliminated.
 			if atomic.LoadInt32(&w.mining) == 0 {
 				w.currentMu.Lock()
-				txs := make(map[common.Address]types.Transactions)
+				txs := make(map[common.Address][]*types.Transaction, len(ev.Txs))
 				for _, tx := range ev.Txs {
 					acc, _ := types.Sender(w.current.signer, tx)
 					txs[acc] = append(txs[acc], tx)

@@ -31,6 +31,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/misc"
 	"github.com/XinFinOrg/XDPoSChain/core"
+	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/bft"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
@@ -779,7 +780,11 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 				pm.knownTxs.Add(tx.Hash(), struct{}{})
 			}
 		}
-		pm.txpool.AddRemotes(txs)
+		warped := make([]*txpool.Transaction, len(txs))
+		for i := range txs {
+			warped[i] = &txpool.Transaction{Tx: txs[i]}
+		}
+		pm.txpool.Add(warped, false, false)
 
 	case msg.Code == OrderTxMsg:
 		// Transactions arrived, make sure we have a valid and fresh chain to handle them

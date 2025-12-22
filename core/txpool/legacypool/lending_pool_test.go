@@ -1,4 +1,4 @@
-package txpool
+package legacypool
 
 import (
 	"math/big"

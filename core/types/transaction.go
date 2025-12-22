@@ -765,9 +765,9 @@ func (s *TxByPriceAndTime) Pop() interface{} {
 // transactions in a profit-maximizing sorted order, while supporting removing
 // entire batches of transactions for non-executable accounts.
 type TransactionsByPriceAndNonce struct {
-	txs    map[common.Address]Transactions // Per account nonce-sorted list of transactions
-	heads  TxByPriceAndTime                // Next transaction for each unique account (price heap)
-	signer Signer                          // Signer for the set of transactions
+	txs    map[common.Address][]*Transaction // Per account nonce-sorted list of transactions
+	heads  TxByPriceAndTime                  // Next transaction for each unique account (price heap)
+	signer Signer                            // Signer for the set of transactions
 }
 
 // NewTransactionsByPriceAndNonce creates a transaction set that can retrieve
@@ -777,7 +777,7 @@ type TransactionsByPriceAndNonce struct {
 // if after providing it to the constructor.
 //
 // It also classifies special txs and normal txs
-func NewTransactionsByPriceAndNonce(signer Signer, txs map[common.Address]Transactions, payersSwap map[common.Address]*big.Int) (*TransactionsByPriceAndNonce, Transactions) {
+func NewTransactionsByPriceAndNonce(signer Signer, txs map[common.Address][]*Transaction, payersSwap map[common.Address]*big.Int) (*TransactionsByPriceAndNonce, Transactions) {
 	// Initialize a price and received time based heap with the head transactions
 	heads := TxByPriceAndTime{}
 	heads.payersSwap = payersSwap

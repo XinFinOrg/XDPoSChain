@@ -29,6 +29,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool"
+	"github.com/XinFinOrg/XDPoSChain/core/txpool/legacypool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
@@ -44,8 +45,8 @@ type Backend interface {
 	TxPool() *txpool.TxPool
 	ChainDb() ethdb.Database
 	GetXDCX() *XDCx.XDCX
-	OrderPool() *txpool.OrderPool
-	LendingPool() *txpool.LendingPool
+	OrderPool() *legacypool.OrderPool
+	LendingPool() *legacypool.LendingPool
 	GetXDCXLending() *XDCxlending.Lending
 }
 

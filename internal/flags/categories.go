@@ -22,7 +22,7 @@ const (
 	EthCategory        = "ETHEREUM"
 	LightCategory      = "LIGHT CLIENT"
 	DevCategory        = "DEVELOPER CHAIN"
-	TxPoolCategory     = "TRANSACTION POOL"
+	TxPoolCategory     = "TRANSACTION POOL (EVM)"
 	PerfCategory       = "PERFORMANCE TUNING"
 	AccountCategory    = "ACCOUNT"
 	APICategory        = "API AND CONSOLE"

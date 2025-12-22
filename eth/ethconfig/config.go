@@ -24,7 +24,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/core"
-	"github.com/XinFinOrg/XDPoSChain/core/txpool"
+	"github.com/XinFinOrg/XDPoSChain/core/txpool/legacypool"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/eth/gasprice"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -52,7 +52,7 @@ var Defaults = Config{
 	FilterLogCacheSize: 32,
 	GasPrice:           big.NewInt(0.25 * params.Shannon),
 
-	TxPool:        txpool.DefaultConfig,
+	TxPool:        legacypool.DefaultConfig,
 	RPCGasCap:     50000000,
 	RPCEVMTimeout: 5 * time.Second,
 	GPO:           FullNodeGPO,
@@ -99,7 +99,7 @@ type Config struct {
 	GasPrice     *big.Int
 
 	// Transaction pool options
-	TxPool txpool.Config
+	TxPool legacypool.Config
 
 	// Gas Price Oracle options
 	GPO gasprice.Config

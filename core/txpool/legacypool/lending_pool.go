@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package txpool
+package legacypool
 
 import (
 	"errors"
@@ -31,6 +31,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
+	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -627,13 +628,13 @@ func (pool *LendingPool) validateTx(tx *types.LendingTransaction, local bool) er
 	}
 	// Heuristic limit, reject transactions over 32KB to prevent DOS attacks
 	if tx.Size() > 32*1024 {
-		return ErrOversizedData
+		return txpool.ErrOversizedData
 	}
 
 	// Make sure the transaction is signed properly
 	from, err := types.LendingSender(pool.signer, tx)
 	if err != nil {
-		return ErrInvalidSender
+		return txpool.ErrInvalidSender
 	}
 	err = pool.validateLending(tx)
 	if err != nil {
@@ -869,18 +870,18 @@ func (pool *LendingPool) addTxsLocked(txs []*types.LendingTransaction, local boo
 
 // Status returns the status (unknown/pending/queued) of a batch of transactions
 // identified by their hashes.
-func (pool *LendingPool) Status(hashes []common.Hash) []TxStatus {
+func (pool *LendingPool) Status(hashes []common.Hash) []txpool.TxStatus {
 	pool.mu.RLock()
 	defer pool.mu.RUnlock()
 
-	status := make([]TxStatus, len(hashes))
+	status := make([]txpool.TxStatus, len(hashes))
 	for i, hash := range hashes {
 		if tx := pool.all[hash]; tx != nil {
 			from, _ := types.LendingSender(pool.signer, tx) // already validated
 			if pool.pending[from] != nil && pool.pending[from].txs.items[tx.Nonce()] != nil {
-				status[i] = TxStatusPending
+				status[i] = txpool.TxStatusPending
 			} else {
-				status[i] = TxStatusQueued
+				status[i] = txpool.TxStatusQueued
 			}
 		}
 	}

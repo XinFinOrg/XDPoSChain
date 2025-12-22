@@ -9,7 +9,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/core"
-	"github.com/XinFinOrg/XDPoSChain/core/txpool"
+	"github.com/XinFinOrg/XDPoSChain/core/txpool/legacypool"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/eth/gasprice"
 )
@@ -39,7 +39,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		MinerThreads            int            `toml:",omitempty"`
 		ExtraData               hexutil.Bytes  `toml:",omitempty"`
 		GasPrice                *big.Int
-		TxPool                  txpool.Config
+		TxPool                  legacypool.Config
 		GPO                     gasprice.Config
 		EnablePreimageRecording bool
 		VMTrace                 string
@@ -103,7 +103,7 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		MinerThreads            *int            `toml:",omitempty"`
 		ExtraData               *hexutil.Bytes  `toml:",omitempty"`
 		GasPrice                *big.Int
-		TxPool                  *txpool.Config
+		TxPool                  *legacypool.Config
 		GPO                     *gasprice.Config
 		EnablePreimageRecording *bool
 		VMTrace                 *string

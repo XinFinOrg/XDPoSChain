@@ -40,7 +40,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/core"
-	"github.com/XinFinOrg/XDPoSChain/core/txpool"
+	"github.com/XinFinOrg/XDPoSChain/core/txpool/legacypool"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/eth"
@@ -201,20 +201,20 @@ var (
 		Name:     "txpool-journal",
 		Aliases:  []string{"txpool.journal"},
 		Usage:    "Disk journal for local transaction to survive node restarts",
-		Value:    txpool.DefaultConfig.Journal,
+		Value:    ethconfig.Defaults.TxPool.Journal,
 		Category: flags.TxPoolCategory,
 	}
 	TxPoolRejournalFlag = &cli.DurationFlag{
 		Name:     "txpool-rejournal",
 		Aliases:  []string{"txpool.rejournal"},
 		Usage:    "Time interval to regenerate the local transaction journal",
-		Value:    txpool.DefaultConfig.Rejournal,
+		Value:    ethconfig.Defaults.TxPool.Rejournal,
 		Category: flags.TxPoolCategory,
 	}
 	TxPoolPriceLimitFlag = &cli.Uint64Flag{
 		Name:     "txpool-pricelimit",
 		Aliases:  []string{"txpool.pricelimit"},
-		Usage:    "Minimum gas price limit to enforce for acceptance into the pool",
+		Usage:    "Minimum gas price tip to enforce for acceptance into the pool",
 		Value:    ethconfig.Defaults.TxPool.PriceLimit,
 		Category: flags.TxPoolCategory,
 	}
@@ -1398,7 +1398,7 @@ func setGPO(ctx *cli.Context, cfg *gasprice.Config) {
 	}
 }
 
-func setTxPool(ctx *cli.Context, cfg *txpool.Config) {
+func setTxPool(ctx *cli.Context, cfg *legacypool.Config) {
 	if ctx.IsSet(TxPoolNoLocalsFlag.Name) {
 		cfg.NoLocals = ctx.Bool(TxPoolNoLocalsFlag.Name)
 	}

@@ -31,6 +31,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
@@ -68,7 +69,9 @@ func newTestProtocolManager(mode downloader.SyncMode, blocks int, generator func
 		panic(err)
 	}
 
-	pm, err := NewProtocolManager(gspec.Config, mode, ethconfig.Defaults.NetworkId, evmux, &testTxPool{added: newtx}, engine, blockchain, db)
+	txpool := newTestTxPool()
+	txpool.added = newtx
+	pm, err := NewProtocolManager(gspec.Config, mode, ethconfig.Defaults.NetworkId, evmux, txpool, engine, blockchain, db)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -90,32 +93,68 @@ func newTestProtocolManagerMust(t *testing.T, mode downloader.SyncMode, blocks i
 
 // testTxPool is a fake, helper transaction pool for testing purposes
 type testTxPool struct {
-	txFeed event.Feed
-	pool   []*types.Transaction        // Collection of all transactions
-	added  chan<- []*types.Transaction // Notification channel for new transactions
+	pool map[common.Hash]*types.Transaction // Hash map of collected transactions
 
-	lock sync.RWMutex // Protects the transaction pool
+	txFeed event.Feed
+	lock   sync.RWMutex // Protects the transaction pool
+
+	added chan<- []*types.Transaction // Notification channel for new transactions
 }
 
-// AddRemotes appends a batch of transactions to the pool, and notifies any
-// listeners if the addition channel is non nil
-func (p *testTxPool) AddRemotes(txs []*types.Transaction) []error {
+// newTestTxPool creates a mock transaction pool.
+func newTestTxPool() *testTxPool {
+	return &testTxPool{
+		pool: make(map[common.Hash]*types.Transaction),
+	}
+}
+
+// Has returns an indicator whether txpool has a transaction
+// cached with the given hash.
+func (p *testTxPool) Has(hash common.Hash) bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	p.pool = append(p.pool, txs...)
-	if p.added != nil {
-		p.added <- txs
+	return p.pool[hash] != nil
+}
+
+// Get retrieves the transaction from local txpool with given
+// tx hash.
+func (p *testTxPool) Get(hash common.Hash) *txpool.Transaction {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	if tx := p.pool[hash]; tx != nil {
+		return &txpool.Transaction{Tx: tx}
 	}
-	return make([]error, len(txs))
+	return nil
+}
+
+// Add appends a batch of transactions to the pool, and notifies any
+// listeners if the addition channel is non nil
+func (p *testTxPool) Add(txs []*txpool.Transaction, local bool, sync bool) []error {
+	unwrapped := make([]*types.Transaction, len(txs))
+	for i, tx := range txs {
+		unwrapped[i] = tx.Tx
+	}
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	for _, tx := range unwrapped {
+		p.pool[tx.Hash()] = tx
+	}
+
+	if p.added != nil {
+		p.added <- unwrapped
+	}
+	return make([]error, len(unwrapped))
 }
 
 // Pending returns all the transactions known to the pool
-func (p *testTxPool) Pending(enforceTips bool) map[common.Address]types.Transactions {
+func (p *testTxPool) Pending(enforceTips bool) map[common.Address][]*types.Transaction {
 	p.lock.RLock()
 	defer p.lock.RUnlock()
 
-	batches := make(map[common.Address]types.Transactions)
+	batches := make(map[common.Address][]*types.Transaction)
 	for _, tx := range p.pool {
 		from, _ := types.Sender(types.HomesteadSigner{}, tx)
 		batches[from] = append(batches[from], tx)
@@ -126,6 +165,8 @@ func (p *testTxPool) Pending(enforceTips bool) map[common.Address]types.Transact
 	return batches
 }
 
+// SubscribeNewTxsEvent should return an event subscription of NewTxsEvent and
+// send events to the given channel.
 func (p *testTxPool) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
 	return p.txFeed.Subscribe(ch)
 }

@@ -272,7 +272,7 @@ func TestTransactionPriceNonceSort(t *testing.T) {
 
 	signer := HomesteadSigner{}
 	// Generate a batch of transactions with overlapping values, but shifted nonces
-	groups := map[common.Address]Transactions{}
+	groups := map[common.Address][]*Transaction{}
 	for start, key := range keys {
 		addr := crypto.PubkeyToAddress(key.PublicKey)
 		for i := 0; i < 25; i++ {
@@ -382,7 +382,7 @@ func TestTransactionTimeSort(t *testing.T) {
 	signer := HomesteadSigner{}
 
 	// Generate a batch of transactions with overlapping prices, but different creation times
-	groups := map[common.Address]Transactions{}
+	groups := map[common.Address][]*Transaction{}
 	for start, key := range keys {
 		addr := crypto.PubkeyToAddress(key.PublicKey)
 
@@ -733,11 +733,11 @@ func TestNewTransactionsByPriceAndNonce_SpecialSeparation(t *testing.T) {
 	}
 
 	testCases := []struct {
-		name           string
-		normalCount    int
-		specialCount   int
-		expectNormal   int
-		expectSpecial  int
+		name          string
+		normalCount   int
+		specialCount  int
+		expectNormal  int
+		expectSpecial int
 	}{
 		{"no transactions", 0, 0, 0, 0},
 		{"only 1 normal", 1, 0, 1, 0},
@@ -762,7 +762,7 @@ func TestNewTransactionsByPriceAndNonce_SpecialSeparation(t *testing.T) {
 			for i := 0; i < tc.specialCount; i++ {
 				txs = append(txs, genSpecialTx(uint64(tc.normalCount+i), key))
 			}
-			group := map[common.Address]Transactions{}
+			group := map[common.Address][]*Transaction{}
 			if len(txs) > 0 {
 				group[addr] = txs
 			}

@@ -41,6 +41,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/bloombits"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool"
+	"github.com/XinFinOrg/XDPoSChain/core/txpool/legacypool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
@@ -72,9 +73,10 @@ type Ethereum struct {
 	shutdownChan chan bool // Channel for shutting down the ethereum
 
 	// Handlers
-	txPool          *txpool.TxPool
-	orderPool       *txpool.OrderPool
-	lendingPool     *txpool.LendingPool
+	txPool *txpool.TxPool
+
+	orderPool       *legacypool.OrderPool
+	lendingPool     *legacypool.LendingPool
 	blockchain      *core.BlockChain
 	protocolManager *ProtocolManager
 
@@ -265,9 +267,15 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	if config.TxPool.Journal != "" {
 		config.TxPool.Journal = stack.ResolvePath(config.TxPool.Journal)
 	}
-	eth.txPool = txpool.New(config.TxPool, eth.chainConfig, eth.blockchain)
-	eth.orderPool = txpool.NewOrderPool(eth.chainConfig, eth.blockchain)
-	eth.lendingPool = txpool.NewLendingPool(eth.chainConfig, eth.blockchain)
+	legacyPool := legacypool.New(config.TxPool, eth.blockchain)
+
+	eth.txPool, err = txpool.New(new(big.Int).SetUint64(config.TxPool.PriceLimit), eth.blockchain, []txpool.SubPool{legacyPool})
+	if err != nil {
+		return nil, err
+	}
+
+	eth.orderPool = legacypool.NewOrderPool(eth.chainConfig, eth.blockchain)
+	eth.lendingPool = legacypool.NewLendingPool(eth.chainConfig, eth.blockchain)
 
 	if eth.protocolManager, err = NewProtocolManagerEx(eth.chainConfig, config.SyncMode, networkID, eth.eventMux, eth.txPool, eth.orderPool, eth.lendingPool, eth.engine, eth.blockchain, chainDb); err != nil {
 		return nil, err
@@ -564,7 +572,7 @@ func (e *Ethereum) Stop() error {
 	e.blockchain.Stop()
 	e.protocolManager.Stop()
 
-	e.txPool.Stop()
+	e.txPool.Close()
 	e.miner.Stop()
 	e.eventMux.Stop()
 
@@ -582,7 +590,7 @@ func (e *Ethereum) GetXDCX() *XDCx.XDCX {
 	return e.XDCX
 }
 
-func (e *Ethereum) OrderPool() *txpool.OrderPool {
+func (e *Ethereum) OrderPool() *legacypool.OrderPool {
 	return e.orderPool
 }
 
@@ -591,6 +599,6 @@ func (e *Ethereum) GetXDCXLending() *XDCxlending.Lending {
 }
 
 // LendingPool geth eth lending pool
-func (e *Ethereum) LendingPool() *txpool.LendingPool {
+func (e *Ethereum) LendingPool() *legacypool.LendingPool {
 	return e.lendingPool
 }
