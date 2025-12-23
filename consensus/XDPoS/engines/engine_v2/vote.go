@@ -22,6 +22,14 @@ func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainReader, vote *types.Vo
 		return false, nil
 	}
 
+	// If we don't yet have the referenced header locally, defer verification.
+	// Votes may arrive before the block header itself; avoid logging an error
+	// for that normal timing condition and let the vote be retried later.
+	if chain.GetHeaderByHash(vote.ProposedBlockInfo.Hash) == nil {
+		log.Debug("[VerifyVoteMessage] referenced header not present yet, defer verification", "blockNum", vote.ProposedBlockInfo.Number, "blockHash", vote.ProposedBlockInfo.Hash)
+		return false, nil
+	}
+
 	epochInfo, err := x.getEpochSwitchInfo(chain, nil, vote.ProposedBlockInfo.Hash)
 	if err != nil {
 		log.Error("[VerifyVoteMessage] Fail to get epochInfo when verifying vote message!", "blockNum", vote.ProposedBlockInfo.Number, "blockHash", vote.ProposedBlockInfo.Hash, "voteHash", vote.Hash(), "voteGapNumber", vote.GapNumber, "err", err)
