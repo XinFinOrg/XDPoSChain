@@ -152,7 +152,6 @@ type OrderPool struct {
 	all       map[common.Hash]*types.OrderTransaction // All transactions to allow lookups
 	wg        sync.WaitGroup                          // for shutdown sync
 	homestead bool
-	IsSigner  func(address common.Address) bool
 }
 
 // NewOrderPool creates a new transaction pool to gather, sort and filter inbound

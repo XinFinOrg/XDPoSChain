@@ -302,7 +302,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 				log.Error("Cannot get etherbase for append m2 header", "err", err)
 				return fmt.Errorf("etherbase missing: %v", err)
 			}
-			ok := eth.txPool.IsSigner != nil && eth.txPool.IsSigner(eb)
+			ok := eth.txPool.IsSigner(eb)
 			if !ok {
 				return nil
 			}
@@ -355,9 +355,10 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 		hooks.AttachConsensusV1Hooks(c, eth.blockchain, chainConfig)
 		hooks.AttachConsensusV2Hooks(c, eth.blockchain, chainConfig)
 
-		eth.txPool.IsSigner = func(address common.Address) bool {
+		isSigner := func(address common.Address) bool {
 			return c.IsAuthorisedAddress(eth.blockchain, eth.blockchain.CurrentHeader(), address)
 		}
+		eth.txPool.SetSigner(isSigner)
 	}
 	// Start the RPC service
 	eth.netRPCService = ethapi.NewNetAPI(eth.p2pServer, eth.NetVersion())

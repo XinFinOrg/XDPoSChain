@@ -289,7 +289,7 @@ type TxPool struct {
 
 	changesSinceReorg int // A counter for how many drops we've performed in-between reorg.
 
-	IsSigner         func(address common.Address) bool
+	isSigner         func(address common.Address) bool
 	trc21FeeCapacity map[common.Address]*big.Int
 }
 
@@ -623,7 +623,7 @@ func (pool *TxPool) validateTxBasics(tx *types.Transaction, local bool) error {
 		MaxSize: txMaxSize,
 		MinTip:  pool.gasTip.Load(),
 		NotSigner: func(from common.Address) bool {
-			return pool.IsSigner != nil && !pool.IsSigner(from)
+			return pool.IsNotSigner(from)
 		},
 	}
 	if local {
@@ -718,7 +718,7 @@ func (pool *TxPool) add(tx *types.Transaction, local bool) (replaced bool, err e
 
 	// already validated
 	from, _ := types.Sender(pool.signer, tx)
-	if tx.IsSpecialTransaction() && pool.IsSigner != nil && pool.IsSigner(from) && pool.pendingNonces.get(from) == tx.Nonce() {
+	if tx.IsSpecialTransaction() && pool.IsSigner(from) && pool.pendingNonces.get(from) == tx.Nonce() {
 		return pool.promoteSpecialTx(from, tx, isLocal)
 	}
 
@@ -1705,6 +1705,18 @@ func (pool *TxPool) demoteUnexecutables() {
 			delete(pool.pending, addr)
 		}
 	}
+}
+
+func (pool *TxPool) SetSigner(f func(address common.Address) bool) {
+	pool.isSigner = f
+}
+
+func (pool *TxPool) IsSigner(addr common.Address) bool {
+	return pool.isSigner != nil && pool.isSigner(addr)
+}
+
+func (pool *TxPool) IsNotSigner(addr common.Address) bool {
+	return pool.isSigner != nil && !pool.isSigner(addr)
 }
 
 // addressByHeartbeat is an account address tagged with its last activity timestamp.
