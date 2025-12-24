@@ -18,7 +18,6 @@ package miner
 
 import (
 	"bytes"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"math/big"
@@ -1020,7 +1019,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 				log.Trace("Data special transaction invalid length", "hash", hash, "data", len(data))
 				continue
 			}
-			blkNumber := binary.BigEndian.Uint64(data[8:40])
+			blkNumber := new(big.Int).SetBytes(data[4:36]).Uint64()
 			if blkNumber >= w.header.Number.Uint64() || blkNumber+w.config.XDPoS.Epoch*2 <= w.header.Number.Uint64() {
 				log.Trace("Data special transaction invalid number", "hash", hash, "blkNumber", blkNumber, "miner", w.header.Number)
 				continue
