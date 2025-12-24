@@ -785,19 +785,20 @@ func NewTransactionsByPriceAndNonce(signer Signer, txs map[common.Address]Transa
 	for _, accTxs := range txs {
 		from, _ := Sender(signer, accTxs[0])
 		var normalTxs Transactions
-		lastSpecialTx := -1
-		if lastSpecialTx >= 0 {
-			for i := 0; i <= lastSpecialTx; i++ {
-				specialTxs = append(specialTxs, accTxs[i])
+		for _, tx := range accTxs {
+			if tx.IsSpecialTransaction() {
+				specialTxs = append(specialTxs, tx)
+			} else {
+				normalTxs = append(normalTxs, tx)
 			}
-			normalTxs = accTxs[lastSpecialTx+1:]
-		} else {
-			normalTxs = accTxs
 		}
 		if len(normalTxs) > 0 {
 			heads.txs = append(heads.txs, normalTxs[0])
-			// Ensure the sender address is from the signer
+			// Remove the first normal transaction for this sender
 			txs[from] = normalTxs[1:]
+		} else {
+			// Remove the account if there are no normal transactions
+			delete(txs, from)
 		}
 	}
 	heap.Init(&heads)

@@ -718,3 +718,78 @@ func TestIsNonEVMTx(t *testing.T) {
 		})
 	}
 }
+
+// TestNewTransactionsByPriceAndNonce_SpecialSeparation uses table-driven tests to verify separation of special and normal transactions.
+func TestNewTransactionsByPriceAndNonce_SpecialSeparation(t *testing.T) {
+	signer := HomesteadSigner{}
+
+	genNormalTx := func(nonce uint64, key *ecdsa.PrivateKey) *Transaction {
+		tx, _ := SignTx(NewTransaction(nonce, common.HexToAddress("0x1234567890123456789012345678901234567890"), big.NewInt(1), 21000, big.NewInt(1), nil), signer, key)
+		return tx
+	}
+	genSpecialTx := func(nonce uint64, key *ecdsa.PrivateKey) *Transaction {
+		tx, _ := SignTx(NewTransaction(nonce, common.BlockSignersBinary, big.NewInt(1), 21000, big.NewInt(1), nil), signer, key)
+		return tx
+	}
+
+	testCases := []struct {
+		name           string
+		normalCount    int
+		specialCount   int
+		expectNormal   int
+		expectSpecial  int
+	}{
+		{"no transactions", 0, 0, 0, 0},
+		{"only 1 normal", 1, 0, 1, 0},
+		{"only 2 normal", 2, 0, 2, 0},
+		{"only 3 normal", 3, 0, 3, 0},
+		{"only 1 special", 0, 1, 0, 1},
+		{"only 2 special", 0, 2, 0, 2},
+		{"only 3 special", 0, 3, 0, 3},
+		{"1 normal, 1 special", 1, 1, 1, 1},
+		{"2 normal, 2 special", 2, 2, 2, 2},
+		{"3 normal, 3 special", 3, 3, 3, 3},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			key, _ := crypto.GenerateKey()
+			addr := crypto.PubkeyToAddress(key.PublicKey)
+			txs := make(Transactions, 0, tc.normalCount+tc.specialCount)
+			for i := 0; i < tc.normalCount; i++ {
+				txs = append(txs, genNormalTx(uint64(i), key))
+			}
+			for i := 0; i < tc.specialCount; i++ {
+				txs = append(txs, genSpecialTx(uint64(tc.normalCount+i), key))
+			}
+			group := map[common.Address]Transactions{}
+			if len(txs) > 0 {
+				group[addr] = txs
+			}
+			txset, specialTxs := NewTransactionsByPriceAndNonce(signer, group, map[common.Address]*big.Int{})
+
+			// Check special transactions
+			if len(specialTxs) != tc.expectSpecial {
+				t.Errorf("expected %d special txs, got %d", tc.expectSpecial, len(specialTxs))
+			}
+			for _, tx := range specialTxs {
+				if tx.To() == nil || *tx.To() != common.BlockSignersBinary {
+					t.Errorf("specialTxs contains non-special tx: %v", tx)
+				}
+			}
+
+			// Check normal transactions
+			normalCount := 0
+			for tx := txset.Peek(); tx != nil; tx = txset.Peek() {
+				if tx.To() == nil || *tx.To() == common.BlockSignersBinary {
+					t.Errorf("txset contains special or nil-to tx: %v", tx)
+				}
+				normalCount++
+				txset.Shift()
+			}
+			if normalCount != tc.expectNormal {
+				t.Errorf("expected %d normal txs, got %d", tc.expectNormal, normalCount)
+			}
+		})
+	}
+}
