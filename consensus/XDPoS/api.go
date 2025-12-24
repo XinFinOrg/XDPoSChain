@@ -580,7 +580,7 @@ func (api *API) getRewardFileNamesInRange(begin, end *rpc.BlockNumber) ([]reward
 
 	// compact the slice's memory
 	ret := rewardFileNames[startIndex:endIndex]
-	return ret[:len(ret):len(ret)], nil
+	return slices.Clip(ret), nil
 }
 
 func getEpochReward(account common.Address, header *types.Header) (AccountEpochReward, error) {
