@@ -971,7 +971,7 @@ func (pool *TxPool) promoteSpecialTx(addr common.Address, tx *types.Transaction,
 	// Set the potentially new pending nonce and notify any subsystems of the new tx
 	pool.beats[addr] = time.Now()
 	pool.pendingNonces.set(addr, tx.Nonce()+1)
-	go pool.txFeed.Send(core.NewTxsEvent{Txs: types.Transactions{tx}})
+	pool.txFeed.Send(core.NewTxsEvent{Txs: []*types.Transaction{tx}})
 	return true, nil
 }
 
