@@ -62,7 +62,6 @@ const (
 	refreshInterval    = 30 * time.Minute
 	revalidateInterval = 10 * time.Second
 	copyNodesInterval  = 30 * time.Second
-	seedMinTableTime   = 5 * time.Minute
 	seedCount          = 30
 	seedMaxAge         = 5 * 24 * time.Hour
 )
