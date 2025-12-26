@@ -141,6 +141,7 @@ func (api *FilterAPI) NewPendingTransactionFilter() rpc.ID {
 				api.filtersMu.Lock()
 				delete(api.filters, pendingTxSub.ID)
 				api.filtersMu.Unlock()
+				pendingTxSub.Unsubscribe()
 				return
 			}
 		}
