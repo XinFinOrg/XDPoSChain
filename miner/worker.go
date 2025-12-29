@@ -42,6 +42,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/trie"
 	mapset "github.com/deckarep/golang-set/v2"
@@ -60,6 +61,15 @@ const (
 	chainSideChanSize = 10
 
 	txMatchGasLimit = 40000000
+)
+
+var (
+	blockNumberGauge   = metrics.NewRegisteredGauge("miner/number", nil)
+	normalTxsMeter     = metrics.NewRegisteredGauge("miner/txs/normal", nil)
+	specialTxsMeter    = metrics.NewRegisteredGauge("miner/txs/special", nil)
+	blockCommitTimer   = metrics.NewRegisteredTimer("miner/time/commit", nil)
+	blockFinalizeTimer = metrics.NewRegisteredTimer("miner/time/finalize", nil)
+	blockTotalTimer    = metrics.NewRegisteredTimer("miner/time/total", nil)
 )
 
 // Agent can register themself with the worker
@@ -910,6 +920,8 @@ func (w *worker) commitNewWork() {
 		}
 	}
 	work.commitTransactions(w.mux, feeCapacity, txs, specialTxs, w.chain, w.coinbase, &w.pendingLogsFeed)
+	commitEnd := time.Now()
+
 	// compute uncles for the new block.
 	var (
 		uncles []*types.Header
@@ -922,7 +934,25 @@ func (w *worker) commitNewWork() {
 	}
 
 	if atomic.LoadInt32(&w.mining) == 1 {
-		log.Info("Committing new block", "number", work.Block.Number(), "txs", work.tcount, "special-txs", len(specialTxs), "uncles", len(uncles), "elapsed", common.PrettyDuration(time.Since(tstart)))
+		finalizeEnd := time.Now()
+		commitElapsed := commitEnd.Sub(tstart)
+		finalizeElapsed := finalizeEnd.Sub(commitEnd)
+		totalElapsed := finalizeEnd.Sub(tstart)
+		log.Info("Committing new block",
+			"number", work.Block.Number(),
+			"txs", work.tcount,
+			"special_txs", len(specialTxs),
+			"uncles", len(uncles),
+			"commit_time", common.PrettyDuration(commitElapsed),
+			"finalize_time", common.PrettyDuration(finalizeElapsed),
+			"total_time", common.PrettyDuration(totalElapsed),
+		)
+		blockNumberGauge.Update(work.Block.Number().Int64())
+		normalTxsMeter.Update(int64(work.tcount))
+		specialTxsMeter.Update(int64(len(specialTxs)))
+		blockCommitTimer.Update(commitElapsed)
+		blockFinalizeTimer.Update(finalizeElapsed)
+		blockTotalTimer.Update(totalElapsed)
 		w.unconfirmed.Shift(work.Block.NumberU64() - 1)
 		w.lastParentBlockCommit = parent.Hash().Hex()
 	}
