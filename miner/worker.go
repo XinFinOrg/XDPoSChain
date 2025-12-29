@@ -970,7 +970,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 		}
 
 		if gp.Gas() < params.TxGas && tx.Gas() > 0 {
-			log.Trace("Not enough gas for further transactions", "gp", gp)
+			log.Warn("Not enough gas for further transactions", "hash", tx.Hash().Hex(), "tx.Gas", tx.Gas(), "gp", gp, "need", params.TxGas)
 			break
 		}
 		// Error may be ignored here. The error has already been checked
@@ -1033,7 +1033,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 	for {
 		// If we don't have enough gas for any further transactions then we're done
 		if gp.Gas() < params.TxGas {
-			log.Trace("Not enough gas for further transactions", "gp", gp)
+			log.Warn("Not enough gas for further transactions", "gp", gp, "need", params.TxGas)
 			break
 		}
 		if txs == nil {
@@ -1115,7 +1115,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 		switch {
 		case errors.Is(err, core.ErrGasLimitReached):
 			// Pop the current out-of-gas transaction without shifting in the next from the account
-			log.Trace("Gas limit exceeded for current block", "sender", from)
+			log.Warn("Gas limit exceeded for current block", "hash", tx.Hash().Hex(), "tx.Gas", tx.Gas(), "err", err)
 			txs.Pop()
 
 		case errors.Is(err, core.ErrNonceTooLow):
