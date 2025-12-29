@@ -334,19 +334,19 @@ func (args *TransactionArgs) ToMessage(b AccountBackend, baseFee *big.Int, skipN
 		}
 	}
 	return &core.Message{
-		From:             addr,
-		To:               args.To,
-		Value:            (*big.Int)(args.Value),
-		Nonce:            uint64(*args.Nonce),
-		GasLimit:         uint64(*args.Gas),
-		GasPrice:         gasPrice,
-		GasFeeCap:        gasFeeCap,
-		GasTipCap:        gasTipCap,
-		Data:             args.data(),
-		AccessList:       accessList,
-		SetCodeAuthorizations:         args.AuthorizationList,
-		SkipNonceChecks:  skipNonceCheck,
-		SkipFromEOACheck: skipEoACheck,
+		From:                  addr,
+		To:                    args.To,
+		Value:                 (*big.Int)(args.Value),
+		Nonce:                 uint64(*args.Nonce),
+		GasLimit:              uint64(*args.Gas),
+		GasPrice:              gasPrice,
+		GasFeeCap:             gasFeeCap,
+		GasTipCap:             gasTipCap,
+		Data:                  args.data(),
+		AccessList:            accessList,
+		SetCodeAuthorizations: args.AuthorizationList,
+		SkipNonceChecks:       skipNonceCheck,
+		SkipFromEOACheck:      skipEoACheck,
 	}
 }
 
