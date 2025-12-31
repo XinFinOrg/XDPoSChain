@@ -2661,7 +2661,7 @@ func (s *BlockChainAPI) GetTokenStats(ctx context.Context, epochNr rpc.EpochNumb
 	if !ok {
 		return nil, errors.New("undefined XDPoS consensus engine")
 	}
-	statedb, header, err := s.b.StateAndHeaderByNumber(ctx, rpc.LatestBlockNumber)
+	statedb, header, _ := s.b.StateAndHeaderByNumber(ctx, rpc.LatestBlockNumber)
 	nonce := statedb.GetNonce(common.MintedRecordAddressBinary)
 	if nonce == 0 {
 		return nil, errors.New("mintedRecordAddress is not initialized due to Reward Upgrade is not applied")
