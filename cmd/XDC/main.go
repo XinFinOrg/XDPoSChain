@@ -139,6 +139,7 @@ var (
 		utils.StoreRewardFlag,
 		utils.SetHeadFlag,
 		utils.DeleteAllBadBlocksFlag,
+		utils.XDCConsensusTimeoutFlag,
 	}, utils.NetworkFlags, utils.DatabaseFlags)
 
 	rpcFlags = []cli.Flag{

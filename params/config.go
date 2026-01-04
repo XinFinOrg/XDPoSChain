@@ -904,6 +904,9 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - TipUpgradePenalty:           %-8v\n", common.TipUpgradePenalty)
 	banner += fmt.Sprintf("  - TIPEpochHalving:             %-8v\n", common.TIPEpochHalving)
 	banner += fmt.Sprintf("  - Engine:                      %v", engine)
+	if common.TimeoutPeriod > 0 {
+		banner += fmt.Sprintf("\n  - TimeoutPeriod (overriding):  %v", common.TimeoutPeriod)
+	}
 	return banner
 }
 

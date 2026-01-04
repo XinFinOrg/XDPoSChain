@@ -171,6 +171,10 @@ func loadBaseConfig(ctx *cli.Context) XDCConfig {
 	}
 	common.MinGasPrice50x = common.MinGasPrice50x.Mul(common.MinGasPrice, big.NewInt(50))
 
+	if ctx.IsSet(utils.XDCConsensusTimeoutFlag.Name) {
+		common.TimeoutPeriod = ctx.Int(utils.XDCConsensusTimeoutFlag.Name)
+	}
+
 	// read passwords from environment
 	passwords := []string{}
 	for _, env := range cfg.Account.Passwords {

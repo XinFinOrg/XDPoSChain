@@ -87,6 +87,9 @@ func New(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh chan i
 	config := chainConfig.XDPoS
 	// Setup timeoutTimer
 	duration := time.Duration(config.V2.CurrentConfig.TimeoutPeriod) * time.Second
+	if common.TimeoutPeriod > 0 {
+		duration = time.Duration(common.TimeoutPeriod) * time.Second
+	}
 	timeoutTimer, err := countdown.NewExpCountDown(duration, config.V2.CurrentConfig.ExpTimeoutConfig.Base, config.V2.CurrentConfig.ExpTimeoutConfig.MaxExponent)
 	if err != nil {
 		log.Crit("create exp countdown", "err", err)
@@ -156,6 +159,9 @@ func (x *XDPoS_v2) UpdateParams(header *types.Header) {
 	// Setup timeoutTimer
 	currentConfig := x.config.V2.GetCurrentConfig()
 	duration := time.Duration(currentConfig.TimeoutPeriod) * time.Second
+	if common.TimeoutPeriod > 0 {
+		duration = time.Duration(common.TimeoutPeriod) * time.Second
+	}
 	err = x.timeoutWorker.SetParams(duration, currentConfig.ExpTimeoutConfig.Base, currentConfig.ExpTimeoutConfig.MaxExponent)
 	if err != nil {
 		log.Error("[UpdateParams] set params failed", "err", err)

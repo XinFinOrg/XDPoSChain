@@ -837,6 +837,14 @@ var (
 		Value:    false,
 		Category: flags.XdcCategory,
 	}
+	// XDC consensus settings, should set to almost the same throughout the netowrk
+	XDCConsensusTimeoutFlag = &cli.IntFlag{
+		Name:     "timeout-period-seconds",
+		Aliases:  []string{"timeoutperiod"},
+		Usage:    "Number of seconds to wait for consensus timeout",
+		Value:    0,
+		Category: flags.XdcCategory,
+	}
 )
 
 var (

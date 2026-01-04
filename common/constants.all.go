@@ -35,6 +35,9 @@ var (
 	BaseLendingInterest     = big.NewInt(100000000)         // 1e8
 	RelayerLendingFee       = big.NewInt(10000000000000000) // 0.01
 	RelayerLendingCancelFee = big.NewInt(1000000000000000)  // 0.001
+
+	// XDC Consensus
+	TimeoutPeriod = int(0) // seconds, zero or negative means no value
 )
 
 type constant struct {
