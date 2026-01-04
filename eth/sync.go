@@ -47,7 +47,11 @@ func (pm *ProtocolManager) syncTransactions(p *peer) {
 	var txs types.Transactions
 	pending := pm.txpool.Pending(false)
 	for _, batch := range pending {
-		txs = append(txs, batch...)
+		for _, lazy := range batch {
+			if tx := lazy.Resolve(); tx != nil {
+				txs = append(txs, tx.Tx)
+			}
+		}
 	}
 	if len(txs) == 0 {
 		return

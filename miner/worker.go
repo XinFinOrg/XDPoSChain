@@ -36,6 +36,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/contracts"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
+	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
@@ -355,13 +356,19 @@ func (w *worker) update() {
 			// be automatically eliminated.
 			if atomic.LoadInt32(&w.mining) == 0 {
 				w.currentMu.Lock()
-				txs := make(map[common.Address][]*types.Transaction, len(ev.Txs))
+				txs := make(map[common.Address][]*txpool.LazyTransaction, len(ev.Txs))
 				for _, tx := range ev.Txs {
 					acc, _ := types.Sender(w.current.signer, tx)
-					txs[acc] = append(txs[acc], tx)
+					txs[acc] = append(txs[acc], &txpool.LazyTransaction{
+						Hash:      tx.Hash(),
+						Tx:        &txpool.Transaction{Tx: tx},
+						Time:      tx.Time(),
+						GasFeeCap: tx.GasFeeCap(),
+						GasTipCap: tx.GasTipCap(),
+					})
 				}
 				feeCapacity := w.current.state.GetTRC21FeeCapacityFromState()
-				txset, specialTxs := types.NewTransactionsByPriceAndNonce(w.current.signer, txs, feeCapacity)
+				txset, specialTxs := newTransactionsByPriceAndNonce(w.current.signer, txs, feeCapacity, w.current.header.BaseFee)
 
 				tcount := w.current.tcount
 				w.current.commitTransactions(w.mux, feeCapacity, txset, specialTxs, w.chain, w.coinbase, &w.pendingLogsFeed)
@@ -778,7 +785,7 @@ func (w *worker) commitNewWork() {
 	}
 	// won't grasp txs at checkpoint
 	var (
-		txs                                                                  *types.TransactionsByPriceAndNonce
+		txs                                                                  *transactionsByPriceAndNonce
 		specialTxs                                                           types.Transactions
 		tradingTxMatches                                                     []tradingstate.TxDataMatch
 		lendingMatchingResults                                               map[common.Hash]lendingstate.MatchingResult
@@ -794,7 +801,7 @@ func (w *worker) commitNewWork() {
 		}
 		if !isEpochSwitchBlock {
 			pending := w.eth.TxPool().Pending(true)
-			txs, specialTxs = types.NewTransactionsByPriceAndNonce(w.current.signer, pending, feeCapacity)
+			txs, specialTxs = newTransactionsByPriceAndNonce(w.current.signer, pending, feeCapacity, header.BaseFee)
 		}
 	}
 	if atomic.LoadInt32(&w.mining) == 1 {
@@ -959,7 +966,7 @@ func (w *worker) commitNewWork() {
 	w.updateSnapshot()
 }
 
-func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Address]*big.Int, txs *types.TransactionsByPriceAndNonce, specialTxs types.Transactions, bc *core.BlockChain, coinbase common.Address, pendingLogsFeed *event.Feed) {
+func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Address]*big.Int, txs *transactionsByPriceAndNonce, specialTxs types.Transactions, bc *core.BlockChain, coinbase common.Address, pendingLogsFeed *event.Feed) {
 	gp := new(core.GasPool).AddGas(w.header.GasLimit)
 	balanceUpdated := map[common.Address]*big.Int{}
 	totalFeeUsed := big.NewInt(0)
@@ -1070,12 +1077,15 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			break
 		}
 		// Retrieve the next transaction and abort if all done
-		tx := txs.Peek()
-
-		if tx == nil {
+		lazyTx := txs.Peek()
+		if lazyTx == nil {
 			break
 		}
-
+		warped := lazyTx.Resolve()
+		if warped == nil || warped.Tx == nil {
+			break
+		}
+		tx := warped.Tx
 		to := tx.To()
 		if w.header.Number.Uint64() >= common.BlackListHFNumber {
 			from := tx.From()

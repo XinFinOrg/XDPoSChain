@@ -18,7 +18,6 @@ package types
 
 import (
 	"bytes"
-	"container/heap"
 	"errors"
 	"fmt"
 	"io"
@@ -401,6 +400,19 @@ func (tx *Transaction) SetCodeAuthorizations() []SetCodeAuthorization {
 	return setcodetx.AuthList
 }
 
+// SetTime sets the decoding time of a transaction. This is used by tests to set
+// arbitrary times and by persistent transaction pools when loading old txs from
+// disk.
+func (tx *Transaction) SetTime(t time.Time) {
+	tx.time = t
+}
+
+// Time returns the time when the transaction was first seen on the network. It
+// is a heuristic to prefer mining older txs vs new all other things equal.
+func (tx *Transaction) Time() time.Time {
+	return tx.time
+}
+
 // Hash returns the transaction hash.
 func (tx *Transaction) Hash() common.Hash {
 	if hash := tx.hash.Load(); hash != nil {
@@ -714,128 +726,6 @@ type TxByNonce Transactions
 func (s TxByNonce) Len() int           { return len(s) }
 func (s TxByNonce) Less(i, j int) bool { return s[i].Nonce() < s[j].Nonce() }
 func (s TxByNonce) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
-
-// TxByPriceAndTime implements both the sort and the heap interface, making it useful
-// for all at once sorting as well as individually adding and removing elements.
-type TxByPriceAndTime struct {
-	txs        Transactions
-	payersSwap map[common.Address]*big.Int
-}
-
-func (s TxByPriceAndTime) Len() int { return len(s.txs) }
-func (s TxByPriceAndTime) Less(i, j int) bool {
-	i_price := s.txs[i].GasPrice()
-	if s.txs[i].To() != nil {
-		if _, ok := s.payersSwap[*s.txs[i].To()]; ok {
-			i_price = common.TRC21GasPrice
-		}
-	}
-
-	j_price := s.txs[j].GasPrice()
-	if s.txs[j].To() != nil {
-		if _, ok := s.payersSwap[*s.txs[j].To()]; ok {
-			j_price = common.TRC21GasPrice
-		}
-	}
-
-	// If the prices are equal, use the time the transaction was first seen for
-	// deterministic sorting
-	cmp := i_price.Cmp(j_price)
-	if cmp == 0 {
-		return s.txs[i].time.Before(s.txs[j].time)
-	}
-	return cmp > 0
-}
-func (s TxByPriceAndTime) Swap(i, j int) { s.txs[i], s.txs[j] = s.txs[j], s.txs[i] }
-
-func (s *TxByPriceAndTime) Push(x interface{}) {
-	s.txs = append(s.txs, x.(*Transaction))
-}
-
-func (s *TxByPriceAndTime) Pop() interface{} {
-	old := s.txs
-	n := len(old)
-	x := old[n-1]
-	old[n-1] = nil // avoid memory leak
-	s.txs = old[0 : n-1]
-	return x
-}
-
-// TransactionsByPriceAndNonce represents a set of transactions that can return
-// transactions in a profit-maximizing sorted order, while supporting removing
-// entire batches of transactions for non-executable accounts.
-type TransactionsByPriceAndNonce struct {
-	txs    map[common.Address][]*Transaction // Per account nonce-sorted list of transactions
-	heads  TxByPriceAndTime                  // Next transaction for each unique account (price heap)
-	signer Signer                            // Signer for the set of transactions
-}
-
-// NewTransactionsByPriceAndNonce creates a transaction set that can retrieve
-// price sorted transactions in a nonce-honouring way.
-//
-// Note, the input map is reowned so the caller should not interact any more with
-// if after providing it to the constructor.
-//
-// It also classifies special txs and normal txs
-func NewTransactionsByPriceAndNonce(signer Signer, txs map[common.Address][]*Transaction, payersSwap map[common.Address]*big.Int) (*TransactionsByPriceAndNonce, Transactions) {
-	// Initialize a price and received time based heap with the head transactions
-	heads := TxByPriceAndTime{}
-	heads.payersSwap = payersSwap
-	specialTxs := Transactions{}
-	for _, accTxs := range txs {
-		from, _ := Sender(signer, accTxs[0])
-		var normalTxs Transactions
-		for _, tx := range accTxs {
-			if tx.IsSpecialTransaction() {
-				specialTxs = append(specialTxs, tx)
-			} else {
-				normalTxs = append(normalTxs, tx)
-			}
-		}
-		if len(normalTxs) > 0 {
-			heads.txs = append(heads.txs, normalTxs[0])
-			// Remove the first normal transaction for this sender
-			txs[from] = normalTxs[1:]
-		} else {
-			// Remove the account if there are no normal transactions
-			delete(txs, from)
-		}
-	}
-	heap.Init(&heads)
-
-	// Assemble and return the transaction set
-	return &TransactionsByPriceAndNonce{
-		txs:    txs,
-		heads:  heads,
-		signer: signer,
-	}, specialTxs
-}
-
-// Peek returns the next transaction by price.
-func (t *TransactionsByPriceAndNonce) Peek() *Transaction {
-	if len(t.heads.txs) == 0 {
-		return nil
-	}
-	return t.heads.txs[0]
-}
-
-// Shift replaces the current best head with the next one from the same account.
-func (t *TransactionsByPriceAndNonce) Shift() {
-	acc, _ := Sender(t.signer, t.heads.txs[0])
-	if txs, ok := t.txs[acc]; ok && len(txs) > 0 {
-		t.heads.txs[0], t.txs[acc] = txs[0], txs[1:]
-		heap.Fix(&t.heads, 0)
-	} else {
-		heap.Pop(&t.heads)
-	}
-}
-
-// Pop removes the best transaction, *not* replacing it with the next one from
-// the same account. This should be used when a transaction cannot be executed
-// and hence all subsequent ones should be discarded from the same account.
-func (t *TransactionsByPriceAndNonce) Pop() {
-	heap.Pop(&t.heads)
-}
 
 // copyAddressPtr copies an address.
 func copyAddressPtr(a *common.Address) *common.Address {

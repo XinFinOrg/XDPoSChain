@@ -25,7 +25,6 @@ import (
 	"math/big"
 	"reflect"
 	"testing"
-	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
@@ -260,75 +259,6 @@ func TestRecipientNormal(t *testing.T) {
 	}
 }
 
-// Tests that transactions can be correctly sorted according to their price in
-// decreasing order, but at the same time with increasing nonces when issued by
-// the same account.
-func TestTransactionPriceNonceSort(t *testing.T) {
-	// Generate a batch of accounts to start with
-	keys := make([]*ecdsa.PrivateKey, 25)
-	for i := 0; i < len(keys); i++ {
-		keys[i], _ = crypto.GenerateKey()
-	}
-
-	signer := HomesteadSigner{}
-	// Generate a batch of transactions with overlapping values, but shifted nonces
-	groups := map[common.Address][]*Transaction{}
-	for start, key := range keys {
-		addr := crypto.PubkeyToAddress(key.PublicKey)
-		for i := 0; i < 25; i++ {
-			tx, _ := SignTx(NewTransaction(uint64(start+i), common.Address{}, big.NewInt(100), 100, big.NewInt(int64(start+i)), nil), signer, key)
-			groups[addr] = append(groups[addr], tx)
-		}
-	}
-	// Sort the transactions and cross check the nonce ordering
-	txset, _ := NewTransactionsByPriceAndNonce(signer, groups, map[common.Address]*big.Int{})
-
-	txs := Transactions{}
-	for tx := txset.Peek(); tx != nil; tx = txset.Peek() {
-		txs = append(txs, tx)
-		txset.Shift()
-	}
-	if len(txs) != 25*25 {
-		t.Errorf("expected %d transactions, found %d", 25*25, len(txs))
-	}
-	for i, txi := range txs {
-		fromi, _ := Sender(signer, txi)
-
-		// Make sure the nonce order is valid
-		for j, txj := range txs[i+1:] {
-			fromj, _ := Sender(signer, txj)
-
-			if fromi == fromj && txi.Nonce() > txj.Nonce() {
-				t.Errorf("invalid nonce ordering: tx #%d (A=%x N=%v) < tx #%d (A=%x N=%v)", i, fromi[:4], txi.Nonce(), i+j, fromj[:4], txj.Nonce())
-			}
-		}
-		// Find the previous and next nonce of this account
-		prev, next := i-1, i+1
-		for j := i - 1; j >= 0; j-- {
-			if fromj, _ := Sender(signer, txs[j]); fromi == fromj {
-				prev = j
-				break
-			}
-		}
-		for j := i + 1; j < len(txs); j++ {
-			if fromj, _ := Sender(signer, txs[j]); fromi == fromj {
-				next = j
-				break
-			}
-		}
-		// Make sure that in between the neighbor nonces, the transaction is correctly positioned price wise
-		for j := prev + 1; j < next; j++ {
-			fromj, _ := Sender(signer, txs[j])
-			if j < i && txs[j].GasPrice().Cmp(txi.GasPrice()) < 0 {
-				t.Errorf("invalid gasprice ordering: tx #%d (A=%x P=%v) < tx #%d (A=%x P=%v)", j, fromj[:4], txs[j].GasPrice(), i, fromi[:4], txi.GasPrice())
-			}
-			if j > i && txs[j].GasPrice().Cmp(txi.GasPrice()) > 0 {
-				t.Errorf("invalid gasprice ordering: tx #%d (A=%x P=%v) > tx #%d (A=%x P=%v)", j, fromj[:4], txs[j].GasPrice(), i, fromi[:4], txi.GasPrice())
-			}
-		}
-	}
-}
-
 // TestTransactionJSON tests serializing/de-serializing to/from JSON.
 func TestTransactionJSON(t *testing.T) {
 	key, err := crypto.GenerateKey()
@@ -367,54 +297,6 @@ func TestTransactionJSON(t *testing.T) {
 		}
 		if tx.ChainId().Cmp(parsedTx.ChainId()) != 0 {
 			t.Errorf("invalid chain id, want %d, got %d", tx.ChainId(), parsedTx.ChainId())
-		}
-	}
-}
-
-// Tests that if multiple transactions have the same price, the ones seen earlier
-// are prioritized to avoid network spam attacks aiming for a specific ordering.
-func TestTransactionTimeSort(t *testing.T) {
-	// Generate a batch of accounts to start with
-	keys := make([]*ecdsa.PrivateKey, 5)
-	for i := 0; i < len(keys); i++ {
-		keys[i], _ = crypto.GenerateKey()
-	}
-	signer := HomesteadSigner{}
-
-	// Generate a batch of transactions with overlapping prices, but different creation times
-	groups := map[common.Address][]*Transaction{}
-	for start, key := range keys {
-		addr := crypto.PubkeyToAddress(key.PublicKey)
-
-		tx, _ := SignTx(NewTransaction(0, common.Address{}, big.NewInt(100), 100, big.NewInt(1), nil), signer, key)
-		tx.time = time.Unix(0, int64(len(keys)-start))
-
-		groups[addr] = append(groups[addr], tx)
-	}
-	// Sort the transactions and cross check the nonce ordering
-	txset, _ := NewTransactionsByPriceAndNonce(signer, groups, map[common.Address]*big.Int{})
-
-	txs := Transactions{}
-	for tx := txset.Peek(); tx != nil; tx = txset.Peek() {
-		txs = append(txs, tx)
-		txset.Shift()
-	}
-	if len(txs) != len(keys) {
-		t.Errorf("expected %d transactions, found %d", len(keys), len(txs))
-	}
-	for i, txi := range txs {
-		fromi, _ := Sender(signer, txi)
-		if i+1 < len(txs) {
-			next := txs[i+1]
-			fromNext, _ := Sender(signer, next)
-
-			if txi.GasPrice().Cmp(next.GasPrice()) < 0 {
-				t.Errorf("invalid gasprice ordering: tx #%d (A=%x P=%v) < tx #%d (A=%x P=%v)", i, fromi[:4], txi.GasPrice(), i+1, fromNext[:4], next.GasPrice())
-			}
-			// Make sure time order is ascending if the txs have the same gas price
-			if txi.GasPrice().Cmp(next.GasPrice()) == 0 && txi.time.After(next.time) {
-				t.Errorf("invalid received time ordering: tx #%d (A=%x T=%v) > tx #%d (A=%x T=%v)", i, fromi[:4], txi.time, i+1, fromNext[:4], next.time)
-			}
 		}
 	}
 }
@@ -714,81 +596,6 @@ func TestIsNonEVMTx(t *testing.T) {
 			result := tx.IsNonEVMTx()
 			if result != tt.expected {
 				t.Errorf("IsNonEVMTx() = %v, want %v", result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestNewTransactionsByPriceAndNonce_SpecialSeparation uses table-driven tests to verify separation of special and normal transactions.
-func TestNewTransactionsByPriceAndNonce_SpecialSeparation(t *testing.T) {
-	signer := HomesteadSigner{}
-
-	genNormalTx := func(nonce uint64, key *ecdsa.PrivateKey) *Transaction {
-		tx, _ := SignTx(NewTransaction(nonce, common.HexToAddress("0x1234567890123456789012345678901234567890"), big.NewInt(1), 21000, big.NewInt(1), nil), signer, key)
-		return tx
-	}
-	genSpecialTx := func(nonce uint64, key *ecdsa.PrivateKey) *Transaction {
-		tx, _ := SignTx(NewTransaction(nonce, common.BlockSignersBinary, big.NewInt(1), 21000, big.NewInt(1), nil), signer, key)
-		return tx
-	}
-
-	testCases := []struct {
-		name          string
-		normalCount   int
-		specialCount  int
-		expectNormal  int
-		expectSpecial int
-	}{
-		{"no transactions", 0, 0, 0, 0},
-		{"only 1 normal", 1, 0, 1, 0},
-		{"only 2 normal", 2, 0, 2, 0},
-		{"only 3 normal", 3, 0, 3, 0},
-		{"only 1 special", 0, 1, 0, 1},
-		{"only 2 special", 0, 2, 0, 2},
-		{"only 3 special", 0, 3, 0, 3},
-		{"1 normal, 1 special", 1, 1, 1, 1},
-		{"2 normal, 2 special", 2, 2, 2, 2},
-		{"3 normal, 3 special", 3, 3, 3, 3},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			key, _ := crypto.GenerateKey()
-			addr := crypto.PubkeyToAddress(key.PublicKey)
-			txs := make(Transactions, 0, tc.normalCount+tc.specialCount)
-			for i := 0; i < tc.normalCount; i++ {
-				txs = append(txs, genNormalTx(uint64(i), key))
-			}
-			for i := 0; i < tc.specialCount; i++ {
-				txs = append(txs, genSpecialTx(uint64(tc.normalCount+i), key))
-			}
-			group := map[common.Address][]*Transaction{}
-			if len(txs) > 0 {
-				group[addr] = txs
-			}
-			txset, specialTxs := NewTransactionsByPriceAndNonce(signer, group, map[common.Address]*big.Int{})
-
-			// Check special transactions
-			if len(specialTxs) != tc.expectSpecial {
-				t.Errorf("expected %d special txs, got %d", tc.expectSpecial, len(specialTxs))
-			}
-			for _, tx := range specialTxs {
-				if tx.To() == nil || *tx.To() != common.BlockSignersBinary {
-					t.Errorf("specialTxs contains non-special tx: %v", tx)
-				}
-			}
-
-			// Check normal transactions
-			normalCount := 0
-			for tx := txset.Peek(); tx != nil; tx = txset.Peek() {
-				if tx.To() == nil || *tx.To() == common.BlockSignersBinary {
-					t.Errorf("txset contains special or nil-to tx: %v", tx)
-				}
-				normalCount++
-				txset.Shift()
-			}
-			if normalCount != tc.expectNormal {
-				t.Errorf("expected %d normal txs, got %d", tc.expectNormal, normalCount)
 			}
 		})
 	}
