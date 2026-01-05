@@ -459,7 +459,7 @@ func (pool *LegacyPool) SetGasTip(tip *big.Int) error {
 		}
 		pool.priced.Removed(len(drop))
 	}
-	log.Info("Transaction pool tip threshold updated", "tip", tip)
+	log.Info("Legacy pool tip threshold updated", "tip", tip)
 	return nil
 }
 
@@ -670,7 +670,7 @@ func (pool *LegacyPool) validateTx(tx *types.Transaction, local bool) error {
 // pending or queued one, it overwrites the previous transaction if its price is higher.
 //
 // If a newly added transaction is marked as local, its sending account will be
-// be added to the allowlist, preventing any associated transaction from being dropped
+// added to the allowlist, preventing any associated transaction from being dropped
 // out of the pool due to pricing constraints.
 func (pool *LegacyPool) add(tx *types.Transaction, local bool) (replaced bool, err error) {
 	// If the transaction is already known, discard it
@@ -951,7 +951,7 @@ func (pool *LegacyPool) promoteSpecialTx(addr common.Address, tx *types.Transact
 }
 
 // Add enqueues a batch of transactions into the pool if they are valid. Depending
-// on the local flag, full pricing contraints will or will not be applied.
+// on the local flag, full pricing constraints will or will not be applied.
 //
 // If sync is set, the method will block until all internal maintenance related
 // to the add is finished. Only use this during tests for determinism!
@@ -964,7 +964,7 @@ func (pool *LegacyPool) Add(txs []*txpool.Transaction, local bool, sync bool) []
 }
 
 // AddLocals enqueues a batch of transactions into the pool if they are valid, marking the
-// senders as a local ones, ensuring they go around the local pricing constraints.
+// senders as local ones, ensuring they go around the local pricing constraints.
 //
 // This method is used to add transactions from the RPC API and performs synchronous pool
 // reorganization and event propagation.
