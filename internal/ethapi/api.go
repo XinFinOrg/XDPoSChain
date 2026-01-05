@@ -2660,18 +2660,18 @@ type tokenSupply struct {
 	BlockNumber     *hexutil.Big `json:"blockNumber"`
 }
 
-func (s *BlockChainAPI) GetTokenStats(ctx context.Context, epochNr rpc.EpochNumber) (*tokenSupply, error) {
-	engine, ok := s.b.Engine().(*XDPoS.XDPoS)
+func (api *BlockChainAPI) GetTokenStats(ctx context.Context, epochNr rpc.EpochNumber) (*tokenSupply, error) {
+	engine, ok := api.b.Engine().(*XDPoS.XDPoS)
 	if !ok {
 		return nil, errors.New("undefined XDPoS consensus engine")
 	}
-	statedb, header, _ := s.b.StateAndHeaderByNumber(ctx, rpc.LatestBlockNumber)
+	statedb, header, _ := api.b.StateAndHeaderByNumber(ctx, rpc.LatestBlockNumber)
 	nonce := statedb.GetNonce(common.MintedRecordAddressBinary)
 	if nonce == 0 {
 		return nil, errors.New("mintedRecordAddress is not initialized due to Reward Upgrade is not applied")
 	}
 	currentRound, err := engine.EngineV2.GetRoundNumber(header)
-	currentEpoch := s.b.ChainConfig().XDPoS.V2.SwitchEpoch + uint64(currentRound)/s.b.ChainConfig().XDPoS.Epoch
+	currentEpoch := api.b.ChainConfig().XDPoS.V2.SwitchEpoch + uint64(currentRound)/api.b.ChainConfig().XDPoS.Epoch
 	if err != nil {
 		return nil, err
 	}
@@ -2690,11 +2690,11 @@ func (s *BlockChainAPI) GetTokenStats(ctx context.Context, epochNr rpc.EpochNumb
 	}
 	postMinted := statedb.GetPostMinted(epochNum).Big()
 	number := statedb.GetPostRewardBlock(epochNum).Big()
-	targetHeader, err := s.b.HeaderByNumber(ctx, rpc.BlockNumber(number.Int64()))
+	targetHeader, err := api.b.HeaderByNumber(ctx, rpc.BlockNumber(number.Int64()))
 	if err != nil {
 		return nil, err
 	}
-	config := s.b.ChainConfig().XDPoS
+	config := api.b.ChainConfig().XDPoS
 	if config == nil {
 		return nil, errors.New("xdpos config is nil")
 	}
