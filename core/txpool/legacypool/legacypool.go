@@ -1303,9 +1303,13 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 	// because of another transaction (e.g. higher gas price).
 	if reset != nil {
 		pool.demoteUnexecutables()
-		if reset.newHead != nil && pool.chainconfig.IsEIP1559(new(big.Int).Add(reset.newHead.Number, big.NewInt(1))) {
-			pendingBaseFee := eip1559.CalcBaseFee(pool.chainconfig, reset.newHead)
-			pool.priced.SetBaseFee(pendingBaseFee)
+		if reset.newHead != nil {
+			if pool.chainconfig.IsEIP1559(new(big.Int).Add(reset.newHead.Number, big.NewInt(1))) {
+				pendingBaseFee := eip1559.CalcBaseFee(pool.chainconfig, reset.newHead)
+				pool.priced.SetBaseFee(pendingBaseFee)
+			} else {
+				pool.priced.Reheap()
+			}
 		}
 		// Update all accounts to the latest known pending nonce
 		nonces := make(map[common.Address]uint64, len(pool.pending))
