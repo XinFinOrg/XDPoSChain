@@ -88,7 +88,7 @@ type authorizationMarshaling struct {
 }
 
 // SignSetCode creates a signed SetCode authorization.
-func SignSetCode(auth SetCodeAuthorization, prv *ecdsa.PrivateKey) (SetCodeAuthorization, error) {
+func SignSetCode(prv *ecdsa.PrivateKey, auth SetCodeAuthorization) (SetCodeAuthorization, error) {
 	sighash := auth.sigHash()
 	sig, err := crypto.Sign(sighash[:], prv)
 	if err != nil {

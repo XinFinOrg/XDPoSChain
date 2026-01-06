@@ -57,11 +57,15 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 		return fmt.Errorf("%w: transaction size %v, limit %v", ErrOversizedData, tx.Size(), opts.MaxSize)
 	}
 	// Ensure only transactions that have been enabled are accepted
-	if !opts.Config.IsEIP1559(head.Number) && tx.Type() != types.LegacyTxType {
+	rules := opts.Config.Rules(head.Number)
+	if !rules.IsEIP1559 && tx.Type() != types.LegacyTxType {
 		return fmt.Errorf("%w: type %d rejected, pool not yet in EIP1559", core.ErrTxTypeNotSupported, tx.Type())
 	}
+	if !rules.IsPrague && tx.Type() == types.SetCodeTxType {
+		return fmt.Errorf("%w: type %d rejected, pool not yet in Prague", core.ErrTxTypeNotSupported, tx.Type())
+	}
 	// Check whether the init code size has been exceeded
-	if opts.Config.IsEIP1559(head.Number) && tx.To() == nil && len(tx.Data()) > params.MaxInitCodeSize {
+	if rules.IsEIP1559 && tx.To() == nil && len(tx.Data()) > params.MaxInitCodeSize {
 		return fmt.Errorf("%w: code size %v, limit %v", core.ErrMaxInitCodeSizeExceeded, len(tx.Data()), params.MaxInitCodeSize)
 	}
 	// Transactions can't be negative. This may never happen using RLP decoded
@@ -111,12 +115,17 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	}
 	// Ensure the transaction has more gas than the bare minimum needed to
 	// cover the transaction metadata
-	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, true, opts.Config.IsEIP1559(head.Number))
+	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, true, rules.IsEIP1559)
 	if err != nil {
 		return err
 	}
 	if tx.Gas() < intrGas {
 		return fmt.Errorf("%w: needed %v, allowed %v", core.ErrIntrinsicGas, intrGas, tx.Gas())
+	}
+	if tx.Type() == types.SetCodeTxType {
+		if len(tx.SetCodeAuthorizations()) == 0 {
+			return fmt.Errorf("set code tx must have at least one authorization tuple")
+		}
 	}
 	return nil
 }
@@ -144,6 +153,11 @@ type ValidationOptionsWithState struct {
 	// ExistingCost is a mandatory callback to retrieve an already pooled
 	// transaction's cost with the given nonce to check for overdrafts.
 	ExistingCost func(addr common.Address, nonce uint64) *big.Int
+
+	// KnownConflicts is an optional callback which iterates over the list of
+	// addresses and returns all addresses known to the pool with in-flight
+	// transactions.
+	KnownConflicts func(sender common.Address, authorizers []common.Address) []common.Address
 
 	Trc21FeeCapacity map[common.Address]*big.Int
 
@@ -220,6 +234,14 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 		// (i.e. max cancellable via out-of-bound transaction).
 		if used, left := opts.UsedAndLeftSlots(from); left <= 0 {
 			return fmt.Errorf("%w: pooled %d txs", ErrAccountLimitExceeded, used)
+		}
+
+		// Verify no authorizations will invalidate existing transactions known to
+		// the pool.
+		if opts.KnownConflicts != nil {
+			if conflicts := opts.KnownConflicts(from, tx.SetCodeAuthorities()); len(conflicts) > 0 {
+				return fmt.Errorf("%w: authorization conflicts with other known tx", ErrAuthorityReserved)
+			}
 		}
 	}
 
