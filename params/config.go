@@ -19,7 +19,6 @@ package params
 import (
 	"fmt"
 	"math/big"
-	"slices"
 	"strings"
 	"sync"
 
@@ -568,9 +567,38 @@ type ExpTimeoutConfig struct {
 
 func XDPoSConfigEqual(a, b *XDPoSConfig) bool {
 	if a == nil || b == nil {
-		return a == b
+		if a != b {
+			log.Warn("[XDPoSConfigEqual] One of the configs is nil", "a", a, "b", b)
+			return false
+		}
+		return true
 	}
-	if a.Period != b.Period || a.Epoch != b.Epoch || a.Reward != b.Reward || a.RewardCheckpoint != b.RewardCheckpoint || a.Gap != b.Gap || a.FoudationWalletAddr != b.FoudationWalletAddr || a.SkipV1Validation != b.SkipV1Validation {
+	if a.Period != b.Period {
+		log.Warn("[XDPoSConfigEqual] Period mismatch", "a.Period", a.Period, "b.Period", b.Period)
+		return false
+	}
+	if a.Epoch != b.Epoch {
+		log.Warn("[XDPoSConfigEqual] Epoch mismatch", "a.Epoch", a.Epoch, "b.Epoch", b.Epoch)
+		return false
+	}
+	if a.Reward != b.Reward {
+		log.Warn("[XDPoSConfigEqual] Reward mismatch", "a.Reward", a.Reward, "b.Reward", b.Reward)
+		return false
+	}
+	if a.RewardCheckpoint != b.RewardCheckpoint {
+		log.Warn("[XDPoSConfigEqual] RewardCheckpoint mismatch", "a.RewardCheckpoint", a.RewardCheckpoint, "b.RewardCheckpoint", b.RewardCheckpoint)
+		return false
+	}
+	if a.Gap != b.Gap {
+		log.Warn("[XDPoSConfigEqual] Gap mismatch", "a.Gap", a.Gap, "b.Gap", b.Gap)
+		return false
+	}
+	if a.FoudationWalletAddr != b.FoudationWalletAddr {
+		log.Warn("[XDPoSConfigEqual] FoudationWalletAddr mismatch", "a.FoudationWalletAddr", a.FoudationWalletAddr.Hex(), "b.FoudationWalletAddr", b.FoudationWalletAddr.Hex())
+		return false
+	}
+	if a.SkipV1Validation != b.SkipV1Validation {
+		log.Warn("[XDPoSConfigEqual] SkipV1Validation mismatch", "a.SkipV1Validation", a.SkipV1Validation, "b.SkipV1Validation", b.SkipV1Validation)
 		return false
 	}
 	return V2Equal(a.V2, b.V2)
@@ -578,20 +606,22 @@ func XDPoSConfigEqual(a, b *XDPoSConfig) bool {
 
 func V2Equal(a, b *V2) bool {
 	if a == nil || b == nil {
-		return a == b
+		if a != b {
+			log.Warn("[V2Equal] One of the configs is nil", "a", a, "b", b)
+			return false
+		}
+		return true
 	}
-	if a.SwitchEpoch != b.SwitchEpoch || !configNumEqual(a.SwitchBlock, b.SwitchBlock) || !slices.Equal(a.configIndex, b.configIndex) {
+	if !configNumEqual(a.SwitchBlock, b.SwitchBlock) {
+		log.Warn("[V2Equal] SwitchBlock mismatch", "a.SwitchBlock", a.SwitchBlock, "b.SwitchBlock", b.SwitchBlock)
 		return false
 	}
-	// compare AllConfigs according to smaller map
-	smallerMap, largerMap := a.AllConfigs, b.AllConfigs
-	if len(smallerMap) > len(largerMap) {
-		smallerMap, largerMap = largerMap, smallerMap
-	}
-	for key, cfg1 := range smallerMap {
-		cfg2, ok := largerMap[key]
-		if !ok || !V2ConfigEqual(cfg1, cfg2) {
-			return false
+	// Only check configs in both of AllConfigs
+	for k1, cfg1 := range a.AllConfigs {
+		if cfg2, ok := b.AllConfigs[k1]; ok {
+			if !V2ConfigEqual(cfg1, cfg2) {
+				return false
+			}
 		}
 	}
 	return true
@@ -599,9 +629,25 @@ func V2Equal(a, b *V2) bool {
 
 func V2ConfigEqual(a, b *V2Config) bool {
 	if a == nil || b == nil {
-		return a == b
+		if a != b {
+			log.Warn("[V2ConfigEqual] One of the configs is nil", "a", a, "b", b)
+			return false
+		}
+		return true
 	}
-	return a.MaxMasternodes == b.MaxMasternodes && a.SwitchRound == b.SwitchRound && a.CertThreshold == b.CertThreshold
+	if a.MaxMasternodes != b.MaxMasternodes {
+		log.Warn("[V2ConfigEqual] MaxMasternodes mismatch", "a.MaxMasternodes", a.MaxMasternodes, "b.MaxMasternodes", b.MaxMasternodes)
+		return false
+	}
+	if a.SwitchRound != b.SwitchRound {
+		log.Warn("[V2ConfigEqual] SwitchRound mismatch", "a.SwitchRound", a.SwitchRound, "b.SwitchRound", b.SwitchRound)
+		return false
+	}
+	if a.CertThreshold != b.CertThreshold {
+		log.Warn("[V2ConfigEqual] CertThreshold mismatch", "a.CertThreshold", a.CertThreshold, "b.CertThreshold", b.CertThreshold)
+		return false
+	}
+	return true
 }
 
 func (c *XDPoSConfig) String() string {
