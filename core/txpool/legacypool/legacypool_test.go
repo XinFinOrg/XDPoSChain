@@ -166,6 +166,10 @@ func pricedSetCodeTx(nonce uint64, gaslimit uint64, gasFee, tip *uint256.Int, ke
 		})
 		authList = append(authList, auth)
 	}
+	return pricedSetCodeTxWithAuth(nonce, gaslimit, gasFee, tip, key, authList)
+}
+
+func pricedSetCodeTxWithAuth(nonce uint64, gaslimit uint64, gasFee, tip *uint256.Int, key *ecdsa.PrivateKey, authList []types.SetCodeAuthorization) *types.Transaction {
 	return types.MustSignNewTx(key, types.LatestSignerForChainID(params.TestChainConfig.ChainID), &types.SetCodeTx{
 		ChainID:    uint256.MustFromBig(params.TestChainConfig.ChainID),
 		Nonce:      nonce,
@@ -2711,11 +2715,11 @@ func TestSetCodeTransactions(t *testing.T) {
 				if err := pool.addRemoteSync(setCodeTx(0, keyA, []unsignedAuth{{0, keyC}})); err != nil {
 					t.Fatalf("%s: failed to add with remote setcode transaction: %v", name, err)
 				}
-					if err := pool.addRemoteSync(pricedTransaction(0, 100000, new(big.Int).Set(minGasPrice), keyC)); err != nil {
+				if err := pool.addRemoteSync(pricedTransaction(0, 100000, new(big.Int).Set(minGasPrice), keyC)); err != nil {
 					t.Fatalf("%s: failed to add with pending delegatio: %v", name, err)
 				}
 				// Also check gapped transaction is rejected.
-					if err := pool.addRemoteSync(pricedTransaction(1, 100000, new(big.Int).Set(minGasPrice), keyC)); !errors.Is(err, txpool.ErrAccountLimitExceeded) {
+				if err := pool.addRemoteSync(pricedTransaction(1, 100000, new(big.Int).Set(minGasPrice), keyC)); !errors.Is(err, txpool.ErrAccountLimitExceeded) {
 					t.Fatalf("%s: error mismatch: want %v, have %v", name, txpool.ErrAccountLimitExceeded, err)
 				}
 			},
@@ -2822,6 +2826,70 @@ func TestSetCodeTransactions(t *testing.T) {
 			t.Fatalf("%s: pool internal state corrupted: %v", tt.name, err)
 		}
 		pool.Clear()
+	}
+}
+
+func TestSetCodeTransactionsReorg(t *testing.T) {
+	t.Parallel()
+
+	// Create the pool to test the status retrievals with
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	blockchain := newTestBlockChain(params.MergedTestChainConfig, 1000000, statedb, new(event.Feed))
+
+	pool := New(testTxPoolConfig, blockchain)
+	pool.Init(new(big.Int).SetUint64(testTxPoolConfig.PriceLimit), blockchain.CurrentBlock(), makeAddressReserver())
+	defer pool.Close()
+
+	// Create the test accounts
+	var (
+		keyA, _ = crypto.GenerateKey()
+		addrA   = crypto.PubkeyToAddress(keyA.PublicKey)
+	)
+	testAddBalance(pool, addrA, big.NewInt(params.Ether))
+
+	minGasFee := uint256.MustFromBig(common.MinGasPrice)
+	doubleGasFee := new(uint256.Int).Mul(new(uint256.Int).Set(minGasFee), uint256.NewInt(2))
+	legacyPrice := new(big.Int).Mul(new(big.Int).Set(common.MinGasPrice), big.NewInt(10))
+
+	// Send an authorization for 0x42
+	var authList []types.SetCodeAuthorization
+	auth, _ := types.SignSetCode(keyA, types.SetCodeAuthorization{
+		ChainID: *uint256.MustFromBig(params.TestChainConfig.ChainID),
+		Address: common.Address{0x42},
+		Nonce:   0,
+	})
+	authList = append(authList, auth)
+	if err := pool.addRemoteSync(pricedSetCodeTxWithAuth(0, 250000, minGasFee, uint256.NewInt(3), keyA, authList)); err != nil {
+		t.Fatalf("failed to add with remote setcode transaction: %v", err)
+	}
+	// Simulate the chain moving
+	blockchain.statedb.SetNonce(addrA, 1)
+	blockchain.statedb.SetCode(addrA, types.AddressToDelegation(auth.Address))
+	<-pool.requestReset(nil, nil)
+	// Set an authorization for 0x00
+	auth, _ = types.SignSetCode(keyA, types.SetCodeAuthorization{
+		ChainID: *uint256.MustFromBig(params.TestChainConfig.ChainID),
+		Address: common.Address{},
+		Nonce:   0,
+	})
+	authList = append(authList, auth)
+	if err := pool.addRemoteSync(pricedSetCodeTxWithAuth(1, 250000, doubleGasFee, uint256.NewInt(3), keyA, authList)); err != nil {
+		t.Fatalf("failed to add with remote setcode transaction: %v", err)
+	}
+	// Try to add a transactions in
+	if err := pool.addRemoteSync(pricedTransaction(2, 100000, new(big.Int).Set(legacyPrice), keyA)); !errors.Is(err, txpool.ErrAccountLimitExceeded) {
+		t.Fatalf("unexpected error %v, expecting %v", err, txpool.ErrAccountLimitExceeded)
+	}
+	// Simulate the chain moving
+	blockchain.statedb.SetNonce(addrA, 2)
+	blockchain.statedb.SetCode(addrA, nil)
+	<-pool.requestReset(nil, nil)
+	// Now send two transactions from addrA
+	if err := pool.addRemoteSync(pricedTransaction(2, 100000, new(big.Int).Set(legacyPrice), keyA)); err != nil {
+		t.Fatalf("failed to added single transaction: %v", err)
+	}
+	if err := pool.addRemoteSync(pricedTransaction(3, 100000, new(big.Int).Set(legacyPrice), keyA)); err != nil {
+		t.Fatalf("failed to added single transaction: %v", err)
 	}
 }
 
