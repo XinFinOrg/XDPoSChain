@@ -93,23 +93,21 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if tx.Nonce()+1 < tx.Nonce() {
 		return core.ErrNonceMax
 	}
-	isSpecial := tx.IsSpecialTransaction()
-	// Ensure the gasprice is high enough to cover the requirement of
-	// the calling pool and/or block producer
-	if tx.GasTipCapIntCmp(opts.MinTip) < 0 {
-		// For special transactions, only check if the sender is not a signer
-		// For regular transactions, always check (to preserve old logic)
-		if !isSpecial || opts.NotSigner(from) {
+	// Skip further validation for special transactions
+	if tx.IsSpecialTransaction() {
+		if opts.NotSigner(from) {
 			return fmt.Errorf("%w: tip needed %v, tip permitted %v", ErrUnderpriced, opts.MinTip, tx.GasTipCap())
 		}
-	}
-	// Skip further checks for special transactions
-	if isSpecial {
 		return nil
 	}
 	// Check zero gas price.
 	if tx.GasPrice().Sign() == 0 {
 		return ErrZeroGasPrice
+	}
+	// Ensure the gas price is high enough to cover the requirement of the calling
+	// pool and/or block producer
+	if tx.GasTipCapIntCmp(opts.MinTip) < 0 {
+		return fmt.Errorf("%w: tip needed %v, tip permitted %v", ErrUnderpriced, opts.MinTip, tx.GasTipCap())
 	}
 	// Ensure the transaction has more gas than the bare minimum needed to
 	// cover the transaction metadata
