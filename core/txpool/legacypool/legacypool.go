@@ -68,6 +68,10 @@ var (
 	// another remote transaction.
 	ErrTxPoolOverflow = errors.New("txpool is full")
 
+	// ErrOutOfOrderTxFromDelegated is returned when the transaction with gapped
+	// nonce received from the accounts with delegation or pending delegation.
+	ErrOutOfOrderTxFromDelegated = errors.New("gapped-nonce tx from delegated accounts")
+
 	// ErrInflightTxLimitReached is returned when the maximum number of in-flight
 	// transactions is reached for specific accounts.
 	ErrInflightTxLimitReached = errors.New("in-flight transaction limit reached for delegated accounts")
@@ -230,11 +234,11 @@ func (config *Config) sanitize() Config {
 // two states over time as they are received and processed.
 //
 // In addition to tracking transactions, the pool also tracks a set of pending SetCode
-// authorizations (EIP7702). This helps minimize number of transactions that can be
+// authorizations (EIP7702). This helps minimize the number of transactions that can be
 // trivially churned in the pool. As a standard rule, any account with a deployed
 // delegation or an in-flight authorization to deploy a delegation will only be allowed a
 // single transaction slot instead of the standard number. This is due to the possibility
-// of the account being sweeped by an unrelated account.
+// of the account being swept by an unrelated account.
 //
 // Because SetCode transactions can have many authorizations included, we avoid explicitly
 // checking their validity to save the state lookup. So long as the encompassing
@@ -723,33 +727,39 @@ func (pool *LegacyPool) validateTx(tx *types.Transaction, local bool) error {
 	return pool.validateAuth(tx)
 }
 
+// checkDelegationLimit determines if the tx sender is delegated or has a
+// pending delegation, and if so, ensures they have at most one in-flight
+// **executable** transaction, e.g. disallow stacked and gapped transactions
+// from the account.
+func (pool *LegacyPool) checkDelegationLimit(tx *types.Transaction) error {
+	from, _ := types.Sender(pool.signer, tx) // validated
+
+	// Short circuit if the sender has neither delegation nor pending delegation.
+	if pool.currentState.GetCodeHash(from) == types.EmptyCodeHash && !pool.all.hasAuth(from) {
+		return nil
+	}
+	pending := pool.pending[from]
+	if pending == nil {
+		// Transaction with gapped nonce is not supported for delegated accounts
+		if pool.pendingNonces.get(from) != tx.Nonce() {
+			return ErrOutOfOrderTxFromDelegated
+		}
+		return nil
+	}
+	// Transaction replacement is supported
+	if pending.Contains(tx.Nonce()) {
+		return nil
+	}
+	return ErrInflightTxLimitReached
+}
+
 // validateAuth verifies that the transaction complies with code authorization
 // restrictions brought by SetCode transaction type.
 func (pool *LegacyPool) validateAuth(tx *types.Transaction) error {
-	from, _ := types.Sender(pool.signer, tx) // validated
-
 	// Allow at most one in-flight tx for delegated accounts or those with a
 	// pending authorization.
-	if pool.currentState.GetCodeHash(from) != types.EmptyCodeHash || len(pool.all.auths[from]) != 0 {
-		var (
-			count  int
-			exists bool
-		)
-		pending := pool.pending[from]
-		if pending != nil {
-			count += pending.Len()
-			exists = pending.Contains(tx.Nonce())
-		}
-		queue := pool.queue[from]
-		if queue != nil {
-			count += queue.Len()
-			exists = exists || queue.Contains(tx.Nonce())
-		}
-		// Replacing the existing in-flight transaction for delegated accounts
-		// is still supported.
-		if count >= 1 && !exists {
-			return ErrInflightTxLimitReached
-		}
+	if err := pool.checkDelegationLimit(tx); err != nil {
+		return err
 	}
 	// Authorities cannot conflict with any pending or queued transactions.
 	if auths := tx.SetCodeAuthorities(); len(auths) > 0 {
@@ -1236,7 +1246,7 @@ func (pool *LegacyPool) Has(hash common.Hash) bool {
 // removeTx removes a single transaction from the queue, moving all subsequent
 // transactions back to the future queue.
 //
-// In unreserve is false, the account will not be relinquished to the main txpool
+// If unreserve is false, the account will not be relinquished to the main txpool
 // even if there are no more references to it. This is used to handle a race when
 // a tx being added, and it evicts a previously scheduled tx from the same account,
 // which could lead to a premature release of the lock.
@@ -2171,6 +2181,15 @@ func (t *lookup) removeAuthorities(hash common.Hash) {
 		}
 		t.auths[addr] = list
 	}
+}
+
+// hasAuth returns a flag indicating whether there are pending authorizations
+// from the specified address.
+func (t *lookup) hasAuth(addr common.Address) bool {
+	t.lock.RLock()
+	defer t.lock.RUnlock()
+
+	return len(t.auths[addr]) > 0
 }
 
 // numSlots calculates the number of slots needed for a single transaction.
