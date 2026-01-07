@@ -61,6 +61,10 @@ var (
 	// remains pending (and vice-versa).
 	ErrAlreadyReserved = errors.New("address already reserved")
 
+	// ErrInflightTxLimitReached is returned when the maximum number of in-flight
+	// transactions is reached for specific accounts.
+	ErrInflightTxLimitReached = errors.New("in-flight transaction limit reached for delegated accounts")
+
 	ErrZeroGasPrice = errors.New("zero gas price")
 
 	ErrUnderMinGasPrice = errors.New("under min gas price")

@@ -72,10 +72,6 @@ var (
 	// nonce received from the accounts with delegation or pending delegation.
 	ErrOutOfOrderTxFromDelegated = errors.New("gapped-nonce tx from delegated accounts")
 
-	// ErrInflightTxLimitReached is returned when the maximum number of in-flight
-	// transactions is reached for specific accounts.
-	ErrInflightTxLimitReached = errors.New("in-flight transaction limit reached for delegated accounts")
-
 	// ErrAuthorityReserved is returned if a transaction has an authorization
 	// signed by an address which already has in-flight transactions known to the
 	// pool.
@@ -259,11 +255,11 @@ type LegacyPool struct {
 	currentHead   atomic.Pointer[types.Header] // Current head of the blockchain
 	currentState  *state.StateDB               // Current state in the blockchain head
 	pendingNonces *noncer                      // Pending state tracking virtual nonces
+	reserver      *txpool.Reserver             // Address reserver to ensure exclusivity across subpools
 
 	locals  *accountSet // Set of local transaction to exempt from eviction rules
 	journal *journal    // Journal of local transaction to back up to disk
 
-	reserve txpool.AddressReserver       // Address reserver to ensure exclusivity across subpools
 	pending map[common.Address]*list     // All currently processable transactions
 	queue   map[common.Address]*list     // Queued but non-processable transactions
 	beats   map[common.Address]time.Time // Last heartbeat from each known account
@@ -340,9 +336,9 @@ func (pool *LegacyPool) Filter(tx *types.Transaction) bool {
 // head to allow balance / nonce checks. The transaction journal will be loaded
 // from disk and filtered based on the provided starting settings. The internal
 // goroutines will be spun up and the pool deemed operational afterwards.
-func (pool *LegacyPool) Init(gasTip *big.Int, head *types.Header, reserve txpool.AddressReserver) error {
+func (pool *LegacyPool) Init(gasTip *big.Int, head *types.Header, reserver *txpool.Reserver) error {
 	// Set the address reserver to request exclusive access to pooled accounts
-	pool.reserve = reserve
+	pool.reserver = reserver
 
 	// Set the basic pool parameters
 	pool.gasTip.Store(gasTip)
@@ -750,7 +746,7 @@ func (pool *LegacyPool) checkDelegationLimit(tx *types.Transaction) error {
 	if pending.Contains(tx.Nonce()) {
 		return nil
 	}
-	return ErrInflightTxLimitReached
+	return txpool.ErrInflightTxLimitReached
 }
 
 // validateAuth verifies that the transaction complies with code authorization
@@ -761,10 +757,22 @@ func (pool *LegacyPool) validateAuth(tx *types.Transaction) error {
 	if err := pool.checkDelegationLimit(tx); err != nil {
 		return err
 	}
-	// Authorities cannot conflict with any pending or queued transactions.
+	// Authorities must not conflict with any pending or queued transactions,
+	// nor with addresses that have already been reserved.
 	if auths := tx.SetCodeAuthorities(); len(auths) > 0 {
 		for _, auth := range auths {
 			if pool.pending[auth] != nil || pool.queue[auth] != nil {
+				return ErrAuthorityReserved
+			}
+			// Because there is no exclusive lock held between different subpools
+			// when processing transactions, the SetCode transaction may be accepted
+			// while other transactions with the same sender address are also
+			// accepted simultaneously in the other pools.
+			//
+			// This scenario is considered acceptable, as the rule primarily ensures
+			// that attackers cannot easily stack a SetCode transaction when the sender
+			// is reserved by other pools.
+			if pool.reserver.Has(auth) {
 				return ErrAuthorityReserved
 			}
 		}
@@ -811,7 +819,7 @@ func (pool *LegacyPool) add(tx *types.Transaction, local bool) (replaced bool, e
 		_, hasQueued  = pool.queue[from]
 	)
 	if !hasPending && !hasQueued {
-		if err := pool.reserve(from, true); err != nil {
+		if err := pool.reserver.Hold(from); err != nil {
 			return false, err
 		}
 		defer func() {
@@ -822,7 +830,7 @@ func (pool *LegacyPool) add(tx *types.Transaction, local bool) (replaced bool, e
 			// by a return statement before running deferred methods. Take care with
 			// removing or subscoping err as it will break this clause.
 			if err != nil {
-				pool.reserve(from, false)
+				pool.reserver.Release(from)
 			}
 		}()
 	}
@@ -1270,7 +1278,7 @@ func (pool *LegacyPool) removeTx(hash common.Hash, outofbound bool, unreserve bo
 				_, hasQueued  = pool.queue[addr]
 			)
 			if !hasPending && !hasQueued {
-				pool.reserve(addr, false)
+				pool.reserver.Release(addr)
 			}
 		}()
 	}
@@ -1666,7 +1674,7 @@ func (pool *LegacyPool) promoteExecutables(accounts []common.Address) []*types.T
 			delete(pool.queue, addr)
 			delete(pool.beats, addr)
 			if _, ok := pool.pending[addr]; !ok {
-				pool.reserve(addr, false)
+				pool.reserver.Release(addr)
 			}
 		}
 	}
@@ -1866,7 +1874,7 @@ func (pool *LegacyPool) demoteUnexecutables() {
 		if list.Empty() {
 			delete(pool.pending, addr)
 			if _, ok := pool.queue[addr]; !ok {
-				pool.reserve(addr, false)
+				pool.reserver.Release(addr)
 			}
 		}
 	}
@@ -2203,8 +2211,8 @@ func (pool *LegacyPool) Clear() {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 
-	// unreserve each tracked account.  Ideally, we could just clear the
-	// reservation map in the parent txpool context.  However, if we clear in
+	// unreserve each tracked account. Ideally, we could just clear the
+	// reservation map in the parent txpool context. However, if we clear in
 	// parent context, to avoid exposing the subpool lock, we have to lock the
 	// reservations and then lock each subpool.
 	//
@@ -2215,19 +2223,25 @@ func (pool *LegacyPool) Clear() {
 	// * TxPool.Clear attempts to lock subpool mutex
 	//
 	// The transaction addition may attempt to reserve the sender addr which
-	// can't happen until Clear releases the reservation lock.  Clear cannot
+	// can't happen until Clear releases the reservation lock. Clear cannot
 	// acquire the subpool lock until the transaction addition is completed.
 	for _, tx := range pool.all.locals {
 		senderAddr, _ := types.Sender(pool.signer, tx)
-		pool.reserve(senderAddr, false)
+		pool.reserver.Release(senderAddr)
 	}
 	for _, tx := range pool.all.remotes {
 		senderAddr, _ := types.Sender(pool.signer, tx)
-		pool.reserve(senderAddr, false)
+		pool.reserver.Release(senderAddr)
 	}
 	pool.all = newLookup()
 	pool.priced = newPricedList(pool.all)
 	pool.pending = make(map[common.Address]*list)
 	pool.queue = make(map[common.Address]*list)
 	pool.pendingNonces = newNoncer(pool.currentState)
+}
+
+// HasPendingAuth returns a flag indicating whether there are pending
+// authorizations from the specific address cached in the pool.
+func (pool *LegacyPool) HasPendingAuth(addr common.Address) bool {
+	return pool.all.hasAuth(addr)
 }
