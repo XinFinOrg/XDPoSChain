@@ -67,6 +67,19 @@ var (
 	// ErrTxPoolOverflow is returned if the transaction pool is full and can't accept
 	// another remote transaction.
 	ErrTxPoolOverflow = errors.New("txpool is full")
+
+	// ErrInflightTxLimitReached is returned when the maximum number of in-flight
+	// transactions is reached for specific accounts.
+	ErrInflightTxLimitReached = errors.New("in-flight transaction limit reached for delegated accounts")
+
+	// ErrAuthorityReserved is returned if a transaction has an authorization
+	// signed by an address which already has in-flight transactions known to the
+	// pool.
+	ErrAuthorityReserved = errors.New("authority already reserved")
+
+	// ErrFutureReplacePending is returned if a future transaction replaces a pending
+	// one. Future transactions should only be able to replace other future transactions.
+	ErrFutureReplacePending = errors.New("future transaction tries to replace pending")
 )
 
 var (
@@ -660,22 +673,8 @@ func (pool *LegacyPool) validateTx(tx *types.Transaction, local bool) error {
 	opts := &txpool.ValidationOptionsWithState{
 		State: pool.currentState,
 
-		FirstNonceGap: nil, // Pool allows arbitrary arrival order, don't invalidate nonce gaps
-		UsedAndLeftSlots: func(addr common.Address) (int, int) {
-			var have int
-			if list := pool.pending[addr]; list != nil {
-				have += list.Len()
-			}
-			if list := pool.queue[addr]; list != nil {
-				have += list.Len()
-			}
-			if pool.currentState.GetCodeHash(addr) != types.EmptyCodeHash || len(pool.all.auths[addr]) != 0 {
-				// Allow at most one in-flight tx for delegated accounts or those with
-				// a pending authorization.
-				return have, max(0, 1-have)
-			}
-			return have, math.MaxInt
-		},
+		FirstNonceGap:    nil, // Pool allows arbitrary arrival order, don't invalidate nonce gaps
+		UsedAndLeftSlots: nil, // Pool has own mechanism to limit the number of transactions
 		ExistingExpenditure: func(addr common.Address) *big.Int {
 			if list := pool.pending[addr]; list != nil {
 				return list.totalcost
@@ -689,18 +688,6 @@ func (pool *LegacyPool) validateTx(tx *types.Transaction, local bool) error {
 				}
 			}
 			return nil
-		},
-		KnownConflicts: func(from common.Address, auths []common.Address) []common.Address {
-			var conflicts []common.Address
-			// Authorities cannot conflict with any pending or queued transactions.
-			for _, addr := range auths {
-				if list := pool.pending[addr]; list != nil {
-					conflicts = append(conflicts, addr)
-				} else if list := pool.queue[addr]; list != nil {
-					conflicts = append(conflicts, addr)
-				}
-			}
-			return conflicts
 		},
 
 		Trc21FeeCapacity: pool.trc21FeeCapacity,
@@ -733,6 +720,45 @@ func (pool *LegacyPool) validateTx(tx *types.Transaction, local bool) error {
 		return core.ValidateXDCXApplyTransaction(pool.chain, nil, copyState, common.BytesToAddress(tx.Data()[4:]))
 	}
 
+	return pool.validateAuth(tx)
+}
+
+// validateAuth verifies that the transaction complies with code authorization
+// restrictions brought by SetCode transaction type.
+func (pool *LegacyPool) validateAuth(tx *types.Transaction) error {
+	from, _ := types.Sender(pool.signer, tx) // validated
+
+	// Allow at most one in-flight tx for delegated accounts or those with a
+	// pending authorization.
+	if pool.currentState.GetCodeHash(from) != types.EmptyCodeHash || len(pool.all.auths[from]) != 0 {
+		var (
+			count  int
+			exists bool
+		)
+		pending := pool.pending[from]
+		if pending != nil {
+			count += pending.Len()
+			exists = pending.Contains(tx.Nonce())
+		}
+		queue := pool.queue[from]
+		if queue != nil {
+			count += queue.Len()
+			exists = exists || queue.Contains(tx.Nonce())
+		}
+		// Replacing the existing in-flight transaction for delegated accounts
+		// is still supported.
+		if count >= 1 && !exists {
+			return ErrInflightTxLimitReached
+		}
+	}
+	// Authorities cannot conflict with any pending or queued transactions.
+	if auths := tx.SetCodeAuthorities(); len(auths) > 0 {
+		for _, auth := range auths {
+			if pool.pending[auth] != nil || pool.queue[auth] != nil {
+				return ErrAuthorityReserved
+			}
+		}
+	}
 	return nil
 }
 
@@ -835,7 +861,7 @@ func (pool *LegacyPool) add(tx *types.Transaction, local bool) (replaced bool, e
 					pool.priced.Put(dropTx, false)
 				}
 				log.Trace("Discarding future transaction replacing pending tx", "hash", hash)
-				return false, txpool.ErrFutureReplacePending
+				return false, ErrFutureReplacePending
 			}
 		}
 
