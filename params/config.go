@@ -533,10 +533,6 @@ func V2Equal(a, b *V2) bool {
 		}
 		return true
 	}
-	if a.SwitchEpoch != b.SwitchEpoch {
-		log.Warn("[V2Equal] SwitchEpoch mismatch", "a.SwitchEpoch", a.SwitchEpoch, "b.SwitchEpoch", b.SwitchEpoch)
-		return false
-	}
 	if !configNumEqual(a.SwitchBlock, b.SwitchBlock) {
 		log.Warn("[V2Equal] SwitchBlock mismatch", "a.SwitchBlock", a.SwitchBlock, "b.SwitchBlock", b.SwitchBlock)
 		return false
