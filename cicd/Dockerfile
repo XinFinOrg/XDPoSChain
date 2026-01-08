@@ -1,3 +1,7 @@
+# Support setting various labels on the final image
+ARG GIT_COMMIT=""
+ENV GIT_COMMIT="$GIT_COMMIT"
+
 FROM golang:1.25-alpine AS builder
 
 RUN apk add make build-base linux-headers
@@ -51,3 +55,8 @@ EXPOSE 8555
 EXPOSE 30303
 
 ENTRYPOINT ["bash","/work/entry.sh"]
+
+# Add some metadata labels to help programmatic image consumption
+ARG GIT_COMMIT=""
+ENV GIT_COMMIT="$GIT_COMMIT"
+LABEL git_commit="$GIT_COMMIT"
