@@ -17,7 +17,9 @@
 package params
 
 import (
+	"cmp"
 	"fmt"
+	"maps"
 	"math/big"
 	"slices"
 	"strings"
@@ -747,21 +749,11 @@ func (v2 *V2) Config(round uint64) *V2Config {
 }
 
 func (v2 *V2) BuildConfigIndex() {
-	var list []uint64
-
-	for i := range v2.AllConfigs {
-		list = append(list, i)
-	}
-
-	// sort, sort lib doesn't support type uint64, it's ok to have O(n^2)  because only few items in the list
+	list := slices.Collect(maps.Keys(v2.AllConfigs))
 	// Make it descending order
-	for i := 0; i < len(list)-1; i++ {
-		for j := i + 1; j < len(list); j++ {
-			if list[i] < list[j] {
-				list[i], list[j] = list[j], list[i]
-			}
-		}
-	}
+	slices.SortFunc(list, func(a, b uint64) int {
+		return cmp.Compare(b, a)
+	})
 	log.Info("[BuildConfigIndex] config list", "list", list)
 	v2.configIndex = list
 }

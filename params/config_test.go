@@ -118,6 +118,20 @@ func TestBuildConfigIndex(t *testing.T) {
 	assert.Equal(t, expected, index)
 }
 
+func TestBuildConfigIndexDescendingOrder(t *testing.T) {
+	v2 := &V2{
+		AllConfigs: map[uint64]*V2Config{
+			5:  {SwitchRound: 5},
+			2:  {SwitchRound: 2},
+			10: {SwitchRound: 10},
+			0:  {SwitchRound: 0},
+			15: {SwitchRound: 15},
+		},
+	}
+	v2.BuildConfigIndex()
+	assert.Equal(t, []uint64{15, 10, 5, 2, 0}, v2.ConfigIndex())
+}
+
 // Test switch epoch is switchblock divide into epoch per block
 func TestSwitchEpoch(t *testing.T) {
 	config := XDCMainnetChainConfig.XDPoS
