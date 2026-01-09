@@ -81,7 +81,7 @@ func (t *Trie) UpdateDb(nodes *MergedNodeSet) error {
 	if t.db == nil {
 		return errors.New("database is nil in trie")
 	}
-	return t.db.Update(nodes)
+	return t.db.Update(0, nodes)
 }
 
 // Copy returns a copy of Trie.

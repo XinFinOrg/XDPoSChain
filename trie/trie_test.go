@@ -85,7 +85,7 @@ func testMissingNode(t *testing.T, memonly bool) {
 	updateString(trie, "120000", "qwerqwerqwerqwerqwerqwerqwerqwer")
 	updateString(trie, "123456", "asdfasdfasdfasdfasdfasdfasdfasdf")
 	root, nodes := trie.Commit(false)
-	triedb.Update(NewWithNodeSet(nodes))
+	triedb.Update(0, NewWithNodeSet(nodes))
 	if !memonly {
 		triedb.Commit(root, false)
 	}
@@ -193,7 +193,7 @@ func TestGet(t *testing.T) {
 			return
 		}
 		root, nodes := trie.Commit(false)
-		db.Update(NewWithNodeSet(nodes))
+		db.Update(0, NewWithNodeSet(nodes))
 		trie, _ = New(TrieID(root), db)
 	}
 }
@@ -265,7 +265,7 @@ func TestReplication(t *testing.T) {
 		updateString(trie, val.k, val.v)
 	}
 	exp, nodes := trie.Commit(false)
-	triedb.Update(NewWithNodeSet(nodes))
+	triedb.Update(0, NewWithNodeSet(nodes))
 
 	// create a new trie on top of the database and check that lookups work.
 	trie2, err := New(TrieID(exp), triedb)
@@ -284,7 +284,7 @@ func TestReplication(t *testing.T) {
 
 	// recreate the trie after commit
 	if nodes != nil {
-		triedb.Update(NewWithNodeSet(nodes))
+		triedb.Update(0, NewWithNodeSet(nodes))
 	}
 	trie2, err = New(TrieID(hash), triedb)
 	if err != nil {
@@ -509,7 +509,7 @@ func runRandTest(rt randTest) error {
 		case opCommit:
 			root, nodes := tr.Commit(true)
 			if nodes != nil {
-				triedb.Update(NewWithNodeSet(nodes))
+				triedb.Update(0, NewWithNodeSet(nodes))
 			}
 			newtr, err := New(TrieID(root), triedb)
 			if err != nil {
@@ -842,7 +842,7 @@ func TestCommitSequence(t *testing.T) {
 		}
 		// Flush trie -> database
 		root, nodes := trie.Commit(false)
-		db.Update(NewWithNodeSet(nodes))
+		db.Update(0, NewWithNodeSet(nodes))
 		// Flush memdb -> disk (sponge)
 		db.Commit(root, false)
 		if got, exp := s.sponge.Sum(nil), tc.expWriteSeqHash; !bytes.Equal(got, exp) {
@@ -883,7 +883,7 @@ func TestCommitSequenceRandomBlobs(t *testing.T) {
 		}
 		// Flush trie -> database
 		root, nodes := trie.Commit(false)
-		db.Update(NewWithNodeSet(nodes))
+		db.Update(0, NewWithNodeSet(nodes))
 		// Flush memdb -> disk (sponge)
 		db.Commit(root, false)
 		if got, exp := s.sponge.Sum(nil), tc.expWriteSeqHash; !bytes.Equal(got, exp) {
@@ -923,7 +923,7 @@ func TestCommitSequenceStackTrie(t *testing.T) {
 		// Flush trie -> database
 		root, nodes := trie.Commit(false)
 		// Flush memdb -> disk (sponge)
-		db.Update(NewWithNodeSet(nodes))
+		db.Update(0, NewWithNodeSet(nodes))
 		db.Commit(root, false)
 		// And flush stacktrie -> disk
 		stRoot, err := stTrie.Commit()
@@ -971,7 +971,7 @@ func TestCommitSequenceSmallRoot(t *testing.T) {
 	// Flush trie -> database
 	root, nodes := trie.Commit(false)
 	// Flush memdb -> disk (sponge)
-	db.Update(NewWithNodeSet(nodes))
+	db.Update(0, NewWithNodeSet(nodes))
 	db.Commit(root, false)
 	// And flush stacktrie -> disk
 	stRoot, err := stTrie.Commit()
@@ -1142,7 +1142,7 @@ func benchmarkDerefRootFixedSize(b *testing.B, addresses [][20]byte, accounts []
 	}
 	h := trie.Hash()
 	_, nodes := trie.Commit(false)
-	triedb.Update(NewWithNodeSet(nodes))
+	triedb.Update(0, NewWithNodeSet(nodes))
 	b.StartTimer()
 	triedb.Dereference(h)
 	b.StopTimer()

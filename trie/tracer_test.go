@@ -69,7 +69,7 @@ func testTrieTracer(t *testing.T, vals []struct{ k, v string }) {
 	insertSet := copySet(trie.tracer.inserts) // copy before commit
 	deleteSet := copySet(trie.tracer.deletes) // copy before commit
 	root, nodes := trie.Commit(false)
-	db.Update(NewWithNodeSet(nodes))
+	db.Update(0, NewWithNodeSet(nodes))
 
 	seen := setKeys(iterNodes(db, root))
 	if !compareSet(insertSet, seen) {
@@ -135,7 +135,7 @@ func testAccessList(t *testing.T, vals []struct{ k, v string }) {
 		trie.Update([]byte(val.k), []byte(val.v))
 	}
 	root, nodes := trie.Commit(false)
-	db.Update(NewWithNodeSet(nodes))
+	db.Update(0, NewWithNodeSet(nodes))
 
 	trie, _ = New(TrieID(root), db)
 	if err := verifyAccessList(orig, trie, nodes); err != nil {
@@ -149,7 +149,7 @@ func testAccessList(t *testing.T, vals []struct{ k, v string }) {
 		trie.Update([]byte(val.k), randBytes(32))
 	}
 	root, nodes = trie.Commit(false)
-	db.Update(NewWithNodeSet(nodes))
+	db.Update(0, NewWithNodeSet(nodes))
 
 	trie, _ = New(TrieID(root), db)
 	if err := verifyAccessList(orig, trie, nodes); err != nil {
@@ -166,7 +166,7 @@ func testAccessList(t *testing.T, vals []struct{ k, v string }) {
 		trie.Update(key, randBytes(32))
 	}
 	root, nodes = trie.Commit(false)
-	db.Update(NewWithNodeSet(nodes))
+	db.Update(0, NewWithNodeSet(nodes))
 
 	trie, _ = New(TrieID(root), db)
 	if err := verifyAccessList(orig, trie, nodes); err != nil {
@@ -180,7 +180,7 @@ func testAccessList(t *testing.T, vals []struct{ k, v string }) {
 		trie.Update([]byte(key), nil)
 	}
 	root, nodes = trie.Commit(false)
-	db.Update(NewWithNodeSet(nodes))
+	db.Update(0, NewWithNodeSet(nodes))
 
 	trie, _ = New(TrieID(root), db)
 	if err := verifyAccessList(orig, trie, nodes); err != nil {
@@ -194,7 +194,7 @@ func testAccessList(t *testing.T, vals []struct{ k, v string }) {
 		trie.Update([]byte(val.k), nil)
 	}
 	root, nodes = trie.Commit(false)
-	db.Update(NewWithNodeSet(nodes))
+	db.Update(0, NewWithNodeSet(nodes))
 
 	trie, _ = New(TrieID(root), db)
 	if err := verifyAccessList(orig, trie, nodes); err != nil {
@@ -213,7 +213,7 @@ func TestAccessListLeak(t *testing.T) {
 		trie.Update([]byte(val.k), []byte(val.v))
 	}
 	root, nodes := trie.Commit(false)
-	db.Update(NewWithNodeSet(nodes))
+	db.Update(0, NewWithNodeSet(nodes))
 
 	var cases = []struct {
 		op func(tr *Trie)
@@ -263,7 +263,7 @@ func TestTinyTree(t *testing.T) {
 		trie.Update([]byte(val.k), randBytes(32))
 	}
 	root, set := trie.Commit(false)
-	db.Update(NewWithNodeSet(set))
+	db.Update(0, NewWithNodeSet(set))
 
 	trie, _ = New(TrieID(root), db)
 	orig := trie.Copy()
@@ -271,7 +271,7 @@ func TestTinyTree(t *testing.T) {
 		trie.Update([]byte(val.k), []byte(val.v))
 	}
 	root, set = trie.Commit(false)
-	db.Update(NewWithNodeSet(set))
+	db.Update(0, NewWithNodeSet(set))
 
 	trie, _ = New(TrieID(root), db)
 	if err := verifyAccessList(orig, trie, set); err != nil {

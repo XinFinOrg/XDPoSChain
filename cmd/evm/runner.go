@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	goruntime "runtime"
 	"runtime/pprof"
@@ -81,12 +82,13 @@ func runCmd(ctx *cli.Context) error {
 	}
 
 	var (
-		tracer      *tracing.Hooks
-		debugLogger *logger.StructLogger
-		statedb     *state.StateDB
-		chainConfig *params.ChainConfig
-		sender      = common.StringToAddress("sender")
-		receiver    = common.StringToAddress("receiver")
+		tracer        *tracing.Hooks
+		debugLogger   *logger.StructLogger
+		statedb       *state.StateDB
+		chainConfig   *params.ChainConfig
+		sender        = common.StringToAddress("sender")
+		receiver      = common.StringToAddress("receiver")
+		genesisConfig *core.Genesis
 	)
 	if ctx.Bool(MachineFlag.Name) {
 		tracer = logger.NewJSONLogger(logconfig, os.Stdout)
@@ -99,6 +101,7 @@ func runCmd(ctx *cli.Context) error {
 
 	if ctx.String(GenesisFlag.Name) != "" {
 		gen := readGenesis(ctx.String(GenesisFlag.Name))
+		genesisConfig = gen
 		db := rawdb.NewMemoryDatabase()
 		genesis := gen.ToBlock(db)
 		statedb, _ = state.New(genesis.Root(), state.NewDatabase(db))
@@ -106,6 +109,7 @@ func runCmd(ctx *cli.Context) error {
 	} else {
 		db := rawdb.NewMemoryDatabase()
 		statedb, _ = state.New(types.EmptyRootHash, state.NewDatabase(db))
+		genesisConfig = new(core.Genesis)
 	}
 	if ctx.String(SenderFlag.Name) != "" {
 		sender = common.HexToAddress(ctx.String(SenderFlag.Name))
@@ -156,12 +160,19 @@ func runCmd(ctx *cli.Context) error {
 	}
 
 	initialGas := ctx.Uint64(GasFlag.Name)
+	if genesisConfig.GasLimit != 0 {
+		initialGas = genesisConfig.GasLimit
+	}
 	runtimeConfig := runtime.Config{
-		Origin:   sender,
-		State:    statedb,
-		GasLimit: initialGas,
-		GasPrice: flags.GlobalBig(ctx, PriceFlag.Name),
-		Value:    flags.GlobalBig(ctx, ValueFlag.Name),
+		Origin:      sender,
+		State:       statedb,
+		GasLimit:    initialGas,
+		GasPrice:    flags.GlobalBig(ctx, PriceFlag.Name),
+		Value:       flags.GlobalBig(ctx, ValueFlag.Name),
+		Difficulty:  genesisConfig.Difficulty,
+		Time:        genesisConfig.Timestamp,
+		Coinbase:    genesisConfig.Coinbase,
+		BlockNumber: new(big.Int).SetUint64(genesisConfig.Number),
 		EVMConfig: vm.Config{
 			Tracer: tracer,
 		},
@@ -197,7 +208,7 @@ func runCmd(ctx *cli.Context) error {
 	execTime := time.Since(tstart)
 
 	if ctx.Bool(DumpFlag.Name) {
-		statedb.IntermediateRoot(true)
+		statedb.Commit(genesisConfig.Number, true)
 		fmt.Println(string(statedb.Dump(nil)))
 	}
 

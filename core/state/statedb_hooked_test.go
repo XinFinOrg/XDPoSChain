@@ -70,7 +70,7 @@ func TestBurn(t *testing.T) {
 	hooked.AddBalance(addC, big.NewInt(200), tracing.BalanceChangeUnspecified)
 	hooked.Finalise(true)
 
-	s.Commit(false)
+	s.Commit(0, false)
 	if have, want := burned, big.NewInt(600); have.Cmp(want) != 0 {
 		t.Fatalf("burn-count wrong, have %v want %v", have, want)
 	}
