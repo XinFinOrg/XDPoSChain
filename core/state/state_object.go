@@ -64,13 +64,6 @@ type stateObject struct {
 	addrHash common.Hash        // hash of ethereum address of the account
 	data     types.StateAccount // Account data with all mutations applied in the scope of block
 
-	// DB error.
-	// State objects are used by the consensus core and VM which are
-	// unable to deal with database-level errors. Any error that occurs
-	// during a database read is memoized here and will eventually be returned
-	// by StateDB.Commit.
-	dbErr error
-
 	// Write caches.
 	trie Trie // storage trie, which becomes non-nil on first access
 	code Code // contract bytecode, which gets set when code is loaded
@@ -125,13 +118,6 @@ func newObject(db *StateDB, address common.Address, data types.StateAccount) *st
 // EncodeRLP implements rlp.Encoder.
 func (s *stateObject) EncodeRLP(w io.Writer) error {
 	return rlp.Encode(w, &s.data)
-}
-
-// setError remembers the first non-nil error it is called with.
-func (s *stateObject) setError(err error) {
-	if s.dbErr == nil {
-		s.dbErr = err
-	}
 }
 
 func (s *stateObject) markSelfdestructed() {
@@ -196,20 +182,20 @@ func (s *stateObject) GetCommittedState(db Database, key common.Hash) common.Has
 	// Otherwise load the value from the database
 	tr, err := s.getTrie(db)
 	if err != nil {
-		s.setError(err)
+		s.db.setError(err)
 		return common.Hash{}
 	}
 	enc, err := tr.GetStorage(s.address, key.Bytes())
 	s.db.StorageReads += time.Since(start)
 	if err != nil {
-		s.setError(err)
+		s.db.setError(err)
 		return common.Hash{}
 	}
 	var value common.Hash
 	if len(enc) > 0 {
 		_, content, _, err := rlp.Split(enc)
 		if err != nil {
-			s.setError(err)
+			s.db.setError(err)
 		}
 		value.SetBytes(content)
 	}
@@ -263,7 +249,7 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 	defer func(start time.Time) { s.db.StorageUpdates += time.Since(start) }(time.Now())
 	tr, err := s.getTrie(db)
 	if err != nil {
-		s.setError(err)
+		s.db.setError(err)
 		return nil, err
 	}
 	// Insert all the pending updates into the trie
@@ -276,7 +262,7 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 
 		if (value == common.Hash{}) {
 			if err := tr.DeleteStorage(s.address, key[:]); err != nil {
-				s.setError(err)
+				s.db.setError(err)
 				return nil, err
 			}
 			s.db.StorageDeleted += 1
@@ -284,7 +270,7 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 			// Encoding []byte cannot fail, ok to ignore the error.
 			v, _ := rlp.EncodeToBytes(common.TrimLeftZeroes(value[:]))
 			if err := tr.UpdateStorage(s.address, key[:], v); err != nil {
-				s.setError(err)
+				s.db.setError(err)
 				return nil, err
 			}
 			s.db.StorageUpdated += 1
@@ -301,7 +287,6 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 func (s *stateObject) updateRoot(db Database) {
 	tr, err := s.updateTrie(db)
 	if err != nil {
-		s.setError(fmt.Errorf("updateRoot (%x) error: %w", s.address, err))
 		return
 	}
 	// If nothing changed, don't bother with hashing anything
@@ -320,9 +305,6 @@ func (s *stateObject) commitTrie(db Database) (*trie.NodeSet, error) {
 	tr, err := s.updateTrie(db)
 	if err != nil {
 		return nil, err
-	}
-	if s.dbErr != nil {
-		return nil, s.dbErr
 	}
 	// If nothing changed, don't bother with hashing anything
 	if tr == nil {
@@ -399,7 +381,7 @@ func (s *stateObject) Code(db Database) []byte {
 	}
 	code, err := db.ContractCode(s.addrHash, common.BytesToHash(s.CodeHash()))
 	if err != nil {
-		s.setError(fmt.Errorf("can't load code hash %x: %v", s.CodeHash(), err))
+		s.db.setError(fmt.Errorf("can't load code hash %x: %v", s.CodeHash(), err))
 	}
 	s.code = code
 	return code
@@ -417,7 +399,7 @@ func (s *stateObject) CodeSize(db Database) int {
 	}
 	size, err := db.ContractCodeSize(s.addrHash, common.BytesToHash(s.CodeHash()))
 	if err != nil {
-		s.setError(fmt.Errorf("can't load code size %x: %v", s.CodeHash(), err))
+		s.db.setError(fmt.Errorf("can't load code size %x: %v", s.CodeHash(), err))
 	}
 	return size
 }
@@ -461,11 +443,4 @@ func (s *stateObject) Nonce() uint64 {
 
 func (s *stateObject) Root() common.Hash {
 	return s.data.Root
-}
-
-// Value is never called, but must be present to allow stateObject to be used
-// as a vm.Account interface that also satisfies the vm.ContractRef
-// interface. Interfaces are awesome.
-func (s *stateObject) Value() *big.Int {
-	panic("Value on stateObject should never be called")
 }
