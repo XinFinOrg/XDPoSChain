@@ -42,10 +42,7 @@ func (d *ExpTimeoutDuration) GetTimeoutDuration(currentRound, highestRound types
 	power := float64(1)
 	// below statement must be true, just to prevent negative result
 	if highestRound < currentRound {
-		exp := uint8(currentRound-highestRound) - 1
-		if exp > d.maxExponent {
-			exp = d.maxExponent
-		}
+		exp := min(uint8(currentRound-highestRound) - 1, d.maxExponent)
 		power = math.Pow(d.base, float64(exp))
 	}
 	return d.duration * time.Duration(power)
