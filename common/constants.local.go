@@ -30,6 +30,7 @@ var localConstant = constant{
 	eip1559Block:           big.NewInt(0),
 	cancunBlock:            big.NewInt(0),
 	pragueBlock:            big.NewInt(math.MaxInt64),
+	dynamicGasLimitBlock:   big.NewInt(0),
 	tipUpgradeReward:       big.NewInt(math.MaxInt64),
 	tipUpgradePenalty:      big.NewInt(math.MaxInt64),
 	tipEpochHalving:        big.NewInt(math.MaxInt64),

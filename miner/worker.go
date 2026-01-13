@@ -736,9 +736,13 @@ func (w *worker) commitNewWork() {
 	header := &types.Header{
 		ParentHash: parent.Hash(),
 		Number:     num.Add(num, common.Big1),
-		GasLimit:   params.TargetGasLimit,
 		Extra:      w.extra,
 		Time:       uint64(tstamp),
+	}
+	if w.config.IsDynamicGasLimitBlock(header.Number) {
+		header.GasLimit = core.CalcGasLimit(parent.GasLimit(), params.TargetGasLimit)
+	} else {
+		header.GasLimit = params.TargetGasLimit
 	}
 	// Set baseFee if we are on an EIP-1559 chain
 	header.BaseFee = eip1559.CalcBaseFee(w.config, header)
