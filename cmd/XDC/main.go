@@ -188,7 +188,7 @@ var (
 func init() {
 	// Initialize the CLI app and start XDC
 	app.Action = XDC
-	app.Copyright = "Copyright (c) 2025 XDPoSChain"
+	app.Copyright = "Copyright 2019-2026 XDC Network"
 	app.Commands = []*cli.Command{
 		// See chaincmd.go:
 		initCommand,
