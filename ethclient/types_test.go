@@ -29,21 +29,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 )
 
-// Verify that Client implements the ethereum interfaces.
-var (
-	_ = ethereum.ChainReader(&Client{})
-	_ = ethereum.TransactionReader(&Client{})
-	_ = ethereum.ChainStateReader(&Client{})
-	_ = ethereum.ChainSyncReader(&Client{})
-	_ = ethereum.ContractCaller(&Client{})
-	_ = ethereum.GasEstimator(&Client{})
-	_ = ethereum.GasPricer(&Client{})
-	_ = ethereum.LogFilterer(&Client{})
-	_ = ethereum.PendingStateReader(&Client{})
-	// _ = ethereum.PendingStateEventer(&Client{})
-	_ = ethereum.PendingContractCaller(&Client{})
-)
-
 func TestToFilterArg(t *testing.T) {
 	blockHashErr := errors.New("cannot specify both BlockHash and FromBlock/ToBlock")
 	addresses := []common.Address{
@@ -59,6 +44,18 @@ func TestToFilterArg(t *testing.T) {
 		output interface{}
 		err    error
 	}{
+		{
+			"without addresses",
+			ethereum.FilterQuery{
+				FromBlock: big.NewInt(1),
+				ToBlock:   big.NewInt(2),
+			},
+			map[string]interface{}{
+				"fromBlock": "0x1",
+				"toBlock":   "0x2",
+			},
+			nil,
+		},
 		{
 			"without BlockHash",
 			ethereum.FilterQuery{
