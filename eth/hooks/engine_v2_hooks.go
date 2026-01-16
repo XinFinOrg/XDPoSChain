@@ -48,12 +48,12 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 		for i := uint64(1); ; i++ {
 			parentHeader := chain.GetHeader(parentHash, parentNumber)
 			if parentHeader == nil {
-				log.Error("[HookPenalty] fail to get parent header")
+				log.Error("[V2 HookPenalty] fail to get parent header")
 				return []common.Address{}, fmt.Errorf("hook penalty fail to get parent header at number: %v, hash: %v", parentNumber, parentHash)
 			}
 			isEpochSwitch, _, err := adaptor.EngineV2.IsEpochSwitch(parentHeader)
 			if err != nil {
-				log.Error("[HookPenalty] isEpochSwitch", "err", err)
+				log.Error("[V2 HookPenalty] isEpochSwitch", "err", err)
 				return []common.Address{}, err
 			}
 			if isEpochSwitch {
@@ -76,13 +76,13 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 		penalties := []common.Address{}
 		for miner, total := range statMiners {
 			if total < common.MinimunMinerBlockPerEpoch {
-				log.Info("[HookPenalty] Find a node does not create enough block", "addr", miner.Hex(), "total", total, "require", common.MinimunMinerBlockPerEpoch)
+				log.Info("[V2 HookPenalty] Find a node does not create enough block", "addr", miner.Hex(), "total", total, "require", common.MinimunMinerBlockPerEpoch)
 				penalties = append(penalties, miner)
 			}
 		}
 		for _, addr := range preMasternodes {
 			if _, exist := statMiners[addr]; !exist {
-				log.Info("[HookPenalty] Find a node do not create any block", "addr", addr.Hex())
+				log.Info("[V2 HookPenalty] Find a node do not create any block", "addr", addr.Hex())
 				penalties = append(penalties, addr)
 			}
 		}
@@ -96,7 +96,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 			for _, p := range pens {
 				for _, addr := range candidates {
 					if p == addr {
-						log.Info("[HookPenalty] get previous penalty node and add into comeback list", "addr", addr)
+						log.Info("[V2 HookPenalty] get previous penalty node and add into comeback list", "addr", addr)
 						penComebacks = append(penComebacks, p)
 						break
 					}
@@ -123,8 +123,12 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 			signingTxs, ok := adaptor.GetCachedSigningTxs(bhash)
 			if !ok {
 				block := chain.GetBlock(bhash, blockNumber)
-				txs := block.Transactions()
-				signingTxs = adaptor.CacheSigningTxs(bhash, txs)
+				if block != nil {
+					txs := block.Transactions()
+					signingTxs = adaptor.CacheSigningTxs(bhash, txs)
+				} else {
+					log.Debug("[V2 HookPenalty] block not found when retrieving signing transactions", "hash", bhash, "number", blockNumber)
+				}
 			}
 			// Check signer signed?
 			for _, tx := range signingTxs {
@@ -156,9 +160,9 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 		}
 
 		for i, p := range penalties {
-			log.Info("[HookPenalty] Final penalty list", "index", i, "addr", p)
+			log.Info("[V2 HookPenalty] Final penalty list", "index", i, "addr", p)
 		}
-		log.Info("[HookPenalty] Time Calculated HookPenaltyV2 ", "block", number, "time", common.PrettyDuration(time.Since(start)))
+		log.Info("[V2 HookPenalty] Time Calculated HookPenaltyV2 ", "block", number, "time", common.PrettyDuration(time.Since(start)))
 		return penalties, nil
 	}
 
@@ -237,7 +241,12 @@ func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *type
 	var masternodes []common.Address
 	var startBlockNumber, endBlockNumber uint64
 	for i := number - 1; ; i-- {
-		header = chain.GetHeader(header.ParentHash, i)
+		parentHash := header.ParentHash
+		header = chain.GetHeader(parentHash, i)
+		if header == nil {
+			log.Error("[GetSigningTxCount] fail to get header", "number", i, "hash", parentHash)
+			return nil, fmt.Errorf("fail to get header in GetSigningTxCount at number: %v, hash: %v", i, parentHash)
+		}
 		isEpochSwitch, _, err := c.IsEpochSwitch(header)
 		if err != nil {
 			return nil, err
