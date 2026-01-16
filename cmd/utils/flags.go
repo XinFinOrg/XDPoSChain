@@ -1610,8 +1610,8 @@ func RegisterEthService(stack *node.Node, cfg *ethconfig.Config, XDCXServ *XDCx.
 	if err != nil {
 		Fatalf("Failed to register the Ethereum service: %v", err)
 	}
-	stack.RegisterAPIs(tracers.APIs(backend.ApiBackend))
-	return backend.ApiBackend, backend
+	stack.RegisterAPIs(tracers.APIs(backend.APIBackend))
+	return backend.APIBackend, backend
 }
 
 // RegisterEthStatsService configures the Ethereum Stats daemon and adds it to the node.

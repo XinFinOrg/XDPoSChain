@@ -90,7 +90,7 @@ type Ethereum struct {
 	bloomRequests chan chan *bloombits.Retrieval // Channel receiving bloom data retrieval requests
 	bloomIndexer  *core.ChainIndexer             // Bloom indexer operating during block imports
 
-	ApiBackend *EthAPIBackend
+	APIBackend *EthAPIBackend
 
 	miner     *miner.Miner
 	gasPrice  *big.Int
@@ -287,17 +287,17 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	if eth.chainConfig.XDPoS != nil {
 		xdPoS = eth.engine.(*XDPoS.XDPoS)
 	}
-	eth.ApiBackend = &EthAPIBackend{
+	eth.APIBackend = &EthAPIBackend{
 		allowUnprotectedTxs: stack.Config().AllowUnprotectedTxs,
 		eth:                 eth,
 		gpo:                 nil,
 		XDPoS:               xdPoS,
 	}
 
-	if eth.ApiBackend.allowUnprotectedTxs {
+	if eth.APIBackend.allowUnprotectedTxs {
 		log.Info("Unprotected transactions allowed")
 	}
-	eth.ApiBackend.gpo = gasprice.NewOracle(eth.ApiBackend, config.GPO, config.GasPrice)
+	eth.APIBackend.gpo = gasprice.NewOracle(eth.APIBackend, config.GPO, config.GasPrice)
 
 	// Set global ipc endpoint.
 	eth.blockchain.IPCEndpoint = stack.IPCEndpoint()
@@ -408,7 +408,7 @@ func CreateConsensusEngine(stack *node.Node, chainConfig *params.ChainConfig, db
 // APIs return the collection of RPC services the ethereum package offers.
 // NOTE, some of these services probably need to be moved to somewhere else.
 func (e *Ethereum) APIs() []rpc.API {
-	apis := ethapi.GetAPIs(e.ApiBackend, e.BlockChain())
+	apis := ethapi.GetAPIs(e.APIBackend, e.BlockChain())
 
 	// Append any APIs exposed explicitly by the consensus engine
 	apis = append(apis, e.engine.APIs(e.BlockChain())...)
@@ -426,7 +426,7 @@ func (e *Ethereum) APIs() []rpc.API {
 			Service:   downloader.NewDownloaderAPI(e.protocolManager.downloader, e.eventMux),
 		}, {
 			Namespace: "eth",
-			Service:   filters.NewFilterAPI(filters.NewFilterSystem(e.ApiBackend, filters.Config{LogCacheSize: e.config.FilterLogCacheSize}), false),
+			Service:   filters.NewFilterAPI(filters.NewFilterSystem(e.APIBackend, filters.Config{LogCacheSize: e.config.FilterLogCacheSize}), false),
 		}, {
 			Namespace: "admin",
 			Service:   NewAdminAPI(e),

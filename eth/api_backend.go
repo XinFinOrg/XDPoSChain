@@ -429,7 +429,6 @@ func (b *EthAPIBackend) StateAtTransaction(ctx context.Context, block *types.Blo
 }
 
 func (b *EthAPIBackend) GetIPCClient() (bind.ContractBackend, error) {
-	// func (b *EthApiBackend) GetIPCClient() (*ethclient.Client, error) {
 	client, err := b.eth.blockchain.GetClient()
 	if err != nil {
 		return nil, err
