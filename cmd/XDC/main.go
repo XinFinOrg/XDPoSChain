@@ -166,6 +166,7 @@ var (
 		utils.AllowUnprotectedTxsFlag,
 		utils.BatchRequestLimitFlag,
 		utils.BatchResponseMaxSizeFlag,
+		utils.RPCGlobalRangeLimitFlag,
 	}
 
 	metricsFlags = []cli.Flag{
