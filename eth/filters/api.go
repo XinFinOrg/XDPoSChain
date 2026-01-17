@@ -33,13 +33,13 @@ import (
 )
 
 var (
-	errInvalidTopic       = invalidParamsErr("invalid topic(s)")
-	errInvalidBlockRange  = invalidParamsErr("invalid block range params")
-	errBlockHashWithRange = invalidParamsErr("can't specify fromBlock/toBlock with blockHash")
-	errUnknownBlock       = errors.New("unknown block")
-	errFilterNotFound     = errors.New("filter not found")
-	errExceedMaxTopics    = errors.New("exceed max topics")
-	errExceedMaxAddresses = errors.New("exceed max addresses")
+	errInvalidTopic        = invalidParamsErr("invalid topic(s)")
+	errInvalidBlockRange   = invalidParamsErr("invalid block range params")
+	errBlockHashWithRange  = invalidParamsErr("can't specify fromBlock/toBlock with blockHash")
+	errUnknownBlock        = errors.New("unknown block")
+	errFilterNotFound      = errors.New("filter not found")
+	errExceedMaxTopics     = errors.New("exceed max topics")
+	errExceedLogQueryLimit = errors.New("exceed max addresses or topics per search position")
 )
 
 type invalidParamsError struct {
@@ -54,8 +54,6 @@ func invalidParamsErr(format string, args ...any) error {
 }
 
 const (
-	// The maximum number of addresses allowed in a filter criteria
-	maxAddresses = 1000
 	// The maximum number of topic criteria allowed, vm.LOG4 - vm.LOG0
 	maxTopics = 4
 )
@@ -75,20 +73,22 @@ type filter struct {
 // FilterAPI offers support to create and manage filters. This will allow external clients to retrieve various
 // information related to the Ethereum protocol such als blocks, transactions and logs.
 type FilterAPI struct {
-	sys       *FilterSystem
-	events    *EventSystem
-	filtersMu sync.Mutex
-	filters   map[rpc.ID]*filter
-	timeout   time.Duration
+	sys           *FilterSystem
+	events        *EventSystem
+	filtersMu     sync.Mutex
+	filters       map[rpc.ID]*filter
+	timeout       time.Duration
+	logQueryLimit int
 }
 
 // NewFilterAPI returns a new FilterAPI instance.
 func NewFilterAPI(system *FilterSystem, lightMode bool) *FilterAPI {
 	api := &FilterAPI{
-		sys:     system,
-		events:  NewEventSystem(system, lightMode),
-		filters: make(map[rpc.ID]*filter),
-		timeout: system.cfg.Timeout,
+		sys:           system,
+		events:        NewEventSystem(system, lightMode),
+		filters:       make(map[rpc.ID]*filter),
+		timeout:       system.cfg.Timeout,
+		logQueryLimit: system.cfg.LogQueryLimit,
 	}
 	go api.timeoutLoop(system.cfg.Timeout)
 
@@ -352,8 +352,15 @@ func (api *FilterAPI) GetLogs(ctx context.Context, crit FilterCriteria) ([]*type
 	if len(crit.Topics) > maxTopics {
 		return nil, errExceedMaxTopics
 	}
-	if len(crit.Addresses) > maxAddresses {
-		return nil, errExceedMaxAddresses
+	if api.logQueryLimit != 0 {
+		if len(crit.Addresses) > api.logQueryLimit {
+			return nil, errExceedLogQueryLimit
+		}
+		for _, topics := range crit.Topics {
+			if len(topics) > api.logQueryLimit {
+				return nil, errExceedLogQueryLimit
+			}
+		}
 	}
 
 	var filter *Filter
@@ -537,9 +544,6 @@ func (args *FilterCriteria) UnmarshalJSON(data []byte) error {
 		// raw.Address can contain a single address or an array of addresses
 		switch rawAddr := raw.Addresses.(type) {
 		case []interface{}:
-			if len(rawAddr) > maxAddresses {
-				return errExceedMaxAddresses
-			}
 			for i, addr := range rawAddr {
 				if strAddr, ok := addr.(string); ok {
 					addr, err := decodeAddress(strAddr)

@@ -50,13 +50,13 @@ var Defaults = Config{
 	TrieDirtyCache:     256,
 	TrieTimeout:        5 * time.Minute,
 	FilterLogCacheSize: 32,
+	LogQueryLimit:      1000,
 	GasPrice:           big.NewInt(0.25 * params.Shannon),
-
-	TxPool:        legacypool.DefaultConfig,
-	RPCGasCap:     50000000,
-	RPCEVMTimeout: 5 * time.Second,
-	GPO:           FullNodeGPO,
-	RPCTxFeeCap:   1, // 1 ether
+	TxPool:             legacypool.DefaultConfig,
+	RPCGasCap:          50000000,
+	RPCEVMTimeout:      5 * time.Second,
+	GPO:                FullNodeGPO,
+	RPCTxFeeCap:        1, // 1 ether
 }
 
 //go:generate go run github.com/fjl/gencodec -type Config -field-override configMarshaling -formats toml -out gen_config.go
@@ -91,6 +91,10 @@ type Config struct {
 
 	// This is the number of blocks for which logs will be cached in the filter system.
 	FilterLogCacheSize int
+
+	// This is the maximum number of addresses or topics allowed in filter criteria
+	// for eth_getLogs.
+	LogQueryLimit int
 
 	// Mining-related options
 	Etherbase    common.Address `toml:",omitempty"`

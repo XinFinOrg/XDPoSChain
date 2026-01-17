@@ -162,6 +162,7 @@ var (
 		utils.IPCDisabledFlag,
 		utils.IPCPathFlag,
 		utils.RPCGlobalTxFeeCapFlag,
+		utils.RPCGlobalLogQueryLimit,
 		utils.AllowUnprotectedTxsFlag,
 		utils.BatchRequestLimitFlag,
 		utils.BatchResponseMaxSizeFlag,

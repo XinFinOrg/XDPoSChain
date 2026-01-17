@@ -343,7 +343,7 @@ func TestInvalidLogFilterCreation(t *testing.T) {
 
 	var (
 		db     = rawdb.NewMemoryDatabase()
-		_, sys = newTestFilterSystem(t, db, Config{})
+		_, sys = newTestFilterSystem(t, db, Config{LogQueryLimit: 1000})
 		api    = NewFilterAPI(sys, false)
 	)
 
@@ -354,7 +354,7 @@ func TestInvalidLogFilterCreation(t *testing.T) {
 		1: {FromBlock: big.NewInt(rpc.PendingBlockNumber.Int64()), ToBlock: big.NewInt(100)},
 		2: {FromBlock: big.NewInt(rpc.LatestBlockNumber.Int64()), ToBlock: big.NewInt(100)},
 		3: {Topics: [][]common.Hash{{}, {}, {}, {}, {}}},
-		4: {Addresses: make([]common.Address, maxAddresses+1)},
+		4: {Addresses: make([]common.Address, api.logQueryLimit+1)},
 	}
 
 	for i, test := range testCases {
@@ -374,7 +374,7 @@ func TestInvalidGetLogsRequest(t *testing.T) {
 			BaseFee: big.NewInt(params.InitialBaseFee),
 		}
 		db, blocks, _    = core.GenerateChainWithGenesis(genesis, ethash.NewFaker(), 10, func(i int, gen *core.BlockGen) {})
-		_, sys           = newTestFilterSystem(t, db, Config{})
+		_, sys           = newTestFilterSystem(t, db, Config{LogQueryLimit: 10})
 		api              = NewFilterAPI(sys, false)
 		blockHash        = blocks[0].Hash()
 		unknownBlockHash = common.HexToHash("0x1111111111111111111111111111111111111111111111111111111111111111")
@@ -419,10 +419,11 @@ func TestInvalidGetLogsRequest(t *testing.T) {
 			err: errExceedMaxTopics,
 		},
 		{
-			f:   FilterCriteria{BlockHash: &blockHash, Addresses: make([]common.Address, maxAddresses+1)},
-			err: errExceedMaxAddresses,
+			f:   FilterCriteria{BlockHash: &blockHash, Addresses: make([]common.Address, api.logQueryLimit+1)},
+			err: errExceedLogQueryLimit,
 		},
 	}
+
 	for i, test := range testCases {
 		_, err := api.GetLogs(context.Background(), test.f)
 		if !errors.Is(err, test.err) {
