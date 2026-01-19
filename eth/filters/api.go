@@ -33,14 +33,25 @@ import (
 )
 
 var (
-	errInvalidTopic       = errors.New("invalid topic(s)")
-	errFilterNotFound     = errors.New("filter not found")
-	errInvalidBlockRange  = errors.New("invalid block range params")
+	errInvalidTopic       = invalidParamsErr("invalid topic(s)")
+	errInvalidBlockRange  = invalidParamsErr("invalid block range params")
+	errBlockHashWithRange = invalidParamsErr("can't specify fromBlock/toBlock with blockHash")
 	errUnknownBlock       = errors.New("unknown block")
-	errBlockHashWithRange = errors.New("can't specify fromBlock/toBlock with blockHash")
+	errFilterNotFound     = errors.New("filter not found")
 	errExceedMaxTopics    = errors.New("exceed max topics")
 	errExceedMaxAddresses = errors.New("exceed max addresses")
 )
+
+type invalidParamsError struct {
+	err error
+}
+
+func (e invalidParamsError) Error() string  { return e.err.Error() }
+func (e invalidParamsError) ErrorCode() int { return -32602 }
+
+func invalidParamsErr(format string, args ...any) error {
+	return invalidParamsError{fmt.Errorf(format, args...)}
+}
 
 const (
 	// The maximum number of addresses allowed in a filter criteria
