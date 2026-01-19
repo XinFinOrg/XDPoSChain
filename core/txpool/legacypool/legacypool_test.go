@@ -2634,7 +2634,7 @@ func TestSetCodeTransactions(t *testing.T) {
 
 	minGasPrice := new(big.Int).Set(common.MinGasPrice)
 	minGasFee := uint256.MustFromBig(minGasPrice)
-	doubleGasFee := new(uint256.Int).Mul(new(uint256.Int).Set(minGasFee), uint256.NewInt(2))
+	doubleGasFee := new(uint256.Int).Lsh(new(uint256.Int).Set(minGasFee), 1)
 	tripleGasFee := new(uint256.Int).Mul(new(uint256.Int).Set(minGasFee), uint256.NewInt(3))
 	legacyReplacePrice := new(big.Int).Mul(minGasPrice, big.NewInt(10))
 

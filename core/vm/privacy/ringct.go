@@ -89,7 +89,7 @@ func DeserializeCompressed(curve elliptic.Curve, b []byte) *ecdsa.PublicKey {
 	// but this was replaced by the algorithms referenced in
 	// https://bitcointalk.org/index.php?topic=162805.msg1712294#msg1712294
 	PPlus1Div4 := new(big.Int).Add(curve.Params().P, big.NewInt(1))
-	PPlus1Div4 = PPlus1Div4.Div(PPlus1Div4, big.NewInt(4))
+	PPlus1Div4.Rsh(PPlus1Div4, 2)
 	y := new(big.Int).Exp(x3, PPlus1Div4, curve.Params().P)
 	ybit := b[0]%2 == 1
 	if ybit != isOdd(y) {

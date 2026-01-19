@@ -202,7 +202,7 @@ func (oracle *Oracle) SuggestTipCap(ctx context.Context) (*big.Int, error) {
 		// - All the transactions included are sent by the miner itself.
 		// In these cases, use half of the latest calculated price for samping.
 		if len(res.values) == 0 {
-			res.values = []*big.Int{new(big.Int).Div(lastPrice, common.Big2)}
+			res.values = []*big.Int{new(big.Int).Rsh(lastPrice, 1)}
 		}
 		// Besides, in order to collect enough data for sampling, if nothing
 		// meaningful returned, try to query more blocks. But the maximum

@@ -78,7 +78,7 @@ func TestGetSettleBalance(t *testing.T) {
 				makerFeeRate:      big.NewInt(10), // feeRate 0.1%
 				baseTokenDecimal:  common.BasePrice,
 				quoteTokenDecimal: common.BasePrice,
-				quantityToTrade:   new(big.Int).Mul(big.NewInt(2), common.BasePrice),
+				quantityToTrade:   new(big.Int).Lsh(common.BasePrice, 1),
 			},
 			nil,
 			true,
@@ -112,7 +112,7 @@ func TestGetSettleBalance(t *testing.T) {
 				makerFeeRate:      big.NewInt(10), // feeRate 0.1%
 				baseTokenDecimal:  common.BasePrice,
 				quoteTokenDecimal: common.BasePrice,
-				quantityToTrade:   new(big.Int).Mul(big.NewInt(2), common.BasePrice),
+				quantityToTrade:   new(big.Int).Lsh(common.BasePrice, 1),
 			},
 			nil,
 			true,
@@ -185,7 +185,7 @@ func TestGetSettleBalance(t *testing.T) {
 				makerFeeRate:      big.NewInt(10), // feeRate 0.1%
 				baseTokenDecimal:  common.BasePrice,
 				quoteTokenDecimal: common.BasePrice,
-				quantityToTrade:   new(big.Int).Mul(big.NewInt(2), common.BasePrice),
+				quantityToTrade:   new(big.Int).Lsh(common.BasePrice, 1),
 			},
 			nil,
 			true,
@@ -219,7 +219,7 @@ func TestGetSettleBalance(t *testing.T) {
 				makerFeeRate:      big.NewInt(10), // feeRate 0.1%
 				baseTokenDecimal:  common.BasePrice,
 				quoteTokenDecimal: common.BasePrice,
-				quantityToTrade:   new(big.Int).Mul(big.NewInt(2), common.BasePrice),
+				quantityToTrade:   new(big.Int).Lsh(common.BasePrice, 1),
 			},
 			nil,
 			true,

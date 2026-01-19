@@ -235,7 +235,7 @@ func CalculateInterestRate(finalizeTime, liquidationTime, term uint64, apr uint6
 	// the time interval which borrower have to pay interest
 	// (T + T1) / 2
 	timeToPayInterest := new(big.Int).Add(new(big.Int).SetUint64(term), new(big.Int).SetUint64(borrowingTime))
-	timeToPayInterest = new(big.Int).Div(timeToPayInterest, new(big.Int).SetUint64(2))
+	timeToPayInterest = new(big.Int).Rsh(timeToPayInterest, 1)
 
 	interestRate := new(big.Int).SetUint64(apr)
 	interestRate = new(big.Int).Mul(interestRate, timeToPayInterest)

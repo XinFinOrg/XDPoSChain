@@ -59,7 +59,7 @@ func TestSetFeeDefaults(t *testing.T) {
 		b        = newBackendMock()
 		zero     = (*hexutil.Big)(big.NewInt(0))
 		fortytwo = (*hexutil.Big)(big.NewInt(42))
-		maxFee   = (*hexutil.Big)(new(big.Int).Add(new(big.Int).Mul(b.current.BaseFee, big.NewInt(2)), fortytwo.ToInt()))
+		maxFee   = (*hexutil.Big)(new(big.Int).Add(new(big.Int).Lsh(b.current.BaseFee, 1), fortytwo.ToInt()))
 		al       = &types.AccessList{types.AccessTuple{Address: common.Address{0xaa}, StorageKeys: []common.Hash{{0x01}}}}
 	)
 

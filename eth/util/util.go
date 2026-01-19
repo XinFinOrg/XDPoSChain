@@ -12,10 +12,10 @@ func RewardInflation(chain consensus.ChainReader, chainReward *big.Int, number u
 	}
 
 	if blockPerYear*2 <= number && number < blockPerYear*5 {
-		chainReward.Div(chainReward, new(big.Int).SetUint64(2))
+		chainReward.Rsh(chainReward, 1)
 	}
 	if blockPerYear*5 <= number {
-		chainReward.Div(chainReward, new(big.Int).SetUint64(4))
+		chainReward.Rsh(chainReward, 2)
 	}
 
 	return chainReward

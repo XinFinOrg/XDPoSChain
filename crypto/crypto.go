@@ -47,7 +47,7 @@ const DigestLength = 32
 
 var (
 	secp256k1N     = S256().Params().N
-	secp256k1halfN = new(big.Int).Div(secp256k1N, big.NewInt(2))
+	secp256k1halfN = new(big.Int).Rsh(secp256k1N, 1)
 )
 
 var errInvalidPubkey = errors.New("invalid secp256k1 public key")

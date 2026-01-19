@@ -379,7 +379,7 @@ func (XDCx *XDCX) getTradeQuantity(quotePrice *big.Int, coinbase common.Address,
 		quotePrice = quoteTokenDecimal
 	}
 	if takerOrder.ExchangeAddress == makerOrder.ExchangeAddress {
-		if err := tradingstate.CheckRelayerFee(takerOrder.ExchangeAddress, new(big.Int).Mul(common.RelayerFee, big.NewInt(2)), statedb); err != nil {
+		if err := tradingstate.CheckRelayerFee(takerOrder.ExchangeAddress, new(big.Int).Lsh(common.RelayerFee, 1), statedb); err != nil {
 			log.Debug("Reject order Taker Exchnage = Maker Exchange , relayer not enough fee ", "err", err)
 			return tradingstate.Zero, false, nil, nil
 		}

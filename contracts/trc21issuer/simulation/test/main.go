@@ -30,7 +30,7 @@ func airDropTokenToAccountNoXDC() {
 	mainAccount.Nonce = big.NewInt(int64(nonce))
 	mainAccount.Value = big.NewInt(0)      // in wei
 	mainAccount.GasLimit = uint64(4000000) // in units
-	mainAccount.GasPrice = big.NewInt(0).Mul(common.TRC21GasPrice, big.NewInt(2))
+	mainAccount.GasPrice = big.NewInt(0).Lsh(common.TRC21GasPrice, 1)
 	trc21Instance, _ := trc21issuer.NewTRC21(mainAccount, trc21TokenAddr, client)
 	trc21IssuerInstance, _ := trc21issuer.NewTRC21Issuer(mainAccount, common.TRC21IssuerSMC, client)
 	// air drop token
@@ -76,7 +76,7 @@ func testTransferTRC21TokenWithAccountNoXDC() {
 	airDropAccount.Nonce = big.NewInt(int64(nonce))
 	airDropAccount.Value = big.NewInt(0)      // in wei
 	airDropAccount.GasLimit = uint64(4000000) // in units
-	airDropAccount.GasPrice = big.NewInt(0).Mul(common.TRC21GasPrice, big.NewInt(2))
+	airDropAccount.GasPrice = big.NewInt(0).Lsh(common.TRC21GasPrice, 1)
 	trc21Instance, _ := trc21issuer.NewTRC21(airDropAccount, trc21TokenAddr, client)
 	trc21IssuerInstance, _ := trc21issuer.NewTRC21Issuer(airDropAccount, common.TRC21IssuerSMC, client)
 
@@ -139,7 +139,7 @@ func testTransferTrc21Fail() {
 	airDropAccount.Nonce = big.NewInt(int64(nonce))
 	airDropAccount.Value = big.NewInt(0)      // in wei
 	airDropAccount.GasLimit = uint64(4000000) // in units
-	airDropAccount.GasPrice = big.NewInt(0).Mul(common.TRC21GasPrice, big.NewInt(2))
+	airDropAccount.GasPrice = big.NewInt(0).Lsh(common.TRC21GasPrice, 1)
 	trc21Instance, _ := trc21issuer.NewTRC21(airDropAccount, trc21TokenAddr, client)
 	trc21IssuerInstance, _ := trc21issuer.NewTRC21Issuer(airDropAccount, common.TRC21IssuerSMC, client)
 	balanceIssuerFee, _ := trc21IssuerInstance.GetTokenCapacity(trc21TokenAddr)

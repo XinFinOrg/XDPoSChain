@@ -227,7 +227,7 @@ func normalizeGTToGnark(cloudflareOrGoogleGT []byte) *gnark.GT {
 	u_3 := new(big.Int).Mul(big.NewInt(3), u)           // 3*u
 	inner := u_6_exp2.Add(u_6_exp2, u_3)                // 6*u^2 + 3*u
 	inner.Add(inner, big.NewInt(1))                     // 6*u^2 + 3*u + 1
-	u_2 := new(big.Int).Mul(big.NewInt(2), u)           // 2*u
+	u_2 := new(big.Int).Lsh(u, 1)                       // 2*u
 	s := u_2.Mul(u_2, inner)                            // 2*u(6*u^2 + 3*u + 1)
 
 	// Scale the Cloudflare/Google GT element by `s`

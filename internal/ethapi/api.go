@@ -2593,7 +2593,7 @@ func (api *BlockChainAPI) GetStakerROI() float64 {
 		totalCap.Add(totalCap, cap)
 	}
 
-	holderReward := new(big.Int).Div(masternodeReward, new(big.Int).SetUint64(2))
+	holderReward := new(big.Int).Rsh(masternodeReward, 1)
 	EpochPerYear := 365 * 86400 / api.b.GetEpochDuration().Uint64()
 	voterRewardAYear := new(big.Int).Mul(holderReward, new(big.Int).SetUint64(EpochPerYear))
 	return 100.0 / float64(totalCap.Div(totalCap, voterRewardAYear).Uint64())
@@ -2627,7 +2627,7 @@ func (api *BlockChainAPI) GetStakerROIMasternode(masternode common.Address) floa
 	}
 
 	// holder reward = 50% total reward of a masternode
-	holderReward := new(big.Int).Div(masternodeReward, new(big.Int).SetUint64(2))
+	holderReward := new(big.Int).Rsh(masternodeReward, 1)
 	EpochPerYear := 365 * 86400 / api.b.GetEpochDuration().Uint64()
 	voterRewardAYear := new(big.Int).Mul(holderReward, new(big.Int).SetUint64(EpochPerYear))
 

@@ -450,7 +450,7 @@ func (l *Lending) getLendQuantity(
 		return lendingstate.Zero, lendingstate.Zero, false, nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", collateralToken, err)
 	}
 	if takerOrder.Relayer == makerOrder.Relayer {
-		if err := lendingstate.CheckRelayerFee(takerOrder.Relayer, new(big.Int).Mul(common.RelayerLendingFee, big.NewInt(2)), statedb); err != nil {
+		if err := lendingstate.CheckRelayerFee(takerOrder.Relayer, new(big.Int).Lsh(common.RelayerLendingFee, 1), statedb); err != nil {
 			log.Debug("Reject order Taker Exchnage = Maker Exchange , relayer not enough fee ", "err", err)
 			return lendingstate.Zero, lendingstate.Zero, false, nil, nil
 		}

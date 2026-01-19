@@ -465,10 +465,10 @@ func accumulateRewards(config *params.ChainConfig, stateDB vm.StateDB, header *t
 		r.Add(uncle.Number, big8)
 		r.Sub(r, header.Number)
 		r.Mul(r, blockReward)
-		r.Div(r, big8)
+		r.Rsh(r, 3)
 		stateDB.AddBalance(uncle.Coinbase, r, tracing.BalanceIncreaseRewardMineUncle)
 
-		r.Div(blockReward, big32)
+		r.Rsh(blockReward, 5)
 		reward.Add(reward, r)
 	}
 	stateDB.AddBalance(header.Coinbase, reward, tracing.BalanceIncreaseRewardMineBlock)
