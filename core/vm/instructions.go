@@ -879,14 +879,14 @@ func opStaticCall(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 
 func opReturn(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	offset, size := scope.Stack.pop(), scope.Stack.pop()
-	ret := scope.Memory.GetPtr(offset.Uint64(), size.Uint64())
+	ret := scope.Memory.GetCopy(offset.Uint64(), size.Uint64())
 
 	return ret, errStopToken
 }
 
 func opRevert(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	offset, size := scope.Stack.pop(), scope.Stack.pop()
-	ret := scope.Memory.GetPtr(offset.Uint64(), size.Uint64())
+	ret := scope.Memory.GetCopy(offset.Uint64(), size.Uint64())
 
 	evm.returnData = ret
 	return ret, ErrExecutionReverted

@@ -134,6 +134,7 @@ func (evm *EVM) Run(contract *Contract, input []byte, readOnly bool) (ret []byte
 	// they are returned to the pools
 	defer func() {
 		returnStack(stack)
+		mem.Free()
 	}()
 	contract.Input = input
 
