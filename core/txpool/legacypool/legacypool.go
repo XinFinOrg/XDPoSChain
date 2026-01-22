@@ -800,10 +800,6 @@ func (pool *LegacyPool) add(tx *types.Transaction, local bool) (replaced bool, e
 	// already validated by this point
 	from, _ := types.Sender(pool.signer, tx)
 
-	if tx.IsSpecialTransaction() && pool.IsSigner(from) && pool.pendingNonces.get(from) == tx.Nonce() {
-		return pool.promoteSpecialTx(from, tx, isLocal)
-	}
-
 	// If the address is not yet known, request exclusivity to track the account
 	// only by this subpool until all transactions are evicted
 	var (
@@ -826,6 +822,13 @@ func (pool *LegacyPool) add(tx *types.Transaction, local bool) (replaced bool, e
 			}
 		}()
 	}
+
+	// Special transactions must also honor the reservation semantics to keep
+	// the coordinator's ownership accounting balanced.
+	if tx.IsSpecialTransaction() && pool.IsSigner(from) && pool.pendingNonces.get(from) == tx.Nonce() {
+		return pool.promoteSpecialTx(from, tx, isLocal)
+	}
+
 	// If the transaction pool is full, discard underpriced transactions
 	if uint64(pool.all.Slots()+numSlots(tx)) > pool.config.GlobalSlots+pool.config.GlobalQueue {
 		// If the new transaction is underpriced, don't accept it
