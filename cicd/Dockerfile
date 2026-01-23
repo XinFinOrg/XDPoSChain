@@ -1,6 +1,5 @@
 # Support setting various labels on the final image
 ARG GIT_COMMIT=""
-ENV GIT_COMMIT="$GIT_COMMIT"
 
 FROM golang:1.25-alpine AS builder
 
