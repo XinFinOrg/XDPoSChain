@@ -178,6 +178,11 @@ var Flags = []cli.Flag{
 	//traceFlag,
 	periodicProfilingFlag,
 	debugDataDirFlag,
+	pyroscopeFlag,
+	pyroscopeServerFlag,
+	pyroscopeAuthUsernameFlag,
+	pyroscopeAuthPasswordFlag,
+	pyroscopeTagsFlag,
 }
 
 var (
@@ -323,6 +328,13 @@ func Setup(ctx *cli.Context) error {
 		StartPProf(address, !ctx.IsSet("metrics-addr") && !ctx.IsSet("metrics.addr"))
 	}
 
+	// Pyroscope profiling
+	if ctx.Bool(pyroscopeFlag.Name) {
+		if err := startPyroscope(ctx); err != nil {
+			return err
+		}
+	}
+
 	if len(logFile) > 0 || rotation {
 		log.Info("Logging configured", context...)
 	}
@@ -347,6 +359,7 @@ func StartPProf(address string, withMetrics bool) {
 // Exit stops all running profiles, flushing their output to the
 // respective file.
 func Exit() {
+	stopPyroscope()
 	Handler.StopCPUProfile()
 	Handler.StopGoTrace()
 	if logOutputFile != nil {
