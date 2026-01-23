@@ -17,7 +17,9 @@
 package state
 
 import (
+	"bytes"
 	"math/big"
+	"sort"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
@@ -223,15 +225,33 @@ func (s *hookedStateDB) AddLog(log *types.Log) {
 func (s *hookedStateDB) Finalise(deleteEmptyObjects bool) {
 	defer s.inner.Finalise(deleteEmptyObjects)
 	if s.hooks.OnBalanceChange == nil {
+		// Short circuit if no relevant hooks are set.
 		return
 	}
+
+	// Collect all self-destructed addresses first, then sort them to ensure
+	// that state change hooks will be invoked in deterministic
+	// order when the accounts are deleted below
+	var selfDestructedAddrs []common.Address
 	for addr := range s.inner.journal.dirties {
 		obj := s.inner.stateObjects[addr]
-		if obj != nil && obj.selfDestructed {
-			// If ether was sent to account post-selfdestruct it is burnt.
-			if bal := obj.Balance(); bal.Sign() != 0 {
-				s.hooks.OnBalanceChange(addr, bal, new(big.Int), tracing.BalanceDecreaseSelfdestructBurn)
-			}
+		if obj == nil || !obj.selfDestructed {
+			// Not self-destructed, keep searching.
+			continue
+		}
+		selfDestructedAddrs = append(selfDestructedAddrs, addr)
+	}
+	sort.Slice(selfDestructedAddrs, func(i, j int) bool {
+		return bytes.Compare(selfDestructedAddrs[i][:], selfDestructedAddrs[j][:]) < 0
+	})
+
+	for _, addr := range selfDestructedAddrs {
+		obj := s.inner.stateObjects[addr]
+		// Bingo: state object was self-destructed, call relevant hooks.
+
+		// If ether was sent to account post-selfdestruct, record as burnt.
+		if bal := obj.Balance(); bal.Sign() != 0 {
+			s.hooks.OnBalanceChange(addr, bal, new(big.Int), tracing.BalanceDecreaseSelfdestructBurn)
 		}
 	}
 }
