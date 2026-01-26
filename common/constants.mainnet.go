@@ -30,6 +30,7 @@ var MainnetConstant = constant{
 	eip1559Block:           big.NewInt(math.MaxInt64),
 	cancunBlock:            big.NewInt(math.MaxInt64),
 	pragueBlock:            big.NewInt(math.MaxInt64),
+	dynamicGasLimitBlock:   big.NewInt(math.MaxInt64),
 	tipUpgradeReward:       big.NewInt(math.MaxInt64),
 	tipUpgradePenalty:      big.NewInt(math.MaxInt64),
 	tipEpochHalving:        big.NewInt(math.MaxInt64),

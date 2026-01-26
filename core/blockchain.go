@@ -957,8 +957,8 @@ func (bc *BlockChain) Stop() {
 		bc.logger.OnClose()
 	}
 	// Flush the collected preimages to disk
-	if err := bc.stateCache.TrieDB().CommitPreimages(); err != nil {
-		log.Error("Failed to commit trie preimages", "err", err)
+	if err := bc.stateCache.TrieDB().Close(); err != nil {
+		log.Error("Failed to close trie db", "err", err)
 	}
 	log.Info("Blockchain manager stopped")
 }

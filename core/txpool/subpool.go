@@ -54,10 +54,6 @@ func (ltx *LazyTransaction) Resolve() *Transaction {
 	return ltx.Tx
 }
 
-// AddressReserver is passed by the main transaction pool to subpools, so they
-// may request (and relinquish) exclusive access to certain addresses.
-type AddressReserver func(addr common.Address, reserve bool) error
-
 // SubPool represents a specialized transaction pool that lives on its own (e.g.
 // blob pool). Since independent of how many specialized pools we have, they do
 // need to be updated in lockstep and assemble into one coherent view for block
@@ -75,7 +71,7 @@ type SubPool interface {
 	// These should not be passed as a constructor argument - nor should the pools
 	// start by themselves - in order to keep multiple subpools in lockstep with
 	// one another.
-	Init(gasTip *big.Int, head *types.Header, reserve AddressReserver) error
+	Init(gasTip *big.Int, head *types.Header, reserver *Reserver) error
 
 	// Close terminates any background processing threads and releases any held
 	// resources.

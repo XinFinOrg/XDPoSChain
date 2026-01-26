@@ -5,6 +5,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/XinFinOrg/XDPoSChain/trie"
@@ -30,7 +31,8 @@ func (n *proofPairList) Delete(key []byte) error {
 // modified from core/types/derive_sha.go
 func deriveTrie(list types.DerivableList) *trie.Trie {
 	buf := new(bytes.Buffer)
-	trie := trie.NewEmpty(nil)
+	db := trie.NewDatabase(rawdb.NewMemoryDatabase())
+	trie := trie.NewEmpty(db)
 	for i := range list.Len() {
 		buf.Reset()
 		rlp.Encode(buf, uint(i))

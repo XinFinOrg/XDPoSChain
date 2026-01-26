@@ -21,6 +21,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/crypto"
 )
 
 // Tests that the node iterator indeed walks over the entire database contents.
@@ -85,8 +86,17 @@ func TestNodeIteratorCoverage(t *testing.T) {
 // database entry belongs to a trie node or not.
 func isTrieNode(scheme string, key, val []byte) (bool, common.Hash) {
 	if scheme == rawdb.HashScheme {
-		if len(key) == common.HashLength {
+		if rawdb.IsLegacyTrieNode(key, val) {
 			return true, common.BytesToHash(key)
+		}
+	} else {
+		ok, _ := rawdb.IsAccountTrieNode(key)
+		if ok {
+			return true, crypto.Keccak256Hash(val)
+		}
+		ok, _, _ = rawdb.IsStorageTrieNode(key)
+		if ok {
+			return true, crypto.Keccak256Hash(val)
 		}
 	}
 	return false, common.Hash{}

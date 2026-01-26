@@ -495,6 +495,8 @@ type ChainConfig struct {
 	CancunBlock     *big.Int `json:"cancunBlock,omitempty"`
 	PragueBlock     *big.Int `json:"pragueBlock,omitempty"`
 
+	DynamicGasLimitBlock *big.Int `json:"dynamicGasLimitBlock,omitempty"` // Dynamic gas limit adjustment algorithm activation block (nil = no fork)
+
 	// Various consensus engines
 	Ethash *EthashConfig `json:"ethash,omitempty"`
 	Clique *CliqueConfig `json:"clique,omitempty"`
@@ -860,6 +862,9 @@ func (c *ChainConfig) String() string {
 	if c.PragueBlock != nil {
 		result += fmt.Sprintf(", PragueBlock: %v", c.PragueBlock)
 	}
+	if c.DynamicGasLimitBlock != nil {
+		result += fmt.Sprintf(", DynamicGasLimitBlock: %v", c.DynamicGasLimitBlock)
+	}
 	if c.XDPoS != nil {
 		result += fmt.Sprintf(", %s", c.XDPoS.String())
 	}
@@ -907,6 +912,10 @@ func (c *ChainConfig) Description() string {
 	if c.PragueBlock != nil {
 		pragueBlock = c.PragueBlock
 	}
+	dynamicGasLimitBlock := common.DynamicGasLimitBlock
+	if c.DynamicGasLimitBlock != nil {
+		dynamicGasLimitBlock = c.DynamicGasLimitBlock
+	}
 
 	var banner = "Chain configuration:\n"
 	banner += fmt.Sprintf("  - ChainID:                     %-8v\n", c.ChainID)
@@ -939,6 +948,7 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - Eip1559:                     %-8v\n", eip1559Block)
 	banner += fmt.Sprintf("  - Cancun:                      %-8v\n", cancunBlock)
 	banner += fmt.Sprintf("  - Prague:                      %-8v\n", pragueBlock)
+	banner += fmt.Sprintf("  - DynamicGasLimitBlock:        %-8v\n", dynamicGasLimitBlock)
 	banner += fmt.Sprintf("  - TIPUpgradeReward:            %-8v\n", common.TIPUpgradeReward)
 	banner += fmt.Sprintf("  - TipUpgradePenalty:           %-8v\n", common.TipUpgradePenalty)
 	banner += fmt.Sprintf("  - TIPEpochHalving:             %-8v\n", common.TIPEpochHalving)
@@ -1022,6 +1032,11 @@ func (c *ChainConfig) IsCancun(num *big.Int) bool {
 // IsPrague returns whether num is either equal to the Prague fork block or greater.
 func (c *ChainConfig) IsPrague(num *big.Int) bool {
 	return isForked(common.PragueBlock, num) || isForked(c.PragueBlock, num)
+}
+
+// IsDynamicGasLimitBlock returns whether num is either equal to the DynamicGasLimitBlock fork block or greater.
+func (c *ChainConfig) IsDynamicGasLimitBlock(num *big.Int) bool {
+	return isForked(common.DynamicGasLimitBlock, num) || isForked(c.DynamicGasLimitBlock, num)
 }
 
 func (c *ChainConfig) IsTIP2019(num *big.Int) bool {
