@@ -22,7 +22,6 @@ require (
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/peterh/liner v1.1.1-0.20190123174540-a2c9a5303de7
 	github.com/pkg/errors v0.9.1
-	github.com/prometheus/prometheus v1.7.2-0.20170814170113-3101606756c5
 	github.com/rs/cors v1.7.0
 	github.com/stretchr/testify v1.10.0
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
@@ -51,6 +50,7 @@ require (
 	github.com/karalabe/hid v1.0.1-0.20240306101548-573246063e52
 	github.com/kylelemons/godebug v1.1.0
 	github.com/mattn/go-isatty v0.0.17
+	github.com/prometheus/tsdb v0.10.0
 	github.com/protolambda/bls12-381-util v0.0.0-20220416220906-d8552aa452c7
 	github.com/shirou/gopsutil v3.21.4-0.20210419000835-c7a38de76ee5+incompatible
 	github.com/status-im/keycard-go v0.3.3
