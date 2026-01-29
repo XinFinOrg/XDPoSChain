@@ -426,7 +426,7 @@ func (e *Ethereum) APIs() []rpc.API {
 			Service:   downloader.NewDownloaderAPI(e.protocolManager.downloader, e.eventMux),
 		}, {
 			Namespace: "eth",
-			Service:   filters.NewFilterAPI(filters.NewFilterSystem(e.APIBackend, filters.Config{LogCacheSize: e.config.FilterLogCacheSize}), false),
+			Service:   filters.NewFilterAPI(filters.NewFilterSystem(e.APIBackend, filters.Config{LogCacheSize: e.config.FilterLogCacheSize})),
 		}, {
 			Namespace: "admin",
 			Service:   NewAdminAPI(e),

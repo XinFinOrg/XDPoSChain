@@ -110,54 +110,55 @@ func (f *Filter) Logs(ctx context.Context) ([]*types.Log, error) {
 		}
 		return f.blockLogs(ctx, header)
 	}
-	var (
-		beginPending = f.begin == rpc.PendingBlockNumber.Int64()
-		endPending   = f.end == rpc.PendingBlockNumber.Int64()
-	)
 
-	// special case for pending logs
-	if beginPending && !endPending {
-		return nil, errors.New("invalid block range")
+	// Disallow pending logs.
+	if f.begin == rpc.PendingBlockNumber.Int64() || f.end == rpc.PendingBlockNumber.Int64() {
+		return nil, errPendingLogsUnsupported
 	}
 
-	// Short-cut if all we care about is pending logs
-	if beginPending && endPending {
-		return f.pendingLogs(), nil
-	}
-
-	resolveSpecial := func(number int64) (int64, error) {
-		var hdr *types.Header
+	resolveSpecial := func(number int64) (uint64, error) {
 		switch number {
-		case rpc.LatestBlockNumber.Int64(), rpc.PendingBlockNumber.Int64():
-			// we should return head here since we've already captured
-			// that we need to get the pending logs in the pending boolean above
-			hdr, _ = f.sys.backend.HeaderByNumber(ctx, rpc.LatestBlockNumber)
+		case rpc.LatestBlockNumber.Int64():
+			hdr, _ := f.sys.backend.HeaderByNumber(ctx, rpc.LatestBlockNumber)
 			if hdr == nil {
 				return 0, errors.New("latest header not found")
 			}
+			return hdr.Number.Uint64(), nil
 		case rpc.FinalizedBlockNumber.Int64():
-			hdr, _ = f.sys.backend.HeaderByNumber(ctx, rpc.FinalizedBlockNumber)
+			hdr, _ := f.sys.backend.HeaderByNumber(ctx, rpc.FinalizedBlockNumber)
 			if hdr == nil {
-				return 0, errors.New("committed header not found")
+				return 0, errors.New("finalized header not found")
 			}
+			return hdr.Number.Uint64(), nil
+		case rpc.EarliestBlockNumber.Int64():
+			hdr, _ := f.sys.backend.HeaderByNumber(ctx, rpc.EarliestBlockNumber)
+			if hdr == nil {
+				return 0, errors.New("earliest header not found")
+			}
+			return hdr.Number.Uint64(), nil
 		default:
-			return number, nil
+			if number < 0 {
+				return 0, errors.New("negative block number")
+			}
+			return uint64(number), nil
 		}
-		return hdr.Number.Int64(), nil
 	}
 
-	var err error
 	// range query need to resolve the special begin/end block number
-	if f.begin, err = resolveSpecial(f.begin); err != nil {
+	begin, err := resolveSpecial(f.begin)
+	if err != nil {
 		return nil, err
 	}
-	if f.end, err = resolveSpecial(f.end); err != nil {
+	end, err := resolveSpecial(f.end)
+	if err != nil {
 		return nil, err
 	}
-	if f.rangeLimit != 0 && (uint64(f.end)-uint64(f.begin)) > f.rangeLimit {
+	if f.rangeLimit != 0 && (end-begin) > f.rangeLimit {
 		return nil, fmt.Errorf("exceed maximum block range: %d", f.rangeLimit)
 	}
 
+	f.begin = int64(begin)
+	f.end = int64(end)
 	logChan, errChan := f.rangeLogsAsync(ctx)
 	var logs []*types.Log
 	for {
@@ -165,16 +166,7 @@ func (f *Filter) Logs(ctx context.Context) ([]*types.Log, error) {
 		case log := <-logChan:
 			logs = append(logs, log)
 		case err := <-errChan:
-			if err != nil {
-				// if an error occurs during extraction, we do return the extracted data
-				return logs, err
-			}
-			// Append the pending ones
-			if endPending {
-				pendingLogs := f.pendingLogs()
-				logs = append(logs, pendingLogs...)
-			}
-			return logs, nil
+			return logs, err
 		}
 	}
 }
@@ -330,22 +322,6 @@ func (f *Filter) checkMatches(ctx context.Context, header *types.Header) ([]*typ
 		logs[i] = &logcopy
 	}
 	return logs, nil
-}
-
-// pendingLogs returns the logs matching the filter criteria within the pending block.
-func (f *Filter) pendingLogs() []*types.Log {
-	block, receipts := f.sys.backend.PendingBlockAndReceipts()
-	if block == nil {
-		return nil
-	}
-	if bloomFilter(block.Bloom(), f.addresses, f.topics) {
-		var unfiltered []*types.Log
-		for _, r := range receipts {
-			unfiltered = append(unfiltered, r.Logs...)
-		}
-		return filterLogs(unfiltered, nil, nil, f.addresses, f.topics)
-	}
-	return nil
 }
 
 func includes(addresses []common.Address, a common.Address) bool {
