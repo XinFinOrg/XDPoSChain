@@ -73,10 +73,10 @@ func newTestBackend(t *testing.T, n int, gspec *core.Genesis, generator func(i i
 		engine:      ethash.NewFaker(),
 		chaindb:     rawdb.NewMemoryDatabase(),
 	}
+	// Generate blocks for testing
 	_, blocks, _ := core.GenerateChainWithGenesis(gspec, backend.engine, n, generator)
 
 	// Import the canonical chain
-	gspec.MustCommit(backend.chaindb)
 	cacheConfig := &core.CacheConfig{
 		TrieCleanLimit:    256,
 		TrieDirtyLimit:    256,
@@ -303,9 +303,9 @@ func TestTraceCall(t *testing.T) {
 	t.Parallel()
 
 	// Initialize test accounts
-	accounts := newAccounts(3)
 	config := *params.TestChainConfig
 	config.Eip1559Block = big.NewInt(0)
+	accounts := newAccounts(3)
 	genesis := &core.Genesis{
 		Config: &config,
 		Alloc: types.GenesisAlloc{
@@ -521,10 +521,8 @@ func TestTraceTransaction(t *testing.T) {
 
 	// Initialize test accounts
 	accounts := newAccounts(2)
-	config := *params.TestChainConfig
-	config.Eip1559Block = big.NewInt(0)
 	genesis := &core.Genesis{
-		Config: &config,
+		Config: params.TestChainConfig,
 		Alloc: types.GenesisAlloc{
 			accounts[0].addr: {Balance: big.NewInt(9000000000000000000)},
 			accounts[1].addr: {Balance: big.NewInt(9000000000000000000)},
@@ -577,10 +575,8 @@ func TestTraceBlock(t *testing.T) {
 
 	// Initialize test accounts
 	accounts := newAccounts(3)
-	config := *params.TestChainConfig
-	config.Eip1559Block = big.NewInt(0)
 	genesis := &core.Genesis{
-		Config: &config,
+		Config: params.TestChainConfig,
 		Alloc: types.GenesisAlloc{
 			accounts[0].addr: {Balance: big.NewInt(9000000000000000000)},
 			accounts[1].addr: {Balance: big.NewInt(9000000000000000000)},
@@ -665,10 +661,11 @@ func TestTraceBlock(t *testing.T) {
 
 func TestTracingWithOverrides(t *testing.T) {
 	t.Parallel()
+
 	// Initialize test accounts
-	accounts := newAccounts(3)
 	config := *params.TestChainConfig
 	config.Eip1559Block = big.NewInt(0)
+	accounts := newAccounts(3)
 	genesis := &core.Genesis{
 		Config: &config,
 		Alloc: types.GenesisAlloc{
@@ -871,10 +868,8 @@ func newStates(keys []common.Hash, vals []common.Hash) map[common.Hash]common.Ha
 func TestTraceChain(t *testing.T) {
 	// Initialize test accounts
 	accounts := newAccounts(3)
-	config := *params.TestChainConfig
-	config.Eip1559Block = big.NewInt(0)
 	genesis := &core.Genesis{
-		Config: &config,
+		Config: params.TestChainConfig,
 		Alloc: types.GenesisAlloc{
 			accounts[0].addr: {Balance: big.NewInt(params.Ether)},
 			accounts[1].addr: {Balance: big.NewInt(params.Ether)},

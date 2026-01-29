@@ -33,17 +33,15 @@ import (
 func TestHeaderVerification(t *testing.T) {
 	// Create a simple chain to verify
 	var (
-		testdb    = rawdb.NewMemoryDatabase()
-		gspec     = &Genesis{Config: params.TestChainConfig}
-		genesis   = gspec.MustCommit(testdb)
-		blocks, _ = GenerateChain(gspec.Config, genesis, ethash.NewFaker(), testdb, 8, nil)
+		gspec        = &Genesis{Config: params.TestChainConfig}
+		_, blocks, _ = GenerateChainWithGenesis(gspec, ethash.NewFaker(), 8, nil)
 	)
 	headers := make([]*types.Header, len(blocks))
 	for i, block := range blocks {
 		headers[i] = block.Header()
 	}
 	// Run the header checker for blocks one-by-one, checking for both valid and invalid nonces
-	chain, err := NewBlockChain(testdb, nil, gspec, ethash.NewFaker(), vm.Config{})
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, ethash.NewFaker(), vm.Config{})
 	defer chain.Stop()
 	if err != nil {
 		t.Fatal(err)

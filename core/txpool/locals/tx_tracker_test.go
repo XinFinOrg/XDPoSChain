@@ -42,7 +42,7 @@ import (
 var (
 	key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 	address = crypto.PubkeyToAddress(key.PublicKey)
-	funds   = big.NewInt(1000000000000000)
+	funds   = big.NewInt(1000000000000000000)
 	gspec   = &core.Genesis{
 		Config: params.TestChainConfig,
 		Alloc: types.GenesisAlloc{
@@ -62,7 +62,11 @@ type testEnv struct {
 
 func newTestEnv(t *testing.T, n int, gasTip uint64, journal string) *testEnv {
 	genDb, blocks, _ := core.GenerateChainWithGenesis(gspec, ethash.NewFaker(), n, func(i int, gen *core.BlockGen) {
-		tx, err := types.SignTx(types.NewTransaction(gen.TxNonce(address), common.Address{0x00}, big.NewInt(1000), params.TxGas, big.NewInt(params.GWei), nil), signer, key)
+		gasPrice := big.NewInt(params.InitialBaseFee)
+		if baseFee := gen.BaseFee(); baseFee != nil {
+			gasPrice = new(big.Int).Set(baseFee)
+		}
+		tx, err := types.SignTx(types.NewTransaction(gen.TxNonce(address), common.Address{0x00}, big.NewInt(1000), params.TxGas, gasPrice, nil), signer, key)
 		if err != nil {
 			panic(err)
 		}
@@ -105,10 +109,14 @@ func (env *testEnv) makeTxs(n int) []*types.Transaction {
 	head := env.chain.CurrentHeader()
 	state, _ := env.chain.StateAt(head.Root)
 	nonce := state.GetNonce(address)
+	gasPrice := big.NewInt(params.InitialBaseFee)
+	if head.BaseFee != nil {
+		gasPrice = new(big.Int).Set(head.BaseFee)
+	}
 
 	var txs []*types.Transaction
 	for i := 0; i < n; i++ {
-		tx, _ := types.SignTx(types.NewTransaction(nonce+uint64(i), common.Address{0x00}, big.NewInt(1000), params.TxGas, big.NewInt(params.GWei), nil), signer, key)
+		tx, _ := types.SignTx(types.NewTransaction(nonce+uint64(i), common.Address{0x00}, big.NewInt(1000), params.TxGas, gasPrice, nil), signer, key)
 		txs = append(txs, tx)
 	}
 	return txs
