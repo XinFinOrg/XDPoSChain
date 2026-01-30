@@ -123,7 +123,7 @@ func hashAlloc(ga *types.GenesisAlloc) (common.Hash, error) {
 // flushAlloc is very similar to hashAlloc, but the main difference is
 // all the generated states will be persisted into the given database.
 // Also, the genesis state specification will be flushed as well.
-func flushAlloc(ga *types.GenesisAlloc, db ethdb.Database) error {
+func flushAlloc(ga *types.GenesisAlloc, db ethdb.Database, blockhash common.Hash) error {
 	statedb, err := state.New(types.EmptyRootHash, state.NewDatabase(db))
 	if err != nil {
 		return err
@@ -151,7 +151,7 @@ func flushAlloc(ga *types.GenesisAlloc, db ethdb.Database) error {
 	if err != nil {
 		return err
 	}
-	rawdb.WriteGenesisStateSpec(db, root, blob)
+	rawdb.WriteGenesisStateSpec(db, blockhash, blob)
 	return nil
 }
 
@@ -323,7 +323,7 @@ func (g *Genesis) Commit(db ethdb.Database) (*types.Block, error) {
 	// All the checks have passed, flushAlloc the states derived from the genesis
 	// specification as well as the specification itself into the provided
 	// database.
-	if err := flushAlloc(&g.Alloc, db); err != nil {
+	if err := flushAlloc(&g.Alloc, db, block.Hash()); err != nil {
 		return nil, err
 	}
 	batch := db.NewBatch()
