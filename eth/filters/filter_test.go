@@ -99,8 +99,8 @@ func TestFilters(t *testing.T) {
 	config.Eip1559Block = big.NewInt(0)
 
 	var (
-		db     = rawdb.NewMemoryDatabase()
-		_, sys = newTestFilterSystem(t, db, Config{})
+		db           = rawdb.NewMemoryDatabase()
+		backend, sys = newTestFilterSystem(t, db, Config{})
 		// Sender account
 		key1, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 		addr    = crypto.PubkeyToAddress(key1.PublicKey)
@@ -265,8 +265,7 @@ func TestFilters(t *testing.T) {
 		}), signer, key1)
 		gen.AddTx(tx)
 	})
-	sys.backend.(*testBackend).pendingBlock = pchain[0]
-	sys.backend.(*testBackend).pendingReceipts = preceipts[0]
+	backend.setPending(pchain[0], preceipts[0])
 
 	for i, tc := range []struct {
 		f    *Filter
@@ -301,22 +300,22 @@ func TestFilters(t *testing.T) {
 			want: `[{"address":"0xfe00000000000000000000000000000000000000","topics":["0x0000000000000000000000000000000000000000000000000000746f70696334"],"data":"0x","blockNumber":"0x3e8","transactionHash":"0x21fd39694cbcc8cc5046b3b7d5200101edf9c85218da613a8851eb5e3d195241","transactionIndex":"0x0","blockHash":"0x8a956d79ca6468ff23c97615a4aa24a55bdaff78767ee28d3e2e02ecb407a0de","logIndex":"0x0","removed":false}]`,
 		}, {
 			f:   sys.NewRangeFilter(int64(rpc.FinalizedBlockNumber), int64(rpc.LatestBlockNumber), nil, nil, 0),
-			err: "committed header not found",
+			err: "finalized header not found",
 		}, {
 			f:   sys.NewRangeFilter(int64(rpc.FinalizedBlockNumber), int64(rpc.FinalizedBlockNumber), nil, nil, 0),
-			err: "committed header not found",
+			err: "finalized header not found",
 		}, {
 			f:   sys.NewRangeFilter(int64(rpc.LatestBlockNumber), int64(rpc.FinalizedBlockNumber), nil, nil, 0),
-			err: "committed header not found",
+			err: "finalized header not found",
 		}, {
-			f:    sys.NewRangeFilter(int64(rpc.PendingBlockNumber), int64(rpc.PendingBlockNumber), nil, nil, 0),
-			want: `[{"address":"0xfe00000000000000000000000000000000000000","topics":["0x0000000000000000000000000000000000000000000000000000746f70696335"],"data":"0x","blockNumber":"0x3e9","transactionHash":"0x87d02f2dddb1941ff179ae5d5fbb123afb9c5f71220045bc1c48f3872be24d4a","transactionIndex":"0x0","blockHash":"0x5f2b35a350840476a43aa23c6ea031d6db277aef337775ebb8421df64f17723f","logIndex":"0x0","removed":false}]`,
+			f:   sys.NewRangeFilter(int64(rpc.PendingBlockNumber), int64(rpc.PendingBlockNumber), nil, nil, 0),
+			err: errPendingLogsUnsupported.Error(),
 		}, {
-			f:    sys.NewRangeFilter(int64(rpc.LatestBlockNumber), int64(rpc.PendingBlockNumber), nil, nil, 0),
-			want: `[{"address":"0xfe00000000000000000000000000000000000000","topics":["0x0000000000000000000000000000000000000000000000000000746f70696334"],"data":"0x","blockNumber":"0x3e8","transactionHash":"0x21fd39694cbcc8cc5046b3b7d5200101edf9c85218da613a8851eb5e3d195241","transactionIndex":"0x0","blockHash":"0x8a956d79ca6468ff23c97615a4aa24a55bdaff78767ee28d3e2e02ecb407a0de","logIndex":"0x0","removed":false},{"address":"0xfe00000000000000000000000000000000000000","topics":["0x0000000000000000000000000000000000000000000000000000746f70696335"],"data":"0x","blockNumber":"0x3e9","transactionHash":"0x87d02f2dddb1941ff179ae5d5fbb123afb9c5f71220045bc1c48f3872be24d4a","transactionIndex":"0x0","blockHash":"0x5f2b35a350840476a43aa23c6ea031d6db277aef337775ebb8421df64f17723f","logIndex":"0x0","removed":false}]`,
+			f:   sys.NewRangeFilter(int64(rpc.LatestBlockNumber), int64(rpc.PendingBlockNumber), nil, nil, 0),
+			err: errPendingLogsUnsupported.Error(),
 		}, {
 			f:   sys.NewRangeFilter(int64(rpc.PendingBlockNumber), int64(rpc.LatestBlockNumber), nil, nil, 0),
-			err: "invalid block range",
+			err: errPendingLogsUnsupported.Error(),
 		},
 	} {
 		logs, err := tc.f.Logs(context.Background())
@@ -338,7 +337,7 @@ func TestFilters(t *testing.T) {
 	}
 
 	t.Run("timeout", func(t *testing.T) {
-		f := sys.NewRangeFilter(0, -1, nil, nil, 0)
+		f := sys.NewRangeFilter(0, rpc.LatestBlockNumber.Int64(), nil, nil, 0)
 		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Hour))
 		defer cancel()
 		_, err := f.Logs(ctx)

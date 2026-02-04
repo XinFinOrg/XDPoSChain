@@ -153,7 +153,7 @@ func NewXDCSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64, chainConf
 
 	filterBackend := &filterBackend{database, blockchain, backend}
 	backend.filterSystem = filters.NewFilterSystem(filterBackend, filters.Config{})
-	backend.events = filters.NewEventSystem(backend.filterSystem, false)
+	backend.events = filters.NewEventSystem(backend.filterSystem)
 
 	blockchain.Client = backend
 
@@ -181,7 +181,7 @@ func NewSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64) *SimulatedBa
 
 	filterBackend := &filterBackend{database, blockchain, backend}
 	backend.filterSystem = filters.NewFilterSystem(filterBackend, filters.Config{})
-	backend.events = filters.NewEventSystem(backend.filterSystem, false)
+	backend.events = filters.NewEventSystem(backend.filterSystem)
 
 	header := backend.blockchain.CurrentBlock()
 	block := backend.blockchain.GetBlock(header.Hash(), header.Number.Uint64())
@@ -834,7 +834,7 @@ func (b *SimulatedBackend) FilterLogs(ctx context.Context, query ethereum.Filter
 		if query.FromBlock != nil {
 			from = query.FromBlock.Int64()
 		}
-		to := int64(-1)
+		to := int64(rpc.LatestBlockNumber)
 		if query.ToBlock != nil {
 			to = query.ToBlock.Int64()
 		}

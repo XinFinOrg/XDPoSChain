@@ -33,13 +33,14 @@ import (
 )
 
 var (
-	errInvalidTopic        = invalidParamsErr("invalid topic(s)")
-	errInvalidBlockRange   = invalidParamsErr("invalid block range params")
-	errBlockHashWithRange  = invalidParamsErr("can't specify fromBlock/toBlock with blockHash")
-	errUnknownBlock        = errors.New("unknown block")
-	errFilterNotFound      = errors.New("filter not found")
-	errExceedMaxTopics     = errors.New("exceed max topics")
-	errExceedLogQueryLimit = errors.New("exceed max addresses or topics per search position")
+	errInvalidTopic           = invalidParamsErr("invalid topic(s)")
+	errInvalidBlockRange      = invalidParamsErr("invalid block range params")
+	errBlockHashWithRange     = invalidParamsErr("can't specify fromBlock/toBlock with blockHash")
+	errPendingLogsUnsupported = invalidParamsErr("pending logs are not supported")
+	errUnknownBlock           = errors.New("unknown block")
+	errFilterNotFound         = errors.New("filter not found")
+	errExceedMaxTopics        = errors.New("exceed max topics")
+	errExceedLogQueryLimit    = errors.New("exceed max addresses or topics per search position")
 )
 
 type invalidParamsError struct {
@@ -83,10 +84,10 @@ type FilterAPI struct {
 }
 
 // NewFilterAPI returns a new FilterAPI instance.
-func NewFilterAPI(system *FilterSystem, lightMode bool) *FilterAPI {
+func NewFilterAPI(system *FilterSystem) *FilterAPI {
 	api := &FilterAPI{
 		sys:           system,
-		events:        NewEventSystem(system, lightMode),
+		events:        NewEventSystem(system),
 		filters:       make(map[rpc.ID]*filter),
 		timeout:       system.cfg.Timeout,
 		logQueryLimit: system.cfg.LogQueryLimit,
@@ -481,7 +482,7 @@ func (api *FilterAPI) GetFilterChanges(id rpc.ID) (interface{}, error) {
 			txs := f.txs
 			f.txs = nil
 			return txs, nil
-		case LogsSubscription, MinedAndPendingLogsSubscription:
+		case LogsSubscription:
 			logs := f.logs
 			f.logs = nil
 			return returnLogs(logs), nil
