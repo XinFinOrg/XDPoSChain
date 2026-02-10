@@ -86,3 +86,7 @@ func (x *XDPoS_v2) AuthorizeFaker(signer common.Address) {
 func (x *XDPoS_v2) GetForensicsFaker() *Forensics {
 	return x.ForensicsProcessor
 }
+
+func (x *XDPoS_v2) GetTCEpochInfoFaker(chain consensus.ChainReader, timeoutRound types.Round) (*types.EpochSwitchInfo, error) {
+	return x.getTCEpochInfo(chain, timeoutRound)
+}
