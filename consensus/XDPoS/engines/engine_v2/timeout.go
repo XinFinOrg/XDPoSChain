@@ -1,7 +1,6 @@
 package engine_v2
 
 import (
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -152,14 +151,9 @@ func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.Time
 		return utils.ErrInvalidTC
 	}
 
-	snap, err := x.getSnapshot(chain, timeoutCert.GapNumber, true)
+	epochInfo, err := x.getTCEpochInfo(chain, timeoutCert.Round)
 	if err != nil {
-		log.Error("[verifyTC] Fail to get snapshot when verifying TC!", "tcGapNumber", timeoutCert.GapNumber)
-		return fmt.Errorf("[verifyTC] Unable to get snapshot, %s", err)
-	}
-	if snap == nil || len(snap.NextEpochCandidates) == 0 {
-		log.Error("[verifyTC] Something wrong with the snapshot from gapNumber", "messageGapNumber", timeoutCert.GapNumber, "snapshot", snap)
-		return errors.New("empty master node lists from snapshot")
+		return err
 	}
 
 	signedTimeoutObj := types.TimeoutSigHash(&types.TimeoutForSign{
@@ -167,14 +161,9 @@ func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.Time
 		GapNumber: timeoutCert.GapNumber,
 	})
 
-	// TODO: snap.NextEpochCandidates should be replaced with epochInfo.Masternodes in another PR
-	numValidSignatures, err := x.countValidSignatures(signedTimeoutObj, timeoutCert.Signatures, snap.NextEpochCandidates)
+	numValidSignatures, err := x.countValidSignatures(signedTimeoutObj, timeoutCert.Signatures, epochInfo.Masternodes)
 	if err != nil {
 		log.Error("[verifyTC] Error while verifying TC message signatures", "tcRound", timeoutCert.Round, "tcGapNumber", timeoutCert.GapNumber, "tcSignLen", len(timeoutCert.Signatures), "Error", err)
-		return err
-	}
-	epochInfo, err := x.getTCEpochInfo(chain, timeoutCert.Round)
-	if err != nil {
 		return err
 	}
 
