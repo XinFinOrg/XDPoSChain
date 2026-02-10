@@ -170,7 +170,7 @@ func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.Time
 	// TODO: snap.NextEpochCandidates should be replaced with epochInfo.Masternodes in another PR
 	numValidSignatures, err := x.countValidSignatures(signedTimeoutObj, timeoutCert.Signatures, snap.NextEpochCandidates)
 	if err != nil {
-		log.Error("[verifyTC] Error while verfying TC message signatures", "tcRound", timeoutCert.Round, "tcGapNumber", timeoutCert.GapNumber, "tcSignLen", len(timeoutCert.Signatures), "Error", err)
+		log.Error("[verifyTC] Error while verifying TC message signatures", "tcRound", timeoutCert.Round, "tcGapNumber", timeoutCert.GapNumber, "tcSignLen", len(timeoutCert.Signatures), "Error", err)
 		return err
 	}
 	epochInfo, err := x.getTCEpochInfo(chain, timeoutCert.Round)

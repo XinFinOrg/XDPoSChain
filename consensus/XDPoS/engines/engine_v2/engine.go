@@ -760,7 +760,7 @@ func (x *XDPoS_v2) verifyQC(blockChainReader consensus.ChainReader, quorumCert *
 	elapsed := time.Since(start)
 	log.Debug("[verifyQC] time verify message signatures of qc", "elapsed", elapsed)
 	if err != nil {
-		log.Error("[verifyQC] Error while verfying QC message signatures", "Error", err)
+		log.Error("[verifyQC] Error while verifying QC message signatures", "Error", err)
 		return err
 	}
 

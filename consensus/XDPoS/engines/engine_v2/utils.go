@@ -109,7 +109,7 @@ func (x *XDPoS_v2) countValidSignatures(messageHash common.Hash, signatures []ty
 			default:
 				verified, signerAddress, err := x.verifyMsgSignature(messageHash, signature, candidates)
 				if err != nil {
-					log.Error("[verifySignatures] Error while verfying QC message signatures", "error", err)
+					log.Error("[verifySignatures] Error while verifying QC message signatures", "error", err)
 					return err
 				}
 				if !verified {
