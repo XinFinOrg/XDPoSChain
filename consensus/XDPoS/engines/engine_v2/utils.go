@@ -117,7 +117,7 @@ func (x *XDPoS_v2) countValidSignatures(messageHash common.Hash, signatures []ty
 				}
 				signatureList[i] = signature
 				pubkeys[i] = signerAddress
-				
+
 				return nil
 			}
 		})
