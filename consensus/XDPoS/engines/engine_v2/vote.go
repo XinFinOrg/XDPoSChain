@@ -22,7 +22,7 @@ func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainReader, vote *types.Vo
 		return false, nil
 	}
 
-	snapshot, err := x.getSnapshot(chain, vote.GapNumber, true)
+	snap, err := x.getSnapshot(chain, vote.GapNumber, true)
 	if err != nil {
 		log.Error("[VerifyVoteMessage] fail to get snapshot for a vote message", "blockNum", vote.ProposedBlockInfo.Number, "blockHash", vote.ProposedBlockInfo.Hash, "voteHash", vote.Hash(), "err", err)
 		return false, err
@@ -31,10 +31,10 @@ func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainReader, vote *types.Vo
 	verified, signer, err := x.verifyMsgSignature(types.VoteSigHash(&types.VoteForSign{
 		ProposedBlockInfo: vote.ProposedBlockInfo,
 		GapNumber:         vote.GapNumber,
-	}), vote.Signature, snapshot.NextEpochCandidates)
+	}), vote.Signature, snap.NextEpochCandidates)
 
 	if err != nil {
-		for i, mn := range snapshot.NextEpochCandidates {
+		for i, mn := range snap.NextEpochCandidates {
 			log.Warn("[VerifyVoteMessage] Master node list item", "index", i, "Master node", mn.Hex())
 		}
 		log.Warn("[VerifyVoteMessage] Error while verifying vote message", "votedBlockNum", vote.ProposedBlockInfo.Number.Uint64(), "votedBlockHash", vote.ProposedBlockInfo.Hash.Hex(), "voteHash", vote.Hash(), "err", err)
