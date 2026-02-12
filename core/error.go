@@ -26,8 +26,8 @@ var (
 	// ErrKnownBlock is returned when a block to import is already known locally.
 	ErrKnownBlock = errors.New("block already known")
 
-	// ErrBlacklistedHash is returned if a block to import is on the blacklist.
-	ErrBlacklistedHash = errors.New("blacklisted hash")
+	// ErrDenylistedHash is returned if a block to import is on the denylist.
+	ErrDenylistedHash = errors.New("denylisted hash")
 
 	// ErrNoGenesis is returned when there is no Genesis Block.
 	ErrNoGenesis = errors.New("genesis not found in chain")
@@ -38,7 +38,7 @@ var (
 // error should be returned which is defined here.
 //
 // - If the pre-checking happens in the miner, then the transaction won't be packed.
-// - If the pre-checking happens in the block processing procedure, then a "BAD BLOCk"
+// - If the pre-checking happens in the block processing procedure, then a "BAD BLOCK"
 // error should be emitted.
 var (
 	// ErrNonceTooLow is returned if the nonce of a transaction is lower than the
@@ -75,6 +75,10 @@ var (
 	// ErrIntrinsicGas is returned if the transaction is specified to use less gas
 	// than required to start the invocation.
 	ErrIntrinsicGas = errors.New("intrinsic gas too low")
+
+	// ErrFloorDataGas is returned if the transaction is specified to use less gas
+	// than required for the data floor cost.
+	ErrFloorDataGas = errors.New("insufficient gas for floor data gas cost")
 
 	// ErrTxTypeNotSupported is returned if a transaction is not supported in the
 	// current network configuration.

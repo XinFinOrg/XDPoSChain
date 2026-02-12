@@ -6,9 +6,9 @@ import (
 )
 
 var localConstant = constant{
-	chainID:           5151,
-	maxMasternodesV2:  108,
-	blackListHFNumber: 0,
+	chainID:          5151,
+	maxMasternodesV2: 108,
+	denylistHFNumber: 0,
 
 	tip2019Block:           big.NewInt(0),
 	tipSigning:             big.NewInt(0),
@@ -29,7 +29,8 @@ var localConstant = constant{
 	tipXDCXReceiverDisable: big.NewInt(0),
 	eip1559Block:           big.NewInt(0),
 	cancunBlock:            big.NewInt(0),
-	pragueBlock:            big.NewInt(math.MaxInt64),
+	pragueBlock:            big.NewInt(0),
+	osakaBlock:             big.NewInt(0),
 	dynamicGasLimitBlock:   big.NewInt(0),
 	tipUpgradeReward:       big.NewInt(math.MaxInt64),
 	tipUpgradePenalty:      big.NewInt(math.MaxInt64),
@@ -42,5 +43,5 @@ var localConstant = constant{
 
 	ignoreSignerCheckBlockArray: map[uint64]struct{}{},
 
-	blacklist: map[Address]struct{}{},
+	denylist: map[Address]struct{}{},
 }

@@ -17,6 +17,8 @@
 package core
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"math/big"
 	"runtime"
@@ -100,17 +102,21 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 	signer := types.MakeSigner(p.config, blockNumber)
 	coinbaseOwner := getCoinbaseOwner(p.bc, statedb, header, nil)
 
+	if p.config.IsPrague(block.Number()) {
+		ProcessParentBlockHash(block.ParentHash(), vmenv, tracingStateDB)
+	}
+
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
-		// check black-list txs after hf
-		if block.Number().Uint64() >= common.BlackListHFNumber {
-			// check if sender is in black list
-			if common.IsInBlacklist(tx.From()) {
-				return nil, nil, 0, fmt.Errorf("block contains transaction with sender in black-list: %v", tx.From().Hex())
+		// check denylist txs after hf
+		if block.Number().Uint64() >= common.DenylistHFNumber {
+			// check if sender is in denylist
+			if common.IsInDenylist(tx.From()) {
+				return nil, nil, 0, fmt.Errorf("block contains transaction with sender in denylist: %v", tx.From().Hex())
 			}
-			// check if receiver is in black list
-			if common.IsInBlacklist(tx.To()) {
-				return nil, nil, 0, fmt.Errorf("block contains transaction with receiver in black-list: %v", tx.To().Hex())
+			// check if receiver is in denylist
+			if common.IsInDenylist(tx.To()) {
+				return nil, nil, 0, fmt.Errorf("block contains transaction with receiver in denylist: %v", tx.To().Hex())
 			}
 		}
 		// validate minFee slot for XDCZ
@@ -203,18 +209,22 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 	signer := types.MakeSigner(p.config, blockNumber)
 	coinbaseOwner := getCoinbaseOwner(p.bc, statedb, header, nil)
 
+	if p.config.IsPrague(block.Number()) {
+		ProcessParentBlockHash(block.ParentHash(), vmenv, tracingStateDB)
+	}
+
 	// Iterate over and process the individual transactions
 	receipts = make([]*types.Receipt, block.Transactions().Len())
 	for i, tx := range block.Transactions() {
-		// check black-list txs after hf
-		if block.Number().Uint64() >= common.BlackListHFNumber {
-			// check if sender is in black list
-			if common.IsInBlacklist(tx.From()) {
-				return nil, nil, 0, fmt.Errorf("block contains transaction with sender in black-list: %v", tx.From().Hex())
+		// check denylist txs after hf
+		if block.Number().Uint64() >= common.DenylistHFNumber {
+			// check if sender is in denylist
+			if common.IsInDenylist(tx.From()) {
+				return nil, nil, 0, fmt.Errorf("block contains transaction with sender in denylist: %v", tx.From().Hex())
 			}
-			// check if receiver is in black list
-			if common.IsInBlacklist(tx.To()) {
-				return nil, nil, 0, fmt.Errorf("block contains transaction with receiver in black-list: %v", tx.To().Hex())
+			// check if receiver is in denylist
+			if common.IsInDenylist(tx.To()) {
+				return nil, nil, 0, fmt.Errorf("block contains transaction with receiver in denylist: %v", tx.To().Hex())
 			}
 		}
 		// validate minFee slot for XDCZ
@@ -306,7 +316,7 @@ func ApplyTransactionWithEVM(msg *Message, config *params.ChainConfig, gp *GasPo
 	txContext := NewEVMTxContext(msg)
 	evm.Reset(txContext, tracingStateDB)
 
-	// Bypass blacklist address
+	// Bypass denylist address
 	maxBlockNumber := new(big.Int).SetInt64(9147459)
 	if blockNumber.Cmp(maxBlockNumber) <= 0 {
 		addrMap := make(map[string]string)
@@ -448,7 +458,7 @@ func ApplyTransactionWithEVM(msg *Message, config *params.ChainConfig, gp *GasPo
 			}
 		}
 	}
-	// End Bypass blacklist address
+	// End Bypass denylist address
 
 	// Apply the transaction to the current state (included in the env)
 	result, err := ApplyMessage(evm, msg, gp, coinbaseOwner)
@@ -638,4 +648,96 @@ func InitSignerInTransactions(config *params.ChainConfig, header *types.Header, 
 		})
 	}
 	wg.Wait()
+}
+
+// ProcessParentBlockHash writes the parent hash to the EIP-2935 history contract
+// and enforces the expected code, with a one-time Prague backfill if missing.
+func ProcessParentBlockHash(prevHash common.Hash, vmenv *vm.EVM, statedb vm.StateDB) {
+	// Verify history contract code matches the expected bytecode
+	code := statedb.GetCode(params.HistoryStorageAddress)
+	if len(code) > 0 && !bytes.Equal(code, params.HistoryStorageCode) {
+		log.Error("History storage code mismatch",
+			"have", crypto.Keccak256Hash(code),
+			"want", crypto.Keccak256Hash(params.HistoryStorageCode),
+		)
+		panic("history storage code mismatch")
+	}
+
+	blockNumber := vmenv.Context.BlockNumber
+	if blockNumber == nil || !vmenv.ChainConfig().IsPrague(blockNumber) {
+		return
+	}
+	forkBlock := vmenv.ChainConfig().PragueBlock
+	if forkBlock == nil {
+		forkBlock = common.PragueBlock
+	}
+	if forkBlock == nil || blockNumber.Cmp(forkBlock) < 0 {
+		return
+	}
+
+	// Only deploy and backfill if the contract is missing at/after Prague activation.
+	if len(code) == 0 {
+		if !statedb.Exist(params.HistoryStorageAddress) {
+			statedb.CreateAccount(params.HistoryStorageAddress)
+		}
+		if statedb.GetNonce(params.HistoryStorageAddress) == 0 {
+			statedb.SetNonce(params.HistoryStorageAddress, 1)
+		}
+		statedb.SetCode(params.HistoryStorageAddress, params.HistoryStorageCode)
+
+		if blockNumber.Sign() > 0 {
+			end := blockNumber.Uint64() - 1
+			start := end
+			if end+1 > params.HistoryServeWindow {
+				start = end + 1 - params.HistoryServeWindow
+			}
+			if forkBlock.Sign() > 0 {
+				forkStart := forkBlock.Uint64() - 1
+				if forkStart > start {
+					start = forkStart
+				}
+			}
+			for n := start; n <= end; n++ {
+				hash := vmenv.Context.GetHash(n)
+				if hash == (common.Hash{}) {
+					log.Debug("History backfill missing hash", "number", n)
+					continue
+				}
+				statedb.SetState(params.HistoryStorageAddress, historyStorageKey(n), hash)
+			}
+		}
+	}
+
+	if tracer := vmenv.Config.Tracer; tracer != nil {
+		if tracer.OnSystemCallStart != nil {
+			tracer.OnSystemCallStart()
+		}
+		if tracer.OnSystemCallEnd != nil {
+			defer tracer.OnSystemCallEnd()
+		}
+	}
+
+	msg := &Message{
+		From:      params.SystemAddress,
+		GasLimit:  30_000_000,
+		GasPrice:  common.Big0,
+		GasFeeCap: common.Big0,
+		GasTipCap: common.Big0,
+		To:        &params.HistoryStorageAddress,
+		Data:      prevHash.Bytes(),
+	}
+	vmenv.Reset(NewEVMTxContext(msg), statedb)
+	statedb.AddAddressToAccessList(params.HistoryStorageAddress)
+	_, _, err := vmenv.Call(vm.AccountRef(msg.From), *msg.To, msg.Data, 30_000_000, common.U2560)
+	if err != nil {
+		panic(err)
+	}
+	statedb.Finalise(true)
+}
+
+func historyStorageKey(number uint64) common.Hash {
+	ringIndex := number % params.HistoryServeWindow
+	var key common.Hash
+	binary.BigEndian.PutUint64(key[24:], ringIndex)
+	return key
 }

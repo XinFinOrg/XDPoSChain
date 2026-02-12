@@ -158,7 +158,7 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config) (*state.StateD
 	if !ok {
 		return nil, UnsupportedForkError{subtest.Fork}
 	}
-	block := t.genesis(config).ToBlock(nil)
+	block := t.genesis(config).ToBlock()
 	db := rawdb.NewMemoryDatabase()
 	statedb := MakePreState(db, t.json.Pre)
 
@@ -201,6 +201,11 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config) (*state.StateD
 	root, _ := statedb.Commit(block.NumberU64(), config.IsEIP158(block.Number()))
 	if root != common.Hash(post.Root) {
 		return statedb, fmt.Errorf("post state root mismatch: got %x, want %x", root, post.Root)
+	}
+	// Re-init the post-state instance for further operation
+	statedb, err = state.New(root, statedb.Database())
+	if err != nil {
+		return nil, err
 	}
 	return statedb, nil
 }

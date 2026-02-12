@@ -17,8 +17,6 @@
 package vm
 
 import (
-	"errors"
-
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
@@ -26,8 +24,10 @@ import (
 // the rules.
 func LookupInstructionSet(rules params.Rules) (JumpTable, error) {
 	switch {
+	case rules.IsOsaka:
+		return newOsakaInstructionSet(), nil
 	case rules.IsPrague:
-		return newCancunInstructionSet(), errors.New("prague-fork not defined yet")
+		return newPragueInstructionSet(), nil
 	case rules.IsCancun:
 		return newCancunInstructionSet(), nil
 	case rules.IsEIP1559:

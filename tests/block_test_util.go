@@ -112,7 +112,7 @@ func (t *BlockTest) Run() error {
 		return fmt.Errorf("genesis block state root does not match test: computed=%x, test=%x", gblock.Root().Bytes(), t.json.Genesis.StateRoot)
 	}
 
-	chain, err := core.NewBlockChain(db, &core.CacheConfig{TrieCleanLimit: 0}, config, ethash.NewFaker(), vm.Config{})
+	chain, err := core.NewBlockChain(db, &core.CacheConfig{TrieCleanLimit: 0}, gspec, ethash.NewFaker(), vm.Config{})
 	if err != nil {
 		return err
 	}
@@ -286,7 +286,7 @@ func (t *BlockTest) validateImportedHeaders(cm *core.BlockChain, validBlocks []b
 	// block-by-block, so we can only validate imported headers after
 	// all blocks have been processed by BlockChain, as they may not
 	// be part of the longest chain until last block is imported.
-	for b := cm.CurrentBlock(); b != nil && b.Number.Uint64() != 0; b = cm.GetHeaderByHash(b.ParentHash) {
+	for b := cm.CurrentBlock(); b != nil && b.Number.Sign() != 0; b = cm.GetHeaderByHash(b.ParentHash) {
 		if err := validateHeader(bmap[b.Hash()].BlockHeader, b); err != nil {
 			return fmt.Errorf("imported block header validation failed: %v", err)
 		}

@@ -734,7 +734,7 @@ func (net *Network) internNodeFromNeighbours(sender *net.UDPAddr, rn rpcNode) (n
 		// We haven't seen this node before.
 		n, err = nodeFromRPC(sender, rn)
 		if net.netrestrict != nil && !net.netrestrict.Contains(n.IP) {
-			return n, errors.New("not contained in netrestrict whitelist")
+			return n, errors.New("not contained in netrestrict allowlist")
 		}
 		if err == nil {
 			n.state = unknown
@@ -818,11 +818,9 @@ type nodeEvent uint
 //go:generate go run golang.org/x/tools/cmd/stringer -type=nodeEvent
 
 const (
-	invalidEvent nodeEvent = iota // zero is reserved
-
 	// Packet type events.
 	// These correspond to packet types in the UDP protocol.
-	pingPacket
+	pingPacket = iota + 1
 	pongPacket
 	findnodePacket
 	neighborsPacket

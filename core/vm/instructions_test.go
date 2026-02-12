@@ -51,14 +51,6 @@ var alphabetSoup = "ABCDEF090807060504030201ffffffffffffffffffffffffffffffffffff
 var commonParams []*twoOperandParams
 var twoOpMethods map[string]executionFunc
 
-type contractRef struct {
-	addr common.Address
-}
-
-func (c contractRef) Address() common.Address {
-	return c.addr
-}
-
 func init() {
 	// Params is a list of common edgecases that should be used for some common tests
 	params := []string{
@@ -583,8 +575,7 @@ func TestOpTstore(t *testing.T) {
 		mem          = NewMemory()
 		caller       = common.Address{}
 		to           = common.Address{1}
-		contractRef  = contractRef{caller}
-		contract     = NewContract(contractRef, AccountRef(to), new(big.Int), 0)
+		contract     = NewContract(caller, to, new(uint256.Int), 0, nil)
 		scopeContext = ScopeContext{mem, stack, contract}
 		value        = common.Hex2Bytes("abcdef00000000000000abba000000000deaf000000c0de00100000000133700")
 	)
@@ -913,6 +904,46 @@ func TestOpMCopy(t *testing.T) {
 		wantGas := tc.wantGas
 		if haveGas != wantGas {
 			t.Errorf("case %d: gas wrong, want %d have %d\n", i, wantGas, haveGas)
+		}
+	}
+}
+
+func TestOpCLZ(t *testing.T) {
+	evm := NewEVM(BlockContext{}, TxContext{}, nil, nil, params.TestChainConfig, Config{})
+
+	tests := []struct {
+		inputHex string
+		want     uint64 // expected CLZ result
+	}{
+		{"0x0", 256},
+		{"0x1", 255},
+		{"0x6ff", 245},        // 0x6ff = 0b11011111111 (11 bits), so 256-11 = 245
+		{"0xffffffffff", 216}, // 40 bits, so 256-40 = 216
+		{"0x4000000000000000000000000000000000000000000000000000000000000000", 1},
+		{"0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", 1},
+		{"0x8000000000000000000000000000000000000000000000000000000000000000", 0},
+		{"0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", 0},
+	}
+	for _, tc := range tests {
+		// prepare a fresh stack and PC
+		stack := newstack()
+		pc := uint64(0)
+
+		// parse input
+		val := new(uint256.Int)
+		if err := val.SetFromHex(tc.inputHex); err != nil {
+			t.Fatal("invalid hex uint256:", tc.inputHex)
+		}
+
+		stack.push(val)
+		opCLZ(&pc, evm, &ScopeContext{Stack: stack})
+
+		if gotLen := stack.len(); gotLen != 1 {
+			t.Fatalf("stack length = %d; want 1", gotLen)
+		}
+		result := stack.pop()
+		if got := result.Uint64(); got != tc.want {
+			t.Fatalf("clz(%q) = %d; want %d", tc.inputHex, got, tc.want)
 		}
 	}
 }

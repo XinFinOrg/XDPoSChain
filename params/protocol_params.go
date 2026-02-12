@@ -16,11 +16,10 @@
 
 package params
 
-import "math/big"
+import (
+	"math/big"
 
-var (
-	TargetGasLimit  uint64 = XDCGenesisGasLimit // The artificial target
-	V2TestsGasLimit uint64 = 1200000000         // The gas limit used in the v2 consensus tests
+	"github.com/XinFinOrg/XDPoSChain/common"
 )
 
 const (
@@ -65,6 +64,8 @@ const (
 	SuicideRefundGas uint64 = 24000 // Refunded following a suicide operation.
 	MemoryGas        uint64 = 3     // Times the address of the (highest referenced byte in memory + 1). NOTE: referencing happens on read, write and in instructions such as RETURN and CALL.
 
+	TxTokenPerNonZeroByte     uint64 = 4     // Token cost per non-zero byte as specified by EIP-7623.
+	TxCostFloorPerToken       uint64 = 10    // Cost floor per byte of data as specified by EIP-7623.
 	TxAccessListAddressGas    uint64 = 2400  // Per address specified in EIP 2930 access list
 	TxAccessListStorageKeyGas uint64 = 1900  // Per storage key specified in EIP 2930 access list
 	TxAuthTupleGas            uint64 = 12500 // Per auth tuple code specified in EIP-7702
@@ -95,16 +96,7 @@ const (
 	// up to half the consumed gas could be refunded. Redefined as 1/5th in EIP-3529
 	RefundQuotient        uint64 = 2
 	RefundQuotientEIP3529 uint64 = 5
-)
 
-var (
-	DifficultyBoundDivisor = big.NewInt(2048)   // The bound divisor of the difficulty, used in the update calculations.
-	GenesisDifficulty      = big.NewInt(131072) // Difficulty of the Genesis block.
-	MinimumDifficulty      = big.NewInt(131072) // The minimum that the difficulty may ever be.
-	DurationLimit          = big.NewInt(13)     // The decision boundary on the blocktime duration used to determine whether difficulty should go up or not.
-)
-
-const (
 	NetSstoreNoopGas  uint64 = 200   // Once per SSTORE operation if the value doesn't change.
 	NetSstoreInitGas  uint64 = 20000 // Once per SSTORE operation from clean zero.
 	NetSstoreCleanGas uint64 = 5000  // Once per SSTORE operation from clean non-zero.
@@ -172,4 +164,25 @@ const (
 	Bn256PairingBaseGasIstanbul      uint64 = 45000  // Base price for an elliptic curve pairing check
 	Bn256PairingPerPointGasByzantium uint64 = 80000  // Byzantium per-point price for an elliptic curve pairing check
 	Bn256PairingPerPointGasIstanbul  uint64 = 34000  // Per-point price for an elliptic curve pairing check
+
+	HistoryServeWindow = 8191 // Number of blocks to serve historical block hashes for, EIP-2935.
+)
+
+var (
+	DifficultyBoundDivisor = big.NewInt(2048)   // The bound divisor of the difficulty, used in the update calculations.
+	GenesisDifficulty      = big.NewInt(131072) // Difficulty of the Genesis block.
+	MinimumDifficulty      = big.NewInt(131072) // The minimum that the difficulty may ever be.
+	DurationLimit          = big.NewInt(13)     // The decision boundary on the blocktime duration used to determine whether difficulty should go up or not.
+
+	TargetGasLimit uint64 = XDCGenesisGasLimit // The artificial target
+)
+
+// System contracts.
+var (
+	// SystemAddress is where the system-transaction is sent from as per EIP-2935
+	SystemAddress = common.HexToAddress("0xfffffffffffffffffffffffffffffffffffffffe")
+
+	// EIP-2935 - Serve historical block hashes from state
+	HistoryStorageAddress = common.HexToAddress("0x0000F90827F1C53a10cb7A02335B175320002935")
+	HistoryStorageCode    = common.FromHex("3373fffffffffffffffffffffffffffffffffffffffe14604657602036036042575f35600143038111604257611fff81430311604257611fff9006545f5260205ff35b5f5ffd5b5f35611fff60014303065500")
 )

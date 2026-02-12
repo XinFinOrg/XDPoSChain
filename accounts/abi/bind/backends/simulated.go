@@ -143,7 +143,7 @@ func NewXDCSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64, chainConf
 		TrieTimeLimit:  5 * time.Minute,
 		Preimages:      true,
 	}
-	blockchain, _ := core.NewBlockChain(database, cacheConfig, genesis.Config, consensus, vm.Config{})
+	blockchain, _ := core.NewBlockChain(database, cacheConfig, &genesis, consensus, vm.Config{})
 
 	backend := &SimulatedBackend{
 		database:   database,
@@ -171,7 +171,7 @@ func NewSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64) *SimulatedBa
 	database := rawdb.NewMemoryDatabase()
 	genesis := core.Genesis{Config: params.AllEthashProtocolChanges, GasLimit: gasLimit, Alloc: alloc}
 	genesis.MustCommit(database)
-	blockchain, _ := core.NewBlockChain(database, nil, genesis.Config, ethash.NewFaker(), vm.Config{})
+	blockchain, _ := core.NewBlockChain(database, nil, &genesis, ethash.NewFaker(), vm.Config{})
 
 	backend := &SimulatedBackend{
 		database:   database,
@@ -830,11 +830,11 @@ func (b *SimulatedBackend) FilterLogs(ctx context.Context, query ethereum.Filter
 		filter = b.filterSystem.NewBlockFilter(*query.BlockHash, query.Addresses, query.Topics)
 	} else {
 		// Initialize unset filter boundaried to run from genesis to chain head
-		from := int64(0)
+		from := rpc.EarliestBlockNumber.Int64()
 		if query.FromBlock != nil {
 			from = query.FromBlock.Int64()
 		}
-		to := int64(-1)
+		to := rpc.LatestBlockNumber.Int64()
 		if query.ToBlock != nil {
 			to = query.ToBlock.Int64()
 		}

@@ -18,7 +18,6 @@ package vm
 
 import (
 	"fmt"
-	"math/big"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/math"
@@ -71,7 +70,7 @@ func (ctx *ScopeContext) Address() common.Address {
 }
 
 // CallValue returns the value supplied with this call.
-func (ctx *ScopeContext) CallValue() *big.Int {
+func (ctx *ScopeContext) CallValue() *uint256.Int {
 	return ctx.Contract.Value()
 }
 
@@ -79,6 +78,11 @@ func (ctx *ScopeContext) CallValue() *big.Int {
 // the contents of the returned data.
 func (ctx *ScopeContext) CallInput() []byte {
 	return ctx.Contract.Input
+}
+
+// ContractCode returns the code of the contract being executed.
+func (ctx *ScopeContext) ContractCode() []byte {
+	return ctx.Contract.Code
 }
 
 // Run loops and evaluates the contract's code with the given input data and returns

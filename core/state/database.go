@@ -93,6 +93,10 @@ type Trie interface {
 	// in the trie with provided address.
 	UpdateAccount(address common.Address, account *types.StateAccount) error
 
+	// UpdateContractCode abstracts code write to the trie. It is expected
+	// to be moved to the stateWriter interface when the latter is ready.
+	UpdateContractCode(address common.Address, codeHash common.Hash, code []byte) error
+
 	// DeleteStorage removes any existing value for key from the trie. If a node
 	// was not found in the database, a trie.MissingNodeError is returned.
 	DeleteStorage(addr common.Address, key []byte) error
@@ -110,11 +114,12 @@ type Trie interface {
 	// The returned nodeset can be nil if the trie is clean(nothing to commit).
 	// Once the trie is committed, it's not usable anymore. A new trie must
 	// be created with new root and updated trie database for following usage
-	Commit(collectLeaf bool) (common.Hash, *trienode.NodeSet)
+	Commit(collectLeaf bool) (common.Hash, *trienode.NodeSet, error)
 
 	// NodeIterator returns an iterator that returns nodes of the trie. Iteration
-	// starts at the key after the given start key.
-	NodeIterator(startKey []byte) trie.NodeIterator
+	// starts at the key after the given start key. An error will be returned
+	// if fails to create node iterator.
+	NodeIterator(startKey []byte) (trie.NodeIterator, error)
 
 	// Prove constructs a Merkle proof for key. The result contains all encoded nodes
 	// on the path to the value at key. The value itself is also included in the last

@@ -38,9 +38,9 @@ var (
 )
 
 type constant struct {
-	chainID           uint64
-	blackListHFNumber uint64
-	maxMasternodesV2  int // Last v1 masternodes
+	chainID          uint64
+	denylistHFNumber uint64
+	maxMasternodesV2 int // Last v1 masternodes
 
 	tip2019Block           *big.Int
 	tipSigning             *big.Int
@@ -65,6 +65,7 @@ type constant struct {
 	eip1559Block           *big.Int
 	cancunBlock            *big.Int
 	pragueBlock            *big.Int
+	osakaBlock             *big.Int
 	dynamicGasLimitBlock   *big.Int
 
 	trc21IssuerSMC         Address
@@ -74,13 +75,13 @@ type constant struct {
 
 	ignoreSignerCheckBlockArray map[uint64]struct{}
 
-	blacklist map[Address]struct{}
+	denylist map[Address]struct{}
 }
 
 // variables for specific networks, copy values from mainnet constant to pass tests
 var (
-	BlackListHFNumber = MainnetConstant.blackListHFNumber
-	MaxMasternodesV2  = MainnetConstant.maxMasternodesV2 // Last v1 masternodes
+	DenylistHFNumber = MainnetConstant.denylistHFNumber
+	MaxMasternodesV2 = MainnetConstant.maxMasternodesV2 // Last v1 masternodes
 
 	TIP2019Block           = MainnetConstant.tip2019Block
 	TIPSigning             = MainnetConstant.tipSigning
@@ -101,6 +102,7 @@ var (
 	Eip1559Block           = MainnetConstant.eip1559Block
 	CancunBlock            = MainnetConstant.cancunBlock
 	PragueBlock            = MainnetConstant.pragueBlock
+	OsakaBlock             = MainnetConstant.osakaBlock
 	DynamicGasLimitBlock   = MainnetConstant.dynamicGasLimitBlock
 	TIPUpgradeReward       = MainnetConstant.tipUpgradeReward
 	TipUpgradePenalty      = MainnetConstant.tipUpgradePenalty
@@ -112,7 +114,7 @@ var (
 	LendingRegistrationSMC = MainnetConstant.lendingRegistrationSMC
 
 	ignoreSignerCheckBlockArray = MainnetConstant.ignoreSignerCheckBlockArray
-	blacklist                   = MainnetConstant.blacklist
+	denylist                    = MainnetConstant.denylist
 )
 
 func IsIgnoreSignerCheckBlock(blockNumber uint64) bool {
@@ -120,11 +122,11 @@ func IsIgnoreSignerCheckBlock(blockNumber uint64) bool {
 	return ok
 }
 
-func IsInBlacklist(address *Address) bool {
+func IsInDenylist(address *Address) bool {
 	if address == nil {
 		return false
 	}
-	_, ok := blacklist[*address]
+	_, ok := denylist[*address]
 	return ok
 }
 
@@ -145,7 +147,7 @@ func CopyConstants(chainID uint64) {
 	}
 
 	MaxMasternodesV2 = c.maxMasternodesV2
-	BlackListHFNumber = c.blackListHFNumber
+	DenylistHFNumber = c.denylistHFNumber
 	TIP2019Block = c.tip2019Block
 	TIPSigning = c.tipSigning
 	TIPRandomize = c.tipRandomize
@@ -165,6 +167,7 @@ func CopyConstants(chainID uint64) {
 	Eip1559Block = c.eip1559Block
 	CancunBlock = c.cancunBlock
 	PragueBlock = c.pragueBlock
+	OsakaBlock = c.osakaBlock
 	DynamicGasLimitBlock = c.dynamicGasLimitBlock
 	TIPUpgradeReward = c.tipUpgradeReward
 	TipUpgradePenalty = c.tipUpgradePenalty
@@ -178,6 +181,6 @@ func CopyConstants(chainID uint64) {
 	clear(ignoreSignerCheckBlockArray)
 	maps.Copy(ignoreSignerCheckBlockArray, c.ignoreSignerCheckBlockArray)
 
-	clear(blacklist)
-	maps.Copy(blacklist, c.blacklist)
+	clear(denylist)
+	maps.Copy(denylist, c.denylist)
 }
