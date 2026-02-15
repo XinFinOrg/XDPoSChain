@@ -363,7 +363,7 @@ func (x *XDPoS_v1) StoreSnapshot(snap *SnapshotV1) error {
 	return snap.store(x.db)
 }
 
-func (x *XDPoS_v1) GetMasternodes(chain consensus.ChainReader, header *types.Header) []common.Address {
+func (x *XDPoS_v1) GetMasternodes(chain consensus.ChainHeaderReader, header *types.Header) []common.Address {
 	n := header.Number.Uint64()
 	e := x.config.Epoch
 	switch {
@@ -549,7 +549,7 @@ func (x *XDPoS_v1) snapshot(chain consensus.ChainReader, number uint64, hash com
 
 // VerifyUncles implements consensus.Engine, always returning an error for any
 // uncles as this consensus mechanism doesn't permit uncles.
-func (x *XDPoS_v1) VerifyUncles(chain consensus.ChainReader, block *types.Block) error {
+func (x *XDPoS_v1) VerifyUncles(chain consensus.ChainHeaderReader, block *types.Block) error {
 	if len(block.Uncles()) > 0 {
 		return errors.New("uncles not allowed")
 	}
@@ -657,7 +657,7 @@ func (x *XDPoS_v1) verifySeal(chain consensus.ChainReader, header *types.Header,
 	return nil
 }
 
-func (x *XDPoS_v1) GetValidator(creator common.Address, chain consensus.ChainReader, header *types.Header) (common.Address, error) {
+func (x *XDPoS_v1) GetValidator(creator common.Address, chain consensus.ChainHeaderReader, header *types.Header) (common.Address, error) {
 	epoch := x.config.Epoch
 	no := header.Number.Uint64()
 	cpNo := no
@@ -1019,7 +1019,7 @@ func removePenaltiesFromBlock(chain consensus.ChainReader, masternodes []common.
 	return masternodes
 }
 
-func (x *XDPoS_v1) getSignersFromContract(chain consensus.ChainReader, checkpointHeader *types.Header) ([]common.Address, error) {
+func (x *XDPoS_v1) getSignersFromContract(chain consensus.ChainHeaderReader, checkpointHeader *types.Header) ([]common.Address, error) {
 	startGapBlockHeader := checkpointHeader
 	number := checkpointHeader.Number.Uint64()
 	for step := uint64(1); step <= chain.Config().XDPoS.Gap; step++ {

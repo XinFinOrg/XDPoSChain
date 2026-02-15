@@ -17,7 +17,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func (x *XDPoS_v2) VerifyTimeoutMessage(chain consensus.ChainReader, timeoutMsg *types.Timeout) (bool, error) {
+func (x *XDPoS_v2) VerifyTimeoutMessage(chain consensus.ChainHeaderReader, timeoutMsg *types.Timeout) (bool, error) {
 	if timeoutMsg.Round < x.currentRound {
 		log.Debug("[VerifyTimeoutMessage] Disqualified timeout message as the proposed round does not match currentRound", "timeoutHash", timeoutMsg.Hash(), "timeoutRound", timeoutMsg.Round, "currentRound", x.currentRound)
 		return false, nil
@@ -46,13 +46,13 @@ func (x *XDPoS_v2) VerifyTimeoutMessage(chain consensus.ChainReader, timeoutMsg 
 /*
 Entry point for handling timeout message to process below:
 */
-func (x *XDPoS_v2) TimeoutHandler(blockChainReader consensus.ChainReader, timeout *types.Timeout) error {
+func (x *XDPoS_v2) TimeoutHandler(blockChainReader consensus.ChainHeaderReader, timeout *types.Timeout) error {
 	x.lock.Lock()
 	defer x.lock.Unlock()
 	return x.timeoutHandler(blockChainReader, timeout)
 }
 
-func (x *XDPoS_v2) timeoutHandler(blockChainReader consensus.ChainReader, timeout *types.Timeout) error {
+func (x *XDPoS_v2) timeoutHandler(blockChainReader consensus.ChainHeaderReader, timeout *types.Timeout) error {
 	// checkRoundNumber
 	if timeout.Round != x.currentRound {
 		return &utils.ErrIncomingMessageRoundNotEqualCurrentRound{
@@ -91,7 +91,7 @@ In the engine v2, we will need to:
  2. processTC()
  3. generateSyncInfo()
 */
-func (x *XDPoS_v2) onTimeoutPoolThresholdReached(blockChainReader consensus.ChainReader, pooledTimeouts map[common.Hash]utils.PoolObj, currentTimeoutMsg utils.PoolObj, gapNumber uint64) error {
+func (x *XDPoS_v2) onTimeoutPoolThresholdReached(blockChainReader consensus.ChainHeaderReader, pooledTimeouts map[common.Hash]utils.PoolObj, currentTimeoutMsg utils.PoolObj, gapNumber uint64) error {
 	signatures := []types.Signature{}
 	for _, v := range pooledTimeouts {
 		signatures = append(signatures, v.(*types.Timeout).Signature)
@@ -113,7 +113,7 @@ func (x *XDPoS_v2) onTimeoutPoolThresholdReached(blockChainReader consensus.Chai
 	return nil
 }
 
-func (x *XDPoS_v2) getTCEpochInfo(chain consensus.ChainReader, timeoutRound types.Round) (*types.EpochSwitchInfo, error) {
+func (x *XDPoS_v2) getTCEpochInfo(chain consensus.ChainHeaderReader, timeoutRound types.Round) (*types.EpochSwitchInfo, error) {
 	epochSwitchInfo, err := x.getEpochSwitchInfo(chain, (chain.CurrentHeader()), (chain.CurrentHeader()).Hash())
 	if err != nil {
 		log.Error("[getTCEpochInfo] Error when getting epoch switch info", "error", err)
@@ -149,7 +149,7 @@ func (x *XDPoS_v2) getTCEpochInfo(chain consensus.ChainReader, timeoutRound type
 	return epochInfo, nil
 }
 
-func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.TimeoutCert) error {
+func (x *XDPoS_v2) verifyTC(chain consensus.ChainHeaderReader, timeoutCert *types.TimeoutCert) error {
 	if timeoutCert == nil || timeoutCert.Signatures == nil {
 		log.Warn("[verifyTC] TC or TC signatures is Nil")
 		return utils.ErrInvalidTC
@@ -225,7 +225,7 @@ func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.Time
 1. Update highestTC
 2. Check TC round >= node's currentRound. If yes, call setNewRound
 */
-func (x *XDPoS_v2) processTC(blockChainReader consensus.ChainReader, timeoutCert *types.TimeoutCert) error {
+func (x *XDPoS_v2) processTC(blockChainReader consensus.ChainHeaderReader, timeoutCert *types.TimeoutCert) error {
 	if x.highestTimeoutCert.Round < timeoutCert.Round {
 		x.highestTimeoutCert = timeoutCert
 	}
@@ -241,7 +241,7 @@ func (x *XDPoS_v2) processTC(blockChainReader consensus.ChainReader, timeoutCert
 	2. Sign the signature
 	3. send to broadcast channel
 */
-func (x *XDPoS_v2) sendTimeout(chain consensus.ChainReader) error {
+func (x *XDPoS_v2) sendTimeout(chain consensus.ChainHeaderReader) error {
 	// Construct the gapNumber
 	var gapNumber uint64
 	currentBlockHeader := chain.CurrentHeader()
@@ -310,13 +310,13 @@ func (x *XDPoS_v2) OnCountdownTimeout(time time.Time, chain interface{}) error {
 	defer x.lock.Unlock()
 
 	// Check if we are within the master node list
-	allow := x.allowedToSend(chain.(consensus.ChainReader), chain.(consensus.ChainReader).CurrentHeader(), "timeout")
+	allow := x.allowedToSend(chain.(consensus.ChainHeaderReader), chain.(consensus.ChainHeaderReader).CurrentHeader(), "timeout")
 	if !allow {
 		return nil
 	}
-	x.processSyncInfoPool(chain.(consensus.ChainReader))
+	x.processSyncInfoPool(chain.(consensus.ChainHeaderReader))
 
-	err := x.sendTimeout(chain.(consensus.ChainReader))
+	err := x.sendTimeout(chain.(consensus.ChainHeaderReader))
 	if err != nil {
 		log.Error("Error while sending out timeout message at time: ", "time", time, "err", err)
 		return err

@@ -164,7 +164,7 @@ func (x *XDPoS_v2) GetRoundNumber(header *types.Header) (types.Round, error) {
 	}
 }
 
-func (x *XDPoS_v2) GetSignersFromSnapshot(chain consensus.ChainReader, header *types.Header) ([]common.Address, error) {
+func (x *XDPoS_v2) GetSignersFromSnapshot(chain consensus.ChainHeaderReader, header *types.Header) ([]common.Address, error) {
 	snap, err := x.getSnapshot(chain, header.Number.Uint64(), false)
 	if err != nil {
 		return nil, err
@@ -172,7 +172,7 @@ func (x *XDPoS_v2) GetSignersFromSnapshot(chain consensus.ChainReader, header *t
 	return snap.NextEpochCandidates, err
 }
 
-func (x *XDPoS_v2) CalculateMissingRounds(chain consensus.ChainReader, header *types.Header) (*utils.PublicApiMissedRoundsMetadata, error) {
+func (x *XDPoS_v2) CalculateMissingRounds(chain consensus.ChainHeaderReader, header *types.Header) (*utils.PublicApiMissedRoundsMetadata, error) {
 	var missedRounds []utils.MissedRoundInfo
 	switchInfo, err := x.getEpochSwitchInfo(chain, header, header.Hash())
 	if err != nil {
@@ -229,7 +229,7 @@ func (x *XDPoS_v2) CalculateMissingRounds(chain consensus.ChainReader, header *t
 	return missedRoundsMetadata, nil
 }
 
-func (x *XDPoS_v2) getBlockByEpochNumberInCache(chain consensus.ChainReader, estRound types.Round) *types.BlockInfo {
+func (x *XDPoS_v2) getBlockByEpochNumberInCache(chain consensus.ChainHeaderReader, estRound types.Round) *types.BlockInfo {
 	epochSwitchInCache := make([]*types.BlockInfo, 0)
 	for r := estRound; r < estRound+types.Round(x.config.Epoch); r++ {
 		blockInfo, ok := x.round2epochBlockInfo.Get(r)
@@ -255,7 +255,7 @@ func (x *XDPoS_v2) getBlockByEpochNumberInCache(chain consensus.ChainReader, est
 	return nil
 }
 
-func (x *XDPoS_v2) binarySearchBlockByEpochNumber(chain consensus.ChainReader, targetEpochNum uint64, start, end uint64) (*types.BlockInfo, *types.Header, error) {
+func (x *XDPoS_v2) binarySearchBlockByEpochNumber(chain consensus.ChainHeaderReader, targetEpochNum uint64, start, end uint64) (*types.BlockInfo, *types.Header, error) {
 	// `end` must be larger than the target and `start` could be the target
 	for start < end {
 		header := chain.GetHeaderByNumber((start + end) / 2)
@@ -305,7 +305,7 @@ func (x *XDPoS_v2) binarySearchBlockByEpochNumber(chain consensus.ChainReader, t
 	return nil, nil, errors.New("no epoch switch header in binary search (all rounds in this epoch are missed, which is very rare)")
 }
 
-func (x *XDPoS_v2) GetBlockByEpochNumber(chain consensus.ChainReader, targetEpochNum uint64) (*types.BlockInfo, error) {
+func (x *XDPoS_v2) GetBlockByEpochNumber(chain consensus.ChainHeaderReader, targetEpochNum uint64) (*types.BlockInfo, error) {
 	currentHeader := chain.CurrentHeader()
 	if currentHeader == nil {
 		return nil, errors.New("current header is nil")

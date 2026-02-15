@@ -28,9 +28,9 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 )
 
-// ChainReader defines a small collection of methods needed to access the local
+// ChainHeaderReader defines a small collection of methods needed to access the local
 // blockchain during header and/or uncle verification.
-type ChainReader interface {
+type ChainHeaderReader interface {
 	// Config retrieves the blockchain's chain configuration.
 	Config() *params.ChainConfig
 
@@ -45,6 +45,12 @@ type ChainReader interface {
 
 	// GetHeaderByHash retrieves a block header from the database by its hash.
 	GetHeaderByHash(hash common.Hash) *types.Header
+}
+
+// ChainReader defines a small collection of methods needed to access the local
+// blockchain during header and/or uncle verification.
+type ChainReader interface {
+	ChainHeaderReader
 
 	// GetBlock retrieves a block from the database by hash and number.
 	GetBlock(hash common.Hash, number uint64) *types.Block

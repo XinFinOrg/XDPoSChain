@@ -10,7 +10,7 @@ import (
 	Testing tools
 */
 
-func (x *XDPoS_v2) SetNewRoundFaker(blockChainReader consensus.ChainReader, newRound types.Round, resetTimer bool) {
+func (x *XDPoS_v2) SetNewRoundFaker(blockChainReader consensus.ChainHeaderReader, newRound types.Round, resetTimer bool) {
 	x.lock.Lock()
 	defer x.lock.Unlock()
 	// Reset a bunch of things
@@ -21,7 +21,7 @@ func (x *XDPoS_v2) SetNewRoundFaker(blockChainReader consensus.ChainReader, newR
 }
 
 // for test only
-func (x *XDPoS_v2) ProcessQCFaker(chain consensus.ChainReader, qc *types.QuorumCert) error {
+func (x *XDPoS_v2) ProcessQCFaker(chain consensus.ChainHeaderReader, qc *types.QuorumCert) error {
 	x.lock.Lock()
 	defer x.lock.Unlock()
 	return x.processQC(chain, qc)
