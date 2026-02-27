@@ -397,6 +397,11 @@ func (s *stateSync) loop() (err error) {
 			}
 		}
 	}
+	// Verify that the state root exists in the database after sync completes
+	if s.root != (common.Hash{}) && !rawdb.HasLegacyTrieNode(s.d.stateDB, s.root) {
+		return fmt.Errorf("state root verification failed: root %x not found in database after sync", s.root)
+	}
+	log.Debug("State root verified after sync", "root", s.root)
 	return nil
 }
 

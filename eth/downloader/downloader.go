@@ -125,6 +125,10 @@ type Downloader struct {
 	notified        int32
 	committed       int32
 
+	// Pivot block configuration (set before sync starts)
+	pivotNumber uint64      // Fixed pivot block number (0 = use default calculation)
+	pivotHash   common.Hash // Expected pivot block hash for verification
+
 	// Channels
 	headerCh      chan dataPack        // [eth/62] Channel receiving inbound block headers
 	bodyCh        chan dataPack        // [eth/62] Channel receiving inbound block bodies
@@ -246,6 +250,14 @@ func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, lightchai
 	go dl.qosTuner()
 	go dl.stateFetcher()
 	return dl
+}
+
+// SetPivotBlock sets the fixed pivot block number and hash for fast sync.
+// If set, the downloader will use this pivot instead of calculating one,
+// and will verify the pivot block's hash after state sync completes.
+func (d *Downloader) SetPivotBlock(number uint64, hash common.Hash) {
+	d.pivotNumber = number
+	d.pivotHash = hash
 }
 
 // Progress retrieves the synchronisation boundaries, specifically the origin
@@ -458,7 +470,13 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td *big.I
 	// Ensure our origin point is below any fast sync pivot point
 	pivot := uint64(0)
 	if mode == FastSync {
-		if height <= uint64(fsMinFullBlocks) {
+		if d.pivotNumber != 0 {
+			// Use configured pivot block
+			pivot = d.pivotNumber
+			if pivot <= origin {
+				origin = pivot - 1
+			}
+		} else if height <= uint64(fsMinFullBlocks) {
 			origin = 0
 		} else {
 			pivot = height - uint64(fsMinFullBlocks)
@@ -1620,9 +1638,12 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 		// Split around the pivot block and process the two sides via fast/full sync
 		if atomic.LoadInt32(&d.committed) == 0 {
 			latest = results[len(results)-1].Header
-			if height := latest.Number.Uint64(); height > pivot+2*uint64(fsMinFullBlocks) {
-				log.Warn("Pivot became stale, moving", "old", pivot, "new", height-uint64(fsMinFullBlocks))
-				pivot = height - uint64(fsMinFullBlocks)
+			// Only allow pivot movement if not configured with fixed pivot
+			if d.pivotNumber == 0 {
+				if height := latest.Number.Uint64(); height > pivot+2*uint64(fsMinFullBlocks) {
+					log.Warn("Pivot became stale, moving", "old", pivot, "new", height-uint64(fsMinFullBlocks))
+					pivot = height - uint64(fsMinFullBlocks)
+				}
 			}
 		}
 		P, beforeP, afterP := splitAroundPivot(pivot, results)
@@ -1644,6 +1665,17 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 			case <-sync.done:
 				if sync.err != nil {
 					return sync.err
+				}
+				// If pivot hash is configured, verify the downloaded pivot block
+				if d.pivotHash != (common.Hash{}) {
+					if P.Header.Hash() != d.pivotHash {
+						return fmt.Errorf("pivot block hash mismatch: have %x, want %x", P.Header.Hash(), d.pivotHash)
+					}
+					log.Info("Pivot block hash verified", "number", P.Header.Number, "hash", P.Header.Hash())
+				}
+				// Log state root for configured pivot
+				if d.pivotNumber != 0 {
+					log.Info("Pivot block state sync complete", "number", P.Header.Number, "root", P.Header.Root)
 				}
 				if err := d.commitPivotBlock(P); err != nil {
 					return err

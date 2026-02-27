@@ -20,6 +20,7 @@ package ethconfig
 import (
 	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool/legacypool"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
@@ -69,6 +70,10 @@ type Config struct {
 	// zero, the chain ID is used as network ID.
 	NetworkId uint64
 	SyncMode  downloader.SyncMode
+
+	// Fast sync pivot configuration
+	FastSyncPivotNumber uint64      // Pivot block number for fast sync (0 = use default calculation)
+	FastSyncPivotHash   common.Hash // Pivot block hash for fast sync verification (zero = skip verification)
 
 	NoPruning bool // Whether to disable pruning and flush everything to disk
 	Prefetch  bool // Whether to enable prefetching and only load state on demand

@@ -179,6 +179,18 @@ var (
 		Value:    ethconfig.Defaults.SyncMode.String(),
 		Category: flags.EthCategory,
 	}
+	FastSyncPivotNumberFlag = &cli.Uint64Flag{
+		Name:     "fastsyncpivotnumber",
+		Usage:    "Pivot block number for fast sync (0 = use default calculation)",
+		Value:    0,
+		Category: flags.EthCategory,
+	}
+	FastSyncPivotHashFlag = &cli.StringFlag{
+		Name:     "fastsyncpivothash",
+		Usage:    "Pivot block hash for fast sync verification (hex string, must be set if fastsyncpivotnumber is set)",
+		Value:    "",
+		Category: flags.EthCategory,
+	}
 	GCModeFlag = &cli.StringFlag{
 		Name:     "gcmode",
 		Usage:    `Blockchain garbage collection mode ("full", "archive")`,
@@ -1519,6 +1531,15 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	if ctx.IsSet(SyncModeFlag.Name) {
 		if err = cfg.SyncMode.UnmarshalText([]byte(ctx.String(SyncModeFlag.Name))); err != nil {
 			Fatalf("invalid --syncmode flag: %v", err)
+		}
+	}
+	if ctx.IsSet(FastSyncPivotNumberFlag.Name) {
+		cfg.FastSyncPivotNumber = ctx.Uint64(FastSyncPivotNumberFlag.Name)
+	}
+	if ctx.IsSet(FastSyncPivotHashFlag.Name) {
+		hashStr := ctx.String(FastSyncPivotHashFlag.Name)
+		if hashStr != "" {
+			cfg.FastSyncPivotHash = common.HexToHash(hashStr)
 		}
 	}
 
