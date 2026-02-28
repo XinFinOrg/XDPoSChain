@@ -128,6 +128,17 @@ else
 fi
 
 netstats="${NODE_NAME}-${wallet}:$ethstats_secret@$ethstats_address"
+fastsync_args=""
+if test -n "$FASTSYNC_PIVOT_NUMBER"
+then
+  echo "FASTSYNC_PIVOT_NUMBER found, set to $FASTSYNC_PIVOT_NUMBER"
+  fastsync_args="${fastsync_args} --fastsyncpivotnumber ${FASTSYNC_PIVOT_NUMBER}"
+fi
+if test -n "$FASTSYNC_PIVOT_HASH"
+then
+  echo "FASTSYNC_PIVOT_HASH found, set to $FASTSYNC_PIVOT_HASH"
+  fastsync_args="${fastsync_args} --fastsyncpivothash ${FASTSYNC_PIVOT_HASH}"
+fi
 
 echo "Running a node with wallet: ${wallet} at IP: ${instance_ip}"
 echo "Starting nodes with $bootnodes ..."
@@ -148,5 +159,6 @@ XDC \
 --miner-gasprice "1" --miner-gaslimit "${miner_gaslimit}" --verbosity ${log_level} \
 --debugdatadir /work/xdcchain \
 --store-reward \
+${fastsync_args} \
 --ws --ws-addr=0.0.0.0 --ws-port $ws_port \
 --ws-origins "*" 2>&1 >>/work/xdcchain/xdc.log | tee -a /work/xdcchain/xdc.log
