@@ -472,6 +472,7 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td *big.I
 	if mode == FastSync {
 		if d.pivotNumber != 0 {
 			// Use configured pivot block
+			log.Info("Using configured pivot block", "number", d.pivotNumber)
 			pivot = d.pivotNumber
 			if pivot <= origin {
 				origin = pivot - 1
@@ -1675,7 +1676,7 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 				}
 				// Log state root for configured pivot
 				if d.pivotNumber != 0 {
-					log.Info("Pivot block state sync complete", "number", P.Header.Number, "root", P.Header.Root)
+					log.Info("Pivot block state sync complete", "number", P.Header.Number, "hash", P.Header.Hash(), "root", P.Header.Root)
 				}
 				if err := d.commitPivotBlock(P); err != nil {
 					return err
