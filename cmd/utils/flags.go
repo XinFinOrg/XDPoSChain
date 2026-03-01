@@ -191,6 +191,12 @@ var (
 		Value:    "",
 		Category: flags.EthCategory,
 	}
+	FastSyncPivotRootFlag = &cli.StringFlag{
+		Name:     "fastsyncpivotroot",
+		Usage:    "State root of pivot block for fast sync state download (hex string, zero = use latest.Root)",
+		Value:    "",
+		Category: flags.EthCategory,
+	}
 	GCModeFlag = &cli.StringFlag{
 		Name:     "gcmode",
 		Usage:    `Blockchain garbage collection mode ("full", "archive")`,
@@ -1540,6 +1546,12 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		hashStr := ctx.String(FastSyncPivotHashFlag.Name)
 		if hashStr != "" {
 			cfg.FastSyncPivotHash = common.HexToHash(hashStr)
+		}
+	}
+	if ctx.IsSet(FastSyncPivotRootFlag.Name) {
+		rootStr := ctx.String(FastSyncPivotRootFlag.Name)
+		if rootStr != "" {
+			cfg.FastSyncPivotRoot = common.HexToHash(rootStr)
 		}
 	}
 

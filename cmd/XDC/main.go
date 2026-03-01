@@ -84,6 +84,7 @@ var (
 		utils.SyncModeFlag,
 		utils.FastSyncPivotNumberFlag,
 		utils.FastSyncPivotHashFlag,
+		utils.FastSyncPivotRootFlag,
 		utils.GCModeFlag,
 		// utils.LightServFlag,  // deprecated
 		// utils.LightPeersFlag, // deprecated

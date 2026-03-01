@@ -294,7 +294,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	}
 	// Set fast sync pivot block if configured
 	if config.FastSyncPivotNumber != 0 {
-		eth.protocolManager.downloader.SetPivotBlock(config.FastSyncPivotNumber, config.FastSyncPivotHash)
+		eth.protocolManager.downloader.SetPivotBlock(config.FastSyncPivotNumber, config.FastSyncPivotHash, config.FastSyncPivotRoot)
 	}
 	eth.miner = miner.New(eth, &config.Miner, eth.blockchain.Config(), eth.EventMux(), eth.engine, stack.Config().AnnounceTxs)
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))

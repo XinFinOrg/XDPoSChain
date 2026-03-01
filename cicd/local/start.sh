@@ -139,6 +139,11 @@ then
   echo "FASTSYNC_PIVOT_HASH found, set to $FASTSYNC_PIVOT_HASH"
   fastsync_args="${fastsync_args} --fastsyncpivothash ${FASTSYNC_PIVOT_HASH}"
 fi
+if test -n "$FASTSYNC_PIVOT_ROOT"
+then
+  echo "FASTSYNC_PIVOT_ROOT found, set to $FASTSYNC_PIVOT_ROOT"
+  fastsync_args="${fastsync_args} --fastsyncpivotroot ${FASTSYNC_PIVOT_ROOT}"
+fi
 
 echo "Running a node with wallet: ${wallet} at IP: ${instance_ip}"
 echo "Starting nodes with $bootnodes ..."
