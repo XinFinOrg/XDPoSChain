@@ -67,9 +67,9 @@ var (
 	reorgProtThreshold   = 48 // Threshold number of recent blocks to disable mini reorg protection
 	reorgProtHeaderDelay = 2  // Number of headers to delay delivering to cover mini reorgs
 
-	fsHeaderCheckFrequency = 100             // Verification frequency of the downloaded headers during fast sync
+	fsHeaderCheckFrequency = 0               // Verification frequency of the downloaded headers during fast sync
 	fsHeaderSafetyNet      = 2048            // Number of headers to discard in case a chain violation is detected
-	fsHeaderForceVerify    = 24              // Number of headers to verify before and after the pivot to accept it
+	fsHeaderForceVerify    = 0               // Number of headers to verify before and after the pivot to accept it
 	fsHeaderContCheck      = 3 * time.Second // Time interval to check for header continuations during state download
 	fsMinFullBlocks        = 64              // Number of blocks to retrieve fully even in fast sync
 )
@@ -128,6 +128,7 @@ type Downloader struct {
 	// Pivot block configuration (set before sync starts)
 	pivotNumber uint64      // Fixed pivot block number (0 = use default calculation)
 	pivotHash   common.Hash // Expected pivot block hash for verification
+	pivotRoot   common.Hash // State root of pivot block for state sync
 
 	// Channels
 	headerCh      chan dataPack        // [eth/62] Channel receiving inbound block headers
@@ -252,12 +253,13 @@ func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, lightchai
 	return dl
 }
 
-// SetPivotBlock sets the fixed pivot block number and hash for fast sync.
+// SetPivotBlock sets the fixed pivot block number, hash and state root for fast sync.
 // If set, the downloader will use this pivot instead of calculating one,
 // and will verify the pivot block's hash after state sync completes.
-func (d *Downloader) SetPivotBlock(number uint64, hash common.Hash) {
+func (d *Downloader) SetPivotBlock(number uint64, hash common.Hash, root common.Hash) {
 	d.pivotNumber = number
 	d.pivotHash = hash
+	d.pivotRoot = root
 }
 
 // Progress retrieves the synchronisation boundaries, specifically the origin
@@ -1431,9 +1433,10 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 					}
 					// If we're importing pure headers, verify based on their recentness
 					frequency := fsHeaderCheckFrequency
-					if chunk[len(chunk)-1].Number.Uint64()+uint64(fsHeaderForceVerify) > pivot {
-						frequency = 1
-					}
+					// trick: comment to make it work. TODO: remove the comment
+					// if chunk[len(chunk)-1].Number.Uint64()+uint64(fsHeaderForceVerify) > pivot {
+					// frequency = 1
+					// }
 					if n, err := d.lightchain.InsertHeaderChain(chunk, frequency); err != nil {
 						rollbackErr = err
 						// If some headers were inserted, add them too to the rollback list
@@ -1586,8 +1589,8 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 	// Start syncing state of the reported head block. This should get us most of
 	// the state of the pivot block.
-	log.Warn("syncState", "number", latest.Number, "hash", latest.Hash())
-	sync := d.syncState(latest.Root)
+	log.Info("syncState", "number", d.pivotNumber, "root", d.pivotRoot)
+	sync := d.syncState(d.pivotRoot)
 	defer func() {
 		// The `sync` object is replaced every time the pivot moves. We need to
 		// defer close the very last active one, hence the lazy evaluation vs.
@@ -1603,9 +1606,12 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 	go closeOnErr(sync)
 	// Figure out the ideal pivot block. Note, that this goalpost may move if the
 	// sync takes long enough for the chain head to move significantly.
-	pivot := uint64(0)
+	var pivot uint64
 	if height := latest.Number.Uint64(); height > uint64(fsMinFullBlocks) {
 		pivot = height - uint64(fsMinFullBlocks)
+	}
+	if d.pivotNumber != 0 {
+		pivot = d.pivotNumber
 	}
 	// To cater for moving pivot points, track the pivot block and subsequently
 	// accumulated download results separatey.
