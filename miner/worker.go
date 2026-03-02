@@ -186,7 +186,7 @@ func newWorker(config *params.ChainConfig, engine consensus.Engine, coinbase com
 	}
 	if worker.announceTxs {
 		// Subscribe NewTxsEvent for tx pool
-		worker.txsSub = eth.TxPool().SubscribeNewTxsEvent(worker.txsCh)
+		worker.txsSub = eth.TxPool().SubscribeTransactions(worker.txsCh, true)
 	}
 	// Subscribe events for blockchain
 	worker.chainHeadSub = eth.BlockChain().SubscribeChainHeadEvent(worker.chainHeadCh)

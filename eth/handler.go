@@ -281,9 +281,9 @@ func (pm *ProtocolManager) removePeer(id string) {
 func (pm *ProtocolManager) Start(maxPeers int) {
 	pm.maxPeers = maxPeers
 
-	// broadcast transactions
+	// broadcast and announce transactions (only new ones, not resurrected ones)
 	pm.txsCh = make(chan core.NewTxsEvent, txChanSize)
-	pm.txsSub = pm.txpool.SubscribeNewTxsEvent(pm.txsCh)
+	pm.txsSub = pm.txpool.SubscribeTransactions(pm.txsCh, false)
 	pm.orderTxCh = make(chan core.OrderTxPreEvent, txChanSize)
 	if pm.orderpool != nil {
 		pm.orderTxSub = pm.orderpool.SubscribeTxPreEvent(pm.orderTxCh)

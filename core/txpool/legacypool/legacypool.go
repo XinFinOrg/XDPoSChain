@@ -251,7 +251,6 @@ type LegacyPool struct {
 	chain       BlockChain
 	gasTip      atomic.Pointer[big.Int]
 	txFeed      event.Feed
-	scope       event.SubscriptionScope
 	signer      types.Signer
 	mu          sync.RWMutex
 
@@ -447,9 +446,6 @@ func (pool *LegacyPool) loop() {
 
 // Close terminates the transaction pool.
 func (pool *LegacyPool) Close() error {
-	// Unsubscribe all subscriptions registered from txpool
-	pool.scope.Close()
-
 	// Terminate the pool reorger and return
 	close(pool.reorgShutdownCh)
 	pool.wg.Wait()
@@ -468,10 +464,14 @@ func (pool *LegacyPool) Reset(oldHead, newHead *types.Header) {
 	<-wait
 }
 
-// SubscribeTransactions registers a subscription of NewTxsEvent and
-// starts sending event to the given channel.
-func (pool *LegacyPool) SubscribeTransactions(ch chan<- core.NewTxsEvent) event.Subscription {
-	return pool.scope.Track(pool.txFeed.Subscribe(ch))
+// SubscribeTransactions registers a subscription for new transaction events,
+// supporting feeding only newly seen or also resurrected transactions.
+func (pool *LegacyPool) SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool) event.Subscription {
+	// The legacy pool has a very messed up internal shuffling, so it's kind of
+	// hard to separate newly discovered transactions from resurrected ones. This
+	// is because the new txs are added to the queue, resurrected ones too and
+	// reorgs run lazily, so separating the two would need a marker.
+	return pool.txFeed.Subscribe(ch)
 }
 
 // SetGasTip updates the minimum gas tip required by the transaction pool for a
@@ -611,6 +611,7 @@ func (pool *LegacyPool) Pending(enforceTips bool) map[common.Address][]*txpool.L
 					Time:      txs[i].Time(),
 					GasFeeCap: txs[i].GasFeeCap(),
 					GasTipCap: txs[i].GasTipCap(),
+					Gas:       txs[i].Gas(),
 				}
 			}
 			pending[addr] = lazies
@@ -1142,7 +1143,7 @@ func (pool *LegacyPool) addRemoteSync(tx *types.Transaction) error {
 }
 
 // Add enqueues a batch of transactions into the pool if they are valid. Depending
-// on the local flag, full pricing contraints will or will not be applied.
+// on the local flag, full pricing constraints will or will not be applied.
 //
 // If sync is set, the method will block until all internal maintenance related
 // to the add is finished. Only use this during tests for determinism!

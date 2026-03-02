@@ -173,10 +173,16 @@ func (p *testTxPool) Pending(enforceTips bool) map[common.Address][]*txpool.Lazy
 	return pending
 }
 
+// SubscribeTransactions should return an event subscription of NewTxsEvent and
+// send events to the given channel.
+func (p *testTxPool) SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool) event.Subscription {
+	return p.txFeed.Subscribe(ch)
+}
+
 // SubscribeNewTxsEvent should return an event subscription of NewTxsEvent and
 // send events to the given channel.
 func (p *testTxPool) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
-	return p.txFeed.Subscribe(ch)
+	return p.SubscribeTransactions(ch, false)
 }
 
 // newTestTransaction create a new dummy transaction.
