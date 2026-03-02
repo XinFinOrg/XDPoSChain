@@ -26,19 +26,13 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/event"
 )
 
-// Transaction is a helper struct to group together a canonical transaction with
-// satellite data items that are needed by the pool but are not part of the chain.
-type Transaction struct {
-	Tx *types.Transaction // Canonical transaction
-}
-
 // LazyTransaction contains a small subset of the transaction properties that is
 // enough for the miner and other APIs to handle large batches of transactions;
 // and supports pulling up the entire transaction when really needed.
 type LazyTransaction struct {
-	Pool SubPool      // Transaction subpool to pull the real transaction up
-	Hash common.Hash  // Transaction hash to pull up if needed
-	Tx   *Transaction // Transaction if already resolved
+	Pool SubPool            // Transaction subpool to pull the real transaction up
+	Hash common.Hash        // Transaction hash to pull up if needed
+	Tx   *types.Transaction // Transaction if already resolved
 
 	Time      time.Time // Time when the transaction was first seen
 	GasFeeCap *big.Int  // Maximum fee per gas the transaction may consume
@@ -47,7 +41,7 @@ type LazyTransaction struct {
 
 // Resolve retrieves the full transaction belonging to a lazy handle if it is still
 // maintained by the transaction pool.
-func (ltx *LazyTransaction) Resolve() *Transaction {
+func (ltx *LazyTransaction) Resolve() *types.Transaction {
 	if ltx.Tx == nil {
 		ltx.Tx = ltx.Pool.Get(ltx.Hash)
 	}
@@ -90,12 +84,12 @@ type SubPool interface {
 	Has(hash common.Hash) bool
 
 	// Get returns a transaction if it is contained in the pool, or nil otherwise.
-	Get(hash common.Hash) *Transaction
+	Get(hash common.Hash) *types.Transaction
 
 	// Add enqueues a batch of transactions into the pool if they are valid. Due
 	// to the large transaction churn, add may postpone fully integrating the tx
 	// to a later point to batch multiple ones together.
-	Add(txs []*Transaction, local bool, sync bool) []error
+	Add(txs []*types.Transaction, local bool, sync bool) []error
 
 	// Pending retrieves all currently processable transactions, grouped by origin
 	// account and sorted by nonce.

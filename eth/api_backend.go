@@ -301,7 +301,7 @@ func (b *EthAPIBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscri
 }
 
 func (b *EthAPIBackend) SendTx(ctx context.Context, signedTx *types.Transaction) error {
-	return b.eth.txPool.Add([]*txpool.Transaction{{Tx: signedTx}}, true, false)[0]
+	return b.eth.txPool.Add([]*types.Transaction{signedTx}, true, false)[0]
 }
 
 func (b *EthAPIBackend) GetPoolTransactions() (types.Transactions, error) {
@@ -310,7 +310,7 @@ func (b *EthAPIBackend) GetPoolTransactions() (types.Transactions, error) {
 	for _, batch := range pending {
 		for _, lazy := range batch {
 			if tx := lazy.Resolve(); tx != nil {
-				txs = append(txs, tx.Tx)
+				txs = append(txs, tx)
 			}
 		}
 	}
@@ -319,7 +319,7 @@ func (b *EthAPIBackend) GetPoolTransactions() (types.Transactions, error) {
 
 func (b *EthAPIBackend) GetPoolTransaction(hash common.Hash) *types.Transaction {
 	if tx := b.eth.txPool.Get(hash); tx != nil {
-		return tx.Tx
+		return tx
 	}
 	return nil
 }
