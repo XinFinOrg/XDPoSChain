@@ -1433,10 +1433,9 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 					}
 					// If we're importing pure headers, verify based on their recentness
 					frequency := fsHeaderCheckFrequency
-					// trick: comment to make it work. TODO: remove the comment
-					// if chunk[len(chunk)-1].Number.Uint64()+uint64(fsHeaderForceVerify) > pivot {
-					// frequency = 1
-					// }
+					if chunk[len(chunk)-1].Number.Uint64()+uint64(fsHeaderForceVerify) > pivot {
+						frequency = 1
+					}
 					if n, err := d.lightchain.InsertHeaderChain(chunk, frequency); err != nil {
 						rollbackErr = err
 						// If some headers were inserted, add them too to the rollback list
@@ -1661,7 +1660,7 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 			// If new pivot block found, cancel old state retrieval and restart
 			if oldPivot != P {
 				sync.Cancel()
-				log.Warn("syncState", "number", P.Header.Number, "hash", P.Header.Hash())
+				log.Info("restart syncState", "number", P.Header.Number, "root", P.Header.Root)
 				sync = d.syncState(P.Header.Root)
 
 				go closeOnErr(sync)
