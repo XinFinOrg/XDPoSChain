@@ -27,9 +27,19 @@ jobs:
 
   notify:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' &&
+    if: |
+      github.event_name == 'pull_request' &&
       github.event.pull_request.draft == false &&
-      !contains(github.event.pull_request.title, 'WIP')
+      !contains(github.event.pull_request.title, 'WIP') &&
+      (
+        github.event.action != 'edited' ||
+        (
+          github.event.changes.title &&
+          (
+            contains(github.event.changes.title.from, 'WIP')
+          )
+        )
+      )
     steps:
       - name: Send Slack notification
         env:
