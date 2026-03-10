@@ -99,7 +99,12 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 			listBlockHash = append(listBlockHash, parentHash)
 		}
 
-		currentConfig := chain.Config().XDPoS.V2.Config(uint64(round))
+		XDPoSEngine, ok := bc.Engine().(*XDPoS.XDPoS)
+		if XDPoSEngine == nil || !ok {
+			return []common.Address{}, fmt.Errorf("[HookPenalty] XDPoS not found")
+		}
+		currentConfig := XDPoSEngine.EngineV2.Config(uint64(round))
+
 		// add list not miner to penalties
 		preMasternodes := adaptor.EngineV2.GetMasternodesByHash(chain, currentHash)
 		penalties := []common.Address{}
@@ -286,7 +291,13 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 			log.Error("[HookReward] Fail to get round", "error", err)
 			return nil, err
 		}
-		currentConfig := chain.Config().XDPoS.V2.Config(uint64(round))
+
+		XDPoSEngine, ok := bc.Engine().(*XDPoS.XDPoS)
+		if XDPoSEngine == nil || !ok {
+			return nil, fmt.Errorf("[HookReward] XDPoS not found")
+		}
+		currentConfig := XDPoSEngine.EngineV2.Config(uint64(round))
+
 		// Get signers/signing tx count, and burned tokens in one epoch
 		signers, burnedInOneEpoch, err := GetSigningTxCount(adaptor, chain, header, parentState, currentConfig)
 

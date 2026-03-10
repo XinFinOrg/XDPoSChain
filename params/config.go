@@ -840,8 +840,8 @@ func (v2 *V2) GetCurrentConfig() *V2Config {
 	}
 
 	// avoid CurrentConfig is changed by other goroutines
-	cpyConfig := *v2.CurrentConfig
-	return &cpyConfig
+	cfg := *v2.CurrentConfig
+	return &cfg
 }
 
 func (v2 *V2) Config(round uint64) *V2Config {
@@ -855,7 +855,10 @@ func (v2 *V2) Config(round uint64) *V2Config {
 			break
 		}
 	}
-	return v2.AllConfigs[index]
+
+	// avoid config is changed by other goroutines
+	cfg := *v2.AllConfigs[index]
+	return &cfg
 }
 
 func (v2 *V2) BuildConfigIndex() {
