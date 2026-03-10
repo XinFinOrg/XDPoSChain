@@ -845,6 +845,9 @@ func (v2 *V2) GetCurrentConfig() *V2Config {
 }
 
 func (v2 *V2) Config(round uint64) *V2Config {
+	v2.lock.RLock()
+	defer v2.lock.RUnlock()
+
 	configRound := round
 	var index uint64
 
@@ -862,6 +865,9 @@ func (v2 *V2) Config(round uint64) *V2Config {
 }
 
 func (v2 *V2) BuildConfigIndex() {
+	v2.lock.Lock()
+	defer v2.lock.Unlock()
+
 	list := slices.Collect(maps.Keys(v2.AllConfigs))
 	// Make it descending order
 	slices.SortFunc(list, func(a, b uint64) int {
