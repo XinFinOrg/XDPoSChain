@@ -32,8 +32,11 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi"
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/txpool"
+	"github.com/XinFinOrg/XDPoSChain/core/txpool/legacypool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/eth/ethconfig"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
@@ -55,6 +58,14 @@ const abiBin = `0x608060405234801561001057600080fd5b506102a0806100206000396000f3
 const deployedCode = `60806040526004361061003b576000357c010000000000000000000000000000000000000000000000000000000090048063a69b6ed014610040575b600080fd5b6100b76004803603602081101561005657600080fd5b810190808035906020019064010000000081111561007357600080fd5b82018360208201111561008557600080fd5b803590602001918460018302840111640100000000831117156100a757600080fd5b9091929391929390505050610132565b6040518080602001828103825283818151815260200191508051906020019080838360005b838110156100f75780820151818401526020810190506100dc565b50505050905090810190601f1680156101245780820380516001836020036101000a031916815260200191505b509250505060405180910390f35b60607f75fd880d39c1daf53b6547ab6cb59451fc6452d27caa90e5b6649dd8293b9eed33348585604051808573ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff168152602001848152602001806020018281038252848482818152602001925080828437600081840152601f19601f8201169050808301925050509550505050505060405180910390a17f46923992397eac56cf13058aced2a1871933622717e27b24eabc13bf9dd329c833604051808273ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200191505060405180910390a16040805190810160405280600b81526020017f68656c6c6f20776f726c6400000000000000000000000000000000000000000081525090509291505056fea165627a7a72305820ff0c57dad254cfeda48c9cfb47f1353a558bccb4d1bc31da1dae69315772d29e0029`
 
 var expectedReturn = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+
+type mockTxPoolFlusher struct {
+	called int
+}
+
+func (m *mockTxPoolFlusher) FlushAllTransactions() {
+	m.called++
+}
 
 func simTestBackend(testAddr common.Address) *Backend {
 	return New(
@@ -160,6 +171,18 @@ func TestNewSimulatedBackend(t *testing.T) {
 	}
 }
 
+func TestRollbackFlushesInjectedTxPool(t *testing.T) {
+	t.Parallel()
+	flusher := &mockTxPoolFlusher{}
+	sim := newBackend(types.GenesisAlloc{}, 10_000_000, flusher)
+	defer sim.Close()
+
+	sim.Rollback()
+	if flusher.called != 1 {
+		t.Fatalf("expected rollback to flush txpool once, got %d", flusher.called)
+	}
+}
+
 func TestAdjustTime(t *testing.T) {
 	sim := New(types.GenesisAlloc{}, 10_000_000)
 	defer sim.Close()
@@ -212,6 +235,38 @@ func TestNewAdjustTimeFail(t *testing.T) {
 	newTime = sim.pendingBlock.Time()
 	if newTime < prevTime {
 		t.Fatalf("time moved backwards unexpectedly")
+	}
+}
+func TestRollbackFlushesRealTxPool(t *testing.T) {
+	sim := simTestBackend(testAddr)
+	defer sim.Close()
+
+	txpoolCfg := ethconfig.Defaults.TxPool
+	txpoolCfg.Journal = ""
+	legacyPool := legacypool.New(txpoolCfg, sim.blockchain)
+	realPool, err := txpool.New(txpoolCfg.PriceLimit, sim.blockchain, []txpool.SubPool{legacyPool})
+	if err != nil {
+		t.Fatalf("create txpool failed: %v", err)
+	}
+	defer realPool.Close()
+
+	sim.txPool = realPool
+	tx, err := newTx(sim, testKey)
+	if err != nil {
+		t.Fatalf("new tx failed: %v", err)
+	}
+	if err := realPool.Add([]*types.Transaction{tx}, false, true)[0]; err != nil {
+		t.Fatalf("add tx to pool failed: %v", err)
+	}
+	pending, queued := realPool.Stats()
+	if pending+queued == 0 {
+		t.Fatalf("expected txpool to contain txs before rollback")
+	}
+
+	sim.Rollback()
+	pending, queued = realPool.Stats()
+	if pending+queued != 0 {
+		t.Fatalf("expected txpool to be flushed, got pending=%d queued=%d", pending, queued)
 	}
 }
 

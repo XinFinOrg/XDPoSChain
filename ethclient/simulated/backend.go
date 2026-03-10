@@ -66,6 +66,10 @@ var (
 	errTransactionDoesNotExist = errors.New("transaction does not exist")
 )
 
+type txPoolFlusher interface {
+	FlushAllTransactions()
+}
+
 // SimulatedBackend implements bind.ContractBackend, simulating a blockchain in
 // the background. Its main purpose is to allow for easy testing of contract bindings.
 // Simulated backend implements the following interfaces:
@@ -84,6 +88,7 @@ type Backend struct {
 	filterSystem *filters.FilterSystem // for filtering database logs
 
 	config *params.ChainConfig
+	txPool txPoolFlusher
 }
 
 // Client exposes the methods provided by the simulated backend client.
@@ -127,17 +132,27 @@ func SimulateWalletAddressAndSignFn() (common.Address, func(account accounts.Acc
 // If chainconfig is supplied, XDPoS-compatible backend is used.
 // Otherwise an ethash backend is used.
 func New(alloc types.GenesisAlloc, gasLimit uint64, chainconfig ...*params.ChainConfig) *Backend {
+	return newBackend(alloc, gasLimit, nil, chainconfig...)
+}
+
+// NewWithTxPool creates a simulated backend with an attached txpool instance.
+// When provided, Rollback() will flush pending pool transactions.
+func NewWithTxPool(alloc types.GenesisAlloc, gasLimit uint64, txPool txPoolFlusher, chainconfig ...*params.ChainConfig) *Backend {
+	return newBackend(alloc, gasLimit, txPool, chainconfig...)
+}
+
+func newBackend(alloc types.GenesisAlloc, gasLimit uint64, txPool txPoolFlusher, chainconfig ...*params.ChainConfig) *Backend {
 	if len(chainconfig) > 0 && chainconfig[0] != nil {
 		if chainconfig[0].XDPoS != nil {
-			return newXDCSimulatedBackend(alloc, gasLimit, chainconfig[0])
+			return newXDCSimulatedBackend(alloc, gasLimit, txPool, chainconfig[0])
 		}
-		return newEthashSimulatedBackendWithConfig(alloc, gasLimit, chainconfig[0])
+		return newEthashSimulatedBackendWithConfig(alloc, gasLimit, txPool, chainconfig[0])
 	}
-	return newEthashSimulatedBackend(alloc, gasLimit)
+	return newEthashSimulatedBackend(alloc, gasLimit, txPool)
 }
 
 // newXDCSimulatedBackend creates a new backend for testing purpose.
-func newXDCSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64, chainConfig *params.ChainConfig) *Backend {
+func newXDCSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64, txPool txPoolFlusher, chainConfig *params.ChainConfig) *Backend {
 	database := rawdb.NewMemoryDatabase()
 	genesis := core.Genesis{
 		GasLimit:  gasLimit, // need this big, support initial smart contract
@@ -182,6 +197,7 @@ func newXDCSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64, chainConf
 		database:   database,
 		blockchain: blockchain,
 		config:     genesis.Config,
+		txPool:     txPool,
 	}
 
 	filterBackend := &filterBackend{database, blockchain, backend}
@@ -200,15 +216,15 @@ func newXDCSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64, chainConf
 // newEthashSimulatedBackend creates a new binding backend based on the given database
 // and uses a simulated blockchain for testing purposes.
 // A simulated backend always uses chainID 1337.
-func newEthashSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64) *Backend {
+func newEthashSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64, txPool txPoolFlusher) *Backend {
 	config := *params.AllEthashProtocolChanges
 	if config.Eip1559Block == nil {
 		config.Eip1559Block = big.NewInt(0)
 	}
-	return newEthashSimulatedBackendWithConfig(alloc, gasLimit, &config)
+	return newEthashSimulatedBackendWithConfig(alloc, gasLimit, txPool, &config)
 }
 
-func newEthashSimulatedBackendWithConfig(alloc types.GenesisAlloc, gasLimit uint64, chainConfig *params.ChainConfig) *Backend {
+func newEthashSimulatedBackendWithConfig(alloc types.GenesisAlloc, gasLimit uint64, txPool txPoolFlusher, chainConfig *params.ChainConfig) *Backend {
 	database := rawdb.NewMemoryDatabase()
 	config := *chainConfig
 	genesis := core.Genesis{Config: &config, GasLimit: gasLimit, Alloc: alloc}
@@ -219,6 +235,7 @@ func newEthashSimulatedBackendWithConfig(alloc types.GenesisAlloc, gasLimit uint
 		database:   database,
 		blockchain: blockchain,
 		config:     genesis.Config,
+		txPool:     txPool,
 	}
 
 	filterBackend := &filterBackend{database, blockchain, backend}
@@ -260,6 +277,9 @@ func (b *Backend) Commit() common.Hash {
 func (b *Backend) Rollback() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.txPool != nil {
+		b.txPool.FlushAllTransactions()
+	}
 
 	header := b.blockchain.CurrentBlock()
 	block := b.blockchain.GetBlock(header.Hash(), header.Number.Uint64())

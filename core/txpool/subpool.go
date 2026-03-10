@@ -107,6 +107,9 @@ type SubPool interface {
 	// transaction, and drops all transactions below this threshold.
 	SetGasTip(tip *big.Int) error
 
+	// FlushAllTransactions drops all transactions in the pool.
+	FlushAllTransactions()
+
 	// Has returns an indicator whether subpool has a transaction cached with the
 	// given hash.
 	Has(hash common.Hash) bool
