@@ -115,6 +115,25 @@ func (journal *journal) load(add func([]*types.Transaction) []error) error {
 	return failure
 }
 
+func (journal *journal) setupWriter() error {
+	if journal.writer != nil {
+		if err := journal.writer.Close(); err != nil {
+			return err
+		}
+		journal.writer = nil
+	}
+
+	// Re-open the journal file for appending
+	// Use O_APPEND to ensure we always write to the end of the file
+	sink, err := os.OpenFile(journal.path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		return err
+	}
+	journal.writer = sink
+
+	return nil
+}
+
 // insert adds the specified transaction to the local disk journal.
 func (journal *journal) insert(tx *types.Transaction) error {
 	if journal.writer == nil {
@@ -137,7 +156,7 @@ func (journal *journal) rotate(all map[common.Address]types.Transactions) error 
 		journal.writer = nil
 	}
 	// Generate a new journal with the contents of the current pool
-	replacement, err := os.OpenFile(journal.path+".new", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
+	replacement, err := os.OpenFile(journal.path+".new", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
@@ -157,7 +176,7 @@ func (journal *journal) rotate(all map[common.Address]types.Transactions) error 
 	if err = os.Rename(journal.path+".new", journal.path); err != nil {
 		return err
 	}
-	sink, err := os.OpenFile(journal.path, os.O_WRONLY|os.O_APPEND, 0755)
+	sink, err := os.OpenFile(journal.path, os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return err
 	}
@@ -175,7 +194,6 @@ func (journal *journal) rotate(all map[common.Address]types.Transactions) error 
 // close flushes the transaction journal contents to disk and closes the file.
 func (journal *journal) close() error {
 	var err error
-
 	if journal.writer != nil {
 		err = journal.writer.Close()
 		journal.writer = nil
