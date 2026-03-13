@@ -219,6 +219,10 @@ func (hc *HeaderChain) WriteHeader(header *types.Header) (status WriteStatus, er
 type WhCallback func(*types.Header) error
 
 func (hc *HeaderChain) ValidateHeaderChain(chain []*types.Header, checkFreq int) (int, error) {
+	if len(chain) == 0 {
+		return 0, nil
+	}
+
 	// Do a sanity check that the provided chain is actually ordered and linked
 	for i := 1; i < len(chain); i++ {
 		if chain[i].Number.Uint64() != chain[i-1].Number.Uint64()+1 || chain[i].ParentHash != chain[i-1].Hash() {
@@ -246,24 +250,28 @@ func (hc *HeaderChain) ValidateHeaderChain(chain []*types.Header, checkFreq int)
 		seals[len(seals)-1] = true
 	}
 
-	abort, results := hc.engine.VerifyHeaders(hc, chain, seals)
-	defer close(abort)
-
-	// Iterate over the headers and ensure they all check out
-	for i, header := range chain {
-		// If the chain is terminating, stop processing blocks
-		if hc.procInterrupt() {
-			log.Debug("Premature abort during headers verification")
-			return 0, errors.New("aborted")
+	for _, batch := range splitHeadersByConsensusVersion(hc.config, chain) {
+		abort, results := hc.engine.VerifyHeaders(hc, chain[batch.start:batch.end], seals[batch.start:batch.end])
+		for i := batch.start; i < batch.end; i++ {
+			header := chain[i]
+			// If the chain is terminating, stop processing blocks
+			if hc.procInterrupt() {
+				close(abort)
+				log.Debug("Premature abort during headers verification")
+				return 0, errors.New("aborted")
+			}
+			// If the header is a banned one, straight out abort
+			if BadHashes[header.Hash()] {
+				close(abort)
+				return i, ErrDenylistedHash
+			}
+			// Otherwise wait for headers checks and ensure they pass
+			if err := <-results; err != nil {
+				close(abort)
+				return i, err
+			}
 		}
-		// If the header is a banned one, straight out abort
-		if BadHashes[header.Hash()] {
-			return i, ErrDenylistedHash
-		}
-		// Otherwise wait for headers checks and ensure they pass
-		if err := <-results; err != nil {
-			return i, err
-		}
+		close(abort)
 	}
 
 	return 0, nil

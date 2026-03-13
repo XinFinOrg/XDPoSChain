@@ -44,6 +44,8 @@ const (
 	newRoundChanSize    = 1
 )
 
+var ErrMixedConsensusBatch = errors.New("mixed v1 and v2 headers in one batch")
+
 func (x *XDPoS) SigHash(header *types.Header) (hash common.Hash) {
 	switch x.config.BlockConsensusVersion(header.Number) {
 	case params.ConsensusEngineVersion2:
@@ -231,12 +233,24 @@ func (x *XDPoS) VerifyHeaders(chain consensus.ChainReader, headers []*types.Head
 			v1fullVerifies = append(v1fullVerifies, fullVerifies[i])
 		}
 	}
+	v1Count, v2Count := len(v1headers), len(v2headers)
 
-	if v1headers != nil {
+	switch {
+	case v1Count != 0 && v2Count == 0:
 		x.EngineV1.VerifyHeaders(chain, v1headers, v1fullVerifies, abort, results)
-	}
-	if v2headers != nil {
+	case v1Count == 0 && v2Count != 0:
 		x.EngineV2.VerifyHeaders(chain, v2headers, v2fullVerifies, abort, results)
+	case v1Count != 0 && v2Count != 0:
+		go func() {
+			for range headers {
+				select {
+				case <-abort:
+					return
+				case results <- ErrMixedConsensusBatch:
+				}
+			}
+		}()
+		return abort, results
 	}
 
 	return abort, results

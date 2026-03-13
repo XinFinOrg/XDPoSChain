@@ -412,29 +412,26 @@ func TestShouldVerifyHeaders(t *testing.T) {
 	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 910, &config, nil)
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
 
-	// Happy path
-	var happyPathHeaders []*types.Header
-	happyPathHeaders = append(happyPathHeaders, blockchain.GetBlockByNumber(899).Header(), blockchain.GetBlockByNumber(900).Header(), blockchain.GetBlockByNumber(901).Header(), blockchain.GetBlockByNumber(902).Header())
-	// Randomly set full verify
-	var fullVerifies []bool
-	fullVerifies = append(fullVerifies, false, true, true, false)
-	_, results := adaptor.VerifyHeaders(blockchain, happyPathHeaders, fullVerifies)
-	var verified []bool
-	for {
-		select {
-		case result := <-results:
-			if result != nil {
-				panic("Error received while verifying headers")
-			}
-			verified = append(verified, true)
-		case <-time.After(time.Duration(5) * time.Second): // It should be very fast to verify headers
-			if len(verified) == len(happyPathHeaders) {
-				return
-			} else {
-				panic("Suppose to have verified 3 block headers")
+	verifyBatch := func(headers []*types.Header, fullVerifies []bool) {
+		_, results := adaptor.VerifyHeaders(blockchain, headers, fullVerifies)
+		for i := 0; i < len(headers); i++ {
+			select {
+			case result := <-results:
+				assert.Nil(t, result)
+			case <-time.After(5 * time.Second): // Header verification should finish quickly.
+				t.Fatalf("timed out waiting for verify result at index %d", i)
 			}
 		}
 	}
+
+	// VerifyHeaders now rejects mixed v1/v2 batches, so verify each version in its own batch.
+	v1Headers := []*types.Header{blockchain.GetBlockByNumber(899).Header(), blockchain.GetBlockByNumber(900).Header()}
+	v1FullVerifies := []bool{false, true}
+	verifyBatch(v1Headers, v1FullVerifies)
+
+	v2Headers := []*types.Header{blockchain.GetBlockByNumber(901).Header(), blockchain.GetBlockByNumber(902).Header()}
+	v2FullVerifies := []bool{true, false}
+	verifyBatch(v2Headers, v2FullVerifies)
 }
 
 func TestShouldVerifyHeadersEvenIfParentsNotYetWrittenIntoDB(t *testing.T) {

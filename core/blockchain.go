@@ -1525,8 +1525,34 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		seals[i] = verifySeals
 		bc.downloadingBlock.Add(block.Hash(), struct{}{})
 	}
-	abort, results := bc.engine.VerifyHeaders(bc, headers, seals)
+	abort := make(chan struct{})
 	defer close(abort)
+	results := make(chan error, len(headers))
+	go func() {
+		for _, batch := range splitHeadersByConsensusVersion(bc.chainConfig, headers) {
+			batchAbort, batchResults := bc.engine.VerifyHeaders(bc, headers[batch.start:batch.end], seals[batch.start:batch.end])
+			stopped := false
+			for i := batch.start; i < batch.end; i++ {
+				select {
+				case <-abort:
+					stopped = true
+				case err := <-batchResults:
+					select {
+					case <-abort:
+						stopped = true
+					case results <- err:
+					}
+				}
+				if stopped {
+					break
+				}
+			}
+			close(batchAbort)
+			if stopped {
+				return
+			}
+		}
+	}()
 
 	// Peek the error for the first block to decide the directing import logic
 	it := newInsertIterator(chain, results, bc.validator)
