@@ -290,7 +290,6 @@ type codeTask struct {
 
 // newStateSync creates a new state trie download scheduler. This method does not
 // yet start the sync. The user needs to call run to initiate.
-// only use fast sync but XDC only run full sync
 // TODO(daniel): remove field sched
 func newStateSync(d *Downloader, root common.Hash) *stateSync {
 	return &stateSync{
