@@ -1605,7 +1605,10 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 // database. It also controls the synchronisation of state nodes of the pivot block.
 func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 	// Gap pivot tracking - only used when gap pivots are configured
-	syncedGaps := make(map[uint64]bool)
+	var (
+		syncedGaps      = make(map[uint64]bool)        // Track which gap pivots are synced
+		pendingGapRoots = make(map[uint64]common.Hash) // Gap pivot roots found but not yet synced
+	)
 	if len(d.pivotGapNumbers) > 0 {
 		log.Info("Configured gap pivot state syncs", "count", len(d.pivotGapNumbers), "gaps", d.pivotGapNumbers)
 	}
@@ -1663,28 +1666,16 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 			d.chainInsertHook(results)
 		}
 
-		// Check for gap pivot blocks in results and sync their state
+		// Collect gap pivot roots as blocks arrive
 		if len(d.pivotGapNumbers) > 0 {
 			for _, result := range results {
 				num := result.Header.Number.Uint64()
 				for _, gapNum := range d.pivotGapNumbers {
 					if num == gapNum && !syncedGaps[gapNum] {
-						// Start state sync for this gap pivot and wait for completion
-						log.Info("syncState for gap pivot", "number", gapNum, "root", result.Header.Root)
-						gapSync := d.syncState(result.Header.Root)
-						if err := gapSync.Wait(); err != nil {
-							return err
-						}
-						log.Info("Gap pivot state sync complete", "number", gapNum, "hash", result.Header.Hash(), "root", result.Header.Root)
-						syncedGaps[gapNum] = true
+						pendingGapRoots[gapNum] = result.Header.Root
 						break
 					}
 				}
-			}
-			// Log progress when all gap pivots are synced
-			if len(syncedGaps) == len(d.pivotGapNumbers) && len(d.pivotGapNumbers) > 0 {
-				log.Info("All gap pivot state syncs complete", "count", len(d.pivotGapNumbers))
-				d.pivotGapNumbers = nil // Clear to avoid reprocessing
 			}
 		}
 
@@ -1732,6 +1723,27 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 				// Log state root for configured pivot
 				if d.pivotNumber != 0 {
 					log.Info("Pivot block state sync complete", "number", P.Header.Number, "hash", P.Header.Hash(), "root", P.Header.Root)
+					// Sync gap pivots after primary pivot state sync completes
+					if len(d.pivotGapNumbers) > 0 {
+						for _, gapNum := range d.pivotGapNumbers {
+							root, ok := pendingGapRoots[gapNum]
+							if !ok {
+								return fmt.Errorf("gap pivot block %d not found in downloaded results", gapNum)
+							}
+							if syncedGaps[gapNum] {
+								continue
+							}
+							log.Info("syncState for gap pivot", "number", gapNum, "root", root)
+							gapSync := d.syncState(root)
+							if err := gapSync.Wait(); err != nil {
+								return err
+							}
+							log.Info("Gap pivot state sync complete", "number", gapNum, "root", root)
+							syncedGaps[gapNum] = true
+						}
+						log.Info("All gap pivot state syncs complete", "count", len(d.pivotGapNumbers))
+						d.pivotGapNumbers = nil // Clear to avoid reprocessing
+					}
 				}
 				if err := d.commitPivotBlock(P); err != nil {
 					return err
