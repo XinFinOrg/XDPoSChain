@@ -30,17 +30,15 @@ jobs:
     if: |
       github.event_name == 'pull_request' &&
       github.event.pull_request.draft == false &&
-      !contains(github.event.pull_request.title, 'WIP') &&
-      !contains(github.event.pull_request.title, 'wip') &&
-      !contains(github.event.pull_request.title, 'Wip') &&
+      !startsWith(github.event.pull_request.title, 'wip') &&
+      !startsWith(github.event.pull_request.title, '[wip]') &&
       (
         github.event.action != 'edited' ||
         (
           github.event.changes.title &&
           (
-            contains(github.event.changes.title.from, 'WIP') ||
-            contains(github.event.changes.title.from, 'wip') ||
-            contains(github.event.changes.title.from, 'Wip')
+            startsWith(github.event.changes.title.from, 'wip') ||
+            startsWith(github.event.changes.title.from, '[wip]')
           )
         )
       )
