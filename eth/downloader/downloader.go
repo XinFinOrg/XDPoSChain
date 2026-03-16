@@ -130,6 +130,9 @@ type Downloader struct {
 	pivotHash   common.Hash // Expected pivot block hash for verification
 	pivotRoot   common.Hash // State root of pivot block for state sync
 
+	// Gap pivots (calculated from primary pivot at 900-block intervals)
+	pivotGapNumbers []uint64 // List of gap pivot numbers to sync before primary
+
 	// Channels
 	headerCh      chan dataPack        // [eth/62] Channel receiving inbound block headers
 	bodyCh        chan dataPack        // [eth/62] Channel receiving inbound block bodies
@@ -256,10 +259,25 @@ func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, lightchai
 // SetPivotBlock sets the fixed pivot block number, hash and state root for fast sync.
 // If set, the downloader will use this pivot instead of calculating one,
 // and will verify the pivot block's hash after state sync completes.
+// It also calculates gap pivots at 900-block intervals that need state sync.
 func (d *Downloader) SetPivotBlock(number uint64, hash common.Hash, root common.Hash) {
 	d.pivotNumber = number
 	d.pivotHash = hash
 	d.pivotRoot = root
+
+	// Calculate all gap pivot numbers: N - N%900 - 450 + 900*i where x < N
+	baseGap := number - number%900 - 450
+	d.pivotGapNumbers = nil
+	for i := uint64(0); ; i++ {
+		gapNumber := baseGap + 900*i
+		if gapNumber >= number {
+			break
+		}
+		d.pivotGapNumbers = append(d.pivotGapNumbers, gapNumber)
+	}
+	if len(d.pivotGapNumbers) > 0 {
+		log.Info("SetPivotBlock calculated gap pivots", "primary", number, "gapCount", len(d.pivotGapNumbers), "gaps", d.pivotGapNumbers)
+	}
 }
 
 // Progress retrieves the synchronisation boundaries, specifically the origin
@@ -1586,6 +1604,12 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 // processFastSyncContent takes fetch results from the queue and writes them to the
 // database. It also controls the synchronisation of state nodes of the pivot block.
 func (d *Downloader) processFastSyncContent(latest *types.Header) error {
+	// Gap pivot tracking - only used when gap pivots are configured
+	syncedGaps := make(map[uint64]bool)
+	if len(d.pivotGapNumbers) > 0 {
+		log.Info("Configured gap pivot state syncs", "count", len(d.pivotGapNumbers), "gaps", d.pivotGapNumbers)
+	}
+
 	// Start syncing state of the reported head block. This should get us most of
 	// the state of the pivot block.
 	log.Info("syncState", "number", d.pivotNumber, "root", d.pivotRoot)
@@ -1638,6 +1662,32 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 		if d.chainInsertHook != nil {
 			d.chainInsertHook(results)
 		}
+
+		// Check for gap pivot blocks in results and sync their state
+		if len(d.pivotGapNumbers) > 0 {
+			for _, result := range results {
+				num := result.Header.Number.Uint64()
+				for _, gapNum := range d.pivotGapNumbers {
+					if num == gapNum && !syncedGaps[gapNum] {
+						// Start state sync for this gap pivot and wait for completion
+						log.Info("syncState for gap pivot", "number", gapNum, "root", result.Header.Root)
+						gapSync := d.syncState(result.Header.Root)
+						if err := gapSync.Wait(); err != nil {
+							return err
+						}
+						log.Info("Gap pivot state sync complete", "number", gapNum, "hash", result.Header.Hash(), "root", result.Header.Root)
+						syncedGaps[gapNum] = true
+						break
+					}
+				}
+			}
+			// Log progress when all gap pivots are synced
+			if len(syncedGaps) == len(d.pivotGapNumbers) && len(d.pivotGapNumbers) > 0 {
+				log.Info("All gap pivot state syncs complete", "count", len(d.pivotGapNumbers))
+				d.pivotGapNumbers = nil // Clear to avoid reprocessing
+			}
+		}
+
 		if oldPivot != nil {
 			results = append(append([]*fetchResult{oldPivot}, oldTail...), results...)
 		}
