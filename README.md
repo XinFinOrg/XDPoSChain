@@ -1,4 +1,4 @@
-# XDPoSChain
+# XDPoSChain test
 
 <p align="center">
   <img src="./assets/images/xinfin-logo.png" />
