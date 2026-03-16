@@ -1,10 +1,10 @@
-# Notify Slack when a PR is ready for review (not draft, title does not contain WIP).
-# Triggers: new PR (non-draft, no WIP), draft -> ready, or title edited to remove WIP.
+# Notify Slack when a PR is ready for review (not draft, no WIP label).
+# Triggers: new PR (non-draft, no WIP label), draft -> ready, or WIP label removed.
 name: PR notify Slack
 
 on:
-  pull_request:
-    types: [opened, reopened, ready_for_review, edited]
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, unlabeled]
   workflow_dispatch:
 
 jobs:
@@ -28,16 +28,13 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     if: |
-      github.event_name == 'pull_request' &&
       github.event.pull_request.draft == false &&
-      !contains(github.event.pull_request.title, 'WIP') &&
+      !contains(github.event.pull_request.labels.*.name, 'WIP') &&
       (
-        github.event.action != 'edited' ||
+        github.event.action != 'unlabeled' ||
         (
-          github.event.changes.title &&
-          (
-            contains(github.event.changes.title.from, 'WIP')
-          )
+          github.event.label &&
+          github.event.label.name == 'WIP'
         )
       )
     steps:
