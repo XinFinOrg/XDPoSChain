@@ -138,19 +138,20 @@ jobs:
           echo "${{ secrets.KUBE_CONFIG }}" | base64 --decode > $HOME/.kube/config
           chmod 600 $HOME/.kube/config
           git_hash=$(git rev-parse --short "$GITHUB_SHA")
-          masternodes=$(kubectl get deployment -o json | jq -r '.items[] | select(.metadata.name | test("masternode-")) | .metadata.name' | sort)
+          masternodes=$(kubectl get deployment -o json | jq -r '.items[] | select(.metadata.name | test("^masternode[0-9]")) | .metadata.name' | sort)
           rpcs=$(kubectl get deployment -o json| jq -r '.items[] | select(.metadata.name | test("rpc")) | "\(.metadata.name)"')
           echo "Masternodes: $masternodes"
           echo "RPCs: $rpcs"
 
-          # Skip masternode-1 through masternode-25, update the rest.
+          # Skip masternode1 through masternode25, update the rest.
           readarray -t mn_array <<< "$masternodes"
           total=${#mn_array[@]}
-          echo "Total masternode deployments: $total, skipping masternode-1..masternode-25"
+          echo "Total masternode deployments: $total, skipping masternode1..masternode25"
 
           for name in "${mn_array[@]}"; do
-            if [[ $name == masternode-* ]]; then
-              num=${name#masternode-}
+            if [[ $name =~ ^masternode[0-9] ]]; then
+              num=${name#masternode}
+              num=${num%%-*}
               if [[ $num =~ ^[0-9]+$ ]] && (( num >= 1 && num <= 25 )); then
                 echo "Skipping deployment: $name"
                 continue
