@@ -1958,7 +1958,7 @@ func (pool *LegacyPool) Clear() {
 		pool.reserver.Release(addr)
 	}
 	pool.all.Clear()
-	pool.priced = newPricedList(pool.all)
+	pool.priced.Reheap()
 	pool.pending = make(map[common.Address]*list)
 	pool.queue = newQueue(pool.config, pool.signer)
 	pool.pendingNonces = newNoncer(pool.currentState)
