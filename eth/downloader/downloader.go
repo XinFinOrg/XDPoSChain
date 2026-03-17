@@ -130,8 +130,9 @@ type Downloader struct {
 	pivotHash   common.Hash // Expected pivot block hash for verification
 	pivotRoot   common.Hash // State root of pivot block for state sync
 
-	// Gap pivots (calculated from primary pivot at 900-block intervals)
-	pivotGapNumbers []uint64 // List of gap pivot numbers to sync before primary
+	// Gap pivots (calculated from primary pivot at Epoch-block intervals)
+	pivotGapNumbers []uint64     // List of gap pivot numbers to sync before primary
+	pivotGapLock    sync.RWMutex // Protects pivotGapNumbers
 
 	// Channels
 	headerCh      chan dataPack        // [eth/62] Channel receiving inbound block headers
@@ -259,17 +260,19 @@ func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, lightchai
 // SetPivotBlock sets the fixed pivot block number, hash and state root for fast sync.
 // If set, the downloader will use this pivot instead of calculating one,
 // and will verify the pivot block's hash after state sync completes.
-// It also calculates gap pivots at 900-block intervals that need state sync.
+// It also calculates gap pivots at some intervals that need state sync.
 func (d *Downloader) SetPivotBlock(number uint64, hash common.Hash, root common.Hash) {
 	d.pivotNumber = number
 	d.pivotHash = hash
 	d.pivotRoot = root
 
-	// Calculate all gap pivot numbers: N - N%900 - 450 + 900*i where x < N
-	baseGap := number - number%900 - 450
+	// Calculate all gap pivot numbers: N - N%Epoch - Gap  where x < N
+
+	baseGap := number - number%d.blockchain.Config().XDPoS.Epoch - d.blockchain.Config().XDPoS.Gap
+	d.pivotGapLock.Lock()
 	d.pivotGapNumbers = nil
 	for i := uint64(0); ; i++ {
-		gapNumber := baseGap + 900*i
+		gapNumber := baseGap + d.blockchain.Config().XDPoS.Epoch*i
 		if gapNumber >= number {
 			break
 		}
@@ -278,6 +281,7 @@ func (d *Downloader) SetPivotBlock(number uint64, hash common.Hash, root common.
 	if len(d.pivotGapNumbers) > 0 {
 		log.Info("SetPivotBlock calculated gap pivots", "primary", number, "gapCount", len(d.pivotGapNumbers), "gaps", d.pivotGapNumbers)
 	}
+	d.pivotGapLock.Unlock()
 }
 
 // Progress retrieves the synchronisation boundaries, specifically the origin
@@ -1452,6 +1456,17 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 					// If we're importing pure headers, verify based on their recentness
 					frequency := fsHeaderCheckFrequency
 					if chunk[len(chunk)-1].Number.Uint64()+uint64(fsHeaderForceVerify) > pivot {
+						// Wait until all gap pivot states are synced before allowing full verification
+						for {
+							d.pivotGapLock.RLock()
+							done := len(d.pivotGapNumbers) == 0
+							d.pivotGapLock.RUnlock()
+							if done {
+								break
+							}
+							log.Info("Waiting for gap pivot state syncs before header verification", "chunkEnd", chunk[len(chunk)-1].Number.Uint64())
+							time.Sleep(5 * time.Second)
+						}
 						frequency = 1
 					}
 					if n, err := d.lightchain.InsertHeaderChain(chunk, frequency); err != nil {
@@ -1609,9 +1624,11 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 		syncedGaps      = make(map[uint64]bool)        // Track which gap pivots are synced
 		pendingGapRoots = make(map[uint64]common.Hash) // Gap pivot roots found but not yet synced
 	)
+	d.pivotGapLock.RLock()
 	if len(d.pivotGapNumbers) > 0 {
 		log.Info("Configured gap pivot state syncs", "count", len(d.pivotGapNumbers), "gaps", d.pivotGapNumbers)
 	}
+	d.pivotGapLock.RUnlock()
 
 	// Start syncing state of the reported head block. This should get us most of
 	// the state of the pivot block.
@@ -1667,6 +1684,7 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 		}
 
 		// Collect gap pivot roots as blocks arrive
+		d.pivotGapLock.RLock()
 		if len(d.pivotGapNumbers) > 0 {
 			for _, result := range results {
 				num := result.Header.Number.Uint64()
@@ -1678,6 +1696,7 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 				}
 			}
 		}
+		d.pivotGapLock.RUnlock()
 
 		if oldPivot != nil {
 			results = append(append([]*fetchResult{oldPivot}, oldTail...), results...)
@@ -1724,8 +1743,12 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 				if d.pivotNumber != 0 {
 					log.Info("Pivot block state sync complete", "number", P.Header.Number, "hash", P.Header.Hash(), "root", P.Header.Root)
 					// Sync gap pivots after primary pivot state sync completes
-					if len(d.pivotGapNumbers) > 0 {
-						for _, gapNum := range d.pivotGapNumbers {
+					d.pivotGapLock.RLock()
+					gapNumbers := make([]uint64, len(d.pivotGapNumbers))
+					copy(gapNumbers, d.pivotGapNumbers)
+					d.pivotGapLock.RUnlock()
+					if len(gapNumbers) > 0 {
+						for _, gapNum := range gapNumbers {
 							root, ok := pendingGapRoots[gapNum]
 							if !ok {
 								return fmt.Errorf("gap pivot block %d not found in downloaded results", gapNum)
@@ -1741,8 +1764,10 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 							log.Info("Gap pivot state sync complete", "number", gapNum, "root", root)
 							syncedGaps[gapNum] = true
 						}
-						log.Info("All gap pivot state syncs complete", "count", len(d.pivotGapNumbers))
+						log.Info("All gap pivot state syncs complete", "count", len(gapNumbers))
+						d.pivotGapLock.Lock()
 						d.pivotGapNumbers = nil // Clear to avoid reprocessing
+						d.pivotGapLock.Unlock()
 					}
 				}
 				if err := d.commitPivotBlock(P); err != nil {
