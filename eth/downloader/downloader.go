@@ -1625,8 +1625,9 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 	// Gap pivot tracking - only used when gap pivots are configured
 	var (
-		syncedGaps      = make(map[uint64]bool)        // Track which gap pivots are synced
-		pendingGapRoots = make(map[uint64]common.Hash) // Gap pivot roots found but not yet synced
+		syncedGaps       = make(map[uint64]bool)        // Track which gap pivots are synced
+		pendingGapRoots  = make(map[uint64]common.Hash) // Gap pivot roots found but not yet synced
+		pendingGapHashes = make(map[uint64]common.Hash) // Gap pivot block hashes found but not yet synced
 	)
 	d.pivotGapLock.RLock()
 	if len(d.pivotGapNumbers) > 0 {
@@ -1695,6 +1696,7 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 				for _, gapNum := range d.pivotGapNumbers {
 					if num == gapNum && !syncedGaps[gapNum] {
 						pendingGapRoots[gapNum] = result.Header.Root
+						pendingGapHashes[gapNum] = result.Header.Hash()
 						break
 					}
 				}
@@ -1766,6 +1768,20 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 								return err
 							}
 							log.Info("Gap pivot state sync complete", "number", gapNum, "root", root)
+							// Generate snapshot for this gap pivot
+							gapHash, ok := pendingGapHashes[gapNum]
+							if !ok {
+								return fmt.Errorf("gap pivot block hash %d not found", gapNum)
+							}
+							statedb, err := state.New(root, state.NewDatabase(d.stateDB))
+							if err != nil {
+								log.Error("Failed to create state for gap pivot snapshot", "number", gapNum, "root", root, "err", err)
+								return err
+							}
+							if err := d.generateSnapshot(statedb, gapNum, gapHash); err != nil {
+								log.Error("Failed to generate snapshot for gap pivot", "number", gapNum, "hash", gapHash, "err", err)
+								return err
+							}
 							syncedGaps[gapNum] = true
 						}
 						log.Info("All gap pivot state syncs complete", "count", len(gapNumbers))
