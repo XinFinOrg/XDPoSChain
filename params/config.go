@@ -145,47 +145,21 @@ var (
 			ProtectorReward:      4000,
 			ObserverReward:       1000,
 		},
-		252000: {
-			SwitchRound:          250000,
+		60000: {
+			SwitchRound:          60000,
 			CertThreshold:        0.667,
 			TimeoutSyncThreshold: 3,
 			TimeoutPeriod:        5,
-			MinePeriod:           2,
+			MinePeriod:           1,
 			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 2.0, MaxExponent: 5},
-			MaxMasternodes:       10,
+			MaxMasternodes:       12,
 			MaxProtectorNodes:    3,
-			MaxObverserNodes:     1,
+			MaxObverserNodes:     3,
 			MasternodeReward:     57.06,
 			ProtectorReward:      45.25,
 			ObserverReward:       22.62,
-		},
-		261000: {
-			SwitchRound:          261000,
-			CertThreshold:        0.667,
-			TimeoutSyncThreshold: 3,
-			TimeoutPeriod:        5,
-			MinePeriod:           2,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 2.0, MaxExponent: 5},
-			MaxMasternodes:       12,
-			MaxProtectorNodes:    0,
-			MaxObverserNodes:     1000,
-			MasternodeReward:     63.42, // 57.078 goes to node, 6.34 goes to foundation
-			ProtectorReward:      50.27, // 45.243 goes to node, 5.02 goes to foundation
-			ObserverReward:       25.13, // 22.671 goes to node, 2.51 goes to foundation
-		},
-		300000: {
-			SwitchRound:          300000,
-			CertThreshold:        0.667,
-			TimeoutSyncThreshold: 3,
-			TimeoutPeriod:        5,
-			MinePeriod:           2,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 2.0, MaxExponent: 5},
-			MaxMasternodes:       12,
-			MaxProtectorNodes:    2,
-			MaxObverserNodes:     2,
-			MasternodeReward:     63.42, // 57.078 goes to node, 6.34 goes to foundation
-			ProtectorReward:      50.27, // 45.243 goes to node, 5.02 goes to foundation
-			ObserverReward:       25.13, // 22.671 goes to node, 2.51 goes to foundation
+			LimitPenaltyEpoch:    3,
+			MinimumSigningTx:     30,
 		},
 	}
 
