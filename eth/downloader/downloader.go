@@ -21,13 +21,17 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain"
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/engines/engine_v2"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
@@ -1974,4 +1978,38 @@ func (d *Downloader) requestTTL() time.Duration {
 		ttl = ttlLimit
 	}
 	return ttl
+}
+
+// generateSnapshot creates and stores a snapshot from the given state and block hash.
+// It retrieves candidates from state, sorts them by stake in descending order,
+// and stores the snapshot for future use.
+func (d *Downloader) generateSnapshot(statedb *state.StateDB, number uint64, hash common.Hash) error {
+	candidates := state.GetCandidates(statedb)
+	var ms []utils.Masternode
+	for _, candidate := range candidates {
+		v := state.GetCandidateCap(statedb, candidate)
+		// Skip zero address candidates
+		if !candidate.IsZero() {
+			ms = append(ms, utils.Masternode{Address: candidate, Stake: v})
+		}
+	}
+	sort.Slice(ms, func(i, j int) bool {
+		return ms[i].Stake.Cmp(ms[j].Stake) >= 0
+	})
+
+	masterNodes := []common.Address{}
+	for _, m := range ms {
+		masterNodes = append(masterNodes, m.Address)
+	}
+
+	snap := engine_v2.NewSnapshot(number, hash, masterNodes)
+	log.Info("[generateSnapshot] created snapshot", "number", number, "hash", hash.Hex(), "candidates", len(masterNodes))
+
+	err := engine_v2.StoreSnapshot(snap, d.stateDB)
+	if err != nil {
+		log.Error("[generateSnapshot] error while storing snapshot", "hash", hash, "error", err)
+		return err
+	}
+
+	return nil
 }

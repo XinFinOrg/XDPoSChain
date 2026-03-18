@@ -23,8 +23,8 @@ type SnapshotV2 struct {
 	NextEpochCandidates []common.Address `json:"masterNodes"` // Set of authorized candidates nodes at this moment for next epoch
 }
 
-// create new snapshot for next epoch to use
-func newSnapshot(number uint64, hash common.Hash, candidates []common.Address) *SnapshotV2 {
+// NewSnapshot creates a new snapshot for next epoch to use
+func NewSnapshot(number uint64, hash common.Hash, candidates []common.Address) *SnapshotV2 {
 	snap := &SnapshotV2{
 		Number:              number,
 		Hash:                hash,
@@ -47,8 +47,8 @@ func loadSnapshot(db ethdb.Database, hash common.Hash) (*SnapshotV2, error) {
 	return snap, nil
 }
 
-// store inserts the SnapshotV2 into the database.
-func storeSnapshot(s *SnapshotV2, db ethdb.Database) error {
+// StoreSnapshot inserts the SnapshotV2 into the database.
+func StoreSnapshot(s *SnapshotV2, db ethdb.Database) error {
 	blob, err := json.Marshal(s)
 	if err != nil {
 		return err

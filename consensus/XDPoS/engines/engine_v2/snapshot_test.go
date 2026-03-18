@@ -11,7 +11,7 @@ import (
 
 func TestGetMasterNodes(t *testing.T) {
 	masterNodes := []common.Address{{0x4}, {0x3}, {0x2}, {0x1}}
-	snap := newSnapshot(1, common.Hash{}, masterNodes)
+	snap := NewSnapshot(1, common.Hash{}, masterNodes)
 
 	for _, address := range masterNodes {
 		if _, ok := snap.GetMappedCandidates()[address]; !ok {
@@ -22,7 +22,7 @@ func TestGetMasterNodes(t *testing.T) {
 }
 
 func TestStoreLoadSnapshot(t *testing.T) {
-	snap := newSnapshot(1, common.Hash{0x1}, nil)
+	snap := NewSnapshot(1, common.Hash{0x1}, nil)
 	dir := t.TempDir()
 	db, err := leveldb.New(dir, 256, 0, "", false)
 	if err != nil {
@@ -30,7 +30,7 @@ func TestStoreLoadSnapshot(t *testing.T) {
 	}
 	lddb := rawdb.NewDatabase(db)
 
-	err = storeSnapshot(snap, lddb)
+	err = StoreSnapshot(snap, lddb)
 	if err != nil {
 		t.Error("store snapshot failed", err)
 	}
