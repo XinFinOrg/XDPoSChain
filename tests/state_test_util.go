@@ -341,7 +341,7 @@ func (tx *stTransaction) toMessage(ps stPostState, baseFee *big.Int) (*core.Mess
 		AccessList:            accessList,
 		SetCodeAuthorizations: authList,
 		SkipNonceChecks:       false,
-		SkipFromEOACheck:      false,
+		SkipTransactionChecks: false,
 	}
 	return msg, nil
 }
