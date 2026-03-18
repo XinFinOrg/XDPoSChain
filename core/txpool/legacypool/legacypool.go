@@ -770,8 +770,12 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 
 	// Special transactions must also honor the reservation semantics to keep
 	// the coordinator's ownership accounting balanced.
-	if tx.IsSpecialTransaction() && pool.IsSigner(from) && pool.pendingNonces.get(from) == tx.Nonce() {
-		return pool.promoteSpecialTx(from, tx)
+	if tx.IsSpecialTransaction() && pool.IsSigner(from) {
+		pendingNonce := pool.pendingNonces.get(from)
+		log.Debug("[DEBUG] special tx path check", "from", from, "txNonce", tx.Nonce(), "pendingNonce", pendingNonce, "match", pendingNonce == tx.Nonce())
+		if pendingNonce == tx.Nonce() {
+			return pool.promoteSpecialTx(from, tx)
+		}
 	}
 
 	// If the transaction pool is full, discard underpriced transactions

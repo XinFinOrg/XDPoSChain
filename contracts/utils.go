@@ -85,7 +85,10 @@ func CreateTransactionSign(chainConfig *params.ChainConfig, pool *txpool.TxPool,
 		}
 
 		// Create and send tx to smart contract for sign validate block.
-		nonce := pool.Nonce(account.Address)
+		stateNonce := pool.Nonce(account.Address)
+		poolNonce := pool.PoolNonce(account.Address)
+		log.Debug("[DEBUG] CreateTransactionSign nonce check", "stateNonce", stateNonce, "poolNonce", poolNonce, "from", account.Address, "blockNumber", block.NumberU64())
+		nonce := stateNonce
 		tx := CreateTxSign(block.Number(), block.Hash(), nonce, common.BlockSignersBinary)
 		txSigned, err := wallet.SignTx(account, tx, chainConfig.ChainID)
 		if err != nil {
@@ -95,7 +98,7 @@ func CreateTransactionSign(chainConfig *params.ChainConfig, pool *txpool.TxPool,
 		// Add tx signed to local tx pool.
 		err = pool.AddLocal(txSigned, true)
 		if err != nil {
-			log.Error("Fail to add tx sign to local pool.", "error", err, "number", block.NumberU64(), "hash", block.Hash().Hex(), "from", account.Address, "nonce", nonce)
+			log.Error("Fail to add tx sign to local pool.", "error", err, "number", block.NumberU64(), "hash", block.Hash().Hex(), "from", account.Address, "stateNonce", stateNonce, "poolNonce", poolNonce)
 			return err
 		}
 
