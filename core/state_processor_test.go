@@ -61,6 +61,7 @@ func TestStateProcessorErrors(t *testing.T) {
 			Eip1559Block:        big.NewInt(0),
 			CancunBlock:         big.NewInt(0),
 			PragueBlock:         big.NewInt(0),
+			OsakaBlock:          big.NewInt(0),
 			Ethash:              new(params.EthashConfig),
 		}
 		signer  = types.LatestSigner(config)
@@ -134,6 +135,7 @@ func TestStateProcessorErrors(t *testing.T) {
 		bigNumber := new(big.Int).SetBytes(common.MaxHash.Bytes())
 		tooBigNumber := new(big.Int).Set(bigNumber)
 		tooBigNumber.Add(tooBigNumber, common.Big1)
+		gasLimit := blockchain.CurrentHeader().GasLimit
 		for i, tt := range []struct {
 			txs  []*types.Transaction
 			want string
@@ -159,9 +161,9 @@ func TestStateProcessorErrors(t *testing.T) {
 			},
 			{ // ErrGasLimitReached
 				txs: []*types.Transaction{
-					makeTx(key1, 0, common.Address{}, big.NewInt(0), 21000000, big.NewInt(12500000000), nil),
+					makeTx(key1, 0, common.Address{}, big.NewInt(0), gasLimit+1, big.NewInt(12500000000), nil),
 				},
-				want: "could not apply tx 0 [0x062b0e84f2d48f09f91e434fca8cb1fb864c4fb82f8bf27d58879ebe60c9f773]: gas limit reached, have: 4712388, need: 21000000",
+				want: "could not apply tx 0 [0x141d5093bebc1570bf844ff66c14113a4516f601f8e4df7aa4d575a4e9bcaa33]: gas limit reached, have: 4712388, need: 4712389",
 			},
 			{ // ErrInsufficientFundsForTransfer
 				txs: []*types.Transaction{
@@ -187,9 +189,9 @@ func TestStateProcessorErrors(t *testing.T) {
 			},
 			{ // ErrGasLimitReached
 				txs: []*types.Transaction{
-					makeTx(key1, 0, common.Address{}, big.NewInt(0), params.TxGas*1000, big.NewInt(12500000000), nil),
+					makeTx(key1, 0, common.Address{}, big.NewInt(0), gasLimit+1, big.NewInt(12500000000), nil),
 				},
-				want: "could not apply tx 0 [0x062b0e84f2d48f09f91e434fca8cb1fb864c4fb82f8bf27d58879ebe60c9f773]: gas limit reached, have: 4712388, need: 21000000",
+				want: "could not apply tx 0 [0x141d5093bebc1570bf844ff66c14113a4516f601f8e4df7aa4d575a4e9bcaa33]: gas limit reached, have: 4712388, need: 4712389",
 			},
 			{ // ErrFeeCapTooLow
 				txs: []*types.Transaction{
@@ -251,6 +253,12 @@ func TestStateProcessorErrors(t *testing.T) {
 				want: "could not apply tx 0 [0x2fadb4fa7ccf8564edc21590f8d94a5b93a981b2bb2de8256978cb7361bc69de]: EIP-7702 transaction with empty auth list (sender 0x71562b71999873DB5b286dF957af199Ec94617F7)",
 			},
 			// ErrSetCodeTxCreate cannot be tested: it is impossible to create a SetCode-tx with nil `to`.
+			{ // ErrGasLimitTooHigh
+				txs: []*types.Transaction{
+					makeTx(key1, 0, common.Address{}, big.NewInt(0), params.MaxTxGas+1, big.NewInt(params.InitialBaseFee), nil),
+				},
+				want: "could not apply tx 0 [0xb49a1f798a865850a62b4deb6a71efb9150e5bf11a46b3f331fec62baa0547b4]: transaction gas limit too high (cap: 16777216, tx: 16777217)",
+			},
 		} {
 			block := GenerateBadBlock(t, genesis, ethash.NewFaker(), tt.txs, gspec.Config)
 			_, err := blockchain.InsertChain(types.Blocks{block})
