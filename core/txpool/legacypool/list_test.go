@@ -24,6 +24,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/holiman/uint256"
 )
 
 // Tests that transactions can be added to strict lists and list contents and
@@ -64,6 +65,67 @@ func TestListAddVeryExpensive(t *testing.T) {
 		tx, _ := types.SignTx(types.NewTransaction(uint64(i), common.Address{}, value, gaslimit, gasprice, nil), types.HomesteadSigner{}, key)
 		t.Logf("cost: %x bitlen: %d\n", tx.Cost(), tx.Cost().BitLen())
 		list.Add(tx, DefaultConfig.PriceBump)
+	}
+}
+
+func TestPricedListSetBaseFeeNilPreserved(t *testing.T) {
+	pl := newPricedList(newLookup())
+
+	pl.SetBaseFee(nil)
+	if pl.urgent.baseFee != nil {
+		t.Fatalf("unexpected non-nil base fee after nil input")
+	}
+}
+
+func TestPricedListSetBaseFeeOverflowClearsBaseFee(t *testing.T) {
+	pl := newPricedList(newLookup())
+
+	pl.SetBaseFee(big.NewInt(1))
+	if pl.urgent.baseFee == nil {
+		t.Fatalf("expected non-nil base fee after valid input")
+	}
+
+	overflow := new(big.Int).Lsh(big.NewInt(1), 300)
+	pl.SetBaseFee(overflow)
+	if pl.urgent.baseFee != nil {
+		t.Fatalf("expected nil base fee when input overflows uint256")
+	}
+}
+
+// TestPriceHeapCmp tests that the price heap comparison function works as intended.
+// It also tests combinations where the basefee is higher than the gas fee cap, which
+// are useful to sort in the mempool to support basefee changes.
+func TestPriceHeapCmp(t *testing.T) {
+	key, _ := crypto.GenerateKey()
+	txs := []*types.Transaction{
+		// nonce, gaslimit, gasfee, gastip
+		dynamicFeeTx(0, 1000, big.NewInt(2), big.NewInt(1), key),
+		dynamicFeeTx(0, 1000, big.NewInt(1), big.NewInt(2), key),
+		dynamicFeeTx(0, 1000, big.NewInt(1), big.NewInt(1), key),
+		dynamicFeeTx(0, 1000, big.NewInt(1), big.NewInt(0), key),
+	}
+
+	// create priceHeap
+	ph := &priceHeap{}
+
+	// now set the basefee on the heap
+	for _, basefee := range []uint64{0, 1, 2, 3} {
+		ph.baseFee = uint256.NewInt(basefee)
+
+		for i := 0; i < len(txs); i++ {
+			for j := 0; j < len(txs); j++ {
+				switch {
+				case i == j:
+					if c := ph.cmp(txs[i], txs[j]); c != 0 {
+						t.Errorf("tx %d should be equal priority to tx %d with basefee %d (cmp=%d)", i, j, basefee, c)
+					}
+				case i < j:
+					if c := ph.cmp(txs[i], txs[j]); c != 1 {
+						t.Errorf("tx %d vs tx %d comparison inconsistent with basefee %d (cmp=%d)", i, j, basefee, c)
+					}
+				}
+			}
+		}
 	}
 }
 
