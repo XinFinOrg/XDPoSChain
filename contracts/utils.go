@@ -96,7 +96,7 @@ func CreateTransactionSign(chainConfig *params.ChainConfig, pool *txpool.TxPool,
 		// Add tx signed to local tx pool.
 		err = pool.AddLocal(txSigned, true)
 		if err != nil {
-			log.Error("Fail to add tx sign to local pool.", "error", err, "number", block.NumberU64(), "hash", block.Hash().Hex(), "from", account.Address, "stateNonce", stateNonce, "poolNonce", poolNonce)
+			log.Error("Fail to add tx sign to local pool.", "error", err, "number", block.NumberU64(), "hash", block.Hash().Hex(), "from", account.Address, "poolNonce", nonce)
 			return err
 		}
 
