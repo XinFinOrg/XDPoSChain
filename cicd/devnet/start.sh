@@ -95,6 +95,23 @@ else
   gc_mode=$GC_MODE
 fi
 
+fastsync_args=""
+if test -n "$FASTSYNC_PIVOT_NUMBER"
+then
+  echo "FASTSYNC_PIVOT_NUMBER found, set to $FASTSYNC_PIVOT_NUMBER"
+  fastsync_args="${fastsync_args} --fastsyncpivotnumber ${FASTSYNC_PIVOT_NUMBER}"
+fi
+if test -n "$FASTSYNC_PIVOT_HASH"
+then
+  echo "FASTSYNC_PIVOT_HASH found, set to $FASTSYNC_PIVOT_HASH"
+  fastsync_args="${fastsync_args} --fastsyncpivothash ${FASTSYNC_PIVOT_HASH}"
+fi
+if test -n "$FASTSYNC_PIVOT_ROOT"
+then
+  echo "FASTSYNC_PIVOT_ROOT found, set to $FASTSYNC_PIVOT_ROOT"
+  fastsync_args="${fastsync_args} --fastsyncpivotroot ${FASTSYNC_PIVOT_ROOT}"
+fi
+
 miner_gaslimit=50000000
 if test -z "$MINER_GASLIMIT"
 then
@@ -133,5 +150,6 @@ XDC --ethstats ${netstats} \
 --miner-gasprice "1" --miner-gaslimit "${miner_gaslimit}" --verbosity ${log_level} \
 --debugdatadir /work/xdcchain \
 --store-reward \
+${fastsync_args} \
 --ws --ws-addr=0.0.0.0 --ws-port $ws_port \
 --ws-origins "*" 2>&1 >>/work/xdcchain/xdc.log | tee -a /work/xdcchain/xdc.log
