@@ -242,8 +242,9 @@ func (x *XDPoS) VerifyHeaders(chain consensus.ChainReader, headers []*types.Head
 	} else if v1Count != 0 && v2Count != 0 {
 		v1Results := make(chan error, v1Count)
 		v2Results := make(chan error, v2Count)
-		x.EngineV1.VerifyHeaders(chain, v1Headers, v1FullVerifies, abort, v1Results)
-		x.EngineV2.VerifyHeaders(chain, v2Headers, v2FullVerifies, abort, v2Results)
+		verifyChain := newVerifyChainReader(chain, headers)
+		x.EngineV1.VerifyHeaders(verifyChain, v1Headers, v1FullVerifies, abort, v1Results)
+		x.EngineV2.VerifyHeaders(verifyChain, v2Headers, v2FullVerifies, abort, v2Results)
 
 		go func() {
 			for range v1Count {
