@@ -17,6 +17,19 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+type maskingChainReader struct {
+	consensus.ChainReader
+	maskedHash   common.Hash
+	maskedNumber uint64
+}
+
+func (m *maskingChainReader) GetHeader(hash common.Hash, number uint64) *types.Header {
+	if hash == m.maskedHash && number == m.maskedNumber {
+		return nil
+	}
+	return m.ChainReader.GetHeader(hash, number)
+}
+
 func TestShouldVerifyBlock(t *testing.T) {
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
@@ -482,6 +495,42 @@ func TestShouldVerifyHeadersEvenIfParentsNotYetWrittenIntoDB(t *testing.T) {
 			} else {
 				panic("Suppose to have verified 3 block headers")
 			}
+		}
+	}
+}
+
+func TestShouldVerifyMixedHeadersWhenParentLookupByHashIsMasked(t *testing.T) {
+	skipLongInShortMode(t)
+	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
+	assert.Nil(t, err)
+
+	var config params.ChainConfig
+	err = json.Unmarshal(b, &config)
+	assert.Nil(t, err)
+
+	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 910, &config, nil)
+	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
+
+	// Build a mixed v1/v2 input where the first v2 header (901) depends on v1 parent (900).
+	headers := []*types.Header{
+		blockchain.GetBlockByNumber(900).Header(),
+		blockchain.GetBlockByNumber(901).Header(),
+	}
+	fullVerifies := []bool{true, true}
+
+	maskedChain := &maskingChainReader{
+		ChainReader:  blockchain,
+		maskedHash:   headers[0].Hash(),
+		maskedNumber: headers[0].Number.Uint64(),
+	}
+
+	_, results := adaptor.VerifyHeaders(maskedChain, headers, fullVerifies)
+	for i := 0; i < len(headers); i++ {
+		select {
+		case result := <-results:
+			assert.Nil(t, result)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for verify result %d", i)
 		}
 	}
 }
