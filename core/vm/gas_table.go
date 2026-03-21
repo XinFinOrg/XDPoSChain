@@ -18,12 +18,10 @@ package vm
 
 import (
 	"errors"
-	"fmt"
-
-	"github.com/XinFinOrg/XDPoSChain/params"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/math"
+	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
 // memoryGasCost calculates the quadratic gas for memory expansion. It does so
@@ -318,10 +316,10 @@ func gasCreateEip3860(evm *EVM, contract *Contract, stack *Stack, mem *Memory, m
 	if overflow {
 		return 0, ErrGasUintOverflow
 	}
-	if size > params.MaxInitCodeSize {
-		return 0, fmt.Errorf("%w: size %d", ErrMaxInitCodeSizeExceeded, size)
+	if err := CheckMaxInitCodeSize(&evm.chainRules, size); err != nil {
+		return 0, err
 	}
-	// Since size <= params.MaxInitCodeSize, these multiplication cannot overflow
+	// Since size <= the protocol-defined maximum initcode size limit, these multiplication cannot overflow
 	moreGas := params.InitCodeWordGas * ((size + 31) / 32)
 	if gas, overflow = math.SafeAdd(gas, moreGas); overflow {
 		return 0, ErrGasUintOverflow
@@ -338,10 +336,10 @@ func gasCreate2Eip3860(evm *EVM, contract *Contract, stack *Stack, mem *Memory, 
 	if overflow {
 		return 0, ErrGasUintOverflow
 	}
-	if size > params.MaxInitCodeSize {
-		return 0, fmt.Errorf("%w: size %d", ErrMaxInitCodeSizeExceeded, size)
+	if err := CheckMaxInitCodeSize(&evm.chainRules, size); err != nil {
+		return 0, err
 	}
-	// Since size <= params.MaxInitCodeSize, these multiplication cannot overflow
+	// Since size <= the protocol-defined maximum initcode size limit, these multiplication cannot overflow
 	moreGas := (params.InitCodeWordGas + params.Keccak256WordGas) * ((size + 31) / 32)
 	if gas, overflow = math.SafeAdd(gas, moreGas); overflow {
 		return 0, ErrGasUintOverflow

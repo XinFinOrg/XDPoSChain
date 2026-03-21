@@ -123,21 +123,21 @@ var createGasTests = []struct {
 	{"0x61C00060006000f0" + "600052" + "60206000F3", true, 44309, 44309},
 	// create2(0, 0, 0xc001, 0) without 3860
 	{"0x600061C00160006000f5" + "600052" + "60206000F3", false, 50471, 50471},
-	// create2(0, 0, 0xc001, 0) (too large), with 3860
-	{"0x600061C00160006000f5" + "600052" + "60206000F3", true, 32012, 100000},
+	// create2(0, 0, 0x10001, 0) (too large), with 3860
+	{"0x60006201000160006000f5" + "600052" + "60206000F3", true, 32012, 100000},
 	// create2(0, 0, 0xc000, 0)
 	// This case is trying to deploy code at (within) the limit
 	{"0x600061C00060006000f5" + "600052" + "60206000F3", true, 53528, 53528},
-	// create2(0, 0, 0xc001, 0)
-	// This case is trying to deploy code exceeding the limit
-	{"0x600061C00160006000f5" + "600052" + "60206000F3", true, 32024, 100000}}
+	// create2(0, 0, 0x10001, 0)
+	// This case is trying to deploy code exceeding Osaka limit
+	{"0x60006201000160006000f5" + "600052" + "60206000F3", true, 32024, 100000}}
 
 func TestCreateGas(t *testing.T) {
 	for i, tt := range createGasTests {
 		var gasUsed = uint64(0)
 		doCheck := func(testGas int) bool {
 			address := common.BytesToAddress([]byte("contract"))
-			statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
+			statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
 			statedb.CreateAccount(address)
 			statedb.SetCode(address, hexutil.MustDecode(tt.code))
 			statedb.Finalise(true)
@@ -147,11 +147,13 @@ func TestCreateGas(t *testing.T) {
 				BlockNumber: big.NewInt(0),
 			}
 			config := Config{}
+			chainConfig := params.AllEthashProtocolChanges
 			if tt.eip3860 {
 				config.ExtraEips = []int{3860}
+				chainConfig = params.MergedTestChainConfig
 			}
 
-			evm := NewEVM(vmctx, statedb, nil, params.AllEthashProtocolChanges, config)
+			evm := NewEVM(vmctx, statedb, nil, chainConfig, config)
 			var startGas = uint64(testGas)
 			ret, gas, err := evm.Call(common.Address{}, address, nil, startGas, new(uint256.Int))
 			if err != nil {

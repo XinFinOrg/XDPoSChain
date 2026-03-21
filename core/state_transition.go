@@ -431,8 +431,10 @@ func (st *StateTransition) TransitionDb(owner common.Address) (*ExecutionResult,
 	}
 
 	// Check whether the init code size has been exceeded.
-	if rules.IsEIP1559 && contractCreation && len(msg.Data) > params.MaxInitCodeSize {
-		return nil, fmt.Errorf("%w: code size %v limit %v", ErrMaxInitCodeSizeExceeded, len(msg.Data), params.MaxInitCodeSize)
+	if contractCreation {
+		if err := vm.CheckMaxInitCodeSize(&rules, uint64(len(msg.Data))); err != nil {
+			return nil, err
+		}
 	}
 
 	// Execute the preparatory steps for state transition which includes:
