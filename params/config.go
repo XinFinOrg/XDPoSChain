@@ -161,6 +161,23 @@ var (
 			LimitPenaltyEpoch:    3,
 			MinimumSigningTx:     30,
 		},
+		105000: {
+			SwitchRound:               105000,
+			CertThreshold:             0.667,
+			TimeoutSyncThreshold:      3,
+			TimeoutPeriod:             5,
+			MinePeriod:                1,
+			ExpTimeoutConfig:          ExpTimeoutConfig{Base: 2.0, MaxExponent: 5},
+			MaxMasternodes:            12,
+			MaxProtectorNodes:         3,
+			MaxObverserNodes:          3,
+			MasternodeReward:          57.06,
+			ProtectorReward:           45.25,
+			ObserverReward:            22.62,
+			LimitPenaltyEpoch:         3,
+			MinimumSigningTx:          30,
+			MinimumMinerBlockPerEpoch: 60,
+		},
 	}
 
 	UnitTestV2Configs = map[uint64]*V2Config{
