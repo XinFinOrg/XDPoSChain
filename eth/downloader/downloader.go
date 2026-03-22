@@ -1624,8 +1624,12 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 
 	// Start syncing state of the reported head block. This should get us most of
 	// the state of the pivot block.
-	log.Info("syncState", "number", d.pivotNumber, "root", d.pivotRoot)
-	sync := d.syncState(d.pivotRoot)
+	root := latest.Root
+	if d.pivotNumber != 0 {
+		root = d.pivotRoot
+	}
+	log.Info("syncState", "number", d.pivotNumber, "root", root)
+	sync := d.syncState(root)
 	defer func() {
 		// The `sync` object is replaced every time the pivot moves. We need to
 		// defer close the very last active one, hence the lazy evaluation vs.
@@ -1987,10 +1991,10 @@ func (d *Downloader) requestTTL() time.Duration {
 // It retrieves candidates from state, sorts them by stake in descending order,
 // and stores the snapshot for future use.
 func (d *Downloader) generateSnapshot(statedb *state.StateDB, number uint64, hash common.Hash) error {
-	candidates := state.GetCandidates(statedb)
+	candidates := statedb.GetCandidates()
 	var ms []utils.Masternode
 	for _, candidate := range candidates {
-		v := state.GetCandidateCap(statedb, candidate)
+		v := statedb.GetCandidateCap(candidate)
 		// Skip zero address candidates
 		if !candidate.IsZero() {
 			ms = append(ms, utils.Masternode{Address: candidate, Stake: v})
