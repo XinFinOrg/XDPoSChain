@@ -210,33 +210,68 @@ func (x *XDPoS) VerifyHeader(chain consensus.ChainReader, header *types.Header, 
 
 // VerifyHeaders is similar to VerifyHeader, but verifies a batch of headers. The
 // method returns a quit channel to abort the operations and a results channel to
-// retrieve the async verifications (the order is that of the input slice).
+// retrieve the async verifications. For mixed v1/v2 inputs, results are emitted
+// in deterministic consensus order: all v1 results first, then all v2 results.
 func (x *XDPoS) VerifyHeaders(chain consensus.ChainReader, headers []*types.Header, fullVerifies []bool) (chan<- struct{}, <-chan error) {
 	abort := make(chan struct{})
 	results := make(chan error, len(headers))
+	verifyChain := newVerifyChainReader(chain, headers)
 
 	// Split the headers list into v1 and v2 buckets
-	var v1headers []*types.Header
-	var v2headers []*types.Header
-	v1fullVerifies := make([]bool, 0, len(headers))
-	v2fullVerifies := make([]bool, 0, len(headers))
+	var v1Headers []*types.Header
+	var v2Headers []*types.Header
+	v1FullVerifies := make([]bool, 0, len(headers))
+	v2FullVerifies := make([]bool, 0, len(headers))
 
 	for i, header := range headers {
 		switch x.config.BlockConsensusVersion(header.Number) {
 		case params.ConsensusEngineVersion2:
-			v2headers = append(v2headers, header)
-			v2fullVerifies = append(v2fullVerifies, fullVerifies[i])
+			v2Headers = append(v2Headers, header)
+			v2FullVerifies = append(v2FullVerifies, fullVerifies[i])
 		default: // Default "v1"
-			v1headers = append(v1headers, header)
-			v1fullVerifies = append(v1fullVerifies, fullVerifies[i])
+			v1Headers = append(v1Headers, header)
+			v1FullVerifies = append(v1FullVerifies, fullVerifies[i])
 		}
 	}
 
-	if v1headers != nil {
-		x.EngineV1.VerifyHeaders(chain, v1headers, v1fullVerifies, abort, results)
-	}
-	if v2headers != nil {
-		x.EngineV2.VerifyHeaders(chain, v2headers, v2fullVerifies, abort, results)
+	v1Count := len(v1Headers)
+	v2Count := len(v2Headers)
+	if v1Count != 0 && v2Count == 0 {
+		x.EngineV1.VerifyHeaders(verifyChain, v1Headers, v1FullVerifies, abort, results)
+	} else if v1Count == 0 && v2Count != 0 {
+		x.EngineV2.VerifyHeaders(verifyChain, v2Headers, v2FullVerifies, abort, results)
+	} else if v1Count != 0 && v2Count != 0 {
+		v1Results := make(chan error, v1Count)
+		v2Results := make(chan error, v2Count)
+		x.EngineV1.VerifyHeaders(verifyChain, v1Headers, v1FullVerifies, abort, v1Results)
+		x.EngineV2.VerifyHeaders(verifyChain, v2Headers, v2FullVerifies, abort, v2Results)
+
+		go func() {
+			for range v1Count {
+				select {
+				case <-abort:
+					return
+				case err := <-v1Results:
+					select {
+					case <-abort:
+						return
+					case results <- err:
+					}
+				}
+			}
+			for range v2Count {
+				select {
+				case <-abort:
+					return
+				case err := <-v2Results:
+					select {
+					case <-abort:
+						return
+					case results <- err:
+					}
+				}
+			}
+		}()
 	}
 
 	return abort, results

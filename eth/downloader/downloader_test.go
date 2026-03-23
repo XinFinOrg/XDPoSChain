@@ -60,6 +60,8 @@ type downloadTester struct {
 	ownReceipts map[common.Hash]types.Receipts // Receipts belonging to the tester
 	ownChainTd  map[common.Hash]*big.Int       // Total difficulties of the blocks in the local chain
 
+	insertHeaderChainHook func([]*types.Header) error
+
 	lock sync.RWMutex
 }
 
@@ -223,6 +225,11 @@ func (dl *downloadTester) getTd(hash common.Hash) *big.Int {
 func (dl *downloadTester) InsertHeaderChain(headers []*types.Header, checkFreq int) (i int, err error) {
 	dl.lock.Lock()
 	defer dl.lock.Unlock()
+	if dl.insertHeaderChainHook != nil {
+		if err := dl.insertHeaderChainHook(headers); err != nil {
+			return 0, err
+		}
+	}
 	// Do a quick check, as the blockchain.InsertHeaderChain doesn't insert anything in case of errors
 	if dl.getHeaderByHash(headers[0].ParentHash) == nil {
 		return 0, fmt.Errorf("InsertHeaderChain: unknown parent at first position, parent of number %d", headers[0].Number)
@@ -1120,6 +1127,70 @@ func testBlockHeaderAttackerDropping(t *testing.T, protocol int) {
 		if _, ok := tester.peers[id]; !ok != tt.drop {
 			t.Errorf("test %d: peer drop mismatch for %v: have %v, want %v", i, tt.result, !ok, tt.drop)
 		}
+	}
+}
+
+// Tests that a sync-time unknown ancestor in header insertion is surfaced as
+// invalid chain and causes peer dropping, matching bad-block handling flow.
+func TestSyncBatchAncestorErrDropPeer(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []SyncMode{LightSync, FastSync} {
+		mode := mode
+		t.Run(mode.String(), func(t *testing.T) {
+			tester := newTester()
+			defer tester.terminate()
+
+			chain := testChainBase.shorten(blockCacheMaxItems - 15)
+			if err := tester.newPeer("peer", 64, chain); err != nil {
+				t.Fatalf("failed to register peer: %v", err)
+			}
+
+			tester.insertHeaderChainHook = func(headers []*types.Header) error {
+				if len(headers) > 0 {
+					return errors.New("unknown ancestor")
+				}
+				return nil
+			}
+
+			head := chain.headBlock()
+			err := tester.downloader.Synchronise("peer", head.Hash(), chain.td(head.Hash()), mode)
+			if !errors.Is(err, errInvalidChain) {
+				t.Fatalf("sync error mismatch: have %v, want wrapped %v", err, errInvalidChain)
+			}
+			if !strings.Contains(err.Error(), "unknown ancestor") {
+				t.Fatalf("sync error should contain root cause, have %v", err)
+			}
+			if _, ok := tester.peers["peer"]; ok {
+				t.Fatalf("peer should be dropped on invalid chain")
+			}
+		})
+	}
+}
+
+// Tests the control path for the same batch sync flow: without injected header
+// insertion errors, sync succeeds and the origin peer is kept.
+func TestSyncBatchNoAncestorErrKeepPeer(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []SyncMode{LightSync, FastSync} {
+		mode := mode
+		t.Run(mode.String(), func(t *testing.T) {
+			tester := newTester()
+			defer tester.terminate()
+
+			chain := testChainBase.shorten(blockCacheMaxItems - 15)
+			if err := tester.newPeer("peer", 64, chain); err != nil {
+				t.Fatalf("failed to register peer: %v", err)
+			}
+
+			head := chain.headBlock()
+			err := tester.downloader.Synchronise("peer", head.Hash(), chain.td(head.Hash()), mode)
+			if err != nil {
+				t.Fatalf("sync should succeed without injected errors, have %v", err)
+			}
+			if _, ok := tester.peers["peer"]; !ok {
+				t.Fatalf("peer should not be dropped on successful sync")
+			}
+		})
 	}
 }
 

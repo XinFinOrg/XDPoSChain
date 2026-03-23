@@ -17,6 +17,19 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+type maskingChainReader struct {
+	consensus.ChainReader
+	maskedHash   common.Hash
+	maskedNumber uint64
+}
+
+func (m *maskingChainReader) GetHeader(hash common.Hash, number uint64) *types.Header {
+	if hash == m.maskedHash && number == m.maskedNumber {
+		return nil
+	}
+	return m.ChainReader.GetHeader(hash, number)
+}
+
 func TestShouldVerifyBlock(t *testing.T) {
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
@@ -482,6 +495,111 @@ func TestShouldVerifyHeadersEvenIfParentsNotYetWrittenIntoDB(t *testing.T) {
 			} else {
 				panic("Suppose to have verified 3 block headers")
 			}
+		}
+	}
+}
+
+func TestShouldVerifyMixedHeadersWhenParentLookupByHashIsMasked(t *testing.T) {
+	skipLongInShortMode(t)
+	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
+	assert.Nil(t, err)
+
+	var config params.ChainConfig
+	err = json.Unmarshal(b, &config)
+	assert.Nil(t, err)
+
+	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 910, &config, nil)
+	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
+
+	// Build a mixed v1/v2 input where the first v2 header (901) depends on v1 parent (900).
+	headers := []*types.Header{
+		blockchain.GetBlockByNumber(900).Header(),
+		blockchain.GetBlockByNumber(901).Header(),
+	}
+	fullVerifies := []bool{true, true}
+
+	maskedChain := &maskingChainReader{
+		ChainReader:  blockchain,
+		maskedHash:   headers[0].Hash(),
+		maskedNumber: headers[0].Number.Uint64(),
+	}
+
+	_, results := adaptor.VerifyHeaders(maskedChain, headers, fullVerifies)
+	for i := 0; i < len(headers); i++ {
+		select {
+		case result := <-results:
+			assert.Nil(t, result)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for verify result %d", i)
+		}
+	}
+}
+
+func TestShouldVerifyPureV2EpochSwitchHeadersEvenIfParentNotYetWrittenIntoDB(t *testing.T) {
+	skipLongInShortMode(t)
+	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
+	assert.Nil(t, err)
+
+	var config params.ChainConfig
+	err = json.Unmarshal(b, &config)
+	assert.Nil(t, err)
+
+	// Build chain to 1798, then construct 1799->1800 in-memory only.
+	// 1800 is a v2 epoch-switch block and triggers HookPenalty via calcMasternodes.
+	blockchain, _, block1798, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 1798, &config, nil)
+	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
+
+	// Probe HookPenalty parent lookup behavior deterministically.
+	adaptor.EngineV2.HookPenalty = func(chain consensus.ChainReader, number *big.Int, parentHash common.Hash, candidates []common.Address) ([]common.Address, error) {
+		parentNumber := number.Uint64() - 1
+		if parent := chain.GetHeader(parentHash, parentNumber); parent == nil {
+			return nil, consensus.ErrUnknownAncestor
+		}
+		return []common.Address{}, nil
+	}
+
+	block1799 := CreateBlock(
+		blockchain,
+		&config,
+		block1798,
+		1799,
+		int64(1799)-config.XDPoS.V2.SwitchBlock.Int64(),
+		signer.Hex(),
+		signer,
+		signFn,
+		nil,
+		nil,
+		"",
+	)
+	block1800 := CreateBlock(
+		blockchain,
+		&config,
+		block1799,
+		1800,
+		int64(1800)-config.XDPoS.V2.SwitchBlock.Int64(),
+		signer.Hex(),
+		signer,
+		signFn,
+		nil,
+		nil,
+		"",
+	)
+
+	headers := []*types.Header{block1799.Header(), block1800.Header()}
+	fullVerifies := []bool{true, true}
+
+	_, results := adaptor.VerifyHeaders(blockchain, headers, fullVerifies)
+	for i := 0; i < len(headers); i++ {
+		select {
+		case result := <-results:
+			if i == 0 {
+				assert.Nil(t, result)
+				continue
+			}
+			assert.Error(t, result)
+			assert.NotEqual(t, consensus.ErrUnknownAncestor, result)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for verify result %d", i)
 		}
 	}
 }
