@@ -24,11 +24,15 @@ import (
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
+	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto/keccak"
+	"github.com/XinFinOrg/XDPoSChain/internal/ethapi/override"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 	"github.com/stretchr/testify/require"
@@ -283,9 +287,35 @@ type storageBackendMock struct {
 	header  *types.Header
 }
 
+type testEngine struct{}
+
+func (testEngine) Author(header *types.Header) (common.Address, error)           { return header.Coinbase, nil }
+func (testEngine) VerifyHeader(consensus.ChainReader, *types.Header, bool) error { return nil }
+func (testEngine) VerifyHeaders(consensus.ChainReader, []*types.Header, []bool) (chan<- struct{}, <-chan error) {
+	quit := make(chan struct{})
+	results := make(chan error)
+	close(results)
+	return quit, results
+}
+func (testEngine) VerifyUncles(consensus.ChainReader, *types.Block) error { return nil }
+func (testEngine) VerifySeal(consensus.ChainReader, *types.Header) error  { return nil }
+func (testEngine) Prepare(consensus.ChainReader, *types.Header) error     { return nil }
+func (testEngine) Finalize(consensus.ChainReader, *types.Header, vm.StateDB, *state.StateDB, []*types.Transaction, []*types.Header, []*types.Receipt) (*types.Block, error) {
+	return nil, nil
+}
+func (testEngine) Seal(consensus.ChainReader, *types.Block, <-chan struct{}) (*types.Block, error) {
+	return nil, nil
+}
+func (testEngine) CalcDifficulty(consensus.ChainReader, uint64, *types.Header) *big.Int {
+	return big.NewInt(0)
+}
+func (testEngine) APIs(consensus.ChainReader) []rpc.API { return nil }
+
 func (b *storageBackendMock) StateAndHeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*state.StateDB, *types.Header, error) {
 	return b.stateDB, b.header, nil
 }
+
+func (b *storageBackendMock) Engine() consensus.Engine { return testEngine{} }
 
 func TestGetStorageValues(t *testing.T) {
 	t.Parallel()
@@ -382,4 +412,48 @@ func TestGetStorageValues(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for exceeding slot limit")
 	}
+}
+
+func TestDoEstimateGasRespectsBlockOverrideGasLimit(t *testing.T) {
+	t.Parallel()
+
+	var (
+		from    = common.HexToAddress("0x1001")
+		to      = common.HexToAddress("0x1002")
+		cap     = hexutil.Uint64(20000)
+		genesis = &core.Genesis{
+			Config: params.MergedTestChainConfig,
+			Alloc: types.GenesisAlloc{
+				from: {Balance: big.NewInt(params.Ether)},
+			},
+		}
+	)
+	db := rawdb.NewMemoryDatabase()
+	block := genesis.MustCommit(db)
+	stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+	if err != nil {
+		t.Fatalf("failed to create state db: %v", err)
+	}
+	header := types.CopyHeader(block.Header())
+	header.GasLimit = 30000
+
+	backend := &storageBackendMock{
+		backendMock: newBackendMock(),
+		stateDB:     stateDB,
+		header:      header,
+	}
+	args := TransactionArgs{From: &from, To: &to}
+	_, err = DoEstimateGas(
+		context.Background(),
+		backend,
+		args,
+		rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber),
+		nil,
+		&override.BlockOverrides{GasLimit: &cap},
+		0,
+	)
+	if err == nil {
+		t.Fatal("expected gas estimation to fail when block override gas limit is below intrinsic gas")
+	}
+	require.ErrorContains(t, err, "gas required exceeds allowance (20000)")
 }
