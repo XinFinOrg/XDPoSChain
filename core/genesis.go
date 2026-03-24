@@ -329,6 +329,7 @@ func (g *Genesis) configOrDefault(ghash common.Hash) *params.ChainConfig {
 	switch {
 	case g != nil:
 		log.Info("[configOrDefault] load orignal config", "hash", ghash)
+		applyDevnet108V2Config(g.Config)
 		return g.Config
 	case ghash == params.MainnetGenesisHash:
 		log.Info("[configOrDefault] load mainnetconfig")
@@ -343,6 +344,17 @@ func (g *Genesis) configOrDefault(ghash common.Hash) *params.ChainConfig {
 		log.Info("[configOrDefault] load AllEthashProtocolChanges", "hash", ghash)
 		return params.AllEthashProtocolChanges
 	}
+}
+
+func applyDevnet108V2Config(cfg *params.ChainConfig) {
+	if cfg == nil || cfg.ChainID == nil || cfg.ChainID.Cmp(params.DevnetChainConfig.ChainID) != 0 {
+		return
+	}
+	if cfg.XDPoS == nil || cfg.XDPoS.V2 == nil {
+		return
+	}
+	cfg.XDPoS.V2.AllConfigs = params.DevnetV2Configs
+	cfg.XDPoS.V2.CurrentConfig = params.DevnetV2Configs[params.Default]
 }
 
 // ToBlock returns the genesis block according to genesis specification.
