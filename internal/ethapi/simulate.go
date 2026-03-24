@@ -33,6 +33,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
+	"github.com/XinFinOrg/XDPoSChain/internal/ethapi/override"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 	"github.com/XinFinOrg/XDPoSChain/trie"
@@ -49,8 +50,8 @@ const (
 
 // simBlock is a batch of calls to be simulated sequentially.
 type simBlock struct {
-	BlockOverrides *BlockOverrides
-	StateOverrides *StateOverride
+	BlockOverrides *override.BlockOverrides
+	StateOverrides *override.StateOverride
 	Calls          []TransactionArgs
 }
 
@@ -289,7 +290,7 @@ func (sim *simulator) sanitizeChain(blocks []simBlock) ([]simBlock, error) {
 	)
 	for _, block := range blocks {
 		if block.BlockOverrides == nil {
-			block.BlockOverrides = new(BlockOverrides)
+			block.BlockOverrides = new(override.BlockOverrides)
 		}
 		if block.BlockOverrides.Number == nil {
 			n := new(big.Int).Add(prevNumber, big.NewInt(1))
@@ -309,7 +310,7 @@ func (sim *simulator) sanitizeChain(blocks []simBlock) ([]simBlock, error) {
 			for i := uint64(0); i < gap.Uint64(); i++ {
 				n := new(big.Int).Add(prevNumber, big.NewInt(int64(i+1)))
 				t := prevTimestamp + timestampIncrement
-				b := simBlock{BlockOverrides: &BlockOverrides{Number: (*hexutil.Big)(n), Time: (*hexutil.Uint64)(&t)}}
+				b := simBlock{BlockOverrides: &override.BlockOverrides{Number: (*hexutil.Big)(n), Time: (*hexutil.Uint64)(&t)}}
 				prevTimestamp = t
 				res = append(res, b)
 			}
