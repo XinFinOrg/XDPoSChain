@@ -291,7 +291,7 @@ func (args *TransactionArgs) CallDefaults(globalGasCap uint64, baseFee *big.Int,
 // ToMessage converts the transaction arguments to the Message type used by the
 // core evm. This method is used in calls and traces that do not require a real
 // live transaction.
-func (args *TransactionArgs) ToMessage(b AccountBackend, baseFee *big.Int, skipNonceCheck, skipEoACheck bool) *core.Message {
+func (args *TransactionArgs) ToMessage(b AccountBackend, baseFee *big.Int, skipNonceCheck bool) *core.Message {
 	var (
 		gasPrice  *big.Int
 		gasFeeCap *big.Int
@@ -347,7 +347,7 @@ func (args *TransactionArgs) ToMessage(b AccountBackend, baseFee *big.Int, skipN
 		AccessList:            accessList,
 		SetCodeAuthorizations: args.AuthorizationList,
 		SkipNonceChecks:       skipNonceCheck,
-		SkipFromEOACheck:      skipEoACheck,
+		SkipTransactionChecks: true,
 	}
 }
 
