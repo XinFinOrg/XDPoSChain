@@ -812,7 +812,7 @@ func (api *API) GetSigningTxCountByEpoch(epochBlockNum rpc.BlockNumber) (map[com
 		if !ok {
 			block := api.chain.GetBlock(h.Hash(), i)
 			if block != nil {
-				signingTxs = api.XDPoS.CacheSigningTxs(h.Hash(), block.Transactions())
+				signingTxs = api.XDPoS.CacheNoneTIPSigningTxs(h.Hash(), block.Transactions())
 			}
 		}
 		for _, tx := range signingTxs {
