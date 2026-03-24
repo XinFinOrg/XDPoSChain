@@ -776,7 +776,7 @@ func (api *API) GetBlockInfoByEpochNum(epochNumber uint64) (*utils.EpochNumInfo,
 // epochBlockNum-1 backwards to the previous epoch-switch block (inclusive).
 // epochBlockNum must be an epoch-switch block number that marks the start of an epoch.
 func (api *API) GetSigningTxCountByEpoch(epochBlockNum rpc.BlockNumber) (map[common.Address]uint64, error) {
-	header, err := api.getHeaderFromApiBlockNum(epochBlockNum)
+	header, err := api.getHeaderFromApiBlockNum(&epochBlockNum)
 	if err != nil {
 		return nil, err
 	}
