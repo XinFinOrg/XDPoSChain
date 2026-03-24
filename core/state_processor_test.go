@@ -19,6 +19,7 @@ package core
 import (
 	"crypto/ecdsa"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"math/big"
 	"testing"
@@ -126,15 +127,36 @@ func TestStateProcessorErrors(t *testing.T) {
 					},
 				},
 			}
-			genesis        = gspec.MustCommit(db)
-			blockchain, _  = NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
-			tooBigInitCode = [params.MaxInitCodeSize + 1]byte{}
+			genesis       = gspec.MustCommit(db)
+			blockchain, _ = NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
 		)
 
 		defer blockchain.Stop()
+		num := big.NewInt(1)
+		rules := config.Rules(num)
 		bigNumber := new(big.Int).SetBytes(common.MaxHash.Bytes())
 		tooBigNumber := new(big.Int).Set(bigNumber)
 		tooBigNumber.Add(tooBigNumber, common.Big1)
+		maxInitCodeSize := params.MaxInitCodeSize
+		if rules.IsOsaka {
+			maxInitCodeSize = params.MaxInitCodeSizeOsaka
+		}
+		tooBigInitCode := make([]byte, maxInitCodeSize+1)
+		tooBigInitCodeIntrinsicGas, err := IntrinsicGas(tooBigInitCode, nil, nil, true, rules.IsHomestead, rules.IsEIP1559)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tooBigInitCodeRequiredGas := tooBigInitCodeIntrinsicGas
+		if rules.IsPrague {
+			tooBigInitCodeFloorGas, err := FloorDataGas(tooBigInitCode)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tooBigInitCodeFloorGas > tooBigInitCodeRequiredGas {
+				tooBigInitCodeRequiredGas = tooBigInitCodeFloorGas
+			}
+		}
+		tooBigInitCodeTx := mkDynamicCreationTx(0, tooBigInitCodeRequiredGas+1000, common.Big0, big.NewInt(params.InitialBaseFee), tooBigInitCode)
 		gasLimit := blockchain.CurrentHeader().GasLimit
 		for i, tt := range []struct {
 			txs  []*types.Transaction
@@ -236,9 +258,9 @@ func TestStateProcessorErrors(t *testing.T) {
 			},
 			{ // ErrMaxInitCodeSizeExceeded
 				txs: []*types.Transaction{
-					mkDynamicCreationTx(0, 520000, common.Big0, big.NewInt(params.InitialBaseFee), tooBigInitCode[:]),
+					tooBigInitCodeTx,
 				},
-				want: "could not apply tx 0 [0x41d48b664cf891e625a16696a90e892ba3857c0b5ea759c3f2bdb4158338cb85]: max initcode size exceeded: code size 49153 limit 49152",
+				want: fmt.Sprintf("could not apply tx 0 [%s]: max initcode size exceeded: code size %d limit %d", tooBigInitCodeTx.Hash().Hex(), len(tooBigInitCode), maxInitCodeSize),
 			},
 			{ // ErrIntrinsicGas: Not enough gas to cover init code
 				txs: []*types.Transaction{
