@@ -811,9 +811,10 @@ func (api *API) GetSigningTxCountByEpoch(epochBlockNum rpc.BlockNumber) (map[com
 		signingTxs, ok := api.XDPoS.GetCachedSigningTxs(h.Hash())
 		if !ok {
 			block := api.chain.GetBlock(h.Hash(), i)
-			if block != nil {
-				signingTxs = api.XDPoS.CacheNoneTIPSigningTxs(h.Hash(), block.Transactions())
+			if block == nil {
+				return nil, fmt.Errorf("failed to get block at number %d hash %s", i, h.Hash().Hex())
 			}
+			signingTxs = api.XDPoS.CacheSigningTxs(h.Hash(), block.Transactions())
 		}
 		for _, tx := range signingTxs {
 			blkHash := common.BytesToHash(tx.Data()[len(tx.Data())-32:])
