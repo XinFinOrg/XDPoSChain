@@ -17,7 +17,12 @@
 package locals
 
 import (
+	"fmt"
+	"maps"
 	"math/big"
+	"math/rand"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -65,7 +70,10 @@ func newTestEnv(t *testing.T, n int, gasTip uint64, journal string) *testEnv {
 	})
 
 	db := rawdb.NewMemoryDatabase()
-	chain, _ := core.NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	chain, err := core.NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("Failed to create blockchain: %v", err)
+	}
 
 	legacyPool := legacypool.New(legacypool.DefaultConfig, chain)
 	pool, err := txpool.New(gasTip, chain, []txpool.SubPool{legacyPool})
@@ -87,24 +95,10 @@ func newTestEnv(t *testing.T, n int, gasTip uint64, journal string) *testEnv {
 }
 
 func (env *testEnv) close() {
+	if err := env.pool.Close(); err != nil {
+		panic(fmt.Sprintf("failed to close tx pool: %v", err))
+	}
 	env.chain.Stop()
-}
-
-func (env *testEnv) setGasTip(gasTip uint64) {
-	env.pool.SetGasTip(new(big.Int).SetUint64(gasTip))
-}
-
-func (env *testEnv) makeTx(nonce uint64, gasPrice *big.Int) *types.Transaction {
-	if nonce == 0 {
-		head := env.chain.CurrentHeader()
-		state, _ := env.chain.StateAt(head.Root)
-		nonce = state.GetNonce(address)
-	}
-	if gasPrice == nil {
-		gasPrice = big.NewInt(params.GWei)
-	}
-	tx, _ := types.SignTx(types.NewTransaction(nonce, common.Address{0x00}, big.NewInt(1000), params.TxGas, gasPrice, nil), signer, key)
-	return tx
 }
 
 func (env *testEnv) makeTxs(n int) []*types.Transaction {
@@ -120,22 +114,6 @@ func (env *testEnv) makeTxs(n int) []*types.Transaction {
 	return txs
 }
 
-func (env *testEnv) commit() {
-	head := env.chain.CurrentBlock()
-	block := env.chain.GetBlock(head.Hash(), head.Number.Uint64())
-	blocks, _ := core.GenerateChain(env.chain.Config(), block, ethash.NewFaker(), env.genDb, 1, func(i int, gen *core.BlockGen) {
-		tx, err := types.SignTx(types.NewTransaction(gen.TxNonce(address), common.Address{0x00}, big.NewInt(1000), params.TxGas, big.NewInt(params.GWei), nil), signer, key)
-		if err != nil {
-			panic(err)
-		}
-		gen.AddTx(tx)
-	})
-	env.chain.InsertChain(blocks)
-	if err := env.pool.Sync(); err != nil {
-		panic(err)
-	}
-}
-
 func TestResubmit(t *testing.T) {
 	env := newTestEnv(t, 10, 0, "")
 	defer env.close()
@@ -144,20 +122,98 @@ func TestResubmit(t *testing.T) {
 	txsA := txs[:len(txs)/2]
 	txsB := txs[len(txs)/2:]
 	env.pool.Add(txsA, true)
+
 	pending, queued := env.pool.ContentFrom(address)
 	if len(pending) != len(txsA) || len(queued) != 0 {
 		t.Fatalf("Unexpected txpool content: %d, %d", len(pending), len(queued))
 	}
 	env.tracker.TrackAll(txs)
 
-	resubmit, all := env.tracker.recheck(true)
+	resubmit := env.tracker.recheck(false)
 	if len(resubmit) != len(txsB) {
 		t.Fatalf("Unexpected transactions to resubmit, got: %d, want: %d", len(resubmit), len(txsB))
 	}
-	if len(all) == 0 || len(all[address]) == 0 {
-		t.Fatalf("Unexpected transactions being tracked, got: %d, want: %d", 0, len(txs))
+	env.tracker.mu.Lock()
+	allCopy := maps.Clone(env.tracker.all)
+	env.tracker.mu.Unlock()
+
+	if len(allCopy) != len(txs) {
+		t.Fatalf("Unexpected transactions being tracked, got: %d, want: %d", len(allCopy), len(txs))
 	}
-	if len(all[address]) != len(txs) {
-		t.Fatalf("Unexpected transactions being tracked, got: %d, want: %d", len(all[address]), len(txs))
+}
+
+func TestJournal(t *testing.T) {
+	journalPath := filepath.Join(t.TempDir(), fmt.Sprintf("%d", rand.Int63()))
+	env := newTestEnv(t, 10, 0, journalPath)
+	defer env.close()
+
+	if err := env.tracker.Start(); err != nil {
+		t.Fatalf("Failed to start tracker: %v", err)
+	}
+
+	txs := env.makeTxs(10)
+	txsA := txs[:len(txs)/2]
+	txsB := txs[len(txs)/2:]
+	env.pool.Add(txsA, true)
+
+	pending, queued := env.pool.ContentFrom(address)
+	if len(pending) != len(txsA) || len(queued) != 0 {
+		t.Fatalf("Unexpected txpool content: %d, %d", len(pending), len(queued))
+	}
+	env.tracker.TrackAll(txsA)
+	env.tracker.TrackAll(txsB)
+	env.tracker.Stop()
+
+	// Make sure all the transactions are properly journalled
+	trackerB := New(journalPath, time.Minute, gspec.Config, env.pool)
+	if err := trackerB.journal.load(func(transactions []*types.Transaction) []error {
+		trackerB.TrackAll(transactions)
+		return nil
+	}); err != nil {
+		t.Fatalf("Failed to load journal: %v", err)
+	}
+
+	trackerB.mu.Lock()
+	allCopy := maps.Clone(trackerB.all)
+	trackerB.mu.Unlock()
+
+	if len(allCopy) != len(txs) {
+		t.Fatalf("Unexpected transactions being tracked, got: %d, want: %d", len(allCopy), len(txs))
+	}
+}
+
+func TestStartInitializesJournalWriter(t *testing.T) {
+	journalPath := filepath.Join(t.TempDir(), fmt.Sprintf("%d", rand.Int63()))
+	env := newTestEnv(t, 10, 0, journalPath)
+	defer env.close()
+
+	if err := env.tracker.Start(); err != nil {
+		t.Fatalf("Failed to start tracker: %v", err)
+	}
+	defer env.tracker.Stop()
+
+	if env.tracker.journal == nil {
+		t.Fatal("Journal should be configured")
+	}
+	if env.tracker.journal.writer == nil {
+		t.Fatal("Journal writer should be initialized before Start returns")
+	}
+}
+
+func TestStartContinuesOnCorruptedJournal(t *testing.T) {
+	journalPath := filepath.Join(t.TempDir(), fmt.Sprintf("%d", rand.Int63()))
+	if err := os.WriteFile(journalPath, []byte{0xff, 0x00, 0x01}, 0o644); err != nil {
+		t.Fatalf("Failed to create corrupted journal: %v", err)
+	}
+	env := newTestEnv(t, 10, 0, journalPath)
+	defer env.close()
+
+	if err := env.tracker.Start(); err != nil {
+		t.Fatalf("Start should continue when journal load fails, got: %v", err)
+	}
+	defer env.tracker.Stop()
+
+	if env.tracker.journal.writer == nil {
+		t.Fatal("Journal writer should be initialized even if journal load fails")
 	}
 }
