@@ -17,6 +17,7 @@
 package miner
 
 import (
+	"crypto/ecdsa"
 	"math/big"
 	"testing"
 	"time"
@@ -26,8 +27,11 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/txpool"
+	"github.com/XinFinOrg/XDPoSChain/core/txpool/legacypool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
+	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/holiman/uint256"
@@ -172,4 +176,201 @@ func TestWorkerSetGasTipCopiesValue(t *testing.T) {
 	if w.tip.Cmp(uint256.NewInt(2*params.GWei)) != 0 {
 		t.Fatalf("worker tip mutated via input pointer: have %v", w.tip)
 	}
+}
+
+func TestPendingMinTipForHeaderWithoutBaseFee(t *testing.T) {
+	minGasPrice := uint256.NewInt(12_500_000_000)
+	got := pendingMinTipForHeader(minGasPrice, nil)
+
+	if got.Cmp(minGasPrice) != 0 {
+		t.Fatalf("unexpected min tip without baseFee: have %v want %v", got, minGasPrice)
+	}
+}
+
+func TestPendingMinTipForHeaderBaseFeeEqualsMinGasPrice(t *testing.T) {
+	minGasPrice := uint256.NewInt(12_500_000_000)
+	baseFee := uint256.NewInt(12_500_000_000)
+
+	got := pendingMinTipForHeader(minGasPrice, baseFee)
+	want := uint256.NewInt(0)
+
+	if got.Cmp(want) != 0 {
+		t.Fatalf("unexpected min tip when baseFee equals min gas price: have %v want %v", got, want)
+	}
+}
+
+func TestPendingMinTipForHeaderSubtractsBaseFee(t *testing.T) {
+	minGasPrice := uint256.NewInt(12_500_000_001)
+	baseFee := uint256.NewInt(12_500_000_000)
+
+	got := pendingMinTipForHeader(minGasPrice, baseFee)
+	want := uint256.NewInt(1)
+
+	if got.Cmp(want) != 0 {
+		t.Fatalf("unexpected min tip after baseFee subtraction: have %v want %v", got, want)
+	}
+}
+
+func TestPendingFilterForHeaderBaseFeeBoundary(t *testing.T) {
+	header := &types.Header{
+		Number:  big.NewInt(1),
+		BaseFee: big.NewInt(12_500_000_000),
+	}
+	minGasPrice := uint256.NewInt(12_500_000_000)
+
+	filter := pendingFilterForHeader(minGasPrice, header, &params.ChainConfig{})
+
+	if filter.MinTip == nil || filter.MinTip.Cmp(uint256.NewInt(0)) != 0 {
+		t.Fatalf("unexpected min tip at boundary: have %v want 0", filter.MinTip)
+	}
+	if filter.BaseFee == nil || filter.BaseFee.Cmp(uint256.MustFromBig(header.BaseFee)) != 0 {
+		t.Fatalf("unexpected base fee in filter: have %v want %v", filter.BaseFee, header.BaseFee)
+	}
+}
+
+func TestPendingFilterForHeaderWithoutBaseFee(t *testing.T) {
+	header := &types.Header{
+		Number: big.NewInt(1),
+	}
+	minGasPrice := uint256.NewInt(12_500_000_000)
+
+	filter := pendingFilterForHeader(minGasPrice, header, &params.ChainConfig{})
+
+	if filter.MinTip == nil || filter.MinTip.Cmp(minGasPrice) != 0 {
+		t.Fatalf("unexpected min tip without baseFee: have %v want %v", filter.MinTip, minGasPrice)
+	}
+	if filter.BaseFee != nil {
+		t.Fatalf("expected nil base fee in filter, have %v", filter.BaseFee)
+	}
+}
+
+func TestPendingFilterForHeaderGasLimitCapPreOsaka(t *testing.T) {
+	header := &types.Header{
+		Number:  big.NewInt(1),
+		BaseFee: big.NewInt(12_500_000_000),
+	}
+	minGasPrice := uint256.NewInt(12_500_000_000)
+	// With default chain config (Osaka not activated), GasLimitCap should remain zero.
+	filter := pendingFilterForHeader(minGasPrice, header, &params.ChainConfig{})
+	if filter.GasLimitCap != 0 {
+		t.Fatalf("unexpected gas limit cap before Osaka activation: have %v want %v", filter.GasLimitCap, 0)
+	}
+}
+
+func TestPendingFilterForHeaderGasLimitCapOsaka(t *testing.T) {
+	header := &types.Header{
+		Number:  big.NewInt(1),
+		BaseFee: big.NewInt(12_500_000_000),
+	}
+	minGasPrice := uint256.NewInt(12_500_000_000)
+	// Activate Osaka at block 1 so that this header is considered Osaka.
+	cfg := &params.ChainConfig{
+		OsakaBlock: big.NewInt(1),
+	}
+	filter := pendingFilterForHeader(minGasPrice, header, cfg)
+	if filter.GasLimitCap != params.MaxTxGas {
+		t.Fatalf("unexpected gas limit cap after Osaka activation: have %v want %v", filter.GasLimitCap, params.MaxTxGas)
+	}
+}
+
+func TestPendingFilterForHeaderTxPoolBoundarySelection(t *testing.T) {
+	key, err := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	if err != nil {
+		t.Fatalf("failed to create test key: %v", err)
+	}
+	from := crypto.PubkeyToAddress(key.PublicKey)
+	to := common.HexToAddress("0x0000000000000000000000000000000000000001")
+
+	chainConfig := params.MergedTestChainConfig
+	baseFee := big.NewInt(params.InitialBaseFee)
+	genesis := &core.Genesis{
+		Config: chainConfig,
+		Alloc: types.GenesisAlloc{
+			from: {Balance: big.NewInt(1_000_000_000_000_000_000)},
+		},
+		Difficulty: common.Big0,
+		BaseFee:    new(big.Int).Set(baseFee),
+	}
+
+	db := rawdb.NewMemoryDatabase()
+	engine := ethash.NewFaker()
+	chain, err := core.NewBlockChain(db, nil, genesis, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	defer chain.Stop()
+
+	legacyCfg := legacypool.DefaultConfig
+	legacyCfg.Journal = ""
+	legacyPool := legacypool.New(legacyCfg, chain)
+	txPool, err := txpool.New(legacyCfg.PriceLimit, chain, []txpool.SubPool{legacyPool})
+	if err != nil {
+		t.Fatalf("failed to create txpool: %v", err)
+	}
+	defer func() {
+		if err := txPool.Close(); err != nil {
+			t.Errorf("failed to close txpool: %v", err)
+		}
+	}()
+
+	signer := types.LatestSignerForChainID(chainConfig.ChainID)
+	legacyTx := mustSignLegacyTx(t, key, signer, 0, new(big.Int).Set(baseFee), to)
+	dynamicTx := mustSignDynamicBoundaryTx(t, key, signer, chainConfig.ChainID, 1, new(big.Int).Set(baseFee), to)
+
+	errs := txPool.Add([]*types.Transaction{legacyTx, dynamicTx}, true)
+	for i, addErr := range errs {
+		if addErr != nil {
+			t.Fatalf("failed to add tx %d: %v", i, addErr)
+		}
+	}
+
+	pendingAll, _ := txPool.ContentFrom(from)
+	if len(pendingAll) != 2 {
+		t.Fatalf("unexpected pending tx count after add: have %d want 2", len(pendingAll))
+	}
+
+	header := &types.Header{Number: big.NewInt(1), BaseFee: new(big.Int).Set(baseFee)}
+	minGasPrice := uint256.MustFromBig(baseFee)
+
+	filter := pendingFilterForHeader(minGasPrice, header, chainConfig)
+	selected := txPool.Pending(filter)
+	if got := len(selected[from]); got != 2 {
+		t.Fatalf("boundary txs should be selected with derived min tip: have %d want 2", got)
+	}
+
+	// This mirrors the pre-fix behavior (MinTip=minGasPrice with baseFee present),
+	// which over-filters boundary-valid transactions.
+	legacyBehaviorFilter := txpool.PendingFilter{MinTip: minGasPrice, BaseFee: uint256.MustFromBig(baseFee)}
+	legacySelected := txPool.Pending(legacyBehaviorFilter)
+	if got := len(legacySelected[from]); got != 0 {
+		t.Fatalf("pre-fix filter unexpectedly selected boundary txs: have %d want 0", got)
+	}
+}
+
+func mustSignLegacyTx(t *testing.T, key *ecdsa.PrivateKey, signer types.Signer, nonce uint64, gasPrice *big.Int, to common.Address) *types.Transaction {
+	t.Helper()
+	tx := types.NewTransaction(nonce, to, big.NewInt(1), params.TxGas, gasPrice, nil)
+	signed, err := types.SignTx(tx, signer, key)
+	if err != nil {
+		t.Fatalf("failed to sign legacy tx: %v", err)
+	}
+	return signed
+}
+
+func mustSignDynamicBoundaryTx(t *testing.T, key *ecdsa.PrivateKey, signer types.Signer, chainID *big.Int, nonce uint64, baseFee *big.Int, to common.Address) *types.Transaction {
+	t.Helper()
+	tx := types.NewTx(&types.DynamicFeeTx{
+		ChainID:   new(big.Int).Set(chainID),
+		Nonce:     nonce,
+		GasTipCap: big.NewInt(params.GWei),
+		GasFeeCap: new(big.Int).Set(baseFee),
+		Gas:       params.TxGas,
+		To:        &to,
+		Value:     big.NewInt(1),
+	})
+	signed, err := types.SignTx(tx, signer, key)
+	if err != nil {
+		t.Fatalf("failed to sign dynamic fee tx: %v", err)
+	}
+	return signed
 }

@@ -145,7 +145,7 @@ type worker struct {
 	mu       sync.Mutex
 	coinbase common.Address
 	extra    []byte
-	tip      *uint256.Int // Minimum tip needed for non-local transaction to include them
+	tip      *uint256.Int // Configured minimum gas-price threshold for including transactions in mined blocks.
 
 	snapshotMu       sync.RWMutex // The lock used to protect the block snapshot and state snapshot
 	snapshotBlock    *types.Block
@@ -255,6 +255,47 @@ func (w *worker) pendingBlock() *types.Block {
 	w.snapshotMu.RLock()
 	defer w.snapshotMu.RUnlock()
 	return w.snapshotBlock
+}
+
+// pendingMinTipForHeader converts the configured minimum gas price into the
+// minimum tip required by txpool pending filtering for the given header.
+//
+// With base fee enabled, txpool filters by effective tip, not effective gas
+// price. To preserve the configured minimum gas price semantics, we derive:
+//
+//	minTip = max(minGasPrice - baseFee, 0)
+func pendingMinTipForHeader(minGasPrice *uint256.Int, baseFee *uint256.Int) *uint256.Int {
+	minTip := new(uint256.Int)
+	if minGasPrice != nil {
+		minTip.Set(minGasPrice)
+	}
+	if baseFee == nil {
+		return minTip
+	}
+	if minTip.Cmp(baseFee) <= 0 {
+		minTip.SetUint64(0)
+		return minTip
+	}
+	return minTip.Sub(minTip, baseFee)
+}
+
+// pendingFilterForHeader builds a txpool pending filter using the miner min
+// gas price semantics for the provided header.
+func pendingFilterForHeader(minGasPrice *uint256.Int, header *types.Header, chainConfig *params.ChainConfig) txpool.PendingFilter {
+	var baseFee *uint256.Int
+	if header.BaseFee != nil {
+		baseFee = uint256.MustFromBig(header.BaseFee)
+	}
+	filter := txpool.PendingFilter{
+		MinTip: pendingMinTipForHeader(minGasPrice, baseFee),
+	}
+	if baseFee != nil {
+		filter.BaseFee = baseFee
+	}
+	if chainConfig.IsOsaka(header.Number) {
+		filter.GasLimitCap = params.MaxTxGas
+	}
+	return filter
 }
 
 // pendingBlockAndReceipts returns pending block and corresponding receipts.
@@ -862,15 +903,10 @@ func (w *worker) commitNewWork() {
 		}
 		if !isEpochSwitchBlock {
 			// Retrieve the pending transactions pre-filtered by the 1559 dynamic fees
-			filter := txpool.PendingFilter{
-				MinTip: w.tip,
-			}
-			if header.BaseFee != nil {
-				filter.BaseFee = uint256.MustFromBig(header.BaseFee)
-			}
-			if w.chainConfig.IsOsaka(header.Number) {
-				filter.GasLimitCap = params.MaxTxGas
-			}
+			// w.tip is the configured minimum gas-price threshold (historical name),
+			// not an EIP-1559 priority-fee tip.
+			minGasPrice := w.tip
+			filter := pendingFilterForHeader(minGasPrice, header, w.chainConfig)
 			pending := w.eth.TxPool().Pending(filter)
 			txs, specialTxs = newTransactionsByPriceAndNonce(w.current.signer, pending, feeCapacity, header.BaseFee)
 		}
