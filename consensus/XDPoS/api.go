@@ -771,8 +771,10 @@ func (api *API) GetBlockInfoByEpochNum(epochNumber uint64) (*utils.EpochNumInfo,
 }
 
 // GetSigningTxCountByEpoch returns the signing transaction count for ALL masternodes
-// (including non-active ones) in the epoch that ends at epochBlockNum.
-// epochBlockNum must be an epoch-switch block number.
+// (including non-active ones) in the epoch that immediately precedes the epoch
+// that starts at epochBlockNum. In other words, it walks blocks from
+// epochBlockNum-1 backwards to the previous epoch-switch block (inclusive).
+// epochBlockNum must be an epoch-switch block number that marks the start of an epoch.
 func (api *API) GetSigningTxCountByEpoch(epochBlockNum rpc.BlockNumber) (map[common.Address]uint64, error) {
 	header := api.chain.GetHeaderByNumber(uint64(epochBlockNum.Int64()))
 	if header == nil {
