@@ -18,7 +18,7 @@ package enr
 
 import (
 	"crypto/ecdsa"
-	"fmt"
+	"errors"
 	"sync"
 
 	"github.com/XinFinOrg/XDPoSChain/common/math"
@@ -90,7 +90,7 @@ func (v4ID) Verify(r *Record, sig []byte) error {
 	if err := r.Load(&entry); err != nil {
 		return err
 	} else if len(entry) != 33 {
-		return fmt.Errorf("invalid public key")
+		return errors.New("invalid public key")
 	}
 
 	h := keccak.NewLegacyKeccak256()
