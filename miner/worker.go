@@ -868,6 +868,9 @@ func (w *worker) commitNewWork() {
 			if header.BaseFee != nil {
 				filter.BaseFee = uint256.MustFromBig(header.BaseFee)
 			}
+			if w.chainConfig.IsOsaka(header.Number) {
+				filter.GasLimitCap = params.MaxTxGas
+			}
 			pending := w.eth.TxPool().Pending(filter)
 			txs, specialTxs = newTransactionsByPriceAndNonce(w.current.signer, pending, feeCapacity, header.BaseFee)
 		}
