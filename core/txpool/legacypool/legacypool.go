@@ -381,8 +381,7 @@ func (pool *LegacyPool) loop() {
 		// Handle inactive account transaction eviction
 		case <-evict.C:
 			pool.mu.Lock()
-			evicted := pool.queue.evict(false)
-			for _, hash := range evicted {
+			for _, hash := range pool.queue.evictList() {
 				pool.removeTx(hash, true, true)
 			}
 			pool.mu.Unlock()
@@ -921,7 +920,6 @@ func (pool *LegacyPool) promoteTx(addr common.Address, hash common.Hash, tx *typ
 		// An older transaction was better, discard this
 		pool.all.Remove(hash)
 		pool.priced.Removed(1)
-
 		pendingDiscardMeter.Mark(1)
 		return false
 	}
@@ -1200,7 +1198,7 @@ func (pool *LegacyPool) removeTx(hash common.Hash, outofbound bool, unreserve bo
 		}
 	}
 	// Transaction is in the future queue
-	pool.queue.removeTx(addr, tx)
+	pool.queue.remove(addr, tx)
 	return 0
 }
 
@@ -1346,7 +1344,7 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 			}
 		}
 		// Reset needs promote for all addresses
-		promoteAddrs = append(promoteAddrs, pool.queue.addresses()...)
+		promoteAddrs = pool.queue.addresses()
 	}
 	// Check for pending transactions for every account that sent new ones
 	promoted := pool.promoteExecutables(promoteAddrs)
@@ -1527,12 +1525,10 @@ func (pool *LegacyPool) promoteExecutables(accounts []common.Address) []*types.T
 	// release all accounts that have no more transactions in the pool
 	for _, addr := range removedAddresses {
 		_, hasPending := pool.pending[addr]
-		_, hasQueued := pool.queue.get(addr)
-		if !hasPending && !hasQueued {
+		if !hasPending {
 			pool.reserver.Release(addr)
 		}
 	}
-
 	return promoted
 }
 
