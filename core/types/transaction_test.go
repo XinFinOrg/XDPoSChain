@@ -28,7 +28,9 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
+	"github.com/holiman/uint256"
 )
 
 // The values in those tests are from the Transaction Tests
@@ -489,6 +491,132 @@ func TestTransactionSizes(t *testing.T) {
 		if have, want := int(utx.Size()), len(bin); have != want {
 			t.Errorf("test %d: (unmarshalled) size wrong, have %d want %d", i, have, want)
 		}
+	}
+}
+
+func BenchmarkEffectiveGasTipCmp(b *testing.B) {
+	signer := LatestSigner(params.TestChainConfig)
+	key, _ := crypto.GenerateKey()
+	txdata := &DynamicFeeTx{
+		ChainID:   big.NewInt(1),
+		Nonce:     0,
+		GasTipCap: big.NewInt(2000000000),
+		GasFeeCap: big.NewInt(3000000000),
+		Gas:       21000,
+		To:        &common.Address{},
+		Value:     big.NewInt(0),
+		Data:      nil,
+	}
+	tx, _ := SignNewTx(key, signer, txdata)
+	other, _ := SignNewTx(key, signer, txdata)
+	baseFee := uint256.NewInt(1000000000) // 1 gwei
+
+	b.Run("Original", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			tx.EffectiveGasTipCmp(other, baseFee)
+		}
+	})
+}
+
+func TestEffectiveGasTipIntCmpMatchesBigIntSemantics(t *testing.T) {
+	tests := []struct {
+		name     string
+		tipCap   int64
+		feeCap   int64
+		baseFee  *uint256.Int
+		otherTip uint64
+	}{
+		{
+			name:     "nil base fee",
+			tipCap:   20,
+			feeCap:   100,
+			baseFee:  nil,
+			otherTip: 10,
+		},
+		{
+			name:     "regular effective tip",
+			tipCap:   20,
+			feeCap:   100,
+			baseFee:  uint256.NewInt(50),
+			otherTip: 19,
+		},
+		{
+			name:     "fee cap below base fee",
+			tipCap:   20,
+			feeCap:   40,
+			baseFee:  uint256.NewInt(50),
+			otherTip: 1,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tx := NewTx(&DynamicFeeTx{
+				ChainID:   big.NewInt(1),
+				Nonce:     0,
+				GasTipCap: big.NewInt(tc.tipCap),
+				GasFeeCap: big.NewInt(tc.feeCap),
+				Gas:       21000,
+				To:        &common.Address{},
+				Value:     big.NewInt(0),
+			})
+			other := uint256.NewInt(tc.otherTip)
+
+			got := tx.EffectiveGasTipIntCmp(other, tc.baseFee)
+
+			var want int
+			if tc.baseFee == nil {
+				want = tx.GasTipCapIntCmp(other.ToBig())
+			} else {
+				want = tx.EffectiveGasTipValue(tc.baseFee.ToBig()).Cmp(other.ToBig())
+			}
+
+			if got != want {
+				t.Fatalf("unexpected comparison result: got %d, want %d", got, want)
+			}
+		})
+	}
+}
+
+func TestEffectiveGasTipNilBaseFeeReturnsTipCap(t *testing.T) {
+	tx := NewTx(&DynamicFeeTx{
+		ChainID:   big.NewInt(1),
+		Nonce:     0,
+		GasTipCap: big.NewInt(20),
+		GasFeeCap: big.NewInt(1),
+		Gas:       21000,
+		To:        &common.Address{},
+		Value:     big.NewInt(0),
+	})
+
+	tip, err := tx.EffectiveGasTip(nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tip.Cmp(big.NewInt(20)) != 0 {
+		t.Fatalf("unexpected effective tip: got %v, want %v", tip, 20)
+	}
+}
+
+func TestCalcEffectiveGasTipClearsDstOnFeeCapBelowBaseFee(t *testing.T) {
+	tx := NewTx(&DynamicFeeTx{
+		ChainID:   big.NewInt(1),
+		Nonce:     0,
+		GasTipCap: big.NewInt(20),
+		GasFeeCap: big.NewInt(40),
+		Gas:       21000,
+		To:        &common.Address{},
+		Value:     big.NewInt(0),
+	})
+	dst := uint256.NewInt(123)
+
+	err := tx.calcEffectiveGasTip(dst, uint256.NewInt(50))
+	if !errors.Is(err, ErrGasFeeCapTooLow) {
+		t.Fatalf("unexpected error: got %v, want %v", err, ErrGasFeeCapTooLow)
+	}
+	if dst.Sign() != 0 {
+		t.Fatalf("expected dst to be cleared on error, got %v", dst)
 	}
 }
 
