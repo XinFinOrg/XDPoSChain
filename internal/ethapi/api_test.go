@@ -25,6 +25,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/XinFinOrg/XDPoSChain/XDCx"
+	"github.com/XinFinOrg/XDPoSChain/XDCx/tradingstate"
 	"github.com/XinFinOrg/XDPoSChain/accounts"
 	"github.com/XinFinOrg/XDPoSChain/accounts/keystore"
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -1803,6 +1805,187 @@ type blockLookupBackendMock struct {
 	blocksByNumber  map[rpc.BlockNumber]*types.Block
 	blocksByHash    map[common.Hash]*types.Block
 	notFoundErr     error
+}
+
+type accessListStateOverrideBackendMock struct {
+	*createAccessListBackendMock
+	xdcx *XDCx.XDCX
+}
+
+type accessListChainContext struct {
+	header *types.Header
+	engine consensus.Engine
+}
+
+func (c accessListChainContext) Engine() consensus.Engine {
+	return c.engine
+}
+
+func (c accessListChainContext) GetHeader(hash common.Hash, number uint64) *types.Header {
+	if c.header == nil {
+		return nil
+	}
+	if c.header.Hash() == hash && c.header.Number.Uint64() == number {
+		return c.header
+	}
+	return nil
+}
+
+func (b *accessListStateOverrideBackendMock) XDCxService() *XDCx.XDCX {
+	return b.xdcx
+}
+
+func (b *accessListStateOverrideBackendMock) GetEVM(ctx context.Context, state *state.StateDB, XDCxState *tradingstate.TradingStateDB, header *types.Header, vmConfig *vm.Config, blockContext *vm.BlockContext) (*vm.EVM, func() error, error) {
+	if vmConfig == nil {
+		vmConfig = new(vm.Config)
+	}
+	chainCtx := accessListChainContext{header: header, engine: b.Engine()}
+	context := core.NewEVMBlockContext(header, chainCtx, nil)
+	if blockContext != nil {
+		context = *blockContext
+	}
+	ev := vm.NewEVM(context, state, XDCxState, b.ChainConfig(), *vmConfig)
+	return ev, func() error { return nil }, nil
+}
+
+func TestCreateAccessListWithStateOverrides(t *testing.T) {
+	// Initialize test backend
+	genesis := &core.Genesis{
+		Config: params.TestChainConfig,
+		Alloc: types.GenesisAlloc{
+			common.HexToAddress("0x71562b71999873db5b286df957af199ec94617f7"): {Balance: big.NewInt(1000000000000000000)},
+		},
+	}
+	db := rawdb.NewMemoryDatabase()
+	block := genesis.MustCommit(db)
+	stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+	require.NoError(t, err)
+
+	backend := &accessListStateOverrideBackendMock{
+		createAccessListBackendMock: &createAccessListBackendMock{
+			estimateBackendMock: &estimateBackendMock{
+				backendMock: newBackendMock(),
+				stateDB:     stateDB,
+				header:      block.Header(),
+				engine:      ethash.NewFaker(),
+			},
+			block: block,
+		},
+		xdcx: &XDCx.XDCX{StateCache: tradingstate.NewDatabase(rawdb.NewMemoryDatabase())},
+	}
+
+	// Create a new BlockChainAPI instance
+	api := NewBlockChainAPI(backend, nil)
+
+	// Create test contract code - a simple storage contract
+	//
+	// SPDX-License-Identifier: MIT
+	// pragma solidity ^0.8.0;
+	//
+	// contract SimpleStorage {
+	//     uint256 private value;
+	//
+	//     function retrieve() public view returns (uint256) {
+	//         return value;
+	//     }
+	// }
+	var (
+		contractCode = hexutil.Bytes(common.Hex2Bytes("6080604052348015600f57600080fd5b506004361060285760003560e01c80632e64cec114602d575b600080fd5b60336047565b604051603e91906067565b60405180910390f35b60008054905090565b6000819050919050565b6061816050565b82525050565b6000602082019050607a6000830184605a565b9291505056"))
+		// Create state overrides with more complete state
+		contractAddr = common.HexToAddress("0x1234567890123456789012345678901234567890")
+		nonce        = hexutil.Uint64(1)
+		overrides    = &override.StateOverride{
+			contractAddr: override.OverrideAccount{
+				Code:    &contractCode,
+				Balance: (*hexutil.Big)(big.NewInt(1000000000000000000)),
+				Nonce:   &nonce,
+				State: map[common.Hash]common.Hash{
+					{}: common.HexToHash("0x000000000000000000000000000000000000000000000000000000000000002a"),
+				},
+			},
+		}
+	)
+
+	// Create transaction arguments with gas and value
+	var (
+		from = common.HexToAddress("0x71562b71999873db5b286df957af199ec94617f7")
+		data = hexutil.Bytes(common.Hex2Bytes("2e64cec1")) // retrieve()
+		gas  = hexutil.Uint64(100000)
+		args = TransactionArgs{
+			From:     &from,
+			To:       &contractAddr,
+			Data:     &data,
+			Gas:      &gas,
+			GasPrice: (*hexutil.Big)(big.NewInt(1)),
+			Value:    new(hexutil.Big),
+		}
+	)
+	// Call CreateAccessList
+	result, err := api.CreateAccessList(context.Background(), args, nil, overrides)
+	if err != nil {
+		t.Fatalf("Failed to create access list: %v", err)
+	}
+	if result == nil {
+		t.Fatalf("Failed to create access list: result is nil")
+	}
+	require.NotNil(t, result.Accesslist)
+
+	// Verify access list contains the contract address and storage slot
+	expected := &types.AccessList{{
+		Address:     contractAddr,
+		StorageKeys: []common.Hash{{}},
+	}}
+	require.Equal(t, expected, result.Accesslist)
+}
+
+func TestCreateAccessListWithMovePrecompile(t *testing.T) {
+	t.Parallel()
+
+	from := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	sha256Addr := common.BytesToAddress([]byte{0x2})
+	newSha256Addr := common.BytesToAddress([]byte{0x10, 0})
+	sha256Input := hexutil.Bytes([]byte("hello"))
+
+	genesis := &core.Genesis{
+		Config: params.MergedTestChainConfig,
+		Alloc: types.GenesisAlloc{
+			from: {Balance: big.NewInt(params.Ether)},
+		},
+	}
+	db := rawdb.NewMemoryDatabase()
+	block := genesis.MustCommit(db)
+	stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+	require.NoError(t, err)
+
+	backend := &accessListStateOverrideBackendMock{
+		createAccessListBackendMock: &createAccessListBackendMock{
+			estimateBackendMock: &estimateBackendMock{
+				backendMock: newBackendMock(),
+				stateDB:     stateDB,
+				header:      block.Header(),
+				engine:      ethash.NewFaker(),
+			},
+			block: block,
+		},
+		xdcx: &XDCx.XDCX{StateCache: tradingstate.NewDatabase(rawdb.NewMemoryDatabase())},
+	}
+	api := NewBlockChainAPI(backend, nil)
+
+	overrides := &override.StateOverride{
+		sha256Addr: override.OverrideAccount{MovePrecompileTo: &newSha256Addr},
+	}
+	gas := hexutil.Uint64(100000)
+
+	result, err := api.CreateAccessList(context.Background(), TransactionArgs{
+		From:     &from,
+		To:       &newSha256Addr,
+		Data:     &sha256Input,
+		Gas:      &gas,
+		GasPrice: (*hexutil.Big)(big.NewInt(1)),
+	}, nil, overrides)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Accesslist)
 }
 
 func TestEstimateGasWithMovePrecompile(t *testing.T) {
@@ -5213,7 +5396,7 @@ func TestCreateAccessListBlockRefSelection(t *testing.T) {
 		stateErr:    errors.New("state failed"),
 	}
 	apiDefault := NewBlockChainAPI(backendDefault, nil)
-	result, err := apiDefault.CreateAccessList(context.Background(), callArgs, nil)
+	result, err := apiDefault.CreateAccessList(context.Background(), callArgs, nil, nil)
 	require.ErrorContains(t, err, "state failed")
 	require.Nil(t, result)
 	require.NotNil(t, backendDefault.seenRef)
@@ -5226,7 +5409,7 @@ func TestCreateAccessListBlockRefSelection(t *testing.T) {
 		stateErr:    errors.New("state failed"),
 	}
 	apiExplicit := NewBlockChainAPI(backendExplicit, nil)
-	result, err = apiExplicit.CreateAccessList(context.Background(), callArgs, &pending)
+	result, err = apiExplicit.CreateAccessList(context.Background(), callArgs, &pending, nil)
 	require.ErrorContains(t, err, "state failed")
 	require.Nil(t, result)
 	require.NotNil(t, backendExplicit.seenRef)
@@ -5239,7 +5422,7 @@ func TestCreateAccessListBlockRefSelection(t *testing.T) {
 		stateErr:    errors.New("state failed"),
 	}
 	apiHash := NewBlockChainAPI(backendHash, nil)
-	result, err = apiHash.CreateAccessList(context.Background(), callArgs, &hashRef)
+	result, err = apiHash.CreateAccessList(context.Background(), callArgs, &hashRef, nil)
 	require.ErrorContains(t, err, "state failed")
 	require.Nil(t, result)
 	require.NotNil(t, backendHash.seenRef)
@@ -5274,7 +5457,7 @@ func TestCreateAccessListNilBlockError(t *testing.T) {
 	api := NewBlockChainAPI(backend, nil)
 	latest := rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber)
 
-	_, err = api.CreateAccessList(context.Background(), TransactionArgs{From: &from, To: &to}, &latest)
+	_, err = api.CreateAccessList(context.Background(), TransactionArgs{From: &from, To: &to}, &latest, nil)
 	require.ErrorContains(t, err, "nil block in AccessList")
 }
 
@@ -5308,7 +5491,7 @@ func TestCreateAccessListBlockLookupError(t *testing.T) {
 	api := NewBlockChainAPI(backend, nil)
 	latest := rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber)
 
-	result, err := api.CreateAccessList(context.Background(), TransactionArgs{From: &from, To: &to}, &latest)
+	result, err := api.CreateAccessList(context.Background(), TransactionArgs{From: &from, To: &to}, &latest, nil)
 	require.ErrorContains(t, err, "block lookup failed")
 	require.Nil(t, result)
 }
@@ -5320,7 +5503,7 @@ func TestCreateAccessListNilStateBehavior(t *testing.T) {
 	backend := &estimateRefBackendMock{backendMock: newBackendMock()}
 	api := NewBlockChainAPI(backend, nil)
 
-	result, err := api.CreateAccessList(context.Background(), TransactionArgs{To: &to}, nil)
+	result, err := api.CreateAccessList(context.Background(), TransactionArgs{To: &to}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, result.Accesslist)
