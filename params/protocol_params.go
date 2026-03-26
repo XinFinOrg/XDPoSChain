@@ -170,6 +170,8 @@ const (
 	Bn256PairingPerPointGasIstanbul  uint64 = 34000  // Per-point price for an elliptic curve pairing check
 
 	HistoryServeWindow = 8191 // Number of blocks to serve historical block hashes for, EIP-2935.
+
+	MaxBlockSize uint64 = 8_388_608 // maximum size of an RLP-encoded block
 )
 
 var (

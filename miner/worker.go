@@ -62,6 +62,10 @@ const (
 	chainSideChanSize = 10
 
 	txMatchGasLimit = 40000000
+
+	// Block size is capped by the protocol at params.MaxBlockSize. During
+	// production keep a safety margin for auxiliary fields added to the block.
+	maxBlockSizeBufferZone = 1_000_000
 )
 
 var (
@@ -90,6 +94,7 @@ type Work struct {
 	signer types.Signer
 	state  *state.StateDB // apply state changes here
 	tcount int            // tx count in cycle
+	size   uint64         // size of the block we are building
 	evm    *vm.EVM
 
 	parentState  *state.StateDB
@@ -106,6 +111,15 @@ type Work struct {
 	uncles   map[common.Hash]*types.Header
 
 	createdAt time.Time
+}
+
+// txFitsSize reports whether the transaction fits into the block size limit.
+func (w *Work) txFitsSize(tx *types.Transaction) bool {
+	// this Osaka-specific cap is not enforced pre-fork
+	if w.config.IsOsaka(w.header.Number) {
+		return w.size+tx.Size() < params.MaxBlockSize-maxBlockSizeBufferZone
+	}
+	return true
 }
 
 type Result struct {
@@ -712,6 +726,7 @@ func (w *worker) makeCurrent(parent *types.Block, header *types.Header) error {
 		config:       w.chainConfig,
 		signer:       types.MakeSigner(w.chainConfig, header.Number),
 		state:        state,
+		size:         uint64(header.Size()),
 		parentState:  state.Copy(),
 		tradingState: XDCxState,
 		lendingState: lendingState,
@@ -1080,6 +1095,10 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 	var coalescedLogs []*types.Log
 	// first priority for special Txs
 	for _, tx := range specialTxs {
+		if !w.txFitsSize(tx) {
+			log.Debug("Skipping oversized transaction", "hash", tx.Hash(), "size", tx.Size())
+			continue
+		}
 		to := tx.To()
 		if w.header.Number.Uint64() >= common.DenylistHFNumber {
 			from := tx.From()
@@ -1193,6 +1212,12 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			break
 		}
 		tx := resolvedTx
+		// if inclusion of the transaction would put the block size over the
+		// maximum we allow, don't add any more txs to the payload.
+		if !w.txFitsSize(tx) {
+			log.Debug("Skipping oversized transaction", "hash", tx.Hash(), "size", tx.Size())
+			break
+		}
 		to := tx.To()
 		if w.header.Number.Uint64() >= common.DenylistHFNumber {
 			from := tx.From()
@@ -1330,6 +1355,7 @@ func (w *Work) commitTransaction(balanceFee map[common.Address]*big.Int, tx *typ
 	}
 	w.txs = append(w.txs, tx)
 	w.receipts = append(w.receipts, receipt)
+	w.size += tx.Size()
 
 	return receipt.Logs, tokenFeeUsed, gas, nil
 }
