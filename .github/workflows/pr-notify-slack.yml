@@ -3,7 +3,7 @@
 name: PR notify Slack
 
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, reopened, ready_for_review, edited]
   workflow_dispatch:
 
