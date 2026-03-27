@@ -47,14 +47,14 @@ jobs:
       - name: Send Slack notification
         env:
           SLACK_PULL_REQUEST_WEBHOOK_URL: ${{ secrets.SLACK_PULL_REQUEST_WEBHOOK_URL }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           if [ -z "$SLACK_PULL_REQUEST_WEBHOOK_URL" ]; then
             echo "SLACK_PULL_REQUEST_WEBHOOK_URL secret is not set; skipping notification."
             exit 0
           fi
-          PR_URL="${{ github.event.pull_request.html_url }}"
-          PR_TITLE="${{ github.event.pull_request.title }}"
-          PR_AUTHOR="${{ github.event.pull_request.user.login }}"
           # Slack mrkdwn: <url|text> for link
           BODY=$(jq -n \
             --arg url "$PR_URL" \
