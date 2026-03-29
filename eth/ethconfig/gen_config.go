@@ -5,6 +5,7 @@ package ethconfig
 import (
 	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool/legacypool"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
@@ -19,6 +20,9 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		AllowBuiltInCustomRecovery bool          `toml:",omitempty"`
 		NetworkId                  uint64
 		SyncMode                   downloader.SyncMode
+		FastSyncPivotNumber        uint64
+		FastSyncPivotHash          common.Hash
+		FastSyncPivotRoot          common.Hash
 		NoPruning                  bool
 		Prefetch                   bool
 		LightServ                  int  `toml:",omitempty"`
@@ -49,6 +53,9 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.AllowBuiltInCustomRecovery = c.AllowBuiltInCustomRecovery
 	enc.NetworkId = c.NetworkId
 	enc.SyncMode = c.SyncMode
+	enc.FastSyncPivotNumber = c.FastSyncPivotNumber
+	enc.FastSyncPivotHash = c.FastSyncPivotHash
+	enc.FastSyncPivotRoot = c.FastSyncPivotRoot
 	enc.NoPruning = c.NoPruning
 	enc.Prefetch = c.Prefetch
 	enc.LightServ = c.LightServ
@@ -83,6 +90,9 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		AllowBuiltInCustomRecovery *bool         `toml:",omitempty"`
 		NetworkId                  *uint64
 		SyncMode                   *downloader.SyncMode
+		FastSyncPivotNumber        *uint64
+		FastSyncPivotHash          *common.Hash
+		FastSyncPivotRoot          *common.Hash
 		NoPruning                  *bool
 		Prefetch                   *bool
 		LightServ                  *int  `toml:",omitempty"`
@@ -123,6 +133,15 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	}
 	if dec.SyncMode != nil {
 		c.SyncMode = *dec.SyncMode
+	}
+	if dec.FastSyncPivotNumber != nil {
+		c.FastSyncPivotNumber = *dec.FastSyncPivotNumber
+	}
+	if dec.FastSyncPivotHash != nil {
+		c.FastSyncPivotHash = *dec.FastSyncPivotHash
+	}
+	if dec.FastSyncPivotRoot != nil {
+		c.FastSyncPivotRoot = *dec.FastSyncPivotRoot
 	}
 	if dec.NoPruning != nil {
 		c.NoPruning = *dec.NoPruning
