@@ -1676,3 +1676,130 @@ func TestRemoteHeaderRequestSpan(t *testing.T) {
 		}
 	}
 }
+
+// Tests that synchronisation succeeds when the peer is slightly ahead but within
+// a range that triggers reorg protection AND causes the skeleton to fail (so
+// full-fetch mode is used, returning very few headers per request).
+//
+// This is a regression test for a bug introduced in ethereum/go-ethereum#17839:
+// when the peer is between (reorgProtThreshold, MaxHeaderFetch) blocks ahead,
+// the skeleton request returns 0 headers (peer doesn't have the skeleton range),
+// the downloader falls back to full-fetch. On the last batch only 1-2 headers
+// remain; the reorg-protection delay cuts ALL of them (delay=min(2,n)=n,
+// remaining=0), and the downloader retries every fsHeaderContCheck forever
+// without making progress.
+//
+// In production the bug manifested as a permanent stall because block insertion
+// was blocked by the BFT consensus engine (which itself waited for sync to
+// finish), keeping CurrentBlock low. We simulate that condition here by using
+// chainInsertHook to pause insertion long enough that CurrentBlock cannot
+// advance between header-fetch retries.
+//
+// Concretely: gap=51 matches the real-world scenario observed in production
+// (local=3,807,570, peer=3,807,621, localHead+48=3,807,618 < 3,807,621).
+func TestReorgProtectionDoesNotStallSync63Full(t *testing.T) {
+	testReorgProtectionDoesNotStallSync(t, 63, FullSync)
+}
+func TestReorgProtectionDoesNotStallSync64Full(t *testing.T) {
+	testReorgProtectionDoesNotStallSync(t, 64, FullSync)
+}
+
+func testReorgProtectionDoesNotStallSync(t *testing.T, protocol int, mode SyncMode) {
+	t.Parallel()
+
+	// All gaps are > reorgProtThreshold (48) so reorg protection fires on the
+	// last batch, but < MaxHeaderFetch (192) so the skeleton fails and
+	// full-fetch is used. The critical cases are gap=49 and gap=50 where the
+	// final batch has exactly 2 headers and delay=min(2,2)=2 cuts all of them.
+	gaps := []int{
+		reorgProtThreshold + 1,                        // 49: final batch = 2 headers, delay cuts all
+		reorgProtThreshold + 2,                        // 50: final batch = 2 headers, delay cuts all
+		reorgProtThreshold + reorgProtHeaderDelay + 1, // 51: the exact production scenario
+		MaxHeaderFetch - 1,                            // 191: just below skeleton threshold
+	}
+
+	for _, gap := range gaps {
+		gap := gap
+		t.Run(fmt.Sprintf("gap=%d", gap), func(t *testing.T) {
+			t.Parallel()
+
+			tester := newTester()
+			defer tester.terminate()
+
+			baseLen := blockCacheMaxItems - 15
+			peerChain := testChainBase.shorten(baseLen + gap)
+			localChain := testChainBase.shorten(baseLen)
+
+			// Pre-populate the tester's local chain with baseLen blocks so that
+			// CurrentBlock() returns the block at height baseLen-1.
+			tester.ownHashes = append(tester.ownHashes[:0], localChain.chain...)
+			for hash, header := range localChain.headerm {
+				tester.ownHeaders[hash] = header
+			}
+			for _, block := range localChain.blockm {
+				tester.ownBlocks[block.Hash()] = block
+				// Stub stateDb so CurrentBlock's lookup succeeds.
+				tester.stateDb.Put(block.Root().Bytes(), []byte{0x00})
+			}
+			// Do not copy receipts: FullSync doesn't download receipts, so
+			// assertOwnChain expects receipts == 1 (genesis only).
+			for hash, td := range localChain.tdm {
+				tester.ownChainTd[hash] = td
+			}
+
+			// Delay only the FIRST block-insertion call to keep CurrentBlock low
+			// while fetchHeaders makes its second header request. This reproduces
+			// the key condition of the bug:
+			//
+			//   1. fetchHeaders delivers a first batch (gap-2 headers).
+			//   2. fetchHeaders immediately retries; the last batch has only 2
+			//      headers. The reorg-protection check fires because
+			//      localHead+threshold < peerHead, and delay=min(2,2)=2 would
+			//      cut ALL remaining headers. Without the fix this causes a
+			//      fsHeaderContCheck retry loop that resolves only once
+			//      CurrentBlock advances – which requires the first insertion
+			//      batch to finish.
+			//   3. With insertDelay > fsHeaderContCheck the retry happens before
+			//      CurrentBlock can advance, so the loop iterates at least once.
+			//
+			// Only the first hook call sleeps; subsequent calls are instant.
+			// This avoids compounding delays when there are multiple insertion
+			// batches (e.g. gap=191 may produce two batches: 189 then 2 blocks).
+			//
+			// Timeline (D = insertDelay, R = fsHeaderContCheck):
+			//   WITHOUT fix: D (first insert) + R (one retry) = D + R
+			//   WITH fix:    D (first insert, all headers already queued) ≈ D
+			//
+			// timeout = D + R/2 sits between the two, so fix passes, bug fails.
+			insertDelay := 4 * fsHeaderContCheck         // e.g. 2 s
+			timeout := insertDelay + fsHeaderContCheck/2 // e.g. 2.25 s
+
+			var firstHookDone uint32
+			tester.downloader.chainInsertHook = func(_ []*fetchResult) {
+				if atomic.CompareAndSwapUint32(&firstHookDone, 0, 1) {
+					time.Sleep(insertDelay)
+				}
+			}
+
+			tester.newPeer("peer", protocol, peerChain)
+
+			done := make(chan error, 1)
+			go func() {
+				done <- tester.sync("peer", nil, mode)
+			}()
+
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("sync failed (gap=%d, mode=%v): %v", gap, mode, err)
+				}
+			case <-time.After(timeout):
+				t.Fatalf("sync timed out after %v (gap=%d, mode=%v): "+
+					"reorg protection is cutting all headers on last batch and stalling the downloader",
+					timeout, gap, mode)
+			}
+
+			assertOwnChain(t, tester, peerChain.len())
+		})
+	}
+}
