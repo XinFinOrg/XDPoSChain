@@ -3,6 +3,8 @@ package common
 import (
 	"maps"
 	"math/big"
+
+	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
 // non-const variables for all network.
@@ -133,18 +135,24 @@ func IsInDenylist(address *Address) bool {
 // CopyConstants only handles testnet, devnet, local network.
 // It skips mainnet since the default value is from mainnet.
 func CopyConstants(chainID uint64) {
+	log.Info("[CopyConstants]", "chainID", chainID)
 	var c *constant
 	switch chainID {
 	case MainnetConstant.chainID:
+		log.Info("[CopyConstants] mainnet chainID matched, no need to copy constants")
 		return
 	case TestnetConstant.chainID:
+		log.Info("[CopyConstants] testnet chainID matched, copying testnet constants")
 		c = &TestnetConstant
 		IsTestnet = true
 	case DevnetConstant.chainID:
+		log.Info("[CopyConstants] devnet chainID matched, copying devnet constants")
 		c = &DevnetConstant
 	default: // local custom chain, it can have any chainID
+		log.Info("[CopyConstants] local chainID matched, copying local constants")
 		c = &localConstant
 	}
+	log.Info("[CopyConstants]", "constants", c)
 
 	MaxMasternodesV2 = c.maxMasternodesV2
 	DenylistHFNumber = c.denylistHFNumber
