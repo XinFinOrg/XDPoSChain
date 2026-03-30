@@ -951,13 +951,9 @@ func (d *Downloader) fetchHeaders(p *peerConnection, from uint64, pivot uint64) 
 					// If the head is way older than this batch, delay the last few headers
 					if head+uint64(reorgProtThreshold) < headers[n-1].Number.Uint64() {
 						delay := reorgProtHeaderDelay
-						if delay > n {
-							delay = n
-						}
-						// Only apply the delay if there are headers remaining after cutting.
-						// If delay == n, all headers would be removed and the downloader would
-						// loop forever retrying the same headers without making progress.
-						if n-delay > 0 {
+						// Only apply the delay if there are headers remaining after cutting,
+						// to avoid looping forever without making progress.
+						if n > delay {
 							p.log.Debug("[fetchHeaders] reorg protection delaying headers", "localHead", head, "lastHeaderNum", headers[n-1].Number.Uint64(), "threshold", reorgProtThreshold, "totalReceived", n, "delaying", delay, "remaining", n-delay)
 							headers = headers[:n-delay]
 						} else {
