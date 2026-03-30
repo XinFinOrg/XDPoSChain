@@ -1,6 +1,7 @@
 package common
 
 import (
+	"fmt"
 	"maps"
 	"math/big"
 
@@ -80,6 +81,43 @@ type constant struct {
 	denylist map[Address]struct{}
 }
 
+func (c *constant) print() {
+	fmt.Println("chainID:", c.chainID)
+	fmt.Println("denylistHFNumber:", c.denylistHFNumber)
+	fmt.Println("maxMasternodesV2:", c.maxMasternodesV2)
+	fmt.Println("tip2019Block:", c.tip2019Block)
+	fmt.Println("tipSigning:", c.tipSigning)
+	fmt.Println("tipRandomize:", c.tipRandomize)
+	fmt.Println("tipNoHalvingMNReward:", c.tipNoHalvingMNReward)
+	fmt.Println("tipXDCX:", c.tipXDCX)
+	fmt.Println("tipXDCXLending:", c.tipXDCXLending)
+	fmt.Println("tipXDCXCancellationFee:", c.tipXDCXCancellationFee)
+	fmt.Println("tipTRC21Fee:", c.tipTRC21Fee)
+	fmt.Println("tipIncreaseMasternodes:", c.tipIncreaseMasternodes)
+	fmt.Println("berlinBlock:", c.berlinBlock)
+	fmt.Println("londonBlock:", c.londonBlock)
+	fmt.Println("mergeBlock:", c.mergeBlock)
+	fmt.Println("shanghaiBlock:", c.shanghaiBlock)
+	fmt.Println("blockNumberGas50x:", c.blockNumberGas50x)
+	fmt.Println("TIPV2SwitchBlock:", c.TIPV2SwitchBlock)
+	fmt.Println("tipXDCXMinerDisable:", c.tipXDCXMinerDisable)
+	fmt.Println("tipXDCXReceiverDisable:", c.tipXDCXReceiverDisable)
+	fmt.Println("tipUpgradeReward:", c.tipUpgradeReward)
+	fmt.Println("tipUpgradePenalty:", c.tipUpgradePenalty)
+	fmt.Println("tipEpochHalving:", c.tipEpochHalving)
+	fmt.Println("eip1559Block:", c.eip1559Block)
+	fmt.Println("cancunBlock:", c.cancunBlock)
+	fmt.Println("pragueBlock:", c.pragueBlock)
+	fmt.Println("osakaBlock:", c.osakaBlock)
+	fmt.Println("dynamicGasLimitBlock:", c.dynamicGasLimitBlock)
+	fmt.Println("trc21IssuerSMC:", c.trc21IssuerSMC)
+	fmt.Println("xdcxListingSMC:", c.xdcxListingSMC)
+	fmt.Println("relayerRegistrationSMC:", c.relayerRegistrationSMC)
+	fmt.Println("lendingRegistrationSMC:", c.lendingRegistrationSMC)
+	fmt.Println("ignoreSignerCheckBlockArray:", c.ignoreSignerCheckBlockArray)
+	fmt.Println("denylist:", c.denylist)
+}
+
 // variables for specific networks, copy values from mainnet constant to pass tests
 var (
 	DenylistHFNumber = MainnetConstant.denylistHFNumber
@@ -152,7 +190,7 @@ func CopyConstants(chainID uint64) {
 		log.Info("[CopyConstants] local chainID matched, copying local constants")
 		c = &localConstant
 	}
-	log.Info("[CopyConstants]", "constants", c)
+	c.print()
 
 	MaxMasternodesV2 = c.maxMasternodesV2
 	DenylistHFNumber = c.denylistHFNumber
