@@ -46,7 +46,6 @@ Response:
 }
 ```
 
-
 ## Method XDPoS_getEpochNumbersBetween
 
 Parameters:
@@ -83,7 +82,6 @@ Response:
   ]
 }
 ```
-
 
 ## Method XDPoS_getLatestPoolStatus
 
@@ -167,7 +165,6 @@ Response:
   }
 }
 ```
-
 
 ## Method XDPoS_getMissedRoundsInEpochByBlockNum
 
@@ -260,7 +257,6 @@ Response:
 }
 ```
 
-
 ## Method XDPoS_getSigners
 
 The `getSigners` method retrieves the list of authorized signers at the specified block.
@@ -289,7 +285,6 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 Response:
 
 See [XDPoS_getSigners_response.json](./XDPoS_getSigners_response.json)
-
 
 ## Method XDPoS_getSignersAtHash
 
@@ -320,7 +315,6 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 Response:
 
 See [XDPoS_getSignersAtHash_response.json](./XDPoS_getSignersAtHash_response.json)
-
 
 ## Method XDPoS_getSnapshot
 
@@ -358,7 +352,6 @@ Response:
 
 See [XDPoS_getSnapshot_response.json](./XDPoS_getSnapshot_response.json)
 
-
 ## Method XDPoS_getSnapshotAtHash
 
 The `getSnapshotAtHash` method retrieves the state snapshot at a given block.
@@ -388,7 +381,6 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 Response:
 
 See [XDPoS_getSnapshotAtHash_response.json](./XDPoS_getSnapshotAtHash_response.json)
-
 
 ## Method XDPoS_getV2BlockByHash
 
@@ -432,7 +424,6 @@ Response:
   }
 }
 ```
-
 
 ## Method XDPoS_getV2BlockByNumber
 
@@ -487,6 +478,81 @@ Response:
 }
 ```
 
+## Method XDPoS_getRewardByAccount
+
+Parameters:
+
+- account: string, required, account address
+- begin: string, required, begin block number (`BlockNumber`)
+- end: string, required, end block number (`BlockNumber`)
+
+Returns:
+
+result: object AccountRewardResponse:
+
+- EpochRewards: array of account rewards grouped by epoch files
+- Total: aggregated rewards in the queried range
+
+Example:
+
+```shell
+curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "XDPoS_getRewardByAccount",
+  "params": [
+    "0x0000000000000000000000000000000000000000",
+    "latest",
+    "latest"
+  ]
+}' | jq
+```
+
+## Method XDPoS_getBlockInfoByV2EpochNum
+
+Parameters:
+
+- epochNumber: integer, required, v2 epoch number
+
+Returns:
+
+result: object EpochNumInfo
+
+Example:
+
+```shell
+curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "XDPoS_getBlockInfoByV2EpochNum",
+  "params": [
+    89300
+  ]
+}' | jq
+```
+
+## Method XDPoS_calculateBlockInfoByV1EpochNum
+
+Parameters:
+
+- targetEpochNum: integer, required, v1 epoch number
+
+Returns:
+
+result: object EpochNumInfo
+
+Example:
+
+```shell
+curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "XDPoS_calculateBlockInfoByV1EpochNum",
+  "params": [
+    100
+  ]
+}' | jq
+```
 
 ## Method XDPoS_networkInformation
 
@@ -603,4 +669,3 @@ Response:
   }
 }
 ```
-

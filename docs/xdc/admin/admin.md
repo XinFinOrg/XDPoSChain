@@ -344,14 +344,40 @@ Response:
 }
 ```
 
-## Method admin_startRPC
+## Method admin_startHTTP
 
-The `startRPC` method starts the HTTP RPC API server.
+The `startHTTP` method starts the HTTP RPC API server.
 
 Parameters:
 
 - host: string, optional, network interface to open the listener socket on (defaults to "localhost")
-- port: int, optional, network port to open the listener socket on (defaults to 8546)
+- port: int, optional, network port to open the listener socket on (defaults to 8545)
+- cors: string, optional, cross-origin resource sharing header to use (defaults to "")
+- apis: string, optional, API modules to offer over this interface (defaults to "eth,net,web3")
+- vhosts: string, optional
+
+Returns:
+
+result: bool, indicating whether the operation succeeded
+
+Example:
+
+```shell
+curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "method": "admin_startHTTP"
+}' | jq
+```
+
+## Method admin_startRPC
+
+The `startRPC` method is a deprecated alias of `admin_startHTTP`.
+
+Parameters:
+
+- host: string, optional, network interface to open the listener socket on (defaults to "localhost")
+- port: int, optional, network port to open the listener socket on (defaults to 8545)
 - cors: string, optional, cross-origin resource sharing header to use (defaults to "")
 - apis: string, optional, API modules to offer over this interface (defaults to "eth,net,web3")
 - vhosts: string, optional
@@ -378,7 +404,7 @@ Parameters:
 
 - host: string, optional, network interface to open the listener socket on (defaults to "localhost")
 - port: int, optional, network port to open the listener socket on (defaults to 8546)
-- cors: string, optional, cross-origin resource sharing header to use (defaults to "")
+- allowedOrigins: string, optional, allowed WebSocket origins (defaults to server configuration)
 - apis: string, optional, API modules to offer over this interface (defaults to "eth,net,web3")
 
 Returns:
@@ -405,9 +431,31 @@ Response:
 }
 ```
 
+## Method admin_stopHTTP
+
+The `stopHTTP` method shuts down the HTTP server.
+
+Parameters:
+
+None
+
+Returns:
+
+result: bool, indicating whether the operation succeeded
+
+Example:
+
+```shell
+curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "method": "admin_stopHTTP"
+}' | jq
+```
+
 ## Method admin_stopRPC
 
-The `stopRPC` method shuts down the HTTP server.
+The `stopRPC` method is a deprecated alias of `admin_stopHTTP`.
 
 Parameters:
 
@@ -458,4 +506,3 @@ Response:
   "result": true
 }
 ```
-
