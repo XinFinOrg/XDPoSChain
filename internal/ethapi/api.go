@@ -1267,27 +1267,25 @@ func DoEstimateGas(ctx context.Context, b Backend, args TransactionArgs, blockNr
 	if err = overrides.Apply(state, nil); err != nil {
 		return 0, err
 	}
-	estimationHeader := header
 	if blockOverrides != nil {
-		estimationHeader = blockOverrides.MakeHeader(header)
+		header = blockOverrides.MakeHeader(header)
 	}
 	// Construct the gas estimator option from the user input
 	opts := &gasestimator.Options{
-		Config:         b.ChainConfig(),
-		Chain:          NewChainContext(ctx, b),
-		Header:         estimationHeader,
-		BlockOverrides: blockOverrides,
-		State:          state,
+		Config: b.ChainConfig(),
+		Chain:  NewChainContext(ctx, b),
+		Header: header,
+		State:  state,
 	}
 	// Set any required transaction default, but make sure the gas cap itself is not messed with
 	// if it was not specified in the original argument list.
 	if args.Gas == nil {
 		args.Gas = new(hexutil.Uint64)
 	}
-	if err := args.CallDefaults(gasCap, estimationHeader.BaseFee, b.ChainConfig().ChainID); err != nil {
+	if err := args.CallDefaults(gasCap, header.BaseFee, b.ChainConfig().ChainID); err != nil {
 		return 0, err
 	}
-	call := args.ToMessage(b, estimationHeader.BaseFee, true)
+	call := args.ToMessage(b, header.BaseFee, true)
 
 	// Run the gas estimation andwrap any revertals into a custom return
 	estimate, revert, err := gasestimator.Estimate(ctx, call, opts, gasCap)

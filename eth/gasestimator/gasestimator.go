@@ -28,7 +28,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
-	"github.com/XinFinOrg/XDPoSChain/internal/ethapi/override"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
@@ -39,11 +38,10 @@ import (
 // these together, it would be excessively hard to test. Splitting the parts out
 // allows testing without needing a proper live chain.
 type Options struct {
-	Config         *params.ChainConfig      // Chain configuration for hard fork selection
-	Chain          core.ChainContext        // Chain context to access past block hashes
-	Header         *types.Header            // Header defining the block context to execute in
-	State          *state.StateDB           // Pre-state on top of which to estimate the gas
-	BlockOverrides *override.BlockOverrides // Block overrides to apply during the estimation
+	Config *params.ChainConfig // Chain configuration for hard fork selection
+	Chain  core.ChainContext   // Chain context to access past block hashes
+	Header *types.Header       // Header defining the block context to execute in
+	State  *state.StateDB      // Pre-state on top of which to estimate the gas
 }
 
 // Estimate returns the lowest possible gas limit that allows the transaction to
@@ -63,13 +61,7 @@ func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uin
 
 	// Cap the maximum gas allowance according to EIP-7825 if the estimation targets Osaka
 	if hi > params.MaxTxGas {
-		blockNumber := opts.Header.Number
-		if opts.BlockOverrides != nil {
-			if opts.BlockOverrides.Number != nil {
-				blockNumber = opts.BlockOverrides.Number.ToInt()
-			}
-		}
-		if opts.Config.IsOsaka(blockNumber) {
+		if opts.Config.IsOsaka(opts.Header.Number) {
 			hi = params.MaxTxGas
 		}
 	}
@@ -186,9 +178,6 @@ func run(ctx context.Context, call *core.Message, opts *Options) (*core.Executio
 		evmContext = core.NewEVMBlockContext(opts.Header, opts.Chain, nil)
 		dirtyState = opts.State.Copy()
 	)
-	if opts.BlockOverrides != nil {
-		opts.BlockOverrides.Apply(&evmContext)
-	}
 	// Lower the basefee to 0 to avoid breaking EVM
 	// invariants (basefee < feecap).
 	if msgContext.GasPrice.Sign() == 0 {
