@@ -201,15 +201,16 @@ func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig
 	stored := rawdb.ReadCanonicalHash(db, 0)
 	if (stored == common.Hash{}) {
 		if genesis == nil {
-			log.Info("Writing default main-net genesis block")
+			log.Info("[SetupGenesisBlock] Writing default main-net genesis block")
 			genesis = DefaultGenesisBlock()
 		} else {
-			log.Info("Writing custom genesis block")
+			log.Info("[SetupGenesisBlock] Writing custom genesis block")
 		}
 		block, err := genesis.Commit(db)
 		if err != nil {
 			return genesis.Config, common.Hash{}, err
 		}
+		log.Info("[SetupGenesisBlock] genesis blockhash", "hash", block.Hash().Hex())
 		return genesis.Config, block.Hash(), err
 	}
 
@@ -217,15 +218,18 @@ func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig
 	// but the corresponding state is missing.
 	header := rawdb.ReadHeader(db, stored, 0)
 	if header == nil {
+		log.Info("[SetupGenesisBlock] missing genesis header", "stored hash", stored.Hex())
 		cfg := genesis.configOrDefault(stored)
 		return cfg, stored, fmt.Errorf("missing genesis header for hash: %s", stored.Hex())
 	}
 	if _, err := state.New(header.Root, state.NewDatabaseWithConfig(db, nil)); err != nil {
 		if genesis == nil {
+			log.Info("[SetupGenesisBlock] missing genesis state, use default genesis block to recover", "hash", stored.Hex())
 			genesis = DefaultGenesisBlock()
 		}
 		// Ensure the stored genesis matches with the given one.
 		hash := genesis.ToBlock().Hash()
+		log.Info("[SetupGenesisBlock] doublecheck genesis block", "storedHash", stored.Hex(), "genesisHash", hash.Hex())
 		if hash != stored {
 			return genesis.Config, hash, &GenesisMismatchError{stored, hash}
 		}
@@ -239,6 +243,7 @@ func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig
 	// Check whether the genesis block is already written.
 	if genesis != nil {
 		hash := genesis.ToBlock().Hash()
+		log.Info("[SetupGenesisBlock] genesis != nil", "storedHash", stored.Hex(), "genesisHash", hash.Hex())
 		if hash != stored {
 			return genesis.Config, hash, &GenesisMismatchError{stored, hash}
 		}
