@@ -207,10 +207,10 @@ func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig
 			log.Info("[SetupGenesisBlock] Writing custom genesis block")
 		}
 		block, err := genesis.Commit(db)
-		log.Info("[SetupGenesisBlock] genesis blockhash", "hash", block.Hash().Hex())
 		if err != nil {
 			return genesis.Config, common.Hash{}, err
 		}
+		log.Info("[SetupGenesisBlock] genesis blockhash", "hash", block.Hash().Hex())
 		return genesis.Config, block.Hash(), err
 	}
 
@@ -218,7 +218,7 @@ func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig
 	// but the corresponding state is missing.
 	header := rawdb.ReadHeader(db, stored, 0)
 	if header == nil {
-		log.Info("[SetupGenesisBlock] missing genesis header, use default genesis block to recover", "hash", stored.Hex())
+		log.Info("[SetupGenesisBlock] missing genesis header", "stored hash", stored.Hex())
 		cfg := genesis.configOrDefault(stored)
 		return cfg, stored, fmt.Errorf("missing genesis header for hash: %s", stored.Hex())
 	}
@@ -242,8 +242,8 @@ func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig
 
 	// Check whether the genesis block is already written.
 	if genesis != nil {
-		log.Info("[SetupGenesisBlock] genesis != nil", "storedHash", stored.Hex(), "genesisHash", genesis.ToBlock().Hash().Hex())
 		hash := genesis.ToBlock().Hash()
+		log.Info("[SetupGenesisBlock] genesis != nil", "storedHash", stored.Hex(), "genesisHash", hash.Hex())
 		if hash != stored {
 			return genesis.Config, hash, &GenesisMismatchError{stored, hash}
 		}
