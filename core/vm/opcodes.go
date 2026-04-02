@@ -210,6 +210,13 @@ const (
 	LOG4
 )
 
+// 0xe0 range - eof operations.
+const (
+	DUPN     OpCode = 0xe6
+	SWAPN    OpCode = 0xe7
+	EXCHANGE OpCode = 0xe8
+)
+
 // 0xf0 range - closures.
 const (
 	CREATE       OpCode = 0xf0
@@ -386,6 +393,11 @@ var opCodeToString = [256]string{
 	LOG3: "LOG3",
 	LOG4: "LOG4",
 
+	// 0xe0 range.
+	DUPN:     "DUPN",
+	SWAPN:    "SWAPN",
+	EXCHANGE: "EXCHANGE",
+
 	// 0xf0 range - closures.
 	CREATE:       "CREATE",
 	CALL:         "CALL",
@@ -552,6 +564,9 @@ var stringToOp = map[string]OpCode{
 	"LOG2":           LOG2,
 	"LOG3":           LOG3,
 	"LOG4":           LOG4,
+	"DUPN":           DUPN,
+	"SWAPN":          SWAPN,
+	"EXCHANGE":       EXCHANGE,
 	"CREATE":         CREATE,
 	"CREATE2":        CREATE2,
 	"CALL":           CALL,
