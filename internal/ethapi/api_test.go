@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"hash"
 	"math/big"
 	"strings"
@@ -6647,4 +6648,42 @@ func TestSimulateV1TooManyBlocksByOverrideNumber(t *testing.T) {
 		{BlockOverrides: &override.BlockOverrides{Number: (*hexutil.Big)(tooFar)}},
 	})
 	require.ErrorContains(t, err, "too many blocks")
+}
+
+func TestSimulateV1CallLimitPerBlock(t *testing.T) {
+	t.Parallel()
+
+	api := NewBlockChainAPI(newBackendMock(), nil)
+
+	_, err := api.SimulateV1(context.Background(), simOpts{
+		BlockStateCalls: []simBlock{{
+			Calls: make([]TransactionArgs, maxSimulateCallsPerBlock+1),
+		}},
+	}, nil)
+	require.Error(t, err)
+	require.EqualError(t, err, fmt.Sprintf("too many calls in block %d (max %d)", 0, maxSimulateCallsPerBlock))
+
+	var rpcErr interface{ ErrorCode() int }
+	require.ErrorAs(t, err, &rpcErr)
+	require.Equal(t, errCodeClientLimitExceeded, rpcErr.ErrorCode())
+}
+
+func TestSimulateV1CallLimitTotal(t *testing.T) {
+	t.Parallel()
+
+	api := NewBlockChainAPI(newBackendMock(), nil)
+
+	_, err := api.SimulateV1(context.Background(), simOpts{
+		BlockStateCalls: []simBlock{
+			{Calls: make([]TransactionArgs, maxSimulateCallsPerBlock)},
+			{Calls: make([]TransactionArgs, maxSimulateCallsPerBlock)},
+			{Calls: make([]TransactionArgs, 1)},
+		},
+	}, nil)
+	require.Error(t, err)
+	require.EqualError(t, err, fmt.Sprintf("too many calls (max %d)", maxSimulateTotalCalls))
+
+	var rpcErr interface{ ErrorCode() int }
+	require.ErrorAs(t, err, &rpcErr)
+	require.Equal(t, errCodeClientLimitExceeded, rpcErr.ErrorCode())
 }
