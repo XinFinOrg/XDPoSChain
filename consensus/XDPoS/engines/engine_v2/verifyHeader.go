@@ -134,7 +134,7 @@ func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Heade
 			return utils.ErrInvalidCheckpointSigners
 		}
 
-		// trick to make it work
+		// if fullVerify, verify masternodes and penalties; else use them inside header
 		if fullVerify {
 			localMasterNodes, localPenalties, err := x.calcMasternodes(chain, header.Number, header.ParentHash, round)
 			masterNodes = localMasterNodes
