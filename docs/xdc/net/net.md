@@ -35,7 +35,6 @@ Response:
 }
 ```
 
-
 ## Method net_peerCount
 
 The `peerCount` method returns the number of connected peers.
@@ -68,7 +67,6 @@ Response:
 }
 ```
 
-
 ## Method net_version
 
 The `version` method returns the devp2p network ID
@@ -100,4 +98,3 @@ Response:
   "result": "50"
 }
 ```
-
