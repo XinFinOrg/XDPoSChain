@@ -92,7 +92,7 @@ func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Heade
 		return utils.ErrRoundInvalid
 	}
 
-	err = x.verifyQC(chain, quorumCert, parent)
+	err = x.verifyQC(chain, quorumCert, parents)
 	if err != nil {
 		log.Warn("[verifyHeader] fail to verify QC", "QCNumber", quorumCert.ProposedBlockInfo.Number, "QCsigLength", len(quorumCert.Signatures))
 		return err

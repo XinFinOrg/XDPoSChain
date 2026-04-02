@@ -11,14 +11,18 @@ import (
 )
 
 // Given header and its hash, get epoch switch info from the epoch switch block of that epoch,
-// header is allow to be nil.
-func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, header *types.Header, hash common.Hash) (*types.EpochSwitchInfo, error) {
+// headers is allow to be nil. headers contain header (as last item) and it parents if any, which can be used to avoid
+// fetching from the database during recursive lookups (useful during VerifyHeaders).
+func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, headers []*types.Header, hash common.Hash) (*types.EpochSwitchInfo, error) {
 	epochSwitchInfo, ok := x.epochSwitches.Get(hash)
 	if ok && epochSwitchInfo != nil {
 		log.Debug("[getEpochSwitchInfo] cache hit", "number", epochSwitchInfo.EpochSwitchBlockInfo.Number, "hash", hash.Hex())
 		return epochSwitchInfo, nil
 	}
-	h := header
+	var h *types.Header
+	if len(headers) > 0 {
+		h = headers[len(headers)-1]
+	}
 	if h == nil {
 		log.Debug("[getEpochSwitchInfo] header doesn't provide, get header by hash", "hash", hash.Hex())
 		h = chain.GetHeaderByHash(hash)
@@ -98,7 +102,11 @@ func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, header *types
 		return epochSwitchInfo, nil
 	}
 
-	epochSwitchInfo, err = x.getEpochSwitchInfo(chain, nil, h.ParentHash)
+	var potentialParentHeaders []*types.Header
+	if len(headers) > 0 {
+		potentialParentHeaders = headers[:len(headers)-1]
+	}
+	epochSwitchInfo, err = x.getEpochSwitchInfo(chain, potentialParentHeaders, h.ParentHash)
 	if err != nil {
 		log.Error("[getEpochSwitchInfo] recursive error", "err", err, "hash", hash.Hex(), "number", h.Number.Uint64())
 		return nil, err
@@ -133,7 +141,7 @@ func (x *XDPoS_v2) isEpochSwitchAtRound(round types.Round, parentHeader *types.H
 
 func (x *XDPoS_v2) GetCurrentEpochSwitchBlock(chain consensus.ChainReader, blockNum *big.Int) (uint64, uint64, error) {
 	header := chain.GetHeaderByNumber(blockNum.Uint64())
-	epochSwitchInfo, err := x.getEpochSwitchInfo(chain, header, header.Hash())
+	epochSwitchInfo, err := x.getEpochSwitchInfo(chain, []*types.Header{header}, header.Hash())
 	if err != nil {
 		log.Error("[GetCurrentEpochSwitchBlock] Fail to get epoch switch info", "Num", header.Number, "Hash", header.Hash())
 		return 0, 0, err
@@ -187,7 +195,7 @@ func (x *XDPoS_v2) GetEpochSwitchInfoBetween(chain consensus.ChainReader, begin,
 	iteratorNum := end.Number
 	// when iterator is strictly > begin number, do the search
 	for iteratorNum.Cmp(begin.Number) > 0 {
-		epochSwitchInfo, err := x.getEpochSwitchInfo(chain, iteratorHeader, iteratorHash)
+		epochSwitchInfo, err := x.getEpochSwitchInfo(chain, []*types.Header{iteratorHeader}, iteratorHash)
 		if err != nil {
 			log.Error("[GetEpochSwitchInfoBetween] Adaptor v2 getEpochSwitchInfo has error, potentially bug", "err", err)
 			return nil, err

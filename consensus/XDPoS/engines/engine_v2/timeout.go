@@ -61,7 +61,7 @@ func (x *XDPoS_v2) timeoutHandler(blockChainReader consensus.ChainReader, timeou
 	numberOfTimeoutsInPool, pooledTimeouts := x.timeoutPool.Add(timeout)
 	log.Debug("[timeoutHandler] collect timeout", "number", numberOfTimeoutsInPool)
 
-	epochInfo, err := x.getEpochSwitchInfo(blockChainReader, blockChainReader.CurrentHeader(), blockChainReader.CurrentHeader().Hash())
+	epochInfo, err := x.getEpochSwitchInfo(blockChainReader, []*types.Header{blockChainReader.CurrentHeader()}, blockChainReader.CurrentHeader().Hash())
 	if err != nil {
 		log.Error("[timeoutHandler] Error when getting epoch switch Info", "error", err)
 		return fmt.Errorf("fail on timeoutHandler due to failure in getting epoch switch info, %s", err)
@@ -110,7 +110,7 @@ func (x *XDPoS_v2) onTimeoutPoolThresholdReached(blockChainReader consensus.Chai
 }
 
 func (x *XDPoS_v2) getTCEpochInfo(chain consensus.ChainReader, timeoutRound types.Round) (*types.EpochSwitchInfo, error) {
-	epochSwitchInfo, err := x.getEpochSwitchInfo(chain, (chain.CurrentHeader()), (chain.CurrentHeader()).Hash())
+	epochSwitchInfo, err := x.getEpochSwitchInfo(chain, []*types.Header{chain.CurrentHeader()}, chain.CurrentHeader().Hash())
 	if err != nil {
 		log.Error("[getTCEpochInfo] Error when getting epoch switch info", "error", err)
 		return nil, fmt.Errorf("fail on getTCEpochInfo due to failure in getting epoch switch info, %s", err)
@@ -217,7 +217,7 @@ func (x *XDPoS_v2) sendTimeout(chain consensus.ChainReader) error {
 		}
 		log.Debug("[sendTimeout] is epoch switch when sending out timeout message", "currentNumber", currentNumber, "gapNumber", gapNumber)
 	} else {
-		epochSwitchInfo, err := x.getEpochSwitchInfo(chain, currentBlockHeader, currentBlockHeader.Hash())
+		epochSwitchInfo, err := x.getEpochSwitchInfo(chain, []*types.Header{currentBlockHeader}, currentBlockHeader.Hash())
 		if err != nil {
 			log.Error("[sendTimeout] Error when trying to get current epoch switch info for a non-epoch block", "currentRound", x.currentRound, "currentBlockNum", currentBlockHeader.Number, "currentBlockHash", currentBlockHeader.Hash(), "epochNum", epochNum)
 			return err

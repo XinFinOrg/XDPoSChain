@@ -208,7 +208,7 @@ func (x *XDPoS_v2) GetSignersFromSnapshot(chain consensus.ChainReader, header *t
 
 func (x *XDPoS_v2) CalculateMissingRounds(chain consensus.ChainReader, header *types.Header) (*utils.PublicApiMissedRoundsMetadata, error) {
 	var missedRounds []utils.MissedRoundInfo
-	switchInfo, err := x.getEpochSwitchInfo(chain, header, header.Hash())
+	switchInfo, err := x.getEpochSwitchInfo(chain, []*types.Header{header}, header.Hash())
 	if err != nil {
 		return nil, err
 	}
@@ -344,7 +344,7 @@ func (x *XDPoS_v2) GetBlockByEpochNumber(chain consensus.ChainReader, targetEpoc
 	if currentHeader == nil {
 		return nil, errors.New("current header is nil")
 	}
-	epochSwitchInfo, err := x.getEpochSwitchInfo(chain, currentHeader, currentHeader.Hash())
+	epochSwitchInfo, err := x.getEpochSwitchInfo(chain, []*types.Header{currentHeader}, currentHeader.Hash())
 	if err != nil {
 		return nil, err
 	}
