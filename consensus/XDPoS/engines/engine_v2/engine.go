@@ -180,14 +180,14 @@ func (x *XDPoS_v2) SignHash(header *types.Header) (hash common.Hash) {
 }
 
 // Initial V2 related parameters
-func (x *XDPoS_v2) Initial(chain consensus.ChainReader, header *types.Header) error {
+func (x *XDPoS_v2) Initial(chain consensus.ChainHeaderReader, header *types.Header) error {
 	x.lock.Lock()
 	defer x.lock.Unlock()
 
 	return x.initial(chain, header)
 }
 
-func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) error {
+func (x *XDPoS_v2) initial(chain consensus.ChainHeaderReader, header *types.Header) error {
 	log.Warn("[initial] initial v2 related parameters")
 
 	if x.highestQuorumCert.ProposedBlockInfo.Hash != (common.Hash{}) { // already initialized
@@ -553,11 +553,11 @@ func (x *XDPoS_v2) Seal(chain consensus.ChainReader, block *types.Block, stop <-
 // CalcDifficulty is the difficulty adjustment algorithm. It returns the difficulty
 // that a new block should have based on the previous blocks in the chain and the
 // current signer.
-func (x *XDPoS_v2) CalcDifficulty(chain consensus.ChainReader, time uint64, parent *types.Header) *big.Int {
+func (x *XDPoS_v2) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
 	return x.calcDifficulty(chain, parent, x.signer)
 }
 
-func (x *XDPoS_v2) IsAuthorisedAddress(chain consensus.ChainReader, header *types.Header, address common.Address) bool {
+func (x *XDPoS_v2) IsAuthorisedAddress(chain consensus.ChainHeaderReader, header *types.Header, address common.Address) bool {
 	snap, err := x.GetSnapshot(chain, header)
 	if err != nil {
 		log.Error("[IsAuthorisedAddress] Can't get snapshot with at ", "number", header.Number, "hash", header.Hash().Hex(), "err", err)
@@ -571,7 +571,7 @@ func (x *XDPoS_v2) IsAuthorisedAddress(chain consensus.ChainReader, header *type
 	return false
 }
 
-func (x *XDPoS_v2) GetSnapshot(chain consensus.ChainReader, header *types.Header) (*SnapshotV2, error) {
+func (x *XDPoS_v2) GetSnapshot(chain consensus.ChainHeaderReader, header *types.Header) (*SnapshotV2, error) {
 	number := header.Number.Uint64()
 	log.Trace("get snapshot", "number", number)
 	snap, err := x.getSnapshot(chain, number, false)
@@ -581,7 +581,7 @@ func (x *XDPoS_v2) GetSnapshot(chain consensus.ChainReader, header *types.Header
 	return snap, nil
 }
 
-func (x *XDPoS_v2) UpdateMasternodes(chain consensus.ChainReader, header *types.Header, ms []utils.Masternode) error {
+func (x *XDPoS_v2) UpdateMasternodes(chain consensus.ChainHeaderReader, header *types.Header, ms []utils.Masternode) error {
 	number := header.Number.Uint64()
 	log.Trace("[UpdateMasternodes]", "number", number, "hash", header.Hash())
 	if number%x.config.Epoch != x.config.Epoch-x.config.Gap {
@@ -615,7 +615,7 @@ func (x *XDPoS_v2) UpdateMasternodes(chain consensus.ChainReader, header *types.
 
 // VerifyUncles implements consensus.Engine, always returning an error for any
 // uncles as this consensus mechanism doesn't permit uncles.
-func (x *XDPoS_v2) VerifyUncles(chain consensus.ChainReader, block *types.Block) error {
+func (x *XDPoS_v2) VerifyUncles(chain consensus.ChainHeaderReader, block *types.Block) error {
 	if len(block.Uncles()) > 0 {
 		return errors.New("uncles not allowed in XDPoS_v2")
 	}
@@ -650,7 +650,7 @@ func (x *XDPoS_v2) VerifyHeaders(chain consensus.ChainReader, headers []*types.H
 /*
 Proposed Block workflow
 */
-func (x *XDPoS_v2) ProposedBlockHandler(chain consensus.ChainReader, blockHeader *types.Header) error {
+func (x *XDPoS_v2) ProposedBlockHandler(chain consensus.ChainHeaderReader, blockHeader *types.Header) error {
 	x.lock.Lock()
 	defer x.lock.Unlock()
 
@@ -693,7 +693,7 @@ func (x *XDPoS_v2) ProposedBlockHandler(chain consensus.ChainReader, blockHeader
 */
 
 // To be used by different message verification. Verify local DB block info against the received block information(i.e hash, blockNum, round)
-func (x *XDPoS_v2) VerifyBlockInfo(blockChainReader consensus.ChainReader, blockInfo *types.BlockInfo, blockHeader *types.Header) error {
+func (x *XDPoS_v2) VerifyBlockInfo(blockChainReader consensus.ChainHeaderReader, blockInfo *types.BlockInfo, blockHeader *types.Header) error {
 	/*
 		1. Check if is able to get header by hash from the chain
 		2. Check the header from step 1 matches what's in the blockInfo. This includes the block number and the round
@@ -740,7 +740,7 @@ func (x *XDPoS_v2) VerifyBlockInfo(blockChainReader consensus.ChainReader, block
 	return nil
 }
 
-func (x *XDPoS_v2) verifyQC(blockChainReader consensus.ChainReader, quorumCert *types.QuorumCert, parentHeader *types.Header) error {
+func (x *XDPoS_v2) verifyQC(blockChainReader consensus.ChainHeaderReader, quorumCert *types.QuorumCert, parentHeader *types.Header) error {
 	if quorumCert == nil {
 		log.Warn("[verifyQC] QC is Nil")
 		return utils.ErrInvalidQC
@@ -789,7 +789,7 @@ func (x *XDPoS_v2) verifyQC(blockChainReader consensus.ChainReader, quorumCert *
 }
 
 // Update local QC variables including highestQC & lockQuorumCert, as well as commit the blocks that satisfy the algorithm requirements
-func (x *XDPoS_v2) processQC(blockChainReader consensus.ChainReader, incomingQuorumCert *types.QuorumCert) error {
+func (x *XDPoS_v2) processQC(blockChainReader consensus.ChainHeaderReader, incomingQuorumCert *types.QuorumCert) error {
 	log.Debug("[processQC][Before]", "HighQC", x.highestQuorumCert.ProposedBlockInfo.Round)
 	// 1. Update HighestQC
 	if incomingQuorumCert.ProposedBlockInfo.Round > x.highestQuorumCert.ProposedBlockInfo.Round {
@@ -834,7 +834,7 @@ func (x *XDPoS_v2) processQC(blockChainReader consensus.ChainReader, incomingQuo
 3. Reset vote and timeout Pools
 4. Send signal to miner
 */
-func (x *XDPoS_v2) setNewRound(blockChainReader consensus.ChainReader, round types.Round) {
+func (x *XDPoS_v2) setNewRound(blockChainReader consensus.ChainHeaderReader, round types.Round) {
 	log.Info("[setNewRound] new round and reset pools and workers", "round", round)
 	x.currentRound = round
 	x.timeoutCount = 0
@@ -863,7 +863,7 @@ func (x *XDPoS_v2) getSyncInfo() *types.SyncInfo {
 }
 
 // Find parent and grandparent, check round number, if so, commit grandparent(grandGrandParent of currentBlock)
-func (x *XDPoS_v2) commitBlocks(blockChainReader consensus.ChainReader, proposedBlockHeader *types.Header, proposedBlockRound *types.Round, incomingQc *types.QuorumCert) (bool, error) {
+func (x *XDPoS_v2) commitBlocks(blockChainReader consensus.ChainHeaderReader, proposedBlockHeader *types.Header, proposedBlockRound *types.Round, incomingQc *types.QuorumCert) (bool, error) {
 	// XDPoS v1.0 switch to v2.0, skip commit
 	if big.NewInt(0).Sub(proposedBlockHeader.Number, big.NewInt(2)).Cmp(x.config.V2.SwitchBlock) <= 0 {
 		return false, nil
@@ -933,7 +933,7 @@ func (x *XDPoS_v2) GetMasternodesFromEpochSwitchHeader(epochSwitchHeader *types.
 }
 
 // Given header, get master node from the epoch switch block of that epoch
-func (x *XDPoS_v2) GetMasternodes(chain consensus.ChainReader, header *types.Header) []common.Address {
+func (x *XDPoS_v2) GetMasternodes(chain consensus.ChainHeaderReader, header *types.Header) []common.Address {
 	epochSwitchInfo, err := x.getEpochSwitchInfo(chain, header, header.Hash())
 	if err != nil {
 		log.Error("[GetMasternodes] Adaptor v2 getEpochSwitchInfo has error", "err", err)
@@ -943,7 +943,7 @@ func (x *XDPoS_v2) GetMasternodes(chain consensus.ChainReader, header *types.Hea
 }
 
 // Given header, get master node from the epoch switch block of that epoch
-func (x *XDPoS_v2) GetPenalties(chain consensus.ChainReader, header *types.Header) []common.Address {
+func (x *XDPoS_v2) GetPenalties(chain consensus.ChainHeaderReader, header *types.Header) []common.Address {
 	epochSwitchInfo, err := x.getEpochSwitchInfo(chain, header, header.Hash())
 	if err != nil {
 		log.Error("[GetPenalties] Adaptor v2 getEpochSwitchInfo has error", "err", err)
@@ -952,7 +952,7 @@ func (x *XDPoS_v2) GetPenalties(chain consensus.ChainReader, header *types.Heade
 	return epochSwitchInfo.Penalties
 }
 
-func (x *XDPoS_v2) GetStandbynodes(chain consensus.ChainReader, header *types.Header) []common.Address {
+func (x *XDPoS_v2) GetStandbynodes(chain consensus.ChainHeaderReader, header *types.Header) []common.Address {
 	epochSwitchInfo, err := x.getEpochSwitchInfo(chain, header, header.Hash())
 	if err != nil {
 		log.Error("[GetStandbynodes] Adaptor v2 getEpochSwitchInfo has error", "err", err)
@@ -1002,7 +1002,7 @@ func (x *XDPoS_v2) calcMasternodes(chain consensus.ChainReader, blockNum *big.In
 }
 
 // Given hash, get master node from the epoch switch block of the epoch
-func (x *XDPoS_v2) GetMasternodesByHash(chain consensus.ChainReader, hash common.Hash) []common.Address {
+func (x *XDPoS_v2) GetMasternodesByHash(chain consensus.ChainHeaderReader, hash common.Hash) []common.Address {
 	epochSwitchInfo, err := x.getEpochSwitchInfo(chain, nil, hash)
 	if err != nil {
 		log.Error("[GetMasternodes] Adaptor v2 getEpochSwitchInfo has error, potentially bug", "err", err)
@@ -1012,7 +1012,7 @@ func (x *XDPoS_v2) GetMasternodesByHash(chain consensus.ChainReader, hash common
 }
 
 // Given hash, get master node from the epoch switch block of the previous `limit` epoch
-func (x *XDPoS_v2) GetPreviousPenaltyByHash(chain consensus.ChainReader, hash common.Hash, limit int) []common.Address {
+func (x *XDPoS_v2) GetPreviousPenaltyByHash(chain consensus.ChainHeaderReader, hash common.Hash, limit int) []common.Address {
 	currentEpochSwitchInfo, err := x.getEpochSwitchInfo(chain, nil, hash)
 	if err != nil {
 		log.Error("[GetPreviousPenaltyByHash] Adaptor v2 getPreviousEpochSwitchInfoByHash has error, potentially bug", "err", err)
@@ -1043,7 +1043,7 @@ func (x *XDPoS_v2) FindParentBlockToAssign(chain consensus.ChainReader) *types.B
 	return parent
 }
 
-func (x *XDPoS_v2) allowedToSend(chain consensus.ChainReader, blockHeader *types.Header, sendType string) bool {
+func (x *XDPoS_v2) allowedToSend(chain consensus.ChainHeaderReader, blockHeader *types.Header, sendType string) bool {
 	// Don't hold the signFn for the whole signing operation
 	x.signLock.RLock()
 	signer := x.signer

@@ -38,7 +38,7 @@ func (f *Forensics) SubscribeForensicsEvent(ch chan<- types.ForensicsEvent) even
 	return f.scope.Track(f.forensicsFeed.Subscribe(ch))
 }
 
-func (f *Forensics) ForensicsMonitoring(chain consensus.ChainReader, engine *XDPoS_v2, headerQcToBeCommitted []types.Header, incomingQC types.QuorumCert) error {
+func (f *Forensics) ForensicsMonitoring(chain consensus.ChainHeaderReader, engine *XDPoS_v2, headerQcToBeCommitted []types.Header, incomingQC types.QuorumCert) error {
 	f.ProcessForensics(chain, engine, incomingQC)
 	return f.SetCommittedQCs(headerQcToBeCommitted, incomingQC)
 }
@@ -78,7 +78,7 @@ func (f *Forensics) SetCommittedQCs(headers []types.Header, incomingQC types.Quo
 	return nil
 }
 
-func (f *Forensics) ProcessForensics(chain consensus.ChainReader, engine *XDPoS_v2, incomingQC types.QuorumCert) error {
+func (f *Forensics) ProcessForensics(chain consensus.ChainHeaderReader, engine *XDPoS_v2, incomingQC types.QuorumCert) error {
 	return nil
 }
 
@@ -129,7 +129,7 @@ func (f *Forensics) ProcessForensics(chain consensus.ChainReader, engine *XDPoS_
 */
 
 // Last step of forensics which sends out detailed proof to report service.
-func (f *Forensics) SendForensicProof(chain consensus.ChainReader, engine *XDPoS_v2, firstQc types.QuorumCert, secondQc types.QuorumCert) error {
+func (f *Forensics) SendForensicProof(chain consensus.ChainHeaderReader, engine *XDPoS_v2, firstQc types.QuorumCert, secondQc types.QuorumCert) error {
 	// Re-order the QC by its round number to make the function cleaner.
 	lowerRoundQC := firstQc
 	higherRoundQC := secondQc
@@ -234,7 +234,7 @@ func (f *Forensics) getQcSignerAddresses(quorumCert types.QuorumCert) []string {
 	return signerList
 }
 
-func (f *Forensics) FindAncestorBlockHash(chain consensus.ChainReader, firstBlockInfo *types.BlockInfo, secondBlockInfo *types.BlockInfo) (common.Hash, []string, []string, error) {
+func (f *Forensics) FindAncestorBlockHash(chain consensus.ChainHeaderReader, firstBlockInfo *types.BlockInfo, secondBlockInfo *types.BlockInfo) (common.Hash, []string, []string, error) {
 	// Re-arrange by block number
 	lowerBlockNumHash := firstBlockInfo.Hash
 	higherBlockNumberHash := secondBlockInfo.Hash
@@ -299,7 +299,7 @@ func generateVoteEquivocationId(signer common.Address, round1, round2 types.Roun
 	return fmt.Sprintf("%x:%d:%d", signer, round1, round2)
 }
 
-func (f *Forensics) ProcessVoteEquivocation(chain consensus.ChainReader, engine *XDPoS_v2, incomingVote *types.Vote) error {
+func (f *Forensics) ProcessVoteEquivocation(chain consensus.ChainHeaderReader, engine *XDPoS_v2, incomingVote *types.Vote) error {
 	return nil
 }
 

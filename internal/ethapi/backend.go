@@ -116,7 +116,7 @@ type Backend interface {
 	GetPeer() int
 }
 
-func GetAPIs(apiBackend Backend, chainReader consensus.ChainReader) []rpc.API {
+func GetAPIs(apiBackend Backend, chainReader consensus.ChainHeaderReader) []rpc.API {
 	nonceLock := new(AddrLocker)
 	return []rpc.API{
 		{

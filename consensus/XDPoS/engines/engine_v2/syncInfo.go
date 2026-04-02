@@ -17,7 +17,7 @@ import (
 )
 
 // Verify syncInfo and trigger process QC or TC if successful
-func (x *XDPoS_v2) VerifySyncInfoMessage(chain consensus.ChainReader, syncInfo *types.SyncInfo) (bool, error) {
+func (x *XDPoS_v2) VerifySyncInfoMessage(chain consensus.ChainHeaderReader, syncInfo *types.SyncInfo) (bool, error) {
 	qc := syncInfo.HighestQuorumCert
 	tc := syncInfo.HighestTimeoutCert
 
@@ -68,14 +68,14 @@ func (x *XDPoS_v2) VerifySyncInfoMessage(chain consensus.ChainReader, syncInfo *
 	return true, nil
 }
 
-func (x *XDPoS_v2) SyncInfoHandler(chain consensus.ChainReader, syncInfo *types.SyncInfo) error {
+func (x *XDPoS_v2) SyncInfoHandler(chain consensus.ChainHeaderReader, syncInfo *types.SyncInfo) error {
 	x.lock.Lock()
 	defer x.lock.Unlock()
 	x.syncInfoPool.Add(syncInfo) // Add syncInfo to the pool, in case this is valid syncInfo but chain is not sync to latest height
 	return x.syncInfoHandler(chain, syncInfo)
 }
 
-func (x *XDPoS_v2) syncInfoHandler(chain consensus.ChainReader, syncInfo *types.SyncInfo) error {
+func (x *XDPoS_v2) syncInfoHandler(chain consensus.ChainHeaderReader, syncInfo *types.SyncInfo) error {
 	qc := syncInfo.HighestQuorumCert
 	tc := syncInfo.HighestTimeoutCert
 
@@ -108,7 +108,7 @@ func (x *XDPoS_v2) syncInfoHandler(chain consensus.ChainReader, syncInfo *types.
 	return nil
 }
 
-func (x *XDPoS_v2) processSyncInfoPool(chain consensus.ChainReader) {
+func (x *XDPoS_v2) processSyncInfoPool(chain consensus.ChainHeaderReader) {
 	syncInfo := x.syncInfoPool.PoolObjKeysList()
 	for _, key := range syncInfo {
 		log.Debug("[processSyncInfoPool] Processing syncInfo message from pool", "key", key)

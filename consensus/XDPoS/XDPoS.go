@@ -166,7 +166,7 @@ func (x *XDPoS) UpdateParams(header *types.Header) {
 	}
 }
 
-func (x *XDPoS) Initial(chain consensus.ChainReader, header *types.Header) error {
+func (x *XDPoS) Initial(chain consensus.ChainHeaderReader, header *types.Header) error {
 	switch x.config.BlockConsensusVersion(header.Number) {
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.Initial(chain, header)
@@ -344,7 +344,7 @@ func (x *XDPoS) CalcDifficulty(chain consensus.ChainReader, time uint64, parent 
 	}
 }
 
-func (x *XDPoS) HandleProposedBlock(chain consensus.ChainReader, header *types.Header) error {
+func (x *XDPoS) HandleProposedBlock(chain consensus.ChainHeaderReader, header *types.Header) error {
 	switch x.config.BlockConsensusVersion(header.Number) {
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.ProposedBlockHandler(chain, header)
@@ -378,7 +378,7 @@ func (x *XDPoS) IsAuthorisedAddress(chain consensus.ChainReader, header *types.H
 	}
 }
 
-func (x *XDPoS) GetMasternodes(chain consensus.ChainReader, header *types.Header) []common.Address {
+func (x *XDPoS) GetMasternodes(chain consensus.ChainHeaderReader, header *types.Header) []common.Address {
 	switch x.config.BlockConsensusVersion(header.Number) {
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.GetMasternodes(chain, header)
@@ -387,7 +387,7 @@ func (x *XDPoS) GetMasternodes(chain consensus.ChainReader, header *types.Header
 	}
 }
 
-func (x *XDPoS) GetMasternodesByNumber(chain consensus.ChainReader, blockNumber uint64) []common.Address {
+func (x *XDPoS) GetMasternodesByNumber(chain consensus.ChainHeaderReader, blockNumber uint64) []common.Address {
 	blockHeader := chain.GetHeaderByNumber(blockNumber)
 	if blockHeader == nil {
 		log.Error("[GetMasternodesByNumber] Unable to find block", "Num", blockNumber)
@@ -410,7 +410,7 @@ func (x *XDPoS) YourTurn(chain consensus.ChainReader, parent *types.Header, sign
 	}
 }
 
-func (x *XDPoS) GetValidator(creator common.Address, chain consensus.ChainReader, header *types.Header) (common.Address, error) {
+func (x *XDPoS) GetValidator(creator common.Address, chain consensus.ChainHeaderReader, header *types.Header) (common.Address, error) {
 	switch x.config.BlockConsensusVersion(header.Number) {
 	default: // Default "v1", v2 does not need this function
 		return x.EngineV1.GetValidator(creator, chain, header)
@@ -465,7 +465,7 @@ func (x *XDPoS) IsEpochSwitch(header *types.Header) (bool, uint64, error) {
 	}
 }
 
-func (x *XDPoS) GetCurrentEpochSwitchBlock(chain consensus.ChainReader, blockNumber *big.Int) (uint64, uint64, error) {
+func (x *XDPoS) GetCurrentEpochSwitchBlock(chain consensus.ChainHeaderReader, blockNumber *big.Int) (uint64, uint64, error) {
 	switch x.config.BlockConsensusVersion(blockNumber) {
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.GetCurrentEpochSwitchBlock(chain, blockNumber)
@@ -474,7 +474,7 @@ func (x *XDPoS) GetCurrentEpochSwitchBlock(chain consensus.ChainReader, blockNum
 	}
 }
 
-func (x *XDPoS) CalculateMissingRounds(chain consensus.ChainReader, header *types.Header) (*utils.PublicApiMissedRoundsMetadata, error) {
+func (x *XDPoS) CalculateMissingRounds(chain consensus.ChainHeaderReader, header *types.Header) (*utils.PublicApiMissedRoundsMetadata, error) {
 	switch x.config.BlockConsensusVersion(header.Number) {
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.CalculateMissingRounds(chain, header)
@@ -589,7 +589,7 @@ func (x *XDPoS) GetCachedSigningTxs(hash common.Hash) ([]*types.Transaction, boo
 	return x.signingTxsCache.Get(hash)
 }
 
-func (x *XDPoS) GetEpochSwitchInfoBetween(chain consensus.ChainReader, begin, end *types.Header) ([]*types.EpochSwitchInfo, error) {
+func (x *XDPoS) GetEpochSwitchInfoBetween(chain consensus.ChainHeaderReader, begin, end *types.Header) ([]*types.EpochSwitchInfo, error) {
 	beginBlockVersion := x.config.BlockConsensusVersion(begin.Number)
 	endBlockVersion := x.config.BlockConsensusVersion(end.Number)
 	if beginBlockVersion == params.ConsensusEngineVersion2 && endBlockVersion == params.ConsensusEngineVersion2 {
