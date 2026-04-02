@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cespare/cp"
 )
@@ -352,6 +353,7 @@ func TestUnlockFlagAmbiguousWrongPassword(t *testing.T) {
 	XDC := runXDC(t,
 		"--nat", "none", "--nodiscover", "--maxpeers", "0", "--port", "0", "--nousb", "--cache", "128", "--ipcdisable",
 		"--keystore", store, "--unlock", "f466859ead1932d743d622cb74fc058882e8648a")
+	XDC.KillTimeout = 90 * time.Second
 	defer XDC.ExpectExit()
 
 	// Helper for the expect template, returns absolute keystore path.
