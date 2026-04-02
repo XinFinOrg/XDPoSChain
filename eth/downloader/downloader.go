@@ -65,7 +65,7 @@ var (
 	qosTuningImpact  = 0.25 // Impact that a new tuning target has on the previous value
 
 	maxQueuedHeaders  = 32 * 1024 // [eth/62] Maximum number of headers to queue for import (DOS protection)
-	maxHeadersProcess = 1         // 2048      // Number of header download results to import at once into the chain
+	maxHeadersProcess = 2048      // Number of header download results to import at once into the chain
 	maxResultsProcess = 2048      // Number of content download results to import at once into the chain
 
 	reorgProtThreshold   = 48 // Threshold number of recent blocks to disable mini reorg protection
