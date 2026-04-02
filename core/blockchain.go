@@ -2446,8 +2446,6 @@ Receipts: %v
 func (bc *BlockChain) InsertHeaderChain(chain []*types.Header, checkFreq int) (int, error) {
 	start := time.Now()
 	if i, err := bc.hc.ValidateHeaderChain(chain, checkFreq); err != nil {
-		// use 0 is trick to make fast sync work
-		// if i, err := bc.hc.ValidateHeaderChain(chain, 0); err != nil {
 		return i, err
 	}
 
