@@ -740,7 +740,7 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 			// by a return statement before running deferred methods. Take care with
 			// removing or subscoping err as it will break this clause.
 			if err != nil {
-				pool.reserver.Release(from)
+				pool.releaseReservation(from)
 			}
 		}()
 	}
@@ -1120,6 +1120,19 @@ func (pool *LegacyPool) get(hash common.Hash) *types.Transaction {
 	return pool.all.Get(hash)
 }
 
+type ownerReserver interface {
+	Owns(common.Address) bool
+}
+
+func (pool *LegacyPool) releaseReservation(addr common.Address) {
+	if ownerAware, ok := pool.reserver.(ownerReserver); ok {
+		if !ownerAware.Owns(addr) {
+			return
+		}
+	}
+	_ = pool.reserver.Release(addr)
+}
+
 // Has returns an indicator whether txpool has a transaction cached with the
 // given hash.
 func (pool *LegacyPool) Has(hash common.Hash) bool {
@@ -1153,7 +1166,7 @@ func (pool *LegacyPool) removeTx(hash common.Hash, outofbound bool, unreserve bo
 				_, hasQueued  = pool.queue.get(addr)
 			)
 			if !hasPending && !hasQueued {
-				pool.reserver.Release(addr)
+				pool.releaseReservation(addr)
 			}
 		}()
 	}
@@ -1511,7 +1524,7 @@ func (pool *LegacyPool) promoteExecutables(accounts []common.Address) []*types.T
 	for _, addr := range removedAddresses {
 		_, hasPending := pool.pending[addr]
 		if !hasPending {
-			pool.reserver.Release(addr)
+			pool.releaseReservation(addr)
 		}
 	}
 	return promoted
@@ -1611,7 +1624,7 @@ func (pool *LegacyPool) truncateQueue() {
 	for _, addr := range removedAddresses {
 		_, hasPending := pool.pending[addr]
 		if !hasPending {
-			pool.reserver.Release(addr)
+			pool.releaseReservation(addr)
 		}
 	}
 }
@@ -1676,7 +1689,7 @@ func (pool *LegacyPool) demoteUnexecutables() {
 			delete(pool.pending, addr)
 			pendingAddrsGauge.Dec(1)
 			if _, ok := pool.queue.get(addr); !ok {
-				pool.reserver.Release(addr)
+				pool.releaseReservation(addr)
 			}
 		}
 	}
@@ -1932,11 +1945,11 @@ func (pool *LegacyPool) Clear() {
 	// acquire the subpool lock until the transaction addition is completed.
 	for addr := range pool.pending {
 		if _, ok := pool.queue.get(addr); !ok {
-			pool.reserver.Release(addr)
+			pool.releaseReservation(addr)
 		}
 	}
 	for _, addr := range pool.queue.addresses() {
-		pool.reserver.Release(addr)
+		pool.releaseReservation(addr)
 	}
 	pool.all.Clear()
 	pool.priced.Reheap()

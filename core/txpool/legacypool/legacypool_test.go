@@ -244,6 +244,13 @@ func (r *reserver) Has(address common.Address) bool {
 	return false // reserver only supports a single pool
 }
 
+func (r *reserver) Owns(address common.Address) bool {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+	_, exists := r.accounts[address]
+	return exists
+}
+
 func setupPoolWithConfig(config *params.ChainConfig) (*LegacyPool, *ecdsa.PrivateKey) {
 	diskdb := rawdb.NewMemoryDatabase()
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(diskdb))
@@ -489,6 +496,47 @@ func TestPromoteSpecialTxOverflowReturnsErrorWithoutMutation(t *testing.T) {
 	}
 	if pool.pendingNonces.get(addr) != 0 {
 		t.Fatalf("pending nonce changed for rejected special tx: have %d want 0", pool.pendingNonces.get(addr))
+	}
+}
+
+func TestPromoteExecutablesQueueEmptyWithoutReservation(t *testing.T) {
+	t.Parallel()
+
+	diskdb := rawdb.NewMemoryDatabase()
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(diskdb))
+	chain := newTestBlockChain(params.TestChainConfig, 10000000, statedb, new(event.Feed))
+
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	statedb.AddBalance(addr, big.NewInt(1_000_000_000_000_000), tracing.BalanceChangeUnspecified)
+
+	r := &reserver{accounts: make(map[common.Address]struct{})}
+	pool := New(testTxPoolConfig, chain)
+	if err := pool.Init(testTxPoolConfig.PriceLimit, chain.CurrentBlock(), r); err != nil {
+		t.Fatalf("failed to init pool: %v", err)
+	}
+	defer pool.Close()
+	<-pool.initDoneCh
+
+	queuedTx := pricedTransaction(5, 100000, new(big.Int).Add(new(big.Int).Set(common.MinGasPrice), big.NewInt(1)), key)
+	if err := pool.addRemoteSync(queuedTx); err != nil {
+		t.Fatalf("failed to add queued tx: %v", err)
+	}
+
+	r.lock.Lock()
+	delete(r.accounts, addr)
+	r.lock.Unlock()
+
+	pool.mu.Lock()
+	pool.currentState.SetNonce(addr, 10)
+	pool.promoteExecutables([]common.Address{addr})
+	pool.mu.Unlock()
+
+	if _, ok := pool.queue.get(addr); ok {
+		t.Fatal("queue should be empty after stale tx is dropped")
 	}
 }
 
