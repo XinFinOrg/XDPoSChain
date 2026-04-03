@@ -49,6 +49,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/internal/syncx"
+	internalversion "github.com/XinFinOrg/XDPoSChain/internal/version"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -2407,6 +2408,11 @@ func (bc *BlockChain) futureBlocksLoop() {
 func (bc *BlockChain) reportBlock(block *types.Block, receipts types.Receipts, err error) {
 	rawdb.WriteBadBlock(bc.db, block)
 
+	commit := "unknown"
+	if vcs, ok := internalversion.VCS(); ok && vcs.Commit != "" {
+		commit = vcs.Commit
+	}
+
 	var roundNumber = types.Round(0)
 	engine, ok := bc.Engine().(*XDPoS.XDPoS)
 	if ok {
@@ -2425,6 +2431,8 @@ func (bc *BlockChain) reportBlock(block *types.Block, receipts types.Receipts, e
 	}
 	log.Error(fmt.Sprintf(`
 ########## BAD BLOCK #########
+Version: %v
+Commit: %v
 Number: %v
 Hash: %#x
 Round: %v
@@ -2432,7 +2440,7 @@ Error: %v
 %s
 Receipts: %v
 ##############################
-`, block.Number(), block.Hash(), roundNumber, err, bc.chainConfig.Description(), receiptString))
+`, internalversion.WithMeta, commit, block.Number(), block.Hash(), roundNumber, err, bc.chainConfig.Description(), receiptString))
 }
 
 // InsertHeaderChain attempts to insert the given header chain in to the local
