@@ -234,7 +234,6 @@ func (x *XDPoS) VerifyHeaders(chain consensus.ChainReader, headers []*types.Head
 		}
 	}
 
-
 	if v1headers != nil {
 		x.EngineV1.VerifyHeaders(chain, v1headers, v1fullVerifies, abort, results)
 	}
@@ -514,21 +513,18 @@ Caching
 // Cache signing transaction data into BlockSingers cache object
 func (x *XDPoS) CacheNoneTIPSigningTxs(header *types.Header, txs []*types.Transaction, receipts []*types.Receipt) []*types.Transaction {
 	signTxs := []*types.Transaction{}
-	for _, tx := range txs {
+	for txIndex, tx := range txs {
 		if tx.IsSigningTransaction() {
-			var b uint64
-			for _, r := range receipts {
-				if r.TxHash == tx.Hash() {
-					if len(r.PostState) > 0 {
-						b = types.ReceiptStatusSuccessful
-					} else {
-						b = r.Status
-					}
-					break
-				}
+			receipt := findTransactionReceipt(txIndex, tx.Hash(), receipts)
+			if receipt == nil {
+				continue
 			}
 
-			if b == types.ReceiptStatusFailed {
+			status := receipt.Status
+			if len(receipt.PostState) > 0 {
+				status = types.ReceiptStatusSuccessful
+			}
+			if status == types.ReceiptStatusFailed {
 				continue
 			}
 
@@ -540,6 +536,21 @@ func (x *XDPoS) CacheNoneTIPSigningTxs(header *types.Header, txs []*types.Transa
 	x.signingTxsCache.Add(header.Hash(), signTxs)
 
 	return signTxs
+}
+
+func findTransactionReceipt(txIndex int, txHash common.Hash, receipts []*types.Receipt) *types.Receipt {
+	if txIndex < len(receipts) {
+		receipt := receipts[txIndex]
+		if receipt != nil && (receipt.TxHash == (common.Hash{}) || receipt.TxHash == txHash) {
+			return receipt
+		}
+	}
+	for _, receipt := range receipts {
+		if receipt != nil && receipt.TxHash == txHash {
+			return receipt
+		}
+	}
+	return nil
 }
 
 // Cache
