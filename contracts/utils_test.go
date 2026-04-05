@@ -27,11 +27,14 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind/backends"
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/contracts/blocksigner"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/XinFinOrg/XDPoSChain/trie"
 )
 
 var (
@@ -51,6 +54,50 @@ func getCommonBackend() *backends.SimulatedBackend {
 	backend.Commit()
 
 	return backend
+}
+
+type rewardReplayChain struct {
+	config  *params.ChainConfig
+	current *types.Header
+	headers map[uint64]*types.Header
+	blocks  map[uint64]*types.Block
+}
+
+func (c *rewardReplayChain) Config() *params.ChainConfig {
+	return c.config
+}
+
+func (c *rewardReplayChain) CurrentHeader() *types.Header {
+	return c.current
+}
+
+func (c *rewardReplayChain) GetHeader(hash common.Hash, number uint64) *types.Header {
+	header := c.headers[number]
+	if header == nil || header.Hash() != hash {
+		return nil
+	}
+	return header
+}
+
+func (c *rewardReplayChain) GetHeaderByNumber(number uint64) *types.Header {
+	return c.headers[number]
+}
+
+func (c *rewardReplayChain) GetHeaderByHash(hash common.Hash) *types.Header {
+	for _, header := range c.headers {
+		if header.Hash() == hash {
+			return header
+		}
+	}
+	return nil
+}
+
+func (c *rewardReplayChain) GetBlock(hash common.Hash, number uint64) *types.Block {
+	block := c.blocks[number]
+	if block == nil || block.Hash() != hash {
+		return nil
+	}
+	return block
 }
 
 func TestSendTxSign(t *testing.T) {
@@ -113,6 +160,109 @@ func TestSendTxSign(t *testing.T) {
 		if len(signers) != len(keys) {
 			t.Error("Tx sign for block validators not match")
 		}
+	}
+}
+
+func TestGetRewardForCheckpointReplaysSigningTxsFromRawReceipts(t *testing.T) {
+	database := rawdb.NewMemoryDatabase()
+	config := params.TestXDPoSMockChainConfig
+	engine := XDPoS.New(config, database)
+
+	checkpointExtra := append(bytes.Repeat([]byte{0x00}, utils.ExtraVanity), acc1Addr.Bytes()...)
+	checkpointExtra = append(checkpointExtra, make([]byte, utils.ExtraSeal)...)
+
+	checkpointHeader := types.NewBlock(&types.Header{
+		Number: big.NewInt(14),
+		Extra:  checkpointExtra,
+	}, nil, nil, nil, trie.NewStackTrie(nil))
+	block15 := types.NewBlock(&types.Header{
+		Number:     big.NewInt(15),
+		ParentHash: checkpointHeader.Hash(),
+	}, nil, nil, nil, trie.NewStackTrie(nil))
+	block16 := types.NewBlock(&types.Header{
+		Number:     big.NewInt(16),
+		ParentHash: block15.Hash(),
+	}, nil, nil, nil, trie.NewStackTrie(nil))
+
+	signer := types.MakeSigner(config, big.NewInt(17))
+	signingTx1, err := types.SignTx(CreateTxSign(big.NewInt(15), block15.Hash(), 0, common.BlockSignersBinary), signer, acc1Key)
+	if err != nil {
+		t.Fatalf("failed to sign first replay tx: %v", err)
+	}
+	receipts := []*types.Receipt{
+		{Status: types.ReceiptStatusSuccessful, CumulativeGasUsed: 200000, TxHash: signingTx1.Hash()},
+	}
+	replayBlock := types.NewBlock(&types.Header{
+		Number:     big.NewInt(17),
+		ParentHash: block16.Hash(),
+	}, []*types.Transaction{signingTx1}, nil, receipts, trie.NewStackTrie(nil))
+	rawdb.WriteReceipts(database, replayBlock.Hash(), replayBlock.NumberU64(), receipts)
+
+	rawReceipts := rawdb.ReadRawReceipts(database, replayBlock.Hash(), replayBlock.NumberU64())
+	if len(rawReceipts) != 1 {
+		t.Fatalf("unexpected raw receipt count: have %d want 1", len(rawReceipts))
+	}
+	if rawReceipts[0].TxHash != (common.Hash{}) {
+		t.Fatalf("expected raw receipt without TxHash metadata, got %s", rawReceipts[0].TxHash)
+	}
+	precheckCached := engine.CacheNoneTIPSigningTxs(replayBlock.Header(), replayBlock.Transactions(), rawReceipts)
+	if len(precheckCached) != 1 {
+		t.Fatalf("unexpected cached signing tx count from raw receipts: have %d want 1", len(precheckCached))
+	}
+	if from := precheckCached[0].From(); from == nil || *from != acc1Addr {
+		t.Fatalf("unexpected signer recovered from replay tx: have %v want %s", from, acc1Addr)
+	}
+	if got := common.BytesToHash(precheckCached[0].Data()[len(precheckCached[0].Data())-32:]); got != block15.Hash() {
+		t.Fatalf("unexpected first replay target hash: have %s want %s", got, block15.Hash())
+	}
+	masternodes := engine.GetMasternodesFromCheckpointHeader(checkpointHeader.Header())
+	if len(masternodes) != 1 || masternodes[0] != acc1Addr {
+		t.Fatalf("unexpected checkpoint masternodes: have %v want [%s]", masternodes, acc1Addr)
+	}
+
+	checkpointBlock := types.NewBlock(&types.Header{
+		Number:     big.NewInt(18),
+		ParentHash: replayBlock.Hash(),
+	}, nil, nil, nil, trie.NewStackTrie(nil))
+	engine = XDPoS.New(config, database)
+	chain := &rewardReplayChain{
+		config:  config,
+		current: checkpointBlock.Header(),
+		headers: map[uint64]*types.Header{
+			14: checkpointHeader.Header(),
+			15: block15.Header(),
+			16: block16.Header(),
+			17: replayBlock.Header(),
+			18: checkpointBlock.Header(),
+		},
+		blocks: map[uint64]*types.Block{
+			15: block15,
+			16: block16,
+			17: replayBlock,
+			18: checkpointBlock,
+		},
+	}
+	if _, ok := engine.GetCachedSigningTxs(replayBlock.Hash()); ok {
+		t.Fatal("expected empty signing cache before restart replay")
+	}
+
+	totalSigner := uint64(0)
+	signers, err := GetRewardForCheckpoint(engine, chain, checkpointBlock.Header(), 2, &totalSigner)
+	if err != nil {
+		t.Fatalf("GetRewardForCheckpoint returned error: %v", err)
+	}
+	if cached, ok := engine.GetCachedSigningTxs(replayBlock.Hash()); !ok || len(cached) != 1 {
+		t.Fatalf("expected replay block signing txs to be cached during reward replay, got ok=%v len=%d", ok, len(cached))
+	}
+	if totalSigner != 1 {
+		t.Fatalf("unexpected total signer count: have %d want 1", totalSigner)
+	}
+	rewardLog := signers[acc1Addr]
+	if rewardLog == nil {
+		t.Fatalf("expected signer %s to be reconstructed from replay", acc1Addr)
+	}
+	if rewardLog.Sign != 1 {
+		t.Fatalf("unexpected signer count for %s: have %d want 1", acc1Addr, rewardLog.Sign)
 	}
 }
 
