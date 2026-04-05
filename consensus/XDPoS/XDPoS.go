@@ -216,6 +216,7 @@ func (x *XDPoS) VerifyHeaders(chain consensus.ChainReader, headers []*types.Head
 
 	abort := make(chan struct{})
 	results := make(chan error, len(headers))
+	chain = NewVerifyHeadersChainReader(chain, headers, nil)
 
 	// Split the headers list into v1 and v2 buckets
 	var v1headers []*types.Header
@@ -233,7 +234,6 @@ func (x *XDPoS) VerifyHeaders(chain consensus.ChainReader, headers []*types.Head
 			v1fullVerifies = append(v1fullVerifies, fullVerifies[i])
 		}
 	}
-
 
 	if v1headers != nil {
 		x.EngineV1.VerifyHeaders(chain, v1headers, v1fullVerifies, abort, results)

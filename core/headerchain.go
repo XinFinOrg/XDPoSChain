@@ -29,6 +29,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/lru"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
@@ -246,7 +247,11 @@ func (hc *HeaderChain) ValidateHeaderChain(chain []*types.Header, checkFreq int)
 		seals[len(seals)-1] = true
 	}
 
-	abort, results := hc.engine.VerifyHeaders(hc, chain, seals)
+	verifier := consensus.ChainReader(hc)
+	if _, ok := hc.engine.(*XDPoS.XDPoS); ok {
+		verifier = XDPoS.NewVerifyHeadersChainReader(hc, chain, nil)
+	}
+	abort, results := hc.engine.VerifyHeaders(verifier, chain, seals)
 	defer close(abort)
 
 	// Iterate over the headers and ensure they all check out
