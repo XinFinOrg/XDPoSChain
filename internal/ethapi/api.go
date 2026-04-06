@@ -2416,7 +2416,7 @@ func (s *NetAPI) Listening() bool {
 	return true // always listening
 }
 
-// PeerCount returns the number of connected peers
+// PeerCount returns the number of connected remote nodes.
 func (s *NetAPI) PeerCount() hexutil.Uint {
 	return hexutil.Uint(s.net.PeerCount())
 }

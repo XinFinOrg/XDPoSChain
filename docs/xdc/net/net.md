@@ -37,7 +37,11 @@ Response:
 
 ## Method net_peerCount
 
-The `peerCount` method returns the number of connected peers.
+The `peerCount` method returns the number of connected remote nodes.
+
+The value is counted by unique node identity. If the client temporarily holds
+multiple physical connections to the same remote NodeID, they are reported as a
+single peer by this method.
 
 Parameters:
 
