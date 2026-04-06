@@ -1539,19 +1539,28 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 			Fatalf("invalid --syncmode flag: %v", err)
 		}
 	}
-	if ctx.IsSet(FastSyncPivotNumberFlag.Name) {
-		cfg.FastSyncPivotNumber = ctx.Uint64(FastSyncPivotNumberFlag.Name)
-	}
-	if ctx.IsSet(FastSyncPivotHashFlag.Name) {
-		hashStr := ctx.String(FastSyncPivotHashFlag.Name)
-		if hashStr != "" {
-			cfg.FastSyncPivotHash = common.HexToHash(hashStr)
+	pivotNumberSet := ctx.IsSet(FastSyncPivotNumberFlag.Name)
+	pivotHashSet := ctx.IsSet(FastSyncPivotHashFlag.Name)
+	pivotRootSet := ctx.IsSet(FastSyncPivotRootFlag.Name)
+	pivotHash := ctx.String(FastSyncPivotHashFlag.Name)
+	pivotRoot := ctx.String(FastSyncPivotRootFlag.Name)
+
+	if pivotNumberSet {
+		if !pivotHashSet || pivotHash == "" || !common.IsHexHash(pivotHash) {
+			Fatalf("--%s must be set to a valid hash if --%s is set", FastSyncPivotHashFlag.Name, FastSyncPivotNumberFlag.Name)
 		}
-	}
-	if ctx.IsSet(FastSyncPivotRootFlag.Name) {
-		rootStr := ctx.String(FastSyncPivotRootFlag.Name)
-		if rootStr != "" {
-			cfg.FastSyncPivotRoot = common.HexToHash(rootStr)
+		if !pivotRootSet || pivotRoot == "" || !common.IsHexHash(pivotRoot) {
+			Fatalf("--%s must be set to a valid hash if --%s is set", FastSyncPivotRootFlag.Name, FastSyncPivotNumberFlag.Name)
+		}
+		cfg.FastSyncPivotNumber = ctx.Uint64(FastSyncPivotNumberFlag.Name)
+		cfg.FastSyncPivotHash = common.HexToHash(pivotHash)
+		cfg.FastSyncPivotRoot = common.HexToHash(pivotRoot)
+	} else {
+		if pivotHashSet {
+			Fatalf("--%s must not be set without --%s", FastSyncPivotHashFlag.Name, FastSyncPivotNumberFlag.Name)
+		}
+		if pivotRootSet {
+			Fatalf("--%s must not be set without --%s", FastSyncPivotRootFlag.Name, FastSyncPivotNumberFlag.Name)
 		}
 	}
 
