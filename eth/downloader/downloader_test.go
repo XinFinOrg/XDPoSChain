@@ -17,6 +17,7 @@
 package downloader
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -28,6 +29,7 @@ import (
 
 	ethereum "github.com/XinFinOrg/XDPoSChain"
 	"github.com/XinFinOrg/XDPoSChain/common"
+	engine_v2 "github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/engines/engine_v2"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
@@ -61,6 +63,10 @@ type downloadTester struct {
 	ownChainTd  map[common.Hash]*big.Int       // Total difficulties of the blocks in the local chain
 
 	insertHeaderChainHook func([]*types.Header) error
+
+	// configOverride, when non-nil, is returned by Config() instead of the
+	// default TestChainConfig.  Used by tests that require XDPoS to be active.
+	configOverride *params.ChainConfig
 
 	lock sync.RWMutex
 }
@@ -344,6 +350,9 @@ func (dl *downloadTester) handleProposedBlock(header *types.Header) error {
 
 // Config retrieves the blockchain's chain configuration.
 func (dl *downloadTester) Config() *params.ChainConfig {
+	if dl.configOverride != nil {
+		return dl.configOverride
+	}
 	config := *params.TestChainConfig
 	config.Eip1559Block = big.NewInt(0)
 	return &config
@@ -1801,5 +1810,238 @@ func testReorgProtectionDoesNotStallSync(t *testing.T, protocol int, mode SyncMo
 
 			assertOwnChain(t, tester, peerChain.len())
 		})
+	}
+}
+
+// TestSetPivotBlockStoresFields verifies that SetPivotBlock persists the pivot
+// number, hash, and state root onto the downloader for later use during sync.
+func TestSetPivotBlockStoresFields(t *testing.T) {
+	t.Parallel()
+
+	tester := newTester()
+	// Provide an XDPoS config so SetPivotBlock does not short-circuit.
+	tester.configOverride = params.TestXDPoSMockChainConfig
+	defer tester.terminate()
+	d := tester.downloader
+
+	wantNumber := uint64(1000)
+	wantHash := common.HexToHash("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+	wantRoot := common.HexToHash("0xcafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe")
+
+	d.SetPivotBlock(wantNumber, wantHash, wantRoot)
+
+	if d.pivotNumber != wantNumber {
+		t.Errorf("pivotNumber mismatch: have %v, want %v", d.pivotNumber, wantNumber)
+	}
+	if d.pivotHash != wantHash {
+		t.Errorf("pivotHash mismatch: have %v, want %v", d.pivotHash, wantHash)
+	}
+	if d.pivotRoot != wantRoot {
+		t.Errorf("pivotRoot mismatch: have %v, want %v", d.pivotRoot, wantRoot)
+	}
+}
+
+// TestSetPivotBlockGapCalculation verifies the gap pivot number derivation
+// produced by SetPivotBlock for a range of primary pivot numbers.
+//
+// With TestXDPoSMockChainConfig (Epoch=900, Gap=450):
+//
+//	epochBase = pivot - pivot%900
+//	baseGap   = epochBase-450  (or 900-450=450 when epochBase < 450)
+//	gaps      = { baseGap + 900*i  |  i=0,1,…  while value < pivot }
+func TestSetPivotBlockGapCalculation(t *testing.T) {
+	t.Parallel()
+
+	tester := newTester()
+	// TestXDPoSMockChainConfig has Epoch=900, Gap=450.
+	tester.configOverride = params.TestXDPoSMockChainConfig
+	defer tester.terminate()
+	d := tester.downloader
+
+	tests := []struct {
+		pivot    uint64
+		wantGaps []uint64
+	}{
+		// pivot ≤ baseGap(450): no gap numbers are strictly less than pivot
+		{pivot: 200, wantGaps: nil},
+		{pivot: 450, wantGaps: nil},
+		// first gap (450) is below pivot for the first time
+		{pivot: 451, wantGaps: []uint64{450}},
+		// pivot at exact epoch boundary (900): only gap at 450
+		// epochBase=900, baseGap=900-450=450; 450<900→add, 1350≥900→stop
+		{pivot: 900, wantGaps: []uint64{450}},
+		// pivot at baseGap+epoch (1350): 450<1350→add, 1350≥1350→stop
+		{pivot: 1350, wantGaps: []uint64{450}},
+		// pivot just above 1350: both 450 and 1350 qualify
+		// epochBase=900, baseGap=450; 450<1351→add, 1350<1351→add, 2250≥1351→stop
+		{pivot: 1351, wantGaps: []uint64{450, 1350}},
+		// pivot at 2*epoch (1800): epochBase=1800, baseGap=1800-450=1350;
+		// 1350<1800→add, 2250≥1800→stop → only [1350]
+		{pivot: 1800, wantGaps: []uint64{1350}},
+		// pivot just above 2250 to get two gaps in a different epoch window:
+		// epochBase=1800, baseGap=1350; 1350<2251→add, 2250<2251→add, 3150≥2251→stop
+		{pivot: 2251, wantGaps: []uint64{1350, 2250}},
+	}
+
+	for _, tc := range tests {
+		d.SetPivotBlock(tc.pivot, common.Hash{}, common.Hash{})
+
+		d.pivotGapLock.RLock()
+		got := make([]uint64, len(d.pivotGapNumbers))
+		copy(got, d.pivotGapNumbers)
+		d.pivotGapLock.RUnlock()
+
+		if len(got) != len(tc.wantGaps) {
+			t.Errorf("pivot %d: gap count mismatch: have %v, want %v", tc.pivot, got, tc.wantGaps)
+			continue
+		}
+		for i, g := range got {
+			if g != tc.wantGaps[i] {
+				t.Errorf("pivot %d: gap[%d] = %v, want %v", tc.pivot, i, g, tc.wantGaps[i])
+			}
+		}
+	}
+}
+
+// TestFastSyncPivotHashMismatch checks that processFastSyncContent returns a
+// descriptive "pivot block hash mismatch" error when the configured pivot hash
+// does not match the actual downloaded pivot block.
+func TestFastSyncPivotHashMismatch(t *testing.T) {
+	t.Parallel()
+
+	tester := newTester()
+	// XDPoS config is required so SetPivotBlock can compute gap numbers.
+	// TestXDPoSMockChainConfig has Epoch=900, Gap=450.
+	tester.configOverride = params.TestXDPoSMockChainConfig
+	defer tester.terminate()
+
+	// Use a chain short enough to be fast but long enough to trigger state sync.
+	chainLen := 300
+	chain := testChainBase.shorten(chainLen)
+	tester.newPeer("peer", 63, chain)
+
+	// Identify the natural pivot block so we can supply the correct state root
+	// (so state sync succeeds) while feeding a wrong hash (so the check fires).
+	// Natural pivot = headBlock().Number - fsMinFullBlocks = (chainLen-1) - fsMinFullBlocks.
+	pivotNum := uint64(chainLen - 1 - fsMinFullBlocks) // = 235
+	pivotRoot := chain.headerm[chain.chain[pivotNum]].Root
+
+	wrongHash := common.HexToHash("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+	tester.downloader.SetPivotBlock(pivotNum, wrongHash, pivotRoot)
+
+	err := tester.sync("peer", nil, FastSync)
+	if err == nil {
+		t.Fatal("expected pivot hash mismatch error, got nil")
+	}
+	if !strings.Contains(err.Error(), "pivot block hash mismatch") {
+		t.Fatalf("unexpected error: %q (want substring %q)", err.Error(), "pivot block hash mismatch")
+	}
+}
+
+// TestFastSyncConfiguredPivotHashMatch verifies that setting the correct pivot
+// hash and state root allows fast sync to complete successfully.
+func TestFastSyncConfiguredPivotHashMatch(t *testing.T) {
+	t.Parallel()
+
+	tester := newTester()
+	// XDPoS config is required so SetPivotBlock can compute gap numbers.
+	// TestXDPoSMockChainConfig has Epoch=900, Gap=450.
+	tester.configOverride = params.TestXDPoSMockChainConfig
+	defer tester.terminate()
+
+	chainLen := 300
+	chain := testChainBase.shorten(chainLen)
+	tester.newPeer("peer", 63, chain)
+
+	// Natural pivot = headBlock().Number - fsMinFullBlocks = (chainLen-1) - fsMinFullBlocks.
+	pivotNum := uint64(chainLen - 1 - fsMinFullBlocks) // = 235
+	pivotHash := chain.headerm[chain.chain[pivotNum]].Hash()
+	pivotRoot := chain.headerm[chain.chain[pivotNum]].Root
+
+	// With Epoch=900 and pivot=235 the calculated baseGap=450 > pivot, so
+	// pivotGapNumbers will be empty – this test focuses purely on hash verification.
+	tester.downloader.SetPivotBlock(pivotNum, pivotHash, pivotRoot)
+
+	if err := tester.sync("peer", nil, FastSync); err != nil {
+		t.Fatalf("fast sync with correct pivot hash failed: %v", err)
+	}
+	assertOwnChain(t, tester, chainLen)
+}
+
+// TestFastSyncGapPivotSync exercises the gap-pivot state-sync path: when the
+// configured pivot is high enough that SetPivotBlock calculates one or more gap
+// pivot numbers, processFastSyncContent must state-sync each gap block and
+// generate a snapshot for it before committing the primary pivot.
+//
+// Chain layout (Epoch=900, Gap=450, pivot=536, gap pivot=[450]):
+//
+//	blocks 1-535  → fast-sync (receipts)
+//	block  450    → gap pivot: state synced + snapshot generated
+//	block  536    → primary pivot: state synced + committed
+//	blocks 537-600 → full-sync
+func TestFastSyncGapPivotSync(t *testing.T) {
+	t.Parallel()
+
+	tester := newTester()
+	// XDPoS config is required so SetPivotBlock can compute gap numbers.
+	// TestXDPoSMockChainConfig has Epoch=900, Gap=450.
+	tester.configOverride = params.TestXDPoSMockChainConfig
+	defer tester.terminate()
+
+	// 600 blocks: natural pivot = 600-64 = 536, gap pivot = 450.
+	chainLen := 600
+	chain := testChainBase.shorten(chainLen)
+	tester.newPeer("peer", 63, chain)
+
+	// Natural pivot = headBlock().Number - fsMinFullBlocks = (chainLen-1) - fsMinFullBlocks.
+	pivotNum := uint64(chainLen - 1 - fsMinFullBlocks) // = 535
+	pivotHash := chain.headerm[chain.chain[pivotNum]].Hash()
+	pivotRoot := chain.headerm[chain.chain[pivotNum]].Root
+
+	tester.downloader.SetPivotBlock(pivotNum, pivotHash, pivotRoot)
+
+	// After SetPivotBlock the gap list should contain exactly block 450:
+	// epochBase=0 (535<900), baseGap=450, first gap=450 < 535.
+	tester.downloader.pivotGapLock.RLock()
+	gaps := make([]uint64, len(tester.downloader.pivotGapNumbers))
+	copy(gaps, tester.downloader.pivotGapNumbers)
+	tester.downloader.pivotGapLock.RUnlock()
+
+	if len(gaps) != 1 || gaps[0] != 450 {
+		t.Fatalf("expected gap pivots [450], got %v", gaps)
+	}
+
+	if err := tester.sync("peer", nil, FastSync); err != nil {
+		t.Fatalf("fast sync with gap pivot failed: %v", err)
+	}
+	assertOwnChain(t, tester, chainLen)
+
+	// After a successful sync the gap list should have been cleared.
+	tester.downloader.pivotGapLock.RLock()
+	remaining := len(tester.downloader.pivotGapNumbers)
+	tester.downloader.pivotGapLock.RUnlock()
+	if remaining != 0 {
+		t.Errorf("pivotGapNumbers not cleared after sync: %d entries remain", remaining)
+	}
+
+	// Verify that the snapshot for the gap pivot block (450) was stored and can
+	// be loaded back from the downloader's state database.
+	gapBlockHash := chain.headerm[chain.chain[450]].Hash()
+	blob, err := rawdb.ReadXdposV2Snapshot(tester.downloader.stateDB, gapBlockHash)
+	if err != nil {
+		t.Fatalf("snapshot for gap pivot block 450 not found in stateDB: %v", err)
+	}
+	if len(blob) == 0 {
+		t.Fatal("snapshot blob for gap pivot block 450 is empty")
+	}
+	var snap engine_v2.SnapshotV2
+	if err := json.Unmarshal(blob, &snap); err != nil {
+		t.Fatalf("failed to unmarshal gap pivot snapshot: %v", err)
+	}
+	if snap.Number != 450 {
+		t.Errorf("snapshot number mismatch: have %d, want 450", snap.Number)
+	}
+	if snap.Hash != gapBlockHash {
+		t.Errorf("snapshot hash mismatch: have %v, want %v", snap.Hash, gapBlockHash)
 	}
 }

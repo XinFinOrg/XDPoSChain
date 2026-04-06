@@ -266,12 +266,15 @@ func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, lightchai
 // and will verify the pivot block's hash after state sync completes.
 // It also calculates gap pivots at some intervals that need state sync.
 func (d *Downloader) SetPivotBlock(number uint64, hash common.Hash, root common.Hash) {
+	// Gap pivots are an XDPoS concept; skip the calculation when XDPoS is not configured.
+	if d.blockchain.Config().XDPoS == nil {
+		return
+	}
 	d.pivotNumber = number
 	d.pivotHash = hash
 	d.pivotRoot = root
 
 	// Calculate all gap pivot numbers: N - N%Epoch - Gap  where x < N
-
 	epoch := d.blockchain.Config().XDPoS.Epoch
 	gap := d.blockchain.Config().XDPoS.Gap
 	epochBase := number - number%epoch
