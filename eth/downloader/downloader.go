@@ -21,13 +21,13 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain"
 	"github.com/XinFinOrg/XDPoSChain/common"
+	xdc_sort "github.com/XinFinOrg/XDPoSChain/common/sort"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/engines/engine_v2"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
@@ -272,11 +272,19 @@ func (d *Downloader) SetPivotBlock(number uint64, hash common.Hash, root common.
 
 	// Calculate all gap pivot numbers: N - N%Epoch - Gap  where x < N
 
-	baseGap := number - number%d.blockchain.Config().XDPoS.Epoch - d.blockchain.Config().XDPoS.Gap
+	epoch := d.blockchain.Config().XDPoS.Epoch
+	gap := d.blockchain.Config().XDPoS.Gap
+	epochBase := number - number%epoch
+	var baseGap uint64
+	if epochBase < gap {
+		baseGap = epoch - gap
+	} else {
+		baseGap = epochBase - gap
+	}
 	d.pivotGapLock.Lock()
 	d.pivotGapNumbers = nil
 	for i := uint64(0); ; i++ {
-		gapNumber := baseGap + d.blockchain.Config().XDPoS.Epoch*i
+		gapNumber := baseGap + epoch*i
 		if gapNumber >= number {
 			break
 		}
@@ -1625,7 +1633,7 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 	// Start syncing state of the reported head block. This should get us most of
 	// the state of the pivot block.
 	root := latest.Root
-	if d.pivotNumber != 0 {
+	if (d.pivotRoot != common.Hash{}) {
 		root = d.pivotRoot
 	}
 	log.Info("syncState", "number", d.pivotNumber, "root", root)
@@ -2000,7 +2008,7 @@ func (d *Downloader) generateSnapshot(statedb *state.StateDB, number uint64, has
 			ms = append(ms, utils.Masternode{Address: candidate, Stake: v})
 		}
 	}
-	sort.Slice(ms, func(i, j int) bool {
+	xdc_sort.Slice(ms, func(i, j int) bool {
 		return ms[i].Stake.Cmp(ms[j].Stake) >= 0
 	})
 

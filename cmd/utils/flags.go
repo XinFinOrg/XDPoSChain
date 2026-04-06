@@ -1546,11 +1546,11 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	pivotRoot := ctx.String(FastSyncPivotRootFlag.Name)
 
 	if pivotNumberSet {
-		if !pivotHashSet || pivotHash == "" || !common.IsHexHash(pivotHash) {
-			Fatalf("--%s must be set to a valid hash if --%s is set", FastSyncPivotHashFlag.Name, FastSyncPivotNumberFlag.Name)
+		if !pivotHashSet || pivotHash == "" {
+			Fatalf("--%s must be set if --%s is set", FastSyncPivotHashFlag.Name, FastSyncPivotNumberFlag.Name)
 		}
-		if !pivotRootSet || pivotRoot == "" || !common.IsHexHash(pivotRoot) {
-			Fatalf("--%s must be set to a valid hash if --%s is set", FastSyncPivotRootFlag.Name, FastSyncPivotNumberFlag.Name)
+		if !pivotRootSet || pivotRoot == "" {
+			Fatalf("--%s must be set if --%s is set", FastSyncPivotRootFlag.Name, FastSyncPivotNumberFlag.Name)
 		}
 		cfg.FastSyncPivotNumber = ctx.Uint64(FastSyncPivotNumberFlag.Name)
 		cfg.FastSyncPivotHash = common.HexToHash(pivotHash)
