@@ -183,8 +183,6 @@ func (b *testBackend) StateAtTransaction(ctx context.Context, block *types.Block
 			return tx, context, statedb, release, nil
 		}
 		msg, _ := core.TransactionToMessage(tx, signer, nil, block.Number(), block.BaseFee())
-		txContext := core.NewEVMTxContext(msg)
-		evm.SetTxContext(txContext)
 		if _, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(tx.Gas()), common.Address{}); err != nil {
 			return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction %#x failed: %v", tx.Hash(), err)
 		}

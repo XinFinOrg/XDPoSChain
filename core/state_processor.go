@@ -281,6 +281,9 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 func ApplyTransactionWithEVM(msg *Message, gp *GasPool, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM, balanceFee *big.Int, coinbaseOwner common.Address) (receipt *types.Receipt, gasUsed uint64, tokenFeeUsed bool, err error) {
 	if hooks := evm.Config.Tracer; hooks != nil {
 		if hooks.OnTxStart != nil {
+			// OnTxStart runs before ApplyMessage, so the execution tx context must be visible
+			// here too. This is XDPoS-specific because msg.GasPrice can differ from the raw tx.
+			evm.SetTxContext(NewEVMTxContext(msg))
 			hooks.OnTxStart(evm.GetVMContext(), tx, msg.From)
 		}
 		if hooks.OnTxEnd != nil {
@@ -307,10 +310,6 @@ func ApplyTransactionWithEVM(msg *Message, gp *GasPool, statedb *state.StateDB, 
 	if tx.IsLendingFinalizedTradeTransaction() && config.IsTIPXDCXReceiver(blockNumber) {
 		return ApplyEmptyTransaction(msg, config, statedb, blockNumber, blockHash, tx, usedGas, evm)
 	}
-
-	// Create a new context to be used in the EVM environment
-	txContext := NewEVMTxContext(msg)
-	evm.SetTxContext(txContext)
 
 	applyHistoricalBalanceBypass(statedb, blockNumber, msg.From)
 

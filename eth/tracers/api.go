@@ -539,11 +539,7 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 				balance = value
 			}
 		}
-		var (
-			msg, _    = core.TransactionToMessage(tx, signer, balance, block.Number(), block.BaseFee())
-			txContext = core.NewEVMTxContext(msg)
-		)
-		evm.SetTxContext(txContext)
+		msg, _ := core.TransactionToMessage(tx, signer, balance, block.Number(), block.BaseFee())
 		statedb.SetTxContext(tx.Hash(), i)
 		if _, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(msg.GasLimit), common.Address{}); err != nil {
 			log.Warn("Tracing intermediate roots did not complete", "txindex", i, "txhash", tx.Hash(), "err", err)
@@ -724,7 +720,6 @@ txloop:
 		header := block.Header()
 		msg, _ := core.TransactionToMessage(tx, signer, balance, header.Number, header.BaseFee)
 		statedb.SetTxContext(tx.Hash(), i)
-		evm.SetTxContext(core.NewEVMTxContext(msg))
 		if _, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(msg.GasLimit), common.Address{}); err != nil {
 			failed = err
 			break txloop
@@ -902,7 +897,6 @@ func (api *API) traceTx(ctx context.Context, tx *types.Transaction, message *cor
 	}
 	tracingStateDB := state.NewHookedState(statedb, tracer.Hooks)
 	evm := vm.NewEVM(vmctx, tracingStateDB, nil, api.backend.ChainConfig(), vm.Config{Tracer: tracer.Hooks, NoBaseFee: true})
-	evm.SetTxContext(vm.TxContext{GasPrice: message.GasPrice})
 
 	// Define a meaningful timeout of a single transaction trace
 	if config.Timeout != nil {

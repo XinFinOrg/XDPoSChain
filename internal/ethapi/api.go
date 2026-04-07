@@ -1166,7 +1166,6 @@ func applyMessage(ctx context.Context, b Backend, args TransactionArgs, state *s
 	if precompiles != nil {
 		evm.SetPrecompiles(precompiles)
 	}
-	evm.SetTxContext(core.NewEVMTxContext(msg))
 	res, err := applyMessageWithEVM(ctx, evm, msg, timeout, gp)
 	// If an internal state error occurred, let that have precedence. Otherwise,
 	// a "trie root missing" type of error will masquerade as e.g. "insufficient gas"
@@ -1810,7 +1809,6 @@ func AccessList(ctx context.Context, b Backend, blockNrOrHash rpc.BlockNumberOrH
 		if msg.GasPrice.Sign() == 0 {
 			evm.Context.BaseFee = new(big.Int)
 		}
-		evm.SetTxContext(core.NewEVMTxContext(msg))
 		res, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(msg.GasLimit), common.Address{})
 		if err != nil {
 			return nil, 0, nil, fmt.Errorf("failed to apply transaction: %v err: %v", args.ToTransaction(types.LegacyTxType).Hash(), err)

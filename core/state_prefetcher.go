@@ -19,7 +19,6 @@ package core
 import (
 	"sync/atomic"
 
-	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -69,7 +68,11 @@ func (p *statePrefetcher) Prefetch(block *types.Block, statedb *state.StateDB, c
 			return // Also invalid block, bail out
 		}
 		statedb.SetTxContext(tx.Hash(), i)
-		if err := precacheTransaction(msg, gaspool, evm); err != nil {
+		coinbaseOwner := statedb.GetOwner(evm.Context.Coinbase)
+
+		// We attempt to apply a transaction. The goal is not to execute
+		// the transaction successfully, rather to warm up touched data slots.
+		if _, err := ApplyMessage(evm, msg, gaspool, coinbaseOwner); err != nil {
 			return // Ugh, something went horribly wrong, bail out
 		}
 		// If we're pre-byzantium, pre-load trie nodes for the intermediate root
@@ -81,15 +84,4 @@ func (p *statePrefetcher) Prefetch(block *types.Block, statedb *state.StateDB, c
 	if byzantium {
 		statedb.IntermediateRoot(true)
 	}
-}
-
-// precacheTransaction attempts to apply a transaction to the given state database
-// and uses the input parameters for its environment. The goal is not to execute
-// the transaction successfully, rather to warm up touched data slots.
-func precacheTransaction(msg *Message, gaspool *GasPool, evm *vm.EVM) error {
-	// Update the evm with the new transaction context.
-	evm.SetTxContext(NewEVMTxContext(msg))
-	// Add addresses to access list if applicable
-	_, err := ApplyMessage(evm, msg, gaspool, common.Address{})
-	return err
 }
