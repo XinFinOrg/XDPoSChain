@@ -433,7 +433,7 @@ func (st *StateTransition) TransitionDb(owner common.Address) (*ExecutionResult,
 	// Check clause 6
 	value, overflow := uint256.FromBig(msg.Value)
 	if overflow {
-		return nil, fmt.Errorf("%w: address %v", ErrInsufficientFundsForTransfer, msg.From.Hex())
+		return nil, fmt.Errorf("%w: address %v", types.ErrUint256Overflow, msg.From.Hex())
 	}
 	if !value.IsZero() && !st.evm.Context.CanTransfer(st.state, msg.From, value) {
 		return nil, fmt.Errorf("%w: address %v", ErrInsufficientFundsForTransfer, msg.From.Hex())

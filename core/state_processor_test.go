@@ -19,6 +19,7 @@ package core
 import (
 	"crypto/ecdsa"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -595,6 +596,63 @@ func TestApplyTransactionWithEVMStateChangeHooks(t *testing.T) {
 	}
 	if !hookInvoked {
 		t.Fatal("expected OnBalanceChange to be invoked, but it was not")
+	}
+}
+
+func TestApplyTransactionWithEVMRejectsValueOverflow(t *testing.T) {
+	t.Parallel()
+
+	config := &params.ChainConfig{
+		ChainID:        big.NewInt(1),
+		HomesteadBlock: big.NewInt(0),
+		EIP155Block:    big.NewInt(0),
+		EIP158Block:    big.NewInt(0),
+		ByzantiumBlock: big.NewInt(0),
+		Ethash:         new(params.EthashConfig),
+	}
+	signer := types.LatestSigner(config)
+	key, err := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	if err != nil {
+		t.Fatalf("Failed to create key: %v", err)
+	}
+	sender := crypto.PubkeyToAddress(key.PublicKey)
+	recipient := common.HexToAddress("0x1234567890123456789012345678901234567890")
+	tooBigValue := new(big.Int).Lsh(big.NewInt(1), 256)
+	hugeBalance := new(big.Int).Lsh(big.NewInt(1), 300)
+
+	db := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{
+		Config: config,
+		Alloc: types.GenesisAlloc{
+			sender: {
+				Balance: hugeBalance,
+			},
+		},
+	}
+	genesis := gspec.MustCommit(db)
+	blockchain, _ := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	defer blockchain.Stop()
+
+	statedb, err := blockchain.State()
+	if err != nil {
+		t.Fatalf("Failed to get state: %v", err)
+	}
+	tx := types.NewTransaction(0, recipient, tooBigValue, 21000, big.NewInt(1), nil)
+	signedTx, err := types.SignTx(tx, signer, key)
+	if err != nil {
+		t.Fatalf("Failed to sign tx: %v", err)
+	}
+	msg, err := TransactionToMessage(signedTx, signer, nil, big.NewInt(1), nil)
+	if err != nil {
+		t.Fatalf("Failed to build message: %v", err)
+	}
+	vmContext := NewEVMBlockContext(blockchain.CurrentBlock(), blockchain, nil)
+	evmenv := vm.NewEVM(vmContext, statedb, nil, blockchain.Config(), vm.Config{})
+	gasPool := new(GasPool).AddGas(1000000)
+	var usedGas uint64
+	_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, big.NewInt(1), genesis.Hash(), signedTx, &usedGas, evmenv, nil, common.Address{})
+	if !errors.Is(err, types.ErrUint256Overflow) {
+		t.Fatalf("expected %v, got %v", types.ErrUint256Overflow, err)
 	}
 }
 
