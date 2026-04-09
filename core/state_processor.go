@@ -570,7 +570,7 @@ func ApplySignTransaction(msg *Message, config *params.ChainConfig, statedb *sta
 			return nil, 0, false, ErrNonceTooLow
 		}
 		// Only increment the nonce for real transactions.
-		statedb.SetNonce(from, nonce+1)
+		statedb.SetNonce(from, nonce+1, tracing.NonceChangeEoACall)
 	}
 	// Create a new receipt for the transaction, storing the intermediate root and gas used by the tx
 	// based on the eip phase, we're passing whether the root touch-delete accounts.
@@ -675,7 +675,7 @@ func ProcessParentBlockHash(prevHash common.Hash, evm *vm.EVM) {
 			evm.StateDB.CreateAccount(params.HistoryStorageAddress)
 		}
 		if evm.StateDB.GetNonce(params.HistoryStorageAddress) == 0 {
-			evm.StateDB.SetNonce(params.HistoryStorageAddress, 1)
+			evm.StateDB.SetNonce(params.HistoryStorageAddress, 1, tracing.NonceChangeUnspecified)
 		}
 		evm.StateDB.SetCode(params.HistoryStorageAddress, params.HistoryStorageCode)
 

@@ -531,7 +531,7 @@ func TestPromoteExecutablesQueueEmptyWithoutReservation(t *testing.T) {
 	r.lock.Unlock()
 
 	pool.mu.Lock()
-	pool.currentState.SetNonce(addr, 10)
+	pool.currentState.SetNonce(addr, 10, tracing.NonceChangeUnspecified)
 	pool.promoteExecutables([]common.Address{addr})
 	pool.mu.Unlock()
 
@@ -557,7 +557,7 @@ func (c *testChain) State() (*state.StateDB, error) {
 	if *c.trigger {
 		c.statedb, _ = state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
 		// simulate that the new head block included tx0 and tx1
-		c.statedb.SetNonce(c.address, 2)
+		c.statedb.SetNonce(c.address, 2, tracing.NonceChangeUnspecified)
 		c.statedb.SetBalance(c.address, new(big.Int).SetUint64(params.Ether), tracing.BalanceChangeUnspecified)
 		*c.trigger = false
 	}
@@ -619,7 +619,7 @@ func testAddBalance(pool *LegacyPool, addr common.Address, amount *big.Int) {
 
 func testSetNonce(pool *LegacyPool, addr common.Address, nonce uint64) {
 	pool.mu.Lock()
-	pool.currentState.SetNonce(addr, nonce)
+	pool.currentState.SetNonce(addr, nonce, tracing.NonceChangeUnspecified)
 	pool.mu.Unlock()
 }
 
@@ -1402,7 +1402,7 @@ func TestQueueTimeLimiting(t *testing.T) {
 	}
 
 	// remove current transactions and increase nonce to prepare for a reset and cleanup
-	statedb.SetNonce(crypto.PubkeyToAddress(remote.PublicKey), 2)
+	statedb.SetNonce(crypto.PubkeyToAddress(remote.PublicKey), 2, tracing.NonceChangeUnspecified)
 	<-pool.requestReset(nil, nil)
 
 	// make sure queue, pending are cleared
@@ -2906,7 +2906,7 @@ func TestSetCodeTransactionsReorg(t *testing.T) {
 		t.Fatalf("failed to add with remote setcode transaction: %v", err)
 	}
 	// Simulate the chain moving
-	blockchain.statedb.SetNonce(addrA, 1)
+	blockchain.statedb.SetNonce(addrA, 1, tracing.NonceChangeUnspecified)
 	blockchain.statedb.SetCode(addrA, types.AddressToDelegation(auth.Address))
 	<-pool.requestReset(nil, nil)
 	// Set an authorization for 0x00
@@ -2924,7 +2924,7 @@ func TestSetCodeTransactionsReorg(t *testing.T) {
 		t.Fatalf("unexpected error %v, expecting %v", err, txpool.ErrInflightTxLimitReached)
 	}
 	// Simulate the chain moving
-	blockchain.statedb.SetNonce(addrA, 2)
+	blockchain.statedb.SetNonce(addrA, 2, tracing.NonceChangeUnspecified)
 	blockchain.statedb.SetCode(addrA, nil)
 	<-pool.requestReset(nil, nil)
 	// Now send two transactions from addrA
