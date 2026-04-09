@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/XDCx"
 	"github.com/XinFinOrg/XDPoSChain/XDCxlending"
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/console/prompt"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/eth"
@@ -35,6 +37,8 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/internal/jsre"
 	"github.com/XinFinOrg/XDPoSChain/miner"
 	"github.com/XinFinOrg/XDPoSChain/node"
+	"github.com/XinFinOrg/XDPoSChain/rpc"
+	"github.com/dop251/goja"
 )
 
 const (
@@ -123,12 +127,13 @@ func newTester(t *testing.T, confOverride func(*ethconfig.Config)) *tester {
 	printer := new(bytes.Buffer)
 
 	console, err := New(Config{
-		DataDir:  stack.DataDir(),
-		DocRoot:  "testdata",
-		Client:   client,
-		Prompter: prompter,
-		Printer:  printer,
-		Preload:  []string{"preload.js"},
+		DataDir:        stack.DataDir(),
+		DocRoot:        "testdata",
+		Client:         client,
+		LocalTransport: true,
+		Prompter:       prompter,
+		Printer:        printer,
+		Preload:        []string{"preload.js"},
 	})
 	if err != nil {
 		t.Fatalf("failed to create JavaScript console: %v", err)
@@ -190,6 +195,167 @@ func TestEvaluate(t *testing.T) {
 	tester.console.Evaluate("2 + 2")
 	if output := tester.output.String(); !strings.Contains(output, "4") {
 		t.Fatalf("statement evaluation failed: have %s, want %s", output, "4")
+	}
+}
+
+type debugPrintAndSetHeadRPC struct{}
+
+func (debugPrintAndSetHeadRPC) PrintBlock(uint64) (string, error) {
+	return "ok", nil
+}
+
+func (debugPrintAndSetHeadRPC) SetHead(hexutil.Uint64) error {
+	return nil
+}
+
+func TestConsoleHidesUnavailableDebugSetHead(t *testing.T) {
+	t.Run("hidden on remote transport", func(t *testing.T) {
+		console := newRPCConsole(t, debugPrintAndSetHeadRPC{}, false)
+		defer stopConsole(t, console)
+		assertDebugSetHeadVisible(t, console, false)
+		assertDebugSetHeadCompletion(t, console, false)
+		assertDebugSetHeadEnumerated(t, console, false)
+		assertDebugSetHeadPrettyPrinted(t, console, false)
+	})
+
+	t.Run("kept on local transport", func(t *testing.T) {
+		console := newRPCConsole(t, debugPrintAndSetHeadRPC{}, true)
+		defer stopConsole(t, console)
+		assertDebugSetHeadVisible(t, console, true)
+		assertDebugSetHeadCompletion(t, console, true)
+		assertDebugSetHeadEnumerated(t, console, true)
+		assertDebugSetHeadPrettyPrinted(t, console, true)
+	})
+}
+
+func newRPCConsole(t *testing.T, debugService interface{}, localTransport bool) *Console {
+	t.Helper()
+
+	server := rpc.NewServer()
+	if err := server.RegisterName("debug", debugService); err != nil {
+		t.Fatalf("failed to register debug service: %v", err)
+	}
+	client := rpc.DialInProc(server)
+	t.Cleanup(func() {
+		client.Close()
+	})
+
+	console, err := New(Config{
+		DataDir:        t.TempDir(),
+		DocRoot:        "testdata",
+		Client:         client,
+		LocalTransport: localTransport,
+		Printer:        new(bytes.Buffer),
+	})
+	if err != nil {
+		t.Fatalf("failed to create console: %v", err)
+	}
+	return console
+}
+
+func stopConsole(t *testing.T, console *Console) {
+	t.Helper()
+	if err := console.Stop(false); err != nil {
+		t.Fatalf("failed to stop console: %v", err)
+	}
+}
+
+func assertDebugSetHeadVisible(t *testing.T, console *Console, want bool) {
+	t.Helper()
+
+	console.jsre.Do(func(vm *goja.Runtime) {
+		debug := getObject(vm, "debug")
+		if debug == nil {
+			t.Fatal("debug object is not available")
+		}
+		got := !goja.IsUndefined(debug.Get("setHead"))
+		if got != want {
+			t.Fatalf("unexpected debug.setHead visibility: got %v want %v", got, want)
+		}
+	})
+}
+
+func assertDebugSetHeadCompletion(t *testing.T, console *Console, want bool) {
+	t.Helper()
+
+	tests := []struct {
+		input string
+		want  []string
+	}{
+		{input: "debug.setH", want: []string{"debug.setHead", "debug.setHead(", "debug.setHead."}},
+		{input: "debug.setHead", want: []string{"debug.setHead", "debug.setHead(", "debug.setHead."}},
+		{input: "web3.debug.setH", want: []string{"web3.debug.setHead", "web3.debug.setHead(", "web3.debug.setHead."}},
+		{input: "web3.debug.setHead", want: []string{"web3.debug.setHead", "web3.debug.setHead(", "web3.debug.setHead."}},
+	}
+	for _, test := range tests {
+		_, completions, _ := console.AutoCompleteInput(test.input, len(test.input))
+		got := false
+		for _, completion := range completions {
+			if slices.Contains(test.want, completion) {
+				got = true
+				break
+			}
+		}
+		if got != want {
+			t.Fatalf("unexpected debug.setHead completion visibility for %q: got %v want %v (completions=%v)", test.input, got, want, completions)
+		}
+	}
+}
+
+func assertDebugSetHeadEnumerated(t *testing.T, console *Console, want bool) {
+	t.Helper()
+
+	console.jsre.Do(func(vm *goja.Runtime) {
+		keys := getObject(vm, "Object")
+		if keys == nil {
+			t.Fatal("Object is not available")
+		}
+		keysFunc, ok := goja.AssertFunction(keys.Get("keys"))
+		if !ok {
+			t.Fatal("Object.keys is not available")
+		}
+		debug := getObject(vm, "debug")
+		if debug == nil {
+			t.Fatal("debug object is not available")
+		}
+		rv, err := keysFunc(goja.Undefined(), debug)
+		if err != nil {
+			t.Fatalf("Object.keys(debug) failed: %v", err)
+		}
+		got := false
+		switch keys := rv.Export().(type) {
+		case []any:
+			for _, key := range keys {
+				if key.(string) == "setHead" {
+					got = true
+					break
+				}
+			}
+		case []string:
+			if slices.Contains(keys, "setHead") {
+				got = true
+			}
+		default:
+			t.Fatalf("Object.keys(debug) returned unexpected type %T", keys)
+		}
+		if got != want {
+			t.Fatalf("unexpected debug.setHead enumeration visibility: got %v want %v", got, want)
+		}
+	})
+}
+
+func assertDebugSetHeadPrettyPrinted(t *testing.T, console *Console, want bool) {
+	t.Helper()
+
+	printer, ok := console.printer.(*bytes.Buffer)
+	if !ok {
+		t.Fatal("console printer is not a bytes.Buffer")
+	}
+	printer.Reset()
+	console.Evaluate("debug")
+	got := strings.Contains(printer.String(), "setHead")
+	if got != want {
+		t.Fatalf("unexpected debug.setHead pretty-print visibility: got %v want %v output=%q", got, want, printer.String())
 	}
 }
 

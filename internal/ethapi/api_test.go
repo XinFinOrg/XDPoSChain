@@ -294,6 +294,45 @@ func TestRPCMarshalBlock(t *testing.T) {
 	}
 }
 
+func TestDebugSetHeadTransportExposure(t *testing.T) {
+	backend := newBackendMock()
+	apis := GetAPIs(backend, nil)
+
+	openServer := rpc.NewServer()
+	localServer := rpc.NewServer()
+	for _, api := range apis {
+		if !api.Authenticated && !api.Local {
+			require.NoError(t, openServer.RegisterName(api.Namespace, api.Service))
+		}
+		require.NoError(t, localServer.RegisterName(api.Namespace, api.Service))
+	}
+
+	openClient := rpc.DialInProc(openServer)
+	defer openClient.Close()
+	localClient := rpc.DialInProc(localServer)
+	defer localClient.Close()
+
+	ctx := context.Background()
+	var block string
+	err := openClient.CallContext(ctx, &block, "debug_printBlock", uint64(0))
+	if isMethodNotFound(err) {
+		t.Fatalf("expected debug_printBlock to remain exposed on open RPC, got %v", err)
+	}
+
+	err = openClient.CallContext(ctx, nil, "debug_setHead", hexutil.Uint64(0))
+	if !isMethodNotFound(err) {
+		t.Fatalf("expected debug_setHead to be hidden from open RPC, got %v", err)
+	}
+
+	err = localClient.CallContext(ctx, nil, "debug_setHead", hexutil.Uint64(0))
+	require.NoError(t, err)
+}
+
+func isMethodNotFound(err error) bool {
+	rpcErr, ok := err.(rpc.Error)
+	return ok && rpcErr.ErrorCode() == -32601
+}
+
 type testEngine struct{}
 
 func (testEngine) Author(header *types.Header) (common.Address, error) { return header.Coinbase, nil }

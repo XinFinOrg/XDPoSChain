@@ -2325,6 +2325,17 @@ func NewDebugAPI(b Backend) *DebugAPI {
 	return &DebugAPI{b: b}
 }
 
+// PrivateDebugAPI is the collection of debug APIs that are intended to be
+// exposed only on local transports such as in-proc and IPC.
+type PrivateDebugAPI struct {
+	b Backend
+}
+
+// NewPrivateDebugAPI creates a new instance of PrivateDebugAPI.
+func NewPrivateDebugAPI(b Backend) *PrivateDebugAPI {
+	return &PrivateDebugAPI{b: b}
+}
+
 // GetBlockRlp retrieves the RLP encoded for of a single block.
 func (api *DebugAPI) GetBlockRlp(ctx context.Context, number uint64) (string, error) {
 	block, _ := api.b.BlockByNumber(ctx, rpc.BlockNumber(number))
@@ -2378,17 +2389,21 @@ func (api *DebugAPI) ChaindbCompact() error {
 	return nil
 }
 
-// SetHead rewinds the head of the blockchain to a previous block.
-func (api *DebugAPI) SetHead(number hexutil.Uint64) error {
-	header := api.b.CurrentHeader()
+func setHead(b Backend, number hexutil.Uint64) error {
+	header := b.CurrentHeader()
 	if header == nil {
 		return errors.New("current header is not available")
 	}
 	if header.Number.Uint64() <= uint64(number) {
 		return errors.New("not allowed to rewind to a future block")
 	}
-	api.b.SetHead(uint64(number))
+	b.SetHead(uint64(number))
 	return nil
+}
+
+// SetHead rewinds the head of the blockchain to a previous block.
+func (api *PrivateDebugAPI) SetHead(number hexutil.Uint64) error {
+	return setHead(api.b, number)
 }
 
 // DbGet returns the raw value of a key stored in the database.

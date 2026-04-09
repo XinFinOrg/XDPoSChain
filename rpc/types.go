@@ -35,6 +35,7 @@ type API struct {
 	Version       string      // deprecated - this field is no longer used, but retained for compatibility
 	Service       interface{} // receiver instance which holds the methods
 	Public        bool        // deprecated - this field is no longer used, but retained for compatibility
+	Local         bool        // whether the api should only be available over local transports (in-process and IPC).
 	Authenticated bool        // whether the api should only be available behind authentication.
 }
 
