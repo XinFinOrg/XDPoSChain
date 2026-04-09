@@ -199,11 +199,6 @@ func NewEVM(blockCtx BlockContext, statedb StateDB, tradingStateDB *tradingstate
 	return evm
 }
 
-// SetTracer sets the tracer for following state transition.
-func (evm *EVM) SetTracer(tracer *tracing.Hooks) {
-	evm.Config.Tracer = tracer
-}
-
 // SetPrecompiles sets the precompiled contracts for the EVM.
 // This method is only used through RPC calls.
 // It is not thread-safe.
