@@ -89,7 +89,7 @@ echo "Starting nodes with $bootnodes ..."
 XDC --ethstats ${netstats} --gcmode archive \
 --nat extip:${instance_ip} \
 --bootnodes ${bootnodes} --syncmode full \
---datadir /work/xdcchain --networkid 551 \
+--datadir /work/xdcchain --networkid 5551 \
 --port $port --http --http-corsdomain "*" --http-addr 0.0.0.0 \
 --http-port $rpc_port \
 --http-api db,eth,debug,net,shh,txpool,personal,web3,XDPoS \

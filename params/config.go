@@ -35,7 +35,7 @@ const (
 var (
 	MainnetGenesisHash = common.HexToHash("0x4a9d748bd78a8d0385b67788c2435dcdb914f98a96250b68863a1f8b7642d6b1") // XDC Mainnet genesis hash to enforce below configs on
 	TestnetGenesisHash = common.HexToHash("0xbdea512b4f12ff1135ec92c00dc047ffb93890c2ea1aa0eefe9b013d80640075") // XDC Testnet genesis hash to enforce below configs on
-	DevnetGenesisHash  = common.HexToHash("0x3c636c841ebee9121374fa76bd5480d17a23e1ba61d425dde21d7b3caba864f4") // XDC Devnet genesis hash to enforce below configs on
+	DevnetGenesisHash  = common.HexToHash("0x7dad95b83c6c1d413de03bd5fcf2d446217db55b2b18e3eaacacbfa4e7629cc9") // XDC Devnet genesis hash to enforce below configs on
 )
 
 var (
@@ -271,7 +271,7 @@ var (
 
 	// DevnetChainConfig contains the chain parameters to run a node on the Ropsten test network.
 	DevnetChainConfig = &ChainConfig{
-		ChainId:        big.NewInt(551),
+		ChainId:        big.NewInt(5551),
 		HomesteadBlock: big.NewInt(0),
 		EIP150Block:    big.NewInt(0),
 		EIP155Block:    big.NewInt(0),
