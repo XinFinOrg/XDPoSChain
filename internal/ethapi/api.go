@@ -2374,6 +2374,18 @@ func NewPrivateDebugAPI(b Backend) *PrivateDebugAPI {
 	return &PrivateDebugAPI{b: b}
 }
 
+// LocalDebugAPI is the collection of Ethereum debug APIs exposed only over
+// local transports.
+type LocalDebugAPI struct {
+	b Backend
+}
+
+// NewLocalDebugAPI creates a new API definition for the local-only debug
+// methods of the Ethereum service.
+func NewLocalDebugAPI(b Backend) *LocalDebugAPI {
+	return &LocalDebugAPI{b: b}
+}
+
 // ChaindbProperty returns leveldb properties of the key-value database.
 func (api *PrivateDebugAPI) ChaindbProperty(property string) (string, error) {
 	if property == "" {
@@ -2406,7 +2418,7 @@ func (api *PrivateDebugAPI) ChaindbCompact() error {
 }
 
 // SetHead rewinds the head of the blockchain to a previous block.
-func (api *PrivateDebugAPI) SetHead(number hexutil.Uint64) error {
+func (api *LocalDebugAPI) SetHead(number hexutil.Uint64) error {
 	header := api.b.CurrentHeader()
 	if header == nil {
 		return errors.New("current header is not available")

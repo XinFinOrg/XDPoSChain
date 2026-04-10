@@ -340,13 +340,15 @@ func (n *Node) closeDataDir() {
 // startup. It's not meant to be called at any time afterwards as it makes certain
 // assumptions about the state of the node.
 func (n *Node) startRPC() error {
-	if err := n.startInProc(); err != nil {
+	openAPIs, localAPIs := n.getAPIs()
+
+	if err := n.startInProc(localAPIs); err != nil {
 		return err
 	}
 
 	// Configure IPC.
 	if n.ipc.endpoint != "" {
-		if err := n.ipc.start(n.rpcAPIs); err != nil {
+		if err := n.ipc.start(localAPIs); err != nil {
 			return err
 		}
 	}
@@ -361,7 +363,7 @@ func (n *Node) startRPC() error {
 		if err := n.http.setListenAddr(n.config.HTTPHost, n.config.HTTPPort); err != nil {
 			return err
 		}
-		if err := n.http.enableRPC(n.rpcAPIs, config); err != nil {
+		if err := n.http.enableRPC(openAPIs, config); err != nil {
 			return err
 		}
 	}
@@ -376,7 +378,7 @@ func (n *Node) startRPC() error {
 		if err := server.setListenAddr(n.config.WSHost, n.config.WSPort); err != nil {
 			return err
 		}
-		if err := server.enableWS(n.rpcAPIs, config); err != nil {
+		if err := server.enableWS(openAPIs, config); err != nil {
 			return err
 		}
 	}
@@ -385,6 +387,17 @@ func (n *Node) startRPC() error {
 		return err
 	}
 	return n.ws.start()
+}
+
+func (n *Node) getAPIs() (open, local []rpc.API) {
+	for _, api := range n.rpcAPIs {
+		local = append(local, api)
+		if api.Local {
+			continue
+		}
+		open = append(open, api)
+	}
+	return open, local
 }
 
 func (n *Node) wsServerForPort(port int) *httpServer {
@@ -402,8 +415,8 @@ func (n *Node) stopRPC() {
 }
 
 // startInProc registers all RPC APIs on the inproc server.
-func (n *Node) startInProc() error {
-	for _, api := range n.rpcAPIs {
+func (n *Node) startInProc(apis []rpc.API) error {
+	for _, api := range apis {
 		if err := n.inprocHandler.RegisterName(api.Namespace, api.Service); err != nil {
 			return err
 		}
