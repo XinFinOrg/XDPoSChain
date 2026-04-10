@@ -57,6 +57,16 @@ func TestMain(m *testing.M) {
 func runXDC(t *testing.T, args ...string) *testXDC {
 	tt := &testXDC{}
 	tt.TestCmd = cmdtest.NewTestCmd(t, tt)
+	var extraArgs []string
+	if !hasArg(args, "--http-port") {
+		extraArgs = append(extraArgs, "--http-port", "0")
+	}
+	if !hasArg(args, "--ws-port") {
+		extraArgs = append(extraArgs, "--ws-port", "0")
+	}
+	if len(extraArgs) > 0 {
+		args = append(extraArgs, args...)
+	}
 	for i, arg := range args {
 		switch arg {
 		case "--datadir":
@@ -81,4 +91,13 @@ func runXDC(t *testing.T, args ...string) *testXDC {
 	tt.Run("XDC-test", args...)
 
 	return tt
+}
+
+func hasArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
 }

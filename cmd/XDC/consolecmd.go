@@ -18,6 +18,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -85,10 +86,11 @@ func localConsole(ctx *cli.Context) error {
 		utils.Fatalf("Failed to attach to the inproc XDC: %v", err)
 	}
 	config := console.Config{
-		DataDir: utils.MakeDataDir(ctx),
-		DocRoot: ctx.String(utils.JSpathFlag.Name),
-		Client:  client,
-		Preload: utils.MakeConsolePreloads(ctx),
+		DataDir:        utils.MakeDataDir(ctx),
+		DocRoot:        ctx.String(utils.JSpathFlag.Name),
+		Client:         client,
+		LocalTransport: true,
+		Preload:        utils.MakeConsolePreloads(ctx),
 	}
 
 	console, err := console.New(config)
@@ -132,15 +134,16 @@ func remoteConsole(ctx *cli.Context) error {
 		endpoint = fmt.Sprintf("%s/XDC.ipc", path)
 	}
 
-	client, err := dialRPC(endpoint)
+	client, localTransport, err := dialRPC(endpoint)
 	if err != nil {
 		utils.Fatalf("Unable to attach to remote XDC: %v", err)
 	}
 	config := console.Config{
-		DataDir: utils.MakeDataDir(ctx),
-		DocRoot: ctx.String(utils.JSpathFlag.Name),
-		Client:  client,
-		Preload: utils.MakeConsolePreloads(ctx),
+		DataDir:        utils.MakeDataDir(ctx),
+		DocRoot:        ctx.String(utils.JSpathFlag.Name),
+		Client:         client,
+		LocalTransport: localTransport,
+		Preload:        utils.MakeConsolePreloads(ctx),
 	}
 
 	console, err := console.New(config)
@@ -164,15 +167,39 @@ func remoteConsole(ctx *cli.Context) error {
 // dialRPC returns a RPC client which connects to the given endpoint.
 // The check for empty endpoint implements the defaulting logic
 // for "XDC attach" and "XDC monitor" with no argument.
-func dialRPC(endpoint string) (*rpc.Client, error) {
+func dialRPC(endpoint string) (*rpc.Client, bool, error) {
+	endpoint, localTransport := resolveConsoleEndpoint(endpoint)
+	client, err := rpc.Dial(endpoint)
+	return client, localTransport, err
+}
+
+func resolveConsoleEndpoint(endpoint string) (string, bool) {
 	if endpoint == "" {
-		endpoint = node.DefaultIPCEndpoint(clientIdentifier)
-	} else if strings.HasPrefix(endpoint, "rpc:") || strings.HasPrefix(endpoint, "ipc:") {
-		// Backwards compatibility with geth < 1.5 which required
-		// these prefixes.
-		endpoint = endpoint[4:]
+		return node.DefaultIPCEndpoint(clientIdentifier), true
 	}
-	return rpc.Dial(endpoint)
+	if strings.HasPrefix(endpoint, "ipc:") {
+		// Backwards compatibility with geth < 1.5 which required these prefixes.
+		return endpoint[4:], true
+	}
+	// Backwards compatibility with geth < 1.5 which required this prefix.
+	// Strip the legacy prefix, then classify the resulting endpoint based
+	// on its actual transport instead of assuming it is local.
+	endpoint = strings.TrimPrefix(endpoint, "rpc:")
+	if endpoint == "stdio" {
+		return endpoint, false
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return endpoint, false
+	}
+	switch u.Scheme {
+	case "http", "https", "ws", "wss", "stdio":
+		return endpoint, false
+	case "":
+		return endpoint, true
+	default:
+		return endpoint, false
+	}
 }
 
 // ephemeralConsole starts a new XDC node, attaches an ephemeral JavaScript
@@ -190,10 +217,11 @@ func ephemeralConsole(ctx *cli.Context) error {
 		utils.Fatalf("Failed to attach to the inproc XDC: %v", err)
 	}
 	config := console.Config{
-		DataDir: utils.MakeDataDir(ctx),
-		DocRoot: ctx.String(utils.JSpathFlag.Name),
-		Client:  client,
-		Preload: utils.MakeConsolePreloads(ctx),
+		DataDir:        utils.MakeDataDir(ctx),
+		DocRoot:        ctx.String(utils.JSpathFlag.Name),
+		Client:         client,
+		LocalTransport: true,
+		Preload:        utils.MakeConsolePreloads(ctx),
 	}
 
 	console, err := console.New(config)

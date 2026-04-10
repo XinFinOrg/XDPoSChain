@@ -19,6 +19,7 @@ package main
 import (
 	"crypto/rand"
 	"math/big"
+	"net"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -96,7 +97,7 @@ func TestIPCAttachWelcome(t *testing.T) {
 
 func TestHTTPAttachWelcome(t *testing.T) {
 	coinbase := "0x8605cdbbdb6d264aa742e77020dcbc58fcdce182"
-	port := strconv.Itoa(trulyRandInt(1024, 65536)) // Yeah, sometimes this will fail, sorry :P
+	port := strconv.Itoa(freeTCPPort(t))
 	datadir := t.TempDir()
 	XDC := runXDC(t,
 		"--datadir", datadir, "--XDCx-datadir", datadir+"/XDCx",
@@ -112,7 +113,7 @@ func TestHTTPAttachWelcome(t *testing.T) {
 
 func TestWSAttachWelcome(t *testing.T) {
 	coinbase := "0x8605cdbbdb6d264aa742e77020dcbc58fcdce182"
-	port := strconv.Itoa(trulyRandInt(1024, 65536)) // Yeah, sometimes this will fail, sorry :P
+	port := strconv.Itoa(freeTCPPort(t))
 	datadir := t.TempDir()
 	XDC := runXDC(t,
 		"--datadir", datadir, "--XDCx-datadir", datadir+"/XDCx",
@@ -158,6 +159,89 @@ at block: 0 ({{niltime}}){{if ipc}}
 > {{.InputLine "exit" }}
 `)
 	attach.ExpectExit()
+}
+
+func TestResolveConsoleEndpoint(t *testing.T) {
+	tests := []struct {
+		name       string
+		endpoint   string
+		wantLocal  bool
+		wantPrefix string
+	}{
+		{name: "default ipc endpoint", endpoint: "", wantLocal: true, wantPrefix: ""},
+		{name: "explicit ipc path", endpoint: "/tmp/XDC.ipc", wantLocal: true, wantPrefix: "/tmp/XDC.ipc"},
+		{name: "legacy ipc prefix", endpoint: "ipc:/tmp/XDC.ipc", wantLocal: true, wantPrefix: "/tmp/XDC.ipc"},
+		{name: "legacy rpc prefix", endpoint: "rpc:/tmp/XDC.ipc", wantLocal: true, wantPrefix: "/tmp/XDC.ipc"},
+		{name: "windows drive path stays unsupported", endpoint: `C:\\Users\\tester\\XDC.ipc`, wantLocal: false, wantPrefix: `C:\\Users\\tester\\XDC.ipc`},
+		{name: "windows drive slash path stays unsupported", endpoint: "C:/Users/tester/XDC.ipc", wantLocal: false, wantPrefix: "C:/Users/tester/XDC.ipc"},
+		{name: "legacy rpc windows drive path stays unsupported", endpoint: `rpc:C:\\Users\\tester\\XDC.ipc`, wantLocal: false, wantPrefix: `C:\\Users\\tester\\XDC.ipc`},
+		{name: "legacy rpc http prefix", endpoint: "rpc:http://localhost:8545", wantPrefix: "http://localhost:8545", wantLocal: false},
+		{name: "legacy rpc ws prefix", endpoint: "rpc:ws://localhost:8546", wantPrefix: "ws://localhost:8546", wantLocal: false},
+		{name: "stdio endpoint", endpoint: "stdio", wantLocal: false, wantPrefix: "stdio"},
+		{name: "legacy rpc stdio prefix", endpoint: "rpc:stdio", wantLocal: false, wantPrefix: "stdio"},
+		{name: "http endpoint", endpoint: "http://localhost:8545", wantLocal: false, wantPrefix: "http://localhost:8545"},
+		{name: "ws endpoint", endpoint: "ws://localhost:8546", wantLocal: false, wantPrefix: "ws://localhost:8546"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			gotEndpoint, gotLocal := resolveConsoleEndpoint(test.endpoint)
+			if gotLocal != test.wantLocal {
+				t.Fatalf("unexpected local transport classification: got %v want %v", gotLocal, test.wantLocal)
+			}
+			if test.wantPrefix == "" {
+				if !strings.HasSuffix(gotEndpoint, "XDC.ipc") {
+					t.Fatalf("expected default IPC endpoint, got %q", gotEndpoint)
+				}
+				return
+			}
+			if gotEndpoint != test.wantPrefix {
+				t.Fatalf("unexpected resolved endpoint: got %q want %q", gotEndpoint, test.wantPrefix)
+			}
+		})
+	}
+}
+
+func TestDialRPCRejectsWindowsDrivePaths(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+	}{
+		{name: "windows drive path", endpoint: `C:\\Users\\tester\\XDC.ipc`},
+		{name: "windows drive slash path", endpoint: "C:/Users/tester/XDC.ipc"},
+		{name: "legacy rpc windows drive path", endpoint: `rpc:C:\\Users\\tester\\XDC.ipc`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client, local, err := dialRPC(test.endpoint)
+			if client != nil {
+				client.Close()
+				t.Fatal("expected dialRPC to reject Windows drive-letter path")
+			}
+			if err == nil {
+				t.Fatal("expected dialRPC to fail for Windows drive-letter path")
+			}
+			if local {
+				t.Fatal("expected Windows drive-letter path to stay classified as non-local")
+			}
+			if !strings.Contains(err.Error(), `no known transport for URL scheme "c"`) {
+				t.Fatalf("unexpected dialRPC error: %v", err)
+			}
+		})
+	}
+}
+
+func freeTCPPort(t *testing.T) int {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to allocate test port: %v", err)
+	}
+	defer listener.Close()
+
+	return listener.Addr().(*net.TCPAddr).Port
 }
 
 // trulyRandInt generates a crypto random integer used by the console tests to

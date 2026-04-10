@@ -18,6 +18,7 @@ package node
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net"
 	"net/http"
@@ -28,6 +29,12 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 	"github.com/stretchr/testify/assert"
 )
+
+type helloRPC string
+
+func (hr helloRPC) HelloWorld() (string, error) {
+	return string(hr), nil
+}
 
 // This test uses the admin_startRPC and admin_startWS APIs,
 // checking whether the HTTP server is started correctly.
@@ -291,6 +298,59 @@ func TestStartRPC(t *testing.T) {
 				t.Errorf("WS RPC %savailable, want it %savailable", not(wsAvailable), not(test.wantWS))
 			}
 		})
+	}
+}
+
+func TestStartRPCLocalAPIsRemainHidden(t *testing.T) {
+	config := Config{}
+	config.NoUSB = true
+	config.P2P.NoDiscovery = true
+
+	stack, err := New(&config)
+	if err != nil {
+		t.Fatal("can't create node:", err)
+	}
+	defer stack.Close()
+
+	stack.RegisterAPIs([]rpc.API{{
+		Namespace: "debug",
+		Version:   "1.0",
+		Service:   helloRPC("hello debug"),
+		Public:    true,
+		Local:     true,
+	}})
+
+	if err := stack.Start(); err != nil {
+		t.Fatal("can't start node:", err)
+	}
+
+	_, err = (&privateAdminAPI{stack}).StartRPC(sp("127.0.0.1"), ip(0), nil, sp("debug"), nil)
+	assert.NoError(t, err)
+
+	localClient, err := stack.Attach()
+	if err != nil {
+		t.Fatalf("failed to attach to node: %v", err)
+	}
+	defer localClient.Close()
+
+	var out string
+	err = localClient.CallContext(context.Background(), &out, "debug_helloWorld")
+	assert.NoError(t, err)
+	assert.Equal(t, "hello debug", out)
+
+	httpClient, err := rpc.DialHTTP(stack.HTTPEndpoint())
+	if err != nil {
+		t.Fatalf("failed to dial HTTP endpoint: %v", err)
+	}
+	defer httpClient.Close()
+
+	err = httpClient.CallContext(context.Background(), &out, "debug_helloWorld")
+	if err == nil {
+		t.Fatal("expected local-only API to stay hidden from HTTP RPC started via admin API")
+	}
+	rpcErr, ok := err.(rpc.Error)
+	if !ok || rpcErr.ErrorCode() != -32601 {
+		t.Fatalf("expected method-not-found for hidden local-only API, got %v", err)
 	}
 }
 
