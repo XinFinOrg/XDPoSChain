@@ -472,7 +472,7 @@ var (
 		Name:     "http",
 		Aliases:  []string{"rpc"},
 		Usage:    "Enable the HTTP-RPC server",
-		Value:    true,
+		Value:    false,
 		Category: flags.APICategory,
 	}
 	HTTPListenAddrFlag = &cli.StringFlag{
@@ -507,7 +507,7 @@ var (
 		Name:     "http-api",
 		Aliases:  []string{"rpcapi"},
 		Usage:    "API's offered over the HTTP-RPC interface",
-		Value:    "debug,eth,net,txpool,web3,XDPoS",
+		Value:    "eth,net,txpool,web3,XDPoS",
 		Category: flags.APICategory,
 	}
 	HTTPPathPrefixFlag = &cli.StringFlag{
@@ -546,7 +546,7 @@ var (
 	WSEnabledFlag = &cli.BoolFlag{
 		Name:     "ws",
 		Usage:    "Enable the WS-RPC server",
-		Value:    true,
+		Value:    false,
 		Category: flags.APICategory,
 	}
 	WSListenAddrFlag = &cli.StringFlag{
@@ -567,7 +567,7 @@ var (
 		Name:     "ws-api",
 		Aliases:  []string{"wsapi"},
 		Usage:    "API's offered over the WS-RPC interface",
-		Value:    "debug,eth,net,txpool,web3,XDPoS",
+		Value:    "eth,net,txpool,web3,XDPoS",
 		Category: flags.APICategory,
 	}
 	WSAllowedOriginsFlag = &cli.StringFlag{
