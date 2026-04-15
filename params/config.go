@@ -140,6 +140,20 @@ var (
 			MinePeriod:           2,
 			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 0, MaxExponent: 0},
 		},
+		5000000: {
+			SwitchRound:          5000000,
+			MaxMasternodes:       108,
+			MaxProtectorNodes:    10,
+			MaxObverserNodes:     1000,
+			CertThreshold:        0.667,
+			TimeoutSyncThreshold: 3,
+			TimeoutPeriod:        10,
+			MinePeriod:           2,
+			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 0, MaxExponent: 0},
+			MasternodeReward:     63.42,
+			ProtectorReward:      50.27,
+			ObserverReward:       25.13,
+		},
 	}
 
 	UnitTestV2Configs = map[uint64]*V2Config{
