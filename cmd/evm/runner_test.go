@@ -1,4 +1,4 @@
-// Copyright 2017 The go-ethereum Authors
+// Copyright 2024 The go-ethereum Authors
 // This file is part of go-ethereum.
 //
 // go-ethereum is free software: you can redistribute it and/or modify
@@ -14,26 +14,36 @@
 // You should have received a copy of the GNU General Public License
 // along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
 
-package compiler
+package main
 
 import (
 	"errors"
-	"fmt"
-
-	"github.com/XinFinOrg/XDPoSChain/core/asm"
+	"testing"
 )
 
-func Compile(fn string, src []byte, debug bool) (string, error) {
-	compiler := asm.NewCompiler(debug)
-	compiler.Feed(asm.Lex(fn, src, debug))
+func TestTimedExecBenchNondeterministicReturnsError(t *testing.T) {
+	t.Parallel()
 
-	bin, compileErrors := compiler.Compile()
-	if len(compileErrors) > 0 {
-		// report errors
-		for _, err := range compileErrors {
-			fmt.Printf("%s:%v\n", fn, err)
+	var calls int
+	execFunc := func() ([]byte, uint64, error) {
+		calls++
+		if calls == 1 {
+			return []byte{0x01}, 7, nil
 		}
-		return "", errors.New("compiling failed")
+		return []byte{0x02}, 7, nil
 	}
-	return bin, nil
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("timedExec panicked instead of returning an error: %v", recovered)
+		}
+	}()
+
+	_, _, err := timedExec(true, execFunc)
+	if err == nil {
+		t.Fatal("expected nondeterministic benchmark run to return an error")
+	}
+	if !errors.Is(err, errInconsistentBenchmarkResult) {
+		t.Fatalf("expected errInconsistentBenchmarkResult, got %v", err)
+	}
 }
