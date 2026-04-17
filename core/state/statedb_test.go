@@ -1056,6 +1056,41 @@ func TestCommitCopy(t *testing.T) {
 	}
 }
 
+func TestGetStateAndCommittedState(t *testing.T) {
+	db := NewDatabase(rawdb.NewMemoryDatabase())
+	state, _ := New(types.EmptyRootHash, db)
+
+	addr := common.HexToAddress("0xaffeaffeaffeaffeaffeaffeaffeaffeaffeaffe")
+	key := common.HexToHash("a1")
+	committed := common.HexToHash("b1")
+	dirty := common.HexToHash("b2")
+
+	current, original := state.GetStateAndCommittedState(addr, key)
+	if current != (common.Hash{}) || original != (common.Hash{}) {
+		t.Fatalf("empty slot mismatch: have current=%x original=%x", current, original)
+	}
+
+	state.SetState(addr, key, committed)
+	current, original = state.GetStateAndCommittedState(addr, key)
+	if current != committed || original != (common.Hash{}) {
+		t.Fatalf("dirty slot mismatch: have current=%x original=%x want current=%x original=%x", current, original, committed, common.Hash{})
+	}
+
+	root, _ := state.Commit(0, false)
+	state, _ = New(root, db)
+
+	current, original = state.GetStateAndCommittedState(addr, key)
+	if current != committed || original != committed {
+		t.Fatalf("committed slot mismatch: have current=%x original=%x want current=%x original=%x", current, original, committed, committed)
+	}
+
+	state.SetState(addr, key, dirty)
+	current, original = state.GetStateAndCommittedState(addr, key)
+	if current != dirty || original != committed {
+		t.Fatalf("updated dirty slot mismatch: have current=%x original=%x want current=%x original=%x", current, original, dirty, committed)
+	}
+}
+
 // Tests that account and storage tries are flushed in the correct order and that
 // no data loss occurs.
 func TestFlushOrderDataLoss(t *testing.T) {

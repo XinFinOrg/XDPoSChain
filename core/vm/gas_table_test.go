@@ -111,6 +111,58 @@ func TestEIP2200(t *testing.T) {
 	}
 }
 
+type countingStateDB struct {
+	*state.StateDB
+	getStateCalls          int
+	getCommittedStateCalls int
+	getCombinedStateCalls  int
+}
+
+func (s *countingStateDB) GetState(addr common.Address, key common.Hash) common.Hash {
+	s.getStateCalls++
+	return s.StateDB.GetState(addr, key)
+}
+
+func (s *countingStateDB) GetCommittedState(addr common.Address, key common.Hash) common.Hash {
+	s.getCommittedStateCalls++
+	return s.StateDB.GetCommittedState(addr, key)
+}
+
+func (s *countingStateDB) GetStateAndCommittedState(addr common.Address, key common.Hash) (common.Hash, common.Hash) {
+	s.getCombinedStateCalls++
+	return s.StateDB.GetStateAndCommittedState(addr, key)
+}
+
+func TestEIP2200UsesCombinedStateGetter(t *testing.T) {
+	address := common.BytesToAddress([]byte("contract"))
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
+	statedb.CreateAccount(address)
+	statedb.SetCode(address, hexutil.MustDecode("0x6002600055"))
+	statedb.SetState(address, common.Hash{}, common.BytesToHash([]byte{1}))
+	statedb.Finalise(true)
+
+	countingDB := &countingStateDB{StateDB: statedb}
+	vmctx := BlockContext{
+		CanTransfer: func(StateDB, common.Address, *uint256.Int) bool { return true },
+		Transfer:    func(StateDB, common.Address, common.Address, *uint256.Int) {},
+	}
+	evm := NewEVM(vmctx, countingDB, nil, params.AllEthashProtocolChanges, Config{ExtraEips: []int{2200}})
+
+	_, _, err := evm.Call(common.Address{}, address, nil, math.MaxUint64, new(uint256.Int))
+	if err != nil {
+		t.Fatalf("call failed: %v", err)
+	}
+	if countingDB.getCombinedStateCalls == 0 {
+		t.Fatalf("expected GetStateAndCommittedState to be used")
+	}
+	if countingDB.getStateCalls != 0 {
+		t.Fatalf("expected GetState to be bypassed, got %d calls", countingDB.getStateCalls)
+	}
+	if countingDB.getCommittedStateCalls != 0 {
+		t.Fatalf("expected GetCommittedState to be bypassed, got %d calls", countingDB.getCommittedStateCalls)
+	}
+}
+
 var createGasTests = []struct {
 	code       string
 	eip3860    bool
