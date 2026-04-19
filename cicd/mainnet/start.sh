@@ -101,20 +101,17 @@ fi
 netstats="${NODE_NAME}-${wallet}:$ethstats_secret@$ethstats_address"
 
 fastsync_args=""
-if test -n "$FASTSYNC_PIVOT_NUMBER"
+if test -n "$FASTSYNC_PIVOT_NUMBER" || test -n "$FASTSYNC_PIVOT_HASH" || test -n "$FASTSYNC_PIVOT_ROOT"
 then
+  if test -z "$FASTSYNC_PIVOT_NUMBER" || test -z "$FASTSYNC_PIVOT_HASH" || test -z "$FASTSYNC_PIVOT_ROOT"
+  then
+    echo "Error: FASTSYNC_PIVOT_NUMBER, FASTSYNC_PIVOT_HASH, and FASTSYNC_PIVOT_ROOT must all be set together."
+    exit 1
+  fi
   echo "FASTSYNC_PIVOT_NUMBER found, set to $FASTSYNC_PIVOT_NUMBER"
-  fastsync_args="${fastsync_args} --fastsyncpivotnumber ${FASTSYNC_PIVOT_NUMBER}"
-fi
-if test -n "$FASTSYNC_PIVOT_HASH"
-then
   echo "FASTSYNC_PIVOT_HASH found, set to $FASTSYNC_PIVOT_HASH"
-  fastsync_args="${fastsync_args} --fastsyncpivothash ${FASTSYNC_PIVOT_HASH}"
-fi
-if test -n "$FASTSYNC_PIVOT_ROOT"
-then
   echo "FASTSYNC_PIVOT_ROOT found, set to $FASTSYNC_PIVOT_ROOT"
-  fastsync_args="${fastsync_args} --fastsyncpivotroot ${FASTSYNC_PIVOT_ROOT}"
+  fastsync_args="--fastsyncpivotnumber ${FASTSYNC_PIVOT_NUMBER} --fastsyncpivothash ${FASTSYNC_PIVOT_HASH} --fastsyncpivotroot ${FASTSYNC_PIVOT_ROOT}"
 fi
 
 INSTANCE_IP=$(curl https://checkip.amazonaws.com)
