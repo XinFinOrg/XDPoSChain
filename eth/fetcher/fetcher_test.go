@@ -41,7 +41,7 @@ var (
 	testAddress = crypto.PubkeyToAddress(testKey.PublicKey)
 
 	gspec = core.Genesis{
-		Alloc:   types.GenesisAlloc{testAddress: {Balance: big.NewInt(1000000000)}},
+		Alloc:   types.GenesisAlloc{testAddress: {Balance: big.NewInt(1000000000000000000)}},
 		BaseFee: big.NewInt(params.InitialBaseFee),
 		Config:  params.TestChainConfig,
 	}
@@ -61,7 +61,11 @@ func makeChain(n int, seed byte, parent *types.Block) ([]common.Hash, map[common
 		// If the block number is multiple of 3, send a bonus transaction to the miner
 		if parent == genesis && i%3 == 0 {
 			signer := types.MakeSigner(params.TestChainConfig, block.Number())
-			tx, err := types.SignTx(types.NewTransaction(block.TxNonce(testAddress), common.Address{seed}, big.NewInt(1000), params.TxGas, nil, nil), signer, testKey)
+			fee := block.BaseFee()
+			if fee == nil {
+				fee = big.NewInt(params.InitialBaseFee)
+			}
+			tx, err := types.SignTx(types.NewTransaction(block.TxNonce(testAddress), common.Address{seed}, big.NewInt(1000), params.TxGas, fee, nil), signer, testKey)
 			if err != nil {
 				panic(err)
 			}

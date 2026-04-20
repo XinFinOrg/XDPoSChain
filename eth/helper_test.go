@@ -59,7 +59,7 @@ func newTestProtocolManager(mode downloader.SyncMode, blocks int, generator func
 		engine = ethash.NewFaker()
 		db     = rawdb.NewMemoryDatabase()
 		gspec  = &core.Genesis{
-			Alloc:  types.GenesisAlloc{testBank: {Balance: big.NewInt(1000000)}},
+			Alloc:  types.GenesisAlloc{testBank: {Balance: new(big.Int).SetUint64(10000000000000000000)}},
 			Config: params.TestChainConfig,
 		}
 		genesis       = gspec.MustCommit(db)

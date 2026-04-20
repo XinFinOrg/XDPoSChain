@@ -127,10 +127,8 @@ func TestStateProcessorErrors(t *testing.T) {
 					},
 				},
 			}
-			genesis       = gspec.MustCommit(db)
 			blockchain, _ = NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
 		)
-
 		defer blockchain.Stop()
 		num := big.NewInt(1)
 		rules := config.Rules(num)
@@ -282,7 +280,7 @@ func TestStateProcessorErrors(t *testing.T) {
 				want: "could not apply tx 0 [0xb49a1f798a865850a62b4deb6a71efb9150e5bf11a46b3f331fec62baa0547b4]: transaction gas limit too high (cap: 16777216, tx: 16777217)",
 			},
 		} {
-			block := GenerateBadBlock(t, genesis, ethash.NewFaker(), tt.txs, gspec.Config)
+			block := GenerateBadBlock(t, gspec.ToBlock(), ethash.NewFaker(), tt.txs, gspec.Config)
 			_, err := blockchain.InsertChain(types.Blocks{block})
 			if err == nil {
 				t.Fatal("block imported without errors")
@@ -316,7 +314,6 @@ func TestStateProcessorErrors(t *testing.T) {
 					},
 				},
 			}
-			genesis       = gspec.MustCommit(db)
 			blockchain, _ = NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
 		)
 		defer blockchain.Stop()
@@ -331,7 +328,7 @@ func TestStateProcessorErrors(t *testing.T) {
 				want: "transaction type not supported",
 			},
 		} {
-			block := GenerateBadBlock(t, genesis, ethash.NewFaker(), tt.txs, gspec.Config)
+			block := GenerateBadBlock(t, gspec.ToBlock(), ethash.NewFaker(), tt.txs, gspec.Config)
 			_, err := blockchain.InsertChain(types.Blocks{block})
 			if err == nil {
 				t.Fatal("block imported without errors")
