@@ -23,6 +23,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/core"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 )
 
@@ -106,6 +107,8 @@ func txValidationError(err error) *invalidTxError {
 	case errors.Is(err, core.ErrTipAboveFeeCap):
 		return &invalidTxError{Message: err.Error(), Code: errCodeInvalidParams}
 	case errors.Is(err, core.ErrFeeCapTooLow):
+		return &invalidTxError{Message: err.Error(), Code: errCodeInvalidParams}
+	case errors.Is(err, types.ErrUint256Overflow):
 		return &invalidTxError{Message: err.Error(), Code: errCodeInvalidParams}
 	case errors.Is(err, core.ErrInsufficientFunds):
 		return &invalidTxError{Message: err.Error(), Code: errCodeInsufficientFunds}

@@ -77,8 +77,12 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	}
 	// Transactions can't be negative. This may never happen using RLP decoded
 	// transactions but may occur for transactions created using the RPC.
-	if tx.Value().Sign() < 0 {
+	val := tx.Value()
+	if val.Sign() < 0 {
 		return ErrNegativeValue
+	}
+	if val.BitLen() > 256 {
+		return types.ErrUint256Overflow
 	}
 	// Ensure the transaction doesn't exceed the current block limit gas
 	if head.GasLimit < tx.Gas() {

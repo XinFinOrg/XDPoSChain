@@ -733,6 +733,19 @@ func TestNegativeValue(t *testing.T) {
 	}
 }
 
+func TestValueOverflow(t *testing.T) {
+	t.Parallel()
+
+	pool, key := setupPool()
+	defer pool.Close()
+
+	tooBigValue := new(big.Int).Lsh(big.NewInt(1), 256)
+	tx, _ := types.SignTx(types.NewTransaction(0, common.Address{}, tooBigValue, 100, big.NewInt(1), nil), types.HomesteadSigner{}, key)
+	if err := pool.ValidateTxBasics(tx); !errors.Is(err, types.ErrUint256Overflow) {
+		t.Error("expected", types.ErrUint256Overflow, "got", err)
+	}
+}
+
 // TestValidateTransactionEIP2681 tests that the pool correctly validates transactions
 // according to EIP-2681, which limits the nonce to a maximum value of 2^64 - 1.
 func TestValidateTransactionEIP2681(t *testing.T) {
