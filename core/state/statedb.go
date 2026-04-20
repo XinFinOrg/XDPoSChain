@@ -450,7 +450,7 @@ func (s *StateDB) SetBalance(addr common.Address, amount *big.Int, _ tracing.Bal
 	}
 }
 
-func (s *StateDB) SetNonce(addr common.Address, nonce uint64) {
+func (s *StateDB) SetNonce(addr common.Address, nonce uint64, _ tracing.NonceChangeReason) {
 	stateObject := s.GetOrNewStateObject(addr)
 	if stateObject != nil {
 		stateObject.SetNonce(nonce)

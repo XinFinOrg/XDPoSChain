@@ -463,7 +463,7 @@ func (evm *EVM) create(caller common.Address, code []byte, gas uint64, value *ui
 	if nonce+1 < nonce {
 		return nil, common.Address{}, gas, ErrNonceUintOverflow
 	}
-	evm.StateDB.SetNonce(caller, nonce+1)
+	evm.StateDB.SetNonce(caller, nonce+1, tracing.NonceChangeContractCreator)
 
 	// We add this to the access list _before_ taking a snapshot. Even if the creation fails,
 	// the access-list change should not be rolled back
@@ -499,7 +499,7 @@ func (evm *EVM) create(caller common.Address, code []byte, gas uint64, value *ui
 	evm.StateDB.CreateContract(address)
 
 	if evm.chainRules.IsEIP158 {
-		evm.StateDB.SetNonce(address, 1)
+		evm.StateDB.SetNonce(address, 1, tracing.NonceChangeNewContract)
 	}
 	evm.Context.Transfer(evm.StateDB, caller, address, value)
 

@@ -663,7 +663,7 @@ func TestProcessParentBlockHash(t *testing.T) {
 		coinbase    = common.Address{}
 	)
 	test := func(statedb *state.StateDB) {
-		statedb.SetNonce(params.HistoryStorageAddress, 1)
+		statedb.SetNonce(params.HistoryStorageAddress, 1, tracing.NonceChangeUnspecified)
 		statedb.SetCode(params.HistoryStorageAddress, params.HistoryStorageCode)
 		statedb.IntermediateRoot(true)
 
