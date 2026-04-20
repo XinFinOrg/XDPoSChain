@@ -1454,7 +1454,11 @@ func testFakedSyncProgress(t *testing.T, protocol int, mode SyncMode) {
 	// Create and sync with an attacker that promises a higher chain than available.
 	brokenChain := chain.shorten(chain.len())
 	numMissing := 5
-	for i := brokenChain.len() - 2; i > brokenChain.len()-numMissing; i-- {
+	// Remove the advertised tail inclusively so the attacker is short by exactly
+	// numMissing heights. The valid peer below is shortened by the same amount,
+	// so both the reduced HighestBlock and the final CurrentBlock must converge
+	// to chain.len()-numMissing-1.
+	for i := brokenChain.len() - 2; i >= brokenChain.len()-numMissing; i-- {
 		delete(brokenChain.headerm, brokenChain.chain[i])
 	}
 	tester.newPeer("attack", protocol, brokenChain)
