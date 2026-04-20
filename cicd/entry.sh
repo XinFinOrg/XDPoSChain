@@ -17,4 +17,4 @@ echo "Select to run $NETWORK..."
 cp -n /work/"$NETWORK"/* /work
 
 echo "Start Node..."
-/work/start.sh
+exec /work/start.sh
