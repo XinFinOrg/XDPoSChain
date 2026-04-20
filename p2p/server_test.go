@@ -486,6 +486,26 @@ func TestServerPeerLimits(t *testing.T) {
 	conn.Close()
 }
 
+func TestRemovePeerTrackingKeepsPrimaryOnPairDrop(t *testing.T) {
+	id := randomID()
+	primary := newPeer(&conn{id: id}, nil)
+	pair := newPeer(&conn{id: id}, nil)
+	primary.PairPeer = pair
+
+	peers := map[discover.NodeID]*Peer{id: primary}
+	connCount := removePeerTracking(peers, peerDrop{Peer: pair}, 2)
+
+	if connCount != 1 {
+		t.Fatalf("unexpected connection count: got %d want %d", connCount, 1)
+	}
+	if peers[id] != primary {
+		t.Fatal("primary peer was removed while dropping pair peer")
+	}
+	if primary.PairPeer != nil {
+		t.Fatal("primary peer still references dropped pair peer")
+	}
+}
+
 func TestServerSetupConn(t *testing.T) {
 	id := randomID()
 	srvkey := newkey()

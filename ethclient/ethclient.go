@@ -112,7 +112,8 @@ func (ec *Client) BlockNumber(ctx context.Context) (uint64, error) {
 	return uint64(result), err
 }
 
-// PeerCount returns the number of p2p peers as reported by the net_peerCount method.
+// PeerCount returns the number of connected remote nodes as reported by
+// the net_peerCount method.
 func (ec *Client) PeerCount(ctx context.Context) (uint64, error) {
 	var result hexutil.Uint64
 	err := ec.c.CallContext(ctx, &result, "net_peerCount")
