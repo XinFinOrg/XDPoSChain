@@ -113,8 +113,10 @@ type Peer struct {
 	disc     chan DiscReason
 
 	// events receives message send / receive events if set
-	events   *event.Feed
-	PairPeer *Peer
+	events *event.Feed
+
+	pairPeerMu sync.RWMutex
+	pairPeer   *Peer
 }
 
 // NewPeer returns a peer for testing purposes.
@@ -190,6 +192,30 @@ func (p *Peer) Log() log.Logger {
 	return p.log
 }
 
+func (p *Peer) PairPeer() *Peer {
+	p.pairPeerMu.RLock()
+	defer p.pairPeerMu.RUnlock()
+
+	return p.pairPeer
+}
+
+func (p *Peer) SetPairPeer(pair *Peer) {
+	p.pairPeerMu.Lock()
+	p.pairPeer = pair
+	p.pairPeerMu.Unlock()
+}
+
+func (p *Peer) ClearPairPeer(pair *Peer) bool {
+	p.pairPeerMu.Lock()
+	defer p.pairPeerMu.Unlock()
+
+	if p.pairPeer != pair {
+		return false
+	}
+	p.pairPeer = nil
+	return true
+}
+
 func (p *Peer) run() (remoteRequested bool, err error) {
 	var (
 		writeStart = make(chan struct{}, 1)
@@ -235,8 +261,8 @@ loop:
 	close(p.closed)
 	p.rw.close(reason)
 	p.wg.Wait()
-	if p.PairPeer != nil {
-		go func() { p.PairPeer.Disconnect(DiscPairPeerStop) }()
+	if pairPeer := p.PairPeer(); pairPeer != nil {
+		go pairPeer.Disconnect(DiscPairPeerStop)
 	}
 	return remoteRequested, err
 }

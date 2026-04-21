@@ -490,7 +490,7 @@ func TestRemovePeerTrackingKeepsPrimaryOnPairDrop(t *testing.T) {
 	id := randomID()
 	primary := newPeer(&conn{id: id}, nil)
 	pair := newPeer(&conn{id: id}, nil)
-	primary.PairPeer = pair
+	primary.SetPairPeer(pair)
 
 	peers := map[discover.NodeID]*Peer{id: primary}
 	connCount := removePeerTracking(peers, peerDrop{Peer: pair}, 2)
@@ -501,7 +501,7 @@ func TestRemovePeerTrackingKeepsPrimaryOnPairDrop(t *testing.T) {
 	if peers[id] != primary {
 		t.Fatal("primary peer was removed while dropping pair peer")
 	}
-	if primary.PairPeer != nil {
+	if primary.PairPeer() != nil {
 		t.Fatal("primary peer still references dropped pair peer")
 	}
 }
