@@ -1,11 +1,11 @@
 package engine_v2
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"math/big"
 	"runtime"
+	"sync"
 
 	"github.com/XinFinOrg/XDPoSChain/accounts"
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -16,7 +16,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/crypto/keccak"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
-	"golang.org/x/sync/errgroup"
 )
 
 func sigHash(header *types.Header) (hash common.Hash) {
@@ -95,51 +94,67 @@ func (x *XDPoS_v2) signSignature(signingHash common.Hash) (types.Signature, erro
 	return signedHash, nil
 }
 
-func (x *XDPoS_v2) countValidSignatures(messageHash common.Hash, signatures []types.Signature, candidates []common.Address) (int, error) {
-	signatureList := make([]types.Signature, len(signatures))
+func (x *XDPoS_v2) verifyAllSignatures(messageHash common.Hash, signatures []types.Signature, candidates []common.Address) (validSignatures []types.Signature, signers []common.Address, duplicates []common.Address, err error) {
+	errs := make([]error, len(signatures))
 	pubkeys := make([]common.Address, len(signatures))
+	ok := make([]bool, len(signatures))
 
-	eg, ctx := errgroup.WithContext(context.Background())
-	eg.SetLimit(runtime.NumCPU())
+	sem := make(chan struct{}, runtime.NumCPU())
+	var wg sync.WaitGroup
 	for i, signature := range signatures {
-		eg.Go(func() error {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			verified, signerAddress, verr := x.verifyMsgSignature(messageHash, signature, candidates)
+			switch {
+			case verr != nil:
+				log.Warn("[verifyAllSignatures] error verifying signature", "index", i, "message", messageHash.Hex(), "error", verr)
+				errs[i] = fmt.Errorf("verify sig %d: %w", i, verr)
+			case !verified:
+				log.Warn("[verifyAllSignatures] signer not in masternode list", "index", i, "signer", signerAddress, "message", messageHash.Hex())
+				errs[i] = fmt.Errorf("verify sig %d: signer %v not in masternodes", i, signerAddress)
 			default:
-				verified, signerAddress, err := x.verifyMsgSignature(messageHash, signature, candidates)
-				if err != nil {
-					log.Error("[verifySignatures] Error while verifying QC message signatures", "error", err)
-					return err
-				}
-				if !verified {
-					return fmt.Errorf("signature verification failed, signer is not part of masternode list. Signature: %v, SignedMessage: %v, SignerAddress: %v, Masternodes: %v", signature, messageHash.Hex(), signerAddress, candidates)
-				}
-				signatureList[i] = signature
 				pubkeys[i] = signerAddress
-
-				return nil
+				ok[i] = true
 			}
-		})
+		}()
 	}
-	err := eg.Wait()
+	wg.Wait()
+
+	seen := make(map[common.Address]struct{}, len(pubkeys))
+	dupSeen := make(map[common.Address]struct{})
+	validSignatures = make([]types.Signature, 0, len(pubkeys))
+	signers = make([]common.Address, 0, len(pubkeys))
+	for i, pubkey := range pubkeys {
+		if !ok[i] {
+			continue
+		}
+		if _, already := seen[pubkey]; already {
+			if _, reported := dupSeen[pubkey]; !reported {
+				log.Warn("[verifyAllSignatures] duplicate signer", "signer", pubkey, "message", messageHash.Hex())
+				duplicates = append(duplicates, pubkey)
+				dupSeen[pubkey] = struct{}{}
+			}
+			continue
+		}
+		seen[pubkey] = struct{}{}
+		signers = append(signers, pubkey)
+		validSignatures = append(validSignatures, signatures[i])
+	}
+	return validSignatures, signers, duplicates, errors.Join(errs...)
+}
+
+func (x *XDPoS_v2) countValidSignatures(messageHash common.Hash, signatures []types.Signature, candidates []common.Address) (int, error) {
+	_, signers, duplicates, err := x.verifyAllSignatures(messageHash, signatures, candidates)
 	if err != nil {
 		return 0, err
 	}
-
-	// check uniqueness
-	keys := make(map[common.Address]struct{}, len(signatureList))
-	for i := range signatureList {
-		pubkeyHex := pubkeys[i]
-		if _, ok := keys[pubkeyHex]; !ok {
-			keys[pubkeyHex] = struct{}{}
-		} else {
-			log.Warn("[verifySignatures] duplicate signing found", "pubkey", pubkeyHex, "signedMessage", messageHash.Hex(), "signature", signatureList[i])
-			return 0, fmt.Errorf("duplicate signing found, pubkey: %v, message: %v, signature: %v", pubkeyHex, messageHash.Hex(), common.Bytes2Hex(signatureList[i]))
-		}
+	if len(duplicates) > 0 {
+		return 0, fmt.Errorf("duplicate signers: %v, message: %v", duplicates, messageHash.Hex())
 	}
-
-	return len(keys), nil
+	return len(signers), nil
 }
 
 func (x *XDPoS_v2) verifyMsgSignature(signedHashToBeVerified common.Hash, signature types.Signature, masternodes []common.Address) (bool, common.Address, error) {

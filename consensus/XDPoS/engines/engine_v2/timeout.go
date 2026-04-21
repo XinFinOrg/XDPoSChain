@@ -88,18 +88,50 @@ In the engine v2, we will need to:
  3. generateSyncInfo()
 */
 func (x *XDPoS_v2) onTimeoutPoolThresholdReached(blockChainReader consensus.ChainReader, pooledTimeouts map[common.Hash]utils.PoolObj, currentTimeoutMsg utils.PoolObj, gapNumber uint64) error {
-	signatures := []types.Signature{}
+	timeoutRound := currentTimeoutMsg.(*types.Timeout).Round
+
+	emptySigner := common.Address{}
+	var signatures []types.Signature
 	for _, v := range pooledTimeouts {
-		signatures = append(signatures, v.(*types.Timeout).Signature)
+		t := v.(*types.Timeout)
+		if t.GetSigner() == emptySigner {
+			continue
+		}
+		signatures = append(signatures, t.Signature)
 	}
-	// Genrate TC
+
+	epochInfo, err := x.getTCEpochInfo(blockChainReader, timeoutRound)
+	if err != nil {
+		log.Error("[onTimeoutPoolThresholdReached] Fail to get epochInfo", "tcRound", timeoutRound, "tcGapNumber", gapNumber, "error", err)
+		return err
+	}
+
+	// verify and deduplicate; drop invalid/duplicate timeouts rather than bail,
+	// so a single byzantine sender cannot stall TC generation for a round
+	signedTimeoutObj := types.TimeoutSigHash(&types.TimeoutForSign{
+		Round:     timeoutRound,
+		GapNumber: gapNumber,
+	})
+	validSignatures, _, duplicates, err := x.verifyAllSignatures(signedTimeoutObj, signatures, epochInfo.Masternodes)
+	if err != nil {
+		log.Warn("[onTimeoutPoolThresholdReached] some timeout signatures failed verification, continuing with valid subset", "error", err)
+	}
+	if len(duplicates) > 0 {
+		log.Warn("[onTimeoutPoolThresholdReached] duplicate signers in timeout pool, dropping duplicates", "duplicates", duplicates)
+	}
+
+	certThreshold := x.config.V2.Config(uint64(timeoutRound)).CertThreshold
+	if float64(len(validSignatures)) < float64(epochInfo.MasternodesLen)*certThreshold {
+		log.Warn("[onTimeoutPoolThresholdReached] Not enough valid signatures to generate TC", "numValid", len(validSignatures), "numTimeouts", len(pooledTimeouts), "certThreshold", float64(epochInfo.MasternodesLen)*certThreshold)
+		return nil
+	}
+
 	timeoutCert := &types.TimeoutCert{
-		Round:      currentTimeoutMsg.(*types.Timeout).Round,
-		Signatures: signatures,
+		Round:      timeoutRound,
+		Signatures: validSignatures,
 		GapNumber:  gapNumber,
 	}
-	// Process TC
-	err := x.processTC(blockChainReader, timeoutCert)
+	err = x.processTC(blockChainReader, timeoutCert)
 	if err != nil {
 		log.Error("[onTimeoutPoolThresholdReached] Fail to process TC", "TcRound", timeoutCert.Round, "NumberOfTcSig", len(timeoutCert.Signatures), "GapNumber", gapNumber, "Error", err)
 		return err
