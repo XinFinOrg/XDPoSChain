@@ -140,6 +140,11 @@ func (c *ChainConfig) IsShanghai(num *big.Int) bool {
 	return isForked(c.ShanghaiBlock, num)
 }
 
+// IsXDPoSV2 returns whether num is either equal to the XDPoS V2 switch block or greater.
+func (c *ChainConfig) IsXDPoSV2(num *big.Int) bool {
+	return c.XDPoS != nil && c.XDPoS.V2 != nil && isForked(c.XDPoS.V2.SwitchBlock, num)
+}
+
 // IsGas50x returns whether num is either equal to the Gas50x fork block or greater.
 func (c *ChainConfig) IsGas50x(num *big.Int) bool {
 	return isForked(c.Gas50xBlock, num)

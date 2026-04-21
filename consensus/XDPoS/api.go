@@ -16,6 +16,7 @@
 package XDPoS
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -33,6 +34,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/XinFinOrg/XDPoSChain/params/chainconfigview"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 )
@@ -120,6 +122,26 @@ const (
 )
 
 type MessageStatus map[string]map[string]SignerTypes
+
+type configBackend struct {
+	chain consensus.ChainReader
+}
+
+func (b configBackend) GenesisHeader(_ context.Context) (*types.Header, error) {
+	header := b.chain.GetHeaderByNumber(0)
+	if header == nil {
+		return nil, errors.New("genesis header not found")
+	}
+	return header, nil
+}
+
+func (b configBackend) CurrentHeader() *types.Header {
+	return b.chain.CurrentHeader()
+}
+
+func (b configBackend) ChainConfig() *params.ChainConfig {
+	return b.chain.Config()
+}
 
 // GetSnapshot retrieves the state snapshot at a given block.
 func (api *API) GetSnapshot(number *rpc.BlockNumber) (*utils.PublicApiSnapshot, error) {
@@ -347,6 +369,11 @@ func (api *API) NetworkInformation() NetworkInformation {
 	info.ConsensusConfigs = *api.XDPoS.config
 
 	return info
+}
+
+// Config returns the current and scheduled chain configuration view.
+func (api *API) Config(ctx context.Context) (*chainconfigview.ConfigResponse, error) {
+	return chainconfigview.Build(ctx, configBackend{chain: api.chain})
 }
 
 /*

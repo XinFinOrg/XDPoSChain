@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	"errors"
 	"math/big"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -804,6 +806,240 @@ func TestChainConfigUnmarshalJSONResetsRuntimeOnlyMetadata(t *testing.T) {
 	}
 }
 
+func TestGatherForksIncludesXDPoSV2SwitchBlock(t *testing.T) {
+	config := &ChainConfig{
+		HomesteadBlock: big.NewInt(0),
+		BerlinBlock:    big.NewInt(1000),
+		EIP1559Block:   big.NewInt(1000),
+		XDPoS: &XDPoSConfig{V2: &V2{
+			SwitchBlock: big.NewInt(1500),
+		}},
+	}
+	// BerlinBlock and EIP1559Block are distinct fork fields that intentionally
+	// share the same height here; GatherForks must collapse that cross-field
+	// duplicate into a single block entry before appending the nested XDPoS V2 switch.
+	assert.Equal(t, []uint64{1000, 1500}, config.GatherForks())
+}
+
+func TestActiveForksReturnsAlphabeticalNames(t *testing.T) {
+	config := &ChainConfig{
+		HomesteadBlock:           big.NewInt(1),
+		ByzantiumBlock:           big.NewInt(1),
+		BerlinBlock:              big.NewInt(1),
+		EIP150Block:              big.NewInt(1),
+		EIP1559Block:             big.NewInt(1),
+		TIP2019Block:             big.NewInt(1),
+		TIPTRC21FeeBlock:         big.NewInt(1),
+		TIPXDCXBlock:             big.NewInt(1),
+		TIPXDCXMinerDisableBlock: big.NewInt(1),
+		DynamicGasLimitBlock:     big.NewInt(1),
+		XDPoS: &XDPoSConfig{V2: &V2{
+			SwitchBlock: big.NewInt(1),
+		}},
+	}
+
+	assert.Equal(t, []string{
+		"Berlin",
+		"Byzantium",
+		"DynamicGasLimit",
+		"EIP1559",
+		"Homestead",
+		"TIP2019",
+		"TIPTRC21Fee",
+		"TIPXDCX",
+		"TIPXDCXReceiver",
+		"TangerineWhistle",
+		"XDCxDisable",
+		"XDPoSV2",
+	}, config.ActiveForks(big.NewInt(1)))
+}
+
+func BenchmarkGatherForks(b *testing.B) {
+	config := &ChainConfig{
+		HomesteadBlock:              big.NewInt(0),
+		DAOForkBlock:                big.NewInt(1),
+		EIP150Block:                 big.NewInt(2),
+		EIP155Block:                 big.NewInt(3),
+		EIP158Block:                 big.NewInt(4),
+		ByzantiumBlock:              big.NewInt(5),
+		ConstantinopleBlock:         big.NewInt(6),
+		PetersburgBlock:             big.NewInt(7),
+		IstanbulBlock:               big.NewInt(8),
+		TIP2019Block:                big.NewInt(9),
+		TIPSigningBlock:             big.NewInt(10),
+		TIPRandomizeBlock:           big.NewInt(11),
+		TIPIncreaseMasternodesBlock: big.NewInt(12),
+		DenylistBlock:               big.NewInt(13),
+		TIPNoHalvingMNRewardBlock:   big.NewInt(14),
+		TIPXDCXBlock:                big.NewInt(15),
+		TIPXDCXLendingBlock:         big.NewInt(16),
+		TIPXDCXCancellationFeeBlock: big.NewInt(17),
+		TIPTRC21FeeBlock:            big.NewInt(18),
+		Gas50xBlock:                 big.NewInt(19),
+		BerlinBlock:                 big.NewInt(20),
+		LondonBlock:                 big.NewInt(21),
+		MergeBlock:                  big.NewInt(22),
+		ShanghaiBlock:               big.NewInt(23),
+		TIPXDCXMinerDisableBlock:    big.NewInt(24),
+		TIPXDCXReceiverDisableBlock: big.NewInt(25),
+		EIP1559Block:                big.NewInt(26),
+		CancunBlock:                 big.NewInt(27),
+		PragueBlock:                 big.NewInt(28),
+		OsakaBlock:                  big.NewInt(29),
+		DynamicGasLimitBlock:        big.NewInt(30),
+		TIPUpgradeRewardBlock:       big.NewInt(31),
+		TIPUpgradePenaltyBlock:      big.NewInt(32),
+		TIPEpochHalvingBlock:        big.NewInt(33),
+		XDPoS: &XDPoSConfig{V2: &V2{
+			SwitchBlock: big.NewInt(34),
+		}},
+	}
+
+	b.Run("current", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			_ = config.GatherForks()
+		}
+	})
+	b.Run("legacy_reflection", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			_ = gatherForksLegacyReflection(config)
+		}
+	})
+}
+
+func BenchmarkActiveForks(b *testing.B) {
+	config := &ChainConfig{
+		HomesteadBlock:              big.NewInt(0),
+		DAOForkBlock:                big.NewInt(1),
+		EIP150Block:                 big.NewInt(2),
+		EIP155Block:                 big.NewInt(3),
+		EIP158Block:                 big.NewInt(4),
+		ByzantiumBlock:              big.NewInt(5),
+		ConstantinopleBlock:         big.NewInt(6),
+		PetersburgBlock:             big.NewInt(7),
+		IstanbulBlock:               big.NewInt(8),
+		TIP2019Block:                big.NewInt(9),
+		TIPSigningBlock:             big.NewInt(10),
+		TIPRandomizeBlock:           big.NewInt(11),
+		TIPIncreaseMasternodesBlock: big.NewInt(12),
+		DenylistBlock:               big.NewInt(13),
+		TIPNoHalvingMNRewardBlock:   big.NewInt(14),
+		TIPXDCXBlock:                big.NewInt(15),
+		TIPXDCXLendingBlock:         big.NewInt(16),
+		TIPXDCXCancellationFeeBlock: big.NewInt(17),
+		TIPTRC21FeeBlock:            big.NewInt(18),
+		Gas50xBlock:                 big.NewInt(19),
+		BerlinBlock:                 big.NewInt(20),
+		LondonBlock:                 big.NewInt(21),
+		MergeBlock:                  big.NewInt(22),
+		ShanghaiBlock:               big.NewInt(23),
+		TIPXDCXMinerDisableBlock:    big.NewInt(24),
+		TIPXDCXReceiverDisableBlock: big.NewInt(40),
+		EIP1559Block:                big.NewInt(26),
+		CancunBlock:                 big.NewInt(27),
+		PragueBlock:                 big.NewInt(28),
+		OsakaBlock:                  big.NewInt(29),
+		DynamicGasLimitBlock:        big.NewInt(30),
+		TIPUpgradeRewardBlock:       big.NewInt(31),
+		TIPUpgradePenaltyBlock:      big.NewInt(32),
+		TIPEpochHalvingBlock:        big.NewInt(33),
+		XDPoS: &XDPoSConfig{V2: &V2{
+			SwitchBlock: big.NewInt(34),
+		}},
+	}
+	block := big.NewInt(35)
+
+	b.Run("current", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			_ = config.ActiveForks(block)
+		}
+	})
+	b.Run("legacy_map_sort", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			_ = activeForksLegacyMapSort(config, block)
+		}
+	})
+}
+
+func gatherForksLegacyReflection(c *ChainConfig) []uint64 {
+	kind := reflect.TypeFor[ChainConfig]()
+	conf := reflect.ValueOf(c).Elem()
+	forksByBlock := make([]uint64, 0)
+	for i := 0; i < kind.NumField(); i++ {
+		field := kind.Field(i)
+		if !strings.HasSuffix(field.Name, "Block") {
+			continue
+		}
+		if field.Type == reflect.TypeFor[*big.Int]() {
+			if rule := conf.Field(i).Interface().(*big.Int); rule != nil {
+				forksByBlock = append(forksByBlock, rule.Uint64())
+			}
+		}
+	}
+	if c.XDPoS != nil && c.XDPoS.V2 != nil && c.XDPoS.V2.SwitchBlock != nil {
+		forksByBlock = append(forksByBlock, c.XDPoS.V2.SwitchBlock.Uint64())
+	}
+	slices.Sort(forksByBlock)
+	forksByBlock = slices.Compact(forksByBlock)
+	if len(forksByBlock) > 0 && forksByBlock[0] == 0 {
+		forksByBlock = forksByBlock[1:]
+	}
+	return forksByBlock
+}
+
+func activeForksLegacyMapSort(c *ChainConfig, block *big.Int) []string {
+	features := map[string]bool{
+		"Homestead":              c.IsHomestead(block),
+		"DAO":                    c.IsDAOFork(block),
+		"TIP2019":                c.IsTIP2019(block),
+		"TangerineWhistle":       c.IsEIP150(block),
+		"SpuriousDragon":         c.IsEIP155(block),
+		"EIP158":                 c.IsEIP158(block),
+		"Byzantium":              c.IsByzantium(block),
+		"Constantinople":         c.IsConstantinople(block),
+		"Petersburg":             c.IsPetersburg(block),
+		"Istanbul":               c.IsIstanbul(block),
+		"TIPSigning":             c.IsTIPSigning(block),
+		"TIPRandomize":           c.IsTIPRandomize(block),
+		"TIPIncreaseMasternodes": c.IsTIPIncreaseMasternodes(block),
+		"Denylist":               c.IsDenylist(block),
+		"TIPNoHalvingMNReward":   c.IsTIPNoHalvingMNReward(block),
+		"TIPXDCX":                c.IsTIPXDCX(block),
+		"TIPXDCXLending":         c.IsTIPXDCXLending(block),
+		"TIPXDCXCancellationFee": c.IsTIPXDCXCancellationFee(block),
+		"TIPTRC21Fee":            c.IsTIPTRC21Fee(block),
+		"Berlin":                 c.IsBerlin(block),
+		"London":                 c.IsLondon(block),
+		"Merge":                  c.IsMerge(block),
+		"Shanghai":               c.IsShanghai(block),
+		"Gas50x":                 c.IsGas50x(block),
+		"XDPoSV2":                c.IsXDPoSV2(block),
+		"TIPXDCXMiner":           c.IsTIPXDCXMiner(block),
+		"TIPXDCXReceiver":        c.IsTIPXDCXReceiver(block),
+		"XDCxDisable":            c.IsXDCxDisable(block),
+		"EIP1559":                c.IsEIP1559(block),
+		"Cancun":                 c.IsCancun(block),
+		"DynamicGasLimit":        c.IsDynamicGasLimit(block),
+		"TIPUpgradeReward":       c.IsTIPUpgradeReward(block),
+		"TIPUpgradePenalty":      c.IsTIPUpgradePenalty(block),
+		"TIPEpochHalving":        c.IsTIPEpochHalving(block),
+		"Prague":                 c.IsPrague(block),
+		"Osaka":                  c.IsOsaka(block),
+	}
+	activeForks := make([]string, 0)
+	for fork, active := range features {
+		if active {
+			activeForks = append(activeForks, fork)
+		}
+	}
+	slices.Sort(activeForks)
+	return activeForks
+}
+
 func TestChainConfigStringIncludesAllFields(t *testing.T) {
 	config := &ChainConfig{
 		ChainID:                     big.NewInt(1),
@@ -916,5 +1152,167 @@ func TestChainConfigStringIncludesAllFields(t *testing.T) {
 		"XDPoS:",
 	} {
 		assert.Contains(t, got, label)
+	}
+}
+
+func TestActiveSystemContractsTracksXDCActivationBlocks(t *testing.T) {
+	config := &ChainConfig{
+		TIPSigningBlock:             big.NewInt(10),
+		TIPRandomizeBlock:           big.NewInt(20),
+		TIPXDCXBlock:                big.NewInt(30),
+		TIPXDCXLendingBlock:         big.NewInt(40),
+		TIPTRC21FeeBlock:            big.NewInt(50),
+		TIPXDCXMinerDisableBlock:    big.NewInt(55),
+		TIPXDCXReceiverDisableBlock: big.NewInt(56),
+		PragueBlock:                 big.NewInt(60),
+		TRC21IssuerSMC:              common.HexToAddress("0x0000000000000000000000000000000000000101"),
+		XDCXListingSMC:              common.HexToAddress("0x0000000000000000000000000000000000000102"),
+		RelayerRegistrationSMC:      common.HexToAddress("0x0000000000000000000000000000000000000103"),
+		LendingRegistrationSMC:      common.HexToAddress("0x0000000000000000000000000000000000000104"),
+		XDPoS:                       &XDPoSConfig{},
+	}
+
+	tests := []struct {
+		name  string
+		block uint64
+		want  map[string]common.Address
+	}{
+		{
+			name:  "genesis only validator contract",
+			block: 0,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC": common.MasternodeVotingSMCBinary,
+				"BLOCK_SIGNERS":         common.BlockSignersBinary,
+			},
+		},
+		{
+			name:  "pre signing exposes legacy block signer contract",
+			block: 9,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC": common.MasternodeVotingSMCBinary,
+				"BLOCK_SIGNERS":         common.BlockSignersBinary,
+			},
+		},
+		{
+			name:  "signing fork removes legacy block signer contract",
+			block: 10,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC": common.MasternodeVotingSMCBinary,
+			},
+		},
+		{
+			name:  "randomize fork adds randomize contract",
+			block: 20,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC": common.MasternodeVotingSMCBinary,
+				"RANDOMIZE_SMC":         common.RandomizeSMCBinary,
+			},
+		},
+		{
+			name:  "xdcx fork adds receiver-routed exchange contracts",
+			block: 30,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC":                common.MasternodeVotingSMCBinary,
+				"RANDOMIZE_SMC":                        common.RandomizeSMCBinary,
+				"XDCX_LISTING_SMC":                     config.XDCXListingSMC,
+				"RELAYER_REGISTRATION_SMC":             config.RelayerRegistrationSMC,
+				"XDCX_ADDRESS":                         common.XDCXAddrBinary,
+				"TRADING_STATE_ADDRESS":                common.TradingStateAddrBinary,
+				"XDCX_LENDING_ADDRESS":                 common.XDCXLendingAddressBinary,
+				"XDCX_LENDING_FINALIZED_TRADE_ADDRESS": common.XDCXLendingFinalizedTradeAddressBinary,
+			},
+		},
+		{
+			name:  "receiver routing exposes lending endpoints before lending fork",
+			block: 39,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC":                common.MasternodeVotingSMCBinary,
+				"RANDOMIZE_SMC":                        common.RandomizeSMCBinary,
+				"XDCX_LISTING_SMC":                     config.XDCXListingSMC,
+				"RELAYER_REGISTRATION_SMC":             config.RelayerRegistrationSMC,
+				"XDCX_ADDRESS":                         common.XDCXAddrBinary,
+				"TRADING_STATE_ADDRESS":                common.TradingStateAddrBinary,
+				"XDCX_LENDING_ADDRESS":                 common.XDCXLendingAddressBinary,
+				"XDCX_LENDING_FINALIZED_TRADE_ADDRESS": common.XDCXLendingFinalizedTradeAddressBinary,
+			},
+		},
+		{
+			name:  "lending fork adds lending contracts",
+			block: 40,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC":                common.MasternodeVotingSMCBinary,
+				"RANDOMIZE_SMC":                        common.RandomizeSMCBinary,
+				"XDCX_LISTING_SMC":                     config.XDCXListingSMC,
+				"RELAYER_REGISTRATION_SMC":             config.RelayerRegistrationSMC,
+				"XDCX_ADDRESS":                         common.XDCXAddrBinary,
+				"TRADING_STATE_ADDRESS":                common.TradingStateAddrBinary,
+				"LENDING_REGISTRATION_SMC":             config.LendingRegistrationSMC,
+				"XDCX_LENDING_ADDRESS":                 common.XDCXLendingAddressBinary,
+				"XDCX_LENDING_FINALIZED_TRADE_ADDRESS": common.XDCXLendingFinalizedTradeAddressBinary,
+			},
+		},
+		{
+			name:  "trc21 fork adds issuer contract",
+			block: 50,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC":                common.MasternodeVotingSMCBinary,
+				"RANDOMIZE_SMC":                        common.RandomizeSMCBinary,
+				"TRC21_ISSUER_SMC":                     config.TRC21IssuerSMC,
+				"XDCX_LISTING_SMC":                     config.XDCXListingSMC,
+				"RELAYER_REGISTRATION_SMC":             config.RelayerRegistrationSMC,
+				"XDCX_ADDRESS":                         common.XDCXAddrBinary,
+				"TRADING_STATE_ADDRESS":                common.TradingStateAddrBinary,
+				"LENDING_REGISTRATION_SMC":             config.LendingRegistrationSMC,
+				"XDCX_LENDING_ADDRESS":                 common.XDCXLendingAddressBinary,
+				"XDCX_LENDING_FINALIZED_TRADE_ADDRESS": common.XDCXLendingFinalizedTradeAddressBinary,
+			},
+		},
+		{
+			name:  "prague adds history storage",
+			block: 60,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC":    common.MasternodeVotingSMCBinary,
+				"RANDOMIZE_SMC":            common.RandomizeSMCBinary,
+				"TRC21_ISSUER_SMC":         config.TRC21IssuerSMC,
+				"XDCX_LISTING_SMC":         config.XDCXListingSMC,
+				"RELAYER_REGISTRATION_SMC": config.RelayerRegistrationSMC,
+				"LENDING_REGISTRATION_SMC": config.LendingRegistrationSMC,
+				"HISTORY_STORAGE_ADDRESS":  HistoryStorageAddress,
+			},
+		},
+		{
+			name:  "miner disable keeps receiver endpoints until receiver disable",
+			block: 55,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC":                common.MasternodeVotingSMCBinary,
+				"RANDOMIZE_SMC":                        common.RandomizeSMCBinary,
+				"TRC21_ISSUER_SMC":                     config.TRC21IssuerSMC,
+				"XDCX_LISTING_SMC":                     config.XDCXListingSMC,
+				"RELAYER_REGISTRATION_SMC":             config.RelayerRegistrationSMC,
+				"XDCX_ADDRESS":                         common.XDCXAddrBinary,
+				"TRADING_STATE_ADDRESS":                common.TradingStateAddrBinary,
+				"LENDING_REGISTRATION_SMC":             config.LendingRegistrationSMC,
+				"XDCX_LENDING_ADDRESS":                 common.XDCXLendingAddressBinary,
+				"XDCX_LENDING_FINALIZED_TRADE_ADDRESS": common.XDCXLendingFinalizedTradeAddressBinary,
+			},
+		},
+		{
+			name:  "receiver disable removes xdcx receiver endpoints",
+			block: 56,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC":    common.MasternodeVotingSMCBinary,
+				"RANDOMIZE_SMC":            common.RandomizeSMCBinary,
+				"TRC21_ISSUER_SMC":         config.TRC21IssuerSMC,
+				"XDCX_LISTING_SMC":         config.XDCXListingSMC,
+				"RELAYER_REGISTRATION_SMC": config.RelayerRegistrationSMC,
+				"LENDING_REGISTRATION_SMC": config.LendingRegistrationSMC,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, config.ActiveSystemContracts(test.block))
+		})
 	}
 }

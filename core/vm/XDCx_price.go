@@ -44,6 +44,10 @@ func (t *XDCxLastPrice) SetTradingState(tradingStateDB *tradingstate.TradingStat
 	}
 }
 
+func (c *XDCxLastPrice) Name() string {
+	return "XDCX_LAST_PRICE"
+}
+
 func (t *XDCxEpochPrice) RequiredGas(input []byte) uint64 {
 	return params.XDCXPriceGas
 }
@@ -68,4 +72,8 @@ func (t *XDCxEpochPrice) SetTradingState(tradingStateDB *tradingstate.TradingSta
 	} else {
 		t.tradingStateDB = nil
 	}
+}
+
+func (c *XDCxEpochPrice) Name() string {
+	return "XDCX_EPOCH_PRICE"
 }

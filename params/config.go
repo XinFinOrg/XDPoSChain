@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"slices"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 )
@@ -810,4 +811,189 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - LendingRegistrationSMC:      %-8s\n", c.LendingRegistrationSMC)
 	banner += fmt.Sprintf("  - Engine:                      %v", engine)
 	return banner
+}
+
+// GatherForks gathers all the known forks and creates a sorted list of
+// block number based forks.
+func (c *ChainConfig) GatherForks() []uint64 {
+	forksByBlock := make([]uint64, 0, len(chainConfigForkBlockFields)+1)
+	ForEachChainConfigForkBlock(c, func(_ string, block *big.Int) {
+		if block != nil {
+			forksByBlock = append(forksByBlock, block.Uint64())
+		}
+	})
+	// Nested fork switches are not discoverable by the reflection pass above and
+	// must be appended manually when introduced.
+	if c.XDPoS != nil && c.XDPoS.V2 != nil && c.XDPoS.V2.SwitchBlock != nil {
+		forksByBlock = append(forksByBlock, c.XDPoS.V2.SwitchBlock.Uint64())
+	}
+	slices.Sort(forksByBlock)
+
+	// Deduplicate fork identifiers applying multiple forks
+	forksByBlock = slices.Compact(forksByBlock)
+	// Skip any forks in block 0, that's the genesis ruleset
+	if len(forksByBlock) > 0 && forksByBlock[0] == 0 {
+		forksByBlock = forksByBlock[1:]
+	}
+	return forksByBlock
+}
+
+// ActiveForks returns the list of active forks at the given block height.
+// The returned list is sorted in alphabetical order.
+func (c *ChainConfig) ActiveForks(block *big.Int) []string {
+	activeForks := make([]string, 0, 36)
+	if c.IsBerlin(block) {
+		activeForks = append(activeForks, "Berlin")
+	}
+	if c.IsByzantium(block) {
+		activeForks = append(activeForks, "Byzantium")
+	}
+	if c.IsCancun(block) {
+		activeForks = append(activeForks, "Cancun")
+	}
+	if c.IsConstantinople(block) {
+		activeForks = append(activeForks, "Constantinople")
+	}
+	if c.IsDAOFork(block) {
+		activeForks = append(activeForks, "DAO")
+	}
+	if c.IsDenylist(block) {
+		activeForks = append(activeForks, "Denylist")
+	}
+	if c.IsDynamicGasLimit(block) {
+		activeForks = append(activeForks, "DynamicGasLimit")
+	}
+	if c.IsEIP1559(block) {
+		activeForks = append(activeForks, "EIP1559")
+	}
+	if c.IsEIP158(block) {
+		activeForks = append(activeForks, "EIP158")
+	}
+	if c.IsGas50x(block) {
+		activeForks = append(activeForks, "Gas50x")
+	}
+	if c.IsHomestead(block) {
+		activeForks = append(activeForks, "Homestead")
+	}
+	if c.IsIstanbul(block) {
+		activeForks = append(activeForks, "Istanbul")
+	}
+	if c.IsLondon(block) {
+		activeForks = append(activeForks, "London")
+	}
+	if c.IsMerge(block) {
+		activeForks = append(activeForks, "Merge")
+	}
+	if c.IsOsaka(block) {
+		activeForks = append(activeForks, "Osaka")
+	}
+	if c.IsPetersburg(block) {
+		activeForks = append(activeForks, "Petersburg")
+	}
+	if c.IsPrague(block) {
+		activeForks = append(activeForks, "Prague")
+	}
+	if c.IsShanghai(block) {
+		activeForks = append(activeForks, "Shanghai")
+	}
+	if c.IsEIP155(block) {
+		activeForks = append(activeForks, "SpuriousDragon")
+	}
+	if c.IsTIP2019(block) {
+		activeForks = append(activeForks, "TIP2019")
+	}
+	if c.IsTIPIncreaseMasternodes(block) {
+		activeForks = append(activeForks, "TIPIncreaseMasternodes")
+	}
+	if c.IsTIPNoHalvingMNReward(block) {
+		activeForks = append(activeForks, "TIPNoHalvingMNReward")
+	}
+	if c.IsTIPRandomize(block) {
+		activeForks = append(activeForks, "TIPRandomize")
+	}
+	if c.IsTIPSigning(block) {
+		activeForks = append(activeForks, "TIPSigning")
+	}
+	if c.IsTIPTRC21Fee(block) {
+		activeForks = append(activeForks, "TIPTRC21Fee")
+	}
+	if c.IsTIPUpgradePenalty(block) {
+		activeForks = append(activeForks, "TIPUpgradePenalty")
+	}
+	if c.IsTIPUpgradeReward(block) {
+		activeForks = append(activeForks, "TIPUpgradeReward")
+	}
+	if c.IsTIPXDCX(block) {
+		activeForks = append(activeForks, "TIPXDCX")
+	}
+	if c.IsTIPXDCXCancellationFee(block) {
+		activeForks = append(activeForks, "TIPXDCXCancellationFee")
+	}
+	if c.IsTIPXDCXLending(block) {
+		activeForks = append(activeForks, "TIPXDCXLending")
+	}
+	if c.IsTIPXDCXMiner(block) {
+		activeForks = append(activeForks, "TIPXDCXMiner")
+	}
+	if c.IsTIPXDCXReceiver(block) {
+		activeForks = append(activeForks, "TIPXDCXReceiver")
+	}
+	if c.IsEIP150(block) {
+		activeForks = append(activeForks, "TangerineWhistle")
+	}
+	if c.IsTIPEpochHalving(block) {
+		activeForks = append(activeForks, "TIPEpochHalving")
+	}
+	if c.IsXDCxDisable(block) {
+		activeForks = append(activeForks, "XDCxDisable")
+	}
+	if c.IsXDPoSV2(block) {
+		activeForks = append(activeForks, "XDPoSV2")
+	}
+	return activeForks
+}
+
+// ActiveSystemContracts returns the currently active system contracts at the
+// given block height.
+func (c *ChainConfig) ActiveSystemContracts(block uint64) map[string]common.Address {
+	active := make(map[string]common.Address)
+	blockNum := new(big.Int).SetUint64(block)
+	add := func(name string, addr common.Address) {
+		if !addr.IsZero() {
+			active[name] = addr
+		}
+	}
+	// MASTERNODE_VOTING_SMC and BLOCK_SIGNERS are XDPoS-specific and have no
+	// dedicated config address fields. The XDPoS config is the local signal
+	// that this chain actually deploys them, whereas the other entries below
+	// are already gated by their own fork helpers or configured addresses.
+	if c.XDPoS != nil {
+		add("MASTERNODE_VOTING_SMC", common.MasternodeVotingSMCBinary)
+	}
+	if c.XDPoS != nil && !c.IsTIPSigning(blockNum) {
+		add("BLOCK_SIGNERS", common.BlockSignersBinary)
+	}
+	if c.IsTIPRandomize(blockNum) {
+		add("RANDOMIZE_SMC", common.RandomizeSMCBinary)
+	}
+	if c.IsTIPXDCX(blockNum) {
+		add("XDCX_LISTING_SMC", c.XDCXListingSMC)
+		add("RELAYER_REGISTRATION_SMC", c.RelayerRegistrationSMC)
+	}
+	if c.IsTIPXDCXLending(blockNum) {
+		add("LENDING_REGISTRATION_SMC", c.LendingRegistrationSMC)
+	}
+	if c.IsTIPXDCXReceiver(blockNum) {
+		add("XDCX_ADDRESS", common.XDCXAddrBinary)
+		add("TRADING_STATE_ADDRESS", common.TradingStateAddrBinary)
+		add("XDCX_LENDING_ADDRESS", common.XDCXLendingAddressBinary)
+		add("XDCX_LENDING_FINALIZED_TRADE_ADDRESS", common.XDCXLendingFinalizedTradeAddressBinary)
+	}
+	if c.IsTIPTRC21Fee(blockNum) {
+		add("TRC21_ISSUER_SMC", c.TRC21IssuerSMC)
+	}
+	if c.IsPrague(blockNum) {
+		active["HISTORY_STORAGE_ADDRESS"] = HistoryStorageAddress
+	}
+	return active
 }
