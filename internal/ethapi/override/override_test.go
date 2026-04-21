@@ -33,6 +33,10 @@ func (p *precompileContract) RequiredGas(input []byte) uint64 { return 0 }
 
 func (p *precompileContract) Run(input []byte) ([]byte, error) { return nil, nil }
 
+func (p *precompileContract) Name() string {
+	return "test-implement"
+}
+
 func TestStateOverrideMovePrecompile(t *testing.T) {
 	db := state.NewDatabase(rawdb.NewMemoryDatabase())
 	statedb, err := state.New(common.Hash{}, db)

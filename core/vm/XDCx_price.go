@@ -10,11 +10,7 @@ import (
 const XDCXPriceNumberOfBytesReturn = 32
 
 // XDCxPrice implements a pre-compile contract to get token price in XDCx
-
 type XDCxLastPrice struct {
-	tradingStateDB *tradingstate.TradingStateDB
-}
-type XDCxEpochPrice struct {
 	tradingStateDB *tradingstate.TradingStateDB
 }
 
@@ -44,6 +40,14 @@ func (t *XDCxLastPrice) SetTradingState(tradingStateDB *tradingstate.TradingStat
 	}
 }
 
+func (c *XDCxLastPrice) Name() string {
+	return "XDCX_LAST_PRICE"
+}
+
+type XDCxEpochPrice struct {
+	tradingStateDB *tradingstate.TradingStateDB
+}
+
 func (t *XDCxEpochPrice) RequiredGas(input []byte) uint64 {
 	return params.XDCXPriceGas
 }
@@ -68,4 +72,8 @@ func (t *XDCxEpochPrice) SetTradingState(tradingStateDB *tradingstate.TradingSta
 	} else {
 		t.tradingStateDB = nil
 	}
+}
+
+func (c *XDCxEpochPrice) Name() string {
+	return "XDCX_EPOCH_PRICE"
 }

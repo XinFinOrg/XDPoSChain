@@ -23,12 +23,14 @@ import (
 	"fmt"
 	"maps"
 	"math/big"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"github.com/XinFinOrg/XDPoSChain/params/forks"
 )
 
 const (
@@ -1880,8 +1882,8 @@ func (c *ChainConfig) IsOsaka(num *big.Int) bool {
 	return isForked(c.OsakaBlock, num)
 }
 
-// IsDynamicGasLimitBlock returns whether num is either equal to the DynamicGasLimitBlock fork block or greater.
-func (c *ChainConfig) IsDynamicGasLimitBlock(num *big.Int) bool {
+// IsDynamicGasLimit returns whether num is either equal to the DynamicGasLimit fork block or greater.
+func (c *ChainConfig) IsDynamicGasLimit(num *big.Int) bool {
 	return isForked(c.DynamicGasLimitBlock, num)
 }
 
@@ -1936,6 +1938,11 @@ func (c *ChainConfig) IsTIPUpgradePenalty(num *big.Int) bool {
 
 func (c *ChainConfig) IsTIPEpochHalving(num *big.Int) bool {
 	return isForked(c.TIPEpochHalvingBlock, num)
+}
+
+// IsXDPoSV2 returns whether num is either equal to the XDPoS V2 switch block or greater.
+func (c *ChainConfig) IsXDPoSV2(num *big.Int) bool {
+	return c.XDPoS != nil && c.XDPoS.V2 != nil && isForked(c.XDPoS.V2.SwitchBlock, num)
 }
 
 // GasTable returns the gas table corresponding to the current phase (homestead or homestead reprice).
@@ -2206,4 +2213,107 @@ func (c *ChainConfig) Rules(num *big.Int) Rules {
 		IsPrague:         c.IsPrague(num),
 		IsOsaka:          c.IsOsaka(num),
 	}
+}
+
+// GatherForks gathers all the known forks and creates a sorted list of
+// block number based forks.
+func (c *ChainConfig) GatherForks() []uint64 {
+	// Gather all the fork block numbers via reflection
+	kind := reflect.TypeFor[ChainConfig]()
+	conf := reflect.ValueOf(c).Elem()
+	var (
+		forksByBlock []uint64
+	)
+	for i := 0; i < kind.NumField(); i++ {
+		// Fetch the next field and skip non-fork rules
+		field := kind.Field(i)
+		if !strings.HasSuffix(field.Name, "Block") {
+			continue
+		}
+
+		// Extract the fork rule block number and aggregate it
+		if field.Type == reflect.TypeFor[*big.Int]() {
+			if rule := conf.Field(i).Interface().(*big.Int); rule != nil {
+				forksByBlock = append(forksByBlock, rule.Uint64())
+			}
+		}
+	}
+	if c.XDPoS != nil && c.XDPoS.V2 != nil && c.XDPoS.V2.SwitchBlock != nil {
+		forksByBlock = append(forksByBlock, c.XDPoS.V2.SwitchBlock.Uint64())
+	}
+	slices.Sort(forksByBlock)
+
+	// Deduplicate fork identifiers applying multiple forks
+	for i := 1; i < len(forksByBlock); i++ {
+		if forksByBlock[i] == forksByBlock[i-1] {
+			forksByBlock = append(forksByBlock[:i], forksByBlock[i+1:]...)
+			i--
+		}
+	}
+	// Skip any forks in block 0, that's the genesis ruleset
+	if len(forksByBlock) > 0 && forksByBlock[0] == 0 {
+		forksByBlock = forksByBlock[1:]
+	}
+	return forksByBlock
+}
+
+// ActiveForks returns the list of active forks at the given block height.
+// The returned list is sorted in alphabetical order.
+func (c *ChainConfig) ActiveForks(block *big.Int) []string {
+	var features = map[forks.Fork]bool{
+		forks.Homestead:              c.IsHomestead(block),
+		forks.DAO:                    c.IsDAOFork(block),
+		forks.TIP2019:                c.IsTIP2019(block),
+		forks.TangerineWhistle:       c.IsEIP150(block),
+		forks.SpuriousDragon:         c.IsEIP155(block),
+		forks.EIP158:                 c.IsEIP158(block),
+		forks.Byzantium:              c.IsByzantium(block),
+		forks.Constantinople:         c.IsConstantinople(block),
+		forks.Petersburg:             c.IsPetersburg(block),
+		forks.Istanbul:               c.IsIstanbul(block),
+		forks.TIPSigning:             c.IsTIPSigning(block),
+		forks.TIPRandomize:           c.IsTIPRandomize(block),
+		forks.TIPIncreaseMasternodes: c.IsTIPIncreaseMasternodes(block),
+		forks.Denylist:               c.IsDenylist(block),
+		forks.TIPNoHalvingMNReward:   c.IsTIPNoHalvingMNReward(block),
+		forks.TIPXDCX:                c.IsTIPXDCX(block),
+		forks.TIPXDCXLending:         c.IsTIPXDCXLending(block),
+		forks.TIPXDCXCancellationFee: c.IsTIPXDCXCancellationFee(block),
+		forks.TIPTRC21Fee:            c.IsTIPTRC21Fee(block),
+		forks.Berlin:                 c.IsBerlin(block),
+		forks.London:                 c.IsLondon(block),
+		forks.Merge:                  c.IsMerge(block),
+		forks.Shanghai:               c.IsShanghai(block),
+		forks.Gas50x:                 c.IsGas50x(block),
+		forks.XDPoSV2:                c.IsXDPoSV2(block),
+		forks.TIPXDCXMiner:           c.IsTIPXDCXMiner(block),
+		forks.TIPXDCXReceiver:        c.IsTIPXDCXReceiver(block),
+		forks.XDCxDisable:            c.IsXDCxDisable(block),
+		forks.EIP1559:                c.IsEIP1559(block),
+		forks.Cancun:                 c.IsCancun(block),
+		forks.DynamicGasLimit:        c.IsDynamicGasLimit(block),
+		forks.TIPUpgradeReward:       c.IsTIPUpgradeReward(block),
+		forks.TIPUpgradePenalty:      c.IsTIPUpgradePenalty(block),
+		forks.TIPEpochHalving:        c.IsTIPEpochHalving(block),
+		forks.Prague:                 c.IsPrague(block),
+		forks.Osaka:                  c.IsOsaka(block),
+	}
+	var activeForks []string
+	for fork, active := range features {
+		if active {
+			activeForks = append(activeForks, fork.String())
+		}
+	}
+	slices.Sort(activeForks)
+	return activeForks
+}
+
+// ActiveSystemContracts returns the currently active system contracts at the
+// given block height.
+func (c *ChainConfig) ActiveSystemContracts(block uint64) map[string]common.Address {
+	active := make(map[string]common.Address)
+	if c.IsPrague(new(big.Int).SetUint64(block)) {
+		active["HISTORY_STORAGE_ADDRESS"] = HistoryStorageAddress
+	}
+	return active
 }

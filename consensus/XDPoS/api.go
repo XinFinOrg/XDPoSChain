@@ -16,6 +16,7 @@
 package XDPoS
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -31,6 +32,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/internal/configapi"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
@@ -131,6 +133,28 @@ type PoolStatus struct {
 	Vote     map[string]SignerTypes   `json:"vote"`
 	Timeout  map[string]SignerTypes   `json:"timeout"`
 	SyncInfo map[string]SyncInfoTypes `json:"syncInfo"`
+}
+
+type configBackend struct {
+	chain consensus.ChainReader
+}
+
+func (b configBackend) HeaderByNumber(_ context.Context, number rpc.BlockNumber) (*types.Header, error) {
+	if number == rpc.LatestBlockNumber {
+		return b.chain.CurrentHeader(), nil
+	}
+	if number.Int64() < 0 {
+		return nil, fmt.Errorf("invalid block number %d", number.Int64())
+	}
+	return b.chain.GetHeaderByNumber(uint64(number.Int64())), nil
+}
+
+func (b configBackend) CurrentHeader() *types.Header {
+	return b.chain.CurrentHeader()
+}
+
+func (b configBackend) ChainConfig() *params.ChainConfig {
+	return b.chain.Config()
 }
 
 // GetSnapshot retrieves the state snapshot at a given block.
@@ -381,6 +405,10 @@ func (api *API) NetworkInformation() NetworkInformation {
 	info.ConsensusConfigs = *api.XDPoS.config
 
 	return info
+}
+
+func (api *API) GetConfig(ctx context.Context) (*configapi.ConfigResponse, error) {
+	return configapi.Build(ctx, configBackend{chain: api.chain})
 }
 
 /*

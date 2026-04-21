@@ -784,7 +784,7 @@ func TestForkActivationIgnoresCommonFallbacks(t *testing.T) {
 	assert.False(t, config.IsCancun(big.NewInt(math.MaxInt64)))
 	assert.False(t, config.IsPrague(big.NewInt(math.MaxInt64)))
 	assert.False(t, config.IsOsaka(big.NewInt(math.MaxInt64)))
-	assert.False(t, config.IsDynamicGasLimitBlock(big.NewInt(math.MaxInt64)))
+	assert.False(t, config.IsDynamicGasLimit(big.NewInt(math.MaxInt64)))
 	assert.False(t, config.IsTIPUpgradeReward(big.NewInt(math.MaxInt64)))
 	assert.False(t, config.IsTIPUpgradePenalty(big.NewInt(math.MaxInt64)))
 	assert.False(t, config.IsTIPEpochHalving(big.NewInt(math.MaxInt64)))
@@ -828,6 +828,18 @@ func TestForkActivationIgnoresCommonFallbacks(t *testing.T) {
 	assertDescriptionLineValue(t, "XDCXListingSMC:", zeroAddress0x)
 	assertDescriptionLineValue(t, "RelayerRegistrationSMC:", zeroAddress0x)
 	assertDescriptionLineValue(t, "LendingRegistrationSMC:", zeroAddress0x)
+}
+
+func TestGatherForksIncludesXDPoSV2SwitchBlock(t *testing.T) {
+	config := &ChainConfig{
+		HomesteadBlock: big.NewInt(0),
+		BerlinBlock:    big.NewInt(1000),
+		Eip1559Block:   big.NewInt(1000),
+		XDPoS: &XDPoSConfig{V2: &V2{
+			SwitchBlock: big.NewInt(1500),
+		}},
+	}
+	assert.Equal(t, []uint64{1000, 1500}, config.GatherForks())
 }
 
 func TestChainConfigStringIncludesAllFields(t *testing.T) {

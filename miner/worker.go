@@ -849,7 +849,7 @@ func (w *worker) commitNewWork() {
 		Extra:      w.extra,
 		Time:       uint64(tstamp),
 	}
-	if w.chainConfig.IsDynamicGasLimitBlock(header.Number) {
+	if w.chainConfig.IsDynamicGasLimit(header.Number) {
 		header.GasLimit = core.CalcGasLimit(parent.GasLimit(), w.config.GasCeil)
 	} else {
 		header.GasLimit = w.config.GasCeil
