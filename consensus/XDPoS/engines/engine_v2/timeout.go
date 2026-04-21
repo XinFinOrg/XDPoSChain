@@ -55,18 +55,50 @@ In the engine v2, we will need to:
  3. generateSyncInfo()
 */
 func (x *XDPoS_v2) onTimeoutPoolThresholdReached(blockChainReader consensus.ChainReader, pooledTimeouts map[common.Hash]utils.PoolObj, currentTimeoutMsg utils.PoolObj, gapNumber uint64) error {
-	signatures := []types.Signature{}
+	timeoutRound := currentTimeoutMsg.(*types.Timeout).Round
+
+	emptySigner := common.Address{}
+	var signatures []types.Signature
 	for _, v := range pooledTimeouts {
-		signatures = append(signatures, v.(*types.Timeout).Signature)
+		t := v.(*types.Timeout)
+		if t.GetSigner() == emptySigner {
+			continue
+		}
+		signatures = append(signatures, t.Signature)
 	}
-	// Genrate TC
+
+	epochInfo, err := x.getTCEpochInfo(blockChainReader, timeoutRound)
+	if err != nil {
+		log.Error("[onTimeoutPoolThresholdReached] Fail to get epochInfo", "tcRound", timeoutRound, "tcGapNumber", gapNumber, "error", err)
+		return err
+	}
+
+	// verify and deduplicate; drop invalid/duplicate timeouts rather than bail,
+	// so a single byzantine sender cannot stall TC generation for a round
+	signedTimeoutObj := types.TimeoutSigHash(&types.TimeoutForSign{
+		Round:     timeoutRound,
+		GapNumber: gapNumber,
+	})
+	validSignatures, _, duplicates, err := x.verifyAllSignatures(signedTimeoutObj, signatures, epochInfo.Masternodes)
+	if err != nil {
+		log.Warn("[onTimeoutPoolThresholdReached] some timeout signatures failed verification, continuing with valid subset", "error", err)
+	}
+	if len(duplicates) > 0 {
+		log.Warn("[onTimeoutPoolThresholdReached] duplicate signers in timeout pool, dropping duplicates", "duplicates", duplicates)
+	}
+
+	certThreshold := x.config.V2.Config(uint64(timeoutRound)).CertThreshold
+	if float64(len(validSignatures)) < float64(epochInfo.MasternodesLen)*certThreshold {
+		log.Warn("[onTimeoutPoolThresholdReached] Not enough valid signatures to generate TC", "numValid", len(validSignatures), "numTimeouts", len(pooledTimeouts), "certThreshold", float64(epochInfo.MasternodesLen)*certThreshold)
+		return nil
+	}
+
 	timeoutCert := &types.TimeoutCert{
-		Round:      currentTimeoutMsg.(*types.Timeout).Round,
-		Signatures: signatures,
+		Round:      timeoutRound,
+		Signatures: validSignatures,
 		GapNumber:  gapNumber,
 	}
-	// Process TC
-	err := x.processTC(blockChainReader, timeoutCert)
+	err = x.processTC(blockChainReader, timeoutCert)
 	if err != nil {
 		log.Error("[onTimeoutPoolThresholdReached] Fail to process TC", "TcRound", timeoutCert.Round, "NumberOfTcSig", len(timeoutCert.Signatures), "GapNumber", gapNumber, "Error", err)
 		return err
@@ -79,8 +111,7 @@ func (x *XDPoS_v2) onTimeoutPoolThresholdReached(blockChainReader consensus.Chai
 	return nil
 }
 
-func (x *XDPoS_v2) getTCEpochInfo(chain consensus.ChainReader, timeoutCert *types.TimeoutCert) (*types.EpochSwitchInfo, error) {
-
+func (x *XDPoS_v2) getTCEpochInfo(chain consensus.ChainReader, timeoutRound types.Round) (*types.EpochSwitchInfo, error) {
 	epochSwitchInfo, err := x.getEpochSwitchInfo(chain, (chain.CurrentHeader()), (chain.CurrentHeader()).Hash())
 	if err != nil {
 		log.Error("[getTCEpochInfo] Error when getting epoch switch info", "error", err)
@@ -95,18 +126,18 @@ func (x *XDPoS_v2) getTCEpochInfo(chain consensus.ChainReader, timeoutCert *type
 		Round:  epochRound,
 		Number: epochSwitchInfo.EpochSwitchBlockInfo.Number,
 	}
-	log.Info("[getTCEpochInfo] Init epochInfo", "number", epochBlockInfo.Number, "round", epochRound, "tcRound", timeoutCert.Round, "tcEpoch", tempTCEpoch)
-	for epochBlockInfo.Round > timeoutCert.Round {
+	log.Info("[getTCEpochInfo] Init epochInfo", "number", epochBlockInfo.Number, "round", epochRound, "tcRound", timeoutRound, "tcEpoch", tempTCEpoch)
+	for epochBlockInfo.Round > timeoutRound && tempTCEpoch > 0 {
 		tempTCEpoch--
 		epochBlockInfo, err = x.GetBlockByEpochNumber(chain, tempTCEpoch)
 		if err != nil {
 			log.Error("[getTCEpochInfo] Error when getting epoch block info by tc round", "error", err)
 			return nil, fmt.Errorf("fail on getTCEpochInfo due to failure in getting epoch block info tc round, %s", err)
 		}
-		log.Debug("[getTCEpochInfo] Loop to get right epochInfo", "number", epochBlockInfo.Number, "round", epochBlockInfo.Round, "tcRound", timeoutCert.Round, "tcEpoch", tempTCEpoch)
+		log.Debug("[getTCEpochInfo] Loop to get right epochInfo", "number", epochBlockInfo.Number, "round", epochBlockInfo.Round, "tcRound", timeoutRound, "tcEpoch", tempTCEpoch)
 	}
 	tcEpoch := tempTCEpoch
-	log.Info("[getTCEpochInfo] Final TC epochInfo", "number", epochBlockInfo.Number, "round", epochBlockInfo.Round, "tcRound", timeoutCert.Round, "tcEpoch", tcEpoch)
+	log.Info("[getTCEpochInfo] Final TC epochInfo", "number", epochBlockInfo.Number, "round", epochBlockInfo.Round, "tcRound", timeoutRound, "tcEpoch", tcEpoch)
 
 	epochInfo, err := x.getEpochSwitchInfo(chain, nil, epochBlockInfo.Hash)
 	if err != nil {
@@ -115,7 +146,6 @@ func (x *XDPoS_v2) getTCEpochInfo(chain consensus.ChainReader, timeoutCert *type
 	}
 	return epochInfo, nil
 }
-
 func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.TimeoutCert) error {
 	/*
 		1. Get epoch master node list by gapNumber
@@ -156,7 +186,7 @@ func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.Time
 		}
 	}
 
-	epochInfo, err := x.getTCEpochInfo(chain, timeoutCert)
+	epochInfo, err := x.getTCEpochInfo(chain, timeoutCert.Round)
 	if err != nil {
 		return err
 	}
