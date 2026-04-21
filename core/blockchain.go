@@ -1526,7 +1526,11 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		seals[i] = verifySeals
 		bc.downloadingBlock.Add(block.Hash(), struct{}{})
 	}
-	abort, results := bc.engine.VerifyHeaders(bc, headers, seals)
+	verifier := consensus.ChainReader(bc)
+	if _, ok := bc.engine.(*XDPoS.XDPoS); ok {
+		verifier = XDPoS.NewVerifyHeadersChainReader(bc, headers, chain)
+	}
+	abort, results := bc.engine.VerifyHeaders(verifier, headers, seals)
 	defer close(abort)
 
 	// Peek the error for the first block to decide the directing import logic

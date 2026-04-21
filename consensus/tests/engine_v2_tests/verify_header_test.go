@@ -2,6 +2,7 @@ package engine_v2_tests
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"testing"
@@ -598,6 +599,80 @@ func TestShouldVerifyPureV2EpochSwitchHeadersEvenIfParentNotYetWrittenIntoDB(t *
 			}
 			assert.Error(t, result)
 			assert.NotEqual(t, consensus.ErrUnknownAncestor, result)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for verify result %d", i)
+		}
+	}
+}
+
+func TestVerifyHeadersDoesNotFabricateBatchBlocksForHookPenalty(t *testing.T) {
+	skipLongInShortMode(t)
+	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
+	assert.Nil(t, err)
+
+	var config params.ChainConfig
+	err = json.Unmarshal(b, &config)
+	assert.Nil(t, err)
+
+	blockchain, _, block1798, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 1798, &config, nil)
+	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
+
+	originalHookPenalty := adaptor.EngineV2.HookPenalty
+	t.Cleanup(func() {
+		adaptor.EngineV2.HookPenalty = originalHookPenalty
+	})
+	expectedErr := errors.New("batch block body must not be fabricated")
+	adaptor.EngineV2.HookPenalty = func(chain consensus.ChainReader, number *big.Int, parentHash common.Hash, candidates []common.Address) ([]common.Address, error) {
+		parentNumber := number.Uint64() - 1
+		parentBlock := chain.GetBlock(parentHash, parentNumber)
+		if parentBlock != nil {
+			return nil, expectedErr
+		}
+		if originalHookPenalty == nil {
+			return []common.Address{}, nil
+		}
+		return originalHookPenalty(chain, number, parentHash, candidates)
+	}
+
+	block1799 := CreateBlock(
+		blockchain,
+		&config,
+		block1798,
+		1799,
+		int64(1799)-config.XDPoS.V2.SwitchBlock.Int64(),
+		signer.Hex(),
+		signer,
+		signFn,
+		nil,
+		nil,
+		"",
+	)
+	block1800 := CreateBlock(
+		blockchain,
+		&config,
+		block1799,
+		1800,
+		int64(1800)-config.XDPoS.V2.SwitchBlock.Int64(),
+		signer.Hex(),
+		signer,
+		signFn,
+		nil,
+		nil,
+		"",
+	)
+
+	headers := []*types.Header{block1799.Header(), block1800.Header()}
+	fullVerifies := []bool{true, true}
+
+	_, results := adaptor.VerifyHeaders(blockchain, headers, fullVerifies)
+	for i := 0; i < len(headers); i++ {
+		select {
+		case result := <-results:
+			if i == 0 {
+				assert.Nil(t, result)
+				continue
+			}
+			assert.False(t, errors.Is(result, expectedErr), "VerifyHeaders should not observe fabricated batch blocks")
 		case <-time.After(5 * time.Second):
 			t.Fatalf("timed out waiting for verify result %d", i)
 		}
