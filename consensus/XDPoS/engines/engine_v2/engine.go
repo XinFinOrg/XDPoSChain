@@ -1101,7 +1101,7 @@ func (x *XDPoS_v2) saveRewardToFile(blockHash common.Hash, blockNumber uint64) {
 		return
 	}
 
-	data, err := json.Marshal(rewards)
+	data, err := json.MarshalIndent(rewards, "", "  ")
 	if err != nil {
 		log.Error("[saveRewardToFile] Error Marshalling rewards", "err", err, "rewards", rewards)
 		return
