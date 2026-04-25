@@ -203,16 +203,6 @@ func (x *XDPoS_v2) verifyAllSignatures(messageHash common.Hash, signatures []typ
 	return validSignatures, signers, duplicates, errors.Join(errs...)
 }
 
-func (x *XDPoS_v2) countValidSignatures(messageHash common.Hash, signatures []types.Signature, candidates []common.Address) (int, error) {
-	_, signers, duplicates, err := x.verifyAllSignatures(messageHash, signatures, candidates)
-	if err != nil {
-		return 0, err
-	}
-	if len(duplicates) > 0 {
-		return 0, fmt.Errorf("duplicate signers: %v, message: %v", duplicates, messageHash.Hex())
-	}
-	return len(signers), nil
-}
 
 func (x *XDPoS_v2) verifyMsgSignature(signedHashToBeVerified common.Hash, signature types.Signature, masternodes []common.Address) (bool, common.Address, error) {
 	var signerAddress common.Address
