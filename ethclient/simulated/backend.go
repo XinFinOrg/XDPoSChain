@@ -990,14 +990,12 @@ func (b *Backend) callContract(ctx context.Context, call ethereum.CallMsg, block
 
 	// Create a new environment which holds all relevant information
 	// about the transaction and calling mechanisms.
-	txContext := core.NewEVMTxContext(msg)
 	evmContext := core.NewEVMBlockContext(block, b.blockchain, nil)
 	// Create a new environment which holds all relevant information
 	// about the transaction and calling mechanisms.
 	evm := vm.NewEVM(evmContext, stateDB, nil, b.config, vm.Config{NoBaseFee: true})
-	evm.SetTxContext(txContext)
 	gaspool := new(core.GasPool).AddGas(gomath.MaxUint64)
-	return core.NewStateTransition(evm, msg, gaspool).TransitionDb(common.Address{})
+	return core.ApplyMessage(evm, msg, gaspool, common.Address{})
 }
 
 // SendTransaction updates the pending block to include the given transaction.

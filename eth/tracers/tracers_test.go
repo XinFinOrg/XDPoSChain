@@ -47,10 +47,6 @@ func BenchmarkTransactionTraceV2(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	txContext := vm.TxContext{
-		Origin:   from,
-		GasPrice: tx.GasPrice(),
-	}
 	context := vm.BlockContext{
 		CanTransfer: core.CanTransfer,
 		Transfer:    core.Transfer,
@@ -82,17 +78,14 @@ func BenchmarkTransactionTraceV2(b *testing.B) {
 	state := tests.MakePreState(rawdb.NewMemoryDatabase(), alloc)
 
 	evm := vm.NewEVM(context, state, nil, params.AllEthashProtocolChanges, vm.Config{})
-	evm.SetTxContext(txContext)
 
 	msg, err := core.TransactionToMessage(tx, signer, nil, nil, context.BaseFee)
 	if err != nil {
 		b.Fatalf("failed to prepare transaction for tracing: %v", err)
 	}
-	b.ResetTimer()
 	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		tracer := logger.NewStructLogger(&logger.Config{Debug: false}).Hooks()
+	for b.Loop() {
+		tracer := logger.NewStructLogger(&logger.Config{}).Hooks()
 		tracer.OnTxStart(evm.GetVMContext(), tx, msg.From)
 		evm.Config.Tracer = tracer
 

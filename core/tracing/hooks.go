@@ -63,9 +63,12 @@ type VMContext struct {
 	BlockNumber *big.Int
 	Time        uint64
 	Random      *common.Hash
-	// Effective tx gas price
+	BaseFee     *big.Int
+	StateDB     StateDB
+
+	// XDPoS tracers need the execution-time gas price because TransactionToMessage
+	// may rewrite it for TRC21 and fixed-price fee paths.
 	GasPrice *big.Int
-	StateDB  StateDB
 }
 
 // BlockEvent is emitted upon tracing an incoming block.

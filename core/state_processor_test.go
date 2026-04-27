@@ -596,6 +596,101 @@ func TestApplyTransactionWithEVMStateChangeHooks(t *testing.T) {
 	}
 }
 
+func TestApplyTransactionWithEVMOnTxStartUsesExecutionGasPrice(t *testing.T) {
+	var (
+		config = &params.ChainConfig{
+			ChainID:             big.NewInt(1),
+			HomesteadBlock:      big.NewInt(0),
+			EIP150Block:         big.NewInt(0),
+			EIP155Block:         big.NewInt(0),
+			EIP158Block:         big.NewInt(0),
+			ByzantiumBlock:      big.NewInt(0),
+			ConstantinopleBlock: big.NewInt(0),
+			PetersburgBlock:     big.NewInt(0),
+			IstanbulBlock:       big.NewInt(0),
+			BerlinBlock:         big.NewInt(0),
+			LondonBlock:         big.NewInt(0),
+			Eip1559Block:        big.NewInt(0),
+			Ethash:              new(params.EthashConfig),
+		}
+		signer            = types.LatestSigner(config)
+		testKey, _        = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		sender            = crypto.PubkeyToAddress(testKey.PublicKey)
+		recipient         = common.HexToAddress("0x1234567890123456789012345678901234567890")
+		rawGasPrice       = big.NewInt(20000000000)
+		executionGasPrice = big.NewInt(7)
+	)
+
+	db := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{
+		Config: config,
+		Alloc: types.GenesisAlloc{
+			sender: {
+				Balance: big.NewInt(1000000000000000000),
+				Nonce:   0,
+			},
+		},
+	}
+	genesis := gspec.MustCommit(db)
+	blockchain, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("Failed to create blockchain: %v", err)
+	}
+	defer blockchain.Stop()
+
+	statedb, err := blockchain.State()
+	if err != nil {
+		t.Fatalf("Failed to get state: %v", err)
+	}
+
+	tx := types.NewTransaction(0, recipient, big.NewInt(1), 21000, rawGasPrice, nil)
+	signedTx, err := types.SignTx(tx, signer, testKey)
+	if err != nil {
+		t.Fatalf("Failed to sign tx: %v", err)
+	}
+
+	var seenGasPrice *big.Int
+	hooks := &tracing.Hooks{
+		OnTxStart: func(vmContext *tracing.VMContext, tx *types.Transaction, from common.Address) {
+			if tx == nil {
+				t.Fatal("OnTxStart called with nil transaction")
+			}
+			if from != sender {
+				t.Fatalf("OnTxStart called with wrong from address: got %v want %v", from, sender)
+			}
+			if vmContext.GasPrice == nil {
+				t.Fatal("OnTxStart saw nil gas price")
+			}
+			seenGasPrice = new(big.Int).Set(vmContext.GasPrice)
+		},
+	}
+
+	msg, err := TransactionToMessage(signedTx, signer, nil, big.NewInt(1), nil)
+	if err != nil {
+		t.Fatalf("Failed to build message: %v", err)
+	}
+	msg.GasPrice = new(big.Int).Set(executionGasPrice)
+
+	gasPool := new(GasPool).AddGas(1000000)
+	vmContext := NewEVMBlockContext(blockchain.CurrentBlock(), blockchain, nil)
+	evmenv := vm.NewEVM(vmContext, statedb, nil, blockchain.Config(), vm.Config{Tracer: hooks})
+
+	var usedGas uint64
+	_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, big.NewInt(1), genesis.Hash(), signedTx, &usedGas, evmenv, nil, common.Address{})
+	if err != nil {
+		t.Fatalf("ApplyTransactionWithEVM failed: %v", err)
+	}
+	if seenGasPrice == nil {
+		t.Fatal("expected OnTxStart to observe gas price")
+	}
+	if seenGasPrice.Cmp(executionGasPrice) != 0 {
+		t.Fatalf("OnTxStart saw wrong execution gas price: got %v want %v", seenGasPrice, executionGasPrice)
+	}
+	if seenGasPrice.Cmp(rawGasPrice) == 0 {
+		t.Fatalf("OnTxStart unexpectedly saw raw tx gas price: %v", seenGasPrice)
+	}
+}
+
 func TestApplyTransactionWithEVMRejectsValueOverflow(t *testing.T) {
 	t.Parallel()
 
