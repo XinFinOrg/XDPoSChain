@@ -499,7 +499,7 @@ func TestApplyTransactionWithEVMTracer(t *testing.T) {
 
 			// Apply transaction
 			var usedGas uint64
-			_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, blockNumber, blockHash, signedTx, &usedGas, evm, big.NewInt(0), common.Address{})
+			_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, blockNumber, blockHash, signedTx, &usedGas, evm, big.NewInt(0))
 			// NOTE: Some special transactions (like BlockSignersBinary or XDCXAddrBinary)
 			// may fail in test environment due to missing configuration or state, but
 			// the tracer should still be called at the beginning of ApplyTransactionWithEVM.
@@ -587,7 +587,7 @@ func TestApplyTransactionWithEVMStateChangeHooks(t *testing.T) {
 
 	gasPool := new(GasPool).AddGas(1000000)
 	var usedGas uint64
-	_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, big.NewInt(1), genesis.Hash(), signedTx, &usedGas, evmenv, nil, common.Address{})
+	_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, big.NewInt(1), genesis.Hash(), signedTx, &usedGas, evmenv, nil)
 	if err != nil {
 		t.Fatalf("ApplyTransactionWithEVM failed: %v", err)
 	}
@@ -647,7 +647,7 @@ func TestApplyTransactionWithEVMRejectsValueOverflow(t *testing.T) {
 	evmenv := vm.NewEVM(vmContext, statedb, nil, blockchain.Config(), vm.Config{})
 	gasPool := new(GasPool).AddGas(1000000)
 	var usedGas uint64
-	_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, big.NewInt(1), genesis.Hash(), signedTx, &usedGas, evmenv, nil, common.Address{})
+	_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, big.NewInt(1), genesis.Hash(), signedTx, &usedGas, evmenv, nil)
 	if !errors.Is(err, types.ErrUint256Overflow) {
 		t.Fatalf("expected %v, got %v", types.ErrUint256Overflow, err)
 	}
