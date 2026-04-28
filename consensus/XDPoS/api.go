@@ -633,7 +633,7 @@ func jsonNumberToBigInt(n json.Number) (*big.Int, bool) {
 	i, acc := f.Int(nil)
 	if acc != big.Exact {
 		// The value had a fractional part; truncate is the best we can do
-		log.Debug("[jsonNumberToBigInt] json.Number had fractional part, truncated to integer", "number", s, "truncated", i.String(), "accuracy", acc)
+		log.Warn("[jsonNumberToBigInt] json.Number is not an exact integer value", "number", s, "truncated", i.String(), "accuracy", acc)
 	}
 
 	return i, true

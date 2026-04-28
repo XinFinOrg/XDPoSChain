@@ -9,6 +9,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCalculateSignersVote(t *testing.T) {
@@ -156,11 +157,11 @@ func TestJsonNumberToBigInt(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, ok := jsonNumberToBigInt(tt.input)
 			if tt.wantOk {
-				assert.True(t, ok, "input %q: parse failed, expected %s", tt.input, tt.want)
+				require.True(t, ok, "input %q: parse failed, expected %s", tt.input, tt.want)
 				assert.Equal(t, 0, tt.want.Cmp(got), "input %q: expected %s but got %s", tt.input, tt.want, got)
 			} else {
-				assert.False(t, ok, "input %q: expected parse failure but got %s", tt.input, got)
-				assert.Nil(t, got, "input %q: expected nil but got %s", tt.input, got)
+				assert.False(t, ok, "input %q: expected parse failure but got %v", tt.input, got)
+				assert.Nil(t, got, "input %q: expected nil but got %v", tt.input, got)
 			}
 		})
 	}
