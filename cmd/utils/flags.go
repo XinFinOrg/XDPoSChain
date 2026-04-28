@@ -1606,7 +1606,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		cfg.Genesis = core.DefaultTestnetGenesisBlock()
 	case ctx.Bool(DevnetFlag.Name):
 		if !ctx.IsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 551
+			cfg.NetworkId = 5551
 		}
 		cfg.Genesis = core.DefaultDevnetGenesisBlock()
 	case ctx.Bool(DeveloperFlag.Name):
@@ -1681,7 +1681,7 @@ func SetNetworkFlagById(ctx *cli.Context, cfg *ethconfig.Config) {
 		case 51:
 			common.IsTestnet = true
 			ctx.Set(TestnetFlag.Name, "true")
-		case 551:
+		case 5551:
 			ctx.Set(DevnetFlag.Name, "true")
 		}
 	}
