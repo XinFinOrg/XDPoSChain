@@ -161,10 +161,17 @@ jobs:
             (( end > total )) && end=$total
             echo "=== Batch ${batch_num}: nodes $((start+1))–${end} ==="
 
+            batch_names=()
             for (( i=start; i<end; i++ )); do
               name="${mn_array[$i]}"
               echo "  Updating deployment: $name"
               kubectl set image "deployment/$name" "$name=$image" || true
+              batch_names+=("$name")
+            done
+
+            # Wait for all pods in this batch to be ready before peering
+            for name in "${batch_names[@]}"; do
+              kubectl rollout status "deployment/$name" --timeout=300s
             done
 
             # Trigger peering-cronjob and wait for it to finish before next batch
