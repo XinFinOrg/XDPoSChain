@@ -21,7 +21,7 @@ _Put an `✅` in the boxes that apply_
 
 ## Impacted Components
 
-Which parts of the codebase do this PR touch?
+Which parts of the codebase does this PR touch?
 _Put an `✅` in the boxes that apply_
 
 - [ ] Consensus
