@@ -714,7 +714,7 @@ running:
 
 				go srv.runPeer(p)
 				if peers[c.id] != nil {
-					peers[c.id].PairPeer = p
+					peers[c.id].SetPairPeer(p)
 					srv.log.Debug("Adding p2p pair peer", "name", name, "addr", c.fd.RemoteAddr(), "connections", connCount)
 				} else {
 					peers[c.id] = p
@@ -777,8 +777,7 @@ func removePeerTracking(peers map[discover.NodeID]*Peer, pd peerDrop, connCount 
 	}
 	if current := peers[pd.ID()]; current == pd.Peer {
 		delete(peers, pd.ID())
-	} else if current != nil && current.PairPeer == pd.Peer {
-		current.PairPeer = nil
+	} else if current != nil && current.ClearPairPeer(pd.Peer) {
 	}
 	return connCount
 }
@@ -801,7 +800,7 @@ func (srv *Server) encHandshakeChecks(peers map[discover.NodeID]*Peer, inboundCo
 		return DiscTooManyPeers
 	case peers[c.id] != nil:
 		exitPeer := peers[c.id]
-		if exitPeer.PairPeer != nil {
+		if exitPeer.PairPeer() != nil {
 			return DiscAlreadyConnected
 		}
 		return nil

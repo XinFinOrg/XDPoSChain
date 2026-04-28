@@ -534,9 +534,9 @@ func (ps *peerSet) Register(p *peer) error {
 		if existPeer.pairRw != nil {
 			return errAlreadyRegistered
 		}
-		existPeer.PairPeer = p.Peer
+		existPeer.SetPairPeer(p.Peer)
 		existPeer.pairRw = p.rw
-		p.PairPeer = existPeer.Peer
+		p.SetPairPeer(existPeer.Peer)
 		return p2p.ErrAddPairPeer
 	}
 	ps.peers[p.id] = p

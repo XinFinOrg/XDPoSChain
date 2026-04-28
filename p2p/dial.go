@@ -266,8 +266,8 @@ func (s *dialstate) checkDial(n *discover.Node, peers map[discover.NodeID]*Peer)
 	case dialing:
 		return errAlreadyDialing
 	case peers[n.ID] != nil:
-		exitsPeer := peers[n.ID]
-		if exitsPeer.PairPeer != nil {
+		existPeer := peers[n.ID]
+		if existPeer.PairPeer() != nil {
 			return errAlreadyConnected
 		}
 	case s.ntab != nil && n.ID == s.ntab.Self().ID:
