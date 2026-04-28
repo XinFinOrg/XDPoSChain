@@ -315,36 +315,40 @@ func TestProcessVoteMsgThenTimeoutMsg(t *testing.T) {
 	assert.Equal(t, "timeout message round number: 5 does not match currentRound: 6", err.Error())
 
 	// Ok, let's do the timeout msg which is on the same round as the current round by creating two timeout message which will not reach timeout pool threshold
-	timeoutMsg = &types.Timeout{
+	timeoutSigningHash := types.TimeoutSigHash(&types.TimeoutForSign{
 		Round:     types.Round(6),
-		Signature: []byte{1},
-	}
+		GapNumber: 450,
+	})
+	sigSigner, err := signFn(accounts.Account{Address: signer}, timeoutSigningHash.Bytes())
+	assert.Nil(t, err)
+	sigAcc1 := SignHashByPK(acc1Key, timeoutSigningHash.Bytes())
+	sigAcc2 := SignHashByPK(acc2Key, timeoutSigningHash.Bytes())
+	sigAcc3 := SignHashByPK(acc3Key, timeoutSigningHash.Bytes())
 
+	// TimeoutHandler bypasses VerifyTimeoutMessage, so the signer field is set
+	// manually here to mirror what the BFT entry path would set.
+	timeoutMsg = &types.Timeout{Round: types.Round(6), Signature: sigSigner, GapNumber: 450}
+	timeoutMsg.SetSigner(signer)
 	err = engineV2.TimeoutHandler(blockchain, timeoutMsg)
 	assert.Nil(t, err)
 	currentRound, _, _, _, _, _ = engineV2.GetPropertiesFaker()
 	assert.Equal(t, types.Round(6), currentRound)
-	timeoutMsg = &types.Timeout{
-		Round:     types.Round(6),
-		Signature: []byte{2},
-	}
+
+	timeoutMsg = &types.Timeout{Round: types.Round(6), Signature: sigAcc1, GapNumber: 450}
+	timeoutMsg.SetSigner(acc1Addr)
 	err = engineV2.TimeoutHandler(blockchain, timeoutMsg)
 	assert.Nil(t, err)
-	timeoutMsg = &types.Timeout{
-		Round:     types.Round(6),
-		Signature: []byte{3},
-	}
+
+	timeoutMsg = &types.Timeout{Round: types.Round(6), Signature: sigAcc2, GapNumber: 450}
+	timeoutMsg.SetSigner(acc2Addr)
 	err = engineV2.TimeoutHandler(blockchain, timeoutMsg)
 	assert.Nil(t, err)
 	currentRound, _, _, _, _, _ = engineV2.GetPropertiesFaker()
 	assert.Equal(t, types.Round(6), currentRound)
 
 	// Create a timeout message that should trigger timeout pool hook
-	timeoutMsg = &types.Timeout{
-		Round:     types.Round(6),
-		Signature: []byte{4},
-	}
-
+	timeoutMsg = &types.Timeout{Round: types.Round(6), Signature: sigAcc3, GapNumber: 450}
+	timeoutMsg.SetSigner(acc3Addr)
 	err = engineV2.TimeoutHandler(blockchain, timeoutMsg)
 	assert.Nil(t, err)
 
@@ -359,8 +363,8 @@ func TestProcessVoteMsgThenTimeoutMsg(t *testing.T) {
 	tc := syncInfoMsg.(*types.SyncInfo).HighestTimeoutCert
 	assert.NotNil(t, tc)
 	assert.Equal(t, types.Round(6), tc.Round)
-	sigatures := []types.Signature{[]byte{1}, []byte{2}, []byte{3}, []byte{4}}
-	assert.ElementsMatch(t, tc.Signatures, sigatures)
+	signatures := []types.Signature{sigSigner, sigAcc1, sigAcc2, sigAcc3}
+	assert.ElementsMatch(t, tc.Signatures, signatures)
 	// Round shall be +1 now
 	currentRound, _, _, _, _, _ = engineV2.GetPropertiesFaker()
 	assert.Equal(t, types.Round(7), currentRound)
