@@ -2,9 +2,11 @@ package engine_v2
 
 import (
 	"crypto/ecdsa"
+	"math/big"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/stretchr/testify/assert"
@@ -21,6 +23,19 @@ func signMsg(t *testing.T, k *ecdsa.PrivateKey, h common.Hash) types.Signature {
 		t.Fatalf("crypto.Sign: %v", err)
 	}
 	return sig
+}
+
+// flipSignature returns the malleable counterpart of sig: same r, s' = N - s, v' = v ^ 1.
+// The result recovers the same public key as the input but is byte-distinct and
+// has S in the upper half of the curve order.
+func flipSignature(sig types.Signature) types.Signature {
+	flipped := make(types.Signature, 65)
+	copy(flipped, sig)
+	s := new(big.Int).SetBytes(sig[32:64])
+	sFlipped := new(big.Int).Sub(crypto.S256().Params().N, s)
+	sFlipped.FillBytes(flipped[32:64])
+	flipped[64] = sig[64] ^ 1
+	return flipped
 }
 
 func TestVerifyAllSignatures_AllValidUnique(t *testing.T) {
@@ -160,4 +175,87 @@ func TestVerifyAllSignatures_OrderPreservedFirstOccurrence(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, []common.Address{addrOf(k2)}, dups)
 	assert.Equal(t, []common.Address{addrOf(k2), addrOf(k1), addrOf(k3)}, signers)
+}
+
+func TestHasLowS_AcceptsCanonicalSignature(t *testing.T) {
+	k, _ := crypto.GenerateKey()
+	sig := signMsg(t, k, common.HexToHash("0xab"))
+	assert.True(t, hasLowS(sig), "crypto.Sign produces canonical low-S; should be accepted")
+}
+
+func TestHasLowS_RejectsMalleableCounterpart(t *testing.T) {
+	k, _ := crypto.GenerateKey()
+	sig := signMsg(t, k, common.HexToHash("0xab"))
+	flipped := flipSignature(sig)
+	assert.NotEqual(t, sig, flipped, "flipSignature must produce byte-distinct signature")
+	assert.True(t, hasLowS(sig))
+	assert.False(t, hasLowS(flipped), "high-S counterpart must be rejected")
+}
+
+func TestHasLowS_RejectsWrongLength(t *testing.T) {
+	for _, n := range []int{0, 1, 32, 64, 66, 128} {
+		assert.Falsef(t, hasLowS(make(types.Signature, n)), "length %d must be rejected", n)
+	}
+}
+
+func TestHasLowS_BoundaryAtHalfN(t *testing.T) {
+	// s == halfN: low-S is `s <= floor(N/2)`, so the midpoint must be accepted.
+	atHalf := make(types.Signature, 65)
+	secp256k1halfN.FillBytes(atHalf[32:64])
+	assert.True(t, hasLowS(atHalf), "s == halfN must be accepted")
+
+	// s == halfN + 1: just over the boundary, must be rejected.
+	overHalf := make(types.Signature, 65)
+	new(big.Int).Add(secp256k1halfN, big.NewInt(1)).FillBytes(overHalf[32:64])
+	assert.False(t, hasLowS(overHalf), "s == halfN+1 must be rejected")
+
+	// s == 1: minimum valid s, must be accepted.
+	minS := make(types.Signature, 65)
+	big.NewInt(1).FillBytes(minS[32:64])
+	assert.True(t, hasLowS(minS))
+}
+
+func TestVerifyMsgSignature_RejectsMalleableSignature(t *testing.T) {
+	x := &XDPoS_v2{}
+	msg := common.HexToHash("0xabc1")
+	k, _ := crypto.GenerateKey()
+	flipped := flipSignature(signMsg(t, k, msg))
+
+	verified, signer, err := x.verifyMsgSignature(msg, flipped, []common.Address{addrOf(k)})
+	assert.False(t, verified)
+	assert.Equal(t, common.Address{}, signer, "no signer recovered when low-S check fails first")
+	assert.ErrorIs(t, err, utils.ErrInvalidSignature)
+}
+
+func TestRecoverUniqueSigners_RejectsBatchOnMalleableSignature(t *testing.T) {
+	msg := common.HexToHash("0xabc2")
+	k1, _ := crypto.GenerateKey()
+	k2, _ := crypto.GenerateKey()
+	good := signMsg(t, k1, msg)
+	bad := flipSignature(signMsg(t, k2, msg))
+
+	// Strict-by-design: one malleable signature fails the entire batch so that
+	// peer-supplied TC/QC certs containing any malleable sig are rejected whole.
+	unique, dups, err := RecoverUniqueSigners(msg, []types.Signature{good, bad})
+	assert.ErrorIs(t, err, utils.ErrInvalidSignature)
+	assert.Nil(t, unique)
+	assert.Nil(t, dups)
+}
+
+func TestVerifyAllSignatures_DropsMalleableKeepsValid(t *testing.T) {
+	x := &XDPoS_v2{}
+	msg := common.HexToHash("0xabc3")
+	k1, _ := crypto.GenerateKey()
+	k2, _ := crypto.GenerateKey()
+	candidates := []common.Address{addrOf(k1), addrOf(k2)}
+	good := signMsg(t, k1, msg)
+	bad := flipSignature(signMsg(t, k2, msg))
+
+	// Tolerant-by-design: per-sig errors are aggregated, valid sigs survive so
+	// a single bad pool entry cannot stall TC/QC generation.
+	valid, signers, dups, err := x.verifyAllSignatures(msg, []types.Signature{good, bad}, candidates)
+	assert.Error(t, err, "malleable sig contributes a per-sig error")
+	assert.Empty(t, dups)
+	assert.Len(t, valid, 1, "valid signature still recovered")
+	assert.Equal(t, []common.Address{addrOf(k1)}, signers)
 }
