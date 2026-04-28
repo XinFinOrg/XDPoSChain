@@ -126,7 +126,10 @@ var (
 			TimeoutSyncThreshold: 3,
 			TimeoutPeriod:        10,
 			MinePeriod:           2,
+<<<<<<< HEAD
 			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
+=======
+>>>>>>> main
 		},
 	}
 
