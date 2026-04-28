@@ -676,7 +676,7 @@ func TestApplyTransactionWithEVMOnTxStartUsesExecutionGasPrice(t *testing.T) {
 	evmenv := vm.NewEVM(vmContext, statedb, nil, blockchain.Config(), vm.Config{Tracer: hooks})
 
 	var usedGas uint64
-	_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, big.NewInt(1), genesis.Hash(), signedTx, &usedGas, evmenv, nil, common.Address{})
+	_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, big.NewInt(1), genesis.Hash(), signedTx, &usedGas, evmenv, nil)
 	if err != nil {
 		t.Fatalf("ApplyTransactionWithEVM failed: %v", err)
 	}
