@@ -22,19 +22,9 @@ import (
 	"testing"
 )
 
-<<<<<<< HEAD:p2p/enr/idscheme_test.go
 // Checks that failure to sign leaves the record unmodified.
 func TestSignError(t *testing.T) {
 	invalidKey := &ecdsa.PrivateKey{D: new(big.Int), PublicKey: *pubkey}
-=======
-const (
-	VersionMajor = 2      // Major version component of the current release
-	VersionMinor = 7      // Minor version component of the current release
-	VersionPatch = 0      // Patch version component of the current release
-	VersionMeta  = "beta" // Version metadata to append to the version string
-)
->>>>>>> main:params/version.go
-
 	var r Record
 	if err := SignV4(&r, invalidKey); err == nil {
 		t.Fatal("expected error from SignV4")
