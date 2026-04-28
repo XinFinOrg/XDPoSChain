@@ -18,6 +18,8 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
+var secp256k1halfN = new(big.Int).Rsh(crypto.S256().Params().N, 1)
+
 func sigHash(header *types.Header) (hash common.Hash) {
 	hasher := sha3.NewLegacyKeccak256()
 
@@ -99,6 +101,13 @@ func RecoverUniqueSigners(signedHash common.Hash, signatureList []types.Signatur
 	for _, signature := range signatureList {
 		go func(sig types.Signature) {
 			defer wg.Done()
+
+			// check flipped signature
+			if !hasLowS(signature) {
+				errCh <- utils.ErrInvalidSignature
+				return
+			}
+
 			pubkey, err := crypto.Ecrecover(signedHash.Bytes(), signature)
 			if err != nil {
 				log.Error("[UniqueSignatures] error while recovering public key", "error", err, "signature", common.Bytes2Hex(signature), "signedHash", signedHash.Hex())
@@ -209,6 +218,12 @@ func (x *XDPoS_v2) verifyMsgSignature(signedHashToBeVerified common.Hash, signat
 	if len(masternodes) == 0 {
 		return false, signerAddress, errors.New("empty masternode list detected when verifying message signatures")
 	}
+
+	// check flipped signature
+	if !hasLowS(signature) {
+		return false, signerAddress, utils.ErrInvalidSignature
+	}
+
 	// Recover the public key and the Ethereum address
 	pubkey, err := crypto.Ecrecover(signedHashToBeVerified.Bytes(), signature)
 	if err != nil {
@@ -450,4 +465,24 @@ func (x *XDPoS_v2) GetBlockByEpochNumber(chain consensus.ChainReader, targetEpoc
 	}
 	// else, we use binary search
 	return x.binarySearchBlockByEpochNumber(chain, targetEpochNum, estBlockNum.Uint64(), epochSwitchInfo.EpochSwitchBlockInfo.Number.Uint64())
+}
+
+// hasLowS reports whether the signature's S value is in the lower half of the
+// secp256k1 curve order, the canonical low-S form that prevents
+// (r, s) -> (r, N-s) malleability.
+func hasLowS(signature types.Signature) bool {
+	if len(signature) != 65 {
+		log.Warn("[hasLowS] invalid signature length", "length", len(signature), "signature", common.Bytes2Hex(signature))
+		return false
+	}
+	s := new(big.Int).SetBytes(signature[32:64])
+	isLowS := s.Cmp(secp256k1halfN) <= 0
+	if !isLowS {
+		log.Warn("[hasLowS] found a flipped signature",
+			"r", common.Bytes2Hex(signature[0:32]),
+			"s", common.Bytes2Hex(signature[32:64]),
+			"v", signature[64],
+			"signature", common.Bytes2Hex(signature))
+	}
+	return isLowS
 }
