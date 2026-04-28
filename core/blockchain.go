@@ -49,6 +49,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/internal/syncx"
+	internalversion "github.com/XinFinOrg/XDPoSChain/internal/version"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -101,7 +102,7 @@ const (
 	receiptsCacheLimit  = 32
 	maxFutureBlocks     = 256
 	maxTimeFutureBlocks = 30
-	triesInMemory       = 128
+	TriesInMemory       = 128
 
 	// BlockChainVersion ensures that an incompatible database forces a resync from scratch.
 	//
@@ -900,7 +901,7 @@ func (bc *BlockChain) saveData() {
 				lendingTriedb = lendingService.GetStateCache().TrieDB()
 			}
 		}
-		for _, offset := range []uint64{0, 1, triesInMemory - 1} {
+		for _, offset := range []uint64{0, 1, TriesInMemory - 1} {
 			if number := bc.CurrentBlock().Number.Uint64(); number > offset {
 				recent := bc.GetBlockByNumber(number - offset)
 
@@ -1319,9 +1320,9 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 		if lendingService != nil {
 			lendingService.GetTriegc().Push(lendingRoot, -int64(block.NumberU64()))
 		}
-		if current := block.NumberU64(); current > triesInMemory {
+		if current := block.NumberU64(); current > TriesInMemory {
 			// Find the next state trie we need to commit
-			chosen := current - triesInMemory
+			chosen := current - TriesInMemory
 			// Only write to disk if we exceeded our memory allowance *and* also have at
 			// least a given number of tries gapped.
 			//
@@ -1338,7 +1339,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 			if nodes > limit || imgs > 4*1024*1024 {
 				bc.triedb.Cap(limit - ethdb.IdealBatchSize)
 			}
-			if bc.gcproc > bc.cacheConfig.TrieTimeLimit || chosen > lastWrite+triesInMemory {
+			if bc.gcproc > bc.cacheConfig.TrieTimeLimit || chosen > lastWrite+TriesInMemory {
 				// If the header is missing (canonical chain behind), we're reorging a low
 				// diff sidechain. Suspend committing until this operation is completed.
 				header := bc.GetHeaderByNumber(chosen)
@@ -1347,15 +1348,15 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 				} else {
 					// If we're exceeding limits but haven't reached a large enough memory gap,
 					// warn the user that the system is becoming unstable.
-					if chosen < lastWrite+triesInMemory && bc.gcproc >= 2*bc.cacheConfig.TrieTimeLimit {
-						log.Info("State in memory for too long, committing", "time", bc.gcproc, "allowance", bc.cacheConfig.TrieTimeLimit, "optimum", float64(chosen-lastWrite)/triesInMemory)
+					if chosen < lastWrite+TriesInMemory && bc.gcproc >= 2*bc.cacheConfig.TrieTimeLimit {
+						log.Info("State in memory for too long, committing", "time", bc.gcproc, "allowance", bc.cacheConfig.TrieTimeLimit, "optimum", float64(chosen-lastWrite)/TriesInMemory)
 					}
 					// Flush an entire trie and restart the counters
 					bc.triedb.Commit(header.Root, true)
 					lastWrite = chosen
 					bc.gcproc = 0
 					if tradingTrieDb != nil && lendingTrieDb != nil {
-						b := bc.GetBlock(header.Hash(), current-triesInMemory)
+						b := bc.GetBlock(header.Hash(), current-TriesInMemory)
 						author, _ := bc.Engine().Author(b.Header())
 						oldTradingRoot, _ := tradingService.GetTradingStateRoot(b, author)
 						oldLendingRoot, _ := lendingService.GetLendingStateRoot(b, author)
@@ -1525,7 +1526,11 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		seals[i] = verifySeals
 		bc.downloadingBlock.Add(block.Hash(), struct{}{})
 	}
-	abort, results := bc.engine.VerifyHeaders(bc, headers, seals)
+	verifier := consensus.ChainReader(bc)
+	if _, ok := bc.engine.(*XDPoS.XDPoS); ok {
+		verifier = XDPoS.NewVerifyHeadersChainReader(bc, headers, chain)
+	}
+	abort, results := bc.engine.VerifyHeaders(verifier, headers, seals)
 	defer close(abort)
 
 	// Peek the error for the first block to decide the directing import logic
@@ -2407,6 +2412,11 @@ func (bc *BlockChain) futureBlocksLoop() {
 func (bc *BlockChain) reportBlock(block *types.Block, receipts types.Receipts, err error) {
 	rawdb.WriteBadBlock(bc.db, block)
 
+	commit := "unknown"
+	if vcs, ok := internalversion.VCS(); ok && vcs.Commit != "" {
+		commit = vcs.Commit
+	}
+
 	var roundNumber = types.Round(0)
 	engine, ok := bc.Engine().(*XDPoS.XDPoS)
 	if ok {
@@ -2425,6 +2435,8 @@ func (bc *BlockChain) reportBlock(block *types.Block, receipts types.Receipts, e
 	}
 	log.Error(fmt.Sprintf(`
 ########## BAD BLOCK #########
+Version: %v
+Commit: %v
 Number: %v
 Hash: %#x
 Round: %v
@@ -2432,7 +2444,7 @@ Error: %v
 %s
 Receipts: %v
 ##############################
-`, block.Number(), block.Hash(), roundNumber, err, bc.chainConfig.Description(), receiptString))
+`, internalversion.WithMeta, commit, block.Number(), block.Hash(), roundNumber, err, bc.chainConfig.Description(), receiptString))
 }
 
 // InsertHeaderChain attempts to insert the given header chain in to the local

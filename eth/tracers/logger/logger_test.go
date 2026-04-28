@@ -24,6 +24,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
+	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/holiman/uint256"
@@ -38,6 +39,16 @@ func (*dummyStatedb) GetState(_ common.Address, _ common.Hash) common.Hash { ret
 func (*dummyStatedb) SetState(_ common.Address, _ common.Hash, _ common.Hash) common.Hash {
 	return common.Hash{}
 }
+
+type dummyOpContext struct{}
+
+func (dummyOpContext) MemoryData() []byte       { return nil }
+func (dummyOpContext) StackData() []uint256.Int { return nil }
+func (dummyOpContext) Caller() common.Address   { return common.Address{} }
+func (dummyOpContext) Address() common.Address  { return common.Address{} }
+func (dummyOpContext) CallValue() *uint256.Int  { return new(uint256.Int) }
+func (dummyOpContext) CallInput() []byte        { return nil }
+func (dummyOpContext) ContractCode() []byte     { return nil }
 
 func TestStoreCapture(t *testing.T) {
 	var (
@@ -89,5 +100,36 @@ func TestStructLogMarshalingOmitEmpty(t *testing.T) {
 				t.Fatalf("mismatched results\n\thave: %v\n\twant: %v", have, want)
 			}
 		})
+	}
+}
+
+func TestStructLoggerLimitRejectsOversizedEntry(t *testing.T) {
+	entry := (&StructLog{Op: vm.STOP, RefundCounter: 1337}).toLegacyJSON()
+	logger := NewStructLogger(&Config{Limit: len(entry) - 1})
+	logger.env = &tracing.VMContext{StateDB: &dummyStatedb{}}
+
+	logger.OnOpcode(0, byte(vm.STOP), 0, 0, dummyOpContext{}, nil, 0, nil)
+
+	if len(logger.logs) != 0 {
+		t.Fatalf("expected oversized entry to be skipped, got %d logs", len(logger.logs))
+	}
+	if logger.resultSize != 0 {
+		t.Fatalf("expected result size to remain zero, got %d", logger.resultSize)
+	}
+}
+
+func TestStructLoggerLimitAllowsEntryUpToBoundary(t *testing.T) {
+	entry := (&StructLog{Op: vm.STOP, RefundCounter: 1337}).toLegacyJSON()
+	logger := NewStructLogger(&Config{Limit: len(entry)})
+	logger.env = &tracing.VMContext{StateDB: &dummyStatedb{}}
+
+	logger.OnOpcode(0, byte(vm.STOP), 0, 0, dummyOpContext{}, nil, 0, nil)
+	logger.OnOpcode(0, byte(vm.STOP), 0, 0, dummyOpContext{}, nil, 0, nil)
+
+	if len(logger.logs) != 1 {
+		t.Fatalf("expected exactly one log at the size boundary, got %d", len(logger.logs))
+	}
+	if logger.resultSize != len(entry) {
+		t.Fatalf("expected result size %d, got %d", len(entry), logger.resultSize)
 	}
 }

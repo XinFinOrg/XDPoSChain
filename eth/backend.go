@@ -580,16 +580,37 @@ func (e *Ethereum) Start() error {
 // Stop implements node.Lifecycle, terminating all internal goroutines used by the
 // Ethereum protocol.
 func (e *Ethereum) Stop() error {
+	log.Info("Stopping Ethereum bloomIndexer start")
 	e.bloomIndexer.Close()
+	log.Info("Ethereum bloomIndexer stopped")
+
+	log.Info("Stopping Ethereum blockchain start")
 	e.blockchain.Stop()
+	log.Info("Ethereum blockchain stopped")
+
+	log.Info("Stopping Ethereum protocolManager start")
 	e.protocolManager.Stop()
+	log.Info("Ethereum protocolManager stopped")
 
+	log.Info("Stopping Ethereum txPool start")
 	e.txPool.Close()
-	e.miner.Stop()
-	e.eventMux.Stop()
+	log.Info("Ethereum txPool stopped")
 
-	e.chainDb.Close()
+	log.Info("Stopping Ethereum shutdownChan start")
 	close(e.shutdownChan)
+	log.Info("Ethereum shutdownChan stopped")
+
+	log.Info("Stopping Ethereum miner start")
+	e.miner.Stop()
+	log.Info("Ethereum miner stopped")
+
+	log.Info("Stopping Ethereum eventMux start")
+	e.eventMux.Stop()
+	log.Info("Ethereum eventMux stopped")
+
+	log.Info("Stopping Ethereum chainDb start")
+	e.chainDb.Close()
+	log.Info("Ethereum chainDb stopped")
 
 	return nil
 }

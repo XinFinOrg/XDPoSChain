@@ -17,6 +17,7 @@
 package runtime
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"math/big"
@@ -36,6 +37,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/core/vm/program"
+	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/eth/tracers"
 	"github.com/XinFinOrg/XDPoSChain/eth/tracers/logger"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -417,7 +419,7 @@ func benchmarkNonModifyingCode(gas uint64, code []byte, name string, tracerCode 
 	eoa := common.HexToAddress("E0")
 	{
 		cfg.State.CreateAccount(eoa)
-		cfg.State.SetNonce(eoa, 100)
+		cfg.State.SetNonce(eoa, 100, tracing.NonceChangeUnspecified)
 	}
 	reverting := common.HexToAddress("EE")
 	{
@@ -678,17 +680,23 @@ func TestColdAccountAccessCost(t *testing.T) {
 			want: 7600,
 		},
 	} {
-		tracer := logger.NewStructLogger(nil)
+		var step = 0
+		var have = uint64(0)
 		Execute(tc.code, nil, &Config{
 			EVMConfig: vm.Config{
-				Tracer: tracer.Hooks(),
+				Tracer: &tracing.Hooks{
+					OnOpcode: func(pc uint64, op byte, gas, cost uint64, scope tracing.OpContext, rData []byte, depth int, err error) {
+						// Uncomment to investigate failures:
+						//t.Logf("%d: %v %d", step, vm.OpCode(op).String(), cost)
+						if step == tc.step {
+							have = cost
+						}
+						step++
+					},
+				},
 			},
 		})
-		have := tracer.StructLogs()[tc.step].GasCost
 		if want := tc.want; have != want {
-			for ii, op := range tracer.StructLogs() {
-				t.Logf("%d: %v %d", ii, op.OpName(), op.GasCost)
-			}
 			t.Fatalf("testcase %d, gas report wrong, step %d, have %d want %d", i, tc.step, have, want)
 		}
 	}
@@ -945,5 +953,63 @@ func TestDelegatedAccountAccessCost(t *testing.T) {
 		if want := tc.want; have != want {
 			t.Fatalf("testcase %d, gas report wrong, step %d, have %d want %d", i, tc.step, have, want)
 		}
+	}
+}
+
+func TestDelegatedAccountExtCodeOpcodes(t *testing.T) {
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+
+	delegated := common.HexToAddress("0xff")
+	target := common.HexToAddress("0xaa")
+	delegationCode := types.AddressToDelegation(target)
+	targetCode := []byte{0x60, 0x2a, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3}
+
+	statedb.SetCode(delegated, delegationCode)
+	statedb.SetCode(target, targetCode)
+
+	for _, tc := range []struct {
+		name string
+		code []byte
+		want []byte
+	}{
+		{
+			name: "extcodesize returns delegation size",
+			code: program.New().
+				Push(delegated).Op(vm.EXTCODESIZE).
+				Push(0).Op(vm.MSTORE).
+				Return(0, 32).
+				Bytes(),
+			want: common.LeftPadBytes(new(big.Int).SetUint64(uint64(len(delegationCode))).Bytes(), 32),
+		},
+		{
+			name: "extcodehash returns delegation hash",
+			code: program.New().
+				Push(delegated).Op(vm.EXTCODEHASH).
+				Push(0).Op(vm.MSTORE).
+				Return(0, 32).
+				Bytes(),
+			want: crypto.Keccak256(delegationCode),
+		},
+		{
+			name: "extcodecopy returns delegation bytes",
+			code: program.New().
+				ExtcodeCopy(delegated, 0, 0, len(delegationCode)).
+				Return(0, len(delegationCode)).
+				Bytes(),
+			want: delegationCode,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			have, _, err := Execute(tc.code, nil, &Config{
+				ChainConfig: params.MergedTestChainConfig,
+				State:       statedb.Copy(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(have, tc.want) {
+				t.Fatalf("wrong return data, have %x want %x", have, tc.want)
+			}
+		})
 	}
 }

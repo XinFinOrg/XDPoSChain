@@ -277,7 +277,10 @@ func (c *conn) set(f connFlag, val bool) {
 	atomic.StoreInt32((*int32)(&c.flags), int32(flags))
 }
 
-// Peers returns all connected peers.
+// Peers returns the public view of connected remote nodes.
+//
+// The returned slice contains one entry per remote NodeID, so multiple physical
+// connections associated with the same node are represented by a single entry.
 func (srv *Server) Peers() []*Peer {
 	var ps []*Peer
 	select {
@@ -295,7 +298,11 @@ func (srv *Server) Peers() []*Peer {
 	return ps
 }
 
-// PeerCount returns the number of connected peers.
+// PeerCount returns the number of connected remote nodes.
+//
+// Multiple physical connections associated with the same remote NodeID
+// (for example pair peers) are counted once because the public peer view is
+// keyed by NodeID.
 func (srv *Server) PeerCount() int {
 	var count int
 	select {
@@ -582,6 +589,7 @@ func (srv *Server) run(dialstate dialer) {
 	defer srv.loopWG.Done()
 	var (
 		peers        = make(map[discover.NodeID]*Peer)
+		connCount    = 0
 		inboundCount = 0
 		trusted      = make(map[discover.NodeID]bool, len(srv.TrustedNodes))
 		taskdone     = make(chan task, maxActiveDialTasks)
@@ -702,14 +710,15 @@ running:
 					p.events = &srv.peerFeed
 				}
 				name := truncateName(c.name)
+				connCount++
 
 				go srv.runPeer(p)
 				if peers[c.id] != nil {
-					peers[c.id].PairPeer = p
-					srv.log.Debug("Adding p2p pair peer", "name", name, "addr", c.fd.RemoteAddr(), "peers", len(peers)+1)
+					peers[c.id].SetPairPeer(p)
+					srv.log.Debug("Adding p2p pair peer", "name", name, "addr", c.fd.RemoteAddr(), "connections", connCount)
 				} else {
 					peers[c.id] = p
-					srv.log.Debug("Adding p2p peer", "name", name, "addr", c.fd.RemoteAddr(), "peers", len(peers)+1)
+					srv.log.Debug("Adding p2p peer", "name", name, "addr", c.fd.RemoteAddr(), "connections", connCount)
 				}
 				if p.Inbound() {
 					inboundCount++
@@ -730,8 +739,8 @@ running:
 		case pd := <-srv.delpeer:
 			// A peer disconnected.
 			d := common.PrettyDuration(mclock.Now() - pd.created)
-			pd.log.Debug("Removing p2p peer", "duration", d, "peers", len(peers)-1, "req", pd.requested, "err", pd.err)
-			delete(peers, pd.ID())
+			connCount = removePeerTracking(peers, pd, connCount)
+			pd.log.Debug("Removing p2p peer", "duration", d, "connections", connCount, "req", pd.requested, "err", pd.err)
 			if pd.Inbound() {
 				inboundCount--
 			}
@@ -755,11 +764,22 @@ running:
 	// Wait for peers to shut down. Pending connections and tasks are
 	// not handled here and will terminate soon-ish because srv.quit
 	// is closed.
-	for len(peers) > 0 {
-		p := <-srv.delpeer
-		p.log.Trace("<-delpeer (spindown)", "remainingTasks", len(runningTasks))
-		delete(peers, p.ID())
+	for connCount > 0 {
+		pd := <-srv.delpeer
+		pd.log.Trace("<-delpeer (spindown)", "remainingTasks", len(runningTasks))
+		connCount = removePeerTracking(peers, pd, connCount)
 	}
+}
+
+func removePeerTracking(peers map[discover.NodeID]*Peer, pd peerDrop, connCount int) int {
+	if connCount > 0 {
+		connCount--
+	}
+	if current := peers[pd.ID()]; current == pd.Peer {
+		delete(peers, pd.ID())
+	} else if current != nil && current.ClearPairPeer(pd.Peer) {
+	}
+	return connCount
 }
 
 func (srv *Server) protoHandshakeChecks(peers map[discover.NodeID]*Peer, inboundCount int, c *conn) error {
@@ -780,7 +800,7 @@ func (srv *Server) encHandshakeChecks(peers map[discover.NodeID]*Peer, inboundCo
 		return DiscTooManyPeers
 	case peers[c.id] != nil:
 		exitPeer := peers[c.id]
-		if exitPeer.PairPeer != nil {
+		if exitPeer.PairPeer() != nil {
 			return DiscAlreadyConnected
 		}
 		return nil

@@ -197,6 +197,34 @@ func TestPeerDisconnectRace(t *testing.T) {
 	}
 }
 
+func TestPeerRunDisconnectsPairPeer(t *testing.T) {
+	closer, _, peer, errc := testPeer(nil)
+	defer closer()
+
+	pairPeer := &Peer{
+		disc:   make(chan DiscReason, 1),
+		closed: make(chan struct{}),
+	}
+	peer.SetPairPeer(pairPeer)
+
+	closer()
+
+	select {
+	case <-errc:
+	case <-time.After(2 * time.Second):
+		t.Fatal("peer did not stop")
+	}
+
+	select {
+	case reason := <-pairPeer.disc:
+		if reason != DiscPairPeerStop {
+			t.Fatalf("unexpected pair disconnect reason: got %v want %v", reason, DiscPairPeerStop)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("pair peer was not disconnected")
+	}
+}
+
 func TestNewPeer(t *testing.T) {
 	name := "nodename"
 	caps := []Cap{{"foo", 2}, {"bar", 3}}

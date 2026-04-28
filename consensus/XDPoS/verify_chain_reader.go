@@ -10,6 +10,11 @@ import (
 // verifyChainReader shadows chain lookups with headers in the current verify batch.
 // This keeps verification deterministic when deep consensus paths query ancestors
 // that are in-flight and not written to DB yet.
+//
+// The wrapper intentionally does not fabricate blocks for batch headers. When a
+// caller asks for a block, returning a header-only placeholder would make an
+// unknown block body look like a real empty block and can skew consensus logic
+// that inspects transactions or uncles.
 type verifyChainReader struct {
 	chain           consensus.ChainReader
 	headersByHash   map[common.Hash]*types.Header
@@ -22,12 +27,17 @@ type hashAndNumber struct {
 	number uint64
 }
 
-func newVerifyChainReader(chain consensus.ChainReader, headers []*types.Header) *verifyChainReader {
+var _ consensus.ChainReader = (*verifyChainReader)(nil)
+
+func NewVerifyHeadersChainReader(chain consensus.ChainReader, headers []*types.Header, blocks []*types.Block) consensus.ChainReader {
+	if reader, ok := chain.(*verifyChainReader); ok {
+		return reader
+	}
 	reader := &verifyChainReader{
 		chain:           chain,
 		headersByHash:   make(map[common.Hash]*types.Header, len(headers)),
 		headersByNumber: make(map[uint64]*types.Header, len(headers)),
-		blocksByHashNo:  make(map[hashAndNumber]*types.Block, len(headers)),
+		blocksByHashNo:  make(map[hashAndNumber]*types.Block, len(blocks)),
 	}
 	for _, header := range headers {
 		if header == nil || header.Number == nil {
@@ -39,7 +49,12 @@ func newVerifyChainReader(chain consensus.ChainReader, headers []*types.Header) 
 		if _, exists := reader.headersByNumber[n]; !exists {
 			reader.headersByNumber[n] = header
 		}
-		reader.blocksByHashNo[hashAndNumber{hash: h, number: n}] = types.NewBlockWithHeader(header)
+	}
+	for _, block := range blocks {
+		if block == nil {
+			continue
+		}
+		reader.blocksByHashNo[hashAndNumber{hash: block.Hash(), number: block.NumberU64()}] = block
 	}
 	return reader
 }

@@ -345,7 +345,6 @@ func (dl *downloadTester) handleProposedBlock(header *types.Header) error {
 // Config retrieves the blockchain's chain configuration.
 func (dl *downloadTester) Config() *params.ChainConfig {
 	config := *params.TestChainConfig
-	config.Eip1559Block = big.NewInt(0)
 	return &config
 }
 
@@ -1501,6 +1500,51 @@ func testFakedSyncProgress(t *testing.T, protocol int, mode SyncMode) {
 		CurrentBlock: uint64(validChain.len() - 1),
 		HighestBlock: uint64(validChain.len() - 1),
 	})
+}
+
+func TestStateSyncSpindownCompletedDoesNotBlock(t *testing.T) {
+	t.Parallel()
+
+	tester := newTester()
+	defer tester.terminate()
+
+	if err := tester.newPeer("active", 63, testChainBase.shorten(8)); err != nil {
+		t.Fatalf("failed to create peer: %v", err)
+	}
+	peer := tester.downloader.peers.Peer("active")
+	if peer == nil {
+		t.Fatal("peer not registered")
+	}
+	atomic.StoreInt32(&peer.stateIdle, 1)
+	peer.stateStarted = time.Now()
+
+	req := &stateReq{
+		nItems: 1,
+		peer:   peer,
+		timer:  time.NewTimer(time.Hour),
+	}
+	defer req.timer.Stop()
+
+	done := make(chan struct{})
+	go func() {
+		tester.downloader.spindownStateSync(
+			map[string]*stateReq{peer.id: req},
+			nil,
+			make(chan *stateReq),
+			make(chan *peerConnection),
+			true,
+		)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("state sync spindown blocked after completion")
+	}
+	if atomic.LoadInt32(&peer.stateIdle) != 0 {
+		t.Fatal("peer was not marked idle after completed state sync")
+	}
 }
 
 // This test reproduces an issue where unexpected deliveries would

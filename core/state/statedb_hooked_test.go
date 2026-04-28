@@ -112,7 +112,7 @@ func TestHooks(t *testing.T) {
 	})
 	sdb.AddBalance(common.Address{0xaa}, big.NewInt(100), tracing.BalanceChangeUnspecified)
 	sdb.SubBalance(common.Address{0xaa}, big.NewInt(50), tracing.BalanceChangeTransfer)
-	sdb.SetNonce(common.Address{0xaa}, 1337)
+	sdb.SetNonce(common.Address{0xaa}, 1337, tracing.NonceChangeGenesis)
 	sdb.SetCode(common.Address{0xaa}, []byte{0x13, 37})
 	sdb.SetState(common.Address{0xaa}, common.HexToHash("0x01"), common.HexToHash("0x11"))
 	sdb.SetState(common.Address{0xaa}, common.HexToHash("0x01"), common.HexToHash("0x22"))

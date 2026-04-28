@@ -3180,6 +3180,9 @@ type txPoolBackendMock struct {
 
 func (b *sendTxBackendMock) SendTx(ctx context.Context, signedTx *types.Transaction) error {
 	b.lastTx = signedTx
+	if signedTx.Value().BitLen() > 256 {
+		return types.ErrUint256Overflow
+	}
 	if b.sendErr != nil {
 		return b.sendErr
 	}
@@ -3442,6 +3445,43 @@ func TestSendRawTransactionFeeCapExceeded(t *testing.T) {
 
 	_, err = api.SendRawTransaction(context.Background(), raw)
 	require.ErrorContains(t, err, "exceeds the configured cap")
+}
+
+func TestSendRawTransactionRejectsValueOverflow(t *testing.T) {
+	t.Parallel()
+
+	key, err := crypto.HexToECDSA("8a1f9a8f95be41cd7ccb6168179afb4504aefe388d1e14474d32c45c72ce7b7a")
+	require.NoError(t, err)
+
+	backend := &sendTxBackendMock{backendMock: newBackendMock()}
+	api := NewTransactionAPI(backend, nil)
+
+	to := common.Address{0x56}
+	overflowValue := new(big.Int).Lsh(big.NewInt(1), 256)
+	tx, err := types.SignNewTx(key, types.LatestSigner(backend.ChainConfig()), &types.LegacyTx{
+		Nonce:    11,
+		GasPrice: big.NewInt(2),
+		Gas:      21000,
+		To:       &to,
+		Value:    overflowValue,
+	})
+	require.NoError(t, err)
+
+	raw, err := tx.MarshalBinary()
+	require.NoError(t, err)
+
+	_, err = api.SendRawTransaction(context.Background(), raw)
+	require.ErrorIs(t, err, types.ErrUint256Overflow)
+	require.NotNil(t, backend.lastTx)
+	require.Equal(t, overflowValue, backend.lastTx.Value())
+}
+
+func TestTxValidationErrorUint256Overflow(t *testing.T) {
+	t.Parallel()
+
+	err := txValidationError(types.ErrUint256Overflow)
+	require.Equal(t, errCodeInvalidParams, err.ErrorCode())
+	require.ErrorContains(t, err, types.ErrUint256Overflow.Error())
 }
 
 func TestGetTransactionByHashBasic(t *testing.T) {

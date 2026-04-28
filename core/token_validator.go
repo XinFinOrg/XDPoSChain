@@ -108,12 +108,10 @@ func CallContractWithState(call ethereum.CallMsg, chain consensus.ChainContext, 
 
 	// Create a new environment which holds all relevant information
 	// about the transaction and calling mechanisms.
-	txContext := NewEVMTxContext(msg)
 	evmContext := NewEVMBlockContext(chain.CurrentHeader(), chain, nil)
 	evm := vm.NewEVM(evmContext, statedb, nil, chain.Config(), vm.Config{})
-	evm.SetTxContext(txContext)
 	gaspool := new(GasPool).AddGas(1000000)
-	result, err := NewStateTransition(evm, msg, gaspool).TransitionDb(common.Address{})
+	result, err := ApplyMessage(evm, msg, gaspool, common.Address{})
 	if err != nil {
 		return nil, err
 	}

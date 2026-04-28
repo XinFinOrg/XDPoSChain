@@ -241,6 +241,10 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 
 The `peers` administrative property can be queried for all the information known about the connected remote nodes at the networking granularity.
 
+The result is an array containing at most one entry per unique remote NodeID.
+If the client temporarily holds multiple physical connections to the same
+remote NodeID, `admin_peers` reports that remote node once.
+
 Parameters:
 
 None

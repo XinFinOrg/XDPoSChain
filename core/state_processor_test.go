@@ -19,6 +19,7 @@ package core
 import (
 	"crypto/ecdsa"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -127,10 +128,8 @@ func TestStateProcessorErrors(t *testing.T) {
 					},
 				},
 			}
-			genesis       = gspec.MustCommit(db)
 			blockchain, _ = NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
 		)
-
 		defer blockchain.Stop()
 		num := big.NewInt(1)
 		rules := config.Rules(num)
@@ -282,7 +281,7 @@ func TestStateProcessorErrors(t *testing.T) {
 				want: "could not apply tx 0 [0xb49a1f798a865850a62b4deb6a71efb9150e5bf11a46b3f331fec62baa0547b4]: transaction gas limit too high (cap: 16777216, tx: 16777217)",
 			},
 		} {
-			block := GenerateBadBlock(t, genesis, ethash.NewFaker(), tt.txs, gspec.Config)
+			block := GenerateBadBlock(t, gspec.ToBlock(), ethash.NewFaker(), tt.txs, gspec.Config)
 			_, err := blockchain.InsertChain(types.Blocks{block})
 			if err == nil {
 				t.Fatal("block imported without errors")
@@ -316,7 +315,6 @@ func TestStateProcessorErrors(t *testing.T) {
 					},
 				},
 			}
-			genesis       = gspec.MustCommit(db)
 			blockchain, _ = NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
 		)
 		defer blockchain.Stop()
@@ -331,7 +329,7 @@ func TestStateProcessorErrors(t *testing.T) {
 				want: "transaction type not supported",
 			},
 		} {
-			block := GenerateBadBlock(t, genesis, ethash.NewFaker(), tt.txs, gspec.Config)
+			block := GenerateBadBlock(t, gspec.ToBlock(), ethash.NewFaker(), tt.txs, gspec.Config)
 			_, err := blockchain.InsertChain(types.Blocks{block})
 			if err == nil {
 				t.Fatal("block imported without errors")
@@ -501,7 +499,7 @@ func TestApplyTransactionWithEVMTracer(t *testing.T) {
 
 			// Apply transaction
 			var usedGas uint64
-			_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, blockNumber, blockHash, signedTx, &usedGas, evm, big.NewInt(0), common.Address{})
+			_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, blockNumber, blockHash, signedTx, &usedGas, evm, big.NewInt(0))
 			// NOTE: Some special transactions (like BlockSignersBinary or XDCXAddrBinary)
 			// may fail in test environment due to missing configuration or state, but
 			// the tracer should still be called at the beginning of ApplyTransactionWithEVM.
@@ -589,12 +587,164 @@ func TestApplyTransactionWithEVMStateChangeHooks(t *testing.T) {
 
 	gasPool := new(GasPool).AddGas(1000000)
 	var usedGas uint64
-	_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, big.NewInt(1), genesis.Hash(), signedTx, &usedGas, evmenv, nil, common.Address{})
+	_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, big.NewInt(1), genesis.Hash(), signedTx, &usedGas, evmenv, nil)
 	if err != nil {
 		t.Fatalf("ApplyTransactionWithEVM failed: %v", err)
 	}
 	if !hookInvoked {
 		t.Fatal("expected OnBalanceChange to be invoked, but it was not")
+	}
+}
+
+func TestApplyTransactionWithEVMOnTxStartUsesExecutionGasPrice(t *testing.T) {
+	var (
+		config = &params.ChainConfig{
+			ChainID:             big.NewInt(1),
+			HomesteadBlock:      big.NewInt(0),
+			EIP150Block:         big.NewInt(0),
+			EIP155Block:         big.NewInt(0),
+			EIP158Block:         big.NewInt(0),
+			ByzantiumBlock:      big.NewInt(0),
+			ConstantinopleBlock: big.NewInt(0),
+			PetersburgBlock:     big.NewInt(0),
+			IstanbulBlock:       big.NewInt(0),
+			BerlinBlock:         big.NewInt(0),
+			LondonBlock:         big.NewInt(0),
+			Eip1559Block:        big.NewInt(0),
+			Ethash:              new(params.EthashConfig),
+		}
+		signer            = types.LatestSigner(config)
+		testKey, _        = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		sender            = crypto.PubkeyToAddress(testKey.PublicKey)
+		recipient         = common.HexToAddress("0x1234567890123456789012345678901234567890")
+		rawGasPrice       = big.NewInt(20000000000)
+		executionGasPrice = big.NewInt(7)
+	)
+
+	db := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{
+		Config: config,
+		Alloc: types.GenesisAlloc{
+			sender: {
+				Balance: big.NewInt(1000000000000000000),
+				Nonce:   0,
+			},
+		},
+	}
+	genesis := gspec.MustCommit(db)
+	blockchain, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("Failed to create blockchain: %v", err)
+	}
+	defer blockchain.Stop()
+
+	statedb, err := blockchain.State()
+	if err != nil {
+		t.Fatalf("Failed to get state: %v", err)
+	}
+
+	tx := types.NewTransaction(0, recipient, big.NewInt(1), 21000, rawGasPrice, nil)
+	signedTx, err := types.SignTx(tx, signer, testKey)
+	if err != nil {
+		t.Fatalf("Failed to sign tx: %v", err)
+	}
+
+	var seenGasPrice *big.Int
+	hooks := &tracing.Hooks{
+		OnTxStart: func(vmContext *tracing.VMContext, tx *types.Transaction, from common.Address) {
+			if tx == nil {
+				t.Fatal("OnTxStart called with nil transaction")
+			}
+			if from != sender {
+				t.Fatalf("OnTxStart called with wrong from address: got %v want %v", from, sender)
+			}
+			if vmContext.GasPrice == nil {
+				t.Fatal("OnTxStart saw nil gas price")
+			}
+			seenGasPrice = new(big.Int).Set(vmContext.GasPrice)
+		},
+	}
+
+	msg, err := TransactionToMessage(signedTx, signer, nil, big.NewInt(1), nil)
+	if err != nil {
+		t.Fatalf("Failed to build message: %v", err)
+	}
+	msg.GasPrice = new(big.Int).Set(executionGasPrice)
+
+	gasPool := new(GasPool).AddGas(1000000)
+	vmContext := NewEVMBlockContext(blockchain.CurrentBlock(), blockchain, nil)
+	evmenv := vm.NewEVM(vmContext, statedb, nil, blockchain.Config(), vm.Config{Tracer: hooks})
+
+	var usedGas uint64
+	_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, big.NewInt(1), genesis.Hash(), signedTx, &usedGas, evmenv, nil)
+	if err != nil {
+		t.Fatalf("ApplyTransactionWithEVM failed: %v", err)
+	}
+	if seenGasPrice == nil {
+		t.Fatal("expected OnTxStart to observe gas price")
+	}
+	if seenGasPrice.Cmp(executionGasPrice) != 0 {
+		t.Fatalf("OnTxStart saw wrong execution gas price: got %v want %v", seenGasPrice, executionGasPrice)
+	}
+	if seenGasPrice.Cmp(rawGasPrice) == 0 {
+		t.Fatalf("OnTxStart unexpectedly saw raw tx gas price: %v", seenGasPrice)
+	}
+}
+
+func TestApplyTransactionWithEVMRejectsValueOverflow(t *testing.T) {
+	t.Parallel()
+
+	config := &params.ChainConfig{
+		ChainID:        big.NewInt(1),
+		HomesteadBlock: big.NewInt(0),
+		EIP155Block:    big.NewInt(0),
+		EIP158Block:    big.NewInt(0),
+		ByzantiumBlock: big.NewInt(0),
+		Ethash:         new(params.EthashConfig),
+	}
+	signer := types.LatestSigner(config)
+	key, err := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	if err != nil {
+		t.Fatalf("Failed to create key: %v", err)
+	}
+	sender := crypto.PubkeyToAddress(key.PublicKey)
+	recipient := common.HexToAddress("0x1234567890123456789012345678901234567890")
+	tooBigValue := new(big.Int).Lsh(big.NewInt(1), 256)
+	hugeBalance := new(big.Int).Lsh(big.NewInt(1), 300)
+
+	db := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{
+		Config: config,
+		Alloc: types.GenesisAlloc{
+			sender: {
+				Balance: hugeBalance,
+			},
+		},
+	}
+	genesis := gspec.MustCommit(db)
+	blockchain, _ := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	defer blockchain.Stop()
+
+	statedb, err := blockchain.State()
+	if err != nil {
+		t.Fatalf("Failed to get state: %v", err)
+	}
+	tx := types.NewTransaction(0, recipient, tooBigValue, 21000, big.NewInt(1), nil)
+	signedTx, err := types.SignTx(tx, signer, key)
+	if err != nil {
+		t.Fatalf("Failed to sign tx: %v", err)
+	}
+	msg, err := TransactionToMessage(signedTx, signer, nil, big.NewInt(1), nil)
+	if err != nil {
+		t.Fatalf("Failed to build message: %v", err)
+	}
+	vmContext := NewEVMBlockContext(blockchain.CurrentBlock(), blockchain, nil)
+	evmenv := vm.NewEVM(vmContext, statedb, nil, blockchain.Config(), vm.Config{})
+	gasPool := new(GasPool).AddGas(1000000)
+	var usedGas uint64
+	_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, big.NewInt(1), genesis.Hash(), signedTx, &usedGas, evmenv, nil)
+	if !errors.Is(err, types.ErrUint256Overflow) {
+		t.Fatalf("expected %v, got %v", types.ErrUint256Overflow, err)
 	}
 }
 
@@ -608,7 +758,7 @@ func TestProcessParentBlockHash(t *testing.T) {
 		coinbase    = common.Address{}
 	)
 	test := func(statedb *state.StateDB) {
-		statedb.SetNonce(params.HistoryStorageAddress, 1)
+		statedb.SetNonce(params.HistoryStorageAddress, 1, tracing.NonceChangeUnspecified)
 		statedb.SetCode(params.HistoryStorageAddress, params.HistoryStorageCode)
 		statedb.IntermediateRoot(true)
 
