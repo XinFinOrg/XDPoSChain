@@ -94,15 +94,6 @@ var (
 			MinePeriod:           2,
 			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
 		},
-		17579700: {
-			MaxMasternodes:       108,
-			SwitchRound:          17579700,
-			CertThreshold:        0.667,
-			TimeoutSyncThreshold: 3,
-			TimeoutPeriod:        60,
-			MinePeriod:           2,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
-		},
 	}
 
 	TestnetV2Configs = map[uint64]*V2Config{
@@ -124,9 +115,9 @@ var (
 			MinePeriod:           2,
 			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
 		},
-		20277000: {
+		15000000: {
 			MaxMasternodes:       108,
-			SwitchRound:          20277000,
+			SwitchRound:          15000000,
 			CertThreshold:        0.667,
 			TimeoutSyncThreshold: 3,
 			TimeoutPeriod:        10,
@@ -138,39 +129,21 @@ var (
 	DevnetV2Configs = map[uint64]*V2Config{
 		Default: {
 			SwitchRound:          0,
-			CertThreshold:        0.667,
-			TimeoutSyncThreshold: 3,
-			TimeoutPeriod:        5,
-			MinePeriod:           2,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 2.0, MaxExponent: 5},
 			MaxMasternodes:       108,
-		},
-		252000: {
-			SwitchRound:          250000,
 			CertThreshold:        0.667,
 			TimeoutSyncThreshold: 3,
-			TimeoutPeriod:        5,
+			TimeoutPeriod:        10,
 			MinePeriod:           2,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 2.0, MaxExponent: 5},
-			MaxMasternodes:       10,
+			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
 		},
-		261000: {
-			SwitchRound:          261000,
+		5000000: {
+			SwitchRound:          5000000,
+			MaxMasternodes:       108,
 			CertThreshold:        0.667,
 			TimeoutSyncThreshold: 3,
-			TimeoutPeriod:        5,
+			TimeoutPeriod:        10,
 			MinePeriod:           2,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 2.0, MaxExponent: 5},
-			MaxMasternodes:       12,
-		},
-		300000: {
-			SwitchRound:          300000,
-			CertThreshold:        0.667,
-			TimeoutSyncThreshold: 3,
-			TimeoutPeriod:        5,
-			MinePeriod:           2,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 2.0, MaxExponent: 5},
-			MaxMasternodes:       12,
+			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
 		},
 	}
 
@@ -228,7 +201,7 @@ var (
 		},
 	}
 
-	// MainnetChainConfig is the chain parameters to run a node on the main network.
+	// MainnetChainConfig is the chain parameters to run a node on the ethereum main network.
 	MainnetChainConfig = &ChainConfig{
 		ChainId:             big.NewInt(1),
 		HomesteadBlock:      big.NewInt(1150000),
@@ -242,7 +215,7 @@ var (
 		Ethash:              new(EthashConfig),
 	}
 
-	// TestnetChainConfig contains the chain parameters to run a node on the Ropsten test network.
+	// TestnetChainConfig contains the chain parameters to run a node on the Apothem testnet.
 	TestnetChainConfig = &ChainConfig{
 		ChainId:             big.NewInt(51),
 		HomesteadBlock:      big.NewInt(1),
@@ -269,7 +242,7 @@ var (
 		},
 	}
 
-	// DevnetChainConfig contains the chain parameters to run a node on the Ropsten test network.
+	// DevnetChainConfig contains the chain parameters to run a node on the devnet.
 	DevnetChainConfig = &ChainConfig{
 		ChainId:        big.NewInt(5551),
 		HomesteadBlock: big.NewInt(0),
@@ -280,10 +253,10 @@ var (
 		XDPoS: &XDPoSConfig{
 			Period:              2,
 			Epoch:               900,
-			Reward:              10,
+			Reward:              7125,
 			RewardCheckpoint:    900,
 			Gap:                 450,
-			FoudationWalletAddr: common.HexToAddress("0xde5b54e8e7b585153add32f472e8d545e5d42a82"),
+			FoudationWalletAddr: common.HexToAddress("0x4f288181b1d1aa599c6d7629f1168d46d5f96338"),
 			V2: &V2{
 				SwitchEpoch:   common.DevnetConstant.TIPV2SwitchBlock.Uint64() / 900,
 				SwitchBlock:   common.DevnetConstant.TIPV2SwitchBlock,
@@ -295,9 +268,6 @@ var (
 
 	// AllEthashProtocolChanges contains every protocol change (EIPs) introduced
 	// and accepted by the Ethereum core developers into the Ethash consensus.
-	//
-	// This configuration is intentionally not using keyed fields to force anyone
-	// adding flags to the config to also have to set these fields.
 	AllEthashProtocolChanges = &ChainConfig{
 		ChainId:             big.NewInt(1337),
 		HomesteadBlock:      big.NewInt(0),
@@ -307,19 +277,19 @@ var (
 		EIP155Block:         big.NewInt(0),
 		EIP158Block:         big.NewInt(0),
 		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: nil,
+		ConstantinopleBlock: big.NewInt(0),
 		Ethash:              new(EthashConfig),
 		Clique:              nil,
 		XDPoS:               nil,
 	}
 
-	// AllXDPoSProtocolChanges contains every protocol change (EIPs) introduced
+	// AllDevChainProtocolChanges contains every protocol change (EIPs) introduced
 	// and accepted by the Ethereum core developers into the XDPoS consensus.
 	//
 	// This configuration is intentionally not using keyed fields to force anyone
 	// adding flags to the config to also have to set these fields.
-	AllXDPoSProtocolChanges = &ChainConfig{
-		ChainId:             big.NewInt(89),
+	AllDevChainProtocolChanges = &ChainConfig{
+		ChainId:             big.NewInt(1337),
 		HomesteadBlock:      big.NewInt(0),
 		DAOForkBlock:        nil,
 		DAOForkSupport:      false,
@@ -327,12 +297,26 @@ var (
 		EIP155Block:         big.NewInt(0),
 		EIP158Block:         big.NewInt(0),
 		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: nil,
+		ConstantinopleBlock: big.NewInt(0),
 		Ethash:              nil,
 		Clique:              nil,
-		XDPoS:               &XDPoSConfig{Period: 0, Epoch: 900},
+		XDPoS: &XDPoSConfig{
+			Epoch:               900,
+			Gap:                 450,
+			SkipV1Validation:    true,
+			FoudationWalletAddr: common.HexToAddress("0x0000000000000000000000000000000000000068"),
+			Reward:              250,
+			V2: &V2{
+				SwitchEpoch:   1,
+				SwitchBlock:   big.NewInt(900),
+				CurrentConfig: UnitTestV2Configs[0],
+				AllConfigs:    UnitTestV2Configs,
+			},
+		},
 	}
 
+	// AllCliqueProtocolChanges contains every protocol change (EIPs) introduced
+	// and accepted by the Ethereum core developers into the Clique consensus.
 	AllCliqueProtocolChanges = &ChainConfig{
 		ChainId:             big.NewInt(1337),
 		HomesteadBlock:      big.NewInt(0),
@@ -342,7 +326,7 @@ var (
 		EIP155Block:         big.NewInt(0),
 		EIP158Block:         big.NewInt(0),
 		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: nil,
+		ConstantinopleBlock: big.NewInt(0),
 		Ethash:              nil,
 		Clique:              &CliqueConfig{Period: 0, Epoch: 900},
 		XDPoS:               nil,
@@ -376,6 +360,8 @@ var (
 		},
 	}
 
+	// TestChainConfig contains every protocol change (EIPs) introduced
+	// and accepted by the Ethereum core developers for testing purposes.
 	TestChainConfig = &ChainConfig{
 		ChainId:             big.NewInt(1),
 		HomesteadBlock:      big.NewInt(0),
@@ -385,7 +371,24 @@ var (
 		EIP155Block:         big.NewInt(0),
 		EIP158Block:         big.NewInt(0),
 		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: nil,
+		ConstantinopleBlock: big.NewInt(0),
+		Ethash:              new(EthashConfig),
+		Clique:              nil,
+		XDPoS:               nil,
+	}
+
+	// MergedTestChainConfig contains every protocol change (EIPs) introduced
+	// and accepted by the Ethereum core developers for testing purposes.
+	MergedTestChainConfig = &ChainConfig{
+		ChainId:             big.NewInt(1),
+		HomesteadBlock:      big.NewInt(0),
+		DAOForkBlock:        nil,
+		DAOForkSupport:      false,
+		EIP150Block:         big.NewInt(0),
+		EIP155Block:         big.NewInt(0),
+		EIP158Block:         big.NewInt(0),
+		ByzantiumBlock:      big.NewInt(0),
+		ConstantinopleBlock: big.NewInt(0),
 		Ethash:              new(EthashConfig),
 		Clique:              nil,
 		XDPoS:               nil,
