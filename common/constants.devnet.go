@@ -5,7 +5,7 @@ import (
 )
 
 var DevnetConstant = constant{
-	chainID:           551,
+	chainID:           5551,
 	blackListHFNumber: 0,
 	maxMasternodesV2:  108,
 
