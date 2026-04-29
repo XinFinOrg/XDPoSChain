@@ -283,12 +283,12 @@ var (
 		XDPoS:               nil,
 	}
 
-	// AllDevChainProtocolChanges contains every protocol change (EIPs) introduced
+	// AllXDPoSProtocolChanges contains every protocol change (EIPs) introduced
 	// and accepted by the Ethereum core developers into the XDPoS consensus.
 	//
 	// This configuration is intentionally not using keyed fields to force anyone
 	// adding flags to the config to also have to set these fields.
-	AllDevChainProtocolChanges = &ChainConfig{
+	AllXDPoSProtocolChanges = &ChainConfig{
 		ChainId:             big.NewInt(1337),
 		HomesteadBlock:      big.NewInt(0),
 		DAOForkBlock:        nil,

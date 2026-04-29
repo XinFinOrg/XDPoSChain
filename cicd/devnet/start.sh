@@ -77,7 +77,15 @@ else
   instance_ip=$INSTANCE_IP
 fi
 
-netstats="${NODE_NAME}-${wallet}-${instance_ip}:xinfin_xdpos_hybrid_network_stats@devnetstats.hashlabs.apothem.network:1999"
+netstats_default="${NODE_NAME}-${wallet}-${instance_ip}:xinfin_xdpos_hybrid_network_stats@devnetstats.hashlabs.apothem.network:1999"
+if test -z "$NETSTATS_CONFIG"
+then
+  echo "NETSTATS_CONFIG not set, default to hashlabs devnet stats"
+  netstats=$netstats_default
+else
+  echo "NETSTATS_CONFIG found, set to $NETSTATS_CONFIG"
+  netstats="${NODE_NAME}-${wallet}-${instance_ip}:$NETSTATS_CONFIG"
+fi
 
 
 echo "Running a node with wallet: ${wallet} at IP: ${instance_ip}"
@@ -94,7 +102,7 @@ XDC --ethstats ${netstats} --gcmode archive \
 --http-port $rpc_port \
 --http-api db,eth,debug,net,shh,txpool,personal,web3,XDPoS \
 --http-vhosts "*" --unlock "${wallet}" --password /work/.pwd --mine \
---miner-gasprice "1" --miner-gaslimit "50000000" --verbosity ${log_level} \
+--miner-gasprice "1" --miner-gaslimit "420000000" --verbosity ${log_level} \
 --debugdatadir /work/xdcchain \
 --store-reward \
 --ws --ws-addr=0.0.0.0 --ws-port $ws_port \
