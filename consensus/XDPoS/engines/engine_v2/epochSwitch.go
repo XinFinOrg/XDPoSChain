@@ -11,7 +11,7 @@ import (
 )
 
 // Given header and its hash, get epoch switch info from the epoch switch block of that epoch,
-// headers is allow to be nil. headers contain header (as last item) and it parents if any, which can be used to avoid
+// headers is allow to be nil. if not nil, headers contain header (as last item) and its parents if any, which can be used to avoid
 // fetching from the database during recursive lookups (useful during VerifyHeaders).
 func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, headers []*types.Header, hash common.Hash) (*types.EpochSwitchInfo, error) {
 	epochSwitchInfo, ok := x.epochSwitches.Get(hash)
