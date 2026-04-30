@@ -511,11 +511,8 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td *big.I
 	if mode == FastSync {
 		if d.pivotNumber != 0 {
 			// Use configured pivot block
-			log.Info("Using configured pivot block", "number", d.pivotNumber)
+			log.Info("Using configured pivot block", "number", d.pivotNumber, "origin", origin)
 			pivot = d.pivotNumber
-			if pivot <= origin {
-				origin = pivot - 1
-			}
 		} else if height <= uint64(fsMinFullBlocks) {
 			origin = 0
 		} else {
@@ -528,6 +525,9 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td *big.I
 	d.committed = 1
 	if mode == FastSync && pivot != 0 {
 		d.committed = 0
+	}
+	if mode == FastSync && d.pivotNumber != 0 && pivot <= origin {
+		d.committed = 1
 	}
 	// Initiate the sync using a concurrent header and content retrieval algorithm
 	d.queue.Prepare(origin+1, mode)
