@@ -2,7 +2,6 @@ package common
 
 import (
 	"fmt"
-	"maps"
 	"math/big"
 
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -75,10 +74,6 @@ type constant struct {
 	xdcxListingSMC         Address
 	relayerRegistrationSMC Address
 	lendingRegistrationSMC Address
-
-	ignoreSignerCheckBlockArray map[uint64]struct{}
-
-	denylist map[Address]struct{}
 }
 
 func (c *constant) print() {
@@ -114,8 +109,6 @@ func (c *constant) print() {
 	fmt.Println("xdcxListingSMC:", c.xdcxListingSMC)
 	fmt.Println("relayerRegistrationSMC:", c.relayerRegistrationSMC)
 	fmt.Println("lendingRegistrationSMC:", c.lendingRegistrationSMC)
-	fmt.Println("ignoreSignerCheckBlockArray:", c.ignoreSignerCheckBlockArray)
-	fmt.Println("denylist:", c.denylist)
 }
 
 // variables for specific networks, copy values from mainnet constant to pass tests
@@ -152,23 +145,7 @@ var (
 	XDCXListingSMC         = MainnetConstant.xdcxListingSMC
 	RelayerRegistrationSMC = MainnetConstant.relayerRegistrationSMC
 	LendingRegistrationSMC = MainnetConstant.lendingRegistrationSMC
-
-	ignoreSignerCheckBlockArray = MainnetConstant.ignoreSignerCheckBlockArray
-	denylist                    = MainnetConstant.denylist
 )
-
-func IsIgnoreSignerCheckBlock(blockNumber uint64) bool {
-	_, ok := ignoreSignerCheckBlockArray[blockNumber]
-	return ok
-}
-
-func IsInDenylist(address *Address) bool {
-	if address == nil {
-		return false
-	}
-	_, ok := denylist[*address]
-	return ok
-}
 
 // CopyConstants only handles testnet, devnet, local network.
 // It skips mainnet since the default value is from mainnet.
@@ -223,10 +200,4 @@ func CopyConstants(chainID uint64) {
 	XDCXListingSMC = c.xdcxListingSMC
 	RelayerRegistrationSMC = c.relayerRegistrationSMC
 	LendingRegistrationSMC = c.lendingRegistrationSMC
-
-	clear(ignoreSignerCheckBlockArray)
-	maps.Copy(ignoreSignerCheckBlockArray, c.ignoreSignerCheckBlockArray)
-
-	clear(denylist)
-	maps.Copy(denylist, c.denylist)
 }
