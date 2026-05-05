@@ -20,7 +20,6 @@ import (
 	"crypto/ecdsa"
 	"errors"
 	"fmt"
-	"math"
 	"math/big"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -40,6 +39,9 @@ type sigCache struct {
 
 // MakeSigner returns a Signer based on the given chain config and block number.
 func MakeSigner(config *params.ChainConfig, blockNumber *big.Int) Signer {
+	if config == nil {
+		return HomesteadSigner{}
+	}
 	var signer Signer
 	switch {
 	case config.IsPrague(blockNumber):
@@ -65,17 +67,19 @@ func MakeSigner(config *params.ChainConfig, blockNumber *big.Int) Signer {
 // have the current block number available, use MakeSigner instead.
 func LatestSigner(config *params.ChainConfig) Signer {
 	var signer Signer
-	if config.ChainID != nil {
+	if config != nil && config.ChainID != nil {
 		switch {
-		case common.PragueBlock.Int64() != math.MaxInt64 || config.PragueBlock != nil:
+		case config.PragueBlock != nil:
 			signer = NewPragueSigner(config.ChainID)
-		case common.Eip1559Block.Int64() != math.MaxInt64 || config.Eip1559Block != nil:
+		case config.Eip1559Block != nil:
 			signer = NewLondonSigner(config.ChainID)
 		case config.EIP155Block != nil:
 			signer = NewEIP155Signer(config.ChainID)
 		default:
 			signer = HomesteadSigner{}
 		}
+	} else {
+		signer = HomesteadSigner{}
 	}
 	return signer
 }

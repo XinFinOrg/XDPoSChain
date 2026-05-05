@@ -131,9 +131,12 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	}
 	// Resolve the effective chain config (and persist it when compatible)
 	// before constructing the consensus engine so it initializes with final network settings.
-	chainConfig, _, genesisErr := core.SetupGenesisBlock(chainDb, config.Genesis)
-	if _, ok := genesisErr.(*params.ConfigCompatError); genesisErr != nil && !ok {
-		return nil, genesisErr
+	chainConfig, _, _, err := core.SetupGenesisBlock(chainDb, config.Genesis)
+	if chainConfig == nil {
+		return nil, fmt.Errorf("nil chain config returned from SetupGenesisBlock (err=%v)", err)
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	// Set networkID to chainID by default.
@@ -141,7 +144,6 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	if networkID == 0 {
 		networkID = chainConfig.ChainID.Uint64()
 	}
-	common.CopyConstants(networkID)
 	engine := CreateConsensusEngine(stack, chainConfig, chainDb)
 
 	// Assemble the Ethereum object.

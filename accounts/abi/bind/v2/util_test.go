@@ -56,7 +56,6 @@ var waitDeployedTests = map[string]struct {
 func TestWaitDeployed(t *testing.T) {
 	t.Parallel()
 	config := *params.TestXDPoSMockChainConfig
-	config.Eip1559Block = big.NewInt(0)
 	for name, test := range waitDeployedTests {
 		backend := simulated.New(
 			types.GenesisAlloc{
@@ -108,7 +107,6 @@ func TestWaitDeployed(t *testing.T) {
 
 func TestWaitDeployedCornerCases(t *testing.T) {
 	config := *params.TestXDPoSMockChainConfig
-	config.Eip1559Block = big.NewInt(0)
 	var (
 		backend = backends.NewXDCSimulatedBackend(
 			types.GenesisAlloc{

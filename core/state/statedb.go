@@ -110,6 +110,8 @@ type StateDB struct {
 	// when accessing state of accounts.
 	dbErr error
 
+	chainConfig *params.ChainConfig
+
 	// The refund counter, also used by state transitioning.
 	refund uint64
 
@@ -194,6 +196,42 @@ func (s *StateDB) setError(err error) {
 // Error returns the memorized database failure occurred earlier.
 func (s *StateDB) Error() error {
 	return s.dbErr
+}
+
+func (s *StateDB) SetChainConfig(config *params.ChainConfig) {
+	s.chainConfig = config
+}
+
+func (s *StateDB) ChainConfig() *params.ChainConfig {
+	return s.chainConfig
+}
+
+func (s *StateDB) TRC21IssuerSMC() common.Address {
+	if s.chainConfig == nil {
+		return common.Address{}
+	}
+	return s.chainConfig.TRC21IssuerSMC
+}
+
+func (s *StateDB) XDCXListingSMC() common.Address {
+	if s.chainConfig == nil {
+		return common.Address{}
+	}
+	return s.chainConfig.XDCXListingSMC
+}
+
+func (s *StateDB) RelayerRegistrationSMC() common.Address {
+	if s.chainConfig == nil {
+		return common.Address{}
+	}
+	return s.chainConfig.RelayerRegistrationSMC
+}
+
+func (s *StateDB) LendingRegistrationSMC() common.Address {
+	if s.chainConfig == nil {
+		return common.Address{}
+	}
+	return s.chainConfig.LendingRegistrationSMC
 }
 
 // Reset clears out all ephemeral state objects from the state db, but keeps
@@ -747,6 +785,7 @@ func (s *StateDB) Copy() *StateDB {
 		stateObjectsDestruct: maps.Clone(s.stateObjectsDestruct),
 		mutations:            make(map[common.Address]*mutation, len(s.mutations)),
 		dbErr:                s.dbErr,
+		chainConfig:          s.chainConfig,
 		refund:               s.refund,
 		thash:                s.thash,
 		txIndex:              s.txIndex,

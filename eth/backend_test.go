@@ -4,8 +4,10 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/util"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
@@ -30,7 +32,32 @@ func TestRewardInflation(t *testing.T) {
 	}
 }
 
-func TestSetupGenesisBlockRepairsMissingV2Config(t *testing.T) {
+func TestRewardInflationUsesChainConfigTIPNoHalvingMNReward(t *testing.T) {
+	chainReward := new(big.Int).Mul(new(big.Int).SetUint64(250), new(big.Int).SetUint64(params.Ether))
+	config := &params.ChainConfig{TIPNoHalvingMNRewardBlock: big.NewInt(20)}
+	reward := util.RewardInflation(testChainReader{cfg: config}, chainReward, 20, 10)
+	if reward.Cmp(new(big.Int).Mul(new(big.Int).SetUint64(250), new(big.Int).SetUint64(params.Ether))) != 0 {
+		t.Fatalf("unexpected reward with no-halving fork: have %v", reward)
+	}
+}
+
+type testChainReader struct {
+	cfg *params.ChainConfig
+}
+
+func (t testChainReader) Config() *params.ChainConfig { return t.cfg }
+
+func (testChainReader) CurrentHeader() *types.Header { return nil }
+
+func (testChainReader) GetHeader(common.Hash, uint64) *types.Header { return nil }
+
+func (testChainReader) GetHeaderByNumber(uint64) *types.Header { return nil }
+
+func (testChainReader) GetHeaderByHash(common.Hash) *types.Header { return nil }
+
+func (testChainReader) GetBlock(common.Hash, uint64) *types.Block { return nil }
+
+func TestSetupGenesisBlockResolvesMissingV2ConfigInMemory(t *testing.T) {
 	db := rawdb.NewMemoryDatabase()
 
 	legacyGenesis := legacyTestnetGenesisWithoutV2()
@@ -43,11 +70,19 @@ func TestSetupGenesisBlockRepairsMissingV2Config(t *testing.T) {
 	if loadedCfg.XDPoS == nil {
 		t.Fatal("expected XDPoS config in loaded chain config")
 	}
-	if loadedCfg.XDPoS.V2 != nil {
-		t.Fatal("expected stored legacy chain config to have nil XDPoS.V2 before setup")
+
+	persistedBefore, err := rawdb.ReadChainConfig(db, params.TestnetGenesisHash)
+	if err != nil {
+		t.Fatalf("failed to read persisted chain config: %v", err)
+	}
+	if persistedBefore == nil || persistedBefore.XDPoS == nil {
+		t.Fatalf("expected persisted legacy chain config, have %v", persistedBefore)
+	}
+	if persistedBefore.XDPoS.V2 != nil {
+		t.Fatal("expected persisted legacy chain config to keep nil XDPoS.V2 before setup")
 	}
 
-	finalCfg, _, err := core.SetupGenesisBlock(db, core.DefaultTestnetGenesisBlock())
+	finalCfg, _, _, err := core.SetupGenesisBlock(db, core.DefaultTestnetGenesisBlock())
 	if err != nil {
 		t.Fatalf("SetupGenesisBlock failed: %v", err)
 	}
@@ -57,17 +92,28 @@ func TestSetupGenesisBlockRepairsMissingV2Config(t *testing.T) {
 	if finalCfg.XDPoS.V2.SwitchBlock.Cmp(params.TestnetChainConfig.XDPoS.V2.SwitchBlock) != 0 {
 		t.Fatalf("unexpected switch block after setup: have %v want %v", finalCfg.XDPoS.V2.SwitchBlock, params.TestnetChainConfig.XDPoS.V2.SwitchBlock)
 	}
+
+	persistedAfter, err := rawdb.ReadChainConfig(db, params.TestnetGenesisHash)
+	if err != nil {
+		t.Fatalf("failed to read persisted chain config after setup: %v", err)
+	}
+	if persistedAfter == nil || persistedAfter.XDPoS == nil {
+		t.Fatalf("expected persisted chain config with XDPoS, have %v", persistedAfter)
+	}
+	if persistedAfter.XDPoS.V2 == nil {
+		t.Fatal("expected SetupGenesisBlock to persist in-memory V2 repair")
+	}
 }
 
 func TestSetupGenesisBlockIsIdempotentForTestnet(t *testing.T) {
 	db := rawdb.NewMemoryDatabase()
 	genesis := core.DefaultTestnetGenesisBlock()
 
-	cfg1, hash1, err := core.SetupGenesisBlock(db, genesis)
+	cfg1, hash1, _, err := core.SetupGenesisBlock(db, genesis)
 	if err != nil {
 		t.Fatalf("first SetupGenesisBlock failed: %v", err)
 	}
-	cfg2, hash2, err := core.SetupGenesisBlock(db, genesis)
+	cfg2, hash2, _, err := core.SetupGenesisBlock(db, genesis)
 	if err != nil {
 		t.Fatalf("second SetupGenesisBlock failed: %v", err)
 	}

@@ -37,8 +37,11 @@ var (
 )
 
 func TestBlockSigner(t *testing.T) {
-	contractBackend := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: big.NewInt(1000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
-	transactOpts := bind.NewKeyedTransactor(key)
+	contractBackend := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: big.NewInt(0).Mul(big.NewInt(1e18), big.NewInt(1000))}}, 10000000, params.TestXDPoSMockChainConfig)
+	transactOpts, err := bind.NewKeyedTransactorWithChainID(key, params.TestXDPoSMockChainConfig.ChainID)
+	if err != nil {
+		t.Fatalf("can't create transactor: %v", err)
+	}
 
 	blockSignerAddress, blockSigner, err := DeployBlockSigner(transactOpts, contractBackend, big.NewInt(99))
 	if err != nil {

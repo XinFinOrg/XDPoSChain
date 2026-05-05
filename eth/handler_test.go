@@ -482,8 +482,10 @@ func testDAOChallenge(t *testing.T, localForked, remoteForked bool, timeout bool
 		db    = rawdb.NewMemoryDatabase()
 		gspec = &core.Genesis{
 			Config: &params.ChainConfig{
-				DAOForkBlock:   big.NewInt(1),
-				DAOForkSupport: localForked,
+				ChainID:          big.NewInt(1337),
+				TIPTRC21FeeBlock: big.NewInt(0),
+				DAOForkBlock:     big.NewInt(1),
+				DAOForkSupport:   localForked,
 			},
 		}
 		blockchain, _ = core.NewBlockChain(db, nil, gspec, pow, vm.Config{})

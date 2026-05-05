@@ -162,19 +162,26 @@ func TestGetPenalties(t *testing.T) {
 // but if it does not stays enough, it will still be penalty.
 func TestHookPenaltyParolee(t *testing.T) {
 	skipLongInShortMode(t)
-	// set upgrade number to 0
-	backup := common.TipUpgradePenalty
-	common.TipUpgradePenalty = big.NewInt(0)
+	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
+	assert.Nil(t, err)
 
-	config := params.TestXDPoSMockChainConfig
-	blockchain, _, _, signer, signFn := PrepareXDCTestBlockChainWithPenaltyForV2Engine(t, int(config.XDPoS.Epoch)*4, config)
+	var config params.ChainConfig
+	err = json.Unmarshal(b, &config)
+	assert.Nil(t, err)
+	config.TIPUpgradePenaltyBlock = big.NewInt(0)
+	b, err = json.Marshal(config)
+	assert.Nil(t, err)
+	err = json.Unmarshal(b, &config)
+	assert.Nil(t, err)
+
+	blockchain, _, _, signer, signFn := PrepareXDCTestBlockChainWithPenaltyForV2Engine(t, int(config.XDPoS.Epoch)*4, &config)
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
-	hooks.AttachConsensusV2Hooks(adaptor, blockchain, config)
+	hooks.AttachConsensusV2Hooks(adaptor, blockchain, &config)
 	assert.NotNil(t, adaptor.EngineV2.HookPenalty)
 	var extraField types.ExtraFields_v2
 	// 901 is the first v2 block
 	header901 := blockchain.GetHeaderByNumber(config.XDPoS.Epoch + 1)
-	err := utils.DecodeBytesExtraFields(header901.Extra, &extraField)
+	err = utils.DecodeBytesExtraFields(header901.Extra, &extraField)
 	assert.Nil(t, err)
 	masternodes := adaptor.GetMasternodesFromCheckpointHeader(header901)
 	assert.Equal(t, 5, len(masternodes))
@@ -211,7 +218,6 @@ func TestHookPenaltyParolee(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, 1, len(penalty))
 
-	common.TipUpgradePenalty = backup
 }
 
 // TestHookPenaltyParoleePerformance tests penalty hook performance
@@ -225,10 +231,11 @@ func TestHookPenaltyParoleePerformance(t *testing.T) {
 	err = json.Unmarshal([]byte(configString), &config)
 	assert.Nil(t, err)
 	config.XDPoS.V2.AllConfigs[900].LimitPenaltyEpoch = 4
-
-	// set upgrade number to 0
-	backup := common.TipUpgradePenalty
-	common.TipUpgradePenalty = big.NewInt(0)
+	config.TIPUpgradePenaltyBlock = big.NewInt(0)
+	b, err = json.Marshal(config)
+	assert.Nil(t, err)
+	err = json.Unmarshal(b, &config)
+	assert.Nil(t, err)
 
 	// 900 1800 2700 3600(not) 4500 5400 has penalty except 3600
 	penaltyOrNot := []bool{true, true, true, false, true, true}
@@ -261,5 +268,4 @@ func TestHookPenaltyParoleePerformance(t *testing.T) {
 	// miner (coinbase) is not parolee since one epoch it is not penalty. so it is in penalty. plus another one, total 2.
 	assert.Equal(t, 2, len(penalty))
 
-	common.TipUpgradePenalty = backup
 }

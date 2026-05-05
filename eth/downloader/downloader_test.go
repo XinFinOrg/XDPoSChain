@@ -344,7 +344,7 @@ func (dl *downloadTester) handleProposedBlock(header *types.Header) error {
 
 // Config retrieves the blockchain's chain configuration.
 func (dl *downloadTester) Config() *params.ChainConfig {
-	config := *params.TestChainConfig
+	config := *testChainConfig
 	return &config
 }
 

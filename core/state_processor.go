@@ -68,6 +68,7 @@ func NewStateProcessor(config *params.ChainConfig, bc *BlockChain, engine consen
 // returns the amount of gas that was used in the process. If any of the
 // transactions failed to execute due to insufficient gas it will return an error.
 func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, cfg vm.Config, tokensFee map[common.Address]*big.Int) (types.Receipts, []*types.Log, uint64, error) {
+	statedb.SetChainConfig(p.config)
 	var (
 		receipts    = make([]*types.Receipt, 0, len(block.Transactions()))
 		usedGas     = new(uint64)
@@ -87,7 +88,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
 		misc.ApplyDAOHardFork(tracingStateDB)
 	}
-	if common.TIPSigning.Cmp(blockNumber) == 0 {
+	if p.config.TIPSigningBlock != nil && p.config.TIPSigningBlock.Cmp(blockNumber) == 0 {
 		statedb.DeleteAddress(common.BlockSignersBinary)
 	}
 	parentState := statedb.Copy()
@@ -107,7 +108,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
 		// check denylist txs after hf
-		if block.Number().Uint64() >= common.DenylistHFNumber {
+		if p.config.IsDenylist(block.Number()) {
 			// check if sender is in denylist
 			if common.IsInDenylist(tx.From()) {
 				return nil, nil, 0, fmt.Errorf("block contains transaction with sender in denylist: %v", tx.From().Hex())
@@ -118,14 +119,14 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 			}
 		}
 		// validate minFee slot for XDCZ
-		if tx.IsXDCZApplyTransaction() {
+		if tx.IsXDCZApplyTransaction(p.config) {
 			copyState := statedb.Copy()
 			if err := ValidateXDCZApplyTransaction(p.bc, block.Number(), copyState, common.BytesToAddress(tx.Data()[4:])); err != nil {
 				return nil, nil, 0, err
 			}
 		}
 		// validate balance slot, token decimal for XDCX
-		if tx.IsXDCXApplyTransaction() {
+		if tx.IsXDCXApplyTransaction(p.config) {
 			copyState := statedb.Copy()
 			if err := ValidateXDCXApplyTransaction(p.bc, block.Number(), copyState, common.BytesToAddress(tx.Data()[4:])); err != nil {
 				return nil, nil, 0, err
@@ -138,7 +139,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 				balanceFee = value
 			}
 		}
-		msg, err := TransactionToMessage(tx, signer, balanceFee, blockNumber, header.BaseFee)
+		msg, err := TransactionToMessage(tx, signer, balanceFee, blockNumber, header.BaseFee, p.config)
 		if err != nil {
 			return nil, nil, 0, err
 		}
@@ -151,7 +152,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 		receipts = append(receipts, receipt)
 		allLogs = append(allLogs, receipt.Logs...)
 		if tokenFeeUsed {
-			fee := common.GetGasFee(block.Header().Number.Uint64(), gas)
+			fee := common.GetGasFee(block.Header().Number.Uint64(), gas, p.config.TIPTRC21FeeBlock, p.config.Gas50xBlock)
 			tokensFee[*tx.To()] = new(big.Int).Sub(tokensFee[*tx.To()], fee)
 			balanceUpdated[*tx.To()] = tokensFee[*tx.To()]
 			totalFeeUsed = totalFeeUsed.Add(totalFeeUsed, fee)
@@ -166,6 +167,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 }
 
 func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, cfg vm.Config, tokensFee map[common.Address]*big.Int) (types.Receipts, []*types.Log, uint64, error) {
+	statedb.SetChainConfig(p.config)
 	block := cBlock.block
 	var (
 		receipts    types.Receipts
@@ -186,7 +188,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
 		misc.ApplyDAOHardFork(tracingStateDB)
 	}
-	if common.TIPSigning.Cmp(blockNumber) == 0 {
+	if p.config.TIPSigningBlock != nil && p.config.TIPSigningBlock.Cmp(blockNumber) == 0 {
 		statedb.DeleteAddress(common.BlockSignersBinary)
 	}
 	if cBlock.stop {
@@ -214,7 +216,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 	receipts = make([]*types.Receipt, block.Transactions().Len())
 	for i, tx := range block.Transactions() {
 		// check denylist txs after hf
-		if block.Number().Uint64() >= common.DenylistHFNumber {
+		if p.config.IsDenylist(block.Number()) {
 			// check if sender is in denylist
 			if common.IsInDenylist(tx.From()) {
 				return nil, nil, 0, fmt.Errorf("block contains transaction with sender in denylist: %v", tx.From().Hex())
@@ -225,14 +227,14 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 			}
 		}
 		// validate minFee slot for XDCZ
-		if tx.IsXDCZApplyTransaction() {
+		if tx.IsXDCZApplyTransaction(p.config) {
 			copyState := statedb.Copy()
 			if err := ValidateXDCZApplyTransaction(p.bc, block.Number(), copyState, common.BytesToAddress(tx.Data()[4:])); err != nil {
 				return nil, nil, 0, err
 			}
 		}
 		// validate balance slot, token decimal for XDCX
-		if tx.IsXDCXApplyTransaction() {
+		if tx.IsXDCXApplyTransaction(p.config) {
 			copyState := statedb.Copy()
 			if err := ValidateXDCXApplyTransaction(p.bc, block.Number(), copyState, common.BytesToAddress(tx.Data()[4:])); err != nil {
 				return nil, nil, 0, err
@@ -244,7 +246,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 				balanceFee = value
 			}
 		}
-		msg, err := TransactionToMessage(tx, signer, balanceFee, blockNumber, header.BaseFee)
+		msg, err := TransactionToMessage(tx, signer, balanceFee, blockNumber, header.BaseFee, p.config)
 		if err != nil {
 			return nil, nil, 0, err
 		}
@@ -260,7 +262,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 		receipts[i] = receipt
 		allLogs = append(allLogs, receipt.Logs...)
 		if tokenFeeUsed {
-			fee := common.GetGasFee(block.Header().Number.Uint64(), gas)
+			fee := common.GetGasFee(block.Header().Number.Uint64(), gas, p.config.TIPTRC21FeeBlock, p.config.Gas50xBlock)
 			tokensFee[*tx.To()] = new(big.Int).Sub(tokensFee[*tx.To()], fee)
 			balanceUpdated[*tx.To()] = tokensFee[*tx.To()]
 			totalFeeUsed = totalFeeUsed.Add(totalFeeUsed, fee)
@@ -374,7 +376,7 @@ func ApplyTransaction(tokensFee map[common.Address]*big.Int, evm *vm.EVM, gp *Ga
 	}
 
 	signer := types.MakeSigner(evm.ChainConfig(), header.Number)
-	msg, err := TransactionToMessage(tx, signer, balanceFee, header.Number, header.BaseFee)
+	msg, err := TransactionToMessage(tx, signer, balanceFee, header.Number, header.BaseFee, evm.ChainConfig())
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -505,9 +507,6 @@ func ProcessParentBlockHash(prevHash common.Hash, evm *vm.EVM) {
 		return
 	}
 	forkBlock := evm.ChainConfig().PragueBlock
-	if forkBlock == nil {
-		forkBlock = common.PragueBlock
-	}
 	if forkBlock == nil || blockNumber.Cmp(forkBlock) < 0 {
 		return
 	}

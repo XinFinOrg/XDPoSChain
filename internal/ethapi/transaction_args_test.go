@@ -252,6 +252,7 @@ func newBackendMock() *backendMock {
 		ConstantinopleBlock: big.NewInt(0),
 		PetersburgBlock:     big.NewInt(0),
 		IstanbulBlock:       big.NewInt(0),
+		TIPTRC21FeeBlock:    big.NewInt(0),
 		BerlinBlock:         big.NewInt(0),
 		Eip1559Block:        big.NewInt(1000),
 	}

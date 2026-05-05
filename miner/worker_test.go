@@ -84,8 +84,10 @@ func TestWorkerUpdateNonXDPoSStaysRunning(t *testing.T) {
 
 func TestWorkerCheckPreCommitXDPoSMismatch(t *testing.T) {
 	config := &params.ChainConfig{
-		ChainID: big.NewInt(1),
+		ChainID:          big.NewInt(1),
+		TIPTRC21FeeBlock: big.NewInt(0),
 		XDPoS: &params.XDPoSConfig{
+			MaxMasternodesV2: 1, // required to avoid missing fork switch error
 			V2: &params.V2{
 				SwitchBlock: big.NewInt(0),
 				AllConfigs: map[uint64]*params.V2Config{

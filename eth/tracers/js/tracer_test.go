@@ -251,24 +251,26 @@ func TestTxStartUsesExecutionGasPrice(t *testing.T) {
 
 func TestIsPrecompile(t *testing.T) {
 	chaincfg := &params.ChainConfig{
-		ChainID:             big.NewInt(1),
-		HomesteadBlock:      big.NewInt(0),
-		DAOForkBlock:        nil,
-		DAOForkSupport:      false,
-		EIP150Block:         big.NewInt(0),
-		EIP155Block:         big.NewInt(0),
-		EIP158Block:         big.NewInt(0),
-		ByzantiumBlock:      big.NewInt(100),
-		ConstantinopleBlock: big.NewInt(0),
-		PetersburgBlock:     big.NewInt(0),
-		IstanbulBlock:       big.NewInt(200),
-		BerlinBlock:         big.NewInt(300),
-		LondonBlock:         big.NewInt(0),
-		Ethash:              new(params.EthashConfig),
-		Clique:              nil,
+		ChainID:                     big.NewInt(1),
+		HomesteadBlock:              big.NewInt(0),
+		DAOForkBlock:                nil,
+		DAOForkSupport:              false,
+		EIP150Block:                 big.NewInt(0),
+		EIP155Block:                 big.NewInt(0),
+		EIP158Block:                 big.NewInt(0),
+		ByzantiumBlock:              big.NewInt(100),
+		ConstantinopleBlock:         big.NewInt(0),
+		PetersburgBlock:             big.NewInt(0),
+		IstanbulBlock:               big.NewInt(200),
+		TIPXDCXCancellationFeeBlock: big.NewInt(200),
+		BerlinBlock:                 big.NewInt(300),
+		LondonBlock:                 big.NewInt(0),
+		Ethash:                      new(params.EthashConfig),
+		Clique:                      nil,
 	}
 	chaincfg.ByzantiumBlock = big.NewInt(100)
 	chaincfg.IstanbulBlock = big.NewInt(200)
+	chaincfg.TIPXDCXCancellationFeeBlock = big.NewInt(200)
 	chaincfg.BerlinBlock = big.NewInt(300)
 	txCtx := vm.TxContext{GasPrice: big.NewInt(100000)}
 	tracer, err := newJsTracer("{addr: toAddress('0000000000000000000000000000000000000009'), res: null, step: function() { this.res = isPrecompiled(this.addr); }, fault: function() {}, result: function() { return this.res; }}", nil, nil, chaincfg)
@@ -292,7 +294,7 @@ func TestIsPrecompile(t *testing.T) {
 		t.Error(err)
 	}
 	if string(res) != "true" {
-		t.Errorf("tracer should consider blake2f as precompile in istanbul")
+		t.Errorf("tracer should consider blake2f as precompile after TIPXDCXCancellationFee")
 	}
 }
 

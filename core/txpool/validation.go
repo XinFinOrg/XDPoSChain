@@ -153,6 +153,8 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 // ValidationOptionsWithState define certain differences between stateful transaction
 // validation across the different pools without having to duplicate those checks.
 type ValidationOptionsWithState struct {
+	Config *params.ChainConfig // Chain configuration to selectively validate based on current fork rules
+
 	State *state.StateDB // State database to check nonces and balances against
 
 	// FirstNonceGap is an optional callback to retrieve the first nonce gap in
@@ -187,6 +189,12 @@ type ValidationOptionsWithState struct {
 // This check is public to allow different transaction pools to check the stateful
 // rules without duplicating code and running the risk of missed updates.
 func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, opts *ValidationOptionsWithState) error {
+	if opts.Config == nil {
+		return ErrMissingChainConfig
+	}
+	if opts.State != nil {
+		opts.State.SetChainConfig(opts.Config)
+	}
 	// Ensure the transaction adheres to nonce ordering
 	from, err := types.Sender(signer, tx) // already validated (and cached), but cleaner to check
 	if err != nil {
@@ -222,7 +230,7 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 			if !opts.State.ValidateTRC21Tx(from, *to, tx.Data()) {
 				return core.ErrInsufficientFunds
 			}
-			cost = tx.TxCost(number)
+			cost = tx.TxCost(number, opts.Config.Gas50xBlock)
 		}
 	}
 	newBalance := new(big.Int).Add(balance, feeCapacity)
@@ -255,7 +263,7 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	}
 
 	// Ensure sender and receiver are not in denylist
-	if number == nil || number.Cmp(new(big.Int).SetUint64(common.DenylistHFNumber)) >= 0 {
+	if number == nil || opts.Config.IsDenylist(number) {
 		// check if sender is in denylist
 		if common.IsInDenylist(tx.From()) {
 			return fmt.Errorf("reject transaction with sender in denylist: %v", tx.From().Hex())
@@ -268,7 +276,7 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 
 	// Validate gas price
 	if !tx.IsSpecialTransaction() {
-		minGasPrice := common.GetMinGasPrice(number)
+		minGasPrice := common.GetMinGasPrice(number, opts.Config.Gas50xBlock)
 		if tx.GasPrice().Cmp(minGasPrice) < 0 {
 			return ErrUnderMinGasPrice
 		}

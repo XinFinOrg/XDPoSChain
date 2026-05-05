@@ -792,7 +792,7 @@ func (x *XDPoS_v1) UpdateMasternodes(chain consensus.ChainReader, header *types.
 	// check if block number is increase ms checkpoint
 	if x.chainConfig.IsTIPIncreaseMasternodes(header.Number) || (x.config.V2.SwitchBlock != nil && header.Number.Cmp(x.config.V2.SwitchBlock) == 1) {
 		// using new masterndoes
-		maxMasternodes = common.MaxMasternodesV2
+		maxMasternodes = x.chainConfig.XDPoS.MaxMasternodesV2
 	} else {
 		// using old masterndoes
 		maxMasternodes = common.MaxMasternodes

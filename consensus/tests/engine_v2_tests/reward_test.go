@@ -179,9 +179,11 @@ func TestHookRewardAfterUpgrade(t *testing.T) {
 	// set switch to 1800, so that it covers 901-1799, 1800-2700 two epochs
 	config.XDPoS.V2.SwitchBlock.SetUint64(1800)
 	config.XDPoS.V2.SwitchEpoch = 2
-	// set upgrade number to 0
-	backup := common.TIPUpgradeReward
-	common.TIPUpgradeReward = big.NewInt(0)
+	config.TIPUpgradeRewardBlock = big.NewInt(0)
+	b, err = json.Marshal(config)
+	assert.Nil(t, err)
+	err = json.Unmarshal(b, &config)
+	assert.Nil(t, err)
 
 	blockchain, _, _, signer, signFn := PrepareXDCTestBlockChainWithProtectorObserver(t, int(config.XDPoS.Epoch)*3+10, &config)
 
@@ -312,7 +314,6 @@ func TestHookRewardAfterUpgrade(t *testing.T) {
 	totalBurned := statedb.GetPostBurned(epochNum).Big().Int64()
 	// since no EIP 1559, so no burned
 	assert.Zero(t, totalBurned, "statedb records wrong total burned")
-	common.TIPUpgradeReward = backup
 }
 
 func TestFinalizeAfterUpgrade(t *testing.T) {
@@ -327,9 +328,11 @@ func TestFinalizeAfterUpgrade(t *testing.T) {
 	// set switch to 1800, so that it covers 901-1799, 1800-2700 two epochs
 	config.XDPoS.V2.SwitchBlock.SetUint64(1800)
 	config.XDPoS.V2.SwitchEpoch = 2
-	// set upgrade number to 0
-	backup := common.TIPUpgradeReward
-	common.TIPUpgradeReward = big.NewInt(0)
+	config.TIPUpgradeRewardBlock = big.NewInt(0)
+	b, err = json.Marshal(config)
+	assert.Nil(t, err)
+	err = json.Unmarshal(b, &config)
+	assert.Nil(t, err)
 
 	blockchain, _, _, signer, signFn := PrepareXDCTestBlockChainWithProtectorObserver(t, int(config.XDPoS.Epoch)*3+10, &config)
 
@@ -381,7 +384,6 @@ func TestFinalizeAfterUpgrade(t *testing.T) {
 	minted := statedbAfterFinalize.GetPostMinted(epochNum)
 	assert.False(t, minted.IsZero())
 
-	common.TIPUpgradeReward = backup
 }
 
 func TestRewardHalvingVanishing(t *testing.T) {

@@ -36,6 +36,10 @@ var (
 	}
 )
 
+func lendingRegistrationSMC(statedb *state.StateDB) common.Address {
+	return statedb.LendingRegistrationSMC()
+}
+
 // @function IsValidRelayer : return whether the given address is the coinbase of a valid relayer or not
 // @param statedb : current state
 // @param coinbase: coinbase address of relayer
@@ -45,7 +49,7 @@ func IsValidRelayer(statedb *state.StateDB, coinbase common.Address) bool {
 
 	// a valid relayer must have baseToken
 	locBaseToken := state.GetLocOfStructElement(locRelayerState, LendingRelayerStructSlots["bases"])
-	if v := statedb.GetState(common.LendingRegistrationSMC, common.BytesToHash(locBaseToken.Bytes())); v != (common.Hash{}) {
+	if v := statedb.GetState(lendingRegistrationSMC(statedb), common.BytesToHash(locBaseToken.Bytes())); v != (common.Hash{}) {
 		if tradingstate.IsResignedRelayer(coinbase, statedb) {
 			return false
 		}
@@ -54,7 +58,7 @@ func IsValidRelayer(statedb *state.StateDB, coinbase common.Address) bool {
 
 		locBigDeposit := new(big.Int).SetUint64(uint64(0)).Add(locRelayerStateTrading, tradingstate.RelayerStructMappingSlot["_deposit"])
 		locHashDeposit := common.BigToHash(locBigDeposit)
-		balance := statedb.GetState(common.RelayerRegistrationSMC, locHashDeposit).Big()
+		balance := statedb.GetState(statedb.RelayerRegistrationSMC(), locHashDeposit).Big()
 		expectedFund := new(big.Int).Mul(common.BasePrice, common.RelayerLockedFund)
 		if balance.Cmp(expectedFund) <= 0 {
 			log.Debug("Relayer is not in relayer list", "relayer", coinbase, "balance", balance, "expected", expectedFund)
@@ -72,7 +76,7 @@ func IsValidRelayer(statedb *state.StateDB, coinbase common.Address) bool {
 func GetFee(statedb *state.StateDB, coinbase common.Address) *big.Int {
 	locRelayerState := state.GetLocMappingAtKey(coinbase.Hash(), LendingRelayerListSlot)
 	locHash := common.BytesToHash(new(big.Int).Add(locRelayerState, LendingRelayerStructSlots["fee"]).Bytes())
-	return statedb.GetState(common.LendingRegistrationSMC, locHash).Big()
+	return statedb.GetState(lendingRegistrationSMC(statedb), locHash).Big()
 }
 
 // @function GetBaseList
@@ -83,10 +87,10 @@ func GetBaseList(statedb *state.StateDB, coinbase common.Address) []common.Addre
 	baseList := []common.Address{}
 	locRelayerState := state.GetLocMappingAtKey(coinbase.Hash(), LendingRelayerListSlot)
 	locBaseHash := state.GetLocOfStructElement(locRelayerState, LendingRelayerStructSlots["bases"])
-	length := statedb.GetState(common.LendingRegistrationSMC, locBaseHash).Big().Uint64()
+	length := statedb.GetState(lendingRegistrationSMC(statedb), locBaseHash).Big().Uint64()
 	for i := uint64(0); i < length; i++ {
 		loc := state.GetLocDynamicArrAtElement(locBaseHash, i, 1)
-		addr := common.BytesToAddress(statedb.GetState(common.LendingRegistrationSMC, loc).Bytes())
+		addr := common.BytesToAddress(statedb.GetState(lendingRegistrationSMC(statedb), loc).Bytes())
 		if addr != (common.Address{}) {
 			baseList = append(baseList, addr)
 		}
@@ -102,10 +106,10 @@ func GetTerms(statedb *state.StateDB, coinbase common.Address) []uint64 {
 	terms := []uint64{}
 	locRelayerState := state.GetLocMappingAtKey(coinbase.Hash(), LendingRelayerListSlot)
 	locTermHash := state.GetLocOfStructElement(locRelayerState, LendingRelayerStructSlots["terms"])
-	length := statedb.GetState(common.LendingRegistrationSMC, locTermHash).Big().Uint64()
+	length := statedb.GetState(lendingRegistrationSMC(statedb), locTermHash).Big().Uint64()
 	for i := uint64(0); i < length; i++ {
 		loc := state.GetLocDynamicArrAtElement(locTermHash, i, 1)
-		t := statedb.GetState(common.LendingRegistrationSMC, loc).Big().Uint64()
+		t := statedb.GetState(lendingRegistrationSMC(statedb), loc).Big().Uint64()
 		if t != uint64(0) {
 			terms = append(terms, t)
 		}
@@ -163,10 +167,10 @@ func GetCollaterals(statedb *state.StateDB, coinbase common.Address, baseToken c
 
 	// if collaterals is not defined for the relayer, return default collaterals
 	locDefaultCollateralHash := state.GetLocSimpleVariable(DefaultCollateralSlot)
-	length := statedb.GetState(common.LendingRegistrationSMC, locDefaultCollateralHash).Big().Uint64()
+	length := statedb.GetState(lendingRegistrationSMC(statedb), locDefaultCollateralHash).Big().Uint64()
 	for i := uint64(0); i < length; i++ {
 		loc := state.GetLocDynamicArrAtElement(locDefaultCollateralHash, i, 1)
-		addr := common.BytesToAddress(statedb.GetState(common.LendingRegistrationSMC, loc).Bytes())
+		addr := common.BytesToAddress(statedb.GetState(lendingRegistrationSMC(statedb), loc).Bytes())
 		if addr != (common.Address{}) {
 			collaterals = append(collaterals, addr)
 		}
@@ -183,9 +187,9 @@ func GetCollateralDetail(statedb *state.StateDB, token common.Address) (depositR
 	locDepositRate := state.GetLocOfStructElement(collateralState, CollateralStructSlots["depositRate"])
 	locLiquidationRate := state.GetLocOfStructElement(collateralState, CollateralStructSlots["liquidationRate"])
 	locRecallRate := state.GetLocOfStructElement(collateralState, CollateralStructSlots["recallRate"])
-	depositRate = statedb.GetState(common.LendingRegistrationSMC, locDepositRate).Big()
-	liquidationRate = statedb.GetState(common.LendingRegistrationSMC, locLiquidationRate).Big()
-	recallRate = statedb.GetState(common.LendingRegistrationSMC, locRecallRate).Big()
+	depositRate = statedb.GetState(lendingRegistrationSMC(statedb), locDepositRate).Big()
+	liquidationRate = statedb.GetState(lendingRegistrationSMC(statedb), locLiquidationRate).Big()
+	recallRate = statedb.GetState(lendingRegistrationSMC(statedb), locRecallRate).Big()
 	return depositRate, liquidationRate, recallRate
 }
 
@@ -197,8 +201,8 @@ func GetCollateralPrice(statedb *state.StateDB, collateralToken common.Address, 
 	locCollateralPrice := common.BigToHash(new(big.Int).Add(new(big.Int).SetBytes(locLendingTokenPriceByte), PriceStructSlots["price"]))
 	locBlockNumber := common.BigToHash(new(big.Int).Add(new(big.Int).SetBytes(locLendingTokenPriceByte), PriceStructSlots["blockNumber"]))
 
-	price = statedb.GetState(common.LendingRegistrationSMC, locCollateralPrice).Big()
-	blockNumber = statedb.GetState(common.LendingRegistrationSMC, locBlockNumber).Big()
+	price = statedb.GetState(lendingRegistrationSMC(statedb), locCollateralPrice).Big()
+	blockNumber = statedb.GetState(lendingRegistrationSMC(statedb), locBlockNumber).Big()
 	return price, blockNumber
 }
 
@@ -208,10 +212,10 @@ func GetCollateralPrice(statedb *state.StateDB, collateralToken common.Address, 
 func GetSupportedTerms(statedb *state.StateDB) []uint64 {
 	terms := []uint64{}
 	locSupportedTerm := state.GetLocSimpleVariable(SupportedTermSlot)
-	length := statedb.GetState(common.LendingRegistrationSMC, locSupportedTerm).Big().Uint64()
+	length := statedb.GetState(lendingRegistrationSMC(statedb), locSupportedTerm).Big().Uint64()
 	for i := uint64(0); i < length; i++ {
 		loc := state.GetLocDynamicArrAtElement(locSupportedTerm, i, 1)
-		t := statedb.GetState(common.LendingRegistrationSMC, loc).Big().Uint64()
+		t := statedb.GetState(lendingRegistrationSMC(statedb), loc).Big().Uint64()
 		if t != 0 {
 			terms = append(terms, t)
 		}
@@ -225,10 +229,10 @@ func GetSupportedTerms(statedb *state.StateDB) []uint64 {
 func GetSupportedBaseToken(statedb *state.StateDB) []common.Address {
 	baseTokens := []common.Address{}
 	locSupportedBaseToken := state.GetLocSimpleVariable(SupportedBaseSlot)
-	length := statedb.GetState(common.LendingRegistrationSMC, locSupportedBaseToken).Big().Uint64()
+	length := statedb.GetState(lendingRegistrationSMC(statedb), locSupportedBaseToken).Big().Uint64()
 	for i := uint64(0); i < length; i++ {
 		loc := state.GetLocDynamicArrAtElement(locSupportedBaseToken, i, 1)
-		addr := common.BytesToAddress(statedb.GetState(common.LendingRegistrationSMC, loc).Bytes())
+		addr := common.BytesToAddress(statedb.GetState(lendingRegistrationSMC(statedb), loc).Bytes())
 		if addr != (common.Address{}) {
 			baseTokens = append(baseTokens, addr)
 		}
@@ -254,10 +258,10 @@ func GetAllCollateral(statedb *state.StateDB) []common.Address {
 	//}
 
 	locDefaultCollateralHash := state.GetLocSimpleVariable(DefaultCollateralSlot)
-	length := statedb.GetState(common.LendingRegistrationSMC, locDefaultCollateralHash).Big().Uint64()
+	length := statedb.GetState(lendingRegistrationSMC(statedb), locDefaultCollateralHash).Big().Uint64()
 	for i := uint64(0); i < length; i++ {
 		loc := state.GetLocDynamicArrAtElement(locDefaultCollateralHash, i, 1)
-		addr := common.BytesToAddress(statedb.GetState(common.LendingRegistrationSMC, loc).Bytes())
+		addr := common.BytesToAddress(statedb.GetState(lendingRegistrationSMC(statedb), loc).Bytes())
 		if addr != (common.Address{}) {
 			collaterals = append(collaterals, addr)
 		}

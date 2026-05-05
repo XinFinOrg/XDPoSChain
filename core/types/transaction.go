@@ -28,6 +28,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/holiman/uint256"
 )
@@ -538,8 +539,8 @@ func (tx *Transaction) WithSignature(signer Signer, sig []byte) (*Transaction, e
 }
 
 // TxCost returns gas * gasPrice + value.
-func (tx *Transaction) TxCost(number *big.Int) *big.Int {
-	total := new(big.Int).Mul(common.GetGasPrice(number), new(big.Int).SetUint64(tx.Gas()))
+func (tx *Transaction) TxCost(number, gas50xBlock *big.Int) *big.Int {
+	total := new(big.Int).Mul(common.GetGasPrice(number, gas50xBlock), new(big.Int).SetUint64(tx.Gas()))
 	total.Add(total, tx.Value())
 	return total
 }
@@ -653,9 +654,9 @@ func (tx *Transaction) IsVotingTransaction() (bool, *common.Address) {
 	return true, &m
 }
 
-func (tx *Transaction) IsXDCXApplyTransaction() bool {
+func (tx *Transaction) IsXDCXApplyTransaction(config *params.ChainConfig) bool {
 	to := tx.To()
-	if to == nil || *to != common.XDCXListingSMC {
+	if config == nil || to == nil || *to != config.XDCXListingSMC {
 		return false
 	}
 	data := tx.Data()
@@ -668,9 +669,9 @@ func (tx *Transaction) IsXDCXApplyTransaction() bool {
 	return method == common.XDCXApplyMethod
 }
 
-func (tx *Transaction) IsXDCZApplyTransaction() bool {
+func (tx *Transaction) IsXDCZApplyTransaction(config *params.ChainConfig) bool {
 	to := tx.To()
-	if to == nil || *to != common.TRC21IssuerSMC {
+	if config == nil || to == nil || *to != config.TRC21IssuerSMC {
 		return false
 	}
 	data := tx.Data()

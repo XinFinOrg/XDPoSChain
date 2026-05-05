@@ -371,12 +371,13 @@ func (api *API) GetV2BlockByHash(blockHash common.Hash) *V2BlockInfo {
 
 func (api *API) NetworkInformation() NetworkInformation {
 	info := NetworkInformation{}
-	info.NetworkId = api.chain.Config().ChainID
+	config := api.chain.Config()
+	info.NetworkId = config.ChainID
 	info.XDCValidatorAddress = common.MasternodeVotingSMCBinary
-	info.LendingAddress = common.LendingRegistrationSMC
-	info.RelayerRegistrationAddress = common.RelayerRegistrationSMC
-	info.XDCXListingAddress = common.XDCXListingSMC
-	info.XDCZAddress = common.TRC21IssuerSMC
+	info.LendingAddress = config.LendingRegistrationSMC
+	info.RelayerRegistrationAddress = config.RelayerRegistrationSMC
+	info.XDCXListingAddress = config.XDCXListingSMC
+	info.XDCZAddress = config.TRC21IssuerSMC
 	info.ConsensusConfigs = *api.XDPoS.config
 
 	return info

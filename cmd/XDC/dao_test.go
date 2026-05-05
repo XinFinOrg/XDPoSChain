@@ -31,13 +31,19 @@ var daoOldGenesis = `{
 	"alloc"      : {},
 	"coinbase"   : "0x0000000000000000000000000000000000000000",
 	"difficulty" : "0x20000",
-	"extraData"  : "",
+	"extraData"  : "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
 	"gasLimit"   : "0x2fefd8",
 	"nonce"      : "0x0000000000000042",
 	"mixhash"    : "0x0000000000000000000000000000000000000000000000000000000000000000",
 	"parentHash" : "0x0000000000000000000000000000000000000000000000000000000000000000",
 	"timestamp"  : "0x00",
-	"config"     : {}
+	"config"     : {
+		"chainId" : 1337,
+		"tipTRC21FeeBlock" : 0,
+		"XDPoS": {
+			"maxMasternodesV2": 108
+		}
+	}
 }`
 
 // Genesis block for nodes which actively oppose the DAO fork
@@ -45,15 +51,20 @@ var daoNoForkGenesis = `{
 	"alloc"      : {},
 	"coinbase"   : "0x0000000000000000000000000000000000000000",
 	"difficulty" : "0x20000",
-	"extraData"  : "",
+	"extraData"  : "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
 	"gasLimit"   : "0x2fefd8",
 	"nonce"      : "0x0000000000000042",
 	"mixhash"    : "0x0000000000000000000000000000000000000000000000000000000000000000",
 	"parentHash" : "0x0000000000000000000000000000000000000000000000000000000000000000",
 	"timestamp"  : "0x00",
 	"config"     : {
+		"chainId" : 1337,
+		"tipTRC21FeeBlock" : 0,
 		"daoForkBlock"   : 314,
-		"daoForkSupport" : false
+		"daoForkSupport" : false,
+		"XDPoS": {
+			"maxMasternodesV2": 108
+		}
 	}
 }`
 
@@ -62,19 +73,23 @@ var daoProForkGenesis = `{
 	"alloc"      : {},
 	"coinbase"   : "0x0000000000000000000000000000000000000000",
 	"difficulty" : "0x20000",
-	"extraData"  : "",
+	"extraData"  : "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
 	"gasLimit"   : "0x2fefd8",
 	"nonce"      : "0x0000000000000042",
 	"mixhash"    : "0x0000000000000000000000000000000000000000000000000000000000000000",
 	"parentHash" : "0x0000000000000000000000000000000000000000000000000000000000000000",
 	"timestamp"  : "0x00",
 	"config"     : {
+		"chainId" : 1337,
+		"tipTRC21FeeBlock" : 0,
 		"daoForkBlock"   : 314,
-		"daoForkSupport" : true
+		"daoForkSupport" : true,
+		"XDPoS": {
+			"maxMasternodesV2": 108
+		}
 	}
 }`
 
-var daoGenesisHash = common.HexToHash("29a4b5d743bfbda3a7461974d49c62bf23ba5df9c8b01de8256e2ac2a9ae1cd8")
 var daoGenesisForkBlock = big.NewInt(314)
 
 // TestDAOForkBlockNewChain tests that the DAO hard-fork number and the nodes support/opposition is correctly
@@ -122,9 +137,10 @@ func testDAOForkBlockNewChain(t *testing.T, test int, genesis string, expectBloc
 	}
 	defer db.Close()
 
-	genesisHash := common.HexToHash("8d13370621558f4ed0da587934473c0404729f28b0ff1d50e5fdd840457a2f17")
-	if genesis != "" {
-		genesisHash = daoGenesisHash
+	genesisHash := rawdb.ReadCanonicalHash(db, 0)
+	if genesisHash == (common.Hash{}) {
+		t.Errorf("test %d: failed to read canonical genesis hash", test)
+		return
 	}
 	config, err := rawdb.ReadChainConfig(db, genesisHash)
 	if err != nil {

@@ -143,7 +143,7 @@ func BenchmarkListAdd(t *testing.B) {
 	t.ResetTimer()
 	for _, v := range rand.Perm(len(txs)) {
 		list.Add(txs[v], DefaultConfig.PriceBump)
-		list.Filter(priceLimit, DefaultConfig.PriceBump, nil, nil)
+		list.Filter(priceLimit, DefaultConfig.PriceBump, nil, nil, nil)
 	}
 }
 

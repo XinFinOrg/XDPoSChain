@@ -736,7 +736,7 @@ func (api *BlockChainAPI) GetCandidateStatus(ctx context.Context, coinbaseAddres
 			return result, errors.New("undefined XDPoS consensus engine")
 		}
 	} else if api.b.ChainConfig().IsTIPIncreaseMasternodes(block.Number()) {
-		maxMasternodes = common.MaxMasternodesV2
+		maxMasternodes = api.b.ChainConfig().XDPoS.MaxMasternodesV2
 	} else {
 		maxMasternodes = common.MaxMasternodes
 	}
@@ -931,7 +931,7 @@ func (api *BlockChainAPI) GetCandidates(ctx context.Context, epoch rpc.EpochNumb
 			return result, errors.New("undefined XDPoS consensus engine")
 		}
 	} else if api.b.ChainConfig().IsTIPIncreaseMasternodes(block.Number()) {
-		maxMasternodes = common.MaxMasternodesV2
+		maxMasternodes = api.b.ChainConfig().XDPoS.MaxMasternodesV2
 	} else {
 		maxMasternodes = common.MaxMasternodes
 	}

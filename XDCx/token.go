@@ -52,8 +52,9 @@ func (XDCx *XDCX) GetTokenDecimal(chain consensus.ChainContext, statedb *state.S
 		return common.BasePrice, nil
 	}
 	var decimals uint8
+	relayerSMC := statedb.RelayerRegistrationSMC()
 	defer func() {
-		log.Debug("GetTokenDecimal from ", "relayerSMC", common.RelayerRegistrationSMC, "tokenAddr", tokenAddr.Hex(), "decimals", decimals)
+		log.Debug("GetTokenDecimal from ", "relayerSMC", relayerSMC, "tokenAddr", tokenAddr.Hex(), "decimals", decimals)
 	}()
 	contractABI, err := GetTokenAbi()
 	if err != nil {

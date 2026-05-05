@@ -13,6 +13,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/crypto/keccak"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 )
 
@@ -159,7 +160,7 @@ func TestLendingItem_VerifyLendingStatus(t *testing.T) {
 func SetFee(statedb *state.StateDB, coinbase common.Address, feeRate *big.Int) {
 	locRelayerState := state.GetLocMappingAtKey(coinbase.Hash(), LendingRelayerListSlot)
 	locHash := common.BytesToHash(new(big.Int).Add(locRelayerState, LendingRelayerStructSlots["fee"]).Bytes())
-	statedb.SetState(common.LendingRegistrationSMC, locHash, common.BigToHash(feeRate))
+	statedb.SetState(statedb.LendingRegistrationSMC(), locHash, common.BigToHash(feeRate))
 }
 
 func SetCollateralDetail(statedb *state.StateDB, token common.Address, depositRate *big.Int, liquidationRate *big.Int, price *big.Int) {
@@ -167,14 +168,15 @@ func SetCollateralDetail(statedb *state.StateDB, token common.Address, depositRa
 	locDepositRate := state.GetLocOfStructElement(collateralState, CollateralStructSlots["depositRate"])
 	locLiquidationRate := state.GetLocOfStructElement(collateralState, CollateralStructSlots["liquidationRate"])
 	locCollateralPrice := state.GetLocOfStructElement(collateralState, CollateralStructSlots["price"])
-	statedb.SetState(common.LendingRegistrationSMC, locDepositRate, common.BigToHash(depositRate))
-	statedb.SetState(common.LendingRegistrationSMC, locLiquidationRate, common.BigToHash(liquidationRate))
-	statedb.SetState(common.LendingRegistrationSMC, locCollateralPrice, common.BigToHash(price))
+	statedb.SetState(statedb.LendingRegistrationSMC(), locDepositRate, common.BigToHash(depositRate))
+	statedb.SetState(statedb.LendingRegistrationSMC(), locLiquidationRate, common.BigToHash(liquidationRate))
+	statedb.SetState(statedb.LendingRegistrationSMC(), locCollateralPrice, common.BigToHash(price))
 }
 
 func TestVerifyBalance(t *testing.T) {
 	db := rawdb.NewMemoryDatabase()
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(db))
+	statedb.SetChainConfig(params.LocalnetChainConfig)
 	relayer := common.HexToAddress("0x0D3ab14BBaD3D99F4203bd7a11aCB94882050E7e")
 	uAddr := common.HexToAddress("0xDeE6238780f98c0ca2c2C28453149bEA49a3Abc9")
 	lendingToken := common.HexToAddress("0xd9bb01454c85247B2ef35BB5BE57384cC275a8cf")    // USD

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -39,10 +40,17 @@ func ExampleGenerateChain() {
 		db      = rawdb.NewMemoryDatabase()
 	)
 	// Ensure that key1 has some funds in the genesis block.
+	futureFork := big.NewInt(1_000_000_000)
 	gspec := &Genesis{
-		Config: &params.ChainConfig{HomesteadBlock: new(big.Int)},
-		Alloc:  types.GenesisAlloc{addr1: {Balance: big.NewInt(1000000)}},
+		Config: &params.ChainConfig{
+			ChainID:        big.NewInt(1337),
+			HomesteadBlock: new(big.Int),
+			Ethash:         new(params.EthashConfig),
+		},
+		Alloc: types.GenesisAlloc{addr1: {Balance: big.NewInt(1000000)}},
 	}
+	setXinFinForksToFuture(gspec.Config, futureFork)
+	gspec.Config = canonicalizeChainConfig(common.Hash{}, gspec.Config)
 	genesis := gspec.MustCommit(db)
 
 	// This call generates a chain of 5 blocks. The function runs for
@@ -95,5 +103,5 @@ func ExampleGenerateChain() {
 	// last block: #5
 	// balance of addr1: 989000
 	// balance of addr2: 10000
-	// balance of addr3: 19687500000000001000
+	// balance of addr3: 11812500000000001000
 }

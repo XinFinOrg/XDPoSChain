@@ -188,10 +188,6 @@ func initGenesis(ctx *cli.Context) error {
 		utils.Fatalf("invalid genesis json: %v", err)
 	}
 
-	if genesis.Config.ChainID != nil {
-		common.CopyConstants(genesis.Config.ChainID.Uint64())
-	}
-
 	// Open and initialise both full and light databases
 	stack, _ := makeConfigNode(ctx)
 	defer stack.Close()
@@ -201,9 +197,12 @@ func initGenesis(ctx *cli.Context) error {
 	if err != nil {
 		utils.Fatalf("Failed to open database: %v", err)
 	}
-	_, hash, err := core.SetupGenesisBlock(chaindb, genesis)
+	_, hash, compatErr, err := core.SetupGenesisBlock(chaindb, genesis)
 	if err != nil {
 		utils.Fatalf("Failed to write genesis block: %v", err)
+	}
+	if compatErr != nil {
+		utils.Fatalf("Failed to write chain config: %v", compatErr)
 	}
 	chaindb.Close()
 	log.Info("Successfully wrote genesis state", "database", name, "hash", hash)

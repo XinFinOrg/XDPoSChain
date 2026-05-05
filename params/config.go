@@ -19,6 +19,7 @@ package params
 import (
 	"cmp"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"math/big"
@@ -34,7 +35,48 @@ const (
 	ConsensusEngineVersion1 = "v1"
 	ConsensusEngineVersion2 = "v2"
 	Default                 = 0
+
+	MainnetV2SwitchBlock uint64 = 80370000 // Target 2nd Oct 2024
+	TestnetV2SwitchBlock uint64 = 56828700 // Target 13th Nov 2023
+	DevnetV2SwitchBlock  uint64 = 2700
 )
+
+var migratedForkFieldJSONKeys = []string{
+	"tip2019Block",
+	"tipSigningBlock",
+	"tipRandomizeBlock",
+	"tipIncreaseMasternodesBlock",
+	"denylistBlock",
+	"tipNoHalvingMNRewardBlock",
+	"tipXDCXBlock",
+	"tipXDCXLendingBlock",
+	"tipXDCXCancellationFeeBlock",
+	"tipTRC21FeeBlock",
+	"berlinBlock",
+	"londonBlock",
+	"mergeBlock",
+	"shanghaiBlock",
+	"tipXDCXMinerDisableBlock",
+	"tipXDCXReceiverDisableBlock",
+	"eip1559Block",
+	"cancunBlock",
+	"pragueBlock",
+	"osakaBlock",
+	"dynamicGasLimitBlock",
+	"tipUpgradeRewardBlock",
+	"tipUpgradePenaltyBlock",
+	"tipEpochHalvingBlock",
+}
+
+var (
+	ErrMissingForkSwitch    = errors.New("missing fork switch")
+	ErrWrongForkSwitchOrder = errors.New("wrong fork switch order")
+)
+
+// MigratedForkFieldJSONKeys returns migrated fork JSON keys as a defensive copy.
+func MigratedForkFieldJSONKeys() []string {
+	return append([]string(nil), migratedForkFieldJSONKeys...)
+}
 
 var (
 	MainnetGenesisHash = common.HexToHash("0x4a9d748bd78a8d0385b67788c2435dcdb914f98a96250b68863a1f8b7642d6b1") // XDC Mainnet genesis hash to enforce below configs on
@@ -167,6 +209,18 @@ var (
 		},
 	}
 
+	LocalnetV2Configs = map[uint64]*V2Config{
+		Default: {
+			MaxMasternodes:       108,
+			SwitchRound:          0,
+			CertThreshold:        0.666,
+			TimeoutSyncThreshold: 3,
+			TimeoutPeriod:        10,
+			MinePeriod:           2,
+			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
+		},
+	}
+
 	UnitTestV2Configs = map[uint64]*V2Config{
 		Default: {
 			MaxMasternodes:       18,
@@ -206,12 +260,49 @@ var (
 
 	// XDPoSChain mainnet config
 	XDCMainnetChainConfig = &ChainConfig{
-		ChainID:        big.NewInt(50),
-		HomesteadBlock: big.NewInt(1),
-		EIP150Block:    big.NewInt(2),
-		EIP155Block:    big.NewInt(3),
-		EIP158Block:    big.NewInt(3),
-		ByzantiumBlock: big.NewInt(4),
+		Name:                        "XDCMainnetChainConfig",
+		ChainID:                     big.NewInt(50),
+		HomesteadBlock:              big.NewInt(1),
+		DAOForkBlock:                nil,
+		DAOForkSupport:              false,
+		TIP2019Block:                big.NewInt(1),
+		EIP150Block:                 big.NewInt(2),
+		EIP155Block:                 big.NewInt(3),
+		EIP158Block:                 big.NewInt(3),
+		ByzantiumBlock:              big.NewInt(4),
+		ConstantinopleBlock:         nil,
+		PetersburgBlock:             nil,
+		IstanbulBlock:               nil,
+		TIPSigningBlock:             big.NewInt(3000000),
+		TIPRandomizeBlock:           big.NewInt(3464000),
+		TIPIncreaseMasternodesBlock: big.NewInt(5000000),
+		DenylistBlock:               big.NewInt(38383838),
+		TIPNoHalvingMNRewardBlock:   big.NewInt(38383838),
+		TIPXDCXBlock:                big.NewInt(38383838),
+		TIPXDCXLendingBlock:         big.NewInt(38383838),
+		TIPXDCXCancellationFeeBlock: big.NewInt(38383838),
+		TIPTRC21FeeBlock:            big.NewInt(38383838),
+		BerlinBlock:                 big.NewInt(76321000),
+		LondonBlock:                 big.NewInt(76321000),
+		MergeBlock:                  big.NewInt(76321000),
+		ShanghaiBlock:               big.NewInt(76321000),
+		Gas50xBlock:                 big.NewInt(80370000),
+		TIPXDCXMinerDisableBlock:    big.NewInt(80370000),
+		TIPXDCXReceiverDisableBlock: big.NewInt(80370900),
+		Eip1559Block:                big.NewInt(98800200),
+		CancunBlock:                 big.NewInt(98802000),
+		PragueBlock:                 nil,
+		OsakaBlock:                  nil,
+		DynamicGasLimitBlock:        nil,
+		TIPUpgradeRewardBlock:       nil,
+		TIPUpgradePenaltyBlock:      nil,
+		TIPEpochHalvingBlock:        nil,
+		TRC21IssuerSMC:              common.HexToAddress("0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee"),
+		XDCXListingSMC:              common.HexToAddress("0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53"),
+		RelayerRegistrationSMC:      common.HexToAddress("0x16c63b79f9C8784168103C0b74E6A59EC2de4a02"),
+		LendingRegistrationSMC:      common.HexToAddress("0x7d761afd7ff65a79e4173897594a194e3c506e57"),
+		Clique:                      nil,
+		Ethash:                      nil,
 		XDPoS: &XDPoSConfig{
 			Period:               2,
 			Epoch:                900,
@@ -219,9 +310,10 @@ var (
 			RewardCheckpoint:     900,
 			Gap:                  450,
 			FoundationWalletAddr: common.HexToAddress("xdc92a289fe95a85c53b8d0d113cbaef0c1ec98ac65"),
+			MaxMasternodesV2:     108,
 			V2: &V2{
-				SwitchEpoch:   common.MainnetConstant.TIPV2SwitchBlock.Uint64() / 900,
-				SwitchBlock:   common.MainnetConstant.TIPV2SwitchBlock,
+				SwitchEpoch:   MainnetV2SwitchBlock / 900,
+				SwitchBlock:   big.NewInt(int64(MainnetV2SwitchBlock)),
 				CurrentConfig: MainnetV2Configs[0],
 				AllConfigs:    MainnetV2Configs,
 			},
@@ -230,29 +322,97 @@ var (
 
 	// MainnetChainConfig is the chain parameters to run a node on the ethereum main network.
 	MainnetChainConfig = &ChainConfig{
-		ChainID:             big.NewInt(1),
-		HomesteadBlock:      big.NewInt(1150000),
-		DAOForkBlock:        big.NewInt(1920000),
-		DAOForkSupport:      true,
-		EIP150Block:         big.NewInt(2463000),
-		EIP155Block:         big.NewInt(2675000),
-		EIP158Block:         big.NewInt(2675000),
-		ByzantiumBlock:      big.NewInt(4370000),
-		ConstantinopleBlock: nil,
-		Ethash:              new(EthashConfig),
+		Name:                        "MainnetChainConfig",
+		ChainID:                     big.NewInt(1),
+		HomesteadBlock:              big.NewInt(1150000),
+		DAOForkBlock:                big.NewInt(1920000),
+		DAOForkSupport:              true,
+		TIP2019Block:                nil,
+		EIP150Block:                 big.NewInt(2463000),
+		EIP155Block:                 big.NewInt(2675000),
+		EIP158Block:                 big.NewInt(2675000),
+		ByzantiumBlock:              big.NewInt(4370000),
+		ConstantinopleBlock:         nil,
+		PetersburgBlock:             nil,
+		IstanbulBlock:               nil,
+		TIPSigningBlock:             nil,
+		TIPRandomizeBlock:           nil,
+		TIPIncreaseMasternodesBlock: nil,
+		DenylistBlock:               nil,
+		TIPNoHalvingMNRewardBlock:   nil,
+		TIPXDCXBlock:                nil,
+		TIPXDCXLendingBlock:         nil,
+		TIPXDCXCancellationFeeBlock: nil,
+		TIPTRC21FeeBlock:            big.NewInt(0),
+		BerlinBlock:                 nil,
+		LondonBlock:                 nil,
+		MergeBlock:                  nil,
+		ShanghaiBlock:               nil,
+		Gas50xBlock:                 big.NewInt(80370000),
+		TIPXDCXMinerDisableBlock:    nil,
+		TIPXDCXReceiverDisableBlock: nil,
+		Eip1559Block:                nil,
+		CancunBlock:                 nil,
+		PragueBlock:                 nil,
+		OsakaBlock:                  nil,
+		DynamicGasLimitBlock:        nil,
+		TIPUpgradeRewardBlock:       nil,
+		TIPUpgradePenaltyBlock:      nil,
+		TIPEpochHalvingBlock:        nil,
+		TRC21IssuerSMC:              common.HexToAddress("0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee"),
+		XDCXListingSMC:              common.HexToAddress("0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53"),
+		RelayerRegistrationSMC:      common.HexToAddress("0x16c63b79f9C8784168103C0b74E6A59EC2de4a02"),
+		LendingRegistrationSMC:      common.HexToAddress("0x7d761afd7ff65a79e4173897594a194e3c506e57"),
+		Clique:                      nil,
+		Ethash:                      new(EthashConfig),
+		XDPoS:                       nil,
 	}
 
 	// TestnetChainConfig contains the chain parameters to run a node on the Apothem testnet.
 	TestnetChainConfig = &ChainConfig{
-		ChainID:             big.NewInt(51),
-		HomesteadBlock:      big.NewInt(1),
-		DAOForkBlock:        nil,
-		DAOForkSupport:      false,
-		EIP150Block:         big.NewInt(2),
-		EIP155Block:         big.NewInt(3),
-		EIP158Block:         big.NewInt(3),
-		ByzantiumBlock:      big.NewInt(4),
-		ConstantinopleBlock: nil,
+		Name:                        "TestnetChainConfig",
+		ChainID:                     big.NewInt(51),
+		HomesteadBlock:              big.NewInt(1),
+		DAOForkBlock:                nil,
+		DAOForkSupport:              false,
+		TIP2019Block:                big.NewInt(1),
+		EIP150Block:                 big.NewInt(2),
+		EIP155Block:                 big.NewInt(3),
+		EIP158Block:                 big.NewInt(3),
+		ByzantiumBlock:              big.NewInt(4),
+		ConstantinopleBlock:         nil,
+		PetersburgBlock:             nil,
+		IstanbulBlock:               nil,
+		TIPSigningBlock:             big.NewInt(3000000),
+		TIPRandomizeBlock:           big.NewInt(3464000),
+		TIPIncreaseMasternodesBlock: big.NewInt(5000000),
+		DenylistBlock:               big.NewInt(23779191),
+		TIPNoHalvingMNRewardBlock:   big.NewInt(23779191),
+		TIPXDCXBlock:                big.NewInt(23779191),
+		TIPXDCXLendingBlock:         big.NewInt(23779191),
+		TIPXDCXCancellationFeeBlock: big.NewInt(23779191),
+		TIPTRC21FeeBlock:            big.NewInt(23779191),
+		Gas50xBlock:                 big.NewInt(56828700),
+		BerlinBlock:                 big.NewInt(61290000),
+		LondonBlock:                 big.NewInt(61290000),
+		MergeBlock:                  big.NewInt(61290000),
+		ShanghaiBlock:               big.NewInt(61290000),
+		TIPXDCXMinerDisableBlock:    big.NewInt(61290000),
+		TIPXDCXReceiverDisableBlock: big.NewInt(66825000),
+		Eip1559Block:                big.NewInt(71550000),
+		CancunBlock:                 big.NewInt(71551800),
+		PragueBlock:                 nil,
+		OsakaBlock:                  nil,
+		DynamicGasLimitBlock:        nil,
+		TIPUpgradeRewardBlock:       nil,
+		TIPUpgradePenaltyBlock:      nil,
+		TIPEpochHalvingBlock:        nil,
+		TRC21IssuerSMC:              common.HexToAddress("0x0E2C88753131CE01c7551B726b28BFD04e44003F"),
+		XDCXListingSMC:              common.HexToAddress("0x14B2Bf043b9c31827A472CE4F94294fE9a6277e0"),
+		RelayerRegistrationSMC:      common.HexToAddress("0xA1996F69f47ba14Cb7f661010A7C31974277958c"),
+		LendingRegistrationSMC:      common.HexToAddress("0x28d7fC2Cf5c18203aaCD7459EFC6Af0643C97bE8"),
+		Clique:                      nil,
+		Ethash:                      nil,
 		XDPoS: &XDPoSConfig{
 			Period:               2,
 			Epoch:                900,
@@ -260,9 +420,10 @@ var (
 			RewardCheckpoint:     900,
 			Gap:                  450,
 			FoundationWalletAddr: common.HexToAddress("xdc746249c61f5832c5eed53172776b460491bdcd5c"),
+			MaxMasternodesV2:     15,
 			V2: &V2{
-				SwitchEpoch:   common.TestnetConstant.TIPV2SwitchBlock.Uint64() / 900,
-				SwitchBlock:   common.TestnetConstant.TIPV2SwitchBlock,
+				SwitchEpoch:   TestnetV2SwitchBlock / 900,
+				SwitchBlock:   big.NewInt(int64(TestnetV2SwitchBlock)),
 				CurrentConfig: TestnetV2Configs[0],
 				AllConfigs:    TestnetV2Configs,
 			},
@@ -271,12 +432,49 @@ var (
 
 	// DevnetChainConfig contains the chain parameters to run a node on the devnet.
 	DevnetChainConfig = &ChainConfig{
-		ChainID:        big.NewInt(5551),
-		HomesteadBlock: big.NewInt(0),
-		EIP150Block:    big.NewInt(0),
-		EIP155Block:    big.NewInt(0),
-		EIP158Block:    big.NewInt(0),
-		ByzantiumBlock: big.NewInt(0),
+		Name:                        "DevnetChainConfig",
+		ChainID:                     big.NewInt(5551),
+		HomesteadBlock:              big.NewInt(0),
+		DAOForkBlock:                nil,
+		DAOForkSupport:              false,
+		TIP2019Block:                big.NewInt(0),
+		EIP150Block:                 big.NewInt(0),
+		EIP155Block:                 big.NewInt(0),
+		EIP158Block:                 big.NewInt(0),
+		ByzantiumBlock:              big.NewInt(0),
+		ConstantinopleBlock:         nil,
+		PetersburgBlock:             nil,
+		IstanbulBlock:               nil,
+		TIPSigningBlock:             big.NewInt(0),
+		TIPRandomizeBlock:           big.NewInt(0),
+		TIPIncreaseMasternodesBlock: big.NewInt(0),
+		DenylistBlock:               big.NewInt(0),
+		TIPNoHalvingMNRewardBlock:   big.NewInt(0),
+		TIPXDCXBlock:                big.NewInt(0),
+		TIPXDCXLendingBlock:         big.NewInt(0),
+		TIPXDCXCancellationFeeBlock: big.NewInt(0),
+		TIPTRC21FeeBlock:            big.NewInt(0),
+		BerlinBlock:                 big.NewInt(0),
+		LondonBlock:                 big.NewInt(0),
+		MergeBlock:                  big.NewInt(0),
+		ShanghaiBlock:               big.NewInt(0),
+		Gas50xBlock:                 big.NewInt(0),
+		TIPXDCXMinerDisableBlock:    big.NewInt(0),
+		TIPXDCXReceiverDisableBlock: big.NewInt(0),
+		Eip1559Block:                big.NewInt(250000),
+		CancunBlock:                 big.NewInt(250000),
+		PragueBlock:                 big.NewInt(5000000),
+		OsakaBlock:                  nil,
+		DynamicGasLimitBlock:        big.NewInt(5000000),
+		TIPUpgradeRewardBlock:       big.NewInt(5000000),
+		TIPUpgradePenaltyBlock:      big.NewInt(5000000),
+		TIPEpochHalvingBlock:        nil,
+		TRC21IssuerSMC:              common.HexToAddress("0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee"),
+		XDCXListingSMC:              common.HexToAddress("0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53"),
+		RelayerRegistrationSMC:      common.HexToAddress("0x16c63b79f9C8784168103C0b74E6A59EC2de4a02"),
+		LendingRegistrationSMC:      common.HexToAddress("0x7d761afd7ff65a79e4173897594a194e3c506e57"),
+		Clique:                      nil,
+		Ethash:                      nil,
 		XDPoS: &XDPoSConfig{
 			Period:               2,
 			Epoch:                900,
@@ -284,39 +482,113 @@ var (
 			RewardCheckpoint:     900,
 			Gap:                  450,
 			FoundationWalletAddr: common.HexToAddress("0x4f288181b1d1aa599c6d7629f1168d46d5f96338"),
+			MaxMasternodesV2:     108,
 			V2: &V2{
-				SwitchEpoch:   common.DevnetConstant.TIPV2SwitchBlock.Uint64() / 900,
-				SwitchBlock:   common.DevnetConstant.TIPV2SwitchBlock,
+				SwitchEpoch:   DevnetV2SwitchBlock / 900,
+				SwitchBlock:   big.NewInt(int64(DevnetV2SwitchBlock)),
 				CurrentConfig: DevnetV2Configs[0],
 				AllConfigs:    DevnetV2Configs,
 			},
 		},
 	}
 
+	// LocalnetChainConfig contains the chain parameters to run a node on the local network.
+	LocalnetChainConfig = &ChainConfig{
+		Name:                        "LocalnetChainConfig",
+		ChainID:                     big.NewInt(5151),
+		HomesteadBlock:              big.NewInt(0),
+		DAOForkBlock:                nil,
+		DAOForkSupport:              false,
+		TIP2019Block:                big.NewInt(0),
+		EIP150Block:                 big.NewInt(0),
+		EIP155Block:                 big.NewInt(0),
+		EIP158Block:                 big.NewInt(0),
+		ByzantiumBlock:              big.NewInt(0),
+		ConstantinopleBlock:         nil,
+		PetersburgBlock:             nil,
+		IstanbulBlock:               nil,
+		TIPSigningBlock:             big.NewInt(0),
+		TIPRandomizeBlock:           big.NewInt(0),
+		TIPIncreaseMasternodesBlock: big.NewInt(0),
+		DenylistBlock:               big.NewInt(0),
+		TIPNoHalvingMNRewardBlock:   big.NewInt(0),
+		TIPXDCXBlock:                big.NewInt(0),
+		TIPXDCXLendingBlock:         big.NewInt(0),
+		TIPXDCXCancellationFeeBlock: big.NewInt(0),
+		TIPTRC21FeeBlock:            big.NewInt(0),
+		BerlinBlock:                 big.NewInt(0),
+		LondonBlock:                 big.NewInt(0),
+		MergeBlock:                  big.NewInt(0),
+		ShanghaiBlock:               big.NewInt(0),
+		Gas50xBlock:                 big.NewInt(0),
+		TIPXDCXMinerDisableBlock:    big.NewInt(0),
+		TIPXDCXReceiverDisableBlock: big.NewInt(0),
+		Eip1559Block:                big.NewInt(0),
+		CancunBlock:                 big.NewInt(0),
+		PragueBlock:                 nil,
+		OsakaBlock:                  nil,
+		DynamicGasLimitBlock:        nil,
+		TIPUpgradeRewardBlock:       nil,
+		TIPUpgradePenaltyBlock:      nil,
+		TIPEpochHalvingBlock:        nil,
+		TRC21IssuerSMC:              common.HexToAddress("0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee"),
+		XDCXListingSMC:              common.HexToAddress("0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53"),
+		RelayerRegistrationSMC:      common.HexToAddress("0x16c63b79f9C8784168103C0b74E6A59EC2de4a02"),
+		LendingRegistrationSMC:      common.HexToAddress("0x7d761afd7ff65a79e4173897594a194e3c506e57"),
+		Clique:                      nil,
+		Ethash:                      nil,
+		XDPoS: &XDPoSConfig{
+			MaxMasternodesV2: 108,
+		},
+	}
+
 	// AllEthashProtocolChanges contains every protocol change (EIPs) introduced
 	// and accepted by the Ethereum core developers into the Ethash consensus.
 	AllEthashProtocolChanges = &ChainConfig{
-		ChainID:             big.NewInt(1337),
-		HomesteadBlock:      big.NewInt(0),
-		DAOForkBlock:        nil,
-		DAOForkSupport:      false,
-		EIP150Block:         big.NewInt(0),
-		EIP155Block:         big.NewInt(0),
-		EIP158Block:         big.NewInt(0),
-		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: big.NewInt(0),
-		PetersburgBlock:     big.NewInt(0),
-		IstanbulBlock:       big.NewInt(0),
-		BerlinBlock:         big.NewInt(0),
-		LondonBlock:         big.NewInt(0),
-		ShanghaiBlock:       big.NewInt(0),
-		Eip1559Block:        nil,
-		CancunBlock:         nil,
-		PragueBlock:         nil,
-		OsakaBlock:          nil,
-		Ethash:              new(EthashConfig),
-		Clique:              nil,
-		XDPoS:               nil,
+		Name:                        "AllEthashProtocolChanges",
+		ChainID:                     big.NewInt(1337),
+		HomesteadBlock:              big.NewInt(0),
+		DAOForkBlock:                nil,
+		DAOForkSupport:              false,
+		TIP2019Block:                big.NewInt(0),
+		EIP150Block:                 big.NewInt(0),
+		EIP155Block:                 big.NewInt(0),
+		EIP158Block:                 big.NewInt(0),
+		ByzantiumBlock:              big.NewInt(0),
+		ConstantinopleBlock:         big.NewInt(0),
+		PetersburgBlock:             big.NewInt(0),
+		IstanbulBlock:               big.NewInt(0),
+		TIPSigningBlock:             big.NewInt(0),
+		TIPRandomizeBlock:           big.NewInt(0),
+		TIPIncreaseMasternodesBlock: big.NewInt(0),
+		DenylistBlock:               big.NewInt(0),
+		TIPNoHalvingMNRewardBlock:   big.NewInt(0),
+		TIPXDCXBlock:                big.NewInt(0),
+		TIPXDCXLendingBlock:         big.NewInt(0),
+		TIPXDCXCancellationFeeBlock: big.NewInt(0),
+		TIPTRC21FeeBlock:            big.NewInt(0),
+		BerlinBlock:                 big.NewInt(0),
+		LondonBlock:                 big.NewInt(0),
+		MergeBlock:                  big.NewInt(0),
+		ShanghaiBlock:               big.NewInt(0),
+		Gas50xBlock:                 big.NewInt(80370000),
+		TIPXDCXMinerDisableBlock:    nil,
+		TIPXDCXReceiverDisableBlock: nil,
+		Eip1559Block:                big.NewInt(0),
+		CancunBlock:                 big.NewInt(0),
+		PragueBlock:                 big.NewInt(0),
+		OsakaBlock:                  big.NewInt(0),
+		DynamicGasLimitBlock:        nil,
+		TIPUpgradeRewardBlock:       nil,
+		TIPUpgradePenaltyBlock:      nil,
+		TIPEpochHalvingBlock:        nil,
+		TRC21IssuerSMC:              common.HexToAddress("0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee"),
+		XDCXListingSMC:              common.HexToAddress("0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53"),
+		RelayerRegistrationSMC:      common.HexToAddress("0x16c63b79f9C8784168103C0b74E6A59EC2de4a02"),
+		LendingRegistrationSMC:      common.HexToAddress("0x7d761afd7ff65a79e4173897594a194e3c506e57"),
+		Clique:                      nil,
+		Ethash:                      new(EthashConfig),
+		XDPoS:                       nil,
 	}
 
 	// AllDevChainProtocolChanges contains every protocol change (EIPs) introduced
@@ -325,32 +597,56 @@ var (
 	// This configuration is intentionally not using keyed fields to force anyone
 	// adding flags to the config to also have to set these fields.
 	AllDevChainProtocolChanges = &ChainConfig{
-		ChainID:             big.NewInt(1337),
-		HomesteadBlock:      big.NewInt(0),
-		DAOForkBlock:        nil,
-		DAOForkSupport:      false,
-		EIP150Block:         big.NewInt(0),
-		EIP155Block:         big.NewInt(0),
-		EIP158Block:         big.NewInt(0),
-		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: big.NewInt(0),
-		PetersburgBlock:     big.NewInt(0),
-		IstanbulBlock:       big.NewInt(0),
-		BerlinBlock:         big.NewInt(0),
-		LondonBlock:         big.NewInt(0),
-		ShanghaiBlock:       big.NewInt(0),
-		Eip1559Block:        big.NewInt(0),
-		CancunBlock:         big.NewInt(0),
-		PragueBlock:         big.NewInt(0),
-		OsakaBlock:          big.NewInt(0),
-		Ethash:              nil,
-		Clique:              nil,
+		Name:                        "AllDevChainProtocolChanges",
+		ChainID:                     big.NewInt(1337),
+		HomesteadBlock:              big.NewInt(0),
+		DAOForkBlock:                nil,
+		DAOForkSupport:              false,
+		TIP2019Block:                big.NewInt(0),
+		EIP150Block:                 big.NewInt(0),
+		EIP155Block:                 big.NewInt(0),
+		EIP158Block:                 big.NewInt(0),
+		ByzantiumBlock:              big.NewInt(0),
+		ConstantinopleBlock:         big.NewInt(0),
+		PetersburgBlock:             big.NewInt(0),
+		IstanbulBlock:               big.NewInt(0),
+		TIPSigningBlock:             big.NewInt(0),
+		TIPRandomizeBlock:           big.NewInt(0),
+		TIPIncreaseMasternodesBlock: big.NewInt(0),
+		DenylistBlock:               big.NewInt(0),
+		TIPNoHalvingMNRewardBlock:   big.NewInt(0),
+		TIPXDCXBlock:                big.NewInt(0),
+		TIPXDCXLendingBlock:         big.NewInt(0),
+		TIPXDCXCancellationFeeBlock: big.NewInt(0),
+		TIPTRC21FeeBlock:            big.NewInt(0),
+		BerlinBlock:                 big.NewInt(0),
+		LondonBlock:                 big.NewInt(0),
+		MergeBlock:                  big.NewInt(0),
+		ShanghaiBlock:               big.NewInt(0),
+		Gas50xBlock:                 big.NewInt(80370000),
+		TIPXDCXMinerDisableBlock:    nil,
+		TIPXDCXReceiverDisableBlock: nil,
+		Eip1559Block:                big.NewInt(0),
+		CancunBlock:                 big.NewInt(0),
+		PragueBlock:                 big.NewInt(0),
+		OsakaBlock:                  big.NewInt(0),
+		DynamicGasLimitBlock:        nil,
+		TIPUpgradeRewardBlock:       nil,
+		TIPUpgradePenaltyBlock:      nil,
+		TIPEpochHalvingBlock:        nil,
+		TRC21IssuerSMC:              common.HexToAddress("0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee"),
+		XDCXListingSMC:              common.HexToAddress("0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53"),
+		RelayerRegistrationSMC:      common.HexToAddress("0x16c63b79f9C8784168103C0b74E6A59EC2de4a02"),
+		LendingRegistrationSMC:      common.HexToAddress("0x7d761afd7ff65a79e4173897594a194e3c506e57"),
+		Clique:                      nil,
+		Ethash:                      nil,
 		XDPoS: &XDPoSConfig{
 			Epoch:                900,
 			Gap:                  450,
 			SkipV1Validation:     true,
 			FoundationWalletAddr: common.HexToAddress("0x0000000000000000000000000000000000000068"),
 			Reward:               250,
+			MaxMasternodesV2:     108,
 			V2: &V2{
 				SwitchEpoch:   1,
 				SwitchBlock:   big.NewInt(900),
@@ -363,48 +659,104 @@ var (
 	// AllCliqueProtocolChanges contains every protocol change (EIPs) introduced
 	// and accepted by the Ethereum core developers into the Clique consensus.
 	AllCliqueProtocolChanges = &ChainConfig{
-		ChainID:             big.NewInt(1337),
-		HomesteadBlock:      big.NewInt(0),
-		DAOForkBlock:        nil,
-		DAOForkSupport:      false,
-		EIP150Block:         big.NewInt(0),
-		EIP155Block:         big.NewInt(0),
-		EIP158Block:         big.NewInt(0),
-		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: big.NewInt(0),
-		PetersburgBlock:     big.NewInt(0),
-		IstanbulBlock:       big.NewInt(0),
-		BerlinBlock:         big.NewInt(0),
-		LondonBlock:         big.NewInt(0),
-		ShanghaiBlock:       big.NewInt(0),
-		Eip1559Block:        big.NewInt(0),
-		CancunBlock:         nil,
-		PragueBlock:         nil,
-		OsakaBlock:          nil,
-		Ethash:              nil,
-		Clique:              &CliqueConfig{Period: 0, Epoch: 900},
-		XDPoS:               nil,
+		Name:                        "AllCliqueProtocolChanges",
+		ChainID:                     big.NewInt(1337),
+		HomesteadBlock:              big.NewInt(0),
+		DAOForkBlock:                nil,
+		DAOForkSupport:              false,
+		TIP2019Block:                big.NewInt(0),
+		EIP150Block:                 big.NewInt(0),
+		EIP155Block:                 big.NewInt(0),
+		EIP158Block:                 big.NewInt(0),
+		ByzantiumBlock:              big.NewInt(0),
+		ConstantinopleBlock:         big.NewInt(0),
+		PetersburgBlock:             big.NewInt(0),
+		IstanbulBlock:               big.NewInt(0),
+		TIPSigningBlock:             big.NewInt(0),
+		TIPRandomizeBlock:           big.NewInt(0),
+		TIPIncreaseMasternodesBlock: big.NewInt(0),
+		DenylistBlock:               big.NewInt(0),
+		TIPNoHalvingMNRewardBlock:   big.NewInt(0),
+		TIPXDCXBlock:                big.NewInt(0),
+		TIPXDCXLendingBlock:         big.NewInt(0),
+		TIPXDCXCancellationFeeBlock: big.NewInt(0),
+		TIPTRC21FeeBlock:            big.NewInt(0),
+		BerlinBlock:                 big.NewInt(0),
+		LondonBlock:                 big.NewInt(0),
+		MergeBlock:                  big.NewInt(0),
+		ShanghaiBlock:               big.NewInt(0),
+		Gas50xBlock:                 big.NewInt(80370000),
+		TIPXDCXMinerDisableBlock:    nil,
+		TIPXDCXReceiverDisableBlock: nil,
+		Eip1559Block:                big.NewInt(0),
+		CancunBlock:                 big.NewInt(0),
+		PragueBlock:                 big.NewInt(0),
+		OsakaBlock:                  big.NewInt(0),
+		DynamicGasLimitBlock:        nil,
+		TIPUpgradeRewardBlock:       nil,
+		TIPUpgradePenaltyBlock:      nil,
+		TIPEpochHalvingBlock:        nil,
+		TRC21IssuerSMC:              common.HexToAddress("0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee"),
+		XDCXListingSMC:              common.HexToAddress("0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53"),
+		RelayerRegistrationSMC:      common.HexToAddress("0x16c63b79f9C8784168103C0b74E6A59EC2de4a02"),
+		LendingRegistrationSMC:      common.HexToAddress("0x7d761afd7ff65a79e4173897594a194e3c506e57"),
+		Clique:                      &CliqueConfig{Period: 0, Epoch: 900},
+		Ethash:                      nil,
+		XDPoS:                       nil,
 	}
 
 	// XDPoS config with v2 engine after block 901
 	TestXDPoSMockChainConfig = &ChainConfig{
-		ChainID:             big.NewInt(1337),
-		HomesteadBlock:      big.NewInt(0),
-		DAOForkBlock:        nil,
-		DAOForkSupport:      false,
-		EIP150Block:         big.NewInt(0),
-		EIP155Block:         big.NewInt(0),
-		EIP158Block:         big.NewInt(0),
-		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: big.NewInt(0),
-		Ethash:              new(EthashConfig),
-		Clique:              nil,
+		Name:                        "TestXDPoSMockChainConfig",
+		ChainID:                     big.NewInt(1337),
+		HomesteadBlock:              big.NewInt(0),
+		DAOForkBlock:                nil,
+		DAOForkSupport:              false,
+		TIP2019Block:                big.NewInt(0),
+		EIP150Block:                 big.NewInt(0),
+		EIP155Block:                 big.NewInt(0),
+		EIP158Block:                 big.NewInt(0),
+		ByzantiumBlock:              big.NewInt(0),
+		ConstantinopleBlock:         big.NewInt(0),
+		PetersburgBlock:             big.NewInt(0),
+		IstanbulBlock:               big.NewInt(0),
+		TIPSigningBlock:             big.NewInt(0),
+		TIPRandomizeBlock:           big.NewInt(0),
+		TIPIncreaseMasternodesBlock: big.NewInt(0),
+		DenylistBlock:               big.NewInt(0),
+		TIPNoHalvingMNRewardBlock:   big.NewInt(0),
+		TIPXDCXBlock:                big.NewInt(0),
+		TIPXDCXLendingBlock:         big.NewInt(0),
+		TIPXDCXCancellationFeeBlock: big.NewInt(0),
+		TIPTRC21FeeBlock:            big.NewInt(0),
+		BerlinBlock:                 big.NewInt(0),
+		LondonBlock:                 big.NewInt(0),
+		MergeBlock:                  big.NewInt(0),
+		ShanghaiBlock:               big.NewInt(0),
+		Gas50xBlock:                 big.NewInt(80370000),
+		TIPXDCXMinerDisableBlock:    nil,
+		TIPXDCXReceiverDisableBlock: nil,
+		Eip1559Block:                big.NewInt(0),
+		CancunBlock:                 big.NewInt(0),
+		PragueBlock:                 big.NewInt(0),
+		OsakaBlock:                  big.NewInt(0),
+		DynamicGasLimitBlock:        nil,
+		TIPUpgradeRewardBlock:       nil,
+		TIPUpgradePenaltyBlock:      nil,
+		TIPEpochHalvingBlock:        nil,
+		TRC21IssuerSMC:              common.HexToAddress("0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee"),
+		XDCXListingSMC:              common.HexToAddress("0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53"),
+		RelayerRegistrationSMC:      common.HexToAddress("0x16c63b79f9C8784168103C0b74E6A59EC2de4a02"),
+		LendingRegistrationSMC:      common.HexToAddress("0x7d761afd7ff65a79e4173897594a194e3c506e57"),
+		Clique:                      nil,
+		Ethash:                      new(EthashConfig),
 		XDPoS: &XDPoSConfig{
 			Epoch:                900,
 			Gap:                  450,
 			SkipV1Validation:     true,
 			FoundationWalletAddr: common.HexToAddress("0x0000000000000000000000000000000000000068"),
 			Reward:               250,
+			MaxMasternodesV2:     108,
 			V2: &V2{
 				SwitchEpoch:   1,
 				SwitchBlock:   big.NewInt(900),
@@ -417,54 +769,101 @@ var (
 	// TestChainConfig contains every protocol change (EIPs) introduced
 	// and accepted by the Ethereum core developers for testing purposes.
 	TestChainConfig = &ChainConfig{
-		ChainID:             big.NewInt(1),
-		HomesteadBlock:      big.NewInt(0),
-		DAOForkBlock:        nil,
-		DAOForkSupport:      false,
-		EIP150Block:         big.NewInt(0),
-		EIP155Block:         big.NewInt(0),
-		EIP158Block:         big.NewInt(0),
-		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: big.NewInt(0),
-		PetersburgBlock:     big.NewInt(0),
-		IstanbulBlock:       big.NewInt(0),
-		BerlinBlock:         big.NewInt(0),
-		LondonBlock:         big.NewInt(0),
-		ShanghaiBlock:       big.NewInt(0),
-		Eip1559Block:        nil,
-		CancunBlock:         nil,
-		PragueBlock:         nil,
-		OsakaBlock:          nil,
-		Ethash:              new(EthashConfig),
-		Clique:              nil,
-		XDPoS:               nil,
+		Name:                        "TestChainConfig",
+		ChainID:                     big.NewInt(1),
+		HomesteadBlock:              big.NewInt(0),
+		DAOForkBlock:                nil,
+		DAOForkSupport:              false,
+		TIP2019Block:                big.NewInt(0),
+		EIP150Block:                 big.NewInt(0),
+		EIP155Block:                 big.NewInt(0),
+		EIP158Block:                 big.NewInt(0),
+		ByzantiumBlock:              big.NewInt(0),
+		ConstantinopleBlock:         big.NewInt(0),
+		PetersburgBlock:             big.NewInt(0),
+		IstanbulBlock:               big.NewInt(0),
+		TIPSigningBlock:             big.NewInt(0),
+		TIPRandomizeBlock:           big.NewInt(0),
+		TIPIncreaseMasternodesBlock: big.NewInt(0),
+		DenylistBlock:               big.NewInt(0),
+		TIPNoHalvingMNRewardBlock:   big.NewInt(0),
+		TIPXDCXBlock:                big.NewInt(0),
+		TIPXDCXLendingBlock:         big.NewInt(0),
+		TIPXDCXCancellationFeeBlock: big.NewInt(0),
+		TIPTRC21FeeBlock:            big.NewInt(0),
+		BerlinBlock:                 big.NewInt(0),
+		LondonBlock:                 big.NewInt(0),
+		MergeBlock:                  big.NewInt(0),
+		ShanghaiBlock:               big.NewInt(0),
+		Gas50xBlock:                 big.NewInt(80370000),
+		TIPXDCXMinerDisableBlock:    nil,
+		TIPXDCXReceiverDisableBlock: nil,
+		Eip1559Block:                big.NewInt(0),
+		CancunBlock:                 big.NewInt(0),
+		PragueBlock:                 big.NewInt(0),
+		OsakaBlock:                  big.NewInt(0),
+		DynamicGasLimitBlock:        nil,
+		TIPUpgradeRewardBlock:       nil,
+		TIPUpgradePenaltyBlock:      nil,
+		TIPEpochHalvingBlock:        nil,
+		TRC21IssuerSMC:              common.HexToAddress("0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee"),
+		XDCXListingSMC:              common.HexToAddress("0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53"),
+		RelayerRegistrationSMC:      common.HexToAddress("0x16c63b79f9C8784168103C0b74E6A59EC2de4a02"),
+		LendingRegistrationSMC:      common.HexToAddress("0x7d761afd7ff65a79e4173897594a194e3c506e57"),
+		Clique:                      nil,
+		Ethash:                      new(EthashConfig),
+		XDPoS:                       nil,
 	}
 
 	// MergedTestChainConfig contains every protocol change (EIPs) introduced
 	// and accepted by the Ethereum core developers for testing purposes.
 	MergedTestChainConfig = &ChainConfig{
-		ChainID:             big.NewInt(1),
-		HomesteadBlock:      big.NewInt(0),
-		DAOForkBlock:        nil,
-		DAOForkSupport:      false,
-		EIP150Block:         big.NewInt(0),
-		EIP155Block:         big.NewInt(0),
-		EIP158Block:         big.NewInt(0),
-		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: big.NewInt(0),
-		PetersburgBlock:     big.NewInt(0),
-		IstanbulBlock:       big.NewInt(0),
-		BerlinBlock:         big.NewInt(0),
-		LondonBlock:         big.NewInt(0),
-		ShanghaiBlock:       big.NewInt(0),
-		Eip1559Block:        big.NewInt(0),
-		CancunBlock:         big.NewInt(0),
-		PragueBlock:         big.NewInt(0),
-		OsakaBlock:          big.NewInt(0),
-		Ethash:              new(EthashConfig),
-		Clique:              nil,
-		XDPoS:               nil,
+		Name:                        "MergedTestChainConfig",
+		ChainID:                     big.NewInt(1),
+		HomesteadBlock:              big.NewInt(0),
+		DAOForkBlock:                nil,
+		DAOForkSupport:              false,
+		TIP2019Block:                big.NewInt(0),
+		EIP150Block:                 big.NewInt(0),
+		EIP155Block:                 big.NewInt(0),
+		EIP158Block:                 big.NewInt(0),
+		ByzantiumBlock:              big.NewInt(0),
+		ConstantinopleBlock:         big.NewInt(0),
+		PetersburgBlock:             big.NewInt(0),
+		IstanbulBlock:               big.NewInt(0),
+		TIPSigningBlock:             big.NewInt(0),
+		TIPRandomizeBlock:           big.NewInt(0),
+		TIPIncreaseMasternodesBlock: big.NewInt(0),
+		DenylistBlock:               big.NewInt(0),
+		TIPNoHalvingMNRewardBlock:   big.NewInt(0),
+		TIPXDCXBlock:                big.NewInt(0),
+		TIPXDCXLendingBlock:         big.NewInt(0),
+		TIPXDCXCancellationFeeBlock: big.NewInt(0),
+		TIPTRC21FeeBlock:            big.NewInt(0),
+		BerlinBlock:                 big.NewInt(0),
+		LondonBlock:                 big.NewInt(0),
+		MergeBlock:                  big.NewInt(0),
+		ShanghaiBlock:               big.NewInt(0),
+		Gas50xBlock:                 big.NewInt(80370000),
+		TIPXDCXMinerDisableBlock:    nil,
+		TIPXDCXReceiverDisableBlock: nil,
+		Eip1559Block:                big.NewInt(0),
+		CancunBlock:                 big.NewInt(0),
+		PragueBlock:                 big.NewInt(0),
+		OsakaBlock:                  big.NewInt(0),
+		DynamicGasLimitBlock:        nil,
+		TIPUpgradeRewardBlock:       nil,
+		TIPUpgradePenaltyBlock:      nil,
+		TIPEpochHalvingBlock:        nil,
+		TRC21IssuerSMC:              common.HexToAddress("0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee"),
+		XDCXListingSMC:              common.HexToAddress("0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53"),
+		RelayerRegistrationSMC:      common.HexToAddress("0x16c63b79f9C8784168103C0b74E6A59EC2de4a02"),
+		LendingRegistrationSMC:      common.HexToAddress("0x7d761afd7ff65a79e4173897594a194e3c506e57"),
+		Clique:                      nil,
+		Ethash:                      new(EthashConfig),
+		XDPoS:                       nil,
 	}
+
 	TestRules = TestChainConfig.Rules(new(big.Int))
 )
 
@@ -500,12 +899,36 @@ type ChainConfig struct {
 	PragueBlock     *big.Int `json:"pragueBlock,omitempty"`
 	OsakaBlock      *big.Int `json:"osakaBlock,omitempty"`
 
-	DynamicGasLimitBlock *big.Int `json:"dynamicGasLimitBlock,omitempty"` // Dynamic gas limit adjustment algorithm activation block (nil = no fork)
+	TIP2019Block                *big.Int       `json:"tip2019Block,omitempty"`
+	TIPSigningBlock             *big.Int       `json:"tipSigningBlock,omitempty"`
+	TIPRandomizeBlock           *big.Int       `json:"tipRandomizeBlock,omitempty"`
+	TIPIncreaseMasternodesBlock *big.Int       `json:"tipIncreaseMasternodesBlock,omitempty"`
+	DenylistBlock               *big.Int       `json:"denylistBlock,omitempty"`
+	TIPNoHalvingMNRewardBlock   *big.Int       `json:"tipNoHalvingMNRewardBlock,omitempty"`
+	TIPXDCXBlock                *big.Int       `json:"tipXDCXBlock,omitempty"`
+	TIPXDCXLendingBlock         *big.Int       `json:"tipXDCXLendingBlock,omitempty"`
+	TIPXDCXCancellationFeeBlock *big.Int       `json:"tipXDCXCancellationFeeBlock,omitempty"`
+	TIPTRC21FeeBlock            *big.Int       `json:"tipTRC21FeeBlock,omitempty"`
+	Gas50xBlock                 *big.Int       `json:"gas50xBlock,omitempty"`
+	TIPXDCXMinerDisableBlock    *big.Int       `json:"tipXDCXMinerDisableBlock,omitempty"`
+	TIPXDCXReceiverDisableBlock *big.Int       `json:"tipXDCXReceiverDisableBlock,omitempty"`
+	DynamicGasLimitBlock        *big.Int       `json:"dynamicGasLimitBlock,omitempty"`
+	TIPUpgradeRewardBlock       *big.Int       `json:"tipUpgradeRewardBlock,omitempty"`
+	TIPUpgradePenaltyBlock      *big.Int       `json:"tipUpgradePenaltyBlock,omitempty"`
+	TIPEpochHalvingBlock        *big.Int       `json:"tipEpochHalvingBlock,omitempty"`
+	TRC21IssuerSMC              common.Address `json:"trc21IssuerSMC,omitempty"`
+	XDCXListingSMC              common.Address `json:"xdcxListingSMC,omitempty"`
+	RelayerRegistrationSMC      common.Address `json:"relayerRegistrationSMC,omitempty"`
+	LendingRegistrationSMC      common.Address `json:"lendingRegistrationSMC,omitempty"`
 
 	// Various consensus engines
 	Ethash *EthashConfig `json:"ethash,omitempty"`
 	Clique *CliqueConfig `json:"clique,omitempty"`
 	XDPoS  *XDPoSConfig  `json:"XDPoS,omitempty"`
+
+	Name                string              `json:"-"`
+	jsonPresence        map[string]struct{} `json:"-"`
+	jsonPresenceTracked bool                `json:"-"`
 }
 
 // EthashConfig is the consensus engine configs for proof-of-work based sealing.
@@ -535,19 +958,49 @@ type XDPoSConfig struct {
 	RewardCheckpoint     uint64         `json:"rewardCheckpoint"`     // Checkpoint block for calculate rewards.
 	Gap                  uint64         `json:"gap"`                  // Gap time preparing for the next epoch
 	FoundationWalletAddr common.Address `json:"foundationWalletAddr"` // Foundation Address Wallet
+	MaxMasternodesV2     int            `json:"maxMasternodesV2"`     // Last v1 masternodes after TIPIncrease
 	SkipV1Validation     bool           //Skip Block Validation for testing purpose, V1 consensus only
 	V2                   *V2            `json:"v2"`
+
+	jsonPresence        map[string]struct{} `json:"-"`
+	jsonPresenceTracked bool                `json:"-"`
+}
+
+// UnmarshalJSON captures field presence so strict missing-field backfill can
+// distinguish omitted keys from explicit zero-values.
+func (c *ChainConfig) UnmarshalJSON(data []byte) error {
+	type chainConfigAlias ChainConfig
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	var decoded chainConfigAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*c = ChainConfig(decoded)
+	c.jsonPresenceTracked = true
+	c.jsonPresence = make(map[string]struct{}, len(raw))
+	for key := range raw {
+		c.jsonPresence[key] = struct{}{}
+	}
+	return nil
 }
 
 // UnmarshalJSON supports both the current and legacy typo-ed JSON key for
 // foundation wallet address to keep old on-disk chain configs compatible.
 func (c *XDPoSConfig) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
 	type xdpJSON struct {
 		Period                    uint64         `json:"period"`
 		Epoch                     uint64         `json:"epoch"`
 		Reward                    uint64         `json:"reward"`
 		RewardCheckpoint          uint64         `json:"rewardCheckpoint"`
 		Gap                       uint64         `json:"gap"`
+		MaxMasternodesV2          int            `json:"maxMasternodesV2"`
 		FoundationWalletAddr      common.Address `json:"foundationWalletAddr"`
 		LegacyFoudationWalletAddr common.Address `json:"foudationWalletAddr"`
 		SkipV1Validation          bool           `json:"SkipV1Validation"`
@@ -563,12 +1016,18 @@ func (c *XDPoSConfig) UnmarshalJSON(data []byte) error {
 	c.Reward = decoded.Reward
 	c.RewardCheckpoint = decoded.RewardCheckpoint
 	c.Gap = decoded.Gap
+	c.MaxMasternodesV2 = decoded.MaxMasternodesV2
 	c.FoundationWalletAddr = decoded.FoundationWalletAddr
 	if c.FoundationWalletAddr == (common.Address{}) && decoded.LegacyFoudationWalletAddr != (common.Address{}) {
 		c.FoundationWalletAddr = decoded.LegacyFoudationWalletAddr
 	}
 	c.SkipV1Validation = decoded.SkipV1Validation
 	c.V2 = decoded.V2
+	c.jsonPresenceTracked = true
+	c.jsonPresence = make(map[string]struct{}, len(raw))
+	for key := range raw {
+		c.jsonPresence[key] = struct{}{}
+	}
 
 	return nil
 }
@@ -580,7 +1039,7 @@ type V2 struct {
 	SwitchBlock   *big.Int             `json:"switchBlock"`
 	CurrentConfig *V2Config            `json:"config"`
 	AllConfigs    map[uint64]*V2Config `json:"allConfigs"`
-	configIndex   []uint64             //list of switch block of configs
+	configIndex   []uint64             // list of switch block of configs
 }
 
 type V2Config struct {
@@ -607,6 +1066,268 @@ type V2Config struct {
 type ExpTimeoutConfig struct {
 	Base        float64 `json:"base"`        // base in base^exponent
 	MaxExponent uint8   `json:"maxExponent"` // max exponent in base^exponent
+}
+
+// Clone returns an independent copy of the v2 config.
+func (c *V2Config) Clone() *V2Config {
+	if c == nil {
+		return nil
+	}
+	clone := *c
+	return &clone
+}
+
+// Clone returns a read-locked deep copy of the V2 state.
+func (v2 *V2) Clone() *V2 {
+	if v2 == nil {
+		return nil
+	}
+	v2.lock.RLock()
+	defer v2.lock.RUnlock()
+
+	clone := &V2{
+		SwitchEpoch: v2.SwitchEpoch,
+		SwitchBlock: common.CloneBigInt(v2.SwitchBlock),
+	}
+	if v2.CurrentConfig != nil {
+		clone.CurrentConfig = v2.CurrentConfig.Clone()
+	}
+	if v2.AllConfigs != nil {
+		clone.AllConfigs = make(map[uint64]*V2Config, len(v2.AllConfigs))
+		for key, cfg := range v2.AllConfigs {
+			clone.AllConfigs[key] = cfg.Clone()
+		}
+	}
+	if v2.configIndex != nil {
+		clone.configIndex = append([]uint64(nil), v2.configIndex...)
+	}
+	return clone
+}
+
+// Clone returns an independent copy of the XDPoS config.
+func (c *XDPoSConfig) Clone() *XDPoSConfig {
+	if c == nil {
+		return nil
+	}
+	clone := *c
+	clone.V2 = c.V2.Clone()
+	if c.jsonPresence != nil {
+		clone.jsonPresence = make(map[string]struct{}, len(c.jsonPresence))
+		for key := range c.jsonPresence {
+			clone.jsonPresence[key] = struct{}{}
+		}
+	}
+	return &clone
+}
+
+// Clone returns a deep copy of the chain config and nested consensus configs.
+func (c *ChainConfig) Clone() *ChainConfig {
+	if c == nil {
+		return nil
+	}
+	clone := *c
+	clone.ChainID = common.CloneBigInt(c.ChainID)
+	clone.HomesteadBlock = common.CloneBigInt(c.HomesteadBlock)
+	clone.TIP2019Block = common.CloneBigInt(c.TIP2019Block)
+	clone.DAOForkBlock = common.CloneBigInt(c.DAOForkBlock)
+	clone.EIP150Block = common.CloneBigInt(c.EIP150Block)
+	clone.EIP155Block = common.CloneBigInt(c.EIP155Block)
+	clone.EIP158Block = common.CloneBigInt(c.EIP158Block)
+	clone.ByzantiumBlock = common.CloneBigInt(c.ByzantiumBlock)
+	clone.ConstantinopleBlock = common.CloneBigInt(c.ConstantinopleBlock)
+	clone.PetersburgBlock = common.CloneBigInt(c.PetersburgBlock)
+	clone.IstanbulBlock = common.CloneBigInt(c.IstanbulBlock)
+	clone.TIPSigningBlock = common.CloneBigInt(c.TIPSigningBlock)
+	clone.TIPRandomizeBlock = common.CloneBigInt(c.TIPRandomizeBlock)
+	clone.TIPIncreaseMasternodesBlock = common.CloneBigInt(c.TIPIncreaseMasternodesBlock)
+	clone.DenylistBlock = common.CloneBigInt(c.DenylistBlock)
+	clone.TIPNoHalvingMNRewardBlock = common.CloneBigInt(c.TIPNoHalvingMNRewardBlock)
+	clone.TIPXDCXBlock = common.CloneBigInt(c.TIPXDCXBlock)
+	clone.TIPXDCXLendingBlock = common.CloneBigInt(c.TIPXDCXLendingBlock)
+	clone.TIPXDCXCancellationFeeBlock = common.CloneBigInt(c.TIPXDCXCancellationFeeBlock)
+	clone.TIPTRC21FeeBlock = common.CloneBigInt(c.TIPTRC21FeeBlock)
+	clone.BerlinBlock = common.CloneBigInt(c.BerlinBlock)
+	clone.LondonBlock = common.CloneBigInt(c.LondonBlock)
+	clone.MergeBlock = common.CloneBigInt(c.MergeBlock)
+	clone.ShanghaiBlock = common.CloneBigInt(c.ShanghaiBlock)
+	clone.Gas50xBlock = common.CloneBigInt(c.Gas50xBlock)
+	clone.TIPXDCXMinerDisableBlock = common.CloneBigInt(c.TIPXDCXMinerDisableBlock)
+	clone.TIPXDCXReceiverDisableBlock = common.CloneBigInt(c.TIPXDCXReceiverDisableBlock)
+	clone.Eip1559Block = common.CloneBigInt(c.Eip1559Block)
+	clone.CancunBlock = common.CloneBigInt(c.CancunBlock)
+	clone.PragueBlock = common.CloneBigInt(c.PragueBlock)
+	clone.OsakaBlock = common.CloneBigInt(c.OsakaBlock)
+	clone.DynamicGasLimitBlock = common.CloneBigInt(c.DynamicGasLimitBlock)
+	clone.TIPUpgradeRewardBlock = common.CloneBigInt(c.TIPUpgradeRewardBlock)
+	clone.TIPUpgradePenaltyBlock = common.CloneBigInt(c.TIPUpgradePenaltyBlock)
+	clone.TIPEpochHalvingBlock = common.CloneBigInt(c.TIPEpochHalvingBlock)
+	clone.TRC21IssuerSMC = c.TRC21IssuerSMC
+	clone.XDCXListingSMC = c.XDCXListingSMC
+	clone.RelayerRegistrationSMC = c.RelayerRegistrationSMC
+	clone.LendingRegistrationSMC = c.LendingRegistrationSMC
+	if c.Clique != nil {
+		clique := *c.Clique
+		clone.Clique = &clique
+	}
+	if c.Ethash != nil {
+		clone.Ethash = new(EthashConfig)
+	}
+	clone.XDPoS = c.XDPoS.Clone()
+	if c.jsonPresence != nil {
+		clone.jsonPresence = make(map[string]struct{}, len(c.jsonPresence))
+		for key := range c.jsonPresence {
+			clone.jsonPresence[key] = struct{}{}
+		}
+	}
+	return &clone
+}
+
+func GetBuiltInChainConfigByHash(ghash common.Hash) *ChainConfig {
+	switch ghash {
+	case MainnetGenesisHash:
+		return XDCMainnetChainConfig
+	case TestnetGenesisHash:
+		return TestnetChainConfig
+	case DevnetGenesisHash:
+		return DevnetChainConfig
+	default:
+		return nil
+	}
+}
+
+func isBuiltInTestNetwork(chainID *big.Int) bool {
+	switch chainID.Uint64() {
+	case TestnetChainConfig.ChainID.Uint64():
+		return true
+	case 1: // MainnetChainConfig, TestChainConfig, MergedTestChainConfig
+		return true
+	case 1337: // AllEthashProtocolChanges, AllDevChainProtocolChanges, AllCliqueProtocolChanges, TestXDPoSMockChainConfig
+		return true
+	default:
+		return false
+	}
+}
+
+// CheckConfigForkOrder checks that we don't "skip" any forks, geth isn't pluggable enough
+// to guarantee that forks can be implemented in a different order than on official networks
+func (c *ChainConfig) CheckConfigForkOrder() error {
+	if c.ChainID == nil {
+		return fmt.Errorf("invalid chain config: %w %s", ErrMissingForkSwitch, "ChainID")
+	}
+	if c.TIPTRC21FeeBlock == nil {
+		return fmt.Errorf("invalid chain config: %w %s", ErrMissingForkSwitch, "TIPTRC21FeeBlock")
+	}
+	if c.Gas50xBlock != nil && c.Gas50xBlock.Cmp(c.TIPTRC21FeeBlock) < 0 {
+		return fmt.Errorf("invalid chain config: %w TIPTRC21FeeBlock %v > Gas50xBlock %v", ErrWrongForkSwitchOrder, c.TIPTRC21FeeBlock, c.Gas50xBlock)
+	}
+	if c.XDPoS == nil && c.Ethash == nil && c.Clique == nil && !isBuiltInTestNetwork(c.ChainID) {
+		return fmt.Errorf("invalid chain config: %w %s", ErrMissingForkSwitch, "XDPoS")
+	}
+	if c.XDPoS != nil {
+		if c.XDPoS.MaxMasternodesV2 == 0 {
+			return fmt.Errorf("invalid chain config: %w %s", ErrMissingForkSwitch, "XDPoS.MaxMasternodesV2")
+		}
+	}
+	return nil
+}
+
+func (c *ChainConfig) isJSONFieldMissing(key string, fallback bool) bool {
+	if c == nil {
+		return false
+	}
+	if !c.jsonPresenceTracked {
+		return fallback
+	}
+	_, ok := c.jsonPresence[key]
+	return !ok
+}
+
+// BackfillMissingFields copies missing fields from LocalnetChainConfig into c
+// using strict JSON-key presence when available. If presence metadata is
+// unavailable, pointer-nil/zero-value fallbacks are used for compatibility.
+func (c *ChainConfig) BackfillMissingFields() *ChainConfig {
+	if c == nil {
+		return c
+	}
+
+	dest := c.Clone()
+	src := LocalnetChainConfig
+
+	bigIntFields := []struct {
+		key string
+		dst **big.Int
+		src *big.Int
+	}{
+		{"chainId", &dest.ChainID, src.ChainID},
+		{"homesteadBlock", &dest.HomesteadBlock, src.HomesteadBlock},
+		{"daoForkBlock", &dest.DAOForkBlock, src.DAOForkBlock},
+		{"eip150Block", &dest.EIP150Block, src.EIP150Block},
+		{"eip155Block", &dest.EIP155Block, src.EIP155Block},
+		{"eip158Block", &dest.EIP158Block, src.EIP158Block},
+		{"byzantiumBlock", &dest.ByzantiumBlock, src.ByzantiumBlock},
+		{"constantinopleBlock", &dest.ConstantinopleBlock, src.ConstantinopleBlock},
+		{"petersburgBlock", &dest.PetersburgBlock, src.PetersburgBlock},
+		{"istanbulBlock", &dest.IstanbulBlock, src.IstanbulBlock},
+		{"tip2019Block", &dest.TIP2019Block, src.TIP2019Block},
+		{"tipSigningBlock", &dest.TIPSigningBlock, src.TIPSigningBlock},
+		{"tipRandomizeBlock", &dest.TIPRandomizeBlock, src.TIPRandomizeBlock},
+		{"tipIncreaseMasternodesBlock", &dest.TIPIncreaseMasternodesBlock, src.TIPIncreaseMasternodesBlock},
+		{"denylistBlock", &dest.DenylistBlock, src.DenylistBlock},
+		{"tipNoHalvingMNRewardBlock", &dest.TIPNoHalvingMNRewardBlock, src.TIPNoHalvingMNRewardBlock},
+		{"tipXDCXBlock", &dest.TIPXDCXBlock, src.TIPXDCXBlock},
+		{"tipXDCXLendingBlock", &dest.TIPXDCXLendingBlock, src.TIPXDCXLendingBlock},
+		{"tipXDCXCancellationFeeBlock", &dest.TIPXDCXCancellationFeeBlock, src.TIPXDCXCancellationFeeBlock},
+		{"tipTRC21FeeBlock", &dest.TIPTRC21FeeBlock, src.TIPTRC21FeeBlock},
+		{"gas50xBlock", &dest.Gas50xBlock, src.Gas50xBlock},
+		{"berlinBlock", &dest.BerlinBlock, src.BerlinBlock},
+		{"londonBlock", &dest.LondonBlock, src.LondonBlock},
+		{"mergeBlock", &dest.MergeBlock, src.MergeBlock},
+		{"shanghaiBlock", &dest.ShanghaiBlock, src.ShanghaiBlock},
+		{"tipXDCXMinerDisableBlock", &dest.TIPXDCXMinerDisableBlock, src.TIPXDCXMinerDisableBlock},
+		{"tipXDCXReceiverDisableBlock", &dest.TIPXDCXReceiverDisableBlock, src.TIPXDCXReceiverDisableBlock},
+		{"eip1559Block", &dest.Eip1559Block, src.Eip1559Block},
+		{"cancunBlock", &dest.CancunBlock, src.CancunBlock},
+		{"pragueBlock", &dest.PragueBlock, src.PragueBlock},
+		{"osakaBlock", &dest.OsakaBlock, src.OsakaBlock},
+		{"dynamicGasLimitBlock", &dest.DynamicGasLimitBlock, src.DynamicGasLimitBlock},
+		{"tipUpgradeRewardBlock", &dest.TIPUpgradeRewardBlock, src.TIPUpgradeRewardBlock},
+		{"tipUpgradePenaltyBlock", &dest.TIPUpgradePenaltyBlock, src.TIPUpgradePenaltyBlock},
+		{"tipEpochHalvingBlock", &dest.TIPEpochHalvingBlock, src.TIPEpochHalvingBlock},
+	}
+
+	addressFields := []struct {
+		key string
+		dst *common.Address
+		src common.Address
+	}{
+		{"trc21IssuerSMC", &dest.TRC21IssuerSMC, src.TRC21IssuerSMC},
+		{"xdcxListingSMC", &dest.XDCXListingSMC, src.XDCXListingSMC},
+		{"relayerRegistrationSMC", &dest.RelayerRegistrationSMC, src.RelayerRegistrationSMC},
+		{"lendingRegistrationSMC", &dest.LendingRegistrationSMC, src.LendingRegistrationSMC},
+	}
+
+	for _, field := range bigIntFields {
+		if dest.isJSONFieldMissing(field.key, *field.dst == nil) {
+			log.Info("Backfilled missing field", "field", field.key, "old", *field.dst, "new", field.src)
+			*field.dst = common.CloneBigInt(field.src)
+		}
+	}
+
+	for _, field := range addressFields {
+		if dest.isJSONFieldMissing(field.key, *field.dst == (common.Address{})) {
+			log.Info("Backfilled missing field", "field", field.key, "old", field.dst.Hex(), "new", field.src.Hex())
+			*field.dst = field.src
+		}
+	}
+
+	if dest.XDPoS == nil {
+		log.Warn("XDPoS in source chain config is nil")
+	} else if dest.XDPoS.MaxMasternodesV2 == 0 {
+		log.Info("Backfilled missing field", "field", "XDPoS.MaxMasternodesV2", "old", 0, "new", src.XDPoS.MaxMasternodesV2)
+		dest.XDPoS.MaxMasternodesV2 = src.XDPoS.MaxMasternodesV2
+	}
+
+	return dest
 }
 
 func XDPoSConfigEqual(a, b *XDPoSConfig) bool {
@@ -639,6 +1360,10 @@ func XDPoSConfigEqual(a, b *XDPoSConfig) bool {
 	}
 	if a.FoundationWalletAddr != b.FoundationWalletAddr {
 		log.Warn("[XDPoSConfigEqual] FoundationWalletAddr mismatch", "a.FoundationWalletAddr", a.FoundationWalletAddr.Hex(), "b.FoundationWalletAddr", b.FoundationWalletAddr.Hex())
+		return false
+	}
+	if a.MaxMasternodesV2 != b.MaxMasternodesV2 {
+		log.Warn("[XDPoSConfigEqual] MaxMasternodesV2 mismatch", "a.MaxMasternodesV2", a.MaxMasternodesV2, "b.MaxMasternodesV2", b.MaxMasternodesV2)
 		return false
 	}
 	if a.SkipV1Validation != b.SkipV1Validation {
@@ -699,7 +1424,7 @@ func (c *XDPoSConfig) String() string {
 		return "XDPoSConfig: <nil>"
 	}
 
-	return fmt.Sprintf("XDPoSConfig{Period: %v, Epoch: %v, Reward: %v, RewardCheckpoint: %v, Gap: %v, FoundationWalletAddr: %v, SkipV1Validation: %v, V2: %s}", c.Period, c.Epoch, c.Reward, c.RewardCheckpoint, c.Gap, c.FoundationWalletAddr.String0x(), c.SkipV1Validation, c.V2.String())
+	return fmt.Sprintf("XDPoSConfig{Period: %v, Epoch: %v, Reward: %v, RewardCheckpoint: %v, Gap: %v, MaxMasternodesV2: %v, FoundationWalletAddr: %v, SkipV1Validation: %v, V2: %s}", c.Period, c.Epoch, c.Reward, c.RewardCheckpoint, c.Gap, c.MaxMasternodesV2, c.FoundationWalletAddr.String0x(), c.SkipV1Validation, c.V2.String())
 }
 
 // Description returns a human-readable description of XDPoSConfig
@@ -716,6 +1441,7 @@ func (c *XDPoSConfig) Description(indent int) string {
 	banner += fmt.Sprintf("%s- Reward: %v\n", prefix, c.Reward)
 	banner += fmt.Sprintf("%s- RewardCheckpoint: %v\n", prefix, c.RewardCheckpoint)
 	banner += fmt.Sprintf("%s- Gap: %v\n", prefix, c.Gap)
+	banner += fmt.Sprintf("%s- MaxMasternodesV2: %v\n", prefix, c.MaxMasternodesV2)
 	banner += fmt.Sprintf("%s- FoundationWalletAddr: %v\n", prefix, c.FoundationWalletAddr.Hex())
 	banner += fmt.Sprintf("%s- SkipV1Validation: %v\n", prefix, c.SkipV1Validation)
 	banner += fmt.Sprintf("%s- %s", prefix, c.V2.Description(indent+2))
@@ -856,7 +1582,13 @@ func (v2 *V2) BuildConfigIndex() {
 }
 
 func (v2 *V2) ConfigIndex() []uint64 {
-	return v2.configIndex
+	v2.lock.RLock()
+	defer v2.lock.RUnlock()
+
+	if v2.configIndex == nil {
+		return nil
+	}
+	return append([]uint64(nil), v2.configIndex...)
 }
 
 // String implements the fmt.Stringer interface, returning a string representation
@@ -866,55 +1598,128 @@ func (c *ChainConfig) String() string {
 
 	// Add block-based forks
 	if c.HomesteadBlock != nil {
-		result += fmt.Sprintf(", HomesteadBlock: %v", c.HomesteadBlock)
+		result += fmt.Sprintf(", Homestead: %v", c.HomesteadBlock)
+	}
+	if c.TIP2019Block != nil {
+		result += fmt.Sprintf(", TIP2019: %v", c.TIP2019Block)
 	}
 	if c.DAOForkBlock != nil {
-		result += fmt.Sprintf(", DAOForkBlock: %v", c.DAOForkBlock)
+		result += fmt.Sprintf(", DAOFork: %v", c.DAOForkBlock)
 	}
+	result += fmt.Sprintf(", DAOForkSupport: %v", c.DAOForkSupport)
 	if c.EIP150Block != nil {
-		result += fmt.Sprintf(", EIP150Block: %v", c.EIP150Block)
+		result += fmt.Sprintf(", EIP150: %v", c.EIP150Block)
 	}
 	if c.EIP155Block != nil {
-		result += fmt.Sprintf(", EIP155Block: %v", c.EIP155Block)
+		result += fmt.Sprintf(", EIP155: %v", c.EIP155Block)
 	}
 	if c.EIP158Block != nil {
-		result += fmt.Sprintf(", EIP158Block: %v", c.EIP158Block)
+		result += fmt.Sprintf(", EIP158: %v", c.EIP158Block)
 	}
 	if c.ByzantiumBlock != nil {
-		result += fmt.Sprintf(", ByzantiumBlock: %v", c.ByzantiumBlock)
+		result += fmt.Sprintf(", Byzantium: %v", c.ByzantiumBlock)
 	}
 	if c.ConstantinopleBlock != nil {
-		result += fmt.Sprintf(", ConstantinopleBlock: %v", c.ConstantinopleBlock)
+		result += fmt.Sprintf(", Constantinople: %v", c.ConstantinopleBlock)
 	}
 	if c.PetersburgBlock != nil {
-		result += fmt.Sprintf(", PetersburgBlock: %v", c.PetersburgBlock)
+		result += fmt.Sprintf(", Petersburg: %v", c.PetersburgBlock)
 	}
 	if c.IstanbulBlock != nil {
-		result += fmt.Sprintf(", IstanbulBlock: %v", c.IstanbulBlock)
+		result += fmt.Sprintf(", Istanbul: %v", c.IstanbulBlock)
+	}
+	if c.TIPSigningBlock != nil {
+		result += fmt.Sprintf(", TIPSigning: %v", c.TIPSigningBlock)
+	}
+	if c.TIPRandomizeBlock != nil {
+		result += fmt.Sprintf(", TIPRandomize: %v", c.TIPRandomizeBlock)
+	}
+	if c.TIPIncreaseMasternodesBlock != nil {
+		result += fmt.Sprintf(", TIPIncreaseMasternodes: %v", c.TIPIncreaseMasternodesBlock)
+	}
+	if c.DenylistBlock != nil {
+		result += fmt.Sprintf(", Denylist: %v", c.DenylistBlock)
+	}
+	if c.TIPNoHalvingMNRewardBlock != nil {
+		result += fmt.Sprintf(", TIPNoHalvingMNReward: %v", c.TIPNoHalvingMNRewardBlock)
+	}
+	if c.TIPXDCXBlock != nil {
+		result += fmt.Sprintf(", TIPXDCX: %v", c.TIPXDCXBlock)
+	}
+	if c.TIPXDCXLendingBlock != nil {
+		result += fmt.Sprintf(", TIPXDCXLending: %v", c.TIPXDCXLendingBlock)
+	}
+	if c.TIPXDCXCancellationFeeBlock != nil {
+		result += fmt.Sprintf(", TIPXDCXCancellationFee: %v", c.TIPXDCXCancellationFeeBlock)
+	}
+	if c.TIPTRC21FeeBlock != nil {
+		result += fmt.Sprintf(", TIPTRC21Fee: %v", c.TIPTRC21FeeBlock)
 	}
 	if c.BerlinBlock != nil {
-		result += fmt.Sprintf(", BerlinBlock: %v", c.BerlinBlock)
+		result += fmt.Sprintf(", Berlin: %v", c.BerlinBlock)
 	}
 	if c.LondonBlock != nil {
-		result += fmt.Sprintf(", LondonBlock: %v", c.LondonBlock)
+		result += fmt.Sprintf(", London: %v", c.LondonBlock)
 	}
 	if c.MergeBlock != nil {
-		result += fmt.Sprintf(", MergeBlock: %v", c.MergeBlock)
+		result += fmt.Sprintf(", Merge: %v", c.MergeBlock)
 	}
 	if c.ShanghaiBlock != nil {
-		result += fmt.Sprintf(", ShanghaiBlock: %v", c.ShanghaiBlock)
+		result += fmt.Sprintf(", Shanghai: %v", c.ShanghaiBlock)
+	}
+	if c.Gas50xBlock != nil {
+		result += fmt.Sprintf(", Gas50x: %v", c.Gas50xBlock)
+	}
+	if c.TIPXDCXMinerDisableBlock != nil {
+		result += fmt.Sprintf(", TIPXDCXMinerDisable: %v", c.TIPXDCXMinerDisableBlock)
+	}
+	if c.TIPXDCXReceiverDisableBlock != nil {
+		result += fmt.Sprintf(", TIPXDCXReceiverDisable: %v", c.TIPXDCXReceiverDisableBlock)
+	}
+	if c.Eip1559Block != nil {
+		result += fmt.Sprintf(", Eip1559: %v", c.Eip1559Block)
 	}
 	if c.CancunBlock != nil {
-		result += fmt.Sprintf(", CancunBlock: %v", c.CancunBlock)
+		result += fmt.Sprintf(", Cancun: %v", c.CancunBlock)
 	}
 	if c.PragueBlock != nil {
-		result += fmt.Sprintf(", PragueBlock: %v", c.PragueBlock)
+		result += fmt.Sprintf(", Prague: %v", c.PragueBlock)
+	}
+	if c.OsakaBlock != nil {
+		result += fmt.Sprintf(", Osaka: %v", c.OsakaBlock)
 	}
 	if c.DynamicGasLimitBlock != nil {
-		result += fmt.Sprintf(", DynamicGasLimitBlock: %v", c.DynamicGasLimitBlock)
+		result += fmt.Sprintf(", DynamicGasLimit: %v", c.DynamicGasLimitBlock)
+	}
+	if c.TIPUpgradeRewardBlock != nil {
+		result += fmt.Sprintf(", TIPUpgradeReward: %v", c.TIPUpgradeRewardBlock)
+	}
+	if c.TIPUpgradePenaltyBlock != nil {
+		result += fmt.Sprintf(", TIPUpgradePenalty: %v", c.TIPUpgradePenaltyBlock)
+	}
+	if c.TIPEpochHalvingBlock != nil {
+		result += fmt.Sprintf(", TIPEpochHalving: %v", c.TIPEpochHalvingBlock)
+	}
+	if c.TRC21IssuerSMC != (common.Address{}) {
+		result += fmt.Sprintf(", TRC21IssuerSMC: %s", c.TRC21IssuerSMC.Hex())
+	}
+	if c.XDCXListingSMC != (common.Address{}) {
+		result += fmt.Sprintf(", XDCXListingSMC: %s", c.XDCXListingSMC.Hex())
+	}
+	if c.RelayerRegistrationSMC != (common.Address{}) {
+		result += fmt.Sprintf(", RelayerRegistrationSMC: %s", c.RelayerRegistrationSMC.Hex())
+	}
+	if c.LendingRegistrationSMC != (common.Address{}) {
+		result += fmt.Sprintf(", LendingRegistrationSMC: %s", c.LendingRegistrationSMC.Hex())
+	}
+	if c.Ethash != nil {
+		result += fmt.Sprintf(", Ethash: %s", c.Ethash.String())
+	}
+	if c.Clique != nil {
+		result += fmt.Sprintf(", Clique: %s", c.Clique.String())
 	}
 	if c.XDPoS != nil {
-		result += fmt.Sprintf(", %s", c.XDPoS.String())
+		result += fmt.Sprintf(", XDPoS: %s", c.XDPoS.String())
 	}
 	result += "}"
 	return result
@@ -932,79 +1737,46 @@ func (c *ChainConfig) Description() string {
 	default:
 		engine = "unknown"
 	}
-	berlinBlock := common.BerlinBlock
-	if c.BerlinBlock != nil {
-		berlinBlock = c.BerlinBlock
-	}
-	londonBlock := common.LondonBlock
-	if c.LondonBlock != nil {
-		londonBlock = c.LondonBlock
-	}
-	mergeBlock := common.MergeBlock
-	if c.MergeBlock != nil {
-		mergeBlock = c.MergeBlock
-	}
-	shanghaiBlock := common.ShanghaiBlock
-	if c.ShanghaiBlock != nil {
-		shanghaiBlock = c.ShanghaiBlock
-	}
-	eip1559Block := common.Eip1559Block
-	if c.Eip1559Block != nil {
-		eip1559Block = c.Eip1559Block
-	}
-	cancunBlock := common.CancunBlock
-	if c.CancunBlock != nil {
-		cancunBlock = c.CancunBlock
-	}
-	pragueBlock := common.PragueBlock
-	if c.PragueBlock != nil {
-		pragueBlock = c.PragueBlock
-	}
-	osakaBlock := common.OsakaBlock
-	if c.OsakaBlock != nil {
-		osakaBlock = c.OsakaBlock
-	}
-	dynamicGasLimitBlock := common.DynamicGasLimitBlock
-	if c.DynamicGasLimitBlock != nil {
-		dynamicGasLimitBlock = c.DynamicGasLimitBlock
-	}
-
 	var banner = "Chain configuration:\n"
 	banner += fmt.Sprintf("  - ChainID:                     %-8v\n", c.ChainID)
 	banner += fmt.Sprintf("  - Homestead:                   %-8v\n", c.HomesteadBlock)
 	banner += fmt.Sprintf("  - DAO Fork:                    %-8v\n", c.DAOForkBlock)
 	banner += fmt.Sprintf("  - DAO Support:                 %-8v\n", c.DAOForkSupport)
+	banner += fmt.Sprintf("  - TIP2019:                     %-8v\n", c.TIP2019Block)
 	banner += fmt.Sprintf("  - Tangerine Whistle (EIP 150): %-8v\n", c.EIP150Block)
 	banner += fmt.Sprintf("  - Spurious Dragon (EIP 155):   %-8v\n", c.EIP155Block)
 	banner += fmt.Sprintf("  - Byzantium:                   %-8v\n", c.ByzantiumBlock)
 	banner += fmt.Sprintf("  - Constantinople:              %-8v\n", c.ConstantinopleBlock)
 	banner += fmt.Sprintf("  - Petersburg:                  %-8v\n", c.PetersburgBlock)
 	banner += fmt.Sprintf("  - Istanbul:                    %-8v\n", c.IstanbulBlock)
-	banner += fmt.Sprintf("  - TIP2019Block:                %-8v\n", common.TIP2019Block)
-	banner += fmt.Sprintf("  - TIPSigning:                  %-8v\n", common.TIPSigning)
-	banner += fmt.Sprintf("  - TIPRandomize:                %-8v\n", common.TIPRandomize)
-	banner += fmt.Sprintf("  - TIPIncreaseMasternodes:      %-8v\n", common.TIPIncreaseMasternodes)
-	banner += fmt.Sprintf("  - DenylistHFNumber:            %-8v\n", common.DenylistHFNumber)
-	banner += fmt.Sprintf("  - TIPNoHalvingMNReward:        %-8v\n", common.TIPNoHalvingMNReward)
-	banner += fmt.Sprintf("  - TIPXDCX:                     %-8v\n", common.TIPXDCX)
-	banner += fmt.Sprintf("  - TIPXDCXLending:              %-8v\n", common.TIPXDCXLending)
-	banner += fmt.Sprintf("  - TIPXDCXCancellationFee:      %-8v\n", common.TIPXDCXCancellationFee)
-	banner += fmt.Sprintf("  - TIPTRC21Fee:                 %-8v\n", common.TIPTRC21Fee)
-	banner += fmt.Sprintf("  - Berlin:                      %-8v\n", berlinBlock)
-	banner += fmt.Sprintf("  - London:                      %-8v\n", londonBlock)
-	banner += fmt.Sprintf("  - Merge:                       %-8v\n", mergeBlock)
-	banner += fmt.Sprintf("  - Shanghai:                    %-8v\n", shanghaiBlock)
-	banner += fmt.Sprintf("  - BlockNumberGas50x:           %-8v\n", common.BlockNumberGas50x)
-	banner += fmt.Sprintf("  - TIPXDCXMinerDisable:         %-8v\n", common.TIPXDCXMinerDisable)
-	banner += fmt.Sprintf("  - TIPXDCXReceiverDisable:      %-8v\n", common.TIPXDCXReceiverDisable)
-	banner += fmt.Sprintf("  - Eip1559:                     %-8v\n", eip1559Block)
-	banner += fmt.Sprintf("  - Cancun:                      %-8v\n", cancunBlock)
-	banner += fmt.Sprintf("  - Prague:                      %-8v\n", pragueBlock)
-	banner += fmt.Sprintf("  - Osaka:                       %-8v\n", osakaBlock)
-	banner += fmt.Sprintf("  - DynamicGasLimitBlock:        %-8v\n", dynamicGasLimitBlock)
-	banner += fmt.Sprintf("  - TIPUpgradeReward:            %-8v\n", common.TIPUpgradeReward)
-	banner += fmt.Sprintf("  - TipUpgradePenalty:           %-8v\n", common.TipUpgradePenalty)
-	banner += fmt.Sprintf("  - TIPEpochHalving:             %-8v\n", common.TIPEpochHalving)
+	banner += fmt.Sprintf("  - TIPSigning:                  %-8v\n", c.TIPSigningBlock)
+	banner += fmt.Sprintf("  - TIPRandomize:                %-8v\n", c.TIPRandomizeBlock)
+	banner += fmt.Sprintf("  - TIPIncreaseMasternodes:      %-8v\n", c.TIPIncreaseMasternodesBlock)
+	banner += fmt.Sprintf("  - Denylist:                    %-8v\n", c.DenylistBlock)
+	banner += fmt.Sprintf("  - TIPNoHalvingMNReward:        %-8v\n", c.TIPNoHalvingMNRewardBlock)
+	banner += fmt.Sprintf("  - TIPXDCX:                     %-8v\n", c.TIPXDCXBlock)
+	banner += fmt.Sprintf("  - TIPXDCXLending:              %-8v\n", c.TIPXDCXLendingBlock)
+	banner += fmt.Sprintf("  - TIPXDCXCancellationFee:      %-8v\n", c.TIPXDCXCancellationFeeBlock)
+	banner += fmt.Sprintf("  - TIPTRC21Fee:                 %-8v\n", c.TIPTRC21FeeBlock)
+	banner += fmt.Sprintf("  - Berlin:                      %-8v\n", c.BerlinBlock)
+	banner += fmt.Sprintf("  - London:                      %-8v\n", c.LondonBlock)
+	banner += fmt.Sprintf("  - Merge:                       %-8v\n", c.MergeBlock)
+	banner += fmt.Sprintf("  - Shanghai:                    %-8v\n", c.ShanghaiBlock)
+	banner += fmt.Sprintf("  - Gas50x:                      %-8v\n", c.Gas50xBlock)
+	banner += fmt.Sprintf("  - TIPXDCXMinerDisable:         %-8v\n", c.TIPXDCXMinerDisableBlock)
+	banner += fmt.Sprintf("  - TIPXDCXReceiverDisable:      %-8v\n", c.TIPXDCXReceiverDisableBlock)
+	banner += fmt.Sprintf("  - Eip1559:                     %-8v\n", c.Eip1559Block)
+	banner += fmt.Sprintf("  - Cancun:                      %-8v\n", c.CancunBlock)
+	banner += fmt.Sprintf("  - Prague:                      %-8v\n", c.PragueBlock)
+	banner += fmt.Sprintf("  - Osaka:                       %-8v\n", c.OsakaBlock)
+	banner += fmt.Sprintf("  - DynamicGasLimit:             %-8v\n", c.DynamicGasLimitBlock)
+	banner += fmt.Sprintf("  - TIPUpgradeReward:            %-8v\n", c.TIPUpgradeRewardBlock)
+	banner += fmt.Sprintf("  - TIPUpgradePenalty:           %-8v\n", c.TIPUpgradePenaltyBlock)
+	banner += fmt.Sprintf("  - TIPEpochHalving:             %-8v\n", c.TIPEpochHalvingBlock)
+	banner += fmt.Sprintf("  - TRC21IssuerSMC:              %-8s\n", c.TRC21IssuerSMC)
+	banner += fmt.Sprintf("  - XDCXListingSMC:              %-8s\n", c.XDCXListingSMC)
+	banner += fmt.Sprintf("  - RelayerRegistrationSMC:      %-8s\n", c.RelayerRegistrationSMC)
+	banner += fmt.Sprintf("  - LendingRegistrationSMC:      %-8s\n", c.LendingRegistrationSMC)
 	banner += fmt.Sprintf("  - Engine:                      %v", engine)
 	return banner
 }
@@ -1012,6 +1784,10 @@ func (c *ChainConfig) Description() string {
 // IsHomestead returns whether num is either equal to the homestead block or greater.
 func (c *ChainConfig) IsHomestead(num *big.Int) bool {
 	return isForked(c.HomesteadBlock, num)
+}
+
+func (c *ChainConfig) IsTIP2019(num *big.Int) bool {
+	return isForked(c.TIP2019Block, num)
 }
 
 // IsDAO returns whether num is either equal to the DAO fork block or greater.
@@ -1039,121 +1815,127 @@ func (c *ChainConfig) IsConstantinople(num *big.Int) bool {
 	return isForked(c.ConstantinopleBlock, num)
 }
 
-// IsPetersburg returns whether num is either
-// - equal to or greater than the PetersburgBlock fork block,
-// - OR is nil, and Constantinople is active
+// IsPetersburg returns whether num is either equal to the Petersburg fork block or greater.
 func (c *ChainConfig) IsPetersburg(num *big.Int) bool {
-	return isForked(common.TIPXDCXCancellationFee, num) || isForked(c.PetersburgBlock, num)
+	return isForked(c.TIPXDCXCancellationFeeBlock, num) || isForked(c.PetersburgBlock, num)
 }
 
-// IsIstanbul returns whether num is either equal to the Istanbul fork block or greater.
+// IsIstanbul returns whether num is either equal to the TIPXDCXCancellationFeeBlock fork block or greater.
 func (c *ChainConfig) IsIstanbul(num *big.Int) bool {
-	return isForked(common.TIPXDCXCancellationFee, num) || isForked(c.IstanbulBlock, num)
+	return isForked(c.TIPXDCXCancellationFeeBlock, num) || isForked(c.IstanbulBlock, num)
+}
+
+// IsTIPTRC21Fee returns whether num is either equal to the TIPTRC21Fee fork block or greater.
+func (c *ChainConfig) IsTIPTRC21Fee(num *big.Int) bool {
+	return isForked(c.TIPTRC21FeeBlock, num)
+}
+
+func (c *ChainConfig) IsDenylist(num *big.Int) bool {
+	return isForked(c.DenylistBlock, num)
 }
 
 // IsBerlin returns whether num is either equal to the Berlin fork block or greater.
 func (c *ChainConfig) IsBerlin(num *big.Int) bool {
-	return isForked(common.BerlinBlock, num) || isForked(c.BerlinBlock, num)
+	return isForked(c.BerlinBlock, num)
 }
 
 // IsLondon returns whether num is either equal to the London fork block or greater.
 func (c *ChainConfig) IsLondon(num *big.Int) bool {
-	return isForked(common.LondonBlock, num) || isForked(c.LondonBlock, num)
+	return isForked(c.LondonBlock, num)
 }
 
 // IsMerge returns whether num is either equal to the Merge fork block or greater.
 // Different from Geth which uses `block.difficulty != nil`
 func (c *ChainConfig) IsMerge(num *big.Int) bool {
-	return isForked(common.MergeBlock, num) || isForked(c.MergeBlock, num)
+	return isForked(c.MergeBlock, num)
 }
 
 // IsShanghai returns whether num is either equal to the Shanghai fork block or greater.
 func (c *ChainConfig) IsShanghai(num *big.Int) bool {
-	return isForked(common.ShanghaiBlock, num) || isForked(c.ShanghaiBlock, num)
+	return isForked(c.ShanghaiBlock, num)
+}
+
+// IsGas50x returns whether num is either equal to the Gas50x fork block or greater.
+func (c *ChainConfig) IsGas50x(num *big.Int) bool {
+	return isForked(c.Gas50xBlock, num)
 }
 
 // IsEIP1559 returns whether num is either equal to the EIP1559 fork block or greater.
 func (c *ChainConfig) IsEIP1559(num *big.Int) bool {
-	return isForked(common.Eip1559Block, num) || isForked(c.Eip1559Block, num)
+	return isForked(c.Eip1559Block, num)
 }
 
 // IsCancun returns whether num is either equal to the Cancun fork block or greater.
 func (c *ChainConfig) IsCancun(num *big.Int) bool {
-	return isForked(common.CancunBlock, num) || isForked(c.CancunBlock, num)
+	return isForked(c.CancunBlock, num)
 }
 
 // IsPrague returns whether num is either equal to the Prague fork block or greater.
 func (c *ChainConfig) IsPrague(num *big.Int) bool {
-	return isForked(common.PragueBlock, num) || isForked(c.PragueBlock, num)
+	return isForked(c.PragueBlock, num)
 }
 
 // IsOsaka returns whether num is either equal to the Osaka fork block or greater.
 func (c *ChainConfig) IsOsaka(num *big.Int) bool {
-	return isForked(common.OsakaBlock, num) || isForked(c.OsakaBlock, num)
+	return isForked(c.OsakaBlock, num)
 }
 
 // IsDynamicGasLimitBlock returns whether num is either equal to the DynamicGasLimitBlock fork block or greater.
 func (c *ChainConfig) IsDynamicGasLimitBlock(num *big.Int) bool {
-	return isForked(common.DynamicGasLimitBlock, num) || isForked(c.DynamicGasLimitBlock, num)
-}
-
-func (c *ChainConfig) IsTIP2019(num *big.Int) bool {
-	return isForked(common.TIP2019Block, num)
+	return isForked(c.DynamicGasLimitBlock, num)
 }
 
 func (c *ChainConfig) IsTIPSigning(num *big.Int) bool {
-	return isForked(common.TIPSigning, num)
+	return isForked(c.TIPSigningBlock, num)
 }
 
 func (c *ChainConfig) IsTIPRandomize(num *big.Int) bool {
-	return isForked(common.TIPRandomize, num)
+	return isForked(c.TIPRandomizeBlock, num)
 }
 
 // IsTIPIncreaseMasternodes using for increase masternodes from 18 to 40
-
-// Time update: 23-07-2019
 func (c *ChainConfig) IsTIPIncreaseMasternodes(num *big.Int) bool {
-	return isForked(common.TIPIncreaseMasternodes, num)
+	return isForked(c.TIPIncreaseMasternodesBlock, num)
 }
 
 func (c *ChainConfig) IsTIPNoHalvingMNReward(num *big.Int) bool {
-	return isForked(common.TIPNoHalvingMNReward, num)
+	return isForked(c.TIPNoHalvingMNRewardBlock, num)
 }
 
 func (c *ChainConfig) IsTIPXDCX(num *big.Int) bool {
-	return isForked(common.TIPXDCX, num)
+	return isForked(c.TIPXDCXBlock, num)
 }
 
 func (c *ChainConfig) IsTIPXDCXMiner(num *big.Int) bool {
-	return isForked(common.TIPXDCX, num) && !isForked(common.TIPXDCXMinerDisable, num)
+	return isForked(c.TIPXDCXBlock, num) && !isForked(c.TIPXDCXMinerDisableBlock, num)
 }
 
 func (c *ChainConfig) IsTIPXDCXReceiver(num *big.Int) bool {
-	return isForked(common.TIPXDCX, num) && !isForked(common.TIPXDCXReceiverDisable, num)
+	return isForked(c.TIPXDCXBlock, num) && !isForked(c.TIPXDCXReceiverDisableBlock, num)
 }
 
 func (c *ChainConfig) IsXDCxDisable(num *big.Int) bool {
-	return isForked(common.TIPXDCXMinerDisable, num)
+	return isForked(c.TIPXDCXMinerDisableBlock, num)
 }
 
 func (c *ChainConfig) IsTIPXDCXLending(num *big.Int) bool {
-	return isForked(common.TIPXDCXLending, num)
+	return isForked(c.TIPXDCXLendingBlock, num)
 }
 
 func (c *ChainConfig) IsTIPXDCXCancellationFee(num *big.Int) bool {
-	return isForked(common.TIPXDCXCancellationFee, num)
+	return isForked(c.TIPXDCXCancellationFeeBlock, num)
 }
 
 func (c *ChainConfig) IsTIPUpgradeReward(num *big.Int) bool {
-	return isForked(common.TIPUpgradeReward, num)
+	return isForked(c.TIPUpgradeRewardBlock, num)
 }
 
 func (c *ChainConfig) IsTIPUpgradePenalty(num *big.Int) bool {
-	return isForked(common.TipUpgradePenalty, num)
+	return isForked(c.TIPUpgradePenaltyBlock, num)
 }
 
 func (c *ChainConfig) IsTIPEpochHalving(num *big.Int) bool {
-	return isForked(common.TIPEpochHalving, num)
+	return isForked(c.TIPEpochHalvingBlock, num)
 }
 
 // GasTable returns the gas table corresponding to the current phase (homestead or homestead reprice).
@@ -1195,6 +1977,9 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, head *big.Int) *Confi
 	if isForkIncompatible(c.HomesteadBlock, newcfg.HomesteadBlock, head) {
 		return newCompatError("Homestead fork block", c.HomesteadBlock, newcfg.HomesteadBlock)
 	}
+	if isForkIncompatible(c.TIP2019Block, newcfg.TIP2019Block, head) {
+		return newCompatError("TIP2019 fork block", c.TIP2019Block, newcfg.TIP2019Block)
+	}
 	if isForkIncompatible(c.DAOForkBlock, newcfg.DAOForkBlock, head) {
 		return newCompatError("DAO fork block", c.DAOForkBlock, newcfg.DAOForkBlock)
 	}
@@ -1229,14 +2014,53 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, head *big.Int) *Confi
 	if isForkIncompatible(c.IstanbulBlock, newcfg.IstanbulBlock, head) {
 		return newCompatError("Istanbul fork block", c.IstanbulBlock, newcfg.IstanbulBlock)
 	}
+	if isForkIncompatible(c.TIPSigningBlock, newcfg.TIPSigningBlock, head) {
+		return newCompatError("TIPSigning fork block", c.TIPSigningBlock, newcfg.TIPSigningBlock)
+	}
+	if isForkIncompatible(c.TIPRandomizeBlock, newcfg.TIPRandomizeBlock, head) {
+		return newCompatError("TIPRandomize fork block", c.TIPRandomizeBlock, newcfg.TIPRandomizeBlock)
+	}
+	if isForkIncompatible(c.TIPIncreaseMasternodesBlock, newcfg.TIPIncreaseMasternodesBlock, head) {
+		return newCompatError("TIPIncreaseMasternodes fork block", c.TIPIncreaseMasternodesBlock, newcfg.TIPIncreaseMasternodesBlock)
+	}
+	if isForkIncompatible(c.DenylistBlock, newcfg.DenylistBlock, head) {
+		return newCompatError("Denylist fork block", c.DenylistBlock, newcfg.DenylistBlock)
+	}
+	if isForkIncompatible(c.TIPNoHalvingMNRewardBlock, newcfg.TIPNoHalvingMNRewardBlock, head) {
+		return newCompatError("TIPNoHalvingMNReward fork block", c.TIPNoHalvingMNRewardBlock, newcfg.TIPNoHalvingMNRewardBlock)
+	}
+	if isForkIncompatible(c.TIPXDCXBlock, newcfg.TIPXDCXBlock, head) {
+		return newCompatError("TIPXDCX fork block", c.TIPXDCXBlock, newcfg.TIPXDCXBlock)
+	}
+	if isForkIncompatible(c.TIPXDCXLendingBlock, newcfg.TIPXDCXLendingBlock, head) {
+		return newCompatError("TIPXDCXLending fork block", c.TIPXDCXLendingBlock, newcfg.TIPXDCXLendingBlock)
+	}
+	if isForkIncompatible(c.TIPXDCXCancellationFeeBlock, newcfg.TIPXDCXCancellationFeeBlock, head) {
+		return newCompatError("TIPXDCXCancellationFee fork block", c.TIPXDCXCancellationFeeBlock, newcfg.TIPXDCXCancellationFeeBlock)
+	}
+	if isForkIncompatible(c.TIPTRC21FeeBlock, newcfg.TIPTRC21FeeBlock, head) {
+		return newCompatError("TIPTRC21Fee fork block", c.TIPTRC21FeeBlock, newcfg.TIPTRC21FeeBlock)
+	}
 	if isForkIncompatible(c.BerlinBlock, newcfg.BerlinBlock, head) {
 		return newCompatError("Berlin fork block", c.BerlinBlock, newcfg.BerlinBlock)
 	}
 	if isForkIncompatible(c.LondonBlock, newcfg.LondonBlock, head) {
 		return newCompatError("London fork block", c.LondonBlock, newcfg.LondonBlock)
 	}
+	if isForkIncompatible(c.MergeBlock, newcfg.MergeBlock, head) {
+		return newCompatError("Merge fork block", c.MergeBlock, newcfg.MergeBlock)
+	}
 	if isForkIncompatible(c.ShanghaiBlock, newcfg.ShanghaiBlock, head) {
 		return newCompatError("Shanghai fork block", c.ShanghaiBlock, newcfg.ShanghaiBlock)
+	}
+	if isForkIncompatible(c.Gas50xBlock, newcfg.Gas50xBlock, head) {
+		return newCompatError("Gas50x fork block", c.Gas50xBlock, newcfg.Gas50xBlock)
+	}
+	if isForkIncompatible(c.TIPXDCXMinerDisableBlock, newcfg.TIPXDCXMinerDisableBlock, head) {
+		return newCompatError("TIPXDCXMinerDisable fork block", c.TIPXDCXMinerDisableBlock, newcfg.TIPXDCXMinerDisableBlock)
+	}
+	if isForkIncompatible(c.TIPXDCXReceiverDisableBlock, newcfg.TIPXDCXReceiverDisableBlock, head) {
+		return newCompatError("TIPXDCXReceiverDisable fork block", c.TIPXDCXReceiverDisableBlock, newcfg.TIPXDCXReceiverDisableBlock)
 	}
 	if isForkIncompatible(c.Eip1559Block, newcfg.Eip1559Block, head) {
 		return newCompatError("Eip1559 fork block", c.Eip1559Block, newcfg.Eip1559Block)
@@ -1249,6 +2073,18 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, head *big.Int) *Confi
 	}
 	if isForkIncompatible(c.OsakaBlock, newcfg.OsakaBlock, head) {
 		return newCompatError("Osaka fork block", c.OsakaBlock, newcfg.OsakaBlock)
+	}
+	if isForkIncompatible(c.DynamicGasLimitBlock, newcfg.DynamicGasLimitBlock, head) {
+		return newCompatError("DynamicGasLimit fork block", c.DynamicGasLimitBlock, newcfg.DynamicGasLimitBlock)
+	}
+	if isForkIncompatible(c.TIPUpgradeRewardBlock, newcfg.TIPUpgradeRewardBlock, head) {
+		return newCompatError("TIPUpgradeReward fork block", c.TIPUpgradeRewardBlock, newcfg.TIPUpgradeRewardBlock)
+	}
+	if isForkIncompatible(c.TIPUpgradePenaltyBlock, newcfg.TIPUpgradePenaltyBlock, head) {
+		return newCompatError("TIPUpgradePenalty fork block", c.TIPUpgradePenaltyBlock, newcfg.TIPUpgradePenaltyBlock)
+	}
+	if isForkIncompatible(c.TIPEpochHalvingBlock, newcfg.TIPEpochHalvingBlock, head) {
+		return newCompatError("TIPEpochHalving fork block", c.TIPEpochHalvingBlock, newcfg.TIPEpochHalvingBlock)
 	}
 	if !XDPoSConfigEqual(c.XDPoS, newcfg.XDPoS) {
 		storedblock := big.NewInt(1)

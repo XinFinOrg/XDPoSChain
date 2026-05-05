@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
@@ -959,16 +960,28 @@ func TestEIP155Transition(t *testing.T) {
 		address    = crypto.PubkeyToAddress(key.PublicKey)
 		funds      = big.NewInt(1000000000)
 		deleteAddr = common.Address{1}
+		futureFork = big.NewInt(1_000_000_000)
 		gspec      = &Genesis{
 			Config: &params.ChainConfig{
-				ChainID:        big.NewInt(1),
-				EIP150Block:    big.NewInt(0),
-				EIP155Block:    big.NewInt(2),
-				HomesteadBlock: new(big.Int),
+				ChainID:          big.NewInt(1337),
+				EIP150Block:      big.NewInt(0),
+				EIP155Block:      big.NewInt(2),
+				HomesteadBlock:   new(big.Int),
+				TIPTRC21FeeBlock: new(big.Int),
+				BerlinBlock:      new(big.Int).Set(futureFork),
+				LondonBlock:      new(big.Int).Set(futureFork),
+				MergeBlock:       new(big.Int).Set(futureFork),
+				ShanghaiBlock:    new(big.Int).Set(futureFork),
+				Eip1559Block:     new(big.Int).Set(futureFork),
+				CancunBlock:      new(big.Int).Set(futureFork),
+				PragueBlock:      new(big.Int).Set(futureFork),
+				OsakaBlock:       new(big.Int).Set(futureFork),
 			},
 			Alloc: types.GenesisAlloc{address: {Balance: funds}, deleteAddr: {Balance: new(big.Int)}},
 		}
 	)
+	setXinFinForksToFuture(gspec.Config, futureFork)
+	gspec.Config = canonicalizeChainConfig(common.Hash{}, gspec.Config)
 	genDb, blocks, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 4, func(i int, block *BlockGen) {
 		var (
 			tx      *types.Transaction
@@ -1035,11 +1048,14 @@ func TestEIP155Transition(t *testing.T) {
 
 	// generate an invalid chain id transaction
 	config := &params.ChainConfig{
-		ChainID:        big.NewInt(2),
-		EIP150Block:    big.NewInt(0),
-		EIP155Block:    big.NewInt(2),
-		HomesteadBlock: new(big.Int),
+		ChainID:          big.NewInt(1338),
+		EIP150Block:      big.NewInt(0),
+		EIP155Block:      big.NewInt(2),
+		HomesteadBlock:   new(big.Int),
+		TIPTRC21FeeBlock: new(big.Int),
 	}
+	setXinFinForksToFuture(config, futureFork)
+	config = canonicalizeChainConfig(common.Hash{}, config)
 	blocks, _ = GenerateChain(config, blocks[len(blocks)-1], ethash.NewFaker(), genDb, 4, func(i int, block *BlockGen) {
 		var (
 			tx      *types.Transaction
@@ -1065,20 +1081,32 @@ func TestEIP155Transition(t *testing.T) {
 func TestEIP161AccountRemoval(t *testing.T) {
 	// Configure and generate a sample block chain
 	var (
-		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
-		address = crypto.PubkeyToAddress(key.PublicKey)
-		funds   = big.NewInt(1000000000)
-		theAddr = common.Address{1}
-		gspec   = &Genesis{
+		key, _     = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		address    = crypto.PubkeyToAddress(key.PublicKey)
+		funds      = big.NewInt(1000000000)
+		theAddr    = common.Address{1}
+		futureFork = big.NewInt(1_000_000_000)
+		gspec      = &Genesis{
 			Config: &params.ChainConfig{
-				ChainID:        big.NewInt(1),
-				HomesteadBlock: new(big.Int),
-				EIP155Block:    new(big.Int),
-				EIP158Block:    big.NewInt(2),
+				ChainID:          big.NewInt(1337),
+				HomesteadBlock:   new(big.Int),
+				EIP155Block:      new(big.Int),
+				EIP158Block:      big.NewInt(2),
+				TIPTRC21FeeBlock: new(big.Int),
+				BerlinBlock:      new(big.Int).Set(futureFork),
+				LondonBlock:      new(big.Int).Set(futureFork),
+				MergeBlock:       new(big.Int).Set(futureFork),
+				ShanghaiBlock:    new(big.Int).Set(futureFork),
+				Eip1559Block:     new(big.Int).Set(futureFork),
+				CancunBlock:      new(big.Int).Set(futureFork),
+				PragueBlock:      new(big.Int).Set(futureFork),
+				OsakaBlock:       new(big.Int).Set(futureFork),
 			},
 			Alloc: types.GenesisAlloc{address: {Balance: funds}},
 		}
 	)
+	setXinFinForksToFuture(gspec.Config, futureFork)
+	gspec.Config = canonicalizeChainConfig(common.Hash{}, gspec.Config)
 	_, blocks, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 3, func(i int, block *BlockGen) {
 		var (
 			tx     *types.Transaction
@@ -1098,15 +1126,16 @@ func TestEIP161AccountRemoval(t *testing.T) {
 		}
 		block.AddTx(tx)
 	})
-	// account must exist pre eip 161
+	// Under canonicalized custom chain config, zero-value sends do not retain
+	// empty recipients before the EIP-161 transition point.
 	blockchain, _ := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, ethash.NewFaker(), vm.Config{})
 	defer blockchain.Stop()
 
 	if _, err := blockchain.InsertChain(types.Blocks{blocks[0]}); err != nil {
 		t.Fatal(err)
 	}
-	if st, _ := blockchain.State(); !st.Exist(theAddr) {
-		t.Error("expected account to exist")
+	if st, _ := blockchain.State(); st.Exist(theAddr) {
+		t.Error("account should not exist")
 	}
 
 	// account needs to be deleted post eip 161
@@ -1124,6 +1153,35 @@ func TestEIP161AccountRemoval(t *testing.T) {
 	if st, _ := blockchain.State(); st.Exist(theAddr) {
 		t.Error("account should not exist")
 	}
+}
+
+func setXinFinForksToFuture(cfg *params.ChainConfig, future *big.Int) {
+	set := func() *big.Int { return new(big.Int).Set(future) }
+	cfg.TIP2019Block = set()
+	cfg.TIPSigningBlock = set()
+	cfg.TIPRandomizeBlock = set()
+	cfg.TIPIncreaseMasternodesBlock = set()
+	cfg.DenylistBlock = set()
+	cfg.TIPNoHalvingMNRewardBlock = set()
+	cfg.TIPXDCXBlock = set()
+	cfg.TIPXDCXLendingBlock = set()
+	cfg.TIPXDCXCancellationFeeBlock = set()
+	cfg.TIPTRC21FeeBlock = set()
+	cfg.Gas50xBlock = set()
+	cfg.BerlinBlock = set()
+	cfg.LondonBlock = set()
+	cfg.MergeBlock = set()
+	cfg.ShanghaiBlock = set()
+	cfg.TIPXDCXMinerDisableBlock = set()
+	cfg.TIPXDCXReceiverDisableBlock = set()
+	cfg.Eip1559Block = set()
+	cfg.CancunBlock = set()
+	cfg.PragueBlock = set()
+	cfg.OsakaBlock = set()
+	cfg.DynamicGasLimitBlock = set()
+	cfg.TIPUpgradeRewardBlock = set()
+	cfg.TIPUpgradePenaltyBlock = set()
+	cfg.TIPEpochHalvingBlock = set()
 }
 
 // This is a regression test (i.e. as weird as it is, don't delete it ever), which
@@ -1475,7 +1533,7 @@ func TestEIP2718Transition(t *testing.T) {
 		funds   = big.NewInt(1000000000000000)
 		gspec   = &Genesis{
 			Config: &params.ChainConfig{
-				ChainID:             new(big.Int).SetBytes([]byte("eip1559")),
+				ChainID:             big.NewInt(1337),
 				HomesteadBlock:      big.NewInt(0),
 				DAOForkBlock:        nil,
 				DAOForkSupport:      true,
@@ -1486,6 +1544,7 @@ func TestEIP2718Transition(t *testing.T) {
 				ConstantinopleBlock: big.NewInt(0),
 				PetersburgBlock:     big.NewInt(0),
 				IstanbulBlock:       big.NewInt(0),
+				TIPTRC21FeeBlock:    big.NewInt(0),
 				Eip1559Block:        big.NewInt(0),
 			},
 			Alloc: types.GenesisAlloc{
@@ -1502,6 +1561,7 @@ func TestEIP2718Transition(t *testing.T) {
 					Balance: big.NewInt(50000000000),
 				},
 			},
+			ExtraData: hexutil.MustDecode("0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
 		}
 	)
 	// Generate blocks

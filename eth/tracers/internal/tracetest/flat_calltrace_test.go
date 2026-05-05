@@ -78,6 +78,7 @@ func flatCallTracerTestRunner(tracerName string, filename string, dirPath string
 	if err := json.Unmarshal(blob, test); err != nil {
 		return fmt.Errorf("failed to parse testcase: %v", err)
 	}
+	test.Genesis.Config = ensureTracerChainConfig(test.Genesis.Config)
 	// Configure a blockchain with the given prestate
 	tx := new(types.Transaction)
 	if err := rlp.DecodeBytes(common.FromHex(test.Input), tx); err != nil {
@@ -101,7 +102,7 @@ func flatCallTracerTestRunner(tracerName string, filename string, dirPath string
 		return fmt.Errorf("failed to create call tracer: %v", err)
 	}
 
-	msg, err := core.TransactionToMessage(tx, signer, nil, context.BlockNumber, context.BaseFee)
+	msg, err := core.TransactionToMessage(tx, signer, nil, context.BlockNumber, context.BaseFee, test.Genesis.Config)
 	if err != nil {
 		return fmt.Errorf("failed to prepare transaction for tracing: %v", err)
 	}

@@ -18,6 +18,7 @@ package core
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -158,7 +159,7 @@ type Message struct {
 }
 
 // TransactionToMessage converts a transaction into a Message.
-func TransactionToMessage(tx *types.Transaction, s types.Signer, balanceFee, blockNumber, baseFee *big.Int) (*Message, error) {
+func TransactionToMessage(tx *types.Transaction, s types.Signer, balanceFee, blockNumber, baseFee *big.Int, chainConfig *params.ChainConfig) (*Message, error) {
 	msg := &Message{
 		Nonce:                 tx.Nonce(),
 		GasLimit:              tx.Gas(),
@@ -177,9 +178,18 @@ func TransactionToMessage(tx *types.Transaction, s types.Signer, balanceFee, blo
 
 	if balanceFee != nil {
 		if blockNumber != nil {
-			if blockNumber.Cmp(common.BlockNumberGas50x) >= 0 {
+			if chainConfig == nil {
+				return nil, errors.New("missing chain config for token fee pricing")
+			}
+			if chainConfig.Gas50xBlock == nil {
+				return nil, errors.New("missing Gas50xBlock in chain config for token fee pricing")
+			}
+			if chainConfig.TIPTRC21FeeBlock == nil {
+				return nil, errors.New("missing TIPTRC21FeeBlock in chain config for token fee pricing")
+			}
+			if blockNumber.Cmp(chainConfig.Gas50xBlock) >= 0 {
 				msg.GasPrice = new(big.Int).Set(common.GasPrice50x)
-			} else if blockNumber.Cmp(common.TIPTRC21Fee) > 0 {
+			} else if blockNumber.Cmp(chainConfig.TIPTRC21FeeBlock) > 0 {
 				msg.GasPrice = new(big.Int).Set(common.TRC21GasPrice)
 			} else {
 				msg.GasPrice = new(big.Int).Set(common.TRC21GasPriceBefore)
@@ -497,7 +507,7 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 
 	// GasPrice of special tx is always 0, so we can skip AddBalance
 	if !types.IsSpecialTx(msg.To) {
-		if st.evm.Context.BlockNumber.Cmp(common.TIPTRC21Fee) > 0 {
+		if st.evm.Context.BlockNumber.Cmp(st.evm.ChainConfig().TIPTRC21FeeBlock) > 0 {
 			if (owner != common.Address{}) {
 				st.state.AddBalance(owner, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), msg.GasPrice), tracing.BalanceIncreaseRewardTransactionFee)
 			}
