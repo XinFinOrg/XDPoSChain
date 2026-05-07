@@ -505,6 +505,14 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 				query.Origin.Number += query.Skip + 1
 			}
 		}
+		if hashMode {
+			p.Log().Debug("Serving block headers", "originHash", query.Origin.Hash, "amount", query.Amount, "skip", query.Skip, "reverse", query.Reverse, "served", len(headers))
+		} else {
+			p.Log().Debug("Serving block headers", "originNumber", query.Origin.Number, "amount", query.Amount, "skip", query.Skip, "reverse", query.Reverse, "served", len(headers))
+		}
+		if len(headers) == 0 {
+			p.Log().Info("Serving empty header response", "originHash", query.Origin.Hash, "originNumber", query.Origin.Number, "amount", query.Amount)
+		}
 		return p.SendBlockHeaders(headers)
 
 	case msg.Code == BlockHeadersMsg:
@@ -585,6 +593,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 				bytes += len(data)
 			}
 		}
+		p.Log().Debug("Serving block bodies", "requested", len(bodies), "bytes", bytes)
 		return p.SendBlockBodiesRLP(bodies)
 
 	case msg.Code == BlockBodiesMsg:
@@ -645,6 +654,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 				bytes += len(entry)
 			}
 		}
+		p.Log().Debug("Serving node data", "served", len(data), "bytes", bytes)
 		return p.SendNodeData(data)
 
 	case p.version >= eth63 && msg.Code == NodeDataMsg:
@@ -692,6 +702,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 				bytes += len(encoded)
 			}
 		}
+		p.Log().Debug("Serving receipts", "served", len(receipts), "bytes", bytes)
 		return p.SendReceiptsRLP(receipts)
 
 	case p.version >= eth63 && msg.Code == ReceiptsMsg:

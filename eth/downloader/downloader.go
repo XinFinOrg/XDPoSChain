@@ -650,7 +650,7 @@ func (d *Downloader) fetchHeight(p *peerConnection, hash common.Hash) (*types.He
 			return head, nil
 
 		case <-timeout:
-			p.log.Debug("Waiting for head header timed out", "elapsed", ttl)
+			p.log.Info("Waiting for head header timed out", "elapsed", ttl, "hash", hash)
 			return nil, errTimeout
 
 		case <-d.bodyCh:
@@ -803,7 +803,7 @@ func (d *Downloader) findAncestor(p *peerConnection, remoteHeader *types.Header)
 			}
 
 		case <-timeout:
-			p.log.Debug("Waiting for head header timed out", "elapsed", ttl)
+			p.log.Info("Waiting for head header timed out during ancestor search", "elapsed", ttl, "localHeight", localHeight, "remoteHeight", remoteHeight)
 			return 0, errTimeout
 
 		case <-d.bodyCh:
@@ -882,7 +882,7 @@ func (d *Downloader) findAncestor(p *peerConnection, remoteHeader *types.Header)
 				hash = h
 
 			case <-timeout:
-				p.log.Debug("Waiting for search header timed out", "elapsed", ttl)
+				p.log.Info("Waiting for binary-search header timed out", "elapsed", ttl, "checkBlock", check, "searchStart", start, "searchEnd", end)
 				return 0, errTimeout
 
 			case <-d.bodyCh:
@@ -1050,7 +1050,7 @@ func (d *Downloader) fetchHeaders(p *peerConnection, from uint64, pivot uint64) 
 				break
 			}
 			// Header retrieval timed out, consider the peer bad and drop
-			p.log.Debug("Header request timed out", "elapsed", ttl)
+			p.log.Info("Header request timed out", "elapsed", ttl, "from", from, "skeleton", skeleton)
 			headerTimeoutMeter.Mark(1)
 			d.dropPeer(p.id)
 
@@ -1256,6 +1256,7 @@ func (d *Downloader) fetchParts(deliveryCh chan dataPack, deliver func(dataPack)
 				return errNoPeers
 			}
 			// Check for fetch request timeouts and demote the responsible peers
+			currentTTL := d.requestTTL()
 			for pid, fails := range expire() {
 				if peer := d.peers.Peer(pid); peer != nil {
 					// If a lot of retrieval elements expired, we might have overestimated the remote peer or perhaps
@@ -1266,10 +1267,10 @@ func (d *Downloader) fetchParts(deliveryCh chan dataPack, deliver func(dataPack)
 					// and latency of a peer separately, which requires pushing the measures capacity a bit and seeing
 					// how response times reacts, to it always requests one more than the minimum (i.e. min 2).
 					if fails > 2 {
-						peer.log.Trace("Data delivery timed out", "type", kind)
+						peer.log.Info("Data delivery timed out, resetting peer capacity", "type", kind, "expiredItems", fails, "ttl", currentTTL)
 						setIdle(peer, 0, time.Now())
 					} else {
-						peer.log.Debug("Stalling delivery, dropping", "type", kind)
+						peer.log.Info("Stalling delivery, dropping", "type", kind, "expiredItems", fails, "ttl", currentTTL)
 
 						if d.dropPeer == nil {
 							// The dropPeer method is nil when `--copydb` is used for a local copy.
@@ -1327,9 +1328,9 @@ func (d *Downloader) fetchParts(deliveryCh chan dataPack, deliver func(dataPack)
 					continue
 				}
 				if request.From > 0 {
-					peer.log.Trace("Requesting new batch of data", "type", kind, "from", request.From)
+					peer.log.Debug("Requesting new batch of data", "type", kind, "from", request.From)
 				} else {
-					peer.log.Trace("Requesting new batch of data", "type", kind, "count", len(request.Headers), "from", request.Headers[0].Number)
+					peer.log.Debug("Requesting new batch of data", "type", kind, "count", len(request.Headers), "from", request.Headers[0].Number)
 				}
 				// Fetch the chunk and make sure any errors return the hashes to the queue
 				if fetchHook != nil {

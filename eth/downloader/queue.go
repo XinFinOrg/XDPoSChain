@@ -667,9 +667,18 @@ func (q *queue) expire(timeout time.Duration, pendPool map[string]*fetchRequest,
 	// Iterate over the expired requests and return each to the queue
 	expiries := make(map[string]int)
 	for id, request := range pendPool {
-		if time.Since(request.Time) > timeout {
+		age := time.Since(request.Time)
+		if age > timeout {
 			// Update the metrics with the timeout
 			timeoutMeter.Mark(1)
+
+			if request.From > 0 {
+				log.Info("Fetch request expired, requeueing", "peer", id, "from", request.From, "age", age, "timeout", timeout)
+			} else if len(request.Headers) > 0 {
+				first := request.Headers[0].Number.Uint64()
+				last := request.Headers[len(request.Headers)-1].Number.Uint64()
+				log.Info("Fetch request expired, requeueing", "peer", id, "headers", len(request.Headers), "firstBlock", first, "lastBlock", last, "age", age, "timeout", timeout)
+			}
 
 			// Return any non satisfied requests to the pool
 			if request.From > 0 {

@@ -153,6 +153,7 @@ func (p *peerConnection) FetchHeaders(from uint64, count int) error {
 	}
 	p.headerStarted = time.Now()
 
+	p.log.Debug("Sending header request to peer", "from", from, "count", count)
 	// Issue the header retrieval request (absolut upwards without gaps)
 	go p.peer.RequestHeadersByNumber(from, count, 0, false)
 
@@ -176,6 +177,9 @@ func (p *peerConnection) FetchBodies(request *fetchRequest) error {
 		hashes := make([]common.Hash, 0, len(request.Headers))
 		for _, header := range request.Headers {
 			hashes = append(hashes, header.Hash())
+		}
+		if len(request.Headers) > 0 {
+			p.log.Debug("Sending block bodies request to peer", "count", len(hashes), "firstBlock", request.Headers[0].Number, "lastBlock", request.Headers[len(request.Headers)-1].Number)
 		}
 		p.peer.RequestBodies(hashes)
 	}()
@@ -201,6 +205,9 @@ func (p *peerConnection) FetchReceipts(request *fetchRequest) error {
 		for _, header := range request.Headers {
 			hashes = append(hashes, header.Hash())
 		}
+		if len(request.Headers) > 0 {
+			p.log.Debug("Sending receipts request to peer", "count", len(hashes), "firstBlock", request.Headers[0].Number, "lastBlock", request.Headers[len(request.Headers)-1].Number)
+		}
 		p.peer.RequestReceipts(hashes)
 	}()
 
@@ -219,6 +226,7 @@ func (p *peerConnection) FetchNodeData(hashes []common.Hash) error {
 	}
 	p.stateStarted = time.Now()
 
+	p.log.Debug("Sending node data request to peer", "count", len(hashes))
 	go p.peer.RequestNodeData(hashes)
 
 	return nil
@@ -263,6 +271,9 @@ func (p *peerConnection) setIdle(elapsed time.Duration, delivered int, throughpu
 
 	// If nothing was delivered (hard timeout / unavailable data), reduce throughput to minimum
 	if delivered == 0 {
+		p.log.Info("Peer delivered nothing, resetting throughput", "elapsed", elapsed,
+			"hps", p.headerThroughput, "bps", p.blockThroughput,
+			"rps", p.receiptThroughput, "sps", p.stateThroughput, "rtt", p.rtt)
 		*throughput = 0
 		return
 	}
@@ -275,7 +286,8 @@ func (p *peerConnection) setIdle(elapsed time.Duration, delivered int, throughpu
 	*throughput = (1-measurementImpact)*(*throughput) + measurementImpact*measured
 	p.rtt = time.Duration((1-measurementImpact)*float64(p.rtt) + measurementImpact*float64(elapsed))
 
-	p.log.Trace("Peer throughput measurements updated",
+	p.log.Debug("Peer throughput measurements updated",
+		"delivered", delivered, "elapsed", elapsed,
 		"hps", p.headerThroughput, "bps", p.blockThroughput,
 		"rps", p.receiptThroughput, "sps", p.stateThroughput,
 		"miss", len(p.lacking), "rtt", p.rtt)
