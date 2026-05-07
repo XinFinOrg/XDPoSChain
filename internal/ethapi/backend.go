@@ -135,6 +135,10 @@ func GetAPIs(apiBackend Backend, chainReader consensus.ChainReader) []rpc.API {
 			Namespace: "debug",
 			Service:   NewDebugAPI(apiBackend),
 		}, {
+			Namespace: "debug",
+			Service:   NewPrivateDebugAPI(apiBackend),
+			Local:     true,
+		}, {
 			Namespace: "eth",
 			Service:   NewEthereumAccountAPI(apiBackend.AccountManager()),
 		},

@@ -378,21 +378,20 @@ func (n *Node) obtainJWTSecret(cliParam string) ([]byte, error) {
 // startup. It's not meant to be called at any time afterwards as it makes certain
 // assumptions about the state of the node.
 func (n *Node) startRPC() error {
-	if err := n.startInProc(n.rpcAPIs); err != nil {
+	openAPIs, authAPIs, localAPIs, hasAuthenticated := n.getAPIs()
+
+	if err := n.startInProc(localAPIs); err != nil {
 		return err
 	}
 
 	// Configure IPC.
 	if n.ipc.endpoint != "" {
-		if err := n.ipc.start(n.rpcAPIs); err != nil {
+		if err := n.ipc.start(localAPIs); err != nil {
 			return err
 		}
 	}
 
-	var (
-		servers           []*httpServer
-		openAPIs, allAPIs = n.getAPIs()
-	)
+	var servers []*httpServer
 
 	rpcConfig := rpcEndpointConfig{
 		batchItemLimit:         n.config.BatchRequestLimit,
@@ -445,7 +444,7 @@ func (n *Node) startRPC() error {
 			batchResponseSizeLimit: engineAPIBatchResponseSizeLimit,
 			httpBodyLimit:          engineAPIBodyLimit,
 		}
-		err := server.enableRPC(allAPIs, httpConfig{
+		err := server.enableRPC(authAPIs, httpConfig{
 			CorsAllowedOrigins: DefaultAuthCors,
 			Vhosts:             n.config.AuthVirtualHosts,
 			Modules:            DefaultAuthModules,
@@ -462,7 +461,7 @@ func (n *Node) startRPC() error {
 		if err := server.setListenAddr(n.config.AuthAddr, port); err != nil {
 			return err
 		}
-		if err := server.enableWS(allAPIs, wsConfig{
+		if err := server.enableWS(authAPIs, wsConfig{
 			Modules:           DefaultAuthModules,
 			Origins:           DefaultAuthOrigins,
 			prefix:            DefaultAuthPrefix,
@@ -488,7 +487,7 @@ func (n *Node) startRPC() error {
 		}
 	}
 	// Configure authenticated API
-	if len(openAPIs) != len(allAPIs) {
+	if hasAuthenticated {
 		jwtSecret, err := n.obtainJWTSecret(n.config.JWTSecret)
 		if err != nil {
 			return err
@@ -582,15 +581,25 @@ func (n *Node) RegisterAPIs(apis []rpc.API) {
 	n.rpcAPIs = append(n.rpcAPIs, apis...)
 }
 
-// getAPIs return two sets of APIs, both the ones that do not require
-// authentication, and the complete set
-func (n *Node) getAPIs() (unauthenticated, all []rpc.API) {
+// getAPIs splits the registered APIs by transport.
+// Open APIs are exposed on unauthenticated HTTP/WS.
+// Auth APIs are exposed on authenticated HTTP/WS.
+// Local APIs are exposed on in-process and IPC transports.
+func (n *Node) getAPIs() (open, auth, local []rpc.API, hasAuthenticated bool) {
 	for _, api := range n.rpcAPIs {
+		local = append(local, api)
+		if api.Local {
+			continue
+		}
+		if api.Authenticated {
+			hasAuthenticated = true
+		}
+		auth = append(auth, api)
 		if !api.Authenticated {
-			unauthenticated = append(unauthenticated, api)
+			open = append(open, api)
 		}
 	}
-	return unauthenticated, n.rpcAPIs
+	return open, auth, local, hasAuthenticated
 }
 
 // RegisterHandler mounts a handler on the given path on the canonical HTTP server.

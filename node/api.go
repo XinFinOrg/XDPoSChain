@@ -221,7 +221,8 @@ func (api *adminAPI) StartHTTP(host *string, port *int, cors *string, apis *stri
 	if err := api.node.http.setListenAddr(*host, *port); err != nil {
 		return false, err
 	}
-	if err := api.node.http.enableRPC(api.node.rpcAPIs, config); err != nil {
+	openApis, _, _, _ := api.node.getAPIs()
+	if err := api.node.http.enableRPC(openApis, config); err != nil {
 		return false, err
 	}
 	if err := api.node.http.start(); err != nil {
@@ -295,7 +296,7 @@ func (api *adminAPI) StartWS(host *string, port *int, allowedOrigins *string, ap
 	if err := server.setListenAddr(*host, *port); err != nil {
 		return false, err
 	}
-	openApis, _ := api.node.getAPIs()
+	openApis, _, _, _ := api.node.getAPIs()
 	if err := server.enableWS(openApis, config); err != nil {
 		return false, err
 	}
