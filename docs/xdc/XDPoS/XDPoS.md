@@ -1,5 +1,110 @@
-
 # Module XDPoS
+
+## Method XDPoS_getConfig
+
+The `getConfig` method returns the chain configuration metadata for the current fork boundary, the next scheduled fork boundary, and the last known future fork boundary.
+
+This method is an XDPoS-specific extension. It is inspired by `eth_config` / EIP-7910, but it does not strictly match geth.
+
+Compatibility notes:
+
+- XDPoS returns `activationBlock` for each config entry.
+- geth uses `activationTime` for time-based fork scheduling.
+- XDPoS currently selects `current`, `next`, and `last` using block-based fork activation metadata.
+- XDPoS may include chain-specific precompiles and system contracts that do not exist on Ethereum mainnet.
+
+Parameters:
+
+None
+
+Returns:
+
+result: object configResponse
+
+- current: object config, the currently active fork boundary.
+- next: object config, the next scheduled fork boundary, or `null` if no future fork is known.
+- last: object config, the last known future fork boundary, or `null` if no future fork is known.
+
+Config object fields:
+
+- activationBlock: uint64, the block height at which this configuration becomes active.
+- chainId: big.Int, the configured chain ID represented as a hexadecimal string.
+- forkId: hex-encoded bytes string, the fork identifier derived from the configured fork schedule (for example, `"0x4f9a9c51"`).
+- activeForks: array of string, the modeled forks active at this `activationBlock`. Values use the RPC's fork labels as returned by `forks.Fork.String()` (for example, `"EIP1559"`, `"Prague"`, `"Cancun"`).
+- precompiles: object, a map of active precompile names to contract addresses.
+- systemContracts: object, a map of active system contract names to contract addresses.
+
+Example:
+
+```shell
+curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "method": "XDPoS_getConfig"
+}' | jq
+```
+
+Response:
+
+The example below is illustrative. Actual fork IDs, precompiles, and system contracts depend on the chain configuration active on the node.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": {
+    "current": {
+      "activationBlock": 1000,
+      "chainId": "0x32",
+      "forkId": "0x4f9a9c51",
+      "activeForks": [
+        "EIP1559",
+        "Prague"
+      ],
+      "precompiles": {
+        "ECREC": "0x0000000000000000000000000000000000000001",
+        "SHA256": "0x0000000000000000000000000000000000000002",
+        "BLAKE2F": "0x0000000000000000000000000000000000000009"
+      },
+      "systemContracts": {
+        "HISTORY_STORAGE_ADDRESS": "0x0000F90827F1C53a10cb7A02335B175320002935"
+      }
+    },
+    "next": {
+      "activationBlock": 2000,
+      "chainId": "0x32",
+      "forkId": "0xd0c4b3b7",
+      "activeForks": [
+        "Cancun"
+      ],
+      "precompiles": {
+        "ECREC": "0x0000000000000000000000000000000000000001",
+        "SHA256": "0x0000000000000000000000000000000000000002",
+        "BLAKE2F": "0x0000000000000000000000000000000000000009"
+      },
+      "systemContracts": {
+        "HISTORY_STORAGE_ADDRESS": "0x0000F90827F1C53a10cb7A02335B175320002935"
+      }
+    },
+    "last": {
+      "activationBlock": 3000,
+      "chainId": "0x32",
+      "forkId": "0x6b495dfd",
+      "activeForks": [
+        "Osaka"
+      ],
+      "precompiles": {
+        "ECREC": "0x0000000000000000000000000000000000000001",
+        "SHA256": "0x0000000000000000000000000000000000000002",
+        "BLAKE2F": "0x0000000000000000000000000000000000000009"
+      },
+      "systemContracts": {
+        "HISTORY_STORAGE_ADDRESS": "0x0000F90827F1C53a10cb7A02335B175320002935"
+      }
+    }
+  }
+}
+```
 
 ## Method XDPoS_getBlockInfoByEpochNum
 

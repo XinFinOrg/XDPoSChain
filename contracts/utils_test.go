@@ -55,8 +55,19 @@ var (
 )
 
 func getCommonBackend() *backends.SimulatedBackend {
-	genesis := types.GenesisAlloc{acc1Addr: {Balance: big.NewInt(1000000000000)}}
-	backend := backends.NewXDCSimulatedBackend(genesis, 10000000, params.TestXDPoSMockChainConfig)
+	legacyConfig := *params.TestXDPoSMockChainConfig
+	futureForkBlock := big.NewInt(1_000_000_000)
+	legacyConfig.BerlinBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.LondonBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.MergeBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.ShanghaiBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.Eip1559Block = new(big.Int).Set(futureForkBlock)
+	legacyConfig.CancunBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.PragueBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.OsakaBlock = new(big.Int).Set(futureForkBlock)
+
+	genesis := types.GenesisAlloc{acc1Addr: {Balance: big.NewInt(1000000000000000000)}}
+	backend := backends.NewXDCSimulatedBackend(genesis, 10000000, &legacyConfig)
 	backend.Commit()
 
 	return backend
@@ -110,10 +121,13 @@ func TestSendTxSign(t *testing.T) {
 	accounts := []common.Address{acc2Addr, acc3Addr, acc4Addr}
 	keys := []*ecdsa.PrivateKey{acc2Key, acc3Key, acc4Key}
 	backend := getCommonBackend()
-	signer := types.HomesteadSigner{}
+	signer := types.LatestSigner(backend.BlockChain().Config())
 	ctx := context.Background()
 
-	transactOpts := bind.NewKeyedTransactor(acc1Key)
+	transactOpts, err := bind.NewKeyedTransactorWithChainID(acc1Key, backend.BlockChain().Config().ChainID)
+	if err != nil {
+		t.Fatalf("can't create transactor: %v", err)
+	}
 	blockSignerAddr, blockSigner, err := blocksigner.DeployBlockSigner(transactOpts, backend, big.NewInt(99))
 	if err != nil {
 		t.Fatalf("Can't get block signer: %v", err)
@@ -123,7 +137,7 @@ func TestSendTxSign(t *testing.T) {
 	nonces := make(map[*ecdsa.PrivateKey]int)
 	oldBlocks := make(map[common.Hash]common.Address)
 
-	signTx := func(ctx context.Context, backend *backends.SimulatedBackend, signer types.HomesteadSigner, nonces map[*ecdsa.PrivateKey]int, accKey *ecdsa.PrivateKey, blockNumber *big.Int, blockHash common.Hash) *types.Transaction {
+	signTx := func(ctx context.Context, backend *backends.SimulatedBackend, signer types.Signer, nonces map[*ecdsa.PrivateKey]int, accKey *ecdsa.PrivateKey, blockNumber *big.Int, blockHash common.Hash) *types.Transaction {
 		tx, _ := types.SignTx(CreateTxSign(blockNumber, blockHash, uint64(nonces[accKey]), blockSignerAddr), signer, accKey)
 		backend.SendTransaction(ctx, tx)
 		backend.Commit()

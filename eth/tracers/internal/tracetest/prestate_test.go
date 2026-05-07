@@ -86,6 +86,7 @@ func testPrestateDiffTracer(tracerName string, dirPath string, t *testing.T) {
 			} else if err := json.Unmarshal(blob, test); err != nil {
 				t.Fatalf("failed to parse testcase: %v", err)
 			}
+			test.Genesis.Config = ensureTracerChainConfig(test.Genesis.Config)
 			if err := tx.UnmarshalBinary(common.FromHex(test.Input)); err != nil {
 				t.Fatalf("failed to parse testcase input: %v", err)
 			}
@@ -110,7 +111,7 @@ func testPrestateDiffTracer(tracerName string, dirPath string, t *testing.T) {
 				t.Fatalf("failed to create call tracer: %v", err)
 			}
 
-			msg, err := core.TransactionToMessage(tx, signer, nil, context.BlockNumber, context.BaseFee)
+			msg, err := core.TransactionToMessage(tx, signer, nil, context.BlockNumber, context.BaseFee, test.Genesis.Config)
 			if err != nil {
 				t.Fatalf("failed to prepare transaction for tracing: %v", err)
 			}

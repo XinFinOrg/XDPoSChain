@@ -241,12 +241,16 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 		}
 	}
 
-	// Setup the genesis block, commit the provided genesis specification
-	// to database if the genesis block is not present yet, or load the
-	// stored one from database.
-	chainConfig, genesisHash, genesisErr := SetupGenesisBlock(db, genesis)
-	if _, ok := genesisErr.(*params.ConfigCompatError); genesisErr != nil && !ok {
-		return nil, genesisErr
+	// Write the supplied genesis to the database if it has not been initialized
+	// yet. The corresponding chain config will be returned, either from the
+	// provided genesis or from the locally stored configuration if the genesis
+	// has already been initialized.
+	chainConfig, genesisHash, compatErr, err := SetupGenesisBlock(db, genesis)
+	if chainConfig == nil {
+		return nil, fmt.Errorf("nil chain config returned from SetupGenesisBlock (err=%v)", err)
+	}
+	if err != nil {
+		return nil, err
 	}
 	log.Info(strings.Repeat("-", 153))
 	for line := range strings.SplitSeq(chainConfig.Description(), "\n") {
@@ -294,7 +298,6 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 	bc.prefetcher = newStatePrefetcher(chainConfig, bc, engine)
 	bc.processor = NewStateProcessor(chainConfig, bc, engine)
 
-	var err error
 	bc.hc, err = NewHeaderChain(db, chainConfig, engine, bc.insertStopped)
 	if err != nil {
 		return nil, err
@@ -350,9 +353,9 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 	}
 
 	// Rewind the chain in case of an incompatible config upgrade.
-	if compat, ok := genesisErr.(*params.ConfigCompatError); ok {
-		log.Warn("Rewinding chain to upgrade configuration", "err", compat)
-		bc.SetHead(compat.RewindTo)
+	if compatErr != nil {
+		log.Warn("Rewinding chain to upgrade configuration", "err", compatErr)
+		bc.SetHead(compatErr.RewindTo)
 		rawdb.WriteChainConfig(db, genesisHash, chainConfig)
 	}
 
@@ -1724,6 +1727,7 @@ func (bc *BlockChain) processBlock(block *types.Block, parent *types.Header, sta
 
 	// Process block using the parent state as reference point.
 	pstart := time.Now()
+	statedb.SetChainConfig(bc.chainConfig)
 	isTIPXDCXReceiver := bc.Config().IsTIPXDCXReceiver(block.Number())
 	tradingState, lendingState, err := bc.processTradingAndLendingStates(isTIPXDCXReceiver, block, parent, statedb)
 	if err != nil {
@@ -2009,6 +2013,7 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 		return nil, err
 	}
 	// Process block using the parent state as reference point.
+	statedb.SetChainConfig(bc.chainConfig)
 	isTIPXDCX := bc.Config().IsTIPXDCX(block.Number())
 	tradingState, lendingState, err := bc.processTradingAndLendingStates(isTIPXDCX, block, parent, statedb)
 	if err != nil {

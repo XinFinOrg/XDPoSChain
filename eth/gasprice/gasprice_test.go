@@ -25,7 +25,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
-	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
@@ -109,6 +108,9 @@ func (b *testBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) eve
 
 func newTestBackend(t *testing.T, eip1559Block *big.Int, pending bool) *testBackend {
 	config := *params.TestChainConfig // needs copy because it is modified below
+	if eip1559Block == nil {
+		eip1559Block = big.NewInt(1_000_000_000)
+	}
 	config.Eip1559Block = eip1559Block
 
 	var (
@@ -123,11 +125,11 @@ func newTestBackend(t *testing.T, eip1559Block *big.Int, pending bool) *testBack
 	engine := ethash.NewFaker()
 
 	// Generate testing blocks
-	_, blocks, _ := core.GenerateChainWithGenesis(gspec, engine, testHead+1, func(i int, b *core.BlockGen) {
+	db, blocks, _ := core.GenerateChainWithGenesis(gspec, engine, testHead+1, func(i int, b *core.BlockGen) {
 		b.SetCoinbase(common.Address{1})
 
 		var txdata types.TxData
-		if eip1559Block != nil && b.Number().Cmp(eip1559Block) >= 0 {
+		if b.Number().Cmp(config.Eip1559Block) >= 0 {
 			txdata = &types.DynamicFeeTx{
 				ChainID:   gspec.Config.ChainID,
 				Nonce:     b.TxNonce(addr),
@@ -150,11 +152,13 @@ func newTestBackend(t *testing.T, eip1559Block *big.Int, pending bool) *testBack
 		b.AddTx(types.MustSignNewTx(key, signer, txdata))
 	})
 	// Construct testing chain
-	chain, err := core.NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, engine, vm.Config{})
+	chain, err := core.NewBlockChain(db, nil, gspec, engine, vm.Config{})
 	if err != nil {
 		t.Fatalf("Failed to create local chain, %v", err)
 	}
-	chain.InsertChain(blocks)
+	if _, err := chain.InsertChain(blocks); err != nil {
+		t.Fatalf("Failed to insert generated chain, %v", err)
+	}
 	return &testBackend{chain: chain, pending: pending}
 }
 

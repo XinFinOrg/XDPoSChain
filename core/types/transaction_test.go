@@ -519,6 +519,27 @@ func BenchmarkEffectiveGasTipCmp(b *testing.B) {
 	})
 }
 
+func TestLatestSignerUsesModernSignerForXDPoSMockChainConfig(t *testing.T) {
+	signer := LatestSigner(params.TestXDPoSMockChainConfig)
+	if _, ok := signer.(pragueSigner); !ok {
+		t.Fatalf("unexpected signer type %T, want pragueSigner for TestXDPoSMockChainConfig", signer)
+	}
+}
+
+func TestLatestSignerNilConfigReturnsHomesteadSigner(t *testing.T) {
+	signer := LatestSigner(nil)
+	if _, ok := signer.(HomesteadSigner); !ok {
+		t.Fatalf("unexpected signer type %T, want HomesteadSigner for nil config", signer)
+	}
+}
+
+func TestMakeSignerNilConfigReturnsHomesteadSigner(t *testing.T) {
+	signer := MakeSigner(nil, big.NewInt(0))
+	if _, ok := signer.(HomesteadSigner); !ok {
+		t.Fatalf("unexpected signer type %T, want HomesteadSigner for nil config", signer)
+	}
+}
+
 func TestEffectiveGasTipIntCmpMatchesBigIntSemantics(t *testing.T) {
 	tests := []struct {
 		name     string

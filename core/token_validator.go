@@ -77,7 +77,12 @@ func RunContract(chain consensus.ChainContext, statedb *state.StateDB, contractA
 func CallContractWithState(call ethereum.CallMsg, chain consensus.ChainContext, statedb *state.StateDB) ([]byte, error) {
 	// Ensure message is initialized properly.
 	call.GasPrice = big.NewInt(0)
-
+	if call.GasFeeCap == nil {
+		call.GasFeeCap = new(big.Int)
+	}
+	if call.GasTipCap == nil {
+		call.GasTipCap = new(big.Int)
+	}
 	if call.Gas == 0 {
 		call.Gas = 1000000
 	}
@@ -109,7 +114,7 @@ func CallContractWithState(call ethereum.CallMsg, chain consensus.ChainContext, 
 	// Create a new environment which holds all relevant information
 	// about the transaction and calling mechanisms.
 	evmContext := NewEVMBlockContext(chain.CurrentHeader(), chain, nil)
-	evm := vm.NewEVM(evmContext, statedb, nil, chain.Config(), vm.Config{})
+	evm := vm.NewEVM(evmContext, statedb, nil, chain.Config(), vm.Config{NoBaseFee: true})
 	gaspool := new(GasPool).AddGas(1000000)
 	result, err := ApplyMessage(evm, msg, gaspool, common.Address{})
 	if err != nil {

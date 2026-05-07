@@ -275,7 +275,7 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 						}
 					}
 					header := task.block.Header()
-					msg, _ := core.TransactionToMessage(tx, signer, balance, header.Number, header.BaseFee)
+					msg, _ := core.TransactionToMessage(tx, signer, balance, header.Number, header.BaseFee, api.backend.ChainConfig())
 					txctx := &Context{
 						BlockHash:   task.block.Hash(),
 						BlockNumber: task.block.Number(),
@@ -539,7 +539,7 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 				balance = value
 			}
 		}
-		msg, _ := core.TransactionToMessage(tx, signer, balance, block.Number(), block.BaseFee())
+		msg, _ := core.TransactionToMessage(tx, signer, balance, block.Number(), block.BaseFee(), api.backend.ChainConfig())
 		statedb.SetTxContext(tx.Hash(), i)
 		if _, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(msg.GasLimit), common.Address{}); err != nil {
 			log.Warn("Tracing intermediate roots did not complete", "txindex", i, "txhash", tx.Hash(), "err", err)
@@ -617,7 +617,7 @@ func (api *API) traceBlock(ctx context.Context, block *types.Block, config *Trac
 			}
 		}
 		// Generate the next state snapshot fast without tracing
-		msg, _ := core.TransactionToMessage(tx, signer, balance, block.Number(), block.BaseFee())
+		msg, _ := core.TransactionToMessage(tx, signer, balance, block.Number(), block.BaseFee(), api.backend.ChainConfig())
 		txctx := &Context{
 			BlockHash:   blockHash,
 			BlockNumber: block.Number(),
@@ -667,7 +667,7 @@ func (api *API) traceBlockParallel(ctx context.Context, block *types.Block, stat
 					}
 				}
 				header := block.Header()
-				msg, _ := core.TransactionToMessage(txs[task.index], signer, balance, header.Number, header.BaseFee)
+				msg, _ := core.TransactionToMessage(txs[task.index], signer, balance, header.Number, header.BaseFee, api.backend.ChainConfig())
 				txctx := &Context{
 					BlockHash:   blockHash,
 					BlockNumber: block.Number(),
@@ -718,7 +718,7 @@ txloop:
 		}
 		// Generate the next state snapshot fast without tracing
 		header := block.Header()
-		msg, _ := core.TransactionToMessage(tx, signer, balance, header.Number, header.BaseFee)
+		msg, _ := core.TransactionToMessage(tx, signer, balance, header.Number, header.BaseFee, api.backend.ChainConfig())
 		statedb.SetTxContext(tx.Hash(), i)
 		if _, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(msg.GasLimit), common.Address{}); err != nil {
 			failed = err
@@ -774,7 +774,7 @@ func (api *API) TraceTransaction(ctx context.Context, hash common.Hash, config *
 			balance = value
 		}
 	}
-	msg, err := core.TransactionToMessage(tx, types.MakeSigner(api.backend.ChainConfig(), block.Number()), balance, block.Number(), block.BaseFee())
+	msg, err := core.TransactionToMessage(tx, types.MakeSigner(api.backend.ChainConfig(), block.Number()), balance, block.Number(), block.BaseFee(), api.backend.ChainConfig())
 	if err != nil {
 		return nil, err
 	}

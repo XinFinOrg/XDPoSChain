@@ -28,6 +28,23 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
+var ErrChainConfigNotFound = errors.New("chain config not found")
+
+func readOptionalBlob(db ethdb.KeyValueReader, key []byte) ([]byte, error) {
+	blob, err := db.Get(key)
+	if err == nil {
+		return blob, nil
+	}
+	has, hasErr := db.Has(key)
+	if hasErr == nil && !has {
+		return nil, ErrChainConfigNotFound
+	}
+	if hasErr != nil {
+		return nil, fmt.Errorf("get failed: %w (has failed: %v)", err, hasErr)
+	}
+	return nil, err
+}
+
 // ReadDatabaseVersion retrieves the version number of the database.
 func ReadDatabaseVersion(db ethdb.KeyValueReader) *uint64 {
 	var version uint64
@@ -56,9 +73,15 @@ func WriteDatabaseVersion(db ethdb.KeyValueWriter, version uint64) {
 
 // ReadChainConfig will fetch the network settings based on the given hash.
 func ReadChainConfig(db ethdb.KeyValueReader, hash common.Hash) (*params.ChainConfig, error) {
-	jsonChainConfig, _ := db.Get(configKey(hash))
+	jsonChainConfig, err := readOptionalBlob(db, configKey(hash))
+	if err != nil {
+		if errors.Is(err, ErrChainConfigNotFound) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("failed to read chain config for hash %s: %w", hash.Hex(), err)
+	}
 	if len(jsonChainConfig) == 0 {
-		return nil, errors.New("ChainConfig not found") // general config not found error
+		return nil, ErrChainConfigNotFound
 	}
 
 	var config params.ChainConfig
@@ -68,6 +91,15 @@ func ReadChainConfig(db ethdb.KeyValueReader, hash common.Hash) (*params.ChainCo
 	}
 
 	return &config, nil
+}
+
+// ReadChainConfigJSON fetches the raw JSON chain config blob for the given hash.
+func ReadChainConfigJSON(db ethdb.KeyValueReader, hash common.Hash) ([]byte, error) {
+	jsonChainConfig, err := readOptionalBlob(db, configKey(hash))
+	if err != nil {
+		return nil, err
+	}
+	return jsonChainConfig, nil
 }
 
 // WriteChainConfig writes the chain config settings to the database.

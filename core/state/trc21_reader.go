@@ -49,17 +49,18 @@ func (s *StateDB) GetTRC21FeeCapacityFromState() map[common.Address]*big.Int {
 	}
 
 	tokensCapacity := map[common.Address]*big.Int{}
+	issuer := s.TRC21IssuerSMC()
 	slotTokens := SlotTRC21Issuer["tokens"]
 	slotTokensHash := common.BigToHash(new(big.Int).SetUint64(slotTokens))
 	slotTokensState := SlotTRC21Issuer["tokensState"]
-	tokenCount := s.GetState(common.TRC21IssuerSMC, slotTokensHash).Big().Uint64()
+	tokenCount := s.GetState(issuer, slotTokensHash).Big().Uint64()
 	for i := range tokenCount {
 		key := GetLocDynamicArrAtElement(slotTokensHash, i, 1)
-		value := s.GetState(common.TRC21IssuerSMC, key)
+		value := s.GetState(issuer, key)
 		if !value.IsZero() {
 			token := common.BytesToAddress(value.Bytes())
 			balanceKey := GetLocMappingAtKey(token.Hash(), slotTokensState)
-			balanceHash := s.GetState(common.TRC21IssuerSMC, common.BigToHash(balanceKey))
+			balanceHash := s.GetState(issuer, common.BigToHash(balanceKey))
 			tokensCapacity[common.BytesToAddress(token.Bytes())] = balanceHash.Big()
 		}
 	}
@@ -151,9 +152,10 @@ func (s *StateDB) UpdateTRC21Fee(newBalance map[common.Address]*big.Int, totalFe
 	}
 
 	slotTokensState := SlotTRC21Issuer["tokensState"]
+	issuer := s.TRC21IssuerSMC()
 	for token, value := range newBalance {
 		balanceKey := GetLocMappingAtKey(token.Hash(), slotTokensState)
-		s.SetState(common.TRC21IssuerSMC, common.BigToHash(balanceKey), common.BigToHash(value))
+		s.SetState(issuer, common.BigToHash(balanceKey), common.BigToHash(value))
 	}
-	s.SubBalance(common.TRC21IssuerSMC, totalFeeUsed, tracing.BalanceChangeUnspecified)
+	s.SubBalance(issuer, totalFeeUsed, tracing.BalanceChangeUnspecified)
 }

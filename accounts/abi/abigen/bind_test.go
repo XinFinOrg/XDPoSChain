@@ -298,7 +298,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
+			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(1000000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
 			defer sim.Close()
 
 			// Deploy an interaction tester contract and call a transaction on it
@@ -355,7 +355,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
+			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(1000000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
 			defer sim.Close()
 
 			// Deploy a tuple tester contract and execute a structured call on it
@@ -402,7 +402,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
+			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(1000000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
 			defer sim.Close()
 
 			// Deploy a tuple tester contract and execute a structured call on it
@@ -461,7 +461,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
+			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(1000000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
 			defer sim.Close()
 
 			// Deploy a slice tester contract and execute a n array call on it
@@ -512,7 +512,7 @@ var bindTests = []struct {
 
 			config := *params.TestXDPoSMockChainConfig
 			config.Eip1559Block = big.NewInt(0)
-			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000, &config)
+			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(1000000000000000000)}}, 10000000, &config)
 			defer sim.Close()
 
 			// Deploy a default method invoker contract and execute its default method
@@ -580,7 +580,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
+			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(1000000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
 			defer sim.Close()
 
 			// Deploy a structs method invoker contract and execute its default method
@@ -713,7 +713,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
+			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(1000000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
 			defer sim.Close()
 
 			// Deploy a funky gas pattern contract
@@ -765,7 +765,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
+			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(1000000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
 			defer sim.Close()
 
 			// Deploy a sender tester contract and execute a structured call on it
@@ -841,7 +841,7 @@ var bindTests = []struct {
 			// Generate a new random account and a funded simulator
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
-			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
+			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(1000000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
 			defer sim.Close()
 
 			// Deploy a underscorer tester contract and execute a structured call on it
@@ -936,7 +936,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
+			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(1000000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
 			defer sim.Close()
 
 			// Deploy an eventer contract
@@ -1128,7 +1128,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
+			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(1000000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
 			defer sim.Close()
 
 			//deploy the test contract
@@ -1266,7 +1266,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
+			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(1000000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
 			defer sim.Close()
 
 			_, _, contract, err := DeployTuple(auth, sim)
@@ -1406,7 +1406,7 @@ var bindTests = []struct {
 		key, _ := crypto.GenerateKey()
 		auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-		sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
+		sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(1000000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
 		defer sim.Close()
 
 		// deploy the test contract
@@ -1497,7 +1497,7 @@ var bindTests = []struct {
 		addr := crypto.PubkeyToAddress(key.PublicKey)
 
 		// Deploy registrar contract
-		sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: big.NewInt(10000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
+		sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: big.NewInt(1000000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
 		defer sim.Close()
 
 		transactOpts, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
@@ -1560,7 +1560,7 @@ var bindTests = []struct {
 		addr := crypto.PubkeyToAddress(key.PublicKey)
 
 		// Deploy registrar contract
-		sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: big.NewInt(10000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
+		sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: big.NewInt(1000000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
 		defer sim.Close()
 
 		transactOpts, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
@@ -1623,7 +1623,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			auth, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
 
-			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
+			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{auth.From: {Balance: big.NewInt(1000000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
 			defer sim.Close()
 
 			// Deploy a tester contract and execute a structured call on it
@@ -1684,7 +1684,7 @@ var bindTests = []struct {
 			key, _ := crypto.GenerateKey()
 			addr := crypto.PubkeyToAddress(key.PublicKey)
 
-			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: big.NewInt(10000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
+			sim := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: big.NewInt(1000000000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
 			defer sim.Close()
 
 			opts, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))

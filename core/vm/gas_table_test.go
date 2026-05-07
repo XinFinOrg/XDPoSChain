@@ -199,7 +199,12 @@ func TestCreateGas(t *testing.T) {
 				BlockNumber: big.NewInt(0),
 			}
 			config := Config{}
-			chainConfig := params.AllEthashProtocolChanges
+			legacyConfig := *params.AllEthashProtocolChanges
+			legacyConfig.Eip1559Block = nil
+			legacyConfig.CancunBlock = nil
+			legacyConfig.PragueBlock = nil
+			legacyConfig.OsakaBlock = nil
+			chainConfig := &legacyConfig
 			if tt.eip3860 {
 				config.ExtraEips = []int{3860}
 				chainConfig = params.MergedTestChainConfig

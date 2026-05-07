@@ -80,6 +80,11 @@ web3._extend({
 	property: 'XDPoS',
 	methods: [
 		new web3._extend.Method({
+			name: 'getConfig',
+			call: 'XDPoS_getConfig',
+			params: 0,
+		}),
+		new web3._extend.Method({
 			name: 'getSnapshot',
 			call: 'XDPoS_getSnapshot',
 			params: 1,

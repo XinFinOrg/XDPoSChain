@@ -310,7 +310,7 @@ func IsValidRelayer(statedb *state.StateDB, address common.Address) bool {
 
 	locBigDeposit := new(big.Int).SetUint64(uint64(0)).Add(locRelayerState, RelayerStructMappingSlot["_deposit"])
 	locHashDeposit := common.BigToHash(locBigDeposit)
-	balance := statedb.GetState(common.RelayerRegistrationSMC, locHashDeposit).Big()
+	balance := statedb.GetState(statedb.RelayerRegistrationSMC(), locHashDeposit).Big()
 	if balance.Cmp(new(big.Int).Mul(common.BasePrice, common.RelayerLockedFund)) <= 0 {
 		log.Debug("Relayer is not in relayer list", "relayer", address, "balance", balance)
 		return false

@@ -99,7 +99,9 @@ func BenchmarkFilters(b *testing.B) {
 
 func TestFilters(t *testing.T) {
 	config := *params.TestChainConfig
-	config.Eip1559Block = big.NewInt(0)
+	config.CancunBlock = nil
+	config.PragueBlock = nil
+	config.OsakaBlock = nil
 
 	var (
 		db     = rawdb.NewMemoryDatabase()

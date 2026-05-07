@@ -23,6 +23,7 @@ func TestGetM1M2FromCheckpointHeader(t *testing.T) {
 	}
 	epoch := uint64(900)
 	config := &params.ChainConfig{
+		TIPRandomizeBlock: big.NewInt(3464000),
 		XDPoS: &params.XDPoSConfig{
 			Epoch: epoch,
 		},

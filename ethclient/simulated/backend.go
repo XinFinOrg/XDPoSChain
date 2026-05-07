@@ -273,6 +273,7 @@ func (b *Backend) rollback(parent *types.Block) {
 
 	b.pendingBlock = blocks[0]
 	b.pendingState, _ = state.New(b.pendingBlock.Root(), stateDB.Database())
+	b.pendingState.SetChainConfig(b.config)
 }
 
 // Fork creates a side-chain that can be used to simulate reorgs.
@@ -1031,6 +1032,7 @@ func (b *Backend) SendTransaction(ctx context.Context, tx *types.Transaction) er
 	}
 	b.pendingBlock = blocks[0]
 	b.pendingState, _ = state.New(b.pendingBlock.Root(), stateDB.Database())
+	b.pendingState.SetChainConfig(b.config)
 	b.pendingReceipts = receipts[0]
 	return nil
 }
@@ -1164,6 +1166,7 @@ func (b *Backend) AdjustTime(adjustment time.Duration) error {
 
 	stateDB, _ := b.blockchain.State()
 	b.pendingState, _ = state.New(b.pendingBlock.Root(), stateDB.Database())
+	b.pendingState.SetChainConfig(b.config)
 
 	return nil
 }

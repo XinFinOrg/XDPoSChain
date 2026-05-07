@@ -112,6 +112,7 @@ func testCallTracer(tracerName string, dirPath string, t *testing.T) {
 			} else if err := json.Unmarshal(blob, test); err != nil {
 				t.Fatalf("failed to parse testcase: %v", err)
 			}
+			test.Genesis.Config = ensureTracerChainConfig(test.Genesis.Config)
 			if err := tx.UnmarshalBinary(common.FromHex(test.Input)); err != nil {
 				t.Fatalf("failed to parse testcase input: %v", err)
 			}
@@ -139,7 +140,7 @@ func testCallTracer(tracerName string, dirPath string, t *testing.T) {
 			if tracer.Hooks != nil {
 				logState = state.NewHookedState(st, tracer.Hooks)
 			}
-			msg, err := core.TransactionToMessage(tx, signer, nil, nil, context.BaseFee)
+			msg, err := core.TransactionToMessage(tx, signer, nil, nil, context.BaseFee, test.Genesis.Config)
 			if err != nil {
 				t.Fatalf("failed to prepare transaction for tracing: %v", err)
 			}
@@ -205,6 +206,7 @@ func BenchmarkTracers(b *testing.B) {
 			if err := json.Unmarshal(blob, test); err != nil {
 				b.Fatalf("failed to parse testcase: %v", err)
 			}
+			test.Genesis.Config = ensureTracerChainConfig(test.Genesis.Config)
 			benchTracer("callTracer", test, b)
 		})
 	}
@@ -218,7 +220,7 @@ func benchTracer(tracerName string, test *callTracerTest, b *testing.B) {
 	}
 	signer := types.MakeSigner(test.Genesis.Config, new(big.Int).SetUint64(uint64(test.Context.Number)))
 	context := test.Context.toBlockContext(test.Genesis)
-	msg, err := core.TransactionToMessage(tx, signer, nil, nil, context.BaseFee)
+	msg, err := core.TransactionToMessage(tx, signer, nil, nil, context.BaseFee, test.Genesis.Config)
 	if err != nil {
 		b.Fatalf("failed to prepare transaction for tracing: %v", err)
 	}
@@ -383,7 +385,7 @@ func TestInternals(t *testing.T) {
 				t.Fatalf("test %v: failed to sign transaction: %v", tc.name, err)
 			}
 			evm := vm.NewEVM(context, logState, nil, config, vm.Config{Tracer: tc.tracer.Hooks})
-			msg, err := core.TransactionToMessage(tx, signer, nil, nil, big.NewInt(0))
+			msg, err := core.TransactionToMessage(tx, signer, nil, nil, big.NewInt(0), config)
 			if err != nil {
 				t.Fatalf("test %v: failed to create message: %v", tc.name, err)
 			}
@@ -436,6 +438,7 @@ func testContractTracer(tracerName string, dirPath string, t *testing.T) {
 			} else if err := json.Unmarshal(blob, test); err != nil {
 				t.Fatalf("failed to parse testcase: %v", err)
 			}
+			test.Genesis.Config = ensureTracerChainConfig(test.Genesis.Config)
 			if err := rlp.DecodeBytes(common.FromHex(test.Input), tx); err != nil {
 				t.Fatalf("failed to parse testcase input: %v", err)
 			}
@@ -459,7 +462,7 @@ func testContractTracer(tracerName string, dirPath string, t *testing.T) {
 				t.Fatalf("failed to create call tracer: %v", err)
 			}
 			evm := vm.NewEVM(context, state, nil, test.Genesis.Config, vm.Config{Tracer: tracer.Hooks})
-			msg, err := core.TransactionToMessage(tx, signer, nil, nil, nil)
+			msg, err := core.TransactionToMessage(tx, signer, nil, nil, nil, test.Genesis.Config)
 			if err != nil {
 				t.Fatalf("failed to prepare transaction for tracing: %v", err)
 			}

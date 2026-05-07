@@ -98,9 +98,6 @@ func newTestBackend(t *testing.T) (*node.Node, []*types.Block, []common.Hash) {
 
 func generateTestChain() (*core.Genesis, []*types.Block, []common.Hash) {
 	chainConfig := *params.AllEthashProtocolChanges
-	chainConfig.Eip1559Block = big.NewInt(0)
-	// Ensure global chain constants match the test chain config before block generation.
-	common.CopyConstants(chainConfig.ChainID.Uint64())
 	genesis := &core.Genesis{
 		Config: &chainConfig,
 		Alloc: types.GenesisAlloc{

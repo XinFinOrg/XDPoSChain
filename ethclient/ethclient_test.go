@@ -85,8 +85,6 @@ var testChainConfig = func() *params.ChainConfig {
 	if config.Eip1559Block == nil {
 		config.Eip1559Block = big.NewInt(0)
 	}
-	// Ensure global chain constants match the test chain config.
-	common.CopyConstants(config.ChainID.Uint64())
 	return &config
 }()
 

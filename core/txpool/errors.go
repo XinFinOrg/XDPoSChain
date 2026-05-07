@@ -84,5 +84,9 @@ var (
 	// by an account that is not an authorized signer.
 	ErrSpecialTxNotFromSigner = errors.New("special transaction sender is not a signer")
 
+	// ErrMissingChainConfig is returned when txpool validation is invoked without
+	// a chain config. This prevents silently skipping fork-gated checks.
+	ErrMissingChainConfig = errors.New("missing chain config")
+
 	ErrMinDeploySMC = errors.New("smart contract creation cost is under allowance")
 )

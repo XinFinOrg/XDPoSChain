@@ -1595,18 +1595,18 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	switch {
 	case ctx.Bool(MainnetFlag.Name):
 		if !ctx.IsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 50
+			cfg.NetworkId = params.XDCMainnetChainConfig.ChainID.Uint64() // 50
 		}
 		cfg.Genesis = core.DefaultGenesisBlock()
 	case ctx.Bool(TestnetFlag.Name):
 		common.IsTestnet = true
 		if !ctx.IsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 51
+			cfg.NetworkId = params.TestnetChainConfig.ChainID.Uint64() // 51
 		}
 		cfg.Genesis = core.DefaultTestnetGenesisBlock()
 	case ctx.Bool(DevnetFlag.Name):
 		if !ctx.IsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 5551
+			cfg.NetworkId = params.DevnetChainConfig.ChainID.Uint64() // 5551
 		}
 		cfg.Genesis = core.DefaultDevnetGenesisBlock()
 	case ctx.Bool(DeveloperFlag.Name):
@@ -1676,12 +1676,12 @@ func SetNetworkFlagById(ctx *cli.Context, cfg *ethconfig.Config) {
 	if ctx.IsSet(NetworkIdFlag.Name) {
 		cfg.NetworkId = ctx.Uint64(NetworkIdFlag.Name)
 		switch cfg.NetworkId {
-		case 50:
+		case params.XDCMainnetChainConfig.ChainID.Uint64(): // 50
 			ctx.Set(MainnetFlag.Name, "true")
-		case 51:
+		case params.TestnetChainConfig.ChainID.Uint64(): // 51
 			common.IsTestnet = true
 			ctx.Set(TestnetFlag.Name, "true")
-		case 5551:
+		case params.DevnetChainConfig.ChainID.Uint64(): // 5551
 			ctx.Set(DevnetFlag.Name, "true")
 		}
 	}

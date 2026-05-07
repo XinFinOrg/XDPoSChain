@@ -41,8 +41,11 @@ var (
 )
 
 func TestRandomize(t *testing.T) {
-	contractBackend := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: big.NewInt(100000000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
-	transactOpts := bind.NewKeyedTransactor(key)
+	contractBackend := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: big.NewInt(0).Mul(big.NewInt(1e18), big.NewInt(1000))}}, 10000000, params.TestXDPoSMockChainConfig)
+	transactOpts, err := bind.NewKeyedTransactorWithChainID(key, params.TestXDPoSMockChainConfig.ChainID)
+	if err != nil {
+		t.Fatalf("can't create transactor: %v", err)
+	}
 	transactOpts.GasLimit = 1000000
 
 	randomizeAddress, randomize, err := DeployRandomize(transactOpts, contractBackend)
@@ -72,13 +75,24 @@ func TestRandomize(t *testing.T) {
 
 func TestSendTxRandomizeSecretAndOpening(t *testing.T) {
 	genesis := types.GenesisAlloc{acc1Addr: {Balance: big.NewInt(1000000000000)}}
-	// TODO(daniel): replace NewSimulatedBackend with NewXDCSimulatedBackend
-	backend := backends.NewSimulatedBackend(genesis, 42000000)
+	// Keep this test on a legacy tx path. NewSimulatedBackend now uses
+	// AllEthashProtocolChanges with post-London forks enabled, which switches
+	// contract deployment to dynamic-fee txs and breaks this legacy-signer flow.
+	legacyConfig := *params.AllEthashProtocolChanges
+	futureForkBlock := big.NewInt(1_000_000_000)
+	legacyConfig.Eip1559Block = new(big.Int).Set(futureForkBlock)
+	legacyConfig.CancunBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.PragueBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.OsakaBlock = new(big.Int).Set(futureForkBlock)
+	backend := backends.NewXDCSimulatedBackend(genesis, 42000000, &legacyConfig)
 	backend.Commit()
 	signer := types.HomesteadSigner{}
 	ctx := context.Background()
 
-	transactOpts := bind.NewKeyedTransactor(acc1Key)
+	transactOpts, err := bind.NewKeyedTransactorWithChainID(acc1Key, legacyConfig.ChainID)
+	if err != nil {
+		t.Fatalf("can't create transactor: %v", err)
+	}
 	transactOpts.GasLimit = 4200000
 	epocNumber := uint64(900)
 	randomizeAddr, randomizeContract, err := DeployRandomize(transactOpts, backend)

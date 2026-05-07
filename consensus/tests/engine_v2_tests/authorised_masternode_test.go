@@ -109,7 +109,8 @@ func TestIsYourTurnConsensusV2CrossConfig(t *testing.T) {
 	// after new mine period
 	secondMinePeriod := blockchain.Config().XDPoS.V2.CurrentConfig.MinePeriod
 
-	time.Sleep(time.Duration(secondMinePeriod-firstMinePeriod) * time.Second)
+	// YourTurn uses Unix-second granularity; add a small buffer to avoid edge-time flakiness.
+	time.Sleep(time.Duration(secondMinePeriod-firstMinePeriod+1) * time.Second)
 	isYourTurn, err = adaptor.YourTurn(blockchain, currentBlockHeader, common.HexToAddress("xdc703c4b2bD70c169f5717101CaeE543299Fc946C7"))
 	assert.Nil(t, err)
 	assert.True(t, isYourTurn)

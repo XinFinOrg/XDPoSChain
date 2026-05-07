@@ -469,12 +469,12 @@ func TestShouldVerifyHeadersEvenIfParentsNotYetWrittenIntoDB(t *testing.T) {
 	// Create block 911 but don't write into DB
 	blockNumber := 911
 	roundNumber := int64(blockNumber) - config.XDPoS.V2.SwitchBlock.Int64()
-	block911 := CreateBlock(blockchain, &config, block910, blockNumber, roundNumber, signer.Hex(), signer, signFn, nil, nil, "")
+	block911 := CreateBlock(blockchain, blockchain.Config(), block910, blockNumber, roundNumber, signer.Hex(), signer, signFn, nil, nil, "")
 
 	// Create block 912 and not write into DB as well
 	blockNumber = 912
 	roundNumber = int64(blockNumber) - config.XDPoS.V2.SwitchBlock.Int64()
-	block912 := CreateBlock(blockchain, &config, block911, blockNumber, roundNumber, signer.Hex(), signer, signFn, nil, nil, "")
+	block912 := CreateBlock(blockchain, blockchain.Config(), block911, blockNumber, roundNumber, signer.Hex(), signer, signFn, nil, nil, "")
 
 	headersTobeVerified = append(headersTobeVerified, block910.Header(), block911.Header(), block912.Header())
 	// Randomly set full verify
@@ -561,7 +561,7 @@ func TestShouldVerifyPureV2EpochSwitchHeadersEvenIfParentNotYetWrittenIntoDB(t *
 
 	block1799 := CreateBlock(
 		blockchain,
-		&config,
+		blockchain.Config(),
 		block1798,
 		1799,
 		int64(1799)-config.XDPoS.V2.SwitchBlock.Int64(),
@@ -574,7 +574,7 @@ func TestShouldVerifyPureV2EpochSwitchHeadersEvenIfParentNotYetWrittenIntoDB(t *
 	)
 	block1800 := CreateBlock(
 		blockchain,
-		&config,
+		blockchain.Config(),
 		block1799,
 		1800,
 		int64(1800)-config.XDPoS.V2.SwitchBlock.Int64(),
@@ -636,7 +636,7 @@ func TestVerifyHeadersDoesNotFabricateBatchBlocksForHookPenalty(t *testing.T) {
 
 	block1799 := CreateBlock(
 		blockchain,
-		&config,
+		blockchain.Config(),
 		block1798,
 		1799,
 		int64(1799)-config.XDPoS.V2.SwitchBlock.Int64(),
@@ -649,7 +649,7 @@ func TestVerifyHeadersDoesNotFabricateBatchBlocksForHookPenalty(t *testing.T) {
 	)
 	block1800 := CreateBlock(
 		blockchain,
-		&config,
+		blockchain.Config(),
 		block1799,
 		1800,
 		int64(1800)-config.XDPoS.V2.SwitchBlock.Int64(),

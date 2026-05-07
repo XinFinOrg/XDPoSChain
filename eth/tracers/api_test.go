@@ -182,7 +182,7 @@ func (b *testBackend) StateAtTransaction(ctx context.Context, block *types.Block
 		if idx == txIndex {
 			return tx, context, statedb, release, nil
 		}
-		msg, _ := core.TransactionToMessage(tx, signer, nil, block.Number(), block.BaseFee())
+		msg, _ := core.TransactionToMessage(tx, signer, nil, block.Number(), block.BaseFee(), b.chainConfig)
 		if _, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(tx.Gas()), common.Address{}); err != nil {
 			return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction %#x failed: %v", tx.Hash(), err)
 		}
@@ -251,7 +251,6 @@ func TestStateHooks(t *testing.T) {
 		signer    = types.HomesteadSigner{}
 		nonce     = uint64(0)
 	)
-	config.Eip1559Block = big.NewInt(0)
 	backend := newTestBackend(t, genBlocks, genesis, func(i int, b *core.BlockGen) {
 		// Transfer from account[0] to account[1]
 		//    value: 1000 wei
@@ -302,7 +301,6 @@ func TestTraceCall(t *testing.T) {
 
 	// Initialize test accounts
 	config := *params.TestChainConfig
-	config.Eip1559Block = big.NewInt(0)
 	accounts := newAccounts(3)
 	genesis := &core.Genesis{
 		Config: &config,
@@ -662,7 +660,6 @@ func TestTracingWithOverrides(t *testing.T) {
 
 	// Initialize test accounts
 	config := *params.TestChainConfig
-	config.Eip1559Block = big.NewInt(0)
 	accounts := newAccounts(3)
 	genesis := &core.Genesis{
 		Config: &config,

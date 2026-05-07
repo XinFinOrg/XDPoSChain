@@ -1571,7 +1571,7 @@ func TestAllowedTxSize(t *testing.T) {
 
 	account := crypto.PubkeyToAddress(key.PublicKey)
 	testAddBalance(pool, account, big.NewInt(1000000000000000000))
-	minGasPrice := common.GetMinGasPrice(pool.currentHead.Load().Number)
+	minGasPrice := common.GetMinGasPrice(pool.currentHead.Load().Number, pool.chainconfig.Gas50xBlock)
 
 	// Find the maximum data length for the kind of transaction which will
 	// be generated in the pool.addRemoteSync calls below.
@@ -1815,7 +1815,7 @@ func TestMinGasPriceEnforced(t *testing.T) {
 	key, _ := crypto.GenerateKey()
 	testAddBalance(pool, crypto.PubkeyToAddress(key.PublicKey), big.NewInt(1_000_000_000_000_000_000))
 
-	minGasPrice := common.GetMinGasPrice(blockchain.CurrentBlock().Number)
+	minGasPrice := common.GetMinGasPrice(blockchain.CurrentBlock().Number, blockchain.Config().Gas50xBlock)
 	legacyPrice := new(big.Int).Add(minGasPrice, big.NewInt(1))
 	dynamicTip := new(big.Int).Add(minGasPrice, big.NewInt(1))
 	dynamicFeeCap := new(big.Int).Add(minGasPrice, big.NewInt(2))

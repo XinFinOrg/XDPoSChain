@@ -79,7 +79,7 @@ func BenchmarkTransactionTraceV2(b *testing.B) {
 
 	evm := vm.NewEVM(context, state, nil, params.AllEthashProtocolChanges, vm.Config{})
 
-	msg, err := core.TransactionToMessage(tx, signer, nil, nil, context.BaseFee)
+	msg, err := core.TransactionToMessage(tx, signer, nil, nil, context.BaseFee, params.AllEthashProtocolChanges)
 	if err != nil {
 		b.Fatalf("failed to prepare transaction for tracing: %v", err)
 	}

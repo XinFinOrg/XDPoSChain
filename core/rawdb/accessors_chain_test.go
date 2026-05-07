@@ -19,6 +19,7 @@ package rawdb
 import (
 	"bytes"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/big"
 	"math/rand/v2"
@@ -32,6 +33,50 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
+
+type errorReader struct {
+	hasResult bool
+	hasErr    error
+	getErr    error
+	value     []byte
+}
+
+func (r *errorReader) Has(key []byte) (bool, error) {
+	return r.hasResult, r.hasErr
+}
+
+func (r *errorReader) Get(key []byte) ([]byte, error) {
+	if r.getErr != nil {
+		return nil, r.getErr
+	}
+	return r.value, nil
+}
+
+func TestReadChainConfigGetError(t *testing.T) {
+	hash := common.HexToHash("0x1")
+	wantErr := errors.New("boom")
+	_, err := ReadChainConfig(&errorReader{getErr: wantErr, hasResult: true}, hash)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected wrapped get error, got %v", err)
+	}
+}
+
+func TestReadChainConfigNotFound(t *testing.T) {
+	hash := common.HexToHash("0x2")
+	_, err := ReadChainConfig(&errorReader{getErr: errors.New("missing"), hasResult: false}, hash)
+	if !errors.Is(err, ErrChainConfigNotFound) {
+		t.Fatalf("expected ErrChainConfigNotFound, got %v", err)
+	}
+}
+
+func TestReadChainConfigJSONGetError(t *testing.T) {
+	hash := common.HexToHash("0x3")
+	wantErr := errors.New("boom")
+	_, err := ReadChainConfigJSON(&errorReader{getErr: wantErr, hasResult: true}, hash)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected wrapped get error, got %v", err)
+	}
+}
 
 type fullLogRLP struct {
 	Address     common.Address

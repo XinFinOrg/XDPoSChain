@@ -849,7 +849,7 @@ func (w *worker) commitNewWork() {
 		Extra:      w.extra,
 		Time:       uint64(tstamp),
 	}
-	if w.chainConfig.IsDynamicGasLimitBlock(header.Number) {
+	if w.chainConfig.IsDynamicGasLimit(header.Number) {
 		header.GasLimit = core.CalcGasLimit(parent.GasLimit(), w.config.GasCeil)
 	} else {
 		header.GasLimit = w.config.GasCeil
@@ -894,7 +894,7 @@ func (w *worker) commitNewWork() {
 	if w.chainConfig.DAOForkSupport && w.chainConfig.DAOForkBlock != nil && w.chainConfig.DAOForkBlock.Cmp(header.Number) == 0 {
 		misc.ApplyDAOHardFork(work.state)
 	}
-	if common.TIPSigning.Cmp(header.Number) == 0 {
+	if w.chainConfig.TIPSigningBlock != nil && w.chainConfig.TIPSigningBlock.Cmp(header.Number) == 0 {
 		work.state.DeleteAddress(common.BlockSignersBinary)
 	}
 	if w.chainConfig.IsPrague(header.Number) {
@@ -1100,7 +1100,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			continue
 		}
 		to := tx.To()
-		if w.header.Number.Uint64() >= common.DenylistHFNumber {
+		if w.config.IsDenylist(w.header.Number) {
 			from := tx.From()
 			// check if sender is in denylist
 			if common.IsInDenylist(from) {
@@ -1115,7 +1115,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 		}
 		data := tx.Data()
 		// validate minFee slot for XDCZ
-		if tx.IsXDCZApplyTransaction() {
+		if tx.IsXDCZApplyTransaction(w.config) {
 			copyState, _ := bc.State()
 			if err := core.ValidateXDCZApplyTransaction(bc, nil, copyState, common.BytesToAddress(data[4:])); err != nil {
 				log.Debug("XDCZApply: invalid token", "token", common.BytesToAddress(data[4:]).Hex())
@@ -1123,7 +1123,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			}
 		}
 		// validate balance slot, token decimal for XDCX
-		if tx.IsXDCXApplyTransaction() {
+		if tx.IsXDCXApplyTransaction(w.config) {
 			copyState, _ := bc.State()
 			if err := core.ValidateXDCXApplyTransaction(bc, nil, copyState, common.BytesToAddress(data[4:])); err != nil {
 				log.Debug("XDCXApply: invalid token", "token", common.BytesToAddress(data[4:]).Hex())
@@ -1186,7 +1186,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			log.Debug("Add Special Transaction failed, account skipped", "hash", hash, "sender", from, "nonce", tx.Nonce(), "to", to, "err", err)
 		}
 		if tokenFeeUsed {
-			fee := common.GetGasFee(w.header.Number.Uint64(), gas)
+			fee := common.GetGasFee(w.header.Number.Uint64(), gas, w.config.TIPTRC21FeeBlock, w.config.Gas50xBlock)
 			balanceFee[*to] = new(big.Int).Sub(balanceFee[*to], fee)
 			balanceUpdated[*to] = balanceFee[*to]
 			totalFeeUsed = totalFeeUsed.Add(totalFeeUsed, fee)
@@ -1219,7 +1219,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			break
 		}
 		to := tx.To()
-		if w.header.Number.Uint64() >= common.DenylistHFNumber {
+		if w.config.IsDenylist(w.header.Number) {
 			from := tx.From()
 			// check if sender is in denylist
 			if common.IsInDenylist(from) {
@@ -1236,7 +1236,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 		}
 		data := tx.Data()
 		// validate minFee slot for XDCZ
-		if tx.IsXDCZApplyTransaction() {
+		if tx.IsXDCZApplyTransaction(w.config) {
 			copyState, _ := bc.State()
 			if err := core.ValidateXDCZApplyTransaction(bc, nil, copyState, common.BytesToAddress(data[4:])); err != nil {
 				log.Debug("XDCZApply: invalid token", "token", common.BytesToAddress(data[4:]).Hex())
@@ -1245,7 +1245,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			}
 		}
 		// validate balance slot, token decimal for XDCX
-		if tx.IsXDCXApplyTransaction() {
+		if tx.IsXDCXApplyTransaction(w.config) {
 			copyState, _ := bc.State()
 			if err := core.ValidateXDCXApplyTransaction(bc, nil, copyState, common.BytesToAddress(data[4:])); err != nil {
 				log.Debug("XDCXApply: invalid token", "token", common.BytesToAddress(data[4:]).Hex())
@@ -1317,7 +1317,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			txs.Shift()
 		}
 		if tokenFeeUsed {
-			fee := common.GetGasFee(w.header.Number.Uint64(), gas)
+			fee := common.GetGasFee(w.header.Number.Uint64(), gas, w.config.TIPTRC21FeeBlock, w.config.Gas50xBlock)
 			balanceFee[*to] = new(big.Int).Sub(balanceFee[*to], fee)
 			balanceUpdated[*to] = balanceFee[*to]
 			totalFeeUsed = totalFeeUsed.Add(totalFeeUsed, fee)
