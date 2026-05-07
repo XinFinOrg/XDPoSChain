@@ -17,86 +17,170 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
+	"regexp"
+	"slices"
+	"strings"
 
-	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
-	"github.com/XinFinOrg/XDPoSChain/eth/tracers/logger"
+	"github.com/XinFinOrg/XDPoSChain/internal/flags"
 	"github.com/XinFinOrg/XDPoSChain/tests"
 	"github.com/urfave/cli/v2"
+	"golang.org/x/term"
+)
+
+var (
+	forkFlag = &cli.StringFlag{
+		Name:     "statetest.fork",
+		Usage:    "Only run tests for the specified fork.",
+		Category: flags.VMCategory,
+	}
+	idxFlag = &cli.IntFlag{
+		Name:     "statetest.index",
+		Usage:    "The index of the subtest to run.",
+		Category: flags.VMCategory,
+		Value:    -1, // default to select all subtest indices
+	}
 )
 
 var stateTestCommand = &cli.Command{
 	Action:    stateTestCmd,
 	Name:      "statetest",
-	Usage:     "executes the given state tests",
+	Usage:     "Executes the given state tests. Filenames can be fed via standard input (batch mode) or as an argument (one-off execution).",
 	ArgsUsage: "<file>",
-}
-
-type StatetestResult struct {
-	Name  string      `json:"name"`
-	Pass  bool        `json:"pass"`
-	Fork  string      `json:"fork"`
-	Error string      `json:"error,omitempty"`
-	State *state.Dump `json:"state,omitempty"`
+	Flags: slices.Concat([]cli.Flag{
+		BenchFlag,
+		DumpFlag,
+		forkFlag,
+		HumanReadableFlag,
+		idxFlag,
+		RunFlag,
+	}, traceFlags),
 }
 
 func stateTestCmd(ctx *cli.Context) error {
-	if len(ctx.Args().First()) == 0 {
-		return errors.New("path-to-test argument required")
-	}
+	path := ctx.Args().First()
 
-	// Configure the EVM logger
-	config := &logger.Config{
-		EnableMemory:     !ctx.Bool(DisableMemoryFlag.Name),
-		DisableStack:     ctx.Bool(DisableStackFlag.Name),
-		DisableStorage:   ctx.Bool(DisableStorageFlag.Name),
-		EnableReturnData: !ctx.Bool(DisableReturnDataFlag.Name),
-	}
-
-	var cfg vm.Config
-	switch {
-	case ctx.Bool(MachineFlag.Name):
-		cfg.Tracer = logger.NewJSONLogger(config, os.Stderr)
-
-	case ctx.Bool(DebugFlag.Name):
-		cfg.Tracer = logger.NewStructLogger(config).Hooks()
-	}
-	// Load the test content from the input file
-	src, err := os.ReadFile(ctx.Args().First())
-	if err != nil {
-		return err
-	}
-	var tests map[string]tests.StateTest
-	if err = json.Unmarshal(src, &tests); err != nil {
-		return err
-	}
-	// Iterate over all the tests, run them and aggregate the results
-	results := make([]StatetestResult, 0, len(tests))
-	for key, test := range tests {
-		for _, st := range test.Subtests() {
-			// Run the test and aggregate the result
-			result := &StatetestResult{Name: key, Fork: st.Fork, Pass: true}
-			s, err := test.Run(st, cfg)
+	// If path is provided, run the tests at that path.
+	if len(path) != 0 {
+		collected, err := collectFiles(path)
+		if err != nil {
+			return cli.Exit(err.Error(), 1)
+		}
+		var results []testResult
+		for _, fname := range collected {
+			r, err := runStateTest(ctx, fname)
 			if err != nil {
-				// Test failed, mark as so and dump any state to aid debugging
-				result.Pass, result.Error = false, err.Error()
-				if ctx.Bool(DumpFlag.Name) && s != nil {
-					dump := s.RawDump(nil)
-					result.State = &dump
+				return err
+			}
+			results = append(results, r...)
+		}
+		report(ctx, results)
+		return nil
+	}
+	// Otherwise, read filenames from stdin and execute back-to-back.
+	// If stdin is a terminal, print error and exit instead of blocking.
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		return fmt.Errorf("no input file provided and stdin is a terminal; please provide a path argument or pipe filenames via stdin")
+	}
+	scanner := bufio.NewScanner(os.Stdin)
+	var results []testResult
+	for scanner.Scan() {
+		fname := scanner.Text()
+		fname = strings.TrimSpace(fname)
+		if len(fname) == 0 {
+			continue
+		}
+		r, err := runStateTest(ctx, fname)
+		if err != nil {
+			return err
+		}
+		results = append(results, r...)
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	report(ctx, results)
+	return nil
+}
+
+// runStateTest loads the state-test given by fname, and executes the test.
+func runStateTest(ctx *cli.Context, fname string) ([]testResult, error) {
+	src, err := os.ReadFile(fname)
+	if err != nil {
+		return nil, err
+	}
+	var testsByName map[string]tests.StateTest
+	if err := json.Unmarshal(src, &testsByName); err != nil {
+		return nil, fmt.Errorf("unable to read test file %s: %w", fname, err)
+	}
+
+	tracer, err := tracerFromFlags(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cfg := vm.Config{Tracer: tracer}
+	re, err := regexp.Compile(ctx.String(RunFlag.Name))
+	if err != nil {
+		return nil, fmt.Errorf("invalid regex --%s: %v", RunFlag.Name, err)
+	}
+
+	// Iterate over all the tests, run them and aggregate the results
+	results := make([]testResult, 0, len(testsByName))
+	for key, test := range testsByName {
+		if !re.MatchString(key) {
+			continue
+		}
+		for _, st := range test.Subtests() {
+			if idx := ctx.Int(idxFlag.Name); idx != -1 && idx != st.Index {
+				// If specific index requested, skip all tests that do not match.
+				continue
+			}
+			if fork := ctx.String(forkFlag.Name); fork != "" && st.Fork != fork {
+				// If specific fork requested, skip all tests that do not match.
+				continue
+			}
+			// Run the test and aggregate the result
+			result := &testResult{Name: key, Fork: st.Fork, Pass: true}
+			statedb, gasUsed, err := test.RunWithGas(st, cfg)
+			if statedb != nil {
+				root := statedb.IntermediateRoot(false)
+				result.Root = &root
+				if ctx.Bool(DumpFlag.Name) {
+					fmt.Fprintf(os.Stderr, "{\"stateRoot\": \"%#x\"}\n", root)
+					result.State = dump(statedb)
 				}
 			}
-			// print state root for evmlab tracing (already committed above, so no need to delete objects again
-			if ctx.Bool(MachineFlag.Name) && s != nil {
-				fmt.Fprintf(os.Stderr, "{\"stateRoot\": \"%x\"}\n", s.IntermediateRoot(false))
+			if ctx.Bool(BenchFlag.Name) {
+				benchCfg := cfg
+				benchCfg.Tracer = nil
+				_, stats, benchErr := timedExec(true, func() ([]byte, uint64, error) {
+					_, gasUsed, err := test.RunWithGas(st, benchCfg)
+					return nil, gasUsed, err
+				})
+				result.Stats = &stats
+				if benchErr != nil {
+					result.Pass = false
+					if result.Error != "" {
+						result.Error += "; "
+					}
+					result.Error += "bench error: " + benchErr.Error()
+				}
+			}
+			if err != nil {
+				result.Pass = false
+				if result.Error != "" {
+					result.Error += "; "
+				}
+				result.Error += err.Error()
+			} else if result.Stats == nil && ctx.Bool(BenchFlag.Name) {
+				result.Stats = &execStats{GasUsed: gasUsed}
 			}
 			results = append(results, *result)
 		}
 	}
-	out, _ := json.MarshalIndent(results, "", "  ")
-	fmt.Println(string(out))
-	return nil
+	return results, nil
 }

@@ -154,9 +154,16 @@ func (t *StateTest) Subtests() []StateSubtest {
 
 // Run executes a specific subtest.
 func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config) (*state.StateDB, error) {
+	statedb, _, err := t.RunWithGas(subtest, vmconfig)
+	return statedb, err
+}
+
+// RunWithGas executes a specific subtest and returns the resulting state along
+// with the gas used by message execution.
+func (t *StateTest) RunWithGas(subtest StateSubtest, vmconfig vm.Config) (*state.StateDB, uint64, error) {
 	config, ok := Forks[subtest.Fork]
 	if !ok {
-		return nil, UnsupportedForkError{subtest.Fork}
+		return nil, 0, UnsupportedForkError{subtest.Fork}
 	}
 	block := t.genesis(config).ToBlock()
 	db := rawdb.NewMemoryDatabase()
@@ -174,7 +181,7 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config) (*state.StateD
 	post := t.json.Post[subtest.Fork][subtest.Index]
 	msg, err := t.json.Tx.toMessage(post, baseFee)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	// Prepare the EVM.
@@ -189,24 +196,30 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config) (*state.StateD
 	gaspool.AddGas(block.GasLimit())
 
 	coinbase := &t.json.Env.Coinbase
-	if _, err := core.ApplyMessage(evm, msg, gaspool, *coinbase); err != nil {
+	result, err := core.ApplyMessage(evm, msg, gaspool, *coinbase)
+	if err != nil {
 		statedb.RevertToSnapshot(snapshot)
 	}
 	if logs := rlpHash(statedb.Logs()); logs != common.Hash(post.Logs) {
-		return statedb, fmt.Errorf("post state logs hash mismatch: got %x, want %x", logs, post.Logs)
+		return statedb, 0, fmt.Errorf("post state logs hash mismatch: got %x, want %x", logs, post.Logs)
 	}
 
 	// Commit block
 	root, _ := statedb.Commit(block.NumberU64(), config.IsEIP158(block.Number()))
 	if root != common.Hash(post.Root) {
-		return statedb, fmt.Errorf("post state root mismatch: got %x, want %x", root, post.Root)
+		return statedb, 0, fmt.Errorf("post state root mismatch: got %x, want %x", root, post.Root)
 	}
 	// Re-init the post-state instance for further operation
-	statedb, err = state.New(root, statedb.Database())
-	if err != nil {
-		return nil, err
+	statedb, err2 := state.New(root, statedb.Database())
+	if err2 != nil {
+		return nil, 0, err2
 	}
-	return statedb, nil
+	var gasUsed uint64
+	if result != nil {
+		gasUsed = result.UsedGas
+	}
+	// If we got an error from ApplyMessage, but post-state is correct, clear err (unless internal failure)
+	return statedb, gasUsed, nil
 }
 
 func (t *StateTest) gasLimit(subtest StateSubtest) uint64 {
