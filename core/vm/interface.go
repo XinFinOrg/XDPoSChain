@@ -42,6 +42,7 @@ type StateDB interface {
 
 	// SetCode sets the new code for the address, and returns the previous code, if any.
 	SetCode(common.Address, []byte) []byte
+
 	GetCodeSize(common.Address) int
 
 	AddRefund(uint64)
@@ -67,17 +68,20 @@ type StateDB interface {
 	SelfDestruct6780(common.Address) (*big.Int, bool)
 
 	// Exist reports whether the given account exists in state.
-	// Notably this should also return true for self-destructed accounts.
+	// Notably this also returns true for self-destructed accounts within the current transaction.
 	Exist(common.Address) bool
+
 	// Empty returns whether the given account is empty. Empty
 	// is defined according to EIP161 (balance = nonce = code = 0).
 	Empty(common.Address) bool
 
 	AddressInAccessList(addr common.Address) bool
 	SlotInAccessList(addr common.Address, slot common.Hash) (addressOk bool, slotOk bool)
+
 	// AddAddressToAccessList adds the given address to the access list. This operation is safe to perform
 	// even if the feature/fork is not active yet
 	AddAddressToAccessList(addr common.Address)
+
 	// AddSlotToAccessList adds the given (address,slot) to the access list. This operation is safe to perform
 	// even if the feature/fork is not active yet
 	AddSlotToAccessList(addr common.Address, slot common.Hash)
