@@ -30,7 +30,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
-	"github.com/XinFinOrg/XDPoSChain/p2p/discover"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/p2p/simulations/adapters"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 	"github.com/gorilla/websocket"
@@ -100,7 +100,7 @@ type SubscribeOpts struct {
 // nodes and connections and filtering message events
 func (c *Client) SubscribeNetwork(events chan *Event, opts SubscribeOpts) (event.Subscription, error) {
 	url := fmt.Sprintf("%s/events?current=%t&filter=%s", c.URL, opts.Current, opts.Filter)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -213,18 +213,18 @@ func (c *Client) RPCClient(ctx context.Context, nodeID string) (*rpc.Client, err
 // Get performs a HTTP GET request decoding the resulting JSON response
 // into "out"
 func (c *Client) Get(path string, out interface{}) error {
-	return c.Send(http.MethodGet, path, nil, out)
+	return c.Send("GET", path, nil, out)
 }
 
 // Post performs a HTTP POST request sending "in" as the JSON body and
 // decoding the resulting JSON response into "out"
 func (c *Client) Post(path string, in, out interface{}) error {
-	return c.Send(http.MethodPost, path, in, out)
+	return c.Send("POST", path, in, out)
 }
 
 // Delete performs a HTTP DELETE request
 func (c *Client) Delete(path string) error {
-	return c.Send(http.MethodDelete, path, nil, nil)
+	return c.Send("DELETE", path, nil, nil)
 }
 
 // Send performs a HTTP request, sending "in" as the JSON request body and
@@ -365,6 +365,7 @@ func (s *Server) StopMocker(w http.ResponseWriter, req *http.Request) {
 
 // GetMockerList returns a list of available mockers
 func (s *Server) GetMockers(w http.ResponseWriter, req *http.Request) {
+
 	list := GetMockerList()
 	s.JSON(w, http.StatusOK, list)
 }
@@ -381,12 +382,6 @@ func (s *Server) StreamNetworkEvents(w http.ResponseWriter, req *http.Request) {
 	events := make(chan *Event)
 	sub := s.network.events.Subscribe(events)
 	defer sub.Unsubscribe()
-
-	// stop the stream if the client goes away
-	var clientGone <-chan bool
-	if cn, ok := w.(http.CloseNotifier); ok {
-		clientGone = cn.CloseNotify()
-	}
 
 	// write writes the given event and data to the stream like:
 	//
@@ -453,6 +448,7 @@ func (s *Server) StreamNetworkEvents(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
+	clientGone := req.Context().Done()
 	for {
 		select {
 		case event := <-events:
@@ -480,13 +476,13 @@ func (s *Server) StreamNetworkEvents(w http.ResponseWriter, req *http.Request) {
 // A message code of '*' or '-1' is considered a wildcard and matches any code.
 func NewMsgFilters(filterParam string) (MsgFilters, error) {
 	filters := make(MsgFilters)
-	for filter := range strings.SplitSeq(filterParam, "-") {
-		proto, codes, found := strings.Cut(filter, ":")
-		if !found || proto == "" || codes == "" {
+	for _, filter := range strings.Split(filterParam, "-") {
+		protoCodes := strings.SplitN(filter, ":", 2)
+		if len(protoCodes) != 2 || protoCodes[0] == "" || protoCodes[1] == "" {
 			return nil, fmt.Errorf("invalid message filter: %s", filter)
 		}
-
-		for code := range strings.SplitSeq(codes, ",") {
+		proto := protoCodes[0]
+		for _, code := range strings.Split(protoCodes[1], ",") {
 			if code == "*" || code == "-1" {
 				filters[MsgFilter{Proto: proto, Code: -1}] = struct{}{}
 				continue
@@ -701,18 +697,19 @@ func (s *Server) JSON(w http.ResponseWriter, status int, data interface{}) {
 	json.NewEncoder(w).Encode(data)
 }
 
-// wrapHandler returns a httprouter.Handle which wraps a http.HandlerFunc by
+// wrapHandler returns an httprouter.Handle which wraps an http.HandlerFunc by
 // populating request.Context with any objects from the URL params
 func (s *Server) wrapHandler(handler http.HandlerFunc) httprouter.Handle {
 	return func(w http.ResponseWriter, req *http.Request, params httprouter.Params) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 
-		ctx := context.Background()
+		ctx := req.Context()
 
 		if id := params.ByName("nodeid"); id != "" {
+			var nodeID enode.ID
 			var node *Node
-			if nodeID, err := discover.HexID(id); err == nil {
+			if nodeID.UnmarshalText([]byte(id)) == nil {
 				node = s.network.GetNode(nodeID)
 			} else {
 				node = s.network.GetNodeByName(id)
@@ -721,13 +718,13 @@ func (s *Server) wrapHandler(handler http.HandlerFunc) httprouter.Handle {
 				http.NotFound(w, req)
 				return
 			}
-			//lint:ignore SA1029 This file will be removed later, reference: #30250
 			ctx = context.WithValue(ctx, "node", node)
 		}
 
 		if id := params.ByName("peerid"); id != "" {
+			var peerID enode.ID
 			var peer *Node
-			if peerID, err := discover.HexID(id); err == nil {
+			if peerID.UnmarshalText([]byte(id)) == nil {
 				peer = s.network.GetNode(peerID)
 			} else {
 				peer = s.network.GetNodeByName(id)
@@ -736,7 +733,6 @@ func (s *Server) wrapHandler(handler http.HandlerFunc) httprouter.Handle {
 				http.NotFound(w, req)
 				return
 			}
-			//lint:ignore SA1029 This file will be removed later, reference: #30250
 			ctx = context.WithValue(ctx, "peer", peer)
 		}
 
