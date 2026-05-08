@@ -18,10 +18,11 @@ package simulations
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"math/rand"
 	"net/http/httptest"
-	"reflect"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -30,20 +31,25 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/node"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
-	"github.com/XinFinOrg/XDPoSChain/p2p/discover"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/p2p/simulations/adapters"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 )
 
+func TestMain(m *testing.M) {
+	flag.Parse()
+	os.Exit(m.Run())
+}
+
 // testService implements the node.Service interface and provides protocols
 // and APIs which are useful for testing nodes in a simulation network
 type testService struct {
-	id discover.NodeID
+	id enode.ID
 
 	// peerCount is incremented once a peer handshake has been performed
 	peerCount int64
 
-	peers    map[discover.NodeID]*testPeer
+	peers    map[enode.ID]*testPeer
 	peersMtx sync.Mutex
 
 	// state stores []byte which is used to test creating and loading
@@ -54,7 +60,7 @@ type testService struct {
 func newTestService(ctx *adapters.ServiceContext, stack *node.Node) (node.Lifecycle, error) {
 	svc := &testService{
 		id:    ctx.Config.ID,
-		peers: make(map[discover.NodeID]*testPeer),
+		peers: make(map[enode.ID]*testPeer),
 	}
 	svc.state.Store(ctx.Snapshot)
 
@@ -66,9 +72,12 @@ func newTestService(ctx *adapters.ServiceContext, stack *node.Node) (node.Lifecy
 type testPeer struct {
 	testReady chan struct{}
 	dumReady  chan struct{}
+	testOnce  sync.Once
+	dumOnce   sync.Once
+	testRuns  int
 }
 
-func (t *testService) peer(id discover.NodeID) *testPeer {
+func (t *testService) peer(id enode.ID) *testPeer {
 	t.peersMtx.Lock()
 	defer t.peersMtx.Unlock()
 	if peer, ok := t.peers[id]; ok {
@@ -154,11 +163,24 @@ func (t *testService) RunTest(p *p2p.Peer, rw p2p.MsgReadWriter) error {
 	}
 
 	// close the testReady channel so that other protocols can run
-	close(peer.testReady)
+	peer.testOnce.Do(func() { close(peer.testReady) })
 
-	// track the peer
-	atomic.AddInt64(&t.peerCount, 1)
-	defer atomic.AddInt64(&t.peerCount, -1)
+	// Track unique active test sessions per peer ID. Duplicate protocol runs for
+	// the same remote peer should not inflate peerCount.
+	t.peersMtx.Lock()
+	peer.testRuns++
+	if peer.testRuns == 1 {
+		atomic.AddInt64(&t.peerCount, 1)
+	}
+	t.peersMtx.Unlock()
+	defer func() {
+		t.peersMtx.Lock()
+		peer.testRuns--
+		if peer.testRuns == 0 {
+			atomic.AddInt64(&t.peerCount, -1)
+		}
+		t.peersMtx.Unlock()
+	}()
 
 	// block until the peer is dropped
 	for {
@@ -181,7 +203,7 @@ func (t *testService) RunDum(p *p2p.Peer, rw p2p.MsgReadWriter) error {
 	}
 
 	// close the dumReady channel so that other protocols can run
-	close(peer.dumReady)
+	peer.dumOnce.Do(func() { close(peer.dumReady) })
 
 	// block until the peer is dropped
 	for {
@@ -255,16 +277,18 @@ func (t *TestAPI) Events(ctx context.Context) (*rpc.Subscription, error) {
 	}
 
 	rpcSub := notifier.CreateSubscription()
+	events := make(chan int64, 1)
+	sub := t.feed.Subscribe(events)
 
 	go func() {
-		events := make(chan int64)
-		sub := t.feed.Subscribe(events)
 		defer sub.Unsubscribe()
 
 		for {
 			select {
 			case event := <-events:
-				notifier.Notify(rpcSub.ID, event)
+				if err := notifier.Notify(rpcSub.ID, event); err != nil {
+					return
+				}
 			case <-sub.Err():
 				return
 			case <-rpcSub.Err():
@@ -408,23 +432,16 @@ type expectEvents struct {
 }
 
 func (t *expectEvents) nodeEvent(id string, up bool) *Event {
-	return &Event{
-		Type: EventTypeNode,
-		Node: &Node{
-			Config: &adapters.NodeConfig{
-				ID: discover.MustHexID(id),
-			},
-			Up: up,
-		},
-	}
+	config := &adapters.NodeConfig{ID: enode.HexID(id)}
+	return &Event{Type: EventTypeNode, Node: newNode(nil, config, up)}
 }
 
 func (t *expectEvents) connEvent(one, other string, up bool) *Event {
 	return &Event{
 		Type: EventTypeConn,
 		Conn: &Conn{
-			One:   discover.MustHexID(one),
-			Other: discover.MustHexID(other),
+			One:   enode.HexID(one),
+			Other: enode.HexID(other),
 			Up:    up,
 		},
 	}
@@ -437,7 +454,7 @@ loop:
 	for {
 		select {
 		case event := <-t.events:
-			t.Logf("received %s event: %s", event.Type, event)
+			t.Logf("received %s event: %v", event.Type, event)
 
 			if event.Type != EventTypeMsg || event.Msg.Received {
 				continue loop
@@ -449,11 +466,20 @@ loop:
 				Proto: event.Msg.Protocol,
 				Code:  int64(event.Msg.Code),
 			}
-			actual[filter]++
-			if actual[filter] > expected[filter] {
-				t.Fatalf("received too many msgs for filter: %v", filter)
+			expectedCount, ok := expected[filter]
+			if !ok {
+				t.Fatalf("received unexpected msg for filter: %v", filter)
 			}
-			if reflect.DeepEqual(actual, expected) {
+			actual[filter]++
+
+			allReached := true
+			for wantFilter, wantCount := range expected {
+				if actual[wantFilter] < wantCount {
+					allReached = false
+					break
+				}
+			}
+			if allReached && actual[filter] >= expectedCount {
 				return
 			}
 
@@ -467,12 +493,13 @@ loop:
 }
 
 func (t *expectEvents) expect(events ...*Event) {
+	t.Helper()
 	timeout := time.After(10 * time.Second)
 	i := 0
 	for {
 		select {
 		case event := <-t.events:
-			t.Logf("received %s event: %s", event.Type, event)
+			t.Logf("received %s event: %v", event.Type, event)
 
 			expected := events[i]
 			if event.Type != expected.Type {
@@ -480,6 +507,7 @@ func (t *expectEvents) expect(events ...*Event) {
 			}
 
 			switch expected.Type {
+
 			case EventTypeNode:
 				if event.Node == nil {
 					t.Fatal("expected event.Node to be set")
@@ -487,8 +515,8 @@ func (t *expectEvents) expect(events ...*Event) {
 				if event.Node.ID() != expected.Node.ID() {
 					t.Fatalf("expected node event %d to have id %q, got %q", i, expected.Node.ID().TerminalString(), event.Node.ID().TerminalString())
 				}
-				if event.Node.Up != expected.Node.Up {
-					t.Fatalf("expected node event %d to have up=%t, got up=%t", i, expected.Node.Up, event.Node.Up)
+				if event.Node.Up() != expected.Node.Up() {
+					t.Fatalf("expected node event %d to have up=%t, got up=%t", i, expected.Node.Up(), event.Node.Up())
 				}
 
 			case EventTypeConn:
@@ -504,6 +532,7 @@ func (t *expectEvents) expect(events ...*Event) {
 				if event.Conn.Up != expected.Conn.Up {
 					t.Fatalf("expected conn event %d to have up=%t, got up=%t", i, expected.Conn.Up, event.Conn.Up)
 				}
+
 			}
 
 			i++
@@ -584,8 +613,25 @@ func TestHTTPNodeRPC(t *testing.T) {
 // TestHTTPSnapshot tests creating and loading network snapshots
 func TestHTTPSnapshot(t *testing.T) {
 	// start the server
-	_, s := testHTTPServer(t)
+	network, s := testHTTPServer(t)
 	defer s.Close()
+
+	eventsDone := make(chan struct{}, 1)
+	eventsDoneChan := make(chan *Event, 16)
+	eventSub := network.Events().Subscribe(eventsDoneChan)
+	go func() {
+		defer eventSub.Unsubscribe()
+		remaining := 1
+		for event := range eventsDoneChan {
+			if event.Type == EventTypeConn && !event.Control {
+				remaining--
+				if remaining == 0 {
+					eventsDone <- struct{}{}
+					return
+				}
+			}
+		}
+	}()
 
 	// create a two-node network
 	client := NewClient(s.URL)
@@ -620,7 +666,11 @@ func TestHTTPSnapshot(t *testing.T) {
 		}
 		states[i] = state
 	}
-
+	select {
+	case <-eventsDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for connection event")
+	}
 	// create a snapshot
 	snap, err := client.CreateSnapshot()
 	if err != nil {
@@ -634,9 +684,23 @@ func TestHTTPSnapshot(t *testing.T) {
 	}
 
 	// create another network
-	_, s = testHTTPServer(t)
+	network2, s := testHTTPServer(t)
 	defer s.Close()
 	client = NewClient(s.URL)
+	eventSub = network2.Events().Subscribe(eventsDoneChan)
+	go func() {
+		defer eventSub.Unsubscribe()
+		remaining := 1
+		for event := range eventsDoneChan {
+			if event.Type == EventTypeConn && !event.Control {
+				remaining--
+				if remaining == 0 {
+					eventsDone <- struct{}{}
+					return
+				}
+			}
+		}
+	}()
 
 	// subscribe to events so we can check them later
 	events := make(chan *Event, 100)
@@ -650,6 +714,11 @@ func TestHTTPSnapshot(t *testing.T) {
 	// load the snapshot
 	if err := client.LoadSnapshot(snap); err != nil {
 		t.Fatalf("error loading snapshot: %s", err)
+	}
+	select {
+	case <-eventsDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for connection event")
 	}
 
 	// check the nodes and connection exists
@@ -675,6 +744,9 @@ func TestHTTPSnapshot(t *testing.T) {
 	}
 	if conn.Other.String() != nodes[1].ID {
 		t.Fatalf("expected connection to have other=%q, got other=%q", nodes[1].ID, conn.Other)
+	}
+	if !conn.Up {
+		t.Fatal("should be up")
 	}
 
 	// check the node states were restored

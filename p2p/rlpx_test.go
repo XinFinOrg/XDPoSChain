@@ -18,6 +18,7 @@ package p2p
 
 import (
 	"bytes"
+	"crypto/ecdsa"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -31,11 +32,10 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/crypto/ecies"
-	"github.com/XinFinOrg/XDPoSChain/crypto/keccak"
-	"github.com/XinFinOrg/XDPoSChain/p2p/discover"
 	"github.com/XinFinOrg/XDPoSChain/p2p/simulations/pipes"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/davecgh/go-spew/spew"
+	"golang.org/x/crypto/sha3"
 )
 
 func TestSharedSecret(t *testing.T) {
@@ -79,9 +79,9 @@ func TestEncHandshake(t *testing.T) {
 
 func testEncHandshake(token []byte) error {
 	type result struct {
-		side string
-		id   discover.NodeID
-		err  error
+		side   string
+		pubkey *ecdsa.PublicKey
+		err    error
 	}
 	var (
 		prv0, _  = crypto.GenerateKey()
@@ -96,14 +96,12 @@ func testEncHandshake(token []byte) error {
 		defer func() { output <- r }()
 		defer fd0.Close()
 
-		dest := &discover.Node{ID: discover.PubkeyID(&prv1.PublicKey)}
-		r.id, r.err = c0.doEncHandshake(prv0, dest)
+		r.pubkey, r.err = c0.doEncHandshake(prv0, &prv1.PublicKey)
 		if r.err != nil {
 			return
 		}
-		id1 := discover.PubkeyID(&prv1.PublicKey)
-		if r.id != id1 {
-			r.err = fmt.Errorf("remote ID mismatch: got %v, want: %v", r.id, id1)
+		if !reflect.DeepEqual(r.pubkey, &prv1.PublicKey) {
+			r.err = fmt.Errorf("remote pubkey mismatch: got %v, want: %v", r.pubkey, &prv1.PublicKey)
 		}
 	}()
 	go func() {
@@ -111,13 +109,12 @@ func testEncHandshake(token []byte) error {
 		defer func() { output <- r }()
 		defer fd1.Close()
 
-		r.id, r.err = c1.doEncHandshake(prv1, nil)
+		r.pubkey, r.err = c1.doEncHandshake(prv1, nil)
 		if r.err != nil {
 			return
 		}
-		id0 := discover.PubkeyID(&prv0.PublicKey)
-		if r.id != id0 {
-			r.err = fmt.Errorf("remote ID mismatch: got %v, want: %v", r.id, id0)
+		if !reflect.DeepEqual(r.pubkey, &prv0.PublicKey) {
+			r.err = fmt.Errorf("remote ID mismatch: got %v, want: %v", r.pubkey, &prv0.PublicKey)
 		}
 	}()
 
@@ -149,12 +146,12 @@ func testEncHandshake(token []byte) error {
 func TestProtocolHandshake(t *testing.T) {
 	var (
 		prv0, _ = crypto.GenerateKey()
-		node0   = &discover.Node{ID: discover.PubkeyID(&prv0.PublicKey), IP: net.IP{1, 2, 3, 4}, TCP: 33}
-		hs0     = &protoHandshake{Version: 3, ID: node0.ID, Caps: []Cap{{"a", 0}, {"b", 2}}}
+		pub0    = crypto.FromECDSAPub(&prv0.PublicKey)[1:]
+		hs0     = &protoHandshake{Version: 3, ID: pub0, Caps: []Cap{{"a", 0}, {"b", 2}}}
 
 		prv1, _ = crypto.GenerateKey()
-		node1   = &discover.Node{ID: discover.PubkeyID(&prv1.PublicKey), IP: net.IP{5, 6, 7, 8}, TCP: 44}
-		hs1     = &protoHandshake{Version: 3, ID: node1.ID, Caps: []Cap{{"c", 1}, {"d", 3}}}
+		pub1    = crypto.FromECDSAPub(&prv1.PublicKey)[1:]
+		hs1     = &protoHandshake{Version: 3, ID: pub1, Caps: []Cap{{"c", 1}, {"d", 3}}}
 
 		wg sync.WaitGroup
 	)
@@ -164,16 +161,18 @@ func TestProtocolHandshake(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wg.Go(func() {
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
 		defer fd0.Close()
 		rlpx := newRLPX(fd0)
-		remid, err := rlpx.doEncHandshake(prv0, node1)
+		rpubkey, err := rlpx.doEncHandshake(prv0, &prv1.PublicKey)
 		if err != nil {
 			t.Errorf("dial side enc handshake failed: %v", err)
 			return
 		}
-		if remid != node1.ID {
-			t.Errorf("dial side remote id mismatch: got %v, want %v", remid, node1.ID)
+		if !reflect.DeepEqual(rpubkey, &prv1.PublicKey) {
+			t.Errorf("dial side remote pubkey mismatch: got %v, want %v", rpubkey, &prv1.PublicKey)
 			return
 		}
 
@@ -188,17 +187,18 @@ func TestProtocolHandshake(t *testing.T) {
 			return
 		}
 		rlpx.close(DiscQuitting)
-	})
-	wg.Go(func() {
+	}()
+	go func() {
+		defer wg.Done()
 		defer fd1.Close()
 		rlpx := newRLPX(fd1)
-		remid, err := rlpx.doEncHandshake(prv1, nil)
+		rpubkey, err := rlpx.doEncHandshake(prv1, nil)
 		if err != nil {
 			t.Errorf("listen side enc handshake failed: %v", err)
 			return
 		}
-		if remid != node0.ID {
-			t.Errorf("listen side remote id mismatch: got %v, want %v", remid, node0.ID)
+		if !reflect.DeepEqual(rpubkey, &prv0.PublicKey) {
+			t.Errorf("listen side remote pubkey mismatch: got %v, want %v", rpubkey, &prv0.PublicKey)
 			return
 		}
 
@@ -216,12 +216,11 @@ func TestProtocolHandshake(t *testing.T) {
 		if err := ExpectMsg(rlpx, discMsg, []DiscReason{DiscQuitting}); err != nil {
 			t.Errorf("error receiving disconnect: %v", err)
 		}
-	})
+	}()
 	wg.Wait()
 }
 
 func TestProtocolHandshakeErrors(t *testing.T) {
-	our := &protoHandshake{Version: 3, Caps: []Cap{{"foo", 2}, {"bar", 3}}, Name: "quux"}
 	tests := []struct {
 		code uint64
 		msg  interface{}
@@ -257,7 +256,7 @@ func TestProtocolHandshakeErrors(t *testing.T) {
 	for i, test := range tests {
 		p1, p2 := MsgPipe()
 		go Send(p1, test.code, test.msg)
-		_, err := readProtocolHandshake(p2, our)
+		_, err := readProtocolHandshake(p2)
 		if !reflect.DeepEqual(err, test.err) {
 			t.Errorf("test %d: error mismatch: got %q, want %q", i, err, test.err)
 		}
@@ -333,8 +332,8 @@ func TestRLPXFrameRW(t *testing.T) {
 	s1 := secrets{
 		AES:        aesSecret,
 		MAC:        macSecret,
-		EgressMAC:  keccak.NewLegacyKeccak256(),
-		IngressMAC: keccak.NewLegacyKeccak256(),
+		EgressMAC:  sha3.NewLegacyKeccak256(),
+		IngressMAC: sha3.NewLegacyKeccak256(),
 	}
 	s1.EgressMAC.Write(egressMACinit)
 	s1.IngressMAC.Write(ingressMACinit)
@@ -343,8 +342,8 @@ func TestRLPXFrameRW(t *testing.T) {
 	s2 := secrets{
 		AES:        aesSecret,
 		MAC:        macSecret,
-		EgressMAC:  keccak.NewLegacyKeccak256(),
-		IngressMAC: keccak.NewLegacyKeccak256(),
+		EgressMAC:  sha3.NewLegacyKeccak256(),
+		IngressMAC: sha3.NewLegacyKeccak256(),
 	}
 	s2.EgressMAC.Write(ingressMACinit)
 	s2.IngressMAC.Write(egressMACinit)
