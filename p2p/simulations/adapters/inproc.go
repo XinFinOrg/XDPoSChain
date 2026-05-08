@@ -334,18 +334,3 @@ func (sn *SimNode) NodeInfo() *p2p.NodeInfo {
 	}
 	return server.NodeInfo()
 }
-
-func setSocketBuffer(conn net.Conn, socketReadBuffer int, socketWriteBuffer int) error {
-	switch v := conn.(type) {
-	case *net.UnixConn:
-		err := v.SetReadBuffer(socketReadBuffer)
-		if err != nil {
-			return err
-		}
-		err = v.SetWriteBuffer(socketWriteBuffer)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
