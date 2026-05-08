@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
@@ -24,6 +25,7 @@ const (
 
 // Forensics instance. Placeholder for future properties to be added
 type Forensics struct {
+	mu                  sync.RWMutex
 	HighestCommittedQCs []types.QuorumCert
 	forensicsFeed       event.Feed
 	scope               event.SubscriptionScope
@@ -64,7 +66,7 @@ func (f *Forensics) SetCommittedQCs(headers []types.Header, incomingQC types.Quo
 		}
 		if i != 0 {
 			if decodedExtraField.QuorumCert.ProposedBlockInfo.Hash != headers[i-1].Hash() {
-				log.Error("[SetCommittedQCs] Headers shall be on the same chain and in the right order", "parentHash", h.ParentHash.Hex(), "headers[i-1].Hash()", headers[i-1].Hash().Hex())
+				log.Error("[SetCommittedQCs] Headers shall be on the same chain and in the right order", "headers[i-1].Hash()", headers[i-1].Hash().Hex())
 				return errors.New("headers shall be on the same chain and in the right order")
 			} else if i == len(headers)-1 { // The last header shall be pointed by the incoming QC
 				if incomingQC.ProposedBlockInfo.Hash != h.Hash() {
@@ -76,7 +78,9 @@ func (f *Forensics) SetCommittedQCs(headers []types.Header, incomingQC types.Quo
 
 		committedQCs = append(committedQCs, *decodedExtraField.QuorumCert)
 	}
+	f.mu.Lock()
 	f.HighestCommittedQCs = append(committedQCs, incomingQC)
+	f.mu.Unlock()
 	return nil
 }
 
@@ -90,7 +94,10 @@ func (f *Forensics) ProcessForensics(chain consensus.ChainReader, engine *XDPoS_
 	return nil
 	log.Debug("Received a QC in forensics", "QC", incomingQC)
 	// Clone the values to a temporary variable
-	highestCommittedQCs := f.HighestCommittedQCs
+	f.mu.RLock()
+	highestCommittedQCs := make([]types.QuorumCert, len(f.HighestCommittedQCs))
+	copy(highestCommittedQCs, f.HighestCommittedQCs)
+	f.mu.RUnlock()
 	if len(highestCommittedQCs) != NUM_OF_FORENSICS_QC {
 		log.Error("[ProcessForensics] HighestCommittedQCs value not set", "incomingQcProposedBlockHash", incomingQC.ProposedBlockInfo.Hash, "incomingQcProposedBlockNumber", incomingQC.ProposedBlockInfo.Number.Uint64(), "incomingQcProposedBlockRound", incomingQC.ProposedBlockInfo.Round)
 		return errors.New("HighestCommittedQCs value not set")
@@ -398,7 +405,10 @@ func (f *Forensics) ProcessVoteEquivocation(chain consensus.ChainReader, engine 
 	return nil
 	log.Debug("Received a vote in forensics", "vote", incomingVote)
 	// Clone the values to a temporary variable
-	highestCommittedQCs := f.HighestCommittedQCs
+	f.mu.RLock()
+	highestCommittedQCs := make([]types.QuorumCert, len(f.HighestCommittedQCs))
+	copy(highestCommittedQCs, f.HighestCommittedQCs)
+	f.mu.RUnlock()
 	if len(highestCommittedQCs) != NUM_OF_FORENSICS_QC {
 		log.Error("[ProcessVoteEquivocation] HighestCommittedQCs value not set", "incomingVoteProposedBlockHash", incomingVote.ProposedBlockInfo.Hash, "incomingVoteProposedBlockNumber", incomingVote.ProposedBlockInfo.Number.Uint64(), "incomingVoteProposedBlockRound", incomingVote.ProposedBlockInfo.Round)
 		return errors.New("HighestCommittedQCs value not set")

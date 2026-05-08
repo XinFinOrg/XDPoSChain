@@ -98,9 +98,14 @@ type headerMarshaling struct {
 	Hash       common.Hash `json:"hash"` // adds call to Hash() in MarshalJSON
 }
 
-// Hash returns the block hash of the header, which is simply the keccak256 hash of its
-// RLP encoding.
+// Hash returns the block hash of the header, which is the keccak256 hash of its
+// RLP encoding without the validator signature.
 func (h *Header) Hash() common.Hash {
+	return h.HashNoValidator()
+}
+
+// HashWithValidator returns the block hash of the header including the validator signature.
+func (h *Header) HashWithValidator() common.Hash {
 	return rlpHash(h)
 }
 

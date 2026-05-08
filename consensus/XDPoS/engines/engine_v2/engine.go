@@ -830,7 +830,7 @@ func (x *XDPoS_v2) verifyQC(blockChainReader consensus.ChainReader, quorumCert *
 
 	var wg sync.WaitGroup
 	wg.Add(len(signatures))
-	var haveError error
+	errChan := make(chan error, len(signatures))
 
 	for _, signature := range signatures {
 		go func(sig types.Signature) {
@@ -841,21 +841,24 @@ func (x *XDPoS_v2) verifyQC(blockChainReader consensus.ChainReader, quorumCert *
 			}), sig, epochInfo.Masternodes)
 			if err != nil {
 				log.Error("[verifyQC] Error while verfying QC message signatures", "Error", err)
-				haveError = errors.New("error while verfying QC message signatures")
+				errChan <- errors.New("error while verfying QC message signatures")
 				return
 			}
 			if !verified {
 				log.Warn("[verifyQC] Signature not verified doing QC verification", "QC", quorumCert)
-				haveError = errors.New("fail to verify QC due to signature mis-match")
+				errChan <- errors.New("fail to verify QC due to signature mis-match")
 				return
 			}
 		}(signature)
 	}
 	wg.Wait()
+	close(errChan)
 	elapsed := time.Since(start)
 	log.Debug("[verifyQC] time verify message signatures of qc", "elapsed", elapsed)
-	if haveError != nil {
-		return haveError
+	for err := range errChan {
+		if err != nil {
+			return err
+		}
 	}
 	epochSwitchNumber := epochInfo.EpochSwitchBlockInfo.Number.Uint64()
 	gapNumber := epochSwitchNumber - epochSwitchNumber%x.config.Epoch - x.config.Gap
