@@ -283,10 +283,12 @@ func (p *Peer) handleIncoming(handle func(msg interface{}) error) error {
 // * the dialing peer needs to send the handshake first and then waits for remote
 // * the listening peer waits for the remote handshake and then sends it
 // returns the remote handshake and an error
-func (p *Peer) Handshake(ctx context.Context, hs interface{}, verify func(interface{}) error) (rhs interface{}, err error) {
+func (p *Peer) Handshake(ctx context.Context, hs interface{}, verify func(interface{}) error) (interface{}, error) {
 	if _, ok := p.spec.GetCode(hs); !ok {
 		return nil, errorf(ErrHandshake, "unknown handshake message type: %T", hs)
 	}
+
+	var rhs interface{}
 	errc := make(chan error, 2)
 	handle := func(msg interface{}) error {
 		rhs = msg
@@ -309,6 +311,7 @@ func (p *Peer) Handshake(ctx context.Context, hs interface{}, verify func(interf
 	}()
 
 	for i := 0; i < 2; i++ {
+		var err error
 		select {
 		case err = <-errc:
 		case <-ctx.Done():
