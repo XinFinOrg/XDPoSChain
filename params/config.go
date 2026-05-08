@@ -39,7 +39,7 @@ const (
 var (
 	MainnetGenesisHash = common.HexToHash("0x4a9d748bd78a8d0385b67788c2435dcdb914f98a96250b68863a1f8b7642d6b1") // XDC Mainnet genesis hash to enforce below configs on
 	TestnetGenesisHash = common.HexToHash("0xbdea512b4f12ff1135ec92c00dc047ffb93890c2ea1aa0eefe9b013d80640075") // XDC Testnet genesis hash to enforce below configs on
-	DevnetGenesisHash  = common.HexToHash("0x7dad95b83c6c1d413de03bd5fcf2d446217db55b2b18e3eaacacbfa4e7629cc9") // XDC Devnet genesis hash to enforce below configs on
+	DevnetGenesisHash  = common.HexToHash("0xb8be003946a9c2688e9f1e255a5567c3d144293ccde2ffb38452a5840081b402") // XDC Devnet genesis hash to enforce below configs on
 )
 
 var (
@@ -148,11 +148,11 @@ var (
 			LimitPenaltyEpoch:         0,
 			MinimumSigningTx:          0,
 		},
-		5000000: {
-			SwitchRound:               5000000,
+		50000: {
+			SwitchRound:               50000,
 			MaxMasternodes:            108,
-			MaxProtectorNodes:         10,
-			MaxObverserNodes:          1000,
+			MaxProtectorNodes:         324,
+			MaxObverserNodes:          2000,
 			CertThreshold:             0.667,
 			TimeoutSyncThreshold:      3,
 			TimeoutPeriod:             10,
@@ -161,9 +161,9 @@ var (
 			MasternodeReward:          63.42,
 			ProtectorReward:           50.27,
 			ObserverReward:            25.13,
-			MinimumMinerBlockPerEpoch: 0,
-			LimitPenaltyEpoch:         0,
-			MinimumSigningTx:          0,
+			MinimumMinerBlockPerEpoch: 5,
+			LimitPenaltyEpoch:         5,
+			MinimumSigningTx:          30,
 		},
 	}
 
