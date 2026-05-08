@@ -99,14 +99,35 @@ type headerMarshaling struct {
 }
 
 // Hash returns the block hash of the header, which is the keccak256 hash of its
-// RLP encoding without the validator signature.
+// RLP encoding.
 func (h *Header) Hash() common.Hash {
-	return h.HashNoValidator()
+	return rlpHash(h)
 }
 
 // HashWithValidator returns the block hash of the header including the validator signature.
 func (h *Header) HashWithValidator() common.Hash {
 	return rlpHash(h)
+}
+
+// HashNoValidator returns the block hash of the header, excluding the validator signature.
+func (h *Header) HashNoValidator() common.Hash {
+	return rlpHash([]interface{}{
+		h.ParentHash,
+		h.UncleHash,
+		h.Coinbase,
+		h.Root,
+		h.TxHash,
+		h.ReceiptHash,
+		h.Bloom,
+		h.Difficulty,
+		h.Number,
+		h.GasLimit,
+		h.GasUsed,
+		h.Time,
+		h.Extra,
+		h.MixDigest,
+		h.Nonce,
+	})
 }
 
 // HashNoNonce returns the hash which is used as input for the proof-of-work search.

@@ -766,8 +766,8 @@ func (x *XDPoS_v2) VerifyBlockInfo(blockChainReader consensus.ChainReader, block
 		}
 	} else {
 		// If blockHeader present, then its value shall consistent with what's provided in the blockInfo
-		if blockHeader.Hash() != blockInfo.Hash {
-			log.Warn("[VerifyBlockInfo] BlockHeader and blockInfo mismatch", "BlockInfoHash", blockInfo.Hash.Hex(), "BlockHeaderHash", blockHeader.Hash())
+		if blockHeader.Hash() != blockInfo.Hash && blockHeader.HashNoValidator() != blockInfo.Hash {
+			log.Warn("[VerifyBlockInfo] BlockHeader and blockInfo mismatch", "BlockInfoHash", blockInfo.Hash.Hex(), "BlockHeaderHash", blockHeader.Hash(), "BlockHeaderHashNoValidator", blockHeader.HashNoValidator())
 			return errors.New("[VerifyBlockInfo] Provided blockheader does not match what's in the blockInfo")
 		}
 	}

@@ -65,12 +65,16 @@ func (f *Forensics) SetCommittedQCs(headers []types.Header, incomingQC types.Quo
 			return err
 		}
 		if i != 0 {
-			if decodedExtraField.QuorumCert.ProposedBlockInfo.Hash != headers[i-1].Hash() {
-				log.Error("[SetCommittedQCs] Headers shall be on the same chain and in the right order", "headers[i-1].Hash()", headers[i-1].Hash().Hex())
+			prevHash := headers[i-1].Hash()
+			prevHashNoVal := headers[i-1].HashNoValidator()
+			if decodedExtraField.QuorumCert.ProposedBlockInfo.Hash != prevHash && decodedExtraField.QuorumCert.ProposedBlockInfo.Hash != prevHashNoVal {
+				log.Error("[SetCommittedQCs] Headers shall be on the same chain and in the right order", "headers[i-1].Hash()", prevHash.Hex(), "headers[i-1].HashNoValidator()", prevHashNoVal.Hex(), "QC.Hash", decodedExtraField.QuorumCert.ProposedBlockInfo.Hash.Hex())
 				return errors.New("headers shall be on the same chain and in the right order")
 			} else if i == len(headers)-1 { // The last header shall be pointed by the incoming QC
-				if incomingQC.ProposedBlockInfo.Hash != h.Hash() {
-					log.Error("[SetCommittedQCs] incomingQc is not pointing at the last header received", "hash", h.Hash().Hex(), "incomingQC.ProposedBlockInfo.Hash", incomingQC.ProposedBlockInfo.Hash.Hex())
+				currentHash := h.Hash()
+				currentHashNoVal := h.HashNoValidator()
+				if incomingQC.ProposedBlockInfo.Hash != currentHash && incomingQC.ProposedBlockInfo.Hash != currentHashNoVal {
+					log.Error("[SetCommittedQCs] incomingQc is not pointing at the last header received", "hash", currentHash.Hex(), "hashNoVal", currentHashNoVal.Hex(), "incomingQC.ProposedBlockInfo.Hash", incomingQC.ProposedBlockInfo.Hash.Hex())
 					return errors.New("incomingQc is not pointing at the last header received")
 				}
 			}
