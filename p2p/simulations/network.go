@@ -167,23 +167,28 @@ func (net *Network) Start(id discover.NodeID) error {
 // snapshots
 func (net *Network) startWithSnapshots(id discover.NodeID, snapshots map[string][]byte) error {
 	net.lock.Lock()
-	defer net.lock.Unlock()
+
 	node := net.getNode(id)
 	if node == nil {
+		net.lock.Unlock()
 		return fmt.Errorf("node %v does not exist", id)
 	}
 	if node.Up {
+		net.lock.Unlock()
 		return fmt.Errorf("node %v already up", id)
 	}
-	log.Trace(fmt.Sprintf("starting node %v: %v using %v", id, node.Up, net.nodeAdapter.Name()))
+	log.Trace("Starting node", "id", id, "adapter", net.nodeAdapter.Name())
 	if err := node.Start(snapshots); err != nil {
-		log.Warn(fmt.Sprintf("start up failed: %v", err))
+		net.lock.Unlock()
+		log.Warn("Node startup failed", "id", id, "err", err)
 		return err
 	}
 	node.Up = true
-	log.Info(fmt.Sprintf("started node %v: %v", id, node.Up))
+	log.Info("Started node", "id", id)
+	ev := NewEvent(node)
+	net.lock.Unlock()
 
-	net.events.Send(NewEvent(node))
+	net.events.Send(ev)
 
 	// subscribe to peer events
 	client, err := node.Client()
@@ -208,13 +213,14 @@ func (net *Network) watchPeerEvents(id discover.NodeID, events chan *p2p.PeerEve
 		// assume the node is now down
 		net.lock.Lock()
 		defer net.lock.Unlock()
+
 		node := net.getNode(id)
 		if node == nil {
-			log.Error("Can not find node for id", "id", id)
 			return
 		}
 		node.Up = false
-		net.events.Send(NewEvent(node))
+		ev := NewEvent(node)
+		net.events.Send(ev)
 	}()
 	for {
 		select {
@@ -226,13 +232,10 @@ func (net *Network) watchPeerEvents(id discover.NodeID, events chan *p2p.PeerEve
 			switch event.Type {
 			case p2p.PeerEventTypeAdd:
 				net.DidConnect(id, peer)
-
 			case p2p.PeerEventTypeDrop:
 				net.DidDisconnect(id, peer)
-
 			case p2p.PeerEventTypeMsgSend:
 				net.DidSend(id, peer, event.Protocol, *event.MsgCode)
-
 			case p2p.PeerEventTypeMsgRecv:
 				net.DidReceive(peer, id, event.Protocol, *event.MsgCode)
 			}
@@ -249,21 +252,30 @@ func (net *Network) watchPeerEvents(id discover.NodeID, events chan *p2p.PeerEve
 // Stop stops the node with the given ID
 func (net *Network) Stop(id discover.NodeID) error {
 	net.lock.Lock()
-	defer net.lock.Unlock()
 	node := net.getNode(id)
 	if node == nil {
+		net.lock.Unlock()
 		return fmt.Errorf("node %v does not exist", id)
 	}
 	if !node.Up {
+		net.lock.Unlock()
 		return fmt.Errorf("node %v already down", id)
 	}
-	if err := node.Stop(); err != nil {
+	node.Up = false
+	net.lock.Unlock()
+
+	err := node.Stop()
+	if err != nil {
+		net.lock.Lock()
+		node.Up = true
+		net.lock.Unlock()
 		return err
 	}
-	node.Up = false
-	log.Info(fmt.Sprintf("stop node %v: %v", id, node.Up))
-
-	net.events.Send(ControlEvent(node))
+	log.Info("Stopped node", "id", id, "err", err)
+	net.lock.Lock()
+	ev := ControlEvent(node)
+	net.lock.Unlock()
+	net.events.Send(ev)
 	return nil
 }
 
