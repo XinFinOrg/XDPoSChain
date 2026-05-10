@@ -99,9 +99,9 @@ type headerMarshaling struct {
 }
 
 // Hash returns the block hash of the header, which is the keccak256 hash of its
-// RLP encoding without the validator signature.
+// RLP encoding.
 func (h *Header) Hash() common.Hash {
-	return h.HashNoValidator()
+	return rlpHash(h)
 }
 
 // HashWithValidator returns the block hash of the header including the validator signature.
