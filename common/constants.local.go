@@ -40,8 +40,4 @@ var localConstant = constant{
 	xdcxListingSMC:         HexToAddress("0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53"),
 	relayerRegistrationSMC: HexToAddress("0x16c63b79f9C8784168103C0b74E6A59EC2de4a02"),
 	lendingRegistrationSMC: HexToAddress("0x7d761afd7ff65a79e4173897594a194e3c506e57"),
-
-	ignoreSignerCheckBlockArray: map[uint64]struct{}{},
-
-	denylist: map[Address]struct{}{},
 }
