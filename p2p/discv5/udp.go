@@ -44,8 +44,9 @@ var (
 
 // Timeouts
 const (
-	respTimeout    = 500 * time.Millisecond
-	expiration     = 20 * time.Second
+	respTimeout = 500 * time.Millisecond
+	expiration  = 20 * time.Second
+
 	driftThreshold = 10 * time.Second // Allowed clock drift before warning user
 )
 
@@ -187,6 +188,10 @@ func makeEndpoint(addr *net.UDPAddr, tcpPort uint16) rpcEndpoint {
 	return rpcEndpoint{IP: ip, UDP: uint16(addr.Port), TCP: tcpPort}
 }
 
+func (e1 rpcEndpoint) equal(e2 rpcEndpoint) bool {
+	return e1.UDP == e2.UDP && e1.TCP == e2.TCP && e1.IP.Equal(e2.IP)
+}
+
 func nodeFromRPC(sender *net.UDPAddr, rn rpcNode) (*Node, error) {
 	if err := netutil.CheckRelayIP(sender.IP, rn.IP); err != nil {
 		return nil, err
@@ -226,7 +231,8 @@ type udp struct {
 }
 
 // ListenUDP returns a new table that listens for UDP packets on laddr.
-func ListenUDP(priv *ecdsa.PrivateKey, conn conn, realaddr *net.UDPAddr, nodeDBPath string, netrestrict *netutil.Netlist) (*Network, error) {
+func ListenUDP(priv *ecdsa.PrivateKey, conn conn, nodeDBPath string, netrestrict *netutil.Netlist) (*Network, error) {
+	realaddr := conn.LocalAddr().(*net.UDPAddr)
 	transport, err := listenUDP(priv, conn, realaddr)
 	if err != nil {
 		return nil, err
@@ -267,6 +273,13 @@ func (t *udp) sendPing(remote *Node, toaddr *net.UDPAddr, topics []Topic) (hash 
 		Topics:     topics,
 	})
 	return hash
+}
+
+func (t *udp) sendFindnode(remote *Node, target NodeID) {
+	t.sendPacket(remote.ID, remote.addr(), byte(findnodePacket), findnode{
+		Target:     target,
+		Expiration: uint64(time.Now().Add(expiration).Unix()),
+	})
 }
 
 func (t *udp) sendNeighbours(remote *Node, results []*Node) {

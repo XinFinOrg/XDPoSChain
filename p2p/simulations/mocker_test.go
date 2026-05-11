@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/XinFinOrg/XDPoSChain/p2p/discover"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 )
 
 func TestMocker(t *testing.T) {
@@ -83,22 +83,22 @@ func TestMocker(t *testing.T) {
 
 	// wait until all nodes are started and connected
 	// store every node up event in a map (value is irrelevant, mimic Set datatype)
-	nodemap := make(map[discover.NodeID]bool)
+	nodemap := make(map[enode.ID]bool)
 	nodesComplete := false
 	connCount := 0
-	wg.Go(func() {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
 		for connCount < (nodeCount-1)*2 {
 			select {
 			case event := <-events:
-				//if the event is a node Up event only
-				if event.Node != nil && event.Node.Up {
+				if isNodeUp(event) {
 					//add the correspondent node ID to the map
 					nodemap[event.Node.Config.ID] = true
 					//this means all nodes got a nodeUp event, so we can continue the test
 					if len(nodemap) == nodeCount {
 						nodesComplete = true
-						//wait for 3s as the mocker will need time to connect the nodes
-						//time.Sleep( 3 *time.Second)
 					}
 				} else if event.Conn != nil && nodesComplete {
 					connCount += 1
@@ -108,7 +108,7 @@ func TestMocker(t *testing.T) {
 				return
 			}
 		}
-	})
+	}()
 
 	//take the last element of the mockerlist as the default mocker-type to ensure one is enabled
 	mockertype := mockerlist[len(mockerlist)-1]
@@ -124,7 +124,6 @@ func TestMocker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Could not start mocker: %s", err)
 	}
-	resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("Invalid Status Code received for starting mocker, expected 200, got %d", resp.StatusCode)
 	}
@@ -146,17 +145,15 @@ func TestMocker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Could not stop mocker: %s", err)
 	}
-	resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("Invalid Status Code received for stopping mocker, expected 200, got %d", resp.StatusCode)
 	}
 
 	//reset the network
-	resp, err = http.Post(s.URL+"/reset", "", nil)
+	_, err = http.Post(s.URL+"/reset", "", nil)
 	if err != nil {
 		t.Fatalf("Could not reset network: %s", err)
 	}
-	resp.Body.Close()
 
 	//now the number of nodes in the network should be zero
 	nodesInfo, err = client.GetNodes()
@@ -167,4 +164,8 @@ func TestMocker(t *testing.T) {
 	if len(nodesInfo) != 0 {
 		t.Fatalf("Expected empty list of nodes, got: %d", len(nodesInfo))
 	}
+}
+
+func isNodeUp(event *Event) bool {
+	return event.Node != nil && event.Node.Up()
 }

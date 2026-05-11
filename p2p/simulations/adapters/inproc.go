@@ -27,7 +27,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/node"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
-	"github.com/XinFinOrg/XDPoSChain/p2p/discover"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/p2p/simulations/pipes"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 	"github.com/gorilla/websocket"
@@ -38,7 +38,7 @@ import (
 type SimAdapter struct {
 	pipe       func() (net.Conn, net.Conn, error)
 	mtx        sync.RWMutex
-	nodes      map[discover.NodeID]*SimNode
+	nodes      map[enode.ID]*SimNode
 	lifecycles LifecycleConstructors
 }
 
@@ -49,32 +49,29 @@ type SimAdapter struct {
 func NewSimAdapter(services LifecycleConstructors) *SimAdapter {
 	return &SimAdapter{
 		pipe:       pipes.NetPipe,
-		nodes:      make(map[discover.NodeID]*SimNode),
-		lifecycles: services,
-	}
-}
-
-func NewTCPAdapter(services LifecycleConstructors) *SimAdapter {
-	return &SimAdapter{
-		pipe:       pipes.TCPPipe,
-		nodes:      make(map[discover.NodeID]*SimNode),
+		nodes:      make(map[enode.ID]*SimNode),
 		lifecycles: services,
 	}
 }
 
 // Name returns the name of the adapter for logging purposes
-func (sa *SimAdapter) Name() string {
+func (s *SimAdapter) Name() string {
 	return "sim-adapter"
 }
 
 // NewNode returns a new SimNode using the given config
-func (sa *SimAdapter) NewNode(config *NodeConfig) (Node, error) {
-	sa.mtx.Lock()
-	defer sa.mtx.Unlock()
+func (s *SimAdapter) NewNode(config *NodeConfig) (Node, error) {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
+	id := config.ID
+	// verify that the node has a private key in the config
+	if config.PrivateKey == nil {
+		return nil, fmt.Errorf("node is missing private key: %s", id)
+	}
 
 	// check a node with the ID doesn't already exist
-	id := config.ID
-	if _, exists := sa.nodes[id]; exists {
+	if _, exists := s.nodes[id]; exists {
 		return nil, fmt.Errorf("node already exists: %s", id)
 	}
 
@@ -83,9 +80,14 @@ func (sa *SimAdapter) NewNode(config *NodeConfig) (Node, error) {
 		return nil, errors.New("node must have at least one service")
 	}
 	for _, service := range config.Lifecycles {
-		if _, exists := sa.lifecycles[service]; !exists {
+		if _, exists := s.lifecycles[service]; !exists {
 			return nil, fmt.Errorf("unknown node service %q", service)
 		}
+	}
+
+	err := config.initDummyEnode()
+	if err != nil {
+		return nil, err
 	}
 
 	n, err := node.New(&node.Config{
@@ -93,58 +95,54 @@ func (sa *SimAdapter) NewNode(config *NodeConfig) (Node, error) {
 			PrivateKey:      config.PrivateKey,
 			MaxPeers:        math.MaxInt32,
 			NoDiscovery:     true,
-			Dialer:          sa,
+			Dialer:          s,
 			EnableMsgEvents: config.EnableMsgEvents,
 		},
-		Logger: log.New("node.id", id),
+		NoUSB:  true,
+		Logger: log.New("node.id", id.String()),
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	simNode := &SimNode{
-		ID:        id,
-		config:    config,
-		node:      n,
-		adapter:   sa,
-		running:   make(map[string]node.Lifecycle),
-		connected: make(map[discover.NodeID]bool),
+		ID:      id,
+		config:  config,
+		node:    n,
+		adapter: s,
+		running: make(map[string]node.Lifecycle),
 	}
-	sa.nodes[id] = simNode
+	s.nodes[id] = simNode
 	return simNode, nil
 }
 
 // Dial implements the p2p.NodeDialer interface by connecting to the node using
 // an in-memory net.Pipe
-func (sa *SimAdapter) Dial(dest *discover.Node) (conn net.Conn, err error) {
-	node, ok := sa.GetNode(dest.ID)
+func (s *SimAdapter) Dial(dest *enode.Node) (conn net.Conn, err error) {
+	node, ok := s.GetNode(dest.ID())
 	if !ok {
-		return nil, fmt.Errorf("unknown node: %s", dest.ID)
-	}
-	if node.connected[dest.ID] {
-		return nil, fmt.Errorf("dialed node: %s", dest.ID)
+		return nil, fmt.Errorf("unknown node: %s", dest.ID())
 	}
 	srv := node.Server()
 	if srv == nil {
-		return nil, fmt.Errorf("node not running: %s", dest.ID)
+		return nil, fmt.Errorf("node not running: %s", dest.ID())
 	}
 	// SimAdapter.pipe is net.Pipe (NewSimAdapter)
-	pipe1, pipe2, err := sa.pipe()
+	pipe1, pipe2, err := s.pipe()
 	if err != nil {
 		return nil, err
 	}
 	// this is simulated 'listening'
-	// asynchronously call the dialed destintion node's p2p server
+	// asynchronously call the dialed destination node's p2p server
 	// to set up connection on the 'listening' side
 	go srv.SetupConn(pipe1, 0, nil)
-	node.connected[dest.ID] = true
 	return pipe2, nil
 }
 
 // DialRPC implements the RPCDialer interface by creating an in-memory RPC
 // client of the given node
-func (sa *SimAdapter) DialRPC(id discover.NodeID) (*rpc.Client, error) {
-	node, ok := sa.GetNode(id)
+func (s *SimAdapter) DialRPC(id enode.ID) (*rpc.Client, error) {
+	node, ok := s.GetNode(id)
 	if !ok {
 		return nil, fmt.Errorf("unknown node: %s", id)
 	}
@@ -152,10 +150,10 @@ func (sa *SimAdapter) DialRPC(id discover.NodeID) (*rpc.Client, error) {
 }
 
 // GetNode returns the node with the given ID if it exists
-func (sa *SimAdapter) GetNode(id discover.NodeID) (*SimNode, bool) {
-	sa.mtx.RLock()
-	defer sa.mtx.RUnlock()
-	node, ok := sa.nodes[id]
+func (s *SimAdapter) GetNode(id enode.ID) (*SimNode, bool) {
+	s.mtx.RLock()
+	defer s.mtx.RUnlock()
+	node, ok := s.nodes[id]
 	return node, ok
 }
 
@@ -164,14 +162,13 @@ func (sa *SimAdapter) GetNode(id discover.NodeID) (*SimNode, bool) {
 // pipe
 type SimNode struct {
 	lock         sync.RWMutex
-	ID           discover.NodeID
+	ID           enode.ID
 	config       *NodeConfig
 	adapter      *SimAdapter
 	node         *node.Node
 	running      map[string]node.Lifecycle
 	client       *rpc.Client
 	registerOnce sync.Once
-	connected    map[discover.NodeID]bool
 }
 
 // Close closes the underlaying node.Node to release
@@ -185,9 +182,9 @@ func (sn *SimNode) Addr() []byte {
 	return []byte(sn.Node().String())
 }
 
-// Node returns a discover.Node representing the SimNode
-func (sn *SimNode) Node() *discover.Node {
-	return discover.NewNode(sn.ID, net.IP{127, 0, 0, 1}, 30303, 30303)
+// Node returns a node descriptor representing the SimNode
+func (sn *SimNode) Node() *enode.Node {
+	return sn.config.Node()
 }
 
 // Client returns an rpc.Client which can be used to communicate with the
@@ -202,7 +199,7 @@ func (sn *SimNode) Client() (*rpc.Client, error) {
 }
 
 // ServeRPC serves RPC requests over the given connection by creating an
-// in-memory client to the node's RPC server
+// in-memory client to the node's RPC server.
 func (sn *SimNode) ServeRPC(conn *websocket.Conn) error {
 	handler, err := sn.node.RPCHandler()
 	if err != nil {
@@ -278,7 +275,6 @@ func (sn *SimNode) Start(snapshots map[string][]byte) error {
 
 	// create an in-process RPC client
 	client := sn.node.Attach()
-
 	sn.lock.Lock()
 	sn.client = client
 	sn.lock.Unlock()
@@ -297,6 +293,13 @@ func (sn *SimNode) Stop() error {
 	return sn.node.Close()
 }
 
+// Service returns a running service by name
+func (sn *SimNode) Service(name string) node.Lifecycle {
+	sn.lock.RLock()
+	defer sn.lock.RUnlock()
+	return sn.running[name]
+}
+
 // Services returns a copy of the underlying services
 func (sn *SimNode) Services() []node.Lifecycle {
 	sn.lock.RLock()
@@ -304,6 +307,17 @@ func (sn *SimNode) Services() []node.Lifecycle {
 	services := make([]node.Lifecycle, 0, len(sn.running))
 	for _, service := range sn.running {
 		services = append(services, service)
+	}
+	return services
+}
+
+// ServiceMap returns a map by names of the underlying services
+func (sn *SimNode) ServiceMap() map[string]node.Lifecycle {
+	sn.lock.RLock()
+	defer sn.lock.RUnlock()
+	services := make(map[string]node.Lifecycle, len(sn.running))
+	for name, service := range sn.running {
+		services[name] = service
 	}
 	return services
 }
@@ -326,26 +340,11 @@ func (sn *SimNode) SubscribeEvents(ch chan *p2p.PeerEvent) event.Subscription {
 // NodeInfo returns information about the node
 func (sn *SimNode) NodeInfo() *p2p.NodeInfo {
 	server := sn.Server()
-	if server.Running == false {
+	if server == nil {
 		return &p2p.NodeInfo{
 			ID:    sn.ID.String(),
 			Enode: sn.Node().String(),
 		}
 	}
 	return server.NodeInfo()
-}
-
-func setSocketBuffer(conn net.Conn, socketReadBuffer int, socketWriteBuffer int) error {
-	switch v := conn.(type) {
-	case *net.UnixConn:
-		err := v.SetReadBuffer(socketReadBuffer)
-		if err != nil {
-			return err
-		}
-		err = v.SetWriteBuffer(socketWriteBuffer)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }

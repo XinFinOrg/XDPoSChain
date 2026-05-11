@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/event"
-	"github.com/XinFinOrg/XDPoSChain/p2p/discover"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
@@ -38,7 +38,7 @@ import (
 // separate Msg with a bytes.Reader as Payload for each send.
 type Msg struct {
 	Code       uint64
-	Size       uint32 // Size of the raw payload
+	Size       uint32 // size of the payload
 	Payload    io.Reader
 	ReceivedAt time.Time
 
@@ -51,21 +51,21 @@ type Msg struct {
 // the given value, which must be a pointer.
 //
 // For the decoding rules, please see package rlp.
-func (m Msg) Decode(val interface{}) error {
-	s := rlp.NewStream(m.Payload, uint64(m.Size))
+func (msg Msg) Decode(val interface{}) error {
+	s := rlp.NewStream(msg.Payload, uint64(msg.Size))
 	if err := s.Decode(val); err != nil {
-		return newPeerError(errInvalidMsg, "(code %x) (size %d) %v", m.Code, m.Size, err)
+		return newPeerError(errInvalidMsg, "(code %x) (size %d) %v", msg.Code, msg.Size, err)
 	}
 	return nil
 }
 
-func (m Msg) String() string {
-	return fmt.Sprintf("msg #%v (%v bytes)", m.Code, m.Size)
+func (msg Msg) String() string {
+	return fmt.Sprintf("msg #%v (%v bytes)", msg.Code, msg.Size)
 }
 
 // Discard reads any remaining payload data into a black hole.
-func (m Msg) Discard() error {
-	_, err := io.Copy(io.Discard, m.Payload)
+func (msg Msg) Discard() error {
+	_, err := io.Copy(io.Discard, msg.Payload)
 	return err
 }
 
@@ -123,24 +123,24 @@ type eofSignal struct {
 
 // note: when using eofSignal to detect whether a message payload
 // has been read, Read might not be called for zero sized messages.
-func (s *eofSignal) Read(buf []byte) (int, error) {
-	if s.count == 0 {
-		if s.eof != nil {
-			s.eof <- struct{}{}
-			s.eof = nil
+func (r *eofSignal) Read(buf []byte) (int, error) {
+	if r.count == 0 {
+		if r.eof != nil {
+			r.eof <- struct{}{}
+			r.eof = nil
 		}
 		return 0, io.EOF
 	}
 
 	max := len(buf)
-	if int(s.count) < len(buf) {
-		max = int(s.count)
+	if int(r.count) < len(buf) {
+		max = int(r.count)
 	}
-	n, err := s.wrapped.Read(buf[:max])
-	s.count -= uint32(n)
-	if (err != nil || s.count == 0) && s.eof != nil {
-		s.eof <- struct{}{} // tell Peer that msg has been consumed
-		s.eof = nil
+	n, err := r.wrapped.Read(buf[:max])
+	r.count -= uint32(n)
+	if (err != nil || r.count == 0) && r.eof != nil {
+		r.eof <- struct{}{} // tell Peer that msg has been consumed
+		r.eof = nil
 	}
 	return n, err
 }
@@ -255,13 +255,13 @@ type msgEventer struct {
 	MsgReadWriter
 
 	feed     *event.Feed
-	peerID   discover.NodeID
+	peerID   enode.ID
 	Protocol string
 }
 
 // newMsgEventer returns a msgEventer which sends message events to the given
 // feed
-func newMsgEventer(rw MsgReadWriter, feed *event.Feed, peerID discover.NodeID, proto string) *msgEventer {
+func newMsgEventer(rw MsgReadWriter, feed *event.Feed, peerID enode.ID, proto string) *msgEventer {
 	return &msgEventer{
 		MsgReadWriter: rw,
 		feed:          feed,

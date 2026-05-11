@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/log"
-	"github.com/XinFinOrg/XDPoSChain/p2p/discover"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/p2p/simulations/adapters"
 )
 
@@ -138,6 +138,8 @@ func probabilistic(net *Network, quit chan struct{}, nodeCount int) {
 			lowid = rand1
 			highid = rand2
 		}
+		var steps = highid - lowid
+		wg.Add(steps)
 		for i := lowid; i < highid; i++ {
 			select {
 			case <-quit:
@@ -148,25 +150,27 @@ func probabilistic(net *Network, quit chan struct{}, nodeCount int) {
 			log.Debug(fmt.Sprintf("node %v shutting down", nodes[i]))
 			err := net.Stop(nodes[i])
 			if err != nil {
-				log.Error("Error stopping node", "node", nodes[i], "err", err)
+				log.Error("Error stopping node", "node", nodes[i])
+				wg.Done()
 				continue
 			}
-			wg.Go(func() {
-				id := nodes[i]
+			go func(id enode.ID) {
 				time.Sleep(randWait)
 				err := net.Start(id)
 				if err != nil {
-					log.Error("Error starting node", "node", id, "err", err)
+					log.Error("Error starting node", "node", id)
 				}
-			})
+				wg.Done()
+			}(nodes[i])
 		}
 		wg.Wait()
 	}
+
 }
 
 // connect nodeCount number of nodes in a ring
-func connectNodesInRing(net *Network, nodeCount int) ([]discover.NodeID, error) {
-	ids := make([]discover.NodeID, nodeCount)
+func connectNodesInRing(net *Network, nodeCount int) ([]enode.ID, error) {
+	ids := make([]enode.ID, nodeCount)
 	for i := 0; i < nodeCount; i++ {
 		conf := adapters.RandomNodeConfig()
 		node, err := net.NewNodeWithConfig(conf)

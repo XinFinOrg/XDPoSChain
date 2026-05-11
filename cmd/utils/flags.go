@@ -60,8 +60,8 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/miner"
 	"github.com/XinFinOrg/XDPoSChain/node"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
-	"github.com/XinFinOrg/XDPoSChain/p2p/discover"
 	"github.com/XinFinOrg/XDPoSChain/p2p/discv5"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/p2p/nat"
 	"github.com/XinFinOrg/XDPoSChain/p2p/netutil"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -932,19 +932,20 @@ func setAllowlistAndDenylistForPeers(ctx *cli.Context, cfg *p2p.Config) {
 	// setup allowlist for peers
 	if ctx.IsSet(PeersAllowlistFlag.Name) {
 		urls := SplitAndTrim(ctx.String(PeersAllowlistFlag.Name))
-		cfg.AllowPeers = make(map[discover.NodeID]struct{}, len(urls))
+		cfg.AllowPeers = make(map[enode.ID]struct{}, len(urls))
 		for _, url := range urls {
 			if url != "" {
-				node1, err1 := discover.HexID(url)
+				var node1 enode.ID
+				err1 := node1.UnmarshalText([]byte(url))
 				if err1 == nil {
 					cfg.AllowPeers[node1] = struct{}{}
 					log.Info("Add peer to allowlist", "id", node1)
 					continue
 				}
-				node2, err2 := discover.ParseNode(url)
+				node2, err2 := enode.ParseV4(url)
 				if err2 == nil {
-					cfg.AllowPeers[node2.ID] = struct{}{}
-					log.Info("Add peer to allowlist", "enode", url, "id", node2.ID)
+					cfg.AllowPeers[node2.ID()] = struct{}{}
+					log.Info("Add peer to allowlist", "enode", url, "id", node2.ID())
 					continue
 				}
 				log.Crit("Invalid peer id for allowlist", "url", url, "err1", err1, "err2", err2)
@@ -955,19 +956,20 @@ func setAllowlistAndDenylistForPeers(ctx *cli.Context, cfg *p2p.Config) {
 	// setup denylist for peers
 	if ctx.IsSet(PeersDenylistFlag.Name) {
 		urls := SplitAndTrim(ctx.String(PeersDenylistFlag.Name))
-		cfg.DenyPeers = make(map[discover.NodeID]struct{}, len(urls))
+		cfg.DenyPeers = make(map[enode.ID]struct{}, len(urls))
 		for _, url := range urls {
 			if url != "" {
-				node1, err1 := discover.HexID(url)
+				var node1 enode.ID
+				err1 := node1.UnmarshalText([]byte(url))
 				if err1 == nil {
 					cfg.DenyPeers[node1] = struct{}{}
 					log.Info("Add peer to denylist", "id", node1)
 					continue
 				}
-				node2, err2 := discover.ParseNode(url)
+				node2, err2 := enode.ParseV4(url)
 				if err2 == nil {
-					cfg.DenyPeers[node2.ID] = struct{}{}
-					log.Info("Add peer to denylist", "enode", url, "id", node2.ID)
+					cfg.DenyPeers[node2.ID()] = struct{}{}
+					log.Info("Add peer to denylist", "enode", url, "id", node2.ID())
 					continue
 				}
 				log.Crit("Invalid peer id for denylist", "url", url, "err1", err1, "err2", err2)
@@ -982,10 +984,10 @@ func removeDenylistedPeers(cfg *p2p.Config) {
 		return
 	}
 
-	filteredNodes := make([]*discover.Node, 0, len(cfg.BootstrapNodes))
+	filteredNodes := make([]*enode.Node, 0, len(cfg.BootstrapNodes))
 	for _, node := range cfg.BootstrapNodes {
-		if _, ok := cfg.DenyPeers[node.ID]; ok {
-			log.Info("Remove denylisted peer", "enode", node, "id", node.ID)
+		if _, ok := cfg.DenyPeers[node.ID()]; ok {
+			log.Info("Remove denylisted peer", "enode", node, "id", node.ID())
 			continue
 		}
 		filteredNodes = append(filteredNodes, node)
@@ -1021,11 +1023,11 @@ func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 	cfg.BootstrapNodes = mustParseBootnodes(urls)
 }
 
-func mustParseBootnodes(urls []string) []*discover.Node {
-	nodes := make([]*discover.Node, 0, len(urls))
+func mustParseBootnodes(urls []string) []*enode.Node {
+	nodes := make([]*enode.Node, 0, len(urls))
 	for _, url := range urls {
 		if url != "" {
-			node, err := discover.ParseNode(url)
+			node, err := enode.ParseV4(url)
 			if err != nil {
 				log.Crit("Bootstrap URL invalid", "enode", url, "err", err)
 				return nil

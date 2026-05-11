@@ -17,15 +17,14 @@
 package adapters
 
 import (
-	"bufio"
+	"bytes"
 	"context"
-	"crypto/ecdsa"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -38,24 +37,26 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/node"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
-	"github.com/XinFinOrg/XDPoSChain/p2p/discover"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 	"github.com/docker/docker/pkg/reexec"
 	"github.com/gorilla/websocket"
 )
 
-// ExecAdapter is a NodeAdapter which runs simulation nodes by executing the
-// current binary as a child process.
-//
-// An init hook is used so that the child process executes the node services
-// (rather than whatever the main() function would normally do), see the
-// execP2PNode function for more information.
+func init() {
+	// Register a reexec function to start a simulation node when the current binary is
+	// executed as "p2p-node" (rather than whatever the main() function would normally do).
+	reexec.Register("p2p-node", execP2PNode)
+}
+
+// ExecAdapter is a NodeAdapter which runs simulation nodes by executing the current binary
+// as a child process.
 type ExecAdapter struct {
 	// BaseDir is the directory under which the data directories for each
 	// simulation node are created.
 	BaseDir string
 
-	nodes map[discover.NodeID]*ExecNode
+	nodes map[enode.ID]*ExecNode
 }
 
 // NewExecAdapter returns an ExecAdapter which stores node data in
@@ -63,7 +64,7 @@ type ExecAdapter struct {
 func NewExecAdapter(baseDir string) *ExecAdapter {
 	return &ExecAdapter{
 		BaseDir: baseDir,
-		nodes:   make(map[discover.NodeID]*ExecNode),
+		nodes:   make(map[enode.ID]*ExecNode),
 	}
 }
 
@@ -90,21 +91,33 @@ func (e *ExecAdapter) NewNode(config *NodeConfig) (Node, error) {
 		return nil, fmt.Errorf("error creating node directory: %s", err)
 	}
 
+	err := config.initDummyEnode()
+	if err != nil {
+		return nil, err
+	}
+
 	// generate the config
 	conf := &execNodeConfig{
 		Stack: node.DefaultConfig,
 		Node:  config,
 	}
-	conf.Stack.DataDir = filepath.Join(dir, "data")
+	if config.DataDir != "" {
+		conf.Stack.DataDir = config.DataDir
+	} else {
+		conf.Stack.DataDir = filepath.Join(dir, "data")
+	}
+
+	// these parameters are crucial for execadapter node to run correctly
 	conf.Stack.WSHost = "127.0.0.1"
 	conf.Stack.WSPort = 0
 	conf.Stack.WSOrigins = []string{"*"}
 	conf.Stack.WSExposeAll = true
-	conf.Stack.P2P.EnableMsgEvents = false
+	conf.Stack.P2P.EnableMsgEvents = config.EnableMsgEvents
 	conf.Stack.P2P.NoDiscovery = true
 	conf.Stack.P2P.NAT = nil
+	conf.Stack.NoUSB = true
 
-	// listen on a localhost port, which we set when we
+	// Listen on a localhost port, which we set when we
 	// initialise NodeConfig (usually a random port)
 	conf.Stack.P2P.ListenAddr = fmt.Sprintf(":%d", config.Port)
 
@@ -122,7 +135,7 @@ func (e *ExecAdapter) NewNode(config *NodeConfig) (Node, error) {
 // ExecNode starts a simulation node by exec'ing the current binary and
 // running the configured services
 type ExecNode struct {
-	ID     discover.NodeID
+	ID     enode.ID
 	Dir    string
 	Config *execNodeConfig
 	Cmd    *exec.Cmd
@@ -132,7 +145,6 @@ type ExecNode struct {
 	client  *rpc.Client
 	wsAddr  string
 	newCmd  func() *exec.Cmd
-	key     *ecdsa.PrivateKey
 }
 
 // Addr returns the node's enode URL
@@ -157,7 +169,6 @@ func (n *ExecNode) Start(snapshots map[string][]byte) (err error) {
 	}
 	defer func() {
 		if err != nil {
-			log.Error("node failed to start", "err", err)
 			n.Stop()
 		}
 	}()
@@ -174,57 +185,76 @@ func (n *ExecNode) Start(snapshots map[string][]byte) (err error) {
 		return fmt.Errorf("error generating node config: %s", err)
 	}
 
-	// use a pipe for stderr so we can both copy the node's stderr to
-	// os.Stderr and read the WebSocket address from the logs
-	stderrR, stderrW := io.Pipe()
-	stderr := io.MultiWriter(os.Stderr, stderrW)
+	// start the one-shot server that waits for startup information
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	statusURL, statusC := n.waitForStartupJSON(ctx)
 
 	// start the node
 	cmd := n.newCmd()
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = stderr
-	cmd.Env = append(os.Environ(), envNodeConfig+"="+string(confData))
+	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(),
+		envStatusURL+"="+statusURL,
+		envNodeConfig+"="+string(confData),
+	)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("error starting node: %s", err)
 	}
 	n.Cmd = cmd
 
-	// read the WebSocket address from the stderr logs
-	var wsAddr string
-	wsAddrC := make(chan string)
-	go func() {
-		s := bufio.NewScanner(stderrR)
-		for s.Scan() {
-			if strings.Contains(s.Text(), "WebSocket endpoint opened") {
-				wsAddrC <- wsAddrPattern.FindString(s.Text())
-			}
-		}
-	}()
-	select {
-	case wsAddr = <-wsAddrC:
-		if wsAddr == "" {
-			return errors.New("failed to read WebSocket address from stderr")
-		}
-	case <-time.After(10 * time.Second):
-		return errors.New("timed out waiting for WebSocket address on stderr")
+	// Wait for the node to start.
+	status := <-statusC
+	if status.Err != "" {
+		return errors.New(status.Err)
 	}
-
-	// create the RPC client and load the node info
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	client, err := rpc.DialWebsocket(ctx, wsAddr, "")
+	client, err := rpc.DialWebsocket(ctx, status.WSEndpoint, "")
 	if err != nil {
-		return fmt.Errorf("error dialing rpc websocket: %s", err)
+		return fmt.Errorf("can't connect to RPC server: %v", err)
 	}
-	var info p2p.NodeInfo
-	if err := client.CallContext(ctx, &info, "admin_nodeInfo"); err != nil {
-		return fmt.Errorf("error getting node info: %s", err)
-	}
-	n.client = client
-	n.wsAddr = wsAddr
-	n.Info = &info
 
+	// Node ready :)
+	n.client = client
+	n.wsAddr = status.WSEndpoint
+	n.Info = status.NodeInfo
 	return nil
+}
+
+// waitForStartupJSON runs a one-shot HTTP server to receive a startup report.
+func (n *ExecNode) waitForStartupJSON(ctx context.Context) (string, chan nodeStartupJSON) {
+	var (
+		ch       = make(chan nodeStartupJSON, 1)
+		quitOnce sync.Once
+		srv      http.Server
+	)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		ch <- nodeStartupJSON{Err: err.Error()}
+		return "", ch
+	}
+	quit := func(status nodeStartupJSON) {
+		quitOnce.Do(func() {
+			l.Close()
+			ch <- status
+		})
+	}
+	srv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var status nodeStartupJSON
+		if err := json.NewDecoder(r.Body).Decode(&status); err != nil {
+			status.Err = fmt.Sprintf("can't decode startup report: %v", err)
+		}
+		quit(status)
+	})
+	// Run the HTTP server, but don't wait forever and shut it down
+	// if the context is canceled.
+	go srv.Serve(l)
+	go func() {
+		<-ctx.Done()
+		quit(nodeStartupJSON{Err: "didn't get startup report"})
+	}()
+
+	url := "http://" + l.Addr().String()
+	return url, ch
 }
 
 // execCommand returns a command which runs the node locally by exec'ing
@@ -288,14 +318,16 @@ func (n *ExecNode) ServeRPC(clientConn *websocket.Conn) error {
 		return err
 	}
 	var wg sync.WaitGroup
-	wg.Go(func() { wsCopy(conn, clientConn) })
-	wg.Go(func() { wsCopy(clientConn, conn) })
+	wg.Add(2)
+	go wsCopy(&wg, conn, clientConn)
+	go wsCopy(&wg, clientConn, conn)
 	wg.Wait()
 	conn.Close()
 	return nil
 }
 
-func wsCopy(src, dst *websocket.Conn) {
+func wsCopy(wg *sync.WaitGroup, src, dst *websocket.Conn) {
+	defer wg.Done()
 	for {
 		msgType, r, err := src.NextReader()
 		if err != nil {
@@ -321,12 +353,6 @@ func (n *ExecNode) Snapshots() (map[string][]byte, error) {
 	return snapshots, n.client.Call(&snapshots, "simulation_snapshot")
 }
 
-func init() {
-	// register a reexec function to start a devp2p node when the current
-	// binary is executed as "p2p-node"
-	reexec.Register("p2p-node", execP2PNode)
-}
-
 // execNodeConfig is used to serialize the node configuration so it can be
 // passed to the child process as a JSON encoded environment variable
 type execNodeConfig struct {
@@ -336,88 +362,73 @@ type execNodeConfig struct {
 	PeerAddrs map[string]string `json:"peer_addrs,omitempty"`
 }
 
-// ExternalIP gets an external IP address so that Enode URL is usable
-func ExternalIP() net.IP {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		log.Crit("error getting IP address", "err", err)
-	}
-	for _, addr := range addrs {
-		if ip, ok := addr.(*net.IPNet); ok && !ip.IP.IsLoopback() && !ip.IP.IsLinkLocalUnicast() {
-			return ip.IP
-		}
-	}
-	log.Warn("unable to determine explicit IP address, falling back to loopback")
-	return net.IP{127, 0, 0, 1}
-}
-
-func initLogging() {
-	// Initialize the logging by default first.
-	var innerHandler slog.Handler
-	innerHandler = slog.NewTextHandler(os.Stderr, nil)
-	glogger := log.NewGlogHandler(innerHandler)
-	glogger.Verbosity(log.LevelInfo)
-	log.SetDefault(log.NewLogger(glogger))
-
-	confEnv := os.Getenv(envNodeConfig)
-	if confEnv == "" {
-		return
-	}
-	var conf execNodeConfig
-	if err := json.Unmarshal([]byte(confEnv), &conf); err != nil {
-		return
-	}
-	var writer = os.Stderr
-	if conf.Node.LogFile != "" {
-		logWriter, err := os.Create(conf.Node.LogFile)
-		if err != nil {
-			return
-		}
-		writer = logWriter
-	}
-	var verbosity = log.LevelInfo
-	if conf.Node.LogVerbosity <= log.LevelTrace && conf.Node.LogVerbosity >= log.LevelCrit {
-		verbosity = log.FromLegacyLevel(int(conf.Node.LogVerbosity))
-	}
-	// Reinitialize the logger
-	innerHandler = log.NewTerminalHandler(writer, true)
-	glogger = log.NewGlogHandler(innerHandler)
-	glogger.Verbosity(verbosity)
-	log.SetDefault(log.NewLogger(glogger))
-}
-
 // execP2PNode starts a simulation node when the current binary is executed with
 // argv[0] being "p2p-node", reading the service / ID from argv[1] / argv[2]
 // and the node config from an environment variable.
 func execP2PNode() {
-	initLogging()
+	statusURL := os.Getenv(envStatusURL)
+	if statusURL == "" {
+		log.Crit("missing " + envStatusURL)
+	}
 
+	// Start the node and gather startup report.
+	var status nodeStartupJSON
+	stack, stackErr := startExecNodeStack()
+	if stackErr != nil {
+		status.Err = stackErr.Error()
+	} else {
+		status.WSEndpoint = "ws://" + stack.WSEndpoint()
+		status.NodeInfo = stack.Server().NodeInfo()
+	}
+
+	// Send status to the host.
+	statusJSON, _ := json.Marshal(status)
+	if _, err := http.Post(statusURL, "application/json", bytes.NewReader(statusJSON)); err != nil {
+		log.Crit("Can't post startup info", "url", statusURL, "err", err)
+	}
+	if stackErr != nil {
+		os.Exit(1)
+	}
+
+	// Stop the stack if we get a SIGTERM signal.
+	go func() {
+		sigc := make(chan os.Signal, 1)
+		signal.Notify(sigc, syscall.SIGTERM)
+		defer signal.Stop(sigc)
+		<-sigc
+		log.Info("Received SIGTERM, shutting down...")
+		stack.Close()
+	}()
+	stack.Wait() // Wait for the stack to exit.
+}
+
+func startExecNodeStack() (*node.Node, error) {
 	// read the services from argv
 	serviceNames := strings.Split(os.Args[1], ",")
 
 	// decode the config
 	confEnv := os.Getenv(envNodeConfig)
 	if confEnv == "" {
-		log.Crit("missing " + envNodeConfig)
+		return nil, fmt.Errorf("missing " + envNodeConfig)
 	}
 	var conf execNodeConfig
 	if err := json.Unmarshal([]byte(confEnv), &conf); err != nil {
-		log.Crit("error decoding "+envNodeConfig, "err", err)
+		return nil, fmt.Errorf("error decoding %s: %v", envNodeConfig, err)
 	}
+
+	// create enode record
+	nodeTcpConn, _ := net.ResolveTCPAddr("tcp", conf.Stack.P2P.ListenAddr)
+	if nodeTcpConn.IP == nil {
+		nodeTcpConn.IP = net.IPv4(127, 0, 0, 1)
+	}
+	conf.Node.initEnode(nodeTcpConn.IP, nodeTcpConn.Port, nodeTcpConn.Port)
 	conf.Stack.P2P.PrivateKey = conf.Node.PrivateKey
 	conf.Stack.Logger = log.New("node.id", conf.Node.ID.String())
-
-	if strings.HasPrefix(conf.Stack.P2P.ListenAddr, ":") {
-		conf.Stack.P2P.ListenAddr = ExternalIP().String() + conf.Stack.P2P.ListenAddr
-	}
-	if conf.Stack.WSHost == "0.0.0.0" {
-		conf.Stack.WSHost = ExternalIP().String()
-	}
 
 	// initialize the devp2p stack
 	stack, err := node.New(&conf.Stack)
 	if err != nil {
-		log.Crit("error creating node stack", "err", err)
+		return nil, fmt.Errorf("error creating node stack: %v", err)
 	}
 
 	// Register the services, collecting them into a map so they can
@@ -426,7 +437,7 @@ func execP2PNode() {
 	for _, name := range serviceNames {
 		lifecycleFunc, exists := lifecycleConstructorFuncs[name]
 		if !exists {
-			log.Crit("unknown node service", "name", name)
+			return nil, fmt.Errorf("unknown node service %q", err)
 		}
 		ctx := &ServiceContext{
 			RPCDialer: &wsRPCDialer{addrs: conf.PeerAddrs},
@@ -437,7 +448,7 @@ func execP2PNode() {
 		}
 		service, err := lifecycleFunc(ctx, stack)
 		if err != nil {
-			log.Crit("error starting service", "name", name, "err", err)
+			return nil, err
 		}
 		services[name] = service
 		stack.RegisterLifecycle(service)
@@ -446,30 +457,27 @@ func execP2PNode() {
 	// Add the snapshot API.
 	stack.RegisterAPIs([]rpc.API{{
 		Namespace: "simulation",
+		Version:   "1.0",
 		Service:   SnapshotAPI{services},
 	}})
 
-	if err := stack.Start(); err != nil {
-		log.Crit("error stating node stack", "err", err)
+	if err = stack.Start(); err != nil {
+		err = fmt.Errorf("error starting stack: %v", err)
 	}
-
-	// stop the stack if we get a SIGTERM signal
-	go func() {
-		sigc := make(chan os.Signal, 1)
-		signal.Notify(sigc, syscall.SIGTERM)
-		defer signal.Stop(sigc)
-		<-sigc
-		log.Info("Received SIGTERM, shutting down...")
-		stack.Close()
-	}()
-
-	// wait for the stack to exit
-	stack.Wait()
+	return stack, err
 }
 
 const (
+	envStatusURL  = "_P2P_STATUS_URL"
 	envNodeConfig = "_P2P_NODE_CONFIG"
 )
+
+// nodeStartupJSON is sent to the simulation host after startup.
+type nodeStartupJSON struct {
+	Err        string
+	WSEndpoint string
+	NodeInfo   *p2p.NodeInfo
+}
 
 // SnapshotAPI provides an RPC method to create snapshots of services
 type SnapshotAPI struct {
@@ -498,7 +506,7 @@ type wsRPCDialer struct {
 
 // DialRPC implements the RPCDialer interface by creating a WebSocket RPC
 // client of the given node
-func (w *wsRPCDialer) DialRPC(id discover.NodeID) (*rpc.Client, error) {
+func (w *wsRPCDialer) DialRPC(id enode.ID) (*rpc.Client, error) {
 	addr, ok := w.addrs[id.String()]
 	if !ok {
 		return nil, fmt.Errorf("unknown node: %s", id)
