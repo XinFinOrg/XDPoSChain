@@ -121,9 +121,8 @@ type EVM struct {
 	// precompiles holds the precompiled contracts for the current epoch
 	precompiles map[common.Address]PrecompiledContract
 
-	// jumpDests is the aggregated result of JUMPDEST analysis made through
-	// the life cycle of EVM.
-	jumpDests map[common.Hash]bitvec
+	// jumpDests stores results of JUMPDEST analysis.
+	jumpDests JumpDestCache
 
 	hasher    crypto.KeccakState // Keccak256 hasher instance shared across opcodes
 	hasherBuf common.Hash        // Keccak256 hasher result array shared across opcodes
@@ -144,7 +143,7 @@ func NewEVM(blockCtx BlockContext, statedb StateDB, tradingStateDB *tradingstate
 		Config:         config,
 		chainConfig:    chainConfig,
 		chainRules:     chainConfig.Rules(blockCtx.BlockNumber),
-		jumpDests:      make(map[common.Hash]bitvec),
+		jumpDests:      newMapJumpDests(),
 		hasher:         crypto.NewKeccakState(),
 	}
 	evm.precompiles = activePrecompiledContracts(evm.chainRules)
@@ -204,6 +203,11 @@ func NewEVM(blockCtx BlockContext, statedb StateDB, tradingStateDB *tradingstate
 // It is not thread-safe.
 func (evm *EVM) SetPrecompiles(precompiles PrecompiledContracts) {
 	evm.precompiles = precompiles
+}
+
+// SetJumpDestCache configures the analysis cache.
+func (evm *EVM) SetJumpDestCache(jumpDests JumpDestCache) {
+	evm.jumpDests = jumpDests
 }
 
 // SetTxContext updates the EVM with a new transaction context.
