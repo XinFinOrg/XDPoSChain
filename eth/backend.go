@@ -292,6 +292,10 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	if eth.protocolManager, err = NewProtocolManagerEx(eth.blockchain.Config(), config.SyncMode, networkID, eth.eventMux, eth.txPool, eth.orderPool, eth.lendingPool, eth.engine, eth.blockchain, chainDb); err != nil {
 		return nil, err
 	}
+	// Set fast sync pivot block if configured
+	if config.FastSyncPivotNumber != 0 {
+		eth.protocolManager.downloader.SetPivotBlock(config.FastSyncPivotNumber, config.FastSyncPivotHash, config.FastSyncPivotRoot)
+	}
 	eth.miner = miner.New(eth, &config.Miner, eth.blockchain.Config(), eth.EventMux(), eth.engine, stack.Config().AnnounceTxs)
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
 

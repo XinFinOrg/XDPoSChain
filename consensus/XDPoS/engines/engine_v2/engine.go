@@ -254,9 +254,9 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 			return fmt.Errorf("masternodes are empty v2 switch number: %d", x.config.V2.SwitchBlock.Uint64())
 		}
 
-		snap := newSnapshot(lastGapNum, lastGapHeader.Hash(), masternodes)
+		snap := NewSnapshot(lastGapNum, lastGapHeader.Hash(), masternodes)
 		x.snapshots.Add(snap.Hash, snap)
-		err = storeSnapshot(snap, x.db)
+		err = StoreSnapshot(snap, x.db)
 		if err != nil {
 			log.Error("[initial] Error while store snapshot", "error", err)
 			return err
@@ -594,11 +594,11 @@ func (x *XDPoS_v2) UpdateMasternodes(chain consensus.ChainReader, header *types.
 	}
 
 	x.lock.RLock()
-	snap := newSnapshot(number, header.Hash(), masterNodes)
+	snap := NewSnapshot(number, header.Hash(), masterNodes)
 	log.Info("[UpdateMasternodes] take snapshot", "number", number, "hash", header.Hash())
 	x.lock.RUnlock()
 
-	err := storeSnapshot(snap, x.db)
+	err := StoreSnapshot(snap, x.db)
 	if err != nil {
 		log.Error("[UpdateMasternodes] Error while store snapshot", "hash", header.Hash(), "currentRound", x.currentRound, "error", err)
 		return err

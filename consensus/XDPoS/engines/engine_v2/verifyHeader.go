@@ -134,33 +134,38 @@ func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Heade
 			return utils.ErrInvalidCheckpointSigners
 		}
 
-		localMasterNodes, localPenalties, err := x.calcMasternodes(chain, header.Number, header.ParentHash, round)
-		masterNodes = localMasterNodes
-		if err != nil {
-			log.Error("[verifyHeader] Fail to calculate master nodes list with penalty", "Number", header.Number, "Hash", header.Hash())
-			return err
-		}
+		// if fullVerify, verify masternodes and penalties; else use them inside header
+		if fullVerify {
+			localMasterNodes, localPenalties, err := x.calcMasternodes(chain, header.Number, header.ParentHash, round)
+			masterNodes = localMasterNodes
+			if err != nil {
+				log.Error("[verifyHeader] Fail to calculate master nodes list with penalty", "Number", header.Number, "Hash", header.Hash())
+				return err
+			}
 
-		validatorsAddress := common.ExtractAddressFromBytes(header.Validators)
-		if !utils.CompareSignersLists(localMasterNodes, validatorsAddress) {
-			for i, addr := range localMasterNodes {
-				log.Warn("[verifyHeader] localMasterNodes", "i", i, "addr", addr.Hex())
+			validatorsAddress := common.ExtractAddressFromBytes(header.Validators)
+			if !utils.CompareSignersLists(localMasterNodes, validatorsAddress) {
+				for i, addr := range localMasterNodes {
+					log.Warn("[verifyHeader] localMasterNodes", "i", i, "addr", addr.Hex())
+				}
+				for i, addr := range validatorsAddress {
+					log.Warn("[verifyHeader] validatorsAddress", "i", i, "addr", addr.Hex())
+				}
+				return utils.ErrValidatorsNotLegit
 			}
-			for i, addr := range validatorsAddress {
-				log.Warn("[verifyHeader] validatorsAddress", "i", i, "addr", addr.Hex())
-			}
-			return utils.ErrValidatorsNotLegit
-		}
 
-		penaltiesAddress := common.ExtractAddressFromBytes(header.Penalties)
-		if !utils.CompareSignersLists(localPenalties, penaltiesAddress) {
-			for i, addr := range localPenalties {
-				log.Warn("[verifyHeader] localPenalties", "i", i, "addr", addr.Hex())
+			penaltiesAddress := common.ExtractAddressFromBytes(header.Penalties)
+			if !utils.CompareSignersLists(localPenalties, penaltiesAddress) {
+				for i, addr := range localPenalties {
+					log.Warn("[verifyHeader] localPenalties", "i", i, "addr", addr.Hex())
+				}
+				for i, addr := range penaltiesAddress {
+					log.Warn("[verifyHeader] penaltiesAddress", "i", i, "addr", addr.Hex())
+				}
+				return utils.ErrPenaltiesNotLegit
 			}
-			for i, addr := range penaltiesAddress {
-				log.Warn("[verifyHeader] penaltiesAddress", "i", i, "addr", addr.Hex())
-			}
-			return utils.ErrPenaltiesNotLegit
+		} else {
+			masterNodes = common.ExtractAddressFromBytes(header.Validators)
 		}
 	} else {
 		if len(header.Validators) != 0 {
