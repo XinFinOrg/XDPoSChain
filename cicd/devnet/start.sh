@@ -118,10 +118,22 @@ fi
 echo "Running a node with wallet: ${wallet} at IP: ${instance_ip}"
 echo "Starting nodes with $bootnodes ..."
 
+if [ -n "$NODE_KEY" ] && [ ! -f /work/xdcchain/XDC/nodekey ]; then
+  mkdir -p /work/xdcchain/XDC
+  echo "$NODE_KEY" > /work/xdcchain/XDC/nodekey
+  echo "Restored nodekey from NODE_KEY secret."
+fi
+
+config_arg=""
+if [ -f /work/config.toml ]; then
+  echo "config.toml found, using static peers from --config /work/config.toml"
+  config_arg="--config /work/config.toml"
+fi
+
 # Note: --gcmode=archive means node will store all historical data. This will lead to high memory usage. But sync mode require archive to sync
 # https://github.com/XinFinOrg/XDPoSChain/issues/268
 
-XDC --ethstats ${netstats} \
+XDC ${config_arg} --ethstats ${netstats} \
 --gcmode ${gc_mode} --syncmode ${sync_mode} \
 --nat extip:${instance_ip} \
 --bootnodes ${bootnodes} \
