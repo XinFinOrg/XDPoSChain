@@ -614,20 +614,43 @@ func getEpochReward(account common.Address, header *types.Header) (AccountEpochR
 	return epochReward, nil
 }
 
+// jsonNumberToBigInt parses a json.Number into a *big.Int, handling both plain
+// decimal strings (e.g. "4500000000000000000") and scientific notation
+// (e.g. "4.5e+21") that big.Int.SetString cannot parse directly.
+func jsonNumberToBigInt(n json.Number) (*big.Int, bool) {
+	s := n.String()
+	// Try plain integer first — the common case.
+	if i, ok := new(big.Int).SetString(s, 10); ok {
+		return i, true
+	}
+	// Fall back to big.Float to handle scientific notation.
+	f, _, err := new(big.Float).SetPrec(256).Parse(s, 10)
+	if err != nil {
+		log.Warn("[jsonNumberToBigInt] Failed to parse json.Number:", "number", s, "err", err)
+		return nil, false
+	}
+
+	i, acc := f.Int(nil)
+	if acc != big.Exact {
+		// The value had a fractional part; truncate is the best we can do
+		log.Warn("[jsonNumberToBigInt] json.Number is not an exact integer value", "number", s, "truncated", i.String(), "accuracy", acc)
+	}
+
+	return i, true
+}
+
 func (rewardObj *AccountEpochReward) getRewardAndStatus(account string, data map[string]interface{}) {
 	if signersData, exists := data["signers"]; exists {
 		if accountData, ok := signersData.(map[string]interface{})[account]; ok {
 			nodeReward := accountData.(map[string]interface{})["reward"]
 			delegatedReward := data["rewards"].(map[string]interface{})[account]
 			rewardObj.AccountStatus = statusMasternode
-			nodeRewardBigInt, ok := new(big.Int).SetString(nodeReward.(json.Number).String(), 10)
-			if ok {
+			if nodeRewardBigInt, ok := jsonNumberToBigInt(nodeReward.(json.Number)); ok {
 				rewardObj.AccountReward = nodeRewardBigInt
 			}
 
 			for k, v := range delegatedReward.(map[string]interface{}) {
-				delegatedBigInt, ok := new(big.Int).SetString(v.(json.Number).String(), 10)
-				if ok {
+				if delegatedBigInt, ok := jsonNumberToBigInt(v.(json.Number)); ok {
 					rewardObj.DelegatedReward[k] = delegatedBigInt
 				}
 			}
@@ -640,14 +663,12 @@ func (rewardObj *AccountEpochReward) getRewardAndStatus(account string, data map
 			nodeReward := accountData.(map[string]interface{})["reward"]
 			delegatedReward := data["rewardsProtector"].(map[string]interface{})[account]
 			rewardObj.AccountStatus = statusProtectornode
-			nodeRewardBigInt, successSetNodeReward := new(big.Int).SetString(nodeReward.(json.Number).String(), 10)
-			if successSetNodeReward {
+			if nodeRewardBigInt, ok := jsonNumberToBigInt(nodeReward.(json.Number)); ok {
 				rewardObj.AccountReward = nodeRewardBigInt
 			}
 
 			for k, v := range delegatedReward.(map[string]interface{}) {
-				delegatedBigInt, successSetDelegatedReward := new(big.Int).SetString(v.(json.Number).String(), 10)
-				if successSetDelegatedReward {
+				if delegatedBigInt, ok := jsonNumberToBigInt(v.(json.Number)); ok {
 					rewardObj.DelegatedReward[k] = delegatedBigInt
 				}
 			}
@@ -660,14 +681,12 @@ func (rewardObj *AccountEpochReward) getRewardAndStatus(account string, data map
 			nodeReward := accountData.(map[string]interface{})["reward"]
 			delegatedReward := data["rewardsObserver"].(map[string]interface{})[account]
 			rewardObj.AccountStatus = statusObservernode
-			nodeRewardBigInt, successSetNodeReward := new(big.Int).SetString(nodeReward.(json.Number).String(), 10)
-			if successSetNodeReward {
+			if nodeRewardBigInt, ok := jsonNumberToBigInt(nodeReward.(json.Number)); ok {
 				rewardObj.AccountReward = nodeRewardBigInt
 			}
 
 			for k, v := range delegatedReward.(map[string]interface{}) {
-				delegatedBigInt, successSetDelegatedReward := new(big.Int).SetString(v.(json.Number).String(), 10)
-				if successSetDelegatedReward {
+				if delegatedBigInt, ok := jsonNumberToBigInt(v.(json.Number)); ok {
 					rewardObj.DelegatedReward[k] = delegatedBigInt
 				}
 			}

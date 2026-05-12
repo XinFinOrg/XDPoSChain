@@ -1,6 +1,7 @@
 package XDPoS
 
 import (
+	"encoding/json"
 	"math/big"
 	"testing"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCalculateSignersVote(t *testing.T) {
@@ -68,4 +70,99 @@ func TestCalculateSignersTimeout(t *testing.T) {
 
 	calculateSigners(info, timeouts.Get(), masternodes)
 	assert.Equal(t, info["10:450"].CurrentNumber, 2)
+}
+
+func TestJsonNumberToBigInt(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  json.Number
+		want   *big.Int
+		wantOk bool
+	}{
+		{
+			name:   "plain decimal integer",
+			input:  json.Number("4500000000000000000000"),
+			want:   new(big.Int).Mul(big.NewInt(45), new(big.Int).Exp(big.NewInt(10), big.NewInt(20), nil)),
+			wantOk: true,
+		},
+		{
+			name:   "scientific notation 4.5e+21",
+			input:  json.Number("4.5e+21"),
+			want:   new(big.Int).Mul(big.NewInt(45), new(big.Int).Exp(big.NewInt(10), big.NewInt(20), nil)),
+			wantOk: true,
+		},
+		{
+			name:   "scientific notation 1e+18",
+			input:  json.Number("1e+18"),
+			want:   new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil),
+			wantOk: true,
+		},
+		{
+			name:   "scientific notation uppercase E",
+			input:  json.Number("4.5E+21"),
+			want:   new(big.Int).Mul(big.NewInt(45), new(big.Int).Exp(big.NewInt(10), big.NewInt(20), nil)),
+			wantOk: true,
+		},
+		{
+			name:   "zero",
+			input:  json.Number("0"),
+			want:   big.NewInt(0),
+			wantOk: true,
+		},
+		{
+			name:   "small integer",
+			input:  json.Number("12345"),
+			want:   big.NewInt(12345),
+			wantOk: true,
+		},
+		{
+			name:   "fractional value truncates",
+			input:  json.Number("1.23e+1"),
+			want:   big.NewInt(12),
+			wantOk: true,
+		},
+		{
+			name:   "decimal without exponent",
+			input:  json.Number("123.456"),
+			want:   big.NewInt(123),
+			wantOk: true,
+		},
+		{
+			name:   "decimal whole number",
+			input:  json.Number("1000.0"),
+			want:   big.NewInt(1000),
+			wantOk: true,
+		},
+		{
+			name:   "negative integer",
+			input:  json.Number("-500"),
+			want:   big.NewInt(-500),
+			wantOk: true,
+		},
+		{
+			name:   "invalid string",
+			input:  json.Number("not_a_number"),
+			want:   nil,
+			wantOk: false,
+		},
+		{
+			name:   "empty string",
+			input:  json.Number(""),
+			want:   nil,
+			wantOk: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := jsonNumberToBigInt(tt.input)
+			if tt.wantOk {
+				require.True(t, ok, "input %q: parse failed, expected %s", tt.input, tt.want)
+				assert.Equal(t, 0, tt.want.Cmp(got), "input %q: expected %s but got %s", tt.input, tt.want, got)
+			} else {
+				assert.False(t, ok, "input %q: expected parse failure but got %v", tt.input, got)
+				assert.Nil(t, got, "input %q: expected nil but got %v", tt.input, got)
+			}
+		})
+	}
 }
