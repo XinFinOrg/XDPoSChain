@@ -1,4 +1,12 @@
 #!/bin/bash
+
+# Restore nodekey from secret before XDC init runs, so init does not generate a new one.
+if [ -n "$NODE_KEY" ] && [ ! -f /work/xdcchain/XDC/nodekey ]; then
+  mkdir -p /work/xdcchain/XDC
+  echo "$NODE_KEY" > /work/xdcchain/XDC/nodekey
+  echo "Restored nodekey from NODE_KEY secret."
+fi
+
 if [ ! -d /work/xdcchain/XDC/chaindata ]
 then
   if test -z "$PRIVATE_KEY"
@@ -117,12 +125,6 @@ fi
 
 echo "Running a node with wallet: ${wallet} at IP: ${instance_ip}"
 echo "Starting nodes with $bootnodes ..."
-
-if [ -n "$NODE_KEY" ] && [ ! -f /work/xdcchain/XDC/nodekey ]; then
-  mkdir -p /work/xdcchain/XDC
-  echo "$NODE_KEY" > /work/xdcchain/XDC/nodekey
-  echo "Restored nodekey from NODE_KEY secret."
-fi
 
 config_arg=""
 if [ -f /work/config.toml ]; then
