@@ -208,7 +208,7 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 	}
 
 	// Construct the different synchronisation mechanisms
-	manager.downloader = downloader.New(chaindb, manager.eventMux, blockchain, nil, manager.removePeer, handleProposedBlock)
+	manager.downloader = downloader.New(chaindb, manager.eventMux, blockchain, nil, manager.removePeerByID, handleProposedBlock)
 
 	validator := func(header *types.Header) error {
 		return engine.VerifyHeader(blockchain, header, true)
@@ -237,7 +237,7 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		atomic.StoreUint32(&manager.acceptTxs, 1) // Mark initial sync done on any fetcher import
 		return manager.blockchain.PrepareBlock(block)
 	}
-	manager.fetcher = fetcher.New(blockchain.GetBlockByHash, validator, handleProposedBlock, manager.BroadcastBlock, heighter, inserter, prepare, manager.removePeer)
+	manager.fetcher = fetcher.New(blockchain.GetBlockByHash, validator, handleProposedBlock, manager.BroadcastBlock, heighter, inserter, prepare, manager.removePeerByID)
 	//Define bft function
 	broadcasts := bft.BroadcastFns{
 		Vote:     manager.BroadcastVote,
@@ -261,21 +261,30 @@ func (pm *ProtocolManager) addLendingPoolProtocol(lendingpool lendingPool) {
 	pm.lendingpool = lendingpool
 }
 
-func (pm *ProtocolManager) removePeer(id string) {
-	// Short circuit if the peer was already removed
-	peer := pm.peers.Peer(id)
+func (pm *ProtocolManager) removePeer(peer *peer) {
 	if peer == nil {
 		return
 	}
-	log.Debug("Removing Ethereum peer", "peer", id)
+	// Short circuit if the peer was already removed.
+	current := pm.peers.Peer(peer.id)
+	if current == nil {
+		return
+	}
+	log.Debug("Removing Ethereum peer", "peer", peer.id)
 
-	// Unregister the peer from the downloader and Ethereum peer set
-	pm.downloader.UnregisterPeer(id)
-	if err := pm.peers.Unregister(id); err != nil {
-		log.Debug("Peer removal failed", "peer", id, "err", err)
+	// Only the primary connection is registered with the downloader.
+	if current == peer {
+		pm.downloader.UnregisterPeer(peer.id)
+	}
+	if err := pm.peers.UnregisterPeer(peer); err != nil {
+		log.Debug("Peer removal failed", "peer", peer.id, "err", err)
 	}
 	// Hard disconnect at the networking layer
 	peer.Peer.Disconnect(p2p.DiscUselessPeer)
+}
+
+func (pm *ProtocolManager) removePeerByID(id string) {
+	pm.removePeer(pm.peers.Peer(id))
 }
 
 func (pm *ProtocolManager) Start(maxPeers int) {
@@ -369,7 +378,7 @@ func (pm *ProtocolManager) handle(p *peer) error {
 		p.Log().Error("Ethereum peer registration failed", "err", err)
 		return err
 	}
-	defer pm.removePeer(p.id)
+	defer pm.removePeer(p)
 	if err != p2p.ErrAddPairPeer {
 		// Register the peer in the downloader. If the downloader considers it banned, we disconnect
 		if err := pm.downloader.RegisterPeer(p.id, p.version, p); err != nil {
@@ -389,7 +398,7 @@ func (pm *ProtocolManager) handle(p *peer) error {
 			// Start a timer to disconnect if the peer doesn't reply in time
 			p.forkDrop = time.AfterFunc(daoChallengeTimeout, func() {
 				p.Log().Debug("Timed out DAO fork-check, dropping")
-				pm.removePeer(p.id)
+				pm.removePeer(p)
 			})
 			// Make sure it's cleaned up if the peer dies off
 			defer func() {
@@ -958,7 +967,7 @@ func (pm *ProtocolManager) BroadcastVote(vote *types.Vote) {
 			err := peer.SendVote(vote)
 			if err != nil {
 				log.Debug("[BroadcastVote] Fail to broadcast vote message", "peerId", peer.id, "version", peer.version, "blockNum", vote.ProposedBlockInfo.Number, "err", err)
-				pm.removePeer(peer.id)
+				pm.removePeer(peer)
 			}
 		}
 		log.Trace("Propagated Vote", "vote hash", vote.Hash(), "voted block hash", vote.ProposedBlockInfo.Hash.Hex(), "number", vote.ProposedBlockInfo.Number, "round", vote.ProposedBlockInfo.Round, "recipients", len(peers))
@@ -975,7 +984,7 @@ func (pm *ProtocolManager) BroadcastTimeout(timeout *types.Timeout) {
 			err := peer.SendTimeout(timeout)
 			if err != nil {
 				log.Debug("[BroadcastTimeout] Fail to broadcast timeout message, remove peer", "peerId", peer.id, "version", peer.version, "timeout", timeout, "err", err)
-				pm.removePeer(peer.id)
+				pm.removePeer(peer)
 			}
 		}
 		log.Trace("Propagated Timeout", "hash", hash, "recipients", len(peers))
@@ -992,7 +1001,7 @@ func (pm *ProtocolManager) BroadcastSyncInfo(syncInfo *types.SyncInfo) {
 			err := peer.SendSyncInfo(syncInfo)
 			if err != nil {
 				log.Debug("[BroadcastSyncInfo] Fail to broadcast syncInfo message, remove peer", "peerId", peer.id, "version", peer.version, "syncInfo", syncInfo, "err", err)
-				pm.removePeer(peer.id)
+				pm.removePeer(peer)
 			}
 		}
 		log.Trace("Propagated SyncInfo", "hash", hash, "recipients", len(peers))

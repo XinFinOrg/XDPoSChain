@@ -35,6 +35,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/eth/ethconfig"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
+	"github.com/XinFinOrg/XDPoSChain/p2p/discover"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
@@ -70,6 +71,85 @@ func TestProtocolCompatibility(t *testing.T) {
 // Tests that block headers can be retrieved from a remote chain based on user queries.
 func TestGetBlockHeaders62(t *testing.T) { testGetBlockHeaders(t, 62) }
 func TestGetBlockHeaders63(t *testing.T) { testGetBlockHeaders(t, 63) }
+
+func TestGetBlockHeadersAfterPairDrop63(t *testing.T) {
+	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, downloader.MaxHashFetch+15, nil, nil)
+	defer pm.Stop()
+
+	var id discover.NodeID
+	id[0] = 1
+
+	newPeerWithID := func(name string) (*testPeer, <-chan error) {
+		app, net := p2p.MsgPipe()
+		peer := pm.newPeer(eth63, p2p.NewPeer(id, name, nil), net)
+
+		errc := make(chan error, 1)
+		go func() {
+			select {
+			case pm.newPeerCh <- peer:
+				errc <- pm.handle(peer)
+			case <-pm.quitSync:
+				errc <- p2p.DiscQuitting
+			}
+		}()
+
+		return &testPeer{app: app, net: net, peer: peer}, errc
+	}
+
+	primary, primaryErrc := newPeerWithID("primary")
+	defer primary.close()
+	pair, pairErrc := newPeerWithID("pair")
+
+	var (
+		genesis = pm.blockchain.Genesis()
+		head    = pm.blockchain.CurrentHeader()
+		hash    = head.Hash()
+		td      = pm.blockchain.GetTd(hash, head.Number.Uint64())
+	)
+	primary.handshake(t, td, hash, genesis.Hash())
+	pair.handshake(t, td, hash, genesis.Hash())
+
+	deadline := time.Now().Add(time.Second)
+	for pm.peers.Len() != 1 || primary.pairRW() == nil {
+		if time.Now().After(deadline) {
+			t.Fatalf("pairing state not established: peers=%d pairRWSet=%t", pm.peers.Len(), primary.pairRW() != nil)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	pair.close()
+	select {
+	case <-pairErrc:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for pair peer to disconnect")
+	}
+
+	if got := pm.peers.Peer(primary.id); got != primary.peer {
+		t.Fatal("primary peer was removed after pair disconnect")
+	}
+	if primary.pairRW() != nil {
+		t.Fatal("primary peer still has stale pair writer after pair disconnect")
+	}
+	if primary.PairPeer() != nil {
+		t.Fatal("primary peer still references pair peer after pair disconnect")
+	}
+
+	query := &getBlockHeadersData{Origin: hashOrNumber{Number: 1}, Amount: 1}
+	expected := []*types.Header{pm.blockchain.GetBlockByNumber(1).Header()}
+
+	if err := p2p.Send(primary.app, GetBlockHeadersMsg, query); err != nil {
+		t.Fatalf("failed to send header request from primary peer: %v", err)
+	}
+	if err := p2p.ExpectMsg(primary.app, BlockHeadersMsg, expected); err != nil {
+		t.Fatalf("failed to receive header response after pair disconnect: %v", err)
+	}
+
+	select {
+	case err := <-primaryErrc:
+		t.Fatalf("primary peer disconnected unexpectedly: %v", err)
+	default:
+	}
+}
 
 func testGetBlockHeaders(t *testing.T, protocol int) {
 	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, downloader.MaxHashFetch+15, nil, nil)
