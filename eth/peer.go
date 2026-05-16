@@ -59,8 +59,9 @@ type peer struct {
 	id string
 
 	*p2p.Peer
-	rw     p2p.MsgReadWriter
-	pairRw p2p.MsgReadWriter
+	rw       p2p.MsgReadWriter
+	pairRw   p2p.MsgReadWriter
+	pairRwMu sync.RWMutex
 
 	version  int         // Protocol version negotiated
 	forkDrop *time.Timer // Timed connection dropper if forks aren't validated in time
@@ -97,6 +98,30 @@ func newPeer(version int, p *p2p.Peer, rw p2p.MsgReadWriter) *peer {
 		knownTimeout:  mapset.NewSet[common.Hash](),
 		knownSyncInfo: mapset.NewSet[common.Hash](),
 	}
+}
+
+func (p *peer) pairRW() p2p.MsgReadWriter {
+	p.pairRwMu.RLock()
+	defer p.pairRwMu.RUnlock()
+
+	return p.pairRw
+}
+
+func (p *peer) setPairRW(rw p2p.MsgReadWriter) {
+	p.pairRwMu.Lock()
+	p.pairRw = rw
+	p.pairRwMu.Unlock()
+}
+
+func (p *peer) clearPairRW() {
+	p.setPairRW(nil)
+}
+
+func (p *peer) msgWriter() p2p.MsgReadWriter {
+	if pairRW := p.pairRW(); pairRW != nil {
+		return pairRW
+	}
+	return p.rw
 }
 
 // Info gathers and returns a collection of metadata known about a peer.
@@ -262,59 +287,35 @@ func (p *peer) SendNewBlock(block *types.Block, td *big.Int) error {
 	}
 
 	p.knownBlocks.Add(block.Hash())
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, NewBlockMsg, []interface{}{block, td})
-	} else {
-		return p2p.Send(p.rw, NewBlockMsg, []interface{}{block, td})
-	}
+	return p2p.Send(p.msgWriter(), NewBlockMsg, []interface{}{block, td})
 }
 
 // SendBlockHeaders sends a batch of block headers to the remote peer.
 func (p *peer) SendBlockHeaders(headers []*types.Header) error {
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, BlockHeadersMsg, headers)
-	} else {
-		return p2p.Send(p.rw, BlockHeadersMsg, headers)
-	}
+	return p2p.Send(p.msgWriter(), BlockHeadersMsg, headers)
 }
 
 // SendBlockBodies sends a batch of block contents to the remote peer.
 func (p *peer) SendBlockBodies(bodies []*blockBody) error {
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, BlockBodiesMsg, blockBodiesData(bodies))
-	} else {
-		return p2p.Send(p.rw, BlockBodiesMsg, blockBodiesData(bodies))
-	}
+	return p2p.Send(p.msgWriter(), BlockBodiesMsg, blockBodiesData(bodies))
 }
 
 // SendBlockBodiesRLP sends a batch of block contents to the remote peer from
 // an already RLP encoded format.
 func (p *peer) SendBlockBodiesRLP(bodies []rlp.RawValue) error {
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, BlockBodiesMsg, bodies)
-	} else {
-		return p2p.Send(p.rw, BlockBodiesMsg, bodies)
-	}
+	return p2p.Send(p.msgWriter(), BlockBodiesMsg, bodies)
 }
 
 // SendNodeDataRLP sends a batch of arbitrary internal data, corresponding to the
 // hashes requested.
 func (p *peer) SendNodeData(data [][]byte) error {
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, NodeDataMsg, data)
-	} else {
-		return p2p.Send(p.rw, NodeDataMsg, data)
-	}
+	return p2p.Send(p.msgWriter(), NodeDataMsg, data)
 }
 
 // SendReceiptsRLP sends a batch of transaction receipts, corresponding to the
 // ones requested from an already RLP encoded format.
 func (p *peer) SendReceiptsRLP(receipts []rlp.RawValue) error {
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, ReceiptsMsg, receipts)
-	} else {
-		return p2p.Send(p.rw, ReceiptsMsg, receipts)
-	}
+	return p2p.Send(p.msgWriter(), ReceiptsMsg, receipts)
 }
 
 func (p *peer) SendVote(vote *types.Vote) error {
@@ -323,11 +324,7 @@ func (p *peer) SendVote(vote *types.Vote) error {
 	}
 
 	p.knownVote.Add(vote.Hash())
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, VoteMsg, vote)
-	} else {
-		return p2p.Send(p.rw, VoteMsg, vote)
-	}
+	return p2p.Send(p.msgWriter(), VoteMsg, vote)
 }
 
 /*
@@ -341,11 +338,7 @@ func (p *peer) SendTimeout(timeout *types.Timeout) error {
 	}
 
 	p.knownTimeout.Add(timeout.Hash())
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, TimeoutMsg, timeout)
-	} else {
-		return p2p.Send(p.rw, TimeoutMsg, timeout)
-	}
+	return p2p.Send(p.msgWriter(), TimeoutMsg, timeout)
 }
 
 /*
@@ -359,11 +352,7 @@ func (p *peer) SendSyncInfo(syncInfo *types.SyncInfo) error {
 	}
 
 	p.knownSyncInfo.Add(syncInfo.Hash())
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, SyncInfoMsg, syncInfo)
-	} else {
-		return p2p.Send(p.rw, SyncInfoMsg, syncInfo)
-	}
+	return p2p.Send(p.msgWriter(), SyncInfoMsg, syncInfo)
 }
 
 /*
@@ -376,65 +365,41 @@ func (p *peer) AsyncSendSyncInfo() {
 // single header. It is used solely by the fetcher.
 func (p *peer) RequestOneHeader(hash common.Hash) error {
 	p.Log().Debug("Fetching single header", "hash", hash)
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Hash: hash}, Amount: uint64(1), Skip: uint64(0), Reverse: false})
-	} else {
-		return p2p.Send(p.rw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Hash: hash}, Amount: uint64(1), Skip: uint64(0), Reverse: false})
-	}
+	return p2p.Send(p.msgWriter(), GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Hash: hash}, Amount: uint64(1), Skip: uint64(0), Reverse: false})
 }
 
 // RequestHeadersByHash fetches a batch of blocks' headers corresponding to the
 // specified header query, based on the hash of an origin block.
 func (p *peer) RequestHeadersByHash(origin common.Hash, amount int, skip int, reverse bool) error {
 	p.Log().Debug("Fetching batch of headers", "count", amount, "fromhash", origin, "skip", skip, "reverse", reverse)
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Hash: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
-	} else {
-		return p2p.Send(p.rw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Hash: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
-	}
+	return p2p.Send(p.msgWriter(), GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Hash: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
 }
 
 // RequestHeadersByNumber fetches a batch of blocks' headers corresponding to the
 // specified header query, based on the number of an origin block.
 func (p *peer) RequestHeadersByNumber(origin uint64, amount int, skip int, reverse bool) error {
 	p.Log().Debug("Fetching batch of headers", "count", amount, "fromnum", origin, "skip", skip, "reverse", reverse)
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Number: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
-	} else {
-		return p2p.Send(p.rw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Number: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
-	}
+	return p2p.Send(p.msgWriter(), GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Number: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
 }
 
 // RequestBodies fetches a batch of blocks' bodies corresponding to the hashes
 // specified.
 func (p *peer) RequestBodies(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of block bodies", "count", len(hashes))
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, GetBlockBodiesMsg, hashes)
-	} else {
-		return p2p.Send(p.rw, GetBlockBodiesMsg, hashes)
-	}
+	return p2p.Send(p.msgWriter(), GetBlockBodiesMsg, hashes)
 }
 
 // RequestNodeData fetches a batch of arbitrary data from a node's known state
 // data, corresponding to the specified hashes.
 func (p *peer) RequestNodeData(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of state data", "count", len(hashes))
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, GetNodeDataMsg, hashes)
-	} else {
-		return p2p.Send(p.rw, GetNodeDataMsg, hashes)
-	}
+	return p2p.Send(p.msgWriter(), GetNodeDataMsg, hashes)
 }
 
 // RequestReceipts fetches a batch of transaction receipts from a remote node.
 func (p *peer) RequestReceipts(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of receipts", "count", len(hashes))
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, GetReceiptsMsg, hashes)
-	} else {
-		return p2p.Send(p.rw, GetReceiptsMsg, hashes)
-	}
+	return p2p.Send(p.msgWriter(), GetReceiptsMsg, hashes)
 }
 
 // Handshake executes the eth protocol handshake, negotiating version number,
@@ -531,11 +496,11 @@ func (ps *peerSet) Register(p *peer) error {
 		return errClosed
 	}
 	if existPeer, ok := ps.peers[p.id]; ok {
-		if existPeer.pairRw != nil {
+		if existPeer.pairRW() != nil {
 			return errAlreadyRegistered
 		}
 		existPeer.SetPairPeer(p.Peer)
-		existPeer.pairRw = p.rw
+		existPeer.setPairRW(p.rw)
 		p.SetPairPeer(existPeer.Peer)
 		return p2p.ErrAddPairPeer
 	}
@@ -549,11 +514,40 @@ func (ps *peerSet) Unregister(id string) error {
 	ps.lock.Lock()
 	defer ps.lock.Unlock()
 
-	if _, ok := ps.peers[id]; !ok {
+	peer, ok := ps.peers[id]
+	if !ok {
 		return errNotRegistered
 	}
+	if pairPeer := peer.PairPeer(); pairPeer != nil {
+		peer.ClearPairPeer(pairPeer)
+	}
+	peer.clearPairRW()
 	delete(ps.peers, id)
 	return nil
+}
+
+// UnregisterPeer removes a specific peer instance from the active set. When the
+// instance is a paired connection, the primary peer remains registered and only
+// its pair state is cleared.
+func (ps *peerSet) UnregisterPeer(p *peer) error {
+	ps.lock.Lock()
+	defer ps.lock.Unlock()
+
+	current, ok := ps.peers[p.id]
+	if !ok {
+		return errNotRegistered
+	}
+	if current == p {
+		current.clearPairRW()
+		delete(ps.peers, p.id)
+		return nil
+	}
+	if current.ClearPairPeer(p.Peer) {
+		p.ClearPairPeer(current.Peer)
+		current.clearPairRW()
+		return nil
+	}
+	return errNotRegistered
 }
 
 // Peer retrieves the registered peer with the given id.
