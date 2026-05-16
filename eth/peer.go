@@ -21,10 +21,12 @@ import (
 	"fmt"
 	"math/big"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	mapset "github.com/deckarep/golang-set/v2"
@@ -34,6 +36,7 @@ var (
 	errClosed            = errors.New("peer set is closed")
 	errAlreadyRegistered = errors.New("peer is already registered")
 	errNotRegistered     = errors.New("peer is not registered")
+	errPairNotRegistered = errors.New("paired peer is not registered")
 )
 
 const (
@@ -56,11 +59,12 @@ type PeerInfo struct {
 }
 
 type peer struct {
-	id string
+	id     string
+	isPair bool
 
 	*p2p.Peer
 	rw     p2p.MsgReadWriter
-	pairRw p2p.MsgReadWriter
+	pairRW atomic.Pointer[p2p.MsgReadWriter]
 
 	version  int         // Protocol version negotiated
 	forkDrop *time.Timer // Timed connection dropper if forks aren't validated in time
@@ -97,6 +101,53 @@ func newPeer(version int, p *p2p.Peer, rw p2p.MsgReadWriter) *peer {
 		knownTimeout:  mapset.NewSet[common.Hash](),
 		knownSyncInfo: mapset.NewSet[common.Hash](),
 	}
+}
+
+func (p *peer) pairWriter() p2p.MsgReadWriter {
+	pairRW := p.pairRW.Load()
+	if pairRW == nil {
+		return nil
+	}
+	return *pairRW
+}
+
+func (p *peer) setPairWriter(rw *p2p.MsgReadWriter) {
+	p.pairRW.Store(rw)
+}
+
+func (p *peer) clearPairWriter() {
+	p.pairRW.Store(nil)
+}
+
+func (p *peer) handlePairWriteFailure(pairRW *p2p.MsgReadWriter, err error) {
+	if !p.pairRW.CompareAndSwap(pairRW, nil) {
+		return
+	}
+	if pairPeer := p.PairPeer(); pairPeer != nil {
+		if p.ClearPairPeer(pairPeer) {
+			pairPeer.ClearPairPeer(p.Peer)
+		}
+		pairPeer.Disconnect(p2p.DiscUselessPeer)
+	}
+	log.Debug("Dropping failed paired writer and retrying on primary", "peer", p.id, "err", err)
+}
+
+func (p *peer) sendWithPairFallback(code uint64, data interface{}) error {
+	if pairRW := p.pairRW.Load(); pairRW != nil {
+		if err := p2p.Send(*pairRW, code, data); err == nil {
+			return nil
+		} else {
+			p.handlePairWriteFailure(pairRW, err)
+		}
+	}
+	return p2p.Send(p.rw, code, data)
+}
+
+func (p *peer) msgWriter() p2p.MsgReadWriter {
+	if pairRW := p.pairWriter(); pairRW != nil {
+		return pairRW
+	}
+	return p.rw
 }
 
 // Info gathers and returns a collection of metadata known about a peer.
@@ -262,59 +313,35 @@ func (p *peer) SendNewBlock(block *types.Block, td *big.Int) error {
 	}
 
 	p.knownBlocks.Add(block.Hash())
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, NewBlockMsg, []interface{}{block, td})
-	} else {
-		return p2p.Send(p.rw, NewBlockMsg, []interface{}{block, td})
-	}
+	return p.sendWithPairFallback(NewBlockMsg, []interface{}{block, td})
 }
 
 // SendBlockHeaders sends a batch of block headers to the remote peer.
 func (p *peer) SendBlockHeaders(headers []*types.Header) error {
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, BlockHeadersMsg, headers)
-	} else {
-		return p2p.Send(p.rw, BlockHeadersMsg, headers)
-	}
+	return p.sendWithPairFallback(BlockHeadersMsg, headers)
 }
 
 // SendBlockBodies sends a batch of block contents to the remote peer.
 func (p *peer) SendBlockBodies(bodies []*blockBody) error {
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, BlockBodiesMsg, blockBodiesData(bodies))
-	} else {
-		return p2p.Send(p.rw, BlockBodiesMsg, blockBodiesData(bodies))
-	}
+	return p.sendWithPairFallback(BlockBodiesMsg, blockBodiesData(bodies))
 }
 
 // SendBlockBodiesRLP sends a batch of block contents to the remote peer from
 // an already RLP encoded format.
 func (p *peer) SendBlockBodiesRLP(bodies []rlp.RawValue) error {
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, BlockBodiesMsg, bodies)
-	} else {
-		return p2p.Send(p.rw, BlockBodiesMsg, bodies)
-	}
+	return p.sendWithPairFallback(BlockBodiesMsg, bodies)
 }
 
 // SendNodeDataRLP sends a batch of arbitrary internal data, corresponding to the
 // hashes requested.
 func (p *peer) SendNodeData(data [][]byte) error {
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, NodeDataMsg, data)
-	} else {
-		return p2p.Send(p.rw, NodeDataMsg, data)
-	}
+	return p.sendWithPairFallback(NodeDataMsg, data)
 }
 
 // SendReceiptsRLP sends a batch of transaction receipts, corresponding to the
 // ones requested from an already RLP encoded format.
 func (p *peer) SendReceiptsRLP(receipts []rlp.RawValue) error {
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, ReceiptsMsg, receipts)
-	} else {
-		return p2p.Send(p.rw, ReceiptsMsg, receipts)
-	}
+	return p.sendWithPairFallback(ReceiptsMsg, receipts)
 }
 
 func (p *peer) SendVote(vote *types.Vote) error {
@@ -323,11 +350,7 @@ func (p *peer) SendVote(vote *types.Vote) error {
 	}
 
 	p.knownVote.Add(vote.Hash())
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, VoteMsg, vote)
-	} else {
-		return p2p.Send(p.rw, VoteMsg, vote)
-	}
+	return p.sendWithPairFallback(VoteMsg, vote)
 }
 
 /*
@@ -341,11 +364,7 @@ func (p *peer) SendTimeout(timeout *types.Timeout) error {
 	}
 
 	p.knownTimeout.Add(timeout.Hash())
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, TimeoutMsg, timeout)
-	} else {
-		return p2p.Send(p.rw, TimeoutMsg, timeout)
-	}
+	return p.sendWithPairFallback(TimeoutMsg, timeout)
 }
 
 /*
@@ -359,11 +378,7 @@ func (p *peer) SendSyncInfo(syncInfo *types.SyncInfo) error {
 	}
 
 	p.knownSyncInfo.Add(syncInfo.Hash())
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, SyncInfoMsg, syncInfo)
-	} else {
-		return p2p.Send(p.rw, SyncInfoMsg, syncInfo)
-	}
+	return p.sendWithPairFallback(SyncInfoMsg, syncInfo)
 }
 
 /*
@@ -376,65 +391,41 @@ func (p *peer) AsyncSendSyncInfo() {
 // single header. It is used solely by the fetcher.
 func (p *peer) RequestOneHeader(hash common.Hash) error {
 	p.Log().Debug("Fetching single header", "hash", hash)
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Hash: hash}, Amount: uint64(1), Skip: uint64(0), Reverse: false})
-	} else {
-		return p2p.Send(p.rw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Hash: hash}, Amount: uint64(1), Skip: uint64(0), Reverse: false})
-	}
+	return p.sendWithPairFallback(GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Hash: hash}, Amount: uint64(1), Skip: uint64(0), Reverse: false})
 }
 
 // RequestHeadersByHash fetches a batch of blocks' headers corresponding to the
 // specified header query, based on the hash of an origin block.
 func (p *peer) RequestHeadersByHash(origin common.Hash, amount int, skip int, reverse bool) error {
 	p.Log().Debug("Fetching batch of headers", "count", amount, "fromhash", origin, "skip", skip, "reverse", reverse)
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Hash: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
-	} else {
-		return p2p.Send(p.rw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Hash: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
-	}
+	return p.sendWithPairFallback(GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Hash: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
 }
 
 // RequestHeadersByNumber fetches a batch of blocks' headers corresponding to the
 // specified header query, based on the number of an origin block.
 func (p *peer) RequestHeadersByNumber(origin uint64, amount int, skip int, reverse bool) error {
 	p.Log().Debug("Fetching batch of headers", "count", amount, "fromnum", origin, "skip", skip, "reverse", reverse)
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Number: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
-	} else {
-		return p2p.Send(p.rw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Number: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
-	}
+	return p.sendWithPairFallback(GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Number: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
 }
 
 // RequestBodies fetches a batch of blocks' bodies corresponding to the hashes
 // specified.
 func (p *peer) RequestBodies(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of block bodies", "count", len(hashes))
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, GetBlockBodiesMsg, hashes)
-	} else {
-		return p2p.Send(p.rw, GetBlockBodiesMsg, hashes)
-	}
+	return p.sendWithPairFallback(GetBlockBodiesMsg, hashes)
 }
 
 // RequestNodeData fetches a batch of arbitrary data from a node's known state
 // data, corresponding to the specified hashes.
 func (p *peer) RequestNodeData(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of state data", "count", len(hashes))
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, GetNodeDataMsg, hashes)
-	} else {
-		return p2p.Send(p.rw, GetNodeDataMsg, hashes)
-	}
+	return p.sendWithPairFallback(GetNodeDataMsg, hashes)
 }
 
 // RequestReceipts fetches a batch of transaction receipts from a remote node.
 func (p *peer) RequestReceipts(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of receipts", "count", len(hashes))
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, GetReceiptsMsg, hashes)
-	} else {
-		return p2p.Send(p.rw, GetReceiptsMsg, hashes)
-	}
+	return p.sendWithPairFallback(GetReceiptsMsg, hashes)
 }
 
 // Handshake executes the eth protocol handshake, negotiating version number,
@@ -531,29 +522,72 @@ func (ps *peerSet) Register(p *peer) error {
 		return errClosed
 	}
 	if existPeer, ok := ps.peers[p.id]; ok {
-		if existPeer.pairRw != nil {
+		// Mark duplicate connections as pair-role peers before any early return
+		// so rejected duplicate pairs still take the pair cleanup path in
+		// UnregisterPeer and report errPairNotRegistered instead of looking
+		// like an unregistered primary.
+		p.isPair = true
+		if existPeer.pairWriter() != nil {
 			return errAlreadyRegistered
 		}
 		existPeer.SetPairPeer(p.Peer)
-		existPeer.pairRw = p.rw
 		p.SetPairPeer(existPeer.Peer)
+		rw := p.rw
+		existPeer.setPairWriter(&rw)
 		return p2p.ErrAddPairPeer
 	}
+	p.isPair = false
 	ps.peers[p.id] = p
 	return nil
 }
 
-// Unregister removes a remote peer from the active set, disabling any further
-// actions to/from that particular entity.
-func (ps *peerSet) Unregister(id string) error {
+// UnregisterPeer removes a specific peer instance from the active set. The
+// returned flag reports whether this exact instance was the currently
+// registered primary peer, allowing callers to keep downloader bookkeeping in
+// sync without performing a separate lookup.
+//
+// When the instance is a paired connection, the primary peer remains
+// registered and only its pair state is cleared.
+func (ps *peerSet) UnregisterPeer(p *peer) (bool, error) {
 	ps.lock.Lock()
 	defer ps.lock.Unlock()
 
-	if _, ok := ps.peers[id]; !ok {
-		return errNotRegistered
+	current, ok := ps.peers[p.id]
+	if !ok {
+		if p.isPair {
+			return false, errPairNotRegistered
+		}
+		return false, errNotRegistered
 	}
-	delete(ps.peers, id)
-	return nil
+	if current == p {
+		// Keep the p2p-level primary->pair peer link intact here. The paired
+		// connection is disconnected by the p2p.Peer.run exit path, and its own
+		// unregister path will clean up any remaining stale pair state.
+		if pairPeer := current.PairPeer(); pairPeer != nil {
+			pairPeer.ClearPairPeer(current.Peer)
+		}
+		// Clear the eth-level paired writer now because only the registered
+		// primary stores pairRW.
+		current.clearPairWriter()
+		delete(ps.peers, p.id)
+		return true, nil
+	}
+	if pairPeer := current.PairPeer(); p.isPair && pairPeer != p.Peer {
+		// A paired connection is known for this id, but it is not this specific
+		// peer instance anymore (for example, a stale pair after primary removal).
+		return false, errPairNotRegistered
+	}
+	if current.ClearPairPeer(p.Peer) {
+		p.ClearPairPeer(current.Peer)
+		current.clearPairWriter()
+		// The current primary cleared its active paired connection; the primary
+		// stays registered, so callers should not treat this as a primary removal.
+		return false, nil
+	}
+	// Reaching here means p shares the id with the current primary but is neither
+	// the registered primary nor the currently tracked pair instance.
+	log.Trace("Ignoring unregister for unexpected same-id peer", "peer", p.id, "isPair", p.isPair, "hasTrackedPair", current.PairPeer() != nil)
+	return false, errNotRegistered
 }
 
 // Peer retrieves the registered peer with the given id.

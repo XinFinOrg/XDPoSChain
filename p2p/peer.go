@@ -23,6 +23,7 @@ import (
 	"net"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common/mclock"
@@ -118,8 +119,7 @@ type Peer struct {
 	// events receives message send / receive events if set
 	events *event.Feed
 
-	pairPeerMu sync.RWMutex
-	pairPeer   *Peer
+	pairPeer atomic.Pointer[Peer]
 }
 
 // NewPeer returns a peer for testing purposes.
@@ -203,27 +203,15 @@ func (p *Peer) Log() log.Logger {
 }
 
 func (p *Peer) PairPeer() *Peer {
-	p.pairPeerMu.RLock()
-	defer p.pairPeerMu.RUnlock()
-
-	return p.pairPeer
+	return p.pairPeer.Load()
 }
 
 func (p *Peer) SetPairPeer(pair *Peer) {
-	p.pairPeerMu.Lock()
-	p.pairPeer = pair
-	p.pairPeerMu.Unlock()
+	p.pairPeer.Store(pair)
 }
 
 func (p *Peer) ClearPairPeer(pair *Peer) bool {
-	p.pairPeerMu.Lock()
-	defer p.pairPeerMu.Unlock()
-
-	if p.pairPeer != pair {
-		return false
-	}
-	p.pairPeer = nil
-	return true
+	return p.pairPeer.CompareAndSwap(pair, nil)
 }
 
 func (p *Peer) run() (remoteRequested bool, err error) {

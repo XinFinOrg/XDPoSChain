@@ -225,6 +225,37 @@ func TestPeerRunDisconnectsPairPeer(t *testing.T) {
 	}
 }
 
+func TestPeerPairPeerAtomicSemantics(t *testing.T) {
+	var peer Peer
+	first := &Peer{}
+	second := &Peer{}
+
+	if got := peer.PairPeer(); got != nil {
+		t.Fatalf("initial pair peer = %p, want nil", got)
+	}
+	peer.SetPairPeer(first)
+	if got := peer.PairPeer(); got != first {
+		t.Fatalf("pair peer after first set = %p, want %p", got, first)
+	}
+	if cleared := peer.ClearPairPeer(second); cleared {
+		t.Fatal("ClearPairPeer should fail when current pair differs")
+	}
+	if got := peer.PairPeer(); got != first {
+		t.Fatalf("pair peer after failed clear = %p, want %p", got, first)
+	}
+	if cleared := peer.ClearPairPeer(first); !cleared {
+		t.Fatal("ClearPairPeer should succeed for the current pair")
+	}
+	if got := peer.PairPeer(); got != nil {
+		t.Fatalf("pair peer after successful clear = %p, want nil", got)
+	}
+	peer.SetPairPeer(second)
+	peer.SetPairPeer(nil)
+	if got := peer.PairPeer(); got != nil {
+		t.Fatalf("pair peer after explicit nil set = %p, want nil", got)
+	}
+}
+
 func TestNewPeer(t *testing.T) {
 	name := "nodename"
 	caps := []Cap{{"foo", 2}, {"bar", 3}}

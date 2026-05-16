@@ -331,7 +331,7 @@ func (dl *downloadTester) newPeer(id string, version int, chain *testChain) erro
 
 	peer := &downloadTesterPeer{dl: dl, id: id, chain: chain}
 	dl.peers[id] = peer
-	return dl.downloader.RegisterPeer(id, version, peer)
+	return dl.downloader.RegisterPeer(id, version, peer, func() { dl.dropPeer(id) })
 }
 
 // dropPeer simulates a hard peer removal from the connection pool.
@@ -1335,6 +1335,44 @@ func TestSyncBatchNoAncestorErrKeepPeer(t *testing.T) {
 				t.Fatalf("peer should not be dropped on successful sync")
 			}
 		})
+	}
+}
+
+func TestPeerConnectionDropUsesBoundInstance(t *testing.T) {
+	tester := newTester()
+	defer tester.terminate()
+
+	const id = "peer"
+	stalePeer := &downloadTesterPeer{dl: tester, id: id, chain: testChainBase}
+	replacementPeer := &downloadTesterPeer{dl: tester, id: id, chain: testChainBase}
+
+	staleDropped := false
+	replacementDropped := false
+
+	if err := tester.downloader.RegisterPeer(id, 64, stalePeer, func() { staleDropped = true }); err != nil {
+		t.Fatalf("register stale peer: %v", err)
+	}
+	staleConn := tester.downloader.peers.Peer(id)
+	if staleConn == nil {
+		t.Fatal("missing stale peer connection")
+	}
+	if err := tester.downloader.UnregisterPeer(id); err != nil {
+		t.Fatalf("unregister stale peer: %v", err)
+	}
+	if err := tester.downloader.RegisterPeer(id, 64, replacementPeer, func() { replacementDropped = true }); err != nil {
+		t.Fatalf("register replacement peer: %v", err)
+	}
+
+	staleConn.dropPeer()
+
+	if !staleDropped {
+		t.Fatal("stale peer dropper was not invoked")
+	}
+	if replacementDropped {
+		t.Fatal("replacement peer dropper should not be invoked by stale connection")
+	}
+	if got := tester.downloader.peers.Peer(id); got == nil || got.peer != replacementPeer {
+		t.Fatal("replacement peer connection should remain registered")
 	}
 }
 

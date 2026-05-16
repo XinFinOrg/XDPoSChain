@@ -74,6 +74,9 @@ type blockPrepareFn func(block *types.Block) error
 // peerDropFn is a callback type for dropping a peer detected as malicious.
 type peerDropFn func(id string)
 
+// peerInstanceDropFn drops the specific peer instance that misbehaved.
+type peerInstanceDropFn func()
+
 // announce is the hash notification of the availability of a new block in the
 // network.
 type announce struct {
@@ -82,7 +85,8 @@ type announce struct {
 	header *types.Header // Header of the block partially reassembled (new protocol)
 	time   time.Time     // Timestamp of the announcement
 
-	origin string // Identifier of the peer originating the notification
+	origin   string             // Identifier of the peer originating the notification
+	dropPeer peerInstanceDropFn // Instance-aware dropper bound at announcement time
 
 	fetchHeader headerRequesterFn // Fetcher function to retrieve the header of an announced block
 	fetchBodies bodyRequesterFn   // Fetcher function to retrieve the body of an announced block
@@ -106,8 +110,9 @@ type bodyFilterTask struct {
 
 // inject represents a schedules import operation.
 type inject struct {
-	origin string
-	block  *types.Block
+	origin   string
+	block    *types.Block
+	dropPeer peerInstanceDropFn
 }
 
 // Fetcher is responsible for accumulating block announcements from various peers
@@ -199,13 +204,15 @@ func (f *Fetcher) Stop() {
 
 // Notify announces the fetcher of the potential availability of a new block in
 // the network.
+
 func (f *Fetcher) Notify(peer string, hash common.Hash, number uint64, time time.Time,
-	headerFetcher headerRequesterFn, bodyFetcher bodyRequesterFn) error {
+	headerFetcher headerRequesterFn, bodyFetcher bodyRequesterFn, drop peerInstanceDropFn) error {
 	block := &announce{
 		hash:        hash,
 		number:      number,
 		time:        time,
 		origin:      peer,
+		dropPeer:    drop,
 		fetchHeader: headerFetcher,
 		fetchBodies: bodyFetcher,
 	}
@@ -218,10 +225,12 @@ func (f *Fetcher) Notify(peer string, hash common.Hash, number uint64, time time
 }
 
 // Enqueue tries to fill gaps the fetcher's future import queue.
-func (f *Fetcher) Enqueue(peer string, block *types.Block) error {
+
+func (f *Fetcher) Enqueue(peer string, block *types.Block, drop peerInstanceDropFn) error {
 	op := &inject{
-		origin: peer,
-		block:  block,
+		origin:   peer,
+		block:    block,
+		dropPeer: drop,
 	}
 	select {
 	case f.inject <- op:
@@ -323,7 +332,7 @@ func (f *Fetcher) loop() {
 				f.forgetBlock(hash)
 				continue
 			}
-			f.insert(op.origin, op.block)
+			f.insert(op.origin, op.block, op.dropPeer)
 		}
 		// Wait for an outside event to occur
 		select {
@@ -368,7 +377,7 @@ func (f *Fetcher) loop() {
 		case op := <-f.inject:
 			// A direct block insertion was requested, try and fill any pending gaps
 			propBroadcastInMeter.Mark(1)
-			f.enqueue(op.origin, op.block)
+			f.enqueue(op.origin, op.block, op.dropPeer)
 
 		case hash := <-f.done:
 			// A pending import finished, remove all traces of the notification
@@ -463,7 +472,9 @@ func (f *Fetcher) loop() {
 					// If the delivered header does not match the promised number, drop the announcer
 					if header.Number.Uint64() != announce.number {
 						log.Trace("Invalid block number fetched", "peer", announce.origin, "hash", header.Hash(), "announced", announce.number, "provided", header.Number)
-						f.dropPeer(announce.origin)
+						if announce.dropPeer != nil {
+							announce.dropPeer()
+						}
 						f.forgetHash(hash)
 						continue
 					}
@@ -514,7 +525,7 @@ func (f *Fetcher) loop() {
 			// Schedule the header-only blocks for import
 			for _, block := range complete {
 				if announce := f.completing[block.Hash()]; announce != nil {
-					f.enqueue(announce.origin, block)
+					f.enqueue(announce.origin, block, announce.dropPeer)
 				}
 			}
 
@@ -580,7 +591,7 @@ func (f *Fetcher) loop() {
 			// Schedule the retrieved blocks for ordered import
 			for _, block := range blocks {
 				if announce := f.completing[block.Hash()]; announce != nil {
-					f.enqueue(announce.origin, block)
+					f.enqueue(announce.origin, block, announce.dropPeer)
 				}
 			}
 		}
@@ -621,7 +632,7 @@ func (f *Fetcher) rescheduleComplete(complete *time.Timer) {
 
 // enqueue schedules a new future import operation, if the block to be imported
 // has not yet been seen.
-func (f *Fetcher) enqueue(peer string, block *types.Block) {
+func (f *Fetcher) enqueue(peer string, block *types.Block, drop peerInstanceDropFn) {
 	hash := block.Hash()
 	if f.knowns.Contains(hash) {
 		log.Trace("Discarded propagated block, known block", "peer", peer, "number", block.Number(), "hash", hash, "limit", blockLimit)
@@ -645,8 +656,9 @@ func (f *Fetcher) enqueue(peer string, block *types.Block) {
 	// Schedule the block for future importing
 	if _, ok := f.queued[hash]; !ok {
 		op := &inject{
-			origin: peer,
-			block:  block,
+			origin:   peer,
+			block:    block,
+			dropPeer: drop,
 		}
 		f.queues[peer] = count
 		f.queued[hash] = op
@@ -662,7 +674,7 @@ func (f *Fetcher) enqueue(peer string, block *types.Block) {
 // insert spawns a new goroutine to run a block insertion into the chain. If the
 // block's number is at the same height as the current import phase, it updates
 // the phase states accordingly.
-func (f *Fetcher) insert(peer string, block *types.Block) {
+func (f *Fetcher) insert(peer string, block *types.Block, drop peerInstanceDropFn) {
 	hash := block.Hash()
 
 	// Run the import on a new thread
@@ -721,7 +733,9 @@ func (f *Fetcher) insert(peer string, block *types.Block) {
 		default:
 			// Something went very wrong, drop the peer
 			log.Warn("Propagated block verification failed", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
-			f.dropPeer(peer)
+			if drop != nil {
+				drop()
+			}
 			return
 		}
 		// Run the actual import and log any issues

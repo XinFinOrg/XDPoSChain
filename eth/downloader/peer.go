@@ -69,6 +69,7 @@ type peerConnection struct {
 	lacking map[common.Hash]struct{} // Set of hashes not to request (didn't have previously)
 
 	peer Peer
+	drop peerInstanceDropFn
 
 	version int        // Eth protocol version number to switch strategies
 	log     log.Logger // Contextual logger to add extra infos to peer logs
@@ -113,13 +114,20 @@ func (w *lightPeerWrapper) RequestNodeData([]common.Hash) error {
 }
 
 // newPeerConnection creates a new downloader peer.
-func newPeerConnection(id string, version int, peer Peer, logger log.Logger) *peerConnection {
+func newPeerConnection(id string, version int, peer Peer, logger log.Logger, drop peerInstanceDropFn) *peerConnection {
 	return &peerConnection{
 		id:      id,
 		lacking: make(map[common.Hash]struct{}),
 		peer:    peer,
+		drop:    drop,
 		version: version,
 		log:     logger,
+	}
+}
+
+func (p *peerConnection) dropPeer() {
+	if p.drop != nil {
+		p.drop()
 	}
 }
 

@@ -339,10 +339,10 @@ func (d *Downloader) Synchronising() bool {
 
 // RegisterPeer injects a new download peer into the set of block source to be
 // used for fetching hashes and blocks from.
-func (d *Downloader) RegisterPeer(id string, version int, peer Peer) error {
+func (d *Downloader) RegisterPeer(id string, version int, peer Peer, drop peerInstanceDropFn) error {
 	logger := log.New("peer", id)
 	logger.Trace("Registering sync peer")
-	if err := d.peers.Register(newPeerConnection(id, version, peer, logger)); err != nil {
+	if err := d.peers.Register(newPeerConnection(id, version, peer, logger, drop)); err != nil {
 		logger.Error("Failed to register sync peer", "err", err)
 		return err
 	}
@@ -352,8 +352,8 @@ func (d *Downloader) RegisterPeer(id string, version int, peer Peer) error {
 }
 
 // RegisterLightPeer injects a light client peer, wrapping it so it appears as a regular peer.
-func (d *Downloader) RegisterLightPeer(id string, version int, peer LightPeer) error {
-	return d.RegisterPeer(id, version, &lightPeerWrapper{peer})
+func (d *Downloader) RegisterLightPeer(id string, version int, peer LightPeer, drop peerInstanceDropFn) error {
+	return d.RegisterPeer(id, version, &lightPeerWrapper{peer}, drop)
 }
 
 // UnregisterPeer remove a peer from the known list, preventing any action from
@@ -375,6 +375,7 @@ func (d *Downloader) UnregisterPeer(id string) error {
 // Synchronise tries to sync up our local block chain with a remote peer, both
 // adding various sanity checks as well as wrapping it with various log entries.
 func (d *Downloader) Synchronise(id string, head common.Hash, td *big.Int, mode SyncMode) error {
+	syncPeer := d.peers.Peer(id)
 	err := d.synchronise(id, head, td, mode)
 
 	switch err {
@@ -391,7 +392,9 @@ func (d *Downloader) Synchronise(id string, head common.Hash, td *big.Int, mode 
 			// Timeouts can occur if e.g. compaction hits at the wrong time, and can be ignored
 			log.Warn("Downloader wants to drop peer, but peerdrop-function is not set", "peer", id)
 		} else {
-			d.dropPeer(id)
+			if syncPeer != nil {
+				syncPeer.dropPeer()
+			}
 		}
 		return err
 	}
@@ -1052,7 +1055,7 @@ func (d *Downloader) fetchHeaders(p *peerConnection, from uint64, pivot uint64) 
 			// Header retrieval timed out, consider the peer bad and drop
 			p.log.Debug("Header request timed out", "elapsed", ttl)
 			headerTimeoutMeter.Mark(1)
-			d.dropPeer(p.id)
+			p.dropPeer()
 
 			// Finish the sync gracefully instead of dumping the gathered data though
 			for _, ch := range []chan bool{d.bodyWakeCh, d.receiptWakeCh} {
@@ -1276,7 +1279,7 @@ func (d *Downloader) fetchParts(deliveryCh chan dataPack, deliver func(dataPack)
 							// Timeouts can occur if e.g. compaction hits at the wrong time, and can be ignored
 							peer.log.Warn("Downloader wants to drop peer, but peerdrop-function is not set", "peer", pid)
 						} else {
-							d.dropPeer(pid)
+							peer.dropPeer()
 
 							// If this peer was the master peer, abort sync immediately
 							d.cancelLock.RLock()

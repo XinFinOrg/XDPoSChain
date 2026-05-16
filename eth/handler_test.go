@@ -17,6 +17,7 @@
 package eth
 
 import (
+	"errors"
 	"math"
 	"math/big"
 	"math/rand"
@@ -35,6 +36,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/eth/ethconfig"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
@@ -43,6 +45,224 @@ func TestGetBlockHeaders62(t *testing.T) { testGetBlockHeaders(t, 62) }
 
 // TestGetBlockHeaders63 tests get block headers 63.
 func TestGetBlockHeaders63(t *testing.T) { testGetBlockHeaders(t, 63) }
+
+func TestGetBlockHeadersAfterPairDrop63(t *testing.T) {
+	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, downloader.MaxHashFetch+15, nil, nil)
+	defer pm.Stop()
+
+	var id enode.ID
+	id[0] = 1
+
+	newPeerWithID := func(name string) (*testPeer, <-chan error) {
+		app, net := p2p.MsgPipe()
+		peer := pm.newPeer(eth63, p2p.NewPeer(id, name, nil), net)
+
+		errc := make(chan error, 1)
+		go func() {
+			select {
+			case pm.newPeerCh <- peer:
+				errc <- pm.handle(peer)
+			case <-pm.quitSync:
+				errc <- p2p.DiscQuitting
+			}
+		}()
+
+		return &testPeer{app: app, net: net, peer: peer}, errc
+	}
+
+	primary, primaryErrc := newPeerWithID("primary")
+	defer primary.close()
+	pair, pairErrc := newPeerWithID("pair")
+
+	var (
+		genesis = pm.blockchain.Genesis()
+		head    = pm.blockchain.CurrentHeader()
+		hash    = head.Hash()
+		td      = pm.blockchain.GetTd(hash, head.Number.Uint64())
+	)
+	primary.handshake(t, td, hash, genesis.Hash())
+	pair.handshake(t, td, hash, genesis.Hash())
+
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	timeout := time.After(3 * time.Second)
+	for primary.pairWriter() == nil {
+		select {
+		case <-ticker.C:
+		case <-timeout:
+			t.Fatalf("pairing state not established: peers=%d pairRWSet=%t", pm.peers.Len(), primary.pairWriter() != nil)
+		}
+	}
+
+	pair.close()
+	select {
+	case <-pairErrc:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for pair peer to disconnect")
+	}
+
+	if got := pm.peers.Peer(primary.id); got != primary.peer {
+		t.Fatal("primary peer was removed after pair disconnect")
+	}
+	if primary.pairWriter() != nil {
+		t.Fatal("primary peer still has stale pair writer after pair disconnect")
+	}
+	if primary.PairPeer() != nil {
+		t.Fatal("primary peer still references pair peer after pair disconnect")
+	}
+
+	query := &getBlockHeadersData{Origin: hashOrNumber{Number: 1}, Amount: 1}
+	expected := []*types.Header{pm.blockchain.GetBlockByNumber(1).Header()}
+
+	if err := p2p.Send(primary.app, GetBlockHeadersMsg, query); err != nil {
+		t.Fatalf("failed to send header request from primary peer: %v", err)
+	}
+	if err := p2p.ExpectMsg(primary.app, BlockHeadersMsg, expected); err != nil {
+		t.Fatalf("failed to receive header response after pair disconnect: %v", err)
+	}
+
+	select {
+	case err := <-primaryErrc:
+		t.Fatalf("primary peer disconnected unexpectedly: %v", err)
+	default:
+	}
+}
+
+type failingMsgReadWriter struct {
+	writeErr error
+}
+
+func (rw *failingMsgReadWriter) ReadMsg() (p2p.Msg, error) {
+	return p2p.Msg{}, errors.New("unexpected read")
+}
+
+func (rw *failingMsgReadWriter) WriteMsg(p2p.Msg) error {
+	return rw.writeErr
+}
+
+func TestBroadcastVotePairWriteFailureKeepsPrimary(t *testing.T) {
+	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	defer pm.Stop()
+
+	var id enode.ID
+	id[0] = 13
+
+	primary := pm.newPeer(eth63, p2p.NewPeer(id, "primary", nil), &stubMsgReadWriter{})
+	pair := pm.newPeer(eth63, p2p.NewPeer(id, "pair", nil), &failingMsgReadWriter{writeErr: errors.New("pair write failed")})
+
+	if err := pm.peers.Register(primary); err != nil {
+		t.Fatalf("register primary: %v", err)
+	}
+	if err := pm.downloader.RegisterPeer(primary.id, primary.version, primary, nil); err != nil {
+		t.Fatalf("register downloader primary: %v", err)
+	}
+	if err := pm.peers.Register(pair); err != p2p.ErrAddPairPeer {
+		t.Fatalf("register pair: got %v want %v", err, p2p.ErrAddPairPeer)
+	}
+
+	vote := &types.Vote{ProposedBlockInfo: &types.BlockInfo{Number: big.NewInt(1)}}
+	pm.BroadcastVote(vote)
+
+	if got := pm.peers.Peer(primary.id); got != primary {
+		t.Fatal("primary peer was removed after pair write failure")
+	}
+	if err := pm.downloader.RegisterPeer(primary.id, primary.version, primary, nil); err == nil {
+		t.Fatal("primary downloader registration was removed after pair write failure")
+	}
+	if primary.pairWriter() != nil {
+		t.Fatal("primary peer still references pair writer after pair write failure")
+	}
+	if primary.PairPeer() != nil {
+		t.Fatal("primary peer still references pair peer after pair write failure")
+	}
+	if pair.PairPeer() != nil {
+		t.Fatal("pair peer still references primary after pair write failure")
+	}
+}
+
+func TestRemovePeerByIDAfterReconnectionKeepsReplacementPrimary(t *testing.T) {
+	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	defer pm.Stop()
+
+	var id enode.ID
+	id[0] = 14
+
+	first := pm.newPeer(eth63, p2p.NewPeer(id, "first", nil), &stubMsgReadWriter{})
+	replacement := pm.newPeer(eth63, p2p.NewPeer(id, "replacement", nil), &stubMsgReadWriter{})
+
+	if err := pm.peers.Register(first); err != nil {
+		t.Fatalf("register first: %v", err)
+	}
+	if _, err := pm.peers.UnregisterPeer(first); err != nil {
+		t.Fatalf("unregister first: %v", err)
+	}
+	if err := pm.peers.Register(replacement); err != nil {
+		t.Fatalf("register replacement: %v", err)
+	}
+
+	pm.removePeerByID(first.id)
+
+	if got := pm.peers.Peer(first.id); got != replacement {
+		t.Fatal("stale id-based drop removed replacement primary")
+	}
+}
+
+func TestRemovePeerKeepsDownloaderRegistrationForPair(t *testing.T) {
+	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	defer pm.Stop()
+
+	var id enode.ID
+	id[0] = 11
+
+	primary := pm.newPeer(eth63, p2p.NewPeer(id, "primary", nil), &stubMsgReadWriter{})
+	pair := pm.newPeer(eth63, p2p.NewPeer(id, "pair", nil), &stubMsgReadWriter{})
+
+	if err := pm.peers.Register(primary); err != nil {
+		t.Fatalf("register primary: %v", err)
+	}
+	if err := pm.downloader.RegisterPeer(primary.id, primary.version, primary, nil); err != nil {
+		t.Fatalf("register downloader primary: %v", err)
+	}
+	if err := pm.peers.Register(pair); err != p2p.ErrAddPairPeer {
+		t.Fatalf("register pair: got %v want %v", err, p2p.ErrAddPairPeer)
+	}
+	pm.removePeer(pair)
+
+	if err := pm.downloader.RegisterPeer(primary.id, primary.version, primary, nil); err == nil {
+		t.Fatal("pair removal should keep downloader primary registration")
+	}
+	if got := pm.peers.Peer(primary.id); got != primary {
+		t.Fatal("pair removal should keep primary registered")
+	}
+	if primary.pairWriter() != nil {
+		t.Fatal("pair removal should clear the primary pair writer")
+	}
+}
+
+func TestRemovePeerUnregistersDownloaderForPrimary(t *testing.T) {
+	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	defer pm.Stop()
+
+	var id enode.ID
+	id[0] = 12
+
+	primary := pm.newPeer(eth63, p2p.NewPeer(id, "primary", nil), &stubMsgReadWriter{})
+
+	if err := pm.peers.Register(primary); err != nil {
+		t.Fatalf("register primary: %v", err)
+	}
+	if err := pm.downloader.RegisterPeer(primary.id, primary.version, primary, nil); err != nil {
+		t.Fatalf("register downloader primary: %v", err)
+	}
+	pm.removePeer(primary)
+
+	if err := pm.downloader.RegisterPeer(primary.id, primary.version, primary, nil); err != nil {
+		t.Fatalf("primary removal should unregister downloader peer: %v", err)
+	}
+	if got := pm.peers.Peer(primary.id); got != nil {
+		t.Fatal("primary removal should unregister primary peer")
+	}
+}
 
 func testGetBlockHeaders(t *testing.T, protocol int) {
 	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, downloader.MaxHashFetch+15, nil, nil)

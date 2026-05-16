@@ -25,6 +25,9 @@ import (
 // peerDropFn is a callback type for dropping a peer detected as malicious.
 type peerDropFn func(id string)
 
+// peerInstanceDropFn drops the specific peer instance that triggered a failure.
+type peerInstanceDropFn func()
+
 // dataPack is a data message returned by a peer for some query.
 type dataPack interface {
 	PeerId() string
