@@ -109,27 +109,6 @@ func (h *Header) HashWithValidator() common.Hash {
 	return rlpHash(h)
 }
 
-// HashNoValidator returns the block hash of the header, excluding the validator signature.
-func (h *Header) HashNoValidator() common.Hash {
-	return rlpHash([]interface{}{
-		h.ParentHash,
-		h.UncleHash,
-		h.Coinbase,
-		h.Root,
-		h.TxHash,
-		h.ReceiptHash,
-		h.Bloom,
-		h.Difficulty,
-		h.Number,
-		h.GasLimit,
-		h.GasUsed,
-		h.Time,
-		h.Extra,
-		h.MixDigest,
-		h.Nonce,
-	})
-}
-
 // HashNoNonce returns the hash which is used as input for the proof-of-work search.
 func (h *Header) HashNoNonce() common.Hash {
 	return rlpHash([]interface{}{
@@ -149,7 +128,7 @@ func (h *Header) HashNoNonce() common.Hash {
 	})
 }
 
-// HashNoNonce returns the hash which is used as input for the proof-of-work search.
+// HashNoValidator returns the block hash of the header, excluding the validator signature.
 func (h *Header) HashNoValidator() common.Hash {
 	return rlpHash([]interface{}{
 		h.ParentHash,
