@@ -223,7 +223,7 @@ func TestVerifyMsgSignature_RejectsMalleableSignature(t *testing.T) {
 
 	verified, signer, err := x.verifyMsgSignature(msg, flipped, []common.Address{addrOf(k)})
 	assert.False(t, verified)
-	assert.Equal(t, common.Address{}, signer, "no signer recovered when low-S check fails first")
+	assert.Equal(t, addrOf(k), signer, "signer is recovered so the attack can be attributed in logs")
 	assert.ErrorIs(t, err, utils.ErrInvalidSignature)
 }
 
