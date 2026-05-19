@@ -585,6 +585,8 @@ func (pool *LegacyPool) ValidateTxBasics(tx *types.Transaction) error {
 // rules and adheres to some heuristic limits of the local node (price and size).
 func (pool *LegacyPool) validateTx(tx *types.Transaction) error {
 	opts := &txpool.ValidationOptionsWithState{
+		Config: pool.chainconfig,
+
 		State: pool.currentState,
 
 		FirstNonceGap:    nil, // Pool allows arbitrary arrival order, don't invalidate nonce gaps
@@ -623,13 +625,13 @@ func (pool *LegacyPool) validateTx(tx *types.Transaction) error {
 	}
 
 	// Validate minFee slot for XDCZ
-	if tx.IsXDCZApplyTransaction() {
+	if tx.IsXDCZApplyTransaction(pool.chainconfig) {
 		copyState := opts.State.Copy()
 		return core.ValidateXDCZApplyTransaction(pool.chain, nil, copyState, common.BytesToAddress(tx.Data()[4:]))
 	}
 
 	// Validate balance slot, token decimal for XDCX
-	if tx.IsXDCXApplyTransaction() {
+	if tx.IsXDCXApplyTransaction(pool.chainconfig) {
 		copyState := opts.State.Copy()
 		return core.ValidateXDCXApplyTransaction(pool.chain, nil, copyState, common.BytesToAddress(tx.Data()[4:]))
 	}
@@ -1498,7 +1500,7 @@ func (pool *LegacyPool) promoteExecutables(accounts []common.Address) []*types.T
 	if head := pool.chain.CurrentHeader(); head != nil {
 		number = head.Number
 	}
-	promotable, dropped, removedAddresses := pool.queue.promoteExecutables(accounts, gasLimit, pool.currentState, pool.pendingNonces, pool.trc21FeeCapacity, number)
+	promotable, dropped, removedAddresses := pool.queue.promoteExecutables(accounts, gasLimit, pool.currentState, pool.pendingNonces, pool.trc21FeeCapacity, number, pool.chainconfig)
 
 	// promote all promotable transactions
 	promoted := make([]*types.Transaction, 0, len(promotable))
@@ -1650,7 +1652,7 @@ func (pool *LegacyPool) demoteUnexecutables() {
 		if pool.chain.CurrentHeader() != nil {
 			number = pool.chain.CurrentHeader().Number
 		}
-		drops, invalids := list.Filter(pool.currentState.GetBalance(addr), gasLimit, pool.trc21FeeCapacity, number)
+		drops, invalids := list.Filter(pool.currentState.GetBalance(addr), gasLimit, pool.trc21FeeCapacity, number, pool.chainconfig)
 		for _, tx := range drops {
 			hash := tx.Hash()
 			pool.all.Remove(hash)

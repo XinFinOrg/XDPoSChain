@@ -20,6 +20,7 @@ package utils
 import (
 	"crypto/ecdsa"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -123,6 +124,11 @@ var (
 	DevnetFlag = &cli.BoolFlag{
 		Name:     "devnet",
 		Usage:    "XDC develop network",
+		Category: flags.EthCategory,
+	}
+	AllowBuiltInConfigOverrideFlag = &cli.BoolFlag{
+		Name:     "allow-builtin-config-override",
+		Usage:    "Allow same-hash custom overrides on built-in IDs to use custom chain config",
 		Category: flags.EthCategory,
 	}
 
@@ -1495,6 +1501,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	setTxPool(ctx, &cfg.TxPool)
 	setMiner(ctx, &cfg.Miner)
 	setLes(ctx, cfg)
+	cfg.AllowBuiltInCustomRecovery = ctx.Bool(AllowBuiltInConfigOverrideFlag.Name)
 
 	// Cap the cache allowance and tune the garbage collector
 	mem, err := gopsutil.VirtualMemory()
@@ -1595,18 +1602,17 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	switch {
 	case ctx.Bool(MainnetFlag.Name):
 		if !ctx.IsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 50
+			cfg.NetworkId = params.XDCMainnetChainConfig.ChainID.Uint64() // 50
 		}
 		cfg.Genesis = core.DefaultGenesisBlock()
 	case ctx.Bool(TestnetFlag.Name):
-		common.IsTestnet = true
 		if !ctx.IsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 51
+			cfg.NetworkId = params.TestnetChainConfig.ChainID.Uint64() // 51
 		}
 		cfg.Genesis = core.DefaultTestnetGenesisBlock()
 	case ctx.Bool(DevnetFlag.Name):
 		if !ctx.IsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 5551
+			cfg.NetworkId = params.DevnetChainConfig.ChainID.Uint64() // 5551
 		}
 		cfg.Genesis = core.DefaultDevnetGenesisBlock()
 	case ctx.Bool(DeveloperFlag.Name):
@@ -1651,7 +1657,7 @@ func RegisterEthService(stack *node.Node, cfg *ethconfig.Config, XDCXServ *XDCx.
 	}
 	backend, err := eth.New(stack, cfg, XDCXServ, lendingServ)
 	if err != nil {
-		Fatalf("Failed to register the Ethereum service: %v", err)
+		Fatalf("Failed to register the Ethereum service: %s", FormatChainConfigError(err))
 	}
 	stack.RegisterAPIs(tracers.APIs(backend.APIBackend))
 	return backend.APIBackend, backend
@@ -1676,12 +1682,11 @@ func SetNetworkFlagById(ctx *cli.Context, cfg *ethconfig.Config) {
 	if ctx.IsSet(NetworkIdFlag.Name) {
 		cfg.NetworkId = ctx.Uint64(NetworkIdFlag.Name)
 		switch cfg.NetworkId {
-		case 50:
+		case params.XDCMainnetChainConfig.ChainID.Uint64(): // 50
 			ctx.Set(MainnetFlag.Name, "true")
-		case 51:
-			common.IsTestnet = true
+		case params.TestnetChainConfig.ChainID.Uint64(): // 51
 			ctx.Set(TestnetFlag.Name, "true")
-		case 5551:
+		case params.DevnetChainConfig.ChainID.Uint64(): // 5551
 			ctx.Set(DevnetFlag.Name, "true")
 		}
 	}
@@ -1785,19 +1790,57 @@ func MakeGenesis(ctx *cli.Context) *core.Genesis {
 	return genesis
 }
 
+// formatBlockChainOpenError rewrites readonly startup failures into operator-
+// facing remediation messages so config rewind and state-repair requirements
+// remain actionable without exposing internal startup details.
+func formatBlockChainOpenError(err error, readonly bool) string {
+	if !readonly {
+		return fmt.Sprintf("Can't create BlockChain: %v", err)
+	}
+	switch {
+	case errors.Is(err, core.ErrReadOnlyGenesisStateRecovery):
+		return "Can't open blockchain in readonly mode: genesis state is missing and requires recovery. Reopen the database in writable mode to recover the missing genesis state, then retry."
+	case errors.Is(err, core.ErrReadOnlyHeadStateRepair):
+		return "Can't open blockchain in readonly mode: head state is missing and requires repair. Reopen the database in writable mode to repair the missing head state, then retry."
+	case errors.Is(err, core.ErrReadOnlyBadHashRewind):
+		return "Can't open blockchain in readonly mode: the local chain contains a denylisted hash and requires rewind. Reopen the database in writable mode so the chain can rewind past the denylisted hash, then retry."
+	case errors.Is(err, core.ErrReadOnlyConfigRewind):
+		return "Can't open blockchain in readonly mode: the local chain configuration requires rewind. Use the correct --networkid/--datadir combination, or reopen the database in writable mode so the chain can rewind, then retry."
+	default:
+		return fmt.Sprintf("Can't create BlockChain: %v", err)
+	}
+}
+
 // MakeChain creates a chain manager from set command line flags.
 func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockChain, ethdb.Database) {
 	var (
-		gspec   = MakeGenesis(ctx)
-		chainDb = MakeChainDatabase(ctx, stack, readonly)
+		gspec     = MakeGenesis(ctx)
+		chainDb   = MakeChainDatabase(ctx, stack, readonly)
+		config    *params.ChainConfig
+		ghash     common.Hash
+		compatErr *params.ConfigCompatError
+		err       error
 	)
-	config, _, err := core.LoadChainConfig(chainDb, gspec)
-	if err != nil {
-		Fatalf("%v", err)
+	if readonly {
+		// Readonly startup still needs compatibility metadata so chain open can
+		// surface ErrReadOnlyConfigRewind instead of collapsing rewindable config
+		// drift into a generic config conflict.
+		config, ghash, compatErr, err = core.LoadChainConfigWithCompatWithOverride(chainDb, gspec, ctx.Bool(AllowBuiltInConfigOverrideFlag.Name))
+		if err != nil {
+			Fatalf("%v", err)
+		}
+	} else {
+		config, ghash, compatErr, err = core.SetupGenesisBlockWithOverride(chainDb, gspec, ctx.Bool(AllowBuiltInConfigOverrideFlag.Name))
+		if err != nil {
+			Fatalf("%v", err)
+		}
 	}
 	var engine consensus.Engine
 	if config.XDPoS != nil {
-		engine = XDPoS.New(config, chainDb)
+		engine, err = XDPoS.New(config, chainDb)
+		if err != nil {
+			Fatalf("%s", FormatChainConfigError(err))
+		}
 	} else {
 		Fatalf("Only support XDPoS consensus")
 	}
@@ -1834,9 +1877,14 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockCh
 		}
 	}
 	// Disable transaction indexing/unindexing by default.
-	chain, err := core.NewBlockChain(chainDb, cache, gspec, engine, vmcfg)
+	var chain *core.BlockChain
+	if readonly {
+		chain, err = core.NewBlockChainReadOnlyResolved(chainDb, cache, gspec, engine, vmcfg, config, ghash, compatErr)
+	} else {
+		chain, err = core.NewBlockChainResolved(chainDb, cache, gspec, engine, vmcfg, config, ghash, compatErr)
+	}
 	if err != nil {
-		Fatalf("Can't create BlockChain: %v", err)
+		Fatalf("%s", formatBlockChainOpenError(err, readonly))
 	}
 
 	return chain, chainDb

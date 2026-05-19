@@ -81,8 +81,17 @@ type XDPoS_v2 struct {
 	votePoolCollectionTime time.Time
 }
 
-func New(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh chan int, newRoundCh chan types.Round) *XDPoS_v2 {
+func New(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh chan int, newRoundCh chan types.Round) (*XDPoS_v2, error) {
+	if chainConfig == nil {
+		return nil, errors.New("engine_v2.New requires startup-validated XDPoS V2 config")
+	}
 	config := chainConfig.XDPoS
+	// Startup paths validate external chain config before constructing engine_v2.
+	// Keep this guard for direct internal callers so invalid state fails fast
+	// instead of nil-dereferencing deeper in constructor setup.
+	if config == nil || config.V2 == nil || config.V2.SwitchBlock == nil || config.V2.CurrentConfig == nil || len(config.V2.AllConfigs) == 0 {
+		return nil, errors.New("engine_v2.New requires startup-validated XDPoS V2 config")
+	}
 	// Setup timeoutTimer
 	duration := time.Duration(config.V2.CurrentConfig.TimeoutPeriod) * time.Second
 	timeoutTimer, err := countdown.NewExpCountDown(duration, config.V2.CurrentConfig.ExpTimeoutConfig.Base, config.V2.CurrentConfig.ExpTimeoutConfig.MaxExponent)
@@ -141,7 +150,7 @@ func New(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh chan i
 	engine.periodicJob()
 	config.V2.BuildConfigIndex()
 
-	return engine
+	return engine, nil
 }
 
 func (x *XDPoS_v2) UpdateParams(header *types.Header) {

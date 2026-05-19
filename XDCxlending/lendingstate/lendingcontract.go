@@ -36,16 +36,34 @@ var (
 	}
 )
 
+// lendingRegistrationSMC returns the lending registration contract address
+// configured on the StateDB's attached chain config.
+func lendingRegistrationSMC(statedb *state.StateDB) (common.Address, bool) {
+	addr, err := statedb.LendingRegistrationSMC()
+	if err != nil {
+		return common.Address{}, false
+	}
+	return addr, true
+}
+
 // @function IsValidRelayer : return whether the given address is the coinbase of a valid relayer or not
 // @param statedb : current state
 // @param coinbase: coinbase address of relayer
 // @return: true if it's a valid coinbase address of lending protocol, otherwise return false
 func IsValidRelayer(statedb *state.StateDB, coinbase common.Address) bool {
+	contract, ok := lendingRegistrationSMC(statedb)
+	if !ok {
+		return false
+	}
+	relayerContract, ok := relayerRegistrationSMC(statedb)
+	if !ok {
+		return false
+	}
 	locRelayerState := GetLocMappingAtKey(coinbase.Hash(), LendingRelayerListSlot)
 
 	// a valid relayer must have baseToken
 	locBaseToken := state.GetLocOfStructElement(locRelayerState, LendingRelayerStructSlots["bases"])
-	if v := statedb.GetState(common.LendingRegistrationSMC, common.BytesToHash(locBaseToken.Bytes())); v != (common.Hash{}) {
+	if v := statedb.GetState(contract, common.BytesToHash(locBaseToken.Bytes())); v != (common.Hash{}) {
 		if tradingstate.IsResignedRelayer(coinbase, statedb) {
 			return false
 		}
@@ -54,7 +72,7 @@ func IsValidRelayer(statedb *state.StateDB, coinbase common.Address) bool {
 
 		locBigDeposit := new(big.Int).SetUint64(uint64(0)).Add(locRelayerStateTrading, tradingstate.RelayerStructMappingSlot["_deposit"])
 		locHashDeposit := common.BigToHash(locBigDeposit)
-		balance := statedb.GetState(common.RelayerRegistrationSMC, locHashDeposit).Big()
+		balance := statedb.GetState(relayerContract, locHashDeposit).Big()
 		expectedFund := new(big.Int).Mul(common.BasePrice, common.RelayerLockedFund)
 		if balance.Cmp(expectedFund) <= 0 {
 			log.Debug("Relayer is not in relayer list", "relayer", coinbase, "balance", balance, "expected", expectedFund)
@@ -70,23 +88,24 @@ func IsValidRelayer(statedb *state.StateDB, coinbase common.Address) bool {
 // @param coinbase: coinbase address of relayer
 // @return: feeRate of lending
 func GetFee(statedb *state.StateDB, coinbase common.Address) *big.Int {
+	contract, ok := lendingRegistrationSMC(statedb)
+	if !ok {
+		return new(big.Int)
+	}
 	locRelayerState := state.GetLocMappingAtKey(coinbase.Hash(), LendingRelayerListSlot)
 	locHash := common.BytesToHash(new(big.Int).Add(locRelayerState, LendingRelayerStructSlots["fee"]).Bytes())
-	return statedb.GetState(common.LendingRegistrationSMC, locHash).Big()
+	return statedb.GetState(contract, locHash).Big()
 }
 
-// @function GetBaseList
-// @param statedb : current state
-// @param coinbase: coinbase address of relayer
-// @return: list of base tokens
-func GetBaseList(statedb *state.StateDB, coinbase common.Address) []common.Address {
+// getBaseListAt returns the base-token list configured for coinbase in contract.
+func getBaseListAt(statedb *state.StateDB, contract common.Address, coinbase common.Address) []common.Address {
 	baseList := []common.Address{}
 	locRelayerState := state.GetLocMappingAtKey(coinbase.Hash(), LendingRelayerListSlot)
 	locBaseHash := state.GetLocOfStructElement(locRelayerState, LendingRelayerStructSlots["bases"])
-	length := statedb.GetState(common.LendingRegistrationSMC, locBaseHash).Big().Uint64()
+	length := statedb.GetState(contract, locBaseHash).Big().Uint64()
 	for i := uint64(0); i < length; i++ {
 		loc := state.GetLocDynamicArrAtElement(locBaseHash, i, 1)
-		addr := common.BytesToAddress(statedb.GetState(common.LendingRegistrationSMC, loc).Bytes())
+		addr := common.BytesToAddress(statedb.GetState(contract, loc).Bytes())
 		if addr != (common.Address{}) {
 			baseList = append(baseList, addr)
 		}
@@ -94,18 +113,15 @@ func GetBaseList(statedb *state.StateDB, coinbase common.Address) []common.Addre
 	return baseList
 }
 
-// @function GetTerms
-// @param statedb : current state
-// @param coinbase: coinbase address of relayer
-// @return: list of supported terms of the given relayer
-func GetTerms(statedb *state.StateDB, coinbase common.Address) []uint64 {
+// getTermsAt returns the supported lending terms configured for coinbase in contract.
+func getTermsAt(statedb *state.StateDB, contract common.Address, coinbase common.Address) []uint64 {
 	terms := []uint64{}
 	locRelayerState := state.GetLocMappingAtKey(coinbase.Hash(), LendingRelayerListSlot)
 	locTermHash := state.GetLocOfStructElement(locRelayerState, LendingRelayerStructSlots["terms"])
-	length := statedb.GetState(common.LendingRegistrationSMC, locTermHash).Big().Uint64()
+	length := statedb.GetState(contract, locTermHash).Big().Uint64()
 	for i := uint64(0); i < length; i++ {
 		loc := state.GetLocDynamicArrAtElement(locTermHash, i, 1)
-		t := statedb.GetState(common.LendingRegistrationSMC, loc).Big().Uint64()
+		t := statedb.GetState(contract, loc).Big().Uint64()
 		if t != uint64(0) {
 			terms = append(terms, t)
 		}
@@ -120,8 +136,12 @@ func GetTerms(statedb *state.StateDB, coinbase common.Address) []uint64 {
 // @param terms: term
 // @return: TRUE if the given baseToken, term organize a valid pair
 func IsValidPair(statedb *state.StateDB, coinbase common.Address, baseToken common.Address, term uint64) (valid bool, pairIndex uint64) {
-	baseTokenList := GetBaseList(statedb, coinbase)
-	terms := GetTerms(statedb, coinbase)
+	contract, ok := lendingRegistrationSMC(statedb)
+	if !ok {
+		return false, 0
+	}
+	baseTokenList := getBaseListAt(statedb, contract, coinbase)
+	terms := getTermsAt(statedb, contract, coinbase)
 	baseIndexes := []uint64{}
 	for i := uint64(0); i < uint64(len(baseTokenList)); i++ {
 		if baseTokenList[i] == baseToken {
@@ -149,6 +169,7 @@ func GetCollaterals(statedb *state.StateDB, coinbase common.Address, baseToken c
 	if !validPair {
 		return []common.Address{}
 	}
+	contract, _ := lendingRegistrationSMC(statedb)
 
 	//TODO: ILO Collateral is not supported in release 2.2.0
 	//locRelayerState := state.GetLocMappingAtKey(coinbase.Hash(), LendingRelayerListSlot)
@@ -163,10 +184,10 @@ func GetCollaterals(statedb *state.StateDB, coinbase common.Address, baseToken c
 
 	// if collaterals is not defined for the relayer, return default collaterals
 	locDefaultCollateralHash := state.GetLocSimpleVariable(DefaultCollateralSlot)
-	length := statedb.GetState(common.LendingRegistrationSMC, locDefaultCollateralHash).Big().Uint64()
+	length := statedb.GetState(contract, locDefaultCollateralHash).Big().Uint64()
 	for i := uint64(0); i < length; i++ {
 		loc := state.GetLocDynamicArrAtElement(locDefaultCollateralHash, i, 1)
-		addr := common.BytesToAddress(statedb.GetState(common.LendingRegistrationSMC, loc).Bytes())
+		addr := common.BytesToAddress(statedb.GetState(contract, loc).Bytes())
 		if addr != (common.Address{}) {
 			collaterals = append(collaterals, addr)
 		}
@@ -179,17 +200,19 @@ func GetCollaterals(statedb *state.StateDB, coinbase common.Address, baseToken c
 // @param token: address of collateral token
 // @return: depositRate, liquidationRate, price of collateral
 func GetCollateralDetail(statedb *state.StateDB, token common.Address) (depositRate, liquidationRate, recallRate *big.Int) {
+	contract, _ := lendingRegistrationSMC(statedb)
 	collateralState := GetLocMappingAtKey(token.Hash(), CollateralMapSlot)
 	locDepositRate := state.GetLocOfStructElement(collateralState, CollateralStructSlots["depositRate"])
 	locLiquidationRate := state.GetLocOfStructElement(collateralState, CollateralStructSlots["liquidationRate"])
 	locRecallRate := state.GetLocOfStructElement(collateralState, CollateralStructSlots["recallRate"])
-	depositRate = statedb.GetState(common.LendingRegistrationSMC, locDepositRate).Big()
-	liquidationRate = statedb.GetState(common.LendingRegistrationSMC, locLiquidationRate).Big()
-	recallRate = statedb.GetState(common.LendingRegistrationSMC, locRecallRate).Big()
+	depositRate = statedb.GetState(contract, locDepositRate).Big()
+	liquidationRate = statedb.GetState(contract, locLiquidationRate).Big()
+	recallRate = statedb.GetState(contract, locRecallRate).Big()
 	return depositRate, liquidationRate, recallRate
 }
 
 func GetCollateralPrice(statedb *state.StateDB, collateralToken common.Address, lendingToken common.Address) (price, blockNumber *big.Int) {
+	contract, _ := lendingRegistrationSMC(statedb)
 	collateralState := GetLocMappingAtKey(collateralToken.Hash(), CollateralMapSlot)
 	locMapPrices := collateralState.Add(collateralState, CollateralStructSlots["price"])
 	locLendingTokenPriceByte := crypto.Keccak256(lendingToken.Hash().Bytes(), common.BigToHash(locMapPrices).Bytes())
@@ -197,21 +220,19 @@ func GetCollateralPrice(statedb *state.StateDB, collateralToken common.Address, 
 	locCollateralPrice := common.BigToHash(new(big.Int).Add(new(big.Int).SetBytes(locLendingTokenPriceByte), PriceStructSlots["price"]))
 	locBlockNumber := common.BigToHash(new(big.Int).Add(new(big.Int).SetBytes(locLendingTokenPriceByte), PriceStructSlots["blockNumber"]))
 
-	price = statedb.GetState(common.LendingRegistrationSMC, locCollateralPrice).Big()
-	blockNumber = statedb.GetState(common.LendingRegistrationSMC, locBlockNumber).Big()
+	price = statedb.GetState(contract, locCollateralPrice).Big()
+	blockNumber = statedb.GetState(contract, locBlockNumber).Big()
 	return price, blockNumber
 }
 
-// @function GetSupportedTerms
-// @param statedb : current state
-// @return: list of terms which XDCxlending supports
-func GetSupportedTerms(statedb *state.StateDB) []uint64 {
+// getSupportedTermsAt returns the globally supported lending terms in contract.
+func getSupportedTermsAt(statedb *state.StateDB, contract common.Address) []uint64 {
 	terms := []uint64{}
 	locSupportedTerm := state.GetLocSimpleVariable(SupportedTermSlot)
-	length := statedb.GetState(common.LendingRegistrationSMC, locSupportedTerm).Big().Uint64()
+	length := statedb.GetState(contract, locSupportedTerm).Big().Uint64()
 	for i := uint64(0); i < length; i++ {
 		loc := state.GetLocDynamicArrAtElement(locSupportedTerm, i, 1)
-		t := statedb.GetState(common.LendingRegistrationSMC, loc).Big().Uint64()
+		t := statedb.GetState(contract, loc).Big().Uint64()
 		if t != 0 {
 			terms = append(terms, t)
 		}
@@ -219,16 +240,14 @@ func GetSupportedTerms(statedb *state.StateDB) []uint64 {
 	return terms
 }
 
-// @function GetSupportedBaseToken
-// @param statedb : current state
-// @return: list of tokens which are available for lending
-func GetSupportedBaseToken(statedb *state.StateDB) []common.Address {
+// getSupportedBaseTokenAt returns the globally supported lending base tokens in contract.
+func getSupportedBaseTokenAt(statedb *state.StateDB, contract common.Address) []common.Address {
 	baseTokens := []common.Address{}
 	locSupportedBaseToken := state.GetLocSimpleVariable(SupportedBaseSlot)
-	length := statedb.GetState(common.LendingRegistrationSMC, locSupportedBaseToken).Big().Uint64()
+	length := statedb.GetState(contract, locSupportedBaseToken).Big().Uint64()
 	for i := uint64(0); i < length; i++ {
 		loc := state.GetLocDynamicArrAtElement(locSupportedBaseToken, i, 1)
-		addr := common.BytesToAddress(statedb.GetState(common.LendingRegistrationSMC, loc).Bytes())
+		addr := common.BytesToAddress(statedb.GetState(contract, loc).Bytes())
 		if addr != (common.Address{}) {
 			baseTokens = append(baseTokens, addr)
 		}
@@ -236,10 +255,8 @@ func GetSupportedBaseToken(statedb *state.StateDB) []common.Address {
 	return baseTokens
 }
 
-// @function GetAllCollateral
-// @param statedb : current state
-// @return: list of address of collateral token
-func GetAllCollateral(statedb *state.StateDB) []common.Address {
+// getAllCollateralAt returns the default collateral token list stored in contract.
+func getAllCollateralAt(statedb *state.StateDB, contract common.Address) []common.Address {
 	collaterals := []common.Address{}
 
 	//TODO: ILO Collateral is not supported in release 2.2.0
@@ -254,10 +271,10 @@ func GetAllCollateral(statedb *state.StateDB) []common.Address {
 	//}
 
 	locDefaultCollateralHash := state.GetLocSimpleVariable(DefaultCollateralSlot)
-	length := statedb.GetState(common.LendingRegistrationSMC, locDefaultCollateralHash).Big().Uint64()
+	length := statedb.GetState(contract, locDefaultCollateralHash).Big().Uint64()
 	for i := uint64(0); i < length; i++ {
 		loc := state.GetLocDynamicArrAtElement(locDefaultCollateralHash, i, 1)
-		addr := common.BytesToAddress(statedb.GetState(common.LendingRegistrationSMC, loc).Bytes())
+		addr := common.BytesToAddress(statedb.GetState(contract, loc).Bytes())
 		if addr != (common.Address{}) {
 			collaterals = append(collaterals, addr)
 		}
@@ -269,9 +286,13 @@ func GetAllCollateral(statedb *state.StateDB) []common.Address {
 // @param statedb : current state
 // @return: a map to specify whether lendingBook (combination of baseToken and term) is valid or not
 func GetAllLendingBooks(statedb *state.StateDB) (mapLendingBook map[common.Hash]bool, err error) {
+	contract, ok := lendingRegistrationSMC(statedb)
+	if !ok {
+		return nil, errors.New("GetAllLendingBooks: missing lending registration contract")
+	}
 	mapLendingBook = make(map[common.Hash]bool)
-	baseTokens := GetSupportedBaseToken(statedb)
-	terms := GetSupportedTerms(statedb)
+	baseTokens := getSupportedBaseTokenAt(statedb, contract)
+	terms := getSupportedTermsAt(statedb, contract)
 	if len(baseTokens) == 0 {
 		return nil, errors.New("GetAllLendingBooks: empty baseToken list")
 	}
@@ -292,8 +313,12 @@ func GetAllLendingBooks(statedb *state.StateDB) (mapLendingBook map[common.Hash]
 // @param statedb : current state
 // @return: list of lendingPair (combination of baseToken and collateralToken)
 func GetAllLendingPairs(statedb *state.StateDB) (allPairs []LendingPair, err error) {
-	baseTokens := GetSupportedBaseToken(statedb)
-	collaterals := GetAllCollateral(statedb)
+	contract, ok := lendingRegistrationSMC(statedb)
+	if !ok {
+		return allPairs, errors.New("GetAllLendingPairs: missing lending registration contract")
+	}
+	baseTokens := getSupportedBaseTokenAt(statedb, contract)
+	collaterals := getAllCollateralAt(statedb, contract)
 	if len(baseTokens) == 0 {
 		return allPairs, errors.New("GetAllLendingPairs: empty baseToken list")
 	}

@@ -70,7 +70,7 @@ func setDefaults(cfg *Config) {
 			LondonBlock:         new(big.Int),
 			MergeBlock:          new(big.Int),
 			ShanghaiBlock:       new(big.Int),
-			Eip1559Block:        new(big.Int),
+			EIP1559Block:        new(big.Int),
 		}
 	}
 

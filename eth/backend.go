@@ -129,11 +129,14 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	if err != nil {
 		return nil, err
 	}
-	// Resolve the effective chain config (and persist it when compatible)
-	// before constructing the consensus engine so it initializes with final network settings.
-	chainConfig, _, genesisErr := core.SetupGenesisBlock(chainDb, config.Genesis)
-	if _, ok := genesisErr.(*params.ConfigCompatError); genesisErr != nil && !ok {
-		return nil, genesisErr
+	// Resolve the effective chain config before constructing the consensus engine.
+	// NewBlockChainEx reruns SetupGenesisBlock and applies any required rewind.
+	chainConfig, genesisHash, compatErr, err := core.SetupGenesisBlockWithOverride(chainDb, config.Genesis, config.AllowBuiltInCustomRecovery)
+	if err != nil {
+		return nil, err
+	}
+	if chainConfig == nil {
+		return nil, fmt.Errorf("nil chain config returned from SetupGenesisBlock (err=%v)", err)
 	}
 
 	// Set networkID to chainID by default.
@@ -141,8 +144,10 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	if networkID == 0 {
 		networkID = chainConfig.ChainID.Uint64()
 	}
-	common.CopyConstants(networkID)
-	engine := CreateConsensusEngine(stack, chainConfig, chainDb)
+	engine, err := CreateConsensusEngine(stack, chainConfig, chainDb)
+	if err != nil {
+		return nil, err
+	}
 
 	// Assemble the Ethereum object.
 	eth := &Ethereum{
@@ -231,7 +236,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 			return eth.Lending
 		}
 	}
-	eth.blockchain, err = core.NewBlockChainEx(chainDb, XDCXServ.GetLevelDB(), cacheConfig, config.Genesis, eth.engine, vmConfig)
+	eth.blockchain, err = core.NewBlockChainExResolved(chainDb, XDCXServ.GetLevelDB(), cacheConfig, config.Genesis, eth.engine, vmConfig, chainConfig, genesisHash, compatErr)
 	if err != nil {
 		return nil, err
 	}
@@ -408,13 +413,13 @@ func makeExtraData(extra []byte) []byte {
 }
 
 // CreateConsensusEngine creates the required type of consensus engine instance for an Ethereum service
-func CreateConsensusEngine(stack *node.Node, chainConfig *params.ChainConfig, db ethdb.Database) consensus.Engine {
+func CreateConsensusEngine(stack *node.Node, chainConfig *params.ChainConfig, db ethdb.Database) (consensus.Engine, error) {
 	// If delegated-proof-of-stake is requested, set it up
 	if chainConfig.XDPoS != nil {
 		return XDPoS.New(chainConfig, db)
 	}
 
-	return ethash.NewFaker()
+	return ethash.NewFaker(), nil
 }
 
 // APIs return the collection of RPC services the ethereum package offers.

@@ -54,14 +54,30 @@ var (
 	eip1559Config *params.ChainConfig
 )
 
+const testLegacyPoolFutureGas50xBlock = 1_000_000_000
+
 func init() {
 	testTxPoolConfig = DefaultConfig
 	testTxPoolConfig.Journal = ""
 
 	cpy := *params.TestChainConfig
+	if cpy.Gas50xBlock != nil && cpy.Gas50xBlock.Sign() == 0 {
+		cpy.Gas50xBlock = big.NewInt(testLegacyPoolFutureGas50xBlock)
+	}
 	eip1559Config = &cpy
 	eip1559Config.BerlinBlock = common.Big0
-	eip1559Config.Eip1559Block = common.Big0
+	eip1559Config.EIP1559Block = common.Big0
+}
+
+func cloneLegacyPoolTestChainConfig(config *params.ChainConfig) *params.ChainConfig {
+	if config == nil {
+		return nil
+	}
+	clone := config.Clone()
+	if clone.Gas50xBlock != nil && clone.Gas50xBlock.Sign() == 0 {
+		clone.Gas50xBlock = big.NewInt(testLegacyPoolFutureGas50xBlock)
+	}
+	return clone
 }
 
 type testBlockChain struct {
@@ -72,7 +88,11 @@ type testBlockChain struct {
 }
 
 func newTestBlockChain(config *params.ChainConfig, gasLimit uint64, statedb *state.StateDB, chainHeadFeed *event.Feed) *testBlockChain {
-	bc := testBlockChain{config: config, statedb: statedb, chainHeadFeed: new(event.Feed)}
+	cloned := cloneLegacyPoolTestChainConfig(config)
+	if statedb != nil && cloned != nil && statedb.ChainConfig() == nil {
+		statedb.SetChainConfig(cloned)
+	}
+	bc := testBlockChain{config: cloned, statedb: statedb, chainHeadFeed: new(event.Feed)}
 	bc.gasLimit.Store(gasLimit)
 	return &bc
 }
@@ -108,6 +128,61 @@ func (bc *testBlockChain) GetBlock(hash common.Hash, number uint64) *types.Block
 
 func (bc *testBlockChain) StateAt(common.Hash) (*state.StateDB, error) {
 	return bc.statedb, nil
+}
+
+// TestNewTestBlockChainAttachesChainConfig tests test block chain construction attaches chain config.
+func TestNewTestBlockChainAttachesChainConfig(t *testing.T) {
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
+	issuer := common.HexToAddress("0x00000000000000000000000000000000000000a1")
+	config := &params.ChainConfig{TRC21IssuerSMC: issuer}
+	blockchain := newTestBlockChain(config, 1000000, statedb, new(event.Feed))
+
+	if statedb.ChainConfig() == nil {
+		t.Fatal("expected chain config to be attached during test block chain construction")
+	}
+
+	reader, err := blockchain.StateAt(types.EmptyRootHash)
+	if err != nil {
+		t.Fatalf("failed to get state: %v", err)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("expected chain config to be propagated to statedb, got panic %v", r)
+		}
+	}()
+
+	reader.GetTRC21FeeCapacityFromStateWithCache(types.EmptyRootHash)
+}
+
+func TestSetupPoolUsesPreGas50xTestConfig(t *testing.T) {
+	t.Parallel()
+
+	pool, _ := setupPool()
+	defer pool.Close()
+
+	if got := params.GetMinGasPrice(pool.currentHead.Load().Number, pool.chainconfig); got.Cmp(common.MinGasPrice) != 0 {
+		t.Fatalf("unexpected min gas price for legacypool tests: have %v want %v", got, common.MinGasPrice)
+	}
+}
+
+// TestLegacyPoolResetWithoutTRC21Issuer tests legacy pool reset without trc 21 issuer.
+func TestLegacyPoolResetWithoutTRC21Issuer(t *testing.T) {
+	t.Parallel()
+
+	pool, _ := setupPoolWithConfig(&params.ChainConfig{
+		ChainID: big.NewInt(1338),
+		Ethash:  new(params.EthashConfig),
+	})
+	defer pool.Close()
+
+	<-pool.requestReset(nil, nil)
+
+	pool.mu.RLock()
+	defer pool.mu.RUnlock()
+	if len(pool.trc21FeeCapacity) != 0 {
+		t.Fatalf("expected empty TRC21 fee capacity, got %v", pool.trc21FeeCapacity)
+	}
 }
 
 func (bc *testBlockChain) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
@@ -332,6 +407,7 @@ func deriveSender(tx *types.Transaction) (common.Address, error) {
 	return types.Sender(types.HomesteadSigner{}, tx)
 }
 
+// TestPromoteSpecialTxUpdatesTotalCost tests promote special tx updates total cost.
 func TestPromoteSpecialTxUpdatesTotalCost(t *testing.T) {
 	pool, key := setupPool()
 	defer pool.Close()
@@ -371,6 +447,7 @@ func TestPromoteSpecialTxUpdatesTotalCost(t *testing.T) {
 	}
 }
 
+// TestListAddReplacementAvoidsIntermediateOverflow tests list add replacement avoids intermediate overflow.
 func TestListAddReplacementAvoidsIntermediateOverflow(t *testing.T) {
 	key, err := crypto.GenerateKey()
 	if err != nil {
@@ -417,6 +494,7 @@ func TestListAddReplacementAvoidsIntermediateOverflow(t *testing.T) {
 	}
 }
 
+// TestPromoteSpecialTxReplacementAvoidsIntermediateOverflow tests promote special tx replacement avoids intermediate overflow.
 func TestPromoteSpecialTxReplacementAvoidsIntermediateOverflow(t *testing.T) {
 	pool, key := setupPool()
 	defer pool.Close()
@@ -466,6 +544,7 @@ func TestPromoteSpecialTxReplacementAvoidsIntermediateOverflow(t *testing.T) {
 	}
 }
 
+// TestPromoteSpecialTxOverflowReturnsErrorWithoutMutation tests promote special tx overflow returns error without mutation.
 func TestPromoteSpecialTxOverflowReturnsErrorWithoutMutation(t *testing.T) {
 	pool, key := setupPool()
 	defer pool.Close()
@@ -499,6 +578,7 @@ func TestPromoteSpecialTxOverflowReturnsErrorWithoutMutation(t *testing.T) {
 	}
 }
 
+// TestPromoteExecutablesQueueEmptyWithoutReservation tests promote executables queue empty without reservation.
 func TestPromoteExecutablesQueueEmptyWithoutReservation(t *testing.T) {
 	t.Parallel()
 
@@ -623,6 +703,7 @@ func testSetNonce(pool *LegacyPool, addr common.Address, nonce uint64) {
 	pool.mu.Unlock()
 }
 
+// TestInvalidTransactions tests invalid transactions.
 func TestInvalidTransactions(t *testing.T) {
 	t.Parallel()
 
@@ -661,6 +742,7 @@ func TestInvalidTransactions(t *testing.T) {
 	}
 }
 
+// TestQueue tests queue.
 func TestQueue(t *testing.T) {
 	t.Parallel()
 
@@ -693,6 +775,7 @@ func TestQueue(t *testing.T) {
 	}
 }
 
+// TestQueue2 tests queue 2.
 func TestQueue2(t *testing.T) {
 	t.Parallel()
 
@@ -719,6 +802,7 @@ func TestQueue2(t *testing.T) {
 	}
 }
 
+// TestNegativeValue tests negative value.
 func TestNegativeValue(t *testing.T) {
 	t.Parallel()
 
@@ -733,6 +817,7 @@ func TestNegativeValue(t *testing.T) {
 	}
 }
 
+// TestValueOverflow tests value overflow.
 func TestValueOverflow(t *testing.T) {
 	t.Parallel()
 
@@ -814,6 +899,7 @@ func TestValidateTransactionEIP2681(t *testing.T) {
 	}
 }
 
+// TestTipAboveFeeCap tests tip above fee cap.
 func TestTipAboveFeeCap(t *testing.T) {
 	t.Parallel()
 
@@ -827,6 +913,7 @@ func TestTipAboveFeeCap(t *testing.T) {
 	}
 }
 
+// TestVeryHighValues tests very high values.
 func TestVeryHighValues(t *testing.T) {
 	t.Parallel()
 
@@ -847,6 +934,7 @@ func TestVeryHighValues(t *testing.T) {
 	}
 }
 
+// TestChainFork tests chain fork.
 func TestChainFork(t *testing.T) {
 	t.Parallel()
 
@@ -876,6 +964,7 @@ func TestChainFork(t *testing.T) {
 	}
 }
 
+// TestDoubleNonce tests double nonce.
 func TestDoubleNonce(t *testing.T) {
 	t.Parallel()
 
@@ -929,6 +1018,7 @@ func TestDoubleNonce(t *testing.T) {
 	}
 }
 
+// TestMissingNonce tests missing nonce.
 func TestMissingNonce(t *testing.T) {
 	t.Parallel()
 
@@ -952,6 +1042,7 @@ func TestMissingNonce(t *testing.T) {
 	}
 }
 
+// TestNonceRecovery tests nonce recovery.
 func TestNonceRecovery(t *testing.T) {
 	t.Parallel()
 
@@ -1571,7 +1662,7 @@ func TestAllowedTxSize(t *testing.T) {
 
 	account := crypto.PubkeyToAddress(key.PublicKey)
 	testAddBalance(pool, account, big.NewInt(1000000000000000000))
-	minGasPrice := common.GetMinGasPrice(pool.currentHead.Load().Number)
+	minGasPrice := params.GetMinGasPrice(pool.currentHead.Load().Number, pool.chainconfig)
 
 	// Find the maximum data length for the kind of transaction which will
 	// be generated in the pool.addRemoteSync calls below.
@@ -1799,6 +1890,7 @@ func TestRepricing(t *testing.T) {
 	}
 }
 
+// TestMinGasPriceEnforced tests min gas price enforced.
 func TestMinGasPriceEnforced(t *testing.T) {
 	t.Parallel()
 
@@ -1815,7 +1907,7 @@ func TestMinGasPriceEnforced(t *testing.T) {
 	key, _ := crypto.GenerateKey()
 	testAddBalance(pool, crypto.PubkeyToAddress(key.PublicKey), big.NewInt(1_000_000_000_000_000_000))
 
-	minGasPrice := common.GetMinGasPrice(blockchain.CurrentBlock().Number)
+	minGasPrice := params.GetMinGasPrice(blockchain.CurrentBlock().Number, blockchain.Config())
 	legacyPrice := new(big.Int).Add(minGasPrice, big.NewInt(1))
 	dynamicTip := new(big.Int).Add(minGasPrice, big.NewInt(1))
 	dynamicFeeCap := new(big.Int).Add(minGasPrice, big.NewInt(2))
@@ -2885,6 +2977,7 @@ func TestSetCodeTransactions(t *testing.T) {
 	}
 }
 
+// TestSetCodeTransactionsReorg tests set code transactions reorg.
 func TestSetCodeTransactionsReorg(t *testing.T) {
 	t.Parallel()
 
@@ -2951,8 +3044,12 @@ func TestSetCodeTransactionsReorg(t *testing.T) {
 
 // Benchmarks the speed of validating the contents of the pending queue of the
 // transaction pool.
-func BenchmarkPendingDemotion100(b *testing.B)   { benchmarkPendingDemotion(b, 100) }
-func BenchmarkPendingDemotion1000(b *testing.B)  { benchmarkPendingDemotion(b, 1000) }
+func BenchmarkPendingDemotion100(b *testing.B) { benchmarkPendingDemotion(b, 100) }
+
+// BenchmarkPendingDemotion1000 benchmarks pending demotion 1000.
+func BenchmarkPendingDemotion1000(b *testing.B) { benchmarkPendingDemotion(b, 1000) }
+
+// BenchmarkPendingDemotion10000 benchmarks pending demotion 10000.
 func BenchmarkPendingDemotion10000(b *testing.B) { benchmarkPendingDemotion(b, 10000) }
 
 func benchmarkPendingDemotion(b *testing.B, size int) {
@@ -2976,8 +3073,12 @@ func benchmarkPendingDemotion(b *testing.B, size int) {
 
 // Benchmarks the speed of scheduling the contents of the future queue of the
 // transaction pool.
-func BenchmarkFuturePromotion100(b *testing.B)   { benchmarkFuturePromotion(b, 100) }
-func BenchmarkFuturePromotion1000(b *testing.B)  { benchmarkFuturePromotion(b, 1000) }
+func BenchmarkFuturePromotion100(b *testing.B) { benchmarkFuturePromotion(b, 100) }
+
+// BenchmarkFuturePromotion1000 benchmarks future promotion 1000.
+func BenchmarkFuturePromotion1000(b *testing.B) { benchmarkFuturePromotion(b, 1000) }
+
+// BenchmarkFuturePromotion10000 benchmarks future promotion 10000.
 func BenchmarkFuturePromotion10000(b *testing.B) { benchmarkFuturePromotion(b, 10000) }
 
 func benchmarkFuturePromotion(b *testing.B, size int) {
@@ -3000,8 +3101,12 @@ func benchmarkFuturePromotion(b *testing.B, size int) {
 }
 
 // Benchmarks the speed of batched transaction insertion.
-func BenchmarkBatchInsert100(b *testing.B)   { benchmarkBatchInsert(b, 100) }
-func BenchmarkBatchInsert1000(b *testing.B)  { benchmarkBatchInsert(b, 1000) }
+func BenchmarkBatchInsert100(b *testing.B) { benchmarkBatchInsert(b, 100) }
+
+// BenchmarkBatchInsert1000 benchmarks batch insert 1000.
+func BenchmarkBatchInsert1000(b *testing.B) { benchmarkBatchInsert(b, 1000) }
+
+// BenchmarkBatchInsert10000 benchmarks batch insert 10000.
 func BenchmarkBatchInsert10000(b *testing.B) { benchmarkBatchInsert(b, 10000) }
 
 func benchmarkBatchInsert(b *testing.B, size int) {
@@ -3047,6 +3152,7 @@ func BenchmarkMultiAccountBatchInsert(b *testing.B) {
 	}
 }
 
+// TestPendingMinTipThreshold tests pending min tip threshold.
 func TestPendingMinTipThreshold(t *testing.T) {
 	t.Parallel()
 
@@ -3086,6 +3192,7 @@ func TestPendingMinTipThreshold(t *testing.T) {
 	}
 }
 
+// TestPendingMinTipWithBaseFee tests pending min tip with base fee.
 func TestPendingMinTipWithBaseFee(t *testing.T) {
 	t.Parallel()
 
@@ -3133,6 +3240,7 @@ func TestPendingMinTipWithBaseFee(t *testing.T) {
 	}
 }
 
+// TestPendingKeepsLocalAndSpecialTransactions tests pending keeps local and special transactions.
 func TestPendingKeepsLocalAndSpecialTransactions(t *testing.T) {
 	t.Parallel()
 
@@ -3187,6 +3295,7 @@ func TestPendingKeepsLocalAndSpecialTransactions(t *testing.T) {
 	}
 }
 
+// TestPendingDynamicFeeThresholdWithoutBaseFee tests pending dynamic fee threshold without base fee.
 func TestPendingDynamicFeeThresholdWithoutBaseFee(t *testing.T) {
 	t.Parallel()
 
@@ -3227,7 +3336,7 @@ func TestPendingDynamicFeeThresholdWithoutBaseFee(t *testing.T) {
 	}
 }
 
-// TestSetGasPrice tests the SetGasPrice validation logic using table-driven tests
+// TestSetGasPrice tests set gas price.
 func TestSetGasPrice(t *testing.T) {
 	testCases := []struct {
 		name        string

@@ -592,7 +592,9 @@ func DoSettleBalance(coinbase common.Address, takerOrder, makerOrder *lendingsta
 		if err != nil {
 			return err
 		}
-		lendingstate.SetSubRelayerFee(takerOrder.Relayer, relayerFee, common.RelayerLendingFee, statedb)
+		if err := lendingstate.SetSubRelayerFee(takerOrder.Relayer, relayerFee, common.RelayerLendingFee, statedb); err != nil {
+			return err
+		}
 		newTakerInTotal, err := lendingstate.CheckAddTokenBalance(takerOrder.UserAddress, settleBalance.Taker.InTotal, settleBalance.Taker.InToken, statedb, mapBalances)
 		if err != nil {
 			return err
@@ -633,7 +635,9 @@ func DoSettleBalance(coinbase common.Address, takerOrder, makerOrder *lendingsta
 		if err != nil {
 			return err
 		}
-		lendingstate.SetSubRelayerFee(makerOrder.Relayer, relayerFee, common.RelayerLendingFee, statedb)
+		if err := lendingstate.SetSubRelayerFee(makerOrder.Relayer, relayerFee, common.RelayerLendingFee, statedb); err != nil {
+			return err
+		}
 		newTakerOutTotal, err := lendingstate.CheckSubTokenBalance(takerOrder.UserAddress, settleBalance.Taker.OutTotal, settleBalance.Taker.OutToken, statedb, mapBalances)
 		if err != nil {
 			return err
@@ -746,7 +750,9 @@ func (l *Lending) ProcessCancelOrder(header *types.Header, lendingStateDB *lendi
 		return err, false
 	}
 	// relayers pay XDC for masternode
-	lendingstate.SubRelayerFee(originOrder.Relayer, common.RelayerLendingCancelFee, statedb)
+	if err := lendingstate.SubRelayerFee(originOrder.Relayer, common.RelayerLendingCancelFee, statedb); err != nil {
+		log.Warn("ProcessCancelOrder SubRelayerFee", "err", err, "originOrder.Relayer", originOrder.Relayer, "common.RelayerLendingCancelFee", *common.RelayerLendingCancelFee)
+	}
 	masternodeOwner := statedb.GetOwner(coinbase)
 	statedb.AddBalance(masternodeOwner, common.RelayerLendingCancelFee, tracing.BalanceChangeUnspecified)
 	relayerOwner := lendingstate.GetRelayerOwner(originOrder.Relayer, statedb)

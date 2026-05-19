@@ -1,15 +1,19 @@
 package eth
 
 import (
+	"encoding/json"
 	"math/big"
 	"testing"
 
+	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/util"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
+// TestRewardInflation tests reward inflation.
 func TestRewardInflation(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		// the first 2 years
@@ -30,24 +34,75 @@ func TestRewardInflation(t *testing.T) {
 	}
 }
 
-func TestSetupGenesisBlockRepairsMissingV2Config(t *testing.T) {
+// TestRewardInflationUsesChainConfigTIPNoHalvingMNReward tests reward inflation uses chain config tip no halving mn reward.
+func TestRewardInflationUsesChainConfigTIPNoHalvingMNReward(t *testing.T) {
+	chainReward := new(big.Int).Mul(new(big.Int).SetUint64(250), new(big.Int).SetUint64(params.Ether))
+	config := &params.ChainConfig{TIPNoHalvingMNRewardBlock: big.NewInt(20)}
+	reward := util.RewardInflation(testChainReader{cfg: config}, chainReward, 20, 10)
+	if reward.Cmp(new(big.Int).Mul(new(big.Int).SetUint64(250), new(big.Int).SetUint64(params.Ether))) != 0 {
+		t.Fatalf("unexpected reward with no-halving fork: have %v", reward)
+	}
+}
+
+type testChainReader struct {
+	cfg *params.ChainConfig
+}
+
+// Config returns the chain config used by the test chain reader.
+func (t testChainReader) Config() *params.ChainConfig { return t.cfg }
+
+// CurrentHeader returns nil because this stub does not track headers.
+func (testChainReader) CurrentHeader() *types.Header { return nil }
+
+// GetHeader returns nil because this stub does not serve headers.
+func (testChainReader) GetHeader(common.Hash, uint64) *types.Header { return nil }
+
+// GetHeaderByNumber returns nil because this stub does not serve headers.
+func (testChainReader) GetHeaderByNumber(uint64) *types.Header { return nil }
+
+// GetHeaderByHash returns nil because this stub does not serve headers.
+func (testChainReader) GetHeaderByHash(common.Hash) *types.Header { return nil }
+
+// GetBlock returns nil because this stub does not serve blocks.
+func (testChainReader) GetBlock(common.Hash, uint64) *types.Block { return nil }
+
+// TestSetupGenesisBlockResolvesMissingV2ConfigInMemory tests setup genesis block resolves missing v 2 config in memory.
+func TestSetupGenesisBlockResolvesMissingV2ConfigInMemory(t *testing.T) {
 	db := rawdb.NewMemoryDatabase()
 
-	legacyGenesis := legacyTestnetGenesisWithoutV2()
-	legacyGenesis.MustCommit(db)
+	genesis := core.DefaultTestnetGenesisBlock().MustCommit(db)
+	rawCfg, err := rawdb.ReadChainConfigJSON(db, genesis.Hash())
+	if err != nil {
+		t.Fatalf("failed to read raw chain config: %v", err)
+	}
+	updatedRawCfg, err := removeXDPoSV2FromRawConfig(rawCfg)
+	if err != nil {
+		t.Fatalf("failed to remove XDPoS.v2 from raw chain config: %v", err)
+	}
+	if err := db.Put(testChainConfigKey(genesis.Hash()), updatedRawCfg); err != nil {
+		t.Fatalf("failed to write modified raw chain config: %v", err)
+	}
 
-	loadedCfg, _, err := core.LoadChainConfig(db, core.DefaultTestnetGenesisBlock())
+	loadedCfg, _, err := core.LoadChainConfig(db, nil)
 	if err != nil {
 		t.Fatalf("LoadChainConfig failed: %v", err)
 	}
 	if loadedCfg.XDPoS == nil {
 		t.Fatal("expected XDPoS config in loaded chain config")
 	}
-	if loadedCfg.XDPoS.V2 != nil {
-		t.Fatal("expected stored legacy chain config to have nil XDPoS.V2 before setup")
+
+	persistedBefore, err := rawdb.ReadChainConfig(db, params.TestnetGenesisHash)
+	if err != nil {
+		t.Fatalf("failed to read persisted chain config: %v", err)
+	}
+	if persistedBefore == nil || persistedBefore.XDPoS == nil {
+		t.Fatalf("expected persisted legacy chain config, have %v", persistedBefore)
+	}
+	if persistedBefore.XDPoS.V2 != nil {
+		t.Fatal("expected persisted legacy chain config to keep nil XDPoS.V2 before setup")
 	}
 
-	finalCfg, _, err := core.SetupGenesisBlock(db, core.DefaultTestnetGenesisBlock())
+	finalCfg, _, _, err := core.SetupGenesisBlock(db, core.DefaultTestnetGenesisBlock())
 	if err != nil {
 		t.Fatalf("SetupGenesisBlock failed: %v", err)
 	}
@@ -57,17 +112,72 @@ func TestSetupGenesisBlockRepairsMissingV2Config(t *testing.T) {
 	if finalCfg.XDPoS.V2.SwitchBlock.Cmp(params.TestnetChainConfig.XDPoS.V2.SwitchBlock) != 0 {
 		t.Fatalf("unexpected switch block after setup: have %v want %v", finalCfg.XDPoS.V2.SwitchBlock, params.TestnetChainConfig.XDPoS.V2.SwitchBlock)
 	}
+
+	persistedAfter, err := rawdb.ReadChainConfig(db, params.TestnetGenesisHash)
+	if err != nil {
+		t.Fatalf("failed to read persisted chain config after setup: %v", err)
+	}
+	if persistedAfter == nil || persistedAfter.XDPoS == nil {
+		t.Fatalf("expected persisted chain config with XDPoS, have %v", persistedAfter)
+	}
+	if persistedAfter.XDPoS.V2 != nil {
+		t.Fatal("expected SetupGenesisBlock to leave persisted legacy V2 config unchanged")
+	}
 }
 
+// TestLoadChainConfigResolvesMissingV2ConfigInMemory tests load chain config resolves missing v 2 config in memory.
+func TestLoadChainConfigResolvesMissingV2ConfigInMemory(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+
+	genesis := core.DefaultTestnetGenesisBlock().MustCommit(db)
+	rawCfg, err := rawdb.ReadChainConfigJSON(db, genesis.Hash())
+	if err != nil {
+		t.Fatalf("failed to read raw chain config: %v", err)
+	}
+	updatedRawCfg, err := removeXDPoSV2FromRawConfig(rawCfg)
+	if err != nil {
+		t.Fatalf("failed to remove XDPoS.v2 from raw chain config: %v", err)
+	}
+	if err := db.Put(testChainConfigKey(genesis.Hash()), updatedRawCfg); err != nil {
+		t.Fatalf("failed to write modified raw chain config: %v", err)
+	}
+
+	loadedCfg, loadedHash, err := core.LoadChainConfig(db, nil)
+	if err != nil {
+		t.Fatalf("LoadChainConfig failed: %v", err)
+	}
+	if loadedHash != genesis.Hash() {
+		t.Fatalf("unexpected genesis hash: have %v want %v", loadedHash, genesis.Hash())
+	}
+	if loadedCfg == nil || loadedCfg.XDPoS == nil || loadedCfg.XDPoS.V2 == nil {
+		t.Fatal("expected LoadChainConfig to return a config with XDPoS.V2")
+	}
+	if loadedCfg.XDPoS.V2.SwitchBlock.Cmp(params.TestnetChainConfig.XDPoS.V2.SwitchBlock) != 0 {
+		t.Fatalf("unexpected switch block after load: have %v want %v", loadedCfg.XDPoS.V2.SwitchBlock, params.TestnetChainConfig.XDPoS.V2.SwitchBlock)
+	}
+
+	persistedCfg, err := rawdb.ReadChainConfig(db, genesis.Hash())
+	if err != nil {
+		t.Fatalf("failed to read persisted chain config after load: %v", err)
+	}
+	if persistedCfg == nil || persistedCfg.XDPoS == nil {
+		t.Fatalf("expected persisted legacy chain config, have %v", persistedCfg)
+	}
+	if persistedCfg.XDPoS.V2 != nil {
+		t.Fatal("expected LoadChainConfig to leave persisted legacy chain config unchanged")
+	}
+}
+
+// TestSetupGenesisBlockIsIdempotentForTestnet tests setup genesis block is idempotent for testnet.
 func TestSetupGenesisBlockIsIdempotentForTestnet(t *testing.T) {
 	db := rawdb.NewMemoryDatabase()
 	genesis := core.DefaultTestnetGenesisBlock()
 
-	cfg1, hash1, err := core.SetupGenesisBlock(db, genesis)
+	cfg1, hash1, _, err := core.SetupGenesisBlock(db, genesis)
 	if err != nil {
 		t.Fatalf("first SetupGenesisBlock failed: %v", err)
 	}
-	cfg2, hash2, err := core.SetupGenesisBlock(db, genesis)
+	cfg2, hash2, _, err := core.SetupGenesisBlock(db, genesis)
 	if err != nil {
 		t.Fatalf("second SetupGenesisBlock failed: %v", err)
 	}
@@ -82,12 +192,27 @@ func TestSetupGenesisBlockIsIdempotentForTestnet(t *testing.T) {
 	}
 }
 
-func legacyTestnetGenesisWithoutV2() *core.Genesis {
-	legacyGenesis := *core.DefaultTestnetGenesisBlock()
-	legacyChainConfig := *params.TestnetChainConfig
-	legacyXDPoS := *params.TestnetChainConfig.XDPoS
-	legacyXDPoS.V2 = nil
-	legacyChainConfig.XDPoS = &legacyXDPoS
-	legacyGenesis.Config = &legacyChainConfig
-	return &legacyGenesis
+// removeXDPoSV2FromRawConfig removes the v2 section from raw XDPoS config JSON
+// for restart-compatibility tests.
+func removeXDPoSV2FromRawConfig(raw []byte) ([]byte, error) {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return nil, err
+	}
+	var xdpos map[string]json.RawMessage
+	if err := json.Unmarshal(root["XDPoS"], &xdpos); err != nil {
+		return nil, err
+	}
+	delete(xdpos, "v2")
+	updatedXDPoS, err := json.Marshal(xdpos)
+	if err != nil {
+		return nil, err
+	}
+	root["XDPoS"] = updatedXDPoS
+	return json.Marshal(root)
+}
+
+// testChainConfigKey returns the rawdb key used to store a chain-config blob.
+func testChainConfigKey(hash common.Hash) []byte {
+	return append([]byte("ethereum-config-"), hash.Bytes()...)
 }

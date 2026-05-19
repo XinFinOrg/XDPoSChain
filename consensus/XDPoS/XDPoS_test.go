@@ -14,16 +14,44 @@ import (
 func TestAdaptorShouldShareDbWithV1Engine(t *testing.T) {
 	database := rawdb.NewMemoryDatabase()
 	config := params.TestXDPoSMockChainConfig
-	engine := New(config, database)
+	engine, err := New(config, database)
+	assert.NoError(t, err)
 
 	assert := assert.New(t)
 	assert.Equal(engine.EngineV1.GetDb(), engine.GetDb())
 }
 
+func TestNewRejectsMissingV2Config(t *testing.T) {
+	database := rawdb.NewMemoryDatabase()
+	config := params.TestnetChainConfig.Clone()
+	config.XDPoS = config.XDPoS.Clone()
+	config.XDPoS.V2 = nil
+
+	engine, err := New(config, database)
+	assert.Nil(t, engine)
+	assert.ErrorIs(t, err, params.ErrMissingForkSwitch)
+}
+
+func TestNewAllowsStartupValidatedV2ScheduleGaps(t *testing.T) {
+	database := rawdb.NewMemoryDatabase()
+	config := params.TestnetChainConfig.Clone()
+	config.XDPoS = config.XDPoS.Clone()
+	config.XDPoS.V2 = config.XDPoS.V2.Clone()
+	config.XDPoS.V2.CurrentConfig = config.XDPoS.V2.CurrentConfig.Clone()
+	config.XDPoS.V2.AllConfigs = map[uint64]*params.V2Config{
+		9: {SwitchRound: 9, MinePeriod: 2, TimeoutPeriod: 10},
+	}
+
+	engine, err := New(config, database)
+	assert.Nil(t, engine)
+	assert.ErrorIs(t, err, params.ErrMissingForkSwitch)
+}
+
 func TestCacheNoneTIPSigningTxsSupportsRawReceiptsWithoutTxHash(t *testing.T) {
 	database := rawdb.NewMemoryDatabase()
 	config := params.TestXDPoSMockChainConfig
-	engine := New(config, database)
+	engine, err := New(config, database)
+	assert.NoError(t, err)
 
 	signingTx := types.NewTransaction(
 		0,
@@ -55,7 +83,8 @@ func TestCacheNoneTIPSigningTxsSupportsRawReceiptsWithoutTxHash(t *testing.T) {
 func TestCacheNoneTIPSigningTxsSkipsFailedSigningReceiptByIndex(t *testing.T) {
 	database := rawdb.NewMemoryDatabase()
 	config := params.TestXDPoSMockChainConfig
-	engine := New(config, database)
+	engine, err := New(config, database)
+	assert.NoError(t, err)
 
 	signingTx := types.NewTransaction(
 		0,
@@ -75,7 +104,8 @@ func TestCacheNoneTIPSigningTxsSkipsFailedSigningReceiptByIndex(t *testing.T) {
 func TestCacheNoneTIPSigningTxsWithRawReceiptRoundTrip(t *testing.T) {
 	database := rawdb.NewMemoryDatabase()
 	config := params.TestXDPoSMockChainConfig
-	engine := New(config, database)
+	engine, err := New(config, database)
+	assert.NoError(t, err)
 	blockHash := common.HexToHash("0x1234")
 	blockNumber := uint64(1)
 

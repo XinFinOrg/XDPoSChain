@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -133,10 +134,13 @@ func voteTX(gasLimit uint64, nonce uint64, addr string) (*types.Transaction, err
 func getCommonBackend(t *testing.T, chainConfig *params.ChainConfig) *backends.SimulatedBackend {
 	// initial helper backend
 	contractBackendForSC := backends.NewXDCSimulatedBackend(types.GenesisAlloc{
-		voterAddr: {Balance: new(big.Int).SetUint64(10000000000)},
+		voterAddr: {Balance: new(big.Int).SetUint64(1000000000000000000)},
 	}, 10000000, chainConfig)
 
-	transactOpts := bind.NewKeyedTransactor(voterKey)
+	transactOpts, err := bind.NewKeyedTransactorWithChainID(voterKey, chainConfig.ChainID)
+	if err != nil {
+		t.Fatalf("can't create transactor: %v", err)
+	}
 
 	var candidates []common.Address
 	var caps []*big.Int
@@ -209,10 +213,13 @@ func getMultiCandidatesBackend(t *testing.T, chainConfig *params.ChainConfig, n 
 	assert.GreaterOrEqual(t, n, 4)
 	// initial helper backend, give a very large gas limit
 	contractBackendForSC := backends.NewXDCSimulatedBackend(types.GenesisAlloc{
-		voterAddr: {Balance: new(big.Int).SetUint64(10000000000)},
+		voterAddr: {Balance: new(big.Int).SetUint64(1000000000000000000)},
 	}, 1000000000, chainConfig)
 
-	transactOpts := bind.NewKeyedTransactor(voterKey)
+	transactOpts, err := bind.NewKeyedTransactorWithChainID(voterKey, chainConfig.ChainID)
+	if err != nil {
+		t.Fatalf("can't create transactor: %v", err)
+	}
 
 	var candidates []common.Address
 	var caps []*big.Int
@@ -285,10 +292,13 @@ func getMultiCandidatesBackend(t *testing.T, chainConfig *params.ChainConfig, n 
 func getProtectorObserverBackend(t *testing.T, chainConfig *params.ChainConfig) *backends.SimulatedBackend {
 	// initial helper backend
 	contractBackendForSC := backends.NewXDCSimulatedBackend(types.GenesisAlloc{
-		voterAddr: {Balance: new(big.Int).SetUint64(10000000000)},
+		voterAddr: {Balance: new(big.Int).SetUint64(1000000000000000000)},
 	}, 10000000, chainConfig)
 
-	transactOpts := bind.NewKeyedTransactor(voterKey)
+	transactOpts, err := bind.NewKeyedTransactorWithChainID(voterKey, chainConfig.ChainID)
+	if err != nil {
+		t.Fatalf("can't create transactor: %v", err)
+	}
 
 	var candidates []common.Address
 	var caps []*big.Int
@@ -427,6 +437,60 @@ func GetCandidateFromCurrentSmartContract(backend bind.ContractBackend, t *testi
 	return ms
 }
 
+// legacyExecutionConfigForV2Tests shifts execution-layer forks far into the
+// future so V2 tests isolate consensus behavior from execution fork changes.
+func legacyExecutionConfigForV2Tests(chainConfig *params.ChainConfig) *params.ChainConfig {
+	if chainConfig == nil {
+		return nil
+	}
+	legacy := *chainConfig
+	futureForkBlock := big.NewInt(1_000_000_000)
+	legacy.PetersburgBlock = new(big.Int).Set(futureForkBlock)
+	legacy.IstanbulBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPSigningBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPRandomizeBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPIncreaseMasternodesBlock = new(big.Int).Set(futureForkBlock)
+	legacy.DenylistBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPNoHalvingMNRewardBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPXDCXBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPXDCXLendingBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPXDCXCancellationFeeBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPTRC21FeeBlock = new(big.Int).Set(futureForkBlock)
+	legacy.Gas50xBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPXDCXMinerDisableBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPXDCXReceiverDisableBlock = new(big.Int).Set(futureForkBlock)
+	legacy.BerlinBlock = new(big.Int).Set(futureForkBlock)
+	legacy.LondonBlock = new(big.Int).Set(futureForkBlock)
+	legacy.MergeBlock = new(big.Int).Set(futureForkBlock)
+	legacy.ShanghaiBlock = new(big.Int).Set(futureForkBlock)
+	legacy.EIP1559Block = new(big.Int).Set(futureForkBlock)
+	legacy.CancunBlock = new(big.Int).Set(futureForkBlock)
+	legacy.PragueBlock = new(big.Int).Set(futureForkBlock)
+	legacy.OsakaBlock = new(big.Int).Set(futureForkBlock)
+	legacy.DynamicGasLimitBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPUpgradeRewardBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPUpgradePenaltyBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPEpochHalvingBlock = new(big.Int).Set(futureForkBlock)
+	return refreshChainConfigPresence(&legacy)
+}
+
+// refreshChainConfigPresence round-trips a chain config through JSON so tests
+// preserve inferred field-presence metadata.
+func refreshChainConfigPresence(config *params.ChainConfig) *params.ChainConfig {
+	if config == nil {
+		return nil
+	}
+	blob, err := json.Marshal(config)
+	if err != nil {
+		panic(fmt.Errorf("failed to marshal chain config: %w", err))
+	}
+	var refreshed params.ChainConfig
+	if err := json.Unmarshal(blob, &refreshed); err != nil {
+		panic(fmt.Errorf("failed to unmarshal chain config: %w", err))
+	}
+	return &refreshed
+}
+
 type ForkedBlockOptions struct {
 	numOfForkedBlocks     *int
 	forkedRoundDifference *int // Minimum is 1
@@ -435,6 +499,7 @@ type ForkedBlockOptions struct {
 
 // V2 consensus engine
 func PrepareXDCTestBlockChainForV2Engine(t *testing.T, numOfBlocks int, chainConfig *params.ChainConfig, forkedBlockOptions *ForkedBlockOptions) (*core.BlockChain, *backends.SimulatedBackend, *types.Block, common.Address, func(account accounts.Account, hash []byte) ([]byte, error), *types.Block) {
+	chainConfig = legacyExecutionConfigForV2Tests(chainConfig)
 	// Preparation
 	var err error
 	signer, signFn, err := backends.SimulateWalletAddressAndSignFn()
@@ -526,6 +591,7 @@ func PrepareXDCTestBlockChainForV2Engine(t *testing.T, numOfBlocks int, chainCon
 
 // V2 consensus engine, compared to PrepareXDCTestBlockChainForV2Engine: (1) no forking (2) add penalty
 func PrepareXDCTestBlockChainWithPenaltyForV2Engine(t *testing.T, numOfBlocks int, chainConfig *params.ChainConfig) (*core.BlockChain, *backends.SimulatedBackend, *types.Block, common.Address, func(account accounts.Account, hash []byte) ([]byte, error)) {
+	chainConfig = legacyExecutionConfigForV2Tests(chainConfig)
 	// Preparation
 	var err error
 	signer, signFn, err := backends.SimulateWalletAddressAndSignFn()
@@ -582,6 +648,7 @@ func PrepareXDCTestBlockChainWithPenaltyForV2Engine(t *testing.T, numOfBlocks in
 
 // V2 consensus engine, compared to PrepareXDCTestBlockChainForV2Engine: (1) no forking (2) add penalty
 func PrepareXDCTestBlockChainWithPenaltyCustomized(t *testing.T, numOfBlocks int, chainConfig *params.ChainConfig, penaltyOrNot []bool) (*core.BlockChain, *backends.SimulatedBackend, *types.Block, common.Address, func(account accounts.Account, hash []byte) ([]byte, error)) {
+	chainConfig = legacyExecutionConfigForV2Tests(chainConfig)
 	// Preparation
 	var err error
 	signer, signFn, err := backends.SimulateWalletAddressAndSignFn()
@@ -645,6 +712,7 @@ func PrepareXDCTestBlockChainWithPenaltyCustomized(t *testing.T, numOfBlocks int
 
 // V2 consensus engine, compared to PrepareXDCTestBlockChainForV2Engine: (1) no forking (2) 128 masternode candidates
 func PrepareXDCTestBlockChainWith128Candidates(t *testing.T, numOfBlocks int, chainConfig *params.ChainConfig) (*core.BlockChain, *backends.SimulatedBackend, *types.Block, common.Address, func(account accounts.Account, hash []byte) ([]byte, error)) {
+	chainConfig = legacyExecutionConfigForV2Tests(chainConfig)
 	// Preparation
 	var err error
 	signer, signFn, err := backends.SimulateWalletAddressAndSignFn()
@@ -709,6 +777,7 @@ func PrepareXDCTestBlockChainWith128Candidates(t *testing.T, numOfBlocks int, ch
 
 // V2 consensus engine
 func PrepareXDCTestBlockChainWithProtectorObserver(t *testing.T, numOfBlocks int, chainConfig *params.ChainConfig) (*core.BlockChain, *backends.SimulatedBackend, *types.Block, common.Address, func(account accounts.Account, hash []byte) ([]byte, error)) {
+	chainConfig = legacyExecutionConfigForV2Tests(chainConfig)
 	// Preparation
 	var err error
 	signer, signFn, err := backends.SimulateWalletAddressAndSignFn()
@@ -887,6 +956,9 @@ func createBlockFromHeader(bc *core.BlockChain, customHeader *types.Header, txs 
 		Validator:   customHeader.Validator,
 		Validators:  customHeader.Validators,
 		Penalties:   customHeader.Penalties,
+	}
+	if config != nil && config.IsEIP1559(header.Number) {
+		header.BaseFee = new(big.Int).Set(common.BaseFee)
 	}
 	var block *types.Block
 	if len(txs) == 0 {

@@ -289,7 +289,11 @@ func (bc *BlockChain) State() (*state.StateDB, error) {
 
 // StateAt returns a new mutable state based on a particular point in time.
 func (bc *BlockChain) StateAt(root common.Hash) (*state.StateDB, error) {
-	return state.New(root, bc.stateCache)
+	statedb, err := state.NewWithChainConfig(root, bc.stateCache, bc.chainConfig)
+	if err != nil {
+		return nil, err
+	}
+	return statedb, nil
 }
 
 // Config retrieves the blockchain's chain configuration.

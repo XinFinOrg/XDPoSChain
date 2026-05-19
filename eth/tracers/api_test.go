@@ -65,6 +65,11 @@ type testBackend struct {
 	relHook func() // Hook is invoked when the requested state is released
 }
 
+type freshStateTraceBackend struct {
+	*testBackend
+	lastState *state.StateDB
+}
+
 // newTestBackend creates a new test backend. OBS: After test is done, teardown must be
 // invoked in order to release associated resources.
 func newTestBackend(t *testing.T, n int, gspec *core.Genesis, generator func(i int, b *core.BlockGen)) *testBackend {
@@ -162,6 +167,43 @@ func (b *testBackend) StateAtBlock(ctx context.Context, block *types.Block, reex
 	return statedb, release, nil
 }
 
+func (b *freshStateTraceBackend) StateAtBlock(ctx context.Context, block *types.Block, reexec uint64, base *state.StateDB, readOnly bool, preferDisk bool) (*state.StateDB, StateReleaseFunc, error) {
+	statedb, err := state.New(block.Root(), state.NewDatabase(b.chaindb))
+	if err != nil {
+		return nil, nil, errStateNotFound
+	}
+	b.lastState = statedb
+	return statedb, func() {}, nil
+}
+
+func (b *freshStateTraceBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*types.Transaction, vm.BlockContext, *state.StateDB, StateReleaseFunc, error) {
+	parent := b.chain.GetBlock(block.ParentHash(), block.NumberU64()-1)
+	if parent == nil {
+		return nil, vm.BlockContext{}, nil, nil, errBlockNotFound
+	}
+	statedb, release, err := b.StateAtBlock(ctx, parent, reexec, nil, true, false)
+	if err != nil {
+		return nil, vm.BlockContext{}, nil, nil, errStateNotFound
+	}
+	if txIndex == 0 && len(block.Transactions()) == 0 {
+		return nil, vm.BlockContext{}, statedb, release, nil
+	}
+	signer := types.MakeSigner(b.chainConfig, block.Number())
+	context := core.NewEVMBlockContext(block.Header(), b.chain, nil)
+	evm := vm.NewEVM(context, statedb, nil, b.chainConfig, vm.Config{})
+	for idx, tx := range block.Transactions() {
+		if idx == txIndex {
+			return tx, context, statedb, release, nil
+		}
+		msg, _ := core.TransactionToMessage(tx, signer, nil, block.Number(), block.BaseFee(), b.chainConfig)
+		if _, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(tx.Gas()), common.Address{}); err != nil {
+			return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction %#x failed: %v", tx.Hash(), err)
+		}
+		statedb.Finalise(evm.ChainConfig().IsEIP158(block.Number()))
+	}
+	return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction index %d out of range for block %#x", txIndex, block.Hash())
+}
+
 func (b *testBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*types.Transaction, vm.BlockContext, *state.StateDB, StateReleaseFunc, error) {
 	parent := b.chain.GetBlock(block.ParentHash(), block.NumberU64()-1)
 	if parent == nil {
@@ -182,7 +224,7 @@ func (b *testBackend) StateAtTransaction(ctx context.Context, block *types.Block
 		if idx == txIndex {
 			return tx, context, statedb, release, nil
 		}
-		msg, _ := core.TransactionToMessage(tx, signer, nil, block.Number(), block.BaseFee())
+		msg, _ := core.TransactionToMessage(tx, signer, nil, block.Number(), block.BaseFee(), b.chainConfig)
 		if _, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(tx.Gas()), common.Address{}); err != nil {
 			return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction %#x failed: %v", tx.Hash(), err)
 		}
@@ -224,6 +266,7 @@ func newStateTracer(ctx *Context, cfg json.RawMessage, chainCfg *params.ChainCon
 	}, nil
 }
 
+// TestStateHooks tests state hooks.
 func TestStateHooks(t *testing.T) {
 	t.Parallel()
 
@@ -251,7 +294,6 @@ func TestStateHooks(t *testing.T) {
 		signer    = types.HomesteadSigner{}
 		nonce     = uint64(0)
 	)
-	config.Eip1559Block = big.NewInt(0)
 	backend := newTestBackend(t, genBlocks, genesis, func(i int, b *core.BlockGen) {
 		// Transfer from account[0] to account[1]
 		//    value: 1000 wei
@@ -297,12 +339,12 @@ func TestStateHooks(t *testing.T) {
 	}
 }
 
+// TestTraceCall tests trace call.
 func TestTraceCall(t *testing.T) {
 	t.Parallel()
 
 	// Initialize test accounts
 	config := *params.TestChainConfig
-	config.Eip1559Block = big.NewInt(0)
 	accounts := newAccounts(3)
 	genesis := &core.Genesis{
 		Config: &config,
@@ -514,6 +556,7 @@ func TestTraceCall(t *testing.T) {
 	}
 }
 
+// TestTraceTransaction tests trace transaction.
 func TestTraceTransaction(t *testing.T) {
 	t.Parallel()
 
@@ -568,6 +611,54 @@ func TestTraceTransaction(t *testing.T) {
 	}
 }
 
+func TestTraceTransactionAttachesChainConfigToFreshState(t *testing.T) {
+	t.Parallel()
+
+	accounts := newAccounts(2)
+	genesis := &core.Genesis{
+		Config: params.TestChainConfig,
+		Alloc: types.GenesisAlloc{
+			accounts[0].addr: {Balance: big.NewInt(9000000000000000000)},
+			accounts[1].addr: {Balance: big.NewInt(9000000000000000000)},
+		},
+	}
+	var target common.Hash
+	signer := types.HomesteadSigner{}
+	backend := &freshStateTraceBackend{testBackend: newTestBackend(t, 1, genesis, func(i int, b *core.BlockGen) {
+		tx, _ := types.SignTx(types.NewTx(&types.LegacyTx{
+			Nonce:    uint64(i),
+			To:       &accounts[1].addr,
+			Value:    big.NewInt(1000),
+			Gas:      params.TxGas,
+			GasPrice: b.BaseFee(),
+		}), signer, accounts[0].key)
+		b.AddTx(tx)
+		target = tx.Hash()
+	})}
+	defer backend.teardown()
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("TraceTransaction panicked with fresh state db: %v", r)
+		}
+	}()
+
+	result, err := NewAPI(backend).TraceTransaction(context.Background(), target, nil)
+	if err != nil {
+		t.Fatalf("TraceTransaction returned error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil trace result")
+	}
+	if backend.lastState == nil {
+		t.Fatal("expected fresh backend to capture the trace state db")
+	}
+	if backend.lastState.ChainConfig() != backend.ChainConfig() {
+		t.Fatal("expected TraceTransaction to attach chain config to fresh state db")
+	}
+}
+
+// TestTraceBlock tests trace block.
 func TestTraceBlock(t *testing.T) {
 	t.Parallel()
 
@@ -657,12 +748,113 @@ func TestTraceBlock(t *testing.T) {
 	}
 }
 
+func TestTraceBlockAttachesChainConfigToFreshState(t *testing.T) {
+	t.Parallel()
+
+	accounts := newAccounts(2)
+	genesis := &core.Genesis{
+		Config: params.TestChainConfig,
+		Alloc: types.GenesisAlloc{
+			accounts[0].addr: {Balance: big.NewInt(9000000000000000000)},
+			accounts[1].addr: {Balance: big.NewInt(9000000000000000000)},
+		},
+	}
+	signer := types.HomesteadSigner{}
+	backend := &freshStateTraceBackend{testBackend: newTestBackend(t, 1, genesis, func(i int, b *core.BlockGen) {
+		tx, _ := types.SignTx(types.NewTx(&types.LegacyTx{
+			Nonce:    uint64(i),
+			To:       &accounts[1].addr,
+			Value:    big.NewInt(1000),
+			Gas:      params.TxGas,
+			GasPrice: b.BaseFee(),
+		}), signer, accounts[0].key)
+		b.AddTx(tx)
+	})}
+	defer backend.teardown()
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("TraceBlockByNumber panicked with fresh state db: %v", r)
+		}
+	}()
+
+	result, err := NewAPI(backend).TraceBlockByNumber(context.Background(), rpc.BlockNumber(1), nil)
+	if err != nil {
+		t.Fatalf("TraceBlockByNumber returned error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 trace result, got %d", len(result))
+	}
+	if result[0] == nil {
+		t.Fatal("expected non-nil trace result")
+	}
+}
+
+// TestTraceBlockReturnsTransactionToMessageError tests trace block returns transaction to message error.
+func TestTraceBlockReturnsTransactionToMessageError(t *testing.T) {
+	t.Parallel()
+
+	accounts := newAccounts(2)
+	token := common.HexToAddress("0x00000000000000000000000000000000000000aa")
+	issuer := common.HexToAddress("0x00000000000000000000000000000000000000bb")
+	config := params.TestChainConfig.Clone()
+	config.Gas50xBlock = big.NewInt(1_000_000_000)
+	config.TRC21IssuerSMC = issuer
+	feeCapacity := new(big.Int).Mul(new(big.Int).SetUint64(params.TxGas), common.TRC21GasPrice)
+
+	slotTokensHash := common.BigToHash(new(big.Int).SetUint64(state.SlotTRC21Issuer["tokens"]))
+	tokenSlot := state.GetLocDynamicArrAtElement(slotTokensHash, 0, 1)
+	tokenStateSlot := common.BigToHash(state.GetLocMappingAtKey(token.Hash(), state.SlotTRC21Issuer["tokensState"]))
+
+	genesis := &core.Genesis{
+		Config: config,
+		Alloc: types.GenesisAlloc{
+			accounts[0].addr: {Balance: big.NewInt(params.Ether)},
+			issuer: {
+				Balance: new(big.Int).Set(feeCapacity),
+				Storage: map[common.Hash]common.Hash{
+					slotTokensHash: common.BigToHash(big.NewInt(1)),
+					tokenSlot:      common.BytesToHash(token.Bytes()),
+					tokenStateSlot: common.BigToHash(feeCapacity),
+				},
+			},
+			token: {Balance: big.NewInt(0)},
+		},
+	}
+
+	backend := newTestBackend(t, 1, genesis, func(i int, b *core.BlockGen) {
+		tx, err := types.SignTx(types.NewTx(&types.LegacyTx{
+			Nonce:    0,
+			To:       &token,
+			Value:    big.NewInt(0),
+			Gas:      params.TxGas,
+			GasPrice: b.BaseFee(),
+		}), types.HomesteadSigner{}, accounts[0].key)
+		if err != nil {
+			t.Fatalf("failed to sign tx: %v", err)
+		}
+		b.AddTx(tx)
+	})
+	defer backend.teardown()
+
+	backend.chainConfig = backend.chainConfig.Clone()
+	backend.chainConfig.TIPTRC21FeeBlock = nil
+
+	_, err := NewAPI(backend).TraceBlockByNumber(context.Background(), rpc.BlockNumber(1), nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "missing TIPTRC21FeeBlock") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestTracingWithOverrides tests tracing with overrides.
 func TestTracingWithOverrides(t *testing.T) {
 	t.Parallel()
 
 	// Initialize test accounts
 	config := *params.TestChainConfig
-	config.Eip1559Block = big.NewInt(0)
 	accounts := newAccounts(3)
 	genesis := &core.Genesis{
 		Config: &config,
@@ -863,6 +1055,7 @@ func newStates(keys []common.Hash, vals []common.Hash) map[common.Hash]common.Ha
 	return m
 }
 
+// TestTraceChain tests trace chain.
 func TestTraceChain(t *testing.T) {
 	// Initialize test accounts
 	accounts := newAccounts(3)
@@ -937,6 +1130,53 @@ func TestTraceChain(t *testing.T) {
 		if nref, nrel := ref.Load(), rel.Load(); nref != nrel {
 			t.Errorf("Ref and deref actions are not equal, ref %d rel %d", nref, nrel)
 		}
+	}
+}
+
+// TestTraceChainWithoutTRC21Issuer tests trace chain without trc 21 issuer.
+func TestTraceChainWithoutTRC21Issuer(t *testing.T) {
+	t.Parallel()
+
+	accounts := newAccounts(2)
+	genesis := &core.Genesis{
+		Config: &params.ChainConfig{
+			ChainID:        big.NewInt(1338),
+			HomesteadBlock: new(big.Int),
+			Ethash:         new(params.EthashConfig),
+		},
+		Alloc: types.GenesisAlloc{
+			accounts[0].addr: {Balance: big.NewInt(params.Ether)},
+			accounts[1].addr: {Balance: big.NewInt(params.Ether)},
+		},
+	}
+	signer := types.HomesteadSigner{}
+	backend := newTestBackend(t, 2, genesis, func(i int, b *core.BlockGen) {
+		tx, _ := types.SignTx(types.NewTransaction(uint64(i), accounts[1].addr, big.NewInt(1000), params.TxGas, b.BaseFee(), nil), signer, accounts[0].key)
+		b.AddTx(tx)
+	})
+	defer backend.teardown()
+
+	api := NewAPI(backend)
+	from, err := api.blockByNumber(context.Background(), rpc.BlockNumber(0))
+	if err != nil {
+		t.Fatalf("failed to fetch start block: %v", err)
+	}
+	to, err := api.blockByNumber(context.Background(), rpc.BlockNumber(2))
+	if err != nil {
+		t.Fatalf("failed to fetch end block: %v", err)
+	}
+
+	var traced int
+	for result := range api.traceChain(from, to, nil, nil) {
+		for _, trace := range result.Traces {
+			if trace.Error != "" {
+				t.Fatalf("unexpected trace error: %v", trace.Error)
+			}
+		}
+		traced++
+	}
+	if traced != 2 {
+		t.Fatalf("unexpected traced block count %d", traced)
 	}
 }
 

@@ -33,6 +33,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
 // Tests that updating a state trie does not leak any database writes prior to
@@ -142,6 +143,208 @@ func TestIntermediateLeaks(t *testing.T) {
 		if !bytes.Equal(fvalue, tvalue) {
 			t.Errorf("value mismatch at key %x: %x in transition database, %x in final database", key, tvalue, fvalue)
 		}
+	}
+}
+
+// TestGetTRC21FeeCapacityFromStateReturnsEmptyWithoutChainConfig tests get trc 21 fee capacity from state returns empty without chain config.
+func TestGetTRC21FeeCapacityFromStateReturnsEmptyWithoutChainConfig(t *testing.T) {
+	state, _ := New(types.EmptyRootHash, NewDatabase(rawdb.NewMemoryDatabase()))
+	got := state.GetTRC21FeeCapacityFromState()
+	if len(got) != 0 {
+		t.Fatalf("expected empty fee capacity map, got %v", got)
+	}
+}
+
+// TestUpdateTRC21FeeSkipsWithoutChainConfigBeforeZeroAddressMutation tests update trc 21 fee skips without chain config before zero address mutation.
+func TestUpdateTRC21FeeSkipsWithoutChainConfigBeforeZeroAddressMutation(t *testing.T) {
+	state, _ := New(types.EmptyRootHash, NewDatabase(rawdb.NewMemoryDatabase()))
+	token := common.HexToAddress("0x00000000000000000000000000000000000000aa")
+	balances := map[common.Address]*big.Int{token: big.NewInt(5)}
+
+	state.UpdateTRC21Fee(balances, big.NewInt(1))
+	if state.Exist(common.Address{}) {
+		t.Fatal("expected zero address to remain unmodified")
+	}
+}
+
+// TestGetTRC21FeeCapacityFromStateReturnsEmptyWithZeroIssuerConfig tests get trc 21 fee capacity from state returns empty with zero issuer config.
+func TestGetTRC21FeeCapacityFromStateReturnsEmptyWithZeroIssuerConfig(t *testing.T) {
+	state, _ := New(types.EmptyRootHash, NewDatabase(rawdb.NewMemoryDatabase()))
+	if err := state.EnsureChainConfig(&params.ChainConfig{}); err != nil {
+		t.Fatalf("failed to attach chain config: %v", err)
+	}
+
+	got := state.GetTRC21FeeCapacityFromState()
+	if len(got) != 0 {
+		t.Fatalf("expected empty fee capacity map, got %v", got)
+	}
+
+	got = state.GetTRC21FeeCapacityFromStateWithCache(types.EmptyRootHash)
+	if len(got) != 0 {
+		t.Fatalf("expected empty cached fee capacity map, got %v", got)
+	}
+}
+
+// TestGetTRC21FeeCapacityFromStateWithCacheSeparatesIssuers tests get trc 21 fee capacity from state with cache separates issuers.
+func TestGetTRC21FeeCapacityFromStateWithCacheSeparatesIssuers(t *testing.T) {
+	cache.Purge()
+
+	diskdb := rawdb.NewMemoryDatabase()
+	db := NewDatabase(diskdb)
+	state, err := New(types.EmptyRootHash, db)
+	if err != nil {
+		t.Fatalf("failed to create state: %v", err)
+	}
+
+	issuerA := common.HexToAddress("0x00000000000000000000000000000000000000a1")
+	issuerB := common.HexToAddress("0x00000000000000000000000000000000000000b2")
+	tokenA := common.HexToAddress("0x0000000000000000000000000000000000000101")
+	tokenB := common.HexToAddress("0x0000000000000000000000000000000000000202")
+
+	setIssuerCapacity := func(issuer, token common.Address, capacity int64) {
+		slotTokensHash := common.BigToHash(new(big.Int).SetUint64(SlotTRC21Issuer["tokens"]))
+		state.SetState(issuer, slotTokensHash, common.BigToHash(big.NewInt(1)))
+		state.SetState(issuer, GetLocDynamicArrAtElement(slotTokensHash, 0, 1), common.BytesToHash(token.Bytes()))
+		balanceKey := GetLocMappingAtKey(token.Hash(), SlotTRC21Issuer["tokensState"])
+		state.SetState(issuer, common.BigToHash(balanceKey), common.BigToHash(big.NewInt(capacity)))
+	}
+
+	setIssuerCapacity(issuerA, tokenA, 11)
+	setIssuerCapacity(issuerB, tokenB, 22)
+
+	root, err := state.Commit(0, false)
+	if err != nil {
+		t.Fatalf("failed to commit state: %v", err)
+	}
+	if err := state.Database().TrieDB().Commit(root, false); err != nil {
+		t.Fatalf("failed to persist trie: %v", err)
+	}
+
+	readerA, err := New(root, db)
+	if err != nil {
+		t.Fatalf("failed to reopen state for issuer A: %v", err)
+	}
+	if err := readerA.EnsureChainConfig(&params.ChainConfig{TRC21IssuerSMC: issuerA}); err != nil {
+		t.Fatalf("failed to attach chain config for issuer A: %v", err)
+	}
+
+	readerB, err := New(root, db)
+	if err != nil {
+		t.Fatalf("failed to reopen state for issuer B: %v", err)
+	}
+	if err := readerB.EnsureChainConfig(&params.ChainConfig{TRC21IssuerSMC: issuerB}); err != nil {
+		t.Fatalf("failed to attach chain config for issuer B: %v", err)
+	}
+
+	capacitiesA := readerA.GetTRC21FeeCapacityFromStateWithCache(root)
+	if got := capacitiesA[tokenA]; got == nil || got.Cmp(big.NewInt(11)) != 0 {
+		t.Fatalf("unexpected cached capacity for issuer A: have %v want 11", got)
+	}
+
+	capacitiesB := readerB.GetTRC21FeeCapacityFromStateWithCache(root)
+	if got := capacitiesB[tokenB]; got == nil || got.Cmp(big.NewInt(22)) != 0 {
+		t.Fatalf("unexpected cached capacity for issuer B: have %v want 22", got)
+	}
+	if _, ok := capacitiesB[tokenA]; ok {
+		t.Fatalf("unexpected token from issuer A cache entry leaked into issuer B result: %v", capacitiesB)
+	}
+}
+
+// TestRelayerRegistrationSMCReturnsErrorWithoutChainConfig tests relayer registration smc returns error without chain config.
+func TestRelayerRegistrationSMCReturnsErrorWithoutChainConfig(t *testing.T) {
+	state, _ := New(types.EmptyRootHash, NewDatabase(rawdb.NewMemoryDatabase()))
+	_, err := state.RelayerRegistrationSMC()
+	if err == nil || err.Error() != "state: missing chain config for relayer state access" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestRelayerRegistrationSMCReturnsErrorWithZeroAddressConfig tests relayer registration smc returns error with zero address config.
+func TestRelayerRegistrationSMCReturnsErrorWithZeroAddressConfig(t *testing.T) {
+	state, _ := New(types.EmptyRootHash, NewDatabase(rawdb.NewMemoryDatabase()))
+	if err := state.EnsureChainConfig(&params.ChainConfig{}); err != nil {
+		t.Fatalf("failed to attach chain config: %v", err)
+	}
+	_, err := state.RelayerRegistrationSMC()
+	if err == nil || err.Error() != "state: missing relayer registration address in chain config" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestLendingRegistrationSMCReturnsErrorWithoutChainConfig tests lending registration smc returns error without chain config.
+func TestLendingRegistrationSMCReturnsErrorWithoutChainConfig(t *testing.T) {
+	state, _ := New(types.EmptyRootHash, NewDatabase(rawdb.NewMemoryDatabase()))
+	_, err := state.LendingRegistrationSMC()
+	if err == nil || err.Error() != "state: missing chain config for lending state access" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestLendingRegistrationSMCReturnsErrorWithZeroAddressConfig tests lending registration smc returns error with zero address config.
+func TestLendingRegistrationSMCReturnsErrorWithZeroAddressConfig(t *testing.T) {
+	state, _ := New(types.EmptyRootHash, NewDatabase(rawdb.NewMemoryDatabase()))
+	if err := state.EnsureChainConfig(&params.ChainConfig{}); err != nil {
+		t.Fatalf("failed to attach chain config: %v", err)
+	}
+	_, err := state.LendingRegistrationSMC()
+	if err == nil || err.Error() != "state: missing lending registration address in chain config" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestNewWithChainConfigAttachesConfig tests new with chain config attaches config during construction.
+func TestNewWithChainConfigAttachesConfig(t *testing.T) {
+	config := &params.ChainConfig{RelayerRegistrationSMC: common.HexToAddress("0x00000000000000000000000000000000000000ab")}
+	state, err := NewWithChainConfig(types.EmptyRootHash, NewDatabase(rawdb.NewMemoryDatabase()), config)
+	if err != nil {
+		t.Fatalf("failed to create state: %v", err)
+	}
+	if state.ChainConfig() != config {
+		t.Fatal("expected chain config to be attached during construction")
+	}
+}
+
+// TestEnsureChainConfigAttachesConfig tests ensure chain config attaches config to a fresh state db.
+func TestEnsureChainConfigAttachesConfig(t *testing.T) {
+	config := &params.ChainConfig{TRC21IssuerSMC: common.HexToAddress("0x00000000000000000000000000000000000000ab")}
+	state, err := New(types.EmptyRootHash, NewDatabase(rawdb.NewMemoryDatabase()))
+	if err != nil {
+		t.Fatalf("failed to create state: %v", err)
+	}
+	if err := state.EnsureChainConfig(config); err != nil {
+		t.Fatalf("expected config attachment to succeed: %v", err)
+	}
+	if state.ChainConfig() != config {
+		t.Fatal("expected chain config to be attached")
+	}
+}
+
+// TestEnsureChainConfigRejectsMissingConfig tests ensure chain config rejects a nil config.
+func TestEnsureChainConfigRejectsMissingConfig(t *testing.T) {
+	state, err := New(types.EmptyRootHash, NewDatabase(rawdb.NewMemoryDatabase()))
+	if err != nil {
+		t.Fatalf("failed to create state: %v", err)
+	}
+	err = state.EnsureChainConfig(nil)
+	if err == nil || err.Error() != "state: missing chain config for state access" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestEnsureChainConfigPreservesExistingConfig tests ensure chain config does not override an existing config.
+func TestEnsureChainConfigPreservesExistingConfig(t *testing.T) {
+	state, err := New(types.EmptyRootHash, NewDatabase(rawdb.NewMemoryDatabase()))
+	if err != nil {
+		t.Fatalf("failed to create state: %v", err)
+	}
+	existing := &params.ChainConfig{TRC21IssuerSMC: common.HexToAddress("0x1000000000000000000000000000000000000001")}
+	incoming := &params.ChainConfig{TRC21IssuerSMC: common.HexToAddress("0x2000000000000000000000000000000000000002")}
+	state.SetChainConfig(existing)
+	if err := state.EnsureChainConfig(incoming); err != nil {
+		t.Fatalf("expected existing config to be preserved without error: %v", err)
+	}
+	if state.ChainConfig() != existing {
+		t.Fatal("expected existing chain config to remain attached")
 	}
 }
 
@@ -280,6 +483,7 @@ func TestCopyObjectState(t *testing.T) {
 	}
 }
 
+// TestSnapshotRandom tests snapshot random.
 func TestSnapshotRandom(t *testing.T) {
 	config := &quick.Config{MaxCount: 1000}
 	err := quick.Check((*snapshotTest).run, config)
@@ -578,6 +782,7 @@ func (test *snapshotTest) checkEqual(state, checkstate *StateDB) error {
 	return nil
 }
 
+// TestTouchDelete tests touch delete.
 func TestTouchDelete(t *testing.T) {
 	s := newStateEnv()
 	s.state.GetOrNewStateObject(common.Address{})
@@ -596,6 +801,7 @@ func TestTouchDelete(t *testing.T) {
 	}
 }
 
+// TestStateDBAccessList tests state db access list.
 func TestStateDBAccessList(t *testing.T) {
 	// Some helpers
 	addr := func(a string) common.Address {
@@ -770,6 +976,7 @@ func TestStateDBAccessList(t *testing.T) {
 	}
 }
 
+// TestStateDBTransientStorage tests state db transient storage.
 func TestStateDBTransientStorage(t *testing.T) {
 	memDb := rawdb.NewMemoryDatabase()
 	db := NewDatabase(memDb)
@@ -1000,7 +1207,7 @@ func TestCopyCopyCommitCopy(t *testing.T) {
 	}
 }
 
-// TestCommitCopy tests the copy from a committed state is not fully functional.
+// TestCommitCopy tests commit copy.
 func TestCommitCopy(t *testing.T) {
 	db := NewDatabase(rawdb.NewMemoryDatabase())
 	state, _ := New(types.EmptyRootHash, db)
@@ -1056,6 +1263,7 @@ func TestCommitCopy(t *testing.T) {
 	}
 }
 
+// TestGetStateAndCommittedState tests get state and committed state.
 func TestGetStateAndCommittedState(t *testing.T) {
 	db := NewDatabase(rawdb.NewMemoryDatabase())
 	state, _ := New(types.EmptyRootHash, db)

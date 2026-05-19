@@ -118,6 +118,7 @@ var (
 		utils.VMTraceFlag,
 		utils.VMTraceJsonConfigFlag,
 		utils.NetworkIdFlag,
+		utils.AllowBuiltInConfigOverrideFlag,
 		utils.HTTPCORSDomainFlag,
 		utils.AuthListenFlag,
 		utils.AuthPortFlag,
