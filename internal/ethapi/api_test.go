@@ -52,6 +52,7 @@ import (
 
 var newHasher = blocktest.NewHasher
 
+// TestRPCMarshalBlock tests rpc marshal block.
 func TestRPCMarshalBlock(t *testing.T) {
 	var (
 		txs []*types.Transaction
@@ -270,6 +271,7 @@ func TestRPCMarshalBlock(t *testing.T) {
 	}
 }
 
+// TestDebugSetHeadTransportExposure tests debug set head transport exposure.
 func TestDebugSetHeadTransportExposure(t *testing.T) {
 	backend := newBackendMock()
 	apis := GetAPIs(backend, nil)
@@ -370,6 +372,7 @@ func (b *storageBackendMock) GetRewardByHash(hash common.Hash) map[string]map[st
 	return b.reward
 }
 
+// TestGetStorageValues tests get storage values.
 func TestGetStorageValues(t *testing.T) {
 	t.Parallel()
 
@@ -521,6 +524,7 @@ func TestGetStorageValues(t *testing.T) {
 	}
 }
 
+// TestDoEstimateGasRespectsBlockOverrideGasLimit tests do estimate gas respects block override gas limit.
 func TestDoEstimateGasRespectsBlockOverrideGasLimit(t *testing.T) {
 	t.Parallel()
 
@@ -565,6 +569,7 @@ func TestDoEstimateGasRespectsBlockOverrideGasLimit(t *testing.T) {
 	require.ErrorContains(t, err, "gas required exceeds allowance (20000)")
 }
 
+// TestTransaction_RoundTripRpcJSON tests transaction round trip rpc json.
 func TestTransaction_RoundTripRpcJSON(t *testing.T) {
 	t.Parallel()
 
@@ -624,6 +629,7 @@ func TestTransaction_RoundTripRpcJSON(t *testing.T) {
 	}
 }
 
+// TestEstimateGas tests estimate gas.
 func TestEstimateGas(t *testing.T) {
 	t.Parallel()
 
@@ -753,6 +759,7 @@ func TestEstimateGas(t *testing.T) {
 	require.Equal(t, common.HexToHash("0x1234"), *backendHash.seenRef.BlockHash)
 }
 
+// TestCall tests call.
 func TestCall(t *testing.T) {
 	t.Parallel()
 
@@ -852,6 +859,7 @@ func TestCall(t *testing.T) {
 
 }
 
+// TestSimulateV1 tests simulate v 1.
 func TestSimulateV1(t *testing.T) {
 	t.Parallel()
 
@@ -1343,6 +1351,7 @@ func TestSimulateV1(t *testing.T) {
 	require.ErrorContains(t, err, "too many blocks")
 }
 
+// TestSimulateV1ChainLinkage tests simulate v 1 chain linkage.
 func TestSimulateV1ChainLinkage(t *testing.T) {
 	t.Parallel()
 
@@ -1367,6 +1376,7 @@ func TestSimulateV1ChainLinkage(t *testing.T) {
 	require.ErrorContains(t, err, "block numbers must be in order")
 }
 
+// TestSimulateV1TxSender tests simulate v 1 tx sender.
 func TestSimulateV1TxSender(t *testing.T) {
 	t.Parallel()
 
@@ -1437,6 +1447,7 @@ func TestSimulateV1TxSender(t *testing.T) {
 	require.Equal(t, common.Address{}, summary[1].Transactions[0].From)
 }
 
+// TestSignTransaction tests sign transaction.
 func TestSignTransaction(t *testing.T) {
 	t.Parallel()
 
@@ -1554,6 +1565,7 @@ func TestSignTransaction(t *testing.T) {
 	require.ErrorContains(t, err, "maxFeePerGas")
 }
 
+// TestRPCGetBlockOrHeader tests rpc get block or header.
 func TestRPCGetBlockOrHeader(t *testing.T) {
 	t.Parallel()
 
@@ -1619,6 +1631,7 @@ func TestRPCGetBlockOrHeader(t *testing.T) {
 	require.Nil(t, pendingBlock["number"])
 }
 
+// TestRPCGetTransactionReceipt tests rpc get transaction receipt.
 func TestRPCGetTransactionReceipt(t *testing.T) {
 	t.Parallel()
 
@@ -1732,6 +1745,7 @@ func TestRPCGetTransactionReceipt(t *testing.T) {
 	require.Nil(t, gotContract["to"])
 }
 
+// TestRPCGetBlockReceipts tests rpc get block receipts.
 func TestRPCGetBlockReceipts(t *testing.T) {
 	t.Parallel()
 
@@ -1828,6 +1842,10 @@ type accessListStateOverrideBackendMock struct {
 	xdcx *XDCx.XDCX
 }
 
+type accessListFreshStateBackendMock struct {
+	*accessListStateOverrideBackendMock
+}
+
 type accessListChainContext struct {
 	header *types.Header
 	engine consensus.Engine
@@ -1851,6 +1869,10 @@ func (b *accessListStateOverrideBackendMock) XDCxService() *XDCx.XDCX {
 	return b.xdcx
 }
 
+func (b *accessListFreshStateBackendMock) StateAndHeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*state.StateDB, *types.Header, error) {
+	return b.stateDB, b.header, nil
+}
+
 func (b *accessListStateOverrideBackendMock) GetEVM(ctx context.Context, state *state.StateDB, XDCxState *tradingstate.TradingStateDB, header *types.Header, vmConfig *vm.Config, blockContext *vm.BlockContext) (*vm.EVM, func() error, error) {
 	if vmConfig == nil {
 		vmConfig = new(vm.Config)
@@ -1864,6 +1886,7 @@ func (b *accessListStateOverrideBackendMock) GetEVM(ctx context.Context, state *
 	return ev, func() error { return nil }, nil
 }
 
+// TestCreateAccessListWithStateOverrides tests create access list with state overrides.
 func TestCreateAccessListWithStateOverrides(t *testing.T) {
 	// Initialize test backend
 	genesis := &core.Genesis{
@@ -1954,6 +1977,57 @@ func TestCreateAccessListWithStateOverrides(t *testing.T) {
 	require.Equal(t, expected, result.Accesslist)
 }
 
+func TestCreateAccessListAttachesChainConfigToFreshState(t *testing.T) {
+	genesis := &core.Genesis{
+		Config: params.TestChainConfig,
+		Alloc: types.GenesisAlloc{
+			common.HexToAddress("0x71562b71999873db5b286df957af199ec94617f7"): {Balance: big.NewInt(1000000000000000000)},
+		},
+	}
+	db := rawdb.NewMemoryDatabase()
+	block := genesis.MustCommit(db)
+	stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+	require.NoError(t, err)
+	require.Nil(t, stateDB.ChainConfig())
+
+	backend := &accessListFreshStateBackendMock{
+		accessListStateOverrideBackendMock: &accessListStateOverrideBackendMock{
+			createAccessListBackendMock: &createAccessListBackendMock{
+				estimateBackendMock: &estimateBackendMock{
+					backendMock: newBackendMock(),
+					stateDB:     stateDB,
+					header:      block.Header(),
+					engine:      ethash.NewFaker(),
+				},
+				block: block,
+			},
+			xdcx: &XDCx.XDCX{StateCache: tradingstate.NewDatabase(rawdb.NewMemoryDatabase())},
+		},
+	}
+
+	api := NewBlockChainAPI(backend, nil)
+	from := common.HexToAddress("0x71562b71999873db5b286df957af199ec94617f7")
+	to := common.HexToAddress("0x1000000000000000000000000000000000000001")
+	gas := hexutil.Uint64(21000)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("CreateAccessList panicked with fresh state db: %v", r)
+		}
+	}()
+
+	result, err := api.CreateAccessList(context.Background(), TransactionArgs{
+		From:  &from,
+		To:    &to,
+		Gas:   &gas,
+		Value: (*hexutil.Big)(big.NewInt(1)),
+	}, nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, backend.ChainConfig(), stateDB.ChainConfig())
+}
+
+// TestCreateAccessListWithMovePrecompile tests create access list with move precompile.
 func TestCreateAccessListWithMovePrecompile(t *testing.T) {
 	t.Parallel()
 
@@ -2004,6 +2078,7 @@ func TestCreateAccessListWithMovePrecompile(t *testing.T) {
 	require.NotNil(t, result.Accesslist)
 }
 
+// TestEstimateGasWithMovePrecompile tests estimate gas with move precompile.
 func TestEstimateGasWithMovePrecompile(t *testing.T) {
 	t.Parallel()
 
@@ -2051,6 +2126,7 @@ type receiptBackendMock struct {
 	err      error
 }
 
+// TestNetAPIListeningAndVersion tests net api listening and version.
 func TestNetAPIListeningAndVersion(t *testing.T) {
 	t.Parallel()
 
@@ -2059,6 +2135,7 @@ func TestNetAPIListeningAndVersion(t *testing.T) {
 	require.Equal(t, "12345", api.Version())
 }
 
+// TestNewRPCTransactionLegacyMined tests new rpc transaction legacy mined.
 func TestNewRPCTransactionLegacyMined(t *testing.T) {
 	t.Parallel()
 
@@ -2091,6 +2168,7 @@ func TestNewRPCTransactionLegacyMined(t *testing.T) {
 	require.Nil(t, rpcTx.GasTipCap)
 }
 
+// TestNewRPCTransactionLegacyPending tests new rpc transaction legacy pending.
 func TestNewRPCTransactionLegacyPending(t *testing.T) {
 	t.Parallel()
 
@@ -2119,6 +2197,7 @@ func TestNewRPCTransactionLegacyPending(t *testing.T) {
 	require.Nil(t, rpcTx.GasTipCap)
 }
 
+// TestNewRPCTransactionDynamicPending tests new rpc transaction dynamic pending.
 func TestNewRPCTransactionDynamicPending(t *testing.T) {
 	t.Parallel()
 
@@ -2150,6 +2229,7 @@ func TestNewRPCTransactionDynamicPending(t *testing.T) {
 	require.NotNil(t, rpcTx.YParity)
 }
 
+// TestNewRPCTransactionAccessListPending tests new rpc transaction access list pending.
 func TestNewRPCTransactionAccessListPending(t *testing.T) {
 	t.Parallel()
 
@@ -2182,6 +2262,7 @@ func TestNewRPCTransactionAccessListPending(t *testing.T) {
 	require.Nil(t, rpcTx.TransactionIndex)
 }
 
+// TestNewRPCTransactionDynamicMinedFeeCapClamp tests new rpc transaction dynamic mined fee cap clamp.
 func TestNewRPCTransactionDynamicMinedFeeCapClamp(t *testing.T) {
 	t.Parallel()
 
@@ -2279,6 +2360,7 @@ func (b *receiptBackendMock) BlockByNumberOrHash(ctx context.Context, blockNrOrH
 	return nil, nil
 }
 
+// TestRPCGetBlockOrHeaderBasic tests rpc get block or header basic.
 func TestRPCGetBlockOrHeaderBasic(t *testing.T) {
 	t.Parallel()
 
@@ -2354,6 +2436,7 @@ func TestRPCGetBlockOrHeaderBasic(t *testing.T) {
 	require.Nil(t, pendingBlock["number"])
 }
 
+// TestRPCGetBlockOrHeaderPendingFullTxMode tests rpc get block or header pending full tx mode.
 func TestRPCGetBlockOrHeaderPendingFullTxMode(t *testing.T) {
 	t.Parallel()
 
@@ -2414,6 +2497,7 @@ func TestRPCGetBlockOrHeaderPendingFullTxMode(t *testing.T) {
 	require.Contains(t, string(byHashJSON), tx.Hash().Hex())
 }
 
+// TestGetBlockFullTxModes tests get block full tx modes.
 func TestGetBlockFullTxModes(t *testing.T) {
 	t.Parallel()
 
@@ -2468,6 +2552,7 @@ func TestGetBlockFullTxModes(t *testing.T) {
 	require.Contains(t, string(fullByHashJSON), tx.Hash().Hex())
 }
 
+// TestGetUncleCountBasic tests get uncle count basic.
 func TestGetUncleCountBasic(t *testing.T) {
 	t.Parallel()
 
@@ -2502,6 +2587,7 @@ func TestGetUncleCountBasic(t *testing.T) {
 	require.Nil(t, missingByHash)
 }
 
+// TestGetUncleByBlockSelectorsBasic tests get uncle by block selectors basic.
 func TestGetUncleByBlockSelectorsBasic(t *testing.T) {
 	t.Parallel()
 
@@ -2560,6 +2646,7 @@ type signingBackendMock struct {
 	manager *accounts.Manager
 }
 
+// TestTransactionByBlockSelectorsBasic tests transaction by block selectors basic.
 func TestTransactionByBlockSelectorsBasic(t *testing.T) {
 	t.Parallel()
 
@@ -2691,6 +2778,7 @@ func TestTransactionByBlockSelectorsBasic(t *testing.T) {
 	require.Equal(t, (*hexutil.Big)(big.NewInt(14)), rpcDynByHash.GasPrice)
 }
 
+// TestGetTransactionReceiptBasic tests get transaction receipt basic.
 func TestGetTransactionReceiptBasic(t *testing.T) {
 	t.Parallel()
 
@@ -2762,6 +2850,7 @@ type txFeeCapBackendMock struct {
 	feeCap float64
 }
 
+// TestGetTransactionReceiptIndexedTransaction tests get transaction receipt indexed transaction.
 func TestGetTransactionReceiptIndexedTransaction(t *testing.T) {
 	t.Parallel()
 
@@ -2831,6 +2920,7 @@ type sendTxBackendMock struct {
 	feeCap  float64
 }
 
+// TestGetTransactionReceiptContractCreation tests get transaction receipt contract creation.
 func TestGetTransactionReceiptContractCreation(t *testing.T) {
 	t.Parallel()
 
@@ -2877,6 +2967,7 @@ func TestGetTransactionReceiptContractCreation(t *testing.T) {
 	require.Nil(t, got["to"])
 }
 
+// TestGetTransactionReceiptPostStateRoot tests get transaction receipt post state root.
 func TestGetTransactionReceiptPostStateRoot(t *testing.T) {
 	t.Parallel()
 
@@ -2923,6 +3014,7 @@ func TestGetTransactionReceiptPostStateRoot(t *testing.T) {
 	require.False(t, hasStatus)
 }
 
+// TestGetTransactionReceiptFailedStatus tests get transaction receipt failed status.
 func TestGetTransactionReceiptFailedStatus(t *testing.T) {
 	t.Parallel()
 
@@ -2978,6 +3070,7 @@ type txLookupBackendMock struct {
 	headerErr error
 }
 
+// TestGetTransactionReceiptWithLogs tests get transaction receipt with logs.
 func TestGetTransactionReceiptWithLogs(t *testing.T) {
 	t.Parallel()
 
@@ -3028,6 +3121,7 @@ func TestGetTransactionReceiptWithLogs(t *testing.T) {
 	require.Equal(t, []byte{0xaa, 0xbb}, logs[0].Data)
 }
 
+// TestGetBlockReceiptsBasic tests get block receipts basic.
 func TestGetBlockReceiptsBasic(t *testing.T) {
 	t.Parallel()
 
@@ -3104,6 +3198,7 @@ func TestGetBlockReceiptsBasic(t *testing.T) {
 	require.ErrorContains(t, err, "receipts length mismatch")
 }
 
+// TestGetBlockReceiptsMultipleTransactions tests get block receipts multiple transactions.
 func TestGetBlockReceiptsMultipleTransactions(t *testing.T) {
 	t.Parallel()
 
@@ -3380,6 +3475,7 @@ func (b *proofBackendMock) GetReceipts(ctx context.Context, hash common.Hash) (t
 	return nil, nil
 }
 
+// TestSendRawTransactionBasic tests send raw transaction basic.
 func TestSendRawTransactionBasic(t *testing.T) {
 	t.Parallel()
 
@@ -3416,6 +3512,7 @@ func TestSendRawTransactionBasic(t *testing.T) {
 	require.ErrorContains(t, err, "pool rejected tx")
 }
 
+// TestSendRawTransactionRejectUnprotected tests send raw transaction reject unprotected.
 func TestSendRawTransactionRejectUnprotected(t *testing.T) {
 	t.Parallel()
 
@@ -3436,6 +3533,7 @@ func TestSendRawTransactionRejectUnprotected(t *testing.T) {
 	require.ErrorContains(t, err, "only replay-protected (EIP-155) transactions allowed over RPC")
 }
 
+// TestSendRawTransactionFeeCapExceeded tests send raw transaction fee cap exceeded.
 func TestSendRawTransactionFeeCapExceeded(t *testing.T) {
 	t.Parallel()
 
@@ -3462,6 +3560,7 @@ func TestSendRawTransactionFeeCapExceeded(t *testing.T) {
 	require.ErrorContains(t, err, "exceeds the configured cap")
 }
 
+// TestSendRawTransactionRejectsValueOverflow tests send raw transaction rejects value overflow.
 func TestSendRawTransactionRejectsValueOverflow(t *testing.T) {
 	t.Parallel()
 
@@ -3491,6 +3590,7 @@ func TestSendRawTransactionRejectsValueOverflow(t *testing.T) {
 	require.Equal(t, overflowValue, backend.lastTx.Value())
 }
 
+// TestTxValidationErrorUint256Overflow tests tx validation error uint 256 overflow.
 func TestTxValidationErrorUint256Overflow(t *testing.T) {
 	t.Parallel()
 
@@ -3499,6 +3599,7 @@ func TestTxValidationErrorUint256Overflow(t *testing.T) {
 	require.ErrorContains(t, err, types.ErrUint256Overflow.Error())
 }
 
+// TestGetTransactionByHashBasic tests get transaction by hash basic.
 func TestGetTransactionByHashBasic(t *testing.T) {
 	t.Parallel()
 
@@ -3650,6 +3751,7 @@ func TestGetTransactionByHashBasic(t *testing.T) {
 	require.ErrorContains(t, err, "header lookup failed")
 }
 
+// TestGetRawTransactionByHashBasic tests get raw transaction by hash basic.
 func TestGetRawTransactionByHashBasic(t *testing.T) {
 	t.Parallel()
 
@@ -3712,6 +3814,7 @@ func TestGetRawTransactionByHashBasic(t *testing.T) {
 	require.Nil(t, missing)
 }
 
+// TestGetTransactionCountBasic tests get transaction count basic.
 func TestGetTransactionCountBasic(t *testing.T) {
 	t.Parallel()
 
@@ -3766,6 +3869,7 @@ func TestGetTransactionCountBasic(t *testing.T) {
 	require.ErrorContains(t, err, "state lookup failed")
 }
 
+// TestPendingTransactionsBasic tests pending transactions basic.
 func TestPendingTransactionsBasic(t *testing.T) {
 	t.Parallel()
 
@@ -3824,6 +3928,7 @@ func TestPendingTransactionsBasic(t *testing.T) {
 	require.ErrorContains(t, err, "pool unavailable")
 }
 
+// TestResendBasic tests resend basic.
 func TestResendBasic(t *testing.T) {
 	t.Parallel()
 
@@ -3924,6 +4029,7 @@ func TestResendBasic(t *testing.T) {
 	backend.sendErr = nil
 }
 
+// TestResendFeeCapExceeded tests resend fee cap exceeded.
 func TestResendFeeCapExceeded(t *testing.T) {
 	t.Parallel()
 
@@ -3978,6 +4084,7 @@ func TestResendFeeCapExceeded(t *testing.T) {
 	require.ErrorContains(t, err, "exceeds the configured cap")
 }
 
+// TestResendWithoutOverrides tests resend without overrides.
 func TestResendWithoutOverrides(t *testing.T) {
 	t.Parallel()
 
@@ -4048,6 +4155,7 @@ func TestResendWithoutOverrides(t *testing.T) {
 	require.Equal(t, big.NewInt(7), backend.lastTx.GasPrice())
 }
 
+// TestTxPoolAPIContentAndInspect tests tx pool api content and inspect.
 func TestTxPoolAPIContentAndInspect(t *testing.T) {
 	t.Parallel()
 
@@ -4119,6 +4227,7 @@ func TestTxPoolAPIContentAndInspect(t *testing.T) {
 	require.Contains(t, inspect["queued"][addr2.Hex()]["2"], "contract creation")
 }
 
+// TestTxPoolAPIStatusEmpty tests tx pool api status empty.
 func TestTxPoolAPIStatusEmpty(t *testing.T) {
 	t.Parallel()
 
@@ -4149,6 +4258,7 @@ func TestTxPoolAPIStatusEmpty(t *testing.T) {
 	require.Empty(t, inspect["queued"])
 }
 
+// TestEthereumAPIBasic tests ethereum api basic.
 func TestEthereumAPIBasic(t *testing.T) {
 	t.Parallel()
 
@@ -4210,6 +4320,7 @@ func TestEthereumAPIBasic(t *testing.T) {
 	require.Empty(t, history.GasUsedRatio)
 }
 
+// TestEthereumAPIGasPriceWithoutBaseFee tests ethereum api gas price without base fee.
 func TestEthereumAPIGasPriceWithoutBaseFee(t *testing.T) {
 	t.Parallel()
 
@@ -4226,6 +4337,7 @@ func TestEthereumAPIGasPriceWithoutBaseFee(t *testing.T) {
 	require.Equal(t, (*hexutil.Big)(big.NewInt(42)), gasPrice)
 }
 
+// TestEthereumAccountAPIAccounts tests ethereum account api accounts.
 func TestEthereumAccountAPIAccounts(t *testing.T) {
 	t.Parallel()
 
@@ -4248,6 +4360,7 @@ func TestEthereumAccountAPIAccounts(t *testing.T) {
 	require.ElementsMatch(t, []common.Address{account1.Address, account2.Address}, got)
 }
 
+// TestEthereumAccountAPIAccountsEmpty tests ethereum account api accounts empty.
 func TestEthereumAccountAPIAccountsEmpty(t *testing.T) {
 	t.Parallel()
 
@@ -4260,6 +4373,7 @@ func TestEthereumAccountAPIAccountsEmpty(t *testing.T) {
 	require.Empty(t, got)
 }
 
+// TestSignTransactionBasic tests sign transaction basic.
 func TestSignTransactionBasic(t *testing.T) {
 	t.Parallel()
 
@@ -4349,6 +4463,7 @@ func TestSignTransactionBasic(t *testing.T) {
 	require.ErrorContains(t, err, `both "data" and "input" are set and not equal`)
 }
 
+// TestSignTransactionValidationErrors tests sign transaction validation errors.
 func TestSignTransactionValidationErrors(t *testing.T) {
 	t.Parallel()
 
@@ -4467,6 +4582,7 @@ func TestSignTransactionValidationErrors(t *testing.T) {
 	require.ErrorContains(t, err, "eip7702 set code transaction requires a destination address")
 }
 
+// TestSignTransactionFeeCapExceeded tests sign transaction fee cap exceeded.
 func TestSignTransactionFeeCapExceeded(t *testing.T) {
 	t.Parallel()
 
@@ -4498,6 +4614,7 @@ type estimateBackendMock struct {
 	engine  consensus.Engine
 }
 
+// TestSignTransactionDynamicFeeBasic tests sign transaction dynamic fee basic.
 func TestSignTransactionDynamicFeeBasic(t *testing.T) {
 	t.Parallel()
 
@@ -4548,6 +4665,7 @@ func TestSignTransactionDynamicFeeBasic(t *testing.T) {
 	require.Equal(t, account.Address, from)
 }
 
+// TestSignTransactionAccessListBasic tests sign transaction access list basic.
 func TestSignTransactionAccessListBasic(t *testing.T) {
 	t.Parallel()
 
@@ -4605,6 +4723,7 @@ type simulateBackendMock struct {
 	gasCap uint64
 }
 
+// TestSignTransactionSetCodeBasic tests sign transaction set code basic.
 func TestSignTransactionSetCodeBasic(t *testing.T) {
 	t.Parallel()
 
@@ -4665,6 +4784,7 @@ type estimateRefBackendMock struct {
 	seenRef  *rpc.BlockNumberOrHash
 }
 
+// TestFillTransactionBasic tests fill transaction basic.
 func TestFillTransactionBasic(t *testing.T) {
 	t.Parallel()
 
@@ -4739,6 +4859,7 @@ type createAccessListBackendMock struct {
 	blockErr error
 }
 
+// TestFillTransactionValidationErrors tests fill transaction validation errors.
 func TestFillTransactionValidationErrors(t *testing.T) {
 	t.Parallel()
 
@@ -4817,6 +4938,7 @@ type chainContextBackendMock struct {
 	last   rpc.BlockNumber
 }
 
+// TestFillTransactionLegacyWhenGasPriceProvided tests fill transaction legacy when gas price provided.
 func TestFillTransactionLegacyWhenGasPriceProvided(t *testing.T) {
 	t.Parallel()
 
@@ -4846,6 +4968,7 @@ func TestFillTransactionLegacyWhenGasPriceProvided(t *testing.T) {
 	require.Equal(t, big.NewInt(7), tx2.GasPrice())
 }
 
+// TestFillTransactionDynamicFeeExplicit tests fill transaction dynamic fee explicit.
 func TestFillTransactionDynamicFeeExplicit(t *testing.T) {
 	t.Parallel()
 
@@ -4881,6 +5004,7 @@ func TestFillTransactionDynamicFeeExplicit(t *testing.T) {
 	require.Equal(t, accessList, tx2.AccessList())
 }
 
+// TestFillTransactionSetCodeBasic tests fill transaction set code basic.
 func TestFillTransactionSetCodeBasic(t *testing.T) {
 	t.Parallel()
 
@@ -4919,6 +5043,11 @@ func TestFillTransactionSetCodeBasic(t *testing.T) {
 }
 
 func (b *estimateBackendMock) StateAndHeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*state.StateDB, *types.Header, error) {
+	if b.stateDB != nil {
+		if err := b.stateDB.EnsureChainConfig(b.ChainConfig()); err != nil {
+			return nil, nil, err
+		}
+	}
 	return b.stateDB, b.header, nil
 }
 
@@ -4964,6 +5093,7 @@ func (b *chainContextBackendMock) HeaderByNumber(ctx context.Context, number rpc
 	return b.header, nil
 }
 
+// TestEstimateGasBasic tests estimate gas basic.
 func TestEstimateGasBasic(t *testing.T) {
 	t.Parallel()
 
@@ -5095,6 +5225,7 @@ func TestEstimateGasBasic(t *testing.T) {
 	require.EqualValues(t, 21000, gas)
 }
 
+// TestChainContextGetHeader tests chain context get header.
 func TestChainContextGetHeader(t *testing.T) {
 	t.Parallel()
 
@@ -5114,6 +5245,7 @@ func TestChainContextGetHeader(t *testing.T) {
 	require.Nil(t, errResult)
 }
 
+// TestChainContextGetHeaderForwardsNumber tests chain context get header forwards number.
 func TestChainContextGetHeaderForwardsNumber(t *testing.T) {
 	t.Parallel()
 
@@ -5126,6 +5258,7 @@ func TestChainContextGetHeaderForwardsNumber(t *testing.T) {
 	require.Equal(t, rpc.BlockNumber(12), backend.last)
 }
 
+// TestChainContextEngine tests chain context engine.
 func TestChainContextEngine(t *testing.T) {
 	t.Parallel()
 
@@ -5136,6 +5269,7 @@ func TestChainContextEngine(t *testing.T) {
 	require.Equal(t, eng, ctx.Engine())
 }
 
+// TestEstimateGasBlockRefSelection tests estimate gas block ref selection.
 func TestEstimateGasBlockRefSelection(t *testing.T) {
 	t.Parallel()
 
@@ -5178,6 +5312,7 @@ func TestEstimateGasBlockRefSelection(t *testing.T) {
 	require.Equal(t, common.HexToHash("0x1234"), *backendHash.seenRef.BlockHash)
 }
 
+// TestEstimateGasInvalidStateOverride tests estimate gas invalid state override.
 func TestEstimateGasInvalidStateOverride(t *testing.T) {
 	t.Parallel()
 
@@ -5224,6 +5359,7 @@ func TestEstimateGasInvalidStateOverride(t *testing.T) {
 	require.ErrorContains(t, err, "has both 'state' and 'stateDiff'")
 }
 
+// TestDoEstimateGasBasic tests do estimate gas basic.
 func TestDoEstimateGasBasic(t *testing.T) {
 	t.Parallel()
 
@@ -5262,6 +5398,7 @@ func TestDoEstimateGasBasic(t *testing.T) {
 	require.EqualValues(t, 21000, gas)
 }
 
+// TestDoEstimateGasStateLookupError tests do estimate gas state lookup error.
 func TestDoEstimateGasStateLookupError(t *testing.T) {
 	t.Parallel()
 
@@ -5284,6 +5421,7 @@ func TestDoEstimateGasStateLookupError(t *testing.T) {
 	require.ErrorContains(t, err, "state failed")
 }
 
+// TestDoEstimateGasInvalidStateOverride tests do estimate gas invalid state override.
 func TestDoEstimateGasInvalidStateOverride(t *testing.T) {
 	t.Parallel()
 
@@ -5341,6 +5479,7 @@ type callBackendMock struct {
 	seenRef  *rpc.BlockNumberOrHash
 }
 
+// TestDoEstimateGasChainIDMismatch tests do estimate gas chain id mismatch.
 func TestDoEstimateGasChainIDMismatch(t *testing.T) {
 	t.Parallel()
 
@@ -5378,6 +5517,7 @@ func TestDoEstimateGasChainIDMismatch(t *testing.T) {
 	require.ErrorContains(t, err, "chainId does not match node's")
 }
 
+// TestDoEstimateGasMixedGasPricingError tests do estimate gas mixed gas pricing error.
 func TestDoEstimateGasMixedGasPricingError(t *testing.T) {
 	t.Parallel()
 
@@ -5421,6 +5561,7 @@ func TestDoEstimateGasMixedGasPricingError(t *testing.T) {
 	require.ErrorContains(t, err, "both gasPrice and (maxFeePerGas or maxPriorityFeePerGas) specified")
 }
 
+// TestDoEstimateGasNilStateBehavior tests do estimate gas nil state behavior.
 func TestDoEstimateGasNilStateBehavior(t *testing.T) {
 	t.Parallel()
 
@@ -5441,6 +5582,7 @@ func TestDoEstimateGasNilStateBehavior(t *testing.T) {
 	require.EqualValues(t, 0, gas)
 }
 
+// TestCreateAccessListBlockRefSelection tests create access list block ref selection.
 func TestCreateAccessListBlockRefSelection(t *testing.T) {
 	t.Parallel()
 
@@ -5486,6 +5628,7 @@ func TestCreateAccessListBlockRefSelection(t *testing.T) {
 	require.Equal(t, common.HexToHash("0x1234"), *backendHash.seenRef.BlockHash)
 }
 
+// TestCreateAccessListNilBlockError tests create access list nil block error.
 func TestCreateAccessListNilBlockError(t *testing.T) {
 	t.Parallel()
 
@@ -5517,6 +5660,7 @@ func TestCreateAccessListNilBlockError(t *testing.T) {
 	require.ErrorContains(t, err, "nil block in AccessList")
 }
 
+// TestCreateAccessListBlockLookupError tests create access list block lookup error.
 func TestCreateAccessListBlockLookupError(t *testing.T) {
 	t.Parallel()
 
@@ -5552,6 +5696,7 @@ func TestCreateAccessListBlockLookupError(t *testing.T) {
 	require.Nil(t, result)
 }
 
+// TestCreateAccessListNilStateBehavior tests create access list nil state behavior.
 func TestCreateAccessListNilStateBehavior(t *testing.T) {
 	t.Parallel()
 
@@ -5565,6 +5710,60 @@ func TestCreateAccessListNilStateBehavior(t *testing.T) {
 	require.NotNil(t, result.Accesslist)
 	require.Len(t, *result.Accesslist, 0)
 	require.EqualValues(t, 0, result.GasUsed)
+	require.Empty(t, result.Error)
+}
+
+// TestCreateAccessListWithoutTRC21Issuer tests create access list without trc 21 issuer.
+func TestCreateAccessListWithoutTRC21Issuer(t *testing.T) {
+	t.Parallel()
+
+	from := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	to := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	gas := hexutil.Uint64(21000)
+
+	backendCfg := newBackendMock()
+	backendCfg.config = &params.ChainConfig{
+		ChainID:        big.NewInt(1338),
+		HomesteadBlock: new(big.Int),
+		Ethash:         new(params.EthashConfig),
+	}
+
+	genesis := &core.Genesis{
+		Config: backendCfg.config,
+		Alloc: types.GenesisAlloc{
+			from: {Balance: big.NewInt(params.Ether)},
+			to:   {Balance: big.NewInt(params.Ether)},
+		},
+	}
+	db := rawdb.NewMemoryDatabase()
+	block := genesis.MustCommit(db)
+	stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+	require.NoError(t, err)
+
+	backend := &accessListStateOverrideBackendMock{
+		createAccessListBackendMock: &createAccessListBackendMock{
+			estimateBackendMock: &estimateBackendMock{
+				backendMock: backendCfg,
+				stateDB:     stateDB,
+				header:      block.Header(),
+				engine:      ethash.NewFaker(),
+			},
+			block: block,
+		},
+		xdcx: &XDCx.XDCX{StateCache: tradingstate.NewDatabase(rawdb.NewMemoryDatabase())},
+	}
+	api := NewBlockChainAPI(backend, nil)
+	latest := rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber)
+
+	result, err := api.CreateAccessList(context.Background(), TransactionArgs{
+		From:     &from,
+		To:       &to,
+		Gas:      &gas,
+		GasPrice: (*hexutil.Big)(big.NewInt(1)),
+	}, &latest, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Accesslist)
 	require.Empty(t, result.Error)
 }
 
@@ -5586,6 +5785,7 @@ func (b *callBackendMock) BlockByNumberOrHash(ctx context.Context, blockNrOrHash
 	return b.block, b.blockErr
 }
 
+// TestCallBlockRefSelection tests call block ref selection.
 func TestCallBlockRefSelection(t *testing.T) {
 	t.Parallel()
 
@@ -5628,6 +5828,7 @@ func TestCallBlockRefSelection(t *testing.T) {
 	require.Equal(t, common.HexToHash("0x1234"), *backendHash.seenRef.BlockHash)
 }
 
+// TestCallBasicErrors tests call basic errors.
 func TestCallBasicErrors(t *testing.T) {
 	t.Parallel()
 
@@ -5677,6 +5878,7 @@ func TestCallBasicErrors(t *testing.T) {
 	require.ErrorContains(t, err, "block lookup failed")
 }
 
+// TestCallInvalidStateOverride tests call invalid state override.
 func TestCallInvalidStateOverride(t *testing.T) {
 	t.Parallel()
 
@@ -5710,6 +5912,7 @@ func TestCallInvalidStateOverride(t *testing.T) {
 	require.ErrorContains(t, err, "has both 'state' and 'stateDiff'")
 }
 
+// TestDoCallInvalidStateOverride tests do call invalid state override.
 func TestDoCallInvalidStateOverride(t *testing.T) {
 	t.Parallel()
 
@@ -5743,6 +5946,7 @@ func TestDoCallInvalidStateOverride(t *testing.T) {
 	require.ErrorContains(t, err, "has both 'state' and 'stateDiff'")
 }
 
+// TestRPCMarshalHeaderBaseFeeField tests rpc marshal header base fee field.
 func TestRPCMarshalHeaderBaseFeeField(t *testing.T) {
 	t.Parallel()
 
@@ -5765,6 +5969,7 @@ func TestRPCMarshalHeaderBaseFeeField(t *testing.T) {
 	require.Equal(t, (*hexutil.Big)(headerWithBaseFee.BaseFee), baseFeeValue)
 }
 
+// TestRPCMarshalHeaderCoreFields tests rpc marshal header core fields.
 func TestRPCMarshalHeaderCoreFields(t *testing.T) {
 	t.Parallel()
 
@@ -5808,6 +6013,7 @@ func TestRPCMarshalHeaderCoreFields(t *testing.T) {
 	require.Equal(t, hexutil.Bytes(header.Penalties), result["penalties"])
 }
 
+// TestEffectiveGasPrice tests effective gas price.
 func TestEffectiveGasPrice(t *testing.T) {
 	t.Parallel()
 
@@ -5832,6 +6038,7 @@ func TestEffectiveGasPrice(t *testing.T) {
 	require.Equal(t, big.NewInt(10), tx.GasFeeCap())
 }
 
+// TestNewRPCPendingTransactionDynamicFee tests new rpc pending transaction dynamic fee.
 func TestNewRPCPendingTransactionDynamicFee(t *testing.T) {
 	t.Parallel()
 
@@ -5858,6 +6065,7 @@ func TestNewRPCPendingTransactionDynamicFee(t *testing.T) {
 	require.Equal(t, (*hexutil.Big)(tx.GasTipCap()), rpcTx.GasTipCap)
 }
 
+// TestNewRPCPendingTransactionWithCurrentHeader tests new rpc pending transaction with current header.
 func TestNewRPCPendingTransactionWithCurrentHeader(t *testing.T) {
 	t.Parallel()
 
@@ -5883,6 +6091,7 @@ func TestNewRPCPendingTransactionWithCurrentHeader(t *testing.T) {
 	require.Equal(t, (*hexutil.Big)(tx.GasTipCap()), rpcTx.GasTipCap)
 }
 
+// TestNewRPCPendingTransactionLegacyNilCurrent tests new rpc pending transaction legacy nil current.
 func TestNewRPCPendingTransactionLegacyNilCurrent(t *testing.T) {
 	t.Parallel()
 
@@ -5905,6 +6114,8 @@ func TestNewRPCPendingTransactionLegacyNilCurrent(t *testing.T) {
 	require.Nil(t, rpcTx.GasFeeCap)
 	require.Nil(t, rpcTx.GasTipCap)
 }
+
+// TestRPCTransactionHelpersOutOfRange tests rpc transaction helpers out of range.
 func TestRPCTransactionHelpersOutOfRange(t *testing.T) {
 	t.Parallel()
 
@@ -5929,6 +6140,8 @@ func TestRPCTransactionHelpersOutOfRange(t *testing.T) {
 	raw := newRPCRawTransactionFromBlockIndex(block, 1)
 	require.Nil(t, raw)
 }
+
+// TestRPCTransactionHelpersFromBlockIndex tests rpc transaction helpers from block index.
 func TestRPCTransactionHelpersFromBlockIndex(t *testing.T) {
 	t.Parallel()
 
@@ -5971,6 +6184,8 @@ func TestRPCTransactionHelpersFromBlockIndex(t *testing.T) {
 	raw := newRPCRawTransactionFromBlockIndex(block, 0)
 	require.Equal(t, hexutil.Bytes(wantRaw), raw)
 }
+
+// TestCheckTxFee tests check tx fee.
 func TestCheckTxFee(t *testing.T) {
 	t.Parallel()
 
@@ -5991,6 +6206,8 @@ func TestCheckTxFee(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorContains(t, err, "exceeds the configured cap")
 }
+
+// TestRPCMarshalBlockUncles tests rpc marshal block uncles.
 func TestRPCMarshalBlockUncles(t *testing.T) {
 	t.Parallel()
 
@@ -6009,6 +6226,7 @@ func TestRPCMarshalBlockUncles(t *testing.T) {
 	require.Equal(t, uncle.Hash(), uncles[0])
 }
 
+// TestBlockChainAPIBasic tests block chain api basic.
 func TestBlockChainAPIBasic(t *testing.T) {
 	t.Parallel()
 
@@ -6050,6 +6268,7 @@ func TestBlockChainAPIBasic(t *testing.T) {
 	require.ErrorContains(t, err, "state unavailable")
 }
 
+// TestBlockChainAPIGetRewardByHash tests block chain api get reward by hash.
 func TestBlockChainAPIGetRewardByHash(t *testing.T) {
 	t.Parallel()
 
@@ -6070,6 +6289,7 @@ func TestBlockChainAPIGetRewardByHash(t *testing.T) {
 	require.Equal(t, reward, got)
 }
 
+// TestGetTransactionAndReceiptProofBasicErrors tests get transaction and receipt proof basic errors.
 func TestGetTransactionAndReceiptProofBasicErrors(t *testing.T) {
 	t.Parallel()
 
@@ -6162,6 +6382,7 @@ func TestGetTransactionAndReceiptProofBasicErrors(t *testing.T) {
 	require.Nil(t, proof)
 }
 
+// TestGetTransactionAndReceiptProofSuccess tests get transaction and receipt proof success.
 func TestGetTransactionAndReceiptProofSuccess(t *testing.T) {
 	t.Parallel()
 
@@ -6214,6 +6435,7 @@ func TestGetTransactionAndReceiptProofSuccess(t *testing.T) {
 	require.NotEmpty(t, proof["receiptProofValues"])
 }
 
+// TestBlockChainAPIGetCodeAndStorageAt tests block chain api get code and storage at.
 func TestBlockChainAPIGetCodeAndStorageAt(t *testing.T) {
 	t.Parallel()
 
@@ -6268,6 +6490,7 @@ func TestBlockChainAPIGetCodeAndStorageAt(t *testing.T) {
 	require.ErrorContains(t, err, "state unavailable")
 }
 
+// TestBlockChainAPIGetAccountInfo tests block chain api get account info.
 func TestBlockChainAPIGetAccountInfo(t *testing.T) {
 	t.Parallel()
 
@@ -6309,6 +6532,7 @@ func TestBlockChainAPIGetAccountInfo(t *testing.T) {
 	require.ErrorContains(t, err, "state unavailable")
 }
 
+// TestSimulateV1StateBuildUpAcrossBlocks tests simulate v 1 state build up across blocks.
 func TestSimulateV1StateBuildUpAcrossBlocks(t *testing.T) {
 	t.Parallel()
 
@@ -6379,6 +6603,7 @@ func TestSimulateV1StateBuildUpAcrossBlocks(t *testing.T) {
 	require.Equal(t, "0x1", summary[1].Calls[0].Status)
 }
 
+// TestSimulateV1FillsBlockNumberGaps tests simulate v 1 fills block number gaps.
 func TestSimulateV1FillsBlockNumberGaps(t *testing.T) {
 	t.Parallel()
 
@@ -6416,6 +6641,7 @@ func TestSimulateV1FillsBlockNumberGaps(t *testing.T) {
 	require.Equal(t, []blockSummary{{Number: "0x1"}, {Number: "0x2"}, {Number: "0x3"}}, summary)
 }
 
+// TestSimulateV1ValidationRejectsHighNonce tests simulate v 1 validation rejects high nonce.
 func TestSimulateV1ValidationRejectsHighNonce(t *testing.T) {
 	t.Parallel()
 
@@ -6464,6 +6690,7 @@ func TestSimulateV1ValidationRejectsHighNonce(t *testing.T) {
 	require.Equal(t, errCodeNonceTooHigh, txErr.Code)
 }
 
+// TestSimulateV1ValidationFeeCapsSuccess tests simulate v 1 validation fee caps success.
 func TestSimulateV1ValidationFeeCapsSuccess(t *testing.T) {
 	t.Parallel()
 
@@ -6530,6 +6757,7 @@ func TestSimulateV1ValidationFeeCapsSuccess(t *testing.T) {
 	require.Equal(t, "0x1", summary[0].Calls[0].Status)
 }
 
+// TestSimulateV1ValidationRejectsMixedFeeStyle tests simulate v 1 validation rejects mixed fee style.
 func TestSimulateV1ValidationRejectsMixedFeeStyle(t *testing.T) {
 	t.Parallel()
 
@@ -6576,6 +6804,7 @@ func TestSimulateV1ValidationRejectsMixedFeeStyle(t *testing.T) {
 	require.ErrorContains(t, err, "both gasPrice and (maxFeePerGas or maxPriorityFeePerGas) specified")
 }
 
+// TestSimulateV1BaseFeeNonValidationMode tests simulate v 1 base fee non validation mode.
 func TestSimulateV1BaseFeeNonValidationMode(t *testing.T) {
 	t.Parallel()
 
@@ -6680,6 +6909,7 @@ func TestSimulateV1BaseFeeNonValidationMode(t *testing.T) {
 	require.Equal(t, "invalid opcode: BASEFEE", summary[1].Calls[1].Error.Message)
 }
 
+// TestSimulateV1InvalidTimestampOrder tests simulate v 1 invalid timestamp order.
 func TestSimulateV1InvalidTimestampOrder(t *testing.T) {
 	t.Parallel()
 
@@ -6692,6 +6922,7 @@ func TestSimulateV1InvalidTimestampOrder(t *testing.T) {
 	require.ErrorContains(t, err, "block timestamps must be in order")
 }
 
+// TestSimulateV1TooManyBlocksByOverrideNumber tests simulate v 1 too many blocks by override number.
 func TestSimulateV1TooManyBlocksByOverrideNumber(t *testing.T) {
 	t.Parallel()
 
@@ -6705,6 +6936,7 @@ func TestSimulateV1TooManyBlocksByOverrideNumber(t *testing.T) {
 	require.ErrorContains(t, err, "too many blocks")
 }
 
+// TestSimulateV1CallLimitPerBlock tests simulate v 1 call limit per block.
 func TestSimulateV1CallLimitPerBlock(t *testing.T) {
 	t.Parallel()
 
@@ -6723,6 +6955,7 @@ func TestSimulateV1CallLimitPerBlock(t *testing.T) {
 	require.Equal(t, errCodeClientLimitExceeded, rpcErr.ErrorCode())
 }
 
+// TestSimulateV1CallLimitTotal tests simulate v 1 call limit total.
 func TestSimulateV1CallLimitTotal(t *testing.T) {
 	t.Parallel()
 

@@ -63,7 +63,8 @@ var Defaults = Config{
 type Config struct {
 	// The genesis block, which is inserted if the database is empty.
 	// If nil, the Ethereum main net block is used.
-	Genesis *core.Genesis `toml:",omitempty"`
+	Genesis                    *core.Genesis `toml:",omitempty"`
+	AllowBuiltInCustomRecovery bool          `toml:",omitempty"`
 
 	// Network ID separates blockchains on the peer-to-peer networking level. When left
 	// zero, the chain ID is used as network ID.

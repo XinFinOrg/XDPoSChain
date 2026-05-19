@@ -49,9 +49,13 @@ var (
 	acc4Addr   = crypto.PubkeyToAddress(acc4Key.PublicKey)
 )
 
+// TestValidator tests validator.
 func TestValidator(t *testing.T) {
-	contractBackend := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: big.NewInt(1000000000)}}, 10000000, params.TestXDPoSMockChainConfig)
-	transactOpts := bind.NewKeyedTransactor(key)
+	contractBackend := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: big.NewInt(0).Mul(big.NewInt(1e18), big.NewInt(1000))}}, 10000000, params.TestXDPoSMockChainConfig)
+	transactOpts, err := bind.NewKeyedTransactorWithChainID(key, params.TestXDPoSMockChainConfig.ChainID)
+	if err != nil {
+		t.Fatalf("can't create transactor: %v", err)
+	}
 
 	validatorCap := new(big.Int)
 	validatorCap.SetString("50000000000000000000000", 10)
@@ -85,16 +89,26 @@ func TestValidator(t *testing.T) {
 	contractBackend.Commit()
 }
 
+// TestRewardBalance tests reward balance.
 func TestRewardBalance(t *testing.T) {
 	contractBackend := backends.NewXDCSimulatedBackend(types.GenesisAlloc{
-		acc1Addr: {Balance: new(big.Int).SetUint64(10000000)},
-		acc2Addr: {Balance: new(big.Int).SetUint64(10000000)},
-		acc4Addr: {Balance: new(big.Int).SetUint64(10000000)},
+		acc1Addr: {Balance: big.NewInt(0).Mul(big.NewInt(1e18), big.NewInt(1000))},
+		acc2Addr: {Balance: big.NewInt(0).Mul(big.NewInt(1e18), big.NewInt(1000))},
+		acc4Addr: {Balance: big.NewInt(0).Mul(big.NewInt(1e18), big.NewInt(1000))},
 	}, 42000000, params.TestXDPoSMockChainConfig)
-	acc1Opts := bind.NewKeyedTransactor(acc1Key)
-	acc2Opts := bind.NewKeyedTransactor(acc2Key)
+	acc1Opts, err := bind.NewKeyedTransactorWithChainID(acc1Key, params.TestXDPoSMockChainConfig.ChainID)
+	if err != nil {
+		t.Fatalf("can't create acc1 transactor: %v", err)
+	}
+	acc2Opts, err := bind.NewKeyedTransactorWithChainID(acc2Key, params.TestXDPoSMockChainConfig.ChainID)
+	if err != nil {
+		t.Fatalf("can't create acc2 transactor: %v", err)
+	}
 	accounts := []*bind.TransactOpts{acc1Opts, acc2Opts}
-	transactOpts := bind.NewKeyedTransactor(acc1Key)
+	transactOpts, err := bind.NewKeyedTransactorWithChainID(acc1Key, params.TestXDPoSMockChainConfig.ChainID)
+	if err != nil {
+		t.Fatalf("can't create deploy transactor: %v", err)
+	}
 
 	// validatorAddr, _, baseValidator, err := contract.DeployXDCValidator(transactOpts, contractBackend, big.NewInt(50000), big.NewInt(99), big.NewInt(100), big.NewInt(100))
 	validatorCap := new(big.Int)
@@ -117,7 +131,10 @@ func TestRewardBalance(t *testing.T) {
 	contractBackend.Commit()
 
 	// Propose master node acc3Addr.
-	opts := bind.NewKeyedTransactor(acc4Key)
+	opts, err := bind.NewKeyedTransactorWithChainID(acc4Key, params.TestXDPoSMockChainConfig.ChainID)
+	if err != nil {
+		t.Fatalf("can't create proposer transactor: %v", err)
+	}
 	opts.Value = new(big.Int).SetUint64(50000)
 	acc4Validator, _ := NewValidator(opts, validatorAddr, contractBackend)
 	acc4Validator.Propose(acc3Addr)
@@ -255,7 +272,7 @@ func toyVoteTx(t *testing.T, nonce uint64, amount *big.Int, to, addr common.Addr
 	vote := "6dd7d8ea" // VoteMethod = "0x6dd7d8ea"
 	action := fmt.Sprintf("%s%s%s", vote, "000000000000000000000000", addr.String()[3:])
 	data := common.Hex2Bytes(action)
-	gasPrice := big.NewInt(0)
+	gasPrice := big.NewInt(20_000_000_000)
 	tx := types.NewTransaction(nonce, to, amount, 5000000, gasPrice, data)
 	signedTX, err := types.SignTx(tx, types.FrontierSigner{}, acc4Key)
 	if err != nil {
@@ -263,19 +280,24 @@ func toyVoteTx(t *testing.T, nonce uint64, amount *big.Int, to, addr common.Addr
 	}
 	return signedTX
 }
+
+// TestStatedbUtils tests statedb utils.
 func TestStatedbUtils(t *testing.T) {
 	validatorCap := new(big.Int)
 	validatorCap.SetString("50000000000000000000000", 10)
 	voteAmount := new(big.Int)
 	voteAmount.SetString("25000000000000000000000", 10)
 	genesisAlloc := types.GenesisAlloc{
-		addr:     {Balance: big.NewInt(1000000000)},
+		addr:     {Balance: big.NewInt(0).Mul(big.NewInt(1e18), big.NewInt(1000))},
 		acc1Addr: {Balance: validatorCap},
 		acc2Addr: {Balance: validatorCap},
 		acc4Addr: {Balance: validatorCap},
 	}
 	contractBackend := backends.NewXDCSimulatedBackend(genesisAlloc, 10000000, params.TestXDPoSMockChainConfig)
-	transactOpts := bind.NewKeyedTransactor(key)
+	transactOpts, err := bind.NewKeyedTransactorWithChainID(key, params.TestXDPoSMockChainConfig.ChainID)
+	if err != nil {
+		t.Fatalf("can't create transactor: %v", err)
+	}
 
 	validatorAddress, _, err := DeployValidator(transactOpts, contractBackend, []common.Address{addr, acc3Addr}, []*big.Int{validatorCap, validatorCap}, addr, nil, nil)
 	if err != nil {

@@ -29,6 +29,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/eth/tracers"
+	internalethapi "github.com/XinFinOrg/XDPoSChain/internal/ethapi"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/trie"
 )
@@ -36,6 +37,12 @@ import (
 // noopReleaser is returned in case there is no operation expected
 // for releasing state.
 var noopReleaser = tracers.StateReleaseFunc(func() {})
+
+// setStateChainConfig attaches the live blockchain config to statedb before
+// config-dependent state inspection.
+func (eth *Ethereum) setStateChainConfig(statedb *state.StateDB) (*state.StateDB, error) {
+	return internalethapi.AttachStateChainConfig(statedb, eth.blockchain.Config())
+}
 
 // StateAtBlock retrieves the state database associated with a certain block.
 // If no state is locally available for the given block, a number of blocks
@@ -72,6 +79,10 @@ func (eth *Ethereum) StateAtBlock(ctx context.Context, block *types.Block, reexe
 		// on top to prevent garbage collection and return a release
 		// function to deref it.
 		if statedb, err = eth.blockchain.StateAt(block.Root()); err == nil {
+			statedb, err = eth.setStateChainConfig(statedb)
+			if err != nil {
+				return nil, nil, err
+			}
 			statedb.Database().TrieDB().Reference(block.Root(), common.Hash{})
 			return statedb, func() {
 				statedb.Database().TrieDB().Dereference(block.Root())
@@ -86,7 +97,7 @@ func (eth *Ethereum) StateAtBlock(ctx context.Context, block *types.Block, reexe
 			// Create an ephemeral trie.Database for isolating the live one. Otherwise
 			// the internal junks created by tracing will be persisted into the disk.
 			database = state.NewDatabaseWithConfig(eth.chainDb, &trie.Config{Cache: 16})
-			if statedb, err = state.New(block.Root(), database); err == nil {
+			if statedb, err = state.NewWithChainConfig(block.Root(), database, eth.blockchain.Config()); err == nil {
 				log.Info("Found disk backend for state trie", "root", block.Root(), "number", block.Number())
 				return statedb, noopReleaser, nil
 			}
@@ -106,7 +117,7 @@ func (eth *Ethereum) StateAtBlock(ctx context.Context, block *types.Block, reexe
 		// otherwise we would rewind past a persisted block (specific corner case is
 		// chain tracing from the genesis).
 		if !readOnly {
-			statedb, err = state.New(current.Root(), database)
+			statedb, err = state.NewWithChainConfig(current.Root(), database, eth.blockchain.Config())
 			if err == nil {
 				return statedb, noopReleaser, nil
 			}
@@ -125,7 +136,7 @@ func (eth *Ethereum) StateAtBlock(ctx context.Context, block *types.Block, reexe
 			}
 			current = parent
 
-			statedb, err = state.New(current.Root(), database)
+			statedb, err = state.NewWithChainConfig(current.Root(), database, eth.blockchain.Config())
 			if err == nil {
 				break
 			}
@@ -170,7 +181,7 @@ func (eth *Ethereum) StateAtBlock(ctx context.Context, block *types.Block, reexe
 			return nil, nil, fmt.Errorf("stateAtBlock commit failed, number %d root %v: %w",
 				current.NumberU64(), current.Root().Hex(), err)
 		}
-		statedb, err = state.New(root, database)
+		statedb, err = state.NewWithChainConfig(root, database, eth.blockchain.Config())
 		if err != nil {
 			return nil, nil, fmt.Errorf("state reset after block %d failed: %v", current.NumberU64(), err)
 		}
@@ -185,6 +196,10 @@ func (eth *Ethereum) StateAtBlock(ctx context.Context, block *types.Block, reexe
 	if report {
 		nodes, imgs := database.TrieDB().Size()
 		log.Info("Historical state regenerated", "block", current.NumberU64(), "elapsed", time.Since(start), "nodes", nodes, "preimages", imgs)
+	}
+	statedb, err = eth.setStateChainConfig(statedb)
+	if err != nil {
+		return nil, nil, err
 	}
 	return statedb, func() { database.TrieDB().Dereference(block.Root()) }, nil
 }
@@ -229,7 +244,10 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 			}
 		}
 		// Assemble the transaction call message and return if the requested offset
-		msg, _ := core.TransactionToMessage(tx, signer, balance, block.Number(), block.BaseFee())
+		msg, err := core.TransactionToMessage(tx, signer, balance, block.Number(), block.BaseFee(), eth.blockchain.Config())
+		if err != nil {
+			return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction %#x failed: %v", tx.Hash(), err)
+		}
 
 		// Not yet the searched for transaction, execute on top of the current state
 		statedb.SetTxContext(tx.Hash(), idx)

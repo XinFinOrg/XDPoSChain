@@ -146,6 +146,16 @@ func (x *XDPoS_v1) verifyHeaderWithCache(chain consensus.ChainReader, header *ty
 	return err
 }
 
+// shouldDisableFullVerify reports whether this engine should skip expensive
+// full verification based on the active chain config instead of legacy global
+// network flags.
+func (x *XDPoS_v1) shouldDisableFullVerify() bool {
+	if x == nil || x.chainConfig == nil || x.chainConfig.ChainID == nil {
+		return false
+	}
+	return x.chainConfig.ChainID.Cmp(params.TestnetChainConfig.ChainID) == 0
+}
+
 // verifyHeader checks whether a header conforms to the consensus rules.The
 // caller may optionally pass in a batch of parents (ascending order) to avoid
 // looking those up from the database. This is useful for concurrently verifying
@@ -155,7 +165,7 @@ func (x *XDPoS_v1) verifyHeader(chain consensus.ChainReader, header *types.Heade
 	if x.config.SkipV1Validation {
 		return nil
 	}
-	if common.IsTestnet {
+	if x.shouldDisableFullVerify() {
 		fullVerify = false
 	}
 	if header.Number == nil {
@@ -792,7 +802,7 @@ func (x *XDPoS_v1) UpdateMasternodes(chain consensus.ChainReader, header *types.
 	// check if block number is increase ms checkpoint
 	if x.chainConfig.IsTIPIncreaseMasternodes(header.Number) || (x.config.V2.SwitchBlock != nil && header.Number.Cmp(x.config.V2.SwitchBlock) == 1) {
 		// using new masterndoes
-		maxMasternodes = common.MaxMasternodesV2
+		maxMasternodes = x.chainConfig.XDPoS.MaxMasternodesV2
 	} else {
 		// using old masterndoes
 		maxMasternodes = common.MaxMasternodes

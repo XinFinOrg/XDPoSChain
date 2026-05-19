@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 )
 
@@ -27,7 +28,9 @@ func TestTransactionRollbackBehavior(t *testing.T) {
 	tx0 := testSendSignedTx(t, testKey2, sim)
 	tx1 := testSendSignedTx(t, testKey2, sim)
 
-	sim.Rollback()
+	if err := sim.Rollback(); err != nil {
+		t.Fatalf("rollback failed: %v", err)
+	}
 
 	if pendingStateHasTx(client, btx0) || pendingStateHasTx(client, tx0) || pendingStateHasTx(client, tx1) {
 		t.Fatalf("all transactions were not rolled back")
@@ -41,6 +44,61 @@ func TestTransactionRollbackBehavior(t *testing.T) {
 
 	if !pendingStateHasTx(client, btx2) || !pendingStateHasTx(client, tx2) || !pendingStateHasTx(client, tx3) {
 		t.Fatalf("all post-rollback transactions were not included")
+	}
+}
+
+func TestSetPendingBlockReturnsErrorOnMissingState(t *testing.T) {
+	sim := New(types.GenesisAlloc{}, 10_000_000)
+	defer sim.Close()
+
+	stateDB, err := sim.blockchain.State()
+	if err != nil {
+		t.Fatalf("failed to load blockchain state: %v", err)
+	}
+	originalBlock := sim.pendingBlock
+	originalState := sim.pendingState
+	badBlock := types.NewBlockWithHeader(&types.Header{Root: common.HexToHash("0x1")})
+
+	err = sim.setPendingBlock(badBlock, stateDB.Database())
+	if err == nil {
+		t.Fatal("expected missing state error")
+	}
+	if sim.pendingBlock != originalBlock {
+		t.Fatal("pending block changed on rebuild failure")
+	}
+	if sim.pendingState != originalState {
+		t.Fatal("pending state changed on rebuild failure")
+	}
+}
+
+func TestSetPendingBlockAndReceiptsKeepsReceiptsOnFailure(t *testing.T) {
+	sim := New(types.GenesisAlloc{}, 10_000_000)
+	defer sim.Close()
+
+	stateDB, err := sim.blockchain.State()
+	if err != nil {
+		t.Fatalf("failed to load blockchain state: %v", err)
+	}
+	originalBlock := sim.pendingBlock
+	originalState := sim.pendingState
+	originalReceipts := types.Receipts{{TxHash: common.HexToHash("0x1")}}
+	sim.pendingReceipts = originalReceipts
+
+	badBlock := types.NewBlockWithHeader(&types.Header{Root: common.HexToHash("0x1")})
+	newReceipts := types.Receipts{{TxHash: common.HexToHash("0x2")}}
+
+	err = sim.setPendingBlockAndReceipts(badBlock, newReceipts, stateDB.Database())
+	if err == nil {
+		t.Fatal("expected missing state error")
+	}
+	if sim.pendingBlock != originalBlock {
+		t.Fatal("pending block changed on rebuild failure")
+	}
+	if sim.pendingState != originalState {
+		t.Fatal("pending state changed on rebuild failure")
+	}
+	if len(sim.pendingReceipts) != len(originalReceipts) || sim.pendingReceipts[0].TxHash != originalReceipts[0].TxHash {
+		t.Fatalf("pending receipts changed on rebuild failure: have %v want %v", sim.pendingReceipts, originalReceipts)
 	}
 }
 

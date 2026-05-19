@@ -19,7 +19,9 @@ package core
 import (
 	"fmt"
 	"math/big"
+	"testing"
 
+	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -27,6 +29,44 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
+
+// TestGenerateChainAddTxWithoutTRC21Issuer tests generate chain add tx without trc 21 issuer.
+func TestGenerateChainAddTxWithoutTRC21Issuer(t *testing.T) {
+	var (
+		key1, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		addr1   = crypto.PubkeyToAddress(key1.PublicKey)
+		addr2   = common.HexToAddress("0x00000000000000000000000000000000000000aa")
+		db      = rawdb.NewMemoryDatabase()
+	)
+	gspec := &Genesis{
+		Config: &params.ChainConfig{
+			ChainID:        big.NewInt(1337),
+			HomesteadBlock: new(big.Int),
+			Ethash:         new(params.EthashConfig),
+		},
+		Alloc: types.GenesisAlloc{addr1: {Balance: big.NewInt(1000000)}},
+	}
+	if !gspec.Config.TRC21IssuerSMC.IsZero() {
+		t.Fatal("expected TRC21 issuer to remain unset for this regression test")
+	}
+	genesis := gspec.MustCommit(db)
+
+	signer := types.HomesteadSigner{}
+	chain, _ := GenerateChain(gspec.Config, genesis, ethash.NewFaker(), db, 1, func(i int, gen *BlockGen) {
+		tx, err := types.SignTx(types.NewTransaction(gen.TxNonce(addr1), addr2, big.NewInt(1), params.TxGas, nil, nil), signer, key1)
+		if err != nil {
+			t.Fatalf("failed to sign transaction: %v", err)
+		}
+		gen.AddTx(tx)
+	})
+
+	if len(chain) != 1 {
+		t.Fatalf("unexpected chain length %d", len(chain))
+	}
+	if got := chain[0].Transactions().Len(); got != 1 {
+		t.Fatalf("unexpected tx count %d", got)
+	}
+}
 
 func ExampleGenerateChain() {
 	var (
@@ -39,10 +79,25 @@ func ExampleGenerateChain() {
 		db      = rawdb.NewMemoryDatabase()
 	)
 	// Ensure that key1 has some funds in the genesis block.
+	futureFork := big.NewInt(1_000_000_000)
 	gspec := &Genesis{
-		Config: &params.ChainConfig{HomesteadBlock: new(big.Int)},
-		Alloc:  types.GenesisAlloc{addr1: {Balance: big.NewInt(1000000)}},
+		Config: &params.ChainConfig{
+			ChainID:                big.NewInt(1337),
+			HomesteadBlock:         new(big.Int),
+			TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(params.EthashConfig),
+		},
+		Alloc: types.GenesisAlloc{addr1: {Balance: big.NewInt(1000000)}},
 	}
+	setXinFinForksToFuture(gspec.Config, futureFork)
+	config, err := resolveProvidedChainConfig(common.Hash{}, gspec.Config, builtInChainConfigMustMatch)
+	if err != nil {
+		panic(err)
+	}
+	gspec.Config = config
 	genesis := gspec.MustCommit(db)
 
 	// This call generates a chain of 5 blocks. The function runs for

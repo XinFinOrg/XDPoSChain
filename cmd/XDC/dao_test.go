@@ -26,18 +26,100 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 )
 
+const daoFutureForkConfig = `
+		"eip150Block" : 1000000000,
+		"eip155Block" : 1000000000,
+		"eip158Block" : 1000000000,
+		"byzantiumBlock" : 1000000000,
+		"constantinopleBlock" : 1000000000,
+		"petersburgBlock" : 1000000000,
+		"istanbulBlock" : 1000000000,
+		"tipSigningBlock" : 1000000000,
+		"tipRandomizeBlock" : 1000000000,
+		"tipIncreaseMasternodesBlock" : 1000000000,
+		"denylistBlock" : 1000000000,
+		"tipNoHalvingMNRewardBlock" : 1000000000,
+		"tipXDCXBlock" : 1000000000,
+		"tipXDCXLendingBlock" : 1000000000,
+		"tipXDCXCancellationFeeBlock" : 1000000000,
+		"tipTRC21FeeBlock" : 1000000000,
+		"gas50xBlock" : 1000000000,
+		"berlinBlock" : 1000000000,
+		"londonBlock" : 1000000000,
+		"mergeBlock" : 1000000000,
+		"shanghaiBlock" : 1000000000,
+		"tipXDCXMinerDisableBlock" : 1000000000,
+		"tipXDCXReceiverDisableBlock" : 1000000000,
+		"eip1559Block" : 1000000000,
+		"cancunBlock" : 1000000000,
+		"pragueBlock" : 1000000000,
+		"osakaBlock" : 1000000000,
+		"dynamicGasLimitBlock" : 1000000000,
+		"tipUpgradeRewardBlock" : 1000000000,
+		"tipUpgradePenaltyBlock" : 1000000000,
+		"tipEpochHalvingBlock" : 1000000000,
+		"trc21IssuerSMC" : "0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee",
+		"xdcxListingSMC" : "0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53",
+		"relayerRegistrationSMC" : "0x16c63b79f9C8784168103C0b74E6A59EC2de4a02",
+		"lendingRegistrationSMC" : "0x7d761afd7ff65a79e4173897594a194e3c506e57",`
+
+const daoXDPoSConfig = `
+		"XDPoS": {
+			"period": 2,
+			"epoch": 900,
+			"reward": 5000,
+			"rewardCheckpoint": 900,
+			"gap": 450,
+			"foundationWalletAddr": "0x0000000000000000000000000000000000000068",
+			"maxMasternodesV2": 108,
+			"v2": {
+				"switchEpoch": 1111111,
+				"switchBlock": 999999900,
+				"config": {
+					"maxMasternodes": 108,
+					"switchRound": 0,
+					"minePeriod": 2,
+					"timeoutSyncThreshold": 3,
+					"timeoutPeriod": 10,
+					"certificateThreshold": 0.667,
+					"expTimeoutConfig": {
+						"base": 1,
+						"maxExponent": 0
+					}
+				},
+				"allConfigs": {
+					"0": {
+						"maxMasternodes": 108,
+						"switchRound": 0,
+						"minePeriod": 2,
+						"timeoutSyncThreshold": 3,
+						"timeoutPeriod": 10,
+						"certificateThreshold": 0.667,
+						"expTimeoutConfig": {
+							"base": 1,
+							"maxExponent": 0
+						}
+					}
+				}
+			}
+		}`
+
 // Genesis block for nodes which don't care about the DAO fork (i.e. not configured)
 var daoOldGenesis = `{
 	"alloc"      : {},
 	"coinbase"   : "0x0000000000000000000000000000000000000000",
 	"difficulty" : "0x20000",
-	"extraData"  : "",
+	"extraData"  : "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
 	"gasLimit"   : "0x2fefd8",
 	"nonce"      : "0x0000000000000042",
 	"mixhash"    : "0x0000000000000000000000000000000000000000000000000000000000000000",
 	"parentHash" : "0x0000000000000000000000000000000000000000000000000000000000000000",
 	"timestamp"  : "0x00",
-	"config"     : {}
+	"config"     : {
+		"chainId" : 1337,
+	` + daoFutureForkConfig + `
+	` + daoXDPoSConfig + `
+	}
 }`
 
 // Genesis block for nodes which actively oppose the DAO fork
@@ -45,15 +127,18 @@ var daoNoForkGenesis = `{
 	"alloc"      : {},
 	"coinbase"   : "0x0000000000000000000000000000000000000000",
 	"difficulty" : "0x20000",
-	"extraData"  : "",
+	"extraData"  : "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
 	"gasLimit"   : "0x2fefd8",
 	"nonce"      : "0x0000000000000042",
 	"mixhash"    : "0x0000000000000000000000000000000000000000000000000000000000000000",
 	"parentHash" : "0x0000000000000000000000000000000000000000000000000000000000000000",
 	"timestamp"  : "0x00",
 	"config"     : {
+		"chainId" : 1337,
+	` + daoFutureForkConfig + `
 		"daoForkBlock"   : 314,
-		"daoForkSupport" : false
+		"daoForkSupport" : false,
+	` + daoXDPoSConfig + `
 	}
 }`
 
@@ -62,19 +147,21 @@ var daoProForkGenesis = `{
 	"alloc"      : {},
 	"coinbase"   : "0x0000000000000000000000000000000000000000",
 	"difficulty" : "0x20000",
-	"extraData"  : "",
+	"extraData"  : "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
 	"gasLimit"   : "0x2fefd8",
 	"nonce"      : "0x0000000000000042",
 	"mixhash"    : "0x0000000000000000000000000000000000000000000000000000000000000000",
 	"parentHash" : "0x0000000000000000000000000000000000000000000000000000000000000000",
 	"timestamp"  : "0x00",
 	"config"     : {
+		"chainId" : 1337,
+	` + daoFutureForkConfig + `
 		"daoForkBlock"   : 314,
-		"daoForkSupport" : true
+		"daoForkSupport" : true,
+	` + daoXDPoSConfig + `
 	}
 }`
 
-var daoGenesisHash = common.HexToHash("29a4b5d743bfbda3a7461974d49c62bf23ba5df9c8b01de8256e2ac2a9ae1cd8")
 var daoGenesisForkBlock = big.NewInt(314)
 
 // TestDAOForkBlockNewChain tests that the DAO hard-fork number and the nodes support/opposition is correctly
@@ -122,9 +209,10 @@ func testDAOForkBlockNewChain(t *testing.T, test int, genesis string, expectBloc
 	}
 	defer db.Close()
 
-	genesisHash := common.HexToHash("8d13370621558f4ed0da587934473c0404729f28b0ff1d50e5fdd840457a2f17")
-	if genesis != "" {
-		genesisHash = daoGenesisHash
+	genesisHash := rawdb.ReadCanonicalHash(db, 0)
+	if genesisHash == (common.Hash{}) {
+		t.Errorf("test %d: failed to read canonical genesis hash", test)
+		return
 	}
 	config, err := rawdb.ReadChainConfig(db, genesisHash)
 	if err != nil {

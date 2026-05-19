@@ -27,7 +27,7 @@ import (
 
 func testConfigEip1559() *params.ChainConfig {
 	config := *params.TestChainConfig
-	config.Eip1559Block = big.NewInt(1)
+	config.EIP1559Block = big.NewInt(1)
 	return &config
 }
 

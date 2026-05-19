@@ -163,7 +163,8 @@ func TestVerifyChainReaderReusesExistingWrapper(t *testing.T) {
 func TestVerifyHeadersMixedWithNilChainDoesNotPanic(t *testing.T) {
 	database := rawdb.NewMemoryDatabase()
 	config := params.TestXDPoSMockChainConfig
-	engine := New(config, database)
+	engine, err := New(config, database)
+	assert.NoError(t, err)
 
 	headers := []*types.Header{
 		{Number: big.NewInt(900)},
@@ -185,7 +186,8 @@ func TestVerifyHeadersMixedWithNilChainDoesNotPanic(t *testing.T) {
 func TestVerifyHeadersMixedEmitsV1ThenV2(t *testing.T) {
 	database := rawdb.NewMemoryDatabase()
 	config := params.TestXDPoSMockChainConfig
-	engine := New(config, database)
+	engine, err := New(config, database)
+	assert.NoError(t, err)
 
 	base := &stubChainReader{
 		config: config,

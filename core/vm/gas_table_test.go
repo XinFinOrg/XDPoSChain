@@ -33,6 +33,7 @@ import (
 	"github.com/holiman/uint256"
 )
 
+// TestMemoryGasCost tests memory gas cost.
 func TestMemoryGasCost(t *testing.T) {
 	tests := []struct {
 		size     uint64
@@ -82,6 +83,7 @@ var eip2200Tests = []struct {
 	{1, 2307, "0x6001600055", 806, 0, nil},                                     // 1 -> 1 (2301 sentry + 2xPUSH)
 }
 
+// TestEIP2200 tests eip 2200.
 func TestEIP2200(t *testing.T) {
 	for i, tt := range eip2200Tests {
 		address := common.BytesToAddress([]byte("contract"))
@@ -133,6 +135,7 @@ func (s *countingStateDB) GetStateAndCommittedState(addr common.Address, key com
 	return s.StateDB.GetStateAndCommittedState(addr, key)
 }
 
+// TestEIP2200UsesCombinedStateGetter tests eip 2200 uses combined state getter.
 func TestEIP2200UsesCombinedStateGetter(t *testing.T) {
 	address := common.BytesToAddress([]byte("contract"))
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
@@ -184,6 +187,7 @@ var createGasTests = []struct {
 	// This case is trying to deploy code exceeding Osaka limit
 	{"0x60006201000160006000f5" + "600052" + "60206000F3", true, 32024, 100000}}
 
+// TestCreateGas tests create gas.
 func TestCreateGas(t *testing.T) {
 	for i, tt := range createGasTests {
 		var gasUsed = uint64(0)
@@ -199,7 +203,12 @@ func TestCreateGas(t *testing.T) {
 				BlockNumber: big.NewInt(0),
 			}
 			config := Config{}
-			chainConfig := params.AllEthashProtocolChanges
+			legacyConfig := *params.AllEthashProtocolChanges
+			legacyConfig.EIP1559Block = nil
+			legacyConfig.CancunBlock = nil
+			legacyConfig.PragueBlock = nil
+			legacyConfig.OsakaBlock = nil
+			chainConfig := &legacyConfig
 			if tt.eip3860 {
 				config.ExtraEips = []int{3860}
 				chainConfig = params.MergedTestChainConfig

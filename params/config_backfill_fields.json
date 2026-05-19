@@ -1,0 +1,295 @@
+[
+  {
+    "name": "ChainID",
+    "jsonKey": "chainId",
+    "backfillSet": "common"
+  },
+  {
+    "name": "HomesteadBlock",
+    "jsonKey": "homesteadBlock",
+    "backfillSet": "common",
+    "forkOrder": 1,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "TIP2019Block",
+    "jsonKey": "tip2019Block",
+    "backfillSet": "builtin",
+    "customMigrated": true,
+    "xdcSpecific": true,
+    "forkOrder": 2,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "DAOForkBlock",
+    "jsonKey": "daoForkBlock",
+    "backfillSet": "common",
+    "forkOrder": 3,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "EIP150Block",
+    "jsonKey": "eip150Block",
+    "backfillSet": "common",
+    "forkOrder": 4,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "EIP155Block",
+    "jsonKey": "eip155Block",
+    "backfillSet": "common",
+    "forkOrder": 5,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "EIP158Block",
+    "jsonKey": "eip158Block",
+    "backfillSet": "common",
+    "forkOrder": 6,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "ByzantiumBlock",
+    "jsonKey": "byzantiumBlock",
+    "backfillSet": "common",
+    "forkOrder": 7,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "ConstantinopleBlock",
+    "jsonKey": "constantinopleBlock",
+    "backfillSet": "common",
+    "forkOrder": 8,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "PetersburgBlock",
+    "jsonKey": "petersburgBlock",
+    "backfillSet": "common",
+    "forkOrder": 9,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "IstanbulBlock",
+    "jsonKey": "istanbulBlock",
+    "backfillSet": "common",
+    "forkOrder": 10,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "TIPSigningBlock",
+    "jsonKey": "tipSigningBlock",
+    "backfillSet": "builtin",
+    "customMigrated": true,
+    "xdcSpecific": true,
+    "forkOrder": 11,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "TIPRandomizeBlock",
+    "jsonKey": "tipRandomizeBlock",
+    "backfillSet": "builtin",
+    "customMigrated": true,
+    "xdcSpecific": true,
+    "forkOrder": 12,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "TIPIncreaseMasternodesBlock",
+    "jsonKey": "tipIncreaseMasternodesBlock",
+    "backfillSet": "builtin",
+    "customMigrated": true,
+    "xdcSpecific": true,
+    "forkOrder": 13,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "DenylistBlock",
+    "jsonKey": "denylistBlock",
+    "backfillSet": "builtin",
+    "customMigrated": true,
+    "xdcSpecific": true,
+    "forkOrder": 14,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "TIPNoHalvingMNRewardBlock",
+    "jsonKey": "tipNoHalvingMNRewardBlock",
+    "backfillSet": "builtin",
+    "customMigrated": true,
+    "xdcSpecific": true,
+    "forkOrder": 15,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "TIPXDCXBlock",
+    "jsonKey": "tipXDCXBlock",
+    "backfillSet": "builtin",
+    "customMigrated": true,
+    "xdcSpecific": true,
+    "forkOrder": 16,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "TIPXDCXLendingBlock",
+    "jsonKey": "tipXDCXLendingBlock",
+    "backfillSet": "builtin",
+    "customMigrated": true,
+    "xdcSpecific": true,
+    "forkOrder": 17,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "TIPXDCXCancellationFeeBlock",
+    "jsonKey": "tipXDCXCancellationFeeBlock",
+    "backfillSet": "builtin",
+    "customMigrated": true,
+    "xdcSpecific": true,
+    "forkOrder": 18,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "TIPTRC21FeeBlock",
+    "jsonKey": "tipTRC21FeeBlock",
+    "backfillSet": "builtin",
+    "customMigrated": true,
+    "xdcSpecific": true,
+    "forkOrder": 19,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "BerlinBlock",
+    "jsonKey": "berlinBlock",
+    "backfillSet": "builtin",
+    "forkOrder": 20,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "LondonBlock",
+    "jsonKey": "londonBlock",
+    "backfillSet": "builtin",
+    "forkOrder": 21,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "MergeBlock",
+    "jsonKey": "mergeBlock",
+    "backfillSet": "builtin",
+    "forkOrder": 22,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "ShanghaiBlock",
+    "jsonKey": "shanghaiBlock",
+    "backfillSet": "builtin",
+    "forkOrder": 23,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "EIP1559Block",
+    "jsonKey": "eip1559Block",
+    "backfillSet": "builtin",
+    "forkOrder": 26,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "CancunBlock",
+    "jsonKey": "cancunBlock",
+    "backfillSet": "builtin",
+    "forkOrder": 27,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "PragueBlock",
+    "jsonKey": "pragueBlock",
+    "backfillSet": "builtin",
+    "forkOrder": 28,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "OsakaBlock",
+    "jsonKey": "osakaBlock",
+    "backfillSet": "builtin",
+    "forkOrder": 29,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "Gas50xBlock",
+    "jsonKey": "gas50xBlock",
+    "backfillSet": "builtin",
+    "customMigrated": true,
+    "xdcSpecific": true
+  },
+  {
+    "name": "TIPXDCXMinerDisableBlock",
+    "jsonKey": "tipXDCXMinerDisableBlock",
+    "backfillSet": "builtin",
+    "xdcSpecific": true,
+    "forkOrder": 24,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "TIPXDCXReceiverDisableBlock",
+    "jsonKey": "tipXDCXReceiverDisableBlock",
+    "backfillSet": "builtin",
+    "xdcSpecific": true,
+    "forkOrder": 25,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "DynamicGasLimitBlock",
+    "jsonKey": "dynamicGasLimitBlock",
+    "backfillSet": "builtin",
+    "xdcSpecific": true,
+    "forkOrder": 30,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "TIPUpgradeRewardBlock",
+    "jsonKey": "tipUpgradeRewardBlock",
+    "backfillSet": "builtin",
+    "xdcSpecific": true,
+    "forkOrder": 31,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "TIPUpgradePenaltyBlock",
+    "jsonKey": "tipUpgradePenaltyBlock",
+    "backfillSet": "builtin",
+    "xdcSpecific": true,
+    "forkOrder": 32,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "TIPEpochHalvingBlock",
+    "jsonKey": "tipEpochHalvingBlock",
+    "backfillSet": "builtin",
+    "xdcSpecific": true,
+    "forkOrder": 33,
+    "forkOrderOptional": true
+  },
+  {
+    "kind": "address",
+    "name": "TRC21IssuerSMC",
+    "jsonKey": "trc21IssuerSMC",
+    "compatField": "TIPTRC21FeeBlock"
+  },
+  {
+    "kind": "address",
+    "name": "XDCXListingSMC",
+    "jsonKey": "xdcxListingSMC",
+    "compatField": "TIPXDCXBlock"
+  },
+  {
+    "kind": "address",
+    "name": "RelayerRegistrationSMC",
+    "jsonKey": "relayerRegistrationSMC",
+    "compatField": "TIPXDCXBlock"
+  },
+  {
+    "kind": "address",
+    "name": "LendingRegistrationSMC",
+    "jsonKey": "lendingRegistrationSMC",
+    "compatField": "TIPXDCXLendingBlock"
+  }
+]

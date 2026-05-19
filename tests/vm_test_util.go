@@ -39,7 +39,8 @@ import (
 // VMTest checks EVM execution without block or transaction context.
 // See https://github.com/ethereum/tests/wiki/VM-Tests for the test format specification.
 type VMTest struct {
-	json vmJSON
+	json        vmJSON
+	chainConfig *params.ChainConfig
 }
 
 func (t *VMTest) UnmarshalJSON(data []byte) error {
@@ -148,7 +149,11 @@ func (t *VMTest) newEVM(statedb *state.StateDB, vmconfig vm.Config) *vm.EVM {
 		GasLimit:    t.json.Env.GasLimit,
 		Difficulty:  t.json.Env.Difficulty,
 	}
-	evm := vm.NewEVM(context, statedb, nil, params.MainnetChainConfig, vmconfig)
+	chainConfig := t.chainConfig
+	if chainConfig == nil {
+		chainConfig = params.MainnetChainConfig
+	}
+	evm := vm.NewEVM(context, statedb, nil, chainConfig, vmconfig)
 	evm.SetTxContext(txContext)
 	return evm
 }

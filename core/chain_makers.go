@@ -96,8 +96,8 @@ func (b *BlockGen) addTx(bc *BlockChain, vmConfig vm.Config, tx *types.Transacti
 	b.txs = append(b.txs, tx)
 	b.receipts = append(b.receipts, receipt)
 	if tokenFeeUsed {
-		fee := common.GetGasFee(b.header.Number.Uint64(), gas)
-		b.statedb.UpdateTRC21Fee(map[common.Address]*big.Int{*tx.To(): new(big.Int).Sub(feeCapacity[*tx.To()], new(big.Int).SetUint64(gas))}, fee)
+		fee := params.GetGasFee(b.header.Number.Uint64(), gas, b.config)
+		b.statedb.UpdateTRC21Fee(map[common.Address]*big.Int{*tx.To(): new(big.Int).Sub(feeCapacity[*tx.To()], fee)}, fee)
 	}
 }
 
@@ -265,7 +265,7 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 		return nil, nil
 	}
 	for i := 0; i < n; i++ {
-		statedb, err := state.New(parent.Root(), state.NewDatabase(db))
+		statedb, err := state.NewWithChainConfig(parent.Root(), state.NewDatabase(db), config)
 		if err != nil {
 			panic(err)
 		}

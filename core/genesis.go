@@ -17,7 +17,6 @@
 package core
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,8 +26,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/common/math"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
-	"github.com/XinFinOrg/XDPoSChain/core/state"
-	"github.com/XinFinOrg/XDPoSChain/core/tracing"
+	"github.com/XinFinOrg/XDPoSChain/core/startup"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
@@ -39,7 +37,13 @@ import (
 
 //go:generate go run github.com/fjl/gencodec -type Genesis -field-override genesisSpecMarshaling -out gen_genesis.go
 
-var errGenesisNoConfig = errors.New("genesis has no chain configuration")
+// Startup routing design notes, including the ASCII state map, live in
+// core/startup/doc.go to keep this file's implementation comments short.
+
+var (
+	errGenesisNoConfig       = errors.New("genesis has no chain configuration")
+	errGenesisConfigConflict = errors.New("provided genesis config conflicts with built-in chain config")
+)
 
 // Deprecated: use types.Account instead.
 type GenesisAccount = types.Account
@@ -68,91 +72,15 @@ type Genesis struct {
 	BaseFee    *big.Int    `json:"baseFeePerGas"`
 }
 
-func getGenesisState(db ethdb.Database, blockhash common.Hash) (alloc types.GenesisAlloc, err error) {
-	blob := rawdb.ReadGenesisStateSpec(db, blockhash)
-	if len(blob) != 0 {
-		if err := alloc.UnmarshalJSON(blob); err != nil {
-			return nil, err
+// copy returns a shallow copy of Genesis with an independent Config value.
+func (g *Genesis) copy() *Genesis {
+	if g != nil {
+		cpy := *g
+		if g.Config != nil {
+			cpy.Config = g.Config.Clone()
 		}
-
-		return alloc, nil
+		return &cpy
 	}
-
-	// Genesis allocation is missing and there are several possibilities:
-	// the node is legacy which doesn't persist the genesis allocation or
-	// the persisted allocation is just lost.
-	// - supported networks(mainnet, testnets), recover with defined allocations
-	// - private network, can't recover
-	var genesis *Genesis
-	switch blockhash {
-	case params.MainnetGenesisHash:
-		genesis = DefaultGenesisBlock()
-	case params.TestnetGenesisHash:
-		genesis = DefaultTestnetGenesisBlock()
-	case params.DevnetGenesisHash:
-		genesis = DefaultDevnetGenesisBlock()
-	}
-	if genesis != nil {
-		return genesis.Alloc, nil
-	}
-
-	return nil, nil
-}
-
-// hashAlloc computes the state root according to the genesis specification.
-func hashAlloc(ga *types.GenesisAlloc) (common.Hash, error) {
-	// Create an ephemeral in-memory database for computing hash,
-	// all the derived states will be discarded to not pollute disk.
-	db := state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), nil)
-	statedb, err := state.New(types.EmptyRootHash, db)
-	if err != nil {
-		return common.Hash{}, err
-	}
-	for addr, account := range *ga {
-		if account.Balance != nil {
-			statedb.AddBalance(addr, account.Balance, tracing.BalanceIncreaseGenesisBalance)
-		}
-		statedb.SetCode(addr, account.Code)
-		statedb.SetNonce(addr, account.Nonce, tracing.NonceChangeGenesis)
-		for key, value := range account.Storage {
-			statedb.SetState(addr, key, value)
-		}
-	}
-	return statedb.Commit(0, false)
-}
-
-// flushAlloc is very similar to hashAlloc, but the main difference is
-// all the generated states will be persisted into the given database.
-// Also, the genesis state specification will be flushed as well.
-func flushAlloc(ga *types.GenesisAlloc, db ethdb.Database, blockhash common.Hash) error {
-	statedb, err := state.New(types.EmptyRootHash, state.NewDatabase(db))
-	if err != nil {
-		return err
-	}
-	for addr, account := range *ga {
-		if account.Balance != nil {
-			statedb.AddBalance(addr, account.Balance, tracing.BalanceIncreaseGenesisBalance)
-		}
-		statedb.SetCode(addr, account.Code)
-		statedb.SetNonce(addr, account.Nonce, tracing.NonceChangeGenesis)
-		for key, value := range account.Storage {
-			statedb.SetState(addr, key, value)
-		}
-	}
-	root, err := statedb.Commit(0, false)
-	if err != nil {
-		return err
-	}
-	err = statedb.Database().TrieDB().Commit(root, true)
-	if err != nil {
-		return err
-	}
-	// Marshal the genesis state specification and persist.
-	blob, err := json.Marshal(ga)
-	if err != nil {
-		return err
-	}
-	rawdb.WriteGenesisStateSpec(db, blockhash, blob)
 	return nil
 }
 
@@ -175,187 +103,655 @@ type GenesisMismatchError struct {
 	Stored, New common.Hash
 }
 
+// Error implements error for GenesisMismatchError.
 func (e *GenesisMismatchError) Error() string {
 	return fmt.Sprintf("database contains incompatible genesis (have %x, new %x)", e.Stored, e.New)
 }
 
-// SetupGenesisBlock writes or updates the genesis block in db.
-// The block that will be used is:
+type chainConfigOrigin uint8
+
+const (
+	chainConfigOriginProvided chainConfigOrigin = iota
+	chainConfigOriginStored
+)
+
+type builtInChainConfigPolicy uint8
+
+const (
+	builtInChainConfigMustMatch builtInChainConfigPolicy = iota
+	builtInChainConfigAllowOverride
+)
+
+// builtInChainConfigPolicyForOverride picks strict or override policy for built-in hashes.
+func builtInChainConfigPolicyForOverride(allowCustomBuiltIn bool) builtInChainConfigPolicy {
+	if allowCustomBuiltIn {
+		return builtInChainConfigAllowOverride
+	}
+	return builtInChainConfigMustMatch
+}
+
+func builtInNetworkName(hash common.Hash) string {
+	switch hash {
+	case params.MainnetGenesisHash:
+		return "MAINNET"
+	case params.TestnetGenesisHash:
+		return "TESTNET"
+	case params.DevnetGenesisHash:
+		return "DEVNET"
+	default:
+		return "BUILTIN"
+	}
+}
+
+// builtInGenesisConfigConflictError wraps built-in conflicts with remediation guidance.
+func builtInGenesisConfigConflictError(hash common.Hash) error {
+	cfg := builtInChainConfigByHash(hash)
+	if cfg == nil {
+		return errGenesisConfigConflict
+	}
+	return fmt.Errorf("%w: same-hash custom overrides on built-in networks require --allow-builtin-config-override; builtin=%s chainId=%d; repair by starting from a fresh datadir: delete chaindata and reinitialize with the intended genesis, or rerun with --allow-builtin-config-override using the matching explicit genesis", errGenesisConfigConflict, builtInNetworkName(hash), cfg.ChainID)
+}
+
+// resolveProvidedChainConfig resolves a caller-supplied chain config for the
+// given genesis hash.
+func resolveProvidedChainConfig(hash common.Hash, cfg *params.ChainConfig, policy builtInChainConfigPolicy) (*params.ChainConfig, error) {
+	if cfg == nil {
+		return nil, nil
+	}
+	cfg = cfg.CloneForBackfill()
+	return resolveChainConfigForGenesisHash(hash, cfg, chainConfigOriginProvided, policy)
+}
+
+// resolveStoredChainConfig resolves a persisted chain config for the given
+// genesis hash.
+func resolveStoredChainConfig(hash common.Hash, cfg *params.ChainConfig) (*params.ChainConfig, error) {
+	if cfg == nil {
+		return nil, nil
+	}
+	return resolveChainConfigForGenesisHash(hash, cfg, chainConfigOriginStored, builtInChainConfigAllowOverride)
+}
+
+// resolveChainConfigForGenesisHash normalizes a chain config using the genesis
+// hash, the config origin, and the built-in policy for same-hash networks.
+func resolveChainConfigForGenesisHash(hash common.Hash, cfg *params.ChainConfig, origin chainConfigOrigin, policy builtInChainConfigPolicy) (*params.ChainConfig, error) {
+	if cfg == nil {
+		return nil, nil
+	}
+	if builtin := builtInBackfillSourceByHash(hash); builtin != nil {
+		hydrated := cfg.BackfillMissingFieldsFrom(builtin)
+		if hydrated == nil {
+			return nil, nil
+		}
+		switch origin {
+		case chainConfigOriginStored:
+			return hydrated, nil
+		case chainConfigOriginProvided:
+			equal, err := chainConfigJSONEqual(hydrated, builtin)
+			if err != nil {
+				return nil, err
+			}
+			if policy == builtInChainConfigMustMatch {
+				if !equal {
+					return nil, builtInGenesisConfigConflictError(hash)
+				}
+				return builtin.Clone(), nil
+			}
+			return hydrated, nil
+		default:
+			return nil, fmt.Errorf("unsupported chain config origin %d", origin)
+		}
+	}
+	if origin == chainConfigOriginStored {
+		if cfg.ChainID == nil {
+			return nil, fmt.Errorf("stored custom chain config missing chainId for genesis %s", hash.Hex())
+		}
+		return hydrateStoredCustomChainConfig(cfg), nil
+	}
+	hydrated := hydrateProvidedCustomChainConfig(cfg)
+	if hydrated == nil {
+		return nil, nil
+	}
+	return clearConsensusOptionalTestChainXDPoS(cfg, hydrated), nil
+}
+
+// hydrateProvidedCustomChainConfig resolves caller-supplied custom genesis
+// configs. The Localnet chain ID receives automatic Localnet defaults.
+// Other custom genesis files keep their explicit values authoritative, but
+// custom XDPoS configs still receive the narrow legacy private-chain
+// compatibility backfill for fields that older sparse genesis files never
+// declared explicitly.
+func hydrateProvidedCustomChainConfig(cfg *params.ChainConfig) *params.ChainConfig {
+	return hydrateCustomChainConfig(cfg, true)
+}
+
+// hydrateStoredCustomChainConfig resolves persisted custom genesis configs.
+// Besides the Localnet chain ID shortcut, it may apply the narrow legacy
+// compatibility backfill for stored private-chain XDPoS configs that used the
+// historical local/private defaults before the ChainConfig migration.
+func hydrateStoredCustomChainConfig(cfg *params.ChainConfig) *params.ChainConfig {
+	return hydrateCustomChainConfig(cfg, false)
+}
+
+// hydrateCustomChainConfig resolves custom configs and optionally applies the
+// consensus-optional test-chain XDPoS cleanup at this function boundary.
+func hydrateCustomChainConfig(cfg *params.ChainConfig, clearAtBoundary bool) *params.ChainConfig {
+	if cfg == nil {
+		return nil
+	}
+
+	var hydrated *params.ChainConfig
+	if localnet := localnetChainConfigByChainID(cfg.ChainID); localnet != nil {
+		hydrated = cfg.BackfillMissingFieldsFrom(localnet)
+		if hydrated == nil {
+			return nil
+		}
+		if hydrated.TIPTRC21FeeBlock == nil {
+			hydrated.TIPTRC21FeeBlock = new(big.Int)
+		}
+	} else {
+		hydrated = hydrateLegacyCompatibleCustomChainConfig(cfg)
+	}
+	if clearAtBoundary {
+		return clearConsensusOptionalTestChainXDPoS(cfg, hydrated)
+	}
+	return hydrated
+}
+
+// hydrateLegacyCompatibleCustomChainConfig backfills only the historical custom
+// migration fields that older XDPoS configs may have omitted from persisted
+// config.
+func hydrateLegacyCompatibleCustomChainConfig(cfg *params.ChainConfig) *params.ChainConfig {
+	if cfg == nil {
+		return nil
+	}
+	hydrated := cfg.Clone()
+	if backfillSource := customChainConfigBackfillSource(cfg); backfillSource != nil {
+		hydrated = cfg.BackfillCustomMigratedFieldsFrom(backfillSource)
+		if hydrated == nil {
+			return nil
+		}
+	}
+	return hydrated
+}
+
+// customChainConfigBackfillSource supplies the narrow custom-network
+// compatibility source used to fill only the migrated XDC defaults and
+// XDPoS.MaxMasternodesV2.
+func customChainConfigBackfillSource(cfg *params.ChainConfig) *params.ChainConfig {
+	if cfg == nil || cfg.XDPoS == nil {
+		return nil
+	}
+	return params.LocalnetChainConfig
+}
+
+// localnetChainConfigByChainID returns the Localnet config when chainID maps to
+// the built-in Localnet profile.
+func localnetChainConfigByChainID(chainID *big.Int) *params.ChainConfig {
+	if chainID == nil {
+		return nil
+	}
+	if chainID.Cmp(params.LocalnetChainConfig.ChainID) == 0 {
+		return params.LocalnetChainConfig
+	}
+	return nil
+}
+
+// clearConsensusOptionalTestChainXDPoS strips injected XDPoS for consensus-optional test chains.
+func clearConsensusOptionalTestChainXDPoS(cfg, hydrated *params.ChainConfig) *params.ChainConfig {
+	if hydrated == nil {
+		return nil
+	}
+	if cfg.XDPoS == nil && cfg.Ethash == nil && cfg.Clique == nil && isConsensusOptionalTestChain(cfg.ChainID) {
+		hydrated.XDPoS = nil
+	}
+	return hydrated
+}
+
+// isConsensusOptionalTestChain reports whether chainID allows a missing engine.
+func isConsensusOptionalTestChain(chainID *big.Int) bool {
+	if chainID == nil || !chainID.IsUint64() {
+		return false
+	}
+	switch chainID.Uint64() {
+	case params.ConsensusOptionalTestChainID:
+		return true
+	default:
+		return false
+	}
+}
+
+// builtInChainConfigByHash returns the bundled config for a known genesis hash.
+func builtInChainConfigByHash(hash common.Hash) *params.ChainConfig {
+	switch hash {
+	case params.MainnetGenesisHash:
+		return params.XDCMainnetChainConfig
+	case params.TestnetGenesisHash:
+		return params.TestnetChainConfig
+	case params.DevnetGenesisHash:
+		return params.DevnetChainConfig
+	default:
+		return nil
+	}
+}
+
+// builtInBackfillSourceByHash returns the bundled chain config when the hash
+// resolves to a built-in genesis definition.
+func builtInBackfillSourceByHash(hash common.Hash) *params.ChainConfig {
+	genesis := builtInGenesisByHash(hash)
+	if genesis == nil || genesis.Config == nil {
+		return nil
+	}
+	return genesis.Config
+}
+
+// builtInGenesisByHash returns the bundled genesis for a known genesis hash.
+func builtInGenesisByHash(hash common.Hash) *Genesis {
+	switch hash {
+	case params.MainnetGenesisHash:
+		return DefaultGenesisBlock()
+	case params.TestnetGenesisHash:
+		return DefaultTestnetGenesisBlock()
+	case params.DevnetGenesisHash:
+		return DefaultDevnetGenesisBlock()
+	default:
+		return nil
+	}
+}
+
+// shouldPreferStoredOverrideConfig keeps a trusted stored override when
+// the provided genesis only restates the bundled built-in config.
 //
-//	                     genesis == nil       genesis != nil
-//	                  +------------------------------------------
-//	db has no genesis |  main-net default  |  genesis
-//	db has genesis    |  from DB           |  genesis (if compatible)
-//
-// The stored chain configuration will be updated if it is compatible (i.e. does not
-// specify a fork block below the local head block). In case of a conflict, the
-// error is a *params.ConfigCompatError and the new, unwritten config is returned.
-//
-// The returned chain configuration is never nil.
-func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig, common.Hash, error) {
-	if genesis != nil && genesis.Config == nil {
-		return params.AllEthashProtocolChanges, common.Hash{}, errGenesisNoConfig
+// The caller passes storedCfg after resolveStoredChainConfig has already
+// hydrated/backfilled any missing built-in fields. Equality here must use
+// chainConfigJSONEqual's strong semantic comparison: it takes the versioned
+// hashChainConfigSemantic fast path when possible and otherwise falls back to a
+// full structured Equal comparison instead of relying on digest equality alone.
+func shouldPreferStoredOverrideConfig(hash common.Hash, storedCfg *params.ChainConfig, genesis *Genesis) (bool, error) {
+	if storedCfg == nil || genesis == nil || genesis.Config == nil {
+		return false, nil
 	}
+	builtin := builtInChainConfigByHash(hash)
+	if builtin == nil {
+		return false, nil
+	}
+	equal, err := chainConfigJSONEqual(genesis.Config, builtin)
+	if err != nil {
+		return false, err
+	}
+	return equal, nil
+}
 
-	// Just commit the new block if there is no stored genesis block.
-	stored := rawdb.ReadCanonicalHash(db, 0)
-	if (stored == common.Hash{}) {
-		if genesis == nil {
-			log.Info("[SetupGenesisBlock] Writing default main-net genesis block")
-			genesis = DefaultGenesisBlock()
-		} else {
-			log.Info("[SetupGenesisBlock] Writing custom genesis block")
+// shouldAllowCustomBuiltInConfig reports whether a built-in genesis hash
+// may keep caller-supplied custom config values instead of canonicalizing to the bundled config.
+// The stored-config heuristic below is only for legacy pre-marker databases;
+// current databases must carry an explicit override marker instead of relying on inference.
+// Callers that merely restate the canonical built-in config stay on the strict
+// built-in path without error. Proven same-hash custom overrides, however,
+// return the recovery gate error so callers can surface the rejection reason.
+func shouldAllowCustomBuiltInConfig(db ethdb.Database, hash, providedHash common.Hash, providedCfg *params.ChainConfig, allowBuiltInCustomRecovery bool) (bool, error) {
+	if hash == (common.Hash{}) {
+		if builtInChainConfigByHash(providedHash) != nil {
+			if !allowBuiltInCustomRecovery {
+				_, err := resolveProvidedChainConfig(providedHash, providedCfg, builtInChainConfigMustMatch)
+				if err != nil {
+					return false, err
+				}
+				return false, nil
+			}
 		}
-		block, err := genesis.Commit(db)
-		if err != nil {
-			return genesis.Config, common.Hash{}, err
-		}
-		log.Info("[SetupGenesisBlock] genesis blockhash", "hash", block.Hash().Hex())
-		return genesis.Config, block.Hash(), err
+		return true, nil
 	}
+	trustedOverride, err := rawdb.ReadChainConfigOverride(db, hash)
+	if err != nil {
+		return false, err
+	}
+	if trustedOverride {
+		if err := requireBuiltInCustomRecovery(hash, allowBuiltInCustomRecovery); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if providedCfg != nil && providedHash == hash {
+		storedCfg, err := rawdb.ReadChainConfig(db, hash)
+		if err != nil && !errors.Is(err, rawdb.ErrChainConfigNotFound) {
+			return false, err
+		}
+		if storedCfg != nil {
+			storedCfg, err = resolveStoredChainConfig(hash, storedCfg)
+			if err != nil {
+				return false, err
+			}
+			legacyOverride, err := isLegacyStoredCustomBuiltInConfig(hash, storedCfg)
+			if err != nil {
+				return false, err
+			}
+			if legacyOverride {
+				providedCfg = providedCfg.CloneForBackfill()
+				resolvedProvidedCfg, err := resolveProvidedChainConfig(providedHash, providedCfg, builtInChainConfigAllowOverride)
+				if err != nil {
+					return false, err
+				}
+				equal, err := chainConfigJSONEqual(resolvedProvidedCfg, storedCfg)
+				if err != nil {
+					return false, err
+				}
+				if equal {
+					return true, nil
+				}
+			}
+		}
+	}
+	if _, err := rawdb.ReadChainConfig(db, hash); err != nil && !errors.Is(err, rawdb.ErrChainConfigNotFound) {
+		return false, err
+	}
+	return false, nil
+}
 
-	// We have the genesis block in database (perhaps in ancient database)
-	// but the corresponding state is missing.
-	header := rawdb.ReadHeader(db, stored, 0)
-	if header == nil {
-		log.Info("[SetupGenesisBlock] missing genesis header", "stored hash", stored.Hex())
-		cfg := genesis.configOrDefault(stored)
-		return cfg, stored, fmt.Errorf("missing genesis header for hash: %s", stored.Hex())
+// isLegacyStoredCustomBuiltInConfig reports whether a stored config should be
+// treated as a pre-marker same-hash custom override for a built-in genesis.
+// It is intentionally narrow and exists only to migrate old databases that
+// predate explicit override metadata.
+// Only configs whose chain ID differs from the bundled chain ID are promoted;
+// same-chain-ID drift remains a conflict.
+func isLegacyStoredCustomBuiltInConfig(hash common.Hash, cfg *params.ChainConfig) (bool, error) {
+	builtin := builtInChainConfigByHash(hash)
+	if builtin == nil || cfg == nil || cfg.ChainID == nil || builtin.ChainID == nil {
+		return false, nil
 	}
-	if _, err := state.New(header.Root, state.NewDatabaseWithConfig(db, nil)); err != nil {
-		if genesis == nil {
-			log.Info("[SetupGenesisBlock] missing genesis state, use default genesis block to recover", "hash", stored.Hex())
-			genesis = DefaultGenesisBlock()
-		}
-		// Ensure the stored genesis matches with the given one.
-		hash := genesis.ToBlock().Hash()
-		log.Info("[SetupGenesisBlock] doublecheck genesis block", "storedHash", stored.Hex(), "genesisHash", hash.Hex())
-		if hash != stored {
-			return genesis.Config, hash, &GenesisMismatchError{stored, hash}
-		}
-		block, err := genesis.Commit(db)
-		if err != nil {
-			return genesis.Config, hash, err
-		}
-		return genesis.Config, block.Hash(), nil
+	if cfg.ChainID.Cmp(builtin.ChainID) == 0 {
+		return false, nil
 	}
+	equal, err := chainConfigJSONEqual(cfg, builtin)
+	if err != nil {
+		return false, err
+	}
+	return !equal, nil
+}
 
-	// Check whether the genesis block is already written.
-	if genesis != nil {
-		hash := genesis.ToBlock().Hash()
-		log.Info("[SetupGenesisBlock] genesis != nil", "storedHash", stored.Hex(), "genesisHash", hash.Hex())
-		if hash != stored {
-			return genesis.Config, hash, &GenesisMismatchError{stored, hash}
-		}
+// annotateResolvedCustomBuiltInConfig marks and logs active built-in overrides.
+func annotateResolvedCustomBuiltInConfig(hash common.Hash, cfg *params.ChainConfig) {
+	if cfg == nil {
+		return
 	}
+	builtin := builtInChainConfigByHash(hash)
+	if builtin == nil {
+		cfg.SetBuiltInGenesisOverride(false)
+		return
+	}
+	equal, err := chainConfigJSONEqual(cfg, builtin)
+	if err != nil {
+		log.Error("Failed to evaluate custom override for built-in genesis", "hash", hash.Hex(), "err", err)
+		return
+	}
+	overrideActive := !equal
+	cfg.SetBuiltInGenesisOverride(overrideActive)
+	if overrideActive {
+		log.Warn("YOU ARE OVERRIDING BUILTIN CHAIN CONFIG", "builtin", builtInNetworkName(hash), "hash", hash.Hex(), "chainId", cfg.ChainID)
+	}
+}
 
-	// Get the existing chain configuration.
-	newcfg := genesis.configOrDefault(stored)
-	storedcfg, err := rawdb.ReadChainConfig(db, stored)
+type builtInChainConfigFacts struct {
+	hasBuiltInConfig        bool
+	trustedOverride         bool
+	storedMatchesBuiltIn    bool
+	candidateMatchesBuiltIn bool
+	allowStoredDriftRepair  bool
+}
+
+type builtInChainConfigAction struct {
+	canonicalizeToBuiltIn bool
+	terminalError         error
+}
+
+// decideBuiltInChainConfigAction resolves built-in canonicalization vs conflict outcomes.
+func decideBuiltInChainConfigAction(facts builtInChainConfigFacts) builtInChainConfigAction {
+	if !facts.hasBuiltInConfig || facts.trustedOverride {
+		return builtInChainConfigAction{}
+	}
+	if !facts.candidateMatchesBuiltIn {
+		return builtInChainConfigAction{terminalError: startup.ErrGenesisConfigConflict}
+	}
+	if facts.storedMatchesBuiltIn || facts.allowStoredDriftRepair {
+		return builtInChainConfigAction{canonicalizeToBuiltIn: true}
+	}
+	return builtInChainConfigAction{terminalError: startup.ErrGenesisConfigConflict}
+}
+
+// normalizeProvidedGenesisConfig clones and normalizes a caller-provided genesis config.
+func normalizeProvidedGenesisConfig(genesis *Genesis, policy builtInChainConfigPolicy) (*Genesis, common.Hash, error) {
+	if genesis == nil {
+		return nil, common.Hash{}, nil
+	}
+	genesis = genesis.copy()
+	if genesis.Config == nil {
+		return nil, common.Hash{}, errGenesisNoConfig
+	}
+	originalGenesisHash, err := genesis.Hash()
 	if err != nil {
 		return nil, common.Hash{}, err
 	}
-	if storedcfg == nil {
-		log.Warn("Found genesis block without chain config")
-		rawdb.WriteChainConfig(db, stored, newcfg)
-		return newcfg, stored, nil
-	}
-
-	// Special case: don't change the existing config of a non-xinfin chain if no new
-	// config is supplied. These chains would get AllProtocolChanges (and a compat error)
-	// if we just continued here.
-	if genesis == nil && newcfg == params.AllEthashProtocolChanges {
-		return storedcfg, stored, nil
-	}
-
-	// Check config compatibility and write the config. Compatibility errors
-	// are returned to the caller unless we're already at block zero.
-	height := rawdb.ReadHeaderNumber(db, rawdb.ReadHeadHeaderHash(db))
-	if height == nil {
-		return newcfg, stored, errors.New("missing block number for head header hash")
-	}
-	compatErr := storedcfg.CheckCompatible(newcfg, *height)
-	if compatErr != nil && *height != 0 && compatErr.RewindTo != 0 {
-		return newcfg, stored, compatErr
-	}
-	// Don't overwrite if the old is identical to the new
-	storedData, err := json.Marshal(storedcfg)
+	resolvedConfig, err := resolveProvidedChainConfig(originalGenesisHash, genesis.Config, policy)
 	if err != nil {
-		return newcfg, stored, fmt.Errorf("failed to marshal stored chain config: %w", err)
+		return nil, originalGenesisHash, err
 	}
-	newData, err := json.Marshal(newcfg)
-	if err != nil {
-		return newcfg, stored, fmt.Errorf("failed to marshal new chain config: %w", err)
-	}
-	if !bytes.Equal(storedData, newData) {
-		rawdb.WriteChainConfig(db, stored, newcfg)
-	}
-	return newcfg, stored, nil
+	genesis.Config = resolvedConfig
+	return genesis, originalGenesisHash, nil
 }
 
-// LoadChainConfig loads the stored chain config if it is already present in
-// database, otherwise, return the config in the provided genesis specification.
-func LoadChainConfig(db ethdb.Database, genesis *Genesis) (cfg *params.ChainConfig, ghash common.Hash, err error) {
-	// Load the stored chain config from the database. It can be nil
-	// in case the database is empty. Notably, we only care about the
-	// chain config corresponds to the canonical chain.
-	stored := rawdb.ReadCanonicalHash(db, 0)
+// decideStoredConfigHeaderAction validates stored-config startup preconditions.
+func decideStoredConfigHeaderAction(db ethdb.Reader, hash common.Hash) startup.Action {
+	return startup.Decide(startup.Facts{
+		CanonicalHash:    hash,
+		HasStoredConfig:  true,
+		HasGenesisHeader: rawdb.ReadHeader(db, hash, 0) != nil,
+	})
+}
+
+// isExpectedStoredConfigHeaderAction reports whether the stored-config header
+// validation path resolved to the explicit stored startup source without a
+// terminal error.
+func isExpectedStoredConfigHeaderAction(action startup.Action) bool {
+	return action.TerminalError == nil && action.GenesisSource == startup.GenesisSourceStored
+}
+
+func expectStoredConfigHeaderAction(action startup.Action) error {
+	if action.TerminalError != nil {
+		return action.TerminalError
+	}
+	if !isExpectedStoredConfigHeaderAction(action) || action.AllowCommitGenesis || action.PreferStoredConfig || action.PromoteOverrideMarker {
+		panic(fmt.Sprintf("BUG: stored-config header validation returned unexpected action: %+v", action))
+	}
+	return nil
+}
+
+func isExpectedInitialGenesisAction(action startup.Action) bool {
+	return action.TerminalError == nil && (action.GenesisSource == startup.GenesisSourceDefaultMainnet || action.GenesisSource == startup.GenesisSourceProvided)
+}
+
+func expectInitialGenesisAction(action startup.Action) error {
+	if action.TerminalError != nil {
+		return action.TerminalError
+	}
+	if !isExpectedInitialGenesisAction(action) || !action.AllowCommitGenesis || action.PreferStoredConfig || action.PromoteOverrideMarker {
+		panic(fmt.Sprintf("BUG: initial startup returned unexpected action: %+v", action))
+	}
+	return nil
+}
+
+func expectSetupMissingConfigAction(action startup.Action) error {
+	if action.TerminalError != nil {
+		return action.TerminalError
+	}
+	if !isExpectedStoredConfigHeaderAction(action) || action.AllowCommitGenesis || action.PreferStoredConfig || action.PromoteOverrideMarker {
+		panic(fmt.Sprintf("BUG: setup missing-config recovery returned unexpected action: %+v", action))
+	}
+	return nil
+}
+
+// Decision helpers build startup state-machine actions from persisted facts.
+
+// decideMissingConfigAction resolves startup behavior when chain config is absent.
+func decideMissingConfigAction(hash common.Hash, hasGenesisHeader, trustedOverride, writable, allowBuiltInCustomRecovery bool) startup.Action {
+	facts := startup.Facts{
+		CanonicalHash:              hash,
+		HasGenesisHeader:           hasGenesisHeader,
+		TrustedOverride:            trustedOverride,
+		Writable:                   writable,
+		AllowBuiltInCustomRecovery: allowBuiltInCustomRecovery,
+	}
+	return startup.Decide(facts)
+}
+
+// decideSetupMissingConfigAction specializes writable missing-config recovery.
+// Unlike generic startup.Decide missing-config routing, writable setup may
+// repair an override-backed missing config only when the caller supplies the
+// authoritative genesis; without that explicit genesis, startup must fail.
+func decideSetupMissingConfigAction(hash common.Hash, hasGenesisHeader, trustedOverride, hasProvidedGenesis bool, _ bool) startup.Action {
+	if hasProvidedGenesis {
+		return startup.Action{GenesisSource: startup.GenesisSourceStored}
+	}
+	if trustedOverride {
+		return startup.Action{TerminalError: startup.ErrGenesisConfigConflict}
+	}
+	return decideMissingConfigAction(hash, hasGenesisHeader, false, true, false)
+}
+
+// selectMissingConfigGenesis chooses provided, built-in, or default genesis for recovery.
+func selectMissingConfigGenesis(ghash common.Hash, provided *Genesis) *Genesis {
+	if provided != nil {
+		log.Info("Writing custom genesis block")
+		return provided
+	}
+	builtin := builtInGenesisByHash(ghash)
+	if builtin != nil {
+		log.Info("Writing built-in genesis block", "hash", ghash)
+		return builtin
+	}
+	log.Info("Writing default main-net genesis block")
+	return DefaultGenesisBlock()
+}
+
+// decideStoredOverrideAction evaluates stored-override reconciliation facts.
+func decideStoredOverrideAction(hash common.Hash, opts startup.StoredOverrideOpts) startup.Action {
+	return startup.Decide(startup.StoredOverrideFacts(hash, opts))
+}
+
+// applyStoredOverrideAction applies PreferStoredConfig by dropping provided genesis.
+func applyStoredOverrideAction(hash common.Hash, opts startup.StoredOverrideOpts, genesis *Genesis) (*Genesis, startup.Action) {
+	action := decideStoredOverrideAction(hash, opts)
+	if action.PreferStoredConfig {
+		if genesis != nil {
+			log.Warn("ignored caller-provided genesis because stored override is authoritative", "hash", hash)
+		}
+		return nil, action
+	}
+	return genesis, action
+}
+
+// reconcileTrustedStoredOverrideGenesis keeps trusted stored overrides when applicable.
+func reconcileTrustedStoredOverrideGenesis(hash common.Hash, storedCfg *params.ChainConfig, genesis *Genesis, opts startup.StoredOverrideOpts) (*Genesis, error) {
+	providedRestatesBuiltIn, err := shouldPreferStoredOverrideConfig(hash, storedCfg, genesis)
+	if err != nil {
+		return nil, err
+	}
+	opts.HasProvidedGenesis = genesis != nil
+	opts.ProvidedRestatesBuiltIn = providedRestatesBuiltIn
+	genesis, _ = applyStoredOverrideAction(hash, opts, genesis)
+	return genesis, nil
+}
+
+// decideInitialStartupAction resolves startup source selection for empty-db paths.
+func decideInitialStartupAction(hash common.Hash, hasProvidedGenesis, writable bool) startup.Action {
+	facts := startup.Facts{
+		CanonicalHash:      hash,
+		HasProvidedGenesis: hasProvidedGenesis,
+		Writable:           writable,
+	}
+	return startup.Decide(facts)
+}
+
+// selectInitialGenesis maps initial startup action to the concrete genesis source.
+func selectInitialGenesis(action startup.Action, provided *Genesis) *Genesis {
+	switch action.GenesisSource {
+	case startup.GenesisSourceDefaultMainnet:
+		log.Info("Writing default main-net genesis block")
+		return DefaultGenesisBlock()
+	case startup.GenesisSourceProvided:
+		log.Info("Writing custom genesis block")
+		return provided
+	default:
+		panic(fmt.Sprintf("BUG: writable initialization returned unexpected genesis source %v", action.GenesisSource))
+	}
+}
+
+type setupGenesisPath uint8
+
+const (
+	setupGenesisPathEmptyDB setupGenesisPath = iota
+	setupGenesisPathMissingConfig
+	setupGenesisPathStoredConfig
+)
+
+// decideSetupGenesisPath classifies writable startup into mutually exclusive paths.
+func decideSetupGenesisPath(ghash common.Hash, hasStoredConfig bool) setupGenesisPath {
+	if ghash == (common.Hash{}) {
+		return setupGenesisPathEmptyDB
+	}
+	if !hasStoredConfig {
+		return setupGenesisPathMissingConfig
+	}
+	return setupGenesisPathStoredConfig
+}
+
+type loadChainConfigPath uint8
+
+const (
+	loadChainConfigPathStoredConfig loadChainConfigPath = iota
+	loadChainConfigPathStoredMissingConfigNoProvidedGenesis
+	loadChainConfigPathProvidedGenesis
+	loadChainConfigPathDefaultMainnet
+)
+
+// decideLoadChainConfigPath classifies readonly loading into mutually exclusive paths.
+func decideLoadChainConfigPath(stored common.Hash, hasStoredConfig, hasProvidedGenesis bool) loadChainConfigPath {
 	if stored != (common.Hash{}) {
-		storedcfg, err := rawdb.ReadChainConfig(db, stored)
-		if err != nil {
-			return nil, common.Hash{}, err
+		if hasStoredConfig {
+			return loadChainConfigPathStoredConfig
 		}
-		if storedcfg != nil {
-			return storedcfg, stored, nil
+		if !hasProvidedGenesis {
+			return loadChainConfigPathStoredMissingConfigNoProvidedGenesis
 		}
 	}
-	// Load the config from the provided genesis specification
-	if genesis != nil {
-		// Reject invalid genesis spec without valid chain config
-		if genesis.Config == nil {
-			return nil, common.Hash{}, errGenesisNoConfig
-		}
-		// If the canonical genesis header is present, but the chain
-		// config is missing(initialize the empty leveldb with an
-		// external ancient chain segment), ensure the provided genesis
-		// is matched.
-		ghash := genesis.ToBlock().Hash()
-		if stored != (common.Hash{}) && ghash != stored {
-			return nil, ghash, &GenesisMismatchError{stored, ghash}
-		}
-		return genesis.Config, ghash, nil
+	if hasProvidedGenesis {
+		return loadChainConfigPathProvidedGenesis
 	}
-	// There is no stored chain config and no new config provided,
-	// In this case the default chain config(mainnet) will be used
-	return params.XDCMainnetChainConfig, params.MainnetGenesisHash, nil
+	return loadChainConfigPathDefaultMainnet
 }
 
-func (g *Genesis) configOrDefault(ghash common.Hash) *params.ChainConfig {
+// chainConfigOrDefault chooses the config that should drive compatibility
+// checks for ghash. preferStored keeps a trusted same-hash custom override
+// authoritative when no explicit genesis should replace it; otherwise bundled
+// configs still win for known built-in genesis hashes.
+func (g *Genesis) chainConfigOrDefault(ghash common.Hash, stored *params.ChainConfig, preferStored bool) *params.ChainConfig {
+	var cfg *params.ChainConfig
 	switch {
 	case g != nil:
-		log.Info("[configOrDefault] load orignal config", "hash", ghash)
-		return g.Config
+		cfg = g.Config
+	case preferStored && stored != nil:
+		cfg = stored
 	case ghash == params.MainnetGenesisHash:
-		log.Info("[configOrDefault] load mainnetconfig")
-		return params.XDCMainnetChainConfig
+		cfg = params.XDCMainnetChainConfig
 	case ghash == params.TestnetGenesisHash:
-		log.Info("[configOrDefault] load TestnetChainConfig")
-		return params.TestnetChainConfig
+		cfg = params.TestnetChainConfig
 	case ghash == params.DevnetGenesisHash:
-		log.Info("[configOrDefault] load DevnetChainConfig")
-		return params.DevnetChainConfig
+		cfg = params.DevnetChainConfig
 	default:
-		log.Info("[configOrDefault] load AllEthashProtocolChanges", "hash", ghash)
-		return params.AllEthashProtocolChanges
+		cfg = stored
 	}
+	return cfg.Clone()
 }
 
-// ToBlock returns the genesis block according to genesis specification.
-func (g *Genesis) ToBlock() *types.Block {
-	root, err := hashAlloc(&g.Alloc)
-	if err != nil {
-		panic(err)
-	}
+func (g *Genesis) toBlockWithRoot(root common.Hash) *types.Block {
 	head := &types.Header{
 		Number:     new(big.Int).SetUint64(g.Number),
 		Nonce:      types.EncodeNonce(g.Nonce),
@@ -376,9 +772,8 @@ func (g *Genesis) ToBlock() *types.Block {
 	if g.Difficulty == nil {
 		head.Difficulty = params.GenesisDifficulty
 	}
-	// Notice: Eip1559Block affects the block hash, we must set:
-	//   1. g.Config.Eip1559Block
-	//   2. or common.Eip1559Block
+	// Notice: EIP1559Block affects the block hash, so g.Config.EIP1559Block
+	// must be set in genesis chain config when EIP-1559 should be active.
 	if g.Config != nil && g.Config.IsEIP1559(common.Big0) {
 		if g.BaseFee != nil {
 			head.BaseFee = g.BaseFee
@@ -389,28 +784,86 @@ func (g *Genesis) ToBlock() *types.Block {
 	return types.NewBlock(head, nil, nil, trie.NewStackTrie(nil))
 }
 
-// Commit writes the block and state of a genesis specification to the database.
-// The block is committed as the canonical head block.
-func (g *Genesis) Commit(db ethdb.Database) (*types.Block, error) {
-	block := g.ToBlock()
-	if block.Number().Sign() != 0 {
-		return nil, errors.New("can't commit genesis block with number > 0")
+// ToBlockWithError returns the genesis block according to genesis specification.
+func (g *Genesis) ToBlockWithError() (*types.Block, error) {
+	root, err := hashAlloc(&g.Alloc)
+	if err != nil {
+		return nil, err
 	}
-	config := g.Config
+	return g.toBlockWithRoot(root), nil
+}
+
+// Hash returns the canonical genesis block hash.
+//
+// Callers must treat g.Config as hash-relevant input: fork settings can change
+// the derived genesis header (for example EIP-1559 activation injects the
+// initial BaseFee). Do not mutate or hydrate Config before validating an
+// expected genesis hash against the caller-supplied genesis spec.
+func (g *Genesis) Hash() (common.Hash, error) {
+	block, err := g.ToBlockWithError()
+	if err != nil {
+		return common.Hash{}, err
+	}
+	return block.Hash(), nil
+}
+
+// ToBlock returns the genesis block according to genesis specification.
+func (g *Genesis) ToBlock() *types.Block {
+	block, err := g.ToBlockWithError()
+	if err != nil {
+		panic(err)
+	}
+	return block
+}
+
+// Commit writes the block, state, and canonicalized chain config of a genesis
+// specification to the database as the canonical head block. Built-in genesis
+// hashes must still resolve to the bundled config.
+func (g *Genesis) Commit(db ethdb.Database) (*types.Block, error) {
+	return g.commit(db, false, false)
+}
+
+// commit writes the genesis block, alloc, and resolved chain config to
+// the database, optionally preserving a same-hash custom override instead of
+// forcing a built-in genesis hash back to the bundled config. skipHydrate is
+// only safe when the caller already normalized g.Config for this genesis hash.
+func (g *Genesis) commit(db ethdb.Database, allowCustomBuiltInConfig bool, skipHydrate bool) (*types.Block, error) {
+	genesis := g.copy()
+	config := genesis.Config
 	if config == nil {
 		return nil, errors.New("invalid genesis without chain config")
 	}
-	if config.XDPoS != nil && len(g.ExtraData) < 32+crypto.SignatureLength {
+	originalHash, err := genesis.Hash()
+	if err != nil {
+		return nil, err
+	}
+	if !skipHydrate {
+		config, err = resolveProvidedChainConfig(originalHash, config, builtInChainConfigPolicyForOverride(allowCustomBuiltInConfig))
+		if err != nil {
+			return nil, err
+		}
+	}
+	genesis.Config = config
+	block, err := genesis.ToBlockWithError()
+	if err != nil {
+		return nil, err
+	}
+	if block.Number().Sign() != 0 {
+		return nil, errors.New("can't commit genesis block with number > 0")
+	}
+	if err := config.CheckConfigForkOrder(); err != nil {
+		return nil, err
+	}
+	if config.XDPoS != nil && len(genesis.ExtraData) < 32+crypto.SignatureLength {
 		return nil, errors.New("can't start XDPoS chain without signers")
 	}
 	// All the checks have passed, flushAlloc the states derived from the genesis
-	// specification as well as the specification itself into the provided
-	// database.
-	if err := flushAlloc(&g.Alloc, db, block.Hash()); err != nil {
+	// specification as well as the specification itself into the provided database.
+	if err := flushAlloc(&genesis.Alloc, db, block.Hash()); err != nil {
 		return nil, err
 	}
 	batch := db.NewBatch()
-	rawdb.WriteTd(batch, block.Hash(), block.NumberU64(), g.Difficulty)
+	rawdb.WriteTd(batch, block.Hash(), block.NumberU64(), genesis.Difficulty)
 	rawdb.WriteBlock(batch, block)
 	rawdb.WriteReceipts(batch, block.Hash(), block.NumberU64(), nil)
 	rawdb.WriteCanonicalHash(batch, block.Hash(), block.NumberU64())
@@ -418,6 +871,17 @@ func (g *Genesis) Commit(db ethdb.Database) (*types.Block, error) {
 	rawdb.WriteHeadFastBlockHash(batch, block.Hash())
 	rawdb.WriteHeadHeaderHash(batch, block.Hash())
 	rawdb.WriteChainConfig(batch, block.Hash(), config)
+	if allowCustomBuiltInConfig {
+		if builtin := builtInChainConfigByHash(block.Hash()); builtin != nil {
+			equal, err := chainConfigJSONEqual(config, builtin)
+			if err != nil {
+				return nil, err
+			}
+			if !equal {
+				rawdb.WriteChainConfigOverride(batch, block.Hash())
+			}
+		}
+	}
 	return block, batch.Write()
 }
 
@@ -499,6 +963,7 @@ func DeveloperGenesisBlock(period uint64, faucet common.Address) *Genesis {
 	}
 }
 
+// DecodeAllocJson decodes a JSON allocation map into GenesisAlloc.
 func DecodeAllocJson(s string) types.GenesisAlloc {
 	alloc := types.GenesisAlloc{}
 	json.Unmarshal([]byte(s), &alloc)

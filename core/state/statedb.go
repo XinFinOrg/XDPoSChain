@@ -110,6 +110,8 @@ type StateDB struct {
 	// when accessing state of accounts.
 	dbErr error
 
+	chainConfig *params.ChainConfig
+
 	// The refund counter, also used by state transitioning.
 	refund uint64
 
@@ -184,6 +186,19 @@ func New(root common.Hash, db Database) (*StateDB, error) {
 	return sdb, nil
 }
 
+// NewWithChainConfig creates a new state from a given trie and attaches the
+// active chain config at construction time.
+func NewWithChainConfig(root common.Hash, db Database, config *params.ChainConfig) (*StateDB, error) {
+	sdb, err := New(root, db)
+	if err != nil {
+		return nil, err
+	}
+	if err := sdb.EnsureChainConfig(config); err != nil {
+		return nil, err
+	}
+	return sdb, nil
+}
+
 // setError remembers the first non-nil error it is called with.
 func (s *StateDB) setError(err error) {
 	if s.dbErr == nil {
@@ -194,6 +209,68 @@ func (s *StateDB) setError(err error) {
 // Error returns the memorized database failure occurred earlier.
 func (s *StateDB) Error() error {
 	return s.dbErr
+}
+
+// SetChainConfig forcibly overrides the chain config attached to the state db.
+//
+// Production code should prefer NewWithChainConfig or EnsureChainConfig.
+// This setter exists only for tests and low-level mocks that intentionally
+// replace an already attached config.
+func (s *StateDB) SetChainConfig(config *params.ChainConfig) {
+	s.chainConfig = config
+}
+
+// EnsureChainConfig establishes the chain config contract for state access.
+// It attaches the provided config to a fresh state db and leaves an existing
+// attachment untouched.
+func (s *StateDB) EnsureChainConfig(config *params.ChainConfig) error {
+	if s == nil {
+		return fmt.Errorf("state: missing StateDB for chain config attachment")
+	}
+	if config == nil {
+		return fmt.Errorf("state: missing chain config for state access")
+	}
+	if s.chainConfig == nil {
+		s.chainConfig = config
+	}
+	return nil
+}
+
+// ChainConfig returns the chain config attached to the state db.
+func (s *StateDB) ChainConfig() *params.ChainConfig {
+	return s.chainConfig
+}
+
+// RelayerRegistrationSMC returns the relayer registration contract address
+// from the attached chain config. It returns an error when the state db,
+// chain config, or resolved address is missing.
+func (s *StateDB) RelayerRegistrationSMC() (common.Address, error) {
+	if s == nil {
+		return common.Address{}, fmt.Errorf("state: missing StateDB for relayer state access")
+	}
+	if s.chainConfig == nil {
+		return common.Address{}, fmt.Errorf("state: missing chain config for relayer state access")
+	}
+	if s.chainConfig.RelayerRegistrationSMC.IsZero() {
+		return common.Address{}, fmt.Errorf("state: missing relayer registration address in chain config")
+	}
+	return s.chainConfig.RelayerRegistrationSMC, nil
+}
+
+// LendingRegistrationSMC returns the lending registration contract address
+// from the attached chain config. It returns an error when the state db,
+// chain config, or resolved address is missing.
+func (s *StateDB) LendingRegistrationSMC() (common.Address, error) {
+	if s == nil {
+		return common.Address{}, fmt.Errorf("state: missing StateDB for lending state access")
+	}
+	if s.chainConfig == nil {
+		return common.Address{}, fmt.Errorf("state: missing chain config for lending state access")
+	}
+	if s.chainConfig.LendingRegistrationSMC.IsZero() {
+		return common.Address{}, fmt.Errorf("state: missing lending registration address in chain config")
+	}
+	return s.chainConfig.LendingRegistrationSMC, nil
 }
 
 // Reset clears out all ephemeral state objects from the state db, but keeps
@@ -747,6 +824,7 @@ func (s *StateDB) Copy() *StateDB {
 		stateObjectsDestruct: maps.Clone(s.stateObjectsDestruct),
 		mutations:            make(map[common.Address]*mutation, len(s.mutations)),
 		dbErr:                s.dbErr,
+		chainConfig:          s.chainConfig,
 		refund:               s.refund,
 		thash:                s.thash,
 		txIndex:              s.txIndex,

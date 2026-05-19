@@ -31,6 +31,7 @@ func (m *maskingChainReader) GetHeader(hash common.Hash, number uint64) *types.H
 	return m.ChainReader.GetHeader(hash, number)
 }
 
+// TestShouldVerifyBlock tests should verify block.
 func TestShouldVerifyBlock(t *testing.T) {
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
@@ -180,6 +181,7 @@ func TestShouldVerifyBlock(t *testing.T) {
 	assert.Equal(t, utils.ErrPenaltiesNotLegit, err)
 }
 
+// TestConfigSwitchOnDifferentCertThreshold tests config switch on different cert threshold.
 func TestConfigSwitchOnDifferentCertThreshold(t *testing.T) {
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
@@ -276,6 +278,7 @@ func TestConfigSwitchOnDifferentCertThreshold(t *testing.T) {
  3. verify this header while node is on round 899,
     This is to simulate node is syncing from remote during config switch
 */
+// TestConfigSwitchOnDifferentMasternodeCount tests config switch on different masternode count.
 func TestConfigSwitchOnDifferentMasternodeCount(t *testing.T) {
 	skipLongInShortMode(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
@@ -313,6 +316,7 @@ func TestConfigSwitchOnDifferentMasternodeCount(t *testing.T) {
 	assert.Equal(t, utils.ErrValidatorNotWithinMasternodes, err)
 }
 
+// TestConfigSwitchOnDifferentMindPeriod tests config switch on different mind period.
 func TestConfigSwitchOnDifferentMindPeriod(t *testing.T) {
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
@@ -364,6 +368,7 @@ func TestConfigSwitchOnDifferentMindPeriod(t *testing.T) {
 	assert.Equal(t, utils.ErrInvalidTimestamp, err)
 }
 
+// TestShouldFailIfNotEnoughQCSignatures tests should fail if not enough qc signatures.
 func TestShouldFailIfNotEnoughQCSignatures(t *testing.T) {
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
@@ -412,6 +417,7 @@ func TestShouldFailIfNotEnoughQCSignatures(t *testing.T) {
 	assert.Equal(t, utils.ErrInvalidQCSignatures, err)
 }
 
+// TestShouldVerifyHeaders tests should verify headers.
 func TestShouldVerifyHeaders(t *testing.T) {
 	skipLongInShortMode(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
@@ -450,6 +456,7 @@ func TestShouldVerifyHeaders(t *testing.T) {
 	}
 }
 
+// TestShouldVerifyHeadersEvenIfParentsNotYetWrittenIntoDB tests should verify headers even if parents not yet written into db.
 func TestShouldVerifyHeadersEvenIfParentsNotYetWrittenIntoDB(t *testing.T) {
 	skipLongInShortMode(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
@@ -468,12 +475,12 @@ func TestShouldVerifyHeadersEvenIfParentsNotYetWrittenIntoDB(t *testing.T) {
 	// Create block 911 but don't write into DB
 	blockNumber := 911
 	roundNumber := int64(blockNumber) - config.XDPoS.V2.SwitchBlock.Int64()
-	block911 := CreateBlock(blockchain, &config, block910, blockNumber, roundNumber, signer.Hex(), signer, signFn, nil, nil, "")
+	block911 := CreateBlock(blockchain, blockchain.Config(), block910, blockNumber, roundNumber, signer.Hex(), signer, signFn, nil, nil, "")
 
 	// Create block 912 and not write into DB as well
 	blockNumber = 912
 	roundNumber = int64(blockNumber) - config.XDPoS.V2.SwitchBlock.Int64()
-	block912 := CreateBlock(blockchain, &config, block911, blockNumber, roundNumber, signer.Hex(), signer, signFn, nil, nil, "")
+	block912 := CreateBlock(blockchain, blockchain.Config(), block911, blockNumber, roundNumber, signer.Hex(), signer, signFn, nil, nil, "")
 
 	headersTobeVerified = append(headersTobeVerified, block910.Header(), block911.Header(), block912.Header())
 	// Randomly set full verify
@@ -499,6 +506,7 @@ func TestShouldVerifyHeadersEvenIfParentsNotYetWrittenIntoDB(t *testing.T) {
 	}
 }
 
+// TestShouldVerifyMixedHeadersWhenParentLookupByHashIsMasked tests should verify mixed headers when parent lookup by hash is masked.
 func TestShouldVerifyMixedHeadersWhenParentLookupByHashIsMasked(t *testing.T) {
 	skipLongInShortMode(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
@@ -535,6 +543,7 @@ func TestShouldVerifyMixedHeadersWhenParentLookupByHashIsMasked(t *testing.T) {
 	}
 }
 
+// TestShouldVerifyPureV2EpochSwitchHeadersEvenIfParentNotYetWrittenIntoDB tests should verify pure v 2 epoch switch headers even if parent not yet written into db.
 func TestShouldVerifyPureV2EpochSwitchHeadersEvenIfParentNotYetWrittenIntoDB(t *testing.T) {
 	skipLongInShortMode(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
@@ -560,7 +569,7 @@ func TestShouldVerifyPureV2EpochSwitchHeadersEvenIfParentNotYetWrittenIntoDB(t *
 
 	block1799 := CreateBlock(
 		blockchain,
-		&config,
+		blockchain.Config(),
 		block1798,
 		1799,
 		int64(1799)-config.XDPoS.V2.SwitchBlock.Int64(),
@@ -573,7 +582,7 @@ func TestShouldVerifyPureV2EpochSwitchHeadersEvenIfParentNotYetWrittenIntoDB(t *
 	)
 	block1800 := CreateBlock(
 		blockchain,
-		&config,
+		blockchain.Config(),
 		block1799,
 		1800,
 		int64(1800)-config.XDPoS.V2.SwitchBlock.Int64(),
@@ -604,6 +613,7 @@ func TestShouldVerifyPureV2EpochSwitchHeadersEvenIfParentNotYetWrittenIntoDB(t *
 	}
 }
 
+// TestVerifyHeadersDoesNotFabricateBatchBlocksForHookPenalty tests verify headers does not fabricate batch blocks for hook penalty.
 func TestVerifyHeadersDoesNotFabricateBatchBlocksForHookPenalty(t *testing.T) {
 	skipLongInShortMode(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
@@ -635,7 +645,7 @@ func TestVerifyHeadersDoesNotFabricateBatchBlocksForHookPenalty(t *testing.T) {
 
 	block1799 := CreateBlock(
 		blockchain,
-		&config,
+		blockchain.Config(),
 		block1798,
 		1799,
 		int64(1799)-config.XDPoS.V2.SwitchBlock.Int64(),
@@ -648,7 +658,7 @@ func TestVerifyHeadersDoesNotFabricateBatchBlocksForHookPenalty(t *testing.T) {
 	)
 	block1800 := CreateBlock(
 		blockchain,
-		&config,
+		blockchain.Config(),
 		block1799,
 		1800,
 		int64(1800)-config.XDPoS.V2.SwitchBlock.Int64(),

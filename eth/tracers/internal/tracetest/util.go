@@ -9,6 +9,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common/math"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
+	"github.com/XinFinOrg/XDPoSChain/params"
 
 	// Force-load native and js packages, to trigger registration
 	_ "github.com/XinFinOrg/XDPoSChain/eth/tracers/js"
@@ -22,6 +23,21 @@ func camel(str string) string {
 		pieces[i] = string(unicode.ToUpper(rune(pieces[i][0]))) + pieces[i][1:]
 	}
 	return strings.Join(pieces, "")
+}
+
+// ensureTracerChainConfig ensures tracer tests always have the minimum fork
+// fields needed by transaction and fee helpers.
+func ensureTracerChainConfig(config *params.ChainConfig) *params.ChainConfig {
+	defaultTIPTRC21FeeBlock := common.CloneBigInt(params.XDCMainnetChainConfig.TIPTRC21FeeBlock)
+	if config == nil {
+		return &params.ChainConfig{TIPTRC21FeeBlock: defaultTIPTRC21FeeBlock}
+	}
+	if config.TIPTRC21FeeBlock != nil {
+		return config
+	}
+	clone := *config
+	clone.TIPTRC21FeeBlock = defaultTIPTRC21FeeBlock
+	return &clone
 }
 
 type callContext struct {

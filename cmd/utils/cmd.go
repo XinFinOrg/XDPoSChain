@@ -37,6 +37,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/internal/debug"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/node"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
@@ -62,6 +63,31 @@ func Fatalf(format string, args ...interface{}) {
 	}
 	fmt.Fprintf(w, "Fatal: "+format+"\n", args...)
 	os.Exit(1)
+}
+
+// FormatChainConfigError appends an operator-facing migration hint when strict
+// XDC fork-config validation rejects a legacy sparse config.
+func FormatChainConfigError(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := err.Error()
+	if !errors.Is(err, params.ErrMissingForkSwitch) {
+		return message
+	}
+	for _, field := range []string{
+		"TIPTRC21FeeBlock",
+		"Gas50xBlock",
+		"TRC21IssuerSMC",
+		"XDCXListingSMC",
+		"RelayerRegistrationSMC",
+		"LendingRegistrationSMC",
+	} {
+		if strings.Contains(message, field) {
+			return message + ". Migration hint: ensure the persisted chain config or external genesis JSON includes TIPTRC21FeeBlock, Gas50xBlock, TRC21IssuerSMC, XDCXListingSMC, RelayerRegistrationSMC, and LendingRegistrationSMC. Older sparse custom XDPoS genesis files are auto-hydrated only when these keys are omitted."
+		}
+	}
+	return message
 }
 
 func StartNode(stack *node.Node, isConsole bool) {

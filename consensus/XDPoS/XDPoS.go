@@ -18,7 +18,6 @@ package XDPoS
 
 import (
 	"errors"
-	"fmt"
 	"math/big"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -83,41 +82,45 @@ func (x *XDPoS) SubscribeForensicsEvent(ch chan<- types.ForensicsEvent) event.Su
 
 // New creates a XDPoS delegated-proof-of-stake consensus engine with the initial
 // signers set to the ones provided by the user.
-func New(chainConfig *params.ChainConfig, db ethdb.Database) *XDPoS {
+func New(chainConfig *params.ChainConfig, db ethdb.Database) (*XDPoS, error) {
 	log.Info("[New] initialise consensus engines")
+	if chainConfig == nil {
+		return nil, errors.New("missing chain config")
+	}
 	config := chainConfig.XDPoS
 	// Set any missing consensus parameters to their defaults
-	if config.Epoch == 0 {
+	if config != nil && config.Epoch == 0 {
 		config.Epoch = utils.EpochLength
 	}
-
-	// For testing and testing project, default to mainnet config
-	if config.V2 == nil {
-		config.V2 = &params.V2{
-			SwitchBlock:   params.XDCMainnetChainConfig.XDPoS.V2.SwitchBlock,
-			CurrentConfig: params.MainnetV2Configs[0],
-			AllConfigs:    params.MainnetV2Configs,
-		}
+	if err := chainConfig.CheckConfigForkOrder(); err != nil {
+		return nil, err
 	}
-
-	if config.V2.SwitchBlock.Uint64()%config.Epoch != 0 {
-		panic(fmt.Sprintf("v2 switch number is not epoch switch block %d, epoch %d", config.V2.SwitchBlock.Uint64(), config.Epoch))
+	if config == nil {
+		return nil, errors.New("missing XDPoS config")
 	}
 
 	log.Info("xdc config loading", "v2 config", config.V2)
 
 	minePeriodCh := make(chan int)
 	newRoundCh := make(chan types.Round, newRoundChanSize)
+	engineV2, err := engine_v2.New(chainConfig, db, minePeriodCh, newRoundCh)
+	if err != nil {
+		return nil, err
+	}
 
 	return &XDPoS{
-		config:          config,
-		db:              db,
-		MinePeriodCh:    minePeriodCh,
-		NewRoundCh:      newRoundCh,
+		config:         config,
+		db:             db,
+		MinePeriodCh:   minePeriodCh,
+		NewRoundCh:     newRoundCh,
+		GetXDCXService: func() utils.TradingService { return nil },
+		GetLendingService: func() utils.LendingService {
+			return nil
+		},
 		signingTxsCache: lru.NewCache[common.Hash, []*types.Transaction](utils.BlockSignersCacheLimit),
 		EngineV1:        engine_v1.New(chainConfig, db),
-		EngineV2:        engine_v2.New(chainConfig, db, minePeriodCh, newRoundCh),
-	}
+		EngineV2:        engineV2,
+	}, nil
 }
 
 // Stop stops the consensus engine:
@@ -128,18 +131,26 @@ func (x *XDPoS) Stop() {
 	close(x.NewRoundCh)
 }
 
-// NewFullFaker creates an ethash consensus engine with a full fake scheme that
-// accepts all blocks as valid, without checking any consensus rules whatsoever.
+// NewFaker creates an XDPoS consensus engine with a full fake scheme that
+// accepts all blocks as valid without enforcing consensus rules.
 func NewFaker(db ethdb.Database, chainConfig *params.ChainConfig) *XDPoS {
 	var fakeEngine *XDPoS
 	// Set any missing consensus parameters to their defaults
-	conf := params.TestXDPoSMockChainConfig.XDPoS
+	fakeChainConfig := params.TestXDPoSMockChainConfig
 	if chainConfig != nil {
-		conf = chainConfig.XDPoS
+		fakeChainConfig = chainConfig
 	}
+	if err := fakeChainConfig.CheckConfigForkOrder(); err != nil {
+		return nil
+	}
+	conf := fakeChainConfig.XDPoS
 
 	minePeriodCh := make(chan int)
 	newRoundCh := make(chan types.Round, newRoundChanSize)
+	engineV2, err := engine_v2.New(fakeChainConfig, db, minePeriodCh, newRoundCh)
+	if err != nil {
+		return nil
+	}
 
 	fakeEngine = &XDPoS{
 		config:            conf,
@@ -149,8 +160,8 @@ func NewFaker(db ethdb.Database, chainConfig *params.ChainConfig) *XDPoS {
 		GetXDCXService:    func() utils.TradingService { return nil },
 		GetLendingService: func() utils.LendingService { return nil },
 		signingTxsCache:   lru.NewCache[common.Hash, []*types.Transaction](utils.BlockSignersCacheLimit),
-		EngineV1:          engine_v1.NewFaker(db, chainConfig),
-		EngineV2:          engine_v2.New(chainConfig, db, minePeriodCh, newRoundCh),
+		EngineV1:          engine_v1.NewFaker(db, fakeChainConfig),
+		EngineV2:          engineV2,
 	}
 	return fakeEngine
 }

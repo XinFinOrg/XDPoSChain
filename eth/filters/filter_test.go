@@ -45,6 +45,7 @@ func makeReceipt(addr common.Address) *types.Receipt {
 	return receipt
 }
 
+// BenchmarkFilters benchmarks filters.
 func BenchmarkFilters(b *testing.B) {
 	var (
 		db, _   = rawdb.NewLevelDBDatabase(b.TempDir(), 0, 0, "", false)
@@ -97,9 +98,12 @@ func BenchmarkFilters(b *testing.B) {
 	}
 }
 
+// TestFilters tests filters.
 func TestFilters(t *testing.T) {
 	config := *params.TestChainConfig
-	config.Eip1559Block = big.NewInt(0)
+	config.CancunBlock = nil
+	config.PragueBlock = nil
+	config.OsakaBlock = nil
 
 	var (
 		db     = rawdb.NewMemoryDatabase()
@@ -356,6 +360,7 @@ func TestFilters(t *testing.T) {
 	})
 }
 
+// TestRangeLimit tests range limit.
 func TestRangeLimit(t *testing.T) {
 	db := rawdb.NewMemoryDatabase()
 	_, sys := newTestFilterSystem(t, db, Config{})

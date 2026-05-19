@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"encoding/json"
 	"errors"
 	"math/big"
 	"math/rand"
@@ -55,8 +56,43 @@ var (
 )
 
 func getCommonBackend() *backends.SimulatedBackend {
-	genesis := types.GenesisAlloc{acc1Addr: {Balance: big.NewInt(1000000000000)}}
-	backend := backends.NewXDCSimulatedBackend(genesis, 10000000, params.TestXDPoSMockChainConfig)
+	legacyConfig := *params.TestXDPoSMockChainConfig
+	futureForkBlock := big.NewInt(1_000_000_000)
+	legacyConfig.TIPSigningBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.TIPRandomizeBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.TIPIncreaseMasternodesBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.DenylistBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.TIPNoHalvingMNRewardBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.TIPXDCXBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.TIPXDCXLendingBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.TIPXDCXCancellationFeeBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.TIPTRC21FeeBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.Gas50xBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.BerlinBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.LondonBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.MergeBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.ShanghaiBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.TIPXDCXMinerDisableBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.TIPXDCXReceiverDisableBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.EIP1559Block = new(big.Int).Set(futureForkBlock)
+	legacyConfig.CancunBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.PragueBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.OsakaBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.DynamicGasLimitBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.TIPUpgradeRewardBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.TIPUpgradePenaltyBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.TIPEpochHalvingBlock = new(big.Int).Set(futureForkBlock)
+
+	blob, err := json.Marshal(&legacyConfig)
+	if err != nil {
+		panic(err)
+	}
+	if err := json.Unmarshal(blob, &legacyConfig); err != nil {
+		panic(err)
+	}
+
+	genesis := types.GenesisAlloc{acc1Addr: {Balance: big.NewInt(1000000000000000000)}}
+	backend := backends.NewXDCSimulatedBackend(genesis, 10000000, &legacyConfig)
 	backend.Commit()
 
 	return backend
@@ -106,14 +142,18 @@ func (c *rewardReplayChain) GetBlock(hash common.Hash, number uint64) *types.Blo
 	return block
 }
 
+// TestSendTxSign tests send tx sign.
 func TestSendTxSign(t *testing.T) {
 	accounts := []common.Address{acc2Addr, acc3Addr, acc4Addr}
 	keys := []*ecdsa.PrivateKey{acc2Key, acc3Key, acc4Key}
 	backend := getCommonBackend()
-	signer := types.HomesteadSigner{}
+	signer := types.LatestSigner(backend.BlockChain().Config())
 	ctx := context.Background()
 
-	transactOpts := bind.NewKeyedTransactor(acc1Key)
+	transactOpts, err := bind.NewKeyedTransactorWithChainID(acc1Key, backend.BlockChain().Config().ChainID)
+	if err != nil {
+		t.Fatalf("can't create transactor: %v", err)
+	}
 	blockSignerAddr, blockSigner, err := blocksigner.DeployBlockSigner(transactOpts, backend, big.NewInt(99))
 	if err != nil {
 		t.Fatalf("Can't get block signer: %v", err)
@@ -123,7 +163,7 @@ func TestSendTxSign(t *testing.T) {
 	nonces := make(map[*ecdsa.PrivateKey]int)
 	oldBlocks := make(map[common.Hash]common.Address)
 
-	signTx := func(ctx context.Context, backend *backends.SimulatedBackend, signer types.HomesteadSigner, nonces map[*ecdsa.PrivateKey]int, accKey *ecdsa.PrivateKey, blockNumber *big.Int, blockHash common.Hash) *types.Transaction {
+	signTx := func(ctx context.Context, backend *backends.SimulatedBackend, signer types.Signer, nonces map[*ecdsa.PrivateKey]int, accKey *ecdsa.PrivateKey, blockNumber *big.Int, blockHash common.Hash) *types.Transaction {
 		tx, _ := types.SignTx(CreateTxSign(blockNumber, blockHash, uint64(nonces[accKey]), blockSignerAddr), signer, accKey)
 		backend.SendTransaction(ctx, tx)
 		backend.Commit()
@@ -169,10 +209,14 @@ func TestSendTxSign(t *testing.T) {
 	}
 }
 
+// TestGetRewardForCheckpointReplaysSigningTxsFromRawReceipts tests get reward for checkpoint replays signing txs from raw receipts.
 func TestGetRewardForCheckpointReplaysSigningTxsFromRawReceipts(t *testing.T) {
 	database := rawdb.NewMemoryDatabase()
 	config := params.TestXDPoSMockChainConfig
-	engine := XDPoS.New(config, database)
+	engine, err := XDPoS.New(config, database)
+	if err != nil {
+		t.Fatalf("failed to create XDPoS engine: %v", err)
+	}
 
 	checkpointExtra := append(bytes.Repeat([]byte{0x00}, utils.ExtraVanity), acc1Addr.Bytes()...)
 	checkpointExtra = append(checkpointExtra, make([]byte, utils.ExtraSeal)...)
@@ -232,7 +276,10 @@ func TestGetRewardForCheckpointReplaysSigningTxsFromRawReceipts(t *testing.T) {
 		Number:     big.NewInt(18),
 		ParentHash: replayBlock.Hash(),
 	}, nil, nil, trie.NewStackTrie(nil))
-	engine = XDPoS.New(config, database)
+	engine, err = XDPoS.New(config, database)
+	if err != nil {
+		t.Fatalf("failed to recreate XDPoS engine: %v", err)
+	}
 	chain := &rewardReplayChain{
 		config:  config,
 		current: checkpointBlock.Header(),
@@ -301,6 +348,7 @@ func TestRandomMasterNode(t *testing.T) {
 	}
 }
 
+// TestEncryptDecrypt tests encrypt decrypt.
 func TestEncryptDecrypt(t *testing.T) {
 	//byteInteger := common.LeftPadBytes([]byte(new(big.Int).SetInt64(4).String()), 32)
 	randomByte := RandStringByte(32)
@@ -453,6 +501,7 @@ func (s *nonceGuardSubPool) SetSigner(f func(address common.Address) bool) {}
 
 func (s *nonceGuardSubPool) IsSigner(addr common.Address) bool { return false }
 
+// TestCreateTransactionSignUsesPoolNonce tests create transaction sign uses pool nonce.
 func TestCreateTransactionSignUsesPoolNonce(t *testing.T) {
 	password := "test-pass"
 	ks := keystore.NewKeyStore(t.TempDir(), keystore.LightScryptN, keystore.LightScryptP)

@@ -24,6 +24,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/holiman/uint256"
 )
 
@@ -68,6 +69,7 @@ func TestListAddVeryExpensive(t *testing.T) {
 	}
 }
 
+// TestPricedListSetBaseFeeNilPreserved tests priced list set base fee nil preserved.
 func TestPricedListSetBaseFeeNilPreserved(t *testing.T) {
 	pl := newPricedList(newLookup())
 
@@ -77,6 +79,7 @@ func TestPricedListSetBaseFeeNilPreserved(t *testing.T) {
 	}
 }
 
+// TestPricedListSetBaseFeeOverflowClearsBaseFee tests priced list set base fee overflow clears base fee.
 func TestPricedListSetBaseFeeOverflowClearsBaseFee(t *testing.T) {
 	pl := newPricedList(newLookup())
 
@@ -129,6 +132,112 @@ func TestPriceHeapCmp(t *testing.T) {
 	}
 }
 
+// TestListFilterUsesGas50xBlockForTokenFeeTransactions tests list filtering
+// uses TxCost(number, cfg) instead of the legacy tx gas price when a
+// token-fee transaction is evaluated after the Gas50x fork.
+func TestListFilterUsesGas50xBlockForTokenFeeTransactions(t *testing.T) {
+	to := common.HexToAddress("0x1000000000000000000000000000000000000001")
+	tx := types.NewTransaction(0, to, big.NewInt(0), 1, big.NewInt(1), nil)
+	list := newList(true)
+	list.Add(tx, DefaultConfig.PriceBump)
+	cfg := &params.ChainConfig{Gas50xBlock: big.NewInt(0)}
+
+	removed, invalids := list.Filter(big.NewInt(0), tx.Gas(), map[common.Address]*big.Int{to: big.NewInt(1)}, big.NewInt(0), cfg)
+	if len(invalids) != 0 {
+		t.Fatalf("expected no invalids, got %d", len(invalids))
+	}
+	if len(removed) != 1 || removed[0].Hash() != tx.Hash() {
+		t.Fatalf("expected transaction to be removed by Gas50x pricing, got %d removed", len(removed))
+	}
+	if list.Len() != 0 {
+		t.Fatalf("expected list to be empty after filtering, have %d items", list.Len())
+	}
+
+	legacyCost := tx.Cost()
+	if legacyCost.Cmp(big.NewInt(1)) != 0 {
+		t.Fatalf("unexpected legacy tx cost: have %v want 1", legacyCost)
+	}
+	gas50xCost := tx.TxCost(big.NewInt(0), cfg)
+	if gas50xCost.Cmp(big.NewInt(1)) <= 0 {
+		t.Fatalf("expected gas50x tx cost to exceed legacy cost: have %v legacy %v", gas50xCost, legacyCost)
+	}
+	if gas50xCost.Cmp(big.NewInt(1)) <= 0 {
+		t.Fatalf("expected gas50x tx cost to exceed legacy balance plus capacity: have %v threshold %v", gas50xCost, big.NewInt(1))
+	}
+	if legacyCost.Cmp(big.NewInt(1)) > 0 {
+		t.Fatalf("expected legacy tx cost to remain within balance plus capacity: have %v threshold %v", legacyCost, big.NewInt(1))
+	}
+}
+
+// TestListFilterDoesNotShortCircuitTokenFeeTransactions tests the cached
+// early-return path does not keep underfunded TRC21 transactions when the
+// runtime TxCost(number, cfg) exceeds the balance plus issuer fee capacity.
+func TestListFilterDoesNotShortCircuitTokenFeeTransactions(t *testing.T) {
+	to := common.HexToAddress("0x1000000000000000000000000000000000000002")
+	tx := types.NewTransaction(0, to, big.NewInt(0), 1, big.NewInt(1), nil)
+	list := newList(true)
+	list.Add(tx, DefaultConfig.PriceBump)
+	cfg := &params.ChainConfig{Gas50xBlock: big.NewInt(0)}
+
+	removed, invalids := list.Filter(big.NewInt(1), tx.Gas(), map[common.Address]*big.Int{to: big.NewInt(0)}, big.NewInt(0), cfg)
+	if len(invalids) != 0 {
+		t.Fatalf("expected no invalids, got %d", len(invalids))
+	}
+	if len(removed) != 1 || removed[0].Hash() != tx.Hash() {
+		t.Fatalf("expected transaction to be removed despite matching legacy cost cap, got %d removed", len(removed))
+	}
+}
+
+func TestListHasTRC21ReceiverCacheTracksMutations(t *testing.T) {
+	issuer := common.HexToAddress("0x1000000000000000000000000000000000000010")
+	other := common.HexToAddress("0x1000000000000000000000000000000000000020")
+	issuers := map[common.Address]*big.Int{issuer: big.NewInt(0)}
+
+	list := newList(false)
+	txIssuer := types.NewTransaction(0, issuer, big.NewInt(0), 1, big.NewInt(1), nil)
+	if ok, _ := list.Add(txIssuer, DefaultConfig.PriceBump); !ok {
+		t.Fatalf("failed to add issuer transaction")
+	}
+	if !list.hasTRC21Receiver(issuers) {
+		t.Fatalf("expected issuer receiver to be cached")
+	}
+
+	txOtherReplacement := types.NewTransaction(0, other, big.NewInt(0), 1, big.NewInt(2), nil)
+	if ok, _ := list.Add(txOtherReplacement, DefaultConfig.PriceBump); !ok {
+		t.Fatalf("failed to replace issuer transaction")
+	}
+	if list.hasTRC21Receiver(issuers) {
+		t.Fatalf("expected issuer receiver cache to clear after replacement")
+	}
+
+	txIssuerA := types.NewTransaction(1, issuer, big.NewInt(0), 1, big.NewInt(1), nil)
+	txIssuerB := types.NewTransaction(2, issuer, big.NewInt(0), 1, big.NewInt(1), nil)
+	if ok, _ := list.Add(txIssuerA, DefaultConfig.PriceBump); !ok {
+		t.Fatalf("failed to add first issuer transaction")
+	}
+	if ok, _ := list.Add(txIssuerB, DefaultConfig.PriceBump); !ok {
+		t.Fatalf("failed to add second issuer transaction")
+	}
+	if !list.hasTRC21Receiver(issuers) {
+		t.Fatalf("expected issuer receiver cache to be restored")
+	}
+
+	if removed, _ := list.Remove(txIssuerA); !removed {
+		t.Fatalf("failed to remove first issuer transaction")
+	}
+	if !list.hasTRC21Receiver(issuers) {
+		t.Fatalf("expected issuer receiver cache to remain set while one tx remains")
+	}
+
+	if removed, _ := list.Remove(txIssuerB); !removed {
+		t.Fatalf("failed to remove second issuer transaction")
+	}
+	if list.hasTRC21Receiver(issuers) {
+		t.Fatalf("expected issuer receiver cache to clear when issuer txs are gone")
+	}
+}
+
+// BenchmarkListAdd benchmarks list add.
 func BenchmarkListAdd(t *testing.B) {
 	// Generate a list of transactions to insert
 	key, _ := crypto.GenerateKey()
@@ -143,10 +252,11 @@ func BenchmarkListAdd(t *testing.B) {
 	t.ResetTimer()
 	for _, v := range rand.Perm(len(txs)) {
 		list.Add(txs[v], DefaultConfig.PriceBump)
-		list.Filter(priceLimit, DefaultConfig.PriceBump, nil, nil)
+		list.Filter(priceLimit, DefaultConfig.PriceBump, nil, nil, nil)
 	}
 }
 
+// BenchmarkListCapOneTx benchmarks list cap one tx.
 func BenchmarkListCapOneTx(b *testing.B) {
 	// Generate a list of transactions to insert
 	key, _ := crypto.GenerateKey()

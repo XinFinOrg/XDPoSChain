@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -74,10 +75,13 @@ func RandStringBytes(n int) string {
 func getCommonBackend(t *testing.T, chainConfig *params.ChainConfig) *backends.SimulatedBackend {
 	// initial helper backend
 	contractBackendForSC := backends.NewXDCSimulatedBackend(types.GenesisAlloc{
-		voterAddr: {Balance: new(big.Int).SetUint64(10000000000)},
+		voterAddr: {Balance: new(big.Int).SetUint64(1000000000000000000)},
 	}, 10000000, chainConfig)
 
-	transactOpts := bind.NewKeyedTransactor(voterKey)
+	transactOpts, err := bind.NewKeyedTransactorWithChainID(voterKey, chainConfig.ChainID)
+	if err != nil {
+		t.Fatalf("can't create transactor: %v", err)
+	}
 
 	var candidates []common.Address
 	var caps []*big.Int
@@ -225,8 +229,64 @@ func GetCandidateFromCurrentSmartContract(backend bind.ContractBackend, t *testi
 	return ms
 }
 
+// legacyV1TestChainConfig shifts post-TIP2019 execution forks far into the
+// future so V1 engine tests can exercise legacy behavior.
+func legacyV1TestChainConfig(chainConfig *params.ChainConfig) *params.ChainConfig {
+	if chainConfig == nil {
+		return nil
+	}
+	legacy := *chainConfig
+	futureForkBlock := big.NewInt(1_000_000_000)
+	legacy.TIP2019Block = common.Big0
+	legacy.PetersburgBlock = new(big.Int).Set(futureForkBlock)
+	legacy.IstanbulBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPSigningBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPRandomizeBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPIncreaseMasternodesBlock = new(big.Int).Set(futureForkBlock)
+	legacy.DenylistBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPNoHalvingMNRewardBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPXDCXBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPXDCXLendingBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPXDCXCancellationFeeBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPTRC21FeeBlock = new(big.Int).Set(futureForkBlock)
+	legacy.Gas50xBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPXDCXMinerDisableBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPXDCXReceiverDisableBlock = new(big.Int).Set(futureForkBlock)
+	legacy.BerlinBlock = new(big.Int).Set(futureForkBlock)
+	legacy.LondonBlock = new(big.Int).Set(futureForkBlock)
+	legacy.MergeBlock = new(big.Int).Set(futureForkBlock)
+	legacy.ShanghaiBlock = new(big.Int).Set(futureForkBlock)
+	legacy.EIP1559Block = new(big.Int).Set(futureForkBlock)
+	legacy.CancunBlock = new(big.Int).Set(futureForkBlock)
+	legacy.PragueBlock = new(big.Int).Set(futureForkBlock)
+	legacy.OsakaBlock = new(big.Int).Set(futureForkBlock)
+	legacy.DynamicGasLimitBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPUpgradeRewardBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPUpgradePenaltyBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPEpochHalvingBlock = new(big.Int).Set(futureForkBlock)
+	return refreshChainConfigPresence(&legacy)
+}
+
+// refreshChainConfigPresence round-trips a chain config through JSON so tests
+// exercise the same presence-tracking logic as production startup.
+func refreshChainConfigPresence(config *params.ChainConfig) *params.ChainConfig {
+	if config == nil {
+		return nil
+	}
+	blob, err := json.Marshal(config)
+	if err != nil {
+		panic(fmt.Errorf("failed to marshal chain config: %w", err))
+	}
+	var refreshed params.ChainConfig
+	if err := json.Unmarshal(blob, &refreshed); err != nil {
+		panic(fmt.Errorf("failed to unmarshal chain config: %w", err))
+	}
+	return &refreshed
+}
+
 // V1 consensus engine
 func PrepareXDCTestBlockChain(t *testing.T, numOfBlocks int, chainConfig *params.ChainConfig) (*core.BlockChain, *backends.SimulatedBackend, *types.Block, common.Address, func(account accounts.Account, hash []byte) ([]byte, error)) {
+	chainConfig = legacyV1TestChainConfig(chainConfig)
 	// Preparation
 	var err error
 	// Authorise
@@ -355,6 +415,9 @@ func createBlockFromHeader(bc *core.BlockChain, customHeader *types.Header, txs 
 		Validator:   customHeader.Validator,
 		Validators:  customHeader.Validators,
 		Penalties:   customHeader.Penalties,
+	}
+	if config != nil && config.IsEIP1559(header.Number) {
+		header.BaseFee = new(big.Int).Set(common.BaseFee)
 	}
 	var block *types.Block
 	if len(txs) == 0 {

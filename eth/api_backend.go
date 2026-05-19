@@ -49,6 +49,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/eth/util"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
+	internalethapi "github.com/XinFinOrg/XDPoSChain/internal/ethapi"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/miner"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -216,6 +217,10 @@ func (b *EthAPIBackend) StateAndHeaderByNumber(ctx context.Context, number rpc.B
 	if err != nil {
 		return nil, nil, err
 	}
+	stateDb, err = internalethapi.AttachStateChainConfig(stateDb, b.ChainConfig())
+	if err != nil {
+		return nil, nil, err
+	}
 	return stateDb, header, err
 }
 
@@ -235,6 +240,10 @@ func (b *EthAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, blockN
 			return nil, nil, errors.New("hash is not currently canonical")
 		}
 		stateDb, err := b.eth.BlockChain().StateAt(header.Root)
+		if err != nil {
+			return nil, nil, err
+		}
+		stateDb, err = internalethapi.AttachStateChainConfig(stateDb, b.ChainConfig())
 		if err != nil {
 			return nil, nil, err
 		}
@@ -557,7 +566,7 @@ func (b *EthAPIBackend) GetVotersRewards(masternodeAddr common.Address) map[comm
 	var voterResults map[common.Address]*big.Int
 	for signer, calcReward := range rewardSigners {
 		if signer == masternodeAddr {
-			rewards, err := contracts.CalculateRewardForHolders(foundationWalletAddr, state, masternodeAddr, calcReward, number)
+			rewards, err := contracts.CalculateRewardForHolders(chain.Config(), foundationWalletAddr, state, masternodeAddr, calcReward, header.Number)
 			if err != nil {
 				log.Error("Fail to calculate reward for holders.", "error", err)
 				return nil

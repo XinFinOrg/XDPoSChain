@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestIsAuthorisedMNForConsensusV2 tests is authorised mn for consensus v 2.
 func TestIsAuthorisedMNForConsensusV2(t *testing.T) {
 	// we skip test for v1 since it's hard to make a real genesis block
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 901, params.TestXDPoSMockChainConfig, nil)
@@ -31,6 +32,7 @@ func TestIsAuthorisedMNForConsensusV2(t *testing.T) {
 	assert.False(t, isAuthorisedMN)
 }
 
+// TestIsYourTurnConsensusV2 tests is your turn consensus v 2.
 func TestIsYourTurnConsensusV2(t *testing.T) {
 	skipLongInShortMode(t)
 	// we skip test for v1 since it's hard to make a real genesis block
@@ -83,6 +85,7 @@ func TestIsYourTurnConsensusV2(t *testing.T) {
 	assert.False(t, isYourTurn)
 }
 
+// TestIsYourTurnConsensusV2CrossConfig tests is your turn consensus v 2 cross config.
 func TestIsYourTurnConsensusV2CrossConfig(t *testing.T) {
 	skipLongInShortMode(t)
 	// we skip test for v1 since it's hard to make a real genesis block
@@ -109,7 +112,8 @@ func TestIsYourTurnConsensusV2CrossConfig(t *testing.T) {
 	// after new mine period
 	secondMinePeriod := blockchain.Config().XDPoS.V2.CurrentConfig.MinePeriod
 
-	time.Sleep(time.Duration(secondMinePeriod-firstMinePeriod) * time.Second)
+	// YourTurn uses Unix-second granularity; add a small buffer to avoid edge-time flakiness.
+	time.Sleep(time.Duration(secondMinePeriod-firstMinePeriod+1) * time.Second)
 	isYourTurn, err = adaptor.YourTurn(blockchain, currentBlockHeader, common.HexToAddress("xdc703c4b2bD70c169f5717101CaeE543299Fc946C7"))
 	assert.Nil(t, err)
 	assert.True(t, isYourTurn)

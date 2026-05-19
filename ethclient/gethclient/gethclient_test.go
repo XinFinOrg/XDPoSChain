@@ -98,9 +98,6 @@ func newTestBackend(t *testing.T) (*node.Node, []*types.Block, []common.Hash) {
 
 func generateTestChain() (*core.Genesis, []*types.Block, []common.Hash) {
 	chainConfig := *params.AllEthashProtocolChanges
-	chainConfig.Eip1559Block = big.NewInt(0)
-	// Ensure global chain constants match the test chain config before block generation.
-	common.CopyConstants(chainConfig.ChainID.Uint64())
 	genesis := &core.Genesis{
 		Config: &chainConfig,
 		Alloc: types.GenesisAlloc{
@@ -134,6 +131,7 @@ func generateTestChain() (*core.Genesis, []*types.Block, []common.Hash) {
 	return genesis, blocks, txHashes
 }
 
+// TestGethClient tests geth client.
 func TestGethClient(t *testing.T) {
 	backend, _, txHashes := newTestBackend(t)
 	client := backend.Attach()
@@ -409,6 +407,7 @@ func testTraceTransactions(t *testing.T, client *rpc.Client, txHashes []common.H
 	}
 }
 
+// TestOverrideAccountMarshal tests override account marshal.
 func TestOverrideAccountMarshal(t *testing.T) {
 	om := map[common.Address]OverrideAccount{
 		{0x11}: {
@@ -459,6 +458,7 @@ func TestOverrideAccountMarshal(t *testing.T) {
 	}
 }
 
+// TestBlockOverridesMarshal tests block overrides marshal.
 func TestBlockOverridesMarshal(t *testing.T) {
 	for i, tt := range []struct {
 		bo   BlockOverrides

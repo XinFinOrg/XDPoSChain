@@ -1,7 +1,6 @@
 package engine_v2_tests
 
 import (
-	"encoding/json"
 	"math/big"
 	"testing"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestInitialFirstV2Block tests initial first v 2 block.
 func TestInitialFirstV2Block(t *testing.T) {
 	skipLongInShortMode(t)
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 900, params.TestXDPoSMockChainConfig, nil)
@@ -54,6 +54,7 @@ func TestInitialFirstV2Block(t *testing.T) {
 	assert.Equal(t, types.Round(1), timeoutMsg.(*types.Timeout).Round)
 }
 
+// TestInitialOtherV2Block tests initial other v 2 block.
 func TestInitialOtherV2Block(t *testing.T) {
 	// insert new block with new extra fields
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 900, params.TestXDPoSMockChainConfig, nil)
@@ -117,6 +118,7 @@ func TestInitialOtherV2Block(t *testing.T) {
 	assert.Equal(t, uint64(450), snap.Number)
 }
 
+// TestSnapshotShouldAlreadyCreatedByUpdateM1 tests snapshot should already created by update m 1.
 func TestSnapshotShouldAlreadyCreatedByUpdateM1(t *testing.T) {
 	skipLongInShortMode(t)
 	// insert new block with new extra fields
@@ -128,20 +130,18 @@ func TestSnapshotShouldAlreadyCreatedByUpdateM1(t *testing.T) {
 	assert.Equal(t, uint64(1350), snap.Number)
 }
 
+// TestInitialWithWrongSwitchNumber tests initial with wrong switch number.
 func TestInitialWithWrongSwitchNumber(t *testing.T) {
-	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
-	assert.Nil(t, err)
-	configString := string(b)
+	config := params.TestXDPoSMockChainConfig.Clone()
+	if config == nil {
+		t.Fatal("expected cloned config")
+	}
 
-	var config params.ChainConfig
-	err = json.Unmarshal([]byte(configString), &config)
-	assert.Nil(t, err)
-
-	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 800, &config, nil)
+	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 800, config, nil)
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
 	header := currentBlock.Header()
 	config.XDPoS.V2.SwitchBlock = big.NewInt(800) // not epoch number
 
-	err = adaptor.EngineV2.Initial(blockchain, header)
+	err := adaptor.EngineV2.Initial(blockchain, header)
 	assert.NotNil(t, err)
 }

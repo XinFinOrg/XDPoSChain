@@ -32,7 +32,7 @@
             "foundationWalletAddr": "0x92a289fe95a85c53b8d0d113cbaef0c1ec98ac65",
             "SkipV1Validation": false,
             "v2": {
-              "SwitchEpoch": 89300,
+              "switchEpoch": 89300,
               "switchBlock": 80370000,
               "config": {
                 "maxMasternodes": 108,

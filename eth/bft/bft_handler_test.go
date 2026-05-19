@@ -42,7 +42,7 @@ func newTester() *bfterTester {
 	testConsensus := &XDPoS.XDPoS{EngineV2: &engine_v2.XDPoS_v2{}}
 	broadcasts := BroadcastFns{}
 	blockChain := &core.BlockChain{}
-	blockChain.SetConfig(params.TestXDPoSMockChainConfig)
+	blockChain.SetChainConfig(params.TestXDPoSMockChainConfig)
 	chainHeight := func() uint64 {
 		return 1351
 	}

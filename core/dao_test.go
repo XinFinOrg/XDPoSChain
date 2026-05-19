@@ -30,8 +30,41 @@ import (
 // blocks based on their extradata fields.
 func TestDAOForkRangeExtradata(t *testing.T) {
 	forkBlock := big.NewInt(32)
-	chainConfig := *params.TestChainConfig
+	futureFork := big.NewInt(1_000_000_000)
+	setFutureXinFinForks := func(cfg *params.ChainConfig) {
+		set := func() *big.Int { return new(big.Int).Set(futureFork) }
+		cfg.TIPSigningBlock = set()
+		cfg.TIPRandomizeBlock = set()
+		cfg.TIPIncreaseMasternodesBlock = set()
+		cfg.DenylistBlock = set()
+		cfg.TIPNoHalvingMNRewardBlock = set()
+		cfg.TIPXDCXBlock = set()
+		cfg.TIPXDCXLendingBlock = set()
+		cfg.TIPXDCXCancellationFeeBlock = set()
+		cfg.TIPTRC21FeeBlock = set()
+		cfg.Gas50xBlock = set()
+		cfg.BerlinBlock = set()
+		cfg.LondonBlock = set()
+		cfg.MergeBlock = set()
+		cfg.ShanghaiBlock = set()
+		cfg.TIPXDCXMinerDisableBlock = set()
+		cfg.TIPXDCXReceiverDisableBlock = set()
+		cfg.EIP1559Block = set()
+		cfg.CancunBlock = set()
+		cfg.PragueBlock = set()
+		cfg.OsakaBlock = set()
+		cfg.DynamicGasLimitBlock = set()
+		cfg.TIPUpgradeRewardBlock = set()
+		cfg.TIPUpgradePenaltyBlock = set()
+		cfg.TIPEpochHalvingBlock = set()
+		cfg.TRC21IssuerSMC = params.XDCMainnetChainConfig.TRC21IssuerSMC
+		cfg.XDCXListingSMC = params.XDCMainnetChainConfig.XDCXListingSMC
+		cfg.RelayerRegistrationSMC = params.XDCMainnetChainConfig.RelayerRegistrationSMC
+		cfg.LendingRegistrationSMC = params.XDCMainnetChainConfig.LendingRegistrationSMC
+	}
+	chainConfig := *params.MainnetChainConfig
 	chainConfig.HomesteadBlock = big.NewInt(0)
+	setFutureXinFinForks(&chainConfig)
 
 	// Generate a common prefix for both pro-forkers and non-forkers
 	gspec := &Genesis{
@@ -42,27 +75,35 @@ func TestDAOForkRangeExtradata(t *testing.T) {
 
 	// Create the concurrent, conflicting two nodes
 	proDb := rawdb.NewMemoryDatabase()
-	proConf := *params.TestChainConfig
+	proConf := *params.MainnetChainConfig
 	proConf.HomesteadBlock = big.NewInt(0)
 	proConf.DAOForkBlock = forkBlock
 	proConf.DAOForkSupport = true
+	setFutureXinFinForks(&proConf)
 	progspec := &Genesis{
 		BaseFee: big.NewInt(params.InitialBaseFee),
 		Config:  &proConf,
 	}
-	proBc, _ := NewBlockChain(proDb, nil, progspec, ethash.NewFaker(), vm.Config{})
+	proBc, err := NewBlockChain(proDb, nil, progspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create pro-fork blockchain: %v", err)
+	}
 	defer proBc.Stop()
 
 	conDb := rawdb.NewMemoryDatabase()
-	conConf := *params.TestChainConfig
+	conConf := *params.MainnetChainConfig
 	conConf.HomesteadBlock = big.NewInt(0)
 	conConf.DAOForkBlock = forkBlock
 	conConf.DAOForkSupport = false
+	setFutureXinFinForks(&conConf)
 	congspec := &Genesis{
 		BaseFee: big.NewInt(params.InitialBaseFee),
 		Config:  &conConf,
 	}
-	conBc, _ := NewBlockChain(conDb, nil, congspec, ethash.NewFaker(), vm.Config{})
+	conBc, err := NewBlockChain(conDb, nil, congspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create con-fork blockchain: %v", err)
+	}
 	defer conBc.Stop()
 
 	if _, err := proBc.InsertChain(prefix); err != nil {
@@ -74,7 +115,10 @@ func TestDAOForkRangeExtradata(t *testing.T) {
 	// Try to expand both pro-fork and non-fork chains iteratively with other camp's blocks
 	for i := int64(0); i < params.DAOForkExtraRange.Int64(); i++ {
 		// Create a pro-fork block, and try to feed into the no-fork chain
-		bc, _ := NewBlockChain(rawdb.NewMemoryDatabase(), nil, congspec, ethash.NewFaker(), vm.Config{})
+		bc, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, congspec, ethash.NewFaker(), vm.Config{})
+		if err != nil {
+			t.Fatalf("failed to create contra-fork expansion chain: %v", err)
+		}
 
 		blocks := conBc.GetBlocksFromHash(conBc.CurrentBlock().Hash(), int(conBc.CurrentBlock().Number.Uint64()))
 		for j := 0; j < len(blocks)/2; j++ {
@@ -97,7 +141,10 @@ func TestDAOForkRangeExtradata(t *testing.T) {
 			t.Fatalf("contra-fork chain didn't accepted no-fork block: %v", err)
 		}
 		// Create a no-fork block, and try to feed into the pro-fork chain
-		bc, _ = NewBlockChain(rawdb.NewMemoryDatabase(), nil, progspec, ethash.NewFaker(), vm.Config{})
+		bc, err = NewBlockChain(rawdb.NewMemoryDatabase(), nil, progspec, ethash.NewFaker(), vm.Config{})
+		if err != nil {
+			t.Fatalf("failed to create pro-fork expansion chain: %v", err)
+		}
 
 		blocks = proBc.GetBlocksFromHash(proBc.CurrentBlock().Hash(), int(proBc.CurrentBlock().Number.Uint64()))
 		for j := 0; j < len(blocks)/2; j++ {

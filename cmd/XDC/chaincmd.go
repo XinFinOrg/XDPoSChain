@@ -188,10 +188,6 @@ func initGenesis(ctx *cli.Context) error {
 		utils.Fatalf("invalid genesis json: %v", err)
 	}
 
-	if genesis.Config.ChainID != nil {
-		common.CopyConstants(genesis.Config.ChainID.Uint64())
-	}
-
 	// Open and initialise both full and light databases
 	stack, _ := makeConfigNode(ctx)
 	defer stack.Close()
@@ -201,9 +197,12 @@ func initGenesis(ctx *cli.Context) error {
 	if err != nil {
 		utils.Fatalf("Failed to open database: %v", err)
 	}
-	_, hash, err := core.SetupGenesisBlock(chaindb, genesis)
+	_, hash, compatErr, err := core.SetupGenesisBlockWithOverride(chaindb, genesis, ctx.Bool(utils.AllowBuiltInConfigOverrideFlag.Name))
 	if err != nil {
-		utils.Fatalf("Failed to write genesis block: %v", err)
+		utils.Fatalf("Failed to write genesis block: %s", utils.FormatChainConfigError(err))
+	}
+	if compatErr != nil {
+		utils.Fatalf("Failed to write chain config: %v", compatErr)
 	}
 	chaindb.Close()
 	log.Info("Successfully wrote genesis state", "database", name, "hash", hash)
@@ -292,7 +291,7 @@ func exportChain(ctx *cli.Context) error {
 		utils.Fatalf("This command requires an argument.")
 	}
 
-	stack, _, _ := makeFullNode(ctx)
+	stack, _ := makeConfigNode(ctx)
 	defer stack.Close()
 
 	chain, db := utils.MakeChain(ctx, stack, true)
