@@ -139,58 +139,61 @@ func TestTimeoutPeriodAndThreadholdConfigChange(t *testing.T) {
 }
 
 // Timeout handler
-func TestTimeoutMessageHandlerSuccessfullyGenerateTCandSyncInfo(t *testing.T) {
-	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
+func TestTimeoutMessageHandlerSuccessfullyGenerateTCandSyncInfoAfterReachingThreshold(t *testing.T) {
+	// skipLongInShortMode(t)
+	blockchain, _, _, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
-	// Set round to 1
 	engineV2.SetNewRoundFaker(blockchain, types.Round(5), false)
-	// Create two timeout message which will not reach timeout pool threshold
-	timeoutMsg := &types.Timeout{
-		Round:     types.Round(5),
-		Signature: []byte{1},
-		GapNumber: 450,
-	}
 
-	err := engineV2.TimeoutHandler(blockchain, timeoutMsg)
+	timeoutSigningHash := types.TimeoutSigHash(&types.TimeoutForSign{
+		Round:     types.Round(5),
+		GapNumber: 450,
+	})
+
+	sigSigner, err := signFn(accounts.Account{Address: signer}, timeoutSigningHash.Bytes())
+	assert.Nil(t, err)
+	sigAcc1 := SignHashByPK(acc1Key, timeoutSigningHash.Bytes())
+	sigAcc2 := SignHashByPK(acc2Key, timeoutSigningHash.Bytes())
+	sigAcc3 := SignHashByPK(acc3Key, timeoutSigningHash.Bytes())
+
+	// TimeoutHandler bypasses VerifyTimeoutMessage, so the signer field is set
+	// manually here to mirror what the BFT entry path would set.
+	timeoutMsg := &types.Timeout{Round: types.Round(5), Signature: sigSigner, GapNumber: 450}
+	timeoutMsg.SetSigner(signer)
+	err = engineV2.TimeoutHandler(blockchain, timeoutMsg)
 	assert.Nil(t, err)
 	currentRound, _, _, _, _, _ := engineV2.GetPropertiesFaker()
 	assert.Equal(t, types.Round(5), currentRound)
-	timeoutMsg = &types.Timeout{
-		Round:     types.Round(5),
-		Signature: []byte{2},
-		GapNumber: 450,
-	}
+
+	timeoutMsg = &types.Timeout{Round: types.Round(5), Signature: sigAcc1, GapNumber: 450}
+	timeoutMsg.SetSigner(acc1Addr)
 	err = engineV2.TimeoutHandler(blockchain, timeoutMsg)
 	assert.Nil(t, err)
-	timeoutMsg = &types.Timeout{
-		Round:     types.Round(5),
-		Signature: []byte{3},
-		GapNumber: 450,
-	}
+
+	timeoutMsg = &types.Timeout{Round: types.Round(5), Signature: sigAcc2, GapNumber: 450}
+	timeoutMsg.SetSigner(acc2Addr)
 	err = engineV2.TimeoutHandler(blockchain, timeoutMsg)
 	assert.Nil(t, err)
 	currentRound, _, _, _, _, _ = engineV2.GetPropertiesFaker()
 	assert.Equal(t, types.Round(5), currentRound)
 
 	// Send a timeout with different gap number, it shall not trigger timeout pool hook
-	timeoutMsg = &types.Timeout{
+	otherGapHash := types.TimeoutSigHash(&types.TimeoutForSign{
 		Round:     types.Round(5),
-		Signature: []byte{4},
 		GapNumber: 1350,
-	}
+	})
+	sigOtherGap := SignHashByPK(acc3Key, otherGapHash.Bytes())
+	timeoutMsg = &types.Timeout{Round: types.Round(5), Signature: sigOtherGap, GapNumber: 1350}
+	timeoutMsg.SetSigner(acc3Addr)
 	err = engineV2.TimeoutHandler(blockchain, timeoutMsg)
 	assert.Nil(t, err)
 	currentRound, _, _, _, _, _ = engineV2.GetPropertiesFaker()
 	assert.Equal(t, types.Round(5), currentRound)
 
 	// Create a timeout message that should trigger timeout pool hook
-	timeoutMsg = &types.Timeout{
-		Round:     types.Round(5),
-		Signature: []byte{5},
-		GapNumber: 450,
-	}
-
+	timeoutMsg = &types.Timeout{Round: types.Round(5), Signature: sigAcc3, GapNumber: 450}
+	timeoutMsg.SetSigner(acc3Addr)
 	err = engineV2.TimeoutHandler(blockchain, timeoutMsg)
 	assert.Nil(t, err)
 
@@ -208,9 +211,9 @@ func TestTimeoutMessageHandlerSuccessfullyGenerateTCandSyncInfo(t *testing.T) {
 	assert.NotNil(t, tc)
 	assert.Equal(t, tc.Round, types.Round(5))
 	assert.Equal(t, uint64(450), tc.GapNumber)
-	// The signatures shall not include the byte{3} from a different gap number
-	sigatures := []types.Signature{[]byte{1}, []byte{2}, []byte{3}, []byte{5}}
-	assert.ElementsMatch(t, tc.Signatures, sigatures)
+	// The signatures shall not include the different-gap signature
+	expectedSigs := []types.Signature{sigSigner, sigAcc1, sigAcc2, sigAcc3}
+	assert.ElementsMatch(t, tc.Signatures, expectedSigs)
 	assert.Equal(t, types.Round(6), currentRound)
 }
 

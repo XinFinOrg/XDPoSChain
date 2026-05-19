@@ -669,7 +669,7 @@ func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainReader, vote *types.Vo
 	}), vote.Signature, snapshot.NextEpochCandidates)
 	if err != nil {
 		for i, mn := range snapshot.NextEpochCandidates {
-			log.Warn("[VerifyVoteMessage] Master node list item", "index", i, "Master node", mn.Hex())
+			log.Debug("[VerifyVoteMessage] Master node list item", "index", i, "Master node", mn.Hex())
 		}
 		log.Warn("[VerifyVoteMessage] Error while verifying vote message", "votedBlockNum", vote.ProposedBlockInfo.Number.Uint64(), "votedBlockHash", vote.ProposedBlockInfo.Hash.Hex(), "voteHash", vote.Hash(), "error", err.Error())
 		return false, err

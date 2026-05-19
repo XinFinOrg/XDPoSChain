@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"runtime"
 	"sync"
 
 	"github.com/XinFinOrg/XDPoSChain/accounts"
@@ -16,6 +17,8 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"golang.org/x/crypto/sha3"
 )
+
+var secp256k1halfN = new(big.Int).Rsh(crypto.S256().Params().N, 1)
 
 func sigHash(header *types.Header) (hash common.Hash) {
 	hasher := sha3.NewLegacyKeccak256()
@@ -98,6 +101,7 @@ func RecoverUniqueSigners(signedHash common.Hash, signatureList []types.Signatur
 	for _, signature := range signatureList {
 		go func(sig types.Signature) {
 			defer wg.Done()
+
 			pubkey, err := crypto.Ecrecover(signedHash.Bytes(), signature)
 			if err != nil {
 				log.Error("[UniqueSignatures] error while recovering public key", "error", err, "signature", common.Bytes2Hex(signature), "signedHash", signedHash.Hex())
@@ -106,6 +110,14 @@ func RecoverUniqueSigners(signedHash common.Hash, signatureList []types.Signatur
 			}
 			var signerAddress common.Address
 			copy(signerAddress[:], crypto.Keccak256(pubkey[1:])[12:])
+			
+			// check flipped signature
+			if !hasLowS(signature) {
+				log.Warn("[RecoverUniqueSigners] found evidence of attack", "signer", signerAddress, "message", signedHash.Hex())
+				errCh <- utils.ErrInvalidSignature
+				return
+			}
+
 			result <- Message{pubkey: signerAddress, sig: sig}
 		}(signature)
 	}
@@ -150,11 +162,65 @@ func (x *XDPoS_v2) signSignature(signingHash common.Hash) (types.Signature, erro
 	return signedHash, nil
 }
 
+func (x *XDPoS_v2) verifyAllSignatures(messageHash common.Hash, signatures []types.Signature, candidates []common.Address) (validSignatures []types.Signature, signers []common.Address, duplicates []common.Address, err error) {
+	errs := make([]error, len(signatures))
+	addresses := make([]common.Address, len(signatures))
+	ok := make([]bool, len(signatures))
+
+	sem := make(chan struct{}, runtime.NumCPU())
+	var wg sync.WaitGroup
+	for i, signature := range signatures {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			verified, signerAddress, verr := x.verifyMsgSignature(messageHash, signature, candidates)
+			switch {
+			case verr != nil:
+				log.Warn("[verifyAllSignatures] error verifying signature", "index", i, "message", messageHash.Hex(), "error", verr)
+				errs[i] = fmt.Errorf("verify sig %d: %w", i, verr)
+			case !verified:
+				log.Warn("[verifyAllSignatures] signer not in masternode list", "index", i, "signer", signerAddress, "message", messageHash.Hex())
+				errs[i] = fmt.Errorf("verify sig %d: signer %v not in masternodes", i, signerAddress)
+			default:
+				addresses[i] = signerAddress
+				ok[i] = true
+			}
+		}()
+	}
+	wg.Wait()
+
+	seen := make(map[common.Address]struct{}, len(addresses))
+	dupSeen := make(map[common.Address]struct{})
+	validSignatures = make([]types.Signature, 0, len(addresses))
+	signers = make([]common.Address, 0, len(addresses))
+	for i, address := range addresses {
+		if !ok[i] {
+			continue
+		}
+		if _, already := seen[address]; already {
+			if _, reported := dupSeen[address]; !reported {
+				log.Warn("[verifyAllSignatures] duplicate signer", "signer", address, "message", messageHash.Hex())
+				duplicates = append(duplicates, address)
+				dupSeen[address] = struct{}{}
+			}
+			continue
+		}
+		seen[address] = struct{}{}
+		signers = append(signers, address)
+		validSignatures = append(validSignatures, signatures[i])
+	}
+	return validSignatures, signers, duplicates, errors.Join(errs...)
+}
+
+
 func (x *XDPoS_v2) verifyMsgSignature(signedHashToBeVerified common.Hash, signature types.Signature, masternodes []common.Address) (bool, common.Address, error) {
 	var signerAddress common.Address
 	if len(masternodes) == 0 {
 		return false, signerAddress, errors.New("empty masternode list detected when verifying message signatures")
 	}
+
 	// Recover the public key and the Ethereum address
 	pubkey, err := crypto.Ecrecover(signedHashToBeVerified.Bytes(), signature)
 	if err != nil {
@@ -164,6 +230,11 @@ func (x *XDPoS_v2) verifyMsgSignature(signedHashToBeVerified common.Hash, signat
 	copy(signerAddress[:], crypto.Keccak256(pubkey[1:])[12:])
 	for _, mn := range masternodes {
 		if mn == signerAddress {
+			// check flipped signature
+			if !hasLowS(signature) {
+				log.Warn("[verifyMsgSignature] found evidence of attack", "signer", signerAddress, "message", signedHashToBeVerified.Hex())
+				return false, signerAddress, utils.ErrInvalidSignature
+			}
 			return true, signerAddress, nil
 		}
 	}
@@ -396,4 +467,24 @@ func (x *XDPoS_v2) GetBlockByEpochNumber(chain consensus.ChainReader, targetEpoc
 	}
 	// else, we use binary search
 	return x.binarySearchBlockByEpochNumber(chain, targetEpochNum, estBlockNum.Uint64(), epochSwitchInfo.EpochSwitchBlockInfo.Number.Uint64())
+}
+
+// hasLowS reports whether the signature's S value is in the lower half of the
+// secp256k1 curve order, the canonical low-S form that prevents
+// (r, s) -> (r, N-s) malleability.
+func hasLowS(signature types.Signature) bool {
+	if len(signature) != 65 {
+		log.Warn("[hasLowS] invalid signature length", "length", len(signature), "signature", common.Bytes2Hex(signature))
+		return false
+	}
+	s := new(big.Int).SetBytes(signature[32:64])
+	isLowS := s.Cmp(secp256k1halfN) <= 0
+	if !isLowS {
+		log.Warn("[hasLowS] found a flipped signature",
+			"r", common.Bytes2Hex(signature[0:32]),
+			"s", common.Bytes2Hex(signature[32:64]),
+			"v", signature[64],
+			"signature", common.Bytes2Hex(signature))
+	}
+	return isLowS
 }
