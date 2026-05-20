@@ -7,14 +7,123 @@
     "eip155Block": 3,
     "eip158Block": 3,
     "byzantiumBlock": 4,
+    "tip2019Block": 1,
+    "tipSigningBlock": 3000000,
+    "tipRandomizeBlock": 3464000,
+    "tipIncreaseMasternodesBlock": 5000000,
+    "denylistBlock": 23779191,
+    "tipNoHalvingMNRewardBlock": 23779191,
+    "tipXDCXBlock": 23779191,
+    "tipXDCXLendingBlock": 23779191,
+    "tipXDCXCancellationFeeBlock": 23779191,
+    "tipTRC21FeeBlock": 23779191,
+    "gas50xBlock": 56828700,
+    "berlinBlock": 61290000,
+    "londonBlock": 61290000,
+    "mergeBlock": 61290000,
+    "shanghaiBlock": 61290000,
+    "tipXDCXMinerDisableBlock": 61290000,
+    "tipXDCXReceiverDisableBlock": 66825000,
     "eip1559Block": 71550000,
+    "cancunBlock": 71551800,
+    "trc21IssuerSMC": "0x0E2C88753131CE01c7551B726b28BFD04e44003F",
+    "xdcxListingSMC": "0x14B2Bf043b9c31827A472CE4F94294fE9a6277e0",
+    "relayerRegistrationSMC": "0xA1996F69f47ba14Cb7f661010A7C31974277958c",
+    "lendingRegistrationSMC": "0x28d7fC2Cf5c18203aaCD7459EFC6Af0643C97bE8",
     "XDPoS": {
       "period": 2,
       "epoch": 900,
       "reward": 5000,
       "rewardCheckpoint": 900,
       "gap": 450,
-      "foundationWalletAddr": "xdc746249c61f5832c5eed53172776b460491bdcd5c"
+      "foundationWalletAddr": "xdc746249c61f5832c5eed53172776b460491bdcd5c",
+      "maxMasternodesV2": 15,
+      "v2": {
+        "switchEpoch": 63143,
+        "switchBlock": 56828700,
+        "config": {
+          "maxMasternodes": 15,
+          "maxProtectorNodes": 0,
+          "maxObserverNodes": 0,
+          "switchRound": 0,
+          "minePeriod": 2,
+          "timeoutSyncThreshold": 3,
+          "timeoutPeriod": 60,
+          "certificateThreshold": 0.45,
+          "masternodeReward": 0,
+          "protectorReward": 0,
+          "observerReward": 0,
+          "minimumMinerBlockPerEpoch": 0,
+          "limitPenaltyEpoch": 0,
+          "minimumSigningTx": 0,
+          "expTimeoutConfig": {
+            "base": 1,
+            "maxExponent": 0
+          }
+        },
+        "allConfigs": {
+          "0": {
+            "maxMasternodes": 15,
+            "maxProtectorNodes": 0,
+            "maxObserverNodes": 0,
+            "switchRound": 0,
+            "minePeriod": 2,
+            "timeoutSyncThreshold": 3,
+            "timeoutPeriod": 60,
+            "certificateThreshold": 0.45,
+            "masternodeReward": 0,
+            "protectorReward": 0,
+            "observerReward": 0,
+            "minimumMinerBlockPerEpoch": 0,
+            "limitPenaltyEpoch": 0,
+            "minimumSigningTx": 0,
+            "expTimeoutConfig": {
+              "base": 1,
+              "maxExponent": 0
+            }
+          },
+          "900000": {
+            "maxMasternodes": 108,
+            "maxProtectorNodes": 0,
+            "maxObserverNodes": 0,
+            "switchRound": 900000,
+            "minePeriod": 2,
+            "timeoutSyncThreshold": 3,
+            "timeoutPeriod": 60,
+            "certificateThreshold": 0.667,
+            "masternodeReward": 0,
+            "protectorReward": 0,
+            "observerReward": 0,
+            "minimumMinerBlockPerEpoch": 0,
+            "limitPenaltyEpoch": 0,
+            "minimumSigningTx": 0,
+            "expTimeoutConfig": {
+              "base": 1,
+              "maxExponent": 0
+            }
+          },
+          "15000000": {
+            "maxMasternodes": 108,
+            "maxProtectorNodes": 0,
+            "maxObserverNodes": 0,
+            "switchRound": 15000000,
+            "minePeriod": 2,
+            "timeoutSyncThreshold": 3,
+            "timeoutPeriod": 10,
+            "certificateThreshold": 0.667,
+            "masternodeReward": 0,
+            "protectorReward": 0,
+            "observerReward": 0,
+            "minimumMinerBlockPerEpoch": 0,
+            "limitPenaltyEpoch": 0,
+            "minimumSigningTx": 0,
+            "expTimeoutConfig": {
+              "base": 1,
+              "maxExponent": 0
+            }
+          }
+        }
+      }
     }
   },
   "nonce": "0x0",
