@@ -13,6 +13,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/startup"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	xdcgenesis "github.com/XinFinOrg/XDPoSChain/genesis"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
@@ -1178,5 +1179,33 @@ func TestLoadChainConfigReturnsCompatErrorWhenCompatDriftRewindsToZero(t *testin
 	}
 	if persistedCfg == nil || persistedCfg.EIP150Block == nil || persistedCfg.EIP150Block.Cmp(storedCfg.EIP150Block) != 0 {
 		t.Fatalf("expected stored config to remain unchanged, have %v", persistedCfg)
+	}
+}
+
+// TestEmbeddedGenesisConfigMatchesParams verifies that each network's embedded
+// genesis JSON (used by `XDC init <network>`) produces a ChainConfig that is
+// semantically equal to the canonical params config used by `--<network>`.
+// A failure here means the two startup paths would diverge at fork activation.
+func TestEmbeddedGenesisConfigMatchesParams(t *testing.T) {
+	cases := []struct {
+		name    string
+		raw     []byte
+		wantCfg *params.ChainConfig
+	}{
+		{"mainnet", xdcgenesis.MainnetGenesis, params.XDCMainnetChainConfig},
+		{"testnet", xdcgenesis.TestnetGenesis, params.TestnetChainConfig},
+		{"devnet", xdcgenesis.DevnetGenesis, params.DevnetChainConfig},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			g := new(Genesis)
+			if err := json.Unmarshal(c.raw, g); err != nil {
+				t.Fatalf("unmarshal embedded %s genesis: %v", c.name, err)
+			}
+			if !chainConfigSemanticallyEqual(g.Config, c.wantCfg) {
+				t.Errorf("embedded %s genesis config does not match params canonical config", c.name)
+			}
+		})
 	}
 }
