@@ -69,6 +69,8 @@ func TestProtocolCompatibility(t *testing.T) {
 
 // Tests that block headers can be retrieved from a remote chain based on user queries.
 func TestGetBlockHeaders62(t *testing.T) { testGetBlockHeaders(t, 62) }
+
+// TestGetBlockHeaders63 tests get block headers 63.
 func TestGetBlockHeaders63(t *testing.T) { testGetBlockHeaders(t, 63) }
 
 func testGetBlockHeaders(t *testing.T, protocol int) {
@@ -228,6 +230,8 @@ func testGetBlockHeaders(t *testing.T, protocol int) {
 
 // Tests that block contents can be retrieved from a remote chain based on their hashes.
 func TestGetBlockBodies62(t *testing.T) { testGetBlockBodies(t, 62) }
+
+// TestGetBlockBodies63 tests get block bodies 63.
 func TestGetBlockBodies63(t *testing.T) { testGetBlockBodies(t, 63) }
 
 func testGetBlockBodies(t *testing.T, protocol int) {
@@ -462,11 +466,21 @@ func testGetReceipt(t *testing.T, protocol int) {
 // Tests that post eth protocol handshake, DAO fork-enabled clients also execute
 // a DAO "challenge" verifying each others' DAO fork headers to ensure they're on
 // compatible chains.
-func TestDAOChallengeNoVsNo(t *testing.T)       { testDAOChallenge(t, false, false, false) }
-func TestDAOChallengeNoVsPro(t *testing.T)      { testDAOChallenge(t, false, true, false) }
-func TestDAOChallengeProVsNo(t *testing.T)      { testDAOChallenge(t, true, false, false) }
-func TestDAOChallengeProVsPro(t *testing.T)     { testDAOChallenge(t, true, true, false) }
-func TestDAOChallengeNoVsTimeout(t *testing.T)  { testDAOChallenge(t, false, false, true) }
+func TestDAOChallengeNoVsNo(t *testing.T) { testDAOChallenge(t, false, false, false) }
+
+// TestDAOChallengeNoVsPro tests dao challenge no vs pro.
+func TestDAOChallengeNoVsPro(t *testing.T) { testDAOChallenge(t, false, true, false) }
+
+// TestDAOChallengeProVsNo tests dao challenge pro vs no.
+func TestDAOChallengeProVsNo(t *testing.T) { testDAOChallenge(t, true, false, false) }
+
+// TestDAOChallengeProVsPro tests dao challenge pro vs pro.
+func TestDAOChallengeProVsPro(t *testing.T) { testDAOChallenge(t, true, true, false) }
+
+// TestDAOChallengeNoVsTimeout tests dao challenge no vs timeout.
+func TestDAOChallengeNoVsTimeout(t *testing.T) { testDAOChallenge(t, false, false, true) }
+
+// TestDAOChallengeProVsTimeout tests dao challenge pro vs timeout.
 func TestDAOChallengeProVsTimeout(t *testing.T) { testDAOChallenge(t, true, true, true) }
 
 func testDAOChallenge(t *testing.T, localForked, remoteForked bool, timeout bool) {
@@ -481,10 +495,7 @@ func testDAOChallenge(t *testing.T, localForked, remoteForked bool, timeout bool
 		pow   = ethash.NewFaker()
 		db    = rawdb.NewMemoryDatabase()
 		gspec = &core.Genesis{
-			Config: &params.ChainConfig{
-				DAOForkBlock:   big.NewInt(1),
-				DAOForkSupport: localForked,
-			},
+			Config: daoChallengeChainConfig(localForked),
 		}
 		blockchain, _ = core.NewBlockChain(db, nil, gspec, pow, vm.Config{})
 	)
@@ -537,4 +548,48 @@ func testDAOChallenge(t *testing.T, localForked, remoteForked bool, timeout bool
 			t.Fatalf("peer count mismatch: have %d, want %d", peers, 0)
 		}
 	}
+}
+
+// daoChallengeChainConfig builds a chain config that activates the DAO fork
+// challenge while pushing later forks into the future.
+func daoChallengeChainConfig(daoForkSupport bool) *params.ChainConfig {
+	config := params.TestChainConfig.Clone()
+	futureForkBlock := big.NewInt(1_000_000_000)
+
+	config.ChainID = big.NewInt(1337)
+	config.DAOForkBlock = big.NewInt(1)
+	config.DAOForkSupport = daoForkSupport
+	config.EIP150Block = new(big.Int).Set(futureForkBlock)
+	config.EIP155Block = new(big.Int).Set(futureForkBlock)
+	config.EIP158Block = new(big.Int).Set(futureForkBlock)
+	config.ByzantiumBlock = new(big.Int).Set(futureForkBlock)
+	config.ConstantinopleBlock = new(big.Int).Set(futureForkBlock)
+	config.PetersburgBlock = new(big.Int).Set(futureForkBlock)
+	config.IstanbulBlock = new(big.Int).Set(futureForkBlock)
+	config.TIPSigningBlock = new(big.Int).Set(futureForkBlock)
+	config.TIPRandomizeBlock = new(big.Int).Set(futureForkBlock)
+	config.TIPIncreaseMasternodesBlock = new(big.Int).Set(futureForkBlock)
+	config.DenylistBlock = new(big.Int).Set(futureForkBlock)
+	config.TIPNoHalvingMNRewardBlock = new(big.Int).Set(futureForkBlock)
+	config.TIPXDCXBlock = new(big.Int).Set(futureForkBlock)
+	config.TIPXDCXLendingBlock = new(big.Int).Set(futureForkBlock)
+	config.TIPXDCXCancellationFeeBlock = new(big.Int).Set(futureForkBlock)
+	config.TIPTRC21FeeBlock = new(big.Int).Set(futureForkBlock)
+	config.Gas50xBlock = new(big.Int).Set(futureForkBlock)
+	config.BerlinBlock = new(big.Int).Set(futureForkBlock)
+	config.LondonBlock = new(big.Int).Set(futureForkBlock)
+	config.MergeBlock = new(big.Int).Set(futureForkBlock)
+	config.ShanghaiBlock = new(big.Int).Set(futureForkBlock)
+	config.TIPXDCXMinerDisableBlock = new(big.Int).Set(futureForkBlock)
+	config.TIPXDCXReceiverDisableBlock = new(big.Int).Set(futureForkBlock)
+	config.EIP1559Block = new(big.Int).Set(futureForkBlock)
+	config.CancunBlock = new(big.Int).Set(futureForkBlock)
+	config.PragueBlock = new(big.Int).Set(futureForkBlock)
+	config.OsakaBlock = new(big.Int).Set(futureForkBlock)
+	config.DynamicGasLimitBlock = new(big.Int).Set(futureForkBlock)
+	config.TIPUpgradeRewardBlock = new(big.Int).Set(futureForkBlock)
+	config.TIPUpgradePenaltyBlock = new(big.Int).Set(futureForkBlock)
+	config.TIPEpochHalvingBlock = new(big.Int).Set(futureForkBlock)
+
+	return config
 }

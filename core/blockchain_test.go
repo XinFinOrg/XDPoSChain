@@ -20,15 +20,18 @@ import (
 	"errors"
 	"math/big"
 	"math/rand"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
+	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
@@ -179,6 +182,7 @@ func testHeaderChainImport(chain []*types.Header, blockchain *BlockChain) error 
 	return nil
 }
 
+// TestLastBlock tests last block.
 func TestLastBlock(t *testing.T) {
 	genDb, _, blockchain, err := newCanonical(ethash.NewFaker(), 0, true)
 	if err != nil {
@@ -195,10 +199,875 @@ func TestLastBlock(t *testing.T) {
 	}
 }
 
+// TestNewBlockChainRecoversMissingGenesisState tests new block chain recovers missing genesis state.
+func TestNewBlockChainRecoversMissingGenesisState(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	genesis := DefaultGenesisBlock()
+	genesisBlock := genesis.MustCommit(db)
+
+	rawdb.DeleteLegacyTrieNode(db, genesisBlock.Root())
+
+	chain, err := NewBlockChain(db, nil, genesis, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to recover missing genesis state: %v", err)
+	}
+	defer chain.Stop()
+
+	if !chain.HasState(genesisBlock.Root()) {
+		t.Fatal("expected genesis state to be restored")
+	}
+	if chain.CurrentBlock().Hash() != genesisBlock.Hash() {
+		t.Fatalf("unexpected head block: have %s want %s", chain.CurrentBlock().Hash(), genesisBlock.Hash())
+	}
+}
+
+// TestNewBlockChainReadOnlyFailsGenesisStateRecovery tests readonly options-based open fails when genesis state recovery would mutate the database.
+func TestNewBlockChainReadOnlyFailsGenesisStateRecovery(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	genesis := DefaultGenesisBlock()
+	genesisBlock := genesis.MustCommit(db)
+
+	rawdb.DeleteLegacyTrieNode(db, genesisBlock.Root())
+
+	chain, err := NewBlockChainReadOnlyResolved(db, nil, nil, ethash.NewFaker(), vm.Config{}, genesis.Config, genesisBlock.Hash(), nil)
+	if err == nil {
+		chain.Stop()
+		t.Fatal("expected readonly open to fail when genesis state restoration would be required")
+	}
+	if !errors.Is(err, ErrReadOnlyGenesisStateRecovery) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := state.New(genesisBlock.Root(), state.NewDatabase(db)); err == nil {
+		t.Fatal("expected readonly open to leave genesis state missing")
+	}
+}
+
+// TestNewBlockChainRecoversMissingCustomGenesisState tests
+// writable startup can recover a custom genesis state when the matching genesis
+// specification is available to the caller.
+func TestNewBlockChainRecoversMissingCustomGenesisState(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	genesis := &Genesis{
+		Config: &params.ChainConfig{
+			ChainID:        big.NewInt(4444),
+			HomesteadBlock: new(big.Int),
+			Ethash:         new(params.EthashConfig),
+		},
+		Nonce:      66,
+		ExtraData:  make([]byte, 32+crypto.SignatureLength),
+		GasLimit:   4700000,
+		Difficulty: big.NewInt(1),
+		Timestamp:  12345,
+		Alloc: types.GenesisAlloc{
+			common.Address{1}: {Balance: big.NewInt(1)},
+		},
+	}
+
+	config, ghash, compatErr, err := SetupGenesisBlock(db, genesis)
+	if err != nil {
+		t.Fatalf("failed to set up custom genesis: %v", err)
+	}
+	if compatErr != nil {
+		t.Fatalf("unexpected compatibility error: %v", compatErr)
+	}
+	genesisBlock := rawdb.ReadBlock(db, ghash, 0)
+	if genesisBlock == nil {
+		t.Fatal("expected stored genesis block")
+	}
+
+	rawdb.DeleteLegacyTrieNode(db, genesisBlock.Root())
+	if err := db.Delete(append([]byte("ethereum-genesis-"), ghash.Bytes()...)); err != nil {
+		t.Fatalf("failed to delete persisted genesis alloc: %v", err)
+	}
+	if _, err := state.New(genesisBlock.Root(), state.NewDatabase(db)); err == nil {
+		t.Fatal("expected genesis state to be missing before reopen")
+	}
+
+	chain, err := NewBlockChainResolved(db, nil, genesis, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr)
+	if err != nil {
+		t.Fatalf("failed to recover missing custom genesis state: %v", err)
+	}
+	defer chain.Stop()
+
+	if !chain.HasState(genesisBlock.Root()) {
+		t.Fatal("expected custom genesis state to be restored")
+	}
+	if chain.CurrentBlock().Hash() != genesisBlock.Hash() {
+		t.Fatalf("unexpected head block: have %s want %s", chain.CurrentBlock().Hash(), genesisBlock.Hash())
+	}
+}
+
+// TestNewBlockChainRecoversMissingSparseGenesisState tests
+// writable startup can recover a custom genesis state when the provided
+// recovery genesis requires hydration before its hash matches the canonical
+// stored genesis hash.
+func TestNewBlockChainRecoversMissingSparseGenesisState(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	genesis := &Genesis{
+		Config: &params.ChainConfig{
+			ChainID:        new(big.Int).Set(params.LocalnetChainConfig.ChainID),
+			HomesteadBlock: new(big.Int),
+			Ethash:         new(params.EthashConfig),
+		},
+		Nonce:      68,
+		ExtraData:  make([]byte, 32+crypto.SignatureLength),
+		GasLimit:   4700000,
+		Difficulty: big.NewInt(1),
+		Timestamp:  12347,
+		Alloc: types.GenesisAlloc{
+			common.Address{3}: {Balance: big.NewInt(1)},
+		},
+	}
+
+	config, ghash, compatErr, err := SetupGenesisBlock(db, genesis)
+	if err != nil {
+		t.Fatalf("failed to set up sparse genesis: %v", err)
+	}
+	if compatErr != nil {
+		t.Fatalf("unexpected compatibility error: %v", compatErr)
+	}
+	genesisBlock := rawdb.ReadBlock(db, ghash, 0)
+	if genesisBlock == nil {
+		t.Fatal("expected stored genesis block")
+	}
+	if genesis.ToBlock().Hash() == ghash {
+		t.Fatal("expected sparse genesis hash to differ before hydration")
+	}
+
+	rawdb.DeleteLegacyTrieNode(db, genesisBlock.Root())
+	if err := db.Delete(append([]byte("ethereum-genesis-"), ghash.Bytes()...)); err != nil {
+		t.Fatalf("failed to delete persisted genesis alloc: %v", err)
+	}
+	if _, err := state.New(genesisBlock.Root(), state.NewDatabase(db)); err == nil {
+		t.Fatal("expected genesis state to be missing before reopen")
+	}
+
+	chain, err := NewBlockChainResolved(db, nil, genesis, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr)
+	if err != nil {
+		t.Fatalf("failed to recover missing sparse genesis state: %v", err)
+	}
+	defer chain.Stop()
+
+	if !chain.HasState(genesisBlock.Root()) {
+		t.Fatal("expected sparse genesis state to be restored")
+	}
+	if chain.CurrentBlock().Hash() != genesisBlock.Hash() {
+		t.Fatalf("unexpected head block: have %s want %s", chain.CurrentBlock().Hash(), genesisBlock.Hash())
+	}
+}
+
+// TestNewBlockChainReadOnlyFailsCustomGenesisStateRecovery
+// tests readonly startup still fails when custom genesis recovery would require
+// mutation.
+func TestNewBlockChainReadOnlyFailsCustomGenesisStateRecovery(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	genesis := &Genesis{
+		Config: &params.ChainConfig{
+			ChainID:        big.NewInt(4445),
+			HomesteadBlock: new(big.Int),
+			Ethash:         new(params.EthashConfig),
+		},
+		Nonce:      67,
+		ExtraData:  make([]byte, 32+crypto.SignatureLength),
+		GasLimit:   4700000,
+		Difficulty: big.NewInt(1),
+		Timestamp:  12346,
+		Alloc: types.GenesisAlloc{
+			common.Address{2}: {Balance: big.NewInt(1)},
+		},
+	}
+
+	config, ghash, compatErr, err := SetupGenesisBlock(db, genesis)
+	if err != nil {
+		t.Fatalf("failed to set up custom genesis: %v", err)
+	}
+	if compatErr != nil {
+		t.Fatalf("unexpected compatibility error: %v", compatErr)
+	}
+	genesisBlock := rawdb.ReadBlock(db, ghash, 0)
+	if genesisBlock == nil {
+		t.Fatal("expected stored genesis block")
+	}
+
+	rawdb.DeleteLegacyTrieNode(db, genesisBlock.Root())
+	if err := db.Delete(append([]byte("ethereum-genesis-"), ghash.Bytes()...)); err != nil {
+		t.Fatalf("failed to delete persisted genesis alloc: %v", err)
+	}
+
+	chain, err := NewBlockChainReadOnlyResolved(db, nil, genesis, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr)
+	if err == nil {
+		chain.Stop()
+		t.Fatal("expected readonly open to fail when custom genesis recovery would be required")
+	}
+	if !errors.Is(err, ErrReadOnlyGenesisStateRecovery) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := state.New(genesisBlock.Root(), state.NewDatabase(db)); err == nil {
+		t.Fatal("expected readonly open to leave custom genesis state missing")
+	}
+}
+
+func TestNewBlockChainLiveTracerDoesNotRecoverCustomGenesisAlloc(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	genesis := &Genesis{
+		Config: &params.ChainConfig{
+			ChainID:        big.NewInt(4447),
+			HomesteadBlock: new(big.Int),
+			Ethash:         new(params.EthashConfig),
+		},
+		Nonce:      70,
+		ExtraData:  make([]byte, 32+crypto.SignatureLength),
+		GasLimit:   4700000,
+		Difficulty: big.NewInt(1),
+		Timestamp:  12349,
+		Alloc: types.GenesisAlloc{
+			common.Address{5}: {Balance: big.NewInt(1)},
+		},
+	}
+
+	config, ghash, compatErr, err := SetupGenesisBlock(db, genesis)
+	if err != nil {
+		t.Fatalf("failed to set up custom genesis: %v", err)
+	}
+	if compatErr != nil {
+		t.Fatalf("unexpected compatibility error: %v", compatErr)
+	}
+	genesisBlock := rawdb.ReadBlock(db, ghash, 0)
+	if genesisBlock == nil {
+		t.Fatal("expected stored genesis block")
+	}
+	if !rawdb.HasLegacyTrieNode(db, genesisBlock.Root()) {
+		t.Fatal("expected genesis state trie to remain present")
+	}
+	if err := db.Delete(append([]byte("ethereum-genesis-"), ghash.Bytes()...)); err != nil {
+		t.Fatalf("failed to delete persisted genesis alloc: %v", err)
+	}
+
+	called := false
+	chain, err := NewBlockChainResolved(db, nil, genesis, ethash.NewFaker(), vm.Config{Tracer: &tracing.Hooks{
+		OnGenesisBlock: func(block *types.Block, alloc types.GenesisAlloc) {
+			called = true
+		},
+	}}, config, ghash, compatErr)
+	if err == nil {
+		chain.Stop()
+		t.Fatal("expected live tracer open to fail when custom genesis alloc would require recovery")
+	}
+	if called {
+		t.Fatal("expected live tracer genesis hook to remain uncalled")
+	}
+	if got := err.Error(); !strings.Contains(got, "live blockchain tracer requires genesis alloc to be set") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rawdb.ReadGenesisStateSpec(db, ghash) != nil {
+		t.Fatal("expected live tracer path to avoid restoring the persisted genesis alloc")
+	}
+}
+
+// TestInsertChainWithoutTRC21Issuer tests insert chain without trc 21 issuer.
+func TestInsertChainWithoutTRC21Issuer(t *testing.T) {
+	key, err := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	if err != nil {
+		t.Fatalf("failed to create test key: %v", err)
+	}
+	from := crypto.PubkeyToAddress(key.PublicKey)
+	to := common.HexToAddress("0x00000000000000000000000000000000000000aa")
+
+	gspec := &Genesis{
+		Config: &params.ChainConfig{
+			ChainID:        big.NewInt(1338),
+			HomesteadBlock: new(big.Int),
+			Ethash:         new(params.EthashConfig),
+		},
+		Alloc: types.GenesisAlloc{
+			from: {Balance: big.NewInt(params.Ether)},
+			to:   {Balance: big.NewInt(0)},
+		},
+		Difficulty: big.NewInt(1),
+	}
+
+	engine := ethash.NewFaker()
+	_, blocks, _ := GenerateChainWithGenesis(gspec, engine, 1, func(i int, b *BlockGen) {
+		tx, err := types.SignTx(types.NewTransaction(0, to, big.NewInt(1), params.TxGas, big.NewInt(1), nil), types.HomesteadSigner{}, key)
+		if err != nil {
+			t.Fatalf("failed to sign tx: %v", err)
+		}
+		b.AddTx(tx)
+	})
+
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create tester chain: %v", err)
+	}
+	defer chain.Stop()
+
+	if n, err := chain.InsertChain(blocks); err != nil {
+		t.Fatalf("block %d: failed to insert into chain: %v", n, err)
+	}
+	if chain.CurrentBlock().Number.Uint64() != 1 {
+		t.Fatalf("unexpected head number: have %d want 1", chain.CurrentBlock().Number.Uint64())
+	}
+	if got := chain.GetBlockByNumber(1); got == nil || len(got.Transactions()) != 1 {
+		t.Fatalf("expected imported block with one transaction")
+	}
+}
+
+// TestNewBlockChainRepairsMissingHeadStateConsistently tests new block chain repairs missing head state consistently.
+func TestNewBlockChainRepairsMissingHeadStateConsistently(t *testing.T) {
+	var (
+		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		address = crypto.PubkeyToAddress(key.PublicKey)
+		funds   = big.NewInt(1000000000000000)
+		gspec   = &Genesis{
+			Alloc:   types.GenesisAlloc{address: {Balance: funds}},
+			BaseFee: big.NewInt(params.InitialBaseFee),
+			Config:  params.TestChainConfig,
+		}
+	)
+	db := rawdb.NewMemoryDatabase()
+	chain, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+
+	_, blocks, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 3, nil)
+	if n, err := chain.InsertChain(blocks); err != nil {
+		chain.Stop()
+		t.Fatalf("failed to insert block %d: %v", n, err)
+	}
+	head := blocks[len(blocks)-1]
+	repaired := blocks[len(blocks)-2]
+	chain.Stop()
+
+	rawdb.DeleteLegacyTrieNode(db, head.Root())
+
+	reopened, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to reopen repaired chain: %v", err)
+	}
+	defer reopened.Stop()
+
+	if got := reopened.CurrentBlock().Hash(); got != repaired.Hash() {
+		t.Fatalf("unexpected repaired current block: have %s want %s", got, repaired.Hash())
+	}
+	if got := reopened.CurrentSnapBlock().Hash(); got != repaired.Hash() {
+		t.Fatalf("unexpected repaired current snap block: have %s want %s", got, repaired.Hash())
+	}
+	if got := reopened.CurrentHeader().Hash(); got != repaired.Hash() {
+		t.Fatalf("unexpected repaired current header: have %s want %s", got, repaired.Hash())
+	}
+	if got := rawdb.ReadHeadHeaderHash(db); got != repaired.Hash() {
+		t.Fatalf("unexpected repaired persisted head header: have %s want %s", got.Hex(), repaired.Hash().Hex())
+	}
+	if got := rawdb.ReadHeadFastBlockHash(db); got != repaired.Hash() {
+		t.Fatalf("unexpected repaired persisted head fast block: have %s want %s", got.Hex(), repaired.Hash().Hex())
+	}
+	if got := rawdb.ReadHeadBlockHash(db); got != repaired.Hash() {
+		t.Fatalf("unexpected repaired persisted head block: have %s want %s", got.Hex(), repaired.Hash().Hex())
+	}
+}
+
+// TestNewBlockChainReadOnlyFailsHeadStateRepair tests readonly options-based open fails when head state repair would mutate the database.
+func TestNewBlockChainReadOnlyFailsHeadStateRepair(t *testing.T) {
+	var (
+		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		address = crypto.PubkeyToAddress(key.PublicKey)
+		funds   = big.NewInt(1000000000000000)
+		gspec   = &Genesis{
+			Alloc:   types.GenesisAlloc{address: {Balance: funds}},
+			BaseFee: big.NewInt(params.InitialBaseFee),
+			Config:  params.TestChainConfig,
+		}
+	)
+	db := rawdb.NewMemoryDatabase()
+	chain, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+
+	_, blocks, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 3, nil)
+	if n, err := chain.InsertChain(blocks); err != nil {
+		chain.Stop()
+		t.Fatalf("failed to insert block %d: %v", n, err)
+	}
+	head := blocks[len(blocks)-1]
+	chain.Stop()
+
+	rawdb.DeleteLegacyTrieNode(db, head.Root())
+
+	reopened, err := NewBlockChainReadOnlyResolved(db, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil)
+	if err == nil {
+		reopened.Stop()
+		t.Fatal("expected readonly open to fail when head state repair would be required")
+	}
+	if !errors.Is(err, ErrReadOnlyHeadStateRepair) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := state.New(head.Root(), state.NewDatabase(db)); err == nil {
+		t.Fatal("expected readonly open to leave head state missing")
+	}
+	if got := rawdb.ReadHeadBlockHash(db); got != head.Hash() {
+		t.Fatalf("expected readonly open to leave head hash unchanged: have %s want %s", got.Hex(), head.Hash().Hex())
+	}
+}
+
+// TestNewBlockChainExReadOnlyResolvedHonorsReadOnly tests the XDCx-aware wrapper
+// forwards readonly startup options instead of silently defaulting to writable
+// recovery.
+func TestNewBlockChainExReadOnlyResolvedHonorsReadOnly(t *testing.T) {
+	var (
+		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		address = crypto.PubkeyToAddress(key.PublicKey)
+		funds   = big.NewInt(1000000000000000)
+		gspec   = &Genesis{
+			Alloc:   types.GenesisAlloc{address: {Balance: funds}},
+			BaseFee: big.NewInt(params.InitialBaseFee),
+			Config:  params.TestChainConfig,
+		}
+	)
+	db := rawdb.NewMemoryDatabase()
+	chain, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+
+	_, blocks, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 3, nil)
+	if n, err := chain.InsertChain(blocks); err != nil {
+		chain.Stop()
+		t.Fatalf("failed to insert block %d: %v", n, err)
+	}
+	head := blocks[len(blocks)-1]
+	chain.Stop()
+
+	rawdb.DeleteLegacyTrieNode(db, head.Root())
+
+	reopened, err := NewBlockChainExReadOnlyResolved(db, nil, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil)
+	if err == nil {
+		reopened.Stop()
+		t.Fatal("expected readonly open to fail when head state repair would be required")
+	}
+	if !errors.Is(err, ErrReadOnlyHeadStateRepair) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := rawdb.ReadHeadBlockHash(db); got != head.Hash() {
+		t.Fatalf("expected readonly open to leave head hash unchanged: have %s want %s", got.Hex(), head.Hash().Hex())
+	}
+	if _, err := state.New(head.Root(), state.NewDatabase(db)); err == nil {
+		t.Fatal("expected readonly open to leave head state missing")
+	}
+}
+
+// TestNewBlockChainRewindsIncompatibleHead tests writable options-based open rewinds an incompatible head when compat metadata requires it.
+func TestNewBlockChainRewindsIncompatibleHead(t *testing.T) {
+	futureFork := big.NewInt(1_000_000)
+	customg := Genesis{
+		Config: &params.ChainConfig{
+			ChainID:                big.NewInt(4444),
+			HomesteadBlock:         big.NewInt(3),
+			TIP2019Block:           new(big.Int).Set(futureFork),
+			EIP150Block:            new(big.Int).Set(futureFork),
+			EIP155Block:            new(big.Int).Set(futureFork),
+			EIP158Block:            new(big.Int).Set(futureFork),
+			ByzantiumBlock:         new(big.Int).Set(futureFork),
+			ConstantinopleBlock:    new(big.Int).Set(futureFork),
+			PetersburgBlock:        new(big.Int).Set(futureFork),
+			IstanbulBlock:          new(big.Int).Set(futureFork),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            new(big.Int).Set(futureFork),
+			TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(params.EthashConfig),
+		},
+		Alloc: types.GenesisAlloc{
+			{1}: {Balance: big.NewInt(1), Storage: map[common.Hash]common.Hash{{1}: {1}}},
+		},
+	}
+	oldcustomg := customg
+	setXinFinForksToFuture(customg.Config, futureFork)
+	setXinFinForksToFuture(oldcustomg.Config, futureFork)
+	var err error
+	customg.Config, err = resolveProvidedChainConfig(common.Hash{}, customg.Config, builtInChainConfigMustMatch)
+	if err != nil {
+		t.Fatalf("failed to hydrate custom config: %v", err)
+	}
+	oldcustomg.Config = &params.ChainConfig{
+		ChainID:                big.NewInt(4444),
+		HomesteadBlock:         big.NewInt(2),
+		TIP2019Block:           new(big.Int).Set(futureFork),
+		EIP150Block:            new(big.Int).Set(futureFork),
+		EIP155Block:            new(big.Int).Set(futureFork),
+		EIP158Block:            new(big.Int).Set(futureFork),
+		ByzantiumBlock:         new(big.Int).Set(futureFork),
+		ConstantinopleBlock:    new(big.Int).Set(futureFork),
+		PetersburgBlock:        new(big.Int).Set(futureFork),
+		IstanbulBlock:          new(big.Int).Set(futureFork),
+		TIPTRC21FeeBlock:       big.NewInt(0),
+		Gas50xBlock:            new(big.Int).Set(futureFork),
+		TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
+		XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
+		RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
+		LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
+		Ethash:                 new(params.EthashConfig),
+	}
+	setXinFinForksToFuture(oldcustomg.Config, futureFork)
+	oldcustomg.Config, err = resolveProvidedChainConfig(common.Hash{}, oldcustomg.Config, builtInChainConfigMustMatch)
+	if err != nil {
+		t.Fatalf("failed to hydrate old custom config: %v", err)
+	}
+
+	db := rawdb.NewMemoryDatabase()
+	genesis := oldcustomg.MustCommit(db)
+
+	chain, err := NewBlockChain(db, nil, &oldcustomg, ethash.NewFullFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+	blocks, _ := GenerateChain(oldcustomg.Config, genesis, ethash.NewFaker(), db, 4, nil)
+	if n, err := chain.InsertChain(blocks); err != nil {
+		chain.Stop()
+		t.Fatalf("failed to insert block %d: %v", n, err)
+	}
+	chain.Stop()
+
+	config, ghash, compatErr, err := SetupGenesisBlock(db, &customg)
+	if err != nil {
+		t.Fatalf("unexpected setup error: %v", err)
+	}
+	if compatErr == nil {
+		t.Fatal("expected compatibility error")
+	}
+
+	reopened, err := NewBlockChainResolved(db, nil, nil, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr)
+	if err != nil {
+		t.Fatalf("failed to reopen rewound chain: %v", err)
+	}
+	defer reopened.Stop()
+
+	if got := reopened.CurrentBlock().Number.Uint64(); got != compatErr.RewindTo {
+		t.Fatalf("unexpected head number after rewind: have %d want %d", got, compatErr.RewindTo)
+	}
+	if got := reopened.CurrentBlock().Hash(); got != blocks[compatErr.RewindTo-1].Hash() {
+		t.Fatalf("unexpected head hash after rewind: have %s want %s", got, blocks[compatErr.RewindTo-1].Hash())
+	}
+}
+
+// TestNewBlockChainFailsReadonlyConfigRewind tests new block chain fails readonly config rewind.
+func TestNewBlockChainFailsReadonlyConfigRewind(t *testing.T) {
+	futureFork := big.NewInt(1_000_000)
+	customg := Genesis{
+		Config: &params.ChainConfig{
+			ChainID:                big.NewInt(4444),
+			HomesteadBlock:         big.NewInt(3),
+			TIP2019Block:           new(big.Int).Set(futureFork),
+			EIP150Block:            new(big.Int).Set(futureFork),
+			EIP155Block:            new(big.Int).Set(futureFork),
+			EIP158Block:            new(big.Int).Set(futureFork),
+			ByzantiumBlock:         new(big.Int).Set(futureFork),
+			ConstantinopleBlock:    new(big.Int).Set(futureFork),
+			PetersburgBlock:        new(big.Int).Set(futureFork),
+			IstanbulBlock:          new(big.Int).Set(futureFork),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            new(big.Int).Set(futureFork),
+			TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(params.EthashConfig),
+		},
+		Alloc: types.GenesisAlloc{
+			{1}: {Balance: big.NewInt(1), Storage: map[common.Hash]common.Hash{{1}: {1}}},
+		},
+	}
+	oldcustomg := customg
+	setXinFinForksToFuture(customg.Config, futureFork)
+	setXinFinForksToFuture(oldcustomg.Config, futureFork)
+	var err error
+	customg.Config, err = resolveProvidedChainConfig(common.Hash{}, customg.Config, builtInChainConfigMustMatch)
+	if err != nil {
+		t.Fatalf("failed to hydrate custom config: %v", err)
+	}
+	oldcustomg.Config = &params.ChainConfig{
+		ChainID:                big.NewInt(4444),
+		HomesteadBlock:         big.NewInt(2),
+		TIP2019Block:           new(big.Int).Set(futureFork),
+		EIP150Block:            new(big.Int).Set(futureFork),
+		EIP155Block:            new(big.Int).Set(futureFork),
+		EIP158Block:            new(big.Int).Set(futureFork),
+		ByzantiumBlock:         new(big.Int).Set(futureFork),
+		ConstantinopleBlock:    new(big.Int).Set(futureFork),
+		PetersburgBlock:        new(big.Int).Set(futureFork),
+		IstanbulBlock:          new(big.Int).Set(futureFork),
+		TIPTRC21FeeBlock:       big.NewInt(0),
+		Gas50xBlock:            new(big.Int).Set(futureFork),
+		TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
+		XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
+		RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
+		LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
+		Ethash:                 new(params.EthashConfig),
+	}
+	setXinFinForksToFuture(oldcustomg.Config, futureFork)
+	oldcustomg.Config, err = resolveProvidedChainConfig(common.Hash{}, oldcustomg.Config, builtInChainConfigMustMatch)
+	if err != nil {
+		t.Fatalf("failed to hydrate old custom config: %v", err)
+	}
+
+	db := rawdb.NewMemoryDatabase()
+	genesis := oldcustomg.MustCommit(db)
+
+	chain, err := NewBlockChain(db, nil, &oldcustomg, ethash.NewFullFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+	blocks, _ := GenerateChain(oldcustomg.Config, genesis, ethash.NewFaker(), db, 4, nil)
+	if n, err := chain.InsertChain(blocks); err != nil {
+		chain.Stop()
+		t.Fatalf("failed to insert block %d: %v", n, err)
+	}
+	chain.Stop()
+
+	config, ghash, compatErr, err := SetupGenesisBlock(db, &customg)
+	if err != nil {
+		t.Fatalf("unexpected setup error: %v", err)
+	}
+	if compatErr == nil {
+		t.Fatal("expected compatibility error")
+	}
+
+	resolvedCfg, err := newResolvedBlockChainOpenConfig(true, nil, config, ghash, compatErr)
+	if err != nil {
+		t.Fatalf("failed to build readonly startup config: %v", err)
+	}
+
+	reopened, err := newBlockChain(db, nil, ethash.NewFaker(), vm.Config{}, resolvedCfg)
+	if err == nil {
+		reopened.Stop()
+		t.Fatal("expected readonly open to fail when config rewind would be required")
+	}
+	if !errors.Is(err, ErrReadOnlyConfigRewind) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := rawdb.ReadHeadBlockHash(db); got != blocks[len(blocks)-1].Hash() {
+		t.Fatalf("expected readonly open to leave head hash unchanged: have %s want %s", got.Hex(), blocks[len(blocks)-1].Hash().Hex())
+	}
+}
+
+// TestNewBlockChainReadOnlyFailsBadHashRewind tests readonly options-based open fails when startup would need a bad-hash rewind.
+func TestNewBlockChainReadOnlyFailsBadHashRewind(t *testing.T) {
+	genDb := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{BaseFee: big.NewInt(params.InitialBaseFee), Config: params.AllEthashProtocolChanges}
+	blockchain, err := NewBlockChain(genDb, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create pristine chain: %v", err)
+	}
+	blocks := makeBlockChain(blockchain.chainConfig, blockchain.GetBlockByHash(blockchain.CurrentBlock().Hash()), 4, ethash.NewFaker(), genDb, 10)
+	if _, err = blockchain.InsertChain(blocks); err != nil {
+		blockchain.Stop()
+		t.Fatalf("failed to import blocks: %v", err)
+	}
+	BadHashes[blocks[3].Hash()] = true
+	defer func() { delete(BadHashes, blocks[3].Hash()) }()
+	blockchain.Stop()
+
+	reopened, err := NewBlockChainReadOnlyResolved(genDb, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil)
+	if err == nil {
+		reopened.Stop()
+		t.Fatal("expected readonly open to fail when bad-hash rewind would be required")
+	}
+	if !errors.Is(err, ErrReadOnlyBadHashRewind) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := rawdb.ReadHeadBlockHash(genDb); got != blocks[3].Hash() {
+		t.Fatalf("expected readonly open to leave head hash unchanged: have %s want %s", got.Hex(), blocks[3].Hash().Hex())
+	}
+}
+
+// TestNewBlockChainRewindsBadHashOnWritableOpen tests writable startup rewinds
+// a denylisted canonical head during blockchain open.
+func TestNewBlockChainRewindsBadHashOnWritableOpen(t *testing.T) {
+	genDb := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{BaseFee: big.NewInt(params.InitialBaseFee), Config: params.AllEthashProtocolChanges}
+	blockchain, err := NewBlockChain(genDb, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create pristine chain: %v", err)
+	}
+	blocks := makeBlockChain(blockchain.chainConfig, blockchain.GetBlockByHash(blockchain.CurrentBlock().Hash()), 4, ethash.NewFaker(), genDb, 10)
+	if _, err = blockchain.InsertChain(blocks); err != nil {
+		blockchain.Stop()
+		t.Fatalf("failed to import blocks: %v", err)
+	}
+	BadHashes[blocks[3].Hash()] = true
+	defer func() { delete(BadHashes, blocks[3].Hash()) }()
+	blockchain.Stop()
+
+	reopened, err := NewBlockChainResolved(genDb, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil)
+	if err != nil {
+		t.Fatalf("failed to reopen rewound chain: %v", err)
+	}
+	defer reopened.Stop()
+
+	if got := reopened.CurrentBlock().Hash(); got != blocks[2].Hash() {
+		t.Fatalf("unexpected head hash after bad-hash rewind: have %s want %s", got.Hex(), blocks[2].Hash().Hex())
+	}
+	if got := rawdb.ReadHeadBlockHash(genDb); got != blocks[2].Hash() {
+		t.Fatalf("expected writable open to rewrite head hash: have %s want %s", got.Hex(), blocks[2].Hash().Hex())
+	}
+}
+
+// TestNewBlockChainFailsOnUnrecoverableMissingGenesisState tests new block
+// chain fails on unrecoverable missing genesis state when no matching genesis
+// specification is available to recover from.
+func TestNewBlockChainFailsOnUnrecoverableMissingGenesisState(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	genesis := &Genesis{
+		Config: &params.ChainConfig{
+			ChainID:                big.NewInt(4444),
+			HomesteadBlock:         big.NewInt(0),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(1),
+			TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(params.EthashConfig),
+		},
+		Alloc: types.GenesisAlloc{
+			{1}: {Balance: big.NewInt(1)},
+		},
+		Difficulty: big.NewInt(1),
+		GasLimit:   4700000,
+	}
+	block := genesis.ToBlock()
+	rawdb.WriteTd(db, block.Hash(), block.NumberU64(), genesis.Difficulty)
+	rawdb.WriteBlock(db, block)
+	rawdb.WriteReceipts(db, block.Hash(), block.NumberU64(), nil)
+	rawdb.WriteCanonicalHash(db, block.Hash(), block.NumberU64())
+	rawdb.WriteHeadBlockHash(db, block.Hash())
+	rawdb.WriteHeadFastBlockHash(db, block.Hash())
+	rawdb.WriteHeadHeaderHash(db, block.Hash())
+	rawdb.WriteChainConfig(db, block.Hash(), genesis.Config)
+
+	_, err := NewBlockChain(db, nil, nil, ethash.NewFaker(), vm.Config{})
+	if err == nil {
+		t.Fatal("expected unrecoverable missing genesis state error")
+	}
+	if got := err.Error(); !strings.Contains(got, "unrecoverable genesis alloc") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestNewBlockChainReadOnlyDoesNotRepairMissingChainConfig tests readonly
+// options-based open resolves startup metadata via readonly loading and does
+// not repair a missing chain-config blob.
+func TestNewBlockChainReadOnlyDoesNotRepairMissingChainConfig(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	genesis := &Genesis{
+		Config: &params.ChainConfig{
+			ChainID:                big.NewInt(92929),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(1),
+			TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(params.EthashConfig),
+		},
+		Alloc: types.GenesisAlloc{
+			{1}: {Balance: big.NewInt(1)},
+		},
+		GasLimit:   4700000,
+		Difficulty: big.NewInt(1),
+	}
+	block := genesis.MustCommit(db)
+
+	if err := db.Delete(append([]byte("ethereum-config-"), block.Hash().Bytes()...)); err != nil {
+		t.Fatalf("failed to delete chain config blob: %v", err)
+	}
+	if _, err := rawdb.ReadChainConfigJSON(db, block.Hash()); !errors.Is(err, rawdb.ErrChainConfigNotFound) {
+		t.Fatalf("expected missing chain config blob, got %v", err)
+	}
+
+	chain, err := NewBlockChainReadOnly(db, nil, genesis, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("expected readonly open to resolve config in memory without repairing metadata: %v", err)
+	}
+	defer chain.Stop()
+	if _, err := rawdb.ReadChainConfigJSON(db, block.Hash()); !errors.Is(err, rawdb.ErrChainConfigNotFound) {
+		t.Fatalf("expected readonly open to leave chain config blob missing, got %v", err)
+	}
+}
+
+// TestNewBlockChainResolvedRejectsMissingGenesisHash tests the
+// resolved-config constructor rejects an empty genesis hash.
+func TestNewBlockChainResolvedRejectsMissingGenesisHash(t *testing.T) {
+	_, err := NewBlockChainResolved(rawdb.NewMemoryDatabase(), nil, nil, ethash.NewFaker(), vm.Config{}, params.AllEthashProtocolChanges, common.Hash{}, nil)
+	if !errors.Is(err, errBlockChainOpenMissingGenesisHash) {
+		t.Fatalf("unexpected error for missing genesis hash: %v", err)
+	}
+}
+
+// TestRecoveryGenesisConfigMismatch reports whether a caller-provided recovery
+// genesis config would be ignored in favor of the resolved chain config.
+func TestRecoveryGenesisConfigMismatch(t *testing.T) {
+	resolved := params.TestnetChainConfig.Clone()
+	mismatched := resolved.Clone()
+	mismatched.ChainID = big.NewInt(9999)
+
+	mismatch, err := recoveryGenesisConfigMismatch(&Genesis{Config: mismatched}, resolved)
+	if err != nil {
+		t.Fatalf("unexpected mismatch error: %v", err)
+	}
+	if !mismatch {
+		t.Fatal("expected mismatched recovery genesis config to be detected")
+	}
+	mismatch, err = recoveryGenesisConfigMismatch(&Genesis{Config: resolved.Clone()}, resolved)
+	if err != nil {
+		t.Fatalf("unexpected equality error: %v", err)
+	}
+	if mismatch {
+		t.Fatal("expected semantically equal recovery genesis config to be accepted")
+	}
+	mismatch, err = recoveryGenesisConfigMismatch(&Genesis{}, resolved)
+	if err != nil {
+		t.Fatalf("unexpected missing-config error: %v", err)
+	}
+	if mismatch {
+		t.Fatal("expected missing recovery genesis config to skip mismatch detection")
+	}
+	mismatch, err = recoveryGenesisConfigMismatch(nil, resolved)
+	if err != nil {
+		t.Fatalf("unexpected nil-genesis error: %v", err)
+	}
+	if mismatch {
+		t.Fatal("expected nil recovery genesis to skip mismatch detection")
+	}
+}
+
+// TestNormalizedRecoveryGenesisRejectsCompareErrors tests recovery genesis
+// config comparison errors fail closed during normalization.
+func TestNormalizedRecoveryGenesisRejectsCompareErrors(t *testing.T) {
+	compareErr := errors.New("compare failed")
+	_, err := normalizedRecoveryGenesisWith(&Genesis{Config: params.TestnetChainConfig.Clone()}, params.TestnetChainConfig.Clone(), func(a, b *params.ChainConfig) (bool, error) {
+		return false, compareErr
+	})
+	if err == nil {
+		t.Fatal("expected recovery genesis config comparison failure")
+	}
+	if !strings.Contains(err.Error(), "failed to compare RecoveryGenesis config") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !errors.Is(err, compareErr) {
+		t.Fatalf("expected wrapped comparison error, got %v", err)
+	}
+}
+
 // Tests that given a starting canonical chain of a given size, it can be extended
 // with various length chains.
 func TestExtendCanonicalHeaders(t *testing.T) { testExtendCanonical(t, false) }
-func TestExtendCanonicalBlocks(t *testing.T)  { testExtendCanonical(t, true) }
+
+// TestExtendCanonicalBlocks tests extend canonical blocks.
+func TestExtendCanonicalBlocks(t *testing.T) { testExtendCanonical(t, true) }
 
 func testExtendCanonical(t *testing.T, full bool) {
 	length := 5
@@ -226,7 +1095,9 @@ func testExtendCanonical(t *testing.T, full bool) {
 // Tests that given a starting canonical chain of a given size, creating shorter
 // forks do not take canonical ownership.
 func TestShorterForkHeaders(t *testing.T) { testShorterFork(t, false) }
-func TestShorterForkBlocks(t *testing.T)  { testShorterFork(t, true) }
+
+// TestShorterForkBlocks tests shorter fork blocks.
+func TestShorterForkBlocks(t *testing.T) { testShorterFork(t, true) }
 
 func testShorterFork(t *testing.T, full bool) {
 	length := 10
@@ -256,7 +1127,9 @@ func testShorterFork(t *testing.T, full bool) {
 // Tests that given a starting canonical chain of a given size, creating longer
 // forks do take canonical ownership.
 func TestLongerForkHeaders(t *testing.T) { testLongerFork(t, false) }
-func TestLongerForkBlocks(t *testing.T)  { testLongerFork(t, true) }
+
+// TestLongerForkBlocks tests longer fork blocks.
+func TestLongerForkBlocks(t *testing.T) { testLongerFork(t, true) }
 
 func testLongerFork(t *testing.T, full bool) {
 	length := 10
@@ -286,7 +1159,9 @@ func testLongerFork(t *testing.T, full bool) {
 // Tests that given a starting canonical chain of a given size, creating equal
 // forks do take canonical ownership.
 func TestEqualForkHeaders(t *testing.T) { testEqualFork(t, false) }
-func TestEqualForkBlocks(t *testing.T)  { testEqualFork(t, true) }
+
+// TestEqualForkBlocks tests equal fork blocks.
+func TestEqualForkBlocks(t *testing.T) { testEqualFork(t, true) }
 
 func testEqualFork(t *testing.T, full bool) {
 	length := 10
@@ -315,7 +1190,9 @@ func testEqualFork(t *testing.T, full bool) {
 
 // Tests that chains missing links do not get accepted by the processor.
 func TestBrokenHeaderChain(t *testing.T) { testBrokenChain(t, false) }
-func TestBrokenBlockChain(t *testing.T)  { testBrokenChain(t, true) }
+
+// TestBrokenBlockChain tests broken block chain.
+func TestBrokenBlockChain(t *testing.T) { testBrokenChain(t, true) }
 
 func testBrokenChain(t *testing.T, full bool) {
 	// Make chain starting from genesis
@@ -342,7 +1219,9 @@ func testBrokenChain(t *testing.T, full bool) {
 // Tests that reorganising a long difficult chain after a short easy one
 // overwrites the canonical numbers and links in the database.
 func TestReorgLongHeaders(t *testing.T) { testReorgLong(t, false) }
-func TestReorgLongBlocks(t *testing.T)  { testReorgLong(t, true) }
+
+// TestReorgLongBlocks tests reorg long blocks.
+func TestReorgLongBlocks(t *testing.T) { testReorgLong(t, true) }
 
 func testReorgLong(t *testing.T, full bool) {
 	testReorg(t, []int64{0, 0, -9}, []int64{0, 0, 0, -9}, 393280, full)
@@ -351,7 +1230,9 @@ func testReorgLong(t *testing.T, full bool) {
 // Tests that reorganising a short difficult chain after a long easy one
 // overwrites the canonical numbers and links in the database.
 func TestReorgShortHeaders(t *testing.T) { testReorgShort(t, false) }
-func TestReorgShortBlocks(t *testing.T)  { testReorgShort(t, true) }
+
+// TestReorgShortBlocks tests reorg short blocks.
+func TestReorgShortBlocks(t *testing.T) { testReorgShort(t, true) }
 
 func testReorgShort(t *testing.T, full bool) {
 	// Create a long easy chain vs. a short heavy one. Due to difficulty adjustment
@@ -443,7 +1324,9 @@ func testReorg(t *testing.T, first, second []int64, td int64, full bool) {
 
 // Tests that the insertion functions detect banned hashes.
 func TestBadHeaderHashes(t *testing.T) { testBadHashes(t, false) }
-func TestBadBlockHashes(t *testing.T)  { testBadHashes(t, true) }
+
+// TestBadBlockHashes tests bad block hashes.
+func TestBadBlockHashes(t *testing.T) { testBadHashes(t, true) }
 
 func testBadHashes(t *testing.T, full bool) {
 	// Create a pristine chain and database
@@ -477,7 +1360,9 @@ func testBadHashes(t *testing.T, full bool) {
 // Tests that bad hashes are detected on boot, and the chain rolled back to a
 // good state prior to the bad hash.
 func TestReorgBadHeaderHashes(t *testing.T) { testReorgBadHashes(t, false) }
-func TestReorgBadBlockHashes(t *testing.T)  { testReorgBadHashes(t, true) }
+
+// TestReorgBadBlockHashes tests reorg bad block hashes.
+func TestReorgBadBlockHashes(t *testing.T) { testReorgBadHashes(t, true) }
 
 func testReorgBadHashes(t *testing.T, full bool) {
 	// Create a pristine chain and database
@@ -532,7 +1417,9 @@ func testReorgBadHashes(t *testing.T, full bool) {
 
 // Tests chain insertions in the face of one entity containing an invalid nonce.
 func TestHeadersInsertNonceError(t *testing.T) { testInsertNonceError(t, false) }
-func TestBlocksInsertNonceError(t *testing.T)  { testInsertNonceError(t, true) }
+
+// TestBlocksInsertNonceError tests blocks insert nonce error.
+func TestBlocksInsertNonceError(t *testing.T) { testInsertNonceError(t, true) }
 
 func testInsertNonceError(t *testing.T, full bool) {
 	for i := 1; i < 25 && !t.Failed(); i++ {
@@ -857,6 +1744,7 @@ func TestChainTxReorgs(t *testing.T) {
 	}
 }
 
+// TestLogReorgs tests log reorgs.
 func TestLogReorgs(t *testing.T) {
 	var (
 		key1, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
@@ -952,6 +1840,7 @@ func TestCanonicalBlockRetrieval(t *testing.T) {
 	pend.Wait()
 }
 
+// TestEIP155Transition tests eip 155 transition.
 func TestEIP155Transition(t *testing.T) {
 	// Configure and generate a sample block chain
 	var (
@@ -959,16 +1848,35 @@ func TestEIP155Transition(t *testing.T) {
 		address    = crypto.PubkeyToAddress(key.PublicKey)
 		funds      = big.NewInt(1000000000)
 		deleteAddr = common.Address{1}
+		futureFork = big.NewInt(1_000_000_000)
 		gspec      = &Genesis{
 			Config: &params.ChainConfig{
-				ChainID:        big.NewInt(1),
-				EIP150Block:    big.NewInt(0),
-				EIP155Block:    big.NewInt(2),
-				HomesteadBlock: new(big.Int),
+				ChainID:          big.NewInt(1337),
+				EIP150Block:      big.NewInt(0),
+				EIP155Block:      big.NewInt(2),
+				EIP158Block:      big.NewInt(2),
+				ByzantiumBlock:   new(big.Int).Set(futureFork),
+				HomesteadBlock:   new(big.Int),
+				TIPTRC21FeeBlock: new(big.Int),
+				BerlinBlock:      new(big.Int).Set(futureFork),
+				LondonBlock:      new(big.Int).Set(futureFork),
+				MergeBlock:       new(big.Int).Set(futureFork),
+				ShanghaiBlock:    new(big.Int).Set(futureFork),
+				EIP1559Block:     new(big.Int).Set(futureFork),
+				CancunBlock:      new(big.Int).Set(futureFork),
+				PragueBlock:      new(big.Int).Set(futureFork),
+				OsakaBlock:       new(big.Int).Set(futureFork),
 			},
 			Alloc: types.GenesisAlloc{address: {Balance: funds}, deleteAddr: {Balance: new(big.Int)}},
 		}
 	)
+	setXinFinForksToFuture(gspec.Config, futureFork)
+	gspec.Config.TIP2019Block = new(big.Int)
+	var err error
+	gspec.Config, err = resolveProvidedChainConfig(common.Hash{}, gspec.Config, builtInChainConfigMustMatch)
+	if err != nil {
+		t.Fatal(err)
+	}
 	genDb, blocks, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 4, func(i int, block *BlockGen) {
 		var (
 			tx      *types.Transaction
@@ -1035,10 +1943,16 @@ func TestEIP155Transition(t *testing.T) {
 
 	// generate an invalid chain id transaction
 	config := &params.ChainConfig{
-		ChainID:        big.NewInt(2),
-		EIP150Block:    big.NewInt(0),
-		EIP155Block:    big.NewInt(2),
-		HomesteadBlock: new(big.Int),
+		ChainID:          big.NewInt(1338),
+		EIP150Block:      big.NewInt(0),
+		EIP155Block:      big.NewInt(2),
+		HomesteadBlock:   new(big.Int),
+		TIPTRC21FeeBlock: new(big.Int),
+	}
+	setXinFinForksToFuture(config, futureFork)
+	config, err = resolveProvidedChainConfig(common.Hash{}, config, builtInChainConfigMustMatch)
+	if err != nil {
+		t.Fatal(err)
 	}
 	blocks, _ = GenerateChain(config, blocks[len(blocks)-1], ethash.NewFaker(), genDb, 4, func(i int, block *BlockGen) {
 		var (
@@ -1056,29 +1970,47 @@ func TestEIP155Transition(t *testing.T) {
 			block.AddTx(tx)
 		}
 	})
-	_, err := blockchain.InsertChain(blocks)
+	_, err = blockchain.InsertChain(blocks)
 	if have, want := err, types.ErrInvalidChainId; !errors.Is(have, want) {
 		t.Errorf("have %v, want %v", have, want)
 	}
 }
 
+// TestEIP161AccountRemoval tests eip 161 account removal.
 func TestEIP161AccountRemoval(t *testing.T) {
 	// Configure and generate a sample block chain
 	var (
-		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
-		address = crypto.PubkeyToAddress(key.PublicKey)
-		funds   = big.NewInt(1000000000)
-		theAddr = common.Address{1}
-		gspec   = &Genesis{
+		key, _     = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		address    = crypto.PubkeyToAddress(key.PublicKey)
+		funds      = big.NewInt(1000000000)
+		theAddr    = common.Address{1}
+		futureFork = big.NewInt(1_000_000_000)
+		gspec      = &Genesis{
 			Config: &params.ChainConfig{
-				ChainID:        big.NewInt(1),
-				HomesteadBlock: new(big.Int),
-				EIP155Block:    new(big.Int),
-				EIP158Block:    big.NewInt(2),
+				ChainID:          big.NewInt(1337),
+				HomesteadBlock:   new(big.Int),
+				EIP155Block:      new(big.Int),
+				EIP158Block:      big.NewInt(2),
+				ByzantiumBlock:   new(big.Int).Set(futureFork),
+				TIPTRC21FeeBlock: new(big.Int),
+				BerlinBlock:      new(big.Int).Set(futureFork),
+				LondonBlock:      new(big.Int).Set(futureFork),
+				MergeBlock:       new(big.Int).Set(futureFork),
+				ShanghaiBlock:    new(big.Int).Set(futureFork),
+				EIP1559Block:     new(big.Int).Set(futureFork),
+				CancunBlock:      new(big.Int).Set(futureFork),
+				PragueBlock:      new(big.Int).Set(futureFork),
+				OsakaBlock:       new(big.Int).Set(futureFork),
 			},
 			Alloc: types.GenesisAlloc{address: {Balance: funds}},
 		}
 	)
+	setXinFinForksToFuture(gspec.Config, futureFork)
+	var err error
+	gspec.Config, err = resolveProvidedChainConfig(common.Hash{}, gspec.Config, builtInChainConfigMustMatch)
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, blocks, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 3, func(i int, block *BlockGen) {
 		var (
 			tx     *types.Transaction
@@ -1098,7 +2030,8 @@ func TestEIP161AccountRemoval(t *testing.T) {
 		}
 		block.AddTx(tx)
 	})
-	// account must exist pre eip 161
+	// As in upstream geth, zero-value sends retain empty recipients before the
+	// EIP-161 transition point and prune them once EIP-158 becomes active.
 	blockchain, _ := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, ethash.NewFaker(), vm.Config{})
 	defer blockchain.Stop()
 
@@ -1124,6 +2057,40 @@ func TestEIP161AccountRemoval(t *testing.T) {
 	if st, _ := blockchain.State(); st.Exist(theAddr) {
 		t.Error("account should not exist")
 	}
+}
+
+// setXinFinForksToFuture moves XDC-specific forks behind a common future block
+// for tests that need pre-fork execution rules.
+func setXinFinForksToFuture(cfg *params.ChainConfig, future *big.Int) {
+	set := func() *big.Int { return new(big.Int).Set(future) }
+	cfg.TIPSigningBlock = set()
+	cfg.TIPRandomizeBlock = set()
+	cfg.TIPIncreaseMasternodesBlock = set()
+	cfg.DenylistBlock = set()
+	cfg.TIPNoHalvingMNRewardBlock = set()
+	cfg.TIPXDCXBlock = set()
+	cfg.TIPXDCXLendingBlock = set()
+	cfg.TIPXDCXCancellationFeeBlock = set()
+	cfg.TIPTRC21FeeBlock = set()
+	cfg.Gas50xBlock = set()
+	cfg.BerlinBlock = set()
+	cfg.LondonBlock = set()
+	cfg.MergeBlock = set()
+	cfg.ShanghaiBlock = set()
+	cfg.TIPXDCXMinerDisableBlock = set()
+	cfg.TIPXDCXReceiverDisableBlock = set()
+	cfg.EIP1559Block = set()
+	cfg.CancunBlock = set()
+	cfg.PragueBlock = set()
+	cfg.OsakaBlock = set()
+	cfg.DynamicGasLimitBlock = set()
+	cfg.TIPUpgradeRewardBlock = set()
+	cfg.TIPUpgradePenaltyBlock = set()
+	cfg.TIPEpochHalvingBlock = set()
+	cfg.TRC21IssuerSMC = params.TestnetChainConfig.TRC21IssuerSMC
+	cfg.XDCXListingSMC = params.TestnetChainConfig.XDCXListingSMC
+	cfg.RelayerRegistrationSMC = params.TestnetChainConfig.RelayerRegistrationSMC
+	cfg.LendingRegistrationSMC = params.TestnetChainConfig.LendingRegistrationSMC
 }
 
 // This is a regression test (i.e. as weird as it is, don't delete it ever), which
@@ -1326,6 +2293,8 @@ func benchmarkLargeNumberOfValueToNonexisting(b *testing.B, numTxs, numBlocks in
 		}
 	}
 }
+
+// BenchmarkBlockChain_1x1000ValueTransferToNonexisting benchmarks block chain 1 x 1000 value transfer to nonexisting.
 func BenchmarkBlockChain_1x1000ValueTransferToNonexisting(b *testing.B) {
 	var (
 		numTxs    = 1000
@@ -1341,6 +2310,8 @@ func BenchmarkBlockChain_1x1000ValueTransferToNonexisting(b *testing.B) {
 
 	benchmarkLargeNumberOfValueToNonexisting(b, numTxs, numBlocks, recipientFn, dataFn)
 }
+
+// BenchmarkBlockChain_1x1000ValueTransferToExisting benchmarks block chain 1 x 1000 value transfer to existing.
 func BenchmarkBlockChain_1x1000ValueTransferToExisting(b *testing.B) {
 	var (
 		numTxs    = 1000
@@ -1358,6 +2329,8 @@ func BenchmarkBlockChain_1x1000ValueTransferToExisting(b *testing.B) {
 
 	benchmarkLargeNumberOfValueToNonexisting(b, numTxs, numBlocks, recipientFn, dataFn)
 }
+
+// BenchmarkBlockChain_1x1000Executions benchmarks block chain 1 x 1000 executions.
 func BenchmarkBlockChain_1x1000Executions(b *testing.B) {
 	var (
 		numTxs    = 1000
@@ -1385,15 +2358,13 @@ cases
  4. When adding new block by mining
  5. When adding new block by syncing with other nodes
 */
+// TestBlocksHashCacheUpdate tests blocks hash cache update.
 func TestBlocksHashCacheUpdate(t *testing.T) {
 	_, _, chain, err := newCanonical(ethash.NewFaker(), 0, true)
 	if err != nil {
 		t.Fatalf("failed to make new canonical chain: %v", err)
 	}
 	defer chain.Stop()
-	if err != nil {
-		t.Fatalf("failed to create tester chain: %v", err)
-	}
 
 	t.Run("Expect BlocksHashCache blank after initialized", func(t *testing.T) {
 		if len(chain.blocksHashCache.Keys()) != 0 {
@@ -1435,6 +2406,7 @@ func TestBlocksHashCacheUpdate(t *testing.T) {
 	})
 }
 
+// TestAreTwoBlocksSamePath tests are two blocks same path.
 func TestAreTwoBlocksSamePath(t *testing.T) {
 	genDb, _, chain, err := newCanonical(ethash.NewFaker(), 10, true)
 	if err != nil {
@@ -1475,18 +2447,24 @@ func TestEIP2718Transition(t *testing.T) {
 		funds   = big.NewInt(1000000000000000)
 		gspec   = &Genesis{
 			Config: &params.ChainConfig{
-				ChainID:             new(big.Int).SetBytes([]byte("eip1559")),
-				HomesteadBlock:      big.NewInt(0),
-				DAOForkBlock:        nil,
-				DAOForkSupport:      true,
-				EIP150Block:         big.NewInt(0),
-				EIP155Block:         big.NewInt(0),
-				EIP158Block:         big.NewInt(0),
-				ByzantiumBlock:      big.NewInt(0),
-				ConstantinopleBlock: big.NewInt(0),
-				PetersburgBlock:     big.NewInt(0),
-				IstanbulBlock:       big.NewInt(0),
-				Eip1559Block:        big.NewInt(0),
+				ChainID:                big.NewInt(1337),
+				HomesteadBlock:         big.NewInt(0),
+				DAOForkBlock:           nil,
+				DAOForkSupport:         true,
+				EIP150Block:            big.NewInt(0),
+				EIP155Block:            big.NewInt(0),
+				EIP158Block:            big.NewInt(0),
+				ByzantiumBlock:         big.NewInt(0),
+				ConstantinopleBlock:    big.NewInt(0),
+				PetersburgBlock:        big.NewInt(0),
+				IstanbulBlock:          big.NewInt(0),
+				TIPTRC21FeeBlock:       big.NewInt(0),
+				Gas50xBlock:            big.NewInt(0),
+				TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
+				XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
+				RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
+				LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
+				EIP1559Block:           big.NewInt(0),
 			},
 			Alloc: types.GenesisAlloc{
 				address: {Balance: funds},
@@ -1502,6 +2480,7 @@ func TestEIP2718Transition(t *testing.T) {
 					Balance: big.NewInt(50000000000),
 				},
 			},
+			ExtraData: hexutil.MustDecode("0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"),
 		}
 	)
 	// Generate blocks
@@ -1639,6 +2618,7 @@ func TestTransientStorageReset(t *testing.T) {
 	}
 }
 
+// TestEIP3651 tests eip 3651.
 func TestEIP3651(t *testing.T) {
 	var (
 		ConstantinopleBlockReward = big.NewInt(3e+18) // Block reward in wei for successfully mining a block upward from Constantinople
@@ -1690,7 +2670,7 @@ func TestEIP3651(t *testing.T) {
 	)
 
 	signer := types.LatestSigner(gspec.Config)
-	gspec.Config.Eip1559Block = common.Big0
+	gspec.Config.EIP1559Block = common.Big0
 
 	_, blocks, _ := GenerateChainWithGenesis(gspec, engine, 1, func(i int, b *BlockGen) {
 		b.SetCoinbase(aa)

@@ -28,6 +28,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/holiman/uint256"
 )
 
@@ -277,6 +278,7 @@ type list struct {
 	costcap   *big.Int     // Price of the highest costing transaction (reset only if exceeds balance)
 	gascap    uint64       // Gas limit of the highest spending transaction (reset only if exceeds block limit)
 	totalcost *uint256.Int // Total cost of all transactions in the list
+	receivers map[common.Address]uint64
 }
 
 // newList creates a new transaction list for maintaining nonce-indexable fast,
@@ -287,6 +289,7 @@ func newList(strict bool) *list {
 		txs:       NewSortedMap(),
 		costcap:   new(big.Int),
 		totalcost: new(uint256.Int),
+		receivers: make(map[common.Address]uint64),
 	}
 }
 
@@ -345,7 +348,11 @@ func (l *list) Add(tx *types.Transaction, priceBump uint64) (bool, *types.Transa
 	l.totalcost = total
 
 	// Otherwise overwrite the old transaction with the current one
+	if old != nil {
+		l.removeTxReceiver(old)
+	}
 	l.txs.Put(tx)
+	l.addTxReceiver(tx)
 	if cost := tx.Cost(); l.costcap.Cmp(cost) < 0 {
 		l.costcap = cost
 	}
@@ -360,6 +367,7 @@ func (l *list) Add(tx *types.Transaction, priceBump uint64) (bool, *types.Transa
 // maintenance.
 func (l *list) Forward(threshold uint64) types.Transactions {
 	txs := l.txs.Forward(threshold)
+	l.removeTxReceivers(txs)
 	l.subTotalCost(txs)
 	return txs
 }
@@ -373,10 +381,12 @@ func (l *list) Forward(threshold uint64) types.Transactions {
 // a point in calculating all the costs or if the balance covers all. If the threshold
 // is lower than the costgas cap, the caps will be reset to a new high after removing
 // the newly invalidated transactions.
-func (l *list) Filter(costLimit *big.Int, gasLimit uint64, trc21Issuers map[common.Address]*big.Int, number *big.Int) (types.Transactions, types.Transactions) {
+func (l *list) Filter(costLimit *big.Int, gasLimit uint64, trc21Issuers map[common.Address]*big.Int, number *big.Int, cfg *params.ChainConfig) (types.Transactions, types.Transactions) {
 	// If all transactions are below the threshold, short circuit
 	if l.costcap.Cmp(costLimit) <= 0 && l.gascap <= gasLimit {
-		return nil, nil
+		if !l.hasUnaffordableTRC21Tx(costLimit, trc21Issuers, number, cfg) {
+			return nil, nil
+		}
 	}
 	l.costcap = new(big.Int).Set(costLimit) // Lower the caps to the thresholds
 	l.gascap = gasLimit
@@ -386,7 +396,7 @@ func (l *list) Filter(costLimit *big.Int, gasLimit uint64, trc21Issuers map[comm
 		maximum := costLimit
 		if tx.To() != nil {
 			if feeCapacity, ok := trc21Issuers[*tx.To()]; ok {
-				return tx.Gas() > gasLimit || new(big.Int).Add(costLimit, feeCapacity).Cmp(tx.TxCost(number)) < 0
+				return tx.Gas() > gasLimit || new(big.Int).Add(costLimit, feeCapacity).Cmp(tx.TxCost(number, cfg)) < 0
 			}
 		}
 		return tx.Gas() > gasLimit || tx.Cost().Cmp(maximum) > 0
@@ -406,6 +416,8 @@ func (l *list) Filter(costLimit *big.Int, gasLimit uint64, trc21Issuers map[comm
 		}
 		invalids = l.txs.filter(func(tx *types.Transaction) bool { return tx.Nonce() > lowest })
 	}
+	l.removeTxReceivers(removed)
+	l.removeTxReceivers(invalids)
 	// Reset total cost
 	l.subTotalCost(removed)
 	l.subTotalCost(invalids)
@@ -413,10 +425,51 @@ func (l *list) Filter(costLimit *big.Int, gasLimit uint64, trc21Issuers map[comm
 	return removed, invalids
 }
 
+func (l *list) hasTRC21Receiver(trc21Issuers map[common.Address]*big.Int) bool {
+	if len(trc21Issuers) == 0 || len(l.receivers) == 0 {
+		return false
+	}
+	if len(l.receivers) <= len(trc21Issuers) {
+		for receiver := range l.receivers {
+			if _, ok := trc21Issuers[receiver]; ok {
+				return true
+			}
+		}
+		return false
+	}
+	for issuer := range trc21Issuers {
+		if l.receivers[issuer] > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (l *list) hasUnaffordableTRC21Tx(costLimit *big.Int, trc21Issuers map[common.Address]*big.Int, number *big.Int, cfg *params.ChainConfig) bool {
+	if !l.hasTRC21Receiver(trc21Issuers) {
+		return false
+	}
+	for _, tx := range l.txs.items {
+		to := tx.To()
+		if to == nil {
+			continue
+		}
+		feeCapacity, ok := trc21Issuers[*to]
+		if !ok {
+			continue
+		}
+		if new(big.Int).Add(costLimit, feeCapacity).Cmp(tx.TxCost(number, cfg)) < 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // Cap places a hard limit on the number of items, returning all transactions
 // exceeding that limit.
 func (l *list) Cap(threshold int) types.Transactions {
 	txs := l.txs.Cap(threshold)
+	l.removeTxReceivers(txs)
 	l.subTotalCost(txs)
 	return txs
 }
@@ -430,10 +483,12 @@ func (l *list) Remove(tx *types.Transaction) (bool, types.Transactions) {
 	if removed := l.txs.Remove(nonce); !removed {
 		return false, nil
 	}
+	l.removeTxReceiver(tx)
 	l.subTotalCost([]*types.Transaction{tx})
 	// In strict mode, filter out non-executable transactions
 	if l.strict {
 		txs := l.txs.Filter(func(tx *types.Transaction) bool { return tx.Nonce() > nonce })
+		l.removeTxReceivers(txs)
 		l.subTotalCost(txs)
 		return true, txs
 	}
@@ -449,6 +504,7 @@ func (l *list) Remove(tx *types.Transaction) (bool, types.Transactions) {
 // happen but better to be self correcting than failing!
 func (l *list) Ready(start uint64) types.Transactions {
 	txs := l.txs.Ready(start)
+	l.removeTxReceivers(txs)
 	l.subTotalCost(txs)
 	return txs
 }
@@ -484,6 +540,33 @@ func (l *list) subTotalCost(txs []*types.Transaction) {
 		if underflow {
 			panic("totalcost underflow")
 		}
+	}
+}
+
+func (l *list) addTxReceiver(tx *types.Transaction) {
+	to := tx.To()
+	if to == nil {
+		return
+	}
+	l.receivers[*to]++
+}
+
+func (l *list) removeTxReceiver(tx *types.Transaction) {
+	to := tx.To()
+	if to == nil {
+		return
+	}
+	count := l.receivers[*to]
+	if count <= 1 {
+		delete(l.receivers, *to)
+		return
+	}
+	l.receivers[*to] = count - 1
+}
+
+func (l *list) removeTxReceivers(txs []*types.Transaction) {
+	for _, tx := range txs {
+		l.removeTxReceiver(tx)
 	}
 }
 

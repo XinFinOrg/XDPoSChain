@@ -31,6 +31,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/tests"
 )
 
+// BenchmarkTransactionTraceV2 benchmarks transaction trace v 2.
 func BenchmarkTransactionTraceV2(b *testing.B) {
 	key, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 	from := crypto.PubkeyToAddress(key.PublicKey)
@@ -79,7 +80,7 @@ func BenchmarkTransactionTraceV2(b *testing.B) {
 
 	evm := vm.NewEVM(context, state, nil, params.AllEthashProtocolChanges, vm.Config{})
 
-	msg, err := core.TransactionToMessage(tx, signer, nil, nil, context.BaseFee)
+	msg, err := core.TransactionToMessage(tx, signer, nil, nil, context.BaseFee, params.AllEthashProtocolChanges)
 	if err != nil {
 		b.Fatalf("failed to prepare transaction for tracing: %v", err)
 	}

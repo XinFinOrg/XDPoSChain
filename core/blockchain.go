@@ -229,10 +229,165 @@ type BlockChain struct {
 	finalizedTrade      *lru.Cache[common.Hash, interface{}] // include both trades which force update to closed/liquidated by the protocol
 }
 
-// NewBlockChain returns a fully initialised block chain using information
-// available in the database. It initialises the default Ethereum Validator and
-// Processor.
+type blockchainOpenConfig struct {
+	readOnly        bool
+	chainConfig     *params.ChainConfig
+	genesisHash     common.Hash
+	compatErr       *params.ConfigCompatError
+	recoveryGenesis *Genesis
+}
+
+// recoveryGenesisConfigMismatch reports whether recovery genesis carries a
+// different config than the resolved startup config that will be used instead.
+func recoveryGenesisConfigMismatch(genesis *Genesis, chainConfig *params.ChainConfig) (bool, error) {
+	return recoveryGenesisConfigMismatchWith(genesis, chainConfig, chainConfigJSONEqual)
+}
+
+func recoveryGenesisConfigMismatchWith(genesis *Genesis, chainConfig *params.ChainConfig, compare func(a, b *params.ChainConfig) (bool, error)) (bool, error) {
+	if genesis == nil || genesis.Config == nil || chainConfig == nil {
+		return false, nil
+	}
+	equal, err := compare(genesis.Config, chainConfig)
+	if err != nil {
+		return false, fmt.Errorf("failed to compare RecoveryGenesis config with resolved chain config: %w", err)
+	}
+	return !equal, nil
+}
+
+// normalizedRecoveryGenesis clones genesis and replaces its config with the
+// resolved chainConfig.
+func normalizedRecoveryGenesis(genesis *Genesis, chainConfig *params.ChainConfig) (*Genesis, error) {
+	return normalizedRecoveryGenesisWith(genesis, chainConfig, chainConfigJSONEqual)
+}
+
+func normalizedRecoveryGenesisWith(genesis *Genesis, chainConfig *params.ChainConfig, compare func(a, b *params.ChainConfig) (bool, error)) (*Genesis, error) {
+	if genesis == nil {
+		return nil, nil
+	}
+	mismatch, err := recoveryGenesisConfigMismatchWith(genesis, chainConfig, compare)
+	if err != nil {
+		return nil, err
+	}
+	if mismatch {
+		log.Warn("Ignoring RecoveryGenesis config in favor of resolved chain config")
+	}
+	normalized := genesis.copy()
+	if chainConfig != nil {
+		normalized.Config = chainConfig.Clone()
+	}
+	return normalized, nil
+}
+
+var (
+	// ErrReadOnlyGenesisStateRecovery reports that opening the chain in readonly
+	// mode would require mutating the database to restore missing genesis state.
+	// This includes custom chains whose genesis alloc can only be recovered from
+	// a caller-provided matching genesis during writable startup.
+	ErrReadOnlyGenesisStateRecovery     = errors.New("readonly blockchain open requires genesis state recovery")
+	ErrReadOnlyHeadStateRepair          = errors.New("readonly blockchain open requires head state repair")
+	ErrReadOnlyBadHashRewind            = errors.New("readonly blockchain open requires bad-hash rewind")
+	ErrReadOnlyConfigRewind             = errors.New("readonly blockchain open requires config rewind")
+	errBlockChainOpenMissingGenesisHash = errors.New("blockchain open options require genesis hash when chain config is provided")
+)
+
+// NewBlockChain returns a fully initialised writable block chain using startup
+// metadata resolved from the database via SetupGenesisBlock.
 func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis, engine consensus.Engine, vmConfig vm.Config) (*BlockChain, error) {
+	resolvedCfg, err := resolveBlockChainOpenConfig(db, genesis, false)
+	if err != nil {
+		return nil, err
+	}
+	return newBlockChain(db, cacheConfig, engine, vmConfig, resolvedCfg)
+}
+
+// NewBlockChainReadOnly returns a fully initialised readonly block chain using
+// startup metadata resolved from the database via LoadChainConfigWithCompat.
+func NewBlockChainReadOnly(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis, engine consensus.Engine, vmConfig vm.Config) (*BlockChain, error) {
+	resolvedCfg, err := resolveBlockChainOpenConfig(db, genesis, true)
+	if err != nil {
+		return nil, err
+	}
+	return newBlockChain(db, cacheConfig, engine, vmConfig, resolvedCfg)
+}
+
+// NewBlockChainResolved opens a writable block chain from caller-supplied
+// startup metadata.
+func NewBlockChainResolved(db ethdb.Database, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError) (*BlockChain, error) {
+	resolvedCfg, err := newResolvedBlockChainOpenConfig(false, recoveryGenesis, chainConfig, genesisHash, compatErr)
+	if err != nil {
+		return nil, err
+	}
+	return newBlockChain(db, cacheConfig, engine, vmConfig, resolvedCfg)
+}
+
+// NewBlockChainReadOnlyResolved opens a readonly block chain from caller-
+// supplied startup metadata.
+func NewBlockChainReadOnlyResolved(db ethdb.Database, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError) (*BlockChain, error) {
+	resolvedCfg, err := newResolvedBlockChainOpenConfig(true, recoveryGenesis, chainConfig, genesisHash, compatErr)
+	if err != nil {
+		return nil, err
+	}
+	return newBlockChain(db, cacheConfig, engine, vmConfig, resolvedCfg)
+}
+
+// resolveBlockChainOpenConfig resolves startup metadata and normalizes
+// recovery inputs for writable or readonly opens.
+func resolveBlockChainOpenConfig(db ethdb.Database, genesis *Genesis, readOnly bool) (blockchainOpenConfig, error) {
+	resolveStartup := SetupGenesisBlock
+	if readOnly {
+		resolveStartup = LoadChainConfigWithCompat
+	}
+	chainConfig, genesisHash, compatErr, err := resolveStartup(db, genesis)
+	if err != nil {
+		return blockchainOpenConfig{}, err
+	}
+	resolved := blockchainOpenConfig{
+		readOnly:        readOnly,
+		chainConfig:     chainConfig,
+		genesisHash:     genesisHash,
+		compatErr:       compatErr,
+		recoveryGenesis: genesis,
+	}
+	resolved.recoveryGenesis, err = normalizedRecoveryGenesis(resolved.recoveryGenesis, chainConfig)
+	if err != nil {
+		return blockchainOpenConfig{}, err
+	}
+	return resolved, nil
+}
+
+func newResolvedBlockChainOpenConfig(readOnly bool, recoveryGenesis *Genesis, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError) (blockchainOpenConfig, error) {
+	if genesisHash == (common.Hash{}) {
+		return blockchainOpenConfig{}, errBlockChainOpenMissingGenesisHash
+	}
+	normalizedGenesis, err := normalizedRecoveryGenesis(recoveryGenesis, chainConfig)
+	if err != nil {
+		return blockchainOpenConfig{}, err
+	}
+	return blockchainOpenConfig{
+		readOnly:        readOnly,
+		chainConfig:     chainConfig,
+		genesisHash:     genesisHash,
+		compatErr:       compatErr,
+		recoveryGenesis: normalizedGenesis,
+	}, nil
+}
+
+// newBlockChain opens a blockchain from already resolved startup metadata,
+// optionally applying startup repairs or compatibility rewind work based on cfg.
+func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus.Engine, vmConfig vm.Config, cfg blockchainOpenConfig) (*BlockChain, error) {
+	var err error
+	chainConfig := cfg.chainConfig
+	if chainConfig == nil {
+		return nil, errors.New("nil chain config returned from SetupGenesisBlock")
+	}
+	genesisHash := cfg.genesisHash
+	compatErr := cfg.compatErr
+	log.Info(strings.Repeat("-", 153))
+	for line := range strings.SplitSeq(chainConfig.Description(), "\n") {
+		log.Info(line)
+	}
+	log.Info(strings.Repeat("-", 153))
+
 	if cacheConfig == nil {
 		cacheConfig = &CacheConfig{
 			TrieCleanLimit: 256,
@@ -240,19 +395,6 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 			TrieTimeLimit:  5 * time.Minute,
 		}
 	}
-
-	// Setup the genesis block, commit the provided genesis specification
-	// to database if the genesis block is not present yet, or load the
-	// stored one from database.
-	chainConfig, genesisHash, genesisErr := SetupGenesisBlock(db, genesis)
-	if _, ok := genesisErr.(*params.ConfigCompatError); genesisErr != nil && !ok {
-		return nil, genesisErr
-	}
-	log.Info(strings.Repeat("-", 153))
-	for line := range strings.SplitSeq(chainConfig.Description(), "\n") {
-		log.Info(line)
-	}
-	log.Info(strings.Repeat("-", 153))
 
 	// Open trie database with provided config
 	triedb := trie.NewDatabaseWithConfig(db, &trie.Config{
@@ -294,7 +436,6 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 	bc.prefetcher = newStatePrefetcher(chainConfig, bc, engine)
 	bc.processor = NewStateProcessor(chainConfig, bc, engine)
 
-	var err error
 	bc.hc, err = NewHeaderChain(db, chainConfig, engine, bc.insertStopped)
 	if err != nil {
 		return nil, err
@@ -310,8 +451,50 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 	// Update chain info data metrics
 	chainInfoGauge.Update(metrics.GaugeInfoValue{"chain_id": bc.chainConfig.ChainID.String()})
 
+	// Load blockchain state from disk.
 	if err := bc.loadLastState(); err != nil {
 		return nil, err
+	}
+	// Make sure the state associated with the block is available.
+	head := bc.CurrentBlock()
+	if head == nil {
+		return nil, errors.New("current block not set after loading chain state")
+	}
+	if !bc.HasState(head.Root) {
+		headBlock := bc.GetBlock(head.Hash(), head.Number.Uint64())
+		if headBlock == nil {
+			return nil, fmt.Errorf("current block missing: #%d [%x..]", head.Number.Uint64(), head.Hash().Bytes()[:4])
+		}
+		if head.Number.Uint64() == 0 {
+			// Unlike geth, XDPoSChain persists the genesis alloc and can rebuild
+			// the genesis state locally instead of waiting for an external sync.
+			if cfg.readOnly {
+				return nil, fmt.Errorf("%w: hash %s", ErrReadOnlyGenesisStateRecovery, head.Hash())
+			}
+			log.Info("Genesis state is missing, restoring from stored alloc", "hash", head.Hash())
+			if err := restoreGenesisState(bc.db, headBlock, cfg.recoveryGenesis); err != nil {
+				return nil, err
+			}
+			if !bc.HasState(head.Root) {
+				return nil, fmt.Errorf("genesis state recovery did not restore root %s", head.Root.Hex())
+			}
+		} else {
+			if cfg.readOnly {
+				return nil, fmt.Errorf("%w: number %d hash %s", ErrReadOnlyHeadStateRepair, head.Number.Uint64(), head.Hash())
+			}
+			log.Warn("Head state missing, repairing", "number", head.Number, "hash", head.Hash())
+			if err := bc.repair(&headBlock); err != nil {
+				return nil, err
+			}
+			rawdb.WriteHeadHeaderHash(bc.db, headBlock.Hash())
+			bc.hc.SetCurrentHeader(headBlock.Header())
+			rawdb.WriteHeadFastBlockHash(bc.db, headBlock.Hash())
+			bc.currentSnapBlock.Store(headBlock.Header())
+			headFastBlockGauge.Update(int64(headBlock.NumberU64()))
+			rawdb.WriteHeadBlockHash(bc.db, headBlock.Hash())
+			bc.currentBlock.Store(headBlock.Header())
+			headBlockGauge.Update(int64(headBlock.NumberU64()))
+		}
 	}
 
 	// Check the current state of the block hashes and make sure that we do not have any of the bad blocks in our chain
@@ -321,6 +504,9 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 			headerByNumber := bc.GetHeaderByNumber(header.Number.Uint64())
 			// make sure the headerByNumber (if present) is in our current canonical chain
 			if headerByNumber != nil && headerByNumber.Hash() == header.Hash() {
+				if cfg.readOnly {
+					return nil, fmt.Errorf("%w: number %d hash %s", ErrReadOnlyBadHashRewind, header.Number.Uint64(), header.Hash())
+				}
 				log.Error("Found bad hash, rewinding chain", "number", header.Number, "hash", header.ParentHash)
 				bc.SetHead(header.Number.Uint64() - 1)
 				log.Error("Chain rewind was successful, resuming normal operation")
@@ -338,7 +524,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 			return nil, errors.New("live blockchain tracer requires current block to be set")
 		}
 		if block.Number != nil && block.Number.Sign() == 0 {
-			alloc, err := getGenesisState(bc.db, block.Hash())
+			alloc, err := getGenesisState(bc.db, block.Hash(), cfg.recoveryGenesis, recoveryDisabled)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get genesis state: %w", err)
 			}
@@ -350,9 +536,12 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 	}
 
 	// Rewind the chain in case of an incompatible config upgrade.
-	if compat, ok := genesisErr.(*params.ConfigCompatError); ok {
-		log.Warn("Rewinding chain to upgrade configuration", "err", compat)
-		bc.SetHead(compat.RewindTo)
+	if compatErr != nil {
+		if cfg.readOnly {
+			return nil, fmt.Errorf("%w: %v", ErrReadOnlyConfigRewind, compatErr)
+		}
+		log.Warn("Rewinding chain to upgrade configuration", "err", compatErr)
+		bc.SetHead(compatErr.RewindTo)
 		rawdb.WriteChainConfig(db, genesisHash, chainConfig)
 	}
 
@@ -365,6 +554,44 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 // NewBlockChainEx extend old blockchain, add order state db
 func NewBlockChainEx(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, genesis *Genesis, engine consensus.Engine, vmConfig vm.Config) (*BlockChain, error) {
 	blockchain, err := NewBlockChain(db, cacheConfig, genesis, engine, vmConfig)
+	if err != nil {
+		return nil, err
+	}
+	if blockchain != nil {
+		blockchain.addXDCxDb(XDCxDb)
+	}
+	return blockchain, nil
+}
+
+// NewBlockChainExReadOnly opens an XDCx-aware readonly blockchain.
+func NewBlockChainExReadOnly(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, genesis *Genesis, engine consensus.Engine, vmConfig vm.Config) (*BlockChain, error) {
+	blockchain, err := NewBlockChainReadOnly(db, cacheConfig, genesis, engine, vmConfig)
+	if err != nil {
+		return nil, err
+	}
+	if blockchain != nil {
+		blockchain.addXDCxDb(XDCxDb)
+	}
+	return blockchain, nil
+}
+
+// NewBlockChainExResolved opens a writable XDCx-aware blockchain from caller-
+// supplied startup metadata.
+func NewBlockChainExResolved(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError) (*BlockChain, error) {
+	blockchain, err := NewBlockChainResolved(db, cacheConfig, recoveryGenesis, engine, vmConfig, chainConfig, genesisHash, compatErr)
+	if err != nil {
+		return nil, err
+	}
+	if blockchain != nil {
+		blockchain.addXDCxDb(XDCxDb)
+	}
+	return blockchain, nil
+}
+
+// NewBlockChainExReadOnlyResolved opens a readonly XDCx-aware blockchain from
+// caller-supplied startup metadata.
+func NewBlockChainExReadOnlyResolved(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError) (*BlockChain, error) {
+	blockchain, err := NewBlockChainReadOnlyResolved(db, cacheConfig, recoveryGenesis, engine, vmConfig, chainConfig, genesisHash, compatErr)
 	if err != nil {
 		return nil, err
 	}
@@ -395,11 +622,9 @@ func (bc *BlockChain) loadLastState() error {
 		log.Warn("Head block missing, resetting chain", "hash", head)
 		return bc.Reset()
 	}
-	// Make sure the state associated with the block is available
+	// Make sure the auxiliary state associated with the block is available.
 	repair := false
-	if !bc.HasState(headBlock.Root()) {
-		repair = true
-	} else {
+	if bc.HasState(headBlock.Root()) {
 		engine, ok := bc.Engine().(*XDPoS.XDPoS)
 		if ok {
 			tradingService := engine.GetXDCXService()
@@ -1596,7 +1821,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 			parent = bc.GetHeader(block.ParentHash(), block.NumberU64()-1)
 		}
 		// Create a new statedb using the parent block and report an error if it fails.
-		statedb, err := state.New(parent.Root, bc.stateCache)
+		statedb, err := state.NewWithChainConfig(parent.Root, bc.stateCache, bc.chainConfig)
 		if err != nil {
 			return it.index, events, coalescedLogs, err
 		}
@@ -1606,7 +1831,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		var followupInterrupt atomic.Bool
 		if bc.cacheConfig.TrieCleanPrefetch {
 			if followup, err := it.peek(); followup != nil && err == nil {
-				throwaway, _ := state.New(parent.Root, bc.stateCache)
+				throwaway, _ := state.NewWithChainConfig(parent.Root, bc.stateCache, bc.chainConfig)
 
 				go func(start time.Time, followup *types.Block, throwaway *state.StateDB, interrupt *atomic.Bool) {
 					// Disable tracing for prefetcher executions.
@@ -2004,7 +2229,7 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 	}
 	var parent = bc.GetHeader(block.ParentHash(), block.NumberU64()-1)
 	// Create a new statedb using the parent block and report an error if it fails.
-	statedb, err := state.New(parent.Root, bc.stateCache)
+	statedb, err := state.NewWithChainConfig(parent.Root, bc.stateCache, bc.chainConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -2474,8 +2699,8 @@ func (bc *BlockChain) InsertHeaderChain(chain []*types.Header, checkFreq int) (i
 	return bc.hc.InsertHeaderChain(chain, whFunc, start)
 }
 
-// Set config for testing purpose function
-func (bc *BlockChain) SetConfig(config *params.ChainConfig) {
+// SetChainConfig sets the chain config for test.
+func (bc *BlockChain) SetChainConfig(config *params.ChainConfig) {
 	bc.chainConfig = config
 }
 

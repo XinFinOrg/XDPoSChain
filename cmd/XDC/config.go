@@ -43,6 +43,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/node"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/naoina/toml"
 	"github.com/urfave/cli/v2"
 )
@@ -169,7 +170,7 @@ func loadBaseConfig(ctx *cli.Context) XDCConfig {
 			common.MinGasPrice = big.NewInt(gasPrice)
 		}
 	}
-	common.MinGasPrice50x = common.MinGasPrice50x.Mul(common.MinGasPrice, big.NewInt(50))
+	params.SetMinGasPrice50x(common.MinGasPrice)
 
 	// read passwords from environment
 	passwords := []string{}

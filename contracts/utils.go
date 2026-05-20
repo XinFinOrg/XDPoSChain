@@ -421,15 +421,21 @@ func GetCandidatesOwnerBySigner(statedb *state.StateDB, signerAddr common.Addres
 	return statedb.GetCandidateOwner(signerAddr)
 }
 
-func CalculateRewardForHolders(foundationWalletAddr common.Address, state *state.StateDB, signer common.Address, calcReward *big.Int, blockNumber uint64) (map[common.Address]*big.Int, error) {
-	rewards, err := GetRewardBalancesRate(foundationWalletAddr, state, signer, calcReward, blockNumber)
+// CalculateRewardForHolders returns the reward distribution for a signer and
+// its voters for the given block using the supplied chain config to evaluate
+// fork-dependent reward rules.
+func CalculateRewardForHolders(chainConfig *params.ChainConfig, foundationWalletAddr common.Address, state *state.StateDB, signer common.Address, calcReward *big.Int, blockNumber *big.Int) (map[common.Address]*big.Int, error) {
+	rewards, err := GetRewardBalancesRate(chainConfig, foundationWalletAddr, state, signer, calcReward, blockNumber)
 	if err != nil {
 		return nil, err
 	}
 	return rewards, nil
 }
 
-func GetRewardBalancesRate(foundationWalletAddr common.Address, statedb *state.StateDB, masterAddr common.Address, totalReward *big.Int, blockNumber uint64) (map[common.Address]*big.Int, error) {
+// GetRewardBalancesRate computes the per-address reward split for a signer,
+// voters, and the foundation wallet for the given block. chainConfig and
+// blockNumber drive fork-aware behavior such as duplicate-voter handling.
+func GetRewardBalancesRate(chainConfig *params.ChainConfig, foundationWalletAddr common.Address, statedb *state.StateDB, masterAddr common.Address, totalReward *big.Int, blockNumber *big.Int) (map[common.Address]*big.Int, error) {
 	owner := GetCandidatesOwnerBySigner(statedb, masterAddr)
 	balances := make(map[common.Address]*big.Int)
 	rewardMaster := new(big.Int).Mul(totalReward, new(big.Int).SetInt64(common.RewardMasterPercent))
@@ -445,7 +451,7 @@ func GetRewardBalancesRate(foundationWalletAddr common.Address, statedb *state.S
 		// Get voters capacities.
 		voterCaps := make(map[common.Address]*big.Int)
 		for _, voteAddr := range voters {
-			if _, ok := voterCaps[voteAddr]; ok && common.TIP2019Block.Uint64() <= blockNumber {
+			if _, ok := voterCaps[voteAddr]; ok && chainConfig != nil && chainConfig.IsTIP2019(blockNumber) {
 				continue
 			}
 			voterCap := statedb.GetVoterCap(masterAddr, voteAddr)
@@ -471,7 +477,7 @@ func GetRewardBalancesRate(foundationWalletAddr common.Address, statedb *state.S
 	foundationReward := new(big.Int).Mul(totalReward, new(big.Int).SetInt64(common.RewardFoundationPercent))
 	foundationReward = new(big.Int).Div(foundationReward, new(big.Int).SetInt64(100))
 
-	if blockNumber >= common.TIPUpgradeReward.Uint64() && balances[foundationWalletAddr] != nil {
+	if chainConfig != nil && chainConfig.IsTIPUpgradeReward(blockNumber) && balances[foundationWalletAddr] != nil {
 		balances[foundationWalletAddr].Add(balances[foundationWalletAddr], foundationReward)
 	} else {
 		balances[foundationWalletAddr] = foundationReward

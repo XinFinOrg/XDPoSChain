@@ -193,7 +193,9 @@ func newXDCSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64, chainConf
 	header := backend.blockchain.CurrentBlock()
 	block := backend.blockchain.GetBlock(header.Hash(), header.Number.Uint64())
 
-	backend.rollback(block)
+	if err := backend.rollback(block); err != nil {
+		panic(err)
+	}
 	return backend
 }
 
@@ -202,8 +204,8 @@ func newXDCSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64, chainConf
 // A simulated backend always uses chainID 1337.
 func newEthashSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64) *Backend {
 	config := *params.AllEthashProtocolChanges
-	if config.Eip1559Block == nil {
-		config.Eip1559Block = big.NewInt(0)
+	if config.EIP1559Block == nil {
+		config.EIP1559Block = big.NewInt(0)
 	}
 	return newEthashSimulatedBackendWithConfig(alloc, gasLimit, &config)
 }
@@ -228,7 +230,9 @@ func newEthashSimulatedBackendWithConfig(alloc types.GenesisAlloc, gasLimit uint
 	header := backend.blockchain.CurrentBlock()
 	block := backend.blockchain.GetBlock(header.Hash(), header.Number.Uint64())
 
-	backend.rollback(block)
+	if err := backend.rollback(block); err != nil {
+		panic(err)
+	}
 	return backend
 }
 
@@ -251,28 +255,53 @@ func (b *Backend) Commit() common.Hash {
 
 	// Using the last inserted block here makes it possible to build on a side
 	// chain after a fork.
-	b.rollback(b.pendingBlock)
+	if err := b.rollback(b.pendingBlock); err != nil {
+		panic(err)
+	}
 
 	return blockHash
 }
 
 // Rollback aborts all pending transactions, reverting to the last committed state.
-func (b *Backend) Rollback() {
+func (b *Backend) Rollback() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	header := b.blockchain.CurrentBlock()
 	block := b.blockchain.GetBlock(header.Hash(), header.Number.Uint64())
 
-	b.rollback(block)
+	return b.rollback(block)
 }
 
-func (b *Backend) rollback(parent *types.Block) {
-	blocks, _ := core.GenerateChain(b.config, parent, b.blockchain.Engine(), b.database, 1, func(int, *core.BlockGen) {})
-	stateDB, _ := b.blockchain.State()
+// setPendingBlock replaces the pending block/state pair from block and db.
+func (b *Backend) setPendingBlock(block *types.Block, db state.Database) error {
+	pendingState, err := state.NewWithChainConfig(block.Root(), db, b.config)
+	if err != nil {
+		return err
+	}
+	b.pendingBlock = block
+	b.pendingState = pendingState
+	return nil
+}
 
-	b.pendingBlock = blocks[0]
-	b.pendingState, _ = state.New(b.pendingBlock.Root(), stateDB.Database())
+// setPendingBlockAndReceipts applies a pending block/state update and only
+// replaces the pending receipts if the state rebuild succeeds.
+func (b *Backend) setPendingBlockAndReceipts(block *types.Block, receipts types.Receipts, db state.Database) error {
+	if err := b.setPendingBlock(block, db); err != nil {
+		return err
+	}
+	b.pendingReceipts = receipts
+	return nil
+}
+
+// rollback rebuilds the next pending block on top of parent.
+func (b *Backend) rollback(parent *types.Block) error {
+	blocks, _ := core.GenerateChain(b.config, parent, b.blockchain.Engine(), b.database, 1, func(int, *core.BlockGen) {})
+	stateDB, err := b.blockchain.State()
+	if err != nil {
+		return err
+	}
+	return b.setPendingBlock(blocks[0], stateDB.Database())
 }
 
 // Fork creates a side-chain that can be used to simulate reorgs.
@@ -298,8 +327,7 @@ func (b *Backend) Fork(parent common.Hash) error {
 	if err != nil {
 		return err
 	}
-	b.rollback(block)
-	return nil
+	return b.rollback(block)
 }
 
 // BlockNumber returns the current block number.
@@ -1029,10 +1057,7 @@ func (b *Backend) SendTransaction(ctx context.Context, tx *types.Transaction) er
 	if err != nil {
 		return err
 	}
-	b.pendingBlock = blocks[0]
-	b.pendingState, _ = state.New(b.pendingBlock.Root(), stateDB.Database())
-	b.pendingReceipts = receipts[0]
-	return nil
+	return b.setPendingBlockAndReceipts(blocks[0], receipts[0], stateDB.Database())
 }
 
 // FilterLogs executes a log filter operation, blocking during execution and
@@ -1159,13 +1184,7 @@ func (b *Backend) AdjustTime(adjustment time.Duration) error {
 	if _, err := b.blockchain.InsertChain(blocks); err != nil {
 		return err
 	}
-	b.pendingBlock = blocks[0]
-	b.rollback(b.pendingBlock)
-
-	stateDB, _ := b.blockchain.State()
-	b.pendingState, _ = state.New(b.pendingBlock.Root(), stateDB.Database())
-
-	return nil
+	return b.rollback(blocks[0])
 }
 
 // Blockchain returns the underlying blockchain.

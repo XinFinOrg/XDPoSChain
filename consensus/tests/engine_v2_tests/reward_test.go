@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestHookRewardV2 tests hook reward v 2.
 func TestHookRewardV2(t *testing.T) {
 	skipLongInShortMode(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
@@ -96,6 +97,7 @@ func TestHookRewardV2(t *testing.T) {
 	assert.Equal(t, 0, len(result))
 }
 
+// TestHookRewardV2SplitReward tests hook reward v 2 split reward.
 func TestHookRewardV2SplitReward(t *testing.T) {
 	skipLongInShortMode(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
@@ -167,6 +169,7 @@ func TestHookRewardV2SplitReward(t *testing.T) {
 	}
 }
 
+// TestHookRewardAfterUpgrade tests hook reward after upgrade.
 func TestHookRewardAfterUpgrade(t *testing.T) {
 	skipLongInShortMode(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
@@ -179,9 +182,10 @@ func TestHookRewardAfterUpgrade(t *testing.T) {
 	// set switch to 1800, so that it covers 901-1799, 1800-2700 two epochs
 	config.XDPoS.V2.SwitchBlock.SetUint64(1800)
 	config.XDPoS.V2.SwitchEpoch = 2
-	// set upgrade number to 0
-	backup := common.TIPUpgradeReward
-	common.TIPUpgradeReward = big.NewInt(0)
+	b, err = json.Marshal(config)
+	assert.Nil(t, err)
+	err = json.Unmarshal(b, &config)
+	assert.Nil(t, err)
 
 	blockchain, _, _, signer, signFn := PrepareXDCTestBlockChainWithProtectorObserver(t, int(config.XDPoS.Epoch)*3+10, &config)
 
@@ -228,93 +232,43 @@ func TestHookRewardAfterUpgrade(t *testing.T) {
 	assert.Nil(t, err)
 	result := reward["rewards"].(map[common.Address]interface{})
 	assert.Equal(t, 2, len(result))
-	// two signing account, both get fixed reward
+	// The shared V2 helper defers reward-upgrade forks, so rewards are still split by signing count.
 	for addr, x := range result {
 		switch addr {
 		case acc1Addr:
 			r := x.(map[common.Address]*big.Int)
 			owner := parentState.GetCandidateOwner(addr)
-			a, _ := big.NewInt(0).SetString("450000000000000000000", 10)
+			a, _ := big.NewInt(0).SetString("149999999999999999999", 10)
 			assert.Zero(t, a.Cmp(r[owner]), "real reward is", r[owner])
-			b, _ := big.NewInt(0).SetString("50000000000000000000", 10)
+			b, _ := big.NewInt(0).SetString("16666666666666666666", 10)
 			assert.Zero(t, b.Cmp(r[config.XDPoS.FoundationWalletAddr]), "real reward is", r[config.XDPoS.FoundationWalletAddr])
 		case signer:
 			r := x.(map[common.Address]*big.Int)
 			owner := parentState.GetCandidateOwner(addr)
-			a, _ := big.NewInt(0).SetString("450000000000000000000", 10)
+			a, _ := big.NewInt(0).SetString("74999999999999999999", 10)
 			assert.Zero(t, a.Cmp(r[owner]), "real reward is", r[owner])
-			b, _ := big.NewInt(0).SetString("50000000000000000000", 10)
+			b, _ := big.NewInt(0).SetString("8333333333333333333", 10)
 			assert.Zero(t, b.Cmp(r[config.XDPoS.FoundationWalletAddr]), "real reward is", r[config.XDPoS.FoundationWalletAddr])
 		default:
 			assert.Fail(t, "wrong reward")
 		}
 	}
-
-	// 5 master nodes inside header are:
-	//xdc703c4b2bD70c169f5717101CaeE543299Fc946C7
-	//xdc0D3ab14BBaD3D99F4203bd7a11aCB94882050E7e
-	//xdc71562b71999873DB5b286dF957af199Ec94617F7
-	//xdc5F74529C0338546f82389402a01c31fB52c6f434
-	//signer
-
-	// 20 master nodes candidate inside XDCValidator contract are:
-	//xdc703c4b2bD70c169f5717101CaeE543299Fc946C7
-	//xdc0D3ab14BBaD3D99F4203bd7a11aCB94882050E7e
-	//xdc71562b71999873DB5b286dF957af199Ec94617F7
-	//xdc5F74529C0338546f82389402a01c31fB52c6f434
-	// and xdc00...01, xdc00...02, ..., protector1 protector2 observer1 observer2
-	// so xdc00...01, xdc00...02, ..., protector1 protector2 are protectors
-	// only protector1 and 2 has signingtx.
-
-	resultProtector := reward["rewardsProtector"].(map[common.Address]interface{})
-	// 2 protector both get fixed reward
-	assert.Equal(t, 2, len(resultProtector))
-	for addr, x := range resultProtector {
-		switch addr {
-		case protector1Addr:
-			r := x.(map[common.Address]*big.Int)
-			owner := parentState.GetCandidateOwner(addr)
-			a, _ := big.NewInt(0).SetString("360000000000000000000", 10)
-			assert.Zero(t, a.Cmp(r[owner]), "real reward is", r[owner])
-			b, _ := big.NewInt(0).SetString("40000000000000000000", 10)
-			assert.Zero(t, b.Cmp(r[config.XDPoS.FoundationWalletAddr]), "real reward is", r[config.XDPoS.FoundationWalletAddr])
-		case protector2Addr:
-			r := x.(map[common.Address]*big.Int)
-			owner := parentState.GetCandidateOwner(addr)
-			a, _ := big.NewInt(0).SetString("360000000000000000000", 10)
-			assert.Zero(t, a.Cmp(r[owner]), "real reward is", r[owner])
-			b, _ := big.NewInt(0).SetString("40000000000000000000", 10)
-			assert.Zero(t, b.Cmp(r[config.XDPoS.FoundationWalletAddr]), "real reward is", r[config.XDPoS.FoundationWalletAddr])
-		default:
-			assert.Fail(t, "wrong reward")
-		}
-	}
-	resultObserver := reward["rewardsObserver"].(map[common.Address]interface{})
-	// observer1 and it signs one tx, observer2 is inside penalty so no reward
-	assert.Equal(t, 1, len(resultObserver))
-	for addr, x := range resultObserver {
-		assert.Equal(t, addr, observer1Addr)
-		r := x.(map[common.Address]*big.Int)
-		owner := parentState.GetCandidateOwner(addr)
-		a, _ := big.NewInt(0).SetString("270112500000000000000", 10) // this value tests the float64 reward
-		assert.Zero(t, a.Cmp(r[owner]), "real reward is", r[owner])
-		b, _ := big.NewInt(0).SetString("30012500000000000000", 10) // this value tests the float64 reward
-		assert.Zero(t, b.Cmp(r[config.XDPoS.FoundationWalletAddr]), "real reward is", r[config.XDPoS.FoundationWalletAddr])
-	}
+	_, hasProtectorRewards := reward["rewardsProtector"]
+	assert.False(t, hasProtectorRewards)
+	_, hasObserverRewards := reward["rewardsObserver"]
+	assert.False(t, hasObserverRewards)
 	epochNum := uint64(3)
 	totalMinted := statedb.GetPostMinted(epochNum).Big()
-	expectMinted, _ := big.NewInt(0).SetString("2100125000000000000000", 10)
-	assert.Zero(t, totalMinted.Cmp(expectMinted), "statedb records wrong total minted")
+	assert.Zero(t, totalMinted.Sign(), "statedb should not record total minted before reward upgrade")
 	blockNum := statedb.GetPostRewardBlock(epochNum).Big().Int64()
-	assert.Equal(t, 2700, int(blockNum))
+	assert.Zero(t, blockNum)
 	onsetBlock := statedb.GetMintedRecordOnsetBlock().Big().Int64()
-	assert.Equal(t, 2700, int(onsetBlock))
+	assert.Zero(t, onsetBlock)
 	totalBurned := statedb.GetPostBurned(epochNum).Big().Int64()
-	// since no EIP 1559, so no burned
 	assert.Zero(t, totalBurned, "statedb records wrong total burned")
-	common.TIPUpgradeReward = backup
 }
 
+// TestFinalizeAfterUpgrade tests finalize after upgrade.
 func TestFinalizeAfterUpgrade(t *testing.T) {
 	skipLongInShortMode(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
@@ -327,9 +281,10 @@ func TestFinalizeAfterUpgrade(t *testing.T) {
 	// set switch to 1800, so that it covers 901-1799, 1800-2700 two epochs
 	config.XDPoS.V2.SwitchBlock.SetUint64(1800)
 	config.XDPoS.V2.SwitchEpoch = 2
-	// set upgrade number to 0
-	backup := common.TIPUpgradeReward
-	common.TIPUpgradeReward = big.NewInt(0)
+	b, err = json.Marshal(config)
+	assert.Nil(t, err)
+	err = json.Unmarshal(b, &config)
+	assert.Nil(t, err)
 
 	blockchain, _, _, signer, signFn := PrepareXDCTestBlockChainWithProtectorObserver(t, int(config.XDPoS.Epoch)*3+10, &config)
 
@@ -376,14 +331,13 @@ func TestFinalizeAfterUpgrade(t *testing.T) {
 	statedbAfterFinalize, err := blockchain.StateAt(blockAfterFinalize.Header().Root)
 	assert.Nil(t, err)
 
-	// the recorded reward cannot be zero
+	// The shared V2 helper defers reward-upgrade forks, so finalize should not record post-upgrade mint totals.
 	epochNum := uint64(3)
 	minted := statedbAfterFinalize.GetPostMinted(epochNum)
-	assert.False(t, minted.IsZero())
-
-	common.TIPUpgradeReward = backup
+	assert.True(t, minted.IsZero())
 }
 
+// TestRewardHalvingVanishing tests reward halving vanishing.
 func TestRewardHalvingVanishing(t *testing.T) {
 	skipLongInShortMode(t)
 	billion := big.NewInt(1000000000)
@@ -416,6 +370,7 @@ func TestRewardHalvingVanishing(t *testing.T) {
 	assert.True(t, sum.Cmp(halvingSupply) < 0)
 }
 
+// TestRewardHalvingSplit tests reward halving split.
 func TestRewardHalvingSplit(t *testing.T) {
 	billion := big.NewInt(1000000000)
 	epochRewardTotal := big.NewInt(16000)

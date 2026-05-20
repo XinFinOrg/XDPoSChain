@@ -1095,11 +1095,15 @@ type NodeInfo struct {
 // NodeInfo retrieves some protocol metadata about the running host node.
 func (pm *ProtocolManager) NodeInfo() *NodeInfo {
 	currentBlock := pm.blockchain.CurrentBlock()
+	config := pm.blockchain.Config()
+	if config != nil {
+		config = config.CloneForJSON()
+	}
 	return &NodeInfo{
 		Network:    pm.networkId,
 		Difficulty: pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64()),
 		Genesis:    pm.blockchain.Genesis().Hash(),
-		Config:     pm.blockchain.Config(),
+		Config:     config,
 		Head:       currentBlock.Hash(),
 	}
 }

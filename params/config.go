@@ -17,455 +17,11 @@
 package params
 
 import (
-	"cmp"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"math/big"
-	"slices"
-	"strings"
-	"sync"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
-	"github.com/XinFinOrg/XDPoSChain/log"
-)
-
-const (
-	ConsensusEngineVersion1 = "v1"
-	ConsensusEngineVersion2 = "v2"
-	Default                 = 0
-)
-
-var (
-	MainnetGenesisHash = common.HexToHash("0x4a9d748bd78a8d0385b67788c2435dcdb914f98a96250b68863a1f8b7642d6b1") // XDC Mainnet genesis hash to enforce below configs on
-	TestnetGenesisHash = common.HexToHash("0xbdea512b4f12ff1135ec92c00dc047ffb93890c2ea1aa0eefe9b013d80640075") // XDC Testnet genesis hash to enforce below configs on
-	DevnetGenesisHash  = common.HexToHash("0x7dad95b83c6c1d413de03bd5fcf2d446217db55b2b18e3eaacacbfa4e7629cc9") // XDC Devnet genesis hash to enforce below configs on
-)
-
-var (
-	MainnetV2Configs = map[uint64]*V2Config{
-		Default: {
-			MaxMasternodes:       108,
-			SwitchRound:          0,
-			CertThreshold:        0.667,
-			TimeoutSyncThreshold: 3,
-			TimeoutPeriod:        30,
-			MinePeriod:           2,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
-		},
-		2000: {
-			MaxMasternodes:       108,
-			SwitchRound:          2000,
-			CertThreshold:        0.667,
-			TimeoutSyncThreshold: 2,
-			TimeoutPeriod:        600,
-			MinePeriod:           2,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
-		},
-		8000: {
-			MaxMasternodes:       108,
-			SwitchRound:          8000,
-			CertThreshold:        0.667,
-			TimeoutSyncThreshold: 2,
-			TimeoutPeriod:        60,
-			MinePeriod:           2,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
-		},
-		220000: {
-			MaxMasternodes:       108,
-			SwitchRound:          220000,
-			CertThreshold:        0.667,
-			TimeoutSyncThreshold: 2,
-			TimeoutPeriod:        30,
-			MinePeriod:           2,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
-		},
-		460000: {
-			MaxMasternodes:       108,
-			SwitchRound:          460000,
-			CertThreshold:        0.667,
-			TimeoutSyncThreshold: 2,
-			TimeoutPeriod:        20,
-			MinePeriod:           2,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
-		},
-		3200000: {
-			MaxMasternodes:       108,
-			SwitchRound:          3200000,
-			CertThreshold:        0.667,
-			TimeoutSyncThreshold: 3,
-			TimeoutPeriod:        10,
-			MinePeriod:           2,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
-		},
-	}
-
-	TestnetV2Configs = map[uint64]*V2Config{
-		Default: {
-			MaxMasternodes:       15,
-			SwitchRound:          0,
-			CertThreshold:        0.45,
-			TimeoutSyncThreshold: 3,
-			TimeoutPeriod:        60,
-			MinePeriod:           2,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
-		},
-		900000: {
-			MaxMasternodes:       108,
-			SwitchRound:          900000,
-			CertThreshold:        0.667,
-			TimeoutSyncThreshold: 3,
-			TimeoutPeriod:        60,
-			MinePeriod:           2,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
-		},
-		15000000: {
-			MaxMasternodes:       108,
-			SwitchRound:          15000000,
-			CertThreshold:        0.667,
-			TimeoutSyncThreshold: 3,
-			TimeoutPeriod:        10,
-			MinePeriod:           2,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
-		},
-	}
-
-	DevnetV2Configs = map[uint64]*V2Config{
-		Default: {
-			SwitchRound:               0,
-			MaxMasternodes:            108,
-			MaxProtectorNodes:         0,
-			MaxObverserNodes:          0,
-			CertThreshold:             0.667,
-			TimeoutSyncThreshold:      3,
-			TimeoutPeriod:             10,
-			MinePeriod:                2,
-			ExpTimeoutConfig:          ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
-			MasternodeReward:          0,
-			ProtectorReward:           0,
-			ObserverReward:            0,
-			MinimumMinerBlockPerEpoch: 0,
-			LimitPenaltyEpoch:         0,
-			MinimumSigningTx:          0,
-		},
-		5000000: {
-			SwitchRound:               5000000,
-			MaxMasternodes:            108,
-			MaxProtectorNodes:         10,
-			MaxObverserNodes:          1000,
-			CertThreshold:             0.667,
-			TimeoutSyncThreshold:      3,
-			TimeoutPeriod:             10,
-			MinePeriod:                2,
-			ExpTimeoutConfig:          ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
-			MasternodeReward:          63.42,
-			ProtectorReward:           50.27,
-			ObserverReward:            25.13,
-			MinimumMinerBlockPerEpoch: 0,
-			LimitPenaltyEpoch:         0,
-			MinimumSigningTx:          0,
-		},
-	}
-
-	UnitTestV2Configs = map[uint64]*V2Config{
-		Default: {
-			MaxMasternodes:       18,
-			SwitchRound:          0,
-			CertThreshold:        0.667,
-			TimeoutSyncThreshold: 2,
-			TimeoutPeriod:        4,
-			MinePeriod:           2,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
-		},
-		10: {
-			MaxMasternodes:       18,
-			SwitchRound:          10,
-			CertThreshold:        0.667,
-			TimeoutSyncThreshold: 2,
-			TimeoutPeriod:        4,
-			MinePeriod:           3,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
-		},
-		900: {
-			MaxMasternodes:       20,
-			MaxProtectorNodes:    17,
-			MaxObverserNodes:     1,
-			SwitchRound:          900,
-			CertThreshold:        0.667,
-			TimeoutSyncThreshold: 4,
-			TimeoutPeriod:        5,
-			MinePeriod:           2,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
-			MasternodeReward:     500, // double as Reward
-			ProtectorReward:      400,
-			ObserverReward:       300.125,
-			LimitPenaltyEpoch:    2,
-			MinimumSigningTx:     2,
-		},
-	}
-
-	// XDPoSChain mainnet config
-	XDCMainnetChainConfig = &ChainConfig{
-		ChainID:        big.NewInt(50),
-		HomesteadBlock: big.NewInt(1),
-		EIP150Block:    big.NewInt(2),
-		EIP155Block:    big.NewInt(3),
-		EIP158Block:    big.NewInt(3),
-		ByzantiumBlock: big.NewInt(4),
-		XDPoS: &XDPoSConfig{
-			Period:               2,
-			Epoch:                900,
-			Reward:               5000,
-			RewardCheckpoint:     900,
-			Gap:                  450,
-			FoundationWalletAddr: common.HexToAddress("xdc92a289fe95a85c53b8d0d113cbaef0c1ec98ac65"),
-			V2: &V2{
-				SwitchEpoch:   common.MainnetConstant.TIPV2SwitchBlock.Uint64() / 900,
-				SwitchBlock:   common.MainnetConstant.TIPV2SwitchBlock,
-				CurrentConfig: MainnetV2Configs[0],
-				AllConfigs:    MainnetV2Configs,
-			},
-		},
-	}
-
-	// MainnetChainConfig is the chain parameters to run a node on the ethereum main network.
-	MainnetChainConfig = &ChainConfig{
-		ChainID:             big.NewInt(1),
-		HomesteadBlock:      big.NewInt(1150000),
-		DAOForkBlock:        big.NewInt(1920000),
-		DAOForkSupport:      true,
-		EIP150Block:         big.NewInt(2463000),
-		EIP155Block:         big.NewInt(2675000),
-		EIP158Block:         big.NewInt(2675000),
-		ByzantiumBlock:      big.NewInt(4370000),
-		ConstantinopleBlock: nil,
-		Ethash:              new(EthashConfig),
-	}
-
-	// TestnetChainConfig contains the chain parameters to run a node on the Apothem testnet.
-	TestnetChainConfig = &ChainConfig{
-		ChainID:             big.NewInt(51),
-		HomesteadBlock:      big.NewInt(1),
-		DAOForkBlock:        nil,
-		DAOForkSupport:      false,
-		EIP150Block:         big.NewInt(2),
-		EIP155Block:         big.NewInt(3),
-		EIP158Block:         big.NewInt(3),
-		ByzantiumBlock:      big.NewInt(4),
-		ConstantinopleBlock: nil,
-		XDPoS: &XDPoSConfig{
-			Period:               2,
-			Epoch:                900,
-			Reward:               5000,
-			RewardCheckpoint:     900,
-			Gap:                  450,
-			FoundationWalletAddr: common.HexToAddress("xdc746249c61f5832c5eed53172776b460491bdcd5c"),
-			V2: &V2{
-				SwitchEpoch:   common.TestnetConstant.TIPV2SwitchBlock.Uint64() / 900,
-				SwitchBlock:   common.TestnetConstant.TIPV2SwitchBlock,
-				CurrentConfig: TestnetV2Configs[0],
-				AllConfigs:    TestnetV2Configs,
-			},
-		},
-	}
-
-	// DevnetChainConfig contains the chain parameters to run a node on the devnet.
-	DevnetChainConfig = &ChainConfig{
-		ChainID:        big.NewInt(5551),
-		HomesteadBlock: big.NewInt(0),
-		EIP150Block:    big.NewInt(0),
-		EIP155Block:    big.NewInt(0),
-		EIP158Block:    big.NewInt(0),
-		ByzantiumBlock: big.NewInt(0),
-		XDPoS: &XDPoSConfig{
-			Period:               2,
-			Epoch:                900,
-			Reward:               7125,
-			RewardCheckpoint:     900,
-			Gap:                  450,
-			FoundationWalletAddr: common.HexToAddress("0x4f288181b1d1aa599c6d7629f1168d46d5f96338"),
-			V2: &V2{
-				SwitchEpoch:   common.DevnetConstant.TIPV2SwitchBlock.Uint64() / 900,
-				SwitchBlock:   common.DevnetConstant.TIPV2SwitchBlock,
-				CurrentConfig: DevnetV2Configs[0],
-				AllConfigs:    DevnetV2Configs,
-			},
-		},
-	}
-
-	// AllEthashProtocolChanges contains every protocol change (EIPs) introduced
-	// and accepted by the Ethereum core developers into the Ethash consensus.
-	AllEthashProtocolChanges = &ChainConfig{
-		ChainID:             big.NewInt(1337),
-		HomesteadBlock:      big.NewInt(0),
-		DAOForkBlock:        nil,
-		DAOForkSupport:      false,
-		EIP150Block:         big.NewInt(0),
-		EIP155Block:         big.NewInt(0),
-		EIP158Block:         big.NewInt(0),
-		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: big.NewInt(0),
-		PetersburgBlock:     big.NewInt(0),
-		IstanbulBlock:       big.NewInt(0),
-		BerlinBlock:         big.NewInt(0),
-		LondonBlock:         big.NewInt(0),
-		ShanghaiBlock:       big.NewInt(0),
-		Eip1559Block:        nil,
-		CancunBlock:         nil,
-		PragueBlock:         nil,
-		OsakaBlock:          nil,
-		Ethash:              new(EthashConfig),
-		Clique:              nil,
-		XDPoS:               nil,
-	}
-
-	// AllDevChainProtocolChanges contains every protocol change (EIPs) introduced
-	// and accepted by the Ethereum core developers into the XDPoS consensus.
-	//
-	// This configuration is intentionally not using keyed fields to force anyone
-	// adding flags to the config to also have to set these fields.
-	AllDevChainProtocolChanges = &ChainConfig{
-		ChainID:             big.NewInt(1337),
-		HomesteadBlock:      big.NewInt(0),
-		DAOForkBlock:        nil,
-		DAOForkSupport:      false,
-		EIP150Block:         big.NewInt(0),
-		EIP155Block:         big.NewInt(0),
-		EIP158Block:         big.NewInt(0),
-		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: big.NewInt(0),
-		PetersburgBlock:     big.NewInt(0),
-		IstanbulBlock:       big.NewInt(0),
-		BerlinBlock:         big.NewInt(0),
-		LondonBlock:         big.NewInt(0),
-		ShanghaiBlock:       big.NewInt(0),
-		Eip1559Block:        big.NewInt(0),
-		CancunBlock:         big.NewInt(0),
-		PragueBlock:         big.NewInt(0),
-		OsakaBlock:          big.NewInt(0),
-		Ethash:              nil,
-		Clique:              nil,
-		XDPoS: &XDPoSConfig{
-			Epoch:                900,
-			Gap:                  450,
-			SkipV1Validation:     true,
-			FoundationWalletAddr: common.HexToAddress("0x0000000000000000000000000000000000000068"),
-			Reward:               250,
-			V2: &V2{
-				SwitchEpoch:   1,
-				SwitchBlock:   big.NewInt(900),
-				CurrentConfig: UnitTestV2Configs[0],
-				AllConfigs:    UnitTestV2Configs,
-			},
-		},
-	}
-
-	// AllCliqueProtocolChanges contains every protocol change (EIPs) introduced
-	// and accepted by the Ethereum core developers into the Clique consensus.
-	AllCliqueProtocolChanges = &ChainConfig{
-		ChainID:             big.NewInt(1337),
-		HomesteadBlock:      big.NewInt(0),
-		DAOForkBlock:        nil,
-		DAOForkSupport:      false,
-		EIP150Block:         big.NewInt(0),
-		EIP155Block:         big.NewInt(0),
-		EIP158Block:         big.NewInt(0),
-		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: big.NewInt(0),
-		PetersburgBlock:     big.NewInt(0),
-		IstanbulBlock:       big.NewInt(0),
-		BerlinBlock:         big.NewInt(0),
-		LondonBlock:         big.NewInt(0),
-		ShanghaiBlock:       big.NewInt(0),
-		Eip1559Block:        big.NewInt(0),
-		CancunBlock:         nil,
-		PragueBlock:         nil,
-		OsakaBlock:          nil,
-		Ethash:              nil,
-		Clique:              &CliqueConfig{Period: 0, Epoch: 900},
-		XDPoS:               nil,
-	}
-
-	// XDPoS config with v2 engine after block 901
-	TestXDPoSMockChainConfig = &ChainConfig{
-		ChainID:             big.NewInt(1337),
-		HomesteadBlock:      big.NewInt(0),
-		DAOForkBlock:        nil,
-		DAOForkSupport:      false,
-		EIP150Block:         big.NewInt(0),
-		EIP155Block:         big.NewInt(0),
-		EIP158Block:         big.NewInt(0),
-		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: big.NewInt(0),
-		Ethash:              new(EthashConfig),
-		Clique:              nil,
-		XDPoS: &XDPoSConfig{
-			Epoch:                900,
-			Gap:                  450,
-			SkipV1Validation:     true,
-			FoundationWalletAddr: common.HexToAddress("0x0000000000000000000000000000000000000068"),
-			Reward:               250,
-			V2: &V2{
-				SwitchEpoch:   1,
-				SwitchBlock:   big.NewInt(900),
-				CurrentConfig: UnitTestV2Configs[0],
-				AllConfigs:    UnitTestV2Configs,
-			},
-		},
-	}
-
-	// TestChainConfig contains every protocol change (EIPs) introduced
-	// and accepted by the Ethereum core developers for testing purposes.
-	TestChainConfig = &ChainConfig{
-		ChainID:             big.NewInt(1),
-		HomesteadBlock:      big.NewInt(0),
-		DAOForkBlock:        nil,
-		DAOForkSupport:      false,
-		EIP150Block:         big.NewInt(0),
-		EIP155Block:         big.NewInt(0),
-		EIP158Block:         big.NewInt(0),
-		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: big.NewInt(0),
-		PetersburgBlock:     big.NewInt(0),
-		IstanbulBlock:       big.NewInt(0),
-		BerlinBlock:         big.NewInt(0),
-		LondonBlock:         big.NewInt(0),
-		ShanghaiBlock:       big.NewInt(0),
-		Eip1559Block:        nil,
-		CancunBlock:         nil,
-		PragueBlock:         nil,
-		OsakaBlock:          nil,
-		Ethash:              new(EthashConfig),
-		Clique:              nil,
-		XDPoS:               nil,
-	}
-
-	// MergedTestChainConfig contains every protocol change (EIPs) introduced
-	// and accepted by the Ethereum core developers for testing purposes.
-	MergedTestChainConfig = &ChainConfig{
-		ChainID:             big.NewInt(1),
-		HomesteadBlock:      big.NewInt(0),
-		DAOForkBlock:        nil,
-		DAOForkSupport:      false,
-		EIP150Block:         big.NewInt(0),
-		EIP155Block:         big.NewInt(0),
-		EIP158Block:         big.NewInt(0),
-		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: big.NewInt(0),
-		PetersburgBlock:     big.NewInt(0),
-		IstanbulBlock:       big.NewInt(0),
-		BerlinBlock:         big.NewInt(0),
-		LondonBlock:         big.NewInt(0),
-		ShanghaiBlock:       big.NewInt(0),
-		Eip1559Block:        big.NewInt(0),
-		CancunBlock:         big.NewInt(0),
-		PragueBlock:         big.NewInt(0),
-		OsakaBlock:          big.NewInt(0),
-		Ethash:              new(EthashConfig),
-		Clique:              nil,
-		XDPoS:               nil,
-	}
-	TestRules = TestChainConfig.Rules(new(big.Int))
 )
 
 // ChainConfig is the core config which determines the blockchain settings.
@@ -473,6 +29,32 @@ var (
 // ChainConfig is stored in the database on a per block basis. This means
 // that any network, identified by its genesis block, can have its own
 // set of configuration options.
+//
+// Clone/Equal selection guide:
+//
+//  1. Need: deep copy for normal runtime use
+//     API: Clone
+//     Notes: preserves runtime metadata (json field presence and built-in
+//     override markers)
+//
+//  2. Need: prepare a config for backfill compatibility logic
+//     API: CloneForBackfill
+//     Notes: keeps tracked JSON presence when captured from JSON; otherwise
+//     infers field presence from populated values
+//
+//  3. Need: serialize a config without runtime-only JSON presence metadata.
+//     API: CloneForJSON
+//     Notes: clears JSON presence tracking and built-in override markers before
+//     marshaling
+//
+//  4. Need: compare semantic config values (ignore runtime-only metadata)
+//     API: Equal
+//     Notes: preferred for behavior and compatibility checks.
+//
+//  5. Need: compare exact JSON output stability
+//     API: MarshalJSON
+//     Notes: use byte comparison only for persistence and audit serialization
+//     checks
 type ChainConfig struct {
 	ChainID *big.Int `json:"chainId"` // Chain id identifies the current chain and is used for replay protection
 
@@ -495,17 +77,130 @@ type ChainConfig struct {
 	LondonBlock     *big.Int `json:"londonBlock,omitempty"`
 	MergeBlock      *big.Int `json:"mergeBlock,omitempty"`
 	ShanghaiBlock   *big.Int `json:"shanghaiBlock,omitempty"`
-	Eip1559Block    *big.Int `json:"eip1559Block,omitempty"`
+	EIP1559Block    *big.Int `json:"eip1559Block,omitempty"`
 	CancunBlock     *big.Int `json:"cancunBlock,omitempty"`
 	PragueBlock     *big.Int `json:"pragueBlock,omitempty"`
 	OsakaBlock      *big.Int `json:"osakaBlock,omitempty"`
 
-	DynamicGasLimitBlock *big.Int `json:"dynamicGasLimitBlock,omitempty"` // Dynamic gas limit adjustment algorithm activation block (nil = no fork)
+	TIP2019Block                *big.Int `json:"tip2019Block,omitempty"`
+	TIPSigningBlock             *big.Int `json:"tipSigningBlock,omitempty"`
+	TIPRandomizeBlock           *big.Int `json:"tipRandomizeBlock,omitempty"`
+	TIPIncreaseMasternodesBlock *big.Int `json:"tipIncreaseMasternodesBlock,omitempty"`
+	DenylistBlock               *big.Int `json:"denylistBlock,omitempty"`
+	TIPNoHalvingMNRewardBlock   *big.Int `json:"tipNoHalvingMNRewardBlock,omitempty"`
+	TIPXDCXBlock                *big.Int `json:"tipXDCXBlock,omitempty"`
+	TIPXDCXLendingBlock         *big.Int `json:"tipXDCXLendingBlock,omitempty"`
+	TIPXDCXCancellationFeeBlock *big.Int `json:"tipXDCXCancellationFeeBlock,omitempty"`
+	TIPTRC21FeeBlock            *big.Int `json:"tipTRC21FeeBlock,omitempty"`
+	Gas50xBlock                 *big.Int `json:"gas50xBlock,omitempty"`
+	TIPXDCXMinerDisableBlock    *big.Int `json:"tipXDCXMinerDisableBlock,omitempty"`
+	TIPXDCXReceiverDisableBlock *big.Int `json:"tipXDCXReceiverDisableBlock,omitempty"`
+	DynamicGasLimitBlock        *big.Int `json:"dynamicGasLimitBlock,omitempty"`
+	TIPUpgradeRewardBlock       *big.Int `json:"tipUpgradeRewardBlock,omitempty"`
+	TIPUpgradePenaltyBlock      *big.Int `json:"tipUpgradePenaltyBlock,omitempty"`
+	TIPEpochHalvingBlock        *big.Int `json:"tipEpochHalvingBlock,omitempty"`
+
+	TRC21IssuerSMC         common.Address `json:"trc21IssuerSMC,omitempty"`
+	XDCXListingSMC         common.Address `json:"xdcxListingSMC,omitempty"`
+	RelayerRegistrationSMC common.Address `json:"relayerRegistrationSMC,omitempty"`
+	LendingRegistrationSMC common.Address `json:"lendingRegistrationSMC,omitempty"`
 
 	// Various consensus engines
 	Ethash *EthashConfig `json:"ethash,omitempty"`
 	Clique *CliqueConfig `json:"clique,omitempty"`
 	XDPoS  *XDPoSConfig  `json:"XDPoS,omitempty"`
+
+	runtime chainConfigRuntimeMetadata `json:"-"`
+}
+
+type chainConfigRuntimeMetadata struct {
+	customBuiltInGenesisOverride bool
+	json                         jsonFieldPresence
+}
+
+func (m chainConfigRuntimeMetadata) clone() chainConfigRuntimeMetadata {
+	m.json = m.json.clone()
+	return m
+}
+
+func (m *chainConfigRuntimeMetadata) setBuiltInGenesisOverride(enabled bool) {
+	if m != nil {
+		m.customBuiltInGenesisOverride = enabled
+	}
+}
+
+func (m *chainConfigRuntimeMetadata) hasBuiltInGenesisOverride() bool {
+	return m != nil && m.customBuiltInGenesisOverride
+}
+
+type jsonFieldPresence struct {
+	keys     map[string]struct{}
+	tracked  bool
+	preserve bool
+}
+
+func (p jsonFieldPresence) clone() jsonFieldPresence {
+	if p.keys == nil {
+		return p
+	}
+	keys := p.keys
+	p.keys = make(map[string]struct{}, len(keys))
+	for key := range keys {
+		p.keys[key] = struct{}{}
+	}
+	return p
+}
+
+func (p *jsonFieldPresence) capture(raw map[string]json.RawMessage) {
+	if p == nil {
+		return
+	}
+	p.tracked = true
+	p.preserve = true
+	p.keys = make(map[string]struct{}, len(raw))
+	for key := range raw {
+		p.keys[key] = struct{}{}
+	}
+}
+
+func (p *jsonFieldPresence) startInferredTracking() {
+	if p == nil {
+		return
+	}
+	p.tracked = true
+	p.preserve = false
+	p.keys = make(map[string]struct{})
+}
+
+func (p *jsonFieldPresence) clear() {
+	if p == nil {
+		return
+	}
+	p.keys = nil
+	p.tracked = false
+	p.preserve = false
+}
+
+func (p *jsonFieldPresence) hasTracking() bool {
+	return p != nil && p.tracked
+}
+
+func (p *jsonFieldPresence) mark(key string) {
+	if p == nil {
+		return
+	}
+	if p.keys == nil {
+		p.keys = make(map[string]struct{})
+	}
+	p.keys[key] = struct{}{}
+}
+
+func (p *jsonFieldPresence) isMissing(key string, fallback bool) bool {
+	if p == nil || !p.tracked {
+		return fallback
+	}
+	_, ok := p.keys[key]
+	return !ok
 }
 
 // EthashConfig is the consensus engine configs for proof-of-work based sealing.
@@ -527,336 +222,389 @@ func (c *CliqueConfig) String() string {
 	return "clique"
 }
 
-// XDPoSConfig is the consensus engine configs for delegated-proof-of-stake based sealing.
-type XDPoSConfig struct {
-	Period               uint64         `json:"period"`               // Number of seconds between blocks to enforce
-	Epoch                uint64         `json:"epoch"`                // Epoch length to reset votes and checkpoint
-	Reward               uint64         `json:"reward"`               // Block reward - unit Ether
-	RewardCheckpoint     uint64         `json:"rewardCheckpoint"`     // Checkpoint block for calculate rewards.
-	Gap                  uint64         `json:"gap"`                  // Gap time preparing for the next epoch
-	FoundationWalletAddr common.Address `json:"foundationWalletAddr"` // Foundation Address Wallet
-	SkipV1Validation     bool           //Skip Block Validation for testing purpose, V1 consensus only
-	V2                   *V2            `json:"v2"`
-}
-
-// UnmarshalJSON supports both the current and legacy typo-ed JSON key for
-// foundation wallet address to keep old on-disk chain configs compatible.
-func (c *XDPoSConfig) UnmarshalJSON(data []byte) error {
-	type xdpJSON struct {
-		Period                    uint64         `json:"period"`
-		Epoch                     uint64         `json:"epoch"`
-		Reward                    uint64         `json:"reward"`
-		RewardCheckpoint          uint64         `json:"rewardCheckpoint"`
-		Gap                       uint64         `json:"gap"`
-		FoundationWalletAddr      common.Address `json:"foundationWalletAddr"`
-		LegacyFoudationWalletAddr common.Address `json:"foudationWalletAddr"`
-		SkipV1Validation          bool           `json:"SkipV1Validation"`
-		V2                        *V2            `json:"v2"`
+// UnmarshalJSON captures field presence so strict missing-field backfill can
+// distinguish omitted keys from explicit zero-values. Unmarshal replaces the
+// entire config, so runtime-only markers such as the built-in genesis override
+// annotation are intentionally cleared and must be recomputed by the caller.
+func (c *ChainConfig) UnmarshalJSON(data []byte) error {
+	type chainConfigAlias ChainConfig
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
 	}
-	var decoded xdpJSON
+	var decoded chainConfigAlias
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
-
-	c.Period = decoded.Period
-	c.Epoch = decoded.Epoch
-	c.Reward = decoded.Reward
-	c.RewardCheckpoint = decoded.RewardCheckpoint
-	c.Gap = decoded.Gap
-	c.FoundationWalletAddr = decoded.FoundationWalletAddr
-	if c.FoundationWalletAddr == (common.Address{}) && decoded.LegacyFoudationWalletAddr != (common.Address{}) {
-		c.FoundationWalletAddr = decoded.LegacyFoudationWalletAddr
-	}
-	c.SkipV1Validation = decoded.SkipV1Validation
-	c.V2 = decoded.V2
-
+	next := ChainConfig(decoded)
+	next.runtime = chainConfigRuntimeMetadata{}
+	*c = next
+	c.runtime.json.capture(raw)
 	return nil
 }
 
-type V2 struct {
-	lock sync.RWMutex // Protects the signer fields
-
-	SwitchEpoch   uint64
-	SwitchBlock   *big.Int             `json:"switchBlock"`
-	CurrentConfig *V2Config            `json:"config"`
-	AllConfigs    map[uint64]*V2Config `json:"allConfigs"`
-	configIndex   []uint64             //list of switch block of configs
-}
-
-type V2Config struct {
-	MaxMasternodes       int     `json:"maxMasternodes"`       // v2 max masternodes
-	MaxProtectorNodes    int     `json:"maxProtectorNodes"`    // v2 max ProtectorNodes
-	MaxObverserNodes     int     `json:"maxObserverNodes"`     // v2 max ObserverNodes
-	SwitchRound          uint64  `json:"switchRound"`          // v1 to v2 switch block number
-	MinePeriod           int     `json:"minePeriod"`           // Miner mine period to mine a block
-	TimeoutSyncThreshold int     `json:"timeoutSyncThreshold"` // send syncInfo after number of timeout
-	TimeoutPeriod        int     `json:"timeoutPeriod"`        // Duration in ms
-	CertThreshold        float64 `json:"certificateThreshold"` // Necessary number of messages from master nodes to form a certificate
-
-	MasternodeReward float64 `json:"masternodeReward"` // Block reward per master node (core validator) - unit Ether
-	ProtectorReward  float64 `json:"protectorReward"`  // Block reward per protector - unit Ether
-	ObserverReward   float64 `json:"observerReward"`   // Block reward per observer - unit Ether
-
-	MinimumMinerBlockPerEpoch int `json:"minimumMinerBlockPerEpoch"` // Minimum block per epoch for a miner to not be penalized
-	LimitPenaltyEpoch         int `json:"limitPenaltyEpoch"`         // Epochs in a row that a penalty node needs to be penalized
-	MinimumSigningTx          int `json:"minimumSigningTx"`          // Signing txs that a node needs to produce to get out of penalty, after `LimitPenaltyEpoch`
-
-	ExpTimeoutConfig ExpTimeoutConfig `json:"expTimeoutConfig"`
-}
-
-type ExpTimeoutConfig struct {
-	Base        float64 `json:"base"`        // base in base^exponent
-	MaxExponent uint8   `json:"maxExponent"` // max exponent in base^exponent
-}
-
-func XDPoSConfigEqual(a, b *XDPoSConfig) bool {
-	if a == nil || b == nil {
-		if a != b {
-			log.Warn("[XDPoSConfigEqual] One of the configs is nil", "a", a, "b", b)
-			return false
+// MarshalJSON preserves explicitly provided zero-values so persistence can
+// round-trip the difference between omitted keys and deliberate null/false/
+// zero-address overrides.
+func (c *ChainConfig) MarshalJSON() ([]byte, error) {
+	if c == nil {
+		return []byte("null"), nil
+	}
+	type chainConfigAlias ChainConfig
+	data, err := json.Marshal(chainConfigAlias(*c))
+	if err != nil || !c.runtime.json.tracked || !c.runtime.json.preserve || len(c.runtime.json.keys) == 0 {
+		return data, err
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	if raw == nil {
+		raw = make(map[string]json.RawMessage)
+	}
+	fieldValues := make(map[string]any, len(chainConfigTopLevelFields))
+	for _, field := range chainConfigTopLevelFields {
+		fieldValues[field.jsonKey] = field.marshalValue(c)
+	}
+	for key := range c.runtime.json.keys {
+		if _, ok := raw[key]; ok {
+			continue
 		}
+		value, ok := fieldValues[key]
+		if !ok {
+			continue
+		}
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal chain config field %s: %w", key, err)
+		}
+		raw[key] = encoded
+	}
+	return json.Marshal(raw)
+}
+
+// Clone supports both the current and legacy typo-ed JSON key for
+func (c *ChainConfig) Clone() *ChainConfig {
+	if c == nil {
+		return nil
+	}
+	clone := *c
+	for _, field := range chainConfigTopLevelFields {
+		field.clone(&clone, c)
+	}
+	clone.runtime = c.runtime.clone()
+	return &clone
+}
+
+// CloneForBackfill returns a clone whose JSON field presence metadata is ready
+// for compatibility backfill. Existing tracked presence is preserved; otherwise
+// the clone infers explicit top-level fields from the populated config.
+func (c *ChainConfig) CloneForBackfill() *ChainConfig {
+	if c == nil {
+		return nil
+	}
+	clone := c.Clone()
+	if clone.runtime.json.hasTracking() && clone.runtime.json.preserve {
+		return clone
+	}
+	clone.runtime.json.startInferredTracking()
+	for _, field := range chainConfigTopLevelFields {
+		if field.shouldInferPresence(clone) {
+			clone.runtime.json.mark(field.jsonKey)
+		}
+	}
+	clone.XDPoS = clone.XDPoS.cloneWithInferredFieldPresence()
+	return clone
+}
+
+// CloneForJSON returns a clone with runtime-only metadata removed so JSON
+// marshaling exposes only user-visible configuration fields.
+func (c *ChainConfig) CloneForJSON() *ChainConfig {
+	clone := c.Clone()
+	if clone == nil {
+		return nil
+	}
+	clone.runtime.json.clear()
+	clone.runtime.setBuiltInGenesisOverride(false)
+	return clone
+}
+
+// Equal reports whether two chain configs are semantically equal after
+// excluding runtime-only metadata.
+func (c *ChainConfig) Equal(other *ChainConfig) bool {
+	if c == other {
 		return true
 	}
-	if a.Period != b.Period {
-		log.Warn("[XDPoSConfigEqual] Period mismatch", "a.Period", a.Period, "b.Period", b.Period)
+	if c == nil || other == nil {
+		return c == nil && other == nil
+	}
+	if !sameChainID(c.ChainID, other.ChainID) || c.DAOForkSupport != other.DAOForkSupport {
 		return false
 	}
-	if a.Epoch != b.Epoch {
-		log.Warn("[XDPoSConfigEqual] Epoch mismatch", "a.Epoch", a.Epoch, "b.Epoch", b.Epoch)
+	equal := true
+	ForEachChainConfigForkBlockPair(c, other, func(_ string, aValue, bValue *big.Int) {
+		if equal && !sameChainID(aValue, bValue) {
+			equal = false
+		}
+	})
+	if !equal {
 		return false
 	}
-	if a.Reward != b.Reward {
-		log.Warn("[XDPoSConfigEqual] Reward mismatch", "a.Reward", a.Reward, "b.Reward", b.Reward)
+	ForEachChainConfigXDCSystemContractPair(c, other, func(_ string, aValue, bValue common.Address) {
+		if equal && aValue != bValue {
+			equal = false
+		}
+	})
+	if !equal {
 		return false
 	}
-	if a.RewardCheckpoint != b.RewardCheckpoint {
-		log.Warn("[XDPoSConfigEqual] RewardCheckpoint mismatch", "a.RewardCheckpoint", a.RewardCheckpoint, "b.RewardCheckpoint", b.RewardCheckpoint)
+	if (c.Ethash == nil) != (other.Ethash == nil) {
 		return false
 	}
-	if a.Gap != b.Gap {
-		log.Warn("[XDPoSConfigEqual] Gap mismatch", "a.Gap", a.Gap, "b.Gap", b.Gap)
+	if !chainConfigSemanticCliqueEqual(c.Clique, other.Clique) {
 		return false
 	}
-	if a.FoundationWalletAddr != b.FoundationWalletAddr {
-		log.Warn("[XDPoSConfigEqual] FoundationWalletAddr mismatch", "a.FoundationWalletAddr", a.FoundationWalletAddr.Hex(), "b.FoundationWalletAddr", b.FoundationWalletAddr.Hex())
-		return false
-	}
-	if a.SkipV1Validation != b.SkipV1Validation {
-		log.Warn("[XDPoSConfigEqual] SkipV1Validation mismatch", "a.SkipV1Validation", a.SkipV1Validation, "b.SkipV1Validation", b.SkipV1Validation)
-		return false
-	}
-	return V2Equal(a.V2, b.V2)
+	return chainConfigSemanticXDPoSEqual(c.XDPoS, other.XDPoS)
 }
 
-func V2Equal(a, b *V2) bool {
+func chainConfigSemanticCliqueEqual(a, b *CliqueConfig) bool {
 	if a == nil || b == nil {
-		if a != b {
-			log.Warn("[V2Equal] One of the configs is nil", "a", a, "b", b)
-			return false
-		}
-		return true
+		return a == nil && b == nil
 	}
-	if !configNumEqual(a.SwitchBlock, b.SwitchBlock) {
-		log.Warn("[V2Equal] SwitchBlock mismatch", "a.SwitchBlock", a.SwitchBlock, "b.SwitchBlock", b.SwitchBlock)
+	return a.Period == b.Period && a.Epoch == b.Epoch
+}
+
+func chainConfigSemanticXDPoSEqual(a, b *XDPoSConfig) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Period == b.Period &&
+		a.Epoch == b.Epoch &&
+		a.Reward == b.Reward &&
+		a.RewardCheckpoint == b.RewardCheckpoint &&
+		a.Gap == b.Gap &&
+		a.FoundationWalletAddr == b.FoundationWalletAddr &&
+		a.MaxMasternodesV2 == b.MaxMasternodesV2 &&
+		a.SkipV1Validation == b.SkipV1Validation &&
+		chainConfigSemanticV2Equal(a.V2, b.V2)
+}
+
+func chainConfigSemanticV2Equal(a, b *V2) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	left := snapshotV2ReadOnly(a)
+	right := snapshotV2ReadOnly(b)
+	if left.switchEpoch != right.switchEpoch || !sameChainID(left.switchBlock, right.switchBlock) {
 		return false
 	}
-	// Only check configs in both of AllConfigs
-	for k1, cfg1 := range a.AllConfigs {
-		if cfg2, ok := b.AllConfigs[k1]; ok {
-			if !V2ConfigEqual(cfg1, cfg2) {
-				return false
+	if !sameV2RuntimeConfig(left.currentConfig, right.currentConfig) {
+		return false
+	}
+	if (left.allConfigs == nil) != (right.allConfigs == nil) {
+		return false
+	}
+	if len(left.allConfigs) != len(right.allConfigs) {
+		return false
+	}
+	for round, cfg := range left.allConfigs {
+		other, ok := right.allConfigs[round]
+		if !ok || !sameV2RuntimeConfig(cfg, other) {
+			return false
+		}
+	}
+	return true
+}
+
+// SetBuiltInGenesisOverride marks whether this config is a same-hash custom
+// override of a bundled built-in genesis.
+func (c *ChainConfig) SetBuiltInGenesisOverride(enabled bool) {
+	if c != nil {
+		c.runtime.setBuiltInGenesisOverride(enabled)
+	}
+}
+
+func (c *ChainConfig) hasBuiltInGenesisOverride() bool {
+	return c != nil && c.runtime.hasBuiltInGenesisOverride()
+}
+
+// isBuiltInTestNetwork reports whether chainID permits reduced startup checks.
+func isBuiltInTestNetwork(chainID *big.Int) bool {
+	if chainID == nil || !chainID.IsUint64() {
+		return false
+	}
+	switch chainID.Uint64() {
+	case ConsensusOptionalTestChainID: // AllEthashProtocolChanges, AllDevChainProtocolChanges, AllCliqueProtocolChanges, TestXDPoSMockChainConfig
+		return true
+	default:
+		return false
+	}
+}
+
+func sameChainID(a, b *big.Int) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Cmp(b) == 0
+}
+
+func isKnownXDCBuiltInChainID(chainID *big.Int) bool {
+	if chainID == nil {
+		return false
+	}
+	return sameChainID(chainID, XDCMainnetChainConfig.ChainID) ||
+		sameChainID(chainID, TestnetChainConfig.ChainID) ||
+		sameChainID(chainID, DevnetChainConfig.ChainID) ||
+		sameChainID(chainID, LocalnetChainConfig.ChainID)
+}
+
+func shouldWarnOnCustomLocalnetFallback(dest, src *ChainConfig) bool {
+	if dest == nil || src == nil || dest.ChainID == nil {
+		return false
+	}
+	if !sameChainID(src.ChainID, LocalnetChainConfig.ChainID) {
+		return false
+	}
+	if isKnownXDCBuiltInChainID(dest.ChainID) || isBuiltInTestNetwork(dest.ChainID) {
+		return false
+	}
+	return true
+}
+
+// requiresXDCForkConfig reports whether the config enables any XDC-specific
+// fork schedule or system-contract setting that cannot be inferred from plain
+// Ethereum defaults.
+func (c *ChainConfig) requiresXDCForkConfig() bool {
+	if c == nil {
+		return false
+	}
+	for _, field := range chainConfigXDCForkBlockFields {
+		if field.get(c) != nil {
+			return true
+		}
+	}
+	for _, field := range chainConfigXDCSystemContractFields {
+		if !field.get(c).IsZero() {
+			return true
+		}
+	}
+	return c.XDPoS != nil
+}
+
+// CheckConfigForkOrder validates that configured forks, required addresses, and
+// XDPoS settings are internally consistent and activate in a supported order.
+func (c *ChainConfig) CheckConfigForkOrder() error {
+	type fork struct {
+		name     string
+		block    *big.Int
+		optional bool
+	}
+	type requiredAddress struct {
+		name  string
+		value common.Address
+	}
+	if c.ChainID == nil {
+		return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "ChainID")
+	}
+	if c.requiresXDCForkConfig() && c.TIPTRC21FeeBlock == nil {
+		return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "TIPTRC21FeeBlock")
+	}
+	if c.requiresXDCForkConfig() && c.Gas50xBlock == nil {
+		return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "Gas50xBlock")
+	}
+	if c.requiresXDCForkConfig() {
+		requiredAddresses := make([]requiredAddress, 0, len(chainConfigXDCSystemContractFields))
+		for _, field := range chainConfigXDCSystemContractFields {
+			requiredAddresses = append(requiredAddresses, requiredAddress{name: field.name, value: field.get(c)})
+		}
+		for _, addr := range requiredAddresses {
+			if addr.value.IsZero() {
+				return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, addr.name)
 			}
 		}
 	}
-	return true
-}
-
-func V2ConfigEqual(a, b *V2Config) bool {
-	if a == nil || b == nil {
-		if a != b {
-			log.Warn("[V2ConfigEqual] One of the configs is nil", "a", a, "b", b)
-			return false
+	var lastFork fork
+	var forkOrderErr error
+	ForEachChainConfigForkOrderBlock(c, func(name string, block *big.Int, optional bool) {
+		if forkOrderErr != nil {
+			return
 		}
-		return true
-	}
-	if a.MaxMasternodes != b.MaxMasternodes {
-		log.Warn("[V2ConfigEqual] MaxMasternodes mismatch", "a.MaxMasternodes", a.MaxMasternodes, "b.MaxMasternodes", b.MaxMasternodes)
-		return false
-	}
-	if a.SwitchRound != b.SwitchRound {
-		log.Warn("[V2ConfigEqual] SwitchRound mismatch", "a.SwitchRound", a.SwitchRound, "b.SwitchRound", b.SwitchRound)
-		return false
-	}
-	if a.CertThreshold != b.CertThreshold {
-		log.Warn("[V2ConfigEqual] CertThreshold mismatch", "a.CertThreshold", a.CertThreshold, "b.CertThreshold", b.CertThreshold)
-		return false
-	}
-	return true
-}
-
-func (c *XDPoSConfig) String() string {
-	if c == nil {
-		return "XDPoSConfig: <nil>"
-	}
-
-	return fmt.Sprintf("XDPoSConfig{Period: %v, Epoch: %v, Reward: %v, RewardCheckpoint: %v, Gap: %v, FoundationWalletAddr: %v, SkipV1Validation: %v, V2: %s}", c.Period, c.Epoch, c.Reward, c.RewardCheckpoint, c.Gap, c.FoundationWalletAddr.String0x(), c.SkipV1Validation, c.V2.String())
-}
-
-// Description returns a human-readable description of XDPoSConfig
-// NOTE: don't append "\n" to end
-func (c *XDPoSConfig) Description(indent int) string {
-	if c == nil {
-		return "XDPoS: <nil>"
-	}
-
-	banner := "XDPoS\n"
-	prefix := strings.Repeat(" ", indent)
-	banner += fmt.Sprintf("%s- Period: %v\n", prefix, c.Period)
-	banner += fmt.Sprintf("%s- Epoch: %v\n", prefix, c.Epoch)
-	banner += fmt.Sprintf("%s- Reward: %v\n", prefix, c.Reward)
-	banner += fmt.Sprintf("%s- RewardCheckpoint: %v\n", prefix, c.RewardCheckpoint)
-	banner += fmt.Sprintf("%s- Gap: %v\n", prefix, c.Gap)
-	banner += fmt.Sprintf("%s- FoundationWalletAddr: %v\n", prefix, c.FoundationWalletAddr.Hex())
-	banner += fmt.Sprintf("%s- SkipV1Validation: %v\n", prefix, c.SkipV1Validation)
-	banner += fmt.Sprintf("%s- %s", prefix, c.V2.Description(indent+2))
-	return banner
-}
-
-func (v2 *V2) String() string {
-	if v2 == nil {
-		return "V2: <nil>"
-	}
-
-	return fmt.Sprintf("V2{SwitchEpoch: %v, SwitchBlock: %v, %s}", v2.SwitchEpoch, v2.SwitchBlock, v2.CurrentConfig.String())
-}
-
-// Description returns a human-readable description of V2
-// NOTE: don't append "\n" to end
-func (v2 *V2) Description(indent int) string {
-	if v2 == nil {
-		return "V2: <nil>"
-	}
-
-	banner := "V2:\n"
-	prefix := strings.Repeat(" ", indent)
-	banner += fmt.Sprintf("%s- SwitchEpoch: %v\n", prefix, v2.SwitchEpoch)
-	banner += fmt.Sprintf("%s- SwitchBlock: %v\n", prefix, v2.SwitchBlock)
-	banner += fmt.Sprintf("%s- %s", prefix, v2.GetCurrentConfig().Description("CurrentConfig", indent+2))
-	return banner
-}
-
-func (c *V2Config) String() string {
-	if c == nil {
-		return "V2Config: <nil>"
-	}
-
-	return fmt.Sprintf("V2{MaxMasternodes: %v, MaxProtectorNodes: %v, MaxObverserNodes: %v, SwitchRound: %v, MinePeriod: %v, TimeoutSyncThreshold: %v, TimeoutPeriod: %v, CertThreshold: %v, MasternodeReward: %v, ProtectorReward: %v, ObserverReward: %v, MinimumMinerBlockPerEpoch: %v, LimitPenaltyEpoch: %v, MinimumSigningTx: %v, %s}", c.MaxMasternodes, c.MaxProtectorNodes, c.MaxObverserNodes, c.SwitchRound, c.MinePeriod, c.TimeoutSyncThreshold, c.TimeoutPeriod, c.CertThreshold, c.MasternodeReward, c.ProtectorReward, c.ObserverReward, c.MinimumMinerBlockPerEpoch, c.LimitPenaltyEpoch, c.MinimumSigningTx, c.ExpTimeoutConfig.String())
-}
-
-// Description returns a human-readable description of V2Config
-// NOTE: don't append "\n" to end
-func (c *V2Config) Description(name string, indent int) string {
-	if c == nil {
-		return name + ": <nil>"
-	}
-
-	banner := name + ":\n"
-	prefix := strings.Repeat(" ", indent)
-	banner += fmt.Sprintf("%s- MaxMasternodes: %v\n", prefix, c.MaxMasternodes)
-	banner += fmt.Sprintf("%s- SwitchRound: %v\n", prefix, c.SwitchRound)
-	banner += fmt.Sprintf("%s- MinePeriod: %v\n", prefix, c.MinePeriod)
-	banner += fmt.Sprintf("%s- TimeoutSyncThreshold: %v\n", prefix, c.TimeoutSyncThreshold)
-	banner += fmt.Sprintf("%s- TimeoutPeriod: %v\n", prefix, c.TimeoutPeriod)
-	banner += fmt.Sprintf("%s- CertThreshold: %v\n", prefix, c.CertThreshold)
-	banner += fmt.Sprintf("%s- MasternodeReward: %v\n", prefix, c.MasternodeReward)
-	banner += fmt.Sprintf("%s- ProtectorReward: %v\n", prefix, c.ProtectorReward)
-	banner += fmt.Sprintf("%s- ObserverReward: %v\n", prefix, c.ObserverReward)
-	banner += fmt.Sprintf("%s- MinimumMinerBlockPerEpoch: %v\n", prefix, c.MinimumMinerBlockPerEpoch)
-	banner += fmt.Sprintf("%s- LimitPenaltyEpoch: %v\n", prefix, c.LimitPenaltyEpoch)
-	banner += fmt.Sprintf("%s- MinimumSigningTx: %v\n", prefix, c.MinimumSigningTx)
-	banner += fmt.Sprintf("%s- ExpTimeoutBase: %v\n", prefix, c.ExpTimeoutConfig.Base)
-	banner += fmt.Sprintf("%s- ExpTimeoutMaxExponent: %v", prefix, c.ExpTimeoutConfig.MaxExponent)
-	return banner
-}
-
-func (c ExpTimeoutConfig) String() string {
-	return fmt.Sprintf("ExpTimeoutConfig{Base: %v, MaxExponent: %v}", c.Base, c.MaxExponent)
-}
-
-func (c *XDPoSConfig) BlockConsensusVersion(num *big.Int) string {
-	if c.V2 != nil && c.V2.SwitchBlock != nil && num.Cmp(c.V2.SwitchBlock) > 0 {
-		return ConsensusEngineVersion2
-	}
-	return ConsensusEngineVersion1
-}
-
-func (v2 *V2) UpdateConfig(round uint64) {
-	v2.lock.Lock()
-	defer v2.lock.Unlock()
-
-	var index uint64
-
-	//find the right config
-	for i := range v2.configIndex {
-		if v2.configIndex[i] <= round {
-			index = v2.configIndex[i]
-			break
+		cur := fork{name: name, block: block, optional: optional}
+		if lastFork.name != "" && lastFork.block != nil && cur.block != nil && lastFork.block.Cmp(cur.block) > 0 {
+			forkOrderErr = fmt.Errorf("invalid chain config: %w: %s %v > %s %v", ErrWrongForkSwitchOrder, lastFork.name, lastFork.block, cur.name, cur.block)
+			return
 		}
-	}
-	// update to current config
-	log.Info("[updateV2Config] Update config", "index", index, "round", round, "SwitchRound", v2.AllConfigs[index].SwitchRound)
-	v2.CurrentConfig = v2.AllConfigs[index]
-}
-
-// GetCurrentConfig returns a opy of the current config, it assumes v2 is not nil
-func (v2 *V2) GetCurrentConfig() *V2Config {
-	v2.lock.RLock()
-	defer v2.lock.RUnlock()
-
-	if v2.CurrentConfig == nil {
-		return nil
-	}
-
-	// avoid CurrentConfig is changed by other goroutines
-	cfg := *v2.CurrentConfig
-	return &cfg
-}
-
-func (v2 *V2) Config(round uint64) *V2Config {
-	v2.lock.RLock()
-	defer v2.lock.RUnlock()
-
-	configRound := round
-	var index uint64
-
-	//find the right config
-	for i := range v2.configIndex {
-		if v2.configIndex[i] <= configRound {
-			index = v2.configIndex[i]
-			break
+		if !cur.optional || cur.block != nil {
+			lastFork = cur
 		}
-	}
-
-	// avoid config is changed by other goroutines
-	cfg := *v2.AllConfigs[index]
-	return &cfg
-}
-
-func (v2 *V2) BuildConfigIndex() {
-	v2.lock.Lock()
-	defer v2.lock.Unlock()
-
-	list := slices.Collect(maps.Keys(v2.AllConfigs))
-	// Make it descending order
-	slices.SortFunc(list, func(a, b uint64) int {
-		return cmp.Compare(b, a)
 	})
-	log.Info("[BuildConfigIndex] config list", "list", list)
-	v2.configIndex = list
-}
-
-func (v2 *V2) ConfigIndex() []uint64 {
-	return v2.configIndex
+	if forkOrderErr != nil {
+		return forkOrderErr
+	}
+	for _, rule := range chainConfigForkOrderSpecialCaseRules {
+		before := rule.before.get(c)
+		after := rule.after.get(c)
+		if !rule.shouldValidate(before, after) {
+			continue
+		}
+		if before.Cmp(after) > 0 {
+			return fmt.Errorf("invalid chain config: %w: %s %v > %s %v", ErrWrongForkSwitchOrder, rule.before.name, before, rule.after.name, after)
+		}
+	}
+	if c.XDPoS == nil && c.Ethash == nil && c.Clique == nil && !isBuiltInTestNetwork(c.ChainID) {
+		return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "XDPoS")
+	}
+	if c.XDPoS != nil {
+		if c.XDPoS.FoundationWalletAddr.IsZero() {
+			return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "XDPoS.FoundationWalletAddr")
+		}
+		if c.XDPoS.MaxMasternodesV2 == 0 {
+			return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "XDPoS.MaxMasternodesV2")
+		}
+		if c.XDPoS.V2 == nil {
+			return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "XDPoS.V2")
+		}
+		if c.XDPoS.V2.SwitchBlock == nil {
+			return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "XDPoS.V2.SwitchBlock")
+		}
+		if c.XDPoS.V2.CurrentConfig == nil {
+			return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "XDPoS.V2.CurrentConfig")
+		}
+		if len(c.XDPoS.V2.AllConfigs) == 0 {
+			return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "XDPoS.V2.AllConfigs")
+		}
+		defaultCfg, ok := c.XDPoS.V2.AllConfigs[0]
+		if !ok || defaultCfg == nil {
+			return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "XDPoS.V2.AllConfigs[0]")
+		}
+		for round, cfg := range c.XDPoS.V2.AllConfigs {
+			if cfg == nil {
+				return fmt.Errorf("invalid chain config: %w: XDPoS.V2.AllConfigs[%d]", ErrMissingForkSwitch, round)
+			}
+			if cfg.SwitchRound != round {
+				return fmt.Errorf("invalid chain config: %w: XDPoS.V2.AllConfigs[%d].SwitchRound %d", ErrWrongForkSwitchOrder, round, cfg.SwitchRound)
+			}
+		}
+		if err := validateV2ExpTimeoutConfig(c.XDPoS.V2.CurrentConfig, "XDPoS.V2.CurrentConfig.ExpTimeoutConfig"); err != nil {
+			return fmt.Errorf("invalid chain config: %w: %v", ErrWrongForkSwitchOrder, err)
+		}
+		for round, cfg := range c.XDPoS.V2.AllConfigs {
+			if err := validateV2ExpTimeoutConfig(cfg, fmt.Sprintf("XDPoS.V2.AllConfigs[%d].ExpTimeoutConfig", round)); err != nil {
+				return fmt.Errorf("invalid chain config: %w: %v", ErrWrongForkSwitchOrder, err)
+			}
+		}
+		currentCfg, ok := c.XDPoS.V2.AllConfigs[c.XDPoS.V2.CurrentConfig.SwitchRound]
+		if !ok || currentCfg == nil {
+			return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "XDPoS.V2.CurrentConfig")
+		}
+		if !sameV2RuntimeConfig(currentCfg, c.XDPoS.V2.CurrentConfig) {
+			return fmt.Errorf("invalid chain config: %w: %s", ErrWrongForkSwitchOrder, "XDPoS.V2.CurrentConfig")
+		}
+		if c.XDPoS.Epoch != 0 && c.XDPoS.V2.SwitchBlock.Uint64()%c.XDPoS.Epoch != 0 {
+			return fmt.Errorf("invalid chain config: %w: XDPoS.V2.SwitchBlock %v not aligned to XDPoS.Epoch %d", ErrWrongForkSwitchOrder, c.XDPoS.V2.SwitchBlock, c.XDPoS.Epoch)
+		}
+	}
+	return nil
 }
 
 // String implements the fmt.Stringer interface, returning a string representation
@@ -866,55 +614,128 @@ func (c *ChainConfig) String() string {
 
 	// Add block-based forks
 	if c.HomesteadBlock != nil {
-		result += fmt.Sprintf(", HomesteadBlock: %v", c.HomesteadBlock)
+		result += fmt.Sprintf(", Homestead: %v", c.HomesteadBlock)
+	}
+	if c.TIP2019Block != nil {
+		result += fmt.Sprintf(", TIP2019: %v", c.TIP2019Block)
 	}
 	if c.DAOForkBlock != nil {
-		result += fmt.Sprintf(", DAOForkBlock: %v", c.DAOForkBlock)
+		result += fmt.Sprintf(", DAOFork: %v", c.DAOForkBlock)
 	}
+	result += fmt.Sprintf(", DAOForkSupport: %v", c.DAOForkSupport)
 	if c.EIP150Block != nil {
-		result += fmt.Sprintf(", EIP150Block: %v", c.EIP150Block)
+		result += fmt.Sprintf(", EIP150: %v", c.EIP150Block)
 	}
 	if c.EIP155Block != nil {
-		result += fmt.Sprintf(", EIP155Block: %v", c.EIP155Block)
+		result += fmt.Sprintf(", EIP155: %v", c.EIP155Block)
 	}
 	if c.EIP158Block != nil {
-		result += fmt.Sprintf(", EIP158Block: %v", c.EIP158Block)
+		result += fmt.Sprintf(", EIP158: %v", c.EIP158Block)
 	}
 	if c.ByzantiumBlock != nil {
-		result += fmt.Sprintf(", ByzantiumBlock: %v", c.ByzantiumBlock)
+		result += fmt.Sprintf(", Byzantium: %v", c.ByzantiumBlock)
 	}
 	if c.ConstantinopleBlock != nil {
-		result += fmt.Sprintf(", ConstantinopleBlock: %v", c.ConstantinopleBlock)
+		result += fmt.Sprintf(", Constantinople: %v", c.ConstantinopleBlock)
 	}
 	if c.PetersburgBlock != nil {
-		result += fmt.Sprintf(", PetersburgBlock: %v", c.PetersburgBlock)
+		result += fmt.Sprintf(", Petersburg: %v", c.PetersburgBlock)
 	}
 	if c.IstanbulBlock != nil {
-		result += fmt.Sprintf(", IstanbulBlock: %v", c.IstanbulBlock)
+		result += fmt.Sprintf(", Istanbul: %v", c.IstanbulBlock)
+	}
+	if c.TIPSigningBlock != nil {
+		result += fmt.Sprintf(", TIPSigning: %v", c.TIPSigningBlock)
+	}
+	if c.TIPRandomizeBlock != nil {
+		result += fmt.Sprintf(", TIPRandomize: %v", c.TIPRandomizeBlock)
+	}
+	if c.TIPIncreaseMasternodesBlock != nil {
+		result += fmt.Sprintf(", TIPIncreaseMasternodes: %v", c.TIPIncreaseMasternodesBlock)
+	}
+	if c.DenylistBlock != nil {
+		result += fmt.Sprintf(", Denylist: %v", c.DenylistBlock)
+	}
+	if c.TIPNoHalvingMNRewardBlock != nil {
+		result += fmt.Sprintf(", TIPNoHalvingMNReward: %v", c.TIPNoHalvingMNRewardBlock)
+	}
+	if c.TIPXDCXBlock != nil {
+		result += fmt.Sprintf(", TIPXDCX: %v", c.TIPXDCXBlock)
+	}
+	if c.TIPXDCXLendingBlock != nil {
+		result += fmt.Sprintf(", TIPXDCXLending: %v", c.TIPXDCXLendingBlock)
+	}
+	if c.TIPXDCXCancellationFeeBlock != nil {
+		result += fmt.Sprintf(", TIPXDCXCancellationFee: %v", c.TIPXDCXCancellationFeeBlock)
+	}
+	if c.TIPTRC21FeeBlock != nil {
+		result += fmt.Sprintf(", TIPTRC21Fee: %v", c.TIPTRC21FeeBlock)
 	}
 	if c.BerlinBlock != nil {
-		result += fmt.Sprintf(", BerlinBlock: %v", c.BerlinBlock)
+		result += fmt.Sprintf(", Berlin: %v", c.BerlinBlock)
 	}
 	if c.LondonBlock != nil {
-		result += fmt.Sprintf(", LondonBlock: %v", c.LondonBlock)
+		result += fmt.Sprintf(", London: %v", c.LondonBlock)
 	}
 	if c.MergeBlock != nil {
-		result += fmt.Sprintf(", MergeBlock: %v", c.MergeBlock)
+		result += fmt.Sprintf(", Merge: %v", c.MergeBlock)
 	}
 	if c.ShanghaiBlock != nil {
-		result += fmt.Sprintf(", ShanghaiBlock: %v", c.ShanghaiBlock)
+		result += fmt.Sprintf(", Shanghai: %v", c.ShanghaiBlock)
+	}
+	if c.Gas50xBlock != nil {
+		result += fmt.Sprintf(", Gas50x: %v", c.Gas50xBlock)
+	}
+	if c.TIPXDCXMinerDisableBlock != nil {
+		result += fmt.Sprintf(", TIPXDCXMinerDisable: %v", c.TIPXDCXMinerDisableBlock)
+	}
+	if c.TIPXDCXReceiverDisableBlock != nil {
+		result += fmt.Sprintf(", TIPXDCXReceiverDisable: %v", c.TIPXDCXReceiverDisableBlock)
+	}
+	if c.EIP1559Block != nil {
+		result += fmt.Sprintf(", EIP1559: %v", c.EIP1559Block)
 	}
 	if c.CancunBlock != nil {
-		result += fmt.Sprintf(", CancunBlock: %v", c.CancunBlock)
+		result += fmt.Sprintf(", Cancun: %v", c.CancunBlock)
 	}
 	if c.PragueBlock != nil {
-		result += fmt.Sprintf(", PragueBlock: %v", c.PragueBlock)
+		result += fmt.Sprintf(", Prague: %v", c.PragueBlock)
+	}
+	if c.OsakaBlock != nil {
+		result += fmt.Sprintf(", Osaka: %v", c.OsakaBlock)
 	}
 	if c.DynamicGasLimitBlock != nil {
-		result += fmt.Sprintf(", DynamicGasLimitBlock: %v", c.DynamicGasLimitBlock)
+		result += fmt.Sprintf(", DynamicGasLimit: %v", c.DynamicGasLimitBlock)
+	}
+	if c.TIPUpgradeRewardBlock != nil {
+		result += fmt.Sprintf(", TIPUpgradeReward: %v", c.TIPUpgradeRewardBlock)
+	}
+	if c.TIPUpgradePenaltyBlock != nil {
+		result += fmt.Sprintf(", TIPUpgradePenalty: %v", c.TIPUpgradePenaltyBlock)
+	}
+	if c.TIPEpochHalvingBlock != nil {
+		result += fmt.Sprintf(", TIPEpochHalving: %v", c.TIPEpochHalvingBlock)
+	}
+	if !c.TRC21IssuerSMC.IsZero() {
+		result += fmt.Sprintf(", TRC21IssuerSMC: %s", c.TRC21IssuerSMC.Hex())
+	}
+	if !c.XDCXListingSMC.IsZero() {
+		result += fmt.Sprintf(", XDCXListingSMC: %s", c.XDCXListingSMC.Hex())
+	}
+	if !c.RelayerRegistrationSMC.IsZero() {
+		result += fmt.Sprintf(", RelayerRegistrationSMC: %s", c.RelayerRegistrationSMC.Hex())
+	}
+	if !c.LendingRegistrationSMC.IsZero() {
+		result += fmt.Sprintf(", LendingRegistrationSMC: %s", c.LendingRegistrationSMC.Hex())
+	}
+	if c.Ethash != nil {
+		result += fmt.Sprintf(", Ethash: %s", c.Ethash.String())
+	}
+	if c.Clique != nil {
+		result += fmt.Sprintf(", Clique: %s", c.Clique.String())
 	}
 	if c.XDPoS != nil {
-		result += fmt.Sprintf(", %s", c.XDPoS.String())
+		result += fmt.Sprintf(", XDPoS: %s", c.XDPoS.String())
 	}
 	result += "}"
 	return result
@@ -932,442 +753,50 @@ func (c *ChainConfig) Description() string {
 	default:
 		engine = "unknown"
 	}
-	berlinBlock := common.BerlinBlock
-	if c.BerlinBlock != nil {
-		berlinBlock = c.BerlinBlock
+	var banner = "Chain configuration"
+	if c.hasBuiltInGenesisOverride() {
+		banner += " (custom override of built-in genesis)"
 	}
-	londonBlock := common.LondonBlock
-	if c.LondonBlock != nil {
-		londonBlock = c.LondonBlock
-	}
-	mergeBlock := common.MergeBlock
-	if c.MergeBlock != nil {
-		mergeBlock = c.MergeBlock
-	}
-	shanghaiBlock := common.ShanghaiBlock
-	if c.ShanghaiBlock != nil {
-		shanghaiBlock = c.ShanghaiBlock
-	}
-	eip1559Block := common.Eip1559Block
-	if c.Eip1559Block != nil {
-		eip1559Block = c.Eip1559Block
-	}
-	cancunBlock := common.CancunBlock
-	if c.CancunBlock != nil {
-		cancunBlock = c.CancunBlock
-	}
-	pragueBlock := common.PragueBlock
-	if c.PragueBlock != nil {
-		pragueBlock = c.PragueBlock
-	}
-	osakaBlock := common.OsakaBlock
-	if c.OsakaBlock != nil {
-		osakaBlock = c.OsakaBlock
-	}
-	dynamicGasLimitBlock := common.DynamicGasLimitBlock
-	if c.DynamicGasLimitBlock != nil {
-		dynamicGasLimitBlock = c.DynamicGasLimitBlock
-	}
-
-	var banner = "Chain configuration:\n"
+	banner += ":\n"
 	banner += fmt.Sprintf("  - ChainID:                     %-8v\n", c.ChainID)
 	banner += fmt.Sprintf("  - Homestead:                   %-8v\n", c.HomesteadBlock)
 	banner += fmt.Sprintf("  - DAO Fork:                    %-8v\n", c.DAOForkBlock)
 	banner += fmt.Sprintf("  - DAO Support:                 %-8v\n", c.DAOForkSupport)
+	banner += fmt.Sprintf("  - TIP2019:                     %-8v\n", c.TIP2019Block)
 	banner += fmt.Sprintf("  - Tangerine Whistle (EIP 150): %-8v\n", c.EIP150Block)
 	banner += fmt.Sprintf("  - Spurious Dragon (EIP 155):   %-8v\n", c.EIP155Block)
 	banner += fmt.Sprintf("  - Byzantium:                   %-8v\n", c.ByzantiumBlock)
 	banner += fmt.Sprintf("  - Constantinople:              %-8v\n", c.ConstantinopleBlock)
 	banner += fmt.Sprintf("  - Petersburg:                  %-8v\n", c.PetersburgBlock)
 	banner += fmt.Sprintf("  - Istanbul:                    %-8v\n", c.IstanbulBlock)
-	banner += fmt.Sprintf("  - TIP2019Block:                %-8v\n", common.TIP2019Block)
-	banner += fmt.Sprintf("  - TIPSigning:                  %-8v\n", common.TIPSigning)
-	banner += fmt.Sprintf("  - TIPRandomize:                %-8v\n", common.TIPRandomize)
-	banner += fmt.Sprintf("  - TIPIncreaseMasternodes:      %-8v\n", common.TIPIncreaseMasternodes)
-	banner += fmt.Sprintf("  - DenylistHFNumber:            %-8v\n", common.DenylistHFNumber)
-	banner += fmt.Sprintf("  - TIPNoHalvingMNReward:        %-8v\n", common.TIPNoHalvingMNReward)
-	banner += fmt.Sprintf("  - TIPXDCX:                     %-8v\n", common.TIPXDCX)
-	banner += fmt.Sprintf("  - TIPXDCXLending:              %-8v\n", common.TIPXDCXLending)
-	banner += fmt.Sprintf("  - TIPXDCXCancellationFee:      %-8v\n", common.TIPXDCXCancellationFee)
-	banner += fmt.Sprintf("  - TIPTRC21Fee:                 %-8v\n", common.TIPTRC21Fee)
-	banner += fmt.Sprintf("  - Berlin:                      %-8v\n", berlinBlock)
-	banner += fmt.Sprintf("  - London:                      %-8v\n", londonBlock)
-	banner += fmt.Sprintf("  - Merge:                       %-8v\n", mergeBlock)
-	banner += fmt.Sprintf("  - Shanghai:                    %-8v\n", shanghaiBlock)
-	banner += fmt.Sprintf("  - BlockNumberGas50x:           %-8v\n", common.BlockNumberGas50x)
-	banner += fmt.Sprintf("  - TIPXDCXMinerDisable:         %-8v\n", common.TIPXDCXMinerDisable)
-	banner += fmt.Sprintf("  - TIPXDCXReceiverDisable:      %-8v\n", common.TIPXDCXReceiverDisable)
-	banner += fmt.Sprintf("  - Eip1559:                     %-8v\n", eip1559Block)
-	banner += fmt.Sprintf("  - Cancun:                      %-8v\n", cancunBlock)
-	banner += fmt.Sprintf("  - Prague:                      %-8v\n", pragueBlock)
-	banner += fmt.Sprintf("  - Osaka:                       %-8v\n", osakaBlock)
-	banner += fmt.Sprintf("  - DynamicGasLimitBlock:        %-8v\n", dynamicGasLimitBlock)
-	banner += fmt.Sprintf("  - TIPUpgradeReward:            %-8v\n", common.TIPUpgradeReward)
-	banner += fmt.Sprintf("  - TipUpgradePenalty:           %-8v\n", common.TipUpgradePenalty)
-	banner += fmt.Sprintf("  - TIPEpochHalving:             %-8v\n", common.TIPEpochHalving)
+	banner += fmt.Sprintf("  - TIPSigning:                  %-8v\n", c.TIPSigningBlock)
+	banner += fmt.Sprintf("  - TIPRandomize:                %-8v\n", c.TIPRandomizeBlock)
+	banner += fmt.Sprintf("  - TIPIncreaseMasternodes:      %-8v\n", c.TIPIncreaseMasternodesBlock)
+	banner += fmt.Sprintf("  - Denylist:                    %-8v\n", c.DenylistBlock)
+	banner += fmt.Sprintf("  - TIPNoHalvingMNReward:        %-8v\n", c.TIPNoHalvingMNRewardBlock)
+	banner += fmt.Sprintf("  - TIPXDCX:                     %-8v\n", c.TIPXDCXBlock)
+	banner += fmt.Sprintf("  - TIPXDCXLending:              %-8v\n", c.TIPXDCXLendingBlock)
+	banner += fmt.Sprintf("  - TIPXDCXCancellationFee:      %-8v\n", c.TIPXDCXCancellationFeeBlock)
+	banner += fmt.Sprintf("  - TIPTRC21Fee:                 %-8v\n", c.TIPTRC21FeeBlock)
+	banner += fmt.Sprintf("  - Berlin:                      %-8v\n", c.BerlinBlock)
+	banner += fmt.Sprintf("  - London:                      %-8v\n", c.LondonBlock)
+	banner += fmt.Sprintf("  - Merge:                       %-8v\n", c.MergeBlock)
+	banner += fmt.Sprintf("  - Shanghai:                    %-8v\n", c.ShanghaiBlock)
+	banner += fmt.Sprintf("  - Gas50x:                      %-8v\n", c.Gas50xBlock)
+	banner += fmt.Sprintf("  - TIPXDCXMinerDisable:         %-8v\n", c.TIPXDCXMinerDisableBlock)
+	banner += fmt.Sprintf("  - TIPXDCXReceiverDisable:      %-8v\n", c.TIPXDCXReceiverDisableBlock)
+	banner += fmt.Sprintf("  - EIP1559:                     %-8v\n", c.EIP1559Block)
+	banner += fmt.Sprintf("  - Cancun:                      %-8v\n", c.CancunBlock)
+	banner += fmt.Sprintf("  - Prague:                      %-8v\n", c.PragueBlock)
+	banner += fmt.Sprintf("  - Osaka:                       %-8v\n", c.OsakaBlock)
+	banner += fmt.Sprintf("  - DynamicGasLimit:             %-8v\n", c.DynamicGasLimitBlock)
+	banner += fmt.Sprintf("  - TIPUpgradeReward:            %-8v\n", c.TIPUpgradeRewardBlock)
+	banner += fmt.Sprintf("  - TIPUpgradePenalty:           %-8v\n", c.TIPUpgradePenaltyBlock)
+	banner += fmt.Sprintf("  - TIPEpochHalving:             %-8v\n", c.TIPEpochHalvingBlock)
+	banner += fmt.Sprintf("  - TRC21IssuerSMC:              %-8s\n", c.TRC21IssuerSMC)
+	banner += fmt.Sprintf("  - XDCXListingSMC:              %-8s\n", c.XDCXListingSMC)
+	banner += fmt.Sprintf("  - RelayerRegistrationSMC:      %-8s\n", c.RelayerRegistrationSMC)
+	banner += fmt.Sprintf("  - LendingRegistrationSMC:      %-8s\n", c.LendingRegistrationSMC)
 	banner += fmt.Sprintf("  - Engine:                      %v", engine)
 	return banner
-}
-
-// IsHomestead returns whether num is either equal to the homestead block or greater.
-func (c *ChainConfig) IsHomestead(num *big.Int) bool {
-	return isForked(c.HomesteadBlock, num)
-}
-
-// IsDAO returns whether num is either equal to the DAO fork block or greater.
-func (c *ChainConfig) IsDAOFork(num *big.Int) bool {
-	return isForked(c.DAOForkBlock, num)
-}
-
-func (c *ChainConfig) IsEIP150(num *big.Int) bool {
-	return isForked(c.EIP150Block, num)
-}
-
-func (c *ChainConfig) IsEIP155(num *big.Int) bool {
-	return isForked(c.EIP155Block, num)
-}
-
-func (c *ChainConfig) IsEIP158(num *big.Int) bool {
-	return isForked(c.EIP158Block, num)
-}
-
-func (c *ChainConfig) IsByzantium(num *big.Int) bool {
-	return isForked(c.ByzantiumBlock, num)
-}
-
-func (c *ChainConfig) IsConstantinople(num *big.Int) bool {
-	return isForked(c.ConstantinopleBlock, num)
-}
-
-// IsPetersburg returns whether num is either
-// - equal to or greater than the PetersburgBlock fork block,
-// - OR is nil, and Constantinople is active
-func (c *ChainConfig) IsPetersburg(num *big.Int) bool {
-	return isForked(common.TIPXDCXCancellationFee, num) || isForked(c.PetersburgBlock, num)
-}
-
-// IsIstanbul returns whether num is either equal to the Istanbul fork block or greater.
-func (c *ChainConfig) IsIstanbul(num *big.Int) bool {
-	return isForked(common.TIPXDCXCancellationFee, num) || isForked(c.IstanbulBlock, num)
-}
-
-// IsBerlin returns whether num is either equal to the Berlin fork block or greater.
-func (c *ChainConfig) IsBerlin(num *big.Int) bool {
-	return isForked(common.BerlinBlock, num) || isForked(c.BerlinBlock, num)
-}
-
-// IsLondon returns whether num is either equal to the London fork block or greater.
-func (c *ChainConfig) IsLondon(num *big.Int) bool {
-	return isForked(common.LondonBlock, num) || isForked(c.LondonBlock, num)
-}
-
-// IsMerge returns whether num is either equal to the Merge fork block or greater.
-// Different from Geth which uses `block.difficulty != nil`
-func (c *ChainConfig) IsMerge(num *big.Int) bool {
-	return isForked(common.MergeBlock, num) || isForked(c.MergeBlock, num)
-}
-
-// IsShanghai returns whether num is either equal to the Shanghai fork block or greater.
-func (c *ChainConfig) IsShanghai(num *big.Int) bool {
-	return isForked(common.ShanghaiBlock, num) || isForked(c.ShanghaiBlock, num)
-}
-
-// IsEIP1559 returns whether num is either equal to the EIP1559 fork block or greater.
-func (c *ChainConfig) IsEIP1559(num *big.Int) bool {
-	return isForked(common.Eip1559Block, num) || isForked(c.Eip1559Block, num)
-}
-
-// IsCancun returns whether num is either equal to the Cancun fork block or greater.
-func (c *ChainConfig) IsCancun(num *big.Int) bool {
-	return isForked(common.CancunBlock, num) || isForked(c.CancunBlock, num)
-}
-
-// IsPrague returns whether num is either equal to the Prague fork block or greater.
-func (c *ChainConfig) IsPrague(num *big.Int) bool {
-	return isForked(common.PragueBlock, num) || isForked(c.PragueBlock, num)
-}
-
-// IsOsaka returns whether num is either equal to the Osaka fork block or greater.
-func (c *ChainConfig) IsOsaka(num *big.Int) bool {
-	return isForked(common.OsakaBlock, num) || isForked(c.OsakaBlock, num)
-}
-
-// IsDynamicGasLimitBlock returns whether num is either equal to the DynamicGasLimitBlock fork block or greater.
-func (c *ChainConfig) IsDynamicGasLimitBlock(num *big.Int) bool {
-	return isForked(common.DynamicGasLimitBlock, num) || isForked(c.DynamicGasLimitBlock, num)
-}
-
-func (c *ChainConfig) IsTIP2019(num *big.Int) bool {
-	return isForked(common.TIP2019Block, num)
-}
-
-func (c *ChainConfig) IsTIPSigning(num *big.Int) bool {
-	return isForked(common.TIPSigning, num)
-}
-
-func (c *ChainConfig) IsTIPRandomize(num *big.Int) bool {
-	return isForked(common.TIPRandomize, num)
-}
-
-// IsTIPIncreaseMasternodes using for increase masternodes from 18 to 40
-
-// Time update: 23-07-2019
-func (c *ChainConfig) IsTIPIncreaseMasternodes(num *big.Int) bool {
-	return isForked(common.TIPIncreaseMasternodes, num)
-}
-
-func (c *ChainConfig) IsTIPNoHalvingMNReward(num *big.Int) bool {
-	return isForked(common.TIPNoHalvingMNReward, num)
-}
-
-func (c *ChainConfig) IsTIPXDCX(num *big.Int) bool {
-	return isForked(common.TIPXDCX, num)
-}
-
-func (c *ChainConfig) IsTIPXDCXMiner(num *big.Int) bool {
-	return isForked(common.TIPXDCX, num) && !isForked(common.TIPXDCXMinerDisable, num)
-}
-
-func (c *ChainConfig) IsTIPXDCXReceiver(num *big.Int) bool {
-	return isForked(common.TIPXDCX, num) && !isForked(common.TIPXDCXReceiverDisable, num)
-}
-
-func (c *ChainConfig) IsXDCxDisable(num *big.Int) bool {
-	return isForked(common.TIPXDCXMinerDisable, num)
-}
-
-func (c *ChainConfig) IsTIPXDCXLending(num *big.Int) bool {
-	return isForked(common.TIPXDCXLending, num)
-}
-
-func (c *ChainConfig) IsTIPXDCXCancellationFee(num *big.Int) bool {
-	return isForked(common.TIPXDCXCancellationFee, num)
-}
-
-func (c *ChainConfig) IsTIPUpgradeReward(num *big.Int) bool {
-	return isForked(common.TIPUpgradeReward, num)
-}
-
-func (c *ChainConfig) IsTIPUpgradePenalty(num *big.Int) bool {
-	return isForked(common.TipUpgradePenalty, num)
-}
-
-func (c *ChainConfig) IsTIPEpochHalving(num *big.Int) bool {
-	return isForked(common.TIPEpochHalving, num)
-}
-
-// GasTable returns the gas table corresponding to the current phase (homestead or homestead reprice).
-//
-// The returned GasTable's fields shouldn't, under any circumstances, be changed.
-func (c *ChainConfig) GasTable(num *big.Int) GasTable {
-	if num == nil {
-		return GasTableHomestead
-	}
-	switch {
-	case c.IsEIP158(num):
-		return GasTableEIP158
-	case c.IsEIP150(num):
-		return GasTableEIP150
-	default:
-		return GasTableHomestead
-	}
-}
-
-// CheckCompatible checks whether scheduled fork transitions have been imported
-// with a mismatching chain configuration.
-func (c *ChainConfig) CheckCompatible(newcfg *ChainConfig, height uint64) *ConfigCompatError {
-	bhead := new(big.Int).SetUint64(height)
-
-	// Iterate checkCompatible to find the lowest conflict.
-	var lasterr *ConfigCompatError
-	for {
-		err := c.checkCompatible(newcfg, bhead)
-		if err == nil || (lasterr != nil && err.RewindTo == lasterr.RewindTo) {
-			break
-		}
-		lasterr = err
-		bhead.SetUint64(err.RewindTo)
-	}
-	return lasterr
-}
-
-func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, head *big.Int) *ConfigCompatError {
-	if isForkIncompatible(c.HomesteadBlock, newcfg.HomesteadBlock, head) {
-		return newCompatError("Homestead fork block", c.HomesteadBlock, newcfg.HomesteadBlock)
-	}
-	if isForkIncompatible(c.DAOForkBlock, newcfg.DAOForkBlock, head) {
-		return newCompatError("DAO fork block", c.DAOForkBlock, newcfg.DAOForkBlock)
-	}
-	if c.IsDAOFork(head) && c.DAOForkSupport != newcfg.DAOForkSupport {
-		return newCompatError("DAO fork support flag", c.DAOForkBlock, newcfg.DAOForkBlock)
-	}
-	if isForkIncompatible(c.EIP150Block, newcfg.EIP150Block, head) {
-		return newCompatError("EIP150 fork block", c.EIP150Block, newcfg.EIP150Block)
-	}
-	if isForkIncompatible(c.EIP155Block, newcfg.EIP155Block, head) {
-		return newCompatError("EIP155 fork block", c.EIP155Block, newcfg.EIP155Block)
-	}
-	if isForkIncompatible(c.EIP158Block, newcfg.EIP158Block, head) {
-		return newCompatError("EIP158 fork block", c.EIP158Block, newcfg.EIP158Block)
-	}
-	if c.IsEIP158(head) && !configNumEqual(c.ChainID, newcfg.ChainID) {
-		return newCompatError("EIP158 chain ID", c.EIP158Block, newcfg.EIP158Block)
-	}
-	if isForkIncompatible(c.ByzantiumBlock, newcfg.ByzantiumBlock, head) {
-		return newCompatError("Byzantium fork block", c.ByzantiumBlock, newcfg.ByzantiumBlock)
-	}
-	if isForkIncompatible(c.ConstantinopleBlock, newcfg.ConstantinopleBlock, head) {
-		return newCompatError("Constantinople fork block", c.ConstantinopleBlock, newcfg.ConstantinopleBlock)
-	}
-	if isForkIncompatible(c.PetersburgBlock, newcfg.PetersburgBlock, head) {
-		// the only case where we allow Petersburg to be set in the past is if it is equal to Constantinople
-		// mainly to satisfy fork ordering requirements which state that Petersburg fork be set if Constantinople fork is set
-		if isForkIncompatible(c.ConstantinopleBlock, newcfg.PetersburgBlock, head) {
-			return newCompatError("Petersburg fork block", c.PetersburgBlock, newcfg.PetersburgBlock)
-		}
-	}
-	if isForkIncompatible(c.IstanbulBlock, newcfg.IstanbulBlock, head) {
-		return newCompatError("Istanbul fork block", c.IstanbulBlock, newcfg.IstanbulBlock)
-	}
-	if isForkIncompatible(c.BerlinBlock, newcfg.BerlinBlock, head) {
-		return newCompatError("Berlin fork block", c.BerlinBlock, newcfg.BerlinBlock)
-	}
-	if isForkIncompatible(c.LondonBlock, newcfg.LondonBlock, head) {
-		return newCompatError("London fork block", c.LondonBlock, newcfg.LondonBlock)
-	}
-	if isForkIncompatible(c.ShanghaiBlock, newcfg.ShanghaiBlock, head) {
-		return newCompatError("Shanghai fork block", c.ShanghaiBlock, newcfg.ShanghaiBlock)
-	}
-	if isForkIncompatible(c.Eip1559Block, newcfg.Eip1559Block, head) {
-		return newCompatError("Eip1559 fork block", c.Eip1559Block, newcfg.Eip1559Block)
-	}
-	if isForkIncompatible(c.CancunBlock, newcfg.CancunBlock, head) {
-		return newCompatError("Cancun fork block", c.CancunBlock, newcfg.CancunBlock)
-	}
-	if isForkIncompatible(c.PragueBlock, newcfg.PragueBlock, head) {
-		return newCompatError("Prague fork block", c.PragueBlock, newcfg.PragueBlock)
-	}
-	if isForkIncompatible(c.OsakaBlock, newcfg.OsakaBlock, head) {
-		return newCompatError("Osaka fork block", c.OsakaBlock, newcfg.OsakaBlock)
-	}
-	if !XDPoSConfigEqual(c.XDPoS, newcfg.XDPoS) {
-		storedblock := big.NewInt(1)
-		if c.XDPoS != nil && c.XDPoS.V2 != nil && c.XDPoS.V2.SwitchBlock != nil {
-			storedblock = c.XDPoS.V2.SwitchBlock
-		}
-		newblock := big.NewInt(1)
-		if newcfg.XDPoS != nil && newcfg.XDPoS.V2 != nil && newcfg.XDPoS.V2.SwitchBlock != nil {
-			newblock = newcfg.XDPoS.V2.SwitchBlock
-		}
-		return newCompatError("XDPoS not equal", storedblock, newblock)
-	}
-	if c.XDPoS != nil && newcfg.XDPoS != nil && c.XDPoS.V2 != nil && newcfg.XDPoS.V2 != nil && isForkIncompatible(c.XDPoS.V2.SwitchBlock, newcfg.XDPoS.V2.SwitchBlock, head) {
-		return newCompatError("XDPoS.V2.SwitchBlock", c.XDPoS.V2.SwitchBlock, newcfg.XDPoS.V2.SwitchBlock)
-	}
-	return nil
-}
-
-// isForkIncompatible returns true if a fork scheduled at s1 cannot be rescheduled to
-// block s2 because head is already past the fork.
-func isForkIncompatible(s1, s2, head *big.Int) bool {
-	return (isForked(s1, head) || isForked(s2, head)) && !configNumEqual(s1, s2)
-}
-
-// isForked returns whether a fork scheduled at block s is active at the given head block.
-func isForked(s, head *big.Int) bool {
-	if s == nil || head == nil {
-		return false
-	}
-	return s.Cmp(head) <= 0
-}
-
-func configNumEqual(x, y *big.Int) bool {
-	if x == nil || y == nil {
-		return x == y
-	}
-	return x.Cmp(y) == 0
-}
-
-// ConfigCompatError is raised if the locally-stored blockchain is initialised with a
-// ChainConfig that would alter the past.
-type ConfigCompatError struct {
-	What string
-	// block numbers of the stored and new configurations
-	StoredConfig, NewConfig *big.Int
-	// the block number to which the local chain must be rewound to correct the error
-	RewindTo uint64
-}
-
-func newCompatError(what string, storedblock, newblock *big.Int) *ConfigCompatError {
-	var rew *big.Int
-	switch {
-	case storedblock == nil:
-		rew = newblock
-	case newblock == nil || storedblock.Cmp(newblock) < 0:
-		rew = storedblock
-	default:
-		rew = newblock
-	}
-	err := &ConfigCompatError{what, storedblock, newblock, 0}
-	if rew != nil && rew.Sign() > 0 {
-		err.RewindTo = rew.Uint64() - 1
-	}
-	return err
-}
-
-func (err *ConfigCompatError) Error() string {
-	return fmt.Sprintf("mismatching %s in database (have %d, want %d, rewindto %d)", err.What, err.StoredConfig, err.NewConfig, err.RewindTo)
-}
-
-// Rules wraps ChainConfig and is merely syntatic sugar or can be used for functions
-// that do not have or require information about the block.
-//
-// Rules is a one time interface meaning that it shouldn't be used in between transition
-// phases.
-type Rules struct {
-	ChainId          *big.Int
-	IsHomestead      bool
-	IsEIP150         bool
-	IsEIP155         bool
-	IsEIP158         bool
-	IsByzantium      bool
-	IsConstantinople bool
-	IsPetersburg     bool
-	IsIstanbul       bool
-	IsBerlin         bool
-	IsLondon         bool
-	IsMerge          bool
-	IsShanghai       bool
-	IsXDCxDisable    bool
-	IsEIP1559        bool
-	IsCancun         bool
-	IsPrague         bool
-	IsOsaka          bool
-}
-
-func (c *ChainConfig) Rules(num *big.Int) Rules {
-	chainId := c.ChainID
-	if chainId == nil {
-		chainId = new(big.Int)
-	}
-	return Rules{
-		ChainId:          new(big.Int).Set(chainId),
-		IsHomestead:      c.IsHomestead(num),
-		IsEIP150:         c.IsEIP150(num),
-		IsEIP155:         c.IsEIP155(num),
-		IsEIP158:         c.IsEIP158(num),
-		IsByzantium:      c.IsByzantium(num),
-		IsConstantinople: c.IsConstantinople(num),
-		IsPetersburg:     c.IsPetersburg(num),
-		IsIstanbul:       c.IsIstanbul(num),
-		IsBerlin:         c.IsBerlin(num),
-		IsLondon:         c.IsLondon(num),
-		IsMerge:          c.IsMerge(num),
-		IsShanghai:       c.IsShanghai(num),
-		IsXDCxDisable:    c.IsXDCxDisable(num),
-		IsEIP1559:        c.IsEIP1559(num),
-		IsCancun:         c.IsCancun(num),
-		IsPrague:         c.IsPrague(num),
-		IsOsaka:          c.IsOsaka(num),
-	}
 }

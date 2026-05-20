@@ -38,6 +38,22 @@ type RewardLog struct {
 	Reward *big.Int `json:"reward"`
 }
 
+// resolvePreUpgradeLimitPenaltyEpoch keeps the legacy pre-upgrade comeback
+// window pinned to the historical V2 constant.
+func resolvePreUpgradeLimitPenaltyEpoch() int {
+	return common.LimitPenaltyEpochV2
+}
+
+// resolvePostUpgradeLimitPenaltyEpoch preserves the legacy post-upgrade
+// fallback of one epoch when the config does not override it.
+func resolvePostUpgradeLimitPenaltyEpoch(currentConfig *params.V2Config) int {
+	limitPenaltyEpoch := 1
+	if currentConfig != nil && currentConfig.LimitPenaltyEpoch > 0 {
+		limitPenaltyEpoch = currentConfig.LimitPenaltyEpoch
+	}
+	return limitPenaltyEpoch
+}
+
 func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConfig *params.ChainConfig) {
 	// Hook scans for bad masternodes and decide to penalty them
 	adaptor.EngineV2.HookPenalty = func(chain consensus.ChainReader, number *big.Int, parentHash common.Hash, candidates []common.Address) ([]common.Address, error) {
@@ -125,10 +141,11 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 		// start to calc comeback at v2 block + limitPenaltyEpochV2 to avoid reading v1 blocks
 
 		if !chain.Config().IsTIPUpgradePenalty(number) {
-			comebackHeight := (common.LimitPenaltyEpochV2+1)*chain.Config().XDPoS.Epoch + chain.Config().XDPoS.V2.SwitchBlock.Uint64()
+			limitPenaltyEpoch := resolvePreUpgradeLimitPenaltyEpoch()
+			comebackHeight := uint64(limitPenaltyEpoch+1)*chain.Config().XDPoS.Epoch + chain.Config().XDPoS.V2.SwitchBlock.Uint64()
 			penComebacks := []common.Address{}
 			if number.Uint64() > comebackHeight {
-				pens := adaptor.EngineV2.GetPreviousPenaltyByHash(chain, currentHash, common.LimitPenaltyEpochV2)
+				pens := adaptor.EngineV2.GetPreviousPenaltyByHash(chain, currentHash, limitPenaltyEpoch)
 				for _, p := range pens {
 					for _, addr := range candidates {
 						if p == addr {
@@ -192,11 +209,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				}
 			}
 		} else { // after penalty upgrade
-			limitPenaltyEpoch := 1
-			if currentConfig.LimitPenaltyEpoch > 0 {
-				// if non-zero parameter, use it
-				limitPenaltyEpoch = currentConfig.LimitPenaltyEpoch
-			}
+			limitPenaltyEpoch := resolvePostUpgradeLimitPenaltyEpoch(currentConfig)
 			comebackHeight := uint64(limitPenaltyEpoch)*chain.Config().XDPoS.Epoch + chain.Config().XDPoS.V2.SwitchBlock.Uint64()
 			if number.Uint64() > comebackHeight {
 				// penParolees record those who stayed enough epoch of LimitPenaltyEpoch
@@ -312,7 +325,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 			// Add reward for coin holders.
 			rewardResults := make(map[common.Address]interface{})
 			for signer, calcReward := range rewardSigners {
-				rewards, err := contracts.CalculateRewardForHolders(foundationWalletAddr, parentState, signer, calcReward, number)
+				rewards, err := contracts.CalculateRewardForHolders(chain.Config(), foundationWalletAddr, parentState, signer, calcReward, header.Number)
 				if err != nil {
 					log.Error("[HookReward] Fail to calculate reward for holders.", "error", err)
 					return nil, err
@@ -350,7 +363,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				// Add reward for coin holders.
 				rewardResults := make(map[common.Address]interface{})
 				for signer, calcReward := range rewardSigners {
-					rewards, err := contracts.CalculateRewardForHolders(foundationWalletAddr, parentState, signer, calcReward, number)
+					rewards, err := contracts.CalculateRewardForHolders(chain.Config(), foundationWalletAddr, parentState, signer, calcReward, header.Number)
 					if err != nil {
 						log.Error("[HookReward] Fail to calculate reward for holders.", "error", err)
 						return nil, err

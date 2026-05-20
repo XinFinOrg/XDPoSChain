@@ -158,7 +158,7 @@ type Message struct {
 }
 
 // TransactionToMessage converts a transaction into a Message.
-func TransactionToMessage(tx *types.Transaction, s types.Signer, balanceFee, blockNumber, baseFee *big.Int) (*Message, error) {
+func TransactionToMessage(tx *types.Transaction, s types.Signer, balanceFee, blockNumber, baseFee *big.Int, chainConfig *params.ChainConfig) (*Message, error) {
 	msg := &Message{
 		Nonce:                 tx.Nonce(),
 		GasLimit:              tx.Gas(),
@@ -177,13 +177,11 @@ func TransactionToMessage(tx *types.Transaction, s types.Signer, balanceFee, blo
 
 	if balanceFee != nil {
 		if blockNumber != nil {
-			if blockNumber.Cmp(common.BlockNumberGas50x) >= 0 {
-				msg.GasPrice = new(big.Int).Set(common.GasPrice50x)
-			} else if blockNumber.Cmp(common.TIPTRC21Fee) > 0 {
-				msg.GasPrice = new(big.Int).Set(common.TRC21GasPrice)
-			} else {
-				msg.GasPrice = new(big.Int).Set(common.TRC21GasPriceBefore)
+			price, err := params.GetGasPriceForTRC21(blockNumber, chainConfig)
+			if err != nil {
+				return nil, err
 			}
+			msg.GasPrice = price
 		}
 	} else if baseFee != nil {
 		// If baseFee provided, set gasPrice to effectiveGasPrice.
@@ -497,7 +495,8 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 
 	// GasPrice of special tx is always 0, so we can skip AddBalance
 	if !types.IsSpecialTx(msg.To) {
-		if st.evm.Context.BlockNumber.Cmp(common.TIPTRC21Fee) > 0 {
+		cfg := st.evm.ChainConfig()
+		if cfg != nil && cfg.TIPTRC21FeeBlock != nil && st.evm.Context.BlockNumber.Cmp(cfg.TIPTRC21FeeBlock) > 0 {
 			if (owner != common.Address{}) {
 				st.state.AddBalance(owner, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), msg.GasPrice), tracing.BalanceIncreaseRewardTransactionFee)
 			}

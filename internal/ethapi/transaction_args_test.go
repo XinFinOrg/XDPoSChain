@@ -45,7 +45,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 )
 
-// TestSetFeeDefaults tests the logic for filling in default fee values works as expected.
+// TestSetFeeDefaults tests set fee defaults.
 func TestSetFeeDefaults(t *testing.T) {
 	type test struct {
 		name     string
@@ -241,19 +241,24 @@ type backendMock struct {
 
 func newBackendMock() *backendMock {
 	config := &params.ChainConfig{
-		ChainID:             big.NewInt(42),
-		HomesteadBlock:      big.NewInt(0),
-		DAOForkBlock:        nil,
-		DAOForkSupport:      true,
-		EIP150Block:         big.NewInt(0),
-		EIP155Block:         big.NewInt(0),
-		EIP158Block:         big.NewInt(0),
-		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: big.NewInt(0),
-		PetersburgBlock:     big.NewInt(0),
-		IstanbulBlock:       big.NewInt(0),
-		BerlinBlock:         big.NewInt(0),
-		Eip1559Block:        big.NewInt(1000),
+		ChainID:                big.NewInt(42),
+		HomesteadBlock:         big.NewInt(0),
+		DAOForkBlock:           nil,
+		DAOForkSupport:         true,
+		EIP150Block:            big.NewInt(0),
+		EIP155Block:            big.NewInt(0),
+		EIP158Block:            big.NewInt(0),
+		ByzantiumBlock:         big.NewInt(0),
+		ConstantinopleBlock:    big.NewInt(0),
+		PetersburgBlock:        big.NewInt(0),
+		IstanbulBlock:          big.NewInt(0),
+		TIPTRC21FeeBlock:       big.NewInt(0),
+		BerlinBlock:            big.NewInt(0),
+		EIP1559Block:           big.NewInt(1000),
+		TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
+		XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
+		RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
+		LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
 	}
 	return &backendMock{
 		current: &types.Header{
