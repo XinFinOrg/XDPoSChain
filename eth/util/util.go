@@ -6,7 +6,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 )
 
-func RewardInflation(chain consensus.ChainReader, chainReward *big.Int, number uint64, blockPerYear uint64) *big.Int {
+func RewardInflation(chain consensus.ChainHeaderReader, chainReward *big.Int, number uint64, blockPerYear uint64) *big.Int {
 	if chain != nil && chain.Config().IsTIPNoHalvingMNReward(new(big.Int).SetUint64(number)) {
 		return chainReward
 	}

@@ -12,7 +12,7 @@ import (
 
 // Given header and its hash, get epoch switch info from the epoch switch block of that epoch,
 // header is allow to be nil.
-func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, header *types.Header, hash common.Hash) (*types.EpochSwitchInfo, error) {
+func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainHeaderReader, header *types.Header, hash common.Hash) (*types.EpochSwitchInfo, error) {
 	epochSwitchInfo, ok := x.epochSwitches.Get(hash)
 	if ok && epochSwitchInfo != nil {
 		log.Debug("[getEpochSwitchInfo] cache hit", "number", epochSwitchInfo.EpochSwitchBlockInfo.Number, "hash", hash.Hex())
@@ -131,7 +131,7 @@ func (x *XDPoS_v2) isEpochSwitchAtRound(round types.Round, parentHeader *types.H
 	return parentRound < epochStartRound, epochNum, nil
 }
 
-func (x *XDPoS_v2) GetCurrentEpochSwitchBlock(chain consensus.ChainReader, blockNum *big.Int) (uint64, uint64, error) {
+func (x *XDPoS_v2) GetCurrentEpochSwitchBlock(chain consensus.ChainHeaderReader, blockNum *big.Int) (uint64, uint64, error) {
 	header := chain.GetHeaderByNumber(blockNum.Uint64())
 	epochSwitchInfo, err := x.getEpochSwitchInfo(chain, header, header.Hash())
 	if err != nil {
@@ -178,7 +178,7 @@ func (x *XDPoS_v2) IsEpochSwitch(header *types.Header) (bool, uint64, error) {
 
 // GetEpochSwitchInfoBetween get epoch switch between begin and end headers
 // Search backwardly from end number to begin number
-func (x *XDPoS_v2) GetEpochSwitchInfoBetween(chain consensus.ChainReader, begin, end *types.Header) ([]*types.EpochSwitchInfo, error) {
+func (x *XDPoS_v2) GetEpochSwitchInfoBetween(chain consensus.ChainHeaderReader, begin, end *types.Header) ([]*types.EpochSwitchInfo, error) {
 	infos := make([]*types.EpochSwitchInfo, 0)
 	// after the first iteration, it becomes nil since epoch switch info does not have header info
 	iteratorHeader := end

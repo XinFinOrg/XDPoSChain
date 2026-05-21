@@ -291,11 +291,11 @@ func (s *EthereumAccountAPI) Accounts() []common.Address {
 // BlockChainAPI provides an API to access Ethereum blockchain data.
 type BlockChainAPI struct {
 	b           Backend
-	chainReader consensus.ChainReader
+	chainReader consensus.ChainHeaderReader
 }
 
 // NewBlockChainAPI creates a new Ethereum blockchain API.
-func NewBlockChainAPI(b Backend, chainReader consensus.ChainReader) *BlockChainAPI {
+func NewBlockChainAPI(b Backend, chainReader consensus.ChainHeaderReader) *BlockChainAPI {
 	return &BlockChainAPI{
 		b,
 		chainReader,

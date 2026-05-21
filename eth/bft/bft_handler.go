@@ -22,7 +22,7 @@ type chainHeightFn func() uint64
 type Bfter struct {
 	epoch uint64
 
-	blockChainReader consensus.ChainReader
+	blockChainReader consensus.ChainHeaderReader
 	broadcastCh      chan interface{}
 	quit             chan struct{}
 	consensus        ConsensusFns
@@ -31,14 +31,14 @@ type Bfter struct {
 }
 
 type ConsensusFns struct {
-	verifyVote  func(consensus.ChainReader, *types.Vote) (bool, error)
-	voteHandler func(consensus.ChainReader, *types.Vote) error
+	verifyVote  func(consensus.ChainHeaderReader, *types.Vote) (bool, error)
+	voteHandler func(consensus.ChainHeaderReader, *types.Vote) error
 
-	verifyTimeout  func(consensus.ChainReader, *types.Timeout) (bool, error)
-	timeoutHandler func(consensus.ChainReader, *types.Timeout) error
+	verifyTimeout  func(consensus.ChainHeaderReader, *types.Timeout) (bool, error)
+	timeoutHandler func(consensus.ChainHeaderReader, *types.Timeout) error
 
-	verifySyncInfo  func(consensus.ChainReader, *types.SyncInfo) (bool, error)
-	syncInfoHandler func(consensus.ChainReader, *types.SyncInfo) error
+	verifySyncInfo  func(consensus.ChainHeaderReader, *types.SyncInfo) (bool, error)
+	syncInfoHandler func(consensus.ChainHeaderReader, *types.SyncInfo) error
 }
 
 type BroadcastFns struct {

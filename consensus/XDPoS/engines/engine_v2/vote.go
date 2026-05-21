@@ -16,7 +16,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
-func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainReader, vote *types.Vote) (bool, error) {
+func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainHeaderReader, vote *types.Vote) (bool, error) {
 	if vote.ProposedBlockInfo.Round < x.currentRound {
 		log.Debug("[VerifyVoteMessage] Disqualified vote message as the proposed round does not match currentRound", "voteHash", vote.Hash(), "voteProposedBlockInfoRound", vote.ProposedBlockInfo.Round, "currentRound", x.currentRound)
 		return false, nil
@@ -46,14 +46,14 @@ func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainReader, vote *types.Vo
 }
 
 // Consensus entry point for processing vote message to produce QC
-func (x *XDPoS_v2) VoteHandler(chain consensus.ChainReader, voteMsg *types.Vote) error {
+func (x *XDPoS_v2) VoteHandler(chain consensus.ChainHeaderReader, voteMsg *types.Vote) error {
 	x.lock.Lock()
 	defer x.lock.Unlock()
 	return x.voteHandler(chain, voteMsg)
 }
 
 // Once Hot stuff voting rule has verified, this node can then send vote
-func (x *XDPoS_v2) sendVote(chainReader consensus.ChainReader, blockInfo *types.BlockInfo) error {
+func (x *XDPoS_v2) sendVote(chainReader consensus.ChainHeaderReader, blockInfo *types.BlockInfo) error {
 	// First step: Update the highest Voted round
 	// Second step: Generate the signature by using node's private key(The signature is the blockInfo signature)
 	// Third step: Construct the vote struct with the above signature & blockinfo struct
@@ -96,7 +96,7 @@ func (x *XDPoS_v2) sendVote(chainReader consensus.ChainReader, blockInfo *types.
 	return nil
 }
 
-func (x *XDPoS_v2) voteHandler(chain consensus.ChainReader, voteMsg *types.Vote) error {
+func (x *XDPoS_v2) voteHandler(chain consensus.ChainHeaderReader, voteMsg *types.Vote) error {
 	// checkRoundNumber
 	if (voteMsg.ProposedBlockInfo.Round != x.currentRound) && (voteMsg.ProposedBlockInfo.Round != x.currentRound+1) {
 		return &utils.ErrIncomingMessageRoundTooFarFromCurrentRound{
@@ -160,7 +160,7 @@ func (x *XDPoS_v2) voteHandler(chain consensus.ChainReader, voteMsg *types.Vote)
 	return nil
 }
 
-func (x *XDPoS_v2) verifyVotes(chain consensus.ChainReader, votes map[common.Hash]utils.PoolObj, header *types.Header) {
+func (x *XDPoS_v2) verifyVotes(chain consensus.ChainHeaderReader, votes map[common.Hash]utils.PoolObj, header *types.Header) {
 	masternodes := x.GetMasternodes(chain, header)
 	start := time.Now()
 	emptySigner := common.Address{}
@@ -211,7 +211,7 @@ func (x *XDPoS_v2) verifyVotes(chain consensus.ChainReader, votes map[common.Has
 Function that will be called by votePool when it reached threshold.
 In the engine v2, we will need to generate and process QC
 */
-func (x *XDPoS_v2) onVotePoolThresholdReached(chain consensus.ChainReader, pooledVotes map[common.Hash]utils.PoolObj, currentVoteMsg utils.PoolObj, proposedBlockHeader *types.Header) error {
+func (x *XDPoS_v2) onVotePoolThresholdReached(chain consensus.ChainHeaderReader, pooledVotes map[common.Hash]utils.PoolObj, currentVoteMsg utils.PoolObj, proposedBlockHeader *types.Header) error {
 	// The signature list may contain empty entey. we only care the ones with values
 	var validSignatures []types.Signature
 	emptySigner := common.Address{}
@@ -249,7 +249,7 @@ func (x *XDPoS_v2) onVotePoolThresholdReached(chain consensus.ChainReader, poole
 }
 
 // Hot stuff rule to decide whether this node is eligible to vote for the received block
-func (x *XDPoS_v2) verifyVotingRule(blockChainReader consensus.ChainReader, blockInfo *types.BlockInfo, quorumCert *types.QuorumCert) (bool, error) {
+func (x *XDPoS_v2) verifyVotingRule(blockChainReader consensus.ChainHeaderReader, blockInfo *types.BlockInfo, quorumCert *types.QuorumCert) (bool, error) {
 	// Make sure this node has not voted for this round.
 	if x.currentRound <= x.highestVotedRound {
 		log.Info("Failed to pass the voting rule verification, currentRound is not large then highestVoteRound", "x.currentRound", x.currentRound, "x.highestVotedRound", x.highestVotedRound)
@@ -288,7 +288,7 @@ func (x *XDPoS_v2) verifyVotingRule(blockChainReader consensus.ChainReader, bloc
 	return true, nil
 }
 
-func (x *XDPoS_v2) isExtendingFromAncestor(blockChainReader consensus.ChainReader, currentBlock *types.BlockInfo, ancestorBlock *types.BlockInfo) (bool, error) {
+func (x *XDPoS_v2) isExtendingFromAncestor(blockChainReader consensus.ChainHeaderReader, currentBlock *types.BlockInfo, ancestorBlock *types.BlockInfo) (bool, error) {
 	blockNumDiff := int(big.NewInt(0).Sub(currentBlock.Number, ancestorBlock.Number).Int64())
 
 	nextBlockHash := currentBlock.Hash

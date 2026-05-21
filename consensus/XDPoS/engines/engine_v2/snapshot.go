@@ -75,7 +75,7 @@ func (s *SnapshotV2) IsCandidates(address common.Address) bool {
 }
 
 // snapshot retrieves the authorization snapshot at a given point in time.
-func (x *XDPoS_v2) getSnapshot(chain consensus.ChainReader, number uint64, isGapNumber bool) (*SnapshotV2, error) {
+func (x *XDPoS_v2) getSnapshot(chain consensus.ChainHeaderReader, number uint64, isGapNumber bool) (*SnapshotV2, error) {
 	var gapBlockNum uint64
 	if isGapNumber {
 		gapBlockNum = number
