@@ -109,7 +109,7 @@ func RecoverUniqueSigners(signedHash common.Hash, signatureList []types.Signatur
 			}
 			var signerAddress common.Address
 			copy(signerAddress[:], crypto.Keccak256(pubkey[1:])[12:])
-			
+
 			// check flipped signature
 			if !hasLowS(signature) {
 				log.Warn("[RecoverUniqueSigners] found evidence of attack", "signer", signerAddress, "message", signedHash.Hex())
@@ -212,7 +212,6 @@ func (x *XDPoS_v2) verifyAllSignatures(messageHash common.Hash, signatures []typ
 	}
 	return validSignatures, signers, duplicates, errors.Join(errs...)
 }
-
 
 func (x *XDPoS_v2) verifyMsgSignature(signedHashToBeVerified common.Hash, signature types.Signature, masternodes []common.Address) (bool, common.Address, error) {
 	var signerAddress common.Address
