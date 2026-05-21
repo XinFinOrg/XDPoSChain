@@ -90,6 +90,7 @@ var (
 	ErrInvalidQCSignatures           = errors.New("invalid QC Signatures")
 	ErrInvalidTC                     = errors.New("invalid TC content")
 	ErrInvalidTCSignatures           = errors.New("invalid TC Signatures")
+	ErrInvalidSignature              = errors.New("invalid signature")
 	ErrInvalidFieldInNonEpochSwitch  = errors.New("invalid field exist in a non-epoch swtich block")
 	ErrValidatorNotWithinMasternodes = errors.New("validator address is not in the master node list")
 	ErrCoinbaseAndValidatorMismatch  = errors.New("validator and coinbase address in header does not match")
