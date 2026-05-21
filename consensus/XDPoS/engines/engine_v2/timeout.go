@@ -17,41 +17,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func (x *XDPoS_v2) VerifyTimeoutMessage(chain consensus.ChainReader, timeoutMsg *types.Timeout) (bool, error) {
-	if timeoutMsg.Round < x.currentRound {
-		log.Debug("[VerifyTimeoutMessage] Disqualified timeout message as the proposed round does not match currentRound", "timeoutHash", timeoutMsg.Hash(), "timeoutRound", timeoutMsg.Round, "currentRound", x.currentRound)
-		return false, nil
-	}
-
-	epochInfo, err := x.getTCEpochInfo(chain, timeoutMsg.Round)
-	if err != nil {
-		log.Error("[VerifyTimeoutMessage] Fail to get epochInfo for timeout message", "tcGapNumber", timeoutMsg.GapNumber, "tcRound", timeoutMsg.Round, "error", err)
-		return false, err
-	}
-
-	verified, signer, err := x.verifyMsgSignature(types.TimeoutSigHash(&types.TimeoutForSign{
-		Round:     timeoutMsg.Round,
-		GapNumber: timeoutMsg.GapNumber,
-	}), timeoutMsg.Signature, epochInfo.Masternodes)
-
-	if err != nil {
-		log.Warn("[VerifyTimeoutMessage] cannot verify timeout signature", "err", err)
-		return false, err
-	}
-
-	timeoutMsg.SetSigner(signer)
-	return verified, nil
-}
-
-/*
-Entry point for handling timeout message to process below:
-*/
-func (x *XDPoS_v2) TimeoutHandler(blockChainReader consensus.ChainReader, timeout *types.Timeout) error {
-	x.lock.Lock()
-	defer x.lock.Unlock()
-	return x.timeoutHandler(blockChainReader, timeout)
-}
-
 func (x *XDPoS_v2) timeoutHandler(blockChainReader consensus.ChainReader, timeout *types.Timeout) error {
 	// checkRoundNumber
 	if timeout.Round != x.currentRound {
@@ -108,6 +73,9 @@ func (x *XDPoS_v2) onTimeoutPoolThresholdReached(blockChainReader consensus.Chai
 		log.Error("[onTimeoutPoolThresholdReached] Fail to process TC", "TcRound", timeoutCert.Round, "NumberOfTcSig", len(timeoutCert.Signatures), "GapNumber", gapNumber, "Error", err)
 		return err
 	}
+	// Generate and broadcast syncInfo
+	syncInfo := x.getSyncInfo()
+	x.broadcastToBftChannel(syncInfo)
 
 	log.Info("[onTimeoutPoolThresholdReached] process TC successfully", "TcRound", timeoutCert.Round, "NumberOfTcSig", len(timeoutCert.Signatures))
 	return nil
@@ -150,6 +118,14 @@ func (x *XDPoS_v2) getTCEpochInfo(chain consensus.ChainReader, timeoutRound type
 }
 
 func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.TimeoutCert) error {
+	/*
+		1. Get epoch master node list by gapNumber
+		2. Check number of signatures > threshold, as well as it's format. (Same as verifyQC)
+		2. Verify signer signature: (List of signatures)
+					- Use ecRecover to get the public key
+					- Use the above public key to find out the xdc address
+					- Use the above xdc address to check against the master node list from step 1(For the received TC epoch)
+	*/
 	if timeoutCert == nil || timeoutCert.Signatures == nil {
 		log.Warn("[verifyTC] TC or TC signatures is Nil")
 		return utils.ErrInvalidTC
@@ -168,7 +144,7 @@ func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.Time
 	signatures, duplicates := UniqueSignatures(timeoutCert.Signatures)
 	if len(duplicates) != 0 {
 		for _, d := range duplicates {
-			log.Warn("[verifyTC] duplicated signature in QC", "duplicate", common.Bytes2Hex(d))
+			log.Warn("[verifyQC] duplicated signature in QC", "duplicate", common.Bytes2Hex(d))
 		}
 	}
 
@@ -226,11 +202,12 @@ func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.Time
 2. Check TC round >= node's currentRound. If yes, call setNewRound
 */
 func (x *XDPoS_v2) processTC(blockChainReader consensus.ChainReader, timeoutCert *types.TimeoutCert) error {
-	if x.highestTimeoutCert.Round < timeoutCert.Round {
+	if timeoutCert.Round > x.highestTimeoutCert.Round {
 		x.highestTimeoutCert = timeoutCert
 	}
 	if timeoutCert.Round >= x.currentRound {
 		x.setNewRound(blockChainReader, timeoutCert.Round+1)
+
 	}
 	return nil
 }
@@ -314,7 +291,6 @@ func (x *XDPoS_v2) OnCountdownTimeout(time time.Time, chain interface{}) error {
 	if !allow {
 		return nil
 	}
-	x.processSyncInfoPool(chain.(consensus.ChainReader))
 
 	err := x.sendTimeout(chain.(consensus.ChainReader))
 	if err != nil {

@@ -143,8 +143,7 @@ func TestTimeoutPeriodAndThreadholdConfigChange(t *testing.T) {
 }
 
 // Timeout handler
-func TestTimeoutMessageHandlerSuccessfullyGenerateTCandSyncInfoAfterReachingThreshold(t *testing.T) {
-	skipLongInShortMode(t)
+func TestTimeoutMessageHandlerSuccessfullyGenerateTCandSyncInfo(t *testing.T) {
 	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -199,30 +198,17 @@ func TestTimeoutMessageHandlerSuccessfullyGenerateTCandSyncInfoAfterReachingThre
 	err = engineV2.TimeoutHandler(blockchain, timeoutMsg)
 	assert.Nil(t, err)
 
-	var syncInfoMsg *types.SyncInfo
-
-	for {
-		msg := <-engineV2.BroadcastCh
-
-		// Try to type assert
-		if s, ok := msg.(*types.SyncInfo); ok {
-			syncInfoMsg = s
-			break
-		}
-
-		// Optionally: log or handle other types
-		t.Logf("Received unexpected message type: %T", msg)
-	}
+	syncInfoMsg := <-engineV2.BroadcastCh
 
 	currentRound, _, _, _, _, _ = engineV2.GetPropertiesFaker()
 
 	assert.NotNil(t, syncInfoMsg)
 
 	// Shouldn't have QC, however, we did not inilise it, hence will show default empty value
-	qc := syncInfoMsg.HighestQuorumCert
+	qc := syncInfoMsg.(*types.SyncInfo).HighestQuorumCert
 	assert.Equal(t, types.Round(0), qc.ProposedBlockInfo.Round)
 
-	tc := syncInfoMsg.HighestTimeoutCert
+	tc := syncInfoMsg.(*types.SyncInfo).HighestTimeoutCert
 	assert.NotNil(t, tc)
 	assert.Equal(t, tc.Round, types.Round(5))
 	assert.Equal(t, uint64(450), tc.GapNumber)

@@ -16,42 +16,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
-func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainReader, vote *types.Vote) (bool, error) {
-	if vote.ProposedBlockInfo.Round < x.currentRound {
-		log.Debug("[VerifyVoteMessage] Disqualified vote message as the proposed round does not match currentRound", "voteHash", vote.Hash(), "voteProposedBlockInfoRound", vote.ProposedBlockInfo.Round, "currentRound", x.currentRound)
-		return false, nil
-	}
-
-	snap, err := x.getSnapshot(chain, vote.GapNumber, true)
-	if err != nil {
-		log.Error("[VerifyVoteMessage] fail to get snapshot for a vote message", "blockNum", vote.ProposedBlockInfo.Number, "blockHash", vote.ProposedBlockInfo.Hash, "voteHash", vote.Hash(), "err", err)
-		return false, err
-	}
-
-	verified, signer, err := x.verifyMsgSignature(types.VoteSigHash(&types.VoteForSign{
-		ProposedBlockInfo: vote.ProposedBlockInfo,
-		GapNumber:         vote.GapNumber,
-	}), vote.Signature, snap.NextEpochCandidates)
-
-	if err != nil {
-		for i, mn := range snap.NextEpochCandidates {
-			log.Warn("[VerifyVoteMessage] Master node list item", "index", i, "Master node", mn.Hex())
-		}
-		log.Warn("[VerifyVoteMessage] Error while verifying vote message", "votedBlockNum", vote.ProposedBlockInfo.Number.Uint64(), "votedBlockHash", vote.ProposedBlockInfo.Hash.Hex(), "voteHash", vote.Hash(), "err", err)
-		return false, err
-	}
-	vote.SetSigner(signer)
-
-	return verified, nil
-}
-
-// Consensus entry point for processing vote message to produce QC
-func (x *XDPoS_v2) VoteHandler(chain consensus.ChainReader, voteMsg *types.Vote) error {
-	x.lock.Lock()
-	defer x.lock.Unlock()
-	return x.voteHandler(chain, voteMsg)
-}
-
 // Once Hot stuff voting rule has verified, this node can then send vote
 func (x *XDPoS_v2) sendVote(chainReader consensus.ChainReader, blockInfo *types.BlockInfo) error {
 	// First step: Update the highest Voted round

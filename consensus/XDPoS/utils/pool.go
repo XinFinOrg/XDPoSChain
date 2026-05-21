@@ -4,7 +4,6 @@ import (
 	"sync"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
-	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
 type PoolObj interface {
@@ -40,20 +39,7 @@ func (p *Pool) Get() map[string]map[common.Hash]PoolObj {
 	return dataCopy
 }
 
-func (p *Pool) Inspect() {
-	p.lock.RLock()
-	defer p.lock.RUnlock()
-
-	for poolKey, objMap := range p.objList {
-		log.Info("[Inspect] Pool Key:", "poolKey", poolKey, "numObjects", len(objMap))
-		for objHash, obj := range objMap {
-			log.Info("[Inspect]   Object Hash:", "objHash", objHash.Hex(), "signer", obj.GetSigner())
-		}
-	}
-}
-
-// Add adds the object to the pool, returns the number of items
-// and the map of objects under the same pool key
+// return true if it has reached threshold
 func (p *Pool) Add(obj PoolObj) (int, map[common.Hash]PoolObj) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
