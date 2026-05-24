@@ -158,7 +158,7 @@ func (b *Bfter) SyncInfo(peer string, syncInfo *types.SyncInfo) error {
 
 	qcBlockNum := syncInfo.HighestQuorumCert.ProposedBlockInfo.Number.Int64()
 	if dist := qcBlockNum - int64(b.chainHeight()); dist < -maxBlockDist || dist > maxBlockDist {
-		log.Debug("[SyncInfo] Discarded propagated syncInfo, too far away", "peer", peer, "blockNum", qcBlockNum, "hash", syncInfo.Hash, "distance", dist)
+		log.Debug("[SyncInfo] Discarded propagated syncInfo, too far away", "peer", peer, "blockNum", qcBlockNum, "hash", syncInfo.Hash().Hex(), "distance", dist)
 		return nil
 	}
 

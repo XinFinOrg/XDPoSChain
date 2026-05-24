@@ -206,7 +206,7 @@ func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.Time
 	for _, signature := range signatures {
 		go func(sig types.Signature) {
 			defer wg.Done()
-			verified, _, err := x.verifyMsgSignature(signedTimeoutObj, sig, snap.NextEpochCandidates)
+			verified, _, err := x.verifyMsgSignature(signedTimeoutObj, sig, epochInfo.Masternodes)
 			if err != nil || !verified {
 				log.Error("[verifyTC] Error or verification failure", "signature", sig, "error", err)
 				mutex.Lock() // Lock before accessing haveError
