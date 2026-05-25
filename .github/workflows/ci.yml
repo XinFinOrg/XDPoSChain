@@ -143,29 +143,28 @@ jobs:
           echo "Masternodes: $masternodes"
           echo "RPCs: $rpcs"
 
-          # Skip masternode1 through masternode25, update the rest.
-          readarray -t mn_array <<< "$masternodes"
-          total=${#mn_array[@]}
-          echo "Total masternode deployments: $total, skipping masternode1..masternode25"
+          export git_hash
+          echo "Total masternode deployments: $(echo "$masternodes" | wc -l)"
 
-          for name in "${mn_array[@]}"; do
-            if [[ $name =~ ^masternode[0-9] ]]; then
-              num=${name#masternode}
-              num=${num%%-*}
-              if [[ $num =~ ^[0-9]+$ ]] && (( num >= 1 && num <= 25 )); then
-                echo "Skipping deployment: $name"
-                continue
-              fi
-            fi
-
+          echo "$masternodes" | xargs -r -P 32 -I {} bash -c '
+            name="$1"
+            # # Skip masternode1 through masternode25, update the rest.
+            # if [[ $name =~ ^masternode[0-9] ]]; then
+            #   num=${name#masternode}
+            #   num=${num%%-*}
+            #   if [[ $num =~ ^[0-9]+$ ]] && (( num >= 1 && num <= 25 )); then
+            #     echo "Skipping deployment: $name"
+            #     exit 0
+            #   fi
+            # fi
             echo "Updating deployment: $name"
             kubectl set image "deployment/$name" "$name=xinfinorg/devnet:dev-upgrade-${git_hash}" || true
-          done
+          ' _ {}
 
-
-          while read -r name; do
-            kubectl set image deployment/$name $name=xinfinorg/devnet:dev-upgrade-${git_hash} || true
-          done <<< "$rpcs"
+          echo "$rpcs" | xargs -r -P 32 -I {} bash -c '
+            name="$1"
+            kubectl set image "deployment/$name" "$name=xinfinorg/devnet:dev-upgrade-${git_hash}" || true
+          ' _ {}
 
   devnet_send_notification:
     runs-on: ubuntu-latest
