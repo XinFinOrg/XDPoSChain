@@ -2201,12 +2201,12 @@ func TestFastSyncConfiguredPivotHashMatch(t *testing.T) {
 // pivot numbers, processFastSyncContent must state-sync each gap block and
 // generate a snapshot for it before committing the primary pivot.
 //
-// Chain layout (Epoch=900, Gap=450, pivot=536, gap pivot=[450]):
+// Chain layout (Epoch=900, Gap=450, pivot=535, gap pivot=[450]):
 //
-//	blocks 1-535  → fast-sync (receipts)
+//	blocks 1-534  → fast-sync (receipts)
 //	block  450    → gap pivot: state synced + snapshot generated
-//	block  536    → primary pivot: state synced + committed
-//	blocks 537-600 → full-sync
+//	block  535    → primary pivot: state synced + committed
+//	blocks 536-600 → full-sync
 func TestFastSyncGapPivotSync(t *testing.T) {
 	t.Parallel()
 
@@ -2216,7 +2216,7 @@ func TestFastSyncGapPivotSync(t *testing.T) {
 	tester.configOverride = params.TestXDPoSMockChainConfig
 	defer tester.terminate()
 
-	// 600 blocks: natural pivot = 600-64 = 536, gap pivot = 450.
+	// 600 blocks: natural pivot = 600-1-64 = 535, gap pivot = 450.
 	chainLen := 600
 	chain := testChainBase.shorten(chainLen)
 	tester.newPeer("peer", 63, chain)
