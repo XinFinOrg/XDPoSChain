@@ -1560,8 +1560,15 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 			Fatalf("--%s must be set if --%s is set", FastSyncPivotRootFlag.Name, FastSyncPivotNumberFlag.Name)
 		}
 		cfg.FastSyncPivotNumber = ctx.Uint64(FastSyncPivotNumberFlag.Name)
-		cfg.FastSyncPivotHash = common.HexToHash(pivotHash)
-		cfg.FastSyncPivotRoot = common.HexToHash(pivotRoot)
+		if cfg.FastSyncPivotNumber == 0 {
+			Fatalf("--%s must be greater than 0 when explicitly set", FastSyncPivotNumberFlag.Name)
+		}
+		if err = cfg.FastSyncPivotHash.UnmarshalText([]byte(pivotHash)); err != nil {
+			Fatalf("invalid --%s flag: %v", FastSyncPivotHashFlag.Name, err)
+		}
+		if err = cfg.FastSyncPivotRoot.UnmarshalText([]byte(pivotRoot)); err != nil {
+			Fatalf("invalid --%s flag: %v", FastSyncPivotRootFlag.Name, err)
+		}
 	} else {
 		if pivotHashSet {
 			Fatalf("--%s must not be set without --%s", FastSyncPivotHashFlag.Name, FastSyncPivotNumberFlag.Name)
