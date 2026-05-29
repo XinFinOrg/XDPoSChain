@@ -261,7 +261,7 @@ func (x *XDPoS_v1) verifyCascadingFields(chain consensus.ChainReader, header *ty
 		// Retrieve the snapshot needed to verify this header and cache it
 		snap, err := x.snapshot(chain, number-1, header.ParentHash, parents, nil)
 		if err != nil {
-			log.Error("[verifyHeader v1] Fail to get snapshot", "number", number, "hash", header.ParentHash, "err", err)
+			log.Error("[verifyCascadingFields] Fail to get snapshot", "number", number, "hash", header.ParentHash, "err", err)
 			return err
 		}
 
@@ -270,15 +270,15 @@ func (x *XDPoS_v1) verifyCascadingFields(chain consensus.ChainReader, header *ty
 		if err == nil {
 			return x.verifySeal(chain, header, parents, fullVerify)
 		}
-		log.Debug("[verifyHeader v1] checkSignersOnCheckpoint failed, fallback to smart contract check", "number", number, "err", err)
+		log.Debug("[verifyCascadingFields] checkSignersOnCheckpoint failed, fallback to smart contract check", "number", number, "err", err)
 		signers, err = x.getSignersFromContract(chain, header)
 		if err != nil {
-			log.Error("[verifyHeader v1] Fail to get signers from smart contract", "number", number, "hash", header.Hash(), "err", err)
+			log.Error("[verifyCascadingFields] Fail to get signers from smart contract", "number", number, "hash", header.Hash(), "err", err)
 			return err
 		}
 		err = x.checkSignersOnCheckpoint(chain, header, signers)
 		if err != nil {
-			log.Error("[verifyHeader v1] checkSignersOnCheckpoint failed with signers from smart contract", "number", number, "hash", header.Hash(), "err", err)
+			log.Error("[verifyCascadingFields] checkSignersOnCheckpoint failed with signers from smart contract", "number", number, "hash", header.Hash(), "err", err)
 			return err
 		}
 		return x.verifySeal(chain, header, parents, fullVerify)
