@@ -82,20 +82,11 @@ func fillBucket(tab *Table, n *node) (last *node) {
 	return b.entries[bucketSize-1]
 }
 
-// fillTable adds nodes the table to the end of their corresponding bucket
-// if the bucket is not full. The caller must not hold tab.mutex.
+// fillTable adds nodes to the table using addSeenNode.
+// The caller must not hold tab.mutex.
 func fillTable(tab *Table, nodes []*node) {
-	tab.mutex.Lock()
-	defer tab.mutex.Unlock()
-
 	for _, n := range nodes {
-		if n.ID() == tab.self().ID() {
-			continue // don't add self
-		}
-		b := tab.bucket(n.ID())
-		if len(b.entries) < bucketSize {
-			tab.bumpOrAdd(b, n)
-		}
+		tab.addSeenNode(n)
 	}
 }
 
@@ -149,15 +140,6 @@ func hasDuplicates(slice []*node) bool {
 			return true
 		}
 		seen[e.ID()] = true
-	}
-	return false
-}
-
-func contains(ns []*node, id enode.ID) bool {
-	for _, n := range ns {
-		if n.ID() == id {
-			return true
-		}
 	}
 	return false
 }
