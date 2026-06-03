@@ -544,6 +544,173 @@ func TestPromoteSpecialTxReplacementAvoidsIntermediateOverflow(t *testing.T) {
 	}
 }
 
+// TestListAddSpecialTxReplacement verifies that a pending special (block-signing)
+// transaction can be replaced by another special transaction at the same nonce,
+// while a regular transaction cannot evict it.
+func TestListAddSpecialTxReplacement(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	// Two distinct special (block-signing) txs sharing nonce 0; the differing
+	// payload gives them different hashes.
+	oldSpecial, err := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, common.Big0, 100000, big.NewInt(1), []byte{0x01}), types.HomesteadSigner{}, key)
+	if err != nil {
+		t.Fatalf("failed to sign old special tx: %v", err)
+	}
+	newSpecial, err := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, common.Big0, 100000, big.NewInt(1), []byte{0x02}), types.HomesteadSigner{}, key)
+	if err != nil {
+		t.Fatalf("failed to sign new special tx: %v", err)
+	}
+	regular, err := types.SignTx(types.NewTransaction(0, common.Address{}, common.Big0, 21000, big.NewInt(1), nil), types.HomesteadSigner{}, key)
+	if err != nil {
+		t.Fatalf("failed to sign regular tx: %v", err)
+	}
+	if !oldSpecial.IsSpecialTransaction() || !newSpecial.IsSpecialTransaction() || regular.IsSpecialTransaction() {
+		t.Fatal("test setup: tx special-ness is wrong")
+	}
+
+	l := newList(true)
+
+	// Seed the pending list with a special tx.
+	if inserted, _ := l.Add(oldSpecial, 0); !inserted {
+		t.Fatal("failed to insert baseline special tx")
+	}
+
+	// A regular tx must NOT replace the pending special tx.
+	if inserted, _ := l.Add(regular, 0); inserted {
+		t.Fatal("regular tx should not be able to replace a special tx")
+	}
+	if tx := l.txs.Get(0); tx == nil || tx.Hash() != oldSpecial.Hash() {
+		t.Fatal("special tx should still occupy the nonce after a rejected regular replacement")
+	}
+
+	// A special tx must be able to evict a pending regular tx at the same nonce.
+	l2 := newList(true)
+	if inserted, _ := l2.Add(regular, 0); !inserted {
+		t.Fatal("failed to insert baseline regular tx")
+	}
+	if inserted, replaced := l2.Add(oldSpecial, 0); !inserted || replaced == nil || replaced.Hash() != regular.Hash() {
+		t.Fatal("special tx should evict a pending regular tx at the same nonce")
+	}
+	if tx := l2.txs.Get(0); tx == nil || tx.Hash() != oldSpecial.Hash() {
+		t.Fatal("special tx should occupy the nonce after evicting the regular tx")
+	}
+
+	// Another special tx MUST replace the pending special tx.
+	inserted, replaced := l.Add(newSpecial, 0)
+	if !inserted {
+		t.Fatal("special tx should replace existing special tx")
+	}
+	if replaced == nil || replaced.Hash() != oldSpecial.Hash() {
+		t.Fatal("replaced tx should be the old special tx")
+	}
+	if tx := l.txs.Get(0); tx == nil || tx.Hash() != newSpecial.Hash() {
+		t.Fatal("new special tx should occupy the nonce")
+	}
+
+	// Total cost should reflect only the surviving (new) tx.
+	want, overflow := uint256.FromBig(newSpecial.Cost())
+	if overflow {
+		t.Fatal("special tx cost overflowed uint256 in test setup")
+	}
+	if l.totalcost.Cmp(want) != 0 {
+		t.Fatalf("totalcost mismatch after special replacement: have %v want %v", l.totalcost, want)
+	}
+}
+
+// TestSpecialTxReplacementThroughPool exercises the special-tx replacement rules
+// end-to-end through the pool's add path (which routes a same-nonce tx into
+// list.Add): a regular tx cannot evict a pending special tx, a special tx
+// replaces a pending special tx, and a special tx evicts a pending regular tx.
+func TestSpecialTxReplacementThroughPool(t *testing.T) {
+	t.Parallel()
+
+	// A nonzero price keeps validation simple; list.Add bypasses the price-bump
+	// rules for special txs regardless of the actual price.
+	price := new(big.Int).Add(new(big.Int).Set(common.MinGasPrice), big.NewInt(1))
+	mkSpecial := func(key *ecdsa.PrivateKey, payload []byte) *types.Transaction {
+		tx, err := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, big.NewInt(0), 100000, price, payload), types.HomesteadSigner{}, key)
+		if err != nil {
+			t.Fatalf("failed to sign special tx: %v", err)
+		}
+		return tx
+	}
+
+	// Case 1: a regular tx must NOT evict a pending special tx at the same nonce.
+	t.Run("regular cannot evict special", func(t *testing.T) {
+		pool, _ := setupPool()
+		defer pool.Close()
+		key, _ := crypto.GenerateKey()
+		addr := crypto.PubkeyToAddress(key.PublicKey)
+		testAddBalance(pool, addr, big.NewInt(1_000_000_000_000_000))
+
+		special := mkSpecial(key, []byte{0x01})
+		if err := pool.addRemoteSync(special); err != nil {
+			t.Fatalf("failed to add special tx: %v", err)
+		}
+		regular := pricedTransaction(0, 100000, new(big.Int).Add(new(big.Int).Set(price), big.NewInt(1000)), key)
+		if err := pool.addRemoteSync(regular); !errors.Is(err, txpool.ErrReplaceUnderpriced) {
+			t.Fatalf("regular tx should be rejected, got err: %v", err)
+		}
+		if pool.all.Get(special.Hash()) == nil {
+			t.Fatal("special tx should still be present")
+		}
+		if pool.all.Get(regular.Hash()) != nil {
+			t.Fatal("rejected regular tx should not be present")
+		}
+	})
+
+	// Case 2: a fresh special tx replaces a pending special tx at the same nonce.
+	t.Run("special replaces special", func(t *testing.T) {
+		pool, _ := setupPool()
+		defer pool.Close()
+		key, _ := crypto.GenerateKey()
+		addr := crypto.PubkeyToAddress(key.PublicKey)
+		testAddBalance(pool, addr, big.NewInt(1_000_000_000_000_000))
+
+		oldSpecial := mkSpecial(key, []byte{0x01})
+		newSpecial := mkSpecial(key, []byte{0x02})
+		if err := pool.addRemoteSync(oldSpecial); err != nil {
+			t.Fatalf("failed to add old special tx: %v", err)
+		}
+		if err := pool.addRemoteSync(newSpecial); err != nil {
+			t.Fatalf("special-replaces-special should succeed, got err: %v", err)
+		}
+		if pool.all.Get(oldSpecial.Hash()) != nil {
+			t.Fatal("old special tx should have been replaced")
+		}
+		if pool.all.Get(newSpecial.Hash()) == nil {
+			t.Fatal("new special tx should be present")
+		}
+	})
+
+	// Case 3: a special tx evicts a pending regular tx at the same nonce.
+	t.Run("special evicts regular", func(t *testing.T) {
+		pool, _ := setupPool()
+		defer pool.Close()
+		key, _ := crypto.GenerateKey()
+		addr := crypto.PubkeyToAddress(key.PublicKey)
+		testAddBalance(pool, addr, big.NewInt(1_000_000_000_000_000))
+
+		regular := pricedTransaction(0, 100000, new(big.Int).Add(new(big.Int).Set(price), big.NewInt(1000)), key)
+		if err := pool.addRemoteSync(regular); err != nil {
+			t.Fatalf("failed to add regular tx: %v", err)
+		}
+		special := mkSpecial(key, []byte{0x01})
+		if err := pool.addRemoteSync(special); err != nil {
+			t.Fatalf("special tx should evict regular tx, got err: %v", err)
+		}
+		if pool.all.Get(regular.Hash()) != nil {
+			t.Fatal("regular tx should have been evicted")
+		}
+		if pool.all.Get(special.Hash()) == nil {
+			t.Fatal("special tx should be present")
+		}
+	})
+}
+
 // TestPromoteSpecialTxOverflowReturnsErrorWithoutMutation tests promote special tx overflow returns error without mutation.
 func TestPromoteSpecialTxOverflowReturnsErrorWithoutMutation(t *testing.T) {
 	pool, key := setupPool()
