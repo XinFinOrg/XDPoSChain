@@ -20,7 +20,6 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"encoding/json"
-	"errors"
 	"math/big"
 	"math/rand"
 	"testing"
@@ -501,8 +500,12 @@ func (s *nonceGuardSubPool) SetSigner(f func(address common.Address) bool) {}
 
 func (s *nonceGuardSubPool) IsSigner(addr common.Address) bool { return false }
 
-// TestCreateTransactionSignUsesPoolNonce tests create transaction sign uses pool nonce.
-func TestCreateTransactionSignUsesPoolNonce(t *testing.T) {
+// TestCreateTransactionSignUsesOnchainNonce verifies CreateTransactionSign signs
+// with the account's on-chain nonce (pool.Nonce), not the pending nonce
+// (pool.PoolNonce). Reusing the on-chain nonce is intentional: a fresher signing
+// tx replaces a stale one at the same nonce instead of queueing behind it, which
+// avoids flooding the pool when a signing tx is slow to be mined.
+func TestCreateTransactionSignUsesOnchainNonce(t *testing.T) {
 	password := "test-pass"
 	ks := keystore.NewKeyStore(t.TempDir(), keystore.LightScryptN, keystore.LightScryptP)
 
@@ -529,28 +532,17 @@ func TestCreateTransactionSignUsesPoolNonce(t *testing.T) {
 		t.Fatal("test requires XDPoS chain config")
 	}
 
-	seedTx := CreateTxSign(big.NewInt(0), common.Hash{0x1}, 0, common.BlockSignersBinary)
-	seedSigned, err := types.SignTx(seedTx, types.LatestSignerForChainID(chainConfig.ChainID), acc1Key)
-	if err != nil {
-		t.Fatalf("failed to sign seed tx: %v", err)
-	}
-	if err := pool.AddLocal(seedSigned, true); err != nil {
-		t.Fatalf("failed to seed pending nonce 0 tx: %v", err)
-	}
-
 	block := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(0)})
-	err = CreateTransactionSign(chainConfig, pool, manager, block, rawdb.NewMemoryDatabase(), account.Address)
-	if errors.Is(err, txpool.ErrReplaceUnderpriced) {
-		t.Fatalf("CreateTransactionSign reused pending nonce and hit replacement rejection: %v", err)
-	}
-	if err != nil {
+	if err := CreateTransactionSign(chainConfig, pool, manager, block, rawdb.NewMemoryDatabase(), account.Address); err != nil {
 		t.Fatalf("CreateTransactionSign failed: %v", err)
 	}
 
-	if len(subpool.added) < 2 {
-		t.Fatalf("expected seed tx and tx sign to be added, got %d txs", len(subpool.added))
+	if len(subpool.added) != 1 {
+		t.Fatalf("expected exactly the signing tx to be added, got %d txs", len(subpool.added))
 	}
-	if got := subpool.added[1].Nonce(); got != 1 {
-		t.Fatalf("tx sign nonce mismatch: got %d, want 1", got)
+	// The empty test state reports on-chain nonce 0, while the pool's pending
+	// nonce (mock Nonce) is 1; the signing tx must use the on-chain nonce.
+	if got := subpool.added[0].Nonce(); got != 0 {
+		t.Fatalf("tx sign used nonce %d, want on-chain nonce 0 (not pending nonce 1)", got)
 	}
 }
