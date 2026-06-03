@@ -1153,7 +1153,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 				continue
 			}
 			blkNumber := new(big.Int).SetBytes(data[4:36]).Uint64()
-			if blkNumber >= w.header.Number.Uint64() || blkNumber+w.config.XDPoS.Epoch*2 <= w.header.Number.Uint64() {
+			if blkNumber >= w.header.Number.Uint64() {
 				log.Trace("Data special transaction invalid number", "hash", hash, "blkNumber", blkNumber, "miner", w.header.Number)
 				continue
 			}
