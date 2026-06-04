@@ -289,7 +289,12 @@ func discv4Resolve(ctx *cli.Context) error {
 	disc := startV4(ctx)
 	defer disc.Close()
 
-	fmt.Println(disc.Resolve(n).String())
+	resolved := disc.Resolve(n)
+	if resolved == nil {
+		fmt.Println("unresolved")
+		return fmt.Errorf("could not resolve node %s", n.ID())
+	}
+	fmt.Println(resolved.String())
 	return nil
 }
 

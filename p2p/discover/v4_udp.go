@@ -175,7 +175,7 @@ func (t *UDPv4) Close() {
 }
 
 // Resolve searches for a specific node with the given ID and tries to get the most recent
-// version of the node record for it. It returns n if the node could not be resolved.
+// version of the node record for it. It returns nil if the node could not be resolved.
 func (t *UDPv4) Resolve(n *enode.Node) *enode.Node {
 	// Try asking directly. This works if the node is still responding on the endpoint we have.
 	if rn, err := t.RequestENR(n); err == nil {
@@ -191,7 +191,7 @@ func (t *UDPv4) Resolve(n *enode.Node) *enode.Node {
 	// Otherwise perform a network lookup.
 	var key enode.Secp256k1
 	if n.Load(&key) != nil {
-		return n // no secp256k1 key
+		return nil // no secp256k1 key
 	}
 	result := t.LookupPubkey((*ecdsa.PublicKey)(&key))
 	for _, rn := range result {
@@ -201,7 +201,7 @@ func (t *UDPv4) Resolve(n *enode.Node) *enode.Node {
 			}
 		}
 	}
-	return n
+	return nil
 }
 
 func (t *UDPv4) ourEndpoint() v4wire.Endpoint {
