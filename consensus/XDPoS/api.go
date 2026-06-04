@@ -457,12 +457,12 @@ func (api *API) GetRewardByAccount(account common.Address, begin rpc.BlockNumber
 }
 
 func (api *API) getRewardFileNamesInRange(begin, end *rpc.BlockNumber) ([]rewardFileName, error) {
-	beginHeader := api.getHeaderFromApiBlockNum(begin)
-	if beginHeader == nil {
+	beginHeader, err := api.getHeaderFromApiBlockNum(begin)
+	if err != nil {
 		return nil, errors.New("illegal begin block number")
 	}
-	endHeader := api.getHeaderFromApiBlockNum(end)
-	if endHeader == nil {
+	endHeader, err := api.getHeaderFromApiBlockNum(end)
+	if err != nil {
 		return nil, errors.New("illegal end block number")
 	}
 	if beginHeader.Number.Cmp(endHeader.Number) > 0 {
