@@ -290,6 +290,11 @@ func (c *conn) set(f connFlag, val bool) {
 	}
 }
 
+// LocalNode returns the local node record.
+func (srv *Server) LocalNode() *enode.LocalNode {
+	return srv.localnode
+}
+
 // Peers returns the public view of connected remote nodes.
 //
 // The returned slice contains one entry per remote NodeID, so multiple physical
