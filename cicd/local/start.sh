@@ -1,4 +1,12 @@
 #!/bin/bash
+
+# Restore nodekey from secret before XDC init runs, so init does not generate a new one.
+if [ -n "$PRIVATE_KEY" ] && [ ! -f /work/xdcchain/XDC/nodekey ]; then
+  mkdir -p /work/xdcchain/XDC
+  echo "$PRIVATE_KEY" > /work/xdcchain/XDC/nodekey
+  echo "Restored nodekey from PRIVATE_KEY secret."
+fi
+
 if [ ! -d /work/xdcchain/XDC/chaindata ]
 then
   if test -z "$PRIVATE_KEY"
