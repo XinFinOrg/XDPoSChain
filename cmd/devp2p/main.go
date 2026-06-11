@@ -22,6 +22,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/internal/debug"
 	"github.com/XinFinOrg/XDPoSChain/internal/flags"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/urfave/cli/v2"
 )
 
@@ -46,6 +47,7 @@ func init() {
 	app.Commands = []*cli.Command{
 		enrdumpCommand,
 		discv4Command,
+		dnsCommand,
 	}
 }
 
@@ -72,6 +74,18 @@ func commandHasFlag(ctx *cli.Context, flag cli.Flag) bool {
 		}
 	}
 	return false
+}
+
+// getNodeArg handles the common case of a single node descriptor argument.
+func getNodeArg(ctx *cli.Context) *enode.Node {
+	if ctx.NArg() < 1 {
+		exit("missing node as command-line argument")
+	}
+	n, err := parseNode(ctx.Args().First())
+	if err != nil {
+		exit(err)
+	}
+	return n
 }
 
 func exit(err interface{}) {
