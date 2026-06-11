@@ -104,7 +104,6 @@ func (x *XDPoS_v2) getSnapshot(chain consensus.ChainReader, number uint64, isGap
 	// If an on-disk checkpoint snapshot can be found, use that
 	snap, err := loadSnapshot(x.db, gapBlockHash)
 	if err != nil {
-		log.Error("Cannot find snapshot from last gap block", "err", err, "number", gapBlockNum, "hash", gapBlockHash)
 		return nil, err
 	}
 

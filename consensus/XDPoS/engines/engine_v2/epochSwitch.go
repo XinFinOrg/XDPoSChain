@@ -73,7 +73,7 @@ func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, headers []*ty
 		standbynodes := []common.Address{}
 		snap, err := x.getSnapshot(chain, h.Number.Uint64(), false)
 		if err != nil {
-			log.Warn("[getEpochSwitchInfo] Adaptor v2 getSnapshot has error, cannot get standbynodes", "err", err)
+			log.Debug("[getEpochSwitchInfo] Adaptor v2 getSnapshot has error, cannot get standbynodes, most probably in fast syncing", "err", err)
 		} else {
 			candidates := snap.NextEpochCandidates
 			if len(masternodes) != len(candidates) {
