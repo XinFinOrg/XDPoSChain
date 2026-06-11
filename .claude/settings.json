@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git ls-tree *)",
+      "Bash(awk '{print $4}')",
+      "Bash(awk '{print $NF}')"
+    ]
+  }
+}
