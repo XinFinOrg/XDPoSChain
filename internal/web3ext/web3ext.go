@@ -143,8 +143,8 @@ web3._extend({
 			inputFormatter: [null, web3._extend.formatters.inputBlockNumberFormatter, web3._extend.formatters.inputBlockNumberFormatter]
 		}),
 		new web3._extend.Method({
-			name: 'config',
-			call: 'XDPoS_config',
+			name: 'getConfig',
+			call: 'XDPoS_getConfig',
 			params: 0,
 		})
 	],

@@ -262,7 +262,7 @@ func TestAPIGetConfig(t *testing.T) {
 	chain := newConfigChainMockWithCurrent(1500)
 	api := &API{chain: chain}
 
-	resp, err := api.Config(context.Background())
+	resp, err := api.GetConfig(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.NotNil(t, resp.Current)
@@ -292,7 +292,7 @@ func TestAPIGetConfig_BeforeXDPoSV2Switch(t *testing.T) {
 	chain := newConfigChainMockWithCurrent(1400)
 	api := &API{chain: chain}
 
-	resp, err := api.Config(context.Background())
+	resp, err := api.GetConfig(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.NotNil(t, resp.Current)

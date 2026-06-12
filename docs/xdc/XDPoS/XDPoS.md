@@ -1,8 +1,8 @@
 # Module XDPoS
 
-## Method XDPoS_config
+## Method XDPoS_gteConfig
 
-The `config` method returns chain-configuration snapshots for the current fork boundary, the next scheduled fork boundary, and the last known future fork boundary.
+The `getConfig` method returns chain-configuration snapshots for the current fork boundary, the next scheduled fork boundary, and the last known future fork boundary.
 
 This method is an XDPoS-specific extension. It is inspired by `eth_config` / EIP-7910, but it does not strictly match geth.
 
@@ -10,7 +10,7 @@ Compatibility notes:
 
 - XDPoS returns `activationBlock` for each config entry.
 - geth uses `activationTime` for time-based fork scheduling.
-- XDPoS does not currently implement `blobSchedule`. XDC does not support blob transactions, so this field is intentionally omitted from `XDPoS_config` responses.
+- XDPoS does not currently implement `blobSchedule`. XDC does not support blob transactions, so this field is intentionally omitted from `XDPoS_getConfig` responses.
 - XDPoS currently selects `current`, `next`, and `last` using block-based fork activation metadata.
 - XDPoS may include chain-specific precompiles and system contracts that do not exist on Ethereum mainnet.
 - Each config entry is a snapshot evaluated at `activationBlock`. Lists such as `systemContracts` describe what is active at that block; they do not imply that every listed item has its own dedicated activation block.
@@ -44,7 +44,7 @@ Example:
 curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   "jsonrpc": "2.0",
   "id": 1001,
-  "method": "XDPoS_config"
+  "method": "XDPoS_getConfig"
 }' | jq
 ```
 

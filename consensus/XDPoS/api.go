@@ -371,8 +371,8 @@ func (api *API) NetworkInformation() NetworkInformation {
 	return info
 }
 
-// Config returns the current and scheduled chain configuration view.
-func (api *API) Config(ctx context.Context) (*chainconfigview.ConfigResponse, error) {
+// GetConfig returns the current and scheduled chain configuration view.
+func (api *API) GetConfig(ctx context.Context) (*chainconfigview.ConfigResponse, error) {
 	return chainconfigview.Build(ctx, configBackend{chain: api.chain})
 }
 
