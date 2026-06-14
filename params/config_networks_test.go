@@ -162,7 +162,7 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 			cancunBlock:                 big.NewInt(71551800),
 			pragueBlock:                 nil,
 			osakaBlock:                  nil,
-			dynamicGasLimitBlock:        nil,
+			dynamicGasLimitBlock:        big.NewInt(83088808),
 			tipUpgradeRewardBlock:       nil,
 			tipUpgradePenaltyBlock:      nil,
 			tipEpochHalvingBlock:        nil,
