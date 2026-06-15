@@ -315,9 +315,9 @@ func (l *list) Add(tx *types.Transaction, priceBump uint64) (bool, *types.Transa
 		//   new special               -> replace: a special (block-signing/randomize)
 		//                                 tx always claims its nonce, evicting whatever
 		//                                 is there, bypassing the price-bump rules.
-		//                                 Signing txs carry a fixed 0 gas price and are
-		//                                 consensus-critical, so they must never be
-		//                                 blocked by a same-nonce tx.
+		//                                 These txs are typically generated with a 0
+		//                                 gas price and are consensus-critical, so they
+		//                                 must never be blocked by a same-nonce tx.
 		//   old special, new regular  -> reject: a regular tx must not evict a pending
 		//                                 special tx.
 		//   old regular, new regular  -> replace only if the new tx beats the old on
