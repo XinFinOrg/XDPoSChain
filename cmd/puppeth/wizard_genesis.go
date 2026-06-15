@@ -53,6 +53,8 @@ type GenesisInput struct {
 	TimeoutPeriod           int
 	TimeoutSyncThreshold    int
 	V2SwitchBlock           uint64
+	TIPTRC21FeeBlock        uint64
+	Gas50xBlock             uint64
 	CertThreshold           float64
 	MasternodesOwner        common.Address
 	Masternodes             []common.Address
@@ -72,6 +74,8 @@ func NewGenesisInput() *GenesisInput {
 		TimeoutPeriod:           10,
 		TimeoutSyncThreshold:    3,
 		V2SwitchBlock:           0,
+		TIPTRC21FeeBlock:        0,
+		Gas50xBlock:             0,
 		CertThreshold:           0.667,
 		StakingThreshold:        10_000_000, // 10M
 		RewardYield:             10,
@@ -327,6 +331,42 @@ func (w *wizard) makeGenesis() {
 			genesis.Config.XDPoS.FoundationWalletAddr = input.FoundationWalletAddress
 		} else {
 			genesis.Config.XDPoS.FoundationWalletAddr = w.readDefaultAddress(common.FoundationAddrBinary)
+		}
+
+		// XDC system contract addresses, required by the chain config validator.
+		// Hardcoded to the canonical mainnet values.
+		genesis.Config.TRC21IssuerSMC = params.XDCMainnetChainConfig.TRC21IssuerSMC
+		genesis.Config.XDCXListingSMC = params.XDCMainnetChainConfig.XDCXListingSMC
+		genesis.Config.RelayerRegistrationSMC = params.XDCMainnetChainConfig.RelayerRegistrationSMC
+		genesis.Config.LendingRegistrationSMC = params.XDCMainnetChainConfig.LendingRegistrationSMC
+
+		// TIPTRC21FeeBlock and Gas50xBlock are required forks; Gas50xBlock must
+		// activate no earlier than TIPTRC21FeeBlock.
+		fmt.Println()
+		fmt.Println("Which block number activates the TRC21 fee fork (TIPTRC21FeeBlock)? (default = 0)")
+		if input != nil {
+			genesis.Config.TIPTRC21FeeBlock = new(big.Int).SetUint64(input.TIPTRC21FeeBlock)
+		} else {
+			genesis.Config.TIPTRC21FeeBlock = w.readDefaultBigInt(big.NewInt(0))
+		}
+
+		fmt.Println()
+		fmt.Println("Which block number activates the 50x gas fork (Gas50xBlock)? (default = 0)")
+		if input != nil {
+			genesis.Config.Gas50xBlock = new(big.Int).SetUint64(input.Gas50xBlock)
+			if genesis.Config.Gas50xBlock.Cmp(genesis.Config.TIPTRC21FeeBlock) < 0 {
+				log.Crit("Invalid Gas50xBlock, must be greater than or equal to TIPTRC21FeeBlock",
+					"Gas50xBlock", genesis.Config.Gas50xBlock, "TIPTRC21FeeBlock", genesis.Config.TIPTRC21FeeBlock)
+			}
+		} else {
+			for {
+				genesis.Config.Gas50xBlock = w.readDefaultBigInt(new(big.Int).Set(genesis.Config.TIPTRC21FeeBlock))
+				if genesis.Config.Gas50xBlock.Cmp(genesis.Config.TIPTRC21FeeBlock) >= 0 {
+					break
+				}
+				log.Error("Invalid input, Gas50xBlock must be greater than or equal to TIPTRC21FeeBlock",
+					"Gas50xBlock", genesis.Config.Gas50xBlock, "TIPTRC21FeeBlock", genesis.Config.TIPTRC21FeeBlock)
+			}
 		}
 
 		// Validator Smart Contract Code
