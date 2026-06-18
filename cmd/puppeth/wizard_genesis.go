@@ -56,11 +56,11 @@ type GenesisInput struct {
 	TIPTRC21FeeBlock        uint64
 	Gas50xBlock             uint64
 	CertThreshold           float64
-	MasternodesOwner        common.Address
-	Masternodes             []common.Address
+	MasternodesOwner        string
+	Masternodes             []string
 	StakingThreshold        uint64
 	RewardYield             uint64
-	FoundationWalletAddress common.Address
+	FoundationWalletAddress string
 }
 
 func NewGenesisInput() *GenesisInput {
@@ -79,7 +79,7 @@ func NewGenesisInput() *GenesisInput {
 		CertThreshold:           0.667,
 		StakingThreshold:        10_000_000, // 10M
 		RewardYield:             10,
-		FoundationWalletAddress: common.FoundationAddrBinary,
+		FoundationWalletAddress: common.FoundationAddrBinary.Hex(),
 	}
 }
 
@@ -249,7 +249,7 @@ func (w *wizard) makeGenesis() {
 		fmt.Println("Who own the first masternodes? (mandatory)")
 		var owner common.Address
 		if input != nil {
-			owner = input.MasternodesOwner
+			owner = common.HexToAddress(input.MasternodesOwner)
 		} else {
 			owner = *w.readAddress()
 		}
@@ -260,7 +260,9 @@ func (w *wizard) makeGenesis() {
 
 		var signers []common.Address
 		if input != nil {
-			signers = append(signers, input.Masternodes...)
+			for _, m := range input.Masternodes {
+				signers = append(signers, common.HexToAddress(m))
+			}
 		} else {
 			for {
 				if address := w.readAddress(); address != nil {
@@ -328,7 +330,7 @@ func (w *wizard) makeGenesis() {
 		fmt.Println()
 		fmt.Println("What is foundation wallet address (collect 10% of all rewards)? (default = xdc0000000000000000000000000000000000000068)")
 		if input != nil {
-			genesis.Config.XDPoS.FoundationWalletAddr = input.FoundationWalletAddress
+			genesis.Config.XDPoS.FoundationWalletAddr = common.HexToAddress(input.FoundationWalletAddress)
 		} else {
 			genesis.Config.XDPoS.FoundationWalletAddr = w.readDefaultAddress(common.FoundationAddrBinary)
 		}
@@ -372,10 +374,13 @@ func (w *wizard) makeGenesis() {
 		// Validator Smart Contract Code
 		pKey, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 		addr := crypto.PubkeyToAddress(pKey.PublicKey)
+		deployerFunds := new(big.Int).Mul(big.NewInt(1_000_000), big.NewInt(1e18)) // 1,000,000 ETH
 		// Gas limit increased to 10,000,000,000 to support validator contract deployment with large masternode counts (>38).
-		contractBackend := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: big.NewInt(1000000000)}}, 10_000_000_000, params.TestXDPoSMockChainConfig)
-		//lint:ignore SA1019 chainID is not determined at this time
-		transactOpts := bind.NewKeyedTransactor(pKey)
+		contractBackend := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: deployerFunds}}, 10_000_000_000, params.TestXDPoSMockChainConfig)
+		transactOpts, err := bind.NewKeyedTransactorWithChainID(pKey, new(big.Int).SetUint64(params.ConsensusOptionalTestChainID))
+		if err != nil {
+			log.Crit("Failed to create genesis contract deployer", "err", err)
+		}
 
 		minDeposit := new(big.Int).SetUint64(threshold)
 		minDeposit.Mul(minDeposit, big.NewInt(1e18)) //convert to wei
@@ -388,7 +393,7 @@ func (w *wizard) makeGenesis() {
 		}
 		validatorAddress, _, err := validatorContract.DeployValidator(transactOpts, contractBackend, signers, validatorCaps, owner, minDeposit, nil)
 		if err != nil {
-			fmt.Println("Can't deploy root registry")
+			log.Crit("Failed to deploy validator (MasternodeVotingSMC) contract", "err", err)
 		}
 		contractBackend.Commit()
 
@@ -413,7 +418,7 @@ func (w *wizard) makeGenesis() {
 		fmt.Println("Which accounts are allowed to confirm in Foundation MultiSignWallet?")
 		var owners []common.Address
 		if input != nil {
-			owners = append(owners, input.MasternodesOwner)
+			owners = append(owners, common.HexToAddress(input.MasternodesOwner))
 		} else {
 			for {
 				if address := w.readAddress(); address != nil {
@@ -438,7 +443,7 @@ func (w *wizard) makeGenesis() {
 		// MultiSigWallet.
 		multiSignWalletAddr, _, err := multiSignWalletContract.DeployMultiSigWallet(transactOpts, contractBackend, owners, big.NewInt(int64(required)))
 		if err != nil {
-			fmt.Println("Can't deploy MultiSignWallet SMC")
+			log.Crit("Failed to deploy Foundation MultiSigWallet contract", "err", err)
 		}
 		contractBackend.Commit()
 		code, _ = contractBackend.CodeAt(ctx, multiSignWalletAddr, nil)
@@ -456,7 +461,7 @@ func (w *wizard) makeGenesis() {
 		// Block Signers Smart Contract
 		blockSignerAddress, _, err := blockSignerContract.DeployBlockSigner(transactOpts, contractBackend, big.NewInt(int64(genesis.Config.XDPoS.Epoch)))
 		if err != nil {
-			fmt.Println("Can't deploy root registry")
+			log.Crit("Failed to deploy BlockSigners contract", "err", err)
 		}
 		contractBackend.Commit()
 
@@ -472,7 +477,7 @@ func (w *wizard) makeGenesis() {
 		// Randomize Smart Contract Code
 		randomizeAddress, _, err := randomizeContract.DeployRandomize(transactOpts, contractBackend)
 		if err != nil {
-			fmt.Println("Can't deploy root registry")
+			log.Crit("Failed to deploy Randomize contract", "err", err)
 		}
 		contractBackend.Commit()
 
@@ -489,7 +494,7 @@ func (w *wizard) makeGenesis() {
 		fmt.Println("Which accounts are allowed to confirm in Team MultiSignWallet?")
 		var teams []common.Address
 		if input != nil {
-			teams = append(teams, input.MasternodesOwner)
+			teams = append(teams, common.HexToAddress(input.MasternodesOwner))
 		} else {
 			for {
 				if address := w.readAddress(); address != nil {
@@ -514,7 +519,7 @@ func (w *wizard) makeGenesis() {
 		// MultiSigWallet.
 		multiSignWalletTeamAddr, _, err := multiSignWalletContract.DeployMultiSigWallet(transactOpts, contractBackend, teams, big.NewInt(requiredTeam))
 		if err != nil {
-			fmt.Println("Can't deploy MultiSignWallet SMC")
+			log.Crit("Failed to deploy Team MultiSigWallet contract", "err", err)
 		}
 		contractBackend.Commit()
 		code, _ = contractBackend.CodeAt(ctx, multiSignWalletTeamAddr, nil)
@@ -542,7 +547,7 @@ func (w *wizard) makeGenesis() {
 	fmt.Println("Which accounts should be pre-funded? (advisable at least one)")
 	var addresses []common.Address
 	if input != nil {
-		addresses = append(addresses, input.MasternodesOwner)
+		addresses = append(addresses, common.HexToAddress(input.MasternodesOwner))
 	} else {
 		for {
 			if address := w.readAddress(); address != nil {
