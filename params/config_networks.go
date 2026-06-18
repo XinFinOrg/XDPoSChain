@@ -184,7 +184,7 @@ var (
 		defaultV2SwitchRound: {
 			MaxMasternodes:       108,
 			SwitchRound:          0,
-			CertThreshold:        0.666,
+			CertThreshold:        0.667,
 			TimeoutSyncThreshold: 3,
 			TimeoutPeriod:        10,
 			MinePeriod:           2,
