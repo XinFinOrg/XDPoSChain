@@ -180,6 +180,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 						}
 					}
 					// Check signer signed?
+					// TODO: check here needs dedup?
 					for _, tx := range signingTxs {
 						blkHash := common.BytesToHash(tx.Data()[len(tx.Data())-32:])
 						from := *tx.From()
@@ -250,6 +251,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 						}
 					}
 					// Check signer signed?
+					// TODO: check here needs dedup?
 					for _, tx := range signingTxs {
 						blkHash := common.BytesToHash(tx.Data()[len(tx.Data())-32:])
 						from := *tx.From()
