@@ -163,6 +163,14 @@ func (tab *Table) ReadRandomNodes(buf []*enode.Node) (n int) {
 	return copy(buf, nodes)
 }
 
+// Ping sends a discv4 ping (XDC pingXDC packet) to n and waits for a pong reply.
+func (tab *Table) Ping(n *enode.Node) error {
+	if err := n.ValidateComplete(); err != nil {
+		return err
+	}
+	return tab.net.ping(n.ID(), &net.UDPAddr{IP: n.IP(), Port: n.UDP()})
+}
+
 // Close terminates the network listener and flushes the node database.
 func (tab *Table) Close() {
 	tab.closeOnce.Do(func() {
