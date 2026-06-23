@@ -84,7 +84,7 @@ func CreateTransactionSign(chainConfig *params.ChainConfig, pool *txpool.TxPool,
 			}
 		}
 
-		nonce := pool.Nonce(account.Address)
+		nonce := pool.PoolNonce(account.Address)
 		tx := CreateTxSign(block.Number(), block.Hash(), nonce, common.BlockSignersBinary)
 		txSigned, err := wallet.SignTx(account, tx, chainConfig.ChainID)
 		if err != nil {

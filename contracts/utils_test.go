@@ -20,7 +20,6 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"encoding/json"
-	"errors"
 	"math/big"
 	"math/rand"
 	"testing"
@@ -501,7 +500,7 @@ func (s *nonceGuardSubPool) SetSigner(f func(address common.Address) bool) {}
 
 func (s *nonceGuardSubPool) IsSigner(addr common.Address) bool { return false }
 
-func TestCreateTransactionSignUsesStateNonce(t *testing.T) {
+func TestCreateTransactionSignUsesPendingNonce(t *testing.T) {
 	password := "test-pass"
 	ks := keystore.NewKeyStore(t.TempDir(), keystore.LightScryptN, keystore.LightScryptP)
 
@@ -548,24 +547,21 @@ func TestCreateTransactionSignUsesStateNonce(t *testing.T) {
 		t.Fatalf("failed to seed pending nonce 0 tx: %v", err)
 	}
 
-	// CreateTransactionSign must derive the nonce from chain STATE (0), not the
-	// pending nonce (1). Its sign tx therefore lands on the already-pending nonce 0
-	// and the pool rejects the duplicate with ErrReplaceUnderpriced. Had it used the
-	// pending nonce (1) there would be no collision and a second sign tx would be
-	// added at nonce 1 -- which the length check below rules out. The duplicate
-	// rejection is the expected outcome (whether surfaced or swallowed); any other
-	// error is a real failure.
+	// CreateTransactionSign must derive the nonce from pool pending state (1), not
+	// from chain state (0). Since nonce 0 is already pending, using pending nonce 1
+	// should add a second tx successfully without replacement errors.
 	block := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(0)})
-	if err := CreateTransactionSign(chainConfig, pool, manager, block, rawdb.NewMemoryDatabase(), account.Address); err != nil && !errors.Is(err, txpool.ErrReplaceUnderpriced) {
-		t.Fatalf("unexpected error from CreateTransactionSign: %v", err)
+	if err := CreateTransactionSign(chainConfig, pool, manager, block, rawdb.NewMemoryDatabase(), account.Address); err != nil {
+		t.Fatalf("CreateTransactionSign returned error: %v", err)
 	}
 
-	// Only the seeded tx is present: the colliding sign tx at state nonce 0 was
-	// rejected. A second entry (at nonce 1) would mean the pending nonce was used.
-	if len(subpool.added) != 1 {
-		t.Fatalf("expected only the seeded tx (sign tx should collide at state nonce 0), got %d txs", len(subpool.added))
+	if len(subpool.added) != 2 {
+		t.Fatalf("expected seed tx plus a new sign tx at pending nonce, got %d txs", len(subpool.added))
 	}
 	if got := subpool.added[0].Nonce(); got != 0 {
 		t.Fatalf("seeded tx nonce mismatch: got %d, want 0", got)
+	}
+	if got := subpool.added[1].Nonce(); got != 1 {
+		t.Fatalf("newly added sign tx nonce mismatch: got %d, want 1", got)
 	}
 }
