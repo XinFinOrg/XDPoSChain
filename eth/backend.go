@@ -385,6 +385,13 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 		hooks.AttachConsensusV2Hooks(c, eth.blockchain, chainConfig)
 
 		isSigner := func(address common.Address) bool {
+			// During sync the head snapshot isn't built yet, so IsAuthorisedAddress
+			// would fail and spam "[IsAuthorisedAddress] Can't get snapshot". The
+			// signer check is meaningless before the chain is synced, so skip it; it
+			// is re-evaluated normally once syncing completes.
+			if eth.Downloader().Synchronising() {
+				return false
+			}
 			return c.IsAuthorisedAddress(eth.blockchain, eth.blockchain.CurrentHeader(), address)
 		}
 		eth.txPool.SetSigner(isSigner)
