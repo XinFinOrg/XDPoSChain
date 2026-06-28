@@ -74,17 +74,28 @@ type SignerTypes struct {
 	MissingSigners []common.Address
 }
 
+// MasternodesStatus reports the node set at a block, split into masternodes,
+// penalties and standby nodes. From the TIPUpgradeReward fork onwards the standby
+// pool is further broken into the protector and observer reward tiers (signalled by
+// TipUpgradeReward); candidates beyond the tier caps stay in Standbynodes, so
+// Masternodes + Penalty + Protector + Observer + Standbynodes still reconciles to
+// the full candidate set.
 type MasternodesStatus struct {
-	Epoch           uint64
-	Number          uint64
-	Round           types.Round
-	MasternodesLen  int
-	Masternodes     []common.Address
-	PenaltyLen      int
-	Penalty         []common.Address
-	StandbynodesLen int
-	Standbynodes    []common.Address
-	Error           error
+	Epoch            uint64
+	Number           uint64
+	Round            types.Round
+	TipUpgradeReward bool // whether the protector/observer tiers are active at this block
+	MasternodesLen   int
+	Masternodes      []common.Address
+	PenaltyLen       int
+	Penalty          []common.Address
+	ProtectorLen     int
+	Protector        []common.Address
+	ObserverLen      int
+	Observer         []common.Address
+	StandbynodesLen  int
+	Standbynodes     []common.Address
+	Error            error
 }
 
 type AccountEpochReward struct {
@@ -198,6 +209,13 @@ func (api *API) GetSignersAtHash(hash common.Hash) ([]common.Address, error) {
 	return api.XDPoS.GetAuthorisedSignersFromSnapshot(api.chain, header)
 }
 
+// GetMasternodesByNumber reports the node set at the given block: masternodes,
+// penalties and standby nodes. From the TIPUpgradeReward fork onwards it also splits
+// the standby pool into the protector and observer reward tiers (the standby list is
+// already stake-descending, so the split is just a slice).
+//
+// The tiering is snapshot/consensus-consistent, not reward-payout-identical: it
+// matches the epoch snapshot used here, whereas the reward hook reads live state.
 func (api *API) GetMasternodesByNumber(number *rpc.BlockNumber) MasternodesStatus {
 	var header *types.Header
 	if number == nil || *number == rpc.LatestBlockNumber {
@@ -238,16 +256,33 @@ func (api *API) GetMasternodesByNumber(number *rpc.BlockNumber) MasternodesStatu
 	standbynodes := api.XDPoS.EngineV2.GetStandbynodes(api.chain, header)
 
 	info := MasternodesStatus{
-		Epoch:           epochNum,
-		Number:          header.Number.Uint64(),
-		Round:           round,
-		MasternodesLen:  len(masterNodes),
-		Masternodes:     masterNodes,
-		PenaltyLen:      len(penalties),
-		Penalty:         penalties,
-		StandbynodesLen: len(standbynodes),
-		Standbynodes:    standbynodes,
+		Epoch:            epochNum,
+		Number:           header.Number.Uint64(),
+		Round:            round,
+		TipUpgradeReward: api.chain.Config().IsTIPUpgradeReward(header.Number),
+		MasternodesLen:   len(masterNodes),
+		Masternodes:      masterNodes,
+		PenaltyLen:       len(penalties),
+		Penalty:          penalties,
 	}
+
+	// Before the reward upgrade there are no tiers; the whole standby pool stays standby.
+	if !info.TipUpgradeReward {
+		info.Standbynodes = standbynodes
+		info.StandbynodesLen = len(standbynodes)
+		return info
+	}
+
+	cfg := api.XDPoS.config.V2.Config(uint64(round))
+	protectorEnd := min(cfg.MaxProtectorNodes, len(standbynodes))
+	observerEnd := min(protectorEnd+cfg.MaxObverserNodes, len(standbynodes))
+
+	info.Protector = standbynodes[:protectorEnd]
+	info.ProtectorLen = len(info.Protector)
+	info.Observer = standbynodes[protectorEnd:observerEnd]
+	info.ObserverLen = len(info.Observer)
+	info.Standbynodes = standbynodes[observerEnd:]
+	info.StandbynodesLen = len(info.Standbynodes)
 	return info
 }
 
