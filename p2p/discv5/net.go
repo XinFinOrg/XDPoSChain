@@ -1036,6 +1036,11 @@ func (net *Network) handle(n *Node, ev nodeEvent, pkt *ingressPacket) error {
 			net.db.ensureExpirer()
 		}
 	}
+	if ev == pongTimeout {
+		// Clean up after pong timeout.
+		n.pingEcho = nil
+		n.pingTopics = nil
+	}
 	if n.state == nil {
 		n.state = unknown //???
 	}
