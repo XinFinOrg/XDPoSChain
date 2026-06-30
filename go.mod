@@ -39,6 +39,7 @@ require (
 	github.com/deckarep/golang-set/v2 v2.7.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1
 	github.com/dop251/goja v0.0.0-20230605162241-28ee0ee714f3
+	github.com/ethereum/hid v1.0.1-0.20260421154323-c2ab8d9bf68a
 	github.com/fsnotify/fsnotify v1.8.0
 	github.com/gballet/go-libpcsclite v0.0.0-20191108122812-4678299bea08
 	github.com/go-yaml/yaml v2.1.0+incompatible
@@ -50,7 +51,6 @@ require (
 	github.com/hashicorp/golang-lru v1.0.2
 	github.com/influxdata/influxdb-client-go/v2 v2.4.0
 	github.com/influxdata/influxdb1-client v0.0.0-20220302092344-a9ab5670611c
-	github.com/karalabe/hid v1.0.1-0.20240306101548-573246063e52
 	github.com/kylelemons/godebug v1.1.0
 	github.com/mattn/go-isatty v0.0.17
 	github.com/protolambda/bls12-381-util v0.0.0-20220416220906-d8552aa452c7
