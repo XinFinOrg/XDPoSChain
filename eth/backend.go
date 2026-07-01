@@ -384,6 +384,13 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 		hooks.AttachConsensusV1Hooks(c, eth.blockchain, chainConfig)
 		hooks.AttachConsensusV2Hooks(c, eth.blockchain, chainConfig)
 
+		// Let the consensus engine know when the node is downloading the chain,
+		// so it can downgrade otherwise-noisy "missing snapshot" logs to Debug
+		// during sync and only Warn when it happens at a synced head.
+		c.EngineV2.HookSyncing = func() bool {
+			return eth.Downloader().Synchronising()
+		}
+
 		isSigner := func(address common.Address) bool {
 			// During sync the head snapshot isn't built yet, so IsAuthorisedAddress
 			// would fail and spam "[IsAuthorisedAddress] Can't get snapshot". The

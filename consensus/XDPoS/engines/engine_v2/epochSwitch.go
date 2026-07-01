@@ -73,7 +73,14 @@ func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, headers []*ty
 		standbynodes := []common.Address{}
 		snap, err := x.getSnapshot(chain, h.Number.Uint64(), false)
 		if err != nil {
-			log.Debug("[getEpochSwitchInfo] Adaptor v2 getSnapshot has error, cannot get standbynodes, most probably in fast syncing", "err", err)
+			// While syncing, snapshots for old blocks may not be built yet, so
+			// standbynodes can't be derived — expected and benign, log at Debug.
+			// At a synced head a missing snapshot is unexpected, so Warn instead.
+			if x.HookSyncing != nil && x.HookSyncing() {
+				log.Debug("[getEpochSwitchInfo] getSnapshot has error, cannot get standbynodes, fast syncing", "err", err)
+			} else {
+				log.Warn("[getEpochSwitchInfo] getSnapshot has error, cannot get standbynodes", "err", err)
+			}
 		} else {
 			candidates := snap.NextEpochCandidates
 			if len(masternodes) != len(candidates) {
