@@ -132,15 +132,6 @@ var (
 			MinePeriod:           2,
 			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
 		},
-		15000000: {
-			MaxMasternodes:       108,
-			SwitchRound:          15000000,
-			CertThreshold:        0.667,
-			TimeoutSyncThreshold: 3,
-			TimeoutPeriod:        10,
-			MinePeriod:           2,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
-		},
 		27360000: {
 			MaxMasternodes:            25,
 			MaxProtectorNodes:         3,
