@@ -84,17 +84,17 @@ type MasternodesStatus struct {
 	Epoch            uint64
 	Number           uint64
 	Round            types.Round
-	TipUpgradeReward bool // whether the protector/observer tiers are active at this block
+	tipUpgradeReward bool // whether the protector/observer tiers are active at this block
 	MasternodesLen   int
 	Masternodes      []common.Address
 	PenaltyLen       int
 	Penalty          []common.Address
-	ProtectorLen     int
-	Protector        []common.Address
-	ObserverLen      int
-	Observer         []common.Address
-	StandbynodesLen  int
-	Standbynodes     []common.Address
+	ProtectorLen     int              `json:",omitempty"`
+	Protectornodes   []common.Address `json:",omitempty"`
+	ObserverLen      int              `json:",omitempty"`
+	Observernodes    []common.Address `json:",omitempty"`
+	StandbynodesLen  int              `json:",omitempty"`
+	Standbynodes     []common.Address `json:",omitempty"`
 	Error            error
 }
 
@@ -253,37 +253,52 @@ func (api *API) GetMasternodesByNumber(number *rpc.BlockNumber) MasternodesStatu
 	epochNum := api.XDPoS.config.V2.SwitchEpoch + uint64(round)/api.XDPoS.config.Epoch
 	masterNodes := api.XDPoS.EngineV2.GetMasternodes(api.chain, header)
 	penalties := api.XDPoS.EngineV2.GetPenalties(api.chain, header)
-	standbynodes := api.XDPoS.EngineV2.GetStandbynodes(api.chain, header)
+	standbyPool := api.XDPoS.EngineV2.GetStandbynodes(api.chain, header)
 
 	info := MasternodesStatus{
 		Epoch:            epochNum,
 		Number:           header.Number.Uint64(),
 		Round:            round,
-		TipUpgradeReward: api.chain.Config().IsTIPUpgradeReward(header.Number),
+		tipUpgradeReward: api.chain.Config().IsTIPUpgradeReward(header.Number),
 		MasternodesLen:   len(masterNodes),
 		Masternodes:      masterNodes,
 		PenaltyLen:       len(penalties),
 		Penalty:          penalties,
 	}
 
-	// Before the reward upgrade there are no tiers; the whole standby pool stays standby.
-	if !info.TipUpgradeReward {
-		info.Standbynodes = standbynodes
-		info.StandbynodesLen = len(standbynodes)
+	// Before the reward upgrade there are no tiers; the whole standby pool stays
+	// standby (the caps are ignored in that case, so any value is fine here).
+	if !info.tipUpgradeReward {
+		info.splitStandbyPool(standbyPool, 0, 0)
 		return info
 	}
 
 	cfg := api.XDPoS.config.V2.Config(uint64(round))
-	protectorEnd := min(cfg.MaxProtectorNodes, len(standbynodes))
-	observerEnd := min(protectorEnd+cfg.MaxObverserNodes, len(standbynodes))
-
-	info.Protector = standbynodes[:protectorEnd]
-	info.ProtectorLen = len(info.Protector)
-	info.Observer = standbynodes[protectorEnd:observerEnd]
-	info.ObserverLen = len(info.Observer)
-	info.Standbynodes = standbynodes[observerEnd:]
-	info.StandbynodesLen = len(info.Standbynodes)
+	info.splitStandbyPool(standbyPool, cfg.MaxProtectorNodes, cfg.MaxObverserNodes)
 	return info
+}
+
+// splitStandbyPool partitions the stake-descending standby pool into the reward
+// tiers. Before the TIPUpgradeReward fork the whole pool stays standby; from the
+// fork onwards the protector and observer tiers take the top maxProtector and
+// maxObserver candidates respectively, and any remainder stays standby. The three
+// tiers always concatenate back to the full pool, so the totals reconcile.
+func (info *MasternodesStatus) splitStandbyPool(standbyPool []common.Address, maxProtector, maxObserver int) {
+	if !info.tipUpgradeReward {
+		info.Standbynodes = standbyPool
+		info.StandbynodesLen = len(standbyPool)
+		return
+	}
+
+	protectorEnd := min(maxProtector, len(standbyPool))
+	observerEnd := min(protectorEnd+maxObserver, len(standbyPool))
+
+	info.Protectornodes = standbyPool[:protectorEnd]
+	info.ProtectorLen = len(info.Protectornodes)
+	info.Observernodes = standbyPool[protectorEnd:observerEnd]
+	info.ObserverLen = len(info.Observernodes)
+	info.Standbynodes = standbyPool[observerEnd:]
+	info.StandbynodesLen = len(info.Standbynodes)
 }
 
 // Get current vote pool and timeout pool content and missing messages
