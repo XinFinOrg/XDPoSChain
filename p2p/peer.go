@@ -127,7 +127,7 @@ func NewPeer(id enode.ID, name string, caps []Cap) *Peer {
 	pipe, _ := net.Pipe()
 	node := enode.SignNull(new(enr.Record), id)
 	conn := &conn{fd: pipe, transport: nil, node: node, caps: caps, name: name}
-	peer := newPeer(conn, nil)
+	peer := newPeer(log.Root(), conn, nil)
 	close(peer.closed) // ensures Disconnect doesn't block
 	return peer
 }
@@ -183,7 +183,7 @@ func (p *Peer) Inbound() bool {
 	return p.rw.is(inboundConn)
 }
 
-func newPeer(conn *conn, protocols []Protocol) *Peer {
+func newPeer(log log.Logger, conn *conn, protocols []Protocol) *Peer {
 	protomap := matchProtocols(protocols, conn.caps, conn)
 	p := &Peer{
 		rw:       conn,
@@ -338,7 +338,9 @@ func (p *Peer) handle(msg Msg) error {
 			return fmt.Errorf("msg code out of range: %v", msg.Code)
 		}
 		if metrics.Enabled() {
-			metrics.GetOrRegisterMeter(fmt.Sprintf("%s/%s/%d/%#02x", MetricsInboundTraffic, proto.Name, proto.Version, msg.Code-proto.offset), nil).Mark(int64(msg.meterSize))
+			m := fmt.Sprintf("%s/%s/%d/%#02x", ingressMeterName, proto.Name, proto.Version, msg.Code-proto.offset)
+			metrics.GetOrRegisterMeter(m, nil).Mark(int64(msg.meterSize))
+			metrics.GetOrRegisterMeter(m+"/packets", nil).Mark(1)
 		}
 		select {
 		case proto.in <- msg:
@@ -439,6 +441,7 @@ func (rw *protoRW) WriteMsg(msg Msg) (err error) {
 	msg.meterCode = msg.Code
 
 	msg.Code += rw.offset
+
 	select {
 	case <-rw.wstart:
 		err = rw.w.WriteMsg(msg)
@@ -467,10 +470,11 @@ func (rw *protoRW) ReadMsg() (Msg, error) {
 // peer. Sub-protocol independent fields are contained and initialized here, with
 // protocol specifics delegated to all connected sub-protocols.
 type PeerInfo struct {
-	Enode   string   `json:"enode"` // Node URL
-	ID      string   `json:"id"`    // Unique node identifier
-	Name    string   `json:"name"`  // Name of the node, including client type, version, OS, custom data
-	Caps    []string `json:"caps"`  // Protocols advertised by this peer
+	ENR     string   `json:"enr,omitempty"` // Ethereum Node Record
+	Enode   string   `json:"enode"`         // Node URL
+	ID      string   `json:"id"`            // Unique node identifier
+	Name    string   `json:"name"`          // Name of the node, including client type, version, OS, custom data
+	Caps    []string `json:"caps"`          // Protocols advertised by this peer
 	Network struct {
 		LocalAddress  string `json:"localAddress"`  // Local endpoint of the TCP data connection
 		RemoteAddress string `json:"remoteAddress"` // Remote endpoint of the TCP data connection
@@ -490,11 +494,14 @@ func (p *Peer) Info() *PeerInfo {
 	}
 	// Assemble the generic peer metadata
 	info := &PeerInfo{
-		Enode:     p.Node().String(),
+		Enode:     p.Node().URLv4(),
 		ID:        p.ID().String(),
 		Name:      p.Name(),
 		Caps:      caps,
 		Protocols: make(map[string]interface{}),
+	}
+	if p.Node().Seq() > 0 {
+		info.ENR = p.Node().String()
 	}
 	info.Network.LocalAddress = p.LocalAddr().String()
 	info.Network.RemoteAddress = p.RemoteAddr().String()

@@ -1,10 +1,23 @@
-// Copyright 2026 XDC Network
+// Copyright 2019 The go-ethereum Authors
+// This file is part of go-ethereum.
+//
+// go-ethereum is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// go-ethereum is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with go-ethereum. If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
 import (
 	"bufio"
-	"crypto/ecdsa"
 	"errors"
 	"fmt"
 	"net"
@@ -13,51 +26,94 @@ import (
 	"sync"
 	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/p2p/discover"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/urfave/cli/v2"
 )
 
 var (
 	discv4Command = &cli.Command{
 		Name:  "discv4",
-		Usage: "Node Discovery v4 tools (XDC pingXDC variant)",
+		Usage: "Node Discovery v4 tools",
 		Subcommands: []*cli.Command{
 			discv4PingCommand,
 			discv4CheckCommand,
+			discv4RequestRecordCommand,
+			discv4ResolveCommand,
+			discv4ResolveJSONCommand,
+			discv4CrawlCommand,
 		},
 	}
-
 	discv4PingCommand = &cli.Command{
 		Name:      "ping",
-		Usage:     "Sends a discv4 ping and waits for pong",
+		Usage:     "Sends ping to a node",
 		Action:    discv4Ping,
-		ArgsUsage: "<enode>",
-		Flags:     discoveryFlags,
+		ArgsUsage: "<node>",
+		Flags:     discoveryPingFlags,
 	}
-
 	discv4CheckCommand = &cli.Command{
 		Name:      "check",
 		Usage:     "Ping every enode listed in a file and report UDP reachability",
 		Action:    discv4Check,
 		ArgsUsage: "<nodes-file>",
-		Flags:     append(discoveryFlags, checkParallelFlag, checkOutputFlag),
+		Flags:     append(discoveryPingFlags, checkParallelFlag, checkOutputFlag),
+	}
+	discv4RequestRecordCommand = &cli.Command{
+		Name:      "requestenr",
+		Usage:     "Requests a node record using EIP-868 enrRequest",
+		Action:    discv4RequestRecord,
+		ArgsUsage: "<node>",
+		Flags:     discoveryNodeFlags,
+	}
+	discv4ResolveCommand = &cli.Command{
+		Name:      "resolve",
+		Usage:     "Finds a node in the DHT",
+		Action:    discv4Resolve,
+		ArgsUsage: "<node>",
+		Flags:     discoveryNodeFlags,
+	}
+	discv4ResolveJSONCommand = &cli.Command{
+		Name:      "resolve-json",
+		Usage:     "Re-resolves nodes in a nodes.json file",
+		Action:    discv4ResolveJSON,
+		Flags:     discoveryNodeFlags,
+		ArgsUsage: "<nodes.json file>",
+	}
+	discv4CrawlCommand = &cli.Command{
+		Name:   "crawl",
+		Usage:  "Updates a nodes.json file with random nodes found in the DHT",
+		Action: discv4Crawl,
+		Flags:  []cli.Flag{bootnodesFlag, crawlTimeoutFlag},
 	}
 )
 
 var (
-	listenAddrFlag = &cli.StringFlag{
-		Name:  "addr",
-		Usage: "Local UDP listen address",
-		Value: "0.0.0.0:0",
+	bootnodesFlag = &cli.StringFlag{
+		Name:  "bootnodes",
+		Usage: "Comma separated nodes used for bootstrapping",
 	}
 	nodekeyFlag = &cli.StringFlag{
 		Name:  "nodekey",
-		Usage: "Hex-encoded node private key (generated if unset)",
+		Usage: "Hex-encoded node key",
 	}
-	timeoutFlag = &cli.DurationFlag{
+	nodedbFlag = &cli.StringFlag{
+		Name:  "nodedb",
+		Usage: "Nodes database location",
+	}
+	listenAddrFlag = &cli.StringFlag{
+		Name:  "addr",
+		Usage: "Listening address",
+	}
+	crawlTimeoutFlag = &cli.DurationFlag{
 		Name:  "timeout",
+		Usage: "Time limit for the crawl.",
+		Value: 30 * time.Minute,
+	}
+	pingTimeoutFlag = &cli.DurationFlag{
+		Name:  "ping-timeout",
 		Usage: "Total time to wait for a pong reply",
 		Value: 3 * time.Second,
 	}
@@ -72,25 +128,25 @@ var (
 	}
 )
 
-var discoveryFlags = []cli.Flag{
+var discoveryNodeFlags = []cli.Flag{
+	bootnodesFlag,
+}
+
+var discoveryPingFlags = []cli.Flag{
+	bootnodesFlag,
 	listenAddrFlag,
 	nodekeyFlag,
-	timeoutFlag,
+	pingTimeoutFlag,
 }
 
 func discv4Ping(ctx *cli.Context) error {
-	n, err := parseNodeArg(ctx)
-	if err != nil {
-		return err
-	}
-	tab, cleanup, err := startDiscovery(ctx)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
+	n := getNodeArg(ctx)
+	disc := startV4(ctx)
+	defer disc.Close()
 
 	start := time.Now()
-	rtt, err := pingUntil(tab, n, ctx.Duration(timeoutFlag.Name))
+	timeout := ctx.Duration(pingTimeoutFlag.Name)
+	rtt, err := pingUntil(disc, n, timeout)
 	if err != nil {
 		return fmt.Errorf("%s did not respond: %v", nodeEndpoint(n), err)
 	}
@@ -110,7 +166,7 @@ func discv4Check(ctx *cli.Context) error {
 		return errors.New("nodes file is empty")
 	}
 
-	timeout := ctx.Duration(timeoutFlag.Name)
+	timeout := ctx.Duration(pingTimeoutFlag.Name)
 	parallel := ctx.Int(checkParallelFlag.Name)
 	if parallel < 1 {
 		return errors.New("parallel must be at least 1")
@@ -125,22 +181,13 @@ func discv4Check(ctx *cli.Context) error {
 		line  string
 	}
 
-	tabs := make([]*discover.Table, parallel)
-	cleanups := make([]func(), parallel)
+	discs := make([]*discover.UDPv4, parallel)
 	for i := 0; i < parallel; i++ {
-		tab, cleanup, err := startDiscovery(ctx)
-		if err != nil {
-			for j := 0; j < i; j++ {
-				cleanups[j]()
-			}
-			return err
-		}
-		tabs[i] = tab
-		cleanups[i] = cleanup
+		discs[i] = startV4(ctx)
 	}
 	defer func() {
-		for _, cleanup := range cleanups {
-			cleanup()
+		for _, disc := range discs {
+			disc.Close()
 		}
 	}()
 
@@ -148,11 +195,11 @@ func discv4Check(ctx *cli.Context) error {
 	results := make([]result, len(nodes))
 	var wg sync.WaitGroup
 
-	worker := func(tab *discover.Table) {
+	worker := func(disc *discover.UDPv4) {
 		defer wg.Done()
 		for j := range jobs {
 			start := time.Now()
-			rtt, pingErr := pingUntil(tab, j.node, timeout)
+			rtt, pingErr := pingUntil(disc, j.node, timeout)
 			elapsed := time.Since(start)
 			if pingErr != nil {
 				results[j.index] = result{j.index, formatCheckLine(j.index+1, j.node, "UDP_TIMEOUT", elapsed, pingErr)}
@@ -164,7 +211,7 @@ func discv4Check(ctx *cli.Context) error {
 
 	for i := 0; i < parallel; i++ {
 		wg.Add(1)
-		go worker(tabs[i])
+		go worker(discs[i])
 	}
 	for i, n := range nodes {
 		jobs <- job{index: i, node: n}
@@ -172,7 +219,7 @@ func discv4Check(ctx *cli.Context) error {
 	close(jobs)
 	wg.Wait()
 
-	var out *os.File = os.Stdout
+	out := os.Stdout
 	if path := ctx.String(checkOutputFlag.Name); path != "" {
 		f, err := os.Create(path)
 		if err != nil {
@@ -198,48 +245,75 @@ func discv4Check(ctx *cli.Context) error {
 	return nil
 }
 
-func startDiscovery(ctx *cli.Context) (*discover.Table, func(), error) {
-	key, err := discoveryPrivateKey(ctx)
+func discv4RequestRecord(ctx *cli.Context) error {
+	n := getNodeArg(ctx)
+	disc := startV4(ctx)
+	defer disc.Close()
+
+	respN, err := disc.RequestENR(n)
 	if err != nil {
-		return nil, nil, err
+		return fmt.Errorf("can't retrieve record: %v", err)
 	}
-	conn, err := net.ListenPacket("udp4", ctx.String(listenAddrFlag.Name))
-	if err != nil {
-		return nil, nil, err
-	}
-	udpConn := conn.(*net.UDPConn)
-	db, err := enode.OpenDB("")
-	if err != nil {
-		conn.Close()
-		return nil, nil, err
-	}
-	ln := enode.NewLocalNode(db, key)
-	tab, err := discover.ListenUDP(udpConn, ln, discover.Config{PrivateKey: key})
-	if err != nil {
-		conn.Close()
-		db.Close()
-		return nil, nil, err
-	}
-	cleanup := func() {
-		tab.Close()
-		conn.Close()
-		db.Close()
-	}
-	return tab, cleanup, nil
+	fmt.Println(respN.String())
+	return nil
 }
 
-func discoveryPrivateKey(ctx *cli.Context) (*ecdsa.PrivateKey, error) {
-	if ctx.IsSet(nodekeyFlag.Name) {
-		return crypto.HexToECDSA(ctx.String(nodekeyFlag.Name))
-	}
-	return crypto.GenerateKey()
+func discv4Resolve(ctx *cli.Context) error {
+	n := getNodeArg(ctx)
+	disc := startV4(ctx)
+	defer disc.Close()
+
+	fmt.Println(disc.Resolve(n).String())
+	return nil
 }
 
-func parseNodeArg(ctx *cli.Context) (*enode.Node, error) {
+func discv4ResolveJSON(ctx *cli.Context) error {
 	if ctx.NArg() < 1 {
-		return nil, errors.New("missing node as command-line argument")
+		return fmt.Errorf("need nodes file as argument")
 	}
-	return enode.ParseV4(ctx.Args().First())
+	nodesFile := ctx.Args().Get(0)
+	inputSet := make(nodeSet)
+	if common.FileExist(nodesFile) {
+		inputSet = loadNodesJSON(nodesFile)
+	}
+
+	// Add extra nodes from command line arguments.
+	var nodeargs []*enode.Node
+	for i := 1; i < ctx.NArg(); i++ {
+		n, err := parseNode(ctx.Args().Get(i))
+		if err != nil {
+			exit(err)
+		}
+		nodeargs = append(nodeargs, n)
+	}
+
+	// Run the crawler.
+	disc := startV4(ctx)
+	defer disc.Close()
+	c := newCrawler(inputSet, disc, enode.IterNodes(nodeargs))
+	c.revalidateInterval = 0
+	output := c.run(0)
+	writeNodesJSON(nodesFile, output)
+	return nil
+}
+
+func discv4Crawl(ctx *cli.Context) error {
+	if ctx.NArg() < 1 {
+		return fmt.Errorf("need nodes file as argument")
+	}
+	nodesFile := ctx.Args().First()
+	var inputSet nodeSet
+	if common.FileExist(nodesFile) {
+		inputSet = loadNodesJSON(nodesFile)
+	}
+
+	disc := startV4(ctx)
+	defer disc.Close()
+	c := newCrawler(inputSet, disc, disc.RandomNodes())
+	c.revalidateInterval = 10 * time.Minute
+	output := c.run(ctx.Duration(crawlTimeoutFlag.Name))
+	writeNodesJSON(nodesFile, output)
+	return nil
 }
 
 func loadNodeFile(path string) ([]*enode.Node, error) {
@@ -270,12 +344,12 @@ func loadNodeFile(path string) ([]*enode.Node, error) {
 	return nodes, nil
 }
 
-func pingUntil(tab *discover.Table, n *enode.Node, timeout time.Duration) (time.Duration, error) {
+func pingUntil(disc *discover.UDPv4, n *enode.Node, timeout time.Duration) (time.Duration, error) {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
 		start := time.Now()
-		err := tab.Ping(n)
+		err := disc.Ping(n)
 		if err == nil {
 			return time.Since(start), nil
 		}
@@ -306,4 +380,80 @@ func formatCheckLine(index int, n *enode.Node, status string, elapsed time.Durat
 		msg = err.Error()
 	}
 	return fmt.Sprintf("%02d|%s|%s|%s|%s", index, nodeEndpoint(n), status, elapsed.Round(time.Millisecond), msg)
+}
+
+// startV4 starts an ephemeral discovery V4 node.
+func startV4(ctx *cli.Context) *discover.UDPv4 {
+	ln, config := makeDiscoveryConfig(ctx)
+	socket := listen(ln, ctx.String(listenAddrFlag.Name))
+	disc, err := discover.ListenV4(socket, ln, config)
+	if err != nil {
+		exit(err)
+	}
+	return disc
+}
+
+func makeDiscoveryConfig(ctx *cli.Context) (*enode.LocalNode, discover.Config) {
+	var cfg discover.Config
+
+	if ctx.IsSet(nodekeyFlag.Name) {
+		key, err := crypto.HexToECDSA(ctx.String(nodekeyFlag.Name))
+		if err != nil {
+			exit(fmt.Errorf("-%s: %v", nodekeyFlag.Name, err))
+		}
+		cfg.PrivateKey = key
+	} else {
+		cfg.PrivateKey, _ = crypto.GenerateKey()
+	}
+
+	if commandHasFlag(ctx, bootnodesFlag) {
+		bn, err := parseBootnodes(ctx)
+		if err != nil {
+			exit(err)
+		}
+		cfg.Bootnodes = bn
+	}
+
+	dbpath := ctx.String(nodedbFlag.Name)
+	db, err := enode.OpenDB(dbpath)
+	if err != nil {
+		exit(err)
+	}
+	ln := enode.NewLocalNode(db, cfg.PrivateKey)
+	return ln, cfg
+}
+
+func listen(ln *enode.LocalNode, addr string) *net.UDPConn {
+	if addr == "" {
+		addr = "0.0.0.0:0"
+	}
+	socket, err := net.ListenPacket("udp4", addr)
+	if err != nil {
+		exit(err)
+	}
+	usocket := socket.(*net.UDPConn)
+	uaddr := socket.LocalAddr().(*net.UDPAddr)
+	ln.SetFallbackIP(net.IP{127, 0, 0, 1})
+	ln.SetFallbackUDP(uaddr.Port)
+	return usocket
+}
+
+func parseBootnodes(ctx *cli.Context) ([]*enode.Node, error) {
+	s := params.MainnetBootnodes
+	if ctx.IsSet(bootnodesFlag.Name) {
+		input := ctx.String(bootnodesFlag.Name)
+		if input == "" {
+			return nil, nil
+		}
+		s = strings.Split(input, ",")
+	}
+	nodes := make([]*enode.Node, len(s))
+	var err error
+	for i, record := range s {
+		nodes[i], err = parseNode(record)
+		if err != nil {
+			return nil, fmt.Errorf("invalid bootstrap node: %v", err)
+		}
+	}
+	return nodes, nil
 }

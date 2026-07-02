@@ -25,21 +25,26 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/metrics"
 )
 
-var (
-	MetricsInboundTraffic  = "p2p/ingress" // Name for the registered inbound traffic meter
-	MetricsOutboundTraffic = "p2p/egress"  // Name for the registered outbound traffic meter
-	ingressTrafficMeter    = metrics.NewRegisteredMeter("p2p/InboundTraffic", nil)
-	egressTrafficMeter     = metrics.NewRegisteredMeter("p2p/OutboundTraffic", nil)
+const (
+	// ingressMeterName is the prefix of the per-packet inbound metrics.
+	ingressMeterName = "p2p/ingress"
+
+	// egressMeterName is the prefix of the per-packet outbound metrics.
+	egressMeterName = "p2p/egress"
 )
 
 var (
 	activePeerGauge = metrics.NewRegisteredGauge("p2p/peers", nil)
 
+	ingressTrafficMeter = metrics.NewRegisteredMeter("p2p/ingress", nil)
+	egressTrafficMeter  = metrics.NewRegisteredMeter("p2p/egress", nil)
+
+	// general ingress/egress connection meters
 	serveMeter          = metrics.NewRegisteredMeter("p2p/serves", nil)
 	serveSuccessMeter   = metrics.NewRegisteredMeter("p2p/serves/success", nil)
 	dialMeter           = metrics.NewRegisteredMeter("p2p/dials", nil)
 	dialSuccessMeter    = metrics.NewRegisteredMeter("p2p/dials/success", nil)
-	dialConnectionError = metrics.NewRegisteredMeter("p2p/dials/error/connection", nil)
+	dialConnectionError = metrics.NewRegisteredMeter("p2p/dials/error/connection", nil) // dial timeout; no route to host; connection refused; network is unreachable
 
 	// handshake error meters
 	dialTooManyPeers        = metrics.NewRegisteredMeter("p2p/dials/error/saturated", nil)
