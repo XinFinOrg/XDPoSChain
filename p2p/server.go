@@ -777,11 +777,7 @@ running:
 			if err == nil {
 				// The handshakes are done and it passed all checks.
 				p := srv.launchPeer(c)
-				if peers[c.node.ID()] != nil {
-					peers[c.node.ID()].SetPairPeer(p)
-				} else {
-					peers[c.node.ID()] = p
-				}
+				peers[c.node.ID()] = p
 				srv.log.Debug("Adding p2p peer", "peercount", len(peers), "id", p.ID(), "conn", c.flags, "addr", p.RemoteAddr(), "name", truncateName(c.name))
 				srv.dialsched.peerAdded(c)
 				if p.Inbound() {
@@ -837,11 +833,7 @@ func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount in
 	case !c.is(trustedConn) && c.is(inboundConn) && inboundCount >= srv.maxInboundConns():
 		return DiscTooManyPeers
 	case peers[c.node.ID()] != nil:
-		existingPeer := peers[c.node.ID()]
-		if existingPeer.PairPeer() != nil {
-			return DiscAlreadyConnected
-		}
-		return nil
+		return DiscAlreadyConnected
 	case c.node.ID() == srv.localnode.ID():
 		return DiscSelf
 	default:

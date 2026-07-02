@@ -297,6 +297,31 @@ func TestServerAtCap(t *testing.T) {
 		t.Error("Server did not set trusted flag")
 	}
 }
+
+func TestPostHandshakeChecksRejectsDuplicateNodeID(t *testing.T) {
+	id := randomID()
+	srv := &Server{Config: Config{MaxPeers: 10}}
+	peers := map[enode.ID]*Peer{id: {}}
+
+	tests := []struct {
+		name  string
+		flags connFlag
+	}{
+		{name: "inbound", flags: inboundConn},
+		{name: "trusted inbound", flags: inboundConn | trustedConn},
+		{name: "dialed", flags: dynDialedConn},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &conn{node: newNode(id, ""), flags: tc.flags}
+			if err := srv.postHandshakeChecks(peers, 0, c); err != DiscAlreadyConnected {
+				t.Fatalf("unexpected error: got %v want %v", err, DiscAlreadyConnected)
+			}
+		})
+	}
+}
+
 func TestServerPeerLimits(t *testing.T) {
 	srvkey := newkey()
 	clientkey := newkey()

@@ -351,41 +351,38 @@ func (pm *ProtocolManager) handle(p *peer) error {
 		rw.Init(p.version)
 	}
 	// Register the peer locally
-	err := pm.peers.Register(p)
-	if err != nil && err != p2p.ErrAddPairPeer {
+	if err := pm.peers.Register(p); err != nil {
 		p.Log().Error("Ethereum peer registration failed", "err", err)
 		return err
 	}
 	defer pm.removePeer(p.id)
-	if err != p2p.ErrAddPairPeer {
-		// Register the peer in the downloader. If the downloader considers it banned, we disconnect
-		if err := pm.downloader.RegisterPeer(p.id, p.version, p); err != nil {
+	// Register the peer in the downloader. If the downloader considers it banned, we disconnect
+	if err := pm.downloader.RegisterPeer(p.id, p.version, p); err != nil {
+		return err
+	}
+	p.Log().Info("Register peer", "nodeid", p.ID().String(), "version", p.version, "addr", p.RemoteAddr())
+	// Propagate existing transactions. new transactions appearing
+	// after this will be sent via broadcasts.
+	pm.syncTransactions(p)
+
+	// If we're DAO hard-fork aware, validate any remote peer with regard to the hard-fork
+	if daoBlock := pm.blockchain.Config().DAOForkBlock; daoBlock != nil {
+		// Request the peer's DAO fork header for extra-data validation
+		if err := p.RequestHeadersByNumber(daoBlock.Uint64(), 1, 0, false); err != nil {
 			return err
 		}
-		p.Log().Info("Register peer", "nodeid", p.ID().String(), "version", p.version, "addr", p.RemoteAddr())
-		// Propagate existing transactions. new transactions appearing
-		// after this will be sent via broadcasts.
-		pm.syncTransactions(p)
-
-		// If we're DAO hard-fork aware, validate any remote peer with regard to the hard-fork
-		if daoBlock := pm.blockchain.Config().DAOForkBlock; daoBlock != nil {
-			// Request the peer's DAO fork header for extra-data validation
-			if err := p.RequestHeadersByNumber(daoBlock.Uint64(), 1, 0, false); err != nil {
-				return err
+		// Start a timer to disconnect if the peer doesn't reply in time
+		p.forkDrop = time.AfterFunc(daoChallengeTimeout, func() {
+			p.Log().Debug("Timed out DAO fork-check, dropping")
+			pm.removePeer(p.id)
+		})
+		// Make sure it's cleaned up if the peer dies off
+		defer func() {
+			if p.forkDrop != nil {
+				p.forkDrop.Stop()
+				p.forkDrop = nil
 			}
-			// Start a timer to disconnect if the peer doesn't reply in time
-			p.forkDrop = time.AfterFunc(daoChallengeTimeout, func() {
-				p.Log().Debug("Timed out DAO fork-check, dropping")
-				pm.removePeer(p.id)
-			})
-			// Make sure it's cleaned up if the peer dies off
-			defer func() {
-				if p.forkDrop != nil {
-					p.forkDrop.Stop()
-					p.forkDrop = nil
-				}
-			}()
-		}
+		}()
 	}
 	// main loop. handle incoming messages.
 	for {
