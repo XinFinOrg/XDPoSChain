@@ -258,6 +258,83 @@ func TestJsonNumberToBigInt(t *testing.T) {
 	}
 }
 
+// standbyAddrs returns n deterministic, distinct addresses standing in for a
+// stake-descending standby pool.
+func standbyAddrs(n int) []common.Address {
+	out := make([]common.Address, n)
+	for i := range out {
+		out[i][0] = byte(i + 1)
+	}
+	return out
+}
+
+// TestSplitStandbyPoolPreUpgrade asserts that before the TIPUpgradeReward fork the
+// whole standby pool is returned unsplit and no protector/observer tier is set,
+// regardless of the configured caps.
+func TestSplitStandbyPoolPreUpgrade(t *testing.T) {
+	pool := standbyAddrs(5)
+
+	info := MasternodesStatus{tipUpgradeReward: false}
+	info.splitStandbyPool(pool, 3, 1) // caps must be ignored pre-upgrade
+
+	assert.Equal(t, pool, info.Standbynodes)
+	assert.Equal(t, 5, info.StandbynodesLen)
+	assert.Nil(t, info.Protectornodes)
+	assert.Nil(t, info.Observernodes)
+	assert.Zero(t, info.ProtectorLen)
+	assert.Zero(t, info.ObserverLen)
+}
+
+// TestSplitStandbyPoolPostUpgrade asserts that from the TIPUpgradeReward fork the
+// standby pool is split deterministically according to the protector/observer caps,
+// clamped to the pool size, and that the three tiers always reconcile back to the
+// full pool.
+func TestSplitStandbyPoolPostUpgrade(t *testing.T) {
+	pool := standbyAddrs(10)
+
+	tests := []struct {
+		name          string
+		maxProtector  int
+		maxObserver   int
+		wantProtector int
+		wantObserver  int
+		wantStandby   int
+	}{
+		{"caps within pool", 3, 4, 3, 4, 3},
+		{"exact fit", 4, 6, 4, 6, 0},
+		{"only protector tier", 4, 0, 4, 0, 6},
+		{"zero caps keep all standby", 0, 0, 0, 0, 10},
+		{"protector cap exceeds pool", 20, 5, 10, 0, 0},
+		{"protector fills, observer overflows", 6, 20, 6, 4, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := MasternodesStatus{tipUpgradeReward: true}
+			info.splitStandbyPool(pool, tt.maxProtector, tt.maxObserver)
+
+			assert.Equal(t, tt.wantProtector, info.ProtectorLen)
+			assert.Equal(t, tt.wantObserver, info.ObserverLen)
+			assert.Equal(t, tt.wantStandby, info.StandbynodesLen)
+			assert.Len(t, info.Protectornodes, tt.wantProtector)
+			assert.Len(t, info.Observernodes, tt.wantObserver)
+			assert.Len(t, info.Standbynodes, tt.wantStandby)
+
+			// Deterministic order: protectors are the top slice, observers the
+			// next, standbys the remainder.
+			assert.Equal(t, pool[:tt.wantProtector], info.Protectornodes)
+			assert.Equal(t, pool[tt.wantProtector:tt.wantProtector+tt.wantObserver], info.Observernodes)
+
+			// Reconciliation: the tiers concatenate back to the full pool.
+			got := make([]common.Address, 0, len(pool))
+			got = append(got, info.Protectornodes...)
+			got = append(got, info.Observernodes...)
+			got = append(got, info.Standbynodes...)
+			assert.Equal(t, pool, got)
+		})
+	}
+}
+
 func TestAPIGetConfig(t *testing.T) {
 	chain := newConfigChainMockWithCurrent(1500)
 	api := &API{chain: chain}
