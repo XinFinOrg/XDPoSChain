@@ -171,6 +171,15 @@ func discv4Check(ctx *cli.Context) error {
 	if parallel < 1 {
 		return errors.New("parallel must be at least 1")
 	}
+	if parallel > 1 {
+		addr, err := net.ResolveUDPAddr("udp", ctx.String(listenAddrFlag.Name))
+		if err != nil {
+			return err
+		}
+		if addr.Port != 0 {
+			return errors.New("parallel > 1 requires --addr to use an ephemeral port (port 0)")
+		}
+	}
 
 	type job struct {
 		index int
@@ -232,7 +241,7 @@ func discv4Check(ctx *cli.Context) error {
 	var ok, fail int
 	for _, r := range results {
 		fmt.Fprintln(out, r.line)
-		if strings.Contains(r.line, "UDP_PONG") {
+		if strings.Contains(r.line, "|UDP_PONG|") {
 			ok++
 		} else {
 			fail++
@@ -427,15 +436,18 @@ func listen(ln *enode.LocalNode, addr string) *net.UDPConn {
 	if addr == "" {
 		addr = "0.0.0.0:0"
 	}
-	socket, err := net.ListenPacket("udp4", addr)
+	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		exit(err)
 	}
-	usocket := socket.(*net.UDPConn)
+	socket, err := net.ListenUDP("udp", udpAddr)
+	if err != nil {
+		exit(err)
+	}
 	uaddr := socket.LocalAddr().(*net.UDPAddr)
 	ln.SetFallbackIP(net.IP{127, 0, 0, 1})
 	ln.SetFallbackUDP(uaddr.Port)
-	return usocket
+	return socket
 }
 
 func parseBootnodes(ctx *cli.Context) ([]*enode.Node, error) {

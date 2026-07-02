@@ -48,6 +48,7 @@ var (
 	errClosed           = errors.New("socket closed")
 	errLowPort          = errors.New("low port")
 
+	// ErrTimeout is returned when a discovery RPC does not receive a reply in time.
 	ErrTimeout = errors.New("RPC timeout")
 	errTimeout = ErrTimeout
 )
