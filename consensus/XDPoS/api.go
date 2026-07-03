@@ -274,7 +274,7 @@ func (api *API) GetMasternodesByNumber(number *rpc.BlockNumber) MasternodesStatu
 	}
 
 	cfg := api.XDPoS.config.V2.Config(uint64(round))
-	info.splitStandbyPool(standbyPool, cfg.MaxProtectorNodes, cfg.MaxObverserNodes)
+	info.splitStandbyPool(standbyPool, cfg.MaxProtectorNodes, cfg.MaxObserverNodes)
 	return info
 }
 

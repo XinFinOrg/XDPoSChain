@@ -424,7 +424,7 @@ func newChainConfigWithV2ConfigsForTest() *params.ChainConfig {
 	defaultConfig := &params.V2Config{
 		MaxMasternodes:            18,
 		MaxProtectorNodes:         3,
-		MaxObverserNodes:          2,
+		MaxObserverNodes:          2,
 		SwitchRound:               0,
 		MinePeriod:                2,
 		TimeoutSyncThreshold:      3,

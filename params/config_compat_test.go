@@ -628,7 +628,7 @@ func TestV2ConsensusConfigEqualCoversConsensusFields(t *testing.T) {
 		{
 			name: "max observer nodes",
 			mutate: func(cfg *V2Config) {
-				cfg.MaxObverserNodes++
+				cfg.MaxObserverNodes++
 			},
 		},
 		{

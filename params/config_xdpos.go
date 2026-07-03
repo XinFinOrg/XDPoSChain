@@ -127,7 +127,7 @@ type V2 struct {
 type V2Config struct {
 	MaxMasternodes       int     `json:"maxMasternodes"`       // v2 max masternodes
 	MaxProtectorNodes    int     `json:"maxProtectorNodes"`    // v2 max ProtectorNodes
-	MaxObverserNodes     int     `json:"maxObserverNodes"`     // v2 max ObserverNodes
+	MaxObserverNodes     int     `json:"maxObserverNodes"`     // v2 max ObserverNodes
 	SwitchRound          uint64  `json:"switchRound"`          // v1 to v2 switch block number
 	MinePeriod           int     `json:"minePeriod"`           // Miner mine period to mine a block
 	TimeoutSyncThreshold int     `json:"timeoutSyncThreshold"` // send syncInfo after number of timeout
@@ -262,7 +262,7 @@ func (c *V2Config) cloneWithInferredFieldPresence() *V2Config {
 	}{
 		{"maxMasternodes", clone.MaxMasternodes},
 		{"maxProtectorNodes", clone.MaxProtectorNodes},
-		{"maxObserverNodes", clone.MaxObverserNodes},
+		{"maxObserverNodes", clone.MaxObserverNodes},
 		{"minePeriod", clone.MinePeriod},
 		{"timeoutSyncThreshold", clone.TimeoutSyncThreshold},
 		{"timeoutPeriod", clone.TimeoutPeriod},
@@ -468,7 +468,7 @@ func sameV2RuntimeConfig(a, b *V2Config) bool {
 	}
 	return a.MaxMasternodes == b.MaxMasternodes &&
 		a.MaxProtectorNodes == b.MaxProtectorNodes &&
-		a.MaxObverserNodes == b.MaxObverserNodes &&
+		a.MaxObserverNodes == b.MaxObserverNodes &&
 		a.SwitchRound == b.SwitchRound &&
 		a.MinePeriod == b.MinePeriod &&
 		a.TimeoutSyncThreshold == b.TimeoutSyncThreshold &&
@@ -590,7 +590,7 @@ func (c *V2Config) String() string {
 		return "V2Config: <nil>"
 	}
 
-	return fmt.Sprintf("V2Config{MaxMasternodes: %v, MaxProtectorNodes: %v, MaxObverserNodes: %v, SwitchRound: %v, MinePeriod: %v, TimeoutSyncThreshold: %v, TimeoutPeriod: %v, CertThreshold: %v, MasternodeReward: %v, ProtectorReward: %v, ObserverReward: %v, MinimumMinerBlockPerEpoch: %v, LimitPenaltyEpoch: %v, MinimumSigningTx: %v, %s}", c.MaxMasternodes, c.MaxProtectorNodes, c.MaxObverserNodes, c.SwitchRound, c.MinePeriod, c.TimeoutSyncThreshold, c.TimeoutPeriod, c.CertThreshold, c.MasternodeReward, c.ProtectorReward, c.ObserverReward, c.MinimumMinerBlockPerEpoch, c.LimitPenaltyEpoch, c.MinimumSigningTx, c.ExpTimeoutConfig.String())
+	return fmt.Sprintf("V2Config{MaxMasternodes: %v, MaxProtectorNodes: %v, MaxObserverNodes: %v, SwitchRound: %v, MinePeriod: %v, TimeoutSyncThreshold: %v, TimeoutPeriod: %v, CertThreshold: %v, MasternodeReward: %v, ProtectorReward: %v, ObserverReward: %v, MinimumMinerBlockPerEpoch: %v, LimitPenaltyEpoch: %v, MinimumSigningTx: %v, %s}", c.MaxMasternodes, c.MaxProtectorNodes, c.MaxObserverNodes, c.SwitchRound, c.MinePeriod, c.TimeoutSyncThreshold, c.TimeoutPeriod, c.CertThreshold, c.MasternodeReward, c.ProtectorReward, c.ObserverReward, c.MinimumMinerBlockPerEpoch, c.LimitPenaltyEpoch, c.MinimumSigningTx, c.ExpTimeoutConfig.String())
 }
 
 // Description returns a human-readable description of V2Config

@@ -753,7 +753,7 @@ func (c *V2Config) backfillMissingScalarFieldsFrom(src *V2Config) {
 	}{
 		{"maxMasternodes", &c.MaxMasternodes, src.MaxMasternodes},
 		{"maxProtectorNodes", &c.MaxProtectorNodes, src.MaxProtectorNodes},
-		{"maxObserverNodes", &c.MaxObverserNodes, src.MaxObverserNodes},
+		{"maxObserverNodes", &c.MaxObserverNodes, src.MaxObserverNodes},
 		{"minePeriod", &c.MinePeriod, src.MinePeriod},
 		{"timeoutSyncThreshold", &c.TimeoutSyncThreshold, src.TimeoutSyncThreshold},
 		{"timeoutPeriod", &c.TimeoutPeriod, src.TimeoutPeriod},

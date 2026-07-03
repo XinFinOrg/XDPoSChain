@@ -508,7 +508,7 @@ func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *type
 						}
 						if len(protector) < currentConfig.MaxProtectorNodes {
 							protector = append(protector, node.Address)
-						} else if len(observer) < currentConfig.MaxObverserNodes {
+						} else if len(observer) < currentConfig.MaxObserverNodes {
 							observer = append(observer, node.Address)
 						}
 					}

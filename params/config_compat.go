@@ -224,7 +224,7 @@ func v2ConsensusConfigSnapshot(cfg *V2Config) map[string]any {
 	return map[string]any{
 		"maxMasternodes":            cfg.MaxMasternodes,
 		"maxProtectorNodes":         cfg.MaxProtectorNodes,
-		"maxObverserNodes":          cfg.MaxObverserNodes,
+		"maxObserverNodes":          cfg.MaxObserverNodes,
 		"switchRound":               cfg.SwitchRound,
 		"minePeriod":                cfg.MinePeriod,
 		"certThreshold":             cfg.CertThreshold,
@@ -287,7 +287,7 @@ func v2ConsensusConfigEqual(a, b *V2Config) bool {
 	if a.MaxProtectorNodes != b.MaxProtectorNodes {
 		return false
 	}
-	if a.MaxObverserNodes != b.MaxObverserNodes {
+	if a.MaxObserverNodes != b.MaxObserverNodes {
 		return false
 	}
 	if a.SwitchRound != b.SwitchRound {
