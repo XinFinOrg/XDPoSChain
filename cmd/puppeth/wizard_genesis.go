@@ -66,6 +66,10 @@ func NewGenesisInput() *GenesisInput {
 }
 
 func (w *wizard) loadGenesisInput() *GenesisInput {
+	// No input file means interactive mode: return nil so makeGenesis prompts.
+	if w.conf.inpath == "" {
+		return nil
+	}
 	input := NewGenesisInput()
 	file, err := os.Open(w.conf.inpath)
 	if err != nil {
@@ -75,8 +79,7 @@ func (w *wizard) loadGenesisInput() *GenesisInput {
 	}
 	defer file.Close()
 
-	log.Warn("Decoding genesis input file", "path", w.conf.inpath)
-	log.Warn("File content", "file", file)
+	log.Info("Decoding genesis input file", "path", w.conf.inpath)
 	decoder := yaml.NewDecoder(file)
 	if err := decoder.Decode(&input); err != nil {
 		log.Warn("Failed to decode genesis input file (expect yaml format)", "err", err)
@@ -257,8 +260,10 @@ func (w *wizard) makeGenesis() {
 		fmt.Println()
 		// fmt.Println("How many Ethers should be rewarded to masternode each Epoch? (default = 10)")
 		fmt.Println("What should be the reward yield of Masternodes in APY% (default = 10)")
-		yield := input.RewardYield
-		if input == nil {
+		var yield uint64
+		if input != nil {
+			yield = input.RewardYield
+		} else {
 			yield = uint64(w.readDefaultInt(10))
 		}
 		if genesis.Config.XDPoS.Period > 0 && genesis.Config.XDPoS.Epoch > 0 {
