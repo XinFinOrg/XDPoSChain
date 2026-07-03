@@ -176,7 +176,7 @@ func discv4Check(ctx *cli.Context) error {
 		if addrStr == "" {
 			addrStr = "0.0.0.0:0"
 		}
-		addr, err := net.ResolveUDPAddr("udp", addrStr)
+		addr, err := net.ResolveUDPAddr("udp4", addrStr)
 		if err != nil {
 			return err
 		}
@@ -444,11 +444,11 @@ func listen(ln *enode.LocalNode, addr string) *net.UDPConn {
 	if addr == "" {
 		addr = "0.0.0.0:0"
 	}
-	udpAddr, err := net.ResolveUDPAddr("udp", addr)
+	udpAddr, err := net.ResolveUDPAddr("udp4", addr)
 	if err != nil {
 		exit(err)
 	}
-	socket, err := net.ListenUDP("udp", udpAddr)
+	socket, err := net.ListenUDP("udp4", udpAddr)
 	if err != nil {
 		exit(err)
 	}
