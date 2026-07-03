@@ -22,23 +22,13 @@ func TestMakeGenesisDeploysSystemContracts(t *testing.T) {
 
 	const inputYAML = `name: xdc-test
 chainid: 19420
-period: 2
 epoch: 900
-gap: 450
-timeoutperiod: 10
-timeoutsyncthreshold: 3
-v2switchblock: 0
-tiptrc21feeblock: 0
-gas50xblock: 0
-certthreshold: 0.667
 masternodesowner: "0xa4477b9b3dcfffb71db9e2aba579975ac756dade"
 masternodes:
   - "0x7e7d7b438abd152af3753bdc01512d2208305397"
   - "0xd3350aaba9e8468e263eb7d197d6805b20e2918f"
   - "0xdb6552adc538e39b4f2a58aea3cd365def1be89b"
 stakingthreshold: 10000000
-rewardyield: 10
-foundationwalletaddress: "0xd7a4209ec6952ca456407fe96740a381391751a0"
 `
 	if err := os.WriteFile(inPath, []byte(inputYAML), 0644); err != nil {
 		t.Fatal(err)
