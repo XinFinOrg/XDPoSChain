@@ -141,15 +141,10 @@ func discv4Ping(ctx *cli.Context) error {
 	defer disc.Close()
 
 	start := time.Now()
-	timeout := ctx.Duration(pingTimeoutFlag.Name)
-	if timeout == 0 {
-		timeout = pingTimeoutFlag.Value
+	if err := disc.Ping(n); err != nil {
+		return fmt.Errorf("node didn't respond: %v", err)
 	}
-	rtt, err := pingUntil(disc, n, timeout)
-	if err != nil {
-		return fmt.Errorf("%s did not respond: %v", nodeEndpoint(n), err)
-	}
-	fmt.Printf("%s responded to ping (RTT %v, elapsed %v)\n", nodeEndpoint(n), rtt, time.Since(start))
+	fmt.Printf("node responded to ping (RTT %v).\n", time.Since(start))
 	return nil
 }
 
@@ -166,11 +161,17 @@ func discv4Check(ctx *cli.Context) error {
 	}
 
 	timeout := ctx.Duration(pingTimeoutFlag.Name)
+	if timeout <= 0 {
+		return errors.New("ping-timeout must be greater than 0")
+	}
 	parallel := ctx.Int(checkParallelFlag.Name)
 	if parallel < 1 {
 		return errors.New("parallel must be at least 1")
 	}
 	if parallel > 1 {
+		if dbpath := ctx.String(nodedbFlag.Name); dbpath != "" {
+			return errors.New("parallel > 1 cannot be used with --nodedb (shared DB path)")
+		}
 		addrStr := ctx.String(listenAddrFlag.Name)
 		if addrStr == "" {
 			addrStr = "0.0.0.0:0"
