@@ -52,14 +52,14 @@ var (
 		Usage:     "Sends ping to a node",
 		Action:    discv4Ping,
 		ArgsUsage: "<node>",
-		Flags:     discoveryPingFlags,
+		Flags:     discoveryNodeFlags,
 	}
 	discv4CheckCommand = &cli.Command{
 		Name:      "check",
 		Usage:     "Ping every enode listed in a file and report UDP reachability",
 		Action:    discv4Check,
 		ArgsUsage: "<nodes-file>",
-		Flags:     append(discoveryPingFlags, checkParallelFlag, checkOutputFlag),
+		Flags:     append(discoveryNodeFlags, pingTimeoutFlag, checkParallelFlag, checkOutputFlag),
 	}
 	discv4RequestRecordCommand = &cli.Command{
 		Name:      "requestenr",
@@ -130,13 +130,9 @@ var (
 
 var discoveryNodeFlags = []cli.Flag{
 	bootnodesFlag,
-}
-
-var discoveryPingFlags = []cli.Flag{
-	bootnodesFlag,
-	listenAddrFlag,
 	nodekeyFlag,
-	pingTimeoutFlag,
+	nodedbFlag,
+	listenAddrFlag,
 }
 
 func discv4Ping(ctx *cli.Context) error {
@@ -146,6 +142,9 @@ func discv4Ping(ctx *cli.Context) error {
 
 	start := time.Now()
 	timeout := ctx.Duration(pingTimeoutFlag.Name)
+	if timeout == 0 {
+		timeout = pingTimeoutFlag.Value
+	}
 	rtt, err := pingUntil(disc, n, timeout)
 	if err != nil {
 		return fmt.Errorf("%s did not respond: %v", nodeEndpoint(n), err)
@@ -172,7 +171,11 @@ func discv4Check(ctx *cli.Context) error {
 		return errors.New("parallel must be at least 1")
 	}
 	if parallel > 1 {
-		addr, err := net.ResolveUDPAddr("udp", ctx.String(listenAddrFlag.Name))
+		addrStr := ctx.String(listenAddrFlag.Name)
+		if addrStr == "" {
+			addrStr = "0.0.0.0:0"
+		}
+		addr, err := net.ResolveUDPAddr("udp", addrStr)
 		if err != nil {
 			return err
 		}
@@ -211,7 +214,11 @@ func discv4Check(ctx *cli.Context) error {
 			rtt, pingErr := pingUntil(disc, j.node, timeout)
 			elapsed := time.Since(start)
 			if pingErr != nil {
-				results[j.index] = result{j.index, formatCheckLine(j.index+1, j.node, "UDP_TIMEOUT", elapsed, pingErr)}
+				status := "UDP_TIMEOUT"
+				if !errors.Is(pingErr, discover.ErrTimeout) {
+					status = "UDP_ERROR"
+				}
+				results[j.index] = result{j.index, formatCheckLine(j.index+1, j.node, status, elapsed, pingErr)}
 				continue
 			}
 			results[j.index] = result{j.index, formatCheckLine(j.index+1, j.node, "UDP_PONG", rtt, nil)}
