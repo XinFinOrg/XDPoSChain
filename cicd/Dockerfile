@@ -25,12 +25,6 @@ COPY --from=builder /builder/build/bin/XDC /usr/bin/XDC
 
 # # Copy over files
 ADD cicd/local /work/local
-ADD cicd/devnet /work/devnet
-ADD cicd/testnet /work/testnet
-ADD cicd/mainnet /work/mainnet
-ADD genesis/devnet.json /work/devnet/genesis.json
-ADD genesis/testnet.json /work/testnet/genesis.json
-ADD genesis/mainnet.json /work/mainnet/genesis.json
 ADD cicd/entry.sh /work/entry.sh
 ADD cicd/puppeth.sh /work/puppeth.sh
 
