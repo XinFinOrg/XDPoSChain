@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -59,7 +60,7 @@ var (
 		Usage:     "Ping every enode listed in a file and report UDP reachability",
 		Action:    discv4Check,
 		ArgsUsage: "<nodes-file>",
-		Flags:     append(discoveryNodeFlags, pingTimeoutFlag, checkParallelFlag, checkOutputFlag),
+		Flags: slices.Concat(discoveryNodeFlags, []cli.Flag{pingTimeoutFlag, checkParallelFlag, checkOutputFlag}),
 	}
 	discv4RequestRecordCommand = &cli.Command{
 		Name:      "requestenr",
@@ -181,7 +182,7 @@ func discv4Check(ctx *cli.Context) error {
 			return err
 		}
 		if addr.Port != 0 {
-			return errors.New("parallel > 1 requires --addr to use an ephemeral port (port 0)")
+			return errors.New("parallel > 1 requires --addr to use port 0 (or leave --addr unset)")
 		}
 	}
 
@@ -192,6 +193,7 @@ func discv4Check(ctx *cli.Context) error {
 	type result struct {
 		index int
 		line  string
+		ok    bool
 	}
 
 	discs := make([]*discover.UDPv4, parallel)
@@ -219,10 +221,10 @@ func discv4Check(ctx *cli.Context) error {
 				if !errors.Is(pingErr, discover.ErrTimeout) {
 					status = "UDP_ERROR"
 				}
-				results[j.index] = result{j.index, formatCheckLine(j.index+1, j.node, status, elapsed, pingErr)}
+				results[j.index] = result{j.index, formatCheckLine(j.index+1, j.node, status, elapsed, pingErr), false}
 				continue
 			}
-			results[j.index] = result{j.index, formatCheckLine(j.index+1, j.node, "UDP_PONG", rtt, nil)}
+			results[j.index] = result{j.index, formatCheckLine(j.index+1, j.node, "UDP_PONG", rtt, nil), true}
 		}
 	}
 
@@ -248,14 +250,18 @@ func discv4Check(ctx *cli.Context) error {
 
 	var ok, fail int
 	for _, r := range results {
-		fmt.Fprintln(out, r.line)
-		if strings.Contains(r.line, "|UDP_PONG|") {
+		if _, err := fmt.Fprintln(out, r.line); err != nil {
+			return err
+		}
+		if r.ok {
 			ok++
 		} else {
 			fail++
 		}
 	}
-	fmt.Fprintf(os.Stderr, "checked %d nodes: %d ok, %d failed\n", len(nodes), ok, fail)
+	if _, err := fmt.Fprintf(os.Stderr, "checked %d nodes: %d ok, %d failed\n", len(nodes), ok, fail); err != nil {
+		return err
+	}
 	if fail > 0 {
 		return fmt.Errorf("%d of %d nodes failed UDP ping", fail, len(nodes))
 	}
