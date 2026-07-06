@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"time"
@@ -271,9 +272,9 @@ func (w *wizard) makeGenesis() {
 				fmt.Println()
 				fmt.Println("Calculated Total Masternode rewards per epoch based on yield: ", totalRewardPerEpoch)
 				genesis.Config.XDPoS.Reward = totalRewardPerEpoch
-				genesis.Config.XDPoS.V2.CurrentConfig.MasternodeReward = float64(rewardPerEpochPerMN)
-				genesis.Config.XDPoS.V2.CurrentConfig.ProtectorReward = float64(rewardPerEpochPerMN) * 0.8
-				genesis.Config.XDPoS.V2.CurrentConfig.ObserverReward = float64(rewardPerEpochPerMN) * 0.6
+				genesis.Config.XDPoS.V2.CurrentConfig.MasternodeReward = math.Round(float64(rewardPerEpochPerMN)*1000) / 1000
+				genesis.Config.XDPoS.V2.CurrentConfig.ProtectorReward = math.Round(float64(rewardPerEpochPerMN)*0.8*1000) / 1000
+				genesis.Config.XDPoS.V2.CurrentConfig.ObserverReward = math.Round(float64(rewardPerEpochPerMN)*0.6*1000) / 1000
 
 			}
 		}
