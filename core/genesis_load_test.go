@@ -1209,3 +1209,48 @@ func TestEmbeddedGenesisConfigMatchesParams(t *testing.T) {
 		})
 	}
 }
+
+// TestEmbeddedGenesisHashMatchesParams verifies that the genesis block hash
+// derived from each network's embedded JSON equals the canonical hash constant
+// in params.  A mismatch means `XDC init <network>` and `XDC --<network>`
+// would produce different block-0 headers, making nodes on each path unable to
+// peer with one another.
+//
+// Historical note: this divergence occurred for devnet when
+// core/genesis_alloc_devnet.go was updated by the May-2026 network reset
+// (#2347) without a corresponding update to genesis/devnet.json, causing the
+// two startup paths to silently generate different genesis hashes until the
+// alloc was re-synchronised in a follow-up fix.
+func TestEmbeddedGenesisHashMatchesParams(t *testing.T) {
+	cases := []struct {
+		name     string
+		raw      []byte
+		wantHash common.Hash
+	}{
+		{"mainnet", xdcgenesis.MainnetGenesis, params.MainnetGenesisHash},
+		{"testnet", xdcgenesis.TestnetGenesis, params.TestnetGenesisHash},
+		{"devnet", xdcgenesis.DevnetGenesis, params.DevnetGenesisHash},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			g := new(Genesis)
+			if err := json.Unmarshal(c.raw, g); err != nil {
+				t.Fatalf("unmarshal embedded %s genesis: %v", c.name, err)
+			}
+			got := g.ToBlock().Hash()
+			if got != c.wantHash {
+				t.Errorf("embedded %s genesis hash mismatch:\n  got  %s\n  want %s\nAlloc or header fields in the embedded JSON diverge from the Go-side genesis used to derive params.%sGenesisHash.",
+					c.name, got.Hex(), c.wantHash.Hex(), capitalize(c.name))
+			}
+		})
+	}
+}
+
+// capitalize upper-cases the first ASCII character of s.
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
