@@ -169,6 +169,9 @@ func discv4Check(ctx *cli.Context) error {
 	if parallel < 1 {
 		return errors.New("parallel must be at least 1")
 	}
+	if parallel > len(nodes) {
+		parallel = len(nodes)
+	}
 	if parallel > 1 {
 		if dbpath := ctx.String(nodedbFlag.Name); dbpath != "" {
 			return errors.New("parallel > 1 cannot be used with --nodedb (shared DB path)")
