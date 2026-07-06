@@ -60,7 +60,7 @@ var (
 		Usage:     "Ping every enode listed in a file and report UDP reachability",
 		Action:    discv4Check,
 		ArgsUsage: "<nodes-file>",
-		Flags: slices.Concat(discoveryNodeFlags, []cli.Flag{pingTimeoutFlag, checkParallelFlag, checkOutputFlag}),
+		Flags:     slices.Concat(discoveryNodeFlags, []cli.Flag{pingTimeoutFlag, checkParallelFlag, checkOutputFlag}),
 	}
 	discv4RequestRecordCommand = &cli.Command{
 		Name:      "requestenr",
