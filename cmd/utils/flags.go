@@ -131,6 +131,12 @@ var (
 		Usage:    "Allow same-hash custom overrides on built-in IDs to use custom chain config",
 		Category: flags.EthCategory,
 	}
+	ChainConfigMismatchPolicyFlag = &cli.StringFlag{
+		Name:     "chain-config-mismatch-policy",
+		Usage:    "Startup policy when chain config mismatches stored config: exit|rewind-and-update|update-config-only|ignore-mismatch (warning: update-config-only/ignore-mismatch may cause state/consensus divergence; expert use only)",
+		Value:    core.DefaultChainConfigMismatchPolicy.String(),
+		Category: flags.EthCategory,
+	}
 
 	// Dev mode
 	DeveloperFlag = &cli.BoolFlag{
@@ -1520,6 +1526,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	setMiner(ctx, &cfg.Miner)
 	setLes(ctx, cfg)
 	cfg.AllowBuiltInCustomRecovery = ctx.Bool(AllowBuiltInConfigOverrideFlag.Name)
+	cfg.ChainConfigMismatchPolicy = resolveChainConfigMismatchPolicyOrFatal(ctx, cfg.ChainConfigMismatchPolicy)
 
 	// Cap the cache allowance and tune the garbage collector
 	mem, err := gopsutil.VirtualMemory()
@@ -1850,6 +1857,8 @@ func formatBlockChainOpenError(err error, readonly bool) string {
 		return fmt.Sprintf("Can't create BlockChain: %v", err)
 	}
 	switch {
+	case errors.Is(err, core.ErrConfigMismatchPolicyExit):
+		return "Can't open blockchain: " + FormatChainConfigError(err)
 	case errors.Is(err, core.ErrReadOnlyGenesisStateRecovery):
 		return "Can't open blockchain in readonly mode: genesis state is missing and requires recovery. Reopen the database in writable mode to recover the missing genesis state, then retry."
 	case errors.Is(err, core.ErrReadOnlyHeadStateRepair):
@@ -1857,7 +1866,9 @@ func formatBlockChainOpenError(err error, readonly bool) string {
 	case errors.Is(err, core.ErrReadOnlyBadHashRewind):
 		return "Can't open blockchain in readonly mode: the local chain contains a denylisted hash and requires rewind. Reopen the database in writable mode so the chain can rewind past the denylisted hash, then retry."
 	case errors.Is(err, core.ErrReadOnlyConfigRewind):
-		return "Can't open blockchain in readonly mode: the local chain configuration requires rewind. Use the correct --networkid/--datadir combination, or reopen the database in writable mode so the chain can rewind, then retry."
+		return "Can't open blockchain in readonly mode: the selected chain-config mismatch policy requires rewind. Reopen in writable mode, or use --chain-config-mismatch-policy=ignore-mismatch to avoid rewind in readonly mode."
+	case errors.Is(err, core.ErrReadOnlyConfigUpdate):
+		return "Can't open blockchain in readonly mode: the selected chain-config mismatch policy requires writing chain config. Reopen in writable mode, or use --chain-config-mismatch-policy=ignore-mismatch in readonly mode."
 	default:
 		return fmt.Sprintf("Can't create BlockChain: %v", err)
 	}
@@ -1866,14 +1877,15 @@ func formatBlockChainOpenError(err error, readonly bool) string {
 var makeChainFatalf = Fatalf
 
 // MakeChain creates a chain manager from set command line flags.
-func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockChain, ethdb.Database) {
+func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool, configuredCompatPolicy string) (*core.BlockChain, ethdb.Database) {
 	var (
-		gspec     = MakeGenesis(ctx)
-		chainDb   = MakeChainDatabase(ctx, stack, readonly)
-		config    *params.ChainConfig
-		ghash     common.Hash
-		compatErr *params.ConfigCompatError
-		err       error
+		gspec        = MakeGenesis(ctx)
+		chainDb      = MakeChainDatabase(ctx, stack, readonly)
+		config       *params.ChainConfig
+		ghash        common.Hash
+		compatErr    *params.ConfigCompatError
+		compatPolicy = core.ChainConfigMismatchPolicy(resolveChainConfigMismatchPolicyOrFatal(ctx, configuredCompatPolicy))
+		err          error
 	)
 	if readonly {
 		// Readonly startup still needs compatibility metadata so chain open can
@@ -1933,15 +1945,38 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockCh
 	// Disable transaction indexing/unindexing by default.
 	var chain *core.BlockChain
 	if readonly {
-		chain, err = core.NewBlockChainReadOnlyResolved(chainDb, cache, gspec, engine, vmcfg, config, ghash, compatErr)
+		chain, err = core.NewBlockChainReadOnlyResolved(chainDb, cache, gspec, engine, vmcfg, config, ghash, compatErr, compatPolicy)
 	} else {
-		chain, err = core.NewBlockChainResolved(chainDb, cache, gspec, engine, vmcfg, config, ghash, compatErr)
+		chain, err = core.NewBlockChainResolved(chainDb, cache, gspec, engine, vmcfg, config, ghash, compatErr, compatPolicy)
 	}
 	if err != nil {
 		makeChainFatalf("%s", formatBlockChainOpenError(err, readonly))
 	}
 
 	return chain, chainDb
+}
+
+func resolveChainConfigMismatchPolicy(ctx *cli.Context, configured string) (string, error) {
+	raw := configured
+	errPrefix := "invalid ChainConfigMismatchPolicy in config"
+	if ctx.IsSet(ChainConfigMismatchPolicyFlag.Name) {
+		raw = ctx.String(ChainConfigMismatchPolicyFlag.Name)
+		errPrefix = fmt.Sprintf("invalid --%s flag", ChainConfigMismatchPolicyFlag.Name)
+	}
+	policy, err := core.ParseChainConfigMismatchPolicy(raw)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", errPrefix, err)
+	}
+	log.Info("Resolved chain config mismatch policy", "value", policy.String())
+	return policy.String(), nil
+}
+
+func resolveChainConfigMismatchPolicyOrFatal(ctx *cli.Context, configured string) string {
+	policy, err := resolveChainConfigMismatchPolicy(ctx, configured)
+	if err != nil {
+		makeChainFatalf("%v", err)
+	}
+	return policy
 }
 
 // MakeConsolePreloads retrieves the absolute paths for the console JavaScript

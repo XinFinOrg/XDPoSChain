@@ -237,7 +237,19 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 			return eth.Lending
 		}
 	}
-	eth.blockchain, err = core.NewBlockChainExResolved(chainDb, XDCXServ.GetLevelDB(), cacheConfig, config.Genesis, eth.engine, vmConfig, chainConfig, genesisHash, compatErr)
+	compatPolicy := core.ChainConfigMismatchPolicy(config.ChainConfigMismatchPolicy)
+	eth.blockchain, err = core.NewBlockChainExResolved(
+		chainDb,
+		XDCXServ.GetLevelDB(),
+		cacheConfig,
+		config.Genesis,
+		eth.engine,
+		vmConfig,
+		chainConfig,
+		genesisHash,
+		compatErr,
+		compatPolicy,
+	)
 	if err != nil {
 		return nil, err
 	}

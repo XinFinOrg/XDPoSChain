@@ -7,6 +7,7 @@ This document summarizes the current startup rules for `genesis` and
 - how the node distinguishes built-in networks, Localnet, and custom networks
 - which missing fields can be backfilled for each class
 - when a resolved `ChainConfig` is written back to the database
+- how the node reacts to an incompatible stored config via `--chain-config-mismatch-policy`
 - how to upgrade `ChainConfig` to add a future fork without changing the canonical genesis block
 
 ## Operator Migration: Single Binary, Runtime Network Selection
@@ -211,6 +212,67 @@ Additional notes:
  the bundled config.
 - For same-hash custom chains, first explicit initialization can also persist a
  chain-config override marker for that data directory.
+
+## Chain Config Mismatch Policy (`--chain-config-mismatch-policy`)
+
+When startup resolves a runtime `ChainConfig` that is incompatible with the
+stored config, `SetupGenesisBlock` / `LoadChainConfigWithCompat` return a
+non-nil `ConfigCompatError`. How the node reacts to that error is now controlled
+by an explicit startup policy instead of an unconditional rewind.
+
+Set the policy with the `--chain-config-mismatch-policy` flag (or the
+`ChainConfigMismatchPolicy` field in the TOML config). Supported values:
+
+- `exit` (default)
+  - Behavior on mismatch: abort startup with an error; the database is not modified.
+  - Writable mode: startup fails, no rewind, no write.
+  - Readonly mode: startup fails, no write.
+
+- `rewind-and-update`
+  - Behavior on mismatch: rewind the head to `compatErr.RewindTo`, then persist the new chain config.
+  - Writable mode: rewinds and writes the resolved config.
+  - Readonly mode: refuses to open (`readonly blockchain open requires config rewind`).
+
+- `update-config-only`
+  - Risk level: high risk (`may cause state/consensus divergence; expert use only`).
+  - Behavior on mismatch: persist the new chain config without rewinding the head.
+  - Writable mode: writes the resolved config, no rewind.
+  - Readonly mode: refuses to open (`readonly blockchain open requires config update`).
+
+- `ignore-mismatch`
+  - Risk level: high risk (`may cause state/consensus divergence; expert use only`).
+  - Behavior on mismatch: keep running with the in-memory config; do not rewind and do not write.
+  - Writable mode: runs; mismatch recurs on next restart.
+  - Readonly mode: runs read-only with no database writes.
+
+Behavior change relative to older startup logic:
+
+- The previous behavior was equivalent to `rewind-and-update` and ran
+  unconditionally on writable startup. The default is now `exit`, so an
+  incompatible config makes the node stop and hand the decision to the operator
+  instead of silently rewinding the chain and rewriting stored config.
+- To preserve the old automatic-rewind behavior, start with
+  `--chain-config-mismatch-policy=rewind-and-update`.
+
+Operational guidance:
+
+- Prefer `exit` (the default) and investigate why the resolved config disagrees
+  with the stored config before choosing a recovery mode. A mismatch usually
+  means the wrong `--networkid`/`--datadir`/`genesis.json` combination, not a
+  routine upgrade.
+- Use `rewind-and-update` only when you intend to roll the head back to the
+  fork boundary and reprocess blocks under the new rules. This is the only
+  policy that keeps the head consistent with the new config.
+- `update-config-only` and `ignore-mismatch` are advanced escape hatches and **high-risk options**. They do **not**
+  reprocess blocks that were already imported past the changed fork boundary,
+  so the running head can diverge in state/consensus from a node that rewound.
+  `update-config-only` additionally marks the mismatch as resolved on disk, so the
+  warning will not recur even though no reprocessing happened. Treat both as
+  `may cause state/consensus divergence; expert use only` and use them only
+  when you fully understand the consensus implications.
+- `rewind-and-update` and `update-config-only` require a writable open. In readonly
+  mode they refuse to start so the database is never mutated; reopen in writable
+  mode, or use `exit`/`ignore-mismatch`, to proceed without writes.
 
 ## Startup API Semantics
 
@@ -533,7 +595,9 @@ persisted config or external `genesis.json` carries the required values.
 
 Do not treat a readonly compatibility warning as a harmless cosmetic diff. It
 means the writable path would need to repair metadata or require an explicit
-rewind decision before startup should proceed.
+rewind decision before startup should proceed. The recovery mode for that
+rewind decision is selected with `--chain-config-mismatch-policy` (see
+[Chain Config Mismatch Policy](#chain-config-mismatch-policy---chain-config-mismatch-policy)).
 
 ## Same-Hash Custom Chains on Built-In IDs (`50` / `51` / `5551`)
 
