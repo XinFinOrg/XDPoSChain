@@ -757,6 +757,24 @@ func (w *worker) checkPreCommitWithLock() (*types.Block, bool) {
 	return w.checkPreCommit()
 }
 
+// parentCommitKey returns the per-parent commit-guard key. For XDPoS V2 it is
+// made round-aware (parentHash:round) so that when the chain head is a
+// TimeoutCert-produced block with no QuorumCert — freezing the highest-QC
+// parent across rounds — the leader can still re-propose a higher-round sibling
+// on that same parent at each new round until one earns a QC and the chain
+// recovers (#1304). A duplicate proposal at the same (parent, round) is still
+// blocked, and same-round double-mining is independently prevented by the
+// engine's highestSelfMinedRound guard. For V1 (round 0) it degrades to the
+// original parent-hash-only key.
+func (w *worker) parentCommitKey(parent *types.Block) string {
+	if engine, ok := w.engine.(*XDPoS.XDPoS); ok {
+		if round := engine.GetCurrentRound(); round > 0 {
+			return fmt.Sprintf("%s:%d", parent.Hash().Hex(), uint64(round))
+		}
+	}
+	return parent.Hash().Hex()
+}
+
 // checkPreCommit checks whether a new work commit is needed,
 // returns the parent block and shouldReturn.
 func (w *worker) checkPreCommit() (*types.Block, bool) {
@@ -782,7 +800,7 @@ func (w *worker) checkPreCommit() (*types.Block, bool) {
 		log.Debug("XDPoS config enabled but consensus engine is not XDPoS")
 		return parent, true
 	}
-	if parent.Hash().Hex() == w.lastParentBlockCommit {
+	if w.parentCommitKey(parent) == w.lastParentBlockCommit {
 		return parent, true
 	}
 	if !w.announceTxs && atomic.LoadInt32(&w.mining) == 0 {
@@ -1082,7 +1100,7 @@ func (w *worker) commitNewWork() {
 		blockFinalizeTimer.Update(finalizeElapsed)
 		blockTotalTimer.Update(totalElapsed)
 		w.unconfirmed.Shift(work.Block.NumberU64() - 1)
-		w.lastParentBlockCommit = parent.Hash().Hex()
+		w.lastParentBlockCommit = w.parentCommitKey(parent)
 	}
 	w.push(work)
 	w.updateSnapshot()

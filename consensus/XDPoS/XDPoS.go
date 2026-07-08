@@ -548,6 +548,13 @@ func (x *XDPoS) FindParentBlockToAssign(chain consensus.ChainReader, currentBloc
 	return parent
 }
 
+// GetCurrentRound returns the V2 engine's current consensus round. Returns 0
+// when V2 has not been initialised (e.g. pure V1 operation), in which case the
+// miner falls back to its parent-hash-only commit guard.
+func (x *XDPoS) GetCurrentRound() types.Round {
+	return x.EngineV2.GetCurrentRound()
+}
+
 /**
 Caching
 */

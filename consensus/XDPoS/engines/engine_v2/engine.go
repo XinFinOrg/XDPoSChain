@@ -1227,6 +1227,17 @@ func (x *XDPoS_v2) GetPreviousPenaltyByHash(chain consensus.ChainReader, hash co
 	return common.ExtractAddressFromBytes(header.Penalties)
 }
 
+// GetCurrentRound returns the engine's current consensus round. Production
+// accessor (read under lock); used by the miner to make its per-parent
+// "already committed" guard round-aware, so a leader can re-propose a
+// higher-round sibling on a frozen highest-QC parent to recover from a
+// TimeoutCert-produced head (#1304).
+func (x *XDPoS_v2) GetCurrentRound() types.Round {
+	x.lock.RLock()
+	defer x.lock.RUnlock()
+	return x.currentRound
+}
+
 func (x *XDPoS_v2) FindParentBlockToAssign(chain consensus.ChainReader) *types.Block {
 	parent := chain.GetBlock(x.highestQuorumCert.ProposedBlockInfo.Hash, x.highestQuorumCert.ProposedBlockInfo.Number.Uint64())
 	if parent == nil {
