@@ -733,7 +733,9 @@ func (f *Fetcher) insert(peer string, block *types.Block) {
 		if f.signHook != nil {
 			if err := f.signHook(block); err != nil {
 				log.Error("Can't sign the imported block", "err", err)
-				return
+				// fall through: a sign-tx failure must NOT block the BFT vote
+				// (mirrors miner/worker.go, which calls HandleProposedBlock BEFORE
+				// CreateTransactionSign and only logs on a signing error)
 			}
 		}
 		err = f.handleProposedBlock(block.Header())
