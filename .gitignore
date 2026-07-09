@@ -4,17 +4,10 @@
 # or operating system, you probably want to add a global ignore instead:
 #   git config --global core.excludesfile ~/.gitignore_global
 
-/tmp
-*/**/*un~
 */**/*.test
 *un~
 .DS_Store
-*/**/.DS_Store
-.ethtest
-*/**/*tx_database*
-*/**/*dapps*
-build/_vendor/pkg
-/devnet
+
 #*
 .#*
 *#
@@ -26,27 +19,20 @@ build/_vendor/pkg
 /build/_workspace/
 /build/cache/
 /build/bin/
-/XDC*.zip
 
 # travis
 profile.tmp
 profile.cov
 
 # IdeaIDE
-.idea
+.idea/
+*.iml
 
 # VS Code
-.vscode
+.vscode/
 
 # Vim
 .*.sw*
 
 # git worktree
 /.worktrees/
-
-**/yarn-error.log
-coverage.txt
-go.sum
-**/.terraform*
-cicd/devnet/tmp
-cicd/devnet/terraform/node-config.json
