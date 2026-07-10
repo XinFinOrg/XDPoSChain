@@ -542,7 +542,7 @@ func (c *V2Config) String() string {
 		return "V2Config: <nil>"
 	}
 
-	return fmt.Sprintf("V2{MaxMasternodes: %v, MaxProtectorNodes: %v, MaxObverserNodes: %v, SwitchRound: %v, MinePeriod: %v, TimeoutSyncThreshold: %v, TimeoutPeriod: %v, CertThreshold: %v, MasternodeReward: %v, ProtectorReward: %v, ObserverReward: %v, MinimumMinerBlockPerEpoch: %v, LimitPenaltyEpoch: %v, MinimumSigningTx: %v, %s}", c.MaxMasternodes, c.MaxProtectorNodes, c.MaxObverserNodes, c.SwitchRound, c.MinePeriod, c.TimeoutSyncThreshold, c.TimeoutPeriod, c.CertThreshold, c.MasternodeReward, c.ProtectorReward, c.ObserverReward, c.MinimumMinerBlockPerEpoch, c.LimitPenaltyEpoch, c.MinimumSigningTx, c.ExpTimeoutConfig.String())
+	return fmt.Sprintf("V2Config{MaxMasternodes: %v, MaxProtectorNodes: %v, MaxObverserNodes: %v, SwitchRound: %v, MinePeriod: %v, TimeoutSyncThreshold: %v, TimeoutPeriod: %v, CertThreshold: %v, MasternodeReward: %v, ProtectorReward: %v, ObserverReward: %v, MinimumMinerBlockPerEpoch: %v, LimitPenaltyEpoch: %v, MinimumSigningTx: %v, %s}", c.MaxMasternodes, c.MaxProtectorNodes, c.MaxObverserNodes, c.SwitchRound, c.MinePeriod, c.TimeoutSyncThreshold, c.TimeoutPeriod, c.CertThreshold, c.MasternodeReward, c.ProtectorReward, c.ObserverReward, c.MinimumMinerBlockPerEpoch, c.LimitPenaltyEpoch, c.MinimumSigningTx, c.ExpTimeoutConfig.String())
 }
 
 // Description returns a human-readable description of V2Config
