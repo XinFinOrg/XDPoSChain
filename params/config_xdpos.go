@@ -521,6 +521,54 @@ func (v2 *V2) String() string {
 	return fmt.Sprintf("V2{SwitchEpoch: %v, SwitchBlock: %v, %s}", snapshot.switchEpoch, snapshot.switchBlock, snapshot.currentConfig.String())
 }
 
+type stableLogConfigEntry struct {
+	Round  uint64    `json:"round"`
+	Config *V2Config `json:"config"`
+}
+
+type stableLogView struct {
+	SwitchEpoch   uint64                 `json:"switchEpoch"`
+	SwitchBlock   string                 `json:"switchBlock"`
+	CurrentConfig *V2Config              `json:"currentConfig"`
+	AllConfigs    []stableLogConfigEntry `json:"allConfigs"`
+	ConfigIndex   []uint64               `json:"configIndex"`
+}
+
+// StableLogValue returns a full, deterministic structured value for startup
+// logs. Callers can pass the returned object directly as a field value to
+// avoid JSON string escaping in terminal log output.
+func (v2 *V2) StableLogValue() stableLogView {
+	if v2 == nil {
+		return stableLogView{}
+	}
+
+	snapshot := snapshotV2ReadOnly(v2)
+
+	keys := slices.Collect(maps.Keys(snapshot.allConfigs))
+	slices.Sort(keys)
+
+	allConfigs := make([]stableLogConfigEntry, 0, len(keys))
+	for _, round := range keys {
+		allConfigs = append(allConfigs, stableLogConfigEntry{
+			Round:  round,
+			Config: snapshot.allConfigs[round].Clone(),
+		})
+	}
+
+	var switchBlock string
+	if snapshot.switchBlock != nil {
+		switchBlock = snapshot.switchBlock.String()
+	}
+
+	return stableLogView{
+		SwitchEpoch:   snapshot.switchEpoch,
+		SwitchBlock:   switchBlock,
+		CurrentConfig: snapshot.currentConfig.Clone(),
+		AllConfigs:    allConfigs,
+		ConfigIndex:   append([]uint64(nil), snapshot.configIndex...),
+	}
+}
+
 // Description returns a human-readable description of V2
 // NOTE: don't append "\n" to end
 func (v2 *V2) Description(indent int) string {

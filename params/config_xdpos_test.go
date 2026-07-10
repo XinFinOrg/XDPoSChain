@@ -19,6 +19,7 @@ package params
 import (
 	"encoding/json"
 	"math/big"
+	"strings"
 	"sync"
 	"testing"
 
@@ -190,6 +191,44 @@ func TestV2StringConcurrentWithUpdateConfig(t *testing.T) {
 
 	close(start)
 	wg.Wait()
+}
+
+func TestV2StableLogValueDeterministicAndComplete(t *testing.T) {
+	v2 := &V2{
+		SwitchEpoch: 63143,
+		SwitchBlock: big.NewInt(56828700),
+		CurrentConfig: &V2Config{
+			MaxMasternodes: 15,
+		},
+		AllConfigs: map[uint64]*V2Config{
+			10: {SwitchRound: 10, MaxMasternodes: 16},
+			0:  {SwitchRound: 0, MaxMasternodes: 15},
+		},
+		configIndex: []uint64{10, 0},
+	}
+
+	firstBytes, err := json.Marshal(v2.StableLogValue())
+	assert.NoError(t, err)
+	secondBytes, err := json.Marshal(v2.StableLogValue())
+	assert.NoError(t, err)
+
+	first := string(firstBytes)
+	second := string(secondBytes)
+	assert.Equal(t, first, second)
+
+	assert.Contains(t, first, `"switchEpoch":63143`)
+	assert.Contains(t, first, `"switchBlock":"56828700"`)
+	assert.Contains(t, first, `"configIndex":[10,0]`)
+	assert.Contains(t, first, `"currentConfig"`)
+
+	idxRound0 := strings.Index(first, `"round":0`)
+	idxRound10 := strings.Index(first, `"round":10`)
+	if idxRound0 == -1 || idxRound10 == -1 {
+		t.Fatalf("expected allConfigs rounds in stable log output, got %q", first)
+	}
+	if idxRound0 > idxRound10 {
+		t.Fatalf("expected allConfigs rounds sorted ascending, got %q", first)
+	}
 }
 
 func TestBuildConfigIndex(t *testing.T) {
