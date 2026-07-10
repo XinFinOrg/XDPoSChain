@@ -1,8 +1,10 @@
 package eth
 
 import (
+	"bytes"
 	"encoding/json"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -10,6 +12,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/util"
+	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
@@ -41,6 +44,29 @@ func TestRewardInflationUsesChainConfigTIPNoHalvingMNReward(t *testing.T) {
 	reward := util.RewardInflation(testChainReader{cfg: config}, chainReward, 20, 10)
 	if reward.Cmp(new(big.Int).Mul(new(big.Int).SetUint64(250), new(big.Int).SetUint64(params.Ether))) != 0 {
 		t.Fatalf("unexpected reward with no-halving fork: have %v", reward)
+	}
+}
+
+func TestLogXDPoSConfigSkipsOnCompatError(t *testing.T) {
+	var logBuf bytes.Buffer
+	prevLog := log.Root()
+	glog := log.NewGlogHandler(log.NewTerminalHandlerWithLevel(&logBuf, log.LevelTrace, false))
+	glog.Verbosity(log.LevelTrace)
+	log.SetDefault(log.NewLogger(glog))
+	defer log.SetDefault(prevLog)
+
+	logXDPoSConfig(params.TestnetChainConfig, &params.ConfigCompatError{What: "XDPoS.V2"})
+	if got := logBuf.String(); got != "" {
+		t.Fatalf("expected no XDPoS config log on compat error, got %q", got)
+	}
+
+	logXDPoSConfig(params.TestnetChainConfig, nil)
+	got := logBuf.String()
+	if !strings.Contains(got, "Load xdc config") {
+		t.Fatalf("expected XDPoS config log on healthy startup, got %q", got)
+	}
+	if !strings.Contains(got, "config.V2") {
+		t.Fatalf("expected V2 config details in startup log, got %q", got)
 	}
 }
 

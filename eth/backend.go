@@ -149,6 +149,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	if err != nil {
 		return nil, err
 	}
+	logXDPoSConfig(chainConfig, compatErr)
 
 	// Assemble the Ethereum object.
 	eth := &Ethereum{
@@ -460,6 +461,14 @@ func (e *Ethereum) APIs() []rpc.API {
 			Service:   e.netRPCService,
 		},
 	}...)
+}
+
+func logXDPoSConfig(chainConfig *params.ChainConfig, compatErr *params.ConfigCompatError) {
+	if compatErr != nil || chainConfig == nil || chainConfig.XDPoS == nil || chainConfig.XDPoS.V2 == nil {
+		return
+	}
+
+	log.Info("Load xdc config", "config.V2", chainConfig.XDPoS.V2.StableLogValue())
 }
 
 func (e *Ethereum) ResetWithGenesisBlock(gb *types.Block) {
