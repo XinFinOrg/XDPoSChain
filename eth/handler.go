@@ -289,6 +289,7 @@ func (pm *ProtocolManager) Start(maxPeers int) {
 	// start sync handlers
 	go pm.syncer()
 	go pm.txsyncLoop()
+	go pm.syncStatusLogger()
 }
 
 func (pm *ProtocolManager) Stop() {

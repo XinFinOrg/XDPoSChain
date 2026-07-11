@@ -36,6 +36,11 @@ const (
 	// This is the target size for the packs of transactions sent by txsyncLoop.
 	// A pack can get larger than this if a single transactions exceeds this size.
 	txsyncPackSize = 100 * 1024
+
+	// syncStatusLogCycle is the interval at which the current sync status is
+	// reported at warn level, so it is visible even when info/debug logs are
+	// filtered out.
+	syncStatusLogCycle = 10 * time.Minute
 )
 
 type txsync struct {
@@ -162,6 +167,35 @@ func (pm *ProtocolManager) syncer() {
 			go pm.synchronise(pm.peers.BestPeer())
 
 		case <-pm.noMorePeers:
+			return
+		}
+	}
+}
+
+// syncStatusLogger periodically reports the current sync status at warn
+// level so that it is always visible in the logs, regardless of whether
+// info/debug logs are enabled, and independent of the one-shot start/finish
+// logs emitted by the downloader itself.
+func (pm *ProtocolManager) syncStatusLogger() {
+	ticker := time.NewTicker(syncStatusLogCycle)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if pm.downloader.Synchronising() {
+				progress := pm.downloader.Progress()
+				log.Warn("Block synchronisation in progress",
+					"starting", progress.StartingBlock,
+					"current", progress.CurrentBlock,
+					"highest", progress.HighestBlock,
+					"pulledStates", progress.PulledStates,
+					"knownStates", progress.KnownStates,
+					"peers", pm.peers.Len(),
+				)
+			}
+
+		case <-pm.quitSync:
 			return
 		}
 	}
