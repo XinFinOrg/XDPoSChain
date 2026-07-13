@@ -196,3 +196,15 @@ var DevnetBootnodes = []string{
 	"enode://64e1b1969f9102977691a40431b0b672055dcf31163897d996434420e6c95dc9c16f60c7c11fc3c9eb27fa26a9035b669bfb77d21cef371ddce94e329222550c@10.96.135.57:30333",
 	"enode://5a95a9ce5aa070ee8ae158988a0b9e34e98e6371f05f4318f88c1b7e2c8123877c95583b1f530858b7b580a9d906a38a8bffbc3c095fc9ef5eb7b339a112da67@10.107.137.189:30333",
 }
+
+// V5MainnetBootnodes are intentionally empty by default.
+// Operators should provide explicit ENR bootnodes for discovery v5.
+var V5MainnetBootnodes = []string{}
+
+// V5TestnetBootnodes are intentionally empty by default.
+// Operators should provide explicit ENR bootnodes for discovery v5.
+var V5TestnetBootnodes = []string{}
+
+// V5DevnetBootnodes are intentionally empty by default.
+// Operators should provide explicit ENR bootnodes for discovery v5.
+var V5DevnetBootnodes = []string{}

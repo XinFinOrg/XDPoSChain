@@ -61,7 +61,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/miner"
 	"github.com/XinFinOrg/XDPoSChain/node"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
-	"github.com/XinFinOrg/XDPoSChain/p2p/discv5"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/p2p/nat"
 	"github.com/XinFinOrg/XDPoSChain/p2p/netutil"
@@ -1057,24 +1056,27 @@ func mustParseBootnodes(urls []string) []*enode.Node {
 // setBootstrapNodesV5 creates a list of bootstrap nodes from the command line
 // flags, reverting to pre-configured ones if none have been specified.
 func setBootstrapNodesV5(ctx *cli.Context, cfg *p2p.Config) {
-	urls := params.MainnetBootnodes
-	switch {
-	case ctx.IsSet(BootnodesFlag.Name):
+	urls := params.V5MainnetBootnodes
+	if ctx.IsSet(BootnodesFlag.Name) {
 		urls = SplitAndTrim(ctx.String(BootnodesFlag.Name))
-	case ctx.IsSet(LegacyBootnodesV5Flag.Name):
+	} else if ctx.IsSet(LegacyBootnodesV5Flag.Name) {
 		urls = SplitAndTrim(ctx.String(LegacyBootnodesV5Flag.Name))
-	case ctx.Bool(TestnetFlag.Name):
-		urls = params.TestnetBootnodes
-	case ctx.Bool(DevnetFlag.Name):
-		urls = params.DevnetBootnodes
-	case cfg.BootstrapNodesV5 != nil:
-		return // already set, don't apply defaults.
+	} else {
+		if cfg.BootstrapNodesV5 != nil {
+			return // already set, don't apply defaults.
+		}
+		switch {
+		case ctx.Bool(TestnetFlag.Name):
+			urls = params.V5TestnetBootnodes
+		case ctx.Bool(DevnetFlag.Name):
+			urls = params.V5DevnetBootnodes
+		}
 	}
 
-	cfg.BootstrapNodesV5 = make([]*discv5.Node, 0, len(urls))
+	cfg.BootstrapNodesV5 = make([]*enode.Node, 0, len(urls))
 	for _, url := range urls {
 		if url != "" {
-			node, err := discv5.ParseNode(url)
+			node, err := enode.Parse(enode.ValidSchemes, url)
 			if err != nil {
 				log.Error("Bootstrap URL invalid", "enode", url, "err", err)
 				continue
@@ -1308,7 +1310,7 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 	setBootstrapNodes(ctx, cfg)
 	setAllowlistAndDenylistForPeers(ctx, cfg)
 	removeDenylistedPeers(cfg)
-	// setBootstrapNodesV5(ctx, cfg)
+	setBootstrapNodesV5(ctx, cfg)
 
 	if ctx.IsSet(MaxPeersFlag.Name) {
 		cfg.MaxPeers = ctx.Int(MaxPeersFlag.Name)

@@ -35,6 +35,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/node"
+	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/urfave/cli/v2"
 )
@@ -456,6 +457,53 @@ func TestResolveChainConfigMismatchPolicyRejectsInvalidConfiguredValue(t *testin
 	const want = "invalid ChainConfigMismatchPolicy in config"
 	if !strings.HasPrefix(err.Error(), want) {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSetBootstrapNodesV5UsesStrictEmptyDefaults(t *testing.T) {
+	tests := []struct {
+		name  string
+		flags map[string]string
+	}{
+		{
+			name:  "mainnet defaults",
+			flags: map[string]string{},
+		},
+		{
+			name: "testnet defaults",
+			flags: map[string]string{
+				TestnetFlag.Name: "true",
+			},
+		},
+		{
+			name: "devnet defaults",
+			flags: map[string]string{
+				DevnetFlag.Name: "true",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			set := flag.NewFlagSet("set-bootstrapnodesv5-test", flag.ContinueOnError)
+			set.Bool(TestnetFlag.Name, false, "")
+			set.Bool(DevnetFlag.Name, false, "")
+			set.String(BootnodesFlag.Name, "", "")
+			set.String(LegacyBootnodesV5Flag.Name, "", "")
+			for name, value := range tt.flags {
+				if err := set.Set(name, value); err != nil {
+					t.Fatalf("failed to set flag %s: %v", name, err)
+				}
+			}
+
+			ctx := cli.NewContext(cli.NewApp(), set, nil)
+			cfg := new(p2p.Config)
+			setBootstrapNodesV5(ctx, cfg)
+
+			if len(cfg.BootstrapNodesV5) != 0 {
+				t.Fatalf("expected empty v5 defaults, got %d entries", len(cfg.BootstrapNodesV5))
+			}
+		})
 	}
 }
 
