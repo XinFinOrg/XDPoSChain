@@ -63,8 +63,8 @@ var (
 		utils.PeersAllowlistFlag,
 		utils.PeersDenylistFlag,
 		utils.BootnodesFlag,
-		utils.BootnodesV4Flag,
-		utils.BootnodesV5Flag,
+		utils.LegacyBootnodesV4Flag,
+		utils.LegacyBootnodesV5Flag,
 		utils.KeyStoreDirFlag,
 		utils.NoUSBFlag, // deprecated
 		utils.USBFlag,

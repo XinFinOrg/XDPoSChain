@@ -674,19 +674,7 @@ var (
 	}
 	BootnodesFlag = &cli.StringFlag{
 		Name:     "bootnodes",
-		Usage:    "Comma separated enode URLs for P2P discovery bootstrap (set v4+v5 instead for light servers)",
-		Value:    "",
-		Category: flags.NetworkingCategory,
-	}
-	BootnodesV4Flag = &cli.StringFlag{
-		Name:     "bootnodesv4",
-		Usage:    "Comma separated enode URLs for P2P v4 discovery bootstrap (light server, full nodes)",
-		Value:    "",
-		Category: flags.NetworkingCategory,
-	}
-	BootnodesV5Flag = &cli.StringFlag{
-		Name:     "bootnodesv5",
-		Usage:    "Comma separated enode URLs for P2P v5 discovery bootstrap (light server, light nodes)",
+		Usage:    "Comma separated enode URLs for P2P discovery bootstrap",
 		Value:    "",
 		Category: flags.NetworkingCategory,
 	}
@@ -1035,8 +1023,8 @@ func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 	urls := params.MainnetBootnodes
 	if ctx.IsSet(BootnodesFlag.Name) {
 		urls = SplitAndTrim(ctx.String(BootnodesFlag.Name))
-	} else if ctx.IsSet(BootnodesV4Flag.Name) {
-		urls = SplitAndTrim(ctx.String(BootnodesV4Flag.Name))
+	} else if ctx.IsSet(LegacyBootnodesV4Flag.Name) {
+		urls = SplitAndTrim(ctx.String(LegacyBootnodesV4Flag.Name))
 	} else {
 		if cfg.BootstrapNodes != nil {
 			return // Already set by config file, don't apply defaults.
@@ -1069,12 +1057,12 @@ func mustParseBootnodes(urls []string) []*enode.Node {
 // setBootstrapNodesV5 creates a list of bootstrap nodes from the command line
 // flags, reverting to pre-configured ones if none have been specified.
 func setBootstrapNodesV5(ctx *cli.Context, cfg *p2p.Config) {
-	urls := params.DiscoveryV5Bootnodes
+	urls := params.MainnetBootnodes
 	switch {
 	case ctx.IsSet(BootnodesFlag.Name):
 		urls = SplitAndTrim(ctx.String(BootnodesFlag.Name))
-	case ctx.IsSet(BootnodesV5Flag.Name):
-		urls = SplitAndTrim(ctx.String(BootnodesV5Flag.Name))
+	case ctx.IsSet(LegacyBootnodesV5Flag.Name):
+		urls = SplitAndTrim(ctx.String(LegacyBootnodesV5Flag.Name))
 	case ctx.Bool(TestnetFlag.Name):
 		urls = params.TestnetBootnodes
 	case ctx.Bool(DevnetFlag.Name):
