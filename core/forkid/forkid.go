@@ -59,6 +59,9 @@ type ID struct {
 	Next uint64  // Block number of the next upcoming fork, or 0 if no forks are known
 }
 
+// Filter is a fork id filter to validate a remotely advertised ID.
+type Filter func(id ID) error
+
 // NewID calculates the XDC fork ID from the chain config, genesis hash, head.
 func NewID(config *params.ChainConfig, genesis *types.Block, head uint64) ID {
 	// Calculate the starting checksum from the genesis hash

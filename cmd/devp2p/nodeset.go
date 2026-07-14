@@ -18,6 +18,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -91,6 +92,26 @@ func (ns nodeSet) add(nodes ...*enode.Node) {
 		v.Seq = n.Seq()
 		ns[n.ID()] = v
 	}
+}
+
+// topN returns the top n nodes by score as a new set.
+func (ns nodeSet) topN(n int) nodeSet {
+	if n >= len(ns) {
+		return ns
+	}
+
+	byscore := make([]nodeJSON, 0, len(ns))
+	for _, v := range ns {
+		byscore = append(byscore, v)
+	}
+	slices.SortFunc(byscore, func(a, b nodeJSON) int {
+		return cmp.Compare(b.Score, a.Score)
+	})
+	result := make(nodeSet, n)
+	for _, v := range byscore[:n] {
+		result[v.N.ID()] = v
+	}
+	return result
 }
 
 // verify performs integrity checks on the node set.
