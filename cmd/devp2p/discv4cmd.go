@@ -21,14 +21,18 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/rpc"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/p2p/discover"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -46,6 +50,7 @@ var (
 			discv4ResolveCommand,
 			discv4ResolveJSONCommand,
 			discv4CrawlCommand,
+			discv4ListenCommand,
 		},
 	}
 	discv4PingCommand = &cli.Command{
@@ -83,11 +88,19 @@ var (
 		Flags:     discoveryNodeFlags,
 		ArgsUsage: "<nodes.json file>",
 	}
+	discv4ListenCommand = &cli.Command{
+		Name:   "listen",
+		Usage:  "Runs a discovery node",
+		Action: discv4Listen,
+		Flags: slices.Concat(discoveryNodeFlags, []cli.Flag{
+			httpAddrFlag,
+		}),
+	}
 	discv4CrawlCommand = &cli.Command{
 		Name:   "crawl",
 		Usage:  "Updates a nodes.json file with random nodes found in the DHT",
 		Action: discv4Crawl,
-		Flags:  []cli.Flag{bootnodesFlag, crawlTimeoutFlag},
+		Flags:  slices.Concat(discoveryNodeFlags, []cli.Flag{crawlTimeoutFlag, crawlParallelismFlag}),
 	}
 )
 
@@ -108,6 +121,10 @@ var (
 		Name:  "addr",
 		Usage: "Listening address",
 	}
+	extAddrFlag = &cli.StringFlag{
+		Name:  "extaddr",
+		Usage: "UDP endpoint announced in ENR. You can provide a bare IP address or IP:port as the value of this flag. Provide a comma-separated pair to announce both an IPv4 and an IPv6 endpoint.",
+	}
 	crawlTimeoutFlag = &cli.DurationFlag{
 		Name:  "timeout",
 		Usage: "Time limit for the crawl.",
@@ -117,6 +134,15 @@ var (
 		Name:  "parallel",
 		Usage: "How many parallel discoveries to attempt.",
 		Value: 16,
+	}
+	remoteEnodeFlag = &cli.StringFlag{
+		Name:    "remote",
+		Usage:   "Enode of the remote node under test",
+		EnvVars: []string{"REMOTE_ENODE"},
+	}
+	httpAddrFlag = &cli.StringFlag{
+		Name:  "rpc",
+		Usage: "HTTP server listening address",
 	}
 	pingTimeoutFlag = &cli.DurationFlag{
 		Name:  "ping-timeout",
@@ -134,6 +160,7 @@ var discoveryNodeFlags = []cli.Flag{
 	nodekeyFlag,
 	nodedbFlag,
 	listenAddrFlag,
+	extAddrFlag,
 }
 
 func discv4Ping(ctx *cli.Context) error {
@@ -147,6 +174,274 @@ func discv4Ping(ctx *cli.Context) error {
 	}
 	fmt.Printf("node responded to ping (RTT %v).\n", time.Since(start))
 	return nil
+}
+
+func discv4Listen(ctx *cli.Context) error {
+	disc, _ := startV4(ctx)
+	defer disc.Close()
+
+	fmt.Println(disc.Self())
+
+	httpAddr := ctx.String(httpAddrFlag.Name)
+	if httpAddr == "" {
+		// Non-HTTP mode.
+		select {}
+	}
+
+	api := &discv4API{disc}
+	log.Info("Starting RPC API server", "addr", httpAddr)
+	srv := rpc.NewServer()
+	srv.RegisterName("discv4", api)
+	http.DefaultServeMux.Handle("/", srv)
+	httpsrv := http.Server{Addr: httpAddr, Handler: http.DefaultServeMux}
+	return httpsrv.ListenAndServe()
+}
+
+func discv4RequestRecord(ctx *cli.Context) error {
+	n := getNodeArg(ctx)
+	disc, _ := startV4(ctx)
+	defer disc.Close()
+
+	respN, err := disc.RequestENR(n)
+	if err != nil {
+		return fmt.Errorf("can't retrieve record: %v", err)
+	}
+	fmt.Println(respN.String())
+	return nil
+}
+
+func discv4Resolve(ctx *cli.Context) error {
+	n := getNodeArg(ctx)
+	disc, _ := startV4(ctx)
+	defer disc.Close()
+
+	resolved := disc.Resolve(n)
+	if resolved == nil {
+		fmt.Println("unresolved")
+		return fmt.Errorf("could not resolve node %s", n.ID())
+	}
+	fmt.Println(resolved.String())
+	return nil
+}
+
+func discv4ResolveJSON(ctx *cli.Context) error {
+	if ctx.NArg() < 1 {
+		return errors.New("need nodes file as argument")
+	}
+	nodesFile := ctx.Args().Get(0)
+	inputSet := make(nodeSet)
+	if common.FileExist(nodesFile) {
+		inputSet = loadNodesJSON(nodesFile)
+	}
+
+	// Add extra nodes from command line arguments.
+	var nodeargs []*enode.Node
+	for i := 1; i < ctx.NArg(); i++ {
+		n, err := parseNode(ctx.Args().Get(i))
+		if err != nil {
+			exit(err)
+		}
+		nodeargs = append(nodeargs, n)
+	}
+
+	disc, config := startV4(ctx)
+	defer disc.Close()
+
+	c, err := newCrawler(inputSet, config.Bootnodes, disc, enode.IterNodes(nodeargs))
+	if err != nil {
+		return err
+	}
+	c.revalidateInterval = 0
+	output := c.run(0, 1)
+	writeNodesJSON(nodesFile, output)
+	return nil
+}
+
+func discv4Crawl(ctx *cli.Context) error {
+	if ctx.NArg() < 1 {
+		return errors.New("need nodes file as argument")
+	}
+	nodesFile := ctx.Args().First()
+	inputSet := make(nodeSet)
+	if common.FileExist(nodesFile) {
+		inputSet = loadNodesJSON(nodesFile)
+	}
+
+	disc, config := startV4(ctx)
+	defer disc.Close()
+
+	c, err := newCrawler(inputSet, config.Bootnodes, disc, disc.RandomNodes())
+	if err != nil {
+		return err
+	}
+	c.revalidateInterval = 10 * time.Minute
+	output := c.run(ctx.Duration(crawlTimeoutFlag.Name), ctx.Int(crawlParallelismFlag.Name))
+	writeNodesJSON(nodesFile, output)
+	return nil
+}
+
+// startV4 starts an ephemeral discovery V4 node.
+func startV4(ctx *cli.Context) (*discover.UDPv4, discover.Config) {
+	ln, config := makeDiscoveryConfig(ctx)
+	socket := listen(ctx, ln)
+	disc, err := discover.ListenV4(socket, ln, config)
+	if err != nil {
+		exit(err)
+	}
+	return disc, config
+}
+
+func makeDiscoveryConfig(ctx *cli.Context) (*enode.LocalNode, discover.Config) {
+	var cfg discover.Config
+
+	if ctx.IsSet(nodekeyFlag.Name) {
+		key, err := crypto.HexToECDSA(ctx.String(nodekeyFlag.Name))
+		if err != nil {
+			exit(fmt.Errorf("-%s: %v", nodekeyFlag.Name, err))
+		}
+		cfg.PrivateKey = key
+	} else {
+		var err error
+		cfg.PrivateKey, err = crypto.GenerateKey()
+		if err != nil {
+			exit(err)
+		}
+	}
+
+	if commandHasFlag(ctx, bootnodesFlag) {
+		bn, err := parseBootnodes(ctx)
+		if err != nil {
+			exit(err)
+		}
+		cfg.Bootnodes = bn
+	}
+
+	dbpath := ctx.String(nodedbFlag.Name)
+	db, err := enode.OpenDB(dbpath)
+	if err != nil {
+		exit(err)
+	}
+	ln := enode.NewLocalNode(db, cfg.PrivateKey)
+	return ln, cfg
+}
+
+func parseExtAddr(spec string) (ip net.IP, port int, ok bool) {
+	ip = net.ParseIP(spec)
+	if ip != nil {
+		return ip, 0, true
+	}
+	host, portstr, err := net.SplitHostPort(spec)
+	if err != nil {
+		return nil, 0, false
+	}
+	ip = net.ParseIP(host)
+	if ip == nil {
+		return nil, 0, false
+	}
+	port, err = strconv.Atoi(portstr)
+	if err != nil {
+		return nil, 0, false
+	}
+	return ip, port, true
+}
+
+func listen(ctx *cli.Context, ln *enode.LocalNode) *net.UDPConn {
+	addr := ctx.String(listenAddrFlag.Name)
+	extAddr := ctx.String(extAddrFlag.Name)
+	var (
+		socket net.PacketConn
+		err    error
+	)
+	if addr == "" {
+		// Dual-stack socket, falling back to IPv4-only where IPv6 is unavailable.
+		if socket, err = net.ListenPacket("udp", "[::]:0"); err != nil {
+			socket, err = net.ListenPacket("udp", "0.0.0.0:0")
+		}
+	} else {
+		socket, err = net.ListenPacket("udp", addr)
+	}
+	if err != nil {
+		exit(err)
+	}
+
+	// Configure the ENR endpoint from the listener address, but only without an
+	// explicit -extaddr: otherwise we'd announce a fallback IP for an address
+	// family the user didn't specify (e.g. loopback IPv4 on an IPv6-only node).
+	usocket := socket.(*net.UDPConn)
+	uaddr := socket.LocalAddr().(*net.UDPAddr)
+	if extAddr == "" {
+		if uaddr.IP.IsUnspecified() {
+			ln.SetFallbackIP(net.IP{127, 0, 0, 1})
+		} else {
+			ln.SetFallbackIP(uaddr.IP)
+		}
+	}
+	ln.SetFallbackUDP(uaddr.Port)
+
+	// Override with explicit -extaddr address(es). A static IP is set per family,
+	// and all specs share one UDP port because the node has a single socket.
+	if extAddr != "" {
+		var extPort int
+		for spec := range strings.SplitSeq(extAddr, ",") {
+			spec = strings.TrimSpace(spec)
+			if spec == "" {
+				continue
+			}
+			ip, port, ok := parseExtAddr(spec)
+			if !ok {
+				exit(fmt.Errorf("-%s: invalid external address %q", extAddrFlag.Name, spec))
+			}
+			ln.SetStaticIP(ip)
+			if port != 0 {
+				if extPort != 0 && port != extPort {
+					exit(fmt.Errorf("-%s: all addresses must announce the same UDP port, got %d and %d", extAddrFlag.Name, extPort, port))
+				}
+				extPort = port
+			}
+		}
+		if extPort != 0 {
+			ln.SetFallbackUDP(extPort)
+		}
+	}
+
+	return usocket
+}
+
+func parseBootnodes(ctx *cli.Context) ([]*enode.Node, error) {
+	s := params.MainnetBootnodes
+	if ctx.IsSet(bootnodesFlag.Name) {
+		input := ctx.String(bootnodesFlag.Name)
+		if input == "" {
+			return nil, nil
+		}
+		s = strings.Split(input, ",")
+	}
+	nodes := make([]*enode.Node, len(s))
+	var err error
+	for i, record := range s {
+		nodes[i], err = parseNode(record)
+		if err != nil {
+			return nil, fmt.Errorf("invalid bootstrap node: %v", err)
+		}
+	}
+	return nodes, nil
+}
+
+type discv4API struct {
+	host *discover.UDPv4
+}
+
+func (api *discv4API) LookupRandom(n int) (ns []*enode.Node) {
+	it := api.host.RandomNodes()
+	defer it.Close()
+	for len(ns) < n && it.Next() {
+		ns = append(ns, it.Node())
+	}
+	return ns
+}
+
+func (api *discv4API) Self() *enode.Node {
+	return api.host.Self()
 }
 
 func discv4Check(ctx *cli.Context) error {
@@ -271,89 +566,6 @@ func discv4Check(ctx *cli.Context) error {
 	return nil
 }
 
-func discv4RequestRecord(ctx *cli.Context) error {
-	n := getNodeArg(ctx)
-	disc, _ := startV4(ctx)
-	defer disc.Close()
-
-	respN, err := disc.RequestENR(n)
-	if err != nil {
-		return fmt.Errorf("can't retrieve record: %v", err)
-	}
-	fmt.Println(respN.String())
-	return nil
-}
-
-func discv4Resolve(ctx *cli.Context) error {
-	n := getNodeArg(ctx)
-	disc, _ := startV4(ctx)
-	defer disc.Close()
-
-	resolved := disc.Resolve(n)
-	if resolved == nil {
-		fmt.Println("unresolved")
-		return fmt.Errorf("could not resolve node %s", n.ID())
-	}
-	fmt.Println(resolved.String())
-	return nil
-}
-
-func discv4ResolveJSON(ctx *cli.Context) error {
-	if ctx.NArg() < 1 {
-		return fmt.Errorf("need nodes file as argument")
-	}
-	nodesFile := ctx.Args().Get(0)
-	inputSet := make(nodeSet)
-	if common.FileExist(nodesFile) {
-		inputSet = loadNodesJSON(nodesFile)
-	}
-
-	// Add extra nodes from command line arguments.
-	var nodeargs []*enode.Node
-	for i := 1; i < ctx.NArg(); i++ {
-		n, err := parseNode(ctx.Args().Get(i))
-		if err != nil {
-			exit(err)
-		}
-		nodeargs = append(nodeargs, n)
-	}
-
-	disc, config := startV4(ctx)
-	defer disc.Close()
-
-	c, err := newCrawler(inputSet, config.Bootnodes, disc, enode.IterNodes(nodeargs))
-	if err != nil {
-		return err
-	}
-	c.revalidateInterval = 0
-	output := c.run(0, 1)
-	writeNodesJSON(nodesFile, output)
-	return nil
-}
-
-func discv4Crawl(ctx *cli.Context) error {
-	if ctx.NArg() < 1 {
-		return fmt.Errorf("need nodes file as argument")
-	}
-	nodesFile := ctx.Args().First()
-	var inputSet nodeSet
-	if common.FileExist(nodesFile) {
-		inputSet = loadNodesJSON(nodesFile)
-	}
-
-	disc, config := startV4(ctx)
-	defer disc.Close()
-
-	c, err := newCrawler(inputSet, config.Bootnodes, disc, disc.RandomNodes())
-	if err != nil {
-		return err
-	}
-	c.revalidateInterval = 10 * time.Minute
-	output := c.run(ctx.Duration(crawlTimeoutFlag.Name), ctx.Int(crawlParallelismFlag.Name))
-	writeNodesJSON(nodesFile, output)
-	return nil
-}
-
 func loadNodeFile(path string) ([]*enode.Node, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -418,87 +630,4 @@ func formatCheckLine(index int, n *enode.Node, status string, elapsed time.Durat
 		msg = err.Error()
 	}
 	return fmt.Sprintf("%02d|%s|%s|%s|%s", index, nodeEndpoint(n), status, elapsed.Round(time.Millisecond), msg)
-}
-
-// startV4 starts an ephemeral discovery V4 node.
-func startV4(ctx *cli.Context) (*discover.UDPv4, discover.Config) {
-	ln, config := makeDiscoveryConfig(ctx)
-	socket := listen(ln, ctx.String(listenAddrFlag.Name))
-	disc, err := discover.ListenV4(socket, ln, config)
-	if err != nil {
-		exit(err)
-	}
-	return disc, config
-}
-
-func makeDiscoveryConfig(ctx *cli.Context) (*enode.LocalNode, discover.Config) {
-	var cfg discover.Config
-
-	if ctx.IsSet(nodekeyFlag.Name) {
-		key, err := crypto.HexToECDSA(ctx.String(nodekeyFlag.Name))
-		if err != nil {
-			exit(fmt.Errorf("-%s: %v", nodekeyFlag.Name, err))
-		}
-		cfg.PrivateKey = key
-	} else {
-		cfg.PrivateKey, _ = crypto.GenerateKey()
-	}
-
-	if commandHasFlag(ctx, bootnodesFlag) {
-		bn, err := parseBootnodes(ctx)
-		if err != nil {
-			exit(err)
-		}
-		cfg.Bootnodes = bn
-	}
-
-	dbpath := ctx.String(nodedbFlag.Name)
-	db, err := enode.OpenDB(dbpath)
-	if err != nil {
-		exit(err)
-	}
-	ln := enode.NewLocalNode(db, cfg.PrivateKey)
-	return ln, cfg
-}
-
-func listen(ln *enode.LocalNode, addr string) *net.UDPConn {
-	if addr == "" {
-		addr = "0.0.0.0:0"
-	}
-	udpAddr, err := net.ResolveUDPAddr("udp4", addr)
-	if err != nil {
-		exit(err)
-	}
-	socket, err := net.ListenUDP("udp4", udpAddr)
-	if err != nil {
-		exit(err)
-	}
-	uaddr := socket.LocalAddr().(*net.UDPAddr)
-	if uaddr.IP.IsUnspecified() {
-		ln.SetFallbackIP(net.IP{127, 0, 0, 1})
-	} else {
-		ln.SetFallbackIP(uaddr.IP)
-	}
-	ln.SetFallbackUDP(uaddr.Port)
-	return socket
-}
-
-func parseBootnodes(ctx *cli.Context) ([]*enode.Node, error) {
-	s := params.MainnetBootnodes
-	if ctx.IsSet(bootnodesFlag.Name) {
-		input := ctx.String(bootnodesFlag.Name)
-		if input == "" {
-			return nil, nil
-		}
-		s = strings.Split(input, ",")
-	}
-	nodes := make([]*enode.Node, len(s))
-	var err error
-	for i, record := range s {
-		nodes[i], err = parseNode(record)
-		if err != nil {
-			return nil, fmt.Errorf("invalid bootstrap node: %v", err)
-		}
-	}
-	return nodes, nil
 }
