@@ -17,10 +17,12 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"net"
 
-	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
+	"github.com/XinFinOrg/XDPoSChain/cmd/devp2p/internal/ethtest"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/p2p/rlpx"
@@ -37,66 +39,81 @@ var (
 		},
 	}
 	rlpxPingCommand = &cli.Command{
-		Name:      "ping",
-		Usage:     "Perform a RLPx handshake",
-		ArgsUsage: "<node>",
-		Action:    rlpxPing,
+		Name:   "ping",
+		Usage:  "Perform a RLPx handshake",
+		Action: rlpxPing,
 	}
 )
 
 func rlpxPing(ctx *cli.Context) error {
 	n := getNodeArg(ctx)
-
-	fd, err := net.Dial("tcp", fmt.Sprintf("%v:%d", n.IP(), n.TCP()))
+	tcpEndpoint, ok := n.TCPEndpoint()
+	if !ok {
+		return errors.New("node has no TCP endpoint")
+	}
+	fd, err := net.Dial("tcp", tcpEndpoint.String())
 	if err != nil {
 		return err
 	}
 	defer fd.Close()
-	conn := rlpx.NewConn(fd, n.Pubkey())
 
+	conn := rlpx.NewConn(fd, n.Pubkey())
 	ourKey, err := crypto.GenerateKey()
 	if err != nil {
 		return err
 	}
-
 	_, err = conn.Handshake(ourKey)
 	if err != nil {
 		return err
 	}
-
 	code, data, _, err := conn.Read()
 	if err != nil {
 		return err
 	}
 	switch code {
 	case 0:
-		var h devp2pHandshake
+		var h ethtest.Hello
 		if err := rlp.DecodeBytes(data, &h); err != nil {
 			return fmt.Errorf("invalid handshake: %v", err)
 		}
 		fmt.Printf("%+v\n", h)
 	case 1:
-		var msg []p2p.DiscReason
-		if err := rlp.DecodeBytes(data, &msg); err != nil {
-			return fmt.Errorf("invalid disconnect message: %v", err)
+		// The disconnect message is specified as a list containing the reason,
+		// but some implementations (including older geth) send the reason as a
+		// single byte. Handle both forms, and on failure include the raw payload
+		// so the operator can see what was actually sent.
+		reason, decErr := decodeRLPxDisconnect(data)
+		if decErr != nil {
+			return fmt.Errorf("invalid disconnect message: %v (raw=0x%x)", decErr, data)
 		}
-		if len(msg) == 0 {
-			return fmt.Errorf("invalid disconnect message")
-		}
-		return fmt.Errorf("received disconnect message: %v", msg[0])
+		return fmt.Errorf("received disconnect message: %v", reason)
 	default:
-		return fmt.Errorf("invalid message code %d, expected handshake (code zero)", code)
+		return fmt.Errorf("invalid message code %d, expected handshake (code zero) or disconnect (code one)", code)
 	}
 	return nil
 }
 
-// devp2pHandshake is the RLP structure of the devp2p protocol handshake.
-type devp2pHandshake struct {
-	Version    uint64
-	Name       string
-	Caps       []p2p.Cap
-	ListenPort uint64
-	ID         hexutil.Bytes // secp256k1 public key
-	// Ignore additional fields (for forward compatibility).
-	Rest []rlp.RawValue `rlp:"tail"`
+// decodeRLPxDisconnect parses a disconnect message payload. Per the RLPx spec
+// the payload is a list containing a single reason, but some implementations
+// (including older geth) sent the reason as a bare byte. Accept both forms.
+func decodeRLPxDisconnect(data []byte) (p2p.DiscReason, error) {
+	s := rlp.NewStream(bytes.NewReader(data), uint64(len(data)))
+	k, _, err := s.Kind()
+	if err != nil {
+		return 0, err
+	}
+	var reason p2p.DiscReason
+	if k == rlp.List {
+		if _, err := s.List(); err != nil {
+			return 0, err
+		}
+		if err := s.Decode(&reason); err != nil {
+			return 0, err
+		}
+		return reason, nil
+	}
+	if err := s.Decode(&reason); err != nil {
+		return 0, err
+	}
+	return reason, nil
 }
