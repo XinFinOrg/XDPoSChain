@@ -396,7 +396,7 @@ func pingUntil(disc *discover.UDPv4, n *enode.Node, timeout time.Duration) (time
 }
 
 func nodeEndpoint(n *enode.Node) string {
-	if n.Incomplete() {
+	if !n.IPAddr().IsValid() {
 		return n.ID().String()
 	}
 	if n.UDP() == n.TCP() {
