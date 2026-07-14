@@ -60,7 +60,7 @@ var (
 		Usage:     "Ping every enode listed in a file and report UDP reachability",
 		Action:    discv4Check,
 		ArgsUsage: "<nodes-file>",
-		Flags:     slices.Concat(discoveryNodeFlags, []cli.Flag{pingTimeoutFlag, checkParallelFlag, checkOutputFlag}),
+		Flags:     slices.Concat(discoveryNodeFlags, []cli.Flag{pingTimeoutFlag, crawlParallelismFlag, checkOutputFlag}),
 	}
 	discv4RequestRecordCommand = &cli.Command{
 		Name:      "requestenr",
@@ -113,15 +113,15 @@ var (
 		Usage: "Time limit for the crawl.",
 		Value: 30 * time.Minute,
 	}
+	crawlParallelismFlag = &cli.IntFlag{
+		Name:  "parallel",
+		Usage: "How many parallel discoveries to attempt.",
+		Value: 16,
+	}
 	pingTimeoutFlag = &cli.DurationFlag{
 		Name:  "ping-timeout",
 		Usage: "Total time to wait for a pong reply",
 		Value: 3 * time.Second,
-	}
-	checkParallelFlag = &cli.IntFlag{
-		Name:  "parallel",
-		Usage: "Number of concurrent ping checks",
-		Value: 8,
 	}
 	checkOutputFlag = &cli.StringFlag{
 		Name:  "output",
@@ -138,7 +138,7 @@ var discoveryNodeFlags = []cli.Flag{
 
 func discv4Ping(ctx *cli.Context) error {
 	n := getNodeArg(ctx)
-	disc := startV4(ctx)
+	disc, _ := startV4(ctx)
 	defer disc.Close()
 
 	start := time.Now()
@@ -165,7 +165,7 @@ func discv4Check(ctx *cli.Context) error {
 	if timeout <= 0 {
 		return errors.New("ping-timeout must be greater than 0")
 	}
-	parallel := ctx.Int(checkParallelFlag.Name)
+	parallel := ctx.Int(crawlParallelismFlag.Name)
 	if parallel < 1 {
 		return errors.New("parallel must be at least 1")
 	}
@@ -201,7 +201,7 @@ func discv4Check(ctx *cli.Context) error {
 
 	discs := make([]*discover.UDPv4, parallel)
 	for i := 0; i < parallel; i++ {
-		discs[i] = startV4(ctx)
+		discs[i], _ = startV4(ctx)
 	}
 	defer func() {
 		for _, disc := range discs {
@@ -273,7 +273,7 @@ func discv4Check(ctx *cli.Context) error {
 
 func discv4RequestRecord(ctx *cli.Context) error {
 	n := getNodeArg(ctx)
-	disc := startV4(ctx)
+	disc, _ := startV4(ctx)
 	defer disc.Close()
 
 	respN, err := disc.RequestENR(n)
@@ -286,7 +286,7 @@ func discv4RequestRecord(ctx *cli.Context) error {
 
 func discv4Resolve(ctx *cli.Context) error {
 	n := getNodeArg(ctx)
-	disc := startV4(ctx)
+	disc, _ := startV4(ctx)
 	defer disc.Close()
 
 	resolved := disc.Resolve(n)
@@ -318,12 +318,15 @@ func discv4ResolveJSON(ctx *cli.Context) error {
 		nodeargs = append(nodeargs, n)
 	}
 
-	// Run the crawler.
-	disc := startV4(ctx)
+	disc, config := startV4(ctx)
 	defer disc.Close()
-	c := newCrawler(inputSet, disc, enode.IterNodes(nodeargs))
+
+	c, err := newCrawler(inputSet, config.Bootnodes, disc, enode.IterNodes(nodeargs))
+	if err != nil {
+		return err
+	}
 	c.revalidateInterval = 0
-	output := c.run(0)
+	output := c.run(0, 1)
 	writeNodesJSON(nodesFile, output)
 	return nil
 }
@@ -338,11 +341,15 @@ func discv4Crawl(ctx *cli.Context) error {
 		inputSet = loadNodesJSON(nodesFile)
 	}
 
-	disc := startV4(ctx)
+	disc, config := startV4(ctx)
 	defer disc.Close()
-	c := newCrawler(inputSet, disc, disc.RandomNodes())
+
+	c, err := newCrawler(inputSet, config.Bootnodes, disc, disc.RandomNodes())
+	if err != nil {
+		return err
+	}
 	c.revalidateInterval = 10 * time.Minute
-	output := c.run(ctx.Duration(crawlTimeoutFlag.Name))
+	output := c.run(ctx.Duration(crawlTimeoutFlag.Name), ctx.Int(crawlParallelismFlag.Name))
 	writeNodesJSON(nodesFile, output)
 	return nil
 }
@@ -414,14 +421,14 @@ func formatCheckLine(index int, n *enode.Node, status string, elapsed time.Durat
 }
 
 // startV4 starts an ephemeral discovery V4 node.
-func startV4(ctx *cli.Context) *discover.UDPv4 {
+func startV4(ctx *cli.Context) (*discover.UDPv4, discover.Config) {
 	ln, config := makeDiscoveryConfig(ctx)
 	socket := listen(ln, ctx.String(listenAddrFlag.Name))
 	disc, err := discover.ListenV4(socket, ln, config)
 	if err != nil {
 		exit(err)
 	}
-	return disc
+	return disc, config
 }
 
 func makeDiscoveryConfig(ctx *cli.Context) (*enode.LocalNode, discover.Config) {
