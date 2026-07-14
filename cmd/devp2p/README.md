@@ -3,11 +3,11 @@
 The devp2p command line tool is a utility for low-level peer-to-peer debugging and
 protocol development purposes. It can do many things.
 
-### ENR Decoding
+## ENR Decoding
 
 Use `devp2p enrdump <base64>` to verify and display an Ethereum Node Record.
 
-### Node Key Management
+## Node Key Management
 
 The `devp2p key ...` command family deals with node key files.
 
@@ -16,7 +16,7 @@ Run `devp2p key generate mynode.key` to create a new node key in the `mynode.key
 Run `devp2p key to-enode mynode.key -ip 127.0.0.1 -tcp 30303` to create an enode:// URL
 corresponding to the given node key and address information.
 
-### Maintaining DNS Discovery Node Lists
+## Maintaining DNS Discovery Node Lists
 
 The devp2p command can create and publish DNS discovery node lists.
 
@@ -30,7 +30,30 @@ Run `devp2p dns to-route53 <directory>` to publish a tree to Amazon Route53.
 
 You can find more information about these commands in the [DNS Discovery Setup Guide][dns-tutorial].
 
-### Discovery v4 Utilities
+## Node Set Utilities
+
+There are several commands for working with JSON node set files. These files are generated
+by the discovery crawlers and DNS client commands. Node sets also used as the input of the
+DNS deployer commands.
+
+Run `devp2p nodeset info <nodes.json>` to display statistics of a node set.
+
+Run `devp2p nodeset filter <nodes.json> <filter flags...>` to write a new, filtered node
+set to standard output. The following filters are supported:
+
+- `-limit <N>` limits the output set to N entries, taking the top N nodes by score
+- `-ip <CIDR>` filters nodes by IP subnet
+- `-min-age <duration>` filters nodes by 'first seen' time
+- `-eth-network <mainnet/sepolia/holesky>` filters nodes by "eth" ENR entry
+- `-les-server` filters nodes by LES server support
+- `-snap` filters nodes by snap protocol support
+
+For example, given a node set in `nodes.json`, you could create a filtered set containing
+up to 20 eth mainnet nodes which also support snap sync using this command:
+
+    devp2p nodeset filter nodes.json -eth-network mainnet -snap -limit 20
+
+## Discovery v4 Utilities
 
 The `devp2p discv4 ...` command family deals with the [Node Discovery v4][discv4]
 protocol.
@@ -42,7 +65,7 @@ the DHT.
 
 Run `devp2p discv4 crawl <nodes.json path>` to create or update a JSON node set.
 
-### Discovery v5 Utilities
+## Discovery v5 Utilities
 
 The `devp2p discv5 ...` command family deals with the [Node Discovery v5][discv5]
 protocol. This protocol is currently under active development.
@@ -57,7 +80,7 @@ Run `devp2p discv5 listen` to run a Discovery v5 node.
 Run `devp2p discv5 crawl <nodes.json path>` to create or update a JSON node set containing
 discv5 nodes.
 
-### Discovery Test Suites
+## Discovery Test Suites
 
 The devp2p command also contains interactive test suites for Discovery v4 and Discovery
 v5.
@@ -81,6 +104,37 @@ Now get the ENR of your node and store it in the `NODE` environment variable.
 
 Start the test by running `devp2p discv5 test -listen1 127.0.0.1 -listen2 127.0.0.2 $NODE`.
 
-[dns-tutorial]: https://geth.ethereum.org/docs/developers/dns-discovery-setup
+## Eth Protocol Test Suite
+
+The Eth Protocol test suite is a conformance test suite for the [eth protocol][eth].
+
+To run the eth protocol test suite against your implementation, the node needs to be initialized
+with our test chain. The chain files are located in `./cmd/devp2p/internal/ethtest/testdata`.
+
+1. initialize the geth node with the `genesis.json` file
+2. import blocks from `chain.rlp`
+3. run the client using the resulting database. For geth, use a command like the one below:
+
+    geth \
+        --datadir <datadir>            \
+        --nodiscover                   \
+        --nat=none                     \
+        --networkid 3503995874084926   \
+        --verbosity 5                  \
+        --authrpc.jwtsecret jwt.secret
+
+Note that the tests also require access to the engine API.
+The test suite can now be executed using the devp2p tool.
+
+    devp2p rlpx eth-test \
+        --chain internal/ethtest/testdata   \
+        --node enode://....                 \
+        --engineapi http://127.0.0.1:8551   \
+        --jwtsecret $(cat jwt.secret)
+
+Repeat the above process (re-initialising the node) in order to run the Eth Protocol test suite again.
+
+[eth]: https://github.com/ethereum/devp2p/blob/master/caps/eth.md
+[dns-tutorial]: https://geth.ethereum.org/docs/developers/geth-developer/dns-discovery-setup
 [discv4]: https://github.com/ethereum/devp2p/tree/master/discv4.md
 [discv5]: https://github.com/ethereum/devp2p/tree/master/discv5/discv5.md
