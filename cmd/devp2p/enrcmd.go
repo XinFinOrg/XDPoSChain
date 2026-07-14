@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -48,7 +49,7 @@ func enrdump(ctx *cli.Context) error {
 	var source string
 	if file := ctx.String(fileFlag.Name); file != "" {
 		if ctx.NArg() != 0 {
-			return fmt.Errorf("can't dump record from command-line argument in -file mode")
+			return errors.New("can't dump record from command-line argument in -file mode")
 		}
 		var b []byte
 		var err error
@@ -64,29 +65,37 @@ func enrdump(ctx *cli.Context) error {
 	} else if ctx.NArg() == 1 {
 		source = ctx.Args().First()
 	} else {
-		return fmt.Errorf("need record as argument")
+		return errors.New("need record as argument")
 	}
 
 	r, err := parseRecord(source)
 	if err != nil {
 		return fmt.Errorf("INVALID: %v", err)
 	}
-	fmt.Print(dumpRecord(r))
+	dumpRecord(os.Stdout, r)
 	return nil
 }
 
 // dumpRecord creates a human-readable description of the given node record.
-func dumpRecord(r *enr.Record) string {
-	out := new(bytes.Buffer)
-	if n, err := enode.New(enode.ValidSchemes, r); err != nil {
+func dumpRecord(out io.Writer, r *enr.Record) {
+	n, err := enode.New(enode.ValidSchemes, r)
+	if err != nil {
 		fmt.Fprintf(out, "INVALID: %v\n", err)
 	} else {
 		fmt.Fprintf(out, "Node ID: %v\n", n.ID())
+		dumpNodeURL(out, n)
 	}
 	kv := r.AppendElements(nil)[1:]
 	fmt.Fprintf(out, "Record has sequence number %d and %d key/value pairs.\n", r.Seq(), len(kv)/2)
 	fmt.Fprint(out, dumpRecordKV(kv, 2))
-	return out.String()
+}
+
+func dumpNodeURL(out io.Writer, n *enode.Node) {
+	var key enode.Secp256k1
+	if n.Load(&key) != nil {
+		return // no secp256k1 public key
+	}
+	fmt.Fprintf(out, "URLv4:   %s\n", n.URLv4())
 }
 
 func dumpRecordKV(kv []interface{}, indent int) string {
@@ -174,8 +183,8 @@ var attrFormatters = map[string]func(rlp.RawValue) (string, bool){
 }
 
 func formatAttrRaw(v rlp.RawValue) (string, bool) {
-	s := hex.EncodeToString(v)
-	return s, true
+	content, _, err := rlp.SplitString(v)
+	return hex.EncodeToString(content), err == nil
 }
 
 func formatAttrString(v rlp.RawValue) (string, bool) {
@@ -185,7 +194,7 @@ func formatAttrString(v rlp.RawValue) (string, bool) {
 
 func formatAttrIP(v rlp.RawValue) (string, bool) {
 	content, _, err := rlp.SplitString(v)
-	if err != nil || len(content) != 4 && len(content) != 6 {
+	if err != nil || len(content) != 4 && len(content) != 16 {
 		return "", false
 	}
 	return net.IP(content).String(), true
