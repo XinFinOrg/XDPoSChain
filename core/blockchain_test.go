@@ -573,6 +573,59 @@ func TestNewBlockChainRepairsMissingHeadStateConsistently(t *testing.T) {
 	}
 }
 
+// TestNewBlockChainRepairsMissingHeadStateRespectsRollbackTarget ensures
+// startup repair does not rewind below the user-requested rollback target.
+func TestNewBlockChainRepairsMissingHeadStateRespectsRollbackTarget(t *testing.T) {
+	var (
+		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		address = crypto.PubkeyToAddress(key.PublicKey)
+		funds   = big.NewInt(1000000000000000)
+		gspec   = &Genesis{
+			Alloc:   types.GenesisAlloc{address: {Balance: funds}},
+			BaseFee: big.NewInt(params.InitialBaseFee),
+			Config:  params.TestChainConfig,
+		}
+	)
+	db := rawdb.NewMemoryDatabase()
+	chain, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+
+	_, blocks, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 3, nil)
+	if n, err := chain.InsertChain(blocks); err != nil {
+		chain.Stop()
+		t.Fatalf("failed to insert block %d: %v", n, err)
+	}
+	head := blocks[len(blocks)-1]
+	target := blocks[len(blocks)-2]
+	chain.Stop()
+
+	rawdb.DeleteLegacyTrieNode(db, head.Root())
+
+	prevRollback := common.RollbackNumber
+	common.RollbackNumber = target.NumberU64()
+	t.Cleanup(func() {
+		common.RollbackNumber = prevRollback
+	})
+
+	reopened, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to reopen repaired chain: %v", err)
+	}
+	defer reopened.Stop()
+
+	if got := reopened.CurrentBlock().Hash(); got != target.Hash() {
+		t.Fatalf("unexpected repaired current block: have %s want %s", got, target.Hash())
+	}
+	if got := reopened.CurrentSnapBlock().Hash(); got != target.Hash() {
+		t.Fatalf("unexpected repaired current snap block: have %s want %s", got, target.Hash())
+	}
+	if got := reopened.CurrentHeader().Hash(); got != target.Hash() {
+		t.Fatalf("unexpected repaired current header: have %s want %s", got, target.Hash())
+	}
+}
+
 // TestNewBlockChainReadOnlyFailsHeadStateRepair tests readonly options-based open fails when head state repair would mutate the database.
 func TestNewBlockChainReadOnlyFailsHeadStateRepair(t *testing.T) {
 	var (

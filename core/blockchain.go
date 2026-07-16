@@ -970,7 +970,7 @@ func (bc *BlockChain) ResetWithGenesisBlock(genesis *types.Block) error {
 func (bc *BlockChain) repair(head **types.Block) error {
 	for {
 		// Abort if we've rewound to a head block that does have associated state
-		if (common.RollbackNumber == 0) || ((*head).Number().Uint64() < common.RollbackNumber) {
+		if (common.RollbackNumber == 0) || ((*head).Number().Uint64() <= common.RollbackNumber) {
 			if bc.HasState((*head).Root()) {
 				log.Info("Rewound blockchain to past state", "number", (*head).Number(), "hash", (*head).Hash())
 				engine, ok := bc.Engine().(*XDPoS.XDPoS)
