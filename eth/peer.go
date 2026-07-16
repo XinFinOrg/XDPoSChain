@@ -535,45 +535,48 @@ func (ps *peerSet) PeersWithoutTx(hash common.Hash) []*peer {
 	return list
 }
 
-// PeersWithoutVote retrieves a list of peers that do not have a given block in
-// their set of known hashes.
+// PeersWithoutVote retrieves a list of peers that do not have a given vote in
+// their set of known hashes. Only peers supporting the XDC BFT protocol
+// (version >= xdc100) are returned.
 func (ps *peerSet) PeersWithoutVote(hash common.Hash) []*peer {
 	ps.lock.RLock()
 	defer ps.lock.RUnlock()
 
 	list := make([]*peer, 0, len(ps.peers))
 	for _, p := range ps.peers {
-		if !p.knownVote.Contains(hash) {
+		if p.version >= xdc100 && !p.knownVote.Contains(hash) {
 			list = append(list, p)
 		}
 	}
 	return list
 }
 
-// PeersWithoutTimeout retrieves a list of peers that do not have a given block in
-// their set of known hashes.
+// PeersWithoutTimeout retrieves a list of peers that do not have a given timeout in
+// their set of known hashes. Only peers supporting the XDC BFT protocol
+// (version >= xdc100) are returned.
 func (ps *peerSet) PeersWithoutTimeout(hash common.Hash) []*peer {
 	ps.lock.RLock()
 	defer ps.lock.RUnlock()
 
 	list := make([]*peer, 0, len(ps.peers))
 	for _, p := range ps.peers {
-		if !p.knownTimeout.Contains(hash) {
+		if p.version >= xdc100 && !p.knownTimeout.Contains(hash) {
 			list = append(list, p)
 		}
 	}
 	return list
 }
 
-// PeersWithoutSyncInfo retrieves a list of peers that do not have a given block in
-// their set of known hashes.
+// PeersWithoutSyncInfo retrieves a list of peers that do not have a given sync
+// info in their set of known hashes. Only peers supporting the XDC BFT protocol
+// (version >= xdc100) are returned.
 func (ps *peerSet) PeersWithoutSyncInfo(hash common.Hash) []*peer {
 	ps.lock.RLock()
 	defer ps.lock.RUnlock()
 
 	list := make([]*peer, 0, len(ps.peers))
 	for _, p := range ps.peers {
-		if !p.knownSyncInfo.Contains(hash) {
+		if p.version >= xdc100 && !p.knownSyncInfo.Contains(hash) {
 			list = append(list, p)
 		}
 	}

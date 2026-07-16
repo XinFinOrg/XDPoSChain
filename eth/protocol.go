@@ -33,17 +33,17 @@ import (
 const (
 	eth62  = 62
 	eth63  = 63
-	xdpos2 = 100
+	xdc100 = 100
 )
 
 // protocolName is the official short name of the protocol used during capability negotiation.
 var protocolName = "eth"
 
 // ProtocolVersions are the supported versions of the eth protocol (first is primary).
-var ProtocolVersions = []uint{xdpos2, eth63}
+var ProtocolVersions = []uint{xdc100, eth63}
 
 // protocolLengths are the number of implemented message corresponding to different protocol versions.
-var protocolLengths = map[uint]uint64{xdpos2: 227, eth63: 17, eth62: 8}
+var protocolLengths = map[uint]uint64{xdc100: 227, eth63: 17, eth62: 8}
 
 const protocolMaxMsgSize = 10 * 1024 * 1024 // Maximum cap on the size of a protocol message
 
@@ -66,7 +66,7 @@ const (
 	GetReceiptsMsg = 0x0f
 	ReceiptsMsg    = 0x10
 
-	// Protocol messages belonging to xdpos2/100
+	// Protocol messages belonging to xdc/100
 	VoteMsg     = 0xe0
 	TimeoutMsg  = 0xe1
 	SyncInfoMsg = 0xe2
