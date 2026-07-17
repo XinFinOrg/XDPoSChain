@@ -35,16 +35,17 @@ const (
 	eth63  = 63
 	xdc100 = 100
 	xdc164 = 164 // eth64
+	xdc165 = 165 // eth65
 )
 
 // protocolName is the official short name of the protocol used during capability negotiation.
 var protocolName = "eth"
 
 // ProtocolVersions are the supported versions of the eth protocol (first is primary).
-var ProtocolVersions = []uint{xdc164, xdc100, eth63}
+var ProtocolVersions = []uint{xdc165, xdc164, xdc100, eth63}
 
 // protocolLengths are the number of implemented message corresponding to different protocol versions.
-var protocolLengths = map[uint]uint64{xdc164: 227, xdc100: 227, eth63: 17}
+var protocolLengths = map[uint]uint64{xdc165: 230, xdc164: 227, xdc100: 227, eth63: 17}
 
 const protocolMaxMsgSize = 10 * 1024 * 1024 // Maximum cap on the size of a protocol message
 
@@ -52,7 +53,7 @@ const protocolMaxMsgSize = 10 * 1024 * 1024 // Maximum cap on the size of a prot
 const (
 	StatusMsg          = 0x00
 	NewBlockHashesMsg  = 0x01
-	TxMsg              = 0x02
+	TransactionMsg     = 0x02
 	GetBlockHeadersMsg = 0x03
 	BlockHeadersMsg    = 0x04
 	GetBlockBodiesMsg  = 0x05
@@ -69,6 +70,11 @@ const (
 	VoteMsg     = 0xe0
 	TimeoutMsg  = 0xe1
 	SyncInfoMsg = 0xe2
+
+	// Protocol message codes introduced in xdc/165
+	NewPooledTransactionHashesMsg = 0xe3
+	GetPooledTransactionsMsg      = 0xe4
+	PooledTransactionsMsg         = 0xe5
 )
 
 type errCode int
@@ -103,6 +109,14 @@ var errorToString = map[int]string{
 }
 
 type txPool interface {
+	// Has returns an indicator whether txpool has a transaction
+	// cached with the given hash.
+	Has(hash common.Hash) bool
+
+	// Get retrieves the transaction from local txpool with given
+	// tx hash.
+	Get(hash common.Hash) *types.Transaction
+
 	// Add should add the given transactions to the pool.
 	Add(txs []*types.Transaction, sync bool) []error
 

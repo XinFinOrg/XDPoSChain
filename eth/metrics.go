@@ -101,7 +101,7 @@ func (rw *meteredMsgReadWriter) ReadMsg() (p2p.Msg, error) {
 		packets, traffic = propHashInPacketsMeter, propHashInTrafficMeter
 	case msg.Code == NewBlockMsg:
 		packets, traffic = propBlockInPacketsMeter, propBlockInTrafficMeter
-	case msg.Code == TxMsg:
+	case msg.Code == TransactionMsg:
 		packets, traffic = propTxnInPacketsMeter, propTxnInTrafficMeter
 	}
 	packets.Mark(1)
@@ -128,7 +128,7 @@ func (rw *meteredMsgReadWriter) WriteMsg(msg p2p.Msg) error {
 		packets, traffic = propHashOutPacketsMeter, propHashOutTrafficMeter
 	case msg.Code == NewBlockMsg:
 		packets, traffic = propBlockOutPacketsMeter, propBlockOutTrafficMeter
-	case msg.Code == TxMsg:
+	case msg.Code == TransactionMsg:
 		packets, traffic = propTxnOutPacketsMeter, propTxnOutTrafficMeter
 	}
 	packets.Mark(1)

@@ -265,7 +265,7 @@ func decodeEthPayload(code uint64, data []byte) (interface{}, error) {
 		msg = new(getReceiptsData)
 	case eth.ReceiptsMsg:
 		msg = new(receiptsData)
-	case eth.TxMsg:
+	case eth.TransactionMsg:
 		msg = new(types.Transactions)
 	case eth.OrderTxMsg:
 		msg = new([]rlp.RawValue)

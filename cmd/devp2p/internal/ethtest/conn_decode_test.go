@@ -103,7 +103,7 @@ func TestDecodeEthPayloadTxMsg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode failed: %v", err)
 	}
-	msg, err := decodeEthPayload(eth.TxMsg, b)
+	msg, err := decodeEthPayload(eth.TransactionMsg, b)
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}

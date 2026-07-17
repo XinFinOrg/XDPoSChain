@@ -74,7 +74,7 @@ func newTestProtocolManager(mode downloader.SyncMode, blocks int, generator func
 
 	txpool := newTestTxPool()
 	txpool.added = newtx
-	pm, err := NewProtocolManager(gspec.Config, mode, ethconfig.Defaults.NetworkId, evmux, txpool, engine, blockchain, db)
+	pm, err := NewProtocolManager(gspec.Config, mode, ethconfig.Defaults.NetworkId, evmux, &testTxPool{added: newtx, pool: make(map[common.Hash]*types.Transaction)}, engine, blockchain, db)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -96,19 +96,11 @@ func newTestProtocolManagerMust(t *testing.T, mode downloader.SyncMode, blocks i
 
 // testTxPool is a fake, helper transaction pool for testing purposes
 type testTxPool struct {
-	pool map[common.Hash]*types.Transaction // Hash map of collected transactions
-
 	txFeed event.Feed
-	lock   sync.RWMutex // Protects the transaction pool
+	pool   map[common.Hash]*types.Transaction // Hash map of collected transactions
+	added  chan<- []*types.Transaction        // Notification channel for new transactions
 
-	added chan<- []*types.Transaction // Notification channel for new transactions
-}
-
-// newTestTxPool creates a mock transaction pool.
-func newTestTxPool() *testTxPool {
-	return &testTxPool{
-		pool: make(map[common.Hash]*types.Transaction),
-	}
+	lock sync.RWMutex // Protects the transaction pool
 }
 
 // Has returns an indicator whether txpool has a transaction
@@ -126,10 +118,14 @@ func (p *testTxPool) Get(hash common.Hash) *types.Transaction {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	if tx := p.pool[hash]; tx != nil {
-		return tx
+	return p.pool[hash]
+}
+
+// newTestTxPool creates a mock transaction pool.
+func newTestTxPool() *testTxPool {
+	return &testTxPool{
+		pool: make(map[common.Hash]*types.Transaction),
 	}
-	return nil
 }
 
 // Add appends a batch of transactions to the pool, and notifies any
@@ -141,10 +137,10 @@ func (p *testTxPool) Add(txs []*types.Transaction, sync bool) []error {
 	for _, tx := range txs {
 		p.pool[tx.Hash()] = tx
 	}
-
 	if p.added != nil {
 		p.added <- txs
 	}
+	p.txFeed.Send(core.NewTxsEvent{Txs: txs})
 	return make([]error, len(txs))
 }
 
@@ -211,7 +207,7 @@ func newTestPeer(name string, version int, pm *ProtocolManager, shake bool) (*te
 	var id enode.ID
 	rand.Read(id[:])
 
-	peer := pm.newPeer(version, p2p.NewPeer(id, name, nil), net)
+	peer := pm.newPeer(version, p2p.NewPeer(id, name, nil), net, pm.txpool.Get)
 
 	// Start the peer on a new thread
 	errc := make(chan error, 1)
@@ -241,7 +237,7 @@ func newTestPeer(name string, version int, pm *ProtocolManager, shake bool) (*te
 func (p *testPeer) handshake(t *testing.T, td *big.Int, head common.Hash, genesis common.Hash, forkID forkid.ID, forkFilter forkid.Filter) {
 	var msg interface{}
 	switch p.version {
-	case xdc164:
+	case xdc165, xdc164:
 		msg = &statusData{
 			ProtocolVersion: uint32(p.version),
 			NetworkID:       ethconfig.Defaults.NetworkId,

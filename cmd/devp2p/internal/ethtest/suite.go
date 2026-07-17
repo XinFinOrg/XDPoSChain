@@ -438,7 +438,7 @@ func (s *Suite) runTransactionSmoke(t *utesting.T, txs types.Transactions, nonce
 	}
 	defer conn.Close()
 
-	if err := conn.Write(ethProto, eth.TxMsg, txs); err != nil {
+	if err := conn.Write(ethProto, eth.TransactionMsg, txs); err != nil {
 		t.Fatalf("failed to write TxMsg: %v", err)
 	}
 	if skipWithoutSenders && nonceAdvance > 0 {
