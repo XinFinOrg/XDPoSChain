@@ -676,14 +676,14 @@ func (f *Fetcher) insert(peer string, block *types.Block) {
 			log.Debug("Unknown parent of propagated block", "peer", peer, "number", block.Number(), "hash", hash, "parent", block.ParentHash())
 			return
 		}
-		fastBroadCast := true
+		isM2 := false
 	again:
 		err := f.verifyHeader(block.Header())
 		// Quickly validate the header and propagate the block if it passes
 		switch err {
 		case nil:
 			// All ok, quickly propagate to our peers
-			if fastBroadCast {
+			if !isM2 {
 				propBroadcastOutTimer.UpdateSince(block.ReceivedAt)
 				go f.broadcastBlock(block, true)
 			}
@@ -695,7 +695,6 @@ func (f *Fetcher) insert(peer string, block *types.Block) {
 		case consensus.ErrNoValidatorSignature:
 			newBlock := block
 			var errM2 error
-			isM2 := false
 			if f.appendM2HeaderHook != nil {
 				if newBlock, isM2, errM2 = f.appendM2HeaderHook(block); errM2 != nil {
 					log.Error("Append m2 to block header fail", "err", errM2)
@@ -716,7 +715,6 @@ func (f *Fetcher) insert(peer string, block *types.Block) {
 				return
 			}
 			block = newBlock
-			fastBroadCast = false
 			goto again
 		default:
 			// Something went very wrong, drop the peer
@@ -741,7 +739,7 @@ func (f *Fetcher) insert(peer string, block *types.Block) {
 			log.Warn("[insert] Unable to handle new proposed block", "err", err, "number", block.Number(), "hash", block.Hash())
 		}
 		// If import succeeded, broadcast the block
-		if !fastBroadCast {
+		if isM2 {
 			propBroadcastOutTimer.UpdateSince(block.ReceivedAt)
 			go f.broadcastBlock(block, true)
 		} else {
