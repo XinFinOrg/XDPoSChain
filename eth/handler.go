@@ -497,6 +497,9 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		if err := msg.Decode(&headers); err != nil {
 			return errResp(ErrDecode, "msg %v: %v", msg, err)
 		}
+		if err := types.SanityCheckHeaders(headers); err != nil {
+			return err
+		}
 		// If no headers were received, but we're expending a DAO fork check, maybe it's that
 		if len(headers) == 0 && p.forkDrop != nil {
 			// Possibly an empty reply to the fork header checks, sanity check TDs
@@ -576,6 +579,9 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		var request blockBodiesData
 		if err := msg.Decode(&request); err != nil {
 			return errResp(ErrDecode, "msg %v: %v", msg, err)
+		}
+		if err := request.sanityCheck(); err != nil {
+			return err
 		}
 		// Deliver them all to the downloader for queuing
 		trasactions := make([][]*types.Transaction, len(request))
@@ -714,6 +720,9 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		var request newBlockData
 		if err := msg.Decode(&request); err != nil {
 			return errResp(ErrDecode, "%v: %v", msg, err)
+		}
+		if err := request.sanityCheck(); err != nil {
+			return err
 		}
 		request.Block.ReceivedAt = msg.ReceivedAt
 		request.Block.ReceivedFrom = p

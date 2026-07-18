@@ -17,6 +17,7 @@
 package eth
 
 import (
+	"bytes"
 	"fmt"
 	"sync"
 	"testing"
@@ -178,6 +179,28 @@ func testSendTransactions(t *testing.T, protocol int) {
 		})
 	}
 	wg.Wait()
+}
+
+func TestBlockBodiesDataSanityCheckUncleExtraSize(t *testing.T) {
+	request := blockBodiesData{{
+		Uncles: []*types.Header{{
+			Extra: bytes.Repeat([]byte{0x01}, 20*1024+1),
+		}},
+	}}
+
+	if err := request.sanityCheck(); err == nil {
+		t.Fatal("expected oversized uncle extra data to fail sanity check")
+	}
+}
+
+func TestBlockHeadersDataSanityCheckExtraSize(t *testing.T) {
+	headers := []*types.Header{{
+		Extra: bytes.Repeat([]byte{0x01}, 20*1024+1),
+	}}
+
+	if err := types.SanityCheckHeaders(headers); err == nil {
+		t.Fatal("expected oversized header extra data to fail sanity check")
+	}
 }
 
 // Tests that the custom union field encoder and decoder works correctly.

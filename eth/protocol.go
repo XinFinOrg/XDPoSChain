@@ -208,6 +208,20 @@ type newBlockData struct {
 	TD    *big.Int
 }
 
+// sanityCheck verifies that the values are reasonable, as a DoS protection
+func (request *newBlockData) sanityCheck() error {
+	if err := request.Block.SanityCheck(); err != nil {
+		return err
+	}
+	// TD is 34 bits at mainnet block 105048538
+	// TD is 32 bits at testnet block 84385810.
+	// If it becomes 100 million times larger, it will still fit within 100 bits.
+	if tdlen := request.TD.BitLen(); tdlen > 100 {
+		return fmt.Errorf("too large block TD: bitlen %d", tdlen)
+	}
+	return nil
+}
+
 // blockBody represents the data content of a single block.
 type blockBody struct {
 	Transactions []*types.Transaction // Transactions contained within a block
@@ -216,3 +230,16 @@ type blockBody struct {
 
 // blockBodiesData is the network packet for block content distribution.
 type blockBodiesData []*blockBody
+
+// sanityCheck verifies that the uncle headers are reasonable, as a DoS protection.
+func (request blockBodiesData) sanityCheck() error {
+	for bodyIndex, body := range request {
+		if body == nil {
+			return fmt.Errorf("nil block body at index %d", bodyIndex)
+		}
+		if err := types.SanityCheckHeaders(body.Uncles); err != nil {
+			return err
+		}
+	}
+	return nil
+}
