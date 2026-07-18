@@ -709,7 +709,7 @@ func (f *Fetcher) insert(peer string, block *types.Block) {
 				}
 				return
 			}
-			log.Debug("Append M2 to header block", "numer", block.NumberU64(), "hahs", block.Hash())
+			log.Debug("Append M2 to header block", "number", block.NumberU64(), "hash", block.Hash())
 			if err := f.prepareBlock(block); err != nil {
 				log.Debug("Propagated block prepare failed", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
 				return
