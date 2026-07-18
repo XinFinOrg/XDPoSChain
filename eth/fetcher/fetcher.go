@@ -706,7 +706,6 @@ func (f *Fetcher) insert(peer string, block *types.Block) {
 				go f.broadcastBlock(block, true)
 				if err := f.prepareBlock(block); err != nil {
 					log.Debug("Propagated block prepare failed", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
-					return
 				}
 				return
 			}
