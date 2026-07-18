@@ -744,6 +744,9 @@ func (f *Fetcher) insert(peer string, block *types.Block) {
 		if !fastBroadCast {
 			propBroadcastOutTimer.UpdateSince(block.ReceivedAt)
 			go f.broadcastBlock(block, true)
+		} else {
+			propAnnounceOutTimer.UpdateSince(block.ReceivedAt)
+			go f.broadcastBlock(block, false)
 		}
 	}()
 }
