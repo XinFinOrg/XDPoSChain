@@ -683,8 +683,8 @@ func (f *Fetcher) insert(peer string, block *types.Block) {
 		switch err {
 		case nil:
 			// All ok, quickly propagate to our peers
-			propBroadcastOutTimer.UpdateSince(block.ReceivedAt)
 			if fastBroadCast {
+				propBroadcastOutTimer.UpdateSince(block.ReceivedAt)
 				go f.broadcastBlock(block, true)
 			}
 		case consensus.ErrFutureBlock:
@@ -703,6 +703,7 @@ func (f *Fetcher) insert(peer string, block *types.Block) {
 				}
 			}
 			if !isM2 {
+				propBroadcastOutTimer.UpdateSince(block.ReceivedAt)
 				go f.broadcastBlock(block, true)
 				if err := f.prepareBlock(block); err != nil {
 					log.Debug("Propagated block prepare failed", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
@@ -740,8 +741,8 @@ func (f *Fetcher) insert(peer string, block *types.Block) {
 			log.Warn("[insert] Unable to handle new proposed block", "err", err, "number", block.Number(), "hash", block.Hash())
 		}
 		// If import succeeded, broadcast the block
-		propAnnounceOutTimer.UpdateSince(block.ReceivedAt)
 		if !fastBroadCast {
+			propBroadcastOutTimer.UpdateSince(block.ReceivedAt)
 			go f.broadcastBlock(block, true)
 		}
 	}()
