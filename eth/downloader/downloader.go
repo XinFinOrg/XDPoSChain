@@ -27,9 +27,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain"
 	"github.com/XinFinOrg/XDPoSChain/common"
-	xdc_sort "github.com/XinFinOrg/XDPoSChain/common/sort"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/engines/engine_v2"
-	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -1998,36 +1996,17 @@ func (d *Downloader) requestTTL() time.Duration {
 	return ttl
 }
 
-// generateSnapshot creates and stores a snapshot from the given state and block hash.
-// It retrieves candidates from state, sorts them by stake in descending order,
-// and stores the snapshot for future use.
+// generateSnapshot creates and stores a gap block snapshot derived from the
+// given committed state. Callers log the failure.
 func (d *Downloader) generateSnapshot(statedb *state.StateDB, number uint64, hash common.Hash) error {
-	candidates := statedb.GetCandidates()
-	var ms []utils.Masternode
-	for _, candidate := range candidates {
-		v := statedb.GetCandidateCap(candidate)
-		// Skip zero address candidates
-		if !candidate.IsZero() {
-			ms = append(ms, utils.Masternode{Address: candidate, Stake: v})
-		}
-	}
-	xdc_sort.Slice(ms, func(i, j int) bool {
-		return ms[i].Stake.Cmp(ms[j].Stake) >= 0
-	})
-
-	masterNodes := []common.Address{}
-	for _, m := range ms {
-		masterNodes = append(masterNodes, m.Address)
-	}
-
-	snap := engine_v2.NewSnapshot(number, hash, masterNodes)
-	log.Info("[generateSnapshot] created snapshot", "number", number, "hash", hash.Hex(), "candidates", len(masterNodes))
-
-	err := engine_v2.StoreSnapshot(snap, d.stateDB)
+	snap, err := engine_v2.BuildSnapshotFromState(statedb, number, hash)
 	if err != nil {
-		log.Error("[generateSnapshot] error while storing snapshot", "hash", hash, "error", err)
 		return err
 	}
+	if err := engine_v2.StoreSnapshot(snap, d.stateDB); err != nil {
+		return err
+	}
+	log.Info("[generateSnapshot] created snapshot", "number", number, "hash", hash.Hex(), "candidates", len(snap.NextEpochCandidates))
 
 	return nil
 }

@@ -50,6 +50,11 @@ func ReadXdposV2Snapshot(db ethdb.KeyValueReader, hash common.Hash) ([]byte, err
 	return data, nil
 }
 
+// HasXdposV2Snapshot reports whether a snapshot is stored for the given hash.
+func HasXdposV2Snapshot(db ethdb.KeyValueReader, hash common.Hash) (bool, error) {
+	return db.Has(xdposV2Key(hash))
+}
+
 // WriteXdposV2Snapshot writes the SnapshotV2 into the database.
 func WriteXdposV2Snapshot(db ethdb.KeyValueWriter, hash common.Hash, blob []byte) error {
 	if err := db.Put(xdposV2Key(hash), blob); err != nil {

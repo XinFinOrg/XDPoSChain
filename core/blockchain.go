@@ -2758,6 +2758,7 @@ func (bc *BlockChain) GetClient() (bind.ContractBackend, error) {
 	return bc.Client, nil
 }
 
+// NOTE: keep code sync with engine_v2.BuildSnapshotFromState
 func (bc *BlockChain) UpdateM1() error {
 	engine, ok := bc.Engine().(*XDPoS.XDPoS)
 	if bc.Config().XDPoS == nil || !ok {

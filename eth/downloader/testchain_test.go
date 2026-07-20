@@ -26,6 +26,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -45,12 +46,29 @@ var (
 	}()
 
 	testGspec = &core.Genesis{
-		Alloc:   types.GenesisAlloc{testAddress: {Balance: big.NewInt(1000000000000000000)}},
+		Alloc: types.GenesisAlloc{
+			testAddress:                      {Balance: big.NewInt(1000000000000000000)},
+			common.MasternodeVotingSMCBinary: {Balance: new(big.Int), Storage: testMasternodeVotingStorage()},
+		},
 		BaseFee: big.NewInt(params.InitialBaseFee),
 		Config:  testChainConfig,
 	}
 	testGenesis = testGspec.MustCommit(testDB)
 )
+
+// testMasternodeVotingStorage lays out the minimum of the masternode voting
+// contract that StateDB.GetCandidates/GetCandidateCap read, so gap block
+// snapshots derived from state are not empty.
+func testMasternodeVotingStorage() map[common.Hash]common.Hash {
+	candidate := common.HexToAddress("0x1234000000000000000000000000000000000000")
+	candidatesSlot := common.BigToHash(big.NewInt(8))
+	capSlot := common.BigToHash(new(big.Int).Add(state.GetLocMappingAtKey(candidate.Hash(), 1), big.NewInt(1)))
+	return map[common.Hash]common.Hash{
+		candidatesSlot: common.BigToHash(big.NewInt(1)),
+		state.GetLocDynamicArrAtElement(candidatesSlot, 0, 1): candidate.Hash(),
+		capSlot: common.BigToHash(big.NewInt(1000)),
+	}
+}
 
 // The common prefix of all test chains:
 var testChainBase *testChain
