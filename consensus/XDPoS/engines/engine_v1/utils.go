@@ -14,9 +14,13 @@ import (
 
 // Get masternodes address from checkpoint Header.
 func decodeMasternodesFromHeaderExtra(checkpointHeader *types.Header) []common.Address {
-	masternodes := make([]common.Address, (len(checkpointHeader.Extra)-utils.ExtraVanity-utils.ExtraSeal)/common.AddressLength)
+	extra := checkpointHeader.Extra
+	if len(extra) < utils.ExtraVanity+utils.ExtraSeal {
+		return nil
+	}
+	masternodes := make([]common.Address, (len(extra)-utils.ExtraVanity-utils.ExtraSeal)/common.AddressLength)
 	for i := 0; i < len(masternodes); i++ {
-		copy(masternodes[i][:], checkpointHeader.Extra[utils.ExtraVanity+i*common.AddressLength:])
+		copy(masternodes[i][:], extra[utils.ExtraVanity+i*common.AddressLength:])
 	}
 	return masternodes
 }
