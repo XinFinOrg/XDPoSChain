@@ -38,7 +38,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
-	contractValidator "github.com/XinFinOrg/XDPoSChain/contracts/validator/contract"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
@@ -1665,6 +1664,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	// Second clause in the if statement reduces the vulnerability to selfish mining.
 	// Please refer to http://www.cs.cornell.edu/~ie53/publications/btcProcFC.pdf
 	reorg := externTd.Cmp(localTd) > 0
+	reorged := false
 	currentBlock = bc.CurrentBlock()
 	if !reorg && externTd.Cmp(localTd) == 0 {
 		// Split same-difficulty blocks by number
@@ -1676,6 +1676,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 			if err := bc.reorg(currentBlock, block.Header()); err != nil {
 				return NonStatTy, err
 			}
+			reorged = true
 		}
 		status = CanonStatTy
 	} else {
@@ -1684,14 +1685,17 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 
 	// Set new head.
 	if status == CanonStatTy {
-		// WriteBlock has already been called, no need to write again
-		bc.writeHeadBlock(block, false)
-		// prepare set of masternodes for the next epoch
-		if bc.chainConfig.XDPoS != nil && ((block.NumberU64() % bc.chainConfig.XDPoS.Epoch) == (bc.chainConfig.XDPoS.Epoch - bc.chainConfig.XDPoS.Gap)) {
-			if err := bc.UpdateM1(); err != nil {
-				log.Crit("Fail to update masternodes during writeBlockWithState", "number", block.Number, "hash", block.Hash().Hex(), "err", err)
+		// The snapshot of a gap block has to reach the disk before its head markers, so
+		// that a crash in between can never leave the head on a gap block whose snapshot
+		// is missing. A reorg already derived it for the whole new chain.
+		if !reorged {
+			if err := bc.storeGapSnapshot(block.Header()); err != nil {
+				log.Error("Fail to store gap snapshot, head not advanced", "number", block.Number(), "hash", block.Hash().Hex(), "err", err)
+				return NonStatTy, fmt.Errorf("failed to store gap snapshot of block %d (%s): %w", block.NumberU64(), block.Hash().Hex(), err)
 			}
 		}
+		// WriteBlock has already been called, no need to write again
+		bc.writeHeadBlock(block, false)
 	}
 	// save cache BlockSigners
 	if bc.chainConfig.XDPoS != nil && bc.chainConfig.IsTIPSigning(block.Number()) {
@@ -2345,6 +2349,8 @@ func (bc *BlockChain) insertBlock(block *types.Block) ([]interface{}, []*types.L
 		return nil, nil, errChainStopped
 	}
 	defer bc.chainmu.Unlock()
+	// A block whose head update failed earlier is skipped here: the downloader replays
+	// it, or a later child moves the head onto it through a reorg.
 	if bc.HasBlockAndFullState(block.Hash(), block.NumberU64()) {
 		return events, coalescedLogs, nil
 	}
@@ -2490,6 +2496,30 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 		}
 	}
 
+	// The snapshot of a gap block has to reach the disk before its head markers, so
+	// derive the snapshots of the whole new chain before anything is mutated, and
+	// before the reorg is even announced. A failure here aborts the reorg without
+	// side effects, leaving the head on a block that still has a snapshot behind
+	// it. Snapshots already written when a later step fails are harmless, they are
+	// keyed by block hash.
+	for i := len(newChain) - 1; i >= 0; i-- {
+		err := bc.storeGapSnapshot(newChain[i])
+		if err == nil {
+			continue
+		}
+		// Aborting on an old block whose tries are pruned would strand the node on the
+		// old chain forever. Only the new head, whose state was just computed by the
+		// importer, is worth giving up the reorg for. The skipped block keeps the hole
+		// this function is meant to prevent, so the next epoch depends on getSnapshot
+		// rebuilding the missing snapshot on demand.
+		if i > 0 && errors.Is(err, errGapBlockStateMissing) {
+			log.Warn("Skipped gap snapshot of reorged block", "number", newChain[i].Number, "hash", newChain[i].Hash().Hex(), "err", err)
+			continue
+		}
+		log.Error("Fail to store gap snapshot, reorg aborted", "number", newChain[i].Number, "hash", newChain[i].Hash().Hex(), "err", err)
+		return fmt.Errorf("failed to store gap snapshot of block %d (%s) during reorg: %w", newChain[i].Number.Uint64(), newChain[i].Hash().Hex(), err)
+	}
+
 	// Ensure the user sees large reorgs
 	if len(oldChain) > 0 && len(newChain) > 0 {
 		logFn := log.Info
@@ -2591,12 +2621,6 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 		}
 		// Update the head block
 		bc.writeHeadBlock(block, true)
-		// prepare set of masternodes for the next epoch
-		if bc.chainConfig.XDPoS != nil && ((block.NumberU64() % bc.chainConfig.XDPoS.Epoch) == (bc.chainConfig.XDPoS.Epoch - bc.chainConfig.XDPoS.Gap)) {
-			if err := bc.UpdateM1(); err != nil {
-				log.Crit("Fail to update masternodes during reorg", "number", block.Number, "hash", block.Hash().Hex(), "err", err)
-			}
-		}
 	}
 	if len(rebirthLogs) > 0 {
 		bc.logsFeed.Send(rebirthLogs)
@@ -2758,73 +2782,84 @@ func (bc *BlockChain) GetClient() (bind.ContractBackend, error) {
 	return bc.Client, nil
 }
 
-func (bc *BlockChain) UpdateM1() error {
+// xdposEngine returns the XDPoS engine if this chain runs on it.
+func (bc *BlockChain) xdposEngine() (*XDPoS.XDPoS, bool) {
 	engine, ok := bc.Engine().(*XDPoS.XDPoS)
-	if bc.Config().XDPoS == nil || !ok {
-		return ErrNotXDPoS
+	if !ok || bc.chainConfig.XDPoS == nil {
+		return nil, false
 	}
-	log.Info("It's time to update new set of masternodes for the next epoch...")
-	// get masternodes information from smart contract
-	client, err := bc.GetClient()
-	if err != nil {
-		return fmt.Errorf("failed to get client: %w", err)
-	}
-	addr := common.MasternodeVotingSMCBinary
-	validator, err := contractValidator.NewXDCValidator(addr, client)
-	if err != nil {
-		return fmt.Errorf("failed to create validator contract: %w", err)
-	}
-	opts := new(bind.CallOpts)
+	return engine, true
+}
 
-	var candidates []common.Address
-	// get candidates from slot of stateDB
-	// if can't get anything, request from contracts
-	stateDB, err := bc.State()
+// storeGapSnapshot persists the masternode snapshot of a gap block, derived from
+// the committed state of that very block. It is a no-op for any other block.
+// Callers must invoke it before writeHeadBlock, so that a crash in between can
+// never leave the persisted head on a gap block whose snapshot is missing.
+func (bc *BlockChain) storeGapSnapshot(header *types.Header) error {
+	engine, ok := bc.xdposEngine()
+	if !ok {
+		return nil
+	}
+	if header.Number.Uint64()%bc.chainConfig.XDPoS.Epoch != bc.chainConfig.XDPoS.Epoch-bc.chainConfig.XDPoS.Gap {
+		return nil
+	}
+	// A fresh StateDB from the committed root avoids depending on the importer's
+	// post-Commit statedb object, whose internal caches may have been cleared.
+	statedb, err := bc.StateAt(header.Root)
 	if err != nil {
-		candidates, err = validator.GetCandidates(opts)
-		if err != nil {
-			return err
-		}
-	} else if stateDB == nil {
-		return errors.New("nil stateDB in UpdateM1")
-	} else {
-		candidates = stateDB.GetCandidates()
+		return fmt.Errorf("%w: %w", errGapBlockStateMissing, err)
 	}
-
-	var ms []utils.Masternode
-	for _, candidate := range candidates {
-		v, err := validator.GetCandidateCap(opts, candidate)
-		if err != nil {
-			return err
-		}
-		// TODO: smart contract shouldn't return "0x0000000000000000000000000000000000000000"
-		if !candidate.IsZero() {
-			ms = append(ms, utils.Masternode{Address: candidate, Stake: v})
-		}
-	}
-	if len(ms) == 0 {
-		log.Error("No masternode found. Stopping node")
-		return errors.New("no masternode found")
-	} else {
-		xdc_sort.Slice(ms, func(i, j int) bool {
-			return ms[i].Stake.Cmp(ms[j].Stake) >= 0
-		})
-		log.Info("Ordered list of masternode candidates")
-		for _, m := range ms {
-			log.Info("", "address", m.Address, "stake", m.Stake)
-		}
-		// update masternodes
-
-		log.Info("Updating new set of masternodes")
-		// get block header
-		header := bc.CurrentHeader()
-		err = engine.UpdateMasternodes(bc, header, ms)
-		if err != nil {
-			return err
-		}
-		log.Info("Masternodes are ready for the next epoch")
+	if err := bc.updateM1ForBlock(engine, header, statedb); err != nil {
+		return fmt.Errorf("%w: %w", utils.ErrGapSnapshotUnavailable, err)
 	}
 	return nil
+}
+
+// updateM1ForBlock computes the masternode candidate set for a gap block from the
+// given committed state, then asks the consensus engine to update/store the
+// corresponding snapshot. It does not depend on bc.CurrentBlock() or
+// bc.CurrentHeader(), so it can safely be called before writeHeadBlock.
+func (bc *BlockChain) updateM1ForBlock(engine *XDPoS.XDPoS, header *types.Header, statedb *state.StateDB) error {
+	log.Info("It's time to update new set of masternodes for the next epoch...", "number", header.Number, "hash", header.Hash().Hex())
+
+	var ms []utils.Masternode
+	for _, candidate := range statedb.GetCandidates() {
+		// GetCandidates only skips zero-valued slots, a malformed entry can still decode to the zero address.
+		if candidate.IsZero() {
+			continue
+		}
+		ms = append(ms, utils.Masternode{Address: candidate, Stake: statedb.GetCandidateCap(candidate)})
+	}
+	if len(ms) == 0 {
+		return errors.New("no masternode found")
+	}
+	xdc_sort.Slice(ms, func(i, j int) bool {
+		return ms[i].Stake.Cmp(ms[j].Stake) >= 0
+	})
+	log.Info("Ordered list of masternode candidates")
+	for _, m := range ms {
+		log.Info("", "address", m.Address, "stake", m.Stake)
+	}
+	log.Info("Updating new set of masternodes")
+	if err := engine.UpdateMasternodes(bc, header, ms); err != nil {
+		return err
+	}
+	log.Info("Masternodes are ready for the next epoch")
+	return nil
+}
+
+// UpdateM1 stores the masternode snapshot derived from the current chain head.
+func (bc *BlockChain) UpdateM1() error {
+	engine, ok := bc.xdposEngine()
+	if !ok {
+		return ErrNotXDPoS
+	}
+	head := bc.CurrentBlock()
+	statedb, err := bc.StateAt(head.Root)
+	if err != nil {
+		return fmt.Errorf("failed to open head state for UpdateM1: %w", err)
+	}
+	return bc.updateM1ForBlock(engine, head, statedb)
 }
 
 func (bc *BlockChain) AddMatchingResult(txHash common.Hash, matchingResults map[common.Hash]tradingstate.MatchingResult) {

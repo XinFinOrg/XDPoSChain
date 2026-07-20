@@ -1606,6 +1606,11 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 			// of the blocks delivered from the downloader, and the indexing will be off.
 			log.Debug("Downloaded item processing failed on sidechain import", "index", index, "err", err)
 		}
+		if errors.Is(err, utils.ErrGapSnapshotUnavailable) {
+			// The blocks are valid, only the local snapshot derivation failed. Retry the
+			// sync later instead of dropping the peer that delivered them.
+			return err
+		}
 		return fmt.Errorf("%w: %v", errInvalidChain, err)
 	}
 	if d.handleProposedBlock != nil {

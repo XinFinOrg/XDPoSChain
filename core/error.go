@@ -18,7 +18,9 @@ package core
 
 import (
 	"errors"
+	"fmt"
 
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 )
 
@@ -108,6 +110,10 @@ var (
 	ErrNotXDPoS           = errors.New("XDPoS not found in config")
 	ErrNotFoundM1         = errors.New("list M1 not found ")
 	ErrStopPreparingBlock = errors.New("stop calculating a block not verified by M2")
+
+	// errGapBlockStateMissing reports that the state of a gap block is gone, which
+	// happens for old side chain blocks whose tries have already been pruned.
+	errGapBlockStateMissing = fmt.Errorf("%w: state unavailable", utils.ErrGapSnapshotUnavailable)
 
 	// -- EIP-7702 errors --
 

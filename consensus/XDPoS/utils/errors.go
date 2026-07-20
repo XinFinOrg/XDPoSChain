@@ -99,6 +99,11 @@ var (
 	ErrRoundInvalid = errors.New("invalid Round, it shall be bigger than QC round")
 
 	ErrAlreadyMined = errors.New("already mined")
+
+	// ErrGapSnapshotUnavailable is returned when the masternode snapshot of a gap
+	// block cannot be derived locally. The block itself passed verification, so the
+	// peer that delivered it must not be blamed for this failure.
+	ErrGapSnapshotUnavailable = errors.New("gap block masternode snapshot unavailable")
 )
 
 type ErrIncomingMessageRoundNotEqualCurrentRound struct {
