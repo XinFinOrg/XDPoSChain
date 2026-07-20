@@ -561,8 +561,8 @@ func (srv *Server) setupDiscovery() error {
 		}
 	}
 
-	// Don't listen on UDP endpoint if DHT is disabled.
-	if srv.NoDiscovery && !srv.DiscoveryV5 {
+	// Don't listen on UDP endpoint if discovery is disabled.
+	if srv.NoDiscovery {
 		return nil
 	}
 
