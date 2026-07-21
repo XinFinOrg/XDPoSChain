@@ -296,28 +296,28 @@ var (
 	CacheFlag = &cli.IntFlag{
 		Name:     "cache",
 		Usage:    "Megabytes of memory allocated to internal caching",
-		Value:    1024,
+		Value:    3072,
 		Category: flags.PerfCategory,
 	}
 	CacheDatabaseFlag = &cli.IntFlag{
 		Name:     "cache-database",
 		Aliases:  []string{"cache.database"},
 		Usage:    "Percentage of cache memory allowance to use for database io",
-		Value:    50,
+		Value:    17,
 		Category: flags.PerfCategory,
 	}
 	CacheTrieFlag = &cli.IntFlag{
 		Name:     "cache-trie",
 		Aliases:  []string{"cache.trie"},
 		Usage:    "Percentage of cache memory allowance to use for trie caching (default = 15% full mode, 30% archive mode)",
-		Value:    15,
+		Value:    5,
 		Category: flags.PerfCategory,
 	}
 	CacheGCFlag = &cli.IntFlag{
 		Name:     "cache-gc",
 		Aliases:  []string{"cache.gc"},
 		Usage:    "Percentage of cache memory allowance to use for trie pruning (default = 25% full mode, 0% archive mode)",
-		Value:    25,
+		Value:    34,
 		Category: flags.PerfCategory,
 	}
 	CachePrefetchFlag = &cli.BoolFlag{
