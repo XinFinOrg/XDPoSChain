@@ -313,3 +313,73 @@ func TestSetHeadCleansOnlyBadBlocksAboveHead(t *testing.T) {
 		t.Fatalf("remaining bad block has wrong hash: got %x, want %x", remaining.Hash(), badBlockLow.Hash())
 	}
 }
+
+// TestSetHeadCleansOnlyXdposSnapshotsAboveHead verifies that SetHead removes
+// XDPoS snapshots strictly above the target height while preserving snapshots
+// at or below the new head.
+func TestSetHeadCleansOnlyXdposSnapshotsAboveHead(t *testing.T) {
+	var (
+		engine  = ethash.NewFaker()
+		genesis = &Genesis{
+			BaseFee: big.NewInt(params.InitialBaseFee),
+			Config:  params.AllEthashProtocolChanges,
+		}
+		db = rawdb.NewMemoryDatabase()
+	)
+	chain, err := NewBlockChain(db, &CacheConfig{TrieDirtyDisabled: true}, genesis, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+	defer chain.Stop()
+
+	// Build a chain 0..25.
+	blocks, _ := GenerateChain(genesis.Config, chain.Genesis(), engine, db, 25, nil)
+	if _, err := chain.InsertChain(blocks); err != nil {
+		t.Fatalf("failed to insert chain: %v", err)
+	}
+
+	// Enable XDPoS snapshot-number gating for SetHead cleanup only.
+	// (Applied after import to avoid triggering UpdateM1 on ethash blocks.)
+	configWithXdpos := genesis.Config.Clone()
+	configWithXdpos.XDPoS = &params.XDPoSConfig{Epoch: 5, Gap: 4}
+	chain.SetChainConfig(configWithXdpos)
+
+	// Create snapshot records with mutually exclusive versions per hash.
+	low := blocks[5]         // height 6, should be kept by SetHead(10)
+	highV2 := blocks[15]     // height 16, should be removed via V2 path
+	highV1Only := blocks[20] // height 21, should be removed via V1 fallback path
+
+	if err := rawdb.WriteXdposV1Snapshot(db, low.Hash(), []byte(`{"number":6}`)); err != nil {
+		t.Fatalf("failed to write v1 low snapshot: %v", err)
+	}
+	if err := rawdb.WriteXdposV2Snapshot(db, highV2.Hash(), []byte(`{"number":16}`)); err != nil {
+		t.Fatalf("failed to write v2 high snapshot: %v", err)
+	}
+	if err := rawdb.WriteXdposV1Snapshot(db, highV1Only.Hash(), []byte(`{"number":21}`)); err != nil {
+		t.Fatalf("failed to write v1 high-only snapshot: %v", err)
+	}
+
+	if _, err := rawdb.ReadXdposV1Snapshot(db, low.Hash()); err != nil {
+		t.Fatalf("expected v1 low snapshot to exist before SetHead: %v", err)
+	}
+	if _, err := rawdb.ReadXdposV2Snapshot(db, highV2.Hash()); err != nil {
+		t.Fatalf("expected v2 high snapshot to exist before SetHead: %v", err)
+	}
+	if _, err := rawdb.ReadXdposV1Snapshot(db, highV1Only.Hash()); err != nil {
+		t.Fatalf("expected v1 high-only snapshot to exist before SetHead: %v", err)
+	}
+
+	if err := chain.SetHead(10); err != nil {
+		t.Fatalf("failed to set head: %v", err)
+	}
+
+	if _, err := rawdb.ReadXdposV1Snapshot(db, low.Hash()); err != nil {
+		t.Fatalf("expected v1 low snapshot to be kept after SetHead: %v", err)
+	}
+	if _, err := rawdb.ReadXdposV2Snapshot(db, highV2.Hash()); err == nil {
+		t.Fatalf("expected v2 high snapshot to be removed after SetHead")
+	}
+	if _, err := rawdb.ReadXdposV1Snapshot(db, highV1Only.Hash()); err == nil {
+		t.Fatalf("expected v1 high-only snapshot to be removed after SetHead")
+	}
+}

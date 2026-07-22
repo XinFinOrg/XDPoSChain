@@ -841,6 +841,9 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64) error {
 			rawdb.DeleteBody(db, hash, num)
 			rawdb.DeleteReceipts(db, hash, num)
 		}
+		if bc.chainConfig.XDPoS != nil && (num+bc.chainConfig.XDPoS.Gap)%bc.chainConfig.XDPoS.Epoch == 0 {
+			rawdb.DeleteXdposSnapshot(db, hash)
+		}
 		// Todo(rjl493456442) txlookup, bloombits, etc
 	}
 	bc.hc.SetHead(head, updateFn, delFn)
