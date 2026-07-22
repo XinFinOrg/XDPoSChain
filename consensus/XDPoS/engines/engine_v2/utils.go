@@ -74,13 +74,29 @@ func ecrecover(header *types.Header, sigcache *utils.SigLRU) (common.Address, er
 // Get masternodes address from checkpoint Header. Only used for v1 last block
 func decodeMasternodesFromHeaderExtra(checkpointHeader *types.Header) []common.Address {
 	extra := checkpointHeader.Extra
-	if len(extra) < utils.ExtraVanity+utils.ExtraSeal {
+	minRequiredLen := utils.ExtraVanity + utils.ExtraSeal
+
+	// Skip processing if extra length is below minimum threshold
+	if len(extra) < minRequiredLen {
 		return nil
 	}
-	masternodes := make([]common.Address, (len(extra)-utils.ExtraVanity-utils.ExtraSeal)/common.AddressLength)
-	for i := 0; i < len(masternodes); i++ {
-		copy(masternodes[i][:], extra[utils.ExtraVanity+i*common.AddressLength:])
+
+	addressTotalPayloadLen := len(extra) - minRequiredLen
+
+	// Verify total payload length is exactly aligned to single address size
+	if addressTotalPayloadLen%common.AddressLength != 0 {
+		return nil
 	}
+
+	masternodeCount := addressTotalPayloadLen / common.AddressLength
+	masternodes := make([]common.Address, masternodeCount)
+
+	srcOffset := utils.ExtraVanity
+	for i := range masternodes {
+		copy(masternodes[i][:], extra[srcOffset:])
+		srcOffset += common.AddressLength
+	}
+
 	return masternodes
 }
 
