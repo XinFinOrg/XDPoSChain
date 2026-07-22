@@ -19,11 +19,39 @@ package forkid
 
 import (
 	"encoding/binary"
+	"errors"
 	"hash/crc32"
+	"math"
 
+	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
+
+var (
+	// ErrRemoteStale is returned by the validator if a remote fork checksum is a
+	// subset of our already applied forks, but the announced next fork block is
+	// not on our already passed chain.
+	ErrRemoteStale = errors.New("remote needs update")
+
+	// ErrLocalIncompatibleOrStale is returned by the validator if a remote fork
+	// checksum does not match any local checksum variation, signalling that the
+	// two chains have diverged in the past at some point (possibly at genesis).
+	ErrLocalIncompatibleOrStale = errors.New("local incompatible or needs update")
+)
+
+// Blockchain defines all necessary method to build a forkID.
+type Blockchain interface {
+	// Config retrieves the chain's fork configuration.
+	Config() *params.ChainConfig
+
+	// Genesis retrieves the chain's genesis block.
+	Genesis() *types.Block
+
+	// CurrentHeader retrieves the current head header of the canonical chain.
+	CurrentHeader() *types.Header
+}
 
 // ID is a fork identifier as defined by EIP-2124.
 type ID struct {
@@ -47,6 +75,101 @@ func NewID(config *params.ChainConfig, genesis *types.Block, head uint64) ID {
 		return ID{Hash: checksumToBytes(hash), Next: fork}
 	}
 	return ID{Hash: checksumToBytes(hash), Next: 0}
+}
+
+// NewFilter creates a filter that returns if a fork ID should be rejected or not
+// based on the local chain's status.
+func NewFilter(chain Blockchain) func(id ID) error {
+	return newFilter(
+		chain.Config(),
+		chain.Genesis().Hash(),
+		func() uint64 {
+			return chain.CurrentHeader().Number.Uint64()
+		},
+	)
+}
+
+// NewStaticFilter creates a filter at block zero.
+func NewStaticFilter(config *params.ChainConfig, genesis common.Hash) func(id ID) error {
+	head := func() uint64 { return 0 }
+	return newFilter(config, genesis, head)
+}
+
+// newFilter is the internal version of NewFilter, taking closures as its arguments
+// instead of a chain. The reason is to allow testing it without having to simulate
+// an entire blockchain.
+func newFilter(config *params.ChainConfig, genesis common.Hash, headfn func() uint64) func(id ID) error {
+	// Calculate the all the valid fork hash and fork next combos
+	var (
+		forks = config.GatherForks()
+		sums  = make([][4]byte, len(forks)+1) // 0th is the genesis
+	)
+	hash := crc32.ChecksumIEEE(genesis[:])
+	sums[0] = checksumToBytes(hash)
+	for i, fork := range forks {
+		hash = checksumUpdate(hash, fork)
+		sums[i+1] = checksumToBytes(hash)
+	}
+	// Add two sentries to simplify the fork checks and don't require special
+	// casing the last one.
+	forks = append(forks, math.MaxUint64) // Last fork will never be passed
+
+	// Create a validator that will filter out incompatible chains
+	return func(id ID) error {
+		// Run the fork checksum validation ruleset:
+		//   1. If local and remote FORK_CSUM matches, connect.
+		//        The two nodes are in the same fork state currently. They might know
+		//        of differing future forks, but that's not relevant until the fork
+		//        triggers (might be postponed, nodes might be updated to match).
+		//   2. If the remote FORK_CSUM is a subset of the local past forks and the
+		//      remote FORK_NEXT matches with the locally following fork block number,
+		//      connect.
+		//        Remote node is currently syncing. It might eventually diverge from
+		//        us, but at this current point in time we don't have enough information.
+		//   3. If the remote FORK_CSUM is a superset of the local past forks and can
+		//      be completed with locally known future forks, connect.
+		//        Local node is currently syncing. It might eventually diverge from
+		//        the remote, but at this current point in time we don't have enough
+		//        information.
+		//   4. Reject in all other cases.
+		head := headfn()
+		for i, fork := range forks {
+			// If our head is beyond this fork, continue to the next (we have a dummy
+			// fork of maxuint64 as the last item to always fail this check eventually).
+			if head > fork {
+				continue
+			}
+			// Found the first unpassed fork block, check if our current state matches
+			// the remote checksum (rule #1).
+			if sums[i] == id.Hash {
+				// Yay, fork checksum matched, ignore any upcoming fork
+				return nil
+			}
+			// The local and remote nodes are in different forks currently, check if the
+			// remote checksum is a subset of our local forks (rule #2).
+			for j := 0; j < i; j++ {
+				if sums[j] == id.Hash {
+					// Remote checksum is a subset, validate based on the announced next fork
+					if forks[j] != id.Next {
+						return ErrRemoteStale
+					}
+					return nil
+				}
+			}
+			// Remote chain is not a subset of our local one, check if it's a superset by
+			// any chance, signalling that we're simply out of sync (rule #3).
+			for j := i + 1; j < len(sums); j++ {
+				if sums[j] == id.Hash {
+					// Yay, remote checksum is a superset, ignore upcoming forks
+					return nil
+				}
+			}
+			// No exact, subset or superset match. We are on differing chains, reject.
+			return ErrLocalIncompatibleOrStale
+		}
+		log.Error("Impossible fork ID validation", "id", id)
+		return nil // Something's very wrong, accept rather than reject
+	}
 }
 
 // checksumUpdate calculates the next IEEE CRC32 checksum based on the previous

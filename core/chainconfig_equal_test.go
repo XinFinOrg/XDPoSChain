@@ -424,7 +424,7 @@ func newChainConfigWithV2ConfigsForTest() *params.ChainConfig {
 	defaultConfig := &params.V2Config{
 		MaxMasternodes:            18,
 		MaxProtectorNodes:         3,
-		MaxObverserNodes:          2,
+		MaxObserverNodes:          2,
 		SwitchRound:               0,
 		MinePeriod:                2,
 		TimeoutSyncThreshold:      3,
@@ -477,9 +477,9 @@ func TestHashChainConfigSemanticGoldenVectors(t *testing.T) {
 		want string
 	}{
 		{name: "nil", cfg: nil, want: "47dc540c94ceb704a23875c11273e16bb0b8a87aed84de911f2133568115f254"},
-		{name: "testnet", cfg: params.TestnetChainConfig.Clone(), want: "7dbc7e67764fdbb08a5774c63f2b73e9ea3cc1d483f1b3f360944b1c97fd4b08"},
+		{name: "testnet", cfg: params.TestnetChainConfig.Clone(), want: "211f23893f2d69fcca32285082e8ee73f4231786cf5e66f1d62cccfa295aad76"},
 		{name: "mainnet", cfg: params.XDCMainnetChainConfig.Clone(), want: "9076222c6783f37836c868190b78c7abe0b4d0d3fce93dc0aa12a6bc8b6ddcd3"},
-		{name: "testnet-berlin-drift", cfg: testnetBerlinDrift, want: "365842abd836bdd13ab9dd40ef66357145f3233ff0a1b455c71f5401c4c8dc71"},
+		{name: "testnet-berlin-drift", cfg: testnetBerlinDrift, want: "9711b6f1f09247c095eb193be8f24977ca706bd9fac1db2b1441a49c0dc3922a"},
 	}
 
 	for _, test := range tests {

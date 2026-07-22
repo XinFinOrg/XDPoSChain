@@ -215,7 +215,7 @@ func (d *chainConfigDigest) writeV2Config(cfg *params.V2Config) {
 	}
 	d.writeInt(cfg.MaxMasternodes)
 	d.writeInt(cfg.MaxProtectorNodes)
-	d.writeInt(cfg.MaxObverserNodes)
+	d.writeInt(cfg.MaxObserverNodes)
 	d.writeUint64(cfg.SwitchRound)
 	d.writeInt(cfg.MinePeriod)
 	d.writeInt(cfg.TimeoutSyncThreshold)

@@ -28,7 +28,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/metrics"
-	"github.com/XinFinOrg/XDPoSChain/p2p/nat"
 	"github.com/XinFinOrg/XDPoSChain/p2p/netutil"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
@@ -39,14 +38,12 @@ const Version = 4
 var (
 	errPacketTooSmall = errors.New("too small")
 	errBadPrefix      = errors.New("bad prefix")
-	errTimeout        = errors.New("RPC timeout")
 )
 
 // Timeouts
 const (
-	respTimeout    = 500 * time.Millisecond
-	expiration     = 20 * time.Second
-	driftThreshold = 10 * time.Second // Allowed clock drift before warning user
+	respTimeout = 500 * time.Millisecond
+	expiration  = 20 * time.Second
 )
 
 // RPC request structures
@@ -221,12 +218,12 @@ type udp struct {
 	conn        conn
 	priv        *ecdsa.PrivateKey
 	ourEndpoint rpcEndpoint
-	nat         nat.Interface
 	net         *Network
 }
 
 // ListenUDP returns a new table that listens for UDP packets on laddr.
-func ListenUDP(priv *ecdsa.PrivateKey, conn conn, realaddr *net.UDPAddr, nodeDBPath string, netrestrict *netutil.Netlist) (*Network, error) {
+func ListenUDP(priv *ecdsa.PrivateKey, conn conn, nodeDBPath string, netrestrict *netutil.Netlist) (*Network, error) {
+	realaddr := conn.LocalAddr().(*net.UDPAddr)
 	transport, err := listenUDP(priv, conn, realaddr)
 	if err != nil {
 		return nil, err
@@ -385,7 +382,6 @@ func (t *udp) handlePacket(from *net.UDPAddr, buf []byte) error {
 	pkt := ingressPacket{remoteAddr: from}
 	if err := decodePacket(buf, &pkt); err != nil {
 		log.Debug(fmt.Sprintf("Bad packet from %v: %v", from, err))
-		//fmt.Println("bad packet", err)
 		return err
 	}
 	t.net.reqReadPacket(pkt)

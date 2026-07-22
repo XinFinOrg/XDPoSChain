@@ -96,10 +96,9 @@ type transport interface {
 }
 
 type findnodeQuery struct {
-	remote   *Node
-	target   common.Hash
-	reply    chan<- []*Node
-	nresults int // counter for received nodes
+	remote *Node
+	target common.Hash
+	reply  chan<- []*Node
 }
 
 type topicRegisterReq struct {
@@ -358,6 +357,8 @@ func (net *Network) loop() {
 		bucketRefreshTimer = time.NewTimer(bucketRefreshInterval)
 		refreshDone        chan struct{} // closed when the 'refresh' lookup has ended
 	)
+	defer refreshTimer.Stop()
+	defer bucketRefreshTimer.Stop()
 
 	// Tracking the next ticket to register.
 	var (
@@ -394,11 +395,13 @@ func (net *Network) loop() {
 		searchInfo                = make(map[Topic]topicSearchInfo)
 		activeSearchCount         int
 	)
+	defer topicRegisterLookupTick.Stop()
 	topicSearchLookupDone := make(chan topicSearchResult, 100)
 	topicSearch := make(chan Topic, 100)
 	<-topicRegisterLookupTick.C
 
 	statsDump := time.NewTicker(10 * time.Second)
+	defer statsDump.Stop()
 
 loop:
 	for {
@@ -642,10 +645,10 @@ loop:
 	if net.conn != nil {
 		net.conn.Close()
 	}
-	if refreshDone != nil {
-		// TODO: wait for pending refresh.
-		//<-refreshResults
-	}
+	// TODO: wait for pending refresh.
+	// if refreshDone != nil {
+	// 	<-refreshResults
+	// }
 	// Cancel all pending timeouts.
 	for _, timer := range net.timeoutTimers {
 		timer.Stop()
@@ -1032,6 +1035,11 @@ func (net *Network) handle(n *Node, ev nodeEvent, pkt *ingressPacket) error {
 		if net.db != nil {
 			net.db.ensureExpirer()
 		}
+	}
+	if ev == pongTimeout {
+		// Clean up after pong timeout.
+		n.pingEcho = nil
+		n.pingTopics = nil
 	}
 	if n.state == nil {
 		n.state = unknown //???

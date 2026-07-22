@@ -31,7 +31,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/log"
-	"github.com/karalabe/hid"
+	"github.com/ethereum/hid"
 )
 
 // Maximum time between wallet health checks to detect USB unplugs.

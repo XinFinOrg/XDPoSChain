@@ -23,7 +23,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
-	"github.com/XinFinOrg/XDPoSChain/p2p/discover"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 )
 
 // Tests that fast sync gets disabled as soon as a real block is successfully
@@ -31,25 +31,35 @@ import (
 func TestFastSyncDisabling(t *testing.T) {
 	// Create a pristine protocol manager, check that fast sync is left enabled
 	pmEmpty, _ := newTestProtocolManagerMust(t, downloader.FastSync, 0, nil, nil)
+	defer pmEmpty.Stop()
 	if atomic.LoadUint32(&pmEmpty.snapSync) == 0 {
 		t.Fatalf("snap sync disabled on pristine blockchain")
 	}
 	// Create a full protocol manager, check that snap sync gets disabled
 	pmFull, _ := newTestProtocolManagerMust(t, downloader.FastSync, 1024, nil, nil)
+	defer pmFull.Stop()
 	if atomic.LoadUint32(&pmFull.snapSync) == 1 {
 		t.Fatalf("snap sync not disabled on non-empty blockchain")
 	}
 	// Sync up the two peers
 	io1, io2 := p2p.MsgPipe()
 
-	go pmFull.handle(pmFull.newPeer(63, p2p.NewPeer(discover.NodeID{}, "empty", nil), io2))
-	go pmEmpty.handle(pmEmpty.newPeer(63, p2p.NewPeer(discover.NodeID{}, "full", nil), io1))
+	go pmFull.handle(pmFull.newPeer(63, p2p.NewPeer(enode.ID{}, "empty", nil), io2))
+	go pmEmpty.handle(pmEmpty.newPeer(63, p2p.NewPeer(enode.ID{}, "full", nil), io1))
 
-	time.Sleep(250 * time.Millisecond)
-	pmEmpty.synchronise(pmEmpty.peers.BestPeer())
+	deadline := time.After(15 * time.Second)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
 
-	// Check that snap sync was disabled
-	if atomic.LoadUint32(&pmEmpty.snapSync) == 1 {
-		t.Fatalf("snap sync not disabled after successful synchronisation")
+	for {
+		if atomic.LoadUint32(&pmEmpty.snapSync) == 0 {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("snap sync not disabled after successful synchronisation")
+		case <-ticker.C:
+			pmEmpty.synchronise(pmEmpty.peers.BestPeer())
+		}
 	}
 }

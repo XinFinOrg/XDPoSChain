@@ -47,7 +47,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/internal/flags"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
-	"github.com/XinFinOrg/XDPoSChain/p2p/discover"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/p2p/simulations"
 	"github.com/XinFinOrg/XDPoSChain/p2p/simulations/adapters"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
@@ -300,7 +300,7 @@ func createNode(ctx *cli.Context) error {
 		if err != nil {
 			return err
 		}
-		config.ID = discover.PubkeyID(&privKey.PublicKey)
+		config.ID = enode.PubkeyToIDV4(&privKey.PublicKey)
 		config.PrivateKey = privKey
 	}
 	if services := ctx.String("services"); services != "" {

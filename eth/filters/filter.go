@@ -19,7 +19,6 @@ package filters
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math/big"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -155,7 +154,7 @@ func (f *Filter) Logs(ctx context.Context) ([]*types.Log, error) {
 		return nil, err
 	}
 	if f.rangeLimit != 0 && (uint64(f.end)-uint64(f.begin)) > f.rangeLimit {
-		return nil, fmt.Errorf("exceed maximum block range: %d", f.rangeLimit)
+		return nil, invalidParamsErr("exceed maximum block range %d", f.rangeLimit)
 	}
 
 	logChan, errChan := f.rangeLogsAsync(ctx)

@@ -99,8 +99,6 @@ func New(chainConfig *params.ChainConfig, db ethdb.Database) (*XDPoS, error) {
 		return nil, errors.New("missing XDPoS config")
 	}
 
-	log.Info("xdc config loading", "v2 config", config.V2)
-
 	minePeriodCh := make(chan int)
 	newRoundCh := make(chan types.Round, newRoundChanSize)
 	engineV2, err := engine_v2.New(chainConfig, db, minePeriodCh, newRoundCh)

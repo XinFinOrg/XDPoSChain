@@ -178,6 +178,7 @@ func TestRPCMarshalBlock(t *testing.T) {
 					{
 						"blockHash":"0x2cb4e4b5b5be5a2520377e87e8d7d2cf83fc0783fa6518d67b9606d3c5317b50",
 						"blockNumber":"0x64",
+						"blockTimestamp":"0x0",
 						"from":"0x0000000000000000000000000000000000000000",
 						"gas":"0x457",
 						"gasPrice":"0x2b67",
@@ -198,6 +199,7 @@ func TestRPCMarshalBlock(t *testing.T) {
 					{
 						"blockHash":"0x2cb4e4b5b5be5a2520377e87e8d7d2cf83fc0783fa6518d67b9606d3c5317b50",
 						"blockNumber":"0x64",
+						"blockTimestamp":"0x0",
 						"from":"0x0000000000000000000000000000000000000000",
 						"gas":"0x457",
 						"gasPrice":"0x2b67",
@@ -216,6 +218,7 @@ func TestRPCMarshalBlock(t *testing.T) {
 					{
 						"blockHash":"0x2cb4e4b5b5be5a2520377e87e8d7d2cf83fc0783fa6518d67b9606d3c5317b50",
 						"blockNumber":"0x64",
+						"blockTimestamp":"0x0",
 						"from":"0x0000000000000000000000000000000000000000",
 						"gas":"0x457",
 						"gasPrice":"0x2b67",
@@ -236,6 +239,7 @@ func TestRPCMarshalBlock(t *testing.T) {
 					{
 						"blockHash":"0x2cb4e4b5b5be5a2520377e87e8d7d2cf83fc0783fa6518d67b9606d3c5317b50",
 						"blockNumber":"0x64",
+						"blockTimestamp":"0x0",
 						"from":"0x0000000000000000000000000000000000000000",
 						"gas":"0x457",
 						"gasPrice":"0x2b67",
@@ -618,7 +622,7 @@ func TestTransaction_RoundTripRpcJSON(t *testing.T) {
 		tx, err := types.SignNewTx(key, signer, txdata)
 		require.NoErrorf(t, err, "test %d: signing failed", i)
 
-		rpcTx := newRPCTransaction(tx, common.Hash{}, 0, 0, nil, config)
+		rpcTx := newRPCTransaction(tx, common.Hash{}, 0, 0, 0, nil, config)
 		data, err := json.Marshal(rpcTx)
 		require.NoErrorf(t, err, "test %d: rpc marshal failed", i)
 
@@ -2153,7 +2157,7 @@ func TestNewRPCTransactionLegacyMined(t *testing.T) {
 	require.NoError(t, err)
 
 	blockHash := common.HexToHash("0x1234")
-	rpcTx := newRPCTransaction(tx, blockHash, 99, 1, big.NewInt(10), config)
+	rpcTx := newRPCTransaction(tx, blockHash, 99, 0, 1, big.NewInt(10), config)
 	require.NotNil(t, rpcTx)
 	require.NotNil(t, rpcTx.BlockHash)
 	require.Equal(t, blockHash, *rpcTx.BlockHash)
@@ -2185,7 +2189,7 @@ func TestNewRPCTransactionLegacyPending(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	rpcTx := newRPCTransaction(tx, common.Hash{}, 0, 0, nil, config)
+	rpcTx := newRPCTransaction(tx, common.Hash{}, 0, 0, 0, nil, config)
 	require.NotNil(t, rpcTx)
 	require.Nil(t, rpcTx.BlockHash)
 	require.Nil(t, rpcTx.BlockNumber)
@@ -2216,7 +2220,7 @@ func TestNewRPCTransactionDynamicPending(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	rpcTx := newRPCTransaction(tx, common.Hash{}, 0, 0, big.NewInt(10), config)
+	rpcTx := newRPCTransaction(tx, common.Hash{}, 0, 0, 0, big.NewInt(10), config)
 	require.NotNil(t, rpcTx)
 	require.Nil(t, rpcTx.BlockHash)
 	require.Nil(t, rpcTx.BlockNumber)
@@ -2249,7 +2253,7 @@ func TestNewRPCTransactionAccessListPending(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	rpcTx := newRPCTransaction(tx, common.Hash{}, 0, 0, nil, config)
+	rpcTx := newRPCTransaction(tx, common.Hash{}, 0, 0, 0, nil, config)
 	require.NotNil(t, rpcTx)
 	require.EqualValues(t, types.AccessListTxType, rpcTx.Type)
 	require.Equal(t, (*hexutil.Big)(tx.GasPrice()), rpcTx.GasPrice)
@@ -2282,7 +2286,7 @@ func TestNewRPCTransactionDynamicMinedFeeCapClamp(t *testing.T) {
 	require.NoError(t, err)
 
 	blockHash := common.HexToHash("0x5678")
-	rpcTx := newRPCTransaction(tx, blockHash, 1200, 0, big.NewInt(20), config)
+	rpcTx := newRPCTransaction(tx, blockHash, 1200, 0, 0, big.NewInt(20), config)
 	require.NotNil(t, rpcTx)
 	require.NotNil(t, rpcTx.BlockHash)
 	require.Equal(t, blockHash, *rpcTx.BlockHash)

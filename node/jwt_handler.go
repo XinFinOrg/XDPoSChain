@@ -31,7 +31,7 @@ type jwtHandler struct {
 	next    http.Handler
 }
 
-// newJWTHandler creates a http.Handler with jwt authentication support.
+// newJWTHandler creates an http.Handler with jwt authentication support.
 func newJWTHandler(secret []byte, next http.Handler) http.Handler {
 	return &jwtHandler{
 		keyFunc: func(token *jwt.Token) (interface{}, error) {

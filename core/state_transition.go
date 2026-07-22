@@ -33,7 +33,8 @@ import (
 // ExecutionResult includes all output after executing given evm
 // message no matter the execution itself is successful or not.
 type ExecutionResult struct {
-	UsedGas    uint64 // Total used gas but include the refunded gas
+	UsedGas    uint64 // Total used gas, refunded gas is deducted
+	MaxUsedGas uint64 // Maximum gas consumed during execution, excluding gas refunds.
 	Err        error  // Any error encountered during the execution(listed in core/vm/errors.go)
 	ReturnData []byte // Returned data from evm(function result or data supplied with revert opcode)
 }
@@ -478,9 +479,13 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 		ret, st.gasRemaining, vmerr = st.evm.Call(msg.From, st.to(), msg.Data, st.gasRemaining, value)
 	}
 
+	// Record the gas used excluding gas refunds. This value represents the actual
+	// gas allowance required to complete execution.
+	peakGasUsed := st.gasUsed()
+
 	// Compute refund counter, capped to a refund quotient.
-	gasRefund := st.calcRefund()
-	st.gasRemaining += gasRefund
+	st.gasRemaining += st.calcRefund()
+
 	if rules.IsPrague {
 		// After EIP-7623: Data-heavy transactions pay the floor gas.
 		if st.gasUsed() < floorDataGas {
@@ -489,6 +494,9 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 			if t := st.evm.Config.Tracer; t != nil && t.OnGasChange != nil {
 				t.OnGasChange(prev, st.gasRemaining, tracing.GasChangeTxDataFloor)
 			}
+		}
+		if peakGasUsed < floorDataGas {
+			peakGasUsed = floorDataGas
 		}
 	}
 	st.returnGas()
@@ -514,6 +522,7 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 
 	return &ExecutionResult{
 		UsedGas:    st.gasUsed(),
+		MaxUsedGas: peakGasUsed,
 		Err:        vmerr,
 		ReturnData: ret,
 	}, nil

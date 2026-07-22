@@ -234,6 +234,7 @@ type blockchainOpenConfig struct {
 	chainConfig     *params.ChainConfig
 	genesisHash     common.Hash
 	compatErr       *params.ConfigCompatError
+	compatPolicy    ChainConfigMismatchPolicy
 	recoveryGenesis *Genesis
 }
 
@@ -287,13 +288,15 @@ var (
 	ErrReadOnlyHeadStateRepair          = errors.New("readonly blockchain open requires head state repair")
 	ErrReadOnlyBadHashRewind            = errors.New("readonly blockchain open requires bad-hash rewind")
 	ErrReadOnlyConfigRewind             = errors.New("readonly blockchain open requires config rewind")
+	ErrReadOnlyConfigUpdate             = errors.New("readonly blockchain open requires config update")
+	ErrConfigMismatchPolicyExit         = errors.New("chain config mismatch policy is exit")
 	errBlockChainOpenMissingGenesisHash = errors.New("blockchain open options require genesis hash when chain config is provided")
 )
 
 // NewBlockChain returns a fully initialised writable block chain using startup
 // metadata resolved from the database via SetupGenesisBlock.
 func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis, engine consensus.Engine, vmConfig vm.Config) (*BlockChain, error) {
-	resolvedCfg, err := resolveBlockChainOpenConfig(db, genesis, false)
+	resolvedCfg, err := resolveBlockChainOpenConfig(db, genesis, false, DefaultChainConfigMismatchPolicy)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +306,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 // NewBlockChainReadOnly returns a fully initialised readonly block chain using
 // startup metadata resolved from the database via LoadChainConfigWithCompat.
 func NewBlockChainReadOnly(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis, engine consensus.Engine, vmConfig vm.Config) (*BlockChain, error) {
-	resolvedCfg, err := resolveBlockChainOpenConfig(db, genesis, true)
+	resolvedCfg, err := resolveBlockChainOpenConfig(db, genesis, true, DefaultChainConfigMismatchPolicy)
 	if err != nil {
 		return nil, err
 	}
@@ -312,8 +315,8 @@ func NewBlockChainReadOnly(db ethdb.Database, cacheConfig *CacheConfig, genesis 
 
 // NewBlockChainResolved opens a writable block chain from caller-supplied
 // startup metadata.
-func NewBlockChainResolved(db ethdb.Database, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError) (*BlockChain, error) {
-	resolvedCfg, err := newResolvedBlockChainOpenConfig(false, recoveryGenesis, chainConfig, genesisHash, compatErr)
+func NewBlockChainResolved(db ethdb.Database, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, compatPolicy ChainConfigMismatchPolicy) (*BlockChain, error) {
+	resolvedCfg, err := newResolvedBlockChainOpenConfig(false, recoveryGenesis, chainConfig, genesisHash, compatErr, compatPolicy)
 	if err != nil {
 		return nil, err
 	}
@@ -322,8 +325,8 @@ func NewBlockChainResolved(db ethdb.Database, cacheConfig *CacheConfig, recovery
 
 // NewBlockChainReadOnlyResolved opens a readonly block chain from caller-
 // supplied startup metadata.
-func NewBlockChainReadOnlyResolved(db ethdb.Database, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError) (*BlockChain, error) {
-	resolvedCfg, err := newResolvedBlockChainOpenConfig(true, recoveryGenesis, chainConfig, genesisHash, compatErr)
+func NewBlockChainReadOnlyResolved(db ethdb.Database, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, compatPolicy ChainConfigMismatchPolicy) (*BlockChain, error) {
+	resolvedCfg, err := newResolvedBlockChainOpenConfig(true, recoveryGenesis, chainConfig, genesisHash, compatErr, compatPolicy)
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +335,7 @@ func NewBlockChainReadOnlyResolved(db ethdb.Database, cacheConfig *CacheConfig, 
 
 // resolveBlockChainOpenConfig resolves startup metadata and normalizes
 // recovery inputs for writable or readonly opens.
-func resolveBlockChainOpenConfig(db ethdb.Database, genesis *Genesis, readOnly bool) (blockchainOpenConfig, error) {
+func resolveBlockChainOpenConfig(db ethdb.Database, genesis *Genesis, readOnly bool, compatPolicy ChainConfigMismatchPolicy) (blockchainOpenConfig, error) {
 	resolveStartup := SetupGenesisBlock
 	if readOnly {
 		resolveStartup = LoadChainConfigWithCompat
@@ -341,11 +344,19 @@ func resolveBlockChainOpenConfig(db ethdb.Database, genesis *Genesis, readOnly b
 	if err != nil {
 		return blockchainOpenConfig{}, err
 	}
+	normalizedCompatPolicy, err := ValidateAndNormalizeCompatPolicy(compatPolicy)
+	if err != nil {
+		return blockchainOpenConfig{}, err
+	}
+	if compatErr != nil && normalizedCompatPolicy == MismatchExit {
+		return blockchainOpenConfig{}, fmt.Errorf("%w: %v", ErrConfigMismatchPolicyExit, compatErr)
+	}
 	resolved := blockchainOpenConfig{
 		readOnly:        readOnly,
 		chainConfig:     chainConfig,
 		genesisHash:     genesisHash,
 		compatErr:       compatErr,
+		compatPolicy:    normalizedCompatPolicy,
 		recoveryGenesis: genesis,
 	}
 	resolved.recoveryGenesis, err = normalizedRecoveryGenesis(resolved.recoveryGenesis, chainConfig)
@@ -355,9 +366,16 @@ func resolveBlockChainOpenConfig(db ethdb.Database, genesis *Genesis, readOnly b
 	return resolved, nil
 }
 
-func newResolvedBlockChainOpenConfig(readOnly bool, recoveryGenesis *Genesis, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError) (blockchainOpenConfig, error) {
+func newResolvedBlockChainOpenConfig(readOnly bool, recoveryGenesis *Genesis, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, compatPolicy ChainConfigMismatchPolicy) (blockchainOpenConfig, error) {
 	if genesisHash == (common.Hash{}) {
 		return blockchainOpenConfig{}, errBlockChainOpenMissingGenesisHash
+	}
+	normalizedCompatPolicy, err := ValidateAndNormalizeCompatPolicy(compatPolicy)
+	if err != nil {
+		return blockchainOpenConfig{}, err
+	}
+	if compatErr != nil && normalizedCompatPolicy == MismatchExit {
+		return blockchainOpenConfig{}, fmt.Errorf("%w: %v", ErrConfigMismatchPolicyExit, compatErr)
 	}
 	normalizedGenesis, err := normalizedRecoveryGenesis(recoveryGenesis, chainConfig)
 	if err != nil {
@@ -368,6 +386,7 @@ func newResolvedBlockChainOpenConfig(readOnly bool, recoveryGenesis *Genesis, ch
 		chainConfig:     chainConfig,
 		genesisHash:     genesisHash,
 		compatErr:       compatErr,
+		compatPolicy:    normalizedCompatPolicy,
 		recoveryGenesis: normalizedGenesis,
 	}, nil
 }
@@ -382,6 +401,7 @@ func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus
 	}
 	genesisHash := cfg.genesisHash
 	compatErr := cfg.compatErr
+	compatPolicy := cfg.compatPolicy
 	log.Info(strings.Repeat("-", 153))
 	for line := range strings.SplitSeq(chainConfig.Description(), "\n") {
 		log.Info(line)
@@ -536,13 +556,32 @@ func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus
 	}
 
 	// Rewind the chain in case of an incompatible config upgrade.
+	// NOTE: MismatchExit is handled in resolveBlockChainOpenConfig /
+	// newResolvedBlockChainOpenConfig before any chain state is touched,
+	// so it never reaches here.
 	if compatErr != nil {
-		if cfg.readOnly {
-			return nil, fmt.Errorf("%w: %v", ErrReadOnlyConfigRewind, compatErr)
+		log.Warn("Mismatched chain config", "err", compatErr)
+		switch compatPolicy {
+		case MismatchRewindAndUpdate:
+			if cfg.readOnly {
+				return nil, fmt.Errorf("%w: %v", ErrReadOnlyConfigRewind, compatErr)
+			}
+			log.Warn("Applying chain config mismatch policy", "policy", compatPolicy, "rewind_to", compatErr.RewindTo, "update_config", true)
+			if err := bc.SetHead(compatErr.RewindTo); err != nil {
+				return nil, fmt.Errorf("failed to rewind chain: %w", err)
+			}
+			rawdb.WriteChainConfig(db, genesisHash, chainConfig)
+		case MismatchUpdateConfigOnly:
+			if cfg.readOnly {
+				return nil, fmt.Errorf("%w: %v", ErrReadOnlyConfigUpdate, compatErr)
+			}
+			log.Warn("Applying chain config mismatch policy", "policy", compatPolicy, "rewind", false, "update_config", true)
+			rawdb.WriteChainConfig(db, genesisHash, chainConfig)
+		case MismatchIgnoreMismatch:
+			log.Warn("Applying chain config mismatch policy", "policy", compatPolicy, "rewind", false, "update_config", false)
+		default:
+			return nil, fmt.Errorf("invalid chain config mismatch policy %q", compatPolicy)
 		}
-		log.Warn("Rewinding chain to upgrade configuration", "err", compatErr)
-		bc.SetHead(compatErr.RewindTo)
-		rawdb.WriteChainConfig(db, genesisHash, chainConfig)
 	}
 
 	// Start future block processor.
@@ -577,8 +616,8 @@ func NewBlockChainExReadOnly(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cache
 
 // NewBlockChainExResolved opens a writable XDCx-aware blockchain from caller-
 // supplied startup metadata.
-func NewBlockChainExResolved(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError) (*BlockChain, error) {
-	blockchain, err := NewBlockChainResolved(db, cacheConfig, recoveryGenesis, engine, vmConfig, chainConfig, genesisHash, compatErr)
+func NewBlockChainExResolved(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, compatPolicy ChainConfigMismatchPolicy) (*BlockChain, error) {
+	blockchain, err := NewBlockChainResolved(db, cacheConfig, recoveryGenesis, engine, vmConfig, chainConfig, genesisHash, compatErr, compatPolicy)
 	if err != nil {
 		return nil, err
 	}
@@ -590,8 +629,8 @@ func NewBlockChainExResolved(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cache
 
 // NewBlockChainExReadOnlyResolved opens a readonly XDCx-aware blockchain from
 // caller-supplied startup metadata.
-func NewBlockChainExReadOnlyResolved(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError) (*BlockChain, error) {
-	blockchain, err := NewBlockChainReadOnlyResolved(db, cacheConfig, recoveryGenesis, engine, vmConfig, chainConfig, genesisHash, compatErr)
+func NewBlockChainExReadOnlyResolved(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, compatPolicy ChainConfigMismatchPolicy) (*BlockChain, error) {
+	blockchain, err := NewBlockChainReadOnlyResolved(db, cacheConfig, recoveryGenesis, engine, vmConfig, chainConfig, genesisHash, compatErr, compatPolicy)
 	if err != nil {
 		return nil, err
 	}

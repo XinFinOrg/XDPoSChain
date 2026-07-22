@@ -59,6 +59,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/miner"
 	"github.com/XinFinOrg/XDPoSChain/node"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enr"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
@@ -74,7 +75,7 @@ type Ethereum struct {
 	blockchain     *core.BlockChain
 
 	// Channel for shutting down the service
-	shutdownChan chan bool // Channel for shutting down the ethereum
+	shutdownChan chan bool
 
 	orderPool       *legacypool.OrderPool
 	lendingPool     *legacypool.LendingPool
@@ -148,6 +149,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	if err != nil {
 		return nil, err
 	}
+	logXDPoSConfig(chainConfig, compatErr)
 
 	// Assemble the Ethereum object.
 	eth := &Ethereum{
@@ -236,7 +238,19 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 			return eth.Lending
 		}
 	}
-	eth.blockchain, err = core.NewBlockChainExResolved(chainDb, XDCXServ.GetLevelDB(), cacheConfig, config.Genesis, eth.engine, vmConfig, chainConfig, genesisHash, compatErr)
+	compatPolicy := core.ChainConfigMismatchPolicy(config.ChainConfigMismatchPolicy)
+	eth.blockchain, err = core.NewBlockChainExResolved(
+		chainDb,
+		XDCXServ.GetLevelDB(),
+		cacheConfig,
+		config.Genesis,
+		eth.engine,
+		vmConfig,
+		chainConfig,
+		genesisHash,
+		compatErr,
+		compatPolicy,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -461,6 +475,14 @@ func (e *Ethereum) APIs() []rpc.API {
 	}...)
 }
 
+func logXDPoSConfig(chainConfig *params.ChainConfig, compatErr *params.ConfigCompatError) {
+	if compatErr != nil || chainConfig == nil || chainConfig.XDPoS == nil || chainConfig.XDPoS.V2 == nil {
+		return
+	}
+
+	log.Info("Load xdc config", "config.V2", chainConfig.XDPoS.V2.StableLogValue())
+}
+
 func (e *Ethereum) ResetWithGenesisBlock(gb *types.Block) {
 	e.blockchain.ResetWithGenesisBlock(gb)
 }
@@ -557,19 +579,26 @@ func (e *Ethereum) EventMux() *event.TypeMux           { return e.eventMux }
 func (e *Ethereum) Engine() consensus.Engine           { return e.engine }
 func (e *Ethereum) ChainDb() ethdb.Database            { return e.chainDb }
 func (e *Ethereum) IsListening() bool                  { return true } // Always listening
-func (e *Ethereum) EthVersion() int                    { return int(e.protocolManager.SubProtocols[0].Version) }
+func (e *Ethereum) EthVersion() int                    { return int(ProtocolVersions[0]) }
 func (e *Ethereum) NetVersion() uint64                 { return e.networkId }
 func (e *Ethereum) Downloader() *downloader.Downloader { return e.protocolManager.downloader }
 func (e *Ethereum) BloomIndexer() *core.ChainIndexer   { return e.bloomIndexer }
 
 // Protocols returns all the currently configured
 func (e *Ethereum) Protocols() []p2p.Protocol {
-	return e.protocolManager.SubProtocols
+	protos := make([]p2p.Protocol, len(ProtocolVersions))
+	for i, vsn := range ProtocolVersions {
+		protos[i] = e.protocolManager.makeProtocol(vsn)
+		protos[i].Attributes = []enr.Entry{e.currentEthEntry()}
+	}
+	return protos
 }
 
 // Start implements node.Lifecycle, starting all internal goroutines needed by the
 // Ethereum protocol implementation.
 func (e *Ethereum) Start() error {
+	e.startEthEntryUpdate(e.p2pServer.LocalNode())
+
 	// Start the bloom bits servicing goroutines
 	e.startBloomHandlers(params.BloomBitsBlocks)
 
