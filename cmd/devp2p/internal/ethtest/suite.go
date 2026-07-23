@@ -19,11 +19,15 @@ package ethtest
 import (
 	"crypto/ecdsa"
 	"fmt"
+	"math/big"
 	"net"
 	"strings"
 	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/eth"
 	"github.com/XinFinOrg/XDPoSChain/internal/utesting"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
@@ -36,13 +40,17 @@ const handshakeTimeout = 5 * time.Second
 // Suite represents a minimal conformance test set that is compatible with
 // the protocol packages available in this repository snapshot.
 type Suite struct {
-	Dest *enode.Node
+	Dest  *enode.Node
+	chain *Chain
 }
 
 // NewSuite creates and returns a compatibility subset suite.
-// The extra string parameters are currently unused and kept for API parity.
-func NewSuite(dest *enode.Node, _, _, _ string) (*Suite, error) {
-	return &Suite{Dest: dest}, nil
+func NewSuite(dest *enode.Node, chainDir, _, _ string) (*Suite, error) {
+	chain, err := NewChain(chainDir)
+	if err != nil {
+		return nil, err
+	}
+	return &Suite{Dest: dest, chain: chain}, nil
 }
 
 // EthTests returns the enabled compatibility subset.
@@ -57,6 +65,35 @@ func (s *Suite) EthTests() []utesting.Test {
 	return []utesting.Test{
 		// Baseline.
 		{Name: "RLPxHandshake", Fn: s.TestRLPxHandshake},
+		{Name: "Status", Fn: s.TestStatus},
+		{Name: "GetBlockHeaders", Fn: s.TestGetBlockHeaders},
+		{Name: "GetBlockHeadersByHash", Fn: s.TestGetBlockHeadersByHash},
+		{Name: "GetBlockHeadersReverseFromGenesis", Fn: s.TestGetBlockHeadersReverseFromGenesis},
+		{Name: "GetBlockHeadersSequentialRequests", Fn: s.TestGetBlockHeadersSequentialRequests},
+		{Name: "GetSequentialMixedRequests", Fn: s.TestGetSequentialMixedRequests},
+		{Name: "GetNonexistentBlockHeaders", Fn: s.TestGetNonexistentBlockHeaders},
+		{Name: "GetNonexistentBlockHeadersByHash", Fn: s.TestGetNonexistentBlockHeadersByHash},
+		{Name: "GetNonexistentHeadersThenBlockBodies", Fn: s.TestGetNonexistentHeadersThenBlockBodies},
+		{Name: "GetNonexistentHeadersThenReceipts", Fn: s.TestGetNonexistentHeadersThenReceipts},
+		{Name: "TransactionSmoke", Fn: s.TestTransactionSmoke},
+		{Name: "TransactionBatchSmoke", Fn: s.TestTransactionBatchSmoke},
+		{Name: "TransactionEmptyListSmoke", Fn: s.TestTransactionEmptyListSmoke},
+		{Name: "TransactionEmptyListThenBlockBodiesSmoke", Fn: s.TestTransactionEmptyListThenBlockBodiesSmoke},
+		{Name: "TransactionThenBlockBodiesSmoke", Fn: s.TestTransactionThenBlockBodiesSmoke},
+		{Name: "TransactionThenReceiptsSmoke", Fn: s.TestTransactionThenReceiptsSmoke},
+		{Name: "TransactionBatchThenBlockBodiesSmoke", Fn: s.TestTransactionBatchThenBlockBodiesSmoke},
+		{Name: "TransactionBatchThenReceiptsSmoke", Fn: s.TestTransactionBatchThenReceiptsSmoke},
+		{Name: "TransactionEmptyListThenReceiptsSmoke", Fn: s.TestTransactionEmptyListThenReceiptsSmoke},
+		{Name: "GetBlockBodies", Fn: s.TestGetBlockBodies},
+		{Name: "GetBlockBodiesSequentialRequests", Fn: s.TestGetBlockBodiesSequentialRequests},
+		{Name: "GetBlockBodiesMixedHashes", Fn: s.TestGetBlockBodiesMixedHashes},
+		{Name: "GetBlockBodiesUnknownOnly", Fn: s.TestGetBlockBodiesUnknownOnly},
+		{Name: "GetBlockBodiesUnknownThenKnown", Fn: s.TestGetBlockBodiesUnknownThenKnown},
+		{Name: "GetReceipts", Fn: s.TestGetReceipts},
+		{Name: "GetReceiptsSequentialRequests", Fn: s.TestGetReceiptsSequentialRequests},
+		{Name: "GetReceiptsMixedHashes", Fn: s.TestGetReceiptsMixedHashes},
+		{Name: "GetReceiptsUnknownOnly", Fn: s.TestGetReceiptsUnknownOnly},
+		{Name: "GetReceiptsUnknownThenKnown", Fn: s.TestGetReceiptsUnknownThenKnown},
 
 		// Identity-focused hello boundary tests.
 		{Name: "MalformedHello", Fn: s.TestMalformedHello},
@@ -110,6 +147,737 @@ func (s *Suite) TestRLPxHandshake(t *utesting.T) {
 		t.Fatalf("rlpx handshake failed: %v", err)
 	}
 	conn.Close()
+}
+
+func (s *Suite) TestStatus(t *utesting.T) {
+	t.Log(`This test performs a protocol handshake plus status exchange.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("status handshake failed: %v", err)
+	}
+	conn.Close()
+}
+
+func (s *Suite) TestGetBlockHeaders(t *utesting.T) {
+	t.Log(`This test requests block headers for a known fixture block.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	req := &getBlockHeadersData{
+		Origin: hashOrNumber{Number: 0},
+		Amount: 1,
+	}
+	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, req); err != nil {
+		t.Fatalf("failed to write GetBlockHeaders: %v", err)
+	}
+	if err := s.expectHeadersResponse(conn, req, 1); err != nil {
+		t.Fatalf("headers response validation failed: %v", err)
+	}
+}
+
+func (s *Suite) TestGetBlockHeadersByHash(t *utesting.T) {
+	t.Log(`This test requests block headers by origin hash.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	req := &getBlockHeadersData{
+		Origin: hashOrNumber{Hash: s.chain.blocks[0].Hash()},
+		Amount: 1,
+	}
+	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, req); err != nil {
+		t.Fatalf("failed to write GetBlockHeaders by hash: %v", err)
+	}
+	if err := s.expectHeadersResponse(conn, req, 1); err != nil {
+		t.Fatalf("headers-by-hash response validation failed: %v", err)
+	}
+}
+
+func (s *Suite) TestGetBlockHeadersReverseFromGenesis(t *utesting.T) {
+	t.Log(`This test requests reverse headers from genesis and expects a safely truncated response.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	req := &getBlockHeadersData{
+		Origin:  hashOrNumber{Number: 0},
+		Amount:  3,
+		Reverse: true,
+	}
+	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, req); err != nil {
+		t.Fatalf("failed to write reverse GetBlockHeaders: %v", err)
+	}
+	if err := s.expectHeadersResponse(conn, req, 1); err != nil {
+		t.Fatalf("reverse-from-genesis headers response validation failed: %v", err)
+	}
+}
+
+func (s *Suite) TestGetBlockHeadersSequentialRequests(t *utesting.T) {
+	t.Log(`This test sends two different valid headers requests on the same connection.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	first := &getBlockHeadersData{Origin: hashOrNumber{Number: 0}, Amount: 1}
+	second := &getBlockHeadersData{Origin: hashOrNumber{Hash: s.chain.blocks[0].Hash()}, Amount: 1}
+
+	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, first); err != nil {
+		t.Fatalf("failed to write first GetBlockHeaders request: %v", err)
+	}
+	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, second); err != nil {
+		t.Fatalf("failed to write second GetBlockHeaders request: %v", err)
+	}
+	if err := s.expectHeadersResponse(conn, first, 2); err != nil {
+		t.Fatalf("first sequential headers response validation failed: %v", err)
+	}
+	if err := s.expectHeadersResponse(conn, second, 2); err != nil {
+		t.Fatalf("second sequential headers response validation failed: %v", err)
+	}
+}
+
+func (s *Suite) TestGetSequentialMixedRequests(t *utesting.T) {
+	t.Log(`This test sends headers, block bodies, and receipts requests sequentially on one connection.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	headersReq := &getBlockHeadersData{Origin: hashOrNumber{Number: 0}, Amount: 1}
+	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, headersReq); err != nil {
+		t.Fatalf("failed to write GetBlockHeaders request: %v", err)
+	}
+	if err := s.expectHeadersResponse(conn, headersReq, 1); err != nil {
+		t.Fatalf("headers response validation failed: %v", err)
+	}
+
+	bodiesReq := getBlockBodiesData{s.chain.blocks[0].Hash()}
+	if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &bodiesReq); err != nil {
+		t.Fatalf("failed to write GetBlockBodies request: %v", err)
+	}
+	if err := s.expectBlockBodiesResponse(conn, &bodiesReq, 1); err != nil {
+		t.Fatalf("block bodies response validation failed: %v", err)
+	}
+
+	receiptsReq := getReceiptsData{s.chain.blocks[0].Hash()}
+	if err := conn.Write(ethProto, eth.GetReceiptsMsg, &receiptsReq); err != nil {
+		t.Fatalf("failed to write GetReceipts request: %v", err)
+	}
+	if err := s.expectReceiptsResponse(conn, &receiptsReq, 1); err != nil {
+		t.Fatalf("receipts response validation failed: %v", err)
+	}
+}
+
+func (s *Suite) TestGetNonexistentBlockHeaders(t *utesting.T) {
+	t.Log(`This test sends a nonexistent headers request and verifies the peer remains responsive.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	badReq := &getBlockHeadersData{
+		Origin: hashOrNumber{Number: ^uint64(0)},
+		Amount: 1,
+	}
+	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, badReq); err != nil {
+		t.Fatalf("failed to write nonexistent GetBlockHeaders request: %v", err)
+	}
+
+	goodReq := &getBlockHeadersData{
+		Origin: hashOrNumber{Number: 0},
+		Amount: 1,
+	}
+	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, goodReq); err != nil {
+		t.Fatalf("failed to write follow-up GetBlockHeaders request: %v", err)
+	}
+
+	if err := s.expectHeadersResponse(conn, goodReq, 2); err != nil {
+		t.Fatalf("follow-up valid headers response was not received: %v", err)
+	}
+}
+
+func (s *Suite) TestGetNonexistentBlockHeadersByHash(t *utesting.T) {
+	t.Log(`This test sends a nonexistent hash-based headers request and verifies the peer remains responsive.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	badReq := &getBlockHeadersData{
+		Origin: hashOrNumber{Hash: common.HexToHash("0x01")},
+		Amount: 1,
+	}
+	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, badReq); err != nil {
+		t.Fatalf("failed to write nonexistent hash GetBlockHeaders request: %v", err)
+	}
+
+	goodReq := &getBlockHeadersData{
+		Origin: hashOrNumber{Hash: s.chain.blocks[0].Hash()},
+		Amount: 1,
+	}
+	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, goodReq); err != nil {
+		t.Fatalf("failed to write follow-up hash GetBlockHeaders request: %v", err)
+	}
+
+	if err := s.expectHeadersResponse(conn, goodReq, 2); err != nil {
+		t.Fatalf("follow-up valid hash-based headers response was not received: %v", err)
+	}
+}
+
+func (s *Suite) TestGetNonexistentHeadersThenBlockBodies(t *utesting.T) {
+	t.Log(`This test sends a nonexistent headers request then a valid block bodies request on the same connection.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	badReq := &getBlockHeadersData{Origin: hashOrNumber{Number: ^uint64(0)}, Amount: 1}
+	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, badReq); err != nil {
+		t.Fatalf("failed to write nonexistent GetBlockHeaders request: %v", err)
+	}
+	goodReq := getBlockBodiesData{s.chain.blocks[0].Hash()}
+	if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &goodReq); err != nil {
+		t.Fatalf("failed to write follow-up GetBlockBodies request: %v", err)
+	}
+	if err := s.expectBlockBodiesResponse(conn, &goodReq, 2); err != nil {
+		t.Fatalf("follow-up valid block bodies response was not received: %v", err)
+	}
+}
+
+func (s *Suite) TestGetNonexistentHeadersThenReceipts(t *utesting.T) {
+	t.Log(`This test sends a nonexistent headers request then a valid receipts request on the same connection.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	badReq := &getBlockHeadersData{Origin: hashOrNumber{Number: ^uint64(0)}, Amount: 1}
+	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, badReq); err != nil {
+		t.Fatalf("failed to write nonexistent GetBlockHeaders request: %v", err)
+	}
+	goodReq := getReceiptsData{s.chain.blocks[0].Hash()}
+	if err := conn.Write(ethProto, eth.GetReceiptsMsg, &goodReq); err != nil {
+		t.Fatalf("failed to write follow-up GetReceipts request: %v", err)
+	}
+	if err := s.expectReceiptsResponse(conn, &goodReq, 2); err != nil {
+		t.Fatalf("follow-up valid receipts response was not received: %v", err)
+	}
+}
+
+func (s *Suite) expectHeadersResponse(conn *Conn, req *getBlockHeadersData, maxReads int) error {
+	expected, err := s.chain.GetHeaders(req)
+	if err != nil {
+		return fmt.Errorf("failed to build expected headers: %w", err)
+	}
+	for i := 0; i < maxReads; i++ {
+		msg, err := conn.ReadEth()
+		if err != nil {
+			return fmt.Errorf("failed to read headers response %d: %w", i+1, err)
+		}
+		headers, ok := msg.(*blockHeadersData)
+		if !ok {
+			continue
+		}
+		if len(*headers) != len(expected) {
+			continue
+		}
+		matched := true
+		for j := range expected {
+			if (*headers)[j].Hash() != expected[j].Hash() {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return nil
+		}
+	}
+	return fmt.Errorf("did not receive matching BlockHeaders response in %d read(s)", maxReads)
+}
+
+func (s *Suite) signedFixtureTxs(count int) (types.Transactions, common.Address, error) {
+	if len(s.chain.senders) == 0 {
+		return nil, common.Address{}, fmt.Errorf("fixture has no sender accounts")
+	}
+	from, nonce := s.chain.GetSender(0)
+	to := common.HexToAddress("0x00000000000000000000000000000000000000aa")
+	txs := make(types.Transactions, 0, count)
+	for i := 0; i < count; i++ {
+		unsigned := types.NewTransaction(nonce+uint64(i), to, big.NewInt(int64(i+1)), 21000, big.NewInt(1), nil)
+		signed, err := s.chain.SignTx(from, unsigned)
+		if err != nil {
+			return nil, common.Address{}, fmt.Errorf("failed to sign tx %d: %w", i, err)
+		}
+		txs = append(txs, signed)
+	}
+	return txs, from, nil
+}
+
+func (s *Suite) runTransactionSmoke(t *utesting.T, txs types.Transactions, nonceAdvance uint64, skipWithoutSenders bool, skipMessage string, followUp func(*Conn) error) {
+	t.Helper()
+	if skipWithoutSenders && len(s.chain.senders) == 0 {
+		t.Log(skipMessage)
+		return
+	}
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	if err := conn.Write(ethProto, eth.TxMsg, txs); err != nil {
+		t.Fatalf("failed to write TxMsg: %v", err)
+	}
+	if skipWithoutSenders && nonceAdvance > 0 {
+		from, _ := s.chain.GetSender(0)
+		s.chain.IncNonce(from, nonceAdvance)
+	}
+	if err := followUp(conn); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (s *Suite) TestTransactionSmoke(t *utesting.T) {
+	t.Log(`This test sends a signed transaction and verifies the peer remains responsive.`)
+	txs, _, err := s.signedFixtureTxs(1)
+	if err != nil {
+		t.Log("fixture has no sender accounts; skipping transaction smoke")
+		return
+	}
+	s.runTransactionSmoke(t, txs, 1, true, "fixture has no sender accounts; skipping transaction smoke", func(conn *Conn) error {
+		req := &getBlockHeadersData{Origin: hashOrNumber{Number: 0}, Amount: 1}
+		if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, req); err != nil {
+			return fmt.Errorf("failed to write follow-up GetBlockHeaders: %w", err)
+		}
+		if err := s.expectHeadersResponse(conn, req, 5); err != nil {
+			return fmt.Errorf("did not receive BlockHeaders response after TxMsg: %w", err)
+		}
+		return nil
+	})
+}
+
+func (s *Suite) TestTransactionBatchSmoke(t *utesting.T) {
+	t.Log(`This test sends a batch of signed transactions and verifies the peer remains responsive.`)
+	txs, _, err := s.signedFixtureTxs(2)
+	if err != nil {
+		t.Log("fixture has no sender accounts; skipping transaction batch smoke")
+		return
+	}
+	s.runTransactionSmoke(t, txs, 2, true, "fixture has no sender accounts; skipping transaction batch smoke", func(conn *Conn) error {
+		req := &getBlockHeadersData{Origin: hashOrNumber{Number: 0}, Amount: 1}
+		if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, req); err != nil {
+			return fmt.Errorf("failed to write follow-up GetBlockHeaders: %w", err)
+		}
+		if err := s.expectHeadersResponse(conn, req, 5); err != nil {
+			return fmt.Errorf("did not receive BlockHeaders response after batched TxMsg: %w", err)
+		}
+		return nil
+	})
+}
+
+func (s *Suite) TestTransactionEmptyListSmoke(t *utesting.T) {
+	t.Log(`This test sends an empty transaction list and verifies the peer remains responsive.`)
+	s.runTransactionSmoke(t, types.Transactions{}, 0, false, "", func(conn *Conn) error {
+		req := &getBlockHeadersData{Origin: hashOrNumber{Number: 0}, Amount: 1}
+		if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, req); err != nil {
+			return fmt.Errorf("failed to write follow-up GetBlockHeaders: %w", err)
+		}
+		if err := s.expectHeadersResponse(conn, req, 5); err != nil {
+			return fmt.Errorf("did not receive BlockHeaders response after empty TxMsg: %w", err)
+		}
+		return nil
+	})
+}
+
+func (s *Suite) TestTransactionEmptyListThenBlockBodiesSmoke(t *utesting.T) {
+	t.Log(`This test sends an empty transaction list and then requests block bodies.`)
+	s.runTransactionSmoke(t, types.Transactions{}, 0, false, "", func(conn *Conn) error {
+		req := getBlockBodiesData{s.chain.blocks[0].Hash()}
+		if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &req); err != nil {
+			return fmt.Errorf("failed to write follow-up GetBlockBodies: %w", err)
+		}
+		if err := s.expectBlockBodiesResponse(conn, &req, 5); err != nil {
+			return fmt.Errorf("did not receive BlockBodies response after empty TxMsg: %w", err)
+		}
+		return nil
+	})
+}
+
+func (s *Suite) TestTransactionEmptyListThenReceiptsSmoke(t *utesting.T) {
+	t.Log(`This test sends an empty transaction list and then requests receipts.`)
+	s.runTransactionSmoke(t, types.Transactions{}, 0, false, "", func(conn *Conn) error {
+		req := getReceiptsData{s.chain.blocks[0].Hash()}
+		if err := conn.Write(ethProto, eth.GetReceiptsMsg, &req); err != nil {
+			return fmt.Errorf("failed to write follow-up GetReceipts: %w", err)
+		}
+		if err := s.expectReceiptsResponse(conn, &req, 5); err != nil {
+			return fmt.Errorf("did not receive Receipts response after empty TxMsg: %w", err)
+		}
+		return nil
+	})
+}
+
+func (s *Suite) TestTransactionThenBlockBodiesSmoke(t *utesting.T) {
+	t.Log(`This test sends a signed transaction and then requests block bodies.`)
+	txs, _, err := s.signedFixtureTxs(1)
+	if err != nil {
+		t.Log("fixture has no sender accounts; skipping transaction block-bodies smoke")
+		return
+	}
+	s.runTransactionSmoke(t, txs, 1, true, "fixture has no sender accounts; skipping transaction block-bodies smoke", func(conn *Conn) error {
+		req := getBlockBodiesData{s.chain.blocks[0].Hash()}
+		if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &req); err != nil {
+			return fmt.Errorf("failed to write follow-up GetBlockBodies: %w", err)
+		}
+		if err := s.expectBlockBodiesResponse(conn, &req, 5); err != nil {
+			return fmt.Errorf("did not receive BlockBodies response after TxMsg: %w", err)
+		}
+		return nil
+	})
+}
+
+func (s *Suite) TestTransactionThenReceiptsSmoke(t *utesting.T) {
+	t.Log(`This test sends a signed transaction and then requests receipts.`)
+	txs, _, err := s.signedFixtureTxs(1)
+	if err != nil {
+		t.Log("fixture has no sender accounts; skipping transaction receipts smoke")
+		return
+	}
+	s.runTransactionSmoke(t, txs, 1, true, "fixture has no sender accounts; skipping transaction receipts smoke", func(conn *Conn) error {
+		req := getReceiptsData{s.chain.blocks[0].Hash()}
+		if err := conn.Write(ethProto, eth.GetReceiptsMsg, &req); err != nil {
+			return fmt.Errorf("failed to write follow-up GetReceipts: %w", err)
+		}
+		if err := s.expectReceiptsResponse(conn, &req, 5); err != nil {
+			return fmt.Errorf("did not receive Receipts response after TxMsg: %w", err)
+		}
+		return nil
+	})
+}
+
+func (s *Suite) TestTransactionBatchThenBlockBodiesSmoke(t *utesting.T) {
+	t.Log(`This test sends a batch of signed transactions and then requests block bodies.`)
+	txs, _, err := s.signedFixtureTxs(2)
+	if err != nil {
+		t.Log("fixture has no sender accounts; skipping batched transaction block-bodies smoke")
+		return
+	}
+	s.runTransactionSmoke(t, txs, 2, true, "fixture has no sender accounts; skipping batched transaction block-bodies smoke", func(conn *Conn) error {
+		req := getBlockBodiesData{s.chain.blocks[0].Hash()}
+		if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &req); err != nil {
+			return fmt.Errorf("failed to write follow-up GetBlockBodies: %w", err)
+		}
+		if err := s.expectBlockBodiesResponse(conn, &req, 5); err != nil {
+			return fmt.Errorf("did not receive BlockBodies response after batched TxMsg: %w", err)
+		}
+		return nil
+	})
+}
+
+func (s *Suite) TestTransactionBatchThenReceiptsSmoke(t *utesting.T) {
+	t.Log(`This test sends a batch of signed transactions and then requests receipts.`)
+	txs, _, err := s.signedFixtureTxs(2)
+	if err != nil {
+		t.Log("fixture has no sender accounts; skipping batched transaction receipts smoke")
+		return
+	}
+	s.runTransactionSmoke(t, txs, 2, true, "fixture has no sender accounts; skipping batched transaction receipts smoke", func(conn *Conn) error {
+		req := getReceiptsData{s.chain.blocks[0].Hash()}
+		if err := conn.Write(ethProto, eth.GetReceiptsMsg, &req); err != nil {
+			return fmt.Errorf("failed to write follow-up GetReceipts: %w", err)
+		}
+		if err := s.expectReceiptsResponse(conn, &req, 5); err != nil {
+			return fmt.Errorf("did not receive Receipts response after batched TxMsg: %w", err)
+		}
+		return nil
+	})
+}
+
+func (s *Suite) TestGetBlockBodies(t *utesting.T) {
+	t.Log(`This test requests block bodies for a known fixture block hash.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	req := getBlockBodiesData{s.chain.blocks[0].Hash()}
+	if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &req); err != nil {
+		t.Fatalf("failed to write GetBlockBodies: %v", err)
+	}
+	if err := s.expectBlockBodiesResponse(conn, &req, 1); err != nil {
+		t.Fatalf("block bodies response validation failed: %v", err)
+	}
+}
+
+func (s *Suite) TestGetBlockBodiesSequentialRequests(t *utesting.T) {
+	t.Log(`This test sends two valid block bodies requests on the same connection.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	first := getBlockBodiesData{s.chain.blocks[0].Hash()}
+	second := getBlockBodiesData{s.chain.blocks[0].Hash(), common.HexToHash("0x01")}
+
+	if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &first); err != nil {
+		t.Fatalf("failed to write first GetBlockBodies request: %v", err)
+	}
+	if err := s.expectBlockBodiesResponse(conn, &first, 1); err != nil {
+		t.Fatalf("first sequential block bodies response validation failed: %v", err)
+	}
+	if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &second); err != nil {
+		t.Fatalf("failed to write second GetBlockBodies request: %v", err)
+	}
+	if err := s.expectBlockBodiesResponse(conn, &second, 1); err != nil {
+		t.Fatalf("second sequential block bodies response validation failed: %v", err)
+	}
+}
+
+func (s *Suite) TestGetBlockBodiesMixedHashes(t *utesting.T) {
+	t.Log(`This test requests block bodies with mixed known and unknown hashes.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	req := getBlockBodiesData{s.chain.blocks[0].Hash(), common.HexToHash("0x01")}
+	if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &req); err != nil {
+		t.Fatalf("failed to write mixed GetBlockBodies: %v", err)
+	}
+	if err := s.expectBlockBodiesResponse(conn, &req, 1); err != nil {
+		t.Fatalf("mixed block bodies response validation failed: %v", err)
+	}
+}
+
+func (s *Suite) TestGetBlockBodiesUnknownOnly(t *utesting.T) {
+	t.Log(`This test requests block bodies for unknown hashes only.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	req := getBlockBodiesData{common.HexToHash("0x01")}
+	if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &req); err != nil {
+		t.Fatalf("failed to write unknown-only GetBlockBodies: %v", err)
+	}
+	if err := s.expectBlockBodiesResponse(conn, &req, 2); err != nil {
+		t.Fatalf("unknown-only block bodies response validation failed: %v", err)
+	}
+}
+
+func (s *Suite) TestGetBlockBodiesUnknownThenKnown(t *utesting.T) {
+	t.Log(`This test sends unknown then known block-bodies requests and expects valid follow-up response.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	badReq := getBlockBodiesData{common.HexToHash("0x01")}
+	if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &badReq); err != nil {
+		t.Fatalf("failed to write unknown GetBlockBodies: %v", err)
+	}
+	goodReq := getBlockBodiesData{s.chain.blocks[0].Hash()}
+	if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &goodReq); err != nil {
+		t.Fatalf("failed to write follow-up GetBlockBodies: %v", err)
+	}
+	if err := s.expectBlockBodiesResponse(conn, &goodReq, 2); err != nil {
+		t.Fatalf("follow-up block bodies response validation failed: %v", err)
+	}
+}
+
+func (s *Suite) TestGetReceipts(t *utesting.T) {
+	t.Log(`This test requests receipts for a known fixture block hash.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	req := getReceiptsData{s.chain.blocks[0].Hash()}
+	if err := conn.Write(ethProto, eth.GetReceiptsMsg, &req); err != nil {
+		t.Fatalf("failed to write GetReceipts: %v", err)
+	}
+	if err := s.expectReceiptsResponse(conn, &req, 1); err != nil {
+		t.Fatalf("receipts response validation failed: %v", err)
+	}
+}
+
+func (s *Suite) TestGetReceiptsSequentialRequests(t *utesting.T) {
+	t.Log(`This test sends two valid receipts requests on the same connection.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	first := getReceiptsData{s.chain.blocks[0].Hash()}
+	second := getReceiptsData{s.chain.blocks[0].Hash(), common.HexToHash("0x01")}
+
+	if err := conn.Write(ethProto, eth.GetReceiptsMsg, &first); err != nil {
+		t.Fatalf("failed to write first GetReceipts request: %v", err)
+	}
+	if err := s.expectReceiptsResponse(conn, &first, 1); err != nil {
+		t.Fatalf("first sequential receipts response validation failed: %v", err)
+	}
+	if err := conn.Write(ethProto, eth.GetReceiptsMsg, &second); err != nil {
+		t.Fatalf("failed to write second GetReceipts request: %v", err)
+	}
+	if err := s.expectReceiptsResponse(conn, &second, 1); err != nil {
+		t.Fatalf("second sequential receipts response validation failed: %v", err)
+	}
+}
+
+func (s *Suite) TestGetReceiptsMixedHashes(t *utesting.T) {
+	t.Log(`This test requests receipts with mixed known and unknown hashes.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	req := getReceiptsData{s.chain.blocks[0].Hash(), common.HexToHash("0x01")}
+	if err := conn.Write(ethProto, eth.GetReceiptsMsg, &req); err != nil {
+		t.Fatalf("failed to write mixed GetReceipts: %v", err)
+	}
+	if err := s.expectReceiptsResponse(conn, &req, 1); err != nil {
+		t.Fatalf("mixed receipts response validation failed: %v", err)
+	}
+}
+
+func (s *Suite) TestGetReceiptsUnknownOnly(t *utesting.T) {
+	t.Log(`This test requests receipts for unknown hashes only.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	req := getReceiptsData{common.HexToHash("0x01")}
+	if err := conn.Write(ethProto, eth.GetReceiptsMsg, &req); err != nil {
+		t.Fatalf("failed to write unknown-only GetReceipts: %v", err)
+	}
+	if err := s.expectReceiptsResponse(conn, &req, 2); err != nil {
+		t.Fatalf("unknown-only receipts response validation failed: %v", err)
+	}
+}
+
+func (s *Suite) TestGetReceiptsUnknownThenKnown(t *utesting.T) {
+	t.Log(`This test sends unknown then known receipts requests and expects valid follow-up response.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	badReq := getReceiptsData{common.HexToHash("0x01")}
+	if err := conn.Write(ethProto, eth.GetReceiptsMsg, &badReq); err != nil {
+		t.Fatalf("failed to write unknown GetReceipts: %v", err)
+	}
+	goodReq := getReceiptsData{s.chain.blocks[0].Hash()}
+	if err := conn.Write(ethProto, eth.GetReceiptsMsg, &goodReq); err != nil {
+		t.Fatalf("failed to write follow-up GetReceipts: %v", err)
+	}
+	if err := s.expectReceiptsResponse(conn, &goodReq, 2); err != nil {
+		t.Fatalf("follow-up receipts response validation failed: %v", err)
+	}
+}
+
+func (s *Suite) expectBlockBodiesResponse(conn *Conn, req *getBlockBodiesData, maxReads int) error {
+	expected, err := s.chain.GetBlockBodies(req)
+	if err != nil {
+		return fmt.Errorf("failed to build expected block bodies: %w", err)
+	}
+	for i := 0; i < maxReads; i++ {
+		msg, err := conn.ReadEth()
+		if err != nil {
+			return fmt.Errorf("failed to read block bodies response %d: %w", i+1, err)
+		}
+		bodies, ok := msg.(*blockBodiesData)
+		if !ok {
+			continue
+		}
+		if len(*bodies) != len(expected) {
+			continue
+		}
+		matched := true
+		for j := range expected {
+			if len((*bodies)[j].Transactions) != len(expected[j].Transactions) || len((*bodies)[j].Uncles) != len(expected[j].Uncles) {
+				matched = false
+				break
+			}
+			for k := range expected[j].Transactions {
+				if (*bodies)[j].Transactions[k].Hash() != expected[j].Transactions[k].Hash() {
+					matched = false
+					break
+				}
+			}
+			if !matched {
+				break
+			}
+			for k := range expected[j].Uncles {
+				if (*bodies)[j].Uncles[k].Hash() != expected[j].Uncles[k].Hash() {
+					matched = false
+					break
+				}
+			}
+			if !matched {
+				break
+			}
+		}
+		if matched {
+			return nil
+		}
+	}
+	return fmt.Errorf("did not receive matching BlockBodies response in %d read(s)", maxReads)
+}
+
+func (s *Suite) expectReceiptsResponse(conn *Conn, req *getReceiptsData, maxReads int) error {
+	expected, err := s.chain.GetReceipts(req)
+	if err != nil {
+		return fmt.Errorf("failed to build expected receipts: %w", err)
+	}
+	for i := 0; i < maxReads; i++ {
+		msg, err := conn.ReadEth()
+		if err != nil {
+			return fmt.Errorf("failed to read receipts response %d: %w", i+1, err)
+		}
+		receipts, ok := msg.(*receiptsData)
+		if !ok {
+			continue
+		}
+		if len(*receipts) != len(expected) {
+			continue
+		}
+		matched := true
+		for j := range expected {
+			if len((*receipts)[j]) != len(expected[j]) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return nil
+		}
+	}
+	return fmt.Errorf("did not receive matching Receipts response in %d read(s)", maxReads)
 }
 
 func (s *Suite) TestMalformedHello(t *utesting.T) {

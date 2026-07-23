@@ -38,12 +38,12 @@ var (
 		Category: flags.TestingCategory,
 	}
 
-	// Kept for CLI compatibility with upstream test commands. In this fork's
-	// current rlpx eth-test subset, only --node is required.
+	// for eth/snap tests
 	testChainDirFlag = &cli.PathFlag{
 		Name:     "chain",
-		Usage:    "Test chain directory (optional in current subset)",
+		Usage:    "Test chain directory (required)",
 		Category: flags.TestingCategory,
+		Required: true,
 	}
 	testNodeFlag = &cli.StringFlag{
 		Name:     "node",
