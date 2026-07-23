@@ -742,6 +742,55 @@ func TestInvalidTransactions(t *testing.T) {
 	}
 }
 
+// TestAddPanicSafeUnlock is a regression test that a panic inside the
+// locked section of Add() used to leave pool.mu permanently locked because
+// Add() released it with a plain Unlock() instead of a deferred one,
+// wedging the pool for the rest of the process's life.
+func TestAddPanicSafeUnlock(t *testing.T) {
+	t.Parallel()
+
+	pool, key := setupPool()
+	defer pool.Close()
+
+	tx := transaction(0, 100000, key)
+	from, err := deriveSender(tx)
+	if err != nil {
+		t.Fatalf("failed to derive sender: %v", err)
+	}
+	testAddBalance(pool, from, big.NewInt(1_000_000_000_000_000))
+
+	pool.mu.Lock()
+	realNoncer := pool.pendingNonces
+	pool.pendingNonces = nil
+	pool.mu.Unlock()
+
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("expected Add to panic with a nil pendingNonces noncer")
+			}
+		}()
+		pool.addRemote(tx)
+	}()
+
+	// The actual regression check: pool.mu must not still be held. Before
+	// the fix, Add()'s non-deferred Unlock() was skipped by the panic
+	// unwind, so this would hang forever - nothing could ever acquire the
+	// mutex again for the lifetime of the process.
+	done := make(chan struct{})
+	go func() {
+		pool.mu.Lock()
+		pool.pendingNonces = realNoncer
+		pool.mu.Unlock()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pool.mu is still locked after a panic inside Add(): Unlock() was not deferred")
+	}
+}
+
 // TestQueue tests queue.
 func TestQueue(t *testing.T) {
 	t.Parallel()

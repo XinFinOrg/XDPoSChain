@@ -148,6 +148,9 @@ func (s *StateDB) ValidateTRC21Tx(from common.Address, token common.Address, dat
 	balanceHash := s.GetState(token, common.BigToHash(balanceKey))
 
 	if !balanceHash.IsZero() {
+		if len(data) < 4 {
+			return false
+		}
 		balance := balanceHash.Big()
 		minFeeTokenKey := GetLocSimpleVariable(SlotTRC21Token["minFee"])
 		minFeeHash := s.GetState(token, minFeeTokenKey)

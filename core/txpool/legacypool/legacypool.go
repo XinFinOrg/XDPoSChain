@@ -1049,8 +1049,10 @@ func (pool *LegacyPool) Add(txs []*types.Transaction, sync bool) []error {
 	// While holding the pool lock, process all txs and let addTxsLocked
 	// populate errs in-place for those that passed the basic prechecks.
 	pool.mu.Lock()
-	dirtyAddrs := pool.addTxsLocked(txs, errs)
-	pool.mu.Unlock()
+	dirtyAddrs := func() *accountSet {
+		defer pool.mu.Unlock()
+		return pool.addTxsLocked(txs, errs)
+	}()
 
 	// Reorg the pool internals if needed and return
 	done := pool.requestPromoteExecutables(dirtyAddrs)
