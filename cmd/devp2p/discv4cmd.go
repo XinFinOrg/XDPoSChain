@@ -30,6 +30,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/cmd/devp2p/internal/v4test"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -50,6 +51,7 @@ var (
 			discv4ResolveCommand,
 			discv4ResolveJSONCommand,
 			discv4CrawlCommand,
+			discv4TestCommand,
 			discv4ListenCommand,
 		},
 	}
@@ -101,6 +103,18 @@ var (
 		Usage:  "Updates a nodes.json file with random nodes found in the DHT",
 		Action: discv4Crawl,
 		Flags:  slices.Concat(discoveryNodeFlags, []cli.Flag{crawlTimeoutFlag, crawlParallelismFlag}),
+	}
+	discv4TestCommand = &cli.Command{
+		Name:   "test",
+		Usage:  "Runs tests against a node",
+		Action: discv4Test,
+		Flags: []cli.Flag{
+			remoteEnodeFlag,
+			testPatternFlag,
+			testTAPFlag,
+			testListen1Flag,
+			testListen2Flag,
+		},
 	}
 )
 
@@ -278,6 +292,18 @@ func discv4Crawl(ctx *cli.Context) error {
 	output := c.run(ctx.Duration(crawlTimeoutFlag.Name), ctx.Int(crawlParallelismFlag.Name))
 	writeNodesJSON(nodesFile, output)
 	return nil
+}
+
+// discv4Test runs the protocol test suite.
+func discv4Test(ctx *cli.Context) error {
+	// Configure test package globals.
+	if !ctx.IsSet(remoteEnodeFlag.Name) {
+		return fmt.Errorf("missing -%v", remoteEnodeFlag.Name)
+	}
+	v4test.Remote = ctx.String(remoteEnodeFlag.Name)
+	v4test.Listen1 = ctx.String(testListen1Flag.Name)
+	v4test.Listen2 = ctx.String(testListen2Flag.Name)
+	return runTests(ctx, v4test.AllTests)
 }
 
 // startV4 starts an ephemeral discovery V4 node.

@@ -25,6 +25,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/cmd/devp2p/internal/ethtest"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/p2p/rlpx"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/urfave/cli/v2"
@@ -36,12 +37,26 @@ var (
 		Usage: "RLPx Commands",
 		Subcommands: []*cli.Command{
 			rlpxPingCommand,
+			rlpxEthTestCommand,
 		},
 	}
 	rlpxPingCommand = &cli.Command{
 		Name:   "ping",
 		Usage:  "Perform a RLPx handshake",
 		Action: rlpxPing,
+	}
+	rlpxEthTestCommand = &cli.Command{
+		Name:   "eth-test",
+		Usage:  "Runs a minimal RLPx/devp2p compatibility test subset against a node",
+		Action: rlpxEthTest,
+		Flags: []cli.Flag{
+			testPatternFlag,
+			testTAPFlag,
+			testChainDirFlag,
+			testNodeFlag,
+			testNodeJWTFlag,
+			testNodeEngineFlag,
+		},
 	}
 )
 
@@ -93,6 +108,16 @@ func rlpxPing(ctx *cli.Context) error {
 	return nil
 }
 
+// rlpxEthTest runs the local compatibility subset for RLPx/devp2p behavior.
+func rlpxEthTest(ctx *cli.Context) error {
+	p := cliTestParams(ctx)
+	suite, err := ethtest.NewSuite(p.node, p.chainDir, p.engineAPI, p.jwt)
+	if err != nil {
+		exit(err)
+	}
+	return runTests(ctx, suite.EthTests())
+}
+
 // decodeRLPxDisconnect parses a disconnect message payload. Per the RLPx spec
 // the payload is a list containing a single reason, but some implementations
 // (including older geth) sent the reason as a bare byte. Accept both forms.
@@ -116,4 +141,26 @@ func decodeRLPxDisconnect(data []byte) (p2p.DiscReason, error) {
 		return 0, err
 	}
 	return reason, nil
+}
+
+type testParams struct {
+	node      *enode.Node
+	engineAPI string
+	jwt       string
+	chainDir  string
+}
+
+func cliTestParams(ctx *cli.Context) *testParams {
+	nodeStr := ctx.String(testNodeFlag.Name)
+	node, err := parseNode(nodeStr)
+	if err != nil {
+		exit(err)
+	}
+	p := testParams{
+		node:      node,
+		engineAPI: ctx.String(testNodeEngineFlag.Name),
+		jwt:       ctx.String(testNodeJWTFlag.Name),
+		chainDir:  ctx.String(testChainDirFlag.Name),
+	}
+	return &p
 }

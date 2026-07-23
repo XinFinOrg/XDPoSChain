@@ -19,34 +19,16 @@ package main
 import (
 	"errors"
 	"fmt"
-	"os"
 	"slices"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/cmd/devp2p/internal/v5test"
 	"github.com/XinFinOrg/XDPoSChain/common"
-	"github.com/XinFinOrg/XDPoSChain/internal/utesting"
-	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/p2p/discover"
 	"github.com/urfave/cli/v2"
 )
 
 var (
-	testPatternFlag = &cli.StringFlag{
-		Name:  "test",
-		Usage: "Run only the tests matching a regular expression.",
-	}
-	testListen1Flag = &cli.StringFlag{
-		Name:  "listen1",
-		Usage: "Additional listen address of the test node.",
-		Value: "127.0.0.1:0",
-	}
-	testListen2Flag = &cli.StringFlag{
-		Name:  "listen2",
-		Usage: "Additional listen address of the test node.",
-		Value: "127.0.0.1:0",
-	}
-
 	discv5Command = &cli.Command{
 		Name:  "discv5",
 		Usage: "Node Discovery v5 tools",
@@ -83,7 +65,12 @@ var (
 		Name:   "test",
 		Usage:  "Runs protocol tests against a node",
 		Action: discv5Test,
-		Flags:  []cli.Flag{testPatternFlag, testListen1Flag, testListen2Flag},
+		Flags: []cli.Flag{
+			testPatternFlag,
+			testTAPFlag,
+			testListen1Flag,
+			testListen2Flag,
+		},
 	}
 	discv5ListenCommand = &cli.Command{
 		Name:   "listen",
@@ -135,28 +122,14 @@ func discv5Crawl(ctx *cli.Context) error {
 	return nil
 }
 
+// discv5Test runs the protocol test suite.
 func discv5Test(ctx *cli.Context) error {
-	// Disable logging unless explicitly enabled.
-	if !ctx.IsSet("verbosity") && !ctx.IsSet("vmodule") {
-		log.SetDefault(log.NewLogger(log.DiscardHandler()))
-	}
-
-	// Filter and run test cases.
 	suite := &v5test.Suite{
 		Dest:    getNodeArg(ctx),
 		Listen1: ctx.String(testListen1Flag.Name),
 		Listen2: ctx.String(testListen2Flag.Name),
 	}
-	tests := suite.AllTests()
-	if ctx.IsSet(testPatternFlag.Name) {
-		tests = utesting.MatchTests(tests, ctx.String(testPatternFlag.Name))
-	}
-	results := utesting.RunTests(tests, os.Stdout)
-	if fails := utesting.CountFailures(results); fails > 0 {
-		return fmt.Errorf("%v/%v tests passed.", len(tests)-fails, len(tests))
-	}
-	fmt.Printf("%v/%v passed\n", len(tests), len(tests))
-	return nil
+	return runTests(ctx, suite.AllTests())
 }
 
 func discv5Listen(ctx *cli.Context) error {
