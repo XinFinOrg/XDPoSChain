@@ -288,6 +288,8 @@ func (w *wizard) makeGenesis() {
 		fmt.Println("What is foundation wallet address (collect 10% of all rewards)? (default = xdc0000000000000000000000000000000000000068)")
 		if input == nil {
 			genesis.Config.XDPoS.FoundationWalletAddr = w.readDefaultAddress(common.FoundationAddrBinary)
+		} else {
+			genesis.Config.XDPoS.FoundationWalletAddr = common.HexToAddress(input.FoundationWalletAddress)
 		}
 
 		// Validator Smart Contract Code
