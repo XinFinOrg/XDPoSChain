@@ -27,6 +27,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain"
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/common/mclock"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/engines/engine_v2"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
@@ -74,6 +75,9 @@ var (
 	fsHeaderSafetyNet      = 2048            // Number of headers to discard in case a chain violation is detected
 	fsHeaderContCheck      = 3 * time.Second // Time interval to check for header continuations during state download
 	fsMinFullBlocks        = 64              // Number of blocks to retrieve fully even in fast sync
+
+	stalledSyncThreshold    = 5 * time.Minute // Minimum age of an unfinished sync round before it is probed for progress
+	stalledSyncWarnInterval = time.Minute     // Minimum interval between two stalled sync warnings
 )
 
 var (
@@ -126,6 +130,16 @@ type Downloader struct {
 	synchronising   int32
 	notified        int32
 	committed       int32
+
+	stallProgressHook func() uint64 // Replacement for stallProgress during testing
+	syncRoundStart    atomic.Int64  // Monotonic time at which the in-flight sync round started (0 if idle)
+	syncRoundSeq      atomic.Uint64 // Generation of the active sync round
+	lastStallWarn     atomic.Int64  // Monotonic time at which the last stalled sync warning was emitted
+	stallProbeMu      sync.Mutex    // Serializes round lifecycle and complete stall probe decisions
+	stallProbeRound   uint64        // Sync round associated with the protected probe state
+	stallProbed       bool          // Whether a baseline was captured for stallProbeRound
+	stallBaseline     uint64        // Progress value observed at the previous probe
+	stallProgressSeq  atomic.Uint64 // Lock-free sequence incremented whenever the active round makes progress
 
 	// Pivot block configuration (set before sync starts)
 	pivotNumber uint64      // Fixed pivot block number (0 = use default calculation)
@@ -397,6 +411,80 @@ func (d *Downloader) Synchronise(id string, head common.Hash, td *big.Int, mode 
 	return err
 }
 
+// warnIfSyncStalled reports a sync round that has been holding the
+// synchronising flag for an unusually long time without making any progress.
+// Such a round silently rejects every subsequent attempt with errBusy, so
+// without this the node can stop syncing indefinitely without emitting a
+// single log line. The first probe past the threshold only captures a progress
+// baseline, and an actual warning is emitted once a later probe shows the
+// round has not advanced any further.
+func (d *Downloader) warnIfSyncStalled(id string) {
+	started := d.syncRoundStart.Load()
+	round := d.syncRoundSeq.Load()
+	if started == 0 {
+		// The running round is already tearing down, nothing to report.
+		return
+	}
+	now := int64(mclock.Now())
+	elapsed := time.Duration(now - started)
+	if elapsed < stalledSyncThreshold {
+		return
+	}
+	if !d.stallProbeMu.TryLock() {
+		// Another busy attempt is already probing this round. Do not make the
+		// errBusy path wait for diagnostics.
+		return
+	}
+	defer d.stallProbeMu.Unlock()
+	if started != d.syncRoundStart.Load() || round != d.syncRoundSeq.Load() {
+		// The observed round ended while this attempt was entering the probe.
+		return
+	}
+	progress := d.stallProgress()
+	if started != d.syncRoundStart.Load() || round != d.syncRoundSeq.Load() {
+		// Reading progress may yield to a finishing round or test hook.
+		return
+	}
+	if d.stallProbeRound != round {
+		d.stallProbeRound = round
+		d.stallProbed = false
+	}
+	if d.stallProbed {
+		// Baseline already captured, only report when the round stopped
+		// advancing since then. Otherwise shift the baseline forward and
+		// stay quiet.
+		if progress > d.stallBaseline {
+			d.stallBaseline = progress
+			return
+		}
+	} else {
+		// First probe of this round, just remember the baseline.
+		d.stallProbed = true
+		d.stallBaseline = progress
+		return
+	}
+	last := d.lastStallWarn.Load()
+	if last != 0 && time.Duration(now-last) < stalledSyncWarnInterval {
+		return
+	}
+	d.lastStallWarn.Store(now)
+	args := []interface{}{"elapsed", common.PrettyDuration(elapsed)}
+	if id != "" {
+		args = append(args, "attemptedPeer", id)
+	}
+	log.Warn("Sync round has not finished and made no progress, downloader may be stalled", args...)
+}
+
+// stallProgress returns a lock-free monotonic proxy for how far the in-flight
+// sync round has advanced. It must stay non-blocking because it runs while a
+// later synchronization attempt is trying to return errBusy.
+func (d *Downloader) stallProgress() uint64 {
+	if d.stallProgressHook != nil {
+		return d.stallProgressHook()
+	}
+	return d.stallProgressSeq.Load()
+}
+
 // synchronise will select the peer and use it for synchronising. If an empty string is given
 // it will use the best peer possible and synchronize if its TD is higher than our own. If any of the
 // checks fail an error will be returned. This method is synchronous
@@ -407,9 +495,19 @@ func (d *Downloader) synchronise(id string, hash common.Hash, td *big.Int, mode 
 	}
 	// Make sure only one goroutine is ever allowed past this point at once
 	if !atomic.CompareAndSwapInt32(&d.synchronising, 0, 1) {
+		d.warnIfSyncStalled(id)
 		return errBusy
 	}
-	defer atomic.StoreInt32(&d.synchronising, 0)
+	d.stallProbeMu.Lock()
+	d.syncRoundSeq.Add(1)
+	d.syncRoundStart.Store(int64(mclock.Now()))
+	d.stallProbeMu.Unlock()
+	defer func() {
+		d.stallProbeMu.Lock()
+		d.syncRoundStart.Store(0)
+		d.stallProbeMu.Unlock()
+		atomic.StoreInt32(&d.synchronising, 0)
+	}()
 
 	// Post a user notification of the sync (only once per session)
 	if atomic.CompareAndSwapInt32(&d.notified, 0, 1) {
@@ -1511,6 +1609,7 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 						return fmt.Errorf("%w: stale headers", errBadPeer)
 					}
 				}
+				d.stallProgressSeq.Add(1)
 				headers = headers[limit:]
 				origin += uint64(limit)
 			}
@@ -1615,6 +1714,7 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 		}
 		return fmt.Errorf("%w: %v", errInvalidChain, err)
 	}
+	d.stallProgressSeq.Add(1)
 	if d.handleProposedBlock != nil {
 		header := blocks[len(blocks)-1].Header()
 		err := d.handleProposedBlock(header)
@@ -1878,6 +1978,7 @@ func (d *Downloader) commitFastSyncData(results []*fetchResult, stateSync *state
 		log.Debug("Downloaded item processing failed", "number", results[index].Header.Number, "hash", results[index].Header.Hash(), "err", err)
 		return fmt.Errorf("%w: %v", errInvalidChain, err)
 	}
+	d.stallProgressSeq.Add(1)
 	return nil
 }
 
@@ -1887,6 +1988,7 @@ func (d *Downloader) commitPivotBlock(result *fetchResult) error {
 	if _, err := d.blockchain.InsertReceiptChain([]*types.Block{block}, []types.Receipts{result.Receipts}); err != nil {
 		return err
 	}
+	d.stallProgressSeq.Add(1)
 	if err := d.blockchain.FastSyncCommitHead(block.Hash()); err != nil {
 		return err
 	}

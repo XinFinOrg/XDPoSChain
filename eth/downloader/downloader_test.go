@@ -30,6 +30,7 @@ import (
 
 	ethereum "github.com/XinFinOrg/XDPoSChain"
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/common/mclock"
 	engine_v2 "github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/engines/engine_v2"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
@@ -2297,5 +2298,204 @@ func TestRequestTTL(t *testing.T) {
 	// healthy peers faster than it can replace them.
 	if ttlLimit < rttMaxEstimate {
 		t.Fatalf("ttlLimit (%v) is below rttMaxEstimate (%v)", ttlLimit, rttMaxEstimate)
+	}
+}
+
+// TestSynchroniseStalledSyncWarning checks that a sync round which never
+// releases the synchronising flag is reported once it stops making progress,
+// that the report is rate limited, and that fresh, progressing and finishing
+// rounds stay quiet. Without it a wedged round silently rejects every
+// subsequent attempt with errBusy and the node stops syncing without any log
+// line.
+func TestSynchroniseStalledSyncWarning(t *testing.T) {
+	var progress uint64
+	d := new(Downloader)
+	d.stallProgressHook = func() uint64 { return progress }
+	atomic.StoreInt32(&d.synchronising, 1)
+
+	// A round that just started must not be reported yet.
+	d.syncRoundStart.Store(int64(mclock.Now()))
+	if err := d.synchronise("peer", common.Hash{}, nil, FullSync); err != errBusy {
+		t.Fatalf("synchronise error mismatch: have %v, want %v", err, errBusy)
+	}
+	if warned := d.lastStallWarn.Load(); warned != 0 {
+		t.Fatalf("fresh sync round reported as stalled")
+	}
+
+	// An old round that is still progressing must stay quiet: the first probe
+	// only captures a progress baseline.
+	progress = 10
+	old := int64(mclock.Now()) - int64(stalledSyncThreshold) - int64(time.Second)
+	d.syncRoundStart.Store(old)
+	if err := d.synchronise("peer", common.Hash{}, nil, FullSync); err != errBusy {
+		t.Fatalf("synchronise error mismatch: have %v, want %v", err, errBusy)
+	}
+	if warned := d.lastStallWarn.Load(); warned != 0 {
+		t.Fatalf("progressing sync round reported as stalled")
+	}
+	if baseline := d.stallBaseline; baseline != progress {
+		t.Fatalf("progress baseline mismatch: have %d, want %d", baseline, progress)
+	}
+
+	// An old round that made no progress since the baseline must be reported.
+	if err := d.synchronise("peer", common.Hash{}, nil, FullSync); err != errBusy {
+		t.Fatalf("synchronise error mismatch: have %v, want %v", err, errBusy)
+	}
+	warned := d.lastStallWarn.Load()
+	if warned == 0 {
+		t.Fatal("stalled sync round not reported")
+	}
+
+	// Further attempts within the rate limit window must stay quiet.
+	if err := d.synchronise("peer", common.Hash{}, nil, FullSync); err != errBusy {
+		t.Fatalf("synchronise error mismatch: have %v, want %v", err, errBusy)
+	}
+	if again := d.lastStallWarn.Load(); again != warned {
+		t.Fatalf("stalled sync warning not rate limited: have %d, want %d", again, warned)
+	}
+
+	// A round that resumed progress must shift the baseline forward and stay
+	// quiet, so healthy long syncs never trip the stall detector.
+	progress = 20
+	if err := d.synchronise("peer", common.Hash{}, nil, FullSync); err != errBusy {
+		t.Fatalf("synchronise error mismatch: have %v, want %v", err, errBusy)
+	}
+	if again := d.lastStallWarn.Load(); again != warned {
+		t.Fatalf("recovered sync round reported as stalled: have %d, want %d", again, warned)
+	}
+	if baseline := d.stallBaseline; baseline != progress {
+		t.Fatalf("progress baseline not shifted: have %d, want %d", baseline, progress)
+	}
+
+	// A round that is already tearing down must not be reported.
+	d.syncRoundStart.Store(0)
+	if err := d.synchronise("peer", common.Hash{}, nil, FullSync); err != errBusy {
+		t.Fatalf("synchronise error mismatch: have %v, want %v", err, errBusy)
+	}
+	if again := d.lastStallWarn.Load(); again != warned {
+		t.Fatalf("finishing sync round reported as stalled: have %d, want %d", again, warned)
+	}
+}
+
+// TestSynchroniseStalledProbeNonBlocking checks that diagnostics on the busy
+// path never delay a synchronization attempt behind progress-reporting locks.
+func TestSynchroniseStalledProbeNonBlocking(t *testing.T) {
+	tester := newTester()
+	d := tester.downloader
+	atomic.StoreInt32(&d.synchronising, 1)
+	d.syncRoundStart.Store(int64(mclock.Now()) - int64(stalledSyncThreshold) - int64(time.Second))
+
+	d.syncStatsLock.Lock()
+	done := make(chan error, 1)
+	go func() {
+		done <- d.synchronise("peer", common.Hash{}, nil, FullSync)
+	}()
+	select {
+	case err := <-done:
+		d.syncStatsLock.Unlock()
+		if err != errBusy {
+			t.Fatalf("synchronise error mismatch: have %v, want %v", err, errBusy)
+		}
+	case <-time.After(100 * time.Millisecond):
+		d.syncStatsLock.Unlock()
+		<-done
+		t.Fatal("busy synchronisation attempt blocked on sync statistics lock")
+	}
+}
+
+// TestSynchroniseConcurrentStallProbes checks that overlapping busy attempts
+// cannot observe or update a partially completed stall-probe decision.
+func TestSynchroniseConcurrentStallProbes(t *testing.T) {
+	var calls atomic.Uint64
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	d := new(Downloader)
+	d.stallProgressHook = func() uint64 {
+		if calls.Add(1) == 1 {
+			close(firstEntered)
+			<-releaseFirst
+		}
+		return 0
+	}
+	atomic.StoreInt32(&d.synchronising, 1)
+	d.syncRoundStart.Store(int64(mclock.Now()) - int64(stalledSyncThreshold) - int64(time.Second))
+
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- d.synchronise("first", common.Hash{}, nil, FullSync)
+	}()
+	<-firstEntered
+	if err := d.synchronise("second", common.Hash{}, nil, FullSync); err != errBusy {
+		t.Fatalf("second synchronise error mismatch: have %v, want %v", err, errBusy)
+	}
+	close(releaseFirst)
+	if err := <-firstDone; err != errBusy {
+		t.Fatalf("first synchronise error mismatch: have %v, want %v", err, errBusy)
+	}
+	if warned := d.lastStallWarn.Load(); warned != 0 {
+		t.Fatal("overlapping initial probes reported the sync as stalled")
+	}
+}
+
+// TestSynchroniseStallProbeRoundIsolation checks that a probe from a finishing
+// round cannot initialize or warn against the next round's state.
+func TestSynchroniseStallProbeRoundIsolation(t *testing.T) {
+	probeEntered := make(chan struct{})
+	releaseProbe := make(chan struct{})
+	d := new(Downloader)
+	d.stallProgressHook = func() uint64 {
+		close(probeEntered)
+		<-releaseProbe
+		return 0
+	}
+	atomic.StoreInt32(&d.synchronising, 1)
+	d.syncRoundSeq.Store(1)
+	old := int64(mclock.Now()) - int64(stalledSyncThreshold) - int64(time.Second)
+	d.syncRoundStart.Store(old)
+
+	oldDone := make(chan error, 1)
+	go func() {
+		oldDone <- d.synchronise("old", common.Hash{}, nil, FullSync)
+	}()
+	<-probeEntered
+	d.syncRoundSeq.Store(2)
+	d.syncRoundStart.Store(old + 1)
+	close(releaseProbe)
+	if err := <-oldDone; err != errBusy {
+		t.Fatalf("old synchronise error mismatch: have %v, want %v", err, errBusy)
+	}
+	if warned := d.lastStallWarn.Load(); warned != 0 {
+		t.Fatal("probe from old round emitted a warning for the new round")
+	}
+	if d.stallProbed {
+		t.Fatal("probe from old round initialized the new round baseline")
+	}
+
+	d.stallProgressHook = func() uint64 { return 0 }
+	if err := d.synchronise("new", common.Hash{}, nil, FullSync); err != errBusy {
+		t.Fatalf("new synchronise error mismatch: have %v, want %v", err, errBusy)
+	}
+	if !d.stallProbed || d.stallProbeRound != 2 {
+		t.Fatalf("new round baseline mismatch: probed %t, round %d", d.stallProbed, d.stallProbeRound)
+	}
+}
+
+// TestSynchroniseRoundLifecycle checks that a successfully started round
+// stamps the round start marker and clears it together with the synchronising
+// flag on the way out, so stale state can never leak into the next round.
+func TestSynchroniseRoundLifecycle(t *testing.T) {
+	tester := newTester()
+	d := tester.downloader
+
+	// A round started without any known peer fails fast, but must still mark
+	// the round as in-flight and clean up both markers when it returns.
+	if err := d.synchronise("peer", common.Hash{}, nil, FullSync); err != errUnknownPeer {
+		t.Fatalf("synchronise error mismatch: have %v, want %v", err, errUnknownPeer)
+	}
+	if started := d.syncRoundStart.Load(); started != 0 {
+		t.Fatalf("round start marker not cleared: %d", started)
+	}
+	if flag := atomic.LoadInt32(&d.synchronising); flag != 0 {
+		t.Fatalf("synchronising flag not cleared: %d", flag)
 	}
 }
