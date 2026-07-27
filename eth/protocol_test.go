@@ -49,7 +49,7 @@ func init() {
 var testAccount, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 
 // Tests that handshake failures are detected and reported correctly.
-func TestStatusMsgErrors63(t *testing.T) {
+func TestStatusMsgErrors100(t *testing.T) {
 	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
 	var (
 		genesis = pm.blockchain.Genesis()
@@ -68,20 +68,20 @@ func TestStatusMsgErrors63(t *testing.T) {
 			wantError: errResp(ErrNoStatusMsg, "first msg has code 2 (!= 0)"),
 		},
 		{
-			code: StatusMsg, data: statusData63{10, ethconfig.Defaults.NetworkId, td, head.Hash(), genesis.Hash()},
-			wantError: errResp(ErrProtocolVersionMismatch, "10 (!= %d)", 63),
+			code: StatusMsg, data: statusData100{10, ethconfig.Defaults.NetworkId, td, head.Hash(), genesis.Hash()},
+			wantError: errResp(ErrProtocolVersionMismatch, "10 (!= %d)", xdc100),
 		},
 		{
-			code: StatusMsg, data: statusData63{63, 999, td, head.Hash(), genesis.Hash()},
+			code: StatusMsg, data: statusData100{xdc100, 999, td, head.Hash(), genesis.Hash()},
 			wantError: errResp(ErrNetworkIDMismatch, "999 (!= %d)", ethconfig.Defaults.NetworkId),
 		},
 		{
-			code: StatusMsg, data: statusData63{63, ethconfig.Defaults.NetworkId, td, head.Hash(), common.Hash{3}},
+			code: StatusMsg, data: statusData100{xdc100, ethconfig.Defaults.NetworkId, td, head.Hash(), common.Hash{3}},
 			wantError: errResp(ErrGenesisMismatch, "0300000000000000 (!= %x)", genesis.Hash().Bytes()[:8]),
 		},
 	}
 	for i, test := range tests {
-		p, errc := newTestPeer("peer", 63, pm, false)
+		p, errc := newTestPeer("peer", xdc100, pm, false)
 		// The send call might hang until reset because
 		// the protocol might not read the payload.
 		go p2p.Send(p.app, test.code, test.data)
@@ -89,9 +89,9 @@ func TestStatusMsgErrors63(t *testing.T) {
 		select {
 		case err := <-errc:
 			if err == nil {
-				t.Errorf("test %d: protocol returned nil error, want %q", i, test.wantError)
+				t.Errorf("test %d: protocol returned nil error, want %v", i, test.wantError)
 			} else if err.Error() != test.wantError.Error() {
-				t.Errorf("test %d: wrong error: got %q, want %q", i, err, test.wantError)
+				t.Errorf("test %d: wrong error: got %v, want %v", i, err, test.wantError)
 			}
 		case <-time.After(2 * time.Second):
 			t.Errorf("protocol did not shut down within 2 seconds")
@@ -121,23 +121,23 @@ func TestStatusMsgErrors164(t *testing.T) {
 		},
 		{
 			code: StatusMsg, data: statusData{10, ethconfig.Defaults.NetworkId, td, head.Hash(), genesis.Hash(), forkID},
-			wantError: errResp(ErrProtocolVersionMismatch, "10 (!= %d)", 164),
+			wantError: errResp(ErrProtocolVersionMismatch, "10 (!= %d)", xdc164),
 		},
 		{
-			code: StatusMsg, data: statusData{164, 999, td, head.Hash(), genesis.Hash(), forkID},
+			code: StatusMsg, data: statusData{xdc164, 999, td, head.Hash(), genesis.Hash(), forkID},
 			wantError: errResp(ErrNetworkIDMismatch, "999 (!= %d)", ethconfig.Defaults.NetworkId),
 		},
 		{
-			code: StatusMsg, data: statusData{164, ethconfig.Defaults.NetworkId, td, head.Hash(), common.Hash{3}, forkID},
+			code: StatusMsg, data: statusData{xdc164, ethconfig.Defaults.NetworkId, td, head.Hash(), common.Hash{3}, forkID},
 			wantError: errResp(ErrGenesisMismatch, "0300000000000000000000000000000000000000000000000000000000000000 (!= %x)", genesis.Hash()),
 		},
 		{
-			code: StatusMsg, data: statusData{164, ethconfig.Defaults.NetworkId, td, head.Hash(), genesis.Hash(), forkid.ID{Hash: [4]byte{0x00, 0x01, 0x02, 0x03}}},
+			code: StatusMsg, data: statusData{xdc164, ethconfig.Defaults.NetworkId, td, head.Hash(), genesis.Hash(), forkid.ID{Hash: [4]byte{0x00, 0x01, 0x02, 0x03}}},
 			wantError: errResp(ErrForkIDRejected, "%s", forkid.ErrLocalIncompatibleOrStale.Error()),
 		},
 	}
 	for i, test := range tests {
-		p, errc := newTestPeer("peer", 164, pm, false)
+		p, errc := newTestPeer("peer", xdc164, pm, false)
 		// The send call might hang until reset because
 		// the protocol might not read the payload.
 		go p2p.Send(p.app, test.code, test.data)
@@ -145,60 +145,9 @@ func TestStatusMsgErrors164(t *testing.T) {
 		select {
 		case err := <-errc:
 			if err == nil {
-				t.Errorf("test %d: protocol returned nil error, want %q", i, test.wantError)
+				t.Errorf("test %d: protocol returned nil error, want %v", i, test.wantError)
 			} else if err.Error() != test.wantError.Error() {
-				t.Errorf("test %d: wrong error: got %q, want %q", i, err, test.wantError)
-			}
-		case <-time.After(2 * time.Second):
-			t.Errorf("protocol did not shut down within 2 seconds")
-		}
-		p.close()
-	}
-}
-
-func TestStatusMsgErrors100(t *testing.T) {
-	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
-	var (
-		genesis = pm.blockchain.Genesis()
-		head    = pm.blockchain.CurrentHeader()
-		td      = pm.blockchain.GetTd(head.Hash(), head.Number.Uint64())
-	)
-	defer pm.Stop()
-
-	tests := []struct {
-		code      uint64
-		data      interface{}
-		wantError error
-	}{
-		{
-			code: TransactionMsg, data: []interface{}{},
-			wantError: errResp(ErrNoStatusMsg, "first msg has code 2 (!= 0)"),
-		},
-		{
-			code: StatusMsg, data: statusData63{10, ethconfig.Defaults.NetworkId, td, head.Hash(), genesis.Hash()},
-			wantError: errResp(ErrProtocolVersionMismatch, "10 (!= %d)", 100),
-		},
-		{
-			code: StatusMsg, data: statusData63{100, 999, td, head.Hash(), genesis.Hash()},
-			wantError: errResp(ErrNetworkIDMismatch, "999 (!= %d)", ethconfig.Defaults.NetworkId),
-		},
-		{
-			code: StatusMsg, data: statusData63{100, ethconfig.Defaults.NetworkId, td, head.Hash(), common.Hash{3}},
-			wantError: errResp(ErrGenesisMismatch, "0300000000000000 (!= %x)", genesis.Hash().Bytes()[:8]),
-		},
-	}
-	for i, test := range tests {
-		p, errc := newTestPeer("peer", 100, pm, false)
-		// The send call might hang until reset because
-		// the protocol might not read the payload.
-		go p2p.Send(p.app, test.code, test.data)
-
-		select {
-		case err := <-errc:
-			if err == nil {
-				t.Errorf("test %d: protocol returned nil error, want %q", i, test.wantError)
-			} else if err.Error() != test.wantError.Error() {
-				t.Errorf("test %d: wrong error: got %q, want %q", i, err, test.wantError)
+				t.Errorf("test %d: wrong error: got %v, want %v", i, err, test.wantError)
 			}
 		case <-time.After(2 * time.Second):
 			t.Errorf("protocol did not shut down within 2 seconds")
@@ -252,8 +201,8 @@ func TestForkIDSplit(t *testing.T) {
 
 	// Both nodes should allow the other to connect (same genesis, next fork is the same)
 	p2pNoFork, p2pProFork := p2p.MsgPipe()
-	peerNoFork := newPeer(164, p2p.NewPeer(enode.ID{1}, "", nil), p2pNoFork, nil)
-	peerProFork := newPeer(164, p2p.NewPeer(enode.ID{2}, "", nil), p2pProFork, nil)
+	peerNoFork := newPeer(xdc164, p2p.NewPeer(enode.ID{1}, "", nil), p2pNoFork, nil)
+	peerProFork := newPeer(xdc164, p2p.NewPeer(enode.ID{2}, "", nil), p2pProFork, nil)
 
 	errc := make(chan error, 2)
 	go func() { errc <- ethNoFork.handle(peerProFork) }()
@@ -277,8 +226,8 @@ func TestForkIDSplit(t *testing.T) {
 	chainProFork.InsertChain(blocksProFork[:1])
 
 	p2pNoFork, p2pProFork = p2p.MsgPipe()
-	peerNoFork = newPeer(164, p2p.NewPeer(enode.ID{1}, "", nil), p2pNoFork, nil)
-	peerProFork = newPeer(164, p2p.NewPeer(enode.ID{2}, "", nil), p2pProFork, nil)
+	peerNoFork = newPeer(xdc164, p2p.NewPeer(enode.ID{1}, "", nil), p2pNoFork, nil)
+	peerProFork = newPeer(xdc164, p2p.NewPeer(enode.ID{2}, "", nil), p2pProFork, nil)
 
 	errc = make(chan error, 2)
 	go func() { errc <- ethNoFork.handle(peerProFork) }()
@@ -301,8 +250,8 @@ func TestForkIDSplit(t *testing.T) {
 	chainProFork.InsertChain(blocksProFork[1:2])
 
 	p2pNoFork, p2pProFork = p2p.MsgPipe()
-	peerNoFork = newPeer(164, p2p.NewPeer(enode.ID{1}, "", nil), p2pNoFork, nil)
-	peerProFork = newPeer(164, p2p.NewPeer(enode.ID{2}, "", nil), p2pProFork, nil)
+	peerNoFork = newPeer(xdc164, p2p.NewPeer(enode.ID{1}, "", nil), p2pNoFork, nil)
+	peerProFork = newPeer(xdc164, p2p.NewPeer(enode.ID{2}, "", nil), p2pProFork, nil)
 
 	errc = make(chan error, 2)
 	go func() { errc <- ethNoFork.handle(peerProFork) }()
@@ -339,10 +288,9 @@ func TestForkIDSplit(t *testing.T) {
 }
 
 // This test checks that received transactions are added to the local pool.
-func TestRecvTransactions63(t *testing.T)  { testRecvTransactions(t, 63) }
-func TestRecvTransactions100(t *testing.T) { testRecvTransactions(t, 100) }
-func TestRecvTransactions164(t *testing.T) { testRecvTransactions(t, 164) }
-func TestRecvTransactions165(t *testing.T) { testRecvTransactions(t, 165) }
+func TestRecvTransactions100(t *testing.T) { testRecvTransactions(t, xdc100) }
+func TestRecvTransactions164(t *testing.T) { testRecvTransactions(t, xdc164) }
+func TestRecvTransactions165(t *testing.T) { testRecvTransactions(t, xdc165) }
 
 func testRecvTransactions(t *testing.T, protocol int) {
 	txAdded := make(chan []*types.Transaction)
@@ -369,10 +317,9 @@ func testRecvTransactions(t *testing.T, protocol int) {
 }
 
 // This test checks that pending transactions are sent.
-func TestSendTransactions63(t *testing.T)  { testSendTransactions(t, 63) }
-func TestSendTransactions100(t *testing.T) { testSendTransactions(t, 100) }
-func TestSendTransactions164(t *testing.T) { testSendTransactions(t, 164) }
-func TestSendTransactions165(t *testing.T) { testSendTransactions(t, 165) }
+func TestSendTransactions100(t *testing.T) { testSendTransactions(t, xdc100) }
+func TestSendTransactions164(t *testing.T) { testSendTransactions(t, xdc164) }
+func TestSendTransactions165(t *testing.T) { testSendTransactions(t, xdc165) }
 
 func testSendTransactions(t *testing.T, protocol int) {
 	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
@@ -401,11 +348,9 @@ func testSendTransactions(t *testing.T, protocol int) {
 		for n := 0; n < len(alltxs) && !t.Failed(); {
 			var forAllHashes func(callback func(hash common.Hash))
 			switch protocol {
-			case 63:
+			case xdc100:
 				fallthrough
-			case 100:
-				fallthrough
-			case 164:
+			case xdc164:
 				msg, err := p.app.ReadMsg()
 				if err != nil {
 					t.Errorf("%v: read error: %v", p.Peer, err)
@@ -424,7 +369,7 @@ func testSendTransactions(t *testing.T, protocol int) {
 						callback(tx.Hash())
 					}
 				}
-			case 165:
+			case xdc165:
 				msg, err := p.app.ReadMsg()
 				if err != nil {
 					t.Errorf("%v: read error: %v", p.Peer, err)
@@ -502,8 +447,8 @@ func testSyncTransaction(t *testing.T, propagation bool) {
 	// Sync up the two peers
 	io1, io2 := p2p.MsgPipe()
 
-	go pmSender.handle(pmSender.newPeer(165, p2p.NewPeer(enode.ID{}, "sender", nil), io2, pmSender.txpool.Get))
-	go pmFetcher.handle(pmFetcher.newPeer(165, p2p.NewPeer(enode.ID{}, "fetcher", nil), io1, pmFetcher.txpool.Get))
+	go pmSender.handle(pmSender.newPeer(xdc165, p2p.NewPeer(enode.ID{}, "sender", nil), io2, pmSender.txpool.Get))
+	go pmFetcher.handle(pmFetcher.newPeer(xdc165, p2p.NewPeer(enode.ID{}, "fetcher", nil), io1, pmFetcher.txpool.Get))
 
 	time.Sleep(250 * time.Millisecond)
 	pmFetcher.synchronise(pmFetcher.peers.BestPeer())

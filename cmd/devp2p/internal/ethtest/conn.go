@@ -18,7 +18,6 @@ import (
 )
 
 const (
-	ethProtoVersion63     uint = 63
 	ethProtoVersionXDpos2 uint = 100
 )
 
@@ -70,7 +69,6 @@ func (s *Suite) dialAs(key *ecdsa.PrivateKey) (*Conn, error) {
 	}
 	conn.caps = []p2p.Cap{
 		{Name: "eth", Version: ethProtoVersionXDpos2},
-		{Name: "eth", Version: ethProtoVersion63},
 	}
 	conn.ourHighestProtoVersion = ethProtoVersionXDpos2
 	return conn, nil

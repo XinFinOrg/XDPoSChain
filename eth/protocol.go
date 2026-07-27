@@ -32,7 +32,6 @@ import (
 
 // Constants to match up protocol versions and messages
 const (
-	eth63  = 63
 	xdc100 = 100
 	xdc164 = 164 // eth64
 	xdc165 = 165 // eth65
@@ -42,10 +41,10 @@ const (
 var protocolName = "eth"
 
 // ProtocolVersions are the supported versions of the eth protocol (first is primary).
-var ProtocolVersions = []uint{xdc165, xdc164, xdc100, eth63}
+var ProtocolVersions = []uint{xdc165, xdc164, xdc100}
 
 // protocolLengths are the number of implemented message corresponding to different protocol versions.
-var protocolLengths = map[uint]uint64{xdc165: 230, xdc164: 227, xdc100: 227, eth63: 17}
+var protocolLengths = map[uint]uint64{xdc165: 230, xdc164: 227, xdc100: 227}
 
 const protocolMaxMsgSize = 10 * 1024 * 1024 // Maximum cap on the size of a protocol message
 
@@ -156,8 +155,8 @@ type lendingPool interface {
 	SubscribeTxPreEvent(chan<- core.LendingTxPreEvent) event.Subscription
 }
 
-// statusData63 is the network packet for the status message for eth/63 and xdc/100.
-type statusData63 struct {
+// statusData100 is the network packet for the status message for xdc/100.
+type statusData100 struct {
 	ProtocolVersion uint32
 	NetworkId       uint64
 	TD              *big.Int

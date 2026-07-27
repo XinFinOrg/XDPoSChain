@@ -1066,7 +1066,7 @@ func (s *Suite) TestHelloWithDuplicateEthCaps(t *utesting.T) {
 func malformedHelloByCase(name string, pub0 []byte) *protoHandshake {
 	base := &protoHandshake{
 		Version: 5,
-		Caps:    []p2p.Cap{{Name: "eth", Version: 63}},
+		Caps:    []p2p.Cap{{Name: "eth", Version: ethProtoVersionXDpos2}},
 		ID:      pub0,
 	}
 	builders := map[string]func() *protoHandshake{
@@ -1109,13 +1109,13 @@ func malformedHelloByCase(name string, pub0 []byte) *protoHandshake {
 			return &protoHandshake{Version: base.Version, Caps: []p2p.Cap{}, ID: base.ID}
 		},
 		"HelloWithEmptyCapName": func() *protoHandshake {
-			return &protoHandshake{Version: base.Version, Caps: []p2p.Cap{{Name: "", Version: 63}}, ID: base.ID}
+			return &protoHandshake{Version: base.Version, Caps: []p2p.Cap{{Name: "", Version: ethProtoVersionXDpos2}}, ID: base.ID}
 		},
 		"HelloWithLongCapName": func() *protoHandshake {
 			return &protoHandshake{Version: base.Version, Caps: []p2p.Cap{{Name: strings.Repeat("x", 512), Version: 1}}, ID: base.ID}
 		},
 		"HelloWithNULCapName": func() *protoHandshake {
-			return &protoHandshake{Version: base.Version, Caps: []p2p.Cap{{Name: "et\x00h", Version: 63}}, ID: base.ID}
+			return &protoHandshake{Version: base.Version, Caps: []p2p.Cap{{Name: "et\x00h", Version: ethProtoVersionXDpos2}}, ID: base.ID}
 		},
 		"HelloWithMismatchedIDAndEmptyCaps": func() *protoHandshake {
 			mismatch := append([]byte(nil), pub0...)
@@ -1136,8 +1136,8 @@ func malformedHelloByCase(name string, pub0 []byte) *protoHandshake {
 			return &protoHandshake{
 				Version: base.Version,
 				Caps: []p2p.Cap{
-					{Name: "eth", Version: 63},
-					{Name: "eth", Version: 63},
+					{Name: "eth", Version: ethProtoVersionXDpos2},
+					{Name: "eth", Version: ethProtoVersionXDpos2},
 				},
 				ID: base.ID,
 			}

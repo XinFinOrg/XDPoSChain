@@ -25,12 +25,12 @@ import (
 )
 
 // TestIdlePeersProtocolVersions verifies that peers running every supported
-// protocol version (eth63, xdc100, xdc164) are eligible for concurrent
+// protocol version (xdc100, xdc164, xdc165) are eligible for concurrent
 // downloads. A regression here silently disables skeleton filling and body,
 // receipt and state fetches, stalling any node that falls behind.
 func TestIdlePeersProtocolVersions(t *testing.T) {
 	ps := newPeerSet()
-	for i, version := range []int{63, 100, 164} {
+	for i, version := range []int{xdc100, xdc164, xdc165} {
 		id := fmt.Sprintf("peer-%d", i)
 		if err := ps.Register(newPeerConnection(id, version, nil, log.New("id", id))); err != nil {
 			t.Fatalf("failed to register version %d peer: %v", version, err)

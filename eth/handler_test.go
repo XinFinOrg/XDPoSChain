@@ -40,8 +40,9 @@ import (
 )
 
 // Tests that block headers can be retrieved from a remote chain based on user queries.
-func TestGetBlockHeaders63(t *testing.T)  { testGetBlockHeaders(t, 63) }
-func TestGetBlockHeaders164(t *testing.T) { testGetBlockHeaders(t, 164) }
+func TestGetBlockHeaders100(t *testing.T) { testGetBlockHeaders(t, xdc100) }
+func TestGetBlockHeaders164(t *testing.T) { testGetBlockHeaders(t, xdc164) }
+func TestGetBlockHeaders165(t *testing.T) { testGetBlockHeaders(t, xdc165) }
 
 func testGetBlockHeaders(t *testing.T, protocol int) {
 	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, downloader.MaxHashFetch+15, nil, nil)
@@ -199,8 +200,9 @@ func testGetBlockHeaders(t *testing.T, protocol int) {
 }
 
 // Tests that block contents can be retrieved from a remote chain based on their hashes.
-func TestGetBlockBodies63(t *testing.T)  { testGetBlockBodies(t, 63) }
-func TestGetBlockBodies164(t *testing.T) { testGetBlockBodies(t, 164) }
+func TestGetBlockBodies100(t *testing.T) { testGetBlockBodies(t, xdc100) }
+func TestGetBlockBodies164(t *testing.T) { testGetBlockBodies(t, xdc164) }
+func TestGetBlockBodies165(t *testing.T) { testGetBlockBodies(t, xdc165) }
 
 func testGetBlockBodies(t *testing.T, protocol int) {
 	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, downloader.MaxBlockFetch+15, nil, nil)
@@ -271,8 +273,9 @@ func testGetBlockBodies(t *testing.T, protocol int) {
 }
 
 // Tests that the node state database can be retrieved based on hashes.
-func TestGetNodeData63(t *testing.T)  { testGetNodeData(t, 63) }
-func TestGetNodeData164(t *testing.T) { testGetNodeData(t, 164) }
+func TestGetNodeData100(t *testing.T) { testGetNodeData(t, xdc100) }
+func TestGetNodeData164(t *testing.T) { testGetNodeData(t, xdc164) }
+func TestGetNodeData165(t *testing.T) { testGetNodeData(t, xdc165) }
 
 func testGetNodeData(t *testing.T, protocol int) {
 	// Define three accounts to simulate transactions with
@@ -370,8 +373,9 @@ func testGetNodeData(t *testing.T, protocol int) {
 }
 
 // Tests that the transaction receipts can be retrieved based on hashes.
-func TestGetReceipt63(t *testing.T)  { testGetReceipt(t, 63) }
-func TestGetReceipt164(t *testing.T) { testGetReceipt(t, 164) }
+func TestGetReceipt100(t *testing.T) { testGetReceipt(t, xdc100) }
+func TestGetReceipt164(t *testing.T) { testGetReceipt(t, xdc164) }
+func TestGetReceipt165(t *testing.T) { testGetReceipt(t, xdc165) }
 
 func testGetReceipt(t *testing.T, protocol int) {
 	// Define three accounts to simulate transactions with
@@ -474,8 +478,8 @@ func testBroadcastBlock(t *testing.T, totalPeers, broadcastExpected int) {
 	pm.Start(1000)
 	defer pm.Stop()
 	var peers []*testPeer
-	for i := 0; i < totalPeers; i++ {
-		peer, _ := newTestPeer(fmt.Sprintf("peer %d", i), eth63, pm, true)
+	for i := range totalPeers {
+		peer, _ := newTestPeer(fmt.Sprintf("peer %d", i), xdc100, pm, true)
 		defer peer.close()
 		peers = append(peers, peer)
 	}
@@ -557,7 +561,12 @@ outer:
 
 // Tests that a propagated malformed block (uncles or transactions don't match
 // with the hashes in the header) gets discarded and not broadcast forward.
-func TestBroadcastMalformedBlock(t *testing.T) {
+func TestBroadcastMalformedBlock164(t *testing.T) { testBroadcastMalformedBlock(t, xdc164) }
+func TestBroadcastMalformedBlock165(t *testing.T) { testBroadcastMalformedBlock(t, xdc165) }
+
+func testBroadcastMalformedBlock(t *testing.T, protocol int) {
+	t.Parallel()
+
 	// Create a live node to test propagation with
 	var (
 		engine  = ethash.NewFaker()
@@ -579,10 +588,10 @@ func TestBroadcastMalformedBlock(t *testing.T) {
 
 	// Create two peers, one to send the malformed block with and one to check
 	// propagation
-	source, _ := newTestPeer("source", eth63, pm, true)
+	source, _ := newTestPeer("source", protocol, pm, true)
 	defer source.close()
 
-	sink, _ := newTestPeer("sink", eth63, pm, true)
+	sink, _ := newTestPeer("sink", protocol, pm, true)
 	defer sink.close()
 
 	// Create various combinations of malformed blocks
@@ -670,7 +679,7 @@ func testDAOChallenge(t *testing.T, localForked, remoteForked bool, timeout bool
 	defer pm.Stop()
 
 	// Connect a new peer and check that we receive the DAO challenge
-	peer, _ := newTestPeer("peer", eth63, pm, true)
+	peer, _ := newTestPeer("peer", xdc100, pm, true)
 	defer peer.close()
 
 	challenge := &getBlockHeadersData{

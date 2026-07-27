@@ -246,8 +246,8 @@ func (p *testPeer) handshake(t *testing.T, td *big.Int, head common.Hash, genesi
 			Genesis:         genesis,
 			ForkID:          forkID,
 		}
-	case xdc100, eth63:
-		msg = &statusData63{
+	case xdc100:
+		msg = &statusData100{
 			ProtocolVersion: uint32(p.version),
 			NetworkId:       ethconfig.Defaults.NetworkId,
 			TD:              td,

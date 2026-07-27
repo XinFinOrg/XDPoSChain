@@ -26,13 +26,16 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 )
 
-func TestFastSyncDisabling63(t *testing.T)  { testFastSyncDisabling(t, 63) }
-func TestFastSyncDisabling164(t *testing.T) { testFastSyncDisabling(t, 164) }
-func TestFastSyncDisabling165(t *testing.T) { testFastSyncDisabling(t, 165) }
+// Tests that fast sync is disabled after a successful sync cycle.
+func TestFastSyncDisabling100(t *testing.T) { testFastSyncDisabling(t, xdc100) }
+func TestFastSyncDisabling164(t *testing.T) { testFastSyncDisabling(t, xdc164) }
+func TestFastSyncDisabling165(t *testing.T) { testFastSyncDisabling(t, xdc165) }
 
 // Tests that fast sync gets disabled as soon as a real block is successfully
 // imported into the blockchain.
 func testFastSyncDisabling(t *testing.T, protocol int) {
+	t.Parallel()
+
 	// Create a pristine protocol manager, check that fast sync is left enabled
 	pmEmpty, _ := newTestProtocolManagerMust(t, downloader.FastSync, 0, nil, nil)
 	defer pmEmpty.Stop()

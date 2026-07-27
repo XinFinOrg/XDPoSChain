@@ -37,7 +37,7 @@ const (
 	maxLackingHashes  = 4096 // Maximum number of entries allowed on the list or lacking items
 	measurementImpact = 0.1  // The impact a single measurement has on a peer's final throughput value.
 
-	minProtocolVer = 63  // eth63
+	minProtocolVer = 100 // xdc100
 	maxProtocolVer = 165 // xdc165
 )
 

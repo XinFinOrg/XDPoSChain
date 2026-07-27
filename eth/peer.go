@@ -695,8 +695,8 @@ func (p *peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis 
 	errc := make(chan error, 2)
 
 	var (
-		status63 statusData63 // safe to read after two values have been received from errc
-		status   statusData   // safe to read after two values have been received from errc
+		status100 statusData100 // safe to read after two values have been received from errc
+		status    statusData    // safe to read after two values have been received from errc
 	)
 	go func() {
 		switch p.version {
@@ -709,8 +709,8 @@ func (p *peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis 
 				Genesis:         genesis,
 				ForkID:          forkID,
 			})
-		case xdc100, eth63:
-			errc <- p2p.Send(p.rw, StatusMsg, &statusData63{
+		case xdc100:
+			errc <- p2p.Send(p.rw, StatusMsg, &statusData100{
 				ProtocolVersion: uint32(p.version),
 				NetworkId:       network,
 				TD:              td,
@@ -725,8 +725,8 @@ func (p *peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis 
 		switch p.version {
 		case xdc165, xdc164:
 			errc <- p.readStatus(network, &status, genesis, forkFilter)
-		case xdc100, eth63:
-			errc <- p.readStatusLegacy(network, &status63, genesis)
+		case xdc100:
+			errc <- p.readStatus100(network, &status100, genesis)
 		default:
 			errc <- errResp(ErrProtocolVersionMismatch, "unsupported eth protocol version: %d", p.version)
 		}
@@ -746,15 +746,15 @@ func (p *peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis 
 	switch p.version {
 	case xdc165, xdc164:
 		p.td, p.head = status.TD, status.Head
-	case xdc100, eth63:
-		p.td, p.head = status63.TD, status63.CurrentBlock
+	case xdc100:
+		p.td, p.head = status100.TD, status100.CurrentBlock
 	default:
 		return errResp(ErrProtocolVersionMismatch, "unsupported eth protocol version: %d", p.version)
 	}
 	return nil
 }
 
-func (p *peer) readStatusLegacy(network uint64, status *statusData63, genesis common.Hash) error {
+func (p *peer) readStatus100(network uint64, status *statusData100, genesis common.Hash) error {
 	msg, err := p.rw.ReadMsg()
 	if err != nil {
 		return err

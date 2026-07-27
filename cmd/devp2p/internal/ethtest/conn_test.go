@@ -10,7 +10,7 @@ import (
 func TestConnNegotiatesHighestSharedEthVersion(t *testing.T) {
 	c := &Conn{ourHighestProtoVersion: ethProtoVersionXDpos2}
 	remoteCaps := []p2p.Cap{
-		{Name: "eth", Version: ethProtoVersion63},
+		{Name: "eth", Version: 170}, // above ours, must be skipped
 		{Name: "eth", Version: ethProtoVersionXDpos2},
 	}
 
@@ -22,8 +22,8 @@ func TestConnNegotiatesHighestSharedEthVersion(t *testing.T) {
 }
 
 func TestConnNegotiatesZeroWhenNoSharedEthVersion(t *testing.T) {
-	c := &Conn{ourHighestProtoVersion: ethProtoVersion63}
-	remoteCaps := []p2p.Cap{{Name: "eth", Version: 70}}
+	c := &Conn{ourHighestProtoVersion: ethProtoVersionXDpos2}
+	remoteCaps := []p2p.Cap{{Name: "eth", Version: 170}}
 
 	c.negotiateEthProtocol(remoteCaps)
 
@@ -38,10 +38,10 @@ func TestMakeStatusPacketFromChain(t *testing.T) {
 		t.Fatalf("failed to load chain fixtures: %v", err)
 	}
 
-	status := makeStatusPacket(chain, ethProtoVersion63)
+	status := makeStatusPacket(chain, ethProtoVersionXDpos2)
 
-	if status.ProtocolVersion != uint32(ethProtoVersion63) {
-		t.Fatalf("wrong protocol version: have %d want %d", status.ProtocolVersion, ethProtoVersion63)
+	if status.ProtocolVersion != uint32(ethProtoVersionXDpos2) {
+		t.Fatalf("wrong protocol version: have %d want %d", status.ProtocolVersion, ethProtoVersionXDpos2)
 	}
 	if status.GenesisBlock != chain.blocks[0].Hash() {
 		t.Fatalf("wrong genesis hash in status: have %x want %x", status.GenesisBlock, chain.blocks[0].Hash())
