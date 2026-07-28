@@ -2273,3 +2273,37 @@ func TestFastSyncGapPivotSync(t *testing.T) {
 		t.Errorf("snapshot hash mismatch: have %v, want %v", snap.Hash, gapBlockHash)
 	}
 }
+
+// TestRequestTTL verifies that the request timeout scales with the measured
+// round-trip time instead of being pinned to a value so small that responsive
+// peers are still reported as timing out and get dropped.
+func TestRequestTTL(t *testing.T) {
+	tests := []struct {
+		name       string
+		rtt        time.Duration
+		confidence float64
+		want       time.Duration
+	}{
+		{"minimum rtt", rttMinEstimate, 1, 6 * time.Second},
+		{"maximum rtt", rttMaxEstimate, 1, time.Minute},
+		{"halved confidence", 5 * time.Second, 0.5, 30 * time.Second},
+		{"minimum confidence", rttMinEstimate, rttMinConfidence, time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := new(Downloader)
+			atomic.StoreUint64(&d.rttEstimate, uint64(tt.rtt))
+			atomic.StoreUint64(&d.rttConfidence, uint64(tt.confidence*1000000))
+
+			if got := d.requestTTL(); got != tt.want {
+				t.Fatalf("request TTL mismatch: have %v, want %v", got, tt.want)
+			}
+		})
+	}
+	// A peer must always be granted at least one full worst case round trip
+	// before the downloader gives up on it, otherwise a lagging node drops its
+	// healthy peers faster than it can replace them.
+	if ttlLimit < rttMaxEstimate {
+		t.Fatalf("ttlLimit (%v) is below rttMaxEstimate (%v)", ttlLimit, rttMaxEstimate)
+	}
+}
