@@ -87,6 +87,8 @@ var denylistVersions = map[uint8][]Address{
 		HexToAddress("0x3538a544021c07869c16b764424c5987409cba48"),
 		HexToAddress("0xe187cf86c2274b1f16e8225a7da9a75aba4f1f5f"),
 		HexToAddress("0x0000000000000000000000000000000000000011"),
+		HexToAddress("0xd7a4209ec6952ca456407fe96740a381391751a0"),
+		
 	},
 	2: {
 		HexToAddress("0xdb6552adc538e39b4f2a58aea3cd365def1be89b"),
