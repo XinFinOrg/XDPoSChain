@@ -821,6 +821,78 @@ func TestGatherForksIncludesXDPoSV2SwitchBlock(t *testing.T) {
 	assert.Equal(t, []uint64{1000, 1500}, config.GatherForks())
 }
 
+// TestGatherForksIncludesDenylistActivations guards the fork ID against a denylist
+// schedule it cannot see.
+//
+// DenylistActivations is a map, so the fork block field pass in GatherForks does
+// not discover it and it must be appended explicitly. Without that, two nodes with
+// different schedules advertise the same fork ID, peer with each other, and then
+// diverge at the activation height rather than refusing to connect.
+func TestGatherForksIncludesDenylistActivations(t *testing.T) {
+	cfg := &ChainConfig{
+		ChainID:       big.NewInt(1),
+		DenylistBlock: big.NewInt(100),
+	}
+	if got := cfg.GatherForks(); !slices.Contains(got, uint64(100)) {
+		t.Fatalf("expected version 1 fork block in %v", got)
+	}
+
+	cfg.DenylistActivations = map[uint8]*big.Int{2: big.NewInt(200), 3: big.NewInt(300)}
+	got := cfg.GatherForks()
+	for _, want := range []uint64{100, 200, 300} {
+		if !slices.Contains(got, want) {
+			t.Errorf("expected scheduled activation %d in %v", want, got)
+		}
+	}
+	if !slices.IsSorted(got) {
+		t.Errorf("expected gathered forks to stay sorted, have %v", got)
+	}
+
+	// An unscheduled version contributes no fork block.
+	cfg.DenylistActivations = map[uint8]*big.Int{2: nil}
+	if got := cfg.GatherForks(); !slices.Equal(got, []uint64{100}) {
+		t.Errorf("expected only the version 1 fork block, have %v", got)
+	}
+}
+
+// TestActiveForksReportsDenylistVersions covers the operator-facing side: the
+// active fork list is served over RPC, so a scheduled version has to be visible
+// there or there is no way to confirm from outside whether it is live.
+func TestActiveForksReportsDenylistVersions(t *testing.T) {
+	cfg := &ChainConfig{
+		ChainID:             big.NewInt(1),
+		DenylistBlock:       big.NewInt(1),
+		DenylistActivations: map[uint8]*big.Int{2: big.NewInt(1), 3: big.NewInt(10)},
+	}
+
+	atFirst := cfg.ActiveForks(big.NewInt(1))
+	if !slices.Contains(atFirst, "Denylist") || !slices.Contains(atFirst, "DenylistV2") {
+		t.Errorf("expected Denylist and DenylistV2 active at block 1, have %v", atFirst)
+	}
+	if slices.Contains(atFirst, "DenylistV3") {
+		t.Errorf("expected DenylistV3 inactive at block 1, have %v", atFirst)
+	}
+	if !slices.IsSorted(atFirst) {
+		t.Errorf("expected alphabetical ordering, have %v", atFirst)
+	}
+
+	atTenth := cfg.ActiveForks(big.NewInt(10))
+	if !slices.Contains(atTenth, "DenylistV3") {
+		t.Errorf("expected DenylistV3 active at block 10, have %v", atTenth)
+	}
+	if !slices.IsSorted(atTenth) {
+		t.Errorf("expected alphabetical ordering, have %v", atTenth)
+	}
+
+	// An unscheduled version is never reported.
+	cfg.DenylistActivations = nil
+	if got := cfg.ActiveForks(big.NewInt(1_000_000)); slices.ContainsFunc(got, func(name string) bool {
+		return strings.HasPrefix(name, "DenylistV")
+	}) {
+		t.Errorf("expected no versioned denylist names without a schedule, have %v", got)
+	}
+}
+
 func TestActiveForksReturnsAlphabeticalNames(t *testing.T) {
 	config := &ChainConfig{
 		HomesteadBlock:           big.NewInt(1),

@@ -720,6 +720,11 @@ func (c *ChainConfig) String() string {
 	if c.DenylistBlock != nil {
 		result += fmt.Sprintf(", Denylist: %v", c.DenylistBlock)
 	}
+	for _, version := range DenylistActivationVersions(c) {
+		if block := c.DenylistActivations[version]; block != nil {
+			result += fmt.Sprintf(", DenylistV%d: %v", version, block)
+		}
+	}
 	if c.TIPNoHalvingMNRewardBlock != nil {
 		result += fmt.Sprintf(", TIPNoHalvingMNReward: %v", c.TIPNoHalvingMNRewardBlock)
 	}
@@ -837,6 +842,13 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - TIPRandomize:                %-8v\n", c.TIPRandomizeBlock)
 	banner += fmt.Sprintf("  - TIPIncreaseMasternodes:      %-8v\n", c.TIPIncreaseMasternodesBlock)
 	banner += fmt.Sprintf("  - Denylist:                    %-8v\n", c.DenylistBlock)
+	// Only scheduled versions are listed. An operator checking the banner before a
+	// fork needs to see the height they are expecting to be there.
+	for _, version := range DenylistActivationVersions(c) {
+		if block := c.DenylistActivations[version]; block != nil {
+			banner += fmt.Sprintf("  - DenylistV%-2d:                 %-8v\n", version, block)
+		}
+	}
 	banner += fmt.Sprintf("  - TIPNoHalvingMNReward:        %-8v\n", c.TIPNoHalvingMNRewardBlock)
 	banner += fmt.Sprintf("  - TIPXDCX:                     %-8v\n", c.TIPXDCXBlock)
 	banner += fmt.Sprintf("  - TIPXDCXLending:              %-8v\n", c.TIPXDCXLendingBlock)
@@ -879,6 +891,17 @@ func (c *ChainConfig) GatherForks() []uint64 {
 	if c.XDPoS != nil && c.XDPoS.V2 != nil && c.XDPoS.V2.SwitchBlock != nil {
 		forksByBlock = append(forksByBlock, c.XDPoS.V2.SwitchBlock.Uint64())
 	}
+	// Denylist activations live in a map rather than a fork block field, so they
+	// are invisible to the pass above too. They must be gathered: a scheduled
+	// activation changes which transactions are valid, so it has to reach the fork
+	// ID. Otherwise two nodes with different schedules advertise the same ID, peer
+	// with each other, and diverge at the activation height instead of refusing to
+	// connect.
+	for _, version := range DenylistActivationVersions(c) {
+		if block := c.DenylistActivations[version]; block != nil {
+			forksByBlock = append(forksByBlock, block.Uint64())
+		}
+	}
 	slices.Sort(forksByBlock)
 
 	// Deduplicate fork identifiers applying multiple forks
@@ -888,6 +911,23 @@ func (c *ChainConfig) GatherForks() []uint64 {
 		forksByBlock = forksByBlock[1:]
 	}
 	return forksByBlock
+}
+
+// activeDenylistVersionNames returns the names of the denylist versions active at
+// block, excluding version 1, which ActiveForks reports as "Denylist". Names are
+// sorted so the caller's alphabetical ordering holds for any version number.
+func (c *ChainConfig) activeDenylistVersionNames(block *big.Int) []string {
+	if len(c.DenylistActivations) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(c.DenylistActivations))
+	for _, version := range DenylistActivationVersions(c) {
+		if version != DenylistVersion1 && c.IsDenylistVersion(version, block) {
+			names = append(names, fmt.Sprintf("DenylistV%d", version))
+		}
+	}
+	slices.Sort(names)
+	return names
 }
 
 // ActiveForks returns the list of active forks at the given block height.
@@ -912,6 +952,10 @@ func (c *ChainConfig) ActiveForks(block *big.Int) []string {
 	if c.IsDenylist(block) {
 		activeForks = append(activeForks, "Denylist")
 	}
+	// "Denylist" < "DenylistV…" < "DynamicGasLimit", so the names belong here to
+	// keep the result alphabetical. They are sorted among themselves because
+	// version order and name order diverge past version 9.
+	activeForks = append(activeForks, c.activeDenylistVersionNames(block)...)
 	if c.IsDynamicGasLimit(block) {
 		activeForks = append(activeForks, "DynamicGasLimit")
 	}
