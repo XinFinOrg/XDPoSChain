@@ -346,6 +346,84 @@ func TestCheckCompatible(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckCompatibleDetectsDenylistActivationDrift covers the startup safety net
+// for the activation schedule: rescheduling a version the chain has already
+// passed must demand a rewind rather than diverge silently, while scheduling a
+// version still in the future stays compatible.
+func TestCheckCompatibleDetectsDenylistActivationDrift(t *testing.T) {
+	withSchedule := func(schedule map[uint8]*big.Int) *ChainConfig {
+		return &ChainConfig{DenylistActivations: schedule}
+	}
+
+	tests := []struct {
+		name        string
+		stored, new *ChainConfig
+		head        uint64
+		wantErr     *ConfigCompatError
+	}{
+		{
+			name:   "activation moved past head",
+			stored: withSchedule(map[uint8]*big.Int{2: big.NewInt(10)}),
+			new:    withSchedule(map[uint8]*big.Int{2: big.NewInt(20)}),
+			head:   15,
+			wantErr: &ConfigCompatError{
+				What:         "Denylist version 2 activation block",
+				StoredConfig: big.NewInt(10),
+				NewConfig:    big.NewInt(20),
+				RewindTo:     9,
+			},
+		},
+		{
+			name:   "version dropped after activation",
+			stored: withSchedule(map[uint8]*big.Int{2: big.NewInt(10)}),
+			new:    withSchedule(nil),
+			head:   15,
+			wantErr: &ConfigCompatError{
+				What:         "Denylist version 2 activation block",
+				StoredConfig: big.NewInt(10),
+				NewConfig:    nil,
+				RewindTo:     9,
+			},
+		},
+		{
+			name:   "version added after head has passed it",
+			stored: withSchedule(nil),
+			new:    withSchedule(map[uint8]*big.Int{2: big.NewInt(10)}),
+			head:   15,
+			wantErr: &ConfigCompatError{
+				What:         "Denylist version 2 activation block",
+				StoredConfig: nil,
+				NewConfig:    big.NewInt(10),
+				RewindTo:     9,
+			},
+		},
+		{
+			name:    "activation still in the future",
+			stored:  withSchedule(map[uint8]*big.Int{2: big.NewInt(100)}),
+			new:     withSchedule(map[uint8]*big.Int{2: big.NewInt(200)}),
+			head:    50,
+			wantErr: nil,
+		},
+		{
+			name:    "unchanged schedule",
+			stored:  withSchedule(map[uint8]*big.Int{2: big.NewInt(10), 3: big.NewInt(20)}),
+			new:     withSchedule(map[uint8]*big.Int{2: big.NewInt(10), 3: big.NewInt(20)}),
+			head:    100,
+			wantErr: nil,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.stored.CheckCompatible(test.new, test.head)
+			if !reflect.DeepEqual(err, test.wantErr) {
+				t.Fatalf("error mismatch:\nhave: %v\nwant: %v", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestCheckCompatibleRejectsXDCSystemContractAddressDrift(t *testing.T) {
 	activationByField := map[string]chainConfigBigIntField{
 		"TRC21IssuerSMC":         mustChainConfigForkBlockField(t, "TIPTRC21FeeBlock"),

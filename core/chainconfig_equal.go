@@ -127,12 +127,24 @@ func (d *chainConfigDigest) writeChainConfig(cfg *params.ChainConfig) {
 	if !wroteDAOForkSupport {
 		d.writeBool(cfg.DAOForkSupport)
 	}
+	d.writeDenylistActivations(cfg)
 	params.ForEachChainConfigXDCSystemContract(cfg, func(_ string, value common.Address) {
 		d.writeAddress(value)
 	})
 	d.writeBool(cfg.Ethash != nil)
 	d.writeClique(cfg.Clique)
 	d.writeXDPoS(cfg.XDPoS)
+}
+
+// writeDenylistActivations appends the denylist activation schedule to the digest
+// buffer in ascending version order, so a map yields a stable encoding.
+func (d *chainConfigDigest) writeDenylistActivations(cfg *params.ChainConfig) {
+	versions := params.DenylistActivationVersions(cfg)
+	d.writeUint64(uint64(len(versions)))
+	for _, version := range versions {
+		d.writeByte(version)
+		d.writeBigInt(cfg.DenylistActivations[version])
+	}
 }
 
 // writeClique appends the Clique subsection to the digest buffer.

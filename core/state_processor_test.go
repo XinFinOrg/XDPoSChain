@@ -404,11 +404,47 @@ func TestStateProcessorErrors(t *testing.T) {
 	}
 }
 
-// TestStateProcessorDenylistHardForkBoundary tests state processor denylist hard fork boundary.
+// TestStateProcessorDenylistHardForkBoundary tests the state processor denylist
+// hard fork boundary for every denylist version.
+//
+// Each version must be gated by its own activation height and by no other. A
+// version that activated earlier than intended would retroactively change the
+// verdict of already-sealed blocks and break replay for a node syncing from
+// genesis, so the cross-version case below matters as much as the boundaries.
 func TestStateProcessorDenylistHardForkBoundary(t *testing.T) {
-	testDenylistedReceiver := common.HexToAddress("0x5248bfb72fd4f234e062d3e9bb76f08643004fcd")
-	if !common.IsInDenylist(&testDenylistedReceiver) {
-		t.Fatalf("test receiver is not denylisted: %v", testDenylistedReceiver.Hex())
+	type version struct {
+		name     string
+		number   uint8
+		receiver common.Address
+		schedule func(*params.ChainConfig, *big.Int)
+	}
+	versions := []version{
+		{
+			name:     "version1",
+			number:   1,
+			receiver: common.HexToAddress("0x5248bfb72fd4f234e062d3e9bb76f08643004fcd"),
+			schedule: func(cfg *params.ChainConfig, block *big.Int) { cfg.DenylistBlock = block },
+		},
+		{
+			name:     "version2",
+			number:   2,
+			receiver: common.HexToAddress("0xdb6552adc538e39b4f2a58aea3cd365def1be89b"),
+			schedule: func(cfg *params.ChainConfig, block *big.Int) {
+				// Version 1 may not activate after version 2, and it is inert here
+				// regardless because the receiver is not tagged version 1.
+				cfg.DenylistBlock = big.NewInt(0)
+				cfg.DenylistActivations = map[uint8]*big.Int{2: block}
+			},
+		},
+	}
+	for _, gen := range versions {
+		got, listed := common.DenylistVersion(&gen.receiver)
+		if !listed {
+			t.Fatalf("%s test receiver is not denylisted: %v", gen.name, gen.receiver.Hex())
+		}
+		if got != gen.number {
+			t.Fatalf("%s test receiver %v is tagged version %d, want %d", gen.name, gen.receiver.Hex(), got, gen.number)
+		}
 	}
 
 	key, err := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
@@ -417,12 +453,13 @@ func TestStateProcessorDenylistHardForkBoundary(t *testing.T) {
 	}
 	from := crypto.PubkeyToAddress(key.PublicKey)
 
-	newConfig := func(forkBlock uint64) *params.ChainConfig {
+	// newConfig starts with every denylist version out of range, so only the
+	// schedule applied by the caller can activate a guard.
+	newConfig := func(apply func(*params.ChainConfig)) *params.ChainConfig {
 		futureFork := big.NewInt(1_000_000_000)
 		cfg := &params.ChainConfig{
 			ChainID:                     big.NewInt(1),
 			HomesteadBlock:              big.NewInt(0),
-			DenylistBlock:               new(big.Int).SetUint64(forkBlock),
 			EIP150Block:                 big.NewInt(0),
 			EIP155Block:                 big.NewInt(0),
 			EIP158Block:                 big.NewInt(0),
@@ -446,16 +483,16 @@ func TestStateProcessorDenylistHardForkBoundary(t *testing.T) {
 		cfg.TIPSigningBlock = big.NewInt(0)
 		cfg.TIPRandomizeBlock = big.NewInt(0)
 		cfg.TIPIncreaseMasternodesBlock = big.NewInt(0)
-		cfg.DenylistBlock = new(big.Int).SetUint64(forkBlock)
+		apply(cfg)
 		return cfg
 	}
 
-	run := func(t *testing.T, forkBlock uint64, expectDenylistErr bool) {
+	run := func(t *testing.T, receiver common.Address, apply func(*params.ChainConfig), expectDenylistErr bool) {
 		t.Helper()
 
-		cfg := newConfig(forkBlock)
+		cfg := newConfig(apply)
 		signer := types.LatestSigner(cfg)
-		tx, err := types.SignTx(types.NewTransaction(0, testDenylistedReceiver, big.NewInt(1), params.TxGas, big.NewInt(params.InitialBaseFee), nil), signer, key)
+		tx, err := types.SignTx(types.NewTransaction(0, receiver, big.NewInt(1), params.TxGas, big.NewInt(params.InitialBaseFee), nil), signer, key)
 		if err != nil {
 			t.Fatalf("failed to sign tx: %v", err)
 		}
@@ -484,15 +521,35 @@ func TestStateProcessorDenylistHardForkBoundary(t *testing.T) {
 
 		hasDenylistErr := strings.Contains(err.Error(), "receiver in denylist")
 		if hasDenylistErr != expectDenylistErr {
-			t.Fatalf("unexpected denylist error presence (fork=%d): have=%v err=%v", forkBlock, hasDenylistErr, err)
+			t.Fatalf("unexpected denylist error presence: have=%v want=%v err=%v", hasDenylistErr, expectDenylistErr, err)
 		}
 	}
 
-	t.Run("below hardfork does not trigger denylist guard", func(t *testing.T) {
-		run(t, 2, false)
-	})
-	t.Run("at hardfork triggers denylist guard", func(t *testing.T) {
-		run(t, 1, true)
+	for _, gen := range versions {
+		t.Run(gen.name, func(t *testing.T) {
+			t.Run("below activation does not trigger denylist guard", func(t *testing.T) {
+				run(t, gen.receiver, func(cfg *params.ChainConfig) { gen.schedule(cfg, big.NewInt(2)) }, false)
+			})
+			t.Run("at activation triggers denylist guard", func(t *testing.T) {
+				run(t, gen.receiver, func(cfg *params.ChainConfig) { gen.schedule(cfg, big.NewInt(1)) }, true)
+			})
+		})
+	}
+
+	// This is the property that keeps sync-from-genesis working: a chain that has
+	// only ever had version 1 active must not begin rejecting version 2 addresses
+	// until version 2 is scheduled and reached. If it did, every block already
+	// sealed after DenylistBlock that touched such an address would fail replay.
+	//
+	// Only this direction is tested because versions must activate in order, so
+	// "version 2 active while version 1 is not" is a config CheckConfigForkOrder
+	// rejects outright.
+	t.Run("earlier version does not deny a later version's addresses", func(t *testing.T) {
+		version2Receiver := common.HexToAddress("0xdb6552adc538e39b4f2a58aea3cd365def1be89b")
+		run(t, version2Receiver, func(cfg *params.ChainConfig) {
+			cfg.DenylistBlock = big.NewInt(0) // version 1 active from genesis
+			// version 2 stays unscheduled
+		}, false)
 	})
 }
 
