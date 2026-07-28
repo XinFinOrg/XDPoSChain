@@ -87,6 +87,8 @@ type ChainConfig struct {
 	TIPSigningBlock             *big.Int `json:"tipSigningBlock,omitempty"`
 	TIPRandomizeBlock           *big.Int `json:"tipRandomizeBlock,omitempty"`
 	TIPIncreaseMasternodesBlock *big.Int `json:"tipIncreaseMasternodesBlock,omitempty"`
+	// DenylistBlock activates denylist version 1, the addresses tagged version 1
+	// in common. Later versions are scheduled by DenylistActivations below.
 	DenylistBlock               *big.Int `json:"denylistBlock,omitempty"`
 	TIPNoHalvingMNRewardBlock   *big.Int `json:"tipNoHalvingMNRewardBlock,omitempty"`
 	TIPXDCXBlock                *big.Int `json:"tipXDCXBlock,omitempty"`
