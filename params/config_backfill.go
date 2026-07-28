@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"slices"
 	"strings"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -413,6 +414,18 @@ var chainConfigTopLevelFields = func() []chainConfigTopLevelField {
 		},
 	})
 	fields = append(fields, chainConfigTopLevelBigIntFields(chainConfigBuiltInBackfillForkBlockFields)...)
+	fields = append(fields, chainConfigTopLevelField{
+		jsonKey: "denylistActivations",
+		clone: func(dst, src *ChainConfig) {
+			dst.DenylistActivations = cloneDenylistActivations(src.DenylistActivations)
+		},
+		marshalValue: func(cfg *ChainConfig) any {
+			return cfg.DenylistActivations
+		},
+		shouldInferPresence: func(cfg *ChainConfig) bool {
+			return cfg.DenylistActivations != nil
+		},
+	})
 	fields = append(fields, chainConfigTopLevelAddressFields(chainConfigXDCSystemContractFields)...)
 	fields = append(fields,
 		chainConfigTopLevelField{
@@ -463,6 +476,33 @@ var chainConfigTopLevelFields = func() []chainConfigTopLevelField {
 	)
 	return fields
 }()
+
+// cloneDenylistActivations deep-copies a denylist activation schedule so a clone
+// never aliases the source config's heights.
+func cloneDenylistActivations(src map[uint8]*big.Int) map[uint8]*big.Int {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[uint8]*big.Int, len(src))
+	for version, block := range src {
+		dst[version] = common.CloneBigInt(block)
+	}
+	return dst
+}
+
+// DenylistActivationVersions returns the versions scheduled by cfg in
+// ascending order, giving callers a deterministic iteration order over a map.
+func DenylistActivationVersions(cfg *ChainConfig) []uint8 {
+	if cfg == nil || len(cfg.DenylistActivations) == 0 {
+		return nil
+	}
+	versions := make([]uint8, 0, len(cfg.DenylistActivations))
+	for version := range cfg.DenylistActivations {
+		versions = append(versions, version)
+	}
+	slices.Sort(versions)
+	return versions
+}
 
 func chainConfigTopLevelFieldJSONKeys() []string {
 	keys := make([]string, 0, len(chainConfigTopLevelFields))
@@ -890,6 +930,15 @@ func (c *ChainConfig) BackfillMissingFieldsFrom(src *ChainConfig) *ChainConfig {
 			if trackCustomLocalnetFallback {
 				customLocalnetFallbackFields = append(customLocalnetFallbackFields, field.key)
 			}
+		}
+	}
+
+	// denylist activation schedule
+	if dest.isJSONFieldMissing("denylistActivations", dest.DenylistActivations == nil) {
+		log.Info("Backfilled missing field", "field", "denylistActivations", "old", dest.DenylistActivations, "new", src.DenylistActivations)
+		dest.DenylistActivations = cloneDenylistActivations(src.DenylistActivations)
+		if trackCustomLocalnetFallback {
+			customLocalnetFallbackFields = append(customLocalnetFallbackFields, "denylistActivations")
 		}
 	}
 

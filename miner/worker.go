@@ -1100,18 +1100,15 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			continue
 		}
 		to := tx.To()
-		if w.config.IsDenylist(w.header.Number) {
-			from := tx.From()
-			// check if sender is in denylist
-			if common.IsInDenylist(from) {
-				log.Debug("Skipping transaction with sender in denylist", "sender", from.Hex())
-				continue
-			}
-			// check if receiver is in denylist
-			if common.IsInDenylist(to) {
-				log.Debug("Skipping transaction with receiver in denylist", "receiver", to.Hex())
-				continue
-			}
+		// check if sender is in denylist
+		if from := tx.From(); core.IsDeniedSender(w.config, w.header.Number, from) {
+			log.Debug("Skipping transaction with sender in denylist", "sender", from.Hex())
+			continue
+		}
+		// check if receiver is in denylist
+		if core.IsDeniedReceiver(w.config, w.header.Number, to) {
+			log.Debug("Skipping transaction with receiver in denylist", "receiver", to.Hex())
+			continue
 		}
 		data := tx.Data()
 		// validate minFee slot for XDCZ
@@ -1219,20 +1216,17 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			break
 		}
 		to := tx.To()
-		if w.config.IsDenylist(w.header.Number) {
-			from := tx.From()
-			// check if sender is in denylist
-			if common.IsInDenylist(from) {
-				log.Debug("Skipping transaction with sender in denylist", "sender", from.Hex())
-				txs.Pop()
-				continue
-			}
-			// check if receiver is in denylist
-			if common.IsInDenylist(to) {
-				log.Debug("Skipping transaction with receiver in denylist", "receiver", to.Hex())
-				txs.Shift()
-				continue
-			}
+		// check if sender is in denylist
+		if from := tx.From(); core.IsDeniedSender(w.config, w.header.Number, from) {
+			log.Debug("Skipping transaction with sender in denylist", "sender", from.Hex())
+			txs.Pop()
+			continue
+		}
+		// check if receiver is in denylist
+		if core.IsDeniedReceiver(w.config, w.header.Number, to) {
+			log.Debug("Skipping transaction with receiver in denylist", "receiver", to.Hex())
+			txs.Shift()
+			continue
 		}
 		data := tx.Data()
 		// validate minFee slot for XDCZ

@@ -275,15 +275,13 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	}
 
 	// Ensure sender and receiver are not in denylist
-	if number == nil || opts.Config.IsDenylist(number) {
-		// check if sender is in denylist
-		if common.IsInDenylist(tx.From()) {
-			return fmt.Errorf("reject transaction with sender in denylist: %v", tx.From().Hex())
-		}
-		// check if receiver is in denylist
-		if common.IsInDenylist(to) {
-			return fmt.Errorf("reject transaction with receiver in denylist: %v", to.Hex())
-		}
+	// check if sender is in denylist
+	if core.IsDeniedSender(opts.Config, number, tx.From()) {
+		return fmt.Errorf("reject transaction with sender in denylist: %v", tx.From().Hex())
+	}
+	// check if receiver is in denylist
+	if core.IsDeniedReceiver(opts.Config, number, to) {
+		return fmt.Errorf("reject transaction with receiver in denylist: %v", to.Hex())
 	}
 
 	// Validate gas price

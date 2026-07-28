@@ -93,9 +93,27 @@ func (c *ChainConfig) IsTIPIncreaseMasternodes(num *big.Int) bool {
 	return isForked(c.TIPIncreaseMasternodesBlock, num)
 }
 
+// DenylistVersion1 is the version scheduled by DenylistBlock. Later
+// versions are scheduled by ChainConfig.DenylistActivations.
+const DenylistVersion1 uint8 = 1
+
 // IsDenylist returns whether num is at or past the denylist fork block.
 func (c *ChainConfig) IsDenylist(num *big.Int) bool {
 	return isForked(c.DenylistBlock, num)
+}
+
+// IsDenylistVersion returns whether num is at or past the activation block of
+// the given denylist version. An unscheduled version is never active.
+//
+// Versions are independent guards rather than sequential protocol upgrades:
+// each denies only its own address set, from its own height. So no ordering
+// between versions is required or enforced, and CheckConfigForkOrder does not
+// place them in the linear fork order.
+func (c *ChainConfig) IsDenylistVersion(version uint8, num *big.Int) bool {
+	if version == DenylistVersion1 {
+		return isForked(c.DenylistBlock, num)
+	}
+	return isForked(c.DenylistActivations[version], num)
 }
 
 func (c *ChainConfig) IsTIPNoHalvingMNReward(num *big.Int) bool {

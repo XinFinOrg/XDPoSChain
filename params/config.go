@@ -101,6 +101,15 @@ type ChainConfig struct {
 	TIPUpgradePenaltyBlock      *big.Int `json:"tipUpgradePenaltyBlock,omitempty"`
 	TIPEpochHalvingBlock        *big.Int `json:"tipEpochHalvingBlock,omitempty"`
 
+	// DenylistActivations schedules denylist versions from 2 onward, mapping a
+	// version to the block at which its addresses become denied. Version 1
+	// is scheduled by DenylistBlock instead and must not appear here.
+	//
+	// Holding every later version in one field keeps adding a version to a
+	// map entry plus a scheduled height, rather than a new fork field and the
+	// registry, ordering, compatibility and digest plumbing each one would need.
+	DenylistActivations map[uint8]*big.Int `json:"denylistActivations,omitempty"`
+
 	TRC21IssuerSMC         common.Address `json:"trc21IssuerSMC,omitempty"`
 	XDCXListingSMC         common.Address `json:"xdcxListingSMC,omitempty"`
 	RelayerRegistrationSMC common.Address `json:"relayerRegistrationSMC,omitempty"`
@@ -359,6 +368,9 @@ func (c *ChainConfig) Equal(other *ChainConfig) bool {
 	if !equal {
 		return false
 	}
+	if !denylistActivationsEqual(c.DenylistActivations, other.DenylistActivations) {
+		return false
+	}
 	if (c.Ethash == nil) != (other.Ethash == nil) {
 		return false
 	}
@@ -366,6 +378,26 @@ func (c *ChainConfig) Equal(other *ChainConfig) bool {
 		return false
 	}
 	return chainConfigSemanticXDPoSEqual(c.XDPoS, other.XDPoS)
+}
+
+// denylistActivationsEqual compares two activation schedules by value. An absent
+// version and one scheduled at nil are both "unscheduled" and compare equal,
+// matching how IsDenylistVersion treats them.
+func denylistActivationsEqual(a, b map[uint8]*big.Int) bool {
+	for version, block := range a {
+		if !sameChainID(block, b[version]) {
+			return false
+		}
+	}
+	for version, block := range b {
+		if _, ok := a[version]; ok {
+			continue
+		}
+		if !sameChainID(nil, block) {
+			return false
+		}
+	}
+	return true
 }
 
 func chainConfigSemanticCliqueEqual(a, b *CliqueConfig) bool {
@@ -520,6 +552,26 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 	}
 	if c.requiresXDCForkConfig() && c.TIPTRC21FeeBlock == nil {
 		return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "TIPTRC21FeeBlock")
+	}
+	// Denylist versions need no ordering against other forks, but they must be
+	// ordered among themselves: versions are created in sequence as addresses are
+	// discovered, so a later version activating before an earlier one is a config
+	// error. Version 1 is owned by DenylistBlock and heads the chain; it must not be
+	// rescheduled in the map. Unscheduled versions are absent or nil and are skipped.
+	previousVersion, previousBlock := DenylistVersion1, c.DenylistBlock
+	for _, version := range DenylistActivationVersions(c) {
+		if version <= DenylistVersion1 {
+			return fmt.Errorf("invalid chain config: denylistActivations must not schedule version %d, use denylistBlock", version)
+		}
+		block := c.DenylistActivations[version]
+		if block == nil {
+			continue
+		}
+		if previousBlock != nil && previousBlock.Cmp(block) > 0 {
+			return fmt.Errorf("invalid chain config: %w: denylist version %d %v > denylist version %d %v",
+				ErrWrongForkSwitchOrder, previousVersion, previousBlock, version, block)
+		}
+		previousVersion, previousBlock = version, block
 	}
 	if c.requiresXDCForkConfig() && c.Gas50xBlock == nil {
 		return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "Gas50xBlock")

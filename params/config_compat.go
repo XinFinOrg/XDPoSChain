@@ -99,6 +99,9 @@ compatLoop:
 	if compatErr != nil {
 		return compatErr
 	}
+	if err := checkDenylistActivationsCompatible(c, newcfg, head); err != nil {
+		return err
+	}
 	if err := checkXDCSystemContractCompatible(c, newcfg, head); err != nil {
 		return err
 	}
@@ -175,6 +178,31 @@ func checkAddressCompatible(name string, stored, new common.Address, activation,
 		return nil
 	}
 	return newAddressCompatError(name, stored, new, activation)
+}
+
+// checkDenylistActivationsCompatible reports a rewind requirement when a denylist
+// version's activation height moves across head. Rescheduling a version the
+// chain has already passed changes which transactions were valid, so a node whose
+// binary carries a different schedule must be caught at startup rather than
+// diverging silently.
+func checkDenylistActivationsCompatible(stored, newcfg *ChainConfig, head *big.Int) *ConfigCompatError {
+	versions := make([]uint8, 0, len(stored.DenylistActivations)+len(newcfg.DenylistActivations))
+	versions = append(versions, DenylistActivationVersions(stored)...)
+	for _, version := range DenylistActivationVersions(newcfg) {
+		if _, ok := stored.DenylistActivations[version]; !ok {
+			versions = append(versions, version)
+		}
+	}
+	slices.Sort(versions)
+
+	for _, version := range versions {
+		storedBlock := stored.DenylistActivations[version]
+		newBlock := newcfg.DenylistActivations[version]
+		if isForkIncompatible(storedBlock, newBlock, head) {
+			return newCompatError(fmt.Sprintf("Denylist version %d activation block", version), storedBlock, newBlock)
+		}
+	}
+	return nil
 }
 
 func checkXDCSystemContractCompatible(stored, newcfg *ChainConfig, head *big.Int) *ConfigCompatError {

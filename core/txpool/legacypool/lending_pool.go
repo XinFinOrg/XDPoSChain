@@ -622,8 +622,13 @@ func (pool *LendingPool) validateLending(tx *types.LendingTransaction) error {
 // validateTx checks whether a transaction is valid according to the consensus
 // rules and adheres to some heuristic limits of the local node (price and size).
 func (pool *LendingPool) validateTx(tx *types.LendingTransaction, local bool) error {
-	// check if sender is in denylist
-	if common.IsInDenylist(tx.From()) {
+	// check if sender is in denylist. A nil head applies every denylist
+	// version, matching the behaviour before the versions existed.
+	var head *big.Int
+	if current := pool.chain.CurrentBlock(); current != nil {
+		head = current.Number
+	}
+	if core.IsDeniedSender(pool.chainconfig, head, tx.From()) {
 		return fmt.Errorf("reject transaction with sender in denylist: %v", tx.From().Hex())
 	}
 	// Heuristic limit, reject transactions over 32KB to prevent DOS attacks

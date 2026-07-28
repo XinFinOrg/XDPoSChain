@@ -110,15 +110,13 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
 		// check denylist txs after hf
-		if p.config.IsDenylist(block.Number()) {
-			// check if sender is in denylist
-			if common.IsInDenylist(tx.From()) {
-				return nil, nil, 0, fmt.Errorf("block contains transaction with sender in denylist: %v", tx.From().Hex())
-			}
-			// check if receiver is in denylist
-			if common.IsInDenylist(tx.To()) {
-				return nil, nil, 0, fmt.Errorf("block contains transaction with receiver in denylist: %v", tx.To().Hex())
-			}
+		// check if sender is in denylist
+		if IsDeniedSender(p.config, block.Number(), tx.From()) {
+			return nil, nil, 0, fmt.Errorf("block contains transaction with sender in denylist: %v", tx.From().Hex())
+		}
+		// check if receiver is in denylist
+		if IsDeniedReceiver(p.config, block.Number(), tx.To()) {
+			return nil, nil, 0, fmt.Errorf("block contains transaction with receiver in denylist: %v", tx.To().Hex())
 		}
 		// validate minFee slot for XDCZ
 		if tx.IsXDCZApplyTransaction(p.config) {
@@ -220,15 +218,13 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 	receipts = make([]*types.Receipt, block.Transactions().Len())
 	for i, tx := range block.Transactions() {
 		// check denylist txs after hf
-		if p.config.IsDenylist(block.Number()) {
-			// check if sender is in denylist
-			if common.IsInDenylist(tx.From()) {
-				return nil, nil, 0, fmt.Errorf("block contains transaction with sender in denylist: %v", tx.From().Hex())
-			}
-			// check if receiver is in denylist
-			if common.IsInDenylist(tx.To()) {
-				return nil, nil, 0, fmt.Errorf("block contains transaction with receiver in denylist: %v", tx.To().Hex())
-			}
+		// check if sender is in denylist
+		if IsDeniedSender(p.config, block.Number(), tx.From()) {
+			return nil, nil, 0, fmt.Errorf("block contains transaction with sender in denylist: %v", tx.From().Hex())
+		}
+		// check if receiver is in denylist
+		if IsDeniedReceiver(p.config, block.Number(), tx.To()) {
+			return nil, nil, 0, fmt.Errorf("block contains transaction with receiver in denylist: %v", tx.To().Hex())
 		}
 		// validate minFee slot for XDCZ
 		if tx.IsXDCZApplyTransaction(p.config) {
