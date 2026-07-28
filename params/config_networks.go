@@ -506,7 +506,7 @@ var (
 		TIPRandomizeBlock:           big.NewInt(0),
 		TIPIncreaseMasternodesBlock: big.NewInt(0),
 		DenylistBlock:               big.NewInt(0),
-		DenylistActivations:         map[uint8]*big.Int{2: big.NewInt(500)},
+		DenylistActivations:         map[uint8]*big.Int{2: big.NewInt(100)},
 		TIPNoHalvingMNRewardBlock:   big.NewInt(0),
 		TIPXDCXBlock:                big.NewInt(0),
 		TIPXDCXLendingBlock:         big.NewInt(0),
