@@ -191,7 +191,7 @@ jobs:
                 },
                 {
                   "type": "section",
-                  "text": {"type": "mrkdwn", "text": ("Service: *xdc*\nEnvironment: *devnet*\nVersion: `" + $sha + "`\n" + $pr_line)}
+                  "text": {"type": "mrkdwn", "text": ("Service: *xdc*\nEnvironment: *releasenet*\nVersion: `" + $sha + "`\n" + $pr_line)}
                 }
               ]
             }')" \
