@@ -35,8 +35,7 @@ const LedgerScheme = "ledger"
 // TrezorScheme is the protocol scheme prefixing account and wallet URLs.
 const TrezorScheme = "trezor"
 
-// refreshCycle is the maximum time between wallet refreshes (if USB hotplug
-// notifications don't work).
+// refreshCycle is the maximum time between wallet refreshes (if USB hotplug notifications don't work).
 const refreshCycle = time.Second
 
 // refreshThrottling is the minimum time between wallet refreshes to avoid USB
