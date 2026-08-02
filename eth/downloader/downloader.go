@@ -1596,17 +1596,27 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 	for i, result := range results {
 		blocks[i] = types.NewBlockWithHeader(result.Header).WithBody(result.body())
 	}
-	if index, err := d.blockchain.InsertChain(blocks); err != nil {
-		if index < len(results) {
-			log.Debug("Downloaded item processing failed", "number", results[index].Header.Number, "hash", results[index].Header.Hash(), "err", err)
-		} else {
-			// The InsertChain method in blockchain.go will sometimes return an out-of-bounds index,
-			// when it needs to preprocess blocks to import a sidechain.
-			// The importer will put together a new list of blocks to import, which is a superset
-			// of the blocks delivered from the downloader, and the indexing will be off.
-			log.Debug("Downloaded item processing failed on sidechain import", "index", index, "err", err)
+	// For XDPoS, the header verification of an epoch-switch block reads the
+	// snapshot stored at its gap block, and that snapshot is only written while
+	// the gap block itself is being executed (UpdateMasternodes). VerifyHeaders
+	// verifies the whole batch up-front (its results channel is fully buffered),
+	// so it would race ahead and try to verify the epoch-switch block before the
+	// gap block in the same batch has been executed, failing to find the snapshot.
+	// Split the batch right after each gap block so the gap block is executed -
+	// and its snapshot stored - before the following blocks are verified.
+	for _, segment := range d.splitBlocksAtGap(blocks) {
+		if index, err := d.blockchain.InsertChain(segment); err != nil {
+			if index < len(segment) {
+				log.Debug("Downloaded item processing failed", "number", segment[index].Number(), "hash", segment[index].Hash(), "err", err)
+			} else {
+				// The InsertChain method in blockchain.go will sometimes return an out-of-bounds index,
+				// when it needs to preprocess blocks to import a sidechain.
+				// The importer will put together a new list of blocks to import, which is a superset
+				// of the blocks delivered from the downloader, and the indexing will be off.
+				log.Debug("Downloaded item processing failed on sidechain import", "index", index, "err", err)
+			}
+			return fmt.Errorf("%w: %v", errInvalidChain, err)
 		}
-		return fmt.Errorf("%w: %v", errInvalidChain, err)
 	}
 	if d.handleProposedBlock != nil {
 		header := blocks[len(blocks)-1].Header()
@@ -1616,6 +1626,36 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 		}
 	}
 	return nil
+}
+
+// splitBlocksAtGap splits a contiguous batch of blocks into segments that each
+// end on a gap block (a block at offset Epoch-Gap within its epoch). The
+// snapshot used to verify the following epoch-switch block is stored when the
+// gap block is executed, so inserting one segment at a time guarantees the gap
+// block's snapshot exists before the next segment's headers are verified. For
+// non-XDPoS chains (or when there is nothing to split) the whole batch is
+// returned as a single segment.
+func (d *Downloader) splitBlocksAtGap(blocks []*types.Block) [][]*types.Block {
+	cfg := d.blockchain.Config()
+	if cfg == nil || cfg.XDPoS == nil || len(blocks) <= 1 {
+		return [][]*types.Block{blocks}
+	}
+	epoch, gap := cfg.XDPoS.Epoch, cfg.XDPoS.Gap
+	if epoch == 0 || gap == 0 || gap >= epoch {
+		return [][]*types.Block{blocks}
+	}
+
+	var segments [][]*types.Block
+	start := 0
+	for i, block := range blocks {
+		// Cut the batch right after each gap block, but never after the very last
+		// block (that would just create an empty trailing segment).
+		if block.NumberU64()%epoch == epoch-gap && i < len(blocks)-1 {
+			segments = append(segments, blocks[start:i+1])
+			start = i + 1
+		}
+	}
+	return append(segments, blocks[start:])
 }
 
 // processFastSyncContent takes fetch results from the queue and writes them to the
