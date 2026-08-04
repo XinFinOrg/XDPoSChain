@@ -30,7 +30,7 @@ Built-in network selection now maps to the following runtime choices:
 - Testnet: `XDC --testnet ...`
 - Testnet notes: equivalent alias `--apothem`. If `--networkid` is omitted, startup uses chain ID `51` and the built-in testnet genesis.
 - Devnet: `XDC --devnet ...`
-- Devnet notes: if `--networkid` is omitted, startup uses chain ID `5551` and the built-in devnet genesis.
+- Devnet notes: if `--networkid` is omitted, startup uses chain ID `551` and the built-in devnet genesis.
 - Localnet: explicit `genesis.json` plus `XDC --datadir <datadir> init /path/to/genesis.json`, then `XDC --datadir <datadir> --networkid 5151 ...`
 - Localnet notes: there is no dedicated `--localnet` flag. Localnet is identified from the resolved config by `ChainID == 5151`.
 
@@ -38,7 +38,7 @@ Practical migration rules:
 
 1. For built-in Mainnet, Testnet, and Devnet, replace any old per-network binary selection with the matching runtime flag on `XDC`.
 2. For Localnet, custom, and private deployments, keep the authoritative `genesis.json` under operator control and initialize the data directory explicitly before normal startup.
-3. `--networkid 50`, `--networkid 51`, and `--networkid 5551` still map to the built-in network profiles at runtime, but using `--mainnet`, `--testnet`, or `--devnet` is clearer for operational scripts and service files.
+3. `--networkid 50`, `--networkid 51`, and `--networkid 551` still map to the built-in network profiles at runtime, but using `--mainnet`, `--testnet`, or `--devnet` is clearer for operational scripts and service files.
 4. `--networkid 5151` does not create a built-in Localnet genesis on an empty data directory. On first initialization, or whenever metadata must be repaired, you still need an explicit writable path with the matching `genesis.json`.
 
 Minimal command migration examples:
@@ -319,7 +319,7 @@ not accidentally scan override metadata.
 
 This marker is used to distinguish:
 
-- an ordinary built-in chain using the bundled config for chain IDs `50`, `51`, or `5551`
+- an ordinary built-in chain using the bundled config for chain IDs `50`, `51`, or `551`
 - a custom chain that intentionally reuses the same genesis block contents/hash
 
 Forward-compatibility rules:
@@ -349,7 +349,7 @@ the bundled built-in networks:
 
 - Mainnet (`ChainID == 50`)
 - Testnet (`ChainID == 51`)
-- Devnet (`ChainID == 5551`)
+- Devnet (`ChainID == 551`)
 
 Use the matching runtime flag on the upgraded binary:
 
@@ -599,14 +599,14 @@ rewind decision before startup should proceed. The recovery mode for that
 rewind decision is selected with `--chain-config-mismatch-policy` (see
 [Chain Config Mismatch Policy](#chain-config-mismatch-policy---chain-config-mismatch-policy)).
 
-## Same-Hash Custom Chains on Built-In IDs (`50` / `51` / `5551`)
+## Same-Hash Custom Chains on Built-In IDs (`50` / `51` / `551`)
 
 The most error-prone migration path is a custom genesis that intentionally
 reuses the same block contents and built-in identity surface as:
 
 - Mainnet (`ChainID == 50`)
 - Testnet (`ChainID == 51`)
-- Devnet (`ChainID == 5551`)
+- Devnet (`ChainID == 551`)
 
 For these chains, classification now depends on more than the genesis hash
 alone.

@@ -53,6 +53,9 @@ type GenesisInput struct {
 	StakingThreshold        uint64   // per-masternode deposit in whole coins; sizes validator caps
 	RewardYield             uint64   // masternode reward yield in APY%
 	FoundationWalletAddress string   // foundation wallet address to collect 10% of all rewards
+	MaxMasternodes          int      // v2 max masternode seats
+	MaxProtectorNodes       int      // v2 max protector seats
+	MaxObserverNodes        int      // v2 max observer seats
 }
 
 func NewGenesisInput() *GenesisInput {
@@ -63,6 +66,9 @@ func NewGenesisInput() *GenesisInput {
 		StakingThreshold:        10_000_000, // 10M
 		RewardYield:             10,         // 10% APY
 		FoundationWalletAddress: common.FoundationAddrBinary.Hex(),
+		MaxMasternodes:          108,
+		MaxProtectorNodes:       0,
+		MaxObserverNodes:        0,
 	}
 }
 
@@ -198,6 +204,13 @@ func (w *wizard) makeGenesis() {
 		if input == nil {
 			genesis.Config.XDPoS.V2.CurrentConfig.CertThreshold = w.readDefaultFloat(0.667)
 		}
+		if input != nil && input.MaxMasternodes > 0 {
+			genesis.Config.XDPoS.V2.CurrentConfig.MaxMasternodes = input.MaxMasternodes
+			genesis.Config.XDPoS.MaxMasternodesV2 = input.MaxMasternodes
+			genesis.Config.XDPoS.V2.CurrentConfig.MaxProtectorNodes = input.MaxProtectorNodes
+			genesis.Config.XDPoS.V2.CurrentConfig.MaxObserverNodes = input.MaxObserverNodes
+			genesis.Config.XDPoS.V2.AllConfigs[0] = genesis.Config.XDPoS.V2.CurrentConfig
+		}
 
 		fmt.Println()
 		fmt.Println("Who own the first masternodes? (mandatory)")
@@ -286,7 +299,9 @@ func (w *wizard) makeGenesis() {
 
 		fmt.Println()
 		fmt.Println("What is foundation wallet address (collect 10% of all rewards)? (default = xdc0000000000000000000000000000000000000068)")
-		if input == nil {
+		if input != nil {
+			genesis.Config.XDPoS.FoundationWalletAddr = common.HexToAddress(input.FoundationWalletAddress)
+		} else {
 			genesis.Config.XDPoS.FoundationWalletAddr = w.readDefaultAddress(common.FoundationAddrBinary)
 		}
 

@@ -52,7 +52,7 @@ var (
 var (
 	MainnetGenesisHash = common.HexToHash("0x4a9d748bd78a8d0385b67788c2435dcdb914f98a96250b68863a1f8b7642d6b1") // XDC Mainnet genesis hash to enforce below configs on
 	TestnetGenesisHash = common.HexToHash("0xbdea512b4f12ff1135ec92c00dc047ffb93890c2ea1aa0eefe9b013d80640075") // XDC Testnet genesis hash to enforce below configs on
-	DevnetGenesisHash  = common.HexToHash("0xb8be003946a9c2688e9f1e255a5567c3d144293ccde2ffb38452a5840081b402") // XDC Devnet genesis hash to enforce below configs on
+	DevnetGenesisHash  = common.HexToHash("0x50e63112ebf55bba9115ea875eedc3f6c62b42440d23786323e2678a9848b7ac") // XDC Devnet genesis hash to enforce below configs on
 )
 
 var (
@@ -163,7 +163,7 @@ var (
 	DevnetV2Configs = map[uint64]*V2Config{
 		defaultV2SwitchRound: {
 			SwitchRound:               0,
-			MaxMasternodes:            108,
+			MaxMasternodes:            18,
 			MaxProtectorNodes:         0,
 			MaxObserverNodes:          0,
 			CertThreshold:             0.667,
@@ -180,9 +180,9 @@ var (
 		},
 		50000: {
 			SwitchRound:               50000,
-			MaxMasternodes:            108,
-			MaxProtectorNodes:         324,
-			MaxObserverNodes:          2000,
+			MaxMasternodes:            10,
+			MaxProtectorNodes:         3,
+			MaxObserverNodes:          10,
 			CertThreshold:             0.667,
 			TimeoutSyncThreshold:      3,
 			TimeoutPeriod:             10,
@@ -425,7 +425,7 @@ var (
 
 	// DevnetChainConfig contains the chain parameters to run a node on the devnet.
 	DevnetChainConfig = &ChainConfig{
-		ChainID:                     big.NewInt(5551),
+		ChainID:                     big.NewInt(551),
 		HomesteadBlock:              big.NewInt(0),
 		DAOForkBlock:                nil,
 		DAOForkSupport:              false,
@@ -470,11 +470,11 @@ var (
 		XDPoS: &XDPoSConfig{
 			Period:               2,
 			Epoch:                900,
-			Reward:               7125,
+			Reward:               1026,
 			RewardCheckpoint:     900,
 			Gap:                  450,
-			FoundationWalletAddr: common.HexToAddress("0x4f288181b1d1aa599c6d7629f1168d46d5f96338"),
-			MaxMasternodesV2:     108,
+			FoundationWalletAddr: common.HexToAddress("0xf8b10955abe83acfdae2dbd4b5d351fc5e1c3672"),
+			MaxMasternodesV2:     18,
 			V2: &V2{
 				SwitchEpoch:   devnetV2SwitchBlock / 900,
 				SwitchBlock:   big.NewInt(int64(devnetV2SwitchBlock)),

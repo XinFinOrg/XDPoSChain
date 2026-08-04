@@ -1658,7 +1658,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		cfg.Genesis = core.DefaultTestnetGenesisBlock()
 	case ctx.Bool(DevnetFlag.Name):
 		if !ctx.IsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = params.DevnetChainConfig.ChainID.Uint64() // 5551
+			cfg.NetworkId = params.DevnetChainConfig.ChainID.Uint64() // 551
 		}
 		cfg.Genesis = core.DefaultDevnetGenesisBlock()
 	case ctx.Bool(DeveloperFlag.Name):
@@ -1732,7 +1732,7 @@ func SetNetworkFlagById(ctx *cli.Context, cfg *ethconfig.Config) {
 			ctx.Set(MainnetFlag.Name, "true")
 		case params.TestnetChainConfig.ChainID.Uint64(): // 51
 			ctx.Set(TestnetFlag.Name, "true")
-		case params.DevnetChainConfig.ChainID.Uint64(): // 5551
+		case params.DevnetChainConfig.ChainID.Uint64(): // 551
 			ctx.Set(DevnetFlag.Name, "true")
 		}
 	}
