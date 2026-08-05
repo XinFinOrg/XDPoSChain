@@ -516,7 +516,15 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 					effectiveTip = msg.GasTipCap
 				}
 			}
-			st.state.AddBalance(st.evm.Context.Coinbase, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), effectiveTip), tracing.BalanceIncreaseRewardTransactionFee)
+			if st.evm.Config.NoBaseFee && msg.GasFeeCap.Sign() == 0 && msg.GasTipCap.Sign() == 0 {
+				// Skip fee payment when NoBaseFee is set and the fee fields
+				// are 0. This avoids a negative effectiveTip being applied to
+				// the coinbase when simulating calls.
+			} else {
+				fee := new(big.Int).SetUint64(st.gasUsed())
+				fee.Mul(fee, effectiveTip)
+				st.state.AddBalance(st.evm.Context.Coinbase, fee, tracing.BalanceIncreaseRewardTransactionFee)
+			}
 		}
 	}
 
