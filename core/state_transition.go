@@ -511,10 +511,7 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 		} else {
 			effectiveTip := msg.GasPrice
 			if rules.IsEIP1559 {
-				effectiveTip = new(big.Int).Sub(msg.GasFeeCap, st.evm.Context.BaseFee)
-				if effectiveTip.Cmp(msg.GasTipCap) > 0 {
-					effectiveTip = msg.GasTipCap
-				}
+				effectiveTip = new(big.Int).Sub(msg.GasPrice, st.evm.Context.BaseFee)
 			}
 			st.state.AddBalance(st.evm.Context.Coinbase, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), effectiveTip), tracing.BalanceIncreaseRewardTransactionFee)
 		}
