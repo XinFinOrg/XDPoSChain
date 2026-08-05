@@ -72,6 +72,19 @@ func NewGenesisInput() *GenesisInput {
 	}
 }
 
+func validateGenesisInput(input *GenesisInput) error {
+	if input.MaxMasternodes < 0 {
+		return fmt.Errorf("maxMasternodes must be non-negative, got %d", input.MaxMasternodes)
+	}
+	if input.MaxProtectorNodes < 0 {
+		return fmt.Errorf("maxProtectorNodes must be non-negative, got %d", input.MaxProtectorNodes)
+	}
+	if input.MaxObserverNodes < 0 {
+		return fmt.Errorf("maxObserverNodes must be non-negative, got %d", input.MaxObserverNodes)
+	}
+	return nil
+}
+
 func (w *wizard) loadGenesisInput() *GenesisInput {
 	// No input file means interactive mode: return nil so makeGenesis prompts.
 	if w.conf.inpath == "" {
@@ -90,6 +103,11 @@ func (w *wizard) loadGenesisInput() *GenesisInput {
 	decoder := yaml.NewDecoder(file)
 	if err := decoder.Decode(&input); err != nil {
 		log.Warn("Failed to decode genesis input file (expect yaml format)", "err", err)
+		os.Exit(1)
+		return nil
+	}
+	if err := validateGenesisInput(input); err != nil {
+		log.Warn("Invalid genesis input file", "err", err)
 		os.Exit(1)
 		return nil
 	}
@@ -299,9 +317,7 @@ func (w *wizard) makeGenesis() {
 
 		fmt.Println()
 		fmt.Println("What is foundation wallet address (collect 10% of all rewards)? (default = xdc0000000000000000000000000000000000000068)")
-		if input != nil {
-			genesis.Config.XDPoS.FoundationWalletAddr = common.HexToAddress(input.FoundationWalletAddress)
-		} else {
+		if input == nil {
 			genesis.Config.XDPoS.FoundationWalletAddr = w.readDefaultAddress(common.FoundationAddrBinary)
 		}
 
