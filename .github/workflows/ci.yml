@@ -140,22 +140,18 @@ jobs:
           export git_hash
           echo "Total masternode deployments: $(echo "$masternodes" | wc -l)"
 
-          # echo "$masternodes" | xargs -r -P 32 -I {} bash -c '
-          #   name="$1"
-          #   # # Skip masternode1 through masternode25, update the rest.
-          #   # if [[ $name =~ ^masternode[0-9] ]]; then
-          #   #   num=${name#masternode}
-          #   #   num=${num%%-*}
-          #   #   if [[ $num =~ ^[0-9]+$ ]] && (( num >= 1 && num <= 25 )); then
-          #   #     echo "Skipping deployment: $name"
-          #   #     exit 0
-          #   #   fi
-          #   # fi
-          #   echo "Updating deployment: $name"
-          #   kubectl set image "deployment/$name" "$name=xinfinorg/devnet:dev-upgrade-${git_hash}" || true
-          # ' _ {}
-
-          kubectl set image "deployment/masternode25" "masternode25=xinfinorg/devnet:v2.8-${git_hash}"
+          echo "$masternodes" | xargs -r -P 32 -I {} bash -c '
+            name="$1"
+            # Only update odd numbered masternodes, skip the even ones.
+            num=${name#masternode}
+            num=${num%%-*}
+            if [[ ! $num =~ ^[0-9]+$ ]] || (( 10#$num % 2 == 0 )); then
+              echo "Skipping deployment: $name"
+              exit 0
+            fi
+            echo "Updating deployment: $name"
+            kubectl set image "deployment/$name" "$name=xinfinorg/devnet:v2.8-${git_hash}" || true
+          ' _ {}
 
   devnet_send_notification:
     runs-on: ubuntu-latest
