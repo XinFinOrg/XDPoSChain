@@ -53,9 +53,6 @@ type GenesisInput struct {
 	StakingThreshold        uint64   // per-masternode deposit in whole coins; sizes validator caps
 	RewardYield             uint64   // masternode reward yield in APY%
 	FoundationWalletAddress string   // foundation wallet address to collect 10% of all rewards
-	MaxMasternodes          int      // v2 max masternode seats
-	MaxProtectorNodes       int      // v2 max protector seats
-	MaxObserverNodes        int      // v2 max observer seats
 }
 
 func NewGenesisInput() *GenesisInput {
@@ -66,23 +63,7 @@ func NewGenesisInput() *GenesisInput {
 		StakingThreshold:        10_000_000, // 10M
 		RewardYield:             10,         // 10% APY
 		FoundationWalletAddress: common.FoundationAddrBinary.Hex(),
-		MaxMasternodes:          108,
-		MaxProtectorNodes:       0,
-		MaxObserverNodes:        0,
 	}
-}
-
-func validateGenesisInput(input *GenesisInput) error {
-	if input.MaxMasternodes < 0 {
-		return fmt.Errorf("maxMasternodes must be non-negative, got %d", input.MaxMasternodes)
-	}
-	if input.MaxProtectorNodes < 0 {
-		return fmt.Errorf("maxProtectorNodes must be non-negative, got %d", input.MaxProtectorNodes)
-	}
-	if input.MaxObserverNodes < 0 {
-		return fmt.Errorf("maxObserverNodes must be non-negative, got %d", input.MaxObserverNodes)
-	}
-	return nil
 }
 
 func (w *wizard) loadGenesisInput() *GenesisInput {
@@ -103,11 +84,6 @@ func (w *wizard) loadGenesisInput() *GenesisInput {
 	decoder := yaml.NewDecoder(file)
 	if err := decoder.Decode(&input); err != nil {
 		log.Warn("Failed to decode genesis input file (expect yaml format)", "err", err)
-		os.Exit(1)
-		return nil
-	}
-	if err := validateGenesisInput(input); err != nil {
-		log.Warn("Invalid genesis input file", "err", err)
 		os.Exit(1)
 		return nil
 	}
@@ -221,13 +197,6 @@ func (w *wizard) makeGenesis() {
 		fmt.Printf("Proportion of total masternodes v2 vote collection to generate a QC (float value), should be two thirds of masternodes? (default = %f)\n", 0.667)
 		if input == nil {
 			genesis.Config.XDPoS.V2.CurrentConfig.CertThreshold = w.readDefaultFloat(0.667)
-		}
-		if input != nil && input.MaxMasternodes > 0 {
-			genesis.Config.XDPoS.V2.CurrentConfig.MaxMasternodes = input.MaxMasternodes
-			genesis.Config.XDPoS.MaxMasternodesV2 = input.MaxMasternodes
-			genesis.Config.XDPoS.V2.CurrentConfig.MaxProtectorNodes = input.MaxProtectorNodes
-			genesis.Config.XDPoS.V2.CurrentConfig.MaxObserverNodes = input.MaxObserverNodes
-			genesis.Config.XDPoS.V2.AllConfigs[0] = genesis.Config.XDPoS.V2.CurrentConfig
 		}
 
 		fmt.Println()

@@ -178,8 +178,8 @@ var (
 			LimitPenaltyEpoch:         0,
 			MinimumSigningTx:          0,
 		},
-		50000: {
-			SwitchRound:               50000,
+		45000: {
+			SwitchRound:               45000,
 			MaxMasternodes:            10,
 			MaxProtectorNodes:         3,
 			MaxObserverNodes:          10,
