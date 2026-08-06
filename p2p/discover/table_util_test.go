@@ -17,12 +17,18 @@
 package discover
 
 import (
+	"bytes"
+	"crypto/ecdsa"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
+	"sort"
 	"sync"
 
+	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enr"
 )
@@ -37,7 +43,8 @@ func init() {
 
 func newTestTable(t transport) (*Table, *enode.DB) {
 	db, _ := enode.OpenDB("")
-	tab, _ := newTable(t, db, nil)
+	tab, _ := newTable(t, db, nil, log.Root())
+	go tab.loop()
 	return tab, db
 }
 
@@ -46,6 +53,23 @@ func nodeAtDistance(base enode.ID, ld int, ip net.IP) *node {
 	var r enr.Record
 	r.Set(enr.IP(ip))
 	return wrapNode(enode.SignNull(&r, idAtDistance(base, ld)))
+}
+
+// nodesAtDistance creates n nodes for which enode.LogDist(base, node.ID()) == ld.
+func nodesAtDistance(base enode.ID, ld int, n int) []*enode.Node {
+	results := make([]*enode.Node, n)
+	for i := range results {
+		results[i] = unwrapNode(nodeAtDistance(base, ld, intIP(i)))
+	}
+	return results
+}
+
+func nodesToRecords(nodes []*enode.Node) []*enr.Record {
+	records := make([]*enr.Record, len(nodes))
+	for i := range nodes {
+		records[i] = nodes[i].Record()
+	}
+	return records
 }
 
 // idAtDistance returns a random hash such that enode.LogDist(a, b) == n
@@ -82,26 +106,18 @@ func fillBucket(tab *Table, n *node) (last *node) {
 	return b.entries[bucketSize-1]
 }
 
-// fillTable adds nodes the table to the end of their corresponding bucket
-// if the bucket is not full. The caller must not hold tab.mutex.
+// fillTable adds nodes to the table using addSeenNode.
+// The caller must not hold tab.mutex.
 func fillTable(tab *Table, nodes []*node) {
-	tab.mutex.Lock()
-	defer tab.mutex.Unlock()
-
 	for _, n := range nodes {
-		if n.ID() == tab.self().ID() {
-			continue // don't add self
-		}
-		b := tab.bucket(n.ID())
-		if len(b.entries) < bucketSize {
-			tab.bumpOrAdd(b, n)
-		}
+		tab.addSeenNode(n)
 	}
 }
 
 type pingRecorder struct {
 	mu           sync.Mutex
 	dead, pinged map[enode.ID]bool
+	records      map[enode.ID]*enode.Node
 	n            *enode.Node
 }
 
@@ -111,33 +127,51 @@ func newPingRecorder() *pingRecorder {
 	n := enode.SignNull(&r, enode.ID{})
 
 	return &pingRecorder{
-		dead:   make(map[enode.ID]bool),
-		pinged: make(map[enode.ID]bool),
-		n:      n,
+		dead:    make(map[enode.ID]bool),
+		pinged:  make(map[enode.ID]bool),
+		records: make(map[enode.ID]*enode.Node),
+		n:       n,
 	}
 }
 
-func (t *pingRecorder) self() *enode.Node {
-	return nullNode
+// setRecord updates a node record. Future calls to ping and
+// requestENR will return this record.
+func (t *pingRecorder) updateRecord(n *enode.Node) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.records[n.ID()] = n
 }
 
-func (t *pingRecorder) findnode(toid enode.ID, toaddr *net.UDPAddr, target encPubkey) ([]*node, error) {
-	return nil, nil
-}
+// Stubs to satisfy the transport interface.
+func (t *pingRecorder) Self() *enode.Node           { return nullNode }
+func (t *pingRecorder) lookupSelf() []*enode.Node   { return nil }
+func (t *pingRecorder) lookupRandom() []*enode.Node { return nil }
 
-func (t *pingRecorder) ping(toid enode.ID, toaddr *net.UDPAddr) error {
+// ping simulates a ping request.
+func (t *pingRecorder) ping(n *enode.Node) (seq uint64, err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	t.pinged[toid] = true
-	if t.dead[toid] {
-		return errTimeout
-	} else {
-		return nil
+	t.pinged[n.ID()] = true
+	if t.dead[n.ID()] {
+		return 0, errTimeout
 	}
+	if t.records[n.ID()] != nil {
+		seq = t.records[n.ID()].Seq()
+	}
+	return seq, nil
 }
 
-func (t *pingRecorder) close() {}
+// requestENR simulates an ENR request.
+func (t *pingRecorder) RequestENR(n *enode.Node) (*enode.Node, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.dead[n.ID()] || t.records[n.ID()] == nil {
+		return nil, errTimeout
+	}
+	return t.records[n.ID()], nil
+}
 
 func hasDuplicates(slice []*node) bool {
 	seen := make(map[enode.ID]bool)
@@ -153,26 +187,61 @@ func hasDuplicates(slice []*node) bool {
 	return false
 }
 
-func contains(ns []*node, id enode.ID) bool {
-	for _, n := range ns {
-		if n.ID() == id {
-			return true
+// checkNodesEqual checks whether the two given node lists contain the same nodes.
+func checkNodesEqual(got, want []*enode.Node) error {
+	if len(got) != len(want) {
+		goto NotEqual
+	}
+	for i := range got {
+		if !nodeEqual(got[i], want[i]) {
+			goto NotEqual
 		}
 	}
-	return false
+	return nil
+
+NotEqual:
+	output := new(bytes.Buffer)
+	fmt.Fprintf(output, "got %d nodes:\n", len(got))
+	for _, n := range got {
+		fmt.Fprintf(output, "  %v %v\n", n.ID(), n)
+	}
+	fmt.Fprintf(output, "want %d:\n", len(want))
+	for _, n := range want {
+		fmt.Fprintf(output, "  %v %v\n", n.ID(), n)
+	}
+	return errors.New(output.String())
+}
+
+func nodeEqual(n1 *enode.Node, n2 *enode.Node) bool {
+	return n1.ID() == n2.ID() && n1.IP().Equal(n2.IP())
+}
+
+func sortByID(nodes []*enode.Node) {
+	sort.Slice(nodes, func(i, j int) bool {
+		return string(nodes[i].ID().Bytes()) < string(nodes[j].ID().Bytes())
+	})
 }
 
 func sortedByDistanceTo(distbase enode.ID, slice []*node) bool {
-	var last enode.ID
-	for i, e := range slice {
-		if i > 0 && enode.DistCmp(distbase, e.ID(), last) < 0 {
-			return false
-		}
-		last = e.ID()
-	}
-	return true
+	return sort.SliceIsSorted(slice, func(i, j int) bool {
+		return enode.DistCmp(distbase, slice[i].ID(), slice[j].ID()) < 0
+	})
 }
 
+// hexEncPrivkey decodes h as a private key.
+func hexEncPrivkey(h string) *ecdsa.PrivateKey {
+	b, err := hex.DecodeString(h)
+	if err != nil {
+		panic(err)
+	}
+	key, err := crypto.ToECDSA(b)
+	if err != nil {
+		panic(err)
+	}
+	return key
+}
+
+// hexEncPubkey decodes h as a public key.
 func hexEncPubkey(h string) (ret encPubkey) {
 	b, err := hex.DecodeString(h)
 	if err != nil {

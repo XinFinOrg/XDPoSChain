@@ -393,3 +393,28 @@ func TestTooFarSyncInfo(t *testing.T) {
 		t.Fatalf("count mismatch: have %v on verify, have %v on handler, %v on broadcast, want %v", verifyCounter, handlerCounter, broadcastCounter, targetSyncInfo)
 	}
 }
+
+func TestVoteReturnsAfterBftStop(t *testing.T) {
+	tester := newTester()
+	tester.bfter.consensus.verifyVote = func(chain consensus.ChainReader, vote *types.Vote) (bool, error) {
+		return true, nil
+	}
+	tester.bfter.consensus.voteHandler = func(chain consensus.ChainReader, vote *types.Vote) error {
+		return nil
+	}
+
+	tester.bfter.Stop()
+
+	vote := types.Vote{ProposedBlockInfo: &types.BlockInfo{Number: big.NewInt(1350)}}
+	done := make(chan struct{})
+	go func() {
+		_ = tester.bfter.Vote(peerID, &vote)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("Vote blocks after bft loop is stopped")
+	}
+}

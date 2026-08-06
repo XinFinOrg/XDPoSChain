@@ -17,9 +17,42 @@
 package downloader
 
 import (
+	"fmt"
 	"sort"
 	"testing"
+
+	"github.com/XinFinOrg/XDPoSChain/log"
 )
+
+// TestIdlePeersProtocolVersions verifies that peers running every supported
+// protocol version (eth63, xdc100, xdc164) are eligible for concurrent
+// downloads. A regression here silently disables skeleton filling and body,
+// receipt and state fetches, stalling any node that falls behind.
+func TestIdlePeersProtocolVersions(t *testing.T) {
+	ps := newPeerSet()
+	for i, version := range []int{63, 100, 164} {
+		id := fmt.Sprintf("peer-%d", i)
+		if err := ps.Register(newPeerConnection(id, version, nil, log.New("id", id))); err != nil {
+			t.Fatalf("failed to register version %d peer: %v", version, err)
+		}
+	}
+	tests := []struct {
+		name  string
+		peers func() ([]*peerConnection, int)
+		total int
+	}{
+		{"HeaderIdlePeers", ps.HeaderIdlePeers, 3},
+		{"BodyIdlePeers", ps.BodyIdlePeers, 3},
+		{"ReceiptIdlePeers", ps.ReceiptIdlePeers, 3},
+		{"NodeDataIdlePeers", ps.NodeDataIdlePeers, 3},
+	}
+	for _, tt := range tests {
+		idle, total := tt.peers()
+		if len(idle) != tt.total || total != tt.total {
+			t.Errorf("%s: got %d idle / %d total, want %d / %d", tt.name, len(idle), total, tt.total, tt.total)
+		}
+	}
+}
 
 func TestPeerThroughputSorting(t *testing.T) {
 	a := &peerConnection{

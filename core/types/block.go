@@ -153,6 +153,15 @@ func (h *Header) HashNoValidator() common.Hash {
 
 var headerSize = common.StorageSize(reflect.TypeOf(Header{}).Size())
 
+const maxHeaderByteFieldSize = 20 * 1024
+
+func checkHeaderByteFieldSize(name string, size int) error {
+	if size <= maxHeaderByteFieldSize {
+		return nil
+	}
+	return fmt.Errorf("too large block %s: size %d exceeds limit %d", name, size, maxHeaderByteFieldSize)
+}
+
 // Size returns the approximate memory used by all internal contents. It is used
 // to approximate and limit the memory consumption of various caches.
 func (h *Header) Size() common.StorageSize {
@@ -161,6 +170,53 @@ func (h *Header) Size() common.StorageSize {
 		baseFeeBits = h.BaseFee.BitLen()
 	}
 	return headerSize + common.StorageSize(len(h.Extra)+len(h.Validators)+len(h.Validator)+len(h.Penalties)+(h.Difficulty.BitLen()+h.Number.BitLen()+baseFeeBits)/8)
+}
+
+// SanityCheck checks a few basic things -- these checks are way beyond what
+// any 'sane' production values should hold, and can mainly be used to prevent
+// that the unbounded fields are stuffed with junk data to add processing
+// overhead
+func (h *Header) SanityCheck() error {
+	if h.Number != nil && !h.Number.IsUint64() {
+		return fmt.Errorf("too large block number: bitlen %d", h.Number.BitLen())
+	}
+	if h.Difficulty != nil {
+		if diffLen := h.Difficulty.BitLen(); diffLen > 80 {
+			return fmt.Errorf("too large block difficulty: bitlen %d", diffLen)
+		}
+	}
+	for _, field := range []struct {
+		name string
+		size int
+	}{
+		{name: "extradata", size: len(h.Extra)},
+		{name: "validators", size: len(h.Validators)},
+		{name: "validator", size: len(h.Validator)},
+		{name: "penalties", size: len(h.Penalties)},
+	} {
+		if err := checkHeaderByteFieldSize(field.name, field.size); err != nil {
+			return err
+		}
+	}
+	if h.BaseFee != nil {
+		if bfLen := h.BaseFee.BitLen(); bfLen > 256 {
+			return fmt.Errorf("too large base fee: bitlen %d", bfLen)
+		}
+	}
+	return nil
+}
+
+// SanityCheckHeaders verifies that a list of headers contains only reasonable values.
+func SanityCheckHeaders(headers []*Header) error {
+	for index, header := range headers {
+		if header == nil {
+			return fmt.Errorf("nil block header at index %d", index)
+		}
+		if err := header.SanityCheck(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // EmptyBody returns true if there is no additional 'body' to complete the header
@@ -423,6 +479,15 @@ func (b *Block) Size() uint64 {
 	rlp.Encode(&c, b)
 	b.size.Store(uint64(c))
 	return uint64(c)
+}
+
+// SanityCheck can be used to prevent that unbounded fields are
+// stuffed with junk data to add processing overhead
+func (b *Block) SanityCheck() error {
+	if err := b.header.SanityCheck(); err != nil {
+		return err
+	}
+	return SanityCheckHeaders(b.uncles)
 }
 
 type writeCounter uint64

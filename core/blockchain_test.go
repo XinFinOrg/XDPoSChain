@@ -229,7 +229,7 @@ func TestNewBlockChainReadOnlyFailsGenesisStateRecovery(t *testing.T) {
 
 	rawdb.DeleteLegacyTrieNode(db, genesisBlock.Root())
 
-	chain, err := NewBlockChainReadOnlyResolved(db, nil, nil, ethash.NewFaker(), vm.Config{}, genesis.Config, genesisBlock.Hash(), nil)
+	chain, err := NewBlockChainReadOnlyResolved(db, nil, nil, ethash.NewFaker(), vm.Config{}, genesis.Config, genesisBlock.Hash(), nil, DefaultChainConfigMismatchPolicy)
 	if err == nil {
 		chain.Stop()
 		t.Fatal("expected readonly open to fail when genesis state restoration would be required")
@@ -283,7 +283,7 @@ func TestNewBlockChainRecoversMissingCustomGenesisState(t *testing.T) {
 		t.Fatal("expected genesis state to be missing before reopen")
 	}
 
-	chain, err := NewBlockChainResolved(db, nil, genesis, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr)
+	chain, err := NewBlockChainResolved(db, nil, genesis, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr, MismatchRewindAndUpdate)
 	if err != nil {
 		t.Fatalf("failed to recover missing custom genesis state: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestNewBlockChainRecoversMissingSparseGenesisState(t *testing.T) {
 		t.Fatal("expected genesis state to be missing before reopen")
 	}
 
-	chain, err := NewBlockChainResolved(db, nil, genesis, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr)
+	chain, err := NewBlockChainResolved(db, nil, genesis, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr, DefaultChainConfigMismatchPolicy)
 	if err != nil {
 		t.Fatalf("failed to recover missing sparse genesis state: %v", err)
 	}
@@ -394,7 +394,7 @@ func TestNewBlockChainReadOnlyFailsCustomGenesisStateRecovery(t *testing.T) {
 		t.Fatalf("failed to delete persisted genesis alloc: %v", err)
 	}
 
-	chain, err := NewBlockChainReadOnlyResolved(db, nil, genesis, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr)
+	chain, err := NewBlockChainReadOnlyResolved(db, nil, genesis, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr, DefaultChainConfigMismatchPolicy)
 	if err == nil {
 		chain.Stop()
 		t.Fatal("expected readonly open to fail when custom genesis recovery would be required")
@@ -448,7 +448,7 @@ func TestNewBlockChainLiveTracerDoesNotRecoverCustomGenesisAlloc(t *testing.T) {
 		OnGenesisBlock: func(block *types.Block, alloc types.GenesisAlloc) {
 			called = true
 		},
-	}}, config, ghash, compatErr)
+	}}, config, ghash, compatErr, DefaultChainConfigMismatchPolicy)
 	if err == nil {
 		chain.Stop()
 		t.Fatal("expected live tracer open to fail when custom genesis alloc would require recovery")
@@ -573,6 +573,59 @@ func TestNewBlockChainRepairsMissingHeadStateConsistently(t *testing.T) {
 	}
 }
 
+// TestNewBlockChainRepairsMissingHeadStateRespectsRollbackTarget ensures
+// startup repair does not rewind below the user-requested rollback target.
+func TestNewBlockChainRepairsMissingHeadStateRespectsRollbackTarget(t *testing.T) {
+	var (
+		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		address = crypto.PubkeyToAddress(key.PublicKey)
+		funds   = big.NewInt(1000000000000000)
+		gspec   = &Genesis{
+			Alloc:   types.GenesisAlloc{address: {Balance: funds}},
+			BaseFee: big.NewInt(params.InitialBaseFee),
+			Config:  params.TestChainConfig,
+		}
+	)
+	db := rawdb.NewMemoryDatabase()
+	chain, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+
+	_, blocks, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 3, nil)
+	if n, err := chain.InsertChain(blocks); err != nil {
+		chain.Stop()
+		t.Fatalf("failed to insert block %d: %v", n, err)
+	}
+	head := blocks[len(blocks)-1]
+	target := blocks[len(blocks)-2]
+	chain.Stop()
+
+	rawdb.DeleteLegacyTrieNode(db, head.Root())
+
+	prevRollback := common.RollbackNumber
+	common.RollbackNumber = target.NumberU64()
+	t.Cleanup(func() {
+		common.RollbackNumber = prevRollback
+	})
+
+	reopened, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to reopen repaired chain: %v", err)
+	}
+	defer reopened.Stop()
+
+	if got := reopened.CurrentBlock().Hash(); got != target.Hash() {
+		t.Fatalf("unexpected repaired current block: have %s want %s", got, target.Hash())
+	}
+	if got := reopened.CurrentSnapBlock().Hash(); got != target.Hash() {
+		t.Fatalf("unexpected repaired current snap block: have %s want %s", got, target.Hash())
+	}
+	if got := reopened.CurrentHeader().Hash(); got != target.Hash() {
+		t.Fatalf("unexpected repaired current header: have %s want %s", got, target.Hash())
+	}
+}
+
 // TestNewBlockChainReadOnlyFailsHeadStateRepair tests readonly options-based open fails when head state repair would mutate the database.
 func TestNewBlockChainReadOnlyFailsHeadStateRepair(t *testing.T) {
 	var (
@@ -601,7 +654,7 @@ func TestNewBlockChainReadOnlyFailsHeadStateRepair(t *testing.T) {
 
 	rawdb.DeleteLegacyTrieNode(db, head.Root())
 
-	reopened, err := NewBlockChainReadOnlyResolved(db, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil)
+	reopened, err := NewBlockChainReadOnlyResolved(db, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil, DefaultChainConfigMismatchPolicy)
 	if err == nil {
 		reopened.Stop()
 		t.Fatal("expected readonly open to fail when head state repair would be required")
@@ -647,7 +700,7 @@ func TestNewBlockChainExReadOnlyResolvedHonorsReadOnly(t *testing.T) {
 
 	rawdb.DeleteLegacyTrieNode(db, head.Root())
 
-	reopened, err := NewBlockChainExReadOnlyResolved(db, nil, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil)
+	reopened, err := NewBlockChainExReadOnlyResolved(db, nil, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil, DefaultChainConfigMismatchPolicy)
 	if err == nil {
 		reopened.Stop()
 		t.Fatal("expected readonly open to fail when head state repair would be required")
@@ -745,7 +798,7 @@ func TestNewBlockChainRewindsIncompatibleHead(t *testing.T) {
 		t.Fatal("expected compatibility error")
 	}
 
-	reopened, err := NewBlockChainResolved(db, nil, nil, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr)
+	reopened, err := NewBlockChainResolved(db, nil, nil, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr, MismatchRewindAndUpdate)
 	if err != nil {
 		t.Fatalf("failed to reopen rewound chain: %v", err)
 	}
@@ -841,7 +894,7 @@ func TestNewBlockChainFailsReadonlyConfigRewind(t *testing.T) {
 		t.Fatal("expected compatibility error")
 	}
 
-	resolvedCfg, err := newResolvedBlockChainOpenConfig(true, nil, config, ghash, compatErr)
+	resolvedCfg, err := newResolvedBlockChainOpenConfig(true, nil, config, ghash, compatErr, MismatchRewindAndUpdate)
 	if err != nil {
 		t.Fatalf("failed to build readonly startup config: %v", err)
 	}
@@ -876,7 +929,7 @@ func TestNewBlockChainReadOnlyFailsBadHashRewind(t *testing.T) {
 	defer func() { delete(BadHashes, blocks[3].Hash()) }()
 	blockchain.Stop()
 
-	reopened, err := NewBlockChainReadOnlyResolved(genDb, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil)
+	reopened, err := NewBlockChainReadOnlyResolved(genDb, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil, DefaultChainConfigMismatchPolicy)
 	if err == nil {
 		reopened.Stop()
 		t.Fatal("expected readonly open to fail when bad-hash rewind would be required")
@@ -907,7 +960,7 @@ func TestNewBlockChainRewindsBadHashOnWritableOpen(t *testing.T) {
 	defer func() { delete(BadHashes, blocks[3].Hash()) }()
 	blockchain.Stop()
 
-	reopened, err := NewBlockChainResolved(genDb, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil)
+	reopened, err := NewBlockChainResolved(genDb, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil, DefaultChainConfigMismatchPolicy)
 	if err != nil {
 		t.Fatalf("failed to reopen rewound chain: %v", err)
 	}
@@ -1007,9 +1060,41 @@ func TestNewBlockChainReadOnlyDoesNotRepairMissingChainConfig(t *testing.T) {
 // TestNewBlockChainResolvedRejectsMissingGenesisHash tests the
 // resolved-config constructor rejects an empty genesis hash.
 func TestNewBlockChainResolvedRejectsMissingGenesisHash(t *testing.T) {
-	_, err := NewBlockChainResolved(rawdb.NewMemoryDatabase(), nil, nil, ethash.NewFaker(), vm.Config{}, params.AllEthashProtocolChanges, common.Hash{}, nil)
+	_, err := NewBlockChainResolved(rawdb.NewMemoryDatabase(), nil, nil, ethash.NewFaker(), vm.Config{}, params.AllEthashProtocolChanges, common.Hash{}, nil, DefaultChainConfigMismatchPolicy)
 	if !errors.Is(err, errBlockChainOpenMissingGenesisHash) {
 		t.Fatalf("unexpected error for missing genesis hash: %v", err)
+	}
+}
+
+func TestNewBlockChainResolvedRejectsInvalidCompatPolicy(t *testing.T) {
+	t.Parallel()
+
+	db := rawdb.NewMemoryDatabase()
+	genesis := DefaultGenesisBlock()
+	if _, _, _, err := SetupGenesisBlock(db, genesis); err != nil {
+		t.Fatalf("failed to setup genesis: %v", err)
+	}
+
+	chain, err := NewBlockChainResolved(
+		db,
+		nil,
+		genesis,
+		ethash.NewFaker(),
+		vm.Config{},
+		genesis.Config,
+		genesis.ToBlock().Hash(),
+		nil,
+		ChainConfigMismatchPolicy("not-a-policy"),
+	)
+	if chain != nil {
+		chain.Stop()
+		t.Fatal("expected blockchain open to fail for invalid compat policy")
+	}
+	if err == nil {
+		t.Fatal("expected error for invalid compat policy")
+	}
+	if !strings.Contains(err.Error(), "invalid chain config mismatch policy") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
@@ -34,6 +35,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/node"
+	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/urfave/cli/v2"
 )
@@ -195,10 +197,11 @@ func TestMakeChainWriteModePassesCompatRewindToCore(t *testing.T) {
 	}
 
 	ctx := newMakeChainTestCLIContext(t, map[string]string{
-		TestnetFlag.Name: "true",
-		GCModeFlag.Name:  "full",
+		TestnetFlag.Name:                   "true",
+		GCModeFlag.Name:                    "full",
+		ChainConfigMismatchPolicyFlag.Name: core.MismatchRewindAndUpdate.String(),
 	})
-	chain, reopenedDb := MakeChain(ctx, stack, false)
+	chain, reopenedDb := MakeChain(ctx, stack, false, "")
 	defer chain.Stop()
 	defer reopenedDb.Close()
 
@@ -269,7 +272,7 @@ func TestMakeChainReadOnlyModeSurfacesCompatRewind(t *testing.T) {
 		t.Fatal("expected compatibility error")
 	}
 
-	chain, err := core.NewBlockChainReadOnlyResolved(readonlyDb, nil, genesis, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr)
+	chain, err := core.NewBlockChainReadOnlyResolved(readonlyDb, nil, genesis, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr, core.MismatchRewindAndUpdate)
 	if chain != nil {
 		chain.Stop()
 		t.Fatal("expected readonly blockchain open to fail")
@@ -317,8 +320,9 @@ func TestMakeChainReadOnlyModeFormatsCompatRewindForOperators(t *testing.T) {
 	}
 
 	ctx := newMakeChainTestCLIContext(t, map[string]string{
-		TestnetFlag.Name: "true",
-		GCModeFlag.Name:  "full",
+		TestnetFlag.Name:                   "true",
+		GCModeFlag.Name:                    "full",
+		ChainConfigMismatchPolicyFlag.Name: core.MismatchRewindAndUpdate.String(),
 	})
 
 	const sentinel = "fatal called"
@@ -334,13 +338,13 @@ func TestMakeChainReadOnlyModeFormatsCompatRewindForOperators(t *testing.T) {
 		if recovered := recover(); recovered != sentinel {
 			t.Fatalf("expected sentinel panic, have %v", recovered)
 		}
-		want := "Can't open blockchain in readonly mode: the local chain configuration requires rewind. Use the correct --networkid/--datadir combination, or reopen the database in writable mode so the chain can rewind, then retry."
+		want := "Can't open blockchain in readonly mode: the selected chain-config mismatch policy requires rewind. Reopen in writable mode, or use --chain-config-mismatch-policy=ignore-mismatch to avoid rewind in readonly mode."
 		if got != want {
 			t.Fatalf("unexpected fatal message: have %q want %q", got, want)
 		}
 	}()
 
-	MakeChain(ctx, stack, true)
+	MakeChain(ctx, stack, true, "")
 	t.Fatal("expected MakeChain to terminate via fatal hook")
 }
 
@@ -371,7 +375,17 @@ func TestFormatBlockChainOpenErrorReadOnly(t *testing.T) {
 		{
 			name: "config rewind",
 			err:  core.ErrReadOnlyConfigRewind,
-			want: "Can't open blockchain in readonly mode: the local chain configuration requires rewind. Use the correct --networkid/--datadir combination, or reopen the database in writable mode so the chain can rewind, then retry.",
+			want: "Can't open blockchain in readonly mode: the selected chain-config mismatch policy requires rewind. Reopen in writable mode, or use --chain-config-mismatch-policy=ignore-mismatch to avoid rewind in readonly mode.",
+		},
+		{
+			name: "config update",
+			err:  core.ErrReadOnlyConfigUpdate,
+			want: "Can't open blockchain in readonly mode: the selected chain-config mismatch policy requires writing chain config. Reopen in writable mode, or use --chain-config-mismatch-policy=ignore-mismatch in readonly mode.",
+		},
+		{
+			name: "config exit",
+			err:  core.ErrConfigMismatchPolicyExit,
+			want: "Can't open blockchain: " + ChainConfigMismatchPolicyExitHint,
 		},
 	}
 
@@ -394,12 +408,112 @@ func TestFormatBlockChainOpenErrorReadOnly(t *testing.T) {
 	}
 }
 
+func TestResolveChainConfigMismatchPolicyHonorsConfiguredWhenFlagNotSet(t *testing.T) {
+	t.Parallel()
+
+	set := flag.NewFlagSet("resolve-policy-test", flag.ContinueOnError)
+	set.String(ChainConfigMismatchPolicyFlag.Name, core.DefaultChainConfigMismatchPolicy.String(), "")
+	ctx := cli.NewContext(cli.NewApp(), set, nil)
+
+	got, err := resolveChainConfigMismatchPolicy(ctx, core.MismatchIgnoreMismatch.String())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != core.MismatchIgnoreMismatch.String() {
+		t.Fatalf("unexpected policy: have %q want %q", got, core.MismatchIgnoreMismatch.String())
+	}
+}
+
+func TestResolveChainConfigMismatchPolicyFlagOverridesConfigured(t *testing.T) {
+	t.Parallel()
+
+	set := flag.NewFlagSet("resolve-policy-override-test", flag.ContinueOnError)
+	set.String(ChainConfigMismatchPolicyFlag.Name, core.DefaultChainConfigMismatchPolicy.String(), "")
+	if err := set.Set(ChainConfigMismatchPolicyFlag.Name, core.MismatchUpdateConfigOnly.String()); err != nil {
+		t.Fatalf("failed to set policy flag: %v", err)
+	}
+	ctx := cli.NewContext(cli.NewApp(), set, nil)
+
+	got, err := resolveChainConfigMismatchPolicy(ctx, core.MismatchIgnoreMismatch.String())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != core.MismatchUpdateConfigOnly.String() {
+		t.Fatalf("unexpected policy: have %q want %q", got, core.MismatchUpdateConfigOnly.String())
+	}
+}
+
+func TestResolveChainConfigMismatchPolicyRejectsInvalidConfiguredValue(t *testing.T) {
+	t.Parallel()
+
+	set := flag.NewFlagSet("resolve-policy-invalid-test", flag.ContinueOnError)
+	set.String(ChainConfigMismatchPolicyFlag.Name, core.DefaultChainConfigMismatchPolicy.String(), "")
+	ctx := cli.NewContext(cli.NewApp(), set, nil)
+
+	_, err := resolveChainConfigMismatchPolicy(ctx, "not-a-policy")
+	if err == nil {
+		t.Fatal("expected error for invalid configured policy")
+	}
+	const want = "invalid ChainConfigMismatchPolicy in config"
+	if !strings.HasPrefix(err.Error(), want) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSetBootstrapNodesV5UsesStrictEmptyDefaults(t *testing.T) {
+	tests := []struct {
+		name  string
+		flags map[string]string
+	}{
+		{
+			name:  "mainnet defaults",
+			flags: map[string]string{},
+		},
+		{
+			name: "testnet defaults",
+			flags: map[string]string{
+				TestnetFlag.Name: "true",
+			},
+		},
+		{
+			name: "devnet defaults",
+			flags: map[string]string{
+				DevnetFlag.Name: "true",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			set := flag.NewFlagSet("set-bootstrapnodesv5-test", flag.ContinueOnError)
+			set.Bool(TestnetFlag.Name, false, "")
+			set.Bool(DevnetFlag.Name, false, "")
+			set.String(BootnodesFlag.Name, "", "")
+			set.String(LegacyBootnodesV5Flag.Name, "", "")
+			for name, value := range tt.flags {
+				if err := set.Set(name, value); err != nil {
+					t.Fatalf("failed to set flag %s: %v", name, err)
+				}
+			}
+
+			ctx := cli.NewContext(cli.NewApp(), set, nil)
+			cfg := new(p2p.Config)
+			setBootstrapNodesV5(ctx, cfg)
+
+			if len(cfg.BootstrapNodesV5) != 0 {
+				t.Fatalf("expected empty v5 defaults, got %d entries", len(cfg.BootstrapNodesV5))
+			}
+		})
+	}
+}
+
 // newMakeChainTestCLIContext builds a minimal CLI context for MakeChain tests.
 func newMakeChainTestCLIContext(t *testing.T, values map[string]string) *cli.Context {
 	t.Helper()
 	set := flag.NewFlagSet("make-chain-test", flag.ContinueOnError)
 	set.Bool(TestnetFlag.Name, false, "")
 	set.Bool(AllowBuiltInConfigOverrideFlag.Name, false, "")
+	set.String(ChainConfigMismatchPolicyFlag.Name, core.DefaultChainConfigMismatchPolicy.String(), "")
 	set.String(GCModeFlag.Name, "full", "")
 	for name, value := range values {
 		if err := set.Set(name, value); err != nil {

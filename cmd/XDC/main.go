@@ -63,8 +63,8 @@ var (
 		utils.PeersAllowlistFlag,
 		utils.PeersDenylistFlag,
 		utils.BootnodesFlag,
-		utils.BootnodesV4Flag,
-		utils.BootnodesV5Flag,
+		utils.LegacyBootnodesV4Flag,
+		utils.LegacyBootnodesV5Flag,
 		utils.KeyStoreDirFlag,
 		utils.NoUSBFlag, // deprecated
 		utils.USBFlag,
@@ -122,6 +122,7 @@ var (
 		utils.VMTraceJsonConfigFlag,
 		utils.NetworkIdFlag,
 		utils.AllowBuiltInConfigOverrideFlag,
+		utils.ChainConfigMismatchPolicyFlag,
 		utils.HTTPCORSDomainFlag,
 		utils.AuthListenFlag,
 		utils.AuthPortFlag,
@@ -351,9 +352,14 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, cfg X
 			started := false
 			ok := false
 			var err error
-			ok, err = ethBackend.ValidateMasternode()
-			if err != nil {
-				utils.Fatalf("Can't verify masternode permission: %v", err)
+			// Skip masternode validation while syncing: IsAuthorisedAddress would
+			// query a snapshot for an unsynced head (failing/noisy and pointlessly
+			// expensive). Staking is (re)evaluated on the first checkpoint after sync.
+			if !ethBackend.Downloader().Synchronising() {
+				ok, err = ethBackend.ValidateMasternode()
+				if err != nil {
+					utils.Fatalf("Can't verify masternode permission: %v", err)
+				}
 			}
 			if ok {
 				log.Info("Masternode found. Enabling staking mode...")
@@ -379,10 +385,19 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, cfg X
 				chain := ethBackend.BlockChain()
 				engine.UpdateParams(chain.CurrentHeader())
 
-				ok, err = ethBackend.ValidateMasternode()
-				if err != nil {
-					utils.Fatalf("Can't verify masternode permission: %v", err)
+				ok = false
+				// While syncing, skip masternode validation (IsAuthorisedAddress ->
+				// GetSnapshot on the just-imported head). The CheckpointCh send in
+				// insertChain/insertBlock is unbuffered, so we still receive here to
+				// avoid blocking block import; staking resumes on the first checkpoint
+				// after sync completes.
+				if !ethBackend.Downloader().Synchronising() {
+					ok, err = ethBackend.ValidateMasternode()
+					if err != nil {
+						utils.Fatalf("Can't verify masternode permission: %v", err)
+					}
 				}
+
 				if !ok {
 					if started {
 						log.Info("Only masternode can propose and verify blocks. Cancelling staking on this node...")

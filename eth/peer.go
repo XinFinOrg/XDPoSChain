@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/forkid"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
@@ -59,8 +60,7 @@ type peer struct {
 	id string
 
 	*p2p.Peer
-	rw     p2p.MsgReadWriter
-	pairRw p2p.MsgReadWriter
+	rw p2p.MsgReadWriter
 
 	version  int         // Protocol version negotiated
 	forkDrop *time.Timer // Timed connection dropper if forks aren't validated in time
@@ -262,59 +262,35 @@ func (p *peer) SendNewBlock(block *types.Block, td *big.Int) error {
 	}
 
 	p.knownBlocks.Add(block.Hash())
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, NewBlockMsg, []interface{}{block, td})
-	} else {
-		return p2p.Send(p.rw, NewBlockMsg, []interface{}{block, td})
-	}
+	return p2p.Send(p.rw, NewBlockMsg, []interface{}{block, td})
 }
 
 // SendBlockHeaders sends a batch of block headers to the remote peer.
 func (p *peer) SendBlockHeaders(headers []*types.Header) error {
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, BlockHeadersMsg, headers)
-	} else {
-		return p2p.Send(p.rw, BlockHeadersMsg, headers)
-	}
+	return p2p.Send(p.rw, BlockHeadersMsg, headers)
 }
 
 // SendBlockBodies sends a batch of block contents to the remote peer.
 func (p *peer) SendBlockBodies(bodies []*blockBody) error {
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, BlockBodiesMsg, blockBodiesData(bodies))
-	} else {
-		return p2p.Send(p.rw, BlockBodiesMsg, blockBodiesData(bodies))
-	}
+	return p2p.Send(p.rw, BlockBodiesMsg, blockBodiesData(bodies))
 }
 
 // SendBlockBodiesRLP sends a batch of block contents to the remote peer from
 // an already RLP encoded format.
 func (p *peer) SendBlockBodiesRLP(bodies []rlp.RawValue) error {
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, BlockBodiesMsg, bodies)
-	} else {
-		return p2p.Send(p.rw, BlockBodiesMsg, bodies)
-	}
+	return p2p.Send(p.rw, BlockBodiesMsg, bodies)
 }
 
 // SendNodeDataRLP sends a batch of arbitrary internal data, corresponding to the
 // hashes requested.
 func (p *peer) SendNodeData(data [][]byte) error {
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, NodeDataMsg, data)
-	} else {
-		return p2p.Send(p.rw, NodeDataMsg, data)
-	}
+	return p2p.Send(p.rw, NodeDataMsg, data)
 }
 
 // SendReceiptsRLP sends a batch of transaction receipts, corresponding to the
 // ones requested from an already RLP encoded format.
 func (p *peer) SendReceiptsRLP(receipts []rlp.RawValue) error {
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, ReceiptsMsg, receipts)
-	} else {
-		return p2p.Send(p.rw, ReceiptsMsg, receipts)
-	}
+	return p2p.Send(p.rw, ReceiptsMsg, receipts)
 }
 
 func (p *peer) SendVote(vote *types.Vote) error {
@@ -323,11 +299,7 @@ func (p *peer) SendVote(vote *types.Vote) error {
 	}
 
 	p.knownVote.Add(vote.Hash())
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, VoteMsg, vote)
-	} else {
-		return p2p.Send(p.rw, VoteMsg, vote)
-	}
+	return p2p.Send(p.rw, VoteMsg, vote)
 }
 
 /*
@@ -341,11 +313,7 @@ func (p *peer) SendTimeout(timeout *types.Timeout) error {
 	}
 
 	p.knownTimeout.Add(timeout.Hash())
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, TimeoutMsg, timeout)
-	} else {
-		return p2p.Send(p.rw, TimeoutMsg, timeout)
-	}
+	return p2p.Send(p.rw, TimeoutMsg, timeout)
 }
 
 /*
@@ -359,11 +327,7 @@ func (p *peer) SendSyncInfo(syncInfo *types.SyncInfo) error {
 	}
 
 	p.knownSyncInfo.Add(syncInfo.Hash())
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, SyncInfoMsg, syncInfo)
-	} else {
-		return p2p.Send(p.rw, SyncInfoMsg, syncInfo)
-	}
+	return p2p.Send(p.rw, SyncInfoMsg, syncInfo)
 }
 
 /*
@@ -376,89 +340,89 @@ func (p *peer) AsyncSendSyncInfo() {
 // single header. It is used solely by the fetcher.
 func (p *peer) RequestOneHeader(hash common.Hash) error {
 	p.Log().Debug("Fetching single header", "hash", hash)
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Hash: hash}, Amount: uint64(1), Skip: uint64(0), Reverse: false})
-	} else {
-		return p2p.Send(p.rw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Hash: hash}, Amount: uint64(1), Skip: uint64(0), Reverse: false})
-	}
+	return p2p.Send(p.rw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Hash: hash}, Amount: uint64(1), Skip: uint64(0), Reverse: false})
 }
 
 // RequestHeadersByHash fetches a batch of blocks' headers corresponding to the
 // specified header query, based on the hash of an origin block.
 func (p *peer) RequestHeadersByHash(origin common.Hash, amount int, skip int, reverse bool) error {
 	p.Log().Debug("Fetching batch of headers", "count", amount, "fromhash", origin, "skip", skip, "reverse", reverse)
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Hash: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
-	} else {
-		return p2p.Send(p.rw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Hash: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
-	}
+	return p2p.Send(p.rw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Hash: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
 }
 
 // RequestHeadersByNumber fetches a batch of blocks' headers corresponding to the
 // specified header query, based on the number of an origin block.
 func (p *peer) RequestHeadersByNumber(origin uint64, amount int, skip int, reverse bool) error {
 	p.Log().Debug("Fetching batch of headers", "count", amount, "fromnum", origin, "skip", skip, "reverse", reverse)
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Number: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
-	} else {
-		return p2p.Send(p.rw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Number: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
-	}
+	return p2p.Send(p.rw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Number: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
 }
 
 // RequestBodies fetches a batch of blocks' bodies corresponding to the hashes
 // specified.
 func (p *peer) RequestBodies(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of block bodies", "count", len(hashes))
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, GetBlockBodiesMsg, hashes)
-	} else {
-		return p2p.Send(p.rw, GetBlockBodiesMsg, hashes)
-	}
+	return p2p.Send(p.rw, GetBlockBodiesMsg, hashes)
 }
 
 // RequestNodeData fetches a batch of arbitrary data from a node's known state
 // data, corresponding to the specified hashes.
 func (p *peer) RequestNodeData(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of state data", "count", len(hashes))
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, GetNodeDataMsg, hashes)
-	} else {
-		return p2p.Send(p.rw, GetNodeDataMsg, hashes)
-	}
+	return p2p.Send(p.rw, GetNodeDataMsg, hashes)
 }
 
 // RequestReceipts fetches a batch of transaction receipts from a remote node.
 func (p *peer) RequestReceipts(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of receipts", "count", len(hashes))
-	if p.pairRw != nil {
-		return p2p.Send(p.pairRw, GetReceiptsMsg, hashes)
-	} else {
-		return p2p.Send(p.rw, GetReceiptsMsg, hashes)
-	}
+	return p2p.Send(p.rw, GetReceiptsMsg, hashes)
 }
 
 // Handshake executes the eth protocol handshake, negotiating version number,
 // network IDs, difficulties, head and genesis blocks.
-func (p *peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis common.Hash) error {
+func (p *peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis common.Hash, forkID forkid.ID, forkFilter forkid.Filter) error {
 	// Send out own handshake in a new thread
 	errc := make(chan error, 2)
-	var status statusData // safe to read after two values have been received from errc
 
+	var (
+		status63 statusData63 // safe to read after two values have been received from errc
+		status   statusData   // safe to read after two values have been received from errc
+	)
 	go func() {
-		errc <- p2p.Send(p.rw, StatusMsg, &statusData{
-			ProtocolVersion: uint32(p.version),
-			NetworkId:       network,
-			TD:              td,
-			CurrentBlock:    head,
-			GenesisBlock:    genesis,
-		})
+		switch p.version {
+		case xdc164:
+			errc <- p2p.Send(p.rw, StatusMsg, &statusData{
+				ProtocolVersion: uint32(p.version),
+				NetworkID:       network,
+				TD:              td,
+				Head:            head,
+				Genesis:         genesis,
+				ForkID:          forkID,
+			})
+		case xdc100, eth63:
+			errc <- p2p.Send(p.rw, StatusMsg, &statusData63{
+				ProtocolVersion: uint32(p.version),
+				NetworkId:       network,
+				TD:              td,
+				CurrentBlock:    head,
+				GenesisBlock:    genesis,
+			})
+		default:
+			errc <- errResp(ErrProtocolVersionMismatch, "unsupported eth protocol version: %d", p.version)
+		}
 	}()
 	go func() {
-		errc <- p.readStatus(network, &status, genesis)
+		switch p.version {
+		case xdc164:
+			errc <- p.readStatus(network, &status, genesis, forkFilter)
+		case xdc100, eth63:
+			errc <- p.readStatusLegacy(network, &status63, genesis)
+		default:
+			errc <- errResp(ErrProtocolVersionMismatch, "unsupported eth protocol version: %d", p.version)
+		}
 	}()
 	timeout := time.NewTimer(handshakeTimeout)
 	defer timeout.Stop()
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		select {
 		case err := <-errc:
 			if err != nil {
@@ -468,11 +432,18 @@ func (p *peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis 
 			return p2p.DiscReadTimeout
 		}
 	}
-	p.td, p.head = status.TD, status.CurrentBlock
+	switch p.version {
+	case xdc164:
+		p.td, p.head = status.TD, status.Head
+	case xdc100, eth63:
+		p.td, p.head = status63.TD, status63.CurrentBlock
+	default:
+		return errResp(ErrProtocolVersionMismatch, "unsupported eth protocol version: %d", p.version)
+	}
 	return nil
 }
 
-func (p *peer) readStatus(network uint64, status *statusData, genesis common.Hash) (err error) {
+func (p *peer) readStatusLegacy(network uint64, status *statusData63, genesis common.Hash) error {
 	msg, err := p.rw.ReadMsg()
 	if err != nil {
 		return err
@@ -480,21 +451,51 @@ func (p *peer) readStatus(network uint64, status *statusData, genesis common.Has
 	if msg.Code != StatusMsg {
 		return errResp(ErrNoStatusMsg, "first msg has code %x (!= %x)", msg.Code, StatusMsg)
 	}
-	if msg.Size > ProtocolMaxMsgSize {
-		return errResp(ErrMsgTooLarge, "%v > %v", msg.Size, ProtocolMaxMsgSize)
+	if msg.Size > protocolMaxMsgSize {
+		return errResp(ErrMsgTooLarge, "%v > %v", msg.Size, protocolMaxMsgSize)
 	}
 	// Decode the handshake and make sure everything matches
 	if err := msg.Decode(&status); err != nil {
 		return errResp(ErrDecode, "msg %v: %v", msg, err)
 	}
 	if status.GenesisBlock != genesis {
-		return errResp(ErrGenesisBlockMismatch, "%x (!= %x)", status.GenesisBlock[:8], genesis[:8])
+		return errResp(ErrGenesisMismatch, "%x (!= %x)", status.GenesisBlock[:8], genesis[:8])
 	}
 	if status.NetworkId != network {
-		return errResp(ErrNetworkIdMismatch, "%d (!= %d)", status.NetworkId, network)
+		return errResp(ErrNetworkIDMismatch, "%d (!= %d)", status.NetworkId, network)
 	}
 	if int(status.ProtocolVersion) != p.version {
 		return errResp(ErrProtocolVersionMismatch, "%d (!= %d)", status.ProtocolVersion, p.version)
+	}
+	return nil
+}
+
+func (p *peer) readStatus(network uint64, status *statusData, genesis common.Hash, forkFilter forkid.Filter) error {
+	msg, err := p.rw.ReadMsg()
+	if err != nil {
+		return err
+	}
+	if msg.Code != StatusMsg {
+		return errResp(ErrNoStatusMsg, "first msg has code %x (!= %x)", msg.Code, StatusMsg)
+	}
+	if msg.Size > protocolMaxMsgSize {
+		return errResp(ErrMsgTooLarge, "%v > %v", msg.Size, protocolMaxMsgSize)
+	}
+	// Decode the handshake and make sure everything matches
+	if err := msg.Decode(&status); err != nil {
+		return errResp(ErrDecode, "msg %v: %v", msg, err)
+	}
+	if status.NetworkID != network {
+		return errResp(ErrNetworkIDMismatch, "%d (!= %d)", status.NetworkID, network)
+	}
+	if int(status.ProtocolVersion) != p.version {
+		return errResp(ErrProtocolVersionMismatch, "%d (!= %d)", status.ProtocolVersion, p.version)
+	}
+	if status.Genesis != genesis {
+		return errResp(ErrGenesisMismatch, "%x (!= %x)", status.Genesis, genesis)
+	}
+	if err := forkFilter(status.ForkID); err != nil {
+		return errResp(ErrForkIDRejected, "%v", err)
 	}
 	return nil
 }
@@ -530,14 +531,8 @@ func (ps *peerSet) Register(p *peer) error {
 	if ps.closed {
 		return errClosed
 	}
-	if existPeer, ok := ps.peers[p.id]; ok {
-		if existPeer.pairRw != nil {
-			return errAlreadyRegistered
-		}
-		existPeer.SetPairPeer(p.Peer)
-		existPeer.pairRw = p.rw
-		p.SetPairPeer(existPeer.Peer)
-		return p2p.ErrAddPairPeer
+	if _, ok := ps.peers[p.id]; ok {
+		return errAlreadyRegistered
 	}
 	ps.peers[p.id] = p
 	return nil
@@ -602,45 +597,48 @@ func (ps *peerSet) PeersWithoutTx(hash common.Hash) []*peer {
 	return list
 }
 
-// PeersWithoutVote retrieves a list of peers that do not have a given block in
-// their set of known hashes.
+// PeersWithoutVote retrieves a list of peers that do not have a given vote in
+// their set of known hashes. Only peers supporting the XDC BFT protocol
+// (version >= xdc100) are returned.
 func (ps *peerSet) PeersWithoutVote(hash common.Hash) []*peer {
 	ps.lock.RLock()
 	defer ps.lock.RUnlock()
 
 	list := make([]*peer, 0, len(ps.peers))
 	for _, p := range ps.peers {
-		if !p.knownVote.Contains(hash) {
+		if p.version >= xdc100 && !p.knownVote.Contains(hash) {
 			list = append(list, p)
 		}
 	}
 	return list
 }
 
-// PeersWithoutTimeout retrieves a list of peers that do not have a given block in
-// their set of known hashes.
+// PeersWithoutTimeout retrieves a list of peers that do not have a given timeout in
+// their set of known hashes. Only peers supporting the XDC BFT protocol
+// (version >= xdc100) are returned.
 func (ps *peerSet) PeersWithoutTimeout(hash common.Hash) []*peer {
 	ps.lock.RLock()
 	defer ps.lock.RUnlock()
 
 	list := make([]*peer, 0, len(ps.peers))
 	for _, p := range ps.peers {
-		if !p.knownTimeout.Contains(hash) {
+		if p.version >= xdc100 && !p.knownTimeout.Contains(hash) {
 			list = append(list, p)
 		}
 	}
 	return list
 }
 
-// PeersWithoutSyncInfo retrieves a list of peers that do not have a given block in
-// their set of known hashes.
+// PeersWithoutSyncInfo retrieves a list of peers that do not have a given sync
+// info in their set of known hashes. Only peers supporting the XDC BFT protocol
+// (version >= xdc100) are returned.
 func (ps *peerSet) PeersWithoutSyncInfo(hash common.Hash) []*peer {
 	ps.lock.RLock()
 	defer ps.lock.RUnlock()
 
 	list := make([]*peer, 0, len(ps.peers))
 	for _, p := range ps.peers {
-		if !p.knownSyncInfo.Contains(hash) {
+		if p.version >= xdc100 && !p.knownSyncInfo.Contains(hash) {
 			list = append(list, p)
 		}
 	}

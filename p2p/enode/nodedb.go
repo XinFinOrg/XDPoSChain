@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/p2p/enr"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/errors"
@@ -41,6 +42,7 @@ const (
 	dbNodePrefix   = "n:"      // Identifier to prefix node entries with
 	dbLocalPrefix  = "local:"
 	dbDiscoverRoot = "v4"
+	dbDiscv5Root   = "v5"
 
 	// These fields are stored per ID and IP, the full key is "n:<ID>:v4:<IP>:findfail".
 	// Use nodeItemKey to create those keys.
@@ -162,7 +164,7 @@ func splitNodeItemKey(key []byte) (id ID, ip net.IP, field string) {
 	}
 	key = key[len(dbDiscoverRoot)+1:]
 	// Split out the IP.
-	ip = net.IP(key[:16])
+	ip = key[:16]
 	if ip4 := ip.To4(); ip4 != nil {
 		ip = ip4
 	}
@@ -170,6 +172,16 @@ func splitNodeItemKey(key []byte) (id ID, ip net.IP, field string) {
 	// Field is the remainder of key.
 	field = string(key)
 	return id, ip, field
+}
+
+func v5Key(id ID, ip net.IP, field string) []byte {
+	return bytes.Join([][]byte{
+		[]byte(dbNodePrefix),
+		id[:],
+		[]byte(dbDiscv5Root),
+		ip.To16(),
+		[]byte(field),
+	}, []byte{':'})
 }
 
 // localItemKey returns the key of a local node item.
@@ -227,13 +239,14 @@ func (db *DB) Node(id ID) *Node {
 }
 
 func mustDecodeNode(id, data []byte) *Node {
-	node := new(Node)
-	if err := rlp.DecodeBytes(data, &node.r); err != nil {
+	var r enr.Record
+	if err := rlp.DecodeBytes(data, &r); err != nil {
 		panic(fmt.Errorf("p2p/enode: can't decode node %x in DB: %v", id, err))
 	}
-	// Restore node id cache.
-	copy(node.id[:], id)
-	return node
+	if len(id) != len(ID{}) {
+		panic(fmt.Errorf("invalid id length %d", len(id)))
+	}
+	return newNodeWithID(&r, ID(id))
 }
 
 // UpdateNode inserts - potentially overwriting - a node into the peer database.
@@ -376,6 +389,16 @@ func (db *DB) FindFails(id ID, ip net.IP) int {
 // UpdateFindFails updates the number of findnode failures since bonding.
 func (db *DB) UpdateFindFails(id ID, ip net.IP, fails int) error {
 	return db.storeInt64(nodeItemKey(id, ip, dbNodeFindFails), int64(fails))
+}
+
+// FindFailsV5 retrieves the discv5 findnode failure counter.
+func (db *DB) FindFailsV5(id ID, ip net.IP) int {
+	return int(db.fetchInt64(v5Key(id, ip, dbNodeFindFails)))
+}
+
+// UpdateFindFailsV5 stores the discv5 findnode failure counter.
+func (db *DB) UpdateFindFailsV5(id ID, ip net.IP, fails int) error {
+	return db.storeInt64(v5Key(id, ip, dbNodeFindFails), int64(fails))
 }
 
 // localSeq retrieves the local record sequence counter, defaulting to the current

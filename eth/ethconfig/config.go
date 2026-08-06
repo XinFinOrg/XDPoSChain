@@ -40,22 +40,23 @@ var FullNodeGPO = gasprice.Config{
 
 // Defaults contains default settings for use on the Ethereum main net.
 var Defaults = Config{
-	SyncMode:           downloader.FullSync,
-	NetworkId:          0, // enable auto configuration of networkID == chainID
-	LightPeers:         100,
-	DatabaseCache:      768,
-	TrieCleanCache:     256,
-	TrieDirtyCache:     256,
-	TrieTimeout:        5 * time.Minute,
-	FilterLogCacheSize: 32,
-	Miner:              miner.DefaultConfig,
-	LogQueryLimit:      1000,
-	TxPool:             legacypool.DefaultConfig,
-	RPCGasCap:          50000000,
-	RPCEVMTimeout:      5 * time.Second,
-	GPO:                FullNodeGPO,
-	RPCTxFeeCap:        1, // 1 ether
-	RangeLimit:         5000,
+	SyncMode:                  downloader.FullSync,
+	NetworkId:                 0, // enable auto configuration of networkID == chainID
+	LightPeers:                100,
+	DatabaseCache:             768,
+	TrieCleanCache:            256,
+	TrieDirtyCache:            256,
+	TrieTimeout:               5 * time.Minute,
+	FilterLogCacheSize:        32,
+	Miner:                     miner.DefaultConfig,
+	LogQueryLimit:             1000,
+	TxPool:                    legacypool.DefaultConfig,
+	RPCGasCap:                 50000000,
+	RPCEVMTimeout:             5 * time.Second,
+	GPO:                       FullNodeGPO,
+	RPCTxFeeCap:               1, // 1 ether
+	RangeLimit:                5000,
+	ChainConfigMismatchPolicy: core.DefaultChainConfigMismatchPolicy.String(),
 }
 
 //go:generate go run github.com/fjl/gencodec -type Config -formats toml -out gen_config.go
@@ -66,6 +67,7 @@ type Config struct {
 	// If nil, the Ethereum main net block is used.
 	Genesis                    *core.Genesis `toml:",omitempty"`
 	AllowBuiltInCustomRecovery bool          `toml:",omitempty"`
+	ChainConfigMismatchPolicy  string        `toml:",omitempty"`
 
 	// Network ID separates blockchains on the peer-to-peer networking level. When left
 	// zero, the chain ID is used as network ID.

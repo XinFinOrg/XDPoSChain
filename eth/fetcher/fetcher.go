@@ -676,15 +676,15 @@ func (f *Fetcher) insert(peer string, block *types.Block) {
 			log.Debug("Unknown parent of propagated block", "peer", peer, "number", block.Number(), "hash", hash, "parent", block.ParentHash())
 			return
 		}
-		fastBroadCast := true
+		isM2 := false
 	again:
 		err := f.verifyHeader(block.Header())
 		// Quickly validate the header and propagate the block if it passes
 		switch err {
 		case nil:
 			// All ok, quickly propagate to our peers
-			propBroadcastOutTimer.UpdateSince(block.ReceivedAt)
-			if fastBroadCast {
+			if !isM2 {
+				propBroadcastOutTimer.UpdateSince(block.ReceivedAt)
 				go f.broadcastBlock(block, true)
 			}
 		case consensus.ErrFutureBlock:
@@ -695,7 +695,6 @@ func (f *Fetcher) insert(peer string, block *types.Block) {
 		case consensus.ErrNoValidatorSignature:
 			newBlock := block
 			var errM2 error
-			isM2 := false
 			if f.appendM2HeaderHook != nil {
 				if newBlock, isM2, errM2 = f.appendM2HeaderHook(block); errM2 != nil {
 					log.Error("Append m2 to block header fail", "err", errM2)
@@ -703,20 +702,19 @@ func (f *Fetcher) insert(peer string, block *types.Block) {
 				}
 			}
 			if !isM2 {
+				propBroadcastOutTimer.UpdateSince(block.ReceivedAt)
 				go f.broadcastBlock(block, true)
 				if err := f.prepareBlock(block); err != nil {
 					log.Debug("Propagated block prepare failed", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
-					return
 				}
 				return
 			}
-			log.Debug("Append M2 to header block", "numer", block.NumberU64(), "hahs", block.Hash())
+			log.Debug("Append M2 to header block", "number", block.NumberU64(), "hash", block.Hash())
 			if err := f.prepareBlock(block); err != nil {
 				log.Debug("Propagated block prepare failed", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
 				return
 			}
 			block = newBlock
-			fastBroadCast = false
 			goto again
 		default:
 			// Something went very wrong, drop the peer
@@ -741,9 +739,12 @@ func (f *Fetcher) insert(peer string, block *types.Block) {
 			log.Warn("[insert] Unable to handle new proposed block", "err", err, "number", block.Number(), "hash", block.Hash())
 		}
 		// If import succeeded, broadcast the block
-		propAnnounceOutTimer.UpdateSince(block.ReceivedAt)
-		if !fastBroadCast {
+		if isM2 {
+			propBroadcastOutTimer.UpdateSince(block.ReceivedAt)
 			go f.broadcastBlock(block, true)
+		} else {
+			propAnnounceOutTimer.UpdateSince(block.ReceivedAt)
+			go f.broadcastBlock(block, false)
 		}
 	}()
 }
@@ -767,7 +768,7 @@ func (f *Fetcher) forgetHash(hash common.Hash) {
 	// Remove any pending fetches and decrement the DOS counters
 	if announce := f.fetching[hash]; announce != nil {
 		f.announces[announce.origin]--
-		if f.announces[announce.origin] == 0 {
+		if f.announces[announce.origin] <= 0 {
 			delete(f.announces, announce.origin)
 		}
 		delete(f.fetching, hash)
@@ -776,7 +777,7 @@ func (f *Fetcher) forgetHash(hash common.Hash) {
 	// Remove any pending completion requests and decrement the DOS counters
 	for _, announce := range f.fetched[hash] {
 		f.announces[announce.origin]--
-		if f.announces[announce.origin] == 0 {
+		if f.announces[announce.origin] <= 0 {
 			delete(f.announces, announce.origin)
 		}
 	}
@@ -785,7 +786,7 @@ func (f *Fetcher) forgetHash(hash common.Hash) {
 	// Remove any pending completions and decrement the DOS counters
 	if announce := f.completing[hash]; announce != nil {
 		f.announces[announce.origin]--
-		if f.announces[announce.origin] == 0 {
+		if f.announces[announce.origin] <= 0 {
 			delete(f.announces, announce.origin)
 		}
 		delete(f.completing, hash)

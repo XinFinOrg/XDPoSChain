@@ -122,6 +122,32 @@ jobs:
           echo "image_name=$image_name"
           echo "image_name=$image_name" >> "$GITHUB_OUTPUT"
 
+  k8_update_start_script:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/dev-upgrade' && !startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: "v1.19.11"
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 --decode > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+      - name: Fetch start scripts from XinFin-Node
+        run: |
+          set -euo pipefail
+          curl -fsSL -o start-devnet.sh  https://raw.githubusercontent.com/XinFinOrg/XinFin-Node/devnet/devnet/start-devnet.sh
+          curl -fsSL -o start-apothem.sh https://raw.githubusercontent.com/XinFinOrg/XinFin-Node/master/testnet/start-apothem.sh
+          curl -fsSL -o start-node.sh    https://raw.githubusercontent.com/XinFinOrg/XinFin-Node/master/mainnet/start-node.sh
+      - name: Apply configmaps
+        run: |
+          set -euo pipefail
+          kubectl create configmap start-devnet-sh --from-file=start-devnet.sh --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create configmap start-apothem-sh --from-file=start-apothem.sh --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create configmap start-node-sh --from-file=start-node.sh --dry-run=client -o yaml | kubectl apply -f -
+
   devnet_k8_apply:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/dev-upgrade' && !startsWith(github.ref, 'refs/tags/')
