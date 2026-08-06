@@ -219,7 +219,7 @@ func importChain(ctx *cli.Context) error {
 	// Start metrics export if enabled
 	utils.SetupMetrics(&cfg.Metrics)
 
-	chain, db := utils.MakeChain(ctx, stack, false)
+	chain, db := utils.MakeChain(ctx, stack, false, cfg.Eth.ChainConfigMismatchPolicy)
 	defer db.Close()
 
 	// Start periodically gathering memory profiles
@@ -291,10 +291,10 @@ func exportChain(ctx *cli.Context) error {
 		utils.Fatalf("This command requires an argument.")
 	}
 
-	stack, _ := makeConfigNode(ctx)
+	stack, cfg := makeConfigNode(ctx)
 	defer stack.Close()
 
-	chain, db := utils.MakeChain(ctx, stack, true)
+	chain, db := utils.MakeChain(ctx, stack, true, cfg.Eth.ChainConfigMismatchPolicy)
 	defer db.Close()
 	start := time.Now()
 

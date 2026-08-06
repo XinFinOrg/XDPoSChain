@@ -43,6 +43,8 @@ import (
 
 const (
 	importBatchSize = 2500
+
+	ChainConfigMismatchPolicyExitHint = "Hint: Use --chain-config-mismatch-policy to recover; Or restart with a matching XDC binary and the same network/genesis settings."
 )
 
 // Fatalf formats a message to standard error and exits the program.
@@ -72,6 +74,22 @@ func FormatChainConfigError(err error) string {
 		return ""
 	}
 	message := err.Error()
+	if errors.Is(err, core.ErrConfigMismatchPolicyExit) {
+		exitText := core.ErrConfigMismatchPolicyExit.Error()
+		guidance := ChainConfigMismatchPolicyExitHint
+		prefix := exitText + ": "
+		if after, ok := strings.CutPrefix(message, prefix); ok {
+			details := strings.TrimSpace(after)
+			if details == "" {
+				return guidance
+			}
+			return details + ".\n" + guidance
+		}
+		if message == exitText {
+			return guidance
+		}
+		return message + ". " + ChainConfigMismatchPolicyExitHint
+	}
 	if !errors.Is(err, params.ErrMissingForkSwitch) {
 		return message
 	}
