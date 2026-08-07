@@ -158,6 +158,23 @@ var (
 			LimitPenaltyEpoch:         5,
 			MinimumSigningTx:          30,
 		},
+		99999999: {
+			MaxMasternodes:            25,
+			MaxProtectorNodes:         3,
+			MaxObverserNodes:          2,
+			SwitchRound:               99999999,
+			CertThreshold:             0.667,
+			TimeoutSyncThreshold:      3,
+			TimeoutPeriod:             10,
+			MinePeriod:                2,
+			ExpTimeoutConfig:          ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
+			MasternodeReward:          63.411,
+			ProtectorReward:           50.733,
+			ObserverReward:            25.366,
+			MinimumMinerBlockPerEpoch: 5,
+			LimitPenaltyEpoch:         5,
+			MinimumSigningTx:          30,
+		},
 	}
 
 	DevnetV2Configs = map[uint64]*V2Config{
