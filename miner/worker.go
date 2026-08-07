@@ -144,7 +144,6 @@ type worker struct {
 	chainHeadSub event.Subscription
 	chainSideCh  chan core.ChainSideEvent
 	chainSideSub event.Subscription
-	resetCh      chan time.Duration // Channel to request timer resets
 
 	wg sync.WaitGroup
 
@@ -194,7 +193,6 @@ func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus
 		txsCh:          make(chan core.NewTxsEvent, txChanSize),
 		chainHeadCh:    make(chan core.ChainHeadEvent, chainHeadChanSize),
 		chainSideCh:    make(chan core.ChainSideEvent, chainSideChanSize),
-		resetCh:        make(chan time.Duration, 1),
 		chainDb:        eth.ChainDb(),
 		recv:           make(chan *Result, resultQueueSize),
 		chain:          eth.BlockChain(),
@@ -387,58 +385,46 @@ func (w *worker) update() {
 
 	timeout := time.NewTimer(time.Duration(minePeriod) * time.Second)
 	defer timeout.Stop()
-	c := make(chan struct{}, 1)
-	defer close(c)
-	finish := make(chan struct{})
-	defer close(finish)
 
-	go func() {
-		for {
-			// A real event arrived, process interesting content
+	// resetTimer rearms the mining timer. It must only ever be called from the
+	// loop below. Driving the timer from a dedicated goroutine would require a
+	// two-way channel handshake, which deadlocks as soon as both directions are
+	// full: the loop blocks handing over the new duration while the helper
+	// blocks handing over the expiry notification.
+	resetTimer := func(d time.Duration) {
+		if !timeout.Stop() {
+			// Drain the timer channel if it had already expired.
 			select {
-			case d := <-w.resetCh:
-				// Reset the timer to the new duration.
-				if !timeout.Stop() {
-					// Drain the timer channel if it had already expired.
-					select {
-					case <-timeout.C:
-					default:
-					}
-				}
-				timeout.Reset(d)
 			case <-timeout.C:
-				c <- struct{}{}
-			case <-finish:
-				return
+			default:
 			}
 		}
-	}()
+		timeout.Reset(d)
+	}
+
 	for {
 		// A real event arrived, process interesting content
 		select {
 		case v := <-minePeriodCh:
 			log.Info("[worker] update wait period", "period", v)
 			minePeriod = v
-			w.resetCh <- time.Duration(minePeriod) * time.Second
+			resetTimer(time.Duration(minePeriod) * time.Second)
 
-		case <-c:
+		case <-timeout.C:
 			if atomic.LoadInt32(&w.mining) == 1 {
 				w.commitNewWork()
 			}
-			resetTime := getResetTime(w.chain, minePeriod)
-			w.resetCh <- resetTime
+			resetTimer(getResetTime(w.chain, minePeriod))
 
 		// Handle ChainHeadEvent
 		case <-w.chainHeadCh:
 			w.commitNewWork()
-			resetTime := getResetTime(w.chain, minePeriod)
-			w.resetCh <- resetTime
+			resetTimer(getResetTime(w.chain, minePeriod))
 
 		// Handle new round
 		case <-newRoundCh:
 			w.commitNewWork()
-			resetTime := getResetTime(w.chain, minePeriod)
-			w.resetCh <- resetTime
+			resetTimer(getResetTime(w.chain, minePeriod))
 
 		// Handle ChainSideEvent
 		case <-w.chainSideCh:
