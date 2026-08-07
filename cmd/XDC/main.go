@@ -385,17 +385,17 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, cfg X
 				chain := ethBackend.BlockChain()
 				engine.UpdateParams(chain.CurrentHeader())
 
-				ok = false
 				// While syncing, skip masternode validation (IsAuthorisedAddress ->
 				// GetSnapshot on the just-imported head). The CheckpointCh send in
 				// insertChain/insertBlock is unbuffered, so we still receive here to
-				// avoid blocking block import; staking resumes on the first checkpoint
-				// after sync completes.
-				if !ethBackend.Downloader().Synchronising() {
-					ok, err = ethBackend.ValidateMasternode()
-					if err != nil {
-						utils.Fatalf("Can't verify masternode permission: %v", err)
-					}
+				// avoid blocking block import, but the staking state is left alone:
+				// an unknown result must not be read as "not a masternode".
+				if ethBackend.Downloader().Synchronising() {
+					continue
+				}
+				ok, err = ethBackend.ValidateMasternode()
+				if err != nil {
+					utils.Fatalf("Can't verify masternode permission: %v", err)
 				}
 
 				if !ok {
