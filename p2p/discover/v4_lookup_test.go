@@ -30,7 +30,9 @@ import (
 )
 
 func TestUDPv4_Lookup(t *testing.T) {
+	skipLongInShortMode(t)
 	t.Parallel()
+
 	test := newUDPTest(t)
 
 	// Lookup on empty table returns no nodes.
@@ -65,7 +67,9 @@ func TestUDPv4_Lookup(t *testing.T) {
 }
 
 func TestUDPv4_LookupIterator(t *testing.T) {
+	skipLongInShortMode(t)
 	t.Parallel()
+
 	test := newUDPTest(t)
 	defer test.close()
 

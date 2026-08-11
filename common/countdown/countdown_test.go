@@ -8,6 +8,13 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func skipLongInShortMode(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("skipping long-running test in -short mode")
+	}
+}
+
 func TestCountdownWillCallback(t *testing.T) {
 	var fakeI interface{}
 	called := make(chan int)
@@ -25,6 +32,8 @@ func TestCountdownWillCallback(t *testing.T) {
 }
 
 func TestCountdownShouldReset(t *testing.T) {
+	skipLongInShortMode(t)
+
 	var fakeI interface{}
 	called := make(chan int)
 	OnTimeoutFn := func(time.Time, interface{}) error {
@@ -76,6 +85,8 @@ firstReset:
 }
 
 func TestCountdownShouldResetEvenIfErrored(t *testing.T) {
+	skipLongInShortMode(t)
+
 	var fakeI interface{}
 	called := make(chan int)
 	OnTimeoutFn := func(time.Time, interface{}) error {
@@ -127,6 +138,8 @@ firstReset:
 }
 
 func TestCountdownShouldBeAbleToStop(t *testing.T) {
+	skipLongInShortMode(t)
+
 	var fakeI interface{}
 	called := make(chan int)
 	OnTimeoutFn := func(time.Time, interface{}) error {
@@ -150,6 +163,8 @@ func TestCountdownShouldBeAbleToStop(t *testing.T) {
 }
 
 func TestCountdownShouldAvoidDeadlock(t *testing.T) {
+	skipLongInShortMode(t)
+
 	var fakeI interface{}
 	called := make(chan int)
 	countdown, err := NewExpCountDown(5000*time.Millisecond, 0, 0)
