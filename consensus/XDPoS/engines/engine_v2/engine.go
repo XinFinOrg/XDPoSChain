@@ -634,7 +634,7 @@ func (x *XDPoS_v2) UpdateMasternodes(chain consensus.ChainReader, header *types.
 
 	log.Info("[UpdateMasternodes] New set of masternodes has been updated to snapshot", "number", snap.Number, "hash", snap.Hash)
 	for i, n := range ms {
-		log.Info("masternode", "index", i, "address", n.Address)
+		log.Info("node", "i", i, "addr", n.Address, "stake", n.Stake)
 	}
 
 	return nil

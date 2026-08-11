@@ -2812,14 +2812,7 @@ func (bc *BlockChain) UpdateM1() error {
 		xdc_sort.Slice(ms, func(i, j int) bool {
 			return ms[i].Stake.Cmp(ms[j].Stake) >= 0
 		})
-		log.Info("Ordered list of masternode candidates")
-		for _, m := range ms {
-			log.Info("", "address", m.Address, "stake", m.Stake)
-		}
-		// update masternodes
-
 		log.Info("Updating new set of masternodes")
-		// get block header
 		header := bc.CurrentHeader()
 		err = engine.UpdateMasternodes(bc, header, ms)
 		if err != nil {
