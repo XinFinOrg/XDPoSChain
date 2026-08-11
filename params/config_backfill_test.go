@@ -425,7 +425,7 @@ func TestCloneForBackfillPreservesProgrammaticZeroForkBlock(t *testing.T) {
 // TestBackfillMissingFieldsFromBackfillsMissingPragueBlockFromBuiltInSource tests backfill missing fields from backfills missing prague block from built-in source.
 func TestBackfillMissingFieldsFromBackfillsMissingPragueBlockFromBuiltInSource(t *testing.T) {
 	var cfg ChainConfig
-	raw := []byte(`{"chainId":5551,"tipTRC21FeeBlock":0,"ethash":{}}`)
+	raw := []byte(`{"chainId":551,"tipTRC21FeeBlock":0,"ethash":{}}`)
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		t.Fatalf("failed to unmarshal chain config: %v", err)
 	}
@@ -448,7 +448,7 @@ func TestBackfillMissingFieldsFromBackfillsMissingPragueBlockFromBuiltInSource(t
 // TestBackfillMissingFieldsFromPreservesExplicitNullPragueBlock tests backfill missing fields from preserves explicit null prague block.
 func TestBackfillMissingFieldsFromPreservesExplicitNullPragueBlock(t *testing.T) {
 	var cfg ChainConfig
-	raw := []byte(`{"chainId":5551,"tipTRC21FeeBlock":0,"pragueBlock":null,"ethash":{}}`)
+	raw := []byte(`{"chainId":551,"tipTRC21FeeBlock":0,"pragueBlock":null,"ethash":{}}`)
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		t.Fatalf("failed to unmarshal chain config: %v", err)
 	}

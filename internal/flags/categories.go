@@ -33,6 +33,7 @@ const (
 	LoggingCategory    = "LOGGING AND DEBUGGING"
 	MetricsCategory    = "METRICS AND STATS"
 	MiscCategory       = "MISC"
+	TestingCategory    = "TESTING"
 	DeprecatedCategory = "ALIASED (deprecated)"
 	XdcCategory        = "XDC"
 )

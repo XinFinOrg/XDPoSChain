@@ -59,6 +59,9 @@ type ID struct {
 	Next uint64  // Block number of the next upcoming fork, or 0 if no forks are known
 }
 
+// Filter is a fork id filter to validate a remotely advertised ID.
+type Filter func(id ID) error
+
 // NewID calculates the XDC fork ID from the chain config, genesis hash, head.
 func NewID(config *params.ChainConfig, genesis *types.Block, head uint64) ID {
 	// Calculate the starting checksum from the genesis hash
@@ -79,7 +82,7 @@ func NewID(config *params.ChainConfig, genesis *types.Block, head uint64) ID {
 
 // NewFilter creates a filter that returns if a fork ID should be rejected or not
 // based on the local chain's status.
-func NewFilter(chain Blockchain) func(id ID) error {
+func NewFilter(chain Blockchain) Filter {
 	return newFilter(
 		chain.Config(),
 		chain.Genesis().Hash(),
@@ -136,7 +139,7 @@ func newFilter(config *params.ChainConfig, genesis common.Hash, headfn func() ui
 		for i, fork := range forks {
 			// If our head is beyond this fork, continue to the next (we have a dummy
 			// fork of maxuint64 as the last item to always fail this check eventually).
-			if head > fork {
+			if head >= fork {
 				continue
 			}
 			// Found the first unpassed fork block, check if our current state matches

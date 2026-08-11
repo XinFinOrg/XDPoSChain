@@ -78,6 +78,11 @@ type XDPoS_v2 struct {
 	HookReward  func(chain consensus.ChainReader, state vm.StateDB, parentState *state.StateDB, header *types.Header) (map[string]interface{}, error)
 	HookPenalty func(chain consensus.ChainReader, number *big.Int, parentHash common.Hash, candidates []common.Address) ([]common.Address, error)
 
+	// HookSyncing reports whether the node is currently downloading the chain.
+	// Wired from the eth backend, where the downloader is reachable. May be nil
+	// in contexts without a downloader (e.g. unit tests); treat nil as "not syncing".
+	HookSyncing func() bool
+
 	ForensicsProcessor *Forensics
 
 	votePoolCollectionTime time.Time

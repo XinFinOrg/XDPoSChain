@@ -92,16 +92,16 @@ func (rw *meteredMsgReadWriter) ReadMsg() (p2p.Msg, error) {
 	case msg.Code == BlockBodiesMsg:
 		packets, traffic = reqBodyInPacketsMeter, reqBodyInTrafficMeter
 
-	case rw.version >= eth63 && msg.Code == NodeDataMsg:
+	case rw.version >= xdc100 && msg.Code == NodeDataMsg:
 		packets, traffic = reqStateInPacketsMeter, reqStateInTrafficMeter
-	case rw.version >= eth63 && msg.Code == ReceiptsMsg:
+	case rw.version >= xdc100 && msg.Code == ReceiptsMsg:
 		packets, traffic = reqReceiptInPacketsMeter, reqReceiptInTrafficMeter
 
 	case msg.Code == NewBlockHashesMsg:
 		packets, traffic = propHashInPacketsMeter, propHashInTrafficMeter
 	case msg.Code == NewBlockMsg:
 		packets, traffic = propBlockInPacketsMeter, propBlockInTrafficMeter
-	case msg.Code == TxMsg:
+	case msg.Code == TransactionMsg:
 		packets, traffic = propTxnInPacketsMeter, propTxnInTrafficMeter
 	}
 	packets.Mark(1)
@@ -119,16 +119,16 @@ func (rw *meteredMsgReadWriter) WriteMsg(msg p2p.Msg) error {
 	case msg.Code == BlockBodiesMsg:
 		packets, traffic = reqBodyOutPacketsMeter, reqBodyOutTrafficMeter
 
-	case rw.version >= eth63 && msg.Code == NodeDataMsg:
+	case rw.version >= xdc100 && msg.Code == NodeDataMsg:
 		packets, traffic = reqStateOutPacketsMeter, reqStateOutTrafficMeter
-	case rw.version >= eth63 && msg.Code == ReceiptsMsg:
+	case rw.version >= xdc100 && msg.Code == ReceiptsMsg:
 		packets, traffic = reqReceiptOutPacketsMeter, reqReceiptOutTrafficMeter
 
 	case msg.Code == NewBlockHashesMsg:
 		packets, traffic = propHashOutPacketsMeter, propHashOutTrafficMeter
 	case msg.Code == NewBlockMsg:
 		packets, traffic = propBlockOutPacketsMeter, propBlockOutTrafficMeter
-	case msg.Code == TxMsg:
+	case msg.Code == TransactionMsg:
 		packets, traffic = propTxnOutPacketsMeter, propTxnOutTrafficMeter
 	}
 	packets.Mark(1)

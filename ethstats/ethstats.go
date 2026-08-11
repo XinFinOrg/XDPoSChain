@@ -744,7 +744,7 @@ func (s *Service) assembleBlockStats(block *types.Block) *blockStats {
 	}
 	// Assemble and return the block stats
 	author, err := s.engine.Author(header)
-	if err != nil {
+	if err != nil && header.Number.Sign() != 0 {
 		log.Error("Failed to retrieve block author", "err", err, "number", header.Number, "hash", header.Hash())
 	}
 

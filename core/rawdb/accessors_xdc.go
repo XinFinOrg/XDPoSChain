@@ -58,6 +58,16 @@ func WriteXdposV2Snapshot(db ethdb.KeyValueWriter, hash common.Hash, blob []byte
 	return nil
 }
 
+// DeleteXdposSnapshot removes the snapshot entry for a block hash.
+func DeleteXdposSnapshot(db ethdb.KeyValueWriter, hash common.Hash) {
+	if err := db.Delete(xdposV2Key(hash)); err != nil {
+		log.Crit("Failed to delete SnapshotV2", "err", err)
+	}
+	if err := db.Delete(xdposV1Key(hash)); err != nil {
+		log.Crit("Failed to delete SnapshotV1", "err", err)
+	}
+}
+
 // ReadSectionHead retrieves the last block hash of a processed section
 // from the database.
 func ReadSectionHead(db ethdb.KeyValueReader, section uint64) common.Hash {

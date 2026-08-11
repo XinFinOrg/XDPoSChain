@@ -23,6 +23,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core"
+	"github.com/XinFinOrg/XDPoSChain/core/forkid"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/event"
@@ -31,28 +32,27 @@ import (
 
 // Constants to match up protocol versions and messages
 const (
-	eth62  = 62
-	eth63  = 63
-	xdpos2 = 100
+	xdc100 = 100
+	xdc164 = 164 // eth64
+	xdc165 = 165 // eth65
 )
 
 // protocolName is the official short name of the protocol used during capability negotiation.
 var protocolName = "eth"
 
 // ProtocolVersions are the supported versions of the eth protocol (first is primary).
-var ProtocolVersions = []uint{xdpos2, eth63}
+var ProtocolVersions = []uint{xdc165, xdc164, xdc100}
 
 // protocolLengths are the number of implemented message corresponding to different protocol versions.
-var protocolLengths = map[uint]uint64{xdpos2: 227, eth63: 17, eth62: 8}
+var protocolLengths = map[uint]uint64{xdc165: 230, xdc164: 227, xdc100: 227}
 
 const protocolMaxMsgSize = 10 * 1024 * 1024 // Maximum cap on the size of a protocol message
 
 // eth protocol message codes
 const (
-	// Protocol messages belonging to eth/62
 	StatusMsg          = 0x00
 	NewBlockHashesMsg  = 0x01
-	TxMsg              = 0x02
+	TransactionMsg     = 0x02
 	GetBlockHeadersMsg = 0x03
 	BlockHeadersMsg    = 0x04
 	GetBlockBodiesMsg  = 0x05
@@ -60,16 +60,20 @@ const (
 	NewBlockMsg        = 0x07
 	OrderTxMsg         = 0x08
 	LendingTxMsg       = 0x09
-	// Protocol messages belonging to eth/63
-	GetNodeDataMsg = 0x0d
-	NodeDataMsg    = 0x0e
-	GetReceiptsMsg = 0x0f
-	ReceiptsMsg    = 0x10
+	GetNodeDataMsg     = 0x0d
+	NodeDataMsg        = 0x0e
+	GetReceiptsMsg     = 0x0f
+	ReceiptsMsg        = 0x10
 
-	// Protocol messages belonging to xdpos2/100
+	// Protocol message codes introduced in xdc/100
 	VoteMsg     = 0xe0
 	TimeoutMsg  = 0xe1
 	SyncInfoMsg = 0xe2
+
+	// Protocol message codes introduced in xdc/165
+	NewPooledTransactionHashesMsg = 0xe3
+	GetPooledTransactionsMsg      = 0xe4
+	PooledTransactionsMsg         = 0xe5
 )
 
 type errCode int
@@ -79,11 +83,11 @@ const (
 	ErrDecode
 	ErrInvalidMsgCode
 	ErrProtocolVersionMismatch
-	ErrNetworkIdMismatch
-	ErrGenesisBlockMismatch
+	ErrNetworkIDMismatch
+	ErrGenesisMismatch
+	ErrForkIDRejected
 	ErrNoStatusMsg
 	ErrExtraStatusMsg
-	ErrSuspendedPeer
 )
 
 func (e errCode) String() string {
@@ -96,14 +100,22 @@ var errorToString = map[int]string{
 	ErrDecode:                  "Invalid message",
 	ErrInvalidMsgCode:          "Invalid message code",
 	ErrProtocolVersionMismatch: "Protocol version mismatch",
-	ErrNetworkIdMismatch:       "NetworkId mismatch",
-	ErrGenesisBlockMismatch:    "Genesis block mismatch",
+	ErrNetworkIDMismatch:       "Network ID mismatch",
+	ErrGenesisMismatch:         "Genesis mismatch",
+	ErrForkIDRejected:          "Fork ID rejected",
 	ErrNoStatusMsg:             "No status message",
 	ErrExtraStatusMsg:          "Extra status message",
-	ErrSuspendedPeer:           "Suspended peer",
 }
 
 type txPool interface {
+	// Has returns an indicator whether txpool has a transaction
+	// cached with the given hash.
+	Has(hash common.Hash) bool
+
+	// Get retrieves the transaction from local txpool with given
+	// tx hash.
+	Get(hash common.Hash) *types.Transaction
+
 	// Add should add the given transactions to the pool.
 	Add(txs []*types.Transaction, sync bool) []error
 
@@ -143,13 +155,23 @@ type lendingPool interface {
 	SubscribeTxPreEvent(chan<- core.LendingTxPreEvent) event.Subscription
 }
 
-// statusData is the network packet for the status message.
-type statusData struct {
+// statusData100 is the network packet for the status message for xdc/100.
+type statusData100 struct {
 	ProtocolVersion uint32
 	NetworkId       uint64
 	TD              *big.Int
 	CurrentBlock    common.Hash
 	GenesisBlock    common.Hash
+}
+
+// statusData is the network packet for the status message for eth/64, xdc/164 and later.
+type statusData struct {
+	ProtocolVersion uint32
+	NetworkID       uint64
+	TD              *big.Int
+	Head            common.Hash
+	Genesis         common.Hash
+	ForkID          forkid.ID
 }
 
 // newBlockHashesData is the network packet for the block announcements.
@@ -208,6 +230,20 @@ type newBlockData struct {
 	TD    *big.Int
 }
 
+// sanityCheck verifies that the values are reasonable, as a DoS protection
+func (request *newBlockData) sanityCheck() error {
+	if err := request.Block.SanityCheck(); err != nil {
+		return err
+	}
+	// TD is 34 bits at mainnet block 105048538
+	// TD is 32 bits at testnet block 84385810.
+	// If it becomes 100 million times larger, it will still fit within 100 bits.
+	if tdlen := request.TD.BitLen(); tdlen > 100 {
+		return fmt.Errorf("too large block TD: bitlen %d", tdlen)
+	}
+	return nil
+}
+
 // blockBody represents the data content of a single block.
 type blockBody struct {
 	Transactions []*types.Transaction // Transactions contained within a block
@@ -216,3 +252,16 @@ type blockBody struct {
 
 // blockBodiesData is the network packet for block content distribution.
 type blockBodiesData []*blockBody
+
+// sanityCheck verifies that the uncle headers are reasonable, as a DoS protection.
+func (request blockBodiesData) sanityCheck() error {
+	for bodyIndex, body := range request {
+		if body == nil {
+			return fmt.Errorf("nil block body at index %d", bodyIndex)
+		}
+		if err := types.SanityCheckHeaders(body.Uncles); err != nil {
+			return err
+		}
+	}
+	return nil
+}

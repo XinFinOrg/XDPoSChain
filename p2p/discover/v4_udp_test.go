@@ -184,6 +184,41 @@ func TestUDPv4_pingTimeout(t *testing.T) {
 	}
 }
 
+func TestUDPv4_resolveReturnsNilWhenUnresolved(t *testing.T) {
+	test := newUDPTest(t)
+	defer test.close()
+
+	var r enr.Record
+	ip := net.IP{127, 0, 0, 1}
+	id := enode.ID{9}
+	r.Set(enr.IP(ip))
+	r.Set(enr.UDP(30303))
+	n := enode.SignNull(&r, id)
+
+	// Avoid triggering the extra bonding ping path in requestENR.
+	test.udp.db.UpdateLastPingReceived(id, ip, time.Now())
+
+	if resolved := test.udp.Resolve(n); resolved != nil {
+		t.Fatalf("expected nil for unresolved node, got: %v", resolved)
+	}
+}
+
+func TestUDPv4_resolveReturnsNilWhenLookupMisses(t *testing.T) {
+	test := newUDPTest(t)
+	defer test.close()
+
+	key := newkey()
+	ip := net.IP{127, 0, 0, 1}
+	n := enode.NewV4(&key.PublicKey, ip, 30303, 30303)
+
+	// Avoid triggering the extra bonding ping path in requestENR.
+	test.udp.db.UpdateLastPingReceived(n.ID(), ip, time.Now())
+
+	if resolved := test.udp.Resolve(n); resolved != nil {
+		t.Fatalf("expected nil for unresolved node with secp256k1 key, got: %v", resolved)
+	}
+}
+
 type testPacket byte
 
 func (req testPacket) Kind() byte   { return byte(req) }

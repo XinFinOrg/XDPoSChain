@@ -32,6 +32,7 @@ import (
 	"strings"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
 // CheckCompatible checks whether scheduled fork transitions have been imported
@@ -190,16 +191,50 @@ func checkXDCSystemContractCompatible(stored, newcfg *ChainConfig, head *big.Int
 
 // checkV2ScheduleCompatible compares the historically active V2 round configs
 // between stored and new chain config.
-func checkV2ScheduleCompatible(stored, newcfg *V2, xdposRound *uint64) *ConfigCompatError {
-	activeRound := v2ActiveCompatRound(stored, newcfg, xdposRound)
-	for _, round := range v2HistoricalRounds(stored, newcfg, activeRound) {
+func checkV2ScheduleCompatible(stored, candidate *V2, xdposRound *uint64) *ConfigCompatError {
+	activeRound := v2ActiveCompatRound(stored, candidate, xdposRound)
+	for _, round := range v2HistoricalRounds(stored, candidate, activeRound) {
 		storedCfg, storedOK := stored.AllConfigs[round]
-		newCfg, newOK := newcfg.AllConfigs[round]
-		if !storedOK || !newOK || !v2ConsensusConfigEqual(storedCfg, newCfg) {
-			return newCompatError(fmt.Sprintf("XDPoS.V2 config at round %d", round), xdposV2CompatBlock(stored), xdposV2CompatBlock(newcfg))
+		candidateCfg, newOK := candidate.AllConfigs[round]
+		if !storedOK || !newOK || !v2ConsensusConfigEqual(storedCfg, candidateCfg) {
+			log.Warn(strings.Repeat("-", 153))
+			log.Warn("V2 config mismatch", "stored", stored.StableLogValue())
+			log.Warn(strings.Repeat("-", 153))
+			log.Warn("V2 config mismatch", "candidate", candidate.StableLogValue())
+			log.Warn(strings.Repeat("-", 153))
+			log.Warn("V2 config mismatch",
+				"round", round,
+				"activeRound", activeRound,
+				"storedOK", storedOK,
+				"newOK", newOK,
+				"storedCfg", v2ConsensusConfigSnapshot(storedCfg),
+				"candidateCfg", v2ConsensusConfigSnapshot(candidateCfg),
+			)
+			log.Warn(strings.Repeat("-", 153))
+			return newCompatError(fmt.Sprintf("XDPoS.V2 config at round %d", round), xdposV2CompatBlock(stored), xdposV2CompatBlock(candidate))
 		}
 	}
 	return nil
+}
+
+func v2ConsensusConfigSnapshot(cfg *V2Config) map[string]any {
+	if cfg == nil {
+		return nil
+	}
+	return map[string]any{
+		"maxMasternodes":            cfg.MaxMasternodes,
+		"maxProtectorNodes":         cfg.MaxProtectorNodes,
+		"maxObserverNodes":          cfg.MaxObserverNodes,
+		"switchRound":               cfg.SwitchRound,
+		"minePeriod":                cfg.MinePeriod,
+		"certThreshold":             cfg.CertThreshold,
+		"masternodeReward":          cfg.MasternodeReward,
+		"protectorReward":           cfg.ProtectorReward,
+		"observerReward":            cfg.ObserverReward,
+		"minimumMinerBlockPerEpoch": cfg.MinimumMinerBlockPerEpoch,
+		"limitPenaltyEpoch":         cfg.LimitPenaltyEpoch,
+		"minimumSigningTx":          cfg.MinimumSigningTx,
+	}
 }
 
 // v2ActiveCompatRound returns the latest round whose config must remain stable
@@ -252,7 +287,7 @@ func v2ConsensusConfigEqual(a, b *V2Config) bool {
 	if a.MaxProtectorNodes != b.MaxProtectorNodes {
 		return false
 	}
-	if a.MaxObverserNodes != b.MaxObverserNodes {
+	if a.MaxObserverNodes != b.MaxObserverNodes {
 		return false
 	}
 	if a.SwitchRound != b.SwitchRound {

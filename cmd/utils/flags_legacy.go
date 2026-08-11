@@ -117,6 +117,19 @@ var (
 		Value:    true,
 		Category: flags.DeprecatedCategory,
 	}
+	// (Deprecated July 2026)
+	LegacyBootnodesV4Flag = &cli.StringFlag{
+		Name:     "bootnodesv4",
+		Usage:    "Comma separated enode URLs for P2P v4 discovery bootstrap (light server, full nodes) (deprecated, use --bootnodes)",
+		Value:    "",
+		Category: flags.DeprecatedCategory,
+	}
+	LegacyBootnodesV5Flag = &cli.StringFlag{
+		Name:     "bootnodesv5",
+		Usage:    "Comma separated enode URLs for P2P v5 discovery bootstrap (light server, light nodes) (deprecated, use --bootnodes)",
+		Value:    "",
+		Category: flags.DeprecatedCategory,
+	}
 )
 
 // showDeprecated displays deprecated flags that will be soon removed from the codebase.

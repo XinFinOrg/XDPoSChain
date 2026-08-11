@@ -139,8 +139,27 @@ func (p *Peer) Node() *enode.Node {
 	return p.rw.node
 }
 
-// Name returns the node name that the remote node advertised.
+// Name returns an abbreviated form of the name
 func (p *Peer) Name() string {
+	const max = 20
+	s := p.rw.name
+	bufCap := min(len(s), max)
+	buf := make([]byte, 0, bufCap)
+	for i := range bufCap {
+		c := s[i]
+		if c < 0x20 || c == 0x7f {
+			c = ' '
+		}
+		buf = append(buf, c)
+	}
+	if len(s) > max {
+		return string(buf) + "..."
+	}
+	return string(buf)
+}
+
+// FullName returns the node name that the remote node advertised.
+func (p *Peer) FullName() string {
 	return p.rw.name
 }
 
@@ -466,7 +485,7 @@ func (p *Peer) Info() *PeerInfo {
 	info := &PeerInfo{
 		Enode:     p.Node().URLv4(),
 		ID:        p.ID().String(),
-		Name:      p.Name(),
+		Name:      p.FullName(),
 		Caps:      caps,
 		Protocols: make(map[string]interface{}),
 	}

@@ -149,6 +149,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	if err != nil {
 		return nil, err
 	}
+	logXDPoSConfig(chainConfig, compatErr)
 
 	// Assemble the Ethereum object.
 	eth := &Ethereum{
@@ -237,7 +238,19 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 			return eth.Lending
 		}
 	}
-	eth.blockchain, err = core.NewBlockChainExResolved(chainDb, XDCXServ.GetLevelDB(), cacheConfig, config.Genesis, eth.engine, vmConfig, chainConfig, genesisHash, compatErr)
+	compatPolicy := core.ChainConfigMismatchPolicy(config.ChainConfigMismatchPolicy)
+	eth.blockchain, err = core.NewBlockChainExResolved(
+		chainDb,
+		XDCXServ.GetLevelDB(),
+		cacheConfig,
+		config.Genesis,
+		eth.engine,
+		vmConfig,
+		chainConfig,
+		genesisHash,
+		compatErr,
+		compatPolicy,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -376,8 +389,8 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 			return block, false, nil
 		}
 
-		eth.protocolManager.fetcher.SetSignHook(signHook)
-		eth.protocolManager.fetcher.SetAppendM2HeaderHook(appendM2HeaderHook)
+		eth.protocolManager.blockFetcher.SetSignHook(signHook)
+		eth.protocolManager.blockFetcher.SetAppendM2HeaderHook(appendM2HeaderHook)
 
 		/*
 			XDPoS1.0 Specific hooks
@@ -385,7 +398,21 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 		hooks.AttachConsensusV1Hooks(c, eth.blockchain, chainConfig)
 		hooks.AttachConsensusV2Hooks(c, eth.blockchain, chainConfig)
 
+		// Let the consensus engine know when the node is downloading the chain,
+		// so it can downgrade otherwise-noisy "missing snapshot" logs to Debug
+		// during sync and only Warn when it happens at a synced head.
+		c.EngineV2.HookSyncing = func() bool {
+			return eth.Downloader().Synchronising()
+		}
+
 		isSigner := func(address common.Address) bool {
+			// During sync the head snapshot isn't built yet, so IsAuthorisedAddress
+			// would fail and spam "[IsAuthorisedAddress] Can't get snapshot". The
+			// signer check is meaningless before the chain is synced, so skip it; it
+			// is re-evaluated normally once syncing completes.
+			if eth.Downloader().Synchronising() {
+				return false
+			}
 			return c.IsAuthorisedAddress(eth.blockchain, eth.blockchain.CurrentHeader(), address)
 		}
 		eth.txPool.SetSigner(isSigner)
@@ -460,6 +487,14 @@ func (e *Ethereum) APIs() []rpc.API {
 			Service:   e.netRPCService,
 		},
 	}...)
+}
+
+func logXDPoSConfig(chainConfig *params.ChainConfig, compatErr *params.ConfigCompatError) {
+	if compatErr != nil || chainConfig == nil || chainConfig.XDPoS == nil || chainConfig.XDPoS.V2 == nil {
+		return
+	}
+
+	log.Info("Load xdc config", "config.V2", chainConfig.XDPoS.V2.StableLogValue())
 }
 
 func (e *Ethereum) ResetWithGenesisBlock(gb *types.Block) {
