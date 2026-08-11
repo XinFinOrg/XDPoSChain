@@ -1361,6 +1361,11 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 		rollback    []*types.Header
 		rollbackErr error
 		mode        = d.getMode()
+		// Highest header written to the light chain this cycle. Block imports
+		// move the header head back to the inserted block, so CurrentHeader
+		// can trail the headers the peer already delivered. A bailing peer
+		// never advances it, keeping the stalling-peer detection intact.
+		lastInserted *types.Header
 	)
 	defer func() {
 		if len(rollback) > 0 {
@@ -1433,6 +1438,9 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 				// peer gave us something useful, we're already happy/progressed (above check).
 				if mode == FastSync || mode == LightSync {
 					head := d.lightchain.CurrentHeader()
+					if lastInserted != nil && lastInserted.Number.Uint64() > head.Number.Uint64() {
+						head = lastInserted
+					}
 					if td.Cmp(d.lightchain.GetTd(head.Hash(), head.Number.Uint64())) > 0 {
 						return errStallingPeer
 					}
@@ -1483,6 +1491,7 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 					if len(rollback) > fsHeaderSafetyNet {
 						rollback = append(rollback[:0], rollback[len(rollback)-fsHeaderSafetyNet:]...)
 					}
+					lastInserted = chunk[len(chunk)-1]
 				}
 				// Unless we're doing light chains, schedule the headers for associated content retrieval
 				if mode == FullSync || mode == FastSync {

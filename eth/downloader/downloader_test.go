@@ -75,6 +75,17 @@ type downloadTester struct {
 
 	insertHeaderChainHook func([]*types.Header) error
 
+	// headHeaderCap, when non-zero, caps the height reported by CurrentHeader.
+	// It models the real chain, where importing blocks moves the header head
+	// back to the block being inserted. It must be set below the length of the
+	// peer chain being synced; a value at or above the chain head simply
+	// disables the cap and no longer models the lagging head.
+	//
+	// The cap is static, while the real lag is a transient window around the
+	// block being imported, but the simplified model is enough to reproduce
+	// the stall misdetection in the terminating header batch.
+	headHeaderCap uint64
+
 	// configOverride, when non-nil, is returned by Config() instead of the
 	// default TestChainConfig.  Used by tests that require XDPoS to be active.
 	configOverride *params.ChainConfig
@@ -187,6 +198,9 @@ func (dl *downloadTester) CurrentHeader() *types.Header {
 
 	for i := len(dl.ownHashes) - 1; i >= 0; i-- {
 		if header := dl.ownHeaders[dl.ownHashes[i]]; header != nil {
+			if dl.headHeaderCap != 0 && header.Number.Uint64() > dl.headHeaderCap {
+				continue
+			}
 			return header
 		}
 	}
@@ -1134,6 +1148,33 @@ func testHighTDStarvationAttack(t *testing.T, protocol int, mode SyncMode) {
 		t.Fatalf("synchronisation error mismatch: have %v, want %v", err, errStallingPeer)
 	}
 	tester.terminate()
+}
+
+// Tests that a header head lagging behind the headers the peer already delivered
+// is not mistaken for a stalling peer. Importing the post-pivot blocks moves the
+// header head back to the block being inserted, so it can trail the synced head
+// while the terminating header batch is processed. Both fast and light sync run
+// the lag-sensitive check, hence both modes are covered.
+func TestFastSyncHeaderHeadLag100(t *testing.T)  { testHeaderHeadLag(t, xdc100, FastSync) }
+func TestFastSyncHeaderHeadLag164(t *testing.T)  { testHeaderHeadLag(t, xdc164, FastSync) }
+func TestFastSyncHeaderHeadLag165(t *testing.T)  { testHeaderHeadLag(t, xdc165, FastSync) }
+func TestLightSyncHeaderHeadLag164(t *testing.T) { testHeaderHeadLag(t, xdc164, LightSync) }
+func TestLightSyncHeaderHeadLag165(t *testing.T) { testHeaderHeadLag(t, xdc165, LightSync) }
+
+func testHeaderHeadLag(t *testing.T, protocol int, mode SyncMode) {
+	t.Parallel()
+
+	tester := newTester()
+	defer tester.terminate()
+
+	chain := testChainBase.shorten(blockCacheMaxItems - 15)
+	tester.headHeaderCap = uint64(chain.len()) - 4
+	tester.newPeer("peer", protocol, chain)
+
+	if err := tester.sync("peer", nil, mode); err != nil {
+		t.Fatalf("failed to synchronise blocks: %v", err)
+	}
+	assertOwnChain(t, tester, chain.len())
 }
 
 // Tests that misbehaving peers are disconnected, whilst behaving ones are not.
