@@ -4279,9 +4279,11 @@ func TestEthereumAPIBasic(t *testing.T) {
 	backend.current = &types.Header{Number: big.NewInt(1100), BaseFee: big.NewInt(10)}
 	api := NewEthereumAPI(backend)
 
+	// The quoted price is tip plus the base fee scheduled for the next block.
 	gasPrice, err := api.GasPrice(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, (*hexutil.Big)(big.NewInt(52)), gasPrice)
+	wantGasPrice := new(big.Int).Add(big.NewInt(42), params.BaseFeeForBlock(backend.ChainConfig(), big.NewInt(1101)))
+	require.Equal(t, (*hexutil.Big)(wantGasPrice), gasPrice)
 
 	tip, err := api.MaxPriorityFeePerGas(context.Background())
 	require.NoError(t, err)

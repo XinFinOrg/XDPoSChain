@@ -221,6 +221,12 @@
     "xdcSpecific": true
   },
   {
+    "name": "Gas2500xBlock",
+    "jsonKey": "gas2500xBlock",
+    "backfillSet": "builtin",
+    "xdcSpecific": true
+  },
+  {
     "name": "TIPXDCXMinerDisableBlock",
     "jsonKey": "tipXDCXMinerDisableBlock",
     "backfillSet": "builtin",

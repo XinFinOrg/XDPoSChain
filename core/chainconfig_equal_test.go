@@ -29,6 +29,7 @@ var chainConfigDigestCoveredFields = []string{
 	"EIP158Block",
 	"EIP1559Block",
 	"Ethash",
+	"Gas2500xBlock",
 	"Gas50xBlock",
 	"HomesteadBlock",
 	"IstanbulBlock",
@@ -476,10 +477,10 @@ func TestHashChainConfigSemanticGoldenVectors(t *testing.T) {
 		cfg  *params.ChainConfig
 		want string
 	}{
-		{name: "nil", cfg: nil, want: "47dc540c94ceb704a23875c11273e16bb0b8a87aed84de911f2133568115f254"},
-		{name: "testnet", cfg: params.TestnetChainConfig.Clone(), want: "211f23893f2d69fcca32285082e8ee73f4231786cf5e66f1d62cccfa295aad76"},
-		{name: "mainnet", cfg: params.XDCMainnetChainConfig.Clone(), want: "9076222c6783f37836c868190b78c7abe0b4d0d3fce93dc0aa12a6bc8b6ddcd3"},
-		{name: "testnet-berlin-drift", cfg: testnetBerlinDrift, want: "9711b6f1f09247c095eb193be8f24977ca706bd9fac1db2b1441a49c0dc3922a"},
+		{name: "nil", cfg: nil, want: "99be5efb88ca2013bd8e4eb035fd42d5245468fe9afa70d8ba9c1c419a48c4e8"},
+		{name: "testnet", cfg: params.TestnetChainConfig.Clone(), want: "759186a62685d424dc8ca52ff0db8e5e298c0e9341344b3142dfd43b743ddbb7"},
+		{name: "mainnet", cfg: params.XDCMainnetChainConfig.Clone(), want: "9b0ecfced732164016e61836ed57a626be9bffb3df283036e3337811a5feed3b"},
+		{name: "testnet-berlin-drift", cfg: testnetBerlinDrift, want: "6465ddb5a31a1b15c30479e666d10cec03dd4a862b372b3ff3a3961ad2134041"},
 	}
 
 	for _, test := range tests {

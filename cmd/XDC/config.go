@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
 	"os"
 	"reflect"
 	"runtime"
@@ -43,7 +42,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/node"
-	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/naoina/toml"
 	"github.com/urfave/cli/v2"
 )
@@ -162,15 +160,6 @@ func loadBaseConfig(ctx *cli.Context) XDCConfig {
 	if ctx.Bool(utils.EnableXDCPrefixFlag.Name) {
 		common.Enable0xPrefix = false
 	}
-
-	// Check GasPrice
-	common.MinGasPrice = big.NewInt(common.DefaultMinGasPrice)
-	if ctx.IsSet(utils.MinerGasPriceFlag.Name) {
-		if gasPrice := int64(ctx.Int(utils.MinerGasPriceFlag.Name)); gasPrice > common.DefaultMinGasPrice {
-			common.MinGasPrice = big.NewInt(gasPrice)
-		}
-	}
-	params.SetMinGasPrice50x(common.MinGasPrice)
 
 	// read passwords from environment
 	passwords := []string{}

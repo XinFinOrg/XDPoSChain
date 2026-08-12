@@ -156,13 +156,13 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 	// Set header fields that depend only on parent block.
 	// Parent hash is needed for evm.GetHashFn to work.
 	header.ParentHash = parent.Hash()
-	if sim.chainConfig.IsLondon(header.Number) {
+	if sim.chainConfig.IsEIP1559(header.Number) {
 		// In non-validation mode base fee is set to 0 if it is not overridden.
 		// This is because it creates an edge case in EVM where gasPrice < baseFee.
 		// Base fee could have been overridden.
 		if header.BaseFee == nil {
 			if sim.validate {
-				header.BaseFee = eip1559.CalcBaseFee(sim.chainConfig, parent)
+				header.BaseFee = eip1559.CalcBaseFee(sim.chainConfig, header)
 			} else {
 				header.BaseFee = big.NewInt(0)
 			}

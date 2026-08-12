@@ -21,6 +21,7 @@ import "fmt"
 // Fork is a numerical identifier of specific network upgrades (forks).
 type Fork int
 
+// Forks are ordered by XDC mainnet activation height; unscheduled forks go last.
 const (
 	Frontier Fork = iota
 	FrontierThawing
@@ -60,6 +61,11 @@ const (
 	TIPEpochHalving
 	Prague
 	Osaka
+	Gas2500x
+
+	// lastFork is a sentinel marking the end of the enum, not a real fork.
+	// It is only used by test cases, not referenced by the production code.
+	lastFork
 )
 
 // String implements fmt.Stringer.
@@ -110,4 +116,5 @@ var forkToString = map[Fork]string{
 	TIPEpochHalving:        "TIPEpochHalving",
 	Prague:                 "Prague",
 	Osaka:                  "Osaka",
+	Gas2500x:               "Gas2500x",
 }

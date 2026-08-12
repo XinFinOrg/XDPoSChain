@@ -137,6 +137,7 @@ func TestForEachChainConfigForkBlockCoversStandardAndXDCForks(t *testing.T) {
 		"TIPXDCXCancellationFeeBlock",
 		"TIPTRC21FeeBlock",
 		"Gas50xBlock",
+		"Gas2500xBlock",
 		"TIPXDCXMinerDisableBlock",
 		"TIPXDCXReceiverDisableBlock",
 		"DynamicGasLimitBlock",
@@ -245,6 +246,7 @@ func TestForEachChainConfigForkOrderSpecialCaseRuleCoversGas50xConstraints(t *te
 
 	want := []rule{
 		{before: "TIPTRC21FeeBlock", after: "Gas50xBlock"},
+		{before: "Gas50xBlock", after: "Gas2500xBlock"},
 		{before: "Gas50xBlock", after: "TIPXDCXMinerDisableBlock"},
 	}
 

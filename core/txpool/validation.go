@@ -236,13 +236,19 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 		number      = opts.CurrentNumber()
 		to          = tx.To()
 	)
+	// A pooled tx can only be included from the next block onwards, so gas
+	// schedule lookups below resolve the fork tier at that height.
+	pendingNumber := number
+	if number != nil {
+		pendingNumber = new(big.Int).Add(number, common.Big1)
+	}
 	if to != nil {
 		if value, ok := opts.Trc21FeeCapacity[*to]; ok {
 			feeCapacity = value
 			if !opts.State.ValidateTRC21Tx(from, *to, tx.Data()) {
 				return core.ErrInsufficientFunds
 			}
-			cost = tx.TxCost(number, opts.Config)
+			cost = tx.TxCost(pendingNumber, opts.Config)
 		}
 	}
 	newBalance := new(big.Int).Add(balance, feeCapacity)
@@ -288,7 +294,7 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 
 	// Validate gas price
 	if !tx.IsSpecialTransaction() {
-		minGasPrice := params.GetMinGasPrice(number, opts.Config)
+		minGasPrice := params.GetMinGasPrice(pendingNumber, opts.Config)
 		if tx.GasPrice().Cmp(minGasPrice) < 0 {
 			return ErrUnderMinGasPrice
 		}

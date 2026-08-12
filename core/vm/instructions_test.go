@@ -698,6 +698,86 @@ func TestCreate2Addresses(t *testing.T) {
 	}
 }
 
+// TestBaseFee checks that BASEFEE reports the header base fee when the block
+// carries one, and otherwise falls back to the pinned opcode value, which
+// covers the London-to-EIP1559 window where XDC leaves the header field unset
+// but the opcode is already available.
+func TestBaseFee(t *testing.T) {
+	gasSchedule := func(gas50x, gas2500x int64) *params.ChainConfig {
+		cfg := *params.TestChainConfig
+		cfg.Gas50xBlock = big.NewInt(gas50x)
+		if gas2500x >= 0 {
+			cfg.Gas2500xBlock = big.NewInt(gas2500x)
+		}
+		return &cfg
+	}
+	for _, tt := range []struct {
+		name    string
+		config  *params.ChainConfig
+		number  *big.Int
+		baseFee *big.Int
+		want    *big.Int
+	}{
+		{name: "header base fee wins over schedule", config: gasSchedule(0, 0), number: big.NewInt(100), baseFee: big.NewInt(7), want: big.NewInt(7)},
+		{name: "absent before any tier", config: gasSchedule(200, -1), number: big.NewInt(100), want: new(big.Int).SetUint64(params.InitialBaseFee)},
+		{name: "absent on gas50x tier", config: gasSchedule(0, -1), number: big.NewInt(100), want: new(big.Int).SetUint64(params.InitialBaseFee)},
+		{name: "absent on gas2500x tier stays pinned", config: gasSchedule(0, 50), number: big.NewInt(100), want: new(big.Int).SetUint64(params.InitialBaseFee)},
+		{name: "absent with unset block number", config: gasSchedule(0, 0), want: new(big.Int).SetUint64(params.InitialBaseFee)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var (
+				evm   = NewEVM(BlockContext{BlockNumber: tt.number, BaseFee: tt.baseFee}, nil, nil, tt.config, Config{})
+				stack = newstack()
+				pc    = uint64(0)
+			)
+			opBaseFee(&pc, evm, &ScopeContext{nil, stack, nil})
+			if len(stack.data) != 1 {
+				t.Fatalf("expected one item on stack, got %d", len(stack.data))
+			}
+			actual := stack.pop()
+			expected, overflow := uint256.FromBig(tt.want)
+			if overflow {
+				t.Fatal("invalid overflow")
+			}
+			if actual.Cmp(expected) != 0 {
+				t.Fatalf("unexpected base fee: have %x want %x", &actual, expected)
+			}
+		})
+	}
+}
+
+// TestBaseFeeFallbackSurvivesStackMutation guards that the precomputed BASEFEE
+// fallback is not corrupted by in-place stack mutations. Stack.push copies the
+// pushed value into the stack slice, so an opcode mutating its operand in place
+// (e.g. opAdd) must not leak the change back into the shared baseFeeForOpcode.
+// If Stack ever switches to storing pointers, this test must fail loudly.
+func TestBaseFeeFallbackSurvivesStackMutation(t *testing.T) {
+	cfg := *params.TestChainConfig
+	cfg.Gas50xBlock = big.NewInt(0)
+
+	evm := NewEVM(BlockContext{BlockNumber: big.NewInt(100)}, nil, nil, &cfg, Config{})
+	stack := newstack()
+	scope := &ScopeContext{nil, stack, nil}
+	pc := uint64(0)
+
+	// BASEFEE, constant 1, ADD: with the BASEFEE result as the mutated operand
+	// this is exactly the sequence a contract computing block.basefee + 1 runs.
+	opBaseFee(&pc, evm, scope)
+	stack.push(uint256.NewInt(1))
+	opAdd(&pc, evm, scope)
+
+	// A second BASEFEE must still report the pinned InitialBaseFee.
+	opBaseFee(&pc, evm, scope)
+	got := stack.pop()
+	want, overflow := uint256.FromBig(new(big.Int).SetUint64(params.InitialBaseFee))
+	if overflow {
+		t.Fatal("unexpected overflow")
+	}
+	if got.Cmp(want) != 0 {
+		t.Fatalf("baseFeeForOpcode corrupted by stack mutation: have %v want %v", &got, want)
+	}
+}
+
 func TestRandom(t *testing.T) {
 	type testcase struct {
 		name   string

@@ -778,7 +778,7 @@ func (g *Genesis) toBlockWithRoot(root common.Hash) *types.Block {
 		if g.BaseFee != nil {
 			head.BaseFee = g.BaseFee
 		} else {
-			head.BaseFee = new(big.Int).SetUint64(params.InitialBaseFee)
+			head.BaseFee = params.BaseFeeForBlock(g.Config, common.Big0)
 		}
 	}
 	return types.NewBlock(head, nil, nil, trie.NewStackTrie(nil))

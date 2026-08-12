@@ -253,6 +253,7 @@ func newBackendMock() *backendMock {
 		PetersburgBlock:        big.NewInt(0),
 		IstanbulBlock:          big.NewInt(0),
 		TIPTRC21FeeBlock:       big.NewInt(0),
+		Gas50xBlock:            big.NewInt(0),
 		BerlinBlock:            big.NewInt(0),
 		EIP1559Block:           big.NewInt(1000),
 		TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,

@@ -1351,8 +1351,9 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 	if reset != nil {
 		pool.demoteUnexecutables()
 		if reset.newHead != nil {
-			if pool.chainconfig.IsEIP1559(new(big.Int).Add(reset.newHead.Number, big.NewInt(1))) {
-				pendingBaseFee := eip1559.CalcBaseFee(pool.chainconfig, reset.newHead)
+			nextNumber := new(big.Int).Add(reset.newHead.Number, common.Big1)
+			if pool.chainconfig.IsEIP1559(nextNumber) {
+				pendingBaseFee := eip1559.CalcBaseFeeForBlockNumber(pool.chainconfig, nextNumber)
 				pool.priced.SetBaseFee(pendingBaseFee)
 			} else {
 				pool.priced.Reheap()
@@ -1495,12 +1496,12 @@ func (pool *LegacyPool) reset(oldHead, newHead *types.Header) {
 // future queue to the set of pending transactions. During this process, all
 // invalidated transactions (low nonce, low balance) are deleted.
 func (pool *LegacyPool) promoteExecutables(accounts []common.Address) []*types.Transaction {
-	gasLimit := pool.currentHead.Load().GasLimit
-	var number *big.Int
-	if head := pool.chain.CurrentHeader(); head != nil {
-		number = head.Number
-	}
-	promotable, dropped, removedAddresses := pool.queue.promoteExecutables(accounts, gasLimit, pool.currentState, pool.pendingNonces, pool.trc21FeeCapacity, number, pool.chainconfig)
+	head := pool.currentHead.Load()
+	gasLimit := head.GasLimit
+	// Pooled txs can only be included from the next block onwards, so affordability
+	// checks below resolve the gas schedule at that height.
+	nextNumber := new(big.Int).Add(head.Number, common.Big1)
+	promotable, dropped, removedAddresses := pool.queue.promoteExecutables(accounts, gasLimit, pool.currentState, pool.pendingNonces, pool.trc21FeeCapacity, nextNumber, pool.chainconfig)
 
 	// promote all promotable transactions
 	promoted := make([]*types.Transaction, 0, len(promotable))
@@ -1636,7 +1637,11 @@ func (pool *LegacyPool) truncateQueue() {
 // to trigger a re-heap is this function
 func (pool *LegacyPool) demoteUnexecutables() {
 	// Iterate over all accounts and demote any non-executable transactions
-	gasLimit := pool.currentHead.Load().GasLimit
+	head := pool.currentHead.Load()
+	gasLimit := head.GasLimit
+	// Pending txs can only be included from the next block onwards, so affordability
+	// checks below resolve the gas schedule at that height.
+	nextNumber := new(big.Int).Add(head.Number, common.Big1)
 	for addr, list := range pool.pending {
 		nonce := pool.currentState.GetNonce(addr)
 
@@ -1648,11 +1653,7 @@ func (pool *LegacyPool) demoteUnexecutables() {
 			log.Trace("Removed old pending transaction", "hash", hash)
 		}
 		// Drop all transactions that are too costly (low balance or out of gas), and queue any invalids back for later
-		var number *big.Int = nil
-		if pool.chain.CurrentHeader() != nil {
-			number = pool.chain.CurrentHeader().Number
-		}
-		drops, invalids := list.Filter(pool.currentState.GetBalance(addr), gasLimit, pool.trc21FeeCapacity, number, pool.chainconfig)
+		drops, invalids := list.Filter(pool.currentState.GetBalance(addr), gasLimit, pool.trc21FeeCapacity, nextNumber, pool.chainconfig)
 		for _, tx := range drops {
 			hash := tx.Hash()
 			pool.all.Remove(hash)

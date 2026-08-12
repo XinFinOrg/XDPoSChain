@@ -226,7 +226,10 @@ func (oracle *Oracle) SuggestTipCap(ctx context.Context) (*big.Int, error) {
 
 	// Check min gas price for non-eip1559 block
 	if head.BaseFee == nil {
-		minGasPrice := params.GetMinGasPrice(head.Number, oracle.backend.ChainConfig())
+		// The suggested price is for a transaction that can only be included from
+		// the next block onwards, so resolve the gas schedule at that height.
+		nextNumber := new(big.Int).Add(head.Number, common.Big1)
+		minGasPrice := params.GetMinGasPrice(nextNumber, oracle.backend.ChainConfig())
 		if price.Cmp(minGasPrice) < 0 {
 			price = new(big.Int).Set(minGasPrice)
 		}

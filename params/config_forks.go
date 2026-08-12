@@ -150,6 +150,11 @@ func (c *ChainConfig) IsGas50x(num *big.Int) bool {
 	return isForked(c.Gas50xBlock, num)
 }
 
+// IsGas2500x returns whether num is either equal to the Gas2500x fork block or greater.
+func (c *ChainConfig) IsGas2500x(num *big.Int) bool {
+	return isForked(c.Gas2500xBlock, num)
+}
+
 // IsTIPXDCXMiner reports whether XDCX miner handling is active at num, taking
 // the later miner-disable fork into account.
 func (c *ChainConfig) IsTIPXDCXMiner(num *big.Int) bool {

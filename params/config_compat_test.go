@@ -448,6 +448,7 @@ func TestForEachChainConfigCompatibleForkBlockPairUsesForkValidationOrder(t *tes
 		if name == "ShanghaiBlock" {
 			want = append(want, name)
 			want = append(want, "Gas50xBlock")
+			want = append(want, "Gas2500xBlock")
 			return
 		}
 		if _, specialCase := chainConfigCompatibilitySpecialCaseFieldNames[name]; specialCase {

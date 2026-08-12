@@ -512,6 +512,7 @@ var (
 		MergeBlock:                  big.NewInt(0),
 		ShanghaiBlock:               big.NewInt(0),
 		Gas50xBlock:                 big.NewInt(0),
+		Gas2500xBlock:               big.NewInt(0),
 		TIPXDCXMinerDisableBlock:    big.NewInt(0),
 		TIPXDCXReceiverDisableBlock: big.NewInt(0),
 		EIP1559Block:                big.NewInt(0),

@@ -320,6 +320,9 @@ func TestMainnetChainConfigDoesNotDeclareXDCSpecificFields(t *testing.T) {
 	if MainnetChainConfig.Gas50xBlock != nil {
 		t.Fatalf("expected MainnetChainConfig Gas50xBlock to be nil, have %v", MainnetChainConfig.Gas50xBlock)
 	}
+	if MainnetChainConfig.Gas2500xBlock != nil {
+		t.Fatalf("expected MainnetChainConfig Gas2500xBlock to be nil, have %v", MainnetChainConfig.Gas2500xBlock)
+	}
 	if MainnetChainConfig.TRC21IssuerSMC != (common.Address{}) {
 		t.Fatalf("expected MainnetChainConfig TRC21IssuerSMC to be zero, have %s", MainnetChainConfig.TRC21IssuerSMC.Hex())
 	}
@@ -341,5 +344,22 @@ func TestMainnetChainConfigDoesNotDeclareXDCSpecificFields(t *testing.T) {
 	}
 	if XDCMainnetChainConfig.TRC21IssuerSMC == (common.Address{}) {
 		t.Fatal("expected XDCMainnetChainConfig TRC21IssuerSMC to remain configured")
+	}
+}
+
+func TestDefaultXDCNetworksDoNotEnableGas2500xFork(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  *ChainConfig
+	}{
+		{name: "devnet", cfg: DevnetChainConfig},
+		{name: "testnet", cfg: TestnetChainConfig},
+		{name: "mainnet", cfg: XDCMainnetChainConfig},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.cfg.Gas2500xBlock != nil {
+				t.Fatalf("expected %s Gas2500xBlock to be nil, have %v", tc.name, tc.cfg.Gas2500xBlock)
+			}
+		})
 	}
 }

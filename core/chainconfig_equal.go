@@ -16,7 +16,7 @@ import (
 // will stop matching the fast path and chainConfigJSONEqual will fall back to
 // field-level semantic comparison until both sides are re-encoded. Update the
 // pinned digest expectations in core/chainconfig_equal_test.go at the same time.
-const chainConfigDigestVersion byte = 1
+const chainConfigDigestVersion byte = 2
 
 func defaultHashChainConfigSemanticVersioned(cfg *params.ChainConfig) (byte, [32]byte) {
 	return chainConfigDigestVersion, hashChainConfigSemantic(cfg)

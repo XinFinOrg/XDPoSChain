@@ -161,8 +161,65 @@ func TestSetupPoolUsesPreGas50xTestConfig(t *testing.T) {
 	pool, _ := setupPool()
 	defer pool.Close()
 
-	if got := params.GetMinGasPrice(pool.currentHead.Load().Number, pool.chainconfig); got.Cmp(common.MinGasPrice) != 0 {
-		t.Fatalf("unexpected min gas price for legacypool tests: have %v want %v", got, common.MinGasPrice)
+	want := big.NewInt(common.DefaultMinGasPrice)
+	if got := params.GetMinGasPrice(pool.currentHead.Load().Number, pool.chainconfig); got.Cmp(want) != 0 {
+		t.Fatalf("unexpected min gas price for legacypool tests: have %v want %v", got, want)
+	}
+}
+
+// TestDemoteUnexecutablesUsesNextBlockGasSchedule verifies that pending TRC21
+// transactions are priced against the block they can first be included in.
+func TestDemoteUnexecutablesUsesNextBlockGasSchedule(t *testing.T) {
+	t.Parallel()
+
+	token := common.HexToAddress("0x00000000000000000000000000000000000000cc")
+	gas50xCapacity := new(big.Int).Mul(new(big.Int).Mul(common.TRC21GasPrice, big.NewInt(50)), new(big.Int).SetUint64(params.TxGas))
+
+	tests := []struct {
+		name    string
+		head    int64
+		dropped bool
+	}{
+		{name: "gas50x capacity kept before gas2500x boundary", head: 198, dropped: false},
+		{name: "gas50x capacity dropped when next block reaches gas2500x", head: 199, dropped: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			pool, key := setupPoolWithConfig(&params.ChainConfig{
+				ChainID:       big.NewInt(1339),
+				Ethash:        new(params.EthashConfig),
+				Gas50xBlock:   big.NewInt(100),
+				Gas2500xBlock: big.NewInt(200),
+			})
+			defer pool.Close()
+
+			pool.mu.Lock()
+			defer pool.mu.Unlock()
+
+			head := *pool.currentHead.Load()
+			head.Number = big.NewInt(tt.head)
+			pool.currentHead.Store(&head)
+			pool.trc21FeeCapacity = map[common.Address]*big.Int{token: gas50xCapacity}
+
+			tx, err := types.SignTx(types.NewTransaction(0, token, big.NewInt(0), params.TxGas, big.NewInt(1), nil), types.HomesteadSigner{}, key)
+			if err != nil {
+				t.Fatalf("failed to sign transaction: %v", err)
+			}
+			from, _ := types.Sender(pool.signer, tx)
+
+			list := newList(true)
+			list.Add(tx, pool.config.PriceBump)
+			pool.pending[from] = list
+			pool.all.Add(tx)
+
+			pool.demoteUnexecutables()
+
+			if dropped := pool.all.Get(tx.Hash()) == nil; dropped != tt.dropped {
+				t.Fatalf("unexpected drop decision at head %d: have %v want %v", tt.head, dropped, tt.dropped)
+			}
+		})
 	}
 }
 
@@ -249,7 +306,7 @@ type unsignedAuth struct {
 }
 
 func setCodeTx(nonce uint64, key *ecdsa.PrivateKey, unsigned []unsignedAuth) *types.Transaction {
-	return pricedSetCodeTx(nonce, 250000, uint256.MustFromBig(common.MinGasPrice), uint256.NewInt(1), key, unsigned)
+	return pricedSetCodeTx(nonce, 250000, uint256.NewInt(common.DefaultMinGasPrice), uint256.NewInt(1), key, unsigned)
 }
 
 func pricedSetCodeTx(nonce uint64, gaslimit uint64, gasFee, tip *uint256.Int, key *ecdsa.PrivateKey, unsigned []unsignedAuth) *types.Transaction {
@@ -629,7 +686,7 @@ func TestSpecialTxReplacementThroughPool(t *testing.T) {
 
 	// A nonzero price keeps validation simple; list.Add bypasses the price-bump
 	// rules for special txs regardless of the actual price.
-	price := new(big.Int).Add(new(big.Int).Set(common.MinGasPrice), big.NewInt(1))
+	price := big.NewInt(common.DefaultMinGasPrice + 1)
 	mkSpecial := func(key *ecdsa.PrivateKey, payload []byte) *types.Transaction {
 		tx, err := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, big.NewInt(0), 100000, price, payload), types.HomesteadSigner{}, key)
 		if err != nil {
@@ -768,7 +825,7 @@ func TestPromoteExecutablesQueueEmptyWithoutReservation(t *testing.T) {
 	defer pool.Close()
 	<-pool.initDoneCh
 
-	queuedTx := pricedTransaction(5, 100000, new(big.Int).Add(new(big.Int).Set(common.MinGasPrice), big.NewInt(1)), key)
+	queuedTx := pricedTransaction(5, 100000, big.NewInt(common.DefaultMinGasPrice+1), key)
 	if err := pool.addRemoteSync(queuedTx); err != nil {
 		t.Fatalf("failed to add queued tx: %v", err)
 	}
@@ -2865,7 +2922,7 @@ func TestSetCodeTransactions(t *testing.T) {
 	testAddBalance(pool, addrB, big.NewInt(params.Ether))
 	testAddBalance(pool, addrC, big.NewInt(params.Ether))
 
-	minGasPrice := new(big.Int).Set(common.MinGasPrice)
+	minGasPrice := big.NewInt(common.DefaultMinGasPrice)
 	minGasFee := uint256.MustFromBig(minGasPrice)
 	tripleGasFee := new(uint256.Int).Mul(new(uint256.Int).Set(minGasFee), uint256.NewInt(3))
 	legacyReplacePrice := new(big.Int).Mul(minGasPrice, big.NewInt(10))
@@ -3163,9 +3220,9 @@ func TestSetCodeTransactionsReorg(t *testing.T) {
 	)
 	testAddBalance(pool, addrA, big.NewInt(params.Ether))
 
-	minGasFee := uint256.MustFromBig(common.MinGasPrice)
+	minGasFee := uint256.NewInt(common.DefaultMinGasPrice)
 	doubleGasFee := new(uint256.Int).Mul(new(uint256.Int).Set(minGasFee), uint256.NewInt(2))
-	legacyPrice := new(big.Int).Mul(new(big.Int).Set(common.MinGasPrice), big.NewInt(10))
+	legacyPrice := big.NewInt(common.DefaultMinGasPrice * 10)
 
 	// Send an authorization for 0x42
 	var authList []types.SetCodeAuthorization
@@ -3328,7 +3385,7 @@ func TestPendingMinTipThreshold(t *testing.T) {
 
 	addr := crypto.PubkeyToAddress(key.PublicKey)
 	testAddBalance(pool, addr, big.NewInt(1_000_000_000_000_000))
-	threshold := new(big.Int).Add(new(big.Int).Set(common.MinGasPrice), big.NewInt(100))
+	threshold := big.NewInt(common.DefaultMinGasPrice + 100)
 	aboveThreshold := new(big.Int).Set(threshold)
 	belowThreshold := new(big.Int).Sub(new(big.Int).Set(threshold), big.NewInt(1))
 
@@ -3368,7 +3425,7 @@ func TestPendingMinTipWithBaseFee(t *testing.T) {
 
 	addr := crypto.PubkeyToAddress(key.PublicKey)
 	testAddBalance(pool, addr, big.NewInt(1_000_000_000_000_000))
-	minGasTip := new(big.Int).Set(common.MinGasPrice)
+	minGasTip := big.NewInt(common.DefaultMinGasPrice)
 	tipPass := new(big.Int).Add(new(big.Int).Set(minGasTip), big.NewInt(80))
 	tipPassWithoutBaseFeeOnly := new(big.Int).Add(new(big.Int).Set(minGasTip), big.NewInt(60))
 
@@ -3413,7 +3470,7 @@ func TestPendingKeepsLocalAndSpecialTransactions(t *testing.T) {
 
 	pool, _ := setupPool()
 	defer pool.Close()
-	minGasTip := new(big.Int).Set(common.MinGasPrice)
+	minGasTip := big.NewInt(common.DefaultMinGasPrice)
 	filterTip := new(big.Int).Add(new(big.Int).Set(minGasTip), big.NewInt(100))
 
 	specialKey, _ := crypto.GenerateKey()
@@ -3472,7 +3529,7 @@ func TestPendingDynamicFeeThresholdWithoutBaseFee(t *testing.T) {
 	addr := crypto.PubkeyToAddress(key.PublicKey)
 	testAddBalance(pool, addr, big.NewInt(1_000_000_000_000_000))
 
-	minTipBig := new(big.Int).Add(new(big.Int).Set(common.MinGasPrice), big.NewInt(50))
+	minTipBig := big.NewInt(common.DefaultMinGasPrice + 50)
 	equalTip := new(big.Int).Set(minTipBig)
 	belowTip := new(big.Int).Sub(new(big.Int).Set(minTipBig), big.NewInt(1))
 

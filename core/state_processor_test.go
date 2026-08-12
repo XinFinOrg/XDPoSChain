@@ -681,7 +681,7 @@ func GenerateBadBlock(t *testing.T, parent *types.Block, engine consensus.Engine
 		UncleHash: types.EmptyUncleHash,
 	}
 	if config.IsEIP1559(header.Number) {
-		header.BaseFee = common.BaseFee
+		header.BaseFee = params.BaseFeeForBlock(config, header.Number)
 	}
 	var receipts []*types.Receipt
 	// The post-state result doesn't need to be correct (this is a bad block), but we do need something there

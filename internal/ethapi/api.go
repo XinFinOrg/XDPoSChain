@@ -92,7 +92,10 @@ func (s *EthereumAPI) GasPrice(ctx context.Context) (*hexutil.Big, error) {
 		return nil, err
 	}
 	if head := s.b.CurrentHeader(); head.BaseFee != nil {
-		tipcap.Add(tipcap, head.BaseFee)
+		// The quoted price is for a transaction that can only be included from the
+		// next block onwards, so resolve the gas schedule at that height.
+		nextNumber := new(big.Int).Add(head.Number, common.Big1)
+		tipcap.Add(tipcap, params.BaseFeeForBlock(s.b.ChainConfig(), nextNumber))
 	}
 	return (*hexutil.Big)(tipcap), err
 }
@@ -1660,7 +1663,8 @@ func newRPCPendingTransaction(tx *types.Transaction, current *types.Header, conf
 		blockTime   = uint64(0)
 	)
 	if current != nil {
-		baseFee = eip1559.CalcBaseFee(config, current)
+		nextNumber := new(big.Int).Add(current.Number, common.Big1)
+		baseFee = eip1559.CalcBaseFeeForBlockNumber(config, nextNumber)
 		blockNumber = current.Number.Uint64()
 		blockTime = current.Time
 	}

@@ -144,6 +144,11 @@ var chainConfigForkOrderSpecialCaseRules = func() []chainConfigForkOrderSpecialC
 			shouldValidate: func(before, after *big.Int) bool { return before != nil && after != nil },
 		},
 		{
+			before:         "Gas50xBlock",
+			after:          "Gas2500xBlock",
+			shouldValidate: func(before, after *big.Int) bool { return before != nil && after != nil },
+		},
+		{
 			before: "Gas50xBlock",
 			after:  "TIPXDCXMinerDisableBlock",
 			shouldValidate: func(before, after *big.Int) bool {
@@ -242,11 +247,17 @@ var chainConfigCompatibilitySpecialCaseFieldNames = func() map[string]struct{} {
 	return fieldNames
 }()
 
+// chainConfigCompatibilityInsertionDefs splices fork fields that are validated by
+// special-case rules instead of chainConfigForkOrderFields into the compatibility
+// scan order. This order only drives which mismatch checkCompatible reports first
+// and is unrelated to the params/forks enum order. Entries sharing an after field
+// are inserted in slice order.
 var chainConfigCompatibilityInsertionDefs = []struct {
 	after string
 	name  string
 }{
 	{after: "ShanghaiBlock", name: "Gas50xBlock"},
+	{after: "ShanghaiBlock", name: "Gas2500xBlock"},
 }
 
 var chainConfigCompatibilityFields = func() []chainConfigBigIntField {

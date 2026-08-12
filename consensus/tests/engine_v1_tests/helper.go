@@ -417,7 +417,7 @@ func createBlockFromHeader(bc *core.BlockChain, customHeader *types.Header, txs 
 		Penalties:   customHeader.Penalties,
 	}
 	if config != nil && config.IsEIP1559(header.Number) {
-		header.BaseFee = new(big.Int).Set(common.BaseFee)
+		header.BaseFee = params.BaseFeeForBlock(config, header.Number)
 	}
 	var block *types.Block
 	if len(txs) == 0 {
