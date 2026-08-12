@@ -1936,10 +1936,10 @@ func TestQueueAccountLimiting(t *testing.T) {
 
 	account := crypto.PubkeyToAddress(key.PublicKey)
 	testAddBalance(pool, account, big.NewInt(300000000000000))
-	testTxPoolConfig.AccountQueue = 10
+	accountQueue := uint64(10)
 
 	// Keep queuing up transactions and make sure all above a limit are dropped
-	for i := uint64(1); i <= testTxPoolConfig.AccountQueue; i++ {
+	for i := uint64(1); i <= accountQueue; i++ {
 		if err := pool.addRemoteSync(pricedTransaction(i, 100000, big.NewInt(300000000), key)); err != nil {
 			t.Fatalf("tx %d: failed to add transaction: %v", i, err)
 		}
@@ -1947,18 +1947,18 @@ func TestQueueAccountLimiting(t *testing.T) {
 			t.Errorf("tx %d: pending pool size mismatch: have %d, want %d", i, len(pool.pending), 0)
 		}
 		list, _ := pool.queue.get(account)
-		if i <= testTxPoolConfig.AccountQueue {
+		if i <= accountQueue {
 			if list.Len() != int(i) {
 				t.Errorf("tx %d: queue size mismatch: have %d, want %d", i, list.Len(), i)
 			}
 		} else {
-			if list.Len() != int(testTxPoolConfig.AccountQueue) {
-				t.Errorf("tx %d: queue limit mismatch: have %d, want %d", i, list.Len(), testTxPoolConfig.AccountQueue)
+			if list.Len() != int(accountQueue) {
+				t.Errorf("tx %d: queue limit mismatch: have %d, want %d", i, list.Len(), accountQueue)
 			}
 		}
 	}
-	if pool.all.Count() != int(testTxPoolConfig.AccountQueue) {
-		t.Errorf("total transaction mismatch: have %d, want %d", pool.all.Count(), testTxPoolConfig.AccountQueue)
+	if pool.all.Count() != int(accountQueue) {
+		t.Errorf("total transaction mismatch: have %d, want %d", pool.all.Count(), accountQueue)
 	}
 }
 
@@ -2154,15 +2154,15 @@ func TestPendingLimiting(t *testing.T) {
 
 	account := crypto.PubkeyToAddress(key.PublicKey)
 	testAddBalance(pool, account, big.NewInt(400000000000000))
-	testTxPoolConfig.AccountQueue = 10
+	accountQueue := uint64(10)
 
 	// Keep track of transaction events to ensure all executables get announced
-	events := make(chan core.NewTxsEvent, testTxPoolConfig.AccountQueue)
+	events := make(chan core.NewTxsEvent, accountQueue)
 	sub := pool.txFeed.Subscribe(events)
 	defer sub.Unsubscribe()
 
 	// Keep queuing up transactions and make sure all above a limit are dropped
-	for i := uint64(0); i < testTxPoolConfig.AccountQueue; i++ {
+	for i := uint64(0); i < accountQueue; i++ {
 		if err := pool.addRemoteSync(pricedTransaction(i, 100000, big.NewInt(300000000), key)); err != nil {
 			t.Fatalf("tx %d: failed to add transaction: %v", i, err)
 		}
@@ -2173,10 +2173,10 @@ func TestPendingLimiting(t *testing.T) {
 			t.Errorf("tx %d: queue size mismatch: have %d, want %d", i, len(pool.queue.addresses()), 0)
 		}
 	}
-	if pool.all.Count() != int(testTxPoolConfig.AccountQueue) {
-		t.Errorf("total transaction mismatch: have %d, want %d", pool.all.Count(), testTxPoolConfig.AccountQueue+5)
+	if pool.all.Count() != int(accountQueue) {
+		t.Errorf("total transaction mismatch: have %d, want %d", pool.all.Count(), accountQueue)
 	}
-	if err := validateEvents(events, int(testTxPoolConfig.AccountQueue)); err != nil {
+	if err := validateEvents(events, int(accountQueue)); err != nil {
 		t.Fatalf("event firing failed: %v", err)
 	}
 	if err := validatePoolInternals(pool); err != nil {
