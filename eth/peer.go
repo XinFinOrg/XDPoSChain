@@ -107,7 +107,8 @@ type peer struct {
 
 	getPooledTx func(common.Hash) *types.Transaction // Callback used to retrieve transaction from txpool
 
-	term chan struct{} // Termination channel to stop the broadcaster
+	term        chan struct{}  // Termination channel to stop the broadcaster
+	broadcastWg sync.WaitGroup // Tracks the broadcaster goroutines so they can be awaited
 
 	knownVote     mapset.Set[common.Hash] // Set of BFT Vote known to be known by this peer
 	knownTimeout  mapset.Set[common.Hash] // Set of BFT timeout known to be known by this peer
@@ -847,24 +848,33 @@ func (ps *peerSet) Register(p *peer) error {
 	}
 	ps.peers[p.id] = p
 
-	go p.broadcastBlocks()
-	go p.broadcastTransactions()
+	p.broadcastWg.Go(func() {
+		p.broadcastBlocks()
+	})
+	p.broadcastWg.Go(func() {
+		p.broadcastTransactions()
+	})
 	if p.version >= xdc165 {
-		go p.announceTransactions()
+		p.broadcastWg.Go(func() {
+			p.announceTransactions()
+		})
 	}
 	return nil
 }
 
 // Unregister removes a remote peer from the active set, disabling any further
-// actions to/from that particular entity.
+// actions to/from that particular entity. It also terminates the peer's
+// broadcast goroutines, so they cannot leak once the peer is removed.
 func (ps *peerSet) Unregister(id string) error {
 	ps.lock.Lock()
 	defer ps.lock.Unlock()
 
-	if _, ok := ps.peers[id]; !ok {
+	p, ok := ps.peers[id]
+	if !ok {
 		return errNotRegistered
 	}
 	delete(ps.peers, id)
+	p.close()
 	return nil
 }
 
