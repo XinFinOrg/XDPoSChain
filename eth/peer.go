@@ -109,6 +109,7 @@ type peer struct {
 
 	term        chan struct{}  // Termination channel to stop the broadcaster
 	broadcastWg sync.WaitGroup // Tracks the broadcaster goroutines so they can be awaited
+	closeOnce   sync.Once      // Ensures term is closed exactly once
 
 	knownVote     mapset.Set[common.Hash] // Set of BFT Vote known to be known by this peer
 	knownTimeout  mapset.Set[common.Hash] // Set of BFT timeout known to be known by this peer
@@ -306,9 +307,10 @@ func (p *peer) announceTransactions() {
 	}
 }
 
-// close signals the broadcast goroutine to terminate.
+// close signals the broadcast goroutine to terminate. It is safe for
+// concurrent and repeated calls: only the first call closes term.
 func (p *peer) close() {
-	close(p.term)
+	p.closeOnce.Do(func() { close(p.term) })
 }
 
 // Info gathers and returns a collection of metadata known about a peer.

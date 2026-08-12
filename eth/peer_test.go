@@ -85,6 +85,40 @@ func waitBroadcasters(t *testing.T, wg *sync.WaitGroup) {
 	}
 }
 
+// TestPeerCloseIsIdempotent verifies that close can be called repeatedly and
+// from concurrent goroutines without panicking on a double close of term. The
+// peer set owns term via Unregister, but making close idempotent removes the
+// risk of a "close of closed channel" panic from future callers.
+func TestPeerCloseIsIdempotent(t *testing.T) {
+	app, net := p2p.MsgPipe()
+	defer app.Close()
+	var id enode.ID
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatalf("failed to generate random peer id: %v", err)
+	}
+	p := newPeer(xdc100, p2p.NewPeer(id, "close", nil), net, func(common.Hash) *types.Transaction { return nil })
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p.close()
+		}()
+	}
+	p.close()
+	wg.Wait()
+
+	// All concurrent calls returned without panic, so idempotency holds. As a
+	// final sanity check, the first call must have closed term; the default
+	// case fails fast if close ever stops closing it.
+	select {
+	case <-p.term:
+	default:
+		t.Fatal("close did not terminate the peer")
+	}
+}
+
 // countingMsgWriter wraps a p2p.MsgReadWriter and counts every write attempt,
 // allowing tests to assert that a peer stops sending after a network error.
 type countingMsgWriter struct {
@@ -118,8 +152,7 @@ func newBroadcastTestPeer(t *testing.T, name string) (*peer, *types.Transaction,
 	}
 	counter := &countingMsgWriter{MsgReadWriter: net}
 	p := newPeer(xdc100, p2p.NewPeer(id, name, nil), counter, func(common.Hash) *types.Transaction { return tx })
-	var closeOnce sync.Once
-	terminate := func() { closeOnce.Do(p.close) }
+	terminate := p.close
 	t.Cleanup(terminate)
 	app.Close()
 	return p, tx, counter, terminate
