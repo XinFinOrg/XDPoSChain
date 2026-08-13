@@ -1314,23 +1314,34 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 	}
 	pool.mu.Lock()
 	if reset != nil {
-		if reset.newHead != nil && reset.oldHead != nil {
-			// Discard the transactions with the gas limit higher than the cap.
-			if pool.chainconfig.IsOsaka(reset.newHead.Number) && !pool.chainconfig.IsOsaka(reset.oldHead.Number) {
-				var hashes []common.Hash
-				pool.all.Range(func(hash common.Hash, tx *types.Transaction) bool {
-					if tx.Gas() > params.MaxTxGas {
-						hashes = append(hashes, hash)
-					}
-					return true
-				})
-				for _, hash := range hashes {
-					pool.removeTx(hash, true, true)
-				}
-			}
-		}
+		// Key the Osaka gas-cap discard off the heads the pool actually lands on:
+		// an aborted reset never reaches the requested heads, and the reorg loop
+		// coalesces pending resets by replacing only the new head, so the old
+		// head goes stale. Keying off the requested heads would drop transactions
+		// still valid under the head the pool remains on. This deliberately
+		// diverges from upstream geth, which keys the discard off the requested
+		// heads.
+		oldPoolHead := pool.currentHead.Load()
+
 		// Reset from the old head to the new, rescheduling any reorged transactions
 		pool.reset(reset.oldHead, reset.newHead)
+		newPoolHead := pool.currentHead.Load()
+
+		// Discard transactions whose gas limit exceeds the cap once the reset
+		// actually moved the pool across the Osaka fork boundary.
+		if newPoolHead != nil && oldPoolHead != nil &&
+			pool.chainconfig.IsOsaka(newPoolHead.Number) && !pool.chainconfig.IsOsaka(oldPoolHead.Number) {
+			var hashes []common.Hash
+			pool.all.Range(func(hash common.Hash, tx *types.Transaction) bool {
+				if tx.Gas() > params.MaxTxGas {
+					hashes = append(hashes, hash)
+				}
+				return true
+			})
+			for _, hash := range hashes {
+				pool.removeTx(hash, true, true)
+			}
+		}
 
 		// Nonces were reset, discard any events that became stale
 		for addr := range events {

@@ -387,15 +387,374 @@ func setupPoolWithConfig(config *params.ChainConfig) (*LegacyPool, *ecdsa.Privat
 	diskdb := rawdb.NewMemoryDatabase()
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(diskdb))
 	blockchain := newTestBlockChain(config, 10000000, statedb, new(event.Feed))
+	return setupPoolWithChain(blockchain)
+}
 
+// setupPoolWithChain is setupPoolWithConfig with a caller-supplied chain, for
+// tests that wrap the chain to inject failures such as missing state.
+func setupPoolWithChain(chain BlockChain) (*LegacyPool, *ecdsa.PrivateKey) {
 	key, _ := crypto.GenerateKey()
-	pool := New(testTxPoolConfig, blockchain)
-	if err := pool.Init(testTxPoolConfig.PriceLimit, blockchain.CurrentBlock(), newReserver()); err != nil {
+	pool := New(testTxPoolConfig, chain)
+	if err := pool.Init(testTxPoolConfig.PriceLimit, chain.CurrentBlock(), newReserver()); err != nil {
 		panic(err)
 	}
 	// wait for the pool to initialize
 	<-pool.initDoneCh
 	return pool, key
+}
+
+// failingStateChain aborts state access while its gate is set, the way a
+// pruned or missing state does. The gate lets tests inject the failure without
+// swapping pool.chain, which the pool only reads under its lock. While release
+// is set, StateAt waits for it to close before delegating, holding a reorg run
+// in flight so later reset requests coalesce in the reorg loop.
+type failingStateChain struct {
+	BlockChain
+	fail    atomic.Bool
+	release <-chan struct{}
+}
+
+func (c *failingStateChain) StateAt(root common.Hash) (*state.StateDB, error) {
+	if c.fail.Load() {
+		return nil, errors.New("missing state")
+	}
+	if c.release != nil {
+		<-c.release
+	}
+	return c.BlockChain.StateAt(root)
+}
+
+// osakaTestEnv bundles the chain config, block gas limit, chain, pool and
+// oversized sender key the Osaka gas cap tests run with. With the cap active
+// at block 300, head 298 makes 299 the last pending block still without the
+// cap, so moving the head to 300 crosses the fork.
+type osakaTestEnv struct {
+	config       *params.ChainConfig
+	gasLimit     uint64
+	chain        BlockChain
+	pool         *LegacyPool
+	oversizedKey *ecdsa.PrivateKey
+}
+
+// newOsakaTestEnv creates an Osaka test environment over an in-memory test
+// chain. Its GetBlock returns a synthetic block for any hash, so the reorg
+// walk in reset short-circuits and the headers built by header move the pool
+// head directly instead of bailing out on the missing old head.
+func newOsakaTestEnv() *osakaTestEnv {
+	env := &osakaTestEnv{
+		config: &params.ChainConfig{
+			ChainID:    big.NewInt(1339),
+			Ethash:     new(params.EthashConfig),
+			OsakaBlock: big.NewInt(300),
+		},
+		gasLimit: params.MaxTxGas + 100000,
+	}
+	diskdb := rawdb.NewMemoryDatabase()
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(diskdb))
+	env.chain = newTestBlockChain(env.config, env.gasLimit, statedb, new(event.Feed))
+	return env
+}
+
+// forkHeight is a block height relative to the Osaka fork block, typing the
+// off-by-one relationships between the heads the tests use.
+type forkHeight int64
+
+// header builds a head header whose gas limit exceeds the Osaka transaction
+// gas cap, so over-cap transactions can be admitted before the fork and only
+// be removed by the fork crossing.
+func (env *osakaTestEnv) header(number forkHeight) *types.Header {
+	return &types.Header{
+		Root:       types.EmptyRootHash,
+		Number:     big.NewInt(int64(number)),
+		Difficulty: common.Big0,
+		GasLimit:   env.gasLimit,
+	}
+}
+
+// forkBlock returns the block at which the Osaka cap activates.
+func (env *osakaTestEnv) forkBlock() forkHeight {
+	return forkHeight(env.config.OsakaBlock.Int64())
+}
+
+// lastPreForkHead returns the last head before the fork: its pending block is
+// the first one with the cap active.
+func (env *osakaTestEnv) lastPreForkHead() forkHeight {
+	return env.forkBlock() - 1
+}
+
+// parkedHead returns the head the pool parks on before the fork: its pending
+// block is the last one still without the cap.
+func (env *osakaTestEnv) parkedHead() forkHeight {
+	return env.forkBlock() - 2
+}
+
+// resetHead requests a reset from the given head to the target and waits for
+// it to run. A nil from starts from the pool's current state.
+func (env *osakaTestEnv) resetHead(from *types.Header, to forkHeight) {
+	<-env.pool.requestReset(from, env.header(to))
+}
+
+// setupPool sets up a legacy pool on the environment, funds the oversized
+// sender, parks the pool on the parked head, and registers the pool for
+// cleanup.
+func (env *osakaTestEnv) setupPool(t *testing.T) {
+	t.Helper()
+
+	pool, oversizedKey := setupPoolWithChain(env.chain)
+	env.pool = pool
+	env.oversizedKey = oversizedKey
+	testAddBalance(pool, env.oversizedAddr(), big.NewInt(1000000000000000000))
+
+	env.resetHead(nil, env.parkedHead())
+	t.Cleanup(func() { pool.Close() })
+}
+
+// newStartedEnv creates the Osaka test environment with the pool set up on
+// the parked head.
+func newStartedEnv(t *testing.T) *osakaTestEnv {
+	t.Helper()
+
+	env := newOsakaTestEnv()
+	env.setupPool(t)
+	return env
+}
+
+// newStartedEnvWithFailingState is like newStartedEnv, but with a chain that
+// aborts state access while the returned gate is set, for the aborted-reset
+// test.
+func newStartedEnvWithFailingState(t *testing.T) (*osakaTestEnv, *failingStateChain) {
+	t.Helper()
+
+	env := newOsakaTestEnv()
+	gate := env.failState()
+	env.setupPool(t)
+	return env, gate
+}
+
+// failState wraps the environment's chain with a failing-state gate and
+// returns the gate.
+func (env *osakaTestEnv) failState() *failingStateChain {
+	gate := &failingStateChain{BlockChain: env.chain}
+	env.chain = gate
+	return gate
+}
+
+// oversizedAddr returns the address of the oversized sender.
+func (env *osakaTestEnv) oversizedAddr() common.Address {
+	return crypto.PubkeyToAddress(env.oversizedKey.PublicKey)
+}
+
+// oversizedTx builds the over-cap transaction the Osaka gas cap tests run
+// with, priced above the floor for the balance the pool grants its sender.
+func (env *osakaTestEnv) oversizedTx() *types.Transaction {
+	return pricedTransaction(0, params.MaxTxGas+1, big.NewInt(300000000), env.oversizedKey)
+}
+
+// addTransactions funds a normal sender alongside the oversized one and adds
+// one over-cap transaction and one transaction within the cap to the pool,
+// returning both.
+func (env *osakaTestEnv) addTransactions(t *testing.T) (*types.Transaction, *types.Transaction) {
+	t.Helper()
+
+	normalKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate normal sender key: %v", err)
+	}
+	normalAddr := crypto.PubkeyToAddress(normalKey.PublicKey)
+	testAddBalance(env.pool, normalAddr, big.NewInt(1000000000000000000))
+
+	oversized := env.oversizedTx()
+	normal := pricedTransaction(0, 21000, big.NewInt(300000000), normalKey)
+	for i, err := range env.pool.addRemotesSync([]*types.Transaction{oversized, normal}) {
+		if err != nil {
+			t.Fatalf("failed to add transaction %d: %v", i, err)
+		}
+	}
+	return oversized, normal
+}
+
+// crossForkExpectDrop moves the pool from the given head onto the fork block
+// in a single reset, then fails the test if the over-cap transaction
+// survived.
+func (env *osakaTestEnv) crossForkExpectDrop(t *testing.T, oversized *types.Transaction, from forkHeight, reason string) {
+	t.Helper()
+
+	env.resetHead(env.header(from), env.forkBlock())
+	if env.pool.Has(oversized.Hash()) {
+		t.Fatalf("over-cap transaction survived %s", reason)
+	}
+}
+
+// assertPresent fails the test if the transaction is no longer in the pool.
+func (env *osakaTestEnv) assertPresent(t *testing.T, tx *types.Transaction, msg string) {
+	t.Helper()
+
+	if !env.pool.Has(tx.Hash()) {
+		t.Fatal(msg)
+	}
+}
+
+// validateInternals fails the test if the pool's internal invariants are
+// broken.
+func (env *osakaTestEnv) validateInternals(t *testing.T) {
+	t.Helper()
+
+	if err := validatePoolInternals(env.pool); err != nil {
+		t.Fatalf("pool internal state corrupted: %v", err)
+	}
+}
+
+// TestOsakaGasCapDropsOversizedTransactions verifies that a reset crossing the
+// Osaka fork removes the transactions whose gas limit exceeds the cap without
+// touching transactions within the cap, and that the reset onto the last block
+// before the fork does not drop anything yet.
+func TestOsakaGasCapDropsOversizedTransactions(t *testing.T) {
+	t.Parallel()
+
+	env := newStartedEnv(t)
+
+	oversized, normal := env.addTransactions(t)
+	oversizedAddr := env.oversizedAddr()
+	if pending, _ := env.pool.Stats(); pending != 2 {
+		t.Fatalf("pool status before the fork: have %d pending, want 2", pending)
+	}
+
+	// Moving to the last pre-fork head makes the fork block pending, the first
+	// with the cap active, but the reset leaves the pool before the fork, so
+	// nothing may be discarded yet.
+	env.resetHead(env.header(env.parkedHead()), env.lastPreForkHead())
+
+	env.assertPresent(t, oversized, "over-cap transaction was dropped by a reset that did not reach Osaka")
+
+	// Crossing the fork must discard the transaction the cap excludes.
+	env.crossForkExpectDrop(t, oversized, env.lastPreForkHead(), "the Osaka fork")
+	env.assertPresent(t, normal, "transaction within the gas cap was dropped by the Osaka fork crossing")
+	if pending, _ := env.pool.Stats(); pending != 1 {
+		t.Fatalf("pool status after the fork: have %d pending, want 1", pending)
+	}
+	if nonce := env.pool.Nonce(oversizedAddr); nonce != 0 {
+		t.Fatalf("pending nonce after the fork: have %d, want 0", nonce)
+	}
+	env.validateInternals(t)
+}
+
+// TestOsakaGasCapAbortedResetDoesNotDrop verifies that a reset which is asked
+// to cross the Osaka fork but never reaches it does not discard over-cap
+// transactions, since the pool remains on a head where they are still valid.
+func TestOsakaGasCapAbortedResetDoesNotDrop(t *testing.T) {
+	t.Parallel()
+
+	env, chain := newStartedEnvWithFailingState(t)
+
+	oversized := env.oversizedTx()
+	if err := env.pool.addRemotesSync([]*types.Transaction{oversized})[0]; err != nil {
+		t.Fatalf("failed to add transaction: %v", err)
+	}
+	// Abort the reset that crosses the fork, leaving the pool on the parked
+	// head while the pool driver already considers the fork block the head to
+	// move on from.
+	chain.fail.Store(true)
+	env.resetHead(env.header(env.parkedHead()), env.forkBlock())
+
+	if head := env.pool.currentHead.Load().Number.Uint64(); head != uint64(env.parkedHead()) {
+		t.Fatalf("head advanced past an aborted reset: have %d want %d", head, env.parkedHead())
+	}
+	env.assertPresent(t, oversized, "over-cap transaction was dropped by a reset that never crossed Osaka")
+	chain.fail.Store(false)
+
+	// A reset that reaches the fork must still discard the transaction.
+	env.crossForkExpectDrop(t, oversized, env.lastPreForkHead(), "the reset that recovered from an abort")
+	env.validateInternals(t)
+}
+
+// TestOsakaGasCapCoalescedResetUsesActualHead verifies that the Osaka gas-cap
+// discard keys off the heads the pool actually lands on, not the heads a reset
+// request carries. The reorg loop coalesces pending resets by replacing only
+// the new head, so the requested old head goes stale: with a stale old head
+// past the fork, the requested-head check skips the discard although the pool
+// crossed the fork.
+func TestOsakaGasCapCoalescedResetUsesActualHead(t *testing.T) {
+	t.Parallel()
+
+	env, chain := newStartedEnvWithFailingState(t)
+
+	oversized := env.oversizedTx()
+	if err := env.pool.addRemotesSync([]*types.Transaction{oversized})[0]; err != nil {
+		t.Fatalf("failed to add transaction: %v", err)
+	}
+
+	// Hold the first run in flight by blocking state access, so the resets
+	// queued below stay pending in the reorg loop and coalesce.
+	release := make(chan struct{})
+	chain.release = release
+	first := env.pool.requestReset(nil, env.header(env.lastPreForkHead()))
+
+	// Queue a reset whose old head is already past the fork - a head the pool
+	// never reached - and immediately coalesce a second reset into it. The
+	// pending request keeps its old head and only replaces the new head, so
+	// the pool crosses the fork with a stale old head in the request.
+	pending := env.pool.requestReset(env.header(env.forkBlock()), env.header(env.forkBlock()))
+	next := env.pool.requestReset(env.header(env.forkBlock()), env.header(env.forkBlock()+1))
+	close(release)
+	<-first
+	<-pending
+	<-next
+
+	if env.pool.Has(oversized.Hash()) {
+		t.Fatal("over-cap transaction survived a fork crossing with a stale requested old head")
+	}
+	env.validateInternals(t)
+}
+
+// TestOsakaGasCapAnnouncesDiscarded verifies that an announcement queued for a
+// transaction the Osaka gas cap discards is still sent, matching upstream
+// behaviour: announcements are hints, and peers that request the transaction
+// simply get nothing back. A transaction surviving the crossing is announced
+// as well.
+func TestOsakaGasCapAnnouncesDiscarded(t *testing.T) {
+	t.Parallel()
+
+	env := newStartedEnv(t)
+
+	oversized, normal := env.addTransactions(t)
+
+	// Subscribe after the additions, so only the announcements from the fork
+	// crossing below are observed.
+	feed := make(chan core.NewTxsEvent, 32)
+	sub := env.pool.txFeed.Subscribe(feed)
+	defer sub.Unsubscribe()
+
+	// Queue the announcements the way scheduleReorgLoop batches ones that
+	// arrived since the previous run, then cross the fork in the same reorg
+	// run. The pool must move from the parked head directly, so the discard
+	// and the queued announcements share a single run.
+	env.pool.queueTxEvent(oversized)
+	env.pool.queueTxEvent(normal)
+	env.crossForkExpectDrop(t, oversized, env.parkedHead(), "the Osaka fork")
+	// Both the discarded transaction and the one surviving the crossing are
+	// announced: queued announcements are deliberately not pruned, mirroring
+	// upstream geth.
+	announced := make(map[common.Hash]struct{})
+	for len(announced) < 2 {
+		select {
+		case ev := <-feed:
+			for _, tx := range ev.Txs {
+				announced[tx.Hash()] = struct{}{}
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("expected both transactions to be announced, have %d", len(announced))
+		}
+	}
+	if _, ok := announced[oversized.Hash()]; !ok {
+		t.Fatal("over-cap transaction announcement was suppressed")
+	}
+	if _, ok := announced[normal.Hash()]; !ok {
+		t.Fatal("surviving transaction was not announced")
+	}
+	if err := validateEvents(feed, 0); err != nil {
+		t.Fatalf("unexpected extra announcements: %v", err)
+	}
+	env.validateInternals(t)
 }
 
 // validatePoolInternals checks various consistency invariants within the pool.
