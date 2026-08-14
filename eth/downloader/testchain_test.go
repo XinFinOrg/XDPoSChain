@@ -26,8 +26,10 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
@@ -36,6 +38,11 @@ var (
 	testKey, _      = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 	testAddress     = crypto.PubkeyToAddress(testKey.PublicKey)
 	testDB          = rawdb.NewMemoryDatabase()
+	testMasternodes = []common.Address{
+		common.HexToAddress("0x0000000000000000000000000000000000000101"),
+		common.HexToAddress("0x0000000000000000000000000000000000000102"),
+		common.HexToAddress("0x0000000000000000000000000000000000000103"),
+	}
 	testChainConfig = func() *params.ChainConfig {
 		cfg := *params.TestChainConfig
 		cfg.CancunBlock = nil
@@ -45,12 +52,37 @@ var (
 	}()
 
 	testGspec = &core.Genesis{
-		Alloc:   types.GenesisAlloc{testAddress: {Balance: big.NewInt(1000000000000000000)}},
+		Alloc: types.GenesisAlloc{
+			testAddress:                      {Balance: big.NewInt(1000000000000000000)},
+			common.MasternodeVotingSMCBinary: {Balance: new(big.Int), Storage: masternodeVotingStorage(testMasternodes)},
+		},
 		BaseFee: big.NewInt(params.InitialBaseFee),
 		Config:  testChainConfig,
 	}
 	testGenesis = testGspec.MustCommit(testDB)
 )
+
+// masternodeVotingStorage lays out the candidate array of the masternode voting
+// contract so StateDB.GetCandidates works without deploying the contract.
+func masternodeVotingStorage(candidates []common.Address) map[common.Hash]common.Hash {
+	// Slot numbers must stay in sync with slotValidatorMapping in
+	// core/state/statedb_utils.go: "candidates" = 8, "validatorsState" = 1.
+	const candidatesSlot, validatorsStateSlot = 8, 1
+
+	slotHash := common.BigToHash(new(big.Int).SetUint64(candidatesSlot))
+	storage := map[common.Hash]common.Hash{
+		slotHash: common.BigToHash(new(big.Int).SetUint64(uint64(len(candidates)))),
+	}
+	for i, candidate := range candidates {
+		storage[state.GetLocDynamicArrAtElement(slotHash, uint64(i), 1)] = candidate.Hash()
+		// validatorsState[candidate].cap sits one word past the struct base.
+		// Stakes strictly decrease with the index, so the descending stake sort
+		// preserves the genesis order and callers can assert it exactly.
+		capLoc := new(big.Int).Add(state.GetLocMappingAtKey(candidate.Hash(), validatorsStateSlot), common.Big1)
+		storage[common.BigToHash(capLoc)] = common.BigToHash(big.NewInt(int64(len(candidates)-i) * 1000))
+	}
+	return storage
+}
 
 // The common prefix of all test chains:
 var testChainBase *testChain
@@ -83,11 +115,21 @@ type testChain struct {
 	blockm   map[common.Hash]*types.Block
 	receiptm map[common.Hash][]*types.Receipt
 	tdm      map[common.Hash]*big.Int
+	db       ethdb.Database // Database the block states are committed to
 }
 
-// newTestChain creates a blockchain of the given length.
+// newTestChain creates a blockchain of the given length, committing the block
+// states to the shared testDB.
 func newTestChain(length int, genesis *types.Block) *testChain {
+	return newTestChainWithDB(length, genesis, testDB)
+}
+
+// newTestChainWithDB creates a blockchain of the given length, committing the
+// block states to db. It is used for chains whose genesis state differs from
+// the shared test genesis (e.g. no voting-contract storage).
+func newTestChainWithDB(length int, genesis *types.Block, db ethdb.Database) *testChain {
 	tc := new(testChain).copy(length)
+	tc.db = db
 	tc.genesis = genesis
 	tc.chain = append(tc.chain, genesis.Hash())
 	tc.headerm[tc.genesis.Hash()] = tc.genesis.Header()
@@ -120,6 +162,7 @@ func (tc *testChain) copy(newlen int) *testChain {
 		blockm:   make(map[common.Hash]*types.Block, newlen),
 		receiptm: make(map[common.Hash][]*types.Receipt, newlen),
 		tdm:      make(map[common.Hash]*big.Int, newlen),
+		db:       tc.db,
 	}
 	for i := 0; i < len(tc.chain) && i < newlen; i++ {
 		hash := tc.chain[i]
@@ -137,7 +180,7 @@ func (tc *testChain) copy(newlen int) *testChain {
 // contains a transaction and every 5th an uncle to allow testing correct block
 // reassembly.
 func (tc *testChain) generate(n int, seed byte, parent *types.Block, heavy bool) {
-	blocks, receipts := core.GenerateChain(testGspec.Config, parent, ethash.NewFaker(), testDB, n, func(i int, block *core.BlockGen) {
+	blocks, receipts := core.GenerateChain(testGspec.Config, parent, ethash.NewFaker(), tc.db, n, func(i int, block *core.BlockGen) {
 		block.SetCoinbase(common.Address{seed})
 		// If a heavy chain is requested, delay blocks to raise difficulty
 		if heavy {

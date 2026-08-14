@@ -206,7 +206,7 @@ func TestBuildSnapshotFromStateSortsByStakeDescending(t *testing.T) {
 // Equal stakes must keep the exact order xdc_sort produces, otherwise nodes
 // derive different masternode sets from the same state. A failure here means
 // the sort implementation drifted and the derivation no longer matches
-// core.BlockChain.UpdateM1 and Downloader.generateSnapshot.
+// core.BlockChain.UpdateM1.
 func TestBuildSnapshotFromStateEqualStakeOrder(t *testing.T) {
 	a, b, c := common.Address{0x1}, common.Address{0x2}, common.Address{0x3}
 	statedb := newCandidateState(t,

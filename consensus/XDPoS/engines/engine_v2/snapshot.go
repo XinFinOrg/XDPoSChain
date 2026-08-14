@@ -130,9 +130,10 @@ type GapStateReader interface {
 var ErrNoCandidates = errors.New("no masternode candidates in state")
 
 // BuildSnapshotFromState derives a gap block snapshot from the state committed
-// at that block. The ordering must stay identical to core.BlockChain.UpdateM1
-// and Downloader.generateSnapshot: a different equal-stake order yields a
-// different masternode set.
+// at that block. The ordering must stay identical to core.BlockChain.UpdateM1:
+// a different equal-stake order yields a different masternode set. Callers such
+// as Downloader.generateSnapshot must delegate here instead of reimplementing
+// the derivation.
 func BuildSnapshotFromState(statedb *state.StateDB, number uint64, hash common.Hash) (*SnapshotV2, error) {
 	var ms []utils.Masternode
 	for _, candidate := range statedb.GetCandidates() {

@@ -27,9 +27,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain"
 	"github.com/XinFinOrg/XDPoSChain/common"
-	xdc_sort "github.com/XinFinOrg/XDPoSChain/common/sort"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/engines/engine_v2"
-	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -1780,10 +1778,19 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 								log.Error("Failed to create state for gap pivot snapshot", "number", gapNum, "root", root, "err", err)
 								return err
 							}
-							if err := d.generateSnapshot(statedb, gapNum, gapHash); err != nil {
+							snap, err := d.generateSnapshot(statedb, gapNum, gapHash)
+							if err != nil {
+								// Abort fast sync instead of persisting an empty or partial
+								// snapshot that would permanently mask the gap. A normal chain
+								// always has masternode candidates at a gap block, so this
+								// failure means the gap block state itself is abnormal: retrying
+								// fast sync hits the same block again. The operator must resync
+								// with a clean data directory or restore valid gap block state
+								// before fast sync can complete.
 								log.Error("Failed to generate snapshot for gap pivot", "number", gapNum, "hash", gapHash, "err", err)
 								return err
 							}
+							log.Info("Gap pivot snapshot generated", "number", gapNum, "hash", gapHash.Hex(), "candidates", len(snap.NextEpochCandidates))
 							syncedGaps[gapNum] = true
 						}
 						log.Info("All gap pivot state syncs complete", "count", len(gapNumbers))
@@ -1998,36 +2005,15 @@ func (d *Downloader) requestTTL() time.Duration {
 	return ttl
 }
 
-// generateSnapshot creates and stores a snapshot from the given state and block hash.
-// It retrieves candidates from state, sorts them by stake in descending order,
-// and stores the snapshot for future use.
-func (d *Downloader) generateSnapshot(statedb *state.StateDB, number uint64, hash common.Hash) error {
-	candidates := statedb.GetCandidates()
-	var ms []utils.Masternode
-	for _, candidate := range candidates {
-		v := statedb.GetCandidateCap(candidate)
-		// Skip zero address candidates
-		if !candidate.IsZero() {
-			ms = append(ms, utils.Masternode{Address: candidate, Stake: v})
-		}
-	}
-	xdc_sort.Slice(ms, func(i, j int) bool {
-		return ms[i].Stake.Cmp(ms[j].Stake) >= 0
-	})
-
-	masterNodes := []common.Address{}
-	for _, m := range ms {
-		masterNodes = append(masterNodes, m.Address)
-	}
-
-	snap := engine_v2.NewSnapshot(number, hash, masterNodes)
-	log.Info("[generateSnapshot] created snapshot", "number", number, "hash", hash.Hex(), "candidates", len(masterNodes))
-
-	err := engine_v2.StoreSnapshot(snap, d.stateDB)
+// generateSnapshot derives the masternode snapshot of a gap block from the
+// given state, stores it and returns it.
+func (d *Downloader) generateSnapshot(statedb *state.StateDB, number uint64, hash common.Hash) (*engine_v2.SnapshotV2, error) {
+	snap, err := engine_v2.BuildSnapshotFromState(statedb, number, hash)
 	if err != nil {
-		log.Error("[generateSnapshot] error while storing snapshot", "hash", hash, "error", err)
-		return err
+		return nil, err
 	}
-
-	return nil
+	if err := engine_v2.StoreSnapshot(snap, d.stateDB); err != nil {
+		return nil, err
+	}
+	return snap, nil
 }

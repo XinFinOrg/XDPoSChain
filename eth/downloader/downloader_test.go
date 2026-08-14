@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,6 +31,7 @@ import (
 	ethereum "github.com/XinFinOrg/XDPoSChain"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	engine_v2 "github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/engines/engine_v2"
+	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
@@ -82,19 +84,26 @@ type downloadTester struct {
 
 // newTester creates a new downloader test mocker.
 func newTester() *downloadTester {
+	return newTesterWithGenesis(testGenesis, testDB)
+}
+
+// newTesterWithGenesis creates a new downloader test mocker backed by a custom
+// genesis and peer database, for tests whose chain state differs from the
+// shared test genesis.
+func newTesterWithGenesis(genesis *types.Block, peerDb ethdb.Database) *downloadTester {
 	tester := &downloadTester{
-		genesis:     testGenesis,
-		peerDb:      testDB,
+		genesis:     genesis,
+		peerDb:      peerDb,
 		peers:       make(map[string]*downloadTesterPeer),
-		ownHashes:   []common.Hash{testGenesis.Hash()},
-		ownHeaders:  map[common.Hash]*types.Header{testGenesis.Hash(): testGenesis.Header()},
-		ownBlocks:   map[common.Hash]*types.Block{testGenesis.Hash(): testGenesis},
-		ownReceipts: map[common.Hash]types.Receipts{testGenesis.Hash(): nil},
-		ownChainTd:  map[common.Hash]*big.Int{testGenesis.Hash(): testGenesis.Difficulty()},
+		ownHashes:   []common.Hash{genesis.Hash()},
+		ownHeaders:  map[common.Hash]*types.Header{genesis.Hash(): genesis.Header()},
+		ownBlocks:   map[common.Hash]*types.Block{genesis.Hash(): genesis},
+		ownReceipts: map[common.Hash]types.Receipts{genesis.Hash(): nil},
+		ownChainTd:  map[common.Hash]*big.Int{genesis.Hash(): genesis.Difficulty()},
 	}
 	tester.stateDb = rawdb.NewMemoryDatabase()
 	tester.triedb = trie.NewDatabase(tester.stateDb)
-	tester.stateDb.Put(testGenesis.Root().Bytes(), []byte{0x00})
+	tester.stateDb.Put(genesis.Root().Bytes(), []byte{0x00})
 	tester.downloader = New(tester.stateDb, new(event.TypeMux), tester, nil, tester.dropPeer, tester.handleProposedBlock)
 	return tester
 }
@@ -2147,6 +2156,72 @@ func TestFastSyncGapPivotSync(t *testing.T) {
 	}
 	if snap.Hash != gapBlockHash {
 		t.Errorf("snapshot hash mismatch: have %v, want %v", snap.Hash, gapBlockHash)
+	}
+	if !slices.Equal(snap.NextEpochCandidates, testMasternodes) {
+		t.Errorf("snapshot candidates mismatch: have %v, want %v", snap.NextEpochCandidates, testMasternodes)
+	}
+}
+
+// TestFastSyncGapPivotEmptyCandidatesAborts verifies the downloader-boundary
+// behavior of the gap-pivot snapshot derivation: when the voting-contract
+// storage holds no candidates, fast sync must abort with
+// engine_v2.ErrNoCandidates and must not persist any snapshot, proving the
+// failure propagates before the pivot is committed.
+func TestFastSyncGapPivotEmptyCandidatesAborts(t *testing.T) {
+	// Genesis without any voting-contract storage: the gap block state holds
+	// no masternode candidates.
+	gspec := &core.Genesis{
+		Alloc:   types.GenesisAlloc{testAddress: {Balance: big.NewInt(1000000000000000000)}},
+		BaseFee: big.NewInt(params.InitialBaseFee),
+		Config:  testChainConfig,
+	}
+	peerDb := rawdb.NewMemoryDatabase()
+	genesis := gspec.MustCommit(peerDb)
+
+	tester := newTesterWithGenesis(genesis, peerDb)
+	// XDPoS config is required so SetPivotBlock can compute gap numbers.
+	// TestXDPoSMockChainConfig has Epoch=900, Gap=450.
+	tester.configOverride = params.TestXDPoSMockChainConfig
+	defer tester.terminate()
+
+	// 600 blocks: natural pivot = 600-1-64 = 535, gap pivot = 450.
+	chainLen := 600
+	chain := newTestChainWithDB(chainLen, genesis, peerDb)
+	tester.newPeer("peer", xdc100, chain)
+
+	pivotNum := uint64(chainLen - 1 - fsMinFullBlocks) // = 535
+	pivotHash := chain.headerm[chain.chain[pivotNum]].Hash()
+	pivotRoot := chain.headerm[chain.chain[pivotNum]].Root
+	tester.downloader.SetPivotBlock(pivotNum, pivotHash, pivotRoot)
+
+	// Same layout as TestFastSyncGapPivotSync: the fixed pivot derives exactly
+	// one gap pivot, block 450, so the abort is exercised on the intended block
+	// instead of passing because no gap pivot was scheduled at all.
+	tester.downloader.pivotGapLock.RLock()
+	gaps := make([]uint64, len(tester.downloader.pivotGapNumbers))
+	copy(gaps, tester.downloader.pivotGapNumbers)
+	tester.downloader.pivotGapLock.RUnlock()
+	if len(gaps) != 1 || gaps[0] != 450 {
+		t.Fatalf("expected gap pivots [450], got %v", gaps)
+	}
+
+	if err := tester.sync("peer", nil, FastSync); !errors.Is(err, engine_v2.ErrNoCandidates) {
+		t.Fatalf("fast sync with empty gap-pivot candidates error = %v, want %v", err, engine_v2.ErrNoCandidates)
+	}
+
+	// The abort happens before commitPivotBlock, so the pivot block must not
+	// be in the local chain.
+	if _, ok := tester.ownBlocks[pivotHash]; ok {
+		t.Errorf("pivot block %d committed despite ErrNoCandidates", pivotNum)
+	}
+	// No snapshot may have been persisted for the gap pivot block.
+	gapBlockHash := chain.headerm[chain.chain[450]].Hash()
+	has, hasErr := rawdb.HasXdposV2Snapshot(tester.downloader.stateDB, gapBlockHash)
+	if hasErr != nil {
+		t.Fatalf("failed to probe gap pivot snapshot %s: %v", gapBlockHash, hasErr)
+	}
+	if has {
+		t.Errorf("snapshot persisted for gap pivot block 450 despite ErrNoCandidates")
 	}
 }
 
