@@ -193,9 +193,22 @@ func (x *XDPoS_v2) Initial(chain consensus.ChainReader, header *types.Header) er
 	x.lock.Lock()
 	defer x.lock.Unlock()
 
-	return x.initial(chain, header)
+	if err := x.initial(chain, header); err != nil {
+		return err
+	}
+	// Startup-only repair, skipped for chain readers that cannot open state.
+	// Runs under x.lock, which is safe here: Initial is only reached from the
+	// startup path before the protocol starts, and the historical state reads
+	// do not take any chain locks.
+	if gapChain, ok := chain.(GapStateReader); ok {
+		x.RepairGapSnapshots(gapChain)
+	}
+	return nil
 }
 
+// initial sets the v2 parameters from the chain. It must only be called while
+// holding x.lock, from either the startup path (Initial) or header verification.
+// The startup-only gap snapshot repair is deliberately kept in Initial, not here.
 func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) error {
 	log.Warn("[initial] initial v2 related parameters")
 
