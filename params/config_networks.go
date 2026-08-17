@@ -200,7 +200,7 @@ var (
 	LocalnetV2Configs = map[uint64]*V2Config{
 		defaultV2SwitchRound: {
 			MaxMasternodes:            108,
-			MaxProtectorNodes:         324,
+			MaxProtectorNodes:         432,
 			MaxObserverNodes:          2000,
 			SwitchRound:               0,
 			CertThreshold:             0.667,
