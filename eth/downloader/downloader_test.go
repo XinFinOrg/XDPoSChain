@@ -2299,3 +2299,32 @@ func TestRequestTTL(t *testing.T) {
 		t.Fatalf("ttlLimit (%v) is below rttMaxEstimate (%v)", ttlLimit, rttMaxEstimate)
 	}
 }
+
+// TestDownloaderUnregisterPeerTwice verifies that a second unregister of an
+// already-removed peer returns errNotRegistered, per the exported contract.
+func TestDownloaderUnregisterPeerTwice(t *testing.T) {
+	dl := newTester()
+	defer dl.terminate()
+
+	chain := newTestChain(1, testGenesis)
+	if err := dl.newPeer("unreg", 62, chain); err != nil {
+		t.Fatalf("failed to register test peer: %v", err)
+	}
+	if err := dl.downloader.UnregisterPeer("unreg"); err != nil {
+		t.Fatalf("first unregister failed: %v", err)
+	}
+	if err := dl.downloader.UnregisterPeer("unreg"); err != errNotRegistered {
+		t.Fatalf("second unregister error mismatch: got %v want %v", err, errNotRegistered)
+	}
+}
+
+// TestDownloaderUnregisterPeerNeverRegistered verifies that unregistering a
+// peer that was never registered returns errNotRegistered.
+func TestDownloaderUnregisterPeerNeverRegistered(t *testing.T) {
+	dl := newTester()
+	defer dl.terminate()
+
+	if err := dl.downloader.UnregisterPeer("ghost"); err != errNotRegistered {
+		t.Fatalf("unregistering a never-registered peer error mismatch: got %v want %v", err, errNotRegistered)
+	}
+}

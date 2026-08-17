@@ -259,3 +259,41 @@ func TestAnnounceTransactionsKeepsDrainingAfterSendFailure(t *testing.T) {
 		t.Fatalf("write attempts after further drain: got %d, want 1", got)
 	}
 }
+
+// TestPeerMarkRemovedOnce verifies that a peer's removal is claimed exactly once.
+func TestPeerMarkRemovedOnce(t *testing.T) {
+	p := &peer{id: "once"}
+	if !p.markRemoved() {
+		t.Fatal("first markRemoved should claim the removal")
+	}
+	for i := 0; i < 10; i++ {
+		if p.markRemoved() {
+			t.Fatalf("markRemoved should not claim a removal after it was already claimed (iteration %d)", i)
+		}
+	}
+}
+
+// TestPeerSetUnregisterTwice documents that unregistering an already-removed
+// peer reports errNotRegistered. A bare &peer{} would panic here: Unregister
+// closes p.term via p.close, so the peer must be built through newPeer, which
+// initializes the termination channel.
+func TestPeerSetUnregisterTwice(t *testing.T) {
+	peers := newPeerSet()
+
+	app, net := p2p.MsgPipe()
+	defer app.Close()
+	var id enode.ID
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatalf("failed to generate random peer id: %v", err)
+	}
+	p := newPeer(xdc100, p2p.NewPeer(id, "twice", nil), net, func(common.Hash) *types.Transaction { return nil })
+	if err := peers.Register(p); err != nil {
+		t.Fatalf("register failed: %v", err)
+	}
+	if err := peers.Unregister(p.id); err != nil {
+		t.Fatalf("first unregister failed: %v", err)
+	}
+	if err := peers.Unregister(p.id); err != errNotRegistered {
+		t.Fatalf("second unregister error mismatch: got %v want %v", err, errNotRegistered)
+	}
+}

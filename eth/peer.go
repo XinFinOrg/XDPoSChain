@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/big"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -110,6 +111,9 @@ type peer struct {
 	term        chan struct{}  // Termination channel to stop the broadcaster
 	broadcastWg sync.WaitGroup // Tracks the broadcaster goroutines so they can be awaited
 	closeOnce   sync.Once      // Ensures term is closed exactly once
+
+	// removed is set exactly once to make peer removal idempotent.
+	removed atomic.Bool
 
 	knownVote     mapset.Set[common.Hash] // Set of BFT Vote known to be known by this peer
 	knownTimeout  mapset.Set[common.Hash] // Set of BFT timeout known to be known by this peer
@@ -305,6 +309,12 @@ func (p *peer) announceTransactions() {
 			return
 		}
 	}
+}
+
+// markRemoved claims the peer's removal, returning true only for the first
+// caller so the unregister sequence runs exactly once per peer.
+func (p *peer) markRemoved() bool {
+	return !p.removed.Swap(true)
 }
 
 // close signals the broadcast goroutine to terminate. It is safe for

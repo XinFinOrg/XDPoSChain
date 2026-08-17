@@ -354,15 +354,24 @@ func (d *Downloader) RegisterLightPeer(id string, version int, peer LightPeer) e
 	return d.RegisterPeer(id, version, &lightPeerWrapper{peer})
 }
 
-// UnregisterPeer remove a peer from the known list, preventing any action from
+// UnregisterPeer removes a peer from the known list, preventing any action from
 // the specified peer. An effort is also made to return any pending fetches into
 // the queue.
+//
+// Unregistering a peer that is not (or no longer) registered returns
+// errNotRegistered without side effects, so repeated or racing calls are safe:
+// the cleanup (queue revocation and peer drop event) runs at most once.
 func (d *Downloader) UnregisterPeer(id string) error {
 	// Unregister the peer from the active peer set and revoke any fetch tasks
 	logger := peerLogger(id)
 	logger.Trace("Unregistering sync peer")
 	if err := d.peers.Unregister(id); err != nil {
-		logger.Warn("Failed to unregister sync peer", "err", err)
+		if errors.Is(err, errNotRegistered) {
+			// Expected: never registered, or removal raced ahead of registration.
+			logger.Debug("Sync peer was never registered")
+		} else {
+			logger.Warn("Failed to unregister sync peer", "err", err)
+		}
 		return err
 	}
 	d.queue.Revoke(id)

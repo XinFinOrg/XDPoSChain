@@ -21,6 +21,7 @@ import (
 	"math"
 	"math/big"
 	"math/rand"
+	"sync"
 	"testing"
 	"time"
 
@@ -36,6 +37,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/eth/ethconfig"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
@@ -772,4 +774,154 @@ func daoChallengeChainConfig(daoForkSupport bool) *params.ChainConfig {
 	config.TIPEpochHalvingBlock = new(big.Int).Set(futureForkBlock)
 
 	return config
+}
+
+// waitForPeerRegistration blocks until the peer with the given id has been
+// registered by the protocol manager's handle goroutine.
+func waitForPeerRegistration(t *testing.T, pm *ProtocolManager, id string) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for pm.peers.Peer(id) == nil {
+		select {
+		case <-deadline:
+			t.Fatalf("test peer %s was not registered in time", id)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// TestProtocolManagerRemovePeerIdempotent verifies that removing an already
+// removed peer is a silent no-op.
+func TestProtocolManagerRemovePeerIdempotent(t *testing.T) {
+	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	defer pm.Stop()
+
+	// Register a peer through the normal protocol handshake path.
+	tp, errc := newTestPeer("test-peer", xdc165, pm, true)
+	// Ensure broadcaster goroutines stop if the test exits before removePeer
+	// reaches peerSet.Unregister.
+	defer tp.peer.close()
+	defer tp.close()
+	defer tp.app.Close()
+	defer func() {
+		select {
+		case <-errc:
+		default:
+		}
+	}()
+	waitForPeerRegistration(t, pm, tp.id)
+
+	if pm.peers.Len() != 1 {
+		t.Fatalf("peer set size mismatch: got %d want 1", pm.peers.Len())
+	}
+	// The first removal performs the full unregister sequence.
+	pm.removePeer(tp.id)
+	if pm.peers.Peer(tp.id) != nil {
+		t.Fatal("peer still registered after first removePeer")
+	}
+	if pm.peers.Len() != 0 {
+		t.Fatalf("peer set size mismatch after removal: got %d want 0", pm.peers.Len())
+	}
+	// A duplicate removal must be a silent no-op. Note it is short-circuited by
+	// the peer == nil lookup above, so markRemoved's atomic branch is covered
+	// by TestPeerMarkRemovedOnce and TestProtocolManagerRemovePeerConcurrent.
+	pm.removePeer(tp.id)
+	if pm.peers.Len() != 0 {
+		t.Fatalf("peer set size mismatch after second removePeer: got %d want 0", pm.peers.Len())
+	}
+}
+
+// TestProtocolManagerRemovePeerConcurrent verifies that concurrent removePeer
+// calls for the same peer remove it exactly once, without panicking or racing
+// on the removal flag.
+func TestProtocolManagerRemovePeerConcurrent(t *testing.T) {
+	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	defer pm.Stop()
+
+	// Register a peer through the normal protocol handshake path.
+	tp, errc := newTestPeer("test-peer", xdc165, pm, true)
+	// Stop the broadcast goroutines started by peers.Register; nothing in the
+	// production teardown path closes the peer's term channel.
+	defer tp.peer.close()
+	defer tp.close()
+	defer tp.app.Close()
+	defer func() {
+		select {
+		case <-errc:
+		default:
+		}
+	}()
+	waitForPeerRegistration(t, pm, tp.id)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pm.removePeer(tp.id)
+		}()
+	}
+	wg.Wait()
+
+	if pm.peers.Peer(tp.id) != nil {
+		t.Fatal("peer still registered after concurrent removePeer calls")
+	}
+	if pm.peers.Len() != 0 {
+		t.Fatalf("peer set size mismatch after concurrent removal: got %d want 0", pm.peers.Len())
+	}
+	// The downloader must not retain a stale entry that blocks re-registration.
+	// Poll briefly in case handle() is still undoing its registration.
+	deadline := time.After(2 * time.Second)
+	for {
+		if err := pm.downloader.RegisterPeer(tp.id, tp.version, tp); err == nil {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("stale downloader entry blocks re-registration")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	// Undo the test's own registration.
+	pm.downloader.UnregisterPeer(tp.id)
+}
+
+// TestRegisterDownloaderPeerUndoesRacedRemoval reproduces the window in handle()
+// between pm.peers.Register and the downloader registration, where a BFT
+// broadcaster can remove the peer. Without the recheck in
+// registerDownloaderPeer, the downloader would keep a stale entry that blocks
+// a reconnect of the same node id.
+func TestRegisterDownloaderPeerUndoesRacedRemoval(t *testing.T) {
+	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	defer pm.Stop()
+
+	// Register the peer in pm.peers only — the state handle() is in mid-window.
+	app, net := p2p.MsgPipe()
+	defer app.Close()
+	var id enode.ID
+	rand.Read(id[:])
+	p := pm.newPeer(xdc165, p2p.NewPeer(id, "race-peer", nil), net, pm.txpool.Get)
+	// peers.Register starts the peer's broadcast goroutines; close the term
+	// channel so they terminate when the test ends.
+	defer p.close()
+	if err := pm.peers.Register(p); err != nil {
+		t.Fatalf("failed to register test peer: %v", err)
+	}
+	if pm.peers.Len() != 1 {
+		t.Fatalf("peer set size mismatch: got %d want 1", pm.peers.Len())
+	}
+	// A BFT broadcaster's failing send removes the peer inside the window.
+	pm.removePeer(p.id)
+	if pm.peers.Peer(p.id) != nil {
+		t.Fatal("peer still present after removePeer")
+	}
+	// The recheck must undo the registration and abort the handshake.
+	if err := pm.registerDownloaderPeer(p); err != p2p.DiscUselessPeer {
+		t.Fatalf("registerDownloaderPeer should abort with DiscUselessPeer a handshake whose removal was already claimed, got: %v", err)
+	}
+	// A reconnect of the same node id must not be blocked by a stale entry.
+	if err := pm.downloader.RegisterPeer(p.id, p.version, p); err != nil {
+		t.Fatalf("reconnect blocked by stale downloader entry: %v", err)
+	}
+	pm.downloader.UnregisterPeer(p.id)
 }

@@ -281,17 +281,40 @@ func (pm *ProtocolManager) removePeer(id string) {
 	if peer == nil {
 		return
 	}
+	// Claim the removal exactly once; concurrent callers become no-ops.
+	if !peer.markRemoved() {
+		return
+	}
 	log.Debug("Removing Ethereum peer", "peer", id)
 
 	// Unregister the peer from the downloader and Ethereum peer set
 	pm.downloader.UnregisterPeer(id)
 	pm.txFetcher.Drop(id)
 
+	// Unregister should succeed: the guard above guarantees the peer is still
+	// in the set.
 	if err := pm.peers.Unregister(id); err != nil {
 		log.Debug("Peer removal failed", "peer", id, "err", err)
 	}
 	// Hard disconnect at the networking layer
 	peer.Peer.Disconnect(p2p.DiscUselessPeer)
+}
+
+// registerDownloaderPeer registers the peer with the downloader, undoing the
+// registration if the peer's removal was claimed in the meantime; otherwise a
+// stale entry would block a reconnect of the same node id. Returns
+// DiscUselessPeer to abort the handshake, matching removePeer's disconnect
+// reason.
+func (pm *ProtocolManager) registerDownloaderPeer(p *peer) error {
+	if err := pm.downloader.RegisterPeer(p.id, p.version, p); err != nil {
+		return err
+	}
+	if p.removed.Load() {
+		// Undo the registration; UnregisterPeer is a no-op if already removed.
+		pm.downloader.UnregisterPeer(p.id)
+		return p2p.DiscUselessPeer
+	}
+	return nil
 }
 
 func (pm *ProtocolManager) Start(maxPeers int) {
@@ -390,7 +413,7 @@ func (pm *ProtocolManager) handle(p *peer) error {
 	defer pm.removePeer(p.id)
 
 	// Register the peer in the downloader. If the downloader considers it banned, we disconnect
-	if err := pm.downloader.RegisterPeer(p.id, p.version, p); err != nil {
+	if err := pm.registerDownloaderPeer(p); err != nil {
 		return err
 	}
 	p.Log().Info("Register peer", "nodeid", p.ID().String(), "version", p.version, "addr", p.RemoteAddr())
