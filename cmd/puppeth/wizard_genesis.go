@@ -271,16 +271,16 @@ func (w *wizard) makeGenesis() {
 			blocksPerYear := 31536000 / genesis.Config.XDPoS.Period
 			epochsPerYear := blocksPerYear / genesis.Config.XDPoS.Epoch
 			if epochsPerYear > 0 {
-				rewardsPerYear := float64(threshold) * (float64(yield) / float64(100))
-				rewardPerEpochPerMN := uint64(rewardsPerYear / float64(epochsPerYear))
-				totalRewardPerEpoch := rewardPerEpochPerMN * uint64(len(signers))
+				rewardsPerYear := float64(threshold) * (float64(yield) / 100)
+				rewardPerEpochPerMNWithoutFoundation := rewardsPerYear / float64(epochsPerYear)
+				rewardPerEpochPerMN := float64(rewardPerEpochPerMNWithoutFoundation) * 100 / float64(100-common.RewardFoundationPercent)
+				totalRewardPerEpoch := float64(rewardPerEpochPerMN) * float64(len(signers))
 				fmt.Println()
-				fmt.Println("Calculated Total Masternode rewards per epoch based on yield: ", totalRewardPerEpoch)
-				genesis.Config.XDPoS.Reward = totalRewardPerEpoch
-				genesis.Config.XDPoS.V2.CurrentConfig.MasternodeReward = math.Round(float64(rewardPerEpochPerMN)*1000) / 1000
-				genesis.Config.XDPoS.V2.CurrentConfig.ProtectorReward = math.Round(float64(rewardPerEpochPerMN)*0.8*1000) / 1000
-				genesis.Config.XDPoS.V2.CurrentConfig.ObserverReward = math.Round(float64(rewardPerEpochPerMN)*0.6*1000) / 1000
-
+				fmt.Println("Calculated Total Masternode rewards per epoch based on yield: ", uint64(math.Round(totalRewardPerEpoch)))
+				genesis.Config.XDPoS.Reward = uint64(math.Round(totalRewardPerEpoch))
+				genesis.Config.XDPoS.V2.CurrentConfig.MasternodeReward = math.Round(rewardPerEpochPerMN*10000) / 10000
+				genesis.Config.XDPoS.V2.CurrentConfig.ProtectorReward = math.Round(rewardPerEpochPerMN*0.8*10000) / 10000
+				genesis.Config.XDPoS.V2.CurrentConfig.ObserverReward = math.Round(rewardPerEpochPerMN*0.4*10000) / 10000
 			}
 		}
 
@@ -289,6 +289,9 @@ func (w *wizard) makeGenesis() {
 		if input == nil {
 			genesis.Config.XDPoS.FoundationWalletAddr = w.readDefaultAddress(common.FoundationAddrBinary)
 		} else {
+			if !common.IsHexAddress(input.FoundationWalletAddress) {
+				log.Crit("Invalid foundation wallet address", "address", input.FoundationWalletAddress)
+			}
 			genesis.Config.XDPoS.FoundationWalletAddr = common.HexToAddress(input.FoundationWalletAddress)
 		}
 
