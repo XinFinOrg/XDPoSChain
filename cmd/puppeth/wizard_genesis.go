@@ -44,6 +44,12 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 )
 
+// deployChainV2SwitchBlock is the block at which the throwaway chain used to
+// deploy the genesis contracts would switch to the XDPoS v2 engine. Deploying
+// takes a handful of blocks, so the switch is never reached and the chain stays
+// on v1 throughout. It must be a whole number of epochs and must not be 0.
+const deployChainV2SwitchBlock = 900
+
 type GenesisInput struct {
 	Name                    string   // informational network name
 	ChainId                 uint64   // network id
@@ -271,16 +277,16 @@ func (w *wizard) makeGenesis() {
 			blocksPerYear := 31536000 / genesis.Config.XDPoS.Period
 			epochsPerYear := blocksPerYear / genesis.Config.XDPoS.Epoch
 			if epochsPerYear > 0 {
-				rewardsPerYear := float64(threshold) * (float64(yield) / float64(100))
-				rewardPerEpochPerMN := uint64(rewardsPerYear / float64(epochsPerYear))
-				totalRewardPerEpoch := rewardPerEpochPerMN * uint64(len(signers))
+				rewardsPerYear := float64(threshold) * (float64(yield) / 100)
+				rewardPerEpochPerMNWithoutFoundation := rewardsPerYear / float64(epochsPerYear)
+				rewardPerEpochPerMN := float64(rewardPerEpochPerMNWithoutFoundation) * 100 / float64(100-common.RewardFoundationPercent)
+				totalRewardPerEpoch := float64(rewardPerEpochPerMN) * float64(len(signers))
 				fmt.Println()
-				fmt.Println("Calculated Total Masternode rewards per epoch based on yield: ", totalRewardPerEpoch)
-				genesis.Config.XDPoS.Reward = totalRewardPerEpoch
-				genesis.Config.XDPoS.V2.CurrentConfig.MasternodeReward = math.Round(float64(rewardPerEpochPerMN)*1000) / 1000
-				genesis.Config.XDPoS.V2.CurrentConfig.ProtectorReward = math.Round(float64(rewardPerEpochPerMN)*0.8*1000) / 1000
-				genesis.Config.XDPoS.V2.CurrentConfig.ObserverReward = math.Round(float64(rewardPerEpochPerMN)*0.6*1000) / 1000
-
+				fmt.Println("Calculated Total Masternode rewards per epoch based on yield: ", uint64(math.Round(totalRewardPerEpoch)))
+				genesis.Config.XDPoS.Reward = uint64(math.Round(totalRewardPerEpoch))
+				genesis.Config.XDPoS.V2.CurrentConfig.MasternodeReward = math.Round(rewardPerEpochPerMN*10000) / 10000
+				genesis.Config.XDPoS.V2.CurrentConfig.ProtectorReward = math.Round(rewardPerEpochPerMN*0.8*10000) / 10000
+				genesis.Config.XDPoS.V2.CurrentConfig.ObserverReward = math.Round(rewardPerEpochPerMN*0.4*10000) / 10000
 			}
 		}
 
@@ -289,6 +295,9 @@ func (w *wizard) makeGenesis() {
 		if input == nil {
 			genesis.Config.XDPoS.FoundationWalletAddr = w.readDefaultAddress(common.FoundationAddrBinary)
 		} else {
+			if !common.IsHexAddress(input.FoundationWalletAddress) {
+				log.Crit("Invalid foundation wallet address", "address", input.FoundationWalletAddress)
+			}
 			genesis.Config.XDPoS.FoundationWalletAddr = common.HexToAddress(input.FoundationWalletAddress)
 		}
 
@@ -296,9 +305,12 @@ func (w *wizard) makeGenesis() {
 		pKey, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 		addr := crypto.PubkeyToAddress(pKey.PublicKey)
 		deployerFunds := new(big.Int).Mul(big.NewInt(1_000_000), big.NewInt(1e18)) // 1,000,000 ETH
+		deployConfig := params.LocalnetChainConfig.Clone()
+		deployConfig.XDPoS.V2.SwitchBlock = new(big.Int).SetUint64(deployChainV2SwitchBlock)
+		deployConfig.XDPoS.V2.SwitchEpoch = deployChainV2SwitchBlock / deployConfig.XDPoS.Epoch
 		// Gas limit increased to 10,000,000,000 to support validator contract deployment with large masternode counts (>38).
-		contractBackend := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: deployerFunds}}, 10_000_000_000, params.TestXDPoSMockChainConfig)
-		transactOpts, err := bind.NewKeyedTransactorWithChainID(pKey, new(big.Int).SetUint64(params.ConsensusOptionalTestChainID))
+		contractBackend := backends.NewXDCSimulatedBackend(types.GenesisAlloc{addr: {Balance: deployerFunds}}, 10_000_000_000, deployConfig)
+		transactOpts, err := bind.NewKeyedTransactorWithChainID(pKey, deployConfig.ChainID)
 		if err != nil {
 			log.Crit("Failed to create genesis contract deployer", "err", err)
 		}
