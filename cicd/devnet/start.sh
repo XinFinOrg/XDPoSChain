@@ -157,7 +157,7 @@ XDC ${config_arg} --ethstats ${netstats} \
 --gcmode ${gc_mode} --syncmode ${sync_mode} \
 --nat extip:${instance_ip} \
 --bootnodes ${bootnodes} \
---datadir /work/xdcchain --networkid 5551 \
+--datadir /work/xdcchain \
 --port $port --http --http-corsdomain "*" --http-addr 0.0.0.0 \
 --http-port $rpc_port \
 --http-api db,eth,net,txpool,web3,XDPoS \

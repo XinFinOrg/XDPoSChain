@@ -126,7 +126,7 @@ XDC --ethstats ${netstats} \
     --gcmode ${gc_mode} --syncmode ${sync_mode} \
     --nat extip:${INSTANCE_IP} \
     --bootnodes ${bootnodes} \
-    --datadir /work/xdcchain --networkid 50 \
+    --datadir /work/xdcchain \
     --port $port --http --http-corsdomain "*" --http-addr 0.0.0.0 \
     --http-port $rpc_port \
     --http-api db,eth,net,txpool,web3,XDPoS \
