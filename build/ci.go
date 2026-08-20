@@ -67,7 +67,6 @@ var (
 		executablePath("bootnode"),
 		executablePath("ethkey"),
 		executablePath("evm"),
-		executablePath("p2psim"),
 		executablePath("puppeth"),
 		executablePath("rlpdump"),
 		executablePath("XDC"),

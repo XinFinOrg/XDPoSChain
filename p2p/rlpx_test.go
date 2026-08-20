@@ -33,7 +33,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/crypto/ecies"
 	"github.com/XinFinOrg/XDPoSChain/crypto/keccak"
 	"github.com/XinFinOrg/XDPoSChain/p2p/discover"
-	"github.com/XinFinOrg/XDPoSChain/p2p/simulations/pipes"
+	"github.com/XinFinOrg/XDPoSChain/p2p/pipes"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/davecgh/go-spew/spew"
 )

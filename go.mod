@@ -16,7 +16,6 @@ require (
 	github.com/holiman/uint256 v1.3.2
 	github.com/huin/goupnp v1.3.0
 	github.com/jackpal/go-nat-pmp v1.0.2
-	github.com/julienschmidt/httprouter v1.3.0
 	github.com/mattn/go-colorable v0.1.13
 	github.com/naoina/toml v0.1.2-0.20170918210437-9fafd6967416
 	github.com/olekukonko/tablewriter v0.0.5
