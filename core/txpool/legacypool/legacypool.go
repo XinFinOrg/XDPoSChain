@@ -986,7 +986,7 @@ func (pool *LegacyPool) promoteSpecialTx(addr common.Address, tx *types.Transact
 	// Set the potentially new pending nonce and notify any subsystems of the new tx
 	pool.queue.bump(addr)
 	pool.pendingNonces.set(addr, tx.Nonce()+1)
-	pool.txFeed.Send(core.NewTxsEvent{Txs: []*types.Transaction{tx}})
+	pool.queueTxEvent(tx)
 	return true, nil
 }
 

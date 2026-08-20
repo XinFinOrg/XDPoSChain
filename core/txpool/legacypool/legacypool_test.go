@@ -4029,3 +4029,123 @@ func TestSetGasPrice(t *testing.T) {
 		})
 	}
 }
+
+// TestSpecialTxPromotionDoesNotBlockOnTxFeed reproduces the mainnet freeze: promoting a
+// special transaction delivered its NewTxsEvent while holding the pool write lock, so a
+// subscriber that stopped draining wedged the pool itself and, through it, every peer
+// goroutine that wanted to add or read transactions.
+func TestSpecialTxPromotionDoesNotBlockOnTxFeed(t *testing.T) {
+	pool, key := setupPool()
+	defer pool.Close()
+
+	pool.SetSigner(func(common.Address) bool { return true })
+	testAddBalance(pool, crypto.PubkeyToAddress(key.PublicKey), big.NewInt(1_000_000_000_000_000_000))
+
+	// Subscriber that never reads, modelling a stalled txBroadcastLoop.
+	sink := make(chan core.NewTxsEvent)
+	sub := pool.SubscribeTransactions(sink, false)
+	defer sub.Unsubscribe()
+
+	gasPrice := new(big.Int).SetUint64(common.DefaultMinGasPrice + 1)
+	specialTx, err := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, big.NewInt(1), 100000, gasPrice, nil), types.HomesteadSigner{}, key)
+	if err != nil {
+		t.Fatalf("failed to sign special tx: %v", err)
+	}
+	if !specialTx.IsSpecialTransaction() {
+		t.Fatal("test setup: transaction is not special")
+	}
+
+	added := make(chan error, 1)
+	go func() {
+		added <- pool.Add([]*types.Transaction{specialTx}, false)[0]
+	}()
+	select {
+	case err := <-added:
+		if err != nil {
+			t.Fatalf("failed to add special tx: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Add blocked: the special tx event is delivered while holding the pool lock")
+	}
+
+	// Rigidity check: the special tx must actually be promoted to pending, not just
+	// accepted into the queue. A regression that skipped promotion would let this test
+	// pass trivially (Add returns, the lock is free) while the tx never reached pending.
+	promoted := false
+	deadline := time.Now().Add(2 * time.Second)
+	for !promoted && time.Now().Before(deadline) {
+		pending, _ := pool.Content()
+		for _, txs := range pending {
+			for _, ptx := range txs {
+				if ptx.Hash() == specialTx.Hash() {
+					promoted = true
+					break
+				}
+			}
+			if promoted {
+				break
+			}
+		}
+		if !promoted {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if !promoted {
+		t.Fatal("special tx was accepted but never promoted to pending")
+	}
+
+	usable := make(chan struct{})
+	go func() {
+		defer close(usable)
+		pool.Stats()
+	}()
+	select {
+	case <-usable:
+	case <-time.After(5 * time.Second):
+		t.Fatal("pool lock still held after promoting a special tx")
+	}
+}
+
+// TestSpecialTxEventDeliveredInSingleReorg locks in the enqueue-before-request
+// ordering: queueTxEvent rendezvouses with scheduleReorgLoop while the pool lock
+// is held, so the event is already batched when Add requests the promotion and a
+// single reorg run announces it. A regression that decoupled the two would split
+// this into an event-only run plus a second maintenance run.
+func TestSpecialTxEventDeliveredInSingleReorg(t *testing.T) {
+	pool, key := setupPool()
+	defer pool.Close()
+
+	pool.SetSigner(func(common.Address) bool { return true })
+	testAddBalance(pool, crypto.PubkeyToAddress(key.PublicKey), big.NewInt(1_000_000_000_000_000_000))
+
+	// Draining subscriber, buffered so runReorg never blocks on the send.
+	events := make(chan core.NewTxsEvent, 4)
+	sub := pool.SubscribeTransactions(events, false)
+	defer sub.Unsubscribe()
+
+	gasPrice := new(big.Int).SetUint64(common.DefaultMinGasPrice + 1)
+	tx, err := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, big.NewInt(1), 100000, gasPrice, nil), types.HomesteadSigner{}, key)
+	if err != nil {
+		t.Fatalf("failed to sign special tx: %v", err)
+	}
+	if !tx.IsSpecialTransaction() {
+		t.Fatal("test setup: transaction is not special")
+	}
+
+	// Sync add: runReorg sends the announcement before closing its done channel.
+	if err := pool.Add([]*types.Transaction{tx}, true)[0]; err != nil {
+		t.Fatalf("failed to add special tx: %v", err)
+	}
+
+	select {
+	case ev := <-events:
+		if len(ev.Txs) != 1 || ev.Txs[0].Hash() != tx.Hash() {
+			t.Fatalf("unexpected event: got %d txs, first hash %v want %v", len(ev.Txs), ev.Txs[0].Hash(), tx.Hash())
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("special tx event was not delivered by the requested reorg run")
+	}
+	if err := validateEvents(events, 0); err != nil {
+		t.Fatalf("special tx announced by more than one reorg run: %v", err)
+	}
+}
