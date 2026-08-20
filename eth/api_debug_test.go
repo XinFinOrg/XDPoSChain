@@ -81,10 +81,12 @@ func TestAccountRange(t *testing.T) {
 		}
 	}
 	root, err := sdb.Commit(0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
 	sdb, _ = state.New(root, statedb)
 
-	_, err = statedb.OpenTrie(root)
-	if err != nil {
+	if _, err := statedb.OpenTrie(root); err != nil {
 		t.Fatal(err)
 	}
 	accountRangeTest(t, sdb, common.Hash{}, AccountRangeMaxResults/2, AccountRangeMaxResults/2)
