@@ -101,19 +101,33 @@ func TestIsYourTurnConsensusV2CrossConfig(t *testing.T) {
 	err := blockchain.InsertBlock(currentBlock)
 	adaptor.EngineV2.SetNewRoundFaker(blockchain, types.Round(10), false)
 	assert.Nil(t, err)
-	// after first mine period
-	time.Sleep(time.Duration(firstMinePeriod) * time.Second)
+
+	// YourTurn derives the mine period from the config for the current round
+	// (round 10 -> MinePeriod 3s) via Config(currentRound). Note that
+	// UpdateParams only repoints the engine's CurrentConfig, so the
+	// blockchain-level CurrentConfig stays at the pre-switch value (2s); look
+	// up the switched-to config by round instead.
+	newMinePeriod := blockchain.Config().XDPoS.V2.Config(uint64(10)).MinePeriod
+	if newMinePeriod <= firstMinePeriod {
+		t.Fatalf("test setup requires a larger mine period after the config switch, got first=%d new=%d", firstMinePeriod, newMinePeriod)
+	}
+
+	// Wait just past the previous mine period but keep waitedTime strictly
+	// below the switched-to config's mine period so YourTurn reports false.
+	// Sleeping the full firstMinePeriod is unsafe: YourTurn compares against
+	// Unix-second granularity, and rounding can push waitedTime up to
+	// newMinePeriod and flip the result to true.
+	time.Sleep(time.Duration(firstMinePeriod-1) * time.Second)
 	isYourTurn, err := adaptor.YourTurn(blockchain, currentBlockHeader, common.HexToAddress("xdc703c4b2bD70c169f5717101CaeE543299Fc946C7"))
 	assert.Nil(t, err)
 	assert.False(t, isYourTurn)
 
 	adaptor.UpdateParams(currentBlockHeader) // it will be triggered automatically on the real code by other process
 
-	// after new mine period
-	secondMinePeriod := blockchain.Config().XDPoS.V2.CurrentConfig.MinePeriod
-
-	// YourTurn uses Unix-second granularity; add a small buffer to avoid edge-time flakiness.
-	time.Sleep(time.Duration(secondMinePeriod-firstMinePeriod+1) * time.Second)
+	// Wait until waitedTime is comfortably past the switched-to config's mine
+	// period (Unix-second granularity, so add a buffer) so YourTurn reports
+	// true.
+	time.Sleep(time.Duration(newMinePeriod) * time.Second)
 	isYourTurn, err = adaptor.YourTurn(blockchain, currentBlockHeader, common.HexToAddress("xdc703c4b2bD70c169f5717101CaeE543299Fc946C7"))
 	assert.Nil(t, err)
 	assert.True(t, isYourTurn)
