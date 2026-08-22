@@ -483,6 +483,14 @@ func testBroadcastBlock(t *testing.T, totalPeers, broadcastExpected int) {
 		defer peer.close()
 		peers = append(peers, peer)
 	}
+	// Peers are registered asynchronously once the handshake completes on the
+	// protocol manager side, wait for the peer set to catch up before broadcasting.
+	for deadline := time.Now().Add(10 * time.Second); pm.peers.Len() < totalPeers; {
+		if time.Now().After(deadline) {
+			t.Fatalf("timeout waiting for peer registration: have %d, want %d", pm.peers.Len(), totalPeers)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	chain, _ := core.GenerateChain(gspec.Config, genesis, ethash.NewFaker(), db, 1, func(i int, gen *core.BlockGen) {})
 	expectedTD := new(big.Int).Add(chain[0].Difficulty(), pm.blockchain.GetTd(chain[0].ParentHash(), chain[0].NumberU64()-1))
 
