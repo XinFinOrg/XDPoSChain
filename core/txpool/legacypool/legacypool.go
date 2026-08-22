@@ -106,6 +106,9 @@ var (
 	underpricedTxMeter = metrics.NewRegisteredMeter("txpool/underpriced", nil)
 	overflowedTxMeter  = metrics.NewRegisteredMeter("txpool/overflowed", nil)
 
+	// Dropped by a raised gas price floor, pending and queue combined
+	belowFloorMeter = metrics.NewRegisteredMeter("txpool/belowfloor", nil)
+
 	// throttleTxMeter counts how many transactions are rejected due to too-many-changes between
 	// txpool reorgs.
 	throttleTxMeter = metrics.NewRegisteredMeter("txpool/throttle", nil)
@@ -1331,18 +1334,20 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 		// actually moved the pool across the Osaka fork boundary.
 		if newPoolHead != nil && oldPoolHead != nil &&
 			pool.chainconfig.IsOsaka(newPoolHead.Number) && !pool.chainconfig.IsOsaka(oldPoolHead.Number) {
-			var hashes []common.Hash
-			pool.all.Range(func(hash common.Hash, tx *types.Transaction) bool {
-				if tx.Gas() > params.MaxTxGas {
-					hashes = append(hashes, hash)
-				}
-				return true
-			})
-			for _, hash := range hashes {
-				pool.removeTx(hash, true, true)
-			}
+			pool.dropWhere(func(tx *types.Transaction) bool {
+				return tx.Gas() <= params.MaxTxGas
+			}, "gas-limit-cap")
 		}
 
+		// Discard transactions a gas schedule fork priced out of the pool. Sweeping
+		// must precede promoteExecutables, which does not check price and would
+		// otherwise pull them back into pending.
+		if floor, previous := pool.raisedGasPriceFloor(oldPoolHead, newPoolHead); floor != nil {
+			if dropped := pool.sweepUnderpriced(floor); dropped > 0 {
+				belowFloorMeter.Mark(int64(dropped))
+				log.Info("Dropped transactions below raised gas price floor", "dropped", dropped, "floor", floor, "previous", previous)
+			}
+		}
 		// Nonces were reset, discard any events that became stale
 		for addr := range events {
 			events[addr].Forward(pool.pendingNonces.get(addr))
@@ -1703,6 +1708,76 @@ func (pool *LegacyPool) demoteUnexecutables() {
 			}
 		}
 	}
+}
+
+// raisedGasPriceFloor returns the minimum gas price of the block pending on top
+// of newHead when moving there raises it, plus the floor it replaces; nil
+// otherwise. The nil-number guard is defensive.
+func (pool *LegacyPool) raisedGasPriceFloor(oldHead, newHead *types.Header) (raised, previous *big.Int) {
+	if oldHead == nil || newHead == nil || oldHead.Number == nil || newHead.Number == nil {
+		return nil, nil
+	}
+	next := params.GetMinGasPrice(new(big.Int).Add(newHead.Number, common.Big1), pool.chainconfig)
+	prev := params.GetMinGasPrice(new(big.Int).Add(oldHead.Number, common.Big1), pool.chainconfig)
+	if next.Cmp(prev) <= 0 {
+		return nil, nil
+	}
+	return next, prev
+}
+
+// sweepUnderpriced drops every pooled transaction priced below the pool floor,
+// returning how many were dropped. A nil floor sweeps nothing.
+//
+// A gas schedule fork raises the floor above transactions admitted under the
+// previous tier; they can no longer be mined, yet keeping them pending would
+// leave pendingNonces pointing past them. The queue is swept too because
+// promoteExecutables does not check price and would promote them straight back
+// into pending. Special transactions are exempt exactly as during admission.
+//
+// The count is not split between the pending list and the queue: removing a
+// pending transaction demotes its successors into the queue, so which of the two
+// a given transaction is taken out of depends on the order the sweep reaches
+// them in, and that order comes out of a map range.
+func (pool *LegacyPool) sweepUnderpriced(minGasPrice *big.Int) int {
+	if minGasPrice == nil {
+		return 0
+	}
+	return pool.dropWhere(func(tx *types.Transaction) bool {
+		return tx.IsSpecialTransaction() || tx.GasPriceIntCmp(minGasPrice) >= 0
+	}, "below-gas-price-floor")
+}
+
+// dropWhere removes every pooled transaction the keep predicate rejects,
+// returning how many were dropped. reason lands in the per-transaction trace
+// log, so a transaction disappearing from the pool can be traced back to the
+// rule that removed it.
+//
+// The hashes to drop are collected before anything is removed: removeTx takes
+// the write lock of the lookup set, which the range below holds for reading.
+// The price heap is charged once for the whole batch rather than once per
+// removal, so it reheaps at most once instead of part way through, the way
+// SetGasTip charges its own. Hashes already gone by their turn are skipped and
+// left out of the count.
+func (pool *LegacyPool) dropWhere(keep func(tx *types.Transaction) bool, reason string) int {
+	var hashes []common.Hash
+	pool.all.Range(func(hash common.Hash, tx *types.Transaction) bool {
+		if !keep(tx) {
+			hashes = append(hashes, hash)
+		}
+		return true
+	})
+
+	dropped := 0
+	for _, hash := range hashes {
+		if pool.all.Get(hash) == nil {
+			continue
+		}
+		pool.removeTx(hash, false, true)
+		log.Trace("Dropped pooled transaction", "hash", hash, "reason", reason)
+		dropped++
+	}
+	pool.priced.Removed(dropped)
+	return dropped
 }
 
 // SetSigner sets the function to identify signer addresses.

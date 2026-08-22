@@ -295,7 +295,7 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	// Validate gas price
 	if !tx.IsSpecialTransaction() {
 		minGasPrice := params.GetMinGasPrice(pendingNumber, opts.Config)
-		if tx.GasPrice().Cmp(minGasPrice) < 0 {
+		if tx.GasPriceIntCmp(minGasPrice) < 0 {
 			return ErrUnderMinGasPrice
 		}
 	}

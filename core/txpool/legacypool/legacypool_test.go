@@ -187,12 +187,7 @@ func TestDemoteUnexecutablesUsesNextBlockGasSchedule(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			pool, key := setupPoolWithConfig(&params.ChainConfig{
-				ChainID:       big.NewInt(1339),
-				Ethash:        new(params.EthashConfig),
-				Gas50xBlock:   big.NewInt(100),
-				Gas2500xBlock: big.NewInt(200),
-			})
+			pool, key := setupPoolWithConfig(gasTierTestConfig())
 			defer pool.Close()
 
 			pool.mu.Lock()
@@ -220,6 +215,545 @@ func TestDemoteUnexecutablesUsesNextBlockGasSchedule(t *testing.T) {
 				t.Fatalf("unexpected drop decision at head %d: have %v want %v", tt.head, dropped, tt.dropped)
 			}
 		})
+	}
+}
+
+// gasTierTestConfig is the chain config the gas schedule tests run on. With
+// gas2500x at block 200, head 198 makes 199 the last pending block still on
+// the gas50x tier, so moving the head to 199 crosses the fork.
+func gasTierTestConfig() *params.ChainConfig {
+	return &params.ChainConfig{
+		ChainID:       big.NewInt(1339),
+		Ethash:        new(params.EthashConfig),
+		Gas50xBlock:   big.NewInt(100),
+		Gas2500xBlock: big.NewInt(200),
+	}
+}
+
+// scaledGasPrice returns the gas tier price for the given multiplier.
+func scaledGasPrice(multiplier int64) *big.Int {
+	return new(big.Int).Mul(big.NewInt(common.DefaultMinGasPrice), big.NewInt(multiplier))
+}
+
+// newTestHeader builds a head header the test blockchain can resolve a state for.
+func newTestHeader(number int64) *types.Header {
+	return &types.Header{
+		Root:       types.EmptyRootHash,
+		Number:     big.NewInt(number),
+		Difficulty: common.Big0,
+		GasLimit:   10000000,
+	}
+}
+
+// TestRaisedGasPriceFloor verifies that the sweep is armed only when moving the
+// head raises the floor of the block pending on top of it, however many gas
+// schedule forks the move crosses at once.
+func TestRaisedGasPriceFloor(t *testing.T) {
+	t.Parallel()
+
+	pool, _ := setupPoolWithConfig(gasTierTestConfig())
+	defer pool.Close()
+
+	tests := []struct {
+		name     string
+		from, to int64
+		raised   *big.Int
+		previous *big.Int
+	}{
+		{name: "within a tier", from: 200, to: 201},
+		{name: "onto the fork block itself", from: 197, to: 198},
+		{name: "reorg lowering the floor", from: 199, to: 198},
+		{name: "reorg back across the fork", from: 205, to: 150},
+		{name: "crossing gas2500x", from: 198, to: 199, raised: scaledGasPrice(2500), previous: scaledGasPrice(50)},
+		{name: "crossing both tiers at once", from: 98, to: 199, raised: scaledGasPrice(2500), previous: scaledGasPrice(1)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			raised, previous := pool.raisedGasPriceFloor(
+				&types.Header{Number: big.NewInt(tt.from)},
+				&types.Header{Number: big.NewInt(tt.to)},
+			)
+			if tt.raised == nil {
+				if raised != nil || previous != nil {
+					t.Fatalf("floor reported as raised from %d to %d: have %v previous %v", tt.from, tt.to, raised, previous)
+				}
+				return
+			}
+			if raised == nil || raised.Cmp(tt.raised) != 0 {
+				t.Fatalf("raised floor from %d to %d: have %v want %v", tt.from, tt.to, raised, tt.raised)
+			}
+			if previous == nil || previous.Cmp(tt.previous) != 0 {
+				t.Fatalf("previous floor from %d to %d: have %v want %v", tt.from, tt.to, previous, tt.previous)
+			}
+		})
+	}
+}
+
+// TestRaisedGasPriceFloorNilNumber verifies that the floor lookup bails out
+// defensively when a head carries no number, which a hand-built header can.
+func TestRaisedGasPriceFloorNilNumber(t *testing.T) {
+	t.Parallel()
+
+	pool, _ := setupPoolWithConfig(gasTierTestConfig())
+	defer pool.Close()
+
+	for _, tt := range []struct {
+		name    string
+		oldHead *types.Header
+		newHead *types.Header
+	}{
+		{name: "old head without number", oldHead: &types.Header{}, newHead: &types.Header{Number: big.NewInt(199)}},
+		{name: "new head without number", oldHead: &types.Header{Number: big.NewInt(198)}, newHead: &types.Header{}},
+		{name: "both heads without number", oldHead: &types.Header{}, newHead: &types.Header{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if raised, previous := pool.raisedGasPriceFloor(tt.oldHead, tt.newHead); raised != nil || previous != nil {
+				t.Fatalf("floor reported for nil head number: have %v previous %v", raised, previous)
+			}
+		})
+	}
+}
+
+// TestSweepUnderpricedOnGasScheduleFork verifies that transactions admitted under
+// a cheaper gas tier are evicted once a fork raises the pool's minimum gas price,
+// so the pending nonce no longer points past an unmineable transaction.
+func TestSweepUnderpricedOnGasScheduleFork(t *testing.T) {
+	t.Parallel()
+
+	pool, key := setupPoolWithConfig(gasTierTestConfig())
+	defer pool.Close()
+
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	testAddBalance(pool, addr, big.NewInt(1000000000000000000))
+
+	// Head 198 makes 199 the pending block, the last one still on the gas50x tier.
+	<-pool.requestReset(nil, newTestHeader(198))
+
+	cheap := pricedTransaction(0, 100000, scaledGasPrice(50), key)
+	costly := pricedTransaction(1, 100000, scaledGasPrice(2500), key)
+	for i, err := range pool.addRemotesSync([]*types.Transaction{cheap, costly}) {
+		if err != nil {
+			t.Fatalf("failed to add transaction %d: %v", i, err)
+		}
+	}
+	if nonce := pool.Nonce(addr); nonce != 2 {
+		t.Fatalf("pending nonce before fork: have %d want 2", nonce)
+	}
+
+	// Head 199 makes 200 the pending block, activating the gas2500x tier.
+	<-pool.requestReset(newTestHeader(198), newTestHeader(199))
+
+	if pool.all.Get(cheap.Hash()) != nil {
+		t.Fatal("underpriced transaction survived the gas schedule fork")
+	}
+	if pool.all.Get(costly.Hash()) == nil {
+		t.Fatal("transaction meeting the raised floor was dropped")
+	}
+	if _, ok := pool.pending[addr]; ok {
+		t.Fatal("expected the pending list to be emptied by the sweep")
+	}
+	if list, ok := pool.queue.get(addr); !ok || list.txs.Get(costly.Nonce()) == nil {
+		t.Fatal("expected the still-valid transaction to be demoted to the queue")
+	}
+	if nonce := pool.Nonce(addr); nonce != 0 {
+		t.Fatalf("pending nonce after fork: have %d want 0", nonce)
+	}
+
+	// A later reset within the same tier must not evict anything else.
+	<-pool.requestReset(newTestHeader(199), newTestHeader(200))
+
+	if pool.all.Get(costly.Hash()) == nil {
+		t.Fatal("valid transaction dropped by a reset that did not raise the floor")
+	}
+	if err := validatePoolInternals(pool); err != nil {
+		t.Fatalf("pool internal state corrupted: %v", err)
+	}
+}
+
+// TestSweepUnderpricedDropsQueued verifies that transactions parked in the queue
+// behind a nonce gap are swept as well, since promoteExecutables does not check
+// price and would otherwise promote them straight back into pending.
+func TestSweepUnderpricedDropsQueued(t *testing.T) {
+	t.Parallel()
+
+	pool, key := setupPoolWithConfig(gasTierTestConfig())
+	defer pool.Close()
+
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	testAddBalance(pool, addr, big.NewInt(1000000000000000000))
+
+	// Head 198 makes 199 the pending block, the last one still on the gas50x tier.
+	<-pool.requestReset(nil, newTestHeader(198))
+
+	// Both transactions sit behind a nonce gap, so they never reach the pending
+	// list and can only be reached by the queue half of the sweep.
+	cheap := pricedTransaction(1, 100000, scaledGasPrice(50), key)
+	costly := pricedTransaction(2, 100000, scaledGasPrice(2500), key)
+	for i, err := range pool.addRemotesSync([]*types.Transaction{cheap, costly}) {
+		if err != nil {
+			t.Fatalf("failed to add transaction %d: %v", i, err)
+		}
+	}
+	if pending, queued := pool.Stats(); pending != 0 || queued != 2 {
+		t.Fatalf("pool status before fork: have %d pending %d queued, want 0 and 2", pending, queued)
+	}
+
+	// Head 199 makes 200 the pending block, activating the gas2500x tier.
+	<-pool.requestReset(newTestHeader(198), newTestHeader(199))
+
+	if pool.all.Get(cheap.Hash()) != nil {
+		t.Fatal("underpriced queued transaction survived the gas schedule fork")
+	}
+	if pool.all.Get(costly.Hash()) == nil {
+		t.Fatal("queued transaction meeting the raised floor was dropped")
+	}
+	if pending, queued := pool.Stats(); pending != 0 || queued != 1 {
+		t.Fatalf("pool status after fork: have %d pending %d queued, want 0 and 1", pending, queued)
+	}
+	if list, ok := pool.queue.get(addr); !ok || list.txs.Get(costly.Nonce()) == nil {
+		t.Fatal("expected the still-valid transaction to stay in the queue")
+	}
+	if err := validatePoolInternals(pool); err != nil {
+		t.Fatalf("pool internal state corrupted: %v", err)
+	}
+}
+
+// TestSweepUnderpricedMiddleNonce verifies that sweeping a transaction out of
+// the middle of a pending sequence rolls the pending nonce back to it, keeps
+// the executable prefix pending and demotes the successors into the queue.
+func TestSweepUnderpricedMiddleNonce(t *testing.T) {
+	t.Parallel()
+
+	pool, key := setupPoolWithConfig(gasTierTestConfig())
+	defer pool.Close()
+
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	testAddBalance(pool, addr, big.NewInt(1000000000000000000))
+
+	// Head 198 makes 199 the pending block, the last one still on the gas50x tier.
+	<-pool.requestReset(nil, newTestHeader(198))
+
+	first := pricedTransaction(0, 100000, scaledGasPrice(2500), key)
+	cheap := pricedTransaction(1, 100000, scaledGasPrice(50), key)
+	last := pricedTransaction(2, 100000, scaledGasPrice(2500), key)
+	for i, err := range pool.addRemotesSync([]*types.Transaction{first, cheap, last}) {
+		if err != nil {
+			t.Fatalf("failed to add transaction %d: %v", i, err)
+		}
+	}
+	if nonce := pool.Nonce(addr); nonce != 3 {
+		t.Fatalf("pending nonce before fork: have %d want 3", nonce)
+	}
+
+	// Head 199 makes 200 the pending block, activating the gas2500x tier.
+	<-pool.requestReset(newTestHeader(198), newTestHeader(199))
+
+	if pool.all.Get(cheap.Hash()) != nil {
+		t.Fatal("underpriced transaction in the middle of the sequence survived the sweep")
+	}
+	if pool.all.Get(first.Hash()) == nil || pool.all.Get(last.Hash()) == nil {
+		t.Fatal("sweep dropped a transaction meeting the raised floor")
+	}
+	if list, ok := pool.pending[addr]; !ok || list.txs.Get(first.Nonce()) == nil {
+		t.Fatal("expected the executable prefix to stay pending")
+	}
+	if list, ok := pool.queue.get(addr); !ok || list.txs.Get(last.Nonce()) == nil {
+		t.Fatal("expected the successor to be demoted to the queue")
+	}
+	if nonce := pool.Nonce(addr); nonce != 1 {
+		t.Fatalf("pending nonce after fork: have %d want 1", nonce)
+	}
+	if pending, queued := pool.Stats(); pending != 1 || queued != 1 {
+		t.Fatalf("pool status after fork: have %d pending %d queued, want 1 and 1", pending, queued)
+	}
+	if err := validatePoolInternals(pool); err != nil {
+		t.Fatalf("pool internal state corrupted: %v", err)
+	}
+}
+
+// statelessBlockChain aborts every reset the way a pruned or missing state does.
+type statelessBlockChain struct {
+	BlockChain
+}
+
+func (statelessBlockChain) StateAt(common.Hash) (*state.StateDB, error) {
+	return nil, errors.New("missing state")
+}
+
+// TestSweepUnderpricedAfterAbortedReset verifies that the fork is still caught by
+// the reset that follows an aborted one, even though the head it is asked to move
+// from is already past the fork: the pool never got there, so its transactions
+// were admitted under the old tier.
+func TestSweepUnderpricedAfterAbortedReset(t *testing.T) {
+	t.Parallel()
+
+	pool, key := setupPoolWithConfig(gasTierTestConfig())
+	defer pool.Close()
+
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	testAddBalance(pool, addr, big.NewInt(1000000000000000000))
+
+	// Head 198 makes 199 the pending block, the last one still on the gas50x tier.
+	<-pool.requestReset(nil, newTestHeader(198))
+
+	cheap := pricedTransaction(0, 100000, scaledGasPrice(50), key)
+	if err := pool.addRemotesSync([]*types.Transaction{cheap})[0]; err != nil {
+		t.Fatalf("failed to add transaction: %v", err)
+	}
+	// Abort the reset that crosses the fork, leaving the pool on head 198 while the
+	// pool driver already considers 199 the head to move on from.
+	pool.mu.Lock()
+	chain := pool.chain
+	pool.chain = statelessBlockChain{chain}
+	pool.mu.Unlock()
+
+	<-pool.requestReset(newTestHeader(198), newTestHeader(199))
+
+	if head := pool.currentHead.Load(); head.Number.Uint64() != 198 {
+		t.Fatalf("head advanced past an aborted reset: have %d want 198", head.Number)
+	}
+	if pool.all.Get(cheap.Hash()) == nil {
+		t.Fatal("transaction swept by a reset that never advanced the head")
+	}
+	pool.mu.Lock()
+	pool.chain = chain
+	pool.mu.Unlock()
+
+	<-pool.requestReset(newTestHeader(199), newTestHeader(200))
+
+	if head := pool.currentHead.Load(); head.Number.Uint64() != 200 {
+		t.Fatalf("head after the recovered reset: have %d want 200", head.Number)
+	}
+	if pool.all.Get(cheap.Hash()) != nil {
+		t.Fatal("underpriced transaction survived the reset that recovered from an abort")
+	}
+	if err := validatePoolInternals(pool); err != nil {
+		t.Fatalf("pool internal state corrupted: %v", err)
+	}
+}
+
+// TestSweepUnderpricedSuppressesStaleAnnouncements verifies that a queued
+// transaction the sweep removes before promotion never makes it into the
+// announcements of the reorg that crosses the gas schedule fork.
+func TestSweepUnderpricedSuppressesStaleAnnouncements(t *testing.T) {
+	t.Parallel()
+
+	pool, cheapKey := setupPoolWithConfig(gasTierTestConfig())
+	defer pool.Close()
+
+	costlyKey, _ := crypto.GenerateKey()
+	cheapAddr := crypto.PubkeyToAddress(cheapKey.PublicKey)
+	costlyAddr := crypto.PubkeyToAddress(costlyKey.PublicKey)
+	testAddBalance(pool, cheapAddr, big.NewInt(1000000000000000000))
+	testAddBalance(pool, costlyAddr, big.NewInt(1000000000000000000))
+
+	// Head 198 makes 199 the pending block, the last one still on the gas50x tier.
+	<-pool.requestReset(nil, newTestHeader(198))
+
+	events := make(chan core.NewTxsEvent, 32)
+	sub := pool.txFeed.Subscribe(events)
+	defer sub.Unsubscribe()
+
+	// Both transactions sit in the queue behind a nonce gap, so neither is
+	// announced until the reorg below promotes them.
+	cheap := pricedTransaction(1, 100000, scaledGasPrice(50), cheapKey)
+	costly := pricedTransaction(1, 100000, scaledGasPrice(2500), costlyKey)
+	for i, err := range pool.addRemotesSync([]*types.Transaction{cheap, costly}) {
+		if err != nil {
+			t.Fatalf("failed to add transaction %d: %v", i, err)
+		}
+	}
+	if _, queued := pool.Stats(); queued != 2 {
+		t.Fatalf("queued transactions mismatched: have %d, want 2", queued)
+	}
+	// Close the nonce gap and move the head past the gas2500x fork. The sweep runs
+	// before promoteExecutables, so the cheap transaction is dropped while still
+	// queued and never enters the announcement batch of this run.
+	testSetNonce(pool, cheapAddr, 1)
+	testSetNonce(pool, costlyAddr, 1)
+	<-pool.requestReset(newTestHeader(198), newTestHeader(199))
+
+	if pool.all.Get(cheap.Hash()) != nil {
+		t.Fatal("underpriced transaction survived the gas schedule fork")
+	}
+	if err := validateEvents(events, 1); err != nil {
+		t.Fatalf("promotion event firing failed: %v", err)
+	}
+	if err := validatePoolInternals(pool); err != nil {
+		t.Fatalf("pool internal state corrupted: %v", err)
+	}
+}
+
+// TestSweepUnderpricedAnnouncesSweptAddEvents verifies that an announcement
+// already queued for a transaction the gas schedule fork sweeps away is still
+// sent, matching upstream behaviour: announcements are hints, and peers that
+// request the transaction simply get nothing back.
+func TestSweepUnderpricedAnnouncesSweptAddEvents(t *testing.T) {
+	t.Parallel()
+
+	pool, key := setupPoolWithConfig(gasTierTestConfig())
+	defer pool.Close()
+
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	testAddBalance(pool, addr, big.NewInt(1000000000000000000))
+
+	// Head 198 makes 199 the pending block, the last one still on the gas50x tier.
+	<-pool.requestReset(nil, newTestHeader(198))
+
+	cheap := pricedTransaction(0, 100000, scaledGasPrice(50), key)
+	if err := pool.addRemotesSync([]*types.Transaction{cheap})[0]; err != nil {
+		t.Fatalf("failed to add transaction: %v", err)
+	}
+
+	feed := make(chan core.NewTxsEvent, 32)
+	sub := pool.txFeed.Subscribe(feed)
+	defer sub.Unsubscribe()
+
+	// Replay the addition the way scheduleReorgLoop batches one that arrived since
+	// the previous run, then cross the gas2500x fork within that same reorg.
+	events := map[common.Address]*SortedMap{addr: NewSortedMap()}
+	events[addr].Put(cheap)
+
+	done := make(chan struct{})
+	pool.runReorg(done, &txpoolResetRequest{oldHead: newTestHeader(198), newHead: newTestHeader(199)}, nil, events)
+	<-done
+
+	if pool.all.Get(cheap.Hash()) != nil {
+		t.Fatal("underpriced transaction survived the gas schedule fork")
+	}
+	if err := validateEvents(feed, 1); err != nil {
+		t.Fatalf("queued announcement was dropped: %v", err)
+	}
+	if err := validatePoolInternals(pool); err != nil {
+		t.Fatalf("pool internal state corrupted: %v", err)
+	}
+}
+
+// TestSweepUnderpricedKeepsDemotedAnnouncements verifies that a transaction the
+// sweep only demotes into the queue is still announced, since suppressing it
+// would deprive a perfectly valid transaction of its propagation.
+func TestSweepUnderpricedKeepsDemotedAnnouncements(t *testing.T) {
+	t.Parallel()
+
+	pool, key := setupPoolWithConfig(gasTierTestConfig())
+	defer pool.Close()
+
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	testAddBalance(pool, addr, big.NewInt(1000000000000000000))
+
+	// Head 198 makes 199 the pending block, the last one still on the gas50x tier.
+	<-pool.requestReset(nil, newTestHeader(198))
+
+	cheap := pricedTransaction(0, 100000, scaledGasPrice(50), key)
+	costly := pricedTransaction(1, 100000, scaledGasPrice(2500), key)
+	for i, err := range pool.addRemotesSync([]*types.Transaction{cheap, costly}) {
+		if err != nil {
+			t.Fatalf("failed to add transaction %d: %v", i, err)
+		}
+	}
+
+	feed := make(chan core.NewTxsEvent, 32)
+	sub := pool.txFeed.Subscribe(feed)
+	defer sub.Unsubscribe()
+
+	// Announce the costly transaction the way scheduleReorgLoop batches one that
+	// arrived since the previous run. Sweeping the cheap transaction in front of it
+	// pushes it back into the queue, but it stays pooled and must still be sent.
+	events := map[common.Address]*SortedMap{addr: NewSortedMap()}
+	events[addr].Put(costly)
+
+	done := make(chan struct{})
+	pool.runReorg(done, &txpoolResetRequest{oldHead: newTestHeader(198), newHead: newTestHeader(199)}, nil, events)
+	<-done
+
+	if pool.all.Get(cheap.Hash()) != nil {
+		t.Fatal("underpriced transaction survived the gas schedule fork")
+	}
+	if list, ok := pool.queue.get(addr); !ok || list.txs.Get(costly.Nonce()) == nil {
+		t.Fatal("expected the still-valid transaction to be demoted to the queue")
+	}
+	if err := validateEvents(feed, 1); err != nil {
+		t.Fatalf("demoted transaction announcement failed: %v", err)
+	}
+	if err := validatePoolInternals(pool); err != nil {
+		t.Fatalf("pool internal state corrupted: %v", err)
+	}
+}
+
+// TestSweepUnderpricedKeepsSpecialTransactions verifies that the sweep exempts
+// special transactions, which are consensus critical and carry a zero gas price.
+func TestSweepUnderpricedKeepsSpecialTransactions(t *testing.T) {
+	t.Parallel()
+
+	pool, key := setupPool()
+	defer pool.Close()
+
+	regularKey, _ := crypto.GenerateKey()
+
+	special, err := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, common.Big0, 100000, common.Big0, nil), types.HomesteadSigner{}, key)
+	if err != nil {
+		t.Fatalf("failed to sign special transaction: %v", err)
+	}
+	regular := pricedTransaction(0, 100000, big.NewInt(1), regularKey)
+
+	pool.mu.Lock()
+	for _, tx := range []*types.Transaction{special, regular} {
+		from, _ := types.Sender(pool.signer, tx)
+		list := newList(true)
+		list.Add(tx, pool.config.PriceBump)
+		pool.pending[from] = list
+		pool.all.Add(tx)
+		pool.priced.Put(tx)
+		pool.pendingNonces.set(from, tx.Nonce()+1)
+	}
+
+	dropped := pool.sweepUnderpriced(big.NewInt(2))
+	pool.mu.Unlock()
+
+	if dropped != 1 {
+		t.Fatalf("unexpected number of swept transactions: have %d want 1", dropped)
+	}
+	if pool.all.Get(special.Hash()) == nil {
+		t.Fatal("special transaction was swept despite its zero gas price exemption")
+	}
+	if pool.all.Get(regular.Hash()) != nil {
+		t.Fatal("underpriced regular transaction survived the sweep")
+	}
+	if err := validatePoolInternals(pool); err != nil {
+		t.Fatalf("pool internal state corrupted: %v", err)
+	}
+}
+
+// TestSweepUnderpricedNilFloor verifies that a nil floor sweeps nothing instead
+// of panicking on the price comparison.
+func TestSweepUnderpricedNilFloor(t *testing.T) {
+	t.Parallel()
+
+	pool, key := setupPool()
+	defer pool.Close()
+
+	tx := pricedTransaction(0, 100000, scaledGasPrice(1), key)
+
+	pool.mu.Lock()
+	from, _ := types.Sender(pool.signer, tx)
+	list := newList(true)
+	list.Add(tx, pool.config.PriceBump)
+	pool.pending[from] = list
+	pool.all.Add(tx)
+	pool.priced.Put(tx)
+
+	dropped := pool.sweepUnderpriced(nil)
+	pool.mu.Unlock()
+
+	if dropped != 0 {
+		t.Fatalf("unexpected number of swept transactions: have %d want 0", dropped)
+	}
+	if pool.all.Get(tx.Hash()) == nil {
+		t.Fatal("transaction swept by a nil floor")
 	}
 }
 
@@ -1930,16 +2464,30 @@ func TestGapFilling(t *testing.T) {
 func TestQueueAccountLimiting(t *testing.T) {
 	t.Parallel()
 
-	// Create a test account and fund it
-	pool, key := setupPool()
-	defer pool.Close()
+	// Create the pool to test the per-account queue limit enforcement with.
+	// The limit has to sit below LimitThresholdNonceInQueue, because validation
+	// rejects transactions more than that many nonces ahead of the pending nonce,
+	// so a limit equal to it could never be exceeded by the loop below.
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
+	blockchain := newTestBlockChain(params.TestChainConfig, 1000000, statedb, new(event.Feed))
 
+	const accountQueue = uint64(4)
+	config := testTxPoolConfig
+	config.AccountQueue = accountQueue
+
+	pool := New(config, blockchain)
+	if err := pool.Init(config.PriceLimit, blockchain.CurrentBlock(), newReserver()); err != nil {
+		t.Fatalf("failed to init pool: %v", err)
+	}
+	defer pool.Close()
+	<-pool.initDoneCh
+
+	key, _ := crypto.GenerateKey()
 	account := crypto.PubkeyToAddress(key.PublicKey)
 	testAddBalance(pool, account, big.NewInt(300000000000000))
-	accountQueue := uint64(10)
 
 	// Keep queuing up transactions and make sure all above a limit are dropped
-	for i := uint64(1); i <= accountQueue; i++ {
+	for i := uint64(1); i <= accountQueue+1; i++ {
 		if err := pool.addRemoteSync(pricedTransaction(i, 100000, big.NewInt(300000000), key)); err != nil {
 			t.Fatalf("tx %d: failed to add transaction: %v", i, err)
 		}
@@ -2148,21 +2696,34 @@ func TestQueueTimeLimiting(t *testing.T) {
 func TestPendingLimiting(t *testing.T) {
 	t.Parallel()
 
-	// Create a test account and fund it
-	pool, key := setupPool()
-	defer pool.Close()
+	// Create the pool with a low per-account queue limit to verify it does not
+	// cap pending transactions.
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
+	blockchain := newTestBlockChain(params.TestChainConfig, 1000000, statedb, new(event.Feed))
 
+	const accountQueue = uint64(10)
+	config := testTxPoolConfig
+	config.AccountQueue = accountQueue
+
+	pool := New(config, blockchain)
+	if err := pool.Init(config.PriceLimit, blockchain.CurrentBlock(), newReserver()); err != nil {
+		t.Fatalf("failed to init pool: %v", err)
+	}
+	defer pool.Close()
+	<-pool.initDoneCh
+
+	key, _ := crypto.GenerateKey()
 	account := crypto.PubkeyToAddress(key.PublicKey)
 	testAddBalance(pool, account, big.NewInt(400000000000000))
-	accountQueue := uint64(10)
 
 	// Keep track of transaction events to ensure all executables get announced
-	events := make(chan core.NewTxsEvent, accountQueue)
+	events := make(chan core.NewTxsEvent, accountQueue+1)
 	sub := pool.txFeed.Subscribe(events)
 	defer sub.Unsubscribe()
 
-	// Keep queuing up transactions and make sure all above a limit are dropped
-	for i := uint64(0); i < accountQueue; i++ {
+	// Keep adding executable transactions: they must all be accepted even though
+	// the count exceeds the account queue limit, which only caps non-executable ones.
+	for i := uint64(0); i <= accountQueue; i++ {
 		if err := pool.addRemoteSync(pricedTransaction(i, 100000, big.NewInt(300000000), key)); err != nil {
 			t.Fatalf("tx %d: failed to add transaction: %v", i, err)
 		}
@@ -2173,10 +2734,10 @@ func TestPendingLimiting(t *testing.T) {
 			t.Errorf("tx %d: queue size mismatch: have %d, want %d", i, len(pool.queue.addresses()), 0)
 		}
 	}
-	if pool.all.Count() != int(accountQueue) {
-		t.Errorf("total transaction mismatch: have %d, want %d", pool.all.Count(), accountQueue)
+	if pool.all.Count() != int(accountQueue)+1 {
+		t.Errorf("total transaction mismatch: have %d, want %d", pool.all.Count(), accountQueue+1)
 	}
-	if err := validateEvents(events, int(accountQueue)); err != nil {
+	if err := validateEvents(events, int(accountQueue)+1); err != nil {
 		t.Fatalf("event firing failed: %v", err)
 	}
 	if err := validatePoolInternals(pool); err != nil {
