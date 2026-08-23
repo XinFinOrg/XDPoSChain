@@ -180,7 +180,6 @@ func (tracker *TxTracker) Start() error {
 		}); err != nil {
 			log.Warn("Failed to load transaction journal", "err", err)
 		}
-
 		// Ensure the writer is ready before Start returns so Track/TrackAll can
 		// persist transactions immediately.
 		if err := tracker.journal.setupWriter(); err != nil {
@@ -197,13 +196,17 @@ func (tracker *TxTracker) Start() error {
 func (tracker *TxTracker) Stop() error {
 	close(tracker.shutdownCh)
 	tracker.wg.Wait()
-	return nil
+
+	tracker.mu.Lock()
+	var err error
+	if tracker.journal != nil {
+		err = tracker.journal.close()
+	}
+	tracker.mu.Unlock()
+	return err
 }
 
 func (tracker *TxTracker) loop() {
-	if tracker.journal != nil {
-		defer tracker.journal.close()
-	}
 	var (
 		lastJournal = time.Now()
 		timer       = time.NewTimer(10 * time.Second) // Do initial check after 10 seconds, do rechecks more seldom.
