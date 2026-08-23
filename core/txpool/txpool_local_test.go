@@ -283,6 +283,38 @@ func TestAddLocalTracksTemporaryRejectedTransaction(t *testing.T) {
 	}
 }
 
+func TestAddLocalTracksAlreadyKnownTransaction(t *testing.T) {
+	events := []string{}
+	tracker := &testLocalTracker{events: &events}
+	subpool := &testSubPool{
+		events:  &events,
+		addErrs: []error{ErrAlreadyKnown},
+	}
+
+	pool, err := New(0, testChain{}, []SubPool{subpool})
+	if err != nil {
+		t.Fatalf("failed to create txpool: %v", err)
+	}
+	defer pool.Close()
+
+	pool.SetLocalTracker(tracker)
+
+	tx := types.NewTransaction(0, common.Address{0x1}, big.NewInt(1), 21000, big.NewInt(1), nil)
+	err = pool.AddLocal(tx, true)
+	if !errors.Is(err, ErrAlreadyKnown) {
+		t.Fatalf("unexpected error: have %v, want %v", err, ErrAlreadyKnown)
+	}
+
+	// The transaction is in the desired state (already in the pool), so it
+	// must still be tracked for the local resubmit flow.
+	if !reflect.DeepEqual(tracker.tracked, []common.Hash{tx.Hash()}) {
+		t.Fatalf("tracker should receive already-known local tx")
+	}
+	if !reflect.DeepEqual(events, []string{"add", "track"}) {
+		t.Fatalf("unexpected call order: have %v", events)
+	}
+}
+
 func TestAddLocalTemporaryRejectWithoutTrackerReturnsError(t *testing.T) {
 	events := []string{}
 	subpool := &testSubPool{

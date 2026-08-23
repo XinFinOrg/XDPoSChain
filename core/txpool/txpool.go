@@ -364,13 +364,16 @@ func (p *TxPool) SetLocalTracker(tracker LocalTracker) {
 }
 
 // AddLocal enqueues a single local transaction into the pool and return the
-// original error. The transaction will be tracked if it was accepted or
-// rejected for a temporary reason, allowing the local tracker to implement
-// re-journal and re-submit flows.
+// original error. The transaction will be tracked if it was accepted, already
+// known to the pool, or rejected for a temporary reason, allowing the local
+// tracker to implement re-journal and re-submit flows.
 func (p *TxPool) AddLocal(tx *types.Transaction, sync bool) error {
 	err := p.Add([]*types.Transaction{tx}, sync)[0]
 	if p.localTracker != nil {
-		if err == nil || p.localTracker.IsRetryableReject(err) {
+		// An already-known transaction is in the desired state: it lost a race
+		// to a concurrent submission of the same transaction, so track it to
+		// keep the local resubmit protection, but still surface the error.
+		if err == nil || p.localTracker.IsRetryableReject(err) || errors.Is(err, ErrAlreadyKnown) {
 			p.localTracker.Track(tx)
 		}
 	}

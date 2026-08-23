@@ -230,3 +230,28 @@ func TestSendTxWithLocalPermanentErrorNotTracked(t *testing.T) {
 		t.Fatalf("unexpected tracked tx count: have %d, want 0", tracked)
 	}
 }
+
+func TestSendTxTracksAlreadyKnown(t *testing.T) {
+	b := initBackend(t, true)
+	if b.eth.localTxTracker == nil {
+		t.Fatal("expected local tx tracker to be configured")
+	}
+	tx := makeTx(0, nil, nil, key)
+	// Simulate the transaction reaching the pool via gossip: a plain pool add
+	// does not involve the local tracker.
+	if err := b.eth.txPool.Add([]*types.Transaction{tx}, true)[0]; err != nil {
+		t.Fatalf("failed to seed the pool with the transaction: %v", err)
+	}
+	if tracked := reflect.ValueOf(b.eth.localTxTracker).Elem().FieldByName("all").Len(); tracked != 0 {
+		t.Fatalf("unexpected tracked tx count before resubmission: have %d, want 0", tracked)
+	}
+	// Submitting the same transaction locally must report ErrAlreadyKnown to
+	// the submitter while still tracking it for the local resubmit flow.
+	err := b.SendTx(context.Background(), tx)
+	if !errors.Is(err, txpool.ErrAlreadyKnown) {
+		t.Fatalf("unexpected error, want: %v, got: %v", txpool.ErrAlreadyKnown, err)
+	}
+	if tracked := reflect.ValueOf(b.eth.localTxTracker).Elem().FieldByName("all").Len(); tracked != 1 {
+		t.Fatalf("unexpected tracked tx count: have %d, want 1", tracked)
+	}
+}
