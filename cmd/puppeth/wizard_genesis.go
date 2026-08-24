@@ -94,6 +94,44 @@ func (w *wizard) loadGenesisInput() *GenesisInput {
 }
 
 // makeGenesis creates a new genesis struct based on some user input.
+// masternodeRewards are the per-epoch reward figures derived from the staking
+// threshold and the target yield, in whole coins.
+type masternodeRewards struct {
+	TotalPerEpoch    uint64  // rewards paid out to the whole masternode set each epoch
+	MasternodeReward float64 // reward of a single masternode (core validator)
+	ProtectorReward  float64 // reward of a single protector, 80% of a masternode
+	ObserverReward   float64 // reward of a single observer, 40% of a masternode
+}
+
+// calcMasternodeRewards derives the per-epoch rewards from the block period,
+// the epoch length, the per-masternode staking threshold and the target reward
+// yield in APY%. The per-node rewards are grossed up by the foundation cut, so
+// that a masternode still earns the requested yield after the foundation has
+// taken its percentage. It reports false when the period and epoch length do
+// not add up to at least one epoch per year, in which case there is nothing to
+// pay out and the caller should leave the reward config untouched.
+func calcMasternodeRewards(period, epoch, threshold, yield uint64, masternodes int) (masternodeRewards, bool) {
+	if period == 0 || epoch == 0 {
+		return masternodeRewards{}, false
+	}
+	blocksPerYear := 31536000 / period
+	epochsPerYear := blocksPerYear / epoch
+	if epochsPerYear == 0 {
+		return masternodeRewards{}, false
+	}
+	rewardsPerYear := float64(threshold) * (float64(yield) / 100)
+	rewardPerEpochPerMNWithoutFoundation := rewardsPerYear / float64(epochsPerYear)
+	rewardPerEpochPerMN := rewardPerEpochPerMNWithoutFoundation * 100 / float64(100-common.RewardFoundationPercent)
+	totalRewardPerEpoch := rewardPerEpochPerMN * float64(masternodes)
+
+	return masternodeRewards{
+		TotalPerEpoch:    uint64(math.Round(totalRewardPerEpoch)),
+		MasternodeReward: math.Round(rewardPerEpochPerMN*10000) / 10000,
+		ProtectorReward:  math.Round(rewardPerEpochPerMN*0.8*10000) / 10000,
+		ObserverReward:   math.Round(rewardPerEpochPerMN*0.4*10000) / 10000,
+	}, true
+}
+
 func (w *wizard) makeGenesis() {
 	genesis := &core.Genesis{
 		Timestamp:  uint64(time.Now().Unix()),
@@ -267,21 +305,13 @@ func (w *wizard) makeGenesis() {
 		} else {
 			yield = uint64(w.readDefaultInt(10))
 		}
-		if genesis.Config.XDPoS.Period > 0 && genesis.Config.XDPoS.Epoch > 0 {
-			blocksPerYear := 31536000 / genesis.Config.XDPoS.Period
-			epochsPerYear := blocksPerYear / genesis.Config.XDPoS.Epoch
-			if epochsPerYear > 0 {
-				rewardsPerYear := float64(threshold) * (float64(yield) / 100)
-				rewardPerEpochPerMNWithoutFoundation := rewardsPerYear / float64(epochsPerYear)
-				rewardPerEpochPerMN := float64(rewardPerEpochPerMNWithoutFoundation) * 100 / float64(100-common.RewardFoundationPercent)
-				totalRewardPerEpoch := float64(rewardPerEpochPerMN) * float64(len(signers))
-				fmt.Println()
-				fmt.Println("Calculated Total Masternode rewards per epoch based on yield: ", uint64(math.Round(totalRewardPerEpoch)))
-				genesis.Config.XDPoS.Reward = uint64(math.Round(totalRewardPerEpoch))
-				genesis.Config.XDPoS.V2.CurrentConfig.MasternodeReward = math.Round(rewardPerEpochPerMN*10000) / 10000
-				genesis.Config.XDPoS.V2.CurrentConfig.ProtectorReward = math.Round(rewardPerEpochPerMN*0.8*10000) / 10000
-				genesis.Config.XDPoS.V2.CurrentConfig.ObserverReward = math.Round(rewardPerEpochPerMN*0.4*10000) / 10000
-			}
+		if rewards, ok := calcMasternodeRewards(genesis.Config.XDPoS.Period, genesis.Config.XDPoS.Epoch, threshold, yield, len(signers)); ok {
+			fmt.Println()
+			fmt.Println("Calculated Total Masternode rewards per epoch based on yield: ", rewards.TotalPerEpoch)
+			genesis.Config.XDPoS.Reward = rewards.TotalPerEpoch
+			genesis.Config.XDPoS.V2.CurrentConfig.MasternodeReward = rewards.MasternodeReward
+			genesis.Config.XDPoS.V2.CurrentConfig.ProtectorReward = rewards.ProtectorReward
+			genesis.Config.XDPoS.V2.CurrentConfig.ObserverReward = rewards.ObserverReward
 		}
 
 		fmt.Println()
