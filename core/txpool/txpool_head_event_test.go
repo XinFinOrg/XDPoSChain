@@ -17,7 +17,9 @@
 package txpool_test
 
 import (
+	"errors"
 	"math/big"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,11 +27,13 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool/legacypool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
@@ -128,5 +132,156 @@ func TestHeadEventDeliveredAfterNew(t *testing.T) {
 	pending, queued := pool.ContentFrom(headTestAddress)
 	if len(pending) != 1 || len(queued) != 0 {
 		t.Fatalf("Unexpected pool content, got pending %d, queued %d, want pending 1", len(pending), len(queued))
+	}
+}
+
+// recordingChain is a BlockChain that records the head event subscription it
+// hands out, so a test can assert whether it gets released.
+type recordingChain struct {
+	sub *trackedSubscription
+}
+
+func (c *recordingChain) Config() *params.ChainConfig { return params.TestChainConfig }
+
+func (c *recordingChain) CurrentBlock() *types.Header { return &types.Header{Number: big.NewInt(0)} }
+
+func (c *recordingChain) StateAt(common.Hash) (*state.StateDB, error) {
+	return state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
+}
+
+func (c *recordingChain) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
+	c.sub = &trackedSubscription{Subscription: event.NewSubscription(func(quit <-chan struct{}) error {
+		<-quit
+		return nil
+	})}
+	return c.sub
+}
+
+// trackedSubscription wraps an event.Subscription and records whether Unsubscribe
+// was called, so tests can assert cleanup on error paths.
+type trackedSubscription struct {
+	event.Subscription
+	mu           sync.Mutex
+	unsubscribed bool
+}
+
+func (t *trackedSubscription) Unsubscribe() {
+	t.mu.Lock()
+	t.unsubscribed = true
+	t.mu.Unlock()
+	t.Subscription.Unsubscribe()
+}
+
+func (t *trackedSubscription) wasUnsubscribed() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.unsubscribed
+}
+
+// failingSubPool is a SubPool whose Init always fails, to exercise the error
+// path of txpool.New.
+type failingSubPool struct{}
+
+func (failingSubPool) Filter(tx *types.Transaction) bool { return false }
+
+func (failingSubPool) Init(gasTip uint64, head *types.Header, reserver txpool.Reserver) error {
+	return errors.New("init failed")
+}
+
+func (failingSubPool) Close() error { return nil }
+
+func (failingSubPool) Reset(oldHead, newHead *types.Header) {}
+
+func (failingSubPool) SetGasTip(tip *big.Int) error { return nil }
+
+func (failingSubPool) Has(hash common.Hash) bool { return false }
+
+func (failingSubPool) Get(hash common.Hash) *types.Transaction { return nil }
+
+func (failingSubPool) ValidateTxBasics(tx *types.Transaction) error { return nil }
+
+func (failingSubPool) Add(txs []*types.Transaction, sync bool) []error { return nil }
+
+func (failingSubPool) Pending(filter txpool.PendingFilter) map[common.Address][]*txpool.LazyTransaction {
+	return nil
+}
+
+func (failingSubPool) SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool) event.Subscription {
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		<-quit
+		return nil
+	})
+}
+
+func (failingSubPool) Nonce(addr common.Address) uint64 { return 0 }
+
+func (failingSubPool) Stats() (int, int) { return 0, 0 }
+
+func (failingSubPool) Content() (map[common.Address][]*types.Transaction, map[common.Address][]*types.Transaction) {
+	return nil, nil
+}
+
+func (failingSubPool) ContentFrom(addr common.Address) ([]*types.Transaction, []*types.Transaction) {
+	return nil, nil
+}
+
+func (failingSubPool) Status(hash common.Hash) txpool.TxStatus { return txpool.TxStatusUnknown }
+
+func (failingSubPool) SetSigner(f func(address common.Address) bool) {}
+
+func (failingSubPool) IsSigner(addr common.Address) bool { return false }
+
+// TestNewUnsubscribesOnInitError verifies that a failed SubPool.Init releases
+// the head event subscription created in New. Otherwise the chain feed would
+// keep sending into an unconsumed, unbuffered channel and block on the next
+// head publication.
+func TestNewUnsubscribesOnInitError(t *testing.T) {
+	chain := &recordingChain{}
+	if _, err := txpool.New(0, chain, []txpool.SubPool{failingSubPool{}}); err == nil {
+		t.Fatal("expected Init to fail")
+	}
+	if chain.sub == nil {
+		t.Fatal("expected a head event subscription to be created")
+	}
+	if !chain.sub.wasUnsubscribed() {
+		t.Fatal("head event subscription not released on Init failure")
+	}
+}
+
+// inspectingSubPool embeds failingSubPool to inherit the zero-value SubPool
+// methods, and overrides Init to synchronously record whether the chain head
+// subscription had already been established by txpool.New when Init runs.
+type inspectingSubPool struct {
+	failingSubPool
+	chain      *recordingChain
+	subscribed bool // set true if the head event subscription exists during Init
+}
+
+func (s *inspectingSubPool) Init(gasTip uint64, head *types.Header, reserver txpool.Reserver) error {
+	s.subscribed = s.chain.sub != nil
+	return nil
+}
+
+// TestNewSubscribesBeforeInit deterministically verifies that txpool.New
+// establishes the chain head subscription before any SubPool.Init completes.
+// The delivery test (TestHeadEventDeliveredAfterNew) can pass even on the
+// pre-fix implementation if the loop goroutine happens to subscribe before the
+// inserted blocks emit a head event; this test closes that gap by asserting the
+// ordering invariant synchronously from inside Init, where the subscription
+// must already exist.
+func TestNewSubscribesBeforeInit(t *testing.T) {
+	chain := &recordingChain{}
+	subpool := &inspectingSubPool{chain: chain}
+	pool, err := txpool.New(0, chain, []txpool.SubPool{subpool})
+	if err != nil {
+		t.Fatalf("Failed to create tx pool: %v", err)
+	}
+	defer pool.Close()
+
+	if chain.sub == nil {
+		t.Fatal("expected a head event subscription to be created")
+	}
+	if !subpool.subscribed {
+		t.Fatal("head event subscription was not established before SubPool.Init completed")
 	}
 }

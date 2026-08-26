@@ -122,6 +122,11 @@ func New(gasTip uint64, chain BlockChain, subpools []SubPool) (*TxPool, error) {
 	reserver := NewReservationTracker()
 	for i, subpool := range subpools {
 		if err := subpool.Init(gasTip, head, reserver.NewHandle(i)); err != nil {
+			// The head event subscription is normally released by the loop's
+			// defer, which never runs on this error path. Unsubscribe now, or
+			// the chain feed keeps sending head events into an unconsumed,
+			// unbuffered channel and blocks on the next head publication.
+			pool.newHeadSub.Unsubscribe()
 			for j := i - 1; j >= 0; j-- {
 				subpools[j].Close()
 			}
