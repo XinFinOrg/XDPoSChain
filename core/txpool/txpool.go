@@ -177,13 +177,12 @@ func (p *TxPool) loop(head *types.Header) {
 		resetForced bool       // Whether a forced reset was requested, only used in simulator mode
 		resetWaiter chan error // Channel waiting on a forced reset, only used in simulator mode
 	)
-	// Notify the live reset waiter without blocking if the txpool is closed.
+	// Notify the live reset waiter when the pool terminates. The send blocks
+	// until Sync() picks it up; it cannot abort via p.term (closed only after
+	// this defer runs), so the notification is guaranteed to be delivered.
 	defer func() {
 		if resetWaiter != nil {
-			select {
-			case resetWaiter <- errors.New("pool already terminated"):
-			default:
-			}
+			resetWaiter <- errors.New("pool already terminated")
 			resetWaiter = nil
 		}
 	}()
@@ -245,12 +244,12 @@ func (p *TxPool) loop(head *types.Header) {
 			// the forced op is still pending. In that case, wait another round
 			// of resets.
 			if resetWaiter != nil && !resetForced {
-				select {
-				case resetWaiter <- nil:
-					// notification delivered
-				default:
-					// no active listener; avoid blocking the event loop
-				}
+				// Block until the waiter receives the notification. Sync() is
+				// guaranteed to be waiting on its waiter channel (it cannot
+				// abort via p.term while this loop is still running), so a
+				// non-blocking send here could drop the notification and leave
+				// Sync() blocked forever.
+				resetWaiter <- nil
 				resetWaiter = nil
 			}
 
