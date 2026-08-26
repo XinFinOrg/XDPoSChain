@@ -45,6 +45,21 @@ const (
 	blockLimit   = 64  // Maximum number of unique blocks a peer may have delivered
 )
 
+// IsPlausibleAnnouncement reports whether a block announcement at the given
+// number is within the fetcher's plausibility window of the current chain
+// height. Untrusted announced numbers must be gated on this check before being
+// recorded (e.g. as a peer's live tip), so a peer cannot inflate the recorded
+// number beyond the window.
+func IsPlausibleAnnouncement(number, height uint64) bool {
+	if number == 0 {
+		return true
+	}
+	if number <= height {
+		return height <= number+maxUncleDist
+	}
+	return number <= height+maxQueueDist
+}
+
 var (
 	blockAnnounceInMeter   = metrics.NewRegisteredMeter("eth/fetcher/block/announces/in", nil)
 	blockAnnounceOutTimer  = metrics.NewRegisteredTimer("eth/fetcher/block/announces/out", nil)
@@ -365,12 +380,11 @@ func (f *BlockFetcher) loop() {
 				break
 			}
 			// If we have a valid block number, check that it's potentially useful
-			if notification.number > 0 {
-				if dist := int64(notification.number) - int64(f.chainHeight()); dist < -maxUncleDist || dist > maxQueueDist {
-					log.Debug("Peer discarded announcement", "peer", notification.origin, "number", notification.number, "hash", notification.hash, "distance", dist)
-					blockAnnounceDropMeter.Mark(1)
-					break
-				}
+			height := f.chainHeight()
+			if !IsPlausibleAnnouncement(notification.number, height) {
+				log.Debug("Peer discarded announcement", "peer", notification.origin, "number", notification.number, "hash", notification.hash, "height", height)
+				blockAnnounceDropMeter.Mark(1)
+				break
 			}
 			// All is well, schedule the announce if block's not yet downloading
 			if _, ok := f.fetching[notification.hash]; ok {
@@ -658,9 +672,11 @@ func (f *BlockFetcher) enqueue(peer string, block *types.Block) {
 		f.forgetHash(hash)
 		return
 	}
-	// Discard any past or too distant blocks
-	if dist := int64(block.NumberU64()) - int64(f.chainHeight()); dist < -maxUncleDist || dist > maxQueueDist {
-		log.Debug("Discarded propagated block, too far away", "peer", peer, "number", block.Number(), "hash", hash, "distance", dist)
+	// Discard any past or too distant blocks, using the same overflow-safe
+	// plausibility window as block announcements so a far-future number (e.g.
+	// MaxUint64) cannot wrap to a small distance and slip into the queue.
+	if !IsPlausibleAnnouncement(block.NumberU64(), f.chainHeight()) {
+		log.Debug("Discarded propagated block, too far away", "peer", peer, "number", block.Number(), "hash", hash)
 		blockBroadcastDropMeter.Mark(1)
 		f.forgetHash(hash)
 		return

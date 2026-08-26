@@ -205,22 +205,63 @@ func (pm *ProtocolManager) syncStatusLogger() {
 	for {
 		select {
 		case <-ticker.C:
-			if pm.downloader.Synchronising() {
-				progress := pm.downloader.Progress()
-				log.Warn("Block synchronisation in progress",
-					"starting", progress.StartingBlock,
-					"current", progress.CurrentBlock,
-					"highest", progress.HighestBlock,
-					"pulledStates", progress.PulledStates,
-					"knownStates", progress.KnownStates,
-					"peers", pm.peers.Len(),
-				)
-			}
+			pm.reportSyncStatus()
 
 		case <-pm.quitSync:
 			return
 		}
 	}
+}
+
+// reportSyncStatus emits a warn-level periodic sync status line, so that the
+// current sync state is always visible in the logs every cycle regardless of
+// whether the node is catching up or already in sync.
+func (pm *ProtocolManager) reportSyncStatus() {
+	var (
+		current uint64
+		highest uint64
+	)
+	// Seed current/highest from the downloader while it is actively
+	// synchronising (it knows the discovered sync target and, in fast sync,
+	// reports the snap block as the current height). Otherwise seed both from
+	// the local chain head. computeSyncStatus then folds the live per-peer
+	// announced-tip high-water mark into highest in both states, so the
+	// reported highest always reflects the freshest known chain tip.
+	if pm.downloader.Synchronising() {
+		progress := pm.downloader.Progress()
+		current, highest = progress.CurrentBlock, progress.HighestBlock
+	} else {
+		current = pm.blockchain.CurrentBlock().Number.Uint64()
+	}
+	status := computeSyncStatus(current, highest, pm.peers.HighestTipNumber())
+	log.Warn("Block synchronisation status",
+		"current", status.current,
+		"highest", status.highest,
+		"behind", status.behind,
+		"peers", pm.peers.Len(),
+	)
+}
+
+// syncStatus holds the values reported by the periodic sync status heartbeat.
+type syncStatus struct {
+	current uint64 // Local head, or the fast-sync snap block while bulk syncing
+	highest uint64 // Highest known network block (downloader target + announced tips)
+	behind  uint64 // Number of blocks behind the highest known network block
+}
+
+// computeSyncStatus derives the heartbeat values. It always folds the live
+// network high-water mark (the highest block announced by any peer, bounded by
+// IsPlausibleAnnouncement) into the reported highest, regardless of whether the
+// downloader is bulk-syncing. The reported highest is therefore the maximum of
+// the downloader target, the local head and the live announced tip in every
+// state, so it reflects the freshest known chain tip.
+func computeSyncStatus(current, highest, announcedTip uint64) syncStatus {
+	highest = max(current, max(highest, announcedTip))
+	behind := uint64(0)
+	if highest > current {
+		behind = highest - current
+	}
+	return syncStatus{current: current, highest: highest, behind: behind}
 }
 
 // synchronise tries to sync up our local block chain with a remote peer.

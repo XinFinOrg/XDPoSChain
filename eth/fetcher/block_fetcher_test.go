@@ -629,6 +629,56 @@ func TestDistantPropagationDiscarding(t *testing.T) {
 	}
 }
 
+// Tests that a far-future block whose number overflows int64 (e.g. MaxUint64)
+// is discarded by enqueue, matching IsPlausibleAnnouncement, instead of being
+// wrapped to a negative distance and accepted into the import queue.
+func TestMaxUint64PropagationDiscarding(t *testing.T) {
+	// Build a low chain so the wrapped distance of a MaxUint64 block (-1) minus
+	// the head would fall inside the acceptance window under the old signed
+	// subtraction (height <= maxUncleDist).
+	hashes, blocks := makeChain(6, 0, genesis)
+	head := hashes[2] // block #4
+
+	tester := newTester()
+	tester.lock.Lock()
+	tester.hashes = []common.Hash{head}
+	tester.blocks = map[common.Hash]*types.Block{head: blocks[head]}
+	tester.lock.Unlock()
+
+	// A far-future block must be discarded rather than queued.
+	maxFuture := types.NewBlockWithHeader(&types.Header{
+		Number:     new(big.Int).SetUint64(^uint64(0)),
+		Difficulty: big.NewInt(1),
+	})
+	tester.fetcher.Enqueue("maxfuture", maxFuture)
+	time.Sleep(10 * time.Millisecond)
+	if !tester.fetcher.queue.Empty() {
+		t.Fatalf("fetcher queued far-future block")
+	}
+}
+
+// Tests that IsPlausibleAnnouncement accepts announcements within the fetcher's
+// plausibility window and rejects those too far from the local chain head.
+func TestIsPlausibleAnnouncement(t *testing.T) {
+	height := uint64(1000)
+	tests := []struct {
+		number uint64
+		want   bool
+	}{
+		{number: 0, want: true},                          // Unknown height, always plausible
+		{number: height - maxUncleDist, want: true},      // Backward window edge
+		{number: height - maxUncleDist - 1, want: false}, // Too far behind
+		{number: height + maxQueueDist, want: true},      // Forward window edge
+		{number: height + maxQueueDist + 1, want: false}, // Too far ahead
+		{number: ^uint64(0), want: false},                // Far future
+	}
+	for i, tt := range tests {
+		if got := IsPlausibleAnnouncement(tt.number, height); got != tt.want {
+			t.Fatalf("case %d: number=%d got %v, want %v", i, tt.number, got, tt.want)
+		}
+	}
+}
+
 // Tests that announcements with numbers much lower or higher than out current
 // head get discarded to prevent wasting resources on useless blocks from faulty
 // peers.

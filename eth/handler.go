@@ -756,9 +756,18 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		if err := msg.Decode(&announces); err != nil {
 			return errResp(ErrDecode, "%v: %v", msg, err)
 		}
-		// Mark the hashes as present at the remote node
+		// Mark the hashes as present at the remote node and track the highest
+		// plausible announced block as the peer's live tip.
+		height := pm.blockchain.CurrentBlock().Number.Uint64()
+		var tip uint64
 		for _, block := range announces {
 			p.MarkBlock(block.Hash)
+			if fetcher.IsPlausibleAnnouncement(block.Number, height) {
+				tip = max(tip, block.Number)
+			}
+		}
+		if tip > 0 {
+			p.SetTipNumber(tip)
 		}
 		// Schedule all the unknown hashes for retrieval
 		unknown := make(newBlockHashesData, 0, len(announces))
@@ -791,8 +800,13 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		request.Block.ReceivedAt = msg.ReceivedAt
 		request.Block.ReceivedFrom = p
 
-		// Mark the peer as owning the block and schedule it for import
+		// Mark the peer as owning the block, track its tip (only when the block
+		// number is within the fetcher's plausibility window), and schedule it
+		// for import
 		p.MarkBlock(request.Block.Hash())
+		if fetcher.IsPlausibleAnnouncement(request.Block.NumberU64(), pm.blockchain.CurrentBlock().Number.Uint64()) {
+			p.SetTipNumber(request.Block.NumberU64())
+		}
 		pm.blockFetcher.Enqueue(p.id, request.Block)
 
 		// Assuming the block is importable by the peer, but possibly not yet done so,

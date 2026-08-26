@@ -96,6 +96,8 @@ type peer struct {
 	td   *big.Int
 	lock sync.RWMutex
 
+	tipNumber uint64 // Highest block number announced by the peer (live network high-water mark)
+
 	knownBlocks     mapset.Set[common.Hash] // Set of block hashes known to be known by this peer
 	queuedBlocks    chan *propEvent         // Queue of blocks to broadcast to the peer
 	queuedBlockAnns chan *types.Block       // Queue of blocks to announce to the peer
@@ -351,6 +353,25 @@ func (p *peer) SetHead(hash common.Hash, td *big.Int) {
 
 	copy(p.head[:], hash[:])
 	p.td.Set(td)
+}
+
+// TipNumber retrieves the highest block number announced by the peer.
+func (p *peer) TipNumber() uint64 {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+	return p.tipNumber
+}
+
+// SetTipNumber records the highest block number announced by the peer. The tip
+// only ever moves forward; unlike SetHead (which conservatively tracks the
+// parent of an announced block), this reflects the actual tip the peer has
+// advertised, so it can serve as a live network high-water mark.
+func (p *peer) SetTipNumber(number uint64) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	if number > p.tipNumber {
+		p.tipNumber = number
+	}
 }
 
 // MarkBlock marks a block as known for the peer, ensuring that the block will
@@ -1049,6 +1070,22 @@ func (ps *peerSet) BestPeer() *peer {
 		}
 	}
 	return bestPeer
+}
+
+// HighestTipNumber returns the highest block number announced by any known
+// peer, providing a live network high-water mark that stays current even when
+// the downloader is idle.
+func (ps *peerSet) HighestTipNumber() uint64 {
+	ps.lock.RLock()
+	defer ps.lock.RUnlock()
+
+	var highest uint64
+	for _, p := range ps.peers {
+		if tip := p.TipNumber(); tip > highest {
+			highest = tip
+		}
+	}
+	return highest
 }
 
 // Close disconnects all peers.
