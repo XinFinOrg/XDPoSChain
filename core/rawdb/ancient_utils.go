@@ -1,0 +1,138 @@
+// Copyright 2022 The go-ethereum Authors
+// This file is part of the go-ethereum library.
+//
+// The go-ethereum library is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// The go-ethereum library is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+
+package rawdb
+
+import (
+	"fmt"
+
+	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/ethdb"
+)
+
+type tableInfo struct {
+	name  string
+	size  common.StorageSize
+	count uint64
+}
+
+// freezerInfo contains the basic information of the freezer.
+type freezerInfo struct {
+	name   string      // The identifier of freezer
+	head   uint64      // The number of last stored item in the freezer
+	tables []tableInfo // Per-table storage size and item count
+}
+
+// size returns the storage size of the entire freezer.
+func (info *freezerInfo) size() common.StorageSize {
+	var total common.StorageSize
+	for _, table := range info.tables {
+		total += table.size
+	}
+	return total
+}
+
+func inspect(name string, order map[string]freezerTableConfig, reader ethdb.AncientReader) (freezerInfo, error) {
+	info := freezerInfo{name: name}
+
+	// Retrieve the number of last stored item.
+	ancients, err := reader.Ancients()
+	if err != nil {
+		return freezerInfo{}, err
+	}
+	if ancients > 0 {
+		info.head = ancients - 1
+	}
+	// Resolve per-group tails so each table can report its own item count.
+	groupTails := make(map[string]uint64)
+	for _, cfg := range order {
+		if cfg.tailGroup == "" {
+			continue
+		}
+		if _, ok := groupTails[cfg.tailGroup]; ok {
+			continue
+		}
+		t, err := reader.Tail(cfg.tailGroup)
+		if err != nil {
+			return freezerInfo{}, err
+		}
+		groupTails[cfg.tailGroup] = t
+	}
+	for t, cfg := range order {
+		size, err := reader.AncientSize(t)
+		if err != nil {
+			return freezerInfo{}, err
+		}
+		var count uint64
+		if ancients > 0 {
+			tail := groupTails[cfg.tailGroup] // 0 for non-prunable tables
+			count = ancients - tail
+		}
+		info.tables = append(info.tables, tableInfo{name: t, size: common.StorageSize(size), count: count})
+	}
+	return info, nil
+}
+
+// inspectFreezers inspects all freezers registered in the system.
+func inspectFreezers(db ethdb.Database) ([]freezerInfo, error) {
+	var infos []freezerInfo
+	for _, freezer := range freezers {
+		switch freezer {
+		case ChainFreezerName:
+			info, err := inspect(ChainFreezerName, chainFreezerTableConfigs, db)
+			if err != nil {
+				return nil, err
+			}
+			infos = append(infos, info)
+
+		default:
+			return nil, fmt.Errorf("unknown freezer, supported ones: %v", freezers)
+		}
+	}
+	return infos, nil
+}
+
+// InspectFreezerTable dumps out the index of a specific freezer table. The passed
+// ancient indicates the path of root ancient directory where the chain freezer can
+// be opened. Start and end specify the range for dumping out indexes.
+// Note this function can only be used for debugging purposes.
+func InspectFreezerTable(ancient string, freezerName string, tableName string, start, end int64) error {
+	var (
+		path   string
+		tables map[string]freezerTableConfig
+	)
+	switch freezerName {
+	case ChainFreezerName:
+		path, tables = resolveChainFreezerDir(ancient), chainFreezerTableConfigs
+	default:
+		return fmt.Errorf("unknown freezer, supported ones: %v", freezers)
+	}
+	noSnappy, exist := tables[tableName]
+	if !exist {
+		var names []string
+		for name := range tables {
+			names = append(names, name)
+		}
+		return fmt.Errorf("unknown table, supported ones: %v", names)
+	}
+	table, err := newFreezerTable(path, tableName, noSnappy, true)
+	if err != nil {
+		return err
+	}
+	defer table.Close()
+	table.dumpIndexStdout(start, end)
+	return nil
+}

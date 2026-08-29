@@ -33,13 +33,18 @@ type XDCXDAO interface {
 	Delete(key []byte) error
 	NewBatch() ethdb.Batch
 	NewBatchWithSize(size int) ethdb.Batch
-	HasAncient(kind string, number uint64) (bool, error)
 	Ancient(kind string, number uint64) ([]byte, error)
+	AncientRange(kind string, start, count, maxBytes uint64) ([][]byte, error)
+	AncientBytes(kind string, id, offset, length uint64) ([]byte, error)
 	Ancients() (uint64, error)
+	Tail(group string) (uint64, error)
 	AncientSize(kind string) (uint64, error)
-	AppendAncient(number uint64, hash, header, body, receipt, td []byte) error
-	TruncateAncients(n uint64) error
-	Sync() error
+	ReadAncients(fn func(ethdb.AncientReaderOp) error) error
+	ModifyAncients(func(ethdb.AncientWriteOp) error) (int64, error)
+	TruncateHead(n uint64) (uint64, error)
+	TruncateTail(group string, n uint64) (uint64, error)
+	SyncAncient() error
+	AncientDatadir() (string, error)
 	NewIterator(prefix []byte, start []byte) ethdb.Iterator
 
 	Stat(property string) (string, error)

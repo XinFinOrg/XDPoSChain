@@ -86,6 +86,18 @@ var (
 		Value:    flags.DirectoryString(node.DefaultDataDir()),
 		Category: flags.EthCategory,
 	}
+	AncientFlag = &flags.DirectoryFlag{
+		Name:     "datadir.ancient",
+		Usage:    "Root directory for ancient chain segments (default = inside chaindata)",
+		Category: flags.EthCategory,
+	}
+	HistoryImmutabilityThresholdFlag = &cli.Uint64Flag{
+		Name:     "history.immutabilitythreshold",
+		Usage:    "Number of blocks after which chain data is moved to the ancient store (DEVELOPMENT ONLY - do not change on a production node)",
+		Value:    params.DefaultFullImmutabilityThreshold,
+		Hidden:   true,
+		Category: flags.EthCategory,
+	}
 	KeyStoreDirFlag = &flags.DirectoryFlag{
 		Name:     "keystore",
 		Usage:    "Directory for the keystore (default = inside the datadir)",
@@ -1641,6 +1653,10 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		cfg.DatabaseCache = ctx.Int(CacheFlag.Name) * ctx.Int(CacheDatabaseFlag.Name) / 100
 	}
 	cfg.DatabaseHandles = MakeDatabaseHandles(ctx.Int(FDLimitFlag.Name))
+	if ctx.IsSet(AncientFlag.Name) {
+		cfg.DatabaseFreezer = ctx.String(AncientFlag.Name)
+	}
+	setImmutabilityThreshold(ctx)
 
 	if gcmode := ctx.String(GCModeFlag.Name); gcmode != "full" && gcmode != "archive" {
 		Fatalf("--%s must be either 'full' or 'archive'", GCModeFlag.Name)
@@ -1881,7 +1897,7 @@ func MakeChainDatabase(ctx *cli.Context, stack *node.Node, readonly bool) ethdb.
 		cache   = ctx.Int(CacheFlag.Name) * ctx.Int(CacheDatabaseFlag.Name) / 100
 		handles = MakeDatabaseHandles(ctx.Int(FDLimitFlag.Name))
 	)
-	chainDb, err := stack.OpenDatabase("chaindata", cache, handles, "", readonly)
+	chainDb, err := stack.OpenDatabaseWithFreezer("chaindata", cache, handles, ctx.String(AncientFlag.Name), "", readonly)
 	if err != nil {
 		Fatalf("Could not open database: %v", err)
 	}
@@ -2088,4 +2104,24 @@ func RegisterFilterAPI(stack *node.Node, backend ethapi.Backend, ethcfg *ethconf
 		Service:   filters.NewFilterAPI(filterSystem, false),
 	}})
 	return filterSystem
+}
+
+// setImmutabilityThreshold applies the hidden --history.immutabilitythreshold
+// override. It exists so tests and local devnets can make the chain freezer
+// actually fire within minutes instead of days; production nodes must not use it.
+func setImmutabilityThreshold(ctx *cli.Context) {
+	if !ctx.IsSet(HistoryImmutabilityThresholdFlag.Name) {
+		return
+	}
+	threshold := ctx.Uint64(HistoryImmutabilityThresholdFlag.Name)
+	if threshold == params.DefaultFullImmutabilityThreshold {
+		return
+	}
+	if threshold < params.MinFullImmutabilityThreshold {
+		Fatalf("--%s must be at least %d: XDPoS reward and penalty hooks read block bodies and receipts at least 2*RewardCheckpoint (1800) blocks back, and the floor keeps a wide margin above that so freezing - and, under minimal history mode, pruning - stays clear of every consensus lookback",
+			HistoryImmutabilityThresholdFlag.Name, params.MinFullImmutabilityThreshold)
+	}
+	params.FullImmutabilityThreshold = threshold
+	log.Warn("Chain freezer immutability threshold overridden - DEVELOPMENT ONLY, not safe for a production node",
+		"threshold", threshold, "default", params.DefaultFullImmutabilityThreshold)
 }

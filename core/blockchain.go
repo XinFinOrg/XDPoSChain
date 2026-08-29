@@ -23,6 +23,7 @@ import (
 	"io"
 	"math/big"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -911,7 +912,7 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64) error {
 		if num+1 <= frozen {
 			// Truncate all relative data(header, total difficulty, body, receipt
 			// and canonical hash) from ancient store.
-			if err := bc.db.TruncateAncients(num + 1); err != nil {
+			if _, err := bc.db.TruncateHead(num + 1); err != nil {
 				log.Crit("Failed to truncate ancient data", "number", num, "err", err)
 			}
 
@@ -1601,12 +1602,17 @@ func (bc *BlockChain) Rollback(chain []common.Hash) {
 // InsertReceiptChain attempts to complete an already existing header chain with
 // transaction and receipt data.
 //
+// Blocks whose number is below ancientLimit are written straight into the ancient
+// store, bypassing the key-value store entirely; the remainder are written live.
+// Pass 0 to disable the ancient fast path and write everything live.
+//
 // The returned index says where the import stopped: a block this node cannot finish (unknown
 // header, receipts that do not derive) reports its own index; an interruption reports the
 // first block the database does not hold, i.e. the first of the current batch rather than the
-// one the loop was on; a write the database refused reports 0, since that batch cannot be
-// split and under-reporting cannot make a caller think a block was written.
-func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain []types.Receipts) (int, error) {
+// one the loop was on; a write the database refused reports the first block of the write that
+// failed, since that write cannot be split and under-reporting cannot make a caller think a
+// block was written.
+func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain []types.Receipts, ancientLimit uint64) (int, error) {
 	// We don't require the chainMu here since we want to maximize the
 	// concurrency of header insertion and receipt insertion.
 	bc.wg.Add(1)
@@ -1631,72 +1637,160 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		stats = struct{ processed, ignored int32 }{}
 		start = time.Now()
 		bytes = 0
-		batch = bc.db.NewBatch()
-		// The first block the database does not hold. Everything below it is on disk;
-		// every block walked since is pending in the batch or not walked yet.
-		firstPending = 0
 	)
-	for i, block := range blockChain {
-		receipts := receiptChain[i]
-		// Short circuit insertion if shutting down or processing failed.
-		//
-		// The index is firstPending, not the cursor: the blocks the batch holds were never
-		// written, so reporting the cursor would claim a half-written batch as complete. The
-		// sentinel is local, so the downloader reports it as errLocalInsertFailure rather
-		// than as errCancelContentProcessing and does not blame the peer.
-		if bc.insertStopped() {
-			return firstPending, ErrInsertionInterrupted
+
+	// writeAncient writes a batch of canonical blocks and their receipts directly
+	// into the ancient store, skipping the key-value store. It only ever receives
+	// canonical chain data; side chains are reverted eventually.
+	writeAncient := func(blockChain types.Blocks, receiptChain []types.Receipts) (int, error) {
+		// The ancient store must contain the genesis block before anything else.
+		if blockChain[0].NumberU64() == 1 {
+			if frozen, _ := bc.db.Ancients(); frozen == 0 {
+				emptyReceipts, err := encodeStorageReceipts(types.Receipts{})
+				if err != nil {
+					return 0, err
+				}
+				writeSize, err := rawdb.WriteAncientBlocks(bc.db, []*types.Block{bc.genesisBlock}, []rlp.RawValue{emptyReceipts})
+				if err != nil {
+					log.Error("Error writing genesis to ancients", "err", err)
+					return 0, wrapLocalCondition(err)
+				}
+				bytes += int(writeSize)
+				log.Info("Wrote genesis to ancients")
+			}
 		}
-		blockHash, blockNumber := block.Hash(), block.NumberU64()
-		// Short circuit if the owner header is unknown
-		if !bc.HasHeader(blockHash, blockNumber) {
-			return i, fmt.Errorf("containing header #%d [%x..] unknown", blockNumber, blockHash.Bytes()[:4])
+		// Convert the receipts into the storage form the freezer holds. This must
+		// match rawdb.WriteReceipts exactly, since ReadRawReceipts decodes both.
+		rawReceipts := make([]rlp.RawValue, len(receiptChain))
+		for i, block := range blockChain {
+			receipts := receiptChain[i]
+			// DeriveFields also validates the receipt count against the block.
+			if err := receipts.DeriveFields(bc.chainConfig, block.Hash(), block.NumberU64(), block.BaseFee(), block.Transactions()); err != nil {
+				return i, fmt.Errorf("failed to derive receipts data: %v", err)
+			}
+			blob, err := encodeStorageReceipts(receipts)
+			if err != nil {
+				return i, err
+			}
+			rawReceipts[i] = blob
 		}
-		// Skip if the entire data is already known
-		if bc.HasBlock(blockHash, blockNumber) {
-			// The block is on disk, so it belongs to the prefix firstPending describes - but
-			// only while nothing is pending: a batch already holding writes would reach the
-			// database after this block, and counting this one would claim that batch too.
-			// firstPending == i says exactly that.
-			if firstPending == i {
+		// The ancient append is atomic, so a refused write leaves nothing of this
+		// group on disk and reports its first block. Like a refused key-value
+		// write, it is this node's condition, not the peer's.
+		writeSize, err := rawdb.WriteAncientBlocks(bc.db, blockChain, rawReceipts)
+		if err != nil {
+			log.Error("Error importing chain data to ancients", "err", err)
+			return 0, wrapLocalCondition(err)
+		}
+		bytes += int(writeSize)
+
+		// Flush the ancient store before touching the key-value store, so a crash
+		// can never leave key-value markers pointing at unflushed ancient data.
+		if err := bc.db.SyncAncient(); err != nil {
+			return 0, wrapLocalCondition(err)
+		}
+		// Ancient blocks are still looked up by hash, and their transactions must
+		// stay indexed, so both mappings go into the key-value store.
+		batch := bc.db.NewBatch()
+		for _, block := range blockChain {
+			rawdb.WriteHeaderNumber(batch, block.Hash(), block.NumberU64())
+			rawdb.WriteTxLookupEntriesByBlock(batch, block)
+		}
+		if err := batch.Write(); err != nil {
+			return 0, wrapLocalCondition(err)
+		}
+		stats.processed += int32(len(blockChain))
+		return 0, nil
+	}
+
+	// writeLive writes a batch of blocks and receipts into the key-value store. Its
+	// index is relative to the blocks it was given.
+	writeLive := func(blockChain types.Blocks, receiptChain []types.Receipts) (int, error) {
+		var (
+			batch = bc.db.NewBatch()
+			// The first block the database does not hold. Everything below it is on disk;
+			// every block walked since is pending in the batch or not walked yet.
+			firstPending = 0
+		)
+		for i, block := range blockChain {
+			receipts := receiptChain[i]
+			// Short circuit insertion if shutting down or processing failed.
+			//
+			// The index is firstPending, not the cursor: the blocks the batch holds were never
+			// written, so reporting the cursor would claim a half-written batch as complete. The
+			// sentinel is local, so the downloader reports it as errLocalInsertFailure rather
+			// than as errCancelContentProcessing and does not blame the peer.
+			if bc.insertStopped() {
+				return firstPending, ErrInsertionInterrupted
+			}
+			blockHash, blockNumber := block.Hash(), block.NumberU64()
+			// Short circuit if the owner header is unknown
+			if !bc.HasHeader(blockHash, blockNumber) {
+				return i, fmt.Errorf("containing header #%d [%x..] unknown", blockNumber, blockHash.Bytes()[:4])
+			}
+			// Skip if the entire data is already known
+			if bc.HasBlock(blockHash, blockNumber) {
+				// The block is on disk, so it belongs to the prefix firstPending describes - but
+				// only while nothing is pending: a batch already holding writes would reach the
+				// database after this block, and counting this one would claim that batch too.
+				// firstPending == i says exactly that.
+				if firstPending == i {
+					firstPending = i + 1
+				}
+				stats.ignored++
+				continue
+			}
+			// Compute all the non-consensus fields of the receipts
+			if err := receipts.DeriveFields(bc.chainConfig, blockHash, blockNumber, block.BaseFee(), block.Transactions()); err != nil {
+				return i, fmt.Errorf("failed to derive receipts data: %v", err)
+			}
+			// Write all the data out into the database
+			rawdb.WriteBody(batch, blockHash, blockNumber, block.Body())
+			rawdb.WriteReceipts(batch, blockHash, blockNumber, receipts)
+			rawdb.WriteTxLookupEntriesByBlock(batch, block)
+
+			// Write everything belongs to the blocks into the database. So that
+			// we can ensure all components of body is completed(body, receipts,
+			// tx indexes)
+			if batch.ValueSize() >= ethdb.IdealBatchSize {
+				if err := batch.Write(); err != nil {
+					// A write the database refused is this node's condition, not the peer's:
+					// it must not become the errInvalidChain the downloader drops the peer with.
+					return firstPending, wrapLocalCondition(err)
+				}
+				bytes += batch.ValueSize()
+				batch.Reset()
+				// Everything up to this block went to disk with the batch that just went out.
 				firstPending = i + 1
 			}
-			stats.ignored++
-			continue
+			stats.processed++
 		}
-		// Compute all the non-consensus fields of the receipts
-		if err := receipts.DeriveFields(bc.chainConfig, blockHash, blockNumber, block.BaseFee(), block.Transactions()); err != nil {
-			return i, fmt.Errorf("failed to derive receipts data: %v", err)
-		}
-		// Write all the data out into the database
-		rawdb.WriteBody(batch, blockHash, blockNumber, block.Body())
-		rawdb.WriteReceipts(batch, blockHash, blockNumber, receipts)
-		rawdb.WriteTxLookupEntriesByBlock(batch, block)
-
 		// Write everything belongs to the blocks into the database. So that
 		// we can ensure all components of body is completed(body, receipts,
 		// tx indexes)
-		if batch.ValueSize() >= ethdb.IdealBatchSize {
-			if err := batch.Write(); err != nil {
-				// A write the database refused is this node's condition, not the peer's:
-				// it must not become the errInvalidChain the downloader drops the peer with.
-				return 0, wrapLocalCondition(err)
-			}
+		if batch.ValueSize() > 0 {
 			bytes += batch.ValueSize()
-			batch.Reset()
-			// Everything up to this block went to disk with the batch that just went out.
-			firstPending = i + 1
+			if err := batch.Write(); err != nil {
+				// Same as above: the refusal is this node's, not the peer's.
+				return firstPending, wrapLocalCondition(err)
+			}
 		}
-		stats.processed++
+		return 0, nil
 	}
-	// Write everything belongs to the blocks into the database. So that
-	// we can ensure all components of body is completed(body, receipts,
-	// tx indexes)
-	if batch.ValueSize() > 0 {
-		bytes += batch.ValueSize()
-		if err := batch.Write(); err != nil {
-			// Same as above: the refusal is this node's, not the peer's.
-			return 0, wrapLocalCondition(err)
+
+	// Split the supplied blocks into two groups, according to the given ancient
+	// limit. Everything strictly below it goes to the freezer.
+	index := sort.Search(len(blockChain), func(i int) bool {
+		return blockChain[i].NumberU64() >= ancientLimit
+	})
+	if index > 0 {
+		if n, err := writeAncient(blockChain[:index], receiptChain[:index]); err != nil {
+			return n, err
+		}
+	}
+	if index != len(blockChain) {
+		if n, err := writeLive(blockChain[index:], receiptChain[index:]); err != nil {
+			return index + n, err
 		}
 	}
 
@@ -1738,6 +1832,21 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 	log.Info("Imported new block receipts", context...)
 
 	return 0, nil
+}
+
+// encodeStorageReceipts encodes receipts into the exact RLP form that both the
+// key-value store and the freezer hold, so rawdb.ReadRawReceipts can decode data
+// originating from either.
+func encodeStorageReceipts(receipts types.Receipts) (rlp.RawValue, error) {
+	storageReceipts := make([]*types.ReceiptForStorage, len(receipts))
+	for i, receipt := range receipts {
+		storageReceipts[i] = (*types.ReceiptForStorage)(receipt)
+	}
+	blob, err := rlp.EncodeToBytes(storageReceipts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode block receipts: %v", err)
+	}
+	return blob, nil
 }
 
 var lastWrite uint64

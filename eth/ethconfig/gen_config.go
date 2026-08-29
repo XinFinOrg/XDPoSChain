@@ -31,6 +31,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		SkipBcVersionCheck         bool `toml:"-"`
 		DeleteAllBadBlocks         bool `toml:"-"`
 		DatabaseHandles            int  `toml:"-"`
+		DatabaseFreezer            string
 		DatabaseCache              int
 		TrieCleanCache             int
 		TrieDirtyCache             int
@@ -65,6 +66,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.SkipBcVersionCheck = c.SkipBcVersionCheck
 	enc.DeleteAllBadBlocks = c.DeleteAllBadBlocks
 	enc.DatabaseHandles = c.DatabaseHandles
+	enc.DatabaseFreezer = c.DatabaseFreezer
 	enc.DatabaseCache = c.DatabaseCache
 	enc.TrieCleanCache = c.TrieCleanCache
 	enc.TrieDirtyCache = c.TrieDirtyCache
@@ -103,6 +105,7 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		SkipBcVersionCheck         *bool `toml:"-"`
 		DeleteAllBadBlocks         *bool `toml:"-"`
 		DatabaseHandles            *int  `toml:"-"`
+		DatabaseFreezer            *string
 		DatabaseCache              *int
 		TrieCleanCache             *int
 		TrieDirtyCache             *int
@@ -169,6 +172,9 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	}
 	if dec.DatabaseHandles != nil {
 		c.DatabaseHandles = *dec.DatabaseHandles
+	}
+	if dec.DatabaseFreezer != nil {
+		c.DatabaseFreezer = *dec.DatabaseFreezer
 	}
 	if dec.DatabaseCache != nil {
 		c.DatabaseCache = *dec.DatabaseCache

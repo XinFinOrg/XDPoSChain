@@ -72,7 +72,9 @@ type downloadTester struct {
 	ownHeaders  map[common.Hash]*types.Header  // Headers belonging to the tester
 	ownBlocks   map[common.Hash]*types.Block   // Blocks belonging to the tester
 	ownReceipts map[common.Hash]types.Receipts // Receipts belonging to the tester
-	ownChainTd  map[common.Hash]*big.Int       // Total difficulties of the blocks in the local chain
+
+	ancientLimit uint64                   // Last ancientLimit the downloader passed to InsertReceiptChain
+	ownChainTd   map[common.Hash]*big.Int // Total difficulties of the blocks in the local chain
 
 	insertHeaderChainHook func([]*types.Header) error
 
@@ -364,10 +366,14 @@ func (dl *downloadTester) writeBlockWithoutState(block *types.Block) error {
 }
 
 // InsertReceiptChain injects a new batch of receipts into the simulated chain.
-func (dl *downloadTester) InsertReceiptChain(blocks types.Blocks, receipts []types.Receipts) (i int, err error) {
+//
+// ancientLimit is recorded so tests can assert which limit the downloader chose,
+// but the simulated chain has no freezer so both groups are stored identically.
+func (dl *downloadTester) InsertReceiptChain(blocks types.Blocks, receipts []types.Receipts, ancientLimit uint64) (i int, err error) {
 	dl.lock.Lock()
 	defer dl.lock.Unlock()
 
+	dl.ancientLimit = ancientLimit
 	if dl.insertReceiptChainHook != nil {
 		if err := dl.insertReceiptChainHook(blocks, receipts); err != nil {
 			return 0, err
@@ -391,6 +397,26 @@ func (dl *downloadTester) InsertReceiptChain(blocks types.Blocks, receipts []typ
 // the simulated chain does for the methods it does not need to stub.
 func (dl *downloadTester) IsLocalInsertError(err error) bool {
 	return core.IsLocalInsertError(err)
+}
+
+// SetHead rewinds the simulated chain to the given block number.
+func (dl *downloadTester) SetHead(head uint64) error {
+	dl.lock.Lock()
+	defer dl.lock.Unlock()
+
+	for len(dl.ownHashes) > 0 {
+		hash := dl.ownHashes[len(dl.ownHashes)-1]
+		header, ok := dl.ownHeaders[hash]
+		if !ok || header.Number.Uint64() <= head {
+			break
+		}
+		dl.ownHashes = dl.ownHashes[:len(dl.ownHashes)-1]
+		delete(dl.ownChainTd, hash)
+		delete(dl.ownHeaders, hash)
+		delete(dl.ownReceipts, hash)
+		delete(dl.ownBlocks, hash)
+	}
+	return nil
 }
 
 // Rollback removes some recently added elements from the chain.
@@ -701,7 +727,7 @@ func testFindAncestorIgnoresBlocksAboveHead(t *testing.T, mode SyncMode, chainLe
 		for i := range receipts {
 			receipts[i] = types.Receipts{}
 		}
-		if _, err := tester.InsertReceiptChain(blocks, receipts); err != nil {
+		if _, err := tester.InsertReceiptChain(blocks, receipts, 0); err != nil {
 			t.Fatalf("failed to insert receipts: %v", err)
 		}
 	}
@@ -1233,7 +1259,7 @@ func TestUsableAsAncestorBoundaries(t *testing.T) {
 	for i := 0; i <= headHeight; i++ {
 		receipts = append(receipts, types.Receipts{})
 	}
-	if _, err := tester.InsertReceiptChain(receiptBlocks, receipts); err != nil {
+	if _, err := tester.InsertReceiptChain(receiptBlocks, receipts, 0); err != nil {
 		t.Fatalf("failed to insert receipts: %v", err)
 	}
 	if have := tester.CurrentBlock().Number.Uint64(); have != headHeight {

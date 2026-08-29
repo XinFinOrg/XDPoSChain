@@ -100,20 +100,10 @@ var (
 )
 
 const (
-	// freezerHeaderTable indicates the name of the freezer header table.
-	freezerHeaderTable = "headers"
+// NOTE: freezer table names now live in ancient_scheme.go. The total
+// difficulty table ("diffs") is intentionally absent: TD is never frozen,
+// ReadTdRLP reads it exclusively from the key-value store. See claude/plan 3.4.
 
-	// freezerHashTable indicates the name of the freezer canonical hash table.
-	freezerHashTable = "hashes"
-
-	// freezerBodiesTable indicates the name of the freezer block body table.
-	freezerBodiesTable = "bodies"
-
-	// freezerReceiptTable indicates the name of the freezer receipts table.
-	freezerReceiptTable = "receipts"
-
-	// freezerDifficultyTable indicates the name of the freezer total difficulty table.
-	freezerDifficultyTable = "diffs"
 )
 
 // LegacyTxLookupEntry is the legacy TxLookupEntry definition with some unnecessary

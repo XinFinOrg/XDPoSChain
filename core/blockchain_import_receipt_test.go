@@ -44,7 +44,7 @@ func TestInsertReceiptChainReportsInterruption(t *testing.T) {
 	chain.InterruptInsert(true)
 	defer chain.InterruptInsert(false)
 
-	n, err := chain.InsertReceiptChain(blocks, receipts)
+	n, err := chain.InsertReceiptChain(blocks, receipts, 0)
 	if !errors.Is(err, ErrInsertionInterrupted) {
 		t.Fatalf("unexpected error: have %v want %v", err, ErrInsertionInterrupted)
 	}
@@ -111,7 +111,7 @@ func TestInsertReceiptChainReportsARefusedWrite(t *testing.T) {
 	db.refuse.Store(true)
 	defer db.refuse.Store(false)
 
-	n, err := chain.InsertReceiptChain(blocks, receipts)
+	n, err := chain.InsertReceiptChain(blocks, receipts, 0)
 	if !errors.Is(err, errRefusedWrite) {
 		t.Fatalf("index %d: the refused write must be reported with its cause, have %v", n, err)
 	}
@@ -222,7 +222,7 @@ func TestInsertReceiptChainReportsOnlyWhatReachedDisk(t *testing.T) {
 	}
 	defer chain.InterruptInsert(false)
 
-	n, err := chain.InsertReceiptChain(blocks, receipts)
+	n, err := chain.InsertReceiptChain(blocks, receipts, 0)
 	if !errors.Is(err, ErrInsertionInterrupted) {
 		// Either no batch was flushed on the way (raise the number of blocks or the payload) or
 		// the interruption was never raised: either way this check has nothing to verify, so it
@@ -282,7 +282,7 @@ func TestInsertReceiptChainReportsTheStoredPrefix(t *testing.T) {
 	}
 	// The stored prefix: three blocks this node completed with an import of its own.
 	stored := 3
-	if n, err := chain.InsertReceiptChain(blocks[:stored], receipts[:stored]); err != nil {
+	if n, err := chain.InsertReceiptChain(blocks[:stored], receipts[:stored], 0); err != nil {
 		t.Fatalf("stored prefix: failed to import the receipts: index %d err %v", n, err)
 	}
 	// Interrupt on the first write the second import queues, so that what it reports has to
@@ -293,7 +293,7 @@ func TestInsertReceiptChainReportsTheStoredPrefix(t *testing.T) {
 	}
 	defer chain.InterruptInsert(false)
 
-	n, err := chain.InsertReceiptChain(blocks, receipts)
+	n, err := chain.InsertReceiptChain(blocks, receipts, 0)
 	if !errors.Is(err, ErrInsertionInterrupted) {
 		t.Fatalf("the import has to be interrupted before it writes: index %d err %v", n, err)
 	}

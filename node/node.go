@@ -34,6 +34,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
+	"github.com/XinFinOrg/XDPoSChain/ethdb/leveldb"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
@@ -729,6 +730,49 @@ func (n *Node) OpenDatabase(name string, cache, handles int, namespace string, r
 		db = n.wrapDatabase(db)
 	}
 	return db, err
+}
+
+// OpenDatabaseWithFreezer opens an existing database with the given name (or
+// creates one if no previous can be found) from within the node's data directory,
+// also attaching a chain freezer to it that moves ancient chain data from the
+// database to immutable append-only files. If the node is an ephemeral one, a
+// memory database is returned.
+func (n *Node) OpenDatabaseWithFreezer(name string, cache, handles int, ancient string, namespace string, readonly bool) (ethdb.Database, error) {
+	n.lock.Lock()
+	defer n.lock.Unlock()
+	if n.state == closedState {
+		return nil, ErrNodeStopped
+	}
+	var db ethdb.Database
+	var err error
+	if n.config.DataDir == "" {
+		db = rawdb.NewMemoryDatabase()
+	} else {
+		kvdb, kerr := leveldb.New(n.ResolvePath(name), cache, handles, namespace, readonly)
+		if kerr != nil {
+			return nil, kerr
+		}
+		db, err = rawdb.NewDatabaseWithFreezer(kvdb, n.ResolveAncient(name, ancient), namespace, readonly)
+		if err != nil {
+			kvdb.Close()
+			return nil, err
+		}
+	}
+	if err == nil {
+		db = n.wrapDatabase(db)
+	}
+	return db, err
+}
+
+// ResolveAncient returns the absolute path of the root ancient directory.
+func (n *Node) ResolveAncient(name string, ancient string) string {
+	switch {
+	case ancient == "":
+		ancient = filepath.Join(n.ResolvePath(name), "ancient")
+	case !filepath.IsAbs(ancient):
+		ancient = n.ResolvePath(ancient)
+	}
+	return ancient
 }
 
 // ResolvePath returns the absolute path of a resource in the instance directory.

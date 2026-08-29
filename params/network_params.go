@@ -28,3 +28,28 @@ const (
 	// considered probably final and its rotated bits are calculated.
 	BloomConfirms = 256
 )
+
+// DefaultFullImmutabilityThreshold is the number of blocks after which a chain
+// segment is considered immutable (i.e. soft finality). It is used by the chain
+// freezer as the cutoff threshold for moving chain segments into the ancient store.
+const DefaultFullImmutabilityThreshold = 90000
+
+// MinFullImmutabilityThreshold is the lowest value FullImmutabilityThreshold may
+// be lowered to.
+//
+// XDPoS consensus reads block bodies and receipts up to 2*RewardCheckpoint blocks
+// back - RewardCheckpoint is 900 on every network, so 1800 blocks - see
+// contracts.GetRewardForCheckpoint. Freezing inside that window is harmless while
+// frozen reads still resolve, but pruning inside it (minimal history mode) would
+// leave the reward and penalty hooks dereferencing missing bodies.
+//
+// The floor is set well above that 1800-block depth rather than just clear of it,
+// to leave room for deeper lookbacks (epoch/gap boundaries, penalty windows) that
+// a future consensus change might introduce without anyone remembering to revisit
+// this constant.
+const MinFullImmutabilityThreshold = 10000
+
+// FullImmutabilityThreshold is the effective freezer cutoff. It is a variable
+// rather than a constant purely so tests and local devnets can lower it via
+// --history.immutabilitythreshold; production nodes must leave it at the default.
+var FullImmutabilityThreshold uint64 = DefaultFullImmutabilityThreshold

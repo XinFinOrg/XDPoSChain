@@ -110,13 +110,21 @@ func (db *BatchDatabase) CommitLendingBulk() error {
 
 var errNotSupported = errors.New("this operation is not supported")
 
-// HasAncient returns an error as we don't have a backing chain freezer.
-func (db *BatchDatabase) HasAncient(kind string, number uint64) (bool, error) {
-	return false, errNotSupported
-}
+// The XDCx order/lending store has no chain freezer; every ancient operation is
+// unsupported. The methods exist only to satisfy ethdb.Database.
 
 // Ancient returns an error as we don't have a backing chain freezer.
 func (db *BatchDatabase) Ancient(kind string, number uint64) ([]byte, error) {
+	return nil, errNotSupported
+}
+
+// AncientRange returns an error as we don't have a backing chain freezer.
+func (db *BatchDatabase) AncientRange(kind string, start, count, maxBytes uint64) ([][]byte, error) {
+	return nil, errNotSupported
+}
+
+// AncientBytes returns an error as we don't have a backing chain freezer.
+func (db *BatchDatabase) AncientBytes(kind string, id, offset, length uint64) ([]byte, error) {
 	return nil, errNotSupported
 }
 
@@ -125,24 +133,46 @@ func (db *BatchDatabase) Ancients() (uint64, error) {
 	return 0, errNotSupported
 }
 
+// Tail returns an error as we don't have a backing chain freezer.
+func (db *BatchDatabase) Tail(group string) (uint64, error) {
+	return 0, errNotSupported
+}
+
 // AncientSize returns an error as we don't have a backing chain freezer.
 func (db *BatchDatabase) AncientSize(kind string) (uint64, error) {
 	return 0, errNotSupported
 }
 
-// AppendAncient returns an error as we don't have a backing chain freezer.
-func (db *BatchDatabase) AppendAncient(number uint64, hash, header, body, receipts, td []byte) error {
+// ReadAncients runs the given function against this store. It deliberately does
+// not return errNotSupported so that callers can probe the ancient store and
+// fall back to the key-value store within a single closure.
+func (db *BatchDatabase) ReadAncients(fn func(ethdb.AncientReaderOp) error) error {
+	return fn(db)
+}
+
+// ModifyAncients returns an error as we don't have a backing chain freezer.
+func (db *BatchDatabase) ModifyAncients(func(ethdb.AncientWriteOp) error) (int64, error) {
+	return 0, errNotSupported
+}
+
+// TruncateHead returns an error as we don't have a backing chain freezer.
+func (db *BatchDatabase) TruncateHead(items uint64) (uint64, error) {
+	return 0, errNotSupported
+}
+
+// TruncateTail returns an error as we don't have a backing chain freezer.
+func (db *BatchDatabase) TruncateTail(group string, items uint64) (uint64, error) {
+	return 0, errNotSupported
+}
+
+// SyncAncient returns an error as we don't have a backing chain freezer.
+func (db *BatchDatabase) SyncAncient() error {
 	return errNotSupported
 }
 
-// TruncateAncients returns an error as we don't have a backing chain freezer.
-func (db *BatchDatabase) TruncateAncients(items uint64) error {
-	return errNotSupported
-}
-
-// Sync returns an error as we don't have a backing chain freezer.
-func (db *BatchDatabase) Sync() error {
-	return errNotSupported
+// AncientDatadir returns an error as we don't have a backing chain freezer.
+func (db *BatchDatabase) AncientDatadir() (string, error) {
+	return "", errNotSupported
 }
 
 func (db *BatchDatabase) NewIterator(prefix []byte, start []byte) ethdb.Iterator {
