@@ -101,11 +101,78 @@ func (tracker *TxTracker) TrackAll(txs []*types.Transaction) {
 		if err != nil { // Ignore this tx
 			continue
 		}
-		tracker.all[tx.Hash()] = tx
-		if tracker.byAddr[addr] == nil {
-			tracker.byAddr[addr] = legacypool.NewSortedMap()
+		list := tracker.byAddr[addr]
+		if list == nil {
+			list = legacypool.NewSortedMap()
+			tracker.byAddr[addr] = list
 		}
-		tracker.byAddr[addr].Put(tx)
+		// A transaction tracked for a nonce that is already taken supersedes the
+		// one it replaces. SortedMap.Put overwrites silently, so the replaced
+		// transaction has to be dropped here: it is never returned by Forward
+		// again, and leaving it in `all` would keep journaling it forever,
+		// where it can win the nonce on the next load and resurrect a
+		// transaction the user already replaced.
+		//
+		// Which of the two supersedes the other is decided the way the pool
+		// decides it:
+		//
+		//   1. The pool still holds one of them. It occupies a nonce with at
+		//      most one transaction, so whichever it holds won the nonce. This
+		//      is checked first because the order transactions reach TrackAll
+		//      is not the order they were accepted in: AddLocal tracks a local
+		//      transaction only after Add has released the subpool lock, so two
+		//      concurrent submissions can be accepted in one order and reach
+		//      here in the other.
+		//   2. The pool holds neither -- two submissions it has since
+		//      discarded, or a journal an older version wrote. Fall back to the
+		//      substitution rules legacypool applies in list.Add: a special
+		//      transaction always claims its nonce, a regular one must not
+		//      evict a pending special one, and otherwise a replacement has to
+		//      beat the transaction it replaces on both fee cap and tip. The
+		//      price bump is deliberately not repeated here: it is a pool
+		//      policy, and a transaction that beats the old one but misses the
+		//      bump behaves exactly as it did before, so no case gets worse.
+		//
+		// Dropping the loser here also converges a journal written by an older
+		// version, which can hold both a transaction and its replacement: load
+		// feeds the file straight into TrackAll, so the replacement wins the
+		// nonce instead of whichever entry the older rotation happened to sort
+		// last, and the next rotation rewrites the journal from the converged
+		// set.
+		if replaced := list.Get(tx.Nonce()); replaced != nil {
+			switch {
+			case tracker.pool.Has(tx.Hash()):
+				// The pool accepted this one, so it holds the nonce. A tracked
+				// transaction that is dearer does not change that: it is one an
+				// older version journalled after the pool rejected it as
+				// retryable, and resubmitting it would evict this one.
+			case tracker.pool.Has(replaced.Hash()):
+				// The pool still holds the transaction this one would replace:
+				// it lost the race for the nonce there.
+				log.Debug("Ignoring tracked local transaction the pool superseded", "nonce", tx.Nonce(),
+					"kept", replaced.Hash(), "ignored", tx.Hash())
+				continue
+			case tx.IsSpecialTransaction():
+				// A special transaction always claims its nonce.
+			case replaced.IsSpecialTransaction():
+				// A regular transaction must not evict a pending special one,
+				// however much dearer it is.
+				log.Debug("Ignoring tracked local transaction that would evict a special one", "nonce", tx.Nonce(),
+					"kept", replaced.Hash(), "ignored", tx.Hash())
+				continue
+			case replaced.GasFeeCapCmp(tx) >= 0 || replaced.GasTipCapCmp(tx) >= 0:
+				// Not a replacement the pool would accept: keep the one that is
+				// already tracked.
+				log.Debug("Ignoring tracked local transaction the tracked one outbids", "nonce", tx.Nonce(),
+					"kept", replaced.Hash(), "ignored", tx.Hash())
+				continue
+			}
+			delete(tracker.all, replaced.Hash())
+			log.Debug("Replaced tracked local transaction", "nonce", tx.Nonce(),
+				"replaced", replaced.Hash(), "replacement", tx.Hash())
+		}
+		list.Put(tx)
+		tracker.all[tx.Hash()] = tx
 
 		if tracker.journal != nil {
 			_ = tracker.journal.insert(tx)

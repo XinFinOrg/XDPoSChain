@@ -37,6 +37,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
 var (
@@ -50,7 +51,6 @@ var (
 		},
 		BaseFee: big.NewInt(params.InitialBaseFee),
 	}
-	signer = types.LatestSigner(gspec.Config)
 )
 
 type testEnv struct {
@@ -58,9 +58,23 @@ type testEnv struct {
 	pool    *txpool.TxPool
 	tracker *TxTracker
 	genDb   ethdb.Database
+	signer  types.Signer
 }
 
 func newTestEnv(t *testing.T, n int, gasTip uint64, journal string) *testEnv {
+	return newTestEnvWithConfig(t, n, gasTip, journal, params.TestChainConfig)
+}
+
+// newTestEnvWithConfig builds an environment around cfg. It builds its own
+// genesis and signer instead of touching the package level ones, which the
+// tests in this file share.
+func newTestEnvWithConfig(t *testing.T, n int, gasTip uint64, journal string, cfg *params.ChainConfig) *testEnv {
+	gspec := &core.Genesis{
+		Config:  cfg,
+		Alloc:   types.GenesisAlloc{address: {Balance: new(big.Int).Set(funds)}},
+		BaseFee: big.NewInt(params.InitialBaseFee),
+	}
+	signer := types.LatestSigner(cfg)
 	genDb, blocks, _ := core.GenerateChainWithGenesis(gspec, ethash.NewFaker(), n, func(i int, gen *core.BlockGen) {
 		gasPrice := big.NewInt(params.InitialBaseFee)
 		if baseFee := gen.BaseFee(); baseFee != nil {
@@ -95,7 +109,23 @@ func newTestEnv(t *testing.T, n int, gasTip uint64, journal string) *testEnv {
 		pool:    pool,
 		tracker: New(journal, time.Minute, gspec.Config, pool),
 		genDb:   genDb,
+		signer:  signer,
 	}
+}
+
+// nonce returns the next nonce the test account can spend at the current head.
+func (env *testEnv) nonce() uint64 {
+	head := env.chain.CurrentHeader()
+	state, _ := env.chain.StateAt(head.Root)
+	return state.GetNonce(address)
+}
+
+// gasPrice returns a gas price the gas schedule of the current head admits.
+func (env *testEnv) gasPrice() *big.Int {
+	if baseFee := env.chain.CurrentHeader().BaseFee; baseFee != nil {
+		return new(big.Int).Set(baseFee)
+	}
+	return big.NewInt(params.InitialBaseFee)
 }
 
 func (env *testEnv) close() {
@@ -116,7 +146,7 @@ func (env *testEnv) makeTxs(n int) []*types.Transaction {
 
 	var txs []*types.Transaction
 	for i := 0; i < n; i++ {
-		tx, _ := types.SignTx(types.NewTransaction(nonce+uint64(i), common.Address{0x00}, big.NewInt(1000), params.TxGas, gasPrice, nil), signer, key)
+		tx, _ := types.SignTx(types.NewTransaction(nonce+uint64(i), common.Address{0x00}, big.NewInt(1000), params.TxGas, gasPrice, nil), env.signer, key)
 		txs = append(txs, tx)
 	}
 	return txs
@@ -223,5 +253,410 @@ func TestStartContinuesOnCorruptedJournal(t *testing.T) {
 
 	if env.tracker.journal.writer == nil {
 		t.Fatal("Journal writer should be initialized even if journal load fails")
+	}
+}
+
+// bumpedPrice returns the lowest gas price that clears the pool's price bump
+// over price, the price a replacement has to carry to take a nonce from the
+// transaction it replaces.
+func bumpedPrice(price *big.Int) *big.Int {
+	bumped := new(big.Int).Div(
+		new(big.Int).Mul(price, big.NewInt(int64(100+legacypool.DefaultConfig.PriceBump))),
+		big.NewInt(100))
+	return bumped.Add(bumped, big.NewInt(1))
+}
+
+// replacementPair returns two transactions sharing a nonce: the one tracked
+// first, and the one that replaces it. The replacement clears the pool's price
+// bump, so the pair stands for the substitution the pool accepts; two equally
+// priced transactions are not a substitution, the pool rejects them.
+func replacementPair(env *testEnv) (replaced, replacement *types.Transaction) {
+	nonce := env.nonce()
+	mk := func(to common.Address, gasPrice *big.Int) *types.Transaction {
+		tx, _ := types.SignTx(types.NewTransaction(nonce, to, big.NewInt(1000), params.TxGas, gasPrice, nil), env.signer, key)
+		return tx
+	}
+	return mk(common.Address{0x00}, env.gasPrice()), mk(common.Address{0x01}, bumpedPrice(env.gasPrice()))
+}
+
+// writeReplacementJournal writes a journal holding two transactions that share
+// a nonce, the way an older version could have left it behind: a transaction
+// together with the one that replaced it, in the order selected by reverse.
+func writeReplacementJournal(t *testing.T, reverse bool) (path string, replaced, replacement *types.Transaction) {
+	t.Helper()
+
+	env := newTestEnv(t, 10, 0, "")
+	defer env.close()
+
+	replaced, replacement = replacementPair(env)
+	order := []*types.Transaction{replaced, replacement}
+	if reverse {
+		order = []*types.Transaction{replacement, replaced}
+	}
+	var journal []byte
+	for _, tx := range order {
+		blob, err := rlp.EncodeToBytes(tx)
+		if err != nil {
+			t.Fatalf("Failed to encode transaction: %v", err)
+		}
+		journal = append(journal, blob...)
+	}
+	path = filepath.Join(t.TempDir(), fmt.Sprintf("%d", rand.Int63()))
+	if err := os.WriteFile(path, journal, 0o644); err != nil {
+		t.Fatalf("Failed to write journal: %v", err)
+	}
+	return path, replaced, replacement
+}
+
+// TestTrackAllKeepsTransactionHeldByPool pins which transaction wins a nonce
+// when the pool already holds one of them: the pool decides, because the order
+// transactions reach TrackAll is not the order they were accepted in. Add
+// tracks a local transaction only after SubPool.Add has released its lock, so
+// a replacement can arrive here before the transaction it replaced.
+func TestTrackAllKeepsTransactionHeldByPool(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		reversed bool
+	}{
+		{name: "pooled first"},
+		{name: "replacement first", reversed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newTestEnv(t, 10, 0, "")
+			defer env.close()
+
+			pooled, replacement := replacementPair(env)
+			if err := env.pool.Add([]*types.Transaction{pooled}, true)[0]; err != nil {
+				t.Fatalf("failed to add the transaction the pool must hold: %v", err)
+			}
+			pair := []*types.Transaction{pooled, replacement}
+			if tc.reversed {
+				pair = []*types.Transaction{replacement, pooled}
+			}
+			env.tracker.TrackAll(pair)
+
+			env.tracker.mu.Lock()
+			defer env.tracker.mu.Unlock()
+
+			if len(env.tracker.all) != 1 {
+				t.Fatalf("tracked set must hold a single transaction, got %d", len(env.tracker.all))
+			}
+			if _, ok := env.tracker.all[pooled.Hash()]; !ok {
+				t.Fatalf("the transaction the pool holds must stay tracked: %v", pooled.Hash())
+			}
+			if kept := env.tracker.byAddr[address].Get(pooled.Nonce()); kept == nil || kept.Hash() != pooled.Hash() {
+				t.Fatalf("nonce %d must hold the pooled transaction, got %v", pooled.Nonce(), kept)
+			}
+		})
+	}
+}
+
+// TestConcurrentReplacementKeepsPoolTransaction pins the tracker's view of two
+// concurrent submissions for the same nonce: the original is added first and
+// reaches the tracker last, the window AddLocal leaves between SubPool.Add
+// releasing its lock and Track acquiring this one. The transaction the pool
+// holds must win the nonce even though it is tracked last, or recheck would
+// keep resubmitting the superseded one and the live one would lose the local
+// resubmit protection entirely.
+func TestConcurrentReplacementKeepsPoolTransaction(t *testing.T) {
+	env := newTestEnv(t, 10, 0, "")
+	defer env.close()
+
+	nonce := env.nonce()
+	price := env.gasPrice()
+	mk := func(to common.Address, gasPrice *big.Int) *types.Transaction {
+		tx, _ := types.SignTx(types.NewTransaction(nonce, to, big.NewInt(1000), params.TxGas, gasPrice, nil), env.signer, key)
+		return tx
+	}
+	var (
+		original    = mk(common.Address{0x00}, price)
+		replacement = mk(common.Address{0x01}, bumpedPrice(price))
+		added       = make(chan struct{})
+		tracked     = make(chan struct{})
+		finished    = make(chan error, 2)
+	)
+	go func() {
+		err := env.pool.Add([]*types.Transaction{original}, true)[0]
+		close(added)
+		<-tracked
+		env.tracker.Track(original)
+		finished <- err
+	}()
+	go func() {
+		<-added
+		err := env.pool.Add([]*types.Transaction{replacement}, true)[0]
+		env.tracker.Track(replacement)
+		close(tracked)
+		finished <- err
+	}()
+	for i := 0; i < 2; i++ {
+		if err := <-finished; err != nil {
+			t.Fatalf("failed to submit the transaction: %v", err)
+		}
+	}
+
+	env.tracker.mu.Lock()
+	defer env.tracker.mu.Unlock()
+
+	if len(env.tracker.all) != 1 {
+		t.Fatalf("tracked set must hold a single transaction, got %d", len(env.tracker.all))
+	}
+	if _, ok := env.tracker.all[replacement.Hash()]; !ok {
+		t.Fatalf("the replacement the pool holds must stay tracked: %v", replacement.Hash())
+	}
+}
+
+func TestTrackAllDropsReplacedTransaction(t *testing.T) {
+	env := newTestEnv(t, 10, 0, "")
+	defer env.close()
+
+	replaced, replacement := replacementPair(env)
+	env.tracker.TrackAll([]*types.Transaction{replaced, replacement})
+
+	env.tracker.mu.Lock()
+	defer env.tracker.mu.Unlock()
+
+	if len(env.tracker.all) != 1 {
+		t.Fatalf("replaced transaction must be dropped: tracking %d", len(env.tracker.all))
+	}
+	if _, ok := env.tracker.all[replaced.Hash()]; ok {
+		t.Fatalf("replaced transaction still tracked: %v", replaced.Hash())
+	}
+	kept := env.tracker.byAddr[address].Get(replacement.Nonce())
+	if kept == nil || kept.Hash() != replacement.Hash() {
+		t.Fatalf("nonce %d must hold the replacement, got %v", replacement.Nonce(), kept)
+	}
+}
+
+func TestRecheckDoesNotResubmitReplacedTransaction(t *testing.T) {
+	env := newTestEnv(t, 10, 0, "")
+	defer env.close()
+
+	replaced, replacement := replacementPair(env)
+	env.tracker.TrackAll([]*types.Transaction{replaced, replacement})
+
+	resubmits := env.tracker.recheck(false)
+	if len(resubmits) != 1 || resubmits[0].Hash() != replacement.Hash() {
+		t.Fatalf("unexpected transactions to resubmit: %v", resubmits)
+	}
+}
+
+func TestJournalRotationDropsReplacedTransaction(t *testing.T) {
+	journalPath := filepath.Join(t.TempDir(), fmt.Sprintf("%d", rand.Int63()))
+	env := newTestEnv(t, 10, 0, journalPath)
+	defer env.close()
+
+	if err := env.tracker.Start(); err != nil {
+		t.Fatalf("Failed to start tracker: %v", err)
+	}
+	defer env.tracker.Stop()
+
+	replaced, replacement := replacementPair(env)
+	env.tracker.TrackAll([]*types.Transaction{replaced, replacement})
+
+	// Rotate the journal from the tracked set: the replaced transaction has
+	// been dropped from it and must not come back.
+	env.tracker.recheck(true)
+
+	reloaded := New(journalPath, time.Minute, params.TestChainConfig, env.pool)
+	if err := reloaded.journal.load(func(transactions []*types.Transaction) []error {
+		reloaded.TrackAll(transactions)
+		return nil
+	}); err != nil {
+		t.Fatalf("Failed to load journal: %v", err)
+	}
+
+	reloaded.mu.Lock()
+	defer reloaded.mu.Unlock()
+
+	if len(reloaded.all) != 1 {
+		t.Fatalf("rotated journal must hold a single transaction, got %d", len(reloaded.all))
+	}
+	if _, ok := reloaded.all[replacement.Hash()]; !ok {
+		t.Fatalf("rotated journal must hold the replacement: %v", replacement.Hash())
+	}
+}
+
+func TestJournalLoadDropsReplacedTransaction(t *testing.T) {
+	journalPath, _, replacement := writeReplacementJournal(t, false)
+	env := newTestEnv(t, 10, 0, journalPath)
+	defer env.close()
+
+	if err := env.tracker.Start(); err != nil {
+		t.Fatalf("Failed to start tracker: %v", err)
+	}
+	defer env.tracker.Stop()
+
+	env.tracker.mu.Lock()
+	defer env.tracker.mu.Unlock()
+
+	if len(env.tracker.all) != 1 {
+		t.Fatalf("loading must leave a single transaction, got %d", len(env.tracker.all))
+	}
+	if _, ok := env.tracker.all[replacement.Hash()]; !ok {
+		t.Fatalf("the replacement must survive the load: %v", replacement.Hash())
+	}
+}
+
+// TestJournalLoadKeepsReplacementPerNonce pins the load path for the reverse
+// file order. A journal entry carries no timestamp or sequence number, so an
+// older rotation could have written the transaction the user replaced after
+// its replacement. Load feeds the file straight into TrackAll, which decides
+// the nonce the way the pool would, so the replacement survives whatever order
+// the entries come back in.
+func TestJournalLoadKeepsReplacementPerNonce(t *testing.T) {
+	journalPath, _, replacement := writeReplacementJournal(t, true)
+	env := newTestEnv(t, 10, 0, journalPath)
+	defer env.close()
+
+	if err := env.tracker.Start(); err != nil {
+		t.Fatalf("Failed to start tracker: %v", err)
+	}
+	defer env.tracker.Stop()
+
+	env.tracker.mu.Lock()
+	defer env.tracker.mu.Unlock()
+
+	if len(env.tracker.all) != 1 {
+		t.Fatalf("loading must leave a single transaction, got %d", len(env.tracker.all))
+	}
+	if _, ok := env.tracker.all[replacement.Hash()]; !ok {
+		t.Fatalf("the replacement must survive the load whatever the file order is: %v", replacement.Hash())
+	}
+}
+
+// TestTrackAllKeepsTransactionAcceptedByPool pins the case a dearer tracked
+// transaction must not win: the pool accepted this one, so it holds the nonce.
+// The dearer one is what an older version journalled after the pool rejected it
+// as retryable, and resubmitting it would evict a transaction the user just
+// submitted successfully.
+func TestTrackAllKeepsTransactionAcceptedByPool(t *testing.T) {
+	env := newTestEnv(t, 10, 0, "")
+	defer env.close()
+
+	nonce := env.nonce()
+	mk := func(to common.Address, gasPrice *big.Int) *types.Transaction {
+		tx, _ := types.SignTx(types.NewTransaction(nonce, to, big.NewInt(1000), params.TxGas, gasPrice, nil), env.signer, key)
+		return tx
+	}
+	tracked := mk(common.Address{0x00}, new(big.Int).Mul(env.gasPrice(), big.NewInt(4)))
+	accepted := mk(common.Address{0x01}, env.gasPrice())
+
+	env.tracker.Track(tracked)
+	if err := env.pool.Add([]*types.Transaction{accepted}, true)[0]; err != nil {
+		t.Fatalf("failed to add the transaction the pool must accept: %v", err)
+	}
+	env.tracker.Track(accepted)
+
+	env.tracker.mu.Lock()
+	defer env.tracker.mu.Unlock()
+
+	if len(env.tracker.all) != 1 {
+		t.Fatalf("tracked set must hold a single transaction, got %d", len(env.tracker.all))
+	}
+	if _, ok := env.tracker.all[accepted.Hash()]; !ok {
+		t.Fatalf("the transaction the pool accepted must stay tracked: %v", accepted.Hash())
+	}
+}
+
+// TestTrackAllKeepsReplacementWhenPoolHoldsNeither pins the fallback for two
+// transactions the pool has discarded, seen in the order a replacement can
+// reach the tracker in: the replacement first, the transaction it replaces
+// last. Keeping the replacement is what stops recheck from resubmitting a
+// transaction the user already superseded.
+//
+// This exercises the fallback rule directly rather than the race that reaches
+// it: the concurrent interleaving is pinned by
+// TestConcurrentReplacementKeepsPoolTransaction, and the pool-discards-both
+// state needs no fork to construct.
+func TestTrackAllKeepsReplacementWhenPoolHoldsNeither(t *testing.T) {
+	env := newTestEnv(t, 10, 0, "")
+	defer env.close()
+
+	replaced, replacement := replacementPair(env)
+	// Neither is submitted to the pool: what is left once the pool discards
+	// both, and the only state the fallback can be decided on.
+	env.tracker.Track(replacement)
+	env.tracker.Track(replaced)
+
+	env.tracker.mu.Lock()
+	defer env.tracker.mu.Unlock()
+
+	if len(env.tracker.all) != 1 {
+		t.Fatalf("tracked set must hold a single transaction, got %d", len(env.tracker.all))
+	}
+	if _, ok := env.tracker.all[replacement.Hash()]; !ok {
+		t.Fatalf("the replacement must stay tracked: %v", replacement.Hash())
+	}
+	if kept := env.tracker.byAddr[address].Get(replacement.Nonce()); kept == nil || kept.Hash() != replacement.Hash() {
+		t.Fatalf("nonce %d must hold the replacement, got %v", replacement.Nonce(), kept)
+	}
+}
+
+// TestTrackAllKeepsTrackedSpecialTransaction pins the exemption that mirrors
+// the pool: a regular transaction must not evict a pending special one, so a
+// dearer regular transaction must not take the nonce of a tracked special one.
+func TestTrackAllKeepsTrackedSpecialTransaction(t *testing.T) {
+	env := newTestEnv(t, 10, 0, "")
+	defer env.close()
+
+	nonce := env.nonce()
+	special, _ := types.SignTx(types.NewTransaction(nonce, common.BlockSignersBinary, big.NewInt(0), params.TxGas, common.Big0, nil), env.signer, key)
+	regular, _ := types.SignTx(types.NewTransaction(nonce, common.Address{0x00}, big.NewInt(1000), params.TxGas, bumpedPrice(env.gasPrice()), nil), env.signer, key)
+
+	env.tracker.Track(special)
+	env.tracker.Track(regular)
+
+	env.tracker.mu.Lock()
+	defer env.tracker.mu.Unlock()
+
+	if len(env.tracker.all) != 1 || env.tracker.all[special.Hash()] == nil {
+		t.Fatalf("the special transaction must stay tracked: %v", env.tracker.all)
+	}
+}
+
+// TestTrackAllLetsSpecialTransactionReplace pins the other half: a special
+// transaction always claims its nonce, so it takes it from a dearer tracked
+// transaction, exactly as it does in the pool.
+func TestTrackAllLetsSpecialTransactionReplace(t *testing.T) {
+	env := newTestEnv(t, 10, 0, "")
+	defer env.close()
+
+	nonce := env.nonce()
+	regular, _ := types.SignTx(types.NewTransaction(nonce, common.Address{0x00}, big.NewInt(1000), params.TxGas, bumpedPrice(env.gasPrice()), nil), env.signer, key)
+	special, _ := types.SignTx(types.NewTransaction(nonce, common.BlockSignersBinary, big.NewInt(0), params.TxGas, common.Big0, nil), env.signer, key)
+
+	env.tracker.Track(regular)
+	env.tracker.Track(special)
+
+	env.tracker.mu.Lock()
+	defer env.tracker.mu.Unlock()
+
+	if len(env.tracker.all) != 1 || env.tracker.all[special.Hash()] == nil {
+		t.Fatalf("the special transaction must replace the tracked one: %v", env.tracker.all)
+	}
+}
+
+// TestTrackAllKeepsFirstTransactionAtEqualPrice pins the tie: equally priced
+// transactions are not a substitution, the pool rejects the later one, so the
+// transaction already tracked keeps the nonce.
+func TestTrackAllKeepsFirstTransactionAtEqualPrice(t *testing.T) {
+	env := newTestEnv(t, 10, 0, "")
+	defer env.close()
+
+	nonce := env.nonce()
+	mk := func(to common.Address) *types.Transaction {
+		tx, _ := types.SignTx(types.NewTransaction(nonce, to, big.NewInt(1000), params.TxGas, env.gasPrice(), nil), env.signer, key)
+		return tx
+	}
+	first, second := mk(common.Address{0x00}), mk(common.Address{0x01})
+
+	env.tracker.TrackAll([]*types.Transaction{first, second})
+
+	env.tracker.mu.Lock()
+	defer env.tracker.mu.Unlock()
+
+	if len(env.tracker.all) != 1 || env.tracker.all[first.Hash()] == nil {
+		t.Fatalf("the first of two equally priced transactions must stay tracked: %v", env.tracker.all)
 	}
 }
