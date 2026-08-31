@@ -30,6 +30,18 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
+// pendingBlockNumber returns the height a pooled transaction is priced at: it
+// can only be included from the next block onwards, so gas schedule lookups
+// resolve the fork tier one past the given head number. A nil input means no
+// head is known and resolves to nil. Admission validation and the local
+// tracker's price floor must both go through here so they cannot drift apart.
+func pendingBlockNumber(number *big.Int) *big.Int {
+	if number == nil {
+		return nil
+	}
+	return new(big.Int).Add(number, common.Big1)
+}
+
 // ValidationOptions define certain differences between transaction validation
 // across the different pools without having to duplicate those checks.
 type ValidationOptions struct {
@@ -238,10 +250,7 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	)
 	// A pooled tx can only be included from the next block onwards, so gas
 	// schedule lookups below resolve the fork tier at that height.
-	pendingNumber := number
-	if number != nil {
-		pendingNumber = new(big.Int).Add(number, common.Big1)
-	}
+	pendingNumber := pendingBlockNumber(number)
 	if to != nil {
 		if value, ok := opts.Trc21FeeCapacity[*to]; ok {
 			feeCapacity = value

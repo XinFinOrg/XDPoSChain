@@ -35,6 +35,16 @@ import (
 var (
 	recheckInterval = time.Minute
 	localGauge      = metrics.GetOrRegisterGauge("txpool/local", nil)
+
+	// Tracked transactions a gas schedule fork priced out of the pool. They stay
+	// tracked so a rollback past the fork can pick them up again, but recheck
+	// holds them back from resubmission, so they are broken out here.
+	//
+	// Only transactions missing from the pool are counted: a tracked transaction
+	// the pool still has is counted as ok instead. local minus belowfloor is
+	// therefore the tracked transactions the pool holds plus the ones recheck
+	// resubmits this round, not just the latter.
+	belowFloorGauge = metrics.GetOrRegisterGauge("txpool/local/belowfloor", nil)
 )
 
 // TxTracker is a struct used to track priority transactions; it will check from
@@ -187,10 +197,15 @@ func (tracker *TxTracker) recheck(journalCheck bool) []*types.Transaction {
 	defer tracker.mu.Unlock()
 
 	var (
-		numStales = 0
-		numOk     = 0
-		resubmits []*types.Transaction
+		numStales     = 0
+		numOk         = 0
+		numBelowFloor = 0
+		resubmits     []*types.Transaction
 	)
+	// Resolved once: it can only change on a chain head update, and a change
+	// mid-recheck would make the counters below inconsistent.
+	floor := tracker.pool.MinGasPrice()
+
 	for sender, txs := range tracker.byAddr {
 		// Wipe the stales
 		stales := txs.Forward(tracker.pool.Nonce(sender))
@@ -203,6 +218,17 @@ func (tracker *TxTracker) recheck(journalCheck bool) []*types.Transaction {
 		for _, tx := range txs.Flatten() {
 			if tracker.pool.Has(tx.Hash()) {
 				numOk++
+				continue
+			}
+			// A gas schedule fork can raise the floor above transactions that
+			// were admitted under the previous tier. Re-submitting them only
+			// yields ErrUnderMinGasPrice, so hold them back until the floor
+			// drops again: a reorg or a set-head rollback past the fork
+			// reinstates them, and the pool does not bring back what it swept.
+			// They stay tracked, so recheck picks them up again on its own.
+			// Special transactions are exempt, exactly as during admission.
+			if !tx.IsSpecialTransaction() && tx.GasPriceIntCmp(floor) < 0 {
+				numBelowFloor++
 				continue
 			}
 			resubmits = append(resubmits, tx)
@@ -232,7 +258,9 @@ func (tracker *TxTracker) recheck(journalCheck bool) []*types.Transaction {
 		}
 	}
 	localGauge.Update(int64(len(tracker.all)))
-	log.Debug("Tx tracker status", "need-resubmit", len(resubmits), "stale", numStales, "ok", numOk)
+	belowFloorGauge.Update(int64(numBelowFloor))
+	log.Debug("Tx tracker status", "need-resubmit", len(resubmits), "stale", numStales,
+		"ok", numOk, "below-floor", numBelowFloor)
 	return resubmits
 }
 

@@ -437,6 +437,24 @@ func (p *TxPool) Nonce(addr common.Address) uint64 {
 	return p.state.GetNonce(addr)
 }
 
+// MinGasPrice returns the gas price floor the pool enforces on the transactions
+// it admits. A pooled transaction can only be included from the next block
+// onwards, so the floor is resolved at the height of the block pending on top
+// of the current head, the height admission validation prices a transaction at.
+//
+// The head here is the chain's, which advances on block insertion, while
+// admission resolves it against the subpool's, which follows on head events.
+// The two drift for as long as a head event is in flight, so a floor read in
+// that window can differ from the one admission applies. It self-corrects on
+// the next recheck, whose period is orders of magnitude longer than the window.
+func (p *TxPool) MinGasPrice() *big.Int {
+	var number *big.Int
+	if head := p.chain.CurrentBlock(); head != nil {
+		number = head.Number
+	}
+	return params.GetMinGasPrice(pendingBlockNumber(number), p.chain.Config())
+}
+
 // Stats retrieves the current pool stats, namely the number of pending and the
 // number of queued (non-executable) transactions.
 func (p *TxPool) Stats() (int, int) {

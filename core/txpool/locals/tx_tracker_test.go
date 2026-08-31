@@ -660,3 +660,103 @@ func TestTrackAllKeepsFirstTransactionAtEqualPrice(t *testing.T) {
 		t.Fatalf("the first of two equally priced transactions must stay tracked: %v", env.tracker.all)
 	}
 }
+
+func TestRecheckHoldsBackBelowFloorTransactions(t *testing.T) {
+	// Push the gas tier fork past the test chain so the floor resolves to the
+	// baseline tier: params.TestChainConfig schedules Gas50x at block 0, which
+	// would put the floor at 50x from genesis on. The field cannot be cleared
+	// instead, CheckConfigForkOrder requires it. Gas2500xBlock stays nil, which
+	// CheckConfigForkOrder accepts; the assignment states it explicitly.
+	cfg := *params.TestChainConfig
+	cfg.Gas50xBlock = big.NewInt(1000)
+	cfg.Gas2500xBlock = nil
+
+	env := newTestEnvWithConfig(t, 1, 0, "", &cfg)
+	defer env.close()
+
+	floor := big.NewInt(common.DefaultMinGasPrice)
+	nonce := env.nonce()
+	mk := func(n uint64, gasPrice *big.Int) *types.Transaction {
+		tx, _ := types.SignTx(types.NewTransaction(n, common.Address{0x00}, big.NewInt(1000), params.TxGas, gasPrice, nil), env.signer, key)
+		return tx
+	}
+	// Priced at the floor and one wei below it: the comparison is
+	// GasPriceIntCmp(floor) < 0, so only the latter is held back.
+	atFloor := mk(nonce, floor)
+	belowFloor := mk(nonce+1, new(big.Int).Sub(floor, big.NewInt(1)))
+
+	env.tracker.TrackAll([]*types.Transaction{atFloor, belowFloor})
+
+	resubmits := env.tracker.recheck(false)
+	if len(resubmits) != 1 || resubmits[0].Hash() != atFloor.Hash() {
+		t.Fatalf("unexpected transactions to resubmit: %v", resubmits)
+	}
+	// Held back, not dropped: it stays tracked so a lower floor picks it up.
+	if len(env.tracker.all) != 2 {
+		t.Fatalf("below-floor transaction must stay tracked, got %d", len(env.tracker.all))
+	}
+}
+
+func TestRecheckResumesAfterFloorDrops(t *testing.T) {
+	cfg := *params.TestChainConfig
+	cfg.Gas50xBlock = big.NewInt(5)
+
+	env := newTestEnvWithConfig(t, 10, 0, "", &cfg)
+	defer env.close()
+
+	// head=10, so the floor resolves at block 11: the 50x tier is active and a
+	// baseline-priced transaction is held back.
+	tx, _ := types.SignTx(types.NewTransaction(
+		env.nonce(), common.Address{0x00}, big.NewInt(1000), params.TxGas,
+		big.NewInt(common.DefaultMinGasPrice), nil), env.signer, key)
+
+	env.tracker.Track(tx)
+	if resubmits := env.tracker.recheck(false); len(resubmits) != 0 {
+		t.Fatalf("transaction below the floor must not be resubmitted: %v", resubmits)
+	}
+	if len(env.tracker.all) != 1 {
+		t.Fatalf("transaction below the floor must stay tracked, got %d", len(env.tracker.all))
+	}
+
+	// Roll the head back before the fork: the floor drops to the baseline tier,
+	// which is exactly the transaction's price, so it is let through. recheck
+	// only filters on Forward(pool.Nonce(sender)), which leaves nonce 10 alone
+	// now that the state nonce has fallen back to 3.
+	if err := env.chain.SetHead(3); err != nil {
+		t.Fatalf("failed to roll back the chain: %v", err)
+	}
+	if err := env.pool.Sync(); err != nil {
+		t.Fatalf("failed to sync the txpool: %v", err)
+	}
+
+	resubmits := env.tracker.recheck(false)
+	if len(resubmits) != 1 || resubmits[0].Hash() != tx.Hash() {
+		t.Fatalf("transaction must be resubmitted once the floor drops: %v", resubmits)
+	}
+}
+
+// TestRecheckResubmitsSpecialTransactionBelowFloor pins the exemption that keeps
+// recheck aligned with admission: special transactions are not priced against
+// the floor there either, so a gas tier fork must not strand the ones submitted
+// locally, which is what the tracker exists to guard.
+func TestRecheckResubmitsSpecialTransactionBelowFloor(t *testing.T) {
+	cfg := *params.TestChainConfig
+	cfg.Gas50xBlock = big.NewInt(5)
+
+	env := newTestEnvWithConfig(t, 10, 0, "", &cfg)
+	defer env.close()
+
+	// head=10, so the floor resolves at block 11 on the 50x tier. The
+	// transaction is priced at the baseline tier, which a plain transaction
+	// would be held back for.
+	tx, _ := types.SignTx(types.NewTransaction(
+		env.nonce(), common.BlockSignersBinary, big.NewInt(0), params.TxGas,
+		big.NewInt(common.DefaultMinGasPrice), nil), env.signer, key)
+
+	env.tracker.Track(tx)
+
+	resubmits := env.tracker.recheck(false)
+	if len(resubmits) != 1 || resubmits[0].Hash() != tx.Hash() {
+		t.Fatalf("special transaction below the floor must still be resubmitted: %v", resubmits)
+	}
+}

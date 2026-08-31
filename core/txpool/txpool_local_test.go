@@ -337,3 +337,36 @@ func TestAddLocalTemporaryRejectWithoutTrackerReturnsError(t *testing.T) {
 		t.Fatalf("unexpected call order: have %v", events)
 	}
 }
+
+// TestAddLocalDoesNotTrackMinGasPriceRejectedTx checks that a local transaction
+// the pool rejects for being priced below the gas schedule floor is not tracked:
+// the floor only rises as the chain advances, so re-submitting the very same
+// transaction could never succeed. The error is still surfaced to the caller.
+func TestAddLocalDoesNotTrackMinGasPriceRejectedTx(t *testing.T) {
+	events := []string{}
+	tracker := &testLocalTracker{events: &events}
+	subpool := &testSubPool{
+		events:  &events,
+		addErrs: []error{ErrUnderMinGasPrice},
+	}
+
+	pool, err := New(0, testChain{}, []SubPool{subpool})
+	if err != nil {
+		t.Fatalf("failed to create txpool: %v", err)
+	}
+	defer pool.Close()
+
+	pool.SetLocalTracker(tracker)
+
+	tx := types.NewTransaction(0, common.Address{0x1}, big.NewInt(1), 21000, big.NewInt(1), nil)
+	err = pool.AddLocal(tx, true)
+	if !errors.Is(err, ErrUnderMinGasPrice) {
+		t.Fatalf("unexpected error: have %v, want %v", err, ErrUnderMinGasPrice)
+	}
+	if len(tracker.tracked) != 0 {
+		t.Fatalf("tracker must not receive a tx rejected by the gas price floor: %v", tracker.tracked)
+	}
+	if !reflect.DeepEqual(events, []string{"add"}) {
+		t.Fatalf("unexpected call order: have %v", events)
+	}
+}
