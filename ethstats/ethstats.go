@@ -742,6 +742,13 @@ func (s *Service) assembleBlockStats(block *types.Block) *blockStats {
 		td = s.backend.GetTd(context.Background(), header.Hash())
 		txs = []txStats{}
 	}
+	// Legacy chaindata predating the TD index can leave the head without a TD
+	// entry: report a zero value rather than the literal "<nil>" string that
+	// big.Int.String returns for a nil receiver, which the stats server
+	// cannot parse as a numeric difficulty.
+	if td == nil {
+		td = common.Big0
+	}
 	// Assemble and return the block stats
 	author, err := s.engine.Author(header)
 	if err != nil && header.Number.Sign() != 0 {

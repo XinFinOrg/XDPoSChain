@@ -294,8 +294,12 @@ func (dl *downloadTester) InsertHeaderChain(headers []*types.Header, checkFreq i
 		dl.ownHashes = append(dl.ownHashes, hash)
 		dl.ownHeaders[hash] = header
 
-		td := dl.getTd(header.ParentHash)
-		dl.ownChainTd[hash] = new(big.Int).Add(td, header.Difficulty)
+		// Mirror the production behaviour on legacy chaindata: a header whose
+		// parent TD is missing is stored without a TD entry, keeping the
+		// nil-TD fork-choice fallbacks exercisable by tests.
+		if td := dl.getTd(header.ParentHash); td != nil {
+			dl.ownChainTd[hash] = new(big.Int).Add(td, header.Difficulty)
+		}
 	}
 	return len(headers), nil
 }
@@ -317,7 +321,11 @@ func (dl *downloadTester) InsertChain(blocks types.Blocks) (i int, err error) {
 		}
 		dl.ownBlocks[block.Hash()] = block
 		dl.stateDb.Put(block.Root().Bytes(), []byte{0x00})
-		dl.ownChainTd[block.Hash()] = new(big.Int).Add(dl.ownChainTd[block.ParentHash()], block.Difficulty())
+		// Mirror the production behaviour on legacy chaindata: skip the TD
+		// entry when the parent TD is missing (see InsertHeaderChain).
+		if td := dl.ownChainTd[block.ParentHash()]; td != nil {
+			dl.ownChainTd[block.Hash()] = new(big.Int).Add(td, block.Difficulty())
+		}
 	}
 	return len(blocks), nil
 }

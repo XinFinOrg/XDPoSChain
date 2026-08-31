@@ -322,3 +322,41 @@ func TestV2UnmarshalSwitchEpochVariants(t *testing.T) {
 	assert.Equal(t, uint64(111), v2.SwitchEpoch)
 	assert.Equal(t, big.NewInt(456), v2.SwitchBlock)
 }
+
+// TestIsV2Block verifies the uint64 fast path of the v2 consensus boundary: a
+// block is v2 strictly above the switch block, and the result must stay in
+// sync with BlockConsensusVersion.
+func TestIsV2Block(t *testing.T) {
+	// Without a v2 config or a switch block nothing is v2.
+	if (&XDPoSConfig{}).IsV2Block(0) {
+		t.Fatalf("expected v1 without a v2 config")
+	}
+	if (&XDPoSConfig{V2: &V2{}}).IsV2Block(0) {
+		t.Fatalf("expected v1 without a switch block")
+	}
+	// Strictly above the switch block, both for a mid-chain and a genesis
+	// switch.
+	sw900 := &XDPoSConfig{V2: &V2{SwitchBlock: big.NewInt(900)}}
+	if sw900.IsV2Block(899) || sw900.IsV2Block(900) || !sw900.IsV2Block(901) {
+		t.Fatalf("unexpected v2 boundary at switch block 900")
+	}
+	sw0 := &XDPoSConfig{V2: &V2{SwitchBlock: big.NewInt(0)}}
+	if sw0.IsV2Block(0) || !sw0.IsV2Block(1) {
+		t.Fatalf("unexpected v2 boundary at switch block 0")
+	}
+	// A switch block beyond uint64 takes the big.Int fallback: no uint64
+	// number can be above it, so every uint64 block is v1.
+	huge := new(big.Int).Lsh(big.NewInt(1), 64)
+	swHuge := &XDPoSConfig{V2: &V2{SwitchBlock: huge}}
+	if swHuge.IsV2Block(^uint64(0)) {
+		t.Fatalf("expected v1 below a huge switch block")
+	}
+	// Consistency with the big.Int definition across the boundary.
+	for _, number := range []uint64{0, 1, 899, 900, 901, 1 << 40} {
+		got := sw900.IsV2Block(number)
+		want := sw900.BlockConsensusVersion(new(big.Int).SetUint64(number)) == ConsensusEngineVersion2
+		if got != want {
+			t.Fatalf("IsV2Block(%d) diverges from BlockConsensusVersion: have %v, want %v", number, got, want)
+		}
+	}
+}

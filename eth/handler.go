@@ -562,10 +562,15 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			verifyDAO := true
 
 			// If we already have a DAO header, we can check the peer's TD against it. If
-			// the peer's ahead of this, it too must have a reply to the DAO check
+			// the peer's ahead of this, it too must have a reply to the DAO check. A
+			// missing local TD (legacy XDPoS chaindata predating the TD index) leaves
+			// the comparison unverifiable: keep the drop timer armed and let the peer
+			// deliver the fork header or time out.
 			if daoHeader := pm.blockchain.GetHeaderByNumber(pm.blockchain.Config().DAOForkBlock.Uint64()); daoHeader != nil {
-				if _, td := p.Head(); td.Cmp(pm.blockchain.GetTd(daoHeader.Hash(), daoHeader.Number.Uint64())) >= 0 {
-					verifyDAO = false
+				if localTd := pm.blockchain.GetTd(daoHeader.Hash(), daoHeader.Number.Uint64()); localTd != nil {
+					if _, td := p.Head(); td.Cmp(localTd) >= 0 {
+						verifyDAO = false
+					}
 				}
 			}
 			// If we're seemingly on the same chain, disable the drop timer
@@ -801,17 +806,32 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			trueHead = request.Block.ParentHash()
 			trueTD   = new(big.Int).Sub(request.TD, request.Block.Difficulty())
 		)
-		// Update the peers total difficulty if better than the previous
-		if _, td := p.Head(); trueTD.Cmp(td) > 0 {
+		// A zero announcement TD is the wire sentinel for a missing TD on legacy
+		// nodes, which makes the derived trueTD negative and unusable as a peer
+		// head claim. Meaningful TDs update the peer head as before; unknown
+		// TDs advance the advertised head monotonically by the announced
+		// block's height so that the sync probe scheduled below targets the
+		// peer's latest head instead of the stale handshake head.
+		if _, td := p.Head(); trueTD.Sign() > 0 && trueTD.Cmp(td) > 0 {
 			p.SetHead(trueHead, trueTD)
-
-			// Schedule a sync if above ours. Note, this will not fire a sync for a gap of
-			// a singe block (as the true TD is below the propagated block), however this
-			// scenario should easily be covered by the fetcher.
-			currentBlock := pm.blockchain.CurrentBlock()
-			if trueTD.Cmp(pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64())) > 0 {
-				go pm.synchronise(p)
+		} else if trueTD.Sign() <= 0 && request.Block.NumberU64() > 0 {
+			if parentNum := request.Block.NumberU64() - 1; parentNum > p.HeadNum() {
+				p.SetHeadByNumber(trueHead, new(big.Int), parentNum)
 			}
+		}
+
+		// Schedule a sync if above ours. Note, this will not fire a sync for a gap of
+		// a singe block (as the true TD is below the propagated block), however this
+		// scenario should easily be covered by the fetcher.
+		currentBlock := pm.blockchain.CurrentBlock()
+		// A missing local TD (legacy XDPoS chaindata) or a zero peer TD makes
+		// the comparison unverifiable: schedule the sync anyway and let the
+		// downloader decide. While a cycle is already running, every
+		// announcement would spawn a probe that the downloader rejects as
+		// busy, so skip it: the running cycle and the periodic syncer
+		// re-evaluate peers.
+		if localTd := pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64()); (localTd == nil || trueTD.Sign() <= 0 || trueTD.Cmp(localTd) > 0) && !pm.downloader.Synchronising() {
+			go pm.synchronise(p)
 		}
 
 	case msg.Code == NewPooledTransactionHashesMsg && p.version >= xdc165:
@@ -1018,7 +1038,11 @@ func (pm *ProtocolManager) BroadcastBlock(block *types.Block, propagate bool) {
 		// Calculate the TD of the block (it's not imported yet, so block.Td is not valid)
 		var td *big.Int
 		if parent := pm.blockchain.GetBlock(block.ParentHash(), block.NumberU64()-1); parent != nil {
-			td = new(big.Int).Add(block.Difficulty(), pm.blockchain.GetTd(block.ParentHash(), block.NumberU64()-1))
+			// The parent TD may be missing on legacy XDPoS chaindata; propagate
+			// the block with a zero TD in that case (the wire format has no nil).
+			if ptd := pm.blockchain.GetTd(block.ParentHash(), block.NumberU64()-1); ptd != nil {
+				td = new(big.Int).Add(block.Difficulty(), ptd)
+			}
 		} else {
 			log.Error("Propagating dangling block", "number", block.Number(), "hash", hash)
 			return

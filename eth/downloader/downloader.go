@@ -547,7 +547,7 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td *big.I
 		func() error { return d.fetchHeaders(p, origin+1, pivot) }, // Headers are always retrieved
 		func() error { return d.fetchBodies(origin + 1) },          // Bodies are retrieved during normal and fast sync
 		func() error { return d.fetchReceipts(origin + 1) },        // Receipts are retrieved during fast sync
-		func() error { return d.processHeaders(origin+1, pivot, td) },
+		func() error { return d.processHeaders(origin+1, pivot, td, height) },
 	}
 	if mode == FastSync {
 		fetchers = append(fetchers, func() error { return d.processFastSyncContent(latest) })
@@ -1365,7 +1365,7 @@ func (d *Downloader) fetchParts(deliveryCh chan dataPack, deliver func(dataPack)
 // processHeaders takes batches of retrieved headers from an input channel and
 // keeps processing and scheduling them into the header chain and downloader's
 // queue until the stream ends or a failure occurs.
-func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) error {
+func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int, height uint64) error {
 	// Keep a count of uncertain headers to roll back
 	var (
 		rollback    []*types.Header
@@ -1435,8 +1435,17 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 				// R: Nothing to give
 				if mode != LightSync {
 					head := d.blockchain.CurrentBlock()
-					if !gotHeaders && td.Cmp(d.blockchain.GetTd(head.Hash(), head.Number.Uint64())) > 0 {
-						return errStallingPeer
+					if !gotHeaders {
+						// The peer delivered nothing: verify it against the promise.
+						// A missing local TD (legacy XDPoS chaindata) makes the TD
+						// comparison impossible, fall back to a height comparison.
+						if localTd := d.blockchain.GetTd(head.Hash(), head.Number.Uint64()); localTd != nil {
+							if td.Cmp(localTd) > 0 {
+								return errStallingPeer
+							}
+						} else if height > head.Number.Uint64() {
+							return errStallingPeer
+						}
 					}
 				}
 				// If fast or light syncing, ensure promised headers are indeed delivered. This is
@@ -1451,7 +1460,13 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 					if lastInserted != nil && lastInserted.Number.Uint64() > head.Number.Uint64() {
 						head = lastInserted
 					}
-					if td.Cmp(d.lightchain.GetTd(head.Hash(), head.Number.Uint64())) > 0 {
+					// A missing local TD (legacy XDPoS chaindata) makes the TD
+					// comparison impossible, fall back to a height comparison.
+					if deliveredTd := d.lightchain.GetTd(head.Hash(), head.Number.Uint64()); deliveredTd != nil {
+						if td.Cmp(deliveredTd) > 0 {
+							return errStallingPeer
+						}
+					} else if height > head.Number.Uint64() {
 						return errStallingPeer
 					}
 				}

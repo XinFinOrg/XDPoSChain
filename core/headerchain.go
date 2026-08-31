@@ -141,28 +141,44 @@ func (hc *HeaderChain) WriteHeader(header *types.Header) (status WriteStatus, er
 		hash   = header.Hash()
 		number = header.Number.Uint64()
 	)
-	// Calculate the total difficulty of the header
-	ptd := hc.GetTd(header.ParentHash, number-1)
-	if ptd == nil {
+	// The parent header must exist for the chain to be importable, but its
+	// total difficulty may be unknown on legacy XDPoS chaindata that predates
+	// the TD index. A missing parent TD no longer blocks the insertion: the
+	// header is stored without a TD entry and the fork choice falls back to a
+	// height comparison.
+	if hc.GetHeader(header.ParentHash, number-1) == nil {
 		return NonStatTy, consensus.ErrUnknownAncestor
 	}
+	ptd := hc.GetTd(header.ParentHash, number-1)
 	localTd := hc.GetTd(hc.currentHeaderHash, hc.CurrentHeader().Number.Uint64())
-	externTd := new(big.Int).Add(header.Difficulty, ptd)
+	var externTd *big.Int
+	if ptd != nil {
+		externTd = new(big.Int).Add(header.Difficulty, ptd)
+	}
 
-	// Irrelevant of the canonical status, write the td and header to the database
+	// Irrelevant of the canonical status, write the header to the database. The
+	// TD entry is written atomically with it whenever it can be computed.
 	//
 	// Note all the components of header(td, hash->number index and header) should
 	// be written atomically.
 	headerBatch := hc.chainDb.NewBatch()
-	rawdb.WriteTd(headerBatch, hash, number, externTd)
+	if externTd != nil {
+		rawdb.WriteTd(headerBatch, hash, number, externTd)
+	}
 	rawdb.WriteHeader(headerBatch, header)
 	if err := headerBatch.Write(); err != nil {
 		log.Crit("Failed to write header into disk", "err", err)
 	}
-	// If the total difficulty is higher than our known, add it to the canonical chain
+	// If the fork-choice weight is higher than our known, add it to the canonical chain
 	// Second clause in the if statement reduces the vulnerability to selfish mining.
 	// Please refer to http://www.cs.cornell.edu/~ie53/publications/btcProcFC.pdf
-	if externTd.Cmp(localTd) > 0 || (externTd.Cmp(localTd) == 0 && mrand.Float64() < 0.5) {
+	//
+	// Equal fork-choice weight triggers the anti-selfish-mining coin flip,
+	// but only when both total difficulties are known: on legacy chaindata a
+	// tie derived from the height fallback must not randomly reorganise the
+	// chain, so the header deterministically stays on the side chain.
+	cmp := forkChoiceCmp(hc.config, number, externTd, hc.CurrentHeader().Number.Uint64(), localTd)
+	if cmp > 0 || (cmp == 0 && externTd != nil && localTd != nil && mrand.Float64() < 0.5) {
 		// If the header can be added into canonical chain, adjust the
 		// header chain markers(canonical indexes and head header flag).
 		//
@@ -206,7 +222,9 @@ func (hc *HeaderChain) WriteHeader(header *types.Header) (status WriteStatus, er
 	} else {
 		status = SideStatTy
 	}
-	hc.tdCache.Add(hash, externTd)
+	if externTd != nil {
+		hc.tdCache.Add(hash, externTd)
+	}
 	hc.headerCache.Add(hash, header)
 	hc.numberCache.Add(hash, number)
 	return

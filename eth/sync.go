@@ -229,11 +229,28 @@ func (pm *ProtocolManager) synchronise(peer *peer) {
 	if peer == nil {
 		return
 	}
-	// Make sure the peer's TD is higher than our own
+	// Make sure the peer's TD is higher than our own. A missing local TD
+	// (legacy XDPoS chaindata predating the TD index) or a zero peer TD (the
+	// wire sentinel for a missing TD, which legacy nodes advertise) makes the
+	// threshold unverifiable: fall back to a height comparison on the known
+	// peer head, and otherwise proceed and let the downloader's height-based
+	// stalling checks reject peers that fail to deliver. When both sides have
+	// a TD the comparison is equivalent to a height comparison in the v2
+	// region.
 	currentBlock := pm.blockchain.CurrentBlock()
 	td := pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64())
 	pHead, pTd := peer.Head()
-	if pTd.Cmp(td) <= 0 {
+	if td != nil && pTd.Sign() > 0 {
+		if pTd.Cmp(td) <= 0 {
+			return
+		}
+	} else if head := pm.blockchain.GetHeaderByHash(pHead); head != nil && head.Number.Uint64() <= currentBlock.Number.Uint64() {
+		// Without a verifiable TD on either side the fork choice falls back
+		// to a height comparison, so a peer whose known head is not strictly
+		// above ours can never be preferred. Skip the sync cycle instead of
+		// running an ancestor probe that cannot make progress; legacy nodes
+		// would otherwise re-probe on every block announcement. Unknown heads
+		// still trigger a full cycle.
 		return
 	}
 	// Otherwise try to sync with the downloader
@@ -253,7 +270,10 @@ func (pm *ProtocolManager) synchronise(peer *peer) {
 
 	if mode == downloader.FastSync {
 		// Make sure the peer's total difficulty we are synchronizing is higher.
-		if pm.blockchain.GetTdByHash(pm.blockchain.CurrentSnapBlock().Hash()).Cmp(pTd) >= 0 {
+		// A missing local snap TD or a zero peer TD (the wire sentinel for a
+		// missing TD) follows the same unverifiable-promise policy as the head
+		// TD above.
+		if snapTd := pm.blockchain.GetTdByHash(pm.blockchain.CurrentSnapBlock().Hash()); snapTd != nil && pTd.Sign() > 0 && snapTd.Cmp(pTd) >= 0 {
 			return
 		}
 	}

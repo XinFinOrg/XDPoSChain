@@ -736,12 +736,23 @@ func (bc *BlockChain) loadLastState() error {
 		headerTd = bc.GetTd(headHeader.Hash(), headHeader.Number.Uint64())
 		blockTd  = bc.GetTd(headBlock.Hash(), headBlock.NumberU64())
 	)
+	// Legacy chaindata can leave the head without a TD entry: display a zero
+	// value rather than the "<nil>" of a nil pointer.
+	if headerTd == nil {
+		headerTd = common.Big0
+	}
+	if blockTd == nil {
+		blockTd = common.Big0
+	}
 	if headHeader.Hash() != headBlock.Hash() {
 		log.Info("Loaded most recent local header", "number", headHeader.Number, "hash", headHeader.Hash(), "td", headerTd, "age", common.PrettyAge(time.Unix(int64(headHeader.Time), 0)))
 	}
 	log.Info("Loaded most recent local block", "number", headBlock.Number(), "hash", headBlock.Hash(), "td", blockTd, "age", common.PrettyAge(time.Unix(int64(headBlock.Time()), 0)))
 	if headBlock.Hash() != currentSnapBlock.Hash() {
 		fastTd := bc.GetTd(currentSnapBlock.Hash(), currentSnapBlock.Number.Uint64())
+		if fastTd == nil {
+			fastTd = common.Big0
+		}
 		log.Info("Loaded most recent local snap block", "number", currentSnapBlock.Number, "hash", currentSnapBlock.Hash(), "td", fastTd, "age", common.PrettyAge(time.Unix(int64(currentSnapBlock.Time), 0)))
 	}
 
@@ -1439,13 +1450,19 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		return 0, errChainStopped
 	}
 	head := blockChain[len(blockChain)-1]
-	if td := bc.GetTd(head.Hash(), head.NumberU64()); td != nil { // Rewind may have occurred, skip in that case
-		currentSnapBlock := bc.CurrentSnapBlock()
-		if bc.GetTd(currentSnapBlock.Hash(), currentSnapBlock.Number.Uint64()).Cmp(td) < 0 {
-			rawdb.WriteHeadFastBlockHash(bc.db, head.Hash())
-			bc.currentSnapBlock.Store(head.Header())
-			headFastBlockGauge.Update(int64(head.NumberU64()))
-		}
+	currentSnapBlock := bc.CurrentSnapBlock()
+	// The receipt data above is written without chainmu, so a concurrent
+	// rewind (SetHead) may have deleted the batch head's header, TD and
+	// canonical-hash markers before the lock was acquired. Such a stale head
+	// has a nil TD and would win the height fallback below, repointing the
+	// snap marker above the rewind. Require the head to still be the
+	// canonical header at its height: a legacy canonical head with a missing
+	// TD index passes this check and can still advance the snap block.
+	canonical := bc.GetHeaderByNumber(head.NumberU64())
+	if canonical != nil && canonical.Hash() == head.Hash() && forkChoiceCmp(bc.chainConfig, head.NumberU64(), bc.GetTd(head.Hash(), head.NumberU64()), currentSnapBlock.Number.Uint64(), bc.GetTd(currentSnapBlock.Hash(), currentSnapBlock.Number.Uint64())) > 0 {
+		rawdb.WriteHeadFastBlockHash(bc.db, head.Hash())
+		bc.currentSnapBlock.Store(head.Header())
+		headFastBlockGauge.Update(int64(head.NumberU64()))
 	}
 	bc.chainmu.Unlock()
 
@@ -1473,7 +1490,9 @@ func (bc *BlockChain) writeBlockWithoutState(block *types.Block, td *big.Int) (e
 	}
 
 	batch := bc.db.NewBatch()
-	rawdb.WriteTd(batch, block.Hash(), block.NumberU64(), td)
+	if td != nil {
+		rawdb.WriteTd(batch, block.Hash(), block.NumberU64(), td)
+	}
 	rawdb.WriteBlock(batch, block)
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to write block into disk", "err", err)
@@ -1497,22 +1516,31 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 		return NonStatTy, errInsertionInterrupted
 	}
 
-	// Calculate the total difficulty of the block
-	ptd := bc.GetTd(block.ParentHash(), block.NumberU64()-1)
-	if ptd == nil {
+	// Calculate the total difficulty of the block. The parent header must
+	// exist for the chain to be importable, but its total difficulty may be
+	// unknown on legacy XDPoS chaindata that predates the TD index. The block
+	// is then stored without a TD entry and the fork choice falls back to a
+	// height comparison.
+	if bc.GetHeader(block.ParentHash(), block.NumberU64()-1) == nil {
 		return NonStatTy, consensus.ErrUnknownAncestor
 	}
+	ptd := bc.GetTd(block.ParentHash(), block.NumberU64()-1)
 	// Make sure no inconsistent state is leaked during insertion
 	currentBlock := bc.CurrentBlock()
 	localTd := bc.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64())
-	externTd := new(big.Int).Add(block.Difficulty(), ptd)
+	var externTd *big.Int
+	if ptd != nil {
+		externTd = new(big.Int).Add(block.Difficulty(), ptd)
+	}
 
 	// Irrelevant of the canonical status, write the block itself to the database.
 	//
 	// Note all the components of block(td, hash->number map, header, body, receipts)
 	// should be written atomically. BlockBatch is used for containing all components.
 	blockBatch := bc.db.NewBatch()
-	rawdb.WriteTd(blockBatch, block.Hash(), block.NumberU64(), externTd)
+	if externTd != nil {
+		rawdb.WriteTd(blockBatch, block.Hash(), block.NumberU64(), externTd)
+	}
 	rawdb.WriteBlock(blockBatch, block)
 	rawdb.WriteReceipts(blockBatch, block.Hash(), block.NumberU64(), receipts)
 	rawdb.WritePreimages(blockBatch, state.Preimages())
@@ -1664,13 +1692,14 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 		}
 	}
 
-	// If the total difficulty is higher than our known, add it to the canonical chain
+	// If the fork-choice weight is higher than our known, add it to the canonical chain
 	// Second clause in the if statement reduces the vulnerability to selfish mining.
 	// Please refer to http://www.cs.cornell.edu/~ie53/publications/btcProcFC.pdf
-	reorg := externTd.Cmp(localTd) > 0
+	cmp := forkChoiceCmp(bc.chainConfig, block.NumberU64(), externTd, currentBlock.Number.Uint64(), localTd)
+	reorg := cmp > 0
 	currentBlock = bc.CurrentBlock()
-	if !reorg && externTd.Cmp(localTd) == 0 {
-		// Split same-difficulty blocks by number
+	if !reorg && cmp == 0 {
+		// Split equal-weight blocks by number
 		reorg = block.NumberU64() > currentBlock.Number.Uint64()
 	}
 	if reorg {
@@ -1976,6 +2005,13 @@ func (bc *BlockChain) processBlock(block *types.Block, parent *types.Header, sta
 	// TODO(daniel): implement CurrentFinalBlock() and CurrentSafeBlock(), ref PR #29189
 	if bc.logger != nil && bc.logger.OnBlockStart != nil {
 		td := bc.GetTd(block.ParentHash(), block.NumberU64()-1)
+		// Legacy chaindata predating the TD index can leave the parent TD
+		// missing: report a zero value to block tracer hooks, whose
+		// implementations may dereference the difficulty. Use a fresh value
+		// rather than the shared common.Big0, which hooks could mutate.
+		if td == nil {
+			td = new(big.Int)
+		}
 		bc.logger.OnBlockStart(tracing.BlockEvent{
 			Block: block,
 			TD:    td,
@@ -2084,9 +2120,13 @@ func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (i
 			}
 		}
 		if externTd == nil {
-			externTd = bc.GetTd(block.ParentHash(), block.NumberU64()-1)
+			if ptd := bc.GetTd(block.ParentHash(), block.NumberU64()-1); ptd != nil {
+				externTd = ptd
+			}
 		}
-		externTd = new(big.Int).Add(externTd, block.Difficulty())
+		if externTd != nil {
+			externTd = new(big.Int).Add(externTd, block.Difficulty())
+		}
 
 		if !bc.HasBlock(block.Hash(), block.NumberU64()) {
 			start := time.Now()
@@ -2106,7 +2146,7 @@ func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (i
 	// If the externTd was larger than our local TD, we now need to reimport the previous
 	// blocks to regenerate the required state
 	localTd := bc.GetTd(bc.CurrentBlock().Hash(), current)
-	if localTd.Cmp(externTd) > 0 {
+	if forkChoiceCmp(bc.chainConfig, it.previous().Number.Uint64(), externTd, current, localTd) < 0 {
 		log.Info("Sidechain written to disk", "start", it.first().NumberU64(), "end", it.previous().Number, "sidetd", externTd, "localtd", localTd)
 		return it.index, nil, nil, err
 	}
@@ -2233,11 +2273,14 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 		}
 	case err == consensus.ErrPrunedAncestor:
 		// Block competing with the canonical chain, store in the db, but don't process
-		// until the competitor TD goes above the canonical TD
+		// until the competitor fork-choice weight goes above the canonical one
 		currentBlock := bc.CurrentBlock()
 		localTd := bc.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64())
-		externTd := new(big.Int).Add(bc.GetTd(block.ParentHash(), block.NumberU64()-1), block.Difficulty())
-		if localTd.Cmp(externTd) > 0 {
+		var externTd *big.Int
+		if ptd := bc.GetTd(block.ParentHash(), block.NumberU64()-1); ptd != nil {
+			externTd = new(big.Int).Add(ptd, block.Difficulty())
+		}
+		if forkChoiceCmp(bc.chainConfig, block.NumberU64(), externTd, currentBlock.Number.Uint64(), localTd) < 0 {
 			return nil, err
 		}
 		// Competitor chain beat canonical, gather all blocks from the common ancestor

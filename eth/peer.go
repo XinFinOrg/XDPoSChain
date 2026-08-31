@@ -94,7 +94,16 @@ type peer struct {
 
 	head common.Hash
 	td   *big.Int
-	lock sync.RWMutex
+
+	// headNum is the height of the advertised head, tracked only for peers
+	// whose TD is unknown (the zero wire sentinel of legacy nodes). The
+	// handshake assigns head and td directly, so headNum starts at zero for
+	// every peer and is advanced monotonically by SetHeadByNumber from block
+	// announcements. SetHead deliberately does not reset it: a peer uses a
+	// single announcement format in practice, and resetting would let a stale
+	// zero-TD announcement overwrite a real head in the mixed-format case.
+	headNum uint64
+	lock    sync.RWMutex
 
 	knownBlocks     mapset.Set[common.Hash] // Set of block hashes known to be known by this peer
 	queuedBlocks    chan *propEvent         // Queue of blocks to broadcast to the peer
@@ -351,6 +360,28 @@ func (p *peer) SetHead(hash common.Hash, td *big.Int) {
 
 	copy(p.head[:], hash[:])
 	p.td.Set(td)
+}
+
+// HeadNum returns the height of the peer's advertised head. It is only
+// meaningful for peers whose TD is unknown (the zero wire sentinel); it is
+// zero for handshake heads, which carry no height.
+func (p *peer) HeadNum() uint64 {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+
+	return p.headNum
+}
+
+// SetHeadByNumber updates the head hash, total difficulty and head height of
+// the peer in one atomic step. It is used to advance the advertised head of
+// unknown-TD peers monotonically from block announcements.
+func (p *peer) SetHeadByNumber(hash common.Hash, td *big.Int, number uint64) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	copy(p.head[:], hash[:])
+	p.td.Set(td)
+	p.headNum = number
 }
 
 // MarkBlock marks a block as known for the peer, ensuring that the block will

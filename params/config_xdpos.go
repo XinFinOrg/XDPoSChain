@@ -623,8 +623,30 @@ func (c ExpTimeoutConfig) String() string {
 	return fmt.Sprintf("ExpTimeoutConfig{Base: %v, MaxExponent: %v}", c.Base, c.MaxExponent)
 }
 
+// isV2Number reports whether the consensus for the given block number is
+// XDPoS v2, i.e. the block is strictly above the v2 switch block. It is the
+// single source of truth for the v2 boundary and must stay in sync with the
+// uint64 fast path of IsV2Block.
+func (c *XDPoSConfig) isV2Number(num *big.Int) bool {
+	return c.V2 != nil && c.V2.SwitchBlock != nil && num.Cmp(c.V2.SwitchBlock) > 0
+}
+
+// IsV2Block reports whether the consensus for the given block number is XDPoS
+// v2, i.e. the block is strictly above the v2 switch block. It is the
+// allocation-free fast path of isV2Number for uint64 numbers and is used on
+// fork-choice hot paths; it must stay in sync with isV2Number.
+func (c *XDPoSConfig) IsV2Block(number uint64) bool {
+	if c.V2 == nil || c.V2.SwitchBlock == nil {
+		return false
+	}
+	if c.V2.SwitchBlock.IsUint64() {
+		return number > c.V2.SwitchBlock.Uint64()
+	}
+	return c.isV2Number(new(big.Int).SetUint64(number))
+}
+
 func (c *XDPoSConfig) BlockConsensusVersion(num *big.Int) string {
-	if c.V2 != nil && c.V2.SwitchBlock != nil && num.Cmp(c.V2.SwitchBlock) > 0 {
+	if c.isV2Number(num) {
 		return ConsensusEngineVersion2
 	}
 	return ConsensusEngineVersion1
