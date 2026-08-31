@@ -541,7 +541,11 @@ func TestVerifyVoteMsg(t *testing.T) {
 	engineV2.SetNewRoundFaker(blockchain, types.Round(14), false)
 	verified, err = engineV2.VerifyVoteMessage(blockchain, voteMsg)
 	assert.False(t, verified)
-	assert.Equal(t, "error while verifying message: invalid signature length", err.Error())
+	// The exact error string depends on which crypto.Ecrecover backend is compiled in:
+	// the cgo backend returns "invalid signature length" while the pure-Go (nocgo)
+	// backend returns "invalid signature" for a malformed signature. Both contain
+	// "invalid signature", so assert on the shared substring to avoid flakiness.
+	assert.ErrorContains(t, err, "invalid signature")
 
 	// Valid vote message from a master node
 	signHash, _ := signFn(accounts.Account{Address: signer}, types.VoteSigHash(voteForSign).Bytes())
