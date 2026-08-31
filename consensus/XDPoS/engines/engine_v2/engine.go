@@ -697,11 +697,17 @@ func (x *XDPoS_v2) VerifySyncInfoMessage(chain consensus.ChainReader, syncInfo *
 		log.Warn("[VerifySyncInfoMessage] SyncInfo message verification failed due to QC", "blockNum", syncInfo.HighestQuorumCert.ProposedBlockInfo.Number, "round", syncInfo.HighestQuorumCert.ProposedBlockInfo.Round, "error", err)
 		return false, err
 	}
-	err = x.verifyTC(chain, syncInfo.HighestTimeoutCert)
-	if err != nil {
-		log.Warn("[VerifySyncInfoMessage] SyncInfo message verification failed due to TC", "gapNum", syncInfo.HighestTimeoutCert.GapNumber, "round", syncInfo.HighestTimeoutCert.Round, "error", err)
-		return false, err
+
+	if !isBlankTC(syncInfo.HighestTimeoutCert) {
+		err = x.verifyTC(chain, syncInfo.HighestTimeoutCert)
+		if err != nil {
+			log.Warn("[VerifySyncInfoMessage] SyncInfo message verification failed due to TC", "gapNum", syncInfo.HighestTimeoutCert.GapNumber, "round", syncInfo.HighestTimeoutCert.Round, "error", err)
+			return false, err
+		}
+	} else {
+		log.Debug("[VerifySyncInfoMessage] Detected blank TC, sender has no TC yet (fresh restart or new chain), skipping TC verification", "qcRound", syncInfo.HighestQuorumCert.ProposedBlockInfo.Round, "qcNumber", syncInfo.HighestQuorumCert.ProposedBlockInfo.Number, "qcHash", syncInfo.HighestQuorumCert.ProposedBlockInfo.Hash)
 	}
+
 	return true, nil
 }
 

@@ -103,6 +103,87 @@ func TestSkipVerifySyncInfoIfBothQcTcNotQualified(t *testing.T) {
 	assert.Nil(t, err)
 }
 
+// A node that has never formed a TC holds the bootstrap TC (round 0, no signatures) and
+// puts it into every syncInfo it sends. The QC in such a message is the only way for a
+// node that missed a QC to catch up, so the placeholder TC must not invalidate it.
+func TestVerifySyncInfoWithNewerQCAndBootstrapTC(t *testing.T) {
+	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
+	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
+
+	// The incoming syncInfo carries the newer QC, taken from the chain head.
+	var incoming types.ExtraFields_v2
+	if err := utils.DecodeBytesExtraFields(currentBlock.Extra(), &incoming); err != nil {
+		t.Fatal("Fail to decode extra data", err)
+	}
+
+	// Our node sits on an older QC and has never seen a TC, exactly like a node whose
+	// votes fell short of the threshold at network start.
+	var older types.ExtraFields_v2
+	if err := utils.DecodeBytesExtraFields(blockchain.GetBlockByNumber(903).Extra(), &older); err != nil {
+		t.Fatal("Fail to decode extra data", err)
+	}
+	bootstrapTC := &types.TimeoutCert{
+		Round:      types.Round(0),
+		Signatures: []types.Signature{},
+	}
+	engineV2.SetPropertiesFaker(older.QuorumCert, bootstrapTC)
+
+	syncInfoMsg := &types.SyncInfo{
+		HighestQuorumCert:  incoming.QuorumCert,
+		HighestTimeoutCert: bootstrapTC,
+	}
+
+	verified, err := engineV2.VerifySyncInfoMessage(blockchain, syncInfoMsg)
+	assert.Nil(t, err, "the bootstrap TC must not invalidate a syncInfo whose QC is newer and valid")
+	assert.True(t, verified)
+}
+
+// The exemption is deliberately narrow: it covers only the empty placeholder, and any TC
+// that actually carries signatures is still put through verifyTC in full. This pins that
+// boundary, so the exemption cannot be widened by sending a TC with a bogus signature set.
+//
+// The trade-off it also documents: a TC that would never be processed anyway - here one
+// staler than the one we hold - still invalidates the whole message, discarding a QC we do
+// need. Verifying only the certificate that is ahead of ours would avoid that, at the cost
+// of a broader change to the syncInfo path.
+func TestVerifySyncInfoStillVerifiesNonEmptyTC(t *testing.T) {
+	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
+	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
+
+	var incoming types.ExtraFields_v2
+	if err := utils.DecodeBytesExtraFields(currentBlock.Extra(), &incoming); err != nil {
+		t.Fatal("Fail to decode extra data", err)
+	}
+	var older types.ExtraFields_v2
+	if err := utils.DecodeBytesExtraFields(blockchain.GetBlockByNumber(903).Extra(), &older); err != nil {
+		t.Fatal("Fail to decode extra data", err)
+	}
+
+	// We already hold a newer TC than the one being sent to us.
+	ourTC := &types.TimeoutCert{
+		Round:      types.Round(5),
+		Signatures: []types.Signature{},
+	}
+	engineV2.SetPropertiesFaker(older.QuorumCert, ourTC)
+
+	// Their TC carries a signature, so it is not the placeholder and gets verified: round 1
+	// with gap number 0, which has no snapshot here, so verification fails.
+	staleTC := &types.TimeoutCert{
+		Round:      types.Round(1),
+		Signatures: []types.Signature{SignHashByPK(acc1Key, types.TimeoutSigHash(&types.TimeoutForSign{Round: types.Round(1), GapNumber: 0}).Bytes())},
+		GapNumber:  0,
+	}
+
+	syncInfoMsg := &types.SyncInfo{
+		HighestQuorumCert:  incoming.QuorumCert,
+		HighestTimeoutCert: staleTC,
+	}
+
+	verified, err := engineV2.VerifySyncInfoMessage(blockchain, syncInfoMsg)
+	assert.NotNil(t, err, "a TC carrying signatures must still be verified, not exempted")
+	assert.False(t, verified)
+}
+
 func TestVerifySyncInfoIfTCRoundIsAtNextEpoch(t *testing.T) {
 	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2

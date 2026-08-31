@@ -146,6 +146,15 @@ func (x *XDPoS_v2) getTCEpochInfo(chain consensus.ChainReader, timeoutRound type
 	}
 	return epochInfo, nil
 }
+
+// Round 0 with no signatures is the bootstrap TC installed by New(), not a real
+// certificate: a TC only comes into existence once a round has timed out.
+// Since TC lives in memory, when a node restarts, it's initialized as a blank.
+// Rejecting the blank would discard the whole syncInfo which could contain useful QC.
+func isBlankTC(timeoutCert *types.TimeoutCert) bool {
+	return timeoutCert != nil && timeoutCert.Round == types.Round(0) && len(timeoutCert.Signatures) == 0
+}
+
 func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.TimeoutCert) error {
 	/*
 		1. Get epoch master node list by gapNumber
