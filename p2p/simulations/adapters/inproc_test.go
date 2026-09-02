@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"sync"
 	"testing"
 
@@ -46,7 +47,9 @@ func TestTCPPipe(t *testing.T) {
 		msg := make([]byte, size)
 		binary.PutUvarint(msg, uint64(i))
 		out := make([]byte, size)
-		if _, err := c2.Read(out); err != nil {
+		// A single Read on a TCP connection is not guaranteed to fill the
+		// buffer, so read the whole message before comparing it.
+		if _, err := io.ReadFull(c2, out); err != nil {
 			t.Fatal(err)
 		}
 		if !bytes.Equal(msg, out) {
@@ -73,7 +76,9 @@ func TestTCPPipeBidirections(t *testing.T) {
 	for i := 0; i < msgs; i++ {
 		expected := []byte(fmt.Sprintf("ping %02d", i))
 		out := make([]byte, size)
-		if _, err := c2.Read(out); err != nil {
+		// A single Read on a TCP connection is not guaranteed to fill the
+		// buffer, so read the whole message before comparing it.
+		if _, err := io.ReadFull(c2, out); err != nil {
 			t.Fatal(err)
 		}
 
@@ -90,7 +95,9 @@ func TestTCPPipeBidirections(t *testing.T) {
 	for i := 0; i < msgs; i++ {
 		expected := []byte(fmt.Sprintf("pong %02d", i))
 		out := make([]byte, size)
-		if _, err := c1.Read(out); err != nil {
+		// A single Read on a TCP connection is not guaranteed to fill the
+		// buffer, so read the whole message before comparing it.
+		if _, err := io.ReadFull(c1, out); err != nil {
 			t.Fatal(err)
 		}
 		if !bytes.Equal(expected, out) {
