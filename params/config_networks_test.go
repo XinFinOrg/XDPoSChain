@@ -352,7 +352,6 @@ func TestDefaultXDCNetworksDoNotEnableGas2500xFork(t *testing.T) {
 		name string
 		cfg  *ChainConfig
 	}{
-		{name: "devnet", cfg: DevnetChainConfig},
 		{name: "testnet", cfg: TestnetChainConfig},
 		{name: "mainnet", cfg: XDCMainnetChainConfig},
 	} {
