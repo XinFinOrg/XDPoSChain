@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2309,6 +2310,9 @@ func (bc *BlockChain) UpdateBlocksHashCache(block *types.Block) []common.Hash {
 	cached, ok := bc.blocksHashCache.Get(blockNumber)
 
 	if ok {
+		if slices.Contains(cached, block.Hash()) {
+			return cached
+		}
 		hashArr := cached
 		hashArr = append(hashArr, block.Hash())
 		bc.blocksHashCache.Remove(blockNumber)

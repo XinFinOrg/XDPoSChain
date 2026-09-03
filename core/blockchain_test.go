@@ -2495,6 +2495,22 @@ func TestBlocksHashCacheUpdate(t *testing.T) {
 			t.Error("BlocksHashCache doesn't work when inserting block solely")
 		}
 	})
+
+	t.Run("Expect repeated cache update to keep one entry per hash", func(t *testing.T) {
+		head := chain.CurrentBlock()
+		chain.UpdateBlocksHashCache(types.NewBlockWithHeader(head))
+		chain.UpdateBlocksHashCache(types.NewBlockWithHeader(head))
+		cached, _ := chain.blocksHashCache.Get(head.Number.Uint64())
+		count := 0
+		for _, hash := range cached {
+			if hash == head.Hash() {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Errorf("BlocksHashCache has %d entries for head hash, want 1: %v", count, cached)
+		}
+	})
 }
 
 // TestAreTwoBlocksSamePath tests are two blocks same path.
