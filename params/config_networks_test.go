@@ -79,7 +79,11 @@ func TestXDPoSMockChainConfigDeclaresModernForks(t *testing.T) {
 	assertBlock("EIP1559Block", config.EIP1559Block)
 	assertBlock("CancunBlock", config.CancunBlock)
 	assertBlock("PragueBlock", config.PragueBlock)
-	assertBlock("OsakaBlock", config.OsakaBlock)
+	assertBlock("DynamicGasLimitBlock", config.DynamicGasLimitBlock)
+	assertBlock("TIPUpgradeRewardBlock", config.TIPUpgradeRewardBlock)
+	assertBlock("TIPUpgradePenaltyBlock", config.TIPUpgradePenaltyBlock)
+	// assertBlock("OsakaBlock", config.OsakaBlock)
+	assert.Nil(t, config.OsakaBlock, "OsakaBlock must stay unscheduled on TestXDPoSMockChainConfig")
 }
 
 func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
@@ -216,11 +220,11 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 			tipXDCXReceiverDisable:      big.NewInt(0),
 			eip1559Block:                big.NewInt(0),
 			cancunBlock:                 big.NewInt(0),
-			pragueBlock:                 nil,
+			pragueBlock:                 big.NewInt(0),
 			osakaBlock:                  nil,
-			dynamicGasLimitBlock:        nil,
-			tipUpgradeRewardBlock:       nil,
-			tipUpgradePenaltyBlock:      nil,
+			dynamicGasLimitBlock:        big.NewInt(0),
+			tipUpgradeRewardBlock:       big.NewInt(0),
+			tipUpgradePenaltyBlock:      big.NewInt(0),
 			tipEpochHalvingBlock:        nil,
 		},
 	}
