@@ -676,50 +676,63 @@ func (d *Downloader) fetchHeight(p *peerConnection, hash common.Hash) (*types.He
 //	count - number of headers to request
 //	skip - number of headers to skip
 //
-// and also returns 'max', the last block which is expected to be returned by the remote peers,
-// given the (from,count,skip)
+// and also returns 'max', the highest block the search should consider from
+// the response, i.e. the last header the peer is expected to return.
+//
+// The sampling top is the highest block below the remote head, capped at
+// the local head, because usableAsAncestor rejects every candidate above it and
+// samples there are wasted round trips. The request is then fixed to two
+// samples spaced one skipped header apart: the window spans three
+// consecutive blocks and samples only its two ends, so a common ancestor at
+// the top sample, at the lower one, or on the skipped middle between them
+// all yields a hit in the first round trip. A hit at the top sample is
+// returned as is, while a hit at the lower one leaves the true ancestor
+// somewhere in the two-block gap under the top sample, and a single
+// binary-search probe at the skipped middle resolves it whichever block
+// it is. When the capped top sits
+// below 2 the raw start would be negative, so 'from' is clamped up to zero
+// while the count is kept, topping the window out past the sampling top;
+// candidates above the local head are rejected by usableAsAncestor's head guard.
 func calculateRequestSpan(remoteHeight, localHeight uint64) (int64, int, int, uint64) {
-	var (
-		from     int
-		count    int
-		MaxCount = MaxHeaderFetch / 16
-	)
-	// requestHead is the highest block that we will ask for. If requestHead is not offset,
-	// the highest block that we will get is 16 blocks back from head, which means we
-	// will fetch 14 or 15 blocks unnecessarily in the case the height difference
-	// between us and the peer is 1-2 blocks, which is most common
-	requestHead := int(remoteHeight) - 1
-	if requestHead < 0 {
-		requestHead = 0
-	}
-	// requestBottom is the lowest block we want included in the query
-	// Ideally, we want to include the one just below our own head
-	requestBottom := int(localHeight - 1)
-	if requestBottom < 0 {
-		requestBottom = 0
-	}
-	totalSpan := requestHead - requestBottom
-	span := 1 + totalSpan/MaxCount
-	if span < 2 {
-		span = 2
-	}
-	if span > 16 {
-		span = 16
-	}
+	// The remote head itself was already fetched to learn the remote height,
+	// so the sampling top starts at the highest block below it; cap that at
+	// the local head, because usableAsAncestor rejects every candidate above it
+	// and sampling there only burns round trips.
+	// max(remoteHeight, 1)-1 saturates the decrement at zero, avoiding the
+	// uint64 underflow a raw remoteHeight-1 would hit at genesis.
+	spanTop := min(max(remoteHeight, 1)-1, localHeight)
+	// Two samples spaced one skipped header apart: the capped top and the
+	// block two below it. The skipped middle block is deliberate; see the
+	// doc comment for the geometry and the refinement trade-off.
+	//
+	// Keeping the count when 'from' is clamped up to zero can top the
+	// window out past spanTop (e.g. at a capped top of 0 or 1). The
+	// window is left as computed: it may sample a few blocks past
+	// spanTop, and usableAsAncestor's head guard is what rejects those above
+	// the local head.
+	from := max(int(spanTop)-2, 0)
+	return int64(from), 2, 1, uint64(from + 2)
+}
 
-	count = 1 + totalSpan/span
-	if count > MaxCount {
-		count = MaxCount
+// usableAsAncestor reports whether a remote block may be used as the common ancestor.
+// Blocks above the local head are rejected even when their body is on disk:
+// side chain blocks written ahead of the head are known by hash, and accepting
+// one as the ancestor skips the range the chain still has to import. The span
+// search's acceptance window follows the raw request, so it can top out above
+// the head when 'from' is clamped up to zero; this guard is what keeps those
+// above-head candidates out of the ancestor search.
+func (d *Downloader) usableAsAncestor(mode SyncMode, hash common.Hash, number, localHeight uint64) bool {
+	if number > localHeight {
+		return false
 	}
-	if count < 2 {
-		count = 2
+	switch mode {
+	case FullSync:
+		return d.blockchain.HasBlock(hash, number)
+	case FastSync:
+		return d.blockchain.HasFastBlock(hash, number)
+	default:
+		return d.lightchain.HasHeader(hash, number)
 	}
-	from = requestHead - (count-1)*span
-	if from < 0 {
-		from = 0
-	}
-	max := from + (count-1)*span
-	return int64(from), count, span - 1, uint64(max)
 }
 
 // findAncestor tries to locate the common ancestor link of the local chain and
@@ -748,6 +761,14 @@ func (d *Downloader) findAncestor(p *peerConnection, remoteHeader *types.Header)
 	if localHeight >= MaxForkAncestry {
 		floor = int64(localHeight - MaxForkAncestry)
 	}
+	// The common ancestor can never sit above the local head, and
+	// usableAsAncestor rejects every candidate above it, so cap both the span
+	// search and the binary search there. Otherwise a head far below the
+	// remote, or stale side chain segments stored above it, burn the whole
+	// search on candidates that cannot be accepted instead of anchoring in
+	// one round trip.
+	ancestorLimitExclusive := localHeight + 1
+
 	from, count, skip, max := calculateRequestSpan(remoteHeight, localHeight)
 
 	p.log.Trace("Span searching for common ancestor", "count", count, "from", from, "skip", skip)
@@ -795,16 +816,7 @@ func (d *Downloader) findAncestor(p *peerConnection, remoteHeader *types.Header)
 				h := headers[i].Hash()
 				n := headers[i].Number.Uint64()
 
-				var known bool
-				switch mode {
-				case FullSync:
-					known = d.blockchain.HasBlock(h, n)
-				case FastSync:
-					known = d.blockchain.HasFastBlock(h, n)
-				default:
-					known = d.lightchain.HasHeader(h, n)
-				}
-				if known {
+				if d.usableAsAncestor(mode, h, n, localHeight) {
 					number, hash = n, h
 					break
 				}
@@ -819,19 +831,38 @@ func (d *Downloader) findAncestor(p *peerConnection, remoteHeader *types.Header)
 			// Out of bounds delivery, ignore
 		}
 	}
-	// If the head fetch already found an ancestor, return
+	// A span hit is only the highest SAMPLED common block: the search steps
+	// over skip headers, so the true fork can sit in the unsampled gap below
+	// the next sample (e.g. at localHeight-1 when the head-capped window is
+	// {head-2, head}, or at the head itself when the clamped window missed it
+	// and the hit fell back to genesis). A hit at the local head or at the
+	// top of the window leaves no gap to close and is returned as is; any
+	// other hit seeds the binary search below with the gap bounds, the hit
+	// being the known-common lower bound and the next sample the
+	// known-rejected upper one.
+	// floor is never negative by construction (0 or localHeight-MaxForkAncestry
+	// with localHeight >= MaxForkAncestry), so the conversion preserves the
+	// original floor>0 clamp exactly. Note the builtin max is shadowed here by
+	// the span request's 'max' return value.
+	start, end := uint64(floor), min(remoteHeight, ancestorLimitExclusive)
 	if !hash.IsZero() {
 		if int64(number) <= floor {
 			p.log.Warn("Ancestor below allowance", "number", number, "hash", hash, "allowance", floor)
 			return 0, errInvalidAncestor
 		}
-		p.log.Debug("Found common ancestor", "number", number, "hash", hash)
-		return number, nil
-	}
-	// Ancestor not found, we need to binary search over our chain
-	start, end := uint64(0), remoteHeight
-	if floor > 0 {
-		start = uint64(floor)
+		if gap := number + uint64(skip) + 1; number < localHeight && gap <= max {
+			// The next sample is the known-rejected upper bound of the
+			// refinement. The clamped window keeps its count, so it can top
+			// out past the local head and past the peer's; probe neither:
+			// usableAsAncestor rejects the former, and the latter comes back
+			// empty and fails the sync. The local-head clamp is explicit so
+			// the not-above-the-head invariant does not hinge on the branch
+			// guard plus the fixed skip arithmetic.
+			start, end = number, min(gap, ancestorLimitExclusive, remoteHeight+1)
+		} else {
+			p.log.Debug("Found common ancestor", "number", number, "hash", hash)
+			return number, nil
+		}
 	}
 	p.log.Trace("Binary searching for common ancestor", "start", start, "end", end)
 
@@ -868,16 +899,10 @@ func (d *Downloader) findAncestor(p *peerConnection, remoteHeader *types.Header)
 				h := headers[0].Hash()
 				n := headers[0].Number.Uint64()
 
-				var known bool
-				switch mode {
-				case FullSync:
-					known = d.blockchain.HasBlock(h, n)
-				case FastSync:
-					known = d.blockchain.HasFastBlock(h, n)
-				default:
-					known = d.lightchain.HasHeader(h, n)
-				}
-				if !known {
+				// The search is capped at the local head, so an honest peer
+				// can never offer a probe above it; any probe that is not a
+				// known block narrows the search below it.
+				if !d.usableAsAncestor(mode, h, n, localHeight) {
 					end = check
 					break
 				}

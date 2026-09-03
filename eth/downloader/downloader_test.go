@@ -322,6 +322,30 @@ func (dl *downloadTester) InsertChain(blocks types.Blocks) (i int, err error) {
 	return len(blocks), nil
 }
 
+// writeBlockWithoutState mirrors core.BlockChain.writeBlockWithoutState: the block
+// becomes known by hash, but without state it cannot become the chain head. The
+// parent must have been imported first (e.g. via InsertChain), as the simulated
+// chain only tracks the total difficulty of blocks it already knows.
+//
+// The block is deliberately kept out of ownHashes, the tester's canonical hash
+// chain: a real node writes such blocks as non-canonical side blocks, so the
+// head getters keep reporting the imported head. Raising CurrentSnapBlock in
+// particular would inflate the local height findAncestor derives in fast sync
+// and mask a sync that resumes above the head.
+func (dl *downloadTester) writeBlockWithoutState(block *types.Block) error {
+	dl.lock.Lock()
+	defer dl.lock.Unlock()
+
+	parentTd, ok := dl.ownChainTd[block.ParentHash()]
+	if !ok {
+		return fmt.Errorf("parent block %s not imported", block.ParentHash())
+	}
+	dl.ownHeaders[block.Hash()] = block.Header()
+	dl.ownBlocks[block.Hash()] = block
+	dl.ownChainTd[block.Hash()] = new(big.Int).Add(parentTd, block.Difficulty())
+	return nil
+}
+
 // InsertReceiptChain injects a new batch of receipts into the simulated chain.
 func (dl *downloadTester) InsertReceiptChain(blocks types.Blocks, receipts []types.Receipts) (i int, err error) {
 	dl.lock.Lock()
@@ -397,6 +421,10 @@ type downloadTesterPeer struct {
 	id            string
 	chain         *testChain
 	missingStates map[common.Hash]bool // State entries that fast sync should not return
+	// requestHook, when non-nil, observes every numbered header request just
+	// before the fake peer serves it, letting tests assert which heights the
+	// downloader actually probes.
+	requestHook func(origin uint64, amount int, skip int, reverse bool)
 }
 
 // Head constructs a function to retrieve a peer's current head hash
@@ -425,6 +453,9 @@ func (dlp *downloadTesterPeer) RequestHeadersByHash(origin common.Hash, amount i
 func (dlp *downloadTesterPeer) RequestHeadersByNumber(origin uint64, amount int, skip int, reverse bool) error {
 	if reverse {
 		panic("reverse header requests not supported")
+	}
+	if dlp.requestHook != nil {
+		dlp.requestHook(origin, amount, skip, reverse)
 	}
 
 	result := dlp.chain.headersByNumber(origin, amount, skip)
@@ -550,6 +581,571 @@ func testCanonicalSynchronisation(t *testing.T, protocol int, mode SyncMode) {
 		t.Fatalf("failed to synchronise blocks: %v", err)
 	}
 	assertOwnChain(t, tester, chain.len())
+}
+
+// TestFindAncestorIgnoresBlocksAboveHead checks that blocks stored ahead of the
+// chain head are not accepted as the common ancestor through the span search.
+// Side chain blocks are written by hash without state, so accepting one
+// resumes the sync above the head and leaves the range in between permanently
+// unimported. The request span is capped at the local head, and any header it
+// still samples past the requested top is rejected by the usableAsAncestor head
+// guard, so the sync anchors at or below the head.
+func TestFindAncestorIgnoresBlocksAboveHead(t *testing.T) {
+	t.Parallel()
+	testFindAncestorIgnoresBlocksAboveHead(t, FullSync, 64, 32, 32)
+}
+
+// TestFindAncestorIgnoresBlocksAboveHeadFast runs the blocks-above-head
+// scenario in fast sync, where the ancestor search derives the local height
+// from the snap block: stubs stored ahead of the head must neither raise the
+// reported snap head nor be accepted as the common ancestor.
+func TestFindAncestorIgnoresBlocksAboveHeadFast(t *testing.T) {
+	t.Parallel()
+	testFindAncestorIgnoresBlocksAboveHead(t, FastSync, 128, 32, 32)
+}
+
+// testFindAncestorIgnoresBlocksAboveHead runs the blocks-above-head scenario:
+// the local head sits at headHeight while the rest of the chainLen-block chain
+// is only known by hash (plus receipts on the fast sync path), the way a side
+// chain segment is written, and the sync must resume from the head instead of
+// resuming above it. A high head (headHeight 32) keeps the span window at or
+// below the head: the span search never samples above it. A head of 1 is the
+// one height where the clamped window {0, 2} tops the request out at the
+// first block past the head; that header is served and rejected by
+// usableAsAncestor's head guard, and the genesis hit the span still finds is
+// refined over the unsampled gap, so the sync anchors at the head anyway.
+// wantOrigin pins the expected anchor exactly: the head itself.
+//
+// The scenario runs in full and fast sync. FastSync derives the local height
+// from the snap block, so it also pins that stubs stored ahead of the head do
+// not raise the reported snap head. Fast sync knowledge is modeled through
+// receipts, so the fast sync runs give the stubs receipts as well: the blocks
+// above the head count as known, so usableAsAncestor's head guard is what keeps
+// them out, not a missing-receipt lookup. Its chain is kept long enough
+// (chainLen > headHeight+fsMinFullBlocks) for the fast sync pivot to land
+// above the origin; a chain at or below fsMinFullBlocks would force the
+// origin back to genesis instead.
+func testFindAncestorIgnoresBlocksAboveHead(t *testing.T, mode SyncMode, chainLen int, headHeight, wantOrigin uint64) {
+	t.Helper()
+
+	tester := newTester()
+	defer tester.terminate()
+
+	chain := testChainBase.shorten(chainLen)
+	tester.newPeer("peer", xdc165, chain)
+
+	imported := make([]*types.Block, 0, headHeight)
+	for i := uint64(1); i <= headHeight; i++ {
+		imported = append(imported, chain.blockm[chain.chain[i]])
+	}
+	if _, err := tester.InsertChain(imported); err != nil {
+		t.Fatalf("failed to import blocks: %v", err)
+	}
+	stubs := make(types.Blocks, 0, uint64(chain.len())-headHeight-1)
+	for i := headHeight + 1; i < uint64(chain.len()); i++ {
+		block := chain.blockm[chain.chain[i]]
+		if err := tester.writeBlockWithoutState(block); err != nil {
+			t.Fatalf("failed to write block without state: %v", err)
+		}
+		stubs = append(stubs, block)
+	}
+	if mode == FastSync {
+		// The fake chain reports fast-sync knowledge through receipts, so the
+		// whole stored prefix must carry them the way a fast-synced local chain
+		// has them: the imported prefix keeps the head syncable, and the stubs
+		// get receipts too so the blocks above the head count as known.
+		// usableAsAncestor's head guard is then what keeps them out; receipt-less
+		// stubs would be dropped as unknown instead, so a sync that lost the
+		// guard would still anchor below the head and mask the regression.
+		blocks := append(append(types.Blocks{}, imported...), stubs...)
+		receipts := make([]types.Receipts, len(blocks))
+		for i := range receipts {
+			receipts[i] = types.Receipts{}
+		}
+		if _, err := tester.InsertReceiptChain(blocks, receipts); err != nil {
+			t.Fatalf("failed to insert receipts: %v", err)
+		}
+	}
+	if have := tester.CurrentBlock().Number.Uint64(); have != headHeight {
+		t.Fatalf("unexpected head: have %d want %d", have, headHeight)
+	}
+
+	// Record the first numbered header request the sync issues: inside
+	// findAncestor that is always the span search request. The requested
+	// range must top out at the head, otherwise the span burns its samples
+	// on blocks usableAsAncestor rejects anyway. Also record the very last
+	// numbered request to pin the sync's completion: a graceful fetchHeaders
+	// run terminates with an empty probe at the first height past the remote
+	// head, so a run that silently stalls after the ancestor search stops
+	// requesting earlier.
+	var (
+		spanRequested bool
+		spanOrigin    uint64
+		spanLast      uint64
+		lastRequest   uint64
+	)
+	tester.peers["peer"].requestHook = func(origin uint64, amount int, skip int, reverse bool) {
+		if !spanRequested {
+			spanRequested = true
+			spanOrigin = origin
+			spanLast = origin + uint64((amount-1)*(skip+1))
+		}
+		lastRequest = origin
+	}
+
+	var origin uint64
+	tester.downloader.syncInitHook = func(from, _ uint64) { origin = from }
+
+	if err := tester.sync("peer", nil, mode); err != nil {
+		t.Fatalf("failed to synchronise blocks: %v", err)
+	}
+	if !spanRequested {
+		t.Fatalf("no numbered header request issued, span search not exercised")
+	}
+	// The span request must top out exactly at the head. The single
+	// exception is the clamped window of calculateRequestSpan: with the
+	// head at 0 or 1 the window is {0, 2} and tops the request out at the
+	// first block past the head (pinned in TestRemoteHeaderRequestSpan);
+	// those headers are served and considered, but rejected by usableAsAncestor's
+	// head guard, so the exception is tied to the head while the request
+	// stays anchored at genesis.
+	wantSpanLast := max(headHeight, 2)
+	if spanLast != wantSpanLast {
+		t.Fatalf("span request tops out at the wrong height: last %d, want %d, head %d", spanLast, wantSpanLast, headHeight)
+	}
+	if spanLast > headHeight && spanOrigin != 0 {
+		t.Fatalf("span request tops out above the head without a below-head anchor: origin %d, head %d", spanOrigin, headHeight)
+	}
+	// Whatever the head height, the sync must anchor at the head itself: the
+	// span hit is refined over the unsampled gap below the next sample, so a
+	// genesis hit with the head at 1 still converges on the head. Pin the
+	// anchor exactly: an ancestor at or below the head is not enough, a
+	// regression re-anchoring lower (e.g. at genesis) must fail as well.
+	if origin != wantOrigin {
+		t.Fatalf("sync resumed at the wrong ancestor: origin %d, want %d (head %d)", origin, wantOrigin, headHeight)
+	}
+	// Anchoring is not enough: the sync must actually reach the remote head.
+	// fetchHeaders terminates with an empty numbered probe at the first
+	// height past the remote head, so a run that silently stalls after the
+	// ancestor search ends its request stream earlier and is caught here.
+	// (CurrentBlock cannot serve this purpose: every header the sync fetches
+	// is already stored by hash, so the simulated chain's head never moves.)
+	if remoteHeight := uint64(chain.len() - 1); lastRequest != remoteHeight+1 {
+		t.Fatalf("sync did not fetch up to the remote head: last numbered request at %d, want %d", lastRequest, remoteHeight+1)
+	}
+}
+
+// TestFindAncestorSpanRejectsAboveHeadCandidate drives the one height where
+// the clamped span window tops the request out at the first block past the
+// head: with the local head at height 1 the peer is asked for
+// block 2 as well, which the test stores by hash the way a side chain segment
+// is written. The span's acceptance window follows the raw request top, so
+// block 2 is served and considered; usableAsAncestor's head guard is what rejects
+// it, and the genesis hit the span still finds is refined over the unsampled
+// gap, so the sync anchors at the head.
+func TestFindAncestorSpanRejectsAboveHeadCandidate(t *testing.T) {
+	t.Parallel()
+	testFindAncestorIgnoresBlocksAboveHead(t, FullSync, 64, 1, 1)
+}
+
+// TestFindAncestorSpanRejectsAboveHeadCandidateFast runs the same clamped
+// window overshoot in fast sync: with the local head at height 1 the span
+// request still tops out at the first block past the head, and that stub carries
+// receipts, so it counts as known. usableAsAncestor's head guard is what rejects
+// it, and the genesis hit the span still finds is refined over the unsampled
+// gap: the sync must anchor at the head instead of resuming above it.
+func TestFindAncestorSpanRejectsAboveHeadCandidateFast(t *testing.T) {
+	t.Parallel()
+	testFindAncestorIgnoresBlocksAboveHead(t, FastSync, 128, 1, 1)
+}
+
+// TestFindAncestorSpanAnchorsAtHeadZero pins the genesis boundary of the span
+// search: with the local head at genesis, the genesis hit is the head itself
+// and must be returned as is. Blocks stored above the head are rejected by
+// usableAsAncestor's head guard, so the sync must neither resume above the head
+// nor search below a hit that is already exact.
+func TestFindAncestorSpanAnchorsAtHeadZero(t *testing.T) {
+	t.Parallel()
+	testFindAncestorIgnoresBlocksAboveHead(t, FullSync, 64, 0, 0)
+}
+
+// TestFindAncestorSpanAnchorsAtHeadTwo pins the first height where the span
+// window {head-2, head} samples the head itself: the hit is exact, and
+// the sync must anchor at the head instead of drifting to a lower sample.
+func TestFindAncestorSpanAnchorsAtHeadTwo(t *testing.T) {
+	t.Parallel()
+	testFindAncestorIgnoresBlocksAboveHead(t, FullSync, 64, 2, 2)
+}
+
+// TestFindAncestorSpanRefinesBelowLowestSample drives the reorg boundary the
+// head-capped span window creates: with the local head sitting on the first
+// block the peer's fork replaces, the window {head-2, head} rejects the head
+// sample and hits its lower sample, while the true common ancestor sits on
+// the unsampled head-1. The span hit must be refined over the unsampled gap,
+// so the sync anchors at head-1 instead of re-importing the head block it
+// already has.
+func TestFindAncestorSpanRefinesBelowLowestSample(t *testing.T) {
+	t.Parallel()
+
+	const (
+		forkPoint  = 10 // first block the peer's chain replaces
+		headHeight = 10 // the local head sits on the replaced block
+		chainLen   = 64
+	)
+
+	tester := newTester()
+	defer tester.terminate()
+
+	// Peer on a heavy fork sharing blocks 0..forkPoint-1 with the base chain
+	// and replacing everything from forkPoint up, so the sync must reorg onto
+	// it from the common ancestor just below the local head.
+	fork := testChainBase.shorten(forkPoint).makeFork(chainLen-forkPoint, true, 7)
+	tester.newPeer("peer", xdc165, fork)
+
+	// Sanity check the span window the call site issues: it samples the local
+	// head (the fork replaced it) and head-2 (still common), leaving the true
+	// ancestor at head-1 unsampled between the two samples. The remote head
+	// is the top of the peer's chain; the function caps the sampling top at
+	// the local head.
+	from, count, skip, max := calculateRequestSpan(uint64(chainLen-1), headHeight)
+	if from != int64(headHeight-2) || count != 2 || skip != 1 || max != headHeight {
+		t.Fatalf("unexpected span window: from %d count %d skip %d max %d", from, count, skip, max)
+	}
+
+	// Import the common prefix plus the first replaced block, so the local
+	// head sits exactly on a block the peer's chain no longer contains.
+	imported := make([]*types.Block, 0, headHeight)
+	for i := uint64(1); i <= headHeight; i++ {
+		imported = append(imported, testChainBase.blockm[testChainBase.chain[i]])
+	}
+	if _, err := tester.InsertChain(imported); err != nil {
+		t.Fatalf("failed to import blocks: %v", err)
+	}
+	if have := tester.CurrentBlock().Number.Uint64(); have != headHeight {
+		t.Fatalf("unexpected head: have %d want %d", have, headHeight)
+	}
+
+	// Record every numbered header request the ancestor search issues: the
+	// span window and the refinement probe must both stay at or below the
+	// head, anything above can never be accepted as the common ancestor.
+	var (
+		searching = true
+		origin    uint64
+		requested []uint64
+	)
+	tester.peers["peer"].requestHook = func(from uint64, amount int, skip int, reverse bool) {
+		if searching {
+			requested = append(requested, from)
+		}
+	}
+	tester.downloader.syncInitHook = func(from, _ uint64) {
+		searching = false
+		origin = from
+	}
+
+	if err := tester.sync("peer", nil, FullSync); err != nil {
+		t.Fatalf("failed to synchronise blocks: %v", err)
+	}
+	if len(requested) < 2 {
+		t.Fatalf("span search was not refined over the unsampled gap: %d request(s)", len(requested))
+	}
+	for i, probe := range requested {
+		if probe > headHeight {
+			t.Fatalf("ancestor search request #%d probes above the head: %d > %d", i, probe, headHeight)
+		}
+	}
+	if origin != forkPoint-1 {
+		t.Fatalf("sync resumed at the wrong ancestor: origin %d want %d", origin, forkPoint-1)
+	}
+	if have := tester.CurrentBlock().Number.Uint64(); have != uint64(chainLen-1) {
+		t.Fatalf("unexpected head after sync: have %d want %d", have, chainLen-1)
+	}
+}
+
+// TestFindAncestorSpanRemoteAtGenesis pins the remote-head clamp of the gap
+// refinement: a peer whose head is the genesis block can only reach the sync
+// through a direct Synchronise call (the sync entry gate requires a TD
+// advantage), yet it exercises a real boundary of the ancestor search. Its
+// clamped span window {0, 2} hits at genesis and refines to the interval
+// [0, 1]; the refinement must stop at the peer's head instead of probing
+// past it, because an empty reply to a probe above the head fails the whole
+// sync rather than just burning a round trip.
+func TestFindAncestorSpanRemoteAtGenesis(t *testing.T) {
+	t.Parallel()
+
+	tester := newTester()
+	defer tester.terminate()
+
+	// Peer holding nothing but the genesis block, sharing it with the base
+	// chain the local chain extends.
+	peerChain := testChainBase.shorten(1)
+	tester.newPeer("peer", xdc165, peerChain)
+
+	// Advance the local chain one block past the peer's head.
+	imported := []*types.Block{testChainBase.blockm[testChainBase.chain[1]]}
+	if _, err := tester.InsertChain(imported); err != nil {
+		t.Fatalf("failed to import blocks: %v", err)
+	}
+	if have := tester.CurrentBlock().Number.Uint64(); have != 1 {
+		t.Fatalf("unexpected head: have %d want 1", have)
+	}
+
+	// Record every numbered header request the ancestor search issues: the
+	// span request at genesis is fine, but a second one could only be a
+	// binary-search probe above the peer's head, which the peer cannot
+	// serve and which fails the sync outright.
+	var (
+		searching = true
+		origin    uint64
+		requested []uint64
+	)
+	tester.peers["peer"].requestHook = func(from uint64, amount int, skip int, reverse bool) {
+		if searching {
+			requested = append(requested, from)
+		}
+	}
+	tester.downloader.syncInitHook = func(from, _ uint64) {
+		searching = false
+		origin = from
+	}
+
+	if err := tester.sync("peer", nil, FullSync); err != nil {
+		t.Fatalf("failed to synchronise blocks: %v", err)
+	}
+	// The genesis span hit must refine to [0, 1] without a single probe
+	// past the peer's head: one request, then straight to the sync with
+	// the genesis anchor.
+	if len(requested) != 1 || requested[0] != 0 {
+		t.Fatalf("ancestor search probed past the genesis peer: requests %v", requested)
+	}
+	if origin != 0 {
+		t.Fatalf("sync resumed at the wrong ancestor: origin %d want 0", origin)
+	}
+}
+
+// TestFindAncestorBinarySearchIgnoresBlocksAboveHead checks the same guarantee
+// as TestFindAncestorIgnoresBlocksAboveHead, but through the binary search.
+// The request span samples only at or below the local head, so with a peer
+// whose chain forks below the sampled range the span search finds nothing and
+// the binary search takes over: capped at the local head, it must stop at the
+// true common ancestor instead of a side chain block stored ahead of the head.
+// The search is also required to never request a height above the head: such
+// a probe can never be accepted as the common ancestor and would only burn a
+// round trip on every rejected candidate before converging on the same one.
+func TestFindAncestorBinarySearchIgnoresBlocksAboveHead(t *testing.T) {
+	t.Parallel()
+
+	const (
+		forkPoint  = 35 // first block the peer's chain replaces
+		headHeight = 37
+		chainLen   = 64
+	)
+
+	tester := newTester()
+	defer tester.terminate()
+
+	// Peer on a heavy fork sharing blocks 0..forkPoint-1 with the base chain
+	// and replacing everything from forkPoint up, so the sync can reorg onto it.
+	fork := testChainBase.shorten(forkPoint).makeFork(chainLen-forkPoint, true, 7)
+	tester.newPeer("peer", xdc165, fork)
+
+	// Sanity check the request span: the call site samples only at or below
+	// the head, and every sample must be replaced by the fork, otherwise
+	// the span search would resolve the ancestor itself. The remote head is
+	// the top of the peer's chain; the function caps the sampling top at
+	// the local head.
+	from, count, skip, max := calculateRequestSpan(uint64(chainLen-1), headHeight)
+	if max != headHeight {
+		t.Fatalf("span search samples above the head: max %d want %d", max, headHeight)
+	}
+	for i := 0; i < count; i++ {
+		num := int(from) + i*(skip+1)
+		if num < 0 || num > int(headHeight) {
+			t.Fatalf("span sample #%d out of the head-capped range: %d", i, num)
+		}
+		if fork.blockm[fork.chain[num]].Hash() == testChainBase.blockm[testChainBase.chain[num]].Hash() {
+			t.Fatalf("span sample #%d is common to both chains, binary search not exercised", num)
+		}
+	}
+
+	// Import the common prefix up to the head, then store the rest of the base
+	// chain by hash without state, the way a side chain segment is written.
+	imported := make([]*types.Block, 0, headHeight)
+	for i := uint64(1); i <= headHeight; i++ {
+		imported = append(imported, testChainBase.blockm[testChainBase.chain[i]])
+	}
+	if _, err := tester.InsertChain(imported); err != nil {
+		t.Fatalf("failed to import blocks: %v", err)
+	}
+	for i := uint64(headHeight + 1); i < uint64(chainLen); i++ {
+		if err := tester.writeBlockWithoutState(testChainBase.blockm[testChainBase.chain[i]]); err != nil {
+			t.Fatalf("failed to write block without state: %v", err)
+		}
+	}
+	if have := tester.CurrentBlock().Number.Uint64(); have != headHeight {
+		t.Fatalf("unexpected head: have %d want %d", have, headHeight)
+	}
+
+	// Record every numbered header request issued while the ancestor search
+	// runs, that is everything before the post-search init hook fires: the
+	// span search samples only at or below the head and the binary search
+	// probes below it, so any request above the head means one of the caps
+	// regressed. Recording stops at the hook because the header fetch phase
+	// that follows legitimately reaches above the head.
+	var (
+		searching = true
+		origin    uint64
+		requested []uint64
+	)
+	tester.peers["peer"].requestHook = func(from uint64, amount int, skip int, reverse bool) {
+		if searching {
+			requested = append(requested, from)
+		}
+	}
+	tester.downloader.syncInitHook = func(from, _ uint64) {
+		searching = false
+		origin = from
+	}
+
+	if err := tester.sync("peer", nil, FullSync); err != nil {
+		t.Fatalf("failed to synchronise blocks: %v", err)
+	}
+	if len(requested) < 2 {
+		t.Fatalf("span search resolved the ancestor, binary search not exercised: %d request(s)", len(requested))
+	}
+	for i, probe := range requested {
+		if probe > headHeight {
+			t.Fatalf("ancestor search request #%d probes above the head: %d > %d", i, probe, headHeight)
+		}
+	}
+	if origin != forkPoint-1 {
+		t.Fatalf("sync resumed at the wrong ancestor: origin %d want %d", origin, forkPoint-1)
+	}
+	if have := tester.CurrentBlock().Number.Uint64(); have != uint64(chainLen-1) {
+		t.Fatalf("unexpected head after sync: have %d want %d", have, chainLen-1)
+	}
+}
+
+// TestWriteBlockWithoutStateRequiresImportedParent asserts that the helper
+// reports an unimported parent instead of silently depending on call order
+// and dereferencing a missing total difficulty.
+func TestWriteBlockWithoutStateRequiresImportedParent(t *testing.T) {
+	t.Parallel()
+
+	tester := newTester()
+	defer tester.terminate()
+
+	chain := testChainBase.shorten(3)
+	// Block at height 2 has an unimported parent, as only the genesis is
+	// known to the simulated chain.
+	block := chain.blockm[chain.chain[2]]
+	if err := tester.writeBlockWithoutState(block); err == nil {
+		t.Fatalf("writeBlockWithoutState accepted block %s with unimported parent %s", block.Hash(), block.ParentHash())
+	}
+	if _, ok := tester.ownChainTd[block.Hash()]; ok {
+		t.Fatalf("writeBlockWithoutState recorded a total difficulty for block %s despite the unimported parent", block.Hash())
+	}
+}
+
+// TestWriteBlockWithoutStateDoesNotAdvanceHeads pins the side chain semantics
+// of the helper: a block stored by hash without state is known to the chain
+// but never enters the canonical hash chain, so the head getters keep
+// reporting the imported head. CurrentSnapBlock in particular feeds the local
+// height findAncestor derives in fast sync; letting stubs raise it would mask
+// a sync that resumes above the head.
+func TestWriteBlockWithoutStateDoesNotAdvanceHeads(t *testing.T) {
+	t.Parallel()
+
+	tester := newTester()
+	defer tester.terminate()
+
+	const headHeight = uint64(4)
+	chain := testChainBase.shorten(int(headHeight) + 4)
+
+	imported := make([]*types.Block, 0, headHeight)
+	for i := uint64(1); i <= headHeight; i++ {
+		imported = append(imported, chain.blockm[chain.chain[i]])
+	}
+	if _, err := tester.InsertChain(imported); err != nil {
+		t.Fatalf("failed to import blocks: %v", err)
+	}
+	for i := headHeight + 1; i < uint64(chain.len()); i++ {
+		if err := tester.writeBlockWithoutState(chain.blockm[chain.chain[i]]); err != nil {
+			t.Fatalf("failed to write block without state: %v", err)
+		}
+	}
+
+	heads := []struct {
+		name string
+		have uint64
+	}{
+		{"CurrentHeader", tester.CurrentHeader().Number.Uint64()},
+		{"CurrentBlock", tester.CurrentBlock().Number.Uint64()},
+		{"CurrentSnapBlock", tester.CurrentSnapBlock().Number.Uint64()},
+	}
+	for _, head := range heads {
+		if head.have != headHeight {
+			t.Errorf("%s reports %d, want the imported head %d", head.name, head.have, headHeight)
+		}
+	}
+}
+
+// TestUsableAsAncestorBoundaries checks the head-height guard of usableAsAncestor in
+// every sync mode: a block at the local head is an acceptable ancestor, while
+// a block one above the head is rejected even when it is known by hash. Side
+// chain blocks are written by hash without state, so knowledge above the head
+// is exactly what used to let the sync resume above itself. The span search
+// caps its acceptance window below the head, so this white-box pin is the
+// guard's only coverage; the end-to-end tests exercise the cap instead.
+func TestUsableAsAncestorBoundaries(t *testing.T) {
+	t.Parallel()
+
+	tester := newTester()
+	defer tester.terminate()
+
+	const headHeight = 4
+	chain := testChainBase.shorten(headHeight + 2)
+
+	imported := make([]*types.Block, 0, headHeight)
+	for i := 1; i <= headHeight; i++ {
+		imported = append(imported, chain.blockm[chain.chain[i]])
+	}
+	if _, err := tester.InsertChain(imported); err != nil {
+		t.Fatalf("failed to import blocks: %v", err)
+	}
+	above := chain.blockm[chain.chain[headHeight+1]]
+	if err := tester.writeBlockWithoutState(above); err != nil {
+		t.Fatalf("failed to write block without state: %v", err)
+	}
+
+	// The fake chain reports fast-sync knowledge through receipts, so give the
+	// head and the above-head block receipts the way a fast-synced segment
+	// would have them. This makes the above-head block known in every mode, so
+	// only the height guard can reject it.
+	receiptBlocks := make(types.Blocks, 0, headHeight+1)
+	receiptBlocks = append(receiptBlocks, imported...)
+	receiptBlocks = append(receiptBlocks, above)
+	receipts := make([]types.Receipts, 0, headHeight+1)
+	for i := 0; i <= headHeight; i++ {
+		receipts = append(receipts, types.Receipts{})
+	}
+	if _, err := tester.InsertReceiptChain(receiptBlocks, receipts); err != nil {
+		t.Fatalf("failed to insert receipts: %v", err)
+	}
+	if have := tester.CurrentBlock().Number.Uint64(); have != headHeight {
+		t.Fatalf("unexpected head: have %d want %d", have, headHeight)
+	}
+
+	downloader := tester.downloader
+	head := chain.blockm[chain.chain[headHeight]]
+	for _, mode := range []SyncMode{FullSync, FastSync, LightSync} {
+		if !downloader.usableAsAncestor(mode, head.Hash(), headHeight, headHeight) {
+			t.Errorf("mode %s: block at the head rejected as ancestor", mode)
+		}
+		if downloader.usableAsAncestor(mode, above.Hash(), headHeight+1, headHeight) {
+			t.Errorf("mode %s: block above the head accepted as ancestor", mode)
+		}
+	}
 }
 
 // Tests that if a large batch of blocks are being downloaded, it is throttled
@@ -1761,43 +2357,68 @@ func (ftp *floodingTestPeer) RequestHeadersByNumber(from uint64, count, skip int
 	return nil
 }
 
-// TestRemoteHeaderRequestSpan tests remote header request span.
+// TestRemoteHeaderRequestSpan tests the header request span calculated from
+// the remote head height and the local head, the exact pair of heights
+// findAncestor passes, so the table pins the wire requests the call site can
+// really issue, with the sampling top derived one below the remote head and
+// capped at the local head.
 func TestRemoteHeaderRequestSpan(t *testing.T) {
 	testCases := []struct {
 		remoteHeight uint64
 		localHeight  uint64
-		expected     []int
+		samples      []int
+		max          uint64
 	}{
-		// Remote is way higher. We should ask for the remote head and go backwards
-		{1500, 1000,
-			[]int{1323, 1339, 1355, 1371, 1387, 1403, 1419, 1435, 1451, 1467, 1483, 1499},
-		},
-		{15000, 13006,
-			[]int{14823, 14839, 14855, 14871, 14887, 14903, 14919, 14935, 14951, 14967, 14983, 14999},
-		},
+		// The remote head height is the exact first argument findAncestor
+		// passes, so every row is a call-site reachable input. The sampling
+		// top is derived one block below it and capped at the local head
+		// inside the function.
+		// Remote is way higher: the cap pulls the request down to the two
+		// blocks just below the local head.
+		{remoteHeight: 1500, localHeight: 1000, samples: []int{998, 1000}, max: 1000},
+		{remoteHeight: 15000, localHeight: 13006, samples: []int{13004, 13006}, max: 13006},
 		//Remote is pretty close to us. We don't have to fetch as many
-		{1200, 1150,
-			[]int{1149, 1154, 1159, 1164, 1169, 1174, 1179, 1184, 1189, 1194, 1199},
-		},
+		{remoteHeight: 1200, localHeight: 1150, samples: []int{1148, 1150}, max: 1150},
 		// Remote is equal to us (so on a fork with higher td)
 		// We should get the closest couple of ancestors
-		{1500, 1500,
-			[]int{1497, 1499},
-		},
+		{remoteHeight: 1500, localHeight: 1500, samples: []int{1497, 1499}, max: 1499},
 		// We're higher than the remote! Odd
-		{1000, 1500,
-			[]int{997, 999},
-		},
-		// Check some weird edgecases that it behaves somewhat rationally
-		{0, 1500,
-			[]int{0, 2},
-		},
-		{6000000, 0,
-			[]int{5999823, 5999839, 5999855, 5999871, 5999887, 5999903, 5999919, 5999935, 5999951, 5999967, 5999983, 5999999},
-		},
-		{0, 0,
-			[]int{0, 2},
-		},
+		{remoteHeight: 1000, localHeight: 1500, samples: []int{997, 999}, max: 999},
+		// Check some weird edgecases that it behaves somewhat rationally. When
+		// the raw start is negative it is clamped up to zero while the count is
+		// kept, so the wire request can top out past the sampling top and max
+		// follows the raw window; candidates above the local head are rejected
+		// by usableAsAncestor, not by the window.
+		{remoteHeight: 1, localHeight: 1500, samples: []int{0, 2}, max: 2},
+		// The cap pulls the sampling top all the way down to the genesis head.
+		{remoteHeight: 6000000, localHeight: 0, samples: []int{0, 2}, max: 2},
+		// A remote at genesis skips the below-head decrement and derives the
+		// same clamped window.
+		{remoteHeight: 0, localHeight: 0, samples: []int{0, 2}, max: 2},
+		// The clamped window: with the remote head at 2 the sampling top
+		// lands on 1, so the raw start is negative, 'from' pins to zero and
+		// the kept count tops the window out one block past the sampling
+		// top. max follows the raw window in that case; anything above the
+		// local head is rejected by usableAsAncestor, not by the window. Note the
+		// head-at-1 entry: the clamped window cannot sample the head itself,
+		// so findAncestor recovers it by refining the genesis hit over the
+		// unsampled gap (TestFindAncestorSpanRejectsAboveHeadCandidate).
+		{remoteHeight: 2, localHeight: 1, samples: []int{0, 2}, max: 2},
+		// The local head itself is a legitimate ancestor sample even when
+		// the sampling top sits below it (here the top is head-1, as whenever
+		// the remote is at the local height): the raw start is negative, and
+		// keeping the count after clamping 'from' to zero is what tops the
+		// window out at the head. Anything above the head is still rejected
+		// by usableAsAncestor, not by the window.
+		{remoteHeight: 2, localHeight: 2, samples: []int{0, 2}, max: 2},
+		// With the remote exactly one block ahead the sampling top lands on
+		// the head without the cap being involved: 'from' stays non-negative
+		// and the window tops out at the head itself, so the head is a
+		// direct sample.
+		{remoteHeight: 3, localHeight: 2, samples: []int{0, 2}, max: 2},
+		// The cap fires with room to spare: the top pins to the head with
+		// 'from' landing exactly at zero, unclamped.
+		{remoteHeight: 4, localHeight: 2, samples: []int{0, 2}, max: 2},
 	}
 	reqs := func(from, count, span int) []int {
 		var r []int
@@ -1812,16 +2433,19 @@ func TestRemoteHeaderRequestSpan(t *testing.T) {
 		from, count, span, max := calculateRequestSpan(tt.remoteHeight, tt.localHeight)
 		data := reqs(int(from), count, span)
 
-		if max != uint64(data[len(data)-1]) {
-			t.Errorf("test %d: wrong last value %d != %d", i, data[len(data)-1], max)
+		// Cross-check the returned max against the request window itself:
+		// max must stay in lockstep with from/count/skip, since findAncestor
+		// uses it to accept or discard the served headers.
+		if max != tt.max || max != uint64(data[len(data)-1]) {
+			t.Errorf("test %d: wrong max %d != %d, last sample %d", i, max, tt.max, data[len(data)-1])
 		}
 		failed := false
-		if len(data) != len(tt.expected) {
+		if len(data) != len(tt.samples) {
 			failed = true
-			t.Errorf("test %d: length wrong, expected %d got %d", i, len(tt.expected), len(data))
+			t.Errorf("test %d: length wrong, expected %d got %d", i, len(tt.samples), len(data))
 		} else {
 			for j, n := range data {
-				if n != tt.expected[j] {
+				if n != tt.samples[j] {
 					failed = true
 					break
 				}
@@ -1829,7 +2453,7 @@ func TestRemoteHeaderRequestSpan(t *testing.T) {
 		}
 		if failed {
 			res := strings.Replace(fmt.Sprint(data), " ", ",", -1)
-			exp := strings.Replace(fmt.Sprint(tt.expected), " ", ",", -1)
+			exp := strings.Replace(fmt.Sprint(tt.samples), " ", ",", -1)
 			fmt.Printf("got: %v\n", res)
 			fmt.Printf("exp: %v\n", exp)
 			t.Errorf("test %d: wrong values", i)
