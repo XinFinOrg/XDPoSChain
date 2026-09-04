@@ -1806,19 +1806,24 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 	block, err := it.next()
 	switch {
 	// First block is pruned, insert as sidechain and reorg only if TD grows enough
-	case err == consensus.ErrPrunedAncestor:
+	case errors.Is(err, consensus.ErrPrunedAncestor):
 		return bc.insertSidechain(block, it)
 
 	// First block is future, shove it (and all children) to the future queue (unknown ancestor)
-	case err == consensus.ErrFutureBlock || (err == consensus.ErrUnknownAncestor && bc.futureBlocks.Contains(it.first().ParentHash())):
-		for block != nil && (it.index == 0 || err == consensus.ErrUnknownAncestor) {
-			if err := bc.addFutureBlock(block); err != nil {
-				return it.index, events, coalescedLogs, err
-			}
-			block, err = it.next()
-		}
-		stats.queued += it.processed()
+	case errors.Is(err, consensus.ErrFutureBlock) || (errors.Is(err, consensus.ErrUnknownAncestor) && bc.futureBlocks.Contains(it.first().ParentHash())):
+		windowErr := bc.queueFutureTail(it, &block, &err, &stats)
 		stats.ignored += it.remaining()
+		if windowErr != nil {
+			log.Warn("Future block beyond queue window", "number", block.NumberU64(), "err", windowErr)
+			return it.index, events, coalescedLogs, windowErr
+		}
+
+		// A genuine verification error after the queued prefix must surface and
+		// be recorded like the tail path does; benign errors are legitimate
+		// chain states, not invalid ones.
+		if err != nil && !isBenignImportError(err) {
+			bc.recordImportFailure(block, err)
+		}
 
 		// If there are any still remaining, mark as ignored
 		return it.index, events, coalescedLogs, err
@@ -1827,11 +1832,11 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 	//   1. We did a roll-back, and should now do a re-import
 	//   2. The block is stored as a sidechain, and is lying about it's stateroot, and passes a stateroot
 	// 	    from the canonical chain, which has not been verified.
-	case err == ErrKnownBlock:
+	case errors.Is(err, ErrKnownBlock):
 		// Skip all known blocks that behind us
 		current := bc.CurrentBlock().Number.Uint64()
 
-		for block != nil && err == ErrKnownBlock && current >= block.NumberU64() {
+		for block != nil && errors.Is(err, ErrKnownBlock) && current >= block.NumberU64() {
 			stats.ignored++
 			block, err = it.next()
 		}
@@ -1840,7 +1845,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 	// Some other error occurred, abort
 	case err != nil:
 		stats.ignored += len(it.chain)
-		bc.reportBlock(block, nil, err)
+		bc.recordImportFailure(block, err)
 		return it.index, events, coalescedLogs, err
 	}
 
@@ -1934,18 +1939,22 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 	}
 
 	// Any blocks remaining here? The only ones we care about are the future ones
-	if block != nil && err == consensus.ErrFutureBlock {
-		if err := bc.addFutureBlock(block); err != nil {
-			return it.index, events, coalescedLogs, err
+	var importErr error
+	if block != nil && errors.Is(err, consensus.ErrFutureBlock) {
+		if windowErr := bc.queueFutureTail(it, &block, &err, &stats); windowErr != nil {
+			log.Warn("Future block beyond queue window", "number", block.NumberU64(), "err", windowErr)
+			importErr = windowErr
 		}
-		block, err = it.next()
+	}
 
-		for ; block != nil && err == consensus.ErrUnknownAncestor; block, err = it.next() {
-			if err := bc.addFutureBlock(block); err != nil {
-				return it.index, events, coalescedLogs, err
-			}
-			stats.queued++
-		}
+	// A genuine verification error must surface and be recorded, whether the
+	// batch failed directly after the processed prefix or after the queued
+	// future tail. Benign errors are legitimate chain states, not invalid
+	// ones. Falling through to the unified exit keeps the ChainHeadEvent for
+	// any canonical progress made before the failure.
+	if importErr == nil && block != nil && err != nil && !isBenignImportError(err) {
+		bc.recordImportFailure(block, err)
+		importErr = err
 	}
 	stats.ignored += it.remaining()
 
@@ -1954,7 +1963,102 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		log.Debug("New ChainHeadEvent ", "number", lastCanon.NumberU64(), "hash", lastCanon.Hash())
 		events = append(events, ChainHeadEvent{lastCanon})
 	}
-	return it.index, events, coalescedLogs, nil
+	return it.index, events, coalescedLogs, importErr
+}
+
+// isBenignImportError reports whether the error describes a legitimate chain
+// state rather than an invalid block: future, pruned, unknown-ancestor and
+// known blocks are transient delivery conditions, not verification failures.
+// Both import paths (the first-block switch and the unified exit) must exempt
+// the same set, so the predicate is defined exactly once.
+func isBenignImportError(err error) bool {
+	return errors.Is(err, consensus.ErrFutureBlock) ||
+		errors.Is(err, consensus.ErrPrunedAncestor) ||
+		errors.Is(err, consensus.ErrUnknownAncestor) ||
+		errors.Is(err, ErrKnownBlock)
+}
+
+// queueFutureTail queues the block at the current iterator position and its
+// descendants for later processing, counting every queued block in stats.
+//
+// The timestamp check precedes the parent lookup, so children of a future
+// block also surface as ErrFutureBlock; an ErrUnknownAncestor child of an
+// already queued block is queueable too. It stops and returns the error when
+// a block lies beyond the maxTimeFutureBlocks window, leaving block and err
+// pointing at it, and likewise at the first verification error that is
+// neither a future nor an unknown-ancestor rejection.
+func (bc *BlockChain) queueFutureTail(it *insertIterator, block **types.Block, err *error, stats *insertStats) error {
+	for *block != nil && (it.index == 0 || errors.Is(*err, consensus.ErrUnknownAncestor) || errors.Is(*err, consensus.ErrFutureBlock)) {
+		if addErr := bc.addFutureBlock(*block); addErr != nil {
+			return addErr
+		}
+		stats.queued++
+		*block, *err = it.next()
+	}
+	return nil
+}
+
+// Only deterministic consensus violations are recorded as bad blocks;
+// verification errors that depend on local state must stay out.
+var consensusViolations = []error{
+	consensus.ErrInvalidNumber,
+	consensus.ErrFailValidatorSignature,
+	consensus.ErrNoValidatorSignature,
+	consensus.ErrNoValidatorSignatureV2,
+	consensus.ErrCoinbaseMismatch,
+	utils.ErrUnknownBlock,
+	utils.ErrInvalidCheckpointBeneficiary,
+	utils.ErrInvalidVote,
+	utils.ErrInvalidCheckpointVote,
+	utils.ErrMissingVanity,
+	utils.ErrMissingSignature,
+	utils.ErrExtraSigners,
+	utils.ErrInvalidCheckpointSigners,
+	utils.ErrInvalidCheckpointPenalties,
+	utils.ErrInvalidMixDigest,
+	utils.ErrInvalidUncleHash,
+	utils.ErrInvalidDifficulty,
+	utils.ErrInvalidTimestamp,
+	utils.ErrInvalidVotingChain,
+	utils.ErrUnauthorized,
+	utils.ErrFailedDoubleValidation,
+	utils.ErrInvalidCheckpointValidators,
+	utils.ErrValidatorsNotLegit,
+	utils.ErrPenaltiesNotLegit,
+	utils.ErrEmptyEpochSwitchValidators,
+	utils.ErrInvalidV2Extra,
+	utils.ErrInvalidQuorumCert,
+	utils.ErrInvalidQC,
+	utils.ErrInvalidQCSignatures,
+	utils.ErrInvalidTC,
+	utils.ErrInvalidTCSignatures,
+	utils.ErrInvalidSignature,
+	utils.ErrInvalidFieldInNonEpochSwitch,
+	utils.ErrValidatorNotWithinMasternodes,
+	utils.ErrCoinbaseAndValidatorMismatch,
+	utils.ErrNotItsTurn,
+	utils.ErrRoundInvalid,
+	ErrDenylistedHash,
+}
+
+func isConsensusViolation(err error) bool {
+	for _, sentinel := range consensusViolations {
+		if errors.Is(err, sentinel) {
+			return true
+		}
+	}
+	return false
+}
+
+// recordImportFailure keeps the bad-block table for deterministic consensus
+// violations only; state-dependent verification errors are logged and left
+// to the caller to surface.
+func (bc *BlockChain) recordImportFailure(block *types.Block, err error) {
+	if isConsensusViolation(err) {
+		bc.reportBlock(block, nil, err)
+		return
+	}
+	log.Warn("Block import failed without consensus violation", "number", block.NumberU64(), "hash", block.Hash(), "err", err)
 }
 
 // blockProcessingResult is a summary of block processing

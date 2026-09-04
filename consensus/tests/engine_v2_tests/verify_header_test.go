@@ -687,3 +687,57 @@ func TestVerifyHeadersDoesNotFabricateBatchBlocksForHookPenalty(t *testing.T) {
 		}
 	}
 }
+
+// TestConsecutiveFutureBlocksReturnErrFutureBlock proves with the real v2
+// engine that the timestamp check precedes the parent lookup: a batch of
+// consecutive future blocks surfaces as ErrFutureBlock for every header —
+// the child even though its retimestamped parent is unknown to the database —
+// instead of ErrUnknownAncestor. core's insertChain relies on this ordering
+// to queue the whole future tail delivered by a peer instead of failing the
+// import.
+func TestConsecutiveFutureBlocksReturnErrFutureBlock(t *testing.T) {
+	skipLongInShortMode(t)
+	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
+	assert.Nil(t, err)
+
+	var config params.ChainConfig
+	err = json.Unmarshal(b, &config)
+	assert.Nil(t, err)
+
+	// Head is the first v2 block (901); build its two children (902, 903).
+	blockchain, _, block901, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 901, &config, nil)
+	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
+
+	roundNumber902 := int64(902) - config.XDPoS.V2.SwitchBlock.Int64()
+	block902 := CreateBlock(blockchain, blockchain.Config(), block901, 902, roundNumber902, signer.Hex(), signer, signFn, nil, nil, "")
+	roundNumber903 := int64(903) - config.XDPoS.V2.SwitchBlock.Int64()
+	block903 := CreateBlock(blockchain, blockchain.Config(), block902, 903, roundNumber903, signer.Hex(), signer, signFn, nil, nil, "")
+
+	// Retimestamp both inside the future-block queue window and relink the
+	// child to the retimestamped parent, whose hash is unknown to the
+	// database, so a parent lookup would return ErrUnknownAncestor.
+	now := uint64(time.Now().Unix())
+	futureParent := block902.Header()
+	futureParent.Time = now + 5
+
+	futureChild := block903.Header()
+	futureChild.Time = now + 15
+	futureChild.ParentHash = futureParent.Hash()
+
+	// Single-header path: the ordering proof.
+	err = adaptor.VerifyHeader(blockchain, futureParent, true)
+	assert.Equal(t, consensus.ErrFutureBlock, err)
+	err = adaptor.VerifyHeader(blockchain, futureChild, true)
+	assert.Equal(t, consensus.ErrFutureBlock, err)
+
+	// End-to-end through core's InsertChain: the consecutive future batch is
+	// queued for later processing instead of failing the import, and nothing
+	// is written to the chain yet.
+	n, err := blockchain.InsertChain([]*types.Block{
+		types.NewBlockWithHeader(futureParent),
+		types.NewBlockWithHeader(futureChild),
+	})
+	assert.Nil(t, err)
+	assert.Equal(t, 2, n)
+	assert.Nil(t, blockchain.GetHeaderByNumber(902))
+}
