@@ -27,10 +27,10 @@ import (
 
 // insertStats tracks and reports on block insertion.
 type insertStats struct {
-	queued, processed, ignored int
-	usedGas                    uint64
-	lastIndex                  int
-	startTime                  mclock.AbsTime
+	processed, ignored int
+	usedGas            uint64
+	lastIndex          int
+	startTime          mclock.AbsTime
 }
 
 // statsReportLimit is the time limit during import and export after which we
@@ -65,9 +65,6 @@ func (st *insertStats) report(chain []*types.Block, index int, cache common.Stor
 		}
 		context = append(context, []interface{}{"dirty", cache}...)
 
-		if st.queued > 0 {
-			context = append(context, []interface{}{"queued", st.queued}...)
-		}
 		if st.ignored > 0 {
 			context = append(context, []interface{}{"ignored", st.ignored}...)
 		}
@@ -153,14 +150,4 @@ func (it *insertIterator) previous() *types.Header {
 // first returns the first block in the it.
 func (it *insertIterator) first() *types.Block {
 	return it.chain[0]
-}
-
-// remaining returns the number of remaining blocks.
-func (it *insertIterator) remaining() int {
-	return len(it.chain) - it.index
-}
-
-// processed returns the number of processed blocks.
-func (it *insertIterator) processed() int {
-	return it.index + 1
 }
