@@ -687,3 +687,81 @@ func TestVerifyHeadersDoesNotFabricateBatchBlocksForHookPenalty(t *testing.T) {
 		}
 	}
 }
+
+// TestFutureTimestampCheckPrecedesParentLookup pins the engine premise that the
+// insertChain future-batch handling relies on: the timestamp check runs before
+// the parent lookup, so a header whose parent is in the same batch and whose
+// timestamp is in the future surfaces as ErrFutureBlock, never as
+// ErrUnknownAncestor. If the checks are ever reordered, children of a future
+// block stop being classified as future blocks and insertChain treats a valid
+// delivery as an invalid chain, which makes the downloader drop the peer.
+func TestFutureTimestampCheckPrecedesParentLookup(t *testing.T) {
+	skipLongInShortMode(t)
+	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
+	assert.Nil(t, err)
+	configString := string(b)
+
+	var config params.ChainConfig
+	err = json.Unmarshal([]byte(configString), &config)
+	assert.Nil(t, err)
+	// Block 901 is the first v2 block with round of 1
+	blockchain, _, block910, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 910, &config, nil)
+	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
+
+	// Build blocks 911 and 912 in memory only; neither is written into the DB.
+	block911 := CreateBlock(
+		blockchain,
+		blockchain.Config(),
+		block910,
+		911,
+		int64(911)-config.XDPoS.V2.SwitchBlock.Int64(),
+		signer.Hex(),
+		signer,
+		signFn,
+		nil,
+		nil,
+		"",
+	)
+	block912 := CreateBlock(
+		blockchain,
+		blockchain.Config(),
+		block911,
+		912,
+		int64(912)-config.XDPoS.V2.SwitchBlock.Int64(),
+		signer.Hex(),
+		signer,
+		signFn,
+		nil,
+		nil,
+		"",
+	)
+
+	// Re-timestamp 912 into the future. The hash changes so the QC no longer
+	// matches, which is fine: the timestamp check also precedes QC verification.
+	futureHeader := block912.Header()
+	futureHeader.Time = uint64(time.Now().Unix() + 10000)
+
+	// Batch path: the parent (911) is in the same batch, so the parent lookup
+	// can always succeed and must not mask the future classification.
+	headers := []*types.Header{block911.Header(), futureHeader}
+	fullVerifies := []bool{true, true}
+	_, results := adaptor.VerifyHeaders(blockchain, headers, fullVerifies)
+	for i := 0; i < len(headers); i++ {
+		select {
+		case result := <-results:
+			if i == 0 {
+				assert.Nil(t, result)
+				continue
+			}
+			assert.Equal(t, consensus.ErrFutureBlock, result)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for verify result %d", i)
+		}
+	}
+
+	// Single-header path: the parent (911) is neither in a batch nor in the DB,
+	// so an engine that checks the parent before the timestamp would answer
+	// ErrUnknownAncestor here instead of ErrFutureBlock.
+	err = adaptor.VerifyHeader(blockchain, futureHeader, true)
+	assert.Equal(t, consensus.ErrFutureBlock, err)
+}
