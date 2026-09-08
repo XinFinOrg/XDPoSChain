@@ -697,7 +697,9 @@ func (hc *HeaderChain) Config() *params.ChainConfig { return hc.config }
 func (hc *HeaderChain) Engine() consensus.Engine { return hc.engine }
 
 // GetBlock implements consensus.ChainReader, and returns nil for every input as
-// a header chain does not have blocks available for retrieval.
+// a header chain does not have blocks available for retrieval. The chain
+// deliberately does not implement consensus.BlockStorer either, so the
+// proposed-block judgment fails as SkipUnjudgeable rather than "not stored".
 func (hc *HeaderChain) GetBlock(hash common.Hash, number uint64) *types.Block {
 	return nil
 }

@@ -282,6 +282,13 @@ type BlockChain struct {
 	blocksHashCache *lru.Cache[uint64, []common.Hash]
 }
 
+// The full chain must answer both halves of the proposed-block judgment; this
+// check keeps the storage half from silently dropping off the type.
+var _ interface {
+	consensus.CanonicalChain
+	consensus.BlockStorer
+} = (*BlockChain)(nil)
+
 type blockchainOpenConfig struct {
 	readOnly        bool
 	chainConfig     *params.ChainConfig
@@ -1230,6 +1237,20 @@ func (bc *BlockChain) HasExecutedBlock(hash common.Hash, number uint64) bool {
 		return false
 	}
 	return bc.HasBlockAndFullState(hash, number)
+}
+
+// HasBlockAndExecutedState checks that the block is known and its state trie
+// opens. Unlike HasBlockAndFullState it leaves out the XDCX trading and lending
+// halves: a missing auxiliary state piece must not become a permanent voting
+// halt. Unlike HasExecutedBlock it does not ask for the execution marker, so a
+// state this node synced rather than ran still passes.
+func (bc *BlockChain) HasBlockAndExecutedState(hash common.Hash, number uint64) bool {
+	block := bc.GetBlock(hash, number)
+	if block == nil {
+		return false
+	}
+	_, err := bc.stateCache.OpenTrie(block.Root())
+	return err == nil
 }
 
 // AreTwoBlockSamePath check if two blocks are same path

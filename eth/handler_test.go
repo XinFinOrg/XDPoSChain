@@ -20,7 +20,9 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,7 +35,9 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/eth/ethconfig"
 	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
+	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
+	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -588,4 +592,184 @@ func TestRegisterDownloaderPeerUndoesRacedRemoval(t *testing.T) {
 		t.Fatalf("reconnect blocked by stale downloader entry: %v", err)
 	}
 	pm.downloader.UnregisterPeer(p.ID())
+}
+
+// newTestProposedBlockHandler builds an ethash handler, whose chain has no
+// consensus engine, so newHandler wires the no-op callback.
+func newTestProposedBlockHandler(t *testing.T, mode downloader.SyncMode) (*handler, ethdb.Database) {
+	t.Helper()
+	var (
+		evmux  = new(event.TypeMux)
+		pow    = ethash.NewFaker()
+		db     = rawdb.NewMemoryDatabase()
+		config = params.TestChainConfig.Clone()
+		gspec  = &core.Genesis{Config: config}
+	)
+	gspec.MustCommit(db)
+	blockchain, err := core.NewBlockChain(db, nil, gspec, pow, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create new blockchain: %v", err)
+	}
+	pm, err := newHandler(&handlerConfig{
+		Database:    db,
+		Chain:       blockchain,
+		TxPool:      &testTxPool{pool: make(map[common.Hash]*types.Transaction)},
+		Network:     ethconfig.Defaults.NetworkId,
+		Sync:        mode,
+		EventMux:    evmux,
+		ChainConfig: config,
+		Engine:      pow,
+	})
+	if err != nil {
+		t.Fatalf("failed to start test handler: %v", err)
+	}
+	pm.Start(1000)
+	return pm, db
+}
+
+// TestFetcherWiresNoopHandlerWithoutConsensus pins the non-XDPoS wiring: no
+// consensus engine means an explicit no-op, silent in either sync mode.
+func TestFetcherWiresNoopHandlerWithoutConsensus(t *testing.T) {
+	logBuf := new(lockedBuffer)
+	prevLog := log.Root()
+	glog := log.NewGlogHandler(log.NewTerminalHandlerWithLevel(logBuf, log.LevelDebug, false))
+	glog.Verbosity(log.LevelDebug)
+	log.SetDefault(log.NewLogger(glog))
+	defer log.SetDefault(prevLog)
+
+	for _, mode := range []downloader.SyncMode{downloader.FastSync, downloader.FullSync} {
+		pm, _ := newTestProposedBlockHandler(t, mode)
+		defer pm.Stop()
+		if pm.fetcherHandleProposedBlock == nil {
+			t.Fatal("fetcher must be wired with a proposed-block handler")
+		}
+		if err := pm.fetcherHandleProposedBlock(pm.chain.CurrentBlock()); err != nil {
+			t.Fatalf("no-op fetcher handler returned error: %v", err)
+		}
+		if strings.Contains(logBuf.String(), "skipped proposed block handler") {
+			t.Fatalf("non-XDPoS manager must wire a no-op without gate logs, have %q", logBuf.String())
+		}
+		logBuf.Reset()
+	}
+}
+
+// TestFetcherProposedBlockHandlerGates exercises the closure directly: fast
+// sync skips, full sync passes an executed block through, unexecuted state is
+// skipped with a Warn and counted independent of the flag, and a nil header
+// fails the SkipNilHeader guard without panicking.
+func TestFetcherProposedBlockHandlerGates(t *testing.T) {
+	logBuf := new(lockedBuffer)
+	prevLog := log.Root()
+	glog := log.NewGlogHandler(log.NewTerminalHandlerWithLevel(logBuf, log.LevelDebug, false))
+	glog.Verbosity(log.LevelDebug)
+	log.SetDefault(log.NewLogger(glog))
+	defer log.SetDefault(prevLog)
+
+	pm, db := newTestProposedBlockHandler(t, downloader.FullSync)
+	defer pm.Stop()
+	called := false
+	gated := newFetcherProposedBlockHandler(pm, func(*types.Header) error {
+		called = true
+		return nil
+	})
+
+	// During fast sync the closure must skip before reaching the handler.
+	atomic.StoreUint32(&pm.snapSync, 1)
+	if err := gated(pm.chain.CurrentBlock()); err != nil {
+		t.Fatalf("gated handler returned error in fast sync: %v", err)
+	}
+	if called {
+		t.Fatal("fast sync call must not reach the consensus handler")
+	}
+	if !strings.Contains(logBuf.String(), "skipped proposed block handler during fast sync") {
+		t.Fatalf("fast sync skip not logged, have %q", logBuf.String())
+	}
+	logBuf.Reset()
+
+	// With fast sync off, the same call reaches the handler.
+	atomic.StoreUint32(&pm.snapSync, 0)
+	if err := gated(pm.chain.CurrentBlock()); err != nil {
+		t.Fatalf("gated handler returned error in full sync: %v", err)
+	}
+	if !called {
+		t.Fatal("full sync call must reach the consensus handler")
+	}
+	if strings.Contains(logBuf.String(), "skipped proposed block handler") {
+		t.Fatalf("executed genesis block must pass both gates, have %q", logBuf.String())
+	}
+	logBuf.Reset()
+
+	// The flag alone is read too late: Synchronise can clear it between the
+	// insert and this callback. Forge a block whose header and body are stored
+	// (so GetBlock finds it) but whose root exists nowhere in the state database,
+	// so the OpenTrie half is what fails — mutating the current header's root
+	// would change its hash and fail at GetBlock instead.
+	current := pm.chain.CurrentBlock()
+	unexecuted := types.CopyHeader(current)
+	unexecuted.Root = common.HexToHash("0xdeadbeef")
+	unexecuted.Number = new(big.Int).Add(current.Number, big.NewInt(1))
+	rawdb.WriteBlock(db, types.NewBlockWithHeader(unexecuted))
+	called = false
+	before := skippedProposedBlockState.Snapshot().Count()
+	if err := gated(unexecuted); err != nil {
+		t.Fatalf("gated handler returned error for unexecuted state: %v", err)
+	}
+	if called {
+		t.Fatal("unexecuted-state call must not reach the consensus handler")
+	}
+	if !strings.Contains(logBuf.String(), "state not executed") {
+		t.Fatalf("state guard skip not logged, have %q", logBuf.String())
+	}
+	if got := skippedProposedBlockState.Snapshot().Count(); got != before+1 {
+		t.Fatalf("state guard skip not counted, before = %d, after = %d", before, got)
+	}
+	if strings.Contains(logBuf.String(), "skipped proposed block handler during fast sync") {
+		t.Fatalf("state guard must be independent of the snapSync flag, have %q", logBuf.String())
+	}
+	logBuf.Reset()
+	called = false
+
+	// A nil header or nil number fails the SkipNilHeader guard instead of
+	// panicking, without reaching the handler or moving the counter.
+	skippedBefore := skippedProposedBlockState.Snapshot().Count()
+	for _, nilCase := range []*types.Header{nil, {}} {
+		if err := gated(nilCase); err != nil {
+			t.Fatalf("gated handler returned error for nil header: %v", err)
+		}
+	}
+	if called {
+		t.Fatal("nil header must not reach the consensus handler")
+	}
+	if !strings.Contains(logBuf.String(), "nil header") {
+		t.Fatalf("nil header skip not logged, have %q", logBuf.String())
+	}
+	if got := skippedProposedBlockState.Snapshot().Count(); got != skippedBefore {
+		t.Fatalf("nil header must not move the state counter, before = %d, after = %d", skippedBefore, got)
+	}
+}
+
+// TestProposedBlockStateReady pins the state predicate the fetcher gate and the
+// sign hook share: a block this node cannot open the state for is neither voted
+// for nor signed, so both callers must get the same answer.
+func TestProposedBlockStateReady(t *testing.T) {
+	pm, db := newTestProposedBlockHandler(t, downloader.FullSync)
+	defer pm.Stop()
+
+	if !pm.proposedBlockStateReady(pm.chain.CurrentBlock()) {
+		t.Fatal("an executed head must be ready")
+	}
+	// Same forge as the gate test above: the block is stored with a body, so the
+	// block half passes and only the state half can refuse it.
+	current := pm.chain.CurrentBlock()
+	unexecuted := types.CopyHeader(current)
+	unexecuted.Root = common.HexToHash("0xdeadbeef")
+	unexecuted.Number = new(big.Int).Add(current.Number, big.NewInt(1))
+	rawdb.WriteBlock(db, types.NewBlockWithHeader(unexecuted))
+	if pm.proposedBlockStateReady(unexecuted) {
+		t.Fatal("a block whose state root does not open must not be ready")
+	}
+	// The sign hook passes block.Header(), but neither nil shape may panic.
+	if pm.proposedBlockStateReady(nil) || pm.proposedBlockStateReady(&types.Header{}) {
+		t.Fatal("a nil header or a header without a number must not be ready")
+	}
 }

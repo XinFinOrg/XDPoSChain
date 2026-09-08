@@ -27,10 +27,16 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/trie"
 	"golang.org/x/sync/errgroup"
 )
+
+// skippedProposedBlock counts skips at this engine's two gates, once per
+// handler invocation. It is the alert target for reorg-race stalls; the wiring
+// bug keeps its own counter (consensus/unjudgeable-proposed-block).
+var skippedProposedBlock = metrics.NewRegisteredCounter("consensus/skipped-proposed-block", nil)
 
 type XDPoS_v2 struct {
 	config       *params.XDPoSConfig // Consensus engine configuration parameters
@@ -846,6 +852,20 @@ func (x *XDPoS_v2) ProposedBlockHandler(chain consensus.ChainReader, blockHeader
 		return err
 	}
 
+	// Re-check at two points: x.lock serializes this handler, not InsertChain,
+	// so a reorg can land in between. The first check protects processQC, whose
+	// first step advances highestQuorumCert before its own existence check; that
+	// check cannot tell a reorged-away fork from the canonical block, because the
+	// fork stays in the database.
+	ok, reason, canonicalHash := consensus.ShouldHandleProposedBlock(chain, blockHeader)
+	if !ok {
+		skippedProposedBlock.Inc(1)
+		consensus.SkipLogLevel(reason)("[ProposedBlockHandler] skip block before processQC", "reason", reason, "hash", blockHeader.Hash(), "number", blockHeader.Number, "canonicalHash", canonicalHash)
+		// Return nil, never an error: the fetcher treats a handler error as an
+		// import failure and suppresses the block's broadcast.
+		return nil
+	}
+
 	// Generate blockInfo
 	blockInfo := &types.BlockInfo{
 		Hash:   blockHeader.Hash(),
@@ -868,6 +888,18 @@ func (x *XDPoS_v2) ProposedBlockHandler(chain consensus.ChainReader, blockHeader
 		return err
 	}
 	if verified {
+		// A reorg can still land between the processQC re-check and the
+		// broadcast, so drop the vote if the block has been reorged away.
+		// processQC's writes stay: the block's embedded QC certifies its parent,
+		// so advancing highestQuorumCert, lockQuorumCert and the commit block on
+		// it is correct, and BlockChain.reorg refuses any reorg that would drop
+		// the committed block. Only the vote for the reorged block must go.
+		ok, reason, canonicalHash = consensus.ShouldHandleProposedBlock(chain, blockHeader)
+		if !ok {
+			skippedProposedBlock.Inc(1)
+			consensus.SkipLogLevel(reason)("[ProposedBlockHandler] skip vote for proposed block", "reason", reason, "hash", blockHeader.Hash(), "number", blockHeader.Number, "canonicalHash", canonicalHash)
+			return nil
+		}
 		return x.sendVote(chain, blockInfo)
 	}
 

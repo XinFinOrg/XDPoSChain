@@ -383,6 +383,15 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 				return nil
 			}
 			if block.NumberU64()%common.MergeSignRange == 0 || !chainConfig.IsTIP2019(block.Number()) {
+				// The state half of the proposed-block gate, shared with the
+				// fetcher's consensus callback: a block whose state this node
+				// cannot open is not voted for, so no signature may go out for
+				// it either. Checked inside the branch so the blocks that sign
+				// nothing pay nothing.
+				if !eth.handler.proposedBlockStateReady(block.Header()) {
+					log.Debug("skipped block signature: state not executed", "hash", block.Hash(), "number", block.Number())
+					return nil
+				}
 				if err := contracts.CreateTransactionSign(chainConfig, eth.txPool, eth.accountManager, block, chainDb, eb); err != nil {
 					return fmt.Errorf("fail to create tx sign for importing block: %v", err)
 				}

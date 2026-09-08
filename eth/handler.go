@@ -39,6 +39,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
@@ -55,6 +56,10 @@ const (
 var (
 	syncChallengeTimeout = 15 * time.Second // Time allowance for a node to reply to the DAO handshake challenge
 )
+
+// skippedProposedBlockState counts fetcher-gate skips on unexecuted state; the
+// gate ignores XDCX trading/lending completeness, so growth means a stall.
+var skippedProposedBlockState = metrics.NewRegisteredCounter("eth/skipped-proposed-block-state", nil)
 
 // txPool defines the methods needed from a transaction pool implementation to
 // support all the operations needed by the Ethereum protocol.
@@ -128,6 +133,10 @@ type handler struct {
 	txFetcher    *fetcher.TxFetcher
 	peers        *peerSet
 	bft          *bft.Bfter
+
+	// fetcherHandleProposedBlock is the gated callback the fetcher runs; tests
+	// call it directly to verify the gate without driving the fetcher loops.
+	fetcherHandleProposedBlock func(header *types.Header) error
 
 	eventMux      *event.TypeMux
 	txsCh         chan core.NewTxsEvent
@@ -216,14 +225,23 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	}
 
 	var handleProposedBlock func(header *types.Header) error
+
+	// The fetcher must not reach the consensus handler during fast sync: that
+	// path discards propagated blocks without executing them. The flag alone
+	// reads too late, but the executed-state check below is false for any
+	// discarded block. The downloader keeps the ungated closure, because its
+	// fast-sync calls run after the pivot commit.
 	if config.ChainConfig.XDPoS != nil {
 		handleProposedBlock = func(header *types.Header) error {
 			return config.Engine.(*XDPoS.XDPoS).HandleProposedBlock(config.Chain, header)
 		}
+		manager.fetcherHandleProposedBlock = newFetcherProposedBlockHandler(manager, handleProposedBlock)
 	} else {
-		handleProposedBlock = func(header *types.Header) error {
-			return nil
-		}
+		// Without a consensus engine every handler and gate is a no-op: wire an
+		// explicit no-op instead of the gated closure (and nil to the downloader,
+		// which guards on nil), so non-XDPoS chains pay no gate cost per block:
+		// the closure body is empty — no snapSync load, state reads, or counter.
+		manager.fetcherHandleProposedBlock = func(*types.Header) error { return nil }
 	}
 
 	// Construct the different synchronisation mechanisms
@@ -256,10 +274,10 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		atomic.StoreUint32(&manager.acceptTxs, 1) // Mark initial sync done on any fetcher import
 		return manager.chain.PrepareBlock(block)
 	}
-	// The fetcher must not sign a block that is not on the canonical chain,
-	// and must not wait for a block the snap-sync inserter discards outright.
-	// Both gates are constructor arguments, so they cannot be forgotten.
-	manager.blockFetcher = fetcher.NewBlockFetcher(config.Chain.GetBlockByHash, validator, handleProposedBlock, manager.BroadcastBlock, heighter, inserter, prepare, manager.removePeer, config.Chain.GetCanonicalHash, func() bool { return atomic.LoadUint32(&manager.snapSync) == 1 })
+	// The sign gates are constructor arguments, so they cannot be forgotten. The
+	// callback is the gated closure above: swapping it back for the bare
+	// handleProposedBlock would drop the snapSync and executed-state halves.
+	manager.blockFetcher = fetcher.NewBlockFetcher(config.Chain.GetBlockByHash, validator, manager.fetcherHandleProposedBlock, manager.BroadcastBlock, heighter, inserter, prepare, manager.removePeer, config.Chain.GetCanonicalHash, func() bool { return atomic.LoadUint32(&manager.snapSync) == 1 })
 
 	fetchTx := func(peer string, hashes []common.Hash) error {
 		p := manager.peers.Peer(peer)
@@ -286,6 +304,50 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	}
 
 	return manager, nil
+}
+
+// proposedBlockStateReady is the state half of the proposed-block gate. The
+// fetcher's consensus callback and the sign hook both ask it: a block whose
+// state this node cannot open is neither signed nor voted for.
+func (pm *handler) proposedBlockStateReady(header *types.Header) bool {
+	if header == nil || header.Number == nil {
+		return false
+	}
+	return pm.chain.HasBlockAndExecutedState(header.Hash(), header.Number.Uint64())
+}
+
+// newFetcherProposedBlockHandler builds the callback the fetcher runs: fast
+// sync discards propagated blocks before executing them, so both the snapSync
+// flag and the executed-state check gate the consensus handler.
+func newFetcherProposedBlockHandler(pm *handler, handleProposedBlock func(*types.Header) error) func(*types.Header) error {
+	return func(header *types.Header) error {
+		// Same nil guard as ShouldHandleProposedBlock.
+		if header == nil || header.Number == nil {
+			consensus.SkipLogLevel(consensus.SkipNilHeader)("[fetcher] skipped proposed block handler: nil header")
+			return nil
+		}
+		if atomic.LoadUint32(&pm.snapSync) == 1 {
+			// The expected snap-sync skip: Debug and deliberately not counted,
+			// so the alert counter below tracks the state half only.
+			log.Debug("[fetcher] skipped proposed block handler during fast sync", "hash", header.Hash(), "number", header.Number)
+			return nil
+		}
+		// A skip halts QC processing and voting, so it is Warn and counted.
+		// Deliberately not HasBlockAndFullState: a missing XDCX trading or
+		// lending state piece must not halt voting on an executed block.
+		//
+		// No retry is deliberate too: every insertBlock path stores the state
+		// root, so a false answer means a damaged database or a block delivered
+		// from before the pruning point, which this node should not vote for
+		// anyway. A node that skips here recovers in the next round, and the
+		// counter is the only signal.
+		if !pm.proposedBlockStateReady(header) {
+			skippedProposedBlockState.Inc(1)
+			log.Warn("[fetcher] skipped proposed block handler: state not executed", "hash", header.Hash(), "number", header.Number)
+			return nil
+		}
+		return handleProposedBlock(header)
+	}
 }
 
 func (pm *handler) removePeer(id string) {
