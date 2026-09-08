@@ -171,7 +171,7 @@ func TestKnownBlockWithFastSyncReceiptsIsNotAdopted(t *testing.T) {
 			if n, err := chain.InsertHeaderChain([]*types.Header{header}, 1); err != nil {
 				t.Fatalf("could not insert the header at %d: %v", n, err)
 			}
-			if n, err := chain.InsertReceiptChain(types.Blocks{block}, []types.Receipts{nil}, 0); err != nil {
+			if n, err := chain.InsertReceiptChain(types.Blocks{block}, []types.Receipts{nil}, 0, 0); err != nil {
 				t.Fatalf("could not insert the receipts at %d: %v", n, err)
 			}
 			// The shape the classification works against: receipts on disk and a root that

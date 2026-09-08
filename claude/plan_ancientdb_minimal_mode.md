@@ -261,6 +261,14 @@ post-merge. XDPoSChain still uses TD across 13 non-test files
   Regression-locked by `TestTotalDifficultyNeverFrozen`.
   Lesson for Phase 2: "we simply do not use table X" is never free in a codebase
   that also *deletes* on the assumption table X exists.
+- **SECOND CORRECTION (found when a fast-synced node was measured).** The same
+  decision has a second consequence in the other direction: nothing *writes* TD
+  either, once the phase that used to write it stops. When `InsertReceiptChain`
+  became the sole writer of fast-synced data (see the correction in §3.5), TD
+  had to be derived there — parent TD plus each block's difficulty — and stored
+  by both `writeAncient` and `writeLive`. Upstream has no equivalent code to
+  copy because upstream has no TD at all. Locked by the TD assertions in
+  `TestInsertReceiptChainWritesAncients`.
 - **Accepted trade-off:** leveldb retains one TD entry (~40 bytes + key
   overhead) per block forever. At 2s blocks that is roughly 16M blocks/year,
   order ~1 GB/year of leveldb that the freezer will not relieve. This is a known
@@ -283,17 +291,65 @@ post-merge. XDPoSChain still uses TD across 13 non-test files
   (line ~1817). Register in `cmd/XDC/main.go` flag groups and `cmd/XDC/usage.go`.
 - `core/blockchain.go`
   - `SetHead` (lines 827-833): `TruncateAncients` → `TruncateHead`.
-  - `InsertReceiptChain(blockChain, receiptChain, ancientLimit uint64)` — add the
+  - `InsertReceiptChain(blockChain, receiptChain, ancientLimit uint64, checkFreq int)` — add the
     parameter and the upstream ancient write path (`writeAncient` / `writeLive`
     split, `rawdb.WriteAncientBlocks`, head-fast-block update, tx-lookup
     indexing of the ancient range).
   - Start/stop the chain freezer goroutine with the blockchain lifecycle;
     `Stop()` must wait for the freeze loop to exit.
 - `eth/downloader/downloader.go`
-  - `BlockChain` interface (line 218): `InsertReceiptChain` gains `uint64`.
+  - `BlockChain` interface (line 218): `InsertReceiptChain` gains `uint64, int`.
   - Compute `d.ancientLimit` as upstream does (pivot − `fsMinFullBlocks`,
     clamped by `FullImmutabilityThreshold`); pass it at lines 1887 and 1897.
   - On fast-sync failure, `TruncateHead(frozen)` rollback.
+
+- **CORRECTION (found when a fast-synced mainnet node was measured).** Porting
+  only `writeAncient` from v1.17.5 was not enough, and the gap was expensive:
+  `db inspect` reported **190 GB of key-value `Headers` alongside 163 GB of
+  ancient `Headers`** — the entire header chain stored twice, permanently.
+
+  Cause: v1.17.5's `writeAncient` correctly writes no header to leveldb, but it
+  is only correct *in combination with v1.17.5's downloader*, which never calls
+  `InsertHeaderChain` at all (grep it: no caller). This fork still runs the
+  legacy header phase, which wrote the whole header chain into leveldb before
+  the bodies arrived. Nothing ever removed those copies: the background freezer
+  only cleans the range it freezes itself, starting at the ancient head, so it
+  never revisits the pre-pivot range.
+
+  Two upstream fixes exist and only one applies. v1.10.x, the era of the legacy
+  downloader this fork still has, deleted the copies at the end of
+  `writeAncient` (`DeleteCanonicalHash` + `DeleteBlockWithoutNumber`, plus a
+  `ReadAllHashesInRange` sweep for side forks). v1.17.5 instead removed the
+  duplicate *write*. **Decision: adopt the v1.17.5 model** — writing 190 GB only
+  to delete it again is pure write amplification.
+
+  What that means concretely:
+  - `processHeaders` no longer inserts headers in `FastSync`; the branch is now
+    `mode == LightSync` only, which is test-only code in this fork (see the
+    deviations list). The downloader diff is two guard changes and nothing else.
+  - `InsertReceiptChain` becomes the sole writer of fast-synced data. It
+    validates the headers up front (`hc.ValidateHeaderChain`), derives TD
+    (§3.4), and `writeLive` now writes `WriteCanonicalHash` + `WriteBlock` +
+    TD rather than just the body. Its `HasHeader` precondition and `HasBlock`
+    skip are gone, as upstream's are.
+  - The head *header* marker now moves with the content, since no header phase
+    advances it any more.
+  - Fast sync's `errStallingPeer` check against the header head is dropped, as
+    upstream dropped it. `testHighTDStarvationAttack` still passes via the
+    existing `!gotHeaders` check; `testHeaderHeadLag` is now light-sync only.
+
+  Regression-locked by the key-value assertions in
+  `TestInsertReceiptChainWritesAncients`, by
+  `TestInsertReceiptChainValidatesHeaders`, and by the "no header without block
+  content" invariant added to `assertOwnForkedChain`, which every downloader
+  sync test now enforces.
+
+  Note this does **not** reclaim space on an already-synced node — it removes
+  the second write, so an affected database has to be resynced.
+
+  Lesson, and it is the same shape as the TD one above: a function copied from
+  upstream is only correct together with its callers. Check what upstream
+  *removed* around it, not just what it kept.
 - `XDCxDAO/interfaces.go`, `XDCxDAO/leveldb.go`, `XDCxDAO/mongodb.go` — update
   stub ancient methods to the new signatures. These stay `errNotSupported`;
   XDCx does not get a freezer.
@@ -817,6 +873,8 @@ Phase 1:
 6. `params: add FullImmutabilityThreshold`
 7. `node, eth, cmd/utils: wire --datadir.ancient`
 8. `core, eth/downloader: thread ancientLimit through InsertReceiptChain`
+8b. `core, eth/downloader: make InsertReceiptChain the sole writer of fast-sync
+    data` (the §3.5 correction — stops the header chain being stored twice)
 9. `cmd/XDC: add db inspect / freezer-index, teach removedb about ancients`
 10. `core/rawdb: add hidden immutability-threshold and table-size test overrides`
 11. `core/rawdb: add freeze backlog progress logging and metrics`
@@ -885,6 +943,10 @@ XDC-specific), `core`, `eth/downloader`, `node` and `params` all green.
   `eth/downloader` computes `d.ancientLimit`, disables it when live data already
   exists below the freezer head, and rewinds via `SetHead` on deep reorg.
   `BlockChain` interface gained `SetHead`.
+- **Single-writer fast sync (v1.17.5 model)**: the fast-sync header phase writes
+  nothing; `InsertReceiptChain` stores the header, body and receipts together
+  and is the only place downloaded headers are validated. See the correction in
+  §3.5 for why, and for the 190 GB it saves.
 
 ### Deviations from upstream (all deliberate)
 
@@ -897,6 +959,99 @@ XDC-specific), `core`, `eth/downloader`, `node` and `params` all green.
   (upstream's non-merged fallback path); no finality and no chain cutoff.
 - `chainFreezer.Ancient` returns `errOutOfBounds` for pruned items instead of
   falling back to an Era store. This is the hook Phase 2 builds on.
+- `InsertReceiptChain` does not hold `chainmu` for its body. Upstream v1.17.5
+  takes it at the top — `if !bc.chainmu.TryLock()` immediately after the
+  unlocked `ValidateHeaderChain` — and holds it for the whole function; this
+  fork keeps the pre-port shape and locks only the tail section that moves the
+  head markers (`core/blockchain.go:1568`).
+
+  **Which writes are now unlocked.** Before the §3.5 correction the receipt
+  phase only wrote content hanging off already-committed headers (body,
+  receipts, tx-lookup), and everything canonicality-affecting was written by the
+  header phase under `chainmu` (`InsertHeaderChain` → `hc.WriteHeader`).
+  `writeLive` now also writes, with no lock held:
+
+  - `rawdb.WriteCanonicalHash` — the canonical marker itself,
+  - `rawdb.WriteBlock` — header (and body),
+  - `rawdb.WriteTd` — the TD that head selection compares against.
+
+  `writeAncient` similarly writes `WriteHeaderNumber` / `WriteTd` /
+  `WriteTxLookupEntriesByBlock` unlocked, after the freezer append. So the
+  invariant "canonical markers are only mutated under `chainmu`" no longer
+  holds. `writeHeadBlock` (`core/blockchain.go:1059`) is the only other writer
+  of `CanonicalHash` / `HeadHeaderHash` that can run in production and is
+  reached exclusively under `chainmu`; `writeLive` is not.
+
+  **Why that is safe today.** Nothing imports blocks concurrently with a snap
+  sync: `processFastSyncContent` is a single goroutine, so `InsertReceiptChain`
+  never overlaps itself, and the block fetcher is barred while snap sync runs,
+  so `writeBlockWithState` cannot interleave. That is a property of the callers,
+  not a lock. Any future path that runs `InsertReceiptChain` concurrently with
+  block import would race on the canonical marker, and since both sides write
+  through separate batches with no compare-and-set, the loser would win silently
+  for its subset of heights — a canonical mapping mixed from two chains, which
+  survives restart. This is a database race, not a Go data race: `-race` cannot
+  see it.
+
+  **Why the lock was not simply added.** Not for the reason first recorded here
+  (a contended `TryLock` aborting the sync): `syncx.ClosableMutex.TryLock`
+  blocks on contention and returns `false` only after `chainmu.Close()`, i.e.
+  only during `Stop()` (`internal/syncx/mutex.go:34`). The real costs are
+  fork-specific:
+
+  - While parked on the lock the function cannot observe `insertStopped()`.
+    `spawnSync` ends every sync with `d.Cancel()` → `InterruptInsert(true)` →
+    `cancelWg.Wait()` (`eth/downloader/downloader.go:654`), and
+    `processFastSyncContent` is one of the fetchers waited on. Today it bails
+    out at once; with the acquire at the top, teardown would wait out whoever
+    holds `chainmu` — including fork-only long holders such as `ExportN`
+    (`core/blockchain.go:1024`, held across an entire RPC-driven export) and
+    XDPoS's `insertBlock` masternode / trading-state work. Stalls, not deadlock:
+    no cycle exists, every holder does finish.
+  - The locked region would be much heavier than upstream's. Upstream receives
+    pre-encoded receipts (`[]rlp.RawValue`) and has no TD at all; this fork runs
+    `DeriveFields` plus `encodeStorageReceipts` per block and a `GetTd` per
+    block, on top of the same `WriteAncientBlocks` and `SyncAncient()` fsync.
+  - `procInterrupt` is dual-owned here. Upstream's flag is monotonic (set once
+    at shutdown), which is what licenses its long critical section — see the
+    `Stop()` comment, "since we also called StopInsert, the mutex should become
+    available quickly". This fork's `Stop()` sets it (`core/blockchain.go:1235`)
+    but `Downloader.Cancel()` clears it at the end of every sync
+    (`eth/downloader/downloader.go:657`), so a `Cancel()` finishing just after
+    `Stop()` begins wipes the shutdown interrupt and `chainmu.Close()` then
+    waits out the full batch. Pre-existing, but a longer critical section makes
+    it bite harder.
+
+  **Consequences.** The head-header write is pushed forward only (upstream
+  writes it unconditionally, safe under its whole-function lock), and the head
+  update stays in the existing tail section.
+
+  **Follow-up (out of scope for this port).** Adopting upstream's whole-function
+  lock restores the invariant and is the right end state: acquire after
+  `ValidateHeaderChain`, delete the tail re-lock (`ClosableMutex` is not
+  reentrant — a second acquire on the same goroutine blocks forever), restore
+  the unconditional head update, remap `errChainStopped` at the two downloader
+  call sites so shutdown does not surface as `errInvalidChain` and drop a peer,
+  and split `procInterrupt` into a monotonic shutdown flag plus a
+  downloader-scoped one. Held back because it changes cancel and shutdown
+  semantics on a path XDPoS consensus shares, and deserves its own testing.
+- `ValidateHeaderChain` is called with a caller-supplied `checkFreq` rather than
+  upstream's verify-every-header. The downloader passes `fsHeaderCheckFrequency`
+  (0), exactly what its header phase used to pass to `InsertHeaderChain`, so
+  pre-pivot seal checking is unchanged from before the port. XDPoS/ethash seals
+  are not free, and post-pivot blocks are still fully verified by `InsertChain`.
+- `InsertReceiptChain` early-returns on an empty chain: this fork's
+  `ValidateHeaderChain` panics on an empty slice (`seals[len(seals)-1]`),
+  upstream's has no seals logic.
+- The `LightSync` branch of `processHeaders` is retained, with its
+  `InsertHeaderChain` call and header rollback. Note this is **test-only** code:
+  `eth/backend.go:114` rejects `LightSync` at startup ("light mode has been
+  deprecated") and the fork has no `les`/`light` packages. It is kept because
+  the downloader test suite exercises the mode, not because it can run.
+  Consequence worth recording: after the §3.5 correction `bc.InsertHeaderChain`
+  has **no production caller left**, which is exactly upstream v1.17.5's
+  property. `writeHeadBlock` is the only other head-header writer that can
+  actually run.
 
 ### Bugs found and fixed during implementation
 
@@ -906,6 +1061,11 @@ XDC-specific), `core`, `eth/downloader`, `node` and `params` all green.
    without closing the freezer when a consistency guard fires; harmless for geth
    (it exits) but it locks the ancient files, and on Windows the caller cannot
    even delete the directory afterwards. Fixed with a deferred close.
+3. **The whole header chain was stored twice after a fast sync** — 190 GB of
+   key-value `Headers` next to 163 GB of ancient `Headers` on mainnet, and
+   permanent, because the freezer never revisits the pre-pivot range. See the
+   correction in §3.5. Fixed by adopting v1.17.5's single-writer model rather
+   than v1.10.x's delete-after-freeze. Requires a resync to benefit.
 
 ### Outstanding for Phase 1
 

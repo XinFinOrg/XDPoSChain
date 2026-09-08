@@ -17,6 +17,7 @@
 package core
 
 import (
+	"encoding/binary"
 	"math/big"
 	"path/filepath"
 	"testing"
@@ -51,9 +52,12 @@ func newFreezerChainDB(t *testing.T) ethdb.Database {
 }
 
 // TestInsertReceiptChainWritesAncients exercises the fast-sync direct-to-ancient
-// path added to InsertReceiptChain. Blocks below the supplied ancientLimit must
-// land in the freezer (not the key-value store) while the remainder stay live,
-// and everything must read back identically either way.
+// path in InsertReceiptChain. Blocks below the supplied ancientLimit must land in
+// the freezer (not the key-value store) while the remainder stay live, and
+// everything must read back identically either way.
+//
+// No header is inserted up front: InsertReceiptChain is the sole writer of
+// fast-synced data, so it has to store the headers itself, and exactly once.
 func TestInsertReceiptChainWritesAncients(t *testing.T) {
 	var (
 		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
@@ -77,15 +81,12 @@ func TestInsertReceiptChainWritesAncients(t *testing.T) {
 	}
 	defer chain.Stop()
 
-	headers := make([]*types.Header, len(blocks))
-	for i, block := range blocks {
-		headers[i] = block.Header()
-	}
-	if n, err := chain.InsertHeaderChain(headers, 1); err != nil {
-		t.Fatalf("failed to insert header %d: %v", n, err)
-	}
-	if n, err := chain.InsertReceiptChain(blocks, receipts, ancientLimit); err != nil {
+	if n, err := chain.InsertReceiptChain(blocks, receipts, ancientLimit, 0); err != nil {
 		t.Fatalf("failed to insert receipt %d: %v", n, err)
+	}
+	// The head header marker has to follow the content, nothing else moves it.
+	if head := chain.CurrentHeader(); head.Number.Uint64() != numBlocks {
+		t.Fatalf("head header: got %d, want %d", head.Number.Uint64(), numBlocks)
 	}
 
 	// Blocks [0, ancientLimit) plus the genesis must now live in the freezer.
@@ -128,6 +129,92 @@ func TestInsertReceiptChainWritesAncients(t *testing.T) {
 		if _, err := db.Ancient(rawdb.ChainFreezerBodiesTable, num); (err == nil) != inAncient {
 			t.Fatalf("block %d: ancient body presence %v, want %v", num, err == nil, inAncient)
 		}
+		// Frozen blocks must hold no second copy of the header or the canonical
+		// marker on the key-value store: the freezer serves both, and the header
+		// sync phase no longer writes them. A copy here would be a permanent
+		// leak, since the background freezer never revisits this range.
+		if has, err := db.Has(kvHeaderKey(num, hash)); err != nil {
+			t.Fatalf("block %d: header lookup: %v", num, err)
+		} else if has == inAncient {
+			t.Fatalf("block %d: key-value header presence %v, want %v", num, has, !inAncient)
+		}
+		if has, err := db.Has(kvCanonicalHashKey(num)); err != nil {
+			t.Fatalf("block %d: canonical marker lookup: %v", num, err)
+		} else if has == inAncient {
+			t.Fatalf("block %d: key-value canonical marker presence %v, want %v", num, has, !inAncient)
+		}
+		// What the freezer does not hold has to be on the key-value store for
+		// every block, frozen or not.
+		if rawdb.ReadHeaderNumber(db, hash) == nil {
+			t.Fatalf("block %d: hash->number mapping missing", num)
+		}
+		if td := rawdb.ReadTd(db, hash, num); td == nil {
+			t.Fatalf("block %d: total difficulty missing", num)
+		} else if want := chain.GetTd(hash, num); td.Cmp(want) != 0 {
+			t.Fatalf("block %d: total difficulty %v, want %v", num, td, want)
+		}
+	}
+}
+
+// kvHeaderKey and kvCanonicalHashKey rebuild the raw rawdb schema keys, so tests
+// can probe the key-value store directly without the ancient-store fallback that
+// every rawdb accessor performs.
+func kvHeaderKey(number uint64, hash common.Hash) []byte {
+	key := append([]byte("h"), encodeBlockNumber(number)...)
+	return append(key, hash.Bytes()...)
+}
+
+func kvCanonicalHashKey(number uint64) []byte {
+	key := append([]byte("h"), encodeBlockNumber(number)...)
+	return append(key, 'n')
+}
+
+func encodeBlockNumber(number uint64) []byte {
+	enc := make([]byte, 8)
+	binary.BigEndian.PutUint64(enc, number)
+	return enc
+}
+
+// TestInsertReceiptChainValidatesHeaders checks that InsertReceiptChain rejects a
+// chain whose headers do not check out. It is the only place downloaded fast-sync
+// headers are verified now, so a bad chain must not reach the database at all.
+func TestInsertReceiptChainValidatesHeaders(t *testing.T) {
+	var (
+		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		address = crypto.PubkeyToAddress(key.PublicKey)
+		funds   = big.NewInt(1000000000000000)
+		gspec   = &Genesis{
+			Config: params.TestChainConfig,
+			Alloc:  types.GenesisAlloc{address: {Balance: funds}},
+		}
+	)
+	_, blocks, receipts := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 16, nil)
+
+	db := newFreezerChainDB(t)
+	// A faker that fails verification, so the headers are rejected on their own
+	// merits rather than because the chain is malformed.
+	chain, err := NewBlockChain(db, nil, gspec, ethash.NewFakeFailer(blocks[8].NumberU64()), vm.Config{})
+	if err != nil {
+		t.Fatalf("new blockchain: %v", err)
+	}
+	defer chain.Stop()
+
+	if _, err := chain.InsertReceiptChain(blocks, receipts, 8, 0); err == nil {
+		t.Fatal("inserted a receipt chain with an invalid header")
+	}
+	// Nothing may have been written, neither live nor frozen.
+	if frozen, _ := db.Ancients(); frozen != 0 {
+		t.Errorf("invalid chain froze %d items", frozen)
+	}
+	for _, block := range blocks {
+		if has, err := db.Has(kvHeaderKey(block.NumberU64(), block.Hash())); err != nil {
+			t.Fatalf("header lookup: %v", err)
+		} else if has {
+			t.Errorf("block %d: header written despite failed verification", block.NumberU64())
+		}
+	}
+	if head := chain.CurrentHeader(); head.Number.Uint64() != 0 {
+		t.Errorf("head header advanced to %d on a rejected chain", head.Number.Uint64())
 	}
 }
 
@@ -152,22 +239,27 @@ func TestInsertReceiptChainZeroLimitStaysLive(t *testing.T) {
 	}
 	defer chain.Stop()
 
-	headers := make([]*types.Header, len(blocks))
-	for i, block := range blocks {
-		headers[i] = block.Header()
-	}
-	if n, err := chain.InsertHeaderChain(headers, 1); err != nil {
-		t.Fatalf("failed to insert header %d: %v", n, err)
-	}
-	if n, err := chain.InsertReceiptChain(blocks, receipts, 0); err != nil {
+	if n, err := chain.InsertReceiptChain(blocks, receipts, 0, 0); err != nil {
 		t.Fatalf("failed to insert receipt %d: %v", n, err)
 	}
 	if frozen, _ := db.Ancients(); frozen != 0 {
 		t.Fatalf("ancientLimit 0 still froze %d items", frozen)
 	}
 	for _, block := range blocks {
-		if got := chain.GetBlockByNumber(block.NumberU64()); got == nil || got.Hash() != block.Hash() {
-			t.Fatalf("block %d not readable", block.NumberU64())
+		num, hash := block.NumberU64(), block.Hash()
+
+		if got := chain.GetBlockByNumber(num); got == nil || got.Hash() != hash {
+			t.Fatalf("block %d not readable", num)
+		}
+		// Everything stays live here, so the key-value store holds the header
+		// and the canonical marker for the whole chain.
+		if has, err := db.Has(kvHeaderKey(num, hash)); err != nil {
+			t.Fatalf("block %d: header lookup: %v", num, err)
+		} else if !has {
+			t.Fatalf("block %d: live header missing", num)
+		}
+		if rawdb.ReadTd(db, hash, num) == nil {
+			t.Fatalf("block %d: total difficulty missing", num)
 		}
 	}
 }

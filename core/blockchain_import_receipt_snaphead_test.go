@@ -57,7 +57,7 @@ func TestInsertReceiptChainReportsAMissingSnapHeadRecord(t *testing.T) {
 			t.Fatalf("header %d: failed to insert headers: %v", n, err)
 		}
 		receipts := make([]types.Receipts, len(blocks))
-		if n, err := chain.InsertReceiptChain(blocks[:3], receipts[:3], 0); err != nil {
+		if n, err := chain.InsertReceiptChain(blocks[:3], receipts[:3], 0, 0); err != nil {
 			t.Fatalf("index %d: failed to insert the receipts of the range below: %v", n, err)
 		}
 		snap := chain.CurrentSnapBlock()
@@ -76,14 +76,14 @@ func TestInsertReceiptChainReportsAMissingSnapHeadRecord(t *testing.T) {
 	// The control: every record is in place, so the receipts above the fast sync head go in.
 	chain, blocks := build(t, false)
 	receipts := make([]types.Receipts, len(blocks))
-	if n, err := chain.InsertReceiptChain(blocks[3:], receipts[3:], 0); err != nil {
+	if n, err := chain.InsertReceiptChain(blocks[3:], receipts[3:], 0, 0); err != nil {
 		t.Fatalf("index %d: the receipts above the fast sync head must be imported: %v", n, err)
 	}
 
 	// The case: the record of the fast sync head is gone.
 	chain, blocks = build(t, true)
 	receipts = make([]types.Receipts, len(blocks))
-	n, err := chain.InsertReceiptChain(blocks[3:], receipts[3:], 0)
+	n, err := chain.InsertReceiptChain(blocks[3:], receipts[3:], 0, 0)
 	if !errors.Is(err, ErrLocalInsertCondition) {
 		t.Fatalf("index %d: a missing record of this node must be reported as a local condition, have %v", n, err)
 	}

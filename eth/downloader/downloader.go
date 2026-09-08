@@ -230,8 +230,9 @@ type BlockChain interface {
 
 	// InsertReceiptChain inserts a batch of receipts into the local chain.
 	// Blocks older than the specified ancientLimit are written directly into
-	// the ancient store, bypassing the key-value store.
-	InsertReceiptChain(types.Blocks, []types.Receipts, uint64) (int, error)
+	// the ancient store, bypassing the key-value store. The last argument is
+	// the seal verification frequency applied to the supplied headers.
+	InsertReceiptChain(types.Blocks, []types.Receipts, uint64, int) (int, error)
 
 	// SetHead rewinds the local chain to a new head.
 	SetHead(uint64) error
@@ -1474,8 +1475,12 @@ func (d *Downloader) fetchParts(deliveryCh chan dataPack, deliver func(dataPack)
 }
 
 // processHeaders takes batches of retrieved headers from an input channel and
-// keeps processing and scheduling them into the header chain and downloader's
-// queue until the stream ends or a failure occurs.
+// keeps processing and scheduling them until the stream ends or a failure occurs.
+//
+// In light sync the headers are the chain, so they are validated and inserted
+// here. In fast sync they only drive content retrieval: the header chain is
+// written by InsertReceiptChain together with the bodies and the receipts, which
+// keeps a single copy of every header in the database.
 func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) error {
 	// Keep a count of uncertain headers to roll back
 	var (
@@ -1557,7 +1562,7 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 				// This check cannot be executed "as is" for full imports, since blocks may still be
 				// queued for processing when the header download completes. However, as long as the
 				// peer gave us something useful, we're already happy/progressed (above check).
-				if mode == FastSync || mode == LightSync {
+				if mode == LightSync {
 					head := d.lightchain.CurrentHeader()
 					if lastInserted != nil && lastInserted.Number.Uint64() > head.Number.Uint64() {
 						head = lastInserted
@@ -1586,8 +1591,9 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 					limit = len(headers)
 				}
 				chunk := headers[:limit]
-				// In case of header only syncing, validate the chunk immediately
-				if mode == FastSync || mode == LightSync {
+				// In case of header only syncing, validate and insert the chunk
+				// immediately: in light mode the header chain is the whole chain.
+				if mode == LightSync {
 					// Collect the yet unknown headers to mark them as uncertain
 					unknown := make([]*types.Header, 0, len(headers))
 					for _, header := range chunk {
@@ -2235,7 +2241,7 @@ func (d *Downloader) commitFastSyncData(results []*fetchResult, stateSync *state
 		blocks[i] = types.NewBlockWithHeader(result.Header).WithBody(result.body())
 		receipts[i] = result.Receipts
 	}
-	if index, err := d.blockchain.InsertReceiptChain(blocks, receipts, d.ancientLimit); err != nil {
+	if index, err := d.blockchain.InsertReceiptChain(blocks, receipts, d.ancientLimit, fsHeaderCheckFrequency); err != nil {
 		// A local failure says nothing about the peer that served the batch. See
 		// localInsertFailure.
 		if d.blockchain.IsLocalInsertError(err) {
@@ -2250,7 +2256,7 @@ func (d *Downloader) commitFastSyncData(results []*fetchResult, stateSync *state
 func (d *Downloader) commitPivotBlock(result *fetchResult) error {
 	block := types.NewBlockWithHeader(result.Header).WithBody(result.body())
 	log.Debug("Committing fast sync pivot as new head", "number", block.Number(), "hash", block.Hash())
-	if index, err := d.blockchain.InsertReceiptChain([]*types.Block{block}, []types.Receipts{result.Receipts}, d.ancientLimit); err != nil {
+	if index, err := d.blockchain.InsertReceiptChain([]*types.Block{block}, []types.Receipts{result.Receipts}, d.ancientLimit, fsHeaderCheckFrequency); err != nil {
 		// A local failure says nothing about the pivot the peer served: it ends the cycle
 		// instead of dropping the peer. See localInsertFailure.
 		if d.blockchain.IsLocalInsertError(err) {

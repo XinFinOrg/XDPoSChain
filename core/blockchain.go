@@ -1602,19 +1602,41 @@ func (bc *BlockChain) Rollback(chain []common.Hash) {
 // InsertReceiptChain attempts to complete an already existing header chain with
 // transaction and receipt data.
 //
-// Blocks whose number is below ancientLimit are written straight into the ancient
-// store, bypassing the key-value store entirely; the remainder are written live.
-// Pass 0 to disable the ancient fast path and write everything live.
+// It is the sole writer of fast-synced data: the header, the body and the
+// receipts of a block are stored together, so no phase of the sync puts a header
+// into the database on its own. Blocks older than the specified ancientLimit are
+// stored directly in the ancient store, while newer blocks are stored in the live
+// key-value store. Pass 0 to disable the ancient fast path.
 //
-// The returned index says where the import stopped: a block this node cannot finish (unknown
+// checkFreq is the seal verification frequency applied to the supplied headers.
+// Upstream go-ethereum verifies every seal here instead; this fork lets the
+// caller choose, so that the downloader can keep applying the frequency its
+// header phase used to apply (fsHeaderCheckFrequency). Non-seal header checks
+// always run, whatever the frequency.
+//
+// The returned index says where the import stopped: a block this node cannot finish (invalid
 // header, receipts that do not derive) reports its own index; an interruption reports the
 // first block the database does not hold, i.e. the first of the current batch rather than the
 // one the loop was on; a write the database refused reports the first block of the write that
 // failed, since that write cannot be split and under-reporting cannot make a caller think a
 // block was written.
-func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain []types.Receipts, ancientLimit uint64) (int, error) {
+func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain []types.Receipts, ancientLimit uint64, checkFreq int) (int, error) {
 	// We don't require the chainMu here since we want to maximize the
-	// concurrency of header insertion and receipt insertion.
+	// concurrency of content insertion and block import.
+	//
+	// Deviation from upstream go-ethereum, which takes chainmu for the whole of
+	// this function. Since the v1.17.5 model folded the header phase in here,
+	// the writes below - WriteCanonicalHash, WriteBlock and WriteTd in writeLive,
+	// WriteHeaderNumber and WriteTd in writeAncient - mutate canonical markers
+	// with no lock held, whereas writeHeadBlock, the only other production
+	// writer of those keys, is always reached under chainmu. What keeps that
+	// safe is the callers, not a lock: processFastSyncContent is a single
+	// goroutine, so this function never overlaps itself, and the block fetcher
+	// is barred while snap sync runs, so block import cannot interleave. Any new
+	// path that breaks either property must take chainmu here (see the chainmu
+	// deviation note in claude/plan_ancientdb_minimal_mode.md for what that
+	// change entails - the tail lock below has to go, ClosableMutex is not
+	// reentrant).
 	bc.wg.Add(1)
 	defer bc.wg.Done()
 
@@ -1632,6 +1654,42 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			}
 		}
 	}
+	if len(blockChain) == 0 {
+		return 0, nil
+	}
+	// Verify the supplied headers before insertion without lock
+	headers := make([]*types.Header, len(blockChain))
+	for i, block := range blockChain {
+		headers[i] = block.Header()
+	}
+	if n, err := bc.hc.ValidateHeaderChain(headers, checkFreq); err != nil {
+		// An interrupted verification says nothing about the headers, and nothing has
+		// been written yet. Report it with the local sentinel, so that the downloader
+		// does not take the abort for an invalid chain and drop the peer.
+		if bc.insertStopped() {
+			return 0, ErrInsertionInterrupted
+		}
+		return n, err
+	}
+	// Deviation from upstream go-ethereum: upstream has no total difficulty at
+	// all any more, this fork still does and never freezes it. The header phase
+	// used to write it, so it has to be derived and stored here now.
+	var (
+		first = blockChain[0]
+		td    *big.Int
+	)
+	if first.NumberU64() == 0 {
+		td = new(big.Int) // the genesis block has no parent
+	} else if td = bc.GetTd(first.ParentHash(), first.NumberU64()-1); td == nil {
+		// The parent is the previous batch or the local chain, so its missing
+		// total difficulty is this node's condition, not the peer's.
+		return 0, parentMissingTdError(first)
+	}
+	tds := make([]*big.Int, len(blockChain))
+	for i, block := range blockChain {
+		td = new(big.Int).Add(td, block.Difficulty())
+		tds[i] = td
+	}
 
 	var (
 		stats = struct{ processed, ignored int32 }{}
@@ -1642,7 +1700,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 	// writeAncient writes a batch of canonical blocks and their receipts directly
 	// into the ancient store, skipping the key-value store. It only ever receives
 	// canonical chain data; side chains are reverted eventually.
-	writeAncient := func(blockChain types.Blocks, receiptChain []types.Receipts) (int, error) {
+	writeAncient := func(blockChain types.Blocks, receiptChain []types.Receipts, tds []*big.Int) (int, error) {
 		// The ancient store must contain the genesis block before anything else.
 		if blockChain[0].NumberU64() == 1 {
 			if frozen, _ := bc.db.Ancients(); frozen == 0 {
@@ -1689,11 +1747,12 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		if err := bc.db.SyncAncient(); err != nil {
 			return 0, wrapLocalCondition(err)
 		}
-		// Ancient blocks are still looked up by hash, and their transactions must
-		// stay indexed, so both mappings go into the key-value store.
+		// Write hash to number mappings, plus what the freezer does not hold:
+		// the total difficulty and the transaction index.
 		batch := bc.db.NewBatch()
-		for _, block := range blockChain {
+		for i, block := range blockChain {
 			rawdb.WriteHeaderNumber(batch, block.Hash(), block.NumberU64())
+			rawdb.WriteTd(batch, block.Hash(), block.NumberU64(), tds[i])
 			rawdb.WriteTxLookupEntriesByBlock(batch, block)
 		}
 		if err := batch.Write(); err != nil {
@@ -1703,14 +1762,22 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		return 0, nil
 	}
 
-	// writeLive writes a batch of blocks and receipts into the key-value store. Its
-	// index is relative to the blocks it was given.
-	writeLive := func(blockChain types.Blocks, receiptChain []types.Receipts) (int, error) {
+	// writeLive writes the blockchain and corresponding receipt chain to the
+	// active store. Its index is relative to the blocks it was given.
+	//
+	// Notably, in different fast sync cycles, the supplied chain may partially
+	// reorganize existing local chain segments (reorg around the chain tip). The
+	// reorganized part will be included in the provided chain segment, and stale
+	// canonical markers will be silently rewritten. Therefore, no explicit reorg
+	// logic is needed.
+	writeLive := func(blockChain types.Blocks, receiptChain []types.Receipts, tds []*big.Int) (int, error) {
 		var (
 			batch = bc.db.NewBatch()
 			// The first block the database does not hold. Everything below it is on disk;
 			// every block walked since is pending in the batch or not walked yet.
 			firstPending = 0
+			// Set once a block is not on disk yet: the blocks after it are not either.
+			skipPresenceCheck = false
 		)
 		for i, block := range blockChain {
 			receipts := receiptChain[i]
@@ -1724,28 +1791,26 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 				return firstPending, ErrInsertionInterrupted
 			}
 			blockHash, blockNumber := block.Hash(), block.NumberU64()
-			// Short circuit if the owner header is unknown
-			if !bc.HasHeader(blockHash, blockNumber) {
-				return i, fmt.Errorf("containing header #%d [%x..] unknown", blockNumber, blockHash.Bytes()[:4])
-			}
-			// Skip if the entire data is already known
-			if bc.HasBlock(blockHash, blockNumber) {
-				// The block is on disk, so it belongs to the prefix firstPending describes - but
-				// only while nothing is pending: a batch already holding writes would reach the
-				// database after this block, and counting this one would claim that batch too.
-				// firstPending == i says exactly that.
-				if firstPending == i {
+			// Skip the prefix this node already holds, as upstream go-ethereum does, but
+			// only where the canonical marker already names the block: a re-delivered
+			// segment must still be able to rewrite a stale marker. Nothing is pending
+			// while the prefix is walked, so it belongs to what the database holds.
+			if !skipPresenceCheck {
+				if rawdb.ReadCanonicalHash(bc.db, blockNumber) == blockHash && bc.HasBlock(blockHash, blockNumber) {
 					firstPending = i + 1
+					stats.ignored++
+					continue
 				}
-				stats.ignored++
-				continue
+				skipPresenceCheck = true
 			}
 			// Compute all the non-consensus fields of the receipts
 			if err := receipts.DeriveFields(bc.chainConfig, blockHash, blockNumber, block.BaseFee(), block.Transactions()); err != nil {
 				return i, fmt.Errorf("failed to derive receipts data: %v", err)
 			}
 			// Write all the data out into the database
-			rawdb.WriteBody(batch, blockHash, blockNumber, block.Body())
+			rawdb.WriteCanonicalHash(batch, blockHash, blockNumber)
+			rawdb.WriteBlock(batch, block)
+			rawdb.WriteTd(batch, blockHash, blockNumber, tds[i])
 			rawdb.WriteReceipts(batch, blockHash, blockNumber, receipts)
 			rawdb.WriteTxLookupEntriesByBlock(batch, block)
 
@@ -1784,12 +1849,12 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		return blockChain[i].NumberU64() >= ancientLimit
 	})
 	if index > 0 {
-		if n, err := writeAncient(blockChain[:index], receiptChain[:index]); err != nil {
+		if n, err := writeAncient(blockChain[:index], receiptChain[:index], tds[:index]); err != nil {
 			return n, err
 		}
 	}
 	if index != len(blockChain) {
-		if n, err := writeLive(blockChain[index:], receiptChain[index:]); err != nil {
+		if n, err := writeLive(blockChain[index:], receiptChain[index:], tds[index:]); err != nil {
 			return index + n, err
 		}
 	}
@@ -1817,6 +1882,20 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			rawdb.WriteHeadFastBlockHash(bc.db, head.Hash())
 			bc.currentSnapBlock.Store(head.Header())
 			headFastBlockGauge.Update(int64(head.NumberU64()))
+		}
+		// Update the head header too, upstream does this from the same place.
+		//
+		// Upstream writes it unconditionally, which is safe there because it
+		// holds chainmu for the whole of InsertReceiptChain and so cannot
+		// interleave with writeHeadBlock, the only other writer during a sync.
+		// This fork deliberately does not take that lock (see the note at the
+		// top), so the marker is only ever pushed forward here. No current path
+		// delivers a lower segment after a higher import - the fetcher is barred
+		// while snap sync runs and queue results are ordered - this just makes
+		// sure this function can never invert the marker if that ever changes.
+		if bc.hc.CurrentHeader().Number.Uint64() < head.NumberU64() {
+			rawdb.WriteHeadHeaderHash(bc.db, head.Hash())
+			bc.hc.SetCurrentHeader(head.Header())
 		}
 	}
 	bc.chainmu.Unlock()
