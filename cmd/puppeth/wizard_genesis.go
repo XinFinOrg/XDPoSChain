@@ -311,6 +311,12 @@ func (w *wizard) makeGenesis() {
 		} else {
 			yield = uint64(w.readDefaultInt(10))
 		}
+		if input != nil {
+			if input.Epoch == 0 {
+				log.Crit("Invalid epoch length", "epoch", input.Epoch)
+			}
+			genesis.Config.XDPoS.Epoch = input.Epoch
+		}
 		if rewards, ok := calcMasternodeRewards(genesis.Config.XDPoS.Period, genesis.Config.XDPoS.Epoch, threshold, yield, len(signers)); ok {
 			fmt.Println()
 			fmt.Println("Calculated Total Masternode rewards per epoch based on yield: ", rewards.TotalPerEpoch)
