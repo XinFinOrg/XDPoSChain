@@ -106,6 +106,26 @@
               "base": 1,
               "maxExponent": 0
             }
+          },
+          "1539900": {
+            "maxMasternodes": 10,
+            "maxProtectorNodes": 3,
+            "maxObserverNodes": 10,
+            "switchRound": 1539900,
+            "minePeriod": 2,
+            "timeoutSyncThreshold": 3,
+            "timeoutPeriod": 10,
+            "certificateThreshold": 0.667,
+            "masternodeReward": 63.4196,
+            "protectorReward": 50.7357,
+            "observerReward": 25.3678,
+            "minimumMinerBlockPerEpoch": 5,
+            "limitPenaltyEpoch": 5,
+            "minimumSigningTx": 30,
+            "expTimeoutConfig": {
+              "base": 1,
+              "maxExponent": 0
+            }
           }
         }
       }
