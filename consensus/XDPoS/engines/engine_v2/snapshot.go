@@ -84,11 +84,20 @@ func (x *XDPoS_v2) getSnapshot(chain consensus.ChainReader, number uint64, isGap
 	if isGapNumber {
 		gapBlockNum = number
 	} else {
-		gapBlockNum = number - number%x.config.Epoch
-		if gapBlockNum > x.config.Gap {
-			gapBlockNum -= x.config.Gap
-		} else {
+		// A reader resolves the gap block of the epoch preceding number: the
+		// refresh writes it at Epoch-Gap, and it is only consulted a full Gap
+		// later. A schedule without such an offset designates no block at all,
+		// so report it rather than falling back to an arbitrary one.
+		offset, ok := x.config.GapOffset()
+		if !ok {
+			return nil, fmt.Errorf("[getSnapshot] unusable gap schedule, epoch: %d, gap: %d", x.config.Epoch, x.config.Gap)
+		}
+		epoch := x.config.Epoch
+		epochStart := number - number%epoch
+		if epochStart == 0 {
 			gapBlockNum = 0
+		} else {
+			gapBlockNum = epochStart - epoch + offset
 		}
 	}
 

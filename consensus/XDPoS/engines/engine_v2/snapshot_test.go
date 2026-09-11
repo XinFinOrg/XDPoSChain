@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -402,6 +403,75 @@ func TestRepairGapCandidatesInvalidSchedule(t *testing.T) {
 			x.config.Gap = tt.gap
 			if got := x.repairGapCandidates(tt.head); got != nil {
 				t.Fatalf("repairGapCandidates(%d) = %v, want nil", tt.head, got)
+			}
+		})
+	}
+}
+
+// headerlessChain answers every header lookup with nil, so getSnapshot reports
+// the gap block number it resolved instead of a snapshot.
+type headerlessChain struct {
+	consensus.ChainReader
+}
+
+func (headerlessChain) GetHeaderByNumber(uint64) *types.Header { return nil }
+
+// TestGetSnapshotResolvesThePrecedingGapBlock pins the block readers resolve:
+// the gap block of the epoch preceding number, which is where the refresh wrote
+// the next-epoch set the reader is about to consult.
+func TestGetSnapshotResolvesThePrecedingGapBlock(t *testing.T) {
+	tests := []struct {
+		name   string
+		number uint64
+		want   uint64
+	}{
+		{"before the first gap block falls back to genesis", 449, 0},
+		{"the second epoch reads the first gap block", 900, 450},
+		{"a mid-epoch block reads the same gap block", 1349, 450},
+		{"a later epoch reads its own gap block", 1800, 1350},
+		{"the end of that epoch reads the same gap block", 2249, 1350},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			x := newRepairEngine(rawdb.NewMemoryDatabase())
+			_, err := x.getSnapshot(headerlessChain{}, tt.number, false)
+			if err == nil {
+				t.Fatalf("getSnapshot(%d) = nil error, want the resolved gap block %d", tt.number, tt.want)
+			}
+			if want := fmt.Sprintf("by number: %d", tt.want); !strings.Contains(err.Error(), want) {
+				t.Fatalf("getSnapshot(%d) error = %q, want it to contain %q", tt.number, err.Error(), want)
+			}
+		})
+	}
+}
+
+// TestGetSnapshotRejectsAnUnusableSchedule pins that a schedule designating no
+// gap block is reported instead of being resolved to some other block, which
+// used to surface later as a missing snapshot for an unrelated block.
+func TestGetSnapshotRejectsAnUnusableSchedule(t *testing.T) {
+	tests := []struct {
+		name  string
+		epoch uint64
+		gap   uint64
+	}{
+		{"zero epoch", 0, 450},
+		{"zero gap", 900, 0},
+		{"gap equal to epoch", 900, 900},
+		{"gap above epoch", 900, 1200},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			x := newRepairEngine(rawdb.NewMemoryDatabase())
+			x.config.Epoch = tt.epoch
+			x.config.Gap = tt.gap
+			// The chain is deliberately nil: the schedule is rejected before
+			// any lookup, which is the whole point of the check.
+			_, err := x.getSnapshot(nil, 1800, false)
+			if err == nil {
+				t.Fatal("getSnapshot = nil error, want the unusable schedule reported")
+			}
+			if !strings.Contains(err.Error(), "unusable gap schedule") {
+				t.Fatalf("error = %q, want it to report the gap schedule", err)
 			}
 		})
 	}

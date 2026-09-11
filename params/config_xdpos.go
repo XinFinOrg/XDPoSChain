@@ -55,6 +55,21 @@ type XDPoSConfig struct {
 	json jsonFieldPresence `json:"-"`
 }
 
+// GapOffset returns the offset of the gap block inside an epoch and whether the
+// schedule defines one at all: Gap has to be a strictly positive offset smaller
+// than Epoch, so that Epoch-Gap resolves to a block inside the epoch. Epoch == 0
+// is rejected as well: it would divide by zero, and XDPoS.New replaces it with
+// the default epoch before an engine is built, so callers only ever reach this
+// with the epoch the chain will run with. The v2 engine resolves the gap block
+// through this wherever it needs one, so a schedule that designates no block is
+// reported instead of being silently resolved to some other block of the chain.
+func (c *XDPoSConfig) GapOffset() (uint64, bool) {
+	if c == nil || c.Epoch == 0 || c.Gap == 0 || c.Gap >= c.Epoch {
+		return 0, false
+	}
+	return c.Epoch - c.Gap, true
+}
+
 // UnmarshalJSON supports both the current and legacy typo-ed JSON key for
 // foundation wallet address to keep old on-disk chain configs compatible.
 func (c *XDPoSConfig) UnmarshalJSON(data []byte) error {

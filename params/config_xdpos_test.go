@@ -322,3 +322,34 @@ func TestV2UnmarshalSwitchEpochVariants(t *testing.T) {
 	assert.Equal(t, uint64(111), v2.SwitchEpoch)
 	assert.Equal(t, big.NewInt(456), v2.SwitchBlock)
 }
+
+// TestXDPoSConfigGapOffset pins the offset the v2 engine resolves the gap block
+// with. The offset has to fall strictly inside the epoch: Epoch == 0 divides by
+// zero, and Gap == 0 or Gap >= Epoch designates no block inside the epoch, so
+// the engine has to be told that instead of resolving some other block.
+func TestXDPoSConfigGapOffset(t *testing.T) {
+	const (
+		epoch = uint64(900)
+		gap   = uint64(450)
+	)
+	tests := []struct {
+		name   string
+		config *XDPoSConfig
+		want   uint64
+		wantOK bool
+	}{
+		{"nil config has no offset", nil, 0, false},
+		{"zero epoch has no offset", &XDPoSConfig{Epoch: 0, Gap: gap}, 0, false},
+		{"zero gap has no offset", &XDPoSConfig{Epoch: epoch, Gap: 0}, 0, false},
+		{"gap equal to epoch has no offset", &XDPoSConfig{Epoch: epoch, Gap: epoch}, 0, false},
+		{"gap above epoch has no offset", &XDPoSConfig{Epoch: epoch, Gap: epoch + 1}, 0, false},
+		{"valid schedule is the epoch minus the gap", &XDPoSConfig{Epoch: epoch, Gap: gap}, epoch - gap, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := tt.config.GapOffset()
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
