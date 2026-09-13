@@ -1,3 +1,9 @@
+// Ring signatures are built on the cgo secp256k1 BitCurve (see ringct.go),
+// and these tests assert that curve type, so without cgo (the default on
+// Windows) every test here panics. Compile the file only where cgo is enabled.
+//
+//go:build cgo
+
 package privacy
 
 import (
