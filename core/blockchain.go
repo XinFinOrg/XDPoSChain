@@ -2533,6 +2533,11 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 	// we'll leave it in for legacy reasons.
 	//
 	// TODO(karalabe): This should be nuked out, no idea how, deprecate some APIs?
+	//
+	// The removals are delivered synchronously, like the reborn logs below and the
+	// canonical logs in PostChainEvents. Spawning the send let a subscriber observe
+	// the logs of the new chain before the removals of the blocks they revert
+	// (geth #19396).
 	{
 		for i := len(oldChain) - 1; i >= 0; i-- {
 			block := bc.GetBlock(oldChain[i].Hash(), oldChain[i].Number.Uint64())
@@ -2543,7 +2548,7 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 				deletedLogs = append(deletedLogs, logs...)
 			}
 			if len(deletedLogs) > 512 {
-				go bc.rmLogsFeed.Send(RemovedLogsEvent{deletedLogs})
+				bc.rmLogsFeed.Send(RemovedLogsEvent{deletedLogs})
 				deletedLogs = nil
 			}
 			// TODO(daniel): remove chainSideFeed, reference PR #30601
@@ -2551,7 +2556,7 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 			// bc.chainSideFeed.Send(ChainSideEvent{Block: block})
 		}
 		if len(deletedLogs) > 0 {
-			go bc.rmLogsFeed.Send(RemovedLogsEvent{deletedLogs})
+			bc.rmLogsFeed.Send(RemovedLogsEvent{deletedLogs})
 		}
 	}
 

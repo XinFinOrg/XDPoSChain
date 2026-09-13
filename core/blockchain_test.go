@@ -22,6 +22,7 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1413,6 +1414,91 @@ func testReorg(t *testing.T, first, second []int64, td int64, full bool) {
 	}
 }
 
+// TestReorgDeliversRemovedLogsSynchronously pins the delivery contract that the
+// reborn logs already follow: a reorg hands the removed logs to every subscriber
+// before it returns. Spawning that send let a subscriber observe the logs of the
+// new chain before the removals of the blocks they revert, which is why geth
+// dropped the goroutine in #19396.
+func TestReorgDeliversRemovedLogsSynchronously(t *testing.T) {
+	var (
+		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		address = crypto.PubkeyToAddress(key.PublicKey)
+		// emitter is a genesis contract whose runtime code emits one anonymous log:
+		// PUSH1 0x00, PUSH1 0x00, LOG0, STOP.
+		emitter = common.HexToAddress("0x0000000000000000000000000000000000000010")
+		gspec   = &Genesis{
+			Config: &params.ChainConfig{
+				ChainID:        big.NewInt(1338),
+				HomesteadBlock: new(big.Int),
+				Ethash:         new(params.EthashConfig),
+			},
+			Alloc: types.GenesisAlloc{
+				address: {Balance: big.NewInt(params.Ether)},
+				emitter: {Code: []byte{0x60, 0x00, 0x60, 0x00, 0xa0, 0x00}},
+			},
+			Difficulty: big.NewInt(1),
+		}
+	)
+	engine := ethash.NewFaker()
+	genDb := rawdb.NewMemoryDatabase()
+	if _, err := gspec.Commit(genDb); err != nil {
+		t.Fatalf("failed to commit genesis: %v", err)
+	}
+	blockchain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+	defer blockchain.Stop()
+
+	// Every block emits one log, so undoing the canonical chain produces removals
+	// that the reorg has to deliver.
+	emit := func(i int, b *BlockGen) {
+		tx, err := types.SignTx(types.NewTransaction(uint64(i), emitter, big.NewInt(0), 100000, big.NewInt(1), nil), types.HomesteadSigner{}, key)
+		if err != nil {
+			t.Fatalf("failed to sign log transaction: %v", err)
+		}
+		b.AddTx(tx)
+	}
+	canonical, _ := GenerateChain(gspec.Config, blockchain.Genesis(), engine, genDb, 4, emit)
+	fork, _ := GenerateChain(gspec.Config, blockchain.Genesis(), engine, genDb, 4, func(i int, b *BlockGen) {
+		b.SetCoinbase(common.Address{0: 0x02})
+		emit(i, b)
+	})
+	if _, err := blockchain.InsertChain(canonical); err != nil {
+		t.Fatalf("failed to insert canonical chain: %v", err)
+	}
+	if _, err := blockchain.InsertChain(fork); err != nil {
+		t.Fatalf("failed to insert the fork: %v", err)
+	}
+	if head, want := blockchain.CurrentBlock(), canonical[len(canonical)-1]; head.Hash() != want.Hash() {
+		t.Fatalf("head moved onto the fork, want it kept as a side chain: have %x, want %x", head.Hash(), want.Hash())
+	}
+
+	// The subscriber stalls on purpose: a synchronous send has to wait for it,
+	// an asynchronous one would let the reorg return first.
+	removed := make(chan RemovedLogsEvent)
+	sub := blockchain.SubscribeRemovedLogsEvent(removed)
+	defer sub.Unsubscribe()
+
+	const subscriberDelay = 250 * time.Millisecond
+	var delivered atomic.Bool
+	go func() {
+		time.Sleep(subscriberDelay)
+		select {
+		case <-removed:
+			delivered.Store(true)
+		case <-time.After(5 * time.Second):
+		}
+	}()
+
+	if err := blockchain.reorg(blockchain.CurrentBlock(), fork[len(fork)-1].Header()); err != nil {
+		t.Fatalf("failed to reorg: %v", err)
+	}
+	if !delivered.Load() {
+		t.Fatalf("reorg returned before the removed logs reached the subscriber, the send must be synchronous")
+	}
+}
+
 // Tests that the insertion functions detect banned hashes.
 func TestBadHeaderHashes(t *testing.T) { testBadHashes(t, false) }
 
@@ -1869,16 +1955,24 @@ func TestLogReorgs(t *testing.T) {
 	}
 
 	_, chain, _ = GenerateChainWithGenesis(gspec, ethash.NewFaker(), 3, func(i int, gen *BlockGen) {})
+	// Removed logs are delivered synchronously, so the subscriber has to be ready
+	// before the reorg runs instead of draining the channel afterwards.
+	done := make(chan struct{})
+	go func() {
+		ev := <-rmLogsCh
+		if len(ev.Logs) == 0 {
+			t.Error("expected logs")
+		}
+		close(done)
+	}()
 	if _, err := blockchain.InsertChain(chain); err != nil {
 		t.Fatalf("failed to insert forked chain: %v", err)
 	}
 
 	timeout := time.NewTimer(1 * time.Second)
+	defer timeout.Stop()
 	select {
-	case ev := <-rmLogsCh:
-		if len(ev.Logs) == 0 {
-			t.Error("expected logs")
-		}
+	case <-done:
 	case <-timeout.C:
 		t.Fatal("Timeout. There is no RemovedLogsEvent has been sent.")
 	}
