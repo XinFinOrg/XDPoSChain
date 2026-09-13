@@ -33,8 +33,6 @@ import (
 )
 
 type XDPoS_v2 struct {
-	chainConfig *params.ChainConfig // Chain & network configuration
-
 	config       *params.XDPoSConfig // Consensus engine configuration parameters
 	db           ethdb.Database      // Database to store and retrieve snapshot checkpoints
 	isInitilised bool                // status of v2 variables
@@ -109,8 +107,6 @@ func New(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh chan i
 	timeoutPool := utils.NewPool()
 	votePool := utils.NewPool()
 	engine := &XDPoS_v2{
-		chainConfig: chainConfig,
-
 		config:       config,
 		db:           db,
 		isInitilised: false,
