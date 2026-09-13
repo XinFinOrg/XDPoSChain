@@ -18,6 +18,7 @@ package params
 
 import (
 	"encoding/json"
+	"errors"
 	"math/big"
 	"strings"
 	"sync"
@@ -263,6 +264,12 @@ func TestV2ConfigIndexReturnsCopy(t *testing.T) {
 	assert.Equal(t, []uint64{3, 2, 1}, v2.ConfigIndex())
 }
 
+// TestSwitchEpoch pins the invariant the v2 round arithmetic depends on: the
+// switch epoch is the epoch number the switch block falls on, i.e.
+// SwitchEpoch == SwitchBlock / Epoch. Every built-in network has to satisfy it,
+// because isEpochSwitchAtRound derives the epoch number as
+// SwitchEpoch + round/Epoch and a drifted pair renumbers every epoch the chain
+// reports without failing any other rule.
 func TestSwitchEpoch(t *testing.T) {
 	config := XDCMainnetChainConfig.XDPoS
 	epoch := config.Epoch
@@ -273,6 +280,10 @@ func TestSwitchEpoch(t *testing.T) {
 	assert.Equal(t, config.V2.SwitchEpoch, config.V2.SwitchBlock.Uint64()/epoch)
 
 	config = DevnetChainConfig.XDPoS
+	epoch = config.Epoch
+	assert.Equal(t, config.V2.SwitchEpoch, config.V2.SwitchBlock.Uint64()/epoch)
+
+	config = LocalnetChainConfig.XDPoS
 	epoch = config.Epoch
 	assert.Equal(t, config.V2.SwitchEpoch, config.V2.SwitchBlock.Uint64()/epoch)
 
@@ -321,4 +332,342 @@ func TestV2UnmarshalSwitchEpochVariants(t *testing.T) {
 	assert.NoError(t, json.Unmarshal([]byte(jsonBoth), &v2))
 	assert.Equal(t, uint64(111), v2.SwitchEpoch)
 	assert.Equal(t, big.NewInt(456), v2.SwitchBlock)
+}
+
+// TestXDPoSConfigGapOffset pins the judgement chain config validation rejects an
+// unusable gap schedule with. The offset has to fall strictly inside the epoch:
+// Gap == 0 or Gap >= Epoch leaves none there (Gap == Epoch puts it on the
+// boundary, which TestGapEqualToEpochMatchesTheEpochSwitchBlock explains), an
+// unset Epoch has no offset either, and Epoch == 1 leaves no usable Gap at all.
+func TestXDPoSConfigGapOffset(t *testing.T) {
+	const (
+		epoch = uint64(900)
+		gap   = uint64(450)
+	)
+	tests := []struct {
+		name   string
+		config *XDPoSConfig
+		want   uint64
+		wantOK bool
+	}{
+		{"nil config has no offset", nil, 0, false},
+		{"zero epoch has no offset", &XDPoSConfig{Epoch: 0, Gap: gap}, 0, false},
+		{"zero epoch and zero gap have no offset", &XDPoSConfig{Epoch: 0, Gap: 0}, 0, false},
+		{"epoch one has no offset", &XDPoSConfig{Epoch: 1, Gap: 0}, 0, false},
+		{"epoch one and gap one have no offset", &XDPoSConfig{Epoch: 1, Gap: 1}, 0, false},
+		{"zero gap has no offset", &XDPoSConfig{Epoch: epoch, Gap: 0}, 0, false},
+		{"gap equal to epoch has no offset", &XDPoSConfig{Epoch: epoch, Gap: epoch}, 0, false},
+		{"gap above epoch has no offset", &XDPoSConfig{Epoch: epoch, Gap: epoch + 1}, 0, false},
+		{"valid schedule is the epoch minus the gap", &XDPoSConfig{Epoch: epoch, Gap: gap}, epoch - gap, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := tt.config.GapOffset()
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestSwitchBlockAligned pins the one definition of the v2 alignment rule that
+// config validation and the puppeth wizard both judge by. The two >2^64 rows are the
+// point: the low 64 bits of a height must not decide the verdict, because
+// SwitchBlock.Uint64() folds every bit above 2^64 away and would invert both.
+func TestSwitchBlockAligned(t *testing.T) {
+	aboveUint64 := new(big.Int).Add(new(big.Int).Lsh(big.NewInt(1), 64), big.NewInt(900))
+	// The aligned height just below it: its low 64 bits are 884, so the uint64 form
+	// reads it as unaligned while the height itself is a multiple of the epoch.
+	alignedAboveUint64 := new(big.Int).Mul(new(big.Int).Div(aboveUint64, big.NewInt(900)), big.NewInt(900))
+	tests := []struct {
+		name  string
+		block *big.Int
+		epoch uint64
+		want  bool
+	}{
+		{"nil block names no boundary", nil, 900, false},
+		{"negative height names no boundary", big.NewInt(-900), 900, false},
+		{"unset epoch names no boundary", big.NewInt(0), 0, false},
+		{"zero is a multiple of every epoch", big.NewInt(0), 900, true},
+		{"an epoch multiple is aligned", big.NewInt(1800), 900, true},
+		{"a non-multiple is not aligned", big.NewInt(901), 900, false},
+		{"below one epoch only zero aligns", big.NewInt(900), 1800, false},
+		{"above 2^64 whose low bits look aligned is not", aboveUint64, 900, false},
+		{"above 2^64 whose low bits look unaligned is", alignedAboveUint64, 900, true},
+		{"epoch one aligns every height", big.NewInt(7), 1, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, SwitchBlockAligned(tt.block, tt.epoch))
+		})
+	}
+}
+
+// TestSwitchEpochFor pins the one definition of the pairing arithmetic: the epoch a
+// switch block falls on, and whether XDPoS.V2.SwitchEpoch can name it. The want is
+// still returned for a negative block so the validation can name it in the mismatch,
+// while fits stays false; a quotient no uint64 can hold is non-nil but never fits.
+func TestSwitchEpochFor(t *testing.T) {
+	aboveUint64 := new(big.Int).Add(new(big.Int).Lsh(big.NewInt(1), 64), big.NewInt(900))
+	tests := []struct {
+		name  string
+		block *big.Int
+		epoch uint64
+		want  *big.Int // nil when the pairing names no epoch at all
+		fits  bool
+	}{
+		{"nil block names no epoch", nil, 900, nil, false},
+		{"unset epoch names no epoch", big.NewInt(900), 0, nil, false},
+		{"a block inside the first epoch is epoch zero", big.NewInt(450), 900, big.NewInt(0), true},
+		{"an epoch start is that epoch", big.NewInt(1800), 900, big.NewInt(2), true},
+		{"a height above 2^64 divides as a big.Int", aboveUint64, 900, new(big.Int).Div(aboveUint64, big.NewInt(900)), true},
+		{"a quotient no uint64 names does not fit", new(big.Int).Lsh(big.NewInt(1), 80), 2, new(big.Int).Lsh(big.NewInt(1), 79), false},
+		{"a negative block keeps its sign and does not fit", big.NewInt(-900), 900, big.NewInt(-1), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			want, fits := SwitchEpochFor(tt.block, tt.epoch)
+			assert.Equal(t, tt.fits, fits)
+			if tt.want == nil {
+				assert.Nil(t, want)
+				return
+			}
+			if assert.NotNil(t, want) {
+				assert.Zero(t, want.Cmp(tt.want))
+			}
+		})
+	}
+}
+
+// TestXDPoSConfigIsGapBlock pins the shared gap-trigger predicate that core's
+// shouldUpdateM1 and the v2 engine's UpdateMasternodes both route through, so
+// "is this height the gap block" has one definition. GapOffset owns the usability
+// judgement, so every schedule that designates no gap block answers false, and no
+// height divides by an unset epoch.
+func TestXDPoSConfigIsGapBlock(t *testing.T) {
+	const (
+		epoch = uint64(900)
+		gap   = uint64(450)
+	)
+	tests := []struct {
+		name   string
+		config *XDPoSConfig
+		number uint64
+		want   bool
+	}{
+		{"nil config never matches", nil, epoch - gap, false},
+		{"unset epoch never matches", &XDPoSConfig{Epoch: 0, Gap: gap}, epoch - gap, false},
+		{"zero gap never matches", &XDPoSConfig{Epoch: epoch, Gap: 0}, epoch, false},
+		{"gap equal to the epoch never matches a residue", &XDPoSConfig{Epoch: epoch, Gap: epoch}, epoch, false},
+		{"gap above the epoch never matches", &XDPoSConfig{Epoch: epoch, Gap: epoch + 1}, epoch, false},
+		{"epoch one leaves no gap block", &XDPoSConfig{Epoch: 1, Gap: 1}, 0, false},
+		{"the offset inside the first epoch is the gap block", &XDPoSConfig{Epoch: epoch, Gap: gap}, epoch - gap, true},
+		{"the next epoch's gap block matches too", &XDPoSConfig{Epoch: epoch, Gap: gap}, 2*epoch - gap, true},
+		{"an epoch start is not the gap block", &XDPoSConfig{Epoch: epoch, Gap: gap}, epoch, false},
+		{"a height before the offset is not the gap block", &XDPoSConfig{Epoch: epoch, Gap: gap}, epoch - gap - 1, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.config.IsGapBlock(tt.number))
+		})
+	}
+}
+
+// TestGapEqualToEpochMatchesTheEpochSwitchBlock pins why Gap == Epoch is refused
+// instead of being read as "the trigger never fires": the refusal is not a claim
+// that no height matches. Epoch-Gap is 0, so the raw trigger matches at every
+// epoch boundary, and the v1 checkpoint predicate (n+Gap)%Epoch == 0 matches
+// there too - the block that samples the next-epoch candidate set would be the
+// block that consumes it. GapOffset still refuses the shape.
+//
+// This is the arithmetic behind that rationale, written out rather than routed
+// through GapOffset, so a future "correction" of the >= in GapOffset cannot be
+// justified by the trigger being dead: opening the gate fails here first, next to
+// core.TestShouldUpdateM1's "gap equal to epoch never fires" row.
+func TestGapEqualToEpochMatchesTheEpochSwitchBlock(t *testing.T) {
+	const epoch = uint64(900)
+	config := &XDPoSConfig{Epoch: epoch, Gap: epoch}
+
+	offset := config.Epoch - config.Gap
+	assert.Equal(t, uint64(0), offset, "gap equal to the epoch has to put the offset on the epoch boundary")
+
+	// Every epoch boundary is a height the raw trigger selects, and the v1
+	// checkpoint predicate of the same schedule lands on it as well.
+	for _, number := range []uint64{epoch, 2 * epoch, 3 * epoch} {
+		assert.True(t, number%config.Epoch == offset, "trigger has to match block %d", number)
+		assert.True(t, (number+config.Gap)%config.Epoch == 0, "v1 checkpoint has to match block %d", number)
+	}
+	// A height that is not an epoch boundary never matches, so the schedule names
+	// no gap block strictly inside an epoch either way.
+	for _, number := range []uint64{epoch - 1, epoch + 1, 2*epoch - 1} {
+		assert.False(t, number%config.Epoch == offset, "trigger must not match block %d", number)
+	}
+
+	// Opening the gate (Gap >= Epoch -> Gap > Epoch) fails here and in
+	// core.TestShouldUpdateM1.
+	got, ok := config.GapOffset()
+	assert.False(t, ok)
+	assert.Equal(t, uint64(0), got)
+}
+
+// TestXDPoSConfigGapBlockNumber pins the height-side counterpart of GapOffset
+// that the v2 paths resolve a block number with. It shares GapOffset's judgement,
+// so a schedule that designates no gap block yields no height at all instead of a
+// division by an unset epoch; an epoch that starts no farther than Gap into the
+// chain reads block 0.
+func TestXDPoSConfigGapBlockNumber(t *testing.T) {
+	const (
+		epoch = uint64(900)
+		gap   = uint64(450)
+	)
+	schedule := &XDPoSConfig{Epoch: epoch, Gap: gap}
+	tests := []struct {
+		name   string
+		config *XDPoSConfig
+		number uint64
+		want   uint64
+		wantOK bool
+	}{
+		{"nil config has no gap block", nil, 1350, 0, false},
+		{"unset epoch has no gap block", &XDPoSConfig{Epoch: 0, Gap: gap}, 1350, 0, false},
+		{"zero gap has no gap block", &XDPoSConfig{Epoch: epoch, Gap: 0}, 1350, 0, false},
+		{"gap equal to epoch has no gap block", &XDPoSConfig{Epoch: epoch, Gap: epoch}, 1350, 0, false},
+		{"gap above epoch has no gap block", &XDPoSConfig{Epoch: epoch, Gap: epoch + 1}, 1350, 0, false},
+		{"epoch one has no gap block", &XDPoSConfig{Epoch: 1, Gap: 0}, 1, 0, false},
+		{"chain start reads block zero", schedule, 0, 0, true},
+		{"height below the first gap block reads block zero", schedule, 899, 0, true},
+		{"epoch switch block reads its own gap block", schedule, 900, 450, true},
+		{"mid epoch reads the gap block of its epoch", schedule, 1350, 450, true},
+		{"last height of an epoch reads the same gap block", schedule, 1799, 450, true},
+		{"second epoch switch reads its own gap block", schedule, 1800, 1350, true},
+		{"third epoch reads its own gap block", schedule, 2700, 2250, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := tt.config.GapBlockNumber(tt.number)
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestXDPoSConfigIsLendingLiquidationBlock pins the predicate block production and
+// block import share: the miner decides with it whether to attach the liquidation
+// work at a height, the importer decides with it whether to expect that work, so a
+// divergence would leave the two sides with different state roots. It is total like
+// the other schedule predicates, so an unset epoch answers false instead of
+// dividing by zero.
+func TestXDPoSConfigIsLendingLiquidationBlock(t *testing.T) {
+	const (
+		epoch = uint64(900)
+		gap   = uint64(450)
+	)
+	schedule := &XDPoSConfig{Epoch: epoch, Gap: gap}
+	// The height inside an epoch the lending service liquidates at.
+	residue := common.LiquidateLendingTradeBlock
+	tests := []struct {
+		name   string
+		config *XDPoSConfig
+		number uint64
+		want   bool
+	}{
+		{"nil config never liquidates", nil, residue, false},
+		{"unset epoch never liquidates", &XDPoSConfig{Epoch: 0, Gap: gap}, residue, false},
+		{"first liquidation height matches", schedule, residue, true},
+		{"liquidation height in the next epoch matches", schedule, epoch + residue, true},
+		{"epoch switch block does not liquidate", schedule, epoch, false},
+		{"gap block does not liquidate", schedule, gap, false},
+		{"neighbouring height does not liquidate", schedule, residue + 1, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.config.IsLendingLiquidationBlock(tt.number))
+		})
+	}
+}
+
+// TestXDPoSConfigIsSameEpoch pins the predicate XDCxlending uses to tell whether a
+// contract price was refreshed in the epoch the header belongs to. It is total like
+// the other schedule predicates: a missing XDPoS section or an unset epoch answers
+// false instead of dividing by zero, which is the state the open-coded divisions it
+// replaces would have panicked on.
+func TestXDPoSConfigIsSameEpoch(t *testing.T) {
+	const (
+		epoch = uint64(900)
+		gap   = uint64(450)
+	)
+	schedule := &XDPoSConfig{Epoch: epoch, Gap: gap}
+	tests := []struct {
+		name   string
+		config *XDPoSConfig
+		first  uint64
+		second uint64
+		want   bool
+	}{
+		{"nil config has no same epoch", nil, 1350, 1351, false},
+		{"unset epoch has no same epoch", &XDPoSConfig{Epoch: 0, Gap: gap}, 1350, 1351, false},
+		{"identical heights share an epoch", schedule, 0, 0, true},
+		{"heights inside one epoch match", schedule, 900, 1799, true},
+		{"the epoch switch block starts a new epoch", schedule, 899, 900, false},
+		{"heights in different epochs do not match", schedule, 1350, 2250, false},
+		{"two epoch starts do not match", schedule, 900, 1800, false},
+		{"later heights of the same epoch match", schedule, 2700, 3599, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.config.IsSameEpoch(tt.first, tt.second))
+		})
+	}
+}
+
+// TestGapBlockNumberMatchesOpenCodedSwitchBlockStep pins the equivalence the
+// engine_v2 first-epoch special case leans on. That path steps back from the v2
+// switch block by Gap instead of asking the height-side definition
+// (GapBlockNumber), and the two only agree because the alignment rule puts an
+// accepted switch block on its own epoch boundary: stepping back by Gap then lands
+// on the same height GapBlockNumber resolves for it.
+//
+// Pin the equality here rather than inside the engine, so a change to either the
+// alignment rule or GapBlockNumber fails a test instead of quietly giving the two
+// definitions different answers for the same height - a divergence there would be
+// read by block production and by block import as different gap blocks.
+func TestGapBlockNumberMatchesOpenCodedSwitchBlockStep(t *testing.T) {
+	const epoch = uint64(900)
+	tests := []struct {
+		name        string
+		gap         uint64
+		switchBlock uint64
+	}{
+		{"gap inside the epoch", 450, epoch},
+		{"shortest usable gap", 1, epoch},
+		{"longest usable gap", epoch - 1, epoch},
+		{"longest usable gap, switch block one epoch later", epoch - 1, epoch * 2},
+		{"switch block several epochs in", 450, epoch * 3},
+		// The only row that reaches the underflow guard: switchBlock is a non-negative
+		// multiple of epoch and gap < epoch, so switchBlock == 0 is the one value that
+		// satisfies switchBlock <= gap.
+		{"switch block at the chain start", 450, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := &XDPoSConfig{Epoch: epoch, Gap: tt.gap}
+			// The schedule only reaches the engine when it is accepted at all.
+			if _, ok := config.GapOffset(); !ok {
+				t.Fatalf("the case has to be a usable schedule, have gap %d epoch %d", tt.gap, epoch)
+			}
+			// The switch block is on an epoch boundary, which is what the alignment rule
+			// guarantees and what makes the two definitions agree.
+			if tt.switchBlock%epoch != 0 {
+				t.Fatalf("the case has to put the switch block on an epoch boundary, have %d", tt.switchBlock)
+			}
+
+			// The step engine_v2.initial performs, underflow guard included.
+			stepped := uint64(0)
+			if tt.switchBlock > tt.gap {
+				stepped = tt.switchBlock - tt.gap
+			}
+			got, ok := config.GapBlockNumber(tt.switchBlock)
+			assert.True(t, ok)
+			assert.Equal(t, stepped, got)
+		})
+	}
 }

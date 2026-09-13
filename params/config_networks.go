@@ -26,7 +26,6 @@ package params
 // backfill is allowed to inherit.
 
 import (
-	"errors"
 	"math/big"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -42,11 +41,6 @@ const (
 	mainnetV2SwitchBlock uint64 = 80370000 // Target 2nd Oct 2024
 	testnetV2SwitchBlock uint64 = 56828700 // Target 13th Nov 2023
 	devnetV2SwitchBlock  uint64 = 2700
-)
-
-var (
-	ErrMissingForkSwitch    = errors.New("missing fork switch")
-	ErrWrongForkSwitchOrder = errors.New("wrong fork switch order")
 )
 
 var (
@@ -300,14 +294,14 @@ var (
 		Ethash:                      nil,
 		XDPoS: &XDPoSConfig{
 			Period:               2,
-			Epoch:                900,
+			Epoch:                DefaultXDPoSEpoch,
 			Reward:               5000,
 			RewardCheckpoint:     900,
 			Gap:                  450,
 			FoundationWalletAddr: common.HexToAddress("xdc92a289fe95a85c53b8d0d113cbaef0c1ec98ac65"),
 			MaxMasternodesV2:     108,
 			V2: &V2{
-				SwitchEpoch:   mainnetV2SwitchBlock / 900,
+				SwitchEpoch:   mainnetV2SwitchBlock / DefaultXDPoSEpoch,
 				SwitchBlock:   big.NewInt(int64(mainnetV2SwitchBlock)),
 				CurrentConfig: MainnetV2Configs[0],
 				AllConfigs:    MainnetV2Configs,
@@ -408,14 +402,14 @@ var (
 		Ethash:                      nil,
 		XDPoS: &XDPoSConfig{
 			Period:               2,
-			Epoch:                900,
+			Epoch:                DefaultXDPoSEpoch,
 			Reward:               5000,
 			RewardCheckpoint:     900,
 			Gap:                  450,
 			FoundationWalletAddr: common.HexToAddress("xdc746249c61f5832c5eed53172776b460491bdcd5c"),
 			MaxMasternodesV2:     15,
 			V2: &V2{
-				SwitchEpoch:   testnetV2SwitchBlock / 900,
+				SwitchEpoch:   testnetV2SwitchBlock / DefaultXDPoSEpoch,
 				SwitchBlock:   big.NewInt(int64(testnetV2SwitchBlock)),
 				CurrentConfig: TestnetV2Configs[0],
 				AllConfigs:    TestnetV2Configs,
@@ -470,14 +464,14 @@ var (
 		Ethash:                      nil,
 		XDPoS: &XDPoSConfig{
 			Period:               2,
-			Epoch:                900,
+			Epoch:                DefaultXDPoSEpoch,
 			Reward:               1026,
 			RewardCheckpoint:     900,
 			Gap:                  450,
 			FoundationWalletAddr: common.HexToAddress("0xf8b10955abe83acfdae2dbd4b5d351fc5e1c3672"),
 			MaxMasternodesV2:     18,
 			V2: &V2{
-				SwitchEpoch:   devnetV2SwitchBlock / 900,
+				SwitchEpoch:   devnetV2SwitchBlock / DefaultXDPoSEpoch,
 				SwitchBlock:   big.NewInt(int64(devnetV2SwitchBlock)),
 				CurrentConfig: DevnetV2Configs[0],
 				AllConfigs:    DevnetV2Configs,
@@ -536,7 +530,7 @@ var (
 		Ethash:                 nil,
 		XDPoS: &XDPoSConfig{
 			Period:               2,
-			Epoch:                900,
+			Epoch:                DefaultXDPoSEpoch,
 			Reward:               250,
 			RewardCheckpoint:     900,
 			Gap:                  450,
@@ -649,7 +643,7 @@ var (
 		Clique:                      nil,
 		Ethash:                      nil,
 		XDPoS: &XDPoSConfig{
-			Epoch:                900,
+			Epoch:                DefaultXDPoSEpoch,
 			Gap:                  450,
 			SkipV1Validation:     true,
 			FoundationWalletAddr: common.HexToAddress("0x0000000000000000000000000000000000000068"),
@@ -657,7 +651,7 @@ var (
 			MaxMasternodesV2:     108,
 			V2: &V2{
 				SwitchEpoch:   1,
-				SwitchBlock:   big.NewInt(900),
+				SwitchBlock:   new(big.Int).SetUint64(DefaultXDPoSEpoch),
 				CurrentConfig: UnitTestV2Configs[0],
 				AllConfigs:    UnitTestV2Configs,
 			},
@@ -757,7 +751,7 @@ var (
 		Clique:                      nil,
 		Ethash:                      nil,
 		XDPoS: &XDPoSConfig{
-			Epoch:                900,
+			Epoch:                DefaultXDPoSEpoch,
 			Gap:                  450,
 			SkipV1Validation:     true,
 			FoundationWalletAddr: common.HexToAddress("0x0000000000000000000000000000000000000068"),
@@ -765,7 +759,7 @@ var (
 			MaxMasternodesV2:     108,
 			V2: &V2{
 				SwitchEpoch:   1,
-				SwitchBlock:   big.NewInt(900),
+				SwitchBlock:   new(big.Int).SetUint64(DefaultXDPoSEpoch),
 				CurrentConfig: UnitTestV2Configs[0],
 				AllConfigs:    UnitTestV2Configs,
 			},

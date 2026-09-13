@@ -40,6 +40,12 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
+// DefaultXDPoSEpoch is the epoch length the XDPoS engine fills in when a chain
+// config leaves XDPoS.Epoch unset. Chain config validation, the genesis load and
+// setup paths, and the engine all judge an omitted epoch against this value, so
+// the definition is shared instead of owned by the engine.
+const DefaultXDPoSEpoch uint64 = 900
+
 // XDPoSConfig is the consensus engine configs for delegated-proof-of-stake based sealing.
 type XDPoSConfig struct {
 	Period               uint64         `json:"period"`               // Number of seconds between blocks to enforce
@@ -53,10 +59,209 @@ type XDPoSConfig struct {
 	V2                   *V2            `json:"v2"`
 
 	json jsonFieldPresence `json:"-"`
+
+	// epochFilledByEngine records that this config's epoch is the default
+	// ChainConfig.ResolveXDPoSEpoch filled in because the source left it unset,
+	// rather than a value the source wrote. It is process-local: the marshalled form
+	// always writes the epoch out, so the state does not survive a JSON round-trip
+	// and a config read back from storage is treated as written. Clone copies it
+	// along with the rest of the struct, which pins the one invariant its reader
+	// relies on: a config the resolution produced must not be cloned and then have its
+	// Epoch rewritten, because core.chainConfigAsStored reads this record to restore
+	// the epoch to 0 when it persists the config, so such a rewrite would be stored as
+	// an unset epoch instead of the value the caller wrote.
+	epochFilledByEngine bool
+}
+
+// GapOffset returns the offset of the gap block inside an epoch and whether the
+// schedule designates one of its own: Gap has to be a strictly positive offset
+// smaller than Epoch, so that Epoch-Gap resolves to a block strictly inside the
+// epoch. An unset Epoch never designates one either, because Gap >= Epoch holds
+// for every Gap once Epoch is 0, and Epoch == 1 designates none because the
+// interval 1 <= Gap < Epoch is empty there.
+//
+// This is the definition of "does this schedule designate a gap block" shared by
+// chain config validation and the v2 gap paths that route through it,
+// UpdateMasternodes and the gap snapshot repair. Callers that treat an unset
+// Epoch as "wait for the engine default" instead of as invalid have to check
+// Epoch themselves, which CheckConfigForkOrder does; GapBlockNumber below
+// carries that same check to the paths that resolve a height to the gap block.
+//
+// The judgement is about the v2 gap trigger n%Epoch == Epoch-Gap. Gap == 0 never
+// satisfies it, and Gap > Epoch underflows the subtraction, so CheckConfigForkOrder
+// rejects a schedule whose trigger matches no height at all: it can never derive
+// the next-epoch masternode set. The v1 snapshot checkpoint predicate
+// (n+Gap)%Epoch == 0 does match at Gap == 0, so the rejection is a deliberate
+// policy for the v2 schedule every XDPoS chain carries, not a claim that Gap == 0
+// never matches anywhere in the engine. Gap == Epoch is refused by the same
+// policy, and there the trigger does match: it names the epoch switch block
+// itself, so the block that samples the next-epoch candidate set is the block
+// that consumes it, and the v1 checkpoint predicate lands on that same height.
+// No built-in network uses that schedule.
+func (c *XDPoSConfig) GapOffset() (uint64, bool) {
+	if c == nil || c.Gap == 0 || c.Gap >= c.Epoch {
+		return 0, false
+	}
+	return c.Epoch - c.Gap, true
+}
+
+// SwitchBlockAligned reports whether block is a switch block the v2 alignment rule
+// accepts for epoch, i.e. a non-negative multiple of a non-zero epoch. A nil or
+// negative block, or an unset epoch, names no boundary and answers false.
+//
+// This is the single definition of that judgement: CheckSwitchBlockAlignment judges
+// a config by it, and the puppeth wizard judges the answer to its switch block
+// question by it, so the two cannot drift apart. It runs on the big.Int rather than
+// on a uint64 form because block.Uint64() folds every bit above 2^64 away, which
+// could make a height that does not fit in a uint64 look aligned to the epoch while
+// the height the chain carries is not.
+//
+// Callers that treat an unset epoch as "wait for the engine default" instead of as
+// invalid have to check Epoch themselves, which CheckSwitchBlockAlignment does;
+// answering false here is what keeps this predicate total for the others.
+func SwitchBlockAligned(block *big.Int, epoch uint64) bool {
+	if block == nil || block.Sign() < 0 || epoch == 0 {
+		return false
+	}
+	return new(big.Int).Mod(block, new(big.Int).SetUint64(epoch)).Sign() == 0
+}
+
+// SwitchEpochFor returns the epoch number a switch block falls on under epoch, i.e.
+// block/epoch, and whether that number fits in a uint64, i.e. whether
+// XDPoS.V2.SwitchEpoch can equal it. It is the single definition of the pairing
+// rule: CheckV2SwitchEpochAlignment compares a config against the want it returns,
+// and the puppeth wizard stores the uint64 form it returns, so the value the wizard
+// writes is the value the validation re-derives.
+//
+// The judgement runs on the big.Int, so want is the epoch the switch block really
+// falls on rather than the one its low 64 bits name; a want that no uint64 can hold
+// names an epoch SwitchEpoch can never equal, which fits reports as false.
+//
+// A nil block or an unset epoch names no epoch and returns (nil, false). A negative
+// block is still divided - big.Int.Div is Euclidean, so the sign is kept - and
+// returns a want that fits reports as false; judging the sign is not this rule's
+// job, so checkV2SwitchBlockSign owns it.
+func SwitchEpochFor(block *big.Int, epoch uint64) (*big.Int, bool) {
+	if block == nil || epoch == 0 {
+		return nil, false
+	}
+	want := new(big.Int).Div(block, new(big.Int).SetUint64(epoch))
+	return want, want.IsUint64()
+}
+
+// GapBlockNumber returns the gap block that governs the epoch containing
+// number, and whether the schedule designates one at all. It resolves number to
+// its epoch start and then steps back by Gap.
+//
+// An epoch that starts no farther than Gap into the chain has no earlier gap
+// block, and the answer is then the first block of the chain. That 0 is a fallback
+// for the chain start rather than a height the trigger selects: the trigger matches
+// number%Epoch == Epoch-Gap, and GapOffset keeps Epoch-Gap inside [1, Epoch-1], so
+// a residue of 0 - block 0 included - never matches.
+//
+// This is the height-side counterpart of GapOffset and the single definition
+// behind getSnapshot, verifyQC, sendVote and sendTimeout. Like GapOffset it
+// refuses a schedule that designates no gap block, so those callers can report
+// an unusable schedule instead of reading a height the schedule never selects or
+// dividing by an unset Epoch.
+func (c *XDPoSConfig) GapBlockNumber(number uint64) (uint64, bool) {
+	if _, ok := c.GapOffset(); !ok {
+		return 0, false
+	}
+	epochStart := number - number%c.Epoch
+	if epochStart > c.Gap {
+		return epochStart - c.Gap, true
+	}
+	return 0, true
+}
+
+// IsGapBlock reports whether the given canonical block number is the gap block
+// the v2 trigger selects, i.e. whether number%Epoch == Epoch-Gap holds for it.
+//
+// GapOffset owns the judgement of whether the schedule designates a gap block at
+// all, so a schedule without one never matches here; that also covers Epoch == 0,
+// which would otherwise divide by zero. This is the single definition behind both
+// core's shouldUpdateM1 and the v2 engine's UpdateMasternodes: block production
+// and block import ask exactly the same question about the same height, and two
+// copies of the expression drifting apart would show up as the two sides
+// disagreeing about which height carries the next-epoch masternode update.
+func (c *XDPoSConfig) IsGapBlock(number uint64) bool {
+	offset, ok := c.GapOffset()
+	return ok && number%c.Epoch == offset
+}
+
+// IsLendingLiquidationBlock reports whether the given canonical block number is
+// the height XDCxlending liquidates open trades at, i.e. number%Epoch ==
+// common.LiquidateLendingTradeBlock.
+//
+// Like the other schedule predicates the judgement comes before the division, so
+// an unset epoch answers false rather than dividing by zero: the guard that admits
+// the callers' branch only skips blocks at or below the epoch, which an unset
+// epoch does not cover for a real block.
+//
+// Block production and block import both ask this question about the same height -
+// the miner decides whether to attach the liquidation work, the importer decides
+// whether to expect it - so the two sides have to share one definition. A
+// divergence would not fail loudly: it would leave the producer and the validator
+// with different state roots, which is the same shape as a consensus fault.
+func (c *XDPoSConfig) IsLendingLiquidationBlock(number uint64) bool {
+	if c == nil || c.Epoch == 0 {
+		return false
+	}
+	return number%c.Epoch == common.LiquidateLendingTradeBlock
+}
+
+// IsSameEpoch reports whether the two canonical block heights fall inside the same
+// chain epoch, the question XDCxlending asks to tell whether a price a contract
+// recorded is still current for the header being processed.
+//
+// Like the other schedule predicates the judgement comes before the division, so a
+// missing XDPoS section or an unset epoch answers false instead of dividing by
+// zero. The open-coded divisions this replaces carried no such guard; they were
+// safe only because newBlockChain refuses an unset epoch, which a BlockChain built
+// inside core can bypass.
+func (c *XDPoSConfig) IsSameEpoch(first, second uint64) bool {
+	if c == nil || c.Epoch == 0 {
+		return false
+	}
+	return first/c.Epoch == second/c.Epoch
+}
+
+// EpochFilledByEngine reports whether this config's epoch is one the resolution
+// filled in rather than a value the source wrote. An omitted epoch is a valid state
+// - validation deliberately leaves it for the engine - so the struct alone cannot
+// tell "the source never wrote an epoch and the default was filled in" from "the
+// source wrote this epoch"; the state ChainConfig.ResolveXDPoSEpoch records can.
+//
+// The judgement reads that state rather than the source JSON keys, so it depends on
+// how the config was resolved rather than on which keys the file happened to spell
+// out: a config that never went through the resolution answers false whatever its
+// source carried, which keeps the conservative reading that a value nobody is known
+// to have defaulted is treated as written.
+//
+// The state is process-local. Marshalling always writes "epoch" out, so a config
+// that has been through a database round-trip carries no such record and answers
+// false even when the value is the one that was filled in. Such a config is read the
+// same way as one that was never resolved - treated as written - which makes this a
+// marker for the in-flight config the callers hold rather than a property that
+// survives storage.
+func (c *XDPoSConfig) EpochFilledByEngine() bool {
+	if c == nil || c.Epoch == 0 {
+		return false
+	}
+	return c.epochFilledByEngine
 }
 
 // UnmarshalJSON supports both the current and legacy typo-ed JSON key for
 // foundation wallet address to keep old on-disk chain configs compatible.
+//
+// The section is replaced, not merged, so the process-local record
+// EpochFilledByEngine reads is cleared the way ChainConfig.UnmarshalJSON clears
+// its runtime-only metadata: the marshalled form always spells the epoch out, so
+// a value that arrives through JSON was written by the source and must not keep
+// being treated as one the resolution filled in for it. Without the reset the
+// record would only be dropped when the receiver happens to be a zero value,
+// which is a property of the caller rather than of this method.
 func (c *XDPoSConfig) UnmarshalJSON(data []byte) error {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -91,6 +296,9 @@ func (c *XDPoSConfig) UnmarshalJSON(data []byte) error {
 	}
 	c.SkipV1Validation = decoded.SkipV1Validation
 	c.V2 = decoded.V2
+	// Cleared after the fields are assigned, so a decode that fails before this
+	// point leaves the receiver as it was rather than half-replaced.
+	c.epochFilledByEngine = false
 	c.json.capture(raw)
 
 	return nil
