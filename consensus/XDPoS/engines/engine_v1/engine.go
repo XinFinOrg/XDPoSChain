@@ -84,12 +84,32 @@ func (x *XDPoS_v1) SigHash(header *types.Header) (hash common.Hash) {
 
 // New creates a XDPoS delegated-proof-of-stake consensus engine with the initial
 // signers set to the ones provided by the user.
+//
+// The consensus parameters are copied, and an unset XDPoS.Epoch is filled with
+// params.DefaultXDPoSEpoch, the same value XDPoS.New and NewFaker fill in, so an
+// engine built here never divides by a zero epoch. The caller's config is left as
+// written: paths that need the stored config to carry that epoch have to resolve it
+// themselves, which XDPoS.New does on its own copy before it validates the gap
+// schedule and exposes it as ChainConfig(). A config without XDPoS parameters has
+// nothing to copy, so the constructor returns nil for one: that nil is the only way
+// this constructor reports a refusal, so callers have to check it before use. The
+// reason is not carried by the return value - there is no error to match with
+// errors.Is - and the callers that need one refuse the same shape themselves before
+// building the engine, which is what XDPoS.New and NewFakerWithError do with
+// params.ErrMissingXDPoSConfig.
+//
+// The copy is shallow on purpose, the way engine_v2.New copies its parameters: the
+// scalar fields the engine reads are isolated, while XDPoS.V2 stays shared with the
+// config the engine exposes.
 func New(chainConfig *params.ChainConfig, db ethdb.Database) *XDPoS_v1 {
+	if chainConfig == nil || chainConfig.XDPoS == nil {
+		return nil
+	}
 	config := chainConfig.XDPoS
 	// Set any missing consensus parameters to their defaults
 	conf := *config
 	if conf.Epoch == 0 {
-		conf.Epoch = utils.EpochLength
+		conf.Epoch = params.DefaultXDPoSEpoch
 	}
 
 	return &XDPoS_v1{
@@ -1048,15 +1068,30 @@ func (x *XDPoS_v1) getSignersFromContract(chain consensus.ChainReader, checkpoin
 	return signers, nil
 }
 
+// NewFaker creates a XDPoS v1 engine that skips consensus validation, mirroring
+// New for the consensus parameters: the config is copied and an unset epoch is
+// filled with params.DefaultXDPoSEpoch, so this constructor cannot hand out an
+// engine whose epoch conversions divide by zero. The caller's config is left as
+// written. Like New it returns nil when there are no XDPoS parameters to copy,
+// instead of dereferencing them, and that nil is its only refusal channel: the
+// reason is named by the caller's own judgement, which for the v1 engines XDPoS
+// builds is params.ErrMissingXDPoSConfig reported before the constructor runs.
 func NewFaker(db ethdb.Database, chainConfig *params.ChainConfig) *XDPoS_v1 {
 	var fakeEngine *XDPoS_v1
-	// Set any missing consensus parameters to their defaults
-	conf := chainConfig.XDPoS
+	if chainConfig == nil || chainConfig.XDPoS == nil {
+		return nil
+	}
+	// Set any missing consensus parameters to their defaults, on a copy: the
+	// caller's XDPoSConfig is not this engine's to mutate.
+	conf := *chainConfig.XDPoS
+	if conf.Epoch == 0 {
+		conf.Epoch = params.DefaultXDPoSEpoch
+	}
 
 	fakeEngine = &XDPoS_v1{
 		chainConfig: chainConfig,
 
-		config:              conf,
+		config:              &conf,
 		db:                  db,
 		recents:             lru.NewCache[common.Hash, *SnapshotV1](utils.InMemorySnapshots),
 		signatures:          lru.NewCache[common.Hash, common.Address](utils.InMemorySnapshots),

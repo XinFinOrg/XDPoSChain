@@ -1836,15 +1836,43 @@ func MakeGenesis(ctx *cli.Context) *core.Genesis {
 	return genesis
 }
 
-// formatBlockChainOpenError rewrites readonly startup failures into operator-
-// facing remediation messages so config rewind and state-repair requirements
-// remain actionable without exposing internal startup details.
+// formatBlockChainOpenError rewrites startup failures into operator-facing
+// remediation messages so config rewind and state-repair requirements remain
+// actionable without exposing internal startup details.
+//
+// It sees what the resolved constructors return. The XDPoS config sentinels reach
+// them in one of two ways. A schedule that designates no gap block is refused by
+// newBlockChain itself, which judges the config it is given with
+// params.XDPoSConfig.CheckGapSchedule, so such a schedule can be reported here as
+// well as while the chain config is resolved. Both policies render their failures
+// through FormatChainConfigError, which is a passthrough for every sentinel it does
+// not know, so the schedule recovery hint is attached whichever constructor
+// reported the refusal and whichever mode the process is in.
+//
+// An unset epoch is not refused the same way: CheckConfigForkOrderWithEpochDefault
+// judges an omitted epoch against DefaultXDPoSEpoch and accepts it. What keeps that
+// sentinel away from here is the engine: eth.New and MakeChain open the chain with
+// the config their engine resolved (XDPoS.ChainConfig()) instead of the object the
+// engine was built from, so newBlockChain is handed a config that carries the epoch.
+// Only a caller of core.NewBlockChain* that formats the error itself can see it,
+// which is why FormatChainConfigError still carries the unset-epoch hint;
+// docs/upgrade.md documents that boundary.
 func formatBlockChainOpenError(err error, readonly bool) string {
 	if errors.Is(err, core.ErrGenesisAllocUnavailable) {
 		return "Can't create BlockChain: " + core.GenesisAllocUnavailableRecoveryMessage
 	}
 	if !readonly {
-		return fmt.Sprintf("Can't create BlockChain: %v", err)
+		// The readonly switch below returns readonly-specific remediation, so it is
+		// kept to that mode. The sentinel table is not: a writable open that reaches
+		// one of the shared XDPoS sentinels has the same recovery path, and the
+		// formatting is a passthrough for everything else, so both modes route through
+		// it instead of the writable one dropping the hint. A nil error is the shape
+		// FormatChainConfigError answers with the empty string, so it keeps the plain
+		// rendering rather than printing the prefix alone.
+		if err == nil {
+			return fmt.Sprintf("Can't create BlockChain: %v", err)
+		}
+		return "Can't create BlockChain: " + FormatChainConfigError(err)
 	}
 	switch {
 	case errors.Is(err, core.ErrConfigMismatchPolicyExit):
@@ -1883,12 +1911,12 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool, configuredComp
 		// drift into a generic config conflict.
 		config, ghash, compatErr, err = core.LoadChainConfigWithCompatWithOverride(chainDb, gspec, ctx.Bool(AllowBuiltInConfigOverrideFlag.Name))
 		if err != nil {
-			makeChainFatalf("%v", err)
+			makeChainFatalf("%s", FormatChainConfigError(err))
 		}
 	} else {
 		config, ghash, compatErr, err = core.SetupGenesisBlockWithOverride(chainDb, gspec, ctx.Bool(AllowBuiltInConfigOverrideFlag.Name))
 		if err != nil {
-			makeChainFatalf("%v", err)
+			makeChainFatalf("%s", FormatChainConfigError(err))
 		}
 	}
 	var engine consensus.Engine
@@ -1896,6 +1924,16 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool, configuredComp
 		engine, err = XDPoS.New(config, chainDb)
 		if err != nil {
 			makeChainFatalf("%s", FormatChainConfigError(err))
+		}
+		// The engine resolves an omitted XDPoS.Epoch onto its own copy, and the
+		// resolved constructors below judge the config as given, so the chain opens
+		// with the engine's config rather than with the unresolved object.
+		if xdpos, ok := engine.(*XDPoS.XDPoS); ok {
+			// Same guard as eth.New: an engine that exposes no resolved config keeps
+			// the object the resolution above returned instead of losing it to nil.
+			if resolved := xdpos.ChainConfig(); resolved != nil {
+				config = resolved
+			}
 		}
 	} else {
 		makeChainFatalf("Only support XDPoS consensus")

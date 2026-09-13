@@ -124,8 +124,12 @@ var xdposTestSignature = func() []byte {
 }()
 
 func newTestBackend(config *node.Config) (*node.Node, []*types.Block, error) {
-	// Generate test chain.
-	blocks := generateTestChain()
+	// Generate test chain, reporting a rejected genesis config as an error rather
+	// than letting a nil engine panic inside GenerateChain.
+	blocks, err := generateTestChain()
+	if err != nil {
+		return nil, nil, err
+	}
 
 	// Create node
 	if config == nil {
@@ -166,7 +170,7 @@ func newTestBackend(config *node.Config) (*node.Node, []*types.Block, error) {
 	return n, blocks, nil
 }
 
-func generateTestChain() []*types.Block {
+func generateTestChain() ([]*types.Block, error) {
 	generate := func(i int, g *core.BlockGen) {
 		g.OffsetTime(5)
 		extra := make([]byte, utils.ExtraVanity+utils.ExtraSeal)
@@ -178,9 +182,12 @@ func generateTestChain() []*types.Block {
 			g.AddTx(testTx2)
 		}
 	}
-	consensus := XDPoS.NewFaker(rawdb.NewMemoryDatabase(), genesis.Config)
+	consensus, err := XDPoS.NewFakerWithError(rawdb.NewMemoryDatabase(), genesis.Config)
+	if err != nil {
+		return nil, fmt.Errorf("XDPoS.NewFakerWithError rejected the test genesis config: %w", err)
+	}
 	_, blocks, _ := core.GenerateChainWithGenesis(genesis, consensus, 2, generate)
-	return append([]*types.Block{genesis.ToBlock()}, blocks...)
+	return append([]*types.Block{genesis.ToBlock()}, blocks...), nil
 }
 
 // TestEthClient tests eth client.

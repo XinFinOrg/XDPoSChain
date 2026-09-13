@@ -23,6 +23,7 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -44,10 +45,13 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 )
 
+// GenesisInput is what the non-interactive input file carries. It deliberately has
+// no schedule fields: makeGenesis stores the cloned Localnet template schedule, so a
+// schedule the file asked for could not be applied, and
+// checkGenesisInputScheduleKeys refuses such a file before it gets here.
 type GenesisInput struct {
 	Name                    string   // informational network name
 	ChainId                 uint64   // network id
-	Epoch                   uint64   // epoch length; baked into the BlockSigner contract
 	MasternodesOwner        string   // owner registered for the initial masternodes
 	Masternodes             []string // initial masternode (validator) set
 	StakingThreshold        uint64   // per-masternode deposit in whole coins; sizes validator caps
@@ -55,15 +59,240 @@ type GenesisInput struct {
 	FoundationWalletAddress string   // foundation wallet address to collect 10% of all rewards
 }
 
+// defaultXDPoSGap is the gap the interactive wizard offers. It is half the engine
+// default epoch, which keeps 1 <= Gap < Epoch satisfiable whenever the epoch
+// question accepts its default.
+const defaultXDPoSGap = params.DefaultXDPoSEpoch / 2
+
+// xdposGapDefault returns the gap the wizard offers for epoch: the shared
+// default, or the largest gap that epoch can hold when the default does not fit.
+// An epoch below 2 has no gap at all; the shared default is returned for it so a
+// caller that only prints the offer never underflows, and the interactive path
+// refuses such an epoch before it reaches the gap question.
+func xdposGapDefault(epoch uint64) uint64 {
+	if epoch >= 2 && defaultXDPoSGap >= epoch {
+		return epoch - 1
+	}
+	return defaultXDPoSGap
+}
+
+// readXDPoSEpoch reads the epoch and re-asks until it can hold a gap block.
+// readDefaultInt accepts 0 and 1, and 1 <= gap < epoch has no solution for
+// either, so the gap question used to loop forever - offering a default it could
+// never accept - with Ctrl-C as the only way out.
+func (w *wizard) readXDPoSEpoch() uint64 {
+	for {
+		epoch := w.readDefaultInt(int(params.DefaultXDPoSEpoch))
+		if epoch >= 2 {
+			return uint64(epoch)
+		}
+		fmt.Printf("The epoch has to be at least 2 so that a gap block (1 <= gap < epoch) exists\n")
+	}
+}
+
+// readXDPoSGap reads the gap and re-asks until it designates a block inside
+// epoch. The offered default always fits, so an epoch only just above the
+// minimum still has a one-keystroke answer. readDefaultInt parses a signed
+// integer, so the value is judged before the conversion to uint64: converting -1
+// first would turn it into a huge gap that loops again.
+//
+// An epoch below 2 cannot hold a gap at all, so no answer would end the loop
+// below. makeGenesis never asks it that way because readXDPoSEpoch refuses the
+// epoch first; returning 0 keeps a direct caller from spinning, and the
+// validation makeGenesis runs before it stores the config refuses that value.
+func (w *wizard) readXDPoSGap(epoch uint64) uint64 {
+	if epoch < 2 {
+		return 0
+	}
+	for {
+		gap := w.readDefaultInt(int(xdposGapDefault(epoch)))
+		if gap > 0 && uint64(gap) < epoch {
+			return uint64(gap)
+		}
+		fmt.Printf("The gap has to designate a block inside the epoch (1 <= gap < %d)\n", epoch)
+	}
+}
+
+// xdposSwitchBlockAligned reports whether the height already satisfies the rule the
+// config validation applies, i.e. whether it is a non-negative multiple of the epoch.
+// The judgement is params.SwitchBlockAligned, the one definition of the rule, so the
+// answer this question accepts is the answer the config validation re-derives: the
+// wizard does not keep a second copy of the rule that could drift from it.
+func xdposSwitchBlockAligned(block *big.Int, epoch uint64) bool {
+	return params.SwitchBlockAligned(block, epoch)
+}
+
+// xdposAlignedSwitchBlock returns a switch block the alignment rule accepts, so the
+// question it defaults can always be ended with a bare enter. A block that already
+// satisfies the rule is returned as given; otherwise the nearest boundary below it
+// is used, and 0 stands in for a missing or negative height because every epoch
+// divides it - 0 is also the value the wizard templates carry.
+//
+// An epoch of zero names no boundary at all, so the answer is 0 rather than a
+// division by it. The interactive path refuses such an epoch before it reaches any
+// question, so this only keeps a direct caller total.
+func xdposAlignedSwitchBlock(block *big.Int, epoch uint64) *big.Int {
+	if epoch == 0 {
+		// An epoch of zero names no boundary this question could accept, and the
+		// caller refuses such an epoch before asking. Kept total so the modulo and
+		// the division below cannot divide by zero.
+		return new(big.Int)
+	}
+	if xdposSwitchBlockAligned(block, epoch) {
+		return block
+	}
+	if block != nil && block.Sign() > 0 {
+		epochBig := new(big.Int).SetUint64(epoch)
+		return new(big.Int).Mul(new(big.Int).Div(block, epochBig), epochBig)
+	}
+	return new(big.Int)
+}
+
+// readXDPoSSwitchBlock reads the v2 switch block and re-asks until it lands on an
+// epoch boundary. makeGenesis collects the switch block before the epoch, so
+// shrinking the epoch afterwards can leave the two inconsistent, and the genesis
+// commit refuses that shape (the v2 switch block has to be a multiple of the
+// epoch). Re-asking here is where an interactive operator can still fix it.
+//
+// Only the alignment is settled here. The paired XDPoS.V2.SwitchEpoch is derived by
+// the caller once the epoch is final (xdposSwitchEpoch), because the two fields
+// describe one schedule and the config validation refuses an epoch that does not
+// name the epoch its block falls on.
+//
+// A refusal keeps a default instead of dropping it: the rejected height is never
+// offered again - readDefaultBigInt returns the default, not the answer that was
+// just refused - while the question still has an answer a bare enter can take, so
+// the loop cannot spin on an operator who keeps pressing enter. That is the same
+// contract readXDPoSEpoch and readXDPoSGap keep. The default is normalized first,
+// because it has to satisfy the rule above to end the loop: a missing, negative or
+// unaligned height names no boundary this question could accept. epoch is the value
+// readXDPoSEpoch returned and is at least 2 in the only path that asks this
+// question; an epoch of zero is answered from the normalized default instead of
+// being divided by, so a direct caller can neither spin nor panic.
+func (w *wizard) readXDPoSSwitchBlock(epoch uint64, def *big.Int) *big.Int {
+	if epoch == 0 {
+		// An epoch of zero names no boundary this question could accept, so there is
+		// nothing to announce and nothing to re-ask: the caller refuses such an epoch
+		// before it gets here.
+		return xdposAlignedSwitchBlock(def, epoch)
+	}
+	aligned := xdposAlignedSwitchBlock(def, epoch)
+	// A height the rule cannot accept is replaced by the nearest boundary below it,
+	// because the offered default is what a bare enter takes and it has to be an
+	// answer the rule accepts. Say so instead of letting 950 become 900, or 5 become 0,
+	// while the operator still believes the value they wrote is on offer.
+	if def != nil && aligned.Cmp(def) != 0 {
+		fmt.Printf("The switch block %v is not a non-negative multiple of the epoch (%d); offering the nearest boundary below, %v, instead\n", def, epoch, aligned)
+	}
+	def = aligned
+	for {
+		block := w.readDefaultBigInt(def)
+		if xdposSwitchBlockAligned(block, epoch) {
+			return block
+		}
+		fmt.Printf("The v2 switch block has to be a non-negative multiple of the epoch (%d); press enter for %s\n", epoch, def)
+	}
+}
+
+// xdposSwitchEpoch derives the v2 switch epoch that pairs with a switch block.
+// SwitchEpoch is the epoch number the block falls on, and the v2 round arithmetic
+// reads it as SwitchEpoch + round/Epoch, so a genesis that lets the two fields
+// drift renumbers every epoch the chain reports. The wizard collects the switch
+// block before the epoch and starts from the template's SwitchEpoch, so the pairing
+// has to be re-derived once both answers are final - which is also what the config
+// validation now requires, so deriving it is what keeps an interactive run able to
+// store what it collected.
+//
+// A nil block, a negative height or an unset epoch names no epoch; every one of
+// those shapes is refused by the validation makeGenesis runs before it stores the
+// genesis, and 0 keeps this helper total for a direct caller.
+func xdposSwitchEpoch(switchBlock *big.Int, epoch uint64) uint64 {
+	// Derived by params.SwitchEpochFor, the same definition the validation derives
+	// its want with, so the value stored here is the value
+	// CheckV2SwitchEpochAlignment re-derives - the wizard does not keep a second
+	// copy of the pairing arithmetic that could drift from it. The derivation runs
+	// on the big.Int, so the epoch named is the one the block really falls on
+	// rather than the one a truncated height would. A quotient no uint64 can hold
+	// names an epoch SwitchEpoch can never equal, which is the mismatch the
+	// validation reports; 0 keeps this helper total for a direct caller.
+	want, ok := params.SwitchEpochFor(switchBlock, epoch)
+	if !ok {
+		return 0
+	}
+	return want.Uint64()
+}
+
 func NewGenesisInput() *GenesisInput {
 	return &GenesisInput{
 		Name:                    "xdc-custom-network",
 		ChainId:                 5151,
-		Epoch:                   900,
 		StakingThreshold:        10_000_000, // 10M
 		RewardYield:             10,         // 10% APY
 		FoundationWalletAddress: common.FoundationAddrBinary.Hex(),
 	}
+}
+
+// checkGenesisInputScheduleKeys refuses an input file that requests a schedule.
+// The input-file path stores the cloned Localnet template schedule, so a schedule in
+// the file cannot be applied - GenesisInput has no schedule field makeGenesis would
+// read - and it would be dropped silently, leaving the operator with a genesis that
+// describes a schedule the file does not. Refusing the file says so instead.
+//
+// The keys are judged on the decoded document rather than on GenesisInput, because
+// yaml matches a key against the lowercased field name exactly: a file that spells
+// switchBlock, switchblock or switch_block would land on no field at all, and the
+// values are ignored either way - what matters is that the file asked, since the
+// generated genesis keeps the template schedule. switchEpoch belongs to the same
+// schedule: makeGenesis re-derives it from the switch block and the epoch, so a value
+// the file writes for it cannot take effect either.
+//
+// The refusal reports the canonical key names in a fixed order, whatever spelling the
+// file used: the case and the underscores are folded away to recognise the key, and
+// the message is built from the canonical names instead.
+func checkGenesisInputScheduleKeys(doc *yaml.Node) error {
+	root := doc
+	if root != nil && root.Kind == yaml.DocumentNode {
+		if len(root.Content) == 0 {
+			return nil
+		}
+		root = root.Content[0]
+	}
+	if root == nil || root.Kind != yaml.MappingNode {
+		return nil
+	}
+	var epoch, gap, switchBlock, switchEpoch bool
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		switch strings.ToLower(strings.ReplaceAll(root.Content[i].Value, "_", "")) {
+		case "epoch":
+			epoch = true
+		case "gap":
+			gap = true
+		case "switchblock":
+			switchBlock = true
+		case "switchepoch":
+			switchEpoch = true
+		}
+	}
+	// Reported in a fixed order, so a refusal names the keys the same way whatever
+	// order the file lists them in.
+	var present []string
+	if epoch {
+		present = append(present, "epoch")
+	}
+	if gap {
+		present = append(present, "gap")
+	}
+	if switchBlock {
+		present = append(present, "switchBlock")
+	}
+	if switchEpoch {
+		present = append(present, "switchEpoch")
+	}
+	if len(present) == 0 {
+		return nil
+	}
+	return fmt.Errorf("input file carries %s, but the input-file path stores the cloned Localnet template schedule (epoch %d, gap %d) instead of applying a schedule of its own; remove the schedule keys, or use the interactive path to choose a schedule",
+		strings.Join(present, ", "), params.LocalnetChainConfig.XDPoS.Epoch, params.LocalnetChainConfig.XDPoS.Gap)
 }
 
 func (w *wizard) loadGenesisInput() *GenesisInput {
@@ -82,8 +311,23 @@ func (w *wizard) loadGenesisInput() *GenesisInput {
 
 	log.Info("Decoding genesis input file", "path", w.conf.inpath)
 	decoder := yaml.NewDecoder(file)
-	if err := decoder.Decode(&input); err != nil {
+	// The document is decoded once as a node so its keys can be judged before the
+	// fields are: yaml matches a key against the lowercased field name exactly, so an
+	// epoch or switchBlock the file carries would otherwise be dropped without a
+	// trace, and the genesis below would silently describe the template's schedule.
+	var doc yaml.Node
+	if err := decoder.Decode(&doc); err != nil {
 		log.Warn("Failed to decode genesis input file (expect yaml format)", "err", err)
+		os.Exit(1)
+		return nil
+	}
+	if err := checkGenesisInputScheduleKeys(&doc); err != nil {
+		log.Error("Refusing the genesis input file", "err", err)
+		os.Exit(1)
+		return nil
+	}
+	if err := doc.Decode(&input); err != nil {
+		log.Warn("Failed to decode genesis input file into the wizard fields", "err", err)
 		os.Exit(1)
 		return nil
 	}
@@ -176,12 +420,6 @@ func (w *wizard) makeGenesis() {
 		}
 
 		fmt.Println()
-		fmt.Println("Which block number start v2 consesus? (default = 0)")
-		if input == nil {
-			genesis.Config.XDPoS.V2.SwitchBlock = w.readDefaultBigInt(genesis.Config.XDPoS.V2.SwitchBlock)
-		}
-
-		fmt.Println()
 		fmt.Println("How long is the v2 timeout period? (default = 10)")
 		if input == nil {
 			genesis.Config.XDPoS.V2.CurrentConfig.TimeoutPeriod = w.readDefaultInt(10)
@@ -238,16 +476,35 @@ func (w *wizard) makeGenesis() {
 		}
 
 		fmt.Println()
-		fmt.Println("How many blocks per epoch? (default = 900)")
+		fmt.Printf("How many blocks per epoch? (default = %d)\n", params.DefaultXDPoSEpoch)
 		if input == nil {
-			genesis.Config.XDPoS.Epoch = uint64(w.readDefaultInt(900))
+			genesis.Config.XDPoS.Epoch = w.readXDPoSEpoch()
 		}
 
 		fmt.Println()
-		fmt.Println("How many blocks before checkpoint need to prepare new set of masternodes? (default = 450)")
+		fmt.Printf("How many blocks before checkpoint need to prepare new set of masternodes? (default = %d)\n", xdposGapDefault(genesis.Config.XDPoS.Epoch))
 		if input == nil {
-			genesis.Config.XDPoS.Gap = uint64(w.readDefaultInt(450))
+			genesis.Config.XDPoS.Gap = w.readXDPoSGap(genesis.Config.XDPoS.Epoch)
 		}
+
+		// The switch block is asked here, once, after the epoch is final: the question
+		// is then judged against the epoch the block has to divide, so the schedule the
+		// operator sees is the schedule that gets stored. Asking it earlier - next to the
+		// V2 runtime questions, before the epoch is known - meant the answer had to be
+		// re-asked once the epoch arrived, or silently overridden. The input-file path
+		// carries the Localnet template's aligned pair, so it never asks.
+		fmt.Println()
+		fmt.Printf("Which block number start v2 consesus? (default = %v)\n", xdposAlignedSwitchBlock(genesis.Config.XDPoS.V2.SwitchBlock, genesis.Config.XDPoS.Epoch))
+		if input == nil {
+			genesis.Config.XDPoS.V2.SwitchBlock = w.readXDPoSSwitchBlock(genesis.Config.XDPoS.Epoch, genesis.Config.XDPoS.V2.SwitchBlock)
+		}
+		// Both answers are final now, so the paired switch epoch is re-derived: the
+		// template supplies a SwitchEpoch of its own, and a switch block the operator
+		// typed would otherwise leave the two describing different schedules, which
+		// the validation below refuses. Re-deriving the template's pair on the
+		// input-file path is a no-op, so this runs for both paths rather than only
+		// where the question was asked.
+		genesis.Config.XDPoS.V2.SwitchEpoch = xdposSwitchEpoch(genesis.Config.XDPoS.V2.SwitchBlock, genesis.Config.XDPoS.Epoch)
 
 		fmt.Println()
 		fmt.Println("What is minimum staking threshold to become a Validator? (default = 10M)")
@@ -496,6 +753,24 @@ func (w *wizard) makeGenesis() {
 		genesis.Config.ChainID = new(big.Int).SetUint64(input.ChainId)
 	} else {
 		genesis.Config.ChainID = new(big.Int).SetUint64(uint64(w.readDefaultInt(rand.Intn(65536))))
+	}
+
+	// Refuse to store a genesis the init path would refuse. The interactive path
+	// collects the epoch and the gap separately, so the schedule can come out
+	// unusable; the input-file path carries no schedule of its own - GenesisInput
+	// only probes the schedule keys so a file that asks for one is refused - and
+	// stores the cloned Localnet template as written. The
+	// same judgement the genesis commit applies is what tells the two apart. The
+	// alignment question above already covers the schedule the operator just
+	// answered; this one also covers the remaining required fields and the fork
+	// order, and reports on stdout as well, because an interactive run otherwise
+	// just ends without storing anything.
+	if genesis.Config.XDPoS != nil {
+		if err := genesis.Config.CheckConfigForkOrderWithEpochDefault(); err != nil {
+			fmt.Println("Refusing to generate an invalid genesis:", err)
+			log.Error("Refusing to generate an invalid genesis", "err", err)
+			return
+		}
 	}
 
 	// All done, store the genesis and flush to disk

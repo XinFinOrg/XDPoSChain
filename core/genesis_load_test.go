@@ -1022,32 +1022,6 @@ func TestLoadChainConfigInternalMatchesCompatWrapperWhenNoCompatError(t *testing
 
 // TestLoadChainConfigRejectsProvidedGenesisDriftForStoredCustomChain tests load chain config rejects provided genesis drift for stored custom chain.
 func TestLoadChainConfigRejectsProvidedGenesisDriftForStoredCustomChain(t *testing.T) {
-	newCustomXDPoSGenesis := func() *Genesis {
-		xdposCfg := params.TestnetChainConfig.XDPoS.Clone()
-		xdposCfg.Epoch = 1
-		xdposCfg.V2 = xdposCfg.V2.Clone()
-		xdposCfg.V2.SwitchBlock = big.NewInt(2)
-		xdposCfg.V2.SwitchEpoch = 2
-		return &Genesis{
-			Config: &params.ChainConfig{
-				ChainID:                big.NewInt(4545),
-				TIPTRC21FeeBlock:       big.NewInt(1),
-				Gas50xBlock:            big.NewInt(1),
-				TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
-				XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
-				RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
-				LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
-				XDPoS:                  xdposCfg,
-			},
-			ExtraData: make([]byte, 32+crypto.SignatureLength),
-			Alloc: types.GenesisAlloc{
-				{1}: {Balance: big.NewInt(1)},
-			},
-			GasLimit:   4700000,
-			Difficulty: big.NewInt(1),
-		}
-	}
-
 	tests := []struct {
 		name   string
 		mutate func(*params.ChainConfig)
@@ -1059,11 +1033,15 @@ func TestLoadChainConfigRejectsProvidedGenesisDriftForStoredCustomChain(t *testi
 			},
 		},
 		{
-			name: "v2 switch epoch drift",
+			name: "v2 switch block and epoch drift",
 			mutate: func(cfg *params.ChainConfig) {
 				cfg.XDPoS = cfg.XDPoS.Clone()
 				cfg.XDPoS.V2 = cfg.XDPoS.V2.Clone()
+				// Drift the paired fields together: the switch epoch has to keep naming
+				// the epoch its switch block falls on, and a config that only bumps the
+				// epoch is refused by validation before the drift comparison runs.
 				cfg.XDPoS.V2.SwitchEpoch++
+				cfg.XDPoS.V2.SwitchBlock = new(big.Int).SetUint64(cfg.XDPoS.Epoch * cfg.XDPoS.V2.SwitchEpoch)
 			},
 		},
 	}
@@ -1071,10 +1049,10 @@ func TestLoadChainConfigRejectsProvidedGenesisDriftForStoredCustomChain(t *testi
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			db := rawdb.NewMemoryDatabase()
-			storedGenesis := newCustomXDPoSGenesis()
+			storedGenesis := newCustomXDPoSGenesis(4545, 0)
 			block := storedGenesis.MustCommit(db)
 
-			provided := newCustomXDPoSGenesis()
+			provided := newCustomXDPoSGenesis(4545, 0)
 			test.mutate(provided.Config)
 
 			cfg, hash, err := LoadChainConfig(db, provided)
@@ -1088,6 +1066,256 @@ func TestLoadChainConfigRejectsProvidedGenesisDriftForStoredCustomChain(t *testi
 				t.Fatalf("expected nil config on custom drift, have %v", cfg)
 			}
 		})
+	}
+}
+
+// TestLoadChainConfigRejectsStoredUnusableGapSchedule pins the stored-database
+// startup path: a chain already persisted whose XDPoS gap schedule designates
+// no gap block has to be refused while loading the chain config, not only when
+// a new genesis is committed. Such a chain previously stalled at its first
+// epoch switch instead, so refusing to start is deliberate.
+func TestLoadChainConfigRejectsStoredUnusableGapSchedule(t *testing.T) {
+	// The unusable gaps below are derived from the fixture epoch so the cases keep
+	// their meaning if the fixture schedule ever changes.
+	epoch := newCustomXDPoSGenesis(4545, 0).Config.XDPoS.Epoch
+	tests := []struct {
+		name    string
+		gap     uint64
+		wantErr error
+	}{
+		{name: "missing gap", gap: 0, wantErr: params.ErrUnusableGapSchedule},
+		{name: "gap equal to epoch", gap: epoch, wantErr: params.ErrUnusableGapSchedule},
+		{name: "gap above epoch", gap: epoch + 1, wantErr: params.ErrUnusableGapSchedule},
+		{name: "minimal usable gap still loads", gap: 1, wantErr: nil},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := rawdb.NewMemoryDatabase()
+			// Commit a valid chain first, then plant the unusable schedule
+			// through the raw database: Genesis.Commit validates before it
+			// writes, so this mirrors a legacy on-disk config rather than a
+			// freshly init'ed one.
+			block := newCustomXDPoSGenesis(4545, 0).MustCommit(db)
+			stored := newCustomXDPoSGenesis(4545, 0).Config
+			stored.XDPoS = stored.XDPoS.Clone()
+			stored.XDPoS.Gap = test.gap
+			overwriteStoredChainConfig(t, db, block.Hash(), stored)
+
+			cfg, hash, err := LoadChainConfig(db, nil)
+			if hash != block.Hash() {
+				t.Fatalf("unexpected hash: have %s want %s", hash.Hex(), block.Hash().Hex())
+			}
+			if test.wantErr == nil {
+				if err != nil {
+					t.Fatalf("unexpected error for a usable schedule: %v", err)
+				}
+				if cfg == nil {
+					t.Fatal("expected a config for a usable schedule")
+				}
+				return
+			}
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("unexpected error: have %v want %v", err, test.wantErr)
+			}
+			if !strings.Contains(err.Error(), "designates no gap block") {
+				t.Fatalf("unexpected error string: %v", err)
+			}
+			if cfg != nil {
+				t.Fatalf("expected nil config on an unusable schedule, have %v", cfg)
+			}
+		})
+	}
+}
+
+// TestLoadChainConfigRejectsStoredMismatchedSwitchEpoch pins the boot path of the
+// switch-epoch rule: a chain already on disk whose switch epoch does not name the
+// epoch of its switch block has to be refused while the chain config is resolved,
+// instead of running on with the wrong epoch number. The schedule is planted
+// through the raw database because Commit validates before it writes, so this
+// mirrors a legacy on-disk config rather than a freshly init'ed one - which is the
+// shape older puppeth builds could generate, since they asked for the switch block
+// and the epoch separately and copied the template's switch epoch unchanged.
+func TestLoadChainConfigRejectsStoredMismatchedSwitchEpoch(t *testing.T) {
+	t.Run("readonly load", func(t *testing.T) {
+		db := rawdb.NewMemoryDatabase()
+		block := newCustomXDPoSGenesis(4545, 0).MustCommit(db)
+		stored := newCustomXDPoSGenesis(4545, 0).Config
+		stored.XDPoS = stored.XDPoS.Clone()
+		stored.XDPoS.V2 = stored.XDPoS.V2.Clone()
+		// Drift only the epoch: the switch block stays on the boundary the fixture
+		// uses, so alignment is satisfied and the pairing is the only defect.
+		stored.XDPoS.V2.SwitchEpoch = customXDPoSGenesisSwitchEpoch + 1
+		overwriteStoredChainConfig(t, db, block.Hash(), stored)
+
+		cfg, hash, err := LoadChainConfig(db, nil)
+		if hash != block.Hash() {
+			t.Fatalf("unexpected hash: have %s want %s", hash.Hex(), block.Hash().Hex())
+		}
+		if !errors.Is(err, params.ErrSwitchEpochMismatch) {
+			t.Fatalf("unexpected error: have %v want %v", err, params.ErrSwitchEpochMismatch)
+		}
+		if cfg != nil {
+			t.Fatalf("expected nil config on a mismatched switch epoch, have %v", cfg)
+		}
+	})
+	t.Run("writable setup", func(t *testing.T) {
+		db := rawdb.NewMemoryDatabase()
+		block := newCustomXDPoSGenesis(4545, 0).MustCommit(db)
+		stored := newCustomXDPoSGenesis(4545, 0).Config
+		stored.XDPoS = stored.XDPoS.Clone()
+		stored.XDPoS.V2 = stored.XDPoS.V2.Clone()
+		stored.XDPoS.V2.SwitchEpoch = customXDPoSGenesisSwitchEpoch + 1
+		overwriteStoredChainConfig(t, db, block.Hash(), stored)
+
+		cfg, _, _, err := SetupGenesisBlock(db, nil)
+		if !errors.Is(err, params.ErrSwitchEpochMismatch) {
+			t.Fatalf("unexpected error: have %v want %v", err, params.ErrSwitchEpochMismatch)
+		}
+		if cfg != nil {
+			t.Fatalf("expected nil config on a mismatched switch epoch, have %v", cfg)
+		}
+	})
+}
+
+// TestLoadChainConfigJudgesOmittedEpochAgainstDefault pins the consistency fix:
+// a stored config that leaves the epoch unset is judged against the engine default
+// epoch while the chain config is resolved, so an unusable gap schedule is refused
+// at load instead of at the first node start. The default covers the whole
+// schedule, which is why a switch block that is not aligned to it is refused with
+// the alignment error.
+func TestLoadChainConfigJudgesOmittedEpochAgainstDefault(t *testing.T) {
+	defaultEpoch := params.DefaultXDPoSEpoch
+	tests := []struct {
+		name        string
+		switchBlock uint64
+		gap         uint64
+		wantErr     error
+	}{
+		{name: "aligned switch block with a missing gap", switchBlock: defaultEpoch, gap: 0, wantErr: params.ErrUnusableGapSchedule},
+		{name: "aligned switch block with a gap equal to the default", switchBlock: defaultEpoch, gap: defaultEpoch, wantErr: params.ErrUnusableGapSchedule},
+		{name: "aligned switch block with a usable gap still loads", switchBlock: defaultEpoch, gap: 1},
+		{name: "unaligned switch block fails the default alignment", switchBlock: 2, gap: 1, wantErr: params.ErrWrongForkSwitchOrder},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := rawdb.NewMemoryDatabase()
+			block := newCustomXDPoSGenesis(4545, 0).MustCommit(db)
+			stored := newCustomXDPoSGenesis(4545, 0).Config
+			stored.XDPoS = stored.XDPoS.Clone()
+			stored.XDPoS.V2 = stored.XDPoS.V2.Clone()
+			stored.XDPoS.Epoch = 0
+			stored.XDPoS.Gap = test.gap
+			stored.XDPoS.V2.SwitchBlock = new(big.Int).SetUint64(test.switchBlock)
+			overwriteStoredChainConfig(t, db, block.Hash(), stored)
+
+			cfg, _, err := LoadChainConfig(db, nil)
+			if test.wantErr == nil {
+				if err != nil {
+					t.Fatalf("unexpected error for a usable schedule: %v", err)
+				}
+				if cfg == nil || cfg.XDPoS == nil {
+					t.Fatalf("expected an XDPoS config for a usable schedule, have %v", cfg)
+				}
+				if cfg.XDPoS.Epoch != 0 {
+					t.Fatalf("load must not fill in the epoch, have %d", cfg.XDPoS.Epoch)
+				}
+				return
+			}
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("unexpected error: have %v want %v", err, test.wantErr)
+			}
+			if cfg != nil {
+				t.Fatalf("expected nil config on a refused schedule, have %v", cfg)
+			}
+		})
+	}
+}
+
+// TestSetupGenesisBlockRejectsStoredUnusableGapSchedule covers the writable
+// startup entry a node actually boots through, so the refusal is not only a
+// property of the readonly loader. A config that omits the epoch is judged against
+// the engine default here as well.
+func TestSetupGenesisBlockRejectsStoredUnusableGapSchedule(t *testing.T) {
+	epoch := newCustomXDPoSGenesis(4545, 0).Config.XDPoS.Epoch
+	tests := []struct {
+		name        string
+		epoch       uint64
+		switchBlock uint64
+	}{
+		{name: "explicit epoch", epoch: epoch, switchBlock: epoch},
+		{name: "omitted epoch", epoch: 0, switchBlock: params.DefaultXDPoSEpoch},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := rawdb.NewMemoryDatabase()
+			block := newCustomXDPoSGenesis(4545, 0).MustCommit(db)
+			stored := newCustomXDPoSGenesis(4545, 0).Config
+			stored.XDPoS = stored.XDPoS.Clone()
+			stored.XDPoS.V2 = stored.XDPoS.V2.Clone()
+			stored.XDPoS.Epoch = test.epoch
+			stored.XDPoS.Gap = 0
+			stored.XDPoS.V2.SwitchBlock = new(big.Int).SetUint64(test.switchBlock)
+			overwriteStoredChainConfig(t, db, block.Hash(), stored)
+
+			cfg, _, _, err := SetupGenesisBlock(db, nil)
+			if !errors.Is(err, params.ErrUnusableGapSchedule) {
+				t.Fatalf("unexpected error: have %v want %v", err, params.ErrUnusableGapSchedule)
+			}
+			if cfg != nil {
+				t.Fatalf("expected nil config on an unusable schedule, have %v", cfg)
+			}
+		})
+	}
+}
+
+// TestSetupGenesisBlockRepairsStoredUnusableGapSchedule pins the recovery path the
+// unusable-schedule hint sends operators down. A data directory whose stored
+// schedule designates no gap block is refused while the chain config is resolved,
+// so the mismatch policy cannot get past it; re-running setup with a repaired
+// genesis is what rewrites the stored config and lets the next load through.
+// Without this test the hint could stay right while the path it names quietly
+// broke.
+func TestSetupGenesisBlockRepairsStoredUnusableGapSchedule(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	block := newCustomXDPoSGenesis(4545, 0).MustCommit(db)
+	stored := newCustomXDPoSGenesis(4545, 0).Config
+	stored.XDPoS = stored.XDPoS.Clone()
+	stored.XDPoS.Gap = 0
+	overwriteStoredChainConfig(t, db, block.Hash(), stored)
+
+	// The refusal happens before a compatibility error exists, so no mismatch
+	// policy value can take the operator past it.
+	if _, _, err := LoadChainConfig(db, nil); !errors.Is(err, params.ErrUnusableGapSchedule) {
+		t.Fatalf("unexpected error loading the unusable schedule: have %v want %v", err, params.ErrUnusableGapSchedule)
+	}
+	if _, _, _, err := SetupGenesisBlockWithOverride(db, nil, false); !errors.Is(err, params.ErrUnusableGapSchedule) {
+		t.Fatalf("unexpected error setting up the unusable schedule: have %v want %v", err, params.ErrUnusableGapSchedule)
+	}
+
+	// Re-running setup with a repaired genesis rewrites the stored schedule.
+	repaired := newCustomXDPoSGenesis(4545, 0)
+	wantGap := repaired.Config.XDPoS.Gap
+	cfg, hash, _, err := SetupGenesisBlock(db, repaired)
+	if err != nil {
+		t.Fatalf("re-running setup with a repaired genesis failed: %v", err)
+	}
+	if cfg == nil || cfg.XDPoS == nil || cfg.XDPoS.Gap != wantGap {
+		t.Fatalf("setup returned the wrong schedule: %v", cfg)
+	}
+	if hash != block.Hash() {
+		t.Fatalf("unexpected genesis hash: have %s want %s", hash.Hex(), block.Hash().Hex())
+	}
+
+	// The stored config now designates a gap block, so the next load accepts it.
+	reloaded, reloadHash, err := LoadChainConfig(db, nil)
+	if err != nil {
+		t.Fatalf("loading the repaired schedule failed: %v", err)
+	}
+	if reloadHash != block.Hash() {
+		t.Fatalf("unexpected reloaded hash: have %s want %s", reloadHash.Hex(), block.Hash().Hex())
+	}
+	if reloaded.XDPoS == nil || reloaded.XDPoS.Gap != wantGap {
+		t.Fatalf("stored schedule was not rewritten: %v", reloaded.XDPoS)
 	}
 }
 

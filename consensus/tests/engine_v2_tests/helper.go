@@ -578,7 +578,7 @@ func PrepareXDCTestBlockChainForV2Engine(t *testing.T, numOfBlocks int, chainCon
 
 		currentBlock = block
 
-		if uint64(i)%chainConfig.XDPoS.Epoch == chainConfig.XDPoS.Epoch-chainConfig.XDPoS.Gap {
+		if offset, ok := chainConfig.XDPoS.GapOffset(); ok && uint64(i)%chainConfig.XDPoS.Epoch == offset {
 			err := blockchain.UpdateM1()
 			if err != nil {
 				t.Fatal(err)
@@ -635,7 +635,7 @@ func PrepareXDCTestBlockChainWithPenaltyForV2Engine(t *testing.T, numOfBlocks in
 		}
 		currentBlock = block
 
-		if uint64(i)%chainConfig.XDPoS.Epoch == chainConfig.XDPoS.Epoch-chainConfig.XDPoS.Gap {
+		if offset, ok := chainConfig.XDPoS.GapOffset(); ok && uint64(i)%chainConfig.XDPoS.Epoch == offset {
 			err := blockchain.UpdateM1()
 			if err != nil {
 				t.Fatal(err)
@@ -699,7 +699,7 @@ func PrepareXDCTestBlockChainWithPenaltyCustomized(t *testing.T, numOfBlocks int
 		}
 		currentBlock = block
 
-		if uint64(i)%chainConfig.XDPoS.Epoch == chainConfig.XDPoS.Epoch-chainConfig.XDPoS.Gap {
+		if offset, ok := chainConfig.XDPoS.GapOffset(); ok && uint64(i)%chainConfig.XDPoS.Epoch == offset {
 			err := blockchain.UpdateM1()
 			if err != nil {
 				t.Fatal(err)
@@ -764,7 +764,7 @@ func PrepareXDCTestBlockChainWith128Candidates(t *testing.T, numOfBlocks int, ch
 
 		currentBlock = block
 
-		if uint64(i)%chainConfig.XDPoS.Epoch == chainConfig.XDPoS.Epoch-chainConfig.XDPoS.Gap {
+		if offset, ok := chainConfig.XDPoS.GapOffset(); ok && uint64(i)%chainConfig.XDPoS.Epoch == offset {
 			err := blockchain.UpdateM1()
 			if err != nil {
 				t.Fatal(err)
@@ -835,7 +835,7 @@ func PrepareXDCTestBlockChainWithProtectorObserver(t *testing.T, numOfBlocks int
 
 		currentBlock = block
 
-		if uint64(i)%chainConfig.XDPoS.Epoch == chainConfig.XDPoS.Epoch-chainConfig.XDPoS.Gap {
+		if offset, ok := chainConfig.XDPoS.GapOffset(); ok && uint64(i)%chainConfig.XDPoS.Epoch == offset {
 			err := blockchain.UpdateM1()
 			if err != nil {
 				t.Fatal(err)
@@ -1080,7 +1080,14 @@ func generateV2Extra(roundNumber int64, currentBlock *types.Block, signer common
 		Round:  round,
 		Number: currentBlock.Number(),
 	}
-	gapNumber := currentBlock.Number().Uint64() - currentBlock.Number().Uint64()%params.TestXDPoSMockChainConfig.XDPoS.Epoch - params.TestXDPoSMockChainConfig.XDPoS.Gap
+	// The gap height comes from the shared definition, so the helper cannot underflow
+	// the subtraction when the block sits inside the first Gap of its epoch, and it
+	// cannot disagree with the engine's sendVote about the block a vote names.
+	number := currentBlock.Number().Uint64()
+	gapNumber, ok := params.TestXDPoSMockChainConfig.XDPoS.GapBlockNumber(number)
+	if !ok {
+		panic("test helper requires a usable gap schedule")
+	}
 	voteForSign := &types.VoteForSign{
 		ProposedBlockInfo: proposedBlockInfo,
 		GapNumber:         gapNumber,

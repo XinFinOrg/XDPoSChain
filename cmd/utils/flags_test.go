@@ -348,10 +348,17 @@ func TestMakeChainReadOnlyModeFormatsCompatRewindForOperators(t *testing.T) {
 	t.Fatal("expected MakeChain to terminate via fatal hook")
 }
 
-// TestFormatBlockChainOpenErrorReadOnly tests format block chain open error read only.
-func TestFormatBlockChainOpenErrorReadOnly(t *testing.T) {
+// TestFormatBlockChainOpenError pins the operator-facing text of both modes. The
+// readonly table covers the readonly-only remediations. The writable assertions
+// below pin that the shared sentinel table applies there too: the XDPoS refusals
+// and the mismatch-policy exit keep the recovery path the readonly mode renders
+// instead of collapsing into a bare error, which is what an operator with a stored
+// unusable schedule needs - re-running init on the data directory is the only
+// recovery, and no --chain-config-mismatch-policy value replaces it. The engine
+// refuses those shapes earlier on the node startup path, so this branch is a
+// backstop for a caller that opens the chain itself and formats the error here.
+func TestFormatBlockChainOpenError(t *testing.T) {
 	t.Parallel()
-
 	tests := []struct {
 		name string
 		err  error
@@ -405,6 +412,55 @@ func TestFormatBlockChainOpenErrorReadOnly(t *testing.T) {
 	wrappedUnavailable := fmt.Errorf("live blockchain tracer requires genesis alloc to be set: %w", core.ErrGenesisAllocUnavailable)
 	if got := formatBlockChainOpenError(wrappedUnavailable, false); got != "Can't create BlockChain: "+core.GenesisAllocUnavailableRecoveryMessage {
 		t.Fatalf("unexpected genesis alloc unavailable message: %q", got)
+	}
+
+	// The shared sentinel table is applied in writable mode as well, and it has to
+	// stay a passthrough for everything it does not know: only the three shapes below
+	// gain text, the message in front of the hint is the error's own.
+	writableHints := []struct {
+		name string
+		err  error
+		want string
+		// dropsErrText marks the shape FormatChainConfigError answers with its
+		// guidance alone: the bare policy exit replaces the message instead of
+		// appending to it, so only the hint can be asserted for it.
+		dropsErrText bool
+	}{
+		{
+			name: "unusable gap schedule",
+			err:  fmt.Errorf("invalid chain config: %w: XDPoS.Gap 0 designates no gap block", params.ErrUnusableGapSchedule),
+			want: UnusableGapScheduleHint,
+		},
+		{
+			name: "unset epoch",
+			err:  fmt.Errorf("invalid chain config: %w", params.ErrUnsetXDPoSEpoch),
+			want: UnsetXDPoSEpochHint,
+		},
+		{
+			name:         "mismatch policy exit",
+			err:          core.ErrConfigMismatchPolicyExit,
+			want:         ChainConfigMismatchPolicyExitHint,
+			dropsErrText: true,
+		},
+	}
+	for _, tt := range writableHints {
+		t.Run("writable "+tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := formatBlockChainOpenError(tt.err, false)
+			if !strings.HasPrefix(got, "Can't create BlockChain: ") {
+				t.Fatalf("writable failure lost its prefix: %q", got)
+			}
+			if !tt.dropsErrText && !strings.Contains(got, tt.err.Error()) {
+				t.Fatalf("writable failure %q does not carry the error it formats", got)
+			}
+			if !strings.Contains(got, tt.want) {
+				t.Fatalf("writable failure %q does not carry the recovery hint", got)
+			}
+		})
+	}
+
+	if got, want := formatBlockChainOpenError(errors.New("some other failure"), false), "Can't create BlockChain: some other failure"; got != want {
+		t.Fatalf("an unknown error has to keep the plain rendering: have %q want %q", got, want)
 	}
 }
 

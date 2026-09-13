@@ -237,6 +237,13 @@ type blockchainOpenConfig struct {
 	compatErr       *params.ConfigCompatError
 	compatPolicy    ChainConfigMismatchPolicy
 	recoveryGenesis *Genesis
+	// configResolvedByCaller records that chainConfig came from a *Resolved
+	// constructor, i.e. from a caller who supplied the config its engine already
+	// resolved. It only selects the wording of the unset-epoch refusal in
+	// newBlockChain: those callers can hand over the engine's config, while the
+	// constructors that resolve their own cannot, and keeping the two apart there is
+	// what makes the refusal's hint actionable.
+	configResolvedByCaller bool
 }
 
 // recoveryGenesisConfigMismatch reports whether recovery genesis carries a
@@ -296,6 +303,24 @@ var (
 
 // NewBlockChain returns a fully initialised writable block chain using startup
 // metadata resolved from the database via SetupGenesisBlock.
+//
+// It opens with the config SetupGenesisBlock resolved, which is a clone of the
+// stored or provided config rather than the caller's object, so an XDPoS.Epoch the
+// engine resolved is not visible here. Callers that rely on that resolution have to
+// use NewBlockChainResolved with the engine's config; see newBlockChain for the
+// guard this documents.
+//
+// A library caller that owns an engine builds it first and opens through the
+// resolved constructor with the config that engine resolved:
+//
+//	engine, err := XDPoS.New(chainConfig, chainDb)
+//	if err != nil {
+//		return err
+//	}
+//	// The engine resolved the schedule onto its own config, exposed as
+//	// (*XDPoS.XDPoS).ChainConfig(); open the chain with that object rather than
+//	// with the unresolved one the engine was built from.
+//	bc, err := NewBlockChainResolved(chainDb, cache, genesis, engine, vmConfig, resolved, ghash, compatErr, compatPolicy)
 func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis, engine consensus.Engine, vmConfig vm.Config) (*BlockChain, error) {
 	resolvedCfg, err := resolveBlockChainOpenConfig(db, genesis, false, DefaultChainConfigMismatchPolicy)
 	if err != nil {
@@ -306,6 +331,10 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 
 // NewBlockChainReadOnly returns a fully initialised readonly block chain using
 // startup metadata resolved from the database via LoadChainConfigWithCompat.
+//
+// Like NewBlockChain it opens with the resolved config rather than the caller's,
+// so the same XDPoS.Epoch precondition applies. A caller that owns the engine
+// opens through NewBlockChainReadOnlyResolved with the engine's config instead.
 func NewBlockChainReadOnly(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis, engine consensus.Engine, vmConfig vm.Config) (*BlockChain, error) {
 	resolvedCfg, err := resolveBlockChainOpenConfig(db, genesis, true, DefaultChainConfigMismatchPolicy)
 	if err != nil {
@@ -316,6 +345,22 @@ func NewBlockChainReadOnly(db ethdb.Database, cacheConfig *CacheConfig, genesis 
 
 // NewBlockChainResolved opens a writable block chain from caller-supplied
 // startup metadata.
+//
+// chainConfig has to carry the XDPoS.Epoch the engine resolved: XDPoS.New and
+// NewFaker never write into the config they are given, so pass the object their
+// ChainConfig() accessor exposes rather than the one they were built from.
+// newBlockChain refuses an unset XDPoS.Epoch with params.ErrUnsetXDPoSEpoch, because
+// the XDPoS gap trigger divides by it, and refuses a schedule that designates no gap
+// block of its own with the params.ErrUnusableGapSchedule the config validation uses;
+// see newBlockChain for the guards this documents.
+//
+// Minimal call shape for a caller that hands over its own engine:
+//
+//	engine, err := XDPoS.New(chainConfig, chainDb)
+//	if err != nil {
+//		return err
+//	}
+//	bc, err := NewBlockChainResolved(chainDb, cache, genesis, engine, vmConfig, engine.(*XDPoS.XDPoS).ChainConfig(), ghash, compatErr, compatPolicy)
 func NewBlockChainResolved(db ethdb.Database, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, compatPolicy ChainConfigMismatchPolicy) (*BlockChain, error) {
 	resolvedCfg, err := newResolvedBlockChainOpenConfig(false, recoveryGenesis, chainConfig, genesisHash, compatErr, compatPolicy)
 	if err != nil {
@@ -326,6 +371,13 @@ func NewBlockChainResolved(db ethdb.Database, cacheConfig *CacheConfig, recovery
 
 // NewBlockChainReadOnlyResolved opens a readonly block chain from caller-
 // supplied startup metadata.
+//
+// Like NewBlockChainResolved it judges the caller's config as given, so that
+// config has to carry the engine-resolved XDPoS.Epoch already - the object the
+// engine's ChainConfig() exposes; newBlockChain refuses an unset epoch with
+// params.ErrUnsetXDPoSEpoch, and a schedule that designates no gap block with
+// params.ErrUnusableGapSchedule. It is the readonly counterpart of that constructor,
+// so the same call shape applies.
 func NewBlockChainReadOnlyResolved(db ethdb.Database, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, compatPolicy ChainConfigMismatchPolicy) (*BlockChain, error) {
 	resolvedCfg, err := newResolvedBlockChainOpenConfig(true, recoveryGenesis, chainConfig, genesisHash, compatErr, compatPolicy)
 	if err != nil {
@@ -383,13 +435,48 @@ func newResolvedBlockChainOpenConfig(readOnly bool, recoveryGenesis *Genesis, ch
 		return blockchainOpenConfig{}, err
 	}
 	return blockchainOpenConfig{
-		readOnly:        readOnly,
-		chainConfig:     chainConfig,
-		genesisHash:     genesisHash,
-		compatErr:       compatErr,
-		compatPolicy:    normalizedCompatPolicy,
-		recoveryGenesis: normalizedGenesis,
+		readOnly:               readOnly,
+		chainConfig:            chainConfig,
+		genesisHash:            genesisHash,
+		compatErr:              compatErr,
+		compatPolicy:           normalizedCompatPolicy,
+		recoveryGenesis:        normalizedGenesis,
+		configResolvedByCaller: true,
 	}, nil
+}
+
+// chainConfigAsStored returns the form of chainConfig the mismatch policies
+// persist. It is the caller's config, except for an epoch the resolution filled in: a
+// config that never wrote an epoch keeps that state in storage, so the stored form
+// still matches the genesis the operator holds instead of gaining a value no file
+// contains. Without this the stored config oscillates between the unset value and
+// the default depending on which tool wrote it last, while core/genesis.go stores an
+// omitted epoch as written.
+//
+// The config itself is returned when there is nothing to restore, so callers do not
+// pay for a copy on the common path.
+//
+// The fill is recognised through XDPoSConfig.EpochFilledByEngine, which reads the
+// state ChainConfig.ResolveXDPoSEpoch records rather than the source JSON keys. That
+// state is process-local and does not survive a database round-trip, so a config
+// read back from storage - whose marshalled form always spells the epoch out - is
+// persisted as it is. Only a config that omits the epoch reaches this function with
+// the record set, because the resolution runs as part of opening a chain and the
+// paths that reach here read the same config the engine resolved.
+//
+// The contract is therefore narrow: the only input this function is written for is
+// the in-flight config the opening resolution produced - the object XDPoS.ChainConfig
+// exposes and the resolved constructors are handed. A config read back from storage,
+// or one that has been through a JSON round-trip, carries no record of a fill and is
+// persisted as written; passing one here would gain the stored config an epoch the
+// genesis does not contain instead of restoring the written state.
+func chainConfigAsStored(chainConfig *params.ChainConfig) *params.ChainConfig {
+	if chainConfig == nil || chainConfig.XDPoS == nil || !chainConfig.XDPoS.EpochFilledByEngine() {
+		return chainConfig
+	}
+	stored := chainConfig.Clone()
+	stored.XDPoS.Epoch = 0
+	return stored
 }
 
 // newBlockChain opens a blockchain from already resolved startup metadata,
@@ -399,6 +486,43 @@ func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus
 	chainConfig := cfg.chainConfig
 	if chainConfig == nil {
 		return nil, errors.New("nil chain config returned from SetupGenesisBlock")
+	}
+	// The XDPoS gap trigger consumes XDPoS.Epoch as a divisor, and an unset
+	// epoch is exactly the state the chain config validation deliberately leaves
+	// alone: it judges an omitted epoch against params.DefaultXDPoSEpoch, a
+	// default that only the resolution fills in. A chain opened without that
+	// resolution would divide by zero on the first canonical block, so refuse it
+	// here, where every constructor funnels through. The schedule itself may be
+	// usable, so the refusal carries its own sentinel rather than the
+	// gap-schedule one. Note this judges cfg.chainConfig, which the unresolved
+	// constructors just cloned out of the database: the caller's own config, which
+	// may still carry the unset epoch, is not what is checked here. The two
+	// open-coded divisions left in this package, setHeadBeyondRoot's v1 checkpoint
+	// predicate and processTradingAndLendingStates, rely on this refusal; the
+	// downloader does not, because it judges the schedule through GapOffset.
+	if chainConfig.XDPoS != nil && chainConfig.XDPoS.Epoch == 0 {
+		// The two open paths need different instructions. A *Resolved caller already
+		// holds the config, so it only has to pass the one its engine resolved; a
+		// constructor that resolves its own config never sees that object, so it has
+		// to be pointed at the resolved constructors and at the metadata they take.
+		if cfg.configResolvedByCaller {
+			return nil, fmt.Errorf("invalid chain config: %w: the config passed to this constructor has to be the one the XDPoS engine resolved (XDPoS.ChainConfig()), not the object the engine was built from - XDPoS.New, NewFaker and ResolveXDPoSEpoch fill params.DefaultXDPoSEpoch (%d) into a copy and never write it back into the config they were given", params.ErrUnsetXDPoSEpoch, params.DefaultXDPoSEpoch)
+		}
+		return nil, fmt.Errorf("invalid chain config: %w: XDPoS.Epoch is unset; this constructor resolves the config from the database or the supplied genesis, so it never sees the default the XDPoS engine fills in (%d). Build the engine on this config first and open through NewBlockChainResolved/NewBlockChainReadOnlyResolved with the config that engine resolved (XDPoS.ChainConfig()); those constructors also take the genesis hash, the compatibility error and the mismatch policy that core.SetupGenesisBlock* and core.LoadChainConfigWithCompat* return", params.ErrUnsetXDPoSEpoch, params.DefaultXDPoSEpoch)
+	}
+	// The schedule itself has to designate a gap block for the same reason: these
+	// constructors judge the config they are given, so a library caller can hand one
+	// that no engine constructor validated. The engine refuses such a schedule on the
+	// node startup path, so this only closes the entry point that bypasses it, and it
+	// keeps a chain from opening with shouldUpdateM1 never firing and every gap
+	// lookup erroring - a divergence that would show up as a state-root mismatch
+	// rather than as an error. The judgement is params.XDPoSConfig's, shared with the
+	// config validation, and the nil guard leaves a config without an XDPoS section
+	// (an ethash chain) alone.
+	if chainConfig.XDPoS != nil {
+		if err := chainConfig.XDPoS.CheckGapSchedule(); err != nil {
+			return nil, err
+		}
 	}
 	genesisHash := cfg.genesisHash
 	compatErr := cfg.compatErr
@@ -571,13 +695,13 @@ func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus
 			if err := bc.SetHead(compatErr.RewindTo); err != nil {
 				return nil, fmt.Errorf("failed to rewind chain: %w", err)
 			}
-			rawdb.WriteChainConfig(db, genesisHash, chainConfig)
+			rawdb.WriteChainConfig(db, genesisHash, chainConfigAsStored(chainConfig))
 		case MismatchUpdateConfigOnly:
 			if cfg.readOnly {
 				return nil, fmt.Errorf("%w: %v", ErrReadOnlyConfigUpdate, compatErr)
 			}
 			log.Warn("Applying chain config mismatch policy", "policy", compatPolicy, "rewind", false, "update_config", true)
-			rawdb.WriteChainConfig(db, genesisHash, chainConfig)
+			rawdb.WriteChainConfig(db, genesisHash, chainConfigAsStored(chainConfig))
 		case MismatchIgnoreMismatch:
 			log.Warn("Applying chain config mismatch policy", "policy", compatPolicy, "rewind", false, "update_config", false)
 		default:
@@ -592,6 +716,9 @@ func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus
 }
 
 // NewBlockChainEx extend old blockchain, add order state db
+//
+// It carries the same XDPoS.Epoch precondition as NewBlockChain; see that
+// constructor for the config state it requires.
 func NewBlockChainEx(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, genesis *Genesis, engine consensus.Engine, vmConfig vm.Config) (*BlockChain, error) {
 	blockchain, err := NewBlockChain(db, cacheConfig, genesis, engine, vmConfig)
 	if err != nil {
@@ -604,6 +731,8 @@ func NewBlockChainEx(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *
 }
 
 // NewBlockChainExReadOnly opens an XDCx-aware readonly blockchain.
+//
+// It carries the same XDPoS.Epoch precondition as NewBlockChainReadOnly.
 func NewBlockChainExReadOnly(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, genesis *Genesis, engine consensus.Engine, vmConfig vm.Config) (*BlockChain, error) {
 	blockchain, err := NewBlockChainReadOnly(db, cacheConfig, genesis, engine, vmConfig)
 	if err != nil {
@@ -617,6 +746,9 @@ func NewBlockChainExReadOnly(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cache
 
 // NewBlockChainExResolved opens a writable XDCx-aware blockchain from caller-
 // supplied startup metadata.
+//
+// chainConfig has to satisfy the same precondition as NewBlockChainResolved: it
+// must already carry the engine-resolved XDPoS.Epoch.
 func NewBlockChainExResolved(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, compatPolicy ChainConfigMismatchPolicy) (*BlockChain, error) {
 	blockchain, err := NewBlockChainResolved(db, cacheConfig, recoveryGenesis, engine, vmConfig, chainConfig, genesisHash, compatErr, compatPolicy)
 	if err != nil {
@@ -630,6 +762,10 @@ func NewBlockChainExResolved(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cache
 
 // NewBlockChainExReadOnlyResolved opens a readonly XDCx-aware blockchain from
 // caller-supplied startup metadata.
+//
+// chainConfig has to satisfy the same precondition as
+// NewBlockChainReadOnlyResolved: it must already carry the engine-resolved
+// XDPoS.Epoch.
 func NewBlockChainExReadOnlyResolved(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, compatPolicy ChainConfigMismatchPolicy) (*BlockChain, error) {
 	blockchain, err := NewBlockChainReadOnlyResolved(db, cacheConfig, recoveryGenesis, engine, vmConfig, chainConfig, genesisHash, compatErr, compatPolicy)
 	if err != nil {
@@ -842,7 +978,10 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64) error {
 			rawdb.DeleteBody(db, hash, num)
 			rawdb.DeleteReceipts(db, hash, num)
 		}
-		if bc.chainConfig.XDPoS != nil && (num+bc.chainConfig.XDPoS.Gap)%bc.chainConfig.XDPoS.Epoch == 0 {
+		// isV1SnapshotCheckpointBlock judges the schedule before dividing, so a chain
+		// whose epoch is unset answers false here instead of panicking inside SetHead.
+		// shouldUpdateM1 shows the GapOffset form the v2 gap trigger uses.
+		if bc.isV1SnapshotCheckpointBlock(num) {
 			rawdb.DeleteXdposSnapshot(db, hash)
 		}
 		// Todo(rjl493456442) txlookup, bloombits, etc
@@ -1691,7 +1830,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 		// WriteBlock has already been called, no need to write again
 		bc.writeHeadBlock(block, false)
 		// prepare set of masternodes for the next epoch
-		if bc.chainConfig.XDPoS != nil && ((block.NumberU64() % bc.chainConfig.XDPoS.Epoch) == (bc.chainConfig.XDPoS.Epoch - bc.chainConfig.XDPoS.Gap)) {
+		if bc.shouldUpdateM1(block.NumberU64()) {
 			if err := bc.UpdateM1(); err != nil {
 				log.Crit("Fail to update masternodes during writeBlockWithState", "number", block.Number, "hash", block.Hash().Hex(), "err", err)
 			}
@@ -2592,7 +2731,7 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 		// Update the head block
 		bc.writeHeadBlock(block, true)
 		// prepare set of masternodes for the next epoch
-		if bc.chainConfig.XDPoS != nil && ((block.NumberU64() % bc.chainConfig.XDPoS.Epoch) == (bc.chainConfig.XDPoS.Epoch - bc.chainConfig.XDPoS.Gap)) {
+		if bc.shouldUpdateM1(block.NumberU64()) {
 			if err := bc.UpdateM1(); err != nil {
 				log.Crit("Fail to update masternodes during reorg", "number", block.Number, "hash", block.Hash().Hex(), "err", err)
 			}
@@ -2756,6 +2895,69 @@ func (bc *BlockChain) GetClient() (bind.ContractBackend, error) {
 	}
 
 	return bc.Client, nil
+}
+
+// shouldUpdateM1 reports whether the given canonical block number is the gap
+// block that prepares the masternode set for the next epoch, i.e. whether the
+// v2 gap trigger n%Epoch == Epoch-Gap fires for it.
+//
+// params.XDPoSConfig.IsGapBlock owns the judgement (through GapOffset) of
+// whether the schedule designates a gap block at all and whether this height is
+// it, so a schedule without one never triggers here and no copy of the trigger
+// expression lives in this package; that also covers Epoch == 0, which would
+// otherwise divide by zero. The nil guard keeps a BlockChain built directly in
+// this package - SetHead runs on one - answering false instead of panicking,
+// the way isV1SnapshotCheckpointBlock and isLendingLiquidationBlock do.
+// newBlockChain refuses to open a chain with an unset epoch, so in a running
+// node this predicate only ever sees schedules the chain config validation
+// accepted.
+//
+// Gap == Epoch is the one schedule where this predicate and
+// isV1SnapshotCheckpointBlock disagree about the same height: GapOffset refuses it
+// outright, so no height triggers here, while the v1 predicate (n+Gap)%Epoch == 0
+// still lands on the epoch switch block. Chain config validation refuses such a
+// schedule before a chain is opened, so the divergence is only reachable through a
+// directly constructed BlockChain.
+func (bc *BlockChain) shouldUpdateM1(number uint64) bool {
+	if bc.chainConfig == nil || bc.chainConfig.XDPoS == nil {
+		return false
+	}
+	return bc.chainConfig.XDPoS.IsGapBlock(number)
+}
+
+// isV1SnapshotCheckpointBlock reports whether the given canonical block number is
+// a v1 XDPoS snapshot checkpoint, whose predicate is (number+Gap)%Epoch == 0.
+//
+// The predicate is open-coded rather than derived from GapOffset: a v1 checkpoint
+// also exists when Gap == 0, which GapOffset refuses. An unset epoch would divide
+// by zero, so the schedule is judged here instead of relying on newBlockChain
+// having refused the chain: a BlockChain can be built directly inside this
+// package, and SetHead has to work on it rather than panic.
+func (bc *BlockChain) isV1SnapshotCheckpointBlock(number uint64) bool {
+	if bc.chainConfig == nil || bc.chainConfig.XDPoS == nil {
+		return false
+	}
+	config := bc.chainConfig.XDPoS
+	return config.Epoch != 0 && (number+config.Gap)%config.Epoch == 0
+}
+
+// isLendingLiquidationBlock reports whether the given canonical block number is
+// the height XDCxlending liquidates open trades at. The definition lives on
+// params.XDPoSConfig.IsLendingLiquidationBlock, next to the gap schedule, because
+// block production asks the same question about the same height: the miner decides
+// whether to attach the liquidation work, this package decides whether to expect
+// it, and two copies of the predicate drifting apart would show up as a state-root
+// divergence rather than an error.
+//
+// This wrapper only adds the nil-config guard, so a BlockChain built directly
+// inside this package keeps answering false instead of panicking on a missing
+// config; the epoch handling - including the unset epoch that must not divide -
+// belongs to the shared definition.
+func (bc *BlockChain) isLendingLiquidationBlock(number uint64) bool {
+	if bc.chainConfig == nil {
+		return false
+	}
+	return bc.chainConfig.XDPoS.IsLendingLiquidationBlock(number)
 }
 
 func (bc *BlockChain) UpdateM1() error {
@@ -2927,7 +3129,11 @@ func (bc *BlockChain) processTradingAndLendingStates(isValidBlockNumber bool, bl
 			}
 		}
 		// liquidate / finalize open lendingTrades
-		if block.Number().Uint64()%bc.chainConfig.XDPoS.Epoch == common.LiquidateLendingTradeBlock {
+		// Like the setHeadBeyondRoot checkpoint predicate, the schedule is judged
+		// inside the predicate, so a chain whose epoch is unset does not divide by
+		// zero here: the guard that admits this branch only rejects blocks at or
+		// below the epoch, which an unset epoch does not cover for a real block.
+		if bc.isLendingLiquidationBlock(block.NumberU64()) {
 			_, _, _, _, _, err := lendingService.ProcessLiquidationData(block.Header(), bc, statedb, tradingState, lendingState)
 			if err != nil {
 				return tradingState, lendingState, fmt.Errorf("failed to ProcessLiquidationData. Err: %v", err)

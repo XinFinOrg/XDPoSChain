@@ -16,7 +16,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/startup"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
-	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -774,34 +773,6 @@ func TestSetupGenesisConfigCompatibilityPathReturnsConfig(t *testing.T) {
 
 // TestSetupGenesisBlockDoesNotRewriteStoredCustomConfigOnCompatDrift tests setup genesis block does not rewrite stored custom config on compat drift.
 func TestSetupGenesisBlockDoesNotRewriteStoredCustomConfigOnCompatDrift(t *testing.T) {
-	newCustomXDPoSGenesis := func() *Genesis {
-		xdposCfg := params.TestnetChainConfig.XDPoS.Clone()
-		xdposCfg.Epoch = 1
-		xdposCfg.V2 = xdposCfg.V2.Clone()
-		xdposCfg.V2.SwitchBlock = big.NewInt(2)
-		xdposCfg.V2.SwitchEpoch = 2
-		cfg := &params.ChainConfig{
-			ChainID:                big.NewInt(4444),
-			TIPTRC21FeeBlock:       big.NewInt(1),
-			Gas50xBlock:            big.NewInt(1),
-			TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
-			XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
-			RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
-			LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
-			XDPoS:                  xdposCfg,
-		}
-		return &Genesis{
-			Config:    cfg,
-			Timestamp: 1,
-			ExtraData: make([]byte, 32+crypto.SignatureLength),
-			Alloc: types.GenesisAlloc{
-				{1}: {Balance: big.NewInt(1)},
-			},
-			GasLimit:   4700000,
-			Difficulty: big.NewInt(1),
-		}
-	}
-
 	writeHead := func(db ethdb.Database, number uint64) {
 		t.Helper()
 		header := &types.Header{Number: new(big.Int).SetUint64(number)}
@@ -817,17 +788,22 @@ func TestSetupGenesisBlockDoesNotRewriteStoredCustomConfigOnCompatDrift(t *testi
 		assertReturned func(*testing.T, *params.ChainConfig)
 	}{
 		{
-			name: "v2 switch epoch drift",
+			name: "v2 switch block and epoch drift",
 			head: 2,
 			mutate: func(cfg *params.ChainConfig) {
 				cfg.XDPoS = cfg.XDPoS.Clone()
 				cfg.XDPoS.V2 = cfg.XDPoS.V2.Clone()
+				// The switch epoch has to keep naming the epoch its switch block falls on,
+				// so the pair is drifted together: bumping only the epoch describes a
+				// schedule the config validation refuses, which would mask the
+				// compatibility drift this case is about.
 				cfg.XDPoS.V2.SwitchEpoch++
+				cfg.XDPoS.V2.SwitchBlock = new(big.Int).SetUint64(cfg.XDPoS.Epoch * cfg.XDPoS.V2.SwitchEpoch)
 			},
 			wantCompatErr: &params.ConfigCompatError{
-				What:         "XDPoS.V2.SwitchEpoch",
+				What:         "XDPoS.V2.SwitchBlock",
 				StoredConfig: big.NewInt(2),
-				NewConfig:    big.NewInt(2),
+				NewConfig:    big.NewInt(4),
 				RewindTo:     1,
 			},
 			assertReturned: func(t *testing.T, cfg *params.ChainConfig) {
@@ -835,8 +811,11 @@ func TestSetupGenesisBlockDoesNotRewriteStoredCustomConfigOnCompatDrift(t *testi
 				if cfg == nil || cfg.XDPoS == nil || cfg.XDPoS.V2 == nil {
 					t.Fatalf("expected returned V2 config, have %v", cfg)
 				}
-				if cfg.XDPoS.V2.SwitchEpoch == 2 {
-					t.Fatalf("expected returned config to keep provided switchEpoch drift, have %d", cfg.XDPoS.V2.SwitchEpoch)
+				// The mutator above bumped the fixture by one, so the returned
+				// config has to carry that value instead of the stored one.
+				want := uint64(customXDPoSGenesisSwitchEpoch + 1)
+				if cfg.XDPoS.V2.SwitchEpoch != want {
+					t.Fatalf("expected returned config to keep provided switchEpoch drift: have %d want %d", cfg.XDPoS.V2.SwitchEpoch, want)
 				}
 			},
 		},
@@ -845,7 +824,7 @@ func TestSetupGenesisBlockDoesNotRewriteStoredCustomConfigOnCompatDrift(t *testi
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			db := rawdb.NewMemoryDatabase()
-			storedGenesis := newCustomXDPoSGenesis()
+			storedGenesis := newCustomXDPoSGenesis(4444, 1)
 			block := storedGenesis.MustCommit(db)
 			writeHead(db, test.head)
 
@@ -854,7 +833,7 @@ func TestSetupGenesisBlockDoesNotRewriteStoredCustomConfigOnCompatDrift(t *testi
 				t.Fatalf("failed to read stored chain config before restart: %v", err)
 			}
 
-			provided := newCustomXDPoSGenesis()
+			provided := newCustomXDPoSGenesis(4444, 1)
 			test.mutate(provided.Config)
 
 			cfg, hash, compatErr, err := SetupGenesisBlock(db, provided)
@@ -884,33 +863,6 @@ func TestSetupGenesisBlockDoesNotRewriteStoredCustomConfigOnCompatDrift(t *testi
 // setup genesis preserves rewind-to-zero compatibility errors instead of
 // rewriting the stored config.
 func TestSetupGenesisBlockReturnsCompatErrorWhenCompatDriftRewindsToZero(t *testing.T) {
-	newCustomXDPoSGenesis := func() *Genesis {
-		xdposCfg := params.TestnetChainConfig.XDPoS.Clone()
-		xdposCfg.Epoch = 1
-		xdposCfg.V2 = xdposCfg.V2.Clone()
-		xdposCfg.V2.SwitchBlock = big.NewInt(2)
-		xdposCfg.V2.SwitchEpoch = 2
-		cfg := &params.ChainConfig{
-			ChainID:                big.NewInt(4444),
-			TIPTRC21FeeBlock:       big.NewInt(1),
-			Gas50xBlock:            big.NewInt(1),
-			TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
-			XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
-			RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
-			LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
-			XDPoS:                  xdposCfg,
-		}
-		return &Genesis{
-			Config:    cfg,
-			ExtraData: make([]byte, 32+crypto.SignatureLength),
-			Alloc: types.GenesisAlloc{
-				{1}: {Balance: big.NewInt(1)},
-			},
-			GasLimit:   4700000,
-			Difficulty: big.NewInt(1),
-		}
-	}
-
 	writeHead := func(db ethdb.Database, number uint64) {
 		t.Helper()
 		header := &types.Header{Number: new(big.Int).SetUint64(number)}
@@ -919,7 +871,7 @@ func TestSetupGenesisBlockReturnsCompatErrorWhenCompatDriftRewindsToZero(t *test
 	}
 
 	db := rawdb.NewMemoryDatabase()
-	storedGenesis := newCustomXDPoSGenesis()
+	storedGenesis := newCustomXDPoSGenesis(4444, 0)
 	block := storedGenesis.MustCommit(db)
 	writeHead(db, 1)
 
@@ -928,7 +880,7 @@ func TestSetupGenesisBlockReturnsCompatErrorWhenCompatDriftRewindsToZero(t *test
 		t.Fatalf("failed to read stored chain config before restart: %v", err)
 	}
 
-	provided := newCustomXDPoSGenesis()
+	provided := newCustomXDPoSGenesis(4444, 0)
 	provided.Config.TRC21IssuerSMC = common.HexToAddress("0x0000000000000000000000000000000000000001")
 
 	cfg, hash, compatErr, err := SetupGenesisBlock(db, provided)
@@ -975,4 +927,62 @@ func TestSetupGenesisBlockReturnsCompatErrorWhenCompatDriftRewindsToZero(t *test
 		t.Fatalf("expected stored chain config to remain unchanged: have %s want %s", storedCfg.TRC21IssuerSMC.Hex(), storedGenesis.Config.TRC21IssuerSMC.Hex())
 	}
 
+}
+
+// TestSetupGenesisBlockRefusesScheduleRepairOnNonEmptyDataDir pins why the
+// schedule recovery hints qualify themselves with head == 0: correcting a
+// schedule is a historical change, so on a directory that already imported
+// blocks SetupGenesisBlock reports a compatibility error and leaves the stored
+// config alone. That is exactly the shape `XDC init` aborts on, which is why
+// such a directory has to be resynchronised instead of repaired in place.
+//
+// A head at block 1 keeps currentXDPoSRoundFromHead on its <= SwitchBlock
+// branch (the fixture's switch block is 2), so no v2 extra fields have to be
+// decoded for the head.
+func TestSetupGenesisBlockRefusesScheduleRepairOnNonEmptyDataDir(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	storedGenesis := newCustomXDPoSGenesis(4444, 0)
+	block := storedGenesis.MustCommit(db)
+
+	// The stored schedule designates no gap block, which is the shape the
+	// upgrade refuses.
+	broken := newCustomXDPoSGenesis(4444, 0).Config
+	broken.XDPoS = broken.XDPoS.Clone()
+	broken.XDPoS.Gap = 0
+	overwriteStoredChainConfig(t, db, block.Hash(), broken)
+
+	header := &types.Header{Number: big.NewInt(1)}
+	rawdb.WriteHeader(db, header)
+	rawdb.WriteHeadHeaderHash(db, header.Hash())
+
+	storedRawBefore, err := rawdb.ReadChainConfigJSON(db, block.Hash())
+	if err != nil {
+		t.Fatalf("failed to read stored chain config before repair: %v", err)
+	}
+
+	repaired := newCustomXDPoSGenesis(4444, 0)
+	cfg, hash, compatErr, err := SetupGenesisBlock(db, repaired)
+	if err != nil {
+		t.Fatalf("unexpected setup error: %v", err)
+	}
+	if compatErr == nil {
+		t.Fatal("expected a compatibility error for a corrected schedule on a non-empty directory")
+	}
+	if compatErr.What != "XDPoS.Gap" {
+		t.Fatalf("unexpected compatibility error: have %v want XDPoS.Gap", compatErr)
+	}
+	if hash != block.Hash() {
+		t.Fatalf("unexpected hash: have %s want %s", hash.Hex(), block.Hash().Hex())
+	}
+	if cfg == nil || cfg.XDPoS == nil || cfg.XDPoS.Gap == 0 {
+		t.Fatalf("expected the returned config to carry the repaired schedule, have %v", cfg)
+	}
+
+	storedRawAfter, err := rawdb.ReadChainConfigJSON(db, block.Hash())
+	if err != nil {
+		t.Fatalf("failed to read stored chain config after repair: %v", err)
+	}
+	if !bytes.Equal(storedRawBefore, storedRawAfter) {
+		t.Fatal("a corrected schedule on a non-empty directory must not rewrite the stored config")
+	}
 }

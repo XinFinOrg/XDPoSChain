@@ -671,3 +671,131 @@ func TestGapBlockNumberMatchesOpenCodedSwitchBlockStep(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveXDPoSEpochFillsAnOmittedEpoch pins the API the XDPoS engine and the
+// resolved blockchain constructors share: an unset epoch is judged against
+// DefaultXDPoSEpoch and filled into a copy, so the caller's config keeps the state
+// its source wrote while the engine runs with an epoch it can divide by.
+func TestResolveXDPoSEpochFillsAnOmittedEpoch(t *testing.T) {
+	cfg := TestnetChainConfig.Clone()
+	cfg.XDPoS = cfg.XDPoS.Clone()
+	cfg.XDPoS.Epoch = 0
+
+	resolved, err := cfg.ResolveXDPoSEpoch()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resolved == cfg {
+		t.Fatal("an omitted epoch has to be resolved onto a copy")
+	}
+	if resolved.XDPoS == cfg.XDPoS {
+		t.Fatal("the resolved config must not share the XDPoS section with the receiver")
+	}
+	if resolved.XDPoS.Epoch != DefaultXDPoSEpoch {
+		t.Fatalf("resolved epoch: have %d want %d", resolved.XDPoS.Epoch, DefaultXDPoSEpoch)
+	}
+	if !resolved.XDPoS.EpochFilledByEngine() {
+		t.Fatal("the resolved copy has to record that the epoch was filled in for it")
+	}
+	if cfg.XDPoS.Epoch != 0 {
+		t.Fatalf("resolving must not fill the receiver in place, have %d", cfg.XDPoS.Epoch)
+	}
+	if cfg.XDPoS.EpochFilledByEngine() {
+		t.Fatal("the receiver keeps an omitted epoch, which is not an engine-filled one")
+	}
+}
+
+// TestResolveXDPoSEpochKeepsAWrittenEpoch pins the zero-allocation branch: a config
+// that writes its epoch out is judged and returned as it is.
+func TestResolveXDPoSEpochKeepsAWrittenEpoch(t *testing.T) {
+	cfg := TestnetChainConfig.Clone()
+	cfg.XDPoS = cfg.XDPoS.Clone()
+
+	resolved, err := cfg.ResolveXDPoSEpoch()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resolved != cfg {
+		t.Fatal("a config that writes its epoch out has to be returned as it is")
+	}
+	if resolved.XDPoS.EpochFilledByEngine() {
+		t.Fatal("a written epoch is not an engine-filled one")
+	}
+}
+
+// TestResolveXDPoSEpochRejectsAnUnusableSchedule pins that the resolution judges the
+// schedule it fills the epoch in for, so a caller cannot obtain a config the engine
+// would refuse. A refusal leaves the receiver untouched.
+func TestResolveXDPoSEpochRejectsAnUnusableSchedule(t *testing.T) {
+	cfg := TestnetChainConfig.Clone()
+	cfg.XDPoS = cfg.XDPoS.Clone()
+	cfg.XDPoS.Epoch = 0
+	cfg.XDPoS.Gap = 0
+
+	resolved, err := cfg.ResolveXDPoSEpoch()
+	if !errors.Is(err, ErrUnusableGapSchedule) {
+		t.Fatalf("unexpected error: have %v want %v", err, ErrUnusableGapSchedule)
+	}
+	if resolved != nil {
+		t.Fatalf("a refused config must not produce a resolved config: %v", resolved)
+	}
+	if cfg.XDPoS.Epoch != 0 {
+		t.Fatalf("a refused config must keep its own epoch, have %d", cfg.XDPoS.Epoch)
+	}
+}
+
+// TestEpochFilledByEngineFollowsTheExplicitState pins that the judgement reads the
+// state the resolution records rather than the source JSON keys: a config that never
+// went through the resolution is not engine-filled even when its source omitted the
+// epoch key, Clone carries the state, and a JSON round-trip drops it.
+func TestEpochFilledByEngineFollowsTheExplicitState(t *testing.T) {
+	var written XDPoSConfig
+	if err := json.Unmarshal([]byte(`{"period":2,"epoch":900,"gap":450}`), &written); err != nil {
+		t.Fatalf("failed to unmarshal the XDPoS section: %v", err)
+	}
+	if written.EpochFilledByEngine() {
+		t.Fatal("a config that never went through the resolution is not engine-filled")
+	}
+
+	cfg := TestnetChainConfig.Clone()
+	cfg.XDPoS = cfg.XDPoS.Clone()
+	cfg.XDPoS.Epoch = 0
+	resolved, err := cfg.ResolveXDPoSEpoch()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !resolved.XDPoS.Clone().EpochFilledByEngine() {
+		t.Fatal("Clone has to carry the engine-filled state")
+	}
+
+	data, err := json.Marshal(resolved.XDPoS)
+	if err != nil {
+		t.Fatalf("failed to marshal the resolved XDPoS section: %v", err)
+	}
+	var roundTripped XDPoSConfig
+	if err := json.Unmarshal(data, &roundTripped); err != nil {
+		t.Fatalf("failed to unmarshal the stored XDPoS section: %v", err)
+	}
+	if roundTripped.Epoch != DefaultXDPoSEpoch {
+		t.Fatalf("the round-trip has to keep the stored epoch, have %d", roundTripped.Epoch)
+	}
+	if roundTripped.EpochFilledByEngine() {
+		t.Fatal("the engine-filled state is process-local and must not survive the round-trip")
+	}
+
+	// The reset has to belong to the receiver rather than to the zero value it
+	// happens to start as. A caller that decodes over a section which was resolved
+	// earlier keeps the record otherwise, which would report an epoch the source
+	// wrote out as one the resolution filled in - the state core's chainConfigAsStored
+	// restores to 0 when it persists the config.
+	reused := *resolved.XDPoS
+	if err := json.Unmarshal(data, &reused); err != nil {
+		t.Fatalf("failed to unmarshal into a receiver that carries the record: %v", err)
+	}
+	if reused.Epoch != DefaultXDPoSEpoch {
+		t.Fatalf("the reused receiver has to keep the stored epoch, have %d", reused.Epoch)
+	}
+	if reused.EpochFilledByEngine() {
+		t.Fatal("a receiver that carried the record must not report the stored epoch as engine-filled")
+	}
+}

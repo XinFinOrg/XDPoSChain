@@ -272,14 +272,41 @@ func (d *Downloader) SetPivotBlock(number uint64, hash common.Hash, root common.
 	d.pivotHash = hash
 	d.pivotRoot = root
 
-	// Calculate all gap pivot numbers: N - N%Epoch - Gap  where x < N
-	epoch := d.blockchain.Config().XDPoS.Epoch
-	gap := d.blockchain.Config().XDPoS.Gap
+	// Calculate all gap pivot numbers: N - N%Epoch - Gap  where x < N. The
+	// schedule is judged through GapOffset, so a schedule that designates no gap
+	// block clears the list instead of dividing by an unset Epoch or underflowing
+	// the subtraction; for a usable schedule the offset equals Epoch-Gap, which is
+	// what the epoch-start fallback below anchors at.
+	xdpos := d.blockchain.Config().XDPoS
+	offset, ok := xdpos.GapOffset()
+	if !ok {
+		log.Warn("SetPivotBlock skipping gap pivots: unusable XDPoS gap schedule", "primary", number, "epoch", xdpos.Epoch, "gap", xdpos.Gap)
+		d.pivotGapLock.Lock()
+		d.pivotGapNumbers = nil
+		d.pivotGapLock.Unlock()
+		return
+	}
+	epoch := xdpos.Epoch
+	gap := xdpos.Gap
 	epochBase := number - number%epoch
-	var baseGap uint64
-	if epochBase < gap {
-		baseGap = epoch - gap
-	} else {
+	// The epoch start anchors the list, unless it sits within the first gap of the
+	// chain, where the offset itself is the only height the trigger selects.
+	// Choosing the fallback first keeps the gap from being subtracted below zero on
+	// the way to a value that is then discarded.
+	//
+	// This is deliberately not GapBlockNumber's answer: that definition resolves the
+	// gap block governing an epoch and reports 0 - the chain-start fallback, not a
+	// height the trigger selects - when the epoch starts no farther than Gap into the
+	// chain. What the list below needs is the smallest gap height strictly below the
+	// pivot, which for a pivot inside the first epoch is the offset itself.
+	// TestSetPivotBlockGapCalculation pins that row.
+	//
+	// This enumerates heights rather than testing one, so it cannot call
+	// params.XDPoSConfig.IsGapBlock directly; it starts from the same offset that
+	// predicate uses, so the two cannot disagree about which heights the trigger
+	// selects.
+	baseGap := offset
+	if epochBase >= gap {
 		baseGap = epochBase - gap
 	}
 	d.pivotGapLock.Lock()
@@ -1586,13 +1613,39 @@ func (d *Downloader) processFullSyncContent(height uint64) error {
 		if len(results) == 0 {
 			return nil
 		}
-		if d.blockchain.Config() != nil && d.blockchain.Config().XDPoS != nil {
-			epoch := d.blockchain.Config().XDPoS.Epoch
-			gap := d.blockchain.Config().XDPoS.Gap
+		cfg := d.blockchain.Config()
+		var (
+			gapOffset  uint64
+			batchAtGap bool
+		)
+		if cfg != nil && cfg.XDPoS != nil {
+			// The gap trigger is judged through GapOffset, so a schedule that
+			// designates no gap block cannot divide by an unset Epoch and falls
+			// through to the single-batch import below instead. Such a schedule
+			// names no gap boundary to split at, and the old Epoch-Gap residue
+			// could not match a block number either (it underflows for Gap > Epoch
+			// and equals Epoch for Gap == 0, while number stays below Epoch). The
+			// epoch-boundary flushes the old test also performed - on number == 0
+			// and number == epoch-1 - do go away with the fallback, so the two are
+			// not equivalent; only a schedule no real node reaches can tell the
+			// difference, because CheckConfigForkOrder refuses it.
+			//
+			// SetPivotBlock degrades the same shape differently - it clears the gap
+			// pivots - and neither fallback is a path a real chain takes: every core
+			// constructor funnels through newBlockChain, which refuses an unset epoch
+			// and judges CheckGapSchedule on the config it is given, for the Resolved
+			// constructors too. What can still reach them is a chain whose Config()
+			// does not come from there, i.e. one without an XDPoS section at all (the
+			// guard above) or a test double, so they stay as the fallback the chain
+			// interface promises rather than as production code paths.
+			gapOffset, batchAtGap = cfg.XDPoS.GapOffset()
+		}
+		if batchAtGap {
+			epoch := cfg.XDPoS.Epoch
 			inserts := []*fetchResult{}
 			for i := 0; i < len(results); i++ {
 				number := results[i].Header.Number.Uint64() % epoch
-				if number == 0 || number == epoch-1 || number == epoch-gap {
+				if number == 0 || number == epoch-1 || number == gapOffset {
 					inserts = append(inserts, results[i])
 					if d.chainInsertHook != nil {
 						d.chainInsertHook(inserts)

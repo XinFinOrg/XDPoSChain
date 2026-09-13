@@ -145,8 +145,26 @@ func newXDCSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64, chainConf
 		Alloc:     alloc,
 		ExtraData: append(make([]byte, 32), make([]byte, crypto.SignatureLength)...),
 	}
+	// Build the engine before committing: the constructor resolves a missing
+	// XDPoS.Epoch onto its own copy, and the committed genesis has to carry the
+	// schedule the chain is opened with. Committing first would persist the
+	// epoch-less config, which the open then refuses.
+	consensus, err := XDPoS.NewFakerWithError(database, chainConfig)
+	if err != nil {
+		// The reason comes from the constructor that failed, so a refused config and
+		// a failed engine build stay distinguishable here; asking
+		// ValidateFakerConfig instead would report a rejected config even when the
+		// config was fine and print a nil judgement for the other case.
+		panic(fmt.Sprintf("simulated backend: cannot build the XDPoS engine: %v", err))
+	}
+	// Store the resolved schedule: the caller's config may still carry the unset
+	// epoch, which the open constructor refuses. A constructor that exposes no
+	// config keeps the caller's object rather than gaining a nil one, so the open
+	// below reports the unset epoch instead of the genesis losing its config.
+	if resolved := consensus.ChainConfig(); resolved != nil {
+		genesis.Config = resolved
+	}
 	genesis.MustCommit(database)
-	consensus := XDPoS.NewFaker(database, chainConfig)
 
 	// Attach mock trading and lending service
 	var DefaultConfig = XDCx.Config{
@@ -176,7 +194,10 @@ func newXDCSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64, chainConf
 		TrieTimeLimit:  5 * time.Minute,
 		Preimages:      true,
 	}
-	blockchain, _ := core.NewBlockChain(database, cacheConfig, &genesis, consensus, vm.Config{})
+	blockchain, err := core.NewBlockChain(database, cacheConfig, &genesis, consensus, vm.Config{})
+	if err != nil {
+		panic(fmt.Sprintf("simulated backend: open blockchain: %v", err))
+	}
 
 	backend := &Backend{
 		database:   database,

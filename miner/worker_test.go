@@ -370,6 +370,8 @@ func TestWorkerCheckPreCommitXDPoSMismatch(t *testing.T) {
 		RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
 		LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
 		XDPoS: &params.XDPoSConfig{
+			Epoch:                900,
+			Gap:                  450, // a usable gap schedule is required to commit an XDPoS genesis
 			FoundationWalletAddr: common.HexToAddress("0x0000000000000000000000000000000000000068"),
 			MaxMasternodesV2:     1, // required to avoid missing fork switch error
 			V2: &params.V2{

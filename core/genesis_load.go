@@ -29,7 +29,7 @@ func normalizeProvidedGenesisForStoredConfig(stored common.Hash, storedCfg *para
 	if err != nil {
 		return nil, originalHash, err
 	}
-	if err := genesis.Config.CheckConfigForkOrder(); err != nil {
+	if err := genesis.Config.CheckConfigForkOrderWithEpochDefault(); err != nil {
 		return nil, common.Hash{}, err
 	}
 	providedHash, err := genesis.Hash()
@@ -73,12 +73,12 @@ func resolveLoadStoredConfigResult(db ethdb.Database, stored common.Hash, stored
 				return nil, nil, errGenesisConfigConflict
 			}
 		}
-		if err := newCfg.CheckConfigForkOrder(); err != nil {
+		if err := newCfg.CheckConfigForkOrderWithEpochDefault(); err != nil {
 			return nil, nil, err
 		}
 		return newCfg, nil, nil
 	}
-	if err := newCfg.CheckConfigForkOrder(); err != nil {
+	if err := newCfg.CheckConfigForkOrderWithEpochDefault(); err != nil {
 		return nil, nil, err
 	}
 	storedEqual, err := chainConfigJSONEqual(storedCfg, state.builtin)
@@ -115,7 +115,7 @@ func resolveLoadStoredMissingConfigNoProvidedGenesis(db ethdb.Database, stored c
 		return nil, action.TerminalError
 	}
 	if state.builtin != nil {
-		if err := state.builtin.CheckConfigForkOrder(); err != nil {
+		if err := state.builtin.CheckConfigForkOrderWithEpochDefault(); err != nil {
 			return nil, err
 		}
 		return state.builtin.Clone(), nil
@@ -138,7 +138,7 @@ func resolveLoadProvidedGenesis(db ethdb.Database, stored common.Hash, genesis *
 	if err != nil {
 		return nil, originalHash, err
 	}
-	err = genesis.Config.CheckConfigForkOrder()
+	err = genesis.Config.CheckConfigForkOrderWithEpochDefault()
 	if err != nil {
 		return nil, common.Hash{}, err
 	}
@@ -297,7 +297,7 @@ func resolveHeadCompatibleChainConfig(db ethdb.Database, storedCfg, candidateCfg
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := candidateCfg.CheckConfigForkOrder(); err != nil {
+	if err := candidateCfg.CheckConfigForkOrderWithEpochDefault(); err != nil {
 		return nil, nil, err
 	}
 	xdposRound, err := currentXDPoSRoundFromHead(head, storedCfg)

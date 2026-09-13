@@ -126,6 +126,17 @@ func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, headers []*ty
 
 // IsEpochSwitchAtRound() is used by miner to check whether it mines a block in the same epoch with parent
 func (x *XDPoS_v2) isEpochSwitchAtRound(round types.Round, parentHeader *types.Header) (bool, uint64, error) {
+	// The epoch arithmetic below divides by Epoch, so a schedule that leaves it
+	// unset would panic here instead of reaching the gap lookup that reports it.
+	// Only the shapes that cannot do that arithmetic return early - a missing
+	// config and an epoch that is not filled in yet - and gapPathError names them
+	// as such rather than as an out-of-range gap: a schedule with a usable Epoch but
+	// no gap block still flows into the caller's guard, which names the height that
+	// caller looked up.
+	if x.config == nil || x.config.Epoch == 0 {
+		return false, 0, gapPathError("[isEpochSwitchAtRound]", parentHeader.Number.Uint64(), x.config)
+	}
+
 	epochNum := x.config.V2.SwitchEpoch + uint64(round)/x.config.Epoch
 	// if parent is last v1 block and this is first v2 block, this is treated as epoch switch
 	if parentHeader.Number.Cmp(x.config.V2.SwitchBlock) == 0 {

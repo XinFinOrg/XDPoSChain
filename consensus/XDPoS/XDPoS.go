@@ -55,6 +55,12 @@ func (x *XDPoS) SigHash(header *types.Header) (hash common.Hash) {
 // XDPoS is the delegated-proof-of-stake consensus engine proposed to support the
 // Ethereum testnet following the Ropsten attacks.
 type XDPoS struct {
+	// chainConfig is the config this engine resolved and runs with: the copy that
+	// carries the XDPoS.Epoch filled in when the caller's config left it unset.
+	// ChainConfig exposes it to callers that have to open the chain with the
+	// resolution rather than with their own object.
+	chainConfig *params.ChainConfig
+
 	config *params.XDPoSConfig // Consensus engine configuration parameters
 	db     ethdb.Database      // Database to store and retrieve snapshot checkpoints
 
@@ -82,32 +88,49 @@ func (x *XDPoS) SubscribeForensicsEvent(ch chan<- types.ForensicsEvent) event.Su
 
 // New creates a XDPoS delegated-proof-of-stake consensus engine with the initial
 // signers set to the ones provided by the user.
+//
+// The config the engine runs with is ChainConfig.ResolveXDPoSEpoch's answer: an
+// omitted XDPoS.Epoch is judged against params.DefaultXDPoSEpoch and filled into a
+// copy, so the caller's config is never mutated and keeps the state its source
+// wrote. Callers that open the chain through core.NewBlockChain(ReadOnly)Resolved
+// pass ChainConfig() of this engine.
 func New(chainConfig *params.ChainConfig, db ethdb.Database) (*XDPoS, error) {
 	log.Info("[New] initialise consensus engines")
 	if chainConfig == nil {
 		return nil, errors.New("missing chain config")
 	}
-	config := chainConfig.XDPoS
-	// Set any missing consensus parameters to their defaults
-	if config != nil && config.Epoch == 0 {
-		config.Epoch = utils.EpochLength
+	// Report the missing section before judging the rest of the config: without it
+	// no XDPoS engine can be built at all, and letting the fork-order validation run
+	// first made the answer depend on the other fields the config happens to carry
+	// (a config that also names Ethash or Clique passed it and only then failed
+	// here, while a bare one failed as a missing fork switch instead).
+	if chainConfig.XDPoS == nil {
+		// params.ErrMissingXDPoSConfig carries exactly this text, so the rejection
+		// keeps the message callers and tests already quote while becoming
+		// recognisable with errors.Is: cmd/utils.FormatChainConfigError selects its
+		// recovery hint by that sentinel, and a bare errors.New here would drop it.
+		return nil, params.ErrMissingXDPoSConfig
 	}
-	if err := chainConfig.CheckConfigForkOrder(); err != nil {
+	// Resolve the schedule the engine runs with. An omitted epoch is judged against
+	// params.DefaultXDPoSEpoch and filled into a copy, so the caller's config keeps
+	// the state its source wrote while ChainConfig can hand the resolution to the
+	// blockchain constructors that judge their config as given. A rejected schedule
+	// is refused before any engine exists.
+	resolved, err := chainConfig.ResolveXDPoSEpoch()
+	if err != nil {
 		return nil, err
-	}
-	if config == nil {
-		return nil, errors.New("missing XDPoS config")
 	}
 
 	minePeriodCh := make(chan int)
 	newRoundCh := make(chan types.Round, newRoundChanSize)
-	engineV2, err := engine_v2.New(chainConfig, db, minePeriodCh, newRoundCh)
+	engineV2, err := engine_v2.New(resolved, db, minePeriodCh, newRoundCh)
 	if err != nil {
 		return nil, err
 	}
 
 	return &XDPoS{
-		config:         config,
+		chainConfig:    resolved,
+		config:         resolved.XDPoS,
 		db:             db,
 		MinePeriodCh:   minePeriodCh,
 		NewRoundCh:     newRoundCh,
@@ -116,7 +139,7 @@ func New(chainConfig *params.ChainConfig, db ethdb.Database) (*XDPoS, error) {
 			return nil
 		},
 		signingTxsCache: lru.NewCache[common.Hash, []*types.Transaction](utils.BlockSignersCacheLimit),
-		EngineV1:        engine_v1.New(chainConfig, db),
+		EngineV1:        engine_v1.New(resolved, db),
 		EngineV2:        engineV2,
 	}, nil
 }
@@ -129,39 +152,116 @@ func (x *XDPoS) Stop() {
 	close(x.NewRoundCh)
 }
 
-// NewFaker creates an XDPoS consensus engine with a full fake scheme that
-// accepts all blocks as valid without enforcing consensus rules.
-func NewFaker(db ethdb.Database, chainConfig *params.ChainConfig) *XDPoS {
-	var fakeEngine *XDPoS
-	// Set any missing consensus parameters to their defaults
-	fakeChainConfig := params.TestXDPoSMockChainConfig
-	if chainConfig != nil {
-		fakeChainConfig = chainConfig
-	}
-	if err := fakeChainConfig.CheckConfigForkOrder(); err != nil {
+// ChainConfig returns the config this engine resolved and runs with: the copy that
+// carries the XDPoS.Epoch filled in when the caller's config left it unset.
+//
+// Callers that open a chain through core.NewBlockChain(ReadOnly)Resolved have to
+// pass this object. Those constructors judge the config as given, so the caller's
+// own config - which may still carry the unset epoch - is refused with
+// params.ErrUnsetXDPoSEpoch.
+//
+// The answer is the schedule the engine runs with, not ownership of it. A config
+// that already wrote its epoch out is returned by ChainConfig.ResolveXDPoSEpoch as
+// it is, so this is the caller's own object and a write to it is visible on both
+// sides; only a config whose epoch the resolution filled in is a copy the engine
+// owns. XDPoS.V2 is shared in either case by design - BuildConfigIndex and
+// UpdateParams keep it live so callers read the running index back through
+// blockchain.Config(). A caller that needs to write should Clone() first, and must
+// not rewrite the epoch of a config the resolution produced: core.chainConfigAsStored
+// reads XDPoSConfig.EpochFilledByEngine to restore the epoch the source wrote before
+// persisting it.
+//
+// A nil answer means the engine carries no resolved config - the zero-value engine
+// and the nil receiver both report nil. Callers that fall back to their own config
+// on nil, as the chain openers do, have to check for it.
+func (x *XDPoS) ChainConfig() *params.ChainConfig {
+	if x == nil {
 		return nil
 	}
-	conf := fakeChainConfig.XDPoS
+	return x.chainConfig
+}
+
+// ValidateFakerConfig applies the judgement NewFakerWithError makes about a chain
+// config before an engine is built, so a caller can check a config - or name why the
+// faker constructor would refuse it - without opening an engine. Like that constructor
+// it treats an unset XDPoS.Epoch as the engine default, which is the state the
+// constructor resolves before it builds the engine; that judgement lives in
+// CheckConfigForkOrderWithEpochDefault, so this function does not repeat which rules
+// an unset epoch defers. It only judges: it neither resolves the epoch nor mutates
+// the config.
+//
+// A config without an XDPoS section is reported as that missing section, the way New
+// reports it: the schedule rules would otherwise pass an ethash or clique config and
+// leave this function answering "no error" for a config NewFakerWithError refuses.
+func ValidateFakerConfig(chainConfig *params.ChainConfig) error {
+	// The judgement is a method on the config and dereferences it, so the nil
+	// receiver keeps its own guard here.
+	if chainConfig == nil {
+		return nil
+	}
+	if chainConfig.XDPoS == nil {
+		return params.ErrMissingXDPoSConfig
+	}
+	return chainConfig.CheckConfigForkOrderWithEpochDefault()
+}
+
+// NewFakerWithError creates an XDPoS consensus engine with a full fake scheme that
+// accepts all blocks as valid without enforcing consensus rules, and reports a refused
+// chain config as the reason it was refused rather than as a nil engine.
+//
+// A refused chain config and a failed engine construction are different
+// operator-facing problems, so the error says which one happened instead of
+// collapsing both into one nil return.
+//
+// Like New it never mutates the caller's config: an omitted XDPoS.Epoch is filled
+// into the copy the engine runs with, which ChainConfig exposes. A caller that
+// commits a genesis from the resolved schedule reads ChainConfig() once the engine
+// exists, so the stored config is the one the chain is opened with instead of the
+// epoch-less config the open guard refuses.
+func NewFakerWithError(db ethdb.Database, chainConfig *params.ChainConfig) (*XDPoS, error) {
+	// A caller that passes none gets a clone of the package-level test config rather
+	// than that config itself, so neither this constructor nor its resolution can
+	// leak into every other holder of the shared object. A config the caller passed
+	// is used as it is: the resolution below copies it anyway, so there is nothing to
+	// clone on this path.
+	fakeChainConfig := chainConfig
+	if fakeChainConfig == nil {
+		fakeChainConfig = params.TestXDPoSMockChainConfig.Clone()
+	}
+	// Mirror New: a config without an XDPoS section has no engine to build, and
+	// naming the missing section here keeps this constructor's answer the same as
+	// New's and as ValidateFakerConfig's.
+	if fakeChainConfig.XDPoS == nil {
+		return nil, params.ErrMissingXDPoSConfig
+	}
+	// Resolve the schedule the engine runs with onto a copy, so a faker engine cannot
+	// carry an unset epoch into the v2 round arithmetic - the one state engine_v2.New
+	// refuses - and a rejected config is not left half-updated in the caller's hands.
+	resolved, err := fakeChainConfig.ResolveXDPoSEpoch()
+	if err != nil {
+		return nil, err
+	}
 
 	minePeriodCh := make(chan int)
 	newRoundCh := make(chan types.Round, newRoundChanSize)
-	engineV2, err := engine_v2.New(fakeChainConfig, db, minePeriodCh, newRoundCh)
+	engineV2, err := engine_v2.New(resolved, db, minePeriodCh, newRoundCh)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
-	fakeEngine = &XDPoS{
-		config:            conf,
+	fakeEngine := &XDPoS{
+		chainConfig:       resolved,
+		config:            resolved.XDPoS,
 		db:                db,
 		MinePeriodCh:      minePeriodCh,
 		NewRoundCh:        newRoundCh,
 		GetXDCXService:    func() utils.TradingService { return nil },
 		GetLendingService: func() utils.LendingService { return nil },
 		signingTxsCache:   lru.NewCache[common.Hash, []*types.Transaction](utils.BlockSignersCacheLimit),
-		EngineV1:          engine_v1.NewFaker(db, fakeChainConfig),
+		EngineV1:          engine_v1.NewFaker(db, resolved),
 		EngineV2:          engineV2,
 	}
-	return fakeEngine
+	return fakeEngine, nil
 }
 
 // Reset parameters after checkpoint due to config may change

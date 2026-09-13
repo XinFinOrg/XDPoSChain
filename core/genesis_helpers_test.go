@@ -9,11 +9,50 @@ import (
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
 var builtInBackfillForkFieldJSONKeysForTests = params.BuiltInBackfillForkFieldJSONKeys()
+
+// customXDPoSGenesisSwitchEpoch is the V2 switch epoch newCustomXDPoSGenesis
+// installs. Tests that drift it compare against the next value.
+const customXDPoSGenesisSwitchEpoch = 1
+
+// newCustomXDPoSGenesis builds a custom chain with the smallest XDPoS schedule
+// the config validation accepts, so compat tests do not need long block ranges.
+// Epoch 2 with gap 1 also keeps the V2 switch block aligned to the epoch. The
+// genesis timestamp is parameterized because some compat tests need a non-zero
+// one.
+func newCustomXDPoSGenesis(chainID int64, timestamp uint64) *Genesis {
+	xdposCfg := params.TestnetChainConfig.XDPoS.Clone()
+	xdposCfg.Epoch = 2
+	xdposCfg.Gap = 1
+	xdposCfg.V2 = xdposCfg.V2.Clone()
+	xdposCfg.V2.SwitchBlock = big.NewInt(2)
+	xdposCfg.V2.SwitchEpoch = customXDPoSGenesisSwitchEpoch
+	return &Genesis{
+		Config: &params.ChainConfig{
+			ChainID:                big.NewInt(chainID),
+			TIPTRC21FeeBlock:       big.NewInt(1),
+			Gas50xBlock:            big.NewInt(1),
+			TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
+			XDPoS:                  xdposCfg,
+		},
+		Timestamp: timestamp,
+		ExtraData: make([]byte, 32+crypto.SignatureLength),
+		Alloc: types.GenesisAlloc{
+			{1}: {Balance: big.NewInt(1)},
+		},
+		GasLimit:   4700000,
+		Difficulty: big.NewInt(1),
+	}
+}
 
 // jsonKeyToForkFieldName maps a migrated fork JSON key to the matching
 // ChainConfig struct field name used by reflection-based test and logging helpers.

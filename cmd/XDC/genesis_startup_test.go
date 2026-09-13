@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -82,6 +83,18 @@ func startupTestGenesis(configBody string) string {
 		%s
 		}
 	}`, configBody, startupTestXDPoSConfig)
+}
+
+// skipIfFatalfBypassesStderr skips a test that asserts on chain-config error text
+// leaving through utils.Fatalf. Fatalf writes to stdout alone on Windows, and the
+// test harness captures only the child's stderr, so the text is unreachable from the
+// parent there and the assertions would fail for a reason that is not the config.
+// These test cases therefore run on every other platform only.
+func skipIfFatalfBypassesStderr(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("utils.Fatalf writes to stdout alone on Windows, which cmdtest does not capture")
+	}
 }
 
 // assertCommandFailsWithChainConfigError checks that a test command fails with
@@ -299,6 +312,31 @@ func overwriteStoredEIP150Block(t *testing.T, datadir string, block *big.Int) co
 	return genesisHash
 }
 
+// overwriteStoredGap updates the stored XDPoS gap in the test chain config, so a
+// directory whose schedule the upgrade refuses can be rebuilt.
+func overwriteStoredGap(t *testing.T, datadir string, gap uint64) common.Hash {
+	t.Helper()
+
+	path := filepath.Join(datadir, "XDC", "chaindata")
+	db := openTestChainDB(t, path)
+	defer db.Close()
+
+	genesisHash := rawdb.ReadCanonicalHash(db, 0)
+	if genesisHash == (common.Hash{}) {
+		t.Fatal("expected canonical genesis hash")
+	}
+	config, err := rawdb.ReadChainConfig(db, genesisHash)
+	if err != nil {
+		t.Fatalf("failed to read chain config: %v", err)
+	}
+	if config == nil || config.XDPoS == nil {
+		t.Fatal("expected stored XDPoS chain config")
+	}
+	config.XDPoS.Gap = gap
+	rawdb.WriteChainConfig(db, genesisHash, config)
+	return genesisHash
+}
+
 // injectCanonicalHeadBlock inserts a synthetic canonical head block into the
 // test datadir.
 func injectCanonicalHeadBlock(t *testing.T, datadir string, genesisHash common.Hash, number uint64) common.Hash {
@@ -410,6 +448,8 @@ func copyDir(t *testing.T, src, dst string) {
 
 // TestInitRejectsBadGenesisConfigAtStartup tests init rejects bad genesis config at startup.
 func TestInitRejectsBadGenesisConfigAtStartup(t *testing.T) {
+	skipIfFatalfBypassesStderr(t)
+
 	datadir := t.TempDir()
 	json := filepath.Join(datadir, "genesis.json")
 	badConfig := strings.Replace(daoFutureForkConfig,
@@ -423,6 +463,201 @@ func TestInitRejectsBadGenesisConfigAtStartup(t *testing.T) {
 	assertCommandFailsWithChainConfigErrors(t, cmd,
 		"invalid chain config: missing fork switch: TRC21IssuerSMC",
 		"ensure the persisted chain config or external genesis JSON includes TIPTRC21FeeBlock, Gas50xBlock",
+	)
+	assertNoCanonicalGenesis(t, datadir)
+}
+
+// startupTestGenesisWithoutEpoch returns the shared startup genesis with the
+// XDPoS epoch omitted and the gap replaced by the caller's value, so a genesis
+// that relies on the engine default epoch can be exercised through init.
+func startupTestGenesisWithoutEpoch(t *testing.T, gap string) string {
+	t.Helper()
+
+	body := strings.Replace(startupTestGenesis(daoFutureForkConfig), `"epoch": 900,`, "", 1)
+	if !strings.Contains(body, `"gap": 450,`) {
+		t.Fatal("startup XDPoS config no longer carries the expected gap stanza")
+	}
+	return strings.Replace(body, `"gap": 450,`, `"gap": `+gap+`,`, 1)
+}
+
+// startupTestGenesisWithoutEpochAndSwitchBlock returns startupTestGenesisWithoutEpoch
+// with the v2 switch block replaced as well, so the alignment rule the default epoch
+// applies to an epoch-less config can be exercised through init.
+func startupTestGenesisWithoutEpochAndSwitchBlock(t *testing.T, gap, switchBlock string) string {
+	t.Helper()
+
+	body := startupTestGenesisWithoutEpoch(t, gap)
+	if !strings.Contains(body, `"switchBlock": 999999900,`) {
+		t.Fatal("startup XDPoS config no longer carries the expected switchBlock stanza")
+	}
+	return strings.Replace(body, `"switchBlock": 999999900,`, `"switchBlock": `+switchBlock+`,`, 1)
+}
+
+// startupTestGenesisWithoutEpochAndSwitchEpoch returns startupTestGenesisWithoutEpoch
+// with the v2 switch epoch replaced as well, so the pairing rule the default epoch
+// applies to an epoch-less config can be exercised through init.
+func startupTestGenesisWithoutEpochAndSwitchEpoch(t *testing.T, gap, switchEpoch string) string {
+	t.Helper()
+
+	body := startupTestGenesisWithoutEpoch(t, gap)
+	if !strings.Contains(body, `"switchEpoch": 1111111,`) {
+		t.Fatal("startup XDPoS config no longer carries the expected switchEpoch stanza")
+	}
+	return strings.Replace(body, `"switchEpoch": 1111111,`, `"switchEpoch": `+switchEpoch+`,`, 1)
+}
+
+// TestInitRejectsOmittedEpochWithUnusableGap pins that init reaches the same
+// verdict as node startup when a genesis omits the epoch. XDPoS.New fills the
+// engine default epoch before judging the gap schedule, so without the same fill
+// here an unusable schedule would be written to disk and only refused at the
+// first node start, leaving the operator to redo the init. The rejection is judged
+// against that default, so the hint has to be the one that says the epoch in the
+// message is not a value the file wrote.
+func TestInitRejectsOmittedEpochWithUnusableGap(t *testing.T) {
+	skipIfFatalfBypassesStderr(t)
+
+	datadir := t.TempDir()
+	jsonPath := filepath.Join(datadir, "genesis.json")
+	if err := os.WriteFile(jsonPath, []byte(startupTestGenesisWithoutEpoch(t, "0")), 0600); err != nil {
+		t.Fatalf("failed to write genesis file: %v", err)
+	}
+
+	cmd := runXDC(t, "init", "--datadir", datadir, jsonPath)
+	assertCommandFailsWithChainConfigErrors(t, cmd,
+		"unusable gap schedule",
+		cmdutils.UnusableGapScheduleDefaultEpochHint,
+	)
+	assertNoCanonicalGenesis(t, datadir)
+}
+
+// TestInitAcceptsOmittedEpochWithUsableGap is the counterpart: an omitted epoch
+// stays acceptable while the gap schedule is usable once the engine default is
+// filled in, and the epoch is stored as written, so a genesis that omits it
+// keeps matching the config that was committed.
+func TestInitAcceptsOmittedEpochWithUsableGap(t *testing.T) {
+	datadir := t.TempDir()
+	jsonPath := filepath.Join(datadir, "genesis.json")
+	if err := os.WriteFile(jsonPath, []byte(startupTestGenesisWithoutEpoch(t, "450")), 0600); err != nil {
+		t.Fatalf("failed to write genesis file: %v", err)
+	}
+
+	cmd := runXDC(t, "init", "--datadir", datadir, jsonPath)
+	assertCommandSucceeds(t, cmd)
+
+	_, stored := readStoredChainConfig(t, datadir)
+	if stored.XDPoS == nil {
+		t.Fatal("expected a stored XDPoS config")
+	}
+	if stored.XDPoS.Epoch != 0 {
+		t.Fatalf("expected the stored epoch to stay as written (0), have %d", stored.XDPoS.Epoch)
+	}
+}
+
+// TestInitRefusesScheduleRepairOnNonEmptyDataDir pins the operator-facing half of
+// the recovery boundary the schedule hints now spell out: on a directory that has
+// already imported blocks, a corrected schedule cannot be applied by init.
+//
+// The corrected schedule changes XDPoS.Gap, which is a historical change, so
+// SetupGenesisBlock returns a ConfigCompatError and init aborts with
+// "Failed to write chain config" instead of rewriting the stored config. Without
+// this test the hints could keep naming a recovery path the command refuses.
+func TestInitRefusesScheduleRepairOnNonEmptyDataDir(t *testing.T) {
+	skipIfFatalfBypassesStderr(t)
+
+	datadir := t.TempDir()
+	jsonPath := filepath.Join(datadir, "genesis.json")
+	genesisJSON := startupTestGenesis(daoFutureForkConfig)
+	if err := os.WriteFile(jsonPath, []byte(genesisJSON), 0600); err != nil {
+		t.Fatalf("failed to write genesis file: %v", err)
+	}
+	assertCommandSucceeds(t, runXDC(t, "init", "--datadir", datadir, jsonPath))
+
+	// Make the stored schedule unusable and give the directory a head: this is a
+	// node that has produced blocks and would be refused on the next start.
+	genesisHash := overwriteStoredGap(t, datadir, 0)
+	injectCanonicalHeadBlock(t, datadir, genesisHash, 1)
+
+	// Re-running init with the corrected schedule must be refused, and must leave
+	// the stored config as it was.
+	cmd := runXDC(t, "init", "--datadir", datadir, jsonPath)
+	assertCommandFailsWithChainConfigErrors(t, cmd, "Failed to write chain config", "XDPoS.Gap")
+
+	_, stored := readStoredChainConfig(t, datadir)
+	if stored.XDPoS == nil || stored.XDPoS.Gap != 0 {
+		t.Fatalf("a refused schedule repair must not rewrite the stored config, have %v", stored.XDPoS)
+	}
+}
+
+// TestInitRejectsOmittedEpochWithUnalignedSwitchBlock pins the other rule the
+// default epoch brings with it. Filling DefaultXDPoSEpoch in lets the whole
+// schedule be judged, so an epoch-less genesis whose switch block is not a
+// multiple of that default is refused with the alignment error - naming an epoch
+// the genesis never wrote - and never reaches the disk. The node could not have
+// started with this schedule either way: XDPoS.New filled the same default before
+// it validated.
+func TestInitRejectsOmittedEpochWithUnalignedSwitchBlock(t *testing.T) {
+	datadir := t.TempDir()
+	jsonPath := filepath.Join(datadir, "genesis.json")
+	genesisJSON := startupTestGenesisWithoutEpochAndSwitchBlock(t, "450", "2")
+	if err := os.WriteFile(jsonPath, []byte(genesisJSON), 0600); err != nil {
+		t.Fatalf("failed to write genesis file: %v", err)
+	}
+
+	cmd := runXDC(t, "init", "--datadir", datadir, jsonPath)
+	assertCommandFailsWithChainConfigErrors(t, cmd,
+		params.ErrWrongForkSwitchOrder.Error(),
+		"not aligned to XDPoS.Epoch 900",
+	)
+	assertNoCanonicalGenesis(t, datadir)
+}
+
+// TestInitRejectsOmittedEpochWithMismatchedSwitchEpoch pins the third rule the
+// default epoch brings with it. The pairing rule divides the switch block by the
+// effective epoch, so filling DefaultXDPoSEpoch in judges the switch epoch against
+// a schedule the file never described: the genesis below names epoch 1111112 for a
+// block the default puts on epoch 1111111. The rejection is tagged as judged
+// against that default, so the operator gets the hint that says where the 900 came
+// from instead of the arithmetic one, which would send them after a defect the file
+// does not have. The node could not have started with this pairing either way:
+// XDPoS.New filled the same default before it validated.
+func TestInitRejectsOmittedEpochWithMismatchedSwitchEpoch(t *testing.T) {
+	skipIfFatalfBypassesStderr(t)
+
+	datadir := t.TempDir()
+	jsonPath := filepath.Join(datadir, "genesis.json")
+	genesisJSON := startupTestGenesisWithoutEpochAndSwitchEpoch(t, "450", "1111112")
+	if err := os.WriteFile(jsonPath, []byte(genesisJSON), 0600); err != nil {
+		t.Fatalf("failed to write genesis file: %v", err)
+	}
+
+	cmd := runXDC(t, "init", "--datadir", datadir, jsonPath)
+	assertCommandFailsWithChainConfigErrors(t, cmd,
+		params.ErrSwitchEpochMismatch.Error(),
+		"does not name the epoch XDPoS.V2.SwitchBlock 999999900 falls on (want 1111111 = XDPoS.V2.SwitchBlock / XDPoS.Epoch 900)",
+		cmdutils.SwitchEpochMismatchAgainstDefaultEpochHint,
+	)
+	assertNoCanonicalGenesis(t, datadir)
+}
+
+// TestInitRejectsNegativeSwitchBlock pins that init refuses a switch block that
+// has no meaning on the chain. A negative height is dangerous precisely because
+// it looks aligned: SwitchBlock.Uint64() folds it to its absolute value, so -900
+// satisfies the epoch alignment rule while the comparisons against the field keep
+// seeing a negative block. Refusing it while the config is resolved keeps the
+// stored config to a single meaning, and mirrors the puppeth wizard, which will
+// not generate one.
+func TestInitRejectsNegativeSwitchBlock(t *testing.T) {
+	datadir := t.TempDir()
+	jsonPath := filepath.Join(datadir, "genesis.json")
+	genesisJSON := startupTestGenesisWithoutEpochAndSwitchBlock(t, "450", "-900")
+	if err := os.WriteFile(jsonPath, []byte(genesisJSON), 0600); err != nil {
+		t.Fatalf("failed to write genesis file: %v", err)
+	}
+
+	cmd := runXDC(t, "init", "--datadir", datadir, jsonPath)
+	assertCommandFailsWithChainConfigErrors(t, cmd,
+		params.ErrNegativeSwitchBlock.Error(),
+		"XDPoS.V2.SwitchBlock -900 must be non-negative",
 	)
 	assertNoCanonicalGenesis(t, datadir)
 }
@@ -678,6 +913,8 @@ func TestLegacySameHashCustomConfigRequiresExplicitInitMigration(t *testing.T) {
 
 // TestStartupRejectsStoredBadChainConfig tests startup rejects stored bad chain config.
 func TestStartupRejectsStoredBadChainConfig(t *testing.T) {
+	skipIfFatalfBypassesStderr(t)
+
 	datadir := t.TempDir()
 	json := filepath.Join(datadir, "genesis.json")
 	if err := os.WriteFile(json, []byte(startupTestGenesis(daoFutureForkConfig)), 0600); err != nil {
@@ -704,6 +941,8 @@ func TestStartupRejectsStoredBadChainConfig(t *testing.T) {
 
 // TestOfflineExportRejectsStoredBuiltInChainConfigDrift tests offline export rejects stored built in chain config drift.
 func TestOfflineExportRejectsStoredBuiltInChainConfigDrift(t *testing.T) {
+	skipIfFatalfBypassesStderr(t)
+
 	datadir := t.TempDir()
 	exportFile := filepath.Join(datadir, "chain.rlp")
 
@@ -748,6 +987,8 @@ func TestOfflineExportAllowsMissingStoredBuiltInChainConfig(t *testing.T) {
 
 // TestOfflineExportRejectsMissingStoredChainConfigForSameHashCustomOverride tests offline export rejects missing stored chain config for same hash custom override.
 func TestOfflineExportRejectsMissingStoredChainConfigForSameHashCustomOverride(t *testing.T) {
+	skipIfFatalfBypassesStderr(t)
+
 	datadir := t.TempDir()
 	jsonPath := filepath.Join(datadir, "genesis.json")
 	exportFile := filepath.Join(datadir, "chain.rlp")
@@ -813,6 +1054,8 @@ func TestOfflineExportUsesStoredSameHashCustomOverrideWithoutBuiltinConfigOverri
 
 // TestOfflineExportFailsReadonlyGenesisStateRecoveryWithoutMutation tests offline export fails readonly genesis state recovery without mutation.
 func TestOfflineExportFailsReadonlyGenesisStateRecoveryWithoutMutation(t *testing.T) {
+	skipIfFatalfBypassesStderr(t)
+
 	sourceDatadir := t.TempDir()
 
 	startupCmd := runXDC(t,
@@ -851,6 +1094,8 @@ func TestOfflineExportFailsReadonlyGenesisStateRecoveryWithoutMutation(t *testin
 
 // TestOfflineExportFailsReadonlyConfigRewindWithoutMutation tests offline export fails readonly config rewind without mutation.
 func TestOfflineExportFailsReadonlyConfigRewindWithoutMutation(t *testing.T) {
+	skipIfFatalfBypassesStderr(t)
+
 	datadir := t.TempDir()
 	exportFile := filepath.Join(datadir, "chain.rlp")
 
@@ -897,6 +1142,8 @@ func TestOfflineExportFailsReadonlyConfigRewindWithoutMutation(t *testing.T) {
 // TestOfflineExportFailsReadonlyHeadStateRepairWithoutMutation tests offline
 // export fails readonly startup when the current head state is missing.
 func TestOfflineExportFailsReadonlyHeadStateRepairWithoutMutation(t *testing.T) {
+	skipIfFatalfBypassesStderr(t)
+
 	datadir := t.TempDir()
 	exportFile := filepath.Join(datadir, "chain.rlp")
 
@@ -930,6 +1177,8 @@ func TestOfflineExportFailsReadonlyHeadStateRepairWithoutMutation(t *testing.T) 
 // offline export still fails readonly startup when the required rewind target is
 // zero.
 func TestOfflineExportFailsReadonlyConfigRewindToZeroWithoutMutation(t *testing.T) {
+	skipIfFatalfBypassesStderr(t)
+
 	datadir := t.TempDir()
 	exportFile := filepath.Join(datadir, "chain.rlp")
 

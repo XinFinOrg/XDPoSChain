@@ -851,7 +851,14 @@ func (g *Genesis) commit(db ethdb.Database, allowCustomBuiltInConfig bool, skipH
 	if block.Number().Sign() != 0 {
 		return nil, errors.New("can't commit genesis block with number > 0")
 	}
-	if err := config.CheckConfigForkOrder(); err != nil {
+	// Judge the schedule the engine will actually run: XDPoS.New fills an unset
+	// Epoch with DefaultXDPoSEpoch before validating the gap schedule, so without
+	// the same default here an unusable schedule would pass init and only be
+	// refused at the first node start. The load and setup paths judge a stored
+	// config the same way. The default is applied to the copy under validation
+	// only, so a genesis that omits the epoch is still stored as written and keeps
+	// matching its own specification.
+	if err := config.CheckConfigForkOrderWithEpochDefault(); err != nil {
 		return nil, err
 	}
 	if config.XDPoS != nil && len(genesis.ExtraData) < 32+crypto.SignatureLength {

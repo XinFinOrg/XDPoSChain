@@ -80,15 +80,27 @@ func (s *SnapshotV2) IsCandidates(address common.Address) bool {
 
 // snapshot retrieves the authorization snapshot at a given point in time.
 func (x *XDPoS_v2) getSnapshot(chain consensus.ChainReader, number uint64, isGapNumber bool) (*SnapshotV2, error) {
+	// GapOffset owns the schedule judgement and is nil-receiver safe, so both
+	// branches refuse an unusable schedule the same way. The gap-number branch used
+	// to skip it because its caller already resolved a gap block: that holds for
+	// every caller today, but the number one of them passes comes from a vote or a
+	// timeout message, so without the judgement a schedule defect would turn into a
+	// header lookup at a height the gap trigger never selects.
+	if _, ok := x.config.GapOffset(); !ok {
+		return nil, gapPathError("[getSnapshot]", number, x.config)
+	}
 	var gapBlockNum uint64
 	if isGapNumber {
 		gapBlockNum = number
 	} else {
-		gapBlockNum = number - number%x.config.Epoch
-		if gapBlockNum > x.config.Gap {
-			gapBlockNum -= x.config.Gap
-		} else {
-			gapBlockNum = 0
+		// The schedule was judged above, so GapBlockNumber only resolves the
+		// height here. Its verdict is still kept: it re-judges the schedule, and
+		// moving the guard above out of this function must not silently turn a 0
+		// into the height looked up.
+		var ok bool
+		gapBlockNum, ok = x.config.GapBlockNumber(number)
+		if !ok {
+			return nil, gapPathError("[getSnapshot]", number, x.config)
 		}
 	}
 
@@ -169,11 +181,13 @@ func BuildSnapshotFromState(statedb *state.StateDB, number uint64, hash common.H
 // snapshot can still matter to the running chain. getSnapshot maps head to the
 // gap block between Gap and Gap+Epoch blocks back, which is always one of these.
 func (x *XDPoS_v2) repairGapCandidates(head uint64) []uint64 {
-	epoch, gap := x.config.Epoch, x.config.Gap
-	if epoch == 0 || gap == 0 || gap >= epoch {
+	// GapOffset is nil-receiver safe, so a missing config degrades to "nothing to
+	// repair" here just like a schedule that designates no gap block.
+	offset, ok := x.config.GapOffset()
+	if !ok {
 		return nil
 	}
-	offset := epoch - gap
+	epoch := x.config.Epoch
 	if head < offset {
 		return nil
 	}

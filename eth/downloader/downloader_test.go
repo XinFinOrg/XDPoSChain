@@ -2747,6 +2747,90 @@ func TestSetPivotBlockGapCalculation(t *testing.T) {
 	}
 }
 
+// TestSetPivotBlockUnusableGapSchedule pins that a schedule which designates no
+// gap block clears the gap pivot list instead of dividing by an unset Epoch or
+// underflowing the epoch-gap subtraction, and that a list a previous usable
+// schedule produced does not survive it.
+func TestSetPivotBlockUnusableGapSchedule(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cfg  *params.XDPoSConfig
+	}{
+		{"unset epoch", &params.XDPoSConfig{Epoch: 0, Gap: 450}},
+		{"zero gap", &params.XDPoSConfig{Epoch: 900, Gap: 0}},
+		{"gap equal to epoch", &params.XDPoSConfig{Epoch: 900, Gap: 900}},
+		{"gap above epoch", &params.XDPoSConfig{Epoch: 900, Gap: 1200}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tester := newTester()
+			tester.configOverride = params.TestXDPoSMockChainConfig
+			defer tester.terminate()
+			d := tester.downloader
+
+			// Seed the list from a usable schedule: pivot 1351 resolves to 450 and
+			// 1350, so an unusable schedule has something to clear.
+			d.SetPivotBlock(1351, common.Hash{}, common.Hash{})
+			d.pivotGapLock.RLock()
+			seeded := len(d.pivotGapNumbers)
+			d.pivotGapLock.RUnlock()
+			if seeded == 0 {
+				t.Fatal("usable schedule produced no gap pivots")
+			}
+
+			tester.configOverride = &params.ChainConfig{XDPoS: tt.cfg}
+			d.SetPivotBlock(1351, common.Hash{}, common.Hash{})
+
+			d.pivotGapLock.RLock()
+			got := append([]uint64(nil), d.pivotGapNumbers...)
+			d.pivotGapLock.RUnlock()
+			if len(got) != 0 {
+				t.Fatalf("unusable schedule left gap pivots behind: %v", got)
+			}
+		})
+	}
+}
+
+// TestFullSyncUnusableGapScheduleImportsAll pins the full-sync batching against
+// the schedule: the trigger is judged through GapOffset, so a schedule that
+// designates no gap block cannot divide by an unset epoch and sends every result
+// through the single-batch import path, which still completes the sync.
+func TestFullSyncUnusableGapScheduleImportsAll(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cfg  *params.XDPoSConfig
+	}{
+		{"unset epoch", &params.XDPoSConfig{Epoch: 0, Gap: 450}},
+		{"zero gap", &params.XDPoSConfig{Epoch: 900, Gap: 0}},
+		{"gap above epoch", &params.XDPoSConfig{Epoch: 900, Gap: 1200}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tester := newTester()
+			// The override only drives the batching; the tester chain itself is the
+			// standard test chain.
+			tester.configOverride = &params.ChainConfig{XDPoS: tt.cfg}
+			defer tester.terminate()
+
+			chain := testChainBase.shorten(blockCacheMaxItems - 15)
+			tester.newPeer("peer", xdc100, chain)
+
+			if err := tester.sync("peer", nil, FullSync); err != nil {
+				t.Fatalf("full sync with an unusable gap schedule failed: %v", err)
+			}
+			assertOwnChain(t, tester, chain.len())
+		})
+	}
+}
+
 // TestFastSyncPivotHashMismatch checks that processFastSyncContent returns a
 // descriptive "pivot block hash mismatch" error when the configured pivot hash
 // does not match the actual downloaded pivot block.

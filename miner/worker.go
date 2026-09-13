@@ -948,7 +948,7 @@ func (w *worker) commitNewWork() {
 					lendingOrderPending, _ := w.eth.LendingPool().Pending()
 					lendingInput, lendingMatchingResults = XDCXLending.ProcessOrderPending(header, w.coinbase, w.chain, lendingOrderPending, work.state, work.lendingState, work.tradingState)
 					log.Debug("lending transaction matches found", "lendingInput", len(lendingInput), "lendingMatchingResults", len(lendingMatchingResults))
-					if header.Number.Uint64()%w.chainConfig.XDPoS.Epoch == common.LiquidateLendingTradeBlock {
+					if w.chainConfig.XDPoS.IsLendingLiquidationBlock(header.Number.Uint64()) {
 						updatedTrades, liquidatedTrades, autoRepayTrades, autoTopUpTrades, autoRecallTrades, err = XDCXLending.ProcessLiquidationData(header, w.chain, work.state, work.tradingState, work.lendingState)
 						if err != nil {
 							log.Error("Fail when process lending liquidation data ", "error", err)

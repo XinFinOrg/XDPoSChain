@@ -19,6 +19,7 @@ package params
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"reflect"
 	"slices"
@@ -572,6 +573,300 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 		}
 		if err == nil || !strings.Contains(err.Error(), "XDPoS.V2.CurrentConfig.ExpTimeoutConfig") {
 			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("xdpos gap schedule designates no gap block", func(t *testing.T) {
+		tests := []struct {
+			name     string
+			epoch    uint64
+			gap      uint64
+			wantHint string
+		}{
+			{name: "zero gap", epoch: 900, gap: 0},
+			{name: "gap equal to epoch", epoch: 900, gap: 900},
+			{name: "gap above epoch", epoch: 900, gap: 1200},
+			{name: "epoch one leaves no usable gap", epoch: 1, gap: 0, wantHint: "Epoch >= 2"},
+			{name: "epoch one with a positive gap", epoch: 1, gap: 1, wantHint: "Epoch >= 2"},
+		}
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				cfg := TestnetChainConfig.Clone()
+				cfg.XDPoS = cfg.XDPoS.Clone()
+				cfg.XDPoS.Epoch = test.epoch
+				cfg.XDPoS.Gap = test.gap
+				// Keep the switch epoch consistent with the epoch under test so this
+				// case isolates the gap rule: the switch-epoch rule is judged first and
+				// would otherwise report a defect the table does not describe.
+				if test.epoch == 0 {
+					t.Fatal("this table judges schedules against an epoch the config writes")
+				}
+				cfg.XDPoS.V2.SwitchEpoch = cfg.XDPoS.V2.SwitchBlock.Uint64() / test.epoch
+
+				err := cfg.CheckConfigForkOrder()
+				if !errors.Is(err, ErrUnusableGapSchedule) {
+					t.Fatalf("unexpected error: have %v want %v", err, ErrUnusableGapSchedule)
+				}
+				if err == nil || !strings.Contains(err.Error(), "designates no gap block") {
+					t.Fatalf("unexpected error string: %v", err)
+				}
+				if test.wantHint != "" && !strings.Contains(err.Error(), test.wantHint) {
+					t.Fatalf("expected error to point at %q, have %v", test.wantHint, err)
+				}
+			})
+		}
+	})
+	t.Run("xdpos gap equal to the epoch names the epoch switch block", func(t *testing.T) {
+		cfg := TestnetChainConfig.Clone()
+		cfg.XDPoS = cfg.XDPoS.Clone()
+		cfg.XDPoS.Epoch = 900
+		cfg.XDPoS.Gap = cfg.XDPoS.Epoch
+
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrUnusableGapSchedule) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrUnusableGapSchedule)
+		}
+		// The refusal is not a claim that the trigger matches no height: Epoch-Gap
+		// is 0, so it selects the epoch switch block itself, and that is the reason
+		// the schedule is refused. It has to survive in the message the operator
+		// reads, not only in docs/upgrade.md.
+		for _, want := range []string{"designates no gap block of its own", "epoch switch block"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("error %q does not say %q", err.Error(), want)
+			}
+		}
+
+		// The two shapes that match no height at all keep their own message, so
+		// folding Gap == Epoch back into them fails here instead of silently losing
+		// the distinction again.
+		above := TestnetChainConfig.Clone()
+		above.XDPoS = above.XDPoS.Clone()
+		above.XDPoS.Epoch = 900
+		above.XDPoS.Gap = above.XDPoS.Epoch + 1
+		aboveErr := above.CheckConfigForkOrder()
+		if !errors.Is(aboveErr, ErrUnusableGapSchedule) {
+			t.Fatalf("unexpected error: have %v want %v", aboveErr, ErrUnusableGapSchedule)
+		}
+		if aboveErr.Error() == err.Error() {
+			t.Fatalf("gap equal to the epoch and gap above the epoch must not share one message, have %q", err.Error())
+		}
+	})
+	t.Run("xdpos gap inside epoch is accepted", func(t *testing.T) {
+		cfg := TestnetChainConfig.Clone()
+		cfg.XDPoS = cfg.XDPoS.Clone()
+		cfg.XDPoS.Epoch = 900
+		cfg.XDPoS.Gap = 450
+
+		if err := cfg.CheckConfigForkOrder(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	t.Run("xdpos zero epoch defers to the engine default", func(t *testing.T) {
+		cfg := TestnetChainConfig.Clone()
+		cfg.XDPoS = cfg.XDPoS.Clone()
+		cfg.XDPoS.Epoch = 0
+		cfg.XDPoS.Gap = 450
+
+		if err := cfg.CheckConfigForkOrder(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	t.Run("xdpos default epoch judges an unset epoch", func(t *testing.T) {
+		tests := []struct {
+			name    string
+			gap     uint64
+			wantErr bool
+		}{
+			{name: "zero gap designates no gap block", gap: 0, wantErr: true},
+			{name: "gap equal to the default epoch designates none", gap: DefaultXDPoSEpoch, wantErr: true},
+			{name: "gap above the default epoch designates none", gap: DefaultXDPoSEpoch + 1, wantErr: true},
+			{name: "gap inside the default epoch is accepted", gap: 450},
+		}
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				cfg := TestnetChainConfig.Clone()
+				cfg.XDPoS = cfg.XDPoS.Clone()
+				cfg.XDPoS.Epoch = 0
+				cfg.XDPoS.Gap = test.gap
+
+				// The bare check treats an unset epoch as "not filled in yet", which
+				// is why the load and genesis paths judge it against the default.
+				if err := cfg.CheckConfigForkOrder(); err != nil {
+					t.Fatalf("CheckConfigForkOrder rejected an unset epoch: %v", err)
+				}
+				err := cfg.CheckConfigForkOrderWithEpochDefault()
+				if test.wantErr {
+					if !errors.Is(err, ErrUnusableGapSchedule) {
+						t.Fatalf("unexpected error: have %v want %v", err, ErrUnusableGapSchedule)
+					}
+					// The message quotes the epoch this call filled in, a number the config
+					// never wrote, so the rejection also has to name that state: it is what
+					// lets the operator-facing formatter explain where the number came from.
+					if !errors.Is(err, ErrUnusableGapScheduleDefaultEpoch) {
+						t.Fatalf("unexpected error: have %v want %v", err, ErrUnusableGapScheduleDefaultEpoch)
+					}
+					if want := fmt.Sprintf("inside XDPoS.Epoch %d", DefaultXDPoSEpoch); !strings.Contains(err.Error(), want) {
+						t.Fatalf("error %q does not quote the default epoch (%q)", err.Error(), want)
+					}
+					if cfg.XDPoS.Epoch != 0 {
+						t.Fatalf("judging against the default epoch must not fill it in, have %d", cfg.XDPoS.Epoch)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			})
+		}
+	})
+	t.Run("xdpos explicit epoch does not blame the default epoch", func(t *testing.T) {
+		// The tag exists only for the state this function creates by filling the epoch
+		// in. A config that writes its own epoch out reaches the schedule rule through
+		// the bare check, so its rejection must stay untagged even though the text is
+		// the same shape.
+		cfg := TestnetChainConfig.Clone()
+		cfg.XDPoS = cfg.XDPoS.Clone()
+		cfg.XDPoS.Gap = 0
+		if cfg.XDPoS.Epoch == 0 {
+			t.Fatal("this case needs a config that writes its epoch out")
+		}
+		err := cfg.CheckConfigForkOrderWithEpochDefault()
+		if !errors.Is(err, ErrUnusableGapSchedule) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrUnusableGapSchedule)
+		}
+		if errors.Is(err, ErrUnusableGapScheduleDefaultEpoch) {
+			t.Fatalf("a config that writes its epoch out must not be reported as judged against the default: %v", err)
+		}
+	})
+	t.Run("xdpos default epoch tags an unaligned switch block", func(t *testing.T) {
+		cfg := TestnetChainConfig.Clone()
+		cfg.XDPoS = cfg.XDPoS.Clone()
+		cfg.XDPoS.Epoch = 0
+		unaligned := new(big.Int).SetUint64(cfg.XDPoS.V2.SwitchBlock.Uint64() + 1)
+		cfg.XDPoS.V2.SwitchBlock = unaligned
+
+		// The bare check skips the alignment rule while the epoch is unset, so this
+		// config is only refused once the engine default is filled in.
+		if err := cfg.CheckConfigForkOrder(); err != nil {
+			t.Fatalf("CheckConfigForkOrder rejected an unset epoch: %v", err)
+		}
+		err := cfg.CheckConfigForkOrderWithEpochDefault()
+		if !errors.Is(err, ErrSwitchBlockUnalignedToDefaultEpoch) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrSwitchBlockUnalignedToDefaultEpoch)
+		}
+		// Callers that only know the rule this sentinel refines keep matching, and so
+		// does the alignment rule's own sentinel: the tag names the default epoch the
+		// rejection was judged against without hiding the two sentinels that describe
+		// the rule itself.
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if !errors.Is(err, ErrSwitchBlockUnalignedToEpoch) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrSwitchBlockUnalignedToEpoch)
+		}
+		// The message stays the one the alignment rule produces, quoting the default
+		// the config never wrote, so existing assertions and messages are unaffected.
+		want := fmt.Sprintf("invalid chain config: %v: XDPoS.V2.SwitchBlock %v not aligned to XDPoS.Epoch %d", ErrWrongForkSwitchOrder, unaligned, DefaultXDPoSEpoch)
+		if err.Error() != want {
+			t.Fatalf("unexpected error string:\n have %q\n want %q", err.Error(), want)
+		}
+		if cfg.XDPoS.Epoch != 0 {
+			t.Fatalf("judging against the default epoch must not fill it in, have %d", cfg.XDPoS.Epoch)
+		}
+	})
+	t.Run("xdpos switch block above uint64 is judged by its real height", func(t *testing.T) {
+		// SwitchBlock.Uint64() folds every bit above 2^64 away, so a height whose low
+		// 64 bits are an epoch multiple used to pass the alignment rule even though
+		// the height itself is not one. The judgement runs on the big.Int, so this
+		// height (2^64 mod 900 == 16, so the whole height is not a multiple) is
+		// refused as unaligned instead of being accepted through its folded value.
+		cfg := TestnetChainConfig.Clone()
+		cfg.XDPoS = cfg.XDPoS.Clone()
+		cfg.XDPoS.V2 = cfg.XDPoS.V2.Clone()
+		block := new(big.Int).Add(new(big.Int).Lsh(big.NewInt(1), 64), new(big.Int).SetUint64(cfg.XDPoS.Epoch))
+		cfg.XDPoS.V2.SwitchBlock = block
+		// The folded value is exactly one epoch multiple, and the paired switch epoch
+		// matches it, so the old judgement accepted this schedule as self-consistent.
+		cfg.XDPoS.V2.SwitchEpoch = 1
+
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		// The epoch is one the config writes out, so the rejection carries the
+		// alignment rule's own sentinel for error formatting to select on.
+		if !errors.Is(err, ErrSwitchBlockUnalignedToEpoch) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrSwitchBlockUnalignedToEpoch)
+		}
+		if !strings.Contains(err.Error(), "not aligned to XDPoS.Epoch") {
+			t.Fatalf("error %q does not name the alignment rule", err)
+		}
+	})
+	t.Run("xdpos default epoch does not mask a missing field", func(t *testing.T) {
+		// The alignment rejection quotes the engine default, a value the genesis
+		// never wrote, so it must not preempt the config's own defects: a config
+		// that is both missing a required address and unaligned has to keep failing
+		// with the sentinel the migration hint hangs off.
+		cfg := TestnetChainConfig.Clone()
+		cfg.XDPoS = cfg.XDPoS.Clone()
+		cfg.XDPoS.Epoch = 0
+		cfg.TRC21IssuerSMC = common.Address{}
+		cfg.XDPoS.V2.SwitchBlock = new(big.Int).SetUint64(cfg.XDPoS.V2.SwitchBlock.Uint64() + 1)
+
+		err := cfg.CheckConfigForkOrderWithEpochDefault()
+		if !errors.Is(err, ErrMissingForkSwitch) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrMissingForkSwitch)
+		}
+		if errors.Is(err, ErrSwitchBlockUnalignedToDefaultEpoch) {
+			t.Fatalf("a missing field must not be reported as an unaligned switch block: %v", err)
+		}
+		if !strings.Contains(err.Error(), "TRC21IssuerSMC") {
+			t.Fatalf("error %q does not name the missing field", err)
+		}
+	})
+	t.Run("xdpos switch block must be non-negative", func(t *testing.T) {
+		// A negative switch block folds to its absolute value in Uint64(), so -900
+		// satisfies the alignment rule even though the comparisons against the field
+		// keep seeing a negative height. The sign is therefore judged as a defect of
+		// the config itself rather than by the alignment rule: -901 is unaligned
+		// either way and has to fail on the sign, not on the alignment.
+		for _, block := range []int64{-900, -901} {
+			cfg := TestnetChainConfig.Clone()
+			cfg.XDPoS = cfg.XDPoS.Clone()
+			cfg.XDPoS.V2 = cfg.XDPoS.V2.Clone()
+			cfg.XDPoS.V2.SwitchBlock = big.NewInt(block)
+
+			err := cfg.CheckConfigForkOrder()
+			if !errors.Is(err, ErrNegativeSwitchBlock) {
+				t.Fatalf("CheckConfigForkOrder(%d): have %v want %v", block, err, ErrNegativeSwitchBlock)
+			}
+			if errors.Is(err, ErrSwitchBlockUnalignedToDefaultEpoch) {
+				t.Fatalf("CheckConfigForkOrder(%d) reported a sign defect as an alignment one: %v", block, err)
+			}
+			if !strings.Contains(err.Error(), "must be non-negative") {
+				t.Fatalf("CheckConfigForkOrder(%d) error %q does not name the requirement", block, err)
+			}
+		}
+	})
+	t.Run("xdpos negative switch block is not blamed on the default epoch", func(t *testing.T) {
+		// An unset epoch must not turn the sign defect into the alignment rejection
+		// that quotes an epoch the config never wrote: the bare check already refuses
+		// the config, so the wrapping variant has to pass that same verdict through
+		// instead of tagging it as unaligned to the default epoch.
+		cfg := TestnetChainConfig.Clone()
+		cfg.XDPoS = cfg.XDPoS.Clone()
+		cfg.XDPoS.V2 = cfg.XDPoS.V2.Clone()
+		cfg.XDPoS.Epoch = 0
+		cfg.XDPoS.V2.SwitchBlock = big.NewInt(-900)
+
+		if err := cfg.CheckConfigForkOrder(); !errors.Is(err, ErrNegativeSwitchBlock) {
+			t.Fatalf("unexpected error from the bare check: have %v want %v", err, ErrNegativeSwitchBlock)
+		}
+		err := cfg.CheckConfigForkOrderWithEpochDefault()
+		if !errors.Is(err, ErrNegativeSwitchBlock) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrNegativeSwitchBlock)
+		}
+		if errors.Is(err, ErrSwitchBlockUnalignedToDefaultEpoch) {
+			t.Fatalf("a negative switch block must not be reported as unaligned to the default epoch: %v", err)
 		}
 	})
 	t.Run("missing system contract addresses fail", func(t *testing.T) {
@@ -1486,5 +1781,322 @@ func TestActiveSystemContractsTracksXDCActivationBlocks(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			assert.Equal(t, test.want, config.ActiveSystemContracts(test.block))
 		})
+	}
+}
+
+// TestCheckConfigForkOrderRejectsSwitchEpochMismatch pins the rule that keeps the
+// v2 switch epoch naming the epoch its switch block falls on. The two fields are
+// one schedule: the v2 round arithmetic derives its epoch number as
+// SwitchEpoch + round/Epoch, so a config that lets them drift renumbers every
+// epoch the chain reports while the schedule itself still looks self-consistent
+// and no other rule notices. Every built-in network satisfies the equality, and
+// the puppeth wizard now derives the value instead of keeping the template's.
+func TestCheckConfigForkOrderRejectsSwitchEpochMismatch(t *testing.T) {
+	t.Run("every built-in xdpos network satisfies the rule", func(t *testing.T) {
+		for _, cfg := range []*ChainConfig{
+			XDCMainnetChainConfig,
+			TestnetChainConfig,
+			DevnetChainConfig,
+			LocalnetChainConfig,
+			TestXDPoSMockChainConfig,
+		} {
+			if err := cfg.CheckV2SwitchEpochAlignment(); err != nil {
+				t.Fatalf("chain %v must satisfy the rule: %v", cfg.ChainID, err)
+			}
+		}
+	})
+	t.Run("a mismatched switch epoch is refused", func(t *testing.T) {
+		cfg := TestnetChainConfig.Clone()
+		cfg.XDPoS = cfg.XDPoS.Clone()
+		if cfg.XDPoS.Epoch == 0 {
+			t.Fatal("this case needs a config that writes its epoch out")
+		}
+		cfg.XDPoS.V2.SwitchEpoch++
+
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrSwitchEpochMismatch) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrSwitchEpochMismatch)
+		}
+		// The fork order is fine, the arithmetic is what has to change, and the two
+		// sentinels carry different recovery hints.
+		if errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("a switch epoch mismatch must not be reported as a fork order defect: %v", err)
+		}
+		want := fmt.Sprintf("invalid chain config: %v: XDPoS.V2.SwitchEpoch %d does not name the epoch XDPoS.V2.SwitchBlock %v falls on (want %s = XDPoS.V2.SwitchBlock / XDPoS.Epoch %d)",
+			ErrSwitchEpochMismatch, cfg.XDPoS.V2.SwitchEpoch, cfg.XDPoS.V2.SwitchBlock, new(big.Int).Div(cfg.XDPoS.V2.SwitchBlock, new(big.Int).SetUint64(cfg.XDPoS.Epoch)), cfg.XDPoS.Epoch)
+		if err.Error() != want {
+			t.Fatalf("unexpected error string:\n have %q\n want %q", err.Error(), want)
+		}
+	})
+	t.Run("a switch block above uint64 names its real epoch", func(t *testing.T) {
+		// 2^64 * 225 is 900 * 2^62, a real epoch boundary whose low 64 bits are all
+		// zero. The folded Uint64()/Epoch used to answer 0 and accept a SwitchEpoch of
+		// 0; the big.Int judgement resolves the block to 2^62, which no uint64-sized
+		// switch epoch equals, and reports the mismatch instead.
+		cfg := TestnetChainConfig.Clone()
+		cfg.XDPoS = cfg.XDPoS.Clone()
+		cfg.XDPoS.V2 = cfg.XDPoS.V2.Clone()
+		cfg.XDPoS.V2.SwitchBlock = new(big.Int).Mul(new(big.Int).Lsh(big.NewInt(1), 64), big.NewInt(225))
+		cfg.XDPoS.V2.SwitchEpoch = 0
+
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrSwitchEpochMismatch) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrSwitchEpochMismatch)
+		}
+	})
+	t.Run("a switch block moved to another epoch boundary is accepted", func(t *testing.T) {
+		// This is the shape the wizard derives: the block was moved and the epoch
+		// was recomputed from it, so the two still describe one schedule.
+		cfg := TestnetChainConfig.Clone()
+		cfg.XDPoS = cfg.XDPoS.Clone()
+		cfg.XDPoS.V2.SwitchBlock = new(big.Int).SetUint64(cfg.XDPoS.Epoch * 2)
+		cfg.XDPoS.V2.SwitchEpoch = 2
+
+		if err := cfg.CheckConfigForkOrder(); err != nil {
+			t.Fatalf("a derived switch epoch must be accepted: %v", err)
+		}
+	})
+	t.Run("an unset epoch leaves the rule to the default-epoch judgement", func(t *testing.T) {
+		// The bare check skips the rule while the epoch is unset, because the
+		// effective value only exists once the engine fills it in; the caller that
+		// knows the default judges that state instead.
+		cfg := TestnetChainConfig.Clone()
+		cfg.XDPoS = cfg.XDPoS.Clone()
+		cfg.XDPoS.Epoch = 0
+		cfg.XDPoS.V2.SwitchEpoch++
+
+		if err := cfg.CheckConfigForkOrder(); err != nil {
+			t.Fatalf("CheckConfigForkOrder rejected an unset epoch: %v", err)
+		}
+		err := cfg.CheckConfigForkOrderWithEpochDefault()
+		if !errors.Is(err, ErrSwitchEpochMismatch) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrSwitchEpochMismatch)
+		}
+		// The message divides by the epoch this call filled in, a number the config
+		// never wrote, so the rejection also has to name that state: it is what lets
+		// the operator-facing formatter explain where the number came from.
+		if !errors.Is(err, ErrSwitchEpochMismatchAgainstDefaultEpoch) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrSwitchEpochMismatchAgainstDefaultEpoch)
+		}
+		if errors.Is(err, ErrUnusableGapScheduleDefaultEpoch) || errors.Is(err, ErrSwitchBlockUnalignedToDefaultEpoch) {
+			t.Fatalf("a switch epoch mismatch must not inherit the other default-epoch tags: %v", err)
+		}
+		if want := fmt.Sprintf("/ XDPoS.Epoch %d", DefaultXDPoSEpoch); !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not quote the default epoch (%q)", err.Error(), want)
+		}
+		if cfg.XDPoS.Epoch != 0 {
+			t.Fatalf("judging against the default epoch must not fill it in, have %d", cfg.XDPoS.Epoch)
+		}
+	})
+	t.Run("an explicit epoch does not blame the default epoch", func(t *testing.T) {
+		// The tag exists only for the state CheckConfigForkOrderWithEpochDefault
+		// creates by filling the epoch in. A config that writes its own epoch out
+		// reaches the rule through the bare check, so its rejection stays untagged
+		// even though the text is the same shape.
+		cfg := TestnetChainConfig.Clone()
+		cfg.XDPoS = cfg.XDPoS.Clone()
+		if cfg.XDPoS.Epoch == 0 {
+			t.Fatal("this case needs a config that writes its epoch out")
+		}
+		cfg.XDPoS.V2.SwitchEpoch++
+
+		err := cfg.CheckConfigForkOrderWithEpochDefault()
+		if !errors.Is(err, ErrSwitchEpochMismatch) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrSwitchEpochMismatch)
+		}
+		if errors.Is(err, ErrSwitchEpochMismatchAgainstDefaultEpoch) {
+			t.Fatalf("a config that writes its epoch out must not be reported as judged against the default: %v", err)
+		}
+	})
+	t.Run("an unaligned switch block is reported as unaligned", func(t *testing.T) {
+		// The mismatch rule divides by the epoch, so it has to stay behind the
+		// alignment rule: an unaligned block offers no exact epoch to name and would
+		// otherwise be reported as a mismatch the operator cannot act on.
+		cfg := TestnetChainConfig.Clone()
+		cfg.XDPoS = cfg.XDPoS.Clone()
+		cfg.XDPoS.V2.SwitchBlock = new(big.Int).SetUint64(cfg.XDPoS.Epoch + 1)
+		cfg.XDPoS.V2.SwitchEpoch = 0
+
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if errors.Is(err, ErrSwitchEpochMismatch) {
+			t.Fatalf("the alignment rule has to be judged first: %v", err)
+		}
+	})
+}
+
+// TestCheckSwitchBlockAlignmentRejectsNegativeSwitchBlock pins that the exported
+// alignment helper owns the sign as well as the multiple-of-epoch rule. It is the
+// one judgement engine_v2.New makes on a directly constructed engine, which never
+// goes through CheckConfigForkOrder, so a negative multiple of the epoch (-900,
+// -1800) has to be refused here rather than only by the full validation - the
+// Uint64() reader folds the sign, so such a value otherwise looks aligned.
+func TestCheckSwitchBlockAlignmentRejectsNegativeSwitchBlock(t *testing.T) {
+	tests := []struct {
+		name    string
+		block   int64
+		wantErr error // nil when the helper accepts the value
+	}{
+		{name: "zero is a boundary", block: 0},
+		{name: "aligned inside the epoch", block: 900},
+		{name: "negative multiple of the epoch", block: -900, wantErr: ErrNegativeSwitchBlock},
+		{name: "negative multiple further down", block: -1800, wantErr: ErrNegativeSwitchBlock},
+		{name: "negative non multiple", block: -901, wantErr: ErrNegativeSwitchBlock},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := TestnetChainConfig.Clone()
+			cfg.XDPoS = cfg.XDPoS.Clone()
+			cfg.XDPoS.V2 = cfg.XDPoS.V2.Clone()
+			cfg.XDPoS.V2.SwitchBlock = big.NewInt(test.block)
+
+			err := cfg.CheckSwitchBlockAlignment()
+			if test.wantErr == nil {
+				if err != nil {
+					t.Fatalf("CheckSwitchBlockAlignment(%d) rejected an aligned block: %v", test.block, err)
+				}
+				return
+			}
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("CheckSwitchBlockAlignment(%d): have %v want %v", test.block, err, test.wantErr)
+			}
+			if errors.Is(err, ErrSwitchBlockUnalignedToDefaultEpoch) {
+				t.Fatalf("CheckSwitchBlockAlignment(%d) reported a sign defect as a default-epoch one: %v", test.block, err)
+			}
+		})
+	}
+}
+
+// TestXDPoSConfigCheckGapSchedule pins the exported predicate the chain open path
+// shares with the full config validation: it judges the schedule the same way
+// CheckConfigForkOrder does, and defers an unset epoch because that state means
+// "not filled in yet" rather than "invalid".
+func TestXDPoSConfigCheckGapSchedule(t *testing.T) {
+	tests := []struct {
+		name    string
+		epoch   uint64
+		gap     uint64
+		wantErr error
+		wantMsg string
+	}{
+		{name: "usable schedule", epoch: 900, gap: 450},
+		{name: "unset epoch defers the judgement", epoch: 0, gap: 0},
+		{name: "zero gap", epoch: 900, gap: 0, wantErr: ErrUnusableGapSchedule, wantMsg: "XDPoS.Gap 0 designates no gap block inside XDPoS.Epoch 900"},
+		{name: "gap equal to epoch", epoch: 900, gap: 900, wantErr: ErrUnusableGapSchedule, wantMsg: "designates no gap block of its own"},
+		{name: "gap above epoch", epoch: 900, gap: 1200, wantErr: ErrUnusableGapSchedule, wantMsg: "XDPoS.Gap 1200 designates no gap block inside XDPoS.Epoch 900"},
+		{name: "epoch one leaves no gap", epoch: 1, gap: 0, wantErr: ErrUnusableGapSchedule, wantMsg: "Epoch >= 2"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := &XDPoSConfig{Epoch: test.epoch, Gap: test.gap}
+
+			err := cfg.CheckGapSchedule()
+			if test.wantErr == nil {
+				if err != nil {
+					t.Fatalf("CheckGapSchedule(%d, %d) rejected a usable schedule: %v", test.epoch, test.gap, err)
+				}
+				return
+			}
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("CheckGapSchedule(%d, %d): have %v want %v", test.epoch, test.gap, err, test.wantErr)
+			}
+			if !strings.Contains(err.Error(), test.wantMsg) {
+				t.Fatalf("error %q does not carry %q", err, test.wantMsg)
+			}
+		})
+	}
+
+	// A missing section is not a schedule defect, so the predicate stays total.
+	var missing *XDPoSConfig
+	if err := missing.CheckGapSchedule(); err != nil {
+		t.Fatalf("a nil config has no schedule to refuse: %v", err)
+	}
+}
+
+// TestCheckConfigForkOrderSplitPreservesVerdicts pins the refactor that splits the
+// validation into its epoch-independent and epoch-dependent halves: the two halves
+// run in sequence have to produce exactly the verdict the single entry point
+// produced. The expected sentinel per shape keeps the matrix honest, so a rule
+// dropped from both halves is still caught here.
+func TestCheckConfigForkOrderSplitPreservesVerdicts(t *testing.T) {
+	shapes := []struct {
+		name    string
+		mutate  func(*ChainConfig)
+		wantErr error // nil when the whole check accepts the config
+	}{
+		{name: "usable network", mutate: func(cfg *ChainConfig) {}},
+		{name: "missing chain id", mutate: func(cfg *ChainConfig) { cfg.ChainID = nil }, wantErr: ErrMissingForkSwitch},
+		{name: "missing system contract", mutate: func(cfg *ChainConfig) { cfg.TRC21IssuerSMC = common.Address{} }, wantErr: ErrMissingForkSwitch},
+		{name: "missing foundation wallet", mutate: func(cfg *ChainConfig) { cfg.XDPoS.FoundationWalletAddr = common.Address{} }, wantErr: ErrMissingForkSwitch},
+		{name: "missing max masternodes v2", mutate: func(cfg *ChainConfig) { cfg.XDPoS.MaxMasternodesV2 = 0 }, wantErr: ErrMissingForkSwitch},
+		{name: "missing v2 section", mutate: func(cfg *ChainConfig) { cfg.XDPoS.V2 = nil }, wantErr: ErrMissingForkSwitch},
+		{name: "missing switch block", mutate: func(cfg *ChainConfig) { cfg.XDPoS.V2.SwitchBlock = nil }, wantErr: ErrMissingForkSwitch},
+		{name: "missing current config", mutate: func(cfg *ChainConfig) { cfg.XDPoS.V2.CurrentConfig = nil }, wantErr: ErrMissingForkSwitch},
+		{name: "missing all configs", mutate: func(cfg *ChainConfig) { cfg.XDPoS.V2.AllConfigs = nil }, wantErr: ErrMissingForkSwitch},
+		{name: "negative switch block", mutate: func(cfg *ChainConfig) { cfg.XDPoS.V2.SwitchBlock = big.NewInt(-900) }, wantErr: ErrNegativeSwitchBlock},
+		{name: "unaligned switch block", mutate: func(cfg *ChainConfig) { cfg.XDPoS.V2.SwitchBlock = new(big.Int).SetUint64(cfg.XDPoS.Epoch + 1) }, wantErr: ErrWrongForkSwitchOrder},
+		{name: "switch epoch mismatch", mutate: func(cfg *ChainConfig) { cfg.XDPoS.V2.SwitchEpoch++ }, wantErr: ErrSwitchEpochMismatch},
+		{name: "zero gap", mutate: func(cfg *ChainConfig) { cfg.XDPoS.Gap = 0 }, wantErr: ErrUnusableGapSchedule},
+		{name: "gap equal to epoch", mutate: func(cfg *ChainConfig) { cfg.XDPoS.Gap = cfg.XDPoS.Epoch }, wantErr: ErrUnusableGapSchedule},
+		{name: "gap above epoch", mutate: func(cfg *ChainConfig) { cfg.XDPoS.Gap = cfg.XDPoS.Epoch + 1 }, wantErr: ErrUnusableGapSchedule},
+		{
+			name: "epoch one leaves no gap",
+			mutate: func(cfg *ChainConfig) {
+				cfg.XDPoS.Epoch = 1
+				cfg.XDPoS.Gap = 0
+				cfg.XDPoS.V2.SwitchEpoch = cfg.XDPoS.V2.SwitchBlock.Uint64()
+			},
+			wantErr: ErrUnusableGapSchedule,
+		},
+		{name: "unset epoch defers the schedule rules", mutate: func(cfg *ChainConfig) { cfg.XDPoS.Epoch = 0 }},
+	}
+	for _, shape := range shapes {
+		t.Run(shape.name, func(t *testing.T) {
+			cfg := TestnetChainConfig.Clone()
+			cfg.XDPoS = cfg.XDPoS.Clone()
+			cfg.XDPoS.V2 = cfg.XDPoS.V2.Clone()
+			shape.mutate(cfg)
+
+			want := cfg.CheckConfigForkOrder()
+			if shape.wantErr == nil {
+				if want != nil {
+					t.Fatalf("CheckConfigForkOrder rejected a config the table accepts: %v", want)
+				}
+			} else if !errors.Is(want, shape.wantErr) {
+				t.Fatalf("CheckConfigForkOrder: have %v want %v", want, shape.wantErr)
+			}
+
+			got := cfg.checkNonEpochDependentRules()
+			if got == nil {
+				got = cfg.checkEpochDependentRules()
+			}
+			if (want == nil) != (got == nil) {
+				t.Fatalf("split verdict differs from the single entry point: whole=%v split=%v", want, got)
+			}
+			if want != nil && want.Error() != got.Error() {
+				t.Fatalf("split verdict text differs:\n whole=%q\n split=%q", want.Error(), got.Error())
+			}
+		})
+	}
+}
+
+// TestCheckConfigForkOrderWithEpochDefaultNilConfig pins that a nil receiver is
+// reported as the missing XDPoS section rather than dereferenced. The method is
+// exported and sits next to ResolveXDPoSEpoch, which answers a nil config the same
+// way, so a caller that treats the two symmetrically must not get a panic from one
+// of them.
+func TestCheckConfigForkOrderWithEpochDefaultNilConfig(t *testing.T) {
+	var cfg *ChainConfig
+	err := cfg.CheckConfigForkOrderWithEpochDefault()
+	if !errors.Is(err, ErrMissingXDPoSConfig) {
+		t.Fatalf("unexpected error: have %v want %v", err, ErrMissingXDPoSConfig)
+	}
+
+	// The sibling entry point answers the same shape with the same sentinel, so the
+	// two cannot drift apart.
+	if _, err := cfg.ResolveXDPoSEpoch(); !errors.Is(err, ErrMissingXDPoSConfig) {
+		t.Fatalf("ResolveXDPoSEpoch: have %v want %v", err, ErrMissingXDPoSConfig)
 	}
 }

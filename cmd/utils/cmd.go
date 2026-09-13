@@ -45,7 +45,151 @@ const (
 	importBatchSize = 2500
 
 	ChainConfigMismatchPolicyExitHint = "Hint: Use --chain-config-mismatch-policy to recover; Or restart with a matching XDC binary and the same network/genesis settings."
+
+	// UnusableGapScheduleHint is the recovery path for a schedule that designates
+	// no gap block. The schedule is persisted with the genesis, and a data
+	// directory that already stored one keeps judging it as written, so fixing the
+	// JSON is not enough on its own: re-running init on the data directory rewrites
+	// the stored config, but only while the directory has produced no blocks. The
+	// mismatch policy does not cover this check, because the schedule is judged
+	// while the config is resolved, before a compatibility error exists.
+	//
+	// init takes the genesis as its only positional argument, so the hint names it:
+	// "init --datadir <dir>" on its own only reports the missing argument. There is
+	// no automatic backfill of a stored schedule, so that command is the whole
+	// in-place recovery path and belongs in the release notes for the upgrade -
+	// with the head == 0 boundary storedScheduleRecovery spells out.
+	UnusableGapScheduleHint = "Hint: set XDPoS.Epoch >= 2 with 1 <= XDPoS.Gap < XDPoS.Epoch in the genesis, then " + storedScheduleRecovery + "."
 )
+
+// storedScheduleRecovery is the qualification every hint that sends an operator to
+// re-run init has to carry. Re-running init rewrites the stored chain config only
+// while the data directory has produced no blocks (head == 0): correcting a
+// schedule changes XDPoS.Gap/XDPoS.Epoch (or the switch pair), which
+// SetupGenesisBlock reports as a ConfigCompatError on a non-empty directory, so
+// XDC init aborts with "Failed to write chain config" and writes nothing at all.
+// The directory then has to be resynchronised from the corrected genesis. Kept in
+// one place so the hints cannot drift back to the unconditional claim.
+const storedScheduleRecovery = "re-run init on the data directory with that genesis file as its argument (XDC init --datadir <dir> <genesis.json>) rewrites it only while the directory has produced no blocks - once blocks have been imported the corrected schedule is a historical change, init refuses it with a compatibility error and writes nothing, so the directory has to be resynchronised from the corrected genesis"
+
+// UnsetXDPoSEpochHint is the recovery path for a chain opened with a config whose
+// XDPoS.Epoch was never filled in. Chain config validation deliberately leaves an
+// omitted epoch for the engine, so the gap schedule can be perfectly usable and
+// the config still carries the unset value into the constructor that refuses it:
+// the missing value is a caller-side defect, not a schedule one, which is why it
+// has its own sentinel and its own hint.
+//
+// The constructor-level message this hint is usually appended to already tells the
+// caller to build the engine first and open through the resolved constructors, so
+// the hint carries only what that message cannot say: which constructor resolves the
+// default onto its own copy, why the unresolved constructors never see it, and the
+// genesis-side alternative for a stored config that is the one missing the epoch. It
+// is also attached to sentinel-carrying errors that are not that message, so it has
+// to stand on its own. Built from params.DefaultXDPoSEpoch so the value it quotes
+// cannot drift from the one the engine fills in.
+var UnsetXDPoSEpochHint = fmt.Sprintf("Hint: the XDPoS config this chain is being opened with leaves XDPoS.Epoch unset, and the XDPoS engine fills %d in when it builds its own view of the config - XDPoS.New resolves the default onto its own copy and exposes it as XDPoS.ChainConfig(), so the config it was given is left untouched, while the unresolved constructors resolve their own config from the database or the supplied genesis and never see the fill. Alternatively, if the stored config is the one missing the epoch, write \"epoch\": %d into the genesis and "+storedScheduleRecovery+".", params.DefaultXDPoSEpoch, params.DefaultXDPoSEpoch)
+
+// UnalignedSwitchBlockHint is the recovery path for a switch block that is not a
+// multiple of the epoch the genesis writes out itself. It is the sibling of
+// UnalignedSwitchBlockDefaultEpochHint: the same rule, judged against a number the
+// file actually contains, so the hint can name the arithmetic to fix without
+// explaining where the epoch came from. Correcting the block also moves the paired
+// XDPoS.V2.SwitchEpoch - the two fields describe one schedule and the validation
+// refuses a switch epoch that does not name the epoch its block falls on - which is
+// why the hint names both fields.
+var UnalignedSwitchBlockHint = "Hint: XDPoS.V2.SwitchBlock has to be a non-negative multiple of XDPoS.Epoch; set it accordingly, keep XDPoS.V2.SwitchEpoch equal to XDPoS.V2.SwitchBlock / XDPoS.Epoch, then " + storedScheduleRecovery + "."
+
+// UnalignedSwitchBlockDefaultEpochHint is the recovery path for a switch block
+// that is not a multiple of an epoch the genesis never wrote. The alignment
+// message quotes params.DefaultXDPoSEpoch, the value
+// CheckConfigForkOrderWithEpochDefault fills in because XDPoS.Epoch was omitted,
+// and nothing else in the message says where that number came from. Built from
+// that definition rather than spelled out so the hint cannot drift from the value
+// the validator applies.
+var UnalignedSwitchBlockDefaultEpochHint = fmt.Sprintf("Hint: XDPoS.Epoch %d in the message above is the engine default, not a value written in the genesis; either set XDPoS.V2.SwitchBlock to a multiple of %d, or write \"epoch\": %d to make the schedule self-describing.", params.DefaultXDPoSEpoch, params.DefaultXDPoSEpoch, params.DefaultXDPoSEpoch)
+
+// UnusableGapScheduleDefaultEpochHint is the recovery path for a schedule that
+// designates no gap block and was judged against the epoch the engine fills in
+// because the genesis never wrote one. The message quotes
+// params.DefaultXDPoSEpoch, a number that appears nowhere in the file, and the
+// schedule is still the thing that has to change: the fix is the gap, not the
+// epoch, so this hint names the usable range instead of only explaining the
+// number. Built from that definition rather than spelled out so it cannot drift
+// from the value the validator applies.
+var UnusableGapScheduleDefaultEpochHint = fmt.Sprintf("Hint: XDPoS.Epoch %d in the message above is the engine default, not a value written in the genesis; the genesis designates no gap block, so set XDPoS.Gap to a value with 1 <= Gap < %d (writing \"epoch\": %d into the genesis spells the same epoch out explicitly), then "+storedScheduleRecovery+".", params.DefaultXDPoSEpoch, params.DefaultXDPoSEpoch, params.DefaultXDPoSEpoch)
+
+// NegativeSwitchBlockHint is the recovery path for a switch block that carries a
+// negative height. The field is read two ways and the readers disagree about the
+// sign: XDPoS.V2.SwitchBlock.Uint64() folds -900 to 900, so the alignment rule
+// accepted such a value while every comparison against the field kept treating it
+// as a height that can never match. A data directory that already stored one keeps
+// judging it as written, so the value has to be corrected in the genesis and
+// re-applied with init - the same recovery path as an unusable gap schedule.
+// Built from DefaultXDPoSEpoch so the multiple it names cannot drift from the
+// epoch the built-in networks use.
+var NegativeSwitchBlockHint = fmt.Sprintf("Hint: XDPoS.V2.SwitchBlock is a block height, so a negative value has no meaning on the chain; set it to a non-negative multiple of the effective XDPoS.Epoch in the genesis (%d on the built-in networks, and the engine default when the genesis omits the epoch), then "+storedScheduleRecovery+".", params.DefaultXDPoSEpoch)
+
+// SwitchEpochMismatchHint is the recovery path for a switch epoch that does not
+// name the epoch its switch block falls on. This defect is quieter than the ones
+// above: the value is read by the v2 round arithmetic rather than by a guard, so
+// the chain still starts and simply numbers its epochs differently from the
+// schedule the genesis describes. The fix is the arithmetic, and the stored config
+// is judged as written, so the hint names init the same way the schedule hints do.
+//
+// It is the hint for a config that spells its epoch out. The message names that
+// epoch, so the arithmetic it asks for can be checked against the file; when the
+// genesis omitted the epoch the validator judged the rule against the engine
+// default instead and tags the rejection, which is what selects
+// SwitchEpochMismatchAgainstDefaultEpochHint.
+var SwitchEpochMismatchHint = "Hint: XDPoS.V2.SwitchEpoch has to equal XDPoS.V2.SwitchBlock / XDPoS.Epoch; correct it in the genesis, then " + storedScheduleRecovery + "."
+
+// SwitchEpochMismatchAgainstDefaultEpochHint is the recovery path for a switch
+// epoch that was judged against the epoch the engine fills in because the genesis
+// never wrote one. The message quotes params.DefaultXDPoSEpoch, a number that
+// appears nowhere in the file, and the pairing can look self-consistent against
+// the epoch the file's author had in mind, so the hint names the number's origin
+// and both ways out: spell the intended epoch out, or move the switch epoch onto
+// the default's boundary. Built from that definition rather than spelled out so it
+// cannot drift from the value the validator applies.
+var SwitchEpochMismatchAgainstDefaultEpochHint = fmt.Sprintf("Hint: XDPoS.Epoch %d in the message above is the engine default, not a value written in the genesis, so XDPoS.V2.SwitchEpoch is being compared against a schedule the file does not describe; either write \"epoch\": <the epoch XDPoS.V2.SwitchEpoch names> into the genesis so the file spells that schedule out, or set XDPoS.V2.SwitchEpoch to XDPoS.V2.SwitchBlock / %d, then "+storedScheduleRecovery+".", params.DefaultXDPoSEpoch, params.DefaultXDPoSEpoch)
+
+// MissingXDPoSConfigHint is the recovery path for a gap path reached with no XDPoS
+// config at all. There is no schedule to repair and nothing in the genesis an
+// operator could edit, so this hint names the constructor contract instead: the
+// engine that runs the gap lookups has to be built with a config that carries the
+// XDPoS section.
+var MissingXDPoSConfigHint = "Hint: the XDPoS engine running this lookup was built without an XDPoS config, so it has no gap schedule to read; build it from a chain config that carries the XDPoS section (XDPoS.New, XDPoS.NewFaker or engine_v2.New) and open the chain with that same config."
+
+// chainConfigErrorHints maps the XDPoS config sentinels to the operator-facing
+// recovery path for each. The order is the priority: FormatChainConfigError returns
+// the first row the error identifies.
+//
+// Two rules set that order. A *DefaultEpoch variant tags a rejection that was judged
+// against the epoch the engine fills in, and its error identifies both the variant
+// and the base sentinel it refines (Unwrap reports the pair), so a variant has to be
+// listed before the sentinel it refines. An unset epoch and a missing config come
+// before every schedule row because both are caller-side defects rather than schedule
+// ones: the schedule itself may be perfectly usable, and no genesis field can fix
+// either, so their hints name the constructor contract instead of sending an operator
+// to edit a schedule that is not broken. An error carrying both families therefore
+// resolves to the caller-side row, which is the defect the operator can act on.
+//
+// A new sentinel is a new row in this order rather than a new branch, which is what
+// the ordering tests in cmd_test.go pin.
+var chainConfigErrorHints = []struct {
+	sentinel error
+	hint     string
+}{
+	{params.ErrUnsetXDPoSEpoch, UnsetXDPoSEpochHint},
+	{params.ErrMissingXDPoSConfig, MissingXDPoSConfigHint},
+	{params.ErrUnusableGapScheduleDefaultEpoch, UnusableGapScheduleDefaultEpochHint},
+	{params.ErrUnusableGapSchedule, UnusableGapScheduleHint},
+	{params.ErrSwitchBlockUnalignedToDefaultEpoch, UnalignedSwitchBlockDefaultEpochHint},
+	{params.ErrSwitchBlockUnalignedToEpoch, UnalignedSwitchBlockHint},
+	{params.ErrNegativeSwitchBlock, NegativeSwitchBlockHint},
+	{params.ErrSwitchEpochMismatchAgainstDefaultEpoch, SwitchEpochMismatchAgainstDefaultEpochHint},
+	{params.ErrSwitchEpochMismatch, SwitchEpochMismatchHint},
+}
 
 // Fatalf formats a message to standard error and exits the program.
 // The message is also printed to standard output if standard error
@@ -68,7 +212,13 @@ func Fatalf(format string, args ...interface{}) {
 }
 
 // FormatChainConfigError appends an operator-facing migration hint when strict
-// XDC fork-config validation rejects a legacy sparse config.
+// XDC fork-config validation rejects a legacy sparse config, and the recovery path
+// when it refuses an unusable gap schedule, a gap schedule judged against the
+// epoch the engine fills in, a switch block that is not aligned to its epoch -
+// whether the config wrote that epoch out or the engine filled it in - a
+// negative switch block, a switch epoch judged against the epoch the engine fills
+// in, a switch epoch that does not name the epoch its block falls on, a gap lookup
+// reached with no XDPoS config, or a chain opened with an unset epoch.
 func FormatChainConfigError(err error) string {
 	if err == nil {
 		return ""
@@ -89,6 +239,11 @@ func FormatChainConfigError(err error) string {
 			return guidance
 		}
 		return message + ". " + ChainConfigMismatchPolicyExitHint
+	}
+	for _, entry := range chainConfigErrorHints {
+		if errors.Is(err, entry.sentinel) {
+			return message + ". " + entry.hint
+		}
 	}
 	if !errors.Is(err, params.ErrMissingForkSwitch) {
 		return message

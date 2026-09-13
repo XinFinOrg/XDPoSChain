@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
 // TestMakeGenesisDeploysSystemContracts runs the full makeGenesis flow via the
@@ -22,7 +23,6 @@ func TestMakeGenesisDeploysSystemContracts(t *testing.T) {
 
 	const inputYAML = `name: xdc-test
 chainid: 19420
-epoch: 900
 masternodesowner: "0xa4477b9b3dcfffb71db9e2aba579975ac756dade"
 masternodes:
   - "0x7e7d7b438abd152af3753bdc01512d2208305397"
@@ -46,6 +46,26 @@ stakingthreshold: 10000000
 	g := w.conf.Genesis
 	if g == nil {
 		t.Fatal("makeGenesis produced no genesis")
+	}
+
+	// The input-file path carries no schedule of its own, so this file has to carry
+	// none either (a schedule key would be refused by checkGenesisInputScheduleKeys,
+	// which TestCheckGenesisInputScheduleKeys pins): the schedule is the cloned
+	// Localnet template's, used as written.
+	if g.Config.XDPoS == nil {
+		t.Fatal("generated genesis has no XDPoS config")
+	}
+	if got, want := g.Config.XDPoS.Epoch, params.LocalnetChainConfig.XDPoS.Epoch; got != want {
+		t.Errorf("XDPoS.Epoch = %d, want the Localnet template value %d", got, want)
+	}
+	// The switch epoch has to be derived from the schedule that was stored rather
+	// than copied from the template, so that what this path generates is what the
+	// validation accepts.
+	if g.Config.XDPoS.V2 == nil {
+		t.Fatal("generated genesis has no XDPoS V2 config")
+	}
+	if got, want := g.Config.XDPoS.V2.SwitchEpoch, xdposSwitchEpoch(g.Config.XDPoS.V2.SwitchBlock, g.Config.XDPoS.Epoch); got != want {
+		t.Errorf("XDPoS.V2.SwitchEpoch = %d, want the derived value %d", got, want)
 	}
 
 	systemContracts := map[string]common.Address{

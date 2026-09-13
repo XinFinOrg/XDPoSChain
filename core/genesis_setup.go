@@ -70,7 +70,7 @@ func prepareSetupStoredConfigOverrides(db ethdb.Database, ghash common.Hash, sto
 
 // resolveSetupStoredConfigResult finalizes writable stored-config reconciliation and persistence.
 func resolveSetupStoredConfigResult(db ethdb.Database, ghash common.Hash, storedCfg, newCfg *params.ChainConfig, genesis *Genesis, head *types.Header, state setupStoredOverrideState) (cfg *params.ChainConfig, compatErr *params.ConfigCompatError, err error) {
-	if err := newCfg.CheckConfigForkOrder(); err != nil {
+	if err := newCfg.CheckConfigForkOrderWithEpochDefault(); err != nil {
 		return nil, nil, err
 	}
 	xdposRound, err := currentXDPoSRoundFromHead(head, storedCfg)
@@ -257,7 +257,7 @@ func setupGenesisBlock(db ethdb.Database, genesis *Genesis, allowBuiltInCustomRe
 		}
 		if rawdb.ReadHeadHeaderHash(db) != (common.Hash{}) || rawdb.ReadHeadBlockHash(db) != (common.Hash{}) || rawdb.ReadHeadFastBlockHash(db) != (common.Hash{}) {
 			newCfg := genesis.chainConfigOrDefault(ghash, nil, false)
-			if err := newCfg.CheckConfigForkOrder(); err != nil {
+			if err := newCfg.CheckConfigForkOrderWithEpochDefault(); err != nil {
 				return nil, common.Hash{}, nil, err
 			}
 			rawdb.WriteChainConfig(db, ghash, newCfg)

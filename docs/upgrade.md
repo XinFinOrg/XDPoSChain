@@ -8,6 +8,7 @@ This document summarizes the current startup rules for `genesis` and
 - which missing fields can be backfilled for each class
 - when a resolved `ChainConfig` is written back to the database
 - how the node reacts to an incompatible stored config via `--chain-config-mismatch-policy`
+- which XDPoS schedules are refused outright, before any mismatch-policy decision
 - how to upgrade `ChainConfig` to add a future fork without changing the canonical genesis block
 
 ## Operator Migration: Single Binary, Runtime Network Selection
@@ -273,6 +274,246 @@ Operational guidance:
 - `rewind-and-update` and `update-config-only` require a writable open. In readonly
   mode they refuse to start so the database is never mutated; reopen in writable
   mode, or use `exit`/`ignore-mismatch`, to proceed without writes.
+- When either update policy writes the config back, an `XDPoS.Epoch` the resolution
+  filled in is not part of what is persisted: a config whose source omitted the epoch
+  is stored unset, exactly as `XDC init` stores it, so the stored config keeps
+  matching the genesis file you hold instead of oscillating between the unset value
+  and the default depending on which tool wrote it last. The resolution is the one
+  `XDPoS.New` / `NewFaker` perform and expose as `XDPoS.ChainConfig()`; the config the
+  caller holds is never mutated.
+
+## Unusable XDPoS Gap Schedule Is Refused Before the Mismatch Policy
+
+An XDPoS schedule must designate a gap block: `Epoch >= 2` with `1 <= Gap < Epoch`.
+The v2 gap trigger is `n % Epoch == Epoch - Gap`, and each refused shape fails it
+differently. `Gap == 0` puts the offset at `Epoch`, which no block number residue
+reaches, and `Gap > Epoch` underflows the subtraction, so neither ever matches.
+`Gap == Epoch` puts the offset at `0`, so the trigger does match - at the epoch
+switch block itself - which is why it is refused: the block that samples the
+next-epoch candidate set would be the block that consumes it (the v1 checkpoint
+predicate `(n + Gap) % Epoch == 0` lands on that same height). `Epoch == 1` leaves
+no usable gap at all. A schedule that matches no height of its own, or only the
+epoch switch block, cannot prepare the next-epoch masternode set.
+
+This is judged while the chain config is resolved - by `XDC init`, by writable
+startup, and by readonly open alike - which is before a `ConfigCompatError` exists.
+It is judged again when the chain is opened: `NewBlockChainResolved` /
+`NewBlockChainReadOnlyResolved` apply `params.XDPoSConfig.CheckGapSchedule` to the
+config they are given, so a config no engine constructor validated cannot open a chain
+whose `shouldUpdateM1` would never fire and whose gap lookups would all error.
+Consequences:
+
+- `--chain-config-mismatch-policy` does not apply. All four values (`exit`,
+  `rewind-and-update`, `update-config-only`, `ignore-mismatch`) fail identically:
+  the same `unusable gap schedule` error, exit code 1, no database write.
+- The schedule is persisted with the genesis and judged as written on every later
+  start, so editing the genesis file alone does not change it.
+- Recovery depends on whether the data directory has produced blocks:
+  - A directory that has only been initialised (`head == 0`) is repaired in place:
+    fix the schedule and re-run init on the same data directory.
+
+    ```bash
+    XDC init --datadir <dir> <fixed-genesis.json>
+    ```
+
+    That rewrites the stored chain config on the existing database, so clearing
+    the data directory is not required at that point.
+  - A directory that has already imported blocks (`head > 0`) cannot be repaired by
+    init. Correcting the schedule changes `XDPoS.Gap`/`XDPoS.Epoch` (or the switch
+    pair), which is a historical change: `SetupGenesisBlock` returns a
+    `ConfigCompatError` and `XDC init` aborts with
+    `Failed to write chain config: ...` (exit code 1) **without writing**, so the
+    stored schedule is left untouched and the next start is refused again. The node
+    command line has no `--genesis` flag, so the corrected schedule cannot be
+    injected at startup either; the real recovery is to resynchronise the chain from
+    the corrected genesis - clear the data directory (or point `--datadir` at a
+    fresh one) and initialise it from that genesis.
+
+  Built-in Mainnet, Testnet and Devnet are unaffected: when the built-in genesis
+  hash matches, the config bundled in the binary is used instead of the stored one.
+
+The startup error names the shape that was refused, for example
+`XDPoS.Gap 0 designates no gap block inside XDPoS.Epoch 900 (want 1 <= Gap < Epoch)`,
+and appends the recovery command above.
+
+Release and rollout notes:
+
+- Treat this as a hard gate, not a policy choice: ship the note with the release,
+  and tell operators of custom/private networks with a non-default `epoch`/`gap`
+  pair to validate their `genesis.json` (or run `XDC init` against a scratch
+  directory with it) before upgrading. A node that starts today will refuse to
+  start afterwards. An omitted `epoch` is judged the same way - see
+  [Omitted XDPoS.Epoch](#omitted-xdposepoch-is-judged-against-the-default-epoch)
+  below.
+- There is no warning-only transition. A schedule that designates no gap block of
+  its own leaves nothing to prepare the next-epoch masternode set from (and at
+  `Gap == Epoch` the only height the trigger names is the epoch switch block, the
+  block that consumes that set), so continuing with a warning would let nodes with
+  different schedules disagree about the masternode set.
+
+### Omitted `XDPoS.Epoch` Is Judged Against the Default Epoch
+
+A config that omits `XDPoS.Epoch` is not exempt from the rules above: the engine
+default `900` is substituted before the schedule is judged, and four shapes are
+refused.
+
+- **Omitted epoch with an unaligned switch block.** `XDPoS.V2.SwitchBlock` has to
+  be a multiple of the effective epoch. A genesis that omits `epoch` and carries a
+  `switchBlock` such as `2` is refused with a message that names the default the
+  config never wrote:
+
+  ```text
+  invalid chain config: XDPoS.V2.SwitchBlock 2 not aligned to XDPoS.Epoch 900
+  ```
+
+  The appended hint says that `900` is the engine default rather than a value in
+  the file, and that the fix is either a `switchBlock` that is a multiple of `900`
+  or an explicit `"epoch": 900` in the genesis. This is not a new class of refused
+  chain: before this change the same config was refused at engine construction,
+  where `XDPoS.New` filled the default first. It is now refused earlier - by
+  `XDC init`, by writable startup and by readonly open - and with the hint
+  attached, so the failure surfaces while the genesis is still being edited.
+
+- **Omitted epoch with an unusable gap schedule.** The rules above still apply to
+  the substituted epoch, so a genesis that omits `epoch` and leaves `gap` at `0` is
+  refused with a message naming the default the config never wrote:
+
+  ```text
+  invalid chain config: unusable gap schedule: XDPoS.Gap 0 designates no gap block inside XDPoS.Epoch 900 (want 1 <= Gap < Epoch)
+  ```
+
+  The appended hint says that `900` is the engine default rather than a value in
+  the file, and that the fix is the schedule: set `XDPoS.Gap` to a value with
+  `1 <= Gap < 900`, or write `"epoch": 900` into the genesis for the same epoch
+  spelled out. Recovery is then the same re-init on the data directory as above.
+
+- **Omitted epoch with a mismatched switch epoch.** The pairing rule is judged
+  against the substituted epoch as well, so a genesis that omits `epoch` and leaves
+  `SwitchEpoch` on a number the default does not put its switch block on is refused
+  with a message naming the default the config never wrote:
+
+  ```text
+  invalid chain config: switch epoch does not match the switch block: XDPoS.V2.SwitchEpoch 5 does not name the epoch XDPoS.V2.SwitchBlock 900 falls on (want 1 = XDPoS.V2.SwitchBlock / XDPoS.Epoch 900)
+  ```
+
+  The appended hint says that `900` is the engine default rather than a value in
+  the file, so the pairing is being judged against a schedule the genesis does not
+  describe, and it names both ways out: write the intended epoch out (`"epoch":
+  180` for a `switchEpoch` of `5` next to a `switchBlock` of `900`), or move
+  `SwitchEpoch` onto the default's boundary (`1` for that block). Recovery is then
+  the same re-init on the data directory as above. This is not a new class of
+  refused chain either: `XDPoS.New` filled the same default before it validated.
+
+- **Unset epoch at chain open.** Code that opens the chain through the `core`
+  constructors instead of the node startup path can hit this directly: a config
+  whose `XDPoS.Epoch` is still `0` is refused with `XDPoS.Epoch is unset`, because
+  the v2 gap trigger divides by it. The unset-epoch hint applies - the engine
+  resolves the default onto its own copy, so the config handed to the constructors
+  has to be the one the engine resolved (`XDPoS.ChainConfig()`), not the object the
+  engine was built from.
+
+All of these refusals happen while the chain config is resolved, so
+`--chain-config-mismatch-policy` does not apply to any of them. Recovery is the
+same as above: fix the schedule in the authoritative `genesis.json` and re-run init
+on the data directory. That in-place rewrite only happens while the directory has
+produced no blocks (`head == 0`); a directory that already imported blocks gets a
+`ConfigCompatError` from `XDC init` instead and has to be resynchronised from the
+corrected genesis.
+
+One boundary is worth knowing: a genesis whose `chainId` matches a bundled network
+(Mainnet, Testnet, Devnet, Localnet) has its omitted fields hydrated from that
+built-in config, so its `epoch` is a written value by the time the schedule is
+judged. An unusable schedule there is refused with the generic schedule hint rather
+than the default-epoch one, and the epoch in the message is the one the bundled
+config carries.
+
+### Negative `XDPoS.V2.SwitchBlock` Is Refused
+
+`XDPoS.V2.SwitchBlock` is a block height, so a negative value has no meaning on the
+chain, and it is now refused while the chain config is resolved - by `XDC init`, by
+writable startup and by readonly open, and independently of whether the epoch is
+written out or left to the engine default.
+
+It deserves a rule of its own because such a value looks aligned to a naive check:
+`SwitchBlock.Uint64()` folds `-900` to `900`, so `-900 % 900 == 0` passes the epoch
+alignment rule, while the comparisons against the field
+(`XDPoSConfig.BlockConsensusVersion`, `isEpochSwitchAtRound`) keep treating it as a
+negative height that can never match. Refusing the sign is what keeps the field to
+one meaning. The startup error names the value:
+
+```text
+invalid chain config: XDPoS.V2.SwitchBlock -900 must be non-negative
+```
+
+The appended hint says that the field is a block height, that its `Uint64()` reader
+folds the sign (which is why the value looked aligned), and that a config already
+stored with one has to be corrected in the genesis and re-applied with init, the
+same recovery path as an unusable gap schedule - which, on a directory that has
+already imported blocks, means resynchronising from the corrected genesis, because
+init refuses the historical change (see
+[Unusable XDPoS Gap Schedule Is Refused Before the Mismatch Policy](#unusable-xdpos-gap-schedule-is-refused-before-the-mismatch-policy)).
+
+Before this rule the value was accepted - it was not part of the fork order fields
+and no other rule judged its sign - so a stored config that carries one has to be
+corrected in the genesis and re-applied with init. The puppeth genesis wizard does
+not produce such a value: it requires a non-negative multiple of the epoch.
+
+The sign is also judged inside `params.ChainConfig.CheckSwitchBlockAlignment`, which
+is the only rule `engine_v2.New` applies to a config it is handed directly; a directly
+constructed engine therefore refuses a negative height too, instead of folding it with
+`Uint64()` and discovering the mismatch later.
+
+### `XDPoS.V2.SwitchEpoch` Must Name the Epoch of Its Switch Block
+
+`XDPoS.V2.SwitchEpoch` and `XDPoS.V2.SwitchBlock` describe one schedule. The v2
+round arithmetic derives its epoch number as `SwitchEpoch + round / Epoch`, so a
+config whose switch epoch does not name the epoch its switch block falls on
+renumbers every epoch the engine reports while the rest of the schedule still looks
+self-consistent. The rule is:
+
+```text
+XDPoS.V2.SwitchEpoch == XDPoS.V2.SwitchBlock / XDPoS.Epoch
+```
+
+Every built-in network satisfies it. A mismatched pair is refused while the chain
+config is resolved, with the same consequences as an unusable gap schedule:
+`--chain-config-mismatch-policy` does not apply, the stored config is judged as
+written, and recovery is to correct the genesis and re-run init on the data
+directory - again, only while that directory has produced no blocks; once blocks
+exist the corrected pair is a historical change and the directory has to be
+resynchronised from the corrected genesis. The startup error names both values:
+
+```text
+invalid chain config: switch epoch does not match the switch block: XDPoS.V2.SwitchEpoch 1 does not name the epoch XDPoS.V2.SwitchBlock 900 falls on (want 450 = XDPoS.V2.SwitchBlock / XDPoS.Epoch 2)
+```
+
+An omitted `epoch` is judged against the engine default, as the other
+epoch-dependent rules are: the message then divides by `900`, a number the genesis
+never wrote, and the rejection carries the default-epoch tag that selects the hint
+saying so - see
+[Omitted XDPoS.Epoch](#omitted-xdposepoch-is-judged-against-the-default-epoch)
+above.
+
+Release and rollout notes:
+
+- The `puppeth` wizard now derives `SwitchEpoch` from the switch block and epoch it
+  collected, so it cannot generate this shape. Builds older than the one that added
+  the rule asked for the switch block and the epoch separately and copied the
+  template's `SwitchEpoch` unchanged, so a genesis generated then - for example
+  `epoch` shortened to `2` while the switch block stayed on a `900` boundary -
+  carries a mismatched pair. Custom networks built with such a build have to be
+  corrected before the upgrade; a node that starts today will refuse to start
+  afterwards.
+- `XDPoS.V2.SwitchBlock` stays a multiple of the epoch (see the omitted-epoch
+  section above), so a mismatched pair is never reported as an alignment failure.
+- The `puppeth` input-file path now refuses a genesis input file that carries any
+  of `epoch`, `gap`, `switchBlock` or `switchEpoch`, and exits with status 1
+  instead of generating a genesis. None of those keys was ever applied - the path
+  stores the cloned `Localnet` template schedule, and the old `GenesisInput.Epoch`
+  field was not read by anything - so a file carrying them used to be accepted
+  with the schedule silently ignored. Remove the keys from the file, or use the
+  interactive wizard to choose a schedule. The refusal names the canonical key
+  names, so a file spelling `switchblock` or `switch_block` is recognised too.
 
 ## Startup API Semantics
 
@@ -283,12 +524,18 @@ The startup helpers now have distinct writable vs. readonly roles:
 | `SetupGenesisBlock`         | Writable startup and repair                                | May write the resolved `ChainConfig` and may persist the same-hash custom override marker | `(*params.ChainConfig, common.Hash, *params.ConfigCompatError, error)` | `compatErr` means the caller must decide whether to rewind/repair before continuing. The helper does not perform the rewind itself.                                |
 | `LoadChainConfigWithCompat` | Readonly startup checks                                    | No database writes                                                                        | `(*params.ChainConfig, common.Hash, *params.ConfigCompatError, error)` | Mirrors writable normalization rules, but only reports what writable startup would need to repair or rewind.                                                       |
 | `LoadChainConfig`           | Legacy readonly callers that only need the resolved config | No database writes                                                                        | `(*params.ChainConfig, common.Hash, error)`                            | Compatibility rewind metadata is intentionally discarded. Callers that need to distinguish hard failure from required repair must use `LoadChainConfigWithCompat`. |
+| `NewBlockChain` / `NewBlockChainReadOnly` | Library callers opening a chain outside the node startup path | None beyond resolution                                    | `(*core.BlockChain, error)`                                            | Resolves the config from the database or the supplied genesis, so it does **not** see an `XDPoS.Epoch` the engine resolved. A stored config that omits the epoch - a state the stored form keeps as written - is refused with `XDPoS.Epoch is unset`; a caller that owns the engine has to open through `NewBlockChainResolved` / `NewBlockChainReadOnlyResolved` with the config their engine resolved (`XDPoS.ChainConfig()`). |
+| `NewBlockChainResolved` / `NewBlockChainReadOnlyResolved` | Library callers whose engine already resolved `XDPoS.Epoch` | None beyond resolution                     | `(*core.BlockChain, error)`                                            | Judge the caller's config as given, so an unset `XDPoS.Epoch` is refused here too rather than replaced by the default, and so is a schedule that designates no gap block - the config is judged with the same `params.XDPoSConfig.CheckGapSchedule` the config validation uses. Pass the config the engine resolved (`XDPoS.ChainConfig()`); `XDPoS.New` / `NewFaker` never write into the config they are given. |
 
 Important behavior changes relative to older startup logic:
 
 - `SetupGenesisBlock` no longer relies on a broad `params.AllEthashProtocolChanges` fallback for ambiguous stored metadata. Classification now follows the network classes and same-hash override rules described in this document.
 - `SetupGenesisBlock` and `LoadChainConfigWithCompat` preserve `ConfigCompatError` values even when `compatErr.RewindTo == 0`. A rewind-to-zero compatibility error still means the stored chain metadata and the requested config disagree in a way the caller must handle explicitly.
 - Because both helpers now return `compatErr` separately from `error`, callers should treat `compatErr != nil` as a required operator decision, not as a successful startup.
+- `NewBlockChain` and `NewBlockChainReadOnly` now refuse a config whose `XDPoS.Epoch` is still unset, instead of opening a chain whose v2 gap trigger divides by it on the first canonical block, and refuse a schedule that designates no gap block with `params.XDPoSConfig.CheckGapSchedule` - the same judgement the config validation applies. A stored config that omits the epoch keeps that state on disk, so the refusal is reachable from these two constructors even when the caller's engine has already resolved the default. The node startup path is unaffected: `eth.New` builds the XDPoS engine through `CreateConsensusEngine` and `utils.MakeChain` builds it itself, and both open the chain with the config their engine resolved (`XDPoS.ChainConfig()`), so the config the caller holds is never rewritten.
+- The engine's gap paths report their defects through distinct sentinels: `params.ErrUnusableGapSchedule` for a height that resolves to no gap block, `params.ErrUnsetXDPoSEpoch` for an epoch the engine was never given, and `params.ErrMissingXDPoSConfig` for a lookup reached with no config at all, including `XDPoS.New` called with a config that has no `XDPoS` section. Error formatting picks its recovery hint by that sentinel, so a missing config is no longer reported as a schedule defect an operator could repair.
+- `consensus/XDPoS/utils.EpochLength` has been removed. `params.DefaultXDPoSEpoch` (`900`) is now the single definition of the engine's default epoch: chain config validation, the genesis load and setup paths, and the XDPoS engine all read it, and `XDPoS.New` / `NewFaker` resolve it onto the config the engine runs with when the source omits `epoch`, exposed as `XDPoS.ChainConfig()`. Code that imported `utils.EpochLength` has to use `params.DefaultXDPoSEpoch` instead.
+- `XDPoS.New` and `NewFaker` no longer write the resolved epoch back into the caller's config. The engine resolves the schedule onto its own copy (`params.ChainConfig.ResolveXDPoSEpoch`) and exposes it as `XDPoS.ChainConfig()`; the node startup path (`eth.New`, `utils.MakeChain`, `ethclient/simulated`) opens the chain with that object. Library callers that relied on the write-back have to read `ChainConfig()` after the engine exists instead of their own config, and `engine_v2` holds a copy of the consensus parameters the same way `engine_v1` does.
 
 ## Schema Change: `chainConfigOverride`
 
@@ -464,9 +711,21 @@ XDPoS root fields:
 XDPoS v2 fields:
 
 - [ ] `XDPoS.V2.SwitchBlock`
+- [ ] `XDPoS.V2.SwitchEpoch`
 - [ ] `XDPoS.V2.CurrentConfig`
 - [ ] `XDPoS.V2.AllConfigs`
 - [ ] `XDPoS.V2.AllConfigs[0]`
+
+`XDPoS.V2.SwitchEpoch` has to name the epoch its switch block falls on, i.e.
+`SwitchEpoch == SwitchBlock / Epoch` - see
+[`XDPoS.V2.SwitchEpoch` Must Name the Epoch of Its Switch Block](#xdposv2switchepoch-must-name-the-epoch-of-its-switch-block).
+A genesis generated by a `puppeth` build that predates that pairing rule can carry
+the template's `switchEpoch: 0` next to a switch block the operator moved onto a
+later boundary, so a custom network started today can be refused on the first
+restart with the upgraded binary. Check the authoritative `genesis.json` before the
+restart; a data directory that already stored the mismatched pair is corrected by
+re-running init on it with the fixed genesis while it has produced no blocks, and
+otherwise has to be resynchronised from the fixed genesis.
 
 Recommended operator check while filling the list:
 
@@ -694,8 +953,12 @@ f. Verify that the node is now using the expected updated chain config.
  different chain and use a fresh data directory instead of trying to mutate
  the existing one in place.
 - If a new fork point is no longer entirely in the future, compatibility checks
- may return a `ConfigCompatError` and require a rewind or another migration
- workflow instead of an in-place update.
+  may return a `ConfigCompatError` and require a rewind or another migration
+  workflow instead of an in-place update.
+- Correcting an `XDPoS` schedule (`Epoch`/`Gap`/switch pair) on a directory that has
+  already imported blocks is one of those historical changes: `XDC init` aborts with
+  a `ConfigCompatError` and writes nothing, so that directory has to be
+  resynchronised from the corrected genesis rather than repaired in place.
 
 ## Prague / EIP-2935
 

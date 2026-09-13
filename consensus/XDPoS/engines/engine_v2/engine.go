@@ -33,8 +33,6 @@ import (
 )
 
 type XDPoS_v2 struct {
-	chainConfig *params.ChainConfig // Chain & network configuration
-
 	config       *params.XDPoSConfig // Consensus engine configuration parameters
 	db           ethdb.Database      // Database to store and retrieve snapshot checkpoints
 	isInitilised bool                // status of v2 variables
@@ -99,6 +97,62 @@ func New(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh chan i
 	if config == nil || config.V2 == nil || config.V2.SwitchBlock == nil || config.V2.CurrentConfig == nil || len(config.V2.AllConfigs) == 0 {
 		return nil, errors.New("engine_v2.New requires startup-validated XDPoS V2 config")
 	}
+	// An unset epoch is a zero divisor for every round/epoch conversion in this
+	// package, and it is exactly the state config validation leaves for the
+	// engine to fill. XDPoS.New fills params.DefaultXDPoSEpoch before it gets
+	// here, so refusing it once, at the only constructor that can reach those
+	// conversions, closes the whole family - including the sites the gap-schedule
+	// guards do not cover - rather than guarding each conversion on its own. The
+	// schedule itself may well be usable, so the refusal carries the unset-epoch
+	// sentinel rather than the gap-schedule one.
+	if config.Epoch == 0 {
+		return nil, fmt.Errorf("engine_v2.New requires a resolved XDPoS.Epoch: %w", params.ErrUnsetXDPoSEpoch)
+	}
+	// initial's first-epoch gap step steps back from the switch block by Gap and
+	// only agrees with params.XDPoSConfig.GapBlockNumber while the switch block sits
+	// on an epoch boundary. CheckConfigForkOrder judges that rule for every resolved
+	// config, but a directly constructed engine never goes through it - and the two
+	// definitions disagreeing there would be read by block production and by block
+	// import as different gap blocks, so judge the rule the constructor relies on
+	// rather than the caller's diligence. CheckSwitchBlockAlignment also refuses a
+	// negative switch block, so this constructor inherits that judgement too. Judged
+	// after the epoch guard above, since the rule skips an unset epoch by design.
+	if err := chainConfig.CheckSwitchBlockAlignment(); err != nil {
+		return nil, fmt.Errorf("engine_v2.New requires a switch block on an epoch boundary: %w", err)
+	}
+	// SwitchEpoch is the other half of the same switch schedule: the v2 round
+	// arithmetic reads SwitchEpoch + round/Epoch, so a pairing that does not name
+	// the epoch its switch block falls on renumbers every epoch the engine reports
+	// while the rest of the schedule still looks self-consistent. CheckConfigForkOrder
+	// judges the rule for every resolved config, but a directly constructed engine
+	// never goes through it, which is why the rule is exported and judged here too.
+	// Judged after the alignment rule, so an unaligned switch block is still
+	// reported as unaligned instead of as a pairing a division it never satisfies
+	// would explain.
+	if err := chainConfig.CheckV2SwitchEpochAlignment(); err != nil {
+		return nil, fmt.Errorf("engine_v2.New requires a switch epoch that names the epoch its switch block falls on: %w", err)
+	}
+	// The gap schedule is the third rule the engine's own paths are built on: the
+	// v2 trigger n%Epoch == Epoch-Gap is what UpdateMasternodes, getSnapshot,
+	// verifyQC, sendVote and sendTimeout resolve their height through. The config
+	// validation and the chain open path both judge it, but a directly constructed
+	// engine goes through neither - the same asymmetry the two switch rules above
+	// are judged for - and a schedule no height satisfies would only surface later
+	// as a gap lookup error on a chain that already opened. Judged last, so a
+	// config that fails one of the switch rules keeps being reported as that
+	// defect rather than as a gap one.
+	if err := config.CheckGapSchedule(); err != nil {
+		return nil, fmt.Errorf("engine_v2.New requires a usable XDPoS gap schedule: %w", err)
+	}
+	// Hold a copy of the consensus parameters, the way engine_v1 does, so the engine
+	// never writes a scalar back through the caller's XDPoSConfig pointer. The copy is
+	// deliberately shallow: V2 stays shared with the caller's config because it carries
+	// the live state - BuildConfigIndex below fills configIndex and UpdateParams
+	// repoints CurrentConfig - and callers read that state back through
+	// blockchain.Config().XDPoS.V2, so cloning it would leave the index and the current
+	// config on a private copy.
+	conf := *config
+	config = &conf
 	// Setup timeoutTimer
 	duration := time.Duration(config.V2.CurrentConfig.TimeoutPeriod) * time.Second
 	timeoutTimer, err := countdown.NewExpCountDown(duration, config.V2.CurrentConfig.ExpTimeoutConfig.Base, config.V2.CurrentConfig.ExpTimeoutConfig.MaxExponent)
@@ -109,8 +163,6 @@ func New(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh chan i
 	timeoutPool := utils.NewPool()
 	votePool := utils.NewPool()
 	engine := &XDPoS_v2{
-		chainConfig: chainConfig,
-
 		config:       config,
 		db:           db,
 		isInitilised: false,
@@ -233,6 +285,14 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 			Round:  types.Round(0),
 			Number: header.Number,
 		}
+		// This is the first v2 epoch, and SwitchBlock is validated to be a multiple
+		// of Epoch (params.CheckSwitchBlockAlignment, which this constructor judges
+		// as well), so stepping back by Gap resolves to the same gap block
+		// GapBlockNumber reports for this height, chain-start fallback included.
+		// params pins that equivalence in
+		// TestGapBlockNumberMatchesOpenCodedSwitchBlockStep. Kept open-coded
+		// deliberately: this is the switch block the caller already holds, before a
+		// v2 epoch exists, and not a second definition of the gap trigger.
 		quorumCert = &types.QuorumCert{
 			ProposedBlockInfo: blockInfo,
 			Signatures:        nil,
@@ -257,7 +317,11 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 		}
 	}
 
-	// Initial first v2 snapshot
+	// Initial first v2 snapshot. Same first-epoch special case as the certificate
+	// above: the gap block that precedes the switch block follows from the switch
+	// block itself, and the two lines that keep the subtraction from underflowing
+	// spell out GapBlockNumber's chain-start rule. The same pinned equivalence as
+	// above applies, because this step runs on the switch block as well.
 	lastGapNum := uint64(0)
 	if x.config.V2.SwitchBlock.Uint64() > x.config.Gap {
 		lastGapNum = x.config.V2.SwitchBlock.Uint64() - x.config.Gap
@@ -608,11 +672,60 @@ func (x *XDPoS_v2) GetSnapshot(chain consensus.ChainReader, header *types.Header
 	return snap, nil
 }
 
+// gapPathError reports the defect a gap path hit while resolving a height to its
+// gap block, so those paths name the same defect UpdateMasternodes reports instead
+// of dividing by an unset Epoch. Every shape wraps a params sentinel, so a caller
+// can identify the defect with errors.Is, and the message names the height the
+// lookup was for.
+//
+// The schedule judgement and its wording belong to params.XDPoSConfig.CheckGapSchedule.
+// Both layers ask the same question, and keeping one copy of the rule is what stops
+// one config from getting two explanations depending on which layer reports it:
+// CheckGapSchedule already separates the shapes that match no height from Gap == Epoch,
+// which puts the trigger on the epoch switch block, and it also names an Epoch below 2
+// as the epoch being too short rather than as an out-of-range gap.
+//
+// That helper deliberately answers nil for the two shapes it defers - a missing
+// section and an unset epoch - and those are exactly the two this function has to
+// name itself, so they are judged first, under their own sentinels. A missing config
+// is not a schedule defect but a caller programming error with no schedule to repair;
+// engine_v2.New refuses a nil config before an engine can be built, so only a directly
+// constructed engine produces this shape. An unset epoch is the state config validation
+// deliberately leaves for the engine to fill rather than a schedule defect:
+// engine_v2.New refuses it with params.ErrUnsetXDPoSEpoch and FormatChainConfigError
+// turns that sentinel into the hint that fits it, so wrapping the schedule sentinel
+// here would send an operator to fix a gap schedule that is not broken.
+func gapPathError(where string, number uint64, config *params.XDPoSConfig) error {
+	if config == nil {
+		return fmt.Errorf("%s gap lookup was called with a nil config, number: %d: %w", where, number, params.ErrMissingXDPoSConfig)
+	}
+	if config.Epoch == 0 {
+		return fmt.Errorf("%s XDPoS.Epoch is unset, number: %d, gap: %d: %w", where, number, config.Gap, params.ErrUnsetXDPoSEpoch)
+	}
+	if err := config.CheckGapSchedule(); err != nil {
+		return fmt.Errorf("%s number: %d: %w", where, number, err)
+	}
+	// Every caller reaches this function only after the schedule has been refused, so
+	// CheckGapSchedule agreeing with them is a contradiction. Report it under the
+	// schedule sentinel rather than returning nil, which would let the caller carry on
+	// with a schedule it had just rejected.
+	return fmt.Errorf("%s number: %d: %w", where, number, params.ErrUnusableGapSchedule)
+}
+
 func (x *XDPoS_v2) UpdateMasternodes(chain consensus.ChainReader, header *types.Header, ms []utils.Masternode) error {
 	number := header.Number.Uint64()
 	log.Trace("[UpdateMasternodes]", "number", number, "hash", header.Hash())
-	if number%x.config.Epoch != x.config.Epoch-x.config.Gap {
-		return fmt.Errorf("[UpdateMasternodes] not gap block, number: %d, epoch: %d,gap: %d", number, x.config.Epoch, x.config.Gap)
+	// An unusable schedule designates no gap block of its own, which is a different
+	// condition from this height not being the gap block. Validation refuses
+	// such a chain earlier, but the engine can still be built directly, e.g. in
+	// tests. GapOffset is nil-receiver safe and gapPathError names both a missing
+	// config and an unset epoch under their own sentinels, so neither needs a
+	// branch of its own here.
+	if _, ok := x.config.GapOffset(); !ok {
+		return gapPathError("[UpdateMasternodes]", number, x.config)
+	}
+	if !x.config.IsGapBlock(number) {
+		return fmt.Errorf("[UpdateMasternodes] not gap block, number: %d, epoch: %d, gap: %d", number, x.config.Epoch, x.config.Gap)
 	}
 
 	masterNodes := []common.Address{}
@@ -989,11 +1102,9 @@ func (x *XDPoS_v2) verifyQC(blockChainReader consensus.ChainReader, quorumCert *
 		return err
 	}
 	epochSwitchNumber := epochInfo.EpochSwitchBlockInfo.Number.Uint64()
-	gapNumber := epochSwitchNumber - epochSwitchNumber%x.config.Epoch
-	if gapNumber > x.config.Gap {
-		gapNumber -= x.config.Gap
-	} else {
-		gapNumber = 0
+	gapNumber, ok := x.config.GapBlockNumber(epochSwitchNumber)
+	if !ok {
+		return gapPathError("[verifyQC]", epochSwitchNumber, x.config)
 	}
 	if gapNumber != quorumCert.GapNumber {
 		log.Error("[verifyQC] QC gap number mismatch", "epochSwitchNumber", epochSwitchNumber, "BlockNum", quorumCert.ProposedBlockInfo.Number, "BlockInfoHash", quorumCert.ProposedBlockInfo.Hash, "Gap", quorumCert.GapNumber, "GapShouldBe", gapNumber)

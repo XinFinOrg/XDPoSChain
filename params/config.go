@@ -18,6 +18,7 @@ package params
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"slices"
@@ -504,9 +505,299 @@ func (c *ChainConfig) requiresXDCForkConfig() bool {
 	return c.XDPoS != nil
 }
 
+// taggedConfigError reports an error a config rule produced, under one or more extra
+// sentinels. errors.Is sees every tag as well as the wrapped error, so the sentinel of
+// the rule that was broken keeps matching while error formatting can select a more
+// specific recovery path. It is what lets the *DefaultEpoch variants say that the epoch
+// quoted in the message is the default the validator filled in rather than a value the
+// config wrote, and what lets the alignment rejection report its own sentinel next to
+// ErrWrongForkSwitchOrder without hiding it. The message stays the wrapped error's, so
+// callers and tests that quote the original text are unaffected.
+type taggedConfigError struct {
+	err  error
+	tags []error
+}
+
+func (e taggedConfigError) Error() string { return e.err.Error() }
+
+func (e taggedConfigError) Unwrap() []error {
+	return append([]error{e.err}, e.tags...)
+}
+
+// CheckConfigForkOrderWithEpochDefault validates the config as if an unset
+// XDPoS.Epoch carried DefaultXDPoSEpoch, without mutating the receiver.
+//
+// An unset epoch means "not filled in yet": the effective epoch only exists once
+// the XDPoS engine is built, so the gap schedule cannot be judged before that and
+// CheckConfigForkOrder skips it. Callers that have to reach the same verdict as
+// the engine use this instead. DefaultXDPoSEpoch lives here in params, next to the
+// validation it feeds, so the engine, the genesis commit and the stored-config
+// load and setup paths judge an omitted epoch against one definition instead of
+// each passing its own default in.
+//
+// Filling the epoch in also subjects the schedule to the rules that skip an unset
+// epoch: the XDPoS.V2.SwitchBlock alignment, the XDPoS.V2.SwitchEpoch that has to
+// name the epoch that block falls on, and the gap schedule. A config that omits
+// the epoch and whose switch block is not a multiple of DefaultXDPoSEpoch is
+// refused with ErrWrongForkSwitchOrder, naming a default epoch the config never
+// wrote. XDPoS.New already filled the same default before it validated, so this
+// moves those refusals earlier rather than introducing them.
+//
+// Each of the three rejections carries a sentinel of its own -
+// ErrSwitchBlockUnalignedToDefaultEpoch, ErrSwitchEpochMismatchAgainstDefaultEpoch
+// and ErrUnusableGapScheduleDefaultEpoch - because each quotes DefaultXDPoSEpoch,
+// a number the genesis may never have written. Error formatting uses them to say
+// where that number came from, and each is reported next to the sentinel of the
+// rule it refines so callers that only know the rule keep matching.
+//
+// The config's own defects are reported before that rejection. An unset epoch
+// defers only the rules the effective value governs, so the bare check reports
+// exactly the defects the config carries on its own - a missing required field or
+// a fork order that does not depend on the epoch - and those must not be masked
+// by a rejection quoting a default the genesis never wrote: an operator whose
+// config is missing TRC21IssuerSMC has to keep seeing ErrMissingForkSwitch and
+// its migration hint, not an alignment message about a 900 that is nowhere in the
+// file.
+//
+// A nil config has no schedule to judge and no rule that could pass, so it is
+// reported as the missing XDPoS section rather than dereferenced - the answer
+// ResolveXDPoSEpoch gives for the same shape, and the one the XDPoS constructors
+// already produce. CheckConfigForkOrder keeps its own precondition instead: it is
+// the pre-existing entry point and its callers all hold a config.
+func (c *ChainConfig) CheckConfigForkOrderWithEpochDefault() error {
+	if c == nil {
+		return fmt.Errorf("invalid chain config: %w", ErrMissingXDPoSConfig)
+	}
+	if c.XDPoS == nil || c.XDPoS.Epoch != 0 {
+		return c.CheckConfigForkOrder()
+	}
+	if err := c.checkNonEpochDependentRules(); err != nil {
+		return err
+	}
+	effective := c.Clone()
+	effective.XDPoS.Epoch = DefaultXDPoSEpoch
+	err := effective.checkEpochDependentRules()
+	if err == nil {
+		return nil
+	}
+	// The bare half returned above, so this error can only come from the three rules
+	// the filled-in epoch governs, and each carries a sentinel of its own: tag the
+	// rejection with the variant that says it was judged against a number the config
+	// never wrote. Any other defect - the sign, which the bare half already reports -
+	// is returned untagged rather than dressed up as an artifact of the default epoch.
+	switch {
+	case errors.Is(err, ErrSwitchEpochMismatch):
+		return taggedConfigError{err: err, tags: []error{ErrSwitchEpochMismatchAgainstDefaultEpoch}}
+	case errors.Is(err, ErrUnusableGapSchedule):
+		return taggedConfigError{err: err, tags: []error{ErrUnusableGapScheduleDefaultEpoch}}
+	case errors.Is(err, ErrSwitchBlockUnalignedToEpoch):
+		return taggedConfigError{err: err, tags: []error{ErrSwitchBlockUnalignedToDefaultEpoch}}
+	default:
+		return err
+	}
+}
+
+// ResolveXDPoSEpoch returns the form of this config the XDPoS engine runs with: a
+// copy whose unset XDPoS.Epoch is filled with DefaultXDPoSEpoch once the schedule
+// has been judged against that value. The config itself is returned when it writes
+// the epoch out already, and a config with no XDPoS section has nothing to resolve,
+// so it is judged and returned too. The receiver is never mutated, so a caller that
+// has to keep the config its source wrote can hand the result to the engine and to
+// the resolved blockchain constructors while keeping the original.
+//
+// The filled copy records the fill through XDPoSConfig.EpochFilledByEngine, which is
+// what lets the mismatch policies persist the state the source wrote instead of a
+// number no file contains. That record is process-local and does not survive
+// storage, so a config read back from the database answers false and is persisted as
+// it is.
+//
+// A schedule the filled-in epoch cannot make usable is refused here, before any
+// engine exists, so a caller cannot obtain a resolved config the engine would
+// reject; a refusal leaves the receiver untouched.
+func (c *ChainConfig) ResolveXDPoSEpoch() (*ChainConfig, error) {
+	if c == nil {
+		return nil, fmt.Errorf("invalid chain config: %w", ErrMissingXDPoSConfig)
+	}
+	if c.XDPoS == nil || c.XDPoS.Epoch != 0 {
+		if err := c.CheckConfigForkOrder(); err != nil {
+			return nil, err
+		}
+		return c, nil
+	}
+	if err := c.CheckConfigForkOrderWithEpochDefault(); err != nil {
+		return nil, err
+	}
+	resolved := c.Clone()
+	resolved.XDPoS.Epoch = DefaultXDPoSEpoch
+	resolved.XDPoS.epochFilledByEngine = true
+	return resolved, nil
+}
+
+// CheckSwitchBlockAlignment rejects a switch block that is negative or not a
+// multiple of the configured epoch. An unset epoch is skipped: the effective value
+// only exists once the engine fills it in, and CheckConfigForkOrderWithEpochDefault
+// is where that state is judged.
+//
+// The sign is judged here as well as in CheckConfigForkOrder because this helper is
+// the only judgement engine_v2.New makes on a config it is handed directly: such an
+// engine never goes through the full validation, and SwitchBlock.Uint64() folds a
+// negative height to its absolute value, so -900 would otherwise look aligned while
+// every comparison against the field keeps treating it as a height that can never
+// match. CheckConfigForkOrder keeps its own earlier sign judgement so that a
+// negative value stays reported as a defect of the config rather than as one the
+// filled-in default epoch caused - that placement is what keeps the default-epoch
+// tagging honest.
+//
+// XDPoS.V2 is mandatory for every XDPoS chain and CheckConfigForkOrder already
+// refused a nil one by the time it calls this, so the guard here is for a direct
+// caller rather than a shape the validation sequence can reach.
+//
+// The judgement is SwitchBlockAligned, the one definition of the rule, so a caller
+// that judges a candidate switch block before it builds a config - the puppeth
+// wizard does - reaches the same verdict this check does.
+//
+// It is exported because the rule is not only a config-validation one: the v2
+// engine's first-epoch gap step steps back from the switch block by Gap, and that
+// only resolves to GapBlockNumber's answer while the switch block sits on an epoch
+// boundary. engine_v2.New judges it on the config it is handed, because a directly
+// constructed engine never goes through CheckConfigForkOrder.
+//
+// The rejection is reported as a taggedConfigError, so errors.Is identifies
+// both ErrSwitchBlockUnalignedToEpoch - the rule's own sentinel, which is what
+// selects the alignment recovery hint - and ErrWrongForkSwitchOrder, the ordering
+// sentinel callers already match. CheckConfigForkOrderWithEpochDefault re-tags that
+// error with ErrSwitchBlockUnalignedToDefaultEpoch when the epoch it judged was the
+// default it filled in.
+func (c *ChainConfig) CheckSwitchBlockAlignment() error {
+	if err := c.checkV2SwitchBlockSign(); err != nil {
+		return err
+	}
+	if c.XDPoS == nil || c.XDPoS.V2 == nil || c.XDPoS.V2.SwitchBlock == nil || c.XDPoS.Epoch == 0 {
+		return nil
+	}
+	if !SwitchBlockAligned(c.XDPoS.V2.SwitchBlock, c.XDPoS.Epoch) {
+		return taggedConfigError{
+			err:  fmt.Errorf("invalid chain config: %w: XDPoS.V2.SwitchBlock %v not aligned to XDPoS.Epoch %d", ErrWrongForkSwitchOrder, c.XDPoS.V2.SwitchBlock, c.XDPoS.Epoch),
+			tags: []error{ErrSwitchBlockUnalignedToEpoch},
+		}
+	}
+	return nil
+}
+
+// checkV2SwitchBlockSign rejects a negative XDPoS.V2.SwitchBlock. A block height
+// has no negative meaning on the chain, and the field's two readers disagree about
+// it: SwitchBlock.Uint64() folds -900 to 900, so the value passes the epoch
+// alignment rule, while the comparisons against it (XDPoSConfig.BlockConsensusVersion,
+// isEpochSwitchAtRound) keep treating it as a height that can never match. Judging
+// the sign separately is what keeps the field to a single meaning.
+//
+// An unset XDPoS section or a missing switch block has nothing to judge, so the
+// guard stays total for a direct caller.
+func (c *ChainConfig) checkV2SwitchBlockSign() error {
+	if c.XDPoS == nil || c.XDPoS.V2 == nil || c.XDPoS.V2.SwitchBlock == nil {
+		return nil
+	}
+	if c.XDPoS.V2.SwitchBlock.Sign() < 0 {
+		return fmt.Errorf("invalid chain config: %w: XDPoS.V2.SwitchBlock %v must be non-negative", ErrNegativeSwitchBlock, c.XDPoS.V2.SwitchBlock)
+	}
+	return nil
+}
+
+// CheckV2SwitchEpochAlignment rejects a switch epoch that does not name the epoch
+// the switch block falls on, i.e. SwitchEpoch != SwitchBlock / Epoch. The v2 round
+// arithmetic derives its epoch number as SwitchEpoch + round/Epoch, so a config
+// that keeps the two fields apart renumbers every epoch the engine reports while
+// the schedule itself still looks self-consistent. Every built-in network
+// satisfies the equality.
+//
+// It is judged after CheckSwitchBlockAlignment, so an unaligned switch block is
+// reported as such instead of as a mismatch against a division it never
+// satisfies. The mismatch itself is a defect of the schedule the engine will run
+// whether or not the config omitted the epoch: SwitchEpoch is a number the config
+// wrote, and the engine fills DefaultXDPoSEpoch in when the file leaves the epoch
+// out. The epoch the message divides by may still be a number no file contains,
+// which is why CheckConfigForkOrderWithEpochDefault tags this rejection with
+// ErrSwitchEpochMismatchAgainstDefaultEpoch when the config omitted the epoch.
+//
+// An unset epoch is skipped for the same reason CheckSwitchBlockAlignment skips
+// it: the effective value only exists once the engine fills it in, and
+// CheckConfigForkOrderWithEpochDefault judges that state against
+// DefaultXDPoSEpoch.
+//
+// The want it compares against comes from SwitchEpochFor, the one definition of the
+// pairing arithmetic, so a caller that derives a switch epoch before it builds a
+// config - the puppeth wizard does - writes the value this check re-derives. The
+// derivation runs on the big.Int, so want is the epoch the switch block really falls
+// on rather than the one its low 64 bits name. A want that no uint64 can hold names
+// an epoch SwitchEpoch can never equal, which is reported as the mismatch it is.
+//
+// It is exported for the same reason CheckSwitchBlockAlignment is: the rule is not
+// only a config-validation one. The v2 round arithmetic reads
+// SwitchEpoch + round/Epoch, so a pairing that does not name the epoch its switch
+// block falls on renumbers every epoch the engine reports, and engine_v2.New judges
+// the rule on the config it is handed because a directly constructed engine never
+// goes through CheckConfigForkOrder.
+func (c *ChainConfig) CheckV2SwitchEpochAlignment() error {
+	if c.XDPoS == nil || c.XDPoS.V2 == nil || c.XDPoS.V2.SwitchBlock == nil || c.XDPoS.Epoch == 0 {
+		return nil
+	}
+	want, fits := SwitchEpochFor(c.XDPoS.V2.SwitchBlock, c.XDPoS.Epoch)
+	if fits && c.XDPoS.V2.SwitchEpoch == want.Uint64() {
+		return nil
+	}
+	return fmt.Errorf("invalid chain config: %w: XDPoS.V2.SwitchEpoch %d does not name the epoch XDPoS.V2.SwitchBlock %v falls on (want %s = XDPoS.V2.SwitchBlock / XDPoS.Epoch %d)", ErrSwitchEpochMismatch, c.XDPoS.V2.SwitchEpoch, c.XDPoS.V2.SwitchBlock, want, c.XDPoS.Epoch)
+}
+
+// CheckGapSchedule rejects an XDPoS schedule that designates no gap block of its
+// own, i.e. one that cannot derive the next-epoch masternode set through the v2
+// gap trigger. It is the single definition of that rule: CheckConfigForkOrder
+// judges it for the config validation, and the chain open path judges it again on
+// the resolved config it is handed, where a caller can still supply a schedule that
+// no engine constructor validated.
+//
+// An unset epoch means "not filled in yet", not "invalid": the effective value only
+// exists once the engine fills it in, so the judgement is skipped here and
+// CheckConfigForkOrderWithEpochDefault reaches it on the copy that carries
+// DefaultXDPoSEpoch. A missing section has no schedule to refuse either, so the
+// predicate stays total for a direct caller.
+func (c *XDPoSConfig) CheckGapSchedule() error {
+	if c == nil || c.Epoch == 0 {
+		return nil
+	}
+	if _, ok := c.GapOffset(); ok {
+		return nil
+	}
+	// The guard above leaves Epoch == 1 as the only value below 2.
+	if c.Epoch == 1 {
+		return fmt.Errorf("invalid chain config: %w: XDPoS.Epoch %d designates no gap block (want Epoch >= 2 so that 1 <= Gap < Epoch is satisfiable)", ErrUnusableGapSchedule, c.Epoch)
+	}
+	// Gap == Epoch is the one refused shape whose trigger does match a height:
+	// Epoch-Gap is 0, so n%Epoch == 0 selects the epoch switch block itself. Say so
+	// instead of folding it into the message the two shapes that match no height at
+	// all share - the block that samples the next-epoch candidate set would be the
+	// block that consumes it.
+	if c.Gap == c.Epoch {
+		return fmt.Errorf("invalid chain config: %w: XDPoS.Gap %d designates no gap block of its own inside XDPoS.Epoch %d - it puts the gap trigger on the epoch switch block, which would have to consume the candidate set it samples (want 1 <= Gap < Epoch)", ErrUnusableGapSchedule, c.Gap, c.Epoch)
+	}
+	return fmt.Errorf("invalid chain config: %w: XDPoS.Gap %d designates no gap block inside XDPoS.Epoch %d (want 1 <= Gap < Epoch)", ErrUnusableGapSchedule, c.Gap, c.Epoch)
+}
+
 // CheckConfigForkOrder validates that configured forks, required addresses, and
 // XDPoS settings are internally consistent and activate in a supported order.
 func (c *ChainConfig) CheckConfigForkOrder() error {
+	if err := c.checkNonEpochDependentRules(); err != nil {
+		return err
+	}
+	return c.checkEpochDependentRules()
+}
+
+// checkNonEpochDependentRules judges every rule whose verdict does not depend on
+// XDPoS.Epoch: the required fields and addresses, the fork order, and every XDPoS.V2
+// field the epoch-dependent rules later read. CheckConfigForkOrder runs it before
+// its epoch-dependent half, and CheckConfigForkOrderWithEpochDefault runs it alone
+// on a config whose epoch is unset, so the defects the config carries on its own are
+// reported before any rejection that quotes the default epoch.
+func (c *ChainConfig) checkNonEpochDependentRules() error {
 	type fork struct {
 		name     string
 		block    *big.Int
@@ -587,6 +878,9 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		if c.XDPoS.MaxMasternodesV2 == 0 {
 			return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "XDPoS.MaxMasternodesV2")
 		}
+		// XDPoS.V2 is mandatory, not optional: the v2 engine is the only engine an
+		// XDPoS chain opens with, and every rule below reads its fields. The nil
+		// branch reports the missing section rather than dereferencing it.
 		if c.XDPoS.V2 == nil {
 			return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "XDPoS.V2")
 		}
@@ -626,11 +920,44 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		if !sameV2RuntimeConfig(currentCfg, c.XDPoS.V2.CurrentConfig) {
 			return fmt.Errorf("invalid chain config: %w: %s", ErrWrongForkSwitchOrder, "XDPoS.V2.CurrentConfig")
 		}
-		if c.XDPoS.Epoch != 0 && c.XDPoS.V2.SwitchBlock.Uint64()%c.XDPoS.Epoch != 0 {
-			return fmt.Errorf("invalid chain config: %w: XDPoS.V2.SwitchBlock %v not aligned to XDPoS.Epoch %d", ErrWrongForkSwitchOrder, c.XDPoS.V2.SwitchBlock, c.XDPoS.Epoch)
+		// The sign is judged before the alignment, and here as well as inside
+		// CheckSwitchBlockAlignment: that helper's rejection is what
+		// CheckConfigForkOrderWithEpochDefault tags as an unaligned-to-the-default
+		// epoch error, and a negative switch block is a defect of the config
+		// itself, not an artifact of the default epoch. Judging it in this function
+		// keeps it reported as such on every entry point, an unset epoch included,
+		// while the helper re-checks it for the callers that never get here.
+		if err := c.checkV2SwitchBlockSign(); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// checkEpochDependentRules judges the rules the effective XDPoS.Epoch governs: the
+// switch block the alignment rule measures against the epoch, the switch epoch that
+// has to name the epoch that block falls on, and the gap schedule. Each rule keeps
+// its own "not filled in yet" skip, so the half is total for an unset epoch;
+// CheckConfigForkOrderWithEpochDefault is where that state is judged, on the copy
+// that carries DefaultXDPoSEpoch.
+func (c *ChainConfig) checkEpochDependentRules() error {
+	if c.XDPoS == nil {
+		return nil
+	}
+	// The alignment rule stays first so an unaligned switch block is reported as
+	// such instead of as a switch epoch mismatch against a division it never
+	// satisfies.
+	if err := c.CheckSwitchBlockAlignment(); err != nil {
+		return err
+	}
+	if err := c.CheckV2SwitchEpochAlignment(); err != nil {
+		return err
+	}
+	// A schedule that designates no gap block of its own can never derive the
+	// next-epoch masternode set through the v2 gap trigger, so reject it and make
+	// geth init fail instead of only failing once a node starts. CheckGapSchedule is
+	// where that judgement lives, shared with the chain open path.
+	return c.XDPoS.CheckGapSchedule()
 }
 
 // String implements the fmt.Stringer interface, returning a string representation

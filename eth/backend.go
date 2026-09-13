@@ -149,6 +149,17 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	if err != nil {
 		return nil, err
 	}
+	// The engine resolves an omitted XDPoS.Epoch onto its own copy, and the resolved
+	// constructors below judge the config as given, so the chain opens with the
+	// engine's config rather than with the object SetupGenesisBlock returned.
+	if xdpos, ok := engine.(*XDPoS.XDPoS); ok {
+		// A nil answer is the engine's zero value rather than a config it resolved, so
+		// the object SetupGenesisBlock returned is kept: replacing it with nil would
+		// turn the refusal newBlockChain already reports into a nil dereference.
+		if resolved := xdpos.ChainConfig(); resolved != nil {
+			chainConfig = resolved
+		}
+	}
 	logXDPoSConfig(chainConfig, compatErr)
 
 	// Assemble the Ethereum object.

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"runtime"
+	"slices"
 	"sync/atomic"
 	"testing"
 
@@ -32,6 +34,12 @@ func TestGetMasterNodes(t *testing.T) {
 }
 
 func TestStoreLoadSnapshot(t *testing.T) {
+	// leveldb holds its log file open for the lifetime of the database, which
+	// keeps t.TempDir's cleanup from removing it on Windows. The test itself is
+	// platform independent, so run it on the other platforms only.
+	if runtime.GOOS == "windows" {
+		t.Skip("leveldb keeps its log file open, so TempDir cleanup fails on Windows")
+	}
 	snap := NewSnapshot(1, common.Hash{0x1}, nil)
 	dir := t.TempDir()
 	db, err := leveldb.New(dir, 256, 0, "", false)
@@ -349,62 +357,116 @@ func TestBuildSnapshotFromStateReturnsStateReadError(t *testing.T) {
 	}
 }
 
+// TestRepairGapCandidates pins both judgements repairGapCandidates makes: which
+// schedule shapes are refused outright, and which gap blocks a usable schedule
+// keeps as candidates for a given head.
+//
+// The usable schedule below is the repair fixture's epoch 900, gap 450, which
+// puts the offset at 450, so the gap trigger names 450, 1350, 2250, ... Gap
+// block G=1350 backs heads in [1800, 2700) and must stay a candidate across that
+// whole span plus the margin on either side, which is where the returned pair
+// changes.
 func TestRepairGapCandidates(t *testing.T) {
-	x := newRepairEngine(rawdb.NewMemoryDatabase())
-	// Gap block G=1350 backs heads in [1800, 2700); it must stay a candidate
-	// across that whole span plus the margin on either side.
+	schedule := func(epoch, gap uint64) *params.XDPoSConfig {
+		return &params.XDPoSConfig{Epoch: epoch, Gap: gap}
+	}
 	tests := []struct {
-		head uint64
-		want []uint64
+		name   string
+		config *params.XDPoSConfig
+		head   uint64
+		want   []uint64
 	}{
-		{head: 0, want: nil},
-		{head: 449, want: nil},
-		{head: 450, want: []uint64{450}},
-		{head: 1350, want: []uint64{450, 1350}},
-		{head: 1799, want: []uint64{450, 1350}},
-		{head: 1800, want: []uint64{450, 1350}},
-		{head: 2250, want: []uint64{1350, 2250}},
-		{head: 2699, want: []uint64{1350, 2250}},
-		{head: 3150, want: []uint64{2250, 3150}},
+		// A schedule that designates no gap block has nothing to repair: the
+		// missing-config shape must not panic, and the epoch/gap shapes must not
+		// divide by an unset epoch.
+		{"missing config", nil, 1800, nil},
+		{"unset epoch", schedule(0, 0), 1800, nil},
+		{"zero gap", schedule(900, 0), 1800, nil},
+		{"gap equal to epoch", schedule(900, 900), 1800, nil},
+		{"gap above epoch", schedule(900, 1200), 1800, nil},
+		{"epoch one leaves no usable gap", schedule(1, 0), 1800, nil},
+		// A usable schedule: a head below the offset has no gap block to repair,
+		// the head at the offset starts the single-candidate span, and the span
+		// boundaries pin when the older candidate drops out.
+		{"head 0", schedule(900, 450), 0, nil},
+		{"head 449 below the offset", schedule(900, 450), 449, nil},
+		{"head 450 at the offset", schedule(900, 450), 450, []uint64{450}},
+		{"head 1350", schedule(900, 450), 1350, []uint64{450, 1350}},
+		{"head 1799", schedule(900, 450), 1799, []uint64{450, 1350}},
+		{"head 1800", schedule(900, 450), 1800, []uint64{450, 1350}},
+		{"head 2250", schedule(900, 450), 2250, []uint64{1350, 2250}},
+		{"head 2699", schedule(900, 450), 2699, []uint64{1350, 2250}},
+		{"head 3150", schedule(900, 450), 3150, []uint64{2250, 3150}},
 	}
 	for _, tt := range tests {
-		got := x.repairGapCandidates(tt.head)
-		if len(got) != len(tt.want) {
-			t.Fatalf("head %d: got %v, want %v", tt.head, got, tt.want)
-		}
-		for i := range got {
-			if got[i] != tt.want[i] {
-				t.Fatalf("head %d: got %v, want %v", tt.head, got, tt.want)
+		t.Run(tt.name, func(t *testing.T) {
+			x := &XDPoS_v2{config: tt.config}
+
+			got := x.repairGapCandidates(tt.head)
+			if tt.want == nil {
+				if got != nil {
+					t.Fatalf("repairGapCandidates(%d) = %v, want nil", tt.head, got)
+				}
+				return
 			}
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("repairGapCandidates(%d) = %v, want %v", tt.head, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestGetSnapshotRejectsUnusableGapSchedule pins that resolving a height to its
+// gap block reports a schedule that designates no gap block instead of dividing by
+// an unset epoch. Both branches apply the same judgement: one caller passes a
+// height it derived, the other the gap number a vote or timeout message named, and
+// neither may read a height the gap trigger never selects. The judgement runs
+// before the chain is read, so a nil chain is enough to reach it.
+func TestGetSnapshotRejectsUnusableGapSchedule(t *testing.T) {
+	tests := []struct {
+		name   string
+		config *params.XDPoSConfig
+		want   []string
+		// unsetEpoch marks the row whose defect is the caller's, not the schedule's.
+		unsetEpoch bool
+	}{
+		{"missing config", nil, []string{"[getSnapshot]", "nil config", "number: 1350"}, false},
+		{"unset epoch", &params.XDPoSConfig{Epoch: 0, Gap: 450}, []string{"[getSnapshot]", "XDPoS.Epoch is unset", "number: 1350", "gap: 450"}, true},
+		{"zero gap", &params.XDPoSConfig{Epoch: 900, Gap: 0}, []string{"[getSnapshot]", "XDPoS.Gap 0 designates no gap block inside XDPoS.Epoch 900", "number: 1350"}, false},
+		{"gap equal to epoch", &params.XDPoSConfig{Epoch: 900, Gap: 900}, []string{"[getSnapshot]", "XDPoS.Gap 900 designates no gap block of its own inside XDPoS.Epoch 900", "number: 1350"}, false},
+		{"epoch one leaves no usable gap", &params.XDPoSConfig{Epoch: 1, Gap: 0}, []string{"[getSnapshot]", "XDPoS.Epoch 1 designates no gap block", "number: 1350"}, false},
+	}
+	for _, isGapNumber := range []bool{false, true} {
+		for _, tt := range tests {
+			t.Run(fmt.Sprintf("%s/gapNumber=%t", tt.name, isGapNumber), func(t *testing.T) {
+				x := &XDPoS_v2{config: tt.config}
+
+				snap, err := x.getSnapshot(nil, 1350, isGapNumber)
+				switch {
+				case tt.unsetEpoch:
+					assertUnsetEpochInGapPath(t, err, tt.want)
+				case tt.config == nil:
+					assertMissingXDPoSConfig(t, err, tt.want)
+				default:
+					assertUnusableGapSchedule(t, err, tt.want)
+				}
+				if snap != nil {
+					t.Fatalf("expected no snapshot, got %v", snap)
+				}
+			})
 		}
 	}
 }
 
-// Invalid schedules must yield no candidates. In particular, with gap == 0 the
-// offset math would target epoch-switch blocks, whose snapshots are owned by
-// the epoch transition, not by this repair.
-func TestRepairGapCandidatesInvalidSchedule(t *testing.T) {
-	tests := []struct {
-		name  string
-		epoch uint64
-		gap   uint64
-		head  uint64
-	}{
-		{name: "zero epoch", epoch: 0, gap: 0, head: 1800},
-		{name: "zero gap", epoch: 900, gap: 0, head: 1800},
-		{name: "gap equals epoch", epoch: 900, gap: 900, head: 1800},
-		{name: "gap exceeds epoch", epoch: 900, gap: 1200, head: 1800},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			x := newRepairEngine(rawdb.NewMemoryDatabase())
-			x.config.Epoch = tt.epoch
-			x.config.Gap = tt.gap
-			if got := x.repairGapCandidates(tt.head); got != nil {
-				t.Fatalf("repairGapCandidates(%d) = %v, want nil", tt.head, got)
-			}
-		})
-	}
+// TestGetSnapshotGapNumberPathKeepsUsableSchedule pins the other side of the
+// judgement the gap-number branch gained: a usable schedule is still read as the
+// gap block the caller named. With no chain to answer the lookup, the failure is
+// the missing header rather than a schedule error.
+func TestGetSnapshotGapNumberPathKeepsUsableSchedule(t *testing.T) {
+	x := &XDPoS_v2{config: &params.XDPoSConfig{Epoch: 900, Gap: 450}}
+
+	_, err := x.getSnapshot(NewMockChainReader(), 1350, true)
+	assertGuardError(t, err, []string{"getSnapshot fail to get header by number: 1350"})
 }
 
 func TestRepairGapSnapshotsHeadIsGapBlock(t *testing.T) {
