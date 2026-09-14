@@ -1711,10 +1711,20 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 		}
 	}
 	if d.handleProposedBlock != nil {
-		header := blocks[len(blocks)-1].Header()
-		err := d.handleProposedBlock(header)
+		// A nil error from InsertChain does not make the tail canonical: a fork batch is
+		// stored as side entries, and a future tail is only parked in the future queue,
+		// which advances the head later (and hands the engine its own head then). Feeding
+		// a non-canonical block into the handler would advance the consensus state - QC
+		// and vote - for a block that is not in the chain.
+		tail := blocks[len(blocks)-1].Header()
+		if head := d.blockchain.CurrentBlock(); head == nil || head.Hash() != tail.Hash() {
+			log.Debug("[downloader] skip the proposed block handler, the batch tail is not the head",
+				"block hash", tail.Hash(), "number", tail.Number)
+			return nil
+		}
+		err := d.handleProposedBlock(tail)
 		if err != nil {
-			log.Info("[downloader] handle proposed block has error", "err", err, "block hash", header.Hash(), "number", header.Number)
+			log.Info("[downloader] handle proposed block has error", "err", err, "block hash", tail.Hash(), "number", tail.Number)
 		}
 	}
 	return nil

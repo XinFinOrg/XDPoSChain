@@ -86,6 +86,11 @@ var (
 	blockReorgAddMeter  = metrics.NewRegisteredMeter("chain/reorg/add", nil)
 	blockReorgDropMeter = metrics.NewRegisteredMeter("chain/reorg/drop", nil)
 
+	// Blocks a futureBlocksLoop pass took out of the queue for good. The queue is the only
+	// place a parked block lives before it is imported, so this counts the blocks that now
+	// have to be delivered again.
+	blockFutureEvictMeter = metrics.NewRegisteredMeter("chain/futureblocks/evictions", nil)
+
 	blockPrefetchExecuteTimer   = metrics.NewRegisteredTimer("chain/prefetch/executes", nil)
 	blockPrefetchInterruptMeter = metrics.NewRegisteredMeter("chain/prefetch/interrupts", nil)
 
@@ -107,10 +112,11 @@ var (
 
 	// ErrLocalInsertRefused is the local condition that cannot heal on its own: this node
 	// refused a reorg while adopting an already stored block. It is deliberately not
-	// ErrLocalInsertCondition even though both are local, because a parked block is retried
-	// on every futureBlocksLoop tick - and a refused reorg is refused again each time, since
-	// the head does not move and the block therefore keeps winning fork choice. See
-	// IsLocalInsertError for why callers must not treat it as a consensus failure either.
+	// ErrLocalInsertCondition even though both are local, because procFutureBlocks keeps a
+	// parked block for every retryable failure and retries it on every futureBlocksLoop tick
+	// - and a refused reorg is refused again each time, since the head does not move and the
+	// block therefore keeps winning fork choice. See IsLocalInsertError for why callers must
+	// not treat it as a consensus failure either.
 	ErrLocalInsertRefused = errors.New("local insert refused")
 
 	errInvalidOldChain = errors.New("invalid old chain")
@@ -1334,6 +1340,14 @@ func (bc *BlockChain) insertStopped() bool {
 	return bc.procInterrupt.Load()
 }
 
+// proposedBlockHandler is the consensus hook invoked when the future-block queue
+// imports a block that advances the canonical head, letting the engine process the
+// new head (QC handling, voting). XDPoS implements it; the small interface keeps
+// procFutureBlocks testable with a stub engine.
+type proposedBlockHandler interface {
+	HandleProposedBlock(chain consensus.ChainReader, header *types.Header) error
+}
+
 func (bc *BlockChain) procFutureBlocks() {
 	capacity := bc.futureBlocks.Len()
 	if capacity == 0 {
@@ -1349,17 +1363,65 @@ func (bc *BlockChain) procFutureBlocks() {
 		types.BlockBy(types.Number).Sort(blocks)
 
 		// Insert one by one as chain insertion needs contiguous ancestry between blocks
+		var lastCanon *types.Block
 		for i := range blocks {
-			_, err := bc.InsertChain(blocks[i : i+1])
-			// let consensus engine handle the last block (e.g. for voting)
-			if i == len(blocks)-1 && err == nil {
-				engine, ok := bc.Engine().(*XDPoS.XDPoS)
-				if ok {
-					header := blocks[i].Header()
-					err = engine.HandleProposedBlock(bc, header)
-					if err != nil {
-						log.Info("[procFutureBlocks] handle proposed block has error", "err", err, "block hash", header.Hash(), "number", header.Number)
-					}
+			if _, err := bc.InsertChain(blocks[i : i+1]); err != nil {
+				// Retryable failures keep the block parked: it is still in the future
+				// (ErrFutureBlock), its parent is itself parked in the queue
+				// (ErrUnknownAncestor), or the attempt never looked at the block at all
+				// (ErrInsertionInterrupted, ErrChainStopped, ErrLocalInsertCondition). None
+				// of those says anything about the block, and the batch that parked it
+				// already reported success, so an eviction here would drop it for good. A
+				// new retryable error has to be registered in classifyInsertErr - that flag
+				// is what selects this branch - otherwise its blocks are dropped for good.
+				// Anything else is evicted: it leaves the queue for good rather than being
+				// re-verified and re-reported as a bad block on every futureBlocksLoop tick.
+				// Blocks are sorted by number, so evicting a failed parent makes the Contains
+				// check of its queued children fail within the same pass and the whole
+				// orphaned chain drains.
+				//
+				// The parked parent is chain state rather than a property of the error, so it
+				// stays here instead of in the table the retryable flag comes from.
+				class := classifyInsertErr(err)
+				if class.retryable ||
+					(errors.Is(err, consensus.ErrUnknownAncestor) && bc.futureBlocks.Contains(blocks[i].ParentHash())) {
+					log.Debug("[procFutureBlocks] keeping the parked block for a later retry",
+						"number", blocks[i].Number(), "hash", blocks[i].Hash(), "err", err)
+					continue
+				}
+				// Nothing else is retried, so this is the only place that can explain why a
+				// parked block disappeared, and the metric below is the only count of it.
+				// insertChain already reported the failures the table blames the block for,
+				// at Error level and with a bad-block record; the ones it does not blame the
+				// block for - a refused reorg, an ancestor whose state is gone - have no
+				// report at all, and dropping one of those is exactly what has to be visible.
+				evict := log.Debug
+				if !class.badBlock {
+					evict = log.Warn
+				}
+				evict("[procFutureBlocks] dropping the parked block",
+					"number", blocks[i].Number(), "hash", blocks[i].Hash(), "err", err)
+				blockFutureEvictMeter.Mark(1)
+				bc.futureBlocks.Remove(blocks[i].Hash())
+				continue
+			}
+			// Only a write that advanced the canonical head qualifies for the engine
+			// hook below: known blocks that are skipped return a nil error without
+			// importing, and side-chain writes must not be treated as the head.
+			// Comparing hashes also keeps a same-height fork from being mistaken for
+			// the canonical head.
+			if bc.CurrentBlock().Hash() == blocks[i].Hash() {
+				lastCanon = blocks[i]
+			}
+		}
+		// Let the consensus engine handle the highest imported canonical block (e.g.
+		// for voting). The sorted queue tail cannot be the target: it may have failed
+		// to import while lower blocks advanced the head, or sit on a side branch.
+		if lastCanon != nil {
+			if engine, ok := bc.Engine().(proposedBlockHandler); ok {
+				header := lastCanon.Header()
+				if err := engine.HandleProposedBlock(bc, header); err != nil {
+					log.Info("[procFutureBlocks] handle proposed block has error", "err", err, "block hash", header.Hash(), "number", header.Number)
 				}
 			}
 		}
