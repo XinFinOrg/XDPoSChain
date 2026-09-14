@@ -2265,7 +2265,9 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []interface{}, []*types.Log, error) {
 	// If the chain is terminating, don't even bother starting up.
 	if bc.insertStopped() {
-		return 0, nil, nil, nil
+		// Report the interruption rather than a success: nothing was imported, and the
+		// downloader recognises this sentinel and does not blame the peer.
+		return 0, nil, nil, ErrInsertionInterrupted
 	}
 
 	// Start a parallel signature recovery (signer will fluke on fork transition, minimal perf loss)
