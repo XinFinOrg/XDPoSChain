@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	"github.com/XinFinOrg/XDPoSChain/consensus"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
 )
 
 // localConditionf marks a failure of this node and names the condition: the first part is the
@@ -38,6 +39,12 @@ func localConditionf(format string, args ...interface{}) error {
 // so callers stop blaming the peer that delivered the blocks.
 func wrapLocalCondition(err error) error {
 	return localConditionf("%w", err)
+}
+
+// storedBlockMissingTdError names the missing total difficulty of a stored block. It is written
+// with the receipts, so its absence is this node's condition, not the block's.
+func storedBlockMissingTdError(block *types.Block) error {
+	return localConditionf("no total difficulty for stored block %d (%v)", block.NumberU64(), block.Hash())
 }
 
 // insertErrClass says what a failed insertion means for its caller: whether the block may stay

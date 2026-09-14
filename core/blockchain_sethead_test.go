@@ -383,3 +383,69 @@ func TestSetHeadCleansOnlyXdposSnapshotsAboveHead(t *testing.T) {
 		t.Fatalf("expected v1 high-only snapshot to be removed after SetHead")
 	}
 }
+
+// TestSetHeadKeepsXdposSnapshotsWithoutAGap pins the other side of the gap predicate: with Gap == 0
+// (or Gap > Epoch) it cannot match any height, so a rewind deletes no snapshot. The heights below are
+// the epoch boundaries the (num+Gap)%Epoch == 0 form used to match: engine_v2 expresses the gap block
+// as num%Epoch == Epoch-Gap, unreachable with Gap == 0, so accepting those heights would have UpdateM1
+// run at every epoch switch and hit its log.Crit.
+//
+// The entries are keyed by block hash, so a rewound block's snapshot is never loaded again: the
+// leftover is a leak rather than a wrong answer, and that is what this test pins.
+func TestSetHeadKeepsXdposSnapshotsWithoutAGap(t *testing.T) {
+	var (
+		engine  = ethash.NewFaker()
+		genesis = &Genesis{
+			BaseFee: big.NewInt(params.InitialBaseFee),
+			Config:  params.AllEthashProtocolChanges,
+		}
+		db = rawdb.NewMemoryDatabase()
+	)
+	chain, err := NewBlockChain(db, &CacheConfig{TrieDirtyDisabled: true}, genesis, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+	defer chain.Stop()
+
+	// Build a chain 0..25.
+	blocks, _ := GenerateChain(genesis.Config, chain.Genesis(), engine, db, 25, nil)
+	if _, err := chain.InsertChain(blocks); err != nil {
+		t.Fatalf("failed to insert chain: %v", err)
+	}
+
+	// Applied after the import, like the test above: an XDPoS config in place during the import
+	// would have the gap predicate - and with it UpdateM1 - reach blocks the chain has no
+	// snapshots for. Gap 0 makes it unmatchable, which is what the rewind is being checked for.
+	configWithXdpos := genesis.Config.Clone()
+	configWithXdpos.XDPoS = &params.XDPoSConfig{Epoch: 5, Gap: 0}
+	chain.SetChainConfig(configWithXdpos)
+
+	// Heights 5 and 10: both are epoch boundaries and both are above the new head.
+	rewound := []int{4, 9}
+	for _, i := range rewound {
+		block := blocks[i]
+		if err := rawdb.WriteXdposV1Snapshot(db, block.Hash(), []byte(`{"number":1}`)); err != nil {
+			t.Fatalf("failed to write the v1 snapshot for #%d: %v", block.NumberU64(), err)
+		}
+		if err := rawdb.WriteXdposV2Snapshot(db, block.Hash(), []byte(`{"number":1}`)); err != nil {
+			t.Fatalf("failed to write the v2 snapshot for #%d: %v", block.NumberU64(), err)
+		}
+	}
+
+	if err := chain.SetHead(2); err != nil {
+		t.Fatalf("failed to set head: %v", err)
+	}
+
+	for _, i := range rewound {
+		block := blocks[i]
+		if chain.HasBlock(block.Hash(), block.NumberU64()) {
+			t.Fatalf("block #%d is below the new head and must be gone", block.NumberU64())
+		}
+		if _, err := rawdb.ReadXdposV1Snapshot(db, block.Hash()); err != nil {
+			t.Fatalf("the v1 snapshot of the rewound #%d was deleted: %v", block.NumberU64(), err)
+		}
+		if _, err := rawdb.ReadXdposV2Snapshot(db, block.Hash()); err != nil {
+			t.Fatalf("the v2 snapshot of the rewound #%d was deleted: %v", block.NumberU64(), err)
+		}
+	}
+}

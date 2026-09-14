@@ -417,7 +417,7 @@ func TestReorgGapSnapshotDerivationFailsBeforeAnySideEffect(t *testing.T) {
 	oldHead := blockchain.CurrentHeader()
 	// reorg expects the chain mutex to be held by its caller.
 	blockchain.chainmu.MustLock()
-	err := blockchain.reorg(oldHead, blocks[len(blocks)-1].Header(), nil)
+	err := blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
 	blockchain.chainmu.Unlock()
 
 	if err == nil {
@@ -458,15 +458,17 @@ func TestReorgTakesAGapSnapshotItAlreadyStored(t *testing.T) {
 
 	oldHead := blockchain.CurrentHeader()
 	blockchain.chainmu.MustLock()
-	err = blockchain.reorg(oldHead, blocks[len(blocks)-1].Header(), nil)
+	err = blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
 	blockchain.chainmu.Unlock()
 	if err != nil {
 		t.Fatalf("the stored set did not spare the unreadable state, so the reorg derived it again: %v", err)
 	}
 
-	want := blocks[len(blocks)-1].Hash()
+	// reorg deliberately leaves the chain head to its caller - see BlockChain.reorg - so the
+	// promoted gap block is the last block it writes here, and the tip above it is not written.
+	want := blocks[0].Hash()
 	if got := blockchain.CurrentBlock().Hash(); got != want {
-		t.Fatalf("head is %s after the reorg, want %s", got, want)
+		t.Fatalf("head is %s after the reorg, want the promoted gap block %s", got, want)
 	}
 	if got, err := rawdb.ReadXdposV2Snapshot(recorder.Database, snap.Hash); err != nil || !bytes.Equal(got, blob) {
 		t.Fatalf("the reorg rewrote the set it took from the database: err=%v", err)
@@ -592,15 +594,17 @@ func TestReorgDerivesAGapSnapshotItDoesNotHave(t *testing.T) {
 	oldHead := blockchain.CurrentHeader()
 	// reorg expects the chain mutex to be held by its caller.
 	blockchain.chainmu.MustLock()
-	err = blockchain.reorg(oldHead, blocks[len(blocks)-1].Header(), nil)
+	err = blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
 	blockchain.chainmu.Unlock()
 	if err != nil {
 		t.Fatalf("the reorg over a gap block with a derivable set failed: %v", err)
 	}
 
-	want := blocks[len(blocks)-1].Hash()
+	// Same contract as above: the reorg writes the blocks below the new head, and the head
+	// itself is the caller's to write.
+	want := blocks[0].Hash()
 	if got := blockchain.CurrentBlock().Hash(); got != want {
-		t.Fatalf("head is %s after the reorg, want %s", got, want)
+		t.Fatalf("head is %s after the reorg, want the promoted gap block %s", got, want)
 	}
 	recorder.mu.Lock()
 	writes, directPuts := recorder.writes, recorder.directPuts
@@ -644,7 +648,7 @@ func TestReorgFailsOnSnapshotProbeError(t *testing.T) {
 	oldHead := blockchain.CurrentHeader()
 	// reorg expects the chain mutex to be held by its caller.
 	blockchain.chainmu.MustLock()
-	err := blockchain.reorg(oldHead, blocks[len(blocks)-1].Header(), nil)
+	err := blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
 	blockchain.chainmu.Unlock()
 
 	if err == nil {
