@@ -116,7 +116,18 @@ var (
 	errInvalidOldChain = errors.New("invalid old chain")
 	errInvalidNewChain = errors.New("invalid new chain")
 
-	CheckpointCh = make(chan int)
+	// CheckpointCh carries the "an epoch switch block reached the head" signal to the
+	// staking loop in cmd/XDC. Every sender - insertChain, insertBlock and writeKnownBlock
+	// through notifyEpochSwitchBlock, and miner/worker.go on the mining goroutine - goes
+	// through SignalCheckpoint, which never waits: the buffer absorbs one pending signal
+	// while the receiver has not started yet or is still working on the previous one, and a
+	// second signal arriving before the buffer drains is dropped, because the pending one
+	// re-reads the head when it is handled and nothing is lost. See SignalCheckpoint.
+	//
+	// Sending directly would block the caller instead, which neither call site can afford:
+	// the import paths hold the chain mutex, and miner/worker.go is the only consumer of the
+	// mined-block queue it would stall.
+	CheckpointCh = make(chan int, 1)
 )
 
 const (
@@ -1626,10 +1637,17 @@ func (bc *BlockChain) notifyEpochSwitchBlock(block *types.Block) {
 	}
 }
 
-// SignalCheckpoint wakes the staking loop in cmd/XDC after an epoch switch block
-// reached the head.
+// SignalCheckpoint wakes the staking loop without ever blocking the caller. The signal is a
+// coalescing wake-up, not a queue: the receiver re-reads the chain head when it runs
+// (cmd/XDC/main.go), so a signal already pending covers this epoch switch and dropping this one
+// loses nothing. Every sender has to go through it - the import paths call it with the chain
+// mutex held, and miner/worker.go calls it from the goroutine that consumes the mined-block
+// queue - so a slow receiver must never be able to stall them. See CheckpointCh.
 func SignalCheckpoint() {
-	CheckpointCh <- 1
+	select {
+	case CheckpointCh <- 1:
+	default:
+	}
 }
 
 // cacheSigningTxs caches the signing transactions of a block that is being
@@ -2182,17 +2200,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 
 		dirty, _ := bc.triedb.Size()
 		stats.report(chain, it.index, dirty)
-		if bc.chainConfig.XDPoS != nil {
-			engine, _ := bc.Engine().(*XDPoS.XDPoS)
-			isEpochSwithBlock, _, err := engine.IsEpochSwitch(block.Header()) // epoch block
-			if err != nil {
-				log.Error("[insertChain] Error while checking and notifying channel CheckpointCh if the incoming block is epoch switch block", "Hash", block.Hash(), "Number", block.Number())
-				bc.reportBlock(block, nil, err)
-			}
-			if isEpochSwithBlock {
-				CheckpointCh <- 1
-			}
-		}
+		bc.notifyEpochSwitchBlock(block)
 	}
 
 	// Any blocks remaining here? The only ones we care about are the future ones
@@ -2646,17 +2654,7 @@ func (bc *BlockChain) insertBlock(block *types.Block) ([]interface{}, []*types.L
 	stats.usedGas += result.usedGas
 	dirty, _ := bc.triedb.Size()
 	stats.report(types.Blocks{block}, 0, dirty)
-	if bc.chainConfig.XDPoS != nil {
-		// epoch block
-		isEpochSwithBlock, _, err := bc.Engine().(*XDPoS.XDPoS).IsEpochSwitch(block.Header())
-		if err != nil {
-			log.Error("[insertBlock] Error while checking if the incoming block is epoch switch block", "Hash", block.Hash(), "Number", block.Number())
-			bc.reportBlock(block, nil, err)
-		}
-		if isEpochSwithBlock {
-			CheckpointCh <- 1
-		}
-	}
+	bc.notifyEpochSwitchBlock(block)
 	// Append a single chain head event if we've progressed the chain
 	if status == CanonStatTy && bc.CurrentBlock().Hash() == block.Hash() {
 		events = append(events, ChainHeadEvent{block})
