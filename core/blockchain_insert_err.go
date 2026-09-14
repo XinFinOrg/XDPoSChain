@@ -94,7 +94,13 @@ func classifyInsertErr(err error) insertErrClass {
 // something the peer can be held accountable for, and the downloader drops the peer for it.
 //
 // consensus.ErrFutureBlock is absent for a different reason again: a future block is queued
-// and retried rather than turned into a consensus failure of the peer.
+// rather than classified as a failure of the block. The one path that can hand it out is the
+// early return of insertSideChain, and it does not hand out the sentinel itself: a block dated
+// ahead of the local clock is wrapped in ErrLocalInsertCondition there, because the only way a
+// segment far below the head can carry one is this node's clock having stepped back - the
+// monotonicity of block timestamps bounds such a block by the head, not by now. That is the same
+// cause addFutureBlock calls a local condition for a block past the future queue's window, so the
+// two paths agree.
 func IsLocalInsertError(err error) bool {
 	return classifyInsertErr(err).local
 }
@@ -105,4 +111,30 @@ func IsLocalInsertError(err error) bool {
 // implementation it abstracts back into its dependency tree.
 func (bc *BlockChain) IsLocalInsertError(err error) bool {
 	return IsLocalInsertError(err)
+}
+
+// DescribeLocalInsertFailure names why an insertion failed for a local condition, so that the
+// callers which take their error message from the classification - the file importers - report
+// the same reason for the same sentinel instead of each keeping its own copy of the list.
+//
+// ok is false for anything that is not local: those are the failures the caller reports in its
+// own words, because they are about the blocks rather than about this node.
+//
+// The specific sentinels are asked before the local flag on purpose: ErrKnownBlock and
+// ErrPrunedAncestor are local as well, so testing IsLocalInsertError first would mask their
+// reasons and report every one of them as a plain interruption.
+func DescribeLocalInsertFailure(err error) (string, bool) {
+	switch {
+	case errors.Is(err, ErrLocalInsertRefused), errors.Is(err, ErrLocalInsertCondition):
+		// A reorg this node refuses, or a segment whose blocks it cannot place: rerunning
+		// the same input ends the same way, so this is not an interruption either.
+		return "cannot be imported", true
+	case errors.Is(err, ErrKnownBlock):
+		return "already imported", true
+	case errors.Is(err, consensus.ErrPrunedAncestor):
+		return "ancestor state is pruned", true
+	case IsLocalInsertError(err):
+		return "interrupted during import", true
+	}
+	return "", false
 }

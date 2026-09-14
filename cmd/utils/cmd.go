@@ -223,7 +223,18 @@ func ImportChain(chain *core.BlockChain, fn string) error {
 			log.Info("Skipping batch as all blocks present", "batch", batch, "first", blocks[0].Hash(), "last", blocks[i-1].Hash())
 			continue
 		}
+		// A batch can still end on a block this node already has, but only in the one shape
+		// insertChain hands the sentinel out from - a future tail stopping on an executed
+		// block, see the note there - and that needs no retry here: from anywhere else
+		// insertChain consumes every known block itself - adopting it, or skipping it when
+		// it does not beat the head - and carries on with the rest of the batch.
 		if _, err := chain.InsertChain(missing); err != nil {
+			// A local condition says nothing about the blocks in the file: blaming them would
+			// report this node's own state as a corrupt import. core owns the classification
+			// and the reason, so this importer and eth/api_admin cannot drift apart.
+			if reason, ok := core.DescribeLocalInsertFailure(err); ok {
+				return fmt.Errorf("%s: %v", reason, err)
+			}
 			return fmt.Errorf("invalid block %d: %v", n, err)
 		}
 	}

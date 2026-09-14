@@ -2368,9 +2368,25 @@ func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (i
 		}
 	}
 	// At this point, we've written all sidechain blocks to database. Loop ended
-	// either on some other error or all were processed. If there was some other
-	// error, we can ignore the rest of those blocks.
+	// either on some other error or all were processed.
 	//
+	// A block that failed verification or body validation is not one of those: report it
+	// right away, because rebuilding the prefix below and returning that result would
+	// report a partial import as a success - nothing after the failing block was even
+	// looked at. ErrUnknownAncestor is how a pruned segment ends normally (the next
+	// block cannot be linked yet), so it is not a failure and falls through to the
+	// reimport below.
+	if err != nil && !errors.Is(err, consensus.ErrUnknownAncestor) {
+		// ErrFutureBlock reaches this branch only for a block dated ahead of this node's clock:
+		// both engines compare the timestamp before they look up the parent (engine_v1/engine.go,
+		// engine_v2/verifyHeader.go), so the parent is never consulted. It is not queued either -
+		// a side entry is not the future chain - and the clock is this node's, not the peer's:
+		// see classifyInsertErr for why a local condition is never blamed on the peer.
+		if errors.Is(err, consensus.ErrFutureBlock) {
+			return it.index, nil, nil, fmt.Errorf("%w: %w", ErrLocalInsertCondition, err)
+		}
+		return it.index, nil, nil, err
+	}
 	// If the externTd was larger than our local TD, we now need to reimport the previous
 	// blocks to regenerate the required state
 	localTd := bc.GetTd(bc.CurrentBlock().Hash(), current)
