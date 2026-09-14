@@ -128,7 +128,14 @@ var (
 	errInvalidOldChain = errors.New("invalid old chain")
 	errInvalidNewChain = errors.New("invalid new chain")
 
-	CheckpointCh = make(chan int)
+	// CheckpointCh carries the "an epoch switch block reached the head" signal to the staking
+	// loop in cmd/XDC. Every sender goes through SignalCheckpoint, which never waits: the
+	// buffer absorbs one pending signal, and a second arriving before it drains is dropped,
+	// because the pending one re-reads the head when it is handled and nothing is lost.
+	//
+	// Sending directly would block the caller, which none of these senders can afford: the
+	// import paths and reorg run with the chain mutex held.
+	CheckpointCh = make(chan int, 1)
 )
 
 const (
@@ -1710,6 +1717,21 @@ func (bc *BlockChain) blockTd(block *types.Block) *big.Int {
 	return bc.GetTd(block.Hash(), block.NumberU64())
 }
 
+// isEpochSwitchBlock reports whether block is the epoch switch block of its epoch. A chain
+// without XDPoS, and an engine that is not XDPoS, have no epoch switch, which is not an
+// error; a failure to decode the header is left to the caller to log.
+func (bc *BlockChain) isEpochSwitchBlock(block *types.Block) (bool, error) {
+	if bc.chainConfig.XDPoS == nil {
+		return false, nil
+	}
+	engine, ok := bc.Engine().(*XDPoS.XDPoS)
+	if !ok {
+		return false, nil
+	}
+	isEpochSwitch, _, err := engine.IsEpochSwitch(block.Header())
+	return isEpochSwitch, err
+}
+
 // notifyEpochSwitchBlock sends a checkpoint notification when block switches the epoch, so
 // that the consensus parameters and the masternode set are refreshed. It is a no-op for
 // non-XDPoS chains and for engines that are not XDPoS.
@@ -1719,14 +1741,7 @@ func (bc *BlockChain) blockTd(block *types.Block) *big.Int {
 // verifyHeader, outside its fullVerify gate, and engine_v1 never fails it), so reportBlock
 // would write a block this node already accepted into the bad-block table.
 func (bc *BlockChain) notifyEpochSwitchBlock(block *types.Block) {
-	if bc.chainConfig.XDPoS == nil {
-		return
-	}
-	engine, ok := bc.Engine().(*XDPoS.XDPoS)
-	if !ok {
-		return
-	}
-	isEpochSwitch, _, err := engine.IsEpochSwitch(block.Header())
+	isEpochSwitch, err := bc.isEpochSwitchBlock(block)
 	if err != nil {
 		log.Error("[notifyEpochSwitchBlock] Error while checking if the incoming block is epoch switch block", "Hash", block.Hash(), "Number", block.Number())
 		return
@@ -1736,10 +1751,16 @@ func (bc *BlockChain) notifyEpochSwitchBlock(block *types.Block) {
 	}
 }
 
-// SignalCheckpoint wakes the staking loop in cmd/XDC after an epoch switch block
-// reached the head.
+// SignalCheckpoint wakes the staking loop without ever blocking the caller. The signal is a
+// coalescing wake-up, not a queue: the receiver re-reads the chain head when it runs, so a
+// signal already pending covers this epoch switch and dropping this one loses nothing. Every
+// sender goes through it - the import paths and reorg hold the chain mutex - so a slow
+// receiver must never be able to stall them. See CheckpointCh.
 func SignalCheckpoint() {
-	CheckpointCh <- 1
+	select {
+	case CheckpointCh <- 1:
+	default:
+	}
 }
 
 // cacheSigningTxs caches the signing transactions of a block that is being
@@ -2505,17 +2526,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 
 		dirty, _ := bc.triedb.Size()
 		stats.report(chain, it.index, dirty)
-		if bc.chainConfig.XDPoS != nil {
-			engine, _ := bc.Engine().(*XDPoS.XDPoS)
-			isEpochSwithBlock, _, err := engine.IsEpochSwitch(block.Header()) // epoch block
-			if err != nil {
-				log.Error("[insertChain] Error while checking and notifying channel CheckpointCh if the incoming block is epoch switch block", "Hash", block.Hash(), "Number", block.Number())
-				bc.reportBlock(block, nil, err)
-			}
-			if isEpochSwithBlock {
-				CheckpointCh <- 1
-			}
-		}
+		bc.notifyEpochSwitchBlock(block)
 	}
 
 	// The loop can also end on a block of its own: the post statement advanced onto the next
@@ -3229,17 +3240,7 @@ func (bc *BlockChain) insertBlock(block *types.Block) ([]interface{}, []*types.L
 	stats.usedGas += result.usedGas
 	dirty, _ := bc.triedb.Size()
 	stats.report(types.Blocks{block}, 0, dirty)
-	if bc.chainConfig.XDPoS != nil {
-		// epoch block
-		isEpochSwithBlock, _, err := bc.Engine().(*XDPoS.XDPoS).IsEpochSwitch(block.Header())
-		if err != nil {
-			log.Error("[insertBlock] Error while checking if the incoming block is epoch switch block", "Hash", block.Hash(), "Number", block.Number())
-			bc.reportBlock(block, nil, err)
-		}
-		if isEpochSwithBlock {
-			CheckpointCh <- 1
-		}
-	}
+	bc.notifyEpochSwitchBlock(block)
 	// Append a single chain head event if we've progressed the chain
 	if status == CanonStatTy && bc.CurrentBlock().Hash() == block.Hash() {
 		events = append(events, ChainHeadEvent{block})
@@ -3563,6 +3564,21 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 			if err := bc.UpdateM1At(block.Header()); err != nil {
 				log.Crit("Fail to update masternodes during reorg", "number", block.Number, "hash", block.Hash().Hex(), "err", err)
 			}
+		}
+		// An epoch switch block reaches the canonical chain here whenever this reorg rewrites
+		// one: the staking loop in cmd/XDC has to revalidate the consensus parameters and the
+		// masternode duty for the new epoch. The import paths signal only for the block they
+		// process, so a head that jumps over the epoch boundary would leave the staking loop on
+		// the previous epoch's parameters until the next epoch switch block arrived. The signal
+		// coalesces - see SignalCheckpoint - so a second one from a rollback re-import costs
+		// nothing.
+		//
+		// A header the engine cannot decode is only logged here, as notifyEpochSwitchBlock
+		// does - see its doc for why neither reports a block this node already has.
+		if isEpochSwitch, err := bc.isEpochSwitchBlock(block); err != nil {
+			log.Error("[reorg] Error while checking if a promoted block is an epoch switch block", "Hash", block.Hash(), "Number", block.Number())
+		} else if isEpochSwitch {
+			SignalCheckpoint()
 		}
 	}
 	if len(rebirthLogs) > 0 {
