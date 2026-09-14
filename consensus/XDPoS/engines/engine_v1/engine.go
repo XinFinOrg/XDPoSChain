@@ -140,7 +140,13 @@ func (x *XDPoS_v1) verifyHeaderWithCache(chain consensus.ChainReader, header *ty
 		return nil
 	}
 	err := x.verifyHeader(chain, header, parents, fullVerify)
-	if err == nil {
+	// Only a full verification is a verdict worth remembering: the cache does not record the
+	// level a header was checked at, and every caller that consults it treats a hit as a
+	// pass. Remembering a reduced check would therefore let a later full verification of the
+	// same header answer nil without ever running its checks. verifyHeader lowers a requested
+	// full verification on the testnet config, so the decision has to follow the mode the
+	// check actually ran in rather than the caller's request.
+	if err == nil && fullVerify && !x.shouldDisableFullVerify() {
 		x.verifiedHeaders.Add(header.Hash(), struct{}{})
 	}
 	return err

@@ -67,6 +67,67 @@ func futureTestHeader(config *params.ChainConfig, number int64, parentHash commo
 	return header
 }
 
+// TestVerifiedHeadersOnlyRemembersFullVerification pins what the verified-header cache may
+// store: a header admitted by a reduced check has to stay uncached, because a hit is treated
+// as a pass by every caller and the cache does not record the level a header was checked at.
+// Remembering the reduced result would let a later full verification answer nil for a header
+// whose validator signature, double validation or checkpoint signer set was never looked at -
+// the shape a sidechain import of a reduced batch leaves behind.
+//
+// SkipV1Validation makes both levels succeed without a chain to read, so the level is the
+// only difference between the two calls below.
+func TestVerifiedHeadersOnlyRemembersFullVerification(t *testing.T) {
+	config := *params.TestXDPoSMockChainConfig
+	xdpos := *config.XDPoS
+	xdpos.SkipV1Validation = true
+	config.XDPoS = &xdpos
+
+	engine := New(&config, nil)
+	header := futureTestHeader(&config, 1, common.Hash{}, uint64(time.Now().Unix()))
+
+	if err := engine.verifyHeaderWithCache(nil, header, nil, false); err != nil {
+		t.Fatalf("reduced verification failed: %v", err)
+	}
+	if engine.verifiedHeaders.Contains(header.Hash()) {
+		t.Fatal("a reduced verification must not be remembered as a full one")
+	}
+
+	if err := engine.verifyHeaderWithCache(nil, header, nil, true); err != nil {
+		t.Fatalf("full verification failed: %v", err)
+	}
+	if !engine.verifiedHeaders.Contains(header.Hash()) {
+		t.Fatal("a full verification must be remembered")
+	}
+}
+
+// TestVerifiedHeadersSkipCachingWhenFullVerifyIsDowngraded pins the other half of the
+// verified-header cache contract: on a reduced-verification network (the testnet chain config)
+// verifyHeader lowers a requested full verification before running, so the result has to stay
+// uncached even though the caller asked for full verification. Caching it would record a
+// verdict the flag never stood for, and the cache cannot tell the two apart on a later hit.
+//
+// SkipV1Validation keeps the call chain-free while still reaching the cache decision: it makes
+// verifyHeader return nil early, and the guard evaluated afterwards is what is under test.
+func TestVerifiedHeadersSkipCachingWhenFullVerifyIsDowngraded(t *testing.T) {
+	config := *params.TestnetChainConfig
+	xdpos := *config.XDPoS
+	xdpos.SkipV1Validation = true
+	config.XDPoS = &xdpos
+
+	engine := New(&config, nil)
+	if !engine.shouldDisableFullVerify() {
+		t.Fatal("testnet chain config must be recognised as a reduced-verification network")
+	}
+	header := futureTestHeader(&config, 1, common.Hash{}, uint64(time.Now().Unix()))
+
+	if err := engine.verifyHeaderWithCache(nil, header, nil, true); err != nil {
+		t.Fatalf("verification failed: %v", err)
+	}
+	if engine.verifiedHeaders.Contains(header.Hash()) {
+		t.Fatal("a verification downgraded by the testnet config must not be remembered as a full one")
+	}
+}
+
 // TestFutureTimestampCheckPrecedesParentLookup pins the engine premise that the
 // insertChain future-batch handling relies on: the timestamp check runs before
 // the parent lookup, so a header whose parent is in the same batch and whose

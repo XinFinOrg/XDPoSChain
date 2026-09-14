@@ -765,3 +765,40 @@ func TestFutureTimestampCheckPrecedesParentLookup(t *testing.T) {
 	err = adaptor.VerifyHeader(blockchain, futureHeader, true)
 	assert.Equal(t, consensus.ErrFutureBlock, err)
 }
+
+// TestVerifiedHeadersOnlyRemembersFullVerification pins what the verified-header cache may
+// store: a header admitted by a reduced check has to stay uncached, because every caller that
+// consults the cache treats a hit as a pass and the cache does not record the level a header
+// was checked at. For a non-epoch-switch block the v2 engine lowers the level for the
+// future-timestamp check alone, so a header timestamped into the future is admitted by the
+// reduced call and rejected by the full one - unless the reduced result was remembered, in
+// which case the full call answers nil from the cache and the timestamp is never looked at.
+func TestVerifiedHeadersOnlyRemembersFullVerification(t *testing.T) {
+	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
+	assert.Nil(t, err)
+
+	var config params.ChainConfig
+	err = json.Unmarshal(b, &config)
+	assert.Nil(t, err)
+
+	// Block 902 is a non-epoch-switch v2 block and the fixture writes it into the chain.
+	blockchain, _, _, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 902, &config, nil)
+	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
+
+	futureHeader := blockchain.GetBlockByNumber(902).Header()
+	futureHeader.Time = uint64(time.Now().Unix() + 10000)
+	// The header signature covers the timestamp, so the timestamped header has to be re-sealed
+	// with the validator of its round; otherwise the reduced call would stop at the signature
+	// and the cache decision under test would never be reached.
+	validator, validatorSignFn := findSignerAndSignFn(blockchain, futureHeader, signer, signFn, &config)
+	sealHeader(blockchain, futureHeader, validator, validatorSignFn)
+
+	// The reduced call admits the header: the timestamp check is what the level selects.
+	err = adaptor.VerifyHeader(blockchain, futureHeader, false)
+	assert.Nil(t, err)
+
+	// The full call has to run the timestamp check. nil here is what a cache entry left
+	// behind by the reduced call looks like.
+	err = adaptor.VerifyHeader(blockchain, futureHeader, true)
+	assert.Equal(t, consensus.ErrFutureBlock, err)
+}
