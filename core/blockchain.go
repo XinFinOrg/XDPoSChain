@@ -1455,9 +1455,16 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 	)
 	for i, block := range blockChain {
 		receipts := receiptChain[i]
-		// Short circuit insertion if shutting down or processing failed
+		// Short circuit insertion if shutting down or processing failed.
+		//
+		// Report the interruption together with the number of blocks that made it to
+		// disk: the ones before it may already have been flushed (see the batch write
+		// below), so returning nil would report a half written batch as a complete
+		// one - the very thing an interrupted insertion must not claim. The sentinel
+		// is local, so the downloader maps it to errCancelContentProcessing instead
+		// of dropping the peer that served the receipts.
 		if bc.insertStopped() {
-			return 0, nil
+			return i, ErrInsertionInterrupted
 		}
 		blockHash, blockNumber := block.Hash(), block.NumberU64()
 		// Short circuit if the owner header is unknown
