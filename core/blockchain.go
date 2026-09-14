@@ -2575,7 +2575,33 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, ve
 	for ; block != nil && (errors.Is(err, consensus.ErrPrunedAncestor)); block, err = it.next() {
 		// Check the canonical state root for that number
 		if number := block.NumberU64(); current >= number {
-			if canonical := bc.GetBlockByNumber(number); canonical != nil && canonical.Root() == block.Root() {
+			canonical := bc.GetBlockByNumber(number)
+			if canonical != nil && canonical.Hash() == block.Hash() {
+				// Not a sidechain block, this is a re-import of a canon block which has it's state pruned.
+				// Carry its total difficulty over: a batch made only of such blocks would
+				// otherwise leave externTd nil, and the comparison after the scan would
+				// dereference it.
+				//
+				// The scan can pass several of them before it reaches the fork point, so the
+				// value has to follow the last one: keeping only the first would drop the
+				// difficulty of every canonical block in between and underestimate the
+				// segment, which would let a heavier sidechain look lighter than it is.
+				// A missing total difficulty leaves the previous value in place rather than
+				// clearing it - the accumulation below dereferences externTd.
+				//
+				// Carrying this baseline over can only err on the high side, which is the
+				// safe direction: a side branch forks at or below this canonical block, so
+				// the value the side blocks are accumulated onto is at least the total
+				// difficulty of the fork point. Overstating the segment at worst rebuilds a
+				// prefix that did not need rebuilding; it cannot make a heavier segment look
+				// lighter and skip the rebuild. Whether the branch is adopted is decided
+				// later, on the blocks themselves, by blockBeatsHead in writeBlockWithState.
+				if td := bc.GetTd(block.Hash(), number); td != nil {
+					externTd = td
+				}
+				continue
+			}
+			if canonical != nil && canonical.Root() == block.Root() {
 				// This is most likely a shadow-state attack. When a fork is imported into the
 				// database, and it eventually reaches a block height which is not pruned, we
 				// just found that the state already exist! This means that the sidechain block
@@ -2708,6 +2734,17 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, ve
 		// the batch was imported, but the first block a caller can act on is the first one
 		// this call did not consume, which is the known block.
 		return it.index, withChainHeadEvent(events, adoptedHead), logs, nil
+	}
+	// A batch without a single sidechain block carries no total difficulty to compare, and
+	// it added nothing to the chain either: every one of its blocks was already stored and
+	// canonical. Comparing against a total difficulty that was never accumulated is not
+	// possible, and the scan error - ErrUnknownAncestor for the block that could not be
+	// linked - says nothing about the peer either, because this node's missing numbers, not
+	// the blocks, are what stopped the segment. Report it as what it is: a local condition
+	// the downloader cancels the content processing for instead of dropping the peer.
+	if externTd == nil {
+		log.Debug("Sidechain segment holds no sidechain block", "start", it.first().NumberU64(), "index", it.index)
+		return it.index, nil, nil, ErrLocalInsertCondition
 	}
 	// If the externTd was larger than our local TD, we now need to reimport the previous
 	// blocks to regenerate the required state
