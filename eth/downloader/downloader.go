@@ -1760,14 +1760,14 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 			if d.blockchain.IsLocalInsertError(err) {
 				return d.localInsertFailure(localInsertStop{where: whereBlocks, from: segment[0].Number(), index: index}, err)
 			}
+			// The failing block is nameable while the index is inside the batch, which it always
+			// is today: insertSideChain reports the batch's own index, where it used to report an
+			// offset into a rebuilt segment that could point past the batch. The bound stays as a
+			// guard so a regression cannot turn this log line into a panic.
 			if index < len(segment) {
 				log.Debug("Downloaded item processing failed", "number", segment[index].Number(), "hash", segment[index].Hash(), "err", err)
 			} else {
-				// The InsertChain method in blockchain.go will sometimes return an out-of-bounds index,
-				// when it needs to preprocess blocks to import a sidechain.
-				// The importer will put together a new list of blocks to import, which is a superset
-				// of the blocks delivered from the downloader, and the indexing will be off.
-				log.Debug("Downloaded item processing failed on sidechain import", "index", index, "err", err)
+				log.Debug("Downloaded item processing failed", "index", index, "batch", len(segment), "err", err)
 			}
 			return fmt.Errorf("%w: %v", errInvalidChain, err)
 		}

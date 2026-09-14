@@ -103,8 +103,13 @@ var (
 	ErrChainStopped = errors.New("blockchain is stopped")
 
 	// ErrLocalInsertCondition keeps the local conditions that have no sentinel of their own
-	// and that a retry cannot repair. See IsLocalInsertError for why callers must not treat
-	// it as a consensus failure.
+	// and that a retry cannot repair: a receipt batch the database refused to write, and a
+	// stored block whose total difficulty this node no longer holds. insertSideChain raises it
+	// too, as a defensive guard for a segment that stops on a block with no stored state - a
+	// state the validator contract rules out, see the note there. A block dated ahead of the
+	// clock is the one local condition that heals, which is why it carries a sentinel of its
+	// own below. See IsLocalInsertError for why callers must not treat it as a consensus
+	// failure.
 	ErrLocalInsertCondition = errors.New("local insert condition")
 
 	// ErrLocalInsertAheadOfClock is the local condition that heals on its own: the block is
@@ -1914,6 +1919,24 @@ func (bc *BlockChain) announceKnownBlock(block *types.Block, promoted bool) ([]i
 	return []interface{}{ChainEvent{block, block.Hash(), logs}}, logs
 }
 
+// withChainHeadEvent appends the head event of block, unless the events already carry one: a
+// batch raises a single head event, for the highest block that moved the head.
+//
+// The adoption shape that needs it is the segment with blocks left above it: insertSideChain
+// adopts the stored prefix and then imports the rest, and that second import raises its own
+// head event for a higher block, which would otherwise move the head twice within one batch.
+func withChainHeadEvent(events []interface{}, block *types.Block) []interface{} {
+	if block == nil {
+		return events
+	}
+	for _, event := range events {
+		if _, ok := event.(ChainHeadEvent); ok {
+			return events
+		}
+	}
+	return append(events, ChainHeadEvent{block})
+}
+
 // writeBlockWithState writes the block and all associated state to the database,
 // but is expects the chain mutex to be held.
 func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.Receipt, state *state.StateDB, tradingState *tradingstate.TradingStateDB, lendingState *lendingstate.LendingStateDB) (status WriteStatus, err error) {
@@ -2266,7 +2289,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 	switch {
 	// First block is pruned, insert as sidechain and reorg only if TD grows enough
 	case errors.Is(err, consensus.ErrPrunedAncestor):
-		return bc.insertSidechain(block, it)
+		return bc.insertSideChain(block, it, verifySeals)
 
 	// First block is future, shove it (and all children) to the future queue (unknown ancestor)
 	case errors.Is(err, consensus.ErrFutureBlock) || (errors.Is(err, consensus.ErrUnknownAncestor) && bc.futureBlocks.Contains(it.first().ParentHash())):
@@ -2641,13 +2664,19 @@ func (bc *BlockChain) headTd(head *types.Header) (*big.Int, error) {
 	return td, nil
 }
 
-// insertSidechain is called when an import batch hits upon a pruned ancestor
+// insertSideChain is called when an import batch hits upon a pruned ancestor
 // error, which happens when a sidechain with a sufficiently old fork-block is
 // found.
 //
 // The method writes all (header-and-body-valid) blocks to disk, then tries to
 // switch over to the new chain if the TD exceeded the current chain.
-func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (int, []interface{}, []*types.Log, error) {
+//
+// verifySeals is the level the batch was verified at. The blocks the scan never reaches are
+// remote data this node holds no verification result for, so they are verified at that same
+// level when imported below; only the blocks read back out of the local database are
+// re-imported with it off. Every index it returns is relative to the batch the caller handed
+// in, never to a segment rebuilt from stored ancestors.
+func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, verifySeals bool) (int, []interface{}, []*types.Log, error) {
 	var (
 		externTd *big.Int
 		current  = bc.CurrentBlock().Number.Uint64()
@@ -2707,17 +2736,95 @@ func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (i
 	// right away, because rebuilding the prefix below would report a partial import as a
 	// success. ErrUnknownAncestor is how a pruned segment ends normally, so it falls through
 	// to the reimport below.
-	if err != nil && !errors.Is(err, consensus.ErrUnknownAncestor) {
+	if err != nil && !errors.Is(err, consensus.ErrUnknownAncestor) && !errors.Is(err, ErrKnownBlock) {
 		// ErrFutureBlock reaches this branch only for a block dated ahead of this node's clock:
 		// both engines compare the timestamp before they look up the parent, so the parent is
 		// never consulted. It is not queued either - a side entry is not the future chain - and
 		// the clock is this node's, not the peer's. The wrap is ErrLocalInsertAheadOfClock
 		// rather than ErrLocalInsertCondition because the clock catches up, so a parked block
 		// has to wait rather than be evicted on the first tick.
+		//
+		// The reject is recorded through the same table as the stops of insertChain: this is the
+		// one place a batch ends without asking it, and asking before the wrap is safe.
+		bc.reportBlockIfFault(block, err)
 		if errors.Is(err, consensus.ErrFutureBlock) {
 			return it.index, nil, nil, fmt.Errorf("%w: %w", ErrLocalInsertAheadOfClock, err)
 		}
 		return it.index, nil, nil, err
+	}
+	// The scan stopped on a block already on disk with its state. Nothing after it was
+	// looked at, so the reimport below would report a partial import as a success: it only
+	// rebuilds it.previous() and its ancestors.
+	//
+	// Adopt the longest prefix of the tail that this node executed as well (it was imported,
+	// only the head did not follow) and import the rest on top of it. The prefix cannot come
+	// out empty: ErrKnownBlock is what ValidateBody reports for an executed block.
+	if errors.Is(err, ErrKnownBlock) {
+		stored := it.index
+		for stored < len(it.chain) && bc.HasExecutedBlock(it.chain[stored].Hash(), it.chain[stored].NumberU64()) {
+			stored++
+		}
+		if stored == it.index {
+			// Defensive guard rather than a state the validator contract can produce. Bailing
+			// out is what keeps the head in place here: adopting it.chain[stored-1] would move
+			// it onto the block below the one that stopped the scan. A stop like this would
+			// say nothing about the blocks, so it must not become an error the downloader
+			// turns into an errInvalidChain that drops the peer.
+			log.Warn("Sidechain segment stopped on a block that is not stored",
+				"number", it.chain[it.index].NumberU64(), "hash", it.chain[it.index].Hash(),
+				"index", it.index, "head", bc.CurrentBlock().Number.Uint64())
+			return it.index, nil, nil, localConditionf("sidechain segment stopped on a block that is not stored")
+		}
+		// Adopting the last stored block also moves the head over the blocks reorg rewrites
+		// in between, whose logs go out through its rebirth logs.
+		adoptedBlock, promoted, adoptErr := bc.writeKnownBlock(it.chain[stored-1])
+		if adoptErr != nil {
+			return it.index, nil, nil, adoptErr
+		}
+		var (
+			events []interface{}
+			logs   []*types.Log
+		)
+		// The block that moved the head. Its head event is announced once the batch is done:
+		// the import below can move the head further, and a batch raises a single head event
+		// for the highest block that moved it. See withChainHeadEvent.
+		var adoptedHead *types.Block
+		if adoptedBlock != nil {
+			adoptedHead = adoptedBlock
+			log.Debug("Adopted an already imported batch", "number", adoptedHead.NumberU64(), "hash", adoptedHead.Hash())
+			// The adopted block moves the head, so it is announced like an adopted known block
+			// of the canonical import path; the blocks reorg rewrote are announced by its
+			// rebirth logs.
+			events, logs = bc.announceKnownBlock(adoptedHead, promoted)
+		} else {
+			// Not an error: the blocks are on disk and this node simply does not adopt this
+			// branch. The batch still reports success and the head stays where it is, so the
+			// count has to be visible - above the head only, like the skip loop of the
+			// canonical import path.
+			if head := bc.CurrentBlock(); head != nil && it.chain[stored-1].NumberU64() > head.Number.Uint64() {
+				blockKnownNotAdoptedMeter.Mark(1)
+			}
+			log.Warn("Batch is already imported but does not beat the head",
+				"head", bc.CurrentBlock().Number, "batch", it.chain[stored-1].Number())
+		}
+		if stored < len(it.chain) {
+			// Nothing above the stored prefix was looked at yet, and the block the scan stopped
+			// on has its state, so the rest executes on top of it like any other batch. These
+			// blocks come from the batch the caller handed in and the scan pulled no verification
+			// result for them, so they are verified at that batch's level: importing them with it
+			// off would let a block through the engine knows to reject.
+			n, moreEvents, moreLogs, err := bc.insertChain(it.chain[stored:], verifySeals)
+			events = append(events, moreEvents...)
+			logs = append(logs, moreLogs...)
+			if err != nil {
+				// The sub-batch counts from it.chain[stored:]; map the failing index back to the
+				// batch the caller handed in.
+				return stored + n, withChainHeadEvent(events, adoptedHead), logs, err
+			}
+		}
+		// The whole batch was consumed: the stored prefix ended in the adopted block and the
+		// rest was imported on top of it, so the index is the batch length.
+		return len(it.chain), withChainHeadEvent(events, adoptedHead), logs, nil
 	}
 	// If the externTd was larger than our local TD, we now need to reimport the previous
 	// blocks to regenerate the required state
@@ -2763,23 +2870,42 @@ func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (i
 		// memory here.
 		if len(blocks) >= 2048 || memory > 64*1024*1024 {
 			log.Info("Importing heavy sidechain segment", "blocks", len(blocks), "start", blocks[0].NumberU64(), "end", block.NumberU64())
+			// insertChain also reports a block that fails verification or body
+			// validation in the middle of the segment: abort the sidechain import
+			// instead of continuing with a state that can only be rebuilt partially.
 			if _, _, _, err := bc.insertChain(blocks, false); err != nil {
-				return 0, nil, nil, err
+				// The index handed back is the batch's, not the re-imported segment's:
+				// the segment is rebuilt from stored ancestors, so it has no offset into
+				// the batch. it.index is the first block this batch has not consumed.
+				return it.index, nil, nil, err
 			}
 			blocks, memory = blocks[:0], 0
 
 			// If the chain is terminating, stop processing blocks
 			if bc.insertStopped() {
 				log.Debug("Abort during blocks processing")
-				return 0, nil, nil, nil
+				// Report the interruption instead of a success, see the entry guard of
+				// insertChain: the rest of the segment was not imported. Same index as
+				// the failure above, for the same reason.
+				return it.index, nil, nil, ErrInsertionInterrupted
 			}
 		}
 	}
 	if len(blocks) > 0 {
 		log.Info("Importing sidechain segment", "start", blocks[0].NumberU64(), "end", blocks[len(blocks)-1].NumberU64())
-		return bc.insertChain(blocks, false)
+		// The error of a partially imported segment is propagated as well, see the
+		// comment on the heavy segment import above. The index is the batch's for the
+		// same reason as there: the segment is rebuilt from stored ancestors, so its own
+		// offset says nothing about where this batch stopped.
+		_, events, logs, err := bc.insertChain(blocks, false)
+		if err != nil {
+			return it.index, nil, nil, err
+		}
+		// Unlike the heavy chunks above, the last segment keeps its events and logs: it is
+		// the end of this batch, not a chunk dropped to stay within the memory allowance.
+		return it.index, events, logs, nil
 	}
-	return 0, nil, nil, nil
+	return it.index, nil, nil, nil
 }
 
 func (bc *BlockChain) InsertBlock(block *types.Block) error {
