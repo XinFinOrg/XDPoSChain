@@ -3000,3 +3000,208 @@ func TestDeleteCreateRevert(t *testing.T) {
 		t.Fatalf("block %d: failed to insert into chain: %v", n, err)
 	}
 }
+
+// newMissingTdChain returns a memory chain over a fresh genesis together with a batch of
+// total generated blocks, of which the first imported ones are already inserted. Keeping
+// total larger than imported lets callers hand the chain blocks that its head never
+// reached. The engine and the generation database are returned as well, since generating
+// a competing block needs both.
+func newMissingTdChain(t *testing.T, total, imported int) (*BlockChain, types.Blocks, consensus.Engine, ethdb.Database) {
+	t.Helper()
+
+	engine := ethash.NewFaker()
+	gspec := &Genesis{
+		Alloc:   types.GenesisAlloc{},
+		BaseFee: big.NewInt(params.InitialBaseFee),
+		Config:  params.TestChainConfig,
+	}
+	genDb := rawdb.NewMemoryDatabase()
+	if _, err := gspec.Commit(genDb); err != nil {
+		t.Fatalf("failed to commit genesis: %v", err)
+	}
+	blocks, _ := GenerateChain(gspec.Config, gspec.ToBlock(), engine, genDb, total, nil)
+
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create tester chain: %v", err)
+	}
+	t.Cleanup(chain.Stop)
+
+	if n, err := chain.InsertChain(blocks[:imported]); err != nil {
+		t.Fatalf("block %d: failed to insert into chain: %v", n, err)
+	}
+	return chain, blocks, engine, genDb
+}
+
+// dropTd deletes a block's total difficulty from both the database and the read cache, so
+// that GetTd answers nil for it again.
+func dropTd(t *testing.T, chain *BlockChain, block *types.Block) {
+	t.Helper()
+
+	rawdb.DeleteTd(chain.ChainDb(), block.Hash(), block.NumberU64())
+	chain.hc.tdCache.Remove(block.Hash())
+	if td := chain.GetTd(block.Hash(), block.NumberU64()); td != nil {
+		t.Fatalf("precondition: the total difficulty of block #%d is still readable", block.NumberU64())
+	}
+}
+
+// sidechainSegmentIterator hands insertSidechain a batch whose first block has already
+// been pulled from the iterator, mirroring the call site in insertChain. Every block is
+// reported as pruned, the shape that routes a batch into insertSidechain.
+func sidechainSegmentIterator(t *testing.T, chain *BlockChain, batch types.Blocks) (*types.Block, *insertIterator) {
+	t.Helper()
+
+	results := make(chan error, len(batch))
+	for range batch {
+		results <- consensus.ErrPrunedAncestor
+	}
+	it := newInsertIterator(batch, results, chain.validator.(*BlockValidator))
+	block, err := it.next()
+	if !errors.Is(err, consensus.ErrPrunedAncestor) {
+		t.Fatalf("unexpected verification result: have %v want %v", err, consensus.ErrPrunedAncestor)
+	}
+	return block, it
+}
+
+// TestInsertSidechainReportsMissingParentTd covers a segment whose parent has no total
+// difficulty on disk: the scan falls back to it to weigh the segment against the head,
+// and used to dereference the missing value. Nothing about the blocks makes them bad -
+// this node simply has no number to compare - so it has to be reported rather than
+// crashing the node.
+func TestInsertSidechainReportsMissingParentTd(t *testing.T) {
+	chain, blocks, _, _ := newMissingTdChain(t, 5, 3) // head at #3, #4 and #5 are unknown
+	dropTd(t, chain, blocks[2])
+
+	// The segment opens on a block whose parent's total difficulty this node no longer
+	// has, so the scan has nothing to weigh it against.
+	block, it := sidechainSegmentIterator(t, chain, blocks[3:5])
+
+	n, _, _, err := chain.insertSidechain(block, it)
+	if !errors.Is(err, errMissingTotalDifficulty) {
+		t.Fatalf("unexpected error: have %v want %v", err, errMissingTotalDifficulty)
+	}
+	if want := 0; n != want {
+		t.Fatalf("unexpected failing index: have %d want %d", n, want)
+	}
+	if want := uint64(3); chain.CurrentBlock().Number.Uint64() != want {
+		t.Fatalf("unexpected head number: have %d want %d", chain.CurrentBlock().Number.Uint64(), want)
+	}
+}
+
+// TestInsertSidechainReportsMissingLocalTd covers the other side of the comparison: the
+// segment carries a total difficulty, but the head's cannot be read. The head has to stay
+// where it is and the failure has to be reported.
+func TestInsertSidechainReportsMissingLocalTd(t *testing.T) {
+	chain, blocks, _, _ := newMissingTdChain(t, 6, 3) // head at #3
+
+	// #4 is stored as a side block with its total difficulty, so the segment that opens
+	// above it has a number to weigh itself against; only the head's is missing.
+	parentTd := chain.GetTd(blocks[2].Hash(), blocks[2].NumberU64())
+	if parentTd == nil {
+		t.Fatal("precondition: the parent's total difficulty is not readable")
+	}
+	if err := chain.writeBlockWithoutState(blocks[3], new(big.Int).Add(parentTd, blocks[3].Difficulty())); err != nil {
+		t.Fatalf("failed to store the side block: %v", err)
+	}
+	dropTd(t, chain, blocks[2])
+
+	// The segment starts above #4, so no block of it is compared against a canonical one
+	// and the scan runs until the batch is exhausted.
+	block, it := sidechainSegmentIterator(t, chain, blocks[4:6])
+
+	n, _, _, err := chain.insertSidechain(block, it)
+	if !errors.Is(err, errMissingTotalDifficulty) {
+		t.Fatalf("unexpected error: have %v want %v", err, errMissingTotalDifficulty)
+	}
+	// The scan ran off the end of the batch looking for a block to weigh.
+	if want := 2; n != want {
+		t.Fatalf("unexpected failing index: have %d want %d", n, want)
+	}
+	if want := uint64(3); chain.CurrentBlock().Number.Uint64() != want {
+		t.Fatalf("unexpected head number: have %d want %d", chain.CurrentBlock().Number.Uint64(), want)
+	}
+}
+
+// TestGetResultBlockReportsMissingTd covers the same guard on the competing-block path: a
+// competitor whose parent total difficulty this node cannot read is not a bad block, it
+// just cannot be weighed, and the arithmetic used to dereference the missing value.
+func TestGetResultBlockReportsMissingTd(t *testing.T) {
+	chain, blocks, engine, genDb := newMissingTdChain(t, 2*TriesInMemory, 2*TriesInMemory)
+
+	// Forking on a block whose state is already pruned makes ValidateBody report the
+	// pruned ancestor, the branch of getResultBlock that compares total difficulties.
+	lastPruned := blocks[TriesInMemory-1]
+	fork, _ := GenerateChain(params.TestChainConfig, lastPruned, engine, genDb, 1, func(i int, b *BlockGen) {
+		// A different coinbase keeps the fork block from reproducing the canonical child
+		// of lastPruned.
+		b.SetCoinbase(common.Address{2})
+	})
+	// The chain read this block's difficulty when it imported its child, so the cached
+	// copy has to go as well.
+	dropTd(t, chain, lastPruned)
+
+	if _, err := chain.getResultBlock(fork[0], false); !errors.Is(err, errMissingTotalDifficulty) {
+		t.Fatalf("unexpected error: have %v want %v", err, errMissingTotalDifficulty)
+	}
+}
+
+// TestGetResultBlockReportsMissingLocalTd covers the other half of the same guard: the
+// competitor's parent is readable, while the canonical head's total difficulty is the one
+// this node cannot read, and the comparison against it used to dereference the missing
+// value.
+func TestGetResultBlockReportsMissingLocalTd(t *testing.T) {
+	chain, blocks, engine, genDb := newMissingTdChain(t, 2*TriesInMemory, 2*TriesInMemory)
+
+	// Forking on a block whose state is already pruned makes ValidateBody report the
+	// pruned ancestor, the branch of getResultBlock that compares total difficulties.
+	lastPruned := blocks[TriesInMemory-1]
+	fork, _ := GenerateChain(params.TestChainConfig, lastPruned, engine, genDb, 1, func(i int, b *BlockGen) {
+		// A different coinbase keeps the fork block from reproducing the canonical child
+		// of lastPruned.
+		b.SetCoinbase(common.Address{2})
+	})
+	// The chain read this block's difficulty when it imported it, so the cached copy has
+	// to go as well. The competitor's parent stays readable.
+	dropTd(t, chain, blocks[2*TriesInMemory-1])
+
+	if _, err := chain.getResultBlock(fork[0], false); !errors.Is(err, errMissingTotalDifficulty) {
+		t.Fatalf("unexpected error: have %v want %v", err, errMissingTotalDifficulty)
+	}
+}
+
+// TestWriteBlockWithStateReportsMissingLocalTd covers the same guard on the stateful
+// insertion path: a child of a recently executed side block can still be weighed against
+// that parent, while the canonical head's total difficulty is the one that cannot be read,
+// and the arithmetic used to dereference the missing value.
+func TestWriteBlockWithStateReportsMissingLocalTd(t *testing.T) {
+	chain, blocks, engine, genDb := newMissingTdChain(t, 4, 4) // head at #4
+
+	// A side block on #3 that competes with the canonical #4. Importing it executes it,
+	// so a child of it can be built on its state, and its own total difficulty is stored.
+	side, _ := GenerateChain(params.TestChainConfig, blocks[2], engine, genDb, 1, func(i int, b *BlockGen) {
+		// A different coinbase keeps the side block from reproducing the canonical #4.
+		b.SetCoinbase(common.Address{2})
+	})
+	if n, err := chain.InsertChain(side); err != nil {
+		t.Fatalf("block %d: failed to insert the side block: %v", n, err)
+	}
+	if head := chain.CurrentBlock().Number.Uint64(); head != 4 {
+		t.Fatalf("precondition: the side block took over the head, at #%d want #4", head)
+	}
+	child, _ := GenerateChain(params.TestChainConfig, side[0], engine, genDb, 1, nil)
+
+	// The child can be executed on the state of the side block; only the head's total
+	// difficulty is gone, which used to dereference the missing number.
+	statedb, err := state.NewWithChainConfig(side[0].Root(), chain.stateCache, chain.chainConfig)
+	if err != nil {
+		t.Fatalf("failed to open the parent state: %v", err)
+	}
+	dropTd(t, chain, blocks[3])
+
+	if _, err := chain.WriteBlockWithState(child[0], nil, statedb, nil, nil); !errors.Is(err, errMissingTotalDifficulty) {
+		t.Fatalf("unexpected error: have %v want %v", err, errMissingTotalDifficulty)
+	}
+	if want := uint64(4); chain.CurrentBlock().Number.Uint64() != want {
+		t.Fatalf("unexpected head number: have %d want %d", chain.CurrentBlock().Number.Uint64(), want)
+	}
+}

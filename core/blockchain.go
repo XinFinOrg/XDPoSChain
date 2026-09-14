@@ -91,8 +91,13 @@ var (
 
 	errInsertionInterrupted = errors.New("insertion is interrupted")
 	errChainStopped         = errors.New("blockchain is stopped")
-	errInvalidOldChain      = errors.New("invalid old chain")
-	errInvalidNewChain      = errors.New("invalid new chain")
+	// errMissingTotalDifficulty is returned when a block cannot be weighed against the
+	// head because this node has no total difficulty on disk for it or for its parent.
+	// It describes what this node can read rather than the block itself, so the callers
+	// must not report it as a consensus failure.
+	errMissingTotalDifficulty = errors.New("missing total difficulty")
+	errInvalidOldChain        = errors.New("invalid old chain")
+	errInvalidNewChain        = errors.New("invalid new chain")
 
 	CheckpointCh = make(chan int)
 )
@@ -1506,6 +1511,14 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	// Make sure no inconsistent state is leaked during insertion
 	currentBlock := bc.CurrentBlock()
 	localTd := bc.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64())
+	if localTd == nil {
+		// Without the head's total difficulty the block cannot be weighed against the
+		// chain it is competing with, and nothing about the block says it is bad: this
+		// node simply has no number to compare. Report instead of dereferencing it.
+		log.Warn("Block has no comparable local total difficulty",
+			"number", block.NumberU64(), "hash", block.Hash(), "parent", block.ParentHash())
+		return NonStatTy, errMissingTotalDifficulty
+	}
 	externTd := new(big.Int).Add(block.Difficulty(), ptd)
 
 	// Irrelevant of the canonical status, write the block itself to the database.
@@ -2079,6 +2092,14 @@ func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (i
 		}
 		if externTd == nil {
 			externTd = bc.GetTd(block.ParentHash(), block.NumberU64()-1)
+			if externTd == nil {
+				// Without the parent's total difficulty the segment cannot be weighed
+				// against the head, and nothing about the blocks says they are bad: this
+				// node simply has no number to compare.
+				log.Warn("Sidechain segment has no comparable total difficulty",
+					"number", block.NumberU64(), "parent", block.ParentHash(), "index", it.index)
+				return it.index, nil, nil, errMissingTotalDifficulty
+			}
 		}
 		externTd = new(big.Int).Add(externTd, block.Difficulty())
 
@@ -2100,6 +2121,13 @@ func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (i
 	// If the externTd was larger than our local TD, we now need to reimport the previous
 	// blocks to regenerate the required state
 	localTd := bc.GetTd(bc.CurrentBlock().Hash(), current)
+	if localTd == nil {
+		// The segment is stored, but this node cannot read the head's total difficulty to
+		// weigh it against: a local condition, not something to blame the blocks for.
+		log.Warn("Sidechain segment has no comparable local total difficulty",
+			"number", current, "hash", bc.CurrentBlock().Hash(), "index", it.index)
+		return it.index, nil, nil, errMissingTotalDifficulty
+	}
 	if localTd.Cmp(externTd) > 0 {
 		log.Info("Sidechain written to disk", "start", it.first().NumberU64(), "end", it.previous().Number, "sidetd", externTd, "localtd", localTd)
 		return it.index, nil, nil, err
@@ -2230,7 +2258,16 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 		// until the competitor TD goes above the canonical TD
 		currentBlock := bc.CurrentBlock()
 		localTd := bc.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64())
-		externTd := new(big.Int).Add(bc.GetTd(block.ParentHash(), block.NumberU64()-1), block.Difficulty())
+		parentTd := bc.GetTd(block.ParentHash(), block.NumberU64()-1)
+		if localTd == nil || parentTd == nil {
+			// Without both total difficulties the competitor cannot be weighed against
+			// this node's chain. That says nothing about the block, so the caller must not
+			// report it as a consensus failure.
+			log.Warn("Competing block has no comparable total difficulty",
+				"number", block.NumberU64(), "hash", block.Hash(), "parent", block.ParentHash())
+			return nil, errMissingTotalDifficulty
+		}
+		externTd := new(big.Int).Add(parentTd, block.Difficulty())
 		if localTd.Cmp(externTd) > 0 {
 			return nil, err
 		}
