@@ -2287,6 +2287,10 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		// If the chain is terminating, stop processing blocks
 		if bc.insertStopped() {
 			log.Debug("Premature abort during blocks processing")
+			// Report the interruption instead of leaving err nil: InterruptInsert documents
+			// that insertion methods return ErrInsertionInterrupted, and the caller would
+			// otherwise believe the remaining blocks were imported.
+			err = ErrInsertionInterrupted
 			break
 		}
 		// If the header is a banned one, straight out abort
@@ -2301,9 +2305,13 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 			parent = bc.GetHeader(block.ParentHash(), block.NumberU64()-1)
 		}
 		// Create a new statedb using the parent block and report an error if it fails.
-		statedb, err := state.NewWithChainConfig(parent.Root, bc.stateCache, bc.chainConfig)
-		if err != nil {
-			return it.index, events, coalescedLogs, err
+		//
+		// stateErr rather than err: err is the loop's own - the loop condition and the post
+		// statement carry it, and the ErrInsertionInterrupted assignment above writes it.
+		// The two are different values and have to keep different names.
+		statedb, stateErr := state.NewWithChainConfig(parent.Root, bc.stateCache, bc.chainConfig)
+		if stateErr != nil {
+			return it.index, events, coalescedLogs, stateErr
 		}
 
 		// If we have a followup block, run that against the current state to pre-cache
@@ -2403,7 +2411,17 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		log.Debug("New ChainHeadEvent ", "number", lastCanon.NumberU64(), "hash", lastCanon.Hash())
 		events = append(events, ChainHeadEvent{lastCanon})
 	}
-	return it.index, events, coalescedLogs, nil
+	// Surface what stopped the batch before the caller turns it into a peer drop: the
+	// downloader only logs this at debug level, which used to leave no usable trace.
+	//
+	// Only a failure the caller will blame on the peer is worth a warning. A local condition
+	// says nothing about the blocks, and the downloader ends the cycle for it
+	// instead of dropping the peer - the same predicate as the reportBlock exclusion above.
+	if err != nil && block != nil && !IsLocalInsertError(err) {
+		log.Warn("Blockchain import aborted", "number", block.Number(), "hash", block.Hash(),
+			"index", it.index, "batch", len(chain), "err", err)
+	}
+	return it.index, events, coalescedLogs, err
 }
 
 // blockProcessingResult is a summary of block processing
