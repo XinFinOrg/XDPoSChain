@@ -1733,6 +1733,9 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 	for i, result := range results {
 		blocks[i] = types.NewBlockWithHeader(result.Header).WithBody(result.body())
 	}
+	// Whether this batch moved the head is the second half of the handoff decision below, so
+	// the head has to be read before the segments are inserted. See handoffProposedBlock.
+	before := d.blockchain.CurrentBlock()
 	// For XDPoS, the header verification of an epoch-switch block reads the
 	// snapshot stored at its gap block, and that snapshot is only written while
 	// the gap block itself is being executed: for v2 it travels in the batch
@@ -1758,6 +1761,11 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 			// A local condition says nothing about the peer that served the blocks, so it must
 			// not become the errInvalidChain that drops it. See localInsertFailure.
 			if d.blockchain.IsLocalInsertError(err) {
+				// The blocks below the one that failed have been dealt with, so the batch can have
+				// moved the head before it stopped; the consensus state has to follow it here too.
+				// The next cycle re-delivers the same range, which no longer moves the head and
+				// therefore hands nothing over.
+				d.handoffProposedBlock(before)
 				return d.localInsertFailure(localInsertStop{where: whereBlocks, from: segment[0].Number(), index: index}, err)
 			}
 			// The failing block is nameable while the index is inside the batch, which it always
@@ -1769,17 +1777,55 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 			} else {
 				log.Debug("Downloaded item processing failed", "index", index, "batch", len(segment), "err", err)
 			}
+			// The prefix this segment did import is on the chain, so the head it left behind is
+			// the one the consensus state has to advance to, for the reason the local branch
+			// above gives.
+			d.handoffProposedBlock(before)
 			return fmt.Errorf("%w: %v", errInvalidChain, err)
 		}
 	}
-	if d.handleProposedBlock != nil {
-		header := blocks[len(blocks)-1].Header()
-		err := d.handleProposedBlock(header)
-		if err != nil {
-			log.Info("[downloader] handle proposed block has error", "err", err, "block hash", header.Hash(), "number", header.Number)
-		}
-	}
+	d.handoffProposedBlock(before)
 	return nil
+}
+
+// handoffProposedBlock advances the consensus state - QC and vote - to the head this batch left
+// behind, which is the block the engine has to be handed rather than the batch's own tail: a
+// fork batch is stored as side entries and a tail dated ahead of this node's clock is only
+// parked in the future queue, so either tail is a block that is not in the chain, and handing
+// one over would advance QC and vote for it. procFutureBlocks answers for the parked tail
+// itself.
+//
+// What decides is whether the head moved at all, so the batch's last block is not read here: a
+// batch whose own tail became the head is covered, and one that left the head where it is is
+// not one to advance the consensus state with.
+//
+// before and head are two unlocked reads, so they do not bracket the insertion: a batch is
+// inserted one segment at a time and the chain lock is released between them, and the block
+// fetcher keeps importing announced blocks alongside the downloader. A head that moved for one
+// of those rather than for this batch is handed over too, repeating a call the other importer
+// already made. That is a redundant advance, not a wrong one - the engine answers a second call
+// for the same block by round - and an advance cannot be missed, because the head never returns
+// to the hash it held before the batch.
+func (d *Downloader) handoffProposedBlock(before *types.Header) {
+	if d.handleProposedBlock == nil {
+		return
+	}
+	head := d.blockchain.CurrentBlock()
+	switch {
+	case head == nil:
+		log.Debug("[downloader] skip the proposed block handler, this node reports no head")
+		return
+	case before != nil && head.Hash() == before.Hash():
+		// A batch re-delivered for a range this node already holds can end on the current head,
+		// so the head is where it was: handing it to the engine again would reprocess that
+		// block's QC and ask whether it may vote for it a second time.
+		log.Debug("[downloader] skip the proposed block handler, the batch did not move the head",
+			"block hash", head.Hash(), "number", head.Number)
+		return
+	}
+	if err := d.handleProposedBlock(head); err != nil {
+		log.Info("[downloader] handle proposed block has error", "err", err, "block hash", head.Hash(), "number", head.Number)
+	}
 }
 
 // splitBlocksForVerification splits a contiguous batch of blocks into segments
