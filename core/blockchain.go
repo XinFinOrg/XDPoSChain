@@ -1517,6 +1517,12 @@ func (bc *BlockChain) Rollback(chain []common.Hash) {
 
 // InsertReceiptChain attempts to complete an already existing header chain with
 // transaction and receipt data.
+//
+// The returned index says where the import stopped: a block this node cannot finish (unknown
+// header, receipts that do not derive) reports its own index; an interruption reports the
+// first block the database does not hold, i.e. the first of the current batch rather than the
+// one the loop was on; a write the database refused reports 0, since that batch cannot be
+// split and under-reporting cannot make a caller think a block was written.
 func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain []types.Receipts) (int, error) {
 	// We don't require the chainMu here since we want to maximize the
 	// concurrency of header insertion and receipt insertion.
@@ -1543,12 +1549,20 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		start = time.Now()
 		bytes = 0
 		batch = bc.db.NewBatch()
+		// The first block the database does not hold. Everything below it is on disk;
+		// every block walked since is pending in the batch or not walked yet.
+		firstPending = 0
 	)
 	for i, block := range blockChain {
 		receipts := receiptChain[i]
-		// Short circuit insertion if shutting down or processing failed
+		// Short circuit insertion if shutting down or processing failed.
+		//
+		// The index is firstPending, not the cursor: the blocks the batch holds were never
+		// written, so reporting the cursor would claim a half-written batch as complete. The
+		// sentinel is local, so the downloader reports it as errLocalInsertFailure rather
+		// than as errCancelContentProcessing and does not blame the peer.
 		if bc.insertStopped() {
-			return 0, nil
+			return firstPending, ErrInsertionInterrupted
 		}
 		blockHash, blockNumber := block.Hash(), block.NumberU64()
 		// Short circuit if the owner header is unknown
@@ -1557,6 +1571,13 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		}
 		// Skip if the entire data is already known
 		if bc.HasBlock(blockHash, blockNumber) {
+			// The block is on disk, so it belongs to the prefix firstPending describes - but
+			// only while nothing is pending: a batch already holding writes would reach the
+			// database after this block, and counting this one would claim that batch too.
+			// firstPending == i says exactly that.
+			if firstPending == i {
+				firstPending = i + 1
+			}
 			stats.ignored++
 			continue
 		}
@@ -1580,6 +1601,8 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			}
 			bytes += batch.ValueSize()
 			batch.Reset()
+			// Everything up to this block went to disk with the batch that just went out.
+			firstPending = i + 1
 		}
 		stats.processed++
 	}
