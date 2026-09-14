@@ -107,11 +107,11 @@
               "maxExponent": 0
             }
           },
-          "1539900": {
+          "1683000": {
             "maxMasternodes": 10,
             "maxProtectorNodes": 3,
             "maxObserverNodes": 10,
-            "switchRound": 1539900,
+            "switchRound": 1683000,
             "minePeriod": 2,
             "timeoutSyncThreshold": 3,
             "timeoutPeriod": 10,
