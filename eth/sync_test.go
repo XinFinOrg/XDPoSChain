@@ -27,6 +27,8 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/consensus"
+	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -470,5 +472,48 @@ func testFastSyncDisabling(t *testing.T, protocol int) {
 		case <-ticker.C:
 			pmEmpty.synchronise(pmEmpty.peers.BestPeer())
 		}
+	}
+}
+
+// Tests that a finished sync cycle is charged to the peer that served it only when
+// the downloader says the failure is the peer's to answer for: a cycle this node
+// ended itself - here an interrupted import - leaves the peer's backoff alone,
+// while a batch the peer cannot link to our chain is recorded against it.
+func TestHandleSyncResult(t *testing.T) {
+	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	defer pm.Stop()
+
+	const id = "sync-result-peer"
+
+	// A local condition of the chain reaches the syncer wrapped, the shape the
+	// downloader hands over: the peer must not be charged for it.
+	backoff := newSyncBackoff()
+	local := fmt.Errorf("local insert failure: %w", core.ErrInsertionInterrupted)
+	pm.handleSyncResult(syncResult{peer: id, err: local}, backoff)
+	if backoff.blocked(id, time.Now()) || backoff.peers[id] != nil {
+		t.Fatalf("a local condition backed the peer off: %+v", backoff.peers[id])
+	}
+	// A failure the peer can be held to is recorded...
+	pm.handleSyncResult(syncResult{peer: id, err: consensus.ErrUnknownAncestor}, backoff)
+	if !backoff.blocked(id, time.Now()) {
+		t.Fatalf("a peer failure did not back the peer off")
+	}
+	if s := backoff.peers[id]; s == nil || s.failures != 1 {
+		t.Fatalf("peer failure record = %+v, want one failure", s)
+	}
+	// ...and a further local condition leaves that record where it is: the cycle is
+	// no evidence either way about the peer, so the backoff neither charges it again
+	// nor clears what it has already earned.
+	pm.handleSyncResult(syncResult{peer: id, err: local}, backoff)
+	if !backoff.blocked(id, time.Now()) {
+		t.Fatalf("a local condition cleared the peer's backoff: %+v", backoff.peers[id])
+	}
+	if s := backoff.peers[id]; s == nil || s.failures != 1 {
+		t.Fatalf("a local condition changed the peer's record: %+v", s)
+	}
+	// ...and a later successful cycle clears it.
+	pm.handleSyncResult(syncResult{peer: id}, backoff)
+	if backoff.blocked(id, time.Now()) || backoff.peers[id] != nil {
+		t.Fatalf("a successful cycle did not clear the peer's backoff")
 	}
 }

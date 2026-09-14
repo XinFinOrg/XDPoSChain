@@ -18,6 +18,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/consensus"
@@ -32,6 +33,38 @@ func TestClassifyInsertErr(t *testing.T) {
 		err  error
 		want insertErrClass
 	}{
+		{
+			name: "interrupted import",
+			err:  ErrInsertionInterrupted,
+			want: insertErrClass{retryable: true, local: true},
+		},
+		{
+			name: "stopped chain",
+			err:  ErrChainStopped,
+			want: insertErrClass{retryable: true, local: true},
+		},
+		{
+			// Local but not retryable: every condition it carries is read the same way on the
+			// next attempt, so keeping the block parked would re-verify it on every
+			// futureBlocksLoop tick.
+			name: "local insert condition",
+			err:  ErrLocalInsertCondition,
+			want: insertErrClass{local: true},
+		},
+		{
+			// The one local condition that heals: the clock catches up, and the block that
+			// could not be queued is queued then.
+			name: "block ahead of the local clock",
+			err:  ErrLocalInsertAheadOfClock,
+			want: insertErrClass{retryable: true, local: true},
+		},
+		{
+			// Local but not retryable: a refused reorg is refused again on every retry, so the
+			// parked block has to be evicted rather than re-verified.
+			name: "refused reorg",
+			err:  ErrLocalInsertRefused,
+			want: insertErrClass{local: true},
+		},
 		{
 			name: "known block",
 			err:  ErrKnownBlock,
@@ -78,7 +111,23 @@ func TestClassifyInsertErrUnwraps(t *testing.T) {
 		name string
 		err  error
 		want insertErrClass
-	}{}
+	}{
+		{
+			// What writeKnownBlock returns for a reorg this node refuses. Retrying cannot help,
+			// so procFutureBlocks has to evict the block rather than re-run the refusal every
+			// tick.
+			name: "refused reorg",
+			err:  fmt.Errorf("download: %w", fmt.Errorf("%w: %v", ErrLocalInsertRefused, errors.New("stop reorg, blockchain is under forking attack"))),
+			want: insertErrClass{local: true},
+		},
+		{
+			// What insertSideChain returns for a block dated ahead of the local clock, which
+			// heals once the clock catches up.
+			name: "clock skew",
+			err:  fmt.Errorf("download: %w", fmt.Errorf("%w: %w", ErrLocalInsertAheadOfClock, consensus.ErrFutureBlock)),
+			want: insertErrClass{retryable: true, local: true},
+		},
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := classifyInsertErr(tt.err); got != tt.want {
@@ -104,5 +153,76 @@ func TestIsLocalInsertErrorIsTheLocalFlag(t *testing.T) {
 		if got, want := IsLocalInsertError(err), classifyInsertErr(err).local; got != want {
 			t.Errorf("IsLocalInsertError(%v) = %v, want the local flag %v", err, got, want)
 		}
+	}
+}
+
+// TestDescribeLocalInsertFailure pins the reason each local sentinel reports, and that a failure
+// the blocks are to blame for stays with the caller. The file importers take their message from
+// here, so a sentinel whose reason is missing would be reported as "invalid block <n>".
+//
+// The reason is deliberately not a claim about a retry: ErrLocalInsertCondition and
+// ErrLocalInsertAheadOfClock differ in classifyInsertErr, and both only say that this very input
+// cannot be imported now.
+func TestDescribeLocalInsertFailure(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"refused reorg", ErrLocalInsertRefused, "cannot be imported"},
+		{"local condition", ErrLocalInsertCondition, "cannot be imported"},
+		{"ahead of the local clock", ErrLocalInsertAheadOfClock, "cannot be imported"},
+		{"known block", ErrKnownBlock, "already imported"},
+		{"pruned ancestor", consensus.ErrPrunedAncestor, "ancestor state is pruned"},
+		{"interrupted import", ErrInsertionInterrupted, "interrupted during import"},
+		{"stopped chain", ErrChainStopped, "interrupted during import"},
+		// Not "interrupted during import": an inconsistent local chain is not a state a file or
+		// a retry can get past.
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reason, ok := DescribeLocalInsertFailure(tt.err)
+			if !ok {
+				t.Fatalf("DescribeLocalInsertFailure(%v) must report a local failure", tt.err)
+			}
+			if reason != tt.want {
+				t.Errorf("DescribeLocalInsertFailure(%v) = %q, want %q", tt.err, reason, tt.want)
+			}
+		})
+	}
+	// A future block is retryable but not local, and an unknown ancestor is the peer's: the
+	// caller words both itself.
+	for _, err := range []error{
+		consensus.ErrFutureBlock,
+		consensus.ErrUnknownAncestor,
+		errors.New("derived state root mismatch"),
+		nil,
+	} {
+		if reason, ok := DescribeLocalInsertFailure(err); ok {
+			t.Errorf("DescribeLocalInsertFailure(%v) = %q, want it left to the caller", err, reason)
+		}
+	}
+}
+
+// TestDescribeLocalInsertFailurePrefersTheNamedEntry pins the one case that tells the two
+// questions of the table apart: the class comes from the first entry the error matches, the
+// wording from the first matching entry that carries one. An error matching an unnamed local
+// sentinel first and a named one after it is the only shape that can separate them, and a
+// single scan answering both questions from its first hit would silently change the wording.
+func TestDescribeLocalInsertFailurePrefersTheNamedEntry(t *testing.T) {
+	// ErrInsertionInterrupted comes first in the table and carries no wording of its own;
+	// ErrKnownBlock comes after it and is named.
+	err := fmt.Errorf("%w: %w", ErrInsertionInterrupted, ErrKnownBlock)
+
+	// The class stays the first matching entry's, so the block may stay parked.
+	if got, want := classifyInsertErr(err), (insertErrClass{retryable: true, local: true}); got != want {
+		t.Errorf("classifyInsertErr(%v) = %+v, want the class of the first matching entry %+v", err, got, want)
+	}
+	reason, ok := DescribeLocalInsertFailure(err)
+	if !ok {
+		t.Fatalf("DescribeLocalInsertFailure(%v) must report a local failure", err)
+	}
+	if want := "already imported"; reason != want {
+		t.Errorf("DescribeLocalInsertFailure(%v) = %q, want the named entry's wording %q", err, reason, want)
 	}
 }

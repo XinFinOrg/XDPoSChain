@@ -91,10 +91,22 @@ var (
 	errInvalidReceipt          = errors.New("retrieved receipt is invalid")
 	errCancelStateFetch        = errors.New("state data download canceled (requested)")
 	errCancelContentProcessing = errors.New("content processing canceled (requested)")
-	errCanceled                = errors.New("syncing canceled (requested)")
-	errNoSyncActive            = errors.New("no sync active")
-	errTooOld                  = fmt.Errorf("peer doesn't speak recent enough protocol version (need version >= %d)", minProtocolVer)
-	errEnoughBlock             = errors.New("downloader download enough block")
+	// errLocalInsertFailure wraps an insertion that failed for a local condition of this node -
+	// the chain is stopping, the import was cut short by InterruptInsert, a reorg it refuses, or
+	// a batch that ran into a block already stored with its state. It must not be reported as
+	// errCancelContentProcessing, which would present a condition the operator has to act on as
+	// a cancellation somebody requested; the cause is kept by wrapping, and Synchronise does not
+	// drop the peer for it.
+	//
+	// Returning it ends the sync cycle instead of skipping the offending segment, and that is
+	// the intent: a batch is contiguous and splitBlocksForVerification only ever cuts it between
+	// a block and its child, so a segment that failed leaves the next one unable to link.
+	// Synchronise re-selects a peer once the cycle has ended.
+	errLocalInsertFailure = errors.New("local insert failure")
+	errCanceled           = errors.New("syncing canceled (requested)")
+	errNoSyncActive       = errors.New("no sync active")
+	errTooOld             = fmt.Errorf("peer doesn't speak recent enough protocol version (need version >= %d)", minProtocolVer)
+	errEnoughBlock        = errors.New("downloader download enough block")
 )
 
 type Downloader struct {
@@ -217,6 +229,12 @@ type BlockChain interface {
 
 	// InsertReceiptChain inserts a batch of receipts into the local chain.
 	InsertReceiptChain(types.Blocks, []types.Receipts) (int, error)
+
+	// IsLocalInsertError reports whether an InsertChain or InsertReceiptChain failure
+	// describes a local condition of this node rather than a fault of the blocks. The chain
+	// owns the classification; the downloader needs the verdict to decide whether the peer may
+	// be blamed.
+	IsLocalInsertError(err error) bool
 
 	// TrieDB retrieves the low level trie database used for interacting
 	// with trie nodes.
@@ -1629,6 +1647,72 @@ func (d *Downloader) processFullSyncContent(height uint64) error {
 	}
 }
 
+// headNumber returns the current head number, or 0 when there is none yet. A local insertion
+// failure leaves the head where it is, so logging it makes a repeating cancel visible.
+func (d *Downloader) headNumber() uint64 {
+	if head := d.blockchain.CurrentBlock(); head != nil {
+		return head.Number.Uint64()
+	}
+	return 0
+}
+
+// localInsertWhere names the batch an insert stopped on: block segments, receipt batches, or the
+// fast sync pivot.
+type localInsertWhere string
+
+const (
+	whereBlocks   localInsertWhere = "blocks"
+	whereReceipts localInsertWhere = "receipts"
+	wherePivot    localInsertWhere = "pivot"
+)
+
+// localInsertStop names where a local insert condition stopped the downloader: the batch, its
+// first block and the failing index within it. pivot is the block a pivot fetch failed on, the
+// one call site that names its block by hash; it is nil for every other batch.
+type localInsertStop struct {
+	where localInsertWhere
+	from  *big.Int
+	index int
+	pivot *common.Hash
+}
+
+// localInsertFailure reports an insertion that failed for a local condition of this node. It
+// lands on errLocalInsertFailure rather than errCancelContentProcessing (which says the content
+// processing was asked to stop) or errInvalidChain (the branch that drops the peer): the cause is
+// kept by wrapping, and Synchronise re-selects a peer once the cycle has ended.
+//
+// Giving up the whole cycle instead of skipping the offending segment is the intent: a batch is
+// contiguous and splitBlocksForVerification only ever cuts it between a block and its child, so a
+// segment that failed leaves the next one unable to link.
+//
+// where, from and index name the batch and the failing block; they travel together on every call
+// site, which is why they are one localInsertStop rather than three arguments.
+func (d *Downloader) localInsertFailure(stop localInsertStop, cause error) error {
+	fields := []interface{}{"where", string(stop.where), "from", stop.from, "index", stop.index, "head", d.headNumber()}
+	if stop.pivot != nil {
+		fields = append(fields, "hash", *stop.pivot)
+	}
+	fields = append(fields, "err", cause)
+	// Info rather than Debug: the head stays where it is, so this is what a stalled sync looks
+	// like, and the cause must be visible at the default log level.
+	log.Info("Downloaded item processing stopped by a local condition", fields...)
+	return fmt.Errorf("%w: %w", errLocalInsertFailure, cause)
+}
+
+// BackoffOnError reports whether a sync cycle that ended with err may be recorded against the
+// peer that served it. errBusy and errCanceled are cycles this node ended itself; the two
+// errCancel* sentinels are the halves of a cancel it asked for; and a local condition of the
+// chain (see BlockChain.IsLocalInsertError) is not the peer's doing either. Synchronise returns
+// all of them without blaming the peer, so this backoff has to agree with that verdict.
+// Everything else stays the peer's to answer for.
+func (d *Downloader) BackoffOnError(err error) bool {
+	switch err {
+	case nil, errBusy, errCanceled, errCancelStateFetch, errCancelContentProcessing:
+		return false
+	}
+	return !d.blockchain.IsLocalInsertError(err)
+}
+
 func (d *Downloader) importBlockResults(results []*fetchResult) error {
 	// Check for any early termination requests
 	if len(results) == 0 {
@@ -1671,6 +1755,11 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 	// however the batch is split.
 	for _, segment := range d.splitBlocksForVerification(blocks) {
 		if index, err := d.blockchain.InsertChain(segment); err != nil {
+			// A local condition says nothing about the peer that served the blocks, so it must
+			// not become the errInvalidChain that drops it. See localInsertFailure.
+			if d.blockchain.IsLocalInsertError(err) {
+				return d.localInsertFailure(localInsertStop{where: whereBlocks, from: segment[0].Number(), index: index}, err)
+			}
 			if index < len(segment) {
 				log.Debug("Downloaded item processing failed", "number", segment[index].Number(), "hash", segment[index].Hash(), "err", err)
 			} else {
@@ -1999,6 +2088,11 @@ func (d *Downloader) commitFastSyncData(results []*fetchResult, stateSync *state
 		receipts[i] = result.Receipts
 	}
 	if index, err := d.blockchain.InsertReceiptChain(blocks, receipts); err != nil {
+		// A local failure says nothing about the peer that served the batch. See
+		// localInsertFailure.
+		if d.blockchain.IsLocalInsertError(err) {
+			return d.localInsertFailure(localInsertStop{where: whereReceipts, from: results[0].Header.Number, index: index}, err)
+		}
 		log.Debug("Downloaded item processing failed", "number", results[index].Header.Number, "hash", results[index].Header.Hash(), "err", err)
 		return fmt.Errorf("%w: %v", errInvalidChain, err)
 	}
@@ -2008,7 +2102,13 @@ func (d *Downloader) commitFastSyncData(results []*fetchResult, stateSync *state
 func (d *Downloader) commitPivotBlock(result *fetchResult) error {
 	block := types.NewBlockWithHeader(result.Header).WithBody(result.body())
 	log.Debug("Committing fast sync pivot as new head", "number", block.Number(), "hash", block.Hash())
-	if _, err := d.blockchain.InsertReceiptChain([]*types.Block{block}, []types.Receipts{result.Receipts}); err != nil {
+	if index, err := d.blockchain.InsertReceiptChain([]*types.Block{block}, []types.Receipts{result.Receipts}); err != nil {
+		// A local failure says nothing about the pivot the peer served: it ends the cycle
+		// instead of dropping the peer. See localInsertFailure.
+		if d.blockchain.IsLocalInsertError(err) {
+			hash := block.Hash()
+			return d.localInsertFailure(localInsertStop{where: wherePivot, from: block.Number(), index: index, pivot: &hash}, err)
+		}
 		return err
 	}
 	if err := d.blockchain.FastSyncCommitHead(block.Hash()); err != nil {

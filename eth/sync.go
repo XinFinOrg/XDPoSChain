@@ -227,17 +227,33 @@ func (pm *ProtocolManager) syncer() {
 
 		case res := <-syncDone:
 			syncing = false
-			if res.err == nil {
-				backoff.succeed(res.peer)
-				break
-			}
-			failures, delay := backoff.fail(res.peer, time.Now())
-			log.Info("Synchronisation failed, backing off peer", "peer", res.peer, "failures", failures, "retryIn", delay, "err", res.err)
+			pm.handleSyncResult(res, backoff)
 
 		case <-pm.noMorePeers:
 			return
 		}
 	}
+}
+
+// handleSyncResult folds one finished sync cycle into the peer's backoff state.
+//
+// The downloader owns the verdict on whether a failed cycle may be charged to the peer that
+// served it: a cycle this node ended itself - a local condition of the chain, an import it cut
+// short, a cancel it asked for, a download already running - says nothing about the peer, so
+// the backoff has to agree with that verdict. See downloader.BackoffOnError. Leaving a
+// charged-for peer's recorded failures in place, rather than clearing them, is deliberate: the
+// cycle is no evidence either way.
+func (pm *ProtocolManager) handleSyncResult(res syncResult, backoff *syncBackoff) {
+	if res.err == nil {
+		backoff.succeed(res.peer)
+		return
+	}
+	if !pm.downloader.BackoffOnError(res.err) {
+		log.Info("Synchronisation stopped by a local condition, peer not backed off", "peer", res.peer, "err", res.err)
+		return
+	}
+	failures, delay := backoff.fail(res.peer, time.Now())
+	log.Info("Synchronisation failed, backing off peer", "peer", res.peer, "failures", failures, "retryIn", delay, "err", res.err)
 }
 
 // requestSync asks the syncer to sync with a peer that announced a heavier
