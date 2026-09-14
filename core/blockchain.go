@@ -2183,7 +2183,12 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 func (bc *BlockChain) addFutureBlock(block *types.Block) error {
 	max := uint64(time.Now().Unix()) + maxTimeFutureBlocks
 	if block.Time() > max {
-		return fmt.Errorf("future block timestamp %v > allowed %v", block.Time(), max)
+		// Nothing is wrong with the block, it is this node's clock that cannot place it yet,
+		// so the failure must not become an errInvalidChain that drops the peer that served
+		// it. The clock is the one local condition a retry repairs, so the sentinel is the
+		// retryable one and procFutureBlocks has to keep the block parked.
+		return fmt.Errorf("%w: block time %v is more than %ds ahead of the local clock",
+			ErrLocalInsertAheadOfClock, block.Time(), maxTimeFutureBlocks)
 	}
 	bc.futureBlocks.Add(block.Hash(), block)
 	return nil
