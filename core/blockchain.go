@@ -2930,7 +2930,22 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, ve
 	for ; block != nil && (errors.Is(err, consensus.ErrPrunedAncestor)); block, err = it.next() {
 		// Check the canonical state root for that number
 		if number := block.NumberU64(); current >= number {
-			if canonical := bc.GetBlockByNumber(number); canonical != nil && canonical.Root() == block.Root() {
+			canonical := bc.GetBlockByNumber(number)
+			if canonical != nil && canonical.Hash() == block.Hash() {
+				// Not a sidechain block: this is a re-import of a canonical block whose state is
+				// pruned. Carry its total difficulty over, as the baseline the sidechain blocks
+				// above it accumulate onto - a batch made only of such blocks would otherwise
+				// leave externTd nil. The value has to follow the last one seen: keeping the
+				// first would underestimate the segment.
+				//
+				// A record this node cannot read is not carried over either: keeping the previous
+				// value would weigh the segment from an earlier canonical block. Clearing it hands
+				// the case to the guards around this value, and a later readable record restores
+				// the baseline, so a hole only weighs in at the fork point.
+				externTd = bc.GetTd(block.Hash(), number)
+				continue
+			}
+			if canonical != nil && canonical.Root() == block.Root() {
 				// This is most likely a shadow-state attack. When a fork is imported into the
 				// database, and it eventually reaches a block height which is not pruned, we
 				// just found that the state already exist! This means that the sidechain block
@@ -3065,6 +3080,14 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, ve
 		// The whole batch was consumed: the stored prefix ended in the adopted block and the
 		// rest was imported on top of it, so the index is the batch length.
 		return len(it.chain), withChainHeadEvent(events, adoptedHead), logs, nil
+	}
+	// A batch without a single sidechain block carries no total difficulty to compare, and
+	// added nothing to the chain either: every block was already stored and canonical. The
+	// scan error says nothing about the peer, this node's missing numbers being what stopped
+	// the segment, so it is reported as a local condition.
+	if externTd == nil {
+		log.Debug("Sidechain segment holds no sidechain block", "start", it.first().NumberU64(), "index", it.index)
+		return it.index, nil, nil, localConditionf("sidechain segment holds no sidechain block")
 	}
 	// If the externTd was larger than our local TD, we now need to reimport the previous
 	// blocks to regenerate the required state
