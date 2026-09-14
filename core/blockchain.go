@@ -2132,6 +2132,12 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		// If the chain is terminating, stop processing blocks
 		if bc.insertStopped() {
 			log.Debug("Premature abort during blocks processing")
+			// Report the interruption instead of leaving err nil: InterruptInsert
+			// documents that insertion methods return ErrInsertionInterrupted, and
+			// the caller would otherwise believe the remaining blocks were imported.
+			// This matches what writeBlockWithState and getResultBlock report when
+			// they notice the interruption while processing a block.
+			err = ErrInsertionInterrupted
 			break
 		}
 		// If the header is a banned one, straight out abort
@@ -2225,7 +2231,21 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		log.Debug("New ChainHeadEvent ", "number", lastCanon.NumberU64(), "hash", lastCanon.Hash())
 		events = append(events, ChainHeadEvent{lastCanon})
 	}
-	return it.index, events, coalescedLogs, nil
+	// Surface what stopped the batch before the caller turns it into a peer drop:
+	// the downloader only logs this at debug level, which used to leave no usable
+	// trace of why a batch was not imported.
+	//
+	// Only a failure the caller will blame on the peer is worth a warning. A local
+	// condition - an interrupted import, a stopped chain, a reorg this node refuses, a
+	// batch that ran into a block already stored with its state - says nothing about the
+	// blocks: the downloader cancels the content processing for it instead of dropping the
+	// peer, so warning about it would only add noise to a sync that is retrying. This is
+	// the same predicate as the reportBlock exclusion above.
+	if err != nil && block != nil && !IsLocalInsertError(err) {
+		log.Warn("Blockchain import aborted", "number", block.Number(), "hash", block.Hash(),
+			"index", it.index, "batch", len(chain), "err", err)
+	}
+	return it.index, events, coalescedLogs, err
 }
 
 // blockProcessingResult is a summary of block processing
