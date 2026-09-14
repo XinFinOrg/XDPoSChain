@@ -2238,10 +2238,49 @@ func (bc *BlockChain) addFutureBlock(block *types.Block) error {
 	return nil
 }
 
+// isQueueableImportErr reports whether a batch tail block should be parked in the
+// future queue instead of failing the import.
+func isQueueableImportErr(err error) bool {
+	return errors.Is(err, consensus.ErrUnknownAncestor) || errors.Is(err, consensus.ErrFutureBlock)
+}
+
+// queueFutureTail parks the batch tail in the future queue, starting at the given block whose
+// verification error err is queueable, and stops at the first block that fails verification
+// with a non-queueable error or at the end of the batch. XDPoS v1/v2 (under full verification)
+// check the timestamp before the parent lookup, so children of a future block surface as
+// ErrFutureBlock; engines that resolve the parent first, or XDPoS without fullVerify, answer
+// ErrUnknownAncestor instead, and the loop accepts both.
+//
+// It returns the block and error that stopped the queueing (stopped/stopErr) and a non-nil
+// abortErr when addFutureBlock rejected the enqueue and the import must fail whole. A non-nil
+// stopped always comes with a non-nil stopErr: a block left unqueued has passed verification,
+// which needs a stored parent - exactly what the block that stopped the queueing cannot have.
+//
+// Inside insertChain every future block is consumed here, so the sentinel never reaches a
+// caller that has to classify it - IsLocalInsertError states the same from the other side.
+func (bc *BlockChain) queueFutureTail(it *insertIterator, block *types.Block, err error) (stopped *types.Block, stopErr, abortErr error) {
+	for block != nil && isQueueableImportErr(err) {
+		if aerr := bc.addFutureBlock(block); aerr != nil {
+			return block, err, aerr
+		}
+		block, err = it.next()
+	}
+	return block, err, nil
+}
+
 // InsertChain attempts to insert the given batch of blocks in to the canonical
 // chain or, otherwise, create a fork. If an error is returned it will return
 // the index number of the failing block as well an error describing what went
 // wrong.
+//
+// A nil error does not imply every block was written: a tail failing with
+// ErrFutureBlock/ErrUnknownAncestor is parked in the future queue and processed later.
+//
+// A non-nil error does not imply that nothing was written either. The index returned is the
+// first block of the batch that did not make it, and the blocks below it have been dealt with
+// (imported, skipped as already known, or written as a side entry), their events and logs
+// fired with this call. A caller that has to tell a failed batch from one stopped for this
+// node's own condition therefore also asks IsLocalInsertError.
 //
 // After insertion is done, all accumulated events will be fired.
 func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
@@ -2344,13 +2383,15 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 
 	// First block is future, shove it (and all children) to the future queue (unknown ancestor)
 	case errors.Is(err, consensus.ErrFutureBlock) || (errors.Is(err, consensus.ErrUnknownAncestor) && bc.futureBlocks.Contains(it.first().ParentHash())):
-		for block != nil && (it.index == 0 || errors.Is(err, consensus.ErrUnknownAncestor)) {
-			if err := bc.addFutureBlock(block); err != nil {
-				return it.index, events, coalescedLogs, err
-			}
-			block, err = it.next()
+		stopped, stopErr, abortErr := bc.queueFutureTail(it, block, err)
+		if abortErr != nil {
+			return it.index, events, coalescedLogs, abortErr
 		}
-		return it.index, events, coalescedLogs, err
+		// The queueing stopped at a block that failed verification with a non-queueable
+		// error. Record the reject like the tail path below: classifyInsertErr is what says
+		// the local conditions and a future timestamp are legitimate states.
+		bc.reportBlockIfFault(stopped, stopErr)
+		return it.index, events, coalescedLogs, stopErr
 
 	// First block (and state) is known
 	//   1. We did a roll-back, and should now do a re-import
@@ -2409,7 +2450,10 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 
 	// Some other error occurred, abort
 	case err != nil:
-		bc.reportBlock(block, nil, err)
+		// The table decides whether the block is at fault, as it does for the two queue-stop
+		// paths. Behaviourally identical today, but it keeps the "is this a bad block" answer
+		// in one place if a local sentinel ever becomes reachable from verification.
+		bc.reportBlockIfFault(block, err)
 		return it.index, events, coalescedLogs, err
 	}
 
@@ -2567,18 +2611,35 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		bc.reportBlockIfFault(block, err)
 	}
 
-	// Any blocks remaining here? The only ones we care about are the future ones
+	// Any blocks remaining here? The only ones we care about are the future ones.
+	//
+	// Only a future block is parked here, unlike the first-block case of the switch above,
+	// which also accepts ErrUnknownAncestor when the parent is itself parked. This gate does
+	// not need that case: a batch is contiguous, so chain[i]'s parent is the chain[i-1] that
+	// was imported just before it, and the parent lookup cannot fail in the middle of it. A
+	// block that cannot be linked here therefore is not a future block, and reporting it is
+	// what lets the downloader hold the peer to it.
 	if block != nil && errors.Is(err, consensus.ErrFutureBlock) {
-		if err := bc.addFutureBlock(block); err != nil {
-			return it.index, events, coalescedLogs, err
+		var abortErr error
+		block, err, abortErr = bc.queueFutureTail(it, block, err)
+		if abortErr != nil {
+			return it.index, events, coalescedLogs, abortErr
 		}
-		block, err = it.next()
-
-		for ; block != nil && errors.Is(err, consensus.ErrUnknownAncestor); block, err = it.next() {
-			if err := bc.addFutureBlock(block); err != nil {
-				return it.index, events, coalescedLogs, err
-			}
-		}
+		// The queueing stopped at a block that failed verification with a non-queueable
+		// error. Record the reject like the first-block failure path: classifyInsertErr is
+		// what says the local conditions and a future timestamp are legitimate states.
+		bc.reportBlockIfFault(block, err)
+		// A stop on ErrKnownBlock is reported instead of adopted here, and this tail is the
+		// only place the sentinel can leave insertChain: the loop above consumes every known
+		// block it meets. That block is on disk with its state and the head sits below it, so
+		// the next batch picks it up, takes the ErrKnownBlock case above and adopts it. Adding
+		// a second adoption site would buy nothing for a shape the downloader does not produce
+		// (its batches are contiguous and split at gap blocks), and the sentinel is local, so
+		// the downloader ends the cycle instead of blaming the peer.
+		//
+		// Reaching this tail takes a block dated ahead of this node's clock, which is what
+		// parked the queueing: the file importers replay historical blocks and never meet the
+		// shape.
 	}
 
 	// Append a single chain head event if we've progressed the chain
