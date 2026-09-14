@@ -52,11 +52,13 @@ type insertErrClass struct {
 //	ErrUnknownAncestor       bad block        a batch that cannot be linked is the peer's
 //	anything else           bad block
 //
-// The four local sentinels that have no other class are marked as not bad blocks. They are
-// only ever raised inside this package, so they never reach a caller through the engine's
-// verification results. Writing a local interruption into the bad block database would
-// outlive the condition that caused it - a shutdown, a cancel, a clock that steps back - so
-// the code states the guarantee instead of relying on that reachability argument. IsLocalInsertError is the local flag, and ErrFutureBlock is the
+// The four local sentinels that have no other class are marked as not bad blocks, although
+// the reportBlock exclusions they replace would have recorded them had they ever arrived
+// there. They can not: they are only ever raised inside this package, so they never reach a
+// caller through the engine's verification results. Writing a local interruption into the
+// bad block database would outlive the condition that caused it - a shutdown, a cancel, a
+// clock that steps back - so the code states the guarantee instead of relying on that
+// reachability argument. IsLocalInsertError is the local flag, and ErrFutureBlock is the
 // retryable error that is not local on its own: the one path that can hand it out wraps it
 // as a local condition, see its comment there.
 //
@@ -93,14 +95,14 @@ func classifyInsertErr(err error) insertErrClass {
 // ErrUnknownAncestor is deliberately absent: a batch that cannot be linked to our chain is
 // something the peer can be held accountable for, and the downloader drops the peer for it.
 //
-// consensus.ErrFutureBlock is absent for a different reason again: a future block is queued
-// rather than classified as a failure of the block. The one path that can hand it out is the
-// early return of insertSideChain, and it does not hand out the sentinel itself: a block dated
-// ahead of the local clock is wrapped in ErrLocalInsertCondition there, because the only way a
-// segment far below the head can carry one is this node's clock having stepped back - the
-// monotonicity of block timestamps bounds such a block by the head, not by now. That is the same
-// cause addFutureBlock calls a local condition for a block past the future queue's window, so the
-// two paths agree.
+// consensus.ErrFutureBlock is absent for a different reason again: inside insertChain every
+// future block is consumed by queueFutureTail, so the error never reaches a caller that has to
+// classify it. The one path that can hand it out is the early return of insertSideChain, and it
+// does not hand out the sentinel itself: a block dated ahead of the local clock is wrapped in
+// ErrLocalInsertCondition there, because the only way a segment far below the head can carry one
+// is this node's clock having stepped back - the monotonicity of block timestamps bounds such a
+// block by the head, not by now. That is the same cause addFutureBlock calls a local condition
+// for a block past the future queue's window, so the two paths agree.
 func IsLocalInsertError(err error) bool {
 	return classifyInsertErr(err).local
 }
