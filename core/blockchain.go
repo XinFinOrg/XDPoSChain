@@ -86,15 +86,61 @@ var (
 	blockReorgAddMeter  = metrics.NewRegisteredMeter("chain/reorg/add", nil)
 	blockReorgDropMeter = metrics.NewRegisteredMeter("chain/reorg/drop", nil)
 
+	// Blocks a futureBlocksLoop pass took out of the queue for good. The queue is the only
+	// place a parked block lives before it is imported, so this counts the blocks that now
+	// have to be delivered again.
+	blockFutureEvictMeter = metrics.NewRegisteredMeter("chain/futureblocks/evictions", nil)
+
+	// Known blocks that were not adopted because they do not beat the head. The batch
+	// reports success without importing anything in that shape, so this is the only count
+	// of it - see writeKnownBlock and the prefix adoption of insertSideChain.
+	blockKnownNotAdoptedMeter = metrics.NewRegisteredMeter("chain/knownblocks/notadopted", nil)
+
 	blockPrefetchExecuteTimer   = metrics.NewRegisteredTimer("chain/prefetch/executes", nil)
 	blockPrefetchInterruptMeter = metrics.NewRegisteredMeter("chain/prefetch/interrupts", nil)
 
-	errInsertionInterrupted = errors.New("insertion is interrupted")
-	errChainStopped         = errors.New("blockchain is stopped")
-	errInvalidOldChain      = errors.New("invalid old chain")
-	errInvalidNewChain      = errors.New("invalid new chain")
+	// ErrInsertionInterrupted is returned by the chain insertion methods when the chain
+	// is terminating or an import was cut short by InterruptInsert. See
+	// IsLocalInsertError for why callers must not treat it as a consensus failure.
+	ErrInsertionInterrupted = errors.New("insertion is interrupted")
 
-	CheckpointCh = make(chan int)
+	// ErrChainStopped is returned by the insertion methods once the chain has been
+	// stopped. chainmu is a ClosableMutex, so TryLock waits for another insertion to
+	// release the lock and only reports the stopped chain after Stop closed it. See
+	// IsLocalInsertError for why callers must not treat it as a consensus failure.
+	ErrChainStopped = errors.New("blockchain is stopped")
+
+	// ErrLocalInsertCondition keeps the retryable local conditions that have no sentinel of
+	// their own: a block too far ahead of this node's clock to be queued. insertSideChain
+	// raises it too, as a defensive guard for a segment that stops on a block with no stored
+	// state - a state the validator contract rules out, see the note there. See
+	// IsLocalInsertError for why callers must not treat it as a consensus failure.
+	ErrLocalInsertCondition = errors.New("local insert condition")
+
+	// ErrLocalInsertRefused is the local condition that cannot heal on its own: this node
+	// refused a reorg while adopting an already stored block. It is deliberately not
+	// ErrLocalInsertCondition even though both are local, because procFutureBlocks keeps a
+	// parked block for every retryable failure and retries it on every futureBlocksLoop tick
+	// - and a refused reorg is refused again each time, since the head does not move and the
+	// block therefore keeps winning fork choice. See IsLocalInsertError for why callers must
+	// not treat it as a consensus failure either.
+	ErrLocalInsertRefused = errors.New("local insert refused")
+
+	errInvalidOldChain = errors.New("invalid old chain")
+	errInvalidNewChain = errors.New("invalid new chain")
+
+	// CheckpointCh carries the "an epoch switch block reached the head" signal to the
+	// staking loop in cmd/XDC. Every sender - insertChain, insertBlock and writeKnownBlock
+	// through notifyEpochSwitchBlock, and miner/worker.go on the mining goroutine - goes
+	// through SignalCheckpoint, which never waits: the buffer absorbs one pending signal
+	// while the receiver has not started yet or is still working on the previous one, and a
+	// second signal arriving before the buffer drains is dropped, because the pending one
+	// re-reads the head when it is handled and nothing is lost. See SignalCheckpoint.
+	//
+	// Sending directly would block the caller instead, which neither call site can afford:
+	// the import paths hold the chain mutex, and miner/worker.go is the only consumer of the
+	// mined-block queue it would stall.
+	CheckpointCh = make(chan int, 1)
 )
 
 const (
@@ -778,9 +824,19 @@ func (bc *BlockChain) SetHead(head uint64) error {
 // retaining chain consistency.
 func (bc *BlockChain) setHeadBeyondRoot(head uint64) error {
 	if !bc.chainmu.TryLock() {
-		return errChainStopped
+		return ErrChainStopped
 	}
 	defer bc.chainmu.Unlock()
+
+	// delFn below reuses isGapBlockNumber to pick the snapshots a rewind deletes, and that
+	// predicate only matches when 0 < Gap <= Epoch. For a configuration outside that range
+	// no snapshot is deleted: the leftover entries are keyed by block hash, so a rewound
+	// block's snapshot is never loaded again - a leak, not a wrong answer. Say so once,
+	// instead of leaving the next reader to rediscover why the database keeps them.
+	if xdpos := bc.chainConfig.XDPoS; xdpos != nil && (xdpos.Gap == 0 || xdpos.Gap > xdpos.Epoch) {
+		log.Warn("Rewinding with no gap snapshot to delete: the gap predicate cannot match this configuration",
+			"epoch", xdpos.Epoch, "gap", xdpos.Gap)
+	}
 
 	updateFn := func(db ethdb.KeyValueWriter, header *types.Header) {
 		// Rewind the block chain, ensuring we don't end up with a stateless head block
@@ -842,7 +898,7 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64) error {
 			rawdb.DeleteBody(db, hash, num)
 			rawdb.DeleteReceipts(db, hash, num)
 		}
-		if bc.chainConfig.XDPoS != nil && (num+bc.chainConfig.XDPoS.Gap)%bc.chainConfig.XDPoS.Epoch == 0 {
+		if bc.isGapBlockNumber(num) {
 			rawdb.DeleteXdposSnapshot(db, hash)
 		}
 		// Todo(rjl493456442) txlookup, bloombits, etc
@@ -874,7 +930,7 @@ func (bc *BlockChain) FastSyncCommitHead(hash common.Hash) error {
 	}
 	// If all checks out, manually set the head block.
 	if !bc.chainmu.TryLock() {
-		return errChainStopped
+		return ErrChainStopped
 	}
 	bc.currentBlock.Store(block.Header())
 	headBlockGauge.Update(int64(block.NumberU64()))
@@ -941,7 +997,7 @@ func (bc *BlockChain) ResetWithGenesisBlock(genesis *types.Block) error {
 		return err
 	}
 	if !bc.chainmu.TryLock() {
-		return errChainStopped
+		return ErrChainStopped
 	}
 	defer bc.chainmu.Unlock()
 
@@ -1023,7 +1079,7 @@ func (bc *BlockChain) Export(w io.Writer) error {
 // ExportN writes a subset of the active chain to the given writer.
 func (bc *BlockChain) ExportN(w io.Writer, first uint64, last uint64) error {
 	if !bc.chainmu.TryLock() {
-		return errChainStopped
+		return ErrChainStopped
 	}
 	defer bc.chainmu.Unlock()
 
@@ -1124,6 +1180,29 @@ func (bc *BlockChain) HasBlockAndFullState(hash common.Hash, number uint64) bool
 		return false
 	}
 	return bc.HasFullState(block)
+}
+
+// HasExecutedBlock checks if this node executed the block itself, i.e. whether the block is
+// on disk together with the state its execution produced and with the receipts it produced.
+//
+// HasBlockAndFullState does not answer that question: it only asks whether the root named by
+// the header resolves in the trie database. writeBlockWithoutState stores a sidechain block
+// without its state and without its receipts, so a block that names a root which happens to
+// exist is taken for one that was executed - and trie.New resolves no node at all for
+// types.EmptyRootHash, so naming an empty root is enough. The insertion paths read "known"
+// as "this node already did the work", which is why they ask this instead wherever that is
+// what they mean.
+//
+// Receipts are the marker because something else would have to write them without writing
+// the state next to them: writeBlockWithState writes both, writeBlockWithoutState writes
+// neither, and a fast sync writes receipts for a block whose state it never had. Nothing
+// removes receipts without removing the body beside them either - only SetHead does, and it
+// takes both.
+func (bc *BlockChain) HasExecutedBlock(hash common.Hash, number uint64) bool {
+	if !bc.HasBlockAndFullState(hash, number) {
+		return false
+	}
+	return rawdb.HasReceipts(bc.db, hash, number)
 }
 
 // AreTwoBlockSamePath check if two blocks are same path
@@ -1254,7 +1333,7 @@ func (bc *BlockChain) Stop() {
 }
 
 // InterruptInsert interrupts all insertion methods, causing them to return
-// errInsertionInterrupted as soon as possible, or resume the chain insertion
+// ErrInsertionInterrupted as soon as possible, or resume the chain insertion
 // if required.
 func (bc *BlockChain) InterruptInsert(on bool) {
 	if on {
@@ -1267,6 +1346,14 @@ func (bc *BlockChain) InterruptInsert(on bool) {
 // insertStopped returns true after StopInsert has been called.
 func (bc *BlockChain) insertStopped() bool {
 	return bc.procInterrupt.Load()
+}
+
+// proposedBlockHandler is the consensus hook invoked when the future-block queue
+// imports a block that advances the canonical head, letting the engine process the
+// new head (QC handling, voting). XDPoS implements it; the small interface keeps
+// procFutureBlocks testable with a stub engine.
+type proposedBlockHandler interface {
+	HandleProposedBlock(chain consensus.ChainReader, header *types.Header) error
 }
 
 func (bc *BlockChain) procFutureBlocks() {
@@ -1284,17 +1371,65 @@ func (bc *BlockChain) procFutureBlocks() {
 		types.BlockBy(types.Number).Sort(blocks)
 
 		// Insert one by one as chain insertion needs contiguous ancestry between blocks
+		var lastCanon *types.Block
 		for i := range blocks {
-			_, err := bc.InsertChain(blocks[i : i+1])
-			// let consensus engine handle the last block (e.g. for voting)
-			if i == len(blocks)-1 && err == nil {
-				engine, ok := bc.Engine().(*XDPoS.XDPoS)
-				if ok {
-					header := blocks[i].Header()
-					err = engine.HandleProposedBlock(bc, header)
-					if err != nil {
-						log.Info("[procFutureBlocks] handle proposed block has error", "err", err, "block hash", header.Hash(), "number", header.Number)
-					}
+			if _, err := bc.InsertChain(blocks[i : i+1]); err != nil {
+				// Retryable failures keep the block parked: it is still in the future
+				// (ErrFutureBlock), its parent is itself parked in the queue
+				// (ErrUnknownAncestor), or the attempt never looked at the block at all
+				// (ErrInsertionInterrupted, ErrChainStopped, ErrLocalInsertCondition). None
+				// of those says anything about the block, and the batch that parked it
+				// already reported success, so an eviction here would drop it for good. A
+				// new retryable error has to be registered in classifyInsertErr - that flag
+				// is what selects this branch - otherwise its blocks are dropped for good.
+				// Anything else is evicted: it leaves the queue for good rather than being
+				// re-verified and re-reported as a bad block on every futureBlocksLoop tick.
+				// Blocks are sorted by number, so evicting a failed parent makes the Contains
+				// check of its queued children fail within the same pass and the whole
+				// orphaned chain drains.
+				//
+				// The parked parent is chain state rather than a property of the error, so it
+				// stays here instead of in the table the retryable flag comes from.
+				class := classifyInsertErr(err)
+				if class.retryable ||
+					(errors.Is(err, consensus.ErrUnknownAncestor) && bc.futureBlocks.Contains(blocks[i].ParentHash())) {
+					log.Debug("[procFutureBlocks] keeping the parked block for a later retry",
+						"number", blocks[i].Number(), "hash", blocks[i].Hash(), "err", err)
+					continue
+				}
+				// Nothing else is retried, so this is the only place that can explain why a
+				// parked block disappeared, and the metric below is the only count of it.
+				// insertChain already reported the failures the table blames the block for,
+				// at Error level and with a bad-block record; the ones it does not blame the
+				// block for - a refused reorg, an ancestor whose state is gone - have no
+				// report at all, and dropping one of those is exactly what has to be visible.
+				evict := log.Debug
+				if !class.badBlock {
+					evict = log.Warn
+				}
+				evict("[procFutureBlocks] dropping the parked block",
+					"number", blocks[i].Number(), "hash", blocks[i].Hash(), "err", err)
+				blockFutureEvictMeter.Mark(1)
+				bc.futureBlocks.Remove(blocks[i].Hash())
+				continue
+			}
+			// Only a write that advanced the canonical head qualifies for the engine
+			// hook below: known blocks that are skipped return a nil error without
+			// importing, and side-chain writes must not be treated as the head.
+			// Comparing hashes also keeps a same-height fork from being mistaken for
+			// the canonical head.
+			if bc.CurrentBlock().Hash() == blocks[i].Hash() {
+				lastCanon = blocks[i]
+			}
+		}
+		// Let the consensus engine handle the highest imported canonical block (e.g.
+		// for voting). The sorted queue tail cannot be the target: it may have failed
+		// to import while lower blocks advanced the head, or sit on a side branch.
+		if lastCanon != nil {
+			if engine, ok := bc.Engine().(proposedBlockHandler); ok {
+				header := lastCanon.Header()
+				if err := engine.HandleProposedBlock(bc, header); err != nil {
+					log.Info("[procFutureBlocks] handle proposed block has error", "err", err, "block hash", header.Hash(), "number", header.Number)
 				}
 			}
 		}
@@ -1390,9 +1525,16 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 	)
 	for i, block := range blockChain {
 		receipts := receiptChain[i]
-		// Short circuit insertion if shutting down or processing failed
+		// Short circuit insertion if shutting down or processing failed.
+		//
+		// Report the interruption together with the number of blocks that made it to
+		// disk: the ones before it may already have been flushed (see the batch write
+		// below), so returning nil would report a half written batch as a complete
+		// one - the very thing an interrupted insertion must not claim. The sentinel
+		// is local, so the downloader maps it to errCancelContentProcessing instead
+		// of dropping the peer that served the receipts.
 		if bc.insertStopped() {
-			return 0, nil
+			return i, ErrInsertionInterrupted
 		}
 		blockHash, blockNumber := block.Hash(), block.NumberU64()
 		// Short circuit if the owner header is unknown
@@ -1437,7 +1579,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 
 	// Update the head fast sync block if better
 	if !bc.chainmu.TryLock() {
-		return 0, errChainStopped
+		return 0, ErrChainStopped
 	}
 	head := blockChain[len(blockChain)-1]
 	if td := bc.GetTd(head.Hash(), head.NumberU64()); td != nil { // Rewind may have occurred, skip in that case
@@ -1470,7 +1612,7 @@ var lastWrite uint64
 // up to the point where they exceed the canonical total difficulty.
 func (bc *BlockChain) writeBlockWithoutState(block *types.Block, td *big.Int) (err error) {
 	if bc.insertStopped() {
-		return errInsertionInterrupted
+		return ErrInsertionInterrupted
 	}
 
 	batch := bc.db.NewBatch()
@@ -1484,18 +1626,310 @@ func (bc *BlockChain) writeBlockWithoutState(block *types.Block, td *big.Int) (e
 
 // WriteBlockWithState writes the block and all associated state to the database.
 func (bc *BlockChain) WriteBlockWithState(block *types.Block, receipts []*types.Receipt, state *state.StateDB, tradingState *tradingstate.TradingStateDB, lendingState *lendingstate.LendingStateDB) (status WriteStatus, err error) {
+	// A closed chain mutex is the same local condition InsertChain reports as
+	// ErrChainStopped: the chain is stopping and nothing is known about the block.
 	if !bc.chainmu.TryLock() {
-		return NonStatTy, errInsertionInterrupted
+		return NonStatTy, ErrChainStopped
 	}
 	defer bc.chainmu.Unlock()
 	return bc.writeBlockWithState(block, receipts, state, tradingState, lendingState)
+}
+
+// isGapBlockNumber reports whether num is the gap block of its epoch, at which the
+// masternode set for the next epoch is refreshed. It asks exactly what engine_v2 asks in
+// UpdateMasternodes (num%Epoch == Epoch-Gap), because the three UpdateM1 call sites -
+// writeBlockWithState, writeKnownBlock and reorg - turn a rejection from that engine into a
+// log.Crit: a block this predicate accepts and the engine refuses halts the node.
+//
+// The (num+Gap)%Epoch == 0 form kept before, which engine_v1 stores and loads its snapshots
+// with, only agrees with the engine for 0 < Gap <= Epoch. With Gap == 0 it holds at every
+// epoch boundary, and with Gap > Epoch, where Epoch-Gap underflows, it holds at offsets the
+// engine cannot express, so both are excluded here. Every configuration in
+// params/config_networks.go uses 0 < Gap < Epoch. With Gap == Epoch the gap block is the
+// epoch switch block itself and engine_v2 accepts it, so that boundary stays.
+//
+// setHeadBeyondRoot used the (num+Gap)%Epoch == 0 form to pick the snapshots a rewind
+// deletes, and now asks this predicate instead, so the two excluded ranges are excluded
+// there too: on a chain with Gap == 0 or Gap > Epoch this predicate is false at every
+// height, the rewind deletes no snapshot, and the ones engine_v1 wrote stay in the database.
+// They are keyed by block hash, so a rewound block's snapshot is never loaded again; the
+// leftover entry is leaked, not wrong.
+func (bc *BlockChain) isGapBlockNumber(num uint64) bool {
+	if bc.chainConfig.XDPoS == nil {
+		return false
+	}
+	epoch, gap := bc.chainConfig.XDPoS.Epoch, bc.chainConfig.XDPoS.Gap
+	return epoch != 0 && gap != 0 && gap <= epoch && num%epoch == epoch-gap
+}
+
+// isGapBlock reports whether block is the gap block of its epoch.
+func (bc *BlockChain) isGapBlock(block *types.Block) bool {
+	return bc.isGapBlockNumber(block.NumberU64())
+}
+
+// blockBeatsHead reports whether block would be adopted as canonical under the
+// same fork-choice rule writeBlockWithState applies: a higher total difficulty,
+// or an equal one with a higher number. It must stay in sync with the check in
+// writeBlockWithState, otherwise a known block could move the head onto a chain
+// that an executed block would never be allowed to adopt.
+//
+// Upstream go-ethereum has no counterpart: its skipBlock decides whether a known block may
+// be skipped from the availability of the snapshot state, not from fork choice. Here the
+// decision is a total-difficulty comparison because XDPoS batches can be re-delivered on a
+// branch that must not become canonical.
+//
+// An unknown parent total difficulty means the block cannot be compared, and is
+// treated as not beating the head so that the batch keeps the current chain.
+func (bc *BlockChain) blockBeatsHead(block *types.Block, head *types.Header) bool {
+	if head == nil {
+		return false
+	}
+	return bc.blockBeatsHeadTd(block, head, bc.GetTd(head.Hash(), head.Number.Uint64()))
+}
+
+// blockBeatsHeadTd is blockBeatsHead with the head's total difficulty already read, for
+// callers that compare many blocks against one head that does not move in between: the
+// known-block skip loop reads it once for a whole re-delivered batch instead of once per
+// block. A nil headTd means the total difficulty is unknown and is treated as not beating
+// the head, which is what blockBeatsHead does with it.
+func (bc *BlockChain) blockBeatsHeadTd(block *types.Block, head *types.Header, headTd *big.Int) bool {
+	if head == nil || headTd == nil {
+		return false
+	}
+	if block.NumberU64() == 0 {
+		return false
+	}
+	ptd := bc.GetTd(block.ParentHash(), block.NumberU64()-1)
+	if ptd == nil {
+		return false
+	}
+	if cmp := new(big.Int).Add(block.Difficulty(), ptd).Cmp(headTd); cmp != 0 {
+		return cmp > 0
+	}
+	return block.NumberU64() > head.Number.Uint64()
+}
+
+// isEpochSwitchBlock reports whether block is the epoch switch block of its epoch. A
+// chain without XDPoS, and an engine that is not XDPoS, have no epoch switch, which is
+// not an error.
+//
+// A failure to decode the header is only logged by both callers, never reported as a bad
+// block. No block this node stored can fail it - engine_v2 reads the same extra fields in
+// verifyHeader, outside its fullVerify gate, so a header that passed verification cannot
+// fail here, and engine_v1 never fails it - and both callers only hand over blocks that
+// are stored and were verified when they were imported, so reportBlock would write a
+// block this node already accepted into the bad-block table.
+func (bc *BlockChain) isEpochSwitchBlock(block *types.Block) (bool, error) {
+	if bc.chainConfig.XDPoS == nil {
+		return false, nil
+	}
+	engine, ok := bc.Engine().(*XDPoS.XDPoS)
+	if !ok {
+		return false, nil
+	}
+	isEpochSwitch, _, err := engine.IsEpochSwitch(block.Header())
+	return isEpochSwitch, err
+}
+
+// notifyEpochSwitchBlock sends a checkpoint notification when block switches the
+// epoch, so that the consensus parameters and the masternode set are refreshed.
+// It is a no-op for non-XDPoS chains and for engines that are not XDPoS. An unreadable
+// epoch switch is logged but not reported, see isEpochSwitchBlock for why.
+func (bc *BlockChain) notifyEpochSwitchBlock(block *types.Block) {
+	isEpochSwitch, err := bc.isEpochSwitchBlock(block)
+	if err != nil {
+		log.Error("[notifyEpochSwitchBlock] Error while checking if the incoming block is epoch switch block", "Hash", block.Hash(), "Number", block.Number())
+		return
+	}
+	if isEpochSwitch {
+		SignalCheckpoint()
+	}
+}
+
+// SignalCheckpoint wakes the staking loop without ever blocking the caller. The signal is a
+// coalescing wake-up, not a queue: the receiver re-reads the chain head when it runs
+// (cmd/XDC/main.go), so a signal already pending covers this epoch switch and dropping this one
+// loses nothing. Every sender has to go through it - the import paths call it with the chain
+// mutex held, and miner/worker.go calls it from the goroutine that consumes the mined-block
+// queue - so a slow receiver must never be able to stall them. See CheckpointCh.
+func SignalCheckpoint() {
+	select {
+	case CheckpointCh <- 1:
+	default:
+	}
+}
+
+// cacheSigningTxs caches the signing transactions of a block that is being
+// adopted, so that later epoch lookups do not have to rescan the whole block.
+// It is a no-op for non-XDPoS chains and for blocks that do not use TIP signing.
+func (bc *BlockChain) cacheSigningTxs(block *types.Block) {
+	if bc.chainConfig.XDPoS == nil || !bc.chainConfig.IsTIPSigning(block.Number()) {
+		return
+	}
+	engine, ok := bc.Engine().(*XDPoS.XDPoS)
+	if !ok {
+		return
+	}
+	engine.CacheSigningTxs(block.Header().Hash(), block.Transactions())
+}
+
+// adoptHead writes block as the canonical head, reorganising the chain first when block does
+// not sit directly on top of current. reorg deliberately leaves the new head to its caller -
+// it has already deleted that block's canonical marker - so this is the single place that
+// writes the head after a reorg, and the callers below must not write it a second time.
+//
+// The reorg error is returned unwrapped so each caller can classify it: writeBlockWithState
+// hands it back and the batch fails, writeKnownBlock wraps it in ErrLocalInsertRefused because
+// those blocks are already on disk and were executed before.
+//
+// critMsg is the caller's own text for the log.Crit below, kept verbatim so the message a
+// halted node prints still says which adoption path reached the gap block.
+func (bc *BlockChain) adoptHead(block *types.Block, current *types.Header, critMsg string) error {
+	if block.ParentHash() != current.Hash() {
+		if err := bc.reorg(current, block.Header()); err != nil {
+			return err
+		}
+	}
+	// WriteBlock has already been called by the caller, no need to write again.
+	bc.writeHeadBlock(block, false)
+	// A gap block reaching the head must refresh the masternode set, otherwise its snapshot
+	// is never written. The head is already persisted at this point, so this failure cannot
+	// be rolled back and must halt the node: the masternode set is what the next epoch
+	// validates against, and a missing snapshot is only repaired by Initial ->
+	// RepairGapSnapshots on the next start. Retrying is not an option either, because the gap
+	// block is already the head and no longer wins fork choice.
+	if bc.isGapBlock(block) {
+		if err := bc.UpdateM1(); err != nil {
+			log.Crit(critMsg, "number", block.Number, "hash", block.Hash().Hex(), "err", err)
+		}
+	}
+	return nil
+}
+
+// writeKnownBlock adopts an already stored and executed block as the chain head,
+// reorganising the chain if it does not sit on top of the current head. It is meant for
+// batches the import loop stopped on because they were already known: those blocks are on
+// disk together with their state, so adopting one is a marker update, not a re-import.
+//
+// The check at the top repeats what "known" has to mean as a defensive assertion rather
+// than as a decision: every caller reaches this function from a classification that already
+// asked HasExecutedBlock under the same chain mutex - ValidateBody for the import loop,
+// the prefix scan for insertSideChain. It is kept because adopting a block this node never
+// executed would move the head without Process and ValidateState running on it at all. A
+// block that fails it is left where it is, which is what the chain did with every known
+// block above its head before this path existed.
+//
+// The decision goes through blockBeatsHead, the same rule writeBlockWithState applies to
+// executed blocks, so a known block can never be adopted under a rule an executed one
+// would have lost. A block that loses fork choice is not adopted and is not an error:
+// the batch was simply imported on a branch that is not the canonical one.
+//
+// Upstream go-ethereum has a helper of the same name but writes the head unconditionally;
+// here the block must first win fork choice, because a batch can be re-delivered on a branch
+// that must not become canonical. adopted/promoted likewise have no upstream counterpart:
+// promoted drives the log dedup for rollback re-imports (see announceKnownBlock).
+//
+// promoted reports whether this adoption put the block on the canonical chain for the
+// first time. Callers use it to decide whether the block's logs still have to be
+// delivered: a block that was canonical before (a rollback re-import) already had them
+// sent, and one that was not (a promoted fork) never did.
+//
+// adopted is the stored block that became the head, or nil when the chain does not adopt
+// this batch. It is the block the callers have to announce, never the one they handed in:
+// a block hash covers only its header, so a batch can carry any body under the header of a
+// stored block. See the note below.
+func (bc *BlockChain) writeKnownBlock(block *types.Block) (adopted *types.Block, promoted bool, err error) {
+	// Assertion, not a decision: both call sites already asked HasExecutedBlock under this
+	// same chain mutex, so this can only fire if a third caller is added without that
+	// classification step. Kept because the alternative - adopting a block this node never
+	// executed, with Process and ValidateState never running on it - is the shape #2534 was
+	// about. A block that fails the check is left where it is, which is what the chain did
+	// with every known block above its head before this path existed.
+	if !bc.HasExecutedBlock(block.Hash(), block.NumberU64()) {
+		// Warn rather than Debug: keeping the head here on purpose looks exactly like the
+		// stall this adoption path was added to end, and that must not go unnoticed.
+		log.Warn("[writeKnownBlock] refusing to adopt a block this node never executed",
+			"number", block.NumberU64(), "hash", block.Hash(), "root", block.Root())
+		return nil, false, nil
+	}
+	// Adopt the copy this node executed, not the one the batch carried. ValidateBody answers
+	// ErrKnownBlock before it compares the body - the hash the classification works on covers
+	// only the header - so the caller's block may carry any body under a stored header.
+	// Everything below, and every caller that announces the block, has to describe the chain
+	// this node holds rather than what the batch claimed it is.
+	stored := bc.GetBlock(block.Hash(), block.NumberU64())
+	if stored == nil {
+		// HasExecutedBlock has just checked that the block, its state and its receipts are
+		// on disk, and the body is written with them, so this is a pruned or corrupt
+		// database rather than a batch that is wrong.
+		log.Warn("[writeKnownBlock] refusing to adopt a block whose body is not on disk",
+			"number", block.NumberU64(), "hash", block.Hash())
+		return nil, false, nil
+	}
+	block = stored
+	// The marker has to be read before the head moves: reorg rewrites it.
+	promoted = bc.GetCanonicalHash(block.NumberU64()) != block.Hash()
+	current := bc.CurrentBlock()
+	if !bc.blockBeatsHead(block, current) {
+		return nil, false, nil
+	}
+	if err := bc.adoptHead(block, current, "Fail to update masternodes during writeKnownBlock"); err != nil {
+		// The blocks are already on disk and were executed before. A reorg this node refuses
+		// - a missing ancestor chain, or the XDPoS committed-block guard - says nothing about
+		// the peer that served them, so it must not be turned into a consensus failure by the
+		// caller.
+		return nil, false, fmt.Errorf("%w: %v", ErrLocalInsertRefused, err)
+	}
+	// Mirror the head side effects of the canonical import path: insertChain calls
+	// UpdateBlocksHashCache and writeBlockWithState populates the signing-tx cache.
+	bc.UpdateBlocksHashCache(block)
+	bc.cacheSigningTxs(block)
+	bc.notifyEpochSwitchBlock(block)
+	bc.futureBlocks.Remove(block.Hash())
+	return block, promoted, nil
+}
+
+// announceKnownBlock returns the events and logs an adopted known block raises: a
+// ChainEvent always, because the head moved and subscribers following the head have to
+// learn about it, and the block's logs only when it is promoted to the canonical chain
+// for the first time. A rollback re-import already delivered them, so sending them again
+// would duplicate them.
+//
+// Subscribers should therefore treat the two as different: the ChainEvent may repeat (a
+// rollback re-import re-announces a head it already announced), the logs never do.
+func (bc *BlockChain) announceKnownBlock(block *types.Block, promoted bool) ([]interface{}, []*types.Log) {
+	var logs []*types.Log
+	if promoted {
+		logs = bc.collectLogs(block, false)
+	}
+	return []interface{}{ChainEvent{block, block.Hash(), logs}}, logs
+}
+
+// withChainHeadEvent appends the head event of block, unless the events already carry one.
+// A batch raises a single head event, for the highest block that moved the head.
+//
+// The adoption shape that needs it is the segment with blocks left above it: insertSideChain
+// adopts the stored prefix and then imports the rest of the batch, and that second import
+// raises its own head event for a higher block. Announcing the adoption's as well would have
+// subscribers see the head move twice within one batch, and would break the
+// single-head-event contract the canonical import path keeps.
+func withChainHeadEvent(events []interface{}, block *types.Block) []interface{} {
+	if block == nil {
+		return events
+	}
+	for _, event := range events {
+		if _, ok := event.(ChainHeadEvent); ok {
+			return events
+		}
+	}
+	return append(events, ChainHeadEvent{block})
 }
 
 // writeBlockWithState writes the block and all associated state to the database,
 // but is expects the chain mutex to be held.
 func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.Receipt, state *state.StateDB, tradingState *tradingstate.TradingStateDB, lendingState *lendingstate.LendingStateDB) (status WriteStatus, err error) {
 	if bc.insertStopped() {
-		return NonStatTy, errInsertionInterrupted
+		return NonStatTy, ErrInsertionInterrupted
 	}
 
 	// Calculate the total difficulty of the block
@@ -1504,8 +1938,6 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 		return NonStatTy, consensus.ErrUnknownAncestor
 	}
 	// Make sure no inconsistent state is leaked during insertion
-	currentBlock := bc.CurrentBlock()
-	localTd := bc.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64())
 	externTd := new(big.Int).Add(block.Difficulty(), ptd)
 
 	// Irrelevant of the canonical status, write the block itself to the database.
@@ -1665,45 +2097,24 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 		}
 	}
 
-	// If the total difficulty is higher than our known, add it to the canonical chain
-	// Second clause in the if statement reduces the vulnerability to selfish mining.
+	// If the block outranks our head, add it to the canonical chain. The rule
+	// itself lives in blockBeatsHead so that the known-block path adopts a chain
+	// exactly when an executed block would, including the same-difficulty split by
+	// block number that reduces the vulnerability to selfish mining.
 	// Please refer to http://www.cs.cornell.edu/~ie53/publications/btcProcFC.pdf
-	reorg := externTd.Cmp(localTd) > 0
-	currentBlock = bc.CurrentBlock()
-	if !reorg && externTd.Cmp(localTd) == 0 {
-		// Split same-difficulty blocks by number
-		reorg = block.NumberU64() > currentBlock.Number.Uint64()
-	}
-	if reorg {
-		// Reorganise the chain if the parent is not the head block
-		if block.ParentHash() != currentBlock.Hash() {
-			if err := bc.reorg(currentBlock, block.Header()); err != nil {
-				return NonStatTy, err
-			}
-		}
-		status = CanonStatTy
-	} else {
+	currentBlock := bc.CurrentBlock()
+	if !bc.blockBeatsHead(block, currentBlock) {
 		status = SideStatTy
-	}
-
-	// Set new head.
-	if status == CanonStatTy {
-		// WriteBlock has already been called, no need to write again
-		bc.writeHeadBlock(block, false)
-		// prepare set of masternodes for the next epoch
-		if bc.chainConfig.XDPoS != nil && ((block.NumberU64() % bc.chainConfig.XDPoS.Epoch) == (bc.chainConfig.XDPoS.Epoch - bc.chainConfig.XDPoS.Gap)) {
-			if err := bc.UpdateM1(); err != nil {
-				log.Crit("Fail to update masternodes during writeBlockWithState", "number", block.Number, "hash", block.Hash().Hex(), "err", err)
-			}
+	} else {
+		status = CanonStatTy
+		// adoptHead reorganises the chain and writes the new head together: reorg leaves the
+		// head to its caller, so the two must not be split.
+		if err := bc.adoptHead(block, currentBlock, "Fail to update masternodes during writeBlockWithState"); err != nil {
+			return NonStatTy, err
 		}
 	}
 	// save cache BlockSigners
-	if bc.chainConfig.XDPoS != nil && bc.chainConfig.IsTIPSigning(block.Number()) {
-		engine, ok := bc.Engine().(*XDPoS.XDPoS)
-		if ok {
-			engine.CacheSigningTxs(block.Header().Hash(), block.Transactions())
-		}
-	}
+	bc.cacheSigningTxs(block)
 	bc.futureBlocks.Remove(block.Hash())
 	return status, nil
 }
@@ -1714,16 +2125,57 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 func (bc *BlockChain) addFutureBlock(block *types.Block) error {
 	max := uint64(time.Now().Unix()) + maxTimeFutureBlocks
 	if block.Time() > max {
-		return fmt.Errorf("future block timestamp %v > allowed %v", block.Time(), max)
+		// Nothing is wrong with the block, it is this node's clock that cannot place it
+		// yet, so the failure must not become an errInvalidChain that drops the peer that
+		// served it.
+		return fmt.Errorf("%w: block time %v is more than %ds ahead of the local clock",
+			ErrLocalInsertCondition, block.Time(), maxTimeFutureBlocks)
 	}
 	bc.futureBlocks.Add(block.Hash(), block)
 	return nil
+}
+
+// isQueueableImportErr reports whether a batch tail block should be parked in the
+// future queue instead of failing the import.
+func isQueueableImportErr(err error) bool {
+	return errors.Is(err, consensus.ErrUnknownAncestor) || errors.Is(err, consensus.ErrFutureBlock)
+}
+
+// queueFutureTail parks the batch tail in the future queue, starting at the given
+// block whose verification error err is queueable, and stops at the first block
+// that fails verification with a non-queueable error or at the end of the batch.
+// XDPoS v1/v2 (under full verification) check the timestamp before the parent
+// lookup (engine_v1/engine.go, engine_v2/verifyHeader.go), so children of a future
+// block surface as ErrFutureBlock. Engines that resolve the parent first (e.g.
+// ethash VerifyHeader), or XDPoS without fullVerify, answer ErrUnknownAncestor
+// instead; the loop accepts both.
+//
+// It returns the block and error that stopped the queueing (stopped/stopErr) - the caller
+// decides whether to report them as bad or ignore them - and a non-nil abortErr when
+// addFutureBlock rejected the enqueue and the import must fail whole.
+//
+// A non-nil stopped always comes with a non-nil stopErr. A block left unqueued has passed
+// verification, and verification passes only against a stored parent - which is exactly
+// what the block that stopped the queueing cannot have, since an unstored parent is what
+// produces a queueable error in the first place.
+func (bc *BlockChain) queueFutureTail(it *insertIterator, block *types.Block, err error) (stopped *types.Block, stopErr, abortErr error) {
+	for block != nil && isQueueableImportErr(err) {
+		if aerr := bc.addFutureBlock(block); aerr != nil {
+			return block, err, aerr
+		}
+		block, err = it.next()
+	}
+	return block, err, nil
 }
 
 // InsertChain attempts to insert the given batch of blocks in to the canonical
 // chain or, otherwise, create a fork. If an error is returned it will return
 // the index number of the failing block as well an error describing what went
 // wrong.
+//
+// A nil error does not imply every block was written: a tail failing with
+// ErrFutureBlock/ErrUnknownAncestor is parked in the future queue and processed
+// later.
 //
 // After insertion is done, all accumulated events will be fired.
 func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
@@ -1751,7 +2203,7 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 
 	// Pre-check passed, start the full block imports.
 	if !bc.chainmu.TryLock() {
-		return 0, errChainStopped
+		return 0, ErrChainStopped
 	}
 	defer bc.chainmu.Unlock()
 	n, events, logs, err := bc.insertChain(chain, true)
@@ -1770,7 +2222,10 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []interface{}, []*types.Log, error) {
 	// If the chain is terminating, don't even bother starting up.
 	if bc.insertStopped() {
-		return 0, nil, nil, nil
+		// Report the interruption rather than a success: nothing was imported, and the
+		// caller would otherwise believe the whole batch was. The downloader recognises
+		// this sentinel and does not blame (or drop) the peer that served the blocks.
+		return 0, nil, nil, ErrInsertionInterrupted
 	}
 
 	// Start a parallel signature recovery (signer will fluke on fork transition, minimal perf loss)
@@ -1808,49 +2263,113 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 	switch {
 	// First block is pruned, insert as sidechain and reorg only if TD grows enough
 	case errors.Is(err, consensus.ErrPrunedAncestor):
-		return bc.insertSidechain(block, it)
+		return bc.insertSideChain(block, it, verifySeals)
 
 	// First block is future, shove it (and all children) to the future queue (unknown ancestor)
 	case errors.Is(err, consensus.ErrFutureBlock) || (errors.Is(err, consensus.ErrUnknownAncestor) && bc.futureBlocks.Contains(it.first().ParentHash())):
-		for block != nil && (it.index == 0 || errors.Is(err, consensus.ErrUnknownAncestor)) {
-			if err := bc.addFutureBlock(block); err != nil {
-				return it.index, events, coalescedLogs, err
-			}
-			block, err = it.next()
+		stopped, stopErr, abortErr := bc.queueFutureTail(it, block, err)
+		if abortErr != nil {
+			return it.index, events, coalescedLogs, abortErr
 		}
-		return it.index, events, coalescedLogs, err
+		// The queueing stopped at a block that failed verification with a
+		// non-queueable error. Record the reject like the tail path below: the local
+		// conditions and a future timestamp are legitimate states, not invalid blocks, and
+		// classifyInsertErr is what says so.
+		bc.reportBlockIfFault(stopped, stopErr)
+		return it.index, events, coalescedLogs, stopErr
 
 	// First block (and state) is known
 	//   1. We did a roll-back, and should now do a re-import
 	//   2. The block is stored as a sidechain, and is lying about it's stateroot, and passes a stateroot
 	// 	    from the canonical chain, which has not been verified.
 	case errors.Is(err, ErrKnownBlock):
-		// Skip all known blocks that behind us
-		current := bc.CurrentBlock().Number.Uint64()
-
-		for block != nil && errors.Is(err, ErrKnownBlock) && current >= block.NumberU64() {
+		// Skip all known blocks that the chain would not adopt anyway, comparing each of
+		// them against the current head. Nothing in the loop moves the head, so the head and
+		// its total difficulty are read once for the whole run: a batch re-delivering
+		// thousands of known blocks would otherwise pay two database lookups per block.
+		head, headTd := bc.CurrentBlock(), (*big.Int)(nil)
+		if head != nil {
+			headTd = bc.GetTd(head.Hash(), head.Number.Uint64())
+		}
+		for block != nil && errors.Is(err, ErrKnownBlock) && !bc.blockBeatsHeadTd(block, head, headTd) {
+			// A known block that loses fork choice now loses it later too - the head
+			// only moves forward here - so leaving it parked would have procFutureBlocks
+			// re-verify it on every tick without ever draining the entry. Dropping it is
+			// safe: ErrKnownBlock means the block and its state are on disk, so a batch
+			// that carries it again adopts it on this very path.
+			bc.futureBlocks.Remove(block.Hash())
 			stats.ignored++
 			block, err = it.next()
 		}
-		// Falls through to the block import
+		// The loop ends on either a nil error (the batch drained), an ErrKnownBlock (the
+		// fall-through below), or the error that stopped it. That last shape is the same
+		// stop the first-block case and the future tail record, so it is recorded here as
+		// well: a batch that stops on an invalid block has to leave that block behind in the
+		// bad-block database, wherever in the batch the known prefix ended.
+		bc.reportBlockIfFault(block, err)
+		// A known block that wins fork choice is not skipped: it falls through to
+		// the import loop below, which adopts it with writeKnownBlock and then
+		// carries on with the rest of the batch instead of stopping on it.
 
 	// Some other error occurred, abort
 	case err != nil:
-		bc.reportBlock(block, nil, err)
+		// The table decides whether the block is at fault, exactly as it does for the two
+		// queue-stop paths. Behaviourally identical today - every unclassified error is
+		// classified as the block's fault - but it keeps the "is this a bad block" answer in
+		// one place if a local sentinel ever becomes reachable from verification.
+		bc.reportBlockIfFault(block, err)
 		return it.index, events, coalescedLogs, err
 	}
 
 	// No validation errors for the first block (or chain prefix skipped)
-	for ; block != nil && err == nil; block, err = it.next() {
+	for ; block != nil && (err == nil || errors.Is(err, ErrKnownBlock)); block, err = it.next() {
 		// If the chain is terminating, stop processing blocks
 		if bc.insertStopped() {
 			log.Debug("Premature abort during blocks processing")
+			// Report the interruption instead of leaving err nil: InterruptInsert
+			// documents that insertion methods return ErrInsertionInterrupted, and
+			// the caller would otherwise believe the remaining blocks were imported.
+			// This matches what writeBlockWithState and getResultBlock report when
+			// they notice the interruption while processing a block.
+			err = ErrInsertionInterrupted
 			break
 		}
 		// If the header is a banned one, straight out abort
 		if BadHashes[block.Hash()] {
 			bc.reportBlock(block, nil, ErrDenylistedHash)
 			return it.index, events, coalescedLogs, ErrDenylistedHash
+		}
+		// The block and its state are already stored, so re-executing it would only
+		// reproduce what is on disk. It still has to become the head, but only if it
+		// wins the same fork choice an executed block would.
+		if errors.Is(err, ErrKnownBlock) {
+			log.Debug("Writing previously known block", "number", block.Number(), "hash", block.Hash())
+			adoptedBlock, promoted, adoptErr := bc.writeKnownBlock(block)
+			if adoptErr != nil {
+				return it.index, events, coalescedLogs, adoptErr
+			}
+			if adoptedBlock == nil {
+				// The block is executed and on disk, this node simply does not adopt this
+				// branch. The batch still reports success, so the count is the only trace
+				// of a sync that keeps delivering ranges without the head moving.
+				//
+				// Drop it from the future queue for the reason the skip loop above gives:
+				// a block that loses fork choice now loses it later too, so the entry
+				// would only be re-verified on every futureBlocksLoop tick.
+				bc.futureBlocks.Remove(block.Hash())
+				blockKnownNotAdoptedMeter.Mark(1)
+				stats.ignored++
+				continue
+			}
+			// The head has advanced, so consumers of chain events must be notified
+			// even for an adopted known block - and with the stored block, not with the
+			// one the batch handed in. See writeKnownBlock.
+			blockEvents, blockLogs := bc.announceKnownBlock(adoptedBlock, promoted)
+			events = append(events, blockEvents...)
+			coalescedLogs = append(coalescedLogs, blockLogs...)
+			stats.processed++
+			lastCanon = adoptedBlock
+			continue
 		}
 		// Retrieve the parent block and it's state to execute on top
 		start := time.Now()
@@ -1916,31 +2435,42 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 
 		dirty, _ := bc.triedb.Size()
 		stats.report(chain, it.index, dirty)
-		if bc.chainConfig.XDPoS != nil {
-			engine, _ := bc.Engine().(*XDPoS.XDPoS)
-			isEpochSwithBlock, _, err := engine.IsEpochSwitch(block.Header()) // epoch block
-			if err != nil {
-				log.Error("[insertChain] Error while checking and notifying channel CheckpointCh if the incoming block is epoch switch block", "Hash", block.Hash(), "Number", block.Number())
-				bc.reportBlock(block, nil, err)
-			}
-			if isEpochSwithBlock {
-				CheckpointCh <- 1
-			}
-		}
+		bc.notifyEpochSwitchBlock(block)
 	}
 
-	// Any blocks remaining here? The only ones we care about are the future ones
+	// Any blocks remaining here? The only ones we care about are the future ones.
+	//
+	// Only a future block is parked here, unlike the first-block case of the switch above,
+	// which also accepts ErrUnknownAncestor when the parent is itself parked. This gate does
+	// not need that case: a batch is contiguous, so chain[i]'s parent is the chain[i-1] that
+	// was imported just before it, and the parent lookup cannot fail in the middle of it. A
+	// block that cannot be linked here therefore is not a future block, and reporting it is
+	// what lets the downloader hold the peer to it.
 	if block != nil && errors.Is(err, consensus.ErrFutureBlock) {
-		if err := bc.addFutureBlock(block); err != nil {
-			return it.index, events, coalescedLogs, err
+		var abortErr error
+		block, err, abortErr = bc.queueFutureTail(it, block, err)
+		if abortErr != nil {
+			return it.index, events, coalescedLogs, abortErr
 		}
-		block, err = it.next()
-
-		for ; block != nil && errors.Is(err, consensus.ErrUnknownAncestor); block, err = it.next() {
-			if err := bc.addFutureBlock(block); err != nil {
-				return it.index, events, coalescedLogs, err
-			}
-		}
+		// The queueing stopped at a block that failed verification with a
+		// non-queueable error. Record the reject like the first-block failure path: the
+		// local conditions and a future timestamp are legitimate states, not invalid
+		// blocks, and classifyInsertErr is what says so.
+		bc.reportBlockIfFault(block, err)
+		// A stop on ErrKnownBlock is reported instead of adopted here, and this tail is the
+		// only place the sentinel can leave insertChain: the loop above consumes every known
+		// block it meets and a nil error is what it ends on otherwise, so nothing else hands
+		// ErrKnownBlock to a caller. That block is already on disk with its state and the head
+		// sits below it, so the next batch picks it up: as that batch's first block it takes
+		// the ErrKnownBlock case above and is adopted by writeKnownBlock. Adding a second
+		// adoption site here would buy nothing for a shape the downloader does not produce -
+		// its batches are contiguous and split at gap blocks - and the sentinel is local, so
+		// the downloader cancels the content processing instead of blaming the peer.
+		//
+		// Reaching this tail at all takes a block dated ahead of this node's clock, which is
+		// what parked the queueing in the first place: the file importers replay historical
+		// blocks and never meet the shape, so they report the sentinel without having to
+		// continue from the returned index.
 	}
 
 	// Append a single chain head event if we've progressed the chain
@@ -1948,7 +2478,21 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		log.Debug("New ChainHeadEvent ", "number", lastCanon.NumberU64(), "hash", lastCanon.Hash())
 		events = append(events, ChainHeadEvent{lastCanon})
 	}
-	return it.index, events, coalescedLogs, nil
+	// Surface what stopped the batch before the caller turns it into a peer drop:
+	// the downloader only logs this at debug level, which used to leave no usable
+	// trace of why a batch was not imported.
+	//
+	// Only a failure the caller will blame on the peer is worth a warning. A local
+	// condition - an interrupted import, a stopped chain, a reorg this node refuses, a
+	// batch that ran into a block already stored with its state - says nothing about the
+	// blocks: the downloader cancels the content processing for it instead of dropping the
+	// peer, so warning about it would only add noise to a sync that is retrying. This is
+	// the same predicate as the reportBlock exclusion above.
+	if err != nil && block != nil && !IsLocalInsertError(err) {
+		log.Warn("Blockchain import aborted", "number", block.Number(), "hash", block.Hash(),
+			"index", it.index, "batch", len(chain), "err", err)
+	}
+	return it.index, events, coalescedLogs, err
 }
 
 // blockProcessingResult is a summary of block processing
@@ -2042,13 +2586,18 @@ func (bc *BlockChain) processBlock(block *types.Block, parent *types.Header, sta
 	return &blockProcessingResult{usedGas: usedGas, procTime: proctime, status: status, logs: logs}, nil
 }
 
-// insertSidechain is called when an import batch hits upon a pruned ancestor
+// insertSideChain is called when an import batch hits upon a pruned ancestor
 // error, which happens when a sidechain with a sufficiently old fork-block is
 // found.
 //
 // The method writes all (header-and-body-valid) blocks to disk, then tries to
 // switch over to the new chain if the TD exceeded the current chain.
-func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (int, []interface{}, []*types.Log, error) {
+//
+// verifySeals is the level the batch was verified at. The blocks of the batch that the scan
+// never reaches are remote data this node holds no verification result for, so when they are
+// imported below they have to be verified at that same level; only the blocks read back out
+// of the local database are re-imported with it off.
+func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, verifySeals bool) (int, []interface{}, []*types.Log, error) {
 	var (
 		externTd *big.Int
 		current  = bc.CurrentBlock().Number.Uint64()
@@ -2061,7 +2610,33 @@ func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (i
 	for ; block != nil && (errors.Is(err, consensus.ErrPrunedAncestor)); block, err = it.next() {
 		// Check the canonical state root for that number
 		if number := block.NumberU64(); current >= number {
-			if canonical := bc.GetBlockByNumber(number); canonical != nil && canonical.Root() == block.Root() {
+			canonical := bc.GetBlockByNumber(number)
+			if canonical != nil && canonical.Hash() == block.Hash() {
+				// Not a sidechain block, this is a re-import of a canon block which has it's state pruned.
+				// Carry its total difficulty over: a batch made only of such blocks would
+				// otherwise leave externTd nil, and the comparison after the scan would
+				// dereference it.
+				//
+				// The scan can pass several of them before it reaches the fork point, so the
+				// value has to follow the last one: keeping only the first would drop the
+				// difficulty of every canonical block in between and underestimate the
+				// segment, which would let a heavier sidechain look lighter than it is.
+				// A missing total difficulty leaves the previous value in place rather than
+				// clearing it - the accumulation below dereferences externTd.
+				//
+				// Carrying this baseline over can only err on the high side, which is the
+				// safe direction: a side branch forks at or below this canonical block, so
+				// the value the side blocks are accumulated onto is at least the total
+				// difficulty of the fork point. Overstating the segment at worst rebuilds a
+				// prefix that did not need rebuilding; it cannot make a heavier segment look
+				// lighter and skip the rebuild. Whether the branch is adopted is decided
+				// later, on the blocks themselves, by blockBeatsHead in writeBlockWithState.
+				if td := bc.GetTd(block.Hash(), number); td != nil {
+					externTd = td
+				}
+				continue
+			}
+			if canonical != nil && canonical.Root() == block.Root() {
 				// This is most likely a shadow-state attack. When a fork is imported into the
 				// database, and it eventually reaches a block height which is not pruned, we
 				// just found that the state already exist! This means that the sidechain block
@@ -2094,9 +2669,118 @@ func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (i
 		}
 	}
 	// At this point, we've written all sidechain blocks to database. Loop ended
-	// either on some other error or all were processed. If there was some other
-	// error, we can ignore the rest of those blocks.
+	// either on some other error or all were processed.
 	//
+	// A block that failed verification or body validation is not one of those: report it
+	// right away, because rebuilding the prefix below and returning that result would
+	// report a partial import as a success - nothing after the failing block was even
+	// looked at. ErrUnknownAncestor is how a pruned segment ends normally (the next
+	// block cannot be linked yet), so it is not a failure and falls through to the
+	// reimport below.
+	if err != nil && !errors.Is(err, consensus.ErrUnknownAncestor) && !errors.Is(err, ErrKnownBlock) {
+		// ErrFutureBlock reaches this branch only for a block dated ahead of this node's clock:
+		// both engines compare the timestamp before they look up the parent (engine_v1/engine.go,
+		// engine_v2/verifyHeader.go), so the parent is never consulted. It is not queued either -
+		// a side entry is not the future chain - and the clock is this node's, not the peer's:
+		// see classifyInsertErr for why a local condition is never blamed on the peer.
+		if errors.Is(err, consensus.ErrFutureBlock) {
+			return it.index, nil, nil, fmt.Errorf("%w: %w", ErrLocalInsertCondition, err)
+		}
+		return it.index, nil, nil, err
+	}
+	// The scan stopped on a block that is already on disk with its state. Nothing after
+	// it was ever looked at, so the reimport below would report a partial import as a
+	// success just the same: it only rebuilds it.previous() and its ancestors, never the
+	// known block or the blocks that follow it.
+	//
+	// Adopt the longest prefix of the tail that this node executed as well - it was
+	// imported, only the head did not follow - and import the rest on top of it. The prefix
+	// cannot come out empty: ErrKnownBlock is what ValidateBody reports for a block this
+	// node executed, so the block the scan stopped on is always part of it.
+	if errors.Is(err, ErrKnownBlock) {
+		stored := it.index
+		for stored < len(it.chain) && bc.HasExecutedBlock(it.chain[stored].Hash(), it.chain[stored].NumberU64()) {
+			stored++
+		}
+		if stored == it.index {
+			// Defensive guard rather than a state the validator contract can produce. Bailing
+			// out is what keeps the head in place here: adopting it.chain[stored-1] would move
+			// it onto the block below the one that stopped the scan. A stop like this would
+			// say nothing about the blocks, so it must not become an error the downloader
+			// turns into an errInvalidChain that drops the peer.
+			log.Warn("Sidechain segment stopped on a block that is not stored",
+				"number", it.chain[it.index].NumberU64(), "hash", it.chain[it.index].Hash(),
+				"index", it.index, "head", bc.CurrentBlock().Number.Uint64())
+			return it.index, nil, nil, ErrLocalInsertCondition
+		}
+		// Adopting the last stored block also moves the head over the blocks reorg
+		// rewrites in between, whose logs are delivered through the rebirth logs of the
+		// reorg.
+		adoptedBlock, promoted, adoptErr := bc.writeKnownBlock(it.chain[stored-1])
+		if adoptErr != nil {
+			return it.index, nil, nil, adoptErr
+		}
+		var (
+			events []interface{}
+			logs   []*types.Log
+		)
+		// The block that moved the head. Its head event is announced once the batch is
+		// done, not here: the import of the rest of the batch below can move the head
+		// further, and a batch raises a single head event - for the highest block that
+		// moved it. See withChainHeadEvent.
+		var adoptedHead *types.Block
+		if adoptedBlock != nil {
+			adoptedHead = adoptedBlock
+			log.Debug("Adopted an already imported batch", "number", adoptedHead.NumberU64(), "hash", adoptedHead.Hash())
+			// The adopted block moves the head, so it is announced like an adopted known
+			// block of the canonical import path; the blocks reorg rewrote on the way are
+			// announced by its rebirth logs instead, exactly as reorg announces them
+			// anywhere else.
+			events, logs = bc.announceKnownBlock(adoptedHead, promoted)
+		} else {
+			// Not an error: the blocks are on disk and this node simply does not adopt this
+			// branch. It is the shape a stalled sync repeats, though - the batch reports
+			// success and the head stays where it is - so it has to be visible.
+			blockKnownNotAdoptedMeter.Mark(1)
+			log.Warn("Batch is already imported but does not beat the head",
+				"head", bc.CurrentBlock().Number, "batch", it.chain[stored-1].NumberU64())
+		}
+		if stored < len(it.chain) {
+			// Nothing above the stored prefix was looked at yet, and the block the scan
+			// stopped on has its state, so the rest executes on top of it like any other
+			// batch. Its events are reported together with the adoption's, like the
+			// prefix reimport below does.
+			//
+			// These blocks come from the batch the caller handed in and the scan never
+			// pulled a verification result for them, so they are verified at the level of
+			// that batch: importing them with it off would let a block through that the
+			// engine already knows how to reject - XDPoS reads the flag as full verification.
+			n, moreEvents, moreLogs, err := bc.insertChain(it.chain[stored:], verifySeals)
+			events = append(events, moreEvents...)
+			logs = append(logs, moreLogs...)
+			if err != nil {
+				// The sub-batch counts from it.chain[stored:]; the caller was handed the
+				// whole batch, so map the failing index back.
+				return stored + n, withChainHeadEvent(events, adoptedHead), logs, err
+			}
+		}
+		// The reported index is the known block the scan stopped on, not the number of
+		// blocks this call consumed: the stored prefix above it was adopted and the rest of
+		// the batch was imported, but the first block a caller can act on is the first one
+		// this call did not consume, which is the known block.
+		return it.index, withChainHeadEvent(events, adoptedHead), logs, nil
+	}
+	// A batch without a single sidechain block carries no total difficulty to compare, and
+	// it added nothing to the chain either: every one of its blocks was already stored and
+	// canonical. Comparing against a total difficulty that was never accumulated is not
+	// possible, and the scan error - ErrUnknownAncestor for the block that could not be
+	// linked - says nothing about the peer either, because this node's missing numbers, not
+	// the blocks, are what stopped the segment. Report it as what it is: a local condition
+	// the downloader cancels the content processing for instead of dropping the peer.
+	if externTd == nil {
+		log.Debug("Sidechain segment holds no sidechain block", "start", it.first().NumberU64(), "index", it.index)
+		return it.index, nil, nil, ErrLocalInsertCondition
+	}
 	// If the externTd was larger than our local TD, we now need to reimport the previous
 	// blocks to regenerate the required state
 	localTd := bc.GetTd(bc.CurrentBlock().Hash(), current)
@@ -2136,6 +2820,9 @@ func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (i
 		// memory here.
 		if len(blocks) >= 2048 || memory > 64*1024*1024 {
 			log.Info("Importing heavy sidechain segment", "blocks", len(blocks), "start", blocks[0].NumberU64(), "end", block.NumberU64())
+			// insertChain also reports a block that fails verification or body
+			// validation in the middle of the segment: abort the sidechain import
+			// instead of continuing with a state that can only be rebuilt partially.
 			if _, _, _, err := bc.insertChain(blocks, false); err != nil {
 				return 0, nil, nil, err
 			}
@@ -2144,12 +2831,16 @@ func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (i
 			// If the chain is terminating, stop processing blocks
 			if bc.insertStopped() {
 				log.Debug("Abort during blocks processing")
-				return 0, nil, nil, nil
+				// Report the interruption instead of a success, see the entry guard of
+				// insertChain: the rest of the segment was not imported.
+				return 0, nil, nil, ErrInsertionInterrupted
 			}
 		}
 	}
 	if len(blocks) > 0 {
 		log.Info("Importing sidechain segment", "start", blocks[0].NumberU64(), "end", blocks[len(blocks)-1].NumberU64())
+		// The error of a partially imported segment is propagated as well, see the
+		// comment on the heavy segment import above.
 		return bc.insertChain(blocks, false)
 	}
 	return 0, nil, nil, nil
@@ -2181,6 +2872,10 @@ func (bc *BlockChain) PrepareBlock(block *types.Block) (err error) {
 		bc.resultProcess.Add(block.Hash(), result)
 		return nil
 	case ErrKnownBlock:
+		// Benign: the block (and its state) is already on disk, so there is nothing to
+		// prepare. getResultBlock answers the same when the head already sits at or above
+		// this block (see its ErrKnownBlock case), which is the same "nothing to prepare"
+		// answer; insertBlock does not swallow it.
 		return nil
 	case ErrStopPreparingBlock:
 		log.Debug("Stop prepare a block because calculating", "number", block.NumberU64(), "hash", block.Hash(), "validator", block.Header().Validator)
@@ -2208,7 +2903,7 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 	// If the chain is terminating, stop processing blocks
 	if bc.insertStopped() {
 		log.Debug("Premature abort during blocks processing")
-		return nil, errInsertionInterrupted
+		return nil, ErrInsertionInterrupted
 	}
 	// If the header is a banned one, straight out abort
 	if BadHashes[block.Hash()] {
@@ -2255,6 +2950,9 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 		log.Debug("Number block need calculated again", "number", block.NumberU64(), "hash", block.Hash().Hex(), "winners", len(winner))
 		// Import all the pruned blocks to make the state available
 		// During reorg, we use verifySeals=false
+		// insertChain reports blocks failing in the middle of the segment as well, and
+		// the block cannot be calculated on a torn state, so the error is propagated.
+		// It is returned unwrapped so that the callers see the original sentinel.
 		_, _, _, err := bc.insertChain(winner, false)
 		if err != nil {
 			return nil, err
@@ -2342,10 +3040,13 @@ func (bc *BlockChain) insertBlock(block *types.Block) ([]interface{}, []*types.L
 	defer bc.wg.Done()
 	// Write the block to the chain and get the status.
 	if !bc.chainmu.TryLock() {
-		return nil, nil, errChainStopped
+		return nil, nil, ErrChainStopped
 	}
 	defer bc.chainmu.Unlock()
-	if bc.HasBlockAndFullState(block.Hash(), block.NumberU64()) {
+	// Only a block this node executed can be left alone: one that is on disk without the
+	// receipts execution leaves behind still has to go through writeBlockWithState, which
+	// writes them and the state together. See HasExecutedBlock.
+	if bc.HasExecutedBlock(block.Hash(), block.NumberU64()) {
 		return events, coalescedLogs, nil
 	}
 	status, err := bc.writeBlockWithState(block, result.receipts, result.state, result.tradingState, result.lendingState)
@@ -2373,17 +3074,7 @@ func (bc *BlockChain) insertBlock(block *types.Block) ([]interface{}, []*types.L
 	stats.usedGas += result.usedGas
 	dirty, _ := bc.triedb.Size()
 	stats.report(types.Blocks{block}, 0, dirty)
-	if bc.chainConfig.XDPoS != nil {
-		// epoch block
-		isEpochSwithBlock, _, err := bc.Engine().(*XDPoS.XDPoS).IsEpochSwitch(block.Header())
-		if err != nil {
-			log.Error("[insertBlock] Error while checking if the incoming block is epoch switch block", "Hash", block.Hash(), "Number", block.Number())
-			bc.reportBlock(block, nil, err)
-		}
-		if isEpochSwithBlock {
-			CheckpointCh <- 1
-		}
-	}
+	bc.notifyEpochSwitchBlock(block)
 	// Append a single chain head event if we've progressed the chain
 	if status == CanonStatTy && bc.CurrentBlock().Hash() == block.Hash() {
 		events = append(events, ChainHeadEvent{block})
@@ -2415,6 +3106,17 @@ func (bc *BlockChain) collectLogs(b *types.Block, removed bool) []*types.Log {
 // reorg takes two blocks, an old chain and a new chain and will reconstruct the
 // blocks and inserts them to be part of the new canonical chain and accumulates
 // potential missing transactions and post an event about them.
+//
+// The new head block is deliberately not processed here: the caller has to write it with
+// writeHeadBlock once reorg returns successfully - and only then - and must not write it a
+// second time. adoptHead is the single caller that does so today, for both the executed
+// path (writeBlockWithState) and the already stored one (writeKnownBlock).
+//
+// A failed reorg does not leave a torn head behind for the caller to repair: both of its
+// failure returns are the GetBlock lookups in the loop below, which run before the stale
+// hash markers are dropped, so the head marker still names whatever the loop wrote last and
+// the marker of the new head was never deleted. That is the same state the chain was in
+// before this helper existed, where the caller returned without writing the head as well.
 func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 	log.Warn("Reorg", "OldHash", oldHead.Hash().Hex(), "OldNum", oldHead.Number, "NewHash", newHead.Hash().Hex(), "NewNum", newHead.Number)
 
@@ -2576,8 +3278,25 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 		// }
 	}
 
-	// Apply new blocks in forward order
-	for i := len(newChain) - 1; i >= 0; i-- {
+	// The new head (newChain[0]) is not applied by this function - the caller writes it
+	// once the reorg is done - but its transactions still belong to the rebirth set: the
+	// difference below drops the transactions of the rewound blocks from the lookup table,
+	// and leaving the head's own transactions out would have this reorg delete entries the
+	// caller is about to write back. Collect them before the loop, whose bounds skip the
+	// head.
+	if len(newChain) > 0 {
+		head := bc.GetBlock(newChain[0].Hash(), newChain[0].Number.Uint64())
+		if head == nil {
+			return errInvalidNewChain // Corrupt database, mostly here to avoid weird panics
+		}
+		for _, tx := range head.Transactions() {
+			rebirthTxs = append(rebirthTxs, tx.Hash())
+		}
+	}
+	// Apply the rest of the new blocks in forward order. The loop stops at index 1, the
+	// upstream go-ethereum bound: this function does not handle the new chain head, so
+	// neither its markers nor, for a gap block, its UpdateM1 are written here.
+	for i := len(newChain) - 1; i >= 1; i-- {
 		// Collect all the included transactions
 		block := bc.GetBlock(newChain[i].Hash(), newChain[i].Number.Uint64())
 		if block == nil {
@@ -2586,21 +3305,45 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 		for _, tx := range block.Transactions() {
 			rebirthTxs = append(rebirthTxs, tx.Hash())
 		}
-		// Collect inserted logs and emit them
-		if logs := bc.collectLogs(block, false); len(logs) > 0 {
-			rebirthLogs = append(rebirthLogs, logs...)
-		}
-		if len(rebirthLogs) > 512 {
-			bc.logsFeed.Send(rebirthLogs)
-			rebirthLogs = nil
+		// Collect inserted logs and emit them, but only for blocks that are
+		// promoted to the canonical chain for the first time. A rollback only
+		// rewinds the head markers and leaves the canonical mappings of the
+		// blocks it rewinds over in place, so re-importing a known block
+		// across them lands here with those retained blocks as intermediates.
+		// Their logs were delivered before the rollback, and sending them
+		// again would duplicate them.
+		if bc.GetCanonicalHash(block.NumberU64()) != block.Hash() {
+			if logs := bc.collectLogs(block, false); len(logs) > 0 {
+				rebirthLogs = append(rebirthLogs, logs...)
+			}
+			if len(rebirthLogs) > 512 {
+				bc.logsFeed.Send(rebirthLogs)
+				rebirthLogs = nil
+			}
 		}
 		// Update the head block
 		bc.writeHeadBlock(block, true)
 		// prepare set of masternodes for the next epoch
-		if bc.chainConfig.XDPoS != nil && ((block.NumberU64() % bc.chainConfig.XDPoS.Epoch) == (bc.chainConfig.XDPoS.Epoch - bc.chainConfig.XDPoS.Gap)) {
+		if bc.isGapBlock(block) {
 			if err := bc.UpdateM1(); err != nil {
 				log.Crit("Fail to update masternodes during reorg", "number", block.Number, "hash", block.Hash().Hex(), "err", err)
 			}
+		}
+		// An epoch switch block reaches the canonical chain here whenever it is one of the
+		// blocks this reorg rewrites instead of the head its caller adopts, and the staking
+		// loop in cmd/XDC has to revalidate the consensus parameters and the masternode duty
+		// for the new epoch. The import paths signal for the block they process and never for
+		// these, so a head that jumps over the epoch boundary would leave the loop on the
+		// previous epoch's parameters until the next epoch switch block arrived. The signal
+		// coalesces - see SignalCheckpoint - so a block that was canonical before the rewind
+		// (a rollback re-import) signalling a second time costs nothing.
+		//
+		// A header the engine cannot decode is only logged here, exactly as
+		// notifyEpochSwitchBlock does it - see isEpochSwitchBlock for why neither reports it.
+		if isEpochSwitch, err := bc.isEpochSwitchBlock(block); err != nil {
+			log.Error("[reorg] Error while checking if a promoted block is an epoch switch block", "Hash", block.Hash(), "Number", block.Number())
+		} else if isEpochSwitch {
+			SignalCheckpoint()
 		}
 	}
 	if len(rebirthLogs) > 0 {
@@ -2614,11 +3357,15 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 		rawdb.DeleteTxLookupEntry(batch, tx)
 	}
 	// Delete all hash markers that are not part of the new canonical chain.
-	// Because the reorg function handles new chain head, all hash
-	// markers greater than new chain head should be deleted.
+	// reorg deliberately does not write the new chain head - its callers do - so the new
+	// head's own marker is the first one that may go. This matches upstream go-ethereum
+	// (core/blockchain.go, reorg): keep the two in sync when backporting. Three shapes:
+	// len(newChain) == 0 is a pure rewind, so everything above commonBlock is stale;
+	// len(newChain) == 1 means newChain[0] sits directly above commonBlock;
+	// len(newChain) > 1 means newChain[1] is the head minus one, contiguous by construction.
 	number := commonBlock.Number
-	if len(newChain) > 0 {
-		number = newChain[0].Number
+	if len(newChain) > 1 {
+		number = newChain[1].Number
 	}
 	for i := number.Uint64() + 1; ; i++ {
 		hash := rawdb.ReadCanonicalHash(bc.db, i)
@@ -2677,6 +3424,18 @@ func (bc *BlockChain) futureBlocksLoop() {
 	}
 }
 
+// reportBlockIfFault records block as a bad block when err is a failure the classification
+// blames on the block, and does nothing for the local conditions and for a nil error. It is
+// the single place the insertion paths ask the question, so a sentinel registered in
+// classifyInsertErr is answered the same way wherever it stops a batch - and a failure that
+// says nothing about the block is never written into the bad-block database.
+func (bc *BlockChain) reportBlockIfFault(block *types.Block, err error) {
+	if block == nil || err == nil || !classifyInsertErr(err).badBlock {
+		return
+	}
+	bc.reportBlock(block, nil, err)
+}
+
 // reportBlock logs a bad block error.
 func (bc *BlockChain) reportBlock(block *types.Block, receipts types.Receipts, err error) {
 	rawdb.WriteBadBlock(bc.db, block)
@@ -2731,7 +3490,7 @@ func (bc *BlockChain) InsertHeaderChain(chain []*types.Header, checkFreq int) (i
 	}
 
 	if !bc.chainmu.TryLock() {
-		return 0, errChainStopped
+		return 0, ErrChainStopped
 	}
 	defer bc.chainmu.Unlock()
 

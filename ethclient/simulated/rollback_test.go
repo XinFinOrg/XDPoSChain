@@ -102,6 +102,21 @@ func TestSetPendingBlockAndReceiptsKeepsReceiptsOnFailure(t *testing.T) {
 	}
 }
 
+// TestCommitOnStoppedChainDoesNotPanic covers Commit after Close: the chain reports the stop
+// as a local condition of this node, and the backend must not turn that into a panic - the
+// process would go down for a chain that is simply no longer writable. No hash is reported
+// either, because no block made it to disk.
+func TestCommitOnStoppedChainDoesNotPanic(t *testing.T) {
+	sim := New(types.GenesisAlloc{testAddr: {Balance: big.NewInt(10000000000000000)}}, 10_000_000)
+
+	testSendSignedTx(t, testKey, sim)
+	sim.Close()
+
+	if hash := sim.Commit(); hash != (common.Hash{}) {
+		t.Fatalf("Commit reported a block for a chain that was stopped: %v", hash)
+	}
+}
+
 // testSendSignedTx sends a signed transaction to the simulated backend.
 // It does not commit the block.
 func testSendSignedTx(t *testing.T, key *ecdsa.PrivateKey, sim *Backend) *types.Transaction {

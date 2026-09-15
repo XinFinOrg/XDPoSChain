@@ -60,8 +60,12 @@ func (v *BlockValidator) ValidateBody(block *types.Block) error {
 	if v.config.IsOsaka(block.Number()) && block.Size() > params.MaxBlockSize {
 		return ErrBlockOversized
 	}
-	// Check whether the block's known, and if not, that it's linkable
-	if v.bc.HasBlockAndFullState(block.Hash(), block.NumberU64()) {
+	// Check whether the block's known, and if not, that it's linkable. Known means this node
+	// executed it: a block that is on disk with a state root that resolves but without the
+	// receipts execution leaves behind is not one this node imported, so it has to go
+	// through execution like any other - where ValidateState rejects a block whose state
+	// root its own execution does not reproduce. See HasExecutedBlock.
+	if v.bc.HasExecutedBlock(block.Hash(), block.NumberU64()) {
 		return ErrKnownBlock
 	}
 	// Header validity is known at this point, check the uncles and transactions
@@ -75,6 +79,11 @@ func (v *BlockValidator) ValidateBody(block *types.Block) error {
 	if hash := types.DeriveSha(block.Transactions(), trie.NewStackTrie(nil)); hash != header.TxHash {
 		return fmt.Errorf("transaction root hash mismatch: have %x, want %x", hash, header.TxHash)
 	}
+	// The parent is asked a weaker question than the block above: all its execution needs is a
+	// state to run against, not a proof that this node ran it. A side entry written by
+	// writeBlockWithoutState has no state and no receipts, so it lands in the pruned-ancestor
+	// branch, which is what sends the segment to insertSideChain - using HasExecutedBlock here
+	// would answer the same today and only obscure why.
 	if !v.bc.HasBlockAndFullState(block.ParentHash(), block.NumberU64()-1) {
 		if !v.bc.HasBlock(block.ParentHash(), block.NumberU64()-1) {
 			return consensus.ErrUnknownAncestor

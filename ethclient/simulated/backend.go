@@ -244,12 +244,29 @@ func (b *Backend) Close() error {
 
 // Commit imports all the pending transactions as a single block and starts a
 // fresh new state.
+//
+// It returns the imported block's hash, or the zero hash when the chain could
+// not be written to (it was stopped, or the import was interrupted). The zero
+// hash is never a real block hash: callers that cannot tolerate a missing block
+// must check for it.
+//
+// Note that accounts/abi/bind/backends.SimulatedBackend embeds this type but overrides this
+// method: the deprecated wrapper deliberately does not carry this contract, it keeps failing
+// loudly (panic) so that a backend reached through it cannot be committed to silently.
 func (b *Backend) Commit() common.Hash {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if _, err := b.blockchain.InsertChain([]*types.Block{b.pendingBlock}); err != nil {
-		panic(err) // This cannot happen unless the simulator is wrong, fail in that case
+		// A chain that was stopped - Close() stops the blockchain - or an import that was cut
+		// short is a local condition of this backend, not a wrong simulator, so it must not
+		// bring the process down. The pending block is left as it is and no hash is reported:
+		// returning one would claim a block that never made it to disk.
+		if !core.IsLocalInsertError(err) {
+			panic(err) // This cannot happen unless the simulator is wrong, fail in that case
+		}
+		log.Error("Commit on a chain that cannot be written to", "err", err)
+		return common.Hash{}
 	}
 	blockHash := b.pendingBlock.Hash()
 

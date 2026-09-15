@@ -386,10 +386,10 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, cfg X
 				engine.UpdateParams(chain.CurrentHeader())
 
 				// While syncing, skip masternode validation (IsAuthorisedAddress ->
-				// GetSnapshot on the just-imported head). The CheckpointCh send in
-				// insertChain/insertBlock is unbuffered, so we still receive here to
-				// avoid blocking block import, but the staking state is left alone:
-				// an unknown result must not be read as "not a masternode".
+				// GetSnapshot on the just-imported head). The signals coalesce - the
+				// sender never blocks and the head is re-read here - so receiving is all
+				// this loop has to do, and the staking state is left alone: an unknown
+				// result must not be read as "not a masternode".
 				if ethBackend.Downloader().Synchronising() {
 					continue
 				}

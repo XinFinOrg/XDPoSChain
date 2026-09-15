@@ -330,11 +330,24 @@ func doGenerate() {
 // doBadDeps verifies whether certain unintended dependencies between some
 // packages leak into the codebase due to a refactor. This is not an exhaustive
 // list, rather something we build up over time at sensitive places.
+//
+// A rule guards the dependency tree of the shipped code: the check lists each
+// package with 'go list -deps', which leaves out the imports that only the test
+// files of a package pull in. Those are reported as warnings rather than
+// failing the run - they do not end up in the binary, and knowing about them is
+// enough to decide whether to accept them.
 func doBadDeps() {
 	baddeps := [][2]string{
 		// Rawdb tends to be a dumping ground for db utils, sometimes leaking the db itself
 		{"github.com/XinFinOrg/XDPoSChain/core/rawdb", "github.com/XinFinOrg/XDPoSChain/ethdb/leveldb"},
 		{"github.com/XinFinOrg/XDPoSChain/core/rawdb", "github.com/XinFinOrg/XDPoSChain/ethdb/pebbledb"},
+
+		// The downloader talks to the local chain through its own BlockChain interface.
+		// Reaching into the core package drags the whole blockchain implementation - and
+		// everything that hangs off it - back into the downloader's dependency tree.
+		// The downloader tests do reach into core to pin the classification the interface
+		// mirrors; that import stays in the test binary and is reported as a warning below.
+		{"github.com/XinFinOrg/XDPoSChain/eth/downloader", "github.com/XinFinOrg/XDPoSChain/core"},
 	}
 	tc := new(build.GoToolchain)
 
@@ -344,17 +357,35 @@ func doBadDeps() {
 		if err != nil {
 			log.Fatalf("Failed to list '%s' dependencies: %v", rule[0], err)
 		}
-		for _, line := range strings.Split(string(out), "\n") {
-			if strings.TrimSpace(line) == rule[1] {
-				log.Printf("Found bad dependency '%s' -> '%s'", rule[0], rule[1])
-				failed = true
-			}
+		if listsDependency(out, rule[1]) {
+			log.Printf("Found bad dependency '%s' -> '%s'", rule[0], rule[1])
+			failed = true
+			continue
+		}
+		// Not part of the shipped code: report it, do not fail the run.
+		testOut, err := tc.Go("list", "-deps", "-test", rule[0]).CombinedOutput()
+		if err != nil {
+			log.Fatalf("Failed to list '%s' test dependencies: %v", rule[0], err)
+		}
+		if listsDependency(testOut, rule[1]) {
+			log.Printf("Warning: test-only dependency '%s' -> '%s' (not part of the shipped binary)", rule[0], rule[1])
 		}
 	}
 	if failed {
 		log.Fatalf("Bad dependencies detected.")
 	}
 	fmt.Println("No bad dependencies detected.")
+}
+
+// listsDependency reports whether a 'go list -deps' listing mentions the package,
+// which is printed one import path per line.
+func listsDependency(out []byte, dependency string) bool {
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(line) == dependency {
+			return true
+		}
+	}
+	return false
 }
 
 // doLint runs golangci-lint on requested packages.
