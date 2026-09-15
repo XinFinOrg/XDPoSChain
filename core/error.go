@@ -31,6 +31,10 @@ var (
 
 	// ErrNoGenesis is returned when there is no Genesis Block.
 	ErrNoGenesis = errors.New("genesis not found in chain")
+
+	// ErrBlockOversized is returned if the size of the RLP-encoded block
+	// exceeds the cap established by EIP-7934
+	ErrBlockOversized = errors.New("block RLP-encoded size exceeds maximum")
 )
 
 // List of evm-call-message pre-checking errors. All state transtion messages will
@@ -60,10 +64,6 @@ var (
 	// ErrInsufficientFundsForTransfer is returned if the transaction sender doesn't
 	// have enough funds for transfer(topmost call only).
 	ErrInsufficientFundsForTransfer = errors.New("insufficient funds for transfer")
-
-	// ErrMaxInitCodeSizeExceeded is returned if creation transaction provides the init code bigger
-	// than init code size limit.
-	ErrMaxInitCodeSizeExceeded = errors.New("max initcode size exceeded")
 
 	// ErrInsufficientFunds is returned if the total cost of executing a transaction
 	// is higher than the balance of the user's account.
@@ -114,6 +114,9 @@ var (
 	// Message validation errors:
 	ErrEmptyAuthList   = errors.New("EIP-7702 transaction with empty auth list")
 	ErrSetCodeTxCreate = errors.New("EIP-7702 transaction cannot be used to create contract")
+
+	// -- EIP-7825 errors --
+	ErrGasLimitTooHigh = errors.New("transaction gas limit too high")
 )
 
 // EIP-7702 state transition errors.

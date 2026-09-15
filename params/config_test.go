@@ -18,155 +18,1473 @@ package params
 
 import (
 	"encoding/json"
+	"errors"
 	"math/big"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/stretchr/testify/assert"
 )
 
-func TestCheckCompatible(t *testing.T) {
-	type test struct {
-		stored, new *ChainConfig
-		head        uint64
-		wantErr     *ConfigCompatError
+func TestChainConfigValidateForStartup(t *testing.T) {
+	t.Run("missing field", func(t *testing.T) {
+		cfg := &ChainConfig{}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrMissingForkSwitch) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrMissingForkSwitch)
+		}
+		if err == nil || err.Error() != "invalid chain config: missing fork switch: ChainID" {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+
+	t.Run("engine-less mainnet chain id fails", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(0),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrMissingForkSwitch) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrMissingForkSwitch)
+		}
+		if err == nil || err.Error() != "invalid chain config: missing fork switch: XDPoS" {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("engine-less testnet chain id fails", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                new(big.Int).Set(TestnetChainConfig.ChainID),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(0),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrMissingForkSwitch) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrMissingForkSwitch)
+		}
+		if err == nil || err.Error() != "invalid chain config: missing fork switch: XDPoS" {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("engine-less 1337 remains valid", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1337),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(0),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+		}
+		if err := cfg.CheckConfigForkOrder(); err != nil {
+			t.Fatalf("ValidateForStartup failed: %v", err)
+		}
+	})
+	t.Run("custom ethash chain without XDC forks remains valid", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:        big.NewInt(1234),
+			HomesteadBlock: big.NewInt(0),
+			Ethash:         new(EthashConfig),
+		}
+		if err := cfg.CheckConfigForkOrder(); err != nil {
+			t.Fatalf("ValidateForStartup failed for plain custom ethash config: %v", err)
+		}
+	})
+	t.Run("gas50x block requires tiptrc21 fee block", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:     big.NewInt(1234),
+			Gas50xBlock: big.NewInt(100),
+			Ethash:      new(EthashConfig),
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrMissingForkSwitch) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrMissingForkSwitch)
+		}
+		if err == nil || err.Error() != "invalid chain config: missing fork switch: TIPTRC21FeeBlock" {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("gas50x block must not precede tiptrc21 fee block", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(20),
+			Gas50xBlock:            big.NewInt(10),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(EthashConfig),
+		}
+
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: TIPTRC21FeeBlock 20 > Gas50xBlock 10" {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("gas50x block must not follow miner disable block", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                  big.NewInt(1234),
+			TIPTRC21FeeBlock:         big.NewInt(0),
+			Gas50xBlock:              big.NewInt(20),
+			TIPXDCXMinerDisableBlock: big.NewInt(10),
+			TRC21IssuerSMC:           TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:           TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC:   TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC:   TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                   new(EthashConfig),
+		}
+
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: Gas50xBlock 20 > TIPXDCXMinerDisableBlock 10" {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("gas2500x block must not precede gas50x block", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(20),
+			Gas2500xBlock:          big.NewInt(10),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(EthashConfig),
+		}
+
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: Gas50xBlock 20 > Gas2500xBlock 10" {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("gas2500x block requires gas50x block", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas2500xBlock:          big.NewInt(10),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(EthashConfig),
+		}
+
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrMissingForkSwitch) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrMissingForkSwitch)
+		}
+		if err == nil || err.Error() != "invalid chain config: missing fork switch: Gas50xBlock" {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("nil gas2500x block is accepted", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(20),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(EthashConfig),
+		}
+
+		if err := cfg.CheckConfigForkOrder(); err != nil {
+			t.Fatalf("CheckConfigForkOrder rejected nil Gas2500xBlock: %v", err)
+		}
+	})
+	t.Run("gas2500x block following eip1559 block is accepted", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(10),
+			LondonBlock:            big.NewInt(10),
+			EIP1559Block:           big.NewInt(20),
+			Gas2500xBlock:          big.NewInt(30),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(EthashConfig),
+		}
+
+		if err := cfg.CheckConfigForkOrder(); err != nil {
+			t.Fatalf("CheckConfigForkOrder rejected gas2500x after eip1559: %v", err)
+		}
+	})
+	t.Run("gas2500x block must not take effect inside the basefee opcode window", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(10),
+			LondonBlock:            big.NewInt(10),
+			Gas2500xBlock:          big.NewInt(20),
+			EIP1559Block:           big.NewInt(30),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(EthashConfig),
+		}
+
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: Gas2500xBlock 20 takes effect before EIP1559Block 30 fills the header base fee" {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("gas2500x block below london block is rejected when eip1559 is later", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(0),
+			Gas2500xBlock:          big.NewInt(0),
+			LondonBlock:            big.NewInt(10),
+			EIP1559Block:           big.NewInt(20),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(EthashConfig),
+		}
+
+		if err := cfg.CheckConfigForkOrder(); !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+	})
+	t.Run("gas2500x block is accepted when the basefee opcode window is empty", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(0),
+			Gas2500xBlock:          big.NewInt(0),
+			LondonBlock:            big.NewInt(10),
+			EIP1559Block:           big.NewInt(10),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(EthashConfig),
+		}
+
+		if err := cfg.CheckConfigForkOrder(); err != nil {
+			t.Fatalf("CheckConfigForkOrder rejected an empty basefee opcode window: %v", err)
+		}
+	})
+	t.Run("gas2500x block without eip1559 block is rejected", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(10),
+			LondonBlock:            big.NewInt(10),
+			Gas2500xBlock:          big.NewInt(20),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(EthashConfig),
+		}
+
+		if err := cfg.CheckConfigForkOrder(); !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+	})
+	t.Run("gas2500x block without london block is accepted", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(10),
+			Gas2500xBlock:          big.NewInt(20),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(EthashConfig),
+		}
+
+		if err := cfg.CheckConfigForkOrder(); err != nil {
+			t.Fatalf("CheckConfigForkOrder rejected gas2500x without london: %v", err)
+		}
+	})
+	t.Run("tiptrc21 fee block requires system contract addresses", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:          big.NewInt(1234),
+			TIPTRC21FeeBlock: big.NewInt(0),
+			Gas50xBlock:      big.NewInt(0),
+			Ethash:           new(EthashConfig),
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrMissingForkSwitch) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrMissingForkSwitch)
+		}
+		if err == nil || !strings.Contains(err.Error(), "TRC21IssuerSMC") {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("built-in config", func(t *testing.T) {
+		cfg := TestnetChainConfig.Clone()
+		if err := cfg.CheckConfigForkOrder(); err != nil {
+			t.Fatalf("ValidateForStartup failed for built-in config: %v", err)
+		}
+	})
+	t.Run("xdpos v2 missing fails", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(0),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			XDPoS: &XDPoSConfig{
+				Epoch:                900,
+				FoundationWalletAddr: TestnetChainConfig.XDPoS.FoundationWalletAddr,
+				MaxMasternodesV2:     108,
+			},
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrMissingForkSwitch) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrMissingForkSwitch)
+		}
+		if err == nil || !strings.Contains(err.Error(), "XDPoS.V2") {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("xdpos v2 current config missing fails", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(0),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			XDPoS: &XDPoSConfig{
+				Epoch:                900,
+				FoundationWalletAddr: TestnetChainConfig.XDPoS.FoundationWalletAddr,
+				MaxMasternodesV2:     108,
+				V2: &V2{
+					SwitchEpoch: 1,
+					SwitchBlock: big.NewInt(900),
+					AllConfigs: map[uint64]*V2Config{
+						0: {SwitchRound: 0, MinePeriod: 2, TimeoutPeriod: 10},
+					},
+				},
+			},
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrMissingForkSwitch) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrMissingForkSwitch)
+		}
+		if err == nil || !strings.Contains(err.Error(), "XDPoS.V2.CurrentConfig") {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("xdpos v2 all configs requires round zero entry", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(0),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			XDPoS: &XDPoSConfig{
+				Epoch:                900,
+				FoundationWalletAddr: TestnetChainConfig.XDPoS.FoundationWalletAddr,
+				MaxMasternodesV2:     108,
+				V2: &V2{
+					SwitchEpoch:   1,
+					SwitchBlock:   big.NewInt(900),
+					CurrentConfig: &V2Config{SwitchRound: 9, MinePeriod: 2, TimeoutPeriod: 10},
+					AllConfigs: map[uint64]*V2Config{
+						9: {SwitchRound: 9, MinePeriod: 2, TimeoutPeriod: 10},
+					},
+				},
+			},
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrMissingForkSwitch) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrMissingForkSwitch)
+		}
+		if err == nil || !strings.Contains(err.Error(), "XDPoS.V2.AllConfigs[0]") {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("xdpos v2 all configs requires matching switch round", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(0),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			XDPoS: &XDPoSConfig{
+				Epoch:                900,
+				FoundationWalletAddr: TestnetChainConfig.XDPoS.FoundationWalletAddr,
+				MaxMasternodesV2:     108,
+				V2: &V2{
+					SwitchEpoch:   1,
+					SwitchBlock:   big.NewInt(900),
+					CurrentConfig: &V2Config{SwitchRound: 0, MinePeriod: 2, TimeoutPeriod: 10},
+					AllConfigs: map[uint64]*V2Config{
+						0:  {SwitchRound: 0, MinePeriod: 2, TimeoutPeriod: 10},
+						10: {SwitchRound: 9, MinePeriod: 2, TimeoutPeriod: 10},
+					},
+				},
+			},
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if err == nil || !strings.Contains(err.Error(), "XDPoS.V2.AllConfigs[10].SwitchRound") {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("xdpos v2 current config must match scheduled entry", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(0),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			XDPoS: &XDPoSConfig{
+				Epoch:                900,
+				FoundationWalletAddr: TestnetChainConfig.XDPoS.FoundationWalletAddr,
+				MaxMasternodesV2:     108,
+				V2: &V2{
+					SwitchEpoch:   1,
+					SwitchBlock:   big.NewInt(900),
+					CurrentConfig: &V2Config{SwitchRound: 0, MinePeriod: 3, TimeoutPeriod: 10},
+					AllConfigs: map[uint64]*V2Config{
+						0: {SwitchRound: 0, MinePeriod: 2, TimeoutPeriod: 10},
+					},
+				},
+			},
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if err == nil || !strings.Contains(err.Error(), "XDPoS.V2.CurrentConfig") {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("xdpos v2 switch block must align with epoch", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(0),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			XDPoS: &XDPoSConfig{
+				Epoch:                900,
+				FoundationWalletAddr: TestnetChainConfig.XDPoS.FoundationWalletAddr,
+				MaxMasternodesV2:     108,
+				V2: &V2{
+					SwitchEpoch:   1,
+					SwitchBlock:   big.NewInt(901),
+					CurrentConfig: &V2Config{SwitchRound: 0, MinePeriod: 2, TimeoutPeriod: 10},
+					AllConfigs: map[uint64]*V2Config{
+						0: {SwitchRound: 0, MinePeriod: 2, TimeoutPeriod: 10},
+					},
+				},
+			},
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if err == nil || !strings.Contains(err.Error(), "XDPoS.V2.SwitchBlock") {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("xdpos v2 exp timeout config must be sane", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(0),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			XDPoS: &XDPoSConfig{
+				Epoch:                900,
+				FoundationWalletAddr: TestnetChainConfig.XDPoS.FoundationWalletAddr,
+				MaxMasternodesV2:     108,
+				V2: &V2{
+					SwitchEpoch: 1,
+					SwitchBlock: big.NewInt(900),
+					CurrentConfig: &V2Config{
+						SwitchRound:   0,
+						MinePeriod:    2,
+						TimeoutPeriod: 10,
+						ExpTimeoutConfig: ExpTimeoutConfig{
+							Base:        2,
+							MaxExponent: 32,
+						},
+					},
+					AllConfigs: map[uint64]*V2Config{
+						0: {
+							SwitchRound:   0,
+							MinePeriod:    2,
+							TimeoutPeriod: 10,
+							ExpTimeoutConfig: ExpTimeoutConfig{
+								Base:        2,
+								MaxExponent: 32,
+							},
+						},
+					},
+				},
+			},
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if err == nil || !strings.Contains(err.Error(), "XDPoS.V2.CurrentConfig.ExpTimeoutConfig") {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("missing system contract addresses fail", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			mutate    func(*ChainConfig)
+			wantField string
+		}{
+			{
+				name: "missing trc21 issuer",
+				mutate: func(cfg *ChainConfig) {
+					cfg.TRC21IssuerSMC = common.Address{}
+				},
+				wantField: "TRC21IssuerSMC",
+			},
+			{
+				name: "missing xdcx listing",
+				mutate: func(cfg *ChainConfig) {
+					cfg.XDCXListingSMC = common.Address{}
+				},
+				wantField: "XDCXListingSMC",
+			},
+			{
+				name: "missing relayer registration",
+				mutate: func(cfg *ChainConfig) {
+					cfg.RelayerRegistrationSMC = common.Address{}
+				},
+				wantField: "RelayerRegistrationSMC",
+			},
+			{
+				name: "missing lending registration",
+				mutate: func(cfg *ChainConfig) {
+					cfg.LendingRegistrationSMC = common.Address{}
+				},
+				wantField: "LendingRegistrationSMC",
+			},
+		}
+
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				cfg := TestnetChainConfig.Clone()
+				test.mutate(cfg)
+
+				err := cfg.CheckConfigForkOrder()
+				if !errors.Is(err, ErrMissingForkSwitch) {
+					t.Fatalf("unexpected error: have %v want %v", err, ErrMissingForkSwitch)
+				}
+				if err == nil || !strings.Contains(err.Error(), test.wantField) {
+					t.Fatalf("unexpected error string: %v", err)
+				}
+			})
+		}
+	})
+	t.Run("missing foundation wallet fails", func(t *testing.T) {
+		cfg := TestnetChainConfig.Clone()
+		cfg.XDPoS.FoundationWalletAddr = common.Address{}
+
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrMissingForkSwitch) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrMissingForkSwitch)
+		}
+		if err == nil || !strings.Contains(err.Error(), "XDPoS.FoundationWalletAddr") {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+
+	tests := []struct {
+		name      string
+		mutate    func(*ChainConfig)
+		wantField string
+	}{
+		{
+			name: "eip150 before tip2019",
+			mutate: func(cfg *ChainConfig) {
+				cfg.EIP150Block = big.NewInt(cfg.TIP2019Block.Int64() - 1)
+			},
+			wantField: "TIP2019Block",
+		},
+		{
+			name: "eip155 before eip150",
+			mutate: func(cfg *ChainConfig) {
+				cfg.EIP155Block = big.NewInt(cfg.EIP150Block.Int64() - 1)
+			},
+			wantField: "EIP150Block",
+		},
+		{
+			name: "byzantium before eip158",
+			mutate: func(cfg *ChainConfig) {
+				cfg.ByzantiumBlock = big.NewInt(cfg.EIP158Block.Int64() - 1)
+			},
+			wantField: "EIP158Block",
+		},
+		{
+			name: "tip signing before byzantium",
+			mutate: func(cfg *ChainConfig) {
+				cfg.TIPSigningBlock = big.NewInt(cfg.ByzantiumBlock.Int64() - 1)
+			},
+			wantField: "ByzantiumBlock",
+		},
+		{
+			name: "tip randomize before tip signing",
+			mutate: func(cfg *ChainConfig) {
+				cfg.TIPRandomizeBlock = big.NewInt(cfg.TIPSigningBlock.Int64() - 1)
+			},
+			wantField: "TIPSigningBlock",
+		},
+		{
+			name: "tip increase masternodes before tip randomize",
+			mutate: func(cfg *ChainConfig) {
+				cfg.TIPIncreaseMasternodesBlock = big.NewInt(cfg.TIPRandomizeBlock.Int64() - 1)
+			},
+			wantField: "TIPRandomizeBlock",
+		},
+		{
+			name: "miner disable before gas50x",
+			mutate: func(cfg *ChainConfig) {
+				cfg.BerlinBlock = nil
+				cfg.LondonBlock = nil
+				cfg.MergeBlock = nil
+				cfg.ShanghaiBlock = nil
+				cfg.TIPXDCXMinerDisableBlock = big.NewInt(cfg.Gas50xBlock.Int64() - 1)
+			},
+			wantField: "Gas50xBlock",
+		},
+		{
+			name: "receiver disable before miner disable",
+			mutate: func(cfg *ChainConfig) {
+				cfg.TIPXDCXReceiverDisableBlock = big.NewInt(cfg.TIPXDCXMinerDisableBlock.Int64() - 1)
+			},
+			wantField: "TIPXDCXMinerDisableBlock",
+		},
+		{
+			name: "berlin before trc21",
+			mutate: func(cfg *ChainConfig) {
+				cfg.BerlinBlock = big.NewInt(cfg.TIPTRC21FeeBlock.Int64() - 1)
+			},
+			wantField: "TIPTRC21FeeBlock",
+		},
+		{
+			name: "london before berlin",
+			mutate: func(cfg *ChainConfig) {
+				cfg.LondonBlock = big.NewInt(cfg.BerlinBlock.Int64() - 1)
+			},
+			wantField: "BerlinBlock",
+		},
+		{
+			name: "merge before london",
+			mutate: func(cfg *ChainConfig) {
+				cfg.MergeBlock = big.NewInt(cfg.LondonBlock.Int64() - 1)
+			},
+			wantField: "LondonBlock",
+		},
+		{
+			name: "shanghai before merge",
+			mutate: func(cfg *ChainConfig) {
+				cfg.ShanghaiBlock = big.NewInt(cfg.MergeBlock.Int64() - 1)
+			},
+			wantField: "MergeBlock",
+		},
+		{
+			name: "eip1559 before shanghai",
+			mutate: func(cfg *ChainConfig) {
+				cfg.TIPXDCXMinerDisableBlock = nil
+				cfg.TIPXDCXReceiverDisableBlock = nil
+				cfg.EIP1559Block = big.NewInt(cfg.ShanghaiBlock.Int64() - 1)
+			},
+			wantField: "ShanghaiBlock",
+		},
+		{
+			name: "cancun before eip1559",
+			mutate: func(cfg *ChainConfig) {
+				cfg.CancunBlock = big.NewInt(cfg.EIP1559Block.Int64() - 1)
+			},
+			wantField: "EIP1559Block",
+		},
+		{
+			name: "prague before cancun",
+			mutate: func(cfg *ChainConfig) {
+				cfg.PragueBlock = big.NewInt(cfg.CancunBlock.Int64() - 1)
+			},
+			wantField: "CancunBlock",
+		},
+		{
+			name: "osaka before prague",
+			mutate: func(cfg *ChainConfig) {
+				cfg.PragueBlock = big.NewInt(cfg.CancunBlock.Int64())
+				cfg.OsakaBlock = big.NewInt(cfg.PragueBlock.Int64() - 1)
+			},
+			wantField: "PragueBlock",
+		},
+		{
+			name: "dynamic gas limit before osaka",
+			mutate: func(cfg *ChainConfig) {
+				cfg.PragueBlock = big.NewInt(cfg.CancunBlock.Int64())
+				cfg.OsakaBlock = big.NewInt(cfg.PragueBlock.Int64())
+				cfg.DynamicGasLimitBlock = big.NewInt(cfg.OsakaBlock.Int64() - 1)
+			},
+			wantField: "OsakaBlock",
+		},
+		{
+			name: "upgrade reward before dynamic gas limit",
+			mutate: func(cfg *ChainConfig) {
+				cfg.PragueBlock = big.NewInt(cfg.CancunBlock.Int64())
+				cfg.OsakaBlock = big.NewInt(cfg.PragueBlock.Int64())
+				cfg.DynamicGasLimitBlock = big.NewInt(cfg.OsakaBlock.Int64())
+				cfg.TIPUpgradeRewardBlock = big.NewInt(cfg.DynamicGasLimitBlock.Int64() - 1)
+			},
+			wantField: "DynamicGasLimitBlock",
+		},
+		{
+			name: "upgrade penalty before upgrade reward",
+			mutate: func(cfg *ChainConfig) {
+				cfg.PragueBlock = big.NewInt(cfg.CancunBlock.Int64())
+				cfg.OsakaBlock = big.NewInt(cfg.PragueBlock.Int64())
+				cfg.DynamicGasLimitBlock = big.NewInt(cfg.OsakaBlock.Int64())
+				cfg.TIPUpgradeRewardBlock = big.NewInt(cfg.DynamicGasLimitBlock.Int64())
+				cfg.TIPUpgradePenaltyBlock = big.NewInt(cfg.TIPUpgradeRewardBlock.Int64() - 1)
+			},
+			wantField: "TIPUpgradeRewardBlock",
+		},
+		{
+			name: "epoch halving before upgrade penalty",
+			mutate: func(cfg *ChainConfig) {
+				cfg.PragueBlock = big.NewInt(cfg.CancunBlock.Int64())
+				cfg.OsakaBlock = big.NewInt(cfg.PragueBlock.Int64())
+				cfg.DynamicGasLimitBlock = big.NewInt(cfg.OsakaBlock.Int64())
+				cfg.TIPUpgradeRewardBlock = big.NewInt(cfg.DynamicGasLimitBlock.Int64())
+				cfg.TIPUpgradePenaltyBlock = big.NewInt(cfg.TIPUpgradeRewardBlock.Int64())
+				cfg.TIPEpochHalvingBlock = big.NewInt(cfg.TIPUpgradePenaltyBlock.Int64() - 1)
+			},
+			wantField: "TIPUpgradePenaltyBlock",
+		},
 	}
-	tests := []test{
-		{stored: AllEthashProtocolChanges, new: AllEthashProtocolChanges, head: 0, wantErr: nil},
-		{stored: AllEthashProtocolChanges, new: AllEthashProtocolChanges, head: 100, wantErr: nil},
-		{
-			stored:  &ChainConfig{EIP150Block: big.NewInt(10)},
-			new:     &ChainConfig{EIP150Block: big.NewInt(20)},
-			head:    9,
-			wantErr: nil,
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := TestnetChainConfig.Clone()
+			test.mutate(cfg)
+
+			err := cfg.CheckConfigForkOrder()
+			if !errors.Is(err, ErrWrongForkSwitchOrder) {
+				t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantField) {
+				t.Fatalf("unexpected error string: %v", err)
+			}
+		})
+	}
+}
+
+func TestChainConfigCloneDeepCopiesNestedConfig(t *testing.T) {
+	original := &ChainConfig{
+		ChainID:                     big.NewInt(50),
+		TIP2019Block:                big.NewInt(10),
+		Gas50xBlock:                 big.NewInt(15),
+		TIPXDCXMinerDisableBlock:    big.NewInt(20),
+		TIPXDCXReceiverDisableBlock: big.NewInt(25),
+		OsakaBlock:                  big.NewInt(30),
+		Ethash:                      new(EthashConfig),
+		XDPoS: &XDPoSConfig{
+			V2: &V2{
+				SwitchEpoch: 12,
+				SwitchBlock: big.NewInt(99),
+				CurrentConfig: &V2Config{
+					SwitchRound: 1,
+				},
+				AllConfigs: map[uint64]*V2Config{
+					1: {SwitchRound: 1},
+				},
+			},
 		},
+	}
+	original.XDPoS.V2.BuildConfigIndex()
+
+	clone := original.Clone()
+	if assert.NotNil(t, clone) {
+		assert.NotSame(t, original, clone)
+		assert.NotSame(t, original.ChainID, clone.ChainID)
+		assert.NotSame(t, original.TIP2019Block, clone.TIP2019Block)
+		assert.NotSame(t, original.Gas50xBlock, clone.Gas50xBlock)
+		assert.NotSame(t, original.TIPXDCXMinerDisableBlock, clone.TIPXDCXMinerDisableBlock)
+		assert.NotSame(t, original.TIPXDCXReceiverDisableBlock, clone.TIPXDCXReceiverDisableBlock)
+		assert.NotSame(t, original.OsakaBlock, clone.OsakaBlock)
+		assert.NotSame(t, original.XDPoS, clone.XDPoS)
+		assert.NotSame(t, original.XDPoS.V2, clone.XDPoS.V2)
+		assert.NotSame(t, original.XDPoS.V2.SwitchBlock, clone.XDPoS.V2.SwitchBlock)
+		assert.NotSame(t, original.XDPoS.V2.CurrentConfig, clone.XDPoS.V2.CurrentConfig)
+		assert.NotSame(t, original.XDPoS.V2.AllConfigs[1], clone.XDPoS.V2.AllConfigs[1])
+
+		clone.ChainID.SetInt64(999)
+		clone.Gas50xBlock.SetInt64(1)
+		clone.XDPoS.V2.SwitchBlock.SetInt64(123)
+		clone.XDPoS.V2.CurrentConfig.SwitchRound = 7
+		cloneIndex := clone.XDPoS.V2.ConfigIndex()
+		cloneIndex[0] = 77
+
+		assert.Equal(t, int64(50), original.ChainID.Int64())
+		assert.Equal(t, int64(15), original.Gas50xBlock.Int64())
+		assert.Equal(t, int64(99), original.XDPoS.V2.SwitchBlock.Int64())
+		assert.Equal(t, uint64(1), original.XDPoS.V2.CurrentConfig.SwitchRound)
+		assert.Equal(t, []uint64{1}, original.XDPoS.V2.ConfigIndex())
+	}
+}
+
+func TestChainConfigClonePreservesNilBigIntFields(t *testing.T) {
+	original := &ChainConfig{}
+
+	clone := original.Clone()
+	if clone == nil {
+		t.Fatal("expected clone for non-nil config")
+	}
+	if clone == original {
+		t.Fatal("expected distinct config clone")
+	}
+	if clone.ChainID != nil {
+		t.Fatalf("expected nil ChainID, got %v", clone.ChainID)
+	}
+	if clone.OsakaBlock != nil {
+		t.Fatalf("expected nil OsakaBlock, got %v", clone.OsakaBlock)
+	}
+	if clone.TIP2019Block != nil {
+		t.Fatalf("expected nil TIP2019Block, got %v", clone.TIP2019Block)
+	}
+}
+
+func TestChainConfigSemanticEqualIgnoresJSONPresence(t *testing.T) {
+	left := XDCMainnetChainConfig.CloneForBackfill()
+	right := XDCMainnetChainConfig.Clone()
+
+	if !left.Equal(right) {
+		t.Fatalf("expected semantic equality to ignore JSON presence: left=%v right=%v", left, right)
+	}
+}
+
+func TestChainConfigMarshalJSONOmitsInferredZeroValueFields(t *testing.T) {
+	cfg := (&ChainConfig{
+		ChainID:        big.NewInt(51),
+		DAOForkBlock:   big.NewInt(0),
+		DAOForkSupport: false,
+		Ethash:         new(EthashConfig),
+	}).CloneForBackfill()
+
+	encoded, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("failed to marshal inferred config: %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &raw); err != nil {
+		t.Fatalf("failed to inspect marshaled config: %v", err)
+	}
+	if _, ok := raw["daoForkSupport"]; ok {
+		t.Fatalf("expected inferred false daoForkSupport to remain omitted, have %s", encoded)
+	}
+	if _, ok := raw["daoForkBlock"]; !ok {
+		t.Fatalf("expected declared daoForkBlock to remain present, have %s", encoded)
+	}
+}
+
+func TestChainConfigCloneForJSONOmitsRuntimeOnlyJSONPresence(t *testing.T) {
+	cfg := (&ChainConfig{
+		ChainID:        big.NewInt(51),
+		DAOForkBlock:   big.NewInt(0),
+		DAOForkSupport: false,
+		Ethash:         new(EthashConfig),
+	}).CloneForBackfill().CloneForJSON()
+
+	encoded, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("failed to marshal plain config: %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &raw); err != nil {
+		t.Fatalf("failed to inspect marshaled config: %v", err)
+	}
+	if _, ok := raw["daoForkSupport"]; ok {
+		t.Fatalf("expected runtime-only JSON presence to be stripped, have %s", encoded)
+	}
+	if _, ok := raw["daoForkBlock"]; !ok {
+		t.Fatalf("expected declared daoForkBlock to remain present, have %s", encoded)
+	}
+}
+
+func TestChainConfigUnmarshalJSONResetsRuntimeOnlyMetadata(t *testing.T) {
+	cfg := &ChainConfig{}
+	cfg.SetBuiltInGenesisOverride(true)
+	cfg.runtime.json.startInferredTracking()
+	cfg.runtime.json.mark("homesteadBlock")
+
+	raw := []byte(`{"chainId":51,"daoForkSupport":false,"ethash":{}}`)
+	if err := json.Unmarshal(raw, cfg); err != nil {
+		t.Fatalf("failed to unmarshal chain config: %v", err)
+	}
+	if cfg.hasBuiltInGenesisOverride() {
+		t.Fatal("expected unmarshal to clear built-in genesis override marker")
+	}
+	if !cfg.runtime.json.tracked || !cfg.runtime.json.preserve {
+		t.Fatalf("expected unmarshal to recapture JSON field presence, have %+v", cfg.runtime.json)
+	}
+	if cfg.runtime.json.isMissing("chainId", true) {
+		t.Fatal("expected chainId presence to be captured from JSON")
+	}
+	if !cfg.runtime.json.isMissing("homesteadBlock", false) {
+		t.Fatal("expected stale pre-unmarshal presence state to be discarded")
+	}
+}
+
+func TestGatherForksIncludesXDPoSV2SwitchBlock(t *testing.T) {
+	config := &ChainConfig{
+		HomesteadBlock: big.NewInt(0),
+		BerlinBlock:    big.NewInt(1000),
+		EIP1559Block:   big.NewInt(1000),
+		XDPoS: &XDPoSConfig{V2: &V2{
+			SwitchBlock: big.NewInt(1500),
+		}},
+	}
+	// BerlinBlock and EIP1559Block are distinct fork fields that intentionally
+	// share the same height here; GatherForks must collapse that cross-field
+	// duplicate into a single block entry before appending the nested XDPoS V2 switch.
+	assert.Equal(t, []uint64{1000, 1500}, config.GatherForks())
+}
+
+func TestActiveForksReturnsAlphabeticalNames(t *testing.T) {
+	config := &ChainConfig{
+		HomesteadBlock:           big.NewInt(1),
+		ByzantiumBlock:           big.NewInt(1),
+		BerlinBlock:              big.NewInt(1),
+		EIP150Block:              big.NewInt(1),
+		EIP1559Block:             big.NewInt(1),
+		TIP2019Block:             big.NewInt(1),
+		TIPTRC21FeeBlock:         big.NewInt(1),
+		TIPXDCXBlock:             big.NewInt(1),
+		TIPXDCXMinerDisableBlock: big.NewInt(1),
+		DynamicGasLimitBlock:     big.NewInt(1),
+		XDPoS: &XDPoSConfig{V2: &V2{
+			SwitchBlock: big.NewInt(1),
+		}},
+	}
+
+	assert.Equal(t, []string{
+		"Berlin",
+		"Byzantium",
+		"DynamicGasLimit",
+		"EIP1559",
+		"Homestead",
+		"TIP2019",
+		"TIPTRC21Fee",
+		"TIPXDCX",
+		"TIPXDCXReceiver",
+		"TangerineWhistle",
+		"XDCxDisable",
+		"XDPoSV2",
+	}, config.ActiveForks(big.NewInt(1)))
+}
+
+func BenchmarkGatherForks(b *testing.B) {
+	config := &ChainConfig{
+		HomesteadBlock:              big.NewInt(0),
+		DAOForkBlock:                big.NewInt(1),
+		EIP150Block:                 big.NewInt(2),
+		EIP155Block:                 big.NewInt(3),
+		EIP158Block:                 big.NewInt(4),
+		ByzantiumBlock:              big.NewInt(5),
+		ConstantinopleBlock:         big.NewInt(6),
+		PetersburgBlock:             big.NewInt(7),
+		IstanbulBlock:               big.NewInt(8),
+		TIP2019Block:                big.NewInt(9),
+		TIPSigningBlock:             big.NewInt(10),
+		TIPRandomizeBlock:           big.NewInt(11),
+		TIPIncreaseMasternodesBlock: big.NewInt(12),
+		DenylistBlock:               big.NewInt(13),
+		TIPNoHalvingMNRewardBlock:   big.NewInt(14),
+		TIPXDCXBlock:                big.NewInt(15),
+		TIPXDCXLendingBlock:         big.NewInt(16),
+		TIPXDCXCancellationFeeBlock: big.NewInt(17),
+		TIPTRC21FeeBlock:            big.NewInt(18),
+		Gas50xBlock:                 big.NewInt(19),
+		BerlinBlock:                 big.NewInt(20),
+		LondonBlock:                 big.NewInt(21),
+		MergeBlock:                  big.NewInt(22),
+		ShanghaiBlock:               big.NewInt(23),
+		TIPXDCXMinerDisableBlock:    big.NewInt(24),
+		TIPXDCXReceiverDisableBlock: big.NewInt(25),
+		EIP1559Block:                big.NewInt(26),
+		CancunBlock:                 big.NewInt(27),
+		PragueBlock:                 big.NewInt(28),
+		OsakaBlock:                  big.NewInt(29),
+		DynamicGasLimitBlock:        big.NewInt(30),
+		TIPUpgradeRewardBlock:       big.NewInt(31),
+		TIPUpgradePenaltyBlock:      big.NewInt(32),
+		TIPEpochHalvingBlock:        big.NewInt(33),
+		XDPoS: &XDPoSConfig{V2: &V2{
+			SwitchBlock: big.NewInt(34),
+		}},
+	}
+
+	b.Run("current", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			_ = config.GatherForks()
+		}
+	})
+	b.Run("legacy_reflection", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			_ = gatherForksLegacyReflection(config)
+		}
+	})
+}
+
+func BenchmarkActiveForks(b *testing.B) {
+	config := &ChainConfig{
+		HomesteadBlock:              big.NewInt(0),
+		DAOForkBlock:                big.NewInt(1),
+		EIP150Block:                 big.NewInt(2),
+		EIP155Block:                 big.NewInt(3),
+		EIP158Block:                 big.NewInt(4),
+		ByzantiumBlock:              big.NewInt(5),
+		ConstantinopleBlock:         big.NewInt(6),
+		PetersburgBlock:             big.NewInt(7),
+		IstanbulBlock:               big.NewInt(8),
+		TIP2019Block:                big.NewInt(9),
+		TIPSigningBlock:             big.NewInt(10),
+		TIPRandomizeBlock:           big.NewInt(11),
+		TIPIncreaseMasternodesBlock: big.NewInt(12),
+		DenylistBlock:               big.NewInt(13),
+		TIPNoHalvingMNRewardBlock:   big.NewInt(14),
+		TIPXDCXBlock:                big.NewInt(15),
+		TIPXDCXLendingBlock:         big.NewInt(16),
+		TIPXDCXCancellationFeeBlock: big.NewInt(17),
+		TIPTRC21FeeBlock:            big.NewInt(18),
+		Gas50xBlock:                 big.NewInt(19),
+		BerlinBlock:                 big.NewInt(20),
+		LondonBlock:                 big.NewInt(21),
+		MergeBlock:                  big.NewInt(22),
+		ShanghaiBlock:               big.NewInt(23),
+		TIPXDCXMinerDisableBlock:    big.NewInt(24),
+		TIPXDCXReceiverDisableBlock: big.NewInt(40),
+		EIP1559Block:                big.NewInt(26),
+		CancunBlock:                 big.NewInt(27),
+		PragueBlock:                 big.NewInt(28),
+		OsakaBlock:                  big.NewInt(29),
+		DynamicGasLimitBlock:        big.NewInt(30),
+		TIPUpgradeRewardBlock:       big.NewInt(31),
+		TIPUpgradePenaltyBlock:      big.NewInt(32),
+		TIPEpochHalvingBlock:        big.NewInt(33),
+		XDPoS: &XDPoSConfig{V2: &V2{
+			SwitchBlock: big.NewInt(34),
+		}},
+	}
+	block := big.NewInt(35)
+
+	b.Run("current", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			_ = config.ActiveForks(block)
+		}
+	})
+	b.Run("legacy_map_sort", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			_ = activeForksLegacyMapSort(config, block)
+		}
+	})
+}
+
+func gatherForksLegacyReflection(c *ChainConfig) []uint64 {
+	kind := reflect.TypeFor[ChainConfig]()
+	conf := reflect.ValueOf(c).Elem()
+	forksByBlock := make([]uint64, 0)
+	for i := 0; i < kind.NumField(); i++ {
+		field := kind.Field(i)
+		if !strings.HasSuffix(field.Name, "Block") {
+			continue
+		}
+		if field.Type == reflect.TypeFor[*big.Int]() {
+			if rule := conf.Field(i).Interface().(*big.Int); rule != nil {
+				forksByBlock = append(forksByBlock, rule.Uint64())
+			}
+		}
+	}
+	if c.XDPoS != nil && c.XDPoS.V2 != nil && c.XDPoS.V2.SwitchBlock != nil {
+		forksByBlock = append(forksByBlock, c.XDPoS.V2.SwitchBlock.Uint64())
+	}
+	slices.Sort(forksByBlock)
+	forksByBlock = slices.Compact(forksByBlock)
+	if len(forksByBlock) > 0 && forksByBlock[0] == 0 {
+		forksByBlock = forksByBlock[1:]
+	}
+	return forksByBlock
+}
+
+func activeForksLegacyMapSort(c *ChainConfig, block *big.Int) []string {
+	features := map[string]bool{
+		"Homestead":              c.IsHomestead(block),
+		"DAO":                    c.IsDAOFork(block),
+		"TIP2019":                c.IsTIP2019(block),
+		"TangerineWhistle":       c.IsEIP150(block),
+		"SpuriousDragon":         c.IsEIP155(block),
+		"EIP158":                 c.IsEIP158(block),
+		"Byzantium":              c.IsByzantium(block),
+		"Constantinople":         c.IsConstantinople(block),
+		"Petersburg":             c.IsPetersburg(block),
+		"Istanbul":               c.IsIstanbul(block),
+		"TIPSigning":             c.IsTIPSigning(block),
+		"TIPRandomize":           c.IsTIPRandomize(block),
+		"TIPIncreaseMasternodes": c.IsTIPIncreaseMasternodes(block),
+		"Denylist":               c.IsDenylist(block),
+		"TIPNoHalvingMNReward":   c.IsTIPNoHalvingMNReward(block),
+		"TIPXDCX":                c.IsTIPXDCX(block),
+		"TIPXDCXLending":         c.IsTIPXDCXLending(block),
+		"TIPXDCXCancellationFee": c.IsTIPXDCXCancellationFee(block),
+		"TIPTRC21Fee":            c.IsTIPTRC21Fee(block),
+		"Berlin":                 c.IsBerlin(block),
+		"London":                 c.IsLondon(block),
+		"Merge":                  c.IsMerge(block),
+		"Shanghai":               c.IsShanghai(block),
+		"Gas50x":                 c.IsGas50x(block),
+		"XDPoSV2":                c.IsXDPoSV2(block),
+		"TIPXDCXMiner":           c.IsTIPXDCXMiner(block),
+		"TIPXDCXReceiver":        c.IsTIPXDCXReceiver(block),
+		"XDCxDisable":            c.IsXDCxDisable(block),
+		"EIP1559":                c.IsEIP1559(block),
+		"Cancun":                 c.IsCancun(block),
+		"DynamicGasLimit":        c.IsDynamicGasLimit(block),
+		"TIPUpgradeReward":       c.IsTIPUpgradeReward(block),
+		"TIPUpgradePenalty":      c.IsTIPUpgradePenalty(block),
+		"TIPEpochHalving":        c.IsTIPEpochHalving(block),
+		"Prague":                 c.IsPrague(block),
+		"Osaka":                  c.IsOsaka(block),
+	}
+	activeForks := make([]string, 0)
+	for fork, active := range features {
+		if active {
+			activeForks = append(activeForks, fork)
+		}
+	}
+	slices.Sort(activeForks)
+	return activeForks
+}
+
+func TestChainConfigStringIncludesAllFields(t *testing.T) {
+	config := &ChainConfig{
+		ChainID:                     big.NewInt(1),
+		HomesteadBlock:              big.NewInt(2),
+		DAOForkBlock:                big.NewInt(3),
+		DAOForkSupport:              true,
+		EIP150Block:                 big.NewInt(4),
+		EIP155Block:                 big.NewInt(5),
+		EIP158Block:                 big.NewInt(6),
+		ByzantiumBlock:              big.NewInt(7),
+		ConstantinopleBlock:         big.NewInt(8),
+		PetersburgBlock:             big.NewInt(9),
+		IstanbulBlock:               big.NewInt(10),
+		BerlinBlock:                 big.NewInt(11),
+		LondonBlock:                 big.NewInt(12),
+		MergeBlock:                  big.NewInt(13),
+		ShanghaiBlock:               big.NewInt(14),
+		EIP1559Block:                big.NewInt(15),
+		CancunBlock:                 big.NewInt(16),
+		PragueBlock:                 big.NewInt(17),
+		OsakaBlock:                  big.NewInt(18),
+		TIP2019Block:                big.NewInt(19),
+		TIPSigningBlock:             big.NewInt(20),
+		TIPRandomizeBlock:           big.NewInt(21),
+		TIPIncreaseMasternodesBlock: big.NewInt(22),
+		DenylistBlock:               big.NewInt(23),
+		TIPNoHalvingMNRewardBlock:   big.NewInt(24),
+		TIPXDCXBlock:                big.NewInt(25),
+		TIPXDCXLendingBlock:         big.NewInt(26),
+		TIPXDCXCancellationFeeBlock: big.NewInt(27),
+		TIPTRC21FeeBlock:            big.NewInt(28),
+		TIPXDCXMinerDisableBlock:    big.NewInt(29),
+		TIPXDCXReceiverDisableBlock: big.NewInt(30),
+		DynamicGasLimitBlock:        big.NewInt(31),
+		TIPUpgradeRewardBlock:       big.NewInt(32),
+		TIPUpgradePenaltyBlock:      big.NewInt(33),
+		TIPEpochHalvingBlock:        big.NewInt(34),
+		TRC21IssuerSMC:              common.HexToAddress("0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee"),
+		XDCXListingSMC:              common.HexToAddress("0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53"),
+		RelayerRegistrationSMC:      common.HexToAddress("0x16c63b79f9C8784168103C0b74E6A59EC2de4a02"),
+		LendingRegistrationSMC:      common.HexToAddress("0x7d761afd7ff65a79e4173897594a194e3c506e57"),
+		Ethash:                      new(EthashConfig),
+		Clique:                      &CliqueConfig{Period: 1, Epoch: 2},
+		XDPoS: &XDPoSConfig{
+			Period:               2,
+			Epoch:                900,
+			Reward:               5000,
+			RewardCheckpoint:     900,
+			Gap:                  450,
+			FoundationWalletAddr: common.HexToAddress("0x0000000000000000000000000000000000000068"),
+			V2: &V2{
+				SwitchEpoch: 1,
+				SwitchBlock: big.NewInt(900),
+				CurrentConfig: &V2Config{
+					MaxMasternodes: 18,
+				},
+			},
+		},
+	}
+
+	got := config.String()
+	assert.NotContains(t, got, "SchemaVersion:")
+
+	encoded, err := json.Marshal(config)
+	assert.NoError(t, err)
+	assert.NotContains(t, string(encoded), "schemaVersion")
+
+	for _, label := range []string{
+		"ChainID:",
+		"Homestead:",
+		"DAOFork:",
+		"DAOForkSupport:",
+		"TIP2019:",
+		"EIP150:",
+		"EIP155:",
+		"EIP158:",
+		"Byzantium:",
+		"Constantinople:",
+		"Petersburg:",
+		"Istanbul:",
+		"TIPSigning:",
+		"TIPRandomize:",
+		"TIPIncreaseMasternodes:",
+		"Denylist:",
+		"TIPNoHalvingMNReward:",
+		"TIPXDCX:",
+		"TIPXDCXLending:",
+		"TIPXDCXCancellationFee:",
+		"TIPTRC21Fee:",
+		"Berlin:",
+		"London:",
+		"Merge:",
+		"Shanghai:",
+		"TIPXDCXMinerDisable:",
+		"TIPXDCXReceiverDisable:",
+		"EIP1559:",
+		"Cancun:",
+		"Prague:",
+		"Osaka:",
+		"DynamicGasLimit:",
+		"TIPUpgradeReward:",
+		"TIPUpgradePenalty:",
+		"TIPEpochHalving:",
+		"TRC21IssuerSMC:",
+		"XDCXListingSMC:",
+		"RelayerRegistrationSMC:",
+		"LendingRegistrationSMC:",
+		"Ethash:",
+		"Clique:",
+		"XDPoS:",
+	} {
+		assert.Contains(t, got, label)
+	}
+}
+
+func TestActiveSystemContractsTracksXDCActivationBlocks(t *testing.T) {
+	config := &ChainConfig{
+		TIPSigningBlock:             big.NewInt(10),
+		TIPRandomizeBlock:           big.NewInt(20),
+		TIPXDCXBlock:                big.NewInt(30),
+		TIPXDCXLendingBlock:         big.NewInt(40),
+		TIPTRC21FeeBlock:            big.NewInt(50),
+		TIPXDCXMinerDisableBlock:    big.NewInt(55),
+		TIPXDCXReceiverDisableBlock: big.NewInt(56),
+		PragueBlock:                 big.NewInt(60),
+		TRC21IssuerSMC:              common.HexToAddress("0x0000000000000000000000000000000000000101"),
+		XDCXListingSMC:              common.HexToAddress("0x0000000000000000000000000000000000000102"),
+		RelayerRegistrationSMC:      common.HexToAddress("0x0000000000000000000000000000000000000103"),
+		LendingRegistrationSMC:      common.HexToAddress("0x0000000000000000000000000000000000000104"),
+		XDPoS:                       &XDPoSConfig{},
+	}
+
+	tests := []struct {
+		name  string
+		block uint64
+		want  map[string]common.Address
+	}{
 		{
-			stored: AllEthashProtocolChanges,
-			new:    &ChainConfig{HomesteadBlock: nil},
-			head:   3,
-			wantErr: &ConfigCompatError{
-				What:         "Homestead fork block",
-				StoredConfig: big.NewInt(0),
-				NewConfig:    nil,
-				RewindTo:     0,
+			name:  "genesis only validator contract",
+			block: 0,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC": common.MasternodeVotingSMCBinary,
+				"BLOCK_SIGNERS":         common.BlockSignersBinary,
 			},
 		},
 		{
-			stored: AllEthashProtocolChanges,
-			new:    &ChainConfig{HomesteadBlock: big.NewInt(1)},
-			head:   3,
-			wantErr: &ConfigCompatError{
-				What:         "Homestead fork block",
-				StoredConfig: big.NewInt(0),
-				NewConfig:    big.NewInt(1),
-				RewindTo:     0,
+			name:  "pre signing exposes legacy block signer contract",
+			block: 9,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC": common.MasternodeVotingSMCBinary,
+				"BLOCK_SIGNERS":         common.BlockSignersBinary,
 			},
 		},
 		{
-			stored: &ChainConfig{HomesteadBlock: big.NewInt(30), EIP150Block: big.NewInt(10)},
-			new:    &ChainConfig{HomesteadBlock: big.NewInt(25), EIP150Block: big.NewInt(20)},
-			head:   25,
-			wantErr: &ConfigCompatError{
-				What:         "EIP150 fork block",
-				StoredConfig: big.NewInt(10),
-				NewConfig:    big.NewInt(20),
-				RewindTo:     9,
+			name:  "signing fork removes legacy block signer contract",
+			block: 10,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC": common.MasternodeVotingSMCBinary,
+			},
+		},
+		{
+			name:  "randomize fork adds randomize contract",
+			block: 20,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC": common.MasternodeVotingSMCBinary,
+				"RANDOMIZE_SMC":         common.RandomizeSMCBinary,
+			},
+		},
+		{
+			name:  "xdcx fork adds receiver-routed exchange contracts",
+			block: 30,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC":                common.MasternodeVotingSMCBinary,
+				"RANDOMIZE_SMC":                        common.RandomizeSMCBinary,
+				"XDCX_LISTING_SMC":                     config.XDCXListingSMC,
+				"RELAYER_REGISTRATION_SMC":             config.RelayerRegistrationSMC,
+				"XDCX_ADDRESS":                         common.XDCXAddrBinary,
+				"TRADING_STATE_ADDRESS":                common.TradingStateAddrBinary,
+				"XDCX_LENDING_ADDRESS":                 common.XDCXLendingAddressBinary,
+				"XDCX_LENDING_FINALIZED_TRADE_ADDRESS": common.XDCXLendingFinalizedTradeAddressBinary,
+			},
+		},
+		{
+			name:  "receiver routing exposes lending endpoints before lending fork",
+			block: 39,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC":                common.MasternodeVotingSMCBinary,
+				"RANDOMIZE_SMC":                        common.RandomizeSMCBinary,
+				"XDCX_LISTING_SMC":                     config.XDCXListingSMC,
+				"RELAYER_REGISTRATION_SMC":             config.RelayerRegistrationSMC,
+				"XDCX_ADDRESS":                         common.XDCXAddrBinary,
+				"TRADING_STATE_ADDRESS":                common.TradingStateAddrBinary,
+				"XDCX_LENDING_ADDRESS":                 common.XDCXLendingAddressBinary,
+				"XDCX_LENDING_FINALIZED_TRADE_ADDRESS": common.XDCXLendingFinalizedTradeAddressBinary,
+			},
+		},
+		{
+			name:  "lending fork adds lending contracts",
+			block: 40,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC":                common.MasternodeVotingSMCBinary,
+				"RANDOMIZE_SMC":                        common.RandomizeSMCBinary,
+				"XDCX_LISTING_SMC":                     config.XDCXListingSMC,
+				"RELAYER_REGISTRATION_SMC":             config.RelayerRegistrationSMC,
+				"XDCX_ADDRESS":                         common.XDCXAddrBinary,
+				"TRADING_STATE_ADDRESS":                common.TradingStateAddrBinary,
+				"LENDING_REGISTRATION_SMC":             config.LendingRegistrationSMC,
+				"XDCX_LENDING_ADDRESS":                 common.XDCXLendingAddressBinary,
+				"XDCX_LENDING_FINALIZED_TRADE_ADDRESS": common.XDCXLendingFinalizedTradeAddressBinary,
+			},
+		},
+		{
+			name:  "trc21 fork adds issuer contract",
+			block: 50,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC":                common.MasternodeVotingSMCBinary,
+				"RANDOMIZE_SMC":                        common.RandomizeSMCBinary,
+				"TRC21_ISSUER_SMC":                     config.TRC21IssuerSMC,
+				"XDCX_LISTING_SMC":                     config.XDCXListingSMC,
+				"RELAYER_REGISTRATION_SMC":             config.RelayerRegistrationSMC,
+				"XDCX_ADDRESS":                         common.XDCXAddrBinary,
+				"TRADING_STATE_ADDRESS":                common.TradingStateAddrBinary,
+				"LENDING_REGISTRATION_SMC":             config.LendingRegistrationSMC,
+				"XDCX_LENDING_ADDRESS":                 common.XDCXLendingAddressBinary,
+				"XDCX_LENDING_FINALIZED_TRADE_ADDRESS": common.XDCXLendingFinalizedTradeAddressBinary,
+			},
+		},
+		{
+			name:  "prague adds history storage",
+			block: 60,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC":    common.MasternodeVotingSMCBinary,
+				"RANDOMIZE_SMC":            common.RandomizeSMCBinary,
+				"TRC21_ISSUER_SMC":         config.TRC21IssuerSMC,
+				"XDCX_LISTING_SMC":         config.XDCXListingSMC,
+				"RELAYER_REGISTRATION_SMC": config.RelayerRegistrationSMC,
+				"LENDING_REGISTRATION_SMC": config.LendingRegistrationSMC,
+				"HISTORY_STORAGE_ADDRESS":  HistoryStorageAddress,
+			},
+		},
+		{
+			name:  "miner disable keeps receiver endpoints until receiver disable",
+			block: 55,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC":                common.MasternodeVotingSMCBinary,
+				"RANDOMIZE_SMC":                        common.RandomizeSMCBinary,
+				"TRC21_ISSUER_SMC":                     config.TRC21IssuerSMC,
+				"XDCX_LISTING_SMC":                     config.XDCXListingSMC,
+				"RELAYER_REGISTRATION_SMC":             config.RelayerRegistrationSMC,
+				"XDCX_ADDRESS":                         common.XDCXAddrBinary,
+				"TRADING_STATE_ADDRESS":                common.TradingStateAddrBinary,
+				"LENDING_REGISTRATION_SMC":             config.LendingRegistrationSMC,
+				"XDCX_LENDING_ADDRESS":                 common.XDCXLendingAddressBinary,
+				"XDCX_LENDING_FINALIZED_TRADE_ADDRESS": common.XDCXLendingFinalizedTradeAddressBinary,
+			},
+		},
+		{
+			name:  "receiver disable removes xdcx receiver endpoints",
+			block: 56,
+			want: map[string]common.Address{
+				"MASTERNODE_VOTING_SMC":    common.MasternodeVotingSMCBinary,
+				"RANDOMIZE_SMC":            common.RandomizeSMCBinary,
+				"TRC21_ISSUER_SMC":         config.TRC21IssuerSMC,
+				"XDCX_LISTING_SMC":         config.XDCXListingSMC,
+				"RELAYER_REGISTRATION_SMC": config.RelayerRegistrationSMC,
+				"LENDING_REGISTRATION_SMC": config.LendingRegistrationSMC,
 			},
 		},
 	}
 
 	for _, test := range tests {
-		err := test.stored.CheckCompatible(test.new, test.head)
-		if !reflect.DeepEqual(err, test.wantErr) {
-			t.Errorf("error mismatch:\nstored: %v\nnew: %v\nhead: %v\nerr: %v\nwant: %v", test.stored, test.new, test.head, err, test.wantErr)
-		}
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, config.ActiveSystemContracts(test.block))
+		})
 	}
-}
-
-func TestUpdateV2Config(t *testing.T) {
-	TestXDPoSMockChainConfig.XDPoS.V2.BuildConfigIndex()
-	c := TestXDPoSMockChainConfig.XDPoS.V2.CurrentConfig
-	assert.Equal(t, 0.667, c.CertThreshold)
-
-	TestXDPoSMockChainConfig.XDPoS.V2.UpdateConfig(10)
-	c = TestXDPoSMockChainConfig.XDPoS.V2.CurrentConfig
-	assert.Equal(t, float64(0.667), c.CertThreshold)
-
-	TestXDPoSMockChainConfig.XDPoS.V2.UpdateConfig(900)
-	c = TestXDPoSMockChainConfig.XDPoS.V2.CurrentConfig
-	assert.Equal(t, 4, c.TimeoutSyncThreshold)
-}
-
-func TestV2Config(t *testing.T) {
-	TestXDPoSMockChainConfig.XDPoS.V2.BuildConfigIndex()
-	c := TestXDPoSMockChainConfig.XDPoS.V2.Config(1)
-	assert.Equal(t, 0.667, c.CertThreshold)
-
-	c = TestXDPoSMockChainConfig.XDPoS.V2.Config(5)
-	assert.Equal(t, 0.667, c.CertThreshold)
-
-	c = TestXDPoSMockChainConfig.XDPoS.V2.Config(10)
-	assert.Equal(t, 0.667, c.CertThreshold)
-
-	c = TestXDPoSMockChainConfig.XDPoS.V2.Config(11)
-	assert.Equal(t, float64(0.667), c.CertThreshold)
-}
-
-func TestBuildConfigIndex(t *testing.T) {
-	TestXDPoSMockChainConfig.XDPoS.V2.BuildConfigIndex()
-	index := TestXDPoSMockChainConfig.XDPoS.V2.ConfigIndex()
-	expected := []uint64{900, 10, 0}
-	assert.Equal(t, expected, index)
-}
-
-func TestBuildConfigIndexDescendingOrder(t *testing.T) {
-	v2 := &V2{
-		AllConfigs: map[uint64]*V2Config{
-			5:  {SwitchRound: 5},
-			2:  {SwitchRound: 2},
-			10: {SwitchRound: 10},
-			0:  {SwitchRound: 0},
-			15: {SwitchRound: 15},
-		},
-	}
-	v2.BuildConfigIndex()
-	assert.Equal(t, []uint64{15, 10, 5, 2, 0}, v2.ConfigIndex())
-}
-
-// Test switch epoch is switchblock divide into epoch per block
-func TestSwitchEpoch(t *testing.T) {
-	config := XDCMainnetChainConfig.XDPoS
-	epoch := config.Epoch
-	assert.Equal(t, config.V2.SwitchEpoch, config.V2.SwitchBlock.Uint64()/epoch)
-
-	config = TestnetChainConfig.XDPoS
-	epoch = config.Epoch
-	assert.Equal(t, config.V2.SwitchEpoch, config.V2.SwitchBlock.Uint64()/epoch)
-
-	config = DevnetChainConfig.XDPoS
-	epoch = config.Epoch
-	assert.Equal(t, config.V2.SwitchEpoch, config.V2.SwitchBlock.Uint64()/epoch)
-
-	config = TestXDPoSMockChainConfig.XDPoS
-	epoch = config.Epoch
-	assert.Equal(t, config.V2.SwitchEpoch, config.V2.SwitchBlock.Uint64()/epoch)
-}
-
-func TestXDPoSConfigUnmarshalLegacyFoundationWalletAddr(t *testing.T) {
-	const raw = `{"period":2,"epoch":900,"reward":5000,"rewardCheckpoint":900,"gap":450,"foudationWalletAddr":"xdc746249c61f5832c5eed53172776b460491bdcd5c"}`
-
-	var cfg XDPoSConfig
-	err := json.Unmarshal([]byte(raw), &cfg)
-	assert.NoError(t, err)
-	assert.Equal(t, common.HexToAddress("xdc746249c61f5832c5eed53172776b460491bdcd5c"), cfg.FoundationWalletAddr)
-}
-
-func TestXDPoSConfigUnmarshalFoundationWalletAddrPrecedence(t *testing.T) {
-	const raw = `{"period":2,"epoch":900,"reward":5000,"rewardCheckpoint":900,"gap":450,"foudationWalletAddr":"xdc746249c61f5832c5eed53172776b460491bdcd5c","foundationWalletAddr":"xdc92a289fe95a85c53b8d0d113cbaef0c1ec98ac65"}`
-
-	var cfg XDPoSConfig
-	err := json.Unmarshal([]byte(raw), &cfg)
-	assert.NoError(t, err)
-	assert.Equal(t, common.HexToAddress("xdc92a289fe95a85c53b8d0d113cbaef0c1ec98ac65"), cfg.FoundationWalletAddr)
 }

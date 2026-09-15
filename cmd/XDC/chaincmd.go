@@ -188,10 +188,6 @@ func initGenesis(ctx *cli.Context) error {
 		utils.Fatalf("invalid genesis json: %v", err)
 	}
 
-	if genesis.Config.ChainID != nil {
-		common.CopyConstants(genesis.Config.ChainID.Uint64())
-	}
-
 	// Open and initialise both full and light databases
 	stack, _ := makeConfigNode(ctx)
 	defer stack.Close()
@@ -201,9 +197,12 @@ func initGenesis(ctx *cli.Context) error {
 	if err != nil {
 		utils.Fatalf("Failed to open database: %v", err)
 	}
-	_, hash, err := core.SetupGenesisBlock(chaindb, genesis)
+	_, hash, compatErr, err := core.SetupGenesisBlockWithOverride(chaindb, genesis, ctx.Bool(utils.AllowBuiltInConfigOverrideFlag.Name))
 	if err != nil {
-		utils.Fatalf("Failed to write genesis block: %v", err)
+		utils.Fatalf("Failed to write genesis block: %s", utils.FormatChainConfigError(err))
+	}
+	if compatErr != nil {
+		utils.Fatalf("Failed to write chain config: %v", compatErr)
 	}
 	chaindb.Close()
 	log.Info("Successfully wrote genesis state", "database", name, "hash", hash)
@@ -220,7 +219,7 @@ func importChain(ctx *cli.Context) error {
 	// Start metrics export if enabled
 	utils.SetupMetrics(&cfg.Metrics)
 
-	chain, db := utils.MakeChain(ctx, stack, false)
+	chain, db := utils.MakeChain(ctx, stack, false, cfg.Eth.ChainConfigMismatchPolicy)
 	defer db.Close()
 
 	// Start periodically gathering memory profiles
@@ -292,10 +291,10 @@ func exportChain(ctx *cli.Context) error {
 		utils.Fatalf("This command requires an argument.")
 	}
 
-	stack, _, _ := makeFullNode(ctx)
+	stack, cfg := makeConfigNode(ctx)
 	defer stack.Close()
 
-	chain, db := utils.MakeChain(ctx, stack, true)
+	chain, db := utils.MakeChain(ctx, stack, true, cfg.Eth.ChainConfigMismatchPolicy)
 	defer db.Close()
 	start := time.Now()
 
@@ -442,7 +441,7 @@ func dump(ctx *cli.Context) error {
 		if conf.OnlyWithAddresses {
 			fmt.Fprintf(os.Stderr, "If you want to include accounts with missing preimages, you need iterative output, since"+
 				" otherwise the accounts will overwrite each other in the resulting mapping.")
-			return fmt.Errorf("incompatible options")
+			return errors.New("incompatible options")
 		}
 		fmt.Println(string(state.Dump(conf)))
 	}

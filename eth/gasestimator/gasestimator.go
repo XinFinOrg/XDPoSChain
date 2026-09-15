@@ -58,6 +58,14 @@ func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uin
 	if call.GasLimit >= params.TxGas {
 		hi = call.GasLimit
 	}
+
+	// Cap the maximum gas allowance according to EIP-7825 if the estimation targets Osaka
+	if hi > params.MaxTxGas {
+		if opts.Config.IsOsaka(opts.Header.Number) {
+			hi = params.MaxTxGas
+		}
+	}
+
 	// Normalize the max fee per gas the call is willing to spend.
 	var feeCap *big.Int
 	if call.GasFeeCap != nil {
@@ -166,18 +174,16 @@ func execute(ctx context.Context, call *core.Message, opts *Options, gasLimit ui
 func run(ctx context.Context, call *core.Message, opts *Options) (*core.ExecutionResult, error) {
 	// Assemble the call and the call context
 	var (
-		msgContext = core.NewEVMTxContext(call)
 		evmContext = core.NewEVMBlockContext(opts.Header, opts.Chain, nil)
-
 		dirtyState = opts.State.Copy()
 	)
 	// Lower the basefee to 0 to avoid breaking EVM
 	// invariants (basefee < feecap).
-	if msgContext.GasPrice.Sign() == 0 {
+	if call.GasPrice.Sign() == 0 {
 		evmContext.BaseFee = new(big.Int)
 	}
 	evm := vm.NewEVM(evmContext, dirtyState, nil, opts.Config, vm.Config{NoBaseFee: true})
-	evm.SetTxContext(msgContext)
+
 	// Monitor the outer context and interrupt the EVM upon cancellation. To avoid
 	// a dangling goroutine until the outer estimation finishes, create an internal
 	// context for the lifetime of this method call.

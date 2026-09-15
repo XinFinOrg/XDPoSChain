@@ -18,7 +18,6 @@ package types
 
 import (
 	"bytes"
-	"hash"
 	"math/big"
 	"reflect"
 	"testing"
@@ -26,7 +25,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/math"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
-	"github.com/XinFinOrg/XDPoSChain/crypto/keccak"
+	"github.com/XinFinOrg/XDPoSChain/internal/blocktest"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
@@ -135,6 +134,98 @@ func TestUncleHash(t *testing.T) {
 	}
 }
 
+func TestHeaderSanityCheckExtraSize(t *testing.T) {
+	tests := []struct {
+		name    string
+		extra   []byte
+		wantErr bool
+	}{
+		{name: "limit", extra: bytes.Repeat([]byte{0x01}, maxHeaderByteFieldSize)},
+		{name: "over limit", extra: bytes.Repeat([]byte{0x01}, maxHeaderByteFieldSize+1), wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			header := &Header{
+				Difficulty: big.NewInt(1),
+				Number:     big.NewInt(1),
+				Extra:      test.extra,
+			}
+			err := header.SanityCheck()
+			if test.wantErr && err == nil {
+				t.Fatal("expected oversized extra data to fail sanity check")
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("expected extra data at limit to pass sanity check: %v", err)
+			}
+		})
+	}
+}
+
+func TestHeaderSanityCheckXDPoSFieldSizes(t *testing.T) {
+	tests := []struct {
+		name string
+		set  func(*Header)
+	}{
+		{
+			name: "validators",
+			set: func(header *Header) {
+				header.Validators = bytes.Repeat([]byte{0x01}, maxHeaderByteFieldSize+1)
+			},
+		},
+		{
+			name: "validator",
+			set: func(header *Header) {
+				header.Validator = bytes.Repeat([]byte{0x01}, maxHeaderByteFieldSize+1)
+			},
+		},
+		{
+			name: "penalties",
+			set: func(header *Header) {
+				header.Penalties = bytes.Repeat([]byte{0x01}, maxHeaderByteFieldSize+1)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			header := &Header{
+				Difficulty: big.NewInt(1),
+				Number:     big.NewInt(1),
+			}
+			test.set(header)
+			if err := header.SanityCheck(); err == nil {
+				t.Fatalf("expected oversized %s data to fail sanity check", test.name)
+			}
+		})
+	}
+}
+
+func TestBlockSanityCheckUncleExtraSize(t *testing.T) {
+	block := NewBlockWithHeader(&Header{
+		Difficulty: big.NewInt(1),
+		Number:     big.NewInt(1),
+	}).WithBody(Body{
+		Uncles: []*Header{{
+			Difficulty: big.NewInt(1),
+			Number:     big.NewInt(1),
+			Extra:      bytes.Repeat([]byte{0x01}, maxHeaderByteFieldSize+1),
+		}},
+	})
+
+	if err := block.SanityCheck(); err == nil {
+		t.Fatal("expected oversized uncle extra data to fail sanity check")
+	}
+}
+
+func TestSanityCheckHeadersExtraSize(t *testing.T) {
+	headers := []*Header{{
+		Extra: bytes.Repeat([]byte{0x01}, maxHeaderByteFieldSize+1),
+	}}
+
+	if err := SanityCheckHeaders(headers); err == nil {
+		t.Fatal("expected oversized header extra data to fail sanity check")
+	}
+}
+
 var benchBuffer = bytes.NewBuffer(make([]byte, 0, 32000))
 
 func BenchmarkEncodeBlock(b *testing.B) {
@@ -146,31 +237,6 @@ func BenchmarkEncodeBlock(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
-}
-
-// testHasher is the helper tool for transaction/receipt list hashing.
-// The original hasher is trie, in order to get rid of import cycle,
-// use the testing hasher instead.
-type testHasher struct {
-	hasher hash.Hash
-}
-
-func newHasher() *testHasher {
-	return &testHasher{hasher: keccak.NewLegacyKeccak256()}
-}
-
-func (h *testHasher) Reset() {
-	h.hasher.Reset()
-}
-
-func (h *testHasher) Update(key, val []byte) error {
-	h.hasher.Write(key)
-	h.hasher.Write(val)
-	return nil
-}
-
-func (h *testHasher) Hash() common.Hash {
-	return common.BytesToHash(h.hasher.Sum(nil))
 }
 
 func makeBenchBlock() *Block {
@@ -211,5 +277,5 @@ func makeBenchBlock() *Block {
 			Extra:      []byte("benchmark uncle"),
 		}
 	}
-	return NewBlock(header, &Body{Transactions: txs, Uncles: uncles}, receipts, newHasher())
+	return NewBlock(header, &Body{Transactions: txs, Uncles: uncles}, receipts, blocktest.NewHasher())
 }

@@ -35,6 +35,16 @@ import (
 var (
 	recheckInterval = time.Minute
 	localGauge      = metrics.GetOrRegisterGauge("txpool/local", nil)
+
+	// Tracked transactions a gas schedule fork priced out of the pool. They stay
+	// tracked so a rollback past the fork can pick them up again, but recheck
+	// holds them back from resubmission, so they are broken out here.
+	//
+	// Only transactions missing from the pool are counted: a tracked transaction
+	// the pool still has is counted as ok instead. local minus belowfloor is
+	// therefore the tracked transactions the pool holds plus the ones recheck
+	// resubmits this round, not just the latter.
+	belowFloorGauge = metrics.GetOrRegisterGauge("txpool/local/belowfloor", nil)
 )
 
 // TxTracker is a struct used to track priority transactions; it will check from
@@ -101,11 +111,78 @@ func (tracker *TxTracker) TrackAll(txs []*types.Transaction) {
 		if err != nil { // Ignore this tx
 			continue
 		}
-		tracker.all[tx.Hash()] = tx
-		if tracker.byAddr[addr] == nil {
-			tracker.byAddr[addr] = legacypool.NewSortedMap()
+		list := tracker.byAddr[addr]
+		if list == nil {
+			list = legacypool.NewSortedMap()
+			tracker.byAddr[addr] = list
 		}
-		tracker.byAddr[addr].Put(tx)
+		// A transaction tracked for a nonce that is already taken supersedes the
+		// one it replaces. SortedMap.Put overwrites silently, so the replaced
+		// transaction has to be dropped here: it is never returned by Forward
+		// again, and leaving it in `all` would keep journaling it forever,
+		// where it can win the nonce on the next load and resurrect a
+		// transaction the user already replaced.
+		//
+		// Which of the two supersedes the other is decided the way the pool
+		// decides it:
+		//
+		//   1. The pool still holds one of them. It occupies a nonce with at
+		//      most one transaction, so whichever it holds won the nonce. This
+		//      is checked first because the order transactions reach TrackAll
+		//      is not the order they were accepted in: AddLocal tracks a local
+		//      transaction only after Add has released the subpool lock, so two
+		//      concurrent submissions can be accepted in one order and reach
+		//      here in the other.
+		//   2. The pool holds neither -- two submissions it has since
+		//      discarded, or a journal an older version wrote. Fall back to the
+		//      substitution rules legacypool applies in list.Add: a special
+		//      transaction always claims its nonce, a regular one must not
+		//      evict a pending special one, and otherwise a replacement has to
+		//      beat the transaction it replaces on both fee cap and tip. The
+		//      price bump is deliberately not repeated here: it is a pool
+		//      policy, and a transaction that beats the old one but misses the
+		//      bump behaves exactly as it did before, so no case gets worse.
+		//
+		// Dropping the loser here also converges a journal written by an older
+		// version, which can hold both a transaction and its replacement: load
+		// feeds the file straight into TrackAll, so the replacement wins the
+		// nonce instead of whichever entry the older rotation happened to sort
+		// last, and the next rotation rewrites the journal from the converged
+		// set.
+		if replaced := list.Get(tx.Nonce()); replaced != nil {
+			switch {
+			case tracker.pool.Has(tx.Hash()):
+				// The pool accepted this one, so it holds the nonce. A tracked
+				// transaction that is dearer does not change that: it is one an
+				// older version journalled after the pool rejected it as
+				// retryable, and resubmitting it would evict this one.
+			case tracker.pool.Has(replaced.Hash()):
+				// The pool still holds the transaction this one would replace:
+				// it lost the race for the nonce there.
+				log.Debug("Ignoring tracked local transaction the pool superseded", "nonce", tx.Nonce(),
+					"kept", replaced.Hash(), "ignored", tx.Hash())
+				continue
+			case tx.IsSpecialTransaction():
+				// A special transaction always claims its nonce.
+			case replaced.IsSpecialTransaction():
+				// A regular transaction must not evict a pending special one,
+				// however much dearer it is.
+				log.Debug("Ignoring tracked local transaction that would evict a special one", "nonce", tx.Nonce(),
+					"kept", replaced.Hash(), "ignored", tx.Hash())
+				continue
+			case replaced.GasFeeCapCmp(tx) >= 0 || replaced.GasTipCapCmp(tx) >= 0:
+				// Not a replacement the pool would accept: keep the one that is
+				// already tracked.
+				log.Debug("Ignoring tracked local transaction the tracked one outbids", "nonce", tx.Nonce(),
+					"kept", replaced.Hash(), "ignored", tx.Hash())
+				continue
+			}
+			delete(tracker.all, replaced.Hash())
+			log.Debug("Replaced tracked local transaction", "nonce", tx.Nonce(),
+				"replaced", replaced.Hash(), "replacement", tx.Hash())
+		}
+		list.Put(tx)
+		tracker.all[tx.Hash()] = tx
 
 		if tracker.journal != nil {
 			_ = tracker.journal.insert(tx)
@@ -115,14 +192,20 @@ func (tracker *TxTracker) TrackAll(txs []*types.Transaction) {
 }
 
 // recheck checks and returns any transactions that needs to be resubmitted.
-func (tracker *TxTracker) recheck(journalCheck bool) (resubmits []*types.Transaction, rejournal map[common.Address]types.Transactions) {
+func (tracker *TxTracker) recheck(journalCheck bool) []*types.Transaction {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 
 	var (
-		numStales = 0
-		numOk     = 0
+		numStales     = 0
+		numOk         = 0
+		numBelowFloor = 0
+		resubmits     []*types.Transaction
 	)
+	// Resolved once: it can only change on a chain head update, and a change
+	// mid-recheck would make the counters below inconsistent.
+	floor := tracker.pool.MinGasPrice()
+
 	for sender, txs := range tracker.byAddr {
 		// Wipe the stales
 		stales := txs.Forward(tracker.pool.Nonce(sender))
@@ -137,12 +220,23 @@ func (tracker *TxTracker) recheck(journalCheck bool) (resubmits []*types.Transac
 				numOk++
 				continue
 			}
+			// A gas schedule fork can raise the floor above transactions that
+			// were admitted under the previous tier. Re-submitting them only
+			// yields ErrUnderMinGasPrice, so hold them back until the floor
+			// drops again: a reorg or a set-head rollback past the fork
+			// reinstates them, and the pool does not bring back what it swept.
+			// They stay tracked, so recheck picks them up again on its own.
+			// Special transactions are exempt, exactly as during admission.
+			if !tx.IsSpecialTransaction() && tx.GasPriceIntCmp(floor) < 0 {
+				numBelowFloor++
+				continue
+			}
 			resubmits = append(resubmits, tx)
 		}
 	}
 
 	if journalCheck { // rejournal
-		rejournal = make(map[common.Address]types.Transactions)
+		rejournal := make(map[common.Address]types.Transactions)
 		for _, tx := range tracker.all {
 			addr, _ := types.Sender(tracker.signer, tx)
 			rejournal[addr] = append(rejournal[addr], tx)
@@ -154,18 +248,40 @@ func (tracker *TxTracker) recheck(journalCheck bool) (resubmits []*types.Transac
 				return cmp.Compare(a.Nonce(), b.Nonce())
 			})
 		}
+		// Rejournal the tracker while holding the lock. No new transactions will
+		// be added to the old journal during this period, preventing any potential
+		// transaction loss.
+		if tracker.journal != nil {
+			if err := tracker.journal.rotate(rejournal); err != nil {
+				log.Warn("Transaction journal rotation failed", "err", err)
+			}
+		}
 	}
 	localGauge.Update(int64(len(tracker.all)))
-	log.Debug("Tx tracker status", "need-resubmit", len(resubmits), "stale", numStales, "ok", numOk)
-	return resubmits, rejournal
+	belowFloorGauge.Update(int64(numBelowFloor))
+	log.Debug("Tx tracker status", "need-resubmit", len(resubmits), "stale", numStales,
+		"ok", numOk, "below-floor", numBelowFloor)
+	return resubmits
 }
 
 // Start implements node.Lifecycle interface
 // Start is called after all services have been constructed and the networking
 // layer was also initialized to spawn any goroutines required by the service.
 func (tracker *TxTracker) Start() error {
-	tracker.wg.Add(1)
-	go tracker.loop()
+	if tracker.journal != nil {
+		if err := tracker.journal.load(func(transactions []*types.Transaction) []error {
+			tracker.TrackAll(transactions)
+			return nil
+		}); err != nil {
+			log.Warn("Failed to load transaction journal", "err", err)
+		}
+		// Ensure the writer is ready before Start returns so Track/TrackAll can
+		// persist transactions immediately.
+		if err := tracker.journal.setupWriter(); err != nil {
+			return err
+		}
+	}
+	tracker.wg.Go(tracker.loop)
 	return nil
 }
 
@@ -175,19 +291,17 @@ func (tracker *TxTracker) Start() error {
 func (tracker *TxTracker) Stop() error {
 	close(tracker.shutdownCh)
 	tracker.wg.Wait()
-	return nil
+
+	tracker.mu.Lock()
+	var err error
+	if tracker.journal != nil {
+		err = tracker.journal.close()
+	}
+	tracker.mu.Unlock()
+	return err
 }
 
 func (tracker *TxTracker) loop() {
-	defer tracker.wg.Done()
-
-	if tracker.journal != nil {
-		tracker.journal.load(func(transactions []*types.Transaction) []error {
-			tracker.TrackAll(transactions)
-			return nil
-		})
-		defer tracker.journal.close()
-	}
 	var (
 		lastJournal = time.Now()
 		timer       = time.NewTimer(10 * time.Second) // Do initial check after 10 seconds, do rechecks more seldom.
@@ -197,19 +311,14 @@ func (tracker *TxTracker) loop() {
 		case <-tracker.shutdownCh:
 			return
 		case <-timer.C:
-			checkJournal := tracker.journal != nil && time.Since(lastJournal) > tracker.rejournal
-			resubmits, rejournal := tracker.recheck(checkJournal)
+			var rejournal bool
+			if tracker.journal != nil && time.Since(lastJournal) > tracker.rejournal {
+				rejournal, lastJournal = true, time.Now()
+				log.Debug("Rejournal the transaction tracker")
+			}
+			resubmits := tracker.recheck(rejournal)
 			if len(resubmits) > 0 {
 				tracker.pool.Add(resubmits, false)
-			}
-			if checkJournal {
-				// Lock to prevent journal.rotate <-> journal.insert (via TrackAll) conflicts
-				tracker.mu.Lock()
-				lastJournal = time.Now()
-				if err := tracker.journal.rotate(rejournal); err != nil {
-					log.Warn("Transaction journal rotation failed", "err", err)
-				}
-				tracker.mu.Unlock()
 			}
 			timer.Reset(recheckInterval)
 		}

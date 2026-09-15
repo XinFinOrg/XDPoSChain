@@ -233,7 +233,7 @@ func (c *ChainIndexer) newHead(head uint64, reorg bool) {
 	// If a reorg happened, invalidate all sections until that point
 	if reorg {
 		// Revert the known section number to the reorg point
-		changed := head / c.sectionSize
+		changed := (head + 1) / c.sectionSize
 		if changed < c.knownSections {
 			c.knownSections = changed
 		}
@@ -295,6 +295,7 @@ func (c *ChainIndexer) updateLoop() {
 					updated = time.Now()
 				}
 				// Cache the current section count and head to allow unlocking the mutex
+				c.verifyLastHead()
 				section := c.storedSections
 				var oldHead common.Hash
 				if section > 0 {
@@ -314,8 +315,8 @@ func (c *ChainIndexer) updateLoop() {
 				}
 				c.lock.Lock()
 
-				// If processing succeeded and no reorgs occcurred, mark the section completed
-				if err == nil && oldHead == c.SectionHead(section-1) {
+				// If processing succeeded and no reorgs occurred, mark the section completed
+				if err == nil && (section == 0 || oldHead == c.SectionHead(section-1)) {
 					c.setSectionHead(section, newHead)
 					c.setValidSections(section + 1)
 					if c.storedSections == c.knownSections && updating {
@@ -330,6 +331,7 @@ func (c *ChainIndexer) updateLoop() {
 				} else {
 					// If processing failed, don't retry until further notification
 					c.log.Debug("Chain index processing failed", "section", section, "err", err)
+					c.verifyLastHead()
 					c.knownSections = c.storedSections
 				}
 			}
@@ -383,6 +385,18 @@ func (c *ChainIndexer) processSection(section uint64, lastHead common.Hash) (com
 	return lastHead, nil
 }
 
+// verifyLastHead compares last stored section head with the corresponding block hash in the
+// actual canonical chain and rolls back reorged sections if necessary to ensure that stored
+// sections are all valid
+func (c *ChainIndexer) verifyLastHead() {
+	for c.storedSections > 0 {
+		if c.SectionHead(c.storedSections-1) == rawdb.ReadCanonicalHash(c.chainDb, c.storedSections*c.sectionSize-1) {
+			return
+		}
+		c.setValidSections(c.storedSections - 1)
+	}
+}
+
 // Sections returns the number of processed sections maintained by the indexer
 // and also the information about the last header indexed for potential canonical
 // verifications.
@@ -390,6 +404,7 @@ func (c *ChainIndexer) Sections() (uint64, uint64, common.Hash) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
+	c.verifyLastHead()
 	return c.storedSections, c.storedSections*c.sectionSize - 1, c.SectionHead(c.storedSections - 1)
 }
 

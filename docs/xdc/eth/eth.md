@@ -37,7 +37,6 @@ Response:
 }
 ```
 
-
 ## Method eth_blobBaseFee
 
 The `blobBaseFee` method returns the expected base fee for blobs in the next block.
@@ -70,7 +69,6 @@ Response:
 }
 ```
 
-
 ## Method eth_blockNumber
 
 The `blockNumber` method returns the current latest block number.
@@ -102,7 +100,6 @@ Response:
   "result": "0x57d1892"
 }
 ```
-
 
 ## Method eth_call
 
@@ -145,7 +142,6 @@ Response:
 }
 ```
 
-
 ## Method eth_chainId
 
 The `chainId` method returns the currently configured chain ID, a value used in replay-protected transaction signing as introduced by EIP-155.
@@ -178,7 +174,6 @@ Response:
 }
 ```
 
-
 ## Method eth_coinbase
 
 The `coinbase` method returns the client coinbase address. The coinbase address is the account to pay mining rewards to. This is the alias for `eth_etherbase`.
@@ -210,7 +205,6 @@ Response:
   "result": "0x077961a99e124088bc386c3183b369187c5be295"
 }
 ```
-
 
 ## Method eth_createAccessList
 
@@ -275,7 +269,6 @@ Response:
 }
 ```
 
-
 ## Method eth_etherbase
 
 The `etherbase` method returns the client coinbase address. The etherbase address is the account to pay mining rewards to.
@@ -307,7 +300,6 @@ Response:
   "result": "0x077961a99e124088bc386c3183b369187c5be295"
 }
 ```
-
 
 ## Method eth_estimateGas
 
@@ -349,7 +341,6 @@ Response:
   "result": "0x5208"
 }
 ```
-
 
 ## Method eth_feeHistory
 
@@ -417,7 +408,6 @@ Response:
 }
 ```
 
-
 ## Method eth_gasPrice
 
 The `gasPrice` method returns the current gas price in wei.
@@ -449,7 +439,6 @@ Response:
   "result": "0x2e90edd00"
 }
 ```
-
 
 ## Method eth_getBalance
 
@@ -488,7 +477,6 @@ Response:
 }
 ```
 
-
 ## Method eth_getBlockByHash
 
 The `getBlockByHash` returns information about a block whose hash is in the request.
@@ -522,7 +510,6 @@ Response:
 See [eth_getBlockByHash_response.json](eth_getBlockByHash_response.json)
 ```
 
-
 ## Method eth_getBlockByNumber
 
 The `getBlockByNumber` method returns information about a block by block number.
@@ -553,7 +540,6 @@ Response:
 ```json
 See [eth_getBlockByNumber_response.json](eth_getBlockByNumber_response.json)
 ```
-
 
 ## Method eth_getBlockReceipts
 
@@ -592,7 +578,6 @@ Response:
 See [eth_getBlockReceipts_response.json](eth_getBlockReceipts_response.json)
 ```
 
-
 ## Method eth_getBlockTransactionCountByHash
 
 The `getBlockTransactionCountByHash` method returns the number of transactions in the block with the given block hash.
@@ -627,7 +612,6 @@ Response:
   "result": "0x3"
 }
 ```
-
 
 ## Method eth_getBlockTransactionCountByNumber
 
@@ -664,7 +648,6 @@ Response:
 }
 ```
 
-
 ## Method eth_getCode
 
 The `getCode` method returns the compiled byte code of a smart contract, if any, at a given address.
@@ -697,7 +680,6 @@ Response:
 ```json
 See [eth_getCode_response.json](eth_getCode_response.json)
 ```
-
 
 ## Method eth_getLogs
 
@@ -750,7 +732,6 @@ Response:
   "result": []
 }
 ```
-
 
 ## Method eth_getOwnerByCoinbase
 
@@ -828,7 +809,6 @@ Response:
 }
 ```
 
-
 ## Method eth_getRawTransactionByBlockHashAndIndex
 
 Teh `getRawTransactionByBlockHashAndIndex` method returns the bytes of the transaction for the given block hash and index.
@@ -866,7 +846,6 @@ Response:
 }
 ```
 
-
 ## Method eth_getRawTransactionByBlockNumberAndIndex
 
 The `getRawTransactionByBlockNumberAndIndex` returns the bytes of the transaction for the given block number and index.
@@ -903,7 +882,6 @@ Response:
 }
 ```
 
-
 ## Method eth_getRawTransactionByHash
 
 The `getRawTransactionByHash` method returns the bytes of the transaction for the given hash.
@@ -939,7 +917,6 @@ Response:
 }
 ```
 
-
 ## Method eth_getRewardByHash
 
 The `getRewardByHash` method returns the reward by block hash.
@@ -974,7 +951,6 @@ Response:
   "result": null
 }
 ```
-
 
 ## Method eth_getTransactionAndReceiptProof
 
@@ -1032,7 +1008,6 @@ Response:
 }
 ```
 
-
 ## Method eth_getTransactionByBlockHashAndIndex
 
 The `getTransactionByBlockHashAndIndex` method returns information about a transaction given block hash and transaction index position.
@@ -1085,7 +1060,6 @@ Response:
   }
 }
 ```
-
 
 ## Method eth_getTransactionByBlockNumberAndIndex
 
@@ -1140,7 +1114,6 @@ Response:
 }
 ```
 
-
 ## Method eth_getTransactionByHash
 
 The `getTransactionByHash` method returns information about a transaction for a given hash.
@@ -1192,7 +1165,6 @@ Response:
 }
 ```
 
-
 ## Method eth_getTransactionCount
 
 The `getTransactionCount` method returns the number of transactions sent from an address.
@@ -1230,7 +1202,6 @@ Response:
 }
 ```
 
-
 ## Method eth_getTransactionReceipt
 
 The `getTransactionReceipt` method returns the receipt of a transaction given transaction hash. Note that the receipt is not available for pending transactions.
@@ -1259,7 +1230,6 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 Response:
 
 See [eth_getTransactionReceipt_response.json](./eth_getTransactionReceipt_response.json)
-
 
 ## Method eth_getUncleByBlockHashAndIndex
 
@@ -1298,7 +1268,6 @@ Response:
 }
 ```
 
-
 ## Method eth_getUncleByBlockNumberAndIndex
 
 The `getUncleByBlockNumberAndIndex` method returns information about an uncle of a block given the block number and the uncle index position.
@@ -1336,7 +1305,6 @@ Response:
 }
 ```
 
-
 ## Method eth_getUncleCountByBlockHash
 
 The `getUncleCountByBlockHash` method returns the number of uncles in a block from a block matching the given block hash.
@@ -1371,7 +1339,6 @@ Response:
   "result": "0x0"
 }
 ```
-
 
 ## Method eth_getUncleCountByBlockNumber
 
@@ -1408,7 +1375,6 @@ Response:
 }
 ```
 
-
 ## Method eth_getWork
 
 The `getWork` method returns the hash of the current block, the seed hash, and the boundary condition to be met ("target").
@@ -1440,7 +1406,6 @@ Response:
 ```json
 
 ```
-
 
 ## Method eth_hashrate
 
@@ -1474,7 +1439,6 @@ Response:
 }
 ```
 
-
 ## Method eth_maxPriorityFeePerGas
 
 The `maxPriorityFeePerGas` method returns an estimate of how much priority fee, in wei, you need to be included in a block.
@@ -1506,7 +1470,6 @@ Response:
   "result": "0x333905980"
 }
 ```
-
 
 ## Method eth_mining
 
@@ -1540,7 +1503,6 @@ Response:
 }
 ```
 
-
 ## Method eth_pendingTransactions
 
 The `pendingTransactions` returns the transactions that are in the transaction pool and have a from address that is one of the accounts this node manages.
@@ -1573,7 +1535,6 @@ Response:
 }
 ```
 
-
 ## Method eth_protocolVersion
 
 The `protocolVersion` method returns the current Ethereum protocol version.
@@ -1605,7 +1566,6 @@ Response:
   "result": "0x64"
 }
 ```
-
 
 ## Method eth_resend
 
@@ -1653,7 +1613,6 @@ Response:
 }
 ```
 
-
 ## Method eth_sendRawTransaction
 
 The `sendRawTransaction` method submits a pre-signed transaction for broadcast to the Ethereum network.
@@ -1688,7 +1647,6 @@ Response:
   "result": "0x85d995eba9763907fdf35cd2034144dd9d53ce4c7f567f1d9592d67e8c5e3c3b"
 }
 ```
-
 
 ## Method eth_sendTransaction
 
@@ -1732,7 +1690,6 @@ Response:
 }
 ```
 
-
 ## Method eth_sign
 
 The `sign` method calculates an Ethereum specific signature with: `sign(keccak256("\x19Ethereum Signed Message:\n" + len(message) + message)))`.
@@ -1758,7 +1715,7 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
   "id": 1001,
   "method": "eth_sign",
   "params":[
-    "0xD4CE02705041F04135f1949Bc835c1Fe0885513c", 
+    "0xD4CE02705041F04135f1949Bc835c1Fe0885513c",
     "0x1234abcd"
   ]
 }' | jq
@@ -1773,7 +1730,6 @@ Response:
   "result": "0xa3f20717a250c2b0b729b7e5becbff67fdaef7e0699da4de7ca5895b02a170a12d887fd3b17bfdce3481f10bea41f45ba9f709d39ce8325427b57afcfc994cee1b"
 }
 ```
-
 
 ## Method eth_signTransaction
 
@@ -1830,7 +1786,6 @@ Response:
 }
 ```
 
-
 ## Method eth_submitWork
 
 The `submitWork` method can be used by external miner to submit their POW solution. It returns an indication if the work was accepted.
@@ -1872,7 +1827,6 @@ Response:
 }
 ```
 
-
 ## Method eth_syncing
 
 The `syncing` method returns an object with data about the sync status or false.
@@ -1905,10 +1859,9 @@ Response:
 }
 ```
 
+## Filter methods
 
-## Method Filter methods
-
-## Method# eth_getFilterChanges
+## Method eth_getFilterChanges
 
 The `getFilterChanges` method polling method for a filter, which returns an array of logs which occurred since the last poll. Filter must be created by calling either `eth_newFilter` or `eth_newBlockFilter`.
 
@@ -1943,8 +1896,7 @@ Response:
 }
 ```
 
-
-## Method# eth_getFilterLogs
+## Method eth_getFilterLogs
 
 The `getFilterLogs` method returns an array of all logs matching the filter with the given filter ID.
 
@@ -2011,8 +1963,7 @@ Response:
 }
 ```
 
-
-### Method eth_newFilter
+## Method eth_newFilter
 
 The `newFilter` method creates a filter object based on the given filter options, to notify when the state changes (logs). To check if the state has changed, call `eth_getFilterChanges`.
 
@@ -2087,7 +2038,7 @@ Response:
 }
 ```
 
-### Method eth_uninstallFilter
+## Method eth_uninstallFilter
 
 The `uninstallFilter` method uninstalls a filter with given ID. This method should always be called when watching is no longer needed. Additionally, filters time out when they aren't requested with `eth_getFilterChanges` for a period of time.
 
@@ -2121,4 +2072,3 @@ Response:
   "result": false
 }
 ```
-

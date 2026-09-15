@@ -56,26 +56,28 @@ const DefaultPrompt = "> "
 // Config is the collection of configurations to fine tune the behavior of the
 // JavaScript console.
 type Config struct {
-	DataDir  string              // Data directory to store the console history at
-	DocRoot  string              // Filesystem path from where to load JavaScript files from
-	Client   *rpc.Client         // RPC client to execute Ethereum requests through
-	Prompt   string              // Input prompt prefix string (defaults to DefaultPrompt)
-	Prompter prompt.UserPrompter // Input prompter to allow interactive user feedback (defaults to TerminalPrompter)
-	Printer  io.Writer           // Output writer to serialize any display strings to (defaults to os.Stdout)
-	Preload  []string            // Absolute paths to JavaScript files to preload
+	DataDir        string              // Data directory to store the console history at
+	DocRoot        string              // Filesystem path from where to load JavaScript files from
+	Client         *rpc.Client         // RPC client to execute Ethereum requests through
+	LocalTransport bool                // Whether the console is attached over an in-process or IPC transport
+	Prompt         string              // Input prompt prefix string (defaults to DefaultPrompt)
+	Prompter       prompt.UserPrompter // Input prompter to allow interactive user feedback (defaults to TerminalPrompter)
+	Printer        io.Writer           // Output writer to serialize any display strings to (defaults to os.Stdout)
+	Preload        []string            // Absolute paths to JavaScript files to preload
 }
 
 // Console is a JavaScript interpreted runtime environment. It is a fully fleged
 // JavaScript console attached to a running node via an external or in-process RPC
 // client.
 type Console struct {
-	client   *rpc.Client         // RPC client to execute Ethereum requests through
-	jsre     *jsre.JSRE          // JavaScript runtime environment running the interpreter
-	prompt   string              // Input prompt prefix string
-	prompter prompt.UserPrompter // Input prompter to allow interactive user feedback
-	histPath string              // Absolute path to the console scrollback history
-	history  []string            // Scroll history maintained by the console
-	printer  io.Writer           // Output writer to serialize any display strings to
+	client         *rpc.Client         // RPC client to execute Ethereum requests through
+	jsre           *jsre.JSRE          // JavaScript runtime environment running the interpreter
+	localTransport bool                // Whether the connected transport is in-process or IPC
+	prompt         string              // Input prompt prefix string
+	prompter       prompt.UserPrompter // Input prompter to allow interactive user feedback
+	histPath       string              // Absolute path to the console scrollback history
+	history        []string            // Scroll history maintained by the console
+	printer        io.Writer           // Output writer to serialize any display strings to
 
 	interactiveStopped chan struct{}
 	stopInteractiveCh  chan struct{}
@@ -103,6 +105,7 @@ func New(config Config) (*Console, error) {
 	console := &Console{
 		client:             config.Client,
 		jsre:               jsre.New(config.DocRoot, config.Printer),
+		localTransport:     config.LocalTransport,
 		prompt:             config.Prompt,
 		prompter:           config.Prompter,
 		printer:            config.Printer,
@@ -235,7 +238,39 @@ func (c *Console) initExtensions() error {
 			}
 		}
 	})
+	if !c.localTransport {
+		c.hideUnavailableDebugMethods()
+	}
 	return nil
+}
+
+func (c *Console) hideUnavailableDebugMethods() {
+	c.jsre.Do(func(vm *goja.Runtime) {
+		if _, err := vm.RunString(`
+			(function() {
+				function hideMethod(target, name) {
+					if (!target) {
+						return;
+					}
+					Object.defineProperty(target, name, {
+						value: undefined,
+						writable: true,
+						configurable: true,
+						enumerable: false
+					});
+				}
+
+				if (typeof debug !== "undefined") {
+					hideMethod(debug, "setHead");
+				}
+				if (typeof web3 !== "undefined" && web3 && web3.debug) {
+					hideMethod(web3.debug, "setHead");
+				}
+			})();
+		`); err != nil {
+			panic(err)
+		}
+	})
 }
 
 // initAdmin creates additional admin APIs implemented by the bridge.
@@ -288,7 +323,23 @@ func (c *Console) AutoCompleteInput(line string, pos int) (string, []string, str
 		start++
 		break
 	}
-	return line[:start], c.jsre.CompleteKeywords(line[start:pos]), line[pos:]
+	return line[:start], c.filterCompletions(c.jsre.CompleteKeywords(line[start:pos])), line[pos:]
+}
+
+func (c *Console) filterCompletions(completions []string) []string {
+	if c.localTransport {
+		return completions
+	}
+	filtered := completions[:0]
+	for _, completion := range completions {
+		switch completion {
+		case "debug.setHead", "debug.setHead(", "debug.setHead.", "web3.debug.setHead", "web3.debug.setHead(", "web3.debug.setHead.":
+			continue
+		default:
+			filtered = append(filtered, completion)
+		}
+	}
+	return filtered
 }
 
 // Welcome show summary of current Geth instance and some metadata about the

@@ -82,11 +82,9 @@ var testChainConfig = func() *params.ChainConfig {
 		}
 		config.XDPoS = &xdpos
 	}
-	if config.Eip1559Block == nil {
-		config.Eip1559Block = big.NewInt(0)
+	if config.EIP1559Block == nil {
+		config.EIP1559Block = big.NewInt(0)
 	}
-	// Ensure global chain constants match the test chain config.
-	common.CopyConstants(config.ChainID.Uint64())
 	return &config
 }()
 
@@ -185,6 +183,7 @@ func generateTestChain() []*types.Block {
 	return append([]*types.Block{genesis.ToBlock()}, blocks...)
 }
 
+// TestEthClient tests eth client.
 func TestEthClient(t *testing.T) {
 	prevLog := log.Root()
 	log.SetDefault(log.NewLogger(log.DiscardHandler()))
@@ -746,6 +745,7 @@ func testTransactionSender(t *testing.T, client *rpc.Client) {
 	}
 }
 
+// TestBlockReceiptsPreservesCanonicalFlag tests block receipts preserves canonical flag.
 func TestBlockReceiptsPreservesCanonicalFlag(t *testing.T) {
 	srv := rpc.NewServer()
 	service := &blockReceiptsTestService{calls: make(chan rpc.BlockNumberOrHash, 1)}
@@ -857,6 +857,7 @@ func ExampleRevertErrorData() {
 	// message: user error
 }
 
+// TestSimulateV1 tests simulate v 1.
 func TestSimulateV1(t *testing.T) {
 	backend, _, err := newTestBackend(nil)
 	if err != nil {
@@ -916,8 +917,15 @@ func TestSimulateV1(t *testing.T) {
 	if results[0].Calls[0].Error != nil {
 		t.Errorf("expected no error, got %v", results[0].Calls[0].Error)
 	}
+	if results[0].Calls[0].MaxUsedGas == 0 {
+		t.Error("expected maxUsedGas to be set")
+	}
+	if results[0].Calls[0].MaxUsedGas < results[0].Calls[0].GasUsed {
+		t.Errorf("expected maxUsedGas >= gasUsed, got %d < %d", results[0].Calls[0].MaxUsedGas, results[0].Calls[0].GasUsed)
+	}
 }
 
+// TestSimulateV1WithBlockOverrides tests simulate v 1 with block overrides.
 func TestSimulateV1WithBlockOverrides(t *testing.T) {
 	backend, _, err := newTestBackend(nil)
 	if err != nil {
@@ -976,6 +984,7 @@ func TestSimulateV1WithBlockOverrides(t *testing.T) {
 	}
 }
 
+// TestSimulateV1WithStateOverrides tests simulate v 1 with state overrides.
 func TestSimulateV1WithStateOverrides(t *testing.T) {
 	backend, _, err := newTestBackend(nil)
 	if err != nil {
@@ -1039,6 +1048,7 @@ func TestSimulateV1WithStateOverrides(t *testing.T) {
 	}
 }
 
+// TestSimulateV1WithBlockNumberOrHash tests simulate v 1 with block number or hash.
 func TestSimulateV1WithBlockNumberOrHash(t *testing.T) {
 	backend, _, err := newTestBackend(nil)
 	if err != nil {

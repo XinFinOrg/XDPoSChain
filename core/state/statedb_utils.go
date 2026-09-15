@@ -4,6 +4,7 @@ import (
 	"math/big"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 )
@@ -154,7 +155,7 @@ func (s *StateDB) GetVoterCap(candidate, voter common.Address) *big.Int {
 
 func (s *StateDB) IncrementMintedRecordNonce() {
 	nonce := s.GetNonce(common.MintedRecordAddressBinary)
-	s.SetNonce(common.MintedRecordAddressBinary, nonce+1)
+	s.SetNonce(common.MintedRecordAddressBinary, nonce+1, tracing.NonceChangeUnspecified)
 }
 
 var (

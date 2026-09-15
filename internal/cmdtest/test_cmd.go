@@ -51,6 +51,9 @@ type TestCmd struct {
 	stdout *bufio.Reader
 	stdin  io.WriteCloser
 	stderr *testlogger
+	// KillTimeout controls how long expect/wait helpers wait before killing child.
+	// Zero value falls back to the historical default.
+	KillTimeout time.Duration
 	// Err will contain the process exit error or interrupt signal error
 	Err error
 }
@@ -230,7 +233,11 @@ func (tt *TestCmd) Kill() {
 }
 
 func (tt *TestCmd) withKillTimeout(fn func()) {
-	timeout := time.AfterFunc(30*time.Second, func() {
+	killTimeout := tt.KillTimeout
+	if killTimeout <= 0 {
+		killTimeout = 30 * time.Second
+	}
+	timeout := time.AfterFunc(killTimeout, func() {
 		tt.Log("killing the child process (timeout)")
 		tt.Kill()
 	})

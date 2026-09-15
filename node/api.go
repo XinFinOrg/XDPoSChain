@@ -26,7 +26,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/internal/debug"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
-	"github.com/XinFinOrg/XDPoSChain/p2p/discover"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 )
 
@@ -61,19 +61,19 @@ func (api *adminAPI) AddPeer(url string) (bool, error) {
 		return false, ErrNodeStopped
 	}
 	// Try to add the url as a static peer and return
-	node, err := discover.ParseNode(url)
+	node, err := enode.Parse(enode.ValidSchemes, url)
 	if err != nil {
 		return false, fmt.Errorf("invalid enode: %v", err)
 	}
 	// only accept the node which is in peer allowlist if the list is not empty
 	if len(server.AllowPeers) > 0 {
-		if _, ok := server.AllowPeers[node.ID]; !ok {
-			return false, fmt.Errorf("peer is not in allowlist: %v, ID: %s", url, node.ID)
+		if _, ok := server.AllowPeers[node.ID()]; !ok {
+			return false, fmt.Errorf("peer is not in allowlist: %v, ID: %s", url, node.ID())
 		}
 	}
 	// reject the node which is in peer blacklist
-	if _, ok := server.DenyPeers[node.ID]; ok {
-		return false, fmt.Errorf("peer is in blacklist: %v, ID: %s", url, node.ID)
+	if _, ok := server.DenyPeers[node.ID()]; ok {
+		return false, fmt.Errorf("peer is in blacklist: %v, ID: %s", url, node.ID())
 	}
 	server.AddPeer(node)
 	return true, nil
@@ -87,7 +87,7 @@ func (api *adminAPI) RemovePeer(url string) (bool, error) {
 		return false, ErrNodeStopped
 	}
 	// Try to remove the url as a static peer and return
-	node, err := discover.ParseNode(url)
+	node, err := enode.Parse(enode.ValidSchemes, url)
 	if err != nil {
 		return false, fmt.Errorf("invalid enode: %v", err)
 	}
@@ -102,19 +102,19 @@ func (api *adminAPI) AddTrustedPeer(url string) (bool, error) {
 	if server == nil {
 		return false, ErrNodeStopped
 	}
-	node, err := discover.ParseNode(url)
+	node, err := enode.Parse(enode.ValidSchemes, url)
 	if err != nil {
 		return false, fmt.Errorf("invalid enode: %v", err)
 	}
 	// only accept the node which is in peer allowlist if the list is not empty
 	if len(server.AllowPeers) > 0 {
-		if _, ok := server.AllowPeers[node.ID]; !ok {
-			return false, fmt.Errorf("trusted peer is not in allowlist: %v, ID: %s", url, node.ID)
+		if _, ok := server.AllowPeers[node.ID()]; !ok {
+			return false, fmt.Errorf("trusted peer is not in allowlist: %v, ID: %s", url, node.ID())
 		}
 	}
 	// reject the node which is in peer blacklist
-	if _, ok := server.DenyPeers[node.ID]; ok {
-		return false, fmt.Errorf("trusted peer is in blacklist: %v, ID: %s", url, node.ID)
+	if _, ok := server.DenyPeers[node.ID()]; ok {
+		return false, fmt.Errorf("trusted peer is in blacklist: %v, ID: %s", url, node.ID())
 	}
 	server.AddTrustedPeer(node)
 	return true, nil
@@ -128,7 +128,7 @@ func (api *adminAPI) RemoveTrustedPeer(url string) (bool, error) {
 	if server == nil {
 		return false, ErrNodeStopped
 	}
-	node, err := discover.ParseNode(url)
+	node, err := enode.Parse(enode.ValidSchemes, url)
 	if err != nil {
 		return false, fmt.Errorf("invalid enode: %v", err)
 	}
@@ -221,7 +221,8 @@ func (api *adminAPI) StartHTTP(host *string, port *int, cors *string, apis *stri
 	if err := api.node.http.setListenAddr(*host, *port); err != nil {
 		return false, err
 	}
-	if err := api.node.http.enableRPC(api.node.rpcAPIs, config); err != nil {
+	openApis, _, _, _ := api.node.getAPIs()
+	if err := api.node.http.enableRPC(openApis, config); err != nil {
 		return false, err
 	}
 	if err := api.node.http.start(); err != nil {
@@ -295,7 +296,7 @@ func (api *adminAPI) StartWS(host *string, port *int, allowedOrigins *string, ap
 	if err := server.setListenAddr(*host, *port); err != nil {
 		return false, err
 	}
-	openApis, _ := api.node.getAPIs()
+	openApis, _, _, _ := api.node.getAPIs()
 	if err := server.enableWS(openApis, config); err != nil {
 		return false, err
 	}

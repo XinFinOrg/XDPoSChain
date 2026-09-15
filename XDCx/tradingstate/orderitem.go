@@ -305,12 +305,16 @@ func (o *OrderItem) verifyStatus() error {
 }
 
 func IsValidRelayer(statedb *state.StateDB, address common.Address) bool {
+	contract, ok := relayerRegistrationSMC(statedb)
+	if !ok {
+		return false
+	}
 	slot := RelayerMappingSlot["RELAYER_LIST"]
 	locRelayerState := GetLocMappingAtKey(address.Hash(), slot)
 
 	locBigDeposit := new(big.Int).SetUint64(uint64(0)).Add(locRelayerState, RelayerStructMappingSlot["_deposit"])
 	locHashDeposit := common.BigToHash(locBigDeposit)
-	balance := statedb.GetState(common.RelayerRegistrationSMC, locHashDeposit).Big()
+	balance := statedb.GetState(contract, locHashDeposit).Big()
 	if balance.Cmp(new(big.Int).Mul(common.BasePrice, common.RelayerLockedFund)) <= 0 {
 		log.Debug("Relayer is not in relayer list", "relayer", address, "balance", balance)
 		return false

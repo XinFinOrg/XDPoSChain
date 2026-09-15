@@ -33,6 +33,7 @@ import (
 	"github.com/holiman/uint256"
 )
 
+// TestMemoryGasCost tests memory gas cost.
 func TestMemoryGasCost(t *testing.T) {
 	tests := []struct {
 		size     uint64
@@ -82,6 +83,7 @@ var eip2200Tests = []struct {
 	{1, 2307, "0x6001600055", 806, 0, nil},                                     // 1 -> 1 (2301 sentry + 2xPUSH)
 }
 
+// TestEIP2200 tests eip 2200.
 func TestEIP2200(t *testing.T) {
 	for i, tt := range eip2200Tests {
 		address := common.BytesToAddress([]byte("contract"))
@@ -111,6 +113,59 @@ func TestEIP2200(t *testing.T) {
 	}
 }
 
+type countingStateDB struct {
+	*state.StateDB
+	getStateCalls          int
+	getCommittedStateCalls int
+	getCombinedStateCalls  int
+}
+
+func (s *countingStateDB) GetState(addr common.Address, key common.Hash) common.Hash {
+	s.getStateCalls++
+	return s.StateDB.GetState(addr, key)
+}
+
+func (s *countingStateDB) GetCommittedState(addr common.Address, key common.Hash) common.Hash {
+	s.getCommittedStateCalls++
+	return s.StateDB.GetCommittedState(addr, key)
+}
+
+func (s *countingStateDB) GetStateAndCommittedState(addr common.Address, key common.Hash) (common.Hash, common.Hash) {
+	s.getCombinedStateCalls++
+	return s.StateDB.GetStateAndCommittedState(addr, key)
+}
+
+// TestEIP2200UsesCombinedStateGetter tests eip 2200 uses combined state getter.
+func TestEIP2200UsesCombinedStateGetter(t *testing.T) {
+	address := common.BytesToAddress([]byte("contract"))
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
+	statedb.CreateAccount(address)
+	statedb.SetCode(address, hexutil.MustDecode("0x6002600055"))
+	statedb.SetState(address, common.Hash{}, common.BytesToHash([]byte{1}))
+	statedb.Finalise(true)
+
+	countingDB := &countingStateDB{StateDB: statedb}
+	vmctx := BlockContext{
+		CanTransfer: func(StateDB, common.Address, *uint256.Int) bool { return true },
+		Transfer:    func(StateDB, common.Address, common.Address, *uint256.Int) {},
+	}
+	evm := NewEVM(vmctx, countingDB, nil, params.AllEthashProtocolChanges, Config{ExtraEips: []int{2200}})
+
+	_, _, err := evm.Call(common.Address{}, address, nil, math.MaxUint64, new(uint256.Int))
+	if err != nil {
+		t.Fatalf("call failed: %v", err)
+	}
+	if countingDB.getCombinedStateCalls == 0 {
+		t.Fatalf("expected GetStateAndCommittedState to be used")
+	}
+	if countingDB.getStateCalls != 0 {
+		t.Fatalf("expected GetState to be bypassed, got %d calls", countingDB.getStateCalls)
+	}
+	if countingDB.getCommittedStateCalls != 0 {
+		t.Fatalf("expected GetCommittedState to be bypassed, got %d calls", countingDB.getCommittedStateCalls)
+	}
+}
+
 var createGasTests = []struct {
 	code       string
 	eip3860    bool
@@ -123,21 +178,22 @@ var createGasTests = []struct {
 	{"0x61C00060006000f0" + "600052" + "60206000F3", true, 44309, 44309},
 	// create2(0, 0, 0xc001, 0) without 3860
 	{"0x600061C00160006000f5" + "600052" + "60206000F3", false, 50471, 50471},
-	// create2(0, 0, 0xc001, 0) (too large), with 3860
-	{"0x600061C00160006000f5" + "600052" + "60206000F3", true, 32012, 100000},
+	// create2(0, 0, 0x10001, 0) (too large), with 3860
+	{"0x60006201000160006000f5" + "600052" + "60206000F3", true, 32012, 100000},
 	// create2(0, 0, 0xc000, 0)
 	// This case is trying to deploy code at (within) the limit
 	{"0x600061C00060006000f5" + "600052" + "60206000F3", true, 53528, 53528},
-	// create2(0, 0, 0xc001, 0)
-	// This case is trying to deploy code exceeding the limit
-	{"0x600061C00160006000f5" + "600052" + "60206000F3", true, 32024, 100000}}
+	// create2(0, 0, 0x10001, 0)
+	// This case is trying to deploy code exceeding Osaka limit
+	{"0x60006201000160006000f5" + "600052" + "60206000F3", true, 32024, 100000}}
 
+// TestCreateGas tests create gas.
 func TestCreateGas(t *testing.T) {
 	for i, tt := range createGasTests {
 		var gasUsed = uint64(0)
 		doCheck := func(testGas int) bool {
 			address := common.BytesToAddress([]byte("contract"))
-			statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
+			statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
 			statedb.CreateAccount(address)
 			statedb.SetCode(address, hexutil.MustDecode(tt.code))
 			statedb.Finalise(true)
@@ -147,11 +203,18 @@ func TestCreateGas(t *testing.T) {
 				BlockNumber: big.NewInt(0),
 			}
 			config := Config{}
+			legacyConfig := *params.AllEthashProtocolChanges
+			legacyConfig.EIP1559Block = nil
+			legacyConfig.CancunBlock = nil
+			legacyConfig.PragueBlock = nil
+			legacyConfig.OsakaBlock = nil
+			chainConfig := &legacyConfig
 			if tt.eip3860 {
 				config.ExtraEips = []int{3860}
+				chainConfig = params.MergedTestChainConfig
 			}
 
-			evm := NewEVM(vmctx, statedb, nil, params.AllEthashProtocolChanges, config)
+			evm := NewEVM(vmctx, statedb, nil, chainConfig, config)
 			var startGas = uint64(testGas)
 			ret, gas, err := evm.Call(common.Address{}, address, nil, startGas, new(uint256.Int))
 			if err != nil {

@@ -124,11 +124,11 @@ func (d *Downloader) runStateSync(s *stateSync) *stateSync {
 		select {
 		// The stateSync lifecycle:
 		case next := <-d.stateSyncStart:
-			d.spindownStateSync(active, finished, timeout, peerDrop)
+			d.spindownStateSync(active, finished, timeout, peerDrop, false)
 			return next
 
 		case <-s.done:
-			d.spindownStateSync(active, finished, timeout, peerDrop)
+			d.spindownStateSync(active, finished, timeout, peerDrop, true)
 			return nil
 
 		// Send the next finished request to the current sync:
@@ -212,8 +212,18 @@ func (d *Downloader) runStateSync(s *stateSync) *stateSync {
 // spindownStateSync 'drains' the outstanding requests; some will be delivered and other
 // will time out. This is to ensure that when the next stateSync starts working, all peers
 // are marked as idle and de facto _are_ idle.
-func (d *Downloader) spindownStateSync(active map[string]*stateReq, finished []*stateReq, timeout chan *stateReq, peerDrop chan *peerConnection) {
+func (d *Downloader) spindownStateSync(active map[string]*stateReq, finished []*stateReq, timeout chan *stateReq, peerDrop chan *peerConnection, completed bool) {
 	log.Trace("State sync spinning down", "active", len(active), "finished", len(finished))
+	if completed {
+		for _, req := range active {
+			req.timer.Stop()
+			req.peer.SetNodeDataIdle(int(req.nItems), time.Now())
+		}
+		for _, req := range finished {
+			req.peer.SetNodeDataIdle(int(req.nItems), time.Now())
+		}
+		return
+	}
 
 	for len(active) > 0 {
 		var (
@@ -290,7 +300,6 @@ type codeTask struct {
 
 // newStateSync creates a new state trie download scheduler. This method does not
 // yet start the sync. The user needs to call run to initiate.
-// only use fast sync but XDC only run full sync
 // TODO(daniel): remove field sched
 func newStateSync(d *Downloader, root common.Hash) *stateSync {
 	return &stateSync{

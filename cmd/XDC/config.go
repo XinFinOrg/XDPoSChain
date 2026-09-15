@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
 	"os"
 	"reflect"
 	"runtime"
@@ -161,15 +160,6 @@ func loadBaseConfig(ctx *cli.Context) XDCConfig {
 	if ctx.Bool(utils.EnableXDCPrefixFlag.Name) {
 		common.Enable0xPrefix = false
 	}
-
-	// Check GasPrice
-	common.MinGasPrice = big.NewInt(common.DefaultMinGasPrice)
-	if ctx.IsSet(utils.MinerGasPriceFlag.Name) {
-		if gasPrice := int64(ctx.Int(utils.MinerGasPriceFlag.Name)); gasPrice > common.DefaultMinGasPrice {
-			common.MinGasPrice = big.NewInt(gasPrice)
-		}
-	}
-	common.MinGasPrice50x = common.MinGasPrice50x.Mul(common.MinGasPrice, big.NewInt(50))
 
 	// read passwords from environment
 	passwords := []string{}

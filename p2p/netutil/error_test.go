@@ -17,10 +17,18 @@
 package netutil
 
 import (
+	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
 )
+
+type timeoutErr bool
+
+func (e timeoutErr) Error() string   { return "timeout" }
+func (e timeoutErr) Timeout() bool   { return bool(e) }
+func (e timeoutErr) Temporary() bool { return false }
 
 // This test checks that isPacketTooBig correctly identifies
 // errors that result from receiving a UDP packet larger
@@ -69,5 +77,27 @@ func TestIsPacketTooBig(t *testing.T) {
 				break
 			}
 		}
+	}
+}
+
+func TestIsTimeout(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", err: nil, want: false},
+		{name: "direct timeout", err: timeoutErr(true), want: true},
+		{name: "wrapped timeout", err: fmt.Errorf("wrapped: %w", timeoutErr(true)), want: true},
+		{name: "wrapped non-timeout", err: fmt.Errorf("wrapped: %w", timeoutErr(false)), want: false},
+		{name: "ordinary error", err: errors.New("no timeout"), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsTimeout(tt.err); got != tt.want {
+				t.Fatalf("IsTimeout(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
 	}
 }

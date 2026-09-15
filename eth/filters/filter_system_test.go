@@ -189,12 +189,11 @@ func TestBlockSubscription(t *testing.T) {
 		db           = rawdb.NewMemoryDatabase()
 		backend, sys = newTestFilterSystem(t, db, Config{})
 		api          = NewFilterAPI(sys, false)
-		gspec        = &core.Genesis{
+		genesis      = &core.Genesis{
 			BaseFee: big.NewInt(params.InitialBaseFee),
 			Config:  params.TestChainConfig,
 		}
-		genesis     = gspec.MustCommit(db)
-		chain, _    = core.GenerateChain(gspec.Config, genesis, ethash.NewFaker(), db, 10, func(i int, gen *core.BlockGen) {})
+		_, chain, _ = core.GenerateChainWithGenesis(genesis, ethash.NewFaker(), 10, func(i int, gen *core.BlockGen) {})
 		chainEvents = []core.ChainEvent{}
 	)
 
@@ -815,7 +814,11 @@ func TestLightFilterLogs(t *testing.T) {
 		}
 		receipts[i-1].Bloom = types.CreateBloom(types.Receipts{receipts[i-1]})
 		b.AddUncheckedReceipt(receipts[i-1])
-		tx, _ := types.SignTx(types.NewTx(&types.LegacyTx{Nonce: uint64(i - 1), To: &common.Address{}, Value: big.NewInt(1000), Gas: params.TxGas, GasPrice: big.NewInt(2100), Data: nil}), signer, key)
+		fee := b.BaseFee()
+		if fee == nil {
+			fee = big.NewInt(params.InitialBaseFee)
+		}
+		tx, _ := types.SignTx(types.NewTx(&types.LegacyTx{Nonce: uint64(i - 1), To: &common.Address{}, Value: big.NewInt(1000), Gas: params.TxGas, GasPrice: fee, Data: nil}), signer, key)
 		b.AddTx(tx)
 	})
 	for i, block := range blocks {

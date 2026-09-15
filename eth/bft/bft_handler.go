@@ -94,18 +94,20 @@ func (b *Bfter) Vote(peer string, vote *types.Vote) error {
 	}
 
 	if verified {
-		b.broadcastCh <- vote
+		if !b.enqueueForBroadcast(vote) {
+			return nil
+		}
 		err = b.consensus.voteHandler(b.blockChainReader, vote)
 		if err != nil {
 			if _, ok := err.(*utils.ErrIncomingMessageRoundTooFarFromCurrentRound); ok {
-				log.Debug("[Vote] vote round not equal", "error", err, "vote", vote.Hash())
+				log.Debug("[Vote] Vote round not equal", "error", err, "vote", vote.Hash())
 				return err
 			}
 			if _, ok := err.(*utils.ErrIncomingMessageBlockNotFound); ok {
-				log.Debug("[Vote] vote proposed block not found", "error", err, "vote", vote.Hash())
+				log.Debug("[Vote] Vote proposed block not found", "error", err, "vote", vote.Hash())
 				return err
 			}
-			log.Error("[Vote] handle BFT Vote", "error", err)
+			log.Error("[Vote] Handle BFT Vote", "error", err)
 			return err
 		}
 	}
@@ -129,14 +131,16 @@ func (b *Bfter) Timeout(peer string, timeout *types.Timeout) error {
 	log.Debug("[Timeout] Received Timeout", "gap", gapNum, "hash", timeout.Hash().Hex(), "round", timeout.Round, "signer", timeout.GetSigner().Hex()) //get signer after verifyTimeout
 
 	if verified {
-		b.broadcastCh <- timeout
+		if !b.enqueueForBroadcast(timeout) {
+			return nil
+		}
 		err = b.consensus.timeoutHandler(b.blockChainReader, timeout)
 		if err != nil {
 			if _, ok := err.(*utils.ErrIncomingMessageRoundNotEqualCurrentRound); ok {
-				log.Debug("[Timeout] timeout round not equal", "error", err)
+				log.Debug("[Timeout] Timeout round not equal", "error", err)
 				return err
 			}
-			log.Error("[Timeout] handle BFT Timeout", "error", err)
+			log.Error("[Timeout] Handle BFT Timeout", "error", err)
 			return err
 		}
 	}
@@ -158,7 +162,7 @@ func (b *Bfter) SyncInfo(peer string, syncInfo *types.SyncInfo) error {
 
 	qcBlockNum := syncInfo.HighestQuorumCert.ProposedBlockInfo.Number.Int64()
 	if dist := qcBlockNum - int64(b.chainHeight()); dist < -maxBlockDist || dist > maxBlockDist {
-		log.Debug("[SyncInfo] Discarded propagated syncInfo, too far away", "peer", peer, "distance", dist, "hash", syncInfo.Hash().Hex())
+		log.Debug("[SyncInfo] Discarded propagated syncInfo, too far away", "peer", peer, "blockNum", qcBlockNum, "hash", syncInfo.Hash().Hex(), "distance", dist)
 		return nil
 	}
 
@@ -170,14 +174,25 @@ func (b *Bfter) SyncInfo(peer string, syncInfo *types.SyncInfo) error {
 
 	// Process only if verified and qualified
 	if verified {
-		b.broadcastCh <- syncInfo
+		if !b.enqueueForBroadcast(syncInfo) {
+			return nil
+		}
 		err = b.consensus.syncInfoHandler(b.blockChainReader, syncInfo)
 		if err != nil {
-			log.Error("[SyncInfo] handle BFT SyncInfo", "error", err)
+			log.Error("[SyncInfo] Handle BFT SyncInfo", "error", err)
 			return err
 		}
 	}
 	return nil
+}
+
+func (b *Bfter) enqueueForBroadcast(msg interface{}) bool {
+	select {
+	case <-b.quit:
+		return false
+	case b.broadcastCh <- msg:
+		return true
+	}
 }
 
 // Start Bft receiver

@@ -113,7 +113,6 @@ Response:
 }
 ```
 
-
 ## Method debug_dbGet
 
 The `dbGet` method returns the raw value of a key stored in the database.
@@ -166,8 +165,7 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 
 Response:
 
-See [debug_dumpBlock.json](./debug_dumpBlock_response.json) 
-
+See [debug_dumpBlock.json](./debug_dumpBlock_response.json)
 
 ## Method debug_getBadBlocks
 
@@ -201,7 +199,6 @@ Response:
 }
 ```
 
-
 ## Method debug_gcStats
 
 The `gcStats` method returns garbage collection statistics.
@@ -228,8 +225,7 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 
 Response:
 
-See [debug_gcStats.json](./debug_gcStats_response.json) 
-
+See [debug_gcStats.json](./debug_gcStats_response.json)
 
 ## Method debug_getBlockRlp
 
@@ -265,7 +261,6 @@ Response:
   "result": "f9029af90295a00000000000000000000000000000000000000000000000000000000000000000a01dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347940000000000000000000000000000000000000000a049be235b0098b048f9805aed38a279d8c189b469ff9ba307b39c7ad3a3bc55aea056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421b901000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001808347b76080845cefae27b89d000000000000000000000000000000000000000000000000000000000000000025c65b4b379ac37cf78357c4915f73677022eaffc7d49d0a2cf198deebd6ce581af465944ec8b2bbcfccdea1006a5cfa7d9484b5b293b46964c265c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000880000000000000000808080c0c0"
 }
 ```
-
 
 ## Method debug_getModifiedAccountsByHash
 
@@ -330,7 +325,6 @@ Response:
 }
 ```
 
-
 ## Method debug_goTrace
 
 The `goTrace` method turns on Go runtime tracing for the given duration and writes trace data to disk.
@@ -390,7 +384,6 @@ Response:
 }
 ```
 
-
 ## Method debug_memStats
 
 The `memStats` method returns detailed runtime memory statistics.
@@ -416,7 +409,6 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 Response:
 
 See [debug_memStats_response.json](./debug_memStats_response.json)
-
 
 ## Method debug_mutexProfile
 
@@ -505,43 +497,6 @@ Response:
 }
 ```
 
-
-## Method debug_seedHash
-
-The `seedHash` method retrieves the seed hash of a block.
-
-Parameters:
-
-- number: uint64, required, block number
-
-Returns:
-
-result: string
-
-Example:
-
-```shell
-curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
-  "jsonrpc": "2.0",
-  "id": 1001,
-  "method": "debug_seedHash",
-  "params": [
-    0
-  ]
-}' | jq
-```
-
-Response:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1001,
-  "result": "0x0000000000000000000000000000000000000000000000000000000000000000"
-}
-```
-
-
 ## Method debug_setBlockProfileRate
 
 The `setBlockProfileRate` method sets the rate (in samples/sec) of goroutine block profile data collection. A non-zero rate enables block profiling, setting it to zero stops the profile. Collected profile data can be written using `debug_writeBlockProfile`.
@@ -576,7 +531,6 @@ Response:
   "result": null
 }
 ```
-
 
 ## Method debug_setGCPercent
 
@@ -613,7 +567,6 @@ Response:
 }
 ```
 
-
 ## Method debug_setHead
 
 The `setHead` method sets the current head of the local chain by block number. Note, this is a destructive action and may severely damage your chain. Use with extreme caution.
@@ -649,7 +602,6 @@ Response:
 }
 ```
 
-
 ## Method debug_stacks
 
 The `stacks` method returns a printed representation of the stacks of all goroutines. Note that the web3 wrapper for this method takes care of the printing and does not return the string.
@@ -675,7 +627,6 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 Response:
 
 See [debug_stacks_response.json](./debug_stacks_response.json)
-
 
 ## Method debug_startCPUProfile
 
@@ -712,7 +663,6 @@ Response:
 }
 ```
 
-
 ## Method debug_stopCPUProfile
 
 The `stopCPUProfile` method stops an ongoing CPU profile.
@@ -744,7 +694,6 @@ Response:
   "result": null
 }
 ```
-
 
 ## Method debug_startGoTrace
 
@@ -781,7 +730,6 @@ Response:
 }
 ```
 
-
 ## Method debug_stopGoTrace
 
 The `stopGoTrace` method stops writing the Go runtime trace.
@@ -813,7 +761,6 @@ Response:
   "result": null
 }
 ```
-
 
 ## Method debug_storageRangeAt
 
@@ -923,7 +870,6 @@ Response:
 
 See [debug_traceBlockByNumber_response.json](./debug_traceBlockByNumber_response.json)
 
-
 ## Method debug_traceBlockFromFile
 
 The `traceBlockFromFile` meothod accepts a file containing the RLP of the block.
@@ -996,7 +942,6 @@ Response:
 }
 ```
 
-
 ## Method debug_traceTransaction
 
 The `traceTransaction` method debugging method will attempt to run the transaction in the exact same manner as it was executed on the network. It will replay any transaction that may have been executed prior to this one before it will finally attempt to execute the transaction that corresponds to the given hash.
@@ -1058,7 +1003,6 @@ Response:
 }
 ```
 
-
 ## Method debug_vmodule
 
 The `vmodule` method sets the logging verbosity pattern.
@@ -1093,7 +1037,6 @@ Response:
   "result": null
 }
 ```
-
 
 ## Method debug_writeBlockProfile
 
@@ -1130,7 +1073,6 @@ Response:
 }
 ```
 
-
 ## Method debug_writeMemProfile
 
 The `writeMemProfile` method writes an allocation profile to the given file. Note that the profiling rate cannot be set through the API, it must be set on the command line using the `--pprof-memprofilerate` flag.
@@ -1166,7 +1108,6 @@ Response:
 }
 ```
 
-
 ## Method debug_writeMutexProfile
 
 The `writeMutexProfile` method writes a goroutine blocking profile to the given file.
@@ -1201,4 +1142,3 @@ Response:
   "result": null
 }
 ```
-

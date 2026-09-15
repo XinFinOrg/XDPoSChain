@@ -20,7 +20,6 @@ import (
 	"crypto/ecdsa"
 	"errors"
 	"fmt"
-	"math"
 	"math/big"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -67,15 +66,17 @@ func LatestSigner(config *params.ChainConfig) Signer {
 	var signer Signer
 	if config.ChainID != nil {
 		switch {
-		case common.PragueBlock.Int64() != math.MaxInt64 || config.PragueBlock != nil:
+		case config.PragueBlock != nil:
 			signer = NewPragueSigner(config.ChainID)
-		case common.Eip1559Block.Int64() != math.MaxInt64 || config.Eip1559Block != nil:
+		case config.EIP1559Block != nil:
 			signer = NewLondonSigner(config.ChainID)
 		case config.EIP155Block != nil:
 			signer = NewEIP155Signer(config.ChainID)
 		default:
 			signer = HomesteadSigner{}
 		}
+	} else {
+		signer = HomesteadSigner{}
 	}
 	return signer
 }

@@ -19,8 +19,11 @@ package core
 import (
 	"crypto/ecdsa"
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"math"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -35,9 +38,47 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/crypto/keccak"
 	"github.com/XinFinOrg/XDPoSChain/ethdb/memorydb"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/XinFinOrg/XDPoSChain/rpc"
 	"github.com/XinFinOrg/XDPoSChain/trie"
 	"github.com/holiman/uint256"
 )
+
+type noopConsensusEngine struct{}
+
+func (noopConsensusEngine) Author(header *types.Header) (common.Address, error) {
+	return common.Address{}, nil
+}
+func (noopConsensusEngine) VerifyHeader(chain consensus.ChainReader, header *types.Header, fullVerify bool) error {
+	return nil
+}
+func (noopConsensusEngine) VerifyHeaders(chain consensus.ChainReader, headers []*types.Header, seals []bool) (chan<- struct{}, <-chan error) {
+	quit := make(chan struct{})
+	results := make(chan error, len(headers))
+	for range headers {
+		results <- nil
+	}
+	close(results)
+	return quit, results
+}
+func (noopConsensusEngine) VerifyUncles(chain consensus.ChainReader, block *types.Block) error {
+	return nil
+}
+func (noopConsensusEngine) VerifySeal(chain consensus.ChainReader, header *types.Header) error {
+	return nil
+}
+func (noopConsensusEngine) Prepare(chain consensus.ChainReader, header *types.Header) error {
+	return nil
+}
+func (noopConsensusEngine) Finalize(chain consensus.ChainReader, header *types.Header, state vm.StateDB, parentState *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
+	return nil, nil
+}
+func (noopConsensusEngine) Seal(chain consensus.ChainReader, block *types.Block, stop <-chan struct{}) (*types.Block, error) {
+	return block, nil
+}
+func (noopConsensusEngine) CalcDifficulty(chain consensus.ChainReader, time uint64, parent *types.Header) *big.Int {
+	return common.Big0
+}
+func (noopConsensusEngine) APIs(chain consensus.ChainReader) []rpc.API { return nil }
 
 // TestStateProcessorErrors tests the output from the 'core' errors
 // as defined in core/error.go. These errors are generated when the
@@ -46,22 +87,29 @@ import (
 func TestStateProcessorErrors(t *testing.T) {
 	var (
 		config = &params.ChainConfig{
-			ChainID:             big.NewInt(1),
-			HomesteadBlock:      big.NewInt(0),
-			EIP150Block:         big.NewInt(0),
-			EIP155Block:         big.NewInt(0),
-			EIP158Block:         big.NewInt(0),
-			ByzantiumBlock:      big.NewInt(0),
-			ConstantinopleBlock: big.NewInt(0),
-			PetersburgBlock:     big.NewInt(0),
-			IstanbulBlock:       big.NewInt(0),
-			BerlinBlock:         big.NewInt(0),
-			LondonBlock:         big.NewInt(0),
-			ShanghaiBlock:       big.NewInt(0),
-			Eip1559Block:        big.NewInt(0),
-			CancunBlock:         big.NewInt(0),
-			PragueBlock:         big.NewInt(0),
-			Ethash:              new(params.EthashConfig),
+			ChainID:                big.NewInt(1),
+			HomesteadBlock:         big.NewInt(0),
+			EIP150Block:            big.NewInt(0),
+			EIP155Block:            big.NewInt(0),
+			EIP158Block:            big.NewInt(0),
+			ByzantiumBlock:         big.NewInt(0),
+			ConstantinopleBlock:    big.NewInt(0),
+			PetersburgBlock:        big.NewInt(0),
+			IstanbulBlock:          big.NewInt(0),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(0),
+			BerlinBlock:            big.NewInt(0),
+			LondonBlock:            big.NewInt(0),
+			ShanghaiBlock:          big.NewInt(0),
+			EIP1559Block:           big.NewInt(0),
+			CancunBlock:            big.NewInt(0),
+			PragueBlock:            big.NewInt(0),
+			OsakaBlock:             big.NewInt(0),
+			TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(params.EthashConfig),
 		}
 		signer  = types.LatestSigner(config)
 		key1, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
@@ -125,15 +173,35 @@ func TestStateProcessorErrors(t *testing.T) {
 					},
 				},
 			}
-			genesis        = gspec.MustCommit(db)
-			blockchain, _  = NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
-			tooBigInitCode = [params.MaxInitCodeSize + 1]byte{}
+			blockchain, _ = NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
 		)
-
 		defer blockchain.Stop()
+		num := big.NewInt(1)
+		rules := config.Rules(num)
 		bigNumber := new(big.Int).SetBytes(common.MaxHash.Bytes())
 		tooBigNumber := new(big.Int).Set(bigNumber)
 		tooBigNumber.Add(tooBigNumber, common.Big1)
+		maxInitCodeSize := params.MaxInitCodeSize
+		if rules.IsOsaka {
+			maxInitCodeSize = params.MaxInitCodeSizeOsaka
+		}
+		tooBigInitCode := make([]byte, maxInitCodeSize+1)
+		tooBigInitCodeIntrinsicGas, err := IntrinsicGas(tooBigInitCode, nil, nil, true, rules.IsHomestead, rules.IsEIP1559)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tooBigInitCodeRequiredGas := tooBigInitCodeIntrinsicGas
+		if rules.IsPrague {
+			tooBigInitCodeFloorGas, err := FloorDataGas(tooBigInitCode)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tooBigInitCodeFloorGas > tooBigInitCodeRequiredGas {
+				tooBigInitCodeRequiredGas = tooBigInitCodeFloorGas
+			}
+		}
+		tooBigInitCodeTx := mkDynamicCreationTx(0, tooBigInitCodeRequiredGas+1000, common.Big0, big.NewInt(params.InitialBaseFee), tooBigInitCode)
+		gasLimit := blockchain.CurrentHeader().GasLimit
 		for i, tt := range []struct {
 			txs  []*types.Transaction
 			want string
@@ -159,9 +227,9 @@ func TestStateProcessorErrors(t *testing.T) {
 			},
 			{ // ErrGasLimitReached
 				txs: []*types.Transaction{
-					makeTx(key1, 0, common.Address{}, big.NewInt(0), 21000000, big.NewInt(12500000000), nil),
+					makeTx(key1, 0, common.Address{}, big.NewInt(0), gasLimit+1, big.NewInt(12500000000), nil),
 				},
-				want: "could not apply tx 0 [0x062b0e84f2d48f09f91e434fca8cb1fb864c4fb82f8bf27d58879ebe60c9f773]: gas limit reached, have: 4712388, need: 21000000",
+				want: "could not apply tx 0 [0x141d5093bebc1570bf844ff66c14113a4516f601f8e4df7aa4d575a4e9bcaa33]: gas limit reached, have: 4712388, need: 4712389",
 			},
 			{ // ErrInsufficientFundsForTransfer
 				txs: []*types.Transaction{
@@ -187,9 +255,9 @@ func TestStateProcessorErrors(t *testing.T) {
 			},
 			{ // ErrGasLimitReached
 				txs: []*types.Transaction{
-					makeTx(key1, 0, common.Address{}, big.NewInt(0), params.TxGas*1000, big.NewInt(12500000000), nil),
+					makeTx(key1, 0, common.Address{}, big.NewInt(0), gasLimit+1, big.NewInt(12500000000), nil),
 				},
-				want: "could not apply tx 0 [0x062b0e84f2d48f09f91e434fca8cb1fb864c4fb82f8bf27d58879ebe60c9f773]: gas limit reached, have: 4712388, need: 21000000",
+				want: "could not apply tx 0 [0x141d5093bebc1570bf844ff66c14113a4516f601f8e4df7aa4d575a4e9bcaa33]: gas limit reached, have: 4712388, need: 4712389",
 			},
 			{ // ErrFeeCapTooLow
 				txs: []*types.Transaction{
@@ -234,9 +302,9 @@ func TestStateProcessorErrors(t *testing.T) {
 			},
 			{ // ErrMaxInitCodeSizeExceeded
 				txs: []*types.Transaction{
-					mkDynamicCreationTx(0, 520000, common.Big0, big.NewInt(params.InitialBaseFee), tooBigInitCode[:]),
+					tooBigInitCodeTx,
 				},
-				want: "could not apply tx 0 [0x41d48b664cf891e625a16696a90e892ba3857c0b5ea759c3f2bdb4158338cb85]: max initcode size exceeded: code size 49153 limit 49152",
+				want: fmt.Sprintf("could not apply tx 0 [%s]: max initcode size exceeded: code size %d limit %d", tooBigInitCodeTx.Hash().Hex(), len(tooBigInitCode), maxInitCodeSize),
 			},
 			{ // ErrIntrinsicGas: Not enough gas to cover init code
 				txs: []*types.Transaction{
@@ -251,8 +319,14 @@ func TestStateProcessorErrors(t *testing.T) {
 				want: "could not apply tx 0 [0x2fadb4fa7ccf8564edc21590f8d94a5b93a981b2bb2de8256978cb7361bc69de]: EIP-7702 transaction with empty auth list (sender 0x71562b71999873DB5b286dF957af199Ec94617F7)",
 			},
 			// ErrSetCodeTxCreate cannot be tested: it is impossible to create a SetCode-tx with nil `to`.
+			{ // ErrGasLimitTooHigh
+				txs: []*types.Transaction{
+					makeTx(key1, 0, common.Address{}, big.NewInt(0), params.MaxTxGas+1, big.NewInt(params.InitialBaseFee), nil),
+				},
+				want: "could not apply tx 0 [0xb49a1f798a865850a62b4deb6a71efb9150e5bf11a46b3f331fec62baa0547b4]: transaction gas limit too high (cap: 16777216, tx: 16777217)",
+			},
 		} {
-			block := GenerateBadBlock(t, genesis, ethash.NewFaker(), tt.txs, gspec.Config)
+			block := GenerateBadBlock(t, gspec.ToBlock(), ethash.NewFaker(), tt.txs, gspec.Config)
 			_, err := blockchain.InsertChain(types.Blocks{block})
 			if err == nil {
 				t.Fatal("block imported without errors")
@@ -266,8 +340,9 @@ func TestStateProcessorErrors(t *testing.T) {
 	// ErrTxTypeNotSupported, For this, we need an older chain
 	{
 		var (
-			db    = rawdb.NewMemoryDatabase()
-			gspec = &Genesis{
+			db         = rawdb.NewMemoryDatabase()
+			futureFork = big.NewInt(1_000_000_000)
+			gspec      = &Genesis{
 				Config: &params.ChainConfig{
 					ChainID:             big.NewInt(1),
 					HomesteadBlock:      big.NewInt(0),
@@ -278,6 +353,17 @@ func TestStateProcessorErrors(t *testing.T) {
 					ConstantinopleBlock: big.NewInt(0),
 					PetersburgBlock:     big.NewInt(0),
 					IstanbulBlock:       big.NewInt(0),
+					TIPTRC21FeeBlock:    big.NewInt(0),
+					Gas50xBlock:         new(big.Int).Set(futureFork),
+					BerlinBlock:         new(big.Int).Set(futureFork),
+					LondonBlock:         new(big.Int).Set(futureFork),
+					MergeBlock:          new(big.Int).Set(futureFork),
+					ShanghaiBlock:       new(big.Int).Set(futureFork),
+					EIP1559Block:        new(big.Int).Set(futureFork),
+					CancunBlock:         new(big.Int).Set(futureFork),
+					PragueBlock:         new(big.Int).Set(futureFork),
+					OsakaBlock:          new(big.Int).Set(futureFork),
+					Ethash:              new(params.EthashConfig),
 				},
 				Alloc: types.GenesisAlloc{
 					common.HexToAddress("0x71562b71999873DB5b286dF957af199Ec94617F7"): types.Account{
@@ -286,9 +372,14 @@ func TestStateProcessorErrors(t *testing.T) {
 					},
 				},
 			}
-			genesis       = gspec.MustCommit(db)
-			blockchain, _ = NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+			blockchain *BlockChain
 		)
+		setXinFinForksToFuture(gspec.Config, futureFork)
+		var err error
+		blockchain, err = NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+		if err != nil {
+			t.Fatalf("failed to create old-chain blockchain: %v", err)
+		}
 		defer blockchain.Stop()
 		for i, tt := range []struct {
 			txs  []*types.Transaction
@@ -301,7 +392,7 @@ func TestStateProcessorErrors(t *testing.T) {
 				want: "transaction type not supported",
 			},
 		} {
-			block := GenerateBadBlock(t, genesis, ethash.NewFaker(), tt.txs, gspec.Config)
+			block := GenerateBadBlock(t, gspec.ToBlock(), ethash.NewFaker(), tt.txs, gspec.Config)
 			_, err := blockchain.InsertChain(types.Blocks{block})
 			if err == nil {
 				t.Fatal("block imported without errors")
@@ -310,6 +401,263 @@ func TestStateProcessorErrors(t *testing.T) {
 				t.Errorf("test %d:\nhave \"%v\"\nwant \"%v\"\n", i, have, want)
 			}
 		}
+	}
+}
+
+// TestStateProcessorDenylistHardForkBoundary tests state processor denylist hard fork boundary.
+func TestStateProcessorDenylistHardForkBoundary(t *testing.T) {
+	testDenylistedReceiver := common.HexToAddress("0x5248bfb72fd4f234e062d3e9bb76f08643004fcd")
+	if !common.IsInDenylist(&testDenylistedReceiver) {
+		t.Fatalf("test receiver is not denylisted: %v", testDenylistedReceiver.Hex())
+	}
+
+	key, err := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	if err != nil {
+		t.Fatalf("failed to parse test key: %v", err)
+	}
+	from := crypto.PubkeyToAddress(key.PublicKey)
+
+	newConfig := func(forkBlock uint64) *params.ChainConfig {
+		futureFork := big.NewInt(1_000_000_000)
+		cfg := &params.ChainConfig{
+			ChainID:                     big.NewInt(1),
+			HomesteadBlock:              big.NewInt(0),
+			DenylistBlock:               new(big.Int).SetUint64(forkBlock),
+			EIP150Block:                 big.NewInt(0),
+			EIP155Block:                 big.NewInt(0),
+			EIP158Block:                 big.NewInt(0),
+			ByzantiumBlock:              big.NewInt(0),
+			ConstantinopleBlock:         big.NewInt(0),
+			PetersburgBlock:             big.NewInt(0),
+			IstanbulBlock:               big.NewInt(0),
+			TIPTRC21FeeBlock:            big.NewInt(0),
+			Gas50xBlock:                 big.NewInt(0),
+			BerlinBlock:                 big.NewInt(0),
+			LondonBlock:                 big.NewInt(0),
+			ShanghaiBlock:               big.NewInt(0),
+			EIP1559Block:                big.NewInt(0),
+			CancunBlock:                 big.NewInt(0),
+			PragueBlock:                 big.NewInt(0),
+			OsakaBlock:                  big.NewInt(0),
+			TIPXDCXCancellationFeeBlock: nil,
+			Ethash:                      new(params.EthashConfig),
+		}
+		setXinFinForksToFuture(cfg, futureFork)
+		cfg.TIPSigningBlock = big.NewInt(0)
+		cfg.TIPRandomizeBlock = big.NewInt(0)
+		cfg.TIPIncreaseMasternodesBlock = big.NewInt(0)
+		cfg.DenylistBlock = new(big.Int).SetUint64(forkBlock)
+		return cfg
+	}
+
+	run := func(t *testing.T, forkBlock uint64, expectDenylistErr bool) {
+		t.Helper()
+
+		cfg := newConfig(forkBlock)
+		signer := types.LatestSigner(cfg)
+		tx, err := types.SignTx(types.NewTransaction(0, testDenylistedReceiver, big.NewInt(1), params.TxGas, big.NewInt(params.InitialBaseFee), nil), signer, key)
+		if err != nil {
+			t.Fatalf("failed to sign tx: %v", err)
+		}
+
+		gspec := &Genesis{
+			Config: cfg,
+			Alloc: types.GenesisAlloc{
+				from: {
+					Balance: big.NewInt(1_000_000_000_000_000_000),
+					Nonce:   0,
+				},
+			},
+		}
+		db := rawdb.NewMemoryDatabase()
+		blockchain, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+		if err != nil {
+			t.Fatalf("failed to create blockchain: %v", err)
+		}
+		defer blockchain.Stop()
+
+		block := GenerateBadBlock(t, gspec.ToBlock(), ethash.NewFaker(), []*types.Transaction{tx}, cfg)
+		_, err = blockchain.InsertChain(types.Blocks{block})
+		if err == nil {
+			t.Fatal("expected block import error")
+		}
+
+		hasDenylistErr := strings.Contains(err.Error(), "receiver in denylist")
+		if hasDenylistErr != expectDenylistErr {
+			t.Fatalf("unexpected denylist error presence (fork=%d): have=%v err=%v", forkBlock, hasDenylistErr, err)
+		}
+	}
+
+	t.Run("below hardfork does not trigger denylist guard", func(t *testing.T) {
+		run(t, 2, false)
+	})
+	t.Run("at hardfork triggers denylist guard", func(t *testing.T) {
+		run(t, 1, true)
+	})
+}
+
+// TestStateProcessorSpecialApplyTransactionsUseChainConfig tests block
+// processing uses the configured system-contract addresses when classifying
+// XDCX/XDCZ apply transactions.
+func TestStateProcessorSpecialApplyTransactionsUseChainConfig(t *testing.T) {
+	key, err := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	if err != nil {
+		t.Fatalf("failed to parse test key: %v", err)
+	}
+	from := crypto.PubkeyToAddress(key.PublicKey)
+	tokenAddr := common.HexToAddress("0x1234567890123456789012345678901234567890")
+	constantZeroCode := common.FromHex("0x600060005260206000f3")
+
+	newConfig := func() *params.ChainConfig {
+		cfg := &params.ChainConfig{
+			ChainID:                     big.NewInt(1),
+			HomesteadBlock:              big.NewInt(0),
+			TIPXDCXBlock:                big.NewInt(0),
+			EIP150Block:                 big.NewInt(0),
+			EIP155Block:                 big.NewInt(0),
+			EIP158Block:                 big.NewInt(0),
+			ByzantiumBlock:              big.NewInt(0),
+			ConstantinopleBlock:         big.NewInt(0),
+			PetersburgBlock:             big.NewInt(0),
+			IstanbulBlock:               big.NewInt(0),
+			TIPTRC21FeeBlock:            big.NewInt(0),
+			Gas50xBlock:                 big.NewInt(0),
+			BerlinBlock:                 big.NewInt(0),
+			LondonBlock:                 big.NewInt(0),
+			ShanghaiBlock:               big.NewInt(0),
+			EIP1559Block:                big.NewInt(0),
+			CancunBlock:                 big.NewInt(0),
+			PragueBlock:                 big.NewInt(0),
+			OsakaBlock:                  big.NewInt(0),
+			TRC21IssuerSMC:              params.TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:              params.TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC:      params.TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC:      params.TestnetChainConfig.LendingRegistrationSMC,
+			TIPXDCXCancellationFeeBlock: nil,
+			Ethash:                      new(params.EthashConfig),
+		}
+		return cfg
+	}
+
+	tests := []struct {
+		name     string
+		to       func(*params.ChainConfig) common.Address
+		method   string
+		isApply  func(*types.Transaction, *params.ChainConfig) bool
+		validate func(consensus.ChainContext, *big.Int, *state.StateDB, common.Address) error
+	}{
+		{
+			name:   "XDCX",
+			to:     func(cfg *params.ChainConfig) common.Address { return cfg.XDCXListingSMC },
+			method: common.XDCXApplyMethod,
+			isApply: func(tx *types.Transaction, cfg *params.ChainConfig) bool {
+				return tx.IsXDCXApplyTransaction(cfg)
+			},
+			validate: ValidateXDCXApplyTransaction,
+		},
+		{
+			name:   "XDCZ",
+			to:     func(cfg *params.ChainConfig) common.Address { return cfg.TRC21IssuerSMC },
+			method: common.XDCZApplyMethod,
+			isApply: func(tx *types.Transaction, cfg *params.ChainConfig) bool {
+				return tx.IsXDCZApplyTransaction(cfg)
+			},
+			validate: ValidateXDCZApplyTransaction,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := newConfig()
+			signer := types.LatestSigner(cfg)
+			data := append(common.FromHex(tt.method), common.LeftPadBytes(tokenAddr.Bytes(), 32)...)
+			tx, err := types.SignTx(types.NewTransaction(0, tt.to(cfg), big.NewInt(0), 50000, big.NewInt(params.InitialBaseFee), data), signer, key)
+			if err != nil {
+				t.Fatalf("failed to sign tx: %v", err)
+			}
+			if !tt.isApply(tx, cfg) {
+				t.Fatal("expected transaction to be classified as special apply")
+			}
+
+			gspec := &Genesis{
+				Config: cfg,
+				Alloc: types.GenesisAlloc{
+					from: {
+						Balance: big.NewInt(1_000_000_000_000_000_000),
+						Nonce:   0,
+					},
+					tokenAddr: {
+						Balance: big.NewInt(0),
+						Nonce:   1,
+						Code:    constantZeroCode,
+					},
+				},
+			}
+			db := rawdb.NewMemoryDatabase()
+			blockchain, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+			if err != nil {
+				t.Fatalf("failed to create blockchain: %v", err)
+			}
+			defer blockchain.Stop()
+
+			block := GenerateBadBlock(t, gspec.ToBlock(), ethash.NewFaker(), []*types.Transaction{tx}, cfg)
+			statedb, err := blockchain.State()
+			if err != nil {
+				t.Fatalf("failed to get state: %v", err)
+			}
+			if err := tt.validate(blockchain, block.Number(), statedb.Copy(), tokenAddr); err == nil {
+				t.Fatal("expected direct special apply validation error")
+			}
+			_, _, _, err = blockchain.Processor().Process(block, statedb, nil, vm.Config{}, map[common.Address]*big.Int{})
+			if err == nil {
+				t.Fatal("expected processing error")
+			}
+			if !strings.Contains(err.Error(), "invalid balance slot") {
+				t.Fatalf("expected special apply validation error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestStateProcessorDoesNotDeleteBlockSignersAtGenesisTIPSigning(t *testing.T) {
+	t.Parallel()
+
+	config := params.TestChainConfig.Clone()
+	config.TIPSigningBlock = big.NewInt(0)
+	config.PragueBlock = nil
+	config.OsakaBlock = nil
+	db := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{
+		Config: config,
+		Alloc: types.GenesisAlloc{
+			common.BlockSignersBinary: {Balance: big.NewInt(1)},
+		},
+		GasLimit:   1,
+		Difficulty: big.NewInt(1),
+	}
+	blockchain, err := NewBlockChain(db, nil, gspec, noopConsensusEngine{}, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	defer blockchain.Stop()
+
+	statedb, err := blockchain.State()
+	if err != nil {
+		t.Fatalf("failed to get state: %v", err)
+	}
+	if err := statedb.EnsureChainConfig(config); err != nil {
+		t.Fatalf("failed to ensure chain config: %v", err)
+	}
+	rootBefore := statedb.IntermediateRoot(false)
+	block := blockchain.GetBlockByNumber(0)
+	if _, _, _, err := blockchain.Processor().Process(block, statedb, nil, vm.Config{}, map[common.Address]*big.Int{}); err != nil {
+		t.Fatalf("process failed: %v", err)
+	}
+	if !statedb.Exist(common.BlockSignersBinary) {
+		t.Fatal("expected block signers account to remain at genesis")
+	}
+	if rootAfter := statedb.IntermediateRoot(false); rootAfter != rootBefore {
+		t.Fatalf("unexpected state root drift at genesis: have %s want %s", rootAfter, rootBefore)
 	}
 }
 
@@ -333,7 +681,7 @@ func GenerateBadBlock(t *testing.T, parent *types.Block, engine consensus.Engine
 		UncleHash: types.EmptyUncleHash,
 	}
 	if config.IsEIP1559(header.Number) {
-		header.BaseFee = common.BaseFee
+		header.BaseFee = params.BaseFeeForBlock(config, header.Number)
 	}
 	var receipts []*types.Receipt
 	// The post-state result doesn't need to be correct (this is a bad block), but we do need something there
@@ -360,19 +708,25 @@ func GenerateBadBlock(t *testing.T, parent *types.Block, engine consensus.Engine
 func TestApplyTransactionWithEVMTracer(t *testing.T) {
 	var (
 		config = &params.ChainConfig{
-			ChainID:             big.NewInt(1),
-			HomesteadBlock:      big.NewInt(0),
-			EIP150Block:         big.NewInt(0),
-			EIP155Block:         big.NewInt(0),
-			EIP158Block:         big.NewInt(0),
-			ByzantiumBlock:      big.NewInt(0),
-			ConstantinopleBlock: big.NewInt(0),
-			PetersburgBlock:     big.NewInt(0),
-			IstanbulBlock:       big.NewInt(0),
-			BerlinBlock:         big.NewInt(0),
-			LondonBlock:         big.NewInt(0),
-			Eip1559Block:        big.NewInt(0),
-			Ethash:              new(params.EthashConfig),
+			ChainID:                big.NewInt(1),
+			HomesteadBlock:         big.NewInt(0),
+			EIP150Block:            big.NewInt(0),
+			EIP155Block:            big.NewInt(0),
+			EIP158Block:            big.NewInt(0),
+			ByzantiumBlock:         big.NewInt(0),
+			ConstantinopleBlock:    big.NewInt(0),
+			PetersburgBlock:        big.NewInt(0),
+			IstanbulBlock:          big.NewInt(0),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(0),
+			BerlinBlock:            big.NewInt(0),
+			LondonBlock:            big.NewInt(0),
+			EIP1559Block:           big.NewInt(0),
+			TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(params.EthashConfig),
 		}
 		signer     = types.LatestSigner(config)
 		testKey, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
@@ -457,7 +811,7 @@ func TestApplyTransactionWithEVMTracer(t *testing.T) {
 				Tracer: mockTracer,
 			}
 
-			msg, err := TransactionToMessage(signedTx, signer, nil, nil, nil)
+			msg, err := TransactionToMessage(signedTx, signer, nil, nil, nil, config)
 			if err != nil {
 				t.Fatalf("Failed to create message: %v", err)
 			}
@@ -471,7 +825,7 @@ func TestApplyTransactionWithEVMTracer(t *testing.T) {
 
 			// Apply transaction
 			var usedGas uint64
-			_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, blockNumber, blockHash, signedTx, &usedGas, evm, big.NewInt(0), common.Address{})
+			_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, blockNumber, blockHash, signedTx, &usedGas, evm, big.NewInt(0))
 			// NOTE: Some special transactions (like BlockSignersBinary or XDCXAddrBinary)
 			// may fail in test environment due to missing configuration or state, but
 			// the tracer should still be called at the beginning of ApplyTransactionWithEVM.
@@ -493,22 +847,29 @@ func TestApplyTransactionWithEVMTracer(t *testing.T) {
 	}
 }
 
+// TestApplyTransactionWithEVMStateChangeHooks tests apply transaction with evm state change hooks.
 func TestApplyTransactionWithEVMStateChangeHooks(t *testing.T) {
 	var (
 		config = &params.ChainConfig{
-			ChainID:             big.NewInt(1),
-			HomesteadBlock:      big.NewInt(0),
-			EIP150Block:         big.NewInt(0),
-			EIP155Block:         big.NewInt(0),
-			EIP158Block:         big.NewInt(0),
-			ByzantiumBlock:      big.NewInt(0),
-			ConstantinopleBlock: big.NewInt(0),
-			PetersburgBlock:     big.NewInt(0),
-			IstanbulBlock:       big.NewInt(0),
-			BerlinBlock:         big.NewInt(0),
-			LondonBlock:         big.NewInt(0),
-			Eip1559Block:        big.NewInt(0),
-			Ethash:              new(params.EthashConfig),
+			ChainID:                big.NewInt(1),
+			HomesteadBlock:         big.NewInt(0),
+			EIP150Block:            big.NewInt(0),
+			EIP155Block:            big.NewInt(0),
+			EIP158Block:            big.NewInt(0),
+			ByzantiumBlock:         big.NewInt(0),
+			ConstantinopleBlock:    big.NewInt(0),
+			PetersburgBlock:        big.NewInt(0),
+			IstanbulBlock:          big.NewInt(0),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(0),
+			BerlinBlock:            big.NewInt(0),
+			LondonBlock:            big.NewInt(0),
+			EIP1559Block:           big.NewInt(0),
+			TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(params.EthashConfig),
 		}
 		signer      = types.LatestSigner(config)
 		testKey, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
@@ -552,14 +913,14 @@ func TestApplyTransactionWithEVMStateChangeHooks(t *testing.T) {
 	vmContext := NewEVMBlockContext(blockchain.CurrentBlock(), blockchain, nil)
 	evmenv := vm.NewEVM(vmContext, hookedState, nil, blockchain.Config(), vm.Config{Tracer: hooks})
 
-	msg, err := TransactionToMessage(signedTx, signer, nil, big.NewInt(1), nil)
+	msg, err := TransactionToMessage(signedTx, signer, nil, big.NewInt(1), nil, config)
 	if err != nil {
 		t.Fatalf("Failed to build message: %v", err)
 	}
 
 	gasPool := new(GasPool).AddGas(1000000)
 	var usedGas uint64
-	_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, big.NewInt(1), genesis.Hash(), signedTx, &usedGas, evmenv, nil, common.Address{})
+	_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, big.NewInt(1), genesis.Hash(), signedTx, &usedGas, evmenv, nil)
 	if err != nil {
 		t.Fatalf("ApplyTransactionWithEVM failed: %v", err)
 	}
@@ -568,6 +929,186 @@ func TestApplyTransactionWithEVMStateChangeHooks(t *testing.T) {
 	}
 }
 
+// TestApplyTransactionWithEVMOnTxStartUsesExecutionGasPrice tests apply transaction with evm on tx start uses execution gas price.
+func TestApplyTransactionWithEVMOnTxStartUsesExecutionGasPrice(t *testing.T) {
+	var (
+		config = &params.ChainConfig{
+			ChainID:                big.NewInt(1),
+			HomesteadBlock:         big.NewInt(0),
+			EIP150Block:            big.NewInt(0),
+			EIP155Block:            big.NewInt(0),
+			EIP158Block:            big.NewInt(0),
+			ByzantiumBlock:         big.NewInt(0),
+			ConstantinopleBlock:    big.NewInt(0),
+			PetersburgBlock:        big.NewInt(0),
+			IstanbulBlock:          big.NewInt(0),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(0),
+			BerlinBlock:            big.NewInt(0),
+			LondonBlock:            big.NewInt(0),
+			EIP1559Block:           big.NewInt(0),
+			TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(params.EthashConfig),
+		}
+		signer            = types.LatestSigner(config)
+		testKey, _        = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		sender            = crypto.PubkeyToAddress(testKey.PublicKey)
+		recipient         = common.HexToAddress("0x1234567890123456789012345678901234567890")
+		rawGasPrice       = big.NewInt(20000000000)
+		executionGasPrice = big.NewInt(7)
+	)
+
+	db := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{
+		Config: config,
+		Alloc: types.GenesisAlloc{
+			sender: {
+				Balance: big.NewInt(1000000000000000000),
+				Nonce:   0,
+			},
+		},
+	}
+	genesis := gspec.MustCommit(db)
+	blockchain, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("Failed to create blockchain: %v", err)
+	}
+	defer blockchain.Stop()
+
+	statedb, err := blockchain.State()
+	if err != nil {
+		t.Fatalf("Failed to get state: %v", err)
+	}
+
+	tx := types.NewTransaction(0, recipient, big.NewInt(1), 21000, rawGasPrice, nil)
+	signedTx, err := types.SignTx(tx, signer, testKey)
+	if err != nil {
+		t.Fatalf("Failed to sign tx: %v", err)
+	}
+
+	var seenGasPrice *big.Int
+	hooks := &tracing.Hooks{
+		OnTxStart: func(vmContext *tracing.VMContext, tx *types.Transaction, from common.Address) {
+			if tx == nil {
+				t.Fatal("OnTxStart called with nil transaction")
+			}
+			if from != sender {
+				t.Fatalf("OnTxStart called with wrong from address: got %v want %v", from, sender)
+			}
+			if vmContext.GasPrice == nil {
+				t.Fatal("OnTxStart saw nil gas price")
+			}
+			seenGasPrice = new(big.Int).Set(vmContext.GasPrice)
+		},
+	}
+
+	msg, err := TransactionToMessage(signedTx, signer, nil, big.NewInt(1), nil, config)
+	if err != nil {
+		t.Fatalf("Failed to build message: %v", err)
+	}
+	msg.GasPrice = new(big.Int).Set(executionGasPrice)
+
+	gasPool := new(GasPool).AddGas(1000000)
+	vmContext := NewEVMBlockContext(blockchain.CurrentBlock(), blockchain, nil)
+	evmenv := vm.NewEVM(vmContext, statedb, nil, blockchain.Config(), vm.Config{Tracer: hooks})
+
+	var usedGas uint64
+	_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, big.NewInt(1), genesis.Hash(), signedTx, &usedGas, evmenv, nil)
+	if err != nil {
+		t.Fatalf("ApplyTransactionWithEVM failed: %v", err)
+	}
+	if seenGasPrice == nil {
+		t.Fatal("expected OnTxStart to observe gas price")
+	}
+	if seenGasPrice.Cmp(executionGasPrice) != 0 {
+		t.Fatalf("OnTxStart saw wrong execution gas price: got %v want %v", seenGasPrice, executionGasPrice)
+	}
+	if seenGasPrice.Cmp(rawGasPrice) == 0 {
+		t.Fatalf("OnTxStart unexpectedly saw raw tx gas price: %v", seenGasPrice)
+	}
+}
+
+// TestApplyTransactionWithEVMRejectsValueOverflow tests apply transaction with evm rejects value overflow.
+func TestApplyTransactionWithEVMRejectsValueOverflow(t *testing.T) {
+	t.Parallel()
+
+	config := &params.ChainConfig{
+		ChainID:                big.NewInt(1),
+		HomesteadBlock:         big.NewInt(0),
+		EIP150Block:            big.NewInt(0),
+		EIP155Block:            big.NewInt(0),
+		EIP158Block:            big.NewInt(0),
+		ByzantiumBlock:         big.NewInt(0),
+		TIPTRC21FeeBlock:       big.NewInt(0),
+		Gas50xBlock:            big.NewInt(1_000_000_000),
+		BerlinBlock:            big.NewInt(1_000_000_000),
+		LondonBlock:            big.NewInt(1_000_000_000),
+		MergeBlock:             big.NewInt(1_000_000_000),
+		ShanghaiBlock:          big.NewInt(1_000_000_000),
+		EIP1559Block:           big.NewInt(1_000_000_000),
+		CancunBlock:            big.NewInt(1_000_000_000),
+		PragueBlock:            big.NewInt(1_000_000_000),
+		OsakaBlock:             big.NewInt(1_000_000_000),
+		TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
+		XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
+		RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
+		LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
+		Ethash:                 new(params.EthashConfig),
+	}
+	signer := types.LatestSigner(config)
+	key, err := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	if err != nil {
+		t.Fatalf("Failed to create key: %v", err)
+	}
+	sender := crypto.PubkeyToAddress(key.PublicKey)
+	recipient := common.HexToAddress("0x1234567890123456789012345678901234567890")
+	tooBigValue := new(big.Int).Lsh(big.NewInt(1), 256)
+	hugeBalance := new(big.Int).Lsh(big.NewInt(1), 300)
+
+	db := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{
+		Config: config,
+		Alloc: types.GenesisAlloc{
+			sender: {
+				Balance: hugeBalance,
+			},
+		},
+	}
+	setXinFinForksToFuture(config, big.NewInt(1_000_000_000))
+	genesis := gspec.MustCommit(db)
+	blockchain, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("Failed to create blockchain: %v", err)
+	}
+	defer blockchain.Stop()
+
+	statedb, err := blockchain.State()
+	if err != nil {
+		t.Fatalf("Failed to get state: %v", err)
+	}
+	tx := types.NewTransaction(0, recipient, tooBigValue, 21000, big.NewInt(1), nil)
+	signedTx, err := types.SignTx(tx, signer, key)
+	if err != nil {
+		t.Fatalf("Failed to sign tx: %v", err)
+	}
+	msg, err := TransactionToMessage(signedTx, signer, nil, big.NewInt(1), nil, config)
+	if err != nil {
+		t.Fatalf("Failed to build message: %v", err)
+	}
+	vmContext := NewEVMBlockContext(blockchain.CurrentBlock(), blockchain, nil)
+	evmenv := vm.NewEVM(vmContext, statedb, nil, blockchain.Config(), vm.Config{})
+	gasPool := new(GasPool).AddGas(1000000)
+	var usedGas uint64
+	_, _, _, err = ApplyTransactionWithEVM(msg, gasPool, statedb, big.NewInt(1), genesis.Hash(), signedTx, &usedGas, evmenv, nil)
+	if !errors.Is(err, types.ErrUint256Overflow) {
+		t.Fatalf("expected %v, got %v", types.ErrUint256Overflow, err)
+	}
+}
+
+// TestProcessParentBlockHash tests process parent block hash.
 func TestProcessParentBlockHash(t *testing.T) {
 	var (
 		chainConfig = params.MergedTestChainConfig
@@ -578,7 +1119,7 @@ func TestProcessParentBlockHash(t *testing.T) {
 		coinbase    = common.Address{}
 	)
 	test := func(statedb *state.StateDB) {
-		statedb.SetNonce(params.HistoryStorageAddress, 1)
+		statedb.SetNonce(params.HistoryStorageAddress, 1, tracing.NonceChangeUnspecified)
 		statedb.SetCode(params.HistoryStorageAddress, params.HistoryStorageCode)
 		statedb.IntermediateRoot(true)
 
@@ -604,6 +1145,7 @@ func TestProcessParentBlockHash(t *testing.T) {
 	})
 }
 
+// TestProcessParentBlockHashPragueGuard tests process parent block hash prague guard.
 func TestProcessParentBlockHashPragueGuard(t *testing.T) {
 	config := *params.MergedTestChainConfig
 	config.PragueBlock = big.NewInt(10)
@@ -634,6 +1176,201 @@ func TestProcessParentBlockHashPragueGuard(t *testing.T) {
 	}
 }
 
+// TestTransactionToMessageRejectsMissingTokenFeeConfig tests transaction to message rejects missing token fee config.
+func TestTransactionToMessageRejectsMissingTokenFeeConfig(t *testing.T) {
+	config := params.TestChainConfig.Clone()
+	signer := types.LatestSigner(config)
+	key, err := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	if err != nil {
+		t.Fatalf("failed to create key: %v", err)
+	}
+	recipient := common.HexToAddress("0x1234567890123456789012345678901234567890")
+	tx := types.NewTransaction(0, recipient, big.NewInt(1), 21000, big.NewInt(1), nil)
+	signedTx, err := types.SignTx(tx, signer, key)
+	if err != nil {
+		t.Fatalf("failed to sign tx: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		cfg         *params.ChainConfig
+		errContains string
+	}{
+		{
+			name:        "nil chain config",
+			cfg:         nil,
+			errContains: "chain config is nil",
+		},
+		{
+			name: "nil trc21 fee block",
+			cfg: func() *params.ChainConfig {
+				cfg := params.TestChainConfig.Clone()
+				cfg.TIPTRC21FeeBlock = nil
+				return cfg
+			}(),
+			errContains: "missing TIPTRC21FeeBlock",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := TransactionToMessage(signedTx, signer, big.NewInt(1), big.NewInt(1), nil, tt.cfg)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.errContains) {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// TestTransactionToMessageAllowsNilGas50xBlock tests transaction to message allows nil gas 50 x block.
+func TestTransactionToMessageAllowsNilGas50xBlock(t *testing.T) {
+	config := params.TestChainConfig.Clone()
+	config.Gas50xBlock = nil
+	config.TIPTRC21FeeBlock = big.NewInt(10)
+
+	signer := types.LatestSigner(config)
+	key, err := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	if err != nil {
+		t.Fatalf("failed to create key: %v", err)
+	}
+	recipient := common.HexToAddress("0x1234567890123456789012345678901234567890")
+	tx := types.NewTransaction(0, recipient, big.NewInt(1), 21000, big.NewInt(1), nil)
+	signedTx, err := types.SignTx(tx, signer, key)
+	if err != nil {
+		t.Fatalf("failed to sign tx: %v", err)
+	}
+
+	msg, err := TransactionToMessage(signedTx, signer, big.NewInt(1), big.NewInt(11), nil, config)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantPrice, err := params.GetGasPriceForTRC21(big.NewInt(11), config)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg.GasPrice.Cmp(wantPrice) != 0 {
+		t.Fatalf("unexpected gas price: have %v want %v", msg.GasPrice, wantPrice)
+	}
+}
+
+// TestApplyTransactionWithEVMKeepsCoinbaseFeeRecipientAtTIPTRC21ActivationBlock tests apply transaction with evm keeps coinbase fee recipient at tiptrc 21 activation block.
+func TestApplyTransactionWithEVMKeepsCoinbaseFeeRecipientAtTIPTRC21ActivationBlock(t *testing.T) {
+	config := &params.ChainConfig{
+		ChainID:                big.NewInt(1),
+		HomesteadBlock:         big.NewInt(0),
+		EIP150Block:            big.NewInt(0),
+		EIP155Block:            big.NewInt(0),
+		EIP158Block:            big.NewInt(0),
+		ByzantiumBlock:         big.NewInt(0),
+		TIPTRC21FeeBlock:       big.NewInt(0),
+		Gas50xBlock:            big.NewInt(1_000_000_000),
+		BerlinBlock:            big.NewInt(1_000_000_000),
+		LondonBlock:            big.NewInt(1_000_000_000),
+		MergeBlock:             big.NewInt(1_000_000_000),
+		ShanghaiBlock:          big.NewInt(1_000_000_000),
+		EIP1559Block:           big.NewInt(1_000_000_000),
+		CancunBlock:            big.NewInt(1_000_000_000),
+		PragueBlock:            big.NewInt(1_000_000_000),
+		OsakaBlock:             big.NewInt(1_000_000_000),
+		TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
+		XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
+		RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
+		LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
+		Ethash:                 new(params.EthashConfig),
+	}
+
+	signer := types.LatestSigner(config)
+	key, err := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	if err != nil {
+		t.Fatalf("failed to create key: %v", err)
+	}
+	sender := crypto.PubkeyToAddress(key.PublicKey)
+	recipient := common.HexToAddress("0x1234567890123456789012345678901234567890")
+	coinbase := common.HexToAddress("0x1000000000000000000000000000000000000001")
+	owner := common.HexToAddress("0x2000000000000000000000000000000000000002")
+
+	db := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{
+		Config: config,
+		Alloc: types.GenesisAlloc{
+			sender: {
+				Balance: big.NewInt(1),
+				Nonce:   0,
+			},
+		},
+	}
+	genesis := gspec.MustCommit(db)
+	blockchain, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	defer blockchain.Stop()
+
+	statedb, err := blockchain.State()
+	if err != nil {
+		t.Fatalf("failed to get state: %v", err)
+	}
+	setCandidateOwnerInState(statedb, coinbase, owner)
+
+	tx := types.NewTransaction(0, recipient, big.NewInt(0), 21000, big.NewInt(1), nil)
+	signedTx, err := types.SignTx(tx, signer, key)
+	if err != nil {
+		t.Fatalf("failed to sign tx: %v", err)
+	}
+
+	blockNumber := new(big.Int).Set(config.TIPTRC21FeeBlock)
+	msg, err := TransactionToMessage(signedTx, signer, big.NewInt(1_000_000_000_000), blockNumber, nil, config)
+	if err != nil {
+		t.Fatalf("failed to build message: %v", err)
+	}
+	wantPrice, err := params.GetGasPriceForTRC21(blockNumber, config)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg.GasPrice.Cmp(wantPrice) != 0 {
+		t.Fatalf("expected activation block token fee pricing to use pre-fork gas price: have %v want %v", msg.GasPrice, wantPrice)
+	}
+
+	vmContext := NewEVMBlockContext(&types.Header{
+		Number:     new(big.Int).Set(blockNumber),
+		GasLimit:   1_000_000,
+		Difficulty: big.NewInt(0),
+		Time:       1,
+	}, blockchain, &coinbase)
+	evmenv := vm.NewEVM(vmContext, statedb, nil, blockchain.Config(), vm.Config{})
+	gasPool := new(GasPool).AddGas(1_000_000)
+	var usedGas uint64
+
+	_, gasUsed, tokenFeeUsed, err := ApplyTransactionWithEVM(msg, gasPool, statedb, blockNumber, genesis.Hash(), signedTx, &usedGas, evmenv, big.NewInt(1_000_000_000_000))
+	if err != nil {
+		t.Fatalf("ApplyTransactionWithEVM failed: %v", err)
+	}
+	if !tokenFeeUsed {
+		t.Fatal("expected token fee path to be used")
+	}
+	fee := new(big.Int).Mul(new(big.Int).SetUint64(gasUsed), wantPrice)
+	if got := statedb.GetBalance(owner); got.Sign() != 0 {
+		t.Fatalf("expected owner to receive no fee at activation block, have %v", got)
+	}
+	if got := statedb.GetBalance(coinbase); got.Cmp(fee) != 0 {
+		t.Fatalf("expected coinbase to receive activation block fee %v, have %v", fee, got)
+	}
+	if usedGas != gasUsed {
+		t.Fatalf("unexpected used gas accumulator: have %d want %d", usedGas, gasUsed)
+	}
+}
+
+// setCandidateOwnerInState seeds the candidate-owner mapping for validator
+// ownership tests.
+func setCandidateOwnerInState(statedb *state.StateDB, candidate, owner common.Address) {
+	locValidatorsState := state.GetLocMappingAtKey(candidate.Hash(), 1)
+	statedb.SetState(common.MasternodeVotingSMCBinary, common.BigToHash(locValidatorsState), owner.Hash())
+}
+
+// TestProcessParentBlockHashBackfillMissingHistory tests process parent block hash backfill missing history.
 func TestProcessParentBlockHashBackfillMissingHistory(t *testing.T) {
 	config := *params.MergedTestChainConfig
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewDatabase(memorydb.New())))
@@ -675,6 +1412,7 @@ func TestProcessParentBlockHashBackfillMissingHistory(t *testing.T) {
 	}
 }
 
+// TestProcessParentBlockHashCodeMismatchPanics tests process parent block hash code mismatch panics.
 func TestProcessParentBlockHashCodeMismatchPanics(t *testing.T) {
 	config := *params.MergedTestChainConfig
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewDatabase(memorydb.New())))

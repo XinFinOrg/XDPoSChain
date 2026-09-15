@@ -29,6 +29,8 @@ const (
 	GenesisGasLimit      uint64 = 4712388            // Gas limit of the Genesis block.
 	XDCGenesisGasLimit   uint64 = 42000000
 
+	MaxTxGas uint64 = 1 << 24 // Maximum transaction gas limit after EIP-7825 (16,777,216).
+
 	MaximumExtraDataSize  uint64 = 32    // Maximum size extra data may be after Genesis.
 	ExpByteGas            uint64 = 10    // Times ceil(log256(exponent)) for the EXP instruction.
 	SloadGas              uint64 = 50    //
@@ -74,8 +76,10 @@ const (
 
 	InitialBaseFee = 12500000000 // Initial base fee for EIP-1559 blocks.
 
-	MaxCodeSize     = 24576           // Maximum bytecode to permit for a contract
-	MaxInitCodeSize = 2 * MaxCodeSize // Maximum initcode to permit in a creation transaction and create instructions
+	MaxCodeSize          = 24576                // Maximum bytecode to permit for a contract
+	MaxInitCodeSize      = 2 * MaxCodeSize      // Maximum initcode to permit in a creation transaction and create instructions
+	MaxCodeSizeOsaka     = 32768                // Maximum bytecode to permit for a contract post Osaka
+	MaxInitCodeSizeOsaka = 2 * MaxCodeSizeOsaka // Maximum initcode to permit in a creation transaction and create instructions post Osaka
 
 	// Precompiled contract gas prices
 
@@ -166,6 +170,8 @@ const (
 	Bn256PairingPerPointGasIstanbul  uint64 = 34000  // Per-point price for an elliptic curve pairing check
 
 	HistoryServeWindow = 8191 // Number of blocks to serve historical block hashes for, EIP-2935.
+
+	MaxBlockSize uint64 = 8_388_608 // maximum size of an RLP-encoded block
 )
 
 var (

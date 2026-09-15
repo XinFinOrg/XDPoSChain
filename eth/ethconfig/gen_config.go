@@ -5,6 +5,7 @@ package ethconfig
 import (
 	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool/legacypool"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
@@ -15,38 +16,48 @@ import (
 // MarshalTOML marshals as TOML.
 func (c Config) MarshalTOML() (interface{}, error) {
 	type Config struct {
-		Genesis                 *core.Genesis `toml:",omitempty"`
-		NetworkId               uint64
-		SyncMode                downloader.SyncMode
-		NoPruning               bool
-		Prefetch                bool
-		LightServ               int  `toml:",omitempty"`
-		LightPeers              int  `toml:",omitempty"`
-		SkipBcVersionCheck      bool `toml:"-"`
-		DeleteAllBadBlocks      bool `toml:"-"`
-		DatabaseHandles         int  `toml:"-"`
-		DatabaseCache           int
-		TrieCleanCache          int
-		TrieDirtyCache          int
-		TrieTimeout             time.Duration
-		Preimages               bool
-		FilterLogCacheSize      int
-		Miner                   miner.Config
-		LogQueryLimit           int
-		TxPool                  legacypool.Config
-		GPO                     gasprice.Config
-		EnablePreimageRecording bool
-		VMTrace                 string
-		VMTraceJsonConfig       string
-		RPCGasCap               uint64
-		RPCEVMTimeout           time.Duration
-		RPCTxFeeCap             float64
-		RangeLimit              uint64 `toml:",omitempty"`
+		Genesis                    *core.Genesis `toml:",omitempty"`
+		AllowBuiltInCustomRecovery bool          `toml:",omitempty"`
+		ChainConfigMismatchPolicy  string        `toml:",omitempty"`
+		NetworkId                  uint64
+		SyncMode                   downloader.SyncMode
+		FastSyncPivotNumber        uint64
+		FastSyncPivotHash          common.Hash
+		FastSyncPivotRoot          common.Hash
+		NoPruning                  bool
+		Prefetch                   bool
+		LightServ                  int  `toml:",omitempty"`
+		LightPeers                 int  `toml:",omitempty"`
+		SkipBcVersionCheck         bool `toml:"-"`
+		DeleteAllBadBlocks         bool `toml:"-"`
+		DatabaseHandles            int  `toml:"-"`
+		DatabaseCache              int
+		TrieCleanCache             int
+		TrieDirtyCache             int
+		TrieTimeout                time.Duration
+		Preimages                  bool
+		FilterLogCacheSize         int
+		Miner                      miner.Config
+		LogQueryLimit              int
+		TxPool                     legacypool.Config
+		GPO                        gasprice.Config
+		EnablePreimageRecording    bool
+		VMTrace                    string
+		VMTraceJsonConfig          string
+		RPCGasCap                  uint64
+		RPCEVMTimeout              time.Duration
+		RPCTxFeeCap                float64
+		RangeLimit                 uint64 `toml:",omitempty"`
 	}
 	var enc Config
 	enc.Genesis = c.Genesis
+	enc.AllowBuiltInCustomRecovery = c.AllowBuiltInCustomRecovery
+	enc.ChainConfigMismatchPolicy = c.ChainConfigMismatchPolicy
 	enc.NetworkId = c.NetworkId
 	enc.SyncMode = c.SyncMode
+	enc.FastSyncPivotNumber = c.FastSyncPivotNumber
+	enc.FastSyncPivotHash = c.FastSyncPivotHash
+	enc.FastSyncPivotRoot = c.FastSyncPivotRoot
 	enc.NoPruning = c.NoPruning
 	enc.Prefetch = c.Prefetch
 	enc.LightServ = c.LightServ
@@ -77,33 +88,38 @@ func (c Config) MarshalTOML() (interface{}, error) {
 // UnmarshalTOML unmarshals from TOML.
 func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	type Config struct {
-		Genesis                 *core.Genesis `toml:",omitempty"`
-		NetworkId               *uint64
-		SyncMode                *downloader.SyncMode
-		NoPruning               *bool
-		Prefetch                *bool
-		LightServ               *int  `toml:",omitempty"`
-		LightPeers              *int  `toml:",omitempty"`
-		SkipBcVersionCheck      *bool `toml:"-"`
-		DeleteAllBadBlocks      *bool `toml:"-"`
-		DatabaseHandles         *int  `toml:"-"`
-		DatabaseCache           *int
-		TrieCleanCache          *int
-		TrieDirtyCache          *int
-		TrieTimeout             *time.Duration
-		Preimages               *bool
-		FilterLogCacheSize      *int
-		Miner                   *miner.Config
-		LogQueryLimit           *int
-		TxPool                  *legacypool.Config
-		GPO                     *gasprice.Config
-		EnablePreimageRecording *bool
-		VMTrace                 *string
-		VMTraceJsonConfig       *string
-		RPCGasCap               *uint64
-		RPCEVMTimeout           *time.Duration
-		RPCTxFeeCap             *float64
-		RangeLimit              *uint64 `toml:",omitempty"`
+		Genesis                    *core.Genesis `toml:",omitempty"`
+		AllowBuiltInCustomRecovery *bool         `toml:",omitempty"`
+		ChainConfigMismatchPolicy  *string       `toml:",omitempty"`
+		NetworkId                  *uint64
+		SyncMode                   *downloader.SyncMode
+		FastSyncPivotNumber        *uint64
+		FastSyncPivotHash          *common.Hash
+		FastSyncPivotRoot          *common.Hash
+		NoPruning                  *bool
+		Prefetch                   *bool
+		LightServ                  *int  `toml:",omitempty"`
+		LightPeers                 *int  `toml:",omitempty"`
+		SkipBcVersionCheck         *bool `toml:"-"`
+		DeleteAllBadBlocks         *bool `toml:"-"`
+		DatabaseHandles            *int  `toml:"-"`
+		DatabaseCache              *int
+		TrieCleanCache             *int
+		TrieDirtyCache             *int
+		TrieTimeout                *time.Duration
+		Preimages                  *bool
+		FilterLogCacheSize         *int
+		Miner                      *miner.Config
+		LogQueryLimit              *int
+		TxPool                     *legacypool.Config
+		GPO                        *gasprice.Config
+		EnablePreimageRecording    *bool
+		VMTrace                    *string
+		VMTraceJsonConfig          *string
+		RPCGasCap                  *uint64
+		RPCEVMTimeout              *time.Duration
+		RPCTxFeeCap                *float64
+		RangeLimit                 *uint64 `toml:",omitempty"`
 	}
 	var dec Config
 	if err := unmarshal(&dec); err != nil {
@@ -112,11 +128,26 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	if dec.Genesis != nil {
 		c.Genesis = dec.Genesis
 	}
+	if dec.AllowBuiltInCustomRecovery != nil {
+		c.AllowBuiltInCustomRecovery = *dec.AllowBuiltInCustomRecovery
+	}
+	if dec.ChainConfigMismatchPolicy != nil {
+		c.ChainConfigMismatchPolicy = *dec.ChainConfigMismatchPolicy
+	}
 	if dec.NetworkId != nil {
 		c.NetworkId = *dec.NetworkId
 	}
 	if dec.SyncMode != nil {
 		c.SyncMode = *dec.SyncMode
+	}
+	if dec.FastSyncPivotNumber != nil {
+		c.FastSyncPivotNumber = *dec.FastSyncPivotNumber
+	}
+	if dec.FastSyncPivotHash != nil {
+		c.FastSyncPivotHash = *dec.FastSyncPivotHash
+	}
+	if dec.FastSyncPivotRoot != nil {
+		c.FastSyncPivotRoot = *dec.FastSyncPivotRoot
 	}
 	if dec.NoPruning != nil {
 		c.NoPruning = *dec.NoPruning

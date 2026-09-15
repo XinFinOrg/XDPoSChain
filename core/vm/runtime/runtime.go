@@ -70,7 +70,7 @@ func setDefaults(cfg *Config) {
 			LondonBlock:         new(big.Int),
 			MergeBlock:          new(big.Int),
 			ShanghaiBlock:       new(big.Int),
-			Eip1559Block:        new(big.Int),
+			EIP1559Block:        new(big.Int),
 		}
 	}
 
@@ -131,13 +131,16 @@ func Execute(code, input []byte, cfg *Config) ([]byte, *state.StateDB, error) {
 	// set the receiver's (the executing contract) code for execution.
 	cfg.State.SetCode(address, code)
 	// Call the code with the given configuration.
-	ret, _, err := vmenv.Call(
+	ret, leftOverGas, err := vmenv.Call(
 		cfg.Origin,
 		common.BytesToAddress([]byte("contract")),
 		input,
 		cfg.GasLimit,
 		uint256.MustFromBig(cfg.Value),
 	)
+	if cfg.EVMConfig.Tracer != nil && cfg.EVMConfig.Tracer.OnTxEnd != nil {
+		cfg.EVMConfig.Tracer.OnTxEnd(&types.Receipt{GasUsed: cfg.GasLimit - leftOverGas}, err)
+	}
 	return ret, cfg.State, err
 }
 
@@ -171,6 +174,9 @@ func Create(input []byte, cfg *Config) ([]byte, common.Address, uint64, error) {
 		cfg.GasLimit,
 		uint256.MustFromBig(cfg.Value),
 	)
+	if cfg.EVMConfig.Tracer != nil && cfg.EVMConfig.Tracer.OnTxEnd != nil {
+		cfg.EVMConfig.Tracer.OnTxEnd(&types.Receipt{GasUsed: cfg.GasLimit - leftOverGas}, err)
+	}
 	return code, address, leftOverGas, err
 }
 
@@ -203,5 +209,8 @@ func Call(address common.Address, input []byte, cfg *Config) ([]byte, uint64, er
 		cfg.GasLimit,
 		uint256.MustFromBig(cfg.Value),
 	)
+	if cfg.EVMConfig.Tracer != nil && cfg.EVMConfig.Tracer.OnTxEnd != nil {
+		cfg.EVMConfig.Tracer.OnTxEnd(&types.Receipt{GasUsed: cfg.GasLimit - leftOverGas}, err)
+	}
 	return ret, leftOverGas, err
 }

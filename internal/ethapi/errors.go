@@ -23,6 +23,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/core"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 )
 
@@ -107,13 +108,15 @@ func txValidationError(err error) *invalidTxError {
 		return &invalidTxError{Message: err.Error(), Code: errCodeInvalidParams}
 	case errors.Is(err, core.ErrFeeCapTooLow):
 		return &invalidTxError{Message: err.Error(), Code: errCodeInvalidParams}
+	case errors.Is(err, types.ErrUint256Overflow):
+		return &invalidTxError{Message: err.Error(), Code: errCodeInvalidParams}
 	case errors.Is(err, core.ErrInsufficientFunds):
 		return &invalidTxError{Message: err.Error(), Code: errCodeInsufficientFunds}
 	case errors.Is(err, core.ErrIntrinsicGas):
 		return &invalidTxError{Message: err.Error(), Code: errCodeIntrinsicGas}
 	case errors.Is(err, core.ErrInsufficientFundsForTransfer):
 		return &invalidTxError{Message: err.Error(), Code: errCodeInsufficientFunds}
-	case errors.Is(err, core.ErrMaxInitCodeSizeExceeded):
+	case errors.Is(err, vm.ErrMaxInitCodeSizeExceeded):
 		return &invalidTxError{Message: err.Error(), Code: errCodeMaxInitCodeSizeExceeded}
 	}
 	return &invalidTxError{

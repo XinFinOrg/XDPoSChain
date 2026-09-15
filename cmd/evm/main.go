@@ -19,157 +19,139 @@ package main
 
 import (
 	"fmt"
-	"math/big"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"slices"
 
+	"github.com/XinFinOrg/XDPoSChain/core/state"
+	"github.com/XinFinOrg/XDPoSChain/core/tracing"
+	"github.com/XinFinOrg/XDPoSChain/eth/tracers/logger"
+	"github.com/XinFinOrg/XDPoSChain/internal/debug"
 	"github.com/XinFinOrg/XDPoSChain/internal/flags"
 	"github.com/urfave/cli/v2"
 )
 
-var (
-	app = flags.NewApp("the evm command line interface")
-)
+// Some other nice-to-haves:
+// * accumulate traces into an object to bundle with test
+// * write tx identifier for trace before hand (blocktest only)
+// * combine blocktest and statetest runner logic using unified test interface
+
+const traceCategory = "TRACING"
 
 var (
-	DebugFlag = &cli.BoolFlag{
-		Name:     "debug",
-		Usage:    "output full trace logs",
+	// Test running flags.
+	RunFlag = &cli.StringFlag{
+		Name:     "run",
+		Value:    ".*",
+		Usage:    "Run only those tests matching the regular expression.",
 		Category: flags.VMCategory,
 	}
-	MemProfileFlag = &cli.StringFlag{
-		Name:     "memprofile",
-		Usage:    "creates a memory profile at the given path",
+	BenchFlag = &cli.BoolFlag{
+		Name:     "bench",
+		Usage:    "benchmark the execution",
 		Category: flags.VMCategory,
 	}
-	CPUProfileFlag = &cli.StringFlag{
-		Name:     "cpuprofile",
-		Usage:    "creates a CPU profile at the given path",
+
+	// Debugging flags.
+	DumpFlag = &cli.BoolFlag{
+		Name:     "dump",
+		Usage:    "dumps the state after the run",
 		Category: flags.VMCategory,
+	}
+	HumanReadableFlag = &cli.BoolFlag{
+		Name:  "human",
+		Usage: "\"Human-readable\" output",
 	}
 	StatDumpFlag = &cli.BoolFlag{
 		Name:     "statdump",
 		Usage:    "displays stack and heap memory information",
 		Category: flags.VMCategory,
 	}
-	CodeFlag = &cli.StringFlag{
-		Name:     "code",
-		Usage:    "EVM code",
-		Category: flags.VMCategory,
+
+	// Tracing flags.
+	TraceFlag = &cli.BoolFlag{
+		Name:     "trace",
+		Usage:    "Enable tracing and output trace log.",
+		Category: traceCategory,
 	}
-	CodeFileFlag = &cli.StringFlag{
-		Name:     "codefile",
-		Usage:    "File containing EVM code. If '-' is specified, code is read from stdin ",
-		Category: flags.VMCategory,
+	TraceFormatFlag = &cli.StringFlag{
+		Name:     "trace.format",
+		Usage:    "Trace output format to use (json|struct|md)",
+		Value:    "json",
+		Category: traceCategory,
 	}
-	GasFlag = &cli.Uint64Flag{
-		Name:     "gas",
-		Usage:    "gas limit for the evm",
-		Value:    10000000000,
-		Category: flags.VMCategory,
+	TraceDisableMemoryFlag = &cli.BoolFlag{
+		Name:     "trace.nomemory",
+		Aliases:  []string{"nomemory"},
+		Value:    true,
+		Usage:    "disable memory output",
+		Category: traceCategory,
 	}
-	PriceFlag = &flags.BigFlag{
-		Name:     "price",
-		Usage:    "price set for the evm",
-		Value:    new(big.Int),
-		Category: flags.VMCategory,
+	TraceDisableStackFlag = &cli.BoolFlag{
+		Name:     "trace.nostack",
+		Aliases:  []string{"nostack"},
+		Usage:    "disable stack output",
+		Category: traceCategory,
 	}
-	ValueFlag = &flags.BigFlag{
-		Name:     "value",
-		Usage:    "value set for the evm",
-		Value:    new(big.Int),
-		Category: flags.VMCategory,
+	TraceDisableStorageFlag = &cli.BoolFlag{
+		Name:     "trace.nostorage",
+		Aliases:  []string{"nostorage"},
+		Usage:    "disable storage output",
+		Category: traceCategory,
 	}
-	DumpFlag = &cli.BoolFlag{
-		Name:     "dump",
-		Usage:    "dumps the state after the run",
-		Category: flags.VMCategory,
+	TraceDisableReturnDataFlag = &cli.BoolFlag{
+		Name:     "trace.noreturndata",
+		Aliases:  []string{"noreturndata"},
+		Value:    true,
+		Usage:    "disable return data output",
+		Category: traceCategory,
 	}
-	InputFlag = &cli.StringFlag{
-		Name:     "input",
-		Usage:    "input for the EVM",
-		Category: flags.VMCategory,
-	}
-	VerbosityFlag = &cli.IntFlag{
-		Name:     "verbosity",
-		Usage:    "sets the verbosity level",
-		Category: flags.VMCategory,
-	}
-	CreateFlag = &cli.BoolFlag{
-		Name:     "create",
-		Usage:    "indicates the action should be create rather than call",
-		Category: flags.VMCategory,
-	}
-	GenesisFlag = &cli.StringFlag{
-		Name:     "prestate",
-		Usage:    "JSON file with prestate (genesis) config",
-		Category: flags.VMCategory,
+
+	// Deprecated flags.
+	DebugFlag = &cli.BoolFlag{
+		Name:     "debug",
+		Usage:    "output full trace logs (deprecated)",
+		Hidden:   true,
+		Category: traceCategory,
 	}
 	MachineFlag = &cli.BoolFlag{
 		Name:     "json",
-		Usage:    "output trace logs in machine readable format (json)",
-		Category: flags.VMCategory,
-	}
-	SenderFlag = &cli.StringFlag{
-		Name:     "sender",
-		Usage:    "The transaction origin",
-		Category: flags.VMCategory,
-	}
-	ReceiverFlag = &cli.StringFlag{
-		Name:     "receiver",
-		Usage:    "The transaction receiver (execution context)",
-		Category: flags.VMCategory,
-	}
-	DisableMemoryFlag = &cli.BoolFlag{
-		Name:     "nomemory",
-		Value:    true,
-		Usage:    "disable memory output",
-		Category: flags.VMCategory,
-	}
-	DisableStackFlag = &cli.BoolFlag{
-		Name:     "nostack",
-		Usage:    "disable stack output",
-		Category: flags.VMCategory,
-	}
-	DisableStorageFlag = &cli.BoolFlag{
-		Name:     "nostorage",
-		Usage:    "disable storage output",
-		Category: flags.VMCategory,
-	}
-	DisableReturnDataFlag = &cli.BoolFlag{
-		Name:     "noreturndata",
-		Value:    true,
-		Usage:    "enable return data output",
-		Category: flags.VMCategory,
+		Usage:    "output trace logs in machine readable format, json (deprecated)",
+		Hidden:   true,
+		Category: traceCategory,
 	}
 )
 
+// traceFlags contains flags that configure tracing output.
+var traceFlags = []cli.Flag{
+	TraceFlag,
+	TraceFormatFlag,
+	TraceDisableStackFlag,
+	TraceDisableMemoryFlag,
+	TraceDisableStorageFlag,
+	TraceDisableReturnDataFlag,
+
+	// deprecated
+	DebugFlag,
+	MachineFlag,
+}
+
+var app = flags.NewApp("the evm command line interface")
+
 func init() {
-	app.Flags = []cli.Flag{
-		CreateFlag,
-		DebugFlag,
-		VerbosityFlag,
-		CodeFlag,
-		CodeFileFlag,
-		GasFlag,
-		PriceFlag,
-		ValueFlag,
-		DumpFlag,
-		InputFlag,
-		MemProfileFlag,
-		CPUProfileFlag,
-		StatDumpFlag,
-		GenesisFlag,
-		MachineFlag,
-		SenderFlag,
-		ReceiverFlag,
-		DisableMemoryFlag,
-		DisableStackFlag,
-	}
+	app.Flags = debug.Flags
 	app.Commands = []*cli.Command{
-		compileCommand,
-		disasmCommand,
 		runCommand,
 		stateTestCommand,
+	}
+	app.Before = func(ctx *cli.Context) error {
+		flags.MigrateGlobalFlags(ctx)
+		return debug.Setup(ctx)
+	}
+	app.After = func(ctx *cli.Context) error {
+		debug.Exit()
+		return nil
 	}
 }
 
@@ -178,4 +160,72 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// tracerFromFlags parses the cli flags and returns the specified tracer, or an error for unknown formats.
+func tracerFromFlags(ctx *cli.Context) (*tracing.Hooks, error) {
+	config := &logger.Config{
+		EnableMemory:     !ctx.Bool(TraceDisableMemoryFlag.Name),
+		DisableStack:     ctx.Bool(TraceDisableStackFlag.Name),
+		DisableStorage:   ctx.Bool(TraceDisableStorageFlag.Name),
+		EnableReturnData: !ctx.Bool(TraceDisableReturnDataFlag.Name),
+	}
+	switch {
+	case ctx.Bool(TraceFlag.Name):
+		switch format := ctx.String(TraceFormatFlag.Name); format {
+		case "struct":
+			return logger.NewStreamingStructLogger(config, os.Stderr).Hooks(), nil
+		case "json":
+			return logger.NewJSONLogger(config, os.Stderr), nil
+		case "md", "markdown":
+			return logger.NewMarkdownLogger(config, os.Stderr).Hooks(), nil
+		default:
+			return nil, cli.Exit(fmt.Sprintf("unknown trace format: %q", format), 1)
+		}
+	// Deprecated ways of configuring tracing.
+	case ctx.Bool(MachineFlag.Name):
+		return logger.NewJSONLogger(config, os.Stderr), nil
+	case ctx.Bool(DebugFlag.Name):
+		return logger.NewStreamingStructLogger(config, os.Stderr).Hooks(), nil
+	default:
+		return nil, nil
+	}
+}
+
+// collectFiles walks the given path. If the path is a directory, it returns
+// a list of all .json files found recursively under the directory.
+// Otherwise, if path points to a file, it returns that path.
+func collectFiles(path string) ([]string, error) {
+	var out []string
+	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		// User explicitly pointed out a file, ignore extension.
+		return []string{path}, nil
+	}
+	err := filepath.Walk(path, func(path string, info fs.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && filepath.Ext(info.Name()) == ".json" {
+			out = append(out, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to collect files from %q: %v", path, err)
+	}
+	if len(out) > 1 {
+		slices.Sort(out)
+	}
+	return out, nil
+}
+
+// dump returns a state dump for the most current trie.
+func dump(s *state.StateDB) *state.Dump {
+	root := s.IntermediateRoot(false)
+	cpy, err := state.New(root, s.Database())
+	if err != nil {
+		return nil
+	}
+	dump := cpy.RawDump(nil)
+	return &dump
 }

@@ -25,6 +25,7 @@ import (
 	"math/big"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/common/bitutil"
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/vm/privacy"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
@@ -40,6 +41,7 @@ import (
 type PrecompiledContract interface {
 	RequiredGas(input []byte) uint64  // RequiredPrice calculates the contract gas use
 	Run(input []byte) ([]byte, error) // Run runs the precompiled contract
+	Name() string
 }
 
 // PrecompiledContracts contains the precompiled contracts supported at the given fork.
@@ -249,7 +251,7 @@ func (c *ecrecover) Run(input []byte) ([]byte, error) {
 	v := input[63] - 27
 
 	// tighter sig s values input homestead only apply to tx sigs
-	if !allZero(input[32:63]) || !crypto.ValidateSignatureValues(v, r, s, false) {
+	if bitutil.TestBytes(input[32:63]) || !crypto.ValidateSignatureValues(v, r, s, false) {
 		return nil, nil
 	}
 	// We must make sure not to modify the 'input', so placing the 'v' along with
@@ -268,6 +270,10 @@ func (c *ecrecover) Run(input []byte) ([]byte, error) {
 	return common.LeftPadBytes(crypto.Keccak256(pubKey[1:])[12:], 32), nil
 }
 
+func (c *ecrecover) Name() string {
+	return "ECREC"
+}
+
 // SHA256 implemented as a native contract.
 type sha256hash struct{}
 
@@ -281,6 +287,10 @@ func (c *sha256hash) RequiredGas(input []byte) uint64 {
 func (c *sha256hash) Run(input []byte) ([]byte, error) {
 	h := sha256.Sum256(input)
 	return h[:], nil
+}
+
+func (c *sha256hash) Name() string {
+	return "SHA256"
 }
 
 // RIPEMD160 implemented as a native contract.
@@ -299,6 +309,10 @@ func (c *ripemd160hash) Run(input []byte) ([]byte, error) {
 	return common.LeftPadBytes(ripemd.Sum(nil), 32), nil
 }
 
+func (c *ripemd160hash) Name() string {
+	return "RIPEMD160"
+}
+
 // data copy implemented as a native contract.
 type dataCopy struct{}
 
@@ -311,6 +325,10 @@ func (c *dataCopy) RequiredGas(input []byte) uint64 {
 }
 func (c *dataCopy) Run(in []byte) ([]byte, error) {
 	return common.CopyBytes(in), nil
+}
+
+func (c *dataCopy) Name() string {
+	return "ID"
 }
 
 // bigModExp implements a native big integer exponential modular operation.
@@ -438,7 +456,9 @@ func (c *bigModExp) RequiredGas(input []byte) uint64 {
 			gas.Mul(gas, adjExpLen)
 		}
 		// 2. Different divisor (`GQUADDIVISOR`) (3)
-		gas.Div(gas, big3)
+		if !c.eip7883 {
+			gas.Div(gas, big3)
+		}
 		if gas.BitLen() > 64 {
 			return math.MaxUint64
 		}
@@ -501,6 +521,10 @@ func (c *bigModExp) Run(input []byte) ([]byte, error) {
 	return common.LeftPadBytes(v, int(modLen)), nil
 }
 
+func (c *bigModExp) Name() string {
+	return "MODEXP"
+}
+
 // newCurvePoint unmarshals a binary blob into a bn256 elliptic curve point,
 // returning it, or an error if the point is invalid.
 func newCurvePoint(blob []byte) (*bn256.G1, error) {
@@ -537,6 +561,10 @@ func runBn256Add(input []byte) ([]byte, error) {
 	return res.Marshal(), nil
 }
 
+// Fork-specific bn256 precompiles intentionally share the same operation names.
+// The active implementation is still selected by address from the fork-specific
+// precompile map, so identical Name values across hard forks are expected.
+
 // bn256AddIstanbul implements a native elliptic curve point addition conforming to
 // Istanbul consensus rules.
 type bn256AddIstanbul struct{}
@@ -550,6 +578,10 @@ func (c *bn256AddIstanbul) Run(input []byte) ([]byte, error) {
 	return runBn256Add(input)
 }
 
+func (c *bn256AddIstanbul) Name() string {
+	return "BN256_ADD"
+}
+
 // bn256AddByzantium implements a native elliptic curve point addition
 // conforming to Byzantium consensus rules.
 type bn256AddByzantium struct{}
@@ -561,6 +593,10 @@ func (c *bn256AddByzantium) RequiredGas(input []byte) uint64 {
 
 func (c *bn256AddByzantium) Run(input []byte) ([]byte, error) {
 	return runBn256Add(input)
+}
+
+func (c *bn256AddByzantium) Name() string {
+	return "BN256_ADD"
 }
 
 // runBn256ScalarMul implements the Bn256ScalarMul precompile, referenced by
@@ -588,6 +624,10 @@ func (c *bn256ScalarMulIstanbul) Run(input []byte) ([]byte, error) {
 	return runBn256ScalarMul(input)
 }
 
+func (c *bn256ScalarMulIstanbul) Name() string {
+	return "BN256_MUL"
+}
+
 // bn256ScalarMulByzantium implements a native elliptic curve scalar
 // multiplication conforming to Byzantium consensus rules.
 type bn256ScalarMulByzantium struct{}
@@ -599,6 +639,10 @@ func (c *bn256ScalarMulByzantium) RequiredGas(input []byte) uint64 {
 
 func (c *bn256ScalarMulByzantium) Run(input []byte) ([]byte, error) {
 	return runBn256ScalarMul(input)
+}
+
+func (c *bn256ScalarMulByzantium) Name() string {
+	return "BN256_MUL"
 }
 
 var (
@@ -644,15 +688,9 @@ func runBn256Pairing(input []byte) ([]byte, error) {
 }
 
 type ringSignatureVerifier struct{}
-type bulletproofVerifier struct{}
-
-func (c *bulletproofVerifier) RequiredGas(input []byte) uint64 {
-	//the gas should depends on the ringsize
-	return 100000
-}
 
 func (c *ringSignatureVerifier) RequiredGas(input []byte) uint64 {
-	//the gas should depends on the ringsize
+	// Ring signature verification currently uses a fixed gas charge.
 	return 100000
 }
 
@@ -665,6 +703,21 @@ func (c *ringSignatureVerifier) Run(proof []byte) ([]byte, error) {
 		return []byte{}, errors.New("fail to verify ring signature")
 	}
 	return []byte{}, nil
+}
+
+func (c *ringSignatureVerifier) Name() string {
+	return "RING_SIG_VERIFY"
+}
+
+type bulletproofVerifier struct{}
+
+func (c *bulletproofVerifier) RequiredGas(input []byte) uint64 {
+	// Bulletproof verification currently uses a fixed gas charge.
+	return 100000
+}
+
+func (c *bulletproofVerifier) Name() string {
+	return "BULLET_PROOF_VERIFY"
 }
 
 func (c *bulletproofVerifier) Run(proof []byte) ([]byte, error) {
@@ -692,6 +745,10 @@ func (c *bn256PairingIstanbul) Run(input []byte) ([]byte, error) {
 	return runBn256Pairing(input)
 }
 
+func (c *bn256PairingIstanbul) Name() string {
+	return "BN256_PAIRING"
+}
+
 // bn256PairingByzantium implements a pairing pre-compile for the bn256 curve
 // conforming to Byzantium consensus rules.
 type bn256PairingByzantium struct{}
@@ -705,6 +762,10 @@ func (c *bn256PairingByzantium) Run(input []byte) ([]byte, error) {
 	return runBn256Pairing(input)
 }
 
+func (c *bn256PairingByzantium) Name() string {
+	return "BN256_PAIRING"
+}
+
 type blake2F struct{}
 
 func (c *blake2F) RequiredGas(input []byte) uint64 {
@@ -714,6 +775,10 @@ func (c *blake2F) RequiredGas(input []byte) uint64 {
 		return 0
 	}
 	return uint64(binary.BigEndian.Uint32(input[0:4]))
+}
+
+func (c *blake2F) Name() string {
+	return "BLAKE2F"
 }
 
 const (

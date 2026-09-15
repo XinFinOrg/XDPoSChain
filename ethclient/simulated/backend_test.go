@@ -115,6 +115,7 @@ func newContractCreationTx(sim *Backend, key *ecdsa.PrivateKey, bytecode []byte,
 	return signed, crypto.CreateAddress(from, nonce), nil
 }
 
+// TestSimulatedBackend tests simulated backend.
 func TestSimulatedBackend(t *testing.T) {
 	t.Parallel()
 	key, _ := crypto.GenerateKey()
@@ -149,6 +150,7 @@ func TestSimulatedBackend(t *testing.T) {
 	}
 }
 
+// TestNewSimulatedBackend tests new simulated backend.
 func TestNewSimulatedBackend(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -162,6 +164,7 @@ func TestNewSimulatedBackend(t *testing.T) {
 	}
 }
 
+// TestAdjustTime tests adjust time.
 func TestAdjustTime(t *testing.T) {
 	sim := New(types.GenesisAlloc{}, 10_000_000)
 	defer sim.Close()
@@ -181,6 +184,7 @@ func TestAdjustTime(t *testing.T) {
 	}
 }
 
+// TestNewAdjustTimeFail tests new adjust time fail.
 func TestNewAdjustTimeFail(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -217,6 +221,7 @@ func TestNewAdjustTimeFail(t *testing.T) {
 	}
 }
 
+// TestBalanceAt tests balance at.
 func TestBalanceAt(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -230,6 +235,7 @@ func TestBalanceAt(t *testing.T) {
 	}
 }
 
+// TestBlockByHash tests block by hash.
 func TestBlockByHash(t *testing.T) {
 	t.Parallel()
 	sim := New(types.GenesisAlloc{}, 10000000)
@@ -243,6 +249,7 @@ func TestBlockByHash(t *testing.T) {
 	}
 }
 
+// TestBlockByNumber tests block by number.
 func TestBlockByNumber(t *testing.T) {
 	t.Parallel()
 	sim := New(types.GenesisAlloc{}, 10000000)
@@ -264,6 +271,7 @@ func TestBlockByNumber(t *testing.T) {
 	}
 }
 
+// TestNonceAt tests nonce at.
 func TestNonceAt(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -291,6 +299,7 @@ func TestNonceAt(t *testing.T) {
 	}
 }
 
+// TestSendTransaction tests send transaction.
 func TestSendTransaction(t *testing.T) {
 	sim := simTestBackend(testAddr)
 	defer sim.Close()
@@ -318,6 +327,7 @@ func TestSendTransaction(t *testing.T) {
 	}
 }
 
+// TestTransactionByHash tests transaction by hash.
 func TestTransactionByHash(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -349,6 +359,7 @@ func TestTransactionByHash(t *testing.T) {
 	}
 }
 
+// TestEstimateGas tests estimate gas.
 func TestEstimateGas(t *testing.T) {
 	t.Parallel()
 	const contractAbi = "[{\"inputs\":[],\"name\":\"Assert\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"OOG\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"PureRevert\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"Revert\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"Valid\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}]"
@@ -398,6 +409,7 @@ func TestEstimateGas(t *testing.T) {
 	}
 }
 
+// TestEstimateGasWithPrice tests estimate gas with price.
 func TestEstimateGasWithPrice(t *testing.T) {
 	t.Parallel()
 	key, _ := crypto.GenerateKey()
@@ -419,6 +431,7 @@ func TestEstimateGasWithPrice(t *testing.T) {
 	}
 }
 
+// TestHeaderByHash tests header by hash.
 func TestHeaderByHash(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -432,6 +445,7 @@ func TestHeaderByHash(t *testing.T) {
 	}
 }
 
+// TestHeaderByNumber tests header by number.
 func TestHeaderByNumber(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -454,6 +468,7 @@ func TestHeaderByNumber(t *testing.T) {
 	}
 }
 
+// TestTransactionCount tests transaction count.
 func TestTransactionCount(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -478,6 +493,7 @@ func TestTransactionCount(t *testing.T) {
 	}
 }
 
+// TestTransactionInBlock tests transaction in block.
 func TestTransactionInBlock(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -503,6 +519,7 @@ func TestTransactionInBlock(t *testing.T) {
 	}
 }
 
+// TestPendingNonceAt tests pending nonce at.
 func TestPendingNonceAt(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -531,6 +548,7 @@ func TestPendingNonceAt(t *testing.T) {
 	}
 }
 
+// TestTransactionReceipt tests transaction receipt.
 func TestTransactionReceipt(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -552,6 +570,7 @@ func TestTransactionReceipt(t *testing.T) {
 	}
 }
 
+// TestSuggestGasPrice tests suggest gas price.
 func TestSuggestGasPrice(t *testing.T) {
 	t.Parallel()
 	sim := New(types.GenesisAlloc{}, 10000000)
@@ -569,6 +588,7 @@ func TestSuggestGasPrice(t *testing.T) {
 	}
 }
 
+// TestPendingCodeAt tests pending code at.
 func TestPendingCodeAt(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -594,6 +614,7 @@ func TestPendingCodeAt(t *testing.T) {
 	}
 }
 
+// TestCodeAt tests code at.
 func TestCodeAt(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -620,6 +641,7 @@ func TestCodeAt(t *testing.T) {
 	}
 }
 
+// TestCodeAtHash tests code at hash.
 func TestCodeAtHash(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -647,6 +669,7 @@ func TestCodeAtHash(t *testing.T) {
 	}
 }
 
+// TestPendingAndCallContract tests pending and call contract.
 func TestPendingAndCallContract(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -683,6 +706,28 @@ func TestPendingAndCallContract(t *testing.T) {
 	}
 }
 
+// TestPendingCallContractWithZeroTRC21Issuer tests pending call contract with zero trc 21 issuer.
+func TestPendingCallContractWithZeroTRC21Issuer(t *testing.T) {
+	t.Parallel()
+	config := &params.ChainConfig{
+		ChainID: big.NewInt(1338),
+		Ethash:  new(params.EthashConfig),
+	}
+	sim := New(types.GenesisAlloc{testAddr: {Balance: big.NewInt(10000000000000000)}}, 10000000, config)
+	defer sim.Close()
+
+	ctx := context.Background()
+	target := common.HexToAddress("0x00000000000000000000000000000000000000aa")
+
+	if _, err := sim.PendingCallContract(ctx, ethereum.CallMsg{From: testAddr, To: &target}); err != nil {
+		t.Fatalf("pending call failed: %v", err)
+	}
+	if _, err := sim.CallContract(ctx, ethereum.CallMsg{From: testAddr, To: &target}, nil); err != nil {
+		t.Fatalf("call failed: %v", err)
+	}
+}
+
+// TestCallContractRevert tests call contract revert.
 func TestCallContractRevert(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -707,6 +752,7 @@ func TestCallContractRevert(t *testing.T) {
 	}
 }
 
+// TestFork tests fork.
 func TestFork(t *testing.T) {
 	t.Parallel()
 	testAddr := crypto.PubkeyToAddress(testKey.PublicKey)
@@ -746,6 +792,7 @@ func TestFork(t *testing.T) {
 	}
 }
 
+// TestForkLogsReborn tests fork logs reborn.
 func TestForkLogsReborn(t *testing.T) {
 	t.Parallel()
 	sim, client, ctx, auth, contract, _, _, parentHash := setupForkLogsRebornScenario(t)
@@ -801,6 +848,7 @@ func TestForkLogsReborn(t *testing.T) {
 	}
 }
 
+// TestForkResendTx tests fork resend tx.
 func TestForkResendTx(t *testing.T) {
 	t.Parallel()
 	testAddr := crypto.PubkeyToAddress(testKey.PublicKey)
@@ -844,6 +892,7 @@ func TestForkResendTx(t *testing.T) {
 	}
 }
 
+// TestCommitReturnValue tests commit return value.
 func TestCommitReturnValue(t *testing.T) {
 	t.Parallel()
 	testAddr := crypto.PubkeyToAddress(testKey.PublicKey)
@@ -887,6 +936,7 @@ func TestCommitReturnValue(t *testing.T) {
 	}
 }
 
+// TestAdjustTimeAfterFork tests adjust time after fork.
 func TestAdjustTimeAfterFork(t *testing.T) {
 	t.Parallel()
 	testAddr := crypto.PubkeyToAddress(testKey.PublicKey)
@@ -910,6 +960,7 @@ func TestAdjustTimeAfterFork(t *testing.T) {
 	}
 }
 
+// TestNewSim tests new sim.
 func TestNewSim(t *testing.T) {
 	sim := New(types.GenesisAlloc{}, 30_000_000)
 	defer sim.Close()
@@ -933,6 +984,7 @@ func TestNewSim(t *testing.T) {
 	}
 }
 
+// TestTransactionByHashLifecycle tests transaction by hash lifecycle.
 func TestTransactionByHashLifecycle(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -965,6 +1017,7 @@ func TestTransactionByHashLifecycle(t *testing.T) {
 	}
 }
 
+// TestTransactionReceiptLifecycle tests transaction receipt lifecycle.
 func TestTransactionReceiptLifecycle(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -995,6 +1048,7 @@ func TestTransactionReceiptLifecycle(t *testing.T) {
 	}
 }
 
+// TestSuggestGasPriceAndTipCap tests suggest gas price and tip cap.
 func TestSuggestGasPriceAndTipCap(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -1023,6 +1077,7 @@ func TestSuggestGasPriceAndTipCap(t *testing.T) {
 	}
 }
 
+// TestEstimateGasSimpleTransfer tests estimate gas simple transfer.
 func TestEstimateGasSimpleTransfer(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -1043,6 +1098,7 @@ func TestEstimateGasSimpleTransfer(t *testing.T) {
 	}
 }
 
+// TestFeeHistoryBasic tests fee history basic.
 func TestFeeHistoryBasic(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -1079,6 +1135,7 @@ func TestFeeHistoryBasic(t *testing.T) {
 	}
 }
 
+// TestPendingCodeAtAndCodeAt tests pending code at and code at.
 func TestPendingCodeAtAndCodeAt(t *testing.T) {
 	t.Parallel()
 	sim := simTestBackend(testAddr)
@@ -1122,6 +1179,7 @@ func TestPendingCodeAtAndCodeAt(t *testing.T) {
 	}
 }
 
+// TestForkLogsRebornFilterLogs tests fork logs reborn filter logs.
 func TestForkLogsRebornFilterLogs(t *testing.T) {
 	t.Parallel()
 	sim, client, ctx, auth, contract, contractAddr, calledEventID, parentHash := setupForkLogsRebornScenario(t)
@@ -1171,6 +1229,7 @@ func TestForkLogsRebornFilterLogs(t *testing.T) {
 	}
 }
 
+// TestForkLogsRebornFilterLogsWithRange tests fork logs reborn filter logs with range.
 func TestForkLogsRebornFilterLogsWithRange(t *testing.T) {
 	t.Parallel()
 	sim, client, ctx, auth, contract, contractAddr, calledEventID, parentHash := setupForkLogsRebornScenario(t)

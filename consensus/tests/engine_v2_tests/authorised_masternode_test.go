@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestIsAuthorisedMNForConsensusV2 tests is authorised mn for consensus v 2.
 func TestIsAuthorisedMNForConsensusV2(t *testing.T) {
 	// we skip test for v1 since it's hard to make a real genesis block
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 901, params.TestXDPoSMockChainConfig, nil)
@@ -31,6 +32,7 @@ func TestIsAuthorisedMNForConsensusV2(t *testing.T) {
 	assert.False(t, isAuthorisedMN)
 }
 
+// TestIsYourTurnConsensusV2 tests is your turn consensus v 2.
 func TestIsYourTurnConsensusV2(t *testing.T) {
 	skipLongInShortMode(t)
 	// we skip test for v1 since it's hard to make a real genesis block
@@ -83,6 +85,7 @@ func TestIsYourTurnConsensusV2(t *testing.T) {
 	assert.False(t, isYourTurn)
 }
 
+// TestIsYourTurnConsensusV2CrossConfig tests is your turn consensus v 2 cross config.
 func TestIsYourTurnConsensusV2CrossConfig(t *testing.T) {
 	skipLongInShortMode(t)
 	// we skip test for v1 since it's hard to make a real genesis block
@@ -98,18 +101,33 @@ func TestIsYourTurnConsensusV2CrossConfig(t *testing.T) {
 	err := blockchain.InsertBlock(currentBlock)
 	adaptor.EngineV2.SetNewRoundFaker(blockchain, types.Round(10), false)
 	assert.Nil(t, err)
-	// after first mine period
-	time.Sleep(time.Duration(firstMinePeriod) * time.Second)
+
+	// YourTurn derives the mine period from the config for the current round
+	// (round 10 -> MinePeriod 3s) via Config(currentRound). Note that
+	// UpdateParams only repoints the engine's CurrentConfig, so the
+	// blockchain-level CurrentConfig stays at the pre-switch value (2s); look
+	// up the switched-to config by round instead.
+	newMinePeriod := blockchain.Config().XDPoS.V2.Config(uint64(10)).MinePeriod
+	if newMinePeriod <= firstMinePeriod {
+		t.Fatalf("test setup requires a larger mine period after the config switch, got first=%d new=%d", firstMinePeriod, newMinePeriod)
+	}
+
+	// Wait just past the previous mine period but keep waitedTime strictly
+	// below the switched-to config's mine period so YourTurn reports false.
+	// Sleeping the full firstMinePeriod is unsafe: YourTurn compares against
+	// Unix-second granularity, and rounding can push waitedTime up to
+	// newMinePeriod and flip the result to true.
+	time.Sleep(time.Duration(firstMinePeriod-1) * time.Second)
 	isYourTurn, err := adaptor.YourTurn(blockchain, currentBlockHeader, common.HexToAddress("xdc703c4b2bD70c169f5717101CaeE543299Fc946C7"))
 	assert.Nil(t, err)
 	assert.False(t, isYourTurn)
 
 	adaptor.UpdateParams(currentBlockHeader) // it will be triggered automatically on the real code by other process
 
-	// after new mine period
-	secondMinePeriod := blockchain.Config().XDPoS.V2.CurrentConfig.MinePeriod
-
-	time.Sleep(time.Duration(secondMinePeriod-firstMinePeriod) * time.Second)
+	// Wait until waitedTime is comfortably past the switched-to config's mine
+	// period (Unix-second granularity, so add a buffer) so YourTurn reports
+	// true.
+	time.Sleep(time.Duration(newMinePeriod) * time.Second)
 	isYourTurn, err = adaptor.YourTurn(blockchain, currentBlockHeader, common.HexToAddress("xdc703c4b2bD70c169f5717101CaeE543299Fc946C7"))
 	assert.Nil(t, err)
 	assert.True(t, isYourTurn)

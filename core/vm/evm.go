@@ -64,7 +64,7 @@ type BlockContext struct {
 	BlockNumber *big.Int       // Provides information for NUMBER
 	Time        uint64         // Provides information for TIME
 	Difficulty  *big.Int       // Provides information for DIFFICULTY
-	BaseFee     *big.Int       // Provides information for BASEFEE (0 if vm runs with NoBaseFee flag and 0 gas price)
+	BaseFee     *big.Int       // Provides information for BASEFEE, nil before EIP-1559
 	Random      *common.Hash   // Provides information for PREVRANDAO
 }
 
@@ -73,7 +73,7 @@ type BlockContext struct {
 type TxContext struct {
 	// Message information
 	Origin   common.Address // Provides information for ORIGIN
-	GasPrice *big.Int       // Provides information for GASPRICE (and is used to zero the basefee if NoBaseFee is set)
+	GasPrice *big.Int       // Provides information for GASPRICE
 }
 
 // EVM is the Ethereum Virtual Machine base object and provides
@@ -121,12 +121,8 @@ type EVM struct {
 	// precompiles holds the precompiled contracts for the current epoch
 	precompiles map[common.Address]PrecompiledContract
 
-	// jumpDests is the aggregated result of JUMPDEST analysis made through
-	// the life cycle of EVM.
-	jumpDests map[common.Hash]bitvec
-
-	hasher    crypto.KeccakState // Keccak256 hasher instance shared across opcodes
-	hasherBuf common.Hash        // Keccak256 hasher result array shared across opcodes
+	// jumpDests stores results of JUMPDEST analysis.
+	jumpDests JumpDestCache
 
 	readOnly   bool   // Whether to throw on stateful modifications
 	returnData []byte // Last CALL's return data for subsequent reuse
@@ -144,8 +140,7 @@ func NewEVM(blockCtx BlockContext, statedb StateDB, tradingStateDB *tradingstate
 		Config:         config,
 		chainConfig:    chainConfig,
 		chainRules:     chainConfig.Rules(blockCtx.BlockNumber),
-		jumpDests:      make(map[common.Hash]bitvec),
-		hasher:         crypto.NewKeccakState(),
+		jumpDests:      newMapJumpDests(),
 	}
 	evm.precompiles = activePrecompiledContracts(evm.chainRules)
 
@@ -199,16 +194,16 @@ func NewEVM(blockCtx BlockContext, statedb StateDB, tradingStateDB *tradingstate
 	return evm
 }
 
-// SetTracer sets the tracer for following state transition.
-func (evm *EVM) SetTracer(tracer *tracing.Hooks) {
-	evm.Config.Tracer = tracer
-}
-
 // SetPrecompiles sets the precompiled contracts for the EVM.
 // This method is only used through RPC calls.
 // It is not thread-safe.
 func (evm *EVM) SetPrecompiles(precompiles PrecompiledContracts) {
 	evm.precompiles = precompiles
+}
+
+// SetJumpDestCache configures the analysis cache.
+func (evm *EVM) SetJumpDestCache(jumpDests JumpDestCache) {
+	evm.jumpDests = jumpDests
 }
 
 // SetTxContext updates the EVM with a new transaction context.
@@ -468,7 +463,7 @@ func (evm *EVM) create(caller common.Address, code []byte, gas uint64, value *ui
 	if nonce+1 < nonce {
 		return nil, common.Address{}, gas, ErrNonceUintOverflow
 	}
-	evm.StateDB.SetNonce(caller, nonce+1)
+	evm.StateDB.SetNonce(caller, nonce+1, tracing.NonceChangeContractCreator)
 
 	// We add this to the access list _before_ taking a snapshot. Even if the creation fails,
 	// the access-list change should not be rolled back
@@ -504,7 +499,7 @@ func (evm *EVM) create(caller common.Address, code []byte, gas uint64, value *ui
 	evm.StateDB.CreateContract(address)
 
 	if evm.chainRules.IsEIP158 {
-		evm.StateDB.SetNonce(address, 1)
+		evm.StateDB.SetNonce(address, 1, tracing.NonceChangeNewContract)
 	}
 	evm.Context.Transfer(evm.StateDB, caller, address, value)
 
@@ -535,8 +530,8 @@ func (evm *EVM) initNewContract(contract *Contract, address common.Address) ([]b
 	}
 
 	// Check whether the max code size has been exceeded, assign err if the case.
-	if evm.chainRules.IsEIP158 && len(ret) > params.MaxCodeSize {
-		return ret, ErrMaxCodeSizeExceeded
+	if err := CheckMaxCodeSize(&evm.chainRules, uint64(len(ret))); err != nil {
+		return ret, err
 	}
 
 	// Reject code starting with 0xEF if EIP-3541 is enabled.
@@ -567,7 +562,8 @@ func (evm *EVM) Create(caller common.Address, code []byte, gas uint64, value *ui
 // The different between Create2 with Create is Create2 uses keccak256(0xff ++ msg.sender ++ salt ++ keccak256(init_code))[12:]
 // instead of the usual sender-and-nonce-hash as the address where the contract is initialized at.
 func (evm *EVM) Create2(caller common.Address, code []byte, gas uint64, endowment *uint256.Int, salt *uint256.Int) (ret []byte, contractAddr common.Address, leftOverGas uint64, err error) {
-	contractAddr = crypto.CreateAddress2(caller, salt.Bytes32(), crypto.Keccak256(code))
+	inithash := crypto.Keccak256Hash(code)
+	contractAddr = crypto.CreateAddress2(caller, salt.Bytes32(), inithash[:])
 	return evm.create(caller, code, gas, endowment, contractAddr, CREATE2)
 }
 
@@ -638,7 +634,10 @@ func (evm *EVM) GetVMContext() *tracing.VMContext {
 		BlockNumber: evm.Context.BlockNumber,
 		Time:        evm.Context.Time,
 		Random:      evm.Context.Random,
-		GasPrice:    evm.TxContext.GasPrice,
+		BaseFee:     evm.Context.BaseFee,
 		StateDB:     evm.StateDB,
+
+		// Keep GasPrice in the tracer context for XDPoS-specific execution pricing.
+		GasPrice: evm.TxContext.GasPrice,
 	}
 }

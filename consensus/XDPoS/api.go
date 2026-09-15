@@ -16,6 +16,7 @@
 package XDPoS
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -33,6 +34,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/XinFinOrg/XDPoSChain/params/chainconfigview"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 )
@@ -72,17 +74,28 @@ type SignerTypes struct {
 	MissingSigners []common.Address
 }
 
+// MasternodesStatus reports the node set at a block, split into masternodes,
+// penalties and standby nodes. From the TIPUpgradeReward fork onwards the standby
+// pool is further broken into the protector and observer reward tiers (signalled by
+// TipUpgradeReward); candidates beyond the tier caps stay in Standbynodes, so
+// Masternodes + Penalty + Protector + Observer + Standbynodes still reconciles to
+// the full candidate set.
 type MasternodesStatus struct {
-	Epoch           uint64
-	Number          uint64
-	Round           types.Round
-	MasternodesLen  int
-	Masternodes     []common.Address
-	PenaltyLen      int
-	Penalty         []common.Address
-	StandbynodesLen int
-	Standbynodes    []common.Address
-	Error           error
+	Epoch            uint64
+	Number           uint64
+	Round            types.Round
+	tipUpgradeReward bool // whether the protector/observer tiers are active at this block
+	MasternodesLen   int
+	Masternodes      []common.Address
+	PenaltyLen       int
+	Penalty          []common.Address
+	ProtectorLen     int              `json:",omitempty"`
+	Protectornodes   []common.Address `json:",omitempty"`
+	ObserverLen      int              `json:",omitempty"`
+	Observernodes    []common.Address `json:",omitempty"`
+	StandbynodesLen  int              `json:",omitempty"`
+	Standbynodes     []common.Address `json:",omitempty"`
+	Error            error
 }
 
 type AccountEpochReward struct {
@@ -119,18 +132,26 @@ const (
 	statusObservernode  AccountRewardStatus = "ObserverNode"
 )
 
-type MessageStatus map[string]map[string]interface{}
+type MessageStatus map[string]map[string]SignerTypes
 
-type SyncInfoTypes struct {
-	Hash      common.Hash `json:"hash"`
-	QCSigners int         `json:"qcSigners"`
-	TCSigners int         `json:"tcSigners"`
+type configBackend struct {
+	chain consensus.ChainReader
 }
 
-type PoolStatus struct {
-	Vote     map[string]SignerTypes   `json:"vote"`
-	Timeout  map[string]SignerTypes   `json:"timeout"`
-	SyncInfo map[string]SyncInfoTypes `json:"syncInfo"`
+func (b configBackend) GenesisHeader(_ context.Context) (*types.Header, error) {
+	header := b.chain.GetHeaderByNumber(0)
+	if header == nil {
+		return nil, errors.New("genesis header not found")
+	}
+	return header, nil
+}
+
+func (b configBackend) CurrentHeader() *types.Header {
+	return b.chain.CurrentHeader()
+}
+
+func (b configBackend) ChainConfig() *params.ChainConfig {
+	return b.chain.Config()
 }
 
 // GetSnapshot retrieves the state snapshot at a given block.
@@ -188,6 +209,13 @@ func (api *API) GetSignersAtHash(hash common.Hash) ([]common.Address, error) {
 	return api.XDPoS.GetAuthorisedSignersFromSnapshot(api.chain, header)
 }
 
+// GetMasternodesByNumber reports the node set at the given block: masternodes,
+// penalties and standby nodes. From the TIPUpgradeReward fork onwards it also splits
+// the standby pool into the protector and observer reward tiers (the standby list is
+// already stake-descending, so the split is just a slice).
+//
+// The tiering is snapshot/consensus-consistent, not reward-payout-identical: it
+// matches the epoch snapshot used here, whereas the reward hook reads live state.
 func (api *API) GetMasternodesByNumber(number *rpc.BlockNumber) MasternodesStatus {
 	var header *types.Header
 	if number == nil || *number == rpc.LatestBlockNumber {
@@ -225,57 +253,67 @@ func (api *API) GetMasternodesByNumber(number *rpc.BlockNumber) MasternodesStatu
 	epochNum := api.XDPoS.config.V2.SwitchEpoch + uint64(round)/api.XDPoS.config.Epoch
 	masterNodes := api.XDPoS.EngineV2.GetMasternodes(api.chain, header)
 	penalties := api.XDPoS.EngineV2.GetPenalties(api.chain, header)
-	standbynodes := api.XDPoS.EngineV2.GetStandbynodes(api.chain, header)
+	standbyPool := api.XDPoS.EngineV2.GetStandbynodes(api.chain, header)
 
 	info := MasternodesStatus{
-		Epoch:           epochNum,
-		Number:          header.Number.Uint64(),
-		Round:           round,
-		MasternodesLen:  len(masterNodes),
-		Masternodes:     masterNodes,
-		PenaltyLen:      len(penalties),
-		Penalty:         penalties,
-		StandbynodesLen: len(standbynodes),
-		Standbynodes:    standbynodes,
+		Epoch:            epochNum,
+		Number:           header.Number.Uint64(),
+		Round:            round,
+		tipUpgradeReward: api.chain.Config().IsTIPUpgradeReward(header.Number),
+		MasternodesLen:   len(masterNodes),
+		Masternodes:      masterNodes,
+		PenaltyLen:       len(penalties),
+		Penalty:          penalties,
 	}
+
+	// Before the reward upgrade there are no tiers; the whole standby pool stays
+	// standby (the caps are ignored in that case, so any value is fine here).
+	if !info.tipUpgradeReward {
+		info.splitStandbyPool(standbyPool, 0, 0)
+		return info
+	}
+
+	cfg := api.XDPoS.config.V2.Config(uint64(round))
+	info.splitStandbyPool(standbyPool, cfg.MaxProtectorNodes, cfg.MaxObserverNodes)
 	return info
 }
 
+// splitStandbyPool partitions the stake-descending standby pool into the reward
+// tiers. Before the TIPUpgradeReward fork the whole pool stays standby; from the
+// fork onwards the protector and observer tiers take the top maxProtector and
+// maxObserver candidates respectively, and any remainder stays standby. The three
+// tiers always concatenate back to the full pool, so the totals reconcile.
+func (info *MasternodesStatus) splitStandbyPool(standbyPool []common.Address, maxProtector, maxObserver int) {
+	if !info.tipUpgradeReward {
+		info.Standbynodes = standbyPool
+		info.StandbynodesLen = len(standbyPool)
+		return
+	}
+
+	protectorEnd := min(maxProtector, len(standbyPool))
+	observerEnd := min(protectorEnd+maxObserver, len(standbyPool))
+
+	info.Protectornodes = standbyPool[:protectorEnd]
+	info.ProtectorLen = len(info.Protectornodes)
+	info.Observernodes = standbyPool[protectorEnd:observerEnd]
+	info.ObserverLen = len(info.Observernodes)
+	info.Standbynodes = standbyPool[observerEnd:]
+	info.StandbynodesLen = len(info.Standbynodes)
+}
+
 // Get current vote pool and timeout pool content and missing messages
-func (api *API) GetLatestPoolStatus() PoolStatus {
+func (api *API) GetLatestPoolStatus() MessageStatus {
 	header := api.chain.CurrentHeader()
 	masternodes := api.XDPoS.EngineV2.GetMasternodes(api.chain, header)
 
 	receivedVotes := api.XDPoS.EngineV2.ReceivedVotes()
 	receivedTimeouts := api.XDPoS.EngineV2.ReceivedTimeouts()
-	receivedSyncInfo := api.XDPoS.EngineV2.ReceivedSyncInfo()
+	info := make(MessageStatus)
+	info["vote"] = make(map[string]SignerTypes)
+	info["timeout"] = make(map[string]SignerTypes)
 
-	info := PoolStatus{}
-	info.Vote = make(map[string]SignerTypes)
-	info.Timeout = make(map[string]SignerTypes)
-	info.SyncInfo = make(map[string]SyncInfoTypes)
-
-	calculateSigners(info.Vote, receivedVotes, masternodes)
-	calculateSigners(info.Timeout, receivedTimeouts, masternodes)
-
-	for name, objs := range receivedSyncInfo {
-		for _, obj := range objs {
-			syncInfo := obj.(*types.SyncInfo)
-			hash := syncInfo.Hash()
-			key := name + ":" + hash.Hex()
-
-			qcSigners := len(syncInfo.HighestQuorumCert.Signatures)
-			tcSigners := 0
-			if syncInfo.HighestTimeoutCert != nil {
-				tcSigners = len(syncInfo.HighestTimeoutCert.Signatures)
-			}
-			info.SyncInfo[key] = SyncInfoTypes{
-				Hash:      hash,
-				QCSigners: qcSigners,
-				TCSigners: tcSigners,
-			}
-		}
-	}
+	calculateSigners(info["vote"], receivedVotes, masternodes)
+	calculateSigners(info["timeout"], receivedTimeouts, masternodes)
 
 	return info
 }
@@ -371,15 +409,21 @@ func (api *API) GetV2BlockByHash(blockHash common.Hash) *V2BlockInfo {
 
 func (api *API) NetworkInformation() NetworkInformation {
 	info := NetworkInformation{}
-	info.NetworkId = api.chain.Config().ChainID
+	config := api.chain.Config()
+	info.NetworkId = config.ChainID
 	info.XDCValidatorAddress = common.MasternodeVotingSMCBinary
-	info.LendingAddress = common.LendingRegistrationSMC
-	info.RelayerRegistrationAddress = common.RelayerRegistrationSMC
-	info.XDCXListingAddress = common.XDCXListingSMC
-	info.XDCZAddress = common.TRC21IssuerSMC
+	info.LendingAddress = config.LendingRegistrationSMC
+	info.RelayerRegistrationAddress = config.RelayerRegistrationSMC
+	info.XDCXListingAddress = config.XDCXListingSMC
+	info.XDCZAddress = config.TRC21IssuerSMC
 	info.ConsensusConfigs = *api.XDPoS.config
 
 	return info
+}
+
+// GetConfig returns the current and scheduled chain configuration view.
+func (api *API) GetConfig(ctx context.Context) (*chainconfigview.ConfigResponse, error) {
+	return chainconfigview.Build(ctx, configBackend{chain: api.chain})
 }
 
 /*
@@ -614,20 +658,43 @@ func getEpochReward(account common.Address, header *types.Header) (AccountEpochR
 	return epochReward, nil
 }
 
+// jsonNumberToBigInt parses a json.Number into a *big.Int, handling both plain
+// decimal strings (e.g. "4500000000000000000") and scientific notation
+// (e.g. "4.5e+21") that big.Int.SetString cannot parse directly.
+func jsonNumberToBigInt(n json.Number) (*big.Int, bool) {
+	s := n.String()
+	// Try plain integer first — the common case.
+	if i, ok := new(big.Int).SetString(s, 10); ok {
+		return i, true
+	}
+	// Fall back to big.Float to handle scientific notation.
+	f, _, err := new(big.Float).SetPrec(256).Parse(s, 10)
+	if err != nil {
+		log.Warn("[jsonNumberToBigInt] Failed to parse json.Number:", "number", s, "err", err)
+		return nil, false
+	}
+
+	i, acc := f.Int(nil)
+	if acc != big.Exact {
+		// The value had a fractional part; truncate is the best we can do
+		log.Warn("[jsonNumberToBigInt] json.Number is not an exact integer value", "number", s, "truncated", i.String(), "accuracy", acc)
+	}
+
+	return i, true
+}
+
 func (rewardObj *AccountEpochReward) getRewardAndStatus(account string, data map[string]interface{}) {
 	if signersData, exists := data["signers"]; exists {
 		if accountData, ok := signersData.(map[string]interface{})[account]; ok {
 			nodeReward := accountData.(map[string]interface{})["reward"]
 			delegatedReward := data["rewards"].(map[string]interface{})[account]
 			rewardObj.AccountStatus = statusMasternode
-			nodeRewardBigInt, ok := new(big.Int).SetString(nodeReward.(json.Number).String(), 10)
-			if ok {
+			if nodeRewardBigInt, ok := jsonNumberToBigInt(nodeReward.(json.Number)); ok {
 				rewardObj.AccountReward = nodeRewardBigInt
 			}
 
 			for k, v := range delegatedReward.(map[string]interface{}) {
-				delegatedBigInt, ok := new(big.Int).SetString(v.(json.Number).String(), 10)
-				if ok {
+				if delegatedBigInt, ok := jsonNumberToBigInt(v.(json.Number)); ok {
 					rewardObj.DelegatedReward[k] = delegatedBigInt
 				}
 			}
@@ -640,14 +707,12 @@ func (rewardObj *AccountEpochReward) getRewardAndStatus(account string, data map
 			nodeReward := accountData.(map[string]interface{})["reward"]
 			delegatedReward := data["rewardsProtector"].(map[string]interface{})[account]
 			rewardObj.AccountStatus = statusProtectornode
-			nodeRewardBigInt, successSetNodeReward := new(big.Int).SetString(nodeReward.(json.Number).String(), 10)
-			if successSetNodeReward {
+			if nodeRewardBigInt, ok := jsonNumberToBigInt(nodeReward.(json.Number)); ok {
 				rewardObj.AccountReward = nodeRewardBigInt
 			}
 
 			for k, v := range delegatedReward.(map[string]interface{}) {
-				delegatedBigInt, successSetDelegatedReward := new(big.Int).SetString(v.(json.Number).String(), 10)
-				if successSetDelegatedReward {
+				if delegatedBigInt, ok := jsonNumberToBigInt(v.(json.Number)); ok {
 					rewardObj.DelegatedReward[k] = delegatedBigInt
 				}
 			}
@@ -660,14 +725,12 @@ func (rewardObj *AccountEpochReward) getRewardAndStatus(account string, data map
 			nodeReward := accountData.(map[string]interface{})["reward"]
 			delegatedReward := data["rewardsObserver"].(map[string]interface{})[account]
 			rewardObj.AccountStatus = statusObservernode
-			nodeRewardBigInt, successSetNodeReward := new(big.Int).SetString(nodeReward.(json.Number).String(), 10)
-			if successSetNodeReward {
+			if nodeRewardBigInt, ok := jsonNumberToBigInt(nodeReward.(json.Number)); ok {
 				rewardObj.AccountReward = nodeRewardBigInt
 			}
 
 			for k, v := range delegatedReward.(map[string]interface{}) {
-				delegatedBigInt, successSetDelegatedReward := new(big.Int).SetString(v.(json.Number).String(), 10)
-				if successSetDelegatedReward {
+				if delegatedBigInt, ok := jsonNumberToBigInt(v.(json.Number)); ok {
 					rewardObj.DelegatedReward[k] = delegatedBigInt
 				}
 			}

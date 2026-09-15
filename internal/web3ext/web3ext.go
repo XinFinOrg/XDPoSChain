@@ -148,6 +148,11 @@ web3._extend({
 			params: 1,
 			inputFormatter: [web3._extend.formatters.inputBlockNumberFormatter]
 		}),
+		new web3._extend.Method({
+			name: 'getConfig',
+			call: 'XDPoS_getConfig',
+			params: 0,
+		})
 	],
 	properties: [
 		new web3._extend.Property({
@@ -490,6 +495,13 @@ web3._extend({
 			call: 'eth_signTransaction',
 			params: 1,
 			inputFormatter: [web3._extend.formatters.inputTransactionFormatter]
+		}),
+		new web3._extend.Method({
+			name: 'estimateGas',
+			call: 'eth_estimateGas',
+			params: 4,
+			inputFormatter: [web3._extend.formatters.inputCallFormatter, web3._extend.formatters.inputDefaultBlockNumberFormatter, null, null],
+			outputFormatter: web3._extend.utils.toDecimal
 		}),
 		new web3._extend.Method({
 			name: 'submitTransaction',

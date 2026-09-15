@@ -76,8 +76,9 @@ func DecodeBytesExtraFields(b []byte, val interface{}) error {
 	if len(b) == 0 {
 		return errors.New("extra field is 0 length")
 	}
-	// Prevent payload attack, limit the size of extra field to 20k bytes. Normal Extrafield payload is less than 7k bytes.
-	if len(b) > 20000 {
+	// Prevent payload attack, limit the size of extra field to 20k bytes.
+	// Normal Extrafield payload is less than 7k bytes.
+	if len(b) > 20*1024 {
 		return errors.New("extra field is too long")
 	}
 

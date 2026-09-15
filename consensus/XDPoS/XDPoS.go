@@ -18,7 +18,6 @@ package XDPoS
 
 import (
 	"errors"
-	"fmt"
 	"math/big"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -83,41 +82,43 @@ func (x *XDPoS) SubscribeForensicsEvent(ch chan<- types.ForensicsEvent) event.Su
 
 // New creates a XDPoS delegated-proof-of-stake consensus engine with the initial
 // signers set to the ones provided by the user.
-func New(chainConfig *params.ChainConfig, db ethdb.Database) *XDPoS {
+func New(chainConfig *params.ChainConfig, db ethdb.Database) (*XDPoS, error) {
 	log.Info("[New] initialise consensus engines")
+	if chainConfig == nil {
+		return nil, errors.New("missing chain config")
+	}
 	config := chainConfig.XDPoS
 	// Set any missing consensus parameters to their defaults
-	if config.Epoch == 0 {
+	if config != nil && config.Epoch == 0 {
 		config.Epoch = utils.EpochLength
 	}
-
-	// For testing and testing project, default to mainnet config
-	if config.V2 == nil {
-		config.V2 = &params.V2{
-			SwitchBlock:   params.XDCMainnetChainConfig.XDPoS.V2.SwitchBlock,
-			CurrentConfig: params.MainnetV2Configs[0],
-			AllConfigs:    params.MainnetV2Configs,
-		}
+	if err := chainConfig.CheckConfigForkOrder(); err != nil {
+		return nil, err
 	}
-
-	if config.V2.SwitchBlock.Uint64()%config.Epoch != 0 {
-		panic(fmt.Sprintf("v2 switch number is not epoch switch block %d, epoch %d", config.V2.SwitchBlock.Uint64(), config.Epoch))
+	if config == nil {
+		return nil, errors.New("missing XDPoS config")
 	}
-
-	log.Info("xdc config loading", "v2 config", config.V2)
 
 	minePeriodCh := make(chan int)
 	newRoundCh := make(chan types.Round, newRoundChanSize)
+	engineV2, err := engine_v2.New(chainConfig, db, minePeriodCh, newRoundCh)
+	if err != nil {
+		return nil, err
+	}
 
 	return &XDPoS{
-		config:          config,
-		db:              db,
-		MinePeriodCh:    minePeriodCh,
-		NewRoundCh:      newRoundCh,
+		config:         config,
+		db:             db,
+		MinePeriodCh:   minePeriodCh,
+		NewRoundCh:     newRoundCh,
+		GetXDCXService: func() utils.TradingService { return nil },
+		GetLendingService: func() utils.LendingService {
+			return nil
+		},
 		signingTxsCache: lru.NewCache[common.Hash, []*types.Transaction](utils.BlockSignersCacheLimit),
 		EngineV1:        engine_v1.New(chainConfig, db),
-		EngineV2:        engine_v2.New(chainConfig, db, minePeriodCh, newRoundCh),
-	}
+		EngineV2:        engineV2,
+	}, nil
 }
 
 // Stop stops the consensus engine:
@@ -128,18 +129,26 @@ func (x *XDPoS) Stop() {
 	close(x.NewRoundCh)
 }
 
-// NewFullFaker creates an ethash consensus engine with a full fake scheme that
-// accepts all blocks as valid, without checking any consensus rules whatsoever.
+// NewFaker creates an XDPoS consensus engine with a full fake scheme that
+// accepts all blocks as valid without enforcing consensus rules.
 func NewFaker(db ethdb.Database, chainConfig *params.ChainConfig) *XDPoS {
 	var fakeEngine *XDPoS
 	// Set any missing consensus parameters to their defaults
-	conf := params.TestXDPoSMockChainConfig.XDPoS
+	fakeChainConfig := params.TestXDPoSMockChainConfig
 	if chainConfig != nil {
-		conf = chainConfig.XDPoS
+		fakeChainConfig = chainConfig
 	}
+	if err := fakeChainConfig.CheckConfigForkOrder(); err != nil {
+		return nil
+	}
+	conf := fakeChainConfig.XDPoS
 
 	minePeriodCh := make(chan int)
 	newRoundCh := make(chan types.Round, newRoundChanSize)
+	engineV2, err := engine_v2.New(fakeChainConfig, db, minePeriodCh, newRoundCh)
+	if err != nil {
+		return nil
+	}
 
 	fakeEngine = &XDPoS{
 		config:            conf,
@@ -149,8 +158,8 @@ func NewFaker(db ethdb.Database, chainConfig *params.ChainConfig) *XDPoS {
 		GetXDCXService:    func() utils.TradingService { return nil },
 		GetLendingService: func() utils.LendingService { return nil },
 		signingTxsCache:   lru.NewCache[common.Hash, []*types.Transaction](utils.BlockSignersCacheLimit),
-		EngineV1:          engine_v1.NewFaker(db, chainConfig),
-		EngineV2:          engine_v2.New(chainConfig, db, minePeriodCh, newRoundCh),
+		EngineV1:          engine_v1.NewFaker(db, fakeChainConfig),
+		EngineV2:          engineV2,
 	}
 	return fakeEngine
 }
@@ -210,33 +219,68 @@ func (x *XDPoS) VerifyHeader(chain consensus.ChainReader, header *types.Header, 
 
 // VerifyHeaders is similar to VerifyHeader, but verifies a batch of headers. The
 // method returns a quit channel to abort the operations and a results channel to
-// retrieve the async verifications (the order is that of the input slice).
+// retrieve the async verifications. For mixed v1/v2 inputs, results are emitted
+// in deterministic consensus order: all v1 results first, then all v2 results.
 func (x *XDPoS) VerifyHeaders(chain consensus.ChainReader, headers []*types.Header, fullVerifies []bool) (chan<- struct{}, <-chan error) {
 	abort := make(chan struct{})
 	results := make(chan error, len(headers))
+	verifyChain := NewVerifyHeadersChainReader(chain, headers, nil)
 
 	// Split the headers list into v1 and v2 buckets
-	var v1headers []*types.Header
-	var v2headers []*types.Header
-	v1fullVerifies := make([]bool, 0, len(headers))
-	v2fullVerifies := make([]bool, 0, len(headers))
+	var v1Headers []*types.Header
+	var v2Headers []*types.Header
+	v1FullVerifies := make([]bool, 0, len(headers))
+	v2FullVerifies := make([]bool, 0, len(headers))
 
 	for i, header := range headers {
 		switch x.config.BlockConsensusVersion(header.Number) {
 		case params.ConsensusEngineVersion2:
-			v2headers = append(v2headers, header)
-			v2fullVerifies = append(v2fullVerifies, fullVerifies[i])
+			v2Headers = append(v2Headers, header)
+			v2FullVerifies = append(v2FullVerifies, fullVerifies[i])
 		default: // Default "v1"
-			v1headers = append(v1headers, header)
-			v1fullVerifies = append(v1fullVerifies, fullVerifies[i])
+			v1Headers = append(v1Headers, header)
+			v1FullVerifies = append(v1FullVerifies, fullVerifies[i])
 		}
 	}
 
-	if v1headers != nil {
-		x.EngineV1.VerifyHeaders(chain, v1headers, v1fullVerifies, abort, results)
-	}
-	if v2headers != nil {
-		x.EngineV2.VerifyHeaders(chain, v2headers, v2fullVerifies, abort, results)
+	v1Count := len(v1Headers)
+	v2Count := len(v2Headers)
+	if v1Count != 0 && v2Count == 0 {
+		x.EngineV1.VerifyHeaders(verifyChain, v1Headers, v1FullVerifies, abort, results)
+	} else if v1Count == 0 && v2Count != 0 {
+		x.EngineV2.VerifyHeaders(verifyChain, v2Headers, v2FullVerifies, abort, results)
+	} else if v1Count != 0 && v2Count != 0 {
+		v1Results := make(chan error, v1Count)
+		v2Results := make(chan error, v2Count)
+		x.EngineV1.VerifyHeaders(verifyChain, v1Headers, v1FullVerifies, abort, v1Results)
+		x.EngineV2.VerifyHeaders(verifyChain, v2Headers, v2FullVerifies, abort, v2Results)
+
+		go func() {
+			for range v1Count {
+				select {
+				case <-abort:
+					return
+				case err := <-v1Results:
+					select {
+					case <-abort:
+						return
+					case results <- err:
+					}
+				}
+			}
+			for range v2Count {
+				select {
+				case <-abort:
+					return
+				case err := <-v2Results:
+					select {
+					case <-abort:
+						return
+					case results <- err:
+					}
+				}
+			}
+		}()
 	}
 
 	return abort, results
@@ -509,21 +553,18 @@ Caching
 // Cache signing transaction data into BlockSingers cache object
 func (x *XDPoS) CacheNoneTIPSigningTxs(header *types.Header, txs []*types.Transaction, receipts []*types.Receipt) []*types.Transaction {
 	signTxs := []*types.Transaction{}
-	for _, tx := range txs {
+	for txIndex, tx := range txs {
 		if tx.IsSigningTransaction() {
-			var b uint64
-			for _, r := range receipts {
-				if r.TxHash == tx.Hash() {
-					if len(r.PostState) > 0 {
-						b = types.ReceiptStatusSuccessful
-					} else {
-						b = r.Status
-					}
-					break
-				}
+			receipt := findTransactionReceipt(txIndex, tx.Hash(), receipts)
+			if receipt == nil {
+				continue
 			}
 
-			if b == types.ReceiptStatusFailed {
+			status := receipt.Status
+			if len(receipt.PostState) > 0 {
+				status = types.ReceiptStatusSuccessful
+			}
+			if status == types.ReceiptStatusFailed {
 				continue
 			}
 
@@ -535,6 +576,21 @@ func (x *XDPoS) CacheNoneTIPSigningTxs(header *types.Header, txs []*types.Transa
 	x.signingTxsCache.Add(header.Hash(), signTxs)
 
 	return signTxs
+}
+
+func findTransactionReceipt(txIndex int, txHash common.Hash, receipts []*types.Receipt) *types.Receipt {
+	if txIndex < len(receipts) {
+		receipt := receipts[txIndex]
+		if receipt != nil && (receipt.TxHash == (common.Hash{}) || receipt.TxHash == txHash) {
+			return receipt
+		}
+	}
+	for _, receipt := range receipts {
+		if receipt != nil && receipt.TxHash == txHash {
+			return receipt
+		}
+	}
+	return nil
 }
 
 // Cache

@@ -17,6 +17,7 @@
 package txpool
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 
@@ -24,9 +25,22 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
+
+// pendingBlockNumber returns the height a pooled transaction is priced at: it
+// can only be included from the next block onwards, so gas schedule lookups
+// resolve the fork tier one past the given head number. A nil input means no
+// head is known and resolves to nil. Admission validation and the local
+// tracker's price floor must both go through here so they cannot drift apart.
+func pendingBlockNumber(number *big.Int) *big.Int {
+	if number == nil {
+		return nil
+	}
+	return new(big.Int).Add(number, common.Big1)
+}
 
 // ValidationOptions define certain differences between transaction validation
 // across the different pools without having to duplicate those checks.
@@ -47,6 +61,12 @@ type ValidationOptions struct {
 // This check is public to allow different transaction pools to check the basic
 // rules without duplicating code and running the risk of missed updates.
 func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types.Signer, opts *ValidationOptions) error {
+	if opts == nil {
+		return errors.New("validation options cannot be nil")
+	}
+	if opts.Config == nil {
+		return ErrMissingChainConfig
+	}
 	// Ensure transactions not implemented by the calling pool are rejected
 	if opts.Accept&(1<<tx.Type()) == 0 {
 		return fmt.Errorf("%w: tx type %v not supported by this pool", core.ErrTxTypeNotSupported, tx.Type())
@@ -65,13 +85,22 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 		return fmt.Errorf("%w: type %d rejected, pool not yet in Prague", core.ErrTxTypeNotSupported, tx.Type())
 	}
 	// Check whether the init code size has been exceeded
-	if rules.IsEIP1559 && tx.To() == nil && len(tx.Data()) > params.MaxInitCodeSize {
-		return fmt.Errorf("%w: code size %v, limit %v", core.ErrMaxInitCodeSizeExceeded, len(tx.Data()), params.MaxInitCodeSize)
+	if tx.To() == nil {
+		if err := vm.CheckMaxInitCodeSize(&rules, uint64(len(tx.Data()))); err != nil {
+			return err
+		}
+	}
+	if rules.IsOsaka && tx.Gas() > params.MaxTxGas {
+		return fmt.Errorf("%w: cap %d, tx %d", core.ErrGasLimitTooHigh, params.MaxTxGas, tx.Gas())
 	}
 	// Transactions can't be negative. This may never happen using RLP decoded
 	// transactions but may occur for transactions created using the RPC.
-	if tx.Value().Sign() < 0 {
+	val := tx.Value()
+	if val.Sign() < 0 {
 		return ErrNegativeValue
+	}
+	if val.BitLen() > 256 {
+		return types.ErrUint256Overflow
 	}
 	// Ensure the transaction doesn't exceed the current block limit gas
 	if head.GasLimit < tx.Gas() {
@@ -133,7 +162,7 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	}
 	if tx.Type() == types.SetCodeTxType {
 		if len(tx.SetCodeAuthorizations()) == 0 {
-			return fmt.Errorf("set code tx must have at least one authorization tuple")
+			return errors.New("set code tx must have at least one authorization tuple")
 		}
 	}
 	return nil
@@ -142,6 +171,8 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 // ValidationOptionsWithState define certain differences between stateful transaction
 // validation across the different pools without having to duplicate those checks.
 type ValidationOptionsWithState struct {
+	Config *params.ChainConfig // Chain configuration to selectively validate based on current fork rules
+
 	State *state.StateDB // State database to check nonces and balances against
 
 	// FirstNonceGap is an optional callback to retrieve the first nonce gap in
@@ -176,6 +207,18 @@ type ValidationOptionsWithState struct {
 // This check is public to allow different transaction pools to check the stateful
 // rules without duplicating code and running the risk of missed updates.
 func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, opts *ValidationOptionsWithState) error {
+	if opts == nil {
+		return errors.New("validation options with state cannot be nil")
+	}
+	if opts.Config == nil {
+		return ErrMissingChainConfig
+	}
+	if opts.State == nil {
+		return fmt.Errorf("state: missing StateDB for chain config attachment")
+	}
+	if opts.State.ChainConfig() == nil {
+		return fmt.Errorf("state: missing chain config for state access")
+	}
 	// Ensure the transaction adheres to nonce ordering
 	from, err := types.Sender(signer, tx) // already validated (and cached), but cleaner to check
 	if err != nil {
@@ -205,13 +248,16 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 		number      = opts.CurrentNumber()
 		to          = tx.To()
 	)
+	// A pooled tx can only be included from the next block onwards, so gas
+	// schedule lookups below resolve the fork tier at that height.
+	pendingNumber := pendingBlockNumber(number)
 	if to != nil {
 		if value, ok := opts.Trc21FeeCapacity[*to]; ok {
 			feeCapacity = value
 			if !opts.State.ValidateTRC21Tx(from, *to, tx.Data()) {
 				return core.ErrInsufficientFunds
 			}
-			cost = tx.TxCost(number)
+			cost = tx.TxCost(pendingNumber, opts.Config)
 		}
 	}
 	newBalance := new(big.Int).Add(balance, feeCapacity)
@@ -244,7 +290,7 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	}
 
 	// Ensure sender and receiver are not in denylist
-	if number == nil || number.Cmp(new(big.Int).SetUint64(common.DenylistHFNumber)) >= 0 {
+	if number == nil || opts.Config.IsDenylist(number) {
 		// check if sender is in denylist
 		if common.IsInDenylist(tx.From()) {
 			return fmt.Errorf("reject transaction with sender in denylist: %v", tx.From().Hex())
@@ -257,8 +303,8 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 
 	// Validate gas price
 	if !tx.IsSpecialTransaction() {
-		minGasPrice := common.GetMinGasPrice(number)
-		if tx.GasPrice().Cmp(minGasPrice) < 0 {
+		minGasPrice := params.GetMinGasPrice(pendingNumber, opts.Config)
+		if tx.GasPriceIntCmp(minGasPrice) < 0 {
 			return ErrUnderMinGasPrice
 		}
 	}

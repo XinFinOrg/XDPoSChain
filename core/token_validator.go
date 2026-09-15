@@ -75,9 +75,20 @@ func RunContract(chain consensus.ChainContext, statedb *state.StateDB, contractA
 // FIXME: please use copyState for this function
 // CallContractWithState executes a contract call at the given state.
 func CallContractWithState(call ethereum.CallMsg, chain consensus.ChainContext, statedb *state.StateDB) ([]byte, error) {
+	if chain == nil {
+		return nil, fmt.Errorf("missing chain context")
+	}
+	if err := statedb.EnsureChainConfig(chain.Config()); err != nil {
+		return nil, err
+	}
 	// Ensure message is initialized properly.
 	call.GasPrice = big.NewInt(0)
-
+	if call.GasFeeCap == nil {
+		call.GasFeeCap = new(big.Int)
+	}
+	if call.GasTipCap == nil {
+		call.GasTipCap = new(big.Int)
+	}
 	if call.Gas == 0 {
 		call.Gas = 1000000
 	}
@@ -87,17 +98,17 @@ func CallContractWithState(call ethereum.CallMsg, chain consensus.ChainContext, 
 
 	// Execute the call.
 	msg := &Message{
-		From:             call.From,
-		To:               call.To,
-		Value:            call.Value,
-		GasLimit:         call.Gas,
-		GasPrice:         call.GasPrice,
-		GasFeeCap:        call.GasFeeCap,
-		GasTipCap:        call.GasTipCap,
-		Data:             call.Data,
-		AccessList:       call.AccessList,
-		SkipNonceChecks:  true,
-		SkipFromEOACheck: true,
+		From:                  call.From,
+		To:                    call.To,
+		Value:                 call.Value,
+		GasLimit:              call.Gas,
+		GasPrice:              call.GasPrice,
+		GasFeeCap:             call.GasFeeCap,
+		GasTipCap:             call.GasTipCap,
+		Data:                  call.Data,
+		AccessList:            call.AccessList,
+		SkipNonceChecks:       true,
+		SkipTransactionChecks: true,
 	}
 	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	if msg.To != nil {
@@ -108,12 +119,10 @@ func CallContractWithState(call ethereum.CallMsg, chain consensus.ChainContext, 
 
 	// Create a new environment which holds all relevant information
 	// about the transaction and calling mechanisms.
-	txContext := NewEVMTxContext(msg)
 	evmContext := NewEVMBlockContext(chain.CurrentHeader(), chain, nil)
-	evm := vm.NewEVM(evmContext, statedb, nil, chain.Config(), vm.Config{})
-	evm.SetTxContext(txContext)
+	evm := vm.NewEVM(evmContext, statedb, nil, chain.Config(), vm.Config{NoBaseFee: true})
 	gaspool := new(GasPool).AddGas(1000000)
-	result, err := NewStateTransition(evm, msg, gaspool).TransitionDb(common.Address{})
+	result, err := ApplyMessage(evm, msg, gaspool, common.Address{})
 	if err != nil {
 		return nil, err
 	}

@@ -26,7 +26,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/log"
-	"github.com/XinFinOrg/XDPoSChain/p2p/discover"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 )
 
 const (
@@ -36,6 +36,11 @@ const (
 	// This is the target size for the packs of transactions sent by txsyncLoop.
 	// A pack can get larger than this if a single transactions exceeds this size.
 	txsyncPackSize = 100 * 1024
+
+	// syncStatusLogCycle is the interval at which the current sync status is
+	// reported at warn level, so it is visible even when info/debug logs are
+	// filtered out.
+	syncStatusLogCycle = 10 * time.Minute
 )
 
 type txsync struct {
@@ -45,6 +50,12 @@ type txsync struct {
 
 // syncTransactions starts sending all currently pending transactions to the given peer.
 func (pm *ProtocolManager) syncTransactions(p *peer) {
+	// Assemble the set of transaction to broadcast or announce to the remote
+	// peer. Fun fact, this is quite an expensive operation as it needs to sort
+	// the transactions if the sorting is not cached yet. However, with a random
+	// order, insertions could overflow the non-executable queues and get dropped.
+	//
+	// TODO(karalabe): Figure out if we could get away with random order somehow
 	var txs types.Transactions
 	pending := pm.txpool.Pending(txpool.PendingFilter{})
 	for _, batch := range pending {
@@ -57,26 +68,40 @@ func (pm *ProtocolManager) syncTransactions(p *peer) {
 	if len(txs) == 0 {
 		return
 	}
+	// The xdc/165 protocol introduces proper transaction announcements, so instead
+	// of dripping transactions across multiple peers, just send the entire list as
+	// an announcement and let the remote side decide what they need (likely nothing).
+	if p.version >= xdc165 {
+		hashes := make([]common.Hash, len(txs))
+		for i, tx := range txs {
+			hashes[i] = tx.Hash()
+		}
+		p.AsyncSendPooledTransactionHashes(hashes)
+		return
+	}
+	// Out of luck, peer is running legacy protocols, drop the txs over
 	select {
 	case pm.txsyncCh <- &txsync{p, txs}:
 	case <-pm.quitSync:
 	}
 }
 
-// txsyncLoop takes care of the initial transaction sync for each new
+// txsyncLoop64 takes care of the initial transaction sync for each new
 // connection. When a new peer appears, we relay all currently pending
 // transactions. In order to minimise egress bandwidth usage, we send
 // the transactions in small packs to one peer at a time.
-func (pm *ProtocolManager) txsyncLoop() {
+func (pm *ProtocolManager) txsyncLoop64() {
 	var (
-		pending = make(map[discover.NodeID]*txsync)
+		pending = make(map[enode.ID]*txsync)
 		sending = false               // whether a send is active
 		pack    = new(txsync)         // the pack that is being sent
 		done    = make(chan error, 1) // result of the send
 	)
-
 	// send starts a sending a pack of transactions from the sync.
 	send := func(s *txsync) {
+		if s.p.version >= xdc165 {
+			panic("initial transaction syncer running on xdc/165+")
+		}
 		// Fill pack with transactions up to the target size.
 		size := common.StorageSize(0)
 		pack.p = s.p
@@ -93,7 +118,7 @@ func (pm *ProtocolManager) txsyncLoop() {
 		// Send the pack in the background.
 		s.p.Log().Trace("Sending batch of transactions", "count", len(pack.txs), "bytes", size)
 		sending = true
-		go func() { done <- pack.p.SendTransactions(pack.txs) }()
+		go func() { done <- pack.p.SendTransactions64(pack.txs) }()
 	}
 
 	// pick chooses the next pending sync.
@@ -138,11 +163,13 @@ func (pm *ProtocolManager) txsyncLoop() {
 // downloading hashes and blocks as well as handling the announcement handler.
 func (pm *ProtocolManager) syncer() {
 	// Start and ensure cleanup of sync mechanisms
-	pm.fetcher.Start()
+	pm.blockFetcher.Start()
+	pm.txFetcher.Start()
 	pm.bft.Start()
-	defer pm.fetcher.Stop()
-	defer pm.bft.Stop()
+	defer pm.blockFetcher.Stop()
+	defer pm.txFetcher.Stop()
 	defer pm.downloader.Terminate()
+	defer pm.bft.Stop()
 
 	// Wait for different events to fire synchronisation operations
 	forceSync := time.NewTicker(forceSyncCycle)
@@ -165,6 +192,76 @@ func (pm *ProtocolManager) syncer() {
 			return
 		}
 	}
+}
+
+// syncStatusLogger periodically reports the current sync status at warn
+// level so that it is always visible in the logs, regardless of whether
+// info/debug logs are enabled, and independent of the one-shot start/finish
+// logs emitted by the downloader itself.
+func (pm *ProtocolManager) syncStatusLogger() {
+	ticker := time.NewTicker(syncStatusLogCycle)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			pm.reportSyncStatus()
+
+		case <-pm.quitSync:
+			return
+		}
+	}
+}
+
+// reportSyncStatus emits a warn-level periodic sync status line, so that the
+// current sync state is always visible in the logs every cycle regardless of
+// whether the node is catching up or already in sync.
+func (pm *ProtocolManager) reportSyncStatus() {
+	var (
+		current uint64
+		highest uint64
+	)
+	// Seed current/highest from the downloader while it is actively
+	// synchronising (it knows the discovered sync target and, in fast sync,
+	// reports the snap block as the current height). Otherwise seed both from
+	// the local chain head. computeSyncStatus then folds the live per-peer
+	// announced-tip high-water mark into highest in both states, so the
+	// reported highest always reflects the freshest known chain tip.
+	if pm.downloader.Synchronising() {
+		progress := pm.downloader.Progress()
+		current, highest = progress.CurrentBlock, progress.HighestBlock
+	} else {
+		current = pm.blockchain.CurrentBlock().Number.Uint64()
+	}
+	status := computeSyncStatus(current, highest, pm.peers.HighestTipNumber())
+	log.Warn("Block synchronisation status",
+		"current", status.current,
+		"highest", status.highest,
+		"behind", status.behind,
+		"peers", pm.peers.Len(),
+	)
+}
+
+// syncStatus holds the values reported by the periodic sync status heartbeat.
+type syncStatus struct {
+	current uint64 // Local head, or the fast-sync snap block while bulk syncing
+	highest uint64 // Highest known network block (downloader target + announced tips)
+	behind  uint64 // Number of blocks behind the highest known network block
+}
+
+// computeSyncStatus derives the heartbeat values. It always folds the live
+// network high-water mark (the highest block announced by any peer, bounded by
+// IsPlausibleAnnouncement) into the reported highest, regardless of whether the
+// downloader is bulk-syncing. The reported highest is therefore the maximum of
+// the downloader target, the local head and the live announced tip in every
+// state, so it reflects the freshest known chain tip.
+func computeSyncStatus(current, highest, announcedTip uint64) syncStatus {
+	highest = max(current, max(highest, announcedTip))
+	behind := uint64(0)
+	if highest > current {
+		behind = highest - current
+	}
+	return syncStatus{current: current, highest: highest, behind: behind}
 }
 
 // synchronise tries to sync up our local block chain with a remote peer.

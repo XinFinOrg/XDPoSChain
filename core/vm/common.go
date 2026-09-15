@@ -17,11 +17,42 @@
 package vm
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/holiman/uint256"
 )
+
+// CheckMaxInitCodeSize checks the size of contract initcode against the protocol-defined limit.
+func CheckMaxInitCodeSize(rules *params.Rules, size uint64) error {
+	if rules.IsOsaka {
+		if size > params.MaxInitCodeSizeOsaka {
+			return fmt.Errorf("%w: code size %v limit %v", ErrMaxInitCodeSizeExceeded, size, params.MaxInitCodeSizeOsaka)
+		}
+	} else if rules.IsEIP1559 {
+		if size > params.MaxInitCodeSize {
+			return fmt.Errorf("%w: code size %v limit %v", ErrMaxInitCodeSizeExceeded, size, params.MaxInitCodeSize)
+		}
+	}
+
+	return nil
+}
+
+// CheckMaxCodeSize checks the size of contract code against the protocol-defined limit.
+func CheckMaxCodeSize(rules *params.Rules, size uint64) error {
+	if rules.IsOsaka {
+		if size > params.MaxCodeSizeOsaka {
+			return fmt.Errorf("%w: code size %v limit %v", ErrMaxCodeSizeExceeded, size, params.MaxCodeSizeOsaka)
+		}
+	} else if rules.IsEIP158 {
+		if size > params.MaxCodeSize {
+			return fmt.Errorf("%w: code size %v limit %v", ErrMaxCodeSizeExceeded, size, params.MaxCodeSize)
+		}
+	}
+	return nil
+}
 
 // calcMemSize64 calculates the required memory size, and returns
 // the size and whether the result overflowed uint64
@@ -71,13 +102,4 @@ func toWordSize(size uint64) uint64 {
 	}
 
 	return (size + 31) / 32
-}
-
-func allZero(b []byte) bool {
-	for _, byte := range b {
-		if byte != 0 {
-			return false
-		}
-	}
-	return true
 }

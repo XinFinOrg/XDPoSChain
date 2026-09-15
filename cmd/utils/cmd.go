@@ -37,11 +37,14 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/internal/debug"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/node"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
 const (
 	importBatchSize = 2500
+
+	ChainConfigMismatchPolicyExitHint = "Hint: Use --chain-config-mismatch-policy to recover; Or restart with a matching XDC binary and the same network/genesis settings."
 )
 
 // Fatalf formats a message to standard error and exits the program.
@@ -62,6 +65,47 @@ func Fatalf(format string, args ...interface{}) {
 	}
 	fmt.Fprintf(w, "Fatal: "+format+"\n", args...)
 	os.Exit(1)
+}
+
+// FormatChainConfigError appends an operator-facing migration hint when strict
+// XDC fork-config validation rejects a legacy sparse config.
+func FormatChainConfigError(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := err.Error()
+	if errors.Is(err, core.ErrConfigMismatchPolicyExit) {
+		exitText := core.ErrConfigMismatchPolicyExit.Error()
+		guidance := ChainConfigMismatchPolicyExitHint
+		prefix := exitText + ": "
+		if after, ok := strings.CutPrefix(message, prefix); ok {
+			details := strings.TrimSpace(after)
+			if details == "" {
+				return guidance
+			}
+			return details + ".\n" + guidance
+		}
+		if message == exitText {
+			return guidance
+		}
+		return message + ". " + ChainConfigMismatchPolicyExitHint
+	}
+	if !errors.Is(err, params.ErrMissingForkSwitch) {
+		return message
+	}
+	for _, field := range []string{
+		"TIPTRC21FeeBlock",
+		"Gas50xBlock",
+		"TRC21IssuerSMC",
+		"XDCXListingSMC",
+		"RelayerRegistrationSMC",
+		"LendingRegistrationSMC",
+	} {
+		if strings.Contains(message, field) {
+			return message + ". Migration hint: ensure the persisted chain config or external genesis JSON includes TIPTRC21FeeBlock, Gas50xBlock, TRC21IssuerSMC, XDCXListingSMC, RelayerRegistrationSMC, and LendingRegistrationSMC. Older sparse custom XDPoS genesis files are auto-hydrated only when these keys are omitted."
+		}
+	}
+	return message
 }
 
 func StartNode(stack *node.Node, isConsole bool) {

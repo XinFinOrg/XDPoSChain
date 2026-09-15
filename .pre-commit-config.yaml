@@ -1,29 +1,40 @@
 fail_fast: true
 repos:
   - repo: https://github.com/compilerla/conventional-pre-commit
-    rev: v4.3.0
+    rev: v4.4.0
     hooks:
       - id: conventional-pre-commit
         stages: [commit-msg]
-        args: []
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
+        stages: [pre-commit]
       - id: end-of-file-fixer
+        stages: [pre-commit]
       - id: check-json
+        stages: [pre-commit]
       - id: check-yaml
+        stages: [pre-commit]
       - id: check-toml
+        stages: [pre-commit]
       - id: check-symlinks
+        stages: [pre-commit]
       - id: fix-byte-order-marker
+        stages: [pre-commit]
       - id: check-added-large-files
+        stages: [pre-commit]
   - repo: https://github.com/dnephin/pre-commit-golang
     rev: v0.5.1
     hooks:
       - id: go-fmt
+        stages: [pre-commit]
       - id: go-vet
+        stages: [pre-commit]
       - id: go-imports
+        stages: [pre-commit]
       - id: go-mod-tidy
+        stages: [pre-commit]
   - repo: local
     hooks:
       - id: make-generate
@@ -31,3 +42,4 @@ repos:
         entry: make generate
         language: system
         pass_filenames: false
+        stages: [pre-commit]

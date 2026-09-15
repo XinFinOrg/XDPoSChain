@@ -29,22 +29,29 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool/legacypool"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool/locals"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	internalethapi "github.com/XinFinOrg/XDPoSChain/internal/ethapi"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/holiman/uint256"
 )
 
 var (
-	key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
-	address = crypto.PubkeyToAddress(key.PublicKey)
-	funds   = big.NewInt(1000_000_000_000_000)
-	gspec   = &core.Genesis{
-		Config: params.MergedTestChainConfig,
+	key, _          = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	address         = crypto.PubkeyToAddress(key.PublicKey)
+	funds           = big.NewInt(1000_000_000_000_000)
+	testChainConfig = func() *params.ChainConfig {
+		cfg := params.MergedTestChainConfig.Clone()
+		cfg.Gas50xBlock = big.NewInt(1_000_000_000)
+		return cfg
+	}()
+	gspec = &core.Genesis{
+		Config: testChainConfig,
 		Alloc: types.GenesisAlloc{
 			address: {Balance: funds},
 		},
@@ -99,6 +106,28 @@ func initBackend(t *testing.T, withLocal bool) *EthAPIBackend {
 
 	return &EthAPIBackend{
 		eth: eth,
+	}
+}
+
+func TestAttachStateChainConfig(t *testing.T) {
+	t.Parallel()
+
+	backend := initBackend(t, false)
+	statedb, err := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
+	if err != nil {
+		t.Fatalf("failed to create state db: %v", err)
+	}
+	if statedb.ChainConfig() != nil {
+		t.Fatal("expected fresh state db to start without chain config")
+	}
+
+	statedb, err = internalethapi.AttachStateChainConfig(statedb, backend.ChainConfig())
+	if err != nil {
+		t.Fatalf("expected attach to succeed: %v", err)
+	}
+
+	if statedb.ChainConfig() != backend.ChainConfig() {
+		t.Fatal("expected backend helper to attach chain config to state db")
 	}
 }
 
@@ -199,5 +228,30 @@ func TestSendTxWithLocalPermanentErrorNotTracked(t *testing.T) {
 	tracked := reflect.ValueOf(b.eth.localTxTracker).Elem().FieldByName("all").Len()
 	if tracked != 0 {
 		t.Fatalf("unexpected tracked tx count: have %d, want 0", tracked)
+	}
+}
+
+func TestSendTxTracksAlreadyKnown(t *testing.T) {
+	b := initBackend(t, true)
+	if b.eth.localTxTracker == nil {
+		t.Fatal("expected local tx tracker to be configured")
+	}
+	tx := makeTx(0, nil, nil, key)
+	// Simulate the transaction reaching the pool via gossip: a plain pool add
+	// does not involve the local tracker.
+	if err := b.eth.txPool.Add([]*types.Transaction{tx}, true)[0]; err != nil {
+		t.Fatalf("failed to seed the pool with the transaction: %v", err)
+	}
+	if tracked := reflect.ValueOf(b.eth.localTxTracker).Elem().FieldByName("all").Len(); tracked != 0 {
+		t.Fatalf("unexpected tracked tx count before resubmission: have %d, want 0", tracked)
+	}
+	// Submitting the same transaction locally must report ErrAlreadyKnown to
+	// the submitter while still tracking it for the local resubmit flow.
+	err := b.SendTx(context.Background(), tx)
+	if !errors.Is(err, txpool.ErrAlreadyKnown) {
+		t.Fatalf("unexpected error, want: %v, got: %v", txpool.ErrAlreadyKnown, err)
+	}
+	if tracked := reflect.ValueOf(b.eth.localTxTracker).Elem().FieldByName("all").Len(); tracked != 1 {
+		t.Fatalf("unexpected tracked tx count: have %d, want 1", tracked)
 	}
 }

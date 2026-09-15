@@ -588,8 +588,12 @@ func DoSettleBalance(coinbase common.Address, takerOrder, makerOrder *tradingsta
 		return err
 	}
 	mapRelayerFee[makerOrder.ExchangeAddress] = newRelayerMakerFee
-	tradingstate.SetSubRelayerFee(takerOrder.ExchangeAddress, newRelayerTakerFee, common.RelayerFee, statedb)
-	tradingstate.SetSubRelayerFee(makerOrder.ExchangeAddress, newRelayerMakerFee, common.RelayerFee, statedb)
+	if err := tradingstate.SetSubRelayerFee(takerOrder.ExchangeAddress, newRelayerTakerFee, common.RelayerFee, statedb); err != nil {
+		return err
+	}
+	if err := tradingstate.SetSubRelayerFee(makerOrder.ExchangeAddress, newRelayerMakerFee, common.RelayerFee, statedb); err != nil {
+		return err
+	}
 
 	masternodeOwner := statedb.GetOwner(coinbase)
 	statedb.AddBalance(masternodeOwner, matchingFee, tracing.BalanceChangeUnspecified)

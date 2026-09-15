@@ -46,7 +46,7 @@ type vmContext struct {
 }
 
 func testCtx() *vmContext {
-	return &vmContext{ctx: vm.BlockContext{BlockNumber: big.NewInt(1)}, txContext: vm.TxContext{GasPrice: big.NewInt(100000)}}
+	return &vmContext{ctx: vm.BlockContext{BlockNumber: big.NewInt(1), BaseFee: big.NewInt(0)}, txContext: vm.TxContext{GasPrice: big.NewInt(100000)}}
 }
 
 func runTrace(tracer *tracers.Tracer, vmctx *vmContext, chaincfg *params.ChainConfig, contractCode []byte) (json.RawMessage, error) {
@@ -63,7 +63,7 @@ func runTrace(tracer *tracers.Tracer, vmctx *vmContext, chaincfg *params.ChainCo
 		contract.Code = contractCode
 	}
 
-	tracer.OnTxStart(evm.GetVMContext(), types.NewTx(&types.LegacyTx{Gas: gasLimit}), contract.Caller())
+	tracer.OnTxStart(evm.GetVMContext(), types.NewTx(&types.LegacyTx{Gas: gasLimit, GasPrice: vmctx.txContext.GasPrice}), contract.Caller())
 	tracer.OnEnter(0, byte(vm.CALL), contract.Caller(), contract.Address(), []byte{}, startGas, value.ToBig())
 	ret, err := evm.Run(contract, []byte{}, false)
 	tracer.OnExit(0, ret, startGas-contract.Gas, err, true)
@@ -75,6 +75,7 @@ func runTrace(tracer *tracers.Tracer, vmctx *vmContext, chaincfg *params.ChainCo
 	return tracer.GetResult()
 }
 
+// TestTracer tests tracer.
 func TestTracer(t *testing.T) {
 	execTracer := func(code string, contract []byte) ([]byte, string) {
 		t.Helper()
@@ -154,6 +155,7 @@ func TestTracer(t *testing.T) {
 	}
 }
 
+// TestHalt tests halt.
 func TestHalt(t *testing.T) {
 	timeout := errors.New("stahp")
 	chainConfig := params.TestChainConfig
@@ -170,6 +172,7 @@ func TestHalt(t *testing.T) {
 	}
 }
 
+// TestHaltBetweenSteps tests halt between steps.
 func TestHaltBetweenSteps(t *testing.T) {
 	chainConfig := params.TestChainConfig
 	tracer, err := newJsTracer("{step: function() {}, fault: function() {}, result: function() { return null; }}", nil, nil, chainConfig)
@@ -229,26 +232,50 @@ func TestNoStepExec(t *testing.T) {
 	}
 }
 
+// TestTxStartUsesExecutionGasPrice tests tx start uses execution gas price.
+func TestTxStartUsesExecutionGasPrice(t *testing.T) {
+	chainConfig := params.TestChainConfig
+	tracer, err := newJsTracer("{step: function() {}, fault: function() {}, result: function(ctx) { return ctx.gasPrice; }}", nil, nil, chainConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evm := vm.NewEVM(vm.BlockContext{BlockNumber: big.NewInt(1), BaseFee: big.NewInt(0)}, &dummyStatedb{}, nil, chainConfig, vm.Config{Tracer: tracer.Hooks})
+	evm.SetTxContext(vm.TxContext{GasPrice: big.NewInt(100)})
+	tracer.OnTxStart(evm.GetVMContext(), types.NewTx(&types.LegacyTx{GasPrice: big.NewInt(1)}), common.Address{})
+	tracer.OnEnter(0, byte(vm.CALL), common.Address{}, common.Address{}, []byte{}, 1000, big.NewInt(0))
+	tracer.OnExit(0, nil, 0, nil, false)
+	ret, err := tracer.GetResult()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(ret) != `"100"` {
+		t.Fatalf("unexpected gasPrice in tracer context, have %s want \"100\"", ret)
+	}
+}
+
+// TestIsPrecompile tests is precompile.
 func TestIsPrecompile(t *testing.T) {
 	chaincfg := &params.ChainConfig{
-		ChainID:             big.NewInt(1),
-		HomesteadBlock:      big.NewInt(0),
-		DAOForkBlock:        nil,
-		DAOForkSupport:      false,
-		EIP150Block:         big.NewInt(0),
-		EIP155Block:         big.NewInt(0),
-		EIP158Block:         big.NewInt(0),
-		ByzantiumBlock:      big.NewInt(100),
-		ConstantinopleBlock: big.NewInt(0),
-		PetersburgBlock:     big.NewInt(0),
-		IstanbulBlock:       big.NewInt(200),
-		BerlinBlock:         big.NewInt(300),
-		LondonBlock:         big.NewInt(0),
-		Ethash:              new(params.EthashConfig),
-		Clique:              nil,
+		ChainID:                     big.NewInt(1),
+		HomesteadBlock:              big.NewInt(0),
+		DAOForkBlock:                nil,
+		DAOForkSupport:              false,
+		EIP150Block:                 big.NewInt(0),
+		EIP155Block:                 big.NewInt(0),
+		EIP158Block:                 big.NewInt(0),
+		ByzantiumBlock:              big.NewInt(100),
+		ConstantinopleBlock:         big.NewInt(0),
+		PetersburgBlock:             big.NewInt(0),
+		IstanbulBlock:               big.NewInt(200),
+		TIPXDCXCancellationFeeBlock: big.NewInt(200),
+		BerlinBlock:                 big.NewInt(300),
+		LondonBlock:                 big.NewInt(0),
+		Ethash:                      new(params.EthashConfig),
+		Clique:                      nil,
 	}
 	chaincfg.ByzantiumBlock = big.NewInt(100)
 	chaincfg.IstanbulBlock = big.NewInt(200)
+	chaincfg.TIPXDCXCancellationFeeBlock = big.NewInt(200)
 	chaincfg.BerlinBlock = big.NewInt(300)
 	txCtx := vm.TxContext{GasPrice: big.NewInt(100000)}
 	tracer, err := newJsTracer("{addr: toAddress('0000000000000000000000000000000000000009'), res: null, step: function() { this.res = isPrecompiled(this.addr); }, fault: function() {}, result: function() { return this.res; }}", nil, nil, chaincfg)
@@ -272,10 +299,11 @@ func TestIsPrecompile(t *testing.T) {
 		t.Error(err)
 	}
 	if string(res) != "true" {
-		t.Errorf("tracer should consider blake2f as precompile in istanbul")
+		t.Errorf("tracer should consider blake2f as precompile after TIPXDCXCancellationFee")
 	}
 }
 
+// TestEnterExit tests enter exit.
 func TestEnterExit(t *testing.T) {
 	chainConfig := params.TestChainConfig
 	// test that either both or none of enter() and exit() are defined
@@ -307,6 +335,7 @@ func TestEnterExit(t *testing.T) {
 	}
 }
 
+// TestSetup tests setup.
 func TestSetup(t *testing.T) {
 	// Test empty config
 	chainConfig := params.TestChainConfig

@@ -1,5 +1,114 @@
-
 # Module XDPoS
+
+## Method XDPoS_gteConfig
+
+The `getConfig` method returns chain-configuration snapshots for the current fork boundary, the next scheduled fork boundary, and the last known future fork boundary.
+
+This method is an XDPoS-specific extension. It is inspired by `eth_config` / EIP-7910, but it does not strictly match geth.
+
+Compatibility notes:
+
+- XDPoS returns `activationBlock` for each config entry.
+- geth uses `activationTime` for time-based fork scheduling.
+- XDPoS does not currently implement `blobSchedule`. XDC does not support blob transactions, so this field is intentionally omitted from `XDPoS_getConfig` responses.
+- XDPoS currently selects `current`, `next`, and `last` using block-based fork activation metadata.
+- XDPoS may include chain-specific precompiles and system contracts that do not exist on Ethereum mainnet.
+- Each config entry is a snapshot evaluated at `activationBlock`. Lists such as `systemContracts` describe what is active at that block; they do not imply that every listed item has its own dedicated activation block.
+
+Parameters:
+
+None
+
+Returns:
+
+result: object configResponse
+
+- current: object config, the snapshot active at the current fork boundary.
+- next: object config, the snapshot that will become active at the next scheduled fork boundary, or `null` if no future fork is known.
+- last: object config, the snapshot for the last known future fork boundary, or `null` if no future fork is known.
+
+Config object fields:
+
+- activationBlock: uint64, the block height used to anchor this configuration snapshot.
+- chainId: big.Int, the configured chain ID represented as a hexadecimal string.
+- forkId: hex-encoded bytes string, the fork identifier derived from the configured fork schedule (for example, `"0x4f9a9c51"`).
+- activeForks: array of string, the modeled forks active at this `activationBlock`. Values use the RPC's fork labels as returned by `forks.Fork.String()` (for example, `"EIP1559"`, `"Prague"`, `"Cancun"`).
+- precompiles: object, a map of active precompile names to contract addresses.
+- systemContracts: object, a map of system contract names to contract addresses that are active at this `activationBlock` snapshot.
+
+`blobSchedule` from EIP-7910 is not implemented and is therefore omitted from the response.
+
+Example:
+
+```shell
+curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "method": "XDPoS_getConfig"
+}' | jq
+```
+
+Response:
+
+The example below is illustrative. Actual fork IDs, precompiles, and system contracts depend on the chain configuration active on the node.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1001,
+  "result": {
+    "current": {
+      "activationBlock": 1000,
+      "chainId": "0x32",
+      "forkId": "0x4f9a9c51",
+      "activeForks": [
+        "EIP1559",
+        "Prague"
+      ],
+      "precompiles": {
+        "ECREC": "0x0000000000000000000000000000000000000001",
+        "SHA256": "0x0000000000000000000000000000000000000002",
+        "BLAKE2F": "0x0000000000000000000000000000000000000009"
+      },
+      "systemContracts": {
+        "HISTORY_STORAGE_ADDRESS": "0x0000F90827F1C53a10cb7A02335B175320002935"
+      }
+    },
+    "next": {
+      "activationBlock": 2000,
+      "chainId": "0x32",
+      "forkId": "0xd0c4b3b7",
+      "activeForks": [
+        "Cancun"
+      ],
+      "precompiles": {
+        "ECREC": "0x0000000000000000000000000000000000000001",
+        "SHA256": "0x0000000000000000000000000000000000000002",
+        "BLAKE2F": "0x0000000000000000000000000000000000000009"
+      },
+      "systemContracts": {
+        "HISTORY_STORAGE_ADDRESS": "0x0000F90827F1C53a10cb7A02335B175320002935"
+      }
+    },
+    "last": {
+      "activationBlock": 3000,
+      "chainId": "0x32",
+      "forkId": "0x6b495dfd",
+      "activeForks": [
+        "Osaka"
+      ],
+      "precompiles": {
+        "ECREC": "0x0000000000000000000000000000000000000001",
+        "SHA256": "0x0000000000000000000000000000000000000002",
+        "BLAKE2F": "0x0000000000000000000000000000000000000009"
+      },
+      "systemContracts": {
+        "HISTORY_STORAGE_ADDRESS": "0x0000F90827F1C53a10cb7A02335B175320002935"
+      }
+    }
+  }
+}
+```
 
 ## Method XDPoS_getBlockInfoByEpochNum
 
@@ -46,7 +155,6 @@ Response:
 }
 ```
 
-
 ## Method XDPoS_getEpochNumbersBetween
 
 Parameters:
@@ -83,7 +191,6 @@ Response:
   ]
 }
 ```
-
 
 ## Method XDPoS_getLatestPoolStatus
 
@@ -167,7 +274,6 @@ Response:
   }
 }
 ```
-
 
 ## Method XDPoS_getMissedRoundsInEpochByBlockNum
 
@@ -260,7 +366,6 @@ Response:
 }
 ```
 
-
 ## Method XDPoS_getSigners
 
 The `getSigners` method retrieves the list of authorized signers at the specified block.
@@ -289,7 +394,6 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 Response:
 
 See [XDPoS_getSigners_response.json](./XDPoS_getSigners_response.json)
-
 
 ## Method XDPoS_getSignersAtHash
 
@@ -320,7 +424,6 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 Response:
 
 See [XDPoS_getSignersAtHash_response.json](./XDPoS_getSignersAtHash_response.json)
-
 
 ## Method XDPoS_getSnapshot
 
@@ -358,7 +461,6 @@ Response:
 
 See [XDPoS_getSnapshot_response.json](./XDPoS_getSnapshot_response.json)
 
-
 ## Method XDPoS_getSnapshotAtHash
 
 The `getSnapshotAtHash` method retrieves the state snapshot at a given block.
@@ -388,7 +490,6 @@ curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
 Response:
 
 See [XDPoS_getSnapshotAtHash_response.json](./XDPoS_getSnapshotAtHash_response.json)
-
 
 ## Method XDPoS_getV2BlockByHash
 
@@ -432,7 +533,6 @@ Response:
   }
 }
 ```
-
 
 ## Method XDPoS_getV2BlockByNumber
 
@@ -487,6 +587,81 @@ Response:
 }
 ```
 
+## Method XDPoS_getRewardByAccount
+
+Parameters:
+
+- account: string, required, account address
+- begin: string, required, begin block number (`BlockNumber`)
+- end: string, required, end block number (`BlockNumber`)
+
+Returns:
+
+result: object AccountRewardResponse:
+
+- EpochRewards: array of account rewards grouped by epoch files
+- Total: aggregated rewards in the queried range
+
+Example:
+
+```shell
+curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "XDPoS_getRewardByAccount",
+  "params": [
+    "0x0000000000000000000000000000000000000000",
+    "latest",
+    "latest"
+  ]
+}' | jq
+```
+
+## Method XDPoS_getBlockInfoByV2EpochNum
+
+Parameters:
+
+- epochNumber: integer, required, v2 epoch number
+
+Returns:
+
+result: object EpochNumInfo
+
+Example:
+
+```shell
+curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "XDPoS_getBlockInfoByV2EpochNum",
+  "params": [
+    89300
+  ]
+}' | jq
+```
+
+## Method XDPoS_calculateBlockInfoByV1EpochNum
+
+Parameters:
+
+- targetEpochNum: integer, required, v1 epoch number
+
+Returns:
+
+result: object EpochNumInfo
+
+Example:
+
+```shell
+curl -s -X POST -H "Content-Type: application/json" ${RPC} -d '{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "XDPoS_calculateBlockInfoByV1EpochNum",
+  "params": [
+    100
+  ]
+}' | jq
+```
 
 ## Method XDPoS_networkInformation
 
@@ -603,4 +778,3 @@ Response:
   }
 }
 ```
-

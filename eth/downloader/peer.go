@@ -21,7 +21,6 @@ package downloader
 
 import (
 	"errors"
-	"fmt"
 	"math"
 	"math/big"
 	"sort"
@@ -37,6 +36,9 @@ import (
 const (
 	maxLackingHashes  = 4096 // Maximum number of entries allowed on the list or lacking items
 	measurementImpact = 0.1  // The impact a single measurement has on a peer's final throughput value.
+
+	minProtocolVer = 100 // xdc100
+	maxProtocolVer = 165 // xdc165
 )
 
 var (
@@ -112,6 +114,15 @@ func (w *lightPeerWrapper) RequestNodeData([]common.Hash) error {
 	panic("RequestNodeData not supported in light client mode sync")
 }
 
+// peerLogger creates a logger tagged with the peer id, truncated to keep the
+// sync logs readable. Short ids used by the tests are left untouched.
+func peerLogger(id string) log.Logger {
+	if len(id) > 16 {
+		id = id[:16]
+	}
+	return log.New("peer", id)
+}
+
 // newPeerConnection creates a new downloader peer.
 func newPeerConnection(id string, version int, peer Peer, logger log.Logger) *peerConnection {
 	return &peerConnection{
@@ -143,10 +154,6 @@ func (p *peerConnection) Reset() {
 
 // FetchHeaders sends a header retrieval request to the remote peer.
 func (p *peerConnection) FetchHeaders(from uint64, count int) error {
-	// Sanity check the protocol version
-	if p.version < 62 {
-		panic(fmt.Sprintf("header fetch [eth/62+] requested on eth/%d", p.version))
-	}
 	// Short circuit if the peer is already fetching
 	if !atomic.CompareAndSwapInt32(&p.headerIdle, 0, 1) {
 		return errAlreadyFetching
@@ -161,10 +168,6 @@ func (p *peerConnection) FetchHeaders(from uint64, count int) error {
 
 // FetchBodies sends a block body retrieval request to the remote peer.
 func (p *peerConnection) FetchBodies(request *fetchRequest) error {
-	// Sanity check the protocol version
-	if p.version < 62 {
-		panic(fmt.Sprintf("body fetch [eth/62+] requested on eth/%d", p.version))
-	}
 	// Short circuit if the peer is already fetching
 	if !atomic.CompareAndSwapInt32(&p.blockIdle, 0, 1) {
 		return errAlreadyFetching
@@ -185,10 +188,6 @@ func (p *peerConnection) FetchBodies(request *fetchRequest) error {
 
 // FetchReceipts sends a receipt retrieval request to the remote peer.
 func (p *peerConnection) FetchReceipts(request *fetchRequest) error {
-	// Sanity check the protocol version
-	if p.version < 63 {
-		panic(fmt.Sprintf("body fetch [eth/63+] requested on eth/%d", p.version))
-	}
 	// Short circuit if the peer is already fetching
 	if !atomic.CompareAndSwapInt32(&p.receiptIdle, 0, 1) {
 		return errAlreadyFetching
@@ -209,10 +208,6 @@ func (p *peerConnection) FetchReceipts(request *fetchRequest) error {
 
 // FetchNodeData sends a node state data retrieval request to the remote peer.
 func (p *peerConnection) FetchNodeData(hashes []common.Hash) error {
-	// Sanity check the protocol version
-	if p.version < 63 {
-		panic(fmt.Sprintf("node data fetch [eth/63+] requested on eth/%d", p.version))
-	}
 	// Short circuit if the peer is already fetching
 	if !atomic.CompareAndSwapInt32(&p.stateIdle, 0, 1) {
 		return errAlreadyFetching
@@ -474,7 +469,7 @@ func (ps *peerSet) HeaderIdlePeers() ([]*peerConnection, int) {
 		defer p.lock.RUnlock()
 		return p.headerThroughput
 	}
-	return ps.idlePeers(62, 101, idle, throughput)
+	return ps.idlePeers(minProtocolVer, maxProtocolVer, idle, throughput)
 }
 
 // BodyIdlePeers retrieves a flat list of all the currently body-idle peers within
@@ -488,7 +483,7 @@ func (ps *peerSet) BodyIdlePeers() ([]*peerConnection, int) {
 		defer p.lock.RUnlock()
 		return p.blockThroughput
 	}
-	return ps.idlePeers(62, 101, idle, throughput)
+	return ps.idlePeers(minProtocolVer, maxProtocolVer, idle, throughput)
 }
 
 // ReceiptIdlePeers retrieves a flat list of all the currently receipt-idle peers
@@ -502,7 +497,7 @@ func (ps *peerSet) ReceiptIdlePeers() ([]*peerConnection, int) {
 		defer p.lock.RUnlock()
 		return p.receiptThroughput
 	}
-	return ps.idlePeers(63, 101, idle, throughput)
+	return ps.idlePeers(minProtocolVer, maxProtocolVer, idle, throughput)
 }
 
 // NodeDataIdlePeers retrieves a flat list of all the currently node-data-idle
@@ -516,7 +511,7 @@ func (ps *peerSet) NodeDataIdlePeers() ([]*peerConnection, int) {
 		defer p.lock.RUnlock()
 		return p.stateThroughput
 	}
-	return ps.idlePeers(63, 101, idle, throughput)
+	return ps.idlePeers(minProtocolVer, maxProtocolVer, idle, throughput)
 }
 
 // idlePeers retrieves a flat list of all currently idle peers satisfying the

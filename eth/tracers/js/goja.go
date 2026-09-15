@@ -259,6 +259,8 @@ func (t *jsTracer) OnTxStart(env *tracing.VMContext, tx *types.Transaction, from
 	t.activePrecompiles = vm.ActivePrecompiles(rules)
 	t.ctx["block"] = t.vm.ToValue(t.env.BlockNumber.Uint64())
 	t.ctx["gas"] = t.vm.ToValue(tx.Gas())
+	// Read the execution-time gas price from VMContext. In XDPoS it may diverge
+	// from the raw tx price due to TRC21 and fixed-price fee handling.
 	gasPriceBig, err := t.toBig(t.vm, env.GasPrice.String())
 	if err != nil {
 		t.err = err

@@ -24,26 +24,11 @@ func TestSyncInfoShouldSuccessfullyUpdateByQC(t *testing.T) {
 		t.Fatal("Fail to decode extra data", err)
 	}
 
-	timeoutForSign := &types.TimeoutForSign{
-		Round:     types.Round(2),
-		GapNumber: 450,
-	}
-
-	// Sign from acc 1, 2, 3 and voter
-	acc1SignedHash := SignHashByPK(acc1Key, types.TimeoutSigHash(timeoutForSign).Bytes())
-	acc2SignedHash := SignHashByPK(acc2Key, types.TimeoutSigHash(timeoutForSign).Bytes())
-	acc3SignedHash := SignHashByPK(acc3Key, types.TimeoutSigHash(timeoutForSign).Bytes())
-	voterSignedHash := SignHashByPK(voterKey, types.TimeoutSigHash(timeoutForSign).Bytes())
-
-	var signatures []types.Signature
-	signatures = append(signatures, acc1SignedHash, acc2SignedHash, acc3SignedHash, voterSignedHash)
-
 	syncInfoMsg := &types.SyncInfo{
 		HighestQuorumCert: extraField.QuorumCert,
 		HighestTimeoutCert: &types.TimeoutCert{
 			Round:      types.Round(2),
-			Signatures: signatures,
-			GapNumber:  450,
+			Signatures: []types.Signature{},
 		},
 	}
 
@@ -70,24 +55,9 @@ func TestSyncInfoShouldSuccessfullyUpdateByTC(t *testing.T) {
 		t.Fatal("Fail to decode extra data", err)
 	}
 
-	timeoutForSign := &types.TimeoutForSign{
-		Round:     types.Round(6),
-		GapNumber: 450,
-	}
-
-	// Sign from acc 1, 2, 3 and voter
-	acc1SignedHash := SignHashByPK(acc1Key, types.TimeoutSigHash(timeoutForSign).Bytes())
-	acc2SignedHash := SignHashByPK(acc2Key, types.TimeoutSigHash(timeoutForSign).Bytes())
-	acc3SignedHash := SignHashByPK(acc3Key, types.TimeoutSigHash(timeoutForSign).Bytes())
-	voterSignedHash := SignHashByPK(voterKey, types.TimeoutSigHash(timeoutForSign).Bytes())
-
-	var signatures []types.Signature
-	signatures = append(signatures, acc1SignedHash, acc2SignedHash, acc3SignedHash, voterSignedHash)
-
 	highestTC := &types.TimeoutCert{
 		Round:      types.Round(6),
-		Signatures: signatures,
-		GapNumber:  450,
+		Signatures: []types.Signature{},
 	}
 
 	syncInfoMsg := &types.SyncInfo{
@@ -133,6 +103,87 @@ func TestSkipVerifySyncInfoIfBothQcTcNotQualified(t *testing.T) {
 	assert.Nil(t, err)
 }
 
+// A node that has never formed a TC holds the bootstrap TC (round 0, no signatures) and
+// puts it into every syncInfo it sends. The QC in such a message is the only way for a
+// node that missed a QC to catch up, so the placeholder TC must not invalidate it.
+func TestVerifySyncInfoWithNewerQCAndBootstrapTC(t *testing.T) {
+	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
+	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
+
+	// The incoming syncInfo carries the newer QC, taken from the chain head.
+	var incoming types.ExtraFields_v2
+	if err := utils.DecodeBytesExtraFields(currentBlock.Extra(), &incoming); err != nil {
+		t.Fatal("Fail to decode extra data", err)
+	}
+
+	// Our node sits on an older QC and has never seen a TC, exactly like a node whose
+	// votes fell short of the threshold at network start.
+	var older types.ExtraFields_v2
+	if err := utils.DecodeBytesExtraFields(blockchain.GetBlockByNumber(903).Extra(), &older); err != nil {
+		t.Fatal("Fail to decode extra data", err)
+	}
+	bootstrapTC := &types.TimeoutCert{
+		Round:      types.Round(0),
+		Signatures: []types.Signature{},
+	}
+	engineV2.SetPropertiesFaker(older.QuorumCert, bootstrapTC)
+
+	syncInfoMsg := &types.SyncInfo{
+		HighestQuorumCert:  incoming.QuorumCert,
+		HighestTimeoutCert: bootstrapTC,
+	}
+
+	verified, err := engineV2.VerifySyncInfoMessage(blockchain, syncInfoMsg)
+	assert.Nil(t, err, "the bootstrap TC must not invalidate a syncInfo whose QC is newer and valid")
+	assert.True(t, verified)
+}
+
+// The exemption is deliberately narrow: it covers only the empty placeholder, and any TC
+// that actually carries signatures is still put through verifyTC in full. This pins that
+// boundary, so the exemption cannot be widened by sending a TC with a bogus signature set.
+//
+// The trade-off it also documents: a TC that would never be processed anyway - here one
+// staler than the one we hold - still invalidates the whole message, discarding a QC we do
+// need. Verifying only the certificate that is ahead of ours would avoid that, at the cost
+// of a broader change to the syncInfo path.
+func TestVerifySyncInfoStillVerifiesNonEmptyTC(t *testing.T) {
+	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
+	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
+
+	var incoming types.ExtraFields_v2
+	if err := utils.DecodeBytesExtraFields(currentBlock.Extra(), &incoming); err != nil {
+		t.Fatal("Fail to decode extra data", err)
+	}
+	var older types.ExtraFields_v2
+	if err := utils.DecodeBytesExtraFields(blockchain.GetBlockByNumber(903).Extra(), &older); err != nil {
+		t.Fatal("Fail to decode extra data", err)
+	}
+
+	// We already hold a newer TC than the one being sent to us.
+	ourTC := &types.TimeoutCert{
+		Round:      types.Round(5),
+		Signatures: []types.Signature{},
+	}
+	engineV2.SetPropertiesFaker(older.QuorumCert, ourTC)
+
+	// Their TC carries a signature, so it is not the placeholder and gets verified: round 1
+	// with gap number 0, which has no snapshot here, so verification fails.
+	staleTC := &types.TimeoutCert{
+		Round:      types.Round(1),
+		Signatures: []types.Signature{SignHashByPK(acc1Key, types.TimeoutSigHash(&types.TimeoutForSign{Round: types.Round(1), GapNumber: 0}).Bytes())},
+		GapNumber:  0,
+	}
+
+	syncInfoMsg := &types.SyncInfo{
+		HighestQuorumCert:  incoming.QuorumCert,
+		HighestTimeoutCert: staleTC,
+	}
+
+	verified, err := engineV2.VerifySyncInfoMessage(blockchain, syncInfoMsg)
+	assert.NotNil(t, err, "a TC carrying signatures must still be verified, not exempted")
+	assert.False(t, verified)
+}
+
 func TestVerifySyncInfoIfTCRoundIsAtNextEpoch(t *testing.T) {
 	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
@@ -143,6 +194,11 @@ func TestVerifySyncInfoIfTCRoundIsAtNextEpoch(t *testing.T) {
 	err := utils.DecodeBytesExtraFields(parentBlock.Extra(), &extraField)
 	if err != nil {
 		t.Fatal("Fail to decode extra data", err)
+	}
+
+	highestTC := &types.TimeoutCert{
+		Round:      types.Round(899),
+		Signatures: []types.Signature{},
 	}
 
 	timeoutForSign := &types.TimeoutForSign{
@@ -169,6 +225,8 @@ func TestVerifySyncInfoIfTCRoundIsAtNextEpoch(t *testing.T) {
 		HighestQuorumCert:  extraField.QuorumCert,
 		HighestTimeoutCert: syncInfoTC,
 	}
+
+	engineV2.SetPropertiesFaker(syncInfoMsg.HighestQuorumCert, highestTC)
 
 	verified, err := engineV2.VerifySyncInfoMessage(blockchain, syncInfoMsg)
 	assert.True(t, verified)
@@ -290,7 +348,12 @@ func TestVerifySyncInfoIfTcUseDifferentEpoch(t *testing.T) {
 		HighestTimeoutCert: newTC,
 	}
 
+	x.SetPropertiesFaker(syncInfoMsg.HighestQuorumCert, &types.TimeoutCert{
+		Round:      types.Round(898),
+		Signatures: []types.Signature{},
+	})
+
 	verified, err := x.VerifySyncInfoMessage(blockchain, syncInfoMsg)
-	assert.Nil(t, err)
 	assert.True(t, verified)
+	assert.Nil(t, err)
 }

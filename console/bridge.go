@@ -19,7 +19,6 @@ package console
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"reflect"
 	"strings"
@@ -56,7 +55,7 @@ func (b *bridge) Sleep(call jsre.Call) (goja.Value, error) {
 	}
 	sleepObj := call.Argument(0)
 	if goja.IsUndefined(sleepObj) || goja.IsNull(sleepObj) || !isNumber(sleepObj) {
-		return nil, fmt.Errorf("usage: sleep(<number of seconds>)")
+		return nil, errors.New("usage: sleep(<number of seconds>)")
 	}
 	sleep := sleepObj.ToFloat()
 	time.Sleep(time.Duration(sleep * float64(time.Second)))

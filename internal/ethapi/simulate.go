@@ -33,6 +33,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
+	"github.com/XinFinOrg/XDPoSChain/internal/ethapi/override"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 	"github.com/XinFinOrg/XDPoSChain/trie"
@@ -43,14 +44,22 @@ const (
 	// in a single request.
 	maxSimulateBlocks = 256
 
+	// maxSimulateCallsPerBlock is the maximum number of calls allowed in a
+	// single simulated block.
+	maxSimulateCallsPerBlock = 5000
+
+	// maxSimulateTotalCalls is the maximum total number of calls allowed
+	// across all simulated blocks in a single request.
+	maxSimulateTotalCalls = 10000
+
 	// timestampIncrement is the default increment between block timestamps.
 	timestampIncrement = 1
 )
 
 // simBlock is a batch of calls to be simulated sequentially.
 type simBlock struct {
-	BlockOverrides *BlockOverrides
-	StateOverrides *StateOverride
+	BlockOverrides *override.BlockOverrides
+	StateOverrides *override.StateOverride
 	Calls          []TransactionArgs
 }
 
@@ -59,6 +68,7 @@ type simCallResult struct {
 	ReturnValue hexutil.Bytes  `json:"returnData"`
 	Logs        []*types.Log   `json:"logs"`
 	GasUsed     hexutil.Uint64 `json:"gasUsed"`
+	MaxUsedGas  hexutil.Uint64 `json:"maxUsedGas"`
 	Status      hexutil.Uint64 `json:"status"`
 	Error       *callError     `json:"error,omitempty"`
 }
@@ -146,13 +156,13 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 	// Set header fields that depend only on parent block.
 	// Parent hash is needed for evm.GetHashFn to work.
 	header.ParentHash = parent.Hash()
-	if sim.chainConfig.IsLondon(header.Number) {
+	if sim.chainConfig.IsEIP1559(header.Number) {
 		// In non-validation mode base fee is set to 0 if it is not overridden.
 		// This is because it creates an edge case in EVM where gasPrice < baseFee.
 		// Base fee could have been overridden.
 		if header.BaseFee == nil {
 			if sim.validate {
-				header.BaseFee = eip1559.CalcBaseFee(sim.chainConfig, parent)
+				header.BaseFee = eip1559.CalcBaseFee(sim.chainConfig, header)
 			} else {
 				header.BaseFee = big.NewInt(0)
 			}
@@ -200,8 +210,7 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 		txes[i] = tx
 		tracer.reset(tx.Hash(), uint(i))
 		// EoA check is always skipped, even in validation mode.
-		msg := call.ToMessage(sim.b, header.BaseFee, !sim.validate, true)
-		evm.SetTxContext(core.NewEVMTxContext(msg))
+		msg := call.ToMessage(sim.b, header.BaseFee, !sim.validate)
 		result, err := applyMessageWithEVM(ctx, evm, msg, timeout, sim.gp)
 		if err != nil {
 			txErr := txValidationError(err)
@@ -217,7 +226,7 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 		gasUsed += result.UsedGas
 		receipts[i] = core.MakeReceipt(evm, result, sim.state, blockContext.BlockNumber, common.Hash{}, tx, gasUsed, root)
 		logs := tracer.Logs()
-		callRes := simCallResult{ReturnValue: result.Return(), Logs: logs, GasUsed: hexutil.Uint64(result.UsedGas)}
+		callRes := simCallResult{ReturnValue: result.Return(), Logs: logs, GasUsed: hexutil.Uint64(result.UsedGas), MaxUsedGas: hexutil.Uint64(result.MaxUsedGas)}
 		if result.Failed() {
 			callRes.Status = hexutil.Uint64(types.ReceiptStatusFailed)
 			if errors.Is(result.Err, vm.ErrExecutionReverted) {
@@ -289,7 +298,7 @@ func (sim *simulator) sanitizeChain(blocks []simBlock) ([]simBlock, error) {
 	)
 	for _, block := range blocks {
 		if block.BlockOverrides == nil {
-			block.BlockOverrides = new(BlockOverrides)
+			block.BlockOverrides = new(override.BlockOverrides)
 		}
 		if block.BlockOverrides.Number == nil {
 			n := new(big.Int).Add(prevNumber, big.NewInt(1))
@@ -309,7 +318,7 @@ func (sim *simulator) sanitizeChain(blocks []simBlock) ([]simBlock, error) {
 			for i := uint64(0); i < gap.Uint64(); i++ {
 				n := new(big.Int).Add(prevNumber, big.NewInt(int64(i+1)))
 				t := prevTimestamp + timestampIncrement
-				b := simBlock{BlockOverrides: &BlockOverrides{Number: (*hexutil.Big)(n), Time: (*hexutil.Uint64)(&t)}}
+				b := simBlock{BlockOverrides: &override.BlockOverrides{Number: (*hexutil.Big)(n), Time: (*hexutil.Uint64)(&t)}}
 				prevTimestamp = t
 				res = append(res, b)
 			}

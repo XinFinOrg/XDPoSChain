@@ -20,104 +20,157 @@ func GetLocMappingAtKey(key common.Hash, slot uint64) *big.Int {
 	return ret
 }
 
+// relayerRegistrationSMC returns the relayer registration contract address
+// configured on the StateDB's attached chain config.
+func relayerRegistrationSMC(statedb *state.StateDB) (common.Address, bool) {
+	addr, err := statedb.RelayerRegistrationSMC()
+	if err != nil {
+		return common.Address{}, false
+	}
+	return addr, true
+}
+
+func requireRelayerRegistrationSMC(statedb *state.StateDB) (common.Address, error) {
+	contract, err := statedb.RelayerRegistrationSMC()
+	if err != nil {
+		return common.Address{}, err
+	}
+	return contract, nil
+}
+
 func GetExRelayerFee(relayer common.Address, statedb *state.StateDB) *big.Int {
+	contract, ok := relayerRegistrationSMC(statedb)
+	if !ok {
+		return new(big.Int)
+	}
 	slot := RelayerMappingSlot["RELAYER_LIST"]
 	locBig := GetLocMappingAtKey(relayer.Hash(), slot)
 	locBig = new(big.Int).Add(locBig, RelayerStructMappingSlot["_fee"])
 	locHash := common.BigToHash(locBig)
-	return statedb.GetState(common.RelayerRegistrationSMC, locHash).Big()
+	return statedb.GetState(contract, locHash).Big()
 }
 
 func GetRelayerOwner(relayer common.Address, statedb *state.StateDB) common.Address {
+	contract, ok := relayerRegistrationSMC(statedb)
+	if !ok {
+		return common.Address{}
+	}
 	slot := RelayerMappingSlot["RELAYER_LIST"]
 	locBig := GetLocMappingAtKey(relayer.Hash(), slot)
 	log.Debug("GetRelayerOwner", "relayer", relayer.Hex(), "slot", slot, "locBig", locBig)
 	locBig = new(big.Int).Add(locBig, RelayerStructMappingSlot["_owner"])
 	locHash := common.BigToHash(locBig)
-	return common.BytesToAddress(statedb.GetState(common.RelayerRegistrationSMC, locHash).Bytes())
+	return common.BytesToAddress(statedb.GetState(contract, locHash).Bytes())
 }
 
 // return true if relayer request to resign and have not withdraw locked fund
 func IsResignedRelayer(relayer common.Address, statedb *state.StateDB) bool {
+	contract, ok := relayerRegistrationSMC(statedb)
+	if !ok {
+		return false
+	}
 	slot := RelayerMappingSlot["RESIGN_REQUESTS"]
 	locBig := GetLocMappingAtKey(relayer.Hash(), slot)
 	locHash := common.BigToHash(locBig)
-	return statedb.GetState(common.RelayerRegistrationSMC, locHash) != (common.Hash{})
+	return statedb.GetState(contract, locHash) != (common.Hash{})
 }
 
 func GetBaseTokenLength(relayer common.Address, statedb *state.StateDB) uint64 {
+	contract, ok := relayerRegistrationSMC(statedb)
+	if !ok {
+		return 0
+	}
 	slot := RelayerMappingSlot["RELAYER_LIST"]
 	locBig := GetLocMappingAtKey(relayer.Hash(), slot)
 	locBig = new(big.Int).Add(locBig, RelayerStructMappingSlot["_fromTokens"])
 	locHash := common.BigToHash(locBig)
-	return statedb.GetState(common.RelayerRegistrationSMC, locHash).Big().Uint64()
+	return statedb.GetState(contract, locHash).Big().Uint64()
 }
 
 func GetBaseTokenAtIndex(relayer common.Address, statedb *state.StateDB, index uint64) common.Address {
+	contract, ok := relayerRegistrationSMC(statedb)
+	if !ok {
+		return common.Address{}
+	}
 	slot := RelayerMappingSlot["RELAYER_LIST"]
 	locBig := GetLocMappingAtKey(relayer.Hash(), slot)
 	locBig = new(big.Int).Add(locBig, RelayerStructMappingSlot["_fromTokens"])
 	locHash := common.BigToHash(locBig)
 	loc := state.GetLocDynamicArrAtElement(locHash, index, 1)
-	return common.BytesToAddress(statedb.GetState(common.RelayerRegistrationSMC, loc).Bytes())
+	return common.BytesToAddress(statedb.GetState(contract, loc).Bytes())
 }
 
 func GetQuoteTokenLength(relayer common.Address, statedb *state.StateDB) uint64 {
+	contract, ok := relayerRegistrationSMC(statedb)
+	if !ok {
+		return 0
+	}
 	slot := RelayerMappingSlot["RELAYER_LIST"]
 	locBig := GetLocMappingAtKey(relayer.Hash(), slot)
 	locBig = new(big.Int).Add(locBig, RelayerStructMappingSlot["_toTokens"])
 	locHash := common.BigToHash(locBig)
-	return statedb.GetState(common.RelayerRegistrationSMC, locHash).Big().Uint64()
+	return statedb.GetState(contract, locHash).Big().Uint64()
 }
 
 func GetQuoteTokenAtIndex(relayer common.Address, statedb *state.StateDB, index uint64) common.Address {
+	contract, ok := relayerRegistrationSMC(statedb)
+	if !ok {
+		return common.Address{}
+	}
 	slot := RelayerMappingSlot["RELAYER_LIST"]
 	locBig := GetLocMappingAtKey(relayer.Hash(), slot)
 	locBig = new(big.Int).Add(locBig, RelayerStructMappingSlot["_toTokens"])
 	locHash := common.BigToHash(locBig)
 	loc := state.GetLocDynamicArrAtElement(locHash, index, 1)
-	return common.BytesToAddress(statedb.GetState(common.RelayerRegistrationSMC, loc).Bytes())
+	return common.BytesToAddress(statedb.GetState(contract, loc).Bytes())
 }
 
-func GetRelayerCount(statedb *state.StateDB) uint64 {
+// getRelayerCountAt returns the relayer count stored in contract.
+func getRelayerCountAt(statedb *state.StateDB, contract common.Address) uint64 {
 	slot := RelayerMappingSlot["RelayerCount"]
 	slotHash := common.BigToHash(new(big.Int).SetUint64(slot))
-	valueHash := statedb.GetState(common.RelayerRegistrationSMC, slotHash)
+	valueHash := statedb.GetState(contract, slotHash)
 	return new(big.Int).SetBytes(valueHash.Bytes()).Uint64()
 }
 
-func GetAllCoinbases(statedb *state.StateDB) []common.Address {
-	relayerCount := GetRelayerCount(statedb)
+// getAllCoinbasesAt returns all registered relayer coinbases from contract.
+func getAllCoinbasesAt(statedb *state.StateDB, contract common.Address) []common.Address {
+	relayerCount := getRelayerCountAt(statedb, contract)
 	slot := RelayerMappingSlot["RELAYER_COINBASES"]
 	coinbases := []common.Address{}
 	for i := uint64(0); i < relayerCount; i++ {
-		valueHash := statedb.GetState(common.RelayerRegistrationSMC, common.BytesToHash(state.GetLocMappingAtKey(common.BigToHash(big.NewInt(int64(i))), slot).Bytes()))
+		valueHash := statedb.GetState(contract, common.BytesToHash(state.GetLocMappingAtKey(common.BigToHash(big.NewInt(int64(i))), slot).Bytes()))
 		coinbases = append(coinbases, common.BytesToAddress(valueHash.Bytes()))
 	}
 	return coinbases
 }
+
 func GetAllTradingPairs(statedb *state.StateDB) (map[common.Hash]bool, error) {
-	coinbases := GetAllCoinbases(statedb)
+	contract, ok := relayerRegistrationSMC(statedb)
+	if !ok {
+		return map[common.Hash]bool{}, nil
+	}
+	coinbases := getAllCoinbasesAt(statedb, contract)
 	slot := RelayerMappingSlot["RELAYER_LIST"]
 	allPairs := map[common.Hash]bool{}
 	for _, coinbase := range coinbases {
 		locBig := GetLocMappingAtKey(coinbase.Hash(), slot)
 		fromTokenSlot := new(big.Int).Add(locBig, RelayerStructMappingSlot["_fromTokens"])
-		fromTokenLength := statedb.GetState(common.RelayerRegistrationSMC, common.BigToHash(fromTokenSlot)).Big().Uint64()
+		fromTokenLength := statedb.GetState(contract, common.BigToHash(fromTokenSlot)).Big().Uint64()
 		toTokenSlot := new(big.Int).Add(locBig, RelayerStructMappingSlot["_toTokens"])
-		toTokenLength := statedb.GetState(common.RelayerRegistrationSMC, common.BigToHash(toTokenSlot)).Big().Uint64()
+		toTokenLength := statedb.GetState(contract, common.BigToHash(toTokenSlot)).Big().Uint64()
 		if toTokenLength != fromTokenLength {
 			return map[common.Hash]bool{}, fmt.Errorf("invalid length from token & to token: from :%d , to :%d ", fromTokenLength, toTokenLength)
 		}
 		fromTokens := []common.Address{}
 		fromTokenSlotHash := common.BytesToHash(fromTokenSlot.Bytes())
 		for i := uint64(0); i < fromTokenLength; i++ {
-			fromToken := common.BytesToAddress(statedb.GetState(common.RelayerRegistrationSMC, state.GetLocDynamicArrAtElement(fromTokenSlotHash, i, uint64(1))).Bytes())
+			fromToken := common.BytesToAddress(statedb.GetState(contract, state.GetLocDynamicArrAtElement(fromTokenSlotHash, i, uint64(1))).Bytes())
 			fromTokens = append(fromTokens, fromToken)
 		}
 		toTokenSlotHash := common.BytesToHash(toTokenSlot.Bytes())
 		for i := uint64(0); i < toTokenLength; i++ {
-			toToken := common.BytesToAddress(statedb.GetState(common.RelayerRegistrationSMC, state.GetLocDynamicArrAtElement(toTokenSlotHash, i, uint64(1))).Bytes())
+			toToken := common.BytesToAddress(statedb.GetState(contract, state.GetLocDynamicArrAtElement(toTokenSlotHash, i, uint64(1))).Bytes())
 
 			log.Debug("GetAllTradingPairs all pair info", "from", fromTokens[i].Hex(), "toToken", toToken.Hex())
 			allPairs[GetTradingOrderBookHash(fromTokens[i], toToken)] = true
@@ -128,31 +181,39 @@ func GetAllTradingPairs(statedb *state.StateDB) (map[common.Hash]bool, error) {
 }
 
 func SubRelayerFee(relayer common.Address, fee *big.Int, statedb *state.StateDB) error {
+	contract, err := requireRelayerRegistrationSMC(statedb)
+	if err != nil {
+		return err
+	}
 	slot := RelayerMappingSlot["RELAYER_LIST"]
 	locBig := GetLocMappingAtKey(relayer.Hash(), slot)
 
 	locBigDeposit := new(big.Int).SetUint64(uint64(0)).Add(locBig, RelayerStructMappingSlot["_deposit"])
 	locHashDeposit := common.BigToHash(locBigDeposit)
-	balance := statedb.GetState(common.RelayerRegistrationSMC, locHashDeposit).Big()
+	balance := statedb.GetState(contract, locHashDeposit).Big()
 	log.Debug("ApplyXDCXMatchedTransaction settle balance: SubRelayerFee BEFORE", "relayer", relayer, "balance", balance)
 	if balance.Cmp(fee) < 0 {
 		return errors.Errorf("relayer %s isn't enough XDC fee", relayer)
 	} else {
 		balance = new(big.Int).Sub(balance, fee)
-		statedb.SetState(common.RelayerRegistrationSMC, locHashDeposit, common.BigToHash(balance))
-		statedb.SubBalance(common.RelayerRegistrationSMC, fee, tracing.BalanceChangeUnspecified)
+		statedb.SetState(contract, locHashDeposit, common.BigToHash(balance))
+		statedb.SubBalance(contract, fee, tracing.BalanceChangeUnspecified)
 		log.Debug("ApplyXDCXMatchedTransaction settle balance: SubRelayerFee AFTER", "relayer", relayer, "balance", balance)
 		return nil
 	}
 }
 
 func CheckRelayerFee(relayer common.Address, fee *big.Int, statedb *state.StateDB) error {
+	contract, err := requireRelayerRegistrationSMC(statedb)
+	if err != nil {
+		return err
+	}
 	slot := RelayerMappingSlot["RELAYER_LIST"]
 	locBig := GetLocMappingAtKey(relayer.Hash(), slot)
 
 	locBigDeposit := new(big.Int).SetUint64(uint64(0)).Add(locBig, RelayerStructMappingSlot["_deposit"])
 	locHashDeposit := common.BigToHash(locBigDeposit)
-	balance := statedb.GetState(common.RelayerRegistrationSMC, locHashDeposit).Big()
+	balance := statedb.GetState(contract, locHashDeposit).Big()
 	if new(big.Int).Sub(balance, fee).Cmp(new(big.Int).Mul(common.BasePrice, common.RelayerLockedFund)) < 0 {
 		return errors.Errorf("relayer %s isn't enough XDC fee : balance %d , fee : %d ", relayer.Hex(), balance.Uint64(), fee.Uint64())
 	}
@@ -290,13 +351,17 @@ func CheckAddTokenBalance(addr common.Address, value *big.Int, token common.Addr
 }
 
 func CheckSubRelayerFee(relayer common.Address, fee *big.Int, statedb *state.StateDB, mapBalances map[common.Address]*big.Int) (*big.Int, error) {
+	contract, err := requireRelayerRegistrationSMC(statedb)
+	if err != nil {
+		return nil, err
+	}
 	balance := mapBalances[relayer]
 	if balance == nil {
 		slot := RelayerMappingSlot["RELAYER_LIST"]
 		locBig := GetLocMappingAtKey(relayer.Hash(), slot)
 		locBigDeposit := new(big.Int).SetUint64(uint64(0)).Add(locBig, RelayerStructMappingSlot["_deposit"])
 		locHashDeposit := common.BigToHash(locBigDeposit)
-		balance = statedb.GetState(common.RelayerRegistrationSMC, locHashDeposit).Big()
+		balance = statedb.GetState(contract, locHashDeposit).Big()
 	}
 	log.Debug("CheckSubRelayerFee settle balance: SubRelayerFee ", "relayer", relayer, "balance", balance, "fee", fee)
 	if balance.Cmp(fee) < 0 {
@@ -339,11 +404,16 @@ func SetTokenBalance(addr common.Address, balance *big.Int, token common.Address
 	}
 }
 
-func SetSubRelayerFee(relayer common.Address, balance *big.Int, fee *big.Int, statedb *state.StateDB) {
+func SetSubRelayerFee(relayer common.Address, balance *big.Int, fee *big.Int, statedb *state.StateDB) error {
+	contract, err := requireRelayerRegistrationSMC(statedb)
+	if err != nil {
+		return err
+	}
 	slot := RelayerMappingSlot["RELAYER_LIST"]
 	locBig := GetLocMappingAtKey(relayer.Hash(), slot)
 	locBigDeposit := new(big.Int).SetUint64(uint64(0)).Add(locBig, RelayerStructMappingSlot["_deposit"])
 	locHashDeposit := common.BigToHash(locBigDeposit)
-	statedb.SetState(common.RelayerRegistrationSMC, locHashDeposit, common.BigToHash(balance))
-	statedb.SubBalance(common.RelayerRegistrationSMC, fee, tracing.BalanceChangeUnspecified)
+	statedb.SetState(contract, locHashDeposit, common.BigToHash(balance))
+	statedb.SubBalance(contract, fee, tracing.BalanceChangeUnspecified)
+	return nil
 }

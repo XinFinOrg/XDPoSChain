@@ -72,6 +72,7 @@ var (
 	PreimagePrefix = []byte("secure-key-")       // PreimagePrefix + hash -> preimage
 	configPrefix   = []byte("ethereum-config-")  // config prefix for the db
 	genesisPrefix  = []byte("ethereum-genesis-") // genesis state prefix for the db
+	overridePrefix = []byte("xdc-cfg-override-") // chain-config override metadata prefix
 
 	// Chain index prefixes (use `i` + single byte to avoid mixing data types).
 	BloomBitsIndexPrefix = []byte("iB") // BloomBitsIndexPrefix is the data table of a chain indexer to track its progress
@@ -200,6 +201,11 @@ func configKey(hash common.Hash) []byte {
 // genesisStateSpecKey = genesisPrefix + hash
 func genesisStateSpecKey(hash common.Hash) []byte {
 	return append(genesisPrefix, hash.Bytes()...)
+}
+
+// configOverrideKey = overridePrefix + hash
+func configOverrideKey(hash common.Hash) []byte {
+	return append(overridePrefix, hash.Bytes()...)
 }
 
 // accountTrieNodeKey = trieNodeAccountPrefix + nodePath.

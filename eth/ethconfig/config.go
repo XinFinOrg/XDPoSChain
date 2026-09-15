@@ -20,6 +20,7 @@ package ethconfig
 import (
 	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool/legacypool"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
@@ -39,22 +40,23 @@ var FullNodeGPO = gasprice.Config{
 
 // Defaults contains default settings for use on the Ethereum main net.
 var Defaults = Config{
-	SyncMode:           downloader.FullSync,
-	NetworkId:          0, // enable auto configuration of networkID == chainID
-	LightPeers:         100,
-	DatabaseCache:      768,
-	TrieCleanCache:     256,
-	TrieDirtyCache:     256,
-	TrieTimeout:        5 * time.Minute,
-	FilterLogCacheSize: 32,
-	Miner:              miner.DefaultConfig,
-	LogQueryLimit:      1000,
-	TxPool:             legacypool.DefaultConfig,
-	RPCGasCap:          50000000,
-	RPCEVMTimeout:      5 * time.Second,
-	GPO:                FullNodeGPO,
-	RPCTxFeeCap:        1, // 1 ether
-	RangeLimit:         5000,
+	SyncMode:                  downloader.FullSync,
+	NetworkId:                 0, // enable auto configuration of networkID == chainID
+	LightPeers:                100,
+	DatabaseCache:             768,
+	TrieCleanCache:            256,
+	TrieDirtyCache:            256,
+	TrieTimeout:               5 * time.Minute,
+	FilterLogCacheSize:        32,
+	Miner:                     miner.DefaultConfig,
+	LogQueryLimit:             1000,
+	TxPool:                    legacypool.DefaultConfig,
+	RPCGasCap:                 50000000,
+	RPCEVMTimeout:             5 * time.Second,
+	GPO:                       FullNodeGPO,
+	RPCTxFeeCap:               1, // 1 ether
+	RangeLimit:                5000,
+	ChainConfigMismatchPolicy: core.DefaultChainConfigMismatchPolicy.String(),
 }
 
 //go:generate go run github.com/fjl/gencodec -type Config -formats toml -out gen_config.go
@@ -63,12 +65,19 @@ var Defaults = Config{
 type Config struct {
 	// The genesis block, which is inserted if the database is empty.
 	// If nil, the Ethereum main net block is used.
-	Genesis *core.Genesis `toml:",omitempty"`
+	Genesis                    *core.Genesis `toml:",omitempty"`
+	AllowBuiltInCustomRecovery bool          `toml:",omitempty"`
+	ChainConfigMismatchPolicy  string        `toml:",omitempty"`
 
 	// Network ID separates blockchains on the peer-to-peer networking level. When left
 	// zero, the chain ID is used as network ID.
 	NetworkId uint64
 	SyncMode  downloader.SyncMode
+
+	// Fast sync pivot configuration
+	FastSyncPivotNumber uint64      // Pivot block number for fast sync (0 = use default calculation)
+	FastSyncPivotHash   common.Hash // Pivot block hash for fast sync verification (zero = skip verification)
+	FastSyncPivotRoot   common.Hash // State root of pivot block for state sync (zero = use latest.Root)
 
 	NoPruning bool // Whether to disable pruning and flush everything to disk
 	Prefetch  bool // Whether to enable prefetching and only load state on demand

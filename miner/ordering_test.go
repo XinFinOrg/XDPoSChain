@@ -196,8 +196,11 @@ func TestNewTransactionsByPriceAndNonce_SpecialSeparation(t *testing.T) {
 		tx, _ := types.SignTx(types.NewTransaction(nonce, common.HexToAddress("0x1234567890123456789012345678901234567890"), big.NewInt(1), 21000, big.NewInt(1), nil), signer, key)
 		return &txpool.LazyTransaction{Tx: tx, Hash: tx.Hash(), Time: tx.Time(), GasFeeCap: uint256.MustFromBig(tx.GasFeeCap()), GasTipCap: uint256.MustFromBig(tx.GasTipCap())}
 	}
-	genSpecialTx := func(nonce uint64, key *ecdsa.PrivateKey) *txpool.LazyTransaction {
-		tx, _ := types.SignTx(types.NewTransaction(nonce, common.BlockSignersBinary, big.NewInt(1), 21000, big.NewInt(1), nil), signer, key)
+	// Special txs are classified by recipient (IsSpecialTransaction), which covers
+	// both the block-signer and the randomize contract; parameterize over the
+	// target so both are exercised.
+	genSpecialTx := func(nonce uint64, to common.Address, key *ecdsa.PrivateKey) *txpool.LazyTransaction {
+		tx, _ := types.SignTx(types.NewTransaction(nonce, to, big.NewInt(1), 21000, big.NewInt(1), nil), signer, key)
 		return &txpool.LazyTransaction{Tx: tx, Hash: tx.Hash(), Time: tx.Time(), GasFeeCap: uint256.MustFromBig(tx.GasFeeCap()), GasTipCap: uint256.MustFromBig(tx.GasTipCap())}
 	}
 
@@ -229,7 +232,13 @@ func TestNewTransactionsByPriceAndNonce_SpecialSeparation(t *testing.T) {
 				txs = append(txs, genNormalTx(uint64(i), key))
 			}
 			for i := 0; i < tc.specialCount; i++ {
-				txs = append(txs, genSpecialTx(uint64(tc.normalCount+i), key))
+				// Alternate between the two special-contract recipients so both
+				// the block-signer and randomize routing paths are covered.
+				to := common.BlockSignersBinary
+				if i%2 == 1 {
+					to = common.RandomizeSMCBinary
+				}
+				txs = append(txs, genSpecialTx(uint64(tc.normalCount+i), to, key))
 			}
 			group := map[common.Address][]*txpool.LazyTransaction{}
 			if len(txs) > 0 {
@@ -242,7 +251,7 @@ func TestNewTransactionsByPriceAndNonce_SpecialSeparation(t *testing.T) {
 				t.Errorf("expected %d special txs, got %d", tc.expectSpecial, len(specialTxs))
 			}
 			for _, tx := range specialTxs {
-				if tx.To() == nil || *tx.To() != common.BlockSignersBinary {
+				if !tx.IsSpecialTransaction() {
 					t.Errorf("specialTxs contains non-special tx: %v", tx)
 				}
 			}
@@ -251,8 +260,8 @@ func TestNewTransactionsByPriceAndNonce_SpecialSeparation(t *testing.T) {
 			normalCount := 0
 			for tx := txset.Peek(); tx != nil; tx = txset.Peek() {
 				resolved := tx.Resolve()
-				if resolved == nil || resolved.To() == nil || *resolved.To() == common.BlockSignersBinary {
-					t.Errorf("txset contains special or nil-to tx: %v", resolved)
+				if resolved == nil || resolved.IsSpecialTransaction() {
+					t.Errorf("txset contains special tx: %v", resolved)
 				}
 				normalCount++
 				txset.Shift()

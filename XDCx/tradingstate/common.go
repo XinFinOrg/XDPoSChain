@@ -195,8 +195,7 @@ func ToBigInt(s string) *big.Int {
 }
 
 func CloneBigInt(bigInt *big.Int) *big.Int {
-	res := new(big.Int).SetBytes(bigInt.Bytes())
-	return res
+	return common.CloneBigInt(bigInt)
 }
 
 func Exp(x, y *big.Int) *big.Int {

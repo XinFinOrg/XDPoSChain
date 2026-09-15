@@ -62,6 +62,10 @@ const (
 	chainSideChanSize = 10
 
 	txMatchGasLimit = 40000000
+
+	// Block size is capped by the protocol at params.MaxBlockSize. During
+	// production keep a safety margin for auxiliary fields added to the block.
+	maxBlockSizeBufferZone = 1_000_000
 )
 
 var (
@@ -90,6 +94,7 @@ type Work struct {
 	signer types.Signer
 	state  *state.StateDB // apply state changes here
 	tcount int            // tx count in cycle
+	size   uint64         // size of the block we are building
 	evm    *vm.EVM
 
 	parentState  *state.StateDB
@@ -106,6 +111,15 @@ type Work struct {
 	uncles   map[common.Hash]*types.Header
 
 	createdAt time.Time
+}
+
+// txFitsSize reports whether the transaction fits into the block size limit.
+func (w *Work) txFitsSize(tx *types.Transaction) bool {
+	// this Osaka-specific cap is not enforced pre-fork
+	if w.config.IsOsaka(w.header.Number) {
+		return w.size+tx.Size() < params.MaxBlockSize-maxBlockSizeBufferZone
+	}
+	return true
 }
 
 type Result struct {
@@ -130,7 +144,6 @@ type worker struct {
 	chainHeadSub event.Subscription
 	chainSideCh  chan core.ChainSideEvent
 	chainSideSub event.Subscription
-	resetCh      chan time.Duration // Channel to request timer resets
 
 	wg sync.WaitGroup
 
@@ -145,7 +158,7 @@ type worker struct {
 	mu       sync.Mutex
 	coinbase common.Address
 	extra    []byte
-	tip      *uint256.Int // Minimum tip needed for non-local transaction to include them
+	tip      *uint256.Int // Configured minimum gas-price threshold for including transactions in mined blocks.
 
 	snapshotMu       sync.RWMutex // The lock used to protect the block snapshot and state snapshot
 	snapshotBlock    *types.Block
@@ -180,7 +193,6 @@ func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus
 		txsCh:          make(chan core.NewTxsEvent, txChanSize),
 		chainHeadCh:    make(chan core.ChainHeadEvent, chainHeadChanSize),
 		chainSideCh:    make(chan core.ChainSideEvent, chainSideChanSize),
-		resetCh:        make(chan time.Duration, 1),
 		chainDb:        eth.ChainDb(),
 		recv:           make(chan *Result, resultQueueSize),
 		chain:          eth.BlockChain(),
@@ -255,6 +267,47 @@ func (w *worker) pendingBlock() *types.Block {
 	w.snapshotMu.RLock()
 	defer w.snapshotMu.RUnlock()
 	return w.snapshotBlock
+}
+
+// pendingMinTipForHeader converts the configured minimum gas price into the
+// minimum tip required by txpool pending filtering for the given header.
+//
+// With base fee enabled, txpool filters by effective tip, not effective gas
+// price. To preserve the configured minimum gas price semantics, we derive:
+//
+//	minTip = max(minGasPrice - baseFee, 0)
+func pendingMinTipForHeader(minGasPrice *uint256.Int, baseFee *uint256.Int) *uint256.Int {
+	minTip := new(uint256.Int)
+	if minGasPrice != nil {
+		minTip.Set(minGasPrice)
+	}
+	if baseFee == nil {
+		return minTip
+	}
+	if minTip.Cmp(baseFee) <= 0 {
+		minTip.SetUint64(0)
+		return minTip
+	}
+	return minTip.Sub(minTip, baseFee)
+}
+
+// pendingFilterForHeader builds a txpool pending filter using the miner min
+// gas price semantics for the provided header.
+func pendingFilterForHeader(minGasPrice *uint256.Int, header *types.Header, chainConfig *params.ChainConfig) txpool.PendingFilter {
+	var baseFee *uint256.Int
+	if header.BaseFee != nil {
+		baseFee = uint256.MustFromBig(header.BaseFee)
+	}
+	filter := txpool.PendingFilter{
+		MinTip: pendingMinTipForHeader(minGasPrice, baseFee),
+	}
+	if baseFee != nil {
+		filter.BaseFee = baseFee
+	}
+	if chainConfig.IsOsaka(header.Number) {
+		filter.GasLimitCap = params.MaxTxGas
+	}
+	return filter
 }
 
 // pendingBlockAndReceipts returns pending block and corresponding receipts.
@@ -332,58 +385,49 @@ func (w *worker) update() {
 
 	timeout := time.NewTimer(time.Duration(minePeriod) * time.Second)
 	defer timeout.Stop()
-	c := make(chan struct{}, 1)
-	defer close(c)
-	finish := make(chan struct{})
-	defer close(finish)
 
-	go func() {
-		for {
-			// A real event arrived, process interesting content
+	// resetTimer rearms the mining timer, which is owned by the update loop and
+	// therefore never accessed from another goroutine. It must only ever be
+	// called from the loop below. Driving the timer from a dedicated goroutine
+	// would require a two-way channel handshake, which deadlocks as soon as
+	// both directions are full: the loop blocks handing over the new duration
+	// while the helper blocks handing over the expiry notification. The
+	// stop-drain-reset sequence follows the standard Timer.Reset pattern from
+	// the time package.
+	resetTimer := func(d time.Duration) {
+		if !timeout.Stop() {
+			// Drain the timer channel if it had already expired.
 			select {
-			case d := <-w.resetCh:
-				// Reset the timer to the new duration.
-				if !timeout.Stop() {
-					// Drain the timer channel if it had already expired.
-					select {
-					case <-timeout.C:
-					default:
-					}
-				}
-				timeout.Reset(d)
 			case <-timeout.C:
-				c <- struct{}{}
-			case <-finish:
-				return
+			default:
 			}
 		}
-	}()
+		timeout.Reset(d)
+	}
+
 	for {
 		// A real event arrived, process interesting content
 		select {
 		case v := <-minePeriodCh:
 			log.Info("[worker] update wait period", "period", v)
 			minePeriod = v
-			w.resetCh <- time.Duration(minePeriod) * time.Second
+			resetTimer(time.Duration(minePeriod) * time.Second)
 
-		case <-c:
+		case <-timeout.C:
 			if atomic.LoadInt32(&w.mining) == 1 {
 				w.commitNewWork()
 			}
-			resetTime := getResetTime(w.chain, minePeriod)
-			w.resetCh <- resetTime
+			resetTimer(getResetTime(w.chain, minePeriod))
 
 		// Handle ChainHeadEvent
 		case <-w.chainHeadCh:
 			w.commitNewWork()
-			resetTime := getResetTime(w.chain, minePeriod)
-			w.resetCh <- resetTime
+			resetTimer(getResetTime(w.chain, minePeriod))
 
 		// Handle new round
 		case <-newRoundCh:
 			w.commitNewWork()
-			resetTime := getResetTime(w.chain, minePeriod)
-			w.resetCh <- resetTime
+			resetTimer(getResetTime(w.chain, minePeriod))
 
 		// Handle ChainSideEvent
 		case <-w.chainSideCh:
@@ -671,6 +715,7 @@ func (w *worker) makeCurrent(parent *types.Block, header *types.Header) error {
 		config:       w.chainConfig,
 		signer:       types.MakeSigner(w.chainConfig, header.Number),
 		state:        state,
+		size:         uint64(header.Size()),
 		parentState:  state.Copy(),
 		tradingState: XDCxState,
 		lendingState: lendingState,
@@ -793,7 +838,7 @@ func (w *worker) commitNewWork() {
 		Extra:      w.extra,
 		Time:       uint64(tstamp),
 	}
-	if w.chainConfig.IsDynamicGasLimitBlock(header.Number) {
+	if w.chainConfig.IsDynamicGasLimit(header.Number) {
 		header.GasLimit = core.CalcGasLimit(parent.GasLimit(), w.config.GasCeil)
 	} else {
 		header.GasLimit = w.config.GasCeil
@@ -838,7 +883,7 @@ func (w *worker) commitNewWork() {
 	if w.chainConfig.DAOForkSupport && w.chainConfig.DAOForkBlock != nil && w.chainConfig.DAOForkBlock.Cmp(header.Number) == 0 {
 		misc.ApplyDAOHardFork(work.state)
 	}
-	if common.TIPSigning.Cmp(header.Number) == 0 {
+	if w.chainConfig.TIPSigningBlock != nil && w.chainConfig.TIPSigningBlock.Cmp(header.Number) == 0 {
 		work.state.DeleteAddress(common.BlockSignersBinary)
 	}
 	if w.chainConfig.IsPrague(header.Number) {
@@ -862,12 +907,10 @@ func (w *worker) commitNewWork() {
 		}
 		if !isEpochSwitchBlock {
 			// Retrieve the pending transactions pre-filtered by the 1559 dynamic fees
-			filter := txpool.PendingFilter{
-				MinTip: w.tip,
-			}
-			if header.BaseFee != nil {
-				filter.BaseFee = uint256.MustFromBig(header.BaseFee)
-			}
+			// w.tip is the configured minimum gas-price threshold (historical name),
+			// not an EIP-1559 priority-fee tip.
+			minGasPrice := w.tip
+			filter := pendingFilterForHeader(minGasPrice, header, w.chainConfig)
 			pending := w.eth.TxPool().Pending(filter)
 			txs, specialTxs = newTransactionsByPriceAndNonce(w.current.signer, pending, feeCapacity, header.BaseFee)
 		}
@@ -1041,8 +1084,12 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 	var coalescedLogs []*types.Log
 	// first priority for special Txs
 	for _, tx := range specialTxs {
+		if !w.txFitsSize(tx) {
+			log.Debug("Skipping oversized transaction", "hash", tx.Hash(), "size", tx.Size())
+			continue
+		}
 		to := tx.To()
-		if w.header.Number.Uint64() >= common.DenylistHFNumber {
+		if w.config.IsDenylist(w.header.Number) {
 			from := tx.From()
 			// check if sender is in denylist
 			if common.IsInDenylist(from) {
@@ -1057,7 +1104,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 		}
 		data := tx.Data()
 		// validate minFee slot for XDCZ
-		if tx.IsXDCZApplyTransaction() {
+		if tx.IsXDCZApplyTransaction(w.config) {
 			copyState, _ := bc.State()
 			if err := core.ValidateXDCZApplyTransaction(bc, nil, copyState, common.BytesToAddress(data[4:])); err != nil {
 				log.Debug("XDCZApply: invalid token", "token", common.BytesToAddress(data[4:]).Hex())
@@ -1065,7 +1112,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			}
 		}
 		// validate balance slot, token decimal for XDCX
-		if tx.IsXDCXApplyTransaction() {
+		if tx.IsXDCXApplyTransaction(w.config) {
 			copyState, _ := bc.State()
 			if err := core.ValidateXDCXApplyTransaction(bc, nil, copyState, common.BytesToAddress(data[4:])); err != nil {
 				log.Debug("XDCXApply: invalid token", "token", common.BytesToAddress(data[4:]).Hex())
@@ -1095,7 +1142,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 				continue
 			}
 			blkNumber := new(big.Int).SetBytes(data[4:36]).Uint64()
-			if blkNumber >= w.header.Number.Uint64() || blkNumber+w.config.XDPoS.Epoch*2 <= w.header.Number.Uint64() {
+			if blkNumber >= w.header.Number.Uint64() {
 				log.Trace("Data special transaction invalid number", "hash", hash, "blkNumber", blkNumber, "miner", w.header.Number)
 				continue
 			}
@@ -1128,7 +1175,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			log.Debug("Add Special Transaction failed, account skipped", "hash", hash, "sender", from, "nonce", tx.Nonce(), "to", to, "err", err)
 		}
 		if tokenFeeUsed {
-			fee := common.GetGasFee(w.header.Number.Uint64(), gas)
+			fee := params.GetGasFee(w.header.Number.Uint64(), gas, w.config)
 			balanceFee[*to] = new(big.Int).Sub(balanceFee[*to], fee)
 			balanceUpdated[*to] = balanceFee[*to]
 			totalFeeUsed = totalFeeUsed.Add(totalFeeUsed, fee)
@@ -1154,8 +1201,14 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			break
 		}
 		tx := resolvedTx
+		// if inclusion of the transaction would put the block size over the
+		// maximum we allow, don't add any more txs to the payload.
+		if !w.txFitsSize(tx) {
+			log.Debug("Skipping oversized transaction", "hash", tx.Hash(), "size", tx.Size())
+			break
+		}
 		to := tx.To()
-		if w.header.Number.Uint64() >= common.DenylistHFNumber {
+		if w.config.IsDenylist(w.header.Number) {
 			from := tx.From()
 			// check if sender is in denylist
 			if common.IsInDenylist(from) {
@@ -1172,7 +1225,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 		}
 		data := tx.Data()
 		// validate minFee slot for XDCZ
-		if tx.IsXDCZApplyTransaction() {
+		if tx.IsXDCZApplyTransaction(w.config) {
 			copyState, _ := bc.State()
 			if err := core.ValidateXDCZApplyTransaction(bc, nil, copyState, common.BytesToAddress(data[4:])); err != nil {
 				log.Debug("XDCZApply: invalid token", "token", common.BytesToAddress(data[4:]).Hex())
@@ -1181,7 +1234,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			}
 		}
 		// validate balance slot, token decimal for XDCX
-		if tx.IsXDCXApplyTransaction() {
+		if tx.IsXDCXApplyTransaction(w.config) {
 			copyState, _ := bc.State()
 			if err := core.ValidateXDCXApplyTransaction(bc, nil, copyState, common.BytesToAddress(data[4:])); err != nil {
 				log.Debug("XDCXApply: invalid token", "token", common.BytesToAddress(data[4:]).Hex())
@@ -1253,7 +1306,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			txs.Shift()
 		}
 		if tokenFeeUsed {
-			fee := common.GetGasFee(w.header.Number.Uint64(), gas)
+			fee := params.GetGasFee(w.header.Number.Uint64(), gas, w.config)
 			balanceFee[*to] = new(big.Int).Sub(balanceFee[*to], fee)
 			balanceUpdated[*to] = balanceFee[*to]
 			totalFeeUsed = totalFeeUsed.Add(totalFeeUsed, fee)
@@ -1291,6 +1344,7 @@ func (w *Work) commitTransaction(balanceFee map[common.Address]*big.Int, tx *typ
 	}
 	w.txs = append(w.txs, tx)
 	w.receipts = append(w.receipts, receipt)
+	w.size += tx.Size()
 
 	return receipt.Logs, tokenFeeUsed, gas, nil
 }

@@ -49,6 +49,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/eth/util"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
+	internalethapi "github.com/XinFinOrg/XDPoSChain/internal/ethapi"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/miner"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -216,6 +217,10 @@ func (b *EthAPIBackend) StateAndHeaderByNumber(ctx context.Context, number rpc.B
 	if err != nil {
 		return nil, nil, err
 	}
+	stateDb, err = internalethapi.AttachStateChainConfig(stateDb, b.ChainConfig())
+	if err != nil {
+		return nil, nil, err
+	}
 	return stateDb, header, err
 }
 
@@ -235,6 +240,10 @@ func (b *EthAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, blockN
 			return nil, nil, errors.New("hash is not currently canonical")
 		}
 		stateDb, err := b.eth.BlockChain().StateAt(header.Root)
+		if err != nil {
+			return nil, nil, err
+		}
+		stateDb, err = internalethapi.AttachStateChainConfig(stateDb, b.ChainConfig())
 		if err != nil {
 			return nil, nil, err
 		}
@@ -309,16 +318,17 @@ func (b *EthAPIBackend) SendTx(ctx context.Context, signedTx *types.Transaction)
 	if b.eth.localTxTracker == nil {
 		return err
 	}
-	// If the transaction fails with an error indicating it is invalid, or if there is
-	// very little chance it will be accepted later (e.g., the gas price is below the
-	// configured minimum, or the sender has insufficient funds to cover the cost),
-	// propagate the error to the user.
+	// Track the transaction unless it was permanently rejected. A transaction
+	// is tracked when it is accepted, temporarily rejected, or already known
+	// to the pool. An already-known transaction is in the desired state (it
+	// lost a race to a concurrent submission), so we still track it, but the
+	// error is surfaced to the caller to match upstream go-ethereum semantics.
 	if err != nil && !locals.IsTemporaryReject(err) {
+		if errors.Is(err, txpool.ErrAlreadyKnown) {
+			b.eth.localTxTracker.Track(signedTx)
+		}
 		return err
 	}
-	// No error will be returned to user if the transaction fails with a temporary
-	// error and might be accepted later (e.g., the transaction pool is full).
-	// Locally submitted transactions will be resubmitted later via the local tracker.
 	b.eth.localTxTracker.Track(signedTx)
 	return nil
 }
@@ -557,7 +567,7 @@ func (b *EthAPIBackend) GetVotersRewards(masternodeAddr common.Address) map[comm
 	var voterResults map[common.Address]*big.Int
 	for signer, calcReward := range rewardSigners {
 		if signer == masternodeAddr {
-			rewards, err := contracts.CalculateRewardForHolders(foundationWalletAddr, state, masternodeAddr, calcReward, number)
+			rewards, err := contracts.CalculateRewardForHolders(chain.Config(), foundationWalletAddr, state, masternodeAddr, calcReward, header.Number)
 			if err != nil {
 				log.Error("Fail to calculate reward for holders.", "error", err)
 				return nil

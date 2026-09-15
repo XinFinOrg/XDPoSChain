@@ -26,6 +26,12 @@ import (
 // IsTemporaryReject determines whether the given error indicates a temporary
 // reason to reject a transaction from being included in the txpool. The result
 // may change if the txpool's state changes later.
+//
+// ErrUnderMinGasPrice must stay out of this set: the floor only rises as the
+// chain advances, so retrying the same transaction cannot help while it stays
+// where it is. It must not be used to drop a tracked transaction either -- a
+// rollback or a reorg past the fork lowers the floor again, and the local
+// tracker is the only thing that can bring those transactions back.
 func IsTemporaryReject(err error) bool {
 	switch {
 	case errors.Is(err, legacypool.ErrOutOfOrderTxFromDelegated):

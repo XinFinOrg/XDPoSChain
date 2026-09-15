@@ -28,7 +28,7 @@ import (
 // Config are the configuration options for the Interpreter
 type Config struct {
 	Tracer                  *tracing.Hooks
-	NoBaseFee               bool  // Forces the EIP-1559 baseFee to 0 (needed for 0 price calls)
+	NoBaseFee               bool  // Skips the base fee check and fee payment for zero-priced calls
 	EnablePreimageRecording bool  // Enables recording of SHA3/keccak preimages
 	ExtraEips               []int // Additional EIPS that are to be enabled
 }
@@ -113,10 +113,11 @@ func (evm *EVM) Run(contract *Contract, input []byte, readOnly bool) (ret []byte
 	}
 
 	var (
-		op          OpCode        // current opcode
-		mem         = NewMemory() // bound memory
-		stack       = newstack()  // local stack
-		callContext = &ScopeContext{
+		op          OpCode     // current opcode
+		jumpTable   *JumpTable = evm.table
+		mem                    = NewMemory() // bound memory
+		stack                  = newstack()  // local stack
+		callContext            = &ScopeContext{
 			Memory:   mem,
 			Stack:    stack,
 			Contract: contract,
@@ -159,6 +160,7 @@ func (evm *EVM) Run(contract *Contract, input []byte, readOnly bool) (ret []byte
 	// explicit STOP, RETURN or SELFDESTRUCT is executed, an error occurred during
 	// the execution of one of the operations or until the done flag is set by the
 	// parent context.
+	_ = jumpTable[0] // nil-check the jumpTable out of the loop
 	for {
 		if debug {
 			// Capture pre-execution values for tracing.
@@ -168,7 +170,7 @@ func (evm *EVM) Run(contract *Contract, input []byte, readOnly bool) (ret []byte
 		// Get the operation from the jump table and validate the stack to ensure there are
 		// enough stack items available to perform the operation.
 		op = contract.GetOp(pc)
-		operation := evm.table[op]
+		operation := jumpTable[op]
 		cost = operation.constantGas // For tracing
 		// Validate stack
 		if sLen := stack.len(); sLen < operation.minStack {
@@ -183,9 +185,9 @@ func (evm *EVM) Run(contract *Contract, input []byte, readOnly bool) (ret []byte
 			contract.Gas -= cost
 		}
 
+		// All ops with a dynamic memory usage also has a dynamic gas cost.
+		var memorySize uint64
 		if operation.dynamicGas != nil {
-			// All ops with a dynamic memory usage also has a dynamic gas cost.
-			var memorySize uint64
 			// calculate the new memory size and expand the memory to fit
 			// the operation
 			// Memory check needs to be done prior to evaluating the dynamic gas portion,
@@ -215,21 +217,10 @@ func (evm *EVM) Run(contract *Contract, input []byte, readOnly bool) (ret []byte
 			} else {
 				contract.Gas -= dynamicCost
 			}
+		}
 
-			// Do tracing before memory expansion
-			if debug {
-				if evm.Config.Tracer.OnGasChange != nil {
-					evm.Config.Tracer.OnGasChange(gasCopy, gasCopy-cost, tracing.GasChangeCallOpCode)
-				}
-				if evm.Config.Tracer.OnOpcode != nil {
-					evm.Config.Tracer.OnOpcode(pc, byte(op), gasCopy, cost, callContext, evm.returnData, evm.depth, VMErrorFromErr(err))
-					logged = true
-				}
-			}
-			if memorySize > 0 {
-				mem.Resize(memorySize)
-			}
-		} else if debug {
+		// Do tracing before memory expansion
+		if debug {
 			if evm.Config.Tracer.OnGasChange != nil {
 				evm.Config.Tracer.OnGasChange(gasCopy, gasCopy-cost, tracing.GasChangeCallOpCode)
 			}
@@ -237,6 +228,9 @@ func (evm *EVM) Run(contract *Contract, input []byte, readOnly bool) (ret []byte
 				evm.Config.Tracer.OnOpcode(pc, byte(op), gasCopy, cost, callContext, evm.returnData, evm.depth, VMErrorFromErr(err))
 				logged = true
 			}
+		}
+		if memorySize > 0 {
+			mem.Resize(memorySize)
 		}
 
 		// execute the operation

@@ -17,6 +17,7 @@
 package core
 
 import (
+	"math/big"
 	"testing"
 	"time"
 
@@ -25,23 +26,22 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/XinFinOrg/XDPoSChain/trie"
 )
 
 // Tests that simple header verification works, for both good and bad blocks.
 func TestHeaderVerification(t *testing.T) {
 	// Create a simple chain to verify
 	var (
-		testdb    = rawdb.NewMemoryDatabase()
-		gspec     = &Genesis{Config: params.TestChainConfig}
-		genesis   = gspec.MustCommit(testdb)
-		blocks, _ = GenerateChain(gspec.Config, genesis, ethash.NewFaker(), testdb, 8, nil)
+		gspec        = &Genesis{Config: params.TestChainConfig}
+		_, blocks, _ = GenerateChainWithGenesis(gspec, ethash.NewFaker(), 8, nil)
 	)
 	headers := make([]*types.Header, len(blocks))
 	for i, block := range blocks {
 		headers[i] = block.Header()
 	}
 	// Run the header checker for blocks one-by-one, checking for both valid and invalid nonces
-	chain, err := NewBlockChain(testdb, nil, gspec, ethash.NewFaker(), vm.Config{})
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, ethash.NewFaker(), vm.Config{})
 	defer chain.Stop()
 	if err != nil {
 		t.Fatal(err)
@@ -74,5 +74,48 @@ func TestHeaderVerification(t *testing.T) {
 			}
 		}
 		chain.InsertChain(blocks[i : i+1])
+	}
+}
+
+func TestValidateBodyBlockOversizedOsakaByBlockNumber(t *testing.T) {
+	testdb := rawdb.NewMemoryDatabase()
+	cfg := *params.TestChainConfig
+	cfg.OsakaBlock = big.NewInt(2)
+	gspec := &Genesis{Config: &cfg}
+	genesis := gspec.MustCommit(testdb)
+
+	chain, err := NewBlockChain(testdb, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer chain.Stop()
+
+	validator := NewBlockValidator(&cfg, chain, ethash.NewFaker())
+	oversizedData := make([]byte, params.MaxBlockSize+1024)
+	tx := types.NewTx(&types.LegacyTx{
+		Nonce:    0,
+		Gas:      params.TxGas,
+		GasPrice: big.NewInt(1),
+		Data:     oversizedData,
+	})
+
+	newOversizedBlock := func(number uint64, ts uint64) *types.Block {
+		header := &types.Header{
+			ParentHash: genesis.Hash(),
+			Number:     new(big.Int).SetUint64(number),
+			Time:       ts,
+			GasLimit:   30_000_000,
+		}
+		return types.NewBlock(header, &types.Body{Transactions: []*types.Transaction{tx}}, nil, trie.NewStackTrie(nil))
+	}
+
+	preOsaka := newOversizedBlock(1, ^uint64(0))
+	if err := validator.ValidateBody(preOsaka); err == ErrBlockOversized {
+		t.Fatalf("pre-Osaka block should not trigger ErrBlockOversized")
+	}
+
+	postOsaka := newOversizedBlock(2, 0)
+	if err := validator.ValidateBody(postOsaka); err != ErrBlockOversized {
+		t.Fatalf("post-Osaka oversized block mismatch: have %v, want %v", err, ErrBlockOversized)
 	}
 }

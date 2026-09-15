@@ -146,6 +146,16 @@ func (x *XDPoS_v1) verifyHeaderWithCache(chain consensus.ChainReader, header *ty
 	return err
 }
 
+// shouldDisableFullVerify reports whether this engine should skip expensive
+// full verification based on the active chain config instead of legacy global
+// network flags.
+func (x *XDPoS_v1) shouldDisableFullVerify() bool {
+	if x == nil || x.chainConfig == nil || x.chainConfig.ChainID == nil {
+		return false
+	}
+	return x.chainConfig.ChainID.Cmp(params.TestnetChainConfig.ChainID) == 0
+}
+
 // verifyHeader checks whether a header conforms to the consensus rules.The
 // caller may optionally pass in a batch of parents (ascending order) to avoid
 // looking those up from the database. This is useful for concurrently verifying
@@ -155,7 +165,7 @@ func (x *XDPoS_v1) verifyHeader(chain consensus.ChainReader, header *types.Heade
 	if x.config.SkipV1Validation {
 		return nil
 	}
-	if common.IsTestnet {
+	if x.shouldDisableFullVerify() {
 		fullVerify = false
 	}
 	if header.Number == nil {
@@ -243,32 +253,38 @@ func (x *XDPoS_v1) verifyCascadingFields(chain consensus.ChainReader, header *ty
 		return x.verifySeal(chain, header, parents, fullVerify)
 	}
 
-	/*
-		BUG: snapshot returns wrong signers sometimes
-		when it happens we get the signers list by requesting smart contract
-	*/
-	// Retrieve the snapshot needed to verify this header and cache it
-	snap, err := x.snapshot(chain, number-1, header.ParentHash, parents, nil)
-	if err != nil {
-		return err
-	}
+	if fullVerify {
+		/*
+			BUG: snapshot returns wrong signers sometimes
+			when it happens we get the signers list by requesting smart contract
+		*/
+		// Retrieve the snapshot needed to verify this header and cache it
+		snap, err := x.snapshot(chain, number-1, header.ParentHash, parents, nil)
+		if err != nil {
+			log.Error("[verifyCascadingFields] Fail to get snapshot", "number", number, "hash", header.ParentHash, "err", err)
+			return err
+		}
 
-	signers := snap.GetSigners()
-	err = x.checkSignersOnCheckpoint(chain, header, signers)
-	if err == nil {
+		signers := snap.GetSigners()
+		err = x.checkSignersOnCheckpoint(chain, header, signers)
+		if err == nil {
+			return x.verifySeal(chain, header, parents, fullVerify)
+		}
+		log.Debug("[verifyCascadingFields] checkSignersOnCheckpoint failed, fallback to smart contract check", "number", number, "err", err)
+		signers, err = x.getSignersFromContract(chain, header)
+		if err != nil {
+			log.Error("[verifyCascadingFields] Fail to get signers from smart contract", "number", number, "hash", header.Hash(), "err", err)
+			return err
+		}
+		err = x.checkSignersOnCheckpoint(chain, header, signers)
+		if err != nil {
+			log.Error("[verifyCascadingFields] checkSignersOnCheckpoint failed with signers from smart contract", "number", number, "hash", header.Hash(), "err", err)
+			return err
+		}
 		return x.verifySeal(chain, header, parents, fullVerify)
 	}
 
-	signers, err = x.getSignersFromContract(chain, header)
-	if err != nil {
-		return err
-	}
-	err = x.checkSignersOnCheckpoint(chain, header, signers)
-	if err == nil {
-		return x.verifySeal(chain, header, parents, fullVerify)
-	}
-
-	return err
+	return x.verifySeal(chain, header, parents, fullVerify)
 }
 
 func (x *XDPoS_v1) checkSignersOnCheckpoint(chain consensus.ChainReader, header *types.Header, signers []common.Address) error {
@@ -792,7 +808,7 @@ func (x *XDPoS_v1) UpdateMasternodes(chain consensus.ChainReader, header *types.
 	// check if block number is increase ms checkpoint
 	if x.chainConfig.IsTIPIncreaseMasternodes(header.Number) || (x.config.V2.SwitchBlock != nil && header.Number.Cmp(x.config.V2.SwitchBlock) == 1) {
 		// using new masterndoes
-		maxMasternodes = common.MaxMasternodesV2
+		maxMasternodes = x.chainConfig.XDPoS.MaxMasternodesV2
 	} else {
 		// using old masterndoes
 		maxMasternodes = common.MaxMasternodes
@@ -816,8 +832,8 @@ func (x *XDPoS_v1) UpdateMasternodes(chain consensus.ChainReader, header *types.
 	}
 	x.recents.Add(snap.Hash, snap)
 	log.Info("New set of masternodes has been updated to snapshot", "number", snap.Number, "hash", snap.Hash)
-	for i, v := range nm {
-		log.Info("masternodes", "i", i, "addr", v)
+	for i, n := range ms {
+		log.Info("node", "i", i, "addr", n.Address, "stake", n.Stake)
 	}
 	return nil
 }

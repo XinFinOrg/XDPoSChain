@@ -16,42 +16,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
-func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainReader, vote *types.Vote) (bool, error) {
-	if vote.ProposedBlockInfo.Round < x.currentRound {
-		log.Debug("[VerifyVoteMessage] Disqualified vote message as the proposed round does not match currentRound", "voteHash", vote.Hash(), "voteProposedBlockInfoRound", vote.ProposedBlockInfo.Round, "currentRound", x.currentRound)
-		return false, nil
-	}
-
-	snap, err := x.getSnapshot(chain, vote.GapNumber, true)
-	if err != nil {
-		log.Error("[VerifyVoteMessage] fail to get snapshot for a vote message", "blockNum", vote.ProposedBlockInfo.Number, "blockHash", vote.ProposedBlockInfo.Hash, "voteHash", vote.Hash(), "err", err)
-		return false, err
-	}
-
-	verified, signer, err := x.verifyMsgSignature(types.VoteSigHash(&types.VoteForSign{
-		ProposedBlockInfo: vote.ProposedBlockInfo,
-		GapNumber:         vote.GapNumber,
-	}), vote.Signature, snap.NextEpochCandidates)
-
-	if err != nil {
-		for i, mn := range snap.NextEpochCandidates {
-			log.Warn("[VerifyVoteMessage] Master node list item", "index", i, "Master node", mn.Hex())
-		}
-		log.Warn("[VerifyVoteMessage] Error while verifying vote message", "votedBlockNum", vote.ProposedBlockInfo.Number.Uint64(), "votedBlockHash", vote.ProposedBlockInfo.Hash.Hex(), "voteHash", vote.Hash(), "err", err)
-		return false, err
-	}
-	vote.SetSigner(signer)
-
-	return verified, nil
-}
-
-// Consensus entry point for processing vote message to produce QC
-func (x *XDPoS_v2) VoteHandler(chain consensus.ChainReader, voteMsg *types.Vote) error {
-	x.lock.Lock()
-	defer x.lock.Unlock()
-	return x.voteHandler(chain, voteMsg)
-}
-
 // Once Hot stuff voting rule has verified, this node can then send vote
 func (x *XDPoS_v2) sendVote(chainReader consensus.ChainReader, blockInfo *types.BlockInfo) error {
 	// First step: Update the highest Voted round
@@ -227,13 +191,27 @@ func (x *XDPoS_v2) onVotePoolThresholdReached(chain consensus.ChainReader, poole
 		return errors.New("fail on voteHandler due to failure in getting epoch switch info")
 	}
 
+	// verify and deduplicate; drop invalid/duplicate votes rather than bail,
+	// so a single byzantine sender cannot stall QC generation for a round
+	signedVoteObj := types.VoteSigHash(&types.VoteForSign{
+		ProposedBlockInfo: currentVoteMsg.(*types.Vote).ProposedBlockInfo,
+		GapNumber:         currentVoteMsg.(*types.Vote).GapNumber,
+	})
+	validSignatures, _, duplicates, err := x.verifyAllSignatures(signedVoteObj, validSignatures, epochInfo.Masternodes)
+	if err != nil {
+		log.Warn("[onVotePoolThresholdReached] some vote signatures failed verification, continuing with valid subset", "error", err)
+	}
+	if len(duplicates) > 0 {
+		log.Warn("[onVotePoolThresholdReached] duplicate signers in vote pool, dropping duplicates", "duplicates", duplicates)
+	}
+
 	// Skip and wait for the next vote to process again if valid votes is less than what we required
 	certThreshold := x.config.V2.Config(uint64(currentVoteMsg.(*types.Vote).ProposedBlockInfo.Round)).CertThreshold
 	if float64(len(validSignatures)) < float64(epochInfo.MasternodesLen)*certThreshold {
 		log.Warn("[onVotePoolThresholdReached] Not enough valid signatures to generate QC", "VotesSignaturesAfterFilter", validSignatures, "NumberOfValidVotes", len(validSignatures), "NumberOfVotes", len(pooledVotes))
 		return nil
 	}
-	// Genrate QC
+	// Generate QC
 	quorumCert := &types.QuorumCert{
 		ProposedBlockInfo: currentVoteMsg.(*types.Vote).ProposedBlockInfo,
 		Signatures:        validSignatures,

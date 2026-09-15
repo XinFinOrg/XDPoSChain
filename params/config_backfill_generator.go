@@ -1,0 +1,242 @@
+//go:build ignore
+
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"go/format"
+	"os"
+	"path/filepath"
+	"slices"
+	"text/template"
+)
+
+const (
+	configBackfillFieldSource = "config_backfill_fields.json"
+	configBackfillGenerated   = "config_backfill_generated.go"
+)
+
+type forkFieldSpec struct {
+	Kind              string `json:"kind,omitempty"`
+	Name              string `json:"name"`
+	JSONKey           string `json:"jsonKey"`
+	BackfillSet       string `json:"backfillSet,omitempty"`
+	CompatField       string `json:"compatField,omitempty"`
+	CustomMigrated    bool   `json:"customMigrated,omitempty"`
+	XDCSpecific       bool   `json:"xdcSpecific,omitempty"`
+	ForkOrder         int    `json:"forkOrder,omitempty"`
+	ForkOrderOptional bool   `json:"forkOrderOptional,omitempty"`
+}
+
+type templateData struct {
+	Common    []forkFieldSpec
+	BuiltIn   []forkFieldSpec
+	ForkOrder []forkFieldSpec
+	Addresses []forkFieldSpec
+}
+
+func main() {
+	if err := generate(); err != nil {
+		fmt.Fprintf(os.Stderr, "config backfill generation failed: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func generate() error {
+	fields, err := loadSpecs(configBackfillFieldSource)
+	if err != nil {
+		return err
+	}
+	data, err := buildTemplateData(fields)
+	if err != nil {
+		return err
+	}
+
+	tmpl, err := template.New("config_backfill").Parse(generatedTemplate)
+	if err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return err
+	}
+	formatted, err := format.Source(buf.Bytes())
+	if err != nil {
+		return fmt.Errorf("format generated file: %w", err)
+	}
+	return os.WriteFile(configBackfillGenerated, formatted, 0o644)
+}
+
+func loadSpecs(path string) ([]forkFieldSpec, error) {
+	content, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return nil, err
+	}
+	var fields []forkFieldSpec
+	if err := json.Unmarshal(content, &fields); err != nil {
+		return nil, err
+	}
+	if len(fields) == 0 {
+		return nil, fmt.Errorf("no field specs found in %s", path)
+	}
+	seenNames := make(map[string]struct{}, len(fields))
+	seenJSONKeys := make(map[string]struct{}, len(fields))
+	seenForkOrders := make(map[int]string)
+	bigIntFieldNames := make(map[string]struct{}, len(fields))
+	addressCompatFields := make(map[string]string)
+	for index := range fields {
+		field := &fields[index]
+		if field.Kind == "" {
+			field.Kind = "bigint"
+		}
+		if field.Name == "" || field.JSONKey == "" {
+			return nil, fmt.Errorf("field specs must include name and jsonKey")
+		}
+		if _, ok := seenNames[field.Name]; ok {
+			return nil, fmt.Errorf("duplicate field name %q", field.Name)
+		}
+		seenNames[field.Name] = struct{}{}
+		if _, ok := seenJSONKeys[field.JSONKey]; ok {
+			return nil, fmt.Errorf("duplicate json key %q", field.JSONKey)
+		}
+		seenJSONKeys[field.JSONKey] = struct{}{}
+		switch field.Kind {
+		case "bigint":
+			bigIntFieldNames[field.Name] = struct{}{}
+			switch field.BackfillSet {
+			case "common", "builtin":
+			default:
+				return nil, fmt.Errorf("field %q has unsupported backfillSet %q", field.Name, field.BackfillSet)
+			}
+		case "address":
+			if field.CompatField == "" {
+				return nil, fmt.Errorf("address field %q must include compatField", field.Name)
+			}
+			addressCompatFields[field.Name] = field.CompatField
+		default:
+			return nil, fmt.Errorf("field %q has unsupported kind %q", field.Name, field.Kind)
+		}
+		if field.ForkOrder != 0 {
+			if field.Kind != "bigint" {
+				return nil, fmt.Errorf("only bigint fields may declare forkOrder: %q", field.Name)
+			}
+			if prev, ok := seenForkOrders[field.ForkOrder]; ok {
+				return nil, fmt.Errorf("fork order %d reused by %q and %q", field.ForkOrder, prev, field.Name)
+			}
+			seenForkOrders[field.ForkOrder] = field.Name
+		}
+	}
+	for fieldName, compatField := range addressCompatFields {
+		if _, ok := bigIntFieldNames[compatField]; !ok {
+			return nil, fmt.Errorf("address field %q references unknown compatField %q", fieldName, compatField)
+		}
+	}
+	return fields, nil
+}
+
+func buildTemplateData(fields []forkFieldSpec) (templateData, error) {
+	data := templateData{
+		Common:    make([]forkFieldSpec, 0),
+		BuiltIn:   make([]forkFieldSpec, 0),
+		Addresses: make([]forkFieldSpec, 0),
+	}
+	builtInStandard := make([]forkFieldSpec, 0)
+	builtInXDC := make([]forkFieldSpec, 0)
+	for _, field := range fields {
+		switch field.Kind {
+		case "bigint":
+			switch field.BackfillSet {
+			case "common":
+				data.Common = append(data.Common, field)
+			case "builtin":
+				if field.XDCSpecific {
+					builtInXDC = append(builtInXDC, field)
+				} else {
+					builtInStandard = append(builtInStandard, field)
+				}
+			}
+			if field.ForkOrder != 0 {
+				data.ForkOrder = append(data.ForkOrder, field)
+			}
+		case "address":
+			data.Addresses = append(data.Addresses, field)
+		}
+	}
+	slices.SortFunc(data.ForkOrder, func(a, b forkFieldSpec) int {
+		return a.ForkOrder - b.ForkOrder
+	})
+	data.BuiltIn = append(data.BuiltIn, builtInStandard...)
+	data.BuiltIn = append(data.BuiltIn, builtInXDC...)
+	return data, nil
+}
+
+const generatedTemplate = `// Code generated by go generate; DO NOT EDIT.
+
+package params
+
+import (
+	"math/big"
+
+	"github.com/XinFinOrg/XDPoSChain/common"
+)
+
+var generatedChainConfigCommonBackfillBigIntFields = []chainConfigBigIntField{
+{{- range .Common }}
+	{
+		name: {{ printf "%q" .Name }},
+		jsonKey: {{ printf "%q" .JSONKey }},
+		{{- if .CustomMigrated }}
+		customMigrated: true,
+		{{- end }}
+		{{- if .XDCSpecific }}
+		xdcSpecific: true,
+		{{- end }}
+		get: func(c *ChainConfig) *big.Int { return c.{{ .Name }} },
+		bind: func(c *ChainConfig) **big.Int { return &c.{{ .Name }} },
+	},
+{{- end }}
+}
+
+var generatedChainConfigBuiltInBackfillForkBlockFields = []chainConfigBigIntField{
+{{- range .BuiltIn }}
+	{
+		name: {{ printf "%q" .Name }},
+		jsonKey: {{ printf "%q" .JSONKey }},
+		{{- if .CustomMigrated }}
+		customMigrated: true,
+		{{- end }}
+		{{- if .XDCSpecific }}
+		xdcSpecific: true,
+		{{- end }}
+		get: func(c *ChainConfig) *big.Int { return c.{{ .Name }} },
+		bind: func(c *ChainConfig) **big.Int { return &c.{{ .Name }} },
+	},
+{{- end }}
+}
+
+var generatedChainConfigForkOrderFieldDefs = []struct {
+	name     string
+	optional func(*ChainConfig) bool
+}{
+{{- range .ForkOrder }}
+	{
+		name: {{ printf "%q" .Name }},
+		optional: {{ if .ForkOrderOptional }}alwaysOptionalChainConfigForkOrderField{{ else }}nil{{ end }},
+	},
+{{- end }}
+}
+
+var generatedChainConfigXDCSystemContractFields = []chainConfigAddressField{
+{{- range .Addresses }}
+	{
+		name: {{ printf "%q" .Name }},
+		jsonKey: {{ printf "%q" .JSONKey }},
+		get: func(c *ChainConfig) common.Address { return c.{{ .Name }} },
+		bind: func(c *ChainConfig) *common.Address { return &c.{{ .Name }} },
+		compat: func(c *ChainConfig) *big.Int { return c.{{ .CompatField }} },
+	},
+{{- end }}
+}
+`

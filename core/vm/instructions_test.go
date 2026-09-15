@@ -19,6 +19,7 @@ package vm
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -697,6 +698,86 @@ func TestCreate2Addresses(t *testing.T) {
 	}
 }
 
+// TestBaseFee checks that BASEFEE reports the header base fee when the block
+// carries one, and otherwise falls back to the pinned opcode value, which
+// covers the London-to-EIP1559 window where XDC leaves the header field unset
+// but the opcode is already available.
+func TestBaseFee(t *testing.T) {
+	gasSchedule := func(gas50x, gas2500x int64) *params.ChainConfig {
+		cfg := *params.TestChainConfig
+		cfg.Gas50xBlock = big.NewInt(gas50x)
+		if gas2500x >= 0 {
+			cfg.Gas2500xBlock = big.NewInt(gas2500x)
+		}
+		return &cfg
+	}
+	for _, tt := range []struct {
+		name    string
+		config  *params.ChainConfig
+		number  *big.Int
+		baseFee *big.Int
+		want    *big.Int
+	}{
+		{name: "header base fee wins over schedule", config: gasSchedule(0, 0), number: big.NewInt(100), baseFee: big.NewInt(7), want: big.NewInt(7)},
+		{name: "absent before any tier", config: gasSchedule(200, -1), number: big.NewInt(100), want: new(big.Int).SetUint64(params.InitialBaseFee)},
+		{name: "absent on gas50x tier", config: gasSchedule(0, -1), number: big.NewInt(100), want: new(big.Int).SetUint64(params.InitialBaseFee)},
+		{name: "absent on gas2500x tier stays pinned", config: gasSchedule(0, 50), number: big.NewInt(100), want: new(big.Int).SetUint64(params.InitialBaseFee)},
+		{name: "absent with unset block number", config: gasSchedule(0, 0), want: new(big.Int).SetUint64(params.InitialBaseFee)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var (
+				evm   = NewEVM(BlockContext{BlockNumber: tt.number, BaseFee: tt.baseFee}, nil, nil, tt.config, Config{})
+				stack = newstack()
+				pc    = uint64(0)
+			)
+			opBaseFee(&pc, evm, &ScopeContext{nil, stack, nil})
+			if len(stack.data) != 1 {
+				t.Fatalf("expected one item on stack, got %d", len(stack.data))
+			}
+			actual := stack.pop()
+			expected, overflow := uint256.FromBig(tt.want)
+			if overflow {
+				t.Fatal("invalid overflow")
+			}
+			if actual.Cmp(expected) != 0 {
+				t.Fatalf("unexpected base fee: have %x want %x", &actual, expected)
+			}
+		})
+	}
+}
+
+// TestBaseFeeFallbackSurvivesStackMutation guards that the precomputed BASEFEE
+// fallback is not corrupted by in-place stack mutations. Stack.push copies the
+// pushed value into the stack slice, so an opcode mutating its operand in place
+// (e.g. opAdd) must not leak the change back into the shared baseFeeForOpcode.
+// If Stack ever switches to storing pointers, this test must fail loudly.
+func TestBaseFeeFallbackSurvivesStackMutation(t *testing.T) {
+	cfg := *params.TestChainConfig
+	cfg.Gas50xBlock = big.NewInt(0)
+
+	evm := NewEVM(BlockContext{BlockNumber: big.NewInt(100)}, nil, nil, &cfg, Config{})
+	stack := newstack()
+	scope := &ScopeContext{nil, stack, nil}
+	pc := uint64(0)
+
+	// BASEFEE, constant 1, ADD: with the BASEFEE result as the mutated operand
+	// this is exactly the sequence a contract computing block.basefee + 1 runs.
+	opBaseFee(&pc, evm, scope)
+	stack.push(uint256.NewInt(1))
+	opAdd(&pc, evm, scope)
+
+	// A second BASEFEE must still report the pinned InitialBaseFee.
+	opBaseFee(&pc, evm, scope)
+	got := stack.pop()
+	want, overflow := uint256.FromBig(new(big.Int).SetUint64(params.InitialBaseFee))
+	if overflow {
+		t.Fatal("unexpected overflow")
+	}
+	if got.Cmp(want) != 0 {
+		t.Fatalf("baseFeeForOpcode corrupted by stack mutation: have %v want %v", &got, want)
+	}
+}
+
 func TestRandom(t *testing.T) {
 	type testcase struct {
 		name   string
@@ -1018,4 +1099,204 @@ func TestPush(t *testing.T) {
 			t.Fatalf("case %d, have %v want %v", i, have, want)
 		}
 	}
+}
+
+func TestEIP8024_Execution(t *testing.T) {
+	evm := NewEVM(BlockContext{}, nil, nil, params.TestChainConfig, Config{})
+
+	tests := []struct {
+		name        string
+		codeHex     string
+		wantErr     error
+		wantOpcode  OpCode
+		wantOperand *byte
+		wantVals    []uint64
+	}{
+		{
+			name:    "DUPN",
+			codeHex: "60016000808080808080808080808080808080e680",
+			wantVals: []uint64{
+				1,
+				0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+				1,
+			},
+		},
+		{
+			name:    "SWAPN",
+			codeHex: "600160008080808080808080808080808080806002e780",
+			wantVals: []uint64{
+				1,
+				0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+				2,
+			},
+		},
+		{
+			name:    "EXCHANGE_MISSING_IMMEDIATE",
+			codeHex: "600260008080808080600160008080808080808080e8",
+			wantVals: []uint64{
+				0, 0, 0, 0, 0, 0, 0, 0, 0,
+				2, // 10th from top
+				0, 0, 0, 0, 0, 0,
+				1, // bottom
+			},
+		},
+		{
+			name:     "EXCHANGE",
+			codeHex:  "600060016002e88e",
+			wantVals: []uint64{2, 0, 1},
+		},
+		{
+			name:    "EXCHANGE",
+			codeHex: "600080808080808080808080808080808080808080808080808080808060016002e88f",
+			wantVals: []uint64{
+				2,
+				0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+				1,
+			},
+		},
+		{
+			name:        "INVALID_DUPN_LOW",
+			codeHex:     "e65b",
+			wantErr:     &ErrInvalidOpCode{},
+			wantOpcode:  DUPN,
+			wantOperand: ptrToByte(0x5b),
+		},
+		{
+			name:        "INVALID_SWAPN_LOW",
+			codeHex:     "e75b",
+			wantErr:     &ErrInvalidOpCode{},
+			wantOpcode:  SWAPN,
+			wantOperand: ptrToByte(0x5b),
+		},
+		{
+			name:    "JUMP_OVER_INVALID_DUPN",
+			codeHex: "600456e65b",
+			wantErr: nil,
+		},
+		{
+			name:     "EXCHANGE",
+			codeHex:  "60008080e88e15",
+			wantVals: []uint64{1, 0, 0},
+		},
+		{
+			name:        "INVALID_EXCHANGE",
+			codeHex:     "e852",
+			wantErr:     &ErrInvalidOpCode{},
+			wantOpcode:  EXCHANGE,
+			wantOperand: ptrToByte(0x52),
+		},
+		{
+			name:       "UNDERFLOW_DUPN",
+			codeHex:    "6000808080808080808080808080808080e680",
+			wantErr:    &ErrStackUnderflow{},
+			wantOpcode: DUPN,
+		},
+		// Additional test cases
+		{
+			name:     "PC_INCREMENT",
+			codeHex:  "600060006000e88e15",
+			wantVals: []uint64{1, 0, 0},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			code := common.FromHex(tc.codeHex)
+			stack := newstack()
+			pc := uint64(0)
+			scope := &ScopeContext{Stack: stack, Contract: &Contract{Code: code}}
+			var err error
+			var errOp OpCode
+			for pc < uint64(len(code)) && err == nil {
+				op := code[pc]
+				switch OpCode(op) {
+				case STOP:
+					return
+				case PUSH1:
+					_, err = opPush1(&pc, evm, scope)
+				case DUP1:
+					dup1 := makeDup(1)
+					_, err = dup1(&pc, evm, scope)
+				case JUMP:
+					_, err = opJump(&pc, evm, scope)
+				case JUMPDEST:
+					_, err = opJumpdest(&pc, evm, scope)
+				case ISZERO:
+					_, err = opIszero(&pc, evm, scope)
+				case PUSH0:
+					_, err = opPush0(&pc, evm, scope)
+				case DUPN:
+					_, err = opDupN(&pc, evm, scope)
+				case SWAPN:
+					_, err = opSwapN(&pc, evm, scope)
+				case EXCHANGE:
+					_, err = opExchange(&pc, evm, scope)
+				default:
+					t.Fatalf("unexpected opcode %s at pc=%d", OpCode(op), pc)
+				}
+				if err != nil {
+					errOp = OpCode(op)
+				}
+				pc++
+			}
+			if tc.wantErr != nil {
+				// Fail because we wanted an error, but didn't get one.
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				// Fail if the wrong opcode threw an error.
+				if errOp != tc.wantOpcode {
+					t.Fatalf("expected error from opcode %s, got %s", tc.wantOpcode, errOp)
+				}
+				// Fail if we don't get the error we expect.
+				switch tc.wantErr.(type) {
+				case *ErrInvalidOpCode:
+					var got *ErrInvalidOpCode
+					if !errors.As(err, &got) {
+						t.Fatalf("expected ErrInvalidOpCode, got %v", err)
+					}
+					if got.opcode != tc.wantOpcode {
+						t.Fatalf("ErrInvalidOpCode.opcode=%s; want %s", got.opcode, tc.wantOpcode)
+					}
+					if tc.wantOperand != nil {
+						if got.operand == nil {
+							t.Fatalf("ErrInvalidOpCode.operand=nil; want 0x%02x", *tc.wantOperand)
+						}
+						if *got.operand != *tc.wantOperand {
+							t.Fatalf("ErrInvalidOpCode.operand=0x%02x; want 0x%02x", *got.operand, *tc.wantOperand)
+						}
+					}
+				case *ErrStackUnderflow:
+					var want *ErrStackUnderflow
+					if !errors.As(err, &want) {
+						t.Fatalf("expected ErrStackUnderflow, got %v", err)
+					}
+				default:
+					t.Fatalf("unsupported wantErr type %T", tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			got := make([]uint64, 0, stack.len())
+			for i := stack.len() - 1; i >= 0; i-- {
+				got = append(got, stack.data[i].Uint64())
+			}
+			if len(got) != len(tc.wantVals) {
+				t.Fatalf("stack len=%d; want %d", len(got), len(tc.wantVals))
+			}
+			for i := range got {
+				if got[i] != tc.wantVals[i] {
+					t.Fatalf("[%s] stack[%d]=%d; want %d\nstack=%v",
+						tc.name, i, got[i], tc.wantVals[i], got)
+				}
+			}
+		})
+	}
+}
+
+func ptrToByte(v byte) *byte {
+	b := v
+	return &b
 }

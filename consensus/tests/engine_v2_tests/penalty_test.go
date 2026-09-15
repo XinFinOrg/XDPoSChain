@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestHookPenaltyV2Mining tests hook penalty v 2 mining.
 func TestHookPenaltyV2Mining(t *testing.T) {
 	skipLongInShortMode(t)
 	config := params.TestXDPoSMockChainConfig
@@ -67,6 +68,7 @@ func TestHookPenaltyV2Mining(t *testing.T) {
 	assert.Equal(t, 19, len(headerMining.Validators)/common.AddressLength)
 }
 
+// TestHookPenaltyV2Comeback tests hook penalty v 2 comeback.
 func TestHookPenaltyV2Comeback(t *testing.T) {
 	skipLongInShortMode(t)
 	config := params.TestXDPoSMockChainConfig
@@ -84,10 +86,12 @@ func TestHookPenaltyV2Comeback(t *testing.T) {
 	header2100 := blockchain.GetHeaderByNumber(config.XDPoS.Epoch * 3)
 	penalty, err := adaptor.EngineV2.HookPenalty(blockchain, big.NewInt(int64(config.XDPoS.Epoch*3)), header2100.ParentHash, masternodes)
 	assert.Nil(t, err)
-	// miner (coinbase) is in comeback. so all addresses are in penalty
+	// The pre-upgrade comeback window remains pinned to the historical
+	// LimitPenaltyEpochV2 constant, so the prior penalty can already return here.
 	assert.Equal(t, 2, len(penalty))
 	header2085 := blockchain.GetHeaderByNumber(config.XDPoS.Epoch*3 - common.MergeSignRange)
-	// forcely insert signing tx into cache, to cancel comeback. since no comeback, penalty is 1
+	// Force a signing tx into cache so the comeback signer is removed from the
+	// penalty set while the missing miner remains.
 	tx, err := signingTxWithSignerFn(header2085, 0, signer, signFn)
 	assert.Nil(t, err)
 	adaptor.CacheSigningTxs(header2085.Hash(), []*types.Transaction{tx})
@@ -96,6 +100,7 @@ func TestHookPenaltyV2Comeback(t *testing.T) {
 	assert.Equal(t, 1, len(penalty))
 }
 
+// TestHookPenaltyV2Jump tests hook penalty v 2 jump.
 func TestHookPenaltyV2Jump(t *testing.T) {
 	skipLongInShortMode(t)
 	config := params.TestXDPoSMockChainConfig
@@ -113,7 +118,8 @@ func TestHookPenaltyV2Jump(t *testing.T) {
 	assert.Equal(t, 5, len(masternodes))
 	header2685 := blockchain.GetHeaderByNumber(uint64(end))
 	adaptor.EngineV2.SetNewRoundFaker(blockchain, types.Round(config.XDPoS.Epoch*3), false)
-	// round 2685-2700 miss blocks, penalty should work as usual
+	// Before the penalty upgrade, comeback still uses the historical
+	// LimitPenaltyEpochV2 constant, so the prior penalty is already eligible.
 	penalty, err := adaptor.EngineV2.HookPenalty(blockchain, header2685.Number, header2685.ParentHash, masternodes)
 	assert.Nil(t, err)
 	assert.Equal(t, 2, len(penalty))
@@ -136,12 +142,14 @@ func TestHookPenaltyV2LessThen150Blocks(t *testing.T) {
 	assert.Equal(t, 5, len(masternodes))
 	header1900 := blockchain.GetHeaderByNumber(1900)
 	adaptor.EngineV2.SetNewRoundFaker(blockchain, types.Round(config.XDPoS.Epoch*3), false)
-	// penalty count from 1900
+	// The pre-upgrade comeback window remains pinned to the historical
+	// LimitPenaltyEpochV2 constant, so the prior penalty can still return here.
 	penalty, err := adaptor.EngineV2.HookPenalty(blockchain, header1900.Number, header1900.ParentHash, masternodes)
 	assert.Nil(t, err)
 	assert.Equal(t, 2, len(penalty))
 }
 
+// TestGetPenalties tests get penalties.
 func TestGetPenalties(t *testing.T) {
 	skipLongInShortMode(t)
 	config := params.TestXDPoSMockChainConfig
@@ -162,19 +170,25 @@ func TestGetPenalties(t *testing.T) {
 // but if it does not stays enough, it will still be penalty.
 func TestHookPenaltyParolee(t *testing.T) {
 	skipLongInShortMode(t)
-	// set upgrade number to 0
-	backup := common.TipUpgradePenalty
-	common.TipUpgradePenalty = big.NewInt(0)
+	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
+	assert.Nil(t, err)
 
-	config := params.TestXDPoSMockChainConfig
-	blockchain, _, _, signer, signFn := PrepareXDCTestBlockChainWithPenaltyForV2Engine(t, int(config.XDPoS.Epoch)*4, config)
+	var config params.ChainConfig
+	err = json.Unmarshal(b, &config)
+	assert.Nil(t, err)
+	b, err = json.Marshal(config)
+	assert.Nil(t, err)
+	err = json.Unmarshal(b, &config)
+	assert.Nil(t, err)
+
+	blockchain, _, _, signer, signFn := PrepareXDCTestBlockChainWithPenaltyForV2Engine(t, int(config.XDPoS.Epoch)*4, &config)
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
-	hooks.AttachConsensusV2Hooks(adaptor, blockchain, config)
+	hooks.AttachConsensusV2Hooks(adaptor, blockchain, &config)
 	assert.NotNil(t, adaptor.EngineV2.HookPenalty)
 	var extraField types.ExtraFields_v2
 	// 901 is the first v2 block
 	header901 := blockchain.GetHeaderByNumber(config.XDPoS.Epoch + 1)
-	err := utils.DecodeBytesExtraFields(header901.Extra, &extraField)
+	err = utils.DecodeBytesExtraFields(header901.Extra, &extraField)
 	assert.Nil(t, err)
 	masternodes := adaptor.GetMasternodesFromCheckpointHeader(header901)
 	assert.Equal(t, 5, len(masternodes))
@@ -191,16 +205,17 @@ func TestHookPenaltyParolee(t *testing.T) {
 	header3600 := blockchain.GetHeaderByNumber(config.XDPoS.Epoch * 4)
 	penalty, err = adaptor.EngineV2.HookPenalty(blockchain, big.NewInt(int64(config.XDPoS.Epoch*4)), header3600.ParentHash, masternodes)
 	assert.Nil(t, err)
-	// miner (coinbase) is in comeback. so all addresses are in penalty
+	// The legacy pre-upgrade comeback logic is already eligible here, so the
+	// prior penalty still appears unless the signer proves itself in range.
 	assert.Equal(t, 2, len(penalty))
 	header3585 := blockchain.GetHeaderByNumber(config.XDPoS.Epoch*4 - common.MergeSignRange)
-	// forcely insert signing tx into cache, to cancel comeback
+	// Force a signing tx into the legacy comeback window so the prior penalty is removed.
 	tx, err = signingTxWithSignerFn(header3585, 0, signer, signFn)
 	assert.Nil(t, err)
 	adaptor.CacheSigningTxs(header3585.Hash(), []*types.Transaction{tx})
 	penalty, err = adaptor.EngineV2.HookPenalty(blockchain, big.NewInt(int64(config.XDPoS.Epoch*4)), header3600.ParentHash, masternodes)
 	assert.Nil(t, err)
-	assert.Equal(t, 2, len(penalty))
+	assert.Equal(t, 1, len(penalty))
 
 	header3570 := blockchain.GetHeaderByNumber(config.XDPoS.Epoch*4 - common.MergeSignRange*2)
 	// forcely insert signing tx into cache, to cancel comeback. since no comeback, penalty is 1
@@ -211,10 +226,9 @@ func TestHookPenaltyParolee(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, 1, len(penalty))
 
-	common.TipUpgradePenalty = backup
 }
 
-// TestHookPenaltyParoleePerformance tests penalty hook performance
+// TestHookPenaltyParoleePerformance tests hook penalty parolee performance.
 func TestHookPenaltyParoleePerformance(t *testing.T) {
 	skipLongInShortMode(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
@@ -224,11 +238,10 @@ func TestHookPenaltyParoleePerformance(t *testing.T) {
 	var config params.ChainConfig
 	err = json.Unmarshal([]byte(configString), &config)
 	assert.Nil(t, err)
-	config.XDPoS.V2.AllConfigs[900].LimitPenaltyEpoch = 4
-
-	// set upgrade number to 0
-	backup := common.TipUpgradePenalty
-	common.TipUpgradePenalty = big.NewInt(0)
+	b, err = json.Marshal(config)
+	assert.Nil(t, err)
+	err = json.Unmarshal(b, &config)
+	assert.Nil(t, err)
 
 	// 900 1800 2700 3600(not) 4500 5400 has penalty except 3600
 	penaltyOrNot := []bool{true, true, true, false, true, true}
@@ -258,8 +271,7 @@ func TestHookPenaltyParoleePerformance(t *testing.T) {
 	header6300 := blockchain.GetHeaderByNumber(config.XDPoS.Epoch * 7)
 	penalty, err := adaptor.EngineV2.HookPenalty(blockchain, big.NewInt(int64(config.XDPoS.Epoch*7)), header6300.ParentHash, masternodes)
 	assert.Nil(t, err)
-	// miner (coinbase) is not parolee since one epoch it is not penalty. so it is in penalty. plus another one, total 2.
-	assert.Equal(t, 2, len(penalty))
+	// The cached signing txs cancel the comeback path, so only the missing miner remains penalized.
+	assert.Equal(t, 1, len(penalty))
 
-	common.TipUpgradePenalty = backup
 }

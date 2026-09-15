@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
@@ -56,12 +55,20 @@ func VerifyEip1559Header(config *params.ChainConfig, parent, header *types.Heade
 	return nil
 }
 
-// CalcBaseFee calculates the basefee of the header.
+// CalcBaseFee computes the base fee for the block whose number is carried by header.
+//
+// NOTE: unlike upstream go-ethereum, header is the block being built or verified,
+// not its parent. The XDC base fee does not depend on parent gas usage, but it is
+// gas schedule aware, so passing a parent header yields the wrong tier on the
+// block where a tier fork activates.
 func CalcBaseFee(config *params.ChainConfig, header *types.Header) *big.Int {
-	// If the current block is the first EIP-1559 block, return the InitialBaseFee.
-	if config.IsEIP1559(header.Number) {
-		return new(big.Int).Set(common.BaseFee)
-	} else {
+	return CalcBaseFeeForBlockNumber(config, header.Number)
+}
+
+// CalcBaseFeeForBlockNumber computes the base fee for the given block number.
+func CalcBaseFeeForBlockNumber(config *params.ChainConfig, number *big.Int) *big.Int {
+	if !config.IsEIP1559(number) {
 		return nil
 	}
+	return params.BaseFeeForBlock(config, number)
 }

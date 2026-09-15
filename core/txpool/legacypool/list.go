@@ -28,6 +28,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/holiman/uint256"
 )
 
@@ -277,6 +278,7 @@ type list struct {
 	costcap   *big.Int     // Price of the highest costing transaction (reset only if exceeds balance)
 	gascap    uint64       // Gas limit of the highest spending transaction (reset only if exceeds block limit)
 	totalcost *uint256.Int // Total cost of all transactions in the list
+	receivers map[common.Address]uint64
 }
 
 // newList creates a new transaction list for maintaining nonce-indexable fast,
@@ -287,6 +289,7 @@ func newList(strict bool) *list {
 		txs:       NewSortedMap(),
 		costcap:   new(big.Int),
 		totalcost: new(uint256.Int),
+		receivers: make(map[common.Address]uint64),
 	}
 }
 
@@ -306,27 +309,47 @@ func (l *list) Add(tx *types.Transaction, priceBump uint64) (bool, *types.Transa
 	// If there's an older better transaction, abort
 	old := l.txs.Get(tx.Nonce())
 	if old != nil {
-		if old.IsSpecialTransaction() {
+		// A transaction already occupies this nonce; decide whether the incoming
+		// one may replace it. Cases by (old, new) kind:
+		//
+		//   new special               -> replace: a special (block-signing/randomize)
+		//                                 tx always claims its nonce, evicting whatever
+		//                                 is there, bypassing the price-bump rules.
+		//                                 These txs are typically generated with a 0
+		//                                 gas price and are consensus-critical, so they
+		//                                 must never be blocked by a same-nonce tx.
+		//   old special, new regular  -> reject: a regular tx must not evict a pending
+		//                                 special tx.
+		//   old regular, new regular  -> replace only if the new tx beats the old on
+		//                                 both fee cap and tip by at least priceBump%.
+		//
+		// In every accepted case we fall through to the cost accounting below.
+		if tx.IsSpecialTransaction() {
+			// new special: always wins its nonce, no further checks.
+		} else if old.IsSpecialTransaction() {
+			// old special, new regular: protect the pending special tx.
 			return false, nil
-		}
-		if old.GasFeeCapCmp(tx) >= 0 || old.GasTipCapCmp(tx) >= 0 {
-			return false, nil
-		}
-		// thresholdFeeCap = oldFC  * (100 + priceBump) / 100
-		a := big.NewInt(100 + int64(priceBump))
-		aFeeCap := new(big.Int).Mul(a, old.GasFeeCap())
-		aTip := a.Mul(a, old.GasTipCap())
+		} else {
+			// regular replacing regular: enforce the price-bump rules.
+			if old.GasFeeCapCmp(tx) >= 0 || old.GasTipCapCmp(tx) >= 0 {
+				return false, nil
+			}
+			// thresholdFeeCap = oldFC  * (100 + priceBump) / 100
+			a := big.NewInt(100 + int64(priceBump))
+			aFeeCap := new(big.Int).Mul(a, old.GasFeeCap())
+			aTip := a.Mul(a, old.GasTipCap())
 
-		// thresholdTip    = oldTip * (100 + priceBump) / 100
-		b := big.NewInt(100)
-		thresholdFeeCap := aFeeCap.Div(aFeeCap, b)
-		thresholdTip := aTip.Div(aTip, b)
+			// thresholdTip    = oldTip * (100 + priceBump) / 100
+			b := big.NewInt(100)
+			thresholdFeeCap := aFeeCap.Div(aFeeCap, b)
+			thresholdTip := aTip.Div(aTip, b)
 
-		// Have to ensure that either the new fee cap or tip is higher than the
-		// old ones as well as checking the percentage threshold to ensure that
-		// this is accurate for low (Wei-level) gas price replacements
-		if tx.GasFeeCapIntCmp(thresholdFeeCap) < 0 || tx.GasTipCapIntCmp(thresholdTip) < 0 {
-			return false, nil
+			// Have to ensure that either the new fee cap or tip is higher than the
+			// old ones as well as checking the percentage threshold to ensure that
+			// this is accurate for low (Wei-level) gas price replacements
+			if tx.GasFeeCapIntCmp(thresholdFeeCap) < 0 || tx.GasTipCapIntCmp(thresholdTip) < 0 {
+				return false, nil
+			}
 		}
 		// Old is being replaced, subtract old cost
 		if _, underflow := base.SubOverflow(base, uint256.MustFromBig(old.Cost())); underflow {
@@ -345,7 +368,11 @@ func (l *list) Add(tx *types.Transaction, priceBump uint64) (bool, *types.Transa
 	l.totalcost = total
 
 	// Otherwise overwrite the old transaction with the current one
+	if old != nil {
+		l.removeTxReceiver(old)
+	}
 	l.txs.Put(tx)
+	l.addTxReceiver(tx)
 	if cost := tx.Cost(); l.costcap.Cmp(cost) < 0 {
 		l.costcap = cost
 	}
@@ -360,6 +387,7 @@ func (l *list) Add(tx *types.Transaction, priceBump uint64) (bool, *types.Transa
 // maintenance.
 func (l *list) Forward(threshold uint64) types.Transactions {
 	txs := l.txs.Forward(threshold)
+	l.removeTxReceivers(txs)
 	l.subTotalCost(txs)
 	return txs
 }
@@ -373,10 +401,12 @@ func (l *list) Forward(threshold uint64) types.Transactions {
 // a point in calculating all the costs or if the balance covers all. If the threshold
 // is lower than the costgas cap, the caps will be reset to a new high after removing
 // the newly invalidated transactions.
-func (l *list) Filter(costLimit *big.Int, gasLimit uint64, trc21Issuers map[common.Address]*big.Int, number *big.Int) (types.Transactions, types.Transactions) {
+func (l *list) Filter(costLimit *big.Int, gasLimit uint64, trc21Issuers map[common.Address]*big.Int, number *big.Int, cfg *params.ChainConfig) (types.Transactions, types.Transactions) {
 	// If all transactions are below the threshold, short circuit
 	if l.costcap.Cmp(costLimit) <= 0 && l.gascap <= gasLimit {
-		return nil, nil
+		if !l.hasUnaffordableTRC21Tx(costLimit, trc21Issuers, number, cfg) {
+			return nil, nil
+		}
 	}
 	l.costcap = new(big.Int).Set(costLimit) // Lower the caps to the thresholds
 	l.gascap = gasLimit
@@ -386,7 +416,7 @@ func (l *list) Filter(costLimit *big.Int, gasLimit uint64, trc21Issuers map[comm
 		maximum := costLimit
 		if tx.To() != nil {
 			if feeCapacity, ok := trc21Issuers[*tx.To()]; ok {
-				return tx.Gas() > gasLimit || new(big.Int).Add(costLimit, feeCapacity).Cmp(tx.TxCost(number)) < 0
+				return tx.Gas() > gasLimit || new(big.Int).Add(costLimit, feeCapacity).Cmp(tx.TxCost(number, cfg)) < 0
 			}
 		}
 		return tx.Gas() > gasLimit || tx.Cost().Cmp(maximum) > 0
@@ -406,6 +436,8 @@ func (l *list) Filter(costLimit *big.Int, gasLimit uint64, trc21Issuers map[comm
 		}
 		invalids = l.txs.filter(func(tx *types.Transaction) bool { return tx.Nonce() > lowest })
 	}
+	l.removeTxReceivers(removed)
+	l.removeTxReceivers(invalids)
 	// Reset total cost
 	l.subTotalCost(removed)
 	l.subTotalCost(invalids)
@@ -413,10 +445,51 @@ func (l *list) Filter(costLimit *big.Int, gasLimit uint64, trc21Issuers map[comm
 	return removed, invalids
 }
 
+func (l *list) hasTRC21Receiver(trc21Issuers map[common.Address]*big.Int) bool {
+	if len(trc21Issuers) == 0 || len(l.receivers) == 0 {
+		return false
+	}
+	if len(l.receivers) <= len(trc21Issuers) {
+		for receiver := range l.receivers {
+			if _, ok := trc21Issuers[receiver]; ok {
+				return true
+			}
+		}
+		return false
+	}
+	for issuer := range trc21Issuers {
+		if l.receivers[issuer] > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (l *list) hasUnaffordableTRC21Tx(costLimit *big.Int, trc21Issuers map[common.Address]*big.Int, number *big.Int, cfg *params.ChainConfig) bool {
+	if !l.hasTRC21Receiver(trc21Issuers) {
+		return false
+	}
+	for _, tx := range l.txs.items {
+		to := tx.To()
+		if to == nil {
+			continue
+		}
+		feeCapacity, ok := trc21Issuers[*to]
+		if !ok {
+			continue
+		}
+		if new(big.Int).Add(costLimit, feeCapacity).Cmp(tx.TxCost(number, cfg)) < 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // Cap places a hard limit on the number of items, returning all transactions
 // exceeding that limit.
 func (l *list) Cap(threshold int) types.Transactions {
 	txs := l.txs.Cap(threshold)
+	l.removeTxReceivers(txs)
 	l.subTotalCost(txs)
 	return txs
 }
@@ -430,10 +503,12 @@ func (l *list) Remove(tx *types.Transaction) (bool, types.Transactions) {
 	if removed := l.txs.Remove(nonce); !removed {
 		return false, nil
 	}
+	l.removeTxReceiver(tx)
 	l.subTotalCost([]*types.Transaction{tx})
 	// In strict mode, filter out non-executable transactions
 	if l.strict {
 		txs := l.txs.Filter(func(tx *types.Transaction) bool { return tx.Nonce() > nonce })
+		l.removeTxReceivers(txs)
 		l.subTotalCost(txs)
 		return true, txs
 	}
@@ -449,6 +524,7 @@ func (l *list) Remove(tx *types.Transaction) (bool, types.Transactions) {
 // happen but better to be self correcting than failing!
 func (l *list) Ready(start uint64) types.Transactions {
 	txs := l.txs.Ready(start)
+	l.removeTxReceivers(txs)
 	l.subTotalCost(txs)
 	return txs
 }
@@ -487,12 +563,39 @@ func (l *list) subTotalCost(txs []*types.Transaction) {
 	}
 }
 
+func (l *list) addTxReceiver(tx *types.Transaction) {
+	to := tx.To()
+	if to == nil {
+		return
+	}
+	l.receivers[*to]++
+}
+
+func (l *list) removeTxReceiver(tx *types.Transaction) {
+	to := tx.To()
+	if to == nil {
+		return
+	}
+	count := l.receivers[*to]
+	if count <= 1 {
+		delete(l.receivers, *to)
+		return
+	}
+	l.receivers[*to] = count - 1
+}
+
+func (l *list) removeTxReceivers(txs []*types.Transaction) {
+	for _, tx := range txs {
+		l.removeTxReceiver(tx)
+	}
+}
+
 // priceHeap is a heap.Interface implementation over transactions for retrieving
 // price-sorted transactions to discard when the pool fills up. If baseFee is set
 // then the heap is sorted based on the effective tip based on the given base fee.
 // If baseFee is nil then the sorting is based on gasFeeCap.
 type priceHeap struct {
-	baseFee *big.Int // heap should always be re-sorted after baseFee is changed
+	baseFee *uint256.Int // heap should always be re-sorted after baseFee is changed
 	list    []*types.Transaction
 }
 
@@ -694,6 +797,13 @@ func (l *pricedList) Reheap() {
 // SetBaseFee updates the base fee and triggers a re-heap. Note that Removed is not
 // necessary to call right before SetBaseFee when processing a new block.
 func (l *pricedList) SetBaseFee(baseFee *big.Int) {
-	l.urgent.baseFee = baseFee
+	var base *uint256.Int
+	if baseFee != nil {
+		converted := new(uint256.Int)
+		if !converted.SetFromBig(baseFee) {
+			base = converted
+		}
+	}
+	l.urgent.baseFee = base
 	l.Reheap()
 }

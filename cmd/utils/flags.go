@@ -20,6 +20,7 @@ package utils
 import (
 	"crypto/ecdsa"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -60,8 +61,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/miner"
 	"github.com/XinFinOrg/XDPoSChain/node"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
-	"github.com/XinFinOrg/XDPoSChain/p2p/discover"
-	"github.com/XinFinOrg/XDPoSChain/p2p/discv5"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/p2p/nat"
 	"github.com/XinFinOrg/XDPoSChain/p2p/netutil"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -125,6 +125,17 @@ var (
 		Usage:    "XDC develop network",
 		Category: flags.EthCategory,
 	}
+	AllowBuiltInConfigOverrideFlag = &cli.BoolFlag{
+		Name:     "allow-builtin-config-override",
+		Usage:    "Allow same-hash custom overrides on built-in IDs to use custom chain config",
+		Category: flags.EthCategory,
+	}
+	ChainConfigMismatchPolicyFlag = &cli.StringFlag{
+		Name:     "chain-config-mismatch-policy",
+		Usage:    "Startup policy when chain config mismatches stored config: exit|rewind-and-update|update-config-only|ignore-mismatch (warning: update-config-only/ignore-mismatch may cause state/consensus divergence; expert use only)",
+		Value:    core.DefaultChainConfigMismatchPolicy.String(),
+		Category: flags.EthCategory,
+	}
 
 	// Dev mode
 	DeveloperFlag = &cli.BoolFlag{
@@ -177,6 +188,24 @@ var (
 		Name:     "syncmode",
 		Usage:    `Blockchain sync mode ("fast" or "full")`,
 		Value:    ethconfig.Defaults.SyncMode.String(),
+		Category: flags.EthCategory,
+	}
+	FastSyncPivotNumberFlag = &cli.Uint64Flag{
+		Name:     "fastsyncpivotnumber",
+		Usage:    "Pivot block number for fast sync (0 = use default calculation)",
+		Value:    0,
+		Category: flags.EthCategory,
+	}
+	FastSyncPivotHashFlag = &cli.StringFlag{
+		Name:     "fastsyncpivothash",
+		Usage:    "Pivot block hash for fast sync verification (hex string, must be set if fastsyncpivotnumber is set)",
+		Value:    "",
+		Category: flags.EthCategory,
+	}
+	FastSyncPivotRootFlag = &cli.StringFlag{
+		Name:     "fastsyncpivotroot",
+		Usage:    "State root of pivot block for fast sync state download (hex string, zero = use latest.Root)",
+		Value:    "",
 		Category: flags.EthCategory,
 	}
 	GCModeFlag = &cli.StringFlag{
@@ -266,28 +295,28 @@ var (
 	CacheFlag = &cli.IntFlag{
 		Name:     "cache",
 		Usage:    "Megabytes of memory allocated to internal caching",
-		Value:    1024,
+		Value:    3072,
 		Category: flags.PerfCategory,
 	}
 	CacheDatabaseFlag = &cli.IntFlag{
 		Name:     "cache-database",
 		Aliases:  []string{"cache.database"},
 		Usage:    "Percentage of cache memory allowance to use for database io",
-		Value:    50,
+		Value:    17,
 		Category: flags.PerfCategory,
 	}
 	CacheTrieFlag = &cli.IntFlag{
 		Name:     "cache-trie",
 		Aliases:  []string{"cache.trie"},
 		Usage:    "Percentage of cache memory allowance to use for trie caching (default = 15% full mode, 30% archive mode)",
-		Value:    15,
+		Value:    5,
 		Category: flags.PerfCategory,
 	}
 	CacheGCFlag = &cli.IntFlag{
 		Name:     "cache-gc",
 		Aliases:  []string{"cache.gc"},
 		Usage:    "Percentage of cache memory allowance to use for trie pruning (default = 25% full mode, 0% archive mode)",
-		Value:    25,
+		Value:    34,
 		Category: flags.PerfCategory,
 	}
 	CachePrefetchFlag = &cli.BoolFlag{
@@ -472,7 +501,7 @@ var (
 		Name:     "http",
 		Aliases:  []string{"rpc"},
 		Usage:    "Enable the HTTP-RPC server",
-		Value:    true,
+		Value:    false,
 		Category: flags.APICategory,
 	}
 	HTTPListenAddrFlag = &cli.StringFlag{
@@ -507,7 +536,7 @@ var (
 		Name:     "http-api",
 		Aliases:  []string{"rpcapi"},
 		Usage:    "API's offered over the HTTP-RPC interface",
-		Value:    "debug,eth,net,txpool,web3,XDPoS",
+		Value:    "eth,net,txpool,web3,XDPoS",
 		Category: flags.APICategory,
 	}
 	HTTPPathPrefixFlag = &cli.StringFlag{
@@ -546,7 +575,7 @@ var (
 	WSEnabledFlag = &cli.BoolFlag{
 		Name:     "ws",
 		Usage:    "Enable the WS-RPC server",
-		Value:    true,
+		Value:    false,
 		Category: flags.APICategory,
 	}
 	WSListenAddrFlag = &cli.StringFlag{
@@ -567,7 +596,7 @@ var (
 		Name:     "ws-api",
 		Aliases:  []string{"wsapi"},
 		Usage:    "API's offered over the WS-RPC interface",
-		Value:    "debug,eth,net,txpool,web3,XDPoS",
+		Value:    "eth,net,txpool,web3,XDPoS",
 		Category: flags.APICategory,
 	}
 	WSAllowedOriginsFlag = &cli.StringFlag{
@@ -644,19 +673,7 @@ var (
 	}
 	BootnodesFlag = &cli.StringFlag{
 		Name:     "bootnodes",
-		Usage:    "Comma separated enode URLs for P2P discovery bootstrap (set v4+v5 instead for light servers)",
-		Value:    "",
-		Category: flags.NetworkingCategory,
-	}
-	BootnodesV4Flag = &cli.StringFlag{
-		Name:     "bootnodesv4",
-		Usage:    "Comma separated enode URLs for P2P v4 discovery bootstrap (light server, full nodes)",
-		Value:    "",
-		Category: flags.NetworkingCategory,
-	}
-	BootnodesV5Flag = &cli.StringFlag{
-		Name:     "bootnodesv5",
-		Usage:    "Comma separated enode URLs for P2P v5 discovery bootstrap (light server, light nodes)",
+		Usage:    "Comma separated enode URLs for P2P discovery bootstrap",
 		Value:    "",
 		Category: flags.NetworkingCategory,
 	}
@@ -932,19 +949,19 @@ func setAllowlistAndDenylistForPeers(ctx *cli.Context, cfg *p2p.Config) {
 	// setup allowlist for peers
 	if ctx.IsSet(PeersAllowlistFlag.Name) {
 		urls := SplitAndTrim(ctx.String(PeersAllowlistFlag.Name))
-		cfg.AllowPeers = make(map[discover.NodeID]struct{}, len(urls))
+		cfg.AllowPeers = make(map[enode.ID]struct{}, len(urls))
 		for _, url := range urls {
 			if url != "" {
-				node1, err1 := discover.HexID(url)
+				node1, err1 := enode.ParseID(url)
 				if err1 == nil {
 					cfg.AllowPeers[node1] = struct{}{}
 					log.Info("Add peer to allowlist", "id", node1)
 					continue
 				}
-				node2, err2 := discover.ParseNode(url)
+				node2, err2 := enode.ParseV4(url)
 				if err2 == nil {
-					cfg.AllowPeers[node2.ID] = struct{}{}
-					log.Info("Add peer to allowlist", "enode", url, "id", node2.ID)
+					cfg.AllowPeers[node2.ID()] = struct{}{}
+					log.Info("Add peer to allowlist", "enode", url, "id", node2.ID())
 					continue
 				}
 				log.Crit("Invalid peer id for allowlist", "url", url, "err1", err1, "err2", err2)
@@ -955,19 +972,19 @@ func setAllowlistAndDenylistForPeers(ctx *cli.Context, cfg *p2p.Config) {
 	// setup denylist for peers
 	if ctx.IsSet(PeersDenylistFlag.Name) {
 		urls := SplitAndTrim(ctx.String(PeersDenylistFlag.Name))
-		cfg.DenyPeers = make(map[discover.NodeID]struct{}, len(urls))
+		cfg.DenyPeers = make(map[enode.ID]struct{}, len(urls))
 		for _, url := range urls {
 			if url != "" {
-				node1, err1 := discover.HexID(url)
+				node1, err1 := enode.ParseID(url)
 				if err1 == nil {
 					cfg.DenyPeers[node1] = struct{}{}
 					log.Info("Add peer to denylist", "id", node1)
 					continue
 				}
-				node2, err2 := discover.ParseNode(url)
+				node2, err2 := enode.ParseV4(url)
 				if err2 == nil {
-					cfg.DenyPeers[node2.ID] = struct{}{}
-					log.Info("Add peer to denylist", "enode", url, "id", node2.ID)
+					cfg.DenyPeers[node2.ID()] = struct{}{}
+					log.Info("Add peer to denylist", "enode", url, "id", node2.ID())
 					continue
 				}
 				log.Crit("Invalid peer id for denylist", "url", url, "err1", err1, "err2", err2)
@@ -982,10 +999,10 @@ func removeDenylistedPeers(cfg *p2p.Config) {
 		return
 	}
 
-	filteredNodes := make([]*discover.Node, 0, len(cfg.BootstrapNodes))
+	filteredNodes := make([]*enode.Node, 0, len(cfg.BootstrapNodes))
 	for _, node := range cfg.BootstrapNodes {
-		if _, ok := cfg.DenyPeers[node.ID]; ok {
-			log.Info("Remove denylisted peer", "enode", node, "id", node.ID)
+		if _, ok := cfg.DenyPeers[node.ID()]; ok {
+			log.Info("Remove denylisted peer", "enode", node, "id", node.ID())
 			continue
 		}
 		filteredNodes = append(filteredNodes, node)
@@ -1005,8 +1022,8 @@ func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 	urls := params.MainnetBootnodes
 	if ctx.IsSet(BootnodesFlag.Name) {
 		urls = SplitAndTrim(ctx.String(BootnodesFlag.Name))
-	} else if ctx.IsSet(BootnodesV4Flag.Name) {
-		urls = SplitAndTrim(ctx.String(BootnodesV4Flag.Name))
+	} else if ctx.IsSet(LegacyBootnodesV4Flag.Name) {
+		urls = SplitAndTrim(ctx.String(LegacyBootnodesV4Flag.Name))
 	} else {
 		if cfg.BootstrapNodes != nil {
 			return // Already set by config file, don't apply defaults.
@@ -1021,11 +1038,11 @@ func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 	cfg.BootstrapNodes = mustParseBootnodes(urls)
 }
 
-func mustParseBootnodes(urls []string) []*discover.Node {
-	nodes := make([]*discover.Node, 0, len(urls))
+func mustParseBootnodes(urls []string) []*enode.Node {
+	nodes := make([]*enode.Node, 0, len(urls))
 	for _, url := range urls {
 		if url != "" {
-			node, err := discover.ParseNode(url)
+			node, err := enode.Parse(enode.ValidSchemes, url)
 			if err != nil {
 				log.Crit("Bootstrap URL invalid", "enode", url, "err", err)
 				return nil
@@ -1039,24 +1056,27 @@ func mustParseBootnodes(urls []string) []*discover.Node {
 // setBootstrapNodesV5 creates a list of bootstrap nodes from the command line
 // flags, reverting to pre-configured ones if none have been specified.
 func setBootstrapNodesV5(ctx *cli.Context, cfg *p2p.Config) {
-	urls := params.DiscoveryV5Bootnodes
-	switch {
-	case ctx.IsSet(BootnodesFlag.Name):
+	urls := params.V5MainnetBootnodes
+	if ctx.IsSet(BootnodesFlag.Name) {
 		urls = SplitAndTrim(ctx.String(BootnodesFlag.Name))
-	case ctx.IsSet(BootnodesV5Flag.Name):
-		urls = SplitAndTrim(ctx.String(BootnodesV5Flag.Name))
-	case ctx.Bool(TestnetFlag.Name):
-		urls = params.TestnetBootnodes
-	case ctx.Bool(DevnetFlag.Name):
-		urls = params.DevnetBootnodes
-	case cfg.BootstrapNodesV5 != nil:
-		return // already set, don't apply defaults.
+	} else if ctx.IsSet(LegacyBootnodesV5Flag.Name) {
+		urls = SplitAndTrim(ctx.String(LegacyBootnodesV5Flag.Name))
+	} else {
+		if cfg.BootstrapNodesV5 != nil {
+			return // already set, don't apply defaults.
+		}
+		switch {
+		case ctx.Bool(TestnetFlag.Name):
+			urls = params.V5TestnetBootnodes
+		case ctx.Bool(DevnetFlag.Name):
+			urls = params.V5DevnetBootnodes
+		}
 	}
 
-	cfg.BootstrapNodesV5 = make([]*discv5.Node, 0, len(urls))
+	cfg.BootstrapNodesV5 = make([]*enode.Node, 0, len(urls))
 	for _, url := range urls {
 		if url != "" {
-			node, err := discv5.ParseNode(url)
+			node, err := enode.Parse(enode.ValidSchemes, url)
 			if err != nil {
 				log.Error("Bootstrap URL invalid", "enode", url, "err", err)
 				continue
@@ -1290,7 +1310,7 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 	setBootstrapNodes(ctx, cfg)
 	setAllowlistAndDenylistForPeers(ctx, cfg)
 	removeDenylistedPeers(cfg)
-	// setBootstrapNodesV5(ctx, cfg)
+	setBootstrapNodesV5(ctx, cfg)
 
 	if ctx.IsSet(MaxPeersFlag.Name) {
 		cfg.MaxPeers = ctx.Int(MaxPeersFlag.Name)
@@ -1495,6 +1515,8 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	setTxPool(ctx, &cfg.TxPool)
 	setMiner(ctx, &cfg.Miner)
 	setLes(ctx, cfg)
+	cfg.AllowBuiltInCustomRecovery = ctx.Bool(AllowBuiltInConfigOverrideFlag.Name)
+	cfg.ChainConfigMismatchPolicy = resolveChainConfigMismatchPolicyOrFatal(ctx, cfg.ChainConfigMismatchPolicy)
 
 	// Cap the cache allowance and tune the garbage collector
 	mem, err := gopsutil.VirtualMemory()
@@ -1519,6 +1541,37 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	if ctx.IsSet(SyncModeFlag.Name) {
 		if err = cfg.SyncMode.UnmarshalText([]byte(ctx.String(SyncModeFlag.Name))); err != nil {
 			Fatalf("invalid --syncmode flag: %v", err)
+		}
+	}
+	pivotNumberSet := ctx.IsSet(FastSyncPivotNumberFlag.Name)
+	pivotHashSet := ctx.IsSet(FastSyncPivotHashFlag.Name)
+	pivotRootSet := ctx.IsSet(FastSyncPivotRootFlag.Name)
+	pivotHash := ctx.String(FastSyncPivotHashFlag.Name)
+	pivotRoot := ctx.String(FastSyncPivotRootFlag.Name)
+
+	if pivotNumberSet {
+		if !pivotHashSet || pivotHash == "" {
+			Fatalf("--%s must be set if --%s is set", FastSyncPivotHashFlag.Name, FastSyncPivotNumberFlag.Name)
+		}
+		if !pivotRootSet || pivotRoot == "" {
+			Fatalf("--%s must be set if --%s is set", FastSyncPivotRootFlag.Name, FastSyncPivotNumberFlag.Name)
+		}
+		cfg.FastSyncPivotNumber = ctx.Uint64(FastSyncPivotNumberFlag.Name)
+		if cfg.FastSyncPivotNumber == 0 {
+			Fatalf("--%s must be greater than 0 when explicitly set", FastSyncPivotNumberFlag.Name)
+		}
+		if err = cfg.FastSyncPivotHash.UnmarshalText([]byte(pivotHash)); err != nil {
+			Fatalf("invalid --%s flag: %v", FastSyncPivotHashFlag.Name, err)
+		}
+		if err = cfg.FastSyncPivotRoot.UnmarshalText([]byte(pivotRoot)); err != nil {
+			Fatalf("invalid --%s flag: %v", FastSyncPivotRootFlag.Name, err)
+		}
+	} else {
+		if pivotHashSet {
+			Fatalf("--%s must not be set without --%s", FastSyncPivotHashFlag.Name, FastSyncPivotNumberFlag.Name)
+		}
+		if pivotRootSet {
+			Fatalf("--%s must not be set without --%s", FastSyncPivotRootFlag.Name, FastSyncPivotNumberFlag.Name)
 		}
 	}
 
@@ -1595,18 +1648,17 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	switch {
 	case ctx.Bool(MainnetFlag.Name):
 		if !ctx.IsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 50
+			cfg.NetworkId = params.XDCMainnetChainConfig.ChainID.Uint64() // 50
 		}
 		cfg.Genesis = core.DefaultGenesisBlock()
 	case ctx.Bool(TestnetFlag.Name):
-		common.IsTestnet = true
 		if !ctx.IsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 51
+			cfg.NetworkId = params.TestnetChainConfig.ChainID.Uint64() // 51
 		}
 		cfg.Genesis = core.DefaultTestnetGenesisBlock()
 	case ctx.Bool(DevnetFlag.Name):
 		if !ctx.IsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 551
+			cfg.NetworkId = params.DevnetChainConfig.ChainID.Uint64() // 551
 		}
 		cfg.Genesis = core.DefaultDevnetGenesisBlock()
 	case ctx.Bool(DeveloperFlag.Name):
@@ -1651,7 +1703,7 @@ func RegisterEthService(stack *node.Node, cfg *ethconfig.Config, XDCXServ *XDCx.
 	}
 	backend, err := eth.New(stack, cfg, XDCXServ, lendingServ)
 	if err != nil {
-		Fatalf("Failed to register the Ethereum service: %v", err)
+		Fatalf("Failed to register the Ethereum service: %s", FormatChainConfigError(err))
 	}
 	stack.RegisterAPIs(tracers.APIs(backend.APIBackend))
 	return backend.APIBackend, backend
@@ -1676,12 +1728,11 @@ func SetNetworkFlagById(ctx *cli.Context, cfg *ethconfig.Config) {
 	if ctx.IsSet(NetworkIdFlag.Name) {
 		cfg.NetworkId = ctx.Uint64(NetworkIdFlag.Name)
 		switch cfg.NetworkId {
-		case 50:
+		case params.XDCMainnetChainConfig.ChainID.Uint64(): // 50
 			ctx.Set(MainnetFlag.Name, "true")
-		case 51:
-			common.IsTestnet = true
+		case params.TestnetChainConfig.ChainID.Uint64(): // 51
 			ctx.Set(TestnetFlag.Name, "true")
-		case 551:
+		case params.DevnetChainConfig.ChainID.Uint64(): // 551
 			ctx.Set(DevnetFlag.Name, "true")
 		}
 	}
@@ -1785,24 +1836,72 @@ func MakeGenesis(ctx *cli.Context) *core.Genesis {
 	return genesis
 }
 
+// formatBlockChainOpenError rewrites readonly startup failures into operator-
+// facing remediation messages so config rewind and state-repair requirements
+// remain actionable without exposing internal startup details.
+func formatBlockChainOpenError(err error, readonly bool) string {
+	if errors.Is(err, core.ErrGenesisAllocUnavailable) {
+		return "Can't create BlockChain: " + core.GenesisAllocUnavailableRecoveryMessage
+	}
+	if !readonly {
+		return fmt.Sprintf("Can't create BlockChain: %v", err)
+	}
+	switch {
+	case errors.Is(err, core.ErrConfigMismatchPolicyExit):
+		return "Can't open blockchain: " + FormatChainConfigError(err)
+	case errors.Is(err, core.ErrReadOnlyGenesisStateRecovery):
+		return "Can't open blockchain in readonly mode: genesis state is missing and requires recovery. Reopen the database in writable mode to recover the missing genesis state, then retry."
+	case errors.Is(err, core.ErrReadOnlyHeadStateRepair):
+		return "Can't open blockchain in readonly mode: head state is missing and requires repair. Reopen the database in writable mode to repair the missing head state, then retry."
+	case errors.Is(err, core.ErrReadOnlyBadHashRewind):
+		return "Can't open blockchain in readonly mode: the local chain contains a denylisted hash and requires rewind. Reopen the database in writable mode so the chain can rewind past the denylisted hash, then retry."
+	case errors.Is(err, core.ErrReadOnlyConfigRewind):
+		return "Can't open blockchain in readonly mode: the selected chain-config mismatch policy requires rewind. Reopen in writable mode, or use --chain-config-mismatch-policy=ignore-mismatch to avoid rewind in readonly mode."
+	case errors.Is(err, core.ErrReadOnlyConfigUpdate):
+		return "Can't open blockchain in readonly mode: the selected chain-config mismatch policy requires writing chain config. Reopen in writable mode, or use --chain-config-mismatch-policy=ignore-mismatch in readonly mode."
+	default:
+		return fmt.Sprintf("Can't create BlockChain: %v", err)
+	}
+}
+
+var makeChainFatalf = Fatalf
+
 // MakeChain creates a chain manager from set command line flags.
-func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockChain, ethdb.Database) {
+func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool, configuredCompatPolicy string) (*core.BlockChain, ethdb.Database) {
 	var (
-		gspec   = MakeGenesis(ctx)
-		chainDb = MakeChainDatabase(ctx, stack, readonly)
+		gspec        = MakeGenesis(ctx)
+		chainDb      = MakeChainDatabase(ctx, stack, readonly)
+		config       *params.ChainConfig
+		ghash        common.Hash
+		compatErr    *params.ConfigCompatError
+		compatPolicy = core.ChainConfigMismatchPolicy(resolveChainConfigMismatchPolicyOrFatal(ctx, configuredCompatPolicy))
+		err          error
 	)
-	config, _, err := core.LoadChainConfig(chainDb, gspec)
-	if err != nil {
-		Fatalf("%v", err)
+	if readonly {
+		// Readonly startup still needs compatibility metadata so chain open can
+		// surface ErrReadOnlyConfigRewind instead of collapsing rewindable config
+		// drift into a generic config conflict.
+		config, ghash, compatErr, err = core.LoadChainConfigWithCompatWithOverride(chainDb, gspec, ctx.Bool(AllowBuiltInConfigOverrideFlag.Name))
+		if err != nil {
+			makeChainFatalf("%v", err)
+		}
+	} else {
+		config, ghash, compatErr, err = core.SetupGenesisBlockWithOverride(chainDb, gspec, ctx.Bool(AllowBuiltInConfigOverrideFlag.Name))
+		if err != nil {
+			makeChainFatalf("%v", err)
+		}
 	}
 	var engine consensus.Engine
 	if config.XDPoS != nil {
-		engine = XDPoS.New(config, chainDb)
+		engine, err = XDPoS.New(config, chainDb)
+		if err != nil {
+			makeChainFatalf("%s", FormatChainConfigError(err))
+		}
 	} else {
-		Fatalf("Only support XDPoS consensus")
+		makeChainFatalf("Only support XDPoS consensus")
 	}
 	if gcmode := ctx.String(GCModeFlag.Name); gcmode != "full" && gcmode != "archive" {
-		Fatalf("--%s must be either 'full' or 'archive'", GCModeFlag.Name)
+		makeChainFatalf("--%s must be either 'full' or 'archive'", GCModeFlag.Name)
 	}
 	cache := &core.CacheConfig{
 		TrieCleanLimit:    ethconfig.Defaults.TrieCleanCache,
@@ -1828,18 +1927,46 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockCh
 			config := json.RawMessage(ctx.String(VMTraceJsonConfigFlag.Name))
 			t, err := tracers.LiveDirectory.New(name, config)
 			if err != nil {
-				Fatalf("Failed to create tracer %q: %v", name, err)
+				makeChainFatalf("Failed to create tracer %q: %v", name, err)
 			}
 			vmcfg.Tracer = t
 		}
 	}
 	// Disable transaction indexing/unindexing by default.
-	chain, err := core.NewBlockChain(chainDb, cache, gspec, engine, vmcfg)
+	var chain *core.BlockChain
+	if readonly {
+		chain, err = core.NewBlockChainReadOnlyResolved(chainDb, cache, gspec, engine, vmcfg, config, ghash, compatErr, compatPolicy)
+	} else {
+		chain, err = core.NewBlockChainResolved(chainDb, cache, gspec, engine, vmcfg, config, ghash, compatErr, compatPolicy)
+	}
 	if err != nil {
-		Fatalf("Can't create BlockChain: %v", err)
+		makeChainFatalf("%s", formatBlockChainOpenError(err, readonly))
 	}
 
 	return chain, chainDb
+}
+
+func resolveChainConfigMismatchPolicy(ctx *cli.Context, configured string) (string, error) {
+	raw := configured
+	errPrefix := "invalid ChainConfigMismatchPolicy in config"
+	if ctx.IsSet(ChainConfigMismatchPolicyFlag.Name) {
+		raw = ctx.String(ChainConfigMismatchPolicyFlag.Name)
+		errPrefix = fmt.Sprintf("invalid --%s flag", ChainConfigMismatchPolicyFlag.Name)
+	}
+	policy, err := core.ParseChainConfigMismatchPolicy(raw)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", errPrefix, err)
+	}
+	log.Info("Resolved chain config mismatch policy", "value", policy.String())
+	return policy.String(), nil
+}
+
+func resolveChainConfigMismatchPolicyOrFatal(ctx *cli.Context, configured string) string {
+	policy, err := resolveChainConfigMismatchPolicy(ctx, configured)
+	if err != nil {
+		makeChainFatalf("%v", err)
+	}
+	return policy
 }
 
 // MakeConsolePreloads retrieves the absolute paths for the console JavaScript

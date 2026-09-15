@@ -59,6 +59,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/miner"
 	"github.com/XinFinOrg/XDPoSChain/node"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enr"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
@@ -74,7 +75,7 @@ type Ethereum struct {
 	blockchain     *core.BlockChain
 
 	// Channel for shutting down the service
-	shutdownChan chan bool // Channel for shutting down the ethereum
+	shutdownChan chan bool
 
 	orderPool       *legacypool.OrderPool
 	lendingPool     *legacypool.LendingPool
@@ -129,11 +130,14 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	if err != nil {
 		return nil, err
 	}
-	// Resolve the effective chain config (and persist it when compatible)
-	// before constructing the consensus engine so it initializes with final network settings.
-	chainConfig, _, genesisErr := core.SetupGenesisBlock(chainDb, config.Genesis)
-	if _, ok := genesisErr.(*params.ConfigCompatError); genesisErr != nil && !ok {
-		return nil, genesisErr
+	// Resolve the effective chain config before constructing the consensus engine.
+	// NewBlockChainEx reruns SetupGenesisBlock and applies any required rewind.
+	chainConfig, genesisHash, compatErr, err := core.SetupGenesisBlockWithOverride(chainDb, config.Genesis, config.AllowBuiltInCustomRecovery)
+	if err != nil {
+		return nil, err
+	}
+	if chainConfig == nil {
+		return nil, fmt.Errorf("nil chain config returned from SetupGenesisBlock (err=%v)", err)
 	}
 
 	// Set networkID to chainID by default.
@@ -141,8 +145,11 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	if networkID == 0 {
 		networkID = chainConfig.ChainID.Uint64()
 	}
-	common.CopyConstants(networkID)
-	engine := CreateConsensusEngine(stack, chainConfig, chainDb)
+	engine, err := CreateConsensusEngine(stack, chainConfig, chainDb)
+	if err != nil {
+		return nil, err
+	}
+	logXDPoSConfig(chainConfig, compatErr)
 
 	// Assemble the Ethereum object.
 	eth := &Ethereum{
@@ -231,7 +238,19 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 			return eth.Lending
 		}
 	}
-	eth.blockchain, err = core.NewBlockChainEx(chainDb, XDCXServ.GetLevelDB(), cacheConfig, config.Genesis, eth.engine, vmConfig)
+	compatPolicy := core.ChainConfigMismatchPolicy(config.ChainConfigMismatchPolicy)
+	eth.blockchain, err = core.NewBlockChainExResolved(
+		chainDb,
+		XDCXServ.GetLevelDB(),
+		cacheConfig,
+		config.Genesis,
+		eth.engine,
+		vmConfig,
+		chainConfig,
+		genesisHash,
+		compatErr,
+		compatPolicy,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -291,6 +310,10 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 
 	if eth.protocolManager, err = NewProtocolManagerEx(eth.blockchain.Config(), config.SyncMode, networkID, eth.eventMux, eth.txPool, eth.orderPool, eth.lendingPool, eth.engine, eth.blockchain, chainDb); err != nil {
 		return nil, err
+	}
+	// Set fast sync pivot block if configured
+	if config.FastSyncPivotNumber != 0 {
+		eth.protocolManager.downloader.SetPivotBlock(config.FastSyncPivotNumber, config.FastSyncPivotHash, config.FastSyncPivotRoot)
 	}
 	eth.miner = miner.New(eth, &config.Miner, eth.blockchain.Config(), eth.EventMux(), eth.engine, stack.Config().AnnounceTxs)
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
@@ -366,8 +389,8 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 			return block, false, nil
 		}
 
-		eth.protocolManager.fetcher.SetSignHook(signHook)
-		eth.protocolManager.fetcher.SetAppendM2HeaderHook(appendM2HeaderHook)
+		eth.protocolManager.blockFetcher.SetSignHook(signHook)
+		eth.protocolManager.blockFetcher.SetAppendM2HeaderHook(appendM2HeaderHook)
 
 		/*
 			XDPoS1.0 Specific hooks
@@ -375,7 +398,21 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 		hooks.AttachConsensusV1Hooks(c, eth.blockchain, chainConfig)
 		hooks.AttachConsensusV2Hooks(c, eth.blockchain, chainConfig)
 
+		// Let the consensus engine know when the node is downloading the chain,
+		// so it can downgrade otherwise-noisy "missing snapshot" logs to Debug
+		// during sync and only Warn when it happens at a synced head.
+		c.EngineV2.HookSyncing = func() bool {
+			return eth.Downloader().Synchronising()
+		}
+
 		isSigner := func(address common.Address) bool {
+			// During sync the head snapshot isn't built yet, so IsAuthorisedAddress
+			// would fail and spam "[IsAuthorisedAddress] Can't get snapshot". The
+			// signer check is meaningless before the chain is synced, so skip it; it
+			// is re-evaluated normally once syncing completes.
+			if eth.Downloader().Synchronising() {
+				return false
+			}
 			return c.IsAuthorisedAddress(eth.blockchain, eth.blockchain.CurrentHeader(), address)
 		}
 		eth.txPool.SetSigner(isSigner)
@@ -408,13 +445,13 @@ func makeExtraData(extra []byte) []byte {
 }
 
 // CreateConsensusEngine creates the required type of consensus engine instance for an Ethereum service
-func CreateConsensusEngine(stack *node.Node, chainConfig *params.ChainConfig, db ethdb.Database) consensus.Engine {
+func CreateConsensusEngine(stack *node.Node, chainConfig *params.ChainConfig, db ethdb.Database) (consensus.Engine, error) {
 	// If delegated-proof-of-stake is requested, set it up
 	if chainConfig.XDPoS != nil {
 		return XDPoS.New(chainConfig, db)
 	}
 
-	return ethash.NewFaker()
+	return ethash.NewFaker(), nil
 }
 
 // APIs return the collection of RPC services the ethereum package offers.
@@ -450,6 +487,14 @@ func (e *Ethereum) APIs() []rpc.API {
 			Service:   e.netRPCService,
 		},
 	}...)
+}
+
+func logXDPoSConfig(chainConfig *params.ChainConfig, compatErr *params.ConfigCompatError) {
+	if compatErr != nil || chainConfig == nil || chainConfig.XDPoS == nil || chainConfig.XDPoS.V2 == nil {
+		return
+	}
+
+	log.Info("Load xdc config", "config.V2", chainConfig.XDPoS.V2.StableLogValue())
 }
 
 func (e *Ethereum) ResetWithGenesisBlock(gb *types.Block) {
@@ -548,19 +593,26 @@ func (e *Ethereum) EventMux() *event.TypeMux           { return e.eventMux }
 func (e *Ethereum) Engine() consensus.Engine           { return e.engine }
 func (e *Ethereum) ChainDb() ethdb.Database            { return e.chainDb }
 func (e *Ethereum) IsListening() bool                  { return true } // Always listening
-func (e *Ethereum) EthVersion() int                    { return int(e.protocolManager.SubProtocols[0].Version) }
+func (e *Ethereum) EthVersion() int                    { return int(ProtocolVersions[0]) }
 func (e *Ethereum) NetVersion() uint64                 { return e.networkId }
 func (e *Ethereum) Downloader() *downloader.Downloader { return e.protocolManager.downloader }
 func (e *Ethereum) BloomIndexer() *core.ChainIndexer   { return e.bloomIndexer }
 
 // Protocols returns all the currently configured
 func (e *Ethereum) Protocols() []p2p.Protocol {
-	return e.protocolManager.SubProtocols
+	protos := make([]p2p.Protocol, len(ProtocolVersions))
+	for i, vsn := range ProtocolVersions {
+		protos[i] = e.protocolManager.makeProtocol(vsn)
+		protos[i].Attributes = []enr.Entry{e.currentEthEntry()}
+	}
+	return protos
 }
 
 // Start implements node.Lifecycle, starting all internal goroutines needed by the
 // Ethereum protocol implementation.
 func (e *Ethereum) Start() error {
+	e.startEthEntryUpdate(e.p2pServer.LocalNode())
+
 	// Start the bloom bits servicing goroutines
 	e.startBloomHandlers(params.BloomBitsBlocks)
 
@@ -580,16 +632,37 @@ func (e *Ethereum) Start() error {
 // Stop implements node.Lifecycle, terminating all internal goroutines used by the
 // Ethereum protocol.
 func (e *Ethereum) Stop() error {
+	log.Info("Stopping Ethereum bloomIndexer start")
 	e.bloomIndexer.Close()
+	log.Info("Ethereum bloomIndexer stopped")
+
+	log.Info("Stopping Ethereum blockchain start")
 	e.blockchain.Stop()
+	log.Info("Ethereum blockchain stopped")
+
+	log.Info("Stopping Ethereum protocolManager start")
 	e.protocolManager.Stop()
+	log.Info("Ethereum protocolManager stopped")
 
+	log.Info("Stopping Ethereum txPool start")
 	e.txPool.Close()
-	e.miner.Stop()
-	e.eventMux.Stop()
+	log.Info("Ethereum txPool stopped")
 
-	e.chainDb.Close()
+	log.Info("Stopping Ethereum shutdownChan start")
 	close(e.shutdownChan)
+	log.Info("Ethereum shutdownChan stopped")
+
+	log.Info("Stopping Ethereum miner start")
+	e.miner.Stop()
+	log.Info("Ethereum miner stopped")
+
+	log.Info("Stopping Ethereum eventMux start")
+	e.eventMux.Stop()
+	log.Info("Ethereum eventMux stopped")
+
+	log.Info("Stopping Ethereum chainDb start")
+	e.chainDb.Close()
+	log.Info("Ethereum chainDb stopped")
 
 	return nil
 }

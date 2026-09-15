@@ -278,7 +278,7 @@ func (c *BoundContract) RawCreationTransact(opts *TransactOpts, calldata []byte)
 func (c *BoundContract) Transfer(opts *TransactOpts) (*types.Transaction, error) {
 	// Check if payable fallback or receive is defined
 	if !c.abi.HasReceive() && !(c.abi.HasFallback() && c.abi.Fallback.IsPayable()) {
-		return nil, fmt.Errorf("contract does not have a payable fallback or receive function")
+		return nil, errors.New("contract does not have a payable fallback or receive function")
 	}
 	return c.transact(opts, &c.address, nil)
 }
