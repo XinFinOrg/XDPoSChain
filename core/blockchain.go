@@ -1709,18 +1709,27 @@ func (bc *BlockChain) blockBeatsHeadTd(block *types.Block, head *types.Header, h
 	return block.NumberU64() > head.Number.Uint64()
 }
 
+// isEpochSwitchBlock reports whether block is the epoch switch block of its epoch. A
+// chain without XDPoS, and an engine that is not XDPoS, have no epoch switch, which is
+// not an error. What a failure to decode the header means is left to the caller:
+// notifyEpochSwitchBlock reports the block, reorg does not - see its call site.
+func (bc *BlockChain) isEpochSwitchBlock(block *types.Block) (bool, error) {
+	if bc.chainConfig.XDPoS == nil {
+		return false, nil
+	}
+	engine, ok := bc.Engine().(*XDPoS.XDPoS)
+	if !ok {
+		return false, nil
+	}
+	isEpochSwitch, _, err := engine.IsEpochSwitch(block.Header())
+	return isEpochSwitch, err
+}
+
 // notifyEpochSwitchBlock sends a checkpoint notification when block switches the
 // epoch, so that the consensus parameters and the masternode set are refreshed.
 // It is a no-op for non-XDPoS chains and for engines that are not XDPoS.
 func (bc *BlockChain) notifyEpochSwitchBlock(block *types.Block) {
-	if bc.chainConfig.XDPoS == nil {
-		return
-	}
-	engine, ok := bc.Engine().(*XDPoS.XDPoS)
-	if !ok {
-		return
-	}
-	isEpochSwitch, _, err := engine.IsEpochSwitch(block.Header())
+	isEpochSwitch, err := bc.isEpochSwitchBlock(block)
 	if err != nil {
 		log.Error("[notifyEpochSwitchBlock] Error while checking if the incoming block is epoch switch block", "Hash", block.Hash(), "Number", block.Number())
 		bc.reportBlock(block, nil, err)
@@ -3313,6 +3322,24 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 			if err := bc.UpdateM1(); err != nil {
 				log.Crit("Fail to update masternodes during reorg", "number", block.Number, "hash", block.Hash().Hex(), "err", err)
 			}
+		}
+		// An epoch switch block reaches the canonical chain here whenever it is one of the
+		// blocks this reorg rewrites instead of the head its caller adopts, and the staking
+		// loop in cmd/XDC has to revalidate the consensus parameters and the masternode duty
+		// for the new epoch. The import paths signal for the block they process and never for
+		// these, so a head that jumps over the epoch boundary would leave the loop on the
+		// previous epoch's parameters until the next epoch switch block arrived. The signal
+		// coalesces - see SignalCheckpoint - so a block that was canonical before the rewind
+		// (a rollback re-import) signalling a second time costs nothing.
+		//
+		// Unlike notifyEpochSwitchBlock, a header the engine cannot decode is not reported
+		// here: these blocks are stored and were verified when they were imported, so the
+		// failure says nothing about the peer that served them, and reportBlock would write
+		// a block this node already accepted into the bad-block table.
+		if isEpochSwitch, err := bc.isEpochSwitchBlock(block); err != nil {
+			log.Error("[reorg] Error while checking if a promoted block is an epoch switch block", "Hash", block.Hash(), "Number", block.Number())
+		} else if isEpochSwitch {
+			SignalCheckpoint()
 		}
 	}
 	if len(rebirthLogs) > 0 {
