@@ -520,8 +520,7 @@ func PrepareXDCTestBlockChainForV2Engine(t *testing.T, numOfBlocks int, chainCon
 	var currentForkBlock *types.Block
 
 	go func() {
-		for range core.CheckpointCh {
-			checkpointChanMsg := <-core.CheckpointCh
+		for checkpointChanMsg := range core.CheckpointCh {
 			log.Info("[V2] Got a message from core CheckpointChan!", "msg", checkpointChanMsg)
 		}
 	}()
@@ -608,8 +607,7 @@ func PrepareXDCTestBlockChainWithPenaltyForV2Engine(t *testing.T, numOfBlocks in
 	currentBlock := blockchain.Genesis()
 
 	go func() {
-		for range core.CheckpointCh {
-			checkpointChanMsg := <-core.CheckpointCh
+		for checkpointChanMsg := range core.CheckpointCh {
 			log.Info("[V2] Got a message from core CheckpointChan!", "msg", checkpointChanMsg)
 		}
 	}()
@@ -665,8 +663,7 @@ func PrepareXDCTestBlockChainWithPenaltyCustomized(t *testing.T, numOfBlocks int
 	currentBlock := blockchain.Genesis()
 
 	go func() {
-		for range core.CheckpointCh {
-			checkpointChanMsg := <-core.CheckpointCh
+		for checkpointChanMsg := range core.CheckpointCh {
 			log.Info("[V2] Got a message from core CheckpointChan!", "msg", checkpointChanMsg)
 		}
 	}()
@@ -731,8 +728,7 @@ func PrepareXDCTestBlockChainWith128Candidates(t *testing.T, numOfBlocks int, ch
 	currentBlock := blockchain.Genesis()
 
 	go func() {
-		for range core.CheckpointCh {
-			checkpointChanMsg := <-core.CheckpointCh
+		for checkpointChanMsg := range core.CheckpointCh {
 			log.Info("[V2] Got a message from core CheckpointChan!", "msg", checkpointChanMsg)
 		}
 	}()
@@ -796,8 +792,7 @@ func PrepareXDCTestBlockChainWithProtectorObserver(t *testing.T, numOfBlocks int
 	currentBlock := blockchain.Genesis()
 
 	go func() {
-		for range core.CheckpointCh {
-			checkpointChanMsg := <-core.CheckpointCh
+		for checkpointChanMsg := range core.CheckpointCh {
 			log.Info("[V2] Got a message from core CheckpointChan!", "msg", checkpointChanMsg)
 		}
 	}()

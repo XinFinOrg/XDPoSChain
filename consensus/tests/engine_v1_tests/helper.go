@@ -304,8 +304,7 @@ func PrepareXDCTestBlockChain(t *testing.T, numOfBlocks int, chainConfig *params
 	currentBlock := blockchain.Genesis()
 
 	go func() {
-		for range core.CheckpointCh {
-			checkpointChanMsg := <-core.CheckpointCh
+		for checkpointChanMsg := range core.CheckpointCh {
 			log.Info("[V1] Got a message from core CheckpointChan!", "msg", checkpointChanMsg)
 		}
 	}()
