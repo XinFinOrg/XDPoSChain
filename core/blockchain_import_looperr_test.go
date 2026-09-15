@@ -22,8 +22,37 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 )
+
+// TestInsertChainReportsBadBlockBehindKnownPrefix pins that a batch stopped by an invalid
+// block directly behind a prefix this node already has is recorded like every other stop on
+// an invalid block: the failure is reported, it blames the block rather than this node, and
+// the invalid block lands in the bad-block database instead of only in a log line.
+func TestInsertChainReportsBadBlockBehindKnownPrefix(t *testing.T) {
+	chain, blocks := newInsertChainTester(t, nil, 5, 3) // #1..#3 are imported, the head is #3
+	invalid := errors.New("transaction root hash mismatch")
+	chain.validator = &failBodyValidator{Validator: chain.validator, failNumber: 4, failErr: invalid}
+
+	n, err := chain.InsertChain(blocks[2:]) // #3 is known, #4 fails body validation
+	if !errors.Is(err, invalid) {
+		t.Fatalf("block %d: have %v want %v", n, err, invalid)
+	}
+	// n is the index of blocks[3] (#4) within the batch handed in, not its number.
+	if want := 1; n != want {
+		t.Fatalf("unexpected failing index: have %d want %d", n, want)
+	}
+	if IsLocalInsertError(err) {
+		t.Fatalf("an invalid block is a consensus failure, not a local condition: %v", err)
+	}
+	if rawdb.ReadBadBlock(chain.ChainDb(), blocks[3].Hash()) == nil {
+		t.Fatal("the invalid block behind a known prefix was not recorded as a bad block")
+	}
+	if want := uint64(3); chain.CurrentBlock().Number.Uint64() != want {
+		t.Fatalf("unexpected head number: have %d want %d", chain.CurrentBlock().Number.Uint64(), want)
+	}
+}
 
 // TestInsertChainReportsMidBatchFailure guards against reporting a partially
 // imported batch as a success, which lets the downloader advance past blocks the
