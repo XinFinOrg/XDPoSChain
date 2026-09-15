@@ -940,3 +940,18 @@ func TestBlockMemoryExhaustionAttack(t *testing.T) {
 	}
 	verifyImportDone(t, imported)
 }
+
+// TestNewBlockFetcherNormalizesNilHandler pins the nil-callback contract: a
+// nil proposed-block handler means "not wired" and must be normalized to a
+// no-op inside NewBlockFetcher, mirroring the downloader's nil tolerance, so
+// the import path never needs a nil guard and a caller can never nil-panic
+// by copying the downloader's wiring style.
+func TestNewBlockFetcherNormalizesNilHandler(t *testing.T) {
+	f := NewBlockFetcher(nil, nil, nil, nil, nil, nil, nil, nil)
+	if f.handleProposedBlock == nil {
+		t.Fatal("nil proposed-block handler must be normalized to a no-op")
+	}
+	if err := f.handleProposedBlock(nil); err != nil {
+		t.Fatalf("normalized handler must be a no-op, got %v", err)
+	}
+}

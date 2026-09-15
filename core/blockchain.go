@@ -230,6 +230,13 @@ type BlockChain struct {
 	finalizedTrade      *lru.Cache[common.Hash, interface{}] // include both trades which force update to closed/liquidated by the protocol
 }
 
+// Compile-time check that the full chain answers both halves of the
+// proposed-block judgment (see utils.ShouldHandleProposedBlock).
+var _ interface {
+	consensus.CanonicalChain
+	consensus.BlockStorer
+} = (*BlockChain)(nil)
+
 type blockchainOpenConfig struct {
 	readOnly        bool
 	chainConfig     *params.ChainConfig
@@ -1094,10 +1101,20 @@ func (bc *BlockChain) writeHeadBlock(block *types.Block, writeBlock bool) {
 	}
 }
 
+// hasExecutedState reports whether the state trie with the given root opens,
+// i.e. the block was executed or its state was synced. Shared by HasFullState
+// and HasBlockAndExecutedState so the criterion cannot drift between them.
+// A zero root and types.EmptyRootHash both open an empty trie without an
+// error (trie.New skips resolving them), so for a block with an empty state
+// root this check degenerates to HasBlock and reports the block as executed.
+func (bc *BlockChain) hasExecutedState(root common.Hash) bool {
+	_, err := bc.stateCache.OpenTrie(root)
+	return err == nil
+}
+
 // HasFullState checks if state trie is fully present in the database or not.
 func (bc *BlockChain) HasFullState(block *types.Block) bool {
-	_, err := bc.stateCache.OpenTrie(block.Root())
-	if err != nil {
+	if !bc.hasExecutedState(block.Root()) {
 		return false
 	}
 	engine, _ := bc.Engine().(*XDPoS.XDPoS)
@@ -1115,8 +1132,10 @@ func (bc *BlockChain) HasFullState(block *types.Block) bool {
 	return true
 }
 
-// HasBlockAndFullState checks if a block and associated state trie is fully present
-// in the database or not, caching it if present.
+// HasBlockAndFullState checks if a block and associated state trie is fully
+// present in the database. It looks the block up with GetBlock, which decodes
+// the whole block body from RLP — callers that must avoid decoding the body
+// should use HasBlockAndExecutedState instead.
 func (bc *BlockChain) HasBlockAndFullState(hash common.Hash, number uint64) bool {
 	// Check first that the block itself is known
 	block := bc.GetBlock(hash, number)
@@ -1124,6 +1143,24 @@ func (bc *BlockChain) HasBlockAndFullState(hash common.Hash, number uint64) bool
 		return false
 	}
 	return bc.HasFullState(block)
+}
+
+// HasBlockAndExecutedState checks that the block is known and its state trie
+// opens, i.e. the block was executed or its state was synced. Unlike
+// HasBlockAndFullState it deliberately leaves out the XDCX trading and lending
+// halves: a missing auxiliary state piece must not become a permanent voting
+// halt for a correctly executed block — callers needing the full guarantee
+// (block validation, dry-run import) must use HasBlockAndFullState. Only
+// HasBlock and the header are read, so no body is ever decoded.
+func (bc *BlockChain) HasBlockAndExecutedState(hash common.Hash, number uint64) bool {
+	if !bc.HasBlock(hash, number) {
+		return false
+	}
+	header := bc.GetHeader(hash, number)
+	if header == nil {
+		return false
+	}
+	return bc.hasExecutedState(header.Root)
 }
 
 // AreTwoBlockSamePath check if two blocks are same path

@@ -27,10 +27,38 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/trie"
 	"golang.org/x/sync/errgroup"
 )
+
+// skippedProposedBlock counts skips at this engine's two gates (before
+// processQC and before sendVote), at most once per handler invocation; the
+// reason also stays in the skip log. Every reason also moves its own counter
+// under the skipped-proposed-block/ prefix (see utils.IncSkipReasonCounter);
+// this total is deliberately named outside that prefix, so the canonical
+// alert regex ^skipped-proposed-block/ aggregates the per-reason and per-site
+// counters exactly once and cannot double-count this total. Read
+// proposed-block-skip-total only as a cross-check of that aggregate, and
+// alert on the per-reason counters: a fast-sync burst of body-not-stored is
+// transient, a persistent non-canonical rate is a stall. Routine pre-filter
+// skips are not counted.
+var skippedProposedBlock = metrics.NewRegisteredCounter("proposed-block-skip-total", nil)
+
+// skipProposedBlock records a ShouldHandleProposedBlock denial at this
+// engine's two gates: it counts the skip and logs it at the reason's grade;
+// the caller returns nil, never an error — the fetcher's import loop treats a
+// handler error as an import failure and suppresses the block's broadcast.
+// The downloader pre-filter and the eth fetcher gate deliberately do not share
+// this helper: the former grades with PreFilterSkipLogLevel under its own
+// counter, the latter skips before any ShouldHandleProposedBlock judgment
+// and carries no reason at all.
+func skipProposedBlock(msg string, reason utils.SkipReason, canonicalHash common.Hash, blockHeader *types.Header) {
+	skippedProposedBlock.Inc(1)
+	utils.IncSkipReasonCounter(reason)
+	utils.SkipLogLevel(reason)(msg, "reason", reason, "hash", blockHeader.Hash(), "number", blockHeader.Number, "canonicalHash", canonicalHash)
+}
 
 type XDPoS_v2 struct {
 	config       *params.XDPoSConfig // Consensus engine configuration parameters
@@ -247,6 +275,8 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 		if err != nil {
 			return err
 		}
+		// Ungated, unlike ProposedBlockHandler: this QC comes from the local
+		// canonical head. The gap that leaves is tracked by TODO(convergence).
 		err = x.processQC(chain, quorumCert)
 		if err != nil {
 			return err
@@ -714,6 +744,10 @@ func (x *XDPoS_v2) SyncInfoHandler(chain consensus.ChainReader, syncInfo *types.
 		1. processQC
 		2. processTC
 	*/
+	// Deliberately ungated, unlike ProposedBlockHandler: this QC already
+	// passed verifyQC's quorum threshold, so accepting a QC for a local
+	// side-chain block is how a forked node converges instead of stalling.
+	// The gap that leaves is tracked by TODO(convergence).
 	err := x.processQC(chain, syncInfo.HighestQuorumCert)
 	if err != nil {
 		return err
@@ -820,11 +854,35 @@ func (x *XDPoS_v2) TimeoutHandler(blockChainReader consensus.ChainReader, timeou
 /*
 Proposed Block workflow
 */
-func (x *XDPoS_v2) ProposedBlockHandler(chain consensus.ChainReader, blockHeader *types.Header) error {
+func (x *XDPoS_v2) ProposedBlockHandler(chain consensus.ProposedBlockChain, blockHeader *types.Header) error {
 	x.lock.Lock()
 	defer x.lock.Unlock()
 
-	// Get QC and Round from Extra
+	// getExtraFields dereferences header.Number, so judge before any
+	// dereference: log Error, return nil, no counter — a caller bug is not a
+	// block observation.
+	if !utils.IsJudgeableHeader(blockHeader) {
+		utils.SkipNilHeaderLog(utils.SkipSiteProposedBlockHandler)
+		return nil
+	}
+
+	// x.lock serializes this handler, not InsertChain, so a reorg can land
+	// between the callers' gates and these checks. Existence alone cannot tell
+	// a reorged-away block from a canonical one — forks stay in the database —
+	// so judge canonicality here and again before sendVote; the other
+	// processQC entries are deliberately ungated (see their call sites).
+	ok, reason, canonicalHash := utils.ShouldHandleProposedBlock(chain, blockHeader)
+	if !ok {
+		skipProposedBlock(utils.SkipSiteProposedBlockHandler+" skip block before processQC", reason, canonicalHash, blockHeader)
+		// Return nil, never an error — see skipProposedBlock. An unjudgeable
+		// skip stops this node voting for good; the counter makes that halt
+		// observable.
+		return nil
+	}
+
+	// Get QC and Round from Extra, after the skip judgment: a block that must be
+	// skipped returns nil even when its extra data is malformed, rather than
+	// failing the import.
 	quorumCert, round, _, err := x.getExtraFields(blockHeader)
 	if err != nil {
 		return err
@@ -852,6 +910,19 @@ func (x *XDPoS_v2) ProposedBlockHandler(chain consensus.ChainReader, blockHeader
 		return err
 	}
 	if verified {
+		// Drop the vote for a block reorged away between the processQC
+		// re-check and the broadcast: processQC's writes are deliberately not
+		// rolled back, so QC state can still point at reorged-away blocks.
+		//
+		// TODO(convergence): close that window for real by sinking the
+		// canonicality check into processQC before its writes, with an
+		// explicit caller-supplied origin the quorum-signed entries can skip.
+		// ref: <issue-url>
+		ok, reason, canonicalHash = utils.ShouldHandleProposedBlock(chain, blockHeader)
+		if !ok {
+			skipProposedBlock(utils.SkipSiteProposedBlockHandler+" skip vote for reorged block", reason, canonicalHash, blockHeader)
+			return nil
+		}
 		return x.sendVote(chain, blockInfo)
 	}
 

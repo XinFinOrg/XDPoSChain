@@ -178,7 +178,7 @@ type BlockFetcher struct {
 	// Callbacks
 	getBlock            blockRetrievalFn      // Retrieves a block from the local chain
 	verifyHeader        headerVerifierFn      // Checks if a block's headers have a valid proof of work
-	handleProposedBlock proposeBlockHandlerFn // Consensus v2 specific: Hanle new proposed block
+	handleProposedBlock proposeBlockHandlerFn // Consensus v2 specific: Handle new proposed block.
 	broadcastBlock      blockBroadcasterFn    // Broadcasts a block to connected peers
 	chainHeight         chainHeightFn         // Retrieves the current chain's height
 	insertBlock         blockInsertFn         // Injects a batch of blocks into the chain
@@ -196,6 +196,13 @@ type BlockFetcher struct {
 
 // NewBlockFetcher creates a block fetcher to retrieve blocks based on hash announcements.
 func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, handleProposedBlock proposeBlockHandlerFn, broadcastBlock blockBroadcasterFn, chainHeight chainHeightFn, insertBlock blockInsertFn, prepareBlock blockPrepareFn, dropPeer peerDropFn) *BlockFetcher {
+	// A nil proposed-block handler means "not wired": normalize it to a no-op so
+	// the import path needs no nil guard. The downloader is not symmetric — it
+	// keeps the callback nil and checks it at the call site.
+	handler := handleProposedBlock
+	if handler == nil {
+		handler = func(*types.Header) error { return nil }
+	}
 	return &BlockFetcher{
 		notify:              make(chan *blockAnnounce),
 		inject:              make(chan *blockInject),
@@ -214,13 +221,24 @@ func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, h
 		knowns:              lru.NewCache[common.Hash, struct{}](blockLimit),
 		getBlock:            getBlock,
 		verifyHeader:        verifyHeader,
-		handleProposedBlock: handleProposedBlock,
+		handleProposedBlock: handler,
 		broadcastBlock:      broadcastBlock,
 		chainHeight:         chainHeight,
 		insertBlock:         insertBlock,
 		prepareBlock:        prepareBlock,
 		dropPeer:            dropPeer,
 	}
+}
+
+// ProposedBlockHandler returns the proposed-block callback this fetcher was
+// wired with, mirroring the downloader's accessor. NewProtocolManager must pass
+// the snapSync-gated closure, not the bare consensus handler.
+//
+// Exported for cross-package wiring tests only — eth's tests read this accessor
+// to assert the gates survive the NewProtocolManager → NewBlockFetcher hop. Not
+// part of the supported API; production code must not call it.
+func (f *BlockFetcher) ProposedBlockHandler() func(*types.Header) error {
+	return f.handleProposedBlock
 }
 
 // Start boots up the announcement based synchroniser, accepting and processing

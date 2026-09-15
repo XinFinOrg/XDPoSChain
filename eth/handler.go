@@ -73,6 +73,10 @@ type ProtocolManager struct {
 
 	snapSync  uint32 // Flag whether snap sync is enabled (gets disabled if we already have blocks)
 	acceptTxs uint32 // Flag whether we're considered synchronised (enables transaction processing)
+	// fastSyncGraceHead is the head height when fast sync last completed
+	// (0 = none; not persisted, so a restart clears it), used by the gate in
+	// newFetcherProposedBlockHandler to keep below-pivot blocks at Warn.
+	fastSyncGraceHead atomic.Uint64
 
 	txpool      txPool
 	orderpool   orderPool
@@ -164,18 +168,34 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		manager.snapSync = uint32(1)
 	}
 
-	var handleProposedBlock func(header *types.Header) error
+	var handleProposedBlock func(*types.Header) error
+
+	// While fast sync runs, the fetcher must not reach the consensus handler:
+	// snapSync discards propagated blocks before executing them, so a block whose
+	// state was never validated would otherwise be judged. The snapSync flag alone
+	// reads too late (Synchronise can flip it between insert and callback); the
+	// hash-keyed HasBlock half of the executed-state gate is what holds.
+	// fetcherHandler is that gated closure; TestFetcherWiresGatedHandlerWithXDPoS
+	// pins the NewProtocolManager → NewBlockFetcher hop.
+	var fetcherHandler func(*types.Header) error
 	if config.XDPoS != nil {
 		handleProposedBlock = func(header *types.Header) error {
 			return engine.(*XDPoS.XDPoS).HandleProposedBlock(blockchain, header)
 		}
+		fetcherHandler = newFetcherProposedBlockHandler(manager, handleProposedBlock)
 	} else {
-		handleProposedBlock = func(header *types.Header) error {
-			return nil
-		}
+		// No XDPoS engine, so there is nothing to gate and nothing to handle:
+		// the downloader keeps nil (it nil-checks at its call site), the fetcher
+		// gets an explicit no-op.
+		fetcherHandler = func(*types.Header) error { return nil }
 	}
 
-	// Construct the different synchronisation mechanisms
+	// Construct the different synchronisation mechanisms. The downloader keeps
+	// the ungated closure: its fast sync calls run after the pivot commit, so
+	// gating it here would skip every proposed block during fast sync and
+	// stall QC and voting; the call site's pre-filter runs the handler's own
+	// judgment. TestDownloaderWiresUngatedHandlerWithXDPoS pins this wiring
+	// through the downloader's test-only ProposedBlockHandler accessor.
 	manager.downloader = downloader.New(chaindb, manager.eventMux, blockchain, nil, manager.removePeer, handleProposedBlock)
 
 	validator := func(header *types.Header) error {
@@ -205,7 +225,9 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		atomic.StoreUint32(&manager.acceptTxs, 1) // Mark initial sync done on any fetcher import
 		return manager.blockchain.PrepareBlock(block)
 	}
-	manager.blockFetcher = fetcher.NewBlockFetcher(blockchain.GetBlockByHash, validator, handleProposedBlock, manager.BroadcastBlock, heighter, inserter, prepare, manager.removePeer)
+	// fetcherHandler, not the bare handleProposedBlock: swapping the argument
+	// back would silently drop both gates during fast sync.
+	manager.blockFetcher = fetcher.NewBlockFetcher(blockchain.GetBlockByHash, validator, fetcherHandler, manager.BroadcastBlock, heighter, inserter, prepare, manager.removePeer)
 
 	fetchTx := func(peer string, hashes []common.Hash) error {
 		p := manager.peers.Peer(peer)

@@ -28,6 +28,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/engines/engine_v2"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -119,7 +120,7 @@ type Downloader struct {
 
 	// Callbacks
 	dropPeer            peerDropFn            // Drops a peer for misbehaving
-	handleProposedBlock proposeBlockHandlerFn // Consensus v2 specific: Hanle new proposed block
+	handleProposedBlock proposeBlockHandlerFn // Consensus v2 specific: Handle new proposed block. Kept as wired, possibly nil — callers nil-check.
 
 	// Status
 	synchroniseMock func(id string, hash common.Hash) error // Replacement for synchronise during testing
@@ -212,6 +213,9 @@ type BlockChain interface {
 	// InsertChain inserts a batch of blocks into the local chain.
 	InsertChain(types.Blocks) (int, error)
 
+	// GetHeaderByNumber retrieves a canonical header from the local chain by height.
+	GetHeaderByNumber(number uint64) *types.Header
+
 	// InterruptInsert disables or enables chain insertion.
 	InterruptInsert(on bool)
 
@@ -257,6 +261,22 @@ func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, lightchai
 	go dl.qosTuner()
 	go dl.stateFetcher()
 	return dl
+}
+
+// ProposedBlockHandler returns the proposed-block callback this downloader was
+// wired with, mirroring the fetcher's accessor. Unlike the fetcher, which
+// normalizes a nil handler to a no-op in New, this returns the callback as
+// wired: without an XDPoS consensus engine NewProtocolManager passes nil, so
+// this accessor can return nil and callers must nil-check (as the import
+// pre-filter does).
+//
+// Exported for cross-package wiring tests only — eth's tests assert that
+// NewProtocolManager hands the downloader the bare consensus handler, because
+// its fast-sync proposed-block calls run after the pivot commit and gating the
+// callback here would skip every proposed block and stall QC and voting. Not
+// part of the supported API; production code must not call it.
+func (d *Downloader) ProposedBlockHandler() func(*types.Header) error {
+	return d.handleProposedBlock
 }
 
 // SetPivotBlock sets the fixed pivot block number, hash and state root for fast sync.
@@ -1671,11 +1691,30 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 			return fmt.Errorf("%w: %v", errInvalidChain, err)
 		}
 	}
+	// A nil error from InsertChain does not make the tail canonical: a fork batch
+	// is stored as side entries, a parked tail not at all. Pre-filter with the
+	// handler's own judgment — an observability and early-out pass, not a
+	// correctness gate: it runs the same judgment, on the same goroutine, a
+	// few lines before the engine's own gates, so it catches nothing the engine
+	// would not. Its value is the per-site counter plus Info-grade per-reason
+	// logs for batch-tail noise, and one saved engine lock acquisition per skip;
+	// correctness comes from the engine re-checking before processQC and before
+	// the vote, so a reorg landing after this point is still caught.
 	if d.handleProposedBlock != nil {
-		header := blocks[len(blocks)-1].Header()
-		err := d.handleProposedBlock(header)
-		if err != nil {
-			log.Info("[downloader] handle proposed block has error", "err", err, "block hash", header.Hash(), "number", header.Number)
+		tail := blocks[len(blocks)-1]
+		ok, reason, canonicalHash := utils.ShouldHandleProposedBlock(d.blockchain, tail.Header())
+		if ok {
+			if err := d.handleProposedBlock(tail.Header()); err != nil {
+				log.Info("[downloader] handle proposed block has error", "err", err, "hash", tail.Hash(), "number", tail.Number())
+			}
+		} else {
+			skippedProposedBlockPreFilter.Inc(1)
+			// SkipUnjudgeable is unreachable here — the BlockChain interface
+			// requires HasBlock — and the reason itself grades Error if it ever
+			// were reached. The "hash" key matches the engine's skipProposedBlock
+			// and the eth fetcher gate, so a single hash= filter covers every
+			// proposed-block skip log that names a block.
+			utils.PreFilterSkipLogLevel(reason)("[downloader] skipped proposed block handler", "hash", tail.Hash(), "number", tail.Number(), "reason", reason, "canonicalHash", canonicalHash)
 		}
 	}
 	return nil

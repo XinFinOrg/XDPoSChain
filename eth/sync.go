@@ -305,6 +305,21 @@ func (pm *ProtocolManager) synchronise(peer *peer) {
 	}
 	if atomic.LoadUint32(&pm.snapSync) == 1 {
 		log.Info("Fast sync complete, auto disabling")
+		// Record the post-commit head BEFORE clearing the snapSync flag, so the
+		// fetcher gate can never observe snapSync == 0 with graceHead still 0:
+		// in that window a below-pivot canonical block (legitimately stateless,
+		// headers and bodies only) would escalate from Warn to a "voting
+		// stalled" Error — exactly the false positive the grace exists to
+		// suppress. The head is still within the stall window of such blocks
+		// right after the commit.
+		//
+		// Nil-guarded like the other CurrentBlock() readers (the fetcher gate,
+		// the miner's pre-commit check): a completed fast sync implies a head,
+		// and a missing one leaves graceHead at 0, which disables the grace the
+		// same way a restart does.
+		if head := pm.blockchain.CurrentBlock(); head != nil && head.Number != nil {
+			pm.fastSyncGraceHead.Store(head.Number.Uint64())
+		}
 		atomic.StoreUint32(&pm.snapSync, 0)
 	}
 	atomic.StoreUint32(&pm.acceptTxs, 1) // Mark initial sync done
