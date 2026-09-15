@@ -940,3 +940,193 @@ func TestBlockMemoryExhaustionAttack(t *testing.T) {
 	}
 	verifyImportDone(t, imported)
 }
+
+// TestNewBlockFetcherNormalizesNilHandler pins the nil-callback contract: a
+// nil proposed-block handler means "not wired" and must be normalized to a
+// no-op inside NewBlockFetcher, mirroring the downloader's nil tolerance, so
+// the import path never needs a nil guard and a caller can never nil-panic
+// by copying the downloader's wiring style.
+func TestNewBlockFetcherNormalizesNilHandler(t *testing.T) {
+	f := NewBlockFetcher(nil, nil, nil, nil, nil, nil, nil, nil)
+	if f.handleProposedBlock == nil {
+		t.Fatal("nil proposed-block handler must be normalized to a no-op")
+	}
+	if err := f.handleProposedBlock(nil); err != nil {
+		t.Fatalf("normalized handler must be a no-op, got %v", err)
+	}
+}
+
+// Tests that the consensus handler is skipped and the signing hook deferred
+// when the import reported success without the block actually reaching the
+// chain (e.g. the block or one of its ancestors was parked in the future
+// queue): signing and voting on an unimported block would corrupt consensus
+// state, while relaying it is safe and happens regardless.
+func TestUnimportedBlockSkipsConsensusHandling(t *testing.T) {
+	block := types.NewBlockWithHeader(&types.Header{
+		ParentHash: genesis.Hash(),
+		Number:     common.Big1,
+		Difficulty: common.Big1,
+		GasLimit:   params.GenesisGasLimit,
+	}).WithBody(types.Body{})
+
+	// Simulate insertBlock queueing the block in the future queue and still
+	// reporting success: neither the sign hook nor the consensus handler may run.
+	tester := newTester()
+	testSkipConsensusHandlingForUnimportedBlock(t, tester, block)
+
+	// A block that actually lands in the chain keeps its consensus handling.
+	tester = newTester()
+	testConsensusHandlingForImportedBlock(t, tester, block)
+}
+
+// testSkipConsensusHandlingForUnimportedBlock injects a block whose import
+// reports success without storing anything and asserts that neither the
+// signing hook nor the consensus handler runs for it: both are consensus
+// actions reserved for blocks that actually reached the chain.
+func testSkipConsensusHandlingForUnimportedBlock(t *testing.T, tester *fetcherTester, block *types.Block) {
+	imported := make(chan *types.Block, 1)
+	tester.fetcher.insertBlock = func(block *types.Block) error {
+		imported <- block
+		return nil
+	}
+	signed := make(chan *types.Block, 1)
+	tester.fetcher.signHook = func(block *types.Block) error {
+		signed <- block
+		return nil
+	}
+	proposed := make(chan *types.Header, 1)
+	tester.fetcher.handleProposedBlock = func(header *types.Header) error {
+		proposed <- header
+		return nil
+	}
+	tester.fetcher.Enqueue("test", block)
+
+	// Wait for the import attempt to finish before checking the hooks.
+	select {
+	case <-imported:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("import of the unimported block never finished")
+	}
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran for unimported block %v", b.Hash())
+	case <-time.After(300 * time.Millisecond):
+	}
+	select {
+	case header := <-proposed:
+		t.Fatalf("consensus handler ran for unimported block %v", header.Hash())
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// testConsensusHandlingForImportedBlock injects a block that reaches the
+// chain and asserts both the signing hook and the consensus handler run for it.
+func testConsensusHandlingForImportedBlock(t *testing.T, tester *fetcherTester, block *types.Block) {
+	signed := make(chan *types.Block, 1)
+	tester.fetcher.signHook = func(block *types.Block) error {
+		signed <- block
+		return nil
+	}
+	proposed := make(chan *types.Header, 1)
+	tester.fetcher.handleProposedBlock = func(header *types.Header) error {
+		proposed <- header
+		return nil
+	}
+	tester.fetcher.Enqueue("test", block)
+
+	// The signing hook runs before the consensus handler.
+	select {
+	case b := <-signed:
+		if b.Hash() != block.Hash() {
+			t.Fatalf("sign hook ran for block %v, want %v", b.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("sign hook never ran for the imported block")
+	}
+	select {
+	case header := <-proposed:
+		if header.Hash() != block.Hash() {
+			t.Fatalf("consensus handler ran for block %v, want %v", header.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("consensus handler never ran for the imported block")
+	}
+}
+
+// TestParkedBlockSignsAfterFutureImport verifies that a block parked in the
+// future queue at delivery time still gets its signature transaction once
+// the future-block loop imports it, while the consensus handler stays
+// reserved for procFutureBlocks.
+func TestParkedBlockSignsAfterFutureImport(t *testing.T) {
+	block := types.NewBlockWithHeader(&types.Header{
+		ParentHash: genesis.Hash(),
+		Number:     common.Big1,
+		Difficulty: common.Big1,
+		GasLimit:   params.GenesisGasLimit,
+	}).WithBody(types.Body{})
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	imported := make(chan *types.Block, 1)
+	tester.fetcher.insertBlock = func(block *types.Block) error {
+		imported <- block
+		return nil // block parked, nothing stored
+	}
+	signed := make(chan *types.Block, 1)
+	tester.fetcher.signHook = func(block *types.Block) error {
+		signed <- block
+		return nil
+	}
+	proposed := make(chan *types.Header, 1)
+	tester.fetcher.handleProposedBlock = func(header *types.Header) error {
+		proposed <- header
+		return nil
+	}
+	broadcasts := make(chan *types.Block, 1)
+	tester.fetcher.broadcastBlock = func(block *types.Block, propagate bool) {
+		broadcasts <- block
+	}
+	tester.fetcher.Enqueue("test", block)
+
+	// Wait for the import attempt: the block is parked, so the signing hook
+	// and the consensus handler must not run yet.
+	select {
+	case <-imported:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("import of the parked block never finished")
+	}
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran before the block was imported: %v", b.Hash())
+	case <-time.After(300 * time.Millisecond):
+	}
+	// Relaying does not wait for the import.
+	select {
+	case b := <-broadcasts:
+		if b.Hash() != block.Hash() {
+			t.Fatalf("broadcast ran for block %v, want %v", b.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("parked block was never broadcast")
+	}
+
+	// Simulate the future-block loop importing the parked block.
+	tester.insertChain(types.Blocks{block})
+
+	// The deferred signing hook now runs for the imported block.
+	select {
+	case b := <-signed:
+		if b.Hash() != block.Hash() {
+			t.Fatalf("sign hook ran for block %v, want %v", b.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("sign hook never ran for the imported parked block")
+	}
+	// The consensus handler stays reserved for procFutureBlocks.
+	select {
+	case header := <-proposed:
+		t.Fatalf("consensus handler ran for parked block %v", header.Hash())
+	case <-time.After(300 * time.Millisecond):
+	}
+}

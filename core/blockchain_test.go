@@ -17,6 +17,7 @@
 package core
 
 import (
+	"encoding/binary"
 	"errors"
 	"math/big"
 	"math/rand"
@@ -2998,5 +2999,275 @@ func TestDeleteCreateRevert(t *testing.T) {
 
 	if n, err := chain.InsertChain(blocks); err != nil {
 		t.Fatalf("block %d: failed to insert into chain: %v", n, err)
+	}
+}
+
+// TestProcFutureBlocksImportsParkedTail pins procFutureBlocks' existing import
+// mechanics: a block parked in futureBlocks whose timestamp has since become
+// consumable is imported as a one-block batch, making it the batch tail whose
+// header procFutureBlocks hands to the consensus handler. This test covers
+// only the import and the tail's position — a non-XDPoS engine skips the
+// handler call by type assertion, and the live-v2 hand-off is covered by the
+// engine re-check tests in consensus.
+func TestProcFutureBlocksImportsParkedTail(t *testing.T) {
+	engine := ethash.NewFaker()
+	// Backdate the genesis so the head and the generated child are already
+	// consumable instead of future: the state a parked future block reaches
+	// once time has passed its timestamp.
+	gspec := &Genesis{
+		BaseFee:   big.NewInt(params.InitialBaseFee),
+		Config:    params.AllEthashProtocolChanges,
+		Timestamp: uint64(time.Now().Unix()) - 60,
+	}
+	blockchain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create tester chain: %v", err)
+	}
+	defer blockchain.Stop()
+
+	if _, err := blockchain.InsertChain(makeBlockChain(gspec.Config, blockchain.Genesis(), 1, engine, blockchain.db, 0)); err != nil {
+		t.Fatalf("failed to insert head: %v", err)
+	}
+
+	parked := makeBlockChain(gspec.Config, blockchain.GetBlockByHash(blockchain.CurrentBlock().Hash()), 1, engine, blockchain.db, 0)[0]
+	if parked.Time() > uint64(time.Now().Unix()) {
+		t.Fatalf("child timestamp %d is still future and would not be importable", parked.Time())
+	}
+	blockchain.futureBlocks.Add(parked.Hash(), parked)
+	if blockchain.GetBlockByNumber(parked.NumberU64()) != nil {
+		t.Fatal("parked block present before procFutureBlocks")
+	}
+
+	blockchain.procFutureBlocks()
+
+	if got := blockchain.GetBlockByNumber(parked.NumberU64()); got == nil || got.Hash() != parked.Hash() {
+		t.Fatalf("parked tail not imported as canonical: got %v", got)
+	}
+	if blockchain.CurrentBlock().Hash() != parked.Hash() {
+		t.Fatal("parked tail did not become the head")
+	}
+	if blockchain.futureBlocks.Contains(parked.Hash()) {
+		t.Fatal("parked tail not removed from the future queue")
+	}
+}
+
+// TestHasBlockAndExecutedState pins every branch of the fetcher gate's
+// existence check directly: an unknown block, a block whose header record is
+// undecodable, and a block whose state root opens nowhere are all false, while
+// a normally executed block is true. HasBlock requires the header key and the
+// body to exist, so the header-missing branch is reached with a corrupt
+// header RLP — the key exists (HasHeader passes) but ReadHeader fails.
+// The XDCX trading/lending divergence from HasBlockAndFullState is not
+// constructed here: it needs a real XDPoS engine with IsTIPXDCX and services
+// reporting missing state, and is pinned indirectly by the eth fetcher-gate
+// test (executed state passes) plus the method's doc comment.
+func TestHasBlockAndExecutedState(t *testing.T) {
+	engine := ethash.NewFaker()
+	gspec := &Genesis{
+		BaseFee:   big.NewInt(params.InitialBaseFee),
+		Config:    params.AllEthashProtocolChanges,
+		Timestamp: uint64(time.Now().Unix()) - 60,
+	}
+	blockchain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create tester chain: %v", err)
+	}
+	defer blockchain.Stop()
+
+	if _, err := blockchain.InsertChain(makeBlockChain(gspec.Config, blockchain.Genesis(), 1, engine, blockchain.db, 0)); err != nil {
+		t.Fatalf("failed to insert head: %v", err)
+	}
+	head := blockchain.CurrentBlock()
+
+	// A hash never written anywhere fails the HasBlock half.
+	if blockchain.HasBlockAndExecutedState(common.Hash{0x01}, 1) {
+		t.Fatal("unknown block must not count as executed state")
+	}
+
+	// A block whose header key exists but whose header RLP does not decode:
+	// HasBlock passes (key plus body) and GetHeader returns nil, so the
+	// header-missing guard must answer false instead of panicking on the
+	// nil header dereference.
+	corrupt := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(1)})
+	rawdb.WriteBody(blockchain.db, corrupt.Hash(), 1, corrupt.Body())
+	headerKey := append(append([]byte("h"), binary.BigEndian.AppendUint64(nil, 1)...), corrupt.Hash().Bytes()...)
+	if err := blockchain.db.Put(headerKey, []byte{0xff}); err != nil {
+		t.Fatalf("failed to corrupt header record: %v", err)
+	}
+	if !blockchain.HasBlock(corrupt.Hash(), 1) {
+		t.Fatal("corrupt-header fixture must pass HasBlock to reach the header guard")
+	}
+	if blockchain.HasBlockAndExecutedState(corrupt.Hash(), 1) {
+		t.Fatal("block with undecodable header must not count as executed state")
+	}
+
+	// A stored block whose state root exists nowhere: the OpenTrie half fails.
+	unexecuted := types.CopyHeader(head)
+	unexecuted.Root = common.HexToHash("0xdeadbeef")
+	unexecuted.Number = new(big.Int).Add(head.Number, big.NewInt(1))
+	rawdb.WriteBlock(blockchain.db, types.NewBlockWithHeader(unexecuted))
+	if blockchain.HasBlockAndExecutedState(unexecuted.Hash(), unexecuted.Number.Uint64()) {
+		t.Fatal("block with unopenable state trie must not count as executed state")
+	}
+
+	// A stored block whose state root is the empty root: trie.New opens the
+	// empty trie without resolving anything, so the executed-state half
+	// degenerates to HasBlock for such a block — a criterion the method
+	// accepts as loose there (see hasExecutedState's doc comment). This
+	// branch pins that degenerate behavior so it cannot drift unnoticed.
+	emptyRoot := types.CopyHeader(head)
+	emptyRoot.Root = types.EmptyRootHash
+	emptyRoot.Number = new(big.Int).Add(head.Number, big.NewInt(2))
+	rawdb.WriteBlock(blockchain.db, types.NewBlockWithHeader(emptyRoot))
+	if !blockchain.HasBlockAndExecutedState(emptyRoot.Hash(), emptyRoot.Number.Uint64()) {
+		t.Fatal("stored block with the empty state root must count as executed state (degenerate to HasBlock)")
+	}
+
+	// A normally executed block passes, and for it HasBlockAndFullState
+	// agrees: the two methods only differ on the XDCX auxiliary state.
+	if !blockchain.HasBlockAndExecutedState(head.Hash(), head.Number.Uint64()) {
+		t.Fatal("executed head block must count as executed state")
+	}
+	if !blockchain.HasBlockAndFullState(head.Hash(), head.Number.Uint64()) {
+		t.Fatal("executed head block must also have full state")
+	}
+}
+
+// failVerifyEngine fails header verification for a single block number, or for
+// every block from failFrom on (0 disables the range), so a batch can be made
+// to fail in the middle instead of at its first block. failFrom is atomic
+// because the chain's future-block loop calls VerifyHeaders concurrently.
+type failVerifyEngine struct {
+	consensus.Engine
+	failNumber uint64
+	failFrom   atomic.Uint64
+	failErr    error
+
+	// failErrAt overrides the failing error for individual block numbers.
+	// Set up before the chain starts and read-only afterwards.
+	failErrAt map[uint64]error
+}
+
+func (e *failVerifyEngine) VerifyHeaders(chain consensus.ChainReader, headers []*types.Header, seals []bool) (chan<- struct{}, <-chan error) {
+	abort := make(chan struct{})
+	results := make(chan error, len(headers))
+	go func() {
+		for _, header := range headers {
+			var err error
+			number := header.Number.Uint64()
+			failFrom := e.failFrom.Load()
+			if custom, ok := e.failErrAt[number]; ok {
+				err = custom
+			} else if number == e.failNumber || (failFrom != 0 && number >= failFrom) {
+				err = e.failErr
+			}
+			select {
+			case <-abort:
+				return
+			case results <- err:
+			}
+		}
+	}()
+	return abort, results
+}
+
+// errNonQueueableTest is a verification error that is neither queueable nor
+// one of the legitimate skip states (future, known, pruned ancestor).
+var errNonQueueableTest = errors.New("non-queueable verification failure")
+
+// TestInsertChainReportsNonQueueableBlockAfterFuturePrefix verifies that a
+// batch stopping at a non-queueable verification error after a future prefix
+// records the reject like the tail path, instead of returning the error
+// without a bad-block record.
+func TestInsertChainReportsNonQueueableBlockAfterFuturePrefix(t *testing.T) {
+	var (
+		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		address = crypto.PubkeyToAddress(key.PublicKey)
+		funds   = big.NewInt(1000000000000000)
+		gspec   = &Genesis{
+			Alloc:   types.GenesisAlloc{address: {Balance: funds}},
+			BaseFee: big.NewInt(params.InitialBaseFee),
+			Config:  params.TestChainConfig,
+		}
+		now = uint64(time.Now().Unix())
+	)
+	// Block 1 is future and parks, block 2 fails with a non-queueable error.
+	_, blocks, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 2, func(i int, gen *BlockGen) {
+		gen.header.Time = now + 10
+	})
+
+	engine := &failVerifyEngine{Engine: ethash.NewFaker(), failErr: consensus.ErrFutureBlock}
+	engine.failFrom.Store(1)
+	engine.failErrAt = map[uint64]error{2: errNonQueueableTest}
+
+	db := rawdb.NewMemoryDatabase()
+	chain, err := NewBlockChain(db, nil, gspec, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create tester chain: %v", err)
+	}
+	defer chain.Stop()
+
+	n, err := chain.InsertChain(blocks)
+	if n != 1 {
+		t.Fatalf("unexpected failing index: have %d want 1", n)
+	}
+	if !errors.Is(err, errNonQueueableTest) {
+		t.Fatalf("unexpected error for block %d: %v", n, err)
+	}
+	if bad := rawdb.ReadBadBlock(db, blocks[0].Hash()); bad != nil {
+		t.Fatalf("future block %d recorded as bad block", blocks[0].NumberU64())
+	}
+	if bad := rawdb.ReadBadBlock(db, blocks[1].Hash()); bad == nil {
+		t.Fatalf("non-queueable block %d not recorded as bad block", blocks[1].NumberU64())
+	}
+}
+
+// TestInsertChainReportsNonQueueableBlockAfterFutureTail verifies that a
+// batch whose tail parks a future block and then stops at a non-queueable
+// verification error records the reject and propagates the error instead of
+// silently swallowing it.
+func TestInsertChainReportsNonQueueableBlockAfterFutureTail(t *testing.T) {
+	var (
+		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		address = crypto.PubkeyToAddress(key.PublicKey)
+		funds   = big.NewInt(1000000000000000)
+		gspec   = &Genesis{
+			Alloc:   types.GenesisAlloc{address: {Balance: funds}},
+			BaseFee: big.NewInt(params.InitialBaseFee),
+			Config:  params.TestChainConfig,
+		}
+		now = uint64(time.Now().Unix())
+	)
+	// Block 1 imports, block 2 is future and parks, block 3 fails with a
+	// non-queueable error.
+	_, blocks, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 3, func(i int, gen *BlockGen) {
+		gen.header.Time = now + 10
+	})
+
+	engine := &failVerifyEngine{Engine: ethash.NewFaker()}
+	engine.failErrAt = map[uint64]error{2: consensus.ErrFutureBlock, 3: errNonQueueableTest}
+
+	db := rawdb.NewMemoryDatabase()
+	chain, err := NewBlockChain(db, nil, gspec, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create tester chain: %v", err)
+	}
+	defer chain.Stop()
+
+	n, err := chain.InsertChain(blocks)
+	if n != 2 {
+		t.Fatalf("unexpected failing index: have %d want 2", n)
+	}
+	if !errors.Is(err, errNonQueueableTest) {
+		t.Fatalf("unexpected error for block %d: %v", n, err)
+	}
+	if bad := rawdb.ReadBadBlock(db, blocks[1].Hash()); bad != nil {
+		t.Fatalf("future block %d recorded as bad block", blocks[1].NumberU64())
+	}
+	if bad := rawdb.ReadBadBlock(db, blocks[2].Hash()); bad == nil {
+		t.Fatalf("non-queueable block %d not recorded as bad block", blocks[2].NumberU64())
+	}
+	if !chain.futureBlocks.Contains(blocks[1].Hash()) {
+		t.Fatalf("future block %d not parked", blocks[1].NumberU64())
 	}
 }

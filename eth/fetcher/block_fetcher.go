@@ -45,6 +45,15 @@ const (
 	blockLimit   = 64  // Maximum number of unique blocks a peer may have delivered
 )
 
+const (
+	// parkedImportTimeout bounds the wait for the future-block loop to import
+	// a block that was parked in the future queue before its signature is
+	// dropped. The enqueue window in core is maxTimeFutureBlocks (30s), so a
+	// threefold margin covers clock skew and queue congestion.
+	parkedImportTimeout      = 90 * time.Second
+	parkedImportPollInterval = 100 * time.Millisecond // same cadence as the future-block loop
+)
+
 // IsPlausibleAnnouncement reports whether a block announcement at the given
 // number is within the fetcher's plausibility window of the current chain
 // height. Untrusted announced numbers must be gated on this check before being
@@ -196,6 +205,13 @@ type BlockFetcher struct {
 
 // NewBlockFetcher creates a block fetcher to retrieve blocks based on hash announcements.
 func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, handleProposedBlock proposeBlockHandlerFn, broadcastBlock blockBroadcasterFn, chainHeight chainHeightFn, insertBlock blockInsertFn, prepareBlock blockPrepareFn, dropPeer peerDropFn) *BlockFetcher {
+	// A nil proposed-block handler means "not wired": normalize it to a no-op so
+	// the import path needs no nil guard. The downloader is not symmetric — it
+	// keeps the callback nil and checks it at the call site.
+	handler := handleProposedBlock
+	if handler == nil {
+		handler = func(*types.Header) error { return nil }
+	}
 	return &BlockFetcher{
 		notify:              make(chan *blockAnnounce),
 		inject:              make(chan *blockInject),
@@ -214,13 +230,22 @@ func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, h
 		knowns:              lru.NewCache[common.Hash, struct{}](blockLimit),
 		getBlock:            getBlock,
 		verifyHeader:        verifyHeader,
-		handleProposedBlock: handleProposedBlock,
+		handleProposedBlock: handler,
 		broadcastBlock:      broadcastBlock,
 		chainHeight:         chainHeight,
 		insertBlock:         insertBlock,
 		prepareBlock:        prepareBlock,
 		dropPeer:            dropPeer,
 	}
+}
+
+// ProposedBlockHandler returns the proposed-block callback this fetcher was
+// wired with, mirroring the downloader's accessor. NewProtocolManager must pass
+// the snapSync-gated closure, not the bare consensus handler; the wiring tests
+// read this accessor to assert the gates survive the NewProtocolManager →
+// NewBlockFetcher hop.
+func (f *BlockFetcher) ProposedBlockHandler() func(*types.Header) error {
+	return f.handleProposedBlock
 }
 
 // Start boots up the announcement based synchroniser, accepting and processing
@@ -767,6 +792,33 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 			return
 		}
 
+		// Signing and consensus handling require the block to actually be in
+		// the chain: the import can report success while only parking the
+		// block (or its ancestors) in the future queue. Signing an unimported
+		// block, or voting on it, would corrupt the consensus state. Relaying
+		// is safe either way — a future block is simply parked again by the
+		// receivers — so the broadcast below must not depend on whether the
+		// block was parked locally.
+		if f.getBlock(block.Hash()) == nil {
+			log.Debug("Block parked in the future queue, deferring signing", "peer", peer, "number", block.Number(), "hash", hash)
+			// The future-block loop imports the block once its timestamp
+			// arrives; create the signature transaction then. The vote is
+			// not compensated: procFutureBlocks feeds the imported block
+			// to the consensus engine itself. Only nodes with a signing
+			// hook (XDPoS) compensate; without one there is nothing to
+			// wait for, so no waiter is spawned.
+			if f.signHook != nil {
+				go f.compensateSignHook(block)
+			}
+			if isM2 {
+				blockBroadcastOutTimer.UpdateSince(block.ReceivedAt)
+				go f.broadcastBlock(block, true)
+			} else {
+				blockAnnounceOutTimer.UpdateSince(block.ReceivedAt)
+				go f.broadcastBlock(block, false)
+			}
+			return
+		}
 		if f.signHook != nil {
 			if err := f.signHook(block); err != nil {
 				log.Error("Can't sign the imported block", "err", err)
@@ -787,6 +839,37 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 			go f.broadcastBlock(block, false)
 		}
 	}()
+}
+
+// compensateSignHook waits for the future-block loop to import a block that
+// was parked in the future queue at delivery time and then runs the signing
+// hook that insert had to skip. Voting is not compensated: procFutureBlocks
+// feeds the imported block to the consensus engine itself. Giving up after
+// parkedImportTimeout only loses the signature of a block that was never
+// imported (evicted, rejected or reorged away).
+func (f *BlockFetcher) compensateSignHook(block *types.Block) {
+	hash := block.Hash()
+	deadline := time.NewTimer(parkedImportTimeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(parkedImportPollInterval)
+	defer ticker.Stop()
+
+	for f.getBlock(hash) == nil {
+		select {
+		case <-f.quit:
+			return
+		case <-deadline.C:
+			log.Warn("Parked block was not imported in time, dropping its signature", "number", block.Number(), "hash", hash)
+			return
+		case <-ticker.C:
+		}
+	}
+
+	if f.signHook != nil {
+		if err := f.signHook(block); err != nil {
+			log.Error("Can't sign the imported block", "err", err)
+		}
+	}
 }
 
 // forgetHash removes all traces of a block announcement from the fetcher's

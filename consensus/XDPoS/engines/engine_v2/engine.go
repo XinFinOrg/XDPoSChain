@@ -27,10 +27,37 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/trie"
 	"golang.org/x/sync/errgroup"
 )
+
+// skippedProposedBlock counts skips at this engine's two gates (before
+// processQC and before sendVote), at most once per handler invocation; the
+// reason also stays in the skip log. Every reason shares this one total and
+// also moves its own counter under skipped-proposed-block/ (see
+// consensus.IncSkipReasonCounter), so alert on the per-reason counters, not
+// the total: a fast-sync burst of body-not-stored is transient, a persistent
+// non-canonical rate is a stall. The unjudgeable reason carries no counter:
+// production wiring hands every entry point a ProposedBlockChain, so the
+// runtime defense in ShouldHandleProposedBlock cannot fire outside tests —
+// its Error logs are the alarm. Routine pre-filter skips are not counted.
+var skippedProposedBlock = metrics.NewRegisteredCounter("skipped-proposed-block", nil)
+
+// skipProposedBlock records a ShouldHandleProposedBlock denial at this
+// engine's two gates: it counts the skip and logs it at the reason's grade;
+// the caller returns nil, never an error — the fetcher's import loop treats a
+// handler error as an import failure and suppresses the block's broadcast.
+// The downloader pre-filter and the eth fetcher gate deliberately do not share
+// this helper: the former grades with PreFilterSkipLogLevel under its own
+// counter, the latter skips before any ShouldHandleProposedBlock judgment
+// and carries no reason at all.
+func skipProposedBlock(msg string, reason consensus.SkipReason, canonicalHash common.Hash, blockHeader *types.Header) {
+	skippedProposedBlock.Inc(1)
+	consensus.IncSkipReasonCounter(reason)
+	consensus.SkipLogLevel(reason)(msg, "reason", reason, "hash", blockHeader.Hash(), "number", blockHeader.Number, "canonicalHash", canonicalHash)
+}
 
 type XDPoS_v2 struct {
 	config       *params.XDPoSConfig // Consensus engine configuration parameters
@@ -714,6 +741,12 @@ func (x *XDPoS_v2) SyncInfoHandler(chain consensus.ChainReader, syncInfo *types.
 		1. processQC
 		2. processTC
 	*/
+	// No canonicality gate here, unlike ProposedBlockHandler: the QC has
+	// already passed verifyQC's quorum signature threshold, so a QC whose
+	// block is a local side-chain block means the network's fork choice has
+	// diverged from ours. Accepting it is how a lagging or forked node
+	// catches up; gating would leave it unable to advance currentRound on
+	// the very evidence that its fork lost.
 	err := x.processQC(chain, syncInfo.HighestQuorumCert)
 	if err != nil {
 		return err
@@ -820,11 +853,39 @@ func (x *XDPoS_v2) TimeoutHandler(blockChainReader consensus.ChainReader, timeou
 /*
 Proposed Block workflow
 */
-func (x *XDPoS_v2) ProposedBlockHandler(chain consensus.ChainReader, blockHeader *types.Header) error {
+func (x *XDPoS_v2) ProposedBlockHandler(chain consensus.ProposedBlockChain, blockHeader *types.Header) error {
 	x.lock.Lock()
 	defer x.lock.Unlock()
 
-	// Get QC and Round from Extra
+	// getExtraFields dereferences header.Number, so judge before any
+	// dereference: log Error, return nil, no counter — a caller bug is not a
+	// block observation.
+	if !consensus.IsJudgeableHeader(blockHeader) {
+		consensus.SkipNilHeaderLog(consensus.SkipSiteProposedBlockHandler)
+		return nil
+	}
+
+	// x.lock serializes this handler, not InsertChain, so a reorg can land
+	// between the callers' gates and these checks. The first check protects
+	// this handler's processQC call, which writes highestQuorumCert,
+	// lockQuorumCert and the commit block before its own existence check;
+	// the second keeps the vote's unguarded window down to the broadcast.
+	// The other two processQC entries (SyncInfoHandler and the vote path)
+	// take quorum-signed QCs and deliberately skip this gate — see their
+	// call sites. Existence alone cannot tell a reorged-away block from a
+	// canonical one — forks stay in the database.
+	ok, reason, canonicalHash := consensus.ShouldHandleProposedBlock(chain, blockHeader)
+	if !ok {
+		skipProposedBlock(consensus.SkipSiteProposedBlockHandler+" skip block before processQC", reason, canonicalHash, blockHeader)
+		// Return nil, never an error — see skipProposedBlock. An unjudgeable
+		// skip stops this node voting for good; the counter makes that halt
+		// observable.
+		return nil
+	}
+
+	// Get QC and Round from Extra, after the skip judgment: a block that must be
+	// skipped returns nil even when its extra data is malformed, rather than
+	// failing the import.
 	quorumCert, round, _, err := x.getExtraFields(blockHeader)
 	if err != nil {
 		return err
@@ -852,6 +913,38 @@ func (x *XDPoS_v2) ProposedBlockHandler(chain consensus.ChainReader, blockHeader
 		return err
 	}
 	if verified {
+		// A reorg can still land between the processQC re-check and the
+		// broadcast, so drop the vote for a block reorged away meanwhile.
+		// processQC's writes are deliberately not rolled back: they are
+		// monotonic round-wise updates of shared consensus state, and this
+		// path has no rollback mechanism. The residual window they leave is
+		// wider than the embedded QC certifying N-1 suggests: a fork deeper
+		// than N-1 replaces N-1 as well,
+		// leaving highestQuorumCert, lockQuorumCert and highestCommitBlock
+		// pointing at reorged-away blocks; and the reorg-side committed-block
+		// refusal is a timing guarantee — it reads highestCommitBlock when the
+		// reorg lands, while this call's commit record is written inside
+		// processQC, after the first gate, so a reorg landing in that window
+		// is not blocked by it. That hazard predates this commit; the gates
+		// only shrink the window. Only the vote for the reorged block must go.
+		// TODO(convergence): close this residual window for real. Candidate:
+		// react to a reorg event (ChainEvent / chain-side insert) by
+		// invalidating highestQuorumCert, lockQuorumCert and
+		// highestCommitBlock when they point at reorged-away blocks, so the
+		// next processQC rebuilds them from the new canonical chain.
+		// The reorg invalidation must also cover the state written by the
+		// other two processQC entries (SyncInfoHandler and the vote path),
+		// which take quorum-signed QCs without a canonicality gate.
+		// Tracked separately; the gates above stay shrink-only until then. Another
+		// candidate for that topic: sink a canonicality check into processQC
+		// itself, before its writes, via an explicit caller-supplied parameter
+		// (the two quorum-signed entries must be able to skip it) — instead of
+		// leaving each new entry point to remember its own gate.
+		ok, reason, canonicalHash = consensus.ShouldHandleProposedBlock(chain, blockHeader)
+		if !ok {
+			skipProposedBlock(consensus.SkipSiteProposedBlockHandler+" skip vote for reorged block", reason, canonicalHash, blockHeader)
+			return nil
+		}
 		return x.sendVote(chain, blockInfo)
 	}
 

@@ -68,13 +68,28 @@ type downloadTester struct {
 	peerDb  ethdb.Database // Database of the peers containing all data
 	peers   map[string]*downloadTesterPeer
 
-	ownHashes   []common.Hash                  // Hash chain belonging to the tester
-	ownHeaders  map[common.Hash]*types.Header  // Headers belonging to the tester
-	ownBlocks   map[common.Hash]*types.Block   // Blocks belonging to the tester
-	ownReceipts map[common.Hash]types.Receipts // Receipts belonging to the tester
-	ownChainTd  map[common.Hash]*big.Int       // Total difficulties of the blocks in the local chain
+	ownHashes    []common.Hash                  // Canonical hash chain in height order, rebuilt from ownCanonical
+	ownHeaders   map[common.Hash]*types.Header  // Headers belonging to the tester
+	ownBlocks    map[common.Hash]*types.Block   // Blocks belonging to the tester
+	ownReceipts  map[common.Hash]types.Receipts // Receipts belonging to the tester
+	ownChainTd   map[common.Hash]*big.Int       // Total difficulties of the blocks in the local chain
+	ownCanonical map[uint64]common.Hash         // Canonical number-to-hash table, mirroring the real chain's marker writes
 
 	insertHeaderChainHook func([]*types.Header) error
+	// parkTailOnce makes the next InsertChain park the batch tail, the way
+	// insertChain parks future blocks: everything but the tail is written.
+	// Consumed by that one call.
+	parkTailOnce bool
+	// extendTailAfterInsert, when set, is called after the next InsertChain
+	// with the batch tail and stores the child it returns, simulating a
+	// concurrent import landing before importBlockResults reads the head.
+	// Consumed by that one call.
+	extendTailAfterInsert func(tail *types.Block) *types.Block
+
+	// proposedCalls and lastProposedHeader record handleProposedBlock calls
+	// for assertions; read them together via proposedState.
+	proposedCalls      int
+	lastProposedHeader *types.Header
 
 	// headHeaderCap, when non-zero, caps the height reported by CurrentHeader.
 	// It models the real chain, where importing blocks moves the header head
@@ -104,14 +119,15 @@ func newTester() *downloadTester {
 // shared test genesis.
 func newTesterWithGenesis(genesis *types.Block, peerDb ethdb.Database) *downloadTester {
 	tester := &downloadTester{
-		genesis:     genesis,
-		peerDb:      peerDb,
-		peers:       make(map[string]*downloadTesterPeer),
-		ownHashes:   []common.Hash{genesis.Hash()},
-		ownHeaders:  map[common.Hash]*types.Header{genesis.Hash(): genesis.Header()},
-		ownBlocks:   map[common.Hash]*types.Block{genesis.Hash(): genesis},
-		ownReceipts: map[common.Hash]types.Receipts{genesis.Hash(): nil},
-		ownChainTd:  map[common.Hash]*big.Int{genesis.Hash(): genesis.Difficulty()},
+		genesis:      genesis,
+		peerDb:       peerDb,
+		peers:        make(map[string]*downloadTesterPeer),
+		ownHashes:    []common.Hash{genesis.Hash()},
+		ownHeaders:   map[common.Hash]*types.Header{genesis.Hash(): genesis.Header()},
+		ownBlocks:    map[common.Hash]*types.Block{genesis.Hash(): genesis},
+		ownReceipts:  map[common.Hash]types.Receipts{genesis.Hash(): nil},
+		ownChainTd:   map[common.Hash]*big.Int{genesis.Hash(): genesis.Difficulty()},
+		ownCanonical: map[uint64]common.Hash{0: genesis.Hash()},
 	}
 	tester.stateDb = rawdb.NewMemoryDatabase()
 	tester.triedb = trie.NewDatabase(tester.stateDb)
@@ -157,9 +173,13 @@ func (dl *downloadTester) HasHeader(hash common.Hash, number uint64) bool {
 	return dl.GetHeaderByHash(hash) != nil
 }
 
-// HasBlock checks if a block is present in the testers canonical chain.
+// HasBlock checks whether a full block is present at the requested height.
 func (dl *downloadTester) HasBlock(hash common.Hash, number uint64) bool {
-	return dl.GetBlockByHash(hash) != nil
+	dl.lock.RLock()
+	defer dl.lock.RUnlock()
+
+	block := dl.ownBlocks[hash]
+	return block != nil && block.NumberU64() == number
 }
 
 // HasFastBlock checks if a block is present in the testers canonical chain.
@@ -282,7 +302,12 @@ func (dl *downloadTester) InsertHeaderChain(headers []*types.Header, checkFreq i
 		hashes = append(hashes, hash)
 	}
 	hashes = append(hashes, headers[len(headers)-1].Hash())
+	// Anchor of the WriteHeader comparison: the current head header. A nil
+	// total difficulty means the entry was rolled back.
+	_, headHash := dl.canonicalHead(false)
+	headTd := dl.ownChainTd[headHash]
 	// Do a full insert if pre-checks passed
+	tookOver := false
 	for i, header := range headers {
 		hash := hashes[i]
 		if dl.getHeaderByHash(hash) != nil {
@@ -292,11 +317,26 @@ func (dl *downloadTester) InsertHeaderChain(headers []*types.Header, checkFreq i
 			// This _should_ be impossible, due to precheck and induction
 			return i, fmt.Errorf("InsertHeaderChain: unknown parent at position %d", i)
 		}
-		dl.ownHashes = append(dl.ownHashes, hash)
 		dl.ownHeaders[hash] = header
 
 		td := dl.getTd(header.ParentHash)
 		dl.ownChainTd[hash] = new(big.Int).Add(td, header.Difficulty)
+
+		// Mirror WriteHeader: a header with a higher total difficulty than
+		// the head takes over the canonical table, before any body exists.
+		// WriteHeader's equal-total-difficulty clause splits ties randomly
+		// (mrand.Float64() < 0.5), which cannot be mirrored deterministically;
+		// this tester keeps the strict comparison, the conservative side of
+		// that distribution.
+		if headTd == nil || dl.ownChainTd[hash].Cmp(headTd) > 0 {
+			dl.canonicalize(hash, header.Number.Uint64())
+			dl.removeAbove(header.Number.Uint64())
+			headTd = dl.ownChainTd[hash]
+			tookOver = true
+		}
+	}
+	if tookOver {
+		dl.rebuildOwnHashes()
 	}
 	return len(headers), nil
 }
@@ -306,19 +346,29 @@ func (dl *downloadTester) InsertChain(blocks types.Blocks) (i int, err error) {
 	dl.lock.Lock()
 	defer dl.lock.Unlock()
 
+	if dl.parkTailOnce {
+		dl.parkTailOnce = false
+		// Park the tail the way insertChain does with future blocks.
+		for i, block := range blocks[:len(blocks)-1] {
+			if err := dl.storeBlock(block); err != nil {
+				return i, fmt.Errorf("InsertChain: %v at position %d / %d", err, i, len(blocks))
+			}
+		}
+		return len(blocks) - 1, nil
+	}
+
 	for i, block := range blocks {
-		if parent, ok := dl.ownBlocks[block.ParentHash()]; !ok {
-			return i, fmt.Errorf("InsertChain: unknown parent at position %d / %d", i, len(blocks))
-		} else if _, err := dl.stateDb.Get(parent.Root().Bytes()); err != nil {
-			return i, fmt.Errorf("InsertChain: unknown parent state %x: %v", parent.Root(), err)
+		if err := dl.storeBlock(block); err != nil {
+			return i, fmt.Errorf("InsertChain: %v at position %d / %d", err, i, len(blocks))
 		}
-		if _, ok := dl.ownHeaders[block.Hash()]; !ok {
-			dl.ownHashes = append(dl.ownHashes, block.Hash())
-			dl.ownHeaders[block.Hash()] = block.Header()
+	}
+	if hook := dl.extendTailAfterInsert; hook != nil {
+		dl.extendTailAfterInsert = nil
+		if child := hook(blocks[len(blocks)-1]); child != nil {
+			if err := dl.storeBlock(child); err != nil {
+				return len(blocks), fmt.Errorf("InsertChain: %v at position %d / %d", err, len(blocks), len(blocks)+1)
+			}
 		}
-		dl.ownBlocks[block.Hash()] = block
-		dl.stateDb.Put(block.Root().Bytes(), []byte{0x00})
-		dl.ownChainTd[block.Hash()] = new(big.Int).Add(dl.ownChainTd[block.ParentHash()], block.Difficulty())
 	}
 	return len(blocks), nil
 }
@@ -347,6 +397,152 @@ func (dl *downloadTester) writeBlockWithoutState(block *types.Block) error {
 	return nil
 }
 
+// storeBlock records a block in the tester's chain, validating its parent.
+// It must be called with dl.lock held for writing.
+func (dl *downloadTester) storeBlock(block *types.Block) error {
+	parent, ok := dl.ownBlocks[block.ParentHash()]
+	if !ok {
+		return fmt.Errorf("unknown parent %s", block.ParentHash())
+	}
+	if _, err := dl.stateDb.Get(parent.Root().Bytes()); err != nil {
+		return fmt.Errorf("unknown parent state %x: %v", parent.Root(), err)
+	}
+	dl.ownHeaders[block.Hash()] = block.Header()
+	dl.ownBlocks[block.Hash()] = block
+	dl.stateDb.Put(block.Root().Bytes(), []byte{0x00})
+	dl.ownChainTd[block.Hash()] = new(big.Int).Add(dl.ownChainTd[block.ParentHash()], block.Difficulty())
+	// Mirror insertChain: only a block heavier than the head block takes
+	// over the canonical table; a lighter one is written as a side entry.
+	// On an equal total difficulty, production splits the tie by number:
+	// a higher-height block takes over, a same-height one stays a side
+	// entry (the selfish-mining guard of writeBlockWithState).
+	headNumber, headHash := dl.canonicalHead(true)
+	headTd := dl.ownChainTd[headHash]
+	blockTd := dl.ownChainTd[block.Hash()]
+	if headTd == nil || blockTd.Cmp(headTd) > 0 || (blockTd.Cmp(headTd) == 0 && block.NumberU64() > headNumber) {
+		dl.canonicalize(block.Hash(), block.NumberU64())
+		// Mirror the reorg cleanup of real insertChain: when a shorter but
+		// heavier branch takes over, the stale markers above the new head
+		// must go, so GetCanonicalHash stops answering with the replaced
+		// branch at those heights.
+		dl.removeAbove(block.NumberU64())
+		// ownHashes is the canonical snapshot, so refresh it only after
+		// removeAbove: rebuilding earlier would re-enter the replaced
+		// branch's stale markers still present in the table.
+		dl.rebuildOwnHashes()
+	}
+	return nil
+}
+
+// The methods below (canonicalize, removeAbove, rebuildOwnHashes,
+// canonicalHead, GetCanonicalHash, GetHeaderByNumber, GetBlock and their
+// helpers in storeBlock) form the tester's fork-choice mirror: ownCanonical
+// is the single source of truth for canonicality, ownHashes its
+// height-ordered snapshot, and every proposed-block test downstream reads
+// the judgment through these accessors. Keep the mirror consistent — a
+// canonical-table write without the matching snapshot rebuild (or vice
+// versa) silently changes what every later test judges canonical.
+//
+// Equivalence with the real chain: the mirror reproduces the canonical-table
+// semantics of WriteHeader and insertChain (heavier branch takes over, equal
+// TD split by height, stale-marker cleanup on takeover), and the real-chain
+// side of the same judgment is covered directly by core/blockchain_test.go
+// and consensus/proposed_block_test.go on *core.BlockChain. The mirror is
+// kept deliberately small rather than cross-validated against a real chain
+// here: the downloader fixture needs a fake consensus engine and cannot host
+// one without duplicating the core test rig.
+// canonicalize makes hash the canonical entry at number and rewires the
+// segment below it, mirroring the marker writes of WriteHeader and
+// insertChain. Caller must hold dl.lock for writing.
+func (dl *downloadTester) canonicalize(hash common.Hash, number uint64) {
+	for n, h := number, hash; n > 0 && dl.ownCanonical[n] != h; n-- {
+		dl.ownCanonical[n] = h
+		header := dl.ownHeaders[h]
+		if header == nil {
+			break
+		}
+		h = header.ParentHash
+	}
+}
+
+// removeAbove drops canonical entries above number, the stale-marker cleanup
+// of WriteHeader. Caller must hold dl.lock for writing.
+func (dl *downloadTester) removeAbove(number uint64) {
+	for n := number + 1; ; n++ {
+		if _, ok := dl.ownCanonical[n]; !ok {
+			break
+		}
+		delete(dl.ownCanonical, n)
+	}
+}
+
+// rebuildOwnHashes refreshes ownHashes from the canonical table, keeping it
+// the height-ordered snapshot of the canonical chain that the head getters
+// report. It must run after removeAbove, so the stale markers of a replaced
+// branch never re-enter the list. Caller must hold dl.lock for writing.
+func (dl *downloadTester) rebuildOwnHashes() {
+	numbers := make([]uint64, 0, len(dl.ownCanonical))
+	for n, h := range dl.ownCanonical {
+		if dl.ownHeaders[h] != nil {
+			numbers = append(numbers, n)
+		}
+	}
+	slices.Sort(numbers)
+	dl.ownHashes = dl.ownHashes[:0]
+	for _, n := range numbers {
+		dl.ownHashes = append(dl.ownHashes, dl.ownCanonical[n])
+	}
+}
+
+// canonicalHead returns the highest canonical entry. With requireBlock,
+// entries without a stored block are skipped, giving the head block that
+// insertChain reorganizes against; without it, the head header that
+// WriteHeader compares against. Caller must hold dl.lock.
+func (dl *downloadTester) canonicalHead(requireBlock bool) (uint64, common.Hash) {
+	headNum, headHash := uint64(0), dl.ownCanonical[0]
+	for n, h := range dl.ownCanonical {
+		if n > headNum && (!requireBlock || dl.ownBlocks[h] != nil) {
+			headNum, headHash = n, h
+		}
+	}
+	return headNum, headHash
+}
+
+// GetCanonicalHash returns the hash of the canonical block at the given
+// height, or the zero hash when the height is unknown. Entries are advanced
+// by header and block inserts that overtake the head's total difficulty,
+// mirroring WriteHeader and insertChain.
+func (dl *downloadTester) GetCanonicalHash(number uint64) common.Hash {
+	dl.lock.RLock()
+	defer dl.lock.RUnlock()
+
+	return dl.ownCanonical[number]
+}
+
+// GetHeaderByNumber returns the canonical header at the given height, or nil
+// when the height is unknown, mirroring the real chain's canonical marker
+// reads used by consensus.ShouldHandleProposedBlock.
+func (dl *downloadTester) GetHeaderByNumber(number uint64) *types.Header {
+	dl.lock.RLock()
+	defer dl.lock.RUnlock()
+
+	return dl.ownHeaders[dl.ownCanonical[number]]
+}
+
+// GetBlock returns the stored block with the requested hash and height, or
+// nil when it is not stored. Test-only accessor for the assertions below:
+// the judgment itself reads storage through HasBlock.
+func (dl *downloadTester) GetBlock(hash common.Hash, number uint64) *types.Block {
+	dl.lock.RLock()
+	defer dl.lock.RUnlock()
+
+	block := dl.ownBlocks[hash]
+	if block == nil || block.NumberU64() != number {
+		return nil
+	}
+	return block
+}
+
 // InsertReceiptChain injects a new batch of receipts into the simulated chain.
 func (dl *downloadTester) InsertReceiptChain(blocks types.Blocks, receipts []types.Receipts) (i int, err error) {
 	dl.lock.Lock()
@@ -371,14 +567,22 @@ func (dl *downloadTester) Rollback(hashes []common.Hash) {
 	defer dl.lock.Unlock()
 
 	for i := len(hashes) - 1; i >= 0; i-- {
-		if dl.ownHashes[len(dl.ownHashes)-1] == hashes[i] {
-			dl.ownHashes = dl.ownHashes[:len(dl.ownHashes)-1]
+		// Drop the canonical marker as well, otherwise GetCanonicalHash
+		// keeps reporting blocks that Rollback just removed. The height is
+		// read before the header itself is deleted below.
+		if header := dl.ownHeaders[hashes[i]]; header != nil {
+			if number := header.Number.Uint64(); dl.ownCanonical[number] == hashes[i] {
+				delete(dl.ownCanonical, number)
+			}
 		}
 		delete(dl.ownChainTd, hashes[i])
 		delete(dl.ownHeaders, hashes[i])
 		delete(dl.ownReceipts, hashes[i])
 		delete(dl.ownBlocks, hashes[i])
 	}
+	// ownHashes is the canonical snapshot, so rebuild it from the markers
+	// the loop above may have dropped.
+	dl.rebuildOwnHashes()
 }
 
 // newPeer registers a new block download source into the downloader.
@@ -400,9 +604,21 @@ func (dl *downloadTester) dropPeer(id string) {
 	dl.downloader.UnregisterPeer(id)
 }
 
-// an empty handleProposedBlock function
+// handleProposedBlock records the invocation and its argument for assertions.
 func (dl *downloadTester) handleProposedBlock(header *types.Header) error {
+	dl.lock.Lock()
+	dl.proposedCalls++
+	dl.lastProposedHeader = header
+	dl.lock.Unlock()
 	return nil
+}
+
+// proposedState returns the invocation count and the header of the most
+// recent handleProposedBlock call.
+func (dl *downloadTester) proposedState() (int, *types.Header) {
+	dl.lock.RLock()
+	defer dl.lock.RUnlock()
+	return dl.proposedCalls, dl.lastProposedHeader
 }
 
 // Config retrieves the blockchain's chain configuration.
@@ -2588,6 +2804,10 @@ func testReorgProtectionDoesNotStallSync(t *testing.T, protocol int, mode SyncMo
 			tester.ownHashes = append(tester.ownHashes[:0], localChain.chain...)
 			for hash, header := range localChain.headerm {
 				tester.ownHeaders[hash] = header
+				// Mirror the canonical markers as well: rebuildOwnHashes sources
+				// from ownCanonical, and the first canonicalize of the sync
+				// would otherwise wipe the preset chain back to genesis.
+				tester.ownCanonical[header.Number.Uint64()] = hash
 			}
 			for _, block := range localChain.blockm {
 				tester.ownBlocks[block.Hash()] = block

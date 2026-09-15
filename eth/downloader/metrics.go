@@ -42,4 +42,12 @@ var (
 	stateDropMeter = metrics.NewRegisteredMeter("eth/downloader/states/drop", nil)
 
 	throttleCounter = metrics.NewRegisteredCounter("eth/downloader/throttle", nil)
+
+	// skippedProposedBlockPreFilter counts pre-filter skips of the proposed-block
+	// handler on each imported batch tail: the tail was judged non-canonical or
+	// unstored, so no QC or vote runs on it. Sustained growth under a reorg
+	// storm means whole batch tails keep landing on a fork. Every proposed-block
+	// skip counter shares the skipped-proposed-block root (engine gates, this
+	// pre-filter, the eth fetcher gate), so one alert regex aggregates them all.
+	skippedProposedBlockPreFilter = metrics.NewRegisteredCounter("skipped-proposed-block/prefilter", nil)
 )

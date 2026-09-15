@@ -217,6 +217,10 @@ func (x *XDPoS_v2) onVotePoolThresholdReached(chain consensus.ChainReader, poole
 		Signatures:        validSignatures,
 		GapNumber:         currentVoteMsg.(*types.Vote).GapNumber,
 	}
+	// No canonicality gate here, unlike ProposedBlockHandler: the pooled
+	// votes carry quorum-level signatures, so a QC for a locally side-chain
+	// block means the network's fork choice has diverged from ours —
+	// following the quorum majority is the convergence behavior.
 	err = x.processQC(chain, quorumCert)
 	if err != nil {
 		log.Error("Error while processing QC in the Vote handler after reaching pool threshold, ", err)

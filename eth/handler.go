@@ -40,6 +40,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -62,6 +63,33 @@ const (
 var (
 	syncChallengeTimeout = 15 * time.Second // Time allowance for a node to reply to the DAO handshake challenge
 )
+
+// skippedProposedBlockState counts fetcher-gate skips on unexecuted state: the
+// block is absent or its state trie does not open, so no QC or vote runs on it.
+// A skip can be a benign fast-sync race, but sustained growth is a liveness
+// stall. It fires only on unexecuted state — XDCX trading/lending state
+// completeness is deliberately not a voting precondition. Every proposed-block
+// skip counter shares the skipped-proposed-block root (engine gates, downloader
+// pre-filter, this fetcher gate), so one alert regex aggregates them all.
+var skippedProposedBlockState = metrics.NewRegisteredCounter("skipped-proposed-block/state", nil)
+
+// skippedProposedBlockSnapSync counts fetcher-gate skips while fast sync is
+// running: snapSync discards propagated blocks before executing them, so
+// every propagation skips here by design. Growth during fast sync is
+// expected; sustained growth after the pivot commit means the snapSync flag
+// never cleared — a sync cycle keeps failing — and QC processing and voting
+// are stalled.
+var skippedProposedBlockSnapSync = metrics.NewRegisteredCounter("skipped-proposed-block/snap-sync", nil)
+
+// proposedBlockStallWindow bounds how far behind the head the fetcher gate's
+// Error escalation reaches. Voting happens within a few blocks of the head,
+// so only a near-head canonical block with unopenable state can mean a live
+// voting stall; farther back the same shape is expected — fast sync stores
+// only headers and bodies below the pivot, so old canonical blocks
+// legitimately have no state — and a late announce for such a height must
+// not pollute the stall alert. Sixty-four covers any plausible voting depth
+// with a wide margin.
+const proposedBlockStallWindow = 64
 
 func errResp(code errCode, format string, v ...interface{}) error {
 	return fmt.Errorf("%v - %v", code, fmt.Sprintf(format, v...))
@@ -164,18 +192,42 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		manager.snapSync = uint32(1)
 	}
 
-	var handleProposedBlock func(header *types.Header) error
+	var handleProposedBlock func(*types.Header) error
+
+	// While fast sync runs, the fetcher must not reach the consensus handler:
+	// snapSync discards propagated blocks before executing them, so a body
+	// written by the receipt phase would pass both halves of the handler's own
+	// judgment on a block whose state was never validated. The snapSync flag
+	// carries the guard inserter and prepare already have, but it reads too
+	// late to be the whole story — Synchronise can flip it between insert and
+	// callback. The executed-state check below is what holds: its HasBlock half
+	// is hash-keyed, so a discarded block with no body fails there, before the
+	// root-keyed OpenTrie half could pass an empty block whose root repeats the
+	// parent's.
+	//
+	// fetcherHandler is that gated closure. Its gate behaviour is verified on
+	// the closure directly, without driving the fetcher loops; the wiring is
+	// pinned by TestFetcherWiresGatedHandlerWithXDPoS through the fetcher's
+	// ProposedBlockHandler accessor.
+	var fetcherHandler func(*types.Header) error
 	if config.XDPoS != nil {
 		handleProposedBlock = func(header *types.Header) error {
 			return engine.(*XDPoS.XDPoS).HandleProposedBlock(blockchain, header)
 		}
+		fetcherHandler = newFetcherProposedBlockHandler(manager, handleProposedBlock)
 	} else {
-		handleProposedBlock = func(header *types.Header) error {
-			return nil
-		}
+		// No XDPoS engine, so there is nothing to gate and nothing to handle:
+		// the downloader keeps nil (it nil-checks at its call site), the fetcher
+		// gets an explicit no-op.
+		fetcherHandler = func(*types.Header) error { return nil }
 	}
 
-	// Construct the different synchronisation mechanisms
+	// Construct the different synchronisation mechanisms. The downloader keeps
+	// the ungated closure: its fast sync calls run after the pivot commit, so
+	// gating it here would skip every proposed block during fast sync and
+	// stall QC and voting; the call site's pre-filter runs the handler's own
+	// judgment. TestDownloaderWiresUngatedHandlerWithXDPoS pins this wiring
+	// through the downloader's ProposedBlockHandler accessor.
 	manager.downloader = downloader.New(chaindb, manager.eventMux, blockchain, nil, manager.removePeer, handleProposedBlock)
 
 	validator := func(header *types.Header) error {
@@ -205,7 +257,9 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		atomic.StoreUint32(&manager.acceptTxs, 1) // Mark initial sync done on any fetcher import
 		return manager.blockchain.PrepareBlock(block)
 	}
-	manager.blockFetcher = fetcher.NewBlockFetcher(blockchain.GetBlockByHash, validator, handleProposedBlock, manager.BroadcastBlock, heighter, inserter, prepare, manager.removePeer)
+	// fetcherHandler, not the bare handleProposedBlock: swapping the argument
+	// back would silently drop both gates during fast sync.
+	manager.blockFetcher = fetcher.NewBlockFetcher(blockchain.GetBlockByHash, validator, fetcherHandler, manager.BroadcastBlock, heighter, inserter, prepare, manager.removePeer)
 
 	fetchTx := func(peer string, hashes []common.Hash) error {
 		p := manager.peers.Peer(peer)
@@ -232,6 +286,78 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 	}
 
 	return manager, nil
+}
+
+// newFetcherProposedBlockHandler builds the callback the fetcher runs. It gates
+// the consensus handler on the snapSync flag and on executed state (see the
+// wiring in NewProtocolManager for why) and leaves canonicality to the engine's
+// own judgment. It reads pm.blockchain instead of taking a chain argument, so
+// the gate cannot diverge from the manager's chain.
+func newFetcherProposedBlockHandler(pm *ProtocolManager, handleProposedBlock func(*types.Header) error) func(*types.Header) error {
+	return func(header *types.Header) error {
+		// A nil header or nil number is a caller bug, not an observation about
+		// a block; this closure dereferences the header before any chain read,
+		// so keep the SkipNilHeader contract instead of panicking.
+		if !consensus.IsJudgeableHeader(header) {
+			consensus.SkipNilHeaderLog(consensus.SkipSiteFetcher)
+			return nil
+		}
+		if atomic.LoadUint32(&pm.snapSync) == 1 {
+			// The flag is deliberately left set when a sync cycle fails
+			// (eth/sync.go): until fast sync completes the node has no state
+			// to judge blocks with, and clearing it early would also reopen tx
+			// handling (the snapSync uses in the broadcast paths above). A
+			// failure loop that keeps the flag stuck shows up as sustained
+			// growth of the skipped-proposed-block/snap-sync counter.
+			skippedProposedBlockSnapSync.Inc(1)
+			log.Debug("[fetcher] skipped proposed block handler during fast sync", "hash", header.Hash(), "number", header.Number)
+			return nil
+		}
+		// Canonicality is the engine's half — the gates interlock, they do not
+		// duplicate. Deliberately not HasBlockAndFullState: a missing XDCX
+		// trading/lending piece is not re-derivable, so demanding it would
+		// permanently halt voting on a correctly executed block.
+		// Residual risk: if the trie root never becomes available this gate
+		// stays false forever — the block is already on chain and will not
+		// re-execute, and the fetcher judges each propagation only once, so
+		// nothing heals it; pruning, a SetHead rollback, and trie corruption
+		// can all produce that shape, not just a fast-sync race. The stall is
+		// confined to this PBOR path: the block's QC still converges through
+		// the two deliberately ungated, quorum-signed entries (SyncInfoHandler
+		// and the vote-threshold path). There is no automatic fallback to
+		// HasBlock — that would undo this gate's protection — so the alert is
+		// the near-head Error below together with sustained growth of the
+		// skipped-proposed-block/state counter; both mean manual intervention
+		// (inspect pruning and trie integrity).
+		//
+		// The gate runs once per propagated block; one stateCache OpenTrie per
+		// block is negligible next to block processing, so the openability
+		// check is deliberately not cached.
+		if !pm.blockchain.HasBlockAndExecutedState(header.Hash(), header.Number.Uint64()) {
+			skippedProposedBlockState.Inc(1)
+			// A fast-sync race and a stall look identical here; separate them
+			// by canonicality and recency. A canonical block whose state never
+			// executes will not re-execute, so its gate stays false and QC
+			// processing and voting halt — near the head that is the alertable
+			// form and logs at Error. Farther back the same shape is expected
+			// noise: fast sync stores only headers and bodies below the pivot,
+			// so old canonical blocks legitimately have no state, and a late
+			// announce for such a height must not pollute the stall alert —
+			// those Warn.
+			head := pm.blockchain.CurrentBlock()
+			// Difference form: a sum with the window could wrap uint64 near
+			// MaxUint64; the guard clause keeps the subtraction from underflow.
+			stale := head != nil && head.Number.Uint64() > header.Number.Uint64() &&
+				head.Number.Uint64()-header.Number.Uint64() > proposedBlockStallWindow
+			if canonical := pm.blockchain.GetHeaderByNumber(header.Number.Uint64()); canonical != nil && canonical.Hash() == header.Hash() && !stale {
+				log.Error("[fetcher] skipped proposed block handler: canonical block state not executed, voting stalled", "hash", header.Hash(), "number", header.Number)
+			} else {
+				log.Warn("[fetcher] skipped proposed block handler: state not executed", "hash", header.Hash(), "number", header.Number)
+			}
+			return nil
+		}
+		return handleProposedBlock(header)
+	}
 }
 
 func (pm *ProtocolManager) addOrderPoolProtocol(orderpool orderPool) {

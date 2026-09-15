@@ -353,7 +353,14 @@ func (x *XDPoS) CalcDifficulty(chain consensus.ChainReader, time uint64, parent 
 	}
 }
 
-func (x *XDPoS) HandleProposedBlock(chain consensus.ChainReader, header *types.Header) error {
+func (x *XDPoS) HandleProposedBlock(chain consensus.ProposedBlockChain, header *types.Header) error {
+	// This wrapper dispatches on header.Number before the engine's own guard
+	// can run, so a nil header or nil number must be judged here: log Error,
+	// return nil, count nothing — a caller bug is not a block observation.
+	if !consensus.IsJudgeableHeader(header) {
+		consensus.SkipNilHeaderLog(consensus.SkipSiteHandleProposedBlock)
+		return nil
+	}
 	switch x.config.BlockConsensusVersion(header.Number) {
 	case params.ConsensusEngineVersion2:
 		return x.EngineV2.ProposedBlockHandler(chain, header)
