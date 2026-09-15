@@ -20,6 +20,7 @@ import (
 	"errors"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
@@ -282,6 +283,55 @@ func TestInsertChainAdoptsKnownBatchAheadOfHead(t *testing.T) {
 	// first imported, so their receipts and state are still the ones written back then.
 	if !chain.HasBlockAndFullState(blocks[4].Hash(), 5) {
 		t.Fatal("block #5 lost its state while being adopted")
+	}
+}
+
+// TestInsertChainAdoptsStoredBodyOfKnownBlock pins that adopting a known block uses the copy
+// this node executed, not the one the batch carried. A block hash covers only its header, and
+// ValidateBody answers ErrKnownBlock before it compares the body, so a batch can hand a stored
+// header together with a body this node never executed. Adopting it would index and announce
+// transactions that are not in this chain.
+func TestInsertChainAdoptsStoredBodyOfKnownBlock(t *testing.T) {
+	chain, blocks := newInsertChainTester(t, nil, 5, 5)
+	rewindHeadMarkers(chain, blocks[2]) // head stops at #3, blocks #4..#5 stay on disk
+
+	headEvents := make(chan ChainEvent, 4)
+	sub := chain.SubscribeChainEvent(headEvents)
+	defer sub.Unsubscribe()
+
+	// The header of the stored #4 under a body this node never executed.
+	forgedTx := types.NewTransaction(0, common.Address{1}, big.NewInt(1), 21000, big.NewInt(1), nil)
+	forged := types.NewBlockWithHeader(blocks[3].Header()).WithBody(types.Body{
+		Transactions: types.Transactions{forgedTx},
+	})
+	if forged.Hash() != blocks[3].Hash() {
+		t.Fatalf("the forged block does not carry the stored header: have %v want %v", forged.Hash(), blocks[3].Hash())
+	}
+	if n, err := chain.InsertChain(types.Blocks{forged}); err != nil {
+		t.Fatalf("block %d: adopting a known block reported failure: %v", n, err)
+	}
+	if want := uint64(4); chain.CurrentBlock().Number.Uint64() != want {
+		t.Fatalf("unexpected head number: have %d want %d", chain.CurrentBlock().Number.Uint64(), want)
+	}
+	if got := chain.GetCanonicalHash(4); got != blocks[3].Hash() {
+		t.Fatalf("unexpected canonical hash: have %v want %v", got, blocks[3].Hash())
+	}
+	// The head was adopted, so writeHeadBlock indexed the transactions of the body it was
+	// handed. The forged transaction is not in this chain and must not be indexed.
+	if entry := rawdb.ReadTxLookupEntry(chain.ChainDb(), forgedTx.Hash()); entry != nil {
+		t.Fatalf("the forged transaction was indexed at block %d by the adoption", *entry)
+	}
+	// The announced head has to be the stored block as well.
+	select {
+	case ev := <-headEvents:
+		if ev.Block.Hash() != blocks[3].Hash() {
+			t.Fatalf("unexpected announced block: have %v want %v", ev.Block.Hash(), blocks[3].Hash())
+		}
+		if got, want := len(ev.Block.Transactions()), len(blocks[3].Transactions()); got != want {
+			t.Fatalf("the announced head carries %d transactions, want %d: the body of the batch was announced", got, want)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the adopted head was not announced")
 	}
 }
 

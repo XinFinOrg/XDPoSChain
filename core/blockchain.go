@@ -1796,10 +1796,13 @@ func (bc *BlockChain) adoptHead(block *types.Block, current *types.Header, critM
 // batches the import loop stopped on because they were already known: those blocks are on
 // disk together with their state, so adopting one is a marker update, not a re-import.
 //
-// The check at the top is a defensive assertion rather than a decision: adopting a block
-// this node never executed would move the head without Process and ValidateState running on
-// it at all. A block that fails it is left where it is, which is what the chain did with
-// every known block above its head before this path existed.
+// The check at the top repeats what "known" has to mean as a defensive assertion rather
+// than as a decision: every caller reaches this function from a classification that already
+// asked HasExecutedBlock under the same chain mutex - ValidateBody for the import loop,
+// the prefix scan for insertSideChain. It is kept because adopting a block this node never
+// executed would move the head without Process and ValidateState running on it at all. A
+// block that fails it is left where it is, which is what the chain did with every known
+// block above its head before this path existed.
 //
 // The decision goes through blockBeatsHead, the same rule writeBlockWithState applies to
 // executed blocks, so a known block can never be adopted under a rule an executed one
@@ -1815,36 +1818,52 @@ func (bc *BlockChain) adoptHead(block *types.Block, current *types.Header, critM
 // first time. Callers use it to decide whether the block's logs still have to be
 // delivered: a block that was canonical before (a rollback re-import) already had them
 // sent, and one that was not (a promoted fork) never did.
-func (bc *BlockChain) writeKnownBlock(block *types.Block) (adopted, promoted bool, err error) {
-	// HasBlockAndFullState - and with it the ErrKnownBlock that led the block here - only
-	// proves that header.Root resolves in the trie database, it does not prove that this
-	// node ever executed the block. writeBlockWithoutState stores a sidechain block without
-	// its state and without its receipts, and trie.New resolves nothing at all for
-	// types.EmptyRootHash, so a block naming an empty - or any other already existing -
-	// root is taken for one that was executed. Adopting it would move the head over a block
-	// whose Process and ValidateState never ran, so demand the durable marker that
-	// execution leaves behind: writeBlockWithState writes the receipts, the state-less
-	// write above does not.
-	if !rawdb.HasReceipts(bc.db, block.Hash(), block.NumberU64()) ||
-		block.Root() == types.EmptyRootHash || block.Root() == (common.Hash{}) {
+//
+// adopted is the stored block that became the head, or nil when the chain does not adopt
+// this batch. It is the block the callers have to announce, never the one they handed in:
+// a block hash covers only its header, so a batch can carry any body under the header of a
+// stored block. See the note below.
+func (bc *BlockChain) writeKnownBlock(block *types.Block) (adopted *types.Block, promoted bool, err error) {
+	// Assertion, not a decision: both call sites already asked HasExecutedBlock under this
+	// same chain mutex, so this can only fire if a third caller is added without that
+	// classification step. Kept because the alternative - adopting a block this node never
+	// executed, with Process and ValidateState never running on it - is the shape #2534 was
+	// about. A block that fails the check is left where it is, which is what the chain did
+	// with every known block above its head before this path existed.
+	if !bc.HasExecutedBlock(block.Hash(), block.NumberU64()) {
 		// Warn rather than Debug: keeping the head here on purpose looks exactly like the
 		// stall this adoption path was added to end, and that must not go unnoticed.
 		log.Warn("[writeKnownBlock] refusing to adopt a block this node never executed",
 			"number", block.NumberU64(), "hash", block.Hash(), "root", block.Root())
-		return false, false, nil
+		return nil, false, nil
 	}
+	// Adopt the copy this node executed, not the one the batch carried. ValidateBody answers
+	// ErrKnownBlock before it compares the body - the hash the classification works on covers
+	// only the header - so the caller's block may carry any body under a stored header.
+	// Everything below, and every caller that announces the block, has to describe the chain
+	// this node holds rather than what the batch claimed it is.
+	stored := bc.GetBlock(block.Hash(), block.NumberU64())
+	if stored == nil {
+		// HasExecutedBlock has just checked that the block, its state and its receipts are
+		// on disk, and the body is written with them, so this is a pruned or corrupt
+		// database rather than a batch that is wrong.
+		log.Warn("[writeKnownBlock] refusing to adopt a block whose body is not on disk",
+			"number", block.NumberU64(), "hash", block.Hash())
+		return nil, false, nil
+	}
+	block = stored
 	// The marker has to be read before the head moves: reorg rewrites it.
 	promoted = bc.GetCanonicalHash(block.NumberU64()) != block.Hash()
 	current := bc.CurrentBlock()
 	if !bc.blockBeatsHead(block, current) {
-		return false, false, nil
+		return nil, false, nil
 	}
 	if err := bc.adoptHead(block, current, "Fail to update masternodes during writeKnownBlock"); err != nil {
 		// The blocks are already on disk and were executed before. A reorg this node refuses
 		// - a missing ancestor chain, or the XDPoS committed-block guard - says nothing about
 		// the peer that served them, so it must not be turned into a consensus failure by the
 		// caller.
-		return false, false, fmt.Errorf("%w: %v", ErrLocalInsertRefused, err)
+		return nil, false, fmt.Errorf("%w: %v", ErrLocalInsertRefused, err)
 	}
 	// Mirror the head side effects of the canonical import path: insertChain calls
 	// UpdateBlocksHashCache and writeBlockWithState populates the signing-tx cache.
@@ -1852,7 +1871,7 @@ func (bc *BlockChain) writeKnownBlock(block *types.Block) (adopted, promoted boo
 	bc.cacheSigningTxs(block)
 	bc.notifyEpochSwitchBlock(block)
 	bc.futureBlocks.Remove(block.Hash())
-	return true, promoted, nil
+	return block, promoted, nil
 }
 
 // announceKnownBlock returns the events and logs an adopted known block raises: a
@@ -2308,11 +2327,11 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		// wins the same fork choice an executed block would.
 		if errors.Is(err, ErrKnownBlock) {
 			log.Debug("Writing previously known block", "number", block.Number(), "hash", block.Hash())
-			adopted, promoted, adoptErr := bc.writeKnownBlock(block)
+			adoptedBlock, promoted, adoptErr := bc.writeKnownBlock(block)
 			if adoptErr != nil {
 				return it.index, events, coalescedLogs, adoptErr
 			}
-			if !adopted {
+			if adoptedBlock == nil {
 				// The block is executed and on disk, this node simply does not adopt this
 				// branch. The batch still reports success, so the count is the only trace
 				// of a sync that keeps delivering ranges without the head moving.
@@ -2326,12 +2345,13 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 				continue
 			}
 			// The head has advanced, so consumers of chain events must be notified
-			// even for an adopted known block.
-			blockEvents, blockLogs := bc.announceKnownBlock(block, promoted)
+			// even for an adopted known block - and with the stored block, not with the
+			// one the batch handed in. See writeKnownBlock.
+			blockEvents, blockLogs := bc.announceKnownBlock(adoptedBlock, promoted)
 			events = append(events, blockEvents...)
 			coalescedLogs = append(coalescedLogs, blockLogs...)
 			stats.processed++
-			lastCanon = block
+			lastCanon = adoptedBlock
 			continue
 		}
 		// Retrieve the parent block and it's state to execute on top
@@ -2658,13 +2678,13 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, ve
 	// success just the same: it only rebuilds it.previous() and its ancestors, never the
 	// known block or the blocks that follow it.
 	//
-	// Adopt the longest prefix of the tail that is stored as well - it was imported, only
-	// the head did not follow - and import the rest on top of it. The prefix cannot come
-	// out empty: ErrKnownBlock is what ValidateBody reports for a block whose state is
-	// already stored, so the block the scan stopped on is always part of it.
+	// Adopt the longest prefix of the tail that this node executed as well - it was
+	// imported, only the head did not follow - and import the rest on top of it. The prefix
+	// cannot come out empty: ErrKnownBlock is what ValidateBody reports for a block this
+	// node executed, so the block the scan stopped on is always part of it.
 	if errors.Is(err, ErrKnownBlock) {
 		stored := it.index
-		for stored < len(it.chain) && bc.HasBlockAndFullState(it.chain[stored].Hash(), it.chain[stored].NumberU64()) {
+		for stored < len(it.chain) && bc.HasExecutedBlock(it.chain[stored].Hash(), it.chain[stored].NumberU64()) {
 			stored++
 		}
 		if stored == it.index {
@@ -2681,7 +2701,7 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, ve
 		// Adopting the last stored block also moves the head over the blocks reorg
 		// rewrites in between, whose logs are delivered through the rebirth logs of the
 		// reorg.
-		adopted, promoted, adoptErr := bc.writeKnownBlock(it.chain[stored-1])
+		adoptedBlock, promoted, adoptErr := bc.writeKnownBlock(it.chain[stored-1])
 		if adoptErr != nil {
 			return it.index, nil, nil, adoptErr
 		}
@@ -2694,8 +2714,8 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, ve
 		// further, and a batch raises a single head event - for the highest block that
 		// moved it. See withChainHeadEvent.
 		var adoptedHead *types.Block
-		if adopted {
-			adoptedHead = it.chain[stored-1]
+		if adoptedBlock != nil {
+			adoptedHead = adoptedBlock
 			log.Debug("Adopted an already imported batch", "number", adoptedHead.NumberU64(), "hash", adoptedHead.Hash())
 			// The adopted block moves the head, so it is announced like an adopted known
 			// block of the canonical import path; the blocks reorg rewrote on the way are
@@ -3008,7 +3028,10 @@ func (bc *BlockChain) insertBlock(block *types.Block) ([]interface{}, []*types.L
 		return nil, nil, ErrChainStopped
 	}
 	defer bc.chainmu.Unlock()
-	if bc.HasBlockAndFullState(block.Hash(), block.NumberU64()) {
+	// Only a block this node executed can be left alone: one that is on disk without the
+	// receipts execution leaves behind still has to go through writeBlockWithState, which
+	// writes them and the state together. See HasExecutedBlock.
+	if bc.HasExecutedBlock(block.Hash(), block.NumberU64()) {
 		return events, coalescedLogs, nil
 	}
 	status, err := bc.writeBlockWithState(block, result.receipts, result.state, result.tradingState, result.lendingState)

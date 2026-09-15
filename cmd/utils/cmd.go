@@ -251,8 +251,10 @@ func missingBlocks(chain *core.BlockChain, blocks []*types.Block) []*types.Block
 			}
 			continue
 		}
-		// If we're above the chain head, state availability is a must
-		if !chain.HasBlockAndFullState(block.Hash(), block.NumberU64()) {
+		// If we're above the chain head, having executed the block is a must: one that is on
+		// disk without its receipts was never executed by this node, so the import has to
+		// start there and run it. See HasExecutedBlock.
+		if !chain.HasExecutedBlock(block.Hash(), block.NumberU64()) {
 			return blocks[i:]
 		}
 	}
