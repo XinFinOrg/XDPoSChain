@@ -367,3 +367,46 @@ func TestInsertSideChainAdoptsSegmentAndImportsTheRestAnnouncesOneHead(t *testin
 		t.Fatalf("delivered %d ChainHeadEvent(s), want exactly one for the tip", headed)
 	}
 }
+
+// TestInsertSideChainImportsTheTailAfterAnExecutableBlock pins the fourth way the scan of a pruned
+// segment can end: on a block this node can execute, whose parent state is on disk, so body
+// validation reports no error and the loop stops without one. Nothing above that stop was looked
+// at, and the batch must not be reported as a success with its tail never received.
+//
+// A database written before the execution marker existed is where a real chain reaches the shape:
+// its blocks carry a state root that resolves without the marker an execution leaves behind, so a
+// stored block whose parent state is also here reads as executable rather than as known.
+//
+// The tail was never body-validated by the scan, so it has to be imported at the level of the
+// batch it came from.
+func TestInsertSideChainImportsTheTailAfterAnExecutableBlock(t *testing.T) {
+	engine := &recordingVerifySealsEngine{Engine: ethash.NewFaker()}
+	chain, blocks := newInsertChainTester(t, engine, 5, 3) // head at #3
+
+	batch := blocks[3:5] // #4 is pruned, #5 stops the scan by being executable
+	validator := &knownBlockSegmentValidator{
+		BlockValidator: chain.validator.(*BlockValidator),
+		bodyErrors:     map[uint64]error{batch[0].NumberU64(): consensus.ErrPrunedAncestor},
+	}
+	results := make(chan error, len(batch))
+	for range batch {
+		results <- nil // the body validator answers, not the header results
+	}
+	it := newInsertIterator(batch, results, validator)
+
+	block, verr := it.next()
+	if !errors.Is(verr, consensus.ErrPrunedAncestor) {
+		t.Fatalf("unexpected verification result: have %v want %v", verr, consensus.ErrPrunedAncestor)
+	}
+	// The batch that built the chain was verified too; this case is about the tail.
+	engine.calls = nil
+
+	if n, _, _, err := chain.insertSideChain(block, it, true); len(engine.calls) == 0 {
+		t.Fatalf("block %d: the tail of the segment was reported as imported without being handed to the import (err %v)", n, err)
+	}
+	for i, full := range engine.calls[0] {
+		if !full {
+			t.Fatalf("tail block %d was imported without full verification", i)
+		}
+	}
+}

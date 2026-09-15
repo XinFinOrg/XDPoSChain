@@ -1032,3 +1032,49 @@ func TestInsertChainAdoptsKnownBatchAheadOfHeadWithXDPoS(t *testing.T) {
 		}
 	}
 }
+
+// TestKnownNotAdoptedMeterIgnoresKnownBlocksBelowTheHead pins the line the meter's own contract
+// draws: it counts the known blocks above the head that a batch did not adopt, because that is
+// the shape in which a batch reports success without moving the head. A known block below the
+// head is the routine skip of a block that is already canonical, and the other two call sites of
+// the meter - the skip loop of the canonical import path and the stored-prefix adoption of
+// insertSideChain - ask for the height before they count. This call site is the third one.
+//
+// The batch is contiguous and sits below the head: it re-delivers #3 and #4 under a head at #5.
+// Its first block is one this node does not count as executed - the marker an execution leaves is
+// taken off, the body, the receipts and the state it was executed with stay - so the import runs
+// it again, and the block after it is met as a known block while the head stands above both of
+// them. That is the shape a database written before the marker holds, which is why the case is
+// only reachable once the marker is what "known" is read from.
+func TestKnownNotAdoptedMeterIgnoresKnownBlocksBelowTheHead(t *testing.T) {
+	chain, blocks := newInsertChainTester(t, nil, 6, 5)
+
+	// Both blocks of the batch must sit below the head, otherwise this is not the case under test.
+	if head, last := chain.CurrentBlock().Number.Uint64(), blocks[3].NumberU64(); last >= head {
+		t.Fatalf("the batch must sit below the head: head at #%d, last block #%d", head, last)
+	}
+	// Take the marker off the first block, leaving the body, the receipts and the state it was
+	// executed with on disk. It is this node's own execution that is not recorded on it, so the
+	// import runs it again - and running it is what writes the marker back.
+	first := blocks[2]
+	rawdb.DeleteExecutedMarker(chain.ChainDb(), first.Hash(), first.NumberU64())
+	if chain.HasExecutedBlock(first.Hash(), first.NumberU64()) {
+		t.Fatal("the batch must not open with a known block, otherwise the skip loop consumes it")
+	}
+	before := blockKnownNotAdoptedMeter.Snapshot().Count()
+
+	if n, err := chain.InsertChain(types.Blocks{first, blocks[3]}); err != nil {
+		t.Fatalf("block %d: the batch was not imported: %v", n, err)
+	}
+	// The shape was reached: the first block was executed again, and the head did not move, which
+	// is what leaves the second block as a known block the batch adopted nothing for.
+	if !rawdb.HasExecutedMarker(chain.ChainDb(), first.Hash(), first.NumberU64()) {
+		t.Fatal("the first block was not executed again, the batch did not take the shape under test")
+	}
+	if head := chain.CurrentBlock().Number.Uint64(); head != 5 {
+		t.Fatalf("the batch must not move the head: have #%d, want #5", head)
+	}
+	if after := blockKnownNotAdoptedMeter.Snapshot().Count(); after != before {
+		t.Fatalf("a known block below the head was counted as not adopted: %d -> %d", before, after)
+	}
+}

@@ -917,6 +917,10 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64) error {
 
 			// Remove the hash <-> number mapping from the active store.
 			rawdb.DeleteHeaderNumber(db, hash)
+			// The receipts move to the ancient store when the block freezes, but the executed
+			// marker stays active, so TruncateAncients above does not take it away: drop it
+			// here as well.
+			rawdb.DeleteExecutedMarker(db, hash, num)
 		} else {
 			// Remove relative body and receipts from the active store.
 			// The header, total difficulty and canonical hash will be
@@ -1253,40 +1257,23 @@ func (bc *BlockChain) HasBlockAndFullState(hash common.Hash, number uint64) bool
 	return bc.HasFullState(block)
 }
 
-// HasExecutedBlock answers whether this node holds the artifacts of executing the block:
-// the receipts its execution produced, and the state the header names.
+// HasExecutedBlock answers whether this node executed the block itself: the marker its
+// execution leaves behind, and the state the header names.
 //
-// HasBlockAndFullState does not even answer that weaker question: it asks only whether the
-// root named by the header resolves in the trie database, and that answer is keyed by the
-// root rather than by the block. writeBlockWithoutState stores a sidechain block without its
-// state and without its receipts, so a block that names a root which happens to exist is
-// taken for one that was executed - and trie.New resolves no node at all for
-// types.EmptyRootHash, so naming an empty root is enough. Asking for the receipts as well
-// makes such a mistake harder rather than ruled out: see below.
+// HasBlockAndFullState does not answer that weaker question: it only asks whether the root
+// named by the header resolves in the trie database, and that answer is keyed by the root,
+// not by the block. writeBlockWithoutState stores a sidechain block without state or
+// receipts, so a block naming a root that happens to exist is taken for one that was
+// executed - and trie.New resolves no node for types.EmptyRootHash, so an empty root is
+// enough. The receipts do not answer it either: InsertReceiptChain writes receipts for a
+// fast sync range this node never ran (the body and receipts go to disk, the state does
+// not), and a re-delivery would then adopt such a block without running Process or
+// ValidateState over it. TestKnownBlockNeverExecutedIsNotReportedAsKnown drives three such
+// roots.
 //
-// Neither half proves that this node ran the block. Receipts are written by
-// InsertReceiptChain too, which is a fast sync completing a header chain: the body and the
-// receipts go to disk, the state does not. And a root resolves for reasons that have nothing
-// to do with this block - the empty root above, a root shared with a block this node did
-// execute, or a pivot state whose synchronisation got far enough to commit the root node
-// before it stopped. TestKnownBlockNeverExecutedIsNotReportedAsKnown drives three such roots
-// on a block this node never executed, and it is the receipts that keep it from being
-// reported as known.
-//
-// What is left unproven is therefore the fast sync's own range above this node's head -
-// see eth/handler.go for when fast sync is allowed at all, and note that it writes receipts
-// well before it knows anything about the state. A block there whose root resolves is still
-// answered as executed, so an admin import skips it and an import that re-delivers it adopts
-// it without running Process or ValidateState over it. Proving more needs a record written
-// only by a full execution of that block, and there is none, so what the callers get is a
-// narrowing of HasBlockAndFullState and not the execution itself.
-//
-// The receipts are asked first because the answer is the same either way and this is the
-// cheaper of the two: a freezer index probe and a key lookup, where HasBlockAndFullState
-// reads and decodes the body and then resolves the state root together with the trading and
-// lending states hanging off it.
+// The marker is asked first because it decides the answer and is the cheaper lookup.
 func (bc *BlockChain) HasExecutedBlock(hash common.Hash, number uint64) bool {
-	if !rawdb.HasReceipts(bc.db, hash, number) {
+	if !rawdb.HasExecutedMarker(bc.db, hash, number) {
 		return false
 	}
 	return bc.HasBlockAndFullState(hash, number)
@@ -1982,14 +1969,9 @@ func (bc *BlockChain) writeKnownBlock(block *types.Block) (adopted *types.Block,
 	}
 
 	// Assertion, not a decision: both call sites already asked HasExecutedBlock under this
-	// same chain mutex, so this can only fire if a third caller is added without that
-	// classification step. Kept because the alternative - adopting a block this node holds no
-	// execution artifacts for, with Process and ValidateState never running on it - is the
-	// shape #2534 was about. HasExecutedBlock narrows HasBlockAndFullState rather than
-	// proving execution, so this is a guard against that shape getting wider again, not a
-	// guarantee that every adopted block was executed here. A block that fails the check is
-	// left where it is, which is what the chain did with every known block above its head
-	// before this path existed.
+	// chain mutex, so this can only fire if a third caller is added without that step. The
+	// shape it keeps out - a block adopted with Process and ValidateState never running on it
+	// - is what #2534 was about.
 	if !bc.HasExecutedBlock(block.Hash(), block.NumberU64()) {
 		// Warn rather than Debug: keeping the head here looks exactly like the stall this
 		// adoption path was added to end.
@@ -2342,6 +2324,38 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 		}
 	}
 
+	// The marker of this block's execution is written last, once every commit above has
+	// succeeded: it is the record HasExecutedBlock answers "this node ran the block" from.
+	//
+	// Written with the block, its receipts and its total difficulty instead - as it was - it
+	// outlived a state, trading, lending or trie commit this node refused. The block then stayed
+	// on disk carrying the marker while the state it names never reached the database, and the
+	// next delivery of it was answered as known: writeKnownBlock adopted it and moved the head
+	// onto a state that is not there, with nothing left that would write it. Written here, a
+	// refused commit leaves the block without the marker instead, which is the answer this
+	// revision gives a database that predates the marker as well: the block is executed again
+	// rather than trusted, and running it is what writes the marker.
+	//
+	// A crash between the two leaves the same shape, which is why the order is the fail-closed
+	// one rather than the reverse. The marker needs its own batch because a database that
+	// refuses it must be reported like the commits above: the accessor makes a failed put fatal
+	// (log.Crit), and so is the batch that carries the block.
+	markerBatch := bc.db.NewBatch()
+	rawdb.WriteExecutedMarker(markerBatch, block.Hash(), block.NumberU64())
+	if err := markerBatch.Write(); err != nil {
+		return NonStatTy, wrapLocalCondition(err)
+	}
+
+	// externTd is the block's own total difficulty, accumulated above to be written with the
+	// block, and headTd the head's, read before anything was written: asking through
+	// blockBeatsHead would look the parent's up a second time for a value this function
+	// already holds, and the head's for the one it already read.
+	//
+	// Reading the head as "does not beat the head" when its record is missing would write
+	// the block as a side chain and leave the head where it is, with no error and no log,
+	// and every following block would repeat the same silent stall. headTd reports that
+	// record being missing instead, and it does so before the write above for the same
+	// reason the parent's total difficulty is asked for before it.
 	if !canonical {
 		status = SideStatTy
 	} else {
@@ -2991,6 +3005,26 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, ve
 	// right away, because rebuilding the prefix below would report a partial import as a
 	// success. ErrUnknownAncestor is how a pruned segment ends normally, so it falls through
 	// to the reimport below.
+	//
+	// The scan can also stop on a block this node can execute: the state of its parent is on
+	// disk, which is what body validation reports as no error. Nothing above that stop was
+	// looked at, and returning here would report the batch as a success while its tail was
+	// never received - the outcome both other ends of this scan are written to prevent. The
+	// rest of the batch is handed to insertChain from the stop, the way the adoption below
+	// hands over the tail of a stored prefix. A database written before the execution marker
+	// existed is where the stop happens: its blocks carry a state root that resolves without
+	// the marker an execution leaves behind, so a stored block is measured as executable
+	// rather than as known.
+	if err == nil && it.index < len(it.chain) {
+		n, moreEvents, moreLogs, err := bc.insertChain(it.chain[it.index:], verifySeals)
+		if err != nil {
+			// The sub-batch counts from it.chain[it.index:]; map the failing index back to
+			// the batch the caller handed in.
+			return it.index + n, moreEvents, moreLogs, err
+		}
+		// The whole batch was consumed: the scan stopped on a block the import above ran.
+		return len(it.chain), moreEvents, moreLogs, nil
+	}
 	if err != nil && !errors.Is(err, consensus.ErrUnknownAncestor) && !errors.Is(err, ErrKnownBlock) {
 		// ErrFutureBlock reaches this branch only for a block dated ahead of this node's clock:
 		// both engines compare the timestamp before they look up the parent, so the parent is
@@ -3020,15 +3054,25 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, ve
 			stored++
 		}
 		if stored == it.index {
-			// Defensive guard rather than a state the validator contract can produce. Bailing
-			// out is what keeps the head in place here: adopting it.chain[stored-1] would move
-			// it onto the block below the one that stopped the scan. A stop like this would
-			// say nothing about the blocks, so it must not become an error the downloader
-			// turns into an errInvalidChain that drops the peer.
-			log.Warn("Sidechain segment stopped on a block that is not stored",
+			// The scan stopped on a block this node did not execute, so there is no stored prefix
+			// to adopt: the block is either not on disk at all, or on disk with the receipts a
+			// fast sync wrote and without the execution marker. A database written before the
+			// marker existed answers the same for blocks it executed itself, so such a range is
+			// run again rather than adopted, and running it writes the marker. Bailing out keeps
+			// the head in place: adopting it.chain[stored-1] would move it below the block that
+			// stopped the scan. The stop says nothing about the blocks, so it must not become an
+			// errInvalidChain that drops the peer.
+			// The head this warning reports is read with the same guard the fork-choice meter
+			// of the adoption below uses: a head this node does not have yet must not turn
+			// the warning into a panic.
+			var headNumber *big.Int
+			if head := bc.CurrentBlock(); head != nil {
+				headNumber = head.Number
+			}
+			log.Warn("Sidechain segment holds no executed prefix to adopt",
 				"number", it.chain[it.index].NumberU64(), "hash", it.chain[it.index].Hash(),
-				"index", it.index, "head", bc.CurrentBlock().Number.Uint64())
-			return it.index, nil, nil, localConditionf("sidechain segment stopped on a block that is not stored")
+				"index", it.index, "head", headNumber)
+			return it.index, nil, nil, localConditionf("sidechain segment holds no executed prefix to adopt")
 		}
 		// Adopting the last stored block also moves the head over the blocks reorg rewrites
 		// in between, whose logs go out through its rebirth logs.
@@ -3463,10 +3507,80 @@ func (bc *BlockChain) UpdateBlocksHashCache(block *types.Block) []common.Hash {
 	return hashArr
 }
 
-// blockAlreadyImported reports whether the import can be skipped for the block: the block
-// and the state execution leaves behind are both on disk for it.
+// genesisBlockOnDisk answers whether this node holds the genesis block: the one block the
+// executed marker never applies to, because core/genesis.go writes it with its state and its
+// block but without a marker, and SetupGenesisBlock does not rewrite the genesis of a database
+// that already holds one. Its own hash on disk is what says this node holds it, and both callers
+// answer block 0 on this test alone - ValidateBody, which answers it as known, and
+// FirstMissingImportedBlock, which answers it as imported. A block 0 of another chain does not
+// pass it and is still reported as one this node does not hold.
+func (bc *BlockChain) genesisBlockOnDisk(block *types.Block) bool {
+	return block.NumberU64() == 0 && bc.HasBlockAndFullState(block.Hash(), 0)
+}
+
+// blockAlreadyImported reports whether the import can be skipped for the block: this node
+// executed it, so the block is on disk together with the state and the marker its execution
+// leaves behind. HasBlockAndFullState does not answer that - a side entry stored by
+// writeBlockWithoutState has a body, and a state root that may well resolve, but no marker -
+// which is why the callers that read "known" as "this node already did the work" ask here.
 func (bc *BlockChain) blockAlreadyImported(block *types.Block) bool {
-	return bc.HasBlockAndFullState(block.Hash(), block.NumberU64())
+	return bc.HasExecutedBlock(block.Hash(), block.NumberU64())
+}
+
+// FirstMissingImportedBlock returns the index of the first block of the batch this node has not
+// imported yet, or -1 when it has imported all of them. That is the line the two importers draw
+// to decide what of a batch still has to be run: below the head the state is available at that
+// head, so a body on disk is what says the block was imported, while at or above it the block
+// has to have been executed by this node (see HasExecutedBlock). Answering on bodies alone would
+// report blocks this node only wrote as side entries - stored without their receipts and state
+// by writeBlockWithoutState - as an import that needs no running, and the batch would be skipped
+// with the head left where it was.
+//
+// eth/api_admin.missingBlocks and cmd/utils.missingBlocks used to spell this rule out twice, each
+// with a comment that a change to one has to be made to the other as well. They ask here
+// instead, so the rule and its reasons live in one place; both take the suffix of the batch that
+// still has to be run, and each adds only its own reporting around it.
+//
+// The genesis block is answered by genesisBlockOnDisk rather than by the marker, and reading it
+// as "not imported" would send the block a node's own export starts from back through the
+// insertion paths. There a batch verifier that resolves the parent of block 0 - ethash's does,
+// XDPoS's does not - rejects it before ValidateBody can answer it, and the rejection is recorded
+// as a bad block. It is the test ValidateBody answers block 0 by; a block 0 of another chain does
+// not pass it and is still reported as one this node has not imported. Both importers drop block 0
+// as they decode the file, so this is the line's own answer for a batch that still carries one.
+//
+// A chain that reports no head has imported nothing, so index 0 is returned rather than a
+// comparison against a head that is not there.
+func (bc *BlockChain) FirstMissingImportedBlock(blocks []*types.Block) int {
+	head := bc.CurrentBlock()
+	if head == nil {
+		return 0
+	}
+	for i, block := range blocks {
+		// The genesis block is answered by genesisBlockOnDisk; the branches below would
+		// answer it by the marker and report it as one the import still has to run.
+		if block.NumberU64() == 0 {
+			if !bc.genesisBlockOnDisk(block) {
+				return i
+			}
+			continue
+		}
+		// Below the head the state is available at that head, so a body on disk is what says
+		// the block was imported.
+		if head.Number.Uint64() > block.NumberU64() {
+			if !bc.HasBlock(block.Hash(), block.NumberU64()) {
+				return i
+			}
+			continue
+		}
+		// At or above the head, having executed the block is a must: one that is on disk
+		// without the marker its execution leaves behind was never executed by this node, so
+		// the import has to start there and run it. See HasExecutedBlock.
+		if !bc.HasExecutedBlock(block.Hash(), block.NumberU64()) {
+			return i
+		}
+	}
+	return -1
 }
 
 // insertChain will execute the actual chain insertion and event aggregation. The

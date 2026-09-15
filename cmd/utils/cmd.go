@@ -241,20 +241,17 @@ func ImportChain(chain *core.BlockChain, fn string) error {
 	return nil
 }
 
+// missingBlocks returns the suffix of the file that still has to be run, starting at the first
+// block this node cannot answer for. That line lives in core (see
+// BlockChain.FirstMissingImportedBlock, which eth/api_admin.missingBlocks asks as well, and which
+// carries the reasoning), so the two importers cannot drift apart.
+//
+// The suffix is what this command runs, not where the head ends up: a block this node executed
+// at or above a head that stops below it answers as imported, so re-delivering that range is
+// skipped. That shape is recovered by the paths that do not come through here.
 func missingBlocks(chain *core.BlockChain, blocks []*types.Block) []*types.Block {
-	head := chain.CurrentBlock()
-	for i, block := range blocks {
-		// If we're behind the chain head, only check block, state is available at head
-		if head.Number.Uint64() > block.NumberU64() {
-			if !chain.HasBlock(block.Hash(), block.NumberU64()) {
-				return blocks[i:]
-			}
-			continue
-		}
-		// If we're above the chain head, state availability is a must
-		if !chain.HasBlockAndFullState(block.Hash(), block.NumberU64()) {
-			return blocks[i:]
-		}
+	if first := chain.FirstMissingImportedBlock(blocks); first >= 0 {
+		return blocks[first:]
 	}
 	return nil
 }

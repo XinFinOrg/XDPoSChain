@@ -61,14 +61,23 @@ func (api *AdminAPI) ExportChain(file string) (bool, error) {
 	return true, nil
 }
 
-func hasAllBlocks(chain *core.BlockChain, bs []*types.Block) bool {
-	for _, b := range bs {
-		if !chain.HasBlock(b.Hash(), b.NumberU64()) {
-			return false
-		}
+// missingBlocks returns the suffix of the batch that still has to be run, starting at the first
+// block this node cannot answer for - the same line, and the same shape, cmd/utils.missingBlocks
+// draws over the same batch. That line lives in core (see BlockChain.FirstMissingImportedBlock,
+// which carries the reasoning), so this importer and the CLI one cannot drift apart.
+//
+// The suffix is what this importer runs, and the shape matters: the blocks before the first missing
+// one are ones this node already holds, so handing the batch over whole would run it through the
+// batch verifiers again and let it adopt them, where this precheck only decides what is skipped.
+//
+// A batch this node executed above a head that stops below it is answered as imported too: this
+// precheck decides what the import skips, not where the head ends up. That shape is recovered by
+// the sync paths, which do not come through here.
+func missingBlocks(chain *core.BlockChain, bs []*types.Block) []*types.Block {
+	if first := chain.FirstMissingImportedBlock(bs); first >= 0 {
+		return bs[first:]
 	}
-
-	return true
+	return nil
 }
 
 // ImportChain imports a blockchain from a local file.
@@ -100,14 +109,25 @@ func (api *AdminAPI) ImportChain(file string) (bool, error) {
 			} else if err != nil {
 				return false, fmt.Errorf("block %d: failed to parse: %v", index, err)
 			}
-			blocks = append(blocks, block)
+			// Count the block before the genesis skip below: index names a position in the input
+			// stream, and a malformed block has to be reported there.
 			index++
+			// The first block of an export is the exporting node's genesis block, which never has
+			// to be imported: the insertion paths answer this node's own by its hash, and a block
+			// 0 of another chain is rejected by the batch verifiers that resolve the parent of
+			// block 0 (ethash's does, XDPoS's does not) before ValidateBody can answer it. The CLI
+			// importer drops it the same way, as does upstream go-ethereum.
+			if block.NumberU64() == 0 {
+				continue
+			}
+			blocks = append(blocks, block)
 		}
 		if len(blocks) == 0 {
 			break
 		}
 
-		if hasAllBlocks(api.eth.BlockChain(), blocks) {
+		missing := missingBlocks(api.eth.BlockChain(), blocks)
+		if len(missing) == 0 {
 			blocks = blocks[:0]
 			continue
 		}
@@ -117,7 +137,7 @@ func (api *AdminAPI) ImportChain(file string) (bool, error) {
 		// node's clock, which the file importers replaying historical blocks do not meet, so
 		// the branch is defensive; a batch that does land there reports "already imported"
 		// below, not a failed insert.
-		if _, err := api.eth.BlockChain().InsertChain(blocks); err != nil {
+		if _, err := api.eth.BlockChain().InsertChain(missing); err != nil {
 			// A local condition says nothing about the blocks in the file: blaming them would
 			// report this node's own state as a failed import. core owns the classification, so
 			// this importer and cmd/utils cannot drift apart.

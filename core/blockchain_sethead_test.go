@@ -449,3 +449,53 @@ func TestSetHeadKeepsXdposSnapshotsWithoutAGap(t *testing.T) {
 		}
 	}
 }
+
+// TestSetHeadRemovesExecutedMarkers pins the other end of the executed-block marker's life: a rewind
+// deletes the body and the receipts of every block above the new head, and the marker has to go with
+// them. A marker left behind would answer that this node executed a block whose receipts it no longer
+// holds, and db inspect would count it into the receipts bucket it belongs to no more.
+func TestSetHeadRemovesExecutedMarkers(t *testing.T) {
+	var (
+		engine  = ethash.NewFaker()
+		genesis = &Genesis{
+			BaseFee: big.NewInt(params.InitialBaseFee),
+			Config:  params.AllEthashProtocolChanges,
+		}
+		db = rawdb.NewMemoryDatabase()
+	)
+	// Archive mode so that every state is persisted and the rewind lands on the height asked
+	// for, which is what lets the blocks above it be deleted one by one.
+	chain, err := NewBlockChain(db, &CacheConfig{TrieDirtyDisabled: true}, genesis, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+	defer chain.Stop()
+
+	_, blocks, _ := GenerateChainWithGenesis(genesis, engine, 32, nil)
+	if _, err := chain.InsertChain(blocks); err != nil {
+		t.Fatalf("failed to insert the chain: %v", err)
+	}
+	for _, block := range blocks {
+		if !rawdb.HasExecutedMarker(db, block.Hash(), block.NumberU64()) {
+			t.Fatalf("block #%d was executed, it must carry the marker", block.NumberU64())
+		}
+	}
+	if err := chain.SetHead(16); err != nil {
+		t.Fatalf("failed to set head: %v", err)
+	}
+	for _, block := range blocks {
+		number := block.NumberU64()
+		if number > 16 {
+			if rawdb.HasReceipts(db, block.Hash(), number) {
+				t.Errorf("the rewound block #%d kept its receipts", number)
+			}
+			if rawdb.HasExecutedMarker(db, block.Hash(), number) {
+				t.Errorf("the rewound block #%d kept its executed marker", number)
+			}
+			continue
+		}
+		if !rawdb.HasExecutedMarker(db, block.Hash(), number) {
+			t.Errorf("block #%d is at or below the new head, its marker must stay", number)
+		}
+	}
+}
