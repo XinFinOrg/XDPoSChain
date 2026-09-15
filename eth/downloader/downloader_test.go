@@ -91,6 +91,9 @@ type downloadTester struct {
 	// default TestChainConfig.  Used by tests that require XDPoS to be active.
 	configOverride *params.ChainConfig
 
+	// proposedBlocks records the headers handed to the proposed-block callback.
+	proposedBlocks []*types.Header
+
 	lock sync.RWMutex
 }
 
@@ -365,6 +368,12 @@ func (dl *downloadTester) InsertReceiptChain(blocks types.Blocks, receipts []typ
 	return len(blocks), nil
 }
 
+// IsLocalInsertError forwards the classification to the real implementation, like the rest
+// of the simulated chain does for the methods it does not need to stub.
+func (dl *downloadTester) IsLocalInsertError(err error) bool {
+	return core.IsLocalInsertError(err)
+}
+
 // Rollback removes some recently added elements from the chain.
 func (dl *downloadTester) Rollback(hashes []common.Hash) {
 	dl.lock.Lock()
@@ -403,6 +412,13 @@ func (dl *downloadTester) dropPeer(id string) {
 // an empty handleProposedBlock function
 func (dl *downloadTester) handleProposedBlock(header *types.Header) error {
 	return nil
+}
+
+// proposedHandled returns the headers the proposed-block callback was invoked with.
+func (dl *downloadTester) proposedHandled() []*types.Header {
+	dl.lock.RLock()
+	defer dl.lock.RUnlock()
+	return append([]*types.Header(nil), dl.proposedBlocks...)
 }
 
 // Config retrieves the blockchain's chain configuration.

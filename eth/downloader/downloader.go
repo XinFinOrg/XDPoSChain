@@ -218,6 +218,13 @@ type BlockChain interface {
 	// InsertReceiptChain inserts a batch of receipts into the local chain.
 	InsertReceiptChain(types.Blocks, []types.Receipts) (int, error)
 
+	// IsLocalInsertError reports whether an InsertChain or InsertReceiptChain failure
+	// describes a local condition of this node - the chain stopping, the insertion being
+	// cut short, or a reorg it refuses - rather than a fault of the blocks. The chain owns
+	// the classification; the downloader only needs the verdict to decide whether the peer
+	// that served the batch may be blamed for it.
+	IsLocalInsertError(err error) bool
+
 	// TrieDB retrieves the low level trie database used for interacting
 	// with trie nodes.
 	TrieDB() *trie.Database
