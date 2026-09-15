@@ -378,7 +378,10 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, cfg X
 				started = true
 				log.Info("Enabled staking node!!!")
 			}
-			defer close(core.CheckpointCh)
+			// core.CheckpointCh is deliberately never closed: it is a package level
+			// channel other goroutines send on - the block import paths and
+			// miner/worker.go - and this loop is its only reader, so a close here could
+			// only race a send. It lives as long as the process.
 			for range core.CheckpointCh {
 				log.Info("Checkpoint!!! It's time to reconcile node's state...")
 				log.Info("Update consensus parameters")
