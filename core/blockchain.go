@@ -1711,8 +1711,14 @@ func (bc *BlockChain) blockBeatsHeadTd(block *types.Block, head *types.Header, h
 
 // isEpochSwitchBlock reports whether block is the epoch switch block of its epoch. A
 // chain without XDPoS, and an engine that is not XDPoS, have no epoch switch, which is
-// not an error. What a failure to decode the header means is left to the caller:
-// notifyEpochSwitchBlock reports the block, reorg does not - see its call site.
+// not an error.
+//
+// A failure to decode the header is only logged by both callers, never reported as a bad
+// block. No block this node stored can fail it - engine_v2 reads the same extra fields in
+// verifyHeader, outside its fullVerify gate, so a header that passed verification cannot
+// fail here, and engine_v1 never fails it - and both callers only hand over blocks that
+// are stored and were verified when they were imported, so reportBlock would write a
+// block this node already accepted into the bad-block table.
 func (bc *BlockChain) isEpochSwitchBlock(block *types.Block) (bool, error) {
 	if bc.chainConfig.XDPoS == nil {
 		return false, nil
@@ -1727,12 +1733,12 @@ func (bc *BlockChain) isEpochSwitchBlock(block *types.Block) (bool, error) {
 
 // notifyEpochSwitchBlock sends a checkpoint notification when block switches the
 // epoch, so that the consensus parameters and the masternode set are refreshed.
-// It is a no-op for non-XDPoS chains and for engines that are not XDPoS.
+// It is a no-op for non-XDPoS chains and for engines that are not XDPoS. An unreadable
+// epoch switch is logged but not reported, see isEpochSwitchBlock for why.
 func (bc *BlockChain) notifyEpochSwitchBlock(block *types.Block) {
 	isEpochSwitch, err := bc.isEpochSwitchBlock(block)
 	if err != nil {
 		log.Error("[notifyEpochSwitchBlock] Error while checking if the incoming block is epoch switch block", "Hash", block.Hash(), "Number", block.Number())
-		bc.reportBlock(block, nil, err)
 		return
 	}
 	if isEpochSwitch {
@@ -3332,10 +3338,8 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 		// coalesces - see SignalCheckpoint - so a block that was canonical before the rewind
 		// (a rollback re-import) signalling a second time costs nothing.
 		//
-		// Unlike notifyEpochSwitchBlock, a header the engine cannot decode is not reported
-		// here: these blocks are stored and were verified when they were imported, so the
-		// failure says nothing about the peer that served them, and reportBlock would write
-		// a block this node already accepted into the bad-block table.
+		// A header the engine cannot decode is only logged here, exactly as
+		// notifyEpochSwitchBlock does it - see isEpochSwitchBlock for why neither reports it.
 		if isEpochSwitch, err := bc.isEpochSwitchBlock(block); err != nil {
 			log.Error("[reorg] Error while checking if a promoted block is an epoch switch block", "Hash", block.Hash(), "Number", block.Number())
 		} else if isEpochSwitch {
