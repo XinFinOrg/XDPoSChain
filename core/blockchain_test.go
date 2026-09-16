@@ -3000,3 +3000,108 @@ func TestDeleteCreateRevert(t *testing.T) {
 		t.Fatalf("block %d: failed to insert into chain: %v", n, err)
 	}
 }
+
+// TestInsertBlockDoesNotPrecomputeAnExecutedBlock pins that the fetcher entry answers a block
+// this node already holds without running getResultBlock on it. That call executes the block
+// in full - the whole EVM run plus the state validation - and the check that follows throws
+// the result away, so such a block must never reach it.
+//
+// Running it is observable: getResultBlock records the block it is about to run in
+// calculatingBlock, and nothing removes that entry, so a block that went through it leaves a
+// trace the skip does not.
+func TestInsertBlockDoesNotPrecomputeAnExecutedBlock(t *testing.T) {
+	key, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	address := crypto.PubkeyToAddress(key.PublicKey)
+	gspec := &Genesis{
+		Alloc:   types.GenesisAlloc{address: {Balance: big.NewInt(1000000000000000)}},
+		BaseFee: big.NewInt(params.InitialBaseFee),
+		Config:  params.TestChainConfig,
+	}
+	_, blocks, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 6, nil)
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create tester chain: %v", err)
+	}
+	t.Cleanup(chain.Stop)
+
+	// Import through the single-block entry, the one the fetcher uses: a block that went
+	// through InsertChain is recorded in downloadingBlock, which insertBlock answers before
+	// anything else - so a chain warmed up in batches never reaches this path at all.
+	for _, block := range blocks {
+		if err := chain.InsertBlock(block); err != nil {
+			t.Fatalf("failed to import block #%d through the single-block path: %v", block.NumberU64(), err)
+		}
+	}
+	// Move the head back to #4, leaving #5 and #6 with their receipts on disk, which is the
+	// shape a crash or an interrupted rollback leaves behind.
+	chain.Rollback([]common.Hash{blocks[4].Hash(), blocks[5].Hash()})
+	if have, want := chain.CurrentBlock().Number.Uint64(), blocks[3].NumberU64(); have != want {
+		t.Fatalf("unexpected head after rollback: have %d want %d", have, want)
+	}
+
+	target := blocks[4] // #5, already executed and on disk
+	if !chain.HasBlockAndFullState(target.Hash(), target.NumberU64()) {
+		t.Fatal("precondition: the block must be held together with its state")
+	}
+	// The imports above ran every block they were handed, and getResultBlock records that in
+	// calculatingBlock without ever removing it. Clear this block's entry, so that one found
+	// after the import below can only have been written by that import.
+	chain.calculatingBlock.Remove(target.HashNoValidator())
+	if chain.calculatingBlock.Contains(target.HashNoValidator()) {
+		t.Fatal("precondition: the block is still recorded as being calculated")
+	}
+
+	if err := chain.InsertBlock(target); err != nil {
+		t.Fatalf("failed to re-import the held block: %v", err)
+	}
+	// getResultBlock is what records a block it is about to run. An entry here means the
+	// already held block was executed a second time, only for the result to be thrown away.
+	if chain.calculatingBlock.Contains(target.HashNoValidator()) {
+		t.Fatal("already held block was precomputed instead of skipped")
+	}
+	// The skip is about the computation only: this path still leaves the head where it is,
+	// which is what the fetcher has always seen from it.
+	if have, want := chain.CurrentBlock().Number.Uint64(), blocks[3].NumberU64(); have != want {
+		t.Fatalf("head moved: have %d want %d", have, want)
+	}
+}
+
+// TestInsertBlockRejectsDenylistedHeldBlock pins that the denylist is still answered for a block
+// this node already holds. The check lives in getResultBlock, which the skip above no longer
+// reaches, so the fast path has to ask on its own - otherwise a block that is rejected on the
+// way in would be reported as inserted the second time it arrives.
+func TestInsertBlockRejectsDenylistedHeldBlock(t *testing.T) {
+	key, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	address := crypto.PubkeyToAddress(key.PublicKey)
+	gspec := &Genesis{
+		Alloc:   types.GenesisAlloc{address: {Balance: big.NewInt(1000000000000000)}},
+		BaseFee: big.NewInt(params.InitialBaseFee),
+		Config:  params.TestChainConfig,
+	}
+	_, blocks, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 6, nil)
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create tester chain: %v", err)
+	}
+	t.Cleanup(chain.Stop)
+
+	for _, block := range blocks {
+		if err := chain.InsertBlock(block); err != nil {
+			t.Fatalf("failed to import block #%d through the single-block path: %v", block.NumberU64(), err)
+		}
+	}
+	// Leave #5 and #6 executed but above the head, the shape in which the fetcher re-delivers
+	// them to an entry that skips what it already holds.
+	chain.Rollback([]common.Hash{blocks[4].Hash(), blocks[5].Hash()})
+
+	target := blocks[4]
+	if !chain.HasBlockAndFullState(target.Hash(), target.NumberU64()) {
+		t.Fatal("precondition: the block must be held together with its state")
+	}
+	BadHashes[target.Hash()] = true
+	t.Cleanup(func() { delete(BadHashes, target.Hash()) })
+
+	if err := chain.InsertBlock(target); !errors.Is(err, ErrDenylistedHash) {
+		t.Fatalf("denylisted block already held with state was accepted: %v", err)
+	}
+}

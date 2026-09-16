@@ -2333,6 +2333,29 @@ func (bc *BlockChain) insertBlock(block *types.Block) ([]interface{}, []*types.L
 		log.Debug("Stop fetcher a block because downloading", "number", block.NumberU64(), "hash", block.Hash())
 		return events, coalescedLogs, nil
 	}
+	// A denylisted hash stays rejected even when the block is already held: the check lives in
+	// getResultBlock, which the fast path below no longer reaches. Ask before that path so the
+	// answer does not depend on whether the block has to be run again.
+	if BadHashes[block.Hash()] {
+		bc.reportBlock(block, nil, ErrDenylistedHash)
+		return events, coalescedLogs, ErrDenylistedHash
+	}
+	// A block this node already holds together with its state has nothing left to compute:
+	// getResultBlock would run it in full - the whole EVM execution plus the state
+	// validation - only for the check below to throw the result away. Look it up before that
+	// call instead. The look is taken without the chain mutex so that the execution stays
+	// out of the lock; holdsBlockWithState asks again under the mutex, which is the answer
+	// that counts, and a block that is not fully present after all falls through to the
+	// regular path below.
+	if bc.HasBlockAndFullState(block.Hash(), block.NumberU64()) {
+		held, lockErr := bc.holdsBlockWithState(block)
+		if lockErr != nil {
+			return events, coalescedLogs, lockErr
+		}
+		if held {
+			return events, coalescedLogs, nil
+		}
+	}
 	result, err := bc.getResultBlock(block, true)
 	if err != nil {
 		return events, coalescedLogs, err
@@ -2390,6 +2413,24 @@ func (bc *BlockChain) insertBlock(block *types.Block) ([]interface{}, []*types.L
 		log.Debug("New ChainHeadEvent from fetcher ", "number", block.NumberU64(), "hash", block.Hash())
 	}
 	return events, coalescedLogs, nil
+}
+
+// holdsBlockWithState reports whether this node holds block together with its state once the
+// chain mutex is taken, which is the question that decides whether getResultBlock has
+// anything left to compute for it.
+//
+// The caller looks the block up without the mutex first, so that the execution stays out of
+// the lock. This asks again under it, and that answer is the one the caller acts on: the
+// state may have been pruned, or the block's receipts written, in between. A chain that has
+// been stopped is reported through err rather than answered with false, so that the caller
+// does not go on to run a block on a closed chain.
+func (bc *BlockChain) holdsBlockWithState(block *types.Block) (bool, error) {
+	if !bc.chainmu.TryLock() {
+		return false, errChainStopped
+	}
+	defer bc.chainmu.Unlock()
+
+	return bc.HasBlockAndFullState(block.Hash(), block.NumberU64()), nil
 }
 
 // collectLogs collects the logs that were generated or removed during
