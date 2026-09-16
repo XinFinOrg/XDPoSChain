@@ -23,8 +23,10 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/engines/engine_v1"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/forkid"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/params/forks"
@@ -382,4 +384,27 @@ func TestAPIGetConfig_BeforeXDPoSV2Switch(t *testing.T) {
 	require.Equal(t, uint64(1500), resp.Next.ActivationBlock)
 	require.Contains(t, resp.Next.ActiveForks, forks.XDPoSV2.String())
 	require.Equal(t, uint64(1500), resp.Last.ActivationBlock)
+}
+
+// TestGetSigningTxCountByEpochGenesis pins the answer for the one epoch switch block that has no
+// preceding epoch. Genesis passes the epoch-switch guard of the v1 engine, since block 0 opens
+// epoch 0, and the walk used to underflow on it: the header it looked for was the one at 2^64-1,
+// a number that cannot exist, so the endpoint failed with a number instead of saying that there
+// is no earlier epoch to count.
+func TestGetSigningTxCountByEpochGenesis(t *testing.T) {
+	cfg := &params.XDPoSConfig{Epoch: 900, V2: &params.V2{SwitchBlock: big.NewInt(1500)}}
+	v1 := engine_v1.NewFaker(rawdb.NewMemoryDatabase(), &params.ChainConfig{XDPoS: cfg})
+	chain := newConfigChainMockWithCurrent(1500)
+	api := &API{chain: chain, XDPoS: &XDPoS{config: cfg, EngineV1: v1}}
+
+	// The precondition is what makes the case reachable at all: the engine reads a genesis block
+	// as the epoch switch that starts epoch 0, so it gets past the check above.
+	isEpochSwitch, _, err := api.XDPoS.IsEpochSwitch(chain.genesis)
+	require.NoError(t, err)
+	require.True(t, isEpochSwitch, "the genesis block has to be an epoch switch to the v1 engine")
+
+	got, err := api.GetSigningTxCountByEpoch(0)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Empty(t, got)
 }

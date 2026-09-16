@@ -838,6 +838,8 @@ func (api *API) GetBlockInfoByEpochNum(epochNumber uint64) (*utils.EpochNumInfo,
 // that starts at epochBlockNum. In other words, it walks blocks from
 // epochBlockNum-1 backwards to the previous epoch-switch block (inclusive).
 // epochBlockNum must be an epoch-switch block number that marks the start of an epoch.
+// The genesis block is an epoch switch block but no epoch precedes it, so its count
+// is empty.
 func (api *API) GetSigningTxCountByEpoch(epochBlockNum rpc.BlockNumber) (map[common.Address]uint64, error) {
 	header, err := api.getHeaderFromApiBlockNum(&epochBlockNum)
 	if err != nil {
@@ -853,6 +855,15 @@ func (api *API) GetSigningTxCountByEpoch(epochBlockNum rpc.BlockNumber) (map[com
 	}
 	if !isEpochSwitch {
 		return nil, fmt.Errorf("block %d is not an epoch switch block", epochBlockNum)
+	}
+
+	// The v1 engine counts block 0 as the epoch switch that opens epoch 0, so the genesis
+	// block passes the guard above, yet nothing precedes it: there is no range of blocks to
+	// walk and no signing to count, so the answer is an empty count. Without this the
+	// epochBlockNum-1 below would underflow to 2^64-1 and the walk would fail looking for a
+	// header at a number that cannot exist.
+	if header.Number.Uint64() == 0 {
+		return map[common.Address]uint64{}, nil
 	}
 
 	// Walk backwards from epochBlockNum-1 to the previous epoch switch block,
