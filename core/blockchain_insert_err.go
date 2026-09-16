@@ -41,6 +41,11 @@ func wrapLocalCondition(err error) error {
 	return localConditionf("%w", err)
 }
 
+// parentMissingTdError names the missing total difficulty of the parent a walk links through.
+func parentMissingTdError(block *types.Block) error {
+	return localConditionf("no total difficulty for the parent of block %d (%v)", block.NumberU64(), block.ParentHash())
+}
+
 // storedBlockMissingTdError names the missing total difficulty of a stored block. It is written
 // with the receipts, so its absence is this node's condition, not the block's.
 func storedBlockMissingTdError(block *types.Block) error {
