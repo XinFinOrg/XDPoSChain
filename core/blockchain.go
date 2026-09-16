@@ -3141,7 +3141,20 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, ve
 	}
 	if localTd.Cmp(externTd) > 0 {
 		log.Info("Sidechain written to disk", "start", it.first().NumberU64(), "end", it.previous().Number, "sidetd", externTd, "localtd", localTd)
-		return it.index, nil, nil, err
+		// The segment linked and was written to disk; this node simply does not switch to it,
+		// because its total difficulty stays below the head. That verdict was made here, on
+		// totals this node holds, so it must not reach the downloader as an unclassified error
+		// that would drop the peer. The err the scan stopped on is the reason, kept by
+		// wrapping.
+		//
+		// ErrLocalInsertRefused rather than ErrLocalInsertCondition: the head does not move,
+		// so the same segment loses the same comparison on every retry.
+		//
+		// A nil error is the segment that was fully delivered and stays a success.
+		if err != nil {
+			return it.index, nil, nil, fmt.Errorf("%w: %v", ErrLocalInsertRefused, err)
+		}
+		return it.index, nil, nil, nil
 	}
 	// Rebuild the ancestors this segment sits on, so that the state to import it becomes
 	// available. The events and logs of the last rebuilt batch come back with it: importing
