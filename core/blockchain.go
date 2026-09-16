@@ -1806,6 +1806,18 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		seals[i] = verifySeals
 		bc.downloadingBlock.Add(block.Hash(), struct{}{})
 	}
+	// The marks only keep the fetcher off the blocks this call is importing, so they cover
+	// this call and nothing else: a block that left insertChain, imported or not, is not
+	// being downloaded any more. Clearing them on the way out is what stops a later
+	// delivery of the same block from being answered by the mark alone - insertBlock reads
+	// it before anything else and reports success without touching the head, which a block
+	// that left this call has no reason to get, and which is enough to keep a head that
+	// sits below an already executed block from advancing.
+	defer func() {
+		for _, block := range chain {
+			bc.downloadingBlock.Remove(block.Hash())
+		}
+	}()
 	verifier := consensus.ChainReader(bc)
 	if _, ok := bc.engine.(*XDPoS.XDPoS); ok {
 		verifier = XDPoS.NewVerifyHeadersChainReader(bc, headers, chain)
