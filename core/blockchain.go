@@ -3615,7 +3615,38 @@ func (bc *BlockChain) insertBlock(block *types.Block) ([]interface{}, []*types.L
 		return events, coalescedLogs, ErrChainStopped
 	}
 	defer bc.chainmu.Unlock()
+	// An interrupted chain does not adopt either: without this the window between
+	// getResultBlock's own insertStopped check and the lock would write a head the batch path
+	// refuses to write.
+	if bc.insertStopped() {
+		return events, coalescedLogs, ErrInsertionInterrupted
+	}
+	// There is still a head to move: this entry point is the one the fetcher uses for a
+	// propagated block and it never goes through insertChain, so the adoption that path
+	// performs for a known block is repeated here.
+	//
+	// The look above answers the rollback or the crash that left the block and its state on
+	// disk with the head still below them. This second one covers a writer that does not go
+	// through the import paths either: the miner commits its block with WriteBlockWithState,
+	// which takes the same chain mutex but not this call's place in it, so it can write this
+	// very block while this call is inside getResultBlock. Adopting it here is what keeps
+	// that block from being run again and written below.
 	if bc.blockAlreadyImported(block) {
+		adopted, promoted, adoptErr := bc.writeKnownBlock(block)
+		if adoptErr != nil {
+			return events, coalescedLogs, adoptErr
+		}
+		if adopted == nil {
+			// The block is executed and on disk, this node simply does not adopt this
+			// branch - the same answer writeKnownBlock gives the batch path.
+			return events, coalescedLogs, nil
+		}
+		blockEvents, blockLogs := bc.announceKnownBlock(adopted, promoted)
+		events = append(events, blockEvents...)
+		// The batch path raises the head event once for the highest block that moved
+		// the head; here the adopted block is that block.
+		events = append(events, ChainHeadEvent{adopted})
+		coalescedLogs = append(coalescedLogs, blockLogs...)
 		return events, coalescedLogs, nil
 	}
 	status, err := bc.writeBlockWithState(block, result.receipts, result.state, result.tradingState, result.lendingState)
