@@ -2808,15 +2808,14 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, ve
 			}
 		}
 		if externTd == nil {
-			externTd = bc.GetTd(block.ParentHash(), block.NumberU64()-1)
-			if externTd == nil {
-				// Without the parent's total difficulty the segment cannot be weighed
-				// against the head, and nothing about the blocks says they are bad: this
-				// node simply has no number to compare.
-				log.Warn("Sidechain segment has no comparable total difficulty",
-					"number", block.NumberU64(), "parent", block.ParentHash(), "index", it.index)
-				return it.index, nil, nil, ErrLocalInsertCondition
+			// big.Int.Add dereferences its operands, so the read is checked before the
+			// accumulation below uses it. A parent this node holds no record for is its
+			// database's condition, not the block's, so it is reported as a local condition.
+			parentTd := bc.GetTd(block.ParentHash(), block.NumberU64()-1)
+			if parentTd == nil {
+				return it.index, nil, nil, parentMissingTdError(block)
 			}
+			externTd = parentTd
 		}
 		externTd = new(big.Int).Add(externTd, block.Difficulty())
 
