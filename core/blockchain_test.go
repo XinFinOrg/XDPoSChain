@@ -3205,3 +3205,261 @@ func TestWriteBlockWithStateReportsMissingLocalTd(t *testing.T) {
 		t.Fatalf("unexpected head number: have %d want %d", chain.CurrentBlock().Number.Uint64(), want)
 	}
 }
+
+// newPreparedBlockChain returns a memory chain over a fresh genesis together with a batch
+// of generated blocks, none of which is inserted: PrepareBlock is about to prepare the
+// first of them, and the chain has not seen any of them yet.
+func newPreparedBlockChain(t *testing.T, total int, gen func(int, *BlockGen)) (*BlockChain, types.Blocks) {
+	t.Helper()
+
+	key, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	gspec := &Genesis{
+		Alloc:   types.GenesisAlloc{crypto.PubkeyToAddress(key.PublicKey): {Balance: big.NewInt(1000000000000000)}},
+		BaseFee: big.NewInt(params.InitialBaseFee),
+		Config:  params.TestChainConfig,
+	}
+	_, blocks, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), total, gen)
+	// XDPoS signs a header with a validator signature before it inserts the block, a
+	// signature that is part of the hash a block is inserted under and of none of the
+	// hashes the caches ask for. The block the tests work with is signed here so that the
+	// two hashes differ in it: an unsigned one answers a look-up by Hash and one by
+	// HashNoValidator alike, and a test over it passes whatever key the caches are
+	// written with.
+	header := types.CopyHeader(blocks[0].Header())
+	header.Validator = []byte{0x01}
+	blocks[0] = blocks[0].WithSeal(header)
+	if blocks[0].Hash() == blocks[0].HashNoValidator() {
+		t.Fatal("the prepared block must be inserted under another hash than the caches ask for")
+	}
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create tester chain: %v", err)
+	}
+	t.Cleanup(chain.Stop)
+	return chain, blocks
+}
+
+// TestPrepareBlockStoresItsResultUnderTheLookupKey pins the key a prepared result is stored
+// under. XDPoS signs a header with a validator signature that takes no part in its execution,
+// so a prepared result belongs to the header alone: getResultBlock looks it up by
+// HashNoValidator when insertBlock imports the block, and the two probes PrepareBlock starts
+// with ask the same way. Storing it under Hash leaves all three look-ups empty, and the
+// precomputation this function exists for is never reused.
+func TestPrepareBlockStoresItsResultUnderTheLookupKey(t *testing.T) {
+	chain, blocks := newPreparedBlockChain(t, 6, nil)
+	target := blocks[0]
+
+	if err := chain.PrepareBlock(target); err != nil {
+		t.Fatalf("failed to prepare the block: %v", err)
+	}
+	if !chain.resultProcess.Contains(target.HashNoValidator()) {
+		t.Fatal("the prepared result is not stored under the key its look-ups use")
+	}
+	// getResultBlock is the look-up insertBlock performs: a reused result is returned
+	// without being computed, so the block is not recorded as being calculated. The
+	// preparation above did record it, hence the reset - nothing else purges that cache.
+	chain.calculatingBlock.Purge()
+	result, err := chain.getResultBlock(target, true)
+	if err != nil {
+		t.Fatalf("failed to look the prepared result up: %v", err)
+	}
+	if result == nil {
+		t.Fatal("the prepared result was not returned")
+	}
+	if chain.calculatingBlock.Contains(target.HashNoValidator()) {
+		t.Fatal("the prepared result was not reused: the block was calculated a second time")
+	}
+}
+
+// TestPrepareBlockSkipsABlockBeingCalculated covers the second probe: a block getResultBlock
+// has already recorded is not prepared again. That probe asks by HashNoValidator as well, so
+// an entry stored under any other key is answered as a miss and the preparation runs anyway.
+func TestPrepareBlockSkipsABlockBeingCalculated(t *testing.T) {
+	chain, blocks := newPreparedBlockChain(t, 6, nil)
+	target := blocks[0]
+
+	// The preset entry is the marker itself, and a preparation that runs anyway replaces it
+	// with one of its own - so comparing the pointer says whether the probe answered or the
+	// preparation went ahead.
+	preset := &CalculatedBlock{block: target}
+	chain.calculatingBlock.Add(target.HashNoValidator(), preset)
+	if err := chain.PrepareBlock(target); err != nil {
+		t.Fatalf("failed to prepare the block: %v", err)
+	}
+	got, ok := chain.calculatingBlock.Peek(target.HashNoValidator())
+	if !ok || got != preset {
+		t.Fatal("a block that is already being calculated was prepared again")
+	}
+}
+
+// TestAReusedResultIsStampedWithTheBlockItIsInsertedUnder covers the hash a prepared result
+// carries into the block that reuses it. XDPoS signs a header with a validator signature
+// after the block was prepared, that signature is part of the hash the block is inserted
+// under, and it is the only thing that hash and the one the result was computed with differ
+// in. Reusing the result as it stands would hence stamp the receipts and the logs the block
+// is published with the pre-signature hash, the hash of a block that is written nowhere.
+func TestAReusedResultIsStampedWithTheBlockItIsInsertedUnder(t *testing.T) {
+	key, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	address := crypto.PubkeyToAddress(key.PublicKey)
+	// A transaction is what makes the result carry a receipt, the thing that is stamped
+	// with the hash of the block it was computed from.
+	chain, blocks := newPreparedBlockChain(t, 2, func(i int, b *BlockGen) {
+		tx, _ := types.SignTx(types.NewTransaction(uint64(i), address, big.NewInt(1), params.TxGas, b.header.BaseFee, nil), types.HomesteadSigner{}, key)
+		b.AddTx(tx)
+	})
+	target := blocks[0]
+
+	// The fetcher prepares the block as it was propagated and imports the one XDPoS signed,
+	// so the unsigned twin of the target is what is prepared here: the signature takes no
+	// part in the execution, hence the prepared result answering the look-up the target
+	// makes as well.
+	header := types.CopyHeader(target.Header())
+	header.Validator = nil
+	unsigned := types.NewBlockWithHeader(header).WithBody(*target.Body())
+	if unsigned.HashNoValidator() != target.HashNoValidator() {
+		t.Fatal("the signature is not expected to take part in the key the caches use")
+	}
+	if unsigned.Hash() == target.Hash() {
+		t.Fatal("the signature is expected to take part in the hash the block is inserted under")
+	}
+	if err := chain.PrepareBlock(unsigned); err != nil {
+		t.Fatalf("failed to prepare the block: %v", err)
+	}
+	// A transaction that emits no log leaves nothing to cover the stamping of the logs,
+	// so one is attached to the prepared result, where a log of its own would sit.
+	prepared, ok := chain.resultProcess.Get(unsigned.HashNoValidator())
+	if !ok {
+		t.Fatal("the prepared result is not stored under the key its look-ups use")
+	}
+	if len(prepared.receipts) == 0 {
+		t.Fatal("the prepared result has no receipt to stamp")
+	}
+	preparedLog := &types.Log{BlockHash: unsigned.Hash(), Address: address}
+	prepared.receipts[0].Logs = append(prepared.receipts[0].Logs, preparedLog)
+	prepared.logs = append(prepared.logs, preparedLog)
+
+	// getResultBlock is the look-up insertBlock performs: a reused result is returned
+	// without being computed, so the block is not recorded as being calculated. The
+	// preparation above did record it, hence the reset - nothing else purges that cache.
+	chain.calculatingBlock.Purge()
+	result, err := chain.getResultBlock(target, true)
+	if err != nil {
+		t.Fatalf("failed to look the prepared result up: %v", err)
+	}
+	if chain.calculatingBlock.Contains(target.HashNoValidator()) {
+		t.Fatal("the prepared result was not reused: the block was calculated a second time")
+	}
+	for _, receipt := range result.receipts {
+		if receipt.BlockHash != target.Hash() {
+			t.Fatalf("receipt stamped with a foreign block hash: have %v, want %v", receipt.BlockHash, target.Hash())
+		}
+	}
+	for _, l := range result.logs {
+		if l.BlockHash != target.Hash() {
+			t.Fatalf("log stamped with a foreign block hash: have %v, want %v", l.BlockHash, target.Hash())
+		}
+	}
+}
+
+// TestConcurrentReusesOfAPreparedResultCarryTheirOwnHash covers the hash a prepared result
+// carries into each of the blocks that reuse it at the same time. A block that was signed
+// twice - by two nodes sharing the validator key, say - yields two blocks that ask the
+// caches by the same hash and are inserted under a hash each, so both of them look the same
+// prepared result up. Each insertion has to be stamped with its own hash: stamping the
+// cached result in place would let one insertion overwrite the hash the other one persists
+// and publishes, and restamp the logs a subscriber is already holding.
+func TestConcurrentReusesOfAPreparedResultCarryTheirOwnHash(t *testing.T) {
+	key, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	address := crypto.PubkeyToAddress(key.PublicKey)
+	// A transaction is what makes the result carry a receipt, the thing that is stamped
+	// with the hash of the block it was computed from.
+	chain, blocks := newPreparedBlockChain(t, 2, func(i int, b *BlockGen) {
+		tx, _ := types.SignTx(types.NewTransaction(uint64(i), address, big.NewInt(1), params.TxGas, b.header.BaseFee, nil), types.HomesteadSigner{}, key)
+		b.AddTx(tx)
+	})
+	target := blocks[0]
+
+	// The fetcher prepares the block as it was propagated and imports the one XDPoS signed,
+	// so the unsigned twin of the target is what is prepared here: the signature takes no
+	// part in the execution, hence the prepared result answering the look-up every signed
+	// twin of it makes.
+	header := types.CopyHeader(target.Header())
+	header.Validator = nil
+	unsigned := types.NewBlockWithHeader(header).WithBody(*target.Body())
+	if err := chain.PrepareBlock(unsigned); err != nil {
+		t.Fatalf("failed to prepare the block: %v", err)
+	}
+	// A transaction that emits no log leaves nothing to cover the stamping of the logs, so
+	// one is attached to the prepared result, where a log of its own would sit.
+	prepared, ok := chain.resultProcess.Get(unsigned.HashNoValidator())
+	if !ok {
+		t.Fatal("the prepared result is not stored under the key its look-ups use")
+	}
+	if len(prepared.receipts) == 0 {
+		t.Fatal("the prepared result has no receipt to stamp")
+	}
+	preparedLog := &types.Log{BlockHash: unsigned.Hash(), Address: address}
+	prepared.receipts[0].Logs = append(prepared.receipts[0].Logs, preparedLog)
+	prepared.logs = append(prepared.logs, preparedLog)
+
+	// Two blocks sharing the key of the prepared result, under a hash each.
+	twins := make([]*types.Block, 0, 2)
+	for _, validator := range [][]byte{{0x01}, {0x02}} {
+		signed := types.CopyHeader(target.Header())
+		signed.Validator = validator
+		twins = append(twins, types.NewBlockWithHeader(signed).WithBody(*target.Body()))
+	}
+	if twins[0].HashNoValidator() != twins[1].HashNoValidator() {
+		t.Fatal("the twins do not share the key the caches ask for")
+	}
+	if twins[0].Hash() == twins[1].Hash() {
+		t.Fatal("the twins are expected to be inserted under a hash each")
+	}
+
+	// Reuse the prepared result from both twins at once, the way two insertions of them
+	// running concurrently do.
+	results := make([]*ResultProcessBlock, len(twins))
+	var wg sync.WaitGroup
+	for i, twin := range twins {
+		wg.Add(1)
+		go func(i int, twin *types.Block) {
+			defer wg.Done()
+
+			result, err := chain.getResultBlock(twin, true)
+			if err != nil {
+				t.Errorf("failed to look the prepared result up: %v", err)
+				return
+			}
+			results[i] = result
+		}(i, twin)
+	}
+	wg.Wait()
+
+	for i, twin := range twins {
+		if results[i] == nil {
+			t.Fatalf("the look-up performed by the block under %v returned nothing", twin.Hash())
+		}
+		for _, receipt := range results[i].receipts {
+			if receipt.BlockHash != twin.Hash() {
+				t.Errorf("receipt of the block under %v stamped with %v", twin.Hash(), receipt.BlockHash)
+			}
+		}
+		for _, l := range results[i].logs {
+			if l.BlockHash != twin.Hash() {
+				t.Errorf("log of the block under %v stamped with %v", twin.Hash(), l.BlockHash)
+			}
+		}
+	}
+	// The cache outlives its reuses and answers every look-up, so neither of them may have
+	// stamped the result it was handed.
+	for _, receipt := range prepared.receipts {
+		if receipt.BlockHash != unsigned.Hash() {
+			t.Errorf("the cached result was stamped in place: receipt has %v, want %v", receipt.BlockHash, unsigned.Hash())
+		}
+	}
+	for _, l := range prepared.logs {
+		if l.BlockHash != unsigned.Hash() {
+			t.Errorf("the cached result was stamped in place: log has %v, want %v", l.BlockHash, unsigned.Hash())
+		}
+	}
+}

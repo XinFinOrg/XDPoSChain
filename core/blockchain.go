@@ -2190,11 +2190,15 @@ func (bc *BlockChain) InsertBlock(block *types.Block) error {
 
 func (bc *BlockChain) PrepareBlock(block *types.Block) (err error) {
 	defer log.Debug("Done prepare block ", "number", block.NumberU64(), "hash", block.Hash(), "validator", block.Header().Validator, "err", err)
-	if _, ok := bc.resultProcess.Get(block.Hash()); ok {
+	// The caches are keyed by HashNoValidator, not by Hash: the result of preparing a block
+	// depends on its header alone, and XDPoS signs the header with a validator signature
+	// that getResultBlock and insertBlock both take off before they look a result up. Asking
+	// by Hash here would miss every entry those two write.
+	if _, ok := bc.resultProcess.Get(block.HashNoValidator()); ok {
 		log.Debug("Stop prepare a block because the result cached", "number", block.NumberU64(), "hash", block.Hash(), "validator", block.Header().Validator)
 		return nil
 	}
-	if _, ok := bc.calculatingBlock.Get(block.Hash()); ok {
+	if _, ok := bc.calculatingBlock.Get(block.HashNoValidator()); ok {
 		log.Debug("Stop prepare a block because inserting", "number", block.NumberU64(), "hash", block.Hash(), "validator", block.Header().Validator)
 		return nil
 	}
@@ -2205,7 +2209,9 @@ func (bc *BlockChain) PrepareBlock(block *types.Block) (err error) {
 	result, err := bc.getResultBlock(block, false)
 	switch err {
 	case nil:
-		bc.resultProcess.Add(block.Hash(), result)
+		// Stored under the same key getResultBlock and insertBlock look a prepared result up
+		// with, so that the precomputation this function exists for is actually reused.
+		bc.resultProcess.Add(block.HashNoValidator(), result)
 		return nil
 	case ErrKnownBlock:
 		return nil
@@ -2217,12 +2223,45 @@ func (bc *BlockChain) PrepareBlock(block *types.Block) (err error) {
 	}
 }
 
+// stampedResultWithBlock returns a copy of a result whose receipts and logs are stamped
+// with the hash of the block it is reused for. A result is prepared from the block as it
+// was propagated, before XDPoS adds the validator signature - which is why the caches are
+// keyed by HashNoValidator - and the signature is part of the hash the block is inserted
+// under. Reusing a result as it was computed would hence publish the pre-signature hash to
+// every subscriber of its logs, and that block is never written anywhere. The cached result
+// is shared with every insert that reuses it, so it is copied instead of being stamped: the
+// hash it is inserted under is the only thing two blocks sharing the key differ in, and
+// stamping the entry in place would let a second insertion overwrite the hash the first one
+// publishes - and restamp the logs a subscriber already holds.
+func stampedResultWithBlock(result *ResultProcessBlock, block *types.Block) *ResultProcessBlock {
+	hash := block.Hash()
+	stamped := *result
+	stamped.receipts = make(types.Receipts, len(result.receipts))
+	// The logs a result publishes are the very objects held by its receipts, which
+	// ProcessBlockNoValidator fills as receipt.Logs. Rebuilding the slice out of the copied
+	// receipts keeps that aliasing, so one pass over the receipts covers the logs as well.
+	stamped.logs = make([]*types.Log, 0, len(result.logs))
+	for i, receipt := range result.receipts {
+		copied := *receipt
+		copied.BlockHash = hash
+		copied.Logs = make([]*types.Log, len(receipt.Logs))
+		for j, receiptLog := range receipt.Logs {
+			copiedLog := *receiptLog
+			copiedLog.BlockHash = hash
+			copied.Logs[j] = &copiedLog
+			stamped.logs = append(stamped.logs, &copiedLog)
+		}
+		stamped.receipts[i] = &copied
+	}
+	return &stamped
+}
+
 func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*ResultProcessBlock, error) {
 	var calculatedBlock *CalculatedBlock
 	if verifiedM2 {
 		if result, ok := bc.resultProcess.Get(block.HashNoValidator()); ok {
 			log.Debug("Get result block from cache ", "number", block.NumberU64(), "hash", block.Hash(), "hash no validator", block.HashNoValidator())
-			return result, nil
+			return stampedResultWithBlock(result, block), nil
 		}
 		log.Debug("Not found cache prepare block ", "number", block.NumberU64(), "hash", block.Hash(), "validator", block.HashNoValidator())
 		if calculatedBlock, _ := bc.calculatingBlock.Get(block.HashNoValidator()); calculatedBlock != nil {
