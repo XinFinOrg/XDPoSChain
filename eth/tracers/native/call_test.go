@@ -524,3 +524,50 @@ func TestCallTracerNonEVMTxLogNoDuplication(t *testing.T) {
 	topics2 := log2Map["topics"].([]interface{})
 	require.Contains(t, topics2[0].(string), "bbbb", "second transaction should have different log topics")
 }
+
+// TestCallTracerKeepsRealFrame checks that a transaction to a system address keeps its
+// real top-level frame when the EVM did execute it. The call tracer flags such a
+// transaction as non-EVM from its to address alone, so the flag is also set when the fork
+// that routes the transaction away from the EVM is not active and a real frame was
+// pushed. The synthetic frame must not shadow it, and its gas, output and logs must
+// survive, exactly like the flat tracer does.
+func TestCallTracerKeepsRealFrame(t *testing.T) {
+	config := json.RawMessage(`{"withLog":true}`)
+	tracer, err := tracers.DefaultDirectory.New("callTracer", &tracers.Context{}, config, params.MainnetChainConfig)
+	require.NoError(t, err)
+
+	from := common.HexToAddress("0xabcdef1234567890abcdef1234567890abcdef12")
+	to := common.TradingStateAddrBinary
+	gasLimit := uint64(100000)
+	tx := types.NewTx(&types.LegacyTx{
+		Nonce:    0,
+		To:       &to,
+		Value:    big.NewInt(1000),
+		Gas:      gasLimit,
+		GasPrice: big.NewInt(1),
+	})
+	require.True(t, tx.IsNonEVMTx(), "premise: the call tracer flags this transaction as non-EVM")
+
+	tracer.OnTxStart(&tracing.VMContext{BlockNumber: big.NewInt(1)}, tx, from)
+	// The EVM ran the transaction, so a real top-level frame was pushed.
+	tracer.OnEnter(0, byte(vm.CALL), from, to, []byte{0x01}, gasLimit, big.NewInt(1000))
+	tracer.OnLog(&types.Log{
+		Address: to,
+		Topics:  []common.Hash{common.HexToHash("0x1234")},
+		Data:    []byte{0x02},
+	})
+	tracer.OnExit(0, []byte{0x03}, 21000, nil, false)
+	tracer.OnTxEnd(&types.Receipt{GasUsed: 21000}, nil)
+
+	res, err := tracer.GetResult()
+	require.NoError(t, err)
+
+	var frame map[string]interface{}
+	require.NoError(t, json.Unmarshal(res, &frame))
+	require.Equal(t, "CALL", frame["type"])
+	require.Equal(t, hexutil.Uint64(21000).String(), frame["gasUsed"])
+	require.Equal(t, hexutil.Bytes([]byte{0x03}).String(), frame["output"])
+	logs, ok := frame["logs"].([]interface{})
+	require.True(t, ok, "the real frame must carry the logs of the transaction")
+	require.Len(t, logs, 1)
+}
