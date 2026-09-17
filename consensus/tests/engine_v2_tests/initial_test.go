@@ -18,11 +18,12 @@ func TestInitialFirstV2Block(t *testing.T) {
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
 	header := currentBlock.Header()
 
-	// snapshot should not be created before initial
-	snap, _ := adaptor.EngineV2.GetSnapshot(blockchain, currentBlock.Header())
-	assert.Nil(t, snap)
+	// the bootstrap snapshot is rebuilt on demand even before initial
+	snap, err := adaptor.EngineV2.GetSnapshot(blockchain, currentBlock.Header())
+	assert.Nil(t, err)
+	assert.Equal(t, uint64(450), snap.Number)
 
-	err := adaptor.EngineV2.Initial(blockchain, header)
+	err = adaptor.EngineV2.Initial(blockchain, header)
 	assert.Nil(t, err)
 
 	round, _, highQC, _, _, _ := adaptor.EngineV2.GetPropertiesFaker()
