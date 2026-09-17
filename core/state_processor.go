@@ -19,6 +19,7 @@ package core
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math/big"
 	"runtime"
@@ -279,6 +280,66 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 	return receipts, allLogs, *usedGas, nil
 }
 
+// txRoute describes how a transaction is handled while a block is processed.
+type txRoute uint8
+
+const (
+	// routeEVM is an ordinary transaction executed by the EVM.
+	routeEVM txRoute = iota
+	// routeSign is a sign transaction handled by ApplySignTransaction.
+	routeSign
+	// routeEmpty is a transaction to the XDCX system addresses handled by
+	// ApplyEmptyTransaction: no EVM execution, no nonce check, no nonce increment
+	// and no state change.
+	routeEmpty
+)
+
+// routeTransaction is the single place that decides which handler a transaction goes
+// through. ApplyTransactionWithEVM and the replay path both call it so state
+// replay can never drift from block processing.
+func routeTransaction(config *params.ChainConfig, blockNumber *big.Int, tx *types.Transaction) txRoute {
+	to := tx.To()
+	if to != nil {
+		if *to == common.BlockSignersBinary && config.IsTIPSigning(blockNumber) {
+			return routeSign
+		}
+		if *to == common.TradingStateAddrBinary && config.IsTIPXDCXReceiver(blockNumber) {
+			return routeEmpty
+		}
+		if *to == common.XDCXLendingAddressBinary && config.IsTIPXDCXReceiver(blockNumber) {
+			return routeEmpty
+		}
+	}
+	if tx.IsTradingTransaction() && config.IsTIPXDCXReceiver(blockNumber) {
+		return routeEmpty
+	}
+	if tx.IsLendingFinalizedTradeTransaction() && config.IsTIPXDCXReceiver(blockNumber) {
+		return routeEmpty
+	}
+	return routeEVM
+}
+
+// finaliseTxState writes the pending state changes of a single transaction to the trie,
+// the same way block processing does before it builds the receipt: the state is finalised
+// once per transaction, and the pre-Byzantium root is only kept for the receipt.
+//
+// Callers must hand it the state the EVM executes against (evm.StateDB), not the
+// *state.StateDB behind it. With a tracer configured that state is a hookedStateDB, and
+// its Finalise reports the balance burnt by self-destructed accounts to the tracer
+// (core/state/statedb_hooked.go); finalising the raw state instead would drop those
+// events. hookedStateDB.IntermediateRoot forwards unchanged, so the pre-Byzantium branch
+// is equivalent either way.
+//
+// The sign and empty routes hand in evm.StateDB as well, even though they never enter the
+// EVM: no account self-destructs on those paths, so the hooked state reports no extra event.
+func finaliseTxState(config *params.ChainConfig, statedb vm.StateDB, blockNumber *big.Int) []byte {
+	if config.IsByzantium(blockNumber) {
+		statedb.Finalise(true)
+		return nil
+	}
+	return statedb.IntermediateRoot(config.IsEIP158(blockNumber)).Bytes()
+}
+
 // ApplyTransactionWithEVM attempts to apply a transaction to the given state database
 // and uses the input parameters for its environment similar to ApplyTransaction. However,
 // this method takes an already created EVM instance as input.
@@ -297,21 +358,10 @@ func ApplyTransactionWithEVM(msg *Message, gp *GasPool, statedb *state.StateDB, 
 
 	to := tx.To()
 	config := evm.ChainConfig()
-	if to != nil {
-		if *to == common.BlockSignersBinary && config.IsTIPSigning(blockNumber) {
-			return ApplySignTransaction(msg, config, statedb, blockNumber, blockHash, tx, usedGas, evm)
-		}
-		if *to == common.TradingStateAddrBinary && config.IsTIPXDCXReceiver(blockNumber) {
-			return ApplyEmptyTransaction(msg, config, statedb, blockNumber, blockHash, tx, usedGas, evm)
-		}
-		if *to == common.XDCXLendingAddressBinary && config.IsTIPXDCXReceiver(blockNumber) {
-			return ApplyEmptyTransaction(msg, config, statedb, blockNumber, blockHash, tx, usedGas, evm)
-		}
-	}
-	if tx.IsTradingTransaction() && config.IsTIPXDCXReceiver(blockNumber) {
-		return ApplyEmptyTransaction(msg, config, statedb, blockNumber, blockHash, tx, usedGas, evm)
-	}
-	if tx.IsLendingFinalizedTradeTransaction() && config.IsTIPXDCXReceiver(blockNumber) {
+	switch routeTransaction(config, blockNumber, tx) {
+	case routeSign:
+		return ApplySignTransaction(msg, config, statedb, blockNumber, blockHash, tx, usedGas, evm)
+	case routeEmpty:
 		return ApplyEmptyTransaction(msg, config, statedb, blockNumber, blockHash, tx, usedGas, evm)
 	}
 
@@ -324,13 +374,8 @@ func ApplyTransactionWithEVM(msg *Message, gp *GasPool, statedb *state.StateDB, 
 		return nil, 0, false, err
 	}
 
-	// Update the state with pending changes.
-	var root []byte
-	if config.IsByzantium(blockNumber) {
-		evm.StateDB.Finalise(true)
-	} else {
-		root = statedb.IntermediateRoot(config.IsEIP158(blockNumber)).Bytes()
-	}
+	// Update the state with pending changes. evm.StateDB, not statedb: see finaliseTxState.
+	root := finaliseTxState(config, evm.StateDB, blockNumber)
 	*usedGas += result.UsedGas
 
 	if balanceFee != nil && result.Failed() {
@@ -387,14 +432,171 @@ func ApplyTransaction(tokensFee map[common.Address]*big.Int, evm *vm.EVM, gp *Ga
 	return ApplyTransactionWithEVM(msg, gp, statedb, header.Number, header.Hash(), tx, usedGas, evm, balanceFee)
 }
 
+// ApplySignTransaction handles a transaction to the block signers address: it finalises
+// the pending state and bumps the sender nonce, without entering the EVM. evm must not
+// be nil; the state it finalises is evm.StateDB (see finaliseTxState), while the nonce and
+// the log it records go to statedb. statedb therefore has to be the *state.StateDB behind
+// evm.StateDB: block processing hands in the pair it built the EVM from, and pairing the
+// EVM with a foreign statedb would split those two effects across two states.
 func ApplySignTransaction(msg *Message, config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM) (receipt *types.Receipt, gasUsed uint64, tokenFeeUsed bool, err error) {
 	// Update the state with pending changes
-	var root []byte
-	if config.IsByzantium(blockNumber) {
-		statedb.Finalise(true)
-	} else {
-		root = statedb.IntermediateRoot(config.IsEIP158(blockNumber)).Bytes()
+	root := finaliseTxState(config, evm.StateDB, blockNumber)
+	if err := applySignTransactionNonce(msg, config, statedb, blockNumber, tx); err != nil {
+		return nil, 0, false, err
 	}
+	// Create a new receipt for the transaction, storing the intermediate root and gas used by the tx
+	// based on the eip phase, we're passing whether the root touch-delete accounts.
+	receipt = types.NewReceipt(root, false, *usedGas)
+	receipt.TxHash = tx.Hash()
+	receipt.GasUsed = 0
+	// if the transaction created a contract, store the creation address in the receipt.
+	// Set the receipt logs and create a bloom for filtering
+	addNonEVMTxLog(statedb, common.BlockSignersBinary, blockNumber)
+	receipt.Logs = statedb.GetLogs(tx.Hash(), blockNumber.Uint64(), blockHash)
+	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
+	receipt.BlockHash = blockHash
+	receipt.BlockNumber = blockNumber
+	receipt.TransactionIndex = uint(statedb.TxIndex())
+	return receipt, 0, false, nil
+}
+
+// ApplyEmptyTransaction handles a transaction to one of the XDCX system addresses: it
+// finalises the pending state and builds the receipt, without entering the EVM and
+// without touching any account. evm must not be nil; the state it finalises is
+// evm.StateDB (see finaliseTxState) and the log it records goes to statedb, so statedb has
+// to be the *state.StateDB behind evm.StateDB, the way ApplySignTransaction documents it.
+func ApplyEmptyTransaction(msg *Message, config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM) (receipt *types.Receipt, gasUsed uint64, tokenFeeUsed bool, err error) {
+	// Update the state with pending changes
+	root := finaliseTxState(config, evm.StateDB, blockNumber)
+	// Create a new receipt for the transaction, storing the intermediate root and gas used by the tx
+	// based on the eip phase, we're passing whether the root touch-delete accounts.
+	receipt = types.NewReceipt(root, false, *usedGas)
+	receipt.TxHash = tx.Hash()
+	receipt.GasUsed = 0
+	// if the transaction created a contract, store the creation address in the receipt.
+	// Set the receipt logs and create a bloom for filtering
+	addNonEVMTxLog(statedb, *tx.To(), blockNumber)
+	receipt.Logs = statedb.GetLogs(tx.Hash(), blockNumber.Uint64(), blockHash)
+	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
+	receipt.BlockHash = blockHash
+	receipt.BlockNumber = blockNumber
+	receipt.TransactionIndex = uint(statedb.TxIndex())
+	return receipt, 0, false, nil
+}
+
+// Errors a caller of ApplyTransactionForReplay can pick out with errors.Is. Both say how
+// the EVM was handed over, not how the transaction went, so a caller must not report them
+// as a transaction failure.
+var (
+	ErrReplayTracingEVM = errors.New("ApplyTransactionForReplay must not be used with a tracing EVM")
+	// ErrReplayStateType reports an EVM that carries a wrapped state although no tracer is
+	// configured. Such an EVM is buildable: eth/tracers/api.go wraps the state with
+	// NewHookedState without checking whether the tracer carries hooks. No caller of
+	// ApplyTransactionForReplay hands one over today; the guard is what keeps the type
+	// assertion below from replaying on a state its finalisation never reaches.
+	ErrReplayStateType = errors.New("ApplyTransactionForReplay requires a *state.StateDB")
+)
+
+// addNonEVMTxLog records the log entry block processing stores for a transaction the EVM
+// never executes, shared by ApplySignTransaction, ApplyEmptyTransaction and the replay of
+// both routes. It is deliberately not a receipt artefact: StateDB.AddLog advances the block
+// wide log count, so a caller that skipped it would give every log the following
+// transactions emit an index the chain never had.
+func addNonEVMTxLog(statedb *state.StateDB, address common.Address, blockNumber *big.Int) {
+	log := &types.Log{}
+	log.Address = address
+	log.BlockNumber = blockNumber.Uint64()
+	statedb.AddLog(log)
+}
+
+// ApplyTransactionForReplay applies tx to the state the EVM executes against, through
+// exactly the same routing as ApplyTransactionWithEVM, including the log it records for a
+// transaction the EVM never executes, but without building a receipt or its bloom. That log
+// is not a receipt artefact: StateDB.AddLog advances the block wide log count the following
+// transactions take their log indexes from, so dropping it would hand out indexes the chain
+// never had.
+//
+// It exists because replaying transactions to rebuild the pre-state of a block must not
+// diverge from block processing. A plain ApplyMessage call gets three things wrong: it
+// executes transactions to the XDCX system addresses with the EVM, while block
+// processing routes them to ApplyEmptyTransaction once the receiver fork is active (no
+// nonce check, no nonce increment and no state change); it executes sign transactions
+// with the EVM, while block processing routes them to ApplySignTransaction, which only
+// bumps the sender nonce; and it is called with the zero address as the coinbase owner,
+// so the block gas fee is credited there instead of to the owner of the block's
+// coinbase. applyHistoricalBalanceBypass is applied here as well.
+//
+// balanceFee is the TRC21 fee capacity of tx.To(), the same value ApplyTransactionWithEVM
+// receives. A non nil balanceFee implies that tx.To() is non nil: callers only look the
+// capacity up by recipient address, so a contract creation never carries one, and the fee
+// failure branch below relies on that.
+//
+// evm must not carry a Tracer and its StateDB must be a *state.StateDB: this function
+// never fires OnTxStart/OnTxEnd, it only produces state, and the finalisation, the nonce
+// and the TRC21 fee handling below need the concrete state type. Paths that need the
+// hooks must go through ApplyTransactionWithEVM.
+//
+// The caller must set the transaction context with StateDB.SetTxContext first, the way
+// block processing does: the log a native route records carries the transaction hash and
+// the index the state has at that moment, and only the caller knows the index. Nothing
+// checks it here, so forgetting it is not an error: the log then silently takes the hash
+// and the index the caller set last.
+func ApplyTransactionForReplay(msg *Message, gp *GasPool, blockNumber *big.Int, tx *types.Transaction, evm *vm.EVM, balanceFee *big.Int) error {
+	// A tracing EVM would silently lose its hooks here, so refuse it instead of
+	// returning a state the caller cannot explain.
+	if evm.Config.Tracer != nil {
+		return ErrReplayTracingEVM
+	}
+	// The state to replay on is the one the EVM executes against. Deriving it from the EVM
+	// instead of taking it as a second argument makes it impossible for the finalisation,
+	// the nonce handling and the TRC21 fee handling below to land on a state other than the
+	// one the execution wrote to. A wrapped state (state.NewHookedState) is only ever built
+	// when a Tracer is configured, which the guard above already rejected.
+	statedb, ok := evm.StateDB.(*state.StateDB)
+	if !ok {
+		return ErrReplayStateType
+	}
+	config := evm.ChainConfig()
+	switch routeTransaction(config, blockNumber, tx) {
+	case routeSign:
+		// ApplySignTransaction finalises the pending state, bumps the sender nonce and only
+		// then records its log; the receipt and its bloom are block processing artefacts.
+		// Keep the same order here so a replay cannot drift from block processing.
+		finaliseTxState(config, evm.StateDB, blockNumber)
+		if err := applySignTransactionNonce(msg, config, statedb, blockNumber, tx); err != nil {
+			return err
+		}
+		addNonEVMTxLog(statedb, common.BlockSignersBinary, blockNumber)
+		return nil
+	case routeEmpty:
+		// ApplyEmptyTransaction changes nothing but the finalisation of the pending state
+		// and the log it records for the transaction.
+		finaliseTxState(config, evm.StateDB, blockNumber)
+		addNonEVMTxLog(statedb, *tx.To(), blockNumber)
+		return nil
+	}
+
+	applyHistoricalBalanceBypass(statedb, blockNumber, msg.From)
+
+	coinbaseOwner := statedb.GetOwner(evm.Context.Coinbase)
+	result, err := ApplyMessage(evm, msg, gp, coinbaseOwner)
+	if err != nil {
+		return err
+	}
+
+	// Update the state with pending changes, mirroring ApplyTransactionWithEVM.
+	finaliseTxState(config, evm.StateDB, blockNumber)
+
+	if balanceFee != nil && result.Failed() {
+		statedb.PayFeeWithTRC21TxFail(msg.From, *tx.To())
+	}
+	return nil
+}
+
+// applySignTransactionNonce performs the state part of ApplySignTransaction: it recovers
+// the sender when the message does not carry it, then enforces and increments the sender
+// nonce. It is shared with the replay path so the two cannot drift.
+func applySignTransactionNonce(msg *Message, config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, tx *types.Transaction) error {
 	// Defensive fallback: msg.From should already be populated by the caller through one of these paths:
 	// 1. Normal block processing: TransactionToMessage recovers from via signature (types.Sender)
 	// 2. TraceCall/debug_traceCall: args.ToMessage directly uses the provided args.From parameter
@@ -405,7 +607,7 @@ func ApplySignTransaction(msg *Message, config *params.ChainConfig, statedb *sta
 		var err error
 		from, err = types.Sender(types.MakeSigner(config, blockNumber), tx)
 		if err != nil {
-			return nil, 0, false, err
+			return err
 		}
 	}
 	nonce := statedb.GetNonce(from)
@@ -414,57 +616,14 @@ func ApplySignTransaction(msg *Message, config *params.ChainConfig, statedb *sta
 	// regardless of the current account nonce. For regular transactions, nonce checks are enforced.
 	if !msg.SkipNonceChecks {
 		if nonce < tx.Nonce() {
-			return nil, 0, false, ErrNonceTooHigh
+			return ErrNonceTooHigh
 		} else if nonce > tx.Nonce() {
-			return nil, 0, false, ErrNonceTooLow
+			return ErrNonceTooLow
 		}
 		// Only increment the nonce for real transactions.
 		statedb.SetNonce(from, nonce+1, tracing.NonceChangeEoACall)
 	}
-	// Create a new receipt for the transaction, storing the intermediate root and gas used by the tx
-	// based on the eip phase, we're passing whether the root touch-delete accounts.
-	receipt = types.NewReceipt(root, false, *usedGas)
-	receipt.TxHash = tx.Hash()
-	receipt.GasUsed = 0
-	// if the transaction created a contract, store the creation address in the receipt.
-	// Set the receipt logs and create a bloom for filtering
-	log := &types.Log{}
-	log.Address = common.BlockSignersBinary
-	log.BlockNumber = blockNumber.Uint64()
-	statedb.AddLog(log)
-	receipt.Logs = statedb.GetLogs(tx.Hash(), blockNumber.Uint64(), blockHash)
-	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
-	receipt.BlockHash = blockHash
-	receipt.BlockNumber = blockNumber
-	receipt.TransactionIndex = uint(statedb.TxIndex())
-	return receipt, 0, false, nil
-}
-
-func ApplyEmptyTransaction(msg *Message, config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM) (receipt *types.Receipt, gasUsed uint64, tokenFeeUsed bool, err error) {
-	// Update the state with pending changes
-	var root []byte
-	if config.IsByzantium(blockNumber) {
-		statedb.Finalise(true)
-	} else {
-		root = statedb.IntermediateRoot(config.IsEIP158(blockNumber)).Bytes()
-	}
-	// Create a new receipt for the transaction, storing the intermediate root and gas used by the tx
-	// based on the eip phase, we're passing whether the root touch-delete accounts.
-	receipt = types.NewReceipt(root, false, *usedGas)
-	receipt.TxHash = tx.Hash()
-	receipt.GasUsed = 0
-	// if the transaction created a contract, store the creation address in the receipt.
-	// Set the receipt logs and create a bloom for filtering
-	log := &types.Log{}
-	log.Address = *tx.To()
-	log.BlockNumber = blockNumber.Uint64()
-	statedb.AddLog(log)
-	receipt.Logs = statedb.GetLogs(tx.Hash(), blockNumber.Uint64(), blockHash)
-	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
-	receipt.BlockHash = blockHash
-	receipt.BlockNumber = blockNumber
-	receipt.TransactionIndex = uint(statedb.TxIndex())
-	return receipt, 0, false, nil
+	return nil
 }
 
 func InitSignerInTransactions(config *params.ChainConfig, header *types.Header, txs types.Transactions) {
