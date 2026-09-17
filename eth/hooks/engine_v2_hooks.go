@@ -4,14 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"slices"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/math"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
-	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/contracts"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
@@ -478,42 +476,18 @@ func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *type
 				nodesToKeep[MasterNodeBeneficiary] = c.GetMasternodesFromCheckpointHeader(h)
 				// in reward upgrade, add protector and observer nodes
 				if chain.Config().IsTIPUpgradeReward(header.Number) {
-					candidates := parentState.GetCandidates()
-					var ms []utils.Masternode
-					for _, candidate := range candidates {
-						// ignore "0x0000000000000000000000000000000000000000"
-						if !candidate.IsZero() {
-							v := parentState.GetCandidateCap(candidate)
-							ms = append(ms, utils.Masternode{Address: candidate, Stake: v})
-						}
-					}
-					slices.SortStableFunc(ms, func(a, b utils.Masternode) int {
-						return b.Stake.Cmp(a.Stake)
-					})
-					// find penalty and filter them out
-					penalties := common.ExtractAddressFromBytes(h.Penalties)
-					filterMap := make(map[common.Address]struct{})
-					for _, addr := range penalties {
-						filterMap[addr] = struct{}{}
-					}
-					for _, addr := range nodesToKeep[MasterNodeBeneficiary] {
-						filterMap[addr] = struct{}{}
-					}
-					// find top candidates
-					protector := []common.Address{}
-					observer := []common.Address{}
-					for _, node := range ms {
-						if _, ok := filterMap[node.Address]; ok {
-							continue
-						}
-						if len(protector) < currentConfig.MaxProtectorNodes {
-							protector = append(protector, node.Address)
-						} else if len(observer) < currentConfig.MaxObserverNodes {
-							observer = append(observer, node.Address)
-						}
-					}
-					nodesToKeep[ProtectorNodeBeneficiary] = protector
-					nodesToKeep[ObserverNodeBeneficiary] = observer
+					// Reuse the same historical standby pool that
+					// XDPoS_getMasternodesByNumber's Protectornodes/Observernodes
+					// are built from (epoch switch header h's NextEpochCandidates,
+					// already stake-sorted by core.BlockChain.UpdateM1 and filtered
+					// of masternodes/penalties by getEpochSwitchInfo), instead of
+					// independently rebuilding the candidate list from the current
+					// parentState and re-sorting it here.
+					standbyPool := c.EngineV2.GetStandbynodes(chain, h)
+					protectorEnd := min(currentConfig.MaxProtectorNodes, len(standbyPool))
+					observerEnd := min(protectorEnd+currentConfig.MaxObserverNodes, len(standbyPool))
+					nodesToKeep[ProtectorNodeBeneficiary] = standbyPool[:protectorEnd]
+					nodesToKeep[ObserverNodeBeneficiary] = standbyPool[protectorEnd:observerEnd]
 				}
 				break
 			}
