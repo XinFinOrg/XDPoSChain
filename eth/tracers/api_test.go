@@ -191,15 +191,33 @@ func (b *freshStateTraceBackend) StateAtTransaction(ctx context.Context, block *
 	signer := types.MakeSigner(b.chainConfig, block.Number())
 	context := core.NewEVMBlockContext(block.Header(), b.chain, nil)
 	evm := vm.NewEVM(context, statedb, nil, b.chainConfig, vm.Config{})
+	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	for idx, tx := range block.Transactions() {
 		if idx == txIndex {
 			return tx, context, statedb, release, nil
 		}
-		msg, _ := core.TransactionToMessage(tx, signer, nil, block.Number(), block.BaseFee(), b.chainConfig)
-		if _, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(tx.Gas()), common.Address{}); err != nil {
+		var balance *big.Int
+		if tx.To() != nil {
+			if value, ok := feeCapacity[*tx.To()]; ok {
+				balance = value
+			}
+		}
+		msg, _ := core.TransactionToMessage(tx, signer, balance, block.Number(), block.BaseFee(), b.chainConfig)
+		// Replay through the same entry point production uses, handing it the same fee
+		// capacity and the same transaction context, so the pre-state handed to the tracer
+		// matches the block that is being traced: the routing, the sender nonce handling and
+		// the TRC21 fee handling are the production ones. The replay finalises the pending
+		// state itself, the way block processing does, so there is nothing left to commit
+		// here.
+		statedb.SetTxContext(tx.Hash(), idx)
+		if err := core.ApplyTransactionForReplay(msg, new(core.GasPool).AddGas(msg.GasLimit), block.Number(), tx, evm, balance); err != nil {
+			// An EVM this replay cannot use is a problem of this caller, not of the
+			// transaction: report it as it is instead of blaming the transaction.
+			if errors.Is(err, core.ErrReplayTracingEVM) || errors.Is(err, core.ErrReplayStateType) {
+				return nil, vm.BlockContext{}, nil, nil, err
+			}
 			return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction %#x failed: %v", tx.Hash(), err)
 		}
-		statedb.Finalise(evm.ChainConfig().IsEIP158(block.Number()))
 	}
 	return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction index %d out of range for block %#x", txIndex, block.Hash())
 }
@@ -220,15 +238,33 @@ func (b *testBackend) StateAtTransaction(ctx context.Context, block *types.Block
 	signer := types.MakeSigner(b.chainConfig, block.Number())
 	context := core.NewEVMBlockContext(block.Header(), b.chain, nil)
 	evm := vm.NewEVM(context, statedb, nil, b.chainConfig, vm.Config{})
+	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	for idx, tx := range block.Transactions() {
 		if idx == txIndex {
 			return tx, context, statedb, release, nil
 		}
-		msg, _ := core.TransactionToMessage(tx, signer, nil, block.Number(), block.BaseFee(), b.chainConfig)
-		if _, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(tx.Gas()), common.Address{}); err != nil {
+		var balance *big.Int
+		if tx.To() != nil {
+			if value, ok := feeCapacity[*tx.To()]; ok {
+				balance = value
+			}
+		}
+		msg, _ := core.TransactionToMessage(tx, signer, balance, block.Number(), block.BaseFee(), b.chainConfig)
+		// Replay through the same entry point production uses, handing it the same fee
+		// capacity and the same transaction context, so the pre-state handed to the tracer
+		// matches the block that is being traced: the routing, the sender nonce handling and
+		// the TRC21 fee handling are the production ones. The replay finalises the pending
+		// state itself, the way block processing does, so there is nothing left to commit
+		// here.
+		statedb.SetTxContext(tx.Hash(), idx)
+		if err := core.ApplyTransactionForReplay(msg, new(core.GasPool).AddGas(msg.GasLimit), block.Number(), tx, evm, balance); err != nil {
+			// An EVM this replay cannot use is a problem of this caller, not of the
+			// transaction: report it as it is instead of blaming the transaction.
+			if errors.Is(err, core.ErrReplayTracingEVM) || errors.Is(err, core.ErrReplayStateType) {
+				return nil, vm.BlockContext{}, nil, nil, err
+			}
 			return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction %#x failed: %v", tx.Hash(), err)
 		}
-		statedb.Finalise(evm.ChainConfig().IsEIP158(block.Number()))
 	}
 	return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction index %d out of range for block %#x", txIndex, block.Hash())
 }
@@ -1541,4 +1577,44 @@ func uintPtr(i int) *hexutil.Uint {
 func uint64Ptr(u uint64) *hexutil.Uint64 {
 	ret := hexutil.Uint64(u)
 	return &ret
+}
+
+// TestTraceTransactionSkipNonceTransactions traces both transactions of a block in
+// which the second one reuses the nonce of the first, because the first goes through
+// ApplyEmptyTransaction while the XDCX receiver fork is active and does not increment
+// the sender nonce. With the fork inactive the first transaction bumps the nonce, so
+// the second one carries nonce+1.
+//
+// stateAtTransaction rebuilds the pre-state by replaying the earlier transactions;
+// replaying the first one with core.ApplyMessage bumps the nonce while the fork is
+// active and makes the second one fail with "nonce too low" (Apothem block 0x2e69c13,
+// issue gzliudan/XDPoSChain#256).
+//
+// Note: this runs against testBackend.StateAtTransaction, the mirror of the production
+// replay that this change updates as well, so on its own it cannot catch the production
+// one drifting away again. TestStateAtTransactionReplayKeepsNonceLessSenderNonce in
+// package eth drives eth.stateAtTransaction directly and is what pins the production
+// behaviour.
+func TestTraceTransactionSkipNonceTransactions(t *testing.T) {
+	for _, tc := range skipNonceForkCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			backend, first, second := newSkipNonceBackend(t, tc.tipXDCXBlock, tc.secondNonce)
+			defer backend.teardown()
+
+			api := NewAPI(backend)
+			for _, traced := range []struct {
+				name string
+				tx   *types.Transaction
+			}{
+				{name: "first, to the trading state address", tx: first},
+				{name: "second, reusing the nonce", tx: second},
+			} {
+				if _, err := api.TraceTransaction(context.Background(), traced.tx.Hash(), nil); err != nil {
+					t.Errorf("%s: TraceTransaction failed: %v", traced.name, err)
+				}
+			}
+		})
+	}
 }

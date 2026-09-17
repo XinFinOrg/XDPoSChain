@@ -272,3 +272,89 @@ func TestStateAtTransactionGiveUpReturnsNoState(t *testing.T) {
 		t.Fatalf("expected no transaction, state or release on the error path, got tx=%v state=%v release=%v", tx, statedb, release)
 	}
 }
+
+// TestStateAtTransactionReplayKeepsNonceLessSenderNonce verifies that replaying a
+// transaction sent to an XDCX system address goes through ApplyTransactionForReplay:
+// while the receiver fork is active it is handled by ApplyEmptyTransaction and must
+// not increment the sender nonce, so that a following transaction reusing the same
+// nonce still replays (Apothem block 0x2e69c13, issue gzliudan/XDPoSChain#256).
+func TestStateAtTransactionReplayKeepsNonceLessSenderNonce(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	engine := ethash.NewFaker()
+	config := *params.TestChainConfig // TIPXDCXBlock is 0: the receiver fork is active from genesis
+	config.TIPXDCXReceiverDisableBlock = nil
+	tradingState := common.TradingStateAddrBinary
+	recipient := common.HexToAddress("0x00000000000000000000000000000000deadbeef")
+	genesis := &core.Genesis{
+		Config: &config,
+		Alloc: types.GenesisAlloc{
+			testBank: {Balance: new(big.Int).Mul(big.NewInt(params.Ether), big.NewInt(2))},
+		},
+		Difficulty: big.NewInt(1),
+	}
+
+	chain, err := core.NewBlockChain(db, nil, genesis, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	defer chain.Stop()
+
+	signer := types.MakeSigner(&config, common.Big1)
+	var wantTxHash common.Hash
+	_, blocks, _ := core.GenerateChainWithGenesis(genesis, engine, 1, func(i int, b *core.BlockGen) {
+		// While the XDCX receiver fork is active this transaction is handled by
+		// ApplyEmptyTransaction and leaves the sender nonce at 0.
+		tx0, err := types.SignTx(types.NewTx(&types.LegacyTx{
+			Nonce:    0,
+			To:       &tradingState,
+			Value:    big.NewInt(0),
+			Gas:      params.TxGas,
+			GasPrice: b.BaseFee(),
+		}), signer, testBankKey)
+		if err != nil {
+			t.Fatalf("failed to sign first tx: %v", err)
+		}
+		b.AddTx(tx0)
+
+		// The sender reuses nonce 0.
+		tx1, err := types.SignTx(types.NewTx(&types.LegacyTx{
+			Nonce:    0,
+			To:       &recipient,
+			Value:    big.NewInt(0),
+			Gas:      params.TxGas,
+			GasPrice: b.BaseFee(),
+		}), signer, testBankKey)
+		if err != nil {
+			t.Fatalf("failed to sign second tx: %v", err)
+		}
+		b.AddTx(tx1)
+		wantTxHash = tx1.Hash()
+	})
+	if _, err := chain.InsertChain(blocks); err != nil {
+		t.Fatalf("failed to insert chain: %v", err)
+	}
+
+	eth := &Ethereum{blockchain: chain, chainDb: db}
+	block := chain.GetBlockByNumber(1)
+	if block == nil {
+		t.Fatal("expected block #1")
+	}
+	tx, _, statedb, release, err := eth.stateAtTransaction(context.Background(), block, 1, 0)
+	if release != nil {
+		defer release()
+	}
+	if err != nil {
+		t.Fatalf("stateAtTransaction failed: %v", err)
+	}
+	if tx == nil || tx.Hash() != wantTxHash {
+		t.Fatalf("unexpected transaction: %v", tx)
+	}
+	if statedb == nil {
+		t.Fatal("expected statedb")
+	}
+	// Replaying the first transaction must leave the nonce untouched: bumping it
+	// makes the second transaction fail with "nonce too low" downstream.
+	if got := statedb.GetNonce(testBank); got != 0 {
+		t.Fatalf("sender nonce after replay = %d, want 0", got)
+	}
+}

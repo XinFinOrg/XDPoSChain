@@ -261,14 +261,25 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 			return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction %#x failed: %v", tx.Hash(), err)
 		}
 
-		// Not yet the searched for transaction, execute on top of the current state
+		// Not yet the searched for transaction, execute on top of the current state.
+		// Replay through the block processing entry point so the pre-state matches the
+		// block that is being traced: while the XDCX receiver fork is active,
+		// transactions to the XDCX system addresses are handled by ApplyEmptyTransaction
+		// and leave the sender nonce untouched. Replaying them with ApplyMessage bumps
+		// the nonce and makes every following transaction of the same sender fail with
+		// "nonce too low" (Apothem block 0x2e69c13, issue gzliudan/XDPoSChain#256).
+		//
+		// The replay finalises the pending state once per transaction itself, the way block
+		// processing does, so there is nothing left to commit here.
 		statedb.SetTxContext(tx.Hash(), idx)
-		if _, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(tx.Gas()), common.Address{}); err != nil {
+		if err := core.ApplyTransactionForReplay(msg, new(core.GasPool).AddGas(tx.Gas()), block.Number(), tx, evm, balance); err != nil {
+			// An EVM this replay cannot use is a problem of this caller, not of the
+			// transaction: report it as it is instead of blaming the transaction.
+			if errors.Is(err, core.ErrReplayTracingEVM) || errors.Is(err, core.ErrReplayStateType) {
+				return nil, vm.BlockContext{}, nil, nil, err
+			}
 			return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction %#x failed: %v", tx.Hash(), err)
 		}
-		// Ensure any modifications are committed to the state
-		// Only delete empty objects if EIP158/161 (a.k.a Spurious Dragon) is in effect
-		statedb.Finalise(evm.ChainConfig().IsEIP158(block.Number()))
 	}
 	return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction index %d out of range for block %#x", txIndex, block.Hash())
 }
