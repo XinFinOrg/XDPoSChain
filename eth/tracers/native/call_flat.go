@@ -218,13 +218,27 @@ func (t *flatCallTracer) OnTxEnd(receipt *types.Receipt, err error) {
 	t.tracer.OnTxEnd(receipt, err)
 }
 
-// GetResult returns an empty json object.
+// GetResult returns the flat list of call frames of the traced transaction.
 func (t *flatCallTracer) GetResult() (json.RawMessage, error) {
-	if len(t.tracer.callstack) < 1 {
+	// Non-EVM transactions (transactions to the XDCX system addresses and block-signing
+	// transactions) are routed to ApplyEmptyTransaction / ApplySignTransaction by block
+	// processing and never enter the EVM, so no frame was pushed onto the callstack.
+	// Flatten the synthetic frame prepared by OnTxStart instead of failing the trace.
+	// Whenever the EVM did run, the first frame on the callstack is the real top-level
+	// frame and wins, as it does in the upstream implementation. An interrupted execution
+	// can leave more than one frame on the callstack; those are discarded rather than
+	// failing the trace, so that the interruption reason is still reported.
+	var top *callFrame
+	switch {
+	case len(t.tracer.callstack) > 0:
+		top = &t.tracer.callstack[0]
+	case t.tracer.isNonEVMTx:
+		top = &t.tracer.nonEVMCall
+	default:
 		return nil, errors.New("invalid number of calls")
 	}
 
-	flat, err := flatFromNested(&t.tracer.callstack[0], []int{}, t.config.ConvertParityErrors, t.ctx)
+	flat, err := flatFromNested(top, []int{}, t.config.ConvertParityErrors, t.ctx)
 	if err != nil {
 		return nil, err
 	}
