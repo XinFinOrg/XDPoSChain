@@ -207,7 +207,12 @@ func (b *testChainIndexBackend) reorg(headNum uint64) uint64 {
 	if firstChanged < b.stored {
 		b.stored = firstChanged
 	}
-	return b.stored * b.indexer.sectionSize
+	if b.stored == 0 {
+		return 0
+	}
+	// Mirror the reorg cascade of ChainIndexer.newHead: the last block covered by
+	// the retained prefix is the section end minus one.
+	return b.stored*b.indexer.sectionSize - 1
 }
 
 func (b *testChainIndexBackend) Reset(ctx context.Context, section uint64, prevHead common.Hash) error {

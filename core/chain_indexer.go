@@ -241,8 +241,16 @@ func (c *ChainIndexer) newHead(head uint64, reorg bool) {
 		if changed < c.storedSections {
 			c.setValidSections(changed)
 		}
-		// Update the new head number to the finalized section end and notify children
+		// Update the new head number to the finalized section end and notify children.
+		// The retained prefix ends at changed*sectionSize-1, so hand that number over
+		// to children, just like the forward cascade does. Passing changed*sectionSize
+		// (the first invalidated block) would let a child keep a section that straddles
+		// the reorg point, which verifyLastHead then has to roll back once the new fork
+		// is written.
 		head = changed * c.sectionSize
+		if head > 0 {
+			head--
+		}
 
 		if head < c.cascadedHead {
 			c.cascadedHead = head
