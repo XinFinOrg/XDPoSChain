@@ -203,3 +203,72 @@ func TestStateAtTransactionWithoutTRC21Issuer(t *testing.T) {
 		t.Fatalf("unexpected chain config on state: have %p want %p", statedb.ChainConfig(), chain.Config())
 	}
 }
+
+// TestStateAtTransactionGiveUpReturnsNoState pins the return contract of the give-up
+// paths of stateAtTransaction: once the parent state has been obtained, a path that gives
+// up must not hand the state or the release function back to the caller. Every caller
+// returns on the error before reaching its deferred release, so a release function handed
+// back on a give-up path would simply be dropped.
+//
+// The requested index is out of range, so the replay of the block's transactions runs to
+// the end and the function gives up afterwards, with the parent state already in hand:
+// nothing half-initialised may be handed back to the caller.
+//
+// Note: whether the release function is actually invoked is not observable from here. The
+// reference is taken inside StateAtBlock (its readOnly path) and neither the live trie
+// database nor the ephemeral one exposes its reference count, so this test cannot tell a
+// released state from a leaked one: the release is guaranteed by the deferred guard in
+// stateAtTransaction, not by the assertions below.
+func TestStateAtTransactionGiveUpReturnsNoState(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	engine := ethash.NewFaker()
+	// TIPXDCXBlock is 0 and TIPXDCXReceiverDisableBlock is nil: the receiver fork is
+	// active from genesis.
+	config := params.TestChainConfig.Clone()
+	recipient := common.HexToAddress("0x00000000000000000000000000000000deadbeef")
+	genesis := &core.Genesis{
+		Config: config,
+		Alloc: types.GenesisAlloc{
+			testBank: {Balance: new(big.Int).Mul(big.NewInt(params.Ether), big.NewInt(2))},
+		},
+		Difficulty: big.NewInt(1),
+	}
+
+	chain, err := core.NewBlockChain(db, nil, genesis, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	defer chain.Stop()
+
+	signer := types.MakeSigner(config, common.Big1)
+	_, blocks, _ := core.GenerateChainWithGenesis(genesis, engine, 1, func(i int, b *core.BlockGen) {
+		tx, err := types.SignTx(types.NewTx(&types.LegacyTx{
+			Nonce:    0,
+			To:       &recipient,
+			Value:    big.NewInt(1),
+			Gas:      params.TxGas,
+			GasPrice: b.BaseFee(),
+		}), signer, testBankKey)
+		if err != nil {
+			t.Fatalf("failed to sign the transaction: %v", err)
+		}
+		b.AddTx(tx)
+	})
+	if _, err := chain.InsertChain(blocks); err != nil {
+		t.Fatalf("failed to insert chain: %v", err)
+	}
+
+	eth := &Ethereum{blockchain: chain, chainDb: db}
+	block := chain.GetBlockByNumber(1)
+	if block == nil {
+		t.Fatal("expected block #1")
+	}
+	outOfRange := len(block.Transactions()) + 1
+	tx, _, statedb, release, err := eth.stateAtTransaction(context.Background(), block, outOfRange, 0)
+	if err == nil {
+		t.Fatalf("expected an error for the out of range transaction index %d", outOfRange)
+	}
+	if tx != nil || statedb != nil || release != nil {
+		t.Fatalf("expected no transaction, state or release on the error path, got tx=%v state=%v release=%v", tx, statedb, release)
+	}
+}

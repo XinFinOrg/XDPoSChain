@@ -221,6 +221,16 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 	if err != nil {
 		return nil, vm.BlockContext{}, nil, nil, err
 	}
+	// release is either handed to the caller on the paths that return the state, or
+	// invoked here when this function gives up. The parent state comes from the live
+	// trie database whenever it is available there (StateAtBlock, readOnly path), so
+	// the reference it holds must not be leaked on the error paths below.
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			release()
+		}
+	}()
 	context := core.NewEVMBlockContext(block.Header(), eth.blockchain, nil)
 	evm := vm.NewEVM(context, statedb, nil, eth.blockchain.Config(), vm.Config{})
 	// If prague hardfork, insert parent block hash in the state as per EIP-2935.
@@ -228,6 +238,7 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 		core.ProcessParentBlockHash(block.ParentHash(), evm)
 	}
 	if txIndex == 0 && len(block.Transactions()) == 0 {
+		handedOff = true
 		return nil, vm.BlockContext{}, statedb, release, nil
 	}
 	// Recompute transactions up to the target index.
@@ -235,6 +246,7 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	for idx, tx := range block.Transactions() {
 		if idx == txIndex {
+			handedOff = true
 			return tx, context, statedb, release, nil
 		}
 		var balance *big.Int
