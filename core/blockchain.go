@@ -2112,7 +2112,18 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	// Calculate the total difficulty of the block
 	ptd := bc.GetTd(block.ParentHash(), block.NumberU64()-1)
 	if ptd == nil {
-		return NonStatTy, consensus.ErrUnknownAncestor
+		// The parent's header is what the verifiers ask for, and a parent this node does not
+		// hold is answered with ErrUnknownAncestor before this point - XDPoS does it in its
+		// own header verification. A parent that is there while its total difficulty is not
+		// is therefore the same read insertSideChain classifies for the same block: a record
+		// this node has lost, which is a condition of its database and not of the blocks.
+		// Answering ErrUnknownAncestor instead hands the downloader a failure it turns into
+		// errInvalidChain, and drops the peer that served a batch this node cannot import -
+		// the same peer the missing record would be blamed on with every other peer too.
+		if !bc.HasHeader(block.ParentHash(), block.NumberU64()-1) {
+			return NonStatTy, consensus.ErrUnknownAncestor
+		}
+		return NonStatTy, parentMissingTdError(block)
 	}
 	// Make sure no inconsistent state is leaked during insertion
 	externTd := new(big.Int).Add(block.Difficulty(), ptd)
