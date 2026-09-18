@@ -1164,13 +1164,32 @@ func (x *XDPoS_v2) GetPenalties(chain consensus.ChainReader, header *types.Heade
 	return epochSwitchInfo.Penalties
 }
 
-func (x *XDPoS_v2) GetStandbynodes(chain consensus.ChainReader, header *types.Header) []common.Address {
+// GetStandbynodesWithError returns the standby nodes for header's epoch, or
+// an error if they could not be derived (e.g. the masternode snapshot for
+// that epoch isn't available yet, such as during fast sync before the gap
+// snapshot is backfilled). Callers that need Standbynodes for
+// consensus-affecting computation (e.g. reward distribution) must use this
+// instead of GetStandbynodes, which silently maps that failure to an empty
+// list — indistinguishable from an epoch that genuinely has no standby
+// nodes, and unsafe as a consensus input.
+func (x *XDPoS_v2) GetStandbynodesWithError(chain consensus.ChainReader, header *types.Header) ([]common.Address, error) {
 	epochSwitchInfo, err := x.getEpochSwitchInfo(chain, []*types.Header{header}, header.Hash())
+	if err != nil {
+		return nil, err
+	}
+	if epochSwitchInfo.StandbynodesUnavailable {
+		return nil, fmt.Errorf("[GetStandbynodesWithError] standby nodes unavailable for epoch switch block %v, hash %v: masternode snapshot not found", header.Number, header.Hash().Hex())
+	}
+	return epochSwitchInfo.Standbynodes, nil
+}
+
+func (x *XDPoS_v2) GetStandbynodes(chain consensus.ChainReader, header *types.Header) []common.Address {
+	standbynodes, err := x.GetStandbynodesWithError(chain, header)
 	if err != nil {
 		log.Error("[GetStandbynodes] Adaptor v2 getEpochSwitchInfo has error", "err", err)
 		return []common.Address{}
 	}
-	return epochSwitchInfo.Standbynodes
+	return standbynodes
 }
 
 // Calculate masternodes for a block number and parent hash. In V2, truncating candidates[:MaxMasternodes] is done in this function.

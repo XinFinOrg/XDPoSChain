@@ -71,6 +71,7 @@ func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, headers []*ty
 
 		penalties := common.ExtractAddressFromBytes(h.Penalties)
 		standbynodes := []common.Address{}
+		standbynodesUnavailable := false
 		snap, err := x.getSnapshot(chain, h.Number.Uint64(), false)
 		if err != nil {
 			// While syncing, snapshots for old blocks may not be built yet, so
@@ -81,6 +82,7 @@ func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, headers []*ty
 			} else {
 				log.Warn("[getEpochSwitchInfo] getSnapshot has error, cannot get standbynodes", "err", err)
 			}
+			standbynodesUnavailable = true
 		} else {
 			candidates := snap.NextEpochCandidates
 			if len(masternodes) != len(candidates) {
@@ -91,10 +93,11 @@ func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, headers []*ty
 		}
 
 		epochSwitchInfo := &types.EpochSwitchInfo{
-			Penalties:      penalties,
-			Standbynodes:   standbynodes,
-			Masternodes:    masternodes,
-			MasternodesLen: len(masternodes),
+			Penalties:               penalties,
+			Standbynodes:            standbynodes,
+			Masternodes:             masternodes,
+			MasternodesLen:          len(masternodes),
+			StandbynodesUnavailable: standbynodesUnavailable,
 			EpochSwitchBlockInfo: &types.BlockInfo{
 				Hash:   hash,
 				Number: h.Number,
@@ -105,7 +108,14 @@ func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, headers []*ty
 			epochSwitchInfo.EpochSwitchParentBlockInfo = quorumCert.ProposedBlockInfo
 		}
 
-		x.epochSwitches.Add(hash, epochSwitchInfo)
+		// Don't cache a result built without standby data: caching it would
+		// permanently poison every future lookup (including after a gap
+		// snapshot is later backfilled, e.g. by fast sync) since a cache hit
+		// is returned without ever retrying getSnapshot. Leaving it uncached
+		// means the next call simply retries.
+		if !standbynodesUnavailable {
+			x.epochSwitches.Add(hash, epochSwitchInfo)
+		}
 		return epochSwitchInfo, nil
 	}
 
@@ -120,7 +130,9 @@ func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, headers []*ty
 	}
 
 	log.Debug("[getEpochSwitchInfo] get epoch switch info recursively", "hash", hash.Hex(), "number", h.Number.Uint64())
-	x.epochSwitches.Add(hash, epochSwitchInfo)
+	if !epochSwitchInfo.StandbynodesUnavailable {
+		x.epochSwitches.Add(hash, epochSwitchInfo)
+	}
 	return epochSwitchInfo, nil
 }
 

@@ -182,6 +182,15 @@ type EpochSwitchInfo struct {
 	MasternodesLen             int
 	EpochSwitchBlockInfo       *BlockInfo
 	EpochSwitchParentBlockInfo *BlockInfo
+
+	// StandbynodesUnavailable is true when Standbynodes could not be derived
+	// because the masternode snapshot for this epoch was not available (e.g.
+	// not yet backfilled during fast sync), as opposed to the epoch
+	// genuinely having no standby nodes. Callers that only need Masternodes
+	// (signature verification) can ignore this; callers relying on
+	// Standbynodes for consensus-affecting computation must treat it as an
+	// error rather than an empty list.
+	StandbynodesUnavailable bool
 }
 
 type VoteForSign struct {

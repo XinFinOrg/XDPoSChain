@@ -483,7 +483,16 @@ func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *type
 					// of masternodes/penalties by getEpochSwitchInfo), instead of
 					// independently rebuilding the candidate list from the current
 					// parentState and re-sorting it here.
-					standbyPool := c.EngineV2.GetStandbynodes(chain, h)
+					//
+					// Use the error-returning lookup rather than GetStandbynodes:
+					// this result feeds consensus-affecting reward distribution, so
+					// a missing masternode snapshot (e.g. not yet backfilled during
+					// fast sync) must abort the calculation, not silently be treated
+					// as "no standby nodes".
+					standbyPool, err := c.EngineV2.GetStandbynodesWithError(chain, h)
+					if err != nil {
+						return nil, burnedInOneEpoch, fmt.Errorf("[GetSigningTxCount] fail to get standby nodes for epoch switch block %v: %w", h.Number, err)
+					}
 					protectorEnd := min(currentConfig.MaxProtectorNodes, len(standbyPool))
 					observerEnd := min(protectorEnd+currentConfig.MaxObserverNodes, len(standbyPool))
 					nodesToKeep[ProtectorNodeBeneficiary] = standbyPool[:protectorEnd]
