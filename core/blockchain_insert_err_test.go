@@ -76,6 +76,20 @@ func TestClassifyInsertErr(t *testing.T) {
 			want: insertErrClass{local: true},
 		},
 		{
+			// What reorg reports when it reads a record of the chain and does not find it.
+			// The production path cannot be built in a unit test, so the table pins the class
+			// and the two flags that matter: the peer must not be blamed, and a retry cannot
+			// repair it.
+			name: "old chain inconsistent",
+			err:  errInvalidOldChain,
+			want: insertErrClass{local: true},
+		},
+		{
+			name: "new chain inconsistent",
+			err:  errInvalidNewChain,
+			want: insertErrClass{local: true},
+		},
+		{
 			// Retryable but not local: a block dated ahead of this node's clock is parked,
 			// while a peer serving it is not at fault. See IsLocalInsertError.
 			name: "future block",
@@ -178,6 +192,8 @@ func TestDescribeLocalInsertFailure(t *testing.T) {
 		{"stopped chain", ErrChainStopped, "interrupted during import"},
 		// Not "interrupted during import": an inconsistent local chain is not a state a file or
 		// a retry can get past.
+		{"old chain inconsistent", errInvalidOldChain, "the local chain is inconsistent"},
+		{"new chain inconsistent", errInvalidNewChain, "the local chain is inconsistent"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

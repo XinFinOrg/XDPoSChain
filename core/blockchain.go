@@ -129,6 +129,10 @@ var (
 	// because a refusal is a verdict this node reached, not a record it is missing.
 	ErrLocalInsertRefused = errors.New("local insert refused")
 
+	// errInvalidOldChain and errInvalidNewChain are raised by reorg when it reads a record of
+	// the chain - a block, or a header it just wrote a marker for - and does not find it: the
+	// chain disagreeing with itself, not the blocks. Local and not retryable, since the same
+	// read sees the same records.
 	errInvalidOldChain = errors.New("invalid old chain")
 	errInvalidNewChain = errors.New("invalid new chain")
 
@@ -1900,8 +1904,8 @@ func (bc *BlockChain) cacheSigningTxs(block *types.Block) {
 // this is the single place that writes the head after a reorg.
 //
 // The reorg error is returned unwrapped so each caller can classify it: writeBlockWithState
-// hands it back and the batch fails, writeKnownBlock wraps it in ErrLocalInsertRefused because
-// those blocks are already on disk and were executed before.
+// hands it back and the batch fails, and writeKnownBlock wraps a refused reorg in
+// ErrLocalInsertRefused and passes the two chain-inconsistency sentinels up untouched.
 //
 // critMsg is the caller's own text for the log.Crit below, kept verbatim so the message a
 // halted node prints still says which adoption path reached the gap block.
@@ -2025,10 +2029,16 @@ func (bc *BlockChain) writeKnownBlock(block *types.Block) (adopted *types.Block,
 		return nil, false, nil
 	}
 	if err := bc.adoptHead(block, current, nil, "Fail to update masternodes during writeKnownBlock"); err != nil {
-		// The blocks are already on disk and were executed before. A reorg this node refuses
-		// - a missing ancestor chain, or the XDPoS committed-block guard - says nothing about
-		// the peer that served them, so it must not be turned into a consensus failure by the
-		// caller.
+		// The two chain-inconsistency sentinels pass through as they are: reorg raises them for
+		// a record of this node's own chain that it could not read, and wrapping them below
+		// would leave only ErrLocalInsertRefused behind. DescribeLocalInsertFailure answers
+		// "the local chain is inconsistent" for these and "cannot be imported" for a refusal,
+		// and an operator has to see which of the two this node is in.
+		if errors.Is(err, errInvalidOldChain) || errors.Is(err, errInvalidNewChain) {
+			return nil, false, err
+		}
+		// The blocks are already on disk and were executed before; a reorg this node refuses
+		// says nothing about the peer that served them.
 		return nil, false, fmt.Errorf("%w: %v", ErrLocalInsertRefused, err)
 	}
 	// Mirror the head side effects of the canonical import path.

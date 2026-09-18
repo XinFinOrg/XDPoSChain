@@ -94,6 +94,14 @@ var insertErrClasses = []struct {
 	// A reorg this node refuses; a retry is refused again, so it must not stay parked.
 	{ErrLocalInsertRefused, insertErrClass{local: true}, "cannot be imported"},
 
+	// reorg read a record of the chain it does not have or cannot have: the chain's own
+	// markers and records disagree. Not retryable (the same read sees the same records) and
+	// not an interruption, so the message keeps an operator from re-running the file.
+	{errInvalidOldChain, insertErrClass{local: true}, "the local chain is inconsistent"},
+
+	// The same, while adopting the other chain.
+	{errInvalidNewChain, insertErrClass{local: true}, "the local chain is inconsistent"},
+
 	// The block is on disk with the state this node executed; the next batch adopts it.
 	{ErrKnownBlock, insertErrClass{local: true}, "already imported"},
 
@@ -103,12 +111,6 @@ var insertErrClasses = []struct {
 	// The gap block of an epoch switch is not on the canonical chain to be read by number.
 	// Reading it keeps failing the same way until the sidechain it sits on is imported, so
 	// keeping the batch parked would only re-verify it on every futureBlocksLoop tick.
-
-	// reorg read a record of the chain it does not have or cannot have: the chain's own
-	// markers and records disagree with each other. Not retryable - the same read sees the
-	// same records.
-
-	// The same, while adopting the other chain.
 
 	// Ahead of this node's clock, so the block is queued rather than failed. Not local on its
 	// own: the one path that hands it out wraps it in ErrLocalInsertAheadOfClock.
