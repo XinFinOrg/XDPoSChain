@@ -266,6 +266,16 @@ func newStateTracer(ctx *Context, cfg json.RawMessage, chainCfg *params.ChainCon
 	}, nil
 }
 
+func init() {
+	// Register the tracers up front, so that parallel tests can use them without racing
+	// on the directory map. The native tracers are not linked into this test binary, so
+	// a name like callTracer is unavailable here, and so is the JS evaluator
+	// (DefaultDirectory.jsEval is nil): an unregistered name would call a nil function
+	// instead of falling through to a working evaluator.
+	DefaultDirectory.Register("stateTracer", newStateTracer, false)
+	DefaultDirectory.Register(parallelProbeTracerName, newParallelProbeTracer, true)
+}
+
 // TestStateHooks tests state hooks.
 func TestStateHooks(t *testing.T) {
 	t.Parallel()
@@ -310,7 +320,6 @@ func TestStateHooks(t *testing.T) {
 		nonce++
 	})
 	defer backend.teardown()
-	DefaultDirectory.Register("stateTracer", newStateTracer, false)
 	api := NewAPI(backend)
 	tracer := "stateTracer"
 	res, err := api.TraceCall(context.Background(), ethapi.TransactionArgs{From: &from, To: &to, Value: (*hexutil.Big)(big.NewInt(1000))}, rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber), &TraceCallConfig{TraceConfig: TraceConfig{Tracer: &tracer}})
@@ -1022,6 +1031,191 @@ func TestTracingWithOverrides(t *testing.T) {
 type Account struct {
 	key  *ecdsa.PrivateKey
 	addr common.Address
+}
+
+// skipNonceForkCases are the receiver fork settings the skip-nonce tests share. With the
+// fork active the first transaction of the block leaves the sender nonce untouched, so the
+// second one reuses its nonce; without it the first transaction bumps the nonce and the
+// second one carries nonce+1.
+var skipNonceForkCases = []struct {
+	name         string
+	tipXDCXBlock *big.Int
+	secondNonce  uint64
+}{
+	{name: "receiver fork inactive", tipXDCXBlock: nil, secondNonce: 1},
+	{name: "receiver fork active", tipXDCXBlock: common.Big0, secondNonce: 0},
+}
+
+// newSkipNonceBackend builds a chain whose block carries two transactions of the same
+// sender. The first one goes to the XDCX trading state address, which block processing
+// routes to ApplyEmptyTransaction while the receiver fork is active: it neither checks nor
+// increments the sender nonce, so the second transaction is an ordinary transfer that
+// reuses that nonce (secondNonce 0). Outside the fork window the first one is an ordinary
+// EVM call that bumps the nonce, so the second one carries nonce+1 (secondNonce 1).
+// Dropping the first transaction therefore leaves the nonce un-bumped and fails the second
+// one with "nonce too high"; replaying it with core.ApplyMessage instead bumps it and
+// fails the second one with "nonce too low" (Apothem block 0x2e69c13, issue
+// gzliudan/XDPoSChain#256).
+func newSkipNonceBackend(t *testing.T, tipXDCXBlock *big.Int, secondNonce uint64) (*testBackend, *types.Transaction, *types.Transaction) {
+	t.Helper()
+
+	config := *params.TestChainConfig
+	config.TIPXDCXBlock = tipXDCXBlock
+	config.TIPXDCXReceiverDisableBlock = nil
+
+	accounts := newAccounts(2)
+	genesis := &core.Genesis{
+		Config: &config,
+		Alloc: types.GenesisAlloc{
+			accounts[0].addr: {Balance: big.NewInt(9000000000000000000)},
+			accounts[1].addr: {Balance: big.NewInt(9000000000000000000)},
+		},
+	}
+	signer := types.MakeSigner(&config, common.Big1)
+	tradingState := common.TradingStateAddrBinary
+	var first, second *types.Transaction
+
+	backend := newTestBackend(t, 1, genesis, func(i int, b *core.BlockGen) {
+		var err error
+		first, err = types.SignTx(types.NewTx(&types.LegacyTx{
+			Nonce:    0,
+			To:       &tradingState,
+			Value:    big.NewInt(1000),
+			Gas:      params.TxGas,
+			GasPrice: b.BaseFee(),
+		}), signer, accounts[0].key)
+		if err != nil {
+			t.Fatalf("failed to sign the trading transaction: %v", err)
+		}
+		b.AddTx(first)
+
+		second, err = types.SignTx(types.NewTx(&types.LegacyTx{
+			Nonce:    secondNonce,
+			To:       &accounts[1].addr,
+			Value:    big.NewInt(1000),
+			Gas:      params.TxGas,
+			GasPrice: b.BaseFee(),
+		}), signer, accounts[0].key)
+		if err != nil {
+			t.Fatalf("failed to sign the following transaction: %v", err)
+		}
+		b.AddTx(second)
+	})
+	return backend, first, second
+}
+
+// TestTraceBlockSkipNonceTransactions traces a block that carries a transaction to one
+// of the XDCX system addresses followed by another transaction of the same sender.
+//
+// With the receiver fork active the first transaction goes through
+// ApplyEmptyTransaction and leaves the sender nonce untouched, so the second one reuses
+// the same nonce. With the fork inactive the first transaction bumps the nonce, so the
+// second one carries nonce+1 — and dropping the first would make it fail with
+// "nonce too high" instead.
+//
+// Either way both transactions must appear in the result array: a dropped entry is a
+// silent hole in the debug_traceBlock* response.
+func TestTraceBlockSkipNonceTransactions(t *testing.T) {
+	for _, tc := range skipNonceForkCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			backend, _, _ := newSkipNonceBackend(t, tc.tipXDCXBlock, tc.secondNonce)
+			defer backend.teardown()
+
+			api := NewAPI(backend)
+			stateTracer := "stateTracer"
+			for _, tracer := range []struct {
+				name string
+				cfg  *TraceConfig
+			}{
+				{name: "default struct logger", cfg: nil},
+				{name: "named tracer", cfg: &TraceConfig{Tracer: &stateTracer}},
+			} {
+				res, err := api.TraceBlockByNumber(context.Background(), rpc.BlockNumber(1), tracer.cfg)
+				if err != nil {
+					t.Fatalf("%s: TraceBlockByNumber failed: %v", tracer.name, err)
+				}
+				if len(res) != 2 {
+					t.Fatalf("%s: trace result length = %d, want 2", tracer.name, len(res))
+				}
+				for i, traced := range res {
+					if traced == nil {
+						t.Errorf("%s: transaction %d is missing from the trace result", tracer.name, i)
+						continue
+					}
+					// traceTx aborts the whole call when a trace fails, so these two are
+					// guards: a transaction that carries no result fails the test either way.
+					if traced.Error != "" {
+						t.Errorf("%s: transaction %d failed to trace: %s", tracer.name, i, traced.Error)
+					}
+					if traced.Result == nil {
+						t.Errorf("%s: transaction %d has no trace result", tracer.name, i)
+					}
+				}
+			}
+		})
+	}
+}
+
+// parallelProbeTracerName is registered as evaluating JS code, so that traceBlock sends
+// the block through its parallel path without the JS evaluator being linked into this
+// test binary: both IsJS and New look the name up in the directory before falling back to
+// the evaluator.
+const parallelProbeTracerName = "parallelProbeTracer"
+
+// newParallelProbeTracer reports nothing. The test using it asserts on the state feeder of
+// traceBlockParallel, not on the trace it produces.
+func newParallelProbeTracer(*Context, json.RawMessage, *params.ChainConfig) (*Tracer, error) {
+	return &Tracer{
+		Hooks:     &tracing.Hooks{},
+		GetResult: func() (json.RawMessage, error) { return json.RawMessage("{}"), nil },
+		Stop:      func(error) {},
+	}, nil
+}
+
+// TestTraceBlockParallelSkipNonceTransactions covers the state feeder of
+// traceBlockParallel, which only tracers that evaluate JS code reach (api.go, IsJS). The
+// block carries a transaction to an XDCX system address followed by another transaction
+// of the same sender: nonce+1 while the receiver fork is inactive and the same nonce
+// while it is active (see skipNonceForkCases). A feeder skipping the first one outright
+// leaves the nonce un-bumped and fails the second one with "nonce too high"; replaying
+// the first one with core.ApplyMessage instead of the block processing routing bumps it
+// and fails the second one with "nonce too low". TraceBlockByNumber returns that error.
+func TestTraceBlockParallelSkipNonceTransactions(t *testing.T) {
+	for _, tc := range skipNonceForkCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			backend, _, _ := newSkipNonceBackend(t, tc.tipXDCXBlock, tc.secondNonce)
+			defer backend.teardown()
+
+			api := NewAPI(backend)
+			tracer := parallelProbeTracerName
+			res, err := api.TraceBlockByNumber(context.Background(), rpc.BlockNumber(1), &TraceConfig{Tracer: &tracer})
+			if err != nil {
+				t.Fatalf("TraceBlockByNumber failed: %v", err)
+			}
+			if len(res) != 2 {
+				t.Fatalf("trace result length = %d, want 2", len(res))
+			}
+			for i, traced := range res {
+				if traced == nil {
+					t.Errorf("transaction %d is missing from the trace result", i)
+					continue
+				}
+				// The workers of traceBlockParallel store their failures in
+				// txTraceResult.Error instead of returning them, so a nil check alone
+				// would pass even if every trace failed and produced no result.
+				if traced.Error != "" {
+					t.Errorf("transaction %d failed to trace: %s", i, traced.Error)
+				}
+				if traced.Result == nil {
+					t.Errorf("transaction %d has no trace result", i)
+				}
+			}
+		})
+	}
 }
 
 func newAccounts(n int) (accounts []Account) {

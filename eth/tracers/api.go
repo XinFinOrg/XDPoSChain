@@ -651,9 +651,13 @@ func (api *API) traceBlock(ctx context.Context, block *types.Block, config *Trac
 	for i, tx := range txs {
 		var balance *big.Int
 		if tx.To() != nil {
-			if tx.IsSkipNonceTransaction() {
-				continue
-			}
+			// Skip-nonce transactions are not dropped here: traceTx replays them through
+			// core.ApplyTransactionWithEVM, the same entry block processing uses. While
+			// the receiver fork is active that routes them to ApplyEmptyTransaction,
+			// which leaves the sender nonce alone; outside the fork window it is an
+			// ordinary EVM call that does bump the nonce the next transaction relies on.
+			// Tracing them keeps the pre-state in step with execution and gives every
+			// transaction an entry in the returned result array.
 			if value, ok := feeCapacity[*tx.To()]; ok {
 				balance = value
 			}
@@ -768,10 +772,9 @@ txloop:
 
 		var balance *big.Int
 		if tx.To() != nil {
-			// Bypass the validation for trading and lending transactions as their nonce are not incremented
-			if tx.IsSkipNonceTransaction() {
-				continue
-			}
+			// Skip-nonce transactions are not dropped here: the replay below goes through
+			// core.ApplyTransactionWithEVM, which routes them the way block processing does,
+			// so the pre-state handed to the workers stays in step with execution.
 			if value, ok := feeCapacity[*tx.To()]; ok {
 				balance = value
 			}
@@ -784,7 +787,7 @@ txloop:
 			break txloop
 		}
 		statedb.SetTxContext(tx.Hash(), i)
-		if _, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(msg.GasLimit), common.Address{}); err != nil {
+		if _, _, _, err := core.ApplyTransactionWithEVM(msg, new(core.GasPool).AddGas(msg.GasLimit), statedb, header.Number, header.Hash(), tx, new(uint64), evm, balance); err != nil {
 			failed = err
 			break txloop
 		}
