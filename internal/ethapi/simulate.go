@@ -199,6 +199,12 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 	if sim.chainConfig.IsPrague(header.Number) {
 		core.ProcessParentBlockHash(header.ParentHash, evm)
 	}
+	// Block level state changes block processing applies before the first transaction of a
+	// block. A simulated block starts from the base state, so without them the calls and the
+	// state root describe a pre-state canonical execution never had: TIPSigning removes the
+	// legacy block signers account at the block that activates it, and the caller can
+	// simulate exactly that block by selecting its parent as the base state.
+	core.ApplyTIPSigningHardFork(sim.chainConfig, sim.state, header.Number)
 	for i, call := range block.Calls {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
