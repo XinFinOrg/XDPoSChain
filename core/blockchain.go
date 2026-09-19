@@ -956,7 +956,7 @@ func (bc *BlockChain) ResetWithGenesisBlock(genesis *types.Block) error {
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to write genesis block", "err", err)
 	}
-	bc.writeHeadBlock(genesis, false)
+	bc.writeHeadBlock(genesis)
 
 	// Last update all in-memory chain markers
 	bc.genesisBlock = genesis
@@ -1059,8 +1059,13 @@ func (bc *BlockChain) ExportN(w io.Writer, first uint64, last uint64) error {
 // header and the head fast sync block to this very same block if they are older
 // or if they are on a different side chain.
 //
+// The block and its receipts must already be persisted by the caller; only the
+// chain markers are written here. The receipts are read back below to fill the
+// XDPoS signing transaction cache, which silently drops the signing
+// transactions it cannot find a receipt for.
+//
 // Note, this function assumes that the `mu` mutex is held!
-func (bc *BlockChain) writeHeadBlock(block *types.Block, writeBlock bool) {
+func (bc *BlockChain) writeHeadBlock(block *types.Block) {
 	blockHash := block.Hash()
 	blockNumberU64 := block.NumberU64()
 
@@ -1071,9 +1076,6 @@ func (bc *BlockChain) writeHeadBlock(block *types.Block, writeBlock bool) {
 	rawdb.WriteCanonicalHash(batch, blockHash, blockNumberU64)
 	rawdb.WriteTxLookupEntriesByBlock(batch, block)
 	rawdb.WriteHeadBlockHash(batch, blockHash)
-	if writeBlock {
-		rawdb.WriteBlock(batch, block)
-	}
 
 	// Flush the whole batch into the disk, exit the node if failed
 	if err := batch.Write(); err != nil {
@@ -1529,6 +1531,8 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	rawdb.WriteBlock(blockBatch, block)
 	rawdb.WriteReceipts(blockBatch, block.Hash(), block.NumberU64(), receipts)
 	rawdb.WritePreimages(blockBatch, state.Preimages())
+	// Keep this commit before bc.reorg below and before writeHeadBlock: the head
+	// must never point at a block whose body is not on disk yet.
 	if err := blockBatch.Write(); err != nil {
 		log.Crit("Failed to write block into disk", "err", err)
 	}
@@ -1700,8 +1704,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 
 	// Set new head.
 	if status == CanonStatTy {
-		// WriteBlock has already been called, no need to write again
-		bc.writeHeadBlock(block, false)
+		bc.writeHeadBlock(block)
 		// prepare set of masternodes for the next epoch
 		if bc.chainConfig.XDPoS != nil && ((block.NumberU64() % bc.chainConfig.XDPoS.Epoch) == (bc.chainConfig.XDPoS.Epoch - bc.chainConfig.XDPoS.Gap)) {
 			if err := bc.UpdateM1(); err != nil {
@@ -2681,8 +2684,13 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 			bc.logsFeed.Send(rebirthLogs)
 			rebirthLogs = nil
 		}
-		// Update the head block
-		bc.writeHeadBlock(block, true)
+		// Update the head block. The body is on disk already: the ancestors were
+		// persisted by the writeBlockWithState call that imported them, and the
+		// head by the block batch committed before reorg was entered. The GetBlock
+		// above only guards a corrupt database, it is not what writes the body.
+		// Keep that order, or the markers written here can outlive the block
+		// they point at.
+		bc.writeHeadBlock(block)
 		// prepare set of masternodes for the next epoch
 		if bc.chainConfig.XDPoS != nil && ((block.NumberU64() % bc.chainConfig.XDPoS.Epoch) == (bc.chainConfig.XDPoS.Epoch - bc.chainConfig.XDPoS.Gap)) {
 			if err := bc.UpdateM1(); err != nil {
