@@ -111,9 +111,6 @@ func TestUpdateMasterNodes(t *testing.T) {
 	assert.Nil(t, err)
 	err = blockchain.InsertBlock(parentBlock)
 	assert.Nil(t, err)
-	// 1350 is a gap block, need to update the snapshot
-	err = blockchain.UpdateM1()
-	assert.Nil(t, err)
 	t.Logf("Inserting block from 1351 to 1800...")
 	for i := 1351; i <= 1800; i++ {
 		blockCoinbase := fmt.Sprintf("0xaaa000000000000000000000000000000000%4d", i)
@@ -252,9 +249,6 @@ func TestUpdateMultipleMasterNodes(t *testing.T) {
 	merkleRoot := "b345a8560bd51926803dd17677c9f0751193914a851a4ec13063d6bf50220b53"
 	parentBlock := CreateBlock(blockchain, config, currentBlock, 1350, 450, blockCoinbaseA, signer, signFn, nil, nil, merkleRoot)
 	err := blockchain.InsertBlock(parentBlock)
-	assert.Nil(t, err)
-	// 1350 is a gap block, need to update the snapshot
-	err = blockchain.UpdateM1()
 	assert.Nil(t, err)
 	// but we wait until 1800 to test the snapshot
 

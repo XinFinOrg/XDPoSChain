@@ -1491,7 +1491,7 @@ func TestReorgDeliversRemovedLogsSynchronously(t *testing.T) {
 		}
 	}()
 
-	if err := blockchain.reorg(blockchain.CurrentBlock(), fork[len(fork)-1].Header()); err != nil {
+	if err := blockchain.reorg(blockchain.CurrentBlock(), fork[len(fork)-1].Header(), nil); err != nil {
 		t.Fatalf("failed to reorg: %v", err)
 	}
 	if !delivered.Load() {
