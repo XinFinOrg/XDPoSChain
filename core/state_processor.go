@@ -61,6 +61,21 @@ func NewStateProcessor(config *params.ChainConfig, bc *BlockChain, engine consen
 	}
 }
 
+// ApplyTIPSigningHardFork clears the legacy block signers account at the block that
+// activates TIPSigning, the same way misc.ApplyDAOHardFork mutates the state at the DAO
+// fork block. Block processing runs it before the first transaction of the block.
+//
+// A replay of a block has to run it too: the pre-state of debug_traceTransaction and the
+// intermediate roots of debug_intermediateRoots are rebuilt from the parent state, and
+// without this call they keep the account canonical execution had already removed. The
+// traces and every intermediate root of the activation block would then describe a state
+// the chain never had.
+func ApplyTIPSigningHardFork(config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int) {
+	if blockNumber.Sign() > 0 && config.TIPSigningBlock != nil && config.TIPSigningBlock.Cmp(blockNumber) == 0 {
+		statedb.DeleteAddress(common.BlockSignersBinary)
+	}
+}
+
 // Process processes the state changes according to the Ethereum rules by running
 // the transaction messages using the statedb and applying any rewards to both
 // the processor (coinbase) and any included uncles.
@@ -91,9 +106,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
 		misc.ApplyDAOHardFork(tracingStateDB)
 	}
-	if blockNumber.Sign() > 0 && p.config.TIPSigningBlock != nil && p.config.TIPSigningBlock.Cmp(blockNumber) == 0 {
-		statedb.DeleteAddress(common.BlockSignersBinary)
-	}
+	ApplyTIPSigningHardFork(p.config, statedb, blockNumber)
 	parentState := statedb.Copy()
 	InitSignerInTransactions(p.config, header, block.Transactions())
 	balanceUpdated := map[common.Address]*big.Int{}
@@ -193,9 +206,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
 		misc.ApplyDAOHardFork(tracingStateDB)
 	}
-	if blockNumber.Sign() > 0 && p.config.TIPSigningBlock != nil && p.config.TIPSigningBlock.Cmp(blockNumber) == 0 {
-		statedb.DeleteAddress(common.BlockSignersBinary)
-	}
+	ApplyTIPSigningHardFork(p.config, statedb, blockNumber)
 	if cBlock.stop {
 		return nil, nil, 0, ErrStopPreparingBlock
 	}
