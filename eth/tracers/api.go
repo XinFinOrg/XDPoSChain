@@ -559,10 +559,6 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 		}
 		var balance *big.Int
 		if tx.To() != nil {
-			// Bypass the validation for trading and lending transactions as their nonce are not incremented
-			if tx.IsSkipNonceTransaction() {
-				continue
-			}
 			if value, ok := feeCapacity[*tx.To()]; ok {
 				balance = value
 			}
@@ -579,7 +575,20 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 			return roots, nil
 		}
 		statedb.SetTxContext(tx.Hash(), i)
-		if _, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(msg.GasLimit), common.Address{}); err != nil {
+		// Replay through the block processing entry point so routing, the coinbase owner fee
+		// and the historical balance bypass all match the block that is being traced. Every
+		// transaction gets a root, including the nonce-less ones that leave the state as is.
+		if err := core.ApplyTransactionForReplay(msg, new(core.GasPool).AddGas(msg.GasLimit), block.Number(), tx, evm, balance); err != nil {
+			// An EVM this replay cannot use is a problem of this caller, not of the
+			// transaction: report it as it is instead of returning a short root list. The
+			// EVM this method builds for itself (the vm.NewEVM above, vm.Config{} and a
+			// plain *state.StateDB) keeps that from firing today; the branch is what stops
+			// a future change that hands in a tracing EVM or a wrapped state - which would
+			// also have to change the vm.NewEVM call above - from silently truncating the
+			// root list of every caller.
+			if errors.Is(err, core.ErrReplayTracingEVM) || errors.Is(err, core.ErrReplayStateType) {
+				return nil, err
+			}
 			log.Warn("Tracing intermediate roots did not complete", "txindex", i, "txhash", tx.Hash(), "err", err)
 			// We intentionally don't return the error here: if we do, then the RPC server will not
 			// return the roots. Most likely, the caller already knows that a certain transaction fails to
