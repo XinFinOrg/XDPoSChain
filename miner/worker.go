@@ -883,9 +883,7 @@ func (w *worker) commitNewWork() {
 	if w.chainConfig.DAOForkSupport && w.chainConfig.DAOForkBlock != nil && w.chainConfig.DAOForkBlock.Cmp(header.Number) == 0 {
 		misc.ApplyDAOHardFork(work.state)
 	}
-	if w.chainConfig.TIPSigningBlock != nil && w.chainConfig.TIPSigningBlock.Cmp(header.Number) == 0 {
-		work.state.DeleteAddress(common.BlockSignersBinary)
-	}
+	core.ApplyTIPSigningHardFork(w.chainConfig, work.state, header.Number)
 	if w.chainConfig.IsPrague(header.Number) {
 		core.ProcessParentBlockHash(header.ParentHash, work.evm)
 	}

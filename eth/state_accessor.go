@@ -227,6 +227,9 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 	if eth.blockchain.Config().IsPrague(block.Number()) {
 		core.ProcessParentBlockHash(block.ParentHash(), evm)
 	}
+	// Block level state changes block processing applies before the first transaction.
+	// Without them the pre-state handed to the tracer is not the one the block ran on.
+	core.ApplyTIPSigningHardFork(eth.blockchain.Config(), statedb, block.Number())
 	if txIndex == 0 && len(block.Transactions()) == 0 {
 		return nil, vm.BlockContext{}, statedb, release, nil
 	}
