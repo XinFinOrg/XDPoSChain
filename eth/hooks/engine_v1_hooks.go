@@ -309,31 +309,54 @@ func getValidatorsAtNumber(bc *core.BlockChain, masternodes []common.Address, bl
 	if bc.Config().XDPoS == nil {
 		return nil, core.ErrNotXDPoS
 	}
-	client, err := bc.GetClient()
+	lenSigners := int64(len(masternodes))
+	if lenSigners == 0 {
+		return nil, core.ErrNotFoundM1
+	}
+	// Get secrets and opening at epoc block checkpoint.
+	//
+	// Both are read off the state of the block that was asked about. The
+	// randomize contract used to answer for them over this node's own IPC
+	// endpoint, which made the hook depend on an IPC endpoint at all.
+	// blockNumber is nil when there is no parent block; the old call read from
+	// the head in that case, so do the same.
+	var (
+		stateDB *state.StateDB
+		err     error
+	)
+	if blockNumber == nil {
+		stateDB, err = bc.State()
+	} else {
+		header := bc.GetHeaderByNumber(blockNumber.Uint64())
+		if header == nil {
+			return nil, fmt.Errorf("no header at %v to read the randomize state from", blockNumber)
+		}
+		stateDB, err = bc.StateAt(header.Root)
+	}
 	if err != nil {
 		return nil, err
 	}
-	// Check m2 exists on chaindb.
-	// Get secrets and opening at epoc block checkpoint.
 
 	var candidates []int64
-	lenSigners := int64(len(masternodes))
-	if lenSigners > 0 {
-		for _, addr := range masternodes {
-			random, err := contracts.GetRandomizeFromContractAtNumber(client, addr, blockNumber)
-			if err != nil {
-				return nil, err
-			}
-			candidates = append(candidates, random)
-		}
-		// Get randomize m2 list.
-		m2, err := contracts.GenM2FromRandomize(candidates, lenSigners)
+	for _, addr := range masternodes {
+		random, err := contracts.DecryptRandomizeFromSecretsAndOpening(stateDB.GetSecret(addr), stateDB.GetOpening(addr))
 		if err != nil {
 			return nil, err
 		}
-		return contracts.BuildValidatorFromM2(m2), nil
+		candidates = append(candidates, random)
 	}
-	return nil, core.ErrNotFoundM1
+	// GetSecret and GetOpening return zero values when the randomize contract
+	// storage cannot be read, memoizing the failure in StateDB.Error(); surface
+	// it instead of deriving validators from them.
+	if err := stateDB.Error(); err != nil {
+		return nil, fmt.Errorf("reading the randomize values from state: %w", err)
+	}
+	// Get randomize m2 list.
+	m2, err := contracts.GenM2FromRandomize(candidates, lenSigners)
+	if err != nil {
+		return nil, err
+	}
+	return contracts.BuildValidatorFromM2(m2), nil
 }
 
 func parentBlockNumber(header *types.Header) *big.Int {

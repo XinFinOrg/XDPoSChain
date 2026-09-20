@@ -38,7 +38,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/contracts/blocksigner/contract"
-	randomizeContract "github.com/XinFinOrg/XDPoSChain/contracts/randomize/contract"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool"
@@ -225,31 +224,6 @@ func GetSignersByExecutingEVM(addrBlockSigner common.Address, client bind.Contra
 		return nil, err
 	}
 	return addrs, nil
-}
-
-// Get random from randomize contract.
-func GetRandomizeFromContract(client bind.ContractBackend, addrMasternode common.Address) (int64, error) {
-	return GetRandomizeFromContractAtNumber(client, addrMasternode, nil)
-}
-
-// GetRandomizeFromContractAtNumber reads randomize data at a specific block height.
-// If blockNumber is nil, the latest state is used.
-func GetRandomizeFromContractAtNumber(client bind.ContractBackend, addrMasternode common.Address, blockNumber *big.Int) (int64, error) {
-	randomize, err := randomizeContract.NewXDCRandomize(common.RandomizeSMCBinary, client)
-	if err != nil {
-		log.Error("Fail to get instance of randomize", "error", err)
-	}
-	opts := &bind.CallOpts{BlockNumber: blockNumber}
-	secrets, err := randomize.GetSecret(opts, addrMasternode)
-	if err != nil {
-		log.Error("Fail get secrets from randomize", "error", err)
-	}
-	opening, err := randomize.GetOpening(opts, addrMasternode)
-	if err != nil {
-		log.Error("Fail get opening from randomize", "error", err)
-	}
-
-	return DecryptRandomizeFromSecretsAndOpening(secrets, opening)
 }
 
 // Generate m2 listing from randomize array.
