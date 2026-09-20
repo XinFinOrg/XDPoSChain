@@ -176,9 +176,9 @@ func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 	}
 
 	// Hook prepares validators M2 for the current epoch at checkpoint block
-	adaptor.EngineV1.HookValidator = func(header *types.Header, signers []common.Address) ([]byte, error) {
+	adaptor.EngineV1.HookValidator = func(parent, header *types.Header, signers []common.Address) ([]byte, error) {
 		start := time.Now()
-		validators, err := getValidatorsAtNumber(bc, signers, parentBlockNumber(header))
+		validators, err := getValidatorsAtNumber(bc, signers, parent)
 		if err != nil {
 			return []byte{}, err
 		}
@@ -188,11 +188,11 @@ func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 	}
 
 	// Hook verifies masternodes set
-	adaptor.EngineV1.HookVerifyMNs = func(header *types.Header, signers []common.Address) error {
+	adaptor.EngineV1.HookVerifyMNs = func(parent, header *types.Header, signers []common.Address) error {
 		number := header.Number.Int64()
 		if number > 0 && number%common.EpocBlockRandomize == 0 {
 			start := time.Now()
-			validators, err := getValidatorsAtNumber(bc, signers, parentBlockNumber(header))
+			validators, err := getValidatorsAtNumber(bc, signers, parent)
 			log.Debug("Time Calculated HookVerifyMNs ", "block", header.Number.Uint64(), "time", common.PrettyDuration(time.Since(start)))
 			if err != nil {
 				return err
@@ -302,7 +302,16 @@ func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 	}
 }
 
-func getValidatorsAtNumber(bc *core.BlockChain, masternodes []common.Address, blockNumber *big.Int) ([]byte, error) {
+// getValidatorsAtNumber derives the next epoch's validators from the randomize
+// values committed at the parent of the checkpoint being checked.
+//
+// The parent is resolved by the caller and handed in, rather than looked up by
+// height here. A checkpoint on a fork has a parent that may only exist in the
+// verifier's batch, while the canonical block of the same height belongs to the
+// competing branch, so deriving validators from that one would validate the
+// wrong chain. parent is nil when there is no parent block; the state then comes
+// from the head, as the old call did.
+func getValidatorsAtNumber(bc *core.BlockChain, masternodes []common.Address, parent *types.Header) ([]byte, error) {
 	if bc.Config().XDPoS == nil {
 		return nil, core.ErrNotXDPoS
 	}
@@ -313,23 +322,17 @@ func getValidatorsAtNumber(bc *core.BlockChain, masternodes []common.Address, bl
 	// Check m2 exists on chaindb.
 	// Get secrets and opening at epoc block checkpoint.
 	//
-	// Both are read off the state of the block that was asked about. The
-	// randomize contract used to answer for them over this node's own IPC
-	// endpoint, which made the hook depend on an IPC endpoint at all.
-	// blockNumber is nil when there is no parent block; the old call read from
-	// the head in that case, so do the same.
+	// Both are read off the parent's state. The randomize contract used to
+	// answer for them over this node's own IPC endpoint, which made the hook
+	// depend on an IPC endpoint at all.
 	var (
 		stateDB *state.StateDB
 		err     error
 	)
-	if blockNumber == nil {
+	if parent == nil {
 		stateDB, err = bc.State()
 	} else {
-		header := bc.GetHeaderByNumber(blockNumber.Uint64())
-		if header == nil {
-			return nil, fmt.Errorf("no header at %v to read the randomize state from", blockNumber)
-		}
-		stateDB, err = bc.StateAt(header.Root)
+		stateDB, err = bc.StateAt(parent.Root)
 	}
 	if err != nil {
 		return nil, err
@@ -355,11 +358,4 @@ func getValidatorsAtNumber(bc *core.BlockChain, masternodes []common.Address, bl
 		return nil, err
 	}
 	return contracts.BuildValidatorFromM2(m2), nil
-}
-
-func parentBlockNumber(header *types.Header) *big.Int {
-	if header == nil || header.Number == nil || header.Number.Sign() == 0 {
-		return nil
-	}
-	return new(big.Int).Sub(header.Number, common.Big1)
 }

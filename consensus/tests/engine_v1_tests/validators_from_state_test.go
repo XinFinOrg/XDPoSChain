@@ -89,10 +89,14 @@ func TestHookValidatorDoesNotNeedAnIPCEndpoint(t *testing.T) {
 	blockchain.Client = nil
 	blockchain.IPCEndpoint = ""
 
-	validators, err := engine.EngineV1.HookValidator(&types.Header{
+	// One past the block carrying the values above, and that block handed over as
+	// the parent the hook is meant to read from: the values are nowhere else, so
+	// a hook that read anywhere else would answer zeros.
+	header := &types.Header{
 		Number:     new(big.Int).Add(parent.Number(), common.Big1),
 		ParentHash: parent.Hash(),
-	}, masternodes)
+	}
+	validators, err := engine.EngineV1.HookValidator(parent.Header(), header, masternodes)
 	require.NoError(t, err)
 	require.Equal(t, expected, validators,
 		"the validators must be derived from the randomize values of the block the call is pinned to")

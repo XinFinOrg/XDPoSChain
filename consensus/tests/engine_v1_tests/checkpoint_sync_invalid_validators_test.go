@@ -82,7 +82,7 @@ func TestCheckpointSyncValidatorVerificationUsesParentState(t *testing.T) {
 	// ErrInvalidCheckpointValidators. That check was always true once NoError
 	// passed, so the guard against the historical failure signature is the
 	// NoError above plus the NotEqual on the derived validators at the top.
-	err = engine.EngineV1.HookVerifyMNs(checkpointHeader, masternodes)
+	err = engine.EngineV1.HookVerifyMNs(parentBlock.Header(), checkpointHeader, masternodes)
 	require.NoError(t, err)
 }
 
