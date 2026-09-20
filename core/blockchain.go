@@ -38,7 +38,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
-	contractValidator "github.com/XinFinOrg/XDPoSChain/contracts/validator/contract"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
@@ -2864,43 +2863,31 @@ func (bc *BlockChain) UpdateM1() error {
 		return ErrNotXDPoS
 	}
 	log.Info("It's time to update new set of masternodes for the next epoch...")
-	// get masternodes information from smart contract
-	client, err := bc.GetClient()
-	if err != nil {
-		return fmt.Errorf("failed to get client: %w", err)
-	}
-	addr := common.MasternodeVotingSMCBinary
-	validator, err := contractValidator.NewXDCValidator(addr, client)
-	if err != nil {
-		return fmt.Errorf("failed to create validator contract: %w", err)
-	}
-	opts := new(bind.CallOpts)
-
-	var candidates []common.Address
-	// get candidates from slot of stateDB
-	// if can't get anything, request from contracts
+	// Read the candidates and their stakes off the state of the head, which is
+	// the block this refresh is for. The stakes used to come back from the
+	// voting contract over this node's own IPC endpoint: that cost an eth_call
+	// per candidate while the chain write lock was held, and it is also what
+	// made the refresh depend on an IPC endpoint at all (a node started with
+	// --ipcdisable fails the refresh, and the callers turn that failure into
+	// log.Crit).
 	stateDB, err := bc.State()
 	if err != nil {
-		candidates, err = validator.GetCandidates(opts)
-		if err != nil {
-			return err
-		}
-	} else if stateDB == nil {
-		return errors.New("nil stateDB in UpdateM1")
-	} else {
-		candidates = stateDB.GetCandidates()
+		return fmt.Errorf("failed to open the state of the head for the masternode update: %w", err)
 	}
 
 	var ms []utils.Masternode
-	for _, candidate := range candidates {
-		v, err := validator.GetCandidateCap(opts, candidate)
-		if err != nil {
-			return err
-		}
-		// TODO: smart contract shouldn't return "0x0000000000000000000000000000000000000000"
-		if !candidate.IsZero() {
-			ms = append(ms, utils.Masternode{Address: candidate, Stake: v})
-		}
+	// GetCandidates skips the zero entries of the candidates array itself, so
+	// there is nothing to filter out here.
+	for _, candidate := range stateDB.GetCandidates() {
+		ms = append(ms, utils.Masternode{Address: candidate, Stake: stateDB.GetCandidateCap(candidate)})
+	}
+	// GetCandidates and GetCandidateCap return zero values when the voting
+	// contract storage cannot be read, memoizing the failure in StateDB.Error().
+	// A set derived from such reads would be empty or partial, so surface the
+	// read error instead: there is no IPC fallback for the candidates any more,
+	// and the call sites stop the node on any error returned here.
+	if err := stateDB.Error(); err != nil {
+		return fmt.Errorf("reading the masternodes of the head from state: %w", err)
 	}
 	if len(ms) == 0 {
 		log.Error("No masternode found. Stopping node")
@@ -2908,6 +2895,12 @@ func (bc *BlockChain) UpdateM1() error {
 	} else {
 		utils.SortMasternodesByStakeDesc(ms)
 		log.Info("Updating new set of masternodes")
+		// The set above was read from bc.State(), i.e. the state of the current
+		// block, and this header is that same block because both call sites run
+		// right after writeHeadBlock, while the chain write lock is held by the
+		// import that triggered the refresh. The two marks are independent
+		// otherwise - Rollback moves only the header one - so a caller outside
+		// that path cannot rely on them agreeing.
 		header := bc.CurrentHeader()
 		err = engine.UpdateMasternodes(bc, header, ms)
 		if err != nil {
