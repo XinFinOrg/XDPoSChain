@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	xdc_sort "github.com/XinFinOrg/XDPoSChain/common/sort"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
@@ -88,4 +89,24 @@ func DecodeBytesExtraFields(b []byte, val interface{}) error {
 	default:
 		return fmt.Errorf("consensus version %d is not defined, or this block is v1 block", b[0])
 	}
+}
+
+// SortMasternodesByStakeDesc sorts masternodes by stake, highest first.
+//
+// The comparator is deliberately non-strict -- ">=", so Less(i, i) is true for
+// equal stakes, which sort.Slice does not allow -- because it is the ordering
+// the consensus derivations have always produced, and common/sort is a frozen
+// copy of the pre-1.19 sort.Slice. For equal stakes the two together yield one
+// specific permutation, and that permutation decides which candidates land
+// inside the top maxMasternodes. A strict comparator, or the pdqsort in the
+// current standard library, reorders equal stakes and therefore changes the
+// masternode set derived from a given state: a consensus break.
+//
+// Every derivation of the top-N set must go through here, including the
+// eth_getCandidates and eth_getCandidateStatus RPCs, whose status fields are
+// decided by the same boundary.
+func SortMasternodesByStakeDesc(ms []Masternode) {
+	xdc_sort.Slice(ms, func(i, j int) bool {
+		return ms[i].Stake.Cmp(ms[j].Stake) >= 0
+	})
 }

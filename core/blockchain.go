@@ -35,7 +35,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common/lru"
 	"github.com/XinFinOrg/XDPoSChain/common/mclock"
 	"github.com/XinFinOrg/XDPoSChain/common/prque"
-	xdc_sort "github.com/XinFinOrg/XDPoSChain/common/sort"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
@@ -2811,9 +2810,7 @@ func (bc *BlockChain) UpdateM1() error {
 		log.Error("No masternode found. Stopping node")
 		return errors.New("no masternode found")
 	} else {
-		xdc_sort.Slice(ms, func(i, j int) bool {
-			return ms[i].Stake.Cmp(ms[j].Stake) >= 0
-		})
+		utils.SortMasternodesByStakeDesc(ms)
 		log.Info("Updating new set of masternodes")
 		header := bc.CurrentHeader()
 		err = engine.UpdateMasternodes(bc, header, ms)

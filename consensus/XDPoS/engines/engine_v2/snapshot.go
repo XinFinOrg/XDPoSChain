@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
-	xdc_sort "github.com/XinFinOrg/XDPoSChain/common/sort"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
@@ -154,9 +153,7 @@ func BuildSnapshotFromState(statedb *state.StateDB, number uint64, hash common.H
 		// An empty snapshot loads back fine and would permanently mask the hole.
 		return nil, ErrNoCandidates
 	}
-	xdc_sort.Slice(ms, func(i, j int) bool {
-		return ms[i].Stake.Cmp(ms[j].Stake) >= 0
-	})
+	utils.SortMasternodesByStakeDesc(ms)
 
 	candidates := make([]common.Address, len(ms))
 	for i, m := range ms {

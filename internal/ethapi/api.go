@@ -31,7 +31,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	math "github.com/XinFinOrg/XDPoSChain/common/math"
-	xdc_sort "github.com/XinFinOrg/XDPoSChain/common/sort"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
@@ -785,9 +784,7 @@ func (api *BlockChainAPI) GetCandidateStatus(ctx context.Context, coinbaseAddres
 	}
 
 	if len(candidates) > maxMasternodes {
-		xdc_sort.Slice(candidates, func(i, j int) bool {
-			return candidates[i].Stake.Cmp(candidates[j].Stake) > 0
-		})
+		utils.SortMasternodesByStakeDesc(candidates)
 	}
 
 	// Get penalties list
@@ -945,9 +942,7 @@ func (api *BlockChainAPI) GetCandidates(ctx context.Context, epoch rpc.EpochNumb
 	}
 
 	if len(candidates) > maxMasternodes {
-		xdc_sort.Slice(candidates, func(i, j int) bool {
-			return candidates[i].Stake.Cmp(candidates[j].Stake) > 0
-		})
+		utils.SortMasternodesByStakeDesc(candidates)
 	}
 
 	// Get penalties list
