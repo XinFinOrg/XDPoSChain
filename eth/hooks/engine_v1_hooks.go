@@ -3,16 +3,15 @@ package hooks
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"math/big"
 	"time"
 
-	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/contracts"
-	contractValidator "github.com/XinFinOrg/XDPoSChain/contracts/validator/contract"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
@@ -209,16 +208,6 @@ func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 	   This is a solution for work around issue return wrong list signers from snapshot
 	*/
 	adaptor.EngineV1.HookGetSignersFromContract = func(block common.Hash) ([]common.Address, error) {
-		client, err := bc.GetClient()
-		if err != nil {
-			return nil, err
-		}
-		addr := common.MasternodeVotingSMCBinary
-		validator, err := contractValidator.NewXDCValidator(addr, client)
-		if err != nil {
-			return nil, err
-		}
-		opts := new(bind.CallOpts)
 		var (
 			candidateAddresses []common.Address
 			candidates         []utils.Masternode
@@ -228,17 +217,29 @@ func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 		if err != nil {
 			return nil, err
 		}
-		if stateDB == nil {
-			return nil, errors.New("nil stateDB in HookGetSignersFromContract")
-		}
 
+		// Read the candidates and their stakes off the same state. The stakes
+		// used to come back from the voting contract over this node's own IPC
+		// endpoint: that made the hook depend on an IPC endpoint at all, so a
+		// node without one could not fall back to the signers from the contract.
+		//
+		// That call carried no block number, so it answered from "latest": each
+		// verifying node judged the checkpoint against its own head at the moment
+		// of the call, and the same node could judge the same checkpoint
+		// differently later. The gap block is the block to settle on, because it
+		// is the state UpdateM1 reads for the next epoch's set.
+		//
+		// No fork block gates that settlement. Replaying the v1 era can therefore
+		// classify a checkpoint differently than the latest-block reading did.
 		candidateAddresses = stateDB.GetCandidates()
 		for _, address := range candidateAddresses {
-			v, err := validator.GetCandidateCap(opts, address)
-			if err != nil {
-				return nil, err
-			}
-			candidates = append(candidates, utils.Masternode{Address: address, Stake: v})
+			candidates = append(candidates, utils.Masternode{Address: address, Stake: stateDB.GetCandidateCap(address)})
+		}
+		// GetCandidates and GetCandidateCap return zero values when the voting
+		// contract storage cannot be read, memoizing the failure in
+		// StateDB.Error(); surface it instead of returning a partial list.
+		if err := stateDB.Error(); err != nil {
+			return nil, fmt.Errorf("reading the signers of %s from state: %w", block.Hex(), err)
 		}
 		// sort candidates by stake descending
 		utils.SortMasternodesByStakeDesc(candidates)
