@@ -208,13 +208,20 @@ func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 	   HookGetSignersFromContract return list masternode for current state (block)
 	   This is a solution for work around issue return wrong list signers from snapshot
 	*/
-	adaptor.EngineV1.HookGetSignersFromContract = func(block common.Hash) ([]common.Address, error) {
+	adaptor.EngineV1.HookGetSignersFromContract = func(gapHeader *types.Header) ([]common.Address, error) {
 		var (
 			candidateAddresses []common.Address
 			candidates         []utils.Masternode
 		)
+		if gapHeader == nil {
+			return nil, errors.New("nil gap block header in HookGetSignersFromContract")
+		}
 
-		stateDB, err := bc.StateAt(bc.GetBlockByHash(block).Root())
+		// The gap block header comes from the caller, which resolves it from the
+		// local chain or from the batch it is verifying. Looking it up here by
+		// hash would find nothing for the gap block of a fork, and the chain
+		// state is what the candidates are read from.
+		stateDB, err := bc.StateAt(gapHeader.Root)
 		if err != nil {
 			return nil, err
 		}
@@ -234,7 +241,7 @@ func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 		// contract storage cannot be read, memoizing the failure in
 		// StateDB.Error(); surface it instead of returning a partial list.
 		if err := stateDB.Error(); err != nil {
-			return nil, fmt.Errorf("reading the signers of %s from state: %w", block.Hex(), err)
+			return nil, fmt.Errorf("reading the signers of %s from state: %w", gapHeader.Hash().Hex(), err)
 		}
 		// sort candidates by stake descending
 		xdc_sort.Slice(candidates, func(i, j int) bool {
