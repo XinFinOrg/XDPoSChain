@@ -30,7 +30,7 @@ func TestHookGetSignersFromContractWithoutIPC(t *testing.T) {
 	blockchain.Client = nil
 	blockchain.IPCEndpoint = ""
 
-	signers, err := engine.EngineV1.HookGetSignersFromContract(head.Hash())
+	signers, err := engine.EngineV1.HookGetSignersFromContract(head.Header())
 	require.NoError(t, err)
 	require.NotEmpty(t, signers)
 
@@ -109,7 +109,7 @@ func TestHookGetSignersFromContractUsesRequestedBlockState(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, newHead.NumberU64(), blockchain.CurrentBlock().Number.Uint64())
 
-	signers, err := engine.EngineV1.HookGetSignersFromContract(asked.Hash())
+	signers, err := engine.EngineV1.HookGetSignersFromContract(asked.Header())
 	require.NoError(t, err)
 
 	require.Equal(t, subject, signers[0], "the signers must be ordered by the stake of the block the hook was asked about")
@@ -124,4 +124,48 @@ func highestCandidateCap(statedb *state.StateDB, candidates []common.Address) *b
 		}
 	}
 	return highest
+}
+
+// TestHookGetSignersFromContractRejectsNilHeader pins the contract of the hook
+// now that the gap block header is handed in by the caller: a nil header is
+// reported instead of being dereferenced.
+func TestHookGetSignersFromContractRejectsNilHeader(t *testing.T) {
+	blockchain, _, _, _, _ := PrepareXDCTestBlockChain(t, 1, params.TestXDPoSMockChainConfig)
+	engine := blockchain.Engine().(*XDPoS.XDPoS)
+	hooks.AttachConsensusV1Hooks(engine, blockchain, blockchain.Config())
+
+	_, err := engine.EngineV1.HookGetSignersFromContract(nil)
+	require.Error(t, err)
+}
+
+// TestHookGetSignersFromContractTakesABatchOnlyGapHeader pins that the hook
+// reads the state of the header it is given, not of a block looked up locally.
+//
+// The gap block of a checkpoint that arrives with a fork is only in the batch
+// the verifier holds; here its header is built on the head's state but never
+// written to the chain, so a lookup by hash finds nothing and dereferencing it
+// would panic. The state read must still answer.
+func TestHookGetSignersFromContractTakesABatchOnlyGapHeader(t *testing.T) {
+	blockchain, _, head, _, _ := PrepareXDCTestBlockChain(t, 20, params.TestXDPoSMockChainConfig)
+	engine := blockchain.Engine().(*XDPoS.XDPoS)
+	hooks.AttachConsensusV1Hooks(engine, blockchain, blockchain.Config())
+
+	blockchain.Client = nil
+	blockchain.IPCEndpoint = ""
+
+	gapHeader := &types.Header{
+		Root:       head.Root(),
+		Number:     head.Number(),
+		ParentHash: head.ParentHash(),
+		Coinbase:   common.HexToAddress("0xccc0000000000000000000000000000000000000"),
+	}
+	require.Nil(t, blockchain.GetBlockByHash(gapHeader.Hash()), "the gap block must not exist in the local chain for this case")
+
+	signers, err := engine.EngineV1.HookGetSignersFromContract(gapHeader)
+	require.NoError(t, err)
+	require.NotEmpty(t, signers)
+
+	statedb, err := blockchain.StateAt(gapHeader.Root)
+	require.NoError(t, err)
+	require.ElementsMatch(t, statedb.GetCandidates(), signers)
 }

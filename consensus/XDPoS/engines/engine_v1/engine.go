@@ -64,7 +64,7 @@ type XDPoS_v1 struct {
 	HookValidator func(parent, header *types.Header, signers []common.Address) ([]byte, error)
 	HookVerifyMNs func(parent, header *types.Header, signers []common.Address) error
 
-	HookGetSignersFromContract func(blockHash common.Hash) ([]common.Address, error)
+	HookGetSignersFromContract func(gapHeader *types.Header) ([]common.Address, error)
 }
 
 /*
@@ -1050,8 +1050,11 @@ func (x *XDPoS_v1) getSignersFromContract(chain consensus.ChainReader, checkpoin
 	number := checkpointHeader.Number.Uint64()
 	for step := uint64(1); step <= chain.Config().XDPoS.Gap; step++ {
 		startGapBlockHeader = chain.GetHeader(startGapBlockHeader.ParentHash, number-step)
+		if startGapBlockHeader == nil {
+			return []common.Address{}, fmt.Errorf("no block at %d to get the signers from", number-step)
+		}
 	}
-	signers, err := x.HookGetSignersFromContract(startGapBlockHeader.Hash())
+	signers, err := x.HookGetSignersFromContract(startGapBlockHeader)
 	if err != nil {
 		return []common.Address{}, fmt.Errorf("can't get signers from Smart Contract . Err: %v", err)
 	}

@@ -122,3 +122,35 @@ func TestHookVerifyMNsRejectsAParentWithoutLocalState(t *testing.T) {
 	err = engine.EngineV1.HookVerifyMNs(parent, checkpointHeader, masternodes)
 	require.Error(t, err)
 }
+
+// TestHookGetSignersFromContractRejectsAGapBlockWithoutLocalState pins the same
+// rejection on the signers fallback: the candidates come from the state of the
+// gap block, so a gap block whose state this node does not hold is reported
+// rather than answered from the head.
+func TestHookGetSignersFromContractRejectsAGapBlockWithoutLocalState(t *testing.T) {
+	blockchain, _, head, _, _ := PrepareXDCTestBlockChain(t, 20, params.TestXDPoSMockChainConfig)
+	engine := blockchain.Engine().(*XDPoS.XDPoS)
+	hooks.AttachConsensusV1Hooks(engine, blockchain, blockchain.Config())
+
+	// Reading the head would find candidates, which is what a fallback to the
+	// head would answer with, so the head's state has to be populated for this
+	// test to tell the two readings apart.
+	headState, err := blockchain.StateAt(head.Root())
+	require.NoError(t, err)
+	require.NotEmpty(t, headState.GetCandidates())
+
+	absentRoot := head.Root()
+	absentRoot[0] ^= 0xff
+	_, err = blockchain.StateAt(absentRoot)
+	require.Error(t, err, "the fixture must not hold state for %s", absentRoot)
+
+	gapHeader := &types.Header{
+		Root:       absentRoot,
+		Number:     head.Number(),
+		ParentHash: head.ParentHash(),
+		Coinbase:   common.HexToAddress("0xddd0000000000000000000000000000000000000"),
+	}
+
+	_, err = engine.EngineV1.HookGetSignersFromContract(gapHeader)
+	require.Error(t, err)
+}
