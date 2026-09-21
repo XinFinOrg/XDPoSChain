@@ -22,6 +22,7 @@ import (
 	"errors"
 	"math/big"
 	"slices"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -82,6 +83,12 @@ func ReadAllHashes(db ethdb.Iteratee, number uint64) []common.Hash {
 	return hashes
 }
 
+// sweepReportInterval bounds how long the dangling-hash sweep may stay silent
+// while it walks the header keyspace. Deliberately kept in sync with
+// core.rewindReportInterval: this package cannot import core, so the value is
+// duplicated with a cross-reference on both sides.
+const sweepReportInterval = 30 * time.Second
+
 // DeleteDanglingHashes removes every header, total-difficulty and canonical-hash
 // entry whose block number is strictly greater than head. It walks the header
 // keyspace directly (rather than scanning contiguous heights), so orphaned
@@ -108,6 +115,17 @@ func DeleteDanglingHashes(db ethdb.KeyValueStore, head uint64, contentFn func(et
 	var (
 		lastNum uint64
 		haveNum bool
+
+		sweepStart = time.Now()
+		reported   = time.Now()
+		scanned    uint64
+		heights    uint64
+
+		// lastScanned is the scanned counter as of the previous progress line,
+		// used to derive the rate over the reporting interval. lastHeights is
+		// the same for the distinct-height counter.
+		lastScanned uint64
+		lastHeights uint64
 	)
 	for it.Next() {
 		key := it.Key()
@@ -127,16 +145,52 @@ func DeleteDanglingHashes(db ethdb.KeyValueStore, head uint64, contentFn func(et
 		DeleteHeader(batch, hash, number)
 		DeleteTd(batch, hash, number)
 		// The iterator yields keys in ascending order, so all hashes at a given
-		// height are contiguous. Delete the canonical marker once per height.
+		// height are contiguous. Delete the canonical marker once per height,
+		// and count the height here too: this is the only branch that runs once
+		// per height rather than once per header key.
 		if !haveNum || number != lastNum {
 			DeleteCanonicalHash(batch, number)
 			lastNum, haveNum = number, true
+			heights++
 		}
 		if batch.ValueSize() >= ethdb.IdealBatchSize {
 			if err := batch.Write(); err != nil {
 				return err
 			}
 			batch.Reset()
+		}
+		// Report scan progress, at most once per sweepReportInterval. The line sits
+		// after the flush above so a batch committed in this iteration is already
+		// accounted for, but the counts may still include the current item and
+		// earlier removals that stay buffered in the batch.
+		scanned++
+		if time.Since(reported) >= sweepReportInterval {
+			elapsed := time.Since(sweepStart)
+			sinceReport := time.Since(reported)
+			// Two units, both whole per second. The item rates are per swept item,
+			// not per block: the iterator visits every orphaned header key, so a
+			// height holding side forks counts once per hash. The height rates are
+			// per distinct height that actually held one, which is the unit the
+			// delete stage above reports in. Neither counter has a denominator: the
+			// end of this keyspace is not known before the walk, and the walk can
+			// skip gaps, so heights is not the span above head and no percent or
+			// eta is printed here.
+			var avgRate, curRate, avgHeightRate, curHeightRate int64
+			if elapsed > 0 {
+				avgRate = int64(float64(scanned) / elapsed.Seconds())
+				avgHeightRate = int64(float64(heights) / elapsed.Seconds())
+			}
+			if sinceReport > 0 {
+				curRate = int64(float64(scanned-lastScanned) / sinceReport.Seconds())
+				curHeightRate = int64(float64(heights-lastHeights) / sinceReport.Seconds())
+			}
+			log.Info("Cleaning dangling data", "number", number, "target", head,
+				"heights", heights, "scanned", scanned,
+				"elapsed", common.PrettyDuration(elapsed.Round(time.Second)),
+				"height/s(avg)", avgHeightRate, "height/s(now)", curHeightRate,
+				"item/s(avg)", avgRate, "item/s(now)", curRate)
+			reported = time.Now()
+			lastScanned, lastHeights = scanned, heights
 		}
 	}
 	return batch.Write()
