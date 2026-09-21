@@ -1012,8 +1012,15 @@ func (bc *BlockChain) ResetWithGenesisBlock(genesis *types.Block) error {
 // fast block are left intact.
 func (bc *BlockChain) repair(head **types.Block) error {
 	for {
-		// Abort if we've rewound to a head block that does have associated state
-		if (common.RollbackNumber == 0) || ((*head).Number().Uint64() <= common.RollbackNumber) {
+		// Abort if we've rewound to a head block that does have associated state.
+		// RollbackNumber already holds an absolute target by the time repair runs:
+		// eth.New resolves a negative --set-head before it opens the chain, so a
+		// negative value never reaches this point. A target of 0 (the genesis
+		// block, from "--set-head=-<current height>") leaves the repair unbounded
+		// in effect, since it cannot rewind past 0 either way. The <= 0 test is
+		// kept as a guard: a negative value reaching here would wrap around in the
+		// uint64 conversion below and leave the rewind unbounded.
+		if (common.RollbackNumber <= 0) || ((*head).Number().Uint64() <= uint64(common.RollbackNumber)) {
 			if bc.HasState((*head).Root()) {
 				log.Info("Rewound blockchain to past state", "number", (*head).Number(), "hash", (*head).Hash())
 				engine, ok := bc.Engine().(*XDPoS.XDPoS)
