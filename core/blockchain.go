@@ -3128,13 +3128,13 @@ func (bc *BlockChain) nextEpochSnapshotOf(statedb *state.StateDB, number uint64,
 // head up a second time.
 //
 // The refresh itself is the v1 one and is unchanged: the candidates and their
-// stakes are read off the state of the head, which is the block this refresh is
-// for, and the result is handed to the engine, which keeps the v1 set in memory.
-// The head has to be the block the caller has just made canonical, because that
-// is the state this reads. There is nothing to persist: the v1 set is read back
-// from the checkpoint header extra data. Callers therefore keep their position
-// behind the head write and pass the header of the block they just made
-// canonical.
+// stakes are read off the state committed at that header, and the result is
+// handed to the engine, which keys the v1 set by that very block and keeps it in
+// memory. The header therefore has to be the block whose set this refreshes:
+// candidates read from anywhere else would be stored as the set of a block they
+// did not come from. There is nothing to persist: the v1 set is read back from
+// the checkpoint header extra data. Callers therefore keep their position behind
+// the head write and pass the header of the block they just made canonical.
 func (bc *BlockChain) UpdateM1At(header *types.Header) error {
 	engine, ok := bc.Engine().(*XDPoS.XDPoS)
 	if bc.Config().XDPoS == nil || !ok {
@@ -3144,16 +3144,16 @@ func (bc *BlockChain) UpdateM1At(header *types.Header) error {
 		return errors.New("nil header in UpdateM1At")
 	}
 	log.Info("It's time to update new set of masternodes for the next epoch...")
-	// Read the candidates and their stakes off the state of the head, which is
-	// the block this refresh is for. The stakes used to come back from the
-	// voting contract over this node's own IPC endpoint: that cost an eth_call
-	// per candidate while the chain write lock was held, and it is also what
-	// made the refresh depend on an IPC endpoint at all (a node started with
-	// --ipcdisable fails the refresh, and the callers turn that failure into
-	// log.Crit).
-	stateDB, err := bc.State()
+	// Read the candidates and their stakes off the state committed at this
+	// header, which is the block this refresh is for. The stakes used to come
+	// back from the voting contract over this node's own IPC endpoint: that cost
+	// an eth_call per candidate while the chain write lock was held, and it is
+	// also what made the refresh depend on an IPC endpoint at all (a node
+	// started with --ipcdisable fails the refresh, and the callers turn that
+	// failure into log.Crit).
+	stateDB, err := bc.StateAt(header.Root)
 	if err != nil {
-		return fmt.Errorf("failed to open the state of the head for the masternode update: %w", err)
+		return fmt.Errorf("failed to open the state of the block for the masternode update: %w", err)
 	}
 
 	var ms []utils.Masternode
@@ -3168,7 +3168,7 @@ func (bc *BlockChain) UpdateM1At(header *types.Header) error {
 	// read error instead: there is no IPC fallback for the candidates any more,
 	// and the call sites stop the node on any error returned here.
 	if err := stateDB.Error(); err != nil {
-		return fmt.Errorf("reading the masternodes of the head from state: %w", err)
+		return fmt.Errorf("reading the masternodes of the block from state: %w", err)
 	}
 	if len(ms) == 0 {
 		log.Error("No masternode found. Stopping node")
@@ -3176,17 +3176,14 @@ func (bc *BlockChain) UpdateM1At(header *types.Header) error {
 	} else {
 		utils.SortMasternodesByStakeDesc(ms)
 		log.Info("Updating new set of masternodes")
-		// The set above was read from bc.State(), i.e. the state of the current
-		// block, and the header passed in is that same block because both call
-		// sites run right after writeHeadBlock, while the chain write lock is
-		// held by the import that triggered the refresh. The two marks are
-		// independent otherwise - Rollback moves only the header one - so a
-		// caller outside that path cannot rely on them agreeing.
+		// The candidates above came from the state committed at this header, so
+		// the set the engine stores for that block is derived from that block's
+		// own state rather than from wherever the head points.
 		err = engine.UpdateMasternodes(bc, header, ms)
 		if err != nil {
 			return err
 		}
-		log.Info("Masternodes are ready for the next epoch")
+		log.Info("Masternodes are ready for the next epoch", "number", header.Number.Uint64(), "hash", header.Hash().Hex())
 	}
 	return nil
 }
