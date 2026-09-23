@@ -2719,7 +2719,13 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (n int, 
 		// The two are different values and have to keep different names.
 		statedb, stateErr := state.NewWithChainConfig(parent.Root, bc.stateCache, bc.chainConfig)
 		if stateErr != nil {
-			return it.index, events, coalescedLogs, stateErr
+			// Opening the state is answered by this node's own trie database, and the
+			// parent is one this node has just validated - ValidateBody asks for its state
+			// before the loop gets here - so a parent state that no longer opens is a
+			// missing or corrupt trie node, or a prune that got in between the two reads.
+			// Reported as it comes out of state.NewWithChainConfig it is classified as the
+			// batch's fault, and the downloader drops the peer that served it.
+			return it.index, events, coalescedLogs, wrapLocalCondition(stateErr)
 		}
 
 		// If we have a followup block, run that against the current state to pre-cache
