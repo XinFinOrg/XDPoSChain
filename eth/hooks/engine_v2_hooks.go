@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"slices"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -487,9 +486,7 @@ func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *type
 							ms = append(ms, utils.Masternode{Address: candidate, Stake: v})
 						}
 					}
-					slices.SortStableFunc(ms, func(a, b utils.Masternode) int {
-						return b.Stake.Cmp(a.Stake)
-					})
+					utils.SortMasternodesByStakeDesc(ms)
 					// find penalty and filter them out
 					penalties := common.ExtractAddressFromBytes(h.Penalties)
 					filterMap := make(map[common.Address]struct{})
