@@ -106,14 +106,10 @@ var (
 	// closed it. Local - see IsLocalInsertError.
 	ErrChainStopped = errors.New("blockchain is stopped")
 
-	// ErrLocalInsertCondition keeps the local conditions that have no sentinel of their own
-	// and that a retry cannot repair: a receipt batch the database refused to write, and a
-	// stored block whose total difficulty this node no longer holds. insertSideChain raises it
-	// too, as a defensive guard for a segment that stops on a block with no stored state - a
-	// state the validator contract rules out, see the note there. A block dated ahead of the
-	// clock is the one local condition that heals, which is why it carries a sentinel of its
-	// own below. See IsLocalInsertError for why callers must not treat it as a consensus
-	// failure.
+	// ErrLocalInsertCondition keeps the local conditions with no sentinel of their own and that
+	// a retry cannot repair: a receipt batch the database refused to write, a state or trie
+	// commit this node refused, a parent state it can no longer open, a stored block whose total
+	// difficulty it no longer holds. Local - see IsLocalInsertError.
 	ErrLocalInsertCondition = errors.New("local insert condition")
 
 	// ErrLocalInsertAheadOfClock is the local condition that heals on its own: the block is
@@ -2204,23 +2200,30 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 		log.Crit("Failed to write block into disk", "err", err)
 	}
 	// Commit all cached state changes into underlying memory database.
+	//
+	// A commit this node's own trie database refuses is a condition of this node and not of the
+	// blocks: the block has been executed and validated by the time the write is asked for.
+	// Reported as it comes out of the commit it is classified as the block's fault, and the
+	// downloader drops the peer that served the batch for it - see classifyInsertErr. The cause
+	// is kept by wrapping, the shape a refused receipt write of InsertReceiptChain reports, and
+	// the trading and lending state commits below say the same thing for the same reason.
 	root, err := state.Commit(block.NumberU64(), bc.chainConfig.IsEIP158(block.Number()))
 	if err != nil {
-		return NonStatTy, err
+		return NonStatTy, wrapLocalCondition(err)
 	}
 
 	tradingRoot := common.Hash{}
 	if tradingState != nil {
 		tradingRoot, err = tradingState.Commit()
 		if err != nil {
-			return NonStatTy, err
+			return NonStatTy, wrapLocalCondition(err)
 		}
 	}
 	lendingRoot := common.Hash{}
 	if lendingState != nil {
 		lendingRoot, err = lendingState.Commit()
 		if err != nil {
-			return NonStatTy, err
+			return NonStatTy, wrapLocalCondition(err)
 		}
 	}
 
@@ -2241,18 +2244,20 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	}
 
 	// If we're running an archive node, always flush
+	// The trie databases below are this node's as well, so a flush they refuse is reported the
+	// same way the commits above are.
 	if bc.cacheConfig.TrieDirtyDisabled {
 		if err := bc.triedb.Commit(root, false); err != nil {
-			return NonStatTy, err
+			return NonStatTy, wrapLocalCondition(err)
 		}
 		if tradingTrieDb != nil {
 			if err := tradingTrieDb.Commit(tradingRoot, false); err != nil {
-				return NonStatTy, err
+				return NonStatTy, wrapLocalCondition(err)
 			}
 		}
 		if lendingTrieDb != nil {
 			if err := lendingTrieDb.Commit(lendingRoot, false); err != nil {
-				return NonStatTy, err
+				return NonStatTy, wrapLocalCondition(err)
 			}
 		}
 	} else {
