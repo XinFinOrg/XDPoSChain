@@ -464,6 +464,18 @@ func (x *XDPoS) GetMasternodesFromCheckpointHeader(checkpointHeader *types.Heade
 	}
 }
 
+// GetStandbynodes returns the standby pool for the epoch of the given (epoch
+// switch) header: stake-sorted and already filtered of that epoch's
+// masternodes and penalties. V1 has no standby tier, so it returns empty.
+func (x *XDPoS) GetStandbynodes(chain consensus.ChainReader, header *types.Header) []common.Address {
+	switch x.config.BlockConsensusVersion(header.Number) {
+	case params.ConsensusEngineVersion2:
+		return x.EngineV2.GetStandbynodes(chain, header)
+	default: // Default "v1"
+		return []common.Address{}
+	}
+}
+
 // Check is epoch switch (checkpoint) block
 func (x *XDPoS) IsEpochSwitch(header *types.Header) (bool, uint64, error) {
 	switch x.config.BlockConsensusVersion(header.Number) {
