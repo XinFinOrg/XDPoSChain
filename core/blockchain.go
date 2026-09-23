@@ -2488,7 +2488,7 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 // racey behaviour. If a sidechain import is in progress, and the historic state
 // is imported, but then new canon-head is added before the actual sidechain
 // completes, then the historic state could be pruned again
-func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []interface{}, []*types.Log, error) {
+func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (n int, events []interface{}, logs []*types.Log, err error) {
 	// If the chain is terminating, don't even bother starting up.
 	if bc.insertStopped() {
 		// Report the interruption rather than a success: nothing was imported, and the
@@ -2504,10 +2504,25 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 	// acquiring.
 	var (
 		stats         = insertStats{startTime: mclock.Now()}
-		events        = make([]interface{}, 0, len(chain))
 		lastCanon     *types.Block
 		coalescedLogs []*types.Log
 	)
+	events = make([]interface{}, 0, len(chain))
+	// Fire a single chain head event if we've progressed the chain. It is deferred because a
+	// batch can fail after it has moved the head - a block that fails execution, or a state
+	// this node cannot open - while the prefix that made it in was already announced through
+	// its ChainEvents, so subscribers would hear about the prefix and never about the head.
+	// Ported from go-ethereum #19396, which fires from a defer for the same reason; here it is
+	// queued into the events the caller posts, since this fork uses PostChainEvents.
+	//
+	// The results are named for this reason: a return hands the caller the slice header it
+	// evaluated, so appending from the defer would not reach the caller.
+	defer func() {
+		if lastCanon != nil && bc.CurrentBlock().Hash() == lastCanon.Hash() {
+			log.Debug("New ChainHeadEvent ", "number", lastCanon.NumberU64(), "hash", lastCanon.Hash())
+			events = withChainHeadEvent(events, lastCanon)
+		}
+	}()
 	// Start the parallel header verifier
 	headers := make([]*types.Header, len(chain))
 	seals := make([]bool, len(chain))
@@ -2806,11 +2821,9 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		// shape.
 	}
 
-	// Append a single chain head event if we've progressed the chain
-	if lastCanon != nil && bc.CurrentBlock().Hash() == lastCanon.Hash() {
-		log.Debug("New ChainHeadEvent ", "number", lastCanon.NumberU64(), "hash", lastCanon.Hash())
-		events = append(events, ChainHeadEvent{lastCanon})
-	}
+	// The head event is raised by the defer above, on the way out, for the reason stated
+	// there: it has to reach subscribers even when the batch failed after moving the head.
+	//
 	// Surface what stopped the batch before the caller turns it into a peer drop: the
 	// downloader only logs this at debug level, which used to leave no usable trace.
 	//
