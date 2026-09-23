@@ -2961,16 +2961,32 @@ func (bc *BlockChain) headTd(head *types.Header) (*big.Int, error) {
 // level when imported below; only the blocks read back out of the local database are
 // re-imported with it off. Every index it returns is relative to the batch the caller handed
 // in, never to a segment rebuilt from stored ancestors.
-func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, verifySeals bool) (int, []interface{}, []*types.Log, error) {
+//
+// The head this call moves is announced on the way out, whatever the call returns: the rebuilt
+// segment is imported in chunks and every chunk but the last drops its events, so a rebuild
+// that moved the head and then stopped would leave subscribers on a head this node has already
+// left. A return that already carries events wins, since a batch raises one head event.
+func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, verifySeals bool) (n int, events []interface{}, logs []*types.Log, err error) {
+	// The head this call started from. InsertChain holds the chain mutex across the whole
+	// call, so nothing else can move the head between the two reads.
+	//
+	// Every head this call reports or compares against comes from here - the fork-choice
+	// meter and the two warnings below, and current. It cannot be nil on an import path:
+	// the genesis block is stored before one can run. That is why only some of those sites
+	// check it; the checks are defensive, not a licence for the others to assume nil.
+	before := bc.CurrentBlock()
+	defer func() {
+		events = bc.headEventSince(events, before)
+	}()
 	var (
 		externTd *big.Int
-		current  = bc.CurrentBlock().Number.Uint64()
+		current  = before.Number.Uint64()
 	)
 	// The first sidechain block error is already verified to be ErrPrunedAncestor.
 	// Since we don't import them here, we expect ErrUnknownAncestor for the remaining
 	// ones. Any other errors means that the block is invalid, and should not be written
 	// to disk.
-	err := consensus.ErrPrunedAncestor
+	err = consensus.ErrPrunedAncestor
 	for ; block != nil && (errors.Is(err, consensus.ErrPrunedAncestor)); block, err = it.next() {
 		// Check the canonical state root for that number
 		if number := block.NumberU64(); current >= number {
@@ -3130,11 +3146,11 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, ve
 			// branch. The batch still reports success and the head stays where it is, so the
 			// count has to be visible - above the head only, like the skip loop of the
 			// canonical import path.
-			if head := bc.CurrentBlock(); head != nil && it.chain[stored-1].NumberU64() > head.Number.Uint64() {
+			if before != nil && it.chain[stored-1].NumberU64() > before.Number.Uint64() {
 				blockKnownNotAdoptedMeter.Mark(1)
 			}
 			log.Warn("Batch is already imported but does not beat the head",
-				"head", bc.CurrentBlock().Number, "batch", it.chain[stored-1].Number())
+				"head", before.Number, "batch", it.chain[stored-1].Number())
 		}
 		if stored < len(it.chain) {
 			// Nothing above the stored prefix was looked at yet, and the block the scan stopped
