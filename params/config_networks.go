@@ -158,11 +158,11 @@ var (
 			LimitPenaltyEpoch:         5,
 			MinimumSigningTx:          30,
 		},
-		99999999: {
-			MaxMasternodes:            25,
-			MaxProtectorNodes:         3,
-			MaxObserverNodes:          2,
-			SwitchRound:               99999999,
+		31320000: {
+			MaxMasternodes:            108,
+			MaxProtectorNodes:         432,
+			MaxObserverNodes:          99999, // unlimit for now
+			SwitchRound:               31320000,
 			CertThreshold:             0.667,
 			TimeoutSyncThreshold:      3,
 			TimeoutPeriod:             10,
@@ -428,7 +428,7 @@ var (
 		TIPXDCXReceiverDisableBlock: big.NewInt(66825000),
 		EIP1559Block:                big.NewInt(71550000),
 		CancunBlock:                 big.NewInt(71551800),
-		PragueBlock:                 big.NewInt(83600000),
+		PragueBlock:                 nil,
 		OsakaBlock:                  nil,
 		DynamicGasLimitBlock:        big.NewInt(83600000),
 		TIPUpgradeRewardBlock:       big.NewInt(83600000),
