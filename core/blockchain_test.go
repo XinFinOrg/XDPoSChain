@@ -3169,6 +3169,71 @@ func TestGetResultBlockReportsMissingLocalTd(t *testing.T) {
 	}
 }
 
+// TestGetResultBlockRebuildNeedsTheChainMutex covers the import the pruned-ancestor
+// branch of getResultBlock runs. Those ancestors are executed, the head they produce is
+// adopted and a gap block among them refreshes the masternode set, so the segment goes
+// in under the chain mutex every other import entry point takes. ClosableMutex.TryLock
+// reads the mutex rather than testing it, so an import already running does not fail the
+// rebuild - it makes it wait, and the errChainStopped the guard pairs with is what a
+// chain stopped during that wait reports.
+func TestGetResultBlockRebuildNeedsTheChainMutex(t *testing.T) {
+	chain, blocks, engine, genDb := newMissingTdChain(t, 4, 3) // head at #3, #4 is unknown
+	head := chain.CurrentBlock()
+
+	// A competitor above a side block this node stored without its state, which is the
+	// storage ValidateBody reports the pruned ancestor for. The total difficulty written
+	// with it is the head's own, so the segment weighs as much as the head the way a
+	// competing chain that has caught up does; the blocks are valid children of it.
+	side, _ := GenerateChain(params.TestChainConfig, blocks[2], engine, genDb, 1, func(i int, b *BlockGen) {
+		// A different coinbase keeps the side block from reproducing a canonical child.
+		b.SetCoinbase(common.Address{2})
+	})
+	competitor, _ := GenerateChain(params.TestChainConfig, side[0], engine, genDb, 1, nil)
+	localTd := chain.GetTd(head.Hash(), head.Number.Uint64())
+	if localTd == nil {
+		t.Fatal("precondition: the head's total difficulty is not readable")
+	}
+	if err := chain.writeBlockWithoutState(side[0], localTd); err != nil {
+		t.Fatalf("failed to store the side block: %v", err)
+	}
+	if chain.HasFullState(side[0]) {
+		t.Fatal("precondition: the stored side block comes with its state")
+	}
+
+	// An import running at the same time holds the chain mutex, and the rebuild waits
+	// for it instead of writing the chain beside it.
+	chain.chainmu.MustLock()
+	done := make(chan error, 1)
+	go func() {
+		_, err := chain.getResultBlock(competitor[0], false)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		chain.chainmu.Unlock()
+		t.Fatalf("the rebuild finished although the chain mutex was held: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if h := chain.CurrentBlock(); h.Hash() != head.Hash() {
+		chain.chainmu.Unlock()
+		t.Fatalf("unexpected head: have #%d [%x..] want the unchanged #%d", h.Number.Uint64(), h.Hash().Bytes()[:4], head.Number.Uint64())
+	}
+	if chain.HasFullState(side[0]) {
+		chain.chainmu.Unlock()
+		t.Fatal("the segment was imported although the chain mutex was held")
+	}
+	chain.chainmu.Unlock()
+
+	// With the mutex free the waiting rebuild goes on, and the segment it imports takes
+	// over the head.
+	if err := <-done; err != nil {
+		t.Fatalf("failed to rebuild the pruned segment: %v", err)
+	}
+	if h := chain.CurrentBlock(); h.Hash() != side[0].Hash() {
+		t.Fatalf("unexpected head: have #%d [%x..] want the imported #%d", h.Number.Uint64(), h.Hash().Bytes()[:4], side[0].NumberU64())
+	}
+}
+
 // TestWriteBlockWithStateReportsMissingLocalTd covers the same guard on the stateful
 // insertion path: a child of a recently executed side block can still be weighed against
 // that parent, while the canonical head's total difficulty is the one that cannot be read,
