@@ -1651,13 +1651,23 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 	}
 	// For XDPoS, the header verification of an epoch-switch block reads the
 	// snapshot stored at its gap block, and that snapshot is only written while
-	// the gap block itself is being executed (UpdateMasternodes). VerifyHeaders
-	// verifies the whole batch up-front (its results channel is fully buffered),
-	// so it would race ahead and try to verify the epoch-switch block before the
-	// gap block in the same batch has been executed, failing to find the snapshot.
-	// Split the batch right after each gap block so the gap block is executed -
-	// and its snapshot stored - before the following blocks are verified.
-	for _, segment := range d.splitBlocksAtGap(blocks) {
+	// the gap block itself is being executed (UpdateMasternodes); the v1
+	// validators check reads the state of the block before the epoch switch as
+	// well, and a block's state exists only once it has been executed.
+	// VerifyHeaders verifies the whole batch up-front (its results channel is
+	// fully buffered), so it would race ahead and try to verify the epoch-switch
+	// block before the gap block - or the block before it - in the same batch has
+	// been executed, failing to find the snapshot or the state. Split the batch
+	// so both are executed and written before the following blocks are verified.
+	//
+	// "Up-front" is XDPoS.VerifyHeaders: it buffers the results channel for the
+	// whole batch and the engine feeds every header into it before InsertChain
+	// has executed the first block of that batch. Only batches that come through
+	// here are split, so a batch handed to InsertChain from anywhere else - the
+	// admin import, XDC import-chain - can still hold a checkpoint and its
+	// parent, and a checkpoint on a fork keeps its parent's state out of reach
+	// however the batch is split.
+	for _, segment := range d.splitBlocksForVerification(blocks) {
 		if index, err := d.blockchain.InsertChain(segment); err != nil {
 			if index < len(segment) {
 				log.Debug("Downloaded item processing failed", "number", segment[index].Number(), "hash", segment[index].Hash(), "err", err)
@@ -1681,31 +1691,57 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 	return nil
 }
 
-// splitBlocksAtGap splits a contiguous batch of blocks into segments that each
-// end on a gap block (a block at offset Epoch-Gap within its epoch). The
-// snapshot used to verify the following epoch-switch block is stored when the
-// gap block is executed, so inserting one segment at a time guarantees the gap
-// block's snapshot exists before the next segment's headers are verified. For
-// non-XDPoS chains (or when there is nothing to split) the whole batch is
+// splitBlocksForVerification splits a contiguous batch of blocks into segments
+// that never leave a block of the segment depending on another block of the same
+// segment having been executed.
+//
+// A gap block (a block at offset Epoch-Gap within its epoch) writes the snapshot
+// the epoch-switch block's verification reads, and the v1 validators check of an
+// epoch-switch block reads the state of the block before it, which is written
+// when that block is executed. Inserting one segment at a time therefore
+// guarantees both are in place before the next segment's headers are verified.
+// The batch is cut right after every gap block and right before every
+// epoch-switch block; the latter applies to any schedule, since the v1
+// validators check runs on the epoch switches whatever the gap offset is. It is
+// not narrowed to the blocks below V2.SwitchBlock: doing so would only save one
+// InsertChain per epoch on the v2 side, where the header check reads the snapshot
+// of the gap block and not the state of the block before it, and that is not worth
+// a version test in a splitter whose other cut is version-blind as well.
+// For non-XDPoS chains (or when there is nothing to split) the whole batch is
 // returned as a single segment.
-func (d *Downloader) splitBlocksAtGap(blocks []*types.Block) [][]*types.Block {
+func (d *Downloader) splitBlocksForVerification(blocks []*types.Block) [][]*types.Block {
 	cfg := d.blockchain.Config()
 	if cfg == nil || cfg.XDPoS == nil || len(blocks) <= 1 {
 		return [][]*types.Block{blocks}
 	}
 	epoch, gap := cfg.XDPoS.Epoch, cfg.XDPoS.Gap
-	if epoch == 0 || gap == 0 || gap >= epoch {
+	if epoch == 0 {
 		return [][]*types.Block{blocks}
 	}
 
 	var segments [][]*types.Block
 	start := 0
 	for i, block := range blocks {
-		// Cut the batch right after each gap block, but never after the very last
-		// block (that would just create an empty trailing segment).
-		if block.NumberU64()%epoch == epoch-gap && i < len(blocks)-1 {
+		number := block.NumberU64()
+		// Cut right after each gap block, but never after the very last block
+		// (that would just create an empty trailing segment). A schedule without
+		// a usable offset (Gap 0, or Gap >= Epoch) has no gap block at all, and
+		// this cut does not make one: the fallback that would read it walks back
+		// an unusable number of steps and UpdateM1 never fires on such a
+		// schedule, so this cut only keeps the epoch-switch cut below from
+		// costing anything there.
+		if gap != 0 && gap < epoch && number%epoch == epoch-gap && i < len(blocks)-1 {
 			segments = append(segments, blocks[start:i+1])
 			start = i + 1
+			continue
+		}
+		// Cut right before each epoch-switch block, so the block before it - the
+		// state the v1 validators check reads - is executed before its header is
+		// verified. This one cuts before the last block as well: its parent is in
+		// the same batch.
+		if i > start && number%epoch == 0 {
+			segments = append(segments, blocks[start:i])
+			start = i
 		}
 	}
 	return append(segments, blocks[start:])
