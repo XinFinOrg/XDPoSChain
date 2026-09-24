@@ -17,13 +17,20 @@
 package bind_test
 
 import (
+	"context"
+	"math/big"
 	"testing"
+	"time"
 
 	bindv1 "github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
+	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind/backends"
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind/v2"
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind/v2/internal/contracts/events"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/ethclient/simulated"
+	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
 // This file is the only carrier of the cases pinning the event signature
@@ -86,5 +93,119 @@ func TestEventSignatureErrorsAreReExportedByV1Bind(t *testing.T) {
 	if bindv1.ErrEventSignatureMismatch != bind.ErrEventSignatureMismatch {
 		t.Fatalf("ErrEventSignatureMismatch differs: %v (%p) in accounts/abi/bind, %v (%p) in accounts/abi/bind/v2",
 			bindv1.ErrEventSignatureMismatch, bindv1.ErrEventSignatureMismatch, bind.ErrEventSignatureMismatch, bind.ErrEventSignatureMismatch)
+	}
+}
+
+var watchTestAddr = crypto.PubkeyToAddress(testKey.PublicKey)
+
+// watchTestBackend builds the simulated backend the way the other tests of this
+// package do (see util_test.go). The upstream case of TestWatchEventsIgnoreMismatch
+// lives in accounts/abi/bind/v2/lib_test.go, which this repository does not carry;
+// the backend construction and the helper names are what differs from upstream.
+func watchTestBackend() *backends.SimulatedBackend {
+	config := *params.TestXDPoSMockChainConfig
+	return backends.NewXDCSimulatedBackend(
+		types.GenesisAlloc{
+			watchTestAddr: {Balance: big.NewInt(100000000000000000)},
+		},
+		10000000,
+		&config,
+	)
+}
+
+func watchTestDeployer(backend simulated.Client) bind.DeployFn {
+	chainId, _ := backend.ChainID(context.Background())
+	return bind.DefaultDeployer(bind.NewKeyedTransactor(testKey, chainId), backend)
+}
+
+func watchTestTxAuth() *bind.TransactOpts {
+	signer := types.LatestSigner(params.AllDevChainProtocolChanges)
+	return &bind.TransactOpts{
+		From:  watchTestAddr,
+		Nonce: nil,
+		Signer: func(address common.Address, tx *types.Transaction) (*types.Transaction, error) {
+			signature, err := crypto.Sign(signer.Hash(tx).Bytes(), testKey)
+			if err != nil {
+				return nil, err
+			}
+			signedTx, err := tx.WithSignature(signer, signature)
+			if err != nil {
+				return nil, err
+			}
+			return signedTx, nil
+		},
+		Context: context.Background(),
+	}
+}
+
+// TestWatchEventsIgnoreMismatch checks that a log whose event signature does not
+// match is skipped instead of ending the subscription. Nodes and proxies do hand
+// out such logs, and one of them must not tear down everything the subscriber has
+// set up; the subscription has to live on and deliver the next matching log.
+func TestWatchEventsIgnoreMismatch(t *testing.T) {
+	backend := watchTestBackend()
+	defer backend.Close()
+
+	deploymentParams := &bind.DeploymentParams{
+		Contracts: []*bind.MetaData{&events.CMetaData},
+	}
+	res, err := bind.LinkAndDeploy(deploymentParams, watchTestDeployer(backend.Client()))
+	if err != nil {
+		t.Fatalf("error deploying contract for testing: %v", err)
+	}
+	backend.Commit()
+
+	c := events.NewC()
+	instance := c.Instance(backend, res.Addresses[events.CMetaData.ID])
+
+	newCBasic1Ch := make(chan *events.CBasic1, 10)
+	watchOpts := &bind.WatchOpts{Context: context.Background()}
+
+	// The first log handed to the loop is reported as a signature mismatch, as a
+	// foreign log would be; the ones after it are unpacked for real.
+	mismatchSimulated := false
+	unpackWithMismatch := func(log *types.Log) (*events.CBasic1, error) {
+		if !mismatchSimulated {
+			mismatchSimulated = true
+			return nil, bind.ErrEventSignatureMismatch
+		}
+		return c.UnpackBasic1Event(log)
+	}
+
+	sub, err := bind.WatchEvents(instance, watchOpts, unpackWithMismatch, newCBasic1Ch)
+	if err != nil {
+		t.Fatalf("WatchEvents returned error: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	packedInput := c.PackEmitMulti()
+	tx, err := bind.Transact(instance, watchTestTxAuth(), packedInput)
+	if err != nil {
+		t.Fatalf("failed to send transaction: %v", err)
+	}
+	backend.Commit()
+	if _, err := bind.WaitMined(context.Background(), backend, tx.Hash()); err != nil {
+		t.Fatalf("error waiting for tx to be mined: %v", err)
+	}
+
+	timeout := time.NewTimer(5 * time.Second)
+	e1Count := 0
+	for {
+		select {
+		case ev := <-newCBasic1Ch:
+			e1Count++
+			if e1Count == 1 {
+				// The first log was skipped, so this must be the second basic1 of
+				// EmitMulti; id=1 would mean the mismatching log was forwarded too.
+				if ev == nil || ev.Id == nil || ev.Id.Cmp(big.NewInt(3)) != 0 {
+					t.Fatalf("expected the skipped log to be dropped, got %v", ev)
+				}
+				return
+			}
+		case err := <-sub.Err():
+			t.Fatalf("subscription failed unexpectedly with error: %v", err)
+		case <-timeout.C:
+			t.Fatalf("timeout waiting for events, only got %d", e1Count)
+		}
 	}
 }
