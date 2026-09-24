@@ -160,7 +160,7 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 			tipXDCXReceiverDisable:      big.NewInt(66825000),
 			eip1559Block:                big.NewInt(71550000),
 			cancunBlock:                 big.NewInt(71551800),
-			pragueBlock:                 big.NewInt(83600000),
+			pragueBlock:                 nil,
 			osakaBlock:                  nil,
 			dynamicGasLimitBlock:        big.NewInt(83600000),
 			tipUpgradeRewardBlock:       big.NewInt(83600000),

@@ -478,9 +478,9 @@ func TestHashChainConfigSemanticGoldenVectors(t *testing.T) {
 		want string
 	}{
 		{name: "nil", cfg: nil, want: "99be5efb88ca2013bd8e4eb035fd42d5245468fe9afa70d8ba9c1c419a48c4e8"},
-		{name: "testnet", cfg: params.TestnetChainConfig.Clone(), want: "5254a57c04bb04bdfcdf1b8ecddeb0bd294550f780b79a302a6a8a543298724f"},
+		{name: "testnet", cfg: params.TestnetChainConfig.Clone(), want: "26f0d8c8c5e1a70429ed3d000190b6f57cafece1356cc21beed6ee5b2a6802dd"},
 		{name: "mainnet", cfg: params.XDCMainnetChainConfig.Clone(), want: "9b0ecfced732164016e61836ed57a626be9bffb3df283036e3337811a5feed3b"},
-		{name: "testnet-berlin-drift", cfg: testnetBerlinDrift, want: "eb196a4b80e94217c881da00c17d8ff8eeba898d6b3bb1b565703d475de2290a"},
+		{name: "testnet-berlin-drift", cfg: testnetBerlinDrift, want: "da188df184e73727c421908c2f8d833c89f977e2c0d6f363bdf096a2530a7423"},
 	}
 
 	for _, test := range tests {
