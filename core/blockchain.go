@@ -976,8 +976,10 @@ func (bc *BlockChain) ResetWithGenesisBlock(genesis *types.Block) error {
 // fast block are left intact.
 func (bc *BlockChain) repair(head **types.Block) error {
 	for {
-		// Abort if we've rewound to a head block that does have associated state
-		if (common.RollbackNumber == 0) || ((*head).Number().Uint64() <= common.RollbackNumber) {
+		// Abort if we've rewound to a head block that does have associated state.
+		// A negative RollbackNumber is an offset from the current head and is
+		// only resolved once the chain is open, so it does not bound the repair.
+		if (common.RollbackNumber <= 0) || ((*head).Number().Uint64() <= uint64(common.RollbackNumber)) {
 			if bc.HasState((*head).Root()) {
 				log.Info("Rewound blockchain to past state", "number", (*head).Number(), "hash", (*head).Hash())
 				engine, ok := bc.Engine().(*XDPoS.XDPoS)

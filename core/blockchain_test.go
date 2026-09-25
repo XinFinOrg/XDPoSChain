@@ -605,7 +605,7 @@ func TestNewBlockChainRepairsMissingHeadStateRespectsRollbackTarget(t *testing.T
 	rawdb.DeleteLegacyTrieNode(db, head.Root())
 
 	prevRollback := common.RollbackNumber
-	common.RollbackNumber = target.NumberU64()
+	common.RollbackNumber = int64(target.NumberU64())
 	t.Cleanup(func() {
 		common.RollbackNumber = prevRollback
 	})

@@ -850,10 +850,10 @@ var (
 		Usage:    "Delete all bad blocks in the database",
 		Category: flags.MiscCategory,
 	}
-	SetHeadFlag = &cli.Uint64Flag{
+	SetHeadFlag = &cli.StringFlag{
 		Name:     "set-head",
-		Usage:    "Rollback chain to block number",
-		Value:    0,
+		Usage:    "Rollback chain to a block number (decimal or 0x-prefixed hex), or to N blocks before the current head when negative (e.g. -1000)",
+		Value:    "0",
 		Category: flags.MiscCategory,
 	}
 	AnnounceTxsFlag = &cli.BoolFlag{
@@ -1504,6 +1504,68 @@ func SetXDCXConfig(ctx *cli.Context, cfg *XDCx.Config, XDCDataDir string) {
 	log.Info("Set XDCX config", "DataDir", cfg.DataDir, "DBName", cfg.DBName)
 }
 
+// parseSetHead parses the value of the --set-head flag. It accepts an absolute
+// block number in decimal or 0x-prefixed hexadecimal, and a negative value
+// stating how many blocks to roll back from the current head. Octal and binary
+// literals, leading zeroes and a "+" sign are rejected on purpose: the flag is
+// set by hand during rare recovery work, so the accepted input should have
+// exactly one reading. A sign is only recognised as the very first character of
+// the value; signs after the 0x prefix are rejected rather than handed to
+// strconv.ParseInt, which accepts them and would give "0x-5" a second reading.
+func parseSetHead(value string) (int64, error) {
+	if value == "" {
+		return 0, errors.New("empty value")
+	}
+	number, negative := value, false
+	if number[0] == '-' {
+		number, negative = number[1:], true
+	} else if number[0] == '+' {
+		return 0, errors.New(`unexpected "+" sign, use a negative value to roll back from the current head`)
+	}
+	if number == "" {
+		return 0, errors.New("no digits after the sign")
+	}
+	// Only a single leading sign is allowed, otherwise "-5" would flip to "+5".
+	if number[0] == '+' || number[0] == '-' {
+		return 0, errors.New("unexpected second sign")
+	}
+	digits, base := number, 10
+	switch {
+	case len(number) >= 2 && number[0] == '0' && (number[1] == 'x' || number[1] == 'X'):
+		digits, base = number[2:], 16
+	case len(number) > 1 && number[0] == '0':
+		return 0, errors.New("leading zeroes are not allowed")
+	}
+	if digits == "" {
+		return 0, errors.New("no digits after the hex prefix")
+	}
+	// Validate the digits here instead of leaving it to strconv.ParseInt: it
+	// accepts a leading sign whatever the base is, so "0x-5" would come back as
+	// -5 and "-0x-5" would flip back to +5, giving the flag a second reading.
+	for i := 0; i < len(digits); i++ {
+		c := digits[i]
+		if c >= '0' && c <= '9' {
+			continue
+		}
+		if base == 16 && ((c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			continue
+		}
+		return 0, errors.New("not a decimal or 0x-prefixed hexadecimal block number")
+	}
+	parsed, err := strconv.ParseInt(digits, base, 64)
+	if err != nil {
+		var numErr *strconv.NumError
+		if errors.As(err, &numErr) && errors.Is(numErr.Err, strconv.ErrRange) {
+			return 0, errors.New("block number out of range")
+		}
+		return 0, errors.New("not a decimal or 0x-prefixed hexadecimal block number")
+	}
+	if negative {
+		parsed = -parsed
+	}
+	return parsed, nil
+}
+
 // SetEthConfig applies eth-related command line flags to the config.
 func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	// Avoid conflicting network flags
@@ -1638,10 +1700,15 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		cfg.DeleteAllBadBlocks = true
 	}
 	if ctx.IsSet(SetHeadFlag.Name) {
-		common.RollbackNumber = ctx.Uint64(SetHeadFlag.Name)
-		if common.RollbackNumber == 0 {
-			Fatalf("the flag --%s must be greater than 0", SetHeadFlag.Name)
+		value := ctx.String(SetHeadFlag.Name)
+		rollback, err := parseSetHead(value)
+		if err != nil {
+			Fatalf("invalid --%s value %q: %v", SetHeadFlag.Name, value, err)
 		}
+		if rollback == 0 {
+			Fatalf("the flag --%s must not be 0 (pass a block number or a negative offset from the current head)", SetHeadFlag.Name)
+		}
+		common.RollbackNumber = rollback
 	}
 
 	// Override any default configs for hard coded networks.

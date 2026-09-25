@@ -257,17 +257,28 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 
 	// Rollback according to SetHeadFlag
 	if common.RollbackNumber != 0 {
-		target := common.RollbackNumber
+		rollback := common.RollbackNumber
 		common.RollbackNumber = 0
 		currentBlock := eth.blockchain.CurrentBlock()
 		if currentBlock == nil {
-			return nil, fmt.Errorf("not find current block when rollback to %d", common.RollbackNumber)
+			return nil, fmt.Errorf("not find current block when rollback to %d", rollback)
 		}
 		currentNumber := currentBlock.Number.Uint64()
+		var target uint64
+		if rollback > 0 {
+			target = uint64(rollback)
+		} else {
+			// A negative value is an offset counting backwards from the current head.
+			offset := uint64(-rollback)
+			if offset > currentNumber {
+				return nil, fmt.Errorf("can't rollback %d blocks from current %d", offset, currentNumber)
+			}
+			target = currentNumber - offset
+		}
 		if target > currentNumber {
 			return nil, fmt.Errorf("can't rollback to %d which is greater than current %d", target, currentNumber)
 		}
-		log.Warn("Start rollback", "target", target, "current", currentNumber)
+		log.Warn("Start rollback", "requested", rollback, "target", target, "current", currentNumber)
 		err := eth.blockchain.SetHead(target)
 		if err != nil {
 			return nil, fmt.Errorf("fail to rollback: target=%d, current=%d, err: %w", target, currentNumber, err)

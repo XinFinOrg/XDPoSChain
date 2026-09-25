@@ -34,7 +34,10 @@ const (
 var (
 	Enable0xPrefix = true
 
-	RollbackNumber = uint64(0)
+	// RollbackNumber is the rollback target taken from the --set-head flag: a
+	// positive value is an absolute block number, a negative value is an offset
+	// counting backwards from the current head, and 0 disables the rollback.
+	RollbackNumber = int64(0)
 
 	StoreRewardFolder string
 
