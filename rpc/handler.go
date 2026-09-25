@@ -31,6 +31,19 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
+// teardownResponseGrace is how long a torn down connection gives its in-flight
+// calls to deliver their response before their contexts are cancelled. The
+// read side of a connection can be gone while the peer is still reading the
+// response to a request it already sent, which is what TestServerShortLivedConn
+// checks, so cancelling right away would drop a response that can still be
+// delivered. A teardown this node initiated does not wait for it, see
+// closeAbort.
+//
+// The value is the one go-ethereum used for its shutdown grace period
+// (stopPendingRequestTimeout, removed in c145589f25 because it did not help
+// slow handlers); a call that takes longer than this still gets cancelled.
+const teardownResponseGrace = 3 * time.Second
+
 // handler handles JSON-RPC messages. There is one handler per connection. Note that
 // handler is not safe for concurrent use. Message handling never blocks indefinitely
 // because RPCs are processed on background goroutines launched by handler.
@@ -58,7 +71,7 @@ type handler struct {
 	respWait             map[string]*requestOp          // active client requests
 	clientSubs           map[string]*ClientSubscription // active client subscriptions
 	callWG               sync.WaitGroup                 // pending call goroutines
-	rootCtx              context.Context                // canceled by close()
+	rootCtx              context.Context                // canceled by close() and closeAbort()
 	cancelRoot           func()                         // cancel function for rootCtx
 	conn                 jsonWriter                     // where responses will be sent
 	log                  log.Logger
@@ -312,11 +325,60 @@ func (h *handler) handleNonBatchCall(cp *callProc, msg *jsonrpcMessage) {
 }
 
 // close cancels all requests except for inflightReq and waits for
-// call goroutines to shut down.
+// call goroutines to shut down. The contexts of the calls are cancelled only
+// after they returned, so a method that is still producing a response is not
+// interrupted: single requests are served through this path (see
+// serveSingleRequest) and must not be aborted mid-flight.
 func (h *handler) close(err error, inflightReq *requestOp) {
 	h.cancelAllRequests(err, inflightReq)
 	h.callWG.Wait()
 	h.cancelRoot()
+	h.cancelServerSubscriptions(err)
+}
+
+// closeAbort cancels all requests except for inflightReq and shuts the call
+// goroutines down. The contexts of the calls are cancelled once they had the
+// chance to deliver their response, so a call that only returns once its
+// context is done cannot block the teardown of the connection.
+//
+// grace bounds that chance: it is zero for a teardown this node initiated
+// (Client.Close, a reconnect), where the connection is gone and no response
+// can be delivered anymore, so the calls are cancelled right away. A read
+// error passes teardownResponseGrace instead, because the peer may have closed
+// only its write half and still receives the responses.
+//
+// A call that ignores cancellation still holds the connection until it
+// returns: bounding that wait needs the call itself to respect cancellation,
+// which is tracked separately.
+func (h *handler) closeAbort(err error, inflightReq *requestOp, grace time.Duration) {
+	h.cancelAllRequests(err, inflightReq)
+	if grace <= 0 {
+		h.cancelRoot()
+		h.callWG.Wait()
+		h.cancelServerSubscriptions(err)
+		return
+	}
+	// Wait for the call goroutines concurrently with the grace period and with
+	// the closure of the connection. cancelRoot can only unblock a call that
+	// observes its context, so it must not run before the calls had the chance
+	// to deliver their response.
+	done := make(chan struct{})
+	go func() {
+		h.callWG.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-done:
+		// Every call returned, its response was written.
+	case <-h.conn.closed():
+		// The connection was closed locally (Server.Stop), a response written
+		// from now on would not reach the peer anymore.
+	case <-timer.C:
+	}
+	h.cancelRoot()
+	<-done
 	h.cancelServerSubscriptions(err)
 }
 

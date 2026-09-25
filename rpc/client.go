@@ -122,8 +122,19 @@ func (c *Client) newClientConn(conn ServerCodec) *clientConn {
 	return &clientConn{conn, handler}
 }
 
-func (cc *clientConn) close(err error, inflightReq *requestOp) {
-	cc.handler.close(err, inflightReq)
+// close tears down the connection: the in-flight calls are aborted first and
+// the codec is closed last. The read side of the connection can be gone while
+// a request that was already read still has to deliver its response, which is
+// what TestServerShortLivedConn checks, so the codec must stay open until
+// handler.closeAbort returned. The socket is therefore released only once the
+// calls finished, even when a call ignores cancellation.
+//
+// grace is handed to handler.closeAbort: it is zero when this node tears the
+// connection down (Client.Close, a reconnect) and teardownResponseGrace when
+// the read side died, where the peer may still read the response to a request
+// it already sent.
+func (cc *clientConn) close(err error, inflightReq *requestOp, grace time.Duration) {
+	cc.handler.closeAbort(err, inflightReq, grace)
 	cc.codec.close()
 }
 
@@ -668,7 +679,7 @@ func (c *Client) dispatch(codec ServerCodec) {
 	defer func() {
 		close(c.closing)
 		if reading {
-			conn.close(ErrClientQuit, nil)
+			conn.close(ErrClientQuit, nil, 0)
 			c.drainRead()
 		}
 		close(c.didClose)
@@ -692,7 +703,9 @@ func (c *Client) dispatch(codec ServerCodec) {
 
 		case err := <-c.readErr:
 			conn.handler.log.Debug("RPC connection read error", "err", err)
-			conn.close(err, lastOp)
+			// The read side is gone, but the write side may still be usable:
+			// the in-flight calls keep their chance to deliver their response.
+			conn.close(err, lastOp, teardownResponseGrace)
 			reading = false
 
 		// Reconnect:
@@ -704,7 +717,7 @@ func (c *Client) dispatch(codec ServerCodec) {
 				// In those cases the caller will notice first and reconnect. Closing the
 				// handler terminates all waiting requests (closing op.resp) except for
 				// lastOp, which will be transferred to the new handler.
-				conn.close(errClientReconnected, lastOp)
+				conn.close(errClientReconnected, lastOp, 0)
 				c.drainRead()
 			}
 			go c.read(newcodec)
