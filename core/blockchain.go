@@ -1634,8 +1634,13 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 					if chosen < lastWrite+TriesInMemory && bc.gcproc >= 2*bc.cacheConfig.TrieTimeLimit {
 						log.Info("State in memory for too long, committing", "time", bc.gcproc, "allowance", bc.cacheConfig.TrieTimeLimit, "optimum", float64(chosen-lastWrite)/TriesInMemory)
 					}
-					// Flush an entire trie and restart the counters
-					bc.triedb.Commit(header.Root, true)
+					// Flush an entire trie and restart the counters. A refusal is logged
+					// rather than returned: the block is already on disk, and what is
+					// collected here is an older trie rather than its state, which
+					// nothing asks for again once lastWrite moves past it.
+					if err := bc.triedb.Commit(header.Root, true); err != nil {
+						log.Error("Failed to flush the trie being collected", "number", chosen, "root", header.Root, "err", err)
+					}
 					lastWrite = chosen
 					bc.gcproc = 0
 					if tradingTrieDb != nil && lendingTrieDb != nil {
@@ -1643,8 +1648,12 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 						author, _ := bc.Engine().Author(b.Header())
 						oldTradingRoot, _ := tradingService.GetTradingStateRoot(b, author)
 						oldLendingRoot, _ := lendingService.GetLendingStateRoot(b, author)
-						tradingTrieDb.Commit(oldTradingRoot, true)
-						lendingTrieDb.Commit(oldLendingRoot, true)
+						if err := tradingTrieDb.Commit(oldTradingRoot, true); err != nil {
+							log.Error("Failed to flush the trading state trie", "number", chosen, "root", oldTradingRoot, "err", err)
+						}
+						if err := lendingTrieDb.Commit(oldLendingRoot, true); err != nil {
+							log.Error("Failed to flush the lending state trie", "number", chosen, "root", oldLendingRoot, "err", err)
+						}
 					}
 				}
 			}
