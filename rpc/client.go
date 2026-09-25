@@ -683,6 +683,11 @@ func (c *Client) dispatch(codec ServerCodec) {
 		if reading {
 			conn.close(ErrClientQuit, nil)
 			c.drainRead()
+		} else if mustFailAfterReadErr(connErr, lastOp) {
+			// The read loop already died, so fail the request that conn.close
+			// left in flight instead of leaving the caller waiting. connErr is
+			// the read error that stopped the loop and is never nil here.
+			conn.handler.failRequestOp(lastOp, connErr)
 		}
 		close(c.didClose)
 	}()

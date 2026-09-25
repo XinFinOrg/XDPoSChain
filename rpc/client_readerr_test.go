@@ -28,18 +28,23 @@ import (
 	"time"
 )
 
-// errTestRead is the read error reported by readErrDuringWriteCodec and
-// readErrWriteFailCodec.
+// errTestRead is the read error reported by the test codecs below.
 var errTestRead = errors.New("test read error")
 
 // errTestWrite is the write error used to force a reconnect.
 var errTestWrite = errors.New("test write error")
 
-// readErrDuringWriteCodec is a ServerCodec which fails the read while the caller
-// is still blocked inside writeJSON. It reproduces the interleaving where
-// dispatch handles the read error before the pending send is reported, and the
-// write then succeeds anyway.
-type readErrDuringWriteCodec struct {
+// readErrCodecBase provides the synchronization that the codecs below share: a
+// writeStarted signal that readBatch waits for, so that a read error is only
+// reported once the peer has started to write, and a connClosed signal that
+// close reports before it tears the connection down. clientConn.close runs
+// handler.close first, so a connClosed signal means the handler of the failed
+// connection is closed, not that dispatch has recorded the error: that happens
+// after conn.close returns. Waiting for the signal is still enough, because the
+// unbuffered channels a caller can synchronize on afterwards (reqInit,
+// reconnected, close) are received in dispatch's select, which runs after those
+// assignments.
+type readErrCodecBase struct {
 	ServerCodec
 
 	writeStartedOnce sync.Once
@@ -49,33 +54,51 @@ type readErrDuringWriteCodec struct {
 	connClosed   chan struct{}
 }
 
-func newReadErrDuringWriteCodec(codec ServerCodec) *readErrDuringWriteCodec {
-	return &readErrDuringWriteCodec{
+func newReadErrCodecBase(codec ServerCodec) readErrCodecBase {
+	return readErrCodecBase{
 		ServerCodec:  codec,
 		writeStarted: make(chan struct{}),
 		connClosed:   make(chan struct{}),
 	}
 }
 
-// readBatch reports a read error, but not before the peer has started to write.
-func (c *readErrDuringWriteCodec) readBatch() ([]*jsonrpcMessage, bool, error) {
+// readBatch is the read method of every codec embedding this base: it reports
+// the read error, but not before the peer has started to write. It takes
+// precedence over the readBatch of the embedded ServerCodec, which would
+// otherwise be used to read the next message.
+func (c *readErrCodecBase) readBatch() ([]*jsonrpcMessage, bool, error) {
 	<-c.writeStarted
 	return nil, false, errTestRead
 }
 
-// writeJSON reports success, but only after the connection has been torn down,
-// which means dispatch has already handled the read error reported above.
-func (c *readErrDuringWriteCodec) writeJSON(ctx context.Context, msg interface{}, isError bool) error {
+// signalWriteStarted reports that the peer has started to write.
+func (c *readErrCodecBase) signalWriteStarted() {
 	c.writeStartedOnce.Do(func() { close(c.writeStarted) })
-	<-c.connClosed
-	return nil
 }
 
-// close is called by clientConn.close, which runs handler.close first, so
-// signalling here means dispatch has finished handling the read error.
-func (c *readErrDuringWriteCodec) close() {
+func (c *readErrCodecBase) close() {
 	c.closeOnce.Do(func() { close(c.connClosed) })
 	c.ServerCodec.close()
+}
+
+// readErrDuringWriteCodec is a ServerCodec which fails the read while the caller
+// is still blocked inside writeJSON. It reproduces the interleaving where
+// dispatch handles the read error before the pending send is reported, and the
+// write then succeeds anyway.
+type readErrDuringWriteCodec struct {
+	readErrCodecBase
+}
+
+func newReadErrDuringWriteCodec(codec ServerCodec) *readErrDuringWriteCodec {
+	return &readErrDuringWriteCodec{readErrCodecBase: newReadErrCodecBase(codec)}
+}
+
+// writeJSON reports success, but only after the read error has reached the
+// connection, so that the pending send is reported once dispatch has handled it.
+func (c *readErrDuringWriteCodec) writeJSON(ctx context.Context, msg interface{}, isError bool) error {
+	c.signalWriteStarted()
+	<-c.connClosed
+	return nil
 }
 
 // TestCallFailsWhenReadErrorPrecedesWrite checks that a call whose write
@@ -115,41 +138,19 @@ func TestCallFailsWhenReadErrorPrecedesWrite(t *testing.T) {
 // readErrWriteFailCodec fails the read and then fails the write, so that the
 // pending request is retried on a reconnected connection.
 type readErrWriteFailCodec struct {
-	ServerCodec
-
-	writeStartedOnce sync.Once
-	closeOnce        sync.Once
-
-	writeStarted chan struct{}
-	connClosed   chan struct{}
+	readErrCodecBase
 }
 
 func newReadErrWriteFailCodec(codec ServerCodec) *readErrWriteFailCodec {
-	return &readErrWriteFailCodec{
-		ServerCodec:  codec,
-		writeStarted: make(chan struct{}),
-		connClosed:   make(chan struct{}),
-	}
-}
-
-func (c *readErrWriteFailCodec) readBatch() ([]*jsonrpcMessage, bool, error) {
-	<-c.writeStarted
-	return nil, false, errTestRead
+	return &readErrWriteFailCodec{readErrCodecBase: newReadErrCodecBase(codec)}
 }
 
 // writeJSON waits for the read error to reach the connection before failing the
 // write, so that dispatch establishes the new connection afterwards.
 func (c *readErrWriteFailCodec) writeJSON(ctx context.Context, msg interface{}, isError bool) error {
-	c.writeStartedOnce.Do(func() { close(c.writeStarted) })
+	c.signalWriteStarted()
 	<-c.connClosed
 	return errTestWrite
-}
-
-// close is called by clientConn.close, which runs handler.close first, so
-// signalling here means dispatch has finished handling the read error.
-func (c *readErrWriteFailCodec) close() {
-	c.closeOnce.Do(func() { close(c.connClosed) })
-	c.ServerCodec.close()
 }
 
 // responseCodec answers the first request it sees with "ok".
@@ -243,19 +244,15 @@ func TestCallSurvivesReconnectAfterReadError(t *testing.T) {
 
 // notifyReadErrCodec fails the read immediately and reports any later write as
 // successful, so that a notification sent on the dead connection completes its
-// write without a reconnect.
+// write without a reconnect. It embeds readErrCodecBase for the connClosed
+// signal only and needs no writeStarted gate, because its read error is
+// reported before any write can start.
 type notifyReadErrCodec struct {
-	ServerCodec
-
-	closeOnce  sync.Once
-	connClosed chan struct{}
+	readErrCodecBase
 }
 
 func newNotifyReadErrCodec(codec ServerCodec) *notifyReadErrCodec {
-	return &notifyReadErrCodec{
-		ServerCodec: codec,
-		connClosed:  make(chan struct{}),
-	}
+	return &notifyReadErrCodec{readErrCodecBase: newReadErrCodecBase(codec)}
 }
 
 func (c *notifyReadErrCodec) readBatch() ([]*jsonrpcMessage, bool, error) {
@@ -267,13 +264,6 @@ func (c *notifyReadErrCodec) readBatch() ([]*jsonrpcMessage, bool, error) {
 func (c *notifyReadErrCodec) writeJSON(ctx context.Context, msg interface{}, isError bool) error {
 	<-c.connClosed
 	return nil
-}
-
-// close is called by clientConn.close, which runs handler.close first, so
-// signalling here means dispatch has finished handling the read error.
-func (c *notifyReadErrCodec) close() {
-	c.closeOnce.Do(func() { close(c.connClosed) })
-	c.ServerCodec.close()
 }
 
 // TestNotifyAfterReadErrorDoesNotPanic checks that a notification sent after the
@@ -344,5 +334,111 @@ func TestCallStartedAfterReadErrorFails(t *testing.T) {
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("call did not return")
+	}
+}
+
+// blockedWriteCodec reports the read error once the write has started and keeps
+// the write blocked until the test releases it.
+type blockedWriteCodec struct {
+	readErrCodecBase
+
+	releaseWrite chan struct{}
+}
+
+func newBlockedWriteCodec(codec ServerCodec) *blockedWriteCodec {
+	c := &blockedWriteCodec{readErrCodecBase: newReadErrCodecBase(codec)}
+	c.releaseWrite = make(chan struct{})
+	return c
+}
+
+func (c *blockedWriteCodec) writeJSON(ctx context.Context, msg interface{}, isError bool) error {
+	c.signalWriteStarted()
+	<-c.releaseWrite
+	return nil
+}
+
+// TestClientCloseFailsUnansweredRequest checks that closing a client while a
+// request is still being written does not leave that request waiting forever:
+// Close documents that it aborts in-flight requests.
+func TestClientCloseFailsUnansweredRequest(t *testing.T) {
+	p1, p2 := net.Pipe()
+	defer p2.Close()
+
+	codec := newBlockedWriteCodec(NewCodec(p1))
+	client, err := newClient(context.Background(), new(clientConfig), func(context.Context) (ServerCodec, error) {
+		return codec, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+	defer client.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- client.CallContext(ctx, nil, "test_method") }()
+
+	// Wait until dispatch has handled the read error.
+	select {
+	case <-codec.connClosed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("connection was not closed in time")
+	}
+
+	// Close while the write is still blocked: the send completion cannot be
+	// pending in the dispatch select yet, so the close case always wins.
+	closed := make(chan struct{})
+	go func() { client.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("client.Close did not return")
+	}
+
+	// Let the blocked write report success.
+	close(codec.releaseWrite)
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("call succeeded unexpectedly")
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("call was left hanging until its context deadline: %v", err)
+		}
+		// The close path must report the read error that stopped the read loop,
+		// not ErrClientQuit, because that is the reason no response can arrive.
+		if !errors.Is(err, errTestRead) {
+			t.Fatalf("call returned %q, want the read error %q", err, errTestRead)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("call did not return")
+	}
+}
+
+// TestMustFailAfterReadErr checks the conditions under which a request is failed
+// with the read error of a connection whose read loop is already gone.
+func TestMustFailAfterReadErr(t *testing.T) {
+	notification := &requestOp{}
+	unanswered := &requestOp{resp: make(chan []*jsonrpcMessage, 1)}
+	answered := &requestOp{resp: make(chan []*jsonrpcMessage, 1), hadResponse: true}
+
+	tests := []struct {
+		name    string
+		connErr error
+		op      *requestOp
+		want    bool
+	}{
+		{"no read error", nil, unanswered, false},
+		{"no operation", errTestRead, nil, false},
+		{"operation without response channel", errTestRead, notification, false},
+		{"unanswered request", errTestRead, unanswered, true},
+		{"answered request", errTestRead, answered, false},
+	}
+	for _, test := range tests {
+		if got := mustFailAfterReadErr(test.connErr, test.op); got != test.want {
+			t.Errorf("%s: got %v, want %v", test.name, got, test.want)
+		}
 	}
 }
