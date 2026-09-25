@@ -41,6 +41,24 @@ const (
 	headerCacheLimit = 512
 	tdCacheLimit     = 1024
 	numberCacheLimit = 2048
+
+	// rewindSampleInterval is the height multiple at which a chain rewind
+	// reports progress. The trigger is keyed off the absolute block number
+	// rather than off how many blocks this rewind has already deleted, so a
+	// sample always lands on a round height (e.g. ...570,000) no matter where
+	// the rewind started. It is combined with rewindReportInterval as a "height
+	// OR elapsed time" trigger; insertStats.report uses the same shape, but
+	// fires at the end of an import batch instead of on a height.
+	rewindSampleInterval = 10_000
+
+	// rewindReportInterval bounds how long a rewind may stay silent. The bulk
+	// of the progress comes from the per-sample lines; this covers the stretches
+	// where a single sample takes longer than the interval, and any rewound
+	// segment that contains no multiple of rewindSampleInterval at all (a large
+	// rewind can run for hours). Deliberately not reusing statsReportLimit,
+	// which is tuned for the import/export cadence.
+	// Kept in sync with rawdb.sweepReportInterval, which cannot import core.
+	rewindReportInterval = 30 * time.Second
 )
 
 // HeaderChain implements the basic block header chain logic that is shared by
@@ -451,7 +469,19 @@ func (hc *HeaderChain) SetHead(head uint64, updateFn UpdateHeadBlocksCallback, d
 	var (
 		parentHash common.Hash
 		batch      = hc.chainDb.NewBatch()
+
+		start    = time.Now()
+		reported = time.Now()
+		deleted  uint64
+		total    uint64
+
+		// lastDeleted is the deleted counter as of the previous progress line,
+		// used to derive the rate over the reporting interval.
+		lastDeleted uint64
 	)
+	if current := hc.CurrentHeader(); current != nil && current.Number.Uint64() > head {
+		total = current.Number.Uint64() - head
+	}
 	for hdr := hc.CurrentHeader(); hdr != nil && hdr.Number.Uint64() > head; hdr = hc.CurrentHeader() {
 		num := hdr.Number.Uint64()
 
@@ -497,6 +527,53 @@ func (hc *HeaderChain) SetHead(head uint64, updateFn UpdateHeadBlocksCallback, d
 		}
 		rawdb.DeleteCanonicalHash(batch, num)
 
+		// Report progress when the height being deleted is a multiple of
+		// rewindSampleInterval, as well as on a time bound, so a long rewind
+		// never goes silent for long stretches. num is the absolute height, so
+		// samples land on round heights rather than one every 10,000 blocks
+		// counted from the start of the rewind; deleted only feeds the log
+		// fields below.
+		deleted++
+		if num%rewindSampleInterval == 0 || time.Since(reported) >= rewindReportInterval {
+			elapsed := time.Since(start)
+			sinceReport := time.Since(reported)
+			// remaining is the number of loop iterations still to come, i.e. the
+			// heights strictly between num and head. num-head would count the
+			// block just deleted as well, so derive it from total/deleted to stay
+			// consistent with percent and eta.
+			percent, remaining, eta := float64(0), uint64(0), time.Duration(0)
+			if total > 0 {
+				// Left unrounded; the log line rounds it to two decimals.
+				percent = float64(deleted) * 100 / float64(total)
+			}
+			if deleted > 0 && total > deleted {
+				remaining = total - deleted
+				eta = time.Duration(float64(elapsed) * float64(remaining) / float64(deleted))
+			}
+			// Two rates, both as whole blocks/s: since the rewind started, and
+			// since the previous line. eta above is derived from the same average
+			// counter before truncation, so it is not exactly remaining/blk/s(avg);
+			// blk/s(now) is the one that shows IO contention.
+			var avgRate, curRate int64
+			if elapsed > 0 {
+				avgRate = int64(float64(deleted) / elapsed.Seconds())
+			}
+			if sinceReport > 0 {
+				curRate = int64(float64(deleted-lastDeleted) / sinceReport.Seconds())
+			}
+			// percent is passed as a formatted string rather than as a float64
+			// because the terminal handler renders every float64 field with three
+			// decimals; %.2f is what rounds it to the two decimals reported here.
+			// elapsed is rounded to whole seconds so that it reads like eta.
+			log.Info("Rewinding chain", "target", head, "number", num, "deleted", deleted,
+				"remaining", remaining, "percent", fmt.Sprintf("%.2f", percent),
+				"elapsed", common.PrettyDuration(elapsed.Round(time.Second)),
+				"eta", common.PrettyDuration(eta.Round(time.Second)),
+				"blk/s(avg)", avgRate, "blk/s(now)", curRate)
+			reported = time.Now()
+			lastDeleted = deleted
+		}
+
 		// Flush the batch once it grows past the ideal size to bound memory
 		// during very large rewinds (e.g. rolling back tens of thousands of
 		// heights). Note: upstream geth's setHead keeps a single batch for the
@@ -511,6 +588,7 @@ func (hc *HeaderChain) SetHead(head uint64, updateFn UpdateHeadBlocksCallback, d
 			batch.Reset()
 		}
 	}
+
 	// Flush the rewind deletions before scanning for dangling data. Otherwise
 	// the dangling sweep would still observe the just-rewound segment
 	// (head+1..old head) that is only marked for deletion in the batch but not
@@ -519,6 +597,13 @@ func (hc *HeaderChain) SetHead(head uint64, updateFn UpdateHeadBlocksCallback, d
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to rewind block", "error", err)
 	}
+	deleteElapsed := time.Since(start)
+	var avgRate int64
+	if deleteElapsed > 0 {
+		avgRate = int64(float64(deleted) / deleteElapsed.Seconds())
+	}
+	log.Info("Rewound chain", "target", head,
+		"deleted", deleted, "elapsed", common.PrettyDuration(deleteElapsed.Round(time.Second)), "blk/s(avg)", avgRate)
 	// Wipe any dangling/orphaned data left ABOVE the new head. An aborted sync
 	// can leave non-contiguous side-fork blocks (with their canonical markers
 	// and, in archive mode, their state) at heights well above the head. If
@@ -527,9 +612,12 @@ func (hc *HeaderChain) SetHead(head uint64, updateFn UpdateHeadBlocksCallback, d
 	// a stale/bad block. The sweep iterates the header keyspace directly so gaps
 	// between orphaned segments are handled correctly, streaming deletions into
 	// batches that are flushed at ethdb.IdealBatchSize to bound memory.
+	sweepStart := time.Now()
+	log.Info("Cleaning dangling data", "target", head)
 	if err := rawdb.DeleteDanglingHashes(hc.chainDb, head, delFn); err != nil {
 		log.Crit("Failed to rewind block", "error", err)
 	}
+	log.Info("Cleaned dangling data", "target", head, "elapsed", common.PrettyDuration(time.Since(sweepStart).Round(time.Second)))
 	// Clean up bad block records for blocks above the new head. Bad blocks at or
 	// below the new head are kept for debugging and operator review.
 	rawdb.DeleteBadBlocksAbove(hc.chainDb, head)

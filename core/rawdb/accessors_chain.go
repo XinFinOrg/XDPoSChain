@@ -22,6 +22,7 @@ import (
 	"errors"
 	"math/big"
 	"slices"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -82,6 +83,12 @@ func ReadAllHashes(db ethdb.Iteratee, number uint64) []common.Hash {
 	return hashes
 }
 
+// sweepReportInterval bounds how long the dangling-hash sweep may stay silent
+// while it walks the header keyspace. Deliberately kept in sync with
+// core.rewindReportInterval: this package cannot import core, so the value is
+// duplicated with a cross-reference on both sides.
+const sweepReportInterval = 30 * time.Second
+
 // DeleteDanglingHashes removes every header, total-difficulty and canonical-hash
 // entry whose block number is strictly greater than head. It walks the header
 // keyspace directly (rather than scanning contiguous heights), so orphaned
@@ -108,6 +115,14 @@ func DeleteDanglingHashes(db ethdb.KeyValueStore, head uint64, contentFn func(et
 	var (
 		lastNum uint64
 		haveNum bool
+
+		sweepStart = time.Now()
+		reported   = time.Now()
+		scanned    uint64
+
+		// lastScanned is the scanned counter as of the previous progress line,
+		// used to derive the rate over the reporting interval.
+		lastScanned uint64
 	)
 	for it.Next() {
 		key := it.Key()
@@ -137,6 +152,30 @@ func DeleteDanglingHashes(db ethdb.KeyValueStore, head uint64, contentFn func(et
 				return err
 			}
 			batch.Reset()
+		}
+		// Report scan progress, at most once per sweepReportInterval. The line sits
+		// after the flush above so a batch committed in this iteration is already
+		// accounted for, but the counts may still include the current item and
+		// earlier removals that stay buffered in the batch.
+		scanned++
+		if time.Since(reported) >= sweepReportInterval {
+			elapsed := time.Since(sweepStart)
+			sinceReport := time.Since(reported)
+			// Rates are per swept item, not per block: the iterator visits every
+			// orphaned header key, so a height holding side forks counts once per
+			// hash. Both values are whole items/s.
+			var avgRate, curRate int64
+			if elapsed > 0 {
+				avgRate = int64(float64(scanned) / elapsed.Seconds())
+			}
+			if sinceReport > 0 {
+				curRate = int64(float64(scanned-lastScanned) / sinceReport.Seconds())
+			}
+			log.Info("Cleaning dangling data", "at", number, "target", head,
+				"scanned", scanned, "elapsed", common.PrettyDuration(elapsed.Round(time.Second)),
+				"item/s(avg)", avgRate, "item/s(now)", curRate)
+			reported = time.Now()
+			lastScanned = scanned
 		}
 	}
 	return batch.Write()

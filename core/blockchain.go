@@ -785,6 +785,23 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64) error {
 	}
 	defer bc.chainmu.Unlock()
 
+	// Report the header head, not the block head: HeaderChain.SetHead below
+	// walks hc.CurrentHeader down to the target, so the header head is the
+	// height this rewind starts deleting from. During header-first/snap sync
+	// the header head can be ahead of the block head (loadLastState restores
+	// the two markers separately), in which case the block head would
+	// understate the rewound segment -- and can even sit below the target.
+	// rewindFrom carries that height into the completion line below, where it
+	// yields the average rate of the whole rewind.
+	var rewindFrom uint64
+	if current := bc.CurrentHeader(); current != nil {
+		log.Warn("Rewinding chain to target", "target", head, "current", current.Number.Uint64())
+		rewindFrom = current.Number.Uint64()
+	} else {
+		log.Warn("Rewinding chain to target", "target", head)
+	}
+	start := time.Now()
+
 	updateFn := func(db ethdb.KeyValueWriter, header *types.Header) {
 		// Rewind the block chain, ensuring we don't end up with a stateless head block
 		if currentBlock := bc.CurrentBlock(); currentBlock != nil && header.Number.Uint64() < currentBlock.Number.Uint64() {
@@ -860,7 +877,21 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64) error {
 	bc.futureBlocks.Purge()
 	bc.blocksHashCache.Purge()
 
-	return bc.loadLastState()
+	if err := bc.loadLastState(); err != nil {
+		return err
+	}
+	elapsed := time.Since(start)
+	// Average rate over the whole rewind, i.e. the starting height down to the
+	// target. Note that elapsed also covers the dangling sweep, so this sits
+	// below the delete-only rate printed by "Rewound chain" whenever the sweep
+	// takes a while.
+	var avgRate int64
+	if elapsed > 0 && rewindFrom > head {
+		avgRate = int64(float64(rewindFrom-head) / elapsed.Seconds())
+	}
+	log.Info("Chain rewind completed", "target", head, "from", rewindFrom,
+		"elapsed", common.PrettyDuration(elapsed.Round(time.Second)), "blk/s(avg)", avgRate)
+	return nil
 }
 
 // FastSyncCommitHead sets the current head block to the one defined by the hash
