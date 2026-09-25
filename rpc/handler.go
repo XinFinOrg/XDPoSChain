@@ -357,6 +357,23 @@ func (h *handler) cancelAllRequests(err error, inflightReq *requestOp) {
 	}
 }
 
+// failRequestOp fails the given request operation with err, unblocking the
+// caller waiting for its response. The operation must not be registered in
+// respWait anymore, otherwise a later cancelAllRequests could close the same
+// channel again. err must not be nil: a closed op.resp is treated as an
+// answered request, and the caller would index into an empty response batch.
+func (h *handler) failRequestOp(op *requestOp, err error) {
+	// Requests that do not expect a response have no channel to close.
+	if op == nil || op.resp == nil {
+		return
+	}
+	for _, id := range op.ids {
+		delete(h.respWait, string(id))
+	}
+	op.err = err
+	close(op.resp)
+}
+
 func (h *handler) addSubscriptions(nn []*Notifier) {
 	h.subLock.Lock()
 	defer h.subLock.Unlock()

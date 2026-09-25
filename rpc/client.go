@@ -664,12 +664,18 @@ func (c *Client) dispatch(codec ServerCodec) {
 		reqInitLock = c.reqInit // nil while the send lock is held
 		conn        = c.newClientConn(codec)
 		reading     = true
+		connErr     error // read error of the current connection, if any
 	)
 	defer func() {
 		close(c.closing)
 		if reading {
 			conn.close(ErrClientQuit, nil)
 			c.drainRead()
+		} else if lastOp != nil && !lastOp.hadResponse {
+			// The read loop already died, so conn.close kept the in-flight
+			// request for a reconnect that will not happen anymore: fail it
+			// instead of leaving the caller waiting.
+			conn.handler.failRequestOp(lastOp, connErr)
 		}
 		close(c.didClose)
 	}()
@@ -693,6 +699,7 @@ func (c *Client) dispatch(codec ServerCodec) {
 		case err := <-c.readErr:
 			conn.handler.log.Debug("RPC connection read error", "err", err)
 			conn.close(err, lastOp)
+			connErr = err
 			reading = false
 
 		// Reconnect:
@@ -726,6 +733,13 @@ func (c *Client) dispatch(codec ServerCodec) {
 				// Remove response handlers for the last send. When the read loop
 				// goes down, it will signal all other current operations.
 				conn.handler.removeRequestOp(lastOp)
+			} else if connErr != nil && !reading && lastOp != nil && !lastOp.hadResponse {
+				// The read loop died while this request was being written, so
+				// conn.close kept it as the in-flight request for a possible
+				// reconnect and retry. The write did complete and no new
+				// connection was established, so nothing can answer it anymore.
+				// Requests that were already answered are left alone.
+				conn.handler.failRequestOp(lastOp, connErr)
 			}
 			// Let the next request in.
 			reqInitLock = c.reqInit
