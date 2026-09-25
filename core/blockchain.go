@@ -2342,9 +2342,19 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 			winner[j], winner[len(winner)-1-j] = winner[len(winner)-1-j], winner[j]
 		}
 		log.Debug("Number block need calculated again", "number", block.NumberU64(), "hash", block.Hash().Hex(), "winners", len(winner))
-		// Import all the pruned blocks to make the state available
+		// Import all the pruned blocks to make the state available. This writes the chain -
+		// the segment is executed, the head it produces is adopted, and a gap block on it
+		// refreshes the masternode set - so it takes the same mutex the import entry points
+		// take: neither caller of getResultBlock holds it yet, PrepareBlock never taking it
+		// and insertBlock taking it only later, for the write of the block it prepared. An
+		// import the downloader runs at the same time is a second writer otherwise, and the
+		// head the two of them adopt can go backwards.
 		// During reorg, we use verifySeals=false
+		if !bc.chainmu.TryLock() {
+			return nil, errChainStopped
+		}
 		_, _, _, err := bc.insertChain(winner, false)
+		bc.chainmu.Unlock()
 		if err != nil {
 			return nil, err
 		}
