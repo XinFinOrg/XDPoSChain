@@ -319,7 +319,7 @@ func (c *BoundContract) createDynamicTx(opts *TransactOpts, contract *common.Add
 		}
 	}
 	// create the transaction
-	nonce, err := c.getNonce(opts)
+	nonce, err := c.GetNonce(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -364,7 +364,7 @@ func (c *BoundContract) createLegacyTx(opts *TransactOpts, contract *common.Addr
 		}
 	}
 	// create the transaction
-	nonce, err := c.getNonce(opts)
+	nonce, err := c.GetNonce(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -401,7 +401,9 @@ func (c *BoundContract) estimateGasLimit(opts *TransactOpts, contract *common.Ad
 	return c.transactor.EstimateGas(ensureContext(opts.Context), msg)
 }
 
-func (c *BoundContract) getNonce(opts *TransactOpts) (uint64, error) {
+// GetNonce returns the nonce to use for a transaction: the pending nonce of
+// opts.From, or the explicitly requested opts.Nonce when it is set.
+func (c *BoundContract) GetNonce(opts *TransactOpts) (uint64, error) {
 	if opts.Nonce == nil {
 		return c.transactor.PendingNonceAt(ensureContext(opts.Context), opts.From)
 	} else {
