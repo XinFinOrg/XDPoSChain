@@ -1487,6 +1487,41 @@ func (bc *BlockChain) writeBlockWithoutState(block *types.Block, td *big.Int) (e
 	return nil
 }
 
+// writeKnownBlock updates the head block flag with a known block
+// and introduces chain reorg if necessary. Like writeBlockWithState, it
+// leaves the block on its side chain if it does not outweigh the head.
+func (bc *BlockChain) writeKnownBlock(block *types.Block) (WriteStatus, error) {
+	ptd := bc.GetTd(block.ParentHash(), block.NumberU64()-1)
+	if ptd == nil {
+		return NonStatTy, consensus.ErrUnknownAncestor
+	}
+	current := bc.CurrentBlock()
+	localTd := bc.GetTd(current.Hash(), current.Number.Uint64())
+	externTd := new(big.Int).Add(block.Difficulty(), ptd)
+
+	reorg := externTd.Cmp(localTd) > 0
+	if !reorg && externTd.Cmp(localTd) == 0 {
+		// Split same-difficulty blocks by number
+		reorg = block.NumberU64() > current.Number.Uint64()
+	}
+	if !reorg {
+		return SideStatTy, nil
+	}
+	if block.ParentHash() != current.Hash() {
+		if err := bc.reorg(current, block.Header()); err != nil {
+			return NonStatTy, err
+		}
+	}
+	bc.writeHeadBlock(block)
+	// prepare set of masternodes for the next epoch
+	if bc.chainConfig.XDPoS != nil && ((block.NumberU64() % bc.chainConfig.XDPoS.Epoch) == (bc.chainConfig.XDPoS.Epoch - bc.chainConfig.XDPoS.Gap)) {
+		if err := bc.UpdateM1(); err != nil {
+			log.Crit("Fail to update masternodes during writeKnownBlock", "number", block.Number, "hash", block.Hash().Hex(), "err", err)
+		}
+	}
+	return CanonStatTy, nil
+}
+
 // WriteBlockWithState writes the block and all associated state to the database.
 func (bc *BlockChain) WriteBlockWithState(block *types.Block, receipts []*types.Receipt, state *state.StateDB, tradingState *tradingstate.TradingStateDB, lendingState *lendingstate.LendingStateDB) (status WriteStatus, err error) {
 	if !bc.chainmu.TryLock() {
@@ -1786,6 +1821,12 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 	if bc.insertStopped() {
 		return 0, nil, nil, nil
 	}
+	// The XDPoS header verification of this batch may read ancestors it only
+	// finds once they are canonical and executed, such as the gap block of an
+	// epoch switch, so regenerate the state of stored ancestors first.
+	if err := bc.insertPrunedAncestors(chain[0]); err != nil {
+		return 0, nil, nil, err
+	}
 
 	// Start a parallel signature recovery (signer will fluke on fork transition, minimal perf loss)
 	SenderCacher().RecoverFromBlocks(types.MakeSigner(bc.chainConfig, chain[0].Number()), chain)
@@ -1867,7 +1908,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 	}
 
 	// No validation errors for the first block (or chain prefix skipped)
-	for ; block != nil && err == nil; block, err = it.next() {
+	for ; block != nil && (err == nil || errors.Is(err, ErrKnownBlock)); block, err = it.next() {
 		// If the chain is terminating, stop processing blocks
 		if bc.insertStopped() {
 			log.Debug("Premature abort during blocks processing")
@@ -1877,6 +1918,38 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		if BadHashes[block.Hash()] {
 			bc.reportBlock(block, nil, ErrDenylistedHash)
 			return it.index, events, coalescedLogs, ErrDenylistedHash
+		}
+		// If the block is known (in the middle of the chain), its state is already
+		// present because an earlier block of this batch produced the same root: an
+		// XDPoS block without transactions and rewards leaves the state of its parent
+		// untouched. This happens when a sidechain written without state is
+		// re-imported. Just adopt the block, otherwise the import would stop here and
+		// leave the rest of the segment non-canonical.
+		if errors.Is(err, ErrKnownBlock) {
+			log.Debug("Inserted known block", "number", block.Number(), "hash", block.Hash(),
+				"txs", len(block.Transactions()), "gas", block.GasUsed(), "root", block.Root())
+
+			// insertSidechain writes the block without receipts, and the block is not
+			// executed again here, so commit the empty receipt slice of the block.
+			if len(block.Transactions()) == 0 {
+				rawdb.WriteReceipts(bc.db, block.Hash(), block.NumberU64(), nil)
+			} else {
+				log.Error("Please file an issue, skip known block execution without receipt",
+					"hash", block.Hash(), "number", block.NumberU64())
+			}
+			status, err := bc.writeKnownBlock(block)
+			if err != nil {
+				return it.index, events, coalescedLogs, err
+			}
+			stats.processed++
+			bc.UpdateBlocksHashCache(block)
+
+			// The logs are empty here, since a block sharing the state of its parent
+			// has no transactions.
+			if status == CanonStatTy {
+				lastCanon = block
+			}
+			continue
 		}
 		// Retrieve the parent block and it's state to execute on top
 		start := time.Now()
@@ -2194,6 +2267,69 @@ func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (i
 		return bc.insertChain(blocks, false)
 	}
 	return 0, nil, nil, nil
+}
+
+// insertPrunedAncestors re-executes the ancestors of block that are stored
+// without state, if they outweigh the canonical chain.
+//
+// The downloader resumes after the highest stored block, which can belong to a
+// sidechain written without state by insertSidechain. The batch following it
+// then fails header verification before its pruned ancestor is ever noticed:
+// the epoch switch of XDPoS reads its gap block by canonical number, and the
+// snapshot of the gap block is only stored once the gap block is executed.
+func (bc *BlockChain) insertPrunedAncestors(block *types.Block) error {
+	parent := bc.GetBlock(block.ParentHash(), block.NumberU64()-1)
+	if parent == nil || bc.HasFullState(parent) {
+		return nil
+	}
+	current := bc.CurrentBlock()
+	localTd := bc.GetTd(current.Hash(), current.Number.Uint64())
+	externTd := bc.GetTd(parent.Hash(), parent.NumberU64())
+	if localTd == nil || externTd == nil || localTd.Cmp(externTd) > 0 {
+		return nil
+	}
+	// Gather all the pruned hashes (full blocks may be memory heavy)
+	var (
+		hashes  []common.Hash
+		numbers []uint64
+	)
+	for parent != nil && !bc.HasFullState(parent) {
+		hashes = append(hashes, parent.Hash())
+		numbers = append(numbers, parent.NumberU64())
+
+		parent = bc.GetBlock(parent.ParentHash(), parent.NumberU64()-1)
+	}
+	if parent == nil {
+		return errors.New("missing parent")
+	}
+	log.Info("Importing pruned ancestors", "start", numbers[len(numbers)-1], "end", numbers[0])
+
+	// Import all the pruned blocks to make the state available
+	var (
+		blocks []*types.Block
+		memory uint64
+	)
+	for i := len(hashes) - 1; i >= 0; i-- {
+		ancestor := bc.GetBlock(hashes[i], numbers[i])
+		if ancestor == nil {
+			return errors.New("missing ancestor body")
+		}
+		blocks = append(blocks, ancestor)
+		memory += ancestor.Size()
+
+		if len(blocks) >= 2048 || memory > 64*1024*1024 || i == 0 {
+			if _, _, _, err := bc.insertChain(blocks, false); err != nil {
+				return err
+			}
+			blocks, memory = blocks[:0], 0
+
+			// If the chain is terminating, stop processing blocks
+			if bc.insertStopped() {
+				return errInsertionInterrupted
+			}
+		}
+	}
+	return nil
 }
 
 func (bc *BlockChain) InsertBlock(block *types.Block) error {
