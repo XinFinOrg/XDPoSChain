@@ -655,6 +655,18 @@ func (c *Client) reconnect(ctx context.Context) error {
 	}
 }
 
+// mustFailAfterReadErr reports whether the read error of the current connection
+// has already been handled while op was still in flight, leaving op with nothing
+// left to answer it: conn.close left it as the in-flight request for a
+// reconnect that will not happen anymore. Such a request has to be failed with
+// that error instead of waiting for an answer that cannot arrive. An operation
+// without a response channel, such as a notification, has nothing to fail and
+// is left alone.
+// Callers add the conditions that hold at their own place in the dispatch loop.
+func mustFailAfterReadErr(connErr error, op *requestOp) bool {
+	return connErr != nil && op != nil && op.resp != nil && !op.hadResponse
+}
+
 // dispatch is the main loop of the client.
 // It sends read messages to waiting calls to Call and BatchCall
 // and subscription notifications to registered subscriptions.
@@ -664,6 +676,7 @@ func (c *Client) dispatch(codec ServerCodec) {
 		reqInitLock = c.reqInit // nil while the send lock is held
 		conn        = c.newClientConn(codec)
 		reading     = true
+		connErr     error // read error of the current connection, if any
 	)
 	defer func() {
 		close(c.closing)
@@ -693,6 +706,7 @@ func (c *Client) dispatch(codec ServerCodec) {
 		case err := <-c.readErr:
 			conn.handler.log.Debug("RPC connection read error", "err", err)
 			conn.close(err, lastOp)
+			connErr = err
 			reading = false
 
 		// Reconnect:
@@ -710,6 +724,10 @@ func (c *Client) dispatch(codec ServerCodec) {
 			go c.read(newcodec)
 			reading = true
 			conn = c.newClientConn(newcodec)
+			// The read error belongs to the connection that just failed. The new
+			// one has not failed yet, so forget it and keep the failure paths
+			// keyed to the connection whose error they report.
+			connErr = nil
 			// Re-register the in-flight request on the new handler
 			// because that's where it will be sent.
 			conn.handler.addRequestOp(lastOp)
@@ -726,6 +744,18 @@ func (c *Client) dispatch(codec ServerCodec) {
 				// Remove response handlers for the last send. When the read loop
 				// goes down, it will signal all other current operations.
 				conn.handler.removeRequestOp(lastOp)
+			} else if !reading && mustFailAfterReadErr(connErr, lastOp) {
+				// The read loop died while this request was being written. The
+				// write did complete and no new connection was established, so
+				// nothing can answer it anymore.
+				// Requests that were already answered are left alone: the read
+				// loop hands its messages and its final error to dispatch in
+				// order, so a response can be dispatched before the error
+				// arrives and hadResponse tells the two apart.
+				// !reading is redundant as long as the reconnect case resets
+				// connErr, but it is the only guard that keeps a retried
+				// request from being failed should that reset ever be removed.
+				conn.handler.failRequestOp(lastOp, connErr)
 			}
 			// Let the next request in.
 			reqInitLock = c.reqInit

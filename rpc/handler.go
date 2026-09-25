@@ -357,6 +357,24 @@ func (h *handler) cancelAllRequests(err error, inflightReq *requestOp) {
 	}
 }
 
+// failRequestOp fails the given request operation with err, unblocking the
+// caller waiting for its response. The operation is removed from respWait
+// first, otherwise a later cancelAllRequests could close the same channel
+// again. op must have a response channel to close: a request failed without an
+// error is indistinguishable from an answered one, because the caller would
+// read an empty response batch instead.
+func (h *handler) failRequestOp(op *requestOp, err error) {
+	// Callers select the operation with mustFailAfterReadErr, so neither op nor
+	// err is nil in practice; the two checks are kept as a guard for a future
+	// caller that does not. A missing op.resp is part of the contract above.
+	if op == nil || err == nil {
+		return
+	}
+	h.removeRequestOp(op)
+	op.err = err
+	close(op.resp)
+}
+
 func (h *handler) addSubscriptions(nn []*Notifier) {
 	h.subLock.Lock()
 	defer h.subLock.Unlock()
