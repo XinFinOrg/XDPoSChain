@@ -26,7 +26,6 @@
     "tipXDCXReceiverDisableBlock": 66825000,
     "eip1559Block": 71550000,
     "cancunBlock": 71551800,
-    "pragueBlock": 83600000,
     "dynamicGasLimitBlock": 83600000,
     "tipUpgradeRewardBlock": 83600000,
     "tipUpgradePenaltyBlock": 83600000,
@@ -146,11 +145,11 @@
               "maxExponent": 0
             }
           },
-          "99999999": {
-            "maxMasternodes": 25,
-            "maxProtectorNodes": 3,
-            "maxObserverNodes": 2,
-            "switchRound": 99999999,
+          "31320000": {
+            "maxMasternodes": 108,
+            "maxProtectorNodes": 432,
+            "maxObserverNodes": 99999,
+            "switchRound": 31320000,
             "minePeriod": 2,
             "timeoutSyncThreshold": 3,
             "timeoutPeriod": 10,
