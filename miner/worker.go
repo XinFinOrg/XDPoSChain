@@ -573,7 +573,10 @@ func (w *worker) wait() {
 					log.Error("[wait] fail to check if block is epoch switch block when worker waiting", "BlockNum", block.Number(), "Hash", block.Hash())
 				}
 				if isEpochSwitchBlock {
-					core.CheckpointCh <- 1
+					// Signal through the chain, so that the send coalesces instead of waiting:
+					// this runs on the only consumer of w.recv, and a stall here would hold up
+					// the whole mined-block pipeline.
+					core.SignalCheckpoint()
 				}
 			}
 			w.chain.UpdateBlocksHashCache(block)

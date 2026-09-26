@@ -18,6 +18,7 @@ package backends
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"github.com/XinFinOrg/XDPoSChain/accounts"
@@ -33,6 +34,22 @@ import (
 // Deprecated: use package github.com/XinFinOrg/XDPoSChain/ethclient/simulated instead.
 type SimulatedBackend struct {
 	*simulated.Backend
+}
+
+// Commit reports the hash of the block that was committed, and does not carry the contract of
+// the method it overrides: the underlying simulated backend reports a chain it cannot write to
+// - it was stopped, or the import was cut short - with the zero hash, and callers of this
+// deprecated wrapper ignore that return value, so a silent zero would only surface later as
+// "receipt not found". A zero hash is never a real block hash, so this wrapper keeps failing
+// loudly instead of returning it, and it fails with the reason attached: the panic names the
+// local condition that stopped the write rather than restating the wrapper's own message.
+// See ethclient/simulated.Backend.Commit for the newer, non-panicking contract.
+func (b *SimulatedBackend) Commit() common.Hash {
+	hash, err := b.Backend.CommitWithReason()
+	if err != nil {
+		panic(fmt.Errorf("backends: Commit on a chain that cannot be written to: %w", err))
+	}
+	return hash
 }
 
 // Client returns a client that accesses the simulated chain.

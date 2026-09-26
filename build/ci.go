@@ -330,31 +330,82 @@ func doGenerate() {
 // doBadDeps verifies whether certain unintended dependencies between some
 // packages leak into the codebase due to a refactor. This is not an exhaustive
 // list, rather something we build up over time at sensitive places.
+//
+// A rule guards the dependency tree of the shipped code: the check lists each
+// package with 'go list -deps', which leaves out the imports that only the test
+// files of a package pull in. Those are reported as warnings rather than
+// failing the run - they do not end up in the binary, and knowing about them is
+// enough to decide whether to accept them. A rule whose test-only import is
+// deliberate rather than something to look at says so with testOnly, so that its
+// warning does not turn into a line nobody reads any more. A rule that matches
+// neither build is reported as well: the dependency was dropped for good, or the
+// rule outlived it, and a table is only as good as its entries.
 func doBadDeps() {
-	baddeps := [][2]string{
+	// A rule of the check: pkg must not depend on dep in the code that is shipped.
+	type badDep struct {
+		pkg      string
+		dep      string
+		testOnly bool // the dependency is expected in the package's test binary
+	}
+	baddeps := []badDep{
 		// Rawdb tends to be a dumping ground for db utils, sometimes leaking the db itself
-		{"github.com/XinFinOrg/XDPoSChain/core/rawdb", "github.com/XinFinOrg/XDPoSChain/ethdb/leveldb"},
-		{"github.com/XinFinOrg/XDPoSChain/core/rawdb", "github.com/XinFinOrg/XDPoSChain/ethdb/pebbledb"},
+		{"github.com/XinFinOrg/XDPoSChain/core/rawdb", "github.com/XinFinOrg/XDPoSChain/ethdb/leveldb", false},
+		{"github.com/XinFinOrg/XDPoSChain/core/rawdb", "github.com/XinFinOrg/XDPoSChain/ethdb/pebbledb", false},
+
+		// The downloader talks to the local chain through its own BlockChain interface.
+		// Reaching into the core package drags the whole blockchain implementation - and
+		// everything that hangs off it - back into the downloader's dependency tree.
+		// The downloader tests do reach into core to pin the classification the interface
+		// mirrors; that import stays in the test binary, which is why this rule is marked
+		// testOnly instead of being reported on every run.
+		{"github.com/XinFinOrg/XDPoSChain/eth/downloader", "github.com/XinFinOrg/XDPoSChain/core", true},
 	}
 	tc := new(build.GoToolchain)
 
 	var failed bool
 	for _, rule := range baddeps {
-		out, err := tc.Go("list", "-deps", rule[0]).CombinedOutput()
+		shipped, err := tc.Go("list", "-deps", rule.pkg).CombinedOutput()
 		if err != nil {
-			log.Fatalf("Failed to list '%s' dependencies: %v", rule[0], err)
+			log.Fatalf("Failed to list '%s' dependencies: %v", rule.pkg, err)
 		}
-		for _, line := range strings.Split(string(out), "\n") {
-			if strings.TrimSpace(line) == rule[1] {
-				log.Printf("Found bad dependency '%s' -> '%s'", rule[0], rule[1])
-				failed = true
-			}
+		if listsDependency(shipped, rule.dep) {
+			log.Printf("Found bad dependency '%s' -> '%s'", rule.pkg, rule.dep)
+			failed = true
+			continue
+		}
+		// Out of the shipped code. Where it is instead - test binary, or nowhere - decides what
+		// this rule has to say, and "nowhere" is worth saying: a rule the tree no longer has any
+		// use for would otherwise sit in the table looking like it still guards something.
+		test, err := tc.Go("list", "-deps", "-test", rule.pkg).CombinedOutput()
+		if err != nil {
+			log.Fatalf("Failed to list '%s' test dependencies: %v", rule.pkg, err)
+		}
+		inTest := listsDependency(test, rule.dep)
+		switch {
+		case rule.testOnly && inTest:
+			// The test binary is where this dependency belongs, so there is nothing to report.
+		case inTest:
+			// Not part of the shipped code: report it, do not fail the run.
+			log.Printf("Warning: test-only dependency '%s' -> '%s' (not part of the shipped binary)", rule.pkg, rule.dep)
+		default:
+			log.Printf("Warning: rule '%s' -> '%s' matches neither the shipped nor the test build (testOnly=%v): the dependency was dropped, or the rule is stale", rule.pkg, rule.dep, rule.testOnly)
 		}
 	}
 	if failed {
 		log.Fatalf("Bad dependencies detected.")
 	}
 	fmt.Println("No bad dependencies detected.")
+}
+
+// listsDependency reports whether a 'go list -deps' listing mentions the package,
+// which is printed one import path per line.
+func listsDependency(out []byte, dependency string) bool {
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(line) == dependency {
+			return true
+		}
+	}
+	return false
 }
 
 // doLint runs golangci-lint on requested packages.
