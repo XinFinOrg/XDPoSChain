@@ -71,7 +71,14 @@ The value of `block.basefee` is the gas price of the block's tier: `12.5 GWei` u
 XDPoSChain has no blob transactions (transaction type `0x03`) and no blob fields
 in the block header, so `blobhash(i)` always returns 0. That is the out-of-bounds
 value defined by EIP-4844, so `require(blobhash(i) != 0)` reverts as expected.
-The KZG point evaluation precompile (`0x0a`) is not available either.
+The KZG point evaluation precompile (`0x0a`) is not implemented. On the networks
+that run the Prague precompile set (devnet from block 50000, localnet from the
+genesis block) its address is registered and every call to it fails, consuming
+the gas of the frame. No network runs the Osaka set yet, because every network
+configuration still leaves `osakaBlock` unset. On mainnet and Apothem, whose
+Prague and Osaka blocks are still unset, the address is not registered at all, so
+a call to it is handled as a call to an empty account: it succeeds and returns
+empty output.
 
 ### block.blobbasefee
 
