@@ -1651,9 +1651,11 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 	}
 	// For XDPoS, the header verification of an epoch-switch block reads the
 	// snapshot stored at its gap block, and that snapshot is only written while
-	// the gap block itself is being executed (UpdateMasternodes); the v1
-	// validators check reads the state of the block before the epoch switch as
-	// well, and a block's state exists only once it has been executed.
+	// the gap block itself is being executed: for v2 it travels in the batch
+	// that carries the chain markers of that block, for v1 the masternode
+	// refresh (UpdateMasternodes) stores it right after the head is written.
+	// The v1 validators check reads the state of the block before the epoch
+	// switch as well, and a block's state exists only once it has been executed.
 	// VerifyHeaders verifies the whole batch up-front (its results channel is
 	// fully buffered), so it would race ahead and try to verify the epoch-switch
 	// block before the gap block - or the block before it - in the same batch has
@@ -1727,7 +1729,7 @@ func (d *Downloader) splitBlocksForVerification(blocks []*types.Block) [][]*type
 		// (that would just create an empty trailing segment). A schedule without
 		// a usable offset (Gap 0, or Gap >= Epoch) has no gap block at all, and
 		// this cut does not make one: the fallback that would read it walks back
-		// an unusable number of steps and UpdateM1 never fires on such a
+		// an unusable number of steps and UpdateM1At never fires on such a
 		// schedule, so this cut only keeps the epoch-switch cut below from
 		// costing anything there.
 		if gap != 0 && gap < epoch && number%epoch == epoch-gap && i < len(blocks)-1 {

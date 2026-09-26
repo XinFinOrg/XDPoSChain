@@ -118,8 +118,9 @@ func TestInitialOtherV2Block(t *testing.T) {
 	assert.Equal(t, uint64(450), snap.Number)
 }
 
-// TestSnapshotShouldAlreadyCreatedByUpdateM1 tests snapshot should already created by update m 1.
-func TestSnapshotShouldAlreadyCreatedByUpdateM1(t *testing.T) {
+// TestSnapshotShouldAlreadyBeCreatedByGapRefresh tests snapshot should already be created
+// by the gap block refresh, which writes it together with the head markers.
+func TestSnapshotShouldAlreadyBeCreatedByGapRefresh(t *testing.T) {
 	skipLongInShortMode(t)
 	// insert new block with new extra fields
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 1800, params.TestXDPoSMockChainConfig, nil)

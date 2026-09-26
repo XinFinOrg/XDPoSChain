@@ -121,10 +121,6 @@ func TestGetSigningTxCountUsesHistoricalStandbynodes(t *testing.T) {
 		err = blockchain.InsertBlock(block)
 		assert.Nil(t, err)
 		currentBlock = block
-		if uint64(i)%config.XDPoS.Epoch == config.XDPoS.Epoch-config.XDPoS.Gap {
-			err = blockchain.UpdateM1()
-			assert.Nil(t, err)
-		}
 	}
 
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)

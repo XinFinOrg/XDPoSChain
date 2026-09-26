@@ -12,10 +12,10 @@ import (
 )
 
 // The next-epoch masternode refresh must not need the node's own IPC endpoint.
-// UpdateM1 used to read the candidates from the state but fetch every candidate
-// cap from the voting contract over IPC, so a node without an IPC endpoint (for
-// instance one started with --ipcdisable) failed the refresh on every gap block
-// and the call sites turn that failure into log.Crit.
+// UpdateM1At used to read the candidates from the state but fetch every
+// candidate cap from the voting contract over IPC, so a node without an IPC
+// endpoint (for instance one started with --ipcdisable) failed the refresh on
+// every gap block and the call sites turn that failure into log.Crit.
 //
 // The gap block is built here rather than taken from the fixture so that the
 // stakes are known: the caps are written as a strictly increasing sequence over
@@ -34,7 +34,7 @@ import (
 // advanced to that block. A refresh that still read the stakes over IPC fails
 // there and takes the call site's log.Crit, which stops this test binary exactly
 // the way it stops a node started with --ipcdisable.
-func TestUpdateM1DoesNotNeedAnIPCEndpoint(t *testing.T) {
+func TestUpdateM1AtDoesNotNeedAnIPCEndpoint(t *testing.T) {
 	config := params.TestXDPoSMockChainConfig
 	blockchain, _, currentBlock, signer, signFn := PrepareXDCTestBlockChain(t, GAP-1, config)
 

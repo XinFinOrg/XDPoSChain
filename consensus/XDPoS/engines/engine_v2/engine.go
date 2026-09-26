@@ -604,6 +604,11 @@ func (x *XDPoS_v2) GetSnapshot(chain consensus.ChainReader, header *types.Header
 	return snap, nil
 }
 
+// UpdateMasternodes stores a gap block snapshot and caches it. The write path no
+// longer goes through here: core.BlockChain derives the set with
+// BuildSnapshotFromState, stores it in the same batch as the chain markers of the
+// gap block and publishes it with CacheSnapshot. The method stays as part of the
+// engine contract that the XDPoS adaptor exposes.
 func (x *XDPoS_v2) UpdateMasternodes(chain consensus.ChainReader, header *types.Header, ms []utils.Masternode) error {
 	number := header.Number.Uint64()
 	log.Trace("[UpdateMasternodes]", "number", number, "hash", header.Hash())
@@ -634,6 +639,14 @@ func (x *XDPoS_v2) UpdateMasternodes(chain consensus.ChainReader, header *types.
 	}
 
 	return nil
+}
+
+// CacheSnapshot publishes a snapshot that the caller has already persisted, so
+// that readers do not have to load it back. It must only be called once the
+// write is durable: caching a snapshot whose write failed would serve a set the
+// database does not have and hide the hole it was meant to close.
+func (x *XDPoS_v2) CacheSnapshot(snap *SnapshotV2) {
+	x.snapshots.Add(snap.Hash, snap)
 }
 
 // VerifyUncles implements consensus.Engine, always returning an error for any

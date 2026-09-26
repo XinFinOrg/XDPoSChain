@@ -12,25 +12,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The next-epoch masternode refresh must not need the node's own IPC endpoint.
-// UpdateM1 used to read the candidates from the state but fetch every candidate
-// cap from the voting contract over IPC, so a node without an IPC endpoint (for
-// instance one started with --ipcdisable) failed the refresh on every gap block
-// and the call sites turn that failure into log.Crit.
+// The next-epoch masternode snapshot must not need the node's own IPC endpoint.
+// The v2 gap-block refresh used to read the candidates from the state but fetch
+// every candidate cap from the voting contract over IPC, so a node without an
+// IPC endpoint (for instance one started with --ipcdisable) failed the refresh
+// on every gap block and the call sites turn that failure into log.Crit. The set
+// is now derived from the state of the gap block itself, before the chain
+// markers of that block are written.
 //
 // The gap block is built here rather than taken from the fixture so that the
-// stakes are known and the order the refresh must produce is unique: the caps
+// stakes are known and the order the derivation must produce is unique: the caps
 // are written as a strictly increasing sequence over the candidate order the
-// state stores them in, so a refresh keyed on those stakes has to hand the set
-// back in the exact reverse of that order. No fixture stake distribution is
-// relied on, and a refresh that read the stakes as zeros cannot produce it.
+// state stores them in, so a derivation keyed on those stakes has to hand the
+// set back in the exact reverse of that order. No fixture stake distribution is
+// relied on, and a derivation that read the stakes as zeros cannot produce it.
 //
 // The endpoint is dropped before the gap block is written, so what is pinned is
-// the crossing itself: the refresh runs inside writeBlockWithState as the head is
-// advanced to that block. A refresh that still read the stakes over IPC fails
-// there and takes the call site's log.Crit, which stops this test binary exactly
-// the way it stops a node started with --ipcdisable.
-func TestUpdateM1DoesNotNeedAnIPCEndpoint(t *testing.T) {
+// the crossing itself: the derivation runs inside writeBlockWithState, on the
+// state that block just executed, before the head is advanced to it. A
+// derivation that still fetched the stakes over IPC would fail there instead of
+// producing the set, and the block would not be imported at all.
+func TestNextEpochSnapshotDoesNotNeedAnIPCEndpoint(t *testing.T) {
 	skipLongInShortMode(t)
 	config := params.TestXDPoSMockChainConfig
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, int(config.XDPoS.Epoch+config.XDPoS.Gap)-1, config, nil)
@@ -53,8 +55,9 @@ func TestUpdateM1DoesNotNeedAnIPCEndpoint(t *testing.T) {
 	blockchain.Client = nil
 	blockchain.IPCEndpoint = ""
 
-	// Insert the gap block, which is where the refresh runs. It is written with
-	// the state above, so the head the refresh reads carries those caps.
+	// Insert the gap block, which is where the derivation runs. It is written
+	// with the state above, so the state the derivation reads carries those
+	// caps.
 	header := &types.Header{
 		Root:       gapState.IntermediateRoot(false),
 		Number:     big.NewInt(int64(config.XDPoS.Epoch + config.XDPoS.Gap)),
@@ -67,8 +70,9 @@ func TestUpdateM1DoesNotNeedAnIPCEndpoint(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, parentBlock.NumberU64(), blockchain.CurrentBlock().Number.Uint64())
 
-	// The set and its order are read back from the snapshot the refresh wrote:
-	// UpdateMasternodes stores the addresses in the order the stakes produced.
+	// The set and its order are read back from the snapshot the derivation
+	// wrote: BuildSnapshotFromState stores the addresses in the order the
+	// stakes produced.
 	//
 	// getSnapshot resolves the snapshot from the number it is given by walking
 	// back to that epoch's gap block, so asking for the first block of the epoch

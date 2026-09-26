@@ -37,6 +37,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common/prque"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/engines/engine_v2"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
@@ -955,7 +956,7 @@ func (bc *BlockChain) ResetWithGenesisBlock(genesis *types.Block) error {
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to write genesis block", "err", err)
 	}
-	bc.writeHeadBlock(genesis)
+	bc.writeHeadBlock(genesis, nil)
 
 	// Last update all in-memory chain markers
 	bc.genesisBlock = genesis
@@ -1063,8 +1064,12 @@ func (bc *BlockChain) ExportN(w io.Writer, first uint64, last uint64) error {
 // XDPoS signing transaction cache, which silently drops the signing
 // transactions it cannot find a receipt for.
 //
+// A non-nil snap is the masternode snapshot of the next epoch for this block and
+// is written in the same batch as the markers: a gap block must never become
+// canonical without the snapshot its epoch switch reads.
+//
 // Note, this function assumes that the `mu` mutex is held!
-func (bc *BlockChain) writeHeadBlock(block *types.Block) {
+func (bc *BlockChain) writeHeadBlock(block *types.Block, snap *engine_v2.SnapshotV2) {
 	blockHash := block.Hash()
 	blockNumberU64 := block.NumberU64()
 
@@ -1075,6 +1080,13 @@ func (bc *BlockChain) writeHeadBlock(block *types.Block) {
 	rawdb.WriteCanonicalHash(batch, blockHash, blockNumberU64)
 	rawdb.WriteTxLookupEntriesByBlock(batch, block)
 	rawdb.WriteHeadBlockHash(batch, blockHash)
+	if snap != nil {
+		blob, err := engine_v2.EncodeSnapshot(snap)
+		if err != nil {
+			log.Crit("Failed to encode the next-epoch masternode snapshot", "number", blockNumberU64, "hash", blockHash.Hex(), "err", err)
+		}
+		rawdb.WriteXdposV2Snapshot(batch, snap.Hash, blob)
+	}
 
 	// Flush the whole batch into the disk, exit the node if failed
 	if err := batch.Write(); err != nil {
@@ -1089,6 +1101,17 @@ func (bc *BlockChain) writeHeadBlock(block *types.Block) {
 
 	bc.currentBlock.Store(block.Header())
 	headBlockGauge.Update(int64(block.NumberU64()))
+
+	// Publish the snapshot only now that the batch is on disk: an engine serving
+	// a snapshot whose write never landed would mask the very hole this batch
+	// closes. The ready line belongs to the same point: it says the set is
+	// durable, not merely derived.
+	if snap != nil {
+		log.Info("Masternodes are ready for the next epoch", "number", blockNumberU64, "hash", blockHash.Hex())
+		if engine, ok := bc.Engine().(*XDPoS.XDPoS); ok {
+			engine.EngineV2.CacheSnapshot(snap)
+		}
+	}
 
 	// save cache BlockSigners
 	if bc.chainConfig.XDPoS != nil && !bc.chainConfig.IsTIPSigning(block.Number()) {
@@ -1521,6 +1544,44 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	}
 	externTd := new(big.Int).Add(block.Difficulty(), ptd)
 
+	// Decide whether this block will replace the head before anything is
+	// written, because the next-epoch snapshot below must fail before the block
+	// reaches the database: a stored block whose head was never advanced is read
+	// back as already known by the insertion paths and would not be applied
+	// again.
+	//
+	// If the total difficulty is higher than our known, add it to the canonical
+	// chain. Second clause in the if statement reduces the vulnerability to
+	// selfish mining. Please refer to
+	// http://www.cs.cornell.edu/~ie53/publications/btcProcFC.pdf
+	canonical := externTd.Cmp(localTd) > 0
+	if !canonical && externTd.Cmp(localTd) == 0 {
+		// Split same-difficulty blocks by number
+		canonical = block.NumberU64() > currentBlock.Number.Uint64()
+	}
+
+	// Derive the next-epoch snapshot of a v2 gap block from the state that was
+	// just executed, still before the block batch is built: a failed derivation
+	// returns here with nothing flushed, so the chain is left exactly where it
+	// was instead of pointing at a gap block without a snapshot.
+	//
+	// The state passed in can no longer serve reads once it is committed below,
+	// which is why the derivation happens now rather than after the commit.
+	var (
+		snap        *engine_v2.SnapshotV2
+		precomputed map[common.Hash]*engine_v2.SnapshotV2
+	)
+	if canonical && bc.needsNextEpochSnapshot(block.Number()) {
+		derived, err := bc.nextEpochSnapshotOf(state, block.NumberU64(), block.Hash())
+		if err != nil {
+			return NonStatTy, err
+		}
+		snap = derived
+		// Hand the set to the reorg as well: the block itself is the tip of the
+		// new chain it is about to apply.
+		precomputed = map[common.Hash]*engine_v2.SnapshotV2{block.Hash(): derived}
+	}
+
 	// Irrelevant of the canonical status, write the block itself to the database.
 	//
 	// Note all the components of block(td, hash->number map, header, body, receipts)
@@ -1680,21 +1741,19 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 		}
 	}
 
-	// If the total difficulty is higher than our known, add it to the canonical chain
-	// Second clause in the if statement reduces the vulnerability to selfish mining.
-	// Please refer to http://www.cs.cornell.edu/~ie53/publications/btcProcFC.pdf
-	reorg := externTd.Cmp(localTd) > 0
-	currentBlock = bc.CurrentBlock()
-	if !reorg && externTd.Cmp(localTd) == 0 {
-		// Split same-difficulty blocks by number
-		reorg = block.NumberU64() > currentBlock.Number.Uint64()
-	}
-	if reorg {
-		// Reorganise the chain if the parent is not the head block
+	if canonical {
+		// Reorganise the chain if the parent is not the head block. The
+		// canonical status was decided before anything was written, and the
+		// snapshot derived there is handed over so that the reorg does not
+		// derive the same set a second time.
 		if block.ParentHash() != currentBlock.Hash() {
-			if err := bc.reorg(currentBlock, block.Header()); err != nil {
+			if err := bc.reorg(currentBlock, block.Header(), precomputed); err != nil {
 				return NonStatTy, err
 			}
+			// The apply loop made this block canonical together with the set
+			// derived above, so the head write below must not carry it again:
+			// that would store and announce the same set a second time.
+			snap = nil
 		}
 		status = CanonStatTy
 	} else {
@@ -1703,10 +1762,20 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 
 	// Set new head.
 	if status == CanonStatTy {
-		bc.writeHeadBlock(block)
+		// The next-epoch masternode set derived above travels in the same batch
+		// as the chain markers: a gap block becomes canonical together with the
+		// set its epoch switch reads.
+		bc.writeHeadBlock(block, snap)
 		// prepare set of masternodes for the next epoch
-		if bc.chainConfig.XDPoS != nil && ((block.NumberU64() % bc.chainConfig.XDPoS.Epoch) == (bc.chainConfig.XDPoS.Epoch - bc.chainConfig.XDPoS.Gap)) {
-			if err := bc.UpdateM1(); err != nil {
+		// Only the v1 era refreshes here: the v2 set of a gap block travels in
+		// the batch written above, and a refresh would store that same set
+		// straight to the database, outside that batch, and cache it there.
+		// The refresh stays behind the head write because the head is what it
+		// refreshes, but it is asked for block.Header() rather than reading the
+		// head itself, so that no path refreshes masternodes through an
+		// implicit head lookup.
+		if bc.isNextEpochGapBlock(block.NumberU64()) && !bc.needsNextEpochSnapshot(block.Number()) {
+			if err := bc.UpdateM1At(block.Header()); err != nil {
 				log.Crit("Fail to update masternodes during writeBlockWithState", "number", block.Number, "hash", block.Hash().Hex(), "err", err)
 			}
 		}
@@ -2504,7 +2573,12 @@ func (bc *BlockChain) collectLogs(b *types.Block, removed bool) []*types.Log {
 // reorg takes two blocks, an old chain and a new chain and will reconstruct the
 // blocks and inserts them to be part of the new canonical chain and accumulates
 // potential missing transactions and post an event about them.
-func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
+//
+// precomputed carries the next-epoch snapshots the caller has already derived,
+// keyed by block hash: the block that drove the reorg comes from the caller's
+// own execution and its state is still in hand. Any other v2 gap block of the
+// new chain is derived here, before the first side effect.
+func (bc *BlockChain) reorg(oldHead, newHead *types.Header, precomputed map[common.Hash]*engine_v2.SnapshotV2) error {
 	log.Warn("Reorg", "OldHash", oldHead.Hash().Hex(), "OldNum", oldHead.Number, "NewHash", newHead.Hash().Hex(), "NewNum", newHead.Number)
 
 	var (
@@ -2577,6 +2651,68 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 				}
 			}
 		}
+	}
+
+	// Derive the next-epoch masternode set of every v2 gap block of the new
+	// chain before any side effect: the head is not advanced, no event is
+	// emitted, and the reorg-detected log entries and their meters below have
+	// not run yet, so a failed derivation leaves the chain exactly where it was
+	// and the cleanup below is never skipped. The "Reorg" warning at the top of
+	// this function is logged before this loop and announces the attempt, not
+	// its outcome. Handing the sets to the apply loop keeps each of them in the
+	// same batch as the chain markers of its block, which is what makes a gap
+	// block canonical together with the snapshot its epoch switch reads.
+	//
+	// The derivation is anchored at each block's own committed state and never
+	// reads the head, so deriving in this order is safe. There is no second
+	// source for a block whose state cannot be read, so that block fails the
+	// reorg instead of leaving the chain with a set that belongs to another
+	// block.
+	//
+	// The v1 sets are not derived here: they are read back from the checkpoint
+	// header extra data and stay on their own path in the apply loop below.
+	snapshots := make(map[common.Hash]*engine_v2.SnapshotV2, len(precomputed))
+	for hash, snap := range precomputed {
+		snapshots[hash] = snap
+	}
+	for i := len(newChain) - 1; i >= 0; i-- {
+		header := newChain[i]
+		if !bc.needsNextEpochSnapshot(header.Number) {
+			continue
+		}
+		if _, ok := snapshots[header.Hash()]; ok {
+			continue
+		}
+		// A set the database already holds does not have to be derived again:
+		// the derivation is deterministic, so the stored set is the one this
+		// loop would produce. Skipping it also keeps the loop from failing the
+		// reorg over a state that is no longer readable, which is the common
+		// case for a gap block that was canonical before the rollback.
+		//
+		// A probe that fails is not a missing set, and is not read as one: the
+		// same read failure would let this loop derive over a set it cannot see,
+		// or fail the reorg on the state below when the stored set was the very
+		// thing that should have spared it. It fails here instead, before any
+		// side effect, the way the startup repair leaves a set it cannot probe
+		// alone.
+		has, err := rawdb.HasXdposV2Snapshot(bc.db, header.Hash())
+		if err != nil {
+			return fmt.Errorf("failed to read the stored next-epoch snapshot of gap block %d (%s): %w",
+				header.Number.Uint64(), header.Hash().Hex(), err)
+		}
+		if has {
+			continue
+		}
+		statedb, err := bc.StateAt(header.Root)
+		if err != nil {
+			return fmt.Errorf("failed to open state of gap block %d (%s) for the masternode update: %w",
+				header.Number.Uint64(), header.Hash().Hex(), err)
+		}
+		snap, err := bc.nextEpochSnapshotOf(statedb, header.Number.Uint64(), header.Hash())
+		if err != nil {
+			return err
+		}
+		snapshots[header.Hash()] = snap
 	}
 
 	// Ensure the user sees large reorgs
@@ -2689,10 +2825,21 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 		// above only guards a corrupt database, it is not what writes the body.
 		// Keep that order, or the markers written here can outlive the block
 		// they point at.
-		bc.writeHeadBlock(block)
+		//
+		// The next-epoch masternode set of this block was derived before any side
+		// effect, so advancing the head here can no longer fail: the set travels
+		// in the same batch as the chain markers. A set taken from the database
+		// instead travels with the block that is already stored with it.
+		bc.writeHeadBlock(block, snapshots[block.Hash()])
 		// prepare set of masternodes for the next epoch
-		if bc.chainConfig.XDPoS != nil && ((block.NumberU64() % bc.chainConfig.XDPoS.Epoch) == (bc.chainConfig.XDPoS.Epoch - bc.chainConfig.XDPoS.Gap)) {
-			if err := bc.UpdateM1(); err != nil {
+		// Only the v1 era refreshes here: the head walk behind this loop is not
+		// evidence about the missing set, since a stored one is skipped above.
+		// Asking for a v2 refresh would store that same set straight to the
+		// database again, outside the batch just written, and cache it there.
+		// The refresh stays behind the head write because the head is what it
+		// refreshes.
+		if bc.isNextEpochGapBlock(block.NumberU64()) && !bc.needsNextEpochSnapshot(block.Number()) {
+			if err := bc.UpdateM1At(block.Header()); err != nil {
 				log.Crit("Fail to update masternodes during reorg", "number", block.Number, "hash", block.Hash().Hex(), "err", err)
 			}
 		}
@@ -2857,22 +3004,97 @@ func (bc *BlockChain) GetClient() (bind.ContractBackend, error) {
 	return bc.Client, nil
 }
 
-func (bc *BlockChain) UpdateM1() error {
+// isNextEpochGapBlock reports whether the block at number is the gap block of
+// its epoch, i.e. the block whose committed state the masternode set of the next
+// epoch is derived from. A schedule without a usable gap offset has no gap block
+// at all, which also keeps the modulo below from dividing by zero.
+//
+// A usable offset is positive and smaller than the epoch. Gap == 0 and
+// Gap > Epoch designate no gap block either way - number%Epoch is never the epoch
+// itself, and Epoch-Gap wraps - so nothing changes for them. Gap == Epoch is the
+// one schedule this predicate moves: it puts the gap block on the epoch switch
+// itself, so the offset is refused here and no height refreshes masternodes or
+// derives a snapshot any more, where the predicate the callers used before this
+// change ((number % Epoch) == (Epoch - Gap)) fired on every epoch switch. The
+// other readers of that schedule do not move with it: the v1 engine still loads
+// and stores its checkpoint snapshot on (number+Gap)%Epoch == 0, and the v2 lookup
+// resolves an epoch switch back to the previous switch, so a Gap == Epoch network
+// would find them looking for a snapshot this code no longer writes. No built-in
+// network uses one.
+func (bc *BlockChain) isNextEpochGapBlock(number uint64) bool {
+	if bc.chainConfig.XDPoS == nil || bc.chainConfig.XDPoS.Epoch == 0 ||
+		bc.chainConfig.XDPoS.Gap == 0 || bc.chainConfig.XDPoS.Gap >= bc.chainConfig.XDPoS.Epoch {
+		return false
+	}
+	return (number % bc.chainConfig.XDPoS.Epoch) == (bc.chainConfig.XDPoS.Epoch - bc.chainConfig.XDPoS.Gap)
+}
+
+// needsNextEpochSnapshot reports whether the block at number owes the v2
+// masternode snapshot of the next epoch. The snapshot travels in the same batch
+// as the chain markers of that block, so only the v2 era asks for one: the v1
+// set is read back from the checkpoint header extra data and is refreshed
+// through UpdateM1At instead.
+func (bc *BlockChain) needsNextEpochSnapshot(number *big.Int) bool {
+	return bc.isNextEpochGapBlock(number.Uint64()) &&
+		bc.chainConfig.XDPoS.BlockConsensusVersion(number) == params.ConsensusEngineVersion2
+}
+
+// nextEpochSnapshotOf derives the masternode snapshot of the next epoch from a
+// state committed at the given block. It writes nothing: the caller either hands
+// the result to writeHeadBlock or keeps it for the reorg it is about to apply,
+// and either way it lands in the same batch as the chain markers of that block,
+// so that a gap block can never become canonical without the snapshot its epoch
+// switch reads.
+//
+// The state always has to be the one committed at this very block, and it is
+// passed in rather than re-opened here: the extension path still holds the state
+// it has just executed, while the reorg path re-opens it from the block root.
+// There is no second source anchored at the block, so a state that cannot be
+// read fails the derivation instead of producing a set that belongs to another
+// block. The ready line is not logged here: deriving is not yet storing, and it
+// is writeHeadBlock that reports the set once its batch is on disk.
+func (bc *BlockChain) nextEpochSnapshotOf(statedb *state.StateDB, number uint64, hash common.Hash) (*engine_v2.SnapshotV2, error) {
+	snap, err := engine_v2.BuildSnapshotFromState(statedb, number, hash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to derive the next-epoch masternodes of gap block %d (%s): %w",
+			number, hash.Hex(), err)
+	}
+	log.Info("Updating the next-epoch masternodes", "number", number, "hash", hash.Hex(), "candidates", len(snap.NextEpochCandidates))
+	return snap, nil
+}
+
+// UpdateM1At refreshes the masternode set of the next epoch for the given
+// header. The header is passed in instead of being read from the chain head, so
+// that both refresh paths name the block they refresh rather than looking the
+// head up a second time.
+//
+// The refresh itself is the v1 one and is unchanged: the candidates and their
+// stakes are read off the state committed at that header, and the result is
+// handed to the engine, which keys the v1 set by that very block and keeps it in
+// memory. The header therefore has to be the block whose set this refreshes:
+// candidates read from anywhere else would be stored as the set of a block they
+// did not come from. There is nothing to persist: the v1 set is read back from
+// the checkpoint header extra data. Callers therefore keep their position behind
+// the head write and pass the header of the block they just made canonical.
+func (bc *BlockChain) UpdateM1At(header *types.Header) error {
 	engine, ok := bc.Engine().(*XDPoS.XDPoS)
 	if bc.Config().XDPoS == nil || !ok {
 		return ErrNotXDPoS
 	}
+	if header == nil {
+		return errors.New("nil header in UpdateM1At")
+	}
 	log.Info("It's time to update new set of masternodes for the next epoch...")
-	// Read the candidates and their stakes off the state of the head, which is
-	// the block this refresh is for. The stakes used to come back from the
-	// voting contract over this node's own IPC endpoint: that cost an eth_call
-	// per candidate while the chain write lock was held, and it is also what
-	// made the refresh depend on an IPC endpoint at all (a node started with
-	// --ipcdisable fails the refresh, and the callers turn that failure into
-	// log.Crit).
-	stateDB, err := bc.State()
+	// Read the candidates and their stakes off the state committed at this
+	// header, which is the block this refresh is for. The stakes used to come
+	// back from the voting contract over this node's own IPC endpoint: that cost
+	// an eth_call per candidate while the chain write lock was held, and it is
+	// also what made the refresh depend on an IPC endpoint at all (a node
+	// started with --ipcdisable fails the refresh, and the callers turn that
+	// failure into log.Crit).
+	stateDB, err := bc.StateAt(header.Root)
 	if err != nil {
-		return fmt.Errorf("failed to open the state of the head for the masternode update: %w", err)
+		return fmt.Errorf("failed to open the state of the block for the masternode update: %w", err)
 	}
 
 	var ms []utils.Masternode
@@ -2887,7 +3109,7 @@ func (bc *BlockChain) UpdateM1() error {
 	// read error instead: there is no IPC fallback for the candidates any more,
 	// and the call sites stop the node on any error returned here.
 	if err := stateDB.Error(); err != nil {
-		return fmt.Errorf("reading the masternodes of the head from state: %w", err)
+		return fmt.Errorf("reading the masternodes of the block from state: %w", err)
 	}
 	if len(ms) == 0 {
 		log.Error("No masternode found. Stopping node")
@@ -2895,18 +3117,14 @@ func (bc *BlockChain) UpdateM1() error {
 	} else {
 		utils.SortMasternodesByStakeDesc(ms)
 		log.Info("Updating new set of masternodes")
-		// The set above was read from bc.State(), i.e. the state of the current
-		// block, and this header is that same block because both call sites run
-		// right after writeHeadBlock, while the chain write lock is held by the
-		// import that triggered the refresh. The two marks are independent
-		// otherwise - Rollback moves only the header one - so a caller outside
-		// that path cannot rely on them agreeing.
-		header := bc.CurrentHeader()
+		// The candidates above came from the state committed at this header, so
+		// the set the engine stores for that block is derived from that block's
+		// own state rather than from wherever the head points.
 		err = engine.UpdateMasternodes(bc, header, ms)
 		if err != nil {
 			return err
 		}
-		log.Info("Masternodes are ready for the next epoch")
+		log.Info("Masternodes are ready for the next epoch", "number", header.Number.Uint64(), "hash", header.Hash().Hex())
 	}
 	return nil
 }

@@ -576,13 +576,6 @@ func PrepareXDCTestBlockChainForV2Engine(t *testing.T, numOfBlocks int, chainCon
 		}
 
 		currentBlock = block
-
-		if uint64(i)%chainConfig.XDPoS.Epoch == chainConfig.XDPoS.Epoch-chainConfig.XDPoS.Gap {
-			err := blockchain.UpdateM1()
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
 	}
 
 	return blockchain, backend, currentBlock, signer, signFn, currentForkBlock
@@ -632,13 +625,6 @@ func PrepareXDCTestBlockChainWithPenaltyForV2Engine(t *testing.T, numOfBlocks in
 			t.Fatal(err)
 		}
 		currentBlock = block
-
-		if uint64(i)%chainConfig.XDPoS.Epoch == chainConfig.XDPoS.Epoch-chainConfig.XDPoS.Gap {
-			err := blockchain.UpdateM1()
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
 	}
 
 	return blockchain, backend, currentBlock, signer, signFn
@@ -695,13 +681,6 @@ func PrepareXDCTestBlockChainWithPenaltyCustomized(t *testing.T, numOfBlocks int
 			t.Fatal(err)
 		}
 		currentBlock = block
-
-		if uint64(i)%chainConfig.XDPoS.Epoch == chainConfig.XDPoS.Epoch-chainConfig.XDPoS.Gap {
-			err := blockchain.UpdateM1()
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
 	}
 
 	return blockchain, backend, currentBlock, signer, signFn
@@ -759,13 +738,6 @@ func PrepareXDCTestBlockChainWith128Candidates(t *testing.T, numOfBlocks int, ch
 		}
 
 		currentBlock = block
-
-		if uint64(i)%chainConfig.XDPoS.Epoch == chainConfig.XDPoS.Epoch-chainConfig.XDPoS.Gap {
-			err := blockchain.UpdateM1()
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
 	}
 
 	return blockchain, backend, currentBlock, signer, signFn
@@ -829,13 +801,6 @@ func PrepareXDCTestBlockChainWithProtectorObserver(t *testing.T, numOfBlocks int
 		}
 
 		currentBlock = block
-
-		if uint64(i)%chainConfig.XDPoS.Epoch == chainConfig.XDPoS.Epoch-chainConfig.XDPoS.Gap {
-			err := blockchain.UpdateM1()
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
 	}
 
 	return blockchain, backend, currentBlock, signer, signFn

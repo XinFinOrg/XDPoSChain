@@ -50,9 +50,18 @@ func loadSnapshot(db ethdb.Database, hash common.Hash) (*SnapshotV2, error) {
 	return snap, nil
 }
 
-// StoreSnapshot inserts the SnapshotV2 into the database.
+// EncodeSnapshot marshals a snapshot for storage. Callers that have to write a
+// snapshot together with other data (e.g. the chain markers of the gap block it
+// belongs to) encode it here and hand the blob to their own writer.
+func EncodeSnapshot(s *SnapshotV2) ([]byte, error) {
+	return json.Marshal(s)
+}
+
+// StoreSnapshot inserts the SnapshotV2 into the database. Callers that have to
+// write it next to other data encode it with EncodeSnapshot instead and hand the
+// blob to their own writer.
 func StoreSnapshot(s *SnapshotV2, db ethdb.Database) error {
-	blob, err := json.Marshal(s)
+	blob, err := EncodeSnapshot(s)
 	if err != nil {
 		return err
 	}
@@ -129,10 +138,11 @@ type GapStateReader interface {
 var ErrNoCandidates = errors.New("no masternode candidates in state")
 
 // BuildSnapshotFromState derives a gap block snapshot from the state committed
-// at that block. The ordering must stay identical to core.BlockChain.UpdateM1:
-// a different equal-stake order yields a different masternode set. Callers such
-// as Downloader.generateSnapshot must delegate here instead of reimplementing
-// the derivation.
+// at that block. The ordering must stay identical to the one
+// core.BlockChain.UpdateM1At applies for the v1 era: a different equal-stake
+// order yields a different masternode set. Callers such as
+// Downloader.generateSnapshot must delegate here instead of reimplementing the
+// derivation.
 func BuildSnapshotFromState(statedb *state.StateDB, number uint64, hash common.Hash) (*SnapshotV2, error) {
 	var ms []utils.Masternode
 	for _, candidate := range statedb.GetCandidates() {
@@ -154,6 +164,13 @@ func BuildSnapshotFromState(statedb *state.StateDB, number uint64, hash common.H
 		return nil, ErrNoCandidates
 	}
 	utils.SortMasternodesByStakeDesc(ms)
+	// The set is consensus critical and the snapshot keeps only the addresses, so
+	// record the members and their stakes here, where the ordered list still
+	// exists: this is the only place that can tell which nodes made the set of a
+	// gap block and with what stake.
+	for i, m := range ms {
+		log.Info("next-epoch masternode", "number", number, "hash", hash.Hex(), "i", i, "addr", m.Address, "stake", m.Stake)
+	}
 
 	candidates := make([]common.Address, len(ms))
 	for i, m := range ms {
@@ -181,10 +198,12 @@ func (x *XDPoS_v2) repairGapCandidates(head uint64) []uint64 {
 	return []uint64{latest - epoch, latest}
 }
 
-// RepairGapSnapshots restores gap block snapshots missing from the database,
-// which happens when the process exits between writeHeadBlock and UpdateM1.
-// Meant to run once at startup. Failures are only logged: a node that is still
-// syncing legitimately has no state to rebuild from.
+// RepairGapSnapshots restores gap block snapshots missing from the database.
+// The write path keeps a gap block and its snapshot in one batch, so a snapshot
+// is missing here for data written before that, or for a gap block stored by a
+// path that derived none. Meant to run once at startup. Failures are only
+// logged: a node that is still syncing legitimately has no state to rebuild
+// from.
 func (x *XDPoS_v2) RepairGapSnapshots(chain GapStateReader) {
 	head := chain.CurrentHeader()
 	if head == nil {
