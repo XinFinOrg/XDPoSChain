@@ -53,7 +53,7 @@ func NewXDCSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64, chainConf
 	}
 }
 
-// NewXDCSimulatedBackend creates a new backend for testing purpose.
+// NewSimulatedBackend creates a new backend for testing purpose.
 //
 // A simulated backend always uses chainID 1337.
 //
