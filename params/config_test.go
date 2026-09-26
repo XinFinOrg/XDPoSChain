@@ -156,6 +156,178 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 			t.Fatalf("unexpected error string: %v", err)
 		}
 	})
+	t.Run("gas2500x block must not precede gas50x block", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(20),
+			Gas2500xBlock:          big.NewInt(10),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(EthashConfig),
+		}
+
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: Gas50xBlock 20 > Gas2500xBlock 10" {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("gas2500x block requires gas50x block", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas2500xBlock:          big.NewInt(10),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(EthashConfig),
+		}
+
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrMissingForkSwitch) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrMissingForkSwitch)
+		}
+		if err == nil || err.Error() != "invalid chain config: missing fork switch: Gas50xBlock" {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("nil gas2500x block is accepted", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(20),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(EthashConfig),
+		}
+
+		if err := cfg.CheckConfigForkOrder(); err != nil {
+			t.Fatalf("CheckConfigForkOrder rejected nil Gas2500xBlock: %v", err)
+		}
+	})
+	t.Run("gas2500x block following eip1559 block is accepted", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(10),
+			LondonBlock:            big.NewInt(10),
+			EIP1559Block:           big.NewInt(20),
+			Gas2500xBlock:          big.NewInt(30),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(EthashConfig),
+		}
+
+		if err := cfg.CheckConfigForkOrder(); err != nil {
+			t.Fatalf("CheckConfigForkOrder rejected gas2500x after eip1559: %v", err)
+		}
+	})
+	t.Run("gas2500x block must not take effect inside the basefee opcode window", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(10),
+			LondonBlock:            big.NewInt(10),
+			Gas2500xBlock:          big.NewInt(20),
+			EIP1559Block:           big.NewInt(30),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(EthashConfig),
+		}
+
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: Gas2500xBlock 20 takes effect before EIP1559Block 30 fills the header base fee" {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("gas2500x block below london block is rejected when eip1559 is later", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(0),
+			Gas2500xBlock:          big.NewInt(0),
+			LondonBlock:            big.NewInt(10),
+			EIP1559Block:           big.NewInt(20),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(EthashConfig),
+		}
+
+		if err := cfg.CheckConfigForkOrder(); !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+	})
+	t.Run("gas2500x block is accepted when the basefee opcode window is empty", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(0),
+			Gas2500xBlock:          big.NewInt(0),
+			LondonBlock:            big.NewInt(10),
+			EIP1559Block:           big.NewInt(10),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(EthashConfig),
+		}
+
+		if err := cfg.CheckConfigForkOrder(); err != nil {
+			t.Fatalf("CheckConfigForkOrder rejected an empty basefee opcode window: %v", err)
+		}
+	})
+	t.Run("gas2500x block without eip1559 block is rejected", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(10),
+			LondonBlock:            big.NewInt(10),
+			Gas2500xBlock:          big.NewInt(20),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(EthashConfig),
+		}
+
+		if err := cfg.CheckConfigForkOrder(); !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+	})
+	t.Run("gas2500x block without london block is accepted", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                big.NewInt(1234),
+			TIPTRC21FeeBlock:       big.NewInt(0),
+			Gas50xBlock:            big.NewInt(10),
+			Gas2500xBlock:          big.NewInt(20),
+			TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(EthashConfig),
+		}
+
+		if err := cfg.CheckConfigForkOrder(); err != nil {
+			t.Fatalf("CheckConfigForkOrder rejected gas2500x without london: %v", err)
+		}
+	})
 	t.Run("tiptrc21 fee block requires system contract addresses", func(t *testing.T) {
 		cfg := &ChainConfig{
 			ChainID:          big.NewInt(1234),

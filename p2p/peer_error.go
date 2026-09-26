@@ -54,8 +54,6 @@ func (pe *peerError) Error() string {
 
 var errProtocolReturned = errors.New("protocol returned")
 
-var ErrAddPairPeer = errors.New("add a pair peer")
-
 type DiscReason uint
 
 const (
@@ -71,6 +69,9 @@ const (
 	DiscUnexpectedIdentity
 	DiscSelf
 	DiscReadTimeout
+	// Deprecated: the per-peer pair connection mechanism was removed (issue #2359).
+	// The enum slot is kept to preserve on-the-wire numbering of the values below
+	// for rolling-upgrade compatibility. Do not reuse.
 	DiscPairPeerStop
 	DiscNonAllowlistedPeer
 	DiscDenylistedPeer

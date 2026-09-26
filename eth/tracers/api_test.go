@@ -185,21 +185,42 @@ func (b *freshStateTraceBackend) StateAtTransaction(ctx context.Context, block *
 	if err != nil {
 		return nil, vm.BlockContext{}, nil, nil, errStateNotFound
 	}
+	// Block level state changes block processing applies before the first transaction.
+	// Without them the pre-state handed to the tracer is not the one the block ran on.
+	core.ApplyTIPSigningHardFork(b.chainConfig, statedb, block.Number())
 	if txIndex == 0 && len(block.Transactions()) == 0 {
 		return nil, vm.BlockContext{}, statedb, release, nil
 	}
 	signer := types.MakeSigner(b.chainConfig, block.Number())
 	context := core.NewEVMBlockContext(block.Header(), b.chain, nil)
 	evm := vm.NewEVM(context, statedb, nil, b.chainConfig, vm.Config{})
+	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	for idx, tx := range block.Transactions() {
 		if idx == txIndex {
 			return tx, context, statedb, release, nil
 		}
-		msg, _ := core.TransactionToMessage(tx, signer, nil, block.Number(), block.BaseFee(), b.chainConfig)
-		if _, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(tx.Gas()), common.Address{}); err != nil {
+		var balance *big.Int
+		if tx.To() != nil {
+			if value, ok := feeCapacity[*tx.To()]; ok {
+				balance = value
+			}
+		}
+		msg, _ := core.TransactionToMessage(tx, signer, balance, block.Number(), block.BaseFee(), b.chainConfig)
+		// Replay through the same entry point production uses, handing it the same fee
+		// capacity and the same transaction context, so the pre-state handed to the tracer
+		// matches the block that is being traced: the routing, the sender nonce handling and
+		// the TRC21 fee handling are the production ones. The replay finalises the pending
+		// state itself, the way block processing does, so there is nothing left to commit
+		// here.
+		statedb.SetTxContext(tx.Hash(), idx)
+		if err := core.ApplyTransactionForReplay(msg, new(core.GasPool).AddGas(msg.GasLimit), block.Number(), tx, evm, balance); err != nil {
+			// An EVM this replay cannot use is a problem of this caller, not of the
+			// transaction: report it as it is instead of blaming the transaction.
+			if errors.Is(err, core.ErrReplayTracingEVM) || errors.Is(err, core.ErrReplayStateType) {
+				return nil, vm.BlockContext{}, nil, nil, err
+			}
 			return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction %#x failed: %v", tx.Hash(), err)
 		}
-		statedb.Finalise(evm.ChainConfig().IsEIP158(block.Number()))
 	}
 	return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction index %d out of range for block %#x", txIndex, block.Hash())
 }
@@ -213,6 +234,9 @@ func (b *testBackend) StateAtTransaction(ctx context.Context, block *types.Block
 	if err != nil {
 		return nil, vm.BlockContext{}, nil, nil, errStateNotFound
 	}
+	// Block level state changes block processing applies before the first transaction.
+	// Without them the pre-state handed to the tracer is not the one the block ran on.
+	core.ApplyTIPSigningHardFork(b.chainConfig, statedb, block.Number())
 	if txIndex == 0 && len(block.Transactions()) == 0 {
 		return nil, vm.BlockContext{}, statedb, release, nil
 	}
@@ -220,15 +244,33 @@ func (b *testBackend) StateAtTransaction(ctx context.Context, block *types.Block
 	signer := types.MakeSigner(b.chainConfig, block.Number())
 	context := core.NewEVMBlockContext(block.Header(), b.chain, nil)
 	evm := vm.NewEVM(context, statedb, nil, b.chainConfig, vm.Config{})
+	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	for idx, tx := range block.Transactions() {
 		if idx == txIndex {
 			return tx, context, statedb, release, nil
 		}
-		msg, _ := core.TransactionToMessage(tx, signer, nil, block.Number(), block.BaseFee(), b.chainConfig)
-		if _, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(tx.Gas()), common.Address{}); err != nil {
+		var balance *big.Int
+		if tx.To() != nil {
+			if value, ok := feeCapacity[*tx.To()]; ok {
+				balance = value
+			}
+		}
+		msg, _ := core.TransactionToMessage(tx, signer, balance, block.Number(), block.BaseFee(), b.chainConfig)
+		// Replay through the same entry point production uses, handing it the same fee
+		// capacity and the same transaction context, so the pre-state handed to the tracer
+		// matches the block that is being traced: the routing, the sender nonce handling and
+		// the TRC21 fee handling are the production ones. The replay finalises the pending
+		// state itself, the way block processing does, so there is nothing left to commit
+		// here.
+		statedb.SetTxContext(tx.Hash(), idx)
+		if err := core.ApplyTransactionForReplay(msg, new(core.GasPool).AddGas(msg.GasLimit), block.Number(), tx, evm, balance); err != nil {
+			// An EVM this replay cannot use is a problem of this caller, not of the
+			// transaction: report it as it is instead of blaming the transaction.
+			if errors.Is(err, core.ErrReplayTracingEVM) || errors.Is(err, core.ErrReplayStateType) {
+				return nil, vm.BlockContext{}, nil, nil, err
+			}
 			return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction %#x failed: %v", tx.Hash(), err)
 		}
-		statedb.Finalise(evm.ChainConfig().IsEIP158(block.Number()))
 	}
 	return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction index %d out of range for block %#x", txIndex, block.Hash())
 }
@@ -264,6 +306,16 @@ func newStateTracer(ctx *Context, cfg json.RawMessage, chainCfg *params.ChainCon
 			},
 		},
 	}, nil
+}
+
+func init() {
+	// Register the tracers up front, so that parallel tests can use them without racing
+	// on the directory map. The native tracers are not linked into this test binary, so
+	// a name like callTracer is unavailable here, and so is the JS evaluator
+	// (DefaultDirectory.jsEval is nil): an unregistered name would call a nil function
+	// instead of falling through to a working evaluator.
+	DefaultDirectory.Register("stateTracer", newStateTracer, false)
+	DefaultDirectory.Register(parallelProbeTracerName, newParallelProbeTracer, true)
 }
 
 // TestStateHooks tests state hooks.
@@ -310,7 +362,6 @@ func TestStateHooks(t *testing.T) {
 		nonce++
 	})
 	defer backend.teardown()
-	DefaultDirectory.Register("stateTracer", newStateTracer, false)
 	api := NewAPI(backend)
 	tracer := "stateTracer"
 	res, err := api.TraceCall(context.Background(), ethapi.TransactionArgs{From: &from, To: &to, Value: (*hexutil.Big)(big.NewInt(1000))}, rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber), &TraceCallConfig{TraceConfig: TraceConfig{Tracer: &tracer}})
@@ -1024,6 +1075,191 @@ type Account struct {
 	addr common.Address
 }
 
+// skipNonceForkCases are the receiver fork settings the skip-nonce tests share. With the
+// fork active the first transaction of the block leaves the sender nonce untouched, so the
+// second one reuses its nonce; without it the first transaction bumps the nonce and the
+// second one carries nonce+1.
+var skipNonceForkCases = []struct {
+	name         string
+	tipXDCXBlock *big.Int
+	secondNonce  uint64
+}{
+	{name: "receiver fork inactive", tipXDCXBlock: nil, secondNonce: 1},
+	{name: "receiver fork active", tipXDCXBlock: common.Big0, secondNonce: 0},
+}
+
+// newSkipNonceBackend builds a chain whose block carries two transactions of the same
+// sender. The first one goes to the XDCX trading state address, which block processing
+// routes to ApplyEmptyTransaction while the receiver fork is active: it neither checks nor
+// increments the sender nonce, so the second transaction is an ordinary transfer that
+// reuses that nonce (secondNonce 0). Outside the fork window the first one is an ordinary
+// EVM call that bumps the nonce, so the second one carries nonce+1 (secondNonce 1).
+// Dropping the first transaction therefore leaves the nonce un-bumped and fails the second
+// one with "nonce too high"; replaying it with core.ApplyMessage instead bumps it and
+// fails the second one with "nonce too low" (Apothem block 0x2e69c13, issue
+// gzliudan/XDPoSChain#256).
+func newSkipNonceBackend(t *testing.T, tipXDCXBlock *big.Int, secondNonce uint64) (*testBackend, *types.Transaction, *types.Transaction) {
+	t.Helper()
+
+	config := *params.TestChainConfig
+	config.TIPXDCXBlock = tipXDCXBlock
+	config.TIPXDCXReceiverDisableBlock = nil
+
+	accounts := newAccounts(2)
+	genesis := &core.Genesis{
+		Config: &config,
+		Alloc: types.GenesisAlloc{
+			accounts[0].addr: {Balance: big.NewInt(9000000000000000000)},
+			accounts[1].addr: {Balance: big.NewInt(9000000000000000000)},
+		},
+	}
+	signer := types.MakeSigner(&config, common.Big1)
+	tradingState := common.TradingStateAddrBinary
+	var first, second *types.Transaction
+
+	backend := newTestBackend(t, 1, genesis, func(i int, b *core.BlockGen) {
+		var err error
+		first, err = types.SignTx(types.NewTx(&types.LegacyTx{
+			Nonce:    0,
+			To:       &tradingState,
+			Value:    big.NewInt(1000),
+			Gas:      params.TxGas,
+			GasPrice: b.BaseFee(),
+		}), signer, accounts[0].key)
+		if err != nil {
+			t.Fatalf("failed to sign the trading transaction: %v", err)
+		}
+		b.AddTx(first)
+
+		second, err = types.SignTx(types.NewTx(&types.LegacyTx{
+			Nonce:    secondNonce,
+			To:       &accounts[1].addr,
+			Value:    big.NewInt(1000),
+			Gas:      params.TxGas,
+			GasPrice: b.BaseFee(),
+		}), signer, accounts[0].key)
+		if err != nil {
+			t.Fatalf("failed to sign the following transaction: %v", err)
+		}
+		b.AddTx(second)
+	})
+	return backend, first, second
+}
+
+// TestTraceBlockSkipNonceTransactions traces a block that carries a transaction to one
+// of the XDCX system addresses followed by another transaction of the same sender.
+//
+// With the receiver fork active the first transaction goes through
+// ApplyEmptyTransaction and leaves the sender nonce untouched, so the second one reuses
+// the same nonce. With the fork inactive the first transaction bumps the nonce, so the
+// second one carries nonce+1 — and dropping the first would make it fail with
+// "nonce too high" instead.
+//
+// Either way both transactions must appear in the result array: a dropped entry is a
+// silent hole in the debug_traceBlock* response.
+func TestTraceBlockSkipNonceTransactions(t *testing.T) {
+	for _, tc := range skipNonceForkCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			backend, _, _ := newSkipNonceBackend(t, tc.tipXDCXBlock, tc.secondNonce)
+			defer backend.teardown()
+
+			api := NewAPI(backend)
+			stateTracer := "stateTracer"
+			for _, tracer := range []struct {
+				name string
+				cfg  *TraceConfig
+			}{
+				{name: "default struct logger", cfg: nil},
+				{name: "named tracer", cfg: &TraceConfig{Tracer: &stateTracer}},
+			} {
+				res, err := api.TraceBlockByNumber(context.Background(), rpc.BlockNumber(1), tracer.cfg)
+				if err != nil {
+					t.Fatalf("%s: TraceBlockByNumber failed: %v", tracer.name, err)
+				}
+				if len(res) != 2 {
+					t.Fatalf("%s: trace result length = %d, want 2", tracer.name, len(res))
+				}
+				for i, traced := range res {
+					if traced == nil {
+						t.Errorf("%s: transaction %d is missing from the trace result", tracer.name, i)
+						continue
+					}
+					// traceTx aborts the whole call when a trace fails, so these two are
+					// guards: a transaction that carries no result fails the test either way.
+					if traced.Error != "" {
+						t.Errorf("%s: transaction %d failed to trace: %s", tracer.name, i, traced.Error)
+					}
+					if traced.Result == nil {
+						t.Errorf("%s: transaction %d has no trace result", tracer.name, i)
+					}
+				}
+			}
+		})
+	}
+}
+
+// parallelProbeTracerName is registered as evaluating JS code, so that traceBlock sends
+// the block through its parallel path without the JS evaluator being linked into this
+// test binary: both IsJS and New look the name up in the directory before falling back to
+// the evaluator.
+const parallelProbeTracerName = "parallelProbeTracer"
+
+// newParallelProbeTracer reports nothing. The test using it asserts on the state feeder of
+// traceBlockParallel, not on the trace it produces.
+func newParallelProbeTracer(*Context, json.RawMessage, *params.ChainConfig) (*Tracer, error) {
+	return &Tracer{
+		Hooks:     &tracing.Hooks{},
+		GetResult: func() (json.RawMessage, error) { return json.RawMessage("{}"), nil },
+		Stop:      func(error) {},
+	}, nil
+}
+
+// TestTraceBlockParallelSkipNonceTransactions covers the state feeder of
+// traceBlockParallel, which only tracers that evaluate JS code reach (api.go, IsJS). The
+// block carries a transaction to an XDCX system address followed by another transaction
+// of the same sender: nonce+1 while the receiver fork is inactive and the same nonce
+// while it is active (see skipNonceForkCases). A feeder skipping the first one outright
+// leaves the nonce un-bumped and fails the second one with "nonce too high"; replaying
+// the first one with core.ApplyMessage instead of the block processing routing bumps it
+// and fails the second one with "nonce too low". TraceBlockByNumber returns that error.
+func TestTraceBlockParallelSkipNonceTransactions(t *testing.T) {
+	for _, tc := range skipNonceForkCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			backend, _, _ := newSkipNonceBackend(t, tc.tipXDCXBlock, tc.secondNonce)
+			defer backend.teardown()
+
+			api := NewAPI(backend)
+			tracer := parallelProbeTracerName
+			res, err := api.TraceBlockByNumber(context.Background(), rpc.BlockNumber(1), &TraceConfig{Tracer: &tracer})
+			if err != nil {
+				t.Fatalf("TraceBlockByNumber failed: %v", err)
+			}
+			if len(res) != 2 {
+				t.Fatalf("trace result length = %d, want 2", len(res))
+			}
+			for i, traced := range res {
+				if traced == nil {
+					t.Errorf("transaction %d is missing from the trace result", i)
+					continue
+				}
+				// The workers of traceBlockParallel store their failures in
+				// txTraceResult.Error instead of returning them, so a nil check alone
+				// would pass even if every trace failed and produced no result.
+				if traced.Error != "" {
+					t.Errorf("transaction %d failed to trace: %s", i, traced.Error)
+				}
+				if traced.Result == nil {
+					t.Errorf("transaction %d has no trace result", i)
+				}
+			}
+		})
+	}
+}
+
 func newAccounts(n int) (accounts []Account) {
 	for i := 0; i < n; i++ {
 		key, _ := crypto.GenerateKey()
@@ -1347,4 +1583,44 @@ func uintPtr(i int) *hexutil.Uint {
 func uint64Ptr(u uint64) *hexutil.Uint64 {
 	ret := hexutil.Uint64(u)
 	return &ret
+}
+
+// TestTraceTransactionSkipNonceTransactions traces both transactions of a block in
+// which the second one reuses the nonce of the first, because the first goes through
+// ApplyEmptyTransaction while the XDCX receiver fork is active and does not increment
+// the sender nonce. With the fork inactive the first transaction bumps the nonce, so
+// the second one carries nonce+1.
+//
+// stateAtTransaction rebuilds the pre-state by replaying the earlier transactions;
+// replaying the first one with core.ApplyMessage bumps the nonce while the fork is
+// active and makes the second one fail with "nonce too low" (Apothem block 0x2e69c13,
+// issue gzliudan/XDPoSChain#256).
+//
+// Note: this runs against testBackend.StateAtTransaction, the mirror of the production
+// replay that this change updates as well, so on its own it cannot catch the production
+// one drifting away again. TestStateAtTransactionReplayKeepsNonceLessSenderNonce in
+// package eth drives eth.stateAtTransaction directly and is what pins the production
+// behaviour.
+func TestTraceTransactionSkipNonceTransactions(t *testing.T) {
+	for _, tc := range skipNonceForkCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			backend, first, second := newSkipNonceBackend(t, tc.tipXDCXBlock, tc.secondNonce)
+			defer backend.teardown()
+
+			api := NewAPI(backend)
+			for _, traced := range []struct {
+				name string
+				tx   *types.Transaction
+			}{
+				{name: "first, to the trading state address", tx: first},
+				{name: "second, reusing the nonce", tx: second},
+			} {
+				if _, err := api.TraceTransaction(context.Background(), traced.tx.Hash(), nil); err != nil {
+					t.Errorf("%s: TraceTransaction failed: %v", traced.name, err)
+				}
+			}
+		})
+	}
 }

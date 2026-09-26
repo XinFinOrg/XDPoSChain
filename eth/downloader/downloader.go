@@ -27,9 +27,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain"
 	"github.com/XinFinOrg/XDPoSChain/common"
-	xdc_sort "github.com/XinFinOrg/XDPoSChain/common/sort"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/engines/engine_v2"
-	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -55,10 +53,10 @@ var (
 
 	MaxForkAncestry  = 3 * params.EpochDuration // Maximum chain reorganisation
 	rttMinEstimate   = 2 * time.Second          // Minimum round-trip time to target for download requests
-	rttMaxEstimate   = 5 * time.Second          // Maximum rount-trip time to target for download requests
+	rttMaxEstimate   = 20 * time.Second         // Maximum round-trip time to target for download requests
 	rttMinConfidence = 0.1                      // Worse confidence factor in our estimated RTT value
-	ttlScaling       = 2                        // Constant scaling factor for RTT -> TTL conversion
-	ttlLimit         = 5 * time.Second          // Maximum TTL allowance to prevent reaching crazy timeouts
+	ttlScaling       = 3                        // Constant scaling factor for RTT -> TTL conversion
+	ttlLimit         = time.Minute              // Maximum TTL allowance to prevent reaching crazy timeouts
 
 	qosTuningPeers   = 5    // Number of peers to tune based on (best peers)
 	qosConfidenceCap = 10   // Number of peers above which not to modify RTT confidence
@@ -95,7 +93,7 @@ var (
 	errCancelContentProcessing = errors.New("content processing canceled (requested)")
 	errCanceled                = errors.New("syncing canceled (requested)")
 	errNoSyncActive            = errors.New("no sync active")
-	errTooOld                  = errors.New("peer doesn't speak recent enough protocol version (need version >= 62)")
+	errTooOld                  = fmt.Errorf("peer doesn't speak recent enough protocol version (need version >= %d)", minProtocolVer)
 	errEnoughBlock             = errors.New("downloader download enough block")
 )
 
@@ -139,17 +137,17 @@ type Downloader struct {
 	pivotGapLock    sync.RWMutex // Protects pivotGapNumbers
 
 	// Channels
-	headerCh      chan dataPack        // [eth/62] Channel receiving inbound block headers
-	bodyCh        chan dataPack        // [eth/62] Channel receiving inbound block bodies
-	receiptCh     chan dataPack        // [eth/63] Channel receiving inbound receipts
-	bodyWakeCh    chan bool            // [eth/62] Channel to signal the block body fetcher of new tasks
-	receiptWakeCh chan bool            // [eth/63] Channel to signal the receipt fetcher of new tasks
-	headerProcCh  chan []*types.Header // [eth/62] Channel to feed the header processor new tasks
+	headerCh      chan dataPack        // Channel receiving inbound block headers
+	bodyCh        chan dataPack        // Channel receiving inbound block bodies
+	receiptCh     chan dataPack        // Channel receiving inbound receipts
+	bodyWakeCh    chan bool            // Channel to signal the block body fetcher of new tasks
+	receiptWakeCh chan bool            // Channel to signal the receipt fetcher of new tasks
+	headerProcCh  chan []*types.Header // Channel to feed the header processor new tasks
 
 	// for stateFetcher
 	stateSyncStart chan *stateSync
 	trackStateReq  chan *stateReq
-	stateCh        chan dataPack // [eth/63] Channel receiving inbound node state data
+	stateCh        chan dataPack // Channel receiving inbound node state data
 
 	// Cancellation and termination
 	cancelPeer string         // Identifier of the peer currently being used as the master (cancel on drop)
@@ -340,7 +338,7 @@ func (d *Downloader) Synchronising() bool {
 // RegisterPeer injects a new download peer into the set of block source to be
 // used for fetching hashes and blocks from.
 func (d *Downloader) RegisterPeer(id string, version int, peer Peer) error {
-	logger := log.New("peer", id)
+	logger := peerLogger(id)
 	logger.Trace("Registering sync peer")
 	if err := d.peers.Register(newPeerConnection(id, version, peer, logger)); err != nil {
 		logger.Error("Failed to register sync peer", "err", err)
@@ -356,15 +354,24 @@ func (d *Downloader) RegisterLightPeer(id string, version int, peer LightPeer) e
 	return d.RegisterPeer(id, version, &lightPeerWrapper{peer})
 }
 
-// UnregisterPeer remove a peer from the known list, preventing any action from
+// UnregisterPeer removes a peer from the known list, preventing any action from
 // the specified peer. An effort is also made to return any pending fetches into
 // the queue.
+//
+// Unregistering a peer that is not (or no longer) registered returns
+// errNotRegistered without side effects, so repeated or racing calls are safe:
+// the cleanup (queue revocation and peer drop event) runs at most once.
 func (d *Downloader) UnregisterPeer(id string) error {
 	// Unregister the peer from the active peer set and revoke any fetch tasks
-	logger := log.New("peer", id)
+	logger := peerLogger(id)
 	logger.Trace("Unregistering sync peer")
 	if err := d.peers.Unregister(id); err != nil {
-		logger.Warn("Failed to unregister sync peer", "err", err)
+		if errors.Is(err, errNotRegistered) {
+			// Expected: never registered, or removal raced ahead of registration.
+			logger.Debug("Sync peer was never registered")
+		} else {
+			logger.Warn("Failed to unregister sync peer", "err", err)
+		}
 		return err
 	}
 	d.queue.Revoke(id)
@@ -385,11 +392,12 @@ func (d *Downloader) Synchronise(id string, head common.Hash, td *big.Int, mode 
 	if errors.Is(err, errInvalidChain) || errors.Is(err, errBadPeer) || errors.Is(err, errTimeout) ||
 		errors.Is(err, errStallingPeer) || errors.Is(err, errEmptyHeaderSet) ||
 		errors.Is(err, errPeersUnavailable) || errors.Is(err, errTooOld) || errors.Is(err, errInvalidAncestor) {
-		log.Warn("Synchronisation failed, dropping peer", "peer", id, "err", err)
+		logger := peerLogger(id)
+		logger.Warn("Synchronisation failed, dropping peer", "err", err)
 		if d.dropPeer == nil {
 			// The dropPeer method is nil when `--copydb` is used for a local copy.
 			// Timeouts can occur if e.g. compaction hits at the wrong time, and can be ignored
-			log.Warn("Downloader wants to drop peer, but peerdrop-function is not set", "peer", id)
+			logger.Warn("Downloader wants to drop peer, but peerdrop-function is not set")
 		} else {
 			d.dropPeer(id)
 		}
@@ -478,7 +486,7 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td *big.I
 			d.mux.Post(DoneEvent{})
 		}
 	}()
-	if p.version < 62 {
+	if p.version < minProtocolVer {
 		return errTooOld
 	}
 	mode := d.getMode()
@@ -660,58 +668,72 @@ func (d *Downloader) fetchHeight(p *peerConnection, hash common.Hash) (*types.He
 	}
 }
 
+// Sampling parameters of the fixed ancestor span request: two samples spaced
+// one skipped header apart, spanning three consecutive blocks and sampling
+// only its two ends.
+const (
+	spanSampleCount = 2 // samples per span request
+	spanSampleSkip  = 1 // headers skipped between two samples
+)
+
 // calculateRequestSpan calculates what headers to request from a peer when trying to determine the
 // common ancestor.
-// It returns parameters to be used for peer.RequestHeadersByNumber:
+// The request shape is fixed at spanSampleCount samples spaced spanSampleSkip
+// skipped headers apart; the function returns the parameters to be used for
+// peer.RequestHeadersByNumber:
 //
 //	from - starting block number
-//	count - number of headers to request
-//	skip - number of headers to skip
+//	max - the highest block the search should consider from the response,
+//	i.e. the top of the acceptance window; it can top out past the peer's
+//	head when 'from' is clamped up to zero (see the clamp below)
 //
-// and also returns 'max', the last block which is expected to be returned by the remote peers,
-// given the (from,count,skip)
-func calculateRequestSpan(remoteHeight, localHeight uint64) (int64, int, int, uint64) {
-	var (
-		from     int
-		count    int
-		MaxCount = MaxHeaderFetch / 16
-	)
-	// requestHead is the highest block that we will ask for. If requestHead is not offset,
-	// the highest block that we will get is 16 blocks back from head, which means we
-	// will fetch 14 or 15 blocks unnecessarily in the case the height difference
-	// between us and the peer is 1-2 blocks, which is most common
-	requestHead := int(remoteHeight) - 1
-	if requestHead < 0 {
-		requestHead = 0
-	}
-	// requestBottom is the lowest block we want included in the query
-	// Ideally, we want to include the one just below our own head
-	requestBottom := int(localHeight - 1)
-	if requestBottom < 0 {
-		requestBottom = 0
-	}
-	totalSpan := requestHead - requestBottom
-	span := 1 + totalSpan/MaxCount
-	if span < 2 {
-		span = 2
-	}
-	if span > 16 {
-		span = 16
-	}
+// The sampling top is the highest block below the remote head, capped at
+// the local head, because usableAsAncestor rejects every candidate above it and
+// samples there are wasted round trips. The window spans three
+// consecutive blocks and samples only its two ends, so a common ancestor at
+// the top sample, at the lower one, or on the skipped middle between them
+// all yields a hit in the first round trip. A hit at the top sample is
+// returned as is, while a hit at the lower one leaves the true ancestor
+// somewhere in the two-block gap under the top sample, and a single
+// binary-search probe at the skipped middle resolves it whichever block
+// it is. When the capped top sits below 2, the raw start would be negative,
+// so 'from' is clamped up to zero and the fixed two-sample window is left
+// as is, topping it out past the sampling top; candidates above the local
+// head are rejected by usableAsAncestor's head guard.
+func calculateRequestSpan(remoteHeight, localHeight uint64) (int64, uint64) {
+	// The remote head itself was already fetched to learn the remote height,
+	// so the sampling top starts at the highest block below it. The local
+	// head cap on it is described in the doc comment. max(remoteHeight, 1)-1
+	// saturates the decrement at zero, avoiding the uint64 underflow a raw
+	// remoteHeight-1 would hit at genesis.
+	spanTop := min(max(remoteHeight, 1)-1, localHeight)
+	// The capped top and the block two below it. The skipped middle block is
+	// deliberate; see the doc comment for the geometry, the clamp, and the
+	// refinement trade-off.
+	width := (spanSampleCount - 1) * (spanSampleSkip + 1)
+	from := max(int(spanTop)-width, 0)
+	return int64(from), uint64(from + width)
+}
 
-	count = 1 + totalSpan/span
-	if count > MaxCount {
-		count = MaxCount
+// usableAsAncestor reports whether a remote block may be used as the common ancestor.
+// Blocks above the local head are rejected even when their body is on disk:
+// side chain blocks written ahead of the head are known by hash, and accepting
+// one as the ancestor skips the range the chain still has to import. The span
+// search's acceptance window follows the raw request, so it can top out above
+// the head when 'from' is clamped up to zero; this guard is what keeps those
+// above-head candidates out of the ancestor search.
+func (d *Downloader) usableAsAncestor(mode SyncMode, hash common.Hash, number, localHeight uint64) bool {
+	if number > localHeight {
+		return false
 	}
-	if count < 2 {
-		count = 2
+	switch mode {
+	case FullSync:
+		return d.blockchain.HasBlock(hash, number)
+	case FastSync:
+		return d.blockchain.HasFastBlock(hash, number)
+	default:
+		return d.lightchain.HasHeader(hash, number)
 	}
-	from = requestHead - (count-1)*span
-	if from < 0 {
-		from = 0
-	}
-	max := from + (count-1)*span
-	return int64(from), count, span - 1, uint64(max)
 }
 
 // findAncestor tries to locate the common ancestor link of the local chain and
@@ -740,10 +762,18 @@ func (d *Downloader) findAncestor(p *peerConnection, remoteHeader *types.Header)
 	if localHeight >= MaxForkAncestry {
 		floor = int64(localHeight - MaxForkAncestry)
 	}
-	from, count, skip, max := calculateRequestSpan(remoteHeight, localHeight)
+	// The common ancestor can never sit above the local head, and
+	// usableAsAncestor rejects every candidate above it, so cap both the span
+	// search and the binary search there. Otherwise a head far below the
+	// remote, or stale side chain segments stored above it, burn the whole
+	// search on candidates that cannot be accepted instead of anchoring in
+	// one round trip.
+	ancestorLimitExclusive := localHeight + 1
 
-	p.log.Trace("Span searching for common ancestor", "count", count, "from", from, "skip", skip)
-	go p.peer.RequestHeadersByNumber(uint64(from), count, skip, false)
+	from, spanMax := calculateRequestSpan(remoteHeight, localHeight)
+
+	p.log.Trace("Span searching for common ancestor", "count", spanSampleCount, "from", from, "skip", spanSampleSkip)
+	go p.peer.RequestHeadersByNumber(uint64(from), spanSampleCount, spanSampleSkip, false)
 
 	// Wait for the remote response to the head fetch
 	number, hash := uint64(0), common.Hash{}
@@ -770,7 +800,7 @@ func (d *Downloader) findAncestor(p *peerConnection, remoteHeader *types.Header)
 			}
 			// Make sure the peer's reply conforms to the request
 			for i, header := range headers {
-				expectNumber := from + int64(i)*int64((skip+1))
+				expectNumber := from + int64(i)*int64(spanSampleSkip+1)
 				if number := header.Number.Int64(); number != expectNumber {
 					p.log.Warn("Head headers broke chain ordering", "index", i, "requested", expectNumber, "received", number)
 					return 0, fmt.Errorf("%w: %v", errInvalidChain, errors.New("head headers broke chain ordering"))
@@ -780,23 +810,14 @@ func (d *Downloader) findAncestor(p *peerConnection, remoteHeader *types.Header)
 			finished = true
 			for i := len(headers) - 1; i >= 0; i-- {
 				// Skip any headers that underflow/overflow our requested set
-				if headers[i].Number.Int64() < from || headers[i].Number.Uint64() > max {
+				if headers[i].Number.Int64() < from || headers[i].Number.Uint64() > spanMax {
 					continue
 				}
 				// Otherwise check if we already know the header or not
 				h := headers[i].Hash()
 				n := headers[i].Number.Uint64()
 
-				var known bool
-				switch mode {
-				case FullSync:
-					known = d.blockchain.HasBlock(h, n)
-				case FastSync:
-					known = d.blockchain.HasFastBlock(h, n)
-				default:
-					known = d.lightchain.HasHeader(h, n)
-				}
-				if known {
+				if d.usableAsAncestor(mode, h, n, localHeight) {
 					number, hash = n, h
 					break
 				}
@@ -811,19 +832,48 @@ func (d *Downloader) findAncestor(p *peerConnection, remoteHeader *types.Header)
 			// Out of bounds delivery, ignore
 		}
 	}
-	// If the head fetch already found an ancestor, return
+	// A span hit is only the highest SAMPLED common block: the search steps
+	// over skip headers, so the true fork can sit in the unsampled gap below
+	// the next sample (e.g. at localHeight-1 when the head-capped window is
+	// {head-2, head}, or at the head itself when the clamped window missed it
+	// and the hit fell back to genesis). A hit at the local head or at the
+	// top of the window leaves no gap to close and is returned as is; any
+	// other hit seeds the binary search below with the gap bounds, the hit
+	// being the known-common lower bound and the next sample the
+	// known-rejected upper one.
+	// floor starts at -1 and stays there while the local chain is shorter
+	// than MaxForkAncestry, so it must be clamped to zero before the
+	// unsigned conversion: uint64(-1) would silently become MaxUint64 and
+	// leave the binary search correct only through unsigned wraparound.
+	start, end := uint64(0), min(remoteHeight, ancestorLimitExclusive)
+	if floor > 0 {
+		start = uint64(floor)
+	}
 	if !hash.IsZero() {
 		if int64(number) <= floor {
 			p.log.Warn("Ancestor below allowance", "number", number, "hash", hash, "allowance", floor)
 			return 0, errInvalidAncestor
 		}
-		p.log.Debug("Found common ancestor", "number", number, "hash", hash)
-		return number, nil
-	}
-	// Ancestor not found, we need to binary search over our chain
-	start, end := uint64(0), remoteHeight
-	if floor > 0 {
-		start = uint64(floor)
+		if gap := number + spanSampleSkip + 1; number < localHeight && gap <= spanMax {
+			// The next sample is the known-rejected upper bound of the
+			// refinement. The clamped window keeps its count, so it can top
+			// out past the local head and past the peer's; probe neither:
+			// usableAsAncestor rejects the former, and the latter comes back
+			// empty and fails the sync. The local-head clamp is explicit so
+			// the not-above-the-head invariant does not hinge on the branch
+			// guard plus the fixed skip arithmetic.
+			// The remote-head bound is exclusive, so the peer's head itself stays
+			// probeable; compare before incrementing, because a head advertised at
+			// MaxUint64 would wrap remoteHeight+1 to zero and silently collapse
+			// the refinement interval to an empty range.
+			start, end = number, min(gap, ancestorLimitExclusive)
+			if remoteHeight < end {
+				end = remoteHeight + 1
+			}
+		} else {
+			p.log.Debug("Found common ancestor", "number", number, "hash", hash)
+			return number, nil
+		}
 	}
 	p.log.Trace("Binary searching for common ancestor", "start", start, "end", end)
 
@@ -860,16 +910,10 @@ func (d *Downloader) findAncestor(p *peerConnection, remoteHeader *types.Header)
 				h := headers[0].Hash()
 				n := headers[0].Number.Uint64()
 
-				var known bool
-				switch mode {
-				case FullSync:
-					known = d.blockchain.HasBlock(h, n)
-				case FastSync:
-					known = d.blockchain.HasFastBlock(h, n)
-				default:
-					known = d.lightchain.HasHeader(h, n)
-				}
-				if !known {
+				// The search is capped at the local head, so an honest peer
+				// can never offer a probe above it; any probe that is not a
+				// known block narrows the search below it.
+				if !d.usableAsAncestor(mode, h, n, localHeight) {
 					end = check
 					break
 				}
@@ -1363,6 +1407,11 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 		rollback    []*types.Header
 		rollbackErr error
 		mode        = d.getMode()
+		// Highest header written to the light chain this cycle. Block imports
+		// move the header head back to the inserted block, so CurrentHeader
+		// can trail the headers the peer already delivered. A bailing peer
+		// never advances it, keeping the stalling-peer detection intact.
+		lastInserted *types.Header
 	)
 	defer func() {
 		if len(rollback) > 0 {
@@ -1435,6 +1484,9 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 				// peer gave us something useful, we're already happy/progressed (above check).
 				if mode == FastSync || mode == LightSync {
 					head := d.lightchain.CurrentHeader()
+					if lastInserted != nil && lastInserted.Number.Uint64() > head.Number.Uint64() {
+						head = lastInserted
+					}
 					if td.Cmp(d.lightchain.GetTd(head.Hash(), head.Number.Uint64())) > 0 {
 						return errStallingPeer
 					}
@@ -1485,6 +1537,7 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 					if len(rollback) > fsHeaderSafetyNet {
 						rollback = append(rollback[:0], rollback[len(rollback)-fsHeaderSafetyNet:]...)
 					}
+					lastInserted = chunk[len(chunk)-1]
 				}
 				// Unless we're doing light chains, schedule the headers for associated content retrieval
 				if mode == FullSync || mode == FastSync {
@@ -1596,17 +1649,37 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 	for i, result := range results {
 		blocks[i] = types.NewBlockWithHeader(result.Header).WithBody(result.body())
 	}
-	if index, err := d.blockchain.InsertChain(blocks); err != nil {
-		if index < len(results) {
-			log.Debug("Downloaded item processing failed", "number", results[index].Header.Number, "hash", results[index].Header.Hash(), "err", err)
-		} else {
-			// The InsertChain method in blockchain.go will sometimes return an out-of-bounds index,
-			// when it needs to preprocess blocks to import a sidechain.
-			// The importer will put together a new list of blocks to import, which is a superset
-			// of the blocks delivered from the downloader, and the indexing will be off.
-			log.Debug("Downloaded item processing failed on sidechain import", "index", index, "err", err)
+	// For XDPoS, the header verification of an epoch-switch block reads the
+	// snapshot stored at its gap block, and that snapshot is only written while
+	// the gap block itself is being executed (UpdateMasternodes); the v1
+	// validators check reads the state of the block before the epoch switch as
+	// well, and a block's state exists only once it has been executed.
+	// VerifyHeaders verifies the whole batch up-front (its results channel is
+	// fully buffered), so it would race ahead and try to verify the epoch-switch
+	// block before the gap block - or the block before it - in the same batch has
+	// been executed, failing to find the snapshot or the state. Split the batch
+	// so both are executed and written before the following blocks are verified.
+	//
+	// "Up-front" is XDPoS.VerifyHeaders: it buffers the results channel for the
+	// whole batch and the engine feeds every header into it before InsertChain
+	// has executed the first block of that batch. Only batches that come through
+	// here are split, so a batch handed to InsertChain from anywhere else - the
+	// admin import, XDC import-chain - can still hold a checkpoint and its
+	// parent, and a checkpoint on a fork keeps its parent's state out of reach
+	// however the batch is split.
+	for _, segment := range d.splitBlocksForVerification(blocks) {
+		if index, err := d.blockchain.InsertChain(segment); err != nil {
+			if index < len(segment) {
+				log.Debug("Downloaded item processing failed", "number", segment[index].Number(), "hash", segment[index].Hash(), "err", err)
+			} else {
+				// The InsertChain method in blockchain.go will sometimes return an out-of-bounds index,
+				// when it needs to preprocess blocks to import a sidechain.
+				// The importer will put together a new list of blocks to import, which is a superset
+				// of the blocks delivered from the downloader, and the indexing will be off.
+				log.Debug("Downloaded item processing failed on sidechain import", "index", index, "err", err)
+			}
+			return fmt.Errorf("%w: %v", errInvalidChain, err)
 		}
-		return fmt.Errorf("%w: %v", errInvalidChain, err)
 	}
 	if d.handleProposedBlock != nil {
 		header := blocks[len(blocks)-1].Header()
@@ -1616,6 +1689,62 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 		}
 	}
 	return nil
+}
+
+// splitBlocksForVerification splits a contiguous batch of blocks into segments
+// that never leave a block of the segment depending on another block of the same
+// segment having been executed.
+//
+// A gap block (a block at offset Epoch-Gap within its epoch) writes the snapshot
+// the epoch-switch block's verification reads, and the v1 validators check of an
+// epoch-switch block reads the state of the block before it, which is written
+// when that block is executed. Inserting one segment at a time therefore
+// guarantees both are in place before the next segment's headers are verified.
+// The batch is cut right after every gap block and right before every
+// epoch-switch block; the latter applies to any schedule, since the v1
+// validators check runs on the epoch switches whatever the gap offset is. It is
+// not narrowed to the blocks below V2.SwitchBlock: doing so would only save one
+// InsertChain per epoch on the v2 side, where the header check reads the snapshot
+// of the gap block and not the state of the block before it, and that is not worth
+// a version test in a splitter whose other cut is version-blind as well.
+// For non-XDPoS chains (or when there is nothing to split) the whole batch is
+// returned as a single segment.
+func (d *Downloader) splitBlocksForVerification(blocks []*types.Block) [][]*types.Block {
+	cfg := d.blockchain.Config()
+	if cfg == nil || cfg.XDPoS == nil || len(blocks) <= 1 {
+		return [][]*types.Block{blocks}
+	}
+	epoch, gap := cfg.XDPoS.Epoch, cfg.XDPoS.Gap
+	if epoch == 0 {
+		return [][]*types.Block{blocks}
+	}
+
+	var segments [][]*types.Block
+	start := 0
+	for i, block := range blocks {
+		number := block.NumberU64()
+		// Cut right after each gap block, but never after the very last block
+		// (that would just create an empty trailing segment). A schedule without
+		// a usable offset (Gap 0, or Gap >= Epoch) has no gap block at all, and
+		// this cut does not make one: the fallback that would read it walks back
+		// an unusable number of steps and UpdateM1 never fires on such a
+		// schedule, so this cut only keeps the epoch-switch cut below from
+		// costing anything there.
+		if gap != 0 && gap < epoch && number%epoch == epoch-gap && i < len(blocks)-1 {
+			segments = append(segments, blocks[start:i+1])
+			start = i + 1
+			continue
+		}
+		// Cut right before each epoch-switch block, so the block before it - the
+		// state the v1 validators check reads - is executed before its header is
+		// verified. This one cuts before the last block as well: its parent is in
+		// the same batch.
+		if i > start && number%epoch == 0 {
+			segments = append(segments, blocks[start:i])
+			start = i
+		}
+	}
+	return append(segments, blocks[start:])
 }
 
 // processFastSyncContent takes fetch results from the queue and writes them to the
@@ -1780,10 +1909,19 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 								log.Error("Failed to create state for gap pivot snapshot", "number", gapNum, "root", root, "err", err)
 								return err
 							}
-							if err := d.generateSnapshot(statedb, gapNum, gapHash); err != nil {
+							snap, err := d.generateSnapshot(statedb, gapNum, gapHash)
+							if err != nil {
+								// Abort fast sync instead of persisting an empty or partial
+								// snapshot that would permanently mask the gap. A normal chain
+								// always has masternode candidates at a gap block, so this
+								// failure means the gap block state itself is abnormal: retrying
+								// fast sync hits the same block again. The operator must resync
+								// with a clean data directory or restore valid gap block state
+								// before fast sync can complete.
 								log.Error("Failed to generate snapshot for gap pivot", "number", gapNum, "hash", gapHash, "err", err)
 								return err
 							}
+							log.Info("Gap pivot snapshot generated", "number", gapNum, "hash", gapHash.Hex(), "candidates", len(snap.NextEpochCandidates))
 							syncedGaps[gapNum] = true
 						}
 						log.Info("All gap pivot state syncs complete", "count", len(gapNumbers))
@@ -1998,36 +2136,15 @@ func (d *Downloader) requestTTL() time.Duration {
 	return ttl
 }
 
-// generateSnapshot creates and stores a snapshot from the given state and block hash.
-// It retrieves candidates from state, sorts them by stake in descending order,
-// and stores the snapshot for future use.
-func (d *Downloader) generateSnapshot(statedb *state.StateDB, number uint64, hash common.Hash) error {
-	candidates := statedb.GetCandidates()
-	var ms []utils.Masternode
-	for _, candidate := range candidates {
-		v := statedb.GetCandidateCap(candidate)
-		// Skip zero address candidates
-		if !candidate.IsZero() {
-			ms = append(ms, utils.Masternode{Address: candidate, Stake: v})
-		}
-	}
-	xdc_sort.Slice(ms, func(i, j int) bool {
-		return ms[i].Stake.Cmp(ms[j].Stake) >= 0
-	})
-
-	masterNodes := []common.Address{}
-	for _, m := range ms {
-		masterNodes = append(masterNodes, m.Address)
-	}
-
-	snap := engine_v2.NewSnapshot(number, hash, masterNodes)
-	log.Info("[generateSnapshot] created snapshot", "number", number, "hash", hash.Hex(), "candidates", len(masterNodes))
-
-	err := engine_v2.StoreSnapshot(snap, d.stateDB)
+// generateSnapshot derives the masternode snapshot of a gap block from the
+// given state, stores it and returns it.
+func (d *Downloader) generateSnapshot(statedb *state.StateDB, number uint64, hash common.Hash) (*engine_v2.SnapshotV2, error) {
+	snap, err := engine_v2.BuildSnapshotFromState(statedb, number, hash)
 	if err != nil {
-		log.Error("[generateSnapshot] error while storing snapshot", "hash", hash, "error", err)
-		return err
+		return nil, err
 	}
-
-	return nil
+	if err := engine_v2.StoreSnapshot(snap, d.stateDB); err != nil {
+		return nil, err
+	}
+	return snap, nil
 }

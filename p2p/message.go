@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/event"
-	"github.com/XinFinOrg/XDPoSChain/p2p/discover"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
@@ -51,21 +51,21 @@ type Msg struct {
 // the given value, which must be a pointer.
 //
 // For the decoding rules, please see package rlp.
-func (m Msg) Decode(val interface{}) error {
-	s := rlp.NewStream(m.Payload, uint64(m.Size))
+func (msg Msg) Decode(val interface{}) error {
+	s := rlp.NewStream(msg.Payload, uint64(msg.Size))
 	if err := s.Decode(val); err != nil {
-		return newPeerError(errInvalidMsg, "(code %x) (size %d) %v", m.Code, m.Size, err)
+		return newPeerError(errInvalidMsg, "(code %x) (size %d) %v", msg.Code, msg.Size, err)
 	}
 	return nil
 }
 
-func (m Msg) String() string {
-	return fmt.Sprintf("msg #%v (%v bytes)", m.Code, m.Size)
+func (msg Msg) String() string {
+	return fmt.Sprintf("msg #%v (%v bytes)", msg.Code, msg.Size)
 }
 
 // Discard reads any remaining payload data into a black hole.
-func (m Msg) Discard() error {
-	_, err := io.Copy(io.Discard, m.Payload)
+func (msg Msg) Discard() error {
+	_, err := io.Copy(io.Discard, msg.Payload)
 	return err
 }
 
@@ -123,24 +123,24 @@ type eofSignal struct {
 
 // note: when using eofSignal to detect whether a message payload
 // has been read, Read might not be called for zero sized messages.
-func (s *eofSignal) Read(buf []byte) (int, error) {
-	if s.count == 0 {
-		if s.eof != nil {
-			s.eof <- struct{}{}
-			s.eof = nil
+func (r *eofSignal) Read(buf []byte) (int, error) {
+	if r.count == 0 {
+		if r.eof != nil {
+			r.eof <- struct{}{}
+			r.eof = nil
 		}
 		return 0, io.EOF
 	}
 
 	max := len(buf)
-	if int(s.count) < len(buf) {
-		max = int(s.count)
+	if int(r.count) < len(buf) {
+		max = int(r.count)
 	}
-	n, err := s.wrapped.Read(buf[:max])
-	s.count -= uint32(n)
-	if (err != nil || s.count == 0) && s.eof != nil {
-		s.eof <- struct{}{} // tell Peer that msg has been consumed
-		s.eof = nil
+	n, err := r.wrapped.Read(buf[:max])
+	r.count -= uint32(n)
+	if (err != nil || r.count == 0) && r.eof != nil {
+		r.eof <- struct{}{} // tell Peer that msg has been consumed
+		r.eof = nil
 	}
 	return n, err
 }
@@ -171,7 +171,7 @@ type MsgPipeRW struct {
 	closed  *int32
 }
 
-// WriteMsg sends a messsage on the pipe.
+// WriteMsg sends a message on the pipe.
 // It blocks until the receiver has consumed the message payload.
 func (p *MsgPipeRW) WriteMsg(msg Msg) error {
 	if atomic.LoadInt32(p.closed) == 0 {
@@ -254,19 +254,23 @@ func ExpectMsg(r MsgReader, code uint64, content interface{}) error {
 type msgEventer struct {
 	MsgReadWriter
 
-	feed     *event.Feed
-	peerID   discover.NodeID
-	Protocol string
+	feed          *event.Feed
+	peerID        enode.ID
+	Protocol      string
+	localAddress  string
+	remoteAddress string
 }
 
 // newMsgEventer returns a msgEventer which sends message events to the given
 // feed
-func newMsgEventer(rw MsgReadWriter, feed *event.Feed, peerID discover.NodeID, proto string) *msgEventer {
+func newMsgEventer(rw MsgReadWriter, feed *event.Feed, peerID enode.ID, proto, remote, local string) *msgEventer {
 	return &msgEventer{
 		MsgReadWriter: rw,
 		feed:          feed,
 		peerID:        peerID,
 		Protocol:      proto,
+		remoteAddress: remote,
+		localAddress:  local,
 	}
 }
 
@@ -278,11 +282,13 @@ func (ev *msgEventer) ReadMsg() (Msg, error) {
 		return msg, err
 	}
 	ev.feed.Send(&PeerEvent{
-		Type:     PeerEventTypeMsgRecv,
-		Peer:     ev.peerID,
-		Protocol: ev.Protocol,
-		MsgCode:  &msg.Code,
-		MsgSize:  &msg.Size,
+		Type:          PeerEventTypeMsgRecv,
+		Peer:          ev.peerID,
+		Protocol:      ev.Protocol,
+		MsgCode:       &msg.Code,
+		MsgSize:       &msg.Size,
+		LocalAddress:  ev.localAddress,
+		RemoteAddress: ev.remoteAddress,
 	})
 	return msg, nil
 }
@@ -295,11 +301,13 @@ func (ev *msgEventer) WriteMsg(msg Msg) error {
 		return err
 	}
 	ev.feed.Send(&PeerEvent{
-		Type:     PeerEventTypeMsgSend,
-		Peer:     ev.peerID,
-		Protocol: ev.Protocol,
-		MsgCode:  &msg.Code,
-		MsgSize:  &msg.Size,
+		Type:          PeerEventTypeMsgSend,
+		Peer:          ev.peerID,
+		Protocol:      ev.Protocol,
+		MsgCode:       &msg.Code,
+		MsgSize:       &msg.Size,
+		LocalAddress:  ev.localAddress,
+		RemoteAddress: ev.remoteAddress,
 	})
 	return nil
 }

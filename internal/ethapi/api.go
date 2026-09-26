@@ -31,7 +31,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	math "github.com/XinFinOrg/XDPoSChain/common/math"
-	xdc_sort "github.com/XinFinOrg/XDPoSChain/common/sort"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
@@ -92,7 +91,10 @@ func (s *EthereumAPI) GasPrice(ctx context.Context) (*hexutil.Big, error) {
 		return nil, err
 	}
 	if head := s.b.CurrentHeader(); head.BaseFee != nil {
-		tipcap.Add(tipcap, head.BaseFee)
+		// The quoted price is for a transaction that can only be included from the
+		// next block onwards, so resolve the gas schedule at that height.
+		nextNumber := new(big.Int).Add(head.Number, common.Big1)
+		tipcap.Add(tipcap, params.BaseFeeForBlock(s.b.ChainConfig(), nextNumber))
 	}
 	return (*hexutil.Big)(tipcap), err
 }
@@ -782,9 +784,7 @@ func (api *BlockChainAPI) GetCandidateStatus(ctx context.Context, coinbaseAddres
 	}
 
 	if len(candidates) > maxMasternodes {
-		xdc_sort.Slice(candidates, func(i, j int) bool {
-			return candidates[i].Stake.Cmp(candidates[j].Stake) > 0
-		})
+		utils.SortMasternodesByStakeDesc(candidates)
 	}
 
 	// Get penalties list
@@ -942,9 +942,7 @@ func (api *BlockChainAPI) GetCandidates(ctx context.Context, epoch rpc.EpochNumb
 	}
 
 	if len(candidates) > maxMasternodes {
-		xdc_sort.Slice(candidates, func(i, j int) bool {
-			return candidates[i].Stake.Cmp(candidates[j].Stake) > 0
-		})
+		utils.SortMasternodesByStakeDesc(candidates)
 	}
 
 	// Get penalties list
@@ -1543,6 +1541,7 @@ func (api *BlockChainAPI) rpcOutputBlockSigners(b *types.Block, ctx context.Cont
 type RPCTransaction struct {
 	BlockHash         *common.Hash                 `json:"blockHash"`
 	BlockNumber       *hexutil.Big                 `json:"blockNumber"`
+	BlockTimestamp    *hexutil.Uint64              `json:"blockTimestamp"`
 	From              common.Address               `json:"from"`
 	Gas               hexutil.Uint64               `json:"gas"`
 	GasPrice          *hexutil.Big                 `json:"gasPrice"`
@@ -1566,7 +1565,7 @@ type RPCTransaction struct {
 
 // newRPCTransaction returns a transaction that will serialize to the RPC
 // representation, with the given location metadata set (if available).
-func newRPCTransaction(tx *types.Transaction, blockHash common.Hash, blockNumber uint64, index uint64, baseFee *big.Int, config *params.ChainConfig) *RPCTransaction {
+func newRPCTransaction(tx *types.Transaction, blockHash common.Hash, blockNumber uint64, blockTime uint64, index uint64, baseFee *big.Int, config *params.ChainConfig) *RPCTransaction {
 	signer := types.MakeSigner(config, new(big.Int).SetUint64(blockNumber))
 	from, _ := types.Sender(signer, tx)
 	v, r, s := tx.RawSignatureValues()
@@ -1587,6 +1586,7 @@ func newRPCTransaction(tx *types.Transaction, blockHash common.Hash, blockNumber
 	if blockHash != (common.Hash{}) {
 		result.BlockHash = &blockHash
 		result.BlockNumber = (*hexutil.Big)(new(big.Int).SetUint64(blockNumber))
+		result.BlockTimestamp = (*hexutil.Uint64)(&blockTime)
 		result.TransactionIndex = (*hexutil.Uint64)(&index)
 	}
 
@@ -1655,12 +1655,15 @@ func newRPCPendingTransaction(tx *types.Transaction, current *types.Header, conf
 	var (
 		baseFee     *big.Int
 		blockNumber = uint64(0)
+		blockTime   = uint64(0)
 	)
 	if current != nil {
-		baseFee = eip1559.CalcBaseFee(config, current)
+		nextNumber := new(big.Int).Add(current.Number, common.Big1)
+		baseFee = eip1559.CalcBaseFeeForBlockNumber(config, nextNumber)
 		blockNumber = current.Number.Uint64()
+		blockTime = current.Time
 	}
-	return newRPCTransaction(tx, common.Hash{}, blockNumber, 0, baseFee, config)
+	return newRPCTransaction(tx, common.Hash{}, blockNumber, blockTime, 0, baseFee, config)
 }
 
 // newRPCTransactionFromBlockIndex returns a transaction that will serialize to the RPC representation.
@@ -1669,7 +1672,7 @@ func newRPCTransactionFromBlockIndex(b *types.Block, index uint64, config *param
 	if index >= uint64(len(txs)) {
 		return nil
 	}
-	return newRPCTransaction(txs[index], b.Hash(), b.NumberU64(), index, b.BaseFee(), config)
+	return newRPCTransaction(txs[index], b.Hash(), b.NumberU64(), b.Time(), index, b.BaseFee(), config)
 }
 
 // newRPCRawTransactionFromBlockIndex returns the bytes of a transaction given a block and a transaction index.
@@ -1917,7 +1920,7 @@ func (s *TransactionAPI) GetTransactionByHash(ctx context.Context, hash common.H
 		if err != nil {
 			return nil, err
 		}
-		return newRPCTransaction(tx, blockHash, blockNumber, index, header.BaseFee, s.b.ChainConfig()), nil
+		return newRPCTransaction(tx, blockHash, blockNumber, header.Time, index, header.BaseFee, s.b.ChainConfig()), nil
 	}
 	// No finalized transaction, try to retrieve it from the pool
 	if tx := s.b.GetPoolTransaction(hash); tx != nil {

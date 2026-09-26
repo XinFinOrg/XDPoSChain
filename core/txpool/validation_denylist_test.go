@@ -40,7 +40,7 @@ func newValidationStateOpts(t *testing.T, cfg *params.ChainConfig, number *big.I
 	statedb.AddBalance(from, new(big.Int).Mul(big.NewInt(1_000_000), big.NewInt(params.Ether)), tracing.BalanceChangeUnspecified)
 
 	denylistedReceiver := common.HexToAddress("0x5248bfb72fd4f234e062d3e9bb76f08643004fcd")
-	gasPrice := new(big.Int).Mul(new(big.Int).Set(common.MinGasPrice), big.NewInt(10))
+	gasPrice := big.NewInt(common.DefaultMinGasPrice * 10)
 	tx, err := types.SignTx(
 		types.NewTransaction(0, denylistedReceiver, big.NewInt(1), params.TxGas, gasPrice, nil),
 		types.HomesteadSigner{},
@@ -108,7 +108,7 @@ func TestValidateTransactionWithStateDenylistHardForkBoundaries(t *testing.T) {
 		from := crypto.PubkeyToAddress(key.PublicKey)
 		statedb.AddBalance(from, new(big.Int).Mul(big.NewInt(1_000_000), big.NewInt(params.Ether)), tracing.BalanceChangeUnspecified)
 
-		gasPrice := new(big.Int).Mul(new(big.Int).Set(common.MinGasPrice), big.NewInt(10))
+		gasPrice := big.NewInt(common.DefaultMinGasPrice * 10)
 		tx, err := types.SignTx(
 			types.NewTransaction(0, common.HexToAddress("0x00000000000000000000000000000000000000b1"), big.NewInt(1), params.TxGas, gasPrice, nil),
 			types.HomesteadSigner{},

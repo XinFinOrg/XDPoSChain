@@ -26,7 +26,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/accounts"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/log"
-	"github.com/karalabe/hid"
+	"github.com/ethereum/hid"
 )
 
 // LedgerScheme is the protocol scheme prefixing account and wallet URLs.

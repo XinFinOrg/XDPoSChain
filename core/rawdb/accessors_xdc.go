@@ -50,12 +50,27 @@ func ReadXdposV2Snapshot(db ethdb.KeyValueReader, hash common.Hash) ([]byte, err
 	return data, nil
 }
 
+// HasXdposV2Snapshot reports whether a snapshot is stored for the given hash.
+func HasXdposV2Snapshot(db ethdb.KeyValueReader, hash common.Hash) (bool, error) {
+	return db.Has(xdposV2Key(hash))
+}
+
 // WriteXdposV2Snapshot writes the SnapshotV2 into the database.
 func WriteXdposV2Snapshot(db ethdb.KeyValueWriter, hash common.Hash, blob []byte) error {
 	if err := db.Put(xdposV2Key(hash), blob); err != nil {
 		log.Crit("Failed to store SnapshotV2", "err", err)
 	}
 	return nil
+}
+
+// DeleteXdposSnapshot removes the snapshot entry for a block hash.
+func DeleteXdposSnapshot(db ethdb.KeyValueWriter, hash common.Hash) {
+	if err := db.Delete(xdposV2Key(hash)); err != nil {
+		log.Crit("Failed to delete SnapshotV2", "err", err)
+	}
+	if err := db.Delete(xdposV1Key(hash)); err != nil {
+		log.Crit("Failed to delete SnapshotV1", "err", err)
+	}
 }
 
 // ReadSectionHead retrieves the last block hash of a processed section

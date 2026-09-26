@@ -127,6 +127,7 @@ func TestCloneChainConfigDeepCopiesMigratedForkBlocks(t *testing.T) {
 		TIPXDCXCancellationFeeBlock: big.NewInt(70),
 		TIPTRC21FeeBlock:            big.NewInt(75),
 		Gas50xBlock:                 big.NewInt(77),
+		Gas2500xBlock:               big.NewInt(78),
 		BerlinBlock:                 big.NewInt(80),
 		LondonBlock:                 big.NewInt(90),
 		MergeBlock:                  big.NewInt(100),
@@ -210,6 +211,31 @@ func TestGenesisCopyDeepCopiesChainConfig(t *testing.T) {
 	}
 	if original.Config.XDPoS.V2.CurrentConfig.TimeoutPeriod != 15 {
 		t.Fatalf("expected original timeout period to remain unchanged, have %d", original.Config.XDPoS.V2.CurrentConfig.TimeoutPeriod)
+	}
+}
+
+func TestGenesisToBlockUsesScheduledBaseFeeAtGenesis(t *testing.T) {
+	genesis := &Genesis{
+		Config: &params.ChainConfig{
+			ChainID:          big.NewInt(551),
+			TIPTRC21FeeBlock: big.NewInt(0),
+			Gas50xBlock:      big.NewInt(0),
+			Gas2500xBlock:    big.NewInt(0),
+			EIP1559Block:     big.NewInt(0),
+			Ethash:           new(params.EthashConfig),
+		},
+		Alloc:      types.GenesisAlloc{common.Address{1}: {Balance: big.NewInt(1)}},
+		GasLimit:   4_700_000,
+		Difficulty: big.NewInt(1),
+	}
+
+	block, err := genesis.ToBlockWithError()
+	if err != nil {
+		t.Fatalf("ToBlockWithError failed: %v", err)
+	}
+	want := new(big.Int).SetUint64(common.DefaultMinGasPrice * 2500)
+	if got := block.BaseFee(); got == nil || got.Cmp(want) != 0 {
+		t.Fatalf("unexpected genesis base fee: have %v want %v", got, want)
 	}
 }
 

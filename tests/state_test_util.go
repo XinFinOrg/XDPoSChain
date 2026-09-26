@@ -175,7 +175,7 @@ func (t *StateTest) RunWithGas(subtest StateSubtest, vmconfig vm.Config) (*state
 		if baseFee == nil {
 			// Retesteth uses `0x10` for genesis baseFee. Therefore, it defaults to
 			// parent - 2 : 0xa as the basefee for 'this' context.
-			baseFee = big.NewInt(common.BaseFee.Int64())
+			baseFee = new(big.Int).SetUint64(params.InitialBaseFee)
 		}
 	}
 	post := t.json.Post[subtest.Fork][subtest.Index]

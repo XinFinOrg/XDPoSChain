@@ -29,6 +29,7 @@ var chainConfigDigestCoveredFields = []string{
 	"EIP158Block",
 	"EIP1559Block",
 	"Ethash",
+	"Gas2500xBlock",
 	"Gas50xBlock",
 	"HomesteadBlock",
 	"IstanbulBlock",
@@ -424,7 +425,7 @@ func newChainConfigWithV2ConfigsForTest() *params.ChainConfig {
 	defaultConfig := &params.V2Config{
 		MaxMasternodes:            18,
 		MaxProtectorNodes:         3,
-		MaxObverserNodes:          2,
+		MaxObserverNodes:          2,
 		SwitchRound:               0,
 		MinePeriod:                2,
 		TimeoutSyncThreshold:      3,
@@ -476,10 +477,10 @@ func TestHashChainConfigSemanticGoldenVectors(t *testing.T) {
 		cfg  *params.ChainConfig
 		want string
 	}{
-		{name: "nil", cfg: nil, want: "47dc540c94ceb704a23875c11273e16bb0b8a87aed84de911f2133568115f254"},
-		{name: "testnet", cfg: params.TestnetChainConfig.Clone(), want: "7dbc7e67764fdbb08a5774c63f2b73e9ea3cc1d483f1b3f360944b1c97fd4b08"},
-		{name: "mainnet", cfg: params.XDCMainnetChainConfig.Clone(), want: "9076222c6783f37836c868190b78c7abe0b4d0d3fce93dc0aa12a6bc8b6ddcd3"},
-		{name: "testnet-berlin-drift", cfg: testnetBerlinDrift, want: "365842abd836bdd13ab9dd40ef66357145f3233ff0a1b455c71f5401c4c8dc71"},
+		{name: "nil", cfg: nil, want: "99be5efb88ca2013bd8e4eb035fd42d5245468fe9afa70d8ba9c1c419a48c4e8"},
+		{name: "testnet", cfg: params.TestnetChainConfig.Clone(), want: "d3bd0cda5358a87b5c08774590fb7e0bf64e20007796d622f2b4e89f9400a139"},
+		{name: "mainnet", cfg: params.XDCMainnetChainConfig.Clone(), want: "9b0ecfced732164016e61836ed57a626be9bffb3df283036e3337811a5feed3b"},
+		{name: "testnet-berlin-drift", cfg: testnetBerlinDrift, want: "43979250b2a4a93b70db816ac696d4c88dce46b946ca5a05df3bd0ef499f76db"},
 	}
 
 	for _, test := range tests {

@@ -52,7 +52,7 @@ var (
 var (
 	MainnetGenesisHash = common.HexToHash("0x4a9d748bd78a8d0385b67788c2435dcdb914f98a96250b68863a1f8b7642d6b1") // XDC Mainnet genesis hash to enforce below configs on
 	TestnetGenesisHash = common.HexToHash("0xbdea512b4f12ff1135ec92c00dc047ffb93890c2ea1aa0eefe9b013d80640075") // XDC Testnet genesis hash to enforce below configs on
-	DevnetGenesisHash  = common.HexToHash("0xb8be003946a9c2688e9f1e255a5567c3d144293ccde2ffb38452a5840081b402") // XDC Devnet genesis hash to enforce below configs on
+	DevnetGenesisHash  = common.HexToHash("0x50e63112ebf55bba9115ea875eedc3f6c62b42440d23786323e2678a9848b7ac") // XDC Devnet genesis hash to enforce below configs on
 )
 
 var (
@@ -132,23 +132,40 @@ var (
 			MinePeriod:           2,
 			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
 		},
-		15000000: {
+		20277000: {
 			MaxMasternodes:       108,
-			SwitchRound:          15000000,
+			SwitchRound:          20277000,
 			CertThreshold:        0.667,
 			TimeoutSyncThreshold: 3,
 			TimeoutPeriod:        10,
 			MinePeriod:           2,
 			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
 		},
+		27360000: {
+			MaxMasternodes:            108,
+			MaxProtectorNodes:         432,
+			MaxObserverNodes:          99999, // unlimit like mainnet
+			SwitchRound:               27360000,
+			CertThreshold:             0.667,
+			TimeoutSyncThreshold:      3,
+			TimeoutPeriod:             10,
+			MinePeriod:                2,
+			ExpTimeoutConfig:          ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
+			MasternodeReward:          63.4196,
+			ProtectorReward:           50.7357,
+			ObserverReward:            25.3678,
+			MinimumMinerBlockPerEpoch: 5,
+			LimitPenaltyEpoch:         5,
+			MinimumSigningTx:          30,
+		},
 	}
 
 	DevnetV2Configs = map[uint64]*V2Config{
 		defaultV2SwitchRound: {
 			SwitchRound:               0,
-			MaxMasternodes:            108,
+			MaxMasternodes:            18,
 			MaxProtectorNodes:         0,
-			MaxObverserNodes:          0,
+			MaxObserverNodes:          0,
 			CertThreshold:             0.667,
 			TimeoutSyncThreshold:      3,
 			TimeoutPeriod:             10,
@@ -161,11 +178,11 @@ var (
 			LimitPenaltyEpoch:         0,
 			MinimumSigningTx:          0,
 		},
-		50000: {
-			SwitchRound:               50000,
-			MaxMasternodes:            108,
-			MaxProtectorNodes:         324,
-			MaxObverserNodes:          2000,
+		45000: {
+			SwitchRound:               45000,
+			MaxMasternodes:            10,
+			MaxProtectorNodes:         3,
+			MaxObserverNodes:          10,
 			CertThreshold:             0.667,
 			TimeoutSyncThreshold:      3,
 			TimeoutPeriod:             10,
@@ -178,17 +195,42 @@ var (
 			LimitPenaltyEpoch:         5,
 			MinimumSigningTx:          30,
 		},
+		1683000: {
+			SwitchRound:               1683000,
+			MaxMasternodes:            10,
+			MaxProtectorNodes:         3,
+			MaxObserverNodes:          10,
+			CertThreshold:             0.667,
+			TimeoutSyncThreshold:      3,
+			TimeoutPeriod:             10,
+			MinePeriod:                2,
+			ExpTimeoutConfig:          ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
+			MasternodeReward:          63.4196,
+			ProtectorReward:           50.7357,
+			ObserverReward:            25.3678,
+			MinimumMinerBlockPerEpoch: 5,
+			LimitPenaltyEpoch:         5,
+			MinimumSigningTx:          30,
+		},
 	}
 
 	LocalnetV2Configs = map[uint64]*V2Config{
 		defaultV2SwitchRound: {
-			MaxMasternodes:       108,
-			SwitchRound:          0,
-			CertThreshold:        0.666,
-			TimeoutSyncThreshold: 3,
-			TimeoutPeriod:        10,
-			MinePeriod:           2,
-			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
+			MaxMasternodes:            108,
+			MaxProtectorNodes:         432,
+			MaxObserverNodes:          2000,
+			SwitchRound:               0,
+			CertThreshold:             0.667,
+			TimeoutSyncThreshold:      3,
+			TimeoutPeriod:             10,
+			MinePeriod:                2,
+			ExpTimeoutConfig:          ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
+			MasternodeReward:          63.42,
+			ProtectorReward:           50.27,
+			ObserverReward:            25.13,
+			MinimumMinerBlockPerEpoch: 5,
+			LimitPenaltyEpoch:         5,
+			MinimumSigningTx:          30,
 		},
 	}
 
@@ -214,7 +256,7 @@ var (
 		900: {
 			MaxMasternodes:       20,
 			MaxProtectorNodes:    17,
-			MaxObverserNodes:     1,
+			MaxObserverNodes:     1,
 			SwitchRound:          900,
 			CertThreshold:        0.667,
 			TimeoutSyncThreshold: 4,
@@ -371,9 +413,9 @@ var (
 		CancunBlock:                 big.NewInt(71551800),
 		PragueBlock:                 nil,
 		OsakaBlock:                  nil,
-		DynamicGasLimitBlock:        nil,
-		TIPUpgradeRewardBlock:       nil,
-		TIPUpgradePenaltyBlock:      nil,
+		DynamicGasLimitBlock:        big.NewInt(83600000),
+		TIPUpgradeRewardBlock:       big.NewInt(83600000),
+		TIPUpgradePenaltyBlock:      big.NewInt(83600000),
 		TIPEpochHalvingBlock:        nil,
 		TRC21IssuerSMC:              common.HexToAddress("0x0E2C88753131CE01c7551B726b28BFD04e44003F"),
 		XDCXListingSMC:              common.HexToAddress("0x14B2Bf043b9c31827A472CE4F94294fE9a6277e0"),
@@ -400,7 +442,7 @@ var (
 
 	// DevnetChainConfig contains the chain parameters to run a node on the devnet.
 	DevnetChainConfig = &ChainConfig{
-		ChainID:                     big.NewInt(5551),
+		ChainID:                     big.NewInt(551),
 		HomesteadBlock:              big.NewInt(0),
 		DAOForkBlock:                nil,
 		DAOForkSupport:              false,
@@ -426,6 +468,7 @@ var (
 		MergeBlock:                  big.NewInt(0),
 		ShanghaiBlock:               big.NewInt(0),
 		Gas50xBlock:                 big.NewInt(0),
+		Gas2500xBlock:               big.NewInt(1385100),
 		TIPXDCXMinerDisableBlock:    big.NewInt(0),
 		TIPXDCXReceiverDisableBlock: big.NewInt(0),
 		EIP1559Block:                big.NewInt(25000),
@@ -445,11 +488,11 @@ var (
 		XDPoS: &XDPoSConfig{
 			Period:               2,
 			Epoch:                900,
-			Reward:               7125,
+			Reward:               1026,
 			RewardCheckpoint:     900,
 			Gap:                  450,
-			FoundationWalletAddr: common.HexToAddress("0x4f288181b1d1aa599c6d7629f1168d46d5f96338"),
-			MaxMasternodesV2:     108,
+			FoundationWalletAddr: common.HexToAddress("0xf8b10955abe83acfdae2dbd4b5d351fc5e1c3672"),
+			MaxMasternodesV2:     18,
 			V2: &V2{
 				SwitchEpoch:   devnetV2SwitchBlock / 900,
 				SwitchBlock:   big.NewInt(int64(devnetV2SwitchBlock)),
@@ -487,15 +530,16 @@ var (
 		MergeBlock:                  big.NewInt(0),
 		ShanghaiBlock:               big.NewInt(0),
 		Gas50xBlock:                 big.NewInt(0),
+		Gas2500xBlock:               big.NewInt(10),
 		TIPXDCXMinerDisableBlock:    big.NewInt(0),
 		TIPXDCXReceiverDisableBlock: big.NewInt(0),
 		EIP1559Block:                big.NewInt(0),
 		CancunBlock:                 big.NewInt(0),
-		PragueBlock:                 nil,
+		PragueBlock:                 big.NewInt(0),
 		OsakaBlock:                  nil,
-		DynamicGasLimitBlock:        nil,
-		TIPUpgradeRewardBlock:       nil,
-		TIPUpgradePenaltyBlock:      nil,
+		DynamicGasLimitBlock:        big.NewInt(0),
+		TIPUpgradeRewardBlock:       big.NewInt(0),
+		TIPUpgradePenaltyBlock:      big.NewInt(0),
 		TIPEpochHalvingBlock:        nil,
 		TRC21IssuerSMC:              common.HexToAddress("0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee"),
 		XDCXListingSMC:              common.HexToAddress("0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53"),
@@ -504,17 +548,19 @@ var (
 		Clique:                      nil,
 		Ethash:                      nil,
 		XDPoS: &XDPoSConfig{
+			Period:               2,
 			Epoch:                900,
-			Gap:                  450,
 			Reward:               250,
+			RewardCheckpoint:     900,
+			Gap:                  450,
 			SkipV1Validation:     true,
 			FoundationWalletAddr: common.HexToAddress("0x0000000000000000000000000000000000000068"),
 			MaxMasternodesV2:     108,
 			V2: &V2{
-				SwitchEpoch:   1,
-				SwitchBlock:   big.NewInt(900),
-				CurrentConfig: UnitTestV2Configs[0],
-				AllConfigs:    UnitTestV2Configs,
+				SwitchEpoch:   0,
+				SwitchBlock:   big.NewInt(0),
+				CurrentConfig: LocalnetV2Configs[0],
+				AllConfigs:    LocalnetV2Configs,
 			},
 		},
 	}

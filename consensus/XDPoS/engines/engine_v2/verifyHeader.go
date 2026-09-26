@@ -203,6 +203,12 @@ func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Heade
 		return utils.ErrNotItsTurn
 	}
 
-	x.verifiedHeaders.Add(header.Hash(), struct{}{})
+	// Only a full verification is a verdict worth remembering: the cache does not record the
+	// level a header was checked at, and every caller that consults it treats a hit as a
+	// pass. Remembering a reduced check would therefore let a later full verification of the
+	// same header answer nil without ever running its checks.
+	if fullVerify {
+		x.verifiedHeaders.Add(header.Hash(), struct{}{})
+	}
 	return nil
 }

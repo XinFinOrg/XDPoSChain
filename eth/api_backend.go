@@ -318,16 +318,17 @@ func (b *EthAPIBackend) SendTx(ctx context.Context, signedTx *types.Transaction)
 	if b.eth.localTxTracker == nil {
 		return err
 	}
-	// If the transaction fails with an error indicating it is invalid, or if there is
-	// very little chance it will be accepted later (e.g., the gas price is below the
-	// configured minimum, or the sender has insufficient funds to cover the cost),
-	// propagate the error to the user.
+	// Track the transaction unless it was permanently rejected. A transaction
+	// is tracked when it is accepted, temporarily rejected, or already known
+	// to the pool. An already-known transaction is in the desired state (it
+	// lost a race to a concurrent submission), so we still track it, but the
+	// error is surfaced to the caller to match upstream go-ethereum semantics.
 	if err != nil && !locals.IsTemporaryReject(err) {
+		if errors.Is(err, txpool.ErrAlreadyKnown) {
+			b.eth.localTxTracker.Track(signedTx)
+		}
 		return err
 	}
-	// No error will be returned to user if the transaction fails with a temporary
-	// error and might be accepted later (e.g., the transaction pool is full).
-	// Locally submitted transactions will be resubmitted later via the local tracker.
 	b.eth.localTxTracker.Track(signedTx)
 	return nil
 }

@@ -64,7 +64,7 @@ type BlockContext struct {
 	BlockNumber *big.Int       // Provides information for NUMBER
 	Time        uint64         // Provides information for TIME
 	Difficulty  *big.Int       // Provides information for DIFFICULTY
-	BaseFee     *big.Int       // Provides information for BASEFEE (0 if vm runs with NoBaseFee flag and 0 gas price)
+	BaseFee     *big.Int       // Provides information for BASEFEE, nil before EIP-1559
 	Random      *common.Hash   // Provides information for PREVRANDAO
 }
 
@@ -73,7 +73,7 @@ type BlockContext struct {
 type TxContext struct {
 	// Message information
 	Origin   common.Address // Provides information for ORIGIN
-	GasPrice *big.Int       // Provides information for GASPRICE (and is used to zero the basefee if NoBaseFee is set)
+	GasPrice *big.Int       // Provides information for GASPRICE
 }
 
 // EVM is the Ethereum Virtual Machine base object and provides

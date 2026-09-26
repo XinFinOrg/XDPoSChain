@@ -34,6 +34,10 @@ func TestSetupGenesisNormalizesLocalnetChainConfig(t *testing.T) {
 			TIPXDCXReceiverDisableBlock: big.NewInt(12),
 			EIP1559Block:                big.NewInt(12),
 			CancunBlock:                 big.NewInt(34),
+			PragueBlock:                 big.NewInt(34),
+			DynamicGasLimitBlock:        big.NewInt(34),
+			TIPUpgradeRewardBlock:       big.NewInt(34),
+			TIPUpgradePenaltyBlock:      big.NewInt(34),
 			TRC21IssuerSMC:              params.LocalnetChainConfig.TRC21IssuerSMC,
 			XDCXListingSMC:              params.LocalnetChainConfig.XDCXListingSMC,
 			RelayerRegistrationSMC:      params.LocalnetChainConfig.RelayerRegistrationSMC,
@@ -73,8 +77,11 @@ func TestSetupGenesisNormalizesLocalnetChainConfig(t *testing.T) {
 	if cfg.Ethash == nil {
 		t.Fatal("expected non-whitelisted fields to be preserved")
 	}
-	if cfg.PragueBlock != nil || cfg.DynamicGasLimitBlock != nil || cfg.TIPUpgradeRewardBlock != nil {
-		t.Fatalf("unexpected localnet whitelist fields: Prague=%v DynamicGasLimit=%v TIPUpgradeReward=%v", cfg.PragueBlock, cfg.DynamicGasLimitBlock, cfg.TIPUpgradeRewardBlock)
+	if cfg.PragueBlock == nil || cfg.PragueBlock.Cmp(big.NewInt(34)) != 0 {
+		t.Fatalf("unexpected preserved Prague block: have %v want 34", cfg.PragueBlock)
+	}
+	if cfg.OsakaBlock != nil || cfg.TIPEpochHalvingBlock != nil {
+		t.Fatalf("unexpected localnet whitelist fields: Osaka=%v TIPEpochHalving=%v", cfg.OsakaBlock, cfg.TIPEpochHalvingBlock)
 	}
 	if cfg.LondonBlock == nil || cfg.LondonBlock.Cmp(big.NewInt(12)) != 0 {
 		t.Fatalf("unexpected localnet London block: have %v want 12", cfg.LondonBlock)

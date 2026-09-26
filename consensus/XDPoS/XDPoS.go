@@ -99,8 +99,6 @@ func New(chainConfig *params.ChainConfig, db ethdb.Database) (*XDPoS, error) {
 		return nil, errors.New("missing XDPoS config")
 	}
 
-	log.Info("xdc config loading", "v2 config", config.V2)
-
 	minePeriodCh := make(chan int)
 	newRoundCh := make(chan types.Round, newRoundChanSize)
 	engineV2, err := engine_v2.New(chainConfig, db, minePeriodCh, newRoundCh)
@@ -463,6 +461,18 @@ func (x *XDPoS) GetMasternodesFromCheckpointHeader(checkpointHeader *types.Heade
 		return x.EngineV2.GetMasternodesFromEpochSwitchHeader(checkpointHeader)
 	default: // Default "v1"
 		return x.EngineV1.GetMasternodesFromCheckpointHeader(checkpointHeader)
+	}
+}
+
+// GetStandbynodes returns the standby pool for the epoch of the given (epoch
+// switch) header: stake-sorted and already filtered of that epoch's
+// masternodes and penalties. V1 has no standby tier, so it returns empty.
+func (x *XDPoS) GetStandbynodes(chain consensus.ChainReader, header *types.Header) []common.Address {
+	switch x.config.BlockConsensusVersion(header.Number) {
+	case params.ConsensusEngineVersion2:
+		return x.EngineV2.GetStandbynodes(chain, header)
+	default: // Default "v1"
+		return []common.Address{}
 	}
 }
 

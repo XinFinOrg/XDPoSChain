@@ -25,6 +25,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
+	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
@@ -296,7 +297,12 @@ func (bc *BlockChain) StateAt(root common.Hash) (*state.StateDB, error) {
 	return statedb, nil
 }
 
-// Config retrieves the blockchain's chain configuration.
+// ChainDb returns the underlying database of the blockchain.
+func (bc *BlockChain) ChainDb() ethdb.Database {
+	return bc.db
+}
+
+// Config retrieves the chain's fork configuration.
 func (bc *BlockChain) Config() *params.ChainConfig { return bc.chainConfig }
 
 // Engine retrieves the blockchain's consensus engine.

@@ -22,6 +22,7 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -229,7 +230,7 @@ func TestNewBlockChainReadOnlyFailsGenesisStateRecovery(t *testing.T) {
 
 	rawdb.DeleteLegacyTrieNode(db, genesisBlock.Root())
 
-	chain, err := NewBlockChainReadOnlyResolved(db, nil, nil, ethash.NewFaker(), vm.Config{}, genesis.Config, genesisBlock.Hash(), nil)
+	chain, err := NewBlockChainReadOnlyResolved(db, nil, nil, ethash.NewFaker(), vm.Config{}, genesis.Config, genesisBlock.Hash(), nil, DefaultChainConfigMismatchPolicy)
 	if err == nil {
 		chain.Stop()
 		t.Fatal("expected readonly open to fail when genesis state restoration would be required")
@@ -283,7 +284,7 @@ func TestNewBlockChainRecoversMissingCustomGenesisState(t *testing.T) {
 		t.Fatal("expected genesis state to be missing before reopen")
 	}
 
-	chain, err := NewBlockChainResolved(db, nil, genesis, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr)
+	chain, err := NewBlockChainResolved(db, nil, genesis, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr, MismatchRewindAndUpdate)
 	if err != nil {
 		t.Fatalf("failed to recover missing custom genesis state: %v", err)
 	}
@@ -342,7 +343,7 @@ func TestNewBlockChainRecoversMissingSparseGenesisState(t *testing.T) {
 		t.Fatal("expected genesis state to be missing before reopen")
 	}
 
-	chain, err := NewBlockChainResolved(db, nil, genesis, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr)
+	chain, err := NewBlockChainResolved(db, nil, genesis, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr, DefaultChainConfigMismatchPolicy)
 	if err != nil {
 		t.Fatalf("failed to recover missing sparse genesis state: %v", err)
 	}
@@ -394,7 +395,7 @@ func TestNewBlockChainReadOnlyFailsCustomGenesisStateRecovery(t *testing.T) {
 		t.Fatalf("failed to delete persisted genesis alloc: %v", err)
 	}
 
-	chain, err := NewBlockChainReadOnlyResolved(db, nil, genesis, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr)
+	chain, err := NewBlockChainReadOnlyResolved(db, nil, genesis, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr, DefaultChainConfigMismatchPolicy)
 	if err == nil {
 		chain.Stop()
 		t.Fatal("expected readonly open to fail when custom genesis recovery would be required")
@@ -448,7 +449,7 @@ func TestNewBlockChainLiveTracerDoesNotRecoverCustomGenesisAlloc(t *testing.T) {
 		OnGenesisBlock: func(block *types.Block, alloc types.GenesisAlloc) {
 			called = true
 		},
-	}}, config, ghash, compatErr)
+	}}, config, ghash, compatErr, DefaultChainConfigMismatchPolicy)
 	if err == nil {
 		chain.Stop()
 		t.Fatal("expected live tracer open to fail when custom genesis alloc would require recovery")
@@ -573,6 +574,59 @@ func TestNewBlockChainRepairsMissingHeadStateConsistently(t *testing.T) {
 	}
 }
 
+// TestNewBlockChainRepairsMissingHeadStateRespectsRollbackTarget ensures
+// startup repair does not rewind below the user-requested rollback target.
+func TestNewBlockChainRepairsMissingHeadStateRespectsRollbackTarget(t *testing.T) {
+	var (
+		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		address = crypto.PubkeyToAddress(key.PublicKey)
+		funds   = big.NewInt(1000000000000000)
+		gspec   = &Genesis{
+			Alloc:   types.GenesisAlloc{address: {Balance: funds}},
+			BaseFee: big.NewInt(params.InitialBaseFee),
+			Config:  params.TestChainConfig,
+		}
+	)
+	db := rawdb.NewMemoryDatabase()
+	chain, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+
+	_, blocks, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 3, nil)
+	if n, err := chain.InsertChain(blocks); err != nil {
+		chain.Stop()
+		t.Fatalf("failed to insert block %d: %v", n, err)
+	}
+	head := blocks[len(blocks)-1]
+	target := blocks[len(blocks)-2]
+	chain.Stop()
+
+	rawdb.DeleteLegacyTrieNode(db, head.Root())
+
+	prevRollback := common.RollbackNumber
+	common.RollbackNumber = target.NumberU64()
+	t.Cleanup(func() {
+		common.RollbackNumber = prevRollback
+	})
+
+	reopened, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to reopen repaired chain: %v", err)
+	}
+	defer reopened.Stop()
+
+	if got := reopened.CurrentBlock().Hash(); got != target.Hash() {
+		t.Fatalf("unexpected repaired current block: have %s want %s", got, target.Hash())
+	}
+	if got := reopened.CurrentSnapBlock().Hash(); got != target.Hash() {
+		t.Fatalf("unexpected repaired current snap block: have %s want %s", got, target.Hash())
+	}
+	if got := reopened.CurrentHeader().Hash(); got != target.Hash() {
+		t.Fatalf("unexpected repaired current header: have %s want %s", got, target.Hash())
+	}
+}
+
 // TestNewBlockChainReadOnlyFailsHeadStateRepair tests readonly options-based open fails when head state repair would mutate the database.
 func TestNewBlockChainReadOnlyFailsHeadStateRepair(t *testing.T) {
 	var (
@@ -601,7 +655,7 @@ func TestNewBlockChainReadOnlyFailsHeadStateRepair(t *testing.T) {
 
 	rawdb.DeleteLegacyTrieNode(db, head.Root())
 
-	reopened, err := NewBlockChainReadOnlyResolved(db, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil)
+	reopened, err := NewBlockChainReadOnlyResolved(db, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil, DefaultChainConfigMismatchPolicy)
 	if err == nil {
 		reopened.Stop()
 		t.Fatal("expected readonly open to fail when head state repair would be required")
@@ -647,7 +701,7 @@ func TestNewBlockChainExReadOnlyResolvedHonorsReadOnly(t *testing.T) {
 
 	rawdb.DeleteLegacyTrieNode(db, head.Root())
 
-	reopened, err := NewBlockChainExReadOnlyResolved(db, nil, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil)
+	reopened, err := NewBlockChainExReadOnlyResolved(db, nil, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil, DefaultChainConfigMismatchPolicy)
 	if err == nil {
 		reopened.Stop()
 		t.Fatal("expected readonly open to fail when head state repair would be required")
@@ -745,7 +799,7 @@ func TestNewBlockChainRewindsIncompatibleHead(t *testing.T) {
 		t.Fatal("expected compatibility error")
 	}
 
-	reopened, err := NewBlockChainResolved(db, nil, nil, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr)
+	reopened, err := NewBlockChainResolved(db, nil, nil, ethash.NewFaker(), vm.Config{}, config, ghash, compatErr, MismatchRewindAndUpdate)
 	if err != nil {
 		t.Fatalf("failed to reopen rewound chain: %v", err)
 	}
@@ -841,7 +895,7 @@ func TestNewBlockChainFailsReadonlyConfigRewind(t *testing.T) {
 		t.Fatal("expected compatibility error")
 	}
 
-	resolvedCfg, err := newResolvedBlockChainOpenConfig(true, nil, config, ghash, compatErr)
+	resolvedCfg, err := newResolvedBlockChainOpenConfig(true, nil, config, ghash, compatErr, MismatchRewindAndUpdate)
 	if err != nil {
 		t.Fatalf("failed to build readonly startup config: %v", err)
 	}
@@ -876,7 +930,7 @@ func TestNewBlockChainReadOnlyFailsBadHashRewind(t *testing.T) {
 	defer func() { delete(BadHashes, blocks[3].Hash()) }()
 	blockchain.Stop()
 
-	reopened, err := NewBlockChainReadOnlyResolved(genDb, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil)
+	reopened, err := NewBlockChainReadOnlyResolved(genDb, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil, DefaultChainConfigMismatchPolicy)
 	if err == nil {
 		reopened.Stop()
 		t.Fatal("expected readonly open to fail when bad-hash rewind would be required")
@@ -907,7 +961,7 @@ func TestNewBlockChainRewindsBadHashOnWritableOpen(t *testing.T) {
 	defer func() { delete(BadHashes, blocks[3].Hash()) }()
 	blockchain.Stop()
 
-	reopened, err := NewBlockChainResolved(genDb, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil)
+	reopened, err := NewBlockChainResolved(genDb, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil, DefaultChainConfigMismatchPolicy)
 	if err != nil {
 		t.Fatalf("failed to reopen rewound chain: %v", err)
 	}
@@ -1007,9 +1061,41 @@ func TestNewBlockChainReadOnlyDoesNotRepairMissingChainConfig(t *testing.T) {
 // TestNewBlockChainResolvedRejectsMissingGenesisHash tests the
 // resolved-config constructor rejects an empty genesis hash.
 func TestNewBlockChainResolvedRejectsMissingGenesisHash(t *testing.T) {
-	_, err := NewBlockChainResolved(rawdb.NewMemoryDatabase(), nil, nil, ethash.NewFaker(), vm.Config{}, params.AllEthashProtocolChanges, common.Hash{}, nil)
+	_, err := NewBlockChainResolved(rawdb.NewMemoryDatabase(), nil, nil, ethash.NewFaker(), vm.Config{}, params.AllEthashProtocolChanges, common.Hash{}, nil, DefaultChainConfigMismatchPolicy)
 	if !errors.Is(err, errBlockChainOpenMissingGenesisHash) {
 		t.Fatalf("unexpected error for missing genesis hash: %v", err)
+	}
+}
+
+func TestNewBlockChainResolvedRejectsInvalidCompatPolicy(t *testing.T) {
+	t.Parallel()
+
+	db := rawdb.NewMemoryDatabase()
+	genesis := DefaultGenesisBlock()
+	if _, _, _, err := SetupGenesisBlock(db, genesis); err != nil {
+		t.Fatalf("failed to setup genesis: %v", err)
+	}
+
+	chain, err := NewBlockChainResolved(
+		db,
+		nil,
+		genesis,
+		ethash.NewFaker(),
+		vm.Config{},
+		genesis.Config,
+		genesis.ToBlock().Hash(),
+		nil,
+		ChainConfigMismatchPolicy("not-a-policy"),
+	)
+	if chain != nil {
+		chain.Stop()
+		t.Fatal("expected blockchain open to fail for invalid compat policy")
+	}
+	if err == nil {
+		t.Fatal("expected error for invalid compat policy")
+	}
+	if !strings.Contains(err.Error(), "invalid chain config mismatch policy") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -1325,6 +1411,91 @@ func testReorg(t *testing.T, first, second []int64, td int64, full bool) {
 		if have := blockchain.GetTd(cur.Hash(), cur.Number.Uint64()); have.Cmp(want) != 0 {
 			t.Errorf("total difficulty mismatch: have %v, want %v", have, want)
 		}
+	}
+}
+
+// TestReorgDeliversRemovedLogsSynchronously pins the delivery contract that the
+// reborn logs already follow: a reorg hands the removed logs to every subscriber
+// before it returns. Spawning that send let a subscriber observe the logs of the
+// new chain before the removals of the blocks they revert, which is why geth
+// dropped the goroutine in #19396.
+func TestReorgDeliversRemovedLogsSynchronously(t *testing.T) {
+	var (
+		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		address = crypto.PubkeyToAddress(key.PublicKey)
+		// emitter is a genesis contract whose runtime code emits one anonymous log:
+		// PUSH1 0x00, PUSH1 0x00, LOG0, STOP.
+		emitter = common.HexToAddress("0x0000000000000000000000000000000000000010")
+		gspec   = &Genesis{
+			Config: &params.ChainConfig{
+				ChainID:        big.NewInt(1338),
+				HomesteadBlock: new(big.Int),
+				Ethash:         new(params.EthashConfig),
+			},
+			Alloc: types.GenesisAlloc{
+				address: {Balance: big.NewInt(params.Ether)},
+				emitter: {Code: []byte{0x60, 0x00, 0x60, 0x00, 0xa0, 0x00}},
+			},
+			Difficulty: big.NewInt(1),
+		}
+	)
+	engine := ethash.NewFaker()
+	genDb := rawdb.NewMemoryDatabase()
+	if _, err := gspec.Commit(genDb); err != nil {
+		t.Fatalf("failed to commit genesis: %v", err)
+	}
+	blockchain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+	defer blockchain.Stop()
+
+	// Every block emits one log, so undoing the canonical chain produces removals
+	// that the reorg has to deliver.
+	emit := func(i int, b *BlockGen) {
+		tx, err := types.SignTx(types.NewTransaction(uint64(i), emitter, big.NewInt(0), 100000, big.NewInt(1), nil), types.HomesteadSigner{}, key)
+		if err != nil {
+			t.Fatalf("failed to sign log transaction: %v", err)
+		}
+		b.AddTx(tx)
+	}
+	canonical, _ := GenerateChain(gspec.Config, blockchain.Genesis(), engine, genDb, 4, emit)
+	fork, _ := GenerateChain(gspec.Config, blockchain.Genesis(), engine, genDb, 4, func(i int, b *BlockGen) {
+		b.SetCoinbase(common.Address{0: 0x02})
+		emit(i, b)
+	})
+	if _, err := blockchain.InsertChain(canonical); err != nil {
+		t.Fatalf("failed to insert canonical chain: %v", err)
+	}
+	if _, err := blockchain.InsertChain(fork); err != nil {
+		t.Fatalf("failed to insert the fork: %v", err)
+	}
+	if head, want := blockchain.CurrentBlock(), canonical[len(canonical)-1]; head.Hash() != want.Hash() {
+		t.Fatalf("head moved onto the fork, want it kept as a side chain: have %x, want %x", head.Hash(), want.Hash())
+	}
+
+	// The subscriber stalls on purpose: a synchronous send has to wait for it,
+	// an asynchronous one would let the reorg return first.
+	removed := make(chan RemovedLogsEvent)
+	sub := blockchain.SubscribeRemovedLogsEvent(removed)
+	defer sub.Unsubscribe()
+
+	const subscriberDelay = 250 * time.Millisecond
+	var delivered atomic.Bool
+	go func() {
+		time.Sleep(subscriberDelay)
+		select {
+		case <-removed:
+			delivered.Store(true)
+		case <-time.After(5 * time.Second):
+		}
+	}()
+
+	if err := blockchain.reorg(blockchain.CurrentBlock(), fork[len(fork)-1].Header()); err != nil {
+		t.Fatalf("failed to reorg: %v", err)
+	}
+	if !delivered.Load() {
+		t.Fatalf("reorg returned before the removed logs reached the subscriber, the send must be synchronous")
 	}
 }
 
@@ -1784,16 +1955,24 @@ func TestLogReorgs(t *testing.T) {
 	}
 
 	_, chain, _ = GenerateChainWithGenesis(gspec, ethash.NewFaker(), 3, func(i int, gen *BlockGen) {})
+	// Removed logs are delivered synchronously, so the subscriber has to be ready
+	// before the reorg runs instead of draining the channel afterwards.
+	done := make(chan struct{})
+	go func() {
+		ev := <-rmLogsCh
+		if len(ev.Logs) == 0 {
+			t.Error("expected logs")
+		}
+		close(done)
+	}()
 	if _, err := blockchain.InsertChain(chain); err != nil {
 		t.Fatalf("failed to insert forked chain: %v", err)
 	}
 
 	timeout := time.NewTimer(1 * time.Second)
+	defer timeout.Stop()
 	select {
-	case ev := <-rmLogsCh:
-		if len(ev.Logs) == 0 {
-			t.Error("expected logs")
-		}
+	case <-done:
 	case <-timeout.C:
 		t.Fatal("Timeout. There is no RemovedLogsEvent has been sent.")
 	}
@@ -2410,6 +2589,22 @@ func TestBlocksHashCacheUpdate(t *testing.T) {
 			t.Error("BlocksHashCache doesn't work when inserting block solely")
 		}
 	})
+
+	t.Run("Expect repeated cache update to keep one entry per hash", func(t *testing.T) {
+		head := chain.CurrentBlock()
+		chain.UpdateBlocksHashCache(types.NewBlockWithHeader(head))
+		chain.UpdateBlocksHashCache(types.NewBlockWithHeader(head))
+		cached, _ := chain.blocksHashCache.Get(head.Number.Uint64())
+		count := 0
+		for _, hash := range cached {
+			if hash == head.Hash() {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Errorf("BlocksHashCache has %d entries for head hash, want 1: %v", count, cached)
+		}
+	})
 }
 
 // TestAreTwoBlocksSamePath tests are two blocks same path.
@@ -2803,5 +2998,468 @@ func TestDeleteCreateRevert(t *testing.T) {
 
 	if n, err := chain.InsertChain(blocks); err != nil {
 		t.Fatalf("block %d: failed to insert into chain: %v", n, err)
+	}
+}
+
+// newMissingTdChain returns a memory chain over a fresh genesis together with a batch of
+// total generated blocks, of which the first imported ones are already inserted. Keeping
+// total larger than imported lets callers hand the chain blocks that its head never
+// reached. The engine and the generation database are returned as well, since generating
+// a competing block needs both.
+func newMissingTdChain(t *testing.T, total, imported int) (*BlockChain, types.Blocks, consensus.Engine, ethdb.Database) {
+	t.Helper()
+
+	engine := ethash.NewFaker()
+	gspec := &Genesis{
+		Alloc:   types.GenesisAlloc{},
+		BaseFee: big.NewInt(params.InitialBaseFee),
+		Config:  params.TestChainConfig,
+	}
+	genDb := rawdb.NewMemoryDatabase()
+	if _, err := gspec.Commit(genDb); err != nil {
+		t.Fatalf("failed to commit genesis: %v", err)
+	}
+	blocks, _ := GenerateChain(gspec.Config, gspec.ToBlock(), engine, genDb, total, nil)
+
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create tester chain: %v", err)
+	}
+	t.Cleanup(chain.Stop)
+
+	if n, err := chain.InsertChain(blocks[:imported]); err != nil {
+		t.Fatalf("block %d: failed to insert into chain: %v", n, err)
+	}
+	return chain, blocks, engine, genDb
+}
+
+// dropTd deletes a block's total difficulty from both the database and the read cache, so
+// that GetTd answers nil for it again.
+func dropTd(t *testing.T, chain *BlockChain, block *types.Block) {
+	t.Helper()
+
+	rawdb.DeleteTd(chain.ChainDb(), block.Hash(), block.NumberU64())
+	chain.hc.tdCache.Remove(block.Hash())
+	if td := chain.GetTd(block.Hash(), block.NumberU64()); td != nil {
+		t.Fatalf("precondition: the total difficulty of block #%d is still readable", block.NumberU64())
+	}
+}
+
+// sidechainSegmentIterator hands insertSidechain a batch whose first block has already
+// been pulled from the iterator, mirroring the call site in insertChain. Every block is
+// reported as pruned, the shape that routes a batch into insertSidechain.
+func sidechainSegmentIterator(t *testing.T, chain *BlockChain, batch types.Blocks) (*types.Block, *insertIterator) {
+	t.Helper()
+
+	results := make(chan error, len(batch))
+	for range batch {
+		results <- consensus.ErrPrunedAncestor
+	}
+	it := newInsertIterator(batch, results, chain.validator.(*BlockValidator))
+	block, err := it.next()
+	if !errors.Is(err, consensus.ErrPrunedAncestor) {
+		t.Fatalf("unexpected verification result: have %v want %v", err, consensus.ErrPrunedAncestor)
+	}
+	return block, it
+}
+
+// TestInsertSidechainReportsMissingParentTd covers a segment whose parent has no total
+// difficulty on disk: the scan falls back to it to weigh the segment against the head,
+// and used to dereference the missing value. Nothing about the blocks makes them bad -
+// this node simply has no number to compare - so it has to be reported rather than
+// crashing the node.
+func TestInsertSidechainReportsMissingParentTd(t *testing.T) {
+	chain, blocks, _, _ := newMissingTdChain(t, 5, 3) // head at #3, #4 and #5 are unknown
+	dropTd(t, chain, blocks[2])
+
+	// The segment opens on a block whose parent's total difficulty this node no longer
+	// has, so the scan has nothing to weigh it against.
+	block, it := sidechainSegmentIterator(t, chain, blocks[3:5])
+
+	n, _, _, err := chain.insertSidechain(block, it)
+	if !errors.Is(err, errMissingTotalDifficulty) {
+		t.Fatalf("unexpected error: have %v want %v", err, errMissingTotalDifficulty)
+	}
+	if want := 0; n != want {
+		t.Fatalf("unexpected failing index: have %d want %d", n, want)
+	}
+	if want := uint64(3); chain.CurrentBlock().Number.Uint64() != want {
+		t.Fatalf("unexpected head number: have %d want %d", chain.CurrentBlock().Number.Uint64(), want)
+	}
+}
+
+// TestInsertSidechainReportsMissingLocalTd covers the other side of the comparison: the
+// segment carries a total difficulty, but the head's cannot be read. The head has to stay
+// where it is and the failure has to be reported.
+func TestInsertSidechainReportsMissingLocalTd(t *testing.T) {
+	chain, blocks, _, _ := newMissingTdChain(t, 6, 3) // head at #3
+
+	// #4 is stored as a side block with its total difficulty, so the segment that opens
+	// above it has a number to weigh itself against; only the head's is missing.
+	parentTd := chain.GetTd(blocks[2].Hash(), blocks[2].NumberU64())
+	if parentTd == nil {
+		t.Fatal("precondition: the parent's total difficulty is not readable")
+	}
+	if err := chain.writeBlockWithoutState(blocks[3], new(big.Int).Add(parentTd, blocks[3].Difficulty())); err != nil {
+		t.Fatalf("failed to store the side block: %v", err)
+	}
+	dropTd(t, chain, blocks[2])
+
+	// The segment starts above #4, so no block of it is compared against a canonical one
+	// and the scan runs until the batch is exhausted.
+	block, it := sidechainSegmentIterator(t, chain, blocks[4:6])
+
+	n, _, _, err := chain.insertSidechain(block, it)
+	if !errors.Is(err, errMissingTotalDifficulty) {
+		t.Fatalf("unexpected error: have %v want %v", err, errMissingTotalDifficulty)
+	}
+	// The scan ran off the end of the batch looking for a block to weigh.
+	if want := 2; n != want {
+		t.Fatalf("unexpected failing index: have %d want %d", n, want)
+	}
+	if want := uint64(3); chain.CurrentBlock().Number.Uint64() != want {
+		t.Fatalf("unexpected head number: have %d want %d", chain.CurrentBlock().Number.Uint64(), want)
+	}
+}
+
+// TestGetResultBlockReportsMissingTd covers the same guard on the competing-block path: a
+// competitor whose parent total difficulty this node cannot read is not a bad block, it
+// just cannot be weighed, and the arithmetic used to dereference the missing value.
+func TestGetResultBlockReportsMissingTd(t *testing.T) {
+	chain, blocks, engine, genDb := newMissingTdChain(t, 2*TriesInMemory, 2*TriesInMemory)
+
+	// Forking on a block whose state is already pruned makes ValidateBody report the
+	// pruned ancestor, the branch of getResultBlock that compares total difficulties.
+	lastPruned := blocks[TriesInMemory-1]
+	fork, _ := GenerateChain(params.TestChainConfig, lastPruned, engine, genDb, 1, func(i int, b *BlockGen) {
+		// A different coinbase keeps the fork block from reproducing the canonical child
+		// of lastPruned.
+		b.SetCoinbase(common.Address{2})
+	})
+	// The chain read this block's difficulty when it imported its child, so the cached
+	// copy has to go as well.
+	dropTd(t, chain, lastPruned)
+
+	if _, err := chain.getResultBlock(fork[0], false); !errors.Is(err, errMissingTotalDifficulty) {
+		t.Fatalf("unexpected error: have %v want %v", err, errMissingTotalDifficulty)
+	}
+}
+
+// TestGetResultBlockReportsMissingLocalTd covers the other half of the same guard: the
+// competitor's parent is readable, while the canonical head's total difficulty is the one
+// this node cannot read, and the comparison against it used to dereference the missing
+// value.
+func TestGetResultBlockReportsMissingLocalTd(t *testing.T) {
+	chain, blocks, engine, genDb := newMissingTdChain(t, 2*TriesInMemory, 2*TriesInMemory)
+
+	// Forking on a block whose state is already pruned makes ValidateBody report the
+	// pruned ancestor, the branch of getResultBlock that compares total difficulties.
+	lastPruned := blocks[TriesInMemory-1]
+	fork, _ := GenerateChain(params.TestChainConfig, lastPruned, engine, genDb, 1, func(i int, b *BlockGen) {
+		// A different coinbase keeps the fork block from reproducing the canonical child
+		// of lastPruned.
+		b.SetCoinbase(common.Address{2})
+	})
+	// The chain read this block's difficulty when it imported it, so the cached copy has
+	// to go as well. The competitor's parent stays readable.
+	dropTd(t, chain, blocks[2*TriesInMemory-1])
+
+	if _, err := chain.getResultBlock(fork[0], false); !errors.Is(err, errMissingTotalDifficulty) {
+		t.Fatalf("unexpected error: have %v want %v", err, errMissingTotalDifficulty)
+	}
+}
+
+// TestWriteBlockWithStateReportsMissingLocalTd covers the same guard on the stateful
+// insertion path: a child of a recently executed side block can still be weighed against
+// that parent, while the canonical head's total difficulty is the one that cannot be read,
+// and the arithmetic used to dereference the missing value.
+func TestWriteBlockWithStateReportsMissingLocalTd(t *testing.T) {
+	chain, blocks, engine, genDb := newMissingTdChain(t, 4, 4) // head at #4
+
+	// A side block on #3 that competes with the canonical #4. Importing it executes it,
+	// so a child of it can be built on its state, and its own total difficulty is stored.
+	side, _ := GenerateChain(params.TestChainConfig, blocks[2], engine, genDb, 1, func(i int, b *BlockGen) {
+		// A different coinbase keeps the side block from reproducing the canonical #4.
+		b.SetCoinbase(common.Address{2})
+	})
+	if n, err := chain.InsertChain(side); err != nil {
+		t.Fatalf("block %d: failed to insert the side block: %v", n, err)
+	}
+	if head := chain.CurrentBlock().Number.Uint64(); head != 4 {
+		t.Fatalf("precondition: the side block took over the head, at #%d want #4", head)
+	}
+	child, _ := GenerateChain(params.TestChainConfig, side[0], engine, genDb, 1, nil)
+
+	// The child can be executed on the state of the side block; only the head's total
+	// difficulty is gone, which used to dereference the missing number.
+	statedb, err := state.NewWithChainConfig(side[0].Root(), chain.stateCache, chain.chainConfig)
+	if err != nil {
+		t.Fatalf("failed to open the parent state: %v", err)
+	}
+	dropTd(t, chain, blocks[3])
+
+	if _, err := chain.WriteBlockWithState(child[0], nil, statedb, nil, nil); !errors.Is(err, errMissingTotalDifficulty) {
+		t.Fatalf("unexpected error: have %v want %v", err, errMissingTotalDifficulty)
+	}
+	if want := uint64(4); chain.CurrentBlock().Number.Uint64() != want {
+		t.Fatalf("unexpected head number: have %d want %d", chain.CurrentBlock().Number.Uint64(), want)
+	}
+}
+
+// newPreparedBlockChain returns a memory chain over a fresh genesis together with a batch
+// of generated blocks, none of which is inserted: PrepareBlock is about to prepare the
+// first of them, and the chain has not seen any of them yet.
+func newPreparedBlockChain(t *testing.T, total int, gen func(int, *BlockGen)) (*BlockChain, types.Blocks) {
+	t.Helper()
+
+	key, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	gspec := &Genesis{
+		Alloc:   types.GenesisAlloc{crypto.PubkeyToAddress(key.PublicKey): {Balance: big.NewInt(1000000000000000)}},
+		BaseFee: big.NewInt(params.InitialBaseFee),
+		Config:  params.TestChainConfig,
+	}
+	_, blocks, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), total, gen)
+	// XDPoS signs a header with a validator signature before it inserts the block, a
+	// signature that is part of the hash a block is inserted under and of none of the
+	// hashes the caches ask for. The block the tests work with is signed here so that the
+	// two hashes differ in it: an unsigned one answers a look-up by Hash and one by
+	// HashNoValidator alike, and a test over it passes whatever key the caches are
+	// written with.
+	header := types.CopyHeader(blocks[0].Header())
+	header.Validator = []byte{0x01}
+	blocks[0] = blocks[0].WithSeal(header)
+	if blocks[0].Hash() == blocks[0].HashNoValidator() {
+		t.Fatal("the prepared block must be inserted under another hash than the caches ask for")
+	}
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create tester chain: %v", err)
+	}
+	t.Cleanup(chain.Stop)
+	return chain, blocks
+}
+
+// TestPrepareBlockStoresItsResultUnderTheLookupKey pins the key a prepared result is stored
+// under. XDPoS signs a header with a validator signature that takes no part in its execution,
+// so a prepared result belongs to the header alone: getResultBlock looks it up by
+// HashNoValidator when insertBlock imports the block, and the two probes PrepareBlock starts
+// with ask the same way. Storing it under Hash leaves all three look-ups empty, and the
+// precomputation this function exists for is never reused.
+func TestPrepareBlockStoresItsResultUnderTheLookupKey(t *testing.T) {
+	chain, blocks := newPreparedBlockChain(t, 6, nil)
+	target := blocks[0]
+
+	if err := chain.PrepareBlock(target); err != nil {
+		t.Fatalf("failed to prepare the block: %v", err)
+	}
+	if !chain.resultProcess.Contains(target.HashNoValidator()) {
+		t.Fatal("the prepared result is not stored under the key its look-ups use")
+	}
+	// getResultBlock is the look-up insertBlock performs: a reused result is returned
+	// without being computed, so the block is not recorded as being calculated. The
+	// preparation above did record it, hence the reset - nothing else purges that cache.
+	chain.calculatingBlock.Purge()
+	result, err := chain.getResultBlock(target, true)
+	if err != nil {
+		t.Fatalf("failed to look the prepared result up: %v", err)
+	}
+	if result == nil {
+		t.Fatal("the prepared result was not returned")
+	}
+	if chain.calculatingBlock.Contains(target.HashNoValidator()) {
+		t.Fatal("the prepared result was not reused: the block was calculated a second time")
+	}
+}
+
+// TestPrepareBlockSkipsABlockBeingCalculated covers the second probe: a block getResultBlock
+// has already recorded is not prepared again. That probe asks by HashNoValidator as well, so
+// an entry stored under any other key is answered as a miss and the preparation runs anyway.
+func TestPrepareBlockSkipsABlockBeingCalculated(t *testing.T) {
+	chain, blocks := newPreparedBlockChain(t, 6, nil)
+	target := blocks[0]
+
+	// The preset entry is the marker itself, and a preparation that runs anyway replaces it
+	// with one of its own - so comparing the pointer says whether the probe answered or the
+	// preparation went ahead.
+	preset := &CalculatedBlock{block: target}
+	chain.calculatingBlock.Add(target.HashNoValidator(), preset)
+	if err := chain.PrepareBlock(target); err != nil {
+		t.Fatalf("failed to prepare the block: %v", err)
+	}
+	got, ok := chain.calculatingBlock.Peek(target.HashNoValidator())
+	if !ok || got != preset {
+		t.Fatal("a block that is already being calculated was prepared again")
+	}
+}
+
+// TestAReusedResultIsStampedWithTheBlockItIsInsertedUnder covers the hash a prepared result
+// carries into the block that reuses it. XDPoS signs a header with a validator signature
+// after the block was prepared, that signature is part of the hash the block is inserted
+// under, and it is the only thing that hash and the one the result was computed with differ
+// in. Reusing the result as it stands would hence stamp the receipts and the logs the block
+// is published with the pre-signature hash, the hash of a block that is written nowhere.
+func TestAReusedResultIsStampedWithTheBlockItIsInsertedUnder(t *testing.T) {
+	key, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	address := crypto.PubkeyToAddress(key.PublicKey)
+	// A transaction is what makes the result carry a receipt, the thing that is stamped
+	// with the hash of the block it was computed from.
+	chain, blocks := newPreparedBlockChain(t, 2, func(i int, b *BlockGen) {
+		tx, _ := types.SignTx(types.NewTransaction(uint64(i), address, big.NewInt(1), params.TxGas, b.header.BaseFee, nil), types.HomesteadSigner{}, key)
+		b.AddTx(tx)
+	})
+	target := blocks[0]
+
+	// The fetcher prepares the block as it was propagated and imports the one XDPoS signed,
+	// so the unsigned twin of the target is what is prepared here: the signature takes no
+	// part in the execution, hence the prepared result answering the look-up the target
+	// makes as well.
+	header := types.CopyHeader(target.Header())
+	header.Validator = nil
+	unsigned := types.NewBlockWithHeader(header).WithBody(*target.Body())
+	if unsigned.HashNoValidator() != target.HashNoValidator() {
+		t.Fatal("the signature is not expected to take part in the key the caches use")
+	}
+	if unsigned.Hash() == target.Hash() {
+		t.Fatal("the signature is expected to take part in the hash the block is inserted under")
+	}
+	if err := chain.PrepareBlock(unsigned); err != nil {
+		t.Fatalf("failed to prepare the block: %v", err)
+	}
+	// A transaction that emits no log leaves nothing to cover the stamping of the logs,
+	// so one is attached to the prepared result, where a log of its own would sit.
+	prepared, ok := chain.resultProcess.Get(unsigned.HashNoValidator())
+	if !ok {
+		t.Fatal("the prepared result is not stored under the key its look-ups use")
+	}
+	if len(prepared.receipts) == 0 {
+		t.Fatal("the prepared result has no receipt to stamp")
+	}
+	preparedLog := &types.Log{BlockHash: unsigned.Hash(), Address: address}
+	prepared.receipts[0].Logs = append(prepared.receipts[0].Logs, preparedLog)
+	prepared.logs = append(prepared.logs, preparedLog)
+
+	// getResultBlock is the look-up insertBlock performs: a reused result is returned
+	// without being computed, so the block is not recorded as being calculated. The
+	// preparation above did record it, hence the reset - nothing else purges that cache.
+	chain.calculatingBlock.Purge()
+	result, err := chain.getResultBlock(target, true)
+	if err != nil {
+		t.Fatalf("failed to look the prepared result up: %v", err)
+	}
+	if chain.calculatingBlock.Contains(target.HashNoValidator()) {
+		t.Fatal("the prepared result was not reused: the block was calculated a second time")
+	}
+	for _, receipt := range result.receipts {
+		if receipt.BlockHash != target.Hash() {
+			t.Fatalf("receipt stamped with a foreign block hash: have %v, want %v", receipt.BlockHash, target.Hash())
+		}
+	}
+	for _, l := range result.logs {
+		if l.BlockHash != target.Hash() {
+			t.Fatalf("log stamped with a foreign block hash: have %v, want %v", l.BlockHash, target.Hash())
+		}
+	}
+}
+
+// TestConcurrentReusesOfAPreparedResultCarryTheirOwnHash covers the hash a prepared result
+// carries into each of the blocks that reuse it at the same time. A block that was signed
+// twice - by two nodes sharing the validator key, say - yields two blocks that ask the
+// caches by the same hash and are inserted under a hash each, so both of them look the same
+// prepared result up. Each insertion has to be stamped with its own hash: stamping the
+// cached result in place would let one insertion overwrite the hash the other one persists
+// and publishes, and restamp the logs a subscriber is already holding.
+func TestConcurrentReusesOfAPreparedResultCarryTheirOwnHash(t *testing.T) {
+	key, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	address := crypto.PubkeyToAddress(key.PublicKey)
+	// A transaction is what makes the result carry a receipt, the thing that is stamped
+	// with the hash of the block it was computed from.
+	chain, blocks := newPreparedBlockChain(t, 2, func(i int, b *BlockGen) {
+		tx, _ := types.SignTx(types.NewTransaction(uint64(i), address, big.NewInt(1), params.TxGas, b.header.BaseFee, nil), types.HomesteadSigner{}, key)
+		b.AddTx(tx)
+	})
+	target := blocks[0]
+
+	// The fetcher prepares the block as it was propagated and imports the one XDPoS signed,
+	// so the unsigned twin of the target is what is prepared here: the signature takes no
+	// part in the execution, hence the prepared result answering the look-up every signed
+	// twin of it makes.
+	header := types.CopyHeader(target.Header())
+	header.Validator = nil
+	unsigned := types.NewBlockWithHeader(header).WithBody(*target.Body())
+	if err := chain.PrepareBlock(unsigned); err != nil {
+		t.Fatalf("failed to prepare the block: %v", err)
+	}
+	// A transaction that emits no log leaves nothing to cover the stamping of the logs, so
+	// one is attached to the prepared result, where a log of its own would sit.
+	prepared, ok := chain.resultProcess.Get(unsigned.HashNoValidator())
+	if !ok {
+		t.Fatal("the prepared result is not stored under the key its look-ups use")
+	}
+	if len(prepared.receipts) == 0 {
+		t.Fatal("the prepared result has no receipt to stamp")
+	}
+	preparedLog := &types.Log{BlockHash: unsigned.Hash(), Address: address}
+	prepared.receipts[0].Logs = append(prepared.receipts[0].Logs, preparedLog)
+	prepared.logs = append(prepared.logs, preparedLog)
+
+	// Two blocks sharing the key of the prepared result, under a hash each.
+	twins := make([]*types.Block, 0, 2)
+	for _, validator := range [][]byte{{0x01}, {0x02}} {
+		signed := types.CopyHeader(target.Header())
+		signed.Validator = validator
+		twins = append(twins, types.NewBlockWithHeader(signed).WithBody(*target.Body()))
+	}
+	if twins[0].HashNoValidator() != twins[1].HashNoValidator() {
+		t.Fatal("the twins do not share the key the caches ask for")
+	}
+	if twins[0].Hash() == twins[1].Hash() {
+		t.Fatal("the twins are expected to be inserted under a hash each")
+	}
+
+	// Reuse the prepared result from both twins at once, the way two insertions of them
+	// running concurrently do.
+	results := make([]*ResultProcessBlock, len(twins))
+	var wg sync.WaitGroup
+	for i, twin := range twins {
+		wg.Add(1)
+		go func(i int, twin *types.Block) {
+			defer wg.Done()
+
+			result, err := chain.getResultBlock(twin, true)
+			if err != nil {
+				t.Errorf("failed to look the prepared result up: %v", err)
+				return
+			}
+			results[i] = result
+		}(i, twin)
+	}
+	wg.Wait()
+
+	for i, twin := range twins {
+		if results[i] == nil {
+			t.Fatalf("the look-up performed by the block under %v returned nothing", twin.Hash())
+		}
+		for _, receipt := range results[i].receipts {
+			if receipt.BlockHash != twin.Hash() {
+				t.Errorf("receipt of the block under %v stamped with %v", twin.Hash(), receipt.BlockHash)
+			}
+		}
+		for _, l := range results[i].logs {
+			if l.BlockHash != twin.Hash() {
+				t.Errorf("log of the block under %v stamped with %v", twin.Hash(), l.BlockHash)
+			}
+		}
+	}
+	// The cache outlives its reuses and answers every look-up, so neither of them may have
+	// stamped the result it was handed.
+	for _, receipt := range prepared.receipts {
+		if receipt.BlockHash != unsigned.Hash() {
+			t.Errorf("the cached result was stamped in place: receipt has %v, want %v", receipt.BlockHash, unsigned.Hash())
+		}
+	}
+	for _, l := range prepared.logs {
+		if l.BlockHash != unsigned.Hash() {
+			t.Errorf("the cached result was stamped in place: log has %v, want %v", l.BlockHash, unsigned.Hash())
+		}
 	}
 }

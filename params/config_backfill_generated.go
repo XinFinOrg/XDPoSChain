@@ -209,6 +209,13 @@ var generatedChainConfigBuiltInBackfillForkBlockFields = []chainConfigBigIntFiel
 		bind:           func(c *ChainConfig) **big.Int { return &c.Gas50xBlock },
 	},
 	{
+		name:        "Gas2500xBlock",
+		jsonKey:     "gas2500xBlock",
+		xdcSpecific: true,
+		get:         func(c *ChainConfig) *big.Int { return c.Gas2500xBlock },
+		bind:        func(c *ChainConfig) **big.Int { return &c.Gas2500xBlock },
+	},
+	{
 		name:        "TIPXDCXMinerDisableBlock",
 		jsonKey:     "tipXDCXMinerDisableBlock",
 		xdcSpecific: true,

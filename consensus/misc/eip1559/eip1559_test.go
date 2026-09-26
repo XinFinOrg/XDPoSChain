@@ -20,7 +20,6 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
@@ -29,6 +28,40 @@ func testConfigEip1559() *params.ChainConfig {
 	config := *params.TestChainConfig
 	config.EIP1559Block = big.NewInt(1)
 	return &config
+}
+
+// TestCalcBaseFeeFollowsGasPriceSchedule pins the base fee returned for each
+// tier of the gas price schedule.
+func TestCalcBaseFeeFollowsGasPriceSchedule(t *testing.T) {
+	config := *params.TestChainConfig
+	config.EIP1559Block = big.NewInt(10)
+	config.Gas50xBlock = big.NewInt(0)
+	config.Gas2500xBlock = big.NewInt(20)
+
+	for _, tc := range []struct {
+		name  string
+		block int64
+		want  *big.Int
+	}{
+		{name: "before eip1559", block: 9, want: nil},
+		{name: "at eip1559", block: 10, want: big.NewInt(12_500_000_000)},
+		{name: "below gas2500x", block: 19, want: big.NewInt(12_500_000_000)},
+		{name: "at gas2500x", block: 20, want: big.NewInt(625_000_000_000)},
+		{name: "above gas2500x", block: 21, want: big.NewInt(625_000_000_000)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := CalcBaseFee(&config, &types.Header{Number: big.NewInt(tc.block)})
+			if tc.want == nil {
+				if got != nil {
+					t.Fatalf("expected nil base fee, got %v", got)
+				}
+				return
+			}
+			if got == nil || got.Cmp(tc.want) != 0 {
+				t.Fatalf("unexpected base fee: have %v want %v", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestVerifyEip1559HeaderParentBaseFee(t *testing.T) {
@@ -52,7 +85,7 @@ func TestVerifyEip1559HeaderParentBaseFee(t *testing.T) {
 			name: "eip1559 parent with basefee",
 			parent: &types.Header{
 				Number:  big.NewInt(1),
-				BaseFee: new(big.Int).Set(common.BaseFee),
+				BaseFee: new(big.Int).SetUint64(params.InitialBaseFee),
 			},
 			headerNum: 2,
 			wantOk:    true,
@@ -68,7 +101,7 @@ func TestVerifyEip1559HeaderParentBaseFee(t *testing.T) {
 	} {
 		header := &types.Header{
 			Number:  big.NewInt(tc.headerNum),
-			BaseFee: new(big.Int).Set(common.BaseFee),
+			BaseFee: new(big.Int).SetUint64(params.InitialBaseFee),
 		}
 		err := VerifyEip1559Header(config, tc.parent, header)
 		if tc.wantOk && err != nil {

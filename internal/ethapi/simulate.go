@@ -68,6 +68,7 @@ type simCallResult struct {
 	ReturnValue hexutil.Bytes  `json:"returnData"`
 	Logs        []*types.Log   `json:"logs"`
 	GasUsed     hexutil.Uint64 `json:"gasUsed"`
+	MaxUsedGas  hexutil.Uint64 `json:"maxUsedGas"`
 	Status      hexutil.Uint64 `json:"status"`
 	Error       *callError     `json:"error,omitempty"`
 }
@@ -155,13 +156,13 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 	// Set header fields that depend only on parent block.
 	// Parent hash is needed for evm.GetHashFn to work.
 	header.ParentHash = parent.Hash()
-	if sim.chainConfig.IsLondon(header.Number) {
+	if sim.chainConfig.IsEIP1559(header.Number) {
 		// In non-validation mode base fee is set to 0 if it is not overridden.
 		// This is because it creates an edge case in EVM where gasPrice < baseFee.
 		// Base fee could have been overridden.
 		if header.BaseFee == nil {
 			if sim.validate {
-				header.BaseFee = eip1559.CalcBaseFee(sim.chainConfig, parent)
+				header.BaseFee = eip1559.CalcBaseFee(sim.chainConfig, header)
 			} else {
 				header.BaseFee = big.NewInt(0)
 			}
@@ -198,6 +199,12 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 	if sim.chainConfig.IsPrague(header.Number) {
 		core.ProcessParentBlockHash(header.ParentHash, evm)
 	}
+	// Block level state changes block processing applies before the first transaction of a
+	// block. A simulated block starts from the base state, so without them the calls and the
+	// state root describe a pre-state canonical execution never had: TIPSigning removes the
+	// legacy block signers account at the block that activates it, and the caller can
+	// simulate exactly that block by selecting its parent as the base state.
+	core.ApplyTIPSigningHardFork(sim.chainConfig, sim.state, header.Number)
 	for i, call := range block.Calls {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
@@ -225,7 +232,7 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 		gasUsed += result.UsedGas
 		receipts[i] = core.MakeReceipt(evm, result, sim.state, blockContext.BlockNumber, common.Hash{}, tx, gasUsed, root)
 		logs := tracer.Logs()
-		callRes := simCallResult{ReturnValue: result.Return(), Logs: logs, GasUsed: hexutil.Uint64(result.UsedGas)}
+		callRes := simCallResult{ReturnValue: result.Return(), Logs: logs, GasUsed: hexutil.Uint64(result.UsedGas), MaxUsedGas: hexutil.Uint64(result.MaxUsedGas)}
 		if result.Failed() {
 			callRes.Status = hexutil.Uint64(types.ReceiptStatusFailed)
 			if errors.Is(result.Err, vm.ErrExecutionReverted) {

@@ -1,118 +1,35 @@
 package engine_v1_tests
 
 import (
-	"context"
 	"math/big"
-	"math/rand"
 	"strconv"
-	"strings"
 	"testing"
 
-	ethereum "github.com/XinFinOrg/XDPoSChain"
-	"github.com/XinFinOrg/XDPoSChain/accounts/abi"
-	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
-	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind/backends"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
-	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/contracts"
-	randomizeContract "github.com/XinFinOrg/XDPoSChain/contracts/randomize/contract"
+	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/hooks"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/stretchr/testify/require"
 )
 
-type randomizeBackendMock struct {
-	*backends.SimulatedBackend
-	apiABI  abi.ABI
-	opening [32]byte
-	latest  map[common.Address]int64
-	byBlock map[uint64]map[common.Address]int64
-}
-
-func newRandomizeBackendMock(t *testing.T, backend *backends.SimulatedBackend) *randomizeBackendMock {
-	t.Helper()
-	parsed, err := abi.JSON(strings.NewReader(randomizeContract.XDCRandomizeABI))
-	require.NoError(t, err)
-
-	var opening [32]byte
-	copy(opening[:], []byte("checkpoint-sync-randomize-key-000")) // 32 bytes prefix, deterministic
-
-	return &randomizeBackendMock{
-		SimulatedBackend: backend,
-		apiABI:           parsed,
-		opening:          opening,
-		latest:           make(map[common.Address]int64),
-		byBlock:          make(map[uint64]map[common.Address]int64),
-	}
-}
-
-func (m *randomizeBackendMock) CodeAt(ctx context.Context, contract common.Address, blockNumber *big.Int) ([]byte, error) {
-	if contract == common.RandomizeSMCBinary {
-		return []byte{1}, nil
-	}
-	return m.SimulatedBackend.CodeAt(ctx, contract, blockNumber)
-}
-
-func (m *randomizeBackendMock) CallContract(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
-	if call.To == nil || *call.To != common.RandomizeSMCBinary || len(call.Data) < 4 {
-		return m.SimulatedBackend.CallContract(ctx, call, blockNumber)
-	}
-	method, err := m.apiABI.MethodById(call.Data[:4])
-	if err != nil {
-		return nil, err
-	}
-	inputs, err := method.Inputs.Unpack(call.Data[4:])
-	if err != nil {
-		return nil, err
-	}
-	var addr common.Address
-	if len(inputs) > 0 {
-		addr = inputs[0].(common.Address)
-	}
-
-	switch method.Name {
-	case "getSecret":
-		random := m.lookupRandom(addr, blockNumber)
-		encrypted := contracts.Encrypt(m.opening[:], strconv.FormatInt(random, 10))
-		var secret [32]byte
-		copy(secret[:], common.LeftPadBytes([]byte(encrypted), 32))
-		return method.Outputs.Pack([][32]byte{secret})
-	case "getOpening":
-		return method.Outputs.Pack(m.opening)
-	default:
-		return m.SimulatedBackend.CallContract(ctx, call, blockNumber)
-	}
-}
-
-func (m *randomizeBackendMock) lookupRandom(addr common.Address, blockNumber *big.Int) int64 {
-	if blockNumber == nil {
-		return m.latest[addr]
-	}
-	if vals, ok := m.byBlock[blockNumber.Uint64()]; ok {
-		if random, ok := vals[addr]; ok {
-			return random
-		}
-	}
-	return m.latest[addr]
-}
-
 // Regression test for sync-time checkpoint verification.
 //
 // Scenario:
 // 1) Build chain up to block 899.
-// 2) Build checkpoint header #900 and precompute its validators from parent(#899) state.
-// 3) Advance canonical chain with #900/#901 that mutate randomize contract state.
-// 4) Re-verify old checkpoint header #900 against the updated chain head.
+// 2) Precompute checkpoint #900's validators from parent(#899) state.
+// 3) Advance the chain with #900, whose randomize state differs from parent(#899).
+// 4) Re-verify old checkpoint header #900 while the head is #900.
 //
-// Before the fix, HookVerifyMNs used latest-state randomize reads and could return
-// ErrInvalidCheckpointValidators for step (4). After the fix, verification is pinned
-// to parent block state and should pass.
+// HookVerifyMNs must read the randomize values pinned to the parent block. Were
+// it to read them at the head, step (4) would return
+// ErrInvalidCheckpointValidators.
 func TestCheckpointSyncValidatorVerificationUsesParentState(t *testing.T) {
 	const checkpointNumber = uint64(900)
 
-	blockchain, backend, parentBlock, _, _ := PrepareXDCTestBlockChain(t, int(checkpointNumber-1), params.TestXDPoSMockChainConfig)
+	blockchain, _, parentBlock, _, _ := PrepareXDCTestBlockChain(t, int(checkpointNumber-1), params.TestXDPoSMockChainConfig)
 	require.Equal(t, checkpointNumber-1, parentBlock.NumberU64())
 
 	engine := blockchain.Engine().(*XDPoS.XDPoS)
@@ -121,94 +38,105 @@ func TestCheckpointSyncValidatorVerificationUsesParentState(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, masternodes)
 
-	mockBackend := newRandomizeBackendMock(t, backend)
-	parentRandoms := make(map[common.Address]int64)
-	latestRandoms := make(map[common.Address]int64)
-	for i, addr := range masternodes {
-		parentRandoms[addr] = int64(i + 1)
-		latestRandoms[addr] = int64(len(masternodes) - i + 100)
-	}
-	mockBackend.byBlock[checkpointNumber-1] = parentRandoms
-	mockBackend.latest = latestRandoms
-	blockchain.Client = mockBackend
+	parentState, err := blockchain.StateAt(parentBlock.Root())
+	require.NoError(t, err)
+	parentRandoms := randomizeValuesFrom(parentState, masternodes)
+	validatorsAtParent, err := validatorsFromRandoms(parentRandoms, int64(len(masternodes)))
+	require.NoError(t, err)
 
-	checkpointHeader := &types.Header{
-		Root:       common.HexToHash("0xea465415b60d88429f181fec9fae67c0f19cbf5a4fa10971d96d4faa57d96ffa"),
+	// Advance the chain with #900 carrying a randomize state different from the
+	// parent's, so that the parent view and the head view disagree.
+	headState, err := blockchain.StateAt(parentBlock.Root())
+	require.NoError(t, err)
+	headRandoms := make([]int64, 0, len(masternodes))
+	for i, addr := range masternodes {
+		random := int64(i) + headRandomizeOffset
+		setRandomizeState(t, headState, addr, random)
+		headRandoms = append(headRandoms, random)
+	}
+	headRoot := headState.IntermediateRoot(false)
+	head := types.NewBlockWithHeader(&types.Header{
+		Root:       headRoot,
 		Number:     new(big.Int).SetUint64(checkpointNumber),
 		ParentHash: parentBlock.Hash(),
 		Coinbase:   common.HexToAddress("0xaaa0000000000000000000000000000000000900"),
+	})
+	_, err = blockchain.WriteBlockWithState(head, nil, headState, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, checkpointNumber, blockchain.CurrentBlock().Number.Uint64())
+
+	validatorsAtHead, err := validatorsFromRandoms(headRandoms, int64(len(masternodes)))
+	require.NoError(t, err)
+	require.NotEqual(t, validatorsAtHead, validatorsAtParent,
+		"the parent view and the head view must differ, otherwise this test cannot tell them apart")
+
+	checkpointHeader := &types.Header{
+		Root:       headRoot,
+		Number:     new(big.Int).SetUint64(checkpointNumber),
+		ParentHash: parentBlock.Hash(),
+		Coinbase:   head.Coinbase(),
+		Validators: validatorsAtParent,
 	}
 
-	// Build expected validators from parent-state randomize values directly,
-	// independent from HookValidator implementation.
-	validatorsAtParent, err := validatorsFromRandomizeAtNumber(blockchain.Client, masternodes, new(big.Int).SetUint64(checkpointNumber-1))
+	// This used to be paired with an explicit check that err is not
+	// ErrInvalidCheckpointValidators. That check was always true once NoError
+	// passed, so the guard against the historical failure signature is the
+	// NoError above plus the NotEqual on the derived validators at the top.
+	err = engine.EngineV1.HookVerifyMNs(parentBlock.Header(), checkpointHeader, masternodes)
 	require.NoError(t, err)
-	validatorsAtLatest, err := validatorsFromRandomizeAtNumber(blockchain.Client, masternodes, nil)
-	require.NoError(t, err)
-	require.NotEqual(t, validatorsAtLatest, validatorsAtParent)
-	checkpointHeader.Validators = validatorsAtParent
-
-	// Re-verify checkpoint header while latest randomize differs from parent block.
-	err = engine.EngineV1.HookVerifyMNs(checkpointHeader, masternodes)
-	require.NoError(t, err)
-
-	// Sanity: latest randomize view has diverged from parent-state view for at least
-	// one masternode, proving this test exercises the historical-state requirement.
-	var diverged bool
-	for _, addr := range masternodes {
-		latest, lerr := contracts.GetRandomizeFromContractAtNumber(blockchain.Client, addr, nil)
-		require.NoError(t, lerr)
-		atParent, perr := contracts.GetRandomizeFromContractAtNumber(blockchain.Client, addr, new(big.Int).SetUint64(checkpointNumber-1))
-		require.NoError(t, perr)
-		if latest != atParent {
-			diverged = true
-			break
-		}
-	}
-	require.True(t, diverged)
-
-	// Keep explicit guard for the historical failure signature.
-	require.NotEqual(t, utils.ErrInvalidCheckpointValidators, err)
 }
 
-func validatorsFromRandomizeAtNumber(client bind.ContractBackend, masternodes []common.Address, blockNumber *big.Int) ([]byte, error) {
+// headRandomizeOffset keeps the head's randomize values away from the zeros the
+// parent state carries.
+const headRandomizeOffset = int64(1000)
+
+// randomizeValuesFrom reads the randomize value of every masternode the same way
+// getValidatorsAtNumber does, but from the state passed in.
+func randomizeValuesFrom(statedb *state.StateDB, masternodes []common.Address) []int64 {
 	randoms := make([]int64, 0, len(masternodes))
 	for _, addr := range masternodes {
-		random, err := contracts.GetRandomizeFromContractAtNumber(client, addr, blockNumber)
+		random, err := contracts.DecryptRandomizeFromSecretsAndOpening(statedb.GetSecret(addr), statedb.GetOpening(addr))
 		if err != nil {
-			return nil, err
+			// A failed decrypt leaves the value at zero; the hook surfaces
+			// StateDB.Error() separately.
+			random = 0
 		}
 		randoms = append(randoms, random)
 	}
-	m2 := deterministicM2FromRandomize(randoms, int64(len(masternodes)))
-	return contracts.BuildValidatorFromM2(m2), nil
+	return randoms
 }
 
-// deterministicM2FromRandomize mirrors contracts.GenM2FromRandomize but uses a
-// local RNG source so the test does not depend on global math/rand state.
-func deterministicM2FromRandomize(randomizes []int64, lenSigners int64) []int64 {
-	blockValidator := make([]int64, lenSigners)
-	for i := int64(0); i < lenSigners; i++ {
-		blockValidator[i] = i
-	}
-	randIndexs := make([]int64, lenSigners)
-	total := int64(0)
-	for _, v := range randomizes {
-		total += v
-	}
-	rng := rand.New(rand.NewSource(total))
+// setRandomizeState writes the encrypted secret and the opening a masternode
+// would have committed, so the state carries random as its randomize value.
+//
+// The slots are derived with the same helpers StateDB.GetSecret and
+// StateDB.GetOpening use (core/state/statedb_utils.go), so a layout change
+// moves both sides together and this test cannot catch it: what it anchors is
+// the declaration order in contracts/randomize/contract/XDCRandomize.sol, where
+// randomSecret is slot 0 and randomOpening is slot 1.
+func setRandomizeState(t *testing.T, statedb *state.StateDB, addr common.Address, random int64) {
+	t.Helper()
 
-	for i := len(blockValidator) - 1; i >= 0; i-- {
-		blockLength := len(blockValidator) - 1
-		if blockLength <= 1 {
-			blockLength = 1
-		}
-		randomIndex := rng.Intn(blockLength)
-		temp := blockValidator[randomIndex]
-		blockValidator[randomIndex] = blockValidator[i]
-		blockValidator[i] = temp
-		blockValidator = append(blockValidator[:i], blockValidator[i+1:]...)
-		randIndexs[i] = temp
+	var opening [32]byte
+	copy(opening[:], []byte("checkpoint-sync-randomize-key-000")) // 32 bytes prefix, deterministic
+
+	encrypted := contracts.Encrypt(opening[:], strconv.FormatInt(random, 10))
+	var secret [32]byte
+	copy(secret[:], common.LeftPadBytes([]byte(encrypted), 32))
+
+	// randomSecret is mapping(address => bytes32[]): slot 0, a single element.
+	locSecret := state.GetLocMappingAtKey(addr.Hash(), 0)
+	statedb.SetState(common.RandomizeSMCBinary, common.BigToHash(locSecret), common.BigToHash(big.NewInt(1)))
+	statedb.SetState(common.RandomizeSMCBinary, state.GetLocDynamicArrAtElement(common.BigToHash(locSecret), 0, 1), secret)
+	// randomOpening is mapping(address => bytes32): slot 1.
+	locOpening := state.GetLocMappingAtKey(addr.Hash(), 1)
+	statedb.SetState(common.RandomizeSMCBinary, common.BigToHash(locOpening), opening)
+}
+
+func validatorsFromRandoms(randoms []int64, lenSigners int64) ([]byte, error) {
+	m2, err := contracts.GenM2FromRandomize(randoms, lenSigners)
+	if err != nil {
+		return nil, err
 	}
-	return randIndexs
+	return contracts.BuildValidatorFromM2(m2), nil
 }

@@ -917,6 +917,12 @@ func TestSimulateV1(t *testing.T) {
 	if results[0].Calls[0].Error != nil {
 		t.Errorf("expected no error, got %v", results[0].Calls[0].Error)
 	}
+	if results[0].Calls[0].MaxUsedGas == 0 {
+		t.Error("expected maxUsedGas to be set")
+	}
+	if results[0].Calls[0].MaxUsedGas < results[0].Calls[0].GasUsed {
+		t.Errorf("expected maxUsedGas >= gasUsed, got %d < %d", results[0].Calls[0].MaxUsedGas, results[0].Calls[0].GasUsed)
+	}
 }
 
 // TestSimulateV1WithBlockOverrides tests simulate v 1 with block overrides.

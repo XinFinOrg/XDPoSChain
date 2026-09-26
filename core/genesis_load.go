@@ -23,7 +23,7 @@ func normalizeProvidedGenesisForStoredConfig(stored common.Hash, storedCfg *para
 	if genesis == nil {
 		return nil, common.Hash{}, nil
 	}
-	originalHash := common.Hash{}
+	var originalHash common.Hash
 	var err error
 	genesis, originalHash, err = normalizeProvidedGenesisConfig(genesis, builtInChainConfigPolicyForOverride(trustedOverride))
 	if err != nil {

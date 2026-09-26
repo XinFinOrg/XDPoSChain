@@ -57,10 +57,14 @@ type XDPoS_v1 struct {
 	HookReward            func(chain consensus.ChainReader, state vm.StateDB, parentState *state.StateDB, header *types.Header) (map[string]interface{}, error)
 	HookPenalty           func(chain consensus.ChainReader, blockNumberEpoc uint64) ([]common.Address, error)
 	HookPenaltyTIPSigning func(chain consensus.ChainReader, header *types.Header, candidate []common.Address) ([]common.Address, error)
-	HookValidator         func(header *types.Header, signers []common.Address) ([]byte, error)
-	HookVerifyMNs         func(header *types.Header, signers []common.Address) error
+	// HookValidator and HookVerifyMNs receive the parent of the header they are
+	// asked about, so their state comes from the parent the caller resolved
+	// instead of a lookup by height, which resolves to the canonical block and
+	// would derive validators from the competing branch for a fork.
+	HookValidator func(parent, header *types.Header, signers []common.Address) ([]byte, error)
+	HookVerifyMNs func(parent, header *types.Header, signers []common.Address) error
 
-	HookGetSignersFromContract func(blockHash common.Hash) ([]common.Address, error)
+	HookGetSignersFromContract func(gapHeader *types.Header) ([]common.Address, error)
 }
 
 /*
@@ -140,7 +144,13 @@ func (x *XDPoS_v1) verifyHeaderWithCache(chain consensus.ChainReader, header *ty
 		return nil
 	}
 	err := x.verifyHeader(chain, header, parents, fullVerify)
-	if err == nil {
+	// Only a full verification is a verdict worth remembering: the cache does not record the
+	// level a header was checked at, and every caller that consults it treats a hit as a
+	// pass. Remembering a reduced check would therefore let a later full verification of the
+	// same header answer nil without ever running its checks. verifyHeader lowers a requested
+	// full verification on the testnet config, so the decision has to follow the mode the
+	// check actually ran in rather than the caller's request.
+	if err == nil && fullVerify && !x.shouldDisableFullVerify() {
 		x.verifiedHeaders.Add(header.Hash(), struct{}{})
 	}
 	return err
@@ -266,7 +276,7 @@ func (x *XDPoS_v1) verifyCascadingFields(chain consensus.ChainReader, header *ty
 		}
 
 		signers := snap.GetSigners()
-		err = x.checkSignersOnCheckpoint(chain, header, signers)
+		err = x.checkSignersOnCheckpoint(chain, parent, header, signers)
 		if err == nil {
 			return x.verifySeal(chain, header, parents, fullVerify)
 		}
@@ -276,7 +286,7 @@ func (x *XDPoS_v1) verifyCascadingFields(chain consensus.ChainReader, header *ty
 			log.Error("[verifyCascadingFields] Fail to get signers from smart contract", "number", number, "hash", header.Hash(), "err", err)
 			return err
 		}
-		err = x.checkSignersOnCheckpoint(chain, header, signers)
+		err = x.checkSignersOnCheckpoint(chain, parent, header, signers)
 		if err != nil {
 			log.Error("[verifyCascadingFields] checkSignersOnCheckpoint failed with signers from smart contract", "number", number, "hash", header.Hash(), "err", err)
 			return err
@@ -287,7 +297,7 @@ func (x *XDPoS_v1) verifyCascadingFields(chain consensus.ChainReader, header *ty
 	return x.verifySeal(chain, header, parents, fullVerify)
 }
 
-func (x *XDPoS_v1) checkSignersOnCheckpoint(chain consensus.ChainReader, header *types.Header, signers []common.Address) error {
+func (x *XDPoS_v1) checkSignersOnCheckpoint(chain consensus.ChainReader, parent, header *types.Header, signers []common.Address) error {
 	number := header.Number.Uint64()
 	// ignore signerCheck at checkpoint block.
 	if common.IsIgnoreSignerCheckBlock(number) {
@@ -336,7 +346,7 @@ func (x *XDPoS_v1) checkSignersOnCheckpoint(chain consensus.ChainReader, header 
 		return utils.ErrInvalidCheckpointSigners
 	}
 	if x.HookVerifyMNs != nil {
-		err := x.HookVerifyMNs(header, signers)
+		err := x.HookVerifyMNs(parent, header, signers)
 		if err != nil {
 			return err
 		}
@@ -778,7 +788,7 @@ func (x *XDPoS_v1) Prepare(chain consensus.ChainReader, header *types.Header) er
 			header.Extra = append(header.Extra, masternode[:]...)
 		}
 		if x.HookValidator != nil {
-			validators, err := x.HookValidator(header, masternodes)
+			validators, err := x.HookValidator(parent, header, masternodes)
 			if err != nil {
 				return err
 			}
@@ -832,8 +842,8 @@ func (x *XDPoS_v1) UpdateMasternodes(chain consensus.ChainReader, header *types.
 	}
 	x.recents.Add(snap.Hash, snap)
 	log.Info("New set of masternodes has been updated to snapshot", "number", snap.Number, "hash", snap.Hash)
-	for i, v := range nm {
-		log.Info("masternodes", "i", i, "addr", v)
+	for i, n := range ms {
+		log.Info("node", "i", i, "addr", n.Address, "stake", n.Stake)
 	}
 	return nil
 }
@@ -1040,8 +1050,11 @@ func (x *XDPoS_v1) getSignersFromContract(chain consensus.ChainReader, checkpoin
 	number := checkpointHeader.Number.Uint64()
 	for step := uint64(1); step <= chain.Config().XDPoS.Gap; step++ {
 		startGapBlockHeader = chain.GetHeader(startGapBlockHeader.ParentHash, number-step)
+		if startGapBlockHeader == nil {
+			return []common.Address{}, fmt.Errorf("no block at %d to get the signers from", number-step)
+		}
 	}
-	signers, err := x.HookGetSignersFromContract(startGapBlockHeader.Hash())
+	signers, err := x.HookGetSignersFromContract(startGapBlockHeader)
 	if err != nil {
 		return []common.Address{}, fmt.Errorf("can't get signers from Smart Contract . Err: %v", err)
 	}

@@ -94,6 +94,7 @@ type ChainConfig struct {
 	TIPXDCXCancellationFeeBlock *big.Int `json:"tipXDCXCancellationFeeBlock,omitempty"`
 	TIPTRC21FeeBlock            *big.Int `json:"tipTRC21FeeBlock,omitempty"`
 	Gas50xBlock                 *big.Int `json:"gas50xBlock,omitempty"`
+	Gas2500xBlock               *big.Int `json:"gas2500xBlock,omitempty"`
 	TIPXDCXMinerDisableBlock    *big.Int `json:"tipXDCXMinerDisableBlock,omitempty"`
 	TIPXDCXReceiverDisableBlock *big.Int `json:"tipXDCXReceiverDisableBlock,omitempty"`
 	DynamicGasLimitBlock        *big.Int `json:"dynamicGasLimitBlock,omitempty"`
@@ -563,6 +564,19 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 			return fmt.Errorf("invalid chain config: %w: %s %v > %s %v", ErrWrongForkSwitchOrder, rule.before.name, before, rule.after.name, after)
 		}
 	}
+	// The BASEFEE opcode is live from London, but XDC only fills the header base
+	// fee from EIP-1559 on; in between the opcode falls back to BaseFeeForOpcode,
+	// which is pinned to the Gas50x tier price. A tier above Gas50x taking effect
+	// inside that window would make the opcode under-report the schedule.
+	if c.Gas2500xBlock != nil && c.LondonBlock != nil {
+		windowStart := c.LondonBlock
+		if c.Gas2500xBlock.Cmp(windowStart) > 0 {
+			windowStart = c.Gas2500xBlock
+		}
+		if c.EIP1559Block == nil || c.EIP1559Block.Cmp(windowStart) > 0 {
+			return fmt.Errorf("invalid chain config: %w: Gas2500xBlock %v takes effect before EIP1559Block %v fills the header base fee", ErrWrongForkSwitchOrder, c.Gas2500xBlock, c.EIP1559Block)
+		}
+	}
 	if c.XDPoS == nil && c.Ethash == nil && c.Clique == nil && !isBuiltInTestNetwork(c.ChainID) {
 		return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "XDPoS")
 	}
@@ -698,6 +712,9 @@ func (c *ChainConfig) String() string {
 	if c.Gas50xBlock != nil {
 		result += fmt.Sprintf(", Gas50x: %v", c.Gas50xBlock)
 	}
+	if c.Gas2500xBlock != nil {
+		result += fmt.Sprintf(", Gas2500x: %v", c.Gas2500xBlock)
+	}
 	if c.TIPXDCXMinerDisableBlock != nil {
 		result += fmt.Sprintf(", TIPXDCXMinerDisable: %v", c.TIPXDCXMinerDisableBlock)
 	}
@@ -795,6 +812,7 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - Merge:                       %-8v\n", c.MergeBlock)
 	banner += fmt.Sprintf("  - Shanghai:                    %-8v\n", c.ShanghaiBlock)
 	banner += fmt.Sprintf("  - Gas50x:                      %-8v\n", c.Gas50xBlock)
+	banner += fmt.Sprintf("  - Gas2500x:                    %-8v\n", c.Gas2500xBlock)
 	banner += fmt.Sprintf("  - TIPXDCXMinerDisable:         %-8v\n", c.TIPXDCXMinerDisableBlock)
 	banner += fmt.Sprintf("  - TIPXDCXReceiverDisable:      %-8v\n", c.TIPXDCXReceiverDisableBlock)
 	banner += fmt.Sprintf("  - EIP1559:                     %-8v\n", c.EIP1559Block)
@@ -841,7 +859,7 @@ func (c *ChainConfig) GatherForks() []uint64 {
 // ActiveForks returns the list of active forks at the given block height.
 // The returned list is sorted in alphabetical order.
 func (c *ChainConfig) ActiveForks(block *big.Int) []string {
-	activeForks := make([]string, 0, 36)
+	activeForks := make([]string, 0, 37)
 	if c.IsBerlin(block) {
 		activeForks = append(activeForks, "Berlin")
 	}
@@ -868,6 +886,9 @@ func (c *ChainConfig) ActiveForks(block *big.Int) []string {
 	}
 	if c.IsEIP158(block) {
 		activeForks = append(activeForks, "EIP158")
+	}
+	if c.IsGas2500x(block) {
+		activeForks = append(activeForks, "Gas2500x")
 	}
 	if c.IsGas50x(block) {
 		activeForks = append(activeForks, "Gas50x")

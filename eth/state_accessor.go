@@ -221,13 +221,27 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 	if err != nil {
 		return nil, vm.BlockContext{}, nil, nil, err
 	}
+	// release is either handed to the caller on the paths that return the state, or
+	// invoked here when this function gives up. The parent state comes from the live
+	// trie database whenever it is available there (StateAtBlock, readOnly path), so
+	// the reference it holds must not be leaked on the error paths below.
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			release()
+		}
+	}()
 	context := core.NewEVMBlockContext(block.Header(), eth.blockchain, nil)
 	evm := vm.NewEVM(context, statedb, nil, eth.blockchain.Config(), vm.Config{})
 	// If prague hardfork, insert parent block hash in the state as per EIP-2935.
 	if eth.blockchain.Config().IsPrague(block.Number()) {
 		core.ProcessParentBlockHash(block.ParentHash(), evm)
 	}
+	// Block level state changes block processing applies before the first transaction.
+	// Without them the pre-state handed to the tracer is not the one the block ran on.
+	core.ApplyTIPSigningHardFork(eth.blockchain.Config(), statedb, block.Number())
 	if txIndex == 0 && len(block.Transactions()) == 0 {
+		handedOff = true
 		return nil, vm.BlockContext{}, statedb, release, nil
 	}
 	// Recompute transactions up to the target index.
@@ -235,6 +249,7 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	for idx, tx := range block.Transactions() {
 		if idx == txIndex {
+			handedOff = true
 			return tx, context, statedb, release, nil
 		}
 		var balance *big.Int
@@ -249,14 +264,25 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 			return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction %#x failed: %v", tx.Hash(), err)
 		}
 
-		// Not yet the searched for transaction, execute on top of the current state
+		// Not yet the searched for transaction, execute on top of the current state.
+		// Replay through the block processing entry point so the pre-state matches the
+		// block that is being traced: while the XDCX receiver fork is active,
+		// transactions to the XDCX system addresses are handled by ApplyEmptyTransaction
+		// and leave the sender nonce untouched. Replaying them with ApplyMessage bumps
+		// the nonce and makes every following transaction of the same sender fail with
+		// "nonce too low" (Apothem block 0x2e69c13, issue gzliudan/XDPoSChain#256).
+		//
+		// The replay finalises the pending state once per transaction itself, the way block
+		// processing does, so there is nothing left to commit here.
 		statedb.SetTxContext(tx.Hash(), idx)
-		if _, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(tx.Gas()), common.Address{}); err != nil {
+		if err := core.ApplyTransactionForReplay(msg, new(core.GasPool).AddGas(tx.Gas()), block.Number(), tx, evm, balance); err != nil {
+			// An EVM this replay cannot use is a problem of this caller, not of the
+			// transaction: report it as it is instead of blaming the transaction.
+			if errors.Is(err, core.ErrReplayTracingEVM) || errors.Is(err, core.ErrReplayStateType) {
+				return nil, vm.BlockContext{}, nil, nil, err
+			}
 			return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction %#x failed: %v", tx.Hash(), err)
 		}
-		// Ensure any modifications are committed to the state
-		// Only delete empty objects if EIP158/161 (a.k.a Spurious Dragon) is in effect
-		statedb.Finalise(evm.ChainConfig().IsEIP158(block.Number()))
 	}
 	return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction index %d out of range for block %#x", txIndex, block.Hash())
 }

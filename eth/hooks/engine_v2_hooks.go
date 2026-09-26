@@ -4,14 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"slices"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/math"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
-	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/contracts"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
@@ -180,6 +178,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 						}
 					}
 					// Check signer signed?
+					// TODO: check here needs dedup?
 					for _, tx := range signingTxs {
 						blkHash := common.BytesToHash(tx.Data()[len(tx.Data())-32:])
 						from := *tx.From()
@@ -250,6 +249,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 						}
 					}
 					// Check signer signed?
+					// TODO: check here needs dedup?
 					for _, tx := range signingTxs {
 						blkHash := common.BytesToHash(tx.Data()[len(tx.Data())-32:])
 						from := *tx.From()
@@ -304,7 +304,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 		currentConfig := adaptor.EngineV2.Config(uint64(round))
 
 		// Get signers/signing tx count, and burned tokens in one epoch
-		signers, burnedInOneEpoch, err := GetSigningTxCount(adaptor, chain, header, parentState, currentConfig)
+		signers, burnedInOneEpoch, err := GetSigningTxCount(adaptor, chain, header, currentConfig)
 
 		log.Debug("Time Get Signers", "block", header.Number.Uint64(), "time", common.PrettyDuration(time.Since(start)))
 		if err != nil {
@@ -424,9 +424,27 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 	}
 }
 
-// get signing transaction sender count
-func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *types.Header, parentState *state.StateDB, currentConfig *params.V2Config) (map[Beneficiary]map[common.Address]*RewardLog, *big.Int, error) {
-	// header should be a new epoch switch block
+// GetSigningTxCount counts, per beneficiary, how many signing txs each address
+// sent for the epoch being rewarded. header should be a new epoch switch block.
+//
+// Mirrors V1's contracts.GetRewardForCheckpoint (prevCheckpoint = number -
+// rCheckpoint*2): rewards are always for the epoch that started two epoch
+// switches ago, never the one that just ended. The reason is that a
+// masternode's signing tx for a block isn't guaranteed to land in the same
+// epoch as that block; walking back a full extra epoch gives those txs a
+// whole epoch's worth of blocks to be included before the count is taken.
+//
+// rewardEpochCount: how many epoch-switch checkpoints to walk back past to
+// reach the epoch being rewarded. That checkpoint (h below) is also where
+// the masternode/protector/observer membership for the reward is read from,
+// since it must reflect that historical epoch, not the current one.
+// signEpochCount: the checkpoint of the epoch in between (one epoch back).
+// It isn't rewarded itself here; it only marks endBlockNumber, the tail of
+// the rewarded epoch. The walk keeps going past it, and every signing tx
+// found anywhere in this "buffer" epoch is still collected into data[],
+// because it may be a late-arriving confirmation of a block in the epoch
+// being rewarded.
+func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *types.Header, currentConfig *params.V2Config) (map[Beneficiary]map[common.Address]*RewardLog, *big.Int, error) {
 	number := header.Number.Uint64()
 	rewardEpochCount := 2
 	signEpochCount := 1
@@ -469,49 +487,26 @@ func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *type
 		if isEpochSwitch && i != chain.Config().XDPoS.V2.SwitchBlock.Uint64()+1 {
 			epochCount += 1
 			if epochCount == signEpochCount {
+				// h is the checkpoint of the "buffer" epoch (one epoch back).
+				// Not rewarded; just closes off the rewarded epoch's range.
 				endBlockNumber = h.Number.Uint64() - 1
 			}
 			if epochCount == rewardEpochCount {
+				// h is the checkpoint of the epoch actually being rewarded
+				// (two epochs back). Its own historical masternode/standby
+				// membership is read here, from h - not from the current tip.
 				startBlockNumber = h.Number.Uint64() + 1
 				nodesToKeep[MasterNodeBeneficiary] = c.GetMasternodesFromCheckpointHeader(h)
 				// in reward upgrade, add protector and observer nodes
 				if chain.Config().IsTIPUpgradeReward(header.Number) {
-					candidates := parentState.GetCandidates()
-					var ms []utils.Masternode
-					for _, candidate := range candidates {
-						// ignore "0x0000000000000000000000000000000000000000"
-						if !candidate.IsZero() {
-							v := parentState.GetCandidateCap(candidate)
-							ms = append(ms, utils.Masternode{Address: candidate, Stake: v})
-						}
-					}
-					slices.SortStableFunc(ms, func(a, b utils.Masternode) int {
-						return b.Stake.Cmp(a.Stake)
-					})
-					// find penalty and filter them out
-					penalties := common.ExtractAddressFromBytes(h.Penalties)
-					filterMap := make(map[common.Address]struct{})
-					for _, addr := range penalties {
-						filterMap[addr] = struct{}{}
-					}
-					for _, addr := range nodesToKeep[MasterNodeBeneficiary] {
-						filterMap[addr] = struct{}{}
-					}
-					// find top candidates
-					protector := []common.Address{}
-					observer := []common.Address{}
-					for _, node := range ms {
-						if _, ok := filterMap[node.Address]; ok {
-							continue
-						}
-						if len(protector) < currentConfig.MaxProtectorNodes {
-							protector = append(protector, node.Address)
-						} else if len(observer) < currentConfig.MaxObverserNodes {
-							observer = append(observer, node.Address)
-						}
-					}
-					nodesToKeep[ProtectorNodeBeneficiary] = protector
-					nodesToKeep[ObserverNodeBeneficiary] = observer
+					// GetStandbynodes derives the pool from h's own historical epoch
+					// snapshot: already stake-sorted and already filtered of h's
+					// masternodes/penalties, same as XDPoS_getMasternodesByNumber uses.
+					standbyPool := c.GetStandbynodes(chain, h)
+					protectorEnd := min(currentConfig.MaxProtectorNodes, len(standbyPool))
+					observerEnd := min(protectorEnd+currentConfig.MaxObserverNodes, len(standbyPool))
+					nodesToKeep[ProtectorNodeBeneficiary] = standbyPool[:protectorEnd]
+					nodesToKeep[ObserverNodeBeneficiary] = standbyPool[protectorEnd:observerEnd]
 				}
 				break
 			}

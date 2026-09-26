@@ -453,7 +453,7 @@ func (hc *HeaderChain) SetHead(head uint64, updateFn UpdateHeadBlocksCallback, d
 		batch      = hc.chainDb.NewBatch()
 	)
 	for hdr := hc.CurrentHeader(); hdr != nil && hdr.Number.Uint64() > head; hdr = hc.CurrentHeader() {
-		hash, num := hdr.Hash(), hdr.Number.Uint64()
+		num := hdr.Number.Uint64()
 
 		// Rewind block chain to new head.
 		parent := hc.GetHeader(hdr.ParentHash, num-1)
@@ -481,19 +481,58 @@ func (hc *HeaderChain) SetHead(head uint64, updateFn UpdateHeadBlocksCallback, d
 		hc.currentHeaderHash = parentHash
 		headHeaderGauge.Update(parent.Number.Int64())
 
-		// Remove the relative data from the database.
-		if delFn != nil {
-			delFn(batch, hash, num)
+		// Remove all block data at this height (canonical block plus any side
+		// forks) so nothing dangling is left behind on the rewound segment.
+		hashes := rawdb.ReadAllHashes(hc.chainDb, num)
+		if len(hashes) == 0 {
+			// As a fallback, use the rewound header hash directly.
+			hashes = append(hashes, hdr.Hash())
 		}
-		// Rewind header chain to new head.
-		rawdb.DeleteHeader(batch, hash, num)
-		rawdb.DeleteTd(batch, hash, num)
+		for _, hash := range hashes {
+			if delFn != nil {
+				delFn(batch, hash, num)
+			}
+			rawdb.DeleteHeader(batch, hash, num)
+			rawdb.DeleteTd(batch, hash, num)
+		}
 		rawdb.DeleteCanonicalHash(batch, num)
+
+		// Flush the batch once it grows past the ideal size to bound memory
+		// during very large rewinds (e.g. rolling back tens of thousands of
+		// heights). Note: upstream geth's setHead keeps a single batch for the
+		// whole rewind segment; this periodic flush is an intentional local
+		// enhancement. It is safe because the head marker is already lowered to
+		// `parent` before any data at `num` is deleted, so head never points
+		// above still-present data, and the post-loop flush commits the rest.
+		if batch.ValueSize() >= ethdb.IdealBatchSize {
+			if err := batch.Write(); err != nil {
+				log.Crit("Failed to rewind block", "error", err)
+			}
+			batch.Reset()
+		}
 	}
-	// Flush all accumulated deletions.
+	// Flush the rewind deletions before scanning for dangling data. Otherwise
+	// the dangling sweep would still observe the just-rewound segment
+	// (head+1..old head) that is only marked for deletion in the batch but not
+	// yet committed, causing duplicate deletes and redundant delFn calls (and
+	// extra ancient-truncation work) over the same heights during large rewinds.
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to rewind block", "error", err)
 	}
+	// Wipe any dangling/orphaned data left ABOVE the new head. An aborted sync
+	// can leave non-contiguous side-fork blocks (with their canonical markers
+	// and, in archive mode, their state) at heights well above the head. If
+	// left in place, the downloader's ancestor search can latch onto them via
+	// HasBlock and skip re-syncing the intermediate range, jumping straight to
+	// a stale/bad block. The sweep iterates the header keyspace directly so gaps
+	// between orphaned segments are handled correctly, streaming deletions into
+	// batches that are flushed at ethdb.IdealBatchSize to bound memory.
+	if err := rawdb.DeleteDanglingHashes(hc.chainDb, head, delFn); err != nil {
+		log.Crit("Failed to rewind block", "error", err)
+	}
+	// Clean up bad block records for blocks above the new head. Bad blocks at or
+	// below the new head are kept for debugging and operator review.
+	rawdb.DeleteBadBlocksAbove(hc.chainDb, head)
 	// Clear out any stale content from the caches
 	hc.headerCache.Purge()
 	hc.tdCache.Purge()

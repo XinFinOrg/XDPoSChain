@@ -48,16 +48,16 @@ jobs:
             script: go run build/ci.go test -coverage $(go list ./... | grep "github.com/XinFinOrg/XDPoSChain/[t-z].*")
     steps:
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: ${{ env.GOPATH }}/src/XDPoSChain
       # Cache build tools to avoid downloading them each time
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: ${{ env.GOPATH }}/src/XDPoSChain/build/cache
           key: ${{ runner.os }}-build-tools-cache-${{ hashFiles('**/build/checksums.txt') }}
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           cache: false
           go-version: "1.25.x"
@@ -88,7 +88,7 @@ jobs:
     needs: tests
     if: startsWith(github.ref, 'refs/tags/')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Login to Docker Hub
         run: echo ${{ secrets.DOCKER_PASSWORD }} | docker login -u ${{ secrets.DOCKER_USERNAME }} --password-stdin
       - name: Build Docker image
@@ -103,7 +103,7 @@ jobs:
     outputs:
       output1: ${{ steps.docker.outputs.image_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Login to Docker Hub
         run: echo ${{ secrets.DOCKER_PASSWORD }} | docker login -u ${{ secrets.DOCKER_USERNAME }} --password-stdin
       - name: Build and Push Docker images
@@ -122,12 +122,38 @@ jobs:
           echo "image_name=$image_name"
           echo "image_name=$image_name" >> "$GITHUB_OUTPUT"
 
+  k8_update_start_script:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/dev-upgrade' && !startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: "v1.19.11"
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 --decode > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+      - name: Fetch start scripts from XinFin-Node
+        run: |
+          set -euo pipefail
+          curl -fsSL -o start-devnet.sh  https://raw.githubusercontent.com/XinFinOrg/XinFin-Node/devnet/devnet/start-devnet.sh
+          curl -fsSL -o start-apothem.sh https://raw.githubusercontent.com/XinFinOrg/XinFin-Node/master/testnet/start-apothem.sh
+          curl -fsSL -o start-node.sh    https://raw.githubusercontent.com/XinFinOrg/XinFin-Node/master/mainnet/start-node.sh
+      - name: Apply configmaps
+        run: |
+          set -euo pipefail
+          kubectl create configmap start-devnet-sh --from-file=start-devnet.sh --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create configmap start-apothem-sh --from-file=start-apothem.sh --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create configmap start-node-sh --from-file=start-node.sh --dry-run=client -o yaml | kubectl apply -f -
+
   devnet_k8_apply:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/dev-upgrade' && !startsWith(github.ref, 'refs/tags/')
     needs: devnet_build_push
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Set up kubectl
         uses: azure/setup-kubectl@v4
         with:
@@ -171,7 +197,7 @@ jobs:
     needs: devnet_k8_apply
     if: github.ref == 'refs/heads/dev-upgrade' && !startsWith(github.ref, 'refs/tags/')
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Send deployment notification
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -23,8 +23,10 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/engines/engine_v1"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/forkid"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/params/forks"
@@ -258,11 +260,88 @@ func TestJsonNumberToBigInt(t *testing.T) {
 	}
 }
 
+// standbyAddrs returns n deterministic, distinct addresses standing in for a
+// stake-descending standby pool.
+func standbyAddrs(n int) []common.Address {
+	out := make([]common.Address, n)
+	for i := range out {
+		out[i][0] = byte(i + 1)
+	}
+	return out
+}
+
+// TestSplitStandbyPoolPreUpgrade asserts that before the TIPUpgradeReward fork the
+// whole standby pool is returned unsplit and no protector/observer tier is set,
+// regardless of the configured caps.
+func TestSplitStandbyPoolPreUpgrade(t *testing.T) {
+	pool := standbyAddrs(5)
+
+	info := MasternodesStatus{tipUpgradeReward: false}
+	info.splitStandbyPool(pool, 3, 1) // caps must be ignored pre-upgrade
+
+	assert.Equal(t, pool, info.Standbynodes)
+	assert.Equal(t, 5, info.StandbynodesLen)
+	assert.Nil(t, info.Protectornodes)
+	assert.Nil(t, info.Observernodes)
+	assert.Zero(t, info.ProtectorLen)
+	assert.Zero(t, info.ObserverLen)
+}
+
+// TestSplitStandbyPoolPostUpgrade asserts that from the TIPUpgradeReward fork the
+// standby pool is split deterministically according to the protector/observer caps,
+// clamped to the pool size, and that the three tiers always reconcile back to the
+// full pool.
+func TestSplitStandbyPoolPostUpgrade(t *testing.T) {
+	pool := standbyAddrs(10)
+
+	tests := []struct {
+		name          string
+		maxProtector  int
+		maxObserver   int
+		wantProtector int
+		wantObserver  int
+		wantStandby   int
+	}{
+		{"caps within pool", 3, 4, 3, 4, 3},
+		{"exact fit", 4, 6, 4, 6, 0},
+		{"only protector tier", 4, 0, 4, 0, 6},
+		{"zero caps keep all standby", 0, 0, 0, 0, 10},
+		{"protector cap exceeds pool", 20, 5, 10, 0, 0},
+		{"protector fills, observer overflows", 6, 20, 6, 4, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := MasternodesStatus{tipUpgradeReward: true}
+			info.splitStandbyPool(pool, tt.maxProtector, tt.maxObserver)
+
+			assert.Equal(t, tt.wantProtector, info.ProtectorLen)
+			assert.Equal(t, tt.wantObserver, info.ObserverLen)
+			assert.Equal(t, tt.wantStandby, info.StandbynodesLen)
+			assert.Len(t, info.Protectornodes, tt.wantProtector)
+			assert.Len(t, info.Observernodes, tt.wantObserver)
+			assert.Len(t, info.Standbynodes, tt.wantStandby)
+
+			// Deterministic order: protectors are the top slice, observers the
+			// next, standbys the remainder.
+			assert.Equal(t, pool[:tt.wantProtector], info.Protectornodes)
+			assert.Equal(t, pool[tt.wantProtector:tt.wantProtector+tt.wantObserver], info.Observernodes)
+
+			// Reconciliation: the tiers concatenate back to the full pool.
+			got := make([]common.Address, 0, len(pool))
+			got = append(got, info.Protectornodes...)
+			got = append(got, info.Observernodes...)
+			got = append(got, info.Standbynodes...)
+			assert.Equal(t, pool, got)
+		})
+	}
+}
+
 func TestAPIGetConfig(t *testing.T) {
 	chain := newConfigChainMockWithCurrent(1500)
 	api := &API{chain: chain}
 
-	resp, err := api.Config(context.Background())
+	resp, err := api.GetConfig(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.NotNil(t, resp.Current)
@@ -292,7 +371,7 @@ func TestAPIGetConfig_BeforeXDPoSV2Switch(t *testing.T) {
 	chain := newConfigChainMockWithCurrent(1400)
 	api := &API{chain: chain}
 
-	resp, err := api.Config(context.Background())
+	resp, err := api.GetConfig(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.NotNil(t, resp.Current)
@@ -305,4 +384,27 @@ func TestAPIGetConfig_BeforeXDPoSV2Switch(t *testing.T) {
 	require.Equal(t, uint64(1500), resp.Next.ActivationBlock)
 	require.Contains(t, resp.Next.ActiveForks, forks.XDPoSV2.String())
 	require.Equal(t, uint64(1500), resp.Last.ActivationBlock)
+}
+
+// TestGetSigningTxCountByEpochGenesis pins the answer for the one epoch switch block that has no
+// preceding epoch. Genesis passes the epoch-switch guard of the v1 engine, since block 0 opens
+// epoch 0, and the walk used to underflow on it: the header it looked for was the one at 2^64-1,
+// a number that cannot exist, so the endpoint failed with a number instead of saying that there
+// is no earlier epoch to count.
+func TestGetSigningTxCountByEpochGenesis(t *testing.T) {
+	cfg := &params.XDPoSConfig{Epoch: 900, V2: &params.V2{SwitchBlock: big.NewInt(1500)}}
+	v1 := engine_v1.NewFaker(rawdb.NewMemoryDatabase(), &params.ChainConfig{XDPoS: cfg})
+	chain := newConfigChainMockWithCurrent(1500)
+	api := &API{chain: chain, XDPoS: &XDPoS{config: cfg, EngineV1: v1}}
+
+	// The precondition is what makes the case reachable at all: the engine reads a genesis block
+	// as the epoch switch that starts epoch 0, so it gets past the check above.
+	isEpochSwitch, _, err := api.XDPoS.IsEpochSwitch(chain.genesis)
+	require.NoError(t, err)
+	require.True(t, isEpochSwitch, "the genesis block has to be an epoch switch to the v1 engine")
+
+	got, err := api.GetSigningTxCountByEpoch(0)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Empty(t, got)
 }

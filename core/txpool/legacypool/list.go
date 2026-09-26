@@ -309,27 +309,47 @@ func (l *list) Add(tx *types.Transaction, priceBump uint64) (bool, *types.Transa
 	// If there's an older better transaction, abort
 	old := l.txs.Get(tx.Nonce())
 	if old != nil {
-		if old.IsSpecialTransaction() {
+		// A transaction already occupies this nonce; decide whether the incoming
+		// one may replace it. Cases by (old, new) kind:
+		//
+		//   new special               -> replace: a special (block-signing/randomize)
+		//                                 tx always claims its nonce, evicting whatever
+		//                                 is there, bypassing the price-bump rules.
+		//                                 These txs are typically generated with a 0
+		//                                 gas price and are consensus-critical, so they
+		//                                 must never be blocked by a same-nonce tx.
+		//   old special, new regular  -> reject: a regular tx must not evict a pending
+		//                                 special tx.
+		//   old regular, new regular  -> replace only if the new tx beats the old on
+		//                                 both fee cap and tip by at least priceBump%.
+		//
+		// In every accepted case we fall through to the cost accounting below.
+		if tx.IsSpecialTransaction() {
+			// new special: always wins its nonce, no further checks.
+		} else if old.IsSpecialTransaction() {
+			// old special, new regular: protect the pending special tx.
 			return false, nil
-		}
-		if old.GasFeeCapCmp(tx) >= 0 || old.GasTipCapCmp(tx) >= 0 {
-			return false, nil
-		}
-		// thresholdFeeCap = oldFC  * (100 + priceBump) / 100
-		a := big.NewInt(100 + int64(priceBump))
-		aFeeCap := new(big.Int).Mul(a, old.GasFeeCap())
-		aTip := a.Mul(a, old.GasTipCap())
+		} else {
+			// regular replacing regular: enforce the price-bump rules.
+			if old.GasFeeCapCmp(tx) >= 0 || old.GasTipCapCmp(tx) >= 0 {
+				return false, nil
+			}
+			// thresholdFeeCap = oldFC  * (100 + priceBump) / 100
+			a := big.NewInt(100 + int64(priceBump))
+			aFeeCap := new(big.Int).Mul(a, old.GasFeeCap())
+			aTip := a.Mul(a, old.GasTipCap())
 
-		// thresholdTip    = oldTip * (100 + priceBump) / 100
-		b := big.NewInt(100)
-		thresholdFeeCap := aFeeCap.Div(aFeeCap, b)
-		thresholdTip := aTip.Div(aTip, b)
+			// thresholdTip    = oldTip * (100 + priceBump) / 100
+			b := big.NewInt(100)
+			thresholdFeeCap := aFeeCap.Div(aFeeCap, b)
+			thresholdTip := aTip.Div(aTip, b)
 
-		// Have to ensure that either the new fee cap or tip is higher than the
-		// old ones as well as checking the percentage threshold to ensure that
-		// this is accurate for low (Wei-level) gas price replacements
-		if tx.GasFeeCapIntCmp(thresholdFeeCap) < 0 || tx.GasTipCapIntCmp(thresholdTip) < 0 {
-			return false, nil
+			// Have to ensure that either the new fee cap or tip is higher than the
+			// old ones as well as checking the percentage threshold to ensure that
+			// this is accurate for low (Wei-level) gas price replacements
+			if tx.GasFeeCapIntCmp(thresholdFeeCap) < 0 || tx.GasTipCapIntCmp(thresholdTip) < 0 {
+				return false, nil
+			}
 		}
 		// Old is being replaced, subtract old cost
 		if _, underflow := base.SubOverflow(base, uint256.MustFromBig(old.Cost())); underflow {

@@ -40,8 +40,6 @@ var (
 
 	TRC21GasPriceBefore = big.NewInt(2500)
 	TRC21GasPrice       = big.NewInt(250000000)
-	MinGasPrice         = big.NewInt(250000000)
-	BaseFee             = big.NewInt(12500000000)
 
 	// XDCx and XDCxlending
 	BasePrice         = big.NewInt(1000000000000000000)               // 1

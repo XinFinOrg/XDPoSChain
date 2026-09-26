@@ -17,9 +17,11 @@
 package eth
 
 import (
+	"fmt"
 	"math"
 	"math/big"
 	"math/rand"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,43 +37,14 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/eth/ethconfig"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
-// Tests that protocol versions and modes of operations are matched up properly.
-func TestProtocolCompatibility(t *testing.T) {
-	// Define the compatibility chart
-	tests := []struct {
-		version    uint
-		mode       downloader.SyncMode
-		compatible bool
-	}{
-		{61, downloader.FullSync, true}, {62, downloader.FullSync, true}, {63, downloader.FullSync, true},
-		{61, downloader.FastSync, false}, {62, downloader.FastSync, false}, {63, downloader.FastSync, true},
-	}
-	// Make sure anything we screw up is restored
-	backup := ProtocolVersions
-	defer func() { ProtocolVersions = backup }()
-
-	// Try all available compatibility configs and check for errors
-	for i, tt := range tests {
-		ProtocolVersions = []uint{tt.version}
-
-		pm, _, err := newTestProtocolManager(tt.mode, 0, nil, nil)
-		if pm != nil {
-			defer pm.Stop()
-		}
-		if (err == nil && !tt.compatible) || (err != nil && tt.compatible) {
-			t.Errorf("test %d: compatibility mismatch: have error %v, want compatibility %v", i, err, tt.compatible)
-		}
-	}
-}
-
 // Tests that block headers can be retrieved from a remote chain based on user queries.
-func TestGetBlockHeaders62(t *testing.T) { testGetBlockHeaders(t, 62) }
-
-// TestGetBlockHeaders63 tests get block headers 63.
-func TestGetBlockHeaders63(t *testing.T) { testGetBlockHeaders(t, 63) }
+func TestGetBlockHeaders100(t *testing.T) { testGetBlockHeaders(t, xdc100) }
+func TestGetBlockHeaders164(t *testing.T) { testGetBlockHeaders(t, xdc164) }
+func TestGetBlockHeaders165(t *testing.T) { testGetBlockHeaders(t, xdc165) }
 
 func testGetBlockHeaders(t *testing.T, protocol int) {
 	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, downloader.MaxHashFetch+15, nil, nil)
@@ -229,10 +202,9 @@ func testGetBlockHeaders(t *testing.T, protocol int) {
 }
 
 // Tests that block contents can be retrieved from a remote chain based on their hashes.
-func TestGetBlockBodies62(t *testing.T) { testGetBlockBodies(t, 62) }
-
-// TestGetBlockBodies63 tests get block bodies 63.
-func TestGetBlockBodies63(t *testing.T) { testGetBlockBodies(t, 63) }
+func TestGetBlockBodies100(t *testing.T) { testGetBlockBodies(t, xdc100) }
+func TestGetBlockBodies164(t *testing.T) { testGetBlockBodies(t, xdc164) }
+func TestGetBlockBodies165(t *testing.T) { testGetBlockBodies(t, xdc165) }
 
 func testGetBlockBodies(t *testing.T, protocol int) {
 	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, downloader.MaxBlockFetch+15, nil, nil)
@@ -303,7 +275,9 @@ func testGetBlockBodies(t *testing.T, protocol int) {
 }
 
 // Tests that the node state database can be retrieved based on hashes.
-func TestGetNodeData63(t *testing.T) { testGetNodeData(t, 63) }
+func TestGetNodeData100(t *testing.T) { testGetNodeData(t, xdc100) }
+func TestGetNodeData164(t *testing.T) { testGetNodeData(t, xdc164) }
+func TestGetNodeData165(t *testing.T) { testGetNodeData(t, xdc165) }
 
 func testGetNodeData(t *testing.T, protocol int) {
 	// Define three accounts to simulate transactions with
@@ -401,7 +375,9 @@ func testGetNodeData(t *testing.T, protocol int) {
 }
 
 // Tests that the transaction receipts can be retrieved based on hashes.
-func TestGetReceipt63(t *testing.T) { testGetReceipt(t, 63) }
+func TestGetReceipt100(t *testing.T) { testGetReceipt(t, xdc100) }
+func TestGetReceipt164(t *testing.T) { testGetReceipt(t, xdc164) }
+func TestGetReceipt165(t *testing.T) { testGetReceipt(t, xdc165) }
 
 func testGetReceipt(t *testing.T, protocol int) {
 	// Define three accounts to simulate transactions with
@@ -463,6 +439,212 @@ func testGetReceipt(t *testing.T, protocol int) {
 	}
 }
 
+func TestBroadcastBlock(t *testing.T) {
+	var tests = []struct {
+		totalPeers        int
+		broadcastExpected int
+	}{
+		{1, 1},
+		{2, 2},
+		{3, 3},
+		{4, 4},
+		{5, 5},
+		{9, 9},
+		{12, 12},
+		{16, 16},
+		{26, 26},
+		{100, 100},
+	}
+	for _, test := range tests {
+		testBroadcastBlock(t, test.totalPeers, test.broadcastExpected)
+	}
+}
+
+func testBroadcastBlock(t *testing.T, totalPeers, broadcastExpected int) {
+	var (
+		evmux   = new(event.TypeMux)
+		pow     = ethash.NewFaker()
+		db      = rawdb.NewMemoryDatabase()
+		config  = params.TestChainConfig.Clone()
+		gspec   = &core.Genesis{Config: config}
+		genesis = gspec.MustCommit(db)
+	)
+	blockchain, err := core.NewBlockChain(db, nil, gspec, pow, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create new blockchain: %v", err)
+	}
+	pm, err := NewProtocolManager(config, downloader.FullSync, ethconfig.Defaults.NetworkId, evmux, &testTxPool{pool: make(map[common.Hash]*types.Transaction)}, pow, blockchain, db)
+	if err != nil {
+		t.Fatalf("failed to start test protocol manager: %v", err)
+	}
+	pm.Start(1000)
+	defer pm.Stop()
+	var peers []*testPeer
+	for i := range totalPeers {
+		peer, _ := newTestPeer(fmt.Sprintf("peer %d", i), xdc100, pm, true)
+		defer peer.close()
+		peers = append(peers, peer)
+	}
+	// Peers are registered asynchronously once the handshake completes on the
+	// protocol manager side, wait for the peer set to catch up before broadcasting.
+	for deadline := time.Now().Add(10 * time.Second); pm.peers.Len() < totalPeers; {
+		if time.Now().After(deadline) {
+			t.Fatalf("timeout waiting for peer registration: have %d, want %d", pm.peers.Len(), totalPeers)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	chain, _ := core.GenerateChain(gspec.Config, genesis, ethash.NewFaker(), db, 1, func(i int, gen *core.BlockGen) {})
+	expectedTD := new(big.Int).Add(chain[0].Difficulty(), pm.blockchain.GetTd(chain[0].ParentHash(), chain[0].NumberU64()-1))
+
+	errCh := make(chan error, totalPeers)
+	doneCh := make(chan struct{}, totalPeers)
+	for _, peer := range peers {
+		go func(p *testPeer) {
+			deadline := time.After(2 * time.Second)
+			for {
+				select {
+				case <-deadline:
+					errCh <- fmt.Errorf("timeout waiting for NewBlockMsg")
+					return
+				default:
+				}
+
+				msg, err := p.app.ReadMsg()
+				if err != nil {
+					errCh <- err
+					return
+				}
+				if msg.Code != NewBlockMsg {
+					_ = msg.Discard()
+					continue
+				}
+
+				var got newBlockData
+				if err := msg.Decode(&got); err != nil {
+					errCh <- err
+					return
+				}
+				if got.Block == nil {
+					errCh <- fmt.Errorf("unexpected nil block in NewBlockMsg")
+					return
+				}
+				if got.Block.Hash() != chain[0].Hash() {
+					errCh <- fmt.Errorf("unexpected block hash: have %v, want %v", got.Block.Hash(), chain[0].Hash())
+					return
+				}
+				if got.TD == nil || got.TD.Cmp(expectedTD) != 0 {
+					errCh <- fmt.Errorf("unexpected td: have %v, want %v", got.TD, expectedTD)
+					return
+				}
+				doneCh <- struct{}{}
+				return
+			}
+		}(peer)
+	}
+	pm.BroadcastBlock(chain[0], true /*propagate*/)
+	timeout := time.After(2 * time.Second)
+	var receivedCount int
+outer:
+	for {
+		select {
+		case err = <-errCh:
+			break outer
+		case <-doneCh:
+			receivedCount++
+			if receivedCount == totalPeers {
+				break outer
+			}
+		case <-timeout:
+			break outer
+		}
+	}
+	for _, peer := range peers {
+		peer.app.Close()
+	}
+	if err != nil {
+		t.Errorf("error matching block by peer: %v", err)
+	}
+	if receivedCount != broadcastExpected {
+		t.Errorf("block broadcast to %d peers, expected %d", receivedCount, broadcastExpected)
+	}
+}
+
+// Tests that a propagated malformed block (uncles or transactions don't match
+// with the hashes in the header) gets discarded and not broadcast forward.
+func TestBroadcastMalformedBlock164(t *testing.T) { testBroadcastMalformedBlock(t, xdc164) }
+func TestBroadcastMalformedBlock165(t *testing.T) { testBroadcastMalformedBlock(t, xdc165) }
+
+func testBroadcastMalformedBlock(t *testing.T, protocol int) {
+	t.Parallel()
+
+	// Create a live node to test propagation with
+	var (
+		engine  = ethash.NewFaker()
+		db      = rawdb.NewMemoryDatabase()
+		config  = params.TestChainConfig.Clone()
+		gspec   = &core.Genesis{Config: config}
+		genesis = gspec.MustCommit(db)
+	)
+	blockchain, err := core.NewBlockChain(db, nil, gspec, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create new blockchain: %v", err)
+	}
+	pm, err := NewProtocolManager(config, downloader.FullSync, ethconfig.Defaults.NetworkId, new(event.TypeMux), new(testTxPool), engine, blockchain, db)
+	if err != nil {
+		t.Fatalf("failed to start test protocol manager: %v", err)
+	}
+	pm.Start(2)
+	defer pm.Stop()
+
+	// Create two peers, one to send the malformed block with and one to check
+	// propagation
+	source, _ := newTestPeer("source", protocol, pm, true)
+	defer source.close()
+
+	sink, _ := newTestPeer("sink", protocol, pm, true)
+	defer sink.close()
+
+	// Create various combinations of malformed blocks
+	chain, _ := core.GenerateChain(gspec.Config, genesis, ethash.NewFaker(), db, 1, func(i int, gen *core.BlockGen) {})
+
+	malformedUncles := chain[0].Header()
+	malformedUncles.UncleHash[0]++
+	malformedTransactions := chain[0].Header()
+	malformedTransactions.TxHash[0]++
+	malformedEverything := chain[0].Header()
+	malformedEverything.UncleHash[0]++
+	malformedEverything.TxHash[0]++
+
+	// Keep listening and notify only if block propagation messages arrive.
+	notify := make(chan uint64, 1)
+	go func() {
+		for {
+			msg, err := sink.app.ReadMsg()
+			if err != nil {
+				return
+			}
+			if msg.Code == NewBlockMsg || msg.Code == NewBlockHashesMsg {
+				select {
+				case notify <- msg.Code:
+				default:
+				}
+			}
+		}
+	}()
+	// Try to broadcast all malformations and ensure they all get discarded
+	for _, header := range []*types.Header{malformedUncles, malformedTransactions, malformedEverything} {
+		block := types.NewBlockWithHeader(header).WithBody(types.Body{Transactions: chain[0].Transactions(), Uncles: chain[0].Uncles()})
+		if err := p2p.Send(source.app, NewBlockMsg, []any{block, big.NewInt(131136)}); err != nil {
+			t.Fatalf("failed to broadcast block: %v", err)
+		}
+		select {
+		case code := <-notify:
+			t.Fatalf("malformed block forwarded, msg code=%#x", code)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
 // Tests that post eth protocol handshake, DAO fork-enabled clients also execute
 // a DAO "challenge" verifying each others' DAO fork headers to ensure they're on
 // compatible chains.
@@ -486,8 +668,8 @@ func TestDAOChallengeProVsTimeout(t *testing.T) { testDAOChallenge(t, true, true
 func testDAOChallenge(t *testing.T, localForked, remoteForked bool, timeout bool) {
 	// Reduce the DAO handshake challenge timeout
 	if timeout {
-		defer func(old time.Duration) { daoChallengeTimeout = old }(daoChallengeTimeout)
-		daoChallengeTimeout = 500 * time.Millisecond
+		defer func(old time.Duration) { syncChallengeTimeout = old }(syncChallengeTimeout)
+		syncChallengeTimeout = 500 * time.Millisecond
 	}
 	// Create a DAO aware protocol manager
 	var (
@@ -499,7 +681,7 @@ func testDAOChallenge(t *testing.T, localForked, remoteForked bool, timeout bool
 		}
 		blockchain, _ = core.NewBlockChain(db, nil, gspec, pow, vm.Config{})
 	)
-	pm, err := NewProtocolManager(gspec.Config, downloader.FullSync, ethconfig.Defaults.NetworkId, evmux, new(testTxPool), pow, blockchain, db)
+	pm, err := NewProtocolManager(gspec.Config, downloader.FullSync, ethconfig.Defaults.NetworkId, evmux, &testTxPool{pool: make(map[common.Hash]*types.Transaction)}, pow, blockchain, db)
 	if err != nil {
 		t.Fatalf("failed to start test protocol manager: %v", err)
 	}
@@ -507,7 +689,7 @@ func testDAOChallenge(t *testing.T, localForked, remoteForked bool, timeout bool
 	defer pm.Stop()
 
 	// Connect a new peer and check that we receive the DAO challenge
-	peer, _ := newTestPeer("peer", eth63, pm, true)
+	peer, _ := newTestPeer("peer", xdc100, pm, true)
 	defer peer.close()
 
 	challenge := &getBlockHeadersData{
@@ -536,7 +718,7 @@ func testDAOChallenge(t *testing.T, localForked, remoteForked bool, timeout bool
 		time.Sleep(100 * time.Millisecond) // Sleep to avoid the verification racing with the drops
 	} else {
 		// Otherwise wait until the test timeout passes
-		time.Sleep(daoChallengeTimeout + 500*time.Millisecond)
+		time.Sleep(syncChallengeTimeout + 500*time.Millisecond)
 	}
 	// Verify that depending on fork side, the remote peer is maintained or dropped
 	if localForked == remoteForked && !timeout {
@@ -592,4 +774,154 @@ func daoChallengeChainConfig(daoForkSupport bool) *params.ChainConfig {
 	config.TIPEpochHalvingBlock = new(big.Int).Set(futureForkBlock)
 
 	return config
+}
+
+// waitForPeerRegistration blocks until the peer with the given id has been
+// registered by the protocol manager's handle goroutine.
+func waitForPeerRegistration(t *testing.T, pm *ProtocolManager, id string) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for pm.peers.Peer(id) == nil {
+		select {
+		case <-deadline:
+			t.Fatalf("test peer %s was not registered in time", id)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// TestProtocolManagerRemovePeerIdempotent verifies that removing an already
+// removed peer is a silent no-op.
+func TestProtocolManagerRemovePeerIdempotent(t *testing.T) {
+	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	defer pm.Stop()
+
+	// Register a peer through the normal protocol handshake path.
+	tp, errc := newTestPeer("test-peer", xdc165, pm, true)
+	// Ensure broadcaster goroutines stop if the test exits before removePeer
+	// reaches peerSet.Unregister.
+	defer tp.peer.close()
+	defer tp.close()
+	defer tp.app.Close()
+	defer func() {
+		select {
+		case <-errc:
+		default:
+		}
+	}()
+	waitForPeerRegistration(t, pm, tp.id)
+
+	if pm.peers.Len() != 1 {
+		t.Fatalf("peer set size mismatch: got %d want 1", pm.peers.Len())
+	}
+	// The first removal performs the full unregister sequence.
+	pm.removePeer(tp.id)
+	if pm.peers.Peer(tp.id) != nil {
+		t.Fatal("peer still registered after first removePeer")
+	}
+	if pm.peers.Len() != 0 {
+		t.Fatalf("peer set size mismatch after removal: got %d want 0", pm.peers.Len())
+	}
+	// A duplicate removal must be a silent no-op. Note it is short-circuited by
+	// the peer == nil lookup above, so markRemoved's atomic branch is covered
+	// by TestPeerMarkRemovedOnce and TestProtocolManagerRemovePeerConcurrent.
+	pm.removePeer(tp.id)
+	if pm.peers.Len() != 0 {
+		t.Fatalf("peer set size mismatch after second removePeer: got %d want 0", pm.peers.Len())
+	}
+}
+
+// TestProtocolManagerRemovePeerConcurrent verifies that concurrent removePeer
+// calls for the same peer remove it exactly once, without panicking or racing
+// on the removal flag.
+func TestProtocolManagerRemovePeerConcurrent(t *testing.T) {
+	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	defer pm.Stop()
+
+	// Register a peer through the normal protocol handshake path.
+	tp, errc := newTestPeer("test-peer", xdc165, pm, true)
+	// Stop the broadcast goroutines started by peers.Register; nothing in the
+	// production teardown path closes the peer's term channel.
+	defer tp.peer.close()
+	defer tp.close()
+	defer tp.app.Close()
+	defer func() {
+		select {
+		case <-errc:
+		default:
+		}
+	}()
+	waitForPeerRegistration(t, pm, tp.id)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pm.removePeer(tp.id)
+		}()
+	}
+	wg.Wait()
+
+	if pm.peers.Peer(tp.id) != nil {
+		t.Fatal("peer still registered after concurrent removePeer calls")
+	}
+	if pm.peers.Len() != 0 {
+		t.Fatalf("peer set size mismatch after concurrent removal: got %d want 0", pm.peers.Len())
+	}
+	// The downloader must not retain a stale entry that blocks re-registration.
+	// Poll briefly in case handle() is still undoing its registration.
+	deadline := time.After(2 * time.Second)
+	for {
+		if err := pm.downloader.RegisterPeer(tp.id, tp.version, tp); err == nil {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("stale downloader entry blocks re-registration")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	// Undo the test's own registration.
+	pm.downloader.UnregisterPeer(tp.id)
+}
+
+// TestRegisterDownloaderPeerUndoesRacedRemoval reproduces the window in handle()
+// between pm.peers.Register and the downloader registration, where a BFT
+// broadcaster can remove the peer. Without the recheck in
+// registerDownloaderPeer, the downloader would keep a stale entry that blocks
+// a reconnect of the same node id.
+func TestRegisterDownloaderPeerUndoesRacedRemoval(t *testing.T) {
+	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	defer pm.Stop()
+
+	// Register the peer in pm.peers only — the state handle() is in mid-window.
+	app, net := p2p.MsgPipe()
+	defer app.Close()
+	var id enode.ID
+	rand.Read(id[:])
+	p := pm.newPeer(xdc165, p2p.NewPeer(id, "race-peer", nil), net, pm.txpool.Get)
+	// peers.Register starts the peer's broadcast goroutines; close the term
+	// channel so they terminate when the test ends.
+	defer p.close()
+	if err := pm.peers.Register(p); err != nil {
+		t.Fatalf("failed to register test peer: %v", err)
+	}
+	if pm.peers.Len() != 1 {
+		t.Fatalf("peer set size mismatch: got %d want 1", pm.peers.Len())
+	}
+	// A BFT broadcaster's failing send removes the peer inside the window.
+	pm.removePeer(p.id)
+	if pm.peers.Peer(p.id) != nil {
+		t.Fatal("peer still present after removePeer")
+	}
+	// The recheck must undo the registration and abort the handshake.
+	if err := pm.registerDownloaderPeer(p); err != p2p.DiscUselessPeer {
+		t.Fatalf("registerDownloaderPeer should abort with DiscUselessPeer a handshake whose removal was already claimed, got: %v", err)
+	}
+	// A reconnect of the same node id must not be blocked by a stale entry.
+	if err := pm.downloader.RegisterPeer(p.id, p.version, p); err != nil {
+		t.Fatalf("reconnect blocked by stale downloader entry: %v", err)
+	}
+	pm.downloader.UnregisterPeer(p.id)
 }

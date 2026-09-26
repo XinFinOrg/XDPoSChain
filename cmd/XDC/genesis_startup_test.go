@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	cmdutils "github.com/XinFinOrg/XDPoSChain/cmd/utils"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
@@ -117,13 +118,17 @@ func assertCommandSucceeds(t *testing.T, cmd *testXDC) {
 	}
 }
 
-func startTestnetConsole(t *testing.T, datadir string) {
+func startTestnetConsole(t *testing.T, datadir string, extraArgs ...string) {
 	t.Helper()
 
-	startupCmd := runXDC(t,
+	args := []string{
 		"--testnet", "console", "--port", "0", "--maxpeers", "0", "--nodiscover", "--nat", "none", "--ipcdisable",
-		"--datadir", datadir, "--exec", "2+2",
-	)
+		"--datadir", datadir,
+	}
+	args = append(args, extraArgs...)
+	args = append(args, "--exec", "2+2")
+
+	startupCmd := runXDC(t, args...)
 	assertCommandSucceeds(t, startupCmd)
 }
 
@@ -855,7 +860,12 @@ func TestOfflineExportFailsReadonlyConfigRewindWithoutMutation(t *testing.T) {
 	injectedHeadHash := injectCanonicalHeadBlock(t, datadir, genesisHash, 101)
 
 	exportCmd := runXDC(t, "--datadir", datadir, "--testnet", "export", exportFile)
-	assertCommandFailsWithChainConfigError(t, exportCmd, "Can't open blockchain in readonly mode: the local chain configuration requires rewind. Use the correct --networkid/--datadir combination, or reopen the database in writable mode so the chain can rewind, then retry.")
+	assertCommandFailsWithChainConfigErrors(
+		t,
+		exportCmd,
+		"Can't open blockchain: mismatching",
+		cmdutils.ChainConfigMismatchPolicyExitHint,
+	)
 	if _, err := os.Stat(exportFile); err == nil {
 		t.Fatalf("expected export to fail without creating %s", exportFile)
 	} else if !os.IsNotExist(err) {
@@ -929,7 +939,12 @@ func TestOfflineExportFailsReadonlyConfigRewindToZeroWithoutMutation(t *testing.
 	injectedHeadHash := injectCanonicalHeadBlock(t, datadir, genesisHash, 1)
 
 	exportCmd := runXDC(t, "--datadir", datadir, "--testnet", "export", exportFile)
-	assertCommandFailsWithChainConfigError(t, exportCmd, "Can't open blockchain in readonly mode: the local chain configuration requires rewind. Use the correct --networkid/--datadir combination, or reopen the database in writable mode so the chain can rewind, then retry.")
+	assertCommandFailsWithChainConfigErrors(
+		t,
+		exportCmd,
+		"Can't open blockchain: mismatching",
+		cmdutils.ChainConfigMismatchPolicyExitHint,
+	)
 	if _, err := os.Stat(exportFile); err == nil {
 		t.Fatalf("expected export to fail without creating %s", exportFile)
 	} else if !os.IsNotExist(err) {
@@ -967,7 +982,7 @@ func TestStartupRewindsStoredBuiltInHistoricalForkDrift(t *testing.T) {
 	genesisHash := overwriteStoredBerlinBlock(t, datadir, big.NewInt(100))
 	injectedHeadHash := injectCanonicalHeadBlock(t, datadir, genesisHash, 101)
 
-	startTestnetConsole(t, datadir)
+	startTestnetConsole(t, datadir, "--chain-config-mismatch-policy", "rewind-and-update")
 
 	path := filepath.Join(datadir, "XDC", "chaindata")
 	db := openTestChainDB(t, path)
@@ -993,12 +1008,12 @@ func TestStartupRewindsStoredBuiltInHistoricalForkDrift(t *testing.T) {
 func TestStartupRewindsStoredBuiltInConfigDriftToZero(t *testing.T) {
 	datadir := t.TempDir()
 
-	startTestnetConsole(t, datadir)
+	startTestnetConsole(t, datadir, "--chain-config-mismatch-policy", "rewind-and-update")
 
 	genesisHash := overwriteStoredEIP150Block(t, datadir, big.NewInt(1))
 	injectedHeadHash := injectCanonicalHeadBlock(t, datadir, genesisHash, 1)
 
-	startTestnetConsole(t, datadir)
+	startTestnetConsole(t, datadir, "--chain-config-mismatch-policy", "rewind-and-update")
 
 	path := filepath.Join(datadir, "XDC", "chaindata")
 	db := openTestChainDB(t, path)

@@ -76,6 +76,9 @@ type TxPool struct {
 	quit chan chan error         // Quit channel to tear down the head updater
 	term chan struct{}           // Termination channel to detect a closed pool
 
+	newHeadCh  chan core.ChainHeadEvent // Channel of chain head events to trigger subpool resets
+	newHeadSub event.Subscription       // Subscription to the chain head events
+
 	sync chan chan error // Testing / simulator channel to block until internal reset is done
 }
 
@@ -105,16 +108,25 @@ func New(gasTip uint64, chain BlockChain, subpools []SubPool) (*TxPool, error) {
 		return nil, err
 	}
 	pool := &TxPool{
-		subpools: subpools,
-		chain:    chain,
-		state:    statedb,
-		quit:     make(chan chan error),
-		term:     make(chan struct{}),
-		sync:     make(chan chan error),
+		subpools:  subpools,
+		chain:     chain,
+		state:     statedb,
+		quit:      make(chan chan error),
+		term:      make(chan struct{}),
+		sync:      make(chan chan error),
+		newHeadCh: make(chan core.ChainHeadEvent),
 	}
+	// Subscribe to chain head events synchronously, before any block is inserted,
+	// so head events emitted right after initialization are not lost.
+	pool.newHeadSub = chain.SubscribeChainHeadEvent(pool.newHeadCh)
 	reserver := NewReservationTracker()
 	for i, subpool := range subpools {
 		if err := subpool.Init(gasTip, head, reserver.NewHandle(i)); err != nil {
+			// The head event subscription is normally released by the loop's
+			// defer, which never runs on this error path. Unsubscribe now, or
+			// the chain feed keeps sending head events into an unconsumed,
+			// unbuffered channel and blocks on the next head publication.
+			pool.newHeadSub.Unsubscribe()
 			for j := i - 1; j >= 0; j-- {
 				subpools[j].Close()
 			}
@@ -157,12 +169,11 @@ func (p *TxPool) loop(head *types.Header) {
 	// Close the termination marker when the pool stops
 	defer close(p.term)
 
-	// Subscribe to chain head events to trigger subpool resets
-	var (
-		newHeadCh  = make(chan core.ChainHeadEvent)
-		newHeadSub = p.chain.SubscribeChainHeadEvent(newHeadCh)
-	)
-	defer newHeadSub.Unsubscribe()
+	// Consume chain head events to trigger subpool resets. The subscription is
+	// established synchronously in New, so head events emitted immediately after
+	// initialization are delivered instead of being lost.
+	newHeadCh := p.newHeadCh
+	defer p.newHeadSub.Unsubscribe()
 
 	// Track the previous and current head to feed to an idle reset
 	var (
@@ -177,13 +188,12 @@ func (p *TxPool) loop(head *types.Header) {
 		resetForced bool       // Whether a forced reset was requested, only used in simulator mode
 		resetWaiter chan error // Channel waiting on a forced reset, only used in simulator mode
 	)
-	// Notify the live reset waiter without blocking if the txpool is closed.
+	// Notify the live reset waiter when the pool terminates. The send blocks
+	// until Sync() picks it up; it cannot abort via p.term (closed only after
+	// this defer runs), so the notification is guaranteed to be delivered.
 	defer func() {
 		if resetWaiter != nil {
-			select {
-			case resetWaiter <- errors.New("pool already terminated"):
-			default:
-			}
+			resetWaiter <- errors.New("pool already terminated")
 			resetWaiter = nil
 		}
 	}()
@@ -245,12 +255,12 @@ func (p *TxPool) loop(head *types.Header) {
 			// the forced op is still pending. In that case, wait another round
 			// of resets.
 			if resetWaiter != nil && !resetForced {
-				select {
-				case resetWaiter <- nil:
-					// notification delivered
-				default:
-					// no active listener; avoid blocking the event loop
-				}
+				// Block until the waiter receives the notification. Sync() is
+				// guaranteed to be waiting on its waiter channel (it cannot
+				// abort via p.term while this loop is still running), so a
+				// non-blocking send here could drop the notification and leave
+				// Sync() blocked forever.
+				resetWaiter <- nil
 				resetWaiter = nil
 			}
 
@@ -364,13 +374,16 @@ func (p *TxPool) SetLocalTracker(tracker LocalTracker) {
 }
 
 // AddLocal enqueues a single local transaction into the pool and return the
-// original error. The transaction will be tracked if it was accepted or
-// rejected for a temporary reason, allowing the local tracker to implement
-// re-journal and re-submit flows.
+// original error. The transaction will be tracked if it was accepted, already
+// known to the pool, or rejected for a temporary reason, allowing the local
+// tracker to implement re-journal and re-submit flows.
 func (p *TxPool) AddLocal(tx *types.Transaction, sync bool) error {
 	err := p.Add([]*types.Transaction{tx}, sync)[0]
 	if p.localTracker != nil {
-		if err == nil || p.localTracker.IsRetryableReject(err) {
+		// An already-known transaction is in the desired state: it lost a race
+		// to a concurrent submission of the same transaction, so track it to
+		// keep the local resubmit protection, but still surface the error.
+		if err == nil || p.localTracker.IsRetryableReject(err) || errors.Is(err, ErrAlreadyKnown) {
 			p.localTracker.Track(tx)
 		}
 	}
@@ -422,6 +435,24 @@ func (p *TxPool) Nonce(addr common.Address) uint64 {
 	defer p.stateLock.RUnlock()
 
 	return p.state.GetNonce(addr)
+}
+
+// MinGasPrice returns the gas price floor the pool enforces on the transactions
+// it admits. A pooled transaction can only be included from the next block
+// onwards, so the floor is resolved at the height of the block pending on top
+// of the current head, the height admission validation prices a transaction at.
+//
+// The head here is the chain's, which advances on block insertion, while
+// admission resolves it against the subpool's, which follows on head events.
+// The two drift for as long as a head event is in flight, so a floor read in
+// that window can differ from the one admission applies. It self-corrects on
+// the next recheck, whose period is orders of magnitude longer than the window.
+func (p *TxPool) MinGasPrice() *big.Int {
+	var number *big.Int
+	if head := p.chain.CurrentBlock(); head != nil {
+		number = head.Number
+	}
+	return params.GetMinGasPrice(pendingBlockNumber(number), p.chain.Config())
 }
 
 // Stats retrieves the current pool stats, namely the number of pending and the

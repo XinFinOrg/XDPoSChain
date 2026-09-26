@@ -143,8 +143,14 @@ web3._extend({
 			inputFormatter: [null, web3._extend.formatters.inputBlockNumberFormatter, web3._extend.formatters.inputBlockNumberFormatter]
 		}),
 		new web3._extend.Method({
-			name: 'config',
-			call: 'XDPoS_config',
+			name: 'getSigningTxCountByEpoch',
+			call: 'XDPoS_getSigningTxCountByEpoch',
+			params: 1,
+			inputFormatter: [web3._extend.formatters.inputBlockNumberFormatter]
+		}),
+		new web3._extend.Method({
+			name: 'getConfig',
+			call: 'XDPoS_getConfig',
 			params: 0,
 		})
 	],

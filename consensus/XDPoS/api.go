@@ -74,17 +74,28 @@ type SignerTypes struct {
 	MissingSigners []common.Address
 }
 
+// MasternodesStatus reports the node set at a block, split into masternodes,
+// penalties and standby nodes. From the TIPUpgradeReward fork onwards the standby
+// pool is further broken into the protector and observer reward tiers (signalled by
+// TipUpgradeReward); candidates beyond the tier caps stay in Standbynodes, so
+// Masternodes + Penalty + Protector + Observer + Standbynodes still reconciles to
+// the full candidate set.
 type MasternodesStatus struct {
-	Epoch           uint64
-	Number          uint64
-	Round           types.Round
-	MasternodesLen  int
-	Masternodes     []common.Address
-	PenaltyLen      int
-	Penalty         []common.Address
-	StandbynodesLen int
-	Standbynodes    []common.Address
-	Error           error
+	Epoch            uint64
+	Number           uint64
+	Round            types.Round
+	tipUpgradeReward bool // whether the protector/observer tiers are active at this block
+	MasternodesLen   int
+	Masternodes      []common.Address
+	PenaltyLen       int
+	Penalty          []common.Address
+	ProtectorLen     int              `json:",omitempty"`
+	Protectornodes   []common.Address `json:",omitempty"`
+	ObserverLen      int              `json:",omitempty"`
+	Observernodes    []common.Address `json:",omitempty"`
+	StandbynodesLen  int              `json:",omitempty"`
+	Standbynodes     []common.Address `json:",omitempty"`
+	Error            error
 }
 
 type AccountEpochReward struct {
@@ -198,6 +209,13 @@ func (api *API) GetSignersAtHash(hash common.Hash) ([]common.Address, error) {
 	return api.XDPoS.GetAuthorisedSignersFromSnapshot(api.chain, header)
 }
 
+// GetMasternodesByNumber reports the node set at the given block: masternodes,
+// penalties and standby nodes. From the TIPUpgradeReward fork onwards it also splits
+// the standby pool into the protector and observer reward tiers (the standby list is
+// already stake-descending, so the split is just a slice).
+//
+// The tiering is snapshot/consensus-consistent, not reward-payout-identical: it
+// matches the epoch snapshot used here, whereas the reward hook reads live state.
 func (api *API) GetMasternodesByNumber(number *rpc.BlockNumber) MasternodesStatus {
 	var header *types.Header
 	if number == nil || *number == rpc.LatestBlockNumber {
@@ -235,20 +253,52 @@ func (api *API) GetMasternodesByNumber(number *rpc.BlockNumber) MasternodesStatu
 	epochNum := api.XDPoS.config.V2.SwitchEpoch + uint64(round)/api.XDPoS.config.Epoch
 	masterNodes := api.XDPoS.EngineV2.GetMasternodes(api.chain, header)
 	penalties := api.XDPoS.EngineV2.GetPenalties(api.chain, header)
-	standbynodes := api.XDPoS.EngineV2.GetStandbynodes(api.chain, header)
+	standbyPool := api.XDPoS.EngineV2.GetStandbynodes(api.chain, header)
 
 	info := MasternodesStatus{
-		Epoch:           epochNum,
-		Number:          header.Number.Uint64(),
-		Round:           round,
-		MasternodesLen:  len(masterNodes),
-		Masternodes:     masterNodes,
-		PenaltyLen:      len(penalties),
-		Penalty:         penalties,
-		StandbynodesLen: len(standbynodes),
-		Standbynodes:    standbynodes,
+		Epoch:            epochNum,
+		Number:           header.Number.Uint64(),
+		Round:            round,
+		tipUpgradeReward: api.chain.Config().IsTIPUpgradeReward(header.Number),
+		MasternodesLen:   len(masterNodes),
+		Masternodes:      masterNodes,
+		PenaltyLen:       len(penalties),
+		Penalty:          penalties,
 	}
+
+	// Before the reward upgrade there are no tiers; the whole standby pool stays
+	// standby (the caps are ignored in that case, so any value is fine here).
+	if !info.tipUpgradeReward {
+		info.splitStandbyPool(standbyPool, 0, 0)
+		return info
+	}
+
+	cfg := api.XDPoS.config.V2.Config(uint64(round))
+	info.splitStandbyPool(standbyPool, cfg.MaxProtectorNodes, cfg.MaxObserverNodes)
 	return info
+}
+
+// splitStandbyPool partitions the stake-descending standby pool into the reward
+// tiers. Before the TIPUpgradeReward fork the whole pool stays standby; from the
+// fork onwards the protector and observer tiers take the top maxProtector and
+// maxObserver candidates respectively, and any remainder stays standby. The three
+// tiers always concatenate back to the full pool, so the totals reconcile.
+func (info *MasternodesStatus) splitStandbyPool(standbyPool []common.Address, maxProtector, maxObserver int) {
+	if !info.tipUpgradeReward {
+		info.Standbynodes = standbyPool
+		info.StandbynodesLen = len(standbyPool)
+		return
+	}
+
+	protectorEnd := min(maxProtector, len(standbyPool))
+	observerEnd := min(protectorEnd+maxObserver, len(standbyPool))
+
+	info.Protectornodes = standbyPool[:protectorEnd]
+	info.ProtectorLen = len(info.Protectornodes)
+	info.Observernodes = standbyPool[protectorEnd:observerEnd]
+	info.ObserverLen = len(info.Observernodes)
+	info.Standbynodes = standbyPool[observerEnd:]
+	info.StandbynodesLen = len(info.Standbynodes)
 }
 
 // Get current vote pool and timeout pool content and missing messages
@@ -371,8 +421,8 @@ func (api *API) NetworkInformation() NetworkInformation {
 	return info
 }
 
-// Config returns the current and scheduled chain configuration view.
-func (api *API) Config(ctx context.Context) (*chainconfigview.ConfigResponse, error) {
+// GetConfig returns the current and scheduled chain configuration view.
+func (api *API) GetConfig(ctx context.Context) (*chainconfigview.ConfigResponse, error) {
 	return chainconfigview.Build(ctx, configBackend{chain: api.chain})
 }
 
@@ -781,4 +831,93 @@ func (api *API) GetBlockInfoByEpochNum(epochNumber uint64) (*utils.EpochNumInfo,
 		return api.CalculateBlockInfoByV1EpochNum(epochNumber)
 	}
 	return api.GetBlockInfoByV2EpochNum(epochNumber)
+}
+
+// GetSigningTxCountByEpoch returns the signing transaction count for ALL masternodes
+// (including non-active ones) in the epoch that immediately precedes the epoch
+// that starts at epochBlockNum. In other words, it walks blocks from
+// epochBlockNum-1 backwards to the previous epoch-switch block (inclusive).
+// epochBlockNum must be an epoch-switch block number that marks the start of an epoch.
+// The genesis block is an epoch switch block but no epoch precedes it, so its count
+// is empty.
+func (api *API) GetSigningTxCountByEpoch(epochBlockNum rpc.BlockNumber) (map[common.Address]uint64, error) {
+	header, err := api.getHeaderFromApiBlockNum(&epochBlockNum)
+	if err != nil {
+		return nil, err
+	}
+	if header == nil {
+		return nil, fmt.Errorf("block %d not found", epochBlockNum)
+	}
+
+	isEpochSwitch, _, err := api.XDPoS.IsEpochSwitch(header)
+	if err != nil {
+		return nil, err
+	}
+	if !isEpochSwitch {
+		return nil, fmt.Errorf("block %d is not an epoch switch block", epochBlockNum)
+	}
+
+	// The v1 engine counts block 0 as the epoch switch that opens epoch 0, so the genesis
+	// block passes the guard above, yet nothing precedes it: there is no range of blocks to
+	// walk and no signing to count, so the answer is an empty count. Without this the
+	// epochBlockNum-1 below would underflow to 2^64-1 and the walk would fail looking for a
+	// header at a number that cannot exist.
+	if header.Number.Uint64() == 0 {
+		return map[common.Address]uint64{}, nil
+	}
+
+	// Walk backwards from epochBlockNum-1 to the previous epoch switch block,
+	// collecting signing txs from every block.
+	mapBlkHash := map[uint64]common.Hash{}
+	// sigData maps blockHash -> list of signers who signed for that block
+	sigData := make(map[common.Hash][]common.Address)
+
+	h := header
+	for i := header.Number.Uint64() - 1; ; i-- {
+		parentHash := h.ParentHash
+		h = api.chain.GetHeader(parentHash, i)
+		if h == nil {
+			return nil, fmt.Errorf("failed to get header at number %d hash %s", i, parentHash.Hex())
+		}
+
+		mapBlkHash[i] = h.Hash()
+
+		signingTxs, ok := api.XDPoS.GetCachedSigningTxs(h.Hash())
+		if !ok {
+			block := api.chain.GetBlock(h.Hash(), i)
+			if block == nil {
+				return nil, fmt.Errorf("failed to get block at number %d hash %s", i, h.Hash().Hex())
+			}
+			signingTxs = api.XDPoS.CacheSigningTxs(h.Hash(), block.Transactions())
+		}
+		for _, tx := range signingTxs {
+			blkHash := common.BytesToHash(tx.Data()[len(tx.Data())-32:])
+			from := *tx.From()
+			sigData[blkHash] = append(sigData[blkHash], from)
+		}
+
+		prevIsEpochSwitch, _, err := api.XDPoS.IsEpochSwitch(h)
+		if err != nil {
+			return nil, err
+		}
+		if prevIsEpochSwitch || i == 0 {
+			break
+		}
+	}
+
+	// Count signings: for each block at MergeSignRange boundary, tally unique signers.
+	result := make(map[common.Address]uint64)
+	for blockNum, blkHash := range mapBlkHash {
+		if blockNum%common.MergeSignRange != 0 {
+			continue
+		}
+		seen := make(map[common.Address]bool)
+		for _, addr := range sigData[blkHash] {
+			if !seen[addr] {
+				seen[addr] = true
+				result[addr]++
+			}
+		}
+	}
+	return result, nil
 }

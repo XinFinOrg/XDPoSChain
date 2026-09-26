@@ -62,11 +62,14 @@ func accountRangeTest(t *testing.T, statedb *state.StateDB, start common.Hash, r
 func TestAccountRange(t *testing.T) {
 	t.Parallel()
 
+	statedb := state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), &trie.Config{Preimages: true})
+	sdb, err := state.New(common.Hash{}, statedb)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var (
-		statedb = state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), &trie.Config{Preimages: true})
-		sdb, _  = state.New(common.Hash{}, statedb)
-		addrs   = [AccountRangeMaxResults * 2]common.Address{}
-		m       = map[common.Address]bool{}
+		addrs = [AccountRangeMaxResults * 2]common.Address{}
+		m     = map[common.Address]bool{}
 	)
 
 	for i := range addrs {
@@ -81,10 +84,15 @@ func TestAccountRange(t *testing.T) {
 		}
 	}
 	root, err := sdb.Commit(0, true)
-	sdb, _ = state.New(root, statedb)
-
-	_, err = statedb.OpenTrie(root)
 	if err != nil {
+		t.Fatal(err)
+	}
+	sdb, err = state.New(root, statedb)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := statedb.OpenTrie(root); err != nil {
 		t.Fatal(err)
 	}
 	accountRangeTest(t, sdb, common.Hash{}, AccountRangeMaxResults/2, AccountRangeMaxResults/2)

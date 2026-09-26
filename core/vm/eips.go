@@ -202,10 +202,18 @@ func opTstore(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	return nil, nil
 }
 
+// baseFeeForOpcode is what BASEFEE reports when the header carries no base fee.
+// Precomputed because the London-to-EIP1559 window spans millions of blocks.
+var baseFeeForOpcode = *uint256.MustFromBig(params.BaseFeeForOpcode())
+
 // opBaseFee implements BASEFEE opcode
 func opBaseFee(pc *uint64, evm *EVM, callContext *ScopeContext) ([]byte, error) {
-	baseFee, _ := uint256.FromBig(common.BaseFee)
-	callContext.Stack.push(baseFee)
+	if value := evm.Context.BaseFee; value != nil {
+		baseFee, _ := uint256.FromBig(value)
+		callContext.Stack.push(baseFee)
+		return nil, nil
+	}
+	callContext.Stack.push(&baseFeeForOpcode)
 	return nil, nil
 }
 

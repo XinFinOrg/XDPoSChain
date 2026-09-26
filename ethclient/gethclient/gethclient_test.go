@@ -23,6 +23,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -133,6 +134,12 @@ func generateTestChain() (*core.Genesis, []*types.Block, []common.Hash) {
 
 // TestGethClient tests geth client.
 func TestGethClient(t *testing.T) {
+	// The XDCx database holds its log file open for the lifetime of the node,
+	// which keeps t.TempDir's cleanup from removing it on Windows. The test
+	// itself is platform independent, so run it on the other platforms only.
+	if runtime.GOOS == "windows" {
+		t.Skip("the XDCx database keeps its log file open, so TempDir cleanup fails on Windows")
+	}
 	backend, _, txHashes := newTestBackend(t)
 	client := backend.Attach()
 	defer backend.Close()

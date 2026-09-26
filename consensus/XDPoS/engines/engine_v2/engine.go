@@ -33,8 +33,6 @@ import (
 )
 
 type XDPoS_v2 struct {
-	chainConfig *params.ChainConfig // Chain & network configuration
-
 	config       *params.XDPoSConfig // Consensus engine configuration parameters
 	db           ethdb.Database      // Database to store and retrieve snapshot checkpoints
 	isInitilised bool                // status of v2 variables
@@ -78,6 +76,11 @@ type XDPoS_v2 struct {
 	HookReward  func(chain consensus.ChainReader, state vm.StateDB, parentState *state.StateDB, header *types.Header) (map[string]interface{}, error)
 	HookPenalty func(chain consensus.ChainReader, number *big.Int, parentHash common.Hash, candidates []common.Address) ([]common.Address, error)
 
+	// HookSyncing reports whether the node is currently downloading the chain.
+	// Wired from the eth backend, where the downloader is reachable. May be nil
+	// in contexts without a downloader (e.g. unit tests); treat nil as "not syncing".
+	HookSyncing func() bool
+
 	ForensicsProcessor *Forensics
 
 	votePoolCollectionTime time.Time
@@ -104,8 +107,6 @@ func New(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh chan i
 	timeoutPool := utils.NewPool()
 	votePool := utils.NewPool()
 	engine := &XDPoS_v2{
-		chainConfig: chainConfig,
-
 		config:       config,
 		db:           db,
 		isInitilised: false,
@@ -193,9 +194,22 @@ func (x *XDPoS_v2) Initial(chain consensus.ChainReader, header *types.Header) er
 	x.lock.Lock()
 	defer x.lock.Unlock()
 
-	return x.initial(chain, header)
+	if err := x.initial(chain, header); err != nil {
+		return err
+	}
+	// Startup-only repair, skipped for chain readers that cannot open state.
+	// Runs under x.lock, which is safe here: Initial is only reached from the
+	// startup path before the protocol starts, and the historical state reads
+	// do not take any chain locks.
+	if gapChain, ok := chain.(GapStateReader); ok {
+		x.RepairGapSnapshots(gapChain)
+	}
+	return nil
 }
 
+// initial sets the v2 parameters from the chain. It must only be called while
+// holding x.lock, from either the startup path (Initial) or header verification.
+// The startup-only gap snapshot repair is deliberately kept in Initial, not here.
 func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) error {
 	log.Warn("[initial] initial v2 related parameters")
 
@@ -616,7 +630,7 @@ func (x *XDPoS_v2) UpdateMasternodes(chain consensus.ChainReader, header *types.
 
 	log.Info("[UpdateMasternodes] New set of masternodes has been updated to snapshot", "number", snap.Number, "hash", snap.Hash)
 	for i, n := range ms {
-		log.Info("masternode", "index", i, "address", n.Address)
+		log.Info("node", "i", i, "addr", n.Address, "stake", n.Stake)
 	}
 
 	return nil
@@ -679,11 +693,17 @@ func (x *XDPoS_v2) VerifySyncInfoMessage(chain consensus.ChainReader, syncInfo *
 		log.Warn("[VerifySyncInfoMessage] SyncInfo message verification failed due to QC", "blockNum", syncInfo.HighestQuorumCert.ProposedBlockInfo.Number, "round", syncInfo.HighestQuorumCert.ProposedBlockInfo.Round, "error", err)
 		return false, err
 	}
-	err = x.verifyTC(chain, syncInfo.HighestTimeoutCert)
-	if err != nil {
-		log.Warn("[VerifySyncInfoMessage] SyncInfo message verification failed due to TC", "gapNum", syncInfo.HighestTimeoutCert.GapNumber, "round", syncInfo.HighestTimeoutCert.Round, "error", err)
-		return false, err
+
+	if !isBlankTC(syncInfo.HighestTimeoutCert) {
+		err = x.verifyTC(chain, syncInfo.HighestTimeoutCert)
+		if err != nil {
+			log.Warn("[VerifySyncInfoMessage] SyncInfo message verification failed due to TC", "gapNum", syncInfo.HighestTimeoutCert.GapNumber, "round", syncInfo.HighestTimeoutCert.Round, "error", err)
+			return false, err
+		}
+	} else {
+		log.Debug("[VerifySyncInfoMessage] Detected blank TC, sender has no TC yet (fresh restart or new chain), skipping TC verification", "qcRound", syncInfo.HighestQuorumCert.ProposedBlockInfo.Round, "qcNumber", syncInfo.HighestQuorumCert.ProposedBlockInfo.Number, "qcHash", syncInfo.HighestQuorumCert.ProposedBlockInfo.Hash)
 	}
+
 	return true, nil
 }
 

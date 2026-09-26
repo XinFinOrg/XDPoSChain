@@ -410,6 +410,9 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 				evm := vm.NewEVM(context, statedb, nil, api.backend.ChainConfig(), vm.Config{})
 				core.ProcessParentBlockHash(next.ParentHash(), evm)
 			}
+			// Block level state changes block processing applies before the first
+			// transaction of the next block, which the loop above replays by hand.
+			core.ApplyTIPSigningHardFork(api.backend.ChainConfig(), statedb, next.Number())
 			// Clean out any pending release functions of trace state. Note this
 			// step must be done after constructing tracing state, because the
 			// tracing state of block next depends on the parent state and construction
@@ -552,6 +555,9 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 	if chainConfig.IsPrague(block.Number()) {
 		core.ProcessParentBlockHash(block.ParentHash(), evm)
 	}
+	// Block level state changes block processing applies before the first transaction:
+	// the roots below describe the state the block ran on, not the parent state.
+	core.ApplyTIPSigningHardFork(chainConfig, statedb, block.Number())
 	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	for i, tx := range block.Transactions() {
 		if err := ctx.Err(); err != nil {
@@ -559,10 +565,6 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 		}
 		var balance *big.Int
 		if tx.To() != nil {
-			// Bypass the validation for trading and lending transactions as their nonce are not incremented
-			if tx.IsSkipNonceTransaction() {
-				continue
-			}
 			if value, ok := feeCapacity[*tx.To()]; ok {
 				balance = value
 			}
@@ -579,7 +581,20 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 			return roots, nil
 		}
 		statedb.SetTxContext(tx.Hash(), i)
-		if _, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(msg.GasLimit), common.Address{}); err != nil {
+		// Replay through the block processing entry point so routing, the coinbase owner fee
+		// and the historical balance bypass all match the block that is being traced. Every
+		// transaction gets a root, including the nonce-less ones that leave the state as is.
+		if err := core.ApplyTransactionForReplay(msg, new(core.GasPool).AddGas(msg.GasLimit), block.Number(), tx, evm, balance); err != nil {
+			// An EVM this replay cannot use is a problem of this caller, not of the
+			// transaction: report it as it is instead of returning a short root list. The
+			// EVM this method builds for itself (the vm.NewEVM above, vm.Config{} and a
+			// plain *state.StateDB) keeps that from firing today; the branch is what stops
+			// a future change that hands in a tracing EVM or a wrapped state - which would
+			// also have to change the vm.NewEVM call above - from silently truncating the
+			// root list of every caller.
+			if errors.Is(err, core.ErrReplayTracingEVM) || errors.Is(err, core.ErrReplayStateType) {
+				return nil, err
+			}
 			log.Warn("Tracing intermediate roots did not complete", "txindex", i, "txhash", tx.Hash(), "err", err)
 			// We intentionally don't return the error here: if we do, then the RPC server will not
 			// return the roots. Most likely, the caller already knows that a certain transaction fails to
@@ -631,6 +646,9 @@ func (api *API) traceBlock(ctx context.Context, block *types.Block, config *Trac
 	if api.backend.ChainConfig().IsPrague(block.Number()) {
 		core.ProcessParentBlockHash(block.ParentHash(), evm)
 	}
+	// Block level state changes block processing applies before the first transaction,
+	// shared with the parallel feeder this function may hand the state over to.
+	core.ApplyTIPSigningHardFork(api.backend.ChainConfig(), statedb, block.Number())
 
 	// JS tracers have high overhead. In this case run a parallel
 	// process that generates states in one thread and traces txes
@@ -651,9 +669,13 @@ func (api *API) traceBlock(ctx context.Context, block *types.Block, config *Trac
 	for i, tx := range txs {
 		var balance *big.Int
 		if tx.To() != nil {
-			if tx.IsSkipNonceTransaction() {
-				continue
-			}
+			// Skip-nonce transactions are not dropped here: traceTx replays them through
+			// core.ApplyTransactionWithEVM, the same entry block processing uses. While
+			// the receiver fork is active that routes them to ApplyEmptyTransaction,
+			// which leaves the sender nonce alone; outside the fork window it is an
+			// ordinary EVM call that does bump the nonce the next transaction relies on.
+			// Tracing them keeps the pre-state in step with execution and gives every
+			// transaction an entry in the returned result array.
 			if value, ok := feeCapacity[*tx.To()]; ok {
 				balance = value
 			}
@@ -768,10 +790,9 @@ txloop:
 
 		var balance *big.Int
 		if tx.To() != nil {
-			// Bypass the validation for trading and lending transactions as their nonce are not incremented
-			if tx.IsSkipNonceTransaction() {
-				continue
-			}
+			// Skip-nonce transactions are not dropped here: the replay below goes through
+			// core.ApplyTransactionWithEVM, which routes them the way block processing does,
+			// so the pre-state handed to the workers stays in step with execution.
 			if value, ok := feeCapacity[*tx.To()]; ok {
 				balance = value
 			}
@@ -784,7 +805,7 @@ txloop:
 			break txloop
 		}
 		statedb.SetTxContext(tx.Hash(), i)
-		if _, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(msg.GasLimit), common.Address{}); err != nil {
+		if _, _, _, err := core.ApplyTransactionWithEVM(msg, new(core.GasPool).AddGas(msg.GasLimit), statedb, header.Number, header.Hash(), tx, new(uint64), evm, balance); err != nil {
 			failed = err
 			break txloop
 		}

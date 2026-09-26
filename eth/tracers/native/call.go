@@ -271,17 +271,16 @@ func (t *callTracer) OnTxEnd(receipt *types.Receipt, err error) {
 		return
 	}
 
-	// Handle non-EVM special tx: update the synthetic call frame.
-	if t.isNonEVMTx {
-		if receipt != nil {
+	// Transactions to the system addresses are flagged as non-EVM on OnTxStart, but the
+	// EVM only stays out of them while the fork that routes them away is active. When it
+	// did run, a real top-level frame exists and that is the one to update.
+	if len(t.callstack) == 0 {
+		// No frame was pushed: the EVM did not execute this transaction, so keep the
+		// synthetic frame in step with the receipt. Guard against an empty callstack to
+		// avoid panic.
+		if t.isNonEVMTx && receipt != nil {
 			t.nonEVMCall.GasUsed = receipt.GasUsed
 		}
-		return
-	}
-
-	// Handle normal EVM tx: update the top-level call frame.
-	if len(t.callstack) == 0 {
-		// Guard against empty callstack to avoid panic.
 		return
 	}
 
@@ -307,8 +306,9 @@ func (t *callTracer) OnLog(log *types.Log) {
 	if t.interrupt.Load() {
 		return
 	}
-	// If this is a non-EVM transaction, append to nonEVMCall.Logs
-	if t.isNonEVMTx {
+	// The synthetic frame only collects the logs of a transaction the EVM did not
+	// execute. When the EVM ran, the logs belong to the real top-level frame below.
+	if t.isNonEVMTx && len(t.callstack) == 0 {
 		l := callLog{
 			Address:  log.Address,
 			Topics:   log.Topics,
@@ -339,10 +339,12 @@ func (t *callTracer) OnLog(log *types.Log) {
 // For non-EVM transactions, a synthetic virtual frame is returned to maintain
 // debug API compatibility even though the EVM did not execute opcodes.
 func (t *callTracer) GetResult() (json.RawMessage, error) {
-	// For non-EVM special transactions (e.g. BlockSignersBinary) the EVM
-	// did not execute opcodes, so return the prepared virtual top-level
-	// callFrame directly without mutating the tracer state.
-	if t.isNonEVMTx {
+	// A real top-level frame wins whenever the EVM executed the transaction, even if
+	// its to address flags it as non-EVM: transactions to the system addresses only
+	// stay out of the EVM while the fork that routes them away is active. The synthetic
+	// frame prepared on OnTxStart is the fallback for the transactions the EVM never
+	// entered; it is returned directly without mutating the tracer state.
+	if len(t.callstack) == 0 && t.isNonEVMTx {
 		res, err := json.Marshal(t.nonEVMCall)
 		if err != nil {
 			return nil, err

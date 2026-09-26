@@ -30,6 +30,18 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
+// pendingBlockNumber returns the height a pooled transaction is priced at: it
+// can only be included from the next block onwards, so gas schedule lookups
+// resolve the fork tier one past the given head number. A nil input means no
+// head is known and resolves to nil. Admission validation and the local
+// tracker's price floor must both go through here so they cannot drift apart.
+func pendingBlockNumber(number *big.Int) *big.Int {
+	if number == nil {
+		return nil
+	}
+	return new(big.Int).Add(number, common.Big1)
+}
+
 // ValidationOptions define certain differences between transaction validation
 // across the different pools without having to duplicate those checks.
 type ValidationOptions struct {
@@ -236,13 +248,16 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 		number      = opts.CurrentNumber()
 		to          = tx.To()
 	)
+	// A pooled tx can only be included from the next block onwards, so gas
+	// schedule lookups below resolve the fork tier at that height.
+	pendingNumber := pendingBlockNumber(number)
 	if to != nil {
 		if value, ok := opts.Trc21FeeCapacity[*to]; ok {
 			feeCapacity = value
 			if !opts.State.ValidateTRC21Tx(from, *to, tx.Data()) {
 				return core.ErrInsufficientFunds
 			}
-			cost = tx.TxCost(number, opts.Config)
+			cost = tx.TxCost(pendingNumber, opts.Config)
 		}
 	}
 	newBalance := new(big.Int).Add(balance, feeCapacity)
@@ -288,8 +303,8 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 
 	// Validate gas price
 	if !tx.IsSpecialTransaction() {
-		minGasPrice := params.GetMinGasPrice(number, opts.Config)
-		if tx.GasPrice().Cmp(minGasPrice) < 0 {
+		minGasPrice := params.GetMinGasPrice(pendingNumber, opts.Config)
+		if tx.GasPriceIntCmp(minGasPrice) < 0 {
 			return ErrUnderMinGasPrice
 		}
 	}

@@ -50,7 +50,6 @@ func TestWorkerUpdateNonXDPoSStaysRunning(t *testing.T) {
 		engine:       ethash.NewFaker(),
 		chainHeadSub: newBlockingSubscription(),
 		chainSideSub: newBlockingSubscription(),
-		resetCh:      make(chan time.Duration, 1),
 	}
 
 	done := make(chan struct{})
@@ -78,6 +77,97 @@ func TestWorkerUpdateNonXDPoSStaysRunning(t *testing.T) {
 	select {
 	case <-done:
 		// Expected: update exits after subscription error.
+	case <-time.After(time.Second):
+		t.Fatal("worker.update did not return after unsubscribe")
+	}
+}
+
+// TestWorkerUpdateKeepsDrainingChainHead ensures the mining timer never stops
+// the update loop from servicing chain events.
+//
+// The timer used to be owned by a dedicated goroutine that exchanged
+// notifications with the update loop over two buffered channels: the loop sent
+// the next duration on resetCh and the goroutine reported expiries on c. Once
+// both buffers were full the two goroutines blocked on each other forever. The
+// worker then stopped draining chainHeadCh, which in turn blocked every
+// producer of chain events (block insertion posts them synchronously) and
+// wedged the whole node.
+func TestWorkerUpdateKeepsDrainingChainHead(t *testing.T) {
+	chainConfig := &params.ChainConfig{
+		ChainID:        big.NewInt(1338),
+		HomesteadBlock: new(big.Int),
+		Ethash:         new(params.EthashConfig),
+	}
+	genesis := &core.Genesis{
+		Config: chainConfig,
+		// Anchor the genesis at the current time so getResetTime returns a
+		// positive duration and the mining timer stays armed throughout the
+		// test: block time plus the mine period starts just ahead of "now",
+		// letting the timer expiry path run while the loop keeps servicing
+		// chain head events.
+		Timestamp:  uint64(time.Now().Unix()),
+		Difficulty: big.NewInt(1),
+		GasLimit:   params.XDCGenesisGasLimit,
+	}
+	db := rawdb.NewMemoryDatabase()
+	engine := ethash.NewFaker()
+	chain, err := core.NewBlockChain(db, nil, genesis, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	defer chain.Stop()
+
+	head := chain.GetBlockByNumber(0)
+	if head == nil {
+		t.Fatal("expected genesis block")
+	}
+
+	// announceTxs is false and mining is 0, so commitNewWork bails out early in
+	// checkPreCommit and the loop stays cheap.
+	worker := &worker{
+		chainConfig:  chainConfig,
+		engine:       engine,
+		chain:        chain,
+		chainHeadCh:  make(chan core.ChainHeadEvent, chainHeadChanSize),
+		chainSideCh:  make(chan core.ChainSideEvent, chainSideChanSize),
+		chainHeadSub: newBlockingSubscription(),
+		chainSideSub: newBlockingSubscription(),
+	}
+
+	done := make(chan struct{})
+	go func() {
+		worker.update()
+		close(done)
+	}()
+
+	// drainTimeout bounds how long a single send may block before the test
+	// concludes that worker.update stopped draining chain events. It is reused
+	// across iterations instead of calling time.After per send, which would
+	// allocate a fresh timer on every iteration.
+	drainTimeout := time.NewTimer(time.Second)
+	defer drainTimeout.Stop()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case worker.chainHeadCh <- core.ChainHeadEvent{Block: head}:
+			// Rearm the timeout for the next send, draining the channel first
+			// if the timer already expired.
+			if !drainTimeout.Stop() {
+				select {
+				case <-drainTimeout.C:
+				default:
+				}
+			}
+			drainTimeout.Reset(time.Second)
+		case <-drainTimeout.C:
+			t.Fatal("worker.update stopped draining chainHeadCh")
+		}
+	}
+
+	worker.chainHeadSub.Unsubscribe()
+	select {
+	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("worker.update did not return after unsubscribe")
 	}

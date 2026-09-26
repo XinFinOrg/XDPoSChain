@@ -65,6 +65,83 @@ func DeleteCanonicalHash(db ethdb.KeyValueWriter, number uint64) {
 	}
 }
 
+// ReadAllHashes retrieves all the hashes assigned to blocks at a certain height,
+// both canonical and reorged forks included.
+func ReadAllHashes(db ethdb.Iteratee, number uint64) []common.Hash {
+	prefix := headerKeyPrefix(number)
+
+	hashes := make([]common.Hash, 0, 1)
+	it := db.NewIterator(prefix, nil)
+	defer it.Release()
+
+	for it.Next() {
+		if key := it.Key(); len(key) == len(prefix)+32 {
+			hashes = append(hashes, common.BytesToHash(key[len(key)-32:]))
+		}
+	}
+	return hashes
+}
+
+// DeleteDanglingHashes removes every header, total-difficulty and canonical-hash
+// entry whose block number is strictly greater than head. It walks the header
+// keyspace directly (rather than scanning contiguous heights), so orphaned
+// side-fork segments left above the chain head by an aborted sync are wiped even
+// when their heights are not contiguous (i.e. separated by gaps). For each
+// removed hash it invokes contentFn (if non-nil) so the caller can drop any
+// associated block content (bodies, receipts, ...). Deletions are streamed into
+// a batch that is flushed at ethdb.IdealBatchSize, bounding memory usage during
+// large sweeps.
+func DeleteDanglingHashes(db ethdb.KeyValueStore, head uint64, contentFn func(ethdb.KeyValueWriter, common.Hash, uint64)) error {
+	// header key = headerPrefix + num (8 bytes) + hash (32 bytes)
+	headerKeyLen := len(headerPrefix) + 8 + common.HashLength
+
+	// Guard against uint64 overflow when head == max.
+	start := head + 1
+	if start == 0 {
+		return nil
+	}
+
+	batch := db.NewBatch()
+	it := db.NewIterator(headerPrefix, encodeBlockNumber(start))
+	defer it.Release()
+
+	var (
+		lastNum uint64
+		haveNum bool
+	)
+	for it.Next() {
+		key := it.Key()
+		// Skip canonical-hash ("n") and total-difficulty ("t") keys, which have
+		// different lengths than a plain header key.
+		if len(key) != headerKeyLen {
+			continue
+		}
+		number := binary.BigEndian.Uint64(key[len(headerPrefix) : len(headerPrefix)+8])
+		if number <= head {
+			continue
+		}
+		hash := common.BytesToHash(key[len(headerPrefix)+8:])
+		if contentFn != nil {
+			contentFn(batch, hash, number)
+		}
+		DeleteHeader(batch, hash, number)
+		DeleteTd(batch, hash, number)
+		// The iterator yields keys in ascending order, so all hashes at a given
+		// height are contiguous. Delete the canonical marker once per height.
+		if !haveNum || number != lastNum {
+			DeleteCanonicalHash(batch, number)
+			lastNum, haveNum = number, true
+		}
+		if batch.ValueSize() >= ethdb.IdealBatchSize {
+			if err := batch.Write(); err != nil {
+				return err
+			}
+			batch.Reset()
+		}
+	}
+	return batch.Write()
+}
+
 // ReadHeaderNumber returns the header number assigned to a hash.
 func ReadHeaderNumber(db ethdb.KeyValueReader, hash common.Hash) *uint64 {
 	data, _ := db.Get(headerNumberKey(hash))
@@ -695,6 +772,50 @@ func WriteBadBlock(db ethdb.KeyValueStore, block *types.Block) {
 func DeleteBadBlocks(db ethdb.KeyValueWriter) {
 	if err := db.Delete(badBlockKey); err != nil {
 		log.Crit("Failed to delete bad blocks", "err", err)
+	}
+}
+
+// DeleteBadBlocksAbove deletes only the bad block records for blocks strictly
+// above the given height, preserving records below it for debugging purposes.
+func DeleteBadBlocksAbove(db ethdb.KeyValueStore, head uint64) {
+	blob, err := db.Get(badBlockKey)
+	if err != nil {
+		// No bad blocks to clean
+		return
+	}
+	var badBlocks []*badBlock
+	if err := rlp.DecodeBytes(blob, &badBlocks); err != nil {
+		log.Warn("Failed to decode bad blocks for cleanup", "error", err)
+		return
+	}
+
+	// Filter: keep only bad blocks at or below head
+	filtered := make([]*badBlock, 0, len(badBlocks))
+	for _, b := range badBlocks {
+		if b.Header.Number.Uint64() <= head {
+			filtered = append(filtered, b)
+		}
+	}
+
+	// If nothing left, delete the key entirely
+	if len(filtered) == 0 {
+		if err := db.Delete(badBlockKey); err != nil {
+			log.Crit("Failed to delete bad blocks key", "err", err)
+		}
+		return
+	}
+
+	// If some remain, re-encode and write them back
+	if len(filtered) != len(badBlocks) {
+		// Only log if we actually deleted something
+		log.Info("Cleaned up bad blocks above head", "head", head, "removed", len(badBlocks)-len(filtered), "remaining", len(filtered))
+		data, err := rlp.EncodeToBytes(filtered)
+		if err != nil {
+			log.Crit("Failed to encode remaining bad blocks", "err", err)
+		}
+		if err := db.Put(badBlockKey, data); err != nil {
+			log.Crit("Failed to write cleaned bad blocks", "err", err)
+		}
 	}
 }
 

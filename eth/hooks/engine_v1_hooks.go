@@ -3,17 +3,15 @@ package hooks
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"math/big"
 	"time"
 
-	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/common"
-	xdc_sort "github.com/XinFinOrg/XDPoSChain/common/sort"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/contracts"
-	contractValidator "github.com/XinFinOrg/XDPoSChain/contracts/validator/contract"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
@@ -177,9 +175,9 @@ func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 	}
 
 	// Hook prepares validators M2 for the current epoch at checkpoint block
-	adaptor.EngineV1.HookValidator = func(header *types.Header, signers []common.Address) ([]byte, error) {
+	adaptor.EngineV1.HookValidator = func(parent, header *types.Header, signers []common.Address) ([]byte, error) {
 		start := time.Now()
-		validators, err := getValidatorsAtNumber(bc, signers, parentBlockNumber(header))
+		validators, err := getValidatorsAtNumber(bc, signers, parent)
 		if err != nil {
 			return []byte{}, err
 		}
@@ -189,11 +187,11 @@ func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 	}
 
 	// Hook verifies masternodes set
-	adaptor.EngineV1.HookVerifyMNs = func(header *types.Header, signers []common.Address) error {
+	adaptor.EngineV1.HookVerifyMNs = func(parent, header *types.Header, signers []common.Address) error {
 		number := header.Number.Int64()
 		if number > 0 && number%common.EpocBlockRandomize == 0 {
 			start := time.Now()
-			validators, err := getValidatorsAtNumber(bc, signers, parentBlockNumber(header))
+			validators, err := getValidatorsAtNumber(bc, signers, parent)
 			log.Debug("Time Calculated HookVerifyMNs ", "block", header.Number.Uint64(), "time", common.PrettyDuration(time.Since(start)))
 			if err != nil {
 				return err
@@ -209,42 +207,49 @@ func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 	   HookGetSignersFromContract return list masternode for current state (block)
 	   This is a solution for work around issue return wrong list signers from snapshot
 	*/
-	adaptor.EngineV1.HookGetSignersFromContract = func(block common.Hash) ([]common.Address, error) {
-		client, err := bc.GetClient()
-		if err != nil {
-			return nil, err
-		}
-		addr := common.MasternodeVotingSMCBinary
-		validator, err := contractValidator.NewXDCValidator(addr, client)
-		if err != nil {
-			return nil, err
-		}
-		opts := new(bind.CallOpts)
+	adaptor.EngineV1.HookGetSignersFromContract = func(gapHeader *types.Header) ([]common.Address, error) {
 		var (
 			candidateAddresses []common.Address
 			candidates         []utils.Masternode
 		)
+		if gapHeader == nil {
+			return nil, errors.New("nil gap block header in HookGetSignersFromContract")
+		}
 
-		stateDB, err := bc.StateAt(bc.GetBlockByHash(block).Root())
+		// The gap block header comes from the caller, which resolves it from the
+		// local chain or from the batch it is verifying. Looking it up here by
+		// hash would find nothing for the gap block of a fork, and the chain
+		// state is what the candidates are read from.
+		stateDB, err := bc.StateAt(gapHeader.Root)
 		if err != nil {
 			return nil, err
 		}
-		if stateDB == nil {
-			return nil, errors.New("nil stateDB in HookGetSignersFromContract")
-		}
 
+		// Read the candidates and their stakes off the same state. The stakes
+		// used to come back from the voting contract over this node's own IPC
+		// endpoint: that made the hook depend on an IPC endpoint at all, so a
+		// node without one could not fall back to the signers from the contract.
+		//
+		// That call carried no block number, so it answered from "latest": each
+		// verifying node judged the checkpoint against its own head at the moment
+		// of the call, and the same node could judge the same checkpoint
+		// differently later. The gap block is the block to settle on, because it
+		// is the state UpdateM1 reads for the next epoch's set.
+		//
+		// No fork block gates that settlement. Replaying the v1 era can therefore
+		// classify a checkpoint differently than the latest-block reading did.
 		candidateAddresses = stateDB.GetCandidates()
 		for _, address := range candidateAddresses {
-			v, err := validator.GetCandidateCap(opts, address)
-			if err != nil {
-				return nil, err
-			}
-			candidates = append(candidates, utils.Masternode{Address: address, Stake: v})
+			candidates = append(candidates, utils.Masternode{Address: address, Stake: stateDB.GetCandidateCap(address)})
+		}
+		// GetCandidates and GetCandidateCap return zero values when the voting
+		// contract storage cannot be read, memoizing the failure in
+		// StateDB.Error(); surface it instead of returning a partial list.
+		if err := stateDB.Error(); err != nil {
+			return nil, fmt.Errorf("reading the signers of %s from state: %w", gapHeader.Hash().Hex(), err)
 		}
 		// sort candidates by stake descending
-		xdc_sort.Slice(candidates, func(i, j int) bool {
-			return candidates[i].Stake.Cmp(candidates[j].Stake) >= 0
-		})
+		utils.SortMasternodesByStakeDesc(candidates)
 		if len(candidates) > 150 {
 			candidates = candidates[:150]
 		}
@@ -307,40 +312,55 @@ func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 	}
 }
 
-func getValidatorsAtNumber(bc *core.BlockChain, masternodes []common.Address, blockNumber *big.Int) ([]byte, error) {
+// getValidatorsAtNumber derives the next epoch's validators from the randomize
+// values committed at the parent of the checkpoint being checked.
+//
+// The parent is resolved by the caller and handed in, rather than looked up by
+// height here. A checkpoint on a fork has a parent that may only exist in the
+// verifier's batch, while the canonical block of the same height belongs to the
+// competing branch, so deriving validators from that one would validate the
+// wrong chain. Both in-tree callers resolve the parent before they get here and
+// refuse to continue without it, so a nil one is reported rather than answered
+// from the head, which is a block the caller did not ask about.
+func getValidatorsAtNumber(bc *core.BlockChain, masternodes []common.Address, parent *types.Header) ([]byte, error) {
 	if bc.Config().XDPoS == nil {
 		return nil, core.ErrNotXDPoS
 	}
-	client, err := bc.GetClient()
+	lenSigners := int64(len(masternodes))
+	if lenSigners == 0 {
+		return nil, core.ErrNotFoundM1
+	}
+	if parent == nil {
+		return nil, errors.New("nil parent block to derive the validators from")
+	}
+	// Get secrets and opening at epoc block checkpoint.
+	//
+	// Both are read off the parent's state. The randomize contract used to
+	// answer for them over this node's own IPC endpoint, which made the hook
+	// depend on an IPC endpoint at all.
+	stateDB, err := bc.StateAt(parent.Root)
 	if err != nil {
 		return nil, err
 	}
-	// Check m2 exists on chaindb.
-	// Get secrets and opening at epoc block checkpoint.
 
 	var candidates []int64
-	lenSigners := int64(len(masternodes))
-	if lenSigners > 0 {
-		for _, addr := range masternodes {
-			random, err := contracts.GetRandomizeFromContractAtNumber(client, addr, blockNumber)
-			if err != nil {
-				return nil, err
-			}
-			candidates = append(candidates, random)
-		}
-		// Get randomize m2 list.
-		m2, err := contracts.GenM2FromRandomize(candidates, lenSigners)
+	for _, addr := range masternodes {
+		random, err := contracts.DecryptRandomizeFromSecretsAndOpening(stateDB.GetSecret(addr), stateDB.GetOpening(addr))
 		if err != nil {
 			return nil, err
 		}
-		return contracts.BuildValidatorFromM2(m2), nil
+		candidates = append(candidates, random)
 	}
-	return nil, core.ErrNotFoundM1
-}
-
-func parentBlockNumber(header *types.Header) *big.Int {
-	if header == nil || header.Number == nil || header.Number.Sign() == 0 {
-		return nil
+	// GetSecret and GetOpening return zero values when the randomize contract
+	// storage cannot be read, memoizing the failure in StateDB.Error(); surface
+	// it instead of deriving validators from them.
+	if err := stateDB.Error(); err != nil {
+		return nil, fmt.Errorf("reading the randomize values from state: %w", err)
 	}
-	return new(big.Int).Sub(header.Number, common.Big1)
+	// Get randomize m2 list.
+	m2, err := contracts.GenM2FromRandomize(candidates, lenSigners)
+	if err != nil {
+		return nil, err
+	}
+	return contracts.BuildValidatorFromM2(m2), nil
 }

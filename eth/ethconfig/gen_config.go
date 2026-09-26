@@ -18,6 +18,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	type Config struct {
 		Genesis                    *core.Genesis `toml:",omitempty"`
 		AllowBuiltInCustomRecovery bool          `toml:",omitempty"`
+		ChainConfigMismatchPolicy  string        `toml:",omitempty"`
 		NetworkId                  uint64
 		SyncMode                   downloader.SyncMode
 		FastSyncPivotNumber        uint64
@@ -51,6 +52,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	var enc Config
 	enc.Genesis = c.Genesis
 	enc.AllowBuiltInCustomRecovery = c.AllowBuiltInCustomRecovery
+	enc.ChainConfigMismatchPolicy = c.ChainConfigMismatchPolicy
 	enc.NetworkId = c.NetworkId
 	enc.SyncMode = c.SyncMode
 	enc.FastSyncPivotNumber = c.FastSyncPivotNumber
@@ -88,6 +90,7 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	type Config struct {
 		Genesis                    *core.Genesis `toml:",omitempty"`
 		AllowBuiltInCustomRecovery *bool         `toml:",omitempty"`
+		ChainConfigMismatchPolicy  *string       `toml:",omitempty"`
 		NetworkId                  *uint64
 		SyncMode                   *downloader.SyncMode
 		FastSyncPivotNumber        *uint64
@@ -127,6 +130,9 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	}
 	if dec.AllowBuiltInCustomRecovery != nil {
 		c.AllowBuiltInCustomRecovery = *dec.AllowBuiltInCustomRecovery
+	}
+	if dec.ChainConfigMismatchPolicy != nil {
+		c.ChainConfigMismatchPolicy = *dec.ChainConfigMismatchPolicy
 	}
 	if dec.NetworkId != nil {
 		c.NetworkId = *dec.NetworkId

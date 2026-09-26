@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,11 +35,9 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common/lru"
 	"github.com/XinFinOrg/XDPoSChain/common/mclock"
 	"github.com/XinFinOrg/XDPoSChain/common/prque"
-	xdc_sort "github.com/XinFinOrg/XDPoSChain/common/sort"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
-	contractValidator "github.com/XinFinOrg/XDPoSChain/contracts/validator/contract"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
@@ -90,8 +89,13 @@ var (
 
 	errInsertionInterrupted = errors.New("insertion is interrupted")
 	errChainStopped         = errors.New("blockchain is stopped")
-	errInvalidOldChain      = errors.New("invalid old chain")
-	errInvalidNewChain      = errors.New("invalid new chain")
+	// errMissingTotalDifficulty is returned when a block cannot be weighed against the
+	// head because this node has no total difficulty on disk for it or for its parent.
+	// It describes what this node can read rather than the block itself, so the callers
+	// must not report it as a consensus failure.
+	errMissingTotalDifficulty = errors.New("missing total difficulty")
+	errInvalidOldChain        = errors.New("invalid old chain")
+	errInvalidNewChain        = errors.New("invalid new chain")
 
 	CheckpointCh = make(chan int)
 )
@@ -102,7 +106,7 @@ const (
 	receiptsCacheLimit  = 32
 	maxFutureBlocks     = 256
 	maxTimeFutureBlocks = 30
-	TriesInMemory       = 128
+	TriesInMemory       = 1024
 
 	// BlockChainVersion ensures that an incompatible database forces a resync from scratch.
 	//
@@ -234,6 +238,7 @@ type blockchainOpenConfig struct {
 	chainConfig     *params.ChainConfig
 	genesisHash     common.Hash
 	compatErr       *params.ConfigCompatError
+	compatPolicy    ChainConfigMismatchPolicy
 	recoveryGenesis *Genesis
 }
 
@@ -287,13 +292,15 @@ var (
 	ErrReadOnlyHeadStateRepair          = errors.New("readonly blockchain open requires head state repair")
 	ErrReadOnlyBadHashRewind            = errors.New("readonly blockchain open requires bad-hash rewind")
 	ErrReadOnlyConfigRewind             = errors.New("readonly blockchain open requires config rewind")
+	ErrReadOnlyConfigUpdate             = errors.New("readonly blockchain open requires config update")
+	ErrConfigMismatchPolicyExit         = errors.New("chain config mismatch policy is exit")
 	errBlockChainOpenMissingGenesisHash = errors.New("blockchain open options require genesis hash when chain config is provided")
 )
 
 // NewBlockChain returns a fully initialised writable block chain using startup
 // metadata resolved from the database via SetupGenesisBlock.
 func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis, engine consensus.Engine, vmConfig vm.Config) (*BlockChain, error) {
-	resolvedCfg, err := resolveBlockChainOpenConfig(db, genesis, false)
+	resolvedCfg, err := resolveBlockChainOpenConfig(db, genesis, false, DefaultChainConfigMismatchPolicy)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +310,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 // NewBlockChainReadOnly returns a fully initialised readonly block chain using
 // startup metadata resolved from the database via LoadChainConfigWithCompat.
 func NewBlockChainReadOnly(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis, engine consensus.Engine, vmConfig vm.Config) (*BlockChain, error) {
-	resolvedCfg, err := resolveBlockChainOpenConfig(db, genesis, true)
+	resolvedCfg, err := resolveBlockChainOpenConfig(db, genesis, true, DefaultChainConfigMismatchPolicy)
 	if err != nil {
 		return nil, err
 	}
@@ -312,8 +319,8 @@ func NewBlockChainReadOnly(db ethdb.Database, cacheConfig *CacheConfig, genesis 
 
 // NewBlockChainResolved opens a writable block chain from caller-supplied
 // startup metadata.
-func NewBlockChainResolved(db ethdb.Database, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError) (*BlockChain, error) {
-	resolvedCfg, err := newResolvedBlockChainOpenConfig(false, recoveryGenesis, chainConfig, genesisHash, compatErr)
+func NewBlockChainResolved(db ethdb.Database, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, compatPolicy ChainConfigMismatchPolicy) (*BlockChain, error) {
+	resolvedCfg, err := newResolvedBlockChainOpenConfig(false, recoveryGenesis, chainConfig, genesisHash, compatErr, compatPolicy)
 	if err != nil {
 		return nil, err
 	}
@@ -322,8 +329,8 @@ func NewBlockChainResolved(db ethdb.Database, cacheConfig *CacheConfig, recovery
 
 // NewBlockChainReadOnlyResolved opens a readonly block chain from caller-
 // supplied startup metadata.
-func NewBlockChainReadOnlyResolved(db ethdb.Database, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError) (*BlockChain, error) {
-	resolvedCfg, err := newResolvedBlockChainOpenConfig(true, recoveryGenesis, chainConfig, genesisHash, compatErr)
+func NewBlockChainReadOnlyResolved(db ethdb.Database, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, compatPolicy ChainConfigMismatchPolicy) (*BlockChain, error) {
+	resolvedCfg, err := newResolvedBlockChainOpenConfig(true, recoveryGenesis, chainConfig, genesisHash, compatErr, compatPolicy)
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +339,7 @@ func NewBlockChainReadOnlyResolved(db ethdb.Database, cacheConfig *CacheConfig, 
 
 // resolveBlockChainOpenConfig resolves startup metadata and normalizes
 // recovery inputs for writable or readonly opens.
-func resolveBlockChainOpenConfig(db ethdb.Database, genesis *Genesis, readOnly bool) (blockchainOpenConfig, error) {
+func resolveBlockChainOpenConfig(db ethdb.Database, genesis *Genesis, readOnly bool, compatPolicy ChainConfigMismatchPolicy) (blockchainOpenConfig, error) {
 	resolveStartup := SetupGenesisBlock
 	if readOnly {
 		resolveStartup = LoadChainConfigWithCompat
@@ -341,11 +348,19 @@ func resolveBlockChainOpenConfig(db ethdb.Database, genesis *Genesis, readOnly b
 	if err != nil {
 		return blockchainOpenConfig{}, err
 	}
+	normalizedCompatPolicy, err := ValidateAndNormalizeCompatPolicy(compatPolicy)
+	if err != nil {
+		return blockchainOpenConfig{}, err
+	}
+	if compatErr != nil && normalizedCompatPolicy == MismatchExit {
+		return blockchainOpenConfig{}, fmt.Errorf("%w: %v", ErrConfigMismatchPolicyExit, compatErr)
+	}
 	resolved := blockchainOpenConfig{
 		readOnly:        readOnly,
 		chainConfig:     chainConfig,
 		genesisHash:     genesisHash,
 		compatErr:       compatErr,
+		compatPolicy:    normalizedCompatPolicy,
 		recoveryGenesis: genesis,
 	}
 	resolved.recoveryGenesis, err = normalizedRecoveryGenesis(resolved.recoveryGenesis, chainConfig)
@@ -355,9 +370,16 @@ func resolveBlockChainOpenConfig(db ethdb.Database, genesis *Genesis, readOnly b
 	return resolved, nil
 }
 
-func newResolvedBlockChainOpenConfig(readOnly bool, recoveryGenesis *Genesis, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError) (blockchainOpenConfig, error) {
+func newResolvedBlockChainOpenConfig(readOnly bool, recoveryGenesis *Genesis, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, compatPolicy ChainConfigMismatchPolicy) (blockchainOpenConfig, error) {
 	if genesisHash == (common.Hash{}) {
 		return blockchainOpenConfig{}, errBlockChainOpenMissingGenesisHash
+	}
+	normalizedCompatPolicy, err := ValidateAndNormalizeCompatPolicy(compatPolicy)
+	if err != nil {
+		return blockchainOpenConfig{}, err
+	}
+	if compatErr != nil && normalizedCompatPolicy == MismatchExit {
+		return blockchainOpenConfig{}, fmt.Errorf("%w: %v", ErrConfigMismatchPolicyExit, compatErr)
 	}
 	normalizedGenesis, err := normalizedRecoveryGenesis(recoveryGenesis, chainConfig)
 	if err != nil {
@@ -368,6 +390,7 @@ func newResolvedBlockChainOpenConfig(readOnly bool, recoveryGenesis *Genesis, ch
 		chainConfig:     chainConfig,
 		genesisHash:     genesisHash,
 		compatErr:       compatErr,
+		compatPolicy:    normalizedCompatPolicy,
 		recoveryGenesis: normalizedGenesis,
 	}, nil
 }
@@ -382,6 +405,7 @@ func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus
 	}
 	genesisHash := cfg.genesisHash
 	compatErr := cfg.compatErr
+	compatPolicy := cfg.compatPolicy
 	log.Info(strings.Repeat("-", 153))
 	for line := range strings.SplitSeq(chainConfig.Description(), "\n") {
 		log.Info(line)
@@ -536,13 +560,32 @@ func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus
 	}
 
 	// Rewind the chain in case of an incompatible config upgrade.
+	// NOTE: MismatchExit is handled in resolveBlockChainOpenConfig /
+	// newResolvedBlockChainOpenConfig before any chain state is touched,
+	// so it never reaches here.
 	if compatErr != nil {
-		if cfg.readOnly {
-			return nil, fmt.Errorf("%w: %v", ErrReadOnlyConfigRewind, compatErr)
+		log.Warn("Mismatched chain config", "err", compatErr)
+		switch compatPolicy {
+		case MismatchRewindAndUpdate:
+			if cfg.readOnly {
+				return nil, fmt.Errorf("%w: %v", ErrReadOnlyConfigRewind, compatErr)
+			}
+			log.Warn("Applying chain config mismatch policy", "policy", compatPolicy, "rewind_to", compatErr.RewindTo, "update_config", true)
+			if err := bc.SetHead(compatErr.RewindTo); err != nil {
+				return nil, fmt.Errorf("failed to rewind chain: %w", err)
+			}
+			rawdb.WriteChainConfig(db, genesisHash, chainConfig)
+		case MismatchUpdateConfigOnly:
+			if cfg.readOnly {
+				return nil, fmt.Errorf("%w: %v", ErrReadOnlyConfigUpdate, compatErr)
+			}
+			log.Warn("Applying chain config mismatch policy", "policy", compatPolicy, "rewind", false, "update_config", true)
+			rawdb.WriteChainConfig(db, genesisHash, chainConfig)
+		case MismatchIgnoreMismatch:
+			log.Warn("Applying chain config mismatch policy", "policy", compatPolicy, "rewind", false, "update_config", false)
+		default:
+			return nil, fmt.Errorf("invalid chain config mismatch policy %q", compatPolicy)
 		}
-		log.Warn("Rewinding chain to upgrade configuration", "err", compatErr)
-		bc.SetHead(compatErr.RewindTo)
-		rawdb.WriteChainConfig(db, genesisHash, chainConfig)
 	}
 
 	// Start future block processor.
@@ -577,8 +620,8 @@ func NewBlockChainExReadOnly(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cache
 
 // NewBlockChainExResolved opens a writable XDCx-aware blockchain from caller-
 // supplied startup metadata.
-func NewBlockChainExResolved(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError) (*BlockChain, error) {
-	blockchain, err := NewBlockChainResolved(db, cacheConfig, recoveryGenesis, engine, vmConfig, chainConfig, genesisHash, compatErr)
+func NewBlockChainExResolved(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, compatPolicy ChainConfigMismatchPolicy) (*BlockChain, error) {
+	blockchain, err := NewBlockChainResolved(db, cacheConfig, recoveryGenesis, engine, vmConfig, chainConfig, genesisHash, compatErr, compatPolicy)
 	if err != nil {
 		return nil, err
 	}
@@ -590,8 +633,8 @@ func NewBlockChainExResolved(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cache
 
 // NewBlockChainExReadOnlyResolved opens a readonly XDCx-aware blockchain from
 // caller-supplied startup metadata.
-func NewBlockChainExReadOnlyResolved(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError) (*BlockChain, error) {
-	blockchain, err := NewBlockChainReadOnlyResolved(db, cacheConfig, recoveryGenesis, engine, vmConfig, chainConfig, genesisHash, compatErr)
+func NewBlockChainExReadOnlyResolved(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, compatPolicy ChainConfigMismatchPolicy) (*BlockChain, error) {
+	blockchain, err := NewBlockChainReadOnlyResolved(db, cacheConfig, recoveryGenesis, engine, vmConfig, chainConfig, genesisHash, compatErr, compatPolicy)
 	if err != nil {
 		return nil, err
 	}
@@ -802,6 +845,9 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64) error {
 			rawdb.DeleteBody(db, hash, num)
 			rawdb.DeleteReceipts(db, hash, num)
 		}
+		if bc.chainConfig.XDPoS != nil && (num+bc.chainConfig.XDPoS.Gap)%bc.chainConfig.XDPoS.Epoch == 0 {
+			rawdb.DeleteXdposSnapshot(db, hash)
+		}
 		// Todo(rjl493456442) txlookup, bloombits, etc
 	}
 	bc.hc.SetHead(head, updateFn, delFn)
@@ -909,7 +955,7 @@ func (bc *BlockChain) ResetWithGenesisBlock(genesis *types.Block) error {
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to write genesis block", "err", err)
 	}
-	bc.writeHeadBlock(genesis, false)
+	bc.writeHeadBlock(genesis)
 
 	// Last update all in-memory chain markers
 	bc.genesisBlock = genesis
@@ -931,7 +977,7 @@ func (bc *BlockChain) ResetWithGenesisBlock(genesis *types.Block) error {
 func (bc *BlockChain) repair(head **types.Block) error {
 	for {
 		// Abort if we've rewound to a head block that does have associated state
-		if (common.RollbackNumber == 0) || ((*head).Number().Uint64() < common.RollbackNumber) {
+		if (common.RollbackNumber == 0) || ((*head).Number().Uint64() <= common.RollbackNumber) {
 			if bc.HasState((*head).Root()) {
 				log.Info("Rewound blockchain to past state", "number", (*head).Number(), "hash", (*head).Hash())
 				engine, ok := bc.Engine().(*XDPoS.XDPoS)
@@ -1012,8 +1058,13 @@ func (bc *BlockChain) ExportN(w io.Writer, first uint64, last uint64) error {
 // header and the head fast sync block to this very same block if they are older
 // or if they are on a different side chain.
 //
+// The block and its receipts must already be persisted by the caller; only the
+// chain markers are written here. The receipts are read back below to fill the
+// XDPoS signing transaction cache, which silently drops the signing
+// transactions it cannot find a receipt for.
+//
 // Note, this function assumes that the `mu` mutex is held!
-func (bc *BlockChain) writeHeadBlock(block *types.Block, writeBlock bool) {
+func (bc *BlockChain) writeHeadBlock(block *types.Block) {
 	blockHash := block.Hash()
 	blockNumberU64 := block.NumberU64()
 
@@ -1024,9 +1075,6 @@ func (bc *BlockChain) writeHeadBlock(block *types.Block, writeBlock bool) {
 	rawdb.WriteCanonicalHash(batch, blockHash, blockNumberU64)
 	rawdb.WriteTxLookupEntriesByBlock(batch, block)
 	rawdb.WriteHeadBlockHash(batch, blockHash)
-	if writeBlock {
-		rawdb.WriteBlock(batch, block)
-	}
 
 	// Flush the whole batch into the disk, exit the node if failed
 	if err := batch.Write(); err != nil {
@@ -1463,6 +1511,14 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	// Make sure no inconsistent state is leaked during insertion
 	currentBlock := bc.CurrentBlock()
 	localTd := bc.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64())
+	if localTd == nil {
+		// Without the head's total difficulty the block cannot be weighed against the
+		// chain it is competing with, and nothing about the block says it is bad: this
+		// node simply has no number to compare. Report instead of dereferencing it.
+		log.Warn("Block has no comparable local total difficulty",
+			"number", block.NumberU64(), "hash", block.Hash(), "parent", block.ParentHash())
+		return NonStatTy, errMissingTotalDifficulty
+	}
 	externTd := new(big.Int).Add(block.Difficulty(), ptd)
 
 	// Irrelevant of the canonical status, write the block itself to the database.
@@ -1474,6 +1530,8 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	rawdb.WriteBlock(blockBatch, block)
 	rawdb.WriteReceipts(blockBatch, block.Hash(), block.NumberU64(), receipts)
 	rawdb.WritePreimages(blockBatch, state.Preimages())
+	// Keep this commit before bc.reorg below and before writeHeadBlock: the head
+	// must never point at a block whose body is not on disk yet.
 	if err := blockBatch.Write(); err != nil {
 		log.Crit("Failed to write block into disk", "err", err)
 	}
@@ -1645,8 +1703,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 
 	// Set new head.
 	if status == CanonStatTy {
-		// WriteBlock has already been called, no need to write again
-		bc.writeHeadBlock(block, false)
+		bc.writeHeadBlock(block)
 		// prepare set of masternodes for the next epoch
 		if bc.chainConfig.XDPoS != nil && ((block.NumberU64() % bc.chainConfig.XDPoS.Epoch) == (bc.chainConfig.XDPoS.Epoch - bc.chainConfig.XDPoS.Gap)) {
 			if err := bc.UpdateM1(); err != nil {
@@ -1751,6 +1808,18 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		seals[i] = verifySeals
 		bc.downloadingBlock.Add(block.Hash(), struct{}{})
 	}
+	// The marks only keep the fetcher off the blocks this call is importing, so they cover
+	// this call and nothing else: a block that left insertChain, imported or not, is not
+	// being downloaded any more. Clearing them on the way out is what stops a later
+	// delivery of the same block from being answered by the mark alone - insertBlock reads
+	// it before anything else and reports success without touching the head, which a block
+	// that left this call has no reason to get, and which is enough to keep a head that
+	// sits below an already executed block from advancing.
+	defer func() {
+		for _, block := range chain {
+			bc.downloadingBlock.Remove(block.Hash())
+		}
+	}()
 	verifier := consensus.ChainReader(bc)
 	if _, ok := bc.engine.(*XDPoS.XDPoS); ok {
 		verifier = XDPoS.NewVerifyHeadersChainReader(bc, headers, chain)
@@ -1764,32 +1833,28 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 	block, err := it.next()
 	switch {
 	// First block is pruned, insert as sidechain and reorg only if TD grows enough
-	case err == consensus.ErrPrunedAncestor:
+	case errors.Is(err, consensus.ErrPrunedAncestor):
 		return bc.insertSidechain(block, it)
 
 	// First block is future, shove it (and all children) to the future queue (unknown ancestor)
-	case err == consensus.ErrFutureBlock || (err == consensus.ErrUnknownAncestor && bc.futureBlocks.Contains(it.first().ParentHash())):
-		for block != nil && (it.index == 0 || err == consensus.ErrUnknownAncestor) {
+	case errors.Is(err, consensus.ErrFutureBlock) || (errors.Is(err, consensus.ErrUnknownAncestor) && bc.futureBlocks.Contains(it.first().ParentHash())):
+		for block != nil && (it.index == 0 || errors.Is(err, consensus.ErrUnknownAncestor)) {
 			if err := bc.addFutureBlock(block); err != nil {
 				return it.index, events, coalescedLogs, err
 			}
 			block, err = it.next()
 		}
-		stats.queued += it.processed()
-		stats.ignored += it.remaining()
-
-		// If there are any still remaining, mark as ignored
 		return it.index, events, coalescedLogs, err
 
 	// First block (and state) is known
 	//   1. We did a roll-back, and should now do a re-import
 	//   2. The block is stored as a sidechain, and is lying about it's stateroot, and passes a stateroot
 	// 	    from the canonical chain, which has not been verified.
-	case err == ErrKnownBlock:
+	case errors.Is(err, ErrKnownBlock):
 		// Skip all known blocks that behind us
 		current := bc.CurrentBlock().Number.Uint64()
 
-		for block != nil && err == ErrKnownBlock && current >= block.NumberU64() {
+		for block != nil && errors.Is(err, ErrKnownBlock) && current >= block.NumberU64() {
 			stats.ignored++
 			block, err = it.next()
 		}
@@ -1797,7 +1862,6 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 
 	// Some other error occurred, abort
 	case err != nil:
-		stats.ignored += len(it.chain)
 		bc.reportBlock(block, nil, err)
 		return it.index, events, coalescedLogs, err
 	}
@@ -1892,20 +1956,18 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 	}
 
 	// Any blocks remaining here? The only ones we care about are the future ones
-	if block != nil && err == consensus.ErrFutureBlock {
+	if block != nil && errors.Is(err, consensus.ErrFutureBlock) {
 		if err := bc.addFutureBlock(block); err != nil {
 			return it.index, events, coalescedLogs, err
 		}
 		block, err = it.next()
 
-		for ; block != nil && err == consensus.ErrUnknownAncestor; block, err = it.next() {
+		for ; block != nil && errors.Is(err, consensus.ErrUnknownAncestor); block, err = it.next() {
 			if err := bc.addFutureBlock(block); err != nil {
 				return it.index, events, coalescedLogs, err
 			}
-			stats.queued++
 		}
 	}
-	stats.ignored += it.remaining()
 
 	// Append a single chain head event if we've progressed the chain
 	if lastCanon != nil && bc.CurrentBlock().Hash() == lastCanon.Hash() {
@@ -2022,7 +2084,7 @@ func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (i
 	// ones. Any other errors means that the block is invalid, and should not be written
 	// to disk.
 	err := consensus.ErrPrunedAncestor
-	for ; block != nil && (err == consensus.ErrPrunedAncestor); block, err = it.next() {
+	for ; block != nil && (errors.Is(err, consensus.ErrPrunedAncestor)); block, err = it.next() {
 		// Check the canonical state root for that number
 		if number := block.NumberU64(); current >= number {
 			if canonical := bc.GetBlockByNumber(number); canonical != nil && canonical.Root() == block.Root() {
@@ -2043,6 +2105,14 @@ func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (i
 		}
 		if externTd == nil {
 			externTd = bc.GetTd(block.ParentHash(), block.NumberU64()-1)
+			if externTd == nil {
+				// Without the parent's total difficulty the segment cannot be weighed
+				// against the head, and nothing about the blocks says they are bad: this
+				// node simply has no number to compare.
+				log.Warn("Sidechain segment has no comparable total difficulty",
+					"number", block.NumberU64(), "parent", block.ParentHash(), "index", it.index)
+				return it.index, nil, nil, errMissingTotalDifficulty
+			}
 		}
 		externTd = new(big.Int).Add(externTd, block.Difficulty())
 
@@ -2064,6 +2134,13 @@ func (bc *BlockChain) insertSidechain(block *types.Block, it *insertIterator) (i
 	// If the externTd was larger than our local TD, we now need to reimport the previous
 	// blocks to regenerate the required state
 	localTd := bc.GetTd(bc.CurrentBlock().Hash(), current)
+	if localTd == nil {
+		// The segment is stored, but this node cannot read the head's total difficulty to
+		// weigh it against: a local condition, not something to blame the blocks for.
+		log.Warn("Sidechain segment has no comparable local total difficulty",
+			"number", current, "hash", bc.CurrentBlock().Hash(), "index", it.index)
+		return it.index, nil, nil, errMissingTotalDifficulty
+	}
 	if localTd.Cmp(externTd) > 0 {
 		log.Info("Sidechain written to disk", "start", it.first().NumberU64(), "end", it.previous().Number, "sidetd", externTd, "localtd", localTd)
 		return it.index, nil, nil, err
@@ -2127,11 +2204,15 @@ func (bc *BlockChain) InsertBlock(block *types.Block) error {
 
 func (bc *BlockChain) PrepareBlock(block *types.Block) (err error) {
 	defer log.Debug("Done prepare block ", "number", block.NumberU64(), "hash", block.Hash(), "validator", block.Header().Validator, "err", err)
-	if _, ok := bc.resultProcess.Get(block.Hash()); ok {
+	// The caches are keyed by HashNoValidator, not by Hash: the result of preparing a block
+	// depends on its header alone, and XDPoS signs the header with a validator signature
+	// that getResultBlock and insertBlock both take off before they look a result up. Asking
+	// by Hash here would miss every entry those two write.
+	if _, ok := bc.resultProcess.Get(block.HashNoValidator()); ok {
 		log.Debug("Stop prepare a block because the result cached", "number", block.NumberU64(), "hash", block.Hash(), "validator", block.Header().Validator)
 		return nil
 	}
-	if _, ok := bc.calculatingBlock.Get(block.Hash()); ok {
+	if _, ok := bc.calculatingBlock.Get(block.HashNoValidator()); ok {
 		log.Debug("Stop prepare a block because inserting", "number", block.NumberU64(), "hash", block.Hash(), "validator", block.Header().Validator)
 		return nil
 	}
@@ -2142,7 +2223,9 @@ func (bc *BlockChain) PrepareBlock(block *types.Block) (err error) {
 	result, err := bc.getResultBlock(block, false)
 	switch err {
 	case nil:
-		bc.resultProcess.Add(block.Hash(), result)
+		// Stored under the same key getResultBlock and insertBlock look a prepared result up
+		// with, so that the precomputation this function exists for is actually reused.
+		bc.resultProcess.Add(block.HashNoValidator(), result)
 		return nil
 	case ErrKnownBlock:
 		return nil
@@ -2154,12 +2237,45 @@ func (bc *BlockChain) PrepareBlock(block *types.Block) (err error) {
 	}
 }
 
+// stampedResultWithBlock returns a copy of a result whose receipts and logs are stamped
+// with the hash of the block it is reused for. A result is prepared from the block as it
+// was propagated, before XDPoS adds the validator signature - which is why the caches are
+// keyed by HashNoValidator - and the signature is part of the hash the block is inserted
+// under. Reusing a result as it was computed would hence publish the pre-signature hash to
+// every subscriber of its logs, and that block is never written anywhere. The cached result
+// is shared with every insert that reuses it, so it is copied instead of being stamped: the
+// hash it is inserted under is the only thing two blocks sharing the key differ in, and
+// stamping the entry in place would let a second insertion overwrite the hash the first one
+// publishes - and restamp the logs a subscriber already holds.
+func stampedResultWithBlock(result *ResultProcessBlock, block *types.Block) *ResultProcessBlock {
+	hash := block.Hash()
+	stamped := *result
+	stamped.receipts = make(types.Receipts, len(result.receipts))
+	// The logs a result publishes are the very objects held by its receipts, which
+	// ProcessBlockNoValidator fills as receipt.Logs. Rebuilding the slice out of the copied
+	// receipts keeps that aliasing, so one pass over the receipts covers the logs as well.
+	stamped.logs = make([]*types.Log, 0, len(result.logs))
+	for i, receipt := range result.receipts {
+		copied := *receipt
+		copied.BlockHash = hash
+		copied.Logs = make([]*types.Log, len(receipt.Logs))
+		for j, receiptLog := range receipt.Logs {
+			copiedLog := *receiptLog
+			copiedLog.BlockHash = hash
+			copied.Logs[j] = &copiedLog
+			stamped.logs = append(stamped.logs, &copiedLog)
+		}
+		stamped.receipts[i] = &copied
+	}
+	return &stamped
+}
+
 func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*ResultProcessBlock, error) {
 	var calculatedBlock *CalculatedBlock
 	if verifiedM2 {
 		if result, ok := bc.resultProcess.Get(block.HashNoValidator()); ok {
 			log.Debug("Get result block from cache ", "number", block.NumberU64(), "hash", block.Hash(), "hash no validator", block.HashNoValidator())
-			return result, nil
+			return stampedResultWithBlock(result, block), nil
 		}
 		log.Debug("Not found cache prepare block ", "number", block.NumberU64(), "hash", block.Hash(), "validator", block.HashNoValidator())
 		if calculatedBlock, _ := bc.calculatingBlock.Get(block.HashNoValidator()); calculatedBlock != nil {
@@ -2183,18 +2299,27 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 	bstart := time.Now()
 	err := bc.validator.ValidateBody(block)
 	switch {
-	case err == ErrKnownBlock:
+	case errors.Is(err, ErrKnownBlock):
 		// Block and state both already known. However if the current block is below
 		// this number we did a rollback and we should reimport it nonetheless.
 		if bc.CurrentBlock().Number.Uint64() >= block.NumberU64() {
 			return nil, ErrKnownBlock
 		}
-	case err == consensus.ErrPrunedAncestor:
+	case errors.Is(err, consensus.ErrPrunedAncestor):
 		// Block competing with the canonical chain, store in the db, but don't process
 		// until the competitor TD goes above the canonical TD
 		currentBlock := bc.CurrentBlock()
 		localTd := bc.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64())
-		externTd := new(big.Int).Add(bc.GetTd(block.ParentHash(), block.NumberU64()-1), block.Difficulty())
+		parentTd := bc.GetTd(block.ParentHash(), block.NumberU64()-1)
+		if localTd == nil || parentTd == nil {
+			// Without both total difficulties the competitor cannot be weighed against
+			// this node's chain. That says nothing about the block, so the caller must not
+			// report it as a consensus failure.
+			log.Warn("Competing block has no comparable total difficulty",
+				"number", block.NumberU64(), "hash", block.Hash(), "parent", block.ParentHash())
+			return nil, errMissingTotalDifficulty
+		}
+		externTd := new(big.Int).Add(parentTd, block.Difficulty())
 		if localTd.Cmp(externTd) > 0 {
 			return nil, err
 		}
@@ -2244,7 +2369,7 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 	receipts, logs, usedGas, err := bc.processor.ProcessBlockNoValidator(calculatedBlock, statedb, tradingState, bc.vmConfig, feeCapacity)
 	process := time.Since(bstart)
 	if err != nil {
-		if err != ErrStopPreparingBlock {
+		if !errors.Is(err, ErrStopPreparingBlock) {
 			bc.reportBlock(block, receipts, err)
 		}
 		return nil, err
@@ -2267,6 +2392,9 @@ func (bc *BlockChain) UpdateBlocksHashCache(block *types.Block) []common.Hash {
 	cached, ok := bc.blocksHashCache.Get(blockNumber)
 
 	if ok {
+		if slices.Contains(cached, block.Hash()) {
+			return cached
+		}
 		hashArr := cached
 		hashArr = append(hashArr, block.Hash())
 		bc.blocksHashCache.Remove(blockNumber)
@@ -2494,6 +2622,11 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 	// we'll leave it in for legacy reasons.
 	//
 	// TODO(karalabe): This should be nuked out, no idea how, deprecate some APIs?
+	//
+	// The removals are delivered synchronously, like the reborn logs below and the
+	// canonical logs in PostChainEvents. Spawning the send let a subscriber observe
+	// the logs of the new chain before the removals of the blocks they revert
+	// (geth #19396).
 	{
 		for i := len(oldChain) - 1; i >= 0; i-- {
 			block := bc.GetBlock(oldChain[i].Hash(), oldChain[i].Number.Uint64())
@@ -2504,7 +2637,7 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 				deletedLogs = append(deletedLogs, logs...)
 			}
 			if len(deletedLogs) > 512 {
-				go bc.rmLogsFeed.Send(RemovedLogsEvent{deletedLogs})
+				bc.rmLogsFeed.Send(RemovedLogsEvent{deletedLogs})
 				deletedLogs = nil
 			}
 			// TODO(daniel): remove chainSideFeed, reference PR #30601
@@ -2512,7 +2645,7 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 			// bc.chainSideFeed.Send(ChainSideEvent{Block: block})
 		}
 		if len(deletedLogs) > 0 {
-			go bc.rmLogsFeed.Send(RemovedLogsEvent{deletedLogs})
+			bc.rmLogsFeed.Send(RemovedLogsEvent{deletedLogs})
 		}
 	}
 
@@ -2550,8 +2683,13 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 			bc.logsFeed.Send(rebirthLogs)
 			rebirthLogs = nil
 		}
-		// Update the head block
-		bc.writeHeadBlock(block, true)
+		// Update the head block. The body is on disk already: the ancestors were
+		// persisted by the writeBlockWithState call that imported them, and the
+		// head by the block batch committed before reorg was entered. The GetBlock
+		// above only guards a corrupt database, it is not what writes the body.
+		// Keep that order, or the markers written here can outlive the block
+		// they point at.
+		bc.writeHeadBlock(block)
 		// prepare set of masternodes for the next epoch
 		if bc.chainConfig.XDPoS != nil && ((block.NumberU64() % bc.chainConfig.XDPoS.Epoch) == (bc.chainConfig.XDPoS.Epoch - bc.chainConfig.XDPoS.Gap)) {
 			if err := bc.UpdateM1(); err != nil {
@@ -2725,59 +2863,44 @@ func (bc *BlockChain) UpdateM1() error {
 		return ErrNotXDPoS
 	}
 	log.Info("It's time to update new set of masternodes for the next epoch...")
-	// get masternodes information from smart contract
-	client, err := bc.GetClient()
-	if err != nil {
-		return fmt.Errorf("failed to get client: %w", err)
-	}
-	addr := common.MasternodeVotingSMCBinary
-	validator, err := contractValidator.NewXDCValidator(addr, client)
-	if err != nil {
-		return fmt.Errorf("failed to create validator contract: %w", err)
-	}
-	opts := new(bind.CallOpts)
-
-	var candidates []common.Address
-	// get candidates from slot of stateDB
-	// if can't get anything, request from contracts
+	// Read the candidates and their stakes off the state of the head, which is
+	// the block this refresh is for. The stakes used to come back from the
+	// voting contract over this node's own IPC endpoint: that cost an eth_call
+	// per candidate while the chain write lock was held, and it is also what
+	// made the refresh depend on an IPC endpoint at all (a node started with
+	// --ipcdisable fails the refresh, and the callers turn that failure into
+	// log.Crit).
 	stateDB, err := bc.State()
 	if err != nil {
-		candidates, err = validator.GetCandidates(opts)
-		if err != nil {
-			return err
-		}
-	} else if stateDB == nil {
-		return errors.New("nil stateDB in UpdateM1")
-	} else {
-		candidates = stateDB.GetCandidates()
+		return fmt.Errorf("failed to open the state of the head for the masternode update: %w", err)
 	}
 
 	var ms []utils.Masternode
-	for _, candidate := range candidates {
-		v, err := validator.GetCandidateCap(opts, candidate)
-		if err != nil {
-			return err
-		}
-		// TODO: smart contract shouldn't return "0x0000000000000000000000000000000000000000"
-		if !candidate.IsZero() {
-			ms = append(ms, utils.Masternode{Address: candidate, Stake: v})
-		}
+	// GetCandidates skips the zero entries of the candidates array itself, so
+	// there is nothing to filter out here.
+	for _, candidate := range stateDB.GetCandidates() {
+		ms = append(ms, utils.Masternode{Address: candidate, Stake: stateDB.GetCandidateCap(candidate)})
+	}
+	// GetCandidates and GetCandidateCap return zero values when the voting
+	// contract storage cannot be read, memoizing the failure in StateDB.Error().
+	// A set derived from such reads would be empty or partial, so surface the
+	// read error instead: there is no IPC fallback for the candidates any more,
+	// and the call sites stop the node on any error returned here.
+	if err := stateDB.Error(); err != nil {
+		return fmt.Errorf("reading the masternodes of the head from state: %w", err)
 	}
 	if len(ms) == 0 {
 		log.Error("No masternode found. Stopping node")
 		return errors.New("no masternode found")
 	} else {
-		xdc_sort.Slice(ms, func(i, j int) bool {
-			return ms[i].Stake.Cmp(ms[j].Stake) >= 0
-		})
-		log.Info("Ordered list of masternode candidates")
-		for _, m := range ms {
-			log.Info("", "address", m.Address, "stake", m.Stake)
-		}
-		// update masternodes
-
+		utils.SortMasternodesByStakeDesc(ms)
 		log.Info("Updating new set of masternodes")
-		// get block header
+		// The set above was read from bc.State(), i.e. the state of the current
+		// block, and this header is that same block because both call sites run
+		// right after writeHeadBlock, while the chain write lock is held by the
+		// import that triggered the refresh. The two marks are independent
+		// otherwise - Rollback moves only the header one - so a caller outside
+		// that path cannot rely on them agreeing.
 		header := bc.CurrentHeader()
 		err = engine.UpdateMasternodes(bc, header, ms)
 		if err != nil {

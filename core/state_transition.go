@@ -33,7 +33,8 @@ import (
 // ExecutionResult includes all output after executing given evm
 // message no matter the execution itself is successful or not.
 type ExecutionResult struct {
-	UsedGas    uint64 // Total used gas but include the refunded gas
+	UsedGas    uint64 // Total used gas, refunded gas is deducted
+	MaxUsedGas uint64 // Maximum gas consumed during execution, excluding gas refunds.
 	Err        error  // Any error encountered during the execution(listed in core/vm/errors.go)
 	ReturnData []byte // Returned data from evm(function result or data supplied with revert opcode)
 }
@@ -478,9 +479,13 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 		ret, st.gasRemaining, vmerr = st.evm.Call(msg.From, st.to(), msg.Data, st.gasRemaining, value)
 	}
 
+	// Record the gas used excluding gas refunds. This value represents the actual
+	// gas allowance required to complete execution.
+	peakGasUsed := st.gasUsed()
+
 	// Compute refund counter, capped to a refund quotient.
-	gasRefund := st.calcRefund()
-	st.gasRemaining += gasRefund
+	st.gasRemaining += st.calcRefund()
+
 	if rules.IsPrague {
 		// After EIP-7623: Data-heavy transactions pay the floor gas.
 		if st.gasUsed() < floorDataGas {
@@ -489,6 +494,9 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 			if t := st.evm.Config.Tracer; t != nil && t.OnGasChange != nil {
 				t.OnGasChange(prev, st.gasRemaining, tracing.GasChangeTxDataFloor)
 			}
+		}
+		if peakGasUsed < floorDataGas {
+			peakGasUsed = floorDataGas
 		}
 	}
 	st.returnGas()
@@ -503,17 +511,23 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 		} else {
 			effectiveTip := msg.GasPrice
 			if rules.IsEIP1559 {
-				effectiveTip = new(big.Int).Sub(msg.GasFeeCap, st.evm.Context.BaseFee)
-				if effectiveTip.Cmp(msg.GasTipCap) > 0 {
-					effectiveTip = msg.GasTipCap
-				}
+				effectiveTip = new(big.Int).Sub(msg.GasPrice, st.evm.Context.BaseFee)
 			}
-			st.state.AddBalance(st.evm.Context.Coinbase, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), effectiveTip), tracing.BalanceIncreaseRewardTransactionFee)
+			if st.evm.Config.NoBaseFee && msg.GasFeeCap.Sign() == 0 && msg.GasTipCap.Sign() == 0 {
+				// Skip fee payment when NoBaseFee is set and the fee fields
+				// are 0. This avoids a negative effectiveTip being applied to
+				// the coinbase when simulating calls.
+			} else {
+				fee := new(big.Int).SetUint64(st.gasUsed())
+				fee.Mul(fee, effectiveTip)
+				st.state.AddBalance(st.evm.Context.Coinbase, fee, tracing.BalanceIncreaseRewardTransactionFee)
+			}
 		}
 	}
 
 	return &ExecutionResult{
 		UsedGas:    st.gasUsed(),
+		MaxUsedGas: peakGasUsed,
 		Err:        vmerr,
 		ReturnData: ret,
 	}, nil

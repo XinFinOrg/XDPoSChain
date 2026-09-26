@@ -304,8 +304,7 @@ func PrepareXDCTestBlockChain(t *testing.T, numOfBlocks int, chainConfig *params
 	currentBlock := blockchain.Genesis()
 
 	go func() {
-		for range core.CheckpointCh {
-			checkpointChanMsg := <-core.CheckpointCh
+		for checkpointChanMsg := range core.CheckpointCh {
 			log.Info("[V1] Got a message from core CheckpointChan!", "msg", checkpointChanMsg)
 		}
 	}()
@@ -417,7 +416,7 @@ func createBlockFromHeader(bc *core.BlockChain, customHeader *types.Header, txs 
 		Penalties:   customHeader.Penalties,
 	}
 	if config != nil && config.IsEIP1559(header.Number) {
-		header.BaseFee = new(big.Int).Set(common.BaseFee)
+		header.BaseFee = params.BaseFeeForBlock(config, header.Number)
 	}
 	var block *types.Block
 	if len(txs) == 0 {
