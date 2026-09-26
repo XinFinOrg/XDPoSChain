@@ -96,6 +96,13 @@ const (
 	Bn256PairingPerPointGas uint64 = 80000  // Per-point price for an elliptic curve pairing check
 	XDCXPriceGas            uint64 = 1
 
+	// BlobTxPointEvaluationPrecompileGas keeps the upstream name and value so
+	// that gas accounting stays comparable. As of this commit its only use is
+	// pricing the 0x0a stub in core/vm/contracts.go: XDC has no blob ecosystem
+	// and deliberately does not implement the EIP-4844 point evaluation
+	// precompile.
+	BlobTxPointEvaluationPrecompileGas uint64 = 50000
+
 	// The Refund Quotient is the cap on how much of the used gas can be refunded. Before EIP-3529,
 	// up to half the consumed gas could be refunded. Redefined as 1/5th in EIP-3529
 	RefundQuotient        uint64 = 2
