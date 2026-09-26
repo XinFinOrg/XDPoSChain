@@ -49,7 +49,7 @@ var (
 // contract failure tests.
 type precompiledFailureTest struct {
 	Input         string
-	ExpectedError error
+	ExpectedError string
 	Name          string
 }
 
@@ -243,22 +243,22 @@ var XDCxEpochPriceWithEmptyTradingStateTests = []precompiledTest{
 var blake2FMalformedInputTests = []precompiledFailureTest{
 	{
 		Input:         "",
-		ExpectedError: errBlake2FInvalidInputLength,
+		ExpectedError: "invalid input length",
 		Name:          "vector 0: empty input",
 	},
 	{
 		Input:         "00000c48c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5d182e6ad7f520e511f6c3e2b8c68059b6bbd41fbabd9831f79217e1319cde05b61626300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000300000000000000000000000000000001",
-		ExpectedError: errBlake2FInvalidInputLength,
+		ExpectedError: "invalid input length",
 		Name:          "vector 1: less than 213 bytes input",
 	},
 	{
 		Input:         "000000000c48c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5d182e6ad7f520e511f6c3e2b8c68059b6bbd41fbabd9831f79217e1319cde05b61626300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000300000000000000000000000000000001",
-		ExpectedError: errBlake2FInvalidInputLength,
+		ExpectedError: "invalid input length",
 		Name:          "vector 2: more than 213 bytes input",
 	},
 	{
 		Input:         "0000000c48c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5d182e6ad7f520e511f6c3e2b8c68059b6bbd41fbabd9831f79217e1319cde05b61626300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000300000000000000000000000000000002",
-		ExpectedError: errBlake2FInvalidFinalFlag,
+		ExpectedError: "invalid final flag",
 		Name:          "vector 3: malformed final block indicator flag",
 	},
 }
@@ -367,7 +367,7 @@ func testPrecompiledFailure(addr string, test precompiledFailureTest, t *testing
 	gas := p.RequiredGas(in)
 	t.Run(test.Name, func(t *testing.T) {
 		_, _, err := RunPrecompiledContract(nil, p, in, gas, nil)
-		if err.Error() != test.ExpectedError.Error() {
+		if err.Error() != test.ExpectedError {
 			t.Errorf("Expected error [%v], got [%v]", test.ExpectedError, err)
 		}
 		// Verify that the precompile did not touch the input buffer
