@@ -236,9 +236,17 @@ func testLinkCase(tcInput linkTestCaseInput) error {
 	return nil
 }
 
-// TODO(daniel): make this case pass test, ref: #31379
+// TestContractLinking checks that a dependency tree of libraries is deployed
+// and linked before the contract that depends on them.
+//
+// It used to be skipped with a TODO pointing at geth #31379. The cause was
+// that the addresses were linked as String()[2:], which carries this
+// repository's xdc prefix and so is 41 characters where the __$<id>$__
+// placeholder is 40. An odd number of links then leaves an odd number of hex
+// digits and the bytecode fails to decode; an even number of links decodes,
+// but shifts every address in the bytecode by one nibble, which is what this
+// case reported as a dependency that had not been deployed.
 func TestContractLinking(t *testing.T) {
-	t.Skip("Skip TestContractLinking")
 	for i, tc := range []linkTestCaseInput{
 		// test simple contract without any dependencies or overrides
 		{
