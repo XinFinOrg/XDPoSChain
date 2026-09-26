@@ -47,7 +47,6 @@ type newBackendEvent struct {
 // Manager is an overarching account manager that can communicate with various
 // backends for signing transactions.
 type Manager struct {
-	config      *Config                    // Global account manager configurations
 	backends    map[reflect.Type][]Backend // Index of backends currently registered
 	updaters    []event.Subscription       // Wallet update subscriptions for all backends
 	updates     chan WalletEvent           // Subscription sink for backend wallet changes
@@ -78,7 +77,6 @@ func NewManager(config *Config, backends ...Backend) *Manager {
 	}
 	// Assemble the account manager and return
 	am := &Manager{
-		config:      config,
 		backends:    make(map[reflect.Type][]Backend),
 		updaters:    subs,
 		updates:     updates,
@@ -101,11 +99,6 @@ func (am *Manager) Close() error {
 	errc := make(chan error)
 	am.quit <- errc
 	return <-errc
-}
-
-// Config returns the configuration of account manager.
-func (am *Manager) Config() *Config {
-	return am.config
 }
 
 // AddBackend starts the tracking of an additional backend for wallet updates.
