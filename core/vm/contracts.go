@@ -134,7 +134,8 @@ var PrecompiledContractsEIP1559 = PrecompiledContracts{
 // stay unchanged. Prague itself is still nil on mainnet and Apothem; devnet
 // (chainId 551) schedules it at block 50000 and is treated as resetable.
 //
-// EIP-2537 (0x0b-0x11) is not provided by this bucket.
+// EIP-2537 (0x0b-0x11) is provided by this bucket as well, and is reachable on
+// exactly the same networks: the ones that schedule Prague.
 var PrecompiledContractsPrague = PrecompiledContracts{
 	common.BytesToAddress([]byte{0x01}): &ecrecover{},
 	common.BytesToAddress([]byte{0x02}): &sha256hash{},
@@ -146,6 +147,13 @@ var PrecompiledContractsPrague = PrecompiledContracts{
 	common.BytesToAddress([]byte{0x08}): &bn256PairingIstanbul{},
 	common.BytesToAddress([]byte{0x09}): &blake2F{},
 	common.BytesToAddress([]byte{0x0a}): kzgStub,
+	common.BytesToAddress([]byte{0x0b}): &bls12381G1Add{},
+	common.BytesToAddress([]byte{0x0c}): &bls12381G1MultiExp{},
+	common.BytesToAddress([]byte{0x0d}): &bls12381G2Add{},
+	common.BytesToAddress([]byte{0x0e}): &bls12381G2MultiExp{},
+	common.BytesToAddress([]byte{0x0f}): &bls12381Pairing{},
+	common.BytesToAddress([]byte{0x10}): &bls12381MapG1{},
+	common.BytesToAddress([]byte{0x11}): &bls12381MapG2{},
 }
 
 // PrecompiledContractsOsaka contains the set of pre-compiled Ethereum
@@ -161,6 +169,13 @@ var PrecompiledContractsOsaka = PrecompiledContracts{
 	common.BytesToAddress([]byte{0x08}): &bn256PairingIstanbul{},
 	common.BytesToAddress([]byte{0x09}): &blake2F{},
 	common.BytesToAddress([]byte{0x0a}): kzgStub,
+	common.BytesToAddress([]byte{0x0b}): &bls12381G1Add{},
+	common.BytesToAddress([]byte{0x0c}): &bls12381G1MultiExp{},
+	common.BytesToAddress([]byte{0x0d}): &bls12381G2Add{},
+	common.BytesToAddress([]byte{0x0e}): &bls12381G2MultiExp{},
+	common.BytesToAddress([]byte{0x0f}): &bls12381Pairing{},
+	common.BytesToAddress([]byte{0x10}): &bls12381MapG1{},
+	common.BytesToAddress([]byte{0x11}): &bls12381MapG2{},
 }
 
 var (
