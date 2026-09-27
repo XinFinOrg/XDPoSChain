@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"math/rand"
 	"os"
 	"testing"
 
@@ -477,6 +478,131 @@ func BenchmarkPrecompiledBn256Add(b *testing.B) { benchJson("bn256Add", "06", b)
 func TestPrecompiledModExpOOG(t *testing.T) {
 	for _, test := range modexpTests {
 		testPrecompiledOOG("05", test, t)
+	}
+}
+
+// modexpInput encodes an EIP-198 modexp call from its three operands.
+func modexpInput(base, exp, mod []byte) []byte {
+	head := make([]byte, 96)
+	for i, l := range []int{len(base), len(exp), len(mod)} {
+		new(big.Int).SetInt64(int64(l)).FillBytes(head[i*32 : (i+1)*32])
+	}
+	input := make([]byte, 0, len(head)+len(base)+len(exp)+len(mod))
+	input = append(input, head...)
+	input = append(input, base...)
+	input = append(input, exp...)
+	return append(input, mod...)
+}
+
+// modexpStdlib computes the expected modexp result with the standard library.
+func modexpStdlib(base, exp, mod []byte) []byte {
+	m := new(big.Int).SetBytes(mod)
+	if m.Sign() == 0 {
+		return make([]byte, len(mod))
+	}
+	v := new(big.Int).Exp(new(big.Int).SetBytes(base), new(big.Int).SetBytes(exp), m)
+	return common.LeftPadBytes(v.Bytes(), len(mod))
+}
+
+// Tests that the precompile output matches the standard library's math/big,
+// which is what it used before the switch to the patched fork. It pins the
+// result only: reverting the precompile to math/big keeps it green, so it
+// catches behavioural drift in the patched fork but not a silent revert.
+func TestPrecompiledModExpMatchesStdlib(t *testing.T) {
+	type modexpCase struct{ base, exp, mod []byte }
+	cases := []modexpCase{
+		{common.FromHex("03"), common.FromHex("ffffffffffffffff"), common.FromHex("ffff")},
+		{common.FromHex("01"), common.FromHex("ffffffffffffffff"), common.FromHex("ffff")}, // base == 1
+		{nil, common.FromHex("ffffffffffffffff"), common.FromHex("ffff")},                  // base == 0
+		{common.FromHex("03"), nil, common.FromHex("ffff")},                                // exp == 0
+		{common.FromHex("03"), common.FromHex("01"), common.FromHex("ffff")},               // exp == 1
+		{common.FromHex("ffff"), common.FromHex("ffff"), common.FromHex("01")},             // mod == 1
+		{common.FromHex("ffff"), common.FromHex("ffff"), common.FromHex("ffff")},           // base == mod
+		{common.FromHex("ff"), common.FromHex("ff"), common.FromHex("02")},                 // even modulus
+		{common.FromHex("0101"), common.FromHex("0100"), common.FromHex("0100")},           // power of two modulus
+	}
+	rnd := rand.New(rand.NewSource(1))
+	randBytes := func(n int) []byte {
+		b := make([]byte, n)
+		rnd.Read(b)
+		return b
+	}
+	for i := 0; i < 200; i++ {
+		base := randBytes(1 + rnd.Intn(64))
+		exp := randBytes(1 + rnd.Intn(32))
+		mod := randBytes(1 + rnd.Intn(64))
+		switch i % 4 {
+		case 1:
+			mod[len(mod)-1] &^= 1 // even modulus
+		case 2:
+			clear(mod)
+			mod[len(mod)-1] = 1 << uint(1+rnd.Intn(7)) // power of two modulus
+		case 3:
+			clear(mod)
+			mod[len(mod)-1] = 1 // modulus 1
+		}
+		if new(big.Int).SetBytes(mod).Sign() == 0 {
+			mod[len(mod)-1] = 1 // a zero modulus would be an unbounded exponentiation
+		}
+		cases = append(cases, modexpCase{base, exp, mod})
+	}
+	// 1024-byte operands, the operand size limit introduced by EIP-7823. The
+	// osaka variant below enables the cap, and these cases sit exactly at it.
+	for i := 0; i < 3; i++ {
+		base := randBytes(1024)
+		mod := randBytes(1024)
+		mod[len(mod)-1] |= 1
+		cases = append(cases, modexpCase{base, randBytes(16), mod})
+	}
+	// Large exponents, the shape the patched fork rewrites most. Measured at
+	// roughly 2ms / 15ms / 130ms per run for 256 / 512 / 1024 bytes.
+	for _, size := range []int{256, 512, 1024} {
+		base := randBytes(size)
+		mod := randBytes(size)
+		mod[len(mod)-1] |= 1
+		cases = append(cases, modexpCase{base, randBytes(size), mod})
+	}
+	bigExp := make([]byte, 512)
+	for i := range bigExp {
+		bigExp[i] = 0xff // the largest exponent of that width
+	}
+	bigMod := randBytes(512)
+	bigMod[len(bigMod)-1] |= 1
+	cases = append(cases, modexpCase{randBytes(512), bigExp, bigMod})
+
+	// All modexp variants share Run, so run the whole table against each of
+	// them: bare, EIP-2565, EIP-2565+EIP-7883 and the EIP-2565+EIP-7823+
+	// EIP-7883 set used by PrecompiledContractsOsaka. The variants are built
+	// here instead of taken from allPrecompiles, which does not hold the Osaka
+	// set, and adding it there would widen the fuzz test's input set.
+	with7823 := &bigModExp{eip2565: true, eip7823: true, eip7883: true}
+	variants := []struct {
+		name string
+		p    PrecompiledContract
+	}{
+		{"05", &bigModExp{eip2565: false, eip7883: false}},
+		{"f5", &bigModExp{eip2565: true, eip7883: false}},
+		{"f6", &bigModExp{eip2565: true, eip7883: true}},
+		{"osaka", with7823},
+	}
+	for _, variant := range variants {
+		for i, c := range cases {
+			input := modexpInput(c.base, c.exp, c.mod)
+			gas := variant.p.RequiredGas(input)
+			res, _, err := RunPrecompiledContract(nil, variant.p, input, gas, nil)
+			if err != nil {
+				t.Fatalf("%s case %d (base %x, exp %x, mod %x): %v", variant.name, i, c.base, c.exp, c.mod, err)
+			}
+			if want := modexpStdlib(c.base, c.exp, c.mod); !bytes.Equal(res, want) {
+				t.Fatalf("%s case %d (base %x, exp %x, mod %x): got %x, want %x", variant.name, i, c.base, c.exp, c.mod, res, want)
+			}
+		}
+	}
+	// EIP-7823 rejects operands larger than 1024 bytes, on the Osaka variant
+	// only; no other test exercises that path.
+	oversize := modexpInput(make([]byte, 1025), []byte{1}, []byte{1})
+	if _, _, err := RunPrecompiledContract(nil, with7823, oversize, with7823.RequiredGas(oversize), nil); err == nil {
+		t.Fatal("eip7823 variant accepted a 1025-byte operand")
 	}
 }
 
