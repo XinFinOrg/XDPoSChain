@@ -11,7 +11,7 @@ Current network activation block numbers:
 | :-----: | -------: | :----: | :---: |
 | mainnet | 98802000 |  TBD   |  TBD  |
 | testnet | 71551800 |  TBD   |  TBD  |
-| devnet  |    43200 |  TBD   |  TBD  |
+| devnet  |    25000 |  50000 |  TBD  |
 
 Recommended compiler settings:
 
