@@ -552,3 +552,88 @@ func TestRepairGapSnapshotsSkipsEmptyCandidates(t *testing.T) {
 		t.Fatalf("stateCalls = %d, want 1", chain.stateCalls)
 	}
 }
+
+// gapSnapshotReadFailure is what the database of the refused-read case answers with, named so a
+// test can tell that the sentinel keeps the storage error as its cause.
+var gapSnapshotReadFailure = errors.New("simulated gap snapshot read failure")
+
+// refusingSnapshotDB refuses every read, so a test can model a database that cannot answer for a
+// stored snapshot at all.
+type refusingSnapshotDB struct {
+	ethdb.Database
+}
+
+func (db *refusingSnapshotDB) Get([]byte) ([]byte, error) {
+	return nil, gapSnapshotReadFailure
+}
+
+// TestGetSnapshotReportsAnUnavailableSnapshot pins how the snapshot walk reports a gap block
+// whose set cannot be obtained. The gap block is resolved by canonical number, so it is this
+// node's own block: a number it cannot resolve at all, an entry that is not stored, a read the
+// database refused and a blob that does not decode all have to reach the caller as a sentinel
+// core classifies as local, rather than as a bare storage error it would read as the fault of the
+// batch under verification.
+//
+// The in-memory cache is empty in every case, which is the state the startup repair exists for: a
+// set written before a gap block and its snapshot shared a batch, or one no path derived.
+func TestGetSnapshotReportsAnUnavailableSnapshot(t *testing.T) {
+	// Under the fixture schedule (epoch 900, gap 450) the snapshot walk resolves 1350 to the gap
+	// block 450.
+	const number = uint64(1350)
+
+	// newChain returns a chain that holds a canonical header for the gap block, unless told
+	// otherwise.
+	newChain := func(withGapHeader bool) *repairTestChain {
+		chain := &repairTestChain{}
+		if withGapHeader {
+			chain.addHeader(&types.Header{Number: new(big.Int).SetUint64(testRepairGap), Extra: []byte("gap")})
+		}
+		return chain
+	}
+
+	t.Run("the gap number has no canonical header", func(t *testing.T) {
+		x := newRepairEngine(rawdb.NewMemoryDatabase())
+
+		_, err := x.getSnapshot(newChain(false), number, false)
+		if !errors.Is(err, consensus.ErrMissingCanonicalGapHeader) {
+			t.Fatalf("getSnapshot() = %v, want %v", err, consensus.ErrMissingCanonicalGapHeader)
+		}
+	})
+
+	t.Run("no snapshot is stored for the gap block", func(t *testing.T) {
+		x := newRepairEngine(rawdb.NewMemoryDatabase())
+
+		_, err := x.getSnapshot(newChain(true), number, false)
+		if !errors.Is(err, consensus.ErrGapSnapshotUnavailable) {
+			t.Fatalf("getSnapshot() = %v, want %v", err, consensus.ErrGapSnapshotUnavailable)
+		}
+		if errors.Is(err, consensus.ErrMissingCanonicalGapHeader) {
+			t.Fatal("a gap block whose set is missing must not be reported as a missing canonical header")
+		}
+	})
+
+	t.Run("the stored snapshot cannot be read", func(t *testing.T) {
+		x := newRepairEngine(&refusingSnapshotDB{Database: rawdb.NewMemoryDatabase()})
+
+		_, err := x.getSnapshot(newChain(true), number, false)
+		if !errors.Is(err, consensus.ErrGapSnapshotUnavailable) {
+			t.Fatalf("getSnapshot() = %v, want %v", err, consensus.ErrGapSnapshotUnavailable)
+		}
+		// The sentinel names the condition, the storage error stays the cause.
+		if !errors.Is(err, gapSnapshotReadFailure) {
+			t.Fatalf("getSnapshot() = %v, want the read failure kept as its cause", err)
+		}
+	})
+
+	t.Run("the stored snapshot does not decode", func(t *testing.T) {
+		db := rawdb.NewMemoryDatabase()
+		x := newRepairEngine(db)
+		chain := newChain(true)
+		rawdb.WriteXdposV2Snapshot(db, chain.GetHeaderByNumber(testRepairGap).Hash(), []byte("not a snapshot"))
+
+		_, err := x.getSnapshot(chain, number, false)
+		if !errors.Is(err, consensus.ErrGapSnapshotUnavailable) {
+			t.Fatalf("getSnapshot() = %v, want %v", err, consensus.ErrGapSnapshotUnavailable)
+		}
+	})
+}

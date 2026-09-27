@@ -103,7 +103,11 @@ func (x *XDPoS_v2) getSnapshot(chain consensus.ChainReader, number uint64, isGap
 	gapHeader := chain.GetHeaderByNumber(gapBlockNum)
 	if gapHeader == nil {
 		log.Error("[getSnapshot] Fail to get header", "number", gapBlockNum)
-		return nil, fmt.Errorf("getSnapshot fail to get header by number: %v", gapBlockNum)
+		// Reported as a sentinel rather than as a bare error: the number this node cannot read
+		// by canonical number is the gap block of an epoch switch, and the reason can be its own
+		// chain (the gap block sits on a sidechain stored without being imported) rather than
+		// the batch under verification. core's classification reads the sentinel as local.
+		return nil, fmt.Errorf("%w: gap block %v", consensus.ErrMissingCanonicalGapHeader, gapBlockNum)
 	}
 	gapBlockHash := gapHeader.Hash()
 	log.Debug("get snapshot from gap block", "number", gapBlockNum, "hash", gapBlockHash.Hex())
@@ -116,7 +120,13 @@ func (x *XDPoS_v2) getSnapshot(chain consensus.ChainReader, number uint64, isGap
 	// If an on-disk checkpoint snapshot can be found, use that
 	snap, err := loadSnapshot(x.db, gapBlockHash)
 	if err != nil {
-		return nil, err
+		// Reported as a sentinel rather than as a bare error: the header above is this node's
+		// own canonical gap block, so an entry that is absent, unreadable or undecodable is a
+		// condition of its database rather than a fault of the batch under verification. core's
+		// classification reads the sentinel as local, and the storage or decoding error stays
+		// the cause.
+		return nil, fmt.Errorf("%w: gap block %v (%s): %w",
+			consensus.ErrGapSnapshotUnavailable, gapBlockNum, gapBlockHash.Hex(), err)
 	}
 
 	log.Trace("Loaded snapshot from disk", "number", gapBlockNum, "hash", gapBlockHash)

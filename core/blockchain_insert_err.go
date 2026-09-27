@@ -67,9 +67,9 @@ type insertErrClass struct {
 // DescribeLocalInsertFailure. An error in no entry is the block's fault, the class of
 // consensus.ErrUnknownAncestor and of everything this fork has not classified yet.
 //
-// Every local entry is also marked as not a bad block: those sentinels are only raised inside
-// this package, and a local interruption written into the bad block database would outlive the
-// condition that caused it - a shutdown, a cancel, a clock that steps back.
+// Every local entry is also marked as not a bad block: each names a condition of this node -
+// its own records, its own state, its own clock - so writing it into the bad block database
+// would outlive the condition that caused it, a shutdown, a cancel or a clock that steps back.
 var insertErrClasses = []struct {
 	err    error
 	class  insertErrClass
@@ -108,9 +108,13 @@ var insertErrClasses = []struct {
 	// This node no longer holds the ancestor's state.
 	{consensus.ErrPrunedAncestor, insertErrClass{local: true}, "ancestor state is pruned"},
 
-	// The gap block of an epoch switch is not on the canonical chain to be read by number.
-	// Reading it keeps failing the same way until the sidechain it sits on is imported, so
-	// keeping the batch parked would only re-verify it on every futureBlocksLoop tick.
+	// The gap block of an epoch switch is not canonical to be read by number, and stays that
+	// way until the sidechain it sits on is imported: local, and not worth parking.
+	{consensus.ErrMissingCanonicalGapHeader, insertErrClass{local: true}, "the epoch gap block is not canonical"},
+
+	// The stored set of that gap block is this node's own record, and an absent, unreadable or
+	// undecodable one is read the same way on the next attempt: local, and not worth parking.
+	{consensus.ErrGapSnapshotUnavailable, insertErrClass{local: true}, "the epoch gap block snapshot is unavailable"},
 
 	// Ahead of this node's clock, so the block is queued rather than failed. Not local on its
 	// own: the one path that hands it out wraps it in ErrLocalInsertAheadOfClock.
