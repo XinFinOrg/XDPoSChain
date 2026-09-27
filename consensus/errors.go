@@ -27,6 +27,21 @@ var (
 	// that is known, but the state of which is not available.
 	ErrPrunedAncestor = errors.New("pruned ancestor")
 
+	// ErrMissingCanonicalGapHeader is returned when XDPoS reads the gap block of an epoch
+	// switch by canonical number (the snapshot walk) and this node holds no canonical header
+	// for it. That happens when the gap block sits on a stored sidechain this node has not
+	// imported, so the condition is this node's own chain rather than the batch under
+	// verification: core's classification reads it as a local failure.
+	ErrMissingCanonicalGapHeader = errors.New("missing canonical gap header")
+
+	// ErrGapSnapshotUnavailable is returned when the snapshot of a gap block resolves by
+	// canonical number (the snapshot walk) but the stored set cannot be loaded: no entry is
+	// stored under the block's hash, the read was refused, or the blob does not decode. The
+	// write path stores the set in the batch that makes the gap block canonical, so an entry
+	// this node cannot read is a condition of its own database rather than of the batch under
+	// verification: core's classification reads it as a local failure.
+	ErrGapSnapshotUnavailable = errors.New("gap snapshot is unavailable")
+
 	// ErrFutureBlock is returned when a block's timestamp is in the future according
 	// to the current node.
 	ErrFutureBlock = errors.New("block in the future")

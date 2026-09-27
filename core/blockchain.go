@@ -98,6 +98,34 @@ var (
 	errInvalidOldChain        = errors.New("invalid old chain")
 	errInvalidNewChain        = errors.New("invalid new chain")
 
+	// ErrInsertionInterrupted is returned when the chain is terminating or an import was cut
+	// short by InterruptInsert. Local - see IsLocalInsertError.
+	ErrInsertionInterrupted = errors.New("insertion is interrupted")
+
+	// ErrChainStopped is returned once the chain has been stopped. chainmu is a ClosableMutex,
+	// so TryLock waits for another insertion and reports the stopped chain only after Stop
+	// closed it. Local - see IsLocalInsertError.
+	ErrChainStopped = errors.New("blockchain is stopped")
+
+	// ErrLocalInsertCondition keeps the local conditions with no sentinel of their own and that
+	// a retry cannot repair: a receipt batch the database refused to write, a state or trie
+	// commit this node refused, a parent state it can no longer open, a stored block whose total
+	// difficulty it no longer holds. Local - see IsLocalInsertError.
+	ErrLocalInsertCondition = errors.New("local insert condition")
+
+	// ErrLocalInsertAheadOfClock is the local condition that heals on its own: the block is
+	// dated further ahead of the clock than the future queue may hold, so the queueing fails
+	// rather than the block, and a retry once the clock catches up succeeds. Retryable, unlike
+	// ErrLocalInsertCondition, so a parked block that failed for this stays parked instead of
+	// being evicted on the first tick. insertSideChain wraps consensus.ErrFutureBlock in it.
+	ErrLocalInsertAheadOfClock = errors.New("local insert condition: block ahead of this node's clock")
+
+	// ErrLocalInsertRefused is the local condition that cannot heal: this node refused a reorg
+	// while adopting a stored block, and refuses it again each time, since the head does not
+	// move and the block keeps winning fork choice. Kept apart from ErrLocalInsertCondition
+	// because a refusal is a verdict this node reached, not a record it is missing.
+	ErrLocalInsertRefused = errors.New("local insert refused")
+
 	CheckpointCh = make(chan int)
 )
 
