@@ -4480,6 +4480,26 @@ func TestPendingDynamicFeeThresholdWithoutBaseFee(t *testing.T) {
 	}
 }
 
+// TestInitClampsTipAboveMax checks that the tip a pool is initialized with goes
+// through the same ceiling SetGasTip enforces, so an over-limit
+// --txpool-pricelimit cannot set a floor the other entry points reject.
+func TestInitClampsTipAboveMax(t *testing.T) {
+	diskdb := rawdb.NewMemoryDatabase()
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(diskdb))
+	blockchain := newTestBlockChain(params.TestChainConfig, 10000000, statedb, new(event.Feed))
+	pool := New(testTxPoolConfig, blockchain)
+	defer pool.Close()
+
+	above := new(big.Int).Add(defaultMaxTip, big.NewInt(1))
+	if err := pool.Init(above.Uint64(), blockchain.CurrentBlock(), newReserver()); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	<-pool.initDoneCh
+	if got := pool.gasTip.Load().ToBig(); got.Cmp(defaultMaxTip) != 0 {
+		t.Fatalf("gas tip not clamped to the ceiling: have %v, want %v", got, defaultMaxTip)
+	}
+}
+
 // TestSetGasPrice tests set gas price.
 func TestSetGasPrice(t *testing.T) {
 	testCases := []struct {

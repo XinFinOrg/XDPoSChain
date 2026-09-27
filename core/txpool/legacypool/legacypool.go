@@ -325,8 +325,16 @@ func (pool *LegacyPool) Init(gasTip uint64, head *types.Header, reserver txpool.
 	// Set the address reserver to request exclusive access to pooled accounts
 	pool.reserver = reserver
 
-	// Set the basic pool parameters
-	pool.gasTip.Store(uint256.NewInt(gasTip))
+	// Set the basic pool parameters. The pool enforces one tip ceiling whatever
+	// the entry point, so an over-limit --txpool-pricelimit is clamped here
+	// instead of being applied while miner_setGasPrice and --miner.gasprice
+	// reject the same value.
+	tip := new(big.Int).SetUint64(gasTip)
+	if tip.Cmp(defaultMaxTip) > 0 {
+		log.Warn("Sanitizing invalid gas tip", "provided", tip, "updated", defaultMaxTip)
+		tip.Set(defaultMaxTip)
+	}
+	pool.gasTip.Store(uint256.MustFromBig(tip))
 
 	// Initialize the state with head block, or fallback to empty one in
 	// case the head state is not available (might occur when node is not
