@@ -2077,6 +2077,49 @@ func withChainHeadEvent(events []interface{}, block *types.Block) []interface{} 
 	return append(events, ChainHeadEvent{block})
 }
 
+// headEventSince returns events with the head event of the block this node has moved to since
+// before, if it moved at all. A path that moves the head owes subscribers the event even when
+// it then fails: the head is where the path left it, not where it started, and a return with
+// no event would leave the tx pool and the miner following a head this node has already left.
+//
+// The callers are the paths that move the head without a batch of their own to announce it
+// from: insertSideChain, whose rebuild imports chunks the events of which are dropped, and the
+// rebuild insertChain runs before verifying a batch.
+func (bc *BlockChain) headEventSince(events []interface{}, before *types.Header) []interface{} {
+	head := bc.CurrentBlock()
+	if before == nil || head == nil || head.Hash() == before.Hash() {
+		return events
+	}
+	// The head is a marker holding a header, and the event carries the block.
+	if moved := bc.GetBlock(head.Hash(), head.Number.Uint64()); moved != nil {
+		return withChainHeadEvent(events, moved)
+	}
+	return events
+}
+
+// verifyAgainstCanonicalChain probes a batch with the header resolution the real verification
+// uses, to ask the question the rebuild before it is decided by: can these headers be verified
+// against this node's chain as it stands now? The reader here is not a weaker one - XDPoS wraps
+// whatever chain reader it is handed in one that answers lookups from the batch's headers as
+// well, so the gap block of an epoch switch resolves here exactly as it does in the real
+// verification, and a batch that fails there on such a header fails here too. That is the
+// direction the conditional rebuild needs: passing bc is not what makes the two differ. The only
+// thing this reader lacks is the batch's own blocks, so a body the batch carries cannot be read
+// back and the probe can come out stricter than the verification it precedes, never looser on
+// the headers. It is a probe: ahead of the check it is not the import's verdict, and every result
+// it consumes is discarded.
+func (bc *BlockChain) verifyAgainstCanonicalChain(headers []*types.Header, seals []bool) error {
+	abort, results := bc.engine.VerifyHeaders(bc, headers, seals)
+	defer close(abort)
+
+	for range headers {
+		if err := <-results; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // writeBlockWithState writes the block and all associated state to the database,
 // but is expects the chain mutex to be held.
 func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.Receipt, state *state.StateDB, tradingState *tradingstate.TradingStateDB, lendingState *lendingstate.LendingStateDB) (status WriteStatus, err error) {
@@ -3033,12 +3076,60 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, ve
 		log.Info("Sidechain written to disk", "start", it.first().NumberU64(), "end", it.previous().Number, "sidetd", externTd, "localtd", localTd)
 		return it.index, nil, nil, err
 	}
-	// Gather all the sidechain hashes (full blocks may be memory heavy)
+	// Rebuild the ancestors this segment sits on, so that the state to import it becomes
+	// available. The events and logs of the last rebuilt batch come back with it: importing
+	// it is what makes the segment canonical.
+	events, logs, rebuiltErr := bc.reimportPrunedAncestors(it.previous(), localTd, externTd)
+	if rebuiltErr != nil {
+		// The index handed back is the batch's, not the re-imported segment's: it has no offset
+		// into the batch. it.index is the first block this batch has not consumed.
+		return it.index, nil, nil, rebuiltErr
+	}
+	return it.index, events, logs, nil
+}
+
+// reimportPrunedAncestors re-executes from and the stored ancestors behind it that carry no
+// state, so that a block on top of the rebuilt range has a state to be verified and executed
+// against.
+//
+// from is where the walk starts and may itself be one of the ancestors without state. A nil
+// from is the caller asking for the ancestors of a block it does not hold: a record of this
+// node rather than anything about the blocks, reported as a local condition.
+//
+// localTd is the total difficulty of the canonical head, externTd the one of the range being
+// rebuilt: when the head outweighs it, the walk does nothing, because the ancestors would only
+// be taken as a side chain. A nil externTd - a range whose total difficulty this node holds no
+// record for - is left alone too: nothing says it outweighs the head, and the batch is left to
+// the caller's verification, which reports the missing record the way every other read of it
+// does.
+//
+// insertChain calls this before verifying a batch, when verifying that batch against the chain
+// as it stands failed and the reason can be the stored ancestors it sits on: XDPoS reads
+// ancestors by canonical number (the gap block of an epoch switch, through the snapshot walk),
+// so a batch sitting on stored ancestors without state fails there before insertSideChain - the
+// path that rebuilds them after a scan - is ever reached. insertSideChain calls it once its
+// scan is done, which is where the rebuild used to live.
+//
+// Only headers are kept while the range is gathered - a full block per ancestor would be
+// memory heavy - and the blocks are read back in batches, exactly as the sidechain import
+// does; the events and logs of the last batch are returned, the earlier ones dropped for the
+// same memory reason as in the loop that imports them.
+func (bc *BlockChain) reimportPrunedAncestors(from *types.Header, localTd, externTd *big.Int) (events []interface{}, logs []*types.Log, err error) {
+	if from == nil {
+		return nil, nil, localConditionf("segment has no stored ancestor")
+	}
+	if bc.HasState(from.Root) {
+		return nil, nil, nil
+	}
+	if localTd == nil || externTd == nil || localTd.Cmp(externTd) > 0 {
+		return nil, nil, nil
+	}
+	// Gather all the pruned hashes (full blocks may be memory heavy)
 	var (
 		hashes  []common.Hash
 		numbers []uint64
 	)
-	parent := it.previous()
+	parent := from
 	for parent != nil && !bc.HasState(parent.Root) {
 		hashes = append(hashes, parent.Hash())
 		numbers = append(numbers, parent.Number.Uint64())
@@ -3047,8 +3138,8 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, ve
 	}
 	if parent == nil {
 		// The numbers this node is missing, not the blocks, are what stopped the walk, so the
-		// failure is local for the same reason the empty segment above is.
-		return it.index, nil, nil, localConditionf("segment has no stored ancestor")
+		// failure is local for the same reason an empty segment is.
+		return nil, nil, localConditionf("segment has no stored ancestor")
 	}
 	// Import all the pruned blocks to make the state available
 	var (
@@ -3071,10 +3162,7 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, ve
 			// validation in the middle of the segment: abort the sidechain import
 			// instead of continuing with a state that can only be rebuilt partially.
 			if _, _, _, err := bc.insertChain(blocks, false); err != nil {
-				// The index handed back is the batch's, not the re-imported segment's:
-				// the segment is rebuilt from stored ancestors, so it has no offset into
-				// the batch. it.index is the first block this batch has not consumed.
-				return it.index, nil, nil, err
+				return nil, nil, err
 			}
 			blocks, memory = blocks[:0], 0
 
@@ -3082,27 +3170,24 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, ve
 			if bc.insertStopped() {
 				log.Debug("Abort during blocks processing")
 				// Report the interruption instead of a success, see the entry guard of
-				// insertChain: the rest of the segment was not imported. Same index as
-				// the failure above, for the same reason.
-				return it.index, nil, nil, ErrInsertionInterrupted
+				// insertChain: the rest of the segment was not imported.
+				return nil, nil, ErrInsertionInterrupted
 			}
 		}
 	}
-	if len(blocks) > 0 {
-		log.Info("Importing sidechain segment", "start", blocks[0].NumberU64(), "end", blocks[len(blocks)-1].NumberU64())
-		// The error of a partially imported segment is propagated as well, see the
-		// comment on the heavy segment import above. The index is the batch's for the
-		// same reason as there: the segment is rebuilt from stored ancestors, so its own
-		// offset says nothing about where this batch stopped.
-		_, events, logs, err := bc.insertChain(blocks, false)
-		if err != nil {
-			return it.index, nil, nil, err
-		}
-		// Unlike the heavy chunks above, the last segment keeps its events and logs: it is
-		// the end of this batch, not a chunk dropped to stay within the memory allowance.
-		return it.index, events, logs, nil
+	if len(blocks) == 0 {
+		return nil, nil, nil
 	}
-	return it.index, nil, nil, nil
+	log.Info("Importing sidechain segment", "start", blocks[0].NumberU64(), "end", blocks[len(blocks)-1].NumberU64())
+	// The error of a partially imported segment is propagated as well, see the comment on the
+	// heavy segment import above. Unlike those chunks, the last segment keeps its events and
+	// logs: it is the end of this rebuild, not a chunk dropped to stay within the memory
+	// allowance.
+	_, events, logs, err = bc.insertChain(blocks, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	return events, logs, nil
 }
 
 func (bc *BlockChain) InsertBlock(block *types.Block) error {

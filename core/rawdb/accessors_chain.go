@@ -514,6 +514,20 @@ func HasReceipts(db ethdb.Reader, hash common.Hash, number uint64) bool {
 	return true
 }
 
+// HasExecutedMarker reports whether this node produced the receipts of the block itself,
+// meaning it ran the block: the marker is written by writeBlockWithState, after those receipts
+// and after the state commits it can fail on, and by nothing else.
+//
+// The receipts alone do not answer this, which is why the marker exists: InsertReceiptChain
+// writes receipts for a fast sync range this node never ran, and a resolving state root proves
+// as little, since the empty root resolves without any state and a shared root resolves through
+// another block's state (see HasBlockAndFullState). Without the marker such a block would be
+// adopted without ever running Process or ValidateState over it.
+func HasExecutedMarker(db ethdb.Reader, hash common.Hash, number uint64) bool {
+	has, err := db.Has(blockReceiptsExecutedKey(number, hash))
+	return has && err == nil
+}
+
 // ReadReceiptsRLP retrieves all the transaction receipts belonging to a block in RLP encoding.
 func ReadReceiptsRLP(db ethdb.Reader, hash common.Hash, number uint64) rlp.RawValue {
 	// First try to look up the data in ancient database. Extra hash
@@ -619,11 +633,34 @@ func WriteReceipts(db ethdb.KeyValueWriter, hash common.Hash, number uint64, rec
 	}
 }
 
-// DeleteReceipts removes all receipt data associated with a block hash.
+// WriteExecutedMarker records that this node executed the block. writeBlockWithState writes it
+// after the block's receipts and after every state commit that write can fail on, in a batch of
+// its own: a crash before it lands leaves the block on disk without its marker, which
+// HasExecutedMarker reads as "never ran" and re-executes, while a marker written first would
+// vouch for a state that never made it to disk. DeleteReceipts takes the marker with the
+// receipts. See HasExecutedMarker.
+func WriteExecutedMarker(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
+	if err := db.Put(blockReceiptsExecutedKey(number, hash), []byte{0x01}); err != nil {
+		log.Crit("Failed to store the executed-block marker", "err", err)
+	}
+}
+
+// DeleteExecutedMarker removes the record that this node executed the block. It is the
+// counterpart of WriteExecutedMarker and is called by DeleteReceipts: a marker that outlived the
+// receipts would claim an execution from a record this node no longer holds.
+func DeleteExecutedMarker(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
+	if err := db.Delete(blockReceiptsExecutedKey(number, hash)); err != nil {
+		log.Crit("Failed to delete the executed-block marker", "err", err)
+	}
+}
+
+// DeleteReceipts removes all receipt data associated with a block hash, together with the
+// executed-block marker that vouches for it: the two are written as a pair, so they go as one.
 func DeleteReceipts(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
 	if err := db.Delete(blockReceiptsKey(number, hash)); err != nil {
 		log.Crit("Failed to delete block receipts", "err", err)
 	}
+	DeleteExecutedMarker(db, hash, number)
 }
 
 // ReceiptLogs is a barebone version of ReceiptForStorage which only keeps
