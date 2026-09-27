@@ -735,6 +735,12 @@ func ProcessParentBlockHash(prevHash common.Hash, evm *vm.EVM) {
 		Data:      prevHash.Bytes(),
 	}
 	evm.SetTxContext(NewEVMTxContext(msg))
+	// Mirror upstream: start the system call from a clean state, dropping the
+	// leftover access list and transaction context of the preceding transaction.
+	// Prepare must run before AddAddressToAccessList, which would otherwise be
+	// discarded along with that leftover access list.
+	evm.StateDB.Prepare(evm.ChainConfig().Rules(blockNumber), common.Address{}, common.Address{}, nil, nil, nil)
+	evm.StateDB.SetTxContext(common.Hash{}, 0)
 	evm.StateDB.AddAddressToAccessList(params.HistoryStorageAddress)
 	_, _, err := evm.Call(msg.From, *msg.To, msg.Data, 30_000_000, common.U2560)
 	if err != nil {

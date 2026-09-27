@@ -136,6 +136,10 @@ func (s *hookedStateDB) Prepare(rules params.Rules, sender, coinbase common.Addr
 	s.inner.Prepare(rules, sender, coinbase, dest, precompiles, txAccesses)
 }
 
+func (s *hookedStateDB) SetTxContext(thash common.Hash, ti int) {
+	s.inner.SetTxContext(thash, ti)
+}
+
 func (s *hookedStateDB) RevertToSnapshot(i int) {
 	s.inner.RevertToSnapshot(i)
 }

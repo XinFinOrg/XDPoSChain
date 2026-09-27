@@ -1176,6 +1176,47 @@ func TestProcessParentBlockHashPragueGuard(t *testing.T) {
 	}
 }
 
+// TestProcessParentBlockHashResetsState pins that the EIP-2935 system call starts
+// from a clean state, the way upstream go-ethereum does: the leftover access list
+// and transaction context of the preceding transaction are dropped, while the
+// history contract itself stays warmed for the call.
+func TestProcessParentBlockHashResetsState(t *testing.T) {
+	config := *params.MergedTestChainConfig
+	config.PragueBlock = big.NewInt(10)
+
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewDatabase(memorydb.New())))
+	statedb.SetNonce(params.HistoryStorageAddress, 1, tracing.NonceChangeUnspecified)
+	statedb.SetCode(params.HistoryStorageAddress, params.HistoryStorageCode)
+
+	random := common.Hash{}
+	blockContext := vm.BlockContext{
+		CanTransfer: CanTransfer,
+		Transfer:    Transfer,
+		GetHash:     func(uint64) common.Hash { return common.Hash{} },
+		Coinbase:    common.Address{},
+		BlockNumber: big.NewInt(15),
+		Time:        0,
+		Difficulty:  big.NewInt(0),
+		GasLimit:    0,
+		BaseFee:     nil,
+		Random:      &random,
+	}
+	// Leave behind what a preceding transaction in the same block would have left.
+	leftover := common.HexToAddress("0xdeadbeef00000000000000000000000000000001")
+	statedb.AddAddressToAccessList(leftover)
+	statedb.SetTxContext(common.Hash{0xaa}, 7)
+
+	evm := vm.NewEVM(blockContext, statedb, nil, &config, vm.Config{})
+	ProcessParentBlockHash(common.Hash{0x01}, evm)
+
+	if statedb.AddressInAccessList(leftover) {
+		t.Errorf("leftover access list entry %v survived the system call", leftover)
+	}
+	if !statedb.AddressInAccessList(params.HistoryStorageAddress) {
+		t.Error("history storage address was not warmed for the system call")
+	}
+}
+
 // TestTransactionToMessageRejectsMissingTokenFeeConfig tests transaction to message rejects missing token fee config.
 func TestTransactionToMessageRejectsMissingTokenFeeConfig(t *testing.T) {
 	config := params.TestChainConfig.Clone()

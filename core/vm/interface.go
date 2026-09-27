@@ -87,6 +87,12 @@ type StateDB interface {
 	AddSlotToAccessList(addr common.Address, slot common.Hash)
 	Prepare(rules params.Rules, sender, coinbase common.Address, dest *common.Address, precompiles []common.Address, txAccesses types.AccessList)
 
+	// SetTxContext sets the hash and index of the transaction currently being
+	// executed, which new state logs are attributed to. Upstream carries a
+	// blockAccessIndex here as well; this fork has no block access list, so the
+	// method takes the hash and the index only.
+	SetTxContext(thash common.Hash, ti int)
+
 	RevertToSnapshot(int)
 	Snapshot() int
 
