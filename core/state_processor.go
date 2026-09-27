@@ -676,14 +676,13 @@ func ProcessParentBlockHash(prevHash common.Hash, evm *vm.EVM) {
 		panic("history storage code mismatch")
 	}
 
+	// IsPrague already covers a nil block number, and it is the only gate needed:
+	// passing it means PragueBlock is non-nil and at or below blockNumber.
 	blockNumber := evm.Context.BlockNumber
-	if blockNumber == nil || !evm.ChainConfig().IsPrague(blockNumber) {
+	if !evm.ChainConfig().IsPrague(blockNumber) {
 		return
 	}
 	forkBlock := evm.ChainConfig().PragueBlock
-	if forkBlock == nil || blockNumber.Cmp(forkBlock) < 0 {
-		return
-	}
 
 	// Only deploy and backfill if the contract is missing at/after Prague activation.
 	if len(code) == 0 {
@@ -701,6 +700,7 @@ func ProcessParentBlockHash(prevHash common.Hash, evm *vm.EVM) {
 			if end+1 > params.HistoryServeWindow {
 				start = end + 1 - params.HistoryServeWindow
 			}
+			// forkBlock is non-nil here: the Prague gate above already required it.
 			if forkBlock.Sign() > 0 {
 				forkStart := forkBlock.Uint64() - 1
 				if forkStart > start {
