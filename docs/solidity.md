@@ -49,9 +49,18 @@ The value of `block.prevrandao` is `keccak256(block.number)` in our current impl
 
 The value of `block.basefee` is the gas price of the block's tier: `12.5 GWei` up to the Gas2500x fork, and `625 GWei` from it. Between the London and EIP-1559 forks, where block headers carry no base fee, it is `12.5 GWei`.
 
+### blobhash()
+
+XDPoSChain has no blob transactions (transaction type `0x03`) and no blob fields
+in the block header, so `blobhash(i)` always returns 0. That is the out-of-bounds
+value defined by EIP-4844, so `require(blobhash(i) != 0)` reverts as expected.
+The KZG point evaluation precompile (`0x0a`) is not available either.
+
 ### block.blobbasefee
 
 The value of `block.blobbasefee` is always 0 in our EIP-7516 implemention.
+EIP-7516 sets a floor of 1 wei; XDPoSChain stays at 0 because it runs no blob fee
+market. Do not use it to infer on-chain activity.
 
 ## Gas price
 
