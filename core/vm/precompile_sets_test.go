@@ -58,12 +58,13 @@ func TestPrecompileSetsByFork(t *testing.T) {
 		common.BytesToAddress([]byte{0x29}), common.BytesToAddress([]byte{0x2a}),
 	}
 	tests := []struct {
-		name      string
-		rules     params.Rules
-		classic   int  // how many of 0x01-0x09 the bucket must hold
-		blsActive bool // whether the EIP-2537 precompiles must be reachable
-		kzgStub   bool // whether 0x0a must hold the failing point-evaluation stub
-		xdcx      int  // how many XDCx precompiles the bucket must hold, 0 = don't check
+		name       string
+		rules      params.Rules
+		classic    int  // how many of 0x01-0x09 the bucket must hold
+		blsActive  bool // whether the EIP-2537 precompiles must be reachable
+		kzgStub    bool // whether 0x0a must hold the failing point-evaluation stub
+		xdcx       int  // how many XDCx precompiles the bucket must hold, 0 = don't check
+		p256Active bool // whether EIP-7951 P256VERIFY (0x100) must be reachable
 	}{
 		{name: "homestead", rules: params.Rules{}, classic: 4, kzgStub: false},
 		{name: "byzantium", rules: params.Rules{IsByzantium: true}, classic: 8, kzgStub: false, xdcx: 4},
@@ -71,7 +72,7 @@ func TestPrecompileSetsByFork(t *testing.T) {
 		{name: "xdcv2", rules: params.Rules{IsXDCxDisable: true}, classic: 9, kzgStub: false},
 		{name: "eip1559", rules: params.Rules{IsEIP1559: true}, classic: 9, kzgStub: false},
 		{name: "prague", rules: params.Rules{IsPrague: true}, classic: 9, blsActive: true, kzgStub: true},
-		{name: "osaka", rules: params.Rules{IsOsaka: true}, classic: 9, blsActive: true, kzgStub: true},
+		{name: "osaka", rules: params.Rules{IsOsaka: true}, classic: 9, blsActive: true, kzgStub: true, p256Active: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -144,6 +145,24 @@ func TestPrecompileSetsByFork(t *testing.T) {
 				if !listed[contract.addr] {
 					t.Errorf("precompile %s at %v absent from ActivePrecompiles", contract.name, contract.addr)
 				}
+			}
+			// EIP-7951 P256VERIFY (0x100) belongs to the Osaka bucket alone, and both
+			// its name and its presence in the address list are load-bearing:
+			// XDPoS_getConfig reports the active set by Name(), and callers warm
+			// the addresses ActivePrecompiles returns.
+			p256Addr := common.BytesToAddress([]byte{0x1, 0x00})
+			p256, haveP256 := set[p256Addr]
+			if haveP256 != test.p256Active {
+				t.Fatalf("precompile P256VERIFY at %v: active = %v, want %v", p256Addr, haveP256, test.p256Active)
+			}
+			if !haveP256 {
+				return
+			}
+			if name := p256.Name(); name != "P256VERIFY" {
+				t.Errorf("precompile at %v: name = %q, want %q", p256Addr, name, "P256VERIFY")
+			}
+			if !listed[p256Addr] {
+				t.Errorf("precompile P256VERIFY at %v absent from ActivePrecompiles", p256Addr)
 			}
 		})
 	}

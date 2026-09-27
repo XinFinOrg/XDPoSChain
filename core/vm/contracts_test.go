@@ -81,6 +81,8 @@ var allPrecompiles = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{0x0f, 0x0e}): &bls12381Pairing{},
 	common.BytesToAddress([]byte{0x0f, 0x0f}): &bls12381MapG1{},
 	common.BytesToAddress([]byte{0x0f, 0x10}): &bls12381MapG2{},
+
+	common.BytesToAddress([]byte{0x1, 0x00}): &p256Verify{},
 }
 
 // modexpTests are the test and benchmark data for the modexp precompiled contract.
@@ -481,6 +483,63 @@ func BenchmarkPrecompiledModExpEip2565(b *testing.B) { benchJson("modexp_eip2565
 
 func TestPrecompiledModExpEip7883(t *testing.T)      { testJson("modexp_eip7883", "f6", t) }
 func BenchmarkPrecompiledModExpEip7883(b *testing.B) { benchJson("modexp_eip7883", "f6", b) }
+
+func TestPrecompiledP256Verify(t *testing.T) {
+	// allPrecompiles is a test-only map, so assert that the Osaka set exposes
+	// the precompile at 0x100 with the expected implementation.
+	if p, ok := PrecompiledContractsOsaka[common.BytesToAddress([]byte{0x1, 0x00})]; !ok {
+		t.Fatal("P256VERIFY is missing from the Osaka precompile set")
+	} else if _, isP256 := p.(*p256Verify); !isP256 {
+		t.Fatalf("0x100 is registered as %T, want *p256Verify", p)
+	}
+	// EIP-7951 only defines the behaviour for a 160-byte input; every other
+	// length must produce empty output without an error, while still charging
+	// the flat 6900 gas (geth params/protocol_params.go P256VerifyGas). All 782
+	// official vectors are exactly 160 bytes long, so the length gate has no
+	// vector coverage and is pinned here.
+	//
+	// Padding alone cannot catch a broken gate: an all-zero or truncated input
+	// also fails verification, so it returns empty output either way. The
+	// over-long case therefore appends a byte to a signature that does verify,
+	// which a gate that accepts 161 bytes would happily verify and answer.
+	validSig := "4cee90eb86eaa050036147a12d49004b6b9c72bd725d39d4785011fe190f0b4da73bd4903f0ce3b639bbbf6e8e80d16931ff4bcf5993d58468e8fb19086e8cac36dbcd03009df8c59286b162af3bd7fcc0450c9aa81be5d10d312af6c66b1d604aebd3099c618202fcfe16ae7770b0c49ab5eadf74b754204a3bb6060e44eff37618b065f9832de4ca6ca971a7a1adc826d0f7c00181a5fb2ddf79ae00b4e10e"
+	for _, tc := range []struct {
+		name  string
+		input []byte
+		want  []byte // nil means empty output
+	}{
+		{"valid-160", common.Hex2Bytes(validSig), true32Byte},
+		{"empty", nil, nil},
+		{"short-159", make([]byte, 159), nil},
+		{"long-161-zero", make([]byte, 161), nil},
+		{"long-161-valid-prefix", append(common.Hex2Bytes(validSig), 0x00), nil},
+	} {
+		t.Run("input-length/"+tc.name, func(t *testing.T) {
+			p := PrecompiledContractsOsaka[common.BytesToAddress([]byte{0x1, 0x00})]
+			out, err := p.Run(tc.input)
+			if err != nil {
+				t.Fatalf("%d-byte input: unexpected error %v", len(tc.input), err)
+			}
+			if !bytes.Equal(out, tc.want) {
+				t.Errorf("%d-byte input: output = %x, want %x", len(tc.input), out, tc.want)
+			}
+			if gas := p.RequiredGas(tc.input); gas != 6900 {
+				t.Errorf("%d-byte input: gas = %d, want 6900", len(tc.input), gas)
+			}
+		})
+	}
+	testJson("p256Verify", "100", t)
+}
+
+// Benchmarks the sample inputs from the P256VERIFY precompile.
+func BenchmarkPrecompiledP256Verify(bench *testing.B) {
+	t := precompiledTest{
+		Input:    "4cee90eb86eaa050036147a12d49004b6b9c72bd725d39d4785011fe190f0b4da73bd4903f0ce3b639bbbf6e8e80d16931ff4bcf5993d58468e8fb19086e8cac36dbcd03009df8c59286b162af3bd7fcc0450c9aa81be5d10d312af6c66b1d604aebd3099c618202fcfe16ae7770b0c49ab5eadf74b754204a3bb6060e44eff37618b065f9832de4ca6ca971a7a1adc826d0f7c00181a5fb2ddf79ae00b4e10e",
+		Expected: "0000000000000000000000000000000000000000000000000000000000000001",
+		Name:     "p256Verify",
+	}
+	benchmarkPrecompiled("100", t, bench)
+}
 
 // Tests the sample inputs from the elliptic curve addition EIP 213.
 func TestPrecompiledBn256Add(t *testing.T)      { testJson("bn256Add", "06", t) }
