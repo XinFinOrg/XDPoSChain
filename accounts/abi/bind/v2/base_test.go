@@ -322,7 +322,7 @@ func TestTransactGasFee(t *testing.T) {
 
 	// GasTipCap and GasFeeCap
 	// When opts.GasTipCap and opts.GasFeeCap are nil
-	mt := &mockTransactor{baseFee: big.NewInt(100), gasTipCap: big.NewInt(5)}
+	mt := &mockTransactor{baseFee: big.NewInt(100), gasTipCap: big.NewInt(5), gasPrice: big.NewInt(200)}
 	bc := bind.NewBoundContract(common.Address{}, abi.ABI{}, nil, mt, nil)
 	opts := &bind.TransactOpts{Signer: mockSign}
 	tx, err := bc.Transact(opts, "")
@@ -360,6 +360,34 @@ func TestTransactGasFee(t *testing.T) {
 	assert.Nil(err)
 	assert.Equal(big.NewInt(6), tx.GasPrice())
 	assert.True(mt.suggestGasPriceCalled)
+}
+
+// TestTransactFeeCapCoversNextBlockGasTier checks that the default fee cap is
+// floored with the node's gas price quote. That quote resolves the base fee of
+// the block the transaction lands in, which on the last block of a gas tier is
+// far above the head's base fee, so a cap derived from the head alone cannot be
+// included.
+func TestTransactFeeCapCoversNextBlockGasTier(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+
+	// A head on the Gas50x tier (12.5 gwei), with the node quoting the base fee of
+	// the Gas2500x tier (625 gwei) plus the tip.
+	headBaseFee := big.NewInt(12_500_000_000)
+	gasTipCap := big.NewInt(1)
+	quotedPrice := new(big.Int).Add(big.NewInt(625_000_000_000), gasTipCap)
+
+	mt := &mockTransactor{baseFee: headBaseFee, gasTipCap: gasTipCap, gasPrice: quotedPrice}
+	bc := bind.NewBoundContract(common.Address{}, abi.ABI{}, nil, mt, nil)
+	opts := &bind.TransactOpts{Signer: mockSign}
+	tx, err := bc.Transact(opts, "")
+	assert.Nil(err)
+	assert.True(mt.suggestGasPriceCalled)
+	assert.Equal(gasTipCap, tx.GasTipCap())
+	assert.Equal(quotedPrice, tx.GasFeeCap())
+
+	headOnly := new(big.Int).Add(gasTipCap, new(big.Int).Lsh(headBaseFee, 1))
+	assert.True(headOnly.Cmp(quotedPrice) < 0, "fixture must leave a head-only cap below the quote")
 }
 
 func unpackAndCheck(t *testing.T, bc *bind.BoundContract, expected map[string]interface{}, mockLog types.Log) {
