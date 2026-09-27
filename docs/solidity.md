@@ -47,8 +47,24 @@ The value of `block.prevrandao` is `keccak256(block.number)` in our current impl
 
 ### block.basefee
 
-The value of `block.basefee` is always 12.5 GWei in our EIP-1559 implemention.
+The value of `block.basefee` is the gas price of the block's tier: `12.5 GWei` up to the Gas2500x fork, and `625 GWei` from it. Between the London and EIP-1559 forks, where block headers carry no base fee, it is `12.5 GWei`.
 
 ### block.blobbasefee
 
 The value of `block.blobbasefee` is always 0 in our EIP-7516 implemention.
+
+## Gas price
+
+A transaction priced below the floor of the tier active at the block that would
+include it is rejected with `under min gas price`. That floor is the gas price of
+the tier, the same value `block.basefee` reports there, so tools that default to
+a low `gasPrice` or `maxFeePerGas` (Hardhat and Foundry among them) must have it
+raised explicitly:
+
+| Network | Gas tier fork      | Minimum gas price |
+| :------ | :----------------- | ----------------: |
+| mainnet | Gas50x (80370000)  |        12.5 GWei  |
+| testnet | Gas50x (56828700)  |        12.5 GWei  |
+| devnet  | Gas2500x (1385100) |         625 GWei  |
+
+Read the value from the node with `eth_gasPrice` instead of hardcoding it.
