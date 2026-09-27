@@ -37,6 +37,23 @@ Notes:
    part of Osaka, not Prague. The strong pinning warning applies to Osaka-only
    features (such as CLZ), not to 0.8.30's default `prague` target by itself.
 
+## Transaction and block size limits
+
+XDPoSChain enforces neither of the two caps Osaka introduces on Ethereum:
+EIP-7825 limits a transaction to 16,777,216 gas and EIP-7934 limits an
+RLP-encoded block to 8 MiB. Both are implemented here and both are gated
+behind Osaka, which no network has scheduled yet, so neither applies today.
+For reference, the public networks run with a block gas limit of 420,000,000,
+set through the node's `--targetgaslimit`; the in-repository default
+(`XDCGenesisGasLimit`) is 42,000,000.
+
+A transaction or deployment that spends more than 16,777,216 gas therefore
+succeeds here but cannot be replayed on an Ethereum network that runs those
+caps, which makes such artifacts migrate one way only. Stay below the cap if
+the contract has to remain portable.
+
+Both caps take effect by themselves once Osaka is scheduled and active.
+
 ## Special variables
 
 ### block.prevrandao
