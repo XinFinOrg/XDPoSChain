@@ -30,6 +30,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 	"github.com/holiman/uint256"
 )
@@ -218,12 +219,13 @@ func (args *TransactionArgs) setLondonFeeDefaults(ctx context.Context, head *typ
 	}
 	// Set maxFeePerGas if it is missing.
 	if args.MaxFeePerGas == nil {
-		// Set the max fee to be 2 times larger than the previous block's base fee.
-		// The additional slack allows the tx to not become invalidated if the base
-		// fee is rising.
+		// The tx can only be included from the next block onwards, and the XDC
+		// base fee steps with the gas tier instead of rising gradually, so the
+		// slack has to be taken on the base fee of that block.
+		nextBaseFee := params.BaseFeeForBlock(b.ChainConfig(), new(big.Int).Add(head.Number, common.Big1))
 		val := new(big.Int).Add(
 			args.MaxPriorityFeePerGas.ToInt(),
-			new(big.Int).Lsh(head.BaseFee, 1),
+			new(big.Int).Lsh(nextBaseFee, 1),
 		)
 		args.MaxFeePerGas = (*hexutil.Big)(val)
 	}
