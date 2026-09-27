@@ -4505,12 +4505,12 @@ func TestSetGasPrice(t *testing.T) {
 			name:        "exceeds maximum by 1",
 			tip:         new(big.Int).Add(defaultMaxTip, big.NewInt(1)),
 			wantErr:     fmt.Errorf("reject too high gas tip: %v, maximum: %v", new(big.Int).Add(defaultMaxTip, big.NewInt(1)), defaultMaxTip),
-			description: "value exceeding 1000 GWei should be rejected",
+			description: "value exceeding the maximum should be rejected",
 		},
 		{
 			name:        "exceeds maximum significantly",
-			tip:         big.NewInt(10000 * params.GWei),
-			wantErr:     fmt.Errorf("reject too high gas tip: %v, maximum: %v", big.NewInt(10000*params.GWei), defaultMaxTip),
+			tip:         new(big.Int).Mul(defaultMaxTip, big.NewInt(2)),
+			wantErr:     fmt.Errorf("reject too high gas tip: %v, maximum: %v", new(big.Int).Mul(defaultMaxTip, big.NewInt(2)), defaultMaxTip),
 			description: "value far exceeding maximum should be rejected",
 		},
 		// Valid cases - should be accepted
@@ -4554,7 +4554,7 @@ func TestSetGasPrice(t *testing.T) {
 			name:        "exactly at maximum",
 			tip:         defaultMaxTip,
 			wantErr:     nil,
-			description: "exactly 1000 GWei should be accepted",
+			description: "exactly at the maximum should be accepted",
 		},
 	}
 

@@ -75,7 +75,7 @@ var (
 	blockCommitTimer   = metrics.NewRegisteredTimer("miner/time/commit", nil)
 	blockFinalizeTimer = metrics.NewRegisteredTimer("miner/time/finalize", nil)
 	blockTotalTimer    = metrics.NewRegisteredTimer("miner/time/total", nil)
-	maxGasTip          = big.NewInt(1000 * params.GWei)
+	maxGasTip          = big.NewInt(50_000 * params.GWei)
 )
 
 // Agent can register themself with the worker

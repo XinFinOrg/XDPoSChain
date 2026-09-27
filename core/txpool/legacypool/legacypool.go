@@ -187,7 +187,9 @@ var DefaultConfig = Config{
 	Lifetime: 3 * time.Hour,
 }
 
-var defaultMaxTip = big.NewInt(1000 * params.GWei)
+// defaultMaxTip is 80x the gas2500x tier price, the headroom the ceiling kept
+// over the tier price before that fork.
+var defaultMaxTip = big.NewInt(50_000 * params.GWei)
 
 // sanitize checks the provided user configurations and changes anything that's
 // unreasonable or unworkable.
@@ -421,7 +423,7 @@ func (pool *LegacyPool) SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs
 
 // SetGasTip updates the minimum gas tip required by the transaction pool for a
 // new transaction, and drops all transactions below this threshold. Negative
-// gas prices and prices exceeding 1000 GWei are considered invalid and will be
+// gas prices and prices above defaultMaxTip are considered invalid and will be
 // rejected without updating the threshold.
 func (pool *LegacyPool) SetGasTip(tip *big.Int) error {
 	pool.mu.Lock()
