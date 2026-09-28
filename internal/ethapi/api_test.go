@@ -4812,6 +4812,11 @@ func TestFillTransactionBasic(t *testing.T) {
 	require.NotEmpty(t, res.Raw)
 	require.NotNil(t, res.Tx)
 
+	// The default fee cap takes its slack on the base fee of the block the
+	// transaction can first be included in.
+	nextBaseFee := params.BaseFeeForBlock(backend.config, new(big.Int).Add(backend.current.Number, common.Big1))
+	wantFeeCap := new(big.Int).Add(big.NewInt(42), new(big.Int).Lsh(nextBaseFee, 1))
+
 	require.EqualValues(t, types.DynamicFeeTxType, res.Tx.Type())
 	require.Equal(t, uint64(0), res.Tx.Nonce())
 	require.Equal(t, uint64(gas), res.Tx.Gas())
@@ -4820,7 +4825,7 @@ func TestFillTransactionBasic(t *testing.T) {
 	require.Equal(t, to, *res.Tx.To())
 	require.Equal(t, backend.config.ChainID, res.Tx.ChainId())
 	require.Equal(t, big.NewInt(42), res.Tx.GasTipCap())
-	require.Equal(t, big.NewInt(62), res.Tx.GasFeeCap())
+	require.Equal(t, wantFeeCap, res.Tx.GasFeeCap())
 
 	var filledTx types.Transaction
 	require.NoError(t, filledTx.UnmarshalBinary(res.Raw))
@@ -4828,7 +4833,7 @@ func TestFillTransactionBasic(t *testing.T) {
 	require.EqualValues(t, types.DynamicFeeTxType, filledTx.Type())
 	require.Equal(t, backend.config.ChainID, filledTx.ChainId())
 	require.Equal(t, big.NewInt(42), filledTx.GasTipCap())
-	require.Equal(t, big.NewInt(62), filledTx.GasFeeCap())
+	require.Equal(t, wantFeeCap, filledTx.GasFeeCap())
 
 	_, err = api.FillTransaction(context.Background(), TransactionArgs{
 		From:    &from,

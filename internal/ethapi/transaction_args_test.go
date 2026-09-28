@@ -56,11 +56,12 @@ func TestSetFeeDefaults(t *testing.T) {
 	}
 
 	var (
-		b        = newBackendMock()
-		zero     = (*hexutil.Big)(big.NewInt(0))
-		fortytwo = (*hexutil.Big)(big.NewInt(42))
-		maxFee   = (*hexutil.Big)(new(big.Int).Add(new(big.Int).Lsh(b.current.BaseFee, 1), fortytwo.ToInt()))
-		al       = &types.AccessList{types.AccessTuple{Address: common.Address{0xaa}, StorageKeys: []common.Hash{{0x01}}}}
+		b           = newBackendMock()
+		zero        = (*hexutil.Big)(big.NewInt(0))
+		fortytwo    = (*hexutil.Big)(big.NewInt(42))
+		nextBaseFee = params.BaseFeeForBlock(b.config, new(big.Int).Add(b.current.Number, common.Big1))
+		maxFee      = (*hexutil.Big)(new(big.Int).Add(new(big.Int).Lsh(nextBaseFee, 1), fortytwo.ToInt()))
+		al          = &types.AccessList{types.AccessTuple{Address: common.Address{0xaa}, StorageKeys: []common.Hash{{0x01}}}}
 	)
 
 	tests := []test{
@@ -170,7 +171,7 @@ func TestSetFeeDefaults(t *testing.T) {
 		{
 			"dynamic fee tx, maxFee < priorityFee",
 			true,
-			&TransactionArgs{MaxFeePerGas: maxFee, MaxPriorityFeePerGas: (*hexutil.Big)(big.NewInt(1000))},
+			&TransactionArgs{MaxFeePerGas: (*hexutil.Big)(big.NewInt(0x3e)), MaxPriorityFeePerGas: (*hexutil.Big)(big.NewInt(1000))},
 			nil,
 			errors.New("maxFeePerGas (0x3e) < maxPriorityFeePerGas (0x3e8)"),
 		},
@@ -234,6 +235,40 @@ func TestSetFeeDefaults(t *testing.T) {
 	}
 }
 
+// TestSetFeeDefaultsUsesNextBlockGasTier checks that the default max fee cap is
+// derived from the base fee of the block the transaction can first be included
+// in. On the last block of a gas tier the head still carries the old tier
+// price, so a cap built from the head falls below the next block's base fee and
+// the transaction cannot be included.
+func TestSetFeeDefaultsUsesNextBlockGasTier(t *testing.T) {
+	const activationHeight = 200
+
+	backend := newBackendMock()
+	backend.config.EIP1559Block = big.NewInt(0)
+	backend.config.Gas2500xBlock = big.NewInt(activationHeight)
+	backend.current.Number = big.NewInt(activationHeight - 1)
+	backend.current.BaseFee = params.BaseFeeForBlock(backend.config, backend.current.Number)
+
+	headBaseFee := params.BaseFeeForBlock(backend.config, big.NewInt(activationHeight-1))
+	nextBaseFee := params.BaseFeeForBlock(backend.config, big.NewInt(activationHeight))
+	if headBaseFee.Cmp(nextBaseFee) >= 0 {
+		t.Fatalf("fixture is not a tier boundary: head base fee %v, next block base fee %v", headBaseFee, nextBaseFee)
+	}
+
+	args := new(TransactionArgs)
+	if err := args.setFeeDefaults(context.Background(), backend); err != nil {
+		t.Fatalf("setFeeDefaults failed: %v", err)
+	}
+	if args.MaxFeePerGas == nil || args.MaxPriorityFeePerGas == nil {
+		t.Fatal("setFeeDefaults did not fill both fee fields")
+	}
+	tip := args.MaxPriorityFeePerGas.ToInt()
+	want := new(big.Int).Add(tip, new(big.Int).Lsh(nextBaseFee, 1))
+	if got := args.MaxFeePerGas.ToInt(); got.Cmp(want) != 0 {
+		t.Fatalf("default max fee cap: have %v, want %v (tip %v, next block base fee %v)", got, want, tip, nextBaseFee)
+	}
+}
+
 type backendMock struct {
 	current *types.Header
 	config  *params.ChainConfig
@@ -269,7 +304,7 @@ func newBackendMock() *backendMock {
 			GasUsed:    8_000_000,
 			Time:       555,
 			Extra:      make([]byte, 32),
-			BaseFee:    big.NewInt(10),
+			BaseFee:    params.BaseFeeForBlock(config, big.NewInt(1100)),
 		},
 		config: config,
 	}

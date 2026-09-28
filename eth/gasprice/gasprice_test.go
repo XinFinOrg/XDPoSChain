@@ -207,3 +207,14 @@ func TestSuggestTipCap(t *testing.T) {
 		}
 	}
 }
+
+// TestDefaultMaxPriceKeepsHeadroomOverGas2500xTier guards the tip cap against
+// the gas tier stepping past it: a cap below the tier price would under-report
+// the tip once real tips reach the cap.
+func TestDefaultMaxPriceKeepsHeadroomOverGas2500xTier(t *testing.T) {
+	cfg := &params.ChainConfig{Gas50xBlock: big.NewInt(0), Gas2500xBlock: big.NewInt(0)}
+	tierPrice := params.BaseFeeForBlock(cfg, big.NewInt(0))
+	if DefaultMaxPrice.Cmp(tierPrice) <= 0 {
+		t.Fatalf("default max price %v does not exceed the gas2500x tier price %v", DefaultMaxPrice, tierPrice)
+	}
+}

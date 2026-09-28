@@ -35,7 +35,9 @@ import (
 const sampleNumber = 3 // Number of transactions sampled in a block
 
 var (
-	DefaultMaxPrice    = big.NewInt(500 * params.GWei)
+	// DefaultMaxPrice is 40x the gas2500x tier price, the headroom this cap kept
+	// over the tier price before that fork.
+	DefaultMaxPrice    = big.NewInt(25_000 * params.GWei)
 	DefaultIgnorePrice = big.NewInt(2 * params.Wei)
 )
 

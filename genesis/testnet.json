@@ -18,6 +18,7 @@
     "tipXDCXCancellationFeeBlock": 23779191,
     "tipTRC21FeeBlock": 23779191,
     "gas50xBlock": 56828700,
+    "gas2500xBlock": 83600000,
     "berlinBlock": 61290000,
     "londonBlock": 61290000,
     "mergeBlock": 61290000,

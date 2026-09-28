@@ -305,6 +305,17 @@ func (c *BoundContract) createDynamicTx(opts *TransactOpts, contract *common.Add
 			gasTipCap,
 			new(big.Int).Mul(head.BaseFee, big.NewInt(basefeeWiggleMultiplier)),
 		)
+		// The XDC base fee steps with the gas tier instead of rising gradually, so
+		// the head can sit on a tier far below the one the transaction lands on.
+		// The node resolves that block in its gas price quote, which floors the
+		// estimate.
+		price, err := c.transactor.SuggestGasPrice(ensureContext(opts.Context))
+		if err != nil {
+			return nil, err
+		}
+		if price.Cmp(gasFeeCap) > 0 {
+			gasFeeCap = price
+		}
 	}
 	if gasFeeCap.Cmp(gasTipCap) < 0 {
 		return nil, fmt.Errorf("maxFeePerGas (%v) < maxPriorityFeePerGas (%v)", gasFeeCap, gasTipCap)

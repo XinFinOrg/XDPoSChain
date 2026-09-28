@@ -66,7 +66,9 @@ func (api *MinerAPI) Start(threads *int) error {
 		price := api.e.gasPrice
 		api.e.lock.RUnlock()
 
-		api.e.txPool.SetGasTip(price)
+		if err := api.e.txPool.SetGasTip(price); err != nil {
+			return err
+		}
 		return api.e.StartStaking(true)
 	}
 	return nil

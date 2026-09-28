@@ -4480,6 +4480,26 @@ func TestPendingDynamicFeeThresholdWithoutBaseFee(t *testing.T) {
 	}
 }
 
+// TestInitClampsTipAboveMax checks that the tip a pool is initialized with goes
+// through the same ceiling SetGasTip enforces, so an over-limit
+// --txpool-pricelimit cannot set a floor the other entry points reject.
+func TestInitClampsTipAboveMax(t *testing.T) {
+	diskdb := rawdb.NewMemoryDatabase()
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(diskdb))
+	blockchain := newTestBlockChain(params.TestChainConfig, 10000000, statedb, new(event.Feed))
+	pool := New(testTxPoolConfig, blockchain)
+	defer pool.Close()
+
+	above := new(big.Int).Add(defaultMaxTip, big.NewInt(1))
+	if err := pool.Init(above.Uint64(), blockchain.CurrentBlock(), newReserver()); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	<-pool.initDoneCh
+	if got := pool.gasTip.Load().ToBig(); got.Cmp(defaultMaxTip) != 0 {
+		t.Fatalf("gas tip not clamped to the ceiling: have %v, want %v", got, defaultMaxTip)
+	}
+}
+
 // TestSetGasPrice tests set gas price.
 func TestSetGasPrice(t *testing.T) {
 	testCases := []struct {
@@ -4505,12 +4525,12 @@ func TestSetGasPrice(t *testing.T) {
 			name:        "exceeds maximum by 1",
 			tip:         new(big.Int).Add(defaultMaxTip, big.NewInt(1)),
 			wantErr:     fmt.Errorf("reject too high gas tip: %v, maximum: %v", new(big.Int).Add(defaultMaxTip, big.NewInt(1)), defaultMaxTip),
-			description: "value exceeding 1000 GWei should be rejected",
+			description: "value exceeding the maximum should be rejected",
 		},
 		{
 			name:        "exceeds maximum significantly",
-			tip:         big.NewInt(10000 * params.GWei),
-			wantErr:     fmt.Errorf("reject too high gas tip: %v, maximum: %v", big.NewInt(10000*params.GWei), defaultMaxTip),
+			tip:         new(big.Int).Mul(defaultMaxTip, big.NewInt(2)),
+			wantErr:     fmt.Errorf("reject too high gas tip: %v, maximum: %v", new(big.Int).Mul(defaultMaxTip, big.NewInt(2)), defaultMaxTip),
 			description: "value far exceeding maximum should be rejected",
 		},
 		// Valid cases - should be accepted
@@ -4554,7 +4574,7 @@ func TestSetGasPrice(t *testing.T) {
 			name:        "exactly at maximum",
 			tip:         defaultMaxTip,
 			wantErr:     nil,
-			description: "exactly 1000 GWei should be accepted",
+			description: "exactly at the maximum should be accepted",
 		},
 	}
 
