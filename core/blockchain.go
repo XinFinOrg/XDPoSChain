@@ -2097,19 +2097,14 @@ func (bc *BlockChain) headEventSince(events []interface{}, before *types.Header)
 	return events
 }
 
-// verifyAgainstCanonicalChain probes a batch with the header resolution the real verification
-// uses, to ask the question the rebuild before it is decided by: can these headers be verified
-// against this node's chain as it stands now? The reader here is not a weaker one - XDPoS wraps
-// whatever chain reader it is handed in one that answers lookups from the batch's headers as
-// well, so the gap block of an epoch switch resolves here exactly as it does in the real
-// verification, and a batch that fails there on such a header fails here too. That is the
-// direction the conditional rebuild needs: passing bc is not what makes the two differ. The only
-// thing this reader lacks is the batch's own blocks, so a body the batch carries cannot be read
-// back and the probe can come out stricter than the verification it precedes, never looser on
-// the headers. It is a probe: ahead of the check it is not the import's verdict, and every result
-// it consumes is discarded.
-func (bc *BlockChain) verifyAgainstCanonicalChain(headers []*types.Header, seals []bool) error {
-	abort, results := bc.engine.VerifyHeaders(bc, headers, seals)
+// verifyAgainstCanonicalChain runs the header verification the batch would go through anyway,
+// ahead of the rebuild decision, and reports whether every header passed. It uses the same
+// reader the import hands the engine, so the probe and the verification it precedes resolve
+// every lookup the same way - batch blocks included - and it is that verification run early,
+// not a weaker stand-in. The caller reuses the pass, nothing being written between the two
+// runs, so the same headers are not put through the engine twice.
+func (bc *BlockChain) verifyAgainstCanonicalChain(verifier consensus.ChainReader, headers []*types.Header, seals []bool) error {
+	abort, results := bc.engine.VerifyHeaders(verifier, headers, seals)
 	defer close(abort)
 
 	for range headers {
@@ -2571,13 +2566,80 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (n int, 
 			bc.downloadingBlock.Remove(block.Hash())
 		}
 	}()
+	// The ancestors this batch is verified against can be stored without state: the downloader
+	// resumes above the highest stored block, which insertSideChain may have written without
+	// state. XDPoS resolves an ancestor by canonical number while verifying an epoch switch -
+	// the gap block, through the snapshot walk - so such a batch fails verification on a header
+	// this node cannot resolve, before ValidateBody can report ErrPrunedAncestor and hand the
+	// batch to insertSideChain. That failure names no block of the batch, so it used to be
+	// recorded as one and to drop the peer.
+	//
+	// The rebuild only pays off when the verification depends on those ancestors, so the batch
+	// is probed once with the real verification's reader, and the ancestors are rebuilt only
+	// when that fails: a batch that verifies there is left to the paths below, insertSideChain
+	// included, whose two-phase order (write the segment, rebuild after a clean scan) must stay.
+	// The probe reuses that reader so that a batch it passed needs no second run - see
+	// verifyAgainstCanonicalChain.
 	verifier := consensus.ChainReader(bc)
 	if _, ok := bc.engine.(*XDPoS.XDPoS); ok {
 		verifier = XDPoS.NewVerifyHeadersChainReader(bc, headers, chain)
 	}
-	abort, results := bc.engine.VerifyHeaders(verifier, headers, seals)
-	defer close(abort)
-
+	// verificationDone is set when the probe below ran the whole batch through the engine and
+	// every header passed: those are this import's results, and running again would repeat it.
+	verificationDone := false
+	if num := chain[0].NumberU64(); num > 0 {
+		if parent := bc.GetHeader(chain[0].ParentHash(), num-1); parent != nil && !bc.HasState(parent.Root) {
+			if probeErr := bc.verifyAgainstCanonicalChain(verifier, headers, seals); probeErr != nil {
+				before := bc.CurrentBlock()
+				headTd, tdErr := bc.headTd(before)
+				if tdErr != nil {
+					return 0, nil, nil, tdErr
+				}
+				rebuiltEvents, rebuiltLogs, rebuildErr := bc.reimportPrunedAncestors(parent, headTd, bc.GetTd(parent.Hash(), parent.Number.Uint64()))
+				// The rebuild imports the ancestors through the normal path, so it can move the
+				// head before this batch is verified. Its head event is left to the deferred
+				// announcement below; whatever else it reported travels with this batch's events.
+				for _, event := range rebuiltEvents {
+					if ev, ok := event.(ChainHeadEvent); ok {
+						lastCanon = ev.Block
+						continue
+					}
+					events = append(events, event)
+				}
+				// The rebuilt logs join the ones this batch collects: every return below hands back
+				// coalescedLogs, so a local result would drop them on the way out.
+				coalescedLogs = append(coalescedLogs, rebuiltLogs...)
+				if rebuildErr != nil {
+					// The rebuild can stop half way - a stored ancestor that fails verification,
+					// a chain shutting down - and the head it moved to is still the head. The
+					// deferred announcement only covers returns past this point, so the event is
+					// appended here, from the block the rebuild left behind.
+					return 0, bc.headEventSince(events, before), coalescedLogs, rebuildErr
+				}
+			} else {
+				// Every header passed against this node's chain as it stands, so no rebuild is
+				// needed and this run has already done the import's verification.
+				verificationDone = true
+			}
+		}
+	}
+	var results <-chan error
+	if verificationDone {
+		// Hand the iterator the same all-clear the engine would have produced rather than run
+		// the batch again: XDPoS header verification carries signature recovery and snapshot
+		// resolution, and a batch can hold maxResultsProcess (2048) blocks. Nothing was written
+		// between the probe and here, so the two verdicts cannot differ.
+		reused := make(chan error, len(headers))
+		for range headers {
+			reused <- nil
+		}
+		close(reused)
+		results = reused
+	} else {
+		abort, verifyResults := bc.engine.VerifyHeaders(verifier, headers, seals)
+		defer close(abort)
+		results = verifyResults
+	}
 	// Peek the error for the first block to decide the directing import logic
 	it := newInsertIterator(chain, results, bc.validator)
 
