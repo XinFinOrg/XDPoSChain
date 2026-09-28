@@ -403,6 +403,7 @@ var (
 		TIPXDCXCancellationFeeBlock: big.NewInt(23779191),
 		TIPTRC21FeeBlock:            big.NewInt(23779191),
 		Gas50xBlock:                 big.NewInt(56828700),
+		Gas2500xBlock:               big.NewInt(83600000),
 		BerlinBlock:                 big.NewInt(61290000),
 		LondonBlock:                 big.NewInt(61290000),
 		MergeBlock:                  big.NewInt(61290000),
