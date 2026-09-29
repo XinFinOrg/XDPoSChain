@@ -17,6 +17,7 @@
 package eth
 
 import (
+	"bytes"
 	"context"
 	"math/big"
 	"testing"
@@ -28,10 +29,11 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
+	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
-// TestStateAtTransactionRemovesLegacyBlockSignersAtTIPSigningActivation verifies that the
+// TestStateAtTransactionAppliesBlockLevelHardForksAtActivation verifies that the
 // pre-state stateAtTransaction hands to the tracer runs the block level state changes block
 // processing performs before the first transaction of a block. TIPSigning removes the legacy
 // block signers account at the block that activates it; debug_traceTransaction and
@@ -47,7 +49,10 @@ import (
 // The fixture pins its premise from both sides: the account is in the parent state (otherwise
 // the removal would change nothing) and it is gone from the state the imported block carries,
 // which is the state block processing produced.
-func TestStateAtTransactionRemovesLegacyBlockSignersAtTIPSigningActivation(t *testing.T) {
+//
+// Prague is activated in the traced block too, so the pre-state also has to carry the
+// canonical Multicall3 code, which the replay installs through core.ApplyMulticall3HardFork.
+func TestStateAtTransactionAppliesBlockLevelHardForksAtActivation(t *testing.T) {
 	t.Parallel()
 
 	legacySigners := common.BlockSignersBinary
@@ -169,5 +174,9 @@ func TestStateAtTransactionRemovesLegacyBlockSignersAtTIPSigningActivation(t *te
 	}
 	if rebuilt.Exist(legacySigners) {
 		t.Fatal("the pre-state of the TIPSigning activation block still has the legacy block signers account in the trie")
+	}
+	// Prague is activated in this block too, so the pre-state carries the canonical Multicall3 code.
+	if have := rebuilt.GetCode(params.Multicall3Address); !bytes.Equal(have, params.Multicall3RuntimeCode) {
+		t.Fatalf("the pre-state of the Prague activation block has Multicall3 code hash %x, want %x (length %d)", crypto.Keccak256Hash(have), crypto.Keccak256Hash(params.Multicall3RuntimeCode), len(have))
 	}
 }

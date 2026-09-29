@@ -80,6 +80,45 @@ func ApplyTIPSigningHardFork(config *params.ChainConfig, statedb *state.StateDB,
 	}
 }
 
+// ApplyMulticall3HardFork installs the canonical Multicall3 code into the state of
+// a Prague-active block, the way misc.ApplyDAOHardFork mutates the state at the DAO
+// fork block. Block processing and every block replay run it before the first
+// transaction, so without it a replay lacks the account canonical execution created.
+//
+// A chain that activates Prague at genesis has no activation block and block zero is
+// never processed, so its first processed block installs the code instead, the way
+// ProcessParentBlockHash installs the EIP-2935 history contract there.
+//
+// A chain whose Prague blocks were produced without this account, because it
+// activated Prague before the code existed, has to be re-created instead of upgraded
+// in place: the install moves the state root of every block it processes.
+//
+// Like ProcessParentBlockHash the install is not limited to the activation block:
+// any Prague-active block re-installs the code when the address has none, so a node
+// that lost the account recovers. Neither hook resets an existing account, so the
+// balance and the storage stay; this install alone sets the nonce 1 a CREATE-deployed
+// contract carries since EIP-161.
+func ApplyMulticall3HardFork(config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int) {
+	if blockNumber.Sign() == 0 || !config.IsPrague(blockNumber) {
+		return
+	}
+	// Refuse code that is not the canonical runtime code, the way
+	// ProcessParentBlockHash rejects a history contract whose code does not match.
+	if code := statedb.GetCode(params.Multicall3Address); len(code) > 0 {
+		if !bytes.Equal(code, params.Multicall3RuntimeCode) {
+			log.Error("Multicall3 code mismatch",
+				"have", crypto.Keccak256Hash(code),
+				"want", crypto.Keccak256Hash(params.Multicall3RuntimeCode),
+			)
+			panic("Multicall3 code mismatch")
+		}
+		return
+	}
+	statedb.SetCode(params.Multicall3Address, params.Multicall3RuntimeCode)
+	// A contract created by CREATE carries nonce 1 since EIP-161.
+	statedb.SetNonce(params.Multicall3Address, 1, tracing.NonceChangeUnspecified)
+}
+
 // Process processes the state changes according to the Ethereum rules by running
 // the transaction messages using the statedb and applying any rewards to both
 // the processor (coinbase) and any included uncles.
@@ -111,6 +150,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 		misc.ApplyDAOHardFork(tracingStateDB)
 	}
 	ApplyTIPSigningHardFork(p.config, statedb, blockNumber)
+	ApplyMulticall3HardFork(p.config, statedb, blockNumber)
 	parentState := statedb.Copy()
 	InitSignerInTransactions(p.config, header, block.Transactions())
 	balanceUpdated := map[common.Address]*big.Int{}
@@ -211,6 +251,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 		misc.ApplyDAOHardFork(tracingStateDB)
 	}
 	ApplyTIPSigningHardFork(p.config, statedb, blockNumber)
+	ApplyMulticall3HardFork(p.config, statedb, blockNumber)
 	if cBlock.stop.Load() {
 		return nil, nil, 0, ErrStopPreparingBlock
 	}

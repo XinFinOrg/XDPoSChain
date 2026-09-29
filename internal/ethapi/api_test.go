@@ -1355,6 +1355,82 @@ func TestSimulateV1(t *testing.T) {
 	require.ErrorContains(t, err, "too many blocks")
 }
 
+// TestSimulateV1Multicall3StateOverride covers the account the Prague install owns. The
+// install runs after the caller's state overrides, so an override of its code would either
+// trip the consensus panic that guards a diverging contract or be undone by the install.
+// The fields the install does not touch stay overridable.
+func TestSimulateV1Multicall3StateOverride(t *testing.T) {
+	t.Parallel()
+
+	// newAPI builds a backend whose chain activates Prague at the genesis block, so the first
+	// simulated block is one whose processing installs Multicall3.
+	sender := common.HexToAddress("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1")
+	newAPI := func(t *testing.T) (*BlockChainAPI, *params.ChainConfig, *big.Int) {
+		t.Helper()
+		genesis := &core.Genesis{
+			Config: params.MergedTestChainConfig,
+			Alloc:  types.GenesisAlloc{sender: {Balance: big.NewInt(params.Ether)}},
+		}
+		db := rawdb.NewMemoryDatabase()
+		block := genesis.MustCommit(db)
+		stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+		require.NoError(t, err)
+		backend := &simulateBackendMock{
+			estimateBackendMock: &estimateBackendMock{
+				backendMock: newBackendMock(),
+				stateDB:     stateDB,
+				header:      block.Header(),
+				engine:      ethash.NewFaker(),
+			},
+			gasCap: 30_000_000,
+		}
+		// The mock backend carries its own chain config, so Prague has to be scheduled there
+		// too for the simulated block to take the block level Prague state changes.
+		backend.config.PragueBlock = big.NewInt(0)
+		return NewBlockChainAPI(backend, nil), backend.config, block.Number()
+	}
+	recipient := common.HexToAddress("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	calls := []TransactionArgs{{From: &sender, To: &recipient, Value: (*hexutil.Big)(big.NewInt(1))}}
+	simulate := func(t *testing.T, overrides override.StateOverride) error {
+		t.Helper()
+		api, config, base := newAPI(t)
+		require.True(t, config.IsPrague(new(big.Int).Add(base, big.NewInt(1))),
+			"the test chain must activate Prague at the first simulated block")
+		_, err := api.SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{{
+			StateOverrides: &overrides,
+			Calls:          calls,
+		}}}, nil)
+		return err
+	}
+
+	nonCanonicalCode := hexutil.Bytes(common.FromHex("0x60006000fd"))
+	canonicalCode := hexutil.Bytes(params.Multicall3RuntimeCode)
+	emptyCode := hexutil.Bytes{}
+	nonce := (*hexutil.Uint64)(new(uint64))
+	for _, tc := range []struct {
+		name     string
+		override override.OverrideAccount
+	}{
+		{"code diverging from the canonical runtime code", override.OverrideAccount{Code: &nonCanonicalCode}},
+		{"empty code", override.OverrideAccount{Code: &emptyCode}},
+		{"canonical code", override.OverrideAccount{Code: &canonicalCode}},
+		{"nonce of an account the install will create", override.OverrideAccount{Nonce: nonce}},
+	} {
+		err := simulate(t, override.StateOverride{params.Multicall3Address: tc.override})
+		var invalidReqErr *invalidParamsError
+		require.ErrorAs(t, err, &invalidReqErr, tc.name)
+		require.Contains(t, invalidReqErr.message, "Multicall3", tc.name)
+	}
+	// The install leaves the balance and the storage of the account alone, so they stay
+	// overridable, and so does every account it does not own.
+	require.NoError(t, simulate(t, override.StateOverride{
+		params.Multicall3Address: override.OverrideAccount{Balance: (*hexutil.Big)(big.NewInt(1))},
+	}))
+	require.NoError(t, simulate(t, override.StateOverride{
+		recipient: override.OverrideAccount{Code: &nonCanonicalCode},
+	}))
+}
+
 // TestSimulateV1ChainLinkage tests simulate v 1 chain linkage.
 func TestSimulateV1ChainLinkage(t *testing.T) {
 	t.Parallel()
