@@ -6986,3 +6986,40 @@ func TestSimulateV1CallLimitTotal(t *testing.T) {
 	require.ErrorAs(t, err, &rpcErr)
 	require.Equal(t, errCodeClientLimitExceeded, rpcErr.ErrorCode())
 }
+
+func TestFillTransactionPreservesAccessListWithGasPrice(t *testing.T) {
+	b := newBackendMock()
+	api := NewTransactionAPI(b, nil)
+	to := common.Address{0x42}
+	gas, nonce := hexutil.Uint64(60000), hexutil.Uint64(7)
+	al := types.AccessList{{Address: to, StorageKeys: []common.Hash{{0x01}}}}
+	result, err := api.FillTransaction(context.Background(), TransactionArgs{
+		To: &to, Gas: &gas, Nonce: &nonce,
+		GasPrice:   (*hexutil.Big)(big.NewInt(1000000000)),
+		AccessList: &al,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tx.Type() != types.AccessListTxType {
+		t.Fatalf("supplied access list was discarded: got type=%d, list=%v; want type=1, list=%v", result.Tx.Type(), result.Tx.AccessList(), al)
+	}
+	require.Equal(t, al, result.Tx.AccessList())
+}
+
+func TestFillTransactionGasPriceWithoutAccessList(t *testing.T) {
+	b := newBackendMock()
+	api := NewTransactionAPI(b, nil)
+	to := common.Address{0x42}
+	gas, nonce := hexutil.Uint64(60000), hexutil.Uint64(7)
+	result, err := api.FillTransaction(context.Background(), TransactionArgs{
+		To: &to, Gas: &gas, Nonce: &nonce,
+		GasPrice: (*hexutil.Big)(big.NewInt(1000000000)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tx.Type() != types.LegacyTxType {
+		t.Fatalf("want legacy, got %d", result.Tx.Type())
+	}
+}
