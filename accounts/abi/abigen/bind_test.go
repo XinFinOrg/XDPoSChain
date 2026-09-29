@@ -1418,6 +1418,7 @@ var bindTests = []struct {
 		sim.Commit()
 
 		resCh, stopCh := make(chan uint64), make(chan struct{})
+		ready := make(chan struct{})
 
 		go func() {
 			barSink := make(chan *OverloadBar)
@@ -1427,6 +1428,7 @@ var bindTests = []struct {
 			bar0Sink := make(chan *OverloadBar0)
 			sub0, _ := contract.WatchBar0(nil, bar0Sink)
 			defer sub0.Unsubscribe()
+			close(ready)
 
 			for {
 				select {
@@ -1439,6 +1441,7 @@ var bindTests = []struct {
 				}
 			}
 		}()
+		<-ready
 		contract.Foo(auth, big.NewInt(1), big.NewInt(2))
 		sim.Commit()
 		select {
@@ -1446,7 +1449,7 @@ var bindTests = []struct {
 			if n != 3 {
 				t.Fatalf("Invalid bar0 event")
 			}
-		case <-time.NewTimer(10 * time.Second).C:
+		case <-time.NewTimer(1 * time.Second).C:
 			t.Fatalf("Wait bar0 event timeout")
 		}
 
@@ -1457,7 +1460,7 @@ var bindTests = []struct {
 			if n != 1 {
 				t.Fatalf("Invalid bar event")
 			}
-		case <-time.NewTimer(10 * time.Second).C:
+		case <-time.NewTimer(1 * time.Second).C:
 			t.Fatalf("Wait bar event timeout")
 		}
 		close(stopCh)
