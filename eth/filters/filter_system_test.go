@@ -18,6 +18,7 @@ package filters
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -253,7 +254,7 @@ func TestPendingTxFilter(t *testing.T) {
 			types.NewTransaction(4, common.HexToAddress("0xb794f5ea0ba39494ce83a213fffba74279579268"), new(big.Int), 0, new(big.Int), nil),
 		}
 
-		txs []*types.Transaction
+		txs []common.Hash
 	)
 
 	fid0 := api.NewPendingTransactionFilter()
@@ -268,7 +269,7 @@ func TestPendingTxFilter(t *testing.T) {
 			t.Fatalf("Unable to retrieve logs: %v", err)
 		}
 
-		tx := results.([]*types.Transaction)
+		tx := results.([]common.Hash)
 		txs = append(txs, tx...)
 		if len(txs) >= len(transactions) {
 			break
@@ -286,8 +287,8 @@ func TestPendingTxFilter(t *testing.T) {
 		return
 	}
 	for i := range txs {
-		if txs[i].Hash() != transactions[i].Hash() {
-			t.Errorf("hashes[%d] invalid, want %x, got %x", i, transactions[i].Hash(), txs[i].Hash())
+		if txs[i] != transactions[i].Hash() {
+			t.Errorf("hashes[%d] invalid, want %x, got %x", i, transactions[i].Hash(), txs[i])
 		}
 	}
 }
@@ -926,7 +927,7 @@ func TestPendingTxFilterDeadlock(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Filter should exist: %v\n", err)
 			}
-			if len(txs.([]*types.Transaction)) > 0 {
+			if len(txs.([]common.Hash)) > 0 {
 				break
 			}
 			runtime.Gosched()
@@ -957,4 +958,46 @@ func flattenLogs(pl [][]*types.Log) []*types.Log {
 		logs = append(logs, l...)
 	}
 	return logs
+}
+
+// No subscription goroutines are needed to inspect the RPC return contract.
+func TestPendingTxFilterReturnsHashes(t *testing.T) {
+	tx := types.NewTransaction(0, common.Address{0x42}, big.NewInt(0), 21000, big.NewInt(1), nil)
+	f := &filter{typ: PendingTransactionsSubscription, deadline: time.NewTimer(time.Hour), txs: []*types.Transaction{tx}}
+	defer f.deadline.Stop()
+	api := &FilterAPI{filters: map[rpc.ID]*filter{"pending": f}, timeout: time.Hour}
+	result, err := api.GetFilterChanges("pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hashes []common.Hash
+	if err := json.Unmarshal(encoded, &hashes); err != nil {
+		t.Fatalf("eth_getFilterChanges pending response cannot be decoded as hashes: %v; response=%s", err, encoded)
+	}
+	if len(hashes) != 1 || hashes[0] != tx.Hash() {
+		t.Fatalf("wrong hashes: %v", hashes)
+	}
+}
+
+func TestPendingTxFilterEmptyPollIsArray(t *testing.T) {
+	f := &filter{typ: PendingTransactionsSubscription, deadline: time.NewTimer(time.Hour), txs: []*types.Transaction{}}
+	defer f.deadline.Stop()
+	api := &FilterAPI{filters: map[rpc.ID]*filter{"pending": f}, timeout: time.Hour}
+	for i := 0; i < 2; i++ {
+		result, err := api.GetFilterChanges("pending")
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(encoded) != "[]" {
+			t.Fatalf("poll %d: got %s, want []", i+1, encoded)
+		}
+	}
 }
