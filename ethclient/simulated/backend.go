@@ -1217,9 +1217,15 @@ func (fb *filterBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNum
 			return nil, errors.New("only XDPoS v2 supports committed block lookup")
 		}
 		current := fb.bc.CurrentBlock()
+		if current == nil {
+			return nil, errors.New("current block is nil")
+		}
 		if fb.bc.Config().XDPoS.BlockConsensusVersion(current.Number) == params.ConsensusEngineVersion2 {
-			confirmedHash := fb.bc.Engine().(*XDPoS.XDPoS).EngineV2.GetLatestCommittedBlockInfo().Hash
-			return fb.bc.GetHeaderByHash(confirmedHash), nil
+			info := fb.bc.Engine().(*XDPoS.XDPoS).EngineV2.GetLatestCommittedBlockInfo()
+			if info == nil {
+				return nil, errors.New("no committed block info available yet")
+			}
+			return fb.bc.GetHeaderByHash(info.Hash), nil
 		}
 		return nil, errors.New("only XDPoS v2 can lookup committed block")
 	default:
