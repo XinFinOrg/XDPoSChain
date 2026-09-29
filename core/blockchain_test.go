@@ -3528,3 +3528,102 @@ func TestConcurrentReusesOfAPreparedResultCarryTheirOwnHash(t *testing.T) {
 		}
 	}
 }
+
+// TestInsertionStopsTheCalculationItFindsInFlight covers the write an insertion performs on
+// the entry it finds in calculatingBlock: getResultBlock marks that entry, and the goroutine
+// running that preparation polls the mark (ProcessBlockNoValidator) and gives up. The
+// insertion is the only writer, and it goes on to process the block on an entry of its own, so
+// the mark it leaves behind must not stop the insertion itself.
+//
+// The entry is preset rather than produced by a preparation in flight, which is what keeps the
+// test deterministic: the preset is the very object the insertion has to write to, so the mark
+// is observable without racing a calculation against the test and without a timeout.
+func TestInsertionStopsTheCalculationItFindsInFlight(t *testing.T) {
+	key, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	address := crypto.PubkeyToAddress(key.PublicKey)
+	// Three transactions are what the balance of the helper's genesis pays for at the base fee
+	// it charges, and they are what makes this insertion run the poll inside the transaction
+	// loop as well - the poll a mark is caught at. A block with none is done before reaching it.
+	chain, blocks := newPreparedBlockChain(t, 1, func(i int, b *BlockGen) {
+		for n := 0; n < 3; n++ {
+			tx, _ := types.SignTx(types.NewTransaction(uint64(n), address, big.NewInt(1), params.TxGas, b.header.BaseFee, nil), types.HomesteadSigner{}, key)
+			b.AddTx(tx)
+		}
+	})
+	target := blocks[0]
+
+	// The entry a preparation in flight would have recorded. getResultBlock asks for it by
+	// HashNoValidator, the key the caches are written with, so the preset goes under that one.
+	inflight := &CalculatedBlock{block: target}
+	chain.calculatingBlock.Add(target.HashNoValidator(), inflight)
+
+	// verifiedM2 is what an insertion passes and a preparation does not, and it is the only
+	// argument that arms the mark. The result cache has to miss for the look-up to be reached
+	// at all: nothing has prepared a result in this chain.
+	result, err := chain.getResultBlock(target, true)
+	if !inflight.stop.Load() {
+		t.Fatal("the insertion did not stop the calculation it found in flight")
+	}
+	if err != nil {
+		t.Fatalf("failed to insert the block: %v", err)
+	}
+	if result == nil {
+		t.Fatal("the block was not processed")
+	}
+}
+
+// TestAnAbortedCalculationStopsAtTheNextTransaction covers the polls ProcessBlockNoValidator
+// makes on the mark an insertion leaves: a calculation that observes it stops right there,
+// which is the whole point of the mark - the transactions it had left are not executed. A
+// tracer is the deterministic place to raise it from: OnTxStart runs inside the transaction
+// loop, so the mark is raised after one transaction has been applied and before the next one
+// starts, with no second goroutine and no window to lose.
+func TestAnAbortedCalculationStopsAtTheNextTransaction(t *testing.T) {
+	key, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	address := crypto.PubkeyToAddress(key.PublicKey)
+	chain, blocks := newPreparedBlockChain(t, 1, func(i int, b *BlockGen) {
+		for n := 0; n < 3; n++ {
+			tx, _ := types.SignTx(types.NewTransaction(uint64(n), address, big.NewInt(1), params.TxGas, b.header.BaseFee, nil), types.HomesteadSigner{}, key)
+			b.AddTx(tx)
+		}
+	})
+	target := blocks[0]
+
+	parent := chain.GetBlock(target.ParentHash(), target.NumberU64()-1)
+	if parent == nil {
+		t.Fatal("the parent of the block to abort is missing")
+	}
+	// The statedb getResultBlock builds for this very block, and the processor it runs on.
+	// The abort is reported before the trading state and the token fees are read for the
+	// first time, so nil stands in for both.
+	statedb, err := state.NewWithChainConfig(parent.Root(), chain.stateCache, chain.chainConfig)
+	if err != nil {
+		t.Fatalf("failed to open the parent state: %v", err)
+	}
+	processor, ok := chain.processor.(*StateProcessor)
+	if !ok {
+		t.Fatal("the chain does not run the state processor this test aborts")
+	}
+
+	calculating := &CalculatedBlock{block: target}
+	started := 0
+	cfg := vm.Config{Tracer: &tracing.Hooks{
+		// OnTxStart runs before a transaction is applied (ApplyTransactionWithEVM), so this
+		// is where an insertion's mark lands: the poll that follows the transaction is the
+		// one that has to observe it.
+		OnTxStart: func(*tracing.VMContext, *types.Transaction, common.Address) {
+			started++
+			calculating.stop.Store(true)
+		},
+	}}
+	receipts, _, _, err := processor.ProcessBlockNoValidator(calculating, statedb, nil, cfg, nil)
+	if !errors.Is(err, ErrStopPreparingBlock) {
+		t.Fatalf("the aborted calculation reported %v, want %v", err, ErrStopPreparingBlock)
+	}
+	if started != 1 {
+		t.Fatalf("the aborted calculation applied %d of the block's 3 transactions, want 1", started)
+	}
+	if receipts != nil {
+		t.Fatal("the aborted calculation returned receipts")
+	}
+}

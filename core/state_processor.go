@@ -24,6 +24,7 @@ import (
 	"math/big"
 	"runtime"
 	"sync"
+	"sync/atomic"
 
 	"github.com/XinFinOrg/XDPoSChain/XDCx/tradingstate"
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -49,7 +50,10 @@ type StateProcessor struct {
 }
 type CalculatedBlock struct {
 	block *types.Block
-	stop  bool
+	// stop is set by the insertion that stops a calculation it found in flight
+	// (getResultBlock) and polled by the goroutine running that calculation
+	// (ProcessBlockNoValidator), with nothing ordering the two, hence atomic.
+	stop atomic.Bool
 }
 
 // NewStateProcessor initialises a new StateProcessor.
@@ -207,7 +211,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 		misc.ApplyDAOHardFork(tracingStateDB)
 	}
 	ApplyTIPSigningHardFork(p.config, statedb, blockNumber)
-	if cBlock.stop {
+	if cBlock.stop.Load() {
 		return nil, nil, 0, ErrStopPreparingBlock
 	}
 	parentState := statedb.Copy()
@@ -215,7 +219,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 	balanceUpdated := map[common.Address]*big.Int{}
 	totalFeeUsed := big.NewInt(0)
 
-	if cBlock.stop {
+	if cBlock.stop.Load() {
 		return nil, nil, 0, ErrStopPreparingBlock
 	}
 
@@ -272,7 +276,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 		if err != nil {
 			return nil, nil, 0, err
 		}
-		if cBlock.stop {
+		if cBlock.stop.Load() {
 			return nil, nil, 0, ErrStopPreparingBlock
 		}
 		receipts[i] = receipt

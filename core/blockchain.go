@@ -2331,10 +2331,10 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 		}
 		log.Debug("Not found cache prepare block ", "number", block.NumberU64(), "hash", block.Hash(), "validator", block.HashNoValidator())
 		if calculatedBlock, _ := bc.calculatingBlock.Get(block.HashNoValidator()); calculatedBlock != nil {
-			calculatedBlock.stop = true
+			calculatedBlock.stop.Store(true)
 		}
 	}
-	calculatedBlock = &CalculatedBlock{block, false}
+	calculatedBlock = &CalculatedBlock{block: block}
 	bc.calculatingBlock.Add(block.HashNoValidator(), calculatedBlock)
 	// Start the parallel header verifier
 	// If the chain is terminating, stop processing blocks
