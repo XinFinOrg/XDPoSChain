@@ -375,6 +375,11 @@ func TestEstimateGas(t *testing.T) {
 	contractAddr, _, _, _ := bind.DeployContract(opts, parsed, common.FromHex(contractBin), sim)
 	sim.Commit()
 
+	// A data heavy call whose EIP-7623 floor (40 gas per non-zero, 10 per zero
+	// byte) prices it above the intrinsic gas, so the estimate must land on the
+	// floor: 21000 + 4*40 + 200*10 = 23160.
+	floorData := append(common.Hex2Bytes("e09fface"), make([]byte, 200)...)
+
 	cases := []struct {
 		message     ethereum.CallMsg
 		expect      uint64
@@ -388,6 +393,7 @@ func TestEstimateGas(t *testing.T) {
 		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: 100000, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("50f6fe34")}, 0, errors.New("gas required exceeds allowance (100000)"), nil},
 		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: 100000, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("b9b046f9")}, 0, errors.New("invalid opcode: INVALID"), nil},
 		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: 100000, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("e09fface")}, 21483, nil, nil},
+		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: 100000, GasPrice: big.NewInt(0), Data: floorData}, 23160, nil, nil},
 	}
 	for _, c := range cases {
 		got, err := sim.EstimateGas(context.Background(), c.message)
