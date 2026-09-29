@@ -68,6 +68,12 @@ func DeleteCanonicalHash(db ethdb.KeyValueWriter, number uint64) {
 
 // ReadAllHashes retrieves all the hashes assigned to blocks at a certain height,
 // both canonical and reorged forks included.
+//
+// Iterator errors are deliberately not reported: this matches upstream, which
+// has this function verbatim. A walk that the database aborts halfway
+// therefore yields a short list instead of an error, and the caller
+// (HeaderChain.SetHead) relies on the DeleteDanglingHashes sweep that follows
+// the rewind loop to remove whatever the short list leaves behind.
 func ReadAllHashes(db ethdb.Iteratee, number uint64) []common.Hash {
 	prefix := headerKeyPrefix(number)
 
@@ -98,6 +104,10 @@ const sweepReportInterval = 30 * time.Second
 // associated block content (bodies, receipts, ...). Deletions are streamed into
 // a batch that is flushed at ethdb.IdealBatchSize, bounding memory usage during
 // large sweeps.
+//
+// A walk that the database aborts on an iterator error ends the loop the same
+// way a completed one does, so the pending iterator error is returned to the
+// caller.
 func DeleteDanglingHashes(db ethdb.KeyValueStore, head uint64, contentFn func(ethdb.KeyValueWriter, common.Hash, uint64)) error {
 	// header key = headerPrefix + num (8 bytes) + hash (32 bytes)
 	headerKeyLen := len(headerPrefix) + 8 + common.HashLength
@@ -192,6 +202,9 @@ func DeleteDanglingHashes(db ethdb.KeyValueStore, head uint64, contentFn func(et
 			reported = time.Now()
 			lastScanned, lastHeights = scanned, heights
 		}
+	}
+	if err := it.Error(); err != nil {
+		return err
 	}
 	return batch.Write()
 }
