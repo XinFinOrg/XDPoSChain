@@ -6987,6 +6987,8 @@ func TestSimulateV1CallLimitTotal(t *testing.T) {
 	require.Equal(t, errCodeClientLimitExceeded, rpcErr.ErrorCode())
 }
 
+// TestFillTransactionPreservesAccessListWithGasPrice checks that an explicit access list
+// survives transaction construction with gasPrice.
 func TestFillTransactionPreservesAccessListWithGasPrice(t *testing.T) {
 	b := newBackendMock()
 	api := NewTransactionAPI(b, nil)
@@ -7007,6 +7009,8 @@ func TestFillTransactionPreservesAccessListWithGasPrice(t *testing.T) {
 	require.Equal(t, al, result.Tx.AccessList())
 }
 
+// TestFillTransactionGasPriceWithoutAccessList checks that gasPrice-only requests
+// retain the legacy transaction type.
 func TestFillTransactionGasPriceWithoutAccessList(t *testing.T) {
 	b := newBackendMock()
 	api := NewTransactionAPI(b, nil)
