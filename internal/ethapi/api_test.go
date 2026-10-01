@@ -6892,6 +6892,111 @@ func TestSimulateV1ValidationRejectsMixedFeeStyle(t *testing.T) {
 	require.ErrorContains(t, err, "both gasPrice and (maxFeePerGas or maxPriorityFeePerGas) specified")
 }
 
+// TestSimulateV1ValidationRejectsGasPriceWithAuthorizationList tests that simulate
+// rejects a gasPrice given together with an authorization list, because a set-code
+// transaction cannot be built from gasPrice alone.
+func TestSimulateV1ValidationRejectsGasPriceWithAuthorizationList(t *testing.T) {
+	t.Parallel()
+
+	var (
+		sender    = common.HexToAddress("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1")
+		recipient = common.HexToAddress("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+		gas       = hexutil.Uint64(21000)
+	)
+
+	genesis := &core.Genesis{
+		Config: params.MergedTestChainConfig,
+		Alloc: types.GenesisAlloc{
+			sender: {Balance: big.NewInt(params.Ether)},
+		},
+	}
+	db := rawdb.NewMemoryDatabase()
+	block := genesis.MustCommit(db)
+	stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+	require.NoError(t, err)
+
+	backend := &simulateBackendMock{
+		estimateBackendMock: &estimateBackendMock{
+			backendMock: newBackendMock(),
+			stateDB:     stateDB,
+			header:      block.Header(),
+			engine:      ethash.NewFaker(),
+		},
+		gasCap: 30_000_000,
+	}
+	api := NewBlockChainAPI(backend, nil)
+
+	_, err = api.SimulateV1(context.Background(), simOpts{
+		Validation: true,
+		BlockStateCalls: []simBlock{{
+			// A base fee keeps this block out of the separate "authorizationList
+			// requires a base fee" rejection, so the gasPrice guard is the only
+			// path that can reject the call.
+			BlockOverrides: &override.BlockOverrides{BaseFeePerGas: (*hexutil.Big)(big.NewInt(1))},
+			Calls: []TransactionArgs{{
+				From:              &sender,
+				To:                &recipient,
+				Gas:               &gas,
+				GasPrice:          (*hexutil.Big)(big.NewInt(1)),
+				AuthorizationList: []types.SetCodeAuthorization{{Address: recipient}},
+			}},
+		}},
+	}, nil)
+	require.ErrorContains(t, err, "both gasPrice and authorizationList specified")
+}
+
+// TestSimulateV1RejectsAuthorizationListWithoutBaseFee tests that simulate rejects
+// an authorization list when the simulated header has no base fee. CallDefaults
+// fills a zero gasPrice in that case, which ToTransaction reads as a legacy
+// request and would downgrade the transaction the block hands back.
+func TestSimulateV1RejectsAuthorizationListWithoutBaseFee(t *testing.T) {
+	t.Parallel()
+
+	var (
+		sender    = common.HexToAddress("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1")
+		recipient = common.HexToAddress("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+		gas       = hexutil.Uint64(100000)
+	)
+
+	genesis := &core.Genesis{
+		Config: params.MergedTestChainConfig,
+		Alloc: types.GenesisAlloc{
+			sender: {Balance: big.NewInt(params.Ether)},
+		},
+	}
+	db := rawdb.NewMemoryDatabase()
+	block := genesis.MustCommit(db)
+	stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+	require.NoError(t, err)
+
+	backend := &simulateBackendMock{
+		estimateBackendMock: &estimateBackendMock{
+			backendMock: newBackendMock(),
+			stateDB:     stateDB,
+			header:      block.Header(),
+			engine:      ethash.NewFaker(),
+		},
+		gasCap: 30_000_000,
+	}
+	api := NewBlockChainAPI(backend, nil)
+
+	// The simulated block follows the base header, and the fixture's chain config
+	// schedules EIP-1559 well past it, so processBlock leaves the base fee unset.
+	require.False(t, backend.ChainConfig().IsEIP1559(new(big.Int).Add(block.Number(), big.NewInt(1))))
+
+	_, err = api.SimulateV1(context.Background(), simOpts{
+		BlockStateCalls: []simBlock{{
+			Calls: []TransactionArgs{{
+				From:              &sender,
+				To:                &recipient,
+				Gas:               &gas,
+				AuthorizationList: []types.SetCodeAuthorization{{Address: recipient}},
+			}},
+		}},
+	}, nil)
+	require.ErrorContains(t, err, "authorizationList requires a base fee")
+}
+
 // TestSimulateV1BaseFeeNonValidationMode tests simulate v 1 base fee non validation mode.
 func TestSimulateV1BaseFeeNonValidationMode(t *testing.T) {
 	t.Parallel()
