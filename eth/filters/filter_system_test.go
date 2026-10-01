@@ -960,6 +960,7 @@ func flattenLogs(pl [][]*types.Log) []*types.Log {
 	return logs
 }
 
+// TestPendingTxFilterReturnsHashes checks the JSON hash-array response contract.
 // No subscription goroutines are needed to inspect the RPC return contract.
 func TestPendingTxFilterReturnsHashes(t *testing.T) {
 	tx := types.NewTransaction(0, common.Address{0x42}, big.NewInt(0), 21000, big.NewInt(1), nil)
@@ -983,6 +984,7 @@ func TestPendingTxFilterReturnsHashes(t *testing.T) {
 	}
 }
 
+// TestPendingTxFilterEmptyPollIsArray checks that repeated empty polls encode as [].
 func TestPendingTxFilterEmptyPollIsArray(t *testing.T) {
 	f := &filter{typ: PendingTransactionsSubscription, deadline: time.NewTimer(time.Hour), txs: []*types.Transaction{}}
 	defer f.deadline.Stop()
