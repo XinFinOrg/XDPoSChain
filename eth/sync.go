@@ -33,6 +33,13 @@ const (
 	forceSyncCycle      = 10 * time.Second // Time interval to force syncs, even if few peers are available
 	minDesiredPeerCount = 5                // Amount of peers desired to start syncing
 
+	// After a failed sync, the next attempt waits syncRetryBaseDelay, doubling
+	// on every further failure up to syncRetryMaxDelay. A successful sync resets
+	// the delay. This keeps a peer with an invalid chain from pulling the node
+	// into a failing sync (which queues all BFT messages) every few seconds.
+	syncRetryBaseDelay = forceSyncCycle
+	syncRetryMaxDelay  = 5 * time.Minute
+
 	// This is the target size for the packs of transactions sent by txsyncLoop.
 	// A pack can get larger than this if a single transactions exceeds this size.
 	txsyncPackSize = 100 * 1024
@@ -175,6 +182,20 @@ func (pm *ProtocolManager) syncer() {
 	forceSync := time.NewTicker(forceSyncCycle)
 	defer forceSync.Stop()
 
+	var (
+		syncing   bool                  // Whether a sync started here is running
+		syncDone  = make(chan error, 1) // Result of the running sync
+		failures  int                   // Consecutive failed syncs
+		nextRetry time.Time             // No sync is started before this time
+	)
+	startSync := func() {
+		if syncing || time.Now().Before(nextRetry) {
+			return
+		}
+		syncing = true
+		go func() { syncDone <- pm.synchronise(pm.peers.BestPeer()) }()
+	}
+
 	for {
 		select {
 		case <-pm.newPeerCh:
@@ -182,16 +203,37 @@ func (pm *ProtocolManager) syncer() {
 			if pm.peers.Len() < minDesiredPeerCount {
 				break
 			}
-			go pm.synchronise(pm.peers.BestPeer())
+			startSync()
 
 		case <-forceSync.C:
 			// Force a sync even if not enough peers are present
-			go pm.synchronise(pm.peers.BestPeer())
+			startSync()
+
+		case err := <-syncDone:
+			syncing = false
+			if err == nil {
+				failures, nextRetry = 0, time.Time{}
+				break
+			}
+			failures++
+			delay := syncRetryDelay(failures)
+			nextRetry = time.Now().Add(delay)
+			log.Info("Synchronisation failed, backing off", "failures", failures, "retryIn", delay, "err", err)
 
 		case <-pm.noMorePeers:
 			return
 		}
 	}
+}
+
+// syncRetryDelay returns how long to wait before the next sync after the
+// given number of consecutive failures.
+func syncRetryDelay(failures int) time.Duration {
+	delay := syncRetryBaseDelay
+	for i := 1; i < failures && delay < syncRetryMaxDelay; i++ {
+		delay *= 2
+	}
+	return min(delay, syncRetryMaxDelay)
 }
 
 // syncStatusLogger periodically reports the current sync status at warn
@@ -264,18 +306,20 @@ func computeSyncStatus(current, highest, announcedTip uint64) syncStatus {
 	return syncStatus{current: current, highest: highest, behind: behind}
 }
 
-// synchronise tries to sync up our local block chain with a remote peer.
-func (pm *ProtocolManager) synchronise(peer *peer) {
+// synchronise tries to sync up our local block chain with a remote peer. It
+// returns the downloader error if a sync was attempted and failed, and nil if
+// the sync succeeded or was not needed.
+func (pm *ProtocolManager) synchronise(peer *peer) error {
 	// Short circuit if no peers are available
 	if peer == nil {
-		return
+		return nil
 	}
 	// Make sure the peer's TD is higher than our own
 	currentBlock := pm.blockchain.CurrentBlock()
 	td := pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64())
 	pHead, pTd := peer.Head()
 	if pTd.Cmp(td) <= 0 {
-		return
+		return nil
 	}
 	// Otherwise try to sync with the downloader
 	mode := downloader.FullSync
@@ -295,19 +339,23 @@ func (pm *ProtocolManager) synchronise(peer *peer) {
 	if mode == downloader.FastSync {
 		// Make sure the peer's total difficulty we are synchronizing is higher.
 		if pm.blockchain.GetTdByHash(pm.blockchain.CurrentSnapBlock().Hash()).Cmp(pTd) >= 0 {
-			return
+			return nil
 		}
 	}
 
+	// Process the BFT messages queued during the sync, whether it succeeded or not
+	defer pm.drainBFTQueue()
+
 	// Run the sync cycle, and disable fast sync if we've went past the pivot block
 	if err := pm.downloader.Synchronise(peer.id, pHead, pTd, mode); err != nil {
-		return
+		return err
 	}
 	if atomic.LoadUint32(&pm.snapSync) == 1 {
 		log.Info("Fast sync complete, auto disabling")
 		atomic.StoreUint32(&pm.snapSync, 0)
 	}
 	atomic.StoreUint32(&pm.acceptTxs, 1) // Mark initial sync done
+	return nil
 	//if head := pm.blockchain.CurrentBlock(); head.NumberU64() > 0 {
 	//	// We've completed a sync cycle, notify all peers of new state. This path is
 	//	// essential in star-topology networks where a gateway node needs to notify
