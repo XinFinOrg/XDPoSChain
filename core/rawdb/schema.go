@@ -58,6 +58,14 @@ var (
 	blockBodyPrefix     = []byte("b") // blockBodyPrefix + num (uint64 big endian) + hash -> block body
 	blockReceiptsPrefix = []byte("r") // blockReceiptsPrefix + num (uint64 big endian) + hash -> block receipts
 
+	// blockReceiptsExecutedSuffix is appended to the receipts key of a block this node
+	// executed itself, so the pair says "these receipts came from running the block here".
+	// InsertReceiptChain, which completes a fast sync range with receipts this node never
+	// ran, does not write it. It follows headerTDSuffix and shares the receipts key as a
+	// prefix, so leveldb prefix compression keeps the marginal cost at a few bytes per
+	// block, where a key family of its own would cost a full key each.
+	blockReceiptsExecutedSuffix = []byte("x") // blockReceiptsKey + blockReceiptsExecutedSuffix -> this node executed the block
+
 	txLookupPrefix  = []byte("l") // txLookupPrefix + hash -> transaction/receipt lookup metadata
 	bloomBitsPrefix = []byte("B") // bloomBitsPrefix + bit (uint16 big endian) + section (uint64 big endian) + hash -> bloom bits
 	codePrefix      = []byte("c") // codePrefix + code hash -> account code
@@ -157,6 +165,11 @@ func blockBodyKey(number uint64, hash common.Hash) []byte {
 // blockReceiptsKey = blockReceiptsPrefix + num (uint64 big endian) + hash
 func blockReceiptsKey(number uint64, hash common.Hash) []byte {
 	return append(append(blockReceiptsPrefix, encodeBlockNumber(number)...), hash.Bytes()...)
+}
+
+// blockReceiptsExecutedKey = blockReceiptsKey + blockReceiptsExecutedSuffix
+func blockReceiptsExecutedKey(number uint64, hash common.Hash) []byte {
+	return append(blockReceiptsKey(number, hash), blockReceiptsExecutedSuffix...)
 }
 
 // txLookupKey = txLookupPrefix + hash

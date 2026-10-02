@@ -244,12 +244,49 @@ func (b *Backend) Close() error {
 
 // Commit imports all the pending transactions as a single block and starts a
 // fresh new state.
+//
+// It returns the imported block's hash, or the zero hash when the chain could
+// not be written to (it was stopped, or the import was interrupted). The zero
+// hash is never a real block hash, and the return value is the only signal there
+// is: a caller that ignores it silently commits nothing, which is the common call
+// shape in this repository (a bare backend.Commit()), and the block it believes it
+// committed then only surfaces as a "receipt not found" from an unrelated call.
+// Callers that cannot tolerate a missing block must check for the zero hash, or ask
+// CommitWithReason for the reason the write could not be made.
+//
+// Note that accounts/abi/bind/backends.SimulatedBackend embeds this type but overrides this
+// method: the deprecated wrapper deliberately does not carry this contract, it keeps failing
+// loudly (panic) so that a backend reached through it cannot be committed to silently.
 func (b *Backend) Commit() common.Hash {
+	hash, err := b.CommitWithReason()
+	if err != nil {
+		log.Error("Commit on a chain that cannot be written to", "err", err)
+		return common.Hash{}
+	}
+	return hash
+}
+
+// CommitWithReason is Commit with the reason a write could not be made reported to the caller
+// instead of only logged. Commit keeps the hash-only shape its callers expect; a caller that has
+// to fail loudly - accounts/abi/bind/backends.SimulatedBackend, whose own callers ignore the
+// hash - asks here, so that the failure it raises can name the cause instead of describing it in
+// its own words.
+//
+// It panics where Commit does: an error that is not a local condition of this node means the
+// simulator itself is wrong, which is not something a caller can act on.
+func (b *Backend) CommitWithReason() (common.Hash, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if _, err := b.blockchain.InsertChain([]*types.Block{b.pendingBlock}); err != nil {
-		panic(err) // This cannot happen unless the simulator is wrong, fail in that case
+		// A chain that was stopped - Close() stops the blockchain - or an import that was cut
+		// short is a local condition of this backend, not a wrong simulator, so it must not
+		// bring the process down. The pending block is left as it is and no hash is reported:
+		// returning one would claim a block that never made it to disk.
+		if !core.IsLocalInsertError(err) {
+			panic(err) // This cannot happen unless the simulator is wrong, fail in that case
+		}
+		return common.Hash{}, err
 	}
 	blockHash := b.pendingBlock.Hash()
 
@@ -259,7 +296,7 @@ func (b *Backend) Commit() common.Hash {
 		panic(err)
 	}
 
-	return blockHash
+	return blockHash, nil
 }
 
 // Rollback aborts all pending transactions, reverting to the last committed state.

@@ -128,8 +128,10 @@ func TestSplitBlocksForVerification(t *testing.T) {
 }
 
 // recordingChain answers Config() for the split and records the batches handed
-// to InsertChain, in the order they were handed over. The embedded interface is
-// nil, so any other call on it panics instead of answering silently.
+// to InsertChain, in the order they were handed over; it answers CurrentBlock
+// with no head, since nothing it is handed moves the head. The embedded
+// interface is nil, so any other call on it panics instead of answering
+// silently.
 type recordingChain struct {
 	BlockChain
 	cfg      *params.ChainConfig
@@ -137,6 +139,10 @@ type recordingChain struct {
 }
 
 func (c *recordingChain) Config() *params.ChainConfig { return c.cfg }
+
+// CurrentBlock answers the head the downloader reads before it inserts, and the
+// chain this fixture stands for stays where it is, so there is no head to report.
+func (c *recordingChain) CurrentBlock() *types.Header { return nil }
 
 func (c *recordingChain) InsertChain(blocks types.Blocks) (int, error) {
 	c.segments = append(c.segments, numbersOf(blocks))

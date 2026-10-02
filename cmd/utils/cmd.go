@@ -223,27 +223,36 @@ func ImportChain(chain *core.BlockChain, fn string) error {
 			log.Info("Skipping batch as all blocks present", "batch", batch, "first", blocks[0].Hash(), "last", blocks[i-1].Hash())
 			continue
 		}
+		// A batch can still end on a block this node already has, but only in the one shape
+		// insertChain hands the sentinel out from - a future tail stopping on an executed
+		// block, see the note there - and that needs no retry here: from anywhere else
+		// insertChain consumes every known block itself - adopting it, or skipping it when
+		// it does not beat the head - and carries on with the rest of the batch.
 		if _, err := chain.InsertChain(missing); err != nil {
+			// A local condition says nothing about the blocks in the file: blaming them would
+			// report this node's own state as a corrupt import. core owns the classification
+			// and the reason, so this importer and eth/api_admin cannot drift apart.
+			if reason, ok := core.DescribeLocalInsertFailure(err); ok {
+				return fmt.Errorf("%s: %v", reason, err)
+			}
 			return fmt.Errorf("invalid block %d: %v", n, err)
 		}
 	}
 	return nil
 }
 
+// missingBlocks returns the suffix of the file that still has to be run, starting at the
+// first block this node cannot answer for. That line lives in core - see
+// BlockChain.FirstMissingImportedBlock, which eth/api_admin.hasAllBlocks asks as well, and which
+// carries the reasoning - so the two importers cannot drift apart.
+//
+// The suffix is what this command runs, not where the head ends up: a block this node
+// executed at or above a head that stops below it answers as imported, so re-delivering that
+// range is skipped. That shape is recovered by the paths that do not come through here - the
+// batch importer the downloader drives, and insertBlock for a propagated block.
 func missingBlocks(chain *core.BlockChain, blocks []*types.Block) []*types.Block {
-	head := chain.CurrentBlock()
-	for i, block := range blocks {
-		// If we're behind the chain head, only check block, state is available at head
-		if head.Number.Uint64() > block.NumberU64() {
-			if !chain.HasBlock(block.Hash(), block.NumberU64()) {
-				return blocks[i:]
-			}
-			continue
-		}
-		// If we're above the chain head, state availability is a must
-		if !chain.HasBlockAndFullState(block.Hash(), block.NumberU64()) {
-			return blocks[i:]
-		}
+	if first := chain.FirstMissingImportedBlock(blocks); first >= 0 {
+		return blocks[first:]
 	}
 	return nil
 }

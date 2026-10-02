@@ -3045,9 +3045,9 @@ func dropTd(t *testing.T, chain *BlockChain, block *types.Block) {
 	}
 }
 
-// sidechainSegmentIterator hands insertSidechain a batch whose first block has already
+// sidechainSegmentIterator hands insertSideChain a batch whose first block has already
 // been pulled from the iterator, mirroring the call site in insertChain. Every block is
-// reported as pruned, the shape that routes a batch into insertSidechain.
+// reported as pruned, the shape that routes a batch into insertSideChain.
 func sidechainSegmentIterator(t *testing.T, chain *BlockChain, batch types.Blocks) (*types.Block, *insertIterator) {
 	t.Helper()
 
@@ -3076,9 +3076,9 @@ func TestInsertSidechainReportsMissingParentTd(t *testing.T) {
 	// has, so the scan has nothing to weigh it against.
 	block, it := sidechainSegmentIterator(t, chain, blocks[3:5])
 
-	n, _, _, err := chain.insertSidechain(block, it)
-	if !errors.Is(err, errMissingTotalDifficulty) {
-		t.Fatalf("unexpected error: have %v want %v", err, errMissingTotalDifficulty)
+	n, _, _, err := chain.insertSideChain(block, it, true)
+	if !errors.Is(err, ErrLocalInsertCondition) {
+		t.Fatalf("unexpected error: have %v want %v", err, ErrLocalInsertCondition)
 	}
 	if want := 0; n != want {
 		t.Fatalf("unexpected failing index: have %d want %d", n, want)
@@ -3109,9 +3109,9 @@ func TestInsertSidechainReportsMissingLocalTd(t *testing.T) {
 	// and the scan runs until the batch is exhausted.
 	block, it := sidechainSegmentIterator(t, chain, blocks[4:6])
 
-	n, _, _, err := chain.insertSidechain(block, it)
-	if !errors.Is(err, errMissingTotalDifficulty) {
-		t.Fatalf("unexpected error: have %v want %v", err, errMissingTotalDifficulty)
+	n, _, _, err := chain.insertSideChain(block, it, true)
+	if !errors.Is(err, ErrLocalInsertCondition) {
+		t.Fatalf("unexpected error: have %v want %v", err, ErrLocalInsertCondition)
 	}
 	// The scan ran off the end of the batch looking for a block to weigh.
 	if want := 2; n != want {
@@ -3140,8 +3140,8 @@ func TestGetResultBlockReportsMissingTd(t *testing.T) {
 	// copy has to go as well.
 	dropTd(t, chain, lastPruned)
 
-	if _, err := chain.getResultBlock(fork[0], false); !errors.Is(err, errMissingTotalDifficulty) {
-		t.Fatalf("unexpected error: have %v want %v", err, errMissingTotalDifficulty)
+	if _, _, _, err := chain.getResultBlock(fork[0], false); !errors.Is(err, ErrLocalInsertCondition) {
+		t.Fatalf("unexpected error: have %v want %v", err, ErrLocalInsertCondition)
 	}
 }
 
@@ -3164,8 +3164,8 @@ func TestGetResultBlockReportsMissingLocalTd(t *testing.T) {
 	// to go as well. The competitor's parent stays readable.
 	dropTd(t, chain, blocks[2*TriesInMemory-1])
 
-	if _, err := chain.getResultBlock(fork[0], false); !errors.Is(err, errMissingTotalDifficulty) {
-		t.Fatalf("unexpected error: have %v want %v", err, errMissingTotalDifficulty)
+	if _, _, _, err := chain.getResultBlock(fork[0], false); !errors.Is(err, ErrLocalInsertCondition) {
+		t.Fatalf("unexpected error: have %v want %v", err, ErrLocalInsertCondition)
 	}
 }
 
@@ -3198,8 +3198,8 @@ func TestWriteBlockWithStateReportsMissingLocalTd(t *testing.T) {
 	}
 	dropTd(t, chain, blocks[3])
 
-	if _, err := chain.WriteBlockWithState(child[0], nil, statedb, nil, nil); !errors.Is(err, errMissingTotalDifficulty) {
-		t.Fatalf("unexpected error: have %v want %v", err, errMissingTotalDifficulty)
+	if _, err := chain.WriteBlockWithState(child[0], nil, statedb, nil, nil); !errors.Is(err, ErrLocalInsertCondition) {
+		t.Fatalf("unexpected error: have %v want %v", err, ErrLocalInsertCondition)
 	}
 	if want := uint64(4); chain.CurrentBlock().Number.Uint64() != want {
 		t.Fatalf("unexpected head number: have %d want %d", chain.CurrentBlock().Number.Uint64(), want)
@@ -3259,7 +3259,7 @@ func TestPrepareBlockStoresItsResultUnderTheLookupKey(t *testing.T) {
 	// without being computed, so the block is not recorded as being calculated. The
 	// preparation above did record it, hence the reset - nothing else purges that cache.
 	chain.calculatingBlock.Purge()
-	result, err := chain.getResultBlock(target, true)
+	result, _, _, err := chain.getResultBlock(target, true)
 	if err != nil {
 		t.Fatalf("failed to look the prepared result up: %v", err)
 	}
@@ -3342,7 +3342,7 @@ func TestAReusedResultIsStampedWithTheBlockItIsInsertedUnder(t *testing.T) {
 	// without being computed, so the block is not recorded as being calculated. The
 	// preparation above did record it, hence the reset - nothing else purges that cache.
 	chain.calculatingBlock.Purge()
-	result, err := chain.getResultBlock(target, true)
+	result, _, _, err := chain.getResultBlock(target, true)
 	if err != nil {
 		t.Fatalf("failed to look the prepared result up: %v", err)
 	}
@@ -3425,7 +3425,7 @@ func TestConcurrentReusesOfAPreparedResultCarryTheirOwnHash(t *testing.T) {
 		go func(i int, twin *types.Block) {
 			defer wg.Done()
 
-			result, err := chain.getResultBlock(twin, true)
+			result, _, _, err := chain.getResultBlock(twin, true)
 			if err != nil {
 				t.Errorf("failed to look the prepared result up: %v", err)
 				return

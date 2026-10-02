@@ -94,7 +94,12 @@ func (x *XDPoS_v2) getSnapshot(chain consensus.ChainReader, number uint64, isGap
 	gapHeader := chain.GetHeaderByNumber(gapBlockNum)
 	if gapHeader == nil {
 		log.Error("[getSnapshot] Fail to get header", "number", gapBlockNum)
-		return nil, fmt.Errorf("getSnapshot fail to get header by number: %v", gapBlockNum)
+		// Reported as a sentinel rather than as a bare error: the number this node cannot read
+		// by canonical number is the gap block of an epoch switch, and the reason can be this
+		// node's own chain - the gap block sits on a sidechain that was stored without being
+		// imported - rather than the batch under verification. The insertion-error
+		// classification reads the sentinel as the local condition it is.
+		return nil, fmt.Errorf("%w: gap block %v", consensus.ErrMissingCanonicalGapHeader, gapBlockNum)
 	}
 	gapBlockHash := gapHeader.Hash()
 	log.Debug("get snapshot from gap block", "number", gapBlockNum, "hash", gapBlockHash.Hex())

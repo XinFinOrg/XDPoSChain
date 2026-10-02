@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 )
 
@@ -100,6 +101,46 @@ func TestSetPendingBlockAndReceiptsKeepsReceiptsOnFailure(t *testing.T) {
 	if len(sim.pendingReceipts) != len(originalReceipts) || sim.pendingReceipts[0].TxHash != originalReceipts[0].TxHash {
 		t.Fatalf("pending receipts changed on rebuild failure: have %v want %v", sim.pendingReceipts, originalReceipts)
 	}
+}
+
+// TestCommitOnStoppedChainDoesNotPanic covers Commit after Close: the chain reports the stop
+// as a local condition of this node, and the backend must not turn that into a panic - the
+// process would go down for a chain that is simply no longer writable. No hash is reported
+// either, because no block made it to disk.
+func TestCommitOnStoppedChainDoesNotPanic(t *testing.T) {
+	sim := New(types.GenesisAlloc{testAddr: {Balance: big.NewInt(10000000000000000)}}, 10_000_000)
+
+	testSendSignedTx(t, testKey, sim)
+	sim.Close()
+
+	if hash := sim.Commit(); hash != (common.Hash{}) {
+		t.Fatalf("Commit reported a block for a chain that was stopped: %v", hash)
+	}
+}
+
+// TestCommitWithReasonReportsTheCause pins the entry the deprecated accounts/abi/bind wrapper
+// uses to fail loudly with the reason attached: Commit keeps its hash-only contract, while a
+// caller that has to panic needs the cause, to name the local condition that stopped the write
+// instead of describing it in words of its own.
+func TestCommitWithReasonReportsTheCause(t *testing.T) {
+	sim := New(types.GenesisAlloc{testAddr: {Balance: big.NewInt(10000000000000000)}}, 10_000_000)
+
+	testSendSignedTx(t, testKey, sim)
+	sim.Close()
+
+	hash, err := sim.CommitWithReason()
+	if err == nil {
+		t.Fatalf("CommitWithReason reported a block for a chain that was stopped: %v", hash)
+	}
+	if hash != (common.Hash{}) {
+		t.Fatalf("CommitWithReason reported a block that never reached disk: %v", hash)
+	}
+	// The cause has to stay a local condition: it is what keeps the wrapper's panic out of the
+	// "the simulator is wrong" reading.
+	if !core.IsLocalInsertError(err) {
+		t.Fatalf("the cause must be a local condition: %v", err)
+	}
+	t.Logf("cause: %v", err)
 }
 
 // testSendSignedTx sends a signed transaction to the simulated backend.

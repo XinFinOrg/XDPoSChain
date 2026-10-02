@@ -161,6 +161,11 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 			bodySize += size
 		case bytes.HasPrefix(key, blockReceiptsPrefix) && len(key) == (len(blockReceiptsPrefix)+8+common.HashLength):
 			receiptSize += size
+		case bytes.HasPrefix(key, blockReceiptsPrefix) && len(key) == (len(blockReceiptsPrefix)+8+common.HashLength+len(blockReceiptsExecutedSuffix)):
+			// The executed-block marker of a block, counted with the receipts it vouches
+			// for: without this case it would land in unaccounted and be reported as data
+			// the database cannot explain.
+			receiptSize += size
 		case bytes.HasPrefix(key, txLookupPrefix) && len(key) == (len(txLookupPrefix)+common.HashLength):
 			txlookupSize += size
 		case bytes.HasPrefix(key, PreimagePrefix) && len(key) == (len(PreimagePrefix)+common.HashLength):
