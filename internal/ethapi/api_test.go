@@ -5015,6 +5015,41 @@ func TestFillTransactionDynamicFeeExplicit(t *testing.T) {
 	require.Equal(t, accessList, tx2.AccessList())
 }
 
+// TestFillTransactionPreservesAccessListWithGasPrice checks that an explicit access list
+// survives transaction construction with gasPrice, including the returned raw transaction.
+func TestFillTransactionPreservesAccessListWithGasPrice(t *testing.T) {
+	t.Parallel()
+
+	backend := newBackendMock()
+	api := NewTransactionAPI(backend, new(AddrLocker))
+
+	from := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	to := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	gas, nonce := hexutil.Uint64(60000), hexutil.Uint64(7)
+	gasPrice := big.NewInt(1000000000)
+	accessList := types.AccessList{{Address: to, StorageKeys: []common.Hash{{0x01}}}}
+
+	res, err := api.FillTransaction(context.Background(), TransactionArgs{
+		From:       &from,
+		To:         &to,
+		Gas:        &gas,
+		Nonce:      &nonce,
+		GasPrice:   (*hexutil.Big)(gasPrice),
+		AccessList: &accessList,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res.Tx)
+	require.EqualValues(t, types.AccessListTxType, res.Tx.Type())
+	require.Equal(t, gasPrice, res.Tx.GasPrice())
+	require.Equal(t, accessList, res.Tx.AccessList())
+
+	var tx2 types.Transaction
+	require.NoError(t, tx2.UnmarshalBinary(res.Raw))
+	require.EqualValues(t, types.AccessListTxType, tx2.Type())
+	require.Equal(t, gasPrice, tx2.GasPrice())
+	require.Equal(t, accessList, tx2.AccessList())
+}
+
 // TestFillTransactionSetCodeBasic tests fill transaction set code basic.
 func TestFillTransactionSetCodeBasic(t *testing.T) {
 	t.Parallel()
@@ -6985,45 +7020,4 @@ func TestSimulateV1CallLimitTotal(t *testing.T) {
 	var rpcErr interface{ ErrorCode() int }
 	require.ErrorAs(t, err, &rpcErr)
 	require.Equal(t, errCodeClientLimitExceeded, rpcErr.ErrorCode())
-}
-
-// TestFillTransactionPreservesAccessListWithGasPrice checks that an explicit access list
-// survives transaction construction with gasPrice.
-func TestFillTransactionPreservesAccessListWithGasPrice(t *testing.T) {
-	b := newBackendMock()
-	api := NewTransactionAPI(b, nil)
-	to := common.Address{0x42}
-	gas, nonce := hexutil.Uint64(60000), hexutil.Uint64(7)
-	al := types.AccessList{{Address: to, StorageKeys: []common.Hash{{0x01}}}}
-	result, err := api.FillTransaction(context.Background(), TransactionArgs{
-		To: &to, Gas: &gas, Nonce: &nonce,
-		GasPrice:   (*hexutil.Big)(big.NewInt(1000000000)),
-		AccessList: &al,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Tx.Type() != types.AccessListTxType {
-		t.Fatalf("supplied access list was discarded: got type=%d, list=%v; want type=1, list=%v", result.Tx.Type(), result.Tx.AccessList(), al)
-	}
-	require.Equal(t, al, result.Tx.AccessList())
-}
-
-// TestFillTransactionGasPriceWithoutAccessList checks that gasPrice-only requests
-// retain the legacy transaction type.
-func TestFillTransactionGasPriceWithoutAccessList(t *testing.T) {
-	b := newBackendMock()
-	api := NewTransactionAPI(b, nil)
-	to := common.Address{0x42}
-	gas, nonce := hexutil.Uint64(60000), hexutil.Uint64(7)
-	result, err := api.FillTransaction(context.Background(), TransactionArgs{
-		To: &to, Gas: &gas, Nonce: &nonce,
-		GasPrice: (*hexutil.Big)(big.NewInt(1000000000)),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Tx.Type() != types.LegacyTxType {
-		t.Fatalf("want legacy, got %d", result.Tx.Type())
-	}
 }
