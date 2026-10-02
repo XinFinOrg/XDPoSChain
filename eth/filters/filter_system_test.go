@@ -966,6 +966,8 @@ func TestPendingTxFilterReturnsHashes(t *testing.T) {
 	tx := types.NewTransaction(0, common.Address{0x42}, big.NewInt(0), 21000, big.NewInt(1), nil)
 	f := &filter{typ: PendingTransactionsSubscription, deadline: time.NewTimer(time.Hour), txs: []*types.Transaction{tx}}
 	defer f.deadline.Stop()
+	// Leave sys nil: this hash-only pending branch does not access the backend.
+	// If that precondition changes, construct the API with newTestFilterSystem.
 	api := &FilterAPI{filters: map[rpc.ID]*filter{"pending": f}, timeout: time.Hour}
 	result, err := api.GetFilterChanges("pending")
 	if err != nil {
@@ -988,6 +990,8 @@ func TestPendingTxFilterReturnsHashes(t *testing.T) {
 func TestPendingTxFilterEmptyPollIsArray(t *testing.T) {
 	f := &filter{typ: PendingTransactionsSubscription, deadline: time.NewTimer(time.Hour), txs: []*types.Transaction{}}
 	defer f.deadline.Stop()
+	// Leave sys nil: this hash-only pending branch does not access the backend.
+	// If that precondition changes, construct the API with newTestFilterSystem.
 	api := &FilterAPI{filters: map[rpc.ID]*filter{"pending": f}, timeout: time.Hour}
 	for i := 0; i < 2; i++ {
 		result, err := api.GetFilterChanges("pending")
