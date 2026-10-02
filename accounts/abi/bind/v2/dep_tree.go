@@ -109,7 +109,10 @@ func (d *depTreeDeployer) linkAndDeploy(metadata *MetaData) (common.Address, err
 			return common.Address{}, err
 		}
 		// Link their deployed addresses into the bytecode to produce
-		deployerCode = strings.ReplaceAll(deployerCode, "__$"+dep.ID+"$__", strings.ToLower(addr.String()[2:]))
+		//
+		// Note: common.Address.String() is xdc-prefixed on this fork, so the bare
+		// hex of the address has to come from String0x().
+		deployerCode = strings.ReplaceAll(deployerCode, "__$"+dep.ID+"$__", strings.ToLower(addr.String0x()[2:]))
 	}
 	// Finally, deploy the top-level contract.
 	code, err := hex.DecodeString(deployerCode[2:])

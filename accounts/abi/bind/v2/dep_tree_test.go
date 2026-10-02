@@ -236,9 +236,7 @@ func testLinkCase(tcInput linkTestCaseInput) error {
 	return nil
 }
 
-// TODO(daniel): make this case pass test, ref: #31379
 func TestContractLinking(t *testing.T) {
-	t.Skip("Skip TestContractLinking")
 	for i, tc := range []linkTestCaseInput{
 		// test simple contract without any dependencies or overrides
 		{

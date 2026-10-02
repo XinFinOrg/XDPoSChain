@@ -61,10 +61,17 @@ func TestBindLibraryDeploymentWait(t *testing.T) {
 			"ctx, cancel := context.WithTimeout(waitCtx, 5*time.Second)",
 			"defer cancel()",
 			"if err := bind.WaitAccepted(ctx, backend, tx); err != nil {",
+			"libAddr.String0x()[2:]",
 		} {
 			if !strings.Contains(code, want) {
 				t.Errorf("test %q: generated binding does not contain %q\n%s", test.name, want, code)
 			}
+		}
+		// The linked address must be the bare hex form. common.Address.String() is
+		// xdc-prefixed on this fork, so slicing it would inject a 41-character
+		// string into the bytecode and corrupt the linked contract.
+		if strings.Contains(code, "libAddr.String()[2:]") {
+			t.Errorf("test %q: generated binding links the library address via the xdc-prefixed String()\n%s", test.name, code)
 		}
 		// The library deployment error must be handled before the transaction is polled,
 		// because a failed deployment returns a nil transaction and WaitAccepted
