@@ -79,6 +79,11 @@ var (
 		  if parsed == nil {
 			return common.Address{}, nil, nil, errors.New("GetABI returned nil")
 		  }
+		  // Library addresses are substituted into a local copy of the bytecode: the
+		  // package-level {{.Type}}Bin is shared by every caller, so substituting in
+		  // it would leave any later deployment linked to the addresses substituted
+		  // by an earlier one.
+		  linkedBin := {{.Type}}Bin
 		  {{range $pattern, $name := .Libraries}}
 			{{decapitalise $name}}Addr, tx, _, err := Deploy{{capitalise $name}}(auth, backend)
 			if err != nil {
@@ -95,9 +100,9 @@ var (
 				    return common.Address{}, nil, nil, err
 				}
 			}
-			{{$contract.Type}}Bin = strings.ReplaceAll({{$contract.Type}}Bin, "__${{$pattern}}$__", {{decapitalise $name}}Addr.String0x()[2:])
+			linkedBin = strings.ReplaceAll(linkedBin, "__${{$pattern}}$__", {{decapitalise $name}}Addr.String0x()[2:])
 		  {{end}}
-		  address, tx, contract, err := bind.DeployContract(auth, *parsed, common.FromHex({{.Type}}Bin), backend {{range .Constructor.Inputs}}, {{.Name}}{{end}})
+		  address, tx, contract, err := bind.DeployContract(auth, *parsed, common.FromHex(linkedBin), backend {{range .Constructor.Inputs}}, {{.Name}}{{end}})
 		  if err != nil {
 		    return common.Address{}, nil, nil, err
 		  }

@@ -49,8 +49,31 @@ func TestBindLibraryDeploymentWait(t *testing.T) {
 		if found != test.want {
 			t.Errorf("test %q: generated binding waits for the library deployment: got %v, want %v\n%s", test.name, found, test.want, code)
 		}
+		// Library addresses must be substituted into a function-local copy of the
+		// bytecode. The package-level MainBin is shared by every caller, so
+		// substituting in it would leave any later deployment linked to the
+		// addresses substituted by an earlier one, and concurrent deployments
+		// would race on it. The local copy is needed even without libraries,
+		// because the deployment call reads it unconditionally.
+		for _, want := range []string{
+			"linkedBin := MainBin",
+			"common.FromHex(linkedBin)",
+		} {
+			if !strings.Contains(code, want) {
+				t.Errorf("test %q: generated binding does not contain %q\n%s", test.name, want, code)
+			}
+		}
+		if strings.Contains(code, "MainBin = strings.ReplaceAll(") {
+			t.Errorf("test %q: generated binding substitutes library addresses into the package-level bytecode\n%s", test.name, code)
+		}
 		if !test.want {
 			continue
+		}
+		if want := `linkedBin = strings.ReplaceAll(linkedBin, "__$` + libPattern + `$__", libAddr.String0x()[2:])`; !strings.Contains(code, want) {
+			t.Errorf("test %q: generated binding does not substitute the library address into the local bytecode copy\n%s", test.name, code)
+		}
+		if local, replace := strings.Index(code, "linkedBin := MainBin"), strings.Index(code, "linkedBin = strings.ReplaceAll("); local < 0 || replace < local {
+			t.Errorf("test %q: generated binding substitutes library addresses before taking the local copy\n%s", test.name, code)
 		}
 		for _, want := range []string{
 			"libAddr, tx, _, err := DeployLib(auth, backend)",
