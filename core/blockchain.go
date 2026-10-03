@@ -1995,14 +1995,18 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		dirty, _ := bc.triedb.Size()
 		stats.report(chain, it.index, dirty)
 		if bc.chainConfig.XDPoS != nil {
-			engine, _ := bc.Engine().(*XDPoS.XDPoS)
-			isEpochSwithBlock, _, err := engine.IsEpochSwitch(block.Header()) // epoch block
-			if err != nil {
-				log.Error("[insertChain] Error while checking and notifying channel CheckpointCh if the incoming block is epoch switch block", "Hash", block.Hash(), "Number", block.Number())
-				bc.reportBlock(block, nil, err)
-			}
-			if isEpochSwithBlock {
-				CheckpointCh <- 1
+			if engine, ok := bc.Engine().(*XDPoS.XDPoS); ok {
+				isEpochSwithBlock, _, err := engine.IsEpochSwitch(block.Header()) // epoch block
+				if err != nil {
+					log.Error("[insertChain] Error while checking and notifying channel CheckpointCh if the incoming block is epoch switch block", "Hash", block.Hash(), "Number", block.Number())
+					bc.reportBlock(block, nil, err)
+				}
+				if isEpochSwithBlock {
+					CheckpointCh <- 1
+				}
+			} else {
+				// A non-XDPoS engine has no epoch switches, so there is nothing to notify.
+				log.Debug("[insertChain] Skip notifying CheckpointCh, the consensus engine is not XDPoS", "Hash", block.Hash(), "Number", block.Number())
 			}
 		}
 	}
@@ -2522,14 +2526,19 @@ func (bc *BlockChain) insertBlock(block *types.Block) ([]interface{}, []*types.L
 	dirty, _ := bc.triedb.Size()
 	stats.report(types.Blocks{block}, 0, dirty)
 	if bc.chainConfig.XDPoS != nil {
-		// epoch block
-		isEpochSwithBlock, _, err := bc.Engine().(*XDPoS.XDPoS).IsEpochSwitch(block.Header())
-		if err != nil {
-			log.Error("[insertBlock] Error while checking if the incoming block is epoch switch block", "Hash", block.Hash(), "Number", block.Number())
-			bc.reportBlock(block, nil, err)
-		}
-		if isEpochSwithBlock {
-			CheckpointCh <- 1
+		if engine, ok := bc.Engine().(*XDPoS.XDPoS); ok {
+			// epoch block
+			isEpochSwithBlock, _, err := engine.IsEpochSwitch(block.Header())
+			if err != nil {
+				log.Error("[insertBlock] Error while checking if the incoming block is epoch switch block", "Hash", block.Hash(), "Number", block.Number())
+				bc.reportBlock(block, nil, err)
+			}
+			if isEpochSwithBlock {
+				CheckpointCh <- 1
+			}
+		} else {
+			// A non-XDPoS engine has no epoch switches, so there is nothing to notify.
+			log.Debug("[insertBlock] Skip notifying CheckpointCh, the consensus engine is not XDPoS", "Hash", block.Hash(), "Number", block.Number())
 		}
 	}
 	// Append a single chain head event if we've progressed the chain
