@@ -664,9 +664,21 @@ func InitSignerInTransactions(config *params.ChainConfig, header *types.Header, 
 }
 
 // ProcessParentBlockHash writes the parent hash to the EIP-2935 history contract
-// and enforces the expected code, with a one-time Prague backfill if missing.
+// and enforces the expected code. When Prague is active and the contract has no
+// code, it is deployed and backfilled on the spot: normally that happens once at
+// the activation block, but any Prague-active call re-runs the deploy and the
+// backfill if the code went missing. It is a no-op unless Prague is active at the
+// block being processed.
 func ProcessParentBlockHash(prevHash common.Hash, evm *vm.EVM) {
-	// Verify history contract code matches the expected bytecode
+	blockNumber := evm.Context.BlockNumber
+	if !evm.ChainConfig().IsPrague(blockNumber) {
+		return
+	}
+
+	// Fail fast if the deployed history contract does not have the expected code:
+	// diverging history semantics would fork the chain silently. The panic hits
+	// block processing and debug_trace* replay alike, so a restart reaches the same
+	// block again and the node stays down until the binary is fixed.
 	code := evm.StateDB.GetCode(params.HistoryStorageAddress)
 	if len(code) > 0 && !bytes.Equal(code, params.HistoryStorageCode) {
 		log.Error("History storage code mismatch",
@@ -676,10 +688,6 @@ func ProcessParentBlockHash(prevHash common.Hash, evm *vm.EVM) {
 		panic("history storage code mismatch")
 	}
 
-	blockNumber := evm.Context.BlockNumber
-	if !evm.ChainConfig().IsPrague(blockNumber) {
-		return
-	}
 	forkBlock := evm.ChainConfig().PragueBlock
 
 	// Only deploy and backfill if the contract is missing at/after Prague activation.

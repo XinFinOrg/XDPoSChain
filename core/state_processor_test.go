@@ -1174,6 +1174,19 @@ func TestProcessParentBlockHashPragueGuard(t *testing.T) {
 	if have := getParentBlockHash(statedb, 0); have != (common.Hash{}) {
 		t.Fatalf("expected empty history slot, have %v", have)
 	}
+
+	// Below Prague the function must return before it reads the history contract, so
+	// unexpected code there cannot make it panic.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("panicked with Prague inactive: %v", r)
+		}
+	}()
+	statedb.SetCode(params.HistoryStorageAddress, []byte{0x01})
+	ProcessParentBlockHash(common.Hash{0x01}, evm)
+	if code := statedb.GetCode(params.HistoryStorageAddress); len(code) != 1 || code[0] != 0x01 {
+		t.Fatalf("history contract code changed below Prague: %x", code)
+	}
 }
 
 // TestTransactionToMessageRejectsMissingTokenFeeConfig tests transaction to message rejects missing token fee config.
