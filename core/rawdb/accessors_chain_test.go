@@ -32,6 +32,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/crypto/keccak"
+	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
@@ -786,6 +787,103 @@ func TestDeriveLogFields(t *testing.T) {
 				t.Errorf("receipts[%d].Logs[%d].Index = %d, want %d", i, j, receipts[i].Logs[j].Index, logIndex)
 			}
 			logIndex++
+		}
+	}
+}
+
+// failingIterator wraps an iterator so that it stops feeding keys after limit
+// items and then reports err, imitating a database that aborts the walk halfway.
+type failingIterator struct {
+	inner ethdb.Iterator
+	limit int
+	err   error
+}
+
+func (it *failingIterator) Next() bool {
+	if it.limit <= 0 {
+		return false
+	}
+	if !it.inner.Next() {
+		return false
+	}
+	it.limit--
+	return true
+}
+
+func (it *failingIterator) Error() error {
+	if it.limit <= 0 {
+		return it.err
+	}
+	return it.inner.Error()
+}
+
+func (it *failingIterator) Key() []byte   { return it.inner.Key() }
+func (it *failingIterator) Value() []byte { return it.inner.Value() }
+func (it *failingIterator) Release()      { it.inner.Release() }
+
+// failingIterStore hands out failingIterator instances over a backing database.
+type failingIterStore struct {
+	ethdb.Database
+	limit int
+	err   error
+}
+
+func (db *failingIterStore) NewIterator(prefix, start []byte) ethdb.Iterator {
+	return &failingIterator{inner: db.Database.NewIterator(prefix, start), limit: db.limit, err: db.err}
+}
+
+// writeOrphanHeaders writes count headers at the heights immediately above head.
+// Each header comes with the total-difficulty entry and the canonical marker that
+// a real import would have left next to it, so a sweep that drops the header but
+// keeps either of the two is observable.
+func writeOrphanHeaders(db ethdb.KeyValueWriter, head uint64, count int) []*types.Header {
+	headers := make([]*types.Header, 0, count)
+	for i := 1; i <= count; i++ {
+		number := head + uint64(i)
+		header := &types.Header{Number: new(big.Int).SetUint64(number)}
+		WriteHeader(db, header)
+		WriteTd(db, header.Hash(), number, big.NewInt(int64(i+1)))
+		WriteCanonicalHash(db, header.Hash(), number)
+		headers = append(headers, header)
+	}
+	return headers
+}
+
+// TestDeleteDanglingHashesIteratorError checks that a keyspace walk the database
+// aborts halfway is reported, instead of being mistaken for a completed sweep.
+func TestDeleteDanglingHashesIteratorError(t *testing.T) {
+	db := NewMemoryDatabase()
+	defer db.Close()
+	writeOrphanHeaders(db, 10, 5)
+
+	walkErr := errors.New("iterator failed")
+	store := &failingIterStore{Database: db, limit: 1, err: walkErr}
+	if err := DeleteDanglingHashes(store, 10, nil); !errors.Is(err, walkErr) {
+		t.Fatalf("expected the iterator error to be returned, got %v", err)
+	}
+}
+
+// TestDeleteDanglingHashesCleanWalk covers the other half of the boundary: a walk
+// that runs to the end returns no error and still removes every orphaned header,
+// along with the total-difficulty entry and the canonical marker beside it.
+func TestDeleteDanglingHashesCleanWalk(t *testing.T) {
+	db := NewMemoryDatabase()
+	defer db.Close()
+	headers := writeOrphanHeaders(db, 10, 5)
+
+	if err := DeleteDanglingHashes(db, 10, nil); err != nil {
+		t.Fatalf("clean walk returned an error: %v", err)
+	}
+	for _, header := range headers {
+		number := header.Number.Uint64()
+		if entry := ReadHeader(db, header.Hash(), number); entry != nil {
+			t.Fatalf("header %d survived the sweep", header.Number)
+		}
+		if td := ReadTd(db, header.Hash(), number); td != nil {
+			t.Fatalf("total difficulty of block %d survived the sweep", header.Number)
+		}
+		if marker := ReadCanonicalHash(db, number); marker != (common.Hash{}) {
+			t.Fatalf("canonical marker of height %d survived the sweep: %s", header.Number, marker)
 		}
 	}
 }
