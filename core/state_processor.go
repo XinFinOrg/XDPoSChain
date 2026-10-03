@@ -677,13 +677,10 @@ func ProcessParentBlockHash(prevHash common.Hash, evm *vm.EVM) {
 	}
 
 	blockNumber := evm.Context.BlockNumber
-	if blockNumber == nil || !evm.ChainConfig().IsPrague(blockNumber) {
+	if !evm.ChainConfig().IsPrague(blockNumber) {
 		return
 	}
 	forkBlock := evm.ChainConfig().PragueBlock
-	if forkBlock == nil || blockNumber.Cmp(forkBlock) < 0 {
-		return
-	}
 
 	// Only deploy and backfill if the contract is missing at/after Prague activation.
 	if len(code) == 0 {
@@ -701,6 +698,7 @@ func ProcessParentBlockHash(prevHash common.Hash, evm *vm.EVM) {
 			if end+1 > params.HistoryServeWindow {
 				start = end + 1 - params.HistoryServeWindow
 			}
+			// Prague can activate at block zero, where forkBlock-1 would underflow.
 			if forkBlock.Sign() > 0 {
 				forkStart := forkBlock.Uint64() - 1
 				if forkStart > start {
