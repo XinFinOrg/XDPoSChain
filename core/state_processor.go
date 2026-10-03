@@ -80,6 +80,22 @@ func ApplyTIPSigningHardFork(config *params.ChainConfig, statedb *state.StateDB,
 	}
 }
 
+// ApplyMulticall3HardFork installs the canonical Multicall3 runtime code at the
+// block that activates Prague, the same way misc.ApplyDAOHardFork mutates the
+// state at the DAO fork block. Block processing runs it before the first
+// transaction of the block.
+//
+// A replay of a block has to run it too: without it the pre-state of
+// debug_traceTransaction and the intermediate roots of debug_intermediateRoots
+// keep an account canonical execution had already created.
+func ApplyMulticall3HardFork(config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int) {
+	if blockNumber.Sign() > 0 && config.PragueBlock != nil && config.PragueBlock.Cmp(blockNumber) == 0 {
+		statedb.SetCode(params.Multicall3Address, params.Multicall3RuntimeCode)
+		// A contract created by CREATE carries nonce 1 since EIP-161.
+		statedb.SetNonce(params.Multicall3Address, 1, tracing.NonceChangeGenesis)
+	}
+}
+
 // Process processes the state changes according to the Ethereum rules by running
 // the transaction messages using the statedb and applying any rewards to both
 // the processor (coinbase) and any included uncles.
@@ -111,6 +127,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 		misc.ApplyDAOHardFork(tracingStateDB)
 	}
 	ApplyTIPSigningHardFork(p.config, statedb, blockNumber)
+	ApplyMulticall3HardFork(p.config, statedb, blockNumber)
 	parentState := statedb.Copy()
 	InitSignerInTransactions(p.config, header, block.Transactions())
 	balanceUpdated := map[common.Address]*big.Int{}
@@ -211,6 +228,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 		misc.ApplyDAOHardFork(tracingStateDB)
 	}
 	ApplyTIPSigningHardFork(p.config, statedb, blockNumber)
+	ApplyMulticall3HardFork(p.config, statedb, blockNumber)
 	if cBlock.stop.Load() {
 		return nil, nil, 0, ErrStopPreparingBlock
 	}

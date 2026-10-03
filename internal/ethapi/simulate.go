@@ -205,6 +205,7 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 	// legacy block signers account at the block that activates it, and the caller can
 	// simulate exactly that block by selecting its parent as the base state.
 	core.ApplyTIPSigningHardFork(sim.chainConfig, sim.state, header.Number)
+	core.ApplyMulticall3HardFork(sim.chainConfig, sim.state, header.Number)
 	for i, call := range block.Calls {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err

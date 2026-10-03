@@ -64,6 +64,7 @@ func blockProcessingRoots(t *testing.T, backend *testBackend, config *params.Cha
 		core.ProcessParentBlockHash(block.ParentHash(), evm)
 	}
 	core.ApplyTIPSigningHardFork(config, statedb, block.Number())
+	core.ApplyMulticall3HardFork(config, statedb, block.Number())
 	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	var (
 		usedGas  uint64

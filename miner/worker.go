@@ -884,6 +884,7 @@ func (w *worker) commitNewWork() {
 		misc.ApplyDAOHardFork(work.state)
 	}
 	core.ApplyTIPSigningHardFork(w.chainConfig, work.state, header.Number)
+	core.ApplyMulticall3HardFork(w.chainConfig, work.state, header.Number)
 	if w.chainConfig.IsPrague(header.Number) {
 		core.ProcessParentBlockHash(header.ParentHash, work.evm)
 	}
