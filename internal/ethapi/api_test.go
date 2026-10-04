@@ -4578,12 +4578,13 @@ func TestSignTransactionValidationErrors(t *testing.T) {
 	require.ErrorContains(t, err, "contract creation without any data provided")
 
 	_, err = api.SignTransaction(context.Background(), TransactionArgs{
-		From:              &from,
-		To:                nil,
-		Gas:               &gas,
-		Nonce:             &nonce,
-		GasPrice:          (*hexutil.Big)(big.NewInt(1)),
-		AuthorizationList: []types.SetCodeAuthorization{},
+		From:                 &from,
+		To:                   nil,
+		Gas:                  &gas,
+		Nonce:                &nonce,
+		MaxFeePerGas:         (*hexutil.Big)(big.NewInt(2)),
+		MaxPriorityFeePerGas: (*hexutil.Big)(big.NewInt(1)),
+		AuthorizationList:    []types.SetCodeAuthorization{},
 	})
 	require.ErrorContains(t, err, "eip7702 set code transaction requires a destination address")
 }
