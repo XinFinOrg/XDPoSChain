@@ -61,7 +61,10 @@ func (result *ExecutionResult) Revert() []byte {
 }
 
 // IntrinsicGas computes the 'intrinsic gas' for a message with the given data.
-func IntrinsicGas(data []byte, accessList types.AccessList, authList []types.SetCodeAuthorization, isContractCreation, isHomestead, isEIP3860 bool) (uint64, error) {
+// isContractCreation charges the contract creation base cost, isHomestead the
+// Homestead variant of it, isEIP2028 the reduced non-zero calldata byte price
+// and isEIP3860 the initcode word cost.
+func IntrinsicGas(data []byte, accessList types.AccessList, authList []types.SetCodeAuthorization, isContractCreation, isHomestead, isEIP2028, isEIP3860 bool) (uint64, error) {
 	// Set the starting gas for the raw transaction
 	var gas uint64
 	if isContractCreation && isHomestead {
@@ -75,12 +78,16 @@ func IntrinsicGas(data []byte, accessList types.AccessList, authList []types.Set
 		// Zero and non-zero bytes are priced differently
 		z := uint64(bytes.Count(data, []byte{0}))
 		nz := dataLen - z
+		nonZeroGas := params.TxDataNonZeroGas
+		if isEIP2028 {
+			nonZeroGas = params.TxDataNonZeroGasEIP2028
+		}
 
 		// Make sure we don't exceed uint64 for all data combinations
-		if (math.MaxUint64-gas)/params.TxDataNonZeroGas < nz {
+		if (math.MaxUint64-gas)/nonZeroGas < nz {
 			return 0, ErrGasUintOverflow
 		}
-		gas += nz * params.TxDataNonZeroGas
+		gas += nz * nonZeroGas
 
 		if (math.MaxUint64-gas)/params.TxDataZeroGas < z {
 			return 0, ErrGasUintOverflow
@@ -404,8 +411,9 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 		floorDataGas     uint64
 	)
 
-	// Check clauses 4-5, subtract intrinsic gas if everything is correct
-	gas, err := IntrinsicGas(msg.Data, msg.AccessList, msg.SetCodeAuthorizations, contractCreation, rules.IsHomestead, rules.IsEIP1559)
+	// Check clauses 4-5, subtract intrinsic gas if everything is correct.
+	// XDC schedules the EIP-2028 calldata pricing with the Prague fork.
+	gas, err := IntrinsicGas(msg.Data, msg.AccessList, msg.SetCodeAuthorizations, contractCreation, rules.IsHomestead, rules.IsPrague, rules.IsEIP1559)
 	if err != nil {
 		return nil, err
 	}

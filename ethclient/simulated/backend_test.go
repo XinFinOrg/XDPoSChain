@@ -387,7 +387,7 @@ func TestEstimateGas(t *testing.T) {
 		{ethereum.CallMsg{From: addr, To: &contractAddr, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("aa8b1d30")}, 0, errors.New("execution reverted"), nil},
 		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: 100000, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("50f6fe34")}, 0, errors.New("gas required exceeds allowance (100000)"), nil},
 		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: 100000, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("b9b046f9")}, 0, errors.New("invalid opcode: INVALID"), nil},
-		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: 100000, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("e09fface")}, 21483, nil, nil},
+		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: 100000, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("e09fface")}, 21275, nil, nil},
 	}
 	for _, c := range cases {
 		got, err := sim.EstimateGas(context.Background(), c.message)

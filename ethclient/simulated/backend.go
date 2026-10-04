@@ -902,7 +902,9 @@ func (b *Backend) EstimateGas(ctx context.Context, call ethereum.CallMsg) (uint6
 		b.pendingState.RevertToSnapshot(snapshot)
 
 		if err != nil {
-			if errors.Is(err, core.ErrIntrinsicGas) {
+			// The intrinsic gas and the EIP-7623 data floor are costs that a
+			// higher gas limit still covers, so raise it instead of giving up.
+			if errors.Is(err, core.ErrIntrinsicGas) || errors.Is(err, core.ErrFloorDataGas) {
 				return true, nil, nil // Special case, raise gas limit
 			}
 			return true, nil, err // Bail out
