@@ -38,12 +38,15 @@ var errTestWrite = errors.New("test write error")
 // writeStarted signal that readBatch waits for, so that a read error is only
 // reported once the peer has started to write, and a connClosed signal that
 // close reports before it tears the connection down. clientConn.close runs
-// handler.close first, so a connClosed signal means the handler of the failed
-// connection is closed, not that dispatch has recorded the error: that happens
-// after conn.close returns. Waiting for the signal is still enough, because the
-// unbuffered channels a caller can synchronize on afterwards (reqInit,
-// reconnected, close) are received in dispatch's select, which runs after those
-// assignments.
+// handler.closeAbort first, so a connClosed signal means the handler of the
+// failed connection is closed, not that dispatch has recorded the error: that
+// happens after conn.close returns. Waiting for the signal is still enough,
+// because the unbuffered channels a caller can synchronize on afterwards
+// (reqInit, reconnected, close) are received in dispatch's select, which runs
+// after those assignments.
+//
+// A read error runs that teardown with teardownResponseGrace, which ends at
+// once for these codecs because they never hand a call to the handler.
 type readErrCodecBase struct {
 	ServerCodec
 

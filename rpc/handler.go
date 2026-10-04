@@ -31,6 +31,36 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
+// teardownResponseGrace is how long a torn down connection gives its in-flight
+// calls to deliver their response before their contexts are cancelled. The
+// read side of a connection can be gone while the peer is still reading the
+// response to a request it already sent, which is what TestServerShortLivedConn
+// checks, so cancelling right away would drop a response that can still be
+// delivered. A teardown this node initiated does not wait for it, see
+// closeAbort.
+//
+// The grace is 3 seconds, the value go-ethereum used for its shutdown grace
+// period (stopPendingRequestTimeout, removed in go-ethereum #2808). There the
+// delay was on closing the codecs, here it is on cancelling the contexts of
+// the calls; a call that takes longer than the grace still gets cancelled.
+const teardownResponseGrace = 3 * time.Second
+
+// teardownDrainGrace bounds how long a teardown waits for its call goroutines
+// after their contexts were cancelled. A call that observes its context returns
+// right away, and the wait covers the response it may still be writing through
+// the codec, which is closed after the teardown returned. A call that ignores
+// the cancellation does not return on its own: waiting for it would keep the
+// codec of the connection open forever, so ServeCodec would never return and
+// its deferred untrackCodec would never drop the codec from Server.codecs, and
+// Client.Close would never finish. The connection is therefore released once
+// this bound has elapsed, with the call goroutine still running and its waiter
+// released together with it. Stopping that call needs the call itself to
+// respect cancellation, which #2640 tracks. A subscription a call registers
+// after this point is failed by addSubscriptions instead of being left behind,
+// and a write it performs after this point fails silently, because the codec of
+// the connection is closed once the teardown returned.
+const teardownDrainGrace = 500 * time.Millisecond
+
 // handler handles JSON-RPC messages. There is one handler per connection. Note that
 // handler is not safe for concurrent use. Message handling never blocks indefinitely
 // because RPCs are processed on background goroutines launched by handler.
@@ -58,7 +88,7 @@ type handler struct {
 	respWait             map[string]*requestOp          // active client requests
 	clientSubs           map[string]*ClientSubscription // active client subscriptions
 	callWG               sync.WaitGroup                 // pending call goroutines
-	rootCtx              context.Context                // canceled by close()
+	rootCtx              context.Context                // canceled by close() and closeAbort()
 	cancelRoot           func()                         // cancel function for rootCtx
 	conn                 jsonWriter                     // where responses will be sent
 	log                  log.Logger
@@ -68,6 +98,13 @@ type handler struct {
 
 	subLock    sync.Mutex
 	serverSubs map[ID]*Subscription
+
+	// subsClosed and subsErr record that cancelServerSubscriptions ran. A call
+	// that outlives the teardown of its connection can still reach
+	// addSubscriptions, and a subscription added then would never be closed
+	// again: addSubscriptions fails it right away instead of keeping it.
+	subsClosed bool
+	subsErr    error
 }
 
 type callProc struct {
@@ -312,11 +349,90 @@ func (h *handler) handleNonBatchCall(cp *callProc, msg *jsonrpcMessage) {
 }
 
 // close cancels all requests except for inflightReq and waits for
-// call goroutines to shut down.
+// call goroutines to shut down. The contexts of the calls are cancelled only
+// after they returned, so a method that is still producing a response is not
+// interrupted: single requests are served through this path (see
+// serveSingleRequest) and must not be aborted mid-flight. Those calls run on
+// the HTTP request's context, which the server cancels when the client goes
+// away, so this wait is not the unbounded one a connection teardown had: that
+// path has no such source, and the waits of closeAbort are bounded.
 func (h *handler) close(err error, inflightReq *requestOp) {
 	h.cancelAllRequests(err, inflightReq)
 	h.callWG.Wait()
 	h.cancelRoot()
+	h.cancelServerSubscriptions(err)
+}
+
+// closeAbort cancels all requests except for inflightReq and shuts the call
+// goroutines down. The contexts of the calls are cancelled once they had the
+// chance to deliver their response, so a call that only returns once its
+// context is done cannot block the teardown of the connection.
+//
+// grace bounds that chance: it is zero for a teardown this node initiated
+// (Client.Close, a reconnect), where the connection is gone and no response
+// can be delivered anymore, so the calls are cancelled right away. A read
+// error passes teardownResponseGrace instead, see there for why such a
+// connection can still deliver a response.
+//
+// abort and clientAbort end that wait before the grace elapsed. abort is closed
+// when this node starts tearing the connection down while the wait is running
+// (a reconnect), and clientAbort when the client itself is closed. Either
+// signal takes precedence over the response the grace was waiting for: the
+// calls are then cancelled as in the zero-grace case. clientAbort is client
+// wide on purpose, so it ends the wait of every connection of the client and
+// not only of the one dispatch happens to serve. A nil channel never ends the
+// wait.
+//
+// Both waits are bounded, so the teardown of the connection always returns and
+// the codec is always released. The wait after the contexts were cancelled is
+// bounded by teardownDrainGrace: a call that ignores the cancellation keeps
+// running past it, but it cannot hold the connection anymore.
+func (h *handler) closeAbort(err error, inflightReq *requestOp, grace time.Duration, abort, clientAbort <-chan struct{}) {
+	h.cancelAllRequests(err, inflightReq)
+
+	// Wait for the call goroutines concurrently with the grace period, with the
+	// closure of the connection and with a local teardown of it. cancelRoot can
+	// only unblock a call that observes its context, so it must not run before
+	// the calls had the chance to deliver their response.
+	done := make(chan struct{})
+	go func() {
+		h.callWG.Wait()
+		close(done)
+	}()
+
+	if grace > 0 {
+		timer := time.NewTimer(grace)
+		defer timer.Stop()
+		select {
+		case <-done:
+			// Every call returned, its response was written.
+		case <-h.conn.closed():
+			// The connection was closed locally, a response written from now on
+			// would not reach the peer anymore. For a connection this node
+			// dialed the codec is closed only after closeAbort returned, so the
+			// abort signal ends the wait instead of this case; Server.Stop
+			// closes the codec of a connection it serves directly.
+		case <-abort:
+			// This node replaces the connection (a reconnect), so no response is
+			// wanted anymore and the calls are cancelled right away.
+		case <-clientAbort:
+			// The client is closing, whether or not it saw this connection in
+			// curConn when Close took its snapshot.
+		case <-timer.C:
+		}
+	}
+	h.cancelRoot()
+	// The contexts are cancelled, so a call that observes them returns now and
+	// the response it still writes reaches the peer through the codec, which is
+	// closed once this function returned. Only a call that ignores the
+	// cancellation can outlast the drain, and it must not keep the connection.
+	drain := time.NewTimer(teardownDrainGrace)
+	defer drain.Stop()
+	select {
+	case <-done:
+	case <-drain.C:
+		h.log.Warn("RPC call did not return after its context was cancelled, releasing the connection", "drain", teardownDrainGrace)
+	}
 	h.cancelServerSubscriptions(err)
 }
 
@@ -380,17 +496,31 @@ func (h *handler) addSubscriptions(nn []*Notifier) {
 	defer h.subLock.Unlock()
 
 	for _, n := range nn {
-		if sub := n.takeSubscription(); sub != nil {
-			h.serverSubs[sub.ID] = sub
+		sub := n.takeSubscription()
+		if sub == nil {
+			continue
 		}
+		if h.subsClosed {
+			// The teardown of the connection already cancelled its
+			// subscriptions, so this one would never be closed again, and the
+			// client it belongs to is gone. Fail it right away.
+			sub.err <- h.subsErr
+			close(sub.err)
+			continue
+		}
+		h.serverSubs[sub.ID] = sub
 	}
 }
 
-// cancelServerSubscriptions removes all subscriptions and closes their error channels.
+// cancelServerSubscriptions removes all subscriptions and closes their error
+// channels. The error is remembered so a subscription registered after this
+// call (see addSubscriptions) is failed the same way instead of being kept.
 func (h *handler) cancelServerSubscriptions(err error) {
 	h.subLock.Lock()
 	defer h.subLock.Unlock()
 
+	h.subsClosed = true
+	h.subsErr = err
 	for id, s := range h.serverSubs {
 		s.err <- err
 		close(s.err)

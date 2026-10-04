@@ -25,6 +25,7 @@ import (
 	"os"
 	"reflect"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -94,6 +95,18 @@ type Client struct {
 	// taken by sending on reqInit and released by sending on reqSent.
 	writeConn jsonWriter
 
+	// curConn is the connection the dispatch loop serves. It should only be
+	// accessed by dispatch, which stores it, and by reconnect, which uses it to
+	// end the teardown grace of the connection it replaces.
+	curConn atomic.Pointer[clientConn]
+
+	// clientAbort is closed by Close and ends the grace period of the teardown
+	// of every connection this client created or will create. It is client wide
+	// on purpose, so a teardown that starts while Close runs is not left
+	// waiting either.
+	clientAbort     chan struct{}
+	clientAbortOnce sync.Once
+
 	// for dispatch
 	close       chan struct{}
 	closing     chan struct{}    // closed when client is quitting
@@ -113,17 +126,45 @@ type clientContextKey struct{}
 type clientConn struct {
 	codec   ServerCodec
 	handler *handler
+	// abort is closed when this node tears the connection down locally while
+	// its teardown is running: a reconnect does not wait for the grace period a
+	// read error grants, see closeAbort.
+	abort     chan struct{}
+	abortOnce sync.Once
+	// clientAbort is the client-wide signal, see Client.clientAbort. It ends
+	// the teardown of this connection when the client is closed, whether this
+	// node saw the connection in curConn or not.
+	clientAbort <-chan struct{}
+}
+
+// abortTeardown ends a grace period that is running in handler.closeAbort: the
+// teardown this node started takes precedence over the response the grace was
+// waiting for. It is safe to call more than once and for a connection that is
+// not being torn down.
+func (cc *clientConn) abortTeardown() {
+	cc.abortOnce.Do(func() { close(cc.abort) })
 }
 
 func (c *Client) newClientConn(conn ServerCodec) *clientConn {
 	ctx := context.WithValue(context.Background(), clientContextKey{}, c)
 	ctx = context.WithValue(ctx, peerInfoContextKey{}, conn.peerInfo())
 	handler := newHandler(ctx, conn, c.idgen, c.services, c.batchItemLimit, c.batchResponseMaxSize)
-	return &clientConn{conn, handler}
+	return &clientConn{codec: conn, handler: handler, abort: make(chan struct{}), clientAbort: c.clientAbort}
 }
 
-func (cc *clientConn) close(err error, inflightReq *requestOp) {
-	cc.handler.close(err, inflightReq)
+// close tears down the connection: the in-flight calls are aborted first and
+// the codec is closed last. A response that is still on its way out has to
+// reach the peer before that, so the codec stays open until closeAbort
+// returned: the socket is released once the calls finished, or at the latest
+// after teardownDrainGrace when a call ignores the cancellation.
+//
+// grace is handed to handler.closeAbort: it is zero when this node tears the
+// connection down (Client.Close, a reconnect) and teardownResponseGrace when
+// the read side died (see there for the response such a peer may still read).
+// A teardown this node starts while the grace is running ends its wait right
+// away through abort, and closing the client ends it through clientAbort.
+func (cc *clientConn) close(err error, inflightReq *requestOp, grace time.Duration) {
+	cc.handler.closeAbort(err, inflightReq, grace, cc.abort, cc.clientAbort)
 	cc.codec.close()
 }
 
@@ -249,6 +290,7 @@ func initClient(conn ServerCodec, services *serviceRegistry, cfg *clientConfig) 
 		batchResponseMaxSize: cfg.batchResponseLimit,
 		writeConn:            conn,
 		close:                make(chan struct{}),
+		clientAbort:          make(chan struct{}),
 		closing:              make(chan struct{}),
 		didClose:             make(chan struct{}),
 		reconnected:          make(chan ServerCodec),
@@ -299,6 +341,11 @@ func (c *Client) Close() {
 	if c.isHTTP {
 		return
 	}
+	// End the grace period of a teardown that is still running instead of
+	// waiting it out, and of a teardown that starts before the dispatch loop
+	// sees the close: the connection it belongs to is not necessarily the one
+	// curConn points at, see clientAbort.
+	c.clientAbortOnce.Do(func() { close(c.clientAbort) })
 	select {
 	case c.close <- struct{}{}:
 		<-c.didClose
@@ -645,6 +692,11 @@ func (c *Client) reconnect(ctx context.Context) error {
 		log.Trace("RPC client reconnect failed", "err", err)
 		return err
 	}
+	// The new connection replaces the old one, so a teardown grace that is
+	// still running for the old one has no reason to wait for its calls.
+	if conn := c.curConn.Load(); conn != nil {
+		conn.abortTeardown()
+	}
 	select {
 	case c.reconnected <- newconn:
 		c.writeConn = newconn
@@ -678,10 +730,11 @@ func (c *Client) dispatch(codec ServerCodec) {
 		reading     = true
 		connErr     error // read error of the current connection, if any
 	)
+	c.curConn.Store(conn)
 	defer func() {
 		close(c.closing)
 		if reading {
-			conn.close(ErrClientQuit, nil)
+			conn.close(ErrClientQuit, nil, 0)
 			c.drainRead()
 		} else if mustFailAfterReadErr(connErr, lastOp) {
 			// The read loop already died, so fail the request that conn.close
@@ -710,7 +763,19 @@ func (c *Client) dispatch(codec ServerCodec) {
 
 		case err := <-c.readErr:
 			conn.handler.log.Debug("RPC connection read error", "err", err)
-			conn.close(err, lastOp)
+			// The read side is gone, but the write side may still be usable:
+			// the in-flight calls keep their chance to deliver their response.
+			// With a call in flight this waits up to teardownResponseGrace for
+			// that chance, which delays failing the requests that can no longer
+			// be answered (#2638) by the same bound: the error below is
+			// recorded once the teardown returned. A caller's context deadline
+			// does not shorten that wait: requestOp.wait reports the timeout to
+			// the dispatch loop before it returns, and the loop stays inside the
+			// teardown until it ends, so the bound is the sum of the two
+			// teardown graces: a call that ignores its cancellation keeps the
+			// drain of handler.closeAbort running to its end, which adds
+			// teardownDrainGrace to the teardownResponseGrace passed here.
+			conn.close(err, lastOp, teardownResponseGrace)
 			connErr = err
 			reading = false
 
@@ -723,12 +788,13 @@ func (c *Client) dispatch(codec ServerCodec) {
 				// In those cases the caller will notice first and reconnect. Closing the
 				// handler terminates all waiting requests (closing op.resp) except for
 				// lastOp, which will be transferred to the new handler.
-				conn.close(errClientReconnected, lastOp)
+				conn.close(errClientReconnected, lastOp, 0)
 				c.drainRead()
 			}
 			go c.read(newcodec)
 			reading = true
 			conn = c.newClientConn(newcodec)
+			c.curConn.Store(conn)
 			// The read error belongs to the connection that just failed. The new
 			// one has not failed yet, so forget it and keep the failure paths
 			// keyed to the connection whose error they report.
