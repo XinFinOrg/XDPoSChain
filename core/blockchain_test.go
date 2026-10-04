@@ -1592,6 +1592,74 @@ func testReorgBadHashes(t *testing.T, full bool) {
 	ncm.Stop()
 }
 
+// Tests that InsertChain re-imports blocks that are stored with their state above
+// the current head - left behind when the head was moved below them without deleting
+// them - instead of skipping them and reporting success, which left the canonical
+// chain ending below them.
+func TestInsertChainReimportsKnownBlocksAboveHead(t *testing.T) {
+	gspec := &Genesis{Config: params.TestChainConfig, BaseFee: big.NewInt(params.InitialBaseFee)}
+	db := rawdb.NewMemoryDatabase()
+	chain, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+	defer chain.Stop()
+
+	_, blocks, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 10, nil)
+	if n, err := chain.InsertChain(blocks); err != nil {
+		t.Fatalf("failed to insert block %d: %v", n, err)
+	}
+	// Move the head down to block 5, keeping the blocks above it and their state
+	// on disk but dropping them from the canonical chain.
+	head, above := blocks[4], blocks[5:]
+	chain.writeHeadBlock(head)
+	for _, block := range above {
+		rawdb.DeleteCanonicalHash(db, block.NumberU64())
+		if !chain.HasBlockAndFullState(block.Hash(), block.NumberU64()) {
+			t.Fatalf("block %d is not stored with its state", block.NumberU64())
+		}
+	}
+	if n, err := chain.InsertChain(above); err != nil {
+		t.Fatalf("failed to re-import block %d: %v", above[n].NumberU64(), err)
+	}
+	last := blocks[len(blocks)-1]
+	if got := chain.CurrentBlock(); got.Hash() != last.Hash() {
+		t.Fatalf("head not advanced: have #%d, want #%d", got.Number.Uint64(), last.NumberU64())
+	}
+	for _, block := range above {
+		if got := chain.GetCanonicalHash(block.NumberU64()); got != block.Hash() {
+			t.Errorf("block %d not canonical: have %x, want %x", block.NumberU64(), got, block.Hash())
+		}
+	}
+}
+
+// Tests that InsertChain reports a block failing verification in the middle of a
+// batch, instead of returning success with only the blocks before it imported.
+func TestInsertChainReportsMidBatchFailure(t *testing.T) {
+	gspec := &Genesis{Config: params.TestChainConfig, BaseFee: big.NewInt(params.InitialBaseFee)}
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+	defer chain.Stop()
+
+	_, blocks, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 6, nil)
+	failAt := 3
+	chain.engine = ethash.NewFakeFailer(blocks[failAt].NumberU64())
+	chain.hc.engine = chain.engine
+
+	n, err := chain.InsertChain(blocks)
+	if err == nil {
+		t.Fatalf("insert succeeded, want failure at block %d", blocks[failAt].NumberU64())
+	}
+	if n != failAt {
+		t.Errorf("failure index mismatch: have %d, want %d", n, failAt)
+	}
+	if got, want := chain.CurrentBlock().Number.Uint64(), blocks[failAt-1].NumberU64(); got != want {
+		t.Errorf("head mismatch: have #%d, want #%d", got, want)
+	}
+}
+
 // Tests chain insertions in the face of one entity containing an invalid nonce.
 func TestHeadersInsertNonceError(t *testing.T) { testInsertNonceError(t, false) }
 

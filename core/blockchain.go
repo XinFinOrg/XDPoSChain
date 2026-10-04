@@ -1918,11 +1918,19 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		return it.index, events, coalescedLogs, err
 	}
 
-	// No validation errors for the first block (or chain prefix skipped)
-	for ; block != nil && err == nil; block, err = it.next() {
+	// No validation errors for the first block (or chain prefix skipped).
+	//
+	// Known blocks above the head (stored with their state, but no longer canonical
+	// after the head was moved below them) are re-executed like any other block, as
+	// insertBlock does, so they are written back onto the canonical chain in order.
+	// Skipping them would leave the canonical chain ending below them while the caller
+	// moves on to their descendants, whose verification can then fail on the missing
+	// canonical ancestors (e.g. an XDPoS epoch switch block reading its gap block).
+	for ; block != nil && (err == nil || errors.Is(err, ErrKnownBlock)); block, err = it.next() {
 		// If the chain is terminating, stop processing blocks
 		if bc.insertStopped() {
 			log.Debug("Premature abort during blocks processing")
+			err = nil // a shutdown is not an import failure
 			break
 		}
 		// If the header is a banned one, straight out abort
@@ -2026,7 +2034,9 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, []
 		log.Debug("New ChainHeadEvent ", "number", lastCanon.NumberU64(), "hash", lastCanon.Hash())
 		events = append(events, ChainHeadEvent{lastCanon})
 	}
-	return it.index, events, coalescedLogs, nil
+	// Report whatever stopped the import early, so the caller does not treat the
+	// blocks from it.index onwards as imported.
+	return it.index, events, coalescedLogs, err
 }
 
 // blockProcessingResult is a summary of block processing
