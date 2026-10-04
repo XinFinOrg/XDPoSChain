@@ -33,6 +33,19 @@ const (
 	forceSyncCycle      = 10 * time.Second // Time interval to force syncs, even if few peers are available
 	minDesiredPeerCount = 5                // Amount of peers desired to start syncing
 
+	// After a failed sync with a peer, that peer is not synced from again for
+	// syncRetryBaseDelay, doubling on every further failure with the same peer
+	// up to syncRetryMaxDelay. A successful sync with the peer resets its delay.
+	// This keeps a peer with an invalid chain from pulling the node into a
+	// failing sync (which queues all BFT messages) every few seconds, while
+	// other peers can still be synced from.
+	syncRetryBaseDelay = forceSyncCycle
+	syncRetryMaxDelay  = 5 * time.Minute
+
+	// A peer's failure count is forgotten once its backoff has been over for
+	// this long.
+	syncBackoffForget = time.Hour
+
 	// This is the target size for the packs of transactions sent by txsyncLoop.
 	// A pack can get larger than this if a single transactions exceeds this size.
 	txsyncPackSize = 100 * 1024
@@ -175,6 +188,24 @@ func (pm *ProtocolManager) syncer() {
 	forceSync := time.NewTicker(forceSyncCycle)
 	defer forceSync.Stop()
 
+	var (
+		syncing  bool                       // Whether a sync started here is running
+		syncDone = make(chan syncResult, 1) // Result of the running sync
+		backoff  = newSyncBackoff()         // Peers recently failed to sync from
+	)
+	startSync := func() {
+		if syncing {
+			return
+		}
+		now := time.Now()
+		peer := pm.peers.BestPeerExcluding(func(p *peer) bool { return backoff.blocked(p.id, now) })
+		if peer == nil {
+			return
+		}
+		syncing = true
+		go func() { syncDone <- syncResult{peer: peer.id, err: pm.synchronise(peer)} }()
+	}
+
 	for {
 		select {
 		case <-pm.newPeerCh:
@@ -182,16 +213,92 @@ func (pm *ProtocolManager) syncer() {
 			if pm.peers.Len() < minDesiredPeerCount {
 				break
 			}
-			go pm.synchronise(pm.peers.BestPeer())
+			startSync()
 
 		case <-forceSync.C:
 			// Force a sync even if not enough peers are present
-			go pm.synchronise(pm.peers.BestPeer())
+			startSync()
+
+		case res := <-syncDone:
+			syncing = false
+			if res.err == nil {
+				backoff.succeed(res.peer)
+				break
+			}
+			failures, delay := backoff.fail(res.peer, time.Now())
+			log.Info("Synchronisation failed, backing off peer", "peer", res.peer, "failures", failures, "retryIn", delay, "err", res.err)
 
 		case <-pm.noMorePeers:
 			return
 		}
 	}
+}
+
+// syncResult is the outcome of a sync attempt with a peer.
+type syncResult struct {
+	peer string
+	err  error
+}
+
+// peerSyncBackoff is the backoff state of a single peer.
+type peerSyncBackoff struct {
+	failures int       // Consecutive failed syncs with the peer
+	until    time.Time // The peer is not synced from before this time
+}
+
+// syncBackoff tracks failed syncs per peer. Entries are keyed by peer id, so a
+// peer keeps its backoff when it is dropped and reconnects.
+type syncBackoff struct {
+	peers map[string]*peerSyncBackoff
+}
+
+func newSyncBackoff() *syncBackoff {
+	return &syncBackoff{peers: make(map[string]*peerSyncBackoff)}
+}
+
+// blocked reports whether the peer is still backed off at the given time.
+func (b *syncBackoff) blocked(id string, now time.Time) bool {
+	s, ok := b.peers[id]
+	return ok && now.Before(s.until)
+}
+
+// fail records a failed sync with the peer and returns its consecutive
+// failure count and how long it is backed off for.
+func (b *syncBackoff) fail(id string, now time.Time) (int, time.Duration) {
+	b.prune(now)
+	s, ok := b.peers[id]
+	if !ok {
+		s = new(peerSyncBackoff)
+		b.peers[id] = s
+	}
+	s.failures++
+	delay := syncRetryDelay(s.failures)
+	s.until = now.Add(delay)
+	return s.failures, delay
+}
+
+// succeed clears the peer's backoff after a successful sync.
+func (b *syncBackoff) succeed(id string) {
+	delete(b.peers, id)
+}
+
+// prune forgets peers whose backoff ended more than syncBackoffForget ago.
+func (b *syncBackoff) prune(now time.Time) {
+	for id, s := range b.peers {
+		if now.Sub(s.until) > syncBackoffForget {
+			delete(b.peers, id)
+		}
+	}
+}
+
+// syncRetryDelay returns how long a peer is backed off after the given number
+// of consecutive failed syncs with it.
+func syncRetryDelay(failures int) time.Duration {
+	delay := syncRetryBaseDelay
+	for i := 1; i < failures && delay < syncRetryMaxDelay; i++ {
+		delay *= 2
+	}
+	return min(delay, syncRetryMaxDelay)
 }
 
 // syncStatusLogger periodically reports the current sync status at warn
@@ -264,18 +371,20 @@ func computeSyncStatus(current, highest, announcedTip uint64) syncStatus {
 	return syncStatus{current: current, highest: highest, behind: behind}
 }
 
-// synchronise tries to sync up our local block chain with a remote peer.
-func (pm *ProtocolManager) synchronise(peer *peer) {
+// synchronise tries to sync up our local block chain with a remote peer. It
+// returns the downloader error if a sync was attempted and failed, and nil if
+// the sync succeeded or was not needed.
+func (pm *ProtocolManager) synchronise(peer *peer) error {
 	// Short circuit if no peers are available
 	if peer == nil {
-		return
+		return nil
 	}
 	// Make sure the peer's TD is higher than our own
 	currentBlock := pm.blockchain.CurrentBlock()
 	td := pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64())
 	pHead, pTd := peer.Head()
 	if pTd.Cmp(td) <= 0 {
-		return
+		return nil
 	}
 	// Otherwise try to sync with the downloader
 	mode := downloader.FullSync
@@ -295,19 +404,23 @@ func (pm *ProtocolManager) synchronise(peer *peer) {
 	if mode == downloader.FastSync {
 		// Make sure the peer's total difficulty we are synchronizing is higher.
 		if pm.blockchain.GetTdByHash(pm.blockchain.CurrentSnapBlock().Hash()).Cmp(pTd) >= 0 {
-			return
+			return nil
 		}
 	}
 
+	// Process the BFT messages queued during the sync, whether it succeeded or not
+	defer pm.drainBFTQueue()
+
 	// Run the sync cycle, and disable fast sync if we've went past the pivot block
 	if err := pm.downloader.Synchronise(peer.id, pHead, pTd, mode); err != nil {
-		return
+		return err
 	}
 	if atomic.LoadUint32(&pm.snapSync) == 1 {
 		log.Info("Fast sync complete, auto disabling")
 		atomic.StoreUint32(&pm.snapSync, 0)
 	}
 	atomic.StoreUint32(&pm.acceptTxs, 1) // Mark initial sync done
+	return nil
 	//if head := pm.blockchain.CurrentBlock(); head.NumberU64() > 0 {
 	//	// We've completed a sync cycle, notify all peers of new state. This path is
 	//	// essential in star-topology networks where a gateway node needs to notify

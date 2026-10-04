@@ -116,6 +116,7 @@ type ProtocolManager struct {
 	knownVotes     *lru.Cache[common.Hash, struct{}]
 	knownSyncInfos *lru.Cache[common.Hash, struct{}]
 	knownTimeouts  *lru.Cache[common.Hash, struct{}]
+	bftQueue       *bftQueue // BFT messages received while synchronising
 }
 
 // NewProtocolManagerEx add order pool to protocol
@@ -150,6 +151,7 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		knownVotes:     lru.NewCache[common.Hash, struct{}](maxKnownVote),
 		knownSyncInfos: lru.NewCache[common.Hash, struct{}](maxKnownSyncInfo),
 		knownTimeouts:  lru.NewCache[common.Hash, struct{}](maxKnownTimeout),
+		bftQueue:       newBFTQueue(),
 		orderpool:      nil,
 		lendingpool:    nil,
 		orderTxSub:     nil,
@@ -962,63 +964,98 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		}
 
 	case msg.Code == VoteMsg:
-		if pm.downloader.Synchronising() {
-			break
-		}
-
 		var vote types.Vote
 		if err := msg.Decode(&vote); err != nil {
 			return errResp(ErrDecode, "msg %v: %v", msg, err)
 		}
 		p.MarkVote(vote.Hash())
 
-		if pm.knownVotes.Contains(vote.Hash()) {
-			log.Trace("Discarded vote, known vote", "vote hash", vote.Hash(), "voted block hash", vote.ProposedBlockInfo.Hash.Hex(), "number", vote.ProposedBlockInfo.Number, "round", vote.ProposedBlockInfo.Round)
-		} else {
-			pm.knownVotes.Add(vote.Hash(), struct{}{})
-			go pm.bft.Vote(p.id, &vote)
-		}
-
-	case msg.Code == TimeoutMsg:
-		if pm.downloader.Synchronising() {
+		// The sender never resends a message it marked as known to us, so queue
+		// it while synchronising instead of dropping it.
+		if pm.bftQueue.enqueueIf(pm.downloader.Synchronising, p.id, vote.Hash(), &vote) {
 			break
 		}
+		pm.handleVote(p.id, &vote)
 
+	case msg.Code == TimeoutMsg:
 		var timeout types.Timeout
 		if err := msg.Decode(&timeout); err != nil {
 			return errResp(ErrDecode, "msg %v: %v", msg, err)
 		}
 		p.MarkTimeout(timeout.Hash())
 
-		if pm.knownTimeouts.Contains(timeout.Hash()) {
-			log.Trace("Discarded Timeout, known Timeout", "Signature", timeout.Signature, "hash", timeout.Hash(), "round", timeout.Round)
-		} else {
-			pm.knownTimeouts.Add(timeout.Hash(), struct{}{})
-			go pm.bft.Timeout(p.id, &timeout)
-		}
-
-	case msg.Code == SyncInfoMsg:
-		if pm.downloader.Synchronising() {
+		if pm.bftQueue.enqueueIf(pm.downloader.Synchronising, p.id, timeout.Hash(), &timeout) {
 			break
 		}
+		pm.handleTimeout(p.id, &timeout)
 
+	case msg.Code == SyncInfoMsg:
 		var syncInfo types.SyncInfo
 		if err := msg.Decode(&syncInfo); err != nil {
 			return errResp(ErrDecode, "msg %v: %v", msg, err)
 		}
 		p.MarkSyncInfo(syncInfo.Hash())
 
-		if pm.knownSyncInfos.Contains(syncInfo.Hash()) {
-			log.Trace("Discarded SyncInfo, known SyncInfo", "hash", syncInfo.Hash())
-		} else {
-			pm.knownSyncInfos.Add(syncInfo.Hash(), struct{}{})
-			go pm.bft.SyncInfo(p.id, &syncInfo)
+		if pm.bftQueue.enqueueIf(pm.downloader.Synchronising, p.id, syncInfo.Hash(), &syncInfo) {
+			break
 		}
+		pm.handleSyncInfo(p.id, &syncInfo)
 
 	default:
 		return errResp(ErrInvalidMsgCode, "%v", msg.Code)
 	}
 	return nil
+}
+
+// handleVote passes a vote to the BFT handler unless it is already known.
+func (pm *ProtocolManager) handleVote(peer string, vote *types.Vote) {
+	if pm.knownVotes.Contains(vote.Hash()) {
+		log.Trace("Discarded vote, known vote", "vote hash", vote.Hash(), "voted block hash", vote.ProposedBlockInfo.Hash.Hex(), "number", vote.ProposedBlockInfo.Number, "round", vote.ProposedBlockInfo.Round)
+		return
+	}
+	pm.knownVotes.Add(vote.Hash(), struct{}{})
+	go pm.bft.Vote(peer, vote)
+}
+
+// handleTimeout passes a timeout to the BFT handler unless it is already known.
+func (pm *ProtocolManager) handleTimeout(peer string, timeout *types.Timeout) {
+	if pm.knownTimeouts.Contains(timeout.Hash()) {
+		log.Trace("Discarded Timeout, known Timeout", "Signature", timeout.Signature, "hash", timeout.Hash(), "round", timeout.Round)
+		return
+	}
+	pm.knownTimeouts.Add(timeout.Hash(), struct{}{})
+	go pm.bft.Timeout(peer, timeout)
+}
+
+// handleSyncInfo passes a syncInfo to the BFT handler unless it is already known.
+func (pm *ProtocolManager) handleSyncInfo(peer string, syncInfo *types.SyncInfo) {
+	if pm.knownSyncInfos.Contains(syncInfo.Hash()) {
+		log.Trace("Discarded SyncInfo, known SyncInfo", "hash", syncInfo.Hash())
+		return
+	}
+	pm.knownSyncInfos.Add(syncInfo.Hash(), struct{}{})
+	go pm.bft.SyncInfo(peer, syncInfo)
+}
+
+// drainBFTQueue processes the BFT messages queued during a sync. It does
+// nothing if another sync is already running; that sync drains the queue when
+// it finishes.
+func (pm *ProtocolManager) drainBFTQueue() {
+	msgs := pm.bftQueue.takeUnless(pm.downloader.Synchronising)
+	if len(msgs) == 0 {
+		return
+	}
+	log.Debug("Processing BFT messages queued during sync", "count", len(msgs))
+	for _, m := range msgs {
+		switch v := m.msg.(type) {
+		case *types.Vote:
+			pm.handleVote(m.peer, v)
+		case *types.Timeout:
+			pm.handleTimeout(m.peer, v)
+		case *types.SyncInfo:
+			pm.handleSyncInfo(m.peer, v)
+		}
+	}
 }
 
 // BroadcastBlock will either propagate a block to a subset of it's peers, or
