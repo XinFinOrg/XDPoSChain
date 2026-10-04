@@ -189,9 +189,10 @@ func messageForReadError(err error) string {
 	return ""
 }
 
-// Stop stops reading new requests, waits for stopPendingRequestTimeout to allow pending
-// requests to finish, then closes all codecs which will cancel pending requests and
-// subscriptions.
+// Stop stops reading new requests and closes all codecs, which cancels pending requests
+// and subscriptions. Pending requests are not waited for: closing a codec unblocks the
+// teardown of its connection right away, which cancels the contexts of its calls without
+// waiting for the grace period.
 func (s *Server) Stop() {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
