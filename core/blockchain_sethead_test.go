@@ -339,7 +339,7 @@ func TestSetHeadCleansOnlyXdposSnapshotsAboveHead(t *testing.T) {
 	}
 
 	// Enable XDPoS snapshot-number gating for SetHead cleanup only.
-	// (Applied after import to avoid triggering UpdateM1 on ethash blocks.)
+	// (Applied after import to avoid triggering UpdateM1At on ethash blocks.)
 	configWithXdpos := genesis.Config.Clone()
 	configWithXdpos.XDPoS = &params.XDPoSConfig{Epoch: 5, Gap: 4}
 	chain.SetChainConfig(configWithXdpos)

@@ -234,7 +234,7 @@ func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 		// verifying node judged the checkpoint against its own head at the moment
 		// of the call, and the same node could judge the same checkpoint
 		// differently later. The gap block is the block to settle on, because it
-		// is the state UpdateM1 reads for the next epoch's set.
+		// is the state UpdateM1At reads for the next epoch's set.
 		//
 		// No fork block gates that settlement. Replaying the v1 era can therefore
 		// classify a checkpoint differently than the latest-block reading did.
