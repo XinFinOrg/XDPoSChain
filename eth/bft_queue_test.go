@@ -88,6 +88,64 @@ func TestSyncRetryDelay(t *testing.T) {
 	}
 }
 
+// Tests that failed syncs back off only the failing peer, that a success
+// resets that peer, and that old entries are forgotten.
+func TestSyncBackoffPerPeer(t *testing.T) {
+	b := newSyncBackoff()
+	now := time.Unix(1_000_000, 0)
+
+	for i, want := range []time.Duration{10 * time.Second, 20 * time.Second, 40 * time.Second} {
+		failures, delay := b.fail("bad", now)
+		if failures != i+1 || delay != want {
+			t.Fatalf("fail %d: have (%d, %v), want (%d, %v)", i+1, failures, delay, i+1, want)
+		}
+	}
+	if !b.blocked("bad", now.Add(39*time.Second)) {
+		t.Fatal("failing peer not backed off")
+	}
+	if b.blocked("bad", now.Add(40*time.Second)) {
+		t.Fatal("failing peer still backed off after its delay")
+	}
+	if b.blocked("good", now) {
+		t.Fatal("other peer backed off")
+	}
+
+	b.fail("good", now)
+	b.succeed("good")
+	if b.blocked("good", now) {
+		t.Fatal("peer still backed off after a successful sync")
+	}
+	if failures, _ := b.fail("good", now); failures != 1 {
+		t.Fatalf("failures after reset: have %d, want 1", failures)
+	}
+
+	later := now.Add(40*time.Second + syncBackoffForget + time.Second)
+	b.fail("other", later)
+	if _, ok := b.peers["bad"]; ok {
+		t.Fatal("stale peer not forgotten")
+	}
+}
+
+// Tests that BestPeerExcluding skips excluded peers even when they have the
+// highest total difficulty.
+func TestBestPeerExcluding(t *testing.T) {
+	ps := newPeerSet()
+	high := &peer{id: "high", td: big.NewInt(100)}
+	low := &peer{id: "low", td: big.NewInt(10)}
+	ps.peers[high.id] = high
+	ps.peers[low.id] = low
+
+	if p := ps.BestPeerExcluding(func(*peer) bool { return false }); p != high {
+		t.Fatalf("best peer: have %v, want high", p)
+	}
+	if p := ps.BestPeerExcluding(func(p *peer) bool { return p.id == "high" }); p != low {
+		t.Fatalf("best peer excluding high: have %v, want low", p)
+	}
+	if p := ps.BestPeerExcluding(func(*peer) bool { return true }); p != nil {
+		t.Fatalf("best peer excluding all: have %v, want nil", p)
+	}
+}
+
 // Tests that a vote received while the downloader is synchronising is queued
 // instead of dropped, and handed to the BFT handler once the sync ends.
 func TestVoteQueuedDuringSync(t *testing.T) {

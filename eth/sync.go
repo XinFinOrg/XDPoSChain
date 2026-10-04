@@ -33,12 +33,18 @@ const (
 	forceSyncCycle      = 10 * time.Second // Time interval to force syncs, even if few peers are available
 	minDesiredPeerCount = 5                // Amount of peers desired to start syncing
 
-	// After a failed sync, the next attempt waits syncRetryBaseDelay, doubling
-	// on every further failure up to syncRetryMaxDelay. A successful sync resets
-	// the delay. This keeps a peer with an invalid chain from pulling the node
-	// into a failing sync (which queues all BFT messages) every few seconds.
+	// After a failed sync with a peer, that peer is not synced from again for
+	// syncRetryBaseDelay, doubling on every further failure with the same peer
+	// up to syncRetryMaxDelay. A successful sync with the peer resets its delay.
+	// This keeps a peer with an invalid chain from pulling the node into a
+	// failing sync (which queues all BFT messages) every few seconds, while
+	// other peers can still be synced from.
 	syncRetryBaseDelay = forceSyncCycle
 	syncRetryMaxDelay  = 5 * time.Minute
+
+	// A peer's failure count is forgotten once its backoff has been over for
+	// this long.
+	syncBackoffForget = time.Hour
 
 	// This is the target size for the packs of transactions sent by txsyncLoop.
 	// A pack can get larger than this if a single transactions exceeds this size.
@@ -183,17 +189,21 @@ func (pm *ProtocolManager) syncer() {
 	defer forceSync.Stop()
 
 	var (
-		syncing   bool                  // Whether a sync started here is running
-		syncDone  = make(chan error, 1) // Result of the running sync
-		failures  int                   // Consecutive failed syncs
-		nextRetry time.Time             // No sync is started before this time
+		syncing  bool                       // Whether a sync started here is running
+		syncDone = make(chan syncResult, 1) // Result of the running sync
+		backoff  = newSyncBackoff()         // Peers recently failed to sync from
 	)
 	startSync := func() {
-		if syncing || time.Now().Before(nextRetry) {
+		if syncing {
+			return
+		}
+		now := time.Now()
+		peer := pm.peers.BestPeerExcluding(func(p *peer) bool { return backoff.blocked(p.id, now) })
+		if peer == nil {
 			return
 		}
 		syncing = true
-		go func() { syncDone <- pm.synchronise(pm.peers.BestPeer()) }()
+		go func() { syncDone <- syncResult{peer: peer.id, err: pm.synchronise(peer)} }()
 	}
 
 	for {
@@ -209,16 +219,14 @@ func (pm *ProtocolManager) syncer() {
 			// Force a sync even if not enough peers are present
 			startSync()
 
-		case err := <-syncDone:
+		case res := <-syncDone:
 			syncing = false
-			if err == nil {
-				failures, nextRetry = 0, time.Time{}
+			if res.err == nil {
+				backoff.succeed(res.peer)
 				break
 			}
-			failures++
-			delay := syncRetryDelay(failures)
-			nextRetry = time.Now().Add(delay)
-			log.Info("Synchronisation failed, backing off", "failures", failures, "retryIn", delay, "err", err)
+			failures, delay := backoff.fail(res.peer, time.Now())
+			log.Info("Synchronisation failed, backing off peer", "peer", res.peer, "failures", failures, "retryIn", delay, "err", res.err)
 
 		case <-pm.noMorePeers:
 			return
@@ -226,8 +234,65 @@ func (pm *ProtocolManager) syncer() {
 	}
 }
 
-// syncRetryDelay returns how long to wait before the next sync after the
-// given number of consecutive failures.
+// syncResult is the outcome of a sync attempt with a peer.
+type syncResult struct {
+	peer string
+	err  error
+}
+
+// peerSyncBackoff is the backoff state of a single peer.
+type peerSyncBackoff struct {
+	failures int       // Consecutive failed syncs with the peer
+	until    time.Time // The peer is not synced from before this time
+}
+
+// syncBackoff tracks failed syncs per peer. Entries are keyed by peer id, so a
+// peer keeps its backoff when it is dropped and reconnects.
+type syncBackoff struct {
+	peers map[string]*peerSyncBackoff
+}
+
+func newSyncBackoff() *syncBackoff {
+	return &syncBackoff{peers: make(map[string]*peerSyncBackoff)}
+}
+
+// blocked reports whether the peer is still backed off at the given time.
+func (b *syncBackoff) blocked(id string, now time.Time) bool {
+	s, ok := b.peers[id]
+	return ok && now.Before(s.until)
+}
+
+// fail records a failed sync with the peer and returns its consecutive
+// failure count and how long it is backed off for.
+func (b *syncBackoff) fail(id string, now time.Time) (int, time.Duration) {
+	b.prune(now)
+	s, ok := b.peers[id]
+	if !ok {
+		s = new(peerSyncBackoff)
+		b.peers[id] = s
+	}
+	s.failures++
+	delay := syncRetryDelay(s.failures)
+	s.until = now.Add(delay)
+	return s.failures, delay
+}
+
+// succeed clears the peer's backoff after a successful sync.
+func (b *syncBackoff) succeed(id string) {
+	delete(b.peers, id)
+}
+
+// prune forgets peers whose backoff ended more than syncBackoffForget ago.
+func (b *syncBackoff) prune(now time.Time) {
+	for id, s := range b.peers {
+		if now.Sub(s.until) > syncBackoffForget {
+			delete(b.peers, id)
+		}
+	}
+}
+
+// syncRetryDelay returns how long a peer is backed off after the given number
+// of consecutive failed syncs with it.
 func syncRetryDelay(failures int) time.Duration {
 	delay := syncRetryBaseDelay
 	for i := 1; i < failures && delay < syncRetryMaxDelay; i++ {
