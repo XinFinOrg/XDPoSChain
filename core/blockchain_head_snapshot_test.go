@@ -286,6 +286,11 @@ func TestGapBlockSnapshotDerivationFailsBeforeAnythingIsWritten(t *testing.T) {
 	if !strings.Contains(err.Error(), "gap block 3") {
 		t.Fatalf("the insertion failed for something other than the gap block set: %v", err)
 	}
+	// The downloader drops the peer for anything the classification does not call local, and
+	// nothing about this failure is a fault of the block that was served.
+	if !blockchain.IsLocalInsertError(err) {
+		t.Fatalf("the failed derivation is the block's fault to the downloader, so it drops the peer that served it: %v", err)
+	}
 	if got := blockchain.CurrentBlock().Hash(); got != head.Hash() {
 		t.Fatalf("head moved to %s despite the failed derivation, want %s", got, head.Hash())
 	}
@@ -425,6 +430,11 @@ func TestReorgGapSnapshotDerivationFailsBeforeAnySideEffect(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "gap block 3") {
 		t.Fatalf("the reorg failed for something other than the gap block set: %v", err)
+	}
+	// A gap block state this node can no longer open is its own condition, so the reorg must
+	// not leave the downloader blaming the peer that served the new chain.
+	if !blockchain.IsLocalInsertError(err) {
+		t.Fatalf("the unopenable gap block state is the block's fault to the downloader, so it drops the peer that served it: %v", err)
 	}
 	if got := blockchain.CurrentBlock().Hash(); got != oldHead.Hash() {
 		t.Fatalf("the head moved to %s despite the failed derivation, want %s", got, oldHead.Hash())
@@ -656,6 +666,11 @@ func TestReorgFailsOnSnapshotProbeError(t *testing.T) {
 	}
 	if !errors.Is(err, probeErr) {
 		t.Fatalf("the reorg failed for something other than the failed probe: %v", err)
+	}
+	// A presence check this node's own database refused says nothing about the blocks of the
+	// new chain, so the peer that served them must not be blamed for it.
+	if !blockchain.IsLocalInsertError(err) {
+		t.Fatalf("the failed probe is the block's fault to the downloader, so it drops the peer that served it: %v", err)
 	}
 	if got := blockchain.CurrentBlock().Hash(); got != oldHead.Hash() {
 		t.Fatalf("the head moved to %s despite the failed probe, want %s", got, oldHead.Hash())

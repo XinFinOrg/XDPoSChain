@@ -4048,16 +4048,18 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 		// alone.
 		has, err := rawdb.HasXdposV2Snapshot(bc.db, header.Hash())
 		if err != nil {
-			return fmt.Errorf("failed to read the stored next-epoch snapshot of gap block %d (%s): %w",
-				header.Number.Uint64(), header.Hash().Hex(), err)
+			// A presence check this node's own database refused says nothing about the blocks of
+			// the new chain: a condition of this node, not of the blocks.
+			return localConditionf("failed to read the stored next-epoch snapshot of gap block %d (%s): %w", header.Number.Uint64(), header.Hash().Hex(), err)
 		}
 		if has {
 			continue
 		}
 		statedb, err := bc.StateAt(header.Root)
 		if err != nil {
-			return fmt.Errorf("failed to open state of gap block %d (%s) for the masternode update: %w",
-				header.Number.Uint64(), header.Hash().Hex(), err)
+			// State this node committed itself and can no longer open is a condition of
+			// this node, not of the blocks.
+			return localConditionf("failed to open state of gap block %d (%s) for the masternode update: %w", header.Number.Uint64(), header.Hash().Hex(), err)
 		}
 		snap, err := bc.nextEpochSnapshotOf(statedb, header.Number.Uint64(), header.Hash())
 		if err != nil {
@@ -4462,8 +4464,10 @@ func (bc *BlockChain) needsNextEpochSnapshot(number *big.Int) bool {
 func (bc *BlockChain) nextEpochSnapshotOf(statedb *state.StateDB, number uint64, hash common.Hash) (*engine_v2.SnapshotV2, error) {
 	snap, err := engine_v2.BuildSnapshotFromState(statedb, number, hash)
 	if err != nil {
-		return nil, fmt.Errorf("failed to derive the next-epoch masternodes of gap block %d (%s): %w",
-			number, hash.Hex(), err)
+		// The set is read off state this node committed itself, so the failure is a condition
+		// of this node rather than a fault of the blocks: reported as local so the downloader
+		// ends the cycle instead of dropping the peer.
+		return nil, localConditionf("failed to derive the next-epoch masternodes of gap block %d (%s): %w", number, hash.Hex(), err)
 	}
 	log.Info("Updating the next-epoch masternodes", "number", number, "hash", hash.Hex(), "candidates", len(snap.NextEpochCandidates))
 	return snap, nil

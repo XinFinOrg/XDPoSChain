@@ -170,18 +170,46 @@ func TestClassifyInsertErrUnwraps(t *testing.T) {
 	}
 }
 
-// TestIsLocalInsertErrorIsTheLocalFlag pins that the exported predicate is the table's local
-// flag and not a second list that could disagree with it. The sentinels are taken from
-// insertErrClasses, so one added to the table is covered without editing this test, and the two
-// errors the table does not carry are the default answer's to keep non-local.
+// TestIsLocalInsertErrorIsTheLocalFlag pins the local flag the table gives each sentinel, so one
+// marked the wrong way is caught here rather than in the peer-blame path the flag feeds. Every
+// sentinel the table carries has to be named below: the table is the source of truth for the
+// class, this list for the flag read off it, and an entry missing here fails the coverage check
+// at the end instead of going in unpinned.
 func TestIsLocalInsertErrorIsTheLocalFlag(t *testing.T) {
-	sentinels := []error{consensus.ErrUnknownAncestor, errors.New("boom")}
-	for _, entry := range insertErrClasses {
-		sentinels = append(sentinels, entry.err)
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"the peer can be held to an unknown ancestor", consensus.ErrUnknownAncestor, false},
+		{"a future block is queued, not failed", consensus.ErrFutureBlock, false},
+		{"a failure this fork has not classified", errors.New("boom"), false},
+		{"an interrupted import", ErrInsertionInterrupted, true},
+		{"a stopped chain", ErrChainStopped, true},
+		{"a block dated ahead of this node's clock", ErrLocalInsertAheadOfClock, true},
+		{"a condition of this node with no sentinel of its own", ErrLocalInsertCondition, true},
+		{"a reorg this node refuses", ErrLocalInsertRefused, true},
+		{"the old side of an inconsistent local chain", errInvalidOldChain, true},
+		{"the new side of an inconsistent local chain", errInvalidNewChain, true},
+		{"a block this node already executed", ErrKnownBlock, true},
+		{"an ancestor state this node no longer holds", consensus.ErrPrunedAncestor, true},
+		{"an epoch gap block that is not canonical", consensus.ErrMissingCanonicalGapHeader, true},
+		{"a gap block snapshot this node cannot read", consensus.ErrGapSnapshotUnavailable, true},
 	}
-	for _, err := range sentinels {
-		if got, want := IsLocalInsertError(err), classifyInsertErr(err).local; got != want {
-			t.Errorf("IsLocalInsertError(%v) = %v, want the local flag %v", err, got, want)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsLocalInsertError(tt.err); got != tt.want {
+				t.Errorf("IsLocalInsertError(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+	named := make(map[error]bool, len(tests))
+	for _, tt := range tests {
+		named[tt.err] = true
+	}
+	for _, entry := range insertErrClasses {
+		if !named[entry.err] {
+			t.Errorf("sentinel %v carries a class in the table but its local flag is not pinned here", entry.err)
 		}
 	}
 }
