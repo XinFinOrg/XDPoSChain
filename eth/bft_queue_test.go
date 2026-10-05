@@ -16,14 +16,14 @@ func syncingFn(v bool) func() bool { return func() bool { return v } }
 
 func TestBFTQueueEnqueueOnlyWhileSyncing(t *testing.T) {
 	q := newBFTQueue()
-	if q.enqueueIf(syncingFn(false), "p", common.Hash{1}, &types.Vote{}) {
+	if q.enqueueIf(syncingFn(false), "p", common.Hash{1}, 100, &types.Vote{}) {
 		t.Fatal("message queued while not syncing")
 	}
-	if !q.enqueueIf(syncingFn(true), "p", common.Hash{1}, &types.Vote{}) {
+	if !q.enqueueIf(syncingFn(true), "p", common.Hash{1}, 100, &types.Vote{}) {
 		t.Fatal("message not queued while syncing")
 	}
 	// A duplicate is accepted but stored once.
-	if !q.enqueueIf(syncingFn(true), "p", common.Hash{1}, &types.Vote{}) {
+	if !q.enqueueIf(syncingFn(true), "p", common.Hash{1}, 100, &types.Vote{}) {
 		t.Fatal("duplicate not accepted while syncing")
 	}
 	if n := q.len(); n != 1 {
@@ -33,7 +33,7 @@ func TestBFTQueueEnqueueOnlyWhileSyncing(t *testing.T) {
 
 func TestBFTQueueTakeKeepsWhileSyncing(t *testing.T) {
 	q := newBFTQueue()
-	q.enqueueIf(syncingFn(true), "p", common.Hash{1}, &types.Vote{})
+	q.enqueueIf(syncingFn(true), "p", common.Hash{1}, 100, &types.Vote{})
 
 	if msgs := q.takeUnless(syncingFn(true)); msgs != nil {
 		t.Fatalf("queue taken while syncing: %d messages", len(msgs))
@@ -46,7 +46,7 @@ func TestBFTQueueTakeKeepsWhileSyncing(t *testing.T) {
 		t.Fatalf("queue length after take: have %d, want 0", n)
 	}
 	// The hash set is reset too, so the same message can be queued again.
-	q.enqueueIf(syncingFn(true), "p", common.Hash{1}, &types.Vote{})
+	q.enqueueIf(syncingFn(true), "p", common.Hash{1}, 100, &types.Vote{})
 	if n := q.len(); n != 1 {
 		t.Fatalf("queue length after requeue: have %d, want 1", n)
 	}
@@ -55,7 +55,7 @@ func TestBFTQueueTakeKeepsWhileSyncing(t *testing.T) {
 func TestBFTQueueDropsOldestWhenFull(t *testing.T) {
 	q := newBFTQueue()
 	for i := 0; i < maxQueuedBFTMsgs+1; i++ {
-		q.enqueueIf(syncingFn(true), "p", common.BigToHash(big.NewInt(int64(i))), &types.Vote{})
+		q.enqueueIf(syncingFn(true), "p", common.BigToHash(big.NewInt(int64(i))), 100, &types.Vote{})
 	}
 	msgs := q.takeUnless(syncingFn(false))
 	if len(msgs) != maxQueuedBFTMsgs {
@@ -66,6 +66,37 @@ func TestBFTQueueDropsOldestWhenFull(t *testing.T) {
 	}
 	if last := msgs[len(msgs)-1].hash; last != common.BigToHash(big.NewInt(maxQueuedBFTMsgs)) {
 		t.Fatalf("newest message missing, last hash %x", last)
+	}
+}
+
+func TestBFTQueueDropsOldestOverByteBudget(t *testing.T) {
+	q := newBFTQueue()
+	n := maxQueuedBFTBytes / maxQueuedBFTMsgSize
+	for i := 0; i < n+1; i++ {
+		q.enqueueIf(syncingFn(true), "p", common.BigToHash(big.NewInt(int64(i))), maxQueuedBFTMsgSize, &types.Vote{})
+	}
+	if q.bytes > maxQueuedBFTBytes {
+		t.Fatalf("queued bytes: have %d, want at most %d", q.bytes, maxQueuedBFTBytes)
+	}
+	msgs := q.takeUnless(syncingFn(false))
+	if len(msgs) != n {
+		t.Fatalf("queue length: have %d, want %d", len(msgs), n)
+	}
+	if first := msgs[0].hash; first != common.BigToHash(big.NewInt(1)) {
+		t.Fatalf("oldest message not dropped, first hash %x", first)
+	}
+	if q.bytes != 0 {
+		t.Fatalf("queued bytes after take: have %d, want 0", q.bytes)
+	}
+}
+
+func TestBFTQueueDropsOversizedMessage(t *testing.T) {
+	q := newBFTQueue()
+	if !q.enqueueIf(syncingFn(true), "p", common.Hash{1}, maxQueuedBFTMsgSize+1, &types.Vote{}) {
+		t.Fatal("oversized message not consumed while syncing")
+	}
+	if n := q.len(); n != 0 {
+		t.Fatalf("queue length: have %d, want 0", n)
 	}
 }
 
@@ -123,6 +154,27 @@ func TestSyncBackoffPerPeer(t *testing.T) {
 	b.fail("other", later)
 	if _, ok := b.peers["bad"]; ok {
 		t.Fatal("stale peer not forgotten")
+	}
+}
+
+// Tests that requestSync never blocks the message handler.
+func TestRequestSyncDoesNotBlock(t *testing.T) {
+	pm := &ProtocolManager{syncReqCh: make(chan *peer, 1)}
+	a, b := &peer{id: "a"}, &peer{id: "b"}
+
+	done := make(chan struct{})
+	go func() {
+		pm.requestSync(a)
+		pm.requestSync(b) // Dropped, a request is already pending
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("requestSync blocked")
+	}
+	if p := <-pm.syncReqCh; p != a {
+		t.Fatalf("pending request: have %s, want %s", p.id, a.id)
 	}
 }
 

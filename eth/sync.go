@@ -193,17 +193,16 @@ func (pm *ProtocolManager) syncer() {
 		syncDone = make(chan syncResult, 1) // Result of the running sync
 		backoff  = newSyncBackoff()         // Peers recently failed to sync from
 	)
-	startSync := func() {
-		if syncing {
-			return
-		}
-		now := time.Now()
-		peer := pm.peers.BestPeerExcluding(func(p *peer) bool { return backoff.blocked(p.id, now) })
-		if peer == nil {
+	startSync := func(peer *peer) {
+		if syncing || peer == nil {
 			return
 		}
 		syncing = true
 		go func() { syncDone <- syncResult{peer: peer.id, err: pm.synchronise(peer)} }()
+	}
+	bestPeer := func() *peer {
+		now := time.Now()
+		return pm.peers.BestPeerExcluding(func(p *peer) bool { return backoff.blocked(p.id, now) })
 	}
 
 	for {
@@ -213,11 +212,18 @@ func (pm *ProtocolManager) syncer() {
 			if pm.peers.Len() < minDesiredPeerCount {
 				break
 			}
-			startSync()
+			startSync(bestPeer())
+
+		case p := <-pm.syncReqCh:
+			// A peer announced a heavier chain; sync with it unless it is backed off
+			if pm.peers.Peer(p.id) == nil || backoff.blocked(p.id, time.Now()) {
+				break
+			}
+			startSync(p)
 
 		case <-forceSync.C:
 			// Force a sync even if not enough peers are present
-			startSync()
+			startSync(bestPeer())
 
 		case res := <-syncDone:
 			syncing = false
@@ -231,6 +237,17 @@ func (pm *ProtocolManager) syncer() {
 		case <-pm.noMorePeers:
 			return
 		}
+	}
+}
+
+// requestSync asks the syncer to sync with a peer that announced a heavier
+// chain, so the sync goes through the syncer's single-flight and backoff. The
+// request is dropped if another is already pending; the syncer also syncs
+// periodically.
+func (pm *ProtocolManager) requestSync(p *peer) {
+	select {
+	case pm.syncReqCh <- p:
+	default:
 	}
 }
 

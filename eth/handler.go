@@ -97,6 +97,7 @@ type ProtocolManager struct {
 
 	// channels for fetcher, syncer, txsyncLoop
 	newPeerCh   chan *peer
+	syncReqCh   chan *peer // Peers announcing a chain heavier than ours
 	txsyncCh    chan *txsync
 	quitSync    chan struct{}
 	noMorePeers chan struct{}
@@ -142,6 +143,7 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		blockchain:     blockchain,
 		peers:          newPeerSet(),
 		newPeerCh:      make(chan *peer),
+		syncReqCh:      make(chan *peer, 1),
 		noMorePeers:    make(chan struct{}),
 		txsyncCh:       make(chan *txsync),
 		quitSync:       make(chan struct{}),
@@ -826,7 +828,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			// scenario should easily be covered by the fetcher.
 			currentBlock := pm.blockchain.CurrentBlock()
 			if trueTD.Cmp(pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64())) > 0 {
-				go pm.synchronise(p)
+				pm.requestSync(p)
 			}
 		}
 
@@ -972,7 +974,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 
 		// The sender never resends a message it marked as known to us, so queue
 		// it while synchronising instead of dropping it.
-		if pm.bftQueue.enqueueIf(pm.downloader.Synchronising, p.id, vote.Hash(), &vote) {
+		if pm.bftQueue.enqueueIf(pm.downloader.Synchronising, p.id, vote.Hash(), msg.Size, &vote) {
 			break
 		}
 		pm.handleVote(p.id, &vote)
@@ -984,7 +986,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		}
 		p.MarkTimeout(timeout.Hash())
 
-		if pm.bftQueue.enqueueIf(pm.downloader.Synchronising, p.id, timeout.Hash(), &timeout) {
+		if pm.bftQueue.enqueueIf(pm.downloader.Synchronising, p.id, timeout.Hash(), msg.Size, &timeout) {
 			break
 		}
 		pm.handleTimeout(p.id, &timeout)
@@ -996,7 +998,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		}
 		p.MarkSyncInfo(syncInfo.Hash())
 
-		if pm.bftQueue.enqueueIf(pm.downloader.Synchronising, p.id, syncInfo.Hash(), &syncInfo) {
+		if pm.bftQueue.enqueueIf(pm.downloader.Synchronising, p.id, syncInfo.Hash(), msg.Size, &syncInfo) {
 			break
 		}
 		pm.handleSyncInfo(p.id, &syncInfo)
