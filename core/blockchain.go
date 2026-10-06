@@ -1933,15 +1933,15 @@ func (bc *BlockChain) adoptHead(block *types.Block, current *types.Header, snap 
 	// lives in the checkpoint header extra data, and a v2 set just stored must not be read back
 	// out of the head state instead.
 	//
-	// The head is already persisted, so this failure cannot be rolled back and must halt the
+	// The head is already persisted, so a failure here cannot be rolled back and must halt the
 	// node: the next epoch validates against the masternode set, and a missing snapshot is
 	// only repaired by Initial -> RepairGapSnapshots on the next start. Retrying is not an
 	// option either, the gap block being the head and no longer winning fork choice.
-	if bc.isGapBlock(block) && !bc.needsNextEpochSnapshot(block.Number()) {
-		if err := bc.UpdateM1At(block.Header()); err != nil {
-			log.Crit(critMsg, "number", block.Number, "hash", block.Hash().Hex(), "err", err)
-		}
-	}
+	//
+	// The one exception is the engine the set would have to come from: a chain that names
+	// XDPoS while running another engine has no set and no epoch to validate one, which is
+	// what refreshMasternodesForGapBlock skips rather than halts on.
+	bc.refreshMasternodesForGapBlock(block, critMsg)
 	return nil
 }
 
@@ -4215,11 +4215,7 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 		// database again, outside the batch just written, and cache it there.
 		// The refresh stays behind the head write because the head is what it
 		// refreshes.
-		if bc.isGapBlock(block) && !bc.needsNextEpochSnapshot(block.Number()) {
-			if err := bc.UpdateM1At(block.Header()); err != nil {
-				log.Crit("Fail to update masternodes during reorg", "number", block.Number, "hash", block.Hash().Hex(), "err", err)
-			}
-		}
+		bc.refreshMasternodesForGapBlock(block, "Fail to update masternodes during reorg")
 		// An epoch switch block reaches the canonical chain here whenever this reorg rewrites
 		// one: the staking loop in cmd/XDC has to revalidate the consensus parameters and the
 		// masternode duty for the new epoch. The import paths signal only for the block they
@@ -4540,6 +4536,23 @@ func (bc *BlockChain) UpdateM1At(header *types.Header) error {
 		log.Info("Masternodes are ready for the next epoch", "number", header.Number.Uint64(), "hash", header.Hash().Hex())
 	}
 	return nil
+}
+
+// refreshMasternodesForGapBlock refreshes the v1 masternode set of the block when it is the gap
+// block of its epoch and the write that stored it did not already carry the set. A chain that
+// names XDPoS while running another engine has no set to refresh, so the ErrNotXDPoS UpdateM1At
+// reports for it is skipped with a warning; every other failure halts the node, logging critMsg.
+func (bc *BlockChain) refreshMasternodesForGapBlock(block *types.Block, critMsg string) {
+	if !bc.isGapBlock(block) || bc.needsNextEpochSnapshot(block.Number()) {
+		return
+	}
+	if err := bc.UpdateM1At(block.Header()); err != nil {
+		if errors.Is(err, ErrNotXDPoS) {
+			log.Warn("Skipping the masternode refresh, the engine is not XDPoS", "number", block.Number(), "hash", block.Hash().Hex())
+			return
+		}
+		log.Crit(critMsg, "number", block.Number, "hash", block.Hash().Hex(), "err", err)
+	}
 }
 
 func (bc *BlockChain) AddMatchingResult(txHash common.Hash, matchingResults map[common.Hash]tradingstate.MatchingResult) {
