@@ -574,9 +574,9 @@ func TestTraceCall(t *testing.T) {
 				BlockOverrides: &override.BlockOverrides{Number: (*hexutil.Big)(big.NewInt(0x1337))},
 			},
 			expectErr: nil,
-			expect: ` {"gas":53072,"failed":false,"returnValue":"","structLogs":[
-		{"pc":0,"op":"NUMBER","gas":24946930,"gasCost":2,"depth":1,"stack":[]},
-		{"pc":1,"op":"STOP","gas":24946928,"gasCost":0,"depth":1,"stack":["0x1337"]}]}`,
+			expect: ` {"gas":53020,"failed":false,"returnValue":"","structLogs":[
+		{"pc":0,"op":"NUMBER","gas":24946982,"gasCost":2,"depth":1,"stack":[]},
+		{"pc":1,"op":"STOP","gas":24946980,"gasCost":0,"depth":1,"stack":["0x1337"]}]}`,
 		},
 	}
 	for i, testspec := range testSuite {
@@ -1006,7 +1006,7 @@ func TestTracingWithOverrides(t *testing.T) {
 					},
 				},
 			},
-			want: `{"gas":23555,"failed":false,"returnValue":"000000000000000000000000000000000000000000000000000000000000007b"}`,
+			want: `{"gas":23347,"failed":false,"returnValue":"000000000000000000000000000000000000000000000000000000000000007b"}`,
 		},
 		{ // Override blocknumber
 			blockNumber: rpc.LatestBlockNumber,
@@ -1018,7 +1018,7 @@ func TestTracingWithOverrides(t *testing.T) {
 			config: &TraceCallConfig{
 				BlockOverrides: &override.BlockOverrides{Number: (*hexutil.Big)(big.NewInt(0x1337))},
 			},
-			want: `{"gas":59903,"failed":false,"returnValue":"0000000000000000000000000000000000000000000000000000000000001337"}`,
+			want: `{"gas":59539,"failed":false,"returnValue":"0000000000000000000000000000000000000000000000000000000000001337"}`,
 		},
 		{ // Override blocknumber, and query a blockhash
 			blockNumber: rpc.LatestBlockNumber,
@@ -1038,7 +1038,7 @@ func TestTracingWithOverrides(t *testing.T) {
 			config: &TraceCallConfig{
 				BlockOverrides: &override.BlockOverrides{Number: (*hexutil.Big)(big.NewInt(0x1337))},
 			},
-			want: `{"gas":73812,"failed":false,"returnValue":"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}`,
+			want: `{"gas":72668,"failed":false,"returnValue":"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}`,
 		},
 	}
 	for i, tc := range testSuite {

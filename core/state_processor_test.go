@@ -186,7 +186,7 @@ func TestStateProcessorErrors(t *testing.T) {
 			maxInitCodeSize = params.MaxInitCodeSizeOsaka
 		}
 		tooBigInitCode := make([]byte, maxInitCodeSize+1)
-		tooBigInitCodeIntrinsicGas, err := IntrinsicGas(tooBigInitCode, nil, nil, true, rules.IsHomestead, rules.IsEIP1559)
+		tooBigInitCodeIntrinsicGas, err := IntrinsicGas(tooBigInitCode, nil, nil, true, rules.IsHomestead, rules.IsPrague, rules.IsEIP1559)
 		if err != nil {
 			t.Fatal(err)
 		}
