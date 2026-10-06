@@ -60,8 +60,19 @@ func (v *BlockValidator) ValidateBody(block *types.Block) error {
 	if v.config.IsOsaka(block.Number()) && block.Size() > params.MaxBlockSize {
 		return ErrBlockOversized
 	}
-	// Check whether the block's known, and if not, that it's linkable
-	if v.bc.HasBlockAndFullState(block.Hash(), block.NumberU64()) {
+	// Check whether the block's known, and if not, that it's linkable. Known means this node
+	// executed it, which HasExecutedBlock answers from the marker an execution leaves behind: a
+	// block on disk with a resolving state root but without that marker is not one this node
+	// ran, so it goes through execution like any other, where ValidateState rejects a block whose
+	// state root its own execution does not reproduce.
+	//
+	// The genesis block is answered by genesisBlockOnDisk: it is the one block the marker never
+	// applies to, and answered by the marker it would fall through to the parent lookup and ask
+	// for number 0-1. A block 0 of another chain does not pass that test and still reaches
+	// ErrUnknownAncestor.
+	if v.bc.genesisBlockOnDisk(block) {
+		return ErrKnownBlock
+	} else if v.bc.HasExecutedBlock(block.Hash(), block.NumberU64()) {
 		return ErrKnownBlock
 	}
 	// Header validity is known at this point, check the uncles and transactions
@@ -75,6 +86,10 @@ func (v *BlockValidator) ValidateBody(block *types.Block) error {
 	if hash := types.DeriveSha(block.Transactions(), trie.NewStackTrie(nil)); hash != header.TxHash {
 		return fmt.Errorf("transaction root hash mismatch: have %x, want %x", hash, header.TxHash)
 	}
+	// The parent is asked a weaker question than the block above: all its execution needs is a
+	// state to run against, not a proof that this node ran it. A side entry written by
+	// writeBlockWithoutState has no state, so it lands in the pruned-ancestor branch, which sends
+	// the segment to insertSideChain.
 	if !v.bc.HasBlockAndFullState(block.ParentHash(), block.NumberU64()-1) {
 		if !v.bc.HasBlock(block.ParentHash(), block.NumberU64()-1) {
 			return consensus.ErrUnknownAncestor

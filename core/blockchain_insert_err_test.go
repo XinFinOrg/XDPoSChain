@@ -1,0 +1,290 @@
+// Copyright 2026 The go-ethereum Authors
+// This file is part of the go-ethereum library.
+//
+// The go-ethereum library is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// The go-ethereum library is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+
+package core
+
+import (
+	"errors"
+	"fmt"
+	"testing"
+
+	"github.com/XinFinOrg/XDPoSChain/consensus"
+)
+
+// TestClassifyInsertErr pins the whole classification table. The insertion paths read flags
+// from this one table, so a sentinel added for any of them has to be added here, and moving one
+// between classes is a deliberate edit to this test rather than a silent drift.
+func TestClassifyInsertErr(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want insertErrClass
+	}{
+		{
+			name: "interrupted import",
+			err:  ErrInsertionInterrupted,
+			want: insertErrClass{retryable: true, local: true},
+		},
+		{
+			name: "stopped chain",
+			err:  ErrChainStopped,
+			want: insertErrClass{retryable: true, local: true},
+		},
+		{
+			// Local but not retryable: every condition it carries is read the same way on the
+			// next attempt, so keeping the block parked would re-verify it on every
+			// futureBlocksLoop tick.
+			name: "local insert condition",
+			err:  ErrLocalInsertCondition,
+			want: insertErrClass{local: true},
+		},
+		{
+			// The one local condition that heals: the clock catches up, and the block that
+			// could not be queued is queued then.
+			name: "block ahead of the local clock",
+			err:  ErrLocalInsertAheadOfClock,
+			want: insertErrClass{retryable: true, local: true},
+		},
+		{
+			// Local but not retryable: a refused reorg is refused again on every retry, so the
+			// parked block has to be evicted rather than re-verified.
+			name: "refused reorg",
+			err:  ErrLocalInsertRefused,
+			want: insertErrClass{local: true},
+		},
+		{
+			name: "known block",
+			err:  ErrKnownBlock,
+			want: insertErrClass{local: true},
+		},
+		{
+			name: "pruned ancestor",
+			err:  consensus.ErrPrunedAncestor,
+			want: insertErrClass{local: true},
+		},
+		{
+			// What reorg reports when it reads a record of the chain and does not find it.
+			// The production path cannot be built in a unit test, so the table pins the class
+			// and the two flags that matter: the peer must not be blamed, and a retry cannot
+			// repair it.
+			name: "old chain inconsistent",
+			err:  errInvalidOldChain,
+			want: insertErrClass{local: true},
+		},
+		{
+			name: "new chain inconsistent",
+			err:  errInvalidNewChain,
+			want: insertErrClass{local: true},
+		},
+		{
+			// Retryable but not local: a block dated ahead of this node's clock is parked,
+			// while a peer serving it is not at fault. See IsLocalInsertError.
+			name: "future block",
+			err:  consensus.ErrFutureBlock,
+			want: insertErrClass{retryable: true},
+		},
+		{
+			// Local but not retryable: the gap block of an epoch switch is read by canonical
+			// number, and it is not there until the sidechain it sits on is imported, so a
+			// parked batch would be re-verified on every futureBlocksLoop tick for nothing.
+			name: "missing canonical gap header",
+			err:  consensus.ErrMissingCanonicalGapHeader,
+			want: insertErrClass{local: true},
+		},
+		{
+			// Local but not retryable, for the reason next to it: the stored set of that gap
+			// block is this node's own record, and a missing or unreadable one is read the same
+			// way on the next attempt.
+			name: "gap snapshot unavailable",
+			err:  consensus.ErrGapSnapshotUnavailable,
+			want: insertErrClass{local: true},
+		},
+		{
+			name: "unknown ancestor",
+			err:  consensus.ErrUnknownAncestor,
+			want: insertErrClass{badBlock: true},
+		},
+		{
+			name: "unrecognised error",
+			err:  errors.New("derived state root mismatch"),
+			want: insertErrClass{badBlock: true},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyInsertErr(tt.err); got != tt.want {
+				t.Errorf("classifyInsertErr(%v) = %+v, want %+v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestClassifyInsertErrUnwraps pins that the table keeps matching through the wrapping the
+// insertion paths do: writeKnownBlock reports a refused reorg as "%w: %v", insertSideChain
+// reports a block dated ahead of the local clock as "%w: %w", and the downloader wraps
+// whatever InsertChain returned into errInvalidChain before anyone looks at it again.
+func TestClassifyInsertErrUnwraps(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want insertErrClass
+	}{
+		{
+			// What writeKnownBlock returns for a reorg this node refuses. Retrying cannot help,
+			// so procFutureBlocks has to evict the block rather than re-run the refusal every
+			// tick.
+			name: "refused reorg",
+			err:  fmt.Errorf("download: %w", fmt.Errorf("%w: %v", ErrLocalInsertRefused, errors.New("stop reorg, blockchain is under forking attack"))),
+			want: insertErrClass{local: true},
+		},
+		{
+			// What insertSideChain returns for a block dated ahead of the local clock, which
+			// heals once the clock catches up.
+			name: "clock skew",
+			err:  fmt.Errorf("download: %w", fmt.Errorf("%w: %w", ErrLocalInsertAheadOfClock, consensus.ErrFutureBlock)),
+			want: insertErrClass{retryable: true, local: true},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyInsertErr(tt.err); got != tt.want {
+				t.Errorf("classifyInsertErr(%v) = %+v, want %+v", tt.err, got, tt.want)
+			}
+			if !IsLocalInsertError(tt.err) {
+				t.Error("IsLocalInsertError must keep matching through wrapping")
+			}
+		})
+	}
+}
+
+// TestIsLocalInsertErrorIsTheLocalFlag pins the local flag the table gives each sentinel, so one
+// marked the wrong way is caught here rather than in the peer-blame path the flag feeds. Every
+// sentinel the table carries has to be named below: the table is the source of truth for the
+// class, this list for the flag read off it, and an entry missing here fails the coverage check
+// at the end instead of going in unpinned.
+func TestIsLocalInsertErrorIsTheLocalFlag(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"the peer can be held to an unknown ancestor", consensus.ErrUnknownAncestor, false},
+		{"a future block is queued, not failed", consensus.ErrFutureBlock, false},
+		{"a failure this fork has not classified", errors.New("boom"), false},
+		{"an interrupted import", ErrInsertionInterrupted, true},
+		{"a stopped chain", ErrChainStopped, true},
+		{"a block dated ahead of this node's clock", ErrLocalInsertAheadOfClock, true},
+		{"a condition of this node with no sentinel of its own", ErrLocalInsertCondition, true},
+		{"a reorg this node refuses", ErrLocalInsertRefused, true},
+		{"the old side of an inconsistent local chain", errInvalidOldChain, true},
+		{"the new side of an inconsistent local chain", errInvalidNewChain, true},
+		{"a block this node already executed", ErrKnownBlock, true},
+		{"an ancestor state this node no longer holds", consensus.ErrPrunedAncestor, true},
+		{"an epoch gap block that is not canonical", consensus.ErrMissingCanonicalGapHeader, true},
+		{"a gap block snapshot this node cannot read", consensus.ErrGapSnapshotUnavailable, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsLocalInsertError(tt.err); got != tt.want {
+				t.Errorf("IsLocalInsertError(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+	named := make(map[error]bool, len(tests))
+	for _, tt := range tests {
+		named[tt.err] = true
+	}
+	for _, entry := range insertErrClasses {
+		if !named[entry.err] {
+			t.Errorf("sentinel %v carries a class in the table but its local flag is not pinned here", entry.err)
+		}
+	}
+}
+
+// TestDescribeLocalInsertFailure pins the reason each local sentinel reports, and that a failure
+// the blocks are to blame for stays with the caller. The file importers take their message from
+// here, so a sentinel whose reason is missing would be reported as "invalid block <n>".
+//
+// The reason is deliberately not a claim about a retry: ErrLocalInsertCondition and
+// ErrLocalInsertAheadOfClock differ in classifyInsertErr, and both only say that this very input
+// cannot be imported now.
+func TestDescribeLocalInsertFailure(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"refused reorg", ErrLocalInsertRefused, "cannot be imported"},
+		{"local condition", ErrLocalInsertCondition, "cannot be imported"},
+		{"ahead of the local clock", ErrLocalInsertAheadOfClock, "cannot be imported"},
+		{"known block", ErrKnownBlock, "already imported"},
+		{"pruned ancestor", consensus.ErrPrunedAncestor, "ancestor state is pruned"},
+		{"missing canonical gap header", consensus.ErrMissingCanonicalGapHeader, "the epoch gap block is not canonical"},
+		{"gap snapshot unavailable", consensus.ErrGapSnapshotUnavailable, "the epoch gap block snapshot is unavailable"},
+		{"interrupted import", ErrInsertionInterrupted, "interrupted during import"},
+		{"stopped chain", ErrChainStopped, "interrupted during import"},
+		// Not "interrupted during import": an inconsistent local chain is not a state a file or
+		// a retry can get past.
+		{"old chain inconsistent", errInvalidOldChain, "the local chain is inconsistent"},
+		{"new chain inconsistent", errInvalidNewChain, "the local chain is inconsistent"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reason, ok := DescribeLocalInsertFailure(tt.err)
+			if !ok {
+				t.Fatalf("DescribeLocalInsertFailure(%v) must report a local failure", tt.err)
+			}
+			if reason != tt.want {
+				t.Errorf("DescribeLocalInsertFailure(%v) = %q, want %q", tt.err, reason, tt.want)
+			}
+		})
+	}
+	// A future block is retryable but not local, and an unknown ancestor is the peer's: the
+	// caller words both itself.
+	for _, err := range []error{
+		consensus.ErrFutureBlock,
+		consensus.ErrUnknownAncestor,
+		errors.New("derived state root mismatch"),
+		nil,
+	} {
+		if reason, ok := DescribeLocalInsertFailure(err); ok {
+			t.Errorf("DescribeLocalInsertFailure(%v) = %q, want it left to the caller", err, reason)
+		}
+	}
+}
+
+// TestDescribeLocalInsertFailurePrefersTheNamedEntry pins the one case that tells the two
+// questions of the table apart: the class comes from the first entry the error matches, the
+// wording from the first matching entry that carries one. An error matching an unnamed local
+// sentinel first and a named one after it is the only shape that can separate them, and a
+// single scan answering both questions from its first hit would silently change the wording.
+func TestDescribeLocalInsertFailurePrefersTheNamedEntry(t *testing.T) {
+	// ErrInsertionInterrupted comes first in the table and carries no wording of its own;
+	// ErrKnownBlock comes after it and is named.
+	err := fmt.Errorf("%w: %w", ErrInsertionInterrupted, ErrKnownBlock)
+
+	// The class stays the first matching entry's, so the block may stay parked.
+	if got, want := classifyInsertErr(err), (insertErrClass{retryable: true, local: true}); got != want {
+		t.Errorf("classifyInsertErr(%v) = %+v, want the class of the first matching entry %+v", err, got, want)
+	}
+	reason, ok := DescribeLocalInsertFailure(err)
+	if !ok {
+		t.Fatalf("DescribeLocalInsertFailure(%v) must report a local failure", err)
+	}
+	if want := "already imported"; reason != want {
+		t.Errorf("DescribeLocalInsertFailure(%v) = %q, want the named entry's wording %q", err, reason, want)
+	}
+}

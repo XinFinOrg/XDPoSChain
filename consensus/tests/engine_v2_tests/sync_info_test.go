@@ -263,9 +263,6 @@ func TestVerifySyncInfoIfTcUseDifferentEpoch(t *testing.T) {
 	assert.Nil(t, err)
 	err = blockchain.InsertBlock(parentBlock)
 	assert.Nil(t, err)
-	// 1350 is a gap block, need to update the snapshot
-	err = blockchain.UpdateM1()
-	assert.Nil(t, err)
 	t.Logf("Inserting block from 1351 to 1799...")
 	for i := 1351; i <= 1799; i++ {
 		blockCoinbase := fmt.Sprintf("0xaaa000000000000000000000000000000000%4d", i)

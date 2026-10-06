@@ -253,6 +253,16 @@ type Rules struct {
 	IsOsaka          bool
 }
 
+// Rules returns the fork rules that apply at the given block number.
+//
+// Unlike upstream go-ethereum, this Rules takes no isMerge argument and does not
+// fold a merge check into the post-merge forks. XDC reaches finality through
+// XDPoS rather than a PoS merge, and MergeBlock here is a plain block number:
+// devnet and the dev test configs set 0, mainnet sets 76321000, and custom chains
+// may leave it nil. Copying upstream's
+// `IsShanghai: isMerge && c.IsShanghai(num, timestamp)` shape would silently
+// disable Shanghai/Cancun/Prague/Osaka on every chain whose MergeBlock is nil or
+// not yet reached.
 func (c *ChainConfig) Rules(num *big.Int) Rules {
 	chainId := c.ChainID
 	if chainId == nil {

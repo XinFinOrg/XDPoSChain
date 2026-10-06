@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
@@ -38,6 +39,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	internalethapi "github.com/XinFinOrg/XDPoSChain/internal/ethapi"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/XinFinOrg/XDPoSChain/rpc"
 	"github.com/holiman/uint256"
 )
 
@@ -128,6 +130,48 @@ func TestAttachStateChainConfig(t *testing.T) {
 
 	if statedb.ChainConfig() != backend.ChainConfig() {
 		t.Fatal("expected backend helper to attach chain config to state db")
+	}
+}
+
+func TestFinalizedBlockNumberWithoutCommittedBlock(t *testing.T) {
+	// The mock config switches to v2 after block 900. Below the genesis block the
+	// engine is v2 from block 0, so the v2 branch needs no generated chain.
+	cfg := params.TestXDPoSMockChainConfig.Clone()
+	cfg.XDPoS.Epoch = 1
+	cfg.XDPoS.V2.SwitchBlock = big.NewInt(-1)
+
+	v2Gspec := &core.Genesis{
+		Config:     cfg,
+		Alloc:      types.GenesisAlloc{address: {Balance: funds}},
+		Difficulty: common.Big0,
+		BaseFee:    big.NewInt(params.InitialBaseFee),
+		ExtraData:  append(make([]byte, 32), make([]byte, crypto.SignatureLength)...),
+	}
+	db := rawdb.NewMemoryDatabase()
+	engine := XDPoS.NewFaker(db, cfg)
+	chain, err := core.NewBlockChain(db, nil, v2Gspec, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	t.Cleanup(chain.Stop)
+
+	if got := chain.Config().XDPoS.BlockConsensusVersion(chain.CurrentBlock().Number); got != params.ConsensusEngineVersion2 {
+		t.Fatalf("test setup needs an active v2 engine, have consensus version %q", got)
+	}
+	if info := engine.EngineV2.GetLatestCommittedBlockInfo(); info != nil {
+		t.Fatalf("test setup needs an engine without committed block info, have %v", info)
+	}
+
+	backend := &EthAPIBackend{eth: &Ethereum{blockchain: chain}, XDPoS: engine}
+	const wantErr = "no committed block info available yet"
+
+	header, err := backend.HeaderByNumber(context.Background(), rpc.FinalizedBlockNumber)
+	if header != nil || err == nil || err.Error() != wantErr {
+		t.Fatalf("HeaderByNumber on the finalized tag: have (%v, %v), want (nil, %q)", header, err, wantErr)
+	}
+	block, err := backend.BlockByNumber(context.Background(), rpc.FinalizedBlockNumber)
+	if block != nil || err == nil || err.Error() != wantErr {
+		t.Fatalf("BlockByNumber on the finalized tag: have (%v, %v), want (nil, %q)", block, err, wantErr)
 	}
 }
 

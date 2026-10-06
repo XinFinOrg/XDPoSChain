@@ -31,7 +31,9 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/crypto/blake2b"
 	"github.com/XinFinOrg/XDPoSChain/crypto/bn256"
+	"github.com/XinFinOrg/XDPoSChain/crypto/secp256r1"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	patched_big "github.com/ethereum/go-bigmodexpfix/src/math/big"
 	"golang.org/x/crypto/ripemd160"
 )
 
@@ -119,21 +121,73 @@ var PrecompiledContractsEIP1559 = PrecompiledContracts{
 	common.BytesToAddress([]byte{9}): &blake2F{},
 }
 
+// PrecompiledContractsPrague contains the set of pre-compiled Ethereum
+// contracts used in the Prague release.
+//
+// The 0x0a entry is an always-failing stub: XDC has no blob ecosystem and
+// deliberately does not implement the EIP-4844 point evaluation precompile,
+// but leaving the address unregistered would make calls to it silently succeed
+// as calls to an empty account.
+//
+// Only Prague and Osaka carry the stub. This fork has no Cancun bucket at all:
+// the Cancun networks (mainnet, Apothem) keep using the EIP1559 bucket, so no
+// already-activated bucket gains the entry and the semantics of past blocks
+// stay unchanged. Prague itself is still nil on mainnet and Apothem; devnet
+// (chainId 551) schedules it at block 50000 and is treated as resetable.
+//
+// EIP-2537 (0x0b-0x11) is provided by this bucket as well, and is reachable on
+// exactly the same networks: the ones that schedule Prague.
+var PrecompiledContractsPrague = PrecompiledContracts{
+	common.BytesToAddress([]byte{0x01}): &ecrecover{},
+	common.BytesToAddress([]byte{0x02}): &sha256hash{},
+	common.BytesToAddress([]byte{0x03}): &ripemd160hash{},
+	common.BytesToAddress([]byte{0x04}): &dataCopy{},
+	common.BytesToAddress([]byte{0x05}): &bigModExp{eip2565: true, eip7823: false, eip7883: false},
+	common.BytesToAddress([]byte{0x06}): &bn256AddIstanbul{},
+	common.BytesToAddress([]byte{0x07}): &bn256ScalarMulIstanbul{},
+	common.BytesToAddress([]byte{0x08}): &bn256PairingIstanbul{},
+	common.BytesToAddress([]byte{0x09}): &blake2F{},
+	common.BytesToAddress([]byte{0x0a}): kzgStub,
+	common.BytesToAddress([]byte{0x0b}): &bls12381G1Add{},
+	common.BytesToAddress([]byte{0x0c}): &bls12381G1MultiExp{},
+	common.BytesToAddress([]byte{0x0d}): &bls12381G2Add{},
+	common.BytesToAddress([]byte{0x0e}): &bls12381G2MultiExp{},
+	common.BytesToAddress([]byte{0x0f}): &bls12381Pairing{},
+	common.BytesToAddress([]byte{0x10}): &bls12381MapG1{},
+	common.BytesToAddress([]byte{0x11}): &bls12381MapG2{},
+}
+
 // PrecompiledContractsOsaka contains the set of pre-compiled Ethereum
 // contracts used in the Osaka release.
+//
+// NOTE: this set is built by hand rather than derived from an earlier set, so
+// precompiles registered for another fork are not carried over automatically.
+// Whenever a new precompile set is added, check whether it belongs here too:
+// anything missing from this map is silently dropped once Osaka activates.
 var PrecompiledContractsOsaka = PrecompiledContracts{
-	common.BytesToAddress([]byte{1}): &ecrecover{},
-	common.BytesToAddress([]byte{2}): &sha256hash{},
-	common.BytesToAddress([]byte{3}): &ripemd160hash{},
-	common.BytesToAddress([]byte{4}): &dataCopy{},
-	common.BytesToAddress([]byte{5}): &bigModExp{eip2565: true, eip7823: true, eip7883: true},
-	common.BytesToAddress([]byte{6}): &bn256AddIstanbul{},
-	common.BytesToAddress([]byte{7}): &bn256ScalarMulIstanbul{},
-	common.BytesToAddress([]byte{8}): &bn256PairingIstanbul{},
-	common.BytesToAddress([]byte{9}): &blake2F{},
+	common.BytesToAddress([]byte{0x01}): &ecrecover{},
+	common.BytesToAddress([]byte{0x02}): &sha256hash{},
+	common.BytesToAddress([]byte{0x03}): &ripemd160hash{},
+	common.BytesToAddress([]byte{0x04}): &dataCopy{},
+	common.BytesToAddress([]byte{0x05}): &bigModExp{eip2565: true, eip7823: true, eip7883: true},
+	common.BytesToAddress([]byte{0x06}): &bn256AddIstanbul{},
+	common.BytesToAddress([]byte{0x07}): &bn256ScalarMulIstanbul{},
+	common.BytesToAddress([]byte{0x08}): &bn256PairingIstanbul{},
+	common.BytesToAddress([]byte{0x09}): &blake2F{},
+	common.BytesToAddress([]byte{0x0a}): kzgStub,
+	common.BytesToAddress([]byte{0x0b}): &bls12381G1Add{},
+	common.BytesToAddress([]byte{0x0c}): &bls12381G1MultiExp{},
+	common.BytesToAddress([]byte{0x0d}): &bls12381G2Add{},
+	common.BytesToAddress([]byte{0x0e}): &bls12381G2MultiExp{},
+	common.BytesToAddress([]byte{0x0f}): &bls12381Pairing{},
+	common.BytesToAddress([]byte{0x10}): &bls12381MapG1{},
+	common.BytesToAddress([]byte{0x11}): &bls12381MapG2{},
+
+	common.BytesToAddress([]byte{0x1, 0x00}): &p256Verify{},
 }
 
 var (
+	PrecompiledAddressesPrague    []common.Address
 	PrecompiledAddressesOsaka     []common.Address
 	PrecompiledAddressesEIP1559   []common.Address
 	PrecompiledAddressesXDCv2     []common.Address
@@ -158,6 +212,9 @@ func init() {
 	for k := range PrecompiledContractsEIP1559 {
 		PrecompiledAddressesEIP1559 = append(PrecompiledAddressesEIP1559, k)
 	}
+	for k := range PrecompiledContractsPrague {
+		PrecompiledAddressesPrague = append(PrecompiledAddressesPrague, k)
+	}
 	for k := range PrecompiledContractsOsaka {
 		PrecompiledAddressesOsaka = append(PrecompiledAddressesOsaka, k)
 	}
@@ -167,6 +224,8 @@ func activePrecompiledContracts(rules params.Rules) PrecompiledContracts {
 	switch {
 	case rules.IsOsaka:
 		return PrecompiledContractsOsaka
+	case rules.IsPrague:
+		return PrecompiledContractsPrague
 	case rules.IsEIP1559:
 		return PrecompiledContractsEIP1559
 	case rules.IsXDCxDisable:
@@ -190,6 +249,8 @@ func ActivePrecompiles(rules params.Rules) []common.Address {
 	switch {
 	case rules.IsOsaka:
 		return PrecompiledAddressesOsaka
+	case rules.IsPrague:
+		return PrecompiledAddressesPrague
 	case rules.IsEIP1559:
 		return PrecompiledAddressesEIP1559
 	case rules.IsXDCxDisable:
@@ -503,9 +564,9 @@ func (c *bigModExp) Run(input []byte) ([]byte, error) {
 	}
 	// Retrieve the operands and execute the exponentiation
 	var (
-		base = new(big.Int).SetBytes(getData(input, 0, baseLen))
-		exp  = new(big.Int).SetBytes(getData(input, baseLen, expLen))
-		mod  = new(big.Int).SetBytes(getData(input, baseLen+expLen, modLen))
+		base = new(patched_big.Int).SetBytes(getData(input, 0, baseLen))
+		exp  = new(patched_big.Int).SetBytes(getData(input, baseLen, expLen))
+		mod  = new(patched_big.Int).SetBytes(getData(input, baseLen+expLen, modLen))
 		v    []byte
 	)
 	switch {
@@ -687,6 +748,40 @@ func runBn256Pairing(input []byte) ([]byte, error) {
 	return false32Byte, nil
 }
 
+// P256VERIFY (secp256r1 signature verification)
+// implemented as a native contract
+type p256Verify struct{}
+
+// RequiredGas returns the gas required to execute the precompiled contract
+func (c *p256Verify) RequiredGas(input []byte) uint64 {
+	return params.P256VerifyGas
+}
+
+// p256VerifyInputLength is the only input length p256Verify accepts.
+const p256VerifyInputLength = 160
+
+// Run executes the precompiled contract with given 160 bytes of param, returning the output and the used gas
+func (c *p256Verify) Run(input []byte) ([]byte, error) {
+	if len(input) != p256VerifyInputLength {
+		return nil, nil
+	}
+
+	// Extract hash, r, s, x, y from the input.
+	hash := input[0:32]
+	r, s := new(big.Int).SetBytes(input[32:64]), new(big.Int).SetBytes(input[64:96])
+	x, y := new(big.Int).SetBytes(input[96:128]), new(big.Int).SetBytes(input[128:160])
+
+	// Verify the signature.
+	if secp256r1.Verify(hash, r, s, x, y) {
+		return true32Byte, nil
+	}
+	return nil, nil
+}
+
+func (c *p256Verify) Name() string {
+	return "P256VERIFY"
+}
+
 type ringSignatureVerifier struct{}
 
 func (c *ringSignatureVerifier) RequiredGas(input []byte) uint64 {
@@ -830,3 +925,39 @@ func (c *blake2F) Run(input []byte) ([]byte, error) {
 	}
 	return output, nil
 }
+
+// errKZGUnsupported is returned by the 0x0a placeholder. It has no upstream
+// counterpart: geth implements the point evaluation precompile, while XDC
+// deliberately does not.
+var errKZGUnsupported = errors.New("kzg point evaluation precompile is not supported")
+
+// unsupportedPrecompile occupies a precompile address whose implementation is
+// intentionally absent, so that calls fail loudly instead of silently
+// succeeding as calls to an empty account.
+//
+// name must be the name geth reports for the same address: XDPoS_getConfig
+// reports the active precompiles by name (params/chainconfigview), while the
+// tracers classify them by address. gas must be the upstream gas cost so that
+// gas accounting stays comparable.
+type unsupportedPrecompile struct {
+	name string
+	gas  uint64
+	err  error
+}
+
+// kzgStub occupies 0x0a in the Prague and Osaka buckets. It is not a KZG
+// implementation: every input, including a well-formed 192-byte proof, fails.
+var kzgStub = &unsupportedPrecompile{
+	name: "KZG_POINT_EVALUATION",
+	gas:  params.BlobTxPointEvaluationPrecompileGas,
+	err:  errKZGUnsupported,
+}
+
+// RequiredGas reports the upstream gas cost for the occupied address.
+func (c *unsupportedPrecompile) RequiredGas(input []byte) uint64 { return c.gas }
+
+// Run always fails. Returning a plain error (rather than ErrExecutionReverted)
+// makes evm.Call consume all the gas handed to this frame.
+func (c *unsupportedPrecompile) Run(input []byte) ([]byte, error) { return nil, c.err }
+
+func (c *unsupportedPrecompile) Name() string { return c.name }

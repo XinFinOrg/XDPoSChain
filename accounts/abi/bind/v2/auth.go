@@ -78,3 +78,9 @@ func NewKeyedTransactor(key *ecdsa.PrivateKey, chainID *big.Int) *TransactOpts {
 		Context: context.Background(),
 	}
 }
+
+// Note (fork): upstream also exposes NewClefTransactor here, which builds a
+// TransactOpts backed by a clef external signer. This fork ships neither clef
+// (no cmd/clef, no signer/) nor accounts/external, so that helper is intentionally
+// absent. To use an external or remote signer, set TransactOpts.Signer directly,
+// exactly as the helpers above do.

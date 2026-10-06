@@ -605,7 +605,7 @@ func TestNewBlockChainRepairsMissingHeadStateRespectsRollbackTarget(t *testing.T
 	rawdb.DeleteLegacyTrieNode(db, head.Root())
 
 	prevRollback := common.RollbackNumber
-	common.RollbackNumber = target.NumberU64()
+	common.RollbackNumber = int64(target.NumberU64())
 	t.Cleanup(func() {
 		common.RollbackNumber = prevRollback
 	})
@@ -3045,9 +3045,8 @@ func dropTd(t *testing.T, chain *BlockChain, block *types.Block) {
 	}
 }
 
-// sidechainSegmentIterator hands insertSidechain a batch whose first block has already
-// been pulled from the iterator, mirroring the call site in insertChain. Every block is
-// reported as pruned, the shape that routes a batch into insertSidechain.
+// sidechainSegmentIterator hands insertSideChain a batch whose first block has already been pulled
+// from the iterator, mirroring the call site in insertChain; every block is reported as pruned.
 func sidechainSegmentIterator(t *testing.T, chain *BlockChain, batch types.Blocks) (*types.Block, *insertIterator) {
 	t.Helper()
 
@@ -3076,9 +3075,9 @@ func TestInsertSidechainReportsMissingParentTd(t *testing.T) {
 	// has, so the scan has nothing to weigh it against.
 	block, it := sidechainSegmentIterator(t, chain, blocks[3:5])
 
-	n, _, _, err := chain.insertSidechain(block, it)
-	if !errors.Is(err, errMissingTotalDifficulty) {
-		t.Fatalf("unexpected error: have %v want %v", err, errMissingTotalDifficulty)
+	n, _, _, err := chain.insertSideChain(block, it, true)
+	if !errors.Is(err, ErrLocalInsertCondition) {
+		t.Fatalf("unexpected error: have %v want %v", err, ErrLocalInsertCondition)
 	}
 	if want := 0; n != want {
 		t.Fatalf("unexpected failing index: have %d want %d", n, want)
@@ -3109,9 +3108,9 @@ func TestInsertSidechainReportsMissingLocalTd(t *testing.T) {
 	// and the scan runs until the batch is exhausted.
 	block, it := sidechainSegmentIterator(t, chain, blocks[4:6])
 
-	n, _, _, err := chain.insertSidechain(block, it)
-	if !errors.Is(err, errMissingTotalDifficulty) {
-		t.Fatalf("unexpected error: have %v want %v", err, errMissingTotalDifficulty)
+	n, _, _, err := chain.insertSideChain(block, it, true)
+	if !errors.Is(err, ErrLocalInsertCondition) {
+		t.Fatalf("unexpected error: have %v want %v", err, ErrLocalInsertCondition)
 	}
 	// The scan ran off the end of the batch looking for a block to weigh.
 	if want := 2; n != want {
@@ -3140,8 +3139,8 @@ func TestGetResultBlockReportsMissingTd(t *testing.T) {
 	// copy has to go as well.
 	dropTd(t, chain, lastPruned)
 
-	if _, err := chain.getResultBlock(fork[0], false); !errors.Is(err, errMissingTotalDifficulty) {
-		t.Fatalf("unexpected error: have %v want %v", err, errMissingTotalDifficulty)
+	if _, _, _, err := chain.getResultBlock(fork[0], false); !errors.Is(err, ErrLocalInsertCondition) {
+		t.Fatalf("unexpected error: have %v want %v", err, ErrLocalInsertCondition)
 	}
 }
 
@@ -3164,8 +3163,73 @@ func TestGetResultBlockReportsMissingLocalTd(t *testing.T) {
 	// to go as well. The competitor's parent stays readable.
 	dropTd(t, chain, blocks[2*TriesInMemory-1])
 
-	if _, err := chain.getResultBlock(fork[0], false); !errors.Is(err, errMissingTotalDifficulty) {
-		t.Fatalf("unexpected error: have %v want %v", err, errMissingTotalDifficulty)
+	if _, _, _, err := chain.getResultBlock(fork[0], false); !errors.Is(err, ErrLocalInsertCondition) {
+		t.Fatalf("unexpected error: have %v want %v", err, ErrLocalInsertCondition)
+	}
+}
+
+// TestGetResultBlockRebuildNeedsTheChainMutex covers the import the pruned-ancestor
+// branch of getResultBlock runs. Those ancestors are executed, the head they produce is
+// adopted and a gap block among them refreshes the masternode set, so the segment goes
+// in under the chain mutex every other import entry point takes. ClosableMutex.TryLock
+// reads the mutex rather than testing it, so an import already running does not fail the
+// rebuild - it makes it wait, and the errChainStopped the guard pairs with is what a
+// chain stopped during that wait reports.
+func TestGetResultBlockRebuildNeedsTheChainMutex(t *testing.T) {
+	chain, blocks, engine, genDb := newMissingTdChain(t, 4, 3) // head at #3, #4 is unknown
+	head := chain.CurrentBlock()
+
+	// A competitor above a side block this node stored without its state, which is the
+	// storage ValidateBody reports the pruned ancestor for. The total difficulty written
+	// with it is the head's own, so the segment weighs as much as the head the way a
+	// competing chain that has caught up does; the blocks are valid children of it.
+	side, _ := GenerateChain(params.TestChainConfig, blocks[2], engine, genDb, 1, func(i int, b *BlockGen) {
+		// A different coinbase keeps the side block from reproducing a canonical child.
+		b.SetCoinbase(common.Address{2})
+	})
+	competitor, _ := GenerateChain(params.TestChainConfig, side[0], engine, genDb, 1, nil)
+	localTd := chain.GetTd(head.Hash(), head.Number.Uint64())
+	if localTd == nil {
+		t.Fatal("precondition: the head's total difficulty is not readable")
+	}
+	if err := chain.writeBlockWithoutState(side[0], localTd); err != nil {
+		t.Fatalf("failed to store the side block: %v", err)
+	}
+	if chain.HasFullState(side[0]) {
+		t.Fatal("precondition: the stored side block comes with its state")
+	}
+
+	// An import running at the same time holds the chain mutex, and the rebuild waits
+	// for it instead of writing the chain beside it.
+	chain.chainmu.MustLock()
+	done := make(chan error, 1)
+	go func() {
+		_, _, _, err := chain.getResultBlock(competitor[0], false)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		chain.chainmu.Unlock()
+		t.Fatalf("the rebuild finished although the chain mutex was held: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if h := chain.CurrentBlock(); h.Hash() != head.Hash() {
+		chain.chainmu.Unlock()
+		t.Fatalf("unexpected head: have #%d [%x..] want the unchanged #%d", h.Number.Uint64(), h.Hash().Bytes()[:4], head.Number.Uint64())
+	}
+	if chain.HasFullState(side[0]) {
+		chain.chainmu.Unlock()
+		t.Fatal("the segment was imported although the chain mutex was held")
+	}
+	chain.chainmu.Unlock()
+
+	// With the mutex free the waiting rebuild goes on, and the segment it imports takes
+	// over the head.
+	if err := <-done; err != nil {
+		t.Fatalf("failed to rebuild the pruned segment: %v", err)
+	}
+	if h := chain.CurrentBlock(); h.Hash() != side[0].Hash() {
+		t.Fatalf("unexpected head: have #%d [%x..] want the imported #%d", h.Number.Uint64(), h.Hash().Bytes()[:4], side[0].NumberU64())
 	}
 }
 
@@ -3198,8 +3262,8 @@ func TestWriteBlockWithStateReportsMissingLocalTd(t *testing.T) {
 	}
 	dropTd(t, chain, blocks[3])
 
-	if _, err := chain.WriteBlockWithState(child[0], nil, statedb, nil, nil); !errors.Is(err, errMissingTotalDifficulty) {
-		t.Fatalf("unexpected error: have %v want %v", err, errMissingTotalDifficulty)
+	if _, err := chain.WriteBlockWithState(child[0], nil, statedb, nil, nil); !errors.Is(err, ErrLocalInsertCondition) {
+		t.Fatalf("unexpected error: have %v want %v", err, ErrLocalInsertCondition)
 	}
 	if want := uint64(4); chain.CurrentBlock().Number.Uint64() != want {
 		t.Fatalf("unexpected head number: have %d want %d", chain.CurrentBlock().Number.Uint64(), want)
@@ -3259,7 +3323,7 @@ func TestPrepareBlockStoresItsResultUnderTheLookupKey(t *testing.T) {
 	// without being computed, so the block is not recorded as being calculated. The
 	// preparation above did record it, hence the reset - nothing else purges that cache.
 	chain.calculatingBlock.Purge()
-	result, err := chain.getResultBlock(target, true)
+	result, _, _, err := chain.getResultBlock(target, true)
 	if err != nil {
 		t.Fatalf("failed to look the prepared result up: %v", err)
 	}
@@ -3342,7 +3406,7 @@ func TestAReusedResultIsStampedWithTheBlockItIsInsertedUnder(t *testing.T) {
 	// without being computed, so the block is not recorded as being calculated. The
 	// preparation above did record it, hence the reset - nothing else purges that cache.
 	chain.calculatingBlock.Purge()
-	result, err := chain.getResultBlock(target, true)
+	result, _, _, err := chain.getResultBlock(target, true)
 	if err != nil {
 		t.Fatalf("failed to look the prepared result up: %v", err)
 	}
@@ -3425,7 +3489,7 @@ func TestConcurrentReusesOfAPreparedResultCarryTheirOwnHash(t *testing.T) {
 		go func(i int, twin *types.Block) {
 			defer wg.Done()
 
-			result, err := chain.getResultBlock(twin, true)
+			result, _, _, err := chain.getResultBlock(twin, true)
 			if err != nil {
 				t.Errorf("failed to look the prepared result up: %v", err)
 				return
@@ -3461,5 +3525,104 @@ func TestConcurrentReusesOfAPreparedResultCarryTheirOwnHash(t *testing.T) {
 		if l.BlockHash != unsigned.Hash() {
 			t.Errorf("the cached result was stamped in place: log has %v, want %v", l.BlockHash, unsigned.Hash())
 		}
+	}
+}
+
+// TestInsertionStopsTheCalculationItFindsInFlight covers the write an insertion performs on
+// the entry it finds in calculatingBlock: getResultBlock marks that entry, and the goroutine
+// running that preparation polls the mark (ProcessBlockNoValidator) and gives up. The
+// insertion is the only writer, and it goes on to process the block on an entry of its own, so
+// the mark it leaves behind must not stop the insertion itself.
+//
+// The entry is preset rather than produced by a preparation in flight, which is what keeps the
+// test deterministic: the preset is the very object the insertion has to write to, so the mark
+// is observable without racing a calculation against the test and without a timeout.
+func TestInsertionStopsTheCalculationItFindsInFlight(t *testing.T) {
+	key, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	address := crypto.PubkeyToAddress(key.PublicKey)
+	// Three transactions are what the balance of the helper's genesis pays for at the base fee
+	// it charges, and they are what makes this insertion run the poll inside the transaction
+	// loop as well - the poll a mark is caught at. A block with none is done before reaching it.
+	chain, blocks := newPreparedBlockChain(t, 1, func(i int, b *BlockGen) {
+		for n := 0; n < 3; n++ {
+			tx, _ := types.SignTx(types.NewTransaction(uint64(n), address, big.NewInt(1), params.TxGas, b.header.BaseFee, nil), types.HomesteadSigner{}, key)
+			b.AddTx(tx)
+		}
+	})
+	target := blocks[0]
+
+	// The entry a preparation in flight would have recorded. getResultBlock asks for it by
+	// HashNoValidator, the key the caches are written with, so the preset goes under that one.
+	inflight := &CalculatedBlock{block: target}
+	chain.calculatingBlock.Add(target.HashNoValidator(), inflight)
+
+	// verifiedM2 is what an insertion passes and a preparation does not, and it is the only
+	// argument that arms the mark. The result cache has to miss for the look-up to be reached
+	// at all: nothing has prepared a result in this chain.
+	result, _, _, err := chain.getResultBlock(target, true)
+	if !inflight.stop.Load() {
+		t.Fatal("the insertion did not stop the calculation it found in flight")
+	}
+	if err != nil {
+		t.Fatalf("failed to insert the block: %v", err)
+	}
+	if result == nil {
+		t.Fatal("the block was not processed")
+	}
+}
+
+// TestAnAbortedCalculationStopsAtTheNextTransaction covers the polls ProcessBlockNoValidator
+// makes on the mark an insertion leaves: a calculation that observes it stops right there,
+// which is the whole point of the mark - the transactions it had left are not executed. A
+// tracer is the deterministic place to raise it from: OnTxStart runs inside the transaction
+// loop, so the mark is raised after one transaction has been applied and before the next one
+// starts, with no second goroutine and no window to lose.
+func TestAnAbortedCalculationStopsAtTheNextTransaction(t *testing.T) {
+	key, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	address := crypto.PubkeyToAddress(key.PublicKey)
+	chain, blocks := newPreparedBlockChain(t, 1, func(i int, b *BlockGen) {
+		for n := 0; n < 3; n++ {
+			tx, _ := types.SignTx(types.NewTransaction(uint64(n), address, big.NewInt(1), params.TxGas, b.header.BaseFee, nil), types.HomesteadSigner{}, key)
+			b.AddTx(tx)
+		}
+	})
+	target := blocks[0]
+
+	parent := chain.GetBlock(target.ParentHash(), target.NumberU64()-1)
+	if parent == nil {
+		t.Fatal("the parent of the block to abort is missing")
+	}
+	// The statedb getResultBlock builds for this very block, and the processor it runs on.
+	// The abort is reported before the trading state and the token fees are read for the
+	// first time, so nil stands in for both.
+	statedb, err := state.NewWithChainConfig(parent.Root(), chain.stateCache, chain.chainConfig)
+	if err != nil {
+		t.Fatalf("failed to open the parent state: %v", err)
+	}
+	processor, ok := chain.processor.(*StateProcessor)
+	if !ok {
+		t.Fatal("the chain does not run the state processor this test aborts")
+	}
+
+	calculating := &CalculatedBlock{block: target}
+	started := 0
+	cfg := vm.Config{Tracer: &tracing.Hooks{
+		// OnTxStart runs before a transaction is applied (ApplyTransactionWithEVM), so this
+		// is where an insertion's mark lands: the poll that follows the transaction is the
+		// one that has to observe it.
+		OnTxStart: func(*tracing.VMContext, *types.Transaction, common.Address) {
+			started++
+			calculating.stop.Store(true)
+		},
+	}}
+	receipts, _, _, err := processor.ProcessBlockNoValidator(calculating, statedb, nil, cfg, nil)
+	if !errors.Is(err, ErrStopPreparingBlock) {
+		t.Fatalf("the aborted calculation reported %v, want %v", err, ErrStopPreparingBlock)
+	}
+	if started != 1 {
+		t.Fatalf("the aborted calculation applied %d of the block's 3 transactions, want 1", started)
+	}
+	if receipts != nil {
+		t.Fatal("the aborted calculation returned receipts")
 	}
 }
