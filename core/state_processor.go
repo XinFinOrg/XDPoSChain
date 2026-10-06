@@ -24,6 +24,7 @@ import (
 	"math/big"
 	"runtime"
 	"sync"
+	"sync/atomic"
 
 	"github.com/XinFinOrg/XDPoSChain/XDCx/tradingstate"
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -49,7 +50,10 @@ type StateProcessor struct {
 }
 type CalculatedBlock struct {
 	block *types.Block
-	stop  bool
+	// stop is set by the insertion that stops a calculation it found in flight
+	// (getResultBlock) and polled by the goroutine running that calculation
+	// (ProcessBlockNoValidator), with nothing ordering the two, hence atomic.
+	stop atomic.Bool
 }
 
 // NewStateProcessor initialises a new StateProcessor.
@@ -74,6 +78,45 @@ func ApplyTIPSigningHardFork(config *params.ChainConfig, statedb *state.StateDB,
 	if blockNumber.Sign() > 0 && config.TIPSigningBlock != nil && config.TIPSigningBlock.Cmp(blockNumber) == 0 {
 		statedb.DeleteAddress(common.BlockSignersBinary)
 	}
+}
+
+// ApplyMulticall3HardFork installs the canonical Multicall3 code into the state of
+// a Prague-active block, the way misc.ApplyDAOHardFork mutates the state at the DAO
+// fork block. Block processing and every block replay run it before the first
+// transaction, so without it a replay lacks the account canonical execution created.
+//
+// A chain that activates Prague at genesis has no activation block and block zero is
+// never processed, so its first processed block installs the code instead, the way
+// ProcessParentBlockHash installs the EIP-2935 history contract there.
+//
+// A chain whose Prague blocks were produced without this account, because it
+// activated Prague before the code existed, has to be re-created instead of upgraded
+// in place: the install moves the state root of every block it processes.
+//
+// Like ProcessParentBlockHash the install is not limited to the activation block:
+// any Prague-active block re-installs the code when the address has none, so a node
+// that lost the account recovers. Neither hook resets an existing account, so the
+// balance and the storage stay; this install alone sets the nonce 1 a CREATE-deployed
+// contract carries since EIP-161.
+func ApplyMulticall3HardFork(config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int) {
+	if blockNumber.Sign() == 0 || !config.IsPrague(blockNumber) {
+		return
+	}
+	// Refuse code that is not the canonical runtime code, the way
+	// ProcessParentBlockHash rejects a history contract whose code does not match.
+	if code := statedb.GetCode(params.Multicall3Address); len(code) > 0 {
+		if !bytes.Equal(code, params.Multicall3RuntimeCode) {
+			log.Error("Multicall3 code mismatch",
+				"have", crypto.Keccak256Hash(code),
+				"want", crypto.Keccak256Hash(params.Multicall3RuntimeCode),
+			)
+			panic("Multicall3 code mismatch")
+		}
+		return
+	}
+	statedb.SetCode(params.Multicall3Address, params.Multicall3RuntimeCode)
+	// A contract created by CREATE carries nonce 1 since EIP-161.
+	statedb.SetNonce(params.Multicall3Address, 1, tracing.NonceChangeUnspecified)
 }
 
 // Process processes the state changes according to the Ethereum rules by running
@@ -107,6 +150,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 		misc.ApplyDAOHardFork(tracingStateDB)
 	}
 	ApplyTIPSigningHardFork(p.config, statedb, blockNumber)
+	ApplyMulticall3HardFork(p.config, statedb, blockNumber)
 	parentState := statedb.Copy()
 	InitSignerInTransactions(p.config, header, block.Transactions())
 	balanceUpdated := map[common.Address]*big.Int{}
@@ -207,7 +251,8 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 		misc.ApplyDAOHardFork(tracingStateDB)
 	}
 	ApplyTIPSigningHardFork(p.config, statedb, blockNumber)
-	if cBlock.stop {
+	ApplyMulticall3HardFork(p.config, statedb, blockNumber)
+	if cBlock.stop.Load() {
 		return nil, nil, 0, ErrStopPreparingBlock
 	}
 	parentState := statedb.Copy()
@@ -215,7 +260,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 	balanceUpdated := map[common.Address]*big.Int{}
 	totalFeeUsed := big.NewInt(0)
 
-	if cBlock.stop {
+	if cBlock.stop.Load() {
 		return nil, nil, 0, ErrStopPreparingBlock
 	}
 
@@ -272,7 +317,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 		if err != nil {
 			return nil, nil, 0, err
 		}
-		if cBlock.stop {
+		if cBlock.stop.Load() {
 			return nil, nil, 0, ErrStopPreparingBlock
 		}
 		receipts[i] = receipt
@@ -664,9 +709,21 @@ func InitSignerInTransactions(config *params.ChainConfig, header *types.Header, 
 }
 
 // ProcessParentBlockHash writes the parent hash to the EIP-2935 history contract
-// and enforces the expected code, with a one-time Prague backfill if missing.
+// and enforces the expected code. When Prague is active and the contract has no
+// code, it is deployed and backfilled on the spot: normally that happens once at
+// the activation block, but any Prague-active call re-runs the deploy and the
+// backfill if the code went missing. It is a no-op unless Prague is active at the
+// block being processed.
 func ProcessParentBlockHash(prevHash common.Hash, evm *vm.EVM) {
-	// Verify history contract code matches the expected bytecode
+	blockNumber := evm.Context.BlockNumber
+	if !evm.ChainConfig().IsPrague(blockNumber) {
+		return
+	}
+
+	// Fail fast if the deployed history contract does not have the expected code:
+	// diverging history semantics would fork the chain silently. The panic hits
+	// block processing and debug_trace* replay alike, so a restart reaches the same
+	// block again and the node stays down until the binary is fixed.
 	code := evm.StateDB.GetCode(params.HistoryStorageAddress)
 	if len(code) > 0 && !bytes.Equal(code, params.HistoryStorageCode) {
 		log.Error("History storage code mismatch",
@@ -676,14 +733,7 @@ func ProcessParentBlockHash(prevHash common.Hash, evm *vm.EVM) {
 		panic("history storage code mismatch")
 	}
 
-	blockNumber := evm.Context.BlockNumber
-	if blockNumber == nil || !evm.ChainConfig().IsPrague(blockNumber) {
-		return
-	}
 	forkBlock := evm.ChainConfig().PragueBlock
-	if forkBlock == nil || blockNumber.Cmp(forkBlock) < 0 {
-		return
-	}
 
 	// Only deploy and backfill if the contract is missing at/after Prague activation.
 	if len(code) == 0 {
@@ -701,6 +751,7 @@ func ProcessParentBlockHash(prevHash common.Hash, evm *vm.EVM) {
 			if end+1 > params.HistoryServeWindow {
 				start = end + 1 - params.HistoryServeWindow
 			}
+			// Prague can activate at block zero, where forkBlock-1 would underflow.
 			if forkBlock.Sign() > 0 {
 				forkStart := forkBlock.Uint64() - 1
 				if forkStart > start {

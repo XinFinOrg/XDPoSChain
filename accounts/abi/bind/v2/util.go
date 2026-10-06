@@ -75,3 +75,32 @@ func WaitDeployed(ctx context.Context, b DeployBackend, hash common.Hash) (commo
 	}
 	return receipt.ContractAddress, err
 }
+
+// WaitAccepted waits for txHash to be available on the backend, checking the pool of
+// pending transactions in addition to the blockchain. It stops waiting when the
+// context is canceled, returning its error.
+func WaitAccepted(ctx context.Context, d ContractBackend, txHash common.Hash) error {
+	queryTicker := time.NewTicker(time.Second)
+	defer queryTicker.Stop()
+	logger := log.New("hash", txHash)
+	for {
+		_, _, err := d.TransactionByHash(ctx, txHash)
+		if err == nil {
+			return nil
+		}
+
+		// ethclient's TransactionByHash reports unknown hashes as ErrNotFound.
+		if errors.Is(err, ethereum.ErrNotFound) {
+			logger.Trace("Transaction not yet accepted")
+		} else {
+			logger.Trace("Transaction lookup failed", "err", err)
+		}
+
+		// Wait for the next round.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-queryTicker.C:
+		}
+	}
+}

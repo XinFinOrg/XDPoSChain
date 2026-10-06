@@ -239,6 +239,29 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 		}
 	}
 	compatPolicy := core.ChainConfigMismatchPolicy(config.ChainConfigMismatchPolicy)
+
+	// A negative --set-head value is an offset from the current head, but the
+	// head is not final until the chain is open: NewBlockChainExResolved below
+	// runs repair, which rewinds the head on its own when the head state is
+	// missing. Resolve the offset against the head recorded on disk first, so
+	// that repair and the SetHead call afterwards aim at the same block.
+	rollbackRequest := common.RollbackNumber
+	rollbackTarget := uint64(0)
+	if rollbackRequest != 0 {
+		head, recorded := rollbackHeadNumber(chainDb)
+		if !recorded && rollbackRequest < 0 {
+			return nil, fmt.Errorf("can't roll back %d blocks: the datadir has no head block number recorded", -rollbackRequest)
+		}
+		rollbackTarget, err = resolveRollbackTarget(rollbackRequest, head)
+		if err != nil {
+			return nil, err
+		}
+		// From here on the request is an absolute target, which is the only form
+		// repair knows how to bound its rewind with. A target of 0 means the
+		// genesis block, and repair cannot rewind past it either way.
+		common.RollbackNumber = int64(rollbackTarget)
+	}
+
 	eth.blockchain, err = core.NewBlockChainExResolved(
 		chainDb,
 		XDCXServ.GetLevelDB(),
@@ -256,23 +279,22 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	}
 
 	// Rollback according to SetHeadFlag
-	if common.RollbackNumber != 0 {
-		target := common.RollbackNumber
+	if rollbackRequest != 0 {
 		common.RollbackNumber = 0
 		currentBlock := eth.blockchain.CurrentBlock()
 		if currentBlock == nil {
-			return nil, fmt.Errorf("not find current block when rollback to %d", common.RollbackNumber)
+			return nil, fmt.Errorf("not find current block when rollback to %d", rollbackTarget)
 		}
 		currentNumber := currentBlock.Number.Uint64()
-		if target > currentNumber {
-			return nil, fmt.Errorf("can't rollback to %d which is greater than current %d", target, currentNumber)
+		if rollbackTarget > currentNumber {
+			return nil, fmt.Errorf("can't rollback to %d which is greater than current %d", rollbackTarget, currentNumber)
 		}
-		log.Warn("Start rollback", "target", target, "current", currentNumber)
-		err := eth.blockchain.SetHead(target)
+		log.Warn("Start rollback", "requested", rollbackRequest, "target", rollbackTarget, "current", currentNumber)
+		err := eth.blockchain.SetHead(rollbackTarget)
 		if err != nil {
-			return nil, fmt.Errorf("fail to rollback: target=%d, current=%d, err: %w", target, currentNumber, err)
+			return nil, fmt.Errorf("fail to rollback: target=%d, current=%d, err: %w", rollbackTarget, currentNumber, err)
 		}
-		log.Warn("Rollback completed", "target", target)
+		log.Warn("Rollback completed", "target", rollbackTarget)
 	}
 
 	if engine, ok := eth.blockchain.Engine().(*XDPoS.XDPoS); ok {
@@ -425,6 +447,45 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	stack.RegisterProtocols(eth.Protocols())
 	stack.RegisterLifecycle(eth)
 	return eth, nil
+}
+
+// rollbackHeadNumber reports the head block number recorded on disk, before the
+// chain is opened and before any startup repair can rewind it. The second return
+// value is false when the datadir carries no head block number at all, which is
+// the case a fresh datadir is in; the height is then reported as zero. Nothing is
+// logged here, because only the caller knows whether a missing head is fatal: a
+// relative request cannot be resolved without one, an absolute one does not need
+// it at all.
+func rollbackHeadNumber(db ethdb.KeyValueReader) (uint64, bool) {
+	head := rawdb.ReadHeadBlockHash(db)
+	if number := rawdb.ReadHeaderNumber(db, head); number != nil {
+		return *number, true
+	}
+	// A head hash without a number index means the database has no usable head
+	// yet. Report it as height zero and let the caller reject any request that
+	// cannot be satisfied from there.
+	return 0, false
+}
+
+// resolveRollbackTarget turns a --set-head request into an absolute target block
+// number. A positive value is the target itself; a negative value is the number
+// of blocks to count back from headNumber.
+func resolveRollbackTarget(request int64, headNumber uint64) (uint64, error) {
+	if request > 0 {
+		return uint64(request), nil
+	}
+	if request == 0 {
+		return 0, errors.New("rollback target must not be 0")
+	}
+	// parseSetHead rejects math.MinInt64 itself, because its magnitude does not
+	// fit an int64, so the negation below cannot overflow. Should such a value
+	// ever arrive here anyway, uint64(math.MinInt64) is 1<<63, far above any
+	// recorded head, and the offset check would reject it.
+	offset := uint64(-request)
+	if offset > headNumber {
+		return 0, fmt.Errorf("can't rollback %d blocks from current %d", offset, headNumber)
+	}
+	return headNumber - offset, nil
 }
 
 func makeExtraData(extra []byte) []byte {

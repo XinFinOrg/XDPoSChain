@@ -11,7 +11,7 @@ Current network activation block numbers:
 | :-----: | -------: | :----: | :---: |
 | mainnet | 98802000 |  TBD   |  TBD  |
 | testnet | 71551800 |  TBD   |  TBD  |
-| devnet  |    43200 |  TBD   |  TBD  |
+| devnet  |    25000 |  50000 |  TBD  |
 
 Recommended compiler settings:
 
@@ -37,6 +37,23 @@ Notes:
    part of Osaka, not Prague. The strong pinning warning applies to Osaka-only
    features (such as CLZ), not to 0.8.30's default `prague` target by itself.
 
+## Transaction and block size limits
+
+XDPoSChain enforces neither of the two caps Osaka introduces on Ethereum:
+EIP-7825 limits a transaction to 16,777,216 gas and EIP-7934 limits an
+RLP-encoded block to 8 MiB. Both are implemented here and both are gated
+behind Osaka, which no network has scheduled yet, so neither applies today.
+For reference, the public networks run with a block gas limit of 420,000,000,
+set through the node's `--targetgaslimit`; the in-repository default
+(`XDCGenesisGasLimit`) is 42,000,000.
+
+A transaction or deployment that spends more than 16,777,216 gas therefore
+succeeds here but cannot be replayed on an Ethereum network that runs those
+caps, which makes such artifacts migrate one way only. Stay below the cap if
+the contract has to remain portable.
+
+Both caps take effect by themselves once Osaka is scheduled and active.
+
 ## Special variables
 
 ### block.prevrandao
@@ -49,9 +66,25 @@ The value of `block.prevrandao` is `keccak256(block.number)` in our current impl
 
 The value of `block.basefee` is the gas price of the block's tier: `12.5 GWei` up to the Gas2500x fork, and `625 GWei` from it. Between the London and EIP-1559 forks, where block headers carry no base fee, it is `12.5 GWei`.
 
+### blobhash()
+
+XDPoSChain has no blob transactions (transaction type `0x03`) and no blob fields
+in the block header, so `blobhash(i)` always returns 0. That is the out-of-bounds
+value defined by EIP-4844, so `require(blobhash(i) != 0)` reverts as expected.
+The KZG point evaluation precompile (`0x0a`) is not implemented. On the networks
+that run the Prague precompile set (devnet from block 50000, localnet from the
+genesis block) its address is registered and every call to it fails, consuming
+the gas of the frame. No network runs the Osaka set yet, because every network
+configuration still leaves `osakaBlock` unset. On mainnet and Apothem, whose
+Prague and Osaka blocks are still unset, the address is not registered at all, so
+a call to it is handled as a call to an empty account: it succeeds and returns
+empty output.
+
 ### block.blobbasefee
 
 The value of `block.blobbasefee` is always 0 in our EIP-7516 implemention.
+EIP-7516 sets a floor of 1 wei; XDPoSChain stays at 0 because it runs no blob fee
+market. Do not use it to infer on-chain activity.
 
 ## Gas price
 

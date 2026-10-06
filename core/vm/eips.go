@@ -267,22 +267,23 @@ func opMcopy(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	return nil, nil
 }
 
-// opBlobHash implements the BLOBHASH opcode
+// opBlobHash implements the BLOBHASH opcode.
+//
+// XDC carries no blobs: there is no blob transaction type and no blob field in
+// the block header, so the blob hash list is always empty. Clearing the index is
+// the EIP-4844 out-of-bounds result, not a fabricated success - a contract
+// requiring a non-zero blob hash still reverts.
 func opBlobHash(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	index := scope.Stack.peek()
-	// xdc chain have no blob hash, so len(interpreter.evm.TxContext.BlobHashes) is always 0
-	// and index.LtUint64(uint64(len(interpreter.evm.TxContext.BlobHashes))) is always false
-	// if index.LtUint64(uint64(len(interpreter.evm.TxContext.BlobHashes))) {
-	// 	blobHash := interpreter.evm.TxContext.BlobHashes[index.Uint64()]
-	// 	index.SetBytes32(blobHash[:])
-	// } else {
-	// 	index.Clear()
-	// }
 	index.Clear()
 	return nil, nil
 }
 
-// opBlobBaseFee implements BLOBBASEFEE opcode
+// opBlobBaseFee implements BLOBBASEFEE opcode.
+//
+// XDC runs no blob fee market, so the value stays 0 even though EIP-7516 sets a
+// floor of 1 wei. Changing it on an already activated fork would replay past
+// blocks differently, so the deviation is documented instead of "fixed".
 func opBlobBaseFee(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	blobBaseFee := new(uint256.Int)
 	scope.Stack.push(blobBaseFee)
@@ -296,7 +297,8 @@ func opCLZ(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	return nil, nil
 }
 
-// enable4844 applies EIP-4844 (BLOBHASH opcode)
+// enable4844 applies the opcode half of EIP-4844 (BLOBHASH). XDC has no blob
+// transactions and no blob header fields, so the opcode has no blob to read.
 func enable4844(jt *JumpTable) {
 	jt[BLOBHASH] = &operation{
 		execute:     opBlobHash,
@@ -316,7 +318,8 @@ func enable7939(jt *JumpTable) {
 	}
 }
 
-// enable7516 applies EIP-7516 (BLOBBASEFEE opcode)
+// enable7516 applies the opcode half of EIP-7516 (BLOBBASEFEE). XDC has no blob
+// fee market, so the opcode reports a constant 0 rather than a computed price.
 func enable7516(jt *JumpTable) {
 	jt[BLOBBASEFEE] = &operation{
 		execute:     opBlobBaseFee,

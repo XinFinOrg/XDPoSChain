@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"math/rand"
 	"os"
 	"testing"
 
@@ -56,21 +57,32 @@ type precompiledFailureTest struct {
 // allPrecompiles does not map to the actual set of precompiles, as it also contains
 // repriced versions of precompiles at certain slots
 var allPrecompiles = map[common.Address]PrecompiledContract{
-	common.BytesToAddress([]byte{1}):    &ecrecover{},
-	common.BytesToAddress([]byte{2}):    &sha256hash{},
-	common.BytesToAddress([]byte{3}):    &ripemd160hash{},
-	common.BytesToAddress([]byte{4}):    &dataCopy{},
-	common.BytesToAddress([]byte{5}):    &bigModExp{eip2565: false, eip7883: false},
+	common.BytesToAddress([]byte{0x01}): &ecrecover{},
+	common.BytesToAddress([]byte{0x02}): &sha256hash{},
+	common.BytesToAddress([]byte{0x03}): &ripemd160hash{},
+	common.BytesToAddress([]byte{0x04}): &dataCopy{},
+	common.BytesToAddress([]byte{0x05}): &bigModExp{eip2565: false, eip7883: false},
 	common.BytesToAddress([]byte{0xf5}): &bigModExp{eip2565: true, eip7883: false},
 	common.BytesToAddress([]byte{0xf6}): &bigModExp{eip2565: true, eip7883: true},
-	common.BytesToAddress([]byte{6}):    &bn256AddIstanbul{},
-	common.BytesToAddress([]byte{7}):    &bn256ScalarMulIstanbul{},
-	common.BytesToAddress([]byte{8}):    &bn256PairingIstanbul{},
-	common.BytesToAddress([]byte{9}):    &blake2F{},
-	common.BytesToAddress([]byte{30}):   &ringSignatureVerifier{},
-	common.BytesToAddress([]byte{40}):   &bulletproofVerifier{},
-	common.BytesToAddress([]byte{41}):   &XDCxLastPrice{},
-	common.BytesToAddress([]byte{42}):   &XDCxEpochPrice{},
+	common.BytesToAddress([]byte{0x06}): &bn256AddIstanbul{},
+	common.BytesToAddress([]byte{0x07}): &bn256ScalarMulIstanbul{},
+	common.BytesToAddress([]byte{0x08}): &bn256PairingIstanbul{},
+	common.BytesToAddress([]byte{0x09}): &blake2F{},
+	common.BytesToAddress([]byte{0x0a}): kzgStub,
+	common.BytesToAddress([]byte{0x1e}): &ringSignatureVerifier{},
+	common.BytesToAddress([]byte{0x28}): &bulletproofVerifier{},
+	common.BytesToAddress([]byte{0x29}): &XDCxLastPrice{},
+	common.BytesToAddress([]byte{0x2a}): &XDCxEpochPrice{},
+
+	common.BytesToAddress([]byte{0x0f, 0x0a}): &bls12381G1Add{},
+	common.BytesToAddress([]byte{0x0f, 0x0b}): &bls12381G1MultiExp{},
+	common.BytesToAddress([]byte{0x0f, 0x0c}): &bls12381G2Add{},
+	common.BytesToAddress([]byte{0x0f, 0x0d}): &bls12381G2MultiExp{},
+	common.BytesToAddress([]byte{0x0f, 0x0e}): &bls12381Pairing{},
+	common.BytesToAddress([]byte{0x0f, 0x0f}): &bls12381MapG1{},
+	common.BytesToAddress([]byte{0x0f, 0x10}): &bls12381MapG2{},
+
+	common.BytesToAddress([]byte{0x1, 0x00}): &p256Verify{},
 }
 
 // modexpTests are the test and benchmark data for the modexp precompiled contract.
@@ -367,6 +379,9 @@ func testPrecompiledFailure(addr string, test precompiledFailureTest, t *testing
 	gas := p.RequiredGas(in)
 	t.Run(test.Name, func(t *testing.T) {
 		_, _, err := RunPrecompiledContract(nil, p, in, gas, nil)
+		if err == nil {
+			t.Fatalf("Expected error [%v], got no error", test.ExpectedError)
+		}
 		if err.Error() != test.ExpectedError {
 			t.Errorf("Expected error [%v], got [%v]", test.ExpectedError, err)
 		}
@@ -469,6 +484,63 @@ func BenchmarkPrecompiledModExpEip2565(b *testing.B) { benchJson("modexp_eip2565
 func TestPrecompiledModExpEip7883(t *testing.T)      { testJson("modexp_eip7883", "f6", t) }
 func BenchmarkPrecompiledModExpEip7883(b *testing.B) { benchJson("modexp_eip7883", "f6", b) }
 
+func TestPrecompiledP256Verify(t *testing.T) {
+	// allPrecompiles is a test-only map, so assert that the Osaka set exposes
+	// the precompile at 0x100 with the expected implementation.
+	if p, ok := PrecompiledContractsOsaka[common.BytesToAddress([]byte{0x1, 0x00})]; !ok {
+		t.Fatal("P256VERIFY is missing from the Osaka precompile set")
+	} else if _, isP256 := p.(*p256Verify); !isP256 {
+		t.Fatalf("0x100 is registered as %T, want *p256Verify", p)
+	}
+	// EIP-7951 only defines the behaviour for a 160-byte input; every other
+	// length must produce empty output without an error, while still charging
+	// the flat 6900 gas (geth params/protocol_params.go P256VerifyGas). All 782
+	// official vectors are exactly 160 bytes long, so the length gate has no
+	// vector coverage and is pinned here.
+	//
+	// Padding alone cannot catch a broken gate: an all-zero or truncated input
+	// also fails verification, so it returns empty output either way. The
+	// over-long case therefore appends a byte to a signature that does verify,
+	// which a gate that accepts 161 bytes would happily verify and answer.
+	validSig := "4cee90eb86eaa050036147a12d49004b6b9c72bd725d39d4785011fe190f0b4da73bd4903f0ce3b639bbbf6e8e80d16931ff4bcf5993d58468e8fb19086e8cac36dbcd03009df8c59286b162af3bd7fcc0450c9aa81be5d10d312af6c66b1d604aebd3099c618202fcfe16ae7770b0c49ab5eadf74b754204a3bb6060e44eff37618b065f9832de4ca6ca971a7a1adc826d0f7c00181a5fb2ddf79ae00b4e10e"
+	for _, tc := range []struct {
+		name  string
+		input []byte
+		want  []byte // nil means empty output
+	}{
+		{"valid-160", common.Hex2Bytes(validSig), true32Byte},
+		{"empty", nil, nil},
+		{"short-159", make([]byte, 159), nil},
+		{"long-161-zero", make([]byte, 161), nil},
+		{"long-161-valid-prefix", append(common.Hex2Bytes(validSig), 0x00), nil},
+	} {
+		t.Run("input-length/"+tc.name, func(t *testing.T) {
+			p := PrecompiledContractsOsaka[common.BytesToAddress([]byte{0x1, 0x00})]
+			out, err := p.Run(tc.input)
+			if err != nil {
+				t.Fatalf("%d-byte input: unexpected error %v", len(tc.input), err)
+			}
+			if !bytes.Equal(out, tc.want) {
+				t.Errorf("%d-byte input: output = %x, want %x", len(tc.input), out, tc.want)
+			}
+			if gas := p.RequiredGas(tc.input); gas != 6900 {
+				t.Errorf("%d-byte input: gas = %d, want 6900", len(tc.input), gas)
+			}
+		})
+	}
+	testJson("p256Verify", "100", t)
+}
+
+// Benchmarks the sample inputs from the P256VERIFY precompile.
+func BenchmarkPrecompiledP256Verify(bench *testing.B) {
+	t := precompiledTest{
+		Input:    "4cee90eb86eaa050036147a12d49004b6b9c72bd725d39d4785011fe190f0b4da73bd4903f0ce3b639bbbf6e8e80d16931ff4bcf5993d58468e8fb19086e8cac36dbcd03009df8c59286b162af3bd7fcc0450c9aa81be5d10d312af6c66b1d604aebd3099c618202fcfe16ae7770b0c49ab5eadf74b754204a3bb6060e44eff37618b065f9832de4ca6ca971a7a1adc826d0f7c00181a5fb2ddf79ae00b4e10e",
+		Expected: "0000000000000000000000000000000000000000000000000000000000000001",
+		Name:     "p256Verify",
+	}
+	benchmarkPrecompiled("100", t, bench)
+}
+
 // Tests the sample inputs from the elliptic curve addition EIP 213.
 func TestPrecompiledBn256Add(t *testing.T)      { testJson("bn256Add", "06", t) }
 func BenchmarkPrecompiledBn256Add(b *testing.B) { benchJson("bn256Add", "06", b) }
@@ -477,6 +549,131 @@ func BenchmarkPrecompiledBn256Add(b *testing.B) { benchJson("bn256Add", "06", b)
 func TestPrecompiledModExpOOG(t *testing.T) {
 	for _, test := range modexpTests {
 		testPrecompiledOOG("05", test, t)
+	}
+}
+
+// modexpInput encodes an EIP-198 modexp call from its three operands.
+func modexpInput(base, exp, mod []byte) []byte {
+	head := make([]byte, 96)
+	for i, l := range []int{len(base), len(exp), len(mod)} {
+		new(big.Int).SetInt64(int64(l)).FillBytes(head[i*32 : (i+1)*32])
+	}
+	input := make([]byte, 0, len(head)+len(base)+len(exp)+len(mod))
+	input = append(input, head...)
+	input = append(input, base...)
+	input = append(input, exp...)
+	return append(input, mod...)
+}
+
+// modexpStdlib computes the expected modexp result with the standard library.
+func modexpStdlib(base, exp, mod []byte) []byte {
+	m := new(big.Int).SetBytes(mod)
+	if m.Sign() == 0 {
+		return make([]byte, len(mod))
+	}
+	v := new(big.Int).Exp(new(big.Int).SetBytes(base), new(big.Int).SetBytes(exp), m)
+	return common.LeftPadBytes(v.Bytes(), len(mod))
+}
+
+// Tests that the precompile output matches the standard library's math/big,
+// which is what it used before the switch to the patched fork. It pins the
+// result only: reverting the precompile to math/big keeps it green, so it
+// catches behavioural drift in the patched fork but not a silent revert.
+func TestPrecompiledModExpMatchesStdlib(t *testing.T) {
+	type modexpCase struct{ base, exp, mod []byte }
+	cases := []modexpCase{
+		{common.FromHex("03"), common.FromHex("ffffffffffffffff"), common.FromHex("ffff")},
+		{common.FromHex("01"), common.FromHex("ffffffffffffffff"), common.FromHex("ffff")}, // base == 1
+		{nil, common.FromHex("ffffffffffffffff"), common.FromHex("ffff")},                  // base == 0
+		{common.FromHex("03"), nil, common.FromHex("ffff")},                                // exp == 0
+		{common.FromHex("03"), common.FromHex("01"), common.FromHex("ffff")},               // exp == 1
+		{common.FromHex("ffff"), common.FromHex("ffff"), common.FromHex("01")},             // mod == 1
+		{common.FromHex("ffff"), common.FromHex("ffff"), common.FromHex("ffff")},           // base == mod
+		{common.FromHex("ff"), common.FromHex("ff"), common.FromHex("02")},                 // even modulus
+		{common.FromHex("0101"), common.FromHex("0100"), common.FromHex("0100")},           // power of two modulus
+	}
+	rnd := rand.New(rand.NewSource(1))
+	randBytes := func(n int) []byte {
+		b := make([]byte, n)
+		rnd.Read(b)
+		return b
+	}
+	for i := 0; i < 200; i++ {
+		base := randBytes(1 + rnd.Intn(64))
+		exp := randBytes(1 + rnd.Intn(32))
+		mod := randBytes(1 + rnd.Intn(64))
+		switch i % 4 {
+		case 1:
+			mod[len(mod)-1] &^= 1 // even modulus
+		case 2:
+			clear(mod)
+			mod[len(mod)-1] = 1 << uint(1+rnd.Intn(7)) // power of two modulus
+		case 3:
+			clear(mod)
+			mod[len(mod)-1] = 1 // modulus 1
+		}
+		if new(big.Int).SetBytes(mod).Sign() == 0 {
+			mod[len(mod)-1] = 1 // a zero modulus would be an unbounded exponentiation
+		}
+		cases = append(cases, modexpCase{base, exp, mod})
+	}
+	// 1024-byte operands, the operand size limit introduced by EIP-7823. The
+	// osaka variant below enables the cap, and these cases sit exactly at it.
+	for i := 0; i < 3; i++ {
+		base := randBytes(1024)
+		mod := randBytes(1024)
+		mod[len(mod)-1] |= 1
+		cases = append(cases, modexpCase{base, randBytes(16), mod})
+	}
+	// Large exponents, the shape the patched fork rewrites most. Measured at
+	// roughly 2ms / 15ms / 130ms per run for 256 / 512 / 1024 bytes.
+	for _, size := range []int{256, 512, 1024} {
+		base := randBytes(size)
+		mod := randBytes(size)
+		mod[len(mod)-1] |= 1
+		cases = append(cases, modexpCase{base, randBytes(size), mod})
+	}
+	bigExp := make([]byte, 512)
+	for i := range bigExp {
+		bigExp[i] = 0xff // the largest exponent of that width
+	}
+	bigMod := randBytes(512)
+	bigMod[len(bigMod)-1] |= 1
+	cases = append(cases, modexpCase{randBytes(512), bigExp, bigMod})
+
+	// All modexp variants share Run, so run the whole table against each of
+	// them: bare, EIP-2565, EIP-2565+EIP-7883 and the EIP-2565+EIP-7823+
+	// EIP-7883 set used by PrecompiledContractsOsaka. The variants are built
+	// here instead of taken from allPrecompiles, which does not hold the Osaka
+	// set, and adding it there would widen the fuzz test's input set.
+	with7823 := &bigModExp{eip2565: true, eip7823: true, eip7883: true}
+	variants := []struct {
+		name string
+		p    PrecompiledContract
+	}{
+		{"05", &bigModExp{eip2565: false, eip7883: false}},
+		{"f5", &bigModExp{eip2565: true, eip7883: false}},
+		{"f6", &bigModExp{eip2565: true, eip7883: true}},
+		{"osaka", with7823},
+	}
+	for _, variant := range variants {
+		for i, c := range cases {
+			input := modexpInput(c.base, c.exp, c.mod)
+			gas := variant.p.RequiredGas(input)
+			res, _, err := RunPrecompiledContract(nil, variant.p, input, gas, nil)
+			if err != nil {
+				t.Fatalf("%s case %d (base %x, exp %x, mod %x): %v", variant.name, i, c.base, c.exp, c.mod, err)
+			}
+			if want := modexpStdlib(c.base, c.exp, c.mod); !bytes.Equal(res, want) {
+				t.Fatalf("%s case %d (base %x, exp %x, mod %x): got %x, want %x", variant.name, i, c.base, c.exp, c.mod, res, want)
+			}
+		}
+	}
+	// EIP-7823 rejects operands larger than 1024 bytes, on the Osaka variant
+	// only; no other test exercises that path.
+	oversize := modexpInput(make([]byte, 1025), []byte{1}, []byte{1})
+	if _, _, err := RunPrecompiledContract(nil, with7823, oversize, with7823.RequiredGas(oversize), nil); err == nil {
+		t.Fatal("eip7823 variant accepted a 1025-byte operand")
 	}
 }
 
@@ -596,6 +793,16 @@ func testJson(name, addr string, t *testing.T) {
 	}
 }
 
+func testJsonFail(name, addr string, t *testing.T) {
+	tests, err := loadJsonFail(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range tests {
+		testPrecompiledFailure(addr, test, t)
+	}
+}
+
 func benchJson(name, addr string, b *testing.B) {
 	tests, err := loadJson(name)
 	if err != nil {
@@ -614,4 +821,81 @@ func loadJson(name string) ([]precompiledTest, error) {
 	var testcases []precompiledTest
 	err = json.Unmarshal(data, &testcases)
 	return testcases, err
+}
+
+func loadJsonFail(name string) ([]precompiledFailureTest, error) {
+	data, err := os.ReadFile(fmt.Sprintf("testdata/precompiles/fail-%v.json", name))
+	if err != nil {
+		return nil, err
+	}
+	var testcases []precompiledFailureTest
+	err = json.Unmarshal(data, &testcases)
+	return testcases, err
+}
+
+func TestPrecompiledBLS12381G1Add(t *testing.T)      { testJson("blsG1Add", "f0a", t) }
+func TestPrecompiledBLS12381G1Mul(t *testing.T)      { testJson("blsG1Mul", "f0b", t) }
+func TestPrecompiledBLS12381G1MultiExp(t *testing.T) { testJson("blsG1MultiExp", "f0b", t) }
+func TestPrecompiledBLS12381G2Add(t *testing.T)      { testJson("blsG2Add", "f0c", t) }
+func TestPrecompiledBLS12381G2Mul(t *testing.T)      { testJson("blsG2Mul", "f0d", t) }
+func TestPrecompiledBLS12381G2MultiExp(t *testing.T) { testJson("blsG2MultiExp", "f0d", t) }
+func TestPrecompiledBLS12381Pairing(t *testing.T)    { testJson("blsPairing", "f0e", t) }
+func TestPrecompiledBLS12381MapG1(t *testing.T)      { testJson("blsMapG1", "f0f", t) }
+func TestPrecompiledBLS12381MapG2(t *testing.T)      { testJson("blsMapG2", "f10", t) }
+
+func BenchmarkPrecompiledBLS12381G1Add(b *testing.B)      { benchJson("blsG1Add", "f0a", b) }
+func BenchmarkPrecompiledBLS12381G1MultiExp(b *testing.B) { benchJson("blsG1MultiExp", "f0b", b) }
+func BenchmarkPrecompiledBLS12381G2Add(b *testing.B)      { benchJson("blsG2Add", "f0c", b) }
+func BenchmarkPrecompiledBLS12381G2MultiExp(b *testing.B) { benchJson("blsG2MultiExp", "f0d", b) }
+func BenchmarkPrecompiledBLS12381Pairing(b *testing.B)    { benchJson("blsPairing", "f0e", b) }
+func BenchmarkPrecompiledBLS12381MapG1(b *testing.B)      { benchJson("blsMapG1", "f0f", b) }
+func BenchmarkPrecompiledBLS12381MapG2(b *testing.B)      { benchJson("blsMapG2", "f10", b) }
+
+func TestPrecompiledBLS12381G1AddFail(t *testing.T)      { testJsonFail("blsG1Add", "f0a", t) }
+func TestPrecompiledBLS12381G1MulFail(t *testing.T)      { testJsonFail("blsG1Mul", "f0b", t) }
+func TestPrecompiledBLS12381G1MultiExpFail(t *testing.T) { testJsonFail("blsG1MultiExp", "f0b", t) }
+func TestPrecompiledBLS12381G2AddFail(t *testing.T)      { testJsonFail("blsG2Add", "f0c", t) }
+func TestPrecompiledBLS12381G2MulFail(t *testing.T)      { testJsonFail("blsG2Mul", "f0d", t) }
+func TestPrecompiledBLS12381G2MultiExpFail(t *testing.T) { testJsonFail("blsG2MultiExp", "f0d", t) }
+func TestPrecompiledBLS12381PairingFail(t *testing.T)    { testJsonFail("blsPairing", "f0e", t) }
+func TestPrecompiledBLS12381MapG1Fail(t *testing.T)      { testJsonFail("blsMapG1", "f0f", t) }
+func TestPrecompiledBLS12381MapG2Fail(t *testing.T)      { testJsonFail("blsMapG2", "f10", t) }
+
+// BenchmarkPrecompiledBLS12381G1MultiExpWorstCase benchmarks the worst case we could find that still fits a gaslimit of 10MGas.
+func BenchmarkPrecompiledBLS12381G1MultiExpWorstCase(b *testing.B) {
+	task := "0000000000000000000000000000000008d8c4a16fb9d8800cce987c0eadbb6b3b005c213d44ecb5adeed713bae79d606041406df26169c35df63cf972c94be1" +
+		"0000000000000000000000000000000011bc8afe71676e6730702a46ef817060249cd06cd82e6981085012ff6d013aa4470ba3a2c71e13ef653e1e223d1ccfe9" +
+		"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+	input := task
+	for i := 0; i < 4787; i++ {
+		input = input + task
+	}
+	testcase := precompiledTest{
+		Input:       input,
+		Expected:    "0000000000000000000000000000000005a6310ea6f2a598023ae48819afc292b4dfcb40aabad24a0c2cb6c19769465691859eeb2a764342a810c5038d700f18000000000000000000000000000000001268ac944437d15923dc0aec00daa9250252e43e4b35ec7a19d01f0d6cd27f6e139d80dae16ba1c79cc7f57055a93ff5",
+		Name:        "WorstCaseG1",
+		NoBenchmark: false,
+	}
+	benchmarkPrecompiled("f0b", testcase, b)
+}
+
+// BenchmarkPrecompiledBLS12381G2MultiExpWorstCase benchmarks the worst case we could find that still fits a gaslimit of 10MGas.
+func BenchmarkPrecompiledBLS12381G2MultiExpWorstCase(b *testing.B) {
+	task := "000000000000000000000000000000000d4f09acd5f362e0a516d4c13c5e2f504d9bd49fdfb6d8b7a7ab35a02c391c8112b03270d5d9eefe9b659dd27601d18f" +
+		"000000000000000000000000000000000fd489cb75945f3b5ebb1c0e326d59602934c8f78fe9294a8877e7aeb95de5addde0cb7ab53674df8b2cfbb036b30b99" +
+		"00000000000000000000000000000000055dbc4eca768714e098bbe9c71cf54b40f51c26e95808ee79225a87fb6fa1415178db47f02d856fea56a752d185f86b" +
+		"000000000000000000000000000000001239b7640f416eb6e921fe47f7501d504fadc190d9cf4e89ae2b717276739a2f4ee9f637c35e23c480df029fd8d247c7" +
+		"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+	input := task
+	for i := 0; i < 1040; i++ {
+		input = input + task
+	}
+
+	testcase := precompiledTest{
+		Input:       input,
+		Expected:    "0000000000000000000000000000000018f5ea0c8b086095cfe23f6bb1d90d45de929292006dba8cdedd6d3203af3c6bbfd592e93ecb2b2c81004961fdcbb46c00000000000000000000000000000000076873199175664f1b6493a43c02234f49dc66f077d3007823e0343ad92e30bd7dc209013435ca9f197aca44d88e9dac000000000000000000000000000000000e6f07f4b23b511eac1e2682a0fc224c15d80e122a3e222d00a41fab15eba645a700b9ae84f331ae4ed873678e2e6c9b000000000000000000000000000000000bcb4849e460612aaed79617255fd30c03f51cf03d2ed4163ca810c13e1954b1e8663157b957a601829bb272a4e6c7b8",
+		Name:        "WorstCaseG2",
+		NoBenchmark: false,
+	}
+	benchmarkPrecompiled("f0d", testcase, b)
 }

@@ -404,15 +404,16 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 				failed = err
 				break
 			}
-			// Insert parent hash in history contract.
+			// Block level state changes block processing applies before the first
+			// transaction of the next block, which the loop above replays by hand.
+			core.ApplyTIPSigningHardFork(api.backend.ChainConfig(), statedb, next.Number())
+			core.ApplyMulticall3HardFork(api.backend.ChainConfig(), statedb, next.Number())
+			// EIP-2935 parent hash history, written after those changes the way block processing does.
 			if api.backend.ChainConfig().IsPrague(next.Number()) {
 				context := core.NewEVMBlockContext(next.Header(), api.chainContext(ctx), nil)
 				evm := vm.NewEVM(context, statedb, nil, api.backend.ChainConfig(), vm.Config{})
 				core.ProcessParentBlockHash(next.ParentHash(), evm)
 			}
-			// Block level state changes block processing applies before the first
-			// transaction of the next block, which the loop above replays by hand.
-			core.ApplyTIPSigningHardFork(api.backend.ChainConfig(), statedb, next.Number())
 			// Clean out any pending release functions of trace state. Note this
 			// step must be done after constructing tracing state, because the
 			// tracing state of block next depends on the parent state and construction
@@ -552,12 +553,14 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 		deleteEmptyObjects = chainConfig.IsEIP158(block.Number())
 	)
 	evm := vm.NewEVM(vmctx, statedb, nil, chainConfig, vm.Config{})
-	if chainConfig.IsPrague(block.Number()) {
-		core.ProcessParentBlockHash(block.ParentHash(), evm)
-	}
 	// Block level state changes block processing applies before the first transaction:
 	// the roots below describe the state the block ran on, not the parent state.
 	core.ApplyTIPSigningHardFork(chainConfig, statedb, block.Number())
+	core.ApplyMulticall3HardFork(chainConfig, statedb, block.Number())
+	// EIP-2935 parent hash history, written after those changes the way block processing does.
+	if chainConfig.IsPrague(block.Number()) {
+		core.ProcessParentBlockHash(block.ParentHash(), evm)
+	}
 	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	for i, tx := range block.Transactions() {
 		if err := ctx.Err(); err != nil {
@@ -643,12 +646,14 @@ func (api *API) traceBlock(ctx context.Context, block *types.Block, config *Trac
 
 	blockCtx := core.NewEVMBlockContext(block.Header(), api.chainContext(ctx), nil)
 	evm := vm.NewEVM(blockCtx, statedb, nil, api.backend.ChainConfig(), vm.Config{})
-	if api.backend.ChainConfig().IsPrague(block.Number()) {
-		core.ProcessParentBlockHash(block.ParentHash(), evm)
-	}
 	// Block level state changes block processing applies before the first transaction,
 	// shared with the parallel feeder this function may hand the state over to.
 	core.ApplyTIPSigningHardFork(api.backend.ChainConfig(), statedb, block.Number())
+	core.ApplyMulticall3HardFork(api.backend.ChainConfig(), statedb, block.Number())
+	// EIP-2935 parent hash history, written after those changes the way block processing does.
+	if api.backend.ChainConfig().IsPrague(block.Number()) {
+		core.ProcessParentBlockHash(block.ParentHash(), evm)
+	}
 
 	// JS tracers have high overhead. In this case run a parallel
 	// process that generates states in one thread and traces txes

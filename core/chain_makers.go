@@ -237,6 +237,7 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 			misc.ApplyDAOHardFork(statedb)
 		}
 		ApplyTIPSigningHardFork(config, statedb, b.header.Number)
+		ApplyMulticall3HardFork(config, statedb, b.header.Number)
 
 		if config.IsPrague(b.header.Number) {
 			// EIP-2935

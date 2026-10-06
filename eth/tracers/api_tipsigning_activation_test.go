@@ -60,10 +60,12 @@ func blockProcessingRoots(t *testing.T, backend *testBackend, config *params.Cha
 	evm := vm.NewEVM(core.NewEVMBlockContext(block.Header(), backend.chain, nil), statedb, nil, config, vm.Config{})
 	// Block level pre-execution, mirroring what both debug_intermediateRoots and block
 	// processing do before the first transaction.
+	core.ApplyTIPSigningHardFork(config, statedb, block.Number())
+	core.ApplyMulticall3HardFork(config, statedb, block.Number())
 	if config.IsPrague(block.Number()) {
+		// EIP-2935, written after those changes the way block processing does.
 		core.ProcessParentBlockHash(block.ParentHash(), evm)
 	}
-	core.ApplyTIPSigningHardFork(config, statedb, block.Number())
 	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	var (
 		usedGas  uint64

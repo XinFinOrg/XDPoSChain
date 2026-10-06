@@ -91,10 +91,16 @@ func (b *EthAPIBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNumb
 			return nil, errors.New("PoW does not support confirmed block lookup")
 		}
 		current := b.eth.blockchain.CurrentBlock()
+		if current == nil {
+			return nil, errors.New("current block is nil")
+		}
 		if b.eth.blockchain.Config().XDPoS.BlockConsensusVersion(current.Number) == params.ConsensusEngineVersion2 {
 			// TO CHECK: why calling config in XDPoS is blocked (not field and method)
-			confirmedHash := b.XDPoS.EngineV2.GetLatestCommittedBlockInfo().Hash
-			return b.eth.blockchain.GetHeaderByHash(confirmedHash), nil
+			info := b.XDPoS.EngineV2.GetLatestCommittedBlockInfo()
+			if info == nil {
+				return nil, errors.New("no committed block info available yet")
+			}
+			return b.eth.blockchain.GetHeaderByHash(info.Hash), nil
 		} else {
 			return nil, errors.New("PoS V1 does not support confirmed block lookup")
 		}
@@ -149,8 +155,11 @@ func (b *EthAPIBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumbe
 		}
 		if b.eth.blockchain.Config().XDPoS.BlockConsensusVersion(current.Number) == params.ConsensusEngineVersion2 {
 			// TO CHECK: why calling config in XDPoS is blocked (not field and method)
-			confirmedHash := b.XDPoS.EngineV2.GetLatestCommittedBlockInfo().Hash
-			return b.eth.blockchain.GetBlockByHash(confirmedHash), nil
+			info := b.XDPoS.EngineV2.GetLatestCommittedBlockInfo()
+			if info == nil {
+				return nil, errors.New("no committed block info available yet")
+			}
+			return b.eth.blockchain.GetBlockByHash(info.Hash), nil
 		} else {
 			return nil, errors.New("PoS V1 does not support confirmed block lookup")
 		}

@@ -170,6 +170,22 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 	}
 	blockContext := core.NewEVMBlockContext(header, sim.newSimulatedChainContext(ctx, headers), nil)
 	precompiles := sim.activePrecompiles(header)
+	// The block level state changes below own the Multicall3 account: a Prague block installs
+	// the canonical code whatever the caller asked the account to be, so an override of it
+	// would either trip the panic that guards a diverging install or be undone by it. Reject
+	// it here, where the caller can be told, instead of running the block from a pre-state the
+	// caller did not choose. The install only raises the nonce while the account has no code,
+	// so the nonce stays overridable once the account carries the canonical one.
+	if sim.chainConfig.IsPrague(header.Number) && block.StateOverrides != nil {
+		if account, ok := (*block.StateOverrides)[params.Multicall3Address]; ok {
+			if account.Code != nil {
+				return nil, nil, &invalidParamsError{message: fmt.Sprintf("state override of %v sets code, which the Prague Multicall3 install owns", params.Multicall3Address)}
+			}
+			if account.Nonce != nil && len(sim.state.GetCode(params.Multicall3Address)) == 0 {
+				return nil, nil, &invalidParamsError{message: fmt.Sprintf("state override of %v sets the nonce, which the Prague Multicall3 install owns", params.Multicall3Address)}
+			}
+		}
+	}
 	// State overrides are applied prior to execution of a block
 	if err := block.StateOverrides.Apply(sim.state, precompiles); err != nil {
 		return nil, nil, err
@@ -196,15 +212,16 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 	if precompiles != nil {
 		evm.SetPrecompiles(precompiles)
 	}
+	// Block level state changes block processing applies before the first transaction of a
+	// block: TIPSigning removes the legacy block signers account at its activation block,
+	// Multicall3 is installed at the one that activates Prague. A simulated block starts from
+	// the base state, so selecting the activation block's parent reproduces either change.
+	core.ApplyTIPSigningHardFork(sim.chainConfig, sim.state, header.Number)
+	core.ApplyMulticall3HardFork(sim.chainConfig, sim.state, header.Number)
+	// EIP-2935 parent hash history, written after those changes the way block processing does.
 	if sim.chainConfig.IsPrague(header.Number) {
 		core.ProcessParentBlockHash(header.ParentHash, evm)
 	}
-	// Block level state changes block processing applies before the first transaction of a
-	// block. A simulated block starts from the base state, so without them the calls and the
-	// state root describe a pre-state canonical execution never had: TIPSigning removes the
-	// legacy block signers account at the block that activates it, and the caller can
-	// simulate exactly that block by selecting its parent as the base state.
-	core.ApplyTIPSigningHardFork(sim.chainConfig, sim.state, header.Number)
 	for i, call := range block.Calls {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err

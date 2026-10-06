@@ -189,9 +189,14 @@ func messageForReadError(err error) string {
 	return ""
 }
 
-// Stop stops reading new requests, waits for stopPendingRequestTimeout to allow pending
-// requests to finish, then closes all codecs which will cancel pending requests and
-// subscriptions.
+// Stop stops reading new requests and closes all codecs, which cancels pending
+// requests and subscriptions. Pending requests are not waited for: closing a codec
+// unblocks the teardown of its connection right away, which cancels the contexts of
+// its calls without waiting the grace period out. That holds for the connections
+// Stop closes itself, where the closed codec is the one their teardown observes;
+// the peer of such a connection sees no such signal, so its own teardown still waits
+// teardownResponseGrace out before cancelling its calls. A teardown still waits up to
+// teardownDrainGrace for its call goroutines before the codec is released.
 func (s *Server) Stop() {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
