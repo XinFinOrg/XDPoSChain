@@ -295,6 +295,14 @@ func (sim *simulator) sanitizeCall(call *TransactionArgs, state vm.StateDB, head
 	if *gasUsed+uint64(*call.Gas) > blockContext.GasLimit {
 		return &blockGasLimitReachedError{fmt.Sprintf("block gas limit reached: %d >= %d", *gasUsed, blockContext.GasLimit)}
 	}
+	// A set-code transaction needs the EIP-1559 fee fields, so gasPrice cannot be
+	// combined with an authorization list. sanitizeCall runs CallDefaults rather
+	// than setFeeDefaults, so without this the pair is downgraded to a legacy
+	// transaction in the block handed back to the caller, while the call itself
+	// applies the authorization list.
+	if call.GasPrice != nil && call.AuthorizationList != nil {
+		return errors.New("both gasPrice and authorizationList specified")
+	}
 	if err := call.CallDefaults(sim.gp.Gas(), header.BaseFee, sim.chainConfig.ChainID); err != nil {
 		return err
 	}
