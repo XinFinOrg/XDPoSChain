@@ -34,6 +34,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
+	"github.com/XinFinOrg/XDPoSChain/eth/ethconfig"
 	"github.com/XinFinOrg/XDPoSChain/node"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -521,4 +522,96 @@ func newMakeChainTestCLIContext(t *testing.T, values map[string]string) *cli.Con
 		}
 	}
 	return cli.NewContext(cli.NewApp(), set, nil)
+}
+
+// newCacheConfigTestCLIContext builds a minimal CLI context carrying the cache
+// and GC mode flags consumed by makeCacheConfig.
+func newCacheConfigTestCLIContext(t *testing.T, values map[string]string) *cli.Context {
+	t.Helper()
+	set := flag.NewFlagSet("cache-config-test", flag.ContinueOnError)
+	set.Int(CacheFlag.Name, 0, "")
+	set.Int(CacheTrieFlag.Name, 0, "")
+	set.Int(CacheGCFlag.Name, 0, "")
+	set.String(GCModeFlag.Name, "full", "")
+	set.Bool(CachePrefetchFlag.Name, false, "")
+	set.Bool(CachePreimagesFlag.Name, false, "")
+	for name, value := range values {
+		if err := set.Set(name, value); err != nil {
+			t.Fatalf("failed to set flag %s: %v", name, value)
+		}
+	}
+	return cli.NewContext(cli.NewApp(), set, nil)
+}
+
+// TestMakeCacheConfigSplitsTrieCachesByFlag pins the flag to cache mapping of
+// makeCacheConfig. --cache-trie must size the clean trie cache and --cache-gc
+// the dirty one, exactly like SetEthConfig maps them: sizing the clean cache
+// from --cache-gc made --cache-trie a silent no-op on the MakeChain path.
+func TestMakeCacheConfigSplitsTrieCachesByFlag(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		flags        map[string]string
+		wantClean    int
+		wantDirty    int
+		wantDisabled bool
+		wantPrefetch bool
+	}{
+		{
+			name:      "no cache flags keeps the defaults",
+			flags:     map[string]string{},
+			wantClean: ethconfig.Defaults.TrieCleanCache,
+			wantDirty: ethconfig.Defaults.TrieDirtyCache,
+		},
+		{
+			name: "cache-trie sizes the clean cache and cache-gc the dirty one",
+			flags: map[string]string{
+				CacheFlag.Name:     "20088",
+				CacheTrieFlag.Name: "20",
+				CacheGCFlag.Name:   "5",
+			},
+			wantClean: 20088 * 20 / 100,
+			wantDirty: 20088 * 5 / 100,
+		},
+		{
+			name: "archive mode disables the dirty cache and forces preimages",
+			flags: map[string]string{
+				GCModeFlag.Name: "archive",
+			},
+			wantClean:    ethconfig.Defaults.TrieCleanCache,
+			wantDirty:    ethconfig.Defaults.TrieDirtyCache,
+			wantDisabled: true,
+		},
+		{
+			name: "cache-prefetch is carried into the cache config",
+			flags: map[string]string{
+				CachePrefetchFlag.Name: "true",
+			},
+			wantClean:    ethconfig.Defaults.TrieCleanCache,
+			wantDirty:    ethconfig.Defaults.TrieDirtyCache,
+			wantPrefetch: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cache := makeCacheConfig(newCacheConfigTestCLIContext(t, tt.flags))
+			if cache.TrieCleanLimit != tt.wantClean {
+				t.Errorf("TrieCleanLimit = %d, want %d", cache.TrieCleanLimit, tt.wantClean)
+			}
+			if cache.TrieDirtyLimit != tt.wantDirty {
+				t.Errorf("TrieDirtyLimit = %d, want %d", cache.TrieDirtyLimit, tt.wantDirty)
+			}
+			if cache.TrieDirtyDisabled != tt.wantDisabled {
+				t.Errorf("TrieDirtyDisabled = %v, want %v", cache.TrieDirtyDisabled, tt.wantDisabled)
+			}
+			if cache.TrieCleanPrefetch != tt.wantPrefetch {
+				t.Errorf("TrieCleanPrefetch = %v, want %v", cache.TrieCleanPrefetch, tt.wantPrefetch)
+			}
+			if cache.TrieDirtyDisabled && !cache.Preimages {
+				t.Error("archive mode must force preimage recording")
+			}
+		})
+	}
 }

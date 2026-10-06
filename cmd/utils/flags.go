@@ -1933,6 +1933,36 @@ func formatBlockChainOpenError(err error, readonly bool) string {
 
 var makeChainFatalf = Fatalf
 
+// makeCacheConfig assembles the trie cache configuration from the cache and GC
+// mode flags. It mirrors the mapping SetEthConfig applies to the same flags:
+// --cache is the whole allowance, --cache-trie sizes the clean trie cache and
+// --cache-gc the dirty one. Archive mode disables the dirty cache and forces
+// preimage recording.
+func makeCacheConfig(ctx *cli.Context) *core.CacheConfig {
+	if gcmode := ctx.String(GCModeFlag.Name); gcmode != "full" && gcmode != "archive" {
+		makeChainFatalf("--%s must be either 'full' or 'archive'", GCModeFlag.Name)
+	}
+	cache := &core.CacheConfig{
+		TrieCleanLimit:    ethconfig.Defaults.TrieCleanCache,
+		TrieCleanPrefetch: ctx.Bool(CachePrefetchFlag.Name),
+		TrieDirtyLimit:    ethconfig.Defaults.TrieDirtyCache,
+		TrieDirtyDisabled: ctx.String(GCModeFlag.Name) == "archive",
+		TrieTimeLimit:     ethconfig.Defaults.TrieTimeout,
+		Preimages:         ctx.Bool(CachePreimagesFlag.Name),
+	}
+	if cache.TrieDirtyDisabled && !cache.Preimages {
+		cache.Preimages = true
+		log.Info("Enabling recording of key preimages since archive mode is used")
+	}
+	if ctx.IsSet(CacheFlag.Name) || ctx.IsSet(CacheTrieFlag.Name) {
+		cache.TrieCleanLimit = ctx.Int(CacheFlag.Name) * ctx.Int(CacheTrieFlag.Name) / 100
+	}
+	if ctx.IsSet(CacheFlag.Name) || ctx.IsSet(CacheGCFlag.Name) {
+		cache.TrieDirtyLimit = ctx.Int(CacheFlag.Name) * ctx.Int(CacheGCFlag.Name) / 100
+	}
+	return cache
+}
+
 // MakeChain creates a chain manager from set command line flags.
 func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool, configuredCompatPolicy string) (*core.BlockChain, ethdb.Database) {
 	var (
@@ -1967,27 +1997,7 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool, configuredComp
 	} else {
 		makeChainFatalf("Only support XDPoS consensus")
 	}
-	if gcmode := ctx.String(GCModeFlag.Name); gcmode != "full" && gcmode != "archive" {
-		makeChainFatalf("--%s must be either 'full' or 'archive'", GCModeFlag.Name)
-	}
-	cache := &core.CacheConfig{
-		TrieCleanLimit:    ethconfig.Defaults.TrieCleanCache,
-		TrieCleanPrefetch: ctx.Bool(CachePrefetchFlag.Name),
-		TrieDirtyLimit:    ethconfig.Defaults.TrieDirtyCache,
-		TrieDirtyDisabled: ctx.String(GCModeFlag.Name) == "archive",
-		TrieTimeLimit:     ethconfig.Defaults.TrieTimeout,
-		Preimages:         ctx.Bool(CachePreimagesFlag.Name),
-	}
-	if cache.TrieDirtyDisabled && !cache.Preimages {
-		cache.Preimages = true
-		log.Info("Enabling recording of key preimages since archive mode is used")
-	}
-	if ctx.IsSet(CacheFlag.Name) || ctx.IsSet(CacheTrieFlag.Name) {
-		cache.TrieCleanLimit = ctx.Int(CacheFlag.Name) * ctx.Int(CacheTrieFlag.Name) / 100
-	}
-	if ctx.IsSet(CacheFlag.Name) || ctx.IsSet(CacheGCFlag.Name) {
-		cache.TrieCleanLimit = ctx.Int(CacheFlag.Name) * ctx.Int(CacheGCFlag.Name) / 100
-	}
+	cache := makeCacheConfig(ctx)
 	vmcfg := vm.Config{EnablePreimageRecording: ctx.Bool(VMEnableDebugFlag.Name)}
 	if ctx.IsSet(VMTraceFlag.Name) {
 		if name := ctx.String(VMTraceFlag.Name); name != "" {
