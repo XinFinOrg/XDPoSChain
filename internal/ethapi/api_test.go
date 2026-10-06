@@ -32,6 +32,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
@@ -7202,4 +7203,30 @@ func TestSimulateV1CallLimitTotal(t *testing.T) {
 	var rpcErr interface{ ErrorCode() int }
 	require.ErrorAs(t, err, &rpcErr)
 	require.Equal(t, errCodeClientLimitExceeded, rpcErr.ErrorCode())
+}
+
+// TestFindNearestSignedBlockWhenEngineIsNotXDPoS pins the engine guard of
+// findNearestSignedBlock for the pair #2708 reports: a config that names XDPoS
+// while the engine is not XDPoS. The guard answers nil, which both callers take
+// as nothing to report, and it runs before the header reads below it, so the
+// pair needs no chain: the mock's engine alone picks the branch.
+func TestFindNearestSignedBlockWhenEngineIsNotXDPoS(t *testing.T) {
+	t.Parallel()
+
+	backend := newBackendMock()
+	backend.engine = ethash.NewFaker()
+	backend.config.XDPoS = &params.XDPoSConfig{Epoch: 900, Gap: 450}
+
+	if backend.ChainConfig().XDPoS == nil {
+		t.Fatal("test setup needs a config that names XDPoS")
+	}
+	if _, ok := backend.Engine().(*XDPoS.XDPoS); ok {
+		t.Fatal("test setup needs an engine that is not XDPoS")
+	}
+
+	api := NewBlockChainAPI(backend, nil)
+	block := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(1100)})
+	if got := api.findNearestSignedBlock(context.Background(), block); got != nil {
+		t.Fatalf("findNearestSignedBlock with a non-XDPoS engine: have %v, want nil", got)
+	}
 }

@@ -1395,6 +1395,20 @@ func (api *BlockChainAPI) findNearestSignedBlock(ctx context.Context, b *types.B
 		return nil
 	}
 
+	// Only the XDPoS engine has epoch switches, so there is nothing for another
+	// engine to find: both callers answer nil as nothing to report,
+	// findFinalityOfBlock as finality 0 and rpcOutputBlockSigners as no signers.
+	// The guard sits above the block reads below, which only the XDPoS path needs.
+	//
+	// findFinalityOfBlock reads its engine with the two-value form discarded
+	// before it calls this, so the nil engine it then holds stays safe only
+	// because the guard answers nil first and that caller returns on the answer
+	// before getSigners is ever handed the engine it read.
+	engine, ok := api.b.Engine().(*XDPoS.XDPoS)
+	if !ok {
+		return nil
+	}
+
 	blockNumber := b.Number().Uint64()
 	signedBlockNumber := blockNumber + (common.MergeSignRange - (blockNumber % common.MergeSignRange))
 	latestBlockNumber := api.b.CurrentBlock().Number
@@ -1404,7 +1418,7 @@ func (api *BlockChainAPI) findNearestSignedBlock(ctx context.Context, b *types.B
 	}
 
 	// Get block epoc latest
-	checkpointNumber, _, err := api.b.Engine().(*XDPoS.XDPoS).GetCurrentEpochSwitchBlock(api.chainReader, big.NewInt(int64(signedBlockNumber)))
+	checkpointNumber, _, err := engine.GetCurrentEpochSwitchBlock(api.chainReader, big.NewInt(int64(signedBlockNumber)))
 	if err != nil {
 		log.Error("[findNearestSignedBlock] Error while trying to get current Epoch switch block", "Number", signedBlockNumber)
 	}

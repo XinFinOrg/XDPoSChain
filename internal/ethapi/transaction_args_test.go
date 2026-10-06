@@ -280,6 +280,7 @@ func TestSetFeeDefaultsUsesNextBlockGasTier(t *testing.T) {
 type backendMock struct {
 	current *types.Header
 	config  *params.ChainConfig
+	engine  consensus.Engine
 }
 
 func newBackendMock() *backendMock {
@@ -439,7 +440,7 @@ func (b *backendMock) SubscribeRemovedLogsEvent(ch chan<- core.RemovedLogsEvent)
 	return nil
 }
 
-func (b *backendMock) Engine() consensus.Engine { return nil }
+func (b *backendMock) Engine() consensus.Engine { return b.engine }
 
 func (b *backendMock) AreTwoBlockSamePath(bh1 common.Hash, bh2 common.Hash) bool {
 	return true
