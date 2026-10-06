@@ -22,6 +22,7 @@ import (
 	"errors"
 	"math/big"
 	"slices"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -82,6 +83,12 @@ func ReadAllHashes(db ethdb.Iteratee, number uint64) []common.Hash {
 	return hashes
 }
 
+// sweepReportInterval bounds how long the dangling-hash sweep may stay silent
+// while it walks the header keyspace. Deliberately kept in sync with
+// core.rewindReportInterval: this package cannot import core, so the value is
+// duplicated with a cross-reference on both sides.
+const sweepReportInterval = 30 * time.Second
+
 // DeleteDanglingHashes removes every header, total-difficulty and canonical-hash
 // entry whose block number is strictly greater than head. It walks the header
 // keyspace directly (rather than scanning contiguous heights), so orphaned
@@ -108,6 +115,17 @@ func DeleteDanglingHashes(db ethdb.KeyValueStore, head uint64, contentFn func(et
 	var (
 		lastNum uint64
 		haveNum bool
+
+		sweepStart = time.Now()
+		reported   = time.Now()
+		scanned    uint64
+		heights    uint64
+
+		// lastScanned is the scanned counter as of the previous progress line,
+		// used to derive the rate over the reporting interval. lastHeights is
+		// the same for the distinct-height counter.
+		lastScanned uint64
+		lastHeights uint64
 	)
 	for it.Next() {
 		key := it.Key()
@@ -127,16 +145,52 @@ func DeleteDanglingHashes(db ethdb.KeyValueStore, head uint64, contentFn func(et
 		DeleteHeader(batch, hash, number)
 		DeleteTd(batch, hash, number)
 		// The iterator yields keys in ascending order, so all hashes at a given
-		// height are contiguous. Delete the canonical marker once per height.
+		// height are contiguous. Delete the canonical marker once per height,
+		// and count the height here too: this is the only branch that runs once
+		// per height rather than once per header key.
 		if !haveNum || number != lastNum {
 			DeleteCanonicalHash(batch, number)
 			lastNum, haveNum = number, true
+			heights++
 		}
 		if batch.ValueSize() >= ethdb.IdealBatchSize {
 			if err := batch.Write(); err != nil {
 				return err
 			}
 			batch.Reset()
+		}
+		// Report scan progress, at most once per sweepReportInterval. The line sits
+		// after the flush above so a batch committed in this iteration is already
+		// accounted for, but the counts may still include the current item and
+		// earlier removals that stay buffered in the batch.
+		scanned++
+		if time.Since(reported) >= sweepReportInterval {
+			elapsed := time.Since(sweepStart)
+			sinceReport := time.Since(reported)
+			// Two units, both whole per second. The item rates are per swept item,
+			// not per block: the iterator visits every orphaned header key, so a
+			// height holding side forks counts once per hash. The height rates are
+			// per distinct height that actually held one, which is the unit the
+			// delete stage above reports in. Neither counter has a denominator: the
+			// end of this keyspace is not known before the walk, and the walk can
+			// skip gaps, so heights is not the span above head and no percent or
+			// eta is printed here.
+			var avgRate, curRate, avgHeightRate, curHeightRate int64
+			if elapsed > 0 {
+				avgRate = int64(float64(scanned) / elapsed.Seconds())
+				avgHeightRate = int64(float64(heights) / elapsed.Seconds())
+			}
+			if sinceReport > 0 {
+				curRate = int64(float64(scanned-lastScanned) / sinceReport.Seconds())
+				curHeightRate = int64(float64(heights-lastHeights) / sinceReport.Seconds())
+			}
+			log.Info("Cleaning dangling data", "number", number, "target", head,
+				"heights", heights, "scanned", scanned,
+				"elapsed", common.PrettyDuration(elapsed.Round(time.Second)),
+				"height/s(avg)", avgHeightRate, "height/s(now)", curHeightRate,
+				"item/s(avg)", avgRate, "item/s(now)", curRate)
+			reported = time.Now()
+			lastScanned, lastHeights = scanned, heights
 		}
 	}
 	return batch.Write()
@@ -460,6 +514,20 @@ func HasReceipts(db ethdb.Reader, hash common.Hash, number uint64) bool {
 	return true
 }
 
+// HasExecutedMarker reports whether this node produced the receipts of the block itself,
+// meaning it ran the block: the marker is written by writeBlockWithState, after those receipts
+// and after the state commits it can fail on, and by nothing else.
+//
+// The receipts alone do not answer this, which is why the marker exists: InsertReceiptChain
+// writes receipts for a fast sync range this node never ran, and a resolving state root proves
+// as little, since the empty root resolves without any state and a shared root resolves through
+// another block's state (see HasBlockAndFullState). Without the marker such a block would be
+// adopted without ever running Process or ValidateState over it.
+func HasExecutedMarker(db ethdb.Reader, hash common.Hash, number uint64) bool {
+	has, err := db.Has(blockReceiptsExecutedKey(number, hash))
+	return has && err == nil
+}
+
 // ReadReceiptsRLP retrieves all the transaction receipts belonging to a block in RLP encoding.
 func ReadReceiptsRLP(db ethdb.Reader, hash common.Hash, number uint64) rlp.RawValue {
 	// First try to look up the data in ancient database. Extra hash
@@ -565,11 +633,34 @@ func WriteReceipts(db ethdb.KeyValueWriter, hash common.Hash, number uint64, rec
 	}
 }
 
-// DeleteReceipts removes all receipt data associated with a block hash.
+// WriteExecutedMarker records that this node executed the block. writeBlockWithState writes it
+// after the block's receipts and after every state commit that write can fail on, in a batch of
+// its own: a crash before it lands leaves the block on disk without its marker, which
+// HasExecutedMarker reads as "never ran" and re-executes, while a marker written first would
+// vouch for a state that never made it to disk. DeleteReceipts takes the marker with the
+// receipts. See HasExecutedMarker.
+func WriteExecutedMarker(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
+	if err := db.Put(blockReceiptsExecutedKey(number, hash), []byte{0x01}); err != nil {
+		log.Crit("Failed to store the executed-block marker", "err", err)
+	}
+}
+
+// DeleteExecutedMarker removes the record that this node executed the block. It is the
+// counterpart of WriteExecutedMarker and is called by DeleteReceipts: a marker that outlived the
+// receipts would claim an execution from a record this node no longer holds.
+func DeleteExecutedMarker(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
+	if err := db.Delete(blockReceiptsExecutedKey(number, hash)); err != nil {
+		log.Crit("Failed to delete the executed-block marker", "err", err)
+	}
+}
+
+// DeleteReceipts removes all receipt data associated with a block hash, together with the
+// executed-block marker that vouches for it: the two are written as a pair, so they go as one.
 func DeleteReceipts(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
 	if err := db.Delete(blockReceiptsKey(number, hash)); err != nil {
 		log.Crit("Failed to delete block receipts", "err", err)
 	}
+	DeleteExecutedMarker(db, hash, number)
 }
 
 // ReceiptLogs is a barebone version of ReceiptForStorage which only keeps

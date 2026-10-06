@@ -1072,6 +1072,27 @@ func (ps *peerSet) BestPeer() *peer {
 	return bestPeer
 }
 
+// BestPeerExcluding returns the peer with the highest total difficulty among
+// the peers for which skip returns false.
+func (ps *peerSet) BestPeerExcluding(skip func(*peer) bool) *peer {
+	ps.lock.RLock()
+	defer ps.lock.RUnlock()
+
+	var (
+		bestPeer *peer
+		bestTd   *big.Int
+	)
+	for _, p := range ps.peers {
+		if skip(p) {
+			continue
+		}
+		if _, td := p.Head(); bestPeer == nil || td.Cmp(bestTd) > 0 {
+			bestPeer, bestTd = p, td
+		}
+	}
+	return bestPeer
+}
+
 // HighestTipNumber returns the highest block number announced by any known
 // peer, providing a live network high-water mark that stays current even when
 // the downloader is idle.

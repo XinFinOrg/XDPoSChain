@@ -43,6 +43,7 @@ require (
 	github.com/deckarep/golang-set/v2 v2.7.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1
 	github.com/dop251/goja v0.0.0-20230605162241-28ee0ee714f3
+	github.com/ethereum/go-bigmodexpfix v0.0.0-20250911101455-f9e208c548ab
 	github.com/ethereum/hid v1.0.1-0.20260421154323-c2ab8d9bf68a
 	github.com/fsnotify/fsnotify v1.8.0
 	github.com/gballet/go-libpcsclite v0.0.0-20191108122812-4678299bea08

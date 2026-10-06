@@ -37,7 +37,7 @@ var (
 	// Flags needed by abigen
 	abiFlag = &cli.StringFlag{
 		Name:  "abi",
-		Usage: "Path to the Ethereum contract ABI json to bind",
+		Usage: "Path to the Ethereum contract ABI json to bind, - for STDIN",
 	}
 	binFlag = &cli.StringFlag{
 		Name:  "bin",
@@ -215,7 +215,7 @@ func generate(c *cli.Context) error {
 		code string
 		err  error
 	)
-	if c.IsSet(v2Flag.Name) {
+	if c.Bool(v2Flag.Name) {
 		code, err = abigen.BindV2(types, abis, bins, c.String(pkgFlag.Name), libs, aliases)
 	} else {
 		code, err = abigen.Bind(types, abis, bins, sigs, c.String(pkgFlag.Name), libs, aliases)

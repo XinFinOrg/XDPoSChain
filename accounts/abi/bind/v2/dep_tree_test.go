@@ -236,9 +236,11 @@ func testLinkCase(tcInput linkTestCaseInput) error {
 	return nil
 }
 
-// TODO(daniel): make this case pass test, ref: #31379
+// TestContractLinking deploys a library dependency tree and links each library
+// address into the bytecode of the contract that depends on it. It used to be
+// skipped with a TODO until #2631 linked the addresses with String0x() instead
+// of the xdc-prefixed String(); see the note in linkAndDeploy.
 func TestContractLinking(t *testing.T) {
-	t.Skip("Skip TestContractLinking")
 	for i, tc := range []linkTestCaseInput{
 		// test simple contract without any dependencies or overrides
 		{

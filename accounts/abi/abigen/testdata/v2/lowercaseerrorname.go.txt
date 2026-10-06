@@ -1,0 +1,84 @@
+// Code generated via abigen V2 - DO NOT EDIT.
+// This file is a generated binding and any manual changes will be lost.
+
+package bindtests
+
+import (
+	"bytes"
+	"errors"
+	"math/big"
+
+	"github.com/XinFinOrg/XDPoSChain/accounts/abi"
+	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind/v2"
+	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
+)
+
+// Reference imports to suppress errors if they are not otherwise used.
+var (
+	_ = bytes.Equal
+	_ = errors.New
+	_ = big.NewInt
+	_ = common.Big1
+	_ = types.BloomLookup
+	_ = abi.ConvertType
+)
+
+// LowercaseErrorNameMetaData contains all meta data concerning the LowercaseErrorName contract.
+var LowercaseErrorNameMetaData = bind.MetaData{
+	ABI: "[{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"value\",\"type\":\"uint256\"}],\"name\":\"myError\",\"type\":\"error\"}]",
+	ID:  "3eb2a099cc89493cdd80b35281a263c159",
+}
+
+// LowercaseErrorName is an auto generated Go binding around an Ethereum contract.
+type LowercaseErrorName struct {
+	abi abi.ABI
+}
+
+// NewLowercaseErrorName creates a new instance of LowercaseErrorName.
+func NewLowercaseErrorName() *LowercaseErrorName {
+	parsed, err := LowercaseErrorNameMetaData.ParseABI()
+	if err != nil {
+		panic(errors.New("invalid ABI: " + err.Error()))
+	}
+	return &LowercaseErrorName{abi: *parsed}
+}
+
+// Instance creates a wrapper for a deployed contract instance at the given address.
+// Use this to create the instance object passed to abigen v2 library functions Call, Transact, etc.
+func (c *LowercaseErrorName) Instance(backend bind.ContractBackend, addr common.Address) *bind.BoundContract {
+	return bind.NewBoundContract(addr, c.abi, backend, backend, backend)
+}
+
+// UnpackError attempts to decode the provided error data using user-defined
+// error definitions.
+func (lowercaseErrorName *LowercaseErrorName) UnpackError(raw []byte) (any, error) {
+	if bytes.Equal(raw[:4], lowercaseErrorName.abi.Errors["myError"].ID.Bytes()[:4]) {
+		return lowercaseErrorName.UnpackMyErrorError(raw[4:])
+	}
+	return nil, errors.New("Unknown error")
+}
+
+// LowercaseErrorNameMyError represents a myError error raised by the LowercaseErrorName contract.
+type LowercaseErrorNameMyError struct {
+	Value *big.Int
+}
+
+// ErrorID returns the hash of canonical representation of the error's signature.
+//
+// Solidity: error myError(uint256 value)
+func LowercaseErrorNameMyErrorErrorID() common.Hash {
+	return common.HexToHash("0xf18650d48925ac927969e26bd5249557b26442ca4ef9d05cc8f4953842b4f901")
+}
+
+// UnpackMyErrorError is the Go binding used to decode the provided
+// error data into the corresponding Go error struct.
+//
+// Solidity: error myError(uint256 value)
+func (lowercaseErrorName *LowercaseErrorName) UnpackMyErrorError(raw []byte) (*LowercaseErrorNameMyError, error) {
+	out := new(LowercaseErrorNameMyError)
+	if err := lowercaseErrorName.abi.UnpackIntoInterface(out, "myError", raw); err != nil {
+		return nil, err
+	}
+	return out, nil
+}

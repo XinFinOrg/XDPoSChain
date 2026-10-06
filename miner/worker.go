@@ -573,7 +573,10 @@ func (w *worker) wait() {
 					log.Error("[wait] fail to check if block is epoch switch block when worker waiting", "BlockNum", block.Number(), "Hash", block.Hash())
 				}
 				if isEpochSwitchBlock {
-					core.CheckpointCh <- 1
+					// Signal through the chain, so that the send coalesces instead of waiting:
+					// this runs on the only consumer of w.recv, and a stall here would hold up
+					// the whole mined-block pipeline.
+					core.SignalCheckpoint()
 				}
 			}
 			w.chain.UpdateBlocksHashCache(block)
@@ -884,6 +887,7 @@ func (w *worker) commitNewWork() {
 		misc.ApplyDAOHardFork(work.state)
 	}
 	core.ApplyTIPSigningHardFork(w.chainConfig, work.state, header.Number)
+	core.ApplyMulticall3HardFork(w.chainConfig, work.state, header.Number)
 	if w.chainConfig.IsPrague(header.Number) {
 		core.ProcessParentBlockHash(header.ParentHash, work.evm)
 	}

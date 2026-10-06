@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -357,6 +358,45 @@ func TestDefaultXDCNetworksDoNotEnableGas2500xFork(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.cfg.Gas2500xBlock != nil {
 				t.Fatalf("expected %s Gas2500xBlock to be nil, have %v", tc.name, tc.cfg.Gas2500xBlock)
+			}
+		})
+	}
+}
+
+// TestBuiltInBootnodesWellFormed guards the hand-maintained bootnode lists against
+// entries that a node could never dial: unparsable URLs, entries without an IP
+// address or TCP port, and duplicated lines.
+func TestBuiltInBootnodesWellFormed(t *testing.T) {
+	lists := []struct {
+		name string
+		urls []string
+	}{
+		{name: "MainnetBootnodes", urls: MainnetBootnodes},
+		{name: "TestnetBootnodes", urls: TestnetBootnodes},
+		{name: "DevnetBootnodes", urls: DevnetBootnodes},
+		{name: "V5MainnetBootnodes", urls: V5MainnetBootnodes},
+		{name: "V5TestnetBootnodes", urls: V5TestnetBootnodes},
+		{name: "V5DevnetBootnodes", urls: V5DevnetBootnodes},
+	}
+
+	for _, list := range lists {
+		t.Run(list.name, func(t *testing.T) {
+			seen := make(map[string]struct{}, len(list.urls))
+			for i, url := range list.urls {
+				if _, ok := seen[url]; ok {
+					t.Errorf("%s[%d]: duplicate entry %q", list.name, i, url)
+					continue
+				}
+				seen[url] = struct{}{}
+
+				node, err := enode.Parse(enode.ValidSchemes, url)
+				if err != nil {
+					t.Errorf("%s[%d]: invalid node URL %q: %v", list.name, i, url, err)
+					continue
+				}
+				if node.IP() == nil || node.TCP() == 0 {
+					t.Errorf("%s[%d]: node URL must carry an IP address and a TCP port: %q", list.name, i, url)
+				}
 			}
 		})
 	}

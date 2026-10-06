@@ -34,7 +34,15 @@ const (
 var (
 	Enable0xPrefix = true
 
-	RollbackNumber = uint64(0)
+	// RollbackNumber is the rollback target taken from the --set-head flag: a
+	// positive value is an absolute block number, a negative value is an offset
+	// counting backwards from the current head, and 0 disables the rollback.
+	// eth.New resolves a negative value against the head recorded on disk before
+	// the chain is opened and writes the absolute target back, so the repair path
+	// in core never sees a negative one. A resolved target of 0 stays possible
+	// ("--set-head=-<current height>") and means the genesis block: repair is then
+	// unbounded in effect, since it cannot rewind past 0 either way.
+	RollbackNumber = int64(0)
 
 	StoreRewardFolder string
 

@@ -4,9 +4,11 @@
 package {{.Package}}
 
 import (
+	"context"
+	"errors"
 	"math/big"
 	"strings"
-	"errors"
+	"time"
 
 	ethereum "github.com/XinFinOrg/XDPoSChain"
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi"
@@ -26,6 +28,9 @@ var (
 	_ = common.Big1
 	_ = types.BloomLookup
 	_ = event.NewSubscription
+	_ = abi.ConvertType
+	_ = time.Tick
+	_ = context.Background
 )
 
 {{$structs := .Structs}}
@@ -75,11 +80,30 @@ var (
 		  if parsed == nil {
 			return common.Address{}, nil, nil, errors.New("GetABI returned nil")
 		  }
+		  // Library addresses are substituted into a local copy of the bytecode: the
+		  // package-level {{.Type}}Bin is shared by every caller, so substituting in
+		  // it would leave any later deployment linked to the addresses substituted
+		  // by an earlier one.
+		  linkedBin := {{.Type}}Bin
 		  {{range $pattern, $name := .Libraries}}
-			{{decapitalise $name}}Addr, _, _, _ := Deploy{{capitalise $name}}(auth, backend)
-			{{$contract.Type}}Bin = strings.ReplaceAll({{$contract.Type}}Bin, "__${{$pattern}}$__", {{decapitalise $name}}Addr.String()[2:])
+			{{decapitalise $name}}Addr, tx, _, err := Deploy{{capitalise $name}}(auth, backend)
+			if err != nil {
+			    return common.Address{}, nil, nil, err
+			}
+			if !auth.NoSend {
+				waitCtx := context.Background()
+				if auth.Context != nil {
+					waitCtx = auth.Context
+				}
+				ctx, cancel := context.WithTimeout(waitCtx, 5 * time.Second)
+				defer cancel()
+				if err := bind.WaitAccepted(ctx, backend, tx); err != nil {
+				    return common.Address{}, nil, nil, err
+				}
+			}
+			linkedBin = strings.ReplaceAll(linkedBin, "__${{$pattern}}$__", {{decapitalise $name}}Addr.String0x()[2:])
 		  {{end}}
-		  address, tx, contract, err := bind.DeployContract(auth, *parsed, common.FromHex({{.Type}}Bin), backend {{range .Constructor.Inputs}}, {{.Name}}{{end}})
+		  address, tx, contract, err := bind.DeployContract(auth, *parsed, common.FromHex(linkedBin), backend {{range .Constructor.Inputs}}, {{.Name}}{{end}})
 		  if err != nil {
 		    return common.Address{}, nil, nil, err
 		  }
@@ -184,11 +208,11 @@ var (
 
 	// bind{{.Type}} binds a generic wrapper to an already deployed contract.
 	func bind{{.Type}}(address common.Address, caller bind.ContractCaller, transactor bind.ContractTransactor, filterer bind.ContractFilterer) (*bind.BoundContract, error) {
-	  parsed, err := abi.JSON(strings.NewReader({{.Type}}ABI))
+	  parsed, err := {{.Type}}MetaData.GetAbi()
 	  if err != nil {
 	    return nil, err
 	  }
-	  return bind.NewBoundContract(address, parsed, caller, transactor, filterer), nil
+	  return bind.NewBoundContract(address, *parsed, caller, transactor, filterer), nil
 	}
 
 	// Call invokes the (constant) contract method with params as input values and
@@ -450,6 +474,10 @@ var (
 						// New log arrived, parse the event and forward to the user
 						event := new({{$contract.Type}}{{.Normalized.Name}})
 						if err := _{{$contract.Type}}.contract.UnpackLog(event, "{{.Original.Name}}", log); err != nil {
+							// If the signature doesn't match, skip this log.
+							if errors.Is(err, bind.ErrEventSignatureMismatch) {
+								continue
+							}
 							return err
 						}
 						event.Raw = log

@@ -91,10 +91,22 @@ var (
 	errInvalidReceipt          = errors.New("retrieved receipt is invalid")
 	errCancelStateFetch        = errors.New("state data download canceled (requested)")
 	errCancelContentProcessing = errors.New("content processing canceled (requested)")
-	errCanceled                = errors.New("syncing canceled (requested)")
-	errNoSyncActive            = errors.New("no sync active")
-	errTooOld                  = fmt.Errorf("peer doesn't speak recent enough protocol version (need version >= %d)", minProtocolVer)
-	errEnoughBlock             = errors.New("downloader download enough block")
+	// errLocalInsertFailure wraps an insertion that failed for a local condition of this node -
+	// the chain is stopping, the import was cut short by InterruptInsert, a reorg it refuses, or
+	// a batch that ran into a block already stored with its state. It must not be reported as
+	// errCancelContentProcessing, which would present a condition the operator has to act on as
+	// a cancellation somebody requested; the cause is kept by wrapping, and Synchronise does not
+	// drop the peer for it.
+	//
+	// Returning it ends the sync cycle instead of skipping the offending segment, and that is
+	// the intent: a batch is contiguous and splitBlocksForVerification only ever cuts it between
+	// a block and its child, so a segment that failed leaves the next one unable to link.
+	// Synchronise re-selects a peer once the cycle has ended.
+	errLocalInsertFailure = errors.New("local insert failure")
+	errCanceled           = errors.New("syncing canceled (requested)")
+	errNoSyncActive       = errors.New("no sync active")
+	errTooOld             = fmt.Errorf("peer doesn't speak recent enough protocol version (need version >= %d)", minProtocolVer)
+	errEnoughBlock        = errors.New("downloader download enough block")
 )
 
 type Downloader struct {
@@ -217,6 +229,12 @@ type BlockChain interface {
 
 	// InsertReceiptChain inserts a batch of receipts into the local chain.
 	InsertReceiptChain(types.Blocks, []types.Receipts) (int, error)
+
+	// IsLocalInsertError reports whether an InsertChain or InsertReceiptChain failure
+	// describes a local condition of this node rather than a fault of the blocks. The chain
+	// owns the classification; the downloader needs the verdict to decide whether the peer may
+	// be blamed.
+	IsLocalInsertError(err error) bool
 
 	// TrieDB retrieves the low level trie database used for interacting
 	// with trie nodes.
@@ -1629,6 +1647,72 @@ func (d *Downloader) processFullSyncContent(height uint64) error {
 	}
 }
 
+// headNumber returns the current head number, or 0 when there is none yet. A local insertion
+// failure leaves the head where it is, so logging it makes a repeating cancel visible.
+func (d *Downloader) headNumber() uint64 {
+	if head := d.blockchain.CurrentBlock(); head != nil {
+		return head.Number.Uint64()
+	}
+	return 0
+}
+
+// localInsertWhere names the batch an insert stopped on: block segments, receipt batches, or the
+// fast sync pivot.
+type localInsertWhere string
+
+const (
+	whereBlocks   localInsertWhere = "blocks"
+	whereReceipts localInsertWhere = "receipts"
+	wherePivot    localInsertWhere = "pivot"
+)
+
+// localInsertStop names where a local insert condition stopped the downloader: the batch, its
+// first block and the failing index within it. pivot is the block a pivot fetch failed on, the
+// one call site that names its block by hash; it is nil for every other batch.
+type localInsertStop struct {
+	where localInsertWhere
+	from  *big.Int
+	index int
+	pivot *common.Hash
+}
+
+// localInsertFailure reports an insertion that failed for a local condition of this node. It
+// lands on errLocalInsertFailure rather than errCancelContentProcessing (which says the content
+// processing was asked to stop) or errInvalidChain (the branch that drops the peer): the cause is
+// kept by wrapping, and Synchronise re-selects a peer once the cycle has ended.
+//
+// Giving up the whole cycle instead of skipping the offending segment is the intent: a batch is
+// contiguous and splitBlocksForVerification only ever cuts it between a block and its child, so a
+// segment that failed leaves the next one unable to link.
+//
+// where, from and index name the batch and the failing block; they travel together on every call
+// site, which is why they are one localInsertStop rather than three arguments.
+func (d *Downloader) localInsertFailure(stop localInsertStop, cause error) error {
+	fields := []interface{}{"where", string(stop.where), "from", stop.from, "index", stop.index, "head", d.headNumber()}
+	if stop.pivot != nil {
+		fields = append(fields, "hash", *stop.pivot)
+	}
+	fields = append(fields, "err", cause)
+	// Info rather than Debug: the head stays where it is, so this is what a stalled sync looks
+	// like, and the cause must be visible at the default log level.
+	log.Info("Downloaded item processing stopped by a local condition", fields...)
+	return fmt.Errorf("%w: %w", errLocalInsertFailure, cause)
+}
+
+// BackoffOnError reports whether a sync cycle that ended with err may be recorded against the
+// peer that served it. errBusy and errCanceled are cycles this node ended itself; the two
+// errCancel* sentinels are the halves of a cancel it asked for; and a local condition of the
+// chain (see BlockChain.IsLocalInsertError) is not the peer's doing either. Synchronise returns
+// all of them without blaming the peer, so this backoff has to agree with that verdict.
+// Everything else stays the peer's to answer for.
+func (d *Downloader) BackoffOnError(err error) bool {
+	switch err {
+	case nil, errBusy, errCanceled, errCancelStateFetch, errCancelContentProcessing:
+		return false
+	}
+	return !d.blockchain.IsLocalInsertError(err)
+}
+
 func (d *Downloader) importBlockResults(results []*fetchResult) error {
 	// Check for any early termination requests
 	if len(results) == 0 {
@@ -1649,11 +1733,16 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 	for i, result := range results {
 		blocks[i] = types.NewBlockWithHeader(result.Header).WithBody(result.body())
 	}
+	// Whether this batch moved the head is the second half of the handoff decision below, so
+	// the head has to be read before the segments are inserted. See handoffProposedBlock.
+	before := d.blockchain.CurrentBlock()
 	// For XDPoS, the header verification of an epoch-switch block reads the
 	// snapshot stored at its gap block, and that snapshot is only written while
-	// the gap block itself is being executed (UpdateMasternodes); the v1
-	// validators check reads the state of the block before the epoch switch as
-	// well, and a block's state exists only once it has been executed.
+	// the gap block itself is being executed: for v2 it travels in the batch
+	// that carries the chain markers of that block, for v1 the masternode
+	// refresh (UpdateMasternodes) stores it right after the head is written.
+	// The v1 validators check reads the state of the block before the epoch
+	// switch as well, and a block's state exists only once it has been executed.
 	// VerifyHeaders verifies the whole batch up-front (its results channel is
 	// fully buffered), so it would race ahead and try to verify the epoch-switch
 	// block before the gap block - or the block before it - in the same batch has
@@ -1669,26 +1758,74 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 	// however the batch is split.
 	for _, segment := range d.splitBlocksForVerification(blocks) {
 		if index, err := d.blockchain.InsertChain(segment); err != nil {
+			// A local condition says nothing about the peer that served the blocks, so it must
+			// not become the errInvalidChain that drops it. See localInsertFailure.
+			if d.blockchain.IsLocalInsertError(err) {
+				// The blocks below the one that failed have been dealt with, so the batch can have
+				// moved the head before it stopped; the consensus state has to follow it here too.
+				// The next cycle re-delivers the same range, which no longer moves the head and
+				// therefore hands nothing over.
+				d.handoffProposedBlock(before)
+				return d.localInsertFailure(localInsertStop{where: whereBlocks, from: segment[0].Number(), index: index}, err)
+			}
+			// The failing block is nameable while the index is inside the batch, which it always
+			// is today: insertSideChain reports the batch's own index, where it used to report an
+			// offset into a rebuilt segment that could point past the batch. The bound stays as a
+			// guard so a regression cannot turn this log line into a panic.
 			if index < len(segment) {
 				log.Debug("Downloaded item processing failed", "number", segment[index].Number(), "hash", segment[index].Hash(), "err", err)
 			} else {
-				// The InsertChain method in blockchain.go will sometimes return an out-of-bounds index,
-				// when it needs to preprocess blocks to import a sidechain.
-				// The importer will put together a new list of blocks to import, which is a superset
-				// of the blocks delivered from the downloader, and the indexing will be off.
-				log.Debug("Downloaded item processing failed on sidechain import", "index", index, "err", err)
+				log.Debug("Downloaded item processing failed", "index", index, "batch", len(segment), "err", err)
 			}
+			// The prefix this segment did import is on the chain, so the head it left behind is
+			// the one the consensus state has to advance to, for the reason the local branch
+			// above gives.
+			d.handoffProposedBlock(before)
 			return fmt.Errorf("%w: %v", errInvalidChain, err)
 		}
 	}
-	if d.handleProposedBlock != nil {
-		header := blocks[len(blocks)-1].Header()
-		err := d.handleProposedBlock(header)
-		if err != nil {
-			log.Info("[downloader] handle proposed block has error", "err", err, "block hash", header.Hash(), "number", header.Number)
-		}
-	}
+	d.handoffProposedBlock(before)
 	return nil
+}
+
+// handoffProposedBlock advances the consensus state - QC and vote - to the head this batch left
+// behind, which is the block the engine has to be handed rather than the batch's own tail: a
+// fork batch is stored as side entries and a tail dated ahead of this node's clock is only
+// parked in the future queue, so either tail is a block that is not in the chain, and handing
+// one over would advance QC and vote for it. procFutureBlocks answers for the parked tail
+// itself.
+//
+// What decides is whether the head moved at all, so the batch's last block is not read here: a
+// batch whose own tail became the head is covered, and one that left the head where it is is
+// not one to advance the consensus state with.
+//
+// before and head are two unlocked reads, so they do not bracket the insertion: a batch is
+// inserted one segment at a time and the chain lock is released between them, and the block
+// fetcher keeps importing announced blocks alongside the downloader. A head that moved for one
+// of those rather than for this batch is handed over too, repeating a call the other importer
+// already made. That is a redundant advance, not a wrong one - the engine answers a second call
+// for the same block by round - and an advance cannot be missed, because the head never returns
+// to the hash it held before the batch.
+func (d *Downloader) handoffProposedBlock(before *types.Header) {
+	if d.handleProposedBlock == nil {
+		return
+	}
+	head := d.blockchain.CurrentBlock()
+	switch {
+	case head == nil:
+		log.Debug("[downloader] skip the proposed block handler, this node reports no head")
+		return
+	case before != nil && head.Hash() == before.Hash():
+		// A batch re-delivered for a range this node already holds can end on the current head,
+		// so the head is where it was: handing it to the engine again would reprocess that
+		// block's QC and ask whether it may vote for it a second time.
+		log.Debug("[downloader] skip the proposed block handler, the batch did not move the head",
+			"block hash", head.Hash(), "number", head.Number)
+		return
+	}
+	if err := d.handleProposedBlock(head); err != nil {
+		log.Info("[downloader] handle proposed block has error", "err", err, "block hash", head.Hash(), "number", head.Number)
+	}
 }
 
 // splitBlocksForVerification splits a contiguous batch of blocks into segments
@@ -1727,7 +1864,7 @@ func (d *Downloader) splitBlocksForVerification(blocks []*types.Block) [][]*type
 		// (that would just create an empty trailing segment). A schedule without
 		// a usable offset (Gap 0, or Gap >= Epoch) has no gap block at all, and
 		// this cut does not make one: the fallback that would read it walks back
-		// an unusable number of steps and UpdateM1 never fires on such a
+		// an unusable number of steps and UpdateM1At never fires on such a
 		// schedule, so this cut only keeps the epoch-switch cut below from
 		// costing anything there.
 		if gap != 0 && gap < epoch && number%epoch == epoch-gap && i < len(blocks)-1 {
@@ -1997,6 +2134,11 @@ func (d *Downloader) commitFastSyncData(results []*fetchResult, stateSync *state
 		receipts[i] = result.Receipts
 	}
 	if index, err := d.blockchain.InsertReceiptChain(blocks, receipts); err != nil {
+		// A local failure says nothing about the peer that served the batch. See
+		// localInsertFailure.
+		if d.blockchain.IsLocalInsertError(err) {
+			return d.localInsertFailure(localInsertStop{where: whereReceipts, from: results[0].Header.Number, index: index}, err)
+		}
 		log.Debug("Downloaded item processing failed", "number", results[index].Header.Number, "hash", results[index].Header.Hash(), "err", err)
 		return fmt.Errorf("%w: %v", errInvalidChain, err)
 	}
@@ -2006,7 +2148,13 @@ func (d *Downloader) commitFastSyncData(results []*fetchResult, stateSync *state
 func (d *Downloader) commitPivotBlock(result *fetchResult) error {
 	block := types.NewBlockWithHeader(result.Header).WithBody(result.body())
 	log.Debug("Committing fast sync pivot as new head", "number", block.Number(), "hash", block.Hash())
-	if _, err := d.blockchain.InsertReceiptChain([]*types.Block{block}, []types.Receipts{result.Receipts}); err != nil {
+	if index, err := d.blockchain.InsertReceiptChain([]*types.Block{block}, []types.Receipts{result.Receipts}); err != nil {
+		// A local failure says nothing about the pivot the peer served: it ends the cycle
+		// instead of dropping the peer. See localInsertFailure.
+		if d.blockchain.IsLocalInsertError(err) {
+			hash := block.Hash()
+			return d.localInsertFailure(localInsertStop{where: wherePivot, from: block.Number(), index: index, pivot: &hash}, err)
+		}
 		return err
 	}
 	if err := d.blockchain.FastSyncCommitHead(block.Hash()); err != nil {

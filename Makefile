@@ -64,6 +64,8 @@ fmt:
 #? clean: Clean go cache, built executables, and the auto generated folder.
 clean:
 	go clean -cache
+	go clean -testcache
+	go clean -modcache
 	rm -fr build/_workspace/pkg/ $(GOBIN)/*
 
 # The devtools target installs tools required for 'go generate'.
