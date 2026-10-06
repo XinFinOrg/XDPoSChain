@@ -1937,8 +1937,10 @@ func (bc *BlockChain) adoptHead(block *types.Block, current *types.Header, snap 
 	// node: the next epoch validates against the masternode set, and a missing snapshot is
 	// only repaired by Initial -> RepairGapSnapshots on the next start. Retrying is not an
 	// option either, the gap block being the head and no longer winning fork choice.
+	// A chain that names XDPoS while running another engine has no masternode set to
+	// refresh: UpdateM1At reports ErrNotXDPoS and the refresh is skipped, not fatal.
 	if bc.isGapBlock(block) && !bc.needsNextEpochSnapshot(block.Number()) {
-		if err := bc.UpdateM1At(block.Header()); err != nil {
+		if err := bc.UpdateM1At(block.Header()); err != nil && !errors.Is(err, ErrNotXDPoS) {
 			log.Crit(critMsg, "number", block.Number, "hash", block.Hash().Hex(), "err", err)
 		}
 	}
@@ -4213,7 +4215,8 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 		// The refresh stays behind the head write because the head is what it
 		// refreshes.
 		if bc.isGapBlock(block) && !bc.needsNextEpochSnapshot(block.Number()) {
-			if err := bc.UpdateM1At(block.Header()); err != nil {
+			// As in adoptHead: ErrNotXDPoS means there is no set to refresh.
+			if err := bc.UpdateM1At(block.Header()); err != nil && !errors.Is(err, ErrNotXDPoS) {
 				log.Crit("Fail to update masternodes during reorg", "number", block.Number, "hash", block.Hash().Hex(), "err", err)
 			}
 		}

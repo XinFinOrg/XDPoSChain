@@ -1256,7 +1256,12 @@ func (fb *filterBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNum
 			return nil, errors.New("current block is nil")
 		}
 		if fb.bc.Config().XDPoS.BlockConsensusVersion(current.Number) == params.ConsensusEngineVersion2 {
-			info := fb.bc.Engine().(*XDPoS.XDPoS).EngineV2.GetLatestCommittedBlockInfo()
+			// Naming XDPoS v2 in the config does not make the engine XDPoS.
+			engine, ok := fb.bc.Engine().(*XDPoS.XDPoS)
+			if !ok {
+				return nil, errors.New("only XDPoS v2 can lookup committed block")
+			}
+			info := engine.EngineV2.GetLatestCommittedBlockInfo()
 			if info == nil {
 				return nil, errors.New("no committed block info available yet")
 			}
