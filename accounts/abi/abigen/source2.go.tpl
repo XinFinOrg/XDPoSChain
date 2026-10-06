@@ -213,6 +213,9 @@ var (
 	// UnpackError attempts to decode the provided error data using user-defined
 	// error definitions.
 	func ({{ decapitalise $contract.Type}} *{{$contract.Type}}) UnpackError(raw []byte) (any, error) {
+		if len(raw) < 4 {
+			return nil, errors.New("Unknown error")
+		}
 		{{- range $k, $v := .Errors}}
 		if bytes.Equal(raw[:4], {{ decapitalise $contract.Type}}.abi.Errors["{{.Original.Name}}"].ID.Bytes()[:4]) {
 			return {{ decapitalise $contract.Type}}.Unpack{{.Normalized.Name}}Error(raw[4:])
