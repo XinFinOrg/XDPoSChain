@@ -18,11 +18,13 @@ package simulated
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
+	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -70,5 +72,44 @@ func TestFilterBackendHeaderByNumberWithoutCommittedBlock(t *testing.T) {
 	header, err := fb.HeaderByNumber(context.Background(), rpc.FinalizedBlockNumber)
 	if header != nil || err == nil || err.Error() != wantErr {
 		t.Fatalf("HeaderByNumber on the finalized tag: have (%v, %v), want (nil, %q)", header, err, wantErr)
+	}
+}
+
+// The engine assertion on the finalized tag answers the pair #2708 reports - a
+// config that names XDPoS v2 while the chain runs another engine - instead of
+// panicking on the assertion. The backend constructor cannot build that pair,
+// so the chain and the filter backend are assembled directly, the way
+// TestFilterBackendHeaderByNumberWithoutCommittedBlock above does.
+func TestFilterBackendHeaderByNumberWhenEngineIsNotXDPoS(t *testing.T) {
+	gspec := &core.Genesis{
+		BaseFee: big.NewInt(params.InitialBaseFee),
+		Config:  params.AllEthashProtocolChanges,
+	}
+	db := rawdb.NewMemoryDatabase()
+	chain, err := core.NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	t.Cleanup(chain.Stop)
+
+	cfg := params.AllEthashProtocolChanges.Clone()
+	cfg.XDPoS = &params.XDPoSConfig{
+		Epoch: 10,
+		Gap:   5,
+		V2:    &params.V2{SwitchBlock: big.NewInt(-1)},
+	}
+	chain.SetChainConfig(cfg)
+
+	if got := chain.Config().XDPoS.BlockConsensusVersion(chain.CurrentBlock().Number); got != params.ConsensusEngineVersion2 {
+		t.Fatalf("test setup needs an active v2 engine, have consensus version %q", got)
+	}
+	if _, ok := chain.Engine().(*XDPoS.XDPoS); ok {
+		t.Fatalf("test setup needs an engine that is not XDPoS")
+	}
+
+	fb := &filterBackend{bc: chain}
+	header, err := fb.HeaderByNumber(context.Background(), rpc.FinalizedBlockNumber)
+	if header != nil || !errors.Is(err, errEngineNotXDPoS) {
+		t.Fatalf("HeaderByNumber on the finalized tag: have (%v, %v), want (nil, %v)", header, err, errEngineNotXDPoS)
 	}
 }
