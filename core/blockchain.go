@@ -2822,19 +2822,23 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (n int, 
 		var followupInterrupt atomic.Bool
 		if bc.cacheConfig.TrieCleanPrefetch {
 			if followup, err := it.peek(); followup != nil && err == nil {
-				throwaway, _ := state.NewWithChainConfig(parent.Root, bc.stateCache, bc.chainConfig)
+				// Prefetching is best effort: when the parent state cannot be
+				// opened the block is imported without it. Handing a nil state
+				// to the prefetcher would panic the goroutine and take the node
+				// down (issue #1738), so only start the prefetch on success.
+				if throwaway, err := state.NewWithChainConfig(parent.Root, bc.stateCache, bc.chainConfig); err == nil {
+					go func(start time.Time, followup *types.Block, throwaway *state.StateDB, interrupt *atomic.Bool) {
+						// Disable tracing for prefetcher executions.
+						vmCfg := bc.vmConfig
+						vmCfg.Tracer = nil
+						bc.prefetcher.Prefetch(followup, throwaway, vmCfg, interrupt)
 
-				go func(start time.Time, followup *types.Block, throwaway *state.StateDB, interrupt *atomic.Bool) {
-					// Disable tracing for prefetcher executions.
-					vmCfg := bc.vmConfig
-					vmCfg.Tracer = nil
-					bc.prefetcher.Prefetch(followup, throwaway, vmCfg, interrupt)
-
-					blockPrefetchExecuteTimer.Update(time.Since(start))
-					if interrupt.Load() {
-						blockPrefetchInterruptMeter.Mark(1)
-					}
-				}(time.Now(), followup, throwaway, &followupInterrupt)
+						blockPrefetchExecuteTimer.Update(time.Since(start))
+						if interrupt.Load() {
+							blockPrefetchInterruptMeter.Mark(1)
+						}
+					}(time.Now(), followup, throwaway, &followupInterrupt)
+				}
 			}
 		}
 
