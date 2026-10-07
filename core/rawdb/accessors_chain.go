@@ -648,10 +648,12 @@ func WriteExecutedMarker(db ethdb.KeyValueWriter, hash common.Hash, number uint6
 // DeleteExecutedMarker removes the record that this node executed the block. It is the
 // counterpart of WriteExecutedMarker and is called by DeleteReceipts: a marker that outlived the
 // receipts would claim an execution from a record this node no longer holds.
-func DeleteExecutedMarker(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
-	if err := db.Delete(blockReceiptsExecutedKey(number, hash)); err != nil {
-		log.Crit("Failed to delete the executed-block marker", "err", err)
-	}
+//
+// The refusal comes back to the caller rather than being logged here. The callers on the write
+// path make it fatal, as the puts are; the one that evicts markers below the state window loses a
+// stale key to it and says so. See HasExecutedMarker.
+func DeleteExecutedMarker(db ethdb.KeyValueWriter, hash common.Hash, number uint64) error {
+	return db.Delete(blockReceiptsExecutedKey(number, hash))
 }
 
 // DeleteReceipts removes all receipt data associated with a block hash, together with the
@@ -660,7 +662,9 @@ func DeleteReceipts(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
 	if err := db.Delete(blockReceiptsKey(number, hash)); err != nil {
 		log.Crit("Failed to delete block receipts", "err", err)
 	}
-	DeleteExecutedMarker(db, hash, number)
+	if err := DeleteExecutedMarker(db, hash, number); err != nil {
+		log.Crit("Failed to delete the executed-block marker", "err", err)
+	}
 }
 
 // ReceiptLogs is a barebone version of ReceiptForStorage which only keeps

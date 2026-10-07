@@ -197,6 +197,15 @@ type ResultProcessBlock struct {
 	usedGas      uint64
 }
 
+// trieGcEntry is one entry of the trie garbage collector's queue: the state root to dereference
+// once the head has passed its height, and the block whose execution left that root behind. The
+// block hash travels with the root because the executed marker is keyed by it, and this entry is
+// the last place the two are still known together. See writeBlockWithState.
+type trieGcEntry struct {
+	root common.Hash // State root to dereference
+	hash common.Hash // Block whose execution wrote it
+}
+
 // BlockChain represents the canonical chain given a database with a genesis
 // block. The Blockchain manages chain imports, reverts, chain reorganisations.
 //
@@ -217,7 +226,7 @@ type BlockChain struct {
 
 	db         ethdb.Database                   // Low level persistent database to store final content in
 	XDCxDb     ethdb.XDCxDatabase               // XDCx database
-	triegc     *prque.Prque[int64, common.Hash] // Priority queue mapping block numbers to tries to gc
+	triegc     *prque.Prque[int64, trieGcEntry] // Priority queue mapping block numbers to tries to gc
 	gcproc     time.Duration                    // Accumulates canonical block processing for trie dumping
 	triedb     *trie.Database                   // The database handler for maintaining trie nodes.
 	stateCache state.Database                   // State database to reuse between imports (contains state cache)
@@ -478,7 +487,7 @@ func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus
 		cacheConfig: cacheConfig,
 		db:          db,
 		triedb:      triedb,
-		triegc:      prque.New[int64, common.Hash](nil),
+		triegc:      prque.New[int64, trieGcEntry](nil),
 		stateCache: state.NewDatabaseWithConfig(db, &trie.Config{
 			Cache:     cacheConfig.TrieCleanLimit,
 			Preimages: cacheConfig.Preimages,
@@ -920,7 +929,9 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64) error {
 			// The receipts move to the ancient store when the block freezes, but the executed
 			// marker stays active, so TruncateAncients above does not take it away: drop it
 			// here as well.
-			rawdb.DeleteExecutedMarker(db, hash, num)
+			if err := rawdb.DeleteExecutedMarker(db, hash, num); err != nil {
+				log.Crit("Failed to delete the executed-block marker", "err", err)
+			}
 		} else {
 			// Remove relative body and receipts from the active store.
 			// The header, total difficulty and canonical hash will be
@@ -1351,8 +1362,27 @@ func (bc *BlockChain) saveData() {
 				}
 			}
 		}
+		// The queue is drained here and its roots are dereferenced, but the markers of the
+		// heights it still holds are left alone while the head sits at the last block the write
+		// path executed: what is left at shutdown is then the state window itself, and there the
+		// marker still decides over a state committed just above, so taking those markers would
+		// turn "this node ran the block" into an execution for every height whose state outlives
+		// the restart - the direction the write path is careful to avoid. A head adopted past that
+		// last written block moves the line without a write, and the markers the bound then reaches
+		// go with the roots dereferenced here: below the line, where they are already inert.
+		chosen := uint64(0)
+		if head := bc.CurrentBlock().Number.Uint64(); head > TriesInMemory {
+			chosen = head - TriesInMemory
+		}
 		for !bc.triegc.Empty() {
-			triedb.Dereference(bc.triegc.PopItem())
+			entry, number := bc.triegc.Pop()
+			height := uint64(-number)
+			if height <= chosen {
+				if err := rawdb.DeleteExecutedMarker(bc.db, entry.hash, height); err != nil {
+					log.Error("Failed to delete the executed-block marker", "number", height, "err", err)
+				}
+			}
+			triedb.Dereference(entry.root)
 		}
 		if tradingTriedb != nil && lendingTriedb != nil {
 			if tradingService.GetTriegc() != nil {
@@ -2258,7 +2288,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	} else {
 		// Full but not archive node, do proper garbage collection
 		bc.triedb.Reference(root, common.Hash{}) // metadata reference to keep trie alive
-		bc.triegc.Push(root, -int64(block.NumberU64()))
+		bc.triegc.Push(trieGcEntry{root: root, hash: block.Hash()}, -int64(block.NumberU64()))
 		if tradingTrieDb != nil {
 			tradingTrieDb.Reference(tradingRoot, common.Hash{})
 		}
@@ -2325,14 +2355,38 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 					}
 				}
 			}
-			// Garbage collect anything below our required write retention
+			// Garbage collect anything below our required write retention. The executed marker of
+			// a block goes with the state that is dereferenced here: below head-TriesInMemory a
+			// marker cannot change any answer on a node that prunes, because HasExecutedBlock asks
+			// for the state as well, so the two lifetimes are kept the same. An archive node never
+			// reaches this loop and keeps every marker.
+			//
+			// Whether the state is gone is asked of the trie database rather than assumed from the
+			// height, and the dereference comes first: a root the flush above committed - or an
+			// earlier flush, or Cap - stays readable on disk, and a root another queued height
+			// still references stays readable in memory, so on those heights the state half of
+			// HasExecutedBlock is still true and the marker is the half that decides. Nothing but
+			// one height per call answered true before, and the marker was taken from the rest of
+			// them with a state that was still there. Probing makes the two lifetimes the same
+			// one on every height. See DeleteExecutedMarker.
 			for !bc.triegc.Empty() {
-				root, number := bc.triegc.Pop()
-				if uint64(-number) > chosen {
-					bc.triegc.Push(root, number)
+				entry, number := bc.triegc.Pop()
+				// The queue is ordered by the negated height, so the height is recovered once for
+				// the bound and the report below.
+				height := uint64(-number)
+				if height > chosen {
+					bc.triegc.Push(entry, number)
 					break
 				}
-				bc.triedb.Dereference(root)
+				bc.triedb.Dereference(entry.root)
+				// A refusal is reported and skipped rather than fatal: this height is behind the
+				// cursor and will not be asked about again, so the cost is one stale marker and
+				// not the block. The commits above are the ones that cannot be skipped.
+				if !bc.HasState(entry.root) {
+					if err := rawdb.DeleteExecutedMarker(bc.db, entry.hash, height); err != nil {
+						log.Error("Failed to delete the executed-block marker", "number", height, "err", err)
+					}
+				}
 			}
 			if tradingService != nil {
 				for !tradingService.GetTriegc().Empty() {
