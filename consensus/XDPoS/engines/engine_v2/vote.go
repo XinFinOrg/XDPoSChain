@@ -217,6 +217,10 @@ func (x *XDPoS_v2) onVotePoolThresholdReached(chain consensus.ChainReader, poole
 		Signatures:        validSignatures,
 		GapNumber:         currentVoteMsg.(*types.Vote).GapNumber,
 	}
+	// Deliberately ungated, unlike ProposedBlockHandler: the pooled votes
+	// carry quorum-level signatures, so following the quorum majority is the
+	// convergence behavior. The gap that leaves is tracked by
+	// TODO(convergence).
 	err = x.processQC(chain, quorumCert)
 	if err != nil {
 		log.Error("Error while processing QC in the Vote handler after reaching pool threshold, ", err)
