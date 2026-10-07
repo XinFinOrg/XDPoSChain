@@ -1057,7 +1057,9 @@ func TestKnownNotAdoptedMeterIgnoresKnownBlocksBelowTheHead(t *testing.T) {
 	// executed with on disk. It is this node's own execution that is not recorded on it, so the
 	// import runs it again - and running it is what writes the marker back.
 	first := blocks[2]
-	rawdb.DeleteExecutedMarker(chain.ChainDb(), first.Hash(), first.NumberU64())
+	if err := rawdb.DeleteExecutedMarker(chain.ChainDb(), first.Hash(), first.NumberU64()); err != nil {
+		t.Fatalf("block %d: failed to drop the executed marker: %v", first.NumberU64(), err)
+	}
 	if chain.HasExecutedBlock(first.Hash(), first.NumberU64()) {
 		t.Fatal("the batch must not open with a known block, otherwise the skip loop consumes it")
 	}
