@@ -213,7 +213,7 @@ func importChain(ctx *cli.Context) error {
 	if ctx.Args().Len() < 1 {
 		utils.Fatalf("This command requires an argument.")
 	}
-	stack, _, cfg := makeFullNode(ctx)
+	stack, cfg := makeConfigNode(ctx)
 	defer stack.Close()
 
 	// Start metrics export if enabled
