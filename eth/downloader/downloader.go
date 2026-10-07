@@ -2025,7 +2025,16 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 						for _, gapNum := range gapNumbers {
 							root, ok := pendingGapRoots[gapNum]
 							if !ok {
-								return fmt.Errorf("gap pivot block %d not found in downloaded results", gapNum)
+								// A cycle resuming after an interrupted one starts above the
+								// blocks already committed, so gap pivots stored locally never
+								// show up in its results. Read them back from the local chain.
+								header := d.localAncestor(P.Header, gapNum)
+								if header == nil {
+									return fmt.Errorf("gap pivot block %d not found in downloaded results", gapNum)
+								}
+								root = header.Root
+								pendingGapRoots[gapNum] = root
+								pendingGapHashes[gapNum] = header.Hash()
 							}
 							if syncedGaps[gapNum] {
 								continue
@@ -2082,6 +2091,21 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 			return err
 		}
 	}
+}
+
+// localAncestor walks the parent hashes of head back through the local chain to
+// the header at number, so the result is an ancestor of head rather than whatever
+// the canonical index holds. It returns nil if the walk hits a missing header first.
+func (d *Downloader) localAncestor(head *types.Header, number uint64) *types.Header {
+	for header := head; header != nil; header = d.blockchain.GetHeaderByHash(header.ParentHash) {
+		if n := header.Number.Uint64(); n <= number {
+			if n == number {
+				return header
+			}
+			return nil
+		}
+	}
+	return nil
 }
 
 func splitAroundPivot(pivot uint64, results []*fetchResult) (p *fetchResult, before, after []*fetchResult) {
