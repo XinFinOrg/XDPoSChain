@@ -61,6 +61,7 @@ const (
 	TIPEpochHalving
 	Prague
 	Osaka
+	Amsterdam
 	Gas2500x
 
 	// lastFork is a sentinel marking the end of the enum, not a real fork.
@@ -116,5 +117,6 @@ var forkToString = map[Fork]string{
 	TIPEpochHalving:        "TIPEpochHalving",
 	Prague:                 "Prague",
 	Osaka:                  "Osaka",
+	Amsterdam:              "Amsterdam",
 	Gas2500x:               "Gas2500x",
 }

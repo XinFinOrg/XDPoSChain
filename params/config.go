@@ -82,6 +82,7 @@ type ChainConfig struct {
 	CancunBlock     *big.Int `json:"cancunBlock,omitempty"`
 	PragueBlock     *big.Int `json:"pragueBlock,omitempty"`
 	OsakaBlock      *big.Int `json:"osakaBlock,omitempty"`
+	AmsterdamBlock  *big.Int `json:"amsterdamBlock,omitempty"`
 
 	TIP2019Block                *big.Int `json:"tip2019Block,omitempty"`
 	TIPSigningBlock             *big.Int `json:"tipSigningBlock,omitempty"`
@@ -733,6 +734,9 @@ func (c *ChainConfig) String() string {
 	if c.OsakaBlock != nil {
 		result += fmt.Sprintf(", Osaka: %v", c.OsakaBlock)
 	}
+	if c.AmsterdamBlock != nil {
+		result += fmt.Sprintf(", Amsterdam: %v", c.AmsterdamBlock)
+	}
 	if c.DynamicGasLimitBlock != nil {
 		result += fmt.Sprintf(", DynamicGasLimit: %v", c.DynamicGasLimitBlock)
 	}
@@ -819,6 +823,7 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - Cancun:                      %-8v\n", c.CancunBlock)
 	banner += fmt.Sprintf("  - Prague:                      %-8v\n", c.PragueBlock)
 	banner += fmt.Sprintf("  - Osaka:                       %-8v\n", c.OsakaBlock)
+	banner += fmt.Sprintf("  - Amsterdam:                   %-8v\n", c.AmsterdamBlock)
 	banner += fmt.Sprintf("  - DynamicGasLimit:             %-8v\n", c.DynamicGasLimitBlock)
 	banner += fmt.Sprintf("  - TIPUpgradeReward:            %-8v\n", c.TIPUpgradeRewardBlock)
 	banner += fmt.Sprintf("  - TIPUpgradePenalty:           %-8v\n", c.TIPUpgradePenaltyBlock)
@@ -907,6 +912,9 @@ func (c *ChainConfig) ActiveForks(block *big.Int) []string {
 	}
 	if c.IsOsaka(block) {
 		activeForks = append(activeForks, "Osaka")
+	}
+	if c.IsAmsterdam(block) {
+		activeForks = append(activeForks, "Amsterdam")
 	}
 	if c.IsPetersburg(block) {
 		activeForks = append(activeForks, "Petersburg")

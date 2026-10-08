@@ -86,6 +86,7 @@ func TestSendTxRandomizeSecretAndOpening(t *testing.T) {
 	legacyConfig.CancunBlock = new(big.Int).Set(futureForkBlock)
 	legacyConfig.PragueBlock = new(big.Int).Set(futureForkBlock)
 	legacyConfig.OsakaBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.AmsterdamBlock = new(big.Int).Set(futureForkBlock)
 	backend := backends.NewXDCSimulatedBackend(genesis, 42000000, &legacyConfig)
 	backend.Commit()
 	signer := types.HomesteadSigner{}

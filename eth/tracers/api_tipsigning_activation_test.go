@@ -149,6 +149,7 @@ func TestIntermediateRootsMatchesBlockProcessingAtTIPSigningActivation(t *testin
 	config.CancunBlock = one()
 	config.PragueBlock = one()
 	config.OsakaBlock = one()
+	config.AmsterdamBlock = one()
 
 	genesis := &core.Genesis{
 		Config: &config,
