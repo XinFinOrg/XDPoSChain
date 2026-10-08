@@ -558,6 +558,7 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td *big.I
 			if pivot <= origin {
 				origin = pivot - 1
 			}
+			log.Info("[syncWithPeer] Activating fast sync with an automatic pivot", "pivot", pivot, "origin", origin, "height", height)
 		}
 	}
 	d.committed = 1
@@ -2047,7 +2048,7 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 					// and the first epoch switch after the pivot would stop on a missing one. The
 					// pivot may have moved since the results were collected, so the gap blocks
 					// are read back from the local chain below the pivot.
-					log.Info("Automatic pivot gap state syncs", "pivot", P.Header.Number, "count", len(gapNumbers), "gaps", gapNumbers)
+					log.Info("[processFastSyncContent] Syncing gap block states below the automatic pivot", "pivot", P.Header.Number, "count", len(gapNumbers), "gaps", gapNumbers)
 					if err := d.syncGapPivots(P, gapNumbers, pendingGapRoots, pendingGapHashes, syncedGaps); err != nil {
 						return err
 					}
