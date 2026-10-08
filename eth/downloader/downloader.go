@@ -290,9 +290,25 @@ func (d *Downloader) SetPivotBlock(number uint64, hash common.Hash, root common.
 	d.pivotHash = hash
 	d.pivotRoot = root
 
-	// Calculate all gap pivot numbers: N - N%Epoch - Gap  where x < N
-	epoch := d.blockchain.Config().XDPoS.Epoch
-	gap := d.blockchain.Config().XDPoS.Gap
+	gaps := d.gapPivotNumbers(number)
+	d.pivotGapLock.Lock()
+	d.pivotGapNumbers = gaps
+	if len(d.pivotGapNumbers) > 0 {
+		log.Info("SetPivotBlock calculated gap pivots", "primary", number, "gapCount", len(d.pivotGapNumbers), "gaps", d.pivotGapNumbers)
+	}
+	d.pivotGapLock.Unlock()
+}
+
+// gapPivotNumbers returns the gap blocks below a fast sync pivot whose snapshots the
+// epoch switches after the pivot read: N - N%Epoch - Gap and every later gap block
+// below N. Blocks below the pivot are never executed, so these snapshots have to be
+// built from state synced for them. It returns nil when XDPoS is not configured.
+func (d *Downloader) gapPivotNumbers(number uint64) []uint64 {
+	cfg := d.blockchain.Config().XDPoS
+	if cfg == nil || cfg.Epoch == 0 {
+		return nil
+	}
+	epoch, gap := cfg.Epoch, cfg.Gap
 	epochBase := number - number%epoch
 	var baseGap uint64
 	if epochBase < gap {
@@ -300,19 +316,15 @@ func (d *Downloader) SetPivotBlock(number uint64, hash common.Hash, root common.
 	} else {
 		baseGap = epochBase - gap
 	}
-	d.pivotGapLock.Lock()
-	d.pivotGapNumbers = nil
+	var gaps []uint64
 	for i := uint64(0); ; i++ {
 		gapNumber := baseGap + epoch*i
 		if gapNumber >= number {
 			break
 		}
-		d.pivotGapNumbers = append(d.pivotGapNumbers, gapNumber)
+		gaps = append(gaps, gapNumber)
 	}
-	if len(d.pivotGapNumbers) > 0 {
-		log.Info("SetPivotBlock calculated gap pivots", "primary", number, "gapCount", len(d.pivotGapNumbers), "gaps", d.pivotGapNumbers)
-	}
-	d.pivotGapLock.Unlock()
+	return gaps
 }
 
 // Progress retrieves the synchronisation boundaries, specifically the origin
@@ -2022,58 +2034,22 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 					copy(gapNumbers, d.pivotGapNumbers)
 					d.pivotGapLock.RUnlock()
 					if len(gapNumbers) > 0 {
-						for _, gapNum := range gapNumbers {
-							root, ok := pendingGapRoots[gapNum]
-							if !ok {
-								// A cycle resuming after an interrupted one starts above the
-								// blocks already committed, so gap pivots stored locally never
-								// show up in its results. Read them back from the local chain.
-								header := d.localAncestor(P.Header, gapNum)
-								if header == nil {
-									return fmt.Errorf("gap pivot block %d not found in downloaded results", gapNum)
-								}
-								root = header.Root
-								pendingGapRoots[gapNum] = root
-								pendingGapHashes[gapNum] = header.Hash()
-							}
-							if syncedGaps[gapNum] {
-								continue
-							}
-							log.Info("syncState for gap pivot", "number", gapNum, "root", root)
-							gapSync := d.syncState(root)
-							if err := gapSync.Wait(); err != nil {
-								return err
-							}
-							log.Info("Gap pivot state sync complete", "number", gapNum, "root", root)
-							// Generate snapshot for this gap pivot
-							gapHash, ok := pendingGapHashes[gapNum]
-							if !ok {
-								return fmt.Errorf("gap pivot block hash %d not found", gapNum)
-							}
-							statedb, err := state.New(root, state.NewDatabase(d.stateDB))
-							if err != nil {
-								log.Error("Failed to create state for gap pivot snapshot", "number", gapNum, "root", root, "err", err)
-								return err
-							}
-							snap, err := d.generateSnapshot(statedb, gapNum, gapHash)
-							if err != nil {
-								// Abort fast sync instead of persisting an empty or partial
-								// snapshot that would permanently mask the gap. A normal chain
-								// always has masternode candidates at a gap block, so this
-								// failure means the gap block state itself is abnormal: retrying
-								// fast sync hits the same block again. The operator must resync
-								// with a clean data directory or restore valid gap block state
-								// before fast sync can complete.
-								log.Error("Failed to generate snapshot for gap pivot", "number", gapNum, "hash", gapHash, "err", err)
-								return err
-							}
-							log.Info("Gap pivot snapshot generated", "number", gapNum, "hash", gapHash.Hex(), "candidates", len(snap.NextEpochCandidates))
-							syncedGaps[gapNum] = true
+						if err := d.syncGapPivots(P, gapNumbers, pendingGapRoots, pendingGapHashes, syncedGaps); err != nil {
+							return err
 						}
-						log.Info("All gap pivot state syncs complete", "count", len(gapNumbers))
 						d.pivotGapLock.Lock()
 						d.pivotGapNumbers = nil // Clear to avoid reprocessing
 						d.pivotGapLock.Unlock()
+					}
+				} else if gapNumbers := d.gapPivotNumbers(P.Header.Number.Uint64()); len(gapNumbers) > 0 {
+					// An automatically chosen pivot needs the same gap snapshots as a configured
+					// one: the blocks below it are never executed, so nothing else derives them
+					// and the first epoch switch after the pivot would stop on a missing one. The
+					// pivot may have moved since the results were collected, so the gap blocks
+					// are read back from the local chain below the pivot.
+					log.Info("Automatic pivot gap state syncs", "pivot", P.Header.Number, "count", len(gapNumbers), "gaps", gapNumbers)
+					if err := d.syncGapPivots(P, gapNumbers, pendingGapRoots, pendingGapHashes, syncedGaps); err != nil {
+						return err
 					}
 				}
 				if err := d.commitPivotBlock(P); err != nil {
@@ -2091,6 +2067,63 @@ func (d *Downloader) processFastSyncContent(latest *types.Header) error {
 			return err
 		}
 	}
+}
+
+// syncGapPivots syncs the state of each gap block below the pivot P and derives its
+// snapshot from it. Gap blocks that came in with this cycle's results carry their root
+// and hash in pendingGapRoots and pendingGapHashes; the others are read back from the
+// local chain below P. syncedGaps records the gap blocks done in this cycle.
+func (d *Downloader) syncGapPivots(P *fetchResult, gapNumbers []uint64, pendingGapRoots, pendingGapHashes map[uint64]common.Hash, syncedGaps map[uint64]bool) error {
+	for _, gapNum := range gapNumbers {
+		root, ok := pendingGapRoots[gapNum]
+		if !ok {
+			// A cycle resuming after an interrupted one starts above the
+			// blocks already committed, so gap pivots stored locally never
+			// show up in its results. Read them back from the local chain.
+			header := d.localAncestor(P.Header, gapNum)
+			if header == nil {
+				return fmt.Errorf("gap pivot block %d not found in downloaded results", gapNum)
+			}
+			root = header.Root
+			pendingGapRoots[gapNum] = root
+			pendingGapHashes[gapNum] = header.Hash()
+		}
+		if syncedGaps[gapNum] {
+			continue
+		}
+		log.Info("syncState for gap pivot", "number", gapNum, "root", root)
+		gapSync := d.syncState(root)
+		if err := gapSync.Wait(); err != nil {
+			return err
+		}
+		log.Info("Gap pivot state sync complete", "number", gapNum, "root", root)
+		// Generate snapshot for this gap pivot
+		gapHash, ok := pendingGapHashes[gapNum]
+		if !ok {
+			return fmt.Errorf("gap pivot block hash %d not found", gapNum)
+		}
+		statedb, err := state.New(root, state.NewDatabase(d.stateDB))
+		if err != nil {
+			log.Error("Failed to create state for gap pivot snapshot", "number", gapNum, "root", root, "err", err)
+			return err
+		}
+		snap, err := d.generateSnapshot(statedb, gapNum, gapHash)
+		if err != nil {
+			// Abort fast sync instead of persisting an empty or partial
+			// snapshot that would permanently mask the gap. A normal chain
+			// always has masternode candidates at a gap block, so this
+			// failure means the gap block state itself is abnormal: retrying
+			// fast sync hits the same block again. The operator must resync
+			// with a clean data directory or restore valid gap block state
+			// before fast sync can complete.
+			log.Error("Failed to generate snapshot for gap pivot", "number", gapNum, "hash", gapHash, "err", err)
+			return err
+		}
+		log.Info("Gap pivot snapshot generated", "number", gapNum, "hash", gapHash.Hex(), "candidates", len(snap.NextEpochCandidates))
+		syncedGaps[gapNum] = true
+	}
+	log.Info("All gap pivot state syncs complete", "count", len(gapNumbers))
+	return nil
 }
 
 // localAncestor walks the parent hashes of head back through the local chain to
