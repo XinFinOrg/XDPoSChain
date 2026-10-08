@@ -430,6 +430,12 @@ func (pm *ProtocolManager) synchronise(peer *peer) error {
 		// The only scenario where this can happen is if the user manually (or via a
 		// bad block) rolled back a fast sync node below the sync point. In this case
 		// however it's safe to reenable fast sync.
+		//
+		// A rewind of a full node can leave the same markers behind, so this switches
+		// a node configured for full sync to fast sync: warn, since the blocks below
+		// the pivot are then stored without being executed.
+		log.Warn("[synchronise] Head block is at genesis but the snap head (highest block with stored body and receipts) is ahead: this node was likely rolled back to a block without state, re-enabling fast sync",
+			"snapHead", pm.blockchain.CurrentSnapBlock().Number)
 		atomic.StoreUint32(&pm.snapSync, 1)
 		mode = downloader.FastSync
 	}
