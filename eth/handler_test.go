@@ -22,6 +22,7 @@ import (
 	"math/big"
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -924,4 +925,37 @@ func TestRegisterDownloaderPeerUndoesRacedRemoval(t *testing.T) {
 		t.Fatalf("reconnect blocked by stale downloader entry: %v", err)
 	}
 	pm.downloader.UnregisterPeer(p.id)
+}
+
+// TestFetcherWiresSignatureGates pins that NewProtocolManager installs the
+// canonical-hash and snap-sync predicates on the block fetcher, and that each
+// is bound to the real chain and the real snapSync flag. canSign fails closed
+// without a canonical-hash source, so dropping a setter - or wiring the wrong
+// non-nil function - would silently stop every signature on the node while the
+// rest of the tests stay green.
+func TestFetcherWiresSignatureGates(t *testing.T) {
+	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	defer pm.Stop()
+
+	canonicalHash := pm.blockFetcher.CanonicalHashFn()
+	if canonicalHash == nil {
+		t.Fatal("NewProtocolManager did not wire the canonical-hash source")
+	}
+	if got, want := canonicalHash(0), pm.blockchain.Genesis().Hash(); got != want {
+		t.Fatalf("canonical-hash source is not bound to the chain: got %v want %v", got, want)
+	}
+	syncing := pm.blockFetcher.SyncingHook()
+	if syncing == nil {
+		t.Fatal("NewProtocolManager did not wire the snap-sync predicate")
+	}
+	// Check both directions: a constant predicate would otherwise pass.
+	atomic.StoreUint32(&pm.snapSync, 1)
+	if !syncing() {
+		t.Fatal("snap-sync predicate is not bound to manager.snapSync (false while syncing)")
+	}
+	atomic.StoreUint32(&pm.snapSync, 0)
+	defer atomic.StoreUint32(&pm.snapSync, 0)
+	if syncing() {
+		t.Fatal("snap-sync predicate is not bound to manager.snapSync (true while idle)")
+	}
 }

@@ -20,6 +20,7 @@ package fetcher
 import (
 	"errors"
 	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -43,6 +44,23 @@ const (
 	maxQueueDist = 32  // Maximum allowed distance from the chain head to queue
 	hashLimit    = 256 // Maximum number of unique blocks a peer may have announced
 	blockLimit   = 64  // Maximum number of unique blocks a peer may have delivered
+)
+
+const (
+	// parkedImportTimeout is a generous upper bound on how long a block whose
+	// delivery reported success without importing it may wait for another
+	// importer to store it before its signature is dropped. The fetcher imports
+	// single blocks, so the reachable case is a block the downloader is already
+	// fetching; that can span several download requests (a single request is
+	// capped by the downloader's ttlLimit), so this is an upper bound rather
+	// than one request's allowance.
+	parkedImportTimeout      = 90 * time.Second
+	parkedImportPollInterval = 100 * time.Millisecond // same cadence as the future-block loop
+
+	// maxParkedSignatures caps the blocks waiting for their signature, so a
+	// master equivocating at a height cannot accumulate unbounded blocks or
+	// DB reads.
+	maxParkedSignatures = 64
 )
 
 // IsPlausibleAnnouncement reports whether a block announcement at the given
@@ -149,6 +167,13 @@ type blockInject struct {
 	block  *types.Block
 }
 
+// parkedSign is a block whose delivery reported success without importing it,
+// waiting for another importer to store it so its signature can be created.
+type parkedSign struct {
+	block    *types.Block
+	deadline time.Time
+}
+
 // BlockFetcher is responsible for accumulating block announcements from various peers
 // and scheduling them for retrieval.
 type BlockFetcher struct {
@@ -175,6 +200,15 @@ type BlockFetcher struct {
 	queued map[common.Hash]*blockInject      // Set of already queued blocks (to dedup imports)
 	knowns *lru.Cache[common.Hash, struct{}]
 
+	// Parked signatures (XDPoS): blocks delivered while another importer was
+	// still going to store them, waiting for the signing hook. Guarded by
+	// parkedMu; waitParkedSignatures runs only while the set is non-empty, so an
+	// idle fetcher runs no waiter.
+	parkedMu      sync.Mutex
+	parked        map[common.Hash]*parkedSign
+	parkedWaiter  bool          // waitParkedSignatures is running (guarded by parkedMu)
+	parkedTimeout time.Duration // bound per parked block; a field so tests can shrink it
+
 	// Callbacks
 	getBlock            blockRetrievalFn      // Retrieves a block from the local chain
 	verifyHeader        headerVerifierFn      // Checks if a block's headers have a valid proof of work
@@ -184,6 +218,9 @@ type BlockFetcher struct {
 	insertBlock         blockInsertFn         // Injects a batch of blocks into the chain
 	prepareBlock        blockPrepareFn
 	dropPeer            peerDropFn // Drops a peer for misbehaving
+
+	canonicalHash func(number uint64) common.Hash // Returns the canonical hash at a height, or the zero hash
+	syncing       func() bool                     // Reports whether the node is still snap syncing
 
 	// Testing hooks
 	announceChangeHook func(common.Hash, bool) // Method to call upon adding or deleting a hash from the blockAnnounce list
@@ -212,6 +249,8 @@ func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, h
 		queues:              make(map[string]int),
 		queued:              make(map[common.Hash]*blockInject),
 		knowns:              lru.NewCache[common.Hash, struct{}](blockLimit),
+		parked:              make(map[common.Hash]*parkedSign),
+		parkedTimeout:       parkedImportTimeout,
 		getBlock:            getBlock,
 		verifyHeader:        verifyHeader,
 		handleProposedBlock: handleProposedBlock,
@@ -767,10 +806,61 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 			return
 		}
 
+		// Signing and consensus handling require the block to actually be in
+		// the chain, which a nil import error does not guarantee: this
+		// fetcher's inserter discards the block while fast sync is still
+		// running, the single-block path returns without storing a block the
+		// downloader is already fetching, and a batch import parks its future
+		// tail in the future queue instead of writing it. Signing an
+		// unimported block, or voting on it, would corrupt the consensus
+		// state: processQC writes highestQuorumCert before it checks that the
+		// block exists. Relaying is safe either way - a receiver that has the
+		// block drops it again - so the broadcast below must not depend on
+		// whether the block was stored.
+		if f.getBlock(block.Hash()) == nil {
+			log.Debug("Propagated block was not imported, deferring signing", "peer", peer, "number", block.Number(), "hash", hash)
+			// Another importer stores the block once its timestamp arrives
+			// (procFutureBlocks) or once the downloader reaches it; create
+			// the signature transaction then. The vote is not compensated:
+			// procFutureBlocks feeds the imported block to the consensus
+			// engine itself. Only nodes with a signing hook (XDPoS) park;
+			// without one there is nothing to wait for.
+			f.parkForSignature(block)
+			if isM2 {
+				blockBroadcastOutTimer.UpdateSince(block.ReceivedAt)
+				go f.broadcastBlock(block, true)
+			} else {
+				blockAnnounceOutTimer.UpdateSince(block.ReceivedAt)
+				go f.broadcastBlock(block, false)
+			}
+			return
+		}
+		// Being in the chain is not enough for the signature, which spends a
+		// transaction: the block must also be canonical and still fresh. A
+		// stored side entry, or one this node declined to adopt, passes the
+		// existence gate but is not worth signing right now. This gate covers
+		// the signature only and must not return: the consensus handling below
+		// keeps the existence gate alone, and procFutureBlocks remains the
+		// owner of the vote.
 		if f.signHook != nil {
-			if err := f.signHook(block); err != nil {
-				log.Error("Can't sign the imported block", "err", err)
-				return
+			signable := f.canSign(block)
+			if signable {
+				if err := f.signHook(block); err != nil {
+					log.Error("Can't sign the imported block", "err", err)
+					return
+				}
+			}
+			if !signable {
+				log.Debug("Imported block is not canonical, parking the signature", "peer", peer, "number", block.Number(), "hash", hash)
+				// The block is stored, so the parked set can revive the
+				// signature if a later reorg adopts this branch; failing that
+				// the uncle-distance and deadline bounds drop it. Voting is
+				// not deferred: handleProposedBlock below still runs now.
+				// Parking a refused block costs a parked-slot (capped by
+				// maxParkedSignatures, drained by the deadline), so a master
+				// equivocating at a height can fill the set, but the slots
+				// clear within parkedImportTimeout.
+				f.parkForSignature(block)
 			}
 		}
 		err = f.handleProposedBlock(block.Header())
@@ -787,6 +877,152 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 			go f.broadcastBlock(block, false)
 		}
 	}()
+}
+
+// parkForSignature records a block whose signature cannot be created yet, so
+// it can be created once the block becomes signable. Two callers feed the set:
+// a delivery that reported success without importing the block (another
+// importer stores it later), and a stored block refused for not being
+// canonical (a later reorg can adopt its branch). The first park starts
+// waitParkedSignatures; it stops when the set drains.
+// The wait is bounded by parkedImportTimeout and the number of parked blocks by
+// maxParkedSignatures. During snap sync the inserter discards propagated blocks
+// outright, so nothing can arrive to sign and the block is not parked at all.
+// The sign hook must be wired before blocks are delivered - eth.New does this
+// before the syncer starts the fetcher - since a block delivered without a hook
+// is not parked.
+func (f *BlockFetcher) parkForSignature(block *types.Block) {
+	if f.signHook == nil {
+		return
+	}
+	if f.syncing != nil && f.syncing() {
+		return
+	}
+	select {
+	case <-f.quit:
+		return
+	default:
+	}
+	hash := block.Hash()
+
+	f.parkedMu.Lock()
+	if _, ok := f.parked[hash]; ok {
+		f.parkedMu.Unlock()
+		return
+	}
+	if len(f.parked) >= maxParkedSignatures {
+		f.parkedMu.Unlock()
+		log.Debug("Too many blocks parked for signing, dropping signature", "number", block.Number(), "hash", hash)
+		return
+	}
+	f.parked[hash] = &parkedSign{block: block, deadline: time.Now().Add(f.parkedTimeout)}
+	start := !f.parkedWaiter
+	f.parkedWaiter = true
+	f.parkedMu.Unlock()
+
+	if start {
+		go f.waitParkedSignatures()
+	}
+}
+
+// waitParkedSignatures drains the parked-signature set on a single ticker and
+// returns once the set is empty, so an idle fetcher runs no waiter. One
+// goroutine and one ticker serve every parked block while any remain; a park
+// racing the exit either finds the waiter running or starts a new one.
+func (f *BlockFetcher) waitParkedSignatures() {
+	ticker := time.NewTicker(parkedImportPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-f.quit:
+			f.parkedMu.Lock()
+			f.parkedWaiter = false
+			f.parkedMu.Unlock()
+			return
+		case <-ticker.C:
+			f.scanParkedSignatures()
+
+			f.parkedMu.Lock()
+			empty := len(f.parked) == 0
+			if empty {
+				f.parkedWaiter = false
+			}
+			f.parkedMu.Unlock()
+			if empty {
+				return
+			}
+		}
+	}
+}
+
+// scanParkedSignatures signs the parked blocks that have become signable and
+// drops the rest once one of the two bounds is hit: the block has fallen below
+// the uncle distance, or its deadline has passed. A stored block that is not
+// signable *right now* is not a reason to drop it — the body is written
+// (rawdb.WriteBlock) before the canonical head (adoptHead), so a block that
+// reads as stored-but-not-canonical here can become canonical moments later;
+// discarding it would lose its signature for good. Signing happens outside the
+// lock so a slow signature cannot stall the scan.
+func (f *BlockFetcher) scanParkedSignatures() {
+	var ready []*types.Block
+
+	// The chain reads below (getBlock, and canSign's canonicalHash and
+	// chainHeight) run under parkedMu on purpose: parkedMu is a leaf lock -
+	// nothing beneath it takes another lock - and the set holds at most
+	// maxParkedSignatures entries with short reads, so the worst case stalls
+	// a parkForSignature caller for one scan pass. Collecting hashes under
+	// the lock and reading the chain outside it would trade that bounded
+	// stall for an ABA window: a reorg landing between the snapshot and the
+	// re-lock could act on a stale height and drop a signature for good,
+	// which is the loss this scan exists to prevent. Signing still happens
+	// outside the lock, below.
+	f.parkedMu.Lock()
+	for hash, parked := range f.parked {
+		if block := f.getBlock(hash); block != nil && f.canSign(block) {
+			ready = append(ready, block)
+			delete(f.parked, hash)
+			continue
+		}
+		if parked.block.NumberU64()+maxUncleDist < f.chainHeight() {
+			log.Debug("Parked block fell below the uncle distance, dropping signature", "number", parked.block.Number(), "hash", hash)
+			delete(f.parked, hash)
+			continue
+		}
+		if time.Now().After(parked.deadline) {
+			if f.getBlock(hash) != nil {
+				log.Debug("Parked block was stored but never became signable, dropping its signature", "number", parked.block.Number(), "hash", hash)
+			} else {
+				log.Warn("Block was not imported in time, dropping its signature", "number", parked.block.Number(), "hash", hash)
+			}
+			delete(f.parked, hash)
+		}
+	}
+	f.parkedMu.Unlock()
+
+	for _, block := range ready {
+		// A reorg can land between the scan and this call, so re-check before
+		// signing: a block the chain has moved past must not be signed.
+		if !f.canSign(block) {
+			log.Debug("Parked block is no longer signable, skipping signature", "number", block.Number(), "hash", block.Hash())
+			continue
+		}
+		if err := f.signHook(block); err != nil {
+			log.Error("Can't sign the imported block", "err", err)
+		}
+	}
+}
+
+// canSign reports whether a block is worth a signature: it must be on the
+// canonical chain and not already too far below the head to matter. A stored
+// block that is not canonical (a side entry, or one this node declined to
+// adopt) fails the first test and is never signed. An unset canonicalHash fails
+// closed: without a canonicality source no block is signed.
+func (f *BlockFetcher) canSign(block *types.Block) bool {
+	if f.canonicalHash == nil || f.canonicalHash(block.NumberU64()) != block.Hash() {
+		return false
+	}
+	return block.NumberU64()+maxUncleDist >= f.chainHeight()
 }
 
 // forgetHash removes all traces of a block announcement from the fetcher's
@@ -848,6 +1084,36 @@ func (f *BlockFetcher) forgetBlock(hash common.Hash) {
 // Bind double validate hook before block imported into chain.
 func (f *BlockFetcher) SetSignHook(signHook func(*types.Block) error) {
 	f.signHook = signHook
+}
+
+// SetCanonicalHashFn binds the source of canonical hashes used to refuse
+// signing a block that is not on the canonical chain. Until it is set, no block
+// is signed.
+func (f *BlockFetcher) SetCanonicalHashFn(canonicalHash func(number uint64) common.Hash) {
+	f.canonicalHash = canonicalHash
+}
+
+// SetSyncingHook binds the predicate that reports whether the node is still
+// snap syncing. While it holds, the inserter discards propagated blocks, so the
+// fetcher parks no signature for them.
+func (f *BlockFetcher) SetSyncingHook(syncing func() bool) {
+	f.syncing = syncing
+}
+
+// CanonicalHashFn returns the canonical-hash source the fetcher was wired with,
+// or nil if none. Exported for cross-package wiring tests only: eth's tests
+// assert NewProtocolManager installs it, since canSign fails closed and a
+// missing setter would silently stop every signature. Not part of the supported
+// API; production code must not call it.
+func (f *BlockFetcher) CanonicalHashFn() func(number uint64) common.Hash {
+	return f.canonicalHash
+}
+
+// SyncingHook returns the snap-sync predicate the fetcher was wired with, or
+// nil if none. Exported for cross-package wiring tests only - see
+// CanonicalHashFn. Not part of the supported API.
+func (f *BlockFetcher) SyncingHook() func() bool {
+	return f.syncing
 }
 
 // Bind append m2 to block header hook when imported into chain.

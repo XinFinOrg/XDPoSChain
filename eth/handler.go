@@ -210,6 +210,10 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		return manager.blockchain.PrepareBlock(block)
 	}
 	manager.blockFetcher = fetcher.NewBlockFetcher(blockchain.GetBlockByHash, validator, handleProposedBlock, manager.BroadcastBlock, heighter, inserter, prepare, manager.removePeer)
+	// The fetcher must not sign a block that is not on the canonical chain,
+	// and must not wait for a block the snap-sync inserter discards outright.
+	manager.blockFetcher.SetCanonicalHashFn(blockchain.GetCanonicalHash)
+	manager.blockFetcher.SetSyncingHook(func() bool { return atomic.LoadUint32(&manager.snapSync) == 1 })
 
 	fetchTx := func(peer string, hashes []common.Hash) error {
 		p := manager.peers.Peer(peer)
