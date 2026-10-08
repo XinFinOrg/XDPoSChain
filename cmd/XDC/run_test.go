@@ -17,11 +17,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/internal/cmdtest"
+	"github.com/XinFinOrg/XDPoSChain/rpc"
 	"github.com/docker/docker/pkg/reexec"
 )
 
@@ -81,4 +84,32 @@ func runXDC(t *testing.T, args ...string) *testXDC {
 	tt.Run("XDC-test", args...)
 
 	return tt
+}
+
+// waitForEndpoint blocks until the given RPC endpoint accepts connections and
+// answers rpc_modules, or until the timeout expires. Node startup takes an
+// unpredictable amount of time under load, so tests must not rely on a fixed
+// sleep before attaching to a freshly started node.
+func waitForEndpoint(t *testing.T, endpoint string, timeout time.Duration) {
+	probe := func() bool {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		c, err := rpc.DialContext(ctx, endpoint)
+		if c != nil {
+			_, err = c.SupportedModules()
+			c.Close()
+		}
+		return err == nil
+	}
+
+	start := time.Now()
+	for {
+		if probe() {
+			return
+		}
+		if time.Since(start) > timeout {
+			t.Fatal("endpoint", endpoint, "did not open within", timeout)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
