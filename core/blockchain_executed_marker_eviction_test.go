@@ -239,8 +239,10 @@ func makeLongSharedStateChain(t *testing.T, count, emptyIdx int) (*Genesis, shar
 		Config:  &config,
 	}
 	// Stay before Prague for the reason makeSharedStateChain does: EIP-2935 writes the parent hash
-	// into the state of every block, which would keep the two heights from sharing a root.
+	// into the state of every block, which would keep the two heights from sharing a root. Amsterdam
+	// is scheduled with Osaka on the test config, so it has to be cleared alongside it.
 	config.PragueBlock, config.OsakaBlock = nil, nil
+	config.AmsterdamBlock = nil
 	signer := types.LatestSigner(gspec.Config)
 	genDb := rawdb.NewMemoryDatabase()
 	if _, err := gspec.Commit(genDb); err != nil {

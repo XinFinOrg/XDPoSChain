@@ -783,6 +783,21 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 			wantField: "PragueBlock",
 		},
 		{
+			name: "amsterdam before osaka",
+			mutate: func(cfg *ChainConfig) {
+				cfg.OsakaBlock = big.NewInt(cfg.PragueBlock.Int64())
+				cfg.AmsterdamBlock = big.NewInt(cfg.OsakaBlock.Int64() - 1)
+			},
+			wantField: "OsakaBlock",
+		},
+		{
+			name: "amsterdam without osaka",
+			mutate: func(cfg *ChainConfig) {
+				cfg.AmsterdamBlock = big.NewInt(cfg.PragueBlock.Int64())
+			},
+			wantField: "OsakaBlock",
+		},
+		{
 			name: "epoch halving before osaka",
 			mutate: func(cfg *ChainConfig) {
 				cfg.OsakaBlock = big.NewInt(cfg.PragueBlock.Int64())
@@ -991,12 +1006,14 @@ func TestActiveForksReturnsAlphabeticalNames(t *testing.T) {
 		TIPXDCXBlock:             big.NewInt(1),
 		TIPXDCXMinerDisableBlock: big.NewInt(1),
 		DynamicGasLimitBlock:     big.NewInt(1),
+		AmsterdamBlock:           big.NewInt(1),
 		XDPoS: &XDPoSConfig{V2: &V2{
 			SwitchBlock: big.NewInt(1),
 		}},
 	}
 
 	assert.Equal(t, []string{
+		"Amsterdam",
 		"Berlin",
 		"Byzantium",
 		"DynamicGasLimit",
@@ -1187,6 +1204,7 @@ func activeForksLegacyMapSort(c *ChainConfig, block *big.Int) []string {
 		"TIPEpochHalving":        c.IsTIPEpochHalving(block),
 		"Prague":                 c.IsPrague(block),
 		"Osaka":                  c.IsOsaka(block),
+		"Amsterdam":              c.IsAmsterdam(block),
 	}
 	activeForks := make([]string, 0)
 	for fork, active := range features {
@@ -1235,6 +1253,7 @@ func TestChainConfigStringIncludesAllFields(t *testing.T) {
 		TIPUpgradeRewardBlock:       big.NewInt(32),
 		TIPUpgradePenaltyBlock:      big.NewInt(33),
 		TIPEpochHalvingBlock:        big.NewInt(34),
+		AmsterdamBlock:              big.NewInt(35),
 		TRC21IssuerSMC:              common.HexToAddress("0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee"),
 		XDCXListingSMC:              common.HexToAddress("0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53"),
 		RelayerRegistrationSMC:      common.HexToAddress("0x16c63b79f9C8784168103C0b74E6A59EC2de4a02"),
@@ -1297,6 +1316,7 @@ func TestChainConfigStringIncludesAllFields(t *testing.T) {
 		"Cancun:",
 		"Prague:",
 		"Osaka:",
+		"Amsterdam:",
 		"DynamicGasLimit:",
 		"TIPUpgradeReward:",
 		"TIPUpgradePenalty:",

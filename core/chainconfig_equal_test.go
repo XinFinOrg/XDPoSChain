@@ -14,6 +14,7 @@ import (
 )
 
 var chainConfigDigestCoveredFields = []string{
+	"AmsterdamBlock",
 	"BerlinBlock",
 	"ByzantiumBlock",
 	"CancunBlock",
@@ -477,10 +478,10 @@ func TestHashChainConfigSemanticGoldenVectors(t *testing.T) {
 		cfg  *params.ChainConfig
 		want string
 	}{
-		{name: "nil", cfg: nil, want: "99be5efb88ca2013bd8e4eb035fd42d5245468fe9afa70d8ba9c1c419a48c4e8"},
-		{name: "testnet", cfg: params.TestnetChainConfig.Clone(), want: "f7a73f240ff2b0b507e641ab69c3a48abe1863774fce972e5b8b0a4cc9f2186d"},
-		{name: "mainnet", cfg: params.XDCMainnetChainConfig.Clone(), want: "15aaee6e7bacf3d540729402b76de2c6c446027dbfad49609c03df7dd8577b45"},
-		{name: "testnet-berlin-drift", cfg: testnetBerlinDrift, want: "18baa77c0abaea3befa5fe15768b52d1591d827c90c689c395f007701ed45ba5"},
+		{name: "nil", cfg: nil, want: "9b4fb24edd6d1d8830e272398263cdbf026b97392cc35387b991dc0248a628f9"},
+		{name: "testnet", cfg: params.TestnetChainConfig.Clone(), want: "f74ab89857a189bb7ee63cf226528e6e2e8d38d2e9418ae2bd09d4643c9185e1"},
+		{name: "mainnet", cfg: params.XDCMainnetChainConfig.Clone(), want: "167729d20d4db65fbc935d93d51479256977e158768c208da6e84662f05e4aa5"},
+		{name: "testnet-berlin-drift", cfg: testnetBerlinDrift, want: "54a58517b84d3e23be45628ddf0f8bdb3666f10ecf444d09297ac0e25b57e2f2"},
 	}
 
 	for _, test := range tests {

@@ -80,6 +80,7 @@ func TestStateAtTransactionAppliesBlockLevelHardForksAtActivation(t *testing.T) 
 	config.CancunBlock = one()
 	config.PragueBlock = one()
 	config.OsakaBlock = one()
+	config.AmsterdamBlock = one()
 
 	genesis := &core.Genesis{
 		Config: config,

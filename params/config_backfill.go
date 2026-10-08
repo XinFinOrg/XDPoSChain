@@ -73,6 +73,7 @@ type chainConfigForkOrderField struct {
 type chainConfigForkOrderSpecialCaseRule struct {
 	before         chainConfigBigIntField
 	after          chainConfigBigIntField
+	beforeRequired bool
 	shouldValidate func(before, after *big.Int) bool
 }
 
@@ -128,14 +129,16 @@ func chainConfigForkBlockFieldByName(name string) (chainConfigBigIntField, bool)
 	return chainConfigBigIntField{}, false
 }
 
-// chainConfigForkOrderFields is the authoritative fork activation order used
-// by CheckConfigForkOrder. It reuses the unified fork field descriptors and
-// fails fast if any known fork field is missing from this order or the
-// explicitly handled special-case rules below.
+// chainConfigForkOrderSpecialCaseRules holds the fork order relationships that
+// the linear order cannot express: pairs that sit outside the main sequence,
+// and pairs whose later fork is meaningless without the earlier one. For the
+// latter the rule sets beforeRequired, which rejects an unset earlier fork in
+// addition to one that is scheduled too late.
 var chainConfigForkOrderSpecialCaseRules = func() []chainConfigForkOrderSpecialCaseRule {
 	ruleDefs := []struct {
 		before         string
 		after          string
+		beforeRequired bool
 		shouldValidate func(before, after *big.Int) bool
 	}{
 		{
@@ -155,6 +158,16 @@ var chainConfigForkOrderSpecialCaseRules = func() []chainConfigForkOrderSpecialC
 				return before != nil && after != nil && after.Sign() > 0
 			},
 		},
+		{
+			// Amsterdam runs the Osaka rules plus the rules added on top of them,
+			// so a chain that schedules it without Osaka would execute rules it
+			// never switched on. The linear order only compares forks that are
+			// both set, hence the explicit requirement on the earlier fork.
+			before:         "OsakaBlock",
+			after:          "AmsterdamBlock",
+			beforeRequired: true,
+			shouldValidate: func(before, after *big.Int) bool { return after != nil },
+		},
 	}
 	rules := make([]chainConfigForkOrderSpecialCaseRule, 0, len(ruleDefs))
 	for _, ruleDef := range ruleDefs {
@@ -169,6 +182,7 @@ var chainConfigForkOrderSpecialCaseRules = func() []chainConfigForkOrderSpecialC
 		rules = append(rules, chainConfigForkOrderSpecialCaseRule{
 			before:         before,
 			after:          after,
+			beforeRequired: ruleDef.beforeRequired,
 			shouldValidate: ruleDef.shouldValidate,
 		})
 	}

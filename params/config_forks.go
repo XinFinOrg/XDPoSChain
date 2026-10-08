@@ -208,6 +208,11 @@ func (c *ChainConfig) IsOsaka(num *big.Int) bool {
 	return isForked(c.OsakaBlock, num)
 }
 
+// IsAmsterdam returns whether num is either equal to the Amsterdam fork block or greater.
+func (c *ChainConfig) IsAmsterdam(num *big.Int) bool {
+	return isForked(c.AmsterdamBlock, num)
+}
+
 // GasTable returns the gas table corresponding to the current phase (homestead or homestead reprice).
 //
 // The returned GasTable's fields shouldn't, under any circumstances, be changed.
@@ -251,6 +256,7 @@ type Rules struct {
 	IsCancun         bool
 	IsPrague         bool
 	IsOsaka          bool
+	IsAmsterdam      bool
 }
 
 // Rules returns the fork rules that apply at the given block number.
@@ -261,8 +267,8 @@ type Rules struct {
 // devnet and the dev test configs set 0, mainnet sets 76321000, and custom chains
 // may leave it nil. Copying upstream's
 // `IsShanghai: isMerge && c.IsShanghai(num, timestamp)` shape would silently
-// disable Shanghai/Cancun/Prague/Osaka on every chain whose MergeBlock is nil or
-// not yet reached.
+// disable Shanghai/Cancun/Prague/Osaka/Amsterdam on every chain whose MergeBlock
+// is nil or not yet reached.
 func (c *ChainConfig) Rules(num *big.Int) Rules {
 	chainId := c.ChainID
 	if chainId == nil {
@@ -287,5 +293,6 @@ func (c *ChainConfig) Rules(num *big.Int) Rules {
 		IsCancun:         c.IsCancun(num),
 		IsPrague:         c.IsPrague(num),
 		IsOsaka:          c.IsOsaka(num),
+		IsAmsterdam:      c.IsAmsterdam(num),
 	}
 }

@@ -101,8 +101,10 @@ func makeSharedStateChainWithCode(t *testing.T, code []byte) (*Genesis, sharedSt
 	}
 	// EIP-2935 stores the parent hash in the state of every block, and EIP-7934 is scheduled
 	// together with it, so stay before Prague: the point of the chain is that block 3 keeps
-	// the state root of block 2.
+	// the state root of block 2. Amsterdam is scheduled with Osaka on the test config, so it
+	// has to be cleared alongside it.
 	config.PragueBlock, config.OsakaBlock = nil, nil
+	config.AmsterdamBlock = nil
 
 	// A transfer into an account with code runs it, so the gas limit has to cover more than
 	// the transfer cost. It stays the transfer cost when there is no code, which keeps the

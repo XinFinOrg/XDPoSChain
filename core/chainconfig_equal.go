@@ -12,11 +12,12 @@ import (
 )
 
 // chainConfigDigestVersion identifies the canonical semantic encoding used by
-// hashChainConfigSemantic. Bump this when the encoding changes: older digests
-// will stop matching the fast path and chainConfigJSONEqual will fall back to
-// field-level semantic comparison until both sides are re-encoded. Update the
+// hashChainConfigSemantic. Bump this when the encoding changes, and update the
 // pinned digest expectations in core/chainconfig_equal_test.go at the same time.
-const chainConfigDigestVersion byte = 2
+// The digest is computed in-process for each comparison and is never persisted
+// or exchanged, so the version byte has no cross-version path to fall back from:
+// a mixed version pair can only arise when a test injects its own encoder.
+const chainConfigDigestVersion byte = 3
 
 func defaultHashChainConfigSemanticVersioned(cfg *params.ChainConfig) (byte, [32]byte) {
 	return chainConfigDigestVersion, hashChainConfigSemantic(cfg)

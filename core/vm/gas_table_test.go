@@ -208,6 +208,7 @@ func TestCreateGas(t *testing.T) {
 			legacyConfig.CancunBlock = nil
 			legacyConfig.PragueBlock = nil
 			legacyConfig.OsakaBlock = nil
+			legacyConfig.AmsterdamBlock = nil
 			chainConfig := &legacyConfig
 			if tt.eip3860 {
 				config.ExtraEips = []int{3860}

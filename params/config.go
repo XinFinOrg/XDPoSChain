@@ -82,6 +82,7 @@ type ChainConfig struct {
 	CancunBlock     *big.Int `json:"cancunBlock,omitempty"`
 	PragueBlock     *big.Int `json:"pragueBlock,omitempty"`
 	OsakaBlock      *big.Int `json:"osakaBlock,omitempty"`
+	AmsterdamBlock  *big.Int `json:"amsterdamBlock,omitempty"`
 
 	TIP2019Block                *big.Int `json:"tip2019Block,omitempty"`
 	TIPSigningBlock             *big.Int `json:"tipSigningBlock,omitempty"`
@@ -560,6 +561,9 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		if !rule.shouldValidate(before, after) {
 			continue
 		}
+		if rule.beforeRequired && before == nil {
+			return fmt.Errorf("invalid chain config: %w: %s is unset, but %s %v is scheduled", ErrWrongForkSwitchOrder, rule.before.name, rule.after.name, after)
+		}
 		if before.Cmp(after) > 0 {
 			return fmt.Errorf("invalid chain config: %w: %s %v > %s %v", ErrWrongForkSwitchOrder, rule.before.name, before, rule.after.name, after)
 		}
@@ -733,6 +737,9 @@ func (c *ChainConfig) String() string {
 	if c.OsakaBlock != nil {
 		result += fmt.Sprintf(", Osaka: %v", c.OsakaBlock)
 	}
+	if c.AmsterdamBlock != nil {
+		result += fmt.Sprintf(", Amsterdam: %v", c.AmsterdamBlock)
+	}
 	if c.DynamicGasLimitBlock != nil {
 		result += fmt.Sprintf(", DynamicGasLimit: %v", c.DynamicGasLimitBlock)
 	}
@@ -819,6 +826,7 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - Cancun:                      %-8v\n", c.CancunBlock)
 	banner += fmt.Sprintf("  - Prague:                      %-8v\n", c.PragueBlock)
 	banner += fmt.Sprintf("  - Osaka:                       %-8v\n", c.OsakaBlock)
+	banner += fmt.Sprintf("  - Amsterdam:                   %-8v\n", c.AmsterdamBlock)
 	banner += fmt.Sprintf("  - DynamicGasLimit:             %-8v\n", c.DynamicGasLimitBlock)
 	banner += fmt.Sprintf("  - TIPUpgradeReward:            %-8v\n", c.TIPUpgradeRewardBlock)
 	banner += fmt.Sprintf("  - TIPUpgradePenalty:           %-8v\n", c.TIPUpgradePenaltyBlock)
@@ -859,7 +867,10 @@ func (c *ChainConfig) GatherForks() []uint64 {
 // ActiveForks returns the list of active forks at the given block height.
 // The returned list is sorted in alphabetical order.
 func (c *ChainConfig) ActiveForks(block *big.Int) []string {
-	activeForks := make([]string, 0, 37)
+	activeForks := make([]string, 0, 38)
+	if c.IsAmsterdam(block) {
+		activeForks = append(activeForks, "Amsterdam")
+	}
 	if c.IsBerlin(block) {
 		activeForks = append(activeForks, "Berlin")
 	}
