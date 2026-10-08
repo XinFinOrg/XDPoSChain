@@ -182,8 +182,8 @@ func TestStateProcessorErrors(t *testing.T) {
 		tooBigNumber := new(big.Int).Set(bigNumber)
 		tooBigNumber.Add(tooBigNumber, common.Big1)
 		maxInitCodeSize := params.MaxInitCodeSize
-		if rules.IsOsaka {
-			maxInitCodeSize = params.MaxInitCodeSizeOsaka
+		if rules.IsAmsterdam {
+			maxInitCodeSize = params.MaxInitCodeSizeAmsterdam
 		}
 		tooBigInitCode := make([]byte, maxInitCodeSize+1)
 		tooBigInitCodeIntrinsicGas, err := IntrinsicGas(tooBigInitCode, nil, nil, true, rules.IsHomestead, rules.IsEIP1559)
