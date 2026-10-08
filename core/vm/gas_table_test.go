@@ -166,6 +166,13 @@ func TestEIP2200UsesCombinedStateGetter(t *testing.T) {
 	}
 }
 
+// createGasSearchCeiling bounds the gas search in TestCreateGas. A case rejected
+// by a size check fails at every gas amount, so the search returns the ceiling.
+// The ceiling must therefore exceed what the creation itself costs, otherwise a
+// creation that runs out of gas is indistinguishable from one rejected by the
+// size check, and the case stops pinning the check.
+const createGasSearchCeiling = 200_000
+
 var createGasTests = []struct {
 	code       string
 	eip3860    bool
@@ -178,14 +185,17 @@ var createGasTests = []struct {
 	{"0x61C00060006000f0" + "600052" + "60206000F3", true, 44309, 44309},
 	// create2(0, 0, 0xc001, 0) without 3860
 	{"0x600061C00160006000f5" + "600052" + "60206000F3", false, 50471, 50471},
-	// create2(0, 0, 0x10001, 0) (too large), with 3860
-	{"0x60006201000160006000f5" + "600052" + "60206000F3", true, 32012, 100000},
+	// create2(0, 0, 0x20001, 0) (too large), with 3860
+	{"0x60006202000160006000f5" + "600052" + "60206000F3", true, 32012, createGasSearchCeiling},
 	// create2(0, 0, 0xc000, 0)
-	// This case is trying to deploy code at (within) the limit
+	// This case is trying to deploy code at (within) the Osaka limit
 	{"0x600061C00060006000f5" + "600052" + "60206000F3", true, 53528, 53528},
 	// create2(0, 0, 0x10001, 0)
-	// This case is trying to deploy code exceeding Osaka limit
-	{"0x60006201000160006000f5" + "600052" + "60206000F3", true, 32024, 100000}}
+	// This case exceeds the Osaka initcode limit but stays within the Amsterdam one
+	{"0x60006201000160006000f5" + "600052" + "60206000F3", true, 62763, 62763},
+	// create2(0, 0, 0x20001, 0)
+	// This case is trying to deploy code exceeding the Amsterdam limit
+	{"0x60006202000160006000f5" + "600052" + "60206000F3", true, 32024, createGasSearchCeiling}}
 
 // TestCreateGas tests create gas.
 func TestCreateGas(t *testing.T) {
@@ -231,12 +241,12 @@ func TestCreateGas(t *testing.T) {
 			}
 			return true
 		}
-		minGas := sort.Search(100_000, doCheck)
+		minGas := sort.Search(createGasSearchCeiling, doCheck)
 		if uint64(minGas) != tt.minimumGas {
 			t.Fatalf("test %d: min gas error, want %d, have %d", i, tt.minimumGas, minGas)
 		}
 		// If the deployment succeeded, we also check the gas used
-		if minGas < 100_000 {
+		if minGas < createGasSearchCeiling {
 			if gasUsed != tt.gasUsed {
 				t.Errorf("test %d: gas used mismatch: have %v, want %v", i, gasUsed, tt.gasUsed)
 			}
