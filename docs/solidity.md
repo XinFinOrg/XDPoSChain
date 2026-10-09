@@ -62,11 +62,12 @@ The value of `block.basefee` is the gas price of the block's tier: `12.5 GWei` u
 
 The pool accepts a transaction only when its gas price reaches that same value, the base fee of the block that would include it, and rejects anything priced below with `under min gas price`; transactions to the block-signer and randomize system contracts are exempt. Tools that default to a low `gasPrice` or `maxFeePerGas`, Hardhat and Foundry among them, are rejected until it is raised:
 
-| Network | Gas tier fork      | Base fee and minimum gas price |
-| :------ | :----------------- | -----------------------------: |
-| mainnet | Gas50x (80370000)  |                     12.5 GWei |
-| testnet | Gas50x (56828700)  |                     12.5 GWei |
-| devnet  | Gas2500x (1385100) |                      625 GWei |
+| Network | Gas tier fork       | Base fee and minimum gas price   |
+| :------ | :------------------ | -------------------------------: |
+| mainnet | Gas50x (80370000)   |                        12.5 GWei |
+| testnet | Gas50x (56828700)   |                        12.5 GWei |
+| testnet | Gas2500x (83600000) |                         625 GWei |
+| devnet  | Gas2500x (1385100)  |                         625 GWei |
 
 Read the floor from the node with `eth_gasPrice` instead of hardcoding it.
 
