@@ -1031,6 +1031,11 @@ func TestLoadChainConfigRejectsProvidedGenesisDriftForStoredCustomChain(t *testi
 		return &Genesis{
 			Config: &params.ChainConfig{
 				ChainID:                big.NewInt(4545),
+				HomesteadBlock:         big.NewInt(0),
+				EIP150Block:            big.NewInt(0),
+				EIP155Block:            big.NewInt(0),
+				EIP158Block:            big.NewInt(0),
+				ByzantiumBlock:         big.NewInt(0),
 				TIPTRC21FeeBlock:       big.NewInt(1),
 				Gas50xBlock:            big.NewInt(1),
 				TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,

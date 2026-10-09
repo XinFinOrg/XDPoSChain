@@ -782,6 +782,11 @@ func TestSetupGenesisBlockDoesNotRewriteStoredCustomConfigOnCompatDrift(t *testi
 		xdposCfg.V2.SwitchEpoch = 2
 		cfg := &params.ChainConfig{
 			ChainID:                big.NewInt(4444),
+			HomesteadBlock:         big.NewInt(0),
+			EIP150Block:            big.NewInt(0),
+			EIP155Block:            big.NewInt(0),
+			EIP158Block:            big.NewInt(0),
+			ByzantiumBlock:         big.NewInt(0),
 			TIPTRC21FeeBlock:       big.NewInt(1),
 			Gas50xBlock:            big.NewInt(1),
 			TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
@@ -892,6 +897,11 @@ func TestSetupGenesisBlockReturnsCompatErrorWhenCompatDriftRewindsToZero(t *test
 		xdposCfg.V2.SwitchEpoch = 2
 		cfg := &params.ChainConfig{
 			ChainID:                big.NewInt(4444),
+			HomesteadBlock:         big.NewInt(0),
+			EIP150Block:            big.NewInt(0),
+			EIP155Block:            big.NewInt(0),
+			EIP158Block:            big.NewInt(0),
+			ByzantiumBlock:         big.NewInt(0),
 			TIPTRC21FeeBlock:       big.NewInt(1),
 			Gas50xBlock:            big.NewInt(1),
 			TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,

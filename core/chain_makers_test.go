@@ -84,6 +84,10 @@ func ExampleGenerateChain() {
 		Config: &params.ChainConfig{
 			ChainID:                big.NewInt(1337),
 			HomesteadBlock:         new(big.Int),
+			EIP150Block:            new(big.Int).Set(futureFork),
+			EIP155Block:            new(big.Int).Set(futureFork),
+			EIP158Block:            new(big.Int).Set(futureFork),
+			ByzantiumBlock:         new(big.Int).Set(futureFork),
 			TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
 			XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
 			RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,

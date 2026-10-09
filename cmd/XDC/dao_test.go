@@ -27,6 +27,7 @@ import (
 )
 
 const daoFutureForkConfig = `
+		"homesteadBlock" : 0,
 		"eip150Block" : 1000000000,
 		"eip155Block" : 1000000000,
 		"eip158Block" : 1000000000,

@@ -505,6 +505,13 @@ func (c *ChainConfig) requiresXDCForkConfig() bool {
 	return c.XDPoS != nil
 }
 
+// forkSequenceError reports a standard fork that later slots build on but that
+// no schedule declared. The sequence scan and the Petersburg pair check both
+// reject through this wording, so it stays written once.
+func forkSequenceError(missing, scheduled string, value *big.Int) error {
+	return fmt.Errorf("invalid chain config: %w: %s is unset, but %s %v is scheduled", ErrWrongForkSwitchOrder, missing, scheduled, value)
+}
+
 // CheckConfigForkOrder validates that configured forks, required addresses, and
 // XDPoS settings are internally consistent and activate in a supported order.
 func (c *ChainConfig) CheckConfigForkOrder() error {
@@ -555,14 +562,47 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 	if forkOrderErr != nil {
 		return forkOrderErr
 	}
+	// A fork that later standard forks build on must be declared before any
+	// later standard fork is scheduled. The linear scan above only compares two
+	// forks when both are configured, so a skipped fork slips through it: every
+	// slot in this chain config is optional by design.
+	var skippedForkErr error
+	declared := true
+	lastRequired := ""
+	ForEachChainConfigForkSequenceBlock(c, func(name string, value *big.Int, required bool) {
+		if skippedForkErr != nil {
+			return
+		}
+		// scheduled names the field the value comes from, which is not always the
+		// slot itself: Istanbul and Petersburg can be activated through their
+		// fallback.
+		scheduled := name
+		if required {
+			value, scheduled = chainConfigForkSequenceEffectiveValue(c, name, value)
+		}
+		if value != nil && !declared {
+			skippedForkErr = forkSequenceError(lastRequired, scheduled, value)
+			return
+		}
+		if required {
+			declared = value != nil
+			lastRequired = name
+		}
+	})
+	if skippedForkErr != nil {
+		return skippedForkErr
+	}
+	// That scan reports a gap only when a later slot carries a value. Petersburg
+	// is paired with Constantinople instead of with a later fork, so a schedule
+	// that stops at Constantinople needs a check of its own.
+	if missing, trigger, triggerValue, unmet := chainConfigForkSequencePetersburgPair(c); unmet {
+		return forkSequenceError(missing, trigger, triggerValue)
+	}
 	for _, rule := range chainConfigForkOrderSpecialCaseRules {
 		before := rule.before.get(c)
 		after := rule.after.get(c)
 		if !rule.shouldValidate(before, after) {
 			continue
-		}
-		if rule.beforeRequired && before == nil {
-			return fmt.Errorf("invalid chain config: %w: %s is unset, but %s %v is scheduled", ErrWrongForkSwitchOrder, rule.before.name, rule.after.name, after)
 		}
 		if before.Cmp(after) > 0 {
 			return fmt.Errorf("invalid chain config: %w: %s %v > %s %v", ErrWrongForkSwitchOrder, rule.before.name, before, rule.after.name, after)

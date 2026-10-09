@@ -2174,6 +2174,7 @@ func TestEIP161AccountRemoval(t *testing.T) {
 			Config: &params.ChainConfig{
 				ChainID:          big.NewInt(1337),
 				HomesteadBlock:   new(big.Int),
+				EIP150Block:      new(big.Int),
 				EIP155Block:      new(big.Int),
 				EIP158Block:      big.NewInt(2),
 				ByzantiumBlock:   new(big.Int).Set(futureFork),
