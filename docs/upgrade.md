@@ -178,7 +178,7 @@ The node does not rewrite the database on every startup.
 3. If the two effective configs are semantically identical, startup does not rewrite the stored chain-config blob just because runtime backfill filled omitted fields in memory.
 4. If the new effective config is semantically different and compatibility checks pass, the node writes the new resolved `ChainConfig` to the database.
 
-In this context, “semantically different” means the two configs differ after ignoring JSON field-presence tracking. In other words, field omission alone is not treated as a meaningful change if the resolved values are the same.
+In this context, "semantically different" means the two configs differ after ignoring JSON field-presence tracking. In other words, field omission alone is not treated as a meaningful change if the resolved values are the same.
 
 Additional notes:
 

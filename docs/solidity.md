@@ -52,7 +52,7 @@ The contract is only present once Prague is active on the network, so there is n
 
 ### block.prevrandao
 
-The value of `block.prevrandao` is `keccak256(block.number)` in our current implemention. It is predictable and unsafe.
+The value of `block.prevrandao` is `keccak256(block.number)` in our current implementation. It is predictable and unsafe.
 
 **NOTICE: do not use it in real business.**
 
@@ -77,4 +77,4 @@ XDPoSChain has no blob transactions (transaction type `0x03`) and no blob fields
 
 ### block.blobbasefee
 
-The value of `block.blobbasefee` is always 0 in our EIP-7516 implemention. EIP-7516 sets a floor of 1 wei; XDPoSChain stays at 0 because it runs no blob fee market. Do not use it to infer on-chain activity.
+The value of `block.blobbasefee` is always 0 in our EIP-7516 implementation. EIP-7516 sets a floor of 1 wei; XDPoSChain stays at 0 because it runs no blob fee market. Do not use it to infer on-chain activity.
