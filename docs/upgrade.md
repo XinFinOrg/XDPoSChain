@@ -1,7 +1,6 @@
 # Upgrade Notes
 
-This document summarizes the current startup rules for `genesis` and
-`ChainConfig` in XDPoSChain:
+This document summarizes the current startup rules for `genesis` and `ChainConfig` in XDPoSChain:
 
 - how single-binary startup now selects the target network at runtime
 - how the node distinguishes built-in networks, Localnet, and custom networks
@@ -12,10 +11,7 @@ This document summarizes the current startup rules for `genesis` and
 
 ## Operator Migration: Single Binary, Runtime Network Selection
 
-The network-specific constant files `constants.mainnet.go`,
-`constants.testnet.go`, `constants.devnet.go`, and `constants.local.go` have
-been removed from the startup path. Operators should now assume a single `XDC`
-binary and select the target network at runtime.
+The network-specific constant files `constants.mainnet.go`, `constants.testnet.go`, `constants.devnet.go`, and `constants.local.go` have been removed from the startup path. Operators should now assume a single `XDC` binary and select the target network at runtime.
 
 Impact for existing automation:
 
@@ -25,14 +21,21 @@ Impact for existing automation:
 
 Built-in network selection now maps to the following runtime choices:
 
-- Mainnet: `XDC --mainnet ...`
-- Mainnet notes: equivalent alias `--xinfin`. If `--networkid` is omitted, startup uses chain ID `50` and the built-in mainnet genesis.
-- Testnet: `XDC --testnet ...`
-- Testnet notes: equivalent alias `--apothem`. If `--networkid` is omitted, startup uses chain ID `51` and the built-in testnet genesis.
-- Devnet: `XDC --devnet ...`
-- Devnet notes: if `--networkid` is omitted, startup uses chain ID `551` and the built-in devnet genesis.
-- Localnet: explicit `genesis.json` plus `XDC --datadir <datadir> init /path/to/genesis.json`, then `XDC --datadir <datadir> --networkid 5151 ...`
-- Localnet notes: there is no dedicated `--localnet` flag. Localnet is identified from the resolved config by `ChainID == 5151`.
+- Mainnet:
+  - Startup: `XDC --mainnet ...`.
+  - Equivalent alias `--xinfin`.
+  - If `--networkid` is omitted, startup uses chain ID `50` and the built-in mainnet genesis.
+- Testnet:
+  - Startup: `XDC --testnet ...`.
+  - Equivalent alias `--apothem`.
+  - If `--networkid` is omitted, startup uses chain ID `51` and the built-in testnet genesis.
+- Devnet:
+  - Startup: `XDC --devnet ...`.
+  - If `--networkid` is omitted, startup uses chain ID `551` and the built-in devnet genesis.
+- Localnet:
+  - Startup: explicit `genesis.json` plus `XDC --datadir <datadir> init /path/to/genesis.json`, then `XDC --datadir <datadir> --networkid 5151 ...`.
+  - There is no dedicated `--localnet` flag.
+  - Localnet is identified from the resolved config by `ChainID == 5151`.
 
 Practical migration rules:
 
@@ -58,9 +61,7 @@ XDC --datadir <datadir> init /path/to/genesis.json
 XDC --datadir <datadir> --networkid 5151 <other flags>
 ```
 
-If an operator script previously inferred the network only from which constant
-file or binary variant was present, that script now needs an explicit runtime
-branch. The required branch point is:
+If an operator script previously inferred the network only from which constant file or binary variant was present, that script now needs an explicit runtime branch. The required branch point is:
 
 - built-in networks: add the matching built-in flag
 - Localnet/custom networks: pass the authoritative `genesis.json` on writable initialization and use the intended chain ID on normal startup
@@ -78,85 +79,67 @@ The node classifies the effective startup config in the following order:
 
 ## Backfill Rules
 
-Backfill only applies to fields that are actually missing. Explicit `0`,
-`false`, `null`, or zero-address values remain authoritative and are not
-overwritten. However, a zero address is only treated as an explicit override
-for backfill purposes. If validation requires a system-contract address to be
-set, the config may still be rejected instead of accepting the zero address as
-a usable value.
+Backfill only applies to fields that are actually missing. Explicit `0`, `false`, `null`, or zero-address values remain authoritative and are not overwritten. However, a zero address is only treated as an explicit override for backfill purposes. If validation requires a system-contract address to be set, the config may still be rejected instead of accepting the zero address as a usable value.
 
-`BackfillMissingFieldsFrom` uses strict JSON-key presence when the config came
-from `UnmarshalJSON`. In that case, an explicit value such as
-`"berlinBlock": 0` or `"pragueBlock": null` is preserved because the key is
-present in the original JSON. If a `ChainConfig` is constructed directly in Go
-code, or through a helper that never populated JSON presence metadata, the
-compatibility fallback degrades to treating `nil` pointers and zero values as
-missing. That fallback is intentional for legacy callers, but it means `nil`
-on a fork-block pointer is interpreted as "missing", not as "this fork is
-intentionally absent".
+`BackfillMissingFieldsFrom` uses strict JSON-key presence when the config came from `UnmarshalJSON`. In that case, an explicit value such as `"berlinBlock": 0` or `"pragueBlock": null` is preserved because the key is present in the original JSON. If a `ChainConfig` is constructed directly in Go code, or through a helper that never populated JSON presence metadata, the compatibility fallback degrades to treating `nil` pointers and zero values as missing. That fallback is intentional for legacy callers, but it means `nil` on a fork-block pointer is interpreted as "missing", not as "this fork is intentionally absent".
 
-Presence tracking is not uniform across every field class. Use the list below
-when deciding whether omission, `null`, `0`, `false`, or a zero address will be
-preserved during backfill.
+Presence tracking is not uniform across every field class. Use the list below when deciding whether omission, `null`, `0`, `false`, or a zero address will be preserved during backfill.
 
 - Top-level `*big.Int` fork pointers
-  Examples: `berlinBlock`, `pragueBlock`, `tip2019Block`
-  JSON-backed configs: yes. `0` and `null` are both preserved because the JSON key is tracked.
-  After `CloneForBackfill` on programmatic configs: yes. Any non-`nil` pointer is treated as explicit, including `big.NewInt(0)`.
-  Backfill meaning: `*big.Int(0)` means "active from genesis"; `nil` means missing when no JSON presence is available.
+  - Examples: `berlinBlock`, `pragueBlock`, `tip2019Block`
+  - JSON-backed configs: yes. `0` and `null` are both preserved because the JSON key is tracked.
+  - After `CloneForBackfill` on programmatic configs: yes. Any non-`nil` pointer is treated as explicit, including `big.NewInt(0)`.
+  - Backfill meaning: `*big.Int(0)` means "active from genesis"; `nil` means missing when no JSON presence is available.
 
 - Top-level consensus-engine pointers
-  Examples: `ethash`, `clique`, `XDPoS`
-  JSON-backed configs: yes.
-  After `CloneForBackfill` on programmatic configs: yes.
-  Backfill meaning: `nil` means missing, non-`nil` means explicit.
+  - Examples: `ethash`, `clique`, `XDPoS`
+  - JSON-backed configs: yes.
+  - After `CloneForBackfill` on programmatic configs: yes.
+  - Backfill meaning: `nil` means missing, non-`nil` means explicit.
 
 - Top-level system-contract addresses
-  Examples: `trc21IssuerSMC`
-  JSON-backed configs: yes. A JSON zero address is preserved as an explicit override.
-  After `CloneForBackfill` on programmatic configs: partially. Only non-zero addresses can be inferred as present.
-  Backfill meaning: zero address is authoritative only when JSON key presence was captured.
+  - Examples: `trc21IssuerSMC`
+  - JSON-backed configs: yes. A JSON zero address is preserved as an explicit override.
+  - After `CloneForBackfill` on programmatic configs: partially. Only non-zero addresses can be inferred as present.
+  - Backfill meaning: zero address is authoritative only when JSON key presence was captured.
 
 - Top-level booleans
-  Examples: `daoForkSupport`
-  JSON-backed configs: yes.
-  After `CloneForBackfill` on programmatic configs: partially. `true` is inferrable; `false` needs JSON presence unless related fork context already proves intent.
-  Backfill meaning: without presence tracking, `false` falls back to "missing".
+  - Examples: `daoForkSupport`
+  - JSON-backed configs: yes.
+  - After `CloneForBackfill` on programmatic configs: partially. `true` is inferrable; `false` needs JSON presence unless related fork context already proves intent.
+  - Backfill meaning: without presence tracking, `false` falls back to "missing".
 
 - XDPoS scalar numerics
-  Examples: `period`, `epoch`, `reward`, `maxMasternodesV2`
-  JSON-backed configs: yes.
-  After `CloneForBackfill` on programmatic configs: partially. Non-zero values are inferrable; zero needs JSON presence.
-  Backfill meaning: without presence tracking, zero falls back to "missing".
+  - Examples: `period`, `epoch`, `reward`, `maxMasternodesV2`
+  - JSON-backed configs: yes.
+  - After `CloneForBackfill` on programmatic configs: partially. Non-zero values are inferrable; zero needs JSON presence.
+  - Backfill meaning: without presence tracking, zero falls back to "missing".
 
 - XDPoS boolean
-  Examples: `SkipV1Validation`
-  JSON-backed configs: yes.
-  After `CloneForBackfill` on programmatic configs: yes for `CloneForBackfill`; it explicitly tracks this field even when `false`.
-  Backfill meaning: `false` stays authoritative once tracked.
+  - Examples: `SkipV1Validation`
+  - JSON-backed configs: yes.
+  - After `CloneForBackfill` on programmatic configs: yes for `CloneForBackfill`; it explicitly tracks this field even when `false`.
+  - Backfill meaning: `false` stays authoritative once tracked.
 
 - V2 scalar numerics and floats
-  Examples: `switchRound`, `timeoutPeriod`, `certificateThreshold`, `base`
-  JSON-backed configs: yes.
-  After `CloneForBackfill` on programmatic configs: partially. Non-zero values are inferrable; zero needs JSON presence.
-  Backfill meaning: without presence tracking, zero falls back to "missing".
+  - Examples: `switchRound`, `timeoutPeriod`, `certificateThreshold`, `base`
+  - JSON-backed configs: yes.
+  - After `CloneForBackfill` on programmatic configs: partially. Non-zero values are inferrable; zero needs JSON presence.
+  - Backfill meaning: without presence tracking, zero falls back to "missing".
 
 - Nested pointer fields
-  Examples: `XDPoS.v2.switchBlock`, `XDPoS.v2.config`, `XDPoS.v2.expTimeoutConfig`
-  JSON-backed configs: yes.
-  After `CloneForBackfill` on programmatic configs: yes for non-`nil` pointers or populated nested structs.
-  Backfill meaning: `nil` stays authoritative only when the containing JSON key was present.
+  - Examples: `XDPoS.v2.switchBlock`, `XDPoS.v2.config`, `XDPoS.v2.expTimeoutConfig`
+  - JSON-backed configs: yes.
+  - After `CloneForBackfill` on programmatic configs: yes for non-`nil` pointers or populated nested structs.
+  - Backfill meaning: `nil` stays authoritative only when the containing JSON key was present.
 
 - Container fields with entry-level limits
-  Examples: `XDPoS.v2.allConfigs`
-  JSON-backed configs: container presence is tracked, and explicit `allConfigs[round]: null` entries are preserved once decoded into the map.
-  After `CloneForBackfill` on programmatic configs: container presence is tracked when the map is non-empty, but per-entry scalar zero values still rely on each nested config's own tracking.
-  Backfill meaning: backfill only adds missing map keys; it does not overwrite an existing key whose value is `null`.
+  - Examples: `XDPoS.v2.allConfigs`
+  - JSON-backed configs: container presence is tracked, and explicit `allConfigs[round]: null` entries are preserved once decoded into the map.
+  - After `CloneForBackfill` on programmatic configs: container presence is tracked when the map is non-empty, but per-entry scalar zero values still rely on each nested config's own tracking.
+  - Backfill meaning: backfill only adds missing map keys; it does not overwrite an existing key whose value is `null`.
 
-The practical rule is: if a field needs to distinguish "explicit zero/false/null"
-from "missing", prefer JSON input or call `CloneForBackfill` before hydration.
-For pointer-valued fork fields, `CloneForBackfill` is sufficient to preserve the
-`*big.Int(0)` vs `nil` distinction.
+The practical rule is: if a field needs to distinguish "explicit zero/false/null" from "missing", prefer JSON input or call `CloneForBackfill` before hydration. For pointer-valued fork fields, `CloneForBackfill` is sufficient to preserve the `*big.Int(0)` vs `nil` distinction.
 
 | Class                     | Backfill source                                                          | What is backfilled                                                                                                                                                                                                                                                                                                                                                                |
 | ------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -180,48 +163,33 @@ Operational note for custom/private networks:
 - The node now emits a `WARN` listing the auto-filled fields when this custom-Localnet fallback happens through `BackfillMissingFieldsFrom`.
 - To disable this behavior, declare every fork field explicitly in your custom chain config instead of relying on omission. Use `null` to disable a pointer-based fork, and `0` or another block number only when that activation is intentional.
 
-Prague declaration requirement:
+Fork declaration requirement:
 
-- Every chain config should now declare `pragueBlock` explicitly.
-- Use `"pragueBlock": null` to keep Prague disabled, or a positive integer to schedule activation.
-- Do not rely on omission as a long-term configuration strategy. Legacy built-in and Localnet configs can still have a missing `pragueBlock` hydrated from their bundled backfill source through `BackfillMissingFieldsFrom`, but custom-network hydration does not inherit later-added fork switches automatically.
+- Every chain config should now declare each fork switch explicitly, starting with the two latest, `pragueBlock` and `amsterdamBlock`.
+- Use `null` to keep a fork disabled, or a positive integer to schedule activation.
+- Do not rely on omission as a long-term configuration strategy. Legacy built-in and Localnet configs can still have a missing `pragueBlock` hydrated from their bundled backfill source through `BackfillMissingFieldsFrom`, but custom-network hydration does not inherit later-added fork switches automatically, and `amsterdamBlock` sits in the same built-in backfill set as `pragueBlock`.
 
 ## When a New ChainConfig Is Written to the Database
 
 The node does not rewrite the database on every startup.
 
-1. On an empty database, first initialization writes the resolved
-  `ChainConfig` after startup hydration and validation.
-2. On an existing database, ordinary startup compares the stored config and the
-  new effective config after clearing JSON field-presence metadata.
-3. If the two effective configs are semantically identical, startup does not
-  rewrite the stored chain-config blob just because runtime backfill filled
-  omitted fields in memory.
-4. If the new effective config is semantically different and compatibility
-  checks pass, the node writes the new resolved `ChainConfig` to the database.
+1. On an empty database, first initialization writes the resolved `ChainConfig` after startup hydration and validation.
+2. On an existing database, ordinary startup compares the stored config and the new effective config after clearing JSON field-presence metadata.
+3. If the two effective configs are semantically identical, startup does not rewrite the stored chain-config blob just because runtime backfill filled omitted fields in memory.
+4. If the new effective config is semantically different and compatibility checks pass, the node writes the new resolved `ChainConfig` to the database.
 
-In this context, “semantically different” means the two configs differ after
-ignoring JSON field-presence tracking. In other words, field omission alone is
-not treated as a meaningful change if the resolved values are the same.
+In this context, "semantically different" means the two configs differ after ignoring JSON field-presence tracking. In other words, field omission alone is not treated as a meaningful change if the resolved values are the same.
 
 Additional notes:
 
-- For built-in networks, adding a new future fork in `params/config.go` does
- not automatically rewrite an existing stored built-in `ChainConfig` during an
- ordinary restart if runtime hydration already makes the effective config match
- the bundled config.
-- For same-hash custom chains, first explicit initialization can also persist a
- chain-config override marker for that data directory.
+- For built-in networks, adding a new future fork in `params/config.go` does not automatically rewrite an existing stored built-in `ChainConfig` during an ordinary restart if runtime hydration already makes the effective config match the bundled config.
+- For same-hash custom chains, first explicit initialization can also persist a chain-config override marker for that data directory.
 
 ## Chain Config Mismatch Policy (`--chain-config-mismatch-policy`)
 
-When startup resolves a runtime `ChainConfig` that is incompatible with the
-stored config, `SetupGenesisBlock` / `LoadChainConfigWithCompat` return a
-non-nil `ConfigCompatError`. How the node reacts to that error is now controlled
-by an explicit startup policy instead of an unconditional rewind.
+When startup resolves a runtime `ChainConfig` that is incompatible with the stored config, `SetupGenesisBlock` / `LoadChainConfigWithCompat` return a non-nil `ConfigCompatError`. How the node reacts to that error is now controlled by an explicit startup policy instead of an unconditional rewind.
 
-Set the policy with the `--chain-config-mismatch-policy` flag (or the
-`ChainConfigMismatchPolicy` field in the TOML config). Supported values:
+Set the policy with the `--chain-config-mismatch-policy` flag (or the `ChainConfigMismatchPolicy` field in the TOML config). Supported values:
 
 - `exit` (default)
   - Behavior on mismatch: abort startup with an error; the database is not modified.
@@ -247,32 +215,15 @@ Set the policy with the `--chain-config-mismatch-policy` flag (or the
 
 Behavior change relative to older startup logic:
 
-- The previous behavior was equivalent to `rewind-and-update` and ran
-  unconditionally on writable startup. The default is now `exit`, so an
-  incompatible config makes the node stop and hand the decision to the operator
-  instead of silently rewinding the chain and rewriting stored config.
-- To preserve the old automatic-rewind behavior, start with
-  `--chain-config-mismatch-policy=rewind-and-update`.
+- The previous behavior was equivalent to `rewind-and-update` and ran unconditionally on writable startup. The default is now `exit`, so an incompatible config makes the node stop and hand the decision to the operator instead of silently rewinding the chain and rewriting stored config.
+- To preserve the old automatic-rewind behavior, start with `--chain-config-mismatch-policy=rewind-and-update`.
 
 Operational guidance:
 
-- Prefer `exit` (the default) and investigate why the resolved config disagrees
-  with the stored config before choosing a recovery mode. A mismatch usually
-  means the wrong `--networkid`/`--datadir`/`genesis.json` combination, not a
-  routine upgrade.
-- Use `rewind-and-update` only when you intend to roll the head back to the
-  fork boundary and reprocess blocks under the new rules. This is the only
-  policy that keeps the head consistent with the new config.
-- `update-config-only` and `ignore-mismatch` are advanced escape hatches and **high-risk options**. They do **not**
-  reprocess blocks that were already imported past the changed fork boundary,
-  so the running head can diverge in state/consensus from a node that rewound.
-  `update-config-only` additionally marks the mismatch as resolved on disk, so the
-  warning will not recur even though no reprocessing happened. Treat both as
-  `may cause state/consensus divergence; expert use only` and use them only
-  when you fully understand the consensus implications.
-- `rewind-and-update` and `update-config-only` require a writable open. In readonly
-  mode they refuse to start so the database is never mutated; reopen in writable
-  mode, or use `exit`/`ignore-mismatch`, to proceed without writes.
+- Prefer `exit` (the default) and investigate why the resolved config disagrees with the stored config before choosing a recovery mode. A mismatch usually means the wrong `--networkid`/`--datadir`/`genesis.json` combination, not a routine upgrade.
+- Use `rewind-and-update` only when you intend to roll the head back to the fork boundary and reprocess blocks under the new rules. This is the only policy that keeps the head consistent with the new config.
+- `update-config-only` and `ignore-mismatch` are advanced escape hatches and **high-risk options**. They do **not** reprocess blocks that were already imported past the changed fork boundary, so the running head can diverge in state/consensus from a node that rewound. `update-config-only` additionally marks the mismatch as resolved on disk, so the warning will not recur even though no reprocessing happened. Treat both as `may cause state/consensus divergence; expert use only` and use them only when you fully understand the consensus implications.
+- `rewind-and-update` and `update-config-only` require a writable open. In readonly mode they refuse to start so the database is never mutated; reopen in writable mode, or use `exit`/`ignore-mismatch`, to proceed without writes.
 
 ## Startup API Semantics
 
@@ -292,30 +243,21 @@ Important behavior changes relative to older startup logic:
 
 ## Schema Change: `chainConfigOverride`
 
-Same-hash custom chains now persist a dedicated metadata marker under the rawdb
-key prefix:
+Same-hash custom chains now persist a dedicated metadata marker under the rawdb key prefix:
 
 ```text
 ethereum-cfgoverride-<genesisHash>
 ```
 
-The value is a versioned payload written by `WriteChainConfigOverride` when a
-data directory is intentionally using a custom `ChainConfig` for a genesis hash
-that also matches a bundled built-in network. The current format is two bytes:
+The value is a versioned payload written by `WriteChainConfigOverride` when a data directory is intentionally using a custom `ChainConfig` for a genesis hash that also matches a bundled built-in network. The current format is two bytes:
 
 ```text
 {version=1, flags=1}
 ```
 
-This change does not bump `core.BlockChainVersion`. The marker is additive
-metadata under a new rawdb key prefix; it does not rewrite existing block,
-receipt, trie, or chain-config encodings, and it does not change the meaning of
-`databaseVersionKey`. Older binaries that do not know this key simply leave it
-unread.
+This change does not bump `core.BlockChainVersion`. The marker is additive metadata under a new rawdb key prefix; it does not rewrite existing block, receipt, trie, or chain-config encodings, and it does not change the meaning of `databaseVersionKey`. Older binaries that do not know this key simply leave it unread.
 
-The override prefix intentionally no longer shares the `ethereum-config-`
-prefix namespace, so future rawdb prefix iteration over chain-config blobs does
-not accidentally scan override metadata.
+The override prefix intentionally no longer shares the `ethereum-config-` prefix namespace, so future rawdb prefix iteration over chain-config blobs does not accidentally scan override metadata.
 
 This marker is used to distinguish:
 
@@ -331,9 +273,7 @@ Forward-compatibility rules:
 Downgrade warning:
 
 - Older binaries do not know about the versioned `chainConfigOverride` metadata.
-- At the rawdb layer they ignore the additional key, but because they never
-  consult the marker they cannot preserve the upgraded same-hash custom-chain
-  classification rules.
+- At the rawdb layer they ignore the additional key, but because they never consult the marker they cannot preserve the upgraded same-hash custom-chain classification rules.
 - If you start a new binary and allow it to persist the new marker, then roll back to an older binary on the same data directory, the old binary may misclassify the chain instead of refusing startup.
 - For a same-hash custom chain, that downgrade can surface `errGenesisConfigConflict` or cause the node to ignore the intended custom classification because the old code cannot see the override marker.
 
@@ -344,8 +284,7 @@ Operational guidance:
 
 ## Compatibility Matrix For Existing Mainnet/Testnet/Devnet Databases
 
-This matrix applies to data directories whose canonical genesis hash is one of
-the bundled built-in networks:
+This matrix applies to data directories whose canonical genesis hash is one of the bundled built-in networks:
 
 - Mainnet (`ChainID == 50`)
 - Testnet (`ChainID == 51`)
@@ -359,45 +298,24 @@ Use the matching runtime flag on the upgraded binary:
 
 Ordinary built-in Mainnet, Testnet, or Devnet database using the bundled config
 
-  First startup on the current binary:
-  Supported as a direct restart with the matching built-in runtime flag. No explicit `genesis.json` is required for ordinary built-in data directories.
-
-  State after successful upgrade or repair:
-  Remains a built-in network database. Ordinary startup does not need to persist `chainConfigOverride` metadata for this path.
-
-  Can the same post-upgrade database be reopened by an older binary?
-  Usually yes. The additive override-marker schema is not required for an ordinary built-in database, so rollback risk is much lower. Still take a backup before any downgrade.
-
-  Operator guidance:
-  A normal rolling upgrade is acceptable. Keep the network selection explicit with `--mainnet`, `--testnet`, or `--devnet`.
+  - First startup on the current binary: Supported as a direct restart with the matching built-in runtime flag. No explicit `genesis.json` is required for ordinary built-in data directories.
+  - State after successful upgrade or repair: Remains a built-in network database. Ordinary startup does not need to persist `chainConfigOverride` metadata for this path.
+  - Can the same post-upgrade database be reopened by an older binary? Usually yes. The additive override-marker schema is not required for an ordinary built-in database, so rollback risk is much lower. Still take a backup before any downgrade.
+  - Operator guidance: A normal rolling upgrade is acceptable. Keep the network selection explicit with `--mainnet`, `--testnet`, or `--devnet`.
 
 Legacy pre-marker same-hash custom database on a built-in genesis hash or chain ID, with no persisted override marker yet
 
-  First startup on the current binary:
-  Not safe as a plain restart. Readonly checks and restart attempts without the authoritative custom `genesis.json` can fail with `errGenesisConfigConflict`. The current binary does not implicitly migrate this case on a readonly path.
-
-  State after successful upgrade or repair:
-  After a writable repair, typically `XDC --allow-builtin-config-override init --datadir <datadir> /path/to/genesis.json` or another writable startup with the matching authoritative genesis, the node persists the repaired chain-config metadata and the `chainConfigOverride` marker. Later readonly reopen paths on the current binary can then use the stored custom classification directly; writable restarts that would repair or rewrite metadata still require `--allow-builtin-config-override`.
-
-  Can the same post-upgrade database be reopened by an older binary?
-  No, not safely after the repair has written the marker. Older binaries ignore the marker and may misclassify the chain or surface a config conflict.
-
-  Operator guidance:
-  Treat the first upgraded start as a migration. Back up the data directory, run the writable repair with the exact matching custom genesis and `--allow-builtin-config-override`, then use readonly commands normally once that migration has completed. Keep `--allow-builtin-config-override` on later writable repair or rewrite paths that must continue to honor the stored custom override instead of the bundled built-in config.
+  - First startup on the current binary: Not safe as a plain restart. Readonly checks and restart attempts without the authoritative custom `genesis.json` can fail with `errGenesisConfigConflict`. The current binary does not implicitly migrate this case on a readonly path.
+  - State after successful upgrade or repair: After a writable repair, typically `XDC --allow-builtin-config-override init --datadir <datadir> /path/to/genesis.json` or another writable startup with the matching authoritative genesis, the node persists the repaired chain-config metadata and the `chainConfigOverride` marker. Later readonly reopen paths on the current binary can then use the stored custom classification directly; writable restarts that would repair or rewrite metadata still require `--allow-builtin-config-override`.
+  - Can the same post-upgrade database be reopened by an older binary? No, not safely after the repair has written the marker. Older binaries ignore the marker and may misclassify the chain or surface a config conflict.
+  - Operator guidance: Treat the first upgraded start as a migration. Back up the data directory, run the writable repair with the exact matching custom genesis and `--allow-builtin-config-override`, then use readonly commands normally once that migration has completed. Keep `--allow-builtin-config-override` on later writable repair or rewrite paths that must continue to honor the stored custom override instead of the bundled built-in config.
 
 Already-migrated same-hash custom database on a built-in genesis hash or chain ID, with `chainConfigOverride` already present
 
-  First startup on the current binary:
-  Supported on the current binary. The marker preserves same-hash custom classification for that data directory, so readonly reopen paths use the stored custom config directly. Writable startup paths that may rewrite metadata still require `--allow-builtin-config-override`.
-
-  State after successful upgrade or repair:
-  Remains an override-backed same-hash custom database. Current binaries continue to honor the stored custom classification and repaired metadata.
-
-  Can the same post-upgrade database be reopened by an older binary?
-  No, not safely. This is the downgrade case called out above: older binaries do not understand `chainConfigOverride` and cannot preserve the upgraded classification rules.
-
-  Operator guidance:
-  Do not downgrade on the same live database. If an older binary must be tested, restore a backup or snapshot taken before the marker existed.
+  - First startup on the current binary: Supported on the current binary. The marker preserves same-hash custom classification for that data directory, so readonly reopen paths use the stored custom config directly. Writable startup paths that may rewrite metadata still require `--allow-builtin-config-override`.
+  - State after successful upgrade or repair: Remains an override-backed same-hash custom database. Current binaries continue to honor the stored custom classification and repaired metadata.
+  - Can the same post-upgrade database be reopened by an older binary? No, not safely. This is the downgrade case called out above: older binaries do not understand `chainConfigOverride` and cannot preserve the upgraded classification rules.
+  - Operator guidance: Do not downgrade on the same live database. If an older binary must be tested, restore a backup or snapshot taken before the marker existed.
 
 Operational summary:
 
@@ -407,8 +325,7 @@ Operational summary:
 
 ## Operator Impact and Repair Workflow
 
-Readonly checks can now tell you that the database is logically repairable but
-not safe to continue with as-is.
+Readonly checks can now tell you that the database is logically repairable but not safe to continue with as-is.
 
 Typical cases:
 
@@ -416,14 +333,9 @@ Typical cases:
 - a same-hash custom chain is missing its stored config blob and must be reopened with an explicit genesis on a writable path
 - writable startup needs to persist the new override marker for a legacy pre-marker same-hash custom chain
 
-In those cases, the correct response is to reopen the data directory in a
-writable mode using the current binary and repair the metadata, rather than to
-keep retrying readonly startup.
+In those cases, the correct response is to reopen the data directory in a writable mode using the current binary and repair the metadata, rather than to keep retrying readonly startup.
 
-For a legacy pre-marker same-hash custom database, do not expect an ordinary
-restart or a readonly command to perform that migration implicitly. The repair
-must be done on a writable path with the authoritative matching `genesis.json`
-and explicit `--allow-builtin-config-override`.
+For a legacy pre-marker same-hash custom database, do not expect an ordinary restart or a readonly command to perform that migration implicitly. The repair must be done on a writable path with the authoritative matching `genesis.json` and explicit `--allow-builtin-config-override`.
 
 Recommended operator workflow:
 
@@ -434,15 +346,11 @@ Recommended operator workflow:
 
 ## Minimal Upgrade Checklist For Strict XDC Fork Config Validation
 
-Nodes now reject any chain config that enables XDPoS or any XDC-specific fork
-field unless the following strict required fields are resolved to non-zero
-usable values.
+Nodes now reject any chain config that enables XDPoS or any XDC-specific fork field unless the following strict required fields are resolved to non-zero usable values.
 
 Operator checklist before the first restart on the upgraded binary:
 
-- Confirm which authoritative source you will trust for the repair:
-  the persisted chain-config blob in the data directory, or the external
-  `genesis.json` used for `XDC init` or writable repair.
+- Confirm which authoritative source you will trust for the repair: the persisted chain-config blob in the data directory, or the external `genesis.json` used for `XDC init` or writable repair.
 - Confirm that source explicitly declares every required field below.
 
 Top-level XDC fork and system-contract fields:
@@ -470,45 +378,25 @@ XDPoS v2 fields:
 
 Recommended operator check while filling the list:
 
-- Treat every blank, omitted key, `null`, `0`, or zero-address value as a stop
-  signal until you have confirmed that the current validation path really
-  allows it.
-- If startup is expected to run with XDPoS enabled, verify that the
-  authoritative source contains the full `XDPoS` object, not only selected
-  nested fields.
+- Treat every blank, omitted key, `null`, `0`, or zero-address value as a stop signal until you have confirmed that the current validation path really allows it.
+- If startup is expected to run with XDPoS enabled, verify that the authoritative source contains the full `XDPoS` object, not only selected nested fields.
 
-For custom or private networks, do not rely on omission as an upgrade strategy.
-If the persisted config is incomplete, update the `config` section in the
-authoritative `genesis.json` so the writable repair path can persist the full
-strict-validation field set.
+For custom or private networks, do not rely on omission as an upgrade strategy. If the persisted config is incomplete, update the `config` section in the authoritative `genesis.json` so the writable repair path can persist the full strict-validation field set.
 
-For legacy custom XDPoS networks, older sparse genesis files can still pass
-startup migration when those keys were omitted entirely. In that case
-`hydrateLegacyCompatibleCustomChainConfig` backfills the historical migrated
-fields from `params.LocalnetChainConfig` before strict validation runs.
+For legacy custom XDPoS networks, older sparse genesis files can still pass startup migration when those keys were omitted entirely. In that case `hydrateLegacyCompatibleCustomChainConfig` backfills the historical migrated fields from `params.LocalnetChainConfig` before strict validation runs.
 
 Important caveat:
 
 - Auto-hydration only applies to omitted fields.
-- Explicit `0`, `null`, or zero-address values remain authoritative and will
-  still fail strict validation if the field is required.
-- The narrow custom-network backfill only runs when the config already has an
-  `XDPoS` section. If `config.XDPoS` is missing entirely, writable startup
-  cannot synthesize the missing nested XDPoS fields for you; the
-  authoritative `genesis.json` must declare them explicitly.
+- Explicit `0`, `null`, or zero-address values remain authoritative and will still fail strict validation if the field is required.
+- The narrow custom-network backfill only runs when the config already has an `XDPoS` section. If `config.XDPoS` is missing entirely, writable startup cannot synthesize the missing nested XDPoS fields for you; the authoritative `genesis.json` must declare them explicitly.
 
 Minimal `genesis.json` example for a custom XDPoS chain:
 
-- Use this as a shape reference for the strict-validation fields, not as a
-  production template.
-- Replace the addresses, `chainId`, fork heights, and reward values with the
-  authoritative values for your network.
-- The fork block values shown as `0` only demonstrate that the field must be
-  declared. They are not universally valid defaults for an existing private
-  chain.
-- If the chain is already initialized, merge these `config` fields into your
-  existing `genesis.json`; do not change other genesis fields unless you
-  intentionally want a different genesis hash.
+- Use this as a shape reference for the strict-validation fields, not as a production template.
+- Replace the addresses, `chainId`, fork heights, and reward values with the authoritative values for your network.
+- The fork block values shown as `0` only demonstrate that the field must be declared. They are not universally valid defaults for an existing private chain.
+- If the chain is already initialized, merge these `config` fields into your existing `genesis.json`; do not change other genesis fields unless you intentionally want a different genesis hash.
 
 ```json
 {
@@ -588,28 +476,19 @@ Minimal `genesis.json` example for a custom XDPoS chain:
 }
 ```
 
-If the first upgraded startup fails with `missing fork switch` for one of the
-fields above, treat it as a migration task rather than a transient startup
-error. Reopen the data directory through a writable path and ensure the
-persisted config or external `genesis.json` carries the required values.
+If the first upgraded startup fails with `missing fork switch` for one of the fields above, treat it as a migration task rather than a transient startup error. Reopen the data directory through a writable path and ensure the persisted config or external `genesis.json` carries the required values.
 
-Do not treat a readonly compatibility warning as a harmless cosmetic diff. It
-means the writable path would need to repair metadata or require an explicit
-rewind decision before startup should proceed. The recovery mode for that
-rewind decision is selected with `--chain-config-mismatch-policy` (see
-[Chain Config Mismatch Policy](#chain-config-mismatch-policy---chain-config-mismatch-policy)).
+Do not treat a readonly compatibility warning as a harmless cosmetic diff. It means the writable path would need to repair metadata or require an explicit rewind decision before startup should proceed. The recovery mode for that rewind decision is selected with `--chain-config-mismatch-policy` (see [Chain Config Mismatch Policy](#chain-config-mismatch-policy---chain-config-mismatch-policy)).
 
 ## Same-Hash Custom Chains on Built-In IDs (`50` / `51` / `551`)
 
-The most error-prone migration path is a custom genesis that intentionally
-reuses the same block contents and built-in identity surface as:
+The most error-prone migration path is a custom genesis that intentionally reuses the same block contents and built-in identity surface as:
 
 - Mainnet (`ChainID == 50`)
 - Testnet (`ChainID == 51`)
 - Devnet (`ChainID == 551`)
 
-For these chains, classification now depends on more than the genesis hash
-alone.
+For these chains, classification now depends on more than the genesis hash alone.
 
 Practical rules:
 
@@ -633,43 +512,26 @@ Minimal repair sequence for a legacy pre-marker same-hash custom database:
 3. Let the current binary persist the repaired chain-config metadata and override marker.
 4. After that writable migration completes, readonly commands can reopen the database normally. Use `--allow-builtin-config-override` again only for later writable repair or rewrite paths.
 
-The helper logic behind `isLegacyStoredCustomBuiltInConfig` and
-`shouldAllowCustomBuiltInConfig` is intentionally conservative. Its purpose is
-to preserve legitimate legacy custom deployments, not to guess operator intent
-from incomplete metadata. When in doubt, prefer an explicit writable repair
-with the authoritative custom genesis file.
+The helper logic behind `isLegacyStoredCustomBuiltInConfig` and `shouldAllowCustomBuiltInConfig` is intentionally conservative. Its purpose is to preserve legitimate legacy custom deployments, not to guess operator intent from incomplete metadata. When in doubt, prefer an explicit writable repair with the authoritative custom genesis file.
 
 ## Upgrading ChainConfig
 
-Use this procedure when the chain is already running and you want to add a new
-future fork or otherwise change `ChainConfig` without changing the canonical
-genesis block.
+Use this procedure when the chain is already running and you want to add a new future fork or otherwise change `ChainConfig` without changing the canonical genesis block.
 
 ### Prerequisites
 
 - Back up the data directory and record the current head block number.
-- Start from the current effective custom or built-in config, not from an old
- template.
-- Keep the genesis block contents unchanged. Do not modify alloc, nonce,
- timestamp, extra data, gas limit, difficulty, or any other field that would
- change the genesis hash.
+- Start from the current effective custom or built-in config, not from an old template.
+- Keep the genesis block contents unchanged. Do not modify alloc, nonce, timestamp, extra data, gas limit, difficulty, or any other field that would change the genesis hash.
 - Change only future-compatible values in the `config` section.
-- For same-hash custom chains, the data directory must already be an
- override-backed same-hash custom chain. Otherwise the node still treats that
- hash as a bundled network.
+- For same-hash custom chains, the data directory must already be an override-backed same-hash custom chain. Otherwise the node still treats that hash as a bundled network.
 
 ### Steps
 
-a. Update the `config` section in your `genesis.json` with the new future fork
-  switch or other future-only config value.
-b. Make sure all required migrated fields, system-contract addresses, and
-  XDPoS settings remain explicitly declared, including
-  `XDPoS.FoundationWalletAddr`, `XDPoS.MaxMasternodesV2`,
-  `XDPoS.V2.SwitchBlock`, `XDPoS.V2.CurrentConfig`, and
-  `XDPoS.V2.AllConfigs`.
-c. Verify that each new or modified fork switch is still in the future and
-  that fork ordering remains valid.
-d. Apply the update with:
+- Update the `config` section in your `genesis.json` with the new future fork switch or other future-only config value.
+- Make sure all required migrated fields, system-contract addresses, and XDPoS settings remain explicitly declared, including `XDPoS.FoundationWalletAddr`, `XDPoS.MaxMasternodesV2`, `XDPoS.V2.SwitchBlock`, `XDPoS.V2.CurrentConfig`, and `XDPoS.V2.AllConfigs`.
+- Verify that each new or modified fork switch is still in the future and that fork ordering remains valid.
+- Apply the update with:
 
   ```bash
   XDC --datadir <datadir> init /path/to/genesis.json
@@ -681,29 +543,22 @@ d. Apply the update with:
   XDC --allow-builtin-config-override --datadir <datadir> init /path/to/genesis.json
   ```
 
-e. Restart the node normally.
-  For same-hash custom chains on built-in IDs, readonly reopen paths can restart normally once the override marker is already persisted. Use `--allow-builtin-config-override` only if this restart is a writable repair or metadata-rewrite path.
-f. Verify that the node is now using the expected updated chain config.
+- Restart the node normally. For same-hash custom chains on built-in IDs, readonly reopen paths can restart normally once the override marker is already persisted. Use `--allow-builtin-config-override` only if this restart is a writable repair or metadata-rewrite path.
+- Verify that the node is now using the expected updated chain config.
 
 ### Important Notes
 
-- Running `XDC init` on a non-empty data directory does not recreate the
- canonical genesis block when the genesis hash is unchanged. It re-runs
- startup chain-config validation with the explicit genesis/config you provide.
-- If the proposed config change would alter the genesis hash, treat it as a
- different chain and use a fresh data directory instead of trying to mutate
- the existing one in place.
-- If a new fork point is no longer entirely in the future, compatibility checks
- may return a `ConfigCompatError` and require a rewind or another migration
- workflow instead of an in-place update.
+- Running `XDC init` on a non-empty data directory does not recreate the canonical genesis block when the genesis hash is unchanged. It re-runs startup chain-config validation with the explicit genesis/config you provide.
+- If the proposed config change would alter the genesis hash, treat it as a different chain and use a fresh data directory instead of trying to mutate the existing one in place.
+- If a new fork point is no longer entirely in the future, compatibility checks may return a `ConfigCompatError` and require a rewind or another migration workflow instead of an in-place update.
 
 ## Prague / EIP-2935
 
-- The history storage contract is predeployed only in the developer genesis.
-- For other networks, the contract is deployed at Prague activation by the
- system call during block processing and state access.
-- Nodes upgrading after Prague will perform a one-time backfill of recent
- parent hashes into the ring buffer. If historical headers are pruned or
- unavailable, missing slots are skipped and only available hashes are filled.
-- If you maintain a custom genesis and want predeployment, add an account entry
- for `HistoryStorageAddress` with `Nonce: 1` and `Code: HistoryStorageCode`.
+The history storage contract at `HistoryStorageAddress` records the hashes of the last 8,191 blocks so that contracts can read them; `blockhash` itself still answers for 256 blocks only. What follows is how the contract gets into the state, which is where this chain differs from upstream go-ethereum.
+
+- EIP-2935 specifies that the account is created by a presigned synthetic deployment transaction, sender `0x3462413Af4609098e1E27A490f554f260213D685`, transaction hash `0x67139a552b0d3fffc30c0fa7d0c20d42144138c8fe07fc5691f09c1cce632e15`. Upstream go-ethereum carries no deployment code of its own: the account exists once that transaction is included in a block, and the bundled mainnet and sepolia genesis allocations do not contain it.
+- XDPoSChain does not use that transaction. Block processing deploys the contract itself at the Prague activation block, only when the code is missing, as a state change just before the system call that stores the parent hash. The account ends up the same either way, `Nonce: 1` with `Code: HistoryStorageCode` and exempt from EIP-161 cleanup; the developer genesis predeploys it, so that step is a no-op there.
+- The ring buffer starts with one entry, the parent hash of the activation block, and every following block adds one more. The window takes 8,191 blocks after activation to fill, and any slot not yet written reads back as zero. EIP-2935 states the same under its activation scenarios and requires every other slot to be `0`.
+- A one-time catch-up runs in the same step whenever the code is missing at a block at or after activation, for example after a state restore. It fills what it can still resolve out of the last 8,191 blocks and skips the slots whose headers are pruned or unavailable. This has no counterpart upstream, where EIP-2935 never has the contract absent after activation. Upgrading to this binary does not trigger a backfill of its own, and a node that already has the code never enters the branch.
+- Two further local deviations, neither reachable today: a failed system call, or code at the address that differs from `HistoryStorageCode`, panics instead of being ignored as upstream does, and the call keeps the 30,000,000 gas limit EIP-2935 prescribes, with no counterpart to the state budget upstream adds to system calls from Amsterdam on.
+- If you maintain a custom genesis and want predeployment, add an account entry for `HistoryStorageAddress` with `Nonce: 1` and `Code: HistoryStorageCode`.
