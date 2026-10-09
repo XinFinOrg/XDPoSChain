@@ -64,7 +64,19 @@ The value of `block.prevrandao` is `keccak256(block.number)` in our current impl
 
 ### block.basefee
 
-The value of `block.basefee` is the gas price of the block's tier: `12.5 GWei` up to the Gas2500x fork, and `625 GWei` from it. Between the London and EIP-1559 forks, where block headers carry no base fee, it is `12.5 GWei`.
+The value of `block.basefee` is the gas price of the block's tier: `12.5 GWei`
+up to the Gas2500x fork, and `625 GWei` from it. Between the London and
+EIP-1559 forks, where block headers carry no base fee, it is `12.5 GWei`.
+
+The pool accepts a transaction only when its gas price reaches that same value, the base fee of the block that would include it, and rejects anything priced below with `under min gas price`; transactions to the block-signer and randomize system contracts are exempt. Tools that default to a low `gasPrice` or `maxFeePerGas`, Hardhat and Foundry among them, are rejected until it is raised:
+
+| Network | Gas tier fork      | Base fee and minimum gas price |
+| :------ | :----------------- | -----------------------------: |
+| mainnet | Gas50x (80370000)  |                     12.5 GWei |
+| testnet | Gas50x (56828700)  |                     12.5 GWei |
+| devnet  | Gas2500x (1385100) |                      625 GWei |
+
+Read the floor from the node with `eth_gasPrice` instead of hardcoding it.
 
 ### blobhash()
 
@@ -82,22 +94,4 @@ empty output.
 
 ### block.blobbasefee
 
-The value of `block.blobbasefee` is always 0 in our EIP-7516 implemention.
-EIP-7516 sets a floor of 1 wei; XDPoSChain stays at 0 because it runs no blob fee
-market. Do not use it to infer on-chain activity.
-
-## Gas price
-
-A transaction priced below the floor of the tier active at the block that would
-include it is rejected with `under min gas price`. That floor is the gas price of
-the tier, the same value `block.basefee` reports there, so tools that default to
-a low `gasPrice` or `maxFeePerGas` (Hardhat and Foundry among them) must have it
-raised explicitly:
-
-| Network | Gas tier fork      | Minimum gas price |
-| :------ | :----------------- | ----------------: |
-| mainnet | Gas50x (80370000)  |        12.5 GWei  |
-| testnet | Gas50x (56828700)  |        12.5 GWei  |
-| devnet  | Gas2500x (1385100) |         625 GWei  |
-
-Read the value from the node with `eth_gasPrice` instead of hardcoding it.
+The value of `block.blobbasefee` is always 0 in our EIP-7516 implemention. EIP-7516 sets a floor of 1 wei; XDPoSChain stays at 0 because it runs no blob fee market. Do not use it to infer on-chain activity.
