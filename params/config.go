@@ -923,6 +923,9 @@ func (c *ChainConfig) ActiveForks(block *big.Int) []string {
 	if c.IsTIP2019(block) {
 		activeForks = append(activeForks, "TIP2019")
 	}
+	if c.IsTIPEpochHalving(block) {
+		activeForks = append(activeForks, "TIPEpochHalving")
+	}
 	if c.IsTIPIncreaseMasternodes(block) {
 		activeForks = append(activeForks, "TIPIncreaseMasternodes")
 	}
@@ -961,9 +964,6 @@ func (c *ChainConfig) ActiveForks(block *big.Int) []string {
 	}
 	if c.IsEIP150(block) {
 		activeForks = append(activeForks, "TangerineWhistle")
-	}
-	if c.IsTIPEpochHalving(block) {
-		activeForks = append(activeForks, "TIPEpochHalving")
 	}
 	if c.IsXDCxDisable(block) {
 		activeForks = append(activeForks, "XDCxDisable")

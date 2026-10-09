@@ -1188,6 +1188,7 @@ func activeForksLegacyMapSort(c *ChainConfig, block *big.Int) []string {
 		"London":                 c.IsLondon(block),
 		"Merge":                  c.IsMerge(block),
 		"Shanghai":               c.IsShanghai(block),
+		"Gas2500x":               c.IsGas2500x(block),
 		"Gas50x":                 c.IsGas50x(block),
 		"XDPoSV2":                c.IsXDPoSV2(block),
 		"TIPXDCXMiner":           c.IsTIPXDCXMiner(block),
@@ -1210,6 +1211,22 @@ func activeForksLegacyMapSort(c *ChainConfig, block *big.Int) []string {
 	}
 	slices.Sort(activeForks)
 	return activeForks
+}
+
+// TestActiveForksLegacyMirrorMatchesActiveForks pins the benchmark-only mirror
+// to the production list: the mirror exists to compare implementations, so it
+// has to enumerate exactly the forks the production list does, in the order
+// ActiveForks promises. Every fork block is scheduled at zero, so the test also
+// covers the forks that no built-in config activates.
+func TestActiveForksLegacyMirrorMatchesActiveForks(t *testing.T) {
+	config := TestChainConfig.Clone()
+	for _, field := range chainConfigForkBlockFields {
+		field.set(config, big.NewInt(0))
+	}
+	config.XDPoS = &XDPoSConfig{V2: &V2{SwitchBlock: big.NewInt(0)}}
+	block := big.NewInt(1)
+
+	assert.Equal(t, config.ActiveForks(block), activeForksLegacyMapSort(config, block))
 }
 
 func TestChainConfigStringIncludesAllFields(t *testing.T) {
