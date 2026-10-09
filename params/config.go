@@ -731,15 +731,6 @@ func (c *ChainConfig) String() string {
 	if c.CancunBlock != nil {
 		result += fmt.Sprintf(", Cancun: %v", c.CancunBlock)
 	}
-	if c.PragueBlock != nil {
-		result += fmt.Sprintf(", Prague: %v", c.PragueBlock)
-	}
-	if c.OsakaBlock != nil {
-		result += fmt.Sprintf(", Osaka: %v", c.OsakaBlock)
-	}
-	if c.AmsterdamBlock != nil {
-		result += fmt.Sprintf(", Amsterdam: %v", c.AmsterdamBlock)
-	}
 	if c.DynamicGasLimitBlock != nil {
 		result += fmt.Sprintf(", DynamicGasLimit: %v", c.DynamicGasLimitBlock)
 	}
@@ -748,6 +739,15 @@ func (c *ChainConfig) String() string {
 	}
 	if c.TIPUpgradePenaltyBlock != nil {
 		result += fmt.Sprintf(", TIPUpgradePenalty: %v", c.TIPUpgradePenaltyBlock)
+	}
+	if c.PragueBlock != nil {
+		result += fmt.Sprintf(", Prague: %v", c.PragueBlock)
+	}
+	if c.OsakaBlock != nil {
+		result += fmt.Sprintf(", Osaka: %v", c.OsakaBlock)
+	}
+	if c.AmsterdamBlock != nil {
+		result += fmt.Sprintf(", Amsterdam: %v", c.AmsterdamBlock)
 	}
 	if c.TIPEpochHalvingBlock != nil {
 		result += fmt.Sprintf(", TIPEpochHalving: %v", c.TIPEpochHalvingBlock)
@@ -824,12 +824,12 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - TIPXDCXReceiverDisable:      %-8v\n", c.TIPXDCXReceiverDisableBlock)
 	banner += fmt.Sprintf("  - EIP1559:                     %-8v\n", c.EIP1559Block)
 	banner += fmt.Sprintf("  - Cancun:                      %-8v\n", c.CancunBlock)
-	banner += fmt.Sprintf("  - Prague:                      %-8v\n", c.PragueBlock)
-	banner += fmt.Sprintf("  - Osaka:                       %-8v\n", c.OsakaBlock)
-	banner += fmt.Sprintf("  - Amsterdam:                   %-8v\n", c.AmsterdamBlock)
 	banner += fmt.Sprintf("  - DynamicGasLimit:             %-8v\n", c.DynamicGasLimitBlock)
 	banner += fmt.Sprintf("  - TIPUpgradeReward:            %-8v\n", c.TIPUpgradeRewardBlock)
 	banner += fmt.Sprintf("  - TIPUpgradePenalty:           %-8v\n", c.TIPUpgradePenaltyBlock)
+	banner += fmt.Sprintf("  - Prague:                      %-8v\n", c.PragueBlock)
+	banner += fmt.Sprintf("  - Osaka:                       %-8v\n", c.OsakaBlock)
+	banner += fmt.Sprintf("  - Amsterdam:                   %-8v\n", c.AmsterdamBlock)
 	banner += fmt.Sprintf("  - TIPEpochHalving:             %-8v\n", c.TIPEpochHalvingBlock)
 	banner += fmt.Sprintf("  - TRC21IssuerSMC:              %-8s\n", c.TRC21IssuerSMC)
 	banner += fmt.Sprintf("  - XDCXListingSMC:              %-8s\n", c.XDCXListingSMC)
@@ -865,7 +865,7 @@ func (c *ChainConfig) GatherForks() []uint64 {
 }
 
 // ActiveForks returns the list of active forks at the given block height.
-// The returned list is sorted in alphabetical order.
+// The returned list is sorted in ascending ASCII order.
 func (c *ChainConfig) ActiveForks(block *big.Int) []string {
 	activeForks := make([]string, 0, 38)
 	if c.IsAmsterdam(block) {
@@ -934,6 +934,9 @@ func (c *ChainConfig) ActiveForks(block *big.Int) []string {
 	if c.IsTIP2019(block) {
 		activeForks = append(activeForks, "TIP2019")
 	}
+	if c.IsTIPEpochHalving(block) {
+		activeForks = append(activeForks, "TIPEpochHalving")
+	}
 	if c.IsTIPIncreaseMasternodes(block) {
 		activeForks = append(activeForks, "TIPIncreaseMasternodes")
 	}
@@ -972,9 +975,6 @@ func (c *ChainConfig) ActiveForks(block *big.Int) []string {
 	}
 	if c.IsEIP150(block) {
 		activeForks = append(activeForks, "TangerineWhistle")
-	}
-	if c.IsTIPEpochHalving(block) {
-		activeForks = append(activeForks, "TIPEpochHalving")
 	}
 	if c.IsXDCxDisable(block) {
 		activeForks = append(activeForks, "XDCxDisable")

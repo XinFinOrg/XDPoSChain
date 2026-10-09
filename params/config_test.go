@@ -994,14 +994,19 @@ func TestGatherForksIncludesXDPoSV2SwitchBlock(t *testing.T) {
 	assert.Equal(t, []uint64{1000, 1500}, config.GatherForks())
 }
 
-func TestActiveForksReturnsAlphabeticalNames(t *testing.T) {
+// TestActiveForksReturnsAscendingASCIIOrder pins the production ordering: the
+// names come out in ascending ASCII order, the order the mirror sorts into and
+// the order the docs for the RPC field promise.
+func TestActiveForksReturnsAscendingASCIIOrder(t *testing.T) {
 	config := &ChainConfig{
 		HomesteadBlock:           big.NewInt(1),
 		ByzantiumBlock:           big.NewInt(1),
 		BerlinBlock:              big.NewInt(1),
 		EIP150Block:              big.NewInt(1),
 		EIP1559Block:             big.NewInt(1),
+		Gas2500xBlock:            big.NewInt(1),
 		TIP2019Block:             big.NewInt(1),
+		TIPEpochHalvingBlock:     big.NewInt(1),
 		TIPTRC21FeeBlock:         big.NewInt(1),
 		TIPXDCXBlock:             big.NewInt(1),
 		TIPXDCXMinerDisableBlock: big.NewInt(1),
@@ -1018,8 +1023,10 @@ func TestActiveForksReturnsAlphabeticalNames(t *testing.T) {
 		"Byzantium",
 		"DynamicGasLimit",
 		"EIP1559",
+		"Gas2500x",
 		"Homestead",
 		"TIP2019",
+		"TIPEpochHalving",
 		"TIPTRC21Fee",
 		"TIPXDCX",
 		"TIPXDCXReceiver",
@@ -1106,6 +1113,7 @@ func BenchmarkActiveForks(b *testing.B) {
 		TIPXDCXCancellationFeeBlock: big.NewInt(17),
 		TIPTRC21FeeBlock:            big.NewInt(18),
 		Gas50xBlock:                 big.NewInt(19),
+		Gas2500xBlock:               big.NewInt(19),
 		BerlinBlock:                 big.NewInt(20),
 		LondonBlock:                 big.NewInt(21),
 		MergeBlock:                  big.NewInt(22),
@@ -1191,6 +1199,7 @@ func activeForksLegacyMapSort(c *ChainConfig, block *big.Int) []string {
 		"London":                 c.IsLondon(block),
 		"Merge":                  c.IsMerge(block),
 		"Shanghai":               c.IsShanghai(block),
+		"Gas2500x":               c.IsGas2500x(block),
 		"Gas50x":                 c.IsGas50x(block),
 		"XDPoSV2":                c.IsXDPoSV2(block),
 		"TIPXDCXMiner":           c.IsTIPXDCXMiner(block),
@@ -1214,6 +1223,77 @@ func activeForksLegacyMapSort(c *ChainConfig, block *big.Int) []string {
 	}
 	slices.Sort(activeForks)
 	return activeForks
+}
+
+// TestActiveForksLegacyMirrorMatchesActiveForks pins the benchmark-only mirror
+// to the production list, so the benchmark keeps comparing implementations that
+// enumerate the same forks in the same order.
+func TestActiveForksLegacyMirrorMatchesActiveForks(t *testing.T) {
+	newConfig := func() *ChainConfig {
+		config := TestChainConfig.Clone()
+		for _, field := range chainConfigForkBlockFields {
+			field.set(config, big.NewInt(0))
+		}
+		config.XDPoS = &XDPoSConfig{V2: &V2{SwitchBlock: big.NewInt(0)}}
+		return config
+	}
+	block := big.NewInt(1)
+
+	// Scheduling the two Disable fork blocks turns TIPXDCXMiner and
+	// TIPXDCXReceiver off and XDCxDisable on, so one config cannot activate every
+	// name; the two runs below cover all of them between them.
+	config := newConfig()
+	first := config.ActiveForks(block)
+	assert.Equal(t, first, activeForksLegacyMapSort(config, block))
+	assert.Contains(t, first, "XDCxDisable")
+	assert.NotContains(t, first, "TIPXDCXMiner")
+	assert.NotContains(t, first, "TIPXDCXReceiver")
+
+	config = newConfig()
+	config.TIPXDCXMinerDisableBlock = nil
+	config.TIPXDCXReceiverDisableBlock = nil
+	second := config.ActiveForks(block)
+	assert.Equal(t, second, activeForksLegacyMapSort(config, block))
+	assert.Contains(t, second, "TIPXDCXMiner")
+	assert.Contains(t, second, "TIPXDCXReceiver")
+	assert.NotContains(t, second, "XDCxDisable")
+
+	covered := make(map[string]struct{}, len(first)+len(second))
+	firstSet := make(map[string]struct{}, len(first))
+	for _, name := range first {
+		covered[name] = struct{}{}
+		firstSet[name] = struct{}{}
+	}
+	secondSet := make(map[string]struct{}, len(second))
+	for _, name := range second {
+		covered[name] = struct{}{}
+		secondSet[name] = struct{}{}
+	}
+	// Every top-level fork field contributes one name, except that TIPXDCXBlock
+	// contributes three (TIPXDCX, TIPXDCXMiner, TIPXDCXReceiver) and
+	// TIPXDCXReceiverDisableBlock only gates TIPXDCXReceiver without
+	// contributing one; that nets +1. XDPoSV2 is driven by XDPoS.V2 rather than
+	// a top-level field, making the total len(chainConfigForkBlockFields) + 2.
+	wantNames := len(chainConfigForkBlockFields) + 2
+	assert.Len(t, covered, wantNames, "the two runs must cover every fork name")
+
+	// Pinning the symmetric difference pins which names each run contributes:
+	// every name outside this pair is active in both runs, so a name that moves
+	// from one run to the other cannot slip past the union length above.
+	onlyFirst := make(map[string]struct{}, len(first))
+	for _, name := range first {
+		if _, ok := secondSet[name]; !ok {
+			onlyFirst[name] = struct{}{}
+		}
+	}
+	onlySecond := make(map[string]struct{}, len(second))
+	for _, name := range second {
+		if _, ok := firstSet[name]; !ok {
+			onlySecond[name] = struct{}{}
+		}
+	}
+	assert.Equal(t, map[string]struct{}{"XDCxDisable": {}}, onlyFirst, "only XDCxDisable belongs to run 1 alone")
+	assert.Equal(t, map[string]struct{}{"TIPXDCXMiner": {}, "TIPXDCXReceiver": {}}, onlySecond, "only the two TIPXDCX names belong to run 2 alone")
 }
 
 func TestChainConfigStringIncludesAllFields(t *testing.T) {
@@ -1314,12 +1394,12 @@ func TestChainConfigStringIncludesAllFields(t *testing.T) {
 		"TIPXDCXReceiverDisable:",
 		"EIP1559:",
 		"Cancun:",
-		"Prague:",
-		"Osaka:",
-		"Amsterdam:",
 		"DynamicGasLimit:",
 		"TIPUpgradeReward:",
 		"TIPUpgradePenalty:",
+		"Prague:",
+		"Osaka:",
+		"Amsterdam:",
 		"TIPEpochHalving:",
 		"TRC21IssuerSMC:",
 		"XDCXListingSMC:",
@@ -1330,6 +1410,63 @@ func TestChainConfigStringIncludesAllFields(t *testing.T) {
 		"XDPoS:",
 	} {
 		assert.Contains(t, got, label)
+	}
+}
+
+// TestChainConfigRenderingFollowsForkOrder pins the placement of the six fork
+// fields this change moves, plus TIPEpochHalving that follows them, in String
+// and Description. The expected order is read off chainConfigForkOrderFields, so
+// a later renumbering carries the expectation with it instead of leaving the
+// renderings behind.
+func TestChainConfigRenderingFollowsForkOrder(t *testing.T) {
+	pinned := map[string]struct{}{
+		"DynamicGasLimitBlock":   {},
+		"TIPUpgradeRewardBlock":  {},
+		"TIPUpgradePenaltyBlock": {},
+		"PragueBlock":            {},
+		"OsakaBlock":             {},
+		"AmsterdamBlock":         {},
+		"TIPEpochHalvingBlock":   {},
+	}
+	var want []string
+	for _, field := range chainConfigForkOrderFields {
+		if _, ok := pinned[field.field.name]; ok {
+			want = append(want, strings.TrimSuffix(field.field.name, "Block"))
+		}
+	}
+	assert.Len(t, want, len(pinned), "the fork order must still cover every pinned fork")
+
+	config := &ChainConfig{
+		ChainID:                big.NewInt(1),
+		DynamicGasLimitBlock:   big.NewInt(1),
+		TIPUpgradeRewardBlock:  big.NewInt(2),
+		TIPUpgradePenaltyBlock: big.NewInt(3),
+		PragueBlock:            big.NewInt(4),
+		OsakaBlock:             big.NewInt(5),
+		AmsterdamBlock:         big.NewInt(6),
+		TIPEpochHalvingBlock:   big.NewInt(7),
+	}
+	for _, rendering := range []struct {
+		name   string
+		prefix string
+		text   string
+	}{
+		{name: "String", prefix: ", ", text: config.String()},
+		{name: "Description", prefix: "  - ", text: config.Description()},
+	} {
+		t.Run(rendering.name, func(t *testing.T) {
+			previous := -1
+			for _, label := range want {
+				index := strings.Index(rendering.text, rendering.prefix+label+":")
+				if index < 0 {
+					t.Fatalf("%s does not list %s: %q", rendering.name, label, rendering.text)
+				}
+				if index < previous {
+					t.Fatalf("%s lists %s out of fork order: %q", rendering.name, label, rendering.text)
+				}
+				previous = index
+			}
+		})
 	}
 }
 
