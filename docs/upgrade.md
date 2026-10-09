@@ -163,11 +163,11 @@ Operational note for custom/private networks:
 - The node now emits a `WARN` listing the auto-filled fields when this custom-Localnet fallback happens through `BackfillMissingFieldsFrom`.
 - To disable this behavior, declare every fork field explicitly in your custom chain config instead of relying on omission. Use `null` to disable a pointer-based fork, and `0` or another block number only when that activation is intentional.
 
-Prague declaration requirement:
+Fork declaration requirement:
 
-- Every chain config should now declare `pragueBlock` explicitly.
-- Use `"pragueBlock": null` to keep Prague disabled, or a positive integer to schedule activation.
-- Do not rely on omission as a long-term configuration strategy. Legacy built-in and Localnet configs can still have a missing `pragueBlock` hydrated from their bundled backfill source through `BackfillMissingFieldsFrom`, but custom-network hydration does not inherit later-added fork switches automatically.
+- Every chain config should now declare each fork switch explicitly, including `pragueBlock`, `osakaBlock` and `amsterdamBlock`.
+- Use `null` to keep a fork disabled, or `0` (active from genesis) or a positive integer to schedule activation.
+- Do not rely on omission as a long-term configuration strategy. Legacy built-in and Localnet configs can still have a missing `pragueBlock` hydrated from their bundled backfill source through `BackfillMissingFieldsFrom`, but custom-network hydration does not inherit later-added fork switches automatically, and `amsterdamBlock` sits in the same built-in backfill set as `pragueBlock`.
 
 ## When a New ChainConfig Is Written to the Database
 
