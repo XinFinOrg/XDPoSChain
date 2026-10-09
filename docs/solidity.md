@@ -40,6 +40,14 @@ Both caps take effect by themselves once Osaka is scheduled and active.
 
 Contract code and initcode are limited separately, by EIP-7954: 24,576 bytes of code and 49,152 of initcode today, rising to 65,536 and 131,072 once Amsterdam is active. That raise is gated on Amsterdam, which is where upstream go-ethereum has it, not on Osaka. No network has scheduled Amsterdam, so the lower pair applies everywhere today.
 
+## Prague / EIP-2935
+
+Prague adds a history storage contract at `HistoryStorageAddress`, `0x0000F90827F1C53a10cb7A02335B175320002935`, which holds the hashes of the last 8,191 blocks.
+
+`blockhash` itself is unchanged: it answers only for the last 256 blocks and returns zero beyond that. To read an older hash, call the history contract with the block number; it returns the hash it stored for that block, and reverts for a number outside the window it keeps. A slot inside the window that was never written reads back as zero, so right after activation most older numbers return zero rather than a hash.
+
+The contract is only present once Prague is active on the network, so there is nothing to call on mainnet or testnet yet (devnet has it active from block 50000).
+
 ## Special variables
 
 ### block.prevrandao
