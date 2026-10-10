@@ -115,6 +115,7 @@ func newTestBackend(t *testing.T, eip1559Block *big.Int, pending bool) *testBack
 	config.CancunBlock = common.CloneBigInt(eip1559Block)
 	config.PragueBlock = common.CloneBigInt(eip1559Block)
 	config.OsakaBlock = common.CloneBigInt(eip1559Block)
+	config.AmsterdamBlock = common.CloneBigInt(eip1559Block)
 	config.DynamicGasLimitBlock = common.CloneBigInt(eip1559Block)
 	config.TIPUpgradeRewardBlock = common.CloneBigInt(eip1559Block)
 	config.TIPUpgradePenaltyBlock = common.CloneBigInt(eip1559Block)

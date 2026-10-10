@@ -22,8 +22,14 @@ import (
 
 // LookupInstructionSet returns the instruction set for the fork configured by
 // the rules.
+//
+// It has no in-repo callers: the EVM selects its table inline in NewEVM. Keep
+// the two in sync, and pin this function with a direct test if a caller is
+// ever added.
 func LookupInstructionSet(rules params.Rules) (JumpTable, error) {
 	switch {
+	case rules.IsAmsterdam:
+		return newAmsterdamInstructionSet(), nil
 	case rules.IsOsaka:
 		return newOsakaInstructionSet(), nil
 	case rules.IsPrague:

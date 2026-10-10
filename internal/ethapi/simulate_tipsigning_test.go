@@ -82,6 +82,8 @@ func TestSimulateV1AppliesTIPSigningActivation(t *testing.T) {
 		// roots compared below for a reason that has nothing to do with TIPSigning.
 		config.PragueBlock = big.NewInt(10)
 		config.OsakaBlock = big.NewInt(10)
+		// Amsterdam stays off with it: the run only exercises the forks it schedules.
+		config.AmsterdamBlock = nil
 
 		// The legacy account has to come from the genesis allocation rather than from a state
 		// override: DeleteAddress removes the account from the trie only, so an account the

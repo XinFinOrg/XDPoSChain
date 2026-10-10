@@ -626,6 +626,7 @@ func TestStateProcessorDoesNotDeleteBlockSignersAtGenesisTIPSigning(t *testing.T
 	config.TIPSigningBlock = big.NewInt(0)
 	config.PragueBlock = nil
 	config.OsakaBlock = nil
+	config.AmsterdamBlock = nil
 	db := rawdb.NewMemoryDatabase()
 	gspec := &Genesis{
 		Config: config,

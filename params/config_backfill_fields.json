@@ -214,6 +214,13 @@
     "forkOrderOptional": true
   },
   {
+    "name": "AmsterdamBlock",
+    "jsonKey": "amsterdamBlock",
+    "backfillSet": "builtin",
+    "forkOrder": 30,
+    "forkOrderOptional": true
+  },
+  {
     "name": "Gas50xBlock",
     "jsonKey": "gas50xBlock",
     "backfillSet": "builtin",
@@ -247,7 +254,7 @@
     "jsonKey": "dynamicGasLimitBlock",
     "backfillSet": "builtin",
     "xdcSpecific": true,
-    "forkOrder": 30,
+    "forkOrder": 31,
     "forkOrderOptional": true
   },
   {
@@ -255,7 +262,7 @@
     "jsonKey": "tipUpgradeRewardBlock",
     "backfillSet": "builtin",
     "xdcSpecific": true,
-    "forkOrder": 31,
+    "forkOrder": 32,
     "forkOrderOptional": true
   },
   {
@@ -263,7 +270,7 @@
     "jsonKey": "tipUpgradePenaltyBlock",
     "backfillSet": "builtin",
     "xdcSpecific": true,
-    "forkOrder": 32,
+    "forkOrder": 33,
     "forkOrderOptional": true
   },
   {
@@ -271,7 +278,7 @@
     "jsonKey": "tipEpochHalvingBlock",
     "backfillSet": "builtin",
     "xdcSpecific": true,
-    "forkOrder": 33,
+    "forkOrder": 34,
     "forkOrderOptional": true
   },
   {
