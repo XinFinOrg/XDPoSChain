@@ -68,6 +68,8 @@ type chainConfigBigIntBackfillField struct {
 type chainConfigForkOrderField struct {
 	field    chainConfigBigIntField
 	optional func(*ChainConfig) bool
+	standard bool
+	required bool
 }
 
 type chainConfigForkOrderSpecialCaseRule struct {
@@ -214,7 +216,7 @@ var chainConfigForkOrderFields = func() []chainConfigForkOrderField {
 			panic("duplicate chain config fork order field: " + entry.name)
 		}
 		seen[entry.name] = struct{}{}
-		resolved = append(resolved, chainConfigForkOrderField{field: field, optional: entry.optional})
+		resolved = append(resolved, chainConfigForkOrderField{field: field, optional: entry.optional, standard: entry.standard, required: entry.required})
 	}
 	if len(seen)+len(chainConfigForkOrderSpecialCaseFieldNames) != len(chainConfigForkBlockFields) {
 		for _, field := range chainConfigForkBlockFields {
@@ -516,6 +518,72 @@ func ForEachChainConfigForkOrderBlock(cfg *ChainConfig, visit func(name string, 
 	for _, field := range chainConfigForkOrderFields {
 		visit(field.field.name, chainConfigBigIntFieldValue(cfg, field.field), field.optional(cfg))
 	}
+}
+
+// ForEachChainConfigForkSequenceBlock visits the standard fork blocks in
+// validation order, flagging the ones whose activation the later standard forks
+// build on. XDC-specific slots are not enumerated here and are never required,
+// but one of them can still decide a rejection: when the effective-value rule
+// below substitutes TIPXDCXCancellationFeeBlock for an unset IstanbulBlock or
+// PetersburgBlock, that field is what the check reports as the scheduled fork.
+func ForEachChainConfigForkSequenceBlock(cfg *ChainConfig, visit func(name string, value *big.Int, required bool)) {
+	for _, field := range chainConfigForkOrderFields {
+		if !field.standard {
+			continue
+		}
+		visit(field.field.name, chainConfigBigIntFieldValue(cfg, field.field), field.required)
+	}
+}
+
+// chainConfigForkSequenceEffectiveValue resolves the activation of a standard
+// fork for the existence check, together with the field the value comes from.
+// Two slots have a second activation path: legacy XDC chains leave IstanbulBlock
+// and PetersburgBlock unset and activate them through
+// TIPXDCXCancellationFeeBlock, so an unset slot takes that field's value,
+// mirroring ChainConfig.IsIstanbul and ChainConfig.IsPetersburg existence for
+// existence. When both paths are set the runtime predicates OR them and the fork
+// activates at the earlier of the two, while this helper keeps the explicit
+// value: the check asks only whether the fork is active at all, and the field a
+// rejection must name is the one the operator actually wrote. Nothing else is
+// substituted here; in particular TIPXDCXMinerDisableBlock does not count,
+// because the XDCv2 precompile bag it selects replaces the Istanbul bag only
+// above its own activation block, while the skipped Istanbul bag would still
+// apply below it.
+//
+// The source name is returned so that a rejection names the field the operator
+// wrote rather than the slot its value stands in for.
+func chainConfigForkSequenceEffectiveValue(cfg *ChainConfig, name string, value *big.Int) (*big.Int, string) {
+	if name != "IstanbulBlock" && name != "PetersburgBlock" {
+		return value, name
+	}
+	if value != nil {
+		return value, name
+	}
+	if fallback := cfg.TIPXDCXCancellationFeeBlock; fallback != nil {
+		return fallback, "TIPXDCXCancellationFeeBlock"
+	}
+	return value, name
+}
+
+// chainConfigForkSequencePetersburgPair reports the one required member whose
+// activation no later slot implies. The sequence scan only reports a gap once a
+// slot that carries a value follows, so it cannot see a schedule that stops at
+// ConstantinopleBlock: IsConstantinople is then true from that block on while
+// IsPetersburg stays false, and the SSTORE gate
+// `IsPetersburg || !IsConstantinople` (core/vm/gas_table.go) keeps the
+// net-metered EIP-1283 rule that Petersburg exists to revert. Upstream accepts
+// that shape too, because its existence branch needs a later non-optional slot
+// to carry a value and none follows when the schedule stops at Constantinople;
+// this repository rejects it, which is the one place where the check is stricter
+// than upstream. See docs/adr/0002-require-standard-fork-sequence.md.
+func chainConfigForkSequencePetersburgPair(cfg *ChainConfig) (missing, trigger string, triggerValue *big.Int, ok bool) {
+	if cfg.ConstantinopleBlock == nil {
+		return "", "", nil, false
+	}
+	if value, _ := chainConfigForkSequenceEffectiveValue(cfg, "PetersburgBlock", cfg.PetersburgBlock); value != nil {
+		return "", "", nil, false
+	}
+	return "PetersburgBlock", "ConstantinopleBlock", cfg.ConstantinopleBlock, true
 }
 
 // ForEachChainConfigForkOrderBlockPair visits fork block pairs in validation order.

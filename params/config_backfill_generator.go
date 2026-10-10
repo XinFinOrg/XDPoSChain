@@ -19,15 +19,17 @@ const (
 )
 
 type forkFieldSpec struct {
-	Kind              string `json:"kind,omitempty"`
-	Name              string `json:"name"`
-	JSONKey           string `json:"jsonKey"`
-	BackfillSet       string `json:"backfillSet,omitempty"`
-	CompatField       string `json:"compatField,omitempty"`
-	CustomMigrated    bool   `json:"customMigrated,omitempty"`
-	XDCSpecific       bool   `json:"xdcSpecific,omitempty"`
-	ForkOrder         int    `json:"forkOrder,omitempty"`
-	ForkOrderOptional bool   `json:"forkOrderOptional,omitempty"`
+	Kind                 string `json:"kind,omitempty"`
+	Name                 string `json:"name"`
+	JSONKey              string `json:"jsonKey"`
+	BackfillSet          string `json:"backfillSet,omitempty"`
+	CompatField          string `json:"compatField,omitempty"`
+	CustomMigrated       bool   `json:"customMigrated,omitempty"`
+	XDCSpecific          bool   `json:"xdcSpecific,omitempty"`
+	ForkOrder            int    `json:"forkOrder,omitempty"`
+	ForkOrderOptional    bool   `json:"forkOrderOptional,omitempty"`
+	ForkOrderStandard    bool   `json:"forkOrderStandard,omitempty"`
+	ForkSequenceRequired bool   `json:"forkSequenceRequired,omitempty"`
 }
 
 type templateData struct {
@@ -127,6 +129,14 @@ func loadSpecs(path string) ([]forkFieldSpec, error) {
 			}
 			seenForkOrders[field.ForkOrder] = field.Name
 		}
+		if field.ForkOrderStandard || field.ForkSequenceRequired {
+			if field.ForkOrder == 0 {
+				return nil, fmt.Errorf("only fields with forkOrder may declare forkOrderStandard or forkSequenceRequired: %q", field.Name)
+			}
+			if field.ForkSequenceRequired && !field.ForkOrderStandard {
+				return nil, fmt.Errorf("field %q must declare forkOrderStandard alongside forkSequenceRequired", field.Name)
+			}
+		}
 	}
 	for fieldName, compatField := range addressCompatFields {
 		if _, ok := bigIntFieldNames[compatField]; !ok {
@@ -219,11 +229,19 @@ var generatedChainConfigBuiltInBackfillForkBlockFields = []chainConfigBigIntFiel
 var generatedChainConfigForkOrderFieldDefs = []struct {
 	name     string
 	optional func(*ChainConfig) bool
+	standard bool
+	required bool
 }{
 {{- range .ForkOrder }}
 	{
 		name: {{ printf "%q" .Name }},
 		optional: {{ if .ForkOrderOptional }}alwaysOptionalChainConfigForkOrderField{{ else }}nil{{ end }},
+		{{- if .ForkOrderStandard }}
+		standard: true,
+		{{- end }}
+		{{- if .ForkSequenceRequired }}
+		required: true,
+		{{- end }}
 	},
 {{- end }}
 }

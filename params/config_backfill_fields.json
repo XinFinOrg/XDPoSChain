@@ -9,7 +9,9 @@
     "jsonKey": "homesteadBlock",
     "backfillSet": "common",
     "forkOrder": 1,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
   },
   {
     "name": "TIP2019Block",
@@ -32,49 +34,62 @@
     "jsonKey": "eip150Block",
     "backfillSet": "common",
     "forkOrder": 4,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
   },
   {
     "name": "EIP155Block",
     "jsonKey": "eip155Block",
     "backfillSet": "common",
     "forkOrder": 5,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
   },
   {
     "name": "EIP158Block",
     "jsonKey": "eip158Block",
     "backfillSet": "common",
     "forkOrder": 6,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
   },
   {
     "name": "ByzantiumBlock",
     "jsonKey": "byzantiumBlock",
     "backfillSet": "common",
     "forkOrder": 7,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
   },
   {
     "name": "ConstantinopleBlock",
     "jsonKey": "constantinopleBlock",
     "backfillSet": "common",
     "forkOrder": 8,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true
   },
   {
     "name": "PetersburgBlock",
     "jsonKey": "petersburgBlock",
     "backfillSet": "common",
     "forkOrder": 9,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
   },
   {
     "name": "IstanbulBlock",
     "jsonKey": "istanbulBlock",
     "backfillSet": "common",
     "forkOrder": 10,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
   },
   {
     "name": "TIPSigningBlock",
@@ -162,56 +177,67 @@
     "jsonKey": "berlinBlock",
     "backfillSet": "builtin",
     "forkOrder": 20,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true
   },
   {
     "name": "LondonBlock",
     "jsonKey": "londonBlock",
     "backfillSet": "builtin",
     "forkOrder": 21,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true
   },
   {
     "name": "MergeBlock",
     "jsonKey": "mergeBlock",
     "backfillSet": "builtin",
     "forkOrder": 22,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true
   },
   {
     "name": "ShanghaiBlock",
     "jsonKey": "shanghaiBlock",
     "backfillSet": "builtin",
     "forkOrder": 23,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true
   },
   {
     "name": "EIP1559Block",
     "jsonKey": "eip1559Block",
     "backfillSet": "builtin",
     "forkOrder": 26,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
   },
   {
     "name": "CancunBlock",
     "jsonKey": "cancunBlock",
     "backfillSet": "builtin",
     "forkOrder": 27,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true
   },
   {
     "name": "PragueBlock",
     "jsonKey": "pragueBlock",
     "backfillSet": "builtin",
     "forkOrder": 28,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
   },
   {
     "name": "OsakaBlock",
     "jsonKey": "osakaBlock",
     "backfillSet": "builtin",
     "forkOrder": 29,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
   },
   {
     "name": "Gas50xBlock",

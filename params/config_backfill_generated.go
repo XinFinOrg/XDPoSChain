@@ -262,10 +262,14 @@ var generatedChainConfigBuiltInBackfillForkBlockFields = []chainConfigBigIntFiel
 var generatedChainConfigForkOrderFieldDefs = []struct {
 	name     string
 	optional func(*ChainConfig) bool
+	standard bool
+	required bool
 }{
 	{
 		name:     "HomesteadBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
 	},
 	{
 		name:     "TIP2019Block",
@@ -278,30 +282,43 @@ var generatedChainConfigForkOrderFieldDefs = []struct {
 	{
 		name:     "EIP150Block",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
 	},
 	{
 		name:     "EIP155Block",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
 	},
 	{
 		name:     "EIP158Block",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
 	},
 	{
 		name:     "ByzantiumBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
 	},
 	{
 		name:     "ConstantinopleBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
 	},
 	{
 		name:     "PetersburgBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
 	},
 	{
 		name:     "IstanbulBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
 	},
 	{
 		name:     "TIPSigningBlock",
@@ -342,18 +359,22 @@ var generatedChainConfigForkOrderFieldDefs = []struct {
 	{
 		name:     "BerlinBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
 	},
 	{
 		name:     "LondonBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
 	},
 	{
 		name:     "MergeBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
 	},
 	{
 		name:     "ShanghaiBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
 	},
 	{
 		name:     "TIPXDCXMinerDisableBlock",
@@ -366,18 +387,25 @@ var generatedChainConfigForkOrderFieldDefs = []struct {
 	{
 		name:     "EIP1559Block",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
 	},
 	{
 		name:     "CancunBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
 	},
 	{
 		name:     "PragueBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
 	},
 	{
 		name:     "OsakaBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
 	},
 	{
 		name:     "DynamicGasLimitBlock",

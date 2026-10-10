@@ -1278,6 +1278,8 @@ func TestApplyTransactionWithEVMKeepsCoinbaseFeeRecipientAtTIPTRC21ActivationBlo
 		EIP155Block:            big.NewInt(0),
 		EIP158Block:            big.NewInt(0),
 		ByzantiumBlock:         big.NewInt(0),
+		PetersburgBlock:        big.NewInt(0),
+		IstanbulBlock:          big.NewInt(0),
 		TIPTRC21FeeBlock:       big.NewInt(0),
 		Gas50xBlock:            big.NewInt(1_000_000_000),
 		BerlinBlock:            big.NewInt(1_000_000_000),

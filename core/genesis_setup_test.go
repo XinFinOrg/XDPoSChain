@@ -484,7 +484,12 @@ func TestSetupGenesisRejectsCustomXDPoSConfigMissingNonMigratedFieldsOnEmptyDB(t
 	db := rawdb.NewMemoryDatabase()
 	genesis := &Genesis{
 		Config: &params.ChainConfig{
-			ChainID: big.NewInt(999003),
+			ChainID:        big.NewInt(999003),
+			HomesteadBlock: big.NewInt(0),
+			EIP150Block:    big.NewInt(0),
+			EIP155Block:    big.NewInt(0),
+			EIP158Block:    big.NewInt(0),
+			ByzantiumBlock: big.NewInt(0),
 			XDPoS: &params.XDPoSConfig{
 				Period: 5,
 			},
@@ -940,9 +945,14 @@ func TestSetupGenesisRejectsPartialLegacyCustomXDPoSConfig(t *testing.T) {
 	db := rawdb.NewMemoryDatabase()
 	genesis := &Genesis{
 		Config: &params.ChainConfig{
-			ChainID:      big.NewInt(4545),
-			TIP2019Block: big.NewInt(0),
-			XDPoS:        &params.XDPoSConfig{MaxMasternodesV2: 108},
+			ChainID:        big.NewInt(4545),
+			HomesteadBlock: big.NewInt(0),
+			EIP150Block:    big.NewInt(0),
+			EIP155Block:    big.NewInt(0),
+			EIP158Block:    big.NewInt(0),
+			ByzantiumBlock: big.NewInt(0),
+			TIP2019Block:   big.NewInt(0),
+			XDPoS:          &params.XDPoSConfig{MaxMasternodesV2: 108},
 		},
 		ExtraData:  make([]byte, 32+crypto.SignatureLength),
 		Alloc:      types.GenesisAlloc{{1}: {Balance: big.NewInt(1)}},
@@ -1000,6 +1010,11 @@ func TestSetupGenesisBlockRejectsInvalidXDPoSV2Config(t *testing.T) {
 	genesis := &Genesis{
 		Config: &params.ChainConfig{
 			ChainID:                big.NewInt(4545),
+			HomesteadBlock:         big.NewInt(0),
+			EIP150Block:            big.NewInt(0),
+			EIP155Block:            big.NewInt(0),
+			EIP158Block:            big.NewInt(0),
+			ByzantiumBlock:         big.NewInt(0),
 			TIPTRC21FeeBlock:       big.NewInt(1),
 			Gas50xBlock:            big.NewInt(1),
 			TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
@@ -1043,6 +1058,11 @@ func TestSetupGenesisBlockRejectsXDPoSV2MissingDefaultConfig(t *testing.T) {
 	genesis := &Genesis{
 		Config: &params.ChainConfig{
 			ChainID:                big.NewInt(4545),
+			HomesteadBlock:         big.NewInt(0),
+			EIP150Block:            big.NewInt(0),
+			EIP155Block:            big.NewInt(0),
+			EIP158Block:            big.NewInt(0),
+			ByzantiumBlock:         big.NewInt(0),
 			TIPTRC21FeeBlock:       big.NewInt(1),
 			Gas50xBlock:            big.NewInt(1),
 			TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
@@ -1094,6 +1114,11 @@ func TestSetupGenesisBlockRejectsXDPoSV2NilDefaultConfig(t *testing.T) {
 	genesis := &Genesis{
 		Config: &params.ChainConfig{
 			ChainID:                big.NewInt(4545),
+			HomesteadBlock:         big.NewInt(0),
+			EIP150Block:            big.NewInt(0),
+			EIP155Block:            big.NewInt(0),
+			EIP158Block:            big.NewInt(0),
+			ByzantiumBlock:         big.NewInt(0),
 			TIPTRC21FeeBlock:       big.NewInt(1),
 			Gas50xBlock:            big.NewInt(1),
 			TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,

@@ -29,6 +29,22 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// declareStandardForkPrefix declares, at block 0, the standard forks these
+// fixtures schedule past: Homestead through Byzantium plus Petersburg and
+// Istanbul. Constantinople is deliberately left out: it is a trigger-only slot,
+// and its one consumer tolerates its absence.
+// EIP1559, Prague and Osaka are required as well, but these fixtures stop before
+// them.
+func declareStandardForkPrefix(cfg *ChainConfig) {
+	cfg.HomesteadBlock = big.NewInt(0)
+	cfg.EIP150Block = big.NewInt(0)
+	cfg.EIP155Block = big.NewInt(0)
+	cfg.EIP158Block = big.NewInt(0)
+	cfg.ByzantiumBlock = big.NewInt(0)
+	cfg.PetersburgBlock = big.NewInt(0)
+	cfg.IstanbulBlock = big.NewInt(0)
+}
+
 func TestChainConfigValidateForStartup(t *testing.T) {
 	t.Run("missing field", func(t *testing.T) {
 		cfg := &ChainConfig{}
@@ -99,6 +115,262 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 		}
 		if err := cfg.CheckConfigForkOrder(); err != nil {
 			t.Fatalf("ValidateForStartup failed for plain custom ethash config: %v", err)
+		}
+	})
+	t.Run("standard fork sequence rejects a skipped fork", func(t *testing.T) {
+		shanghaiPrefix := &ChainConfig{ChainID: big.NewInt(1234), Ethash: new(EthashConfig)}
+		declareStandardForkPrefix(shanghaiPrefix)
+		shanghaiPrefix.BerlinBlock = big.NewInt(0)
+		shanghaiPrefix.LondonBlock = big.NewInt(0)
+		shanghaiPrefix.MergeBlock = big.NewInt(0)
+		shanghaiPrefix.ShanghaiBlock = big.NewInt(0)
+		shanghaiPrefix.OsakaBlock = big.NewInt(0)
+
+		tests := []struct {
+			name string
+			cfg  *ChainConfig
+			want string
+		}{
+			{
+				name: "osaka without prague",
+				cfg:  &ChainConfig{ChainID: big.NewInt(1234), OsakaBlock: big.NewInt(0), Ethash: new(EthashConfig)},
+				want: "invalid chain config: wrong fork switch order: PragueBlock is unset, but OsakaBlock 0 is scheduled",
+			},
+			{
+				name: "cancun without eip1559",
+				cfg:  &ChainConfig{ChainID: big.NewInt(1234), CancunBlock: big.NewInt(0), Ethash: new(EthashConfig)},
+				want: "invalid chain config: wrong fork switch order: EIP1559Block is unset, but CancunBlock 0 is scheduled",
+			},
+			{
+				name: "prague without eip1559",
+				cfg:  &ChainConfig{ChainID: big.NewInt(1234), PragueBlock: big.NewInt(0), Ethash: new(EthashConfig)},
+				want: "invalid chain config: wrong fork switch order: EIP1559Block is unset, but PragueBlock 0 is scheduled",
+			},
+			{
+				name: "eip1559 without istanbul",
+				cfg:  &ChainConfig{ChainID: big.NewInt(1234), EIP1559Block: big.NewInt(0), Ethash: new(EthashConfig)},
+				want: "invalid chain config: wrong fork switch order: IstanbulBlock is unset, but EIP1559Block 0 is scheduled",
+			},
+			{
+				name: "berlin without istanbul",
+				cfg:  &ChainConfig{ChainID: big.NewInt(1234), BerlinBlock: big.NewInt(0), Ethash: new(EthashConfig)},
+				want: "invalid chain config: wrong fork switch order: IstanbulBlock is unset, but BerlinBlock 0 is scheduled",
+			},
+			{
+				name: "issue 2771 reproduction",
+				cfg:  shanghaiPrefix,
+				want: "invalid chain config: wrong fork switch order: PragueBlock is unset, but OsakaBlock 0 is scheduled",
+			},
+			{
+				// The shape upstream rejects too: Istanbul is scheduled while
+				// Petersburg is unset, and neither ConstantinopleBlock nor the
+				// cancellation-fee fallback is declared.
+				name: "petersburg absent without constantinople",
+				cfg: &ChainConfig{
+					ChainID:        big.NewInt(1234),
+					HomesteadBlock: big.NewInt(0),
+					EIP150Block:    big.NewInt(0),
+					EIP155Block:    big.NewInt(0),
+					EIP158Block:    big.NewInt(0),
+					ByzantiumBlock: big.NewInt(0),
+					IstanbulBlock:  big.NewInt(0),
+					BerlinBlock:    big.NewInt(10),
+					Ethash:         new(EthashConfig),
+				},
+				want: "invalid chain config: wrong fork switch order: PetersburgBlock is unset, but IstanbulBlock 0 is scheduled",
+			},
+			{
+				// Petersburg must be declared before Istanbul is scheduled.
+				name: "petersburg skipped while constantinople is declared",
+				cfg: &ChainConfig{
+					ChainID:             big.NewInt(1234),
+					HomesteadBlock:      big.NewInt(0),
+					EIP150Block:         big.NewInt(0),
+					EIP155Block:         big.NewInt(0),
+					EIP158Block:         big.NewInt(0),
+					ByzantiumBlock:      big.NewInt(0),
+					ConstantinopleBlock: big.NewInt(0),
+					IstanbulBlock:       big.NewInt(0),
+					Ethash:              new(EthashConfig),
+				},
+				want: "invalid chain config: wrong fork switch order: PetersburgBlock is unset, but IstanbulBlock 0 is scheduled",
+			},
+			{
+				// The pair check needs no later fork: IsConstantinople is true from
+				// block 0 on, so the net-metered SSTORE rule runs although no fork
+				// declares it.
+				name: "petersburg skipped with nothing later scheduled",
+				cfg: &ChainConfig{
+					ChainID:             big.NewInt(1234),
+					HomesteadBlock:      big.NewInt(0),
+					EIP150Block:         big.NewInt(0),
+					EIP155Block:         big.NewInt(0),
+					EIP158Block:         big.NewInt(0),
+					ByzantiumBlock:      big.NewInt(0),
+					ConstantinopleBlock: big.NewInt(0),
+					Ethash:              new(EthashConfig),
+				},
+				want: "invalid chain config: wrong fork switch order: PetersburgBlock is unset, but ConstantinopleBlock 0 is scheduled",
+			},
+		}
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				err := test.cfg.CheckConfigForkOrder()
+				if !errors.Is(err, ErrWrongForkSwitchOrder) {
+					t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+				}
+				if err == nil || err.Error() != test.want {
+					t.Fatalf("unexpected error string:\nhave %v\nwant %v", err, test.want)
+				}
+			})
+		}
+	})
+	t.Run("standard fork sequence accepts a declared prefix", func(t *testing.T) {
+		cancunGap := &ChainConfig{ChainID: big.NewInt(1234), Ethash: new(EthashConfig)}
+		declareStandardForkPrefix(cancunGap)
+		cancunGap.BerlinBlock = big.NewInt(10)
+		cancunGap.LondonBlock = big.NewInt(10)
+		cancunGap.MergeBlock = big.NewInt(10)
+		cancunGap.ShanghaiBlock = big.NewInt(10)
+		cancunGap.EIP1559Block = big.NewInt(10)
+		cancunGap.PragueBlock = big.NewInt(20)
+		cancunGap.OsakaBlock = big.NewInt(20)
+
+		// Petersburg scheduled after Constantinople is valid, and its
+		// IsPetersburg is false before PetersburgBlock just like this
+		// repository's, so the window between the two is not a divergence.
+		petersburgDeclaredAfterConstantinople := &ChainConfig{ChainID: big.NewInt(1234), Ethash: new(EthashConfig)}
+		declareStandardForkPrefix(petersburgDeclaredAfterConstantinople)
+		petersburgDeclaredAfterConstantinople.ConstantinopleBlock = big.NewInt(0)
+		petersburgDeclaredAfterConstantinople.PetersburgBlock = big.NewInt(10)
+		petersburgDeclaredAfterConstantinople.IstanbulBlock = big.NewInt(10)
+
+		// The same holds when the migrated cancellation-fee fork supplies the
+		// effective Petersburg activation; the XDC fields come along because
+		// setting one triggers requiresXDCForkConfig().
+		petersburgViaCancellationFee := &ChainConfig{
+			ChainID:                     big.NewInt(1234),
+			HomesteadBlock:              big.NewInt(0),
+			EIP150Block:                 big.NewInt(0),
+			EIP155Block:                 big.NewInt(0),
+			EIP158Block:                 big.NewInt(0),
+			ByzantiumBlock:              big.NewInt(0),
+			ConstantinopleBlock:         big.NewInt(0),
+			TIPXDCXCancellationFeeBlock: big.NewInt(0),
+			TIPTRC21FeeBlock:            big.NewInt(0),
+			Gas50xBlock:                 big.NewInt(0),
+			TRC21IssuerSMC:              TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:              TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC:      TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC:      TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                      new(EthashConfig),
+		}
+
+		istanbulViaCancellationFee := &ChainConfig{
+			ChainID:                     big.NewInt(1234),
+			HomesteadBlock:              big.NewInt(0),
+			EIP150Block:                 big.NewInt(0),
+			EIP155Block:                 big.NewInt(0),
+			EIP158Block:                 big.NewInt(0),
+			ByzantiumBlock:              big.NewInt(0),
+			BerlinBlock:                 big.NewInt(10),
+			TIPXDCXCancellationFeeBlock: big.NewInt(0),
+			TIPTRC21FeeBlock:            big.NewInt(0),
+			Gas50xBlock:                 big.NewInt(0),
+			TRC21IssuerSMC:              TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:              TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC:      TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC:      TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                      new(EthashConfig),
+		}
+
+		for _, test := range []struct {
+			name string
+			cfg  *ChainConfig
+		}{
+			{name: "cancun skipped between eip1559 and prague", cfg: cancunGap},
+			{name: "petersburg declared after constantinople", cfg: petersburgDeclaredAfterConstantinople},
+			{name: "petersburg activated through the cancellation fee fork", cfg: petersburgViaCancellationFee},
+			{name: "istanbul activated through the cancellation fee fork", cfg: istanbulViaCancellationFee},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				if err := test.cfg.CheckConfigForkOrder(); err != nil {
+					t.Fatalf("CheckConfigForkOrder rejected a declared standard prefix: %v", err)
+				}
+			})
+		}
+	})
+	t.Run("miner disable does not substitute for istanbul", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                  big.NewInt(1234),
+			HomesteadBlock:           big.NewInt(0),
+			EIP150Block:              big.NewInt(0),
+			EIP155Block:              big.NewInt(0),
+			EIP158Block:              big.NewInt(0),
+			ByzantiumBlock:           big.NewInt(0),
+			BerlinBlock:              big.NewInt(10),
+			TIPXDCXMinerDisableBlock: big.NewInt(20),
+			TIPTRC21FeeBlock:         big.NewInt(0),
+			Gas50xBlock:              big.NewInt(0),
+			TRC21IssuerSMC:           TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:           TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC:   TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC:   TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                   new(EthashConfig),
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: IstanbulBlock is unset, but BerlinBlock 10 is scheduled" {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("linear comparison keeps reporting a real inversion first", func(t *testing.T) {
+		// The sequence scan runs after the linear comparison, so a config that
+		// both inverts a pair and skips a required fork keeps the inversion's
+		// error. Moving the sequence scan earlier changes this string.
+		cfg := &ChainConfig{
+			ChainID:                  big.NewInt(1234),
+			EIP158Block:              big.NewInt(100),
+			TIPTRC21FeeBlock:         big.NewInt(0),
+			Gas50xBlock:              big.NewInt(0),
+			TRC21IssuerSMC:           TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:           TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC:   TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC:   TestnetChainConfig.LendingRegistrationSMC,
+			TIPXDCXMinerDisableBlock: big.NewInt(50),
+			Ethash:                   new(EthashConfig),
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: EIP158Block 100 > TIPTRC21FeeBlock 0" {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("effective istanbul activation names the field it came from", func(t *testing.T) {
+		// A config whose Istanbul is activated by the migrated cancellation-fee
+		// fork instead of IstanbulBlock must name that field: the operator has
+		// no IstanbulBlock to look at.
+		cfg := &ChainConfig{
+			ChainID:                     big.NewInt(1234),
+			TIPTRC21FeeBlock:            big.NewInt(0),
+			Gas50xBlock:                 big.NewInt(0),
+			TRC21IssuerSMC:              TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:              TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC:      TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC:      TestnetChainConfig.LendingRegistrationSMC,
+			TIPXDCXCancellationFeeBlock: big.NewInt(0),
+			Ethash:                      new(EthashConfig),
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: ByzantiumBlock is unset, but TIPXDCXCancellationFeeBlock 0 is scheduled" {
+			t.Fatalf("unexpected error string: %v", err)
 		}
 	})
 	t.Run("gas50x block requires tiptrc21 fee block", func(t *testing.T) {
@@ -227,6 +499,7 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
 			Ethash:                 new(EthashConfig),
 		}
+		declareStandardForkPrefix(cfg)
 
 		if err := cfg.CheckConfigForkOrder(); err != nil {
 			t.Fatalf("CheckConfigForkOrder rejected gas2500x after eip1559: %v", err)
@@ -246,6 +519,7 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
 			Ethash:                 new(EthashConfig),
 		}
+		declareStandardForkPrefix(cfg)
 
 		err := cfg.CheckConfigForkOrder()
 		if !errors.Is(err, ErrWrongForkSwitchOrder) {
@@ -269,6 +543,7 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
 			Ethash:                 new(EthashConfig),
 		}
+		declareStandardForkPrefix(cfg)
 
 		if err := cfg.CheckConfigForkOrder(); !errors.Is(err, ErrWrongForkSwitchOrder) {
 			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
@@ -288,6 +563,7 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
 			Ethash:                 new(EthashConfig),
 		}
+		declareStandardForkPrefix(cfg)
 
 		if err := cfg.CheckConfigForkOrder(); err != nil {
 			t.Fatalf("CheckConfigForkOrder rejected an empty basefee opcode window: %v", err)
@@ -306,6 +582,7 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
 			Ethash:                 new(EthashConfig),
 		}
+		declareStandardForkPrefix(cfg)
 
 		if err := cfg.CheckConfigForkOrder(); !errors.Is(err, ErrWrongForkSwitchOrder) {
 			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)

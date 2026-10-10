@@ -198,6 +198,140 @@ func TestForEachChainConfigForkOrderBlockCoversValidationOrder(t *testing.T) {
 	}
 }
 
+// TestChainConfigForkSequenceRequiredSet pins the standard forks that
+// CheckConfigForkOrder requires to be declared before any later standard fork
+// is scheduled. Changing either list changes which chain configs start, so an
+// edit here must be deliberate. The fixture config is TestnetChainConfig, and
+// every required member is demanded unconditionally, so the list this test
+// reads is the one any config reaching the scan is measured against.
+func TestChainConfigForkSequenceRequiredSet(t *testing.T) {
+	standard := make([]string, 0)
+	required := make([]string, 0)
+	ForEachChainConfigForkSequenceBlock(TestnetChainConfig, func(name string, _ *big.Int, isRequired bool) {
+		standard = append(standard, name)
+		if isRequired {
+			required = append(required, name)
+		}
+	})
+
+	wantStandard := []string{
+		"HomesteadBlock",
+		"EIP150Block",
+		"EIP155Block",
+		"EIP158Block",
+		"ByzantiumBlock",
+		"ConstantinopleBlock",
+		"PetersburgBlock",
+		"IstanbulBlock",
+		"BerlinBlock",
+		"LondonBlock",
+		"MergeBlock",
+		"ShanghaiBlock",
+		"EIP1559Block",
+		"CancunBlock",
+		"PragueBlock",
+		"OsakaBlock",
+	}
+	wantRequired := []string{
+		"HomesteadBlock",
+		"EIP150Block",
+		"EIP155Block",
+		"EIP158Block",
+		"ByzantiumBlock",
+		"PetersburgBlock",
+		"IstanbulBlock",
+		"EIP1559Block",
+		"PragueBlock",
+		"OsakaBlock",
+	}
+
+	if !reflect.DeepEqual(standard, wantStandard) {
+		t.Fatalf("unexpected standard fork sequence:\nhave=%v\nwant=%v", standard, wantStandard)
+	}
+	if !reflect.DeepEqual(required, wantRequired) {
+		t.Fatalf("unexpected required fork sequence:\nhave=%v\nwant=%v", required, wantRequired)
+	}
+}
+
+// TestChainConfigForkSequencePetersburgPairInvariant pins the shapes the pair
+// check separates. The sequence scan reports a gap only when a later slot has a
+// value, so a schedule that stops at ConstantinopleBlock needs this check: it is
+// the one shape where a declared fork leaves a rule running that no schedule
+// asked for. The three accepted shapes are the ones upstream reads the same way.
+func TestChainConfigForkSequencePetersburgPairInvariant(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		constantinople *big.Int
+		petersburg     *big.Int
+		cancellation   *big.Int
+		wantUnmet      bool
+	}{
+		{name: "constantinople absent", constantinople: nil, wantUnmet: false},
+		{name: "petersburg declared", constantinople: big.NewInt(0), petersburg: big.NewInt(100), wantUnmet: false},
+		{name: "cancellation fee fallback", constantinople: big.NewInt(0), cancellation: big.NewInt(0), wantUnmet: false},
+		{name: "petersburg missing", constantinople: big.NewInt(0), wantUnmet: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := &ChainConfig{
+				ChainID:                     big.NewInt(1234),
+				ConstantinopleBlock:         test.constantinople,
+				PetersburgBlock:             test.petersburg,
+				TIPXDCXCancellationFeeBlock: test.cancellation,
+				Ethash:                      new(EthashConfig),
+			}
+			missing, trigger, value, unmet := chainConfigForkSequencePetersburgPair(cfg)
+			if unmet != test.wantUnmet {
+				t.Fatalf("petersburg pair unmet: have %v want %v", unmet, test.wantUnmet)
+			}
+			if !unmet {
+				return
+			}
+			if missing != "PetersburgBlock" || trigger != "ConstantinopleBlock" || value != test.constantinople {
+				t.Fatalf("unexpected pair: missing %s, trigger %s, value %v", missing, trigger, value)
+			}
+		})
+	}
+}
+
+// TestChainConfigForkSequenceFallbackMirrorsRuntimeFlags pins that the slots for
+// which the validation substitutes the migrated cancellation-fee fork are exactly
+// the slots whose runtime flag consults it. The rule is written twice — in
+// ChainConfig.IsIstanbul and ChainConfig.IsPetersburg (params/config_forks.go)
+// and in chainConfigForkSequenceEffectiveValue here — and this is the only thing
+// that keeps the two copies from drifting apart.
+func TestChainConfigForkSequenceFallbackMirrorsRuntimeFlags(t *testing.T) {
+	cfg := &ChainConfig{ChainID: big.NewInt(1234), TIPXDCXCancellationFeeBlock: big.NewInt(0), Ethash: new(EthashConfig)}
+	rules := cfg.Rules(big.NewInt(0))
+	runtimeUsesFallback := map[string]bool{
+		"HomesteadBlock":      rules.IsHomestead,
+		"EIP150Block":         rules.IsEIP150,
+		"EIP155Block":         rules.IsEIP155,
+		"EIP158Block":         rules.IsEIP158,
+		"ByzantiumBlock":      rules.IsByzantium,
+		"ConstantinopleBlock": rules.IsConstantinople,
+		"PetersburgBlock":     rules.IsPetersburg,
+		"IstanbulBlock":       rules.IsIstanbul,
+		"BerlinBlock":         rules.IsBerlin,
+		"LondonBlock":         rules.IsLondon,
+		"MergeBlock":          rules.IsMerge,
+		"ShanghaiBlock":       rules.IsShanghai,
+		"EIP1559Block":        rules.IsEIP1559,
+		"CancunBlock":         rules.IsCancun,
+		"PragueBlock":         rules.IsPrague,
+		"OsakaBlock":          rules.IsOsaka,
+	}
+	ForEachChainConfigForkSequenceBlock(cfg, func(name string, _ *big.Int, _ bool) {
+		want, listed := runtimeUsesFallback[name]
+		if !listed {
+			t.Fatalf("%s is in the standard fork sequence but missing from this test's flag map", name)
+		}
+		value, source := chainConfigForkSequenceEffectiveValue(cfg, name, nil)
+		if got := value != nil && source == "TIPXDCXCancellationFeeBlock"; got != want {
+			t.Fatalf("%s: validation substitutes the cancellation fee: %v, runtime flag: %v", name, got, want)
+		}
+	})
+}
+
 func TestForEachChainConfigForkOrderBlockMarksTIPTRC21FeeBlockOptional(t *testing.T) {
 	tests := []struct {
 		name string
