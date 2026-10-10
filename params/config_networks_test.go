@@ -81,6 +81,7 @@ func TestXDPoSMockChainConfigDeclaresModernForks(t *testing.T) {
 	assertBlock("CancunBlock", config.CancunBlock)
 	assertBlock("PragueBlock", config.PragueBlock)
 	assertBlock("OsakaBlock", config.OsakaBlock)
+	assertBlock("AmsterdamBlock", config.AmsterdamBlock)
 }
 
 func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
@@ -107,6 +108,7 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 		cancunBlock                 *big.Int
 		pragueBlock                 *big.Int
 		osakaBlock                  *big.Int
+		amsterdamBlock              *big.Int
 		dynamicGasLimitBlock        *big.Int
 		tipUpgradeRewardBlock       *big.Int
 		tipUpgradePenaltyBlock      *big.Int
@@ -135,6 +137,7 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 			cancunBlock:                 big.NewInt(98802000),
 			pragueBlock:                 nil,
 			osakaBlock:                  nil,
+			amsterdamBlock:              nil,
 			dynamicGasLimitBlock:        nil,
 			tipUpgradeRewardBlock:       nil,
 			tipUpgradePenaltyBlock:      nil,
@@ -163,6 +166,7 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 			cancunBlock:                 big.NewInt(71551800),
 			pragueBlock:                 nil,
 			osakaBlock:                  nil,
+			amsterdamBlock:              nil,
 			dynamicGasLimitBlock:        big.NewInt(83600000),
 			tipUpgradeRewardBlock:       big.NewInt(83600000),
 			tipUpgradePenaltyBlock:      big.NewInt(83600000),
@@ -191,6 +195,7 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 			cancunBlock:                 big.NewInt(25000),
 			pragueBlock:                 big.NewInt(50000),
 			osakaBlock:                  nil,
+			amsterdamBlock:              nil,
 			dynamicGasLimitBlock:        big.NewInt(50000),
 			tipUpgradeRewardBlock:       big.NewInt(50000),
 			tipUpgradePenaltyBlock:      big.NewInt(50000),
@@ -219,6 +224,7 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 			cancunBlock:                 big.NewInt(0),
 			pragueBlock:                 big.NewInt(0),
 			osakaBlock:                  nil,
+			amsterdamBlock:              nil,
 			dynamicGasLimitBlock:        big.NewInt(0),
 			tipUpgradeRewardBlock:       big.NewInt(0),
 			tipUpgradePenaltyBlock:      big.NewInt(0),
@@ -262,6 +268,7 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 			assertBlock(t, "Cancun", test.config.CancunBlock, test.cancunBlock)
 			assertBlock(t, "Prague", test.config.PragueBlock, test.pragueBlock)
 			assertBlock(t, "Osaka", test.config.OsakaBlock, test.osakaBlock)
+			assertBlock(t, "Amsterdam", test.config.AmsterdamBlock, test.amsterdamBlock)
 			assertBlock(t, "DynamicGasLimit", test.config.DynamicGasLimitBlock, test.dynamicGasLimitBlock)
 			assertBlock(t, "TIPUpgradeReward", test.config.TIPUpgradeRewardBlock, test.tipUpgradeRewardBlock)
 			assertBlock(t, "TIPUpgradePenalty", test.config.TIPUpgradePenaltyBlock, test.tipUpgradePenaltyBlock)

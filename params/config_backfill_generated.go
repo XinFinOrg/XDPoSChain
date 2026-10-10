@@ -121,6 +121,12 @@ var generatedChainConfigBuiltInBackfillForkBlockFields = []chainConfigBigIntFiel
 		bind:    func(c *ChainConfig) **big.Int { return &c.OsakaBlock },
 	},
 	{
+		name:    "AmsterdamBlock",
+		jsonKey: "amsterdamBlock",
+		get:     func(c *ChainConfig) *big.Int { return c.AmsterdamBlock },
+		bind:    func(c *ChainConfig) **big.Int { return &c.AmsterdamBlock },
+	},
+	{
 		name:           "TIP2019Block",
 		jsonKey:        "tip2019Block",
 		customMigrated: true,
@@ -377,6 +383,10 @@ var generatedChainConfigForkOrderFieldDefs = []struct {
 	},
 	{
 		name:     "OsakaBlock",
+		optional: alwaysOptionalChainConfigForkOrderField,
+	},
+	{
+		name:     "AmsterdamBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
 	},
 	{

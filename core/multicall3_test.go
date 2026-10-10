@@ -37,6 +37,7 @@ func multicall3Config(pragueBlock *big.Int) *params.ChainConfig {
 	config := *params.TestChainConfig
 	config.PragueBlock = pragueBlock
 	config.OsakaBlock = nil
+	config.AmsterdamBlock = nil
 	return &config
 }
 

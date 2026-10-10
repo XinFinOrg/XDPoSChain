@@ -38,6 +38,7 @@ func TestRandomizeStatedbUtils(t *testing.T) {
 	legacyConfig.CancunBlock = new(big.Int).Set(futureForkBlock)
 	legacyConfig.PragueBlock = new(big.Int).Set(futureForkBlock)
 	legacyConfig.OsakaBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.AmsterdamBlock = new(big.Int).Set(futureForkBlock)
 
 	balance := new(big.Int).SetUint64(1000000000000)
 	deployBackend := backends.NewXDCSimulatedBackend(types.GenesisAlloc{acc1Addr: {Balance: balance}}, 42000000, &legacyConfig)

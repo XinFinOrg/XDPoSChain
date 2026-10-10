@@ -17,8 +17,10 @@
 package vm
 
 import (
+	"math/big"
 	"testing"
 
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,4 +34,31 @@ func TestJumpTableCopy(t *testing.T) {
 	deepCopy[SLOAD].constantGas = 100
 	require.Equal(t, uint64(100), deepCopy[SLOAD].constantGas)
 	require.Equal(t, uint64(0), tbl[SLOAD].constantGas)
+}
+
+// TestAmsterdamJumpTableSelection pins the fork-to-table selection in NewEVM.
+//
+// TestEIP8024_Execution exercises the EIP-8024 handlers directly and never
+// consults evm.table, so a selector that picked the wrong table - running
+// Amsterdam bytecode against the Osaka table, or the reverse - would go
+// unnoticed. EIP-8024 (DUPN, SWAPN, EXCHANGE) is the only instruction set the
+// Amsterdam table adds over Osaka, so the two tables must differ exactly there,
+// and NewEVM must hand out the one its rules call for.
+func TestAmsterdamJumpTableSelection(t *testing.T) {
+	evmAt := func(cfg *params.ChainConfig) *EVM {
+		return NewEVM(BlockContext{BlockNumber: big.NewInt(0)}, nil, nil, cfg, Config{})
+	}
+	osaka := evmAt(&params.ChainConfig{OsakaBlock: big.NewInt(0)})
+	if osaka.table != &osakaInstructionSet {
+		t.Fatalf("Osaka rules selected %p, want the Osaka instruction set", osaka.table)
+	}
+	amsterdam := evmAt(&params.ChainConfig{OsakaBlock: big.NewInt(0), AmsterdamBlock: big.NewInt(0)})
+	if amsterdam.table != &amsterdamInstructionSet {
+		t.Fatalf("Amsterdam rules selected %p, want the Amsterdam instruction set", amsterdam.table)
+	}
+	for _, op := range []OpCode{DUPN, SWAPN, EXCHANGE} {
+		if osaka.table[op] == amsterdam.table[op] {
+			t.Errorf("table[%#x] is shared between Osaka and Amsterdam, want the EIP-8024 entry to differ", op)
+		}
+	}
 }

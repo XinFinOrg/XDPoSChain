@@ -126,6 +126,7 @@ func TestForEachChainConfigForkBlockCoversStandardAndXDCForks(t *testing.T) {
 		"CancunBlock",
 		"PragueBlock",
 		"OsakaBlock",
+		"AmsterdamBlock",
 		"TIP2019Block",
 		"TIPSigningBlock",
 		"TIPRandomizeBlock",
@@ -187,6 +188,7 @@ func TestForEachChainConfigForkOrderBlockCoversValidationOrder(t *testing.T) {
 		"CancunBlock",
 		"PragueBlock",
 		"OsakaBlock",
+		"AmsterdamBlock",
 		"DynamicGasLimitBlock",
 		"TIPUpgradeRewardBlock",
 		"TIPUpgradePenaltyBlock",
@@ -234,7 +236,7 @@ func TestForEachChainConfigForkOrderBlockMarksTIPTRC21FeeBlockOptional(t *testin
 	}
 }
 
-func TestForEachChainConfigForkOrderSpecialCaseRuleCoversGas50xConstraints(t *testing.T) {
+func TestForEachChainConfigForkOrderSpecialCaseRuleCoversSpecialCaseConstraints(t *testing.T) {
 	type rule struct {
 		before string
 		after  string
@@ -248,6 +250,7 @@ func TestForEachChainConfigForkOrderSpecialCaseRuleCoversGas50xConstraints(t *te
 		{before: "TIPTRC21FeeBlock", after: "Gas50xBlock"},
 		{before: "Gas50xBlock", after: "Gas2500xBlock"},
 		{before: "Gas50xBlock", after: "TIPXDCXMinerDisableBlock"},
+		{before: "OsakaBlock", after: "AmsterdamBlock"},
 	}
 
 	if !reflect.DeepEqual(got, want) {

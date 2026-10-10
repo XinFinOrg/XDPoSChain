@@ -105,6 +105,7 @@ func TestFilters(t *testing.T) {
 	config.CancunBlock = nil
 	config.PragueBlock = nil
 	config.OsakaBlock = nil
+	config.AmsterdamBlock = nil
 
 	var (
 		db     = rawdb.NewMemoryDatabase()
