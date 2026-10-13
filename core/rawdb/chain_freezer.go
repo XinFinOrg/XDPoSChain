@@ -19,6 +19,9 @@ package rawdb
 import (
 	"errors"
 	"fmt"
+	"math"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -37,7 +40,42 @@ const (
 	// freezerBatchLimit is the maximum number of blocks to freeze in one batch
 	// before doing an fsync and deleting it from the key-value store.
 	freezerBatchLimit = 30000
+
+	// freezerTableSizeEnv names the environment variable that overrides the
+	// maximum size of chain freezer data files. It exists so tests and local
+	// devnets can force data file rollovers within minutes instead of after
+	// gigabytes of chain; production nodes must not set it.
+	freezerTableSizeEnv = "XDC_FREEZER_TABLE_SIZE"
+
+	// minFreezerTableSizeOverride is the smallest accepted override. A table
+	// keeps every one of its data files open, so tiny files would exhaust the
+	// process's file descriptors long before the chain gets interesting.
+	minFreezerTableSizeOverride = 64 * 1024
 )
+
+// chainFreezerTableSize returns the maximum size of chain freezer data files,
+// applying the XDC_FREEZER_TABLE_SIZE override when it is set.
+//
+// The size only decides when a table rolls over to a new data file, so an
+// existing freezer can be reopened with a different value; files written
+// before the change keep their size.
+func chainFreezerTableSize() (uint32, error) {
+	value := os.Getenv(freezerTableSizeEnv)
+	if value == "" {
+		return freezerTableSize, nil
+	}
+	size, err := strconv.ParseUint(value, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: must be a byte count no larger than %d", freezerTableSizeEnv, value, uint32(math.MaxUint32))
+	}
+	if size < minFreezerTableSizeOverride {
+		return 0, fmt.Errorf("%s must be at least %d bytes, got %d: every data file of a table stays open, so smaller files exhaust file descriptors",
+			freezerTableSizeEnv, minFreezerTableSizeOverride, size)
+	}
+	log.Warn("Chain freezer table size overridden - DEVELOPMENT ONLY, not safe for a production node",
+		"size", common.StorageSize(size), "default", common.StorageSize(freezerTableSize))
+	return uint32(size), nil
+}
 
 // chainFreezer is a wrapper of chain ancient store with additional chain freezing
 // feature. The background thread will keep moving ancient chain segments from
@@ -64,7 +102,11 @@ func newChainFreezer(datadir string, namespace string, readonly bool) (*chainFre
 			trigger:  make(chan chan struct{}),
 		}, nil
 	}
-	freezer, err := NewFreezer(datadir, namespace, readonly, freezerTableSize, chainFreezerTableConfigs)
+	tableSize, err := chainFreezerTableSize()
+	if err != nil {
+		return nil, err
+	}
+	freezer, err := NewFreezer(datadir, namespace, readonly, tableSize, chainFreezerTableConfigs)
 	if err != nil {
 		return nil, err
 	}

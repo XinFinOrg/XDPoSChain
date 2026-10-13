@@ -248,3 +248,101 @@ func TestInspectDatabaseAncients(t *testing.T) {
 		t.Fatalf("InspectDatabase without freezer: %v", err)
 	}
 }
+
+// TestChainFreezerTableSizeOverride checks the parsing and bounds of the
+// XDC_FREEZER_TABLE_SIZE development override.
+func TestChainFreezerTableSizeOverride(t *testing.T) {
+	tests := []struct {
+		value   string
+		want    uint32
+		wantErr bool
+	}{
+		{value: "", want: freezerTableSize},
+		{value: "65536", want: 65536},
+		{value: "4294967295", want: 4294967295},
+		{value: "65535", wantErr: true},
+		{value: "4294967296", wantErr: true},
+		{value: "-1", wantErr: true},
+		{value: "2GiB", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Setenv(freezerTableSizeEnv, tt.value)
+		got, err := chainFreezerTableSize()
+		if tt.wantErr {
+			if err == nil {
+				t.Errorf("%q: expected an error, got size %d", tt.value, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%q: unexpected error: %v", tt.value, err)
+		} else if got != tt.want {
+			t.Errorf("%q: got %d, want %d", tt.value, got, tt.want)
+		}
+	}
+	// An invalid override must stop the database from opening at all.
+	t.Setenv(freezerTableSizeEnv, "1024")
+	dir := t.TempDir()
+	kv, err := leveldb.New(filepath.Join(dir, "chaindata"), 0, 0, "", false)
+	if err != nil {
+		t.Fatalf("open leveldb: %v", err)
+	}
+	defer kv.Close()
+	if _, err := NewDatabaseWithFreezer(kv, filepath.Join(dir, "ancient"), "", false); err == nil {
+		t.Fatal("expected an invalid table size to be rejected")
+	}
+}
+
+// TestChainFreezerTableSizeRollover checks that a small XDC_FREEZER_TABLE_SIZE
+// makes the chain freezer spread its tables over several data files, which is
+// what the minimal history mode tests rely on, and that the data still reads
+// back after reopening.
+func TestChainFreezerTableSizeRollover(t *testing.T) {
+	defer func(v uint64) { params.FullImmutabilityThreshold = v }(params.FullImmutabilityThreshold)
+	params.FullImmutabilityThreshold = 10
+	t.Setenv(freezerTableSizeEnv, "65536")
+
+	dir := t.TempDir()
+	open := func() ethdb.Database {
+		kv, err := leveldb.New(filepath.Join(dir, "chaindata"), 0, 0, "", false)
+		if err != nil {
+			t.Fatalf("open leveldb: %v", err)
+		}
+		db, err := NewDatabaseWithFreezer(kv, filepath.Join(dir, "ancient"), "", false)
+		if err != nil {
+			kv.Close()
+			t.Fatalf("open freezer-backed db: %v", err)
+		}
+		return db
+	}
+	db := open()
+	headers := writeTestChain(t, db, 3000)
+	if err := db.(*freezerdb).Freeze(); err != nil {
+		t.Fatalf("freeze: %v", err)
+	}
+	db.Close()
+
+	files, err := filepath.Glob(filepath.Join(dir, "ancient", ChainFreezerName, ChainFreezerHeaderTable+".*.cdat"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) < 3 {
+		t.Fatalf("expected the header table to span at least 3 data files, got %d", len(files))
+	}
+
+	db = open()
+	defer db.Close()
+	frozen, err := db.Ancients()
+	if err != nil {
+		t.Fatalf("Ancients: %v", err)
+	}
+	if frozen != 2990 {
+		t.Fatalf("frozen count: got %d, want 2990", frozen)
+	}
+	for i := uint64(0); i < frozen; i++ {
+		want := headers[i]
+		if got := ReadHeader(db, want.Hash(), i); got == nil || got.Hash() != want.Hash() {
+			t.Fatalf("header %d not readable after reopening", i)
+		}
+	}
+}
