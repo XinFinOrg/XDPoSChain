@@ -1805,8 +1805,12 @@ func AccessList(ctx context.Context, b Backend, blockNrOrHash rpc.BlockNumberOrH
 
 		// Copy the original db so we don't modify it
 		statedb := db.Copy()
-		// Set the accesslist to the last al
-		args.AccessList = &accessList
+		// Only attach the list once type-1 is enabled: the tracer's list fills
+		// in as the call runs, and attaching it before the fork would mark the
+		// message as a type-1 transaction, which preCheck then rejects.
+		if rules.IsEIP1559 {
+			args.AccessList = &accessList
+		}
 		msg := args.ToMessage(b, header.BaseFee, true)
 
 		feeCapacity := statedb.GetTRC21FeeCapacityFromState()

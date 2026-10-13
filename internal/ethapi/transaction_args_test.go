@@ -283,6 +283,24 @@ type backendMock struct {
 	engine  consensus.Engine
 }
 
+// TestToMessageDropsEmptyAccessList checks that an empty JSON access list
+// ("accessList": []) is treated like an omitted one: the decoder produces a
+// non-nil empty slice, which the state transition would otherwise read as a
+// type-1 transaction.
+func TestToMessageDropsEmptyAccessList(t *testing.T) {
+	t.Parallel()
+
+	from := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	empty := types.AccessList{}
+	args := TransactionArgs{From: &from, AccessList: &empty}
+	if err := args.CallDefaults(0, nil, big.NewInt(1)); err != nil {
+		t.Fatalf("CallDefaults: %v", err)
+	}
+	if msg := args.ToMessage(nil, nil, true); msg.AccessList != nil {
+		t.Fatalf("empty access list reached the message: %v", msg.AccessList)
+	}
+}
+
 func newBackendMock() *backendMock {
 	config := &params.ChainConfig{
 		ChainID:                big.NewInt(42),

@@ -328,8 +328,11 @@ func (args *TransactionArgs) ToMessage(b AccountBackend, baseFee *big.Int, skipN
 			}
 		}
 	}
+	// An empty JSON array ("accessList": []) decodes to a non-nil empty slice.
+	// Treat it like an omitted list: the state transition reads a non-nil list
+	// as a type-1 transaction and rejects it before the fork.
 	var accessList types.AccessList
-	if args.AccessList != nil {
+	if args.AccessList != nil && len(*args.AccessList) > 0 {
 		accessList = *args.AccessList
 	}
 

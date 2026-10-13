@@ -312,6 +312,13 @@ func (sim *simulator) sanitizeCall(call *TransactionArgs, state vm.StateDB, head
 	if call.AuthorizationList != nil && header.BaseFee == nil {
 		return errors.New("authorizationList requires a base fee")
 	}
+	// An empty JSON access list ("accessList": []) decodes to a non-nil empty
+	// slice. ToMessage already treats it like an omitted list; normalize it here
+	// so ToTransaction, which runs before ToMessage, picks the same transaction
+	// type instead of a type-1 one the pool rejects before the fork.
+	if call.AccessList != nil && len(*call.AccessList) == 0 {
+		call.AccessList = nil
+	}
 	if err := call.CallDefaults(sim.gp.Gas(), header.BaseFee, sim.chainConfig.ChainID); err != nil {
 		return err
 	}
