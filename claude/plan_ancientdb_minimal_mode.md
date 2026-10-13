@@ -947,6 +947,31 @@ XDC-specific), `core`, `eth/downloader`, `node` and `params` all green.
   nothing; `InsertReceiptChain` stores the header, body and receipts together
   and is the only place downloaded headers are validated. See the correction in
   §3.5 for why, and for the 190 GB it saves.
+- **Tooling (§3.6, commit 9)**: `--datadir.ancient` is now part of
+  `utils.DatabaseFlags`, so `init`, `import`, `export`, `removedb` and every
+  `db` subcommand honour it (before, it was node-only and they silently used
+  the default location). `init` opens the database with the freezer.
+  `XDC db freezer-index <freezer> <table> <start> <end>` exposes
+  `InspectFreezerTable`. `removedb` confirms the key-value store and the
+  ancient chain separately, with `--remove.state` / `--remove.chain` for
+  non-interactive use. `db inspect` reports the ancient tables through
+  `inspectFreezers`, with an Items column giving each table's retained range
+  (e.g. `30 (#0-#29)`), so a pruned `blockdata` tail shows up directly in
+  Phase 2. Covered end to end by `TestDBCommandsWithAncient` (`cmd/XDC`,
+  in-process CLI harness).
+- **`XDC_FREEZER_TABLE_SIZE` (§3.7, commit 10)**: overrides the 2 GB data
+  file limit of file-based chain freezers, with a development-only warning.
+  Floor 64 KiB, because a table keeps every data file open; an invalid value
+  fails the database open. Only governs rollover, so it can change between
+  restarts.
+- **Freeze backlog observability (§3.9, commit 11)**: the
+  `rawdb/chainfreezer/backlog` gauge tracks blocks old enough to freeze but
+  still in leveldb. While a backlog spans more than one batch (30000 blocks),
+  the loop logs `Freezing chain backlog into the ancient store` with
+  `frozen` / `remaining` / `elapsed` at most every 8s, then `Chain freezer
+  caught up with the backlog`. A node that keeps up stays quiet. Batch size
+  and backoff are unchanged from upstream (`freezerBatchLimit` became a var
+  only so tests can force several batches).
 
 ### Deviations from upstream (all deliberate)
 
@@ -1069,19 +1094,23 @@ XDC-specific), `core`, `eth/downloader`, `node` and `params` all green.
 
 ### Outstanding for Phase 1
 
-- `XDC db inspect` / `db freezer-index` commands; `removedb` ancient prompt
-  (§3.6). `InspectFreezerTable` is ported and ready to be exposed.
-- `XDC_FREEZER_TABLE_SIZE` dev override (§3.7) — needed before Phase 2 can
-  demonstrate multi-file pruning.
 - `cicd/local/compose-3node/` harness and the nightly CI job (§5.4, §5.6), so
   the single-node smoke test (§5.3) and the 3-node soak (§5.4) have **not run**.
-- **Not verified: the CLI end to end.** The binary compiles and the flags are
-  registered, but this sandbox refuses to execute freshly built binaries, so no
-  node has actually been started with `--datadir.ancient`. Do this manually
-  before trusting the wiring.
+- The compose harness must pass `XDC_FREEZER_TABLE_SIZE` through to the
+  containers (`cicd/local/start.sh` does not forward arbitrary env today).
+- A node has been started manually with `--datadir.ancient` (reported by the
+  author). The §5.3 assertions (crash recovery, restart idempotence, a second
+  node syncing from a frozen peer) are still to be scripted.
 
-### Known unrelated failure
+### Known unrelated failures
 
 `TestStoreLoadSnapshot` (`consensus/XDPoS/engines/engine_v2`) fails on Windows
 with a TempDir cleanup error. Verified to fail identically on a clean tree — a
 pre-existing leveldb handle leak in that test, not caused by this work.
+
+On a Windows checkout with CRLF working files, `make test` additionally fails
+in `accounts/abi/abigen`, `accounts/abi/bind/v2`, `cmd/XDC` (genesis/export
+startup tests), `cmd/utils`, `ethclient/gethclient`, `metrics/...` and
+`rlp/rlpgen`. The same set fails on a clean worktree of the parent commit, so
+none of it comes from this work. `make tidy` and `make generate` likewise
+report CRLF-only differences there; compare with `git diff --ignore-cr-at-eol`.
