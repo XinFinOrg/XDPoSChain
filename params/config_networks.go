@@ -111,6 +111,15 @@ var (
 			MinePeriod:           2,
 			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
 		},
+		17579700: {
+			MaxMasternodes:       108,
+			SwitchRound:          17579700,
+			CertThreshold:        0.667,
+			TimeoutSyncThreshold: 3,
+			TimeoutPeriod:        60,
+			MinePeriod:           2,
+			ExpTimeoutConfig:     ExpTimeoutConfig{Base: 1.0, MaxExponent: 0},
+		},
 	}
 
 	TestnetV2Configs = map[uint64]*V2Config{
