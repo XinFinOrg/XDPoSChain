@@ -17,14 +17,18 @@
 package rawdb
 
 import (
+	"bytes"
 	"math/big"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/ethdb/leveldb"
+	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
@@ -343,6 +347,92 @@ func TestChainFreezerTableSizeRollover(t *testing.T) {
 		want := headers[i]
 		if got := ReadHeader(db, want.Hash(), i); got == nil || got.Hash() != want.Hash() {
 			t.Fatalf("header %d not readable after reopening", i)
+		}
+	}
+}
+
+// syncBuffer is a bytes.Buffer safe for the freezer goroutine to log into.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// TestChainFreezerBacklogReporting checks that a backlog spanning several
+// freeze batches is reported at info level and through the backlog gauge, and
+// that the end of the backlog is announced.
+func TestChainFreezerBacklogReporting(t *testing.T) {
+	defer func(v uint64) { params.FullImmutabilityThreshold = v }(params.FullImmutabilityThreshold)
+	params.FullImmutabilityThreshold = 10
+	defer func(v uint64) { freezerBatchLimit = v }(freezerBatchLimit)
+	freezerBatchLimit = 10
+
+	logs := new(syncBuffer)
+	defer log.SetDefault(log.Root())
+	log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(logs, log.LevelInfo, false)))
+
+	db, _ := newFreezerBackedDB(t)
+	// HEAD is block 39 and the threshold 10, so blocks 0..29 are due: three
+	// batches of ten.
+	writeTestChain(t, db, 40)
+	freezerBacklogGauge.Update(-1)
+	if err := db.(*freezerdb).Freeze(); err != nil {
+		t.Fatalf("freeze: %v", err)
+	}
+	if frozen, _ := db.Ancients(); frozen != 30 {
+		t.Fatalf("frozen count: got %d, want 30", frozen)
+	}
+	if backlog := freezerBacklogGauge.Snapshot().Value(); backlog != 0 {
+		t.Fatalf("backlog gauge after catching up: got %d, want 0", backlog)
+	}
+	output := logs.String()
+	for _, want := range []string{
+		"Freezing chain backlog into the ancient store frozen=10 remaining=20",
+		"Chain freezer caught up with the backlog frozen=30",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("missing log line %q in:\n%s", want, output)
+		}
+	}
+	// The second batch falls inside the progress interval and stays quiet.
+	if n := strings.Count(output, "Freezing chain backlog"); n != 1 {
+		t.Errorf("got %d progress reports, want 1:\n%s", n, output)
+	}
+
+	// A freeze cycle with nothing to do neither reports nor raises the gauge.
+	freezerBacklogGauge.Update(-1)
+	if err := db.(*freezerdb).Freeze(); err != nil {
+		t.Fatalf("freeze: %v", err)
+	}
+	if backlog := freezerBacklogGauge.Snapshot().Value(); backlog != 0 {
+		t.Fatalf("backlog gauge when idle: got %d, want 0", backlog)
+	}
+	if n := strings.Count(logs.String(), "Freezing chain backlog"); n != 1 {
+		t.Errorf("idle freeze cycle reported progress")
+	}
+}
+
+func TestFreezerBacklog(t *testing.T) {
+	for _, tt := range []struct{ frozen, threshold, want uint64 }{
+		{0, 0, 1},
+		{0, 29, 30},
+		{10, 29, 20},
+		{30, 29, 0},
+		{31, 29, 0},
+	} {
+		if got := freezerBacklog(tt.frozen, tt.threshold); got != tt.want {
+			t.Errorf("freezerBacklog(%d, %d) = %d, want %d", tt.frozen, tt.threshold, got, tt.want)
 		}
 	}
 }

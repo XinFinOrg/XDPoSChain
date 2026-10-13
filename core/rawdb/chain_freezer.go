@@ -28,6 +28,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
@@ -37,9 +38,9 @@ const (
 	// storage.
 	freezerRecheckInterval = time.Minute
 
-	// freezerBatchLimit is the maximum number of blocks to freeze in one batch
-	// before doing an fsync and deleting it from the key-value store.
-	freezerBatchLimit = 30000
+	// freezerProgressInterval is the minimum time between two progress reports
+	// while the freezer works through a backlog.
+	freezerProgressInterval = 8 * time.Second
 
 	// freezerTableSizeEnv names the environment variable that overrides the
 	// maximum size of chain freezer data files. It exists so tests and local
@@ -52,6 +53,15 @@ const (
 	// process's file descriptors long before the chain gets interesting.
 	minFreezerTableSizeOverride = 64 * 1024
 )
+
+// freezerBatchLimit is the maximum number of blocks to freeze in one batch
+// before doing an fsync and deleting it from the key-value store. It is a
+// variable only so tests can produce a multi-batch backlog cheaply.
+var freezerBatchLimit uint64 = 30000
+
+// freezerBacklogGauge tracks the number of blocks that are old enough to be
+// frozen but still sit in the key-value store.
+var freezerBacklogGauge = metrics.NewRegisteredGauge("rawdb/chainfreezer/backlog", nil)
 
 // chainFreezerTableSize returns the maximum size of chain freezer data files,
 // applying the XDC_FREEZER_TABLE_SIZE override when it is set.
@@ -170,6 +180,9 @@ func (f *chainFreezer) freeze(db ethdb.KeyValueStore) {
 		backoff   bool
 		triggered chan struct{} // Used in tests
 		nfdb      = &nofreezedb{KeyValueStore: db}
+
+		backlogStart   time.Time // Start of the backlog being reported, zero if none
+		progressLogged time.Time // Time of the last backlog progress report
 	)
 	timer := time.NewTimer(freezerRecheckInterval)
 	defer timer.Stop()
@@ -207,6 +220,7 @@ func (f *chainFreezer) freeze(db ethdb.KeyValueStore) {
 
 		// Short circuit if the blocks below threshold are already frozen.
 		if frozen != 0 && frozen-1 >= threshold {
+			freezerBacklogGauge.Update(0)
 			backoff = true
 			log.Debug("Ancient blocks frozen already", "threshold", threshold, "frozen", frozen)
 			continue
@@ -304,6 +318,27 @@ func (f *chainFreezer) freeze(db ethdb.KeyValueStore) {
 			context = append(context, []interface{}{"hash", ancients[n-1]}...)
 		}
 		log.Debug("Deep froze chain segment", context...)
+
+		// Report the backlog. A node whose key-value store holds a long chain
+		// (first start with an ancient store, or a long downtime) works through
+		// it one batch at a time; say so at info level, so that a slow
+		// migration can be told apart from a stuck one. A node that keeps up
+		// finishes each cycle within one batch and stays quiet.
+		remaining := freezerBacklog(frozen, threshold)
+		freezerBacklogGauge.Update(int64(remaining))
+		switch {
+		case remaining > 0 && time.Since(progressLogged) > freezerProgressInterval:
+			if backlogStart.IsZero() {
+				backlogStart = start
+			}
+			log.Info("Freezing chain backlog into the ancient store", "frozen", frozen, "remaining", remaining,
+				"elapsed", common.PrettyDuration(time.Since(backlogStart)))
+			progressLogged = time.Now()
+		case remaining == 0 && !backlogStart.IsZero():
+			log.Info("Chain freezer caught up with the backlog", "frozen", frozen,
+				"elapsed", common.PrettyDuration(time.Since(backlogStart)))
+			backlogStart, progressLogged = time.Time{}, time.Time{}
+		}
 
 		// Avoid database thrashing with tiny writes
 		if frozen-first < freezerBatchLimit {
@@ -457,4 +492,13 @@ func deleteFrozenCanonicalBlock(db ethdb.KeyValueWriter, hash common.Hash, numbe
 	DeleteReceipts(db, hash, number)
 	deleteHeaderWithoutNumber(db, hash, number)
 	DeleteBody(db, hash, number)
+}
+
+// freezerBacklog returns the number of blocks up to and including threshold
+// that are not yet frozen, given the current number of frozen items.
+func freezerBacklog(frozen, threshold uint64) uint64 {
+	if frozen > threshold {
+		return 0
+	}
+	return threshold + 1 - frozen
 }
