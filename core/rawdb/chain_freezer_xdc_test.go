@@ -208,3 +208,43 @@ func TestFreezerGenesisMismatchRejected(t *testing.T) {
 		t.Fatal("expected genesis mismatch to be rejected, but the database opened")
 	}
 }
+
+// TestInspectDatabaseAncients checks that `XDC db inspect` reports per-table
+// item counts for the chain freezer, and still works on a database without one.
+func TestInspectDatabaseAncients(t *testing.T) {
+	defer func(v uint64) { params.FullImmutabilityThreshold = v }(params.FullImmutabilityThreshold)
+	params.FullImmutabilityThreshold = 10
+
+	db, _ := newFreezerBackedDB(t)
+	writeTestChain(t, db, 40)
+	if err := db.(*freezerdb).Freeze(); err != nil {
+		t.Fatalf("freeze: %v", err)
+	}
+	infos, err := inspectFreezers(db)
+	if err != nil {
+		t.Fatalf("inspectFreezers: %v", err)
+	}
+	if len(infos) != 1 || infos[0].name != ChainFreezerName {
+		t.Fatalf("unexpected freezers: %+v", infos)
+	}
+	if infos[0].head != 29 {
+		t.Fatalf("freezer head: got %d, want 29", infos[0].head)
+	}
+	if len(infos[0].tables) != len(chainFreezerTableConfigs) {
+		t.Fatalf("table count: got %d, want %d", len(infos[0].tables), len(chainFreezerTableConfigs))
+	}
+	for _, table := range infos[0].tables {
+		if table.count != 30 {
+			t.Errorf("table %s: got %d items, want 30", table.name, table.count)
+		}
+		if table.size == 0 {
+			t.Errorf("table %s: zero size", table.name)
+		}
+	}
+	if err := InspectDatabase(db, nil, nil); err != nil {
+		t.Fatalf("InspectDatabase with freezer: %v", err)
+	}
+	if err := InspectDatabase(NewMemoryDatabase(), nil, nil); err != nil {
+		t.Fatalf("InspectDatabase without freezer: %v", err)
+	}
+}

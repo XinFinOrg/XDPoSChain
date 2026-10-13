@@ -901,6 +901,7 @@ var (
 	// DatabaseFlags is the flag group of all database flags.
 	DatabaseFlags = []cli.Flag{
 		DataDirFlag,
+		AncientFlag,
 		XDCXDataDirFlag,
 	}
 )

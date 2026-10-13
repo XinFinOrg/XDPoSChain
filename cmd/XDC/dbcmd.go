@@ -36,14 +36,25 @@ import (
 )
 
 var (
+	removeStateDataFlag = &cli.BoolFlag{
+		Name:  "remove.state",
+		Usage: "If set, selects the state data for removal",
+	}
+	removeChainDataFlag = &cli.BoolFlag{
+		Name:  "remove.chain",
+		Usage: "If set, selects the ancient chain data for removal",
+	}
+
 	removedbCommand = &cli.Command{
 		Action:    removeDB,
 		Name:      "removedb",
 		Usage:     "Remove blockchain and state databases",
 		ArgsUsage: " ",
-		Flags:     utils.DatabaseFlags,
+		Flags: slices.Concat(utils.DatabaseFlags,
+			[]cli.Flag{removeStateDataFlag, removeChainDataFlag}),
 		Description: `
-Remove blockchain and state databases`,
+Remove blockchain and state databases. The key-value store (recent blocks and
+state) and the ancient chain store are confirmed separately.`,
 	}
 	dbCommand = &cli.Command{
 		Name:      "db",
@@ -57,6 +68,7 @@ Remove blockchain and state databases`,
 			dbDeleteCmd,
 			dbPutCmd,
 			dbGetSlotsCmd,
+			dbDumpFreezerIndex,
 		},
 	}
 	dbInspectCmd = &cli.Command{
@@ -132,17 +144,26 @@ WARNING: This is a low-level operation which may cause database corruption!`,
 		}, utils.NetworkFlags, utils.DatabaseFlags),
 		Description: "This command looks up the specified database key from the database.",
 	}
+	dbDumpFreezerIndex = &cli.Command{
+		Action:      freezerInspect,
+		Name:        "freezer-index",
+		Usage:       "Dump out the index of a specific freezer table",
+		ArgsUsage:   "<freezer-type> <table-type> <start (int)> <end (int)>",
+		Flags:       slices.Concat(utils.NetworkFlags, utils.DatabaseFlags),
+		Description: "This command displays information about the freezer index.",
+	}
 )
 
 func removeDB(ctx *cli.Context) error {
-	stack, _ := makeConfigNode(ctx)
-	name := "chaindata"
-	dbdir := stack.ResolvePath(name)
-	if common.FileExist(dbdir) {
-		confirmAndRemoveDB(dbdir, name)
-	} else {
-		log.Info("Database doesn't exist, skipping", "path", dbdir)
-	}
+	stack, config := makeConfigNode(ctx)
+
+	// Delete the key-value store. removeFolder leaves subfolders alone, so the
+	// default ancient location inside chaindata survives this step.
+	confirmAndRemoveDB(stack.ResolvePath("chaindata"), "state data", ctx, removeStateDataFlag.Name)
+
+	// Delete the ancient chain
+	ancientDir := stack.ResolveAncient("chaindata", config.Eth.DatabaseFreezer)
+	confirmAndRemoveDB(filepath.Join(ancientDir, rawdb.ChainFreezerName), "ancient chain", ctx, removeChainDataFlag.Name)
 	return nil
 }
 
@@ -164,14 +185,27 @@ func removeFolder(dir string) {
 }
 
 // confirmAndRemoveDB prompts the user for a last confirmation and removes the
-// folder if accepted.
-func confirmAndRemoveDB(path string, kind string) {
-	confirm, err := prompt.Stdin.PromptConfirm(fmt.Sprintf("Remove %s (%s)?", kind, path))
+// folder if accepted. If the flag removeFlagName is set, its value is used as
+// the answer instead of prompting.
+func confirmAndRemoveDB(path string, kind string, ctx *cli.Context, removeFlagName string) {
+	if !common.FileExist(path) {
+		log.Info("Database doesn't exist, skipping", "kind", kind, "path", path)
+		return
+	}
+	var (
+		confirm bool
+		err     error
+	)
+	if ctx.IsSet(removeFlagName) {
+		confirm = ctx.Bool(removeFlagName)
+	} else {
+		confirm, err = prompt.Stdin.PromptConfirm(fmt.Sprintf("Remove %s (%s)?", kind, path))
+	}
 	switch {
 	case err != nil:
 		utils.Fatalf("%v", err)
 	case !confirm:
-		log.Warn("Database deletion aborted", "path", path)
+		log.Warn("Database deletion skipped", "kind", kind, "path", path)
 	default:
 		start := time.Now()
 		removeFolder(path)
@@ -405,4 +439,28 @@ func dbDumpTrie(ctx *cli.Context) error {
 		count++
 	}
 	return it.Err
+}
+
+func freezerInspect(ctx *cli.Context) error {
+	if ctx.NArg() < 4 {
+		return fmt.Errorf("required arguments: %v", ctx.Command.ArgsUsage)
+	}
+	var (
+		freezer = ctx.Args().Get(0)
+		table   = ctx.Args().Get(1)
+	)
+	start, err := strconv.ParseInt(ctx.Args().Get(2), 10, 64)
+	if err != nil {
+		log.Info("Could not read start-param", "err", err)
+		return err
+	}
+	end, err := strconv.ParseInt(ctx.Args().Get(3), 10, 64)
+	if err != nil {
+		log.Info("Could not read count param", "err", err)
+		return err
+	}
+	stack, _ := makeConfigNode(ctx)
+	ancient := stack.ResolveAncient("chaindata", ctx.String(utils.AncientFlag.Name))
+	stack.Close()
+	return rawdb.InspectFreezerTable(ancient, freezer, table, start, end)
 }

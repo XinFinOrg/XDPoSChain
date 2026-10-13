@@ -66,7 +66,6 @@ var (
 		utils.LegacyBootnodesV4Flag,
 		utils.LegacyBootnodesV5Flag,
 		utils.KeyStoreDirFlag,
-		utils.AncientFlag,
 		utils.HistoryImmutabilityThresholdFlag,
 		utils.NoUSBFlag, // deprecated
 		utils.USBFlag,

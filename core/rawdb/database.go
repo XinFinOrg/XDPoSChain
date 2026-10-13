@@ -376,12 +376,6 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		bloomBitsSize   common.StorageSize
 		cliqueSnapsSize common.StorageSize
 
-		// Ancient store statistics
-		ancientHeaders  common.StorageSize
-		ancientBodies   common.StorageSize
-		ancientReceipts common.StorageSize
-		ancientHashes   common.StorageSize
-
 		// Les statistic
 		chtTrieNodes   common.StorageSize
 		bloomTrieNodes common.StorageSize
@@ -449,41 +443,59 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 			logged = time.Now()
 		}
 	}
-	// Inspect append-only file store then.
-	// NOTE: total difficulty is never frozen in this fork (see claude/plan 3.4),
-	// so there is no ancient TD category to tally.
-	ancients := []*common.StorageSize{&ancientHeaders, &ancientBodies, &ancientReceipts, &ancientHashes}
-	for i, category := range []string{ChainFreezerHeaderTable, ChainFreezerBodiesTable, ChainFreezerReceiptTable, ChainFreezerHashTable} {
-		if size, err := db.AncientSize(category); err == nil {
-			*ancients[i] += common.StorageSize(size)
-			total += common.StorageSize(size)
-		}
-	}
 	// Display the database statistic.
 	stats := [][]string{
-		{"Key-Value store", "Headers", headerSize.String()},
-		{"Key-Value store", "Bodies", bodySize.String()},
-		{"Key-Value store", "Receipts", receiptSize.String()},
-		{"Key-Value store", "Difficulties", tdSize.String()},
-		{"Key-Value store", "Block number->hash", numHashPairing.String()},
-		{"Key-Value store", "Block hash->number", hashNumPairing.String()},
-		{"Key-Value store", "Transaction index", txlookupSize.String()},
-		{"Key-Value store", "Bloombit index", bloomBitsSize.String()},
-		{"Key-Value store", "Contract codes", codeSize.String()},
-		{"Key-Value store", "Trie nodes", trieSize.String()},
-		{"Key-Value store", "Trie preimages", preimageSize.String()},
-		{"Key-Value store", "Clique snapshots", cliqueSnapsSize.String()},
-		{"Key-Value store", "Singleton metadata", metadata.String()},
-		{"Ancient store", "Headers", ancientHeaders.String()},
-		{"Ancient store", "Bodies", ancientBodies.String()},
-		{"Ancient store", "Receipts", ancientReceipts.String()},
-		{"Ancient store", "Block number->hash", ancientHashes.String()},
-		{"Light client", "CHT trie nodes", chtTrieNodes.String()},
-		{"Light client", "Bloom trie nodes", bloomTrieNodes.String()},
+		{"Key-Value store", "Headers", headerSize.String(), ""},
+		{"Key-Value store", "Bodies", bodySize.String(), ""},
+		{"Key-Value store", "Receipts", receiptSize.String(), ""},
+		{"Key-Value store", "Difficulties", tdSize.String(), ""},
+		{"Key-Value store", "Block number->hash", numHashPairing.String(), ""},
+		{"Key-Value store", "Block hash->number", hashNumPairing.String(), ""},
+		{"Key-Value store", "Transaction index", txlookupSize.String(), ""},
+		{"Key-Value store", "Bloombit index", bloomBitsSize.String(), ""},
+		{"Key-Value store", "Contract codes", codeSize.String(), ""},
+		{"Key-Value store", "Trie nodes", trieSize.String(), ""},
+		{"Key-Value store", "Trie preimages", preimageSize.String(), ""},
+		{"Key-Value store", "Clique snapshots", cliqueSnapsSize.String(), ""},
+		{"Key-Value store", "Singleton metadata", metadata.String(), ""},
 	}
+	// Inspect append-only file store then. A database without a freezer has
+	// nothing to report here.
+	// NOTE: total difficulty is never frozen in this fork (see claude/plan 3.4),
+	// so there is no ancient TD category to tally.
+	freezerInfos, err := inspectFreezers(db)
+	if err != nil && !errors.Is(err, errNotSupported) {
+		return err
+	}
+	for _, info := range freezerInfos {
+		for _, category := range []struct{ table, title string }{
+			{ChainFreezerHeaderTable, "Headers"},
+			{ChainFreezerBodiesTable, "Bodies"},
+			{ChainFreezerReceiptTable, "Receipts"},
+			{ChainFreezerHashTable, "Block number->hash"},
+		} {
+			for _, t := range info.tables {
+				if t.name != category.table {
+					continue
+				}
+				// Items are the retained range: bodies and receipts may have a
+				// pruned tail, headers and hashes always start at genesis.
+				items := "0"
+				if t.count > 0 {
+					items = fmt.Sprintf("%d (#%d-#%d)", t.count, info.head+1-t.count, info.head)
+				}
+				stats = append(stats, []string{fmt.Sprintf("Ancient store (%s)", info.name), category.title, t.size.String(), items})
+			}
+		}
+		total += info.size()
+	}
+	stats = append(stats,
+		[]string{"Light client", "CHT trie nodes", chtTrieNodes.String(), ""},
+		[]string{"Light client", "Bloom trie nodes", bloomTrieNodes.String(), ""},
+	)
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"Database", "Category", "Size"})
-	table.SetFooter([]string{"", "Total", total.String()})
+	table.SetHeader([]string{"Database", "Category", "Size", "Items"})
+	table.SetFooter([]string{"", "Total", total.String(), ""})
 	table.AppendBulk(stats)
 	table.Render()
 
