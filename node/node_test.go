@@ -22,6 +22,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -103,6 +105,72 @@ func TestNodeUsedDataDir(t *testing.T) {
 	_, err = New(&Config{DataDir: dir})
 	if err != ErrDatadirUsed {
 		t.Fatalf("duplicate datadir failure mismatch: have %v, want %v", err, ErrDatadirUsed)
+	}
+}
+
+// Failed construction must not prevent a corrected configuration from using the datadir.
+func TestNodeNewFailureReleasesDataDir(t *testing.T) {
+	for _, failure := range []string{"keystore", "http-prefix", "ws-prefix"} {
+		t.Run(failure, func(t *testing.T) {
+			config := testNodeConfig()
+			config.DataDir = t.TempDir()
+			broken := *config
+			var wantError string
+			switch failure {
+			case "keystore":
+				broken.KeyStoreDir = filepath.Join(t.TempDir(), "file")
+				if err := os.WriteFile(broken.KeyStoreDir, nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+			case "http-prefix":
+				broken.HTTPPathPrefix = "invalid"
+				wantError = "HTTP RPC path prefix"
+			case "ws-prefix":
+				broken.WSPathPrefix = "invalid"
+				wantError = "WebSocket RPC path prefix"
+			}
+			failed, err := New(&broken)
+			if failed != nil {
+				failed.Close()
+				t.Fatal("New returned a node for an invalid configuration")
+			}
+			if err == nil {
+				t.Fatal("New accepted an invalid configuration")
+			}
+			if failure == "keystore" {
+				var pathErr *os.PathError
+				if !errors.As(err, &pathErr) || pathErr.Path != broken.KeyStoreDir {
+					t.Fatalf("wrong keystore error: %v", err)
+				}
+			} else if !strings.Contains(err.Error(), wantError) {
+				t.Fatalf("wrong prefix error: %v", err)
+			}
+
+			// No GC or process restart should be needed to retry initialization.
+			recovered, err := New(config)
+			if err != nil {
+				t.Fatalf("failed to reopen datadir after %s error: %v", failure, err)
+			}
+			defer recovered.Close()
+
+			// Successful construction must retain the lock until Close.
+			duplicate, err := New(config)
+			if duplicate != nil {
+				duplicate.Close()
+				t.Fatal("second node acquired an in-use datadir")
+			}
+			if !errors.Is(err, ErrDatadirUsed) {
+				t.Fatalf("expected ErrDatadirUsed, got %v", err)
+			}
+			if err := recovered.Close(); err != nil {
+				t.Fatal(err)
+			}
+			reopened, err := New(config)
+			if err != nil {
+				t.Fatalf("failed to reopen datadir after Close: %v", err)
+			}
+			defer reopened.Close()
+		})
 	}
 }
 
