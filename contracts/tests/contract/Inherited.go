@@ -4,27 +4,65 @@
 package contract
 
 import (
+	"context"
+	"errors"
+	"math/big"
 	"strings"
+	"time"
 
+	ethereum "github.com/XinFinOrg/XDPoSChain"
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi"
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/event"
 )
 
+// Reference imports to suppress errors if they are not otherwise used.
+var (
+	_ = errors.New
+	_ = big.NewInt
+	_ = strings.NewReader
+	_ = ethereum.ErrNotFound
+	_ = bind.Bind
+	_ = common.Big1
+	_ = types.BloomLookup
+	_ = event.NewSubscription
+	_ = abi.ConvertType
+	_ = time.Tick
+	_ = context.Background
+)
+
+// Base1MetaData contains all meta data concerning the Base1 contract.
+var Base1MetaData = &bind.MetaData{
+	ABI: "[{\"inputs\":[],\"name\":\"foo\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}]",
+	Bin: "0x6080604052348015600f57600080fd5b50606d80601d6000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c8063c298557814602d575b600080fd5b60336035565b005b56fea2646970667358221220861aecb7678c5118a12be7047c66ea27b4e28b80d5d5d4ad1813a7b08983adb664736f6c634300060a0033",
+}
+
 // Base1ABI is the input ABI used to generate the binding from.
-const Base1ABI = "[{\"inputs\":[],\"name\":\"foo\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}]"
+// Deprecated: Use Base1MetaData.ABI instead.
+var Base1ABI = Base1MetaData.ABI
 
 // Base1Bin is the compiled bytecode used for deploying new contracts.
-const Base1Bin = `0x6080604052348015600f57600080fd5b50606d80601d6000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c8063c298557814602d575b600080fd5b60336035565b005b56fea2646970667358221220861aecb7678c5118a12be7047c66ea27b4e28b80d5d5d4ad1813a7b08983adb664736f6c634300060a0033`
+// Deprecated: Use Base1MetaData.Bin instead.
+var Base1Bin = Base1MetaData.Bin
 
 // DeployBase1 deploys a new Ethereum contract, binding an instance of Base1 to it.
 func DeployBase1(auth *bind.TransactOpts, backend bind.ContractBackend) (common.Address, *types.Transaction, *Base1, error) {
-	parsed, err := abi.JSON(strings.NewReader(Base1ABI))
+	parsed, err := Base1MetaData.GetAbi()
 	if err != nil {
 		return common.Address{}, nil, nil, err
 	}
-	address, tx, contract, err := bind.DeployContract(auth, parsed, common.FromHex(Base1Bin), backend)
+	if parsed == nil {
+		return common.Address{}, nil, nil, errors.New("GetABI returned nil")
+	}
+	// Library addresses are substituted into a local copy of the bytecode: the
+	// package-level Base1Bin is shared by every caller, so substituting in
+	// it would leave any later deployment linked to the addresses substituted
+	// by an earlier one.
+	linkedBin := Base1Bin
+
+	address, tx, contract, err := bind.DeployContract(auth, *parsed, common.FromHex(linkedBin), backend)
 	if err != nil {
 		return common.Address{}, nil, nil, err
 	}
@@ -128,11 +166,11 @@ func NewBase1Filterer(address common.Address, filterer bind.ContractFilterer) (*
 
 // bindBase1 binds a generic wrapper to an already deployed contract.
 func bindBase1(address common.Address, caller bind.ContractCaller, transactor bind.ContractTransactor, filterer bind.ContractFilterer) (*bind.BoundContract, error) {
-	parsed, err := abi.JSON(strings.NewReader(Base1ABI))
+	parsed, err := Base1MetaData.GetAbi()
 	if err != nil {
 		return nil, err
 	}
-	return bind.NewBoundContract(address, parsed, caller, transactor, filterer), nil
+	return bind.NewBoundContract(address, *parsed, caller, transactor, filterer), nil
 }
 
 // Call invokes the (constant) contract method with params as input values and
@@ -194,19 +232,36 @@ func (_Base1 *Base1TransactorSession) Foo() (*types.Transaction, error) {
 	return _Base1.Contract.Foo(&_Base1.TransactOpts)
 }
 
+// Base2MetaData contains all meta data concerning the Base2 contract.
+var Base2MetaData = &bind.MetaData{
+	ABI: "[{\"inputs\":[],\"name\":\"foo\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}]",
+	Bin: "0x6080604052348015600f57600080fd5b50606d80601d6000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c8063c298557814602d575b600080fd5b60336035565b005b56fea26469706673582212205b8cfeb4357fea7b0f1d1c30727a20d5e54b63b328315e480e275c07ca89189564736f6c634300060a0033",
+}
+
 // Base2ABI is the input ABI used to generate the binding from.
-const Base2ABI = "[{\"inputs\":[],\"name\":\"foo\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}]"
+// Deprecated: Use Base2MetaData.ABI instead.
+var Base2ABI = Base2MetaData.ABI
 
 // Base2Bin is the compiled bytecode used for deploying new contracts.
-const Base2Bin = `0x6080604052348015600f57600080fd5b50606d80601d6000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c8063c298557814602d575b600080fd5b60336035565b005b56fea26469706673582212205b8cfeb4357fea7b0f1d1c30727a20d5e54b63b328315e480e275c07ca89189564736f6c634300060a0033`
+// Deprecated: Use Base2MetaData.Bin instead.
+var Base2Bin = Base2MetaData.Bin
 
 // DeployBase2 deploys a new Ethereum contract, binding an instance of Base2 to it.
 func DeployBase2(auth *bind.TransactOpts, backend bind.ContractBackend) (common.Address, *types.Transaction, *Base2, error) {
-	parsed, err := abi.JSON(strings.NewReader(Base2ABI))
+	parsed, err := Base2MetaData.GetAbi()
 	if err != nil {
 		return common.Address{}, nil, nil, err
 	}
-	address, tx, contract, err := bind.DeployContract(auth, parsed, common.FromHex(Base2Bin), backend)
+	if parsed == nil {
+		return common.Address{}, nil, nil, errors.New("GetABI returned nil")
+	}
+	// Library addresses are substituted into a local copy of the bytecode: the
+	// package-level Base2Bin is shared by every caller, so substituting in
+	// it would leave any later deployment linked to the addresses substituted
+	// by an earlier one.
+	linkedBin := Base2Bin
+
+	address, tx, contract, err := bind.DeployContract(auth, *parsed, common.FromHex(linkedBin), backend)
 	if err != nil {
 		return common.Address{}, nil, nil, err
 	}
@@ -310,11 +365,11 @@ func NewBase2Filterer(address common.Address, filterer bind.ContractFilterer) (*
 
 // bindBase2 binds a generic wrapper to an already deployed contract.
 func bindBase2(address common.Address, caller bind.ContractCaller, transactor bind.ContractTransactor, filterer bind.ContractFilterer) (*bind.BoundContract, error) {
-	parsed, err := abi.JSON(strings.NewReader(Base2ABI))
+	parsed, err := Base2MetaData.GetAbi()
 	if err != nil {
 		return nil, err
 	}
-	return bind.NewBoundContract(address, parsed, caller, transactor, filterer), nil
+	return bind.NewBoundContract(address, *parsed, caller, transactor, filterer), nil
 }
 
 // Call invokes the (constant) contract method with params as input values and
@@ -376,19 +431,36 @@ func (_Base2 *Base2TransactorSession) Foo() (*types.Transaction, error) {
 	return _Base2.Contract.Foo(&_Base2.TransactOpts)
 }
 
+// InheritedMetaData contains all meta data concerning the Inherited contract.
+var InheritedMetaData = &bind.MetaData{
+	ABI: "[{\"inputs\":[],\"name\":\"foo\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}]",
+	Bin: "0x6080604052348015600f57600080fd5b50606d80601d6000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c8063c298557814602d575b600080fd5b60336035565b005b56fea2646970667358221220bbe212c6ad2a1b1546352d1975164c6f0fb7b6d29285b29b7d444d7bc2d8198d64736f6c634300060a0033",
+}
+
 // InheritedABI is the input ABI used to generate the binding from.
-const InheritedABI = "[{\"inputs\":[],\"name\":\"foo\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}]"
+// Deprecated: Use InheritedMetaData.ABI instead.
+var InheritedABI = InheritedMetaData.ABI
 
 // InheritedBin is the compiled bytecode used for deploying new contracts.
-const InheritedBin = `0x6080604052348015600f57600080fd5b50606d80601d6000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c8063c298557814602d575b600080fd5b60336035565b005b56fea2646970667358221220bbe212c6ad2a1b1546352d1975164c6f0fb7b6d29285b29b7d444d7bc2d8198d64736f6c634300060a0033`
+// Deprecated: Use InheritedMetaData.Bin instead.
+var InheritedBin = InheritedMetaData.Bin
 
 // DeployInherited deploys a new Ethereum contract, binding an instance of Inherited to it.
 func DeployInherited(auth *bind.TransactOpts, backend bind.ContractBackend) (common.Address, *types.Transaction, *Inherited, error) {
-	parsed, err := abi.JSON(strings.NewReader(InheritedABI))
+	parsed, err := InheritedMetaData.GetAbi()
 	if err != nil {
 		return common.Address{}, nil, nil, err
 	}
-	address, tx, contract, err := bind.DeployContract(auth, parsed, common.FromHex(InheritedBin), backend)
+	if parsed == nil {
+		return common.Address{}, nil, nil, errors.New("GetABI returned nil")
+	}
+	// Library addresses are substituted into a local copy of the bytecode: the
+	// package-level InheritedBin is shared by every caller, so substituting in
+	// it would leave any later deployment linked to the addresses substituted
+	// by an earlier one.
+	linkedBin := InheritedBin
+
+	address, tx, contract, err := bind.DeployContract(auth, *parsed, common.FromHex(linkedBin), backend)
 	if err != nil {
 		return common.Address{}, nil, nil, err
 	}
@@ -492,11 +564,11 @@ func NewInheritedFilterer(address common.Address, filterer bind.ContractFilterer
 
 // bindInherited binds a generic wrapper to an already deployed contract.
 func bindInherited(address common.Address, caller bind.ContractCaller, transactor bind.ContractTransactor, filterer bind.ContractFilterer) (*bind.BoundContract, error) {
-	parsed, err := abi.JSON(strings.NewReader(InheritedABI))
+	parsed, err := InheritedMetaData.GetAbi()
 	if err != nil {
 		return nil, err
 	}
-	return bind.NewBoundContract(address, parsed, caller, transactor, filterer), nil
+	return bind.NewBoundContract(address, *parsed, caller, transactor, filterer), nil
 }
 
 // Call invokes the (constant) contract method with params as input values and
