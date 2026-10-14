@@ -17,18 +17,33 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
+
+// failingFinalizeEngine is a consensus engine whose Finalize always fails. It
+// embeds the noop engine of the package so that only the Finalize path under
+// test needs to be overridden.
+type failingFinalizeEngine struct {
+	noopConsensusEngine
+}
+
+func (failingFinalizeEngine) Finalize(chain consensus.ChainReader, header *types.Header, state vm.StateDB, parentState *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
+	return nil, errors.New("finalize failed")
+}
 
 // TestGenerateChainAddTxWithoutTRC21Issuer tests generate chain add tx without trc 21 issuer.
 func TestGenerateChainAddTxWithoutTRC21Issuer(t *testing.T) {
@@ -66,6 +81,33 @@ func TestGenerateChainAddTxWithoutTRC21Issuer(t *testing.T) {
 	if got := chain[0].Transactions().Len(); got != 1 {
 		t.Fatalf("unexpected tx count %d", got)
 	}
+}
+
+// TestGenerateChainFinalizeError tests that GenerateChain surfaces a failing
+// Finalize of the consensus engine instead of discarding the error and
+// committing the state anyway.
+func TestGenerateChainFinalizeError(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{
+		Config: &params.ChainConfig{
+			ChainID:        big.NewInt(1337),
+			HomesteadBlock: new(big.Int),
+			Ethash:         new(params.EthashConfig),
+		},
+	}
+	genesis := gspec.MustCommit(db)
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected GenerateChain to panic when Finalize fails")
+		}
+		msg, ok := r.(string)
+		if !ok || !strings.Contains(msg, "finalize error") || !strings.Contains(msg, "finalize failed") {
+			t.Fatalf("unexpected panic value: %v", r)
+		}
+	}()
+	GenerateChain(gspec.Config, genesis, failingFinalizeEngine{}, db, 1, nil)
 }
 
 func ExampleGenerateChain() {
