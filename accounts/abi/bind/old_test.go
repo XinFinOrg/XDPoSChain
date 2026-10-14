@@ -36,8 +36,7 @@ const otherMetaDataABI = `[{"constant":true,"inputs":[],"name":"other","outputs"
 // resolves the ABI this way from every constructor and binding wrapper it
 // generates, so a cache that is bypassed turns each construction into another
 // full JSON parse. The generated bindings that reach this method come with the
-// regenerated v1 bindings (#2784); on this tree the cached path has no caller yet
-// and only this test exercises it.
+// regenerated v1 bindings (#2784), so this test is not its only exerciser.
 //
 // The second call is compared by pointer, and the parse result is checked as
 // well: a cache that returns one shared error or one zero value for every call
