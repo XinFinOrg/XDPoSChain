@@ -128,6 +128,9 @@ func New(conf *Config) (_ *Node, err error) {
 	// Release the instance directory if any later initialization step fails.
 	defer func() {
 		if err != nil {
+			if node.keyDirTemp {
+				_ = os.RemoveAll(node.keyDir)
+			}
 			node.closeDataDir()
 		}
 	}()

@@ -110,25 +110,44 @@ func TestNodeUsedDataDir(t *testing.T) {
 
 // Failed construction must not prevent a corrected configuration from using the datadir.
 func TestNodeNewFailureReleasesDataDir(t *testing.T) {
-	for _, failure := range []string{"keystore", "http-prefix", "ws-prefix"} {
-		t.Run(failure, func(t *testing.T) {
+	tests := []struct {
+		name      string
+		setup     func(*testing.T, *Config)
+		wantError string
+		checkErr  func(*testing.T, *Config, error)
+	}{
+		{
+			name: "keystore",
+			setup: func(t *testing.T, config *Config) {
+				config.KeyStoreDir = filepath.Join(t.TempDir(), "file")
+				if err := os.WriteFile(config.KeyStoreDir, nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			checkErr: func(t *testing.T, config *Config, err error) {
+				var pathErr *os.PathError
+				if !errors.As(err, &pathErr) || pathErr.Path != config.KeyStoreDir {
+					t.Fatalf("wrong keystore error: %v", err)
+				}
+			},
+		},
+		{
+			name:      "http-prefix",
+			setup:     func(_ *testing.T, config *Config) { config.HTTPPathPrefix = "invalid" },
+			wantError: "HTTP RPC path prefix",
+		},
+		{
+			name:      "ws-prefix",
+			setup:     func(_ *testing.T, config *Config) { config.WSPathPrefix = "invalid" },
+			wantError: "WebSocket RPC path prefix",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
 			config := testNodeConfig()
 			config.DataDir = t.TempDir()
 			broken := *config
-			var wantError string
-			switch failure {
-			case "keystore":
-				broken.KeyStoreDir = filepath.Join(t.TempDir(), "file")
-				if err := os.WriteFile(broken.KeyStoreDir, nil, 0600); err != nil {
-					t.Fatal(err)
-				}
-			case "http-prefix":
-				broken.HTTPPathPrefix = "invalid"
-				wantError = "HTTP RPC path prefix"
-			case "ws-prefix":
-				broken.WSPathPrefix = "invalid"
-				wantError = "WebSocket RPC path prefix"
-			}
+			test.setup(t, &broken)
 			failed, err := New(&broken)
 			if failed != nil {
 				failed.Close()
@@ -137,21 +156,25 @@ func TestNodeNewFailureReleasesDataDir(t *testing.T) {
 			if err == nil {
 				t.Fatal("New accepted an invalid configuration")
 			}
-			if failure == "keystore" {
-				var pathErr *os.PathError
-				if !errors.As(err, &pathErr) || pathErr.Path != broken.KeyStoreDir {
-					t.Fatalf("wrong keystore error: %v", err)
-				}
-			} else if !strings.Contains(err.Error(), wantError) {
+			if test.checkErr != nil {
+				test.checkErr(t, &broken, err)
+			} else if !strings.Contains(err.Error(), test.wantError) {
 				t.Fatalf("wrong prefix error: %v", err)
 			}
 
 			// No GC or process restart should be needed to retry initialization.
 			recovered, err := New(config)
 			if err != nil {
-				t.Fatalf("failed to reopen datadir after %s error: %v", failure, err)
+				t.Fatalf("failed to reopen datadir after %s error: %v", test.name, err)
 			}
-			defer recovered.Close()
+			recoveredClosed := false
+			t.Cleanup(func() {
+				if !recoveredClosed {
+					if err := recovered.Close(); err != nil {
+						t.Errorf("failed to close recovered node: %v", err)
+					}
+				}
+			})
 
 			// Successful construction must retain the lock until Close.
 			duplicate, err := New(config)
@@ -165,12 +188,101 @@ func TestNodeNewFailureReleasesDataDir(t *testing.T) {
 			if err := recovered.Close(); err != nil {
 				t.Fatal(err)
 			}
+			recoveredClosed = true
 			reopened, err := New(config)
 			if err != nil {
 				t.Fatalf("failed to reopen datadir after Close: %v", err)
 			}
 			defer reopened.Close()
 		})
+	}
+}
+
+func TestNodeNewFailureCleansUpKeyStore(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*Config)
+		wantError string
+	}{
+		{
+			name:      "http-prefix",
+			configure: func(config *Config) { config.HTTPPathPrefix = "invalid" },
+			wantError: "HTTP RPC path prefix",
+		},
+		{
+			name:      "ws-prefix",
+			configure: func(config *Config) { config.WSPathPrefix = "invalid" },
+			wantError: "WebSocket RPC path prefix",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			t.Setenv("TMPDIR", tempDir)
+			t.Setenv("TMP", tempDir)
+			t.Setenv("TEMP", tempDir)
+
+			config := testNodeConfig()
+			test.configure(config)
+			node, err := New(config)
+			if node != nil {
+				node.Close()
+				t.Fatal("New returned a node for an invalid configuration")
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("wrong initialization error: %v", err)
+			}
+			entries, err := os.ReadDir(tempDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("temporary keystore was not removed: %s", entries[0].Name())
+			}
+		})
+	}
+}
+
+func TestNodeNewFailurePreservesConfiguredKeyStore(t *testing.T) {
+	keyDir := t.TempDir()
+	marker := filepath.Join(keyDir, "marker")
+	if err := os.WriteFile(marker, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config := testNodeConfig()
+	config.KeyStoreDir = keyDir
+	config.HTTPPathPrefix = "invalid"
+	if node, err := New(config); node != nil || err == nil {
+		if node != nil {
+			node.Close()
+		}
+		t.Fatalf("New returned (%v, %v), want initialization error", node, err)
+	}
+	if contents, err := os.ReadFile(marker); err != nil || string(contents) != "keep" {
+		t.Fatalf("configured keystore was changed: contents %q, error %v", contents, err)
+	}
+}
+
+func TestEphemeralKeyStoreLifecycle(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("TMPDIR", tempDir)
+	t.Setenv("TMP", tempDir)
+	t.Setenv("TEMP", tempDir)
+
+	node, err := New(testNodeConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDir := node.keyDir
+	if _, err := os.Stat(keyDir); err != nil {
+		node.Close()
+		t.Fatalf("ephemeral keystore missing before Close: %v", err)
+	}
+	if err := node.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(keyDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ephemeral keystore still exists after Close: %v", err)
 	}
 }
 
