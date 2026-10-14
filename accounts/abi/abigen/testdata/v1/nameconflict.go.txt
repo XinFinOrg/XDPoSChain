@@ -1,0 +1,417 @@
+// Code generated - DO NOT EDIT.
+// This file is a generated binding and any manual changes will be lost.
+
+package bindtest
+
+import (
+	"context"
+	"errors"
+	"math/big"
+	"strings"
+	"time"
+
+	ethereum "github.com/XinFinOrg/XDPoSChain"
+	"github.com/XinFinOrg/XDPoSChain/accounts/abi"
+	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
+	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/event"
+)
+
+// Reference imports to suppress errors if they are not otherwise used.
+var (
+	_ = errors.New
+	_ = big.NewInt
+	_ = strings.NewReader
+	_ = ethereum.ErrNotFound
+	_ = bind.Bind
+	_ = common.Big1
+	_ = types.BloomLookup
+	_ = event.NewSubscription
+	_ = abi.ConvertType
+	_ = time.Tick
+	_ = context.Background
+)
+
+// Oraclerequest is an auto generated low-level Go binding around an user-defined struct.
+type Oraclerequest struct {
+	Data  []byte
+	Data0 []byte
+}
+
+// NameConflictMetaData contains all meta data concerning the NameConflict contract.
+var NameConflictMetaData = &bind.MetaData{
+	ABI: "[{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"int256\",\"name\":\"msg\",\"type\":\"int256\"},{\"indexed\":false,\"internalType\":\"int256\",\"name\":\"_msg\",\"type\":\"int256\"}],\"name\":\"log\",\"type\":\"event\"},{\"inputs\":[{\"components\":[{\"internalType\":\"bytes\",\"name\":\"data\",\"type\":\"bytes\"},{\"internalType\":\"bytes\",\"name\":\"_data\",\"type\":\"bytes\"}],\"internalType\":\"structoracle.request\",\"name\":\"req\",\"type\":\"tuple\"}],\"name\":\"addRequest\",\"outputs\":[],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getRequest\",\"outputs\":[{\"components\":[{\"internalType\":\"bytes\",\"name\":\"data\",\"type\":\"bytes\"},{\"internalType\":\"bytes\",\"name\":\"_data\",\"type\":\"bytes\"}],\"internalType\":\"structoracle.request\",\"name\":\"\",\"type\":\"tuple\"}],\"stateMutability\":\"pure\",\"type\":\"function\"}]",
+	Bin: "0x608060405234801561001057600080fd5b5061042b806100206000396000f3fe608060405234801561001057600080fd5b50600436106100365760003560e01c8063c2bb515f1461003b578063cce7b04814610059575b600080fd5b610043610075565b60405161005091906101af565b60405180910390f35b610073600480360381019061006e91906103ac565b6100b5565b005b61007d6100b8565b604051806040016040528060405180602001604052806000815250815260200160405180602001604052806000815250815250905090565b50565b604051806040016040528060608152602001606081525090565b600081519050919050565b600082825260208201905092915050565b60005b8381101561010c5780820151818401526020810190506100f1565b8381111561011b576000848401525b50505050565b6000601f19601f8301169050919050565b600061013d826100d2565b61014781856100dd565b93506101578185602086016100ee565b61016081610121565b840191505092915050565b600060408301600083015184820360008601526101888282610132565b915050602083015184820360208601526101a28282610132565b9150508091505092915050565b600060208201905081810360008301526101c9818461016b565b905092915050565b6000604051905090565b600080fd5b600080fd5b600080fd5b7f4e487b7100000000000000000000000000000000000000000000000000000000600052604160045260246000fd5b61022282610121565b810181811067ffffffffffffffff82111715610241576102406101ea565b5b80604052505050565b60006102546101d1565b90506102608282610219565b919050565b600080fd5b600080fd5b600080fd5b600067ffffffffffffffff82111561028f5761028e6101ea565b5b61029882610121565b9050602081019050919050565b82818337600083830152505050565b60006102c76102c284610274565b61024a565b9050828152602081018484840111156102e3576102e261026f565b5b6102ee8482856102a5565b509392505050565b600082601f83011261030b5761030a61026a565b5b813561031b8482602086016102b4565b91505092915050565b60006040828403121561033a576103396101e5565b5b610344604061024a565b9050600082013567ffffffffffffffff81111561036457610363610265565b5b610370848285016102f6565b600083015250602082013567ffffffffffffffff81111561039457610393610265565b5b6103a0848285016102f6565b60208301525092915050565b6000602082840312156103c2576103c16101db565b5b600082013567ffffffffffffffff8111156103e0576103df6101e0565b5b6103ec84828501610324565b9150509291505056fea264697066735822122033bca1606af9b6aeba1673f98c52003cec19338539fb44b86690ce82c51483b564736f6c634300080e0033",
+}
+
+// NameConflictABI is the input ABI used to generate the binding from.
+// Deprecated: Use NameConflictMetaData.ABI instead.
+var NameConflictABI = NameConflictMetaData.ABI
+
+// NameConflictBin is the compiled bytecode used for deploying new contracts.
+// Deprecated: Use NameConflictMetaData.Bin instead.
+var NameConflictBin = NameConflictMetaData.Bin
+
+// DeployNameConflict deploys a new Ethereum contract, binding an instance of NameConflict to it.
+func DeployNameConflict(auth *bind.TransactOpts, backend bind.ContractBackend) (common.Address, *types.Transaction, *NameConflict, error) {
+	parsed, err := NameConflictMetaData.GetAbi()
+	if err != nil {
+		return common.Address{}, nil, nil, err
+	}
+	if parsed == nil {
+		return common.Address{}, nil, nil, errors.New("GetABI returned nil")
+	}
+	// Library addresses are substituted into a local copy of the bytecode: the
+	// package-level NameConflictBin is shared by every caller, so substituting in
+	// it would leave any later deployment linked to the addresses substituted
+	// by an earlier one.
+	linkedBin := NameConflictBin
+
+	address, tx, contract, err := bind.DeployContract(auth, *parsed, common.FromHex(linkedBin), backend)
+	if err != nil {
+		return common.Address{}, nil, nil, err
+	}
+	return address, tx, &NameConflict{NameConflictCaller: NameConflictCaller{contract: contract}, NameConflictTransactor: NameConflictTransactor{contract: contract}, NameConflictFilterer: NameConflictFilterer{contract: contract}}, nil
+}
+
+// NameConflict is an auto generated Go binding around an Ethereum contract.
+type NameConflict struct {
+	NameConflictCaller     // Read-only binding to the contract
+	NameConflictTransactor // Write-only binding to the contract
+	NameConflictFilterer   // Log filterer for contract events
+}
+
+// NameConflictCaller is an auto generated read-only Go binding around an Ethereum contract.
+type NameConflictCaller struct {
+	contract *bind.BoundContract // Generic contract wrapper for the low level calls
+}
+
+// NameConflictTransactor is an auto generated write-only Go binding around an Ethereum contract.
+type NameConflictTransactor struct {
+	contract *bind.BoundContract // Generic contract wrapper for the low level calls
+}
+
+// NameConflictFilterer is an auto generated log filtering Go binding around an Ethereum contract events.
+type NameConflictFilterer struct {
+	contract *bind.BoundContract // Generic contract wrapper for the low level calls
+}
+
+// NameConflictSession is an auto generated Go binding around an Ethereum contract,
+// with pre-set call and transact options.
+type NameConflictSession struct {
+	Contract     *NameConflict     // Generic contract binding to set the session for
+	CallOpts     bind.CallOpts     // Call options to use throughout this session
+	TransactOpts bind.TransactOpts // Transaction auth options to use throughout this session
+}
+
+// NameConflictCallerSession is an auto generated read-only Go binding around an Ethereum contract,
+// with pre-set call options.
+type NameConflictCallerSession struct {
+	Contract *NameConflictCaller // Generic contract caller binding to set the session for
+	CallOpts bind.CallOpts       // Call options to use throughout this session
+}
+
+// NameConflictTransactorSession is an auto generated write-only Go binding around an Ethereum contract,
+// with pre-set transact options.
+type NameConflictTransactorSession struct {
+	Contract     *NameConflictTransactor // Generic contract transactor binding to set the session for
+	TransactOpts bind.TransactOpts       // Transaction auth options to use throughout this session
+}
+
+// NameConflictRaw is an auto generated low-level Go binding around an Ethereum contract.
+type NameConflictRaw struct {
+	Contract *NameConflict // Generic contract binding to access the raw methods on
+}
+
+// NameConflictCallerRaw is an auto generated low-level read-only Go binding around an Ethereum contract.
+type NameConflictCallerRaw struct {
+	Contract *NameConflictCaller // Generic read-only contract binding to access the raw methods on
+}
+
+// NameConflictTransactorRaw is an auto generated low-level write-only Go binding around an Ethereum contract.
+type NameConflictTransactorRaw struct {
+	Contract *NameConflictTransactor // Generic write-only contract binding to access the raw methods on
+}
+
+// NewNameConflict creates a new instance of NameConflict, bound to a specific deployed contract.
+func NewNameConflict(address common.Address, backend bind.ContractBackend) (*NameConflict, error) {
+	contract, err := bindNameConflict(address, backend, backend, backend)
+	if err != nil {
+		return nil, err
+	}
+	return &NameConflict{NameConflictCaller: NameConflictCaller{contract: contract}, NameConflictTransactor: NameConflictTransactor{contract: contract}, NameConflictFilterer: NameConflictFilterer{contract: contract}}, nil
+}
+
+// NewNameConflictCaller creates a new read-only instance of NameConflict, bound to a specific deployed contract.
+func NewNameConflictCaller(address common.Address, caller bind.ContractCaller) (*NameConflictCaller, error) {
+	contract, err := bindNameConflict(address, caller, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &NameConflictCaller{contract: contract}, nil
+}
+
+// NewNameConflictTransactor creates a new write-only instance of NameConflict, bound to a specific deployed contract.
+func NewNameConflictTransactor(address common.Address, transactor bind.ContractTransactor) (*NameConflictTransactor, error) {
+	contract, err := bindNameConflict(address, nil, transactor, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &NameConflictTransactor{contract: contract}, nil
+}
+
+// NewNameConflictFilterer creates a new log filterer instance of NameConflict, bound to a specific deployed contract.
+func NewNameConflictFilterer(address common.Address, filterer bind.ContractFilterer) (*NameConflictFilterer, error) {
+	contract, err := bindNameConflict(address, nil, nil, filterer)
+	if err != nil {
+		return nil, err
+	}
+	return &NameConflictFilterer{contract: contract}, nil
+}
+
+// bindNameConflict binds a generic wrapper to an already deployed contract.
+func bindNameConflict(address common.Address, caller bind.ContractCaller, transactor bind.ContractTransactor, filterer bind.ContractFilterer) (*bind.BoundContract, error) {
+	parsed, err := NameConflictMetaData.GetAbi()
+	if err != nil {
+		return nil, err
+	}
+	return bind.NewBoundContract(address, *parsed, caller, transactor, filterer), nil
+}
+
+// Call invokes the (constant) contract method with params as input values and
+// sets the output to result. The result type might be a single field for simple
+// returns, a slice of interfaces for anonymous returns and a struct for named
+// returns.
+func (_NameConflict *NameConflictRaw) Call(opts *bind.CallOpts, result *[]interface{}, method string, params ...interface{}) error {
+	return _NameConflict.Contract.NameConflictCaller.contract.Call(opts, result, method, params...)
+}
+
+// Transfer initiates a plain transaction to move funds to the contract, calling
+// its default method if one is available.
+func (_NameConflict *NameConflictRaw) Transfer(opts *bind.TransactOpts) (*types.Transaction, error) {
+	return _NameConflict.Contract.NameConflictTransactor.contract.Transfer(opts)
+}
+
+// Transact invokes the (paid) contract method with params as input values.
+func (_NameConflict *NameConflictRaw) Transact(opts *bind.TransactOpts, method string, params ...interface{}) (*types.Transaction, error) {
+	return _NameConflict.Contract.NameConflictTransactor.contract.Transact(opts, method, params...)
+}
+
+// Call invokes the (constant) contract method with params as input values and
+// sets the output to result. The result type might be a single field for simple
+// returns, a slice of interfaces for anonymous returns and a struct for named
+// returns.
+func (_NameConflict *NameConflictCallerRaw) Call(opts *bind.CallOpts, result *[]interface{}, method string, params ...interface{}) error {
+	return _NameConflict.Contract.contract.Call(opts, result, method, params...)
+}
+
+// Transfer initiates a plain transaction to move funds to the contract, calling
+// its default method if one is available.
+func (_NameConflict *NameConflictTransactorRaw) Transfer(opts *bind.TransactOpts) (*types.Transaction, error) {
+	return _NameConflict.Contract.contract.Transfer(opts)
+}
+
+// Transact invokes the (paid) contract method with params as input values.
+func (_NameConflict *NameConflictTransactorRaw) Transact(opts *bind.TransactOpts, method string, params ...interface{}) (*types.Transaction, error) {
+	return _NameConflict.Contract.contract.Transact(opts, method, params...)
+}
+
+// AddRequest is a free data retrieval call binding the contract method 0xcce7b048.
+//
+// Solidity: function addRequest((bytes,bytes) req) pure returns()
+func (_NameConflict *NameConflictCaller) AddRequest(opts *bind.CallOpts, req Oraclerequest) error {
+	var out []interface{}
+	err := _NameConflict.contract.Call(opts, &out, "addRequest", req)
+
+	if err != nil {
+		return err
+	}
+
+	return err
+
+}
+
+// AddRequest is a free data retrieval call binding the contract method 0xcce7b048.
+//
+// Solidity: function addRequest((bytes,bytes) req) pure returns()
+func (_NameConflict *NameConflictSession) AddRequest(req Oraclerequest) error {
+	return _NameConflict.Contract.AddRequest(&_NameConflict.CallOpts, req)
+}
+
+// AddRequest is a free data retrieval call binding the contract method 0xcce7b048.
+//
+// Solidity: function addRequest((bytes,bytes) req) pure returns()
+func (_NameConflict *NameConflictCallerSession) AddRequest(req Oraclerequest) error {
+	return _NameConflict.Contract.AddRequest(&_NameConflict.CallOpts, req)
+}
+
+// GetRequest is a free data retrieval call binding the contract method 0xc2bb515f.
+//
+// Solidity: function getRequest() pure returns((bytes,bytes))
+func (_NameConflict *NameConflictCaller) GetRequest(opts *bind.CallOpts) (Oraclerequest, error) {
+	var out []interface{}
+	err := _NameConflict.contract.Call(opts, &out, "getRequest")
+
+	if err != nil {
+		return *new(Oraclerequest), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(Oraclerequest)).(*Oraclerequest)
+
+	return out0, err
+
+}
+
+// GetRequest is a free data retrieval call binding the contract method 0xc2bb515f.
+//
+// Solidity: function getRequest() pure returns((bytes,bytes))
+func (_NameConflict *NameConflictSession) GetRequest() (Oraclerequest, error) {
+	return _NameConflict.Contract.GetRequest(&_NameConflict.CallOpts)
+}
+
+// GetRequest is a free data retrieval call binding the contract method 0xc2bb515f.
+//
+// Solidity: function getRequest() pure returns((bytes,bytes))
+func (_NameConflict *NameConflictCallerSession) GetRequest() (Oraclerequest, error) {
+	return _NameConflict.Contract.GetRequest(&_NameConflict.CallOpts)
+}
+
+// NameConflictLogIterator is returned from FilterLog and is used to iterate over the raw logs and unpacked data for Log events raised by the NameConflict contract.
+type NameConflictLogIterator struct {
+	Event *NameConflictLog // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *NameConflictLogIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(NameConflictLog)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(NameConflictLog)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *NameConflictLogIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *NameConflictLogIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// NameConflictLog represents a Log event raised by the NameConflict contract.
+type NameConflictLog struct {
+	Msg  *big.Int
+	Msg0 *big.Int
+	Raw  types.Log // Blockchain specific contextual infos
+}
+
+// FilterLog is a free log retrieval operation binding the contract event 0x6f9a4c4eca2c95746f2a52c479c65e27757e1e941b15ab24e75209ef3eb308cb.
+//
+// Solidity: event log(int256 msg, int256 _msg)
+func (_NameConflict *NameConflictFilterer) FilterLog(opts *bind.FilterOpts) (*NameConflictLogIterator, error) {
+
+	logs, sub, err := _NameConflict.contract.FilterLogs(opts, "log")
+	if err != nil {
+		return nil, err
+	}
+	return &NameConflictLogIterator{contract: _NameConflict.contract, event: "log", logs: logs, sub: sub}, nil
+}
+
+// WatchLog is a free log subscription operation binding the contract event 0x6f9a4c4eca2c95746f2a52c479c65e27757e1e941b15ab24e75209ef3eb308cb.
+//
+// Solidity: event log(int256 msg, int256 _msg)
+func (_NameConflict *NameConflictFilterer) WatchLog(opts *bind.WatchOpts, sink chan<- *NameConflictLog) (event.Subscription, error) {
+
+	logs, sub, err := _NameConflict.contract.WatchLogs(opts, "log")
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(NameConflictLog)
+				if err := _NameConflict.contract.UnpackLog(event, "log", log); err != nil {
+					// If the signature doesn't match, skip this log.
+					if errors.Is(err, bind.ErrEventSignatureMismatch) {
+						continue
+					}
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseLog is a log parse operation binding the contract event 0x6f9a4c4eca2c95746f2a52c479c65e27757e1e941b15ab24e75209ef3eb308cb.
+//
+// Solidity: event log(int256 msg, int256 _msg)
+func (_NameConflict *NameConflictFilterer) ParseLog(log types.Log) (*NameConflictLog, error) {
+	event := new(NameConflictLog)
+	if err := _NameConflict.contract.UnpackLog(event, "log", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}

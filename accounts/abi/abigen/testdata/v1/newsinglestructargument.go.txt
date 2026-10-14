@@ -1,0 +1,377 @@
+// Code generated - DO NOT EDIT.
+// This file is a generated binding and any manual changes will be lost.
+
+package bindtest
+
+import (
+	"context"
+	"errors"
+	"math/big"
+	"strings"
+	"time"
+
+	ethereum "github.com/XinFinOrg/XDPoSChain"
+	"github.com/XinFinOrg/XDPoSChain/accounts/abi"
+	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
+	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/event"
+)
+
+// Reference imports to suppress errors if they are not otherwise used.
+var (
+	_ = errors.New
+	_ = big.NewInt
+	_ = strings.NewReader
+	_ = ethereum.ErrNotFound
+	_ = bind.Bind
+	_ = common.Big1
+	_ = types.BloomLookup
+	_ = event.NewSubscription
+	_ = abi.ConvertType
+	_ = time.Tick
+	_ = context.Background
+)
+
+// TestMyStruct is an auto generated low-level Go binding around an user-defined struct.
+type TestMyStruct struct {
+	A *big.Int
+	B *big.Int
+}
+
+// NewSingleStructArgumentMetaData contains all meta data concerning the NewSingleStructArgument contract.
+var NewSingleStructArgumentMetaData = &bind.MetaData{
+	ABI: "[{\"anonymous\":false,\"inputs\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"a\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"b\",\"type\":\"uint256\"}],\"indexed\":false,\"internalType\":\"structTest.MyStruct\",\"name\":\"s\",\"type\":\"tuple\"}],\"name\":\"StructEvent\",\"type\":\"event\"},{\"inputs\":[],\"name\":\"TestEvent\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}]",
+	Bin: "0x608060405234801561001057600080fd5b50610113806100206000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c806324ec1d3f14602d575b600080fd5b60336035565b005b7fb4b2ff75e30cb4317eaae16dd8a187dd89978df17565104caa6c2797caae27d460405180604001604052806001815260200160028152506040516078919060ba565b60405180910390a1565b6040820160008201516096600085018260ad565b50602082015160a7602085018260ad565b50505050565b60b48160d3565b82525050565b600060408201905060cd60008301846082565b92915050565b600081905091905056fea26469706673582212208823628796125bf9941ce4eda18da1be3cf2931b231708ab848e1bd7151c0c9a64736f6c63430008070033",
+}
+
+// NewSingleStructArgumentABI is the input ABI used to generate the binding from.
+// Deprecated: Use NewSingleStructArgumentMetaData.ABI instead.
+var NewSingleStructArgumentABI = NewSingleStructArgumentMetaData.ABI
+
+// NewSingleStructArgumentBin is the compiled bytecode used for deploying new contracts.
+// Deprecated: Use NewSingleStructArgumentMetaData.Bin instead.
+var NewSingleStructArgumentBin = NewSingleStructArgumentMetaData.Bin
+
+// DeployNewSingleStructArgument deploys a new Ethereum contract, binding an instance of NewSingleStructArgument to it.
+func DeployNewSingleStructArgument(auth *bind.TransactOpts, backend bind.ContractBackend) (common.Address, *types.Transaction, *NewSingleStructArgument, error) {
+	parsed, err := NewSingleStructArgumentMetaData.GetAbi()
+	if err != nil {
+		return common.Address{}, nil, nil, err
+	}
+	if parsed == nil {
+		return common.Address{}, nil, nil, errors.New("GetABI returned nil")
+	}
+	// Library addresses are substituted into a local copy of the bytecode: the
+	// package-level NewSingleStructArgumentBin is shared by every caller, so substituting in
+	// it would leave any later deployment linked to the addresses substituted
+	// by an earlier one.
+	linkedBin := NewSingleStructArgumentBin
+
+	address, tx, contract, err := bind.DeployContract(auth, *parsed, common.FromHex(linkedBin), backend)
+	if err != nil {
+		return common.Address{}, nil, nil, err
+	}
+	return address, tx, &NewSingleStructArgument{NewSingleStructArgumentCaller: NewSingleStructArgumentCaller{contract: contract}, NewSingleStructArgumentTransactor: NewSingleStructArgumentTransactor{contract: contract}, NewSingleStructArgumentFilterer: NewSingleStructArgumentFilterer{contract: contract}}, nil
+}
+
+// NewSingleStructArgument is an auto generated Go binding around an Ethereum contract.
+type NewSingleStructArgument struct {
+	NewSingleStructArgumentCaller     // Read-only binding to the contract
+	NewSingleStructArgumentTransactor // Write-only binding to the contract
+	NewSingleStructArgumentFilterer   // Log filterer for contract events
+}
+
+// NewSingleStructArgumentCaller is an auto generated read-only Go binding around an Ethereum contract.
+type NewSingleStructArgumentCaller struct {
+	contract *bind.BoundContract // Generic contract wrapper for the low level calls
+}
+
+// NewSingleStructArgumentTransactor is an auto generated write-only Go binding around an Ethereum contract.
+type NewSingleStructArgumentTransactor struct {
+	contract *bind.BoundContract // Generic contract wrapper for the low level calls
+}
+
+// NewSingleStructArgumentFilterer is an auto generated log filtering Go binding around an Ethereum contract events.
+type NewSingleStructArgumentFilterer struct {
+	contract *bind.BoundContract // Generic contract wrapper for the low level calls
+}
+
+// NewSingleStructArgumentSession is an auto generated Go binding around an Ethereum contract,
+// with pre-set call and transact options.
+type NewSingleStructArgumentSession struct {
+	Contract     *NewSingleStructArgument // Generic contract binding to set the session for
+	CallOpts     bind.CallOpts            // Call options to use throughout this session
+	TransactOpts bind.TransactOpts        // Transaction auth options to use throughout this session
+}
+
+// NewSingleStructArgumentCallerSession is an auto generated read-only Go binding around an Ethereum contract,
+// with pre-set call options.
+type NewSingleStructArgumentCallerSession struct {
+	Contract *NewSingleStructArgumentCaller // Generic contract caller binding to set the session for
+	CallOpts bind.CallOpts                  // Call options to use throughout this session
+}
+
+// NewSingleStructArgumentTransactorSession is an auto generated write-only Go binding around an Ethereum contract,
+// with pre-set transact options.
+type NewSingleStructArgumentTransactorSession struct {
+	Contract     *NewSingleStructArgumentTransactor // Generic contract transactor binding to set the session for
+	TransactOpts bind.TransactOpts                  // Transaction auth options to use throughout this session
+}
+
+// NewSingleStructArgumentRaw is an auto generated low-level Go binding around an Ethereum contract.
+type NewSingleStructArgumentRaw struct {
+	Contract *NewSingleStructArgument // Generic contract binding to access the raw methods on
+}
+
+// NewSingleStructArgumentCallerRaw is an auto generated low-level read-only Go binding around an Ethereum contract.
+type NewSingleStructArgumentCallerRaw struct {
+	Contract *NewSingleStructArgumentCaller // Generic read-only contract binding to access the raw methods on
+}
+
+// NewSingleStructArgumentTransactorRaw is an auto generated low-level write-only Go binding around an Ethereum contract.
+type NewSingleStructArgumentTransactorRaw struct {
+	Contract *NewSingleStructArgumentTransactor // Generic write-only contract binding to access the raw methods on
+}
+
+// NewNewSingleStructArgument creates a new instance of NewSingleStructArgument, bound to a specific deployed contract.
+func NewNewSingleStructArgument(address common.Address, backend bind.ContractBackend) (*NewSingleStructArgument, error) {
+	contract, err := bindNewSingleStructArgument(address, backend, backend, backend)
+	if err != nil {
+		return nil, err
+	}
+	return &NewSingleStructArgument{NewSingleStructArgumentCaller: NewSingleStructArgumentCaller{contract: contract}, NewSingleStructArgumentTransactor: NewSingleStructArgumentTransactor{contract: contract}, NewSingleStructArgumentFilterer: NewSingleStructArgumentFilterer{contract: contract}}, nil
+}
+
+// NewNewSingleStructArgumentCaller creates a new read-only instance of NewSingleStructArgument, bound to a specific deployed contract.
+func NewNewSingleStructArgumentCaller(address common.Address, caller bind.ContractCaller) (*NewSingleStructArgumentCaller, error) {
+	contract, err := bindNewSingleStructArgument(address, caller, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &NewSingleStructArgumentCaller{contract: contract}, nil
+}
+
+// NewNewSingleStructArgumentTransactor creates a new write-only instance of NewSingleStructArgument, bound to a specific deployed contract.
+func NewNewSingleStructArgumentTransactor(address common.Address, transactor bind.ContractTransactor) (*NewSingleStructArgumentTransactor, error) {
+	contract, err := bindNewSingleStructArgument(address, nil, transactor, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &NewSingleStructArgumentTransactor{contract: contract}, nil
+}
+
+// NewNewSingleStructArgumentFilterer creates a new log filterer instance of NewSingleStructArgument, bound to a specific deployed contract.
+func NewNewSingleStructArgumentFilterer(address common.Address, filterer bind.ContractFilterer) (*NewSingleStructArgumentFilterer, error) {
+	contract, err := bindNewSingleStructArgument(address, nil, nil, filterer)
+	if err != nil {
+		return nil, err
+	}
+	return &NewSingleStructArgumentFilterer{contract: contract}, nil
+}
+
+// bindNewSingleStructArgument binds a generic wrapper to an already deployed contract.
+func bindNewSingleStructArgument(address common.Address, caller bind.ContractCaller, transactor bind.ContractTransactor, filterer bind.ContractFilterer) (*bind.BoundContract, error) {
+	parsed, err := NewSingleStructArgumentMetaData.GetAbi()
+	if err != nil {
+		return nil, err
+	}
+	return bind.NewBoundContract(address, *parsed, caller, transactor, filterer), nil
+}
+
+// Call invokes the (constant) contract method with params as input values and
+// sets the output to result. The result type might be a single field for simple
+// returns, a slice of interfaces for anonymous returns and a struct for named
+// returns.
+func (_NewSingleStructArgument *NewSingleStructArgumentRaw) Call(opts *bind.CallOpts, result *[]interface{}, method string, params ...interface{}) error {
+	return _NewSingleStructArgument.Contract.NewSingleStructArgumentCaller.contract.Call(opts, result, method, params...)
+}
+
+// Transfer initiates a plain transaction to move funds to the contract, calling
+// its default method if one is available.
+func (_NewSingleStructArgument *NewSingleStructArgumentRaw) Transfer(opts *bind.TransactOpts) (*types.Transaction, error) {
+	return _NewSingleStructArgument.Contract.NewSingleStructArgumentTransactor.contract.Transfer(opts)
+}
+
+// Transact invokes the (paid) contract method with params as input values.
+func (_NewSingleStructArgument *NewSingleStructArgumentRaw) Transact(opts *bind.TransactOpts, method string, params ...interface{}) (*types.Transaction, error) {
+	return _NewSingleStructArgument.Contract.NewSingleStructArgumentTransactor.contract.Transact(opts, method, params...)
+}
+
+// Call invokes the (constant) contract method with params as input values and
+// sets the output to result. The result type might be a single field for simple
+// returns, a slice of interfaces for anonymous returns and a struct for named
+// returns.
+func (_NewSingleStructArgument *NewSingleStructArgumentCallerRaw) Call(opts *bind.CallOpts, result *[]interface{}, method string, params ...interface{}) error {
+	return _NewSingleStructArgument.Contract.contract.Call(opts, result, method, params...)
+}
+
+// Transfer initiates a plain transaction to move funds to the contract, calling
+// its default method if one is available.
+func (_NewSingleStructArgument *NewSingleStructArgumentTransactorRaw) Transfer(opts *bind.TransactOpts) (*types.Transaction, error) {
+	return _NewSingleStructArgument.Contract.contract.Transfer(opts)
+}
+
+// Transact invokes the (paid) contract method with params as input values.
+func (_NewSingleStructArgument *NewSingleStructArgumentTransactorRaw) Transact(opts *bind.TransactOpts, method string, params ...interface{}) (*types.Transaction, error) {
+	return _NewSingleStructArgument.Contract.contract.Transact(opts, method, params...)
+}
+
+// TestEvent is a paid mutator transaction binding the contract method 0x24ec1d3f.
+//
+// Solidity: function TestEvent() returns()
+func (_NewSingleStructArgument *NewSingleStructArgumentTransactor) TestEvent(opts *bind.TransactOpts) (*types.Transaction, error) {
+	return _NewSingleStructArgument.contract.Transact(opts, "TestEvent")
+}
+
+// TestEvent is a paid mutator transaction binding the contract method 0x24ec1d3f.
+//
+// Solidity: function TestEvent() returns()
+func (_NewSingleStructArgument *NewSingleStructArgumentSession) TestEvent() (*types.Transaction, error) {
+	return _NewSingleStructArgument.Contract.TestEvent(&_NewSingleStructArgument.TransactOpts)
+}
+
+// TestEvent is a paid mutator transaction binding the contract method 0x24ec1d3f.
+//
+// Solidity: function TestEvent() returns()
+func (_NewSingleStructArgument *NewSingleStructArgumentTransactorSession) TestEvent() (*types.Transaction, error) {
+	return _NewSingleStructArgument.Contract.TestEvent(&_NewSingleStructArgument.TransactOpts)
+}
+
+// NewSingleStructArgumentStructEventIterator is returned from FilterStructEvent and is used to iterate over the raw logs and unpacked data for StructEvent events raised by the NewSingleStructArgument contract.
+type NewSingleStructArgumentStructEventIterator struct {
+	Event *NewSingleStructArgumentStructEvent // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *NewSingleStructArgumentStructEventIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(NewSingleStructArgumentStructEvent)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(NewSingleStructArgumentStructEvent)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *NewSingleStructArgumentStructEventIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *NewSingleStructArgumentStructEventIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// NewSingleStructArgumentStructEvent represents a StructEvent event raised by the NewSingleStructArgument contract.
+type NewSingleStructArgumentStructEvent struct {
+	S   TestMyStruct
+	Raw types.Log // Blockchain specific contextual infos
+}
+
+// FilterStructEvent is a free log retrieval operation binding the contract event 0xb4b2ff75e30cb4317eaae16dd8a187dd89978df17565104caa6c2797caae27d4.
+//
+// Solidity: event StructEvent((uint256,uint256) s)
+func (_NewSingleStructArgument *NewSingleStructArgumentFilterer) FilterStructEvent(opts *bind.FilterOpts) (*NewSingleStructArgumentStructEventIterator, error) {
+
+	logs, sub, err := _NewSingleStructArgument.contract.FilterLogs(opts, "StructEvent")
+	if err != nil {
+		return nil, err
+	}
+	return &NewSingleStructArgumentStructEventIterator{contract: _NewSingleStructArgument.contract, event: "StructEvent", logs: logs, sub: sub}, nil
+}
+
+// WatchStructEvent is a free log subscription operation binding the contract event 0xb4b2ff75e30cb4317eaae16dd8a187dd89978df17565104caa6c2797caae27d4.
+//
+// Solidity: event StructEvent((uint256,uint256) s)
+func (_NewSingleStructArgument *NewSingleStructArgumentFilterer) WatchStructEvent(opts *bind.WatchOpts, sink chan<- *NewSingleStructArgumentStructEvent) (event.Subscription, error) {
+
+	logs, sub, err := _NewSingleStructArgument.contract.WatchLogs(opts, "StructEvent")
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(NewSingleStructArgumentStructEvent)
+				if err := _NewSingleStructArgument.contract.UnpackLog(event, "StructEvent", log); err != nil {
+					// If the signature doesn't match, skip this log.
+					if errors.Is(err, bind.ErrEventSignatureMismatch) {
+						continue
+					}
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseStructEvent is a log parse operation binding the contract event 0xb4b2ff75e30cb4317eaae16dd8a187dd89978df17565104caa6c2797caae27d4.
+//
+// Solidity: event StructEvent((uint256,uint256) s)
+func (_NewSingleStructArgument *NewSingleStructArgumentFilterer) ParseStructEvent(log types.Log) (*NewSingleStructArgumentStructEvent, error) {
+	event := new(NewSingleStructArgumentStructEvent)
+	if err := _NewSingleStructArgument.contract.UnpackLog(event, "StructEvent", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}
