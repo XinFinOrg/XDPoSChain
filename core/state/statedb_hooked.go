@@ -198,6 +198,21 @@ func (s *hookedStateDB) SetState(address common.Address, key common.Hash, value 
 	return prev
 }
 
+func (s *hookedStateDB) DeleteAddress(addr common.Address) {
+	// Only a removal that actually drops an account is reported: the caller
+	// (ApplyTIPSigningHardFork) runs unconditionally at the activation block,
+	// so an absent account must not surface a 0 -> 0 destruct event. An
+	// existing account is reported even with a zero balance.
+	exists := s.inner.Exist(addr)
+	// Copy the balance: GetBalance hands out the object's live balance pointer,
+	// while the previous values of AddBalance/SubBalance are already detached.
+	prev := new(big.Int).Set(s.inner.GetBalance(addr))
+	s.inner.DeleteAddress(addr)
+	if exists && s.hooks.OnBalanceChange != nil {
+		s.hooks.OnBalanceChange(addr, prev, new(big.Int), tracing.BalanceDecreaseSelfdestruct)
+	}
+}
+
 func (s *hookedStateDB) SelfDestruct(address common.Address) *big.Int {
 	prev := s.inner.SelfDestruct(address)
 	if s.hooks.OnBalanceChange != nil {

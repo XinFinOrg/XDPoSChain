@@ -74,7 +74,10 @@ func NewStateProcessor(config *params.ChainConfig, bc *BlockChain, engine consen
 // without this call they keep the account canonical execution had already removed. The
 // traces and every intermediate root of the activation block would then describe a state
 // the chain never had.
-func ApplyTIPSigningHardFork(config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int) {
+//
+// The state may be a tracing wrapper: the removal is then reported to the tracer hooks as a
+// balance change.
+func ApplyTIPSigningHardFork(config *params.ChainConfig, statedb vm.StateDB, blockNumber *big.Int) {
 	if blockNumber.Sign() > 0 && config.TIPSigningBlock != nil && config.TIPSigningBlock.Cmp(blockNumber) == 0 {
 		statedb.DeleteAddress(common.BlockSignersBinary)
 	}
@@ -149,7 +152,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
 		misc.ApplyDAOHardFork(tracingStateDB)
 	}
-	ApplyTIPSigningHardFork(p.config, statedb, blockNumber)
+	ApplyTIPSigningHardFork(p.config, tracingStateDB, blockNumber)
 	ApplyMulticall3HardFork(p.config, statedb, blockNumber)
 	parentState := statedb.Copy()
 	InitSignerInTransactions(p.config, header, block.Transactions())
@@ -250,7 +253,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
 		misc.ApplyDAOHardFork(tracingStateDB)
 	}
-	ApplyTIPSigningHardFork(p.config, statedb, blockNumber)
+	ApplyTIPSigningHardFork(p.config, tracingStateDB, blockNumber)
 	ApplyMulticall3HardFork(p.config, statedb, blockNumber)
 	if cBlock.stop.Load() {
 		return nil, nil, 0, ErrStopPreparingBlock

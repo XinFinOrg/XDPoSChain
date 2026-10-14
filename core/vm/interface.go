@@ -60,6 +60,13 @@ type StateDB interface {
 	SelfDestruct(common.Address) *big.Int
 	HasSelfDestructed(common.Address) bool
 
+	// DeleteAddress removes the account from the live cache and marks it destructed;
+	// the account trie entry is deleted by the next IntermediateRoot. Unlike
+	// SelfDestruct, the removal is visible to the rest of the session immediately.
+	// Both paths share the destruct bookkeeping, but DeleteAddress runs it
+	// immediately while the self-destruct path defers it to Finalise.
+	DeleteAddress(common.Address)
+
 	// SelfDestruct6780 is post-EIP6780 selfdestruct, which means that it's a
 	// send-all-to-beneficiary, unless the contract was created in this same
 	// transaction, in which case it will be destructed.

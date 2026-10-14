@@ -162,6 +162,12 @@ func TestStateAtTransactionAppliesBlockLevelHardForksAtActivation(t *testing.T) 
 	// The removal goes through DeleteAddress, which only deletes the account from the trie
 	// and leaves the cached state object readable in this session, so the replay result is
 	// read back through the trie: commit the replayed state and rebuild from its root.
+	if statedb.Exist(legacySigners) {
+		t.Fatal("the replayed pre-state still reports the legacy block signers account in-session")
+	}
+	if have := statedb.GetBalance(legacySigners); have.Sign() != 0 {
+		t.Fatalf("the replayed pre-state still reports a balance for the legacy block signers account in-session: have %v", have)
+	}
 	root, err := statedb.Commit(block.NumberU64(), config.IsEIP158(block.Number()))
 	if err != nil {
 		t.Fatalf("failed to commit the replayed state: %v", err)

@@ -659,6 +659,112 @@ func TestStateProcessorDoesNotDeleteBlockSignersAtGenesisTIPSigning(t *testing.T
 	}
 }
 
+// TestApplyTIPSigningHardForkHidesAccountInSession pins the production call
+// site: after the hook removes the legacy block signers account, the rest of
+// the session must already read it as absent, not only the committed root.
+func TestApplyTIPSigningHardForkHidesAccountInSession(t *testing.T) {
+	t.Parallel()
+
+	config := params.TestChainConfig.Clone()
+	config.TIPSigningBlock = big.NewInt(1)
+
+	db := rawdb.NewMemoryDatabase()
+	sdb, err := state.New(types.EmptyRootHash, state.NewDatabase(db))
+	if err != nil {
+		t.Fatalf("failed to create statedb: %v", err)
+	}
+	sdb.AddBalance(common.BlockSignersBinary, big.NewInt(1), tracing.BalanceChangeUnspecified)
+	sdb.SetCode(common.BlockSignersBinary, []byte{0x60, 0x00})
+	root, err := sdb.Commit(0, false)
+	if err != nil {
+		t.Fatalf("failed to commit state: %v", err)
+	}
+	if err := sdb.Database().TrieDB().Commit(root, false); err != nil {
+		t.Fatalf("failed to commit trie: %v", err)
+	}
+	statedb, err := state.New(root, state.NewDatabase(db))
+	if err != nil {
+		t.Fatalf("failed to reopen statedb: %v", err)
+	}
+	if !statedb.Exist(common.BlockSignersBinary) {
+		t.Fatal("block signers account missing from the pre-state")
+	}
+	rootBefore := statedb.IntermediateRoot(false)
+
+	ApplyTIPSigningHardFork(config, statedb, big.NewInt(1))
+
+	if statedb.Exist(common.BlockSignersBinary) {
+		t.Fatal("block signers account still readable in the same session")
+	}
+	if got := statedb.GetBalance(common.BlockSignersBinary); got.Sign() != 0 {
+		t.Errorf("balance after the hook: have %v, want 0", got)
+	}
+	if code := statedb.GetCode(common.BlockSignersBinary); len(code) != 0 {
+		t.Errorf("code after the hook: have %x, want empty", code)
+	}
+	rootAfter, err := statedb.Commit(1, false)
+	if err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+	if rootAfter == rootBefore {
+		t.Fatalf("state root unchanged after the removal: %x", rootAfter)
+	}
+}
+
+// TestApplyTIPSigningHardForkReportsRemovedBalance pins the tracer side of the
+// removal: the hook runs on the wrapped state, so a tracer sees the balance the
+// removal drops instead of the removal being silent.
+func TestApplyTIPSigningHardForkReportsRemovedBalance(t *testing.T) {
+	t.Parallel()
+
+	config := params.TestChainConfig.Clone()
+	config.TIPSigningBlock = big.NewInt(1)
+
+	db := rawdb.NewMemoryDatabase()
+	sdb, err := state.New(types.EmptyRootHash, state.NewDatabase(db))
+	if err != nil {
+		t.Fatalf("failed to create statedb: %v", err)
+	}
+	sdb.AddBalance(common.BlockSignersBinary, big.NewInt(1234), tracing.BalanceChangeUnspecified)
+	root, err := sdb.Commit(0, false)
+	if err != nil {
+		t.Fatalf("failed to commit state: %v", err)
+	}
+	if err := sdb.Database().TrieDB().Commit(root, false); err != nil {
+		t.Fatalf("failed to commit trie: %v", err)
+	}
+	statedb, err := state.New(root, state.NewDatabase(db))
+	if err != nil {
+		t.Fatalf("failed to reopen statedb: %v", err)
+	}
+
+	type change struct {
+		addr       common.Address
+		prev, next *big.Int
+		reason     tracing.BalanceChangeReason
+	}
+	var changes []change
+	hooked := state.NewHookedState(statedb, &tracing.Hooks{
+		OnBalanceChange: func(addr common.Address, prev, next *big.Int, reason tracing.BalanceChangeReason) {
+			changes = append(changes, change{addr, new(big.Int).Set(prev), new(big.Int).Set(next), reason})
+		},
+	})
+	ApplyTIPSigningHardFork(config, hooked, big.NewInt(1))
+
+	if len(changes) != 1 {
+		t.Fatalf("balance change hooks: have %d, want 1", len(changes))
+	}
+	if changes[0].addr != common.BlockSignersBinary {
+		t.Errorf("reported address: have %s, want %s", changes[0].addr, common.BlockSignersBinary)
+	}
+	if changes[0].prev.Int64() != 1234 || changes[0].next.Sign() != 0 {
+		t.Errorf("reported change: have %v -> %v, want 1234 -> 0", changes[0].prev, changes[0].next)
+	}
+	if changes[0].reason != tracing.BalanceDecreaseSelfdestruct {
+		t.Errorf("reported reason: have %v, want %v", changes[0].reason, tracing.BalanceDecreaseSelfdestruct)
+	}
+}
+
 // GenerateBadBlock constructs a "block" which contains the transactions. The transactions are not expected to be
 // valid, and no proper post-state can be made. But from the perspective of the blockchain, the block is sufficiently
 // valid to be considered for import:
