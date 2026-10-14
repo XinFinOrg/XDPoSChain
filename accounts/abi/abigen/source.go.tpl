@@ -80,6 +80,13 @@ var (
 		  if parsed == nil {
 			return common.Address{}, nil, nil, errors.New("GetABI returned nil")
 		  }
+		  {{- if .Libraries}}{{/* The trim markers keep a binding without library dependencies byte-for-byte identical to the pre-#35888 template output, so regenerating the checked-in contracts/ bindings stays a no-op. */}}
+			// Copy the opts so the nonce can be advanced without touching the caller's.
+			{
+			    opts := *auth
+			    auth = &opts
+			}
+		  {{- end}}
 		  // Library addresses are substituted into a local copy of the bytecode: the
 		  // package-level {{.Type}}Bin is shared by every caller, so substituting in
 		  // it would leave any later deployment linked to the addresses substituted
@@ -100,6 +107,11 @@ var (
 				if err := bind.WaitAccepted(ctx, backend, tx); err != nil {
 				    return common.Address{}, nil, nil, err
 				}
+				// The pool's pending nonce may not include the library tx yet, so
+				// advance it past the library transaction instead of asking the
+				// pool again. A transaction that was never submitted cannot move
+				// the pool, hence the placement inside the NoSend guard.
+				auth.Nonce = new(big.Int).SetUint64(tx.Nonce() + 1)
 			}
 			linkedBin = strings.ReplaceAll(linkedBin, "__${{$pattern}}$__", {{decapitalise $name}}Addr.String0x()[2:])
 		  {{end}}
