@@ -41,6 +41,35 @@ test: all
 quick-test: all
 	go run build/ci.go test -short -failfast
 
+# The CI job runs these, so the carve-out, the package list (test files only) and
+# the shard split live here. -p 4 is why rpc stands alone: its 32 MiB websocket
+# test trips the codec's 30s pong timeout. -failfast is left out so one run
+# reports every race. pkgs is assigned before use and checked non-empty, since
+# /bin/sh has no pipefail and an empty slice would fall back to ./... with rpc.
+#? race-test: Run tests under the race detector (short mode).
+race-test: all race-test-bulk race-test-rpc
+
+#? race-test-full: Run the full (non-short) suite under the race detector.
+race-test-full: all race-test-full-bulk race-test-full-rpc
+
+# One slice per shard, four in CI; the default is the whole pass.
+RACE_SHARDS ?= 1
+RACE_SHARD ?= 1
+RACE_PKGS = go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./... | grep -v "XDPoSChain/rpc$$"
+
+race-test-bulk:
+	set -e; pkgs=$$($(RACE_PKGS) | awk -v i=$(RACE_SHARD) -v n=$(RACE_SHARDS) 'NR % n == i - 1'); \
+	[ -n "$$pkgs" ]; go run build/ci.go test -race -short -p 4 $$pkgs
+
+race-test-rpc:
+	go run build/ci.go test -race -short ./rpc/
+
+race-test-full-bulk:
+	set -e; pkgs=$$($(RACE_PKGS)); [ -n "$$pkgs" ]; go run build/ci.go test -race -p 4 $$pkgs
+
+race-test-full-rpc:
+	go run build/ci.go test -race ./rpc/
+
 #? lint: Run certain pre-selected linters.
 lint: ## Run linters.
 	$(GORUN) build/ci.go lint
