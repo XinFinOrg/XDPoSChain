@@ -26,6 +26,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/accounts"
@@ -1007,15 +1008,39 @@ func (api *API) traceTx(ctx context.Context, tx *types.Transaction, message *cor
 		}
 	}
 	deadlineCtx, cancel := context.WithTimeout(ctx, timeout)
+	// The watcher must not stop a tracer whose execution already finished: the
+	// deferred cancel() fires it on every trace that ran to completion as well.
+	// The flag is set when the whole trace is over -- after GetResult returned,
+	// immediately before cancel() runs -- so a watcher woken by the cancel the
+	// trace itself caused sees the trace as finished and returns. It is
+	// deliberately not set right after the EVM call: GetResult can run
+	// caller-supplied code, as a JS tracer's result() does, and that phase has to
+	// stay within the deadline's reach. Watching a completion channel as well
+	// would leave the choice to select, which picks at random once both are
+	// closed, and would stop a tracer that already finished.
+	var finished atomic.Bool
+	defer func() {
+		finished.Store(true)
+		cancel()
+	}()
 	go func() {
 		<-deadlineCtx.Done()
-		if errors.Is(deadlineCtx.Err(), context.DeadlineExceeded) {
-			tracer.Stop(errors.New("execution timeout"))
-			// Stop evm execution. Note cancellation is not necessarily immediate.
-			evm.Cancel()
+		if finished.Load() {
+			// The trace ran to completion, nothing to stop.
+			return
 		}
+		// Stop on any reason the deadline context is done, not only on its own
+		// timeout: a caller that went away cancels it, and the trace has to stop
+		// as well instead of running until the deadline it was given.
+		switch {
+		case errors.Is(deadlineCtx.Err(), context.DeadlineExceeded):
+			tracer.Stop(errors.New("execution timeout"))
+		default:
+			tracer.Stop(fmt.Errorf("execution aborted: %w", deadlineCtx.Err()))
+		}
+		// Stop evm execution. Note cancellation is not necessarily immediate.
+		evm.Cancel()
 	}()
-	defer cancel()
 
 	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	var balance *big.Int
