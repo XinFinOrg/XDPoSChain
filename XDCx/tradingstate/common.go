@@ -4,15 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"math/big"
-	"time"
-
-	"github.com/XinFinOrg/XDPoSChain/crypto"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
-)
-
-const (
-	OrderCacheLimit = 10000
 )
 
 var (
@@ -131,25 +124,12 @@ func DecodeTxMatchesBatch(data []byte) (TxMatchBatch, error) {
 	return txMatchResult, nil
 }
 
-// use orderHash instead of orderId
-// because both takerOrders don't have orderId
-func GetOrderHistoryKey(baseToken, quoteToken common.Address, orderHash common.Hash) common.Hash {
-	return crypto.Keccak256Hash(baseToken.Bytes(), quoteToken.Bytes(), orderHash.Bytes())
-}
-
 func (tx TxDataMatch) DecodeOrder() (*OrderItem, error) {
 	order := &OrderItem{}
 	if err := DecodeBytesItem(tx.Order, order); err != nil {
 		return order, err
 	}
 	return order, nil
-}
-
-type OrderHistoryItem struct {
-	TxHash       common.Hash
-	FilledAmount *big.Int
-	Status       string
-	UpdatedAt    time.Time
 }
 
 // ToJSON : log json string

@@ -45,7 +45,6 @@ type XDCX struct {
 	StateCache tradingstate.Database            // State database to reuse between imports (contains state cache)    *XDCx_state.TradingStateDB
 
 	tokenDecimalCache *lru.Cache[common.Address, *big.Int]
-	orderCache        *lru.Cache[common.Hash, map[common.Hash]tradingstate.OrderHistoryItem]
 }
 
 func NewLDBEngine(cfg *Config) *XDCxDAO.BatchDatabase {
@@ -58,7 +57,6 @@ func New(stack *node.Node, cfg *Config) *XDCX {
 	XDCX := &XDCX{
 		Triegc:            prque.New[int64, common.Hash](nil),
 		tokenDecimalCache: lru.NewCache[common.Address, *big.Int](defaultCacheLimit),
-		orderCache:        lru.NewCache[common.Hash, map[common.Hash]tradingstate.OrderHistoryItem](tradingstate.OrderCacheLimit),
 	}
 
 	// default DBEngine: levelDB
@@ -257,17 +255,4 @@ func (XDCx *XDCX) GetTradingStateRoot(block *types.Block, author common.Address)
 		}
 	}
 	return tradingstate.EmptyRoot, nil
-}
-
-func (XDCx *XDCX) UpdateOrderCache(baseToken, quoteToken common.Address, orderHash common.Hash, txhash common.Hash, lastState tradingstate.OrderHistoryItem) {
-	orderCacheAtTxHash, ok := XDCx.orderCache.Get(txhash)
-	if !ok || orderCacheAtTxHash == nil {
-		orderCacheAtTxHash = make(map[common.Hash]tradingstate.OrderHistoryItem)
-	}
-	orderKey := tradingstate.GetOrderHistoryKey(baseToken, quoteToken, orderHash)
-	_, ok = orderCacheAtTxHash[orderKey]
-	if !ok {
-		orderCacheAtTxHash[orderKey] = lastState
-	}
-	XDCx.orderCache.Add(txhash, orderCacheAtTxHash)
 }
