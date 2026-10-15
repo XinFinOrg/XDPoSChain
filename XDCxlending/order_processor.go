@@ -16,32 +16,31 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
-func (l *Lending) CommitOrder(header *types.Header, coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, lendingStateDB *lendingstate.LendingStateDB, tradingStateDb *tradingstate.TradingStateDB, lendingOrderBook common.Hash, order *lendingstate.LendingItem) ([]*lendingstate.LendingTrade, []*lendingstate.LendingItem, error) {
+func (l *Lending) CommitOrder(header *types.Header, coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, lendingStateDB *lendingstate.LendingStateDB, tradingStateDb *tradingstate.TradingStateDB, lendingOrderBook common.Hash, order *lendingstate.LendingItem) ([]*lendingstate.LendingItem, error) {
 	lendingSnap := lendingStateDB.Snapshot()
 	tradingSnap := tradingStateDb.Snapshot()
 	dbSnap := statedb.Snapshot()
-	trades, rejects, err := l.ApplyOrder(header, coinbase, chain, statedb, lendingStateDB, tradingStateDb, lendingOrderBook, order)
+	rejects, err := l.ApplyOrder(header, coinbase, chain, statedb, lendingStateDB, tradingStateDb, lendingOrderBook, order)
 	if err != nil {
 		lendingStateDB.RevertToSnapshot(lendingSnap)
 		tradingStateDb.RevertToSnapshot(tradingSnap)
 		statedb.RevertToSnapshot(dbSnap)
-		return nil, nil, err
+		return nil, err
 	}
-	return trades, rejects, err
+	return rejects, err
 }
 
-func (l *Lending) ApplyOrder(header *types.Header, coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, lendingStateDB *lendingstate.LendingStateDB, tradingStateDb *tradingstate.TradingStateDB, lendingOrderBook common.Hash, order *lendingstate.LendingItem) ([]*lendingstate.LendingTrade, []*lendingstate.LendingItem, error) {
+func (l *Lending) ApplyOrder(header *types.Header, coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, lendingStateDB *lendingstate.LendingStateDB, tradingStateDb *tradingstate.TradingStateDB, lendingOrderBook common.Hash, order *lendingstate.LendingItem) ([]*lendingstate.LendingItem, error) {
 	var (
 		rejects []*lendingstate.LendingItem
-		trades  []*lendingstate.LendingTrade
 		err     error
 	)
 	nonce := lendingStateDB.GetNonce(order.UserAddress.Hash())
 	log.Debug("ApplyOrder", "addr", order.UserAddress, "statenonce", nonce, "ordernonce", order.Nonce)
 	if big.NewInt(int64(nonce)).Cmp(order.Nonce) == -1 {
-		return nil, nil, ErrNonceTooHigh
+		return nil, ErrNonceTooHigh
 	} else if big.NewInt(int64(nonce)).Cmp(order.Nonce) == 1 {
-		return nil, nil, ErrNonceTooLow
+		return nil, ErrNonceTooLow
 	}
 
 	log.Debug("Exchange add user nonce:", "address", order.UserAddress, "status", order.Status, "nonce", nonce+1)
@@ -62,25 +61,23 @@ func (l *Lending) ApplyOrder(header *types.Header, coinbase common.Address, chai
 	if err := order.VerifyLendingItem(statedb); err != nil {
 		log.Debug("invalid lending order", "order", lendingstate.ToJSON(order), "err", err)
 		rejects = append(rejects, order)
-		return trades, rejects, nil
+		return rejects, nil
 	}
 
 	switch order.Type {
 	case lendingstate.TopUp:
-		reject, newLendingTrade, err := l.ProcessTopUp(lendingStateDB, statedb, tradingStateDb, order)
+		reject, err := l.ProcessTopUp(lendingStateDB, statedb, tradingStateDb, order)
 		if err != nil || reject {
 			rejects = append(rejects, order)
 		}
-		trades = append(trades, newLendingTrade)
-		return trades, rejects, nil
+		return rejects, nil
 	case lendingstate.Repay:
-		lendingTrade, err := l.ProcessRepay(header, chain, lendingStateDB, statedb, tradingStateDb, lendingOrderBook, order)
+		err := l.ProcessRepay(header, chain, lendingStateDB, statedb, tradingStateDb, lendingOrderBook, order)
 		if err != nil {
 			log.Debug("Can not process payment", "err", err)
 			rejects = append(rejects, order)
 		}
-		trades = append(trades, lendingTrade)
-		return trades, rejects, nil
+		return rejects, nil
 	default:
 	}
 
@@ -89,46 +86,42 @@ func (l *Lending) ApplyOrder(header *types.Header, coinbase common.Address, chai
 		if err != nil || reject {
 			rejects = append(rejects, order)
 		}
-		return trades, rejects, nil
+		return rejects, nil
 	}
 
 	if order.Type != lendingstate.Market {
 		if order.Interest.Sign() == 0 || common.BigToHash(order.Interest).Big().Cmp(order.Interest) != 0 {
 			log.Debug("Reject order Interest invalid", "Interest", order.Interest)
 			rejects = append(rejects, order)
-			return trades, rejects, nil
+			return rejects, nil
 		}
 	}
 	if order.Quantity.Sign() == 0 || common.BigToHash(order.Quantity).Big().Cmp(order.Quantity) != 0 {
 		log.Debug("Reject order quantity invalid", "quantity", order.Quantity)
 		rejects = append(rejects, order)
-		return trades, rejects, nil
+		return rejects, nil
 	}
 	orderType := order.Type
 	// if we do not use auto-increment orderid, we must set Interest slot to avoid conflict
 	if orderType == lendingstate.Market {
 		log.Debug("Process maket order", "side", order.Side, "quantity", order.Quantity, "Interest", order.Interest)
-		trades, rejects, err = l.processMarketOrder(header, coinbase, chain, statedb, lendingStateDB, tradingStateDb, lendingOrderBook, order)
+		rejects, err = l.processMarketOrder(header, coinbase, chain, statedb, lendingStateDB, tradingStateDb, lendingOrderBook, order)
 		if err != nil {
-			trades = []*lendingstate.LendingTrade{}
 			rejects = append(rejects, order)
 		}
 	} else {
 		log.Debug("Process limit order", "side", order.Side, "quantity", order.Quantity, "Interest", order.Interest)
-		trades, rejects, err = l.processLimitOrder(header, coinbase, chain, statedb, lendingStateDB, tradingStateDb, lendingOrderBook, order)
+		rejects, err = l.processLimitOrder(header, coinbase, chain, statedb, lendingStateDB, tradingStateDb, lendingOrderBook, order)
 		if err != nil {
-			trades = []*lendingstate.LendingTrade{}
 			rejects = append(rejects, order)
 		}
 	}
-	return trades, rejects, nil
+	return rejects, nil
 }
 
 // processMarketOrder : process the market order
-func (l *Lending) processMarketOrder(header *types.Header, coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, lendingStateDB *lendingstate.LendingStateDB, tradingStateDb *tradingstate.TradingStateDB, lendingOrderBook common.Hash, order *lendingstate.LendingItem) ([]*lendingstate.LendingTrade, []*lendingstate.LendingItem, error) {
+func (l *Lending) processMarketOrder(header *types.Header, coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, lendingStateDB *lendingstate.LendingStateDB, tradingStateDb *tradingstate.TradingStateDB, lendingOrderBook common.Hash, order *lendingstate.LendingItem) ([]*lendingstate.LendingItem, error) {
 	var (
-		trades     []*lendingstate.LendingTrade
-		newTrades  []*lendingstate.LendingTrade
 		rejects    []*lendingstate.LendingItem
 		newRejects []*lendingstate.LendingItem
 		err        error
@@ -141,11 +134,10 @@ func (l *Lending) processMarketOrder(header *types.Header, coinbase common.Addre
 		bestInterest, volume := lendingStateDB.GetBestInvestingRate(lendingOrderBook)
 		log.Debug("processMarketOrder ", "side", side, "bestInterest", bestInterest, "quantityToTrade", quantityToTrade, "volume", volume)
 		for quantityToTrade.Cmp(zero) > 0 && bestInterest.Cmp(zero) > 0 {
-			quantityToTrade, newTrades, newRejects, err = l.processOrderList(header, coinbase, chain, statedb, lendingStateDB, tradingStateDb, lendingstate.Investing, lendingOrderBook, bestInterest, quantityToTrade, order)
+			quantityToTrade, newRejects, err = l.processOrderList(header, coinbase, chain, statedb, lendingStateDB, tradingStateDb, lendingstate.Investing, lendingOrderBook, bestInterest, quantityToTrade, order)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
-			trades = append(trades, newTrades...)
 			rejects = append(rejects, newRejects...)
 			bestInterest, volume = lendingStateDB.GetBestInvestingRate(lendingOrderBook)
 			log.Debug("processMarketOrder ", "side", side, "bestInterest", bestInterest, "quantityToTrade", quantityToTrade, "volume", volume)
@@ -154,25 +146,22 @@ func (l *Lending) processMarketOrder(header *types.Header, coinbase common.Addre
 		bestInterest, volume := lendingStateDB.GetBestBorrowRate(lendingOrderBook)
 		log.Debug("processMarketOrder ", "side", side, "bestInterest", bestInterest, "quantityToTrade", quantityToTrade, "volume", volume)
 		for quantityToTrade.Cmp(zero) > 0 && bestInterest.Cmp(zero) > 0 {
-			quantityToTrade, newTrades, newRejects, err = l.processOrderList(header, coinbase, chain, statedb, lendingStateDB, tradingStateDb, lendingstate.Borrowing, lendingOrderBook, bestInterest, quantityToTrade, order)
+			quantityToTrade, newRejects, err = l.processOrderList(header, coinbase, chain, statedb, lendingStateDB, tradingStateDb, lendingstate.Borrowing, lendingOrderBook, bestInterest, quantityToTrade, order)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
-			trades = append(trades, newTrades...)
 			rejects = append(rejects, newRejects...)
 			bestInterest, volume = lendingStateDB.GetBestBorrowRate(lendingOrderBook)
 			log.Debug("processMarketOrder ", "side", side, "bestInterest", bestInterest, "quantityToTrade", quantityToTrade, "volume", volume)
 		}
 	}
-	return trades, rejects, nil
+	return rejects, nil
 }
 
 // processLimitOrder : process the limit order, can change the quote
 // If not care for performance, we should make a copy of quote to prevent further reference problem
-func (l *Lending) processLimitOrder(header *types.Header, coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, lendingStateDB *lendingstate.LendingStateDB, tradingStateDb *tradingstate.TradingStateDB, lendingOrderBook common.Hash, order *lendingstate.LendingItem) ([]*lendingstate.LendingTrade, []*lendingstate.LendingItem, error) {
+func (l *Lending) processLimitOrder(header *types.Header, coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, lendingStateDB *lendingstate.LendingStateDB, tradingStateDb *tradingstate.TradingStateDB, lendingOrderBook common.Hash, order *lendingstate.LendingItem) ([]*lendingstate.LendingItem, error) {
 	var (
-		trades     []*lendingstate.LendingTrade
-		newTrades  []*lendingstate.LendingTrade
 		rejects    []*lendingstate.LendingItem
 		newRejects []*lendingstate.LendingItem
 		err        error
@@ -188,13 +177,12 @@ func (l *Lending) processLimitOrder(header *types.Header, coinbase common.Addres
 		log.Debug("processLimitOrder ", "side", side, "minInterest", minInterest, "orderInterest", Interest, "volume", volume)
 		for quantityToTrade.Cmp(zero) > 0 && Interest.Cmp(minInterest) >= 0 && minInterest.Cmp(zero) > 0 {
 			log.Debug("Min Interest in Investing tree", "Interest", minInterest.String())
-			quantityToTrade, newTrades, newRejects, err = l.processOrderList(header, coinbase, chain, statedb, lendingStateDB, tradingStateDb, lendingstate.Investing, lendingOrderBook, minInterest, quantityToTrade, order)
+			quantityToTrade, newRejects, err = l.processOrderList(header, coinbase, chain, statedb, lendingStateDB, tradingStateDb, lendingstate.Investing, lendingOrderBook, minInterest, quantityToTrade, order)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
-			trades = append(trades, newTrades...)
 			rejects = append(rejects, newRejects...)
-			log.Debug("New trade found", "newTrades", newTrades, "quantityToTrade", quantityToTrade)
+			log.Debug("New trade found", "quantityToTrade", quantityToTrade)
 			minInterest, volume = lendingStateDB.GetBestInvestingRate(lendingOrderBook)
 			log.Debug("processLimitOrder ", "side", side, "minInterest", minInterest, "orderInterest", Interest, "volume", volume)
 		}
@@ -203,13 +191,12 @@ func (l *Lending) processLimitOrder(header *types.Header, coinbase common.Addres
 		log.Debug("processLimitOrder ", "side", side, "maxInterest", maxInterest, "orderInterest", Interest, "volume", volume)
 		for quantityToTrade.Cmp(zero) > 0 && Interest.Cmp(maxInterest) <= 0 && maxInterest.Cmp(zero) > 0 {
 			log.Debug("Max Interest in Borrowing tree", "Interest", maxInterest.String())
-			quantityToTrade, newTrades, newRejects, err = l.processOrderList(header, coinbase, chain, statedb, lendingStateDB, tradingStateDb, lendingstate.Borrowing, lendingOrderBook, maxInterest, quantityToTrade, order)
+			quantityToTrade, newRejects, err = l.processOrderList(header, coinbase, chain, statedb, lendingStateDB, tradingStateDb, lendingstate.Borrowing, lendingOrderBook, maxInterest, quantityToTrade, order)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
-			trades = append(trades, newTrades...)
 			rejects = append(rejects, newRejects...)
-			log.Debug("New trade found", "newTrades", newTrades, "quantityToTrade", quantityToTrade)
+			log.Debug("New trade found", "quantityToTrade", quantityToTrade)
 			maxInterest, volume = lendingStateDB.GetBestBorrowRate(lendingOrderBook)
 			log.Debug("processLimitOrder ", "side", side, "maxInterest", maxInterest, "orderInterest", Interest, "volume", volume)
 		}
@@ -226,21 +213,20 @@ func (l *Lending) processLimitOrder(header *types.Header, coinbase common.Addres
 		borrowingRate, borrowingVolume := lendingStateDB.GetBestBorrowRate(lendingOrderBook)
 		log.Debug("After matching", "side", order.Side, "LendingId", order.LendingId, "investingRate", investingRate, "investingVolume", investingVolume, "borrowingRate", borrowingRate, "borrowingVolume", borrowingVolume)
 	}
-	return trades, rejects, nil
+	return rejects, nil
 }
 
 // processOrderList : process the order list
-func (l *Lending) processOrderList(header *types.Header, coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, lendingStateDB *lendingstate.LendingStateDB, tradingStateDb *tradingstate.TradingStateDB, side string, lendingOrderBook common.Hash, Interest *big.Int, quantityStillToTrade *big.Int, order *lendingstate.LendingItem) (*big.Int, []*lendingstate.LendingTrade, []*lendingstate.LendingItem, error) {
+func (l *Lending) processOrderList(header *types.Header, coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, lendingStateDB *lendingstate.LendingStateDB, tradingStateDb *tradingstate.TradingStateDB, side string, lendingOrderBook common.Hash, Interest *big.Int, quantityStillToTrade *big.Int, order *lendingstate.LendingItem) (*big.Int, []*lendingstate.LendingItem, error) {
 	quantityToTrade := lendingstate.CloneBigInt(quantityStillToTrade)
 	log.Debug("Process matching between order and orderlist", "quantityToTrade", quantityToTrade)
 	var (
-		trades  []*lendingstate.LendingTrade
 		rejects []*lendingstate.LendingItem
 	)
 	for quantityToTrade.Sign() > 0 {
 		orderId, amount, err := lendingStateDB.GetBestLendingIdAndAmount(lendingOrderBook, Interest, side)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 		var oldestOrder lendingstate.LendingItem
 		if amount.Sign() > 0 {
@@ -266,28 +252,28 @@ func (l *Lending) processOrderList(header *types.Header, coinbase common.Address
 			borrowFee = lendingstate.GetFee(statedb, oldestOrder.Relayer)
 		}
 		if collateralToken.IsZero() {
-			return nil, nil, nil, errors.New("empty collateral")
+			return nil, nil, errors.New("empty collateral")
 		}
 		depositRate, liquidationRate, recallRate := lendingstate.GetCollateralDetail(statedb, collateralToken)
 		if depositRate == nil || depositRate.Sign() <= 0 {
-			return nil, nil, nil, fmt.Errorf("invalid depositRate %v", depositRate)
+			return nil, nil, fmt.Errorf("invalid depositRate %v", depositRate)
 		}
 		if liquidationRate == nil || liquidationRate.Sign() <= 0 {
-			return nil, nil, nil, fmt.Errorf("invalid liquidationRate %v", liquidationRate)
+			return nil, nil, fmt.Errorf("invalid liquidationRate %v", liquidationRate)
 		}
 		if recallRate == nil || recallRate.Sign() <= 0 {
-			return nil, nil, nil, fmt.Errorf("invalid recallRate %v", recallRate)
+			return nil, nil, fmt.Errorf("invalid recallRate %v", recallRate)
 		}
 
 		lendTokenXDCPrice, collateralPrice, err := l.GetCollateralPrices(header, chain, statedb, tradingStateDb, collateralToken, order.LendingToken)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 		if lendTokenXDCPrice == nil || lendTokenXDCPrice.Sign() <= 0 {
-			return nil, nil, nil, errors.New("invalid lendToken price")
+			return nil, nil, errors.New("invalid lendToken price")
 		}
 		if collateralPrice == nil || collateralPrice.Sign() <= 0 {
-			return nil, nil, nil, errors.New("invalid collateral price")
+			return nil, nil, errors.New("invalid collateral price")
 		}
 		tradedQuantity, collateralLockedAmount, rejectMaker, settleBalanceResult, err := l.getLendQuantity(lendTokenXDCPrice, collateralPrice, depositRate, borrowFee, coinbase, chain, header, statedb, order, &oldestOrder, maxTradedQuantity)
 		if err != nil && err == lendingstate.ErrQuantityTradeTooSmall && tradedQuantity != nil && tradedQuantity.Sign() >= 0 {
@@ -299,7 +285,7 @@ func (l *Lending) processOrderList(header *types.Header, coinbase common.Address
 					err = lendingStateDB.CancelLendingOrder(lendingOrderBook, &oldestOrder)
 					log.Debug("Reject order maker", "lending id ", oldestOrder.LendingId, "err", err)
 					if err != nil {
-						return nil, nil, nil, err
+						return nil, nil, err
 					}
 					break
 				} else if quantityToTrade.Cmp(amount) < 0 { // reject Taker
@@ -311,7 +297,7 @@ func (l *Lending) processOrderList(header *types.Header, coinbase common.Address
 					err = lendingStateDB.CancelLendingOrder(lendingOrderBook, &oldestOrder)
 					log.Debug("Reject order maker", "lending id ", oldestOrder.LendingId, "err", err)
 					if err != nil {
-						return nil, nil, nil, err
+						return nil, nil, err
 					}
 					continue
 				}
@@ -321,7 +307,7 @@ func (l *Lending) processOrderList(header *types.Header, coinbase common.Address
 					err = lendingStateDB.CancelLendingOrder(lendingOrderBook, &oldestOrder)
 					log.Debug("Reject order maker", "lending id ", oldestOrder.LendingId, "err", err)
 					if err != nil {
-						return nil, nil, nil, err
+						return nil, nil, err
 					}
 					continue
 				} else { // reject Taker
@@ -331,7 +317,7 @@ func (l *Lending) processOrderList(header *types.Header, coinbase common.Address
 				}
 			}
 		} else if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 		if tradedQuantity.Sign() == 0 && !rejectMaker {
 			log.Debug("Reject order Taker ", "tradedQuantity", tradedQuantity, "rejectMaker", rejectMaker)
@@ -409,17 +395,16 @@ func (l *Lending) processOrderList(header *types.Header, coinbase common.Address
 			lendingStateDB.SetTradeNonce(lendingOrderBook, tradingId)
 			log.Debug("InsertLiquidationPrice", "TradingOrderBookHash", tradingstate.GetTradingOrderBookHash(collateralToken, order.LendingToken).Hex(), "tradingId", tradingId, "lendingOrderBook", lendingOrderBook.Hex(), "liquidationPrice", liquidationPrice)
 			tradingStateDb.InsertLiquidationPrice(tradingstate.GetTradingOrderBookHash(collateralToken, order.LendingToken), liquidationPrice, lendingOrderBook, tradingId)
-			trades = append(trades, &lendingTrade)
 		}
 		if rejectMaker {
 			rejects = append(rejects, &oldestOrder)
 			err := lendingStateDB.CancelLendingOrder(lendingOrderBook, &oldestOrder)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, err
 			}
 		}
 	}
-	return quantityToTrade, trades, rejects, nil
+	return quantityToTrade, rejects, nil
 }
 
 func (l *Lending) getLendQuantity(
@@ -791,41 +776,42 @@ func (l *Lending) ProcessCancelOrder(header *types.Header, lendingStateDB *lendi
 	return nil, false
 }
 
-func (l *Lending) ProcessTopUp(lendingStateDB *lendingstate.LendingStateDB, statedb *state.StateDB, tradingStateDb *tradingstate.TradingStateDB, order *lendingstate.LendingItem) (bool, *lendingstate.LendingTrade, error) {
+func (l *Lending) ProcessTopUp(lendingStateDB *lendingstate.LendingStateDB, statedb *state.StateDB, tradingStateDb *tradingstate.TradingStateDB, order *lendingstate.LendingItem) (bool, error) {
 	lendingTradeId := common.Uint64ToHash(order.LendingTradeId)
 	lendingBook := lendingstate.GetLendingOrderBookHash(order.LendingToken, order.Term)
 	lendingTrade := lendingStateDB.GetLendingTrade(lendingBook, lendingTradeId)
 	if lendingTrade == lendingstate.EmptyLendingTrade {
-		return true, nil, fmt.Errorf("process deposit for emptyLendingTrade is not allowed. lendingTradeId: %v", lendingTradeId.Hex())
+		return true, fmt.Errorf("process deposit for emptyLendingTrade is not allowed. lendingTradeId: %v", lendingTradeId.Hex())
 	}
 	if order.UserAddress != lendingTrade.Borrower {
-		return true, nil, fmt.Errorf("ProcessTopUp: invalid userAddress . UserAddress: %s . Borrower: %s", order.UserAddress.Hex(), lendingTrade.Borrower.Hex())
+		return true, fmt.Errorf("ProcessTopUp: invalid userAddress . UserAddress: %s . Borrower: %s", order.UserAddress.Hex(), lendingTrade.Borrower.Hex())
 	}
 	if order.Relayer != lendingTrade.BorrowingRelayer {
-		return true, nil, fmt.Errorf("ProcessTopUp: invalid relayerAddress . Got: %s . Expect: %s", order.Relayer.Hex(), lendingTrade.BorrowingRelayer.Hex())
+		return true, fmt.Errorf("ProcessTopUp: invalid relayerAddress . Got: %s . Expect: %s", order.Relayer.Hex(), lendingTrade.BorrowingRelayer.Hex())
 	}
 	if order.Quantity.Sign() <= 0 || lendingTrade.TradeId != lendingTradeId.Big().Uint64() {
 		log.Debug("ProcessTopUp: invalid quantity", "Quantity", order.Quantity, "lendingTradeId", lendingTradeId.Hex())
-		return true, nil, nil
+		return true, nil
 	}
-	return l.ProcessTopUpLendingTrade(lendingStateDB, statedb, tradingStateDb, lendingTradeId, lendingBook, order.Quantity)
+	reject, _, err := l.ProcessTopUpLendingTrade(lendingStateDB, statedb, tradingStateDb, lendingTradeId, lendingBook, order.Quantity)
+	return reject, err
 }
 
-// return hash: hash of lendingTrade
-func (l *Lending) ProcessRepay(header *types.Header, chain consensus.ChainContext, lendingStateDB *lendingstate.LendingStateDB, statedb *state.StateDB, tradingstateDB *tradingstate.TradingStateDB, lendingBook common.Hash, order *lendingstate.LendingItem) (trade *lendingstate.LendingTrade, err error) {
+func (l *Lending) ProcessRepay(header *types.Header, chain consensus.ChainContext, lendingStateDB *lendingstate.LendingStateDB, statedb *state.StateDB, tradingstateDB *tradingstate.TradingStateDB, lendingBook common.Hash, order *lendingstate.LendingItem) error {
 	lendingTradeId := order.LendingTradeId
 	lendingTradeIdHash := common.Uint64ToHash(lendingTradeId)
 	lendingTrade := lendingStateDB.GetLendingTrade(lendingBook, lendingTradeIdHash)
 	if lendingTrade == lendingstate.EmptyLendingTrade || lendingTrade.TradeId != lendingTradeIdHash.Big().Uint64() {
-		return nil, fmt.Errorf("ProcessRepay for emptyLendingTrade is not allowed. lendingTradeId: %v", lendingTradeId)
+		return fmt.Errorf("ProcessRepay for emptyLendingTrade is not allowed. lendingTradeId: %v", lendingTradeId)
 	}
 	if order.UserAddress != lendingTrade.Borrower {
-		return nil, fmt.Errorf("ProcessRepay: invalid userAddress . UserAddress: %s . Borrower: %s", order.UserAddress.Hex(), lendingTrade.Borrower.Hex())
+		return fmt.Errorf("ProcessRepay: invalid userAddress . UserAddress: %s . Borrower: %s", order.UserAddress.Hex(), lendingTrade.Borrower.Hex())
 	}
 	if order.Relayer != lendingTrade.BorrowingRelayer {
-		return nil, fmt.Errorf("ProcessRepay: invalid relayerAddress . Got: %s . Expect: %s", order.Relayer.Hex(), lendingTrade.BorrowingRelayer.Hex())
+		return fmt.Errorf("ProcessRepay: invalid relayerAddress . Got: %s . Expect: %s", order.Relayer.Hex(), lendingTrade.BorrowingRelayer.Hex())
 	}
-	return l.ProcessRepayLendingTrade(header, chain, lendingStateDB, statedb, tradingstateDB, lendingBook, lendingTradeId)
+	_, err := l.ProcessRepayLendingTrade(header, chain, lendingStateDB, statedb, tradingstateDB, lendingBook, lendingTradeId)
+	return err
 }
 
 // return liquidatedTrade

@@ -44,7 +44,6 @@ type XDCX struct {
 	Triegc     *prque.Prque[int64, common.Hash] // Priority queue mapping block numbers to tries to gc
 	StateCache tradingstate.Database            // State database to reuse between imports (contains state cache)    *XDCx_state.TradingStateDB
 
-	sdkNode           bool
 	tokenDecimalCache *lru.Cache[common.Address, *big.Int]
 	orderCache        *lru.Cache[common.Hash, map[common.Hash]tradingstate.OrderHistoryItem]
 }
@@ -74,9 +73,8 @@ func (XDCx *XDCX) GetLevelDB() XDCxDAO.XDCXDAO {
 	return XDCx.db
 }
 
-func (XDCx *XDCX) ProcessOrderPending(header *types.Header, coinbase common.Address, chain consensus.ChainContext, pending map[common.Address]types.OrderTransactions, statedb *state.StateDB, XDCXstatedb *tradingstate.TradingStateDB) ([]tradingstate.TxDataMatch, map[common.Hash]tradingstate.MatchingResult) {
+func (XDCx *XDCX) ProcessOrderPending(header *types.Header, coinbase common.Address, chain consensus.ChainContext, pending map[common.Address]types.OrderTransactions, statedb *state.StateDB, XDCXstatedb *tradingstate.TradingStateDB) []tradingstate.TxDataMatch {
 	txMatches := []tradingstate.TxDataMatch{}
-	matchingResults := map[common.Hash]tradingstate.MatchingResult{}
 
 	txs := types.NewOrderTransactionByNonce(types.OrderTxSigner{}, pending)
 	numberTx := 0
@@ -124,7 +122,7 @@ func (XDCx *XDCX) ProcessOrderPending(header *types.Header, coinbase common.Addr
 		*originalOrder = *order
 		originalOrder.Quantity = tradingstate.CloneBigInt(order.Quantity)
 
-		newTrades, newRejectedOrders, err := XDCx.CommitOrder(header, coinbase, chain, statedb, XDCXstatedb, tradingstate.GetTradingOrderBookHash(order.BaseToken, order.QuoteToken), order)
+		newRejectedOrders, err := XDCx.CommitOrder(header, coinbase, chain, statedb, XDCXstatedb, tradingstate.GetTradingOrderBookHash(order.BaseToken, order.QuoteToken), order)
 
 		for _, reject := range newRejectedOrders {
 			log.Debug("Reject order", "reject", *reject)
@@ -167,12 +165,8 @@ func (XDCx *XDCX) ProcessOrderPending(header *types.Header, coinbase common.Addr
 			Order: originalOrderValue,
 		}
 		txMatches = append(txMatches, txMatch)
-		matchingResults[tradingstate.GetMatchingResultCacheKey(order)] = tradingstate.MatchingResult{
-			Trades:  newTrades,
-			Rejects: newRejectedOrders,
-		}
 	}
-	return txMatches, matchingResults
+	return txMatches
 }
 
 // return average price of the given pair in the last epoch
