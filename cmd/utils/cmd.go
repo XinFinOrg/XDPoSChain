@@ -203,13 +203,15 @@ func ImportChain(chain *core.BlockChain, fn string) error {
 			} else if err != nil {
 				return fmt.Errorf("at block %d: %v", n, err)
 			}
+			// Count before the genesis skip: n is the block's position in the input
+			// stream, as eth/api_admin.go counts its batch.
+			n++
 			// don't import first block
 			if b.NumberU64() == 0 {
 				i--
 				continue
 			}
 			blocks[i] = &b
-			n++
 		}
 		if i == 0 {
 			break
@@ -228,14 +230,22 @@ func ImportChain(chain *core.BlockChain, fn string) error {
 		// block). Reaching that tail takes a block dated ahead of this node's clock, which the
 		// file importers replaying historical blocks do not meet, so the branch is defensive; a
 		// batch that does land there reports "already imported" below, not an invalid block.
-		if _, err := chain.InsertChain(missing); err != nil {
+		if failindex, err := chain.InsertChain(missing); err != nil {
 			// A local condition says nothing about the blocks in the file: blaming them would
 			// report this node's own state as a corrupt import. core owns the classification,
 			// so this importer and eth/api_admin cannot drift apart.
 			if reason, ok := core.DescribeLocalInsertFailure(err); ok {
 				return fmt.Errorf("%s: %v", reason, err)
 			}
-			return fmt.Errorf("invalid block %d: %v", n, err)
+			// Name the block the insert stopped on, not the batch end: InsertChain hands
+			// back the failing block's index (upstream go-ethereum #27213), which is a chain
+			// height, not the file position n names. The contiguity pre-check and the
+			// sidechain rebuild answer a block that is not the failure, as upstream does.
+			failnumber := missing[0].NumberU64()
+			if failindex > 0 && failindex < len(missing) {
+				failnumber = missing[failindex].NumberU64()
+			}
+			return fmt.Errorf("invalid block %d: %v", failnumber, err)
 		}
 	}
 	return nil
