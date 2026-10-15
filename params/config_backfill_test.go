@@ -185,11 +185,11 @@ func TestForEachChainConfigForkOrderBlockCoversValidationOrder(t *testing.T) {
 		"TIPXDCXReceiverDisableBlock",
 		"EIP1559Block",
 		"CancunBlock",
-		"PragueBlock",
-		"OsakaBlock",
 		"DynamicGasLimitBlock",
 		"TIPUpgradeRewardBlock",
 		"TIPUpgradePenaltyBlock",
+		"PragueBlock",
+		"OsakaBlock",
 		"TIPEpochHalvingBlock",
 	}
 

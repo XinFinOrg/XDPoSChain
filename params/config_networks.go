@@ -438,7 +438,7 @@ var (
 		TIPXDCXReceiverDisableBlock: big.NewInt(66825000),
 		EIP1559Block:                big.NewInt(71550000),
 		CancunBlock:                 big.NewInt(71551800),
-		PragueBlock:                 nil,
+		PragueBlock:                 big.NewInt(87633000),
 		OsakaBlock:                  nil,
 		DynamicGasLimitBlock:        big.NewInt(83600000),
 		TIPUpgradeRewardBlock:       big.NewInt(83600000),
