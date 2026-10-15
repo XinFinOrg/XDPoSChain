@@ -332,17 +332,26 @@ func injectCanonicalHeadBlockWithRoot(t *testing.T, datadir string, genesisHash 
 	if genesis == nil {
 		t.Fatal("expected stored genesis block")
 	}
-	head := types.NewBlockWithHeader(&types.Header{
-		Number:     new(big.Int).SetUint64(number),
-		ParentHash: genesisHash,
-		Root:       root,
-		Time:       genesis.Time() + number,
-		GasLimit:   genesis.GasLimit(),
-		Difficulty: genesis.Difficulty(),
-	})
-	rawdb.WriteTd(db, head.Hash(), number, new(big.Int).Add(genesis.Difficulty(), big.NewInt(int64(number))))
-	rawdb.WriteBlock(db, head)
-	rawdb.WriteCanonicalHash(db, head.Hash(), number)
+	// Write every block from #1 up to the head, not the head alone: a database
+	// whose head is past genesis but has no block #1 is what a datadir looks like
+	// after its chain was moved to an ancient store that is not attached, and
+	// opening it is refused.
+	var head *types.Block
+	parent := genesisHash
+	for i := uint64(1); i <= number; i++ {
+		head = types.NewBlockWithHeader(&types.Header{
+			Number:     new(big.Int).SetUint64(i),
+			ParentHash: parent,
+			Root:       root,
+			Time:       genesis.Time() + i,
+			GasLimit:   genesis.GasLimit(),
+			Difficulty: genesis.Difficulty(),
+		})
+		rawdb.WriteTd(db, head.Hash(), i, new(big.Int).Add(genesis.Difficulty(), big.NewInt(int64(i))))
+		rawdb.WriteBlock(db, head)
+		rawdb.WriteCanonicalHash(db, head.Hash(), i)
+		parent = head.Hash()
+	}
 	rawdb.WriteHeadHeaderHash(db, head.Hash())
 	rawdb.WriteHeadBlockHash(db, head.Hash())
 	rawdb.WriteHeadFastBlockHash(db, head.Hash())

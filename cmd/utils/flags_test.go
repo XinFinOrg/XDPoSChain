@@ -34,6 +34,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
+	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/node"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -160,20 +161,7 @@ func TestMakeChainWriteModePassesCompatRewindToCore(t *testing.T) {
 	storedCfg.BerlinBlock = big.NewInt(100)
 	rawdb.WriteChainConfig(chainDb, genesisBlock.Hash(), storedCfg)
 
-	head := types.NewBlockWithHeader(&types.Header{
-		Number:     big.NewInt(101),
-		ParentHash: genesisBlock.Hash(),
-		Root:       genesisBlock.Root(),
-		Time:       genesisBlock.Time() + 2,
-		Difficulty: big.NewInt(1),
-	})
-	rawdb.WriteBlock(chainDb, head)
-	rawdb.WriteCanonicalHash(chainDb, genesisBlock.Hash(), 0)
-	rawdb.WriteCanonicalHash(chainDb, head.Hash(), head.NumberU64())
-	rawdb.WriteHeadHeaderHash(chainDb, head.Hash())
-	rawdb.WriteHeadBlockHash(chainDb, head.Hash())
-	rawdb.WriteHeadFastBlockHash(chainDb, head.Hash())
-	rawdb.WriteTd(chainDb, head.Hash(), head.NumberU64(), new(big.Int).Add(genesisBlock.Difficulty(), head.Difficulty()))
+	writeCompatFixtureChain(chainDb, genesisBlock, 101)
 
 	resolvedCfg, _, compatErr, err := core.SetupGenesisBlock(chainDb, genesis)
 	if err != nil {
@@ -202,11 +190,13 @@ func TestMakeChainWriteModePassesCompatRewindToCore(t *testing.T) {
 		ChainConfigMismatchPolicyFlag.Name: core.MismatchRewindAndUpdate.String(),
 	})
 	chain, reopenedDb := MakeChain(ctx, stack, false, "")
-	defer chain.Stop()
+	// Stop the chain before closing its database: Stop flushes the head state.
 	defer reopenedDb.Close()
+	defer chain.Stop()
 
-	if got := chain.CurrentBlock().Number.Uint64(); got != 0 {
-		t.Fatalf("unexpected head after MakeChain rewind: have %d want 0", got)
+	// The stored config moved Berlin to block 100, so the chain rewinds to 99.
+	if got := chain.CurrentBlock().Number.Uint64(); got != 99 {
+		t.Fatalf("unexpected head after MakeChain rewind: have %d want 99", got)
 	}
 	if got := chain.Config().BerlinBlock; got == nil || got.Cmp(params.TestnetChainConfig.BerlinBlock) != 0 {
 		t.Fatalf("unexpected chain config after MakeChain: have %v want %v", got, params.TestnetChainConfig.BerlinBlock)
@@ -239,20 +229,7 @@ func TestMakeChainReadOnlyModeSurfacesCompatRewind(t *testing.T) {
 	storedCfg.BerlinBlock = big.NewInt(100)
 	rawdb.WriteChainConfig(chainDb, genesisBlock.Hash(), storedCfg)
 
-	head := types.NewBlockWithHeader(&types.Header{
-		Number:     big.NewInt(101),
-		ParentHash: genesisBlock.Hash(),
-		Root:       genesisBlock.Root(),
-		Time:       genesisBlock.Time() + 2,
-		Difficulty: big.NewInt(1),
-	})
-	rawdb.WriteBlock(chainDb, head)
-	rawdb.WriteCanonicalHash(chainDb, genesisBlock.Hash(), 0)
-	rawdb.WriteCanonicalHash(chainDb, head.Hash(), head.NumberU64())
-	rawdb.WriteHeadHeaderHash(chainDb, head.Hash())
-	rawdb.WriteHeadBlockHash(chainDb, head.Hash())
-	rawdb.WriteHeadFastBlockHash(chainDb, head.Hash())
-	rawdb.WriteTd(chainDb, head.Hash(), head.NumberU64(), new(big.Int).Add(genesisBlock.Difficulty(), head.Difficulty()))
+	writeCompatFixtureChain(chainDb, genesisBlock, 101)
 
 	if err := chainDb.Close(); err != nil {
 		t.Fatalf("failed to close prepared chain database: %v", err)
@@ -289,7 +266,9 @@ func TestMakeChainReadOnlyModeFormatsCompatRewindForOperators(t *testing.T) {
 	}
 	defer stack.Close()
 
-	chainDb, err := stack.OpenDatabase("chaindata", 0, 0, "", false)
+	// Prepare the database with its freezer, as a node of this version leaves it: MakeChain
+	// opens it read-only below, and a read-only freezer cannot create its tables.
+	chainDb, err := stack.OpenDatabaseWithFreezer("chaindata", 0, 0, "", "", false)
 	if err != nil {
 		t.Fatalf("failed to open chain database: %v", err)
 	}
@@ -300,20 +279,7 @@ func TestMakeChainReadOnlyModeFormatsCompatRewindForOperators(t *testing.T) {
 	storedCfg.BerlinBlock = big.NewInt(100)
 	rawdb.WriteChainConfig(chainDb, genesisBlock.Hash(), storedCfg)
 
-	head := types.NewBlockWithHeader(&types.Header{
-		Number:     big.NewInt(101),
-		ParentHash: genesisBlock.Hash(),
-		Root:       genesisBlock.Root(),
-		Time:       genesisBlock.Time() + 2,
-		Difficulty: big.NewInt(1),
-	})
-	rawdb.WriteBlock(chainDb, head)
-	rawdb.WriteCanonicalHash(chainDb, genesisBlock.Hash(), 0)
-	rawdb.WriteCanonicalHash(chainDb, head.Hash(), head.NumberU64())
-	rawdb.WriteHeadHeaderHash(chainDb, head.Hash())
-	rawdb.WriteHeadBlockHash(chainDb, head.Hash())
-	rawdb.WriteHeadFastBlockHash(chainDb, head.Hash())
-	rawdb.WriteTd(chainDb, head.Hash(), head.NumberU64(), new(big.Int).Add(genesisBlock.Difficulty(), head.Difficulty()))
+	writeCompatFixtureChain(chainDb, genesisBlock, 101)
 
 	if err := chainDb.Close(); err != nil {
 		t.Fatalf("failed to close prepared chain database: %v", err)
@@ -505,6 +471,33 @@ func TestSetBootstrapNodesV5UsesStrictEmptyDefaults(t *testing.T) {
 			}
 		})
 	}
+}
+
+// writeCompatFixtureChain writes a canonical chain of empty blocks #1..#number
+// on top of the genesis block, all sharing the genesis state root, and marks
+// the last one as the head. Every block is written, not the head alone: a
+// database whose head is past genesis but has no block #1 looks like a chain
+// moved to an ancient store that is not attached, and opening it is refused.
+func writeCompatFixtureChain(db ethdb.Database, genesisBlock *types.Block, number int64) {
+	rawdb.WriteCanonicalHash(db, genesisBlock.Hash(), 0)
+	head := genesisBlock
+	td := new(big.Int).Set(genesisBlock.Difficulty())
+	for i := int64(1); i <= number; i++ {
+		head = types.NewBlockWithHeader(&types.Header{
+			Number:     big.NewInt(i),
+			ParentHash: head.Hash(),
+			Root:       genesisBlock.Root(),
+			Time:       genesisBlock.Time() + uint64(i)*2,
+			Difficulty: big.NewInt(1),
+		})
+		td.Add(td, head.Difficulty())
+		rawdb.WriteBlock(db, head)
+		rawdb.WriteCanonicalHash(db, head.Hash(), head.NumberU64())
+		rawdb.WriteTd(db, head.Hash(), head.NumberU64(), td)
+	}
+	rawdb.WriteHeadHeaderHash(db, head.Hash())
+	rawdb.WriteHeadBlockHash(db, head.Hash())
+	rawdb.WriteHeadFastBlockHash(db, head.Hash())
 }
 
 // newMakeChainTestCLIContext builds a minimal CLI context for MakeChain tests.
