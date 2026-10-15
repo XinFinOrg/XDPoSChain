@@ -101,7 +101,10 @@ func ApplyTIPSigningHardFork(config *params.ChainConfig, statedb vm.StateDB, blo
 // that lost the account recovers. Neither hook resets an existing account, so the
 // balance and the storage stay; this install alone sets the nonce 1 a CREATE-deployed
 // contract carries since EIP-161.
-func ApplyMulticall3HardFork(config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int) {
+//
+// The state may be a tracing wrapper: the install is then reported to the tracer
+// hooks as a code change and a nonce change.
+func ApplyMulticall3HardFork(config *params.ChainConfig, statedb vm.StateDB, blockNumber *big.Int) {
 	if blockNumber.Sign() == 0 || !config.IsPrague(blockNumber) {
 		return
 	}
@@ -120,6 +123,17 @@ func ApplyMulticall3HardFork(config *params.ChainConfig, statedb *state.StateDB,
 	statedb.SetCode(params.Multicall3Address, params.Multicall3RuntimeCode)
 	// A contract created by CREATE carries nonce 1 since EIP-161.
 	statedb.SetNonce(params.Multicall3Address, 1, tracing.NonceChangeUnspecified)
+}
+
+// ApplyBlockLevelHooks applies the block level state changes block processing
+// performs before the first transaction: the two statedb mutations, then the
+// parent hash history write. The caller owns the EVM; the DAO fork stays out,
+// as upstream core.PreExecution leaves it out (ethereum/go-ethereum#34812).
+func ApplyBlockLevelHooks(parentHash common.Hash, evm *vm.EVM) {
+	config, blockNumber := evm.ChainConfig(), evm.Context.BlockNumber
+	ApplyTIPSigningHardFork(config, evm.StateDB, blockNumber)
+	ApplyMulticall3HardFork(config, evm.StateDB, blockNumber)
+	ProcessParentBlockHash(parentHash, evm)
 }
 
 // Process processes the state changes according to the Ethereum rules by running
@@ -152,21 +166,19 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
 		misc.ApplyDAOHardFork(tracingStateDB)
 	}
-	ApplyTIPSigningHardFork(p.config, tracingStateDB, blockNumber)
-	ApplyMulticall3HardFork(p.config, statedb, blockNumber)
+	// parentState is the snapshot Finalize hands to HookReward: take it before
+	// the block level hooks, as the miner does. HookReward reads only masternode
+	// slots, which the hooks do not write, and the root comes from statedb, so
+	// output is unchanged; at DAOForkBlock the DAO balances still differ.
 	parentState := statedb.Copy()
-	InitSignerInTransactions(p.config, header, block.Transactions())
-	balanceUpdated := map[common.Address]*big.Int{}
-	totalFeeUsed := big.NewInt(0)
-
-	// Apply pre-execution system calls.
+	// Apply the block level hooks.
 	context := NewEVMBlockContext(header, p.bc, nil)
 	evm := vm.NewEVM(context, tracingStateDB, tradingState, p.config, cfg)
 	signer := types.MakeSigner(p.config, blockNumber)
-
-	if p.config.IsPrague(block.Number()) {
-		ProcessParentBlockHash(block.ParentHash(), evm)
-	}
+	ApplyBlockLevelHooks(block.ParentHash(), evm)
+	InitSignerInTransactions(p.config, header, block.Transactions())
+	balanceUpdated := map[common.Address]*big.Int{}
+	totalFeeUsed := big.NewInt(0)
 
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
@@ -253,27 +265,27 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
 		misc.ApplyDAOHardFork(tracingStateDB)
 	}
-	ApplyTIPSigningHardFork(p.config, tracingStateDB, blockNumber)
-	ApplyMulticall3HardFork(p.config, statedb, blockNumber)
+	// A stop abandons the block before the snapshot, the EVM and the hooks; the
+	// state is discarded. The DAO fork above already ran, as in the baseline; a
+	// stop arriving during the hooks is caught below them, so all three run
+	// where the baseline ran two and skipped the EIP-2935 write.
 	if cBlock.stop.Load() {
 		return nil, nil, 0, ErrStopPreparingBlock
 	}
+	// See Process: the snapshot Finalize hands to HookReward predates the
+	// block level hooks, matching the miner's work.parentState.
 	parentState := statedb.Copy()
+	// Apply the block level hooks.
+	context := NewEVMBlockContext(header, p.bc, nil)
+	evm := vm.NewEVM(context, tracingStateDB, tradingState, p.config, cfg)
+	signer := types.MakeSigner(p.config, blockNumber)
+	ApplyBlockLevelHooks(block.ParentHash(), evm)
 	InitSignerInTransactions(p.config, header, block.Transactions())
 	balanceUpdated := map[common.Address]*big.Int{}
 	totalFeeUsed := big.NewInt(0)
 
 	if cBlock.stop.Load() {
 		return nil, nil, 0, ErrStopPreparingBlock
-	}
-
-	// Apply pre-execution system calls.
-	context := NewEVMBlockContext(header, p.bc, nil)
-	evm := vm.NewEVM(context, tracingStateDB, tradingState, p.config, cfg)
-	signer := types.MakeSigner(p.config, blockNumber)
-
-	if p.config.IsPrague(block.Number()) {
-		ProcessParentBlockHash(block.ParentHash(), evm)
 	}
 
 	// Iterate over and process the individual transactions

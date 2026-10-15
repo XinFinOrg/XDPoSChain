@@ -202,11 +202,7 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 		evm.SetPrecompiles(precompiles)
 	}
 	// Block level state changes, applied the way block processing does.
-	core.ApplyTIPSigningHardFork(sim.chainConfig, tracingStateDB, header.Number)
-	core.ApplyMulticall3HardFork(sim.chainConfig, sim.state, header.Number)
-	if sim.chainConfig.IsPrague(header.Number) {
-		core.ProcessParentBlockHash(header.ParentHash, evm)
-	}
+	core.ApplyBlockLevelHooks(header.ParentHash, evm)
 	for i, call := range block.Calls {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err

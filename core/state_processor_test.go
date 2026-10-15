@@ -17,12 +17,14 @@
 package core
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
 	"math/big"
+	"slices"
 	"strings"
 	"testing"
 
@@ -659,6 +661,251 @@ func TestStateProcessorDoesNotDeleteBlockSignersAtGenesisTIPSigning(t *testing.T
 	}
 }
 
+// finalizeCapturingEngine records the state snapshots Process hands to
+// Finalize, so a test can assert which state the reward path sees. It touches
+// nothing itself.
+type finalizeCapturingEngine struct {
+	noopConsensusEngine
+	called           bool
+	stateHasSigners  bool
+	parentHasSigners bool
+}
+
+func (e *finalizeCapturingEngine) Finalize(chain consensus.ChainReader, header *types.Header, state vm.StateDB, parentState *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
+	e.called = true
+	e.stateHasSigners = state.Exist(common.BlockSignersBinary)
+	e.parentHasSigners = parentState.Exist(common.BlockSignersBinary)
+	return nil, nil
+}
+
+// TestProcessSnapshotsParentStateBeforeBlockLevelHooks pins the snapshot
+// ordering: Finalize's parentState predates the block level hooks, so the
+// reward path cannot see the block signers account TIPSigning removes.
+func TestProcessSnapshotsParentStateBeforeBlockLevelHooks(t *testing.T) {
+	t.Parallel()
+
+	config := params.TestChainConfig.Clone()
+	setXinFinForksToFuture(config, big.NewInt(1_000_000_000))
+	// setXinFinForksToFuture leaves Amsterdam unset.
+	config.AmsterdamBlock = big.NewInt(1_000_000_000)
+	config.TIPSigningBlock = big.NewInt(1)
+
+	db := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{
+		Config: config,
+		Alloc: types.GenesisAlloc{
+			common.BlockSignersBinary: {Balance: big.NewInt(1)},
+		},
+	}
+	blockchain, err := NewBlockChain(db, nil, gspec, noopConsensusEngine{}, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	defer blockchain.Stop()
+
+	statedb, err := blockchain.State()
+	if err != nil {
+		t.Fatalf("failed to get state: %v", err)
+	}
+	engine := &finalizeCapturingEngine{}
+	processor := NewStateProcessor(config, blockchain, engine)
+	block := GenerateBadBlock(t, gspec.ToBlock(), noopConsensusEngine{}, nil, config)
+	if _, _, _, err := processor.Process(block, statedb, nil, vm.Config{}, map[common.Address]*big.Int{}); err != nil {
+		t.Fatalf("process failed: %v", err)
+	}
+	if !engine.called {
+		t.Fatal("engine Finalize was not called")
+	}
+	if !engine.parentHasSigners {
+		t.Fatal("the reward snapshot was taken after the block level hooks: block signers account already removed")
+	}
+	if engine.stateHasSigners {
+		t.Fatal("block signers account still present in the processed state")
+	}
+}
+
+// TestProcessBlockNoValidatorSnapshotsParentStateBeforeBlockLevelHooks pins
+// the same ordering on the validator-free path: the snapshot predates the
+// hooks, and a stop raised before the call returns before both.
+func TestProcessBlockNoValidatorSnapshotsParentStateBeforeBlockLevelHooks(t *testing.T) {
+	t.Parallel()
+
+	config := params.TestChainConfig.Clone()
+	setXinFinForksToFuture(config, big.NewInt(1_000_000_000))
+	// setXinFinForksToFuture leaves Amsterdam unset.
+	config.AmsterdamBlock = big.NewInt(1_000_000_000)
+	config.TIPSigningBlock = big.NewInt(1)
+
+	db := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{
+		Config: config,
+		Alloc: types.GenesisAlloc{
+			common.BlockSignersBinary: {Balance: big.NewInt(1)},
+		},
+	}
+	blockchain, err := NewBlockChain(db, nil, gspec, noopConsensusEngine{}, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	defer blockchain.Stop()
+
+	block := GenerateBadBlock(t, gspec.ToBlock(), noopConsensusEngine{}, nil, config)
+	engine := &finalizeCapturingEngine{}
+	processor := NewStateProcessor(config, blockchain, engine)
+
+	// A stop raised before the call abandons the block before the snapshot, the
+	// EVM and the hooks, so Finalize never runs.
+	stopped := &CalculatedBlock{block: block}
+	stopped.stop.Store(true)
+	stoppedState, err := blockchain.State()
+	if err != nil {
+		t.Fatalf("failed to get state: %v", err)
+	}
+	if _, _, _, err := processor.ProcessBlockNoValidator(stopped, stoppedState, nil, vm.Config{}, map[common.Address]*big.Int{}); !errors.Is(err, ErrStopPreparingBlock) {
+		t.Fatalf("the stopped calculation reported %v, want %v", err, ErrStopPreparingBlock)
+	}
+	if engine.called {
+		t.Fatal("the stopped calculation reached Finalize")
+	}
+	// Nor may it have run the hooks: the account the TIPSigning hook removes is
+	// still there, which is what distinguishes the stop check sitting ahead of
+	// the snapshot and the hooks from one that only sits ahead of the loop.
+	if !stoppedState.Exist(common.BlockSignersBinary) {
+		t.Fatal("the stopped calculation ran the block level hooks before observing the stop")
+	}
+
+	// The same block without the stop runs the hooks and hands Finalize the
+	// snapshot taken before them.
+	statedb, err := blockchain.State()
+	if err != nil {
+		t.Fatalf("failed to get state: %v", err)
+	}
+	calculating := &CalculatedBlock{block: block}
+	if _, _, _, err := processor.ProcessBlockNoValidator(calculating, statedb, nil, vm.Config{}, map[common.Address]*big.Int{}); err != nil {
+		t.Fatalf("process failed: %v", err)
+	}
+	if !engine.called {
+		t.Fatal("engine Finalize was not called")
+	}
+	if !engine.parentHasSigners {
+		t.Fatal("the reward snapshot was taken after the block level hooks: block signers account already removed")
+	}
+	if engine.stateHasSigners {
+		t.Fatal("block signers account still present in the processed state")
+	}
+}
+
+// TestProcessReportsMulticall3InstallToTheTracer pins the production call site:
+// block processing hands the hooks the EVM it executes the transactions with,
+// so a tracer attached through vm.Config sees the install. Only Process and
+// ProcessBlockNoValidator wrap the state with a tracer carrying state hooks.
+func TestProcessReportsMulticall3InstallToTheTracer(t *testing.T) {
+	t.Parallel()
+
+	// Every fork at zero makes the generated block Prague active, which is what
+	// the install is gated on.
+	config := params.TestChainConfig.Clone()
+
+	db := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{Config: config}
+	blockchain, err := NewBlockChain(db, nil, gspec, noopConsensusEngine{}, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	defer blockchain.Stop()
+
+	statedb, err := blockchain.State()
+	if err != nil {
+		t.Fatalf("failed to get state: %v", err)
+	}
+	var codeChanges, nonceChanges []common.Address
+	hooks := &tracing.Hooks{
+		OnCodeChange: func(addr common.Address, prevCodeHash common.Hash, prev []byte, codeHash common.Hash, code []byte) {
+			codeChanges = append(codeChanges, addr)
+		},
+		OnNonceChangeV2: func(addr common.Address, prev, next uint64, reason tracing.NonceChangeReason) {
+			nonceChanges = append(nonceChanges, addr)
+		},
+	}
+	processor := NewStateProcessor(config, blockchain, noopConsensusEngine{})
+	block := GenerateBadBlock(t, gspec.ToBlock(), noopConsensusEngine{}, nil, config)
+	if _, _, _, err := processor.Process(block, statedb, nil, vm.Config{Tracer: hooks}, map[common.Address]*big.Int{}); err != nil {
+		t.Fatalf("process failed: %v", err)
+	}
+	if !slices.Contains(codeChanges, params.Multicall3Address) {
+		t.Fatalf("Multicall3 code change not reported through Process, got %v", codeChanges)
+	}
+	if !slices.Contains(nonceChanges, params.Multicall3Address) {
+		t.Fatalf("Multicall3 nonce change not reported through Process, got %v", nonceChanges)
+	}
+	// The install is in the processed state too, not only in the tracer stream.
+	if code := statedb.GetCode(params.Multicall3Address); !bytes.Equal(code, params.Multicall3RuntimeCode) {
+		t.Fatalf("Multicall3 code missing from the processed state: %x", code)
+	}
+}
+
+// TestProcessRunsBlockLevelHooksBeforeTheFirstTransaction pins the hooks ahead
+// of the first transaction: the transaction sees the Multicall3 install and the
+// EIP-2935 write. The EIP-2935 write is a system call that enters the EVM too,
+// so only the transaction's own frame is observed.
+func TestProcessRunsBlockLevelHooksBeforeTheFirstTransaction(t *testing.T) {
+	t.Parallel()
+
+	config := multicall3Config(big.NewInt(1))
+	key, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	sender := crypto.PubkeyToAddress(key.PublicKey)
+	to := common.HexToAddress("0x00000000000000000000000000000000000000c1")
+
+	db := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{
+		Config: config,
+		Alloc: types.GenesisAlloc{
+			sender: {Balance: new(big.Int).Mul(big.NewInt(params.Ether), big.NewInt(10))},
+		},
+	}
+	blockchain, err := NewBlockChain(db, nil, gspec, noopConsensusEngine{}, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	defer blockchain.Stop()
+
+	statedb, err := blockchain.State()
+	if err != nil {
+		t.Fatalf("failed to get state: %v", err)
+	}
+	tx, err := types.SignTx(
+		types.NewTransaction(0, to, big.NewInt(1), params.TxGas, new(big.Int).Mul(big.NewInt(params.InitialBaseFee), big.NewInt(2)), nil),
+		types.LatestSignerForChainID(config.ChainID), key)
+	if err != nil {
+		t.Fatalf("failed to sign transaction: %v", err)
+	}
+	block := GenerateBadBlock(t, gspec.ToBlock(), noopConsensusEngine{}, types.Transactions{tx}, config)
+
+	var multicall3CodeLen, historyCodeLen int
+	hooks := &tracing.Hooks{
+		OnEnter: func(depth int, typ byte, from common.Address, to common.Address, input []byte, gas uint64, value *big.Int) {
+			// The EIP-2935 write runs as a system call and enters the EVM as
+			// well, so only the transaction's own entry frame is the observation
+			// point here.
+			if depth != 0 || from != sender {
+				return
+			}
+			multicall3CodeLen = len(statedb.GetCode(params.Multicall3Address))
+			historyCodeLen = len(statedb.GetCode(params.HistoryStorageAddress))
+		},
+	}
+	processor := NewStateProcessor(config, blockchain, noopConsensusEngine{})
+	if _, _, _, err := processor.Process(block, statedb, nil, vm.Config{Tracer: hooks}, map[common.Address]*big.Int{}); err != nil {
+		t.Fatalf("process failed: %v", err)
+	}
+	if multicall3CodeLen == 0 {
+		t.Fatal("the first transaction ran before the Multicall3 install")
+	}
+	if historyCodeLen == 0 {
+		t.Fatal("the first transaction ran before the EIP-2935 history write")
+	}
+}
+
 // TestApplyTIPSigningHardForkHidesAccountInSession pins the production call
 // site: after the hook removes the legacy block signers account, the rest of
 // the session must already read it as absent, not only the committed root.
@@ -762,6 +1009,59 @@ func TestApplyTIPSigningHardForkReportsRemovedBalance(t *testing.T) {
 	}
 	if changes[0].reason != tracing.BalanceDecreaseSelfdestruct {
 		t.Errorf("reported reason: have %v, want %v", changes[0].reason, tracing.BalanceDecreaseSelfdestruct)
+	}
+}
+
+// TestApplyMulticall3HardForkReportsInstallToTheTracer pins the hook in
+// isolation: handed a tracing wrapper, it reports the code and nonce it writes.
+// Call sites are covered by TestApplyBlockLevelHooksReportsInstallToTheTracer
+// and TestProcessReportsMulticall3InstallToTheTracer.
+func TestApplyMulticall3HardForkReportsInstallToTheTracer(t *testing.T) {
+	t.Parallel()
+
+	config := multicall3Config(big.NewInt(2))
+	db := rawdb.NewMemoryDatabase()
+	statedb, err := state.New(types.EmptyRootHash, state.NewDatabase(db))
+	if err != nil {
+		t.Fatalf("failed to create statedb: %v", err)
+	}
+
+	type nonceChange struct {
+		addr       common.Address
+		prev, next uint64
+		reason     tracing.NonceChangeReason
+	}
+	var (
+		codeChanges  []common.Address
+		nonceChanges []nonceChange
+	)
+	hooked := state.NewHookedState(statedb, &tracing.Hooks{
+		OnCodeChange: func(addr common.Address, prevCodeHash common.Hash, prev []byte, codeHash common.Hash, code []byte) {
+			codeChanges = append(codeChanges, addr)
+		},
+		OnNonceChangeV2: func(addr common.Address, prev, next uint64, reason tracing.NonceChangeReason) {
+			nonceChanges = append(nonceChanges, nonceChange{addr, prev, next, reason})
+		},
+	})
+	// The block before activation is a no-op: nothing may reach the tracer.
+	ApplyMulticall3HardFork(config, hooked, big.NewInt(1))
+	if len(codeChanges) != 0 || len(nonceChanges) != 0 {
+		t.Fatalf("pre-activation block reported changes: %d code, %d nonce", len(codeChanges), len(nonceChanges))
+	}
+	// The activation block installs the code and reports both writes.
+	ApplyMulticall3HardFork(config, hooked, big.NewInt(2))
+	if len(codeChanges) != 1 {
+		t.Fatalf("code change hooks: have %d, want 1", len(codeChanges))
+	}
+	if codeChanges[0] != params.Multicall3Address {
+		t.Errorf("reported code change address: have %s, want %s", codeChanges[0], params.Multicall3Address)
+	}
+	if len(nonceChanges) != 1 {
+		t.Fatalf("nonce change hooks: have %d, want 1", len(nonceChanges))
+	}
+	got := nonceChanges[0]
+	if got.addr != params.Multicall3Address || got.prev != 0 || got.next != 1 || got.reason != tracing.NonceChangeUnspecified {
+		t.Errorf("reported nonce change: have %+v, want address %s, 0 -> 1, %v", got, params.Multicall3Address, tracing.NonceChangeUnspecified)
 	}
 }
 
@@ -1290,6 +1590,115 @@ func TestProcessParentBlockHashPragueGuard(t *testing.T) {
 	ProcessParentBlockHash(common.Hash{0x01}, evm)
 	if code := statedb.GetCode(params.HistoryStorageAddress); len(code) != 1 || code[0] != 0x01 {
 		t.Fatalf("history contract code changed below Prague: %x", code)
+	}
+}
+
+// TestApplyBlockLevelHooksGate covers the activation gate shared by the three
+// block level hooks: they all follow the EVM they are handed, so the block
+// before activation is a no-op and the activation block applies every write.
+func TestApplyBlockLevelHooksGate(t *testing.T) {
+	config := *params.MergedTestChainConfig
+	config.TIPSigningBlock = big.NewInt(10)
+	config.PragueBlock = big.NewInt(10)
+
+	newState := func() *state.StateDB {
+		t.Helper()
+		statedb, err := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewDatabase(memorydb.New())))
+		if err != nil {
+			t.Fatalf("failed to create state: %v", err)
+		}
+		statedb.CreateAccount(common.BlockSignersBinary)
+		return statedb
+	}
+	newEVM := func(statedb *state.StateDB, number int64) *vm.EVM {
+		random := common.Hash{}
+		return vm.NewEVM(vm.BlockContext{
+			CanTransfer: CanTransfer,
+			Transfer:    Transfer,
+			GetHash:     func(n uint64) common.Hash { return common.Hash{byte(n)} },
+			Coinbase:    common.Address{},
+			BlockNumber: big.NewInt(number),
+			Difficulty:  big.NewInt(0),
+			Random:      &random,
+		}, statedb, nil, &config, vm.Config{})
+	}
+	// The block before activation must not touch the state at all.
+	pre := newState()
+	ApplyBlockLevelHooks(common.Hash{0x01}, newEVM(pre, 9))
+	if !pre.Exist(common.BlockSignersBinary) {
+		t.Fatal("block signers account removed before TIPSigning")
+	}
+	if code := pre.GetCode(params.Multicall3Address); len(code) != 0 {
+		t.Fatalf("Multicall3 installed before Prague: %x", code)
+	}
+	if code := pre.GetCode(params.HistoryStorageAddress); len(code) != 0 {
+		t.Fatalf("history contract installed before Prague: %x", code)
+	}
+	// The activation block applies all three writes.
+	parentHash := common.Hash{0x02}
+	act := newState()
+	ApplyBlockLevelHooks(parentHash, newEVM(act, 10))
+	if act.Exist(common.BlockSignersBinary) {
+		t.Fatal("block signers account survived TIPSigning activation")
+	}
+	if code := act.GetCode(params.Multicall3Address); !bytes.Equal(code, params.Multicall3RuntimeCode) {
+		t.Fatalf("Multicall3 not installed at Prague: %x", code)
+	}
+	if nonce := act.GetNonce(params.Multicall3Address); nonce != 1 {
+		t.Fatalf("Multicall3 nonce = %d, want 1", nonce)
+	}
+	if code := act.GetCode(params.HistoryStorageAddress); !bytes.Equal(code, params.HistoryStorageCode) {
+		t.Fatalf("history contract not installed at Prague: %x", code)
+	}
+	if have := getParentBlockHash(act, 9); have != parentHash {
+		t.Fatalf("history slot 9 = %v, want %v", have, parentHash)
+	}
+}
+
+// TestApplyBlockLevelHooksReportsInstallToTheTracer pins the helper's own
+// contract: every write goes through evm.StateDB, so a caller that builds the
+// EVM on a tracing wrapper sees the Multicall3 install. Which state the writes
+// land on is decided by the EVM, not by an argument to each hook.
+func TestApplyBlockLevelHooksReportsInstallToTheTracer(t *testing.T) {
+	t.Parallel()
+
+	config := multicall3Config(big.NewInt(2))
+	statedb, err := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewDatabase(memorydb.New())))
+	if err != nil {
+		t.Fatalf("failed to create state: %v", err)
+	}
+	var codeChanges, nonceChanges []common.Address
+	hooked := state.NewHookedState(statedb, &tracing.Hooks{
+		OnCodeChange: func(addr common.Address, prevCodeHash common.Hash, prev []byte, codeHash common.Hash, code []byte) {
+			codeChanges = append(codeChanges, addr)
+		},
+		OnNonceChangeV2: func(addr common.Address, prev, next uint64, reason tracing.NonceChangeReason) {
+			nonceChanges = append(nonceChanges, addr)
+		},
+	})
+	random := common.Hash{}
+	evm := vm.NewEVM(vm.BlockContext{
+		CanTransfer: CanTransfer,
+		Transfer:    Transfer,
+		GetHash:     func(n uint64) common.Hash { return common.Hash{byte(n)} },
+		BlockNumber: big.NewInt(2),
+		Difficulty:  big.NewInt(0),
+		Random:      &random,
+	}, hooked, nil, config, vm.Config{})
+
+	ApplyBlockLevelHooks(common.Hash{0x42}, evm)
+
+	// The EIP-2935 history write goes through the same state, so the tracer
+	// sees more than the install: pick Multicall3 out.
+	if !slices.Contains(codeChanges, params.Multicall3Address) {
+		t.Fatalf("Multicall3 code change not reported to the tracer, got %v", codeChanges)
+	}
+	if !slices.Contains(nonceChanges, params.Multicall3Address) {
+		t.Fatalf("Multicall3 nonce change not reported to the tracer, got %v", nonceChanges)
+	}
+	// The install still lands in the state the EVM executes against.
+	if code := statedb.GetCode(params.Multicall3Address); !bytes.Equal(code, params.Multicall3RuntimeCode) {
+		t.Fatalf("Multicall3 code missing from the EVM state: %x", code)
 	}
 }
 
