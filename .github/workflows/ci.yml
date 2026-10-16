@@ -45,7 +45,7 @@ jobs:
           - name: O-S tests
             script: go run build/ci.go test -coverage $(go list ./... | grep "github.com/XinFinOrg/XDPoSChain/[o-s].*")
           - name: T-Z tests
-            script: go run build/ci.go test -coverage $(go list ./... | grep "github.com/XinFinOrg/XDPoSChain/[t-z].*")
+            script: go run build/ci.go test -coverage $(go list ./... | grep "github.com/XinFinOrg/XDPoSChain/[t-zT-Z].*")
     steps:
       - name: Check out code
         uses: actions/checkout@v5

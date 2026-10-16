@@ -140,10 +140,13 @@ func TestCreation(t *testing.T) {
 				// Fork at block 71551800
 				{71551799, ID{Hash: checksumToBytes(0x5cab807f), Next: 71551800}}, // Just before fork 71551800
 				{71551800, ID{Hash: checksumToBytes(0xebce6795), Next: 83600000}}, // After fork 71551800
-				// Final fork at block 83600000
-				{83599999, ID{Hash: checksumToBytes(0xebce6795), Next: 83600000}}, // Just before final fork
-				{83600000, ID{Hash: checksumToBytes(0x7fcfc8b0), Next: 0}},        // After final fork
-				{90000000, ID{Hash: checksumToBytes(0x7fcfc8b0), Next: 0}},        // Future block after all forks
+				// Fork at block 83600000
+				{83599999, ID{Hash: checksumToBytes(0xebce6795), Next: 83600000}}, // Just before fork 83600000
+				{83600000, ID{Hash: checksumToBytes(0x7fcfc8b0), Next: 87633000}}, // After fork 83600000
+				// Final fork at block 87633000 (Prague)
+				{87632999, ID{Hash: checksumToBytes(0x7fcfc8b0), Next: 87633000}}, // Just before final fork
+				{87633000, ID{Hash: checksumToBytes(0xb126afb4), Next: 0}},        // After final fork
+				{90000000, ID{Hash: checksumToBytes(0xb126afb4), Next: 0}},        // Future block after all forks
 			},
 		},
 	}

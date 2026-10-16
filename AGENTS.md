@@ -96,3 +96,19 @@ Examples:
 - `feat(trie/archiver): streaming subtree archival to fix OOM`
 
 Use the top-level package paths as the scope, comma-separated if multiple areas are affected. Only mention the directories with functional changes; interface changes that trickle all over the codebase should not generate an exhaustive list. The description should be a short, lowercase summary of the change.
+
+## Agent skills
+
+**Scope**: only meaningful if your own skills include the mattpocock engineering set (`triage`, `to-spec`, `to-tickets`, `wayfinder`, `code-review`). If they do not, ignore this whole section — it names files and skills you do not have, and it should not change how you work.
+
+### Issue tracker
+
+Issues and specs live as GitHub issues in `XinFinOrg/XDPoSChain`, driven by the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage roles map to identically-named labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `GLOSSARY.md` plus `docs/adr/` at the repo root, created lazily. See `docs/agents/domain.md`.

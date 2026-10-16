@@ -27,6 +27,7 @@
     "tipXDCXReceiverDisableBlock": 66825000,
     "eip1559Block": 71550000,
     "cancunBlock": 71551800,
+    "pragueBlock": 87633000,
     "dynamicGasLimitBlock": 83600000,
     "tipUpgradeRewardBlock": 83600000,
     "tipUpgradePenaltyBlock": 83600000,

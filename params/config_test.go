@@ -748,35 +748,15 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 			wantField: "EIP1559Block",
 		},
 		{
-			name: "prague before cancun",
+			name: "dynamic gas limit before cancun",
 			mutate: func(cfg *ChainConfig) {
-				cfg.PragueBlock = big.NewInt(cfg.CancunBlock.Int64() - 1)
+				cfg.DynamicGasLimitBlock = big.NewInt(cfg.CancunBlock.Int64() - 1)
 			},
 			wantField: "CancunBlock",
 		},
 		{
-			name: "osaka before prague",
-			mutate: func(cfg *ChainConfig) {
-				cfg.PragueBlock = big.NewInt(cfg.CancunBlock.Int64())
-				cfg.OsakaBlock = big.NewInt(cfg.PragueBlock.Int64() - 1)
-			},
-			wantField: "PragueBlock",
-		},
-		{
-			name: "dynamic gas limit before osaka",
-			mutate: func(cfg *ChainConfig) {
-				cfg.PragueBlock = big.NewInt(cfg.CancunBlock.Int64())
-				cfg.OsakaBlock = big.NewInt(cfg.PragueBlock.Int64())
-				cfg.DynamicGasLimitBlock = big.NewInt(cfg.OsakaBlock.Int64() - 1)
-			},
-			wantField: "OsakaBlock",
-		},
-		{
 			name: "upgrade reward before dynamic gas limit",
 			mutate: func(cfg *ChainConfig) {
-				cfg.PragueBlock = big.NewInt(cfg.CancunBlock.Int64())
-				cfg.OsakaBlock = big.NewInt(cfg.PragueBlock.Int64())
-				cfg.DynamicGasLimitBlock = big.NewInt(cfg.OsakaBlock.Int64())
 				cfg.TIPUpgradeRewardBlock = big.NewInt(cfg.DynamicGasLimitBlock.Int64() - 1)
 			},
 			wantField: "DynamicGasLimitBlock",
@@ -784,25 +764,31 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 		{
 			name: "upgrade penalty before upgrade reward",
 			mutate: func(cfg *ChainConfig) {
-				cfg.PragueBlock = big.NewInt(cfg.CancunBlock.Int64())
-				cfg.OsakaBlock = big.NewInt(cfg.PragueBlock.Int64())
-				cfg.DynamicGasLimitBlock = big.NewInt(cfg.OsakaBlock.Int64())
-				cfg.TIPUpgradeRewardBlock = big.NewInt(cfg.DynamicGasLimitBlock.Int64())
 				cfg.TIPUpgradePenaltyBlock = big.NewInt(cfg.TIPUpgradeRewardBlock.Int64() - 1)
 			},
 			wantField: "TIPUpgradeRewardBlock",
 		},
 		{
-			name: "epoch halving before upgrade penalty",
+			name: "prague before upgrade penalty",
 			mutate: func(cfg *ChainConfig) {
-				cfg.PragueBlock = big.NewInt(cfg.CancunBlock.Int64())
-				cfg.OsakaBlock = big.NewInt(cfg.PragueBlock.Int64())
-				cfg.DynamicGasLimitBlock = big.NewInt(cfg.OsakaBlock.Int64())
-				cfg.TIPUpgradeRewardBlock = big.NewInt(cfg.DynamicGasLimitBlock.Int64())
-				cfg.TIPUpgradePenaltyBlock = big.NewInt(cfg.TIPUpgradeRewardBlock.Int64())
-				cfg.TIPEpochHalvingBlock = big.NewInt(cfg.TIPUpgradePenaltyBlock.Int64() - 1)
+				cfg.PragueBlock = big.NewInt(cfg.TIPUpgradePenaltyBlock.Int64() - 1)
 			},
 			wantField: "TIPUpgradePenaltyBlock",
+		},
+		{
+			name: "osaka before prague",
+			mutate: func(cfg *ChainConfig) {
+				cfg.OsakaBlock = big.NewInt(cfg.PragueBlock.Int64() - 1)
+			},
+			wantField: "PragueBlock",
+		},
+		{
+			name: "epoch halving before osaka",
+			mutate: func(cfg *ChainConfig) {
+				cfg.OsakaBlock = big.NewInt(cfg.PragueBlock.Int64())
+				cfg.TIPEpochHalvingBlock = big.NewInt(cfg.OsakaBlock.Int64() - 1)
+			},
+			wantField: "OsakaBlock",
 		},
 	}
 

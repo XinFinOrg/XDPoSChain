@@ -372,14 +372,6 @@ var generatedChainConfigForkOrderFieldDefs = []struct {
 		optional: alwaysOptionalChainConfigForkOrderField,
 	},
 	{
-		name:     "PragueBlock",
-		optional: alwaysOptionalChainConfigForkOrderField,
-	},
-	{
-		name:     "OsakaBlock",
-		optional: alwaysOptionalChainConfigForkOrderField,
-	},
-	{
 		name:     "DynamicGasLimitBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
 	},
@@ -389,6 +381,14 @@ var generatedChainConfigForkOrderFieldDefs = []struct {
 	},
 	{
 		name:     "TIPUpgradePenaltyBlock",
+		optional: alwaysOptionalChainConfigForkOrderField,
+	},
+	{
+		name:     "PragueBlock",
+		optional: alwaysOptionalChainConfigForkOrderField,
+	},
+	{
+		name:     "OsakaBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
 	},
 	{

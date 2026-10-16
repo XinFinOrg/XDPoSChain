@@ -203,14 +203,14 @@
     "name": "PragueBlock",
     "jsonKey": "pragueBlock",
     "backfillSet": "builtin",
-    "forkOrder": 28,
+    "forkOrder": 31,
     "forkOrderOptional": true
   },
   {
     "name": "OsakaBlock",
     "jsonKey": "osakaBlock",
     "backfillSet": "builtin",
-    "forkOrder": 29,
+    "forkOrder": 32,
     "forkOrderOptional": true
   },
   {
@@ -247,7 +247,7 @@
     "jsonKey": "dynamicGasLimitBlock",
     "backfillSet": "builtin",
     "xdcSpecific": true,
-    "forkOrder": 30,
+    "forkOrder": 28,
     "forkOrderOptional": true
   },
   {
@@ -255,7 +255,7 @@
     "jsonKey": "tipUpgradeRewardBlock",
     "backfillSet": "builtin",
     "xdcSpecific": true,
-    "forkOrder": 31,
+    "forkOrder": 29,
     "forkOrderOptional": true
   },
   {
@@ -263,7 +263,7 @@
     "jsonKey": "tipUpgradePenaltyBlock",
     "backfillSet": "builtin",
     "xdcSpecific": true,
-    "forkOrder": 32,
+    "forkOrder": 30,
     "forkOrderOptional": true
   },
   {
