@@ -8,7 +8,6 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/XDCx"
 	"github.com/XinFinOrg/XDPoSChain/XDCx/tradingstate"
-	"github.com/XinFinOrg/XDPoSChain/XDCxDAO"
 	"github.com/XinFinOrg/XDPoSChain/XDCxlending/lendingstate"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/lru"
@@ -48,10 +47,6 @@ func New(stack *node.Node, XDCx *XDCx.XDCX) *Lending {
 	lending.XDCx = XDCx
 
 	return lending
-}
-
-func (l *Lending) GetLevelDB() XDCxDAO.XDCXDAO {
-	return l.XDCx.GetLevelDB()
 }
 
 func (l *Lending) ProcessOrderPending(header *types.Header, coinbase common.Address, chain consensus.ChainContext, pending map[common.Address]types.LendingTransactions, statedb *state.StateDB, lendingStatedb *lendingstate.LendingStateDB, tradingStateDb *tradingstate.TradingStateDB) ([]*lendingstate.LendingItem, map[common.Hash]lendingstate.MatchingResult) {

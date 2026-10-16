@@ -73,7 +73,7 @@ func bootSetHeadNode(t *testing.T, dataDir string, gspec *core.Genesis) (*node.N
 
 // TestNewResolvesSetHeadAgainstTheHeadRecordedOnDisk pins the startup ordering
 // that eth.New depends on: a relative --set-head request is counted from the
-// head recorded on disk, and it is resolved before core.NewBlockChainExResolved
+// head recorded on disk, and it is resolved before core.NewBlockChainResolved
 // opens the chain, which runs repair and may rewind a head whose state is
 // missing. TestResolveRollbackTarget covers the arithmetic; what these cases add
 // is that the order of the two steps in eth.New is observable. Moving the

@@ -15,6 +15,22 @@ const (
 	OrderCacheLimit = 10000
 )
 
+// Trade record field names, used as keys when building trade records.
+const (
+	TradeTakerOrderHash = "takerOrderHash"
+	TradeMakerOrderHash = "makerOrderHash"
+	TradeTimestamp      = "timestamp"
+	TradeQuantity       = "quantity"
+	TradeMakerExchange  = "makerExAddr"
+	TradeMaker          = "uAddr"
+	TradeBaseToken      = "bToken"
+	TradeQuoteToken     = "qToken"
+	TradePrice          = "tradedPrice"
+	MakerOrderType      = "makerOrderType"
+	MakerFee            = "makerFee"
+	TakerFee            = "takerFee"
+)
+
 var (
 	EmptyRoot = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
 	Ask       = "SELL"
@@ -29,15 +45,6 @@ var EmptyHash = common.Hash{}
 var Zero = big.NewInt(0)
 var One = big.NewInt(1)
 
-var EmptyOrderList = orderList{
-	Volume: nil,
-	Root:   EmptyHash,
-}
-var EmptyExchangeOnject = tradingExchangeObject{
-	Nonce:   0,
-	AskRoot: EmptyHash,
-	BidRoot: EmptyHash,
-}
 var EmptyOrder = OrderItem{
 	Quantity: Zero,
 }
@@ -58,8 +65,9 @@ var (
 	}
 )
 
-// tradingExchangeObject is the Ethereum consensus representation of exchanges.
-// These objects are stored in the main orderId trie.
+// orderList is the value stored under each price in an exchange's ask/bid price
+// tries: the aggregate volume of the open orders at that price and the merkle
+// root of the orderId-keyed storage trie that holds the per-order quantities.
 type orderList struct {
 	Volume *big.Int
 	Root   common.Hash // merkle root of the storage trie
@@ -186,12 +194,6 @@ func Sub(x, y *big.Int) *big.Int {
 
 func Neg(x *big.Int) *big.Int {
 	return big.NewInt(0).Neg(x)
-}
-
-func ToBigInt(s string) *big.Int {
-	res := big.NewInt(0)
-	res.SetString(s, 10)
-	return res
 }
 
 func CloneBigInt(bigInt *big.Int) *big.Int {

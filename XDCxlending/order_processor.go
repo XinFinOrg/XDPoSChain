@@ -887,7 +887,7 @@ func (l *Lending) LiquidationExpiredTrade(header *types.Header, chain consensus.
 		log.Debug("LiquidationTrade CancelLendingTrade", "err", err)
 		return nil, err
 	}
-	// update liquidationData mongodb
+	// record liquidationData in the trade's extraData
 	liquidationData := lendingstate.LiquidationData{
 		RecallAmount:      recallAmount,
 		LiquidationAmount: repayAmount,
