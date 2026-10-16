@@ -34,6 +34,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
+	"github.com/XinFinOrg/XDPoSChain/eth/ethconfig"
 	"github.com/XinFinOrg/XDPoSChain/node"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -521,4 +522,142 @@ func newMakeChainTestCLIContext(t *testing.T, values map[string]string) *cli.Con
 		}
 	}
 	return cli.NewContext(cli.NewApp(), set, nil)
+}
+
+// newCacheConfigTestCLIContext builds a minimal CLI context carrying the cache
+// and GC mode flags consumed by makeCacheConfig.
+func newCacheConfigTestCLIContext(t *testing.T, values map[string]string) *cli.Context {
+	t.Helper()
+	set := flag.NewFlagSet("cache-config-test", flag.ContinueOnError)
+	set.Int(CacheFlag.Name, CacheFlag.Value, "")
+	set.Int(CacheTrieFlag.Name, CacheTrieFlag.Value, "")
+	set.Int(CacheGCFlag.Name, CacheGCFlag.Value, "")
+	set.String(GCModeFlag.Name, "full", "")
+	set.Bool(CachePrefetchFlag.Name, false, "")
+	set.Bool(CachePreimagesFlag.Name, false, "")
+	for name, value := range values {
+		if err := set.Set(name, value); err != nil {
+			t.Fatalf("failed to set flag %s: %v", name, value)
+		}
+	}
+	return cli.NewContext(cli.NewApp(), set, nil)
+}
+
+// TestMakeCacheConfigSplitsTrieCachesByFlag pins the flag to cache mapping of
+// makeCacheConfig. --cache-trie must size the clean trie cache and --cache-gc
+// the dirty one, exactly like SetEthConfig maps them: sizing the clean cache
+// from --cache-gc made --cache-trie a silent no-op on the MakeChain path.
+func TestMakeCacheConfigSplitsTrieCachesByFlag(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		flags        map[string]string
+		wantClean    int
+		wantDirty    int
+		wantDisabled bool
+		wantPrefetch bool
+	}{
+		{
+			name:      "no cache flags keeps the defaults",
+			flags:     map[string]string{},
+			wantClean: ethconfig.Defaults.TrieCleanCache,
+			wantDirty: ethconfig.Defaults.TrieDirtyCache,
+		},
+		{
+			name: "cache-trie sizes the clean cache and cache-gc the dirty one",
+			flags: map[string]string{
+				CacheFlag.Name:     "20088",
+				CacheTrieFlag.Name: "20",
+				CacheGCFlag.Name:   "5",
+			},
+			wantClean: 20088 * 20 / 100,
+			wantDirty: 20088 * 5 / 100,
+		},
+		{
+			name:      "cache-trie alone sizes the clean cache",
+			flags:     map[string]string{CacheTrieFlag.Name: "20"},
+			wantClean: CacheFlag.Value * 20 / 100,
+			wantDirty: ethconfig.Defaults.TrieDirtyCache,
+		},
+		{
+			name:      "cache-gc alone sizes the dirty cache",
+			flags:     map[string]string{CacheGCFlag.Name: "5"},
+			wantClean: ethconfig.Defaults.TrieCleanCache,
+			wantDirty: CacheFlag.Value * 5 / 100,
+		},
+		{
+			name:      "cache alone sizes both caches from the shared allowance",
+			flags:     map[string]string{CacheFlag.Name: fmt.Sprintf("%d", CacheFlag.Value)},
+			wantClean: CacheFlag.Value * CacheTrieFlag.Value / 100,
+			wantDirty: CacheFlag.Value * CacheGCFlag.Value / 100,
+		},
+		{
+			name: "archive mode disables the dirty cache and forces preimages",
+			flags: map[string]string{
+				GCModeFlag.Name: "archive",
+			},
+			wantClean:    ethconfig.Defaults.TrieCleanCache,
+			wantDirty:    ethconfig.Defaults.TrieDirtyCache,
+			wantDisabled: true,
+		},
+		{
+			name: "cache-prefetch is carried into the cache config",
+			flags: map[string]string{
+				CachePrefetchFlag.Name: "true",
+			},
+			wantClean:    ethconfig.Defaults.TrieCleanCache,
+			wantDirty:    ethconfig.Defaults.TrieDirtyCache,
+			wantPrefetch: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cache := makeCacheConfig(newCacheConfigTestCLIContext(t, tt.flags))
+			if cache.TrieCleanLimit != tt.wantClean {
+				t.Errorf("TrieCleanLimit = %d, want %d", cache.TrieCleanLimit, tt.wantClean)
+			}
+			if cache.TrieDirtyLimit != tt.wantDirty {
+				t.Errorf("TrieDirtyLimit = %d, want %d", cache.TrieDirtyLimit, tt.wantDirty)
+			}
+			if cache.TrieDirtyDisabled != tt.wantDisabled {
+				t.Errorf("TrieDirtyDisabled = %v, want %v", cache.TrieDirtyDisabled, tt.wantDisabled)
+			}
+			if cache.TrieCleanPrefetch != tt.wantPrefetch {
+				t.Errorf("TrieCleanPrefetch = %v, want %v", cache.TrieCleanPrefetch, tt.wantPrefetch)
+			}
+			if cache.TrieDirtyDisabled && !cache.Preimages {
+				t.Error("archive mode must force preimage recording")
+			}
+		})
+	}
+}
+
+// TestMakeCacheConfigRejectsInvalidGCMode checks that makeCacheConfig refuses
+// GC modes other than 'full' and 'archive' through the fatal hook, like
+// SetEthConfig does. It is not parallel because it swaps the package-level
+// fatalf hook.
+func TestMakeCacheConfigRejectsInvalidGCMode(t *testing.T) {
+	const sentinel = "fatal called"
+	var got string
+	originalFatalf := makeChainFatalf
+	makeChainFatalf = func(format string, args ...interface{}) {
+		got = fmt.Sprintf(format, args...)
+		panic(sentinel)
+	}
+	defer func() { makeChainFatalf = originalFatalf }()
+
+	defer func() {
+		if recovered := recover(); recovered != sentinel {
+			t.Fatalf("expected sentinel panic, have %v", recovered)
+		}
+		want := "--gcmode must be either 'full' or 'archive'"
+		if got != want {
+			t.Fatalf("unexpected fatal message: have %q want %q", got, want)
+		}
+	}()
+
+	makeCacheConfig(newCacheConfigTestCLIContext(t, map[string]string{GCModeFlag.Name: "bogus"}))
+	t.Fatal("expected makeCacheConfig to terminate via fatal hook")
 }
