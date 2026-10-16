@@ -4,15 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"math/big"
-	"time"
-
-	"github.com/XinFinOrg/XDPoSChain/crypto"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
-)
-
-const (
-	OrderCacheLimit = 10000
 )
 
 var (
@@ -115,11 +108,6 @@ type TxMatchBatch struct {
 	TxHash    common.Hash
 }
 
-type MatchingResult struct {
-	Trades  []map[string]string
-	Rejects []*OrderItem
-}
-
 func EncodeTxMatchesBatch(txMatchBatch TxMatchBatch) ([]byte, error) {
 	data, err := json.Marshal(txMatchBatch)
 	if err != nil || data == nil {
@@ -136,25 +124,12 @@ func DecodeTxMatchesBatch(data []byte) (TxMatchBatch, error) {
 	return txMatchResult, nil
 }
 
-// use orderHash instead of orderId
-// because both takerOrders don't have orderId
-func GetOrderHistoryKey(baseToken, quoteToken common.Address, orderHash common.Hash) common.Hash {
-	return crypto.Keccak256Hash(baseToken.Bytes(), quoteToken.Bytes(), orderHash.Bytes())
-}
-
 func (tx TxDataMatch) DecodeOrder() (*OrderItem, error) {
 	order := &OrderItem{}
 	if err := DecodeBytesItem(tx.Order, order); err != nil {
 		return order, err
 	}
 	return order, nil
-}
-
-type OrderHistoryItem struct {
-	TxHash       common.Hash
-	FilledAmount *big.Int
-	Status       string
-	UpdatedAt    time.Time
 }
 
 // ToJSON : log json string
@@ -212,8 +187,4 @@ func Max(a, b *big.Int) *big.Int {
 
 func GetTradingOrderBookHash(baseToken common.Address, quoteToken common.Address) common.Hash {
 	return common.BytesToHash(append(baseToken[:16], quoteToken[4:]...))
-}
-
-func GetMatchingResultCacheKey(order *OrderItem) common.Hash {
-	return crypto.Keccak256Hash(order.UserAddress.Bytes(), order.Nonce.Bytes())
 }

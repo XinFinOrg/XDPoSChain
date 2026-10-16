@@ -83,11 +83,6 @@ type TxLendingBatch struct {
 	TxHash    common.Hash
 }
 
-type MatchingResult struct {
-	Trades  []*LendingTrade
-	Rejects []*LendingItem
-}
-
 type FinalizedResult struct {
 	Liquidated []common.Hash
 	AutoRepay  []common.Hash
@@ -242,8 +237,4 @@ func DecodeFinalizedResult(data []byte) (result FinalizedResult, err error) {
 		return FinalizedResult{}, err
 	}
 	return result, nil
-}
-
-func GetLendingCacheKey(item *LendingItem) common.Hash {
-	return crypto.Keccak256Hash(item.UserAddress.Bytes(), item.Nonce.Bytes())
 }

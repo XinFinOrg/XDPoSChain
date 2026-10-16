@@ -896,7 +896,6 @@ func (w *worker) commitNewWork() {
 		txs                                                                  *transactionsByPriceAndNonce
 		specialTxs                                                           types.Transactions
 		tradingTxMatches                                                     []tradingstate.TxDataMatch
-		lendingMatchingResults                                               map[common.Hash]lendingstate.MatchingResult
 		lendingInput                                                         []*lendingstate.LendingItem
 		updatedTrades                                                        map[common.Hash]*lendingstate.LendingTrade
 		liquidatedTrades, autoRepayTrades, autoTopUpTrades, autoRecallTrades []*lendingstate.LendingTrade
@@ -944,12 +943,12 @@ func (w *worker) commitNewWork() {
 					log.Debug("Start processing order pending")
 					tradingOrderPending, _ := w.eth.OrderPool().Pending()
 					log.Debug("Start processing order pending", "len", len(tradingOrderPending))
-					tradingTxMatches, _ = XDCX.ProcessOrderPending(header, w.coinbase, w.chain, tradingOrderPending, work.state, work.tradingState)
+					tradingTxMatches = XDCX.ProcessOrderPending(header, w.coinbase, w.chain, tradingOrderPending, work.state, work.tradingState)
 					log.Debug("trading transaction matches found", "tradingTxMatches", len(tradingTxMatches))
 
 					lendingOrderPending, _ := w.eth.LendingPool().Pending()
-					lendingInput, lendingMatchingResults = XDCXLending.ProcessOrderPending(header, w.coinbase, w.chain, lendingOrderPending, work.state, work.lendingState, work.tradingState)
-					log.Debug("lending transaction matches found", "lendingInput", len(lendingInput), "lendingMatchingResults", len(lendingMatchingResults))
+					lendingInput = XDCXLending.ProcessOrderPending(header, w.coinbase, w.chain, lendingOrderPending, work.state, work.lendingState, work.tradingState)
+					log.Debug("lending transaction matches found", "lendingInput", len(lendingInput))
 					if header.Number.Uint64()%w.chainConfig.XDPoS.Epoch == common.LiquidateLendingTradeBlock {
 						updatedTrades, liquidatedTrades, autoRepayTrades, autoTopUpTrades, autoRecallTrades, err = XDCXLending.ProcessLiquidationData(header, w.chain, work.state, work.tradingState, work.lendingState)
 						if err != nil {

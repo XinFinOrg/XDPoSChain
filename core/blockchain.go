@@ -44,7 +44,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
-	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/ethclient"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
@@ -273,12 +272,6 @@ type BlockChain struct {
 	// Blocks hash array by block number
 	// cache field for tracking finality purpose, can't use for tracking block vs block relationship
 	blocksHashCache *lru.Cache[uint64, []common.Hash]
-
-	resultTrade         *lru.Cache[common.Hash, interface{}] // trades result: key - takerOrderHash, value: trades corresponding to takerOrder
-	rejectedOrders      *lru.Cache[common.Hash, interface{}] // rejected orders: key - takerOrderHash, value: rejected orders corresponding to takerOrder
-	resultLendingTrade  *lru.Cache[common.Hash, interface{}]
-	rejectedLendingItem *lru.Cache[common.Hash, interface{}]
-	finalizedTrade      *lru.Cache[common.Hash, interface{}] // include both trades which force update to closed/liquidated by the protocol
 }
 
 type blockchainOpenConfig struct {
@@ -483,25 +476,20 @@ func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus
 			Cache:     cacheConfig.TrieCleanLimit,
 			Preimages: cacheConfig.Preimages,
 		}),
-		quit:                make(chan struct{}),
-		chainmu:             syncx.NewClosableMutex(),
-		bodyCache:           lru.NewCache[common.Hash, *types.Body](bodyCacheLimit),
-		bodyRLPCache:        lru.NewCache[common.Hash, rlp.RawValue](bodyCacheLimit),
-		receiptsCache:       lru.NewCache[common.Hash, types.Receipts](receiptsCacheLimit),
-		blockCache:          lru.NewCache[common.Hash, *types.Block](blockCacheLimit),
-		futureBlocks:        lru.NewCache[common.Hash, *types.Block](maxFutureBlocks),
-		resultProcess:       lru.NewCache[common.Hash, *ResultProcessBlock](blockCacheLimit),
-		calculatingBlock:    lru.NewCache[common.Hash, *CalculatedBlock](blockCacheLimit),
-		downloadingBlock:    lru.NewCache[common.Hash, struct{}](blockCacheLimit),
-		engine:              engine,
-		vmConfig:            vmConfig,
-		logger:              vmConfig.Tracer,
-		blocksHashCache:     lru.NewCache[uint64, []common.Hash](blocksHashCacheLimit),
-		resultTrade:         lru.NewCache[common.Hash, interface{}](tradingstate.OrderCacheLimit),
-		rejectedOrders:      lru.NewCache[common.Hash, interface{}](tradingstate.OrderCacheLimit),
-		resultLendingTrade:  lru.NewCache[common.Hash, interface{}](tradingstate.OrderCacheLimit),
-		rejectedLendingItem: lru.NewCache[common.Hash, interface{}](tradingstate.OrderCacheLimit),
-		finalizedTrade:      lru.NewCache[common.Hash, interface{}](tradingstate.OrderCacheLimit),
+		quit:             make(chan struct{}),
+		chainmu:          syncx.NewClosableMutex(),
+		bodyCache:        lru.NewCache[common.Hash, *types.Body](bodyCacheLimit),
+		bodyRLPCache:     lru.NewCache[common.Hash, rlp.RawValue](bodyCacheLimit),
+		receiptsCache:    lru.NewCache[common.Hash, types.Receipts](receiptsCacheLimit),
+		blockCache:       lru.NewCache[common.Hash, *types.Block](blockCacheLimit),
+		futureBlocks:     lru.NewCache[common.Hash, *types.Block](maxFutureBlocks),
+		resultProcess:    lru.NewCache[common.Hash, *ResultProcessBlock](blockCacheLimit),
+		calculatingBlock: lru.NewCache[common.Hash, *CalculatedBlock](blockCacheLimit),
+		downloadingBlock: lru.NewCache[common.Hash, struct{}](blockCacheLimit),
+		engine:           engine,
+		vmConfig:         vmConfig,
+		logger:           vmConfig.Tracer,
+		blocksHashCache:  lru.NewCache[uint64, []common.Hash](blocksHashCacheLimit),
 	}
 	bc.stateCache = state.NewDatabaseWithNodeDB(bc.db, bc.triedb)
 	bc.validator = NewBlockValidator(chainConfig, bc, engine)
@@ -4537,25 +4525,6 @@ func (bc *BlockChain) UpdateM1At(header *types.Header) error {
 		log.Info("Masternodes are ready for the next epoch", "number", header.Number.Uint64(), "hash", header.Hash().Hex())
 	}
 	return nil
-}
-
-func (bc *BlockChain) AddMatchingResult(txHash common.Hash, matchingResults map[common.Hash]tradingstate.MatchingResult) {
-	for hash, result := range matchingResults {
-		cacheKey := crypto.Keccak256Hash(txHash.Bytes(), hash.Bytes())
-		bc.resultTrade.Add(cacheKey, result.Trades)
-		bc.rejectedOrders.Add(cacheKey, result.Rejects)
-	}
-}
-
-func (bc *BlockChain) AddLendingResult(txHash common.Hash, lendingResults map[common.Hash]lendingstate.MatchingResult) {
-	for hash, result := range lendingResults {
-		bc.resultLendingTrade.Add(crypto.Keccak256Hash(txHash.Bytes(), hash.Bytes()), result.Trades)
-		bc.rejectedLendingItem.Add(crypto.Keccak256Hash(txHash.Bytes(), hash.Bytes()), result.Rejects)
-	}
-}
-
-func (bc *BlockChain) AddFinalizedTrades(txHash common.Hash, trades map[common.Hash]*lendingstate.LendingTrade) {
-	bc.finalizedTrade.Add(txHash, trades)
 }
 
 // processTradingAndLendingStates processes the trading and lending states for a given block in the blockchain.
