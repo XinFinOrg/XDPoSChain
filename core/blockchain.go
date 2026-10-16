@@ -4551,7 +4551,7 @@ func (bc *BlockChain) refreshMasternodesForGapBlock(block *types.Block, critMsg 
 			log.Warn("Skipping the masternode refresh, the engine is not XDPoS", "number", block.Number(), "hash", block.Hash().Hex())
 			return
 		}
-		log.Crit(critMsg, "number", block.Number, "hash", block.Hash().Hex(), "err", err)
+		log.Crit(critMsg, "number", block.Number(), "hash", block.Hash().Hex(), "err", err)
 	}
 }
 
