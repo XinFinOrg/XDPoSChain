@@ -77,7 +77,7 @@ type downloadTester struct {
 	receiptCheckFreq int                      // Last checkFreq the downloader passed to InsertReceiptChain
 	ownChainTd       map[common.Hash]*big.Int // Total difficulties of the blocks in the local chain
 
-	insertHeaderChainHook  func([]*types.Header) error
+	insertHeaderChainHook func([]*types.Header) error
 
 	// insertChainHook, when non-nil, makes InsertChain fail with the returned error before
 	// touching the simulated chain.
