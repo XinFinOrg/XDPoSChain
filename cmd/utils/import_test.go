@@ -131,3 +131,80 @@ func TestImportChainReasonsComeFromTheClassifier(t *testing.T) {
 		t.Fatal("an unclassified failure is the file's, not this node's")
 	}
 }
+
+// newTargetChain returns a fresh ethash chain sitting on its genesis block: the chain an import
+// runs into, and the genesis block its export opens with.
+func newTargetChain(t *testing.T) *core.BlockChain {
+	t.Helper()
+
+	key, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	gspec := &core.Genesis{
+		Alloc:   core.GenesisAlloc{crypto.PubkeyToAddress(key.PublicKey): {Balance: big.NewInt(1000000000000000)}},
+		BaseFee: big.NewInt(params.InitialBaseFee),
+		Config:  params.TestChainConfig,
+	}
+	db := rawdb.NewMemoryDatabase()
+	gspec.MustCommit(db)
+	chain, err := core.NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create the target chain: %v", err)
+	}
+	t.Cleanup(chain.Stop)
+	return chain
+}
+
+// TestImportChainReportsTheFailingBlockPosition pins the position a malformed block is reported at.
+// The stream the importer reads starts with the exporting node's genesis block, which it drops, so
+// the block after it is block 1: a parse error has to name it as block 1 rather than as block 0.
+func TestImportChainReportsTheFailingBlockPosition(t *testing.T) {
+	target := newTargetChain(t)
+
+	// The shape BlockChain.Export writes - one RLP encoded block after another - cut short behind
+	// the genesis block this file opens with.
+	path := filepath.Join(t.TempDir(), "truncated.rlp")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("failed to create the export file: %v", err)
+	}
+	if err := target.Genesis().EncodeRLP(f); err != nil {
+		t.Fatalf("failed to encode the genesis block: %v", err)
+	}
+	if _, err := f.Write([]byte{0xff}); err != nil {
+		t.Fatalf("failed to cut the export short: %v", err)
+	}
+	f.Close()
+
+	err = ImportChain(target, path)
+	if err == nil {
+		t.Fatal("ImportChain(a truncated export) = nil, want an error")
+	}
+	if want := "at block 1:"; !strings.HasPrefix(err.Error(), want) {
+		t.Fatalf("the malformed block must be reported as %q, have %v", want, err)
+	}
+}
+
+// TestImportChainAcceptsAForeignGenesisOnlyExport is the other side of the skip: a file holding
+// nothing but a genesis block of another chain has nothing left for this node to run, so the import
+// reports success instead of blaming the file.
+func TestImportChainAcceptsAForeignGenesisOnlyExport(t *testing.T) {
+	target := newTargetChain(t)
+
+	foreign := (&core.Genesis{
+		BaseFee: big.NewInt(params.InitialBaseFee),
+		Config:  params.AllEthashProtocolChanges,
+	}).ToBlock()
+
+	path := filepath.Join(t.TempDir(), "foreign.rlp")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("failed to create the export file: %v", err)
+	}
+	if err := foreign.EncodeRLP(f); err != nil {
+		t.Fatalf("failed to encode the foreign genesis block: %v", err)
+	}
+	f.Close()
+
+	if err := ImportChain(target, path); err != nil {
+		t.Fatalf("ImportChain(a foreign genesis-only export) = %v, want nil", err)
+	}
+}

@@ -203,13 +203,16 @@ func ImportChain(chain *core.BlockChain, fn string) error {
 			} else if err != nil {
 				return fmt.Errorf("at block %d: %v", n, err)
 			}
+			// Count the block before the genesis skip below: n names a position in the input
+			// stream, and a malformed block has to be reported there. eth/api_admin.go counts
+			// its batch the same way, so the two importers name a block alike.
+			n++
 			// don't import first block
 			if b.NumberU64() == 0 {
 				i--
 				continue
 			}
 			blocks[i] = &b
-			n++
 		}
 		if i == 0 {
 			break
