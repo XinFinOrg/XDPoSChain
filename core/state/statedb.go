@@ -691,11 +691,32 @@ func (s *StateDB) deleteStateObject(addr common.Address) {
 	}
 }
 
-// DeleteAddress removes the address from the state trie.
+// DeleteAddress removes the address from the state trie. The removal is
+// visible to the rest of the session: the object is dropped from the live
+// cache and the account is marked as destructed, so subsequent reads report
+// it as absent, the same way a self-destructed account is treated.
 func (s *StateDB) DeleteAddress(addr common.Address) {
 	stateObject := s.getStateObject(addr)
 	if stateObject != nil {
 		s.deleteStateObject(stateObject.address)
+
+		// Invalidate the session cache. Without this the removed account
+		// would stay readable through s.stateObjects until the statedb is
+		// recreated from the resulting root, and in-session reads would
+		// disagree with the final state. Marking the account destructed
+		// additionally lets handleDestruction track its original value as a
+		// deletion at commit time, like the self-destruct path does.
+		delete(s.stateObjects, addr)
+		// Record a deletion mutation so it replaces any pending update for
+		// this address. An object that leaves the live set must carry a
+		// deletion mutation: pending updates are applied through
+		// updateStateObject(s.stateObjects[addr]), which would dereference
+		// a missing object otherwise. The self-destruct finalisation path
+		// keeps the same invariant via markDelete.
+		s.markDelete(addr)
+		if _, ok := s.stateObjectsDestruct[addr]; !ok {
+			s.stateObjectsDestruct[addr] = stateObject.origin
+		}
 	}
 }
 
