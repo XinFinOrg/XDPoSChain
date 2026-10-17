@@ -236,15 +236,10 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 		if config.DAOForkSupport && config.DAOForkBlock != nil && config.DAOForkBlock.Cmp(b.header.Number) == 0 {
 			misc.ApplyDAOHardFork(statedb)
 		}
-		ApplyTIPSigningHardFork(config, statedb, b.header.Number)
-		ApplyMulticall3HardFork(config, statedb, b.header.Number)
-
-		if config.IsPrague(b.header.Number) {
-			// EIP-2935
-			blockContext := NewEVMBlockContext(b.header, chainReader, &b.header.Coinbase)
-			evm := vm.NewEVM(blockContext, statedb, nil, config, vm.Config{})
-			ProcessParentBlockHash(b.header.ParentHash, evm)
-		}
+		// Apply pre-execution system calls.
+		blockContext := NewEVMBlockContext(b.header, chainReader, &b.header.Coinbase)
+		evm := vm.NewEVM(blockContext, statedb, nil, config, vm.Config{})
+		ApplyBlockLevelHooks(config, statedb, b.header.Number, b.header.ParentHash, evm)
 
 		// Execute any user modifications to the block
 		if gen != nil {

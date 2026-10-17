@@ -187,14 +187,13 @@ func (b *freshStateTraceBackend) StateAtTransaction(ctx context.Context, block *
 	}
 	// Block level state changes block processing applies before the first transaction.
 	// Without them the pre-state handed to the tracer is not the one the block ran on.
-	core.ApplyTIPSigningHardFork(b.chainConfig, statedb, block.Number())
-	core.ApplyMulticall3HardFork(b.chainConfig, statedb, block.Number())
+	context := core.NewEVMBlockContext(block.Header(), b.chain, nil)
+	evm := vm.NewEVM(context, statedb, nil, b.chainConfig, vm.Config{})
+	core.ApplyBlockLevelHooks(b.chainConfig, statedb, block.Number(), block.ParentHash(), evm)
 	if txIndex == 0 && len(block.Transactions()) == 0 {
 		return nil, vm.BlockContext{}, statedb, release, nil
 	}
 	signer := types.MakeSigner(b.chainConfig, block.Number())
-	context := core.NewEVMBlockContext(block.Header(), b.chain, nil)
-	evm := vm.NewEVM(context, statedb, nil, b.chainConfig, vm.Config{})
 	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	for idx, tx := range block.Transactions() {
 		if idx == txIndex {
@@ -237,15 +236,14 @@ func (b *testBackend) StateAtTransaction(ctx context.Context, block *types.Block
 	}
 	// Block level state changes block processing applies before the first transaction.
 	// Without them the pre-state handed to the tracer is not the one the block ran on.
-	core.ApplyTIPSigningHardFork(b.chainConfig, statedb, block.Number())
-	core.ApplyMulticall3HardFork(b.chainConfig, statedb, block.Number())
+	context := core.NewEVMBlockContext(block.Header(), b.chain, nil)
+	evm := vm.NewEVM(context, statedb, nil, b.chainConfig, vm.Config{})
+	core.ApplyBlockLevelHooks(b.chainConfig, statedb, block.Number(), block.ParentHash(), evm)
 	if txIndex == 0 && len(block.Transactions()) == 0 {
 		return nil, vm.BlockContext{}, statedb, release, nil
 	}
 	// Recompute transactions up to the target index.
 	signer := types.MakeSigner(b.chainConfig, block.Number())
-	context := core.NewEVMBlockContext(block.Header(), b.chain, nil)
-	evm := vm.NewEVM(context, statedb, nil, b.chainConfig, vm.Config{})
 	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	for idx, tx := range block.Transactions() {
 		if idx == txIndex {

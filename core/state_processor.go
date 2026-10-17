@@ -119,6 +119,25 @@ func ApplyMulticall3HardFork(config *params.ChainConfig, statedb *state.StateDB,
 	statedb.SetNonce(params.Multicall3Address, 1, tracing.NonceChangeUnspecified)
 }
 
+// ApplyBlockLevelHooks applies the block level state changes that block
+// processing performs before the first transaction, in the canonical order:
+// the hooks that mutate the statedb first, then the EVM system call that
+// writes the parent block hash history. The caller owns the EVM, because the
+// call sites build it for their own use (block processing reuses it for the
+// transactions, the miner for the work task) and only some of them need the
+// extra state a miner or a tracer attaches to it.
+//
+// Every path that replays a block, or prepares one the chain will seal, calls
+// this helper so the pre-state it works against is the one the block ran on:
+// debug_trace*, eth_simulateV1, the miner and the test helpers that mirror
+// them. Adding a block level state change means adding it here, in the order
+// block processing applies it, and not at the individual call sites.
+func ApplyBlockLevelHooks(config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, parentHash common.Hash, evm *vm.EVM) {
+	ApplyTIPSigningHardFork(config, statedb, blockNumber)
+	ApplyMulticall3HardFork(config, statedb, blockNumber)
+	ProcessParentBlockHash(parentHash, evm)
+}
+
 // Process processes the state changes according to the Ethereum rules by running
 // the transaction messages using the statedb and applying any rewards to both
 // the processor (coinbase) and any included uncles.
@@ -149,21 +168,15 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
 		misc.ApplyDAOHardFork(tracingStateDB)
 	}
-	ApplyTIPSigningHardFork(p.config, statedb, blockNumber)
-	ApplyMulticall3HardFork(p.config, statedb, blockNumber)
-	parentState := statedb.Copy()
-	InitSignerInTransactions(p.config, header, block.Transactions())
-	balanceUpdated := map[common.Address]*big.Int{}
-	totalFeeUsed := big.NewInt(0)
-
 	// Apply pre-execution system calls.
 	context := NewEVMBlockContext(header, p.bc, nil)
 	evm := vm.NewEVM(context, tracingStateDB, tradingState, p.config, cfg)
 	signer := types.MakeSigner(p.config, blockNumber)
-
-	if p.config.IsPrague(block.Number()) {
-		ProcessParentBlockHash(block.ParentHash(), evm)
-	}
+	ApplyBlockLevelHooks(p.config, statedb, blockNumber, block.ParentHash(), evm)
+	parentState := statedb.Copy()
+	InitSignerInTransactions(p.config, header, block.Transactions())
+	balanceUpdated := map[common.Address]*big.Int{}
+	totalFeeUsed := big.NewInt(0)
 
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
@@ -250,8 +263,11 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
 		misc.ApplyDAOHardFork(tracingStateDB)
 	}
-	ApplyTIPSigningHardFork(p.config, statedb, blockNumber)
-	ApplyMulticall3HardFork(p.config, statedb, blockNumber)
+	// Apply pre-execution system calls.
+	context := NewEVMBlockContext(header, p.bc, nil)
+	evm := vm.NewEVM(context, tracingStateDB, tradingState, p.config, cfg)
+	signer := types.MakeSigner(p.config, blockNumber)
+	ApplyBlockLevelHooks(p.config, statedb, blockNumber, block.ParentHash(), evm)
 	if cBlock.stop.Load() {
 		return nil, nil, 0, ErrStopPreparingBlock
 	}
@@ -262,15 +278,6 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 
 	if cBlock.stop.Load() {
 		return nil, nil, 0, ErrStopPreparingBlock
-	}
-
-	// Apply pre-execution system calls.
-	context := NewEVMBlockContext(header, p.bc, nil)
-	evm := vm.NewEVM(context, tracingStateDB, tradingState, p.config, cfg)
-	signer := types.MakeSigner(p.config, blockNumber)
-
-	if p.config.IsPrague(block.Number()) {
-		ProcessParentBlockHash(block.ParentHash(), evm)
 	}
 
 	// Iterate over and process the individual transactions

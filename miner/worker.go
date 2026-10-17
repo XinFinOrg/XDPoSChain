@@ -886,11 +886,7 @@ func (w *worker) commitNewWork() {
 	if w.chainConfig.DAOForkSupport && w.chainConfig.DAOForkBlock != nil && w.chainConfig.DAOForkBlock.Cmp(header.Number) == 0 {
 		misc.ApplyDAOHardFork(work.state)
 	}
-	core.ApplyTIPSigningHardFork(w.chainConfig, work.state, header.Number)
-	core.ApplyMulticall3HardFork(w.chainConfig, work.state, header.Number)
-	if w.chainConfig.IsPrague(header.Number) {
-		core.ProcessParentBlockHash(header.ParentHash, work.evm)
-	}
+	core.ApplyBlockLevelHooks(w.chainConfig, work.state, header.Number, header.ParentHash, work.evm)
 	// won't grasp txs at checkpoint
 	var (
 		txs                                                                  *transactionsByPriceAndNonce

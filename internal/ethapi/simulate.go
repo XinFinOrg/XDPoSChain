@@ -216,12 +216,7 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 	// block: TIPSigning removes the legacy block signers account at its activation block,
 	// Multicall3 is installed at the one that activates Prague. A simulated block starts from
 	// the base state, so selecting the activation block's parent reproduces either change.
-	core.ApplyTIPSigningHardFork(sim.chainConfig, sim.state, header.Number)
-	core.ApplyMulticall3HardFork(sim.chainConfig, sim.state, header.Number)
-	// EIP-2935 parent hash history, written after those changes the way block processing does.
-	if sim.chainConfig.IsPrague(header.Number) {
-		core.ProcessParentBlockHash(header.ParentHash, evm)
-	}
+	core.ApplyBlockLevelHooks(sim.chainConfig, sim.state, header.Number, header.ParentHash, evm)
 	for i, call := range block.Calls {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
