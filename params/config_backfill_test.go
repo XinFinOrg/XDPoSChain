@@ -166,9 +166,6 @@ func TestForEachChainConfigForkOrderBlockCoversValidationOrder(t *testing.T) {
 		"EIP155Block",
 		"EIP158Block",
 		"ByzantiumBlock",
-		"ConstantinopleBlock",
-		"PetersburgBlock",
-		"IstanbulBlock",
 		"TIPSigningBlock",
 		"TIPRandomizeBlock",
 		"TIPIncreaseMasternodesBlock",
@@ -177,6 +174,9 @@ func TestForEachChainConfigForkOrderBlockCoversValidationOrder(t *testing.T) {
 		"TIPXDCXBlock",
 		"TIPXDCXLendingBlock",
 		"TIPXDCXCancellationFeeBlock",
+		"ConstantinopleBlock",
+		"PetersburgBlock",
+		"IstanbulBlock",
 		"TIPTRC21FeeBlock",
 		"BerlinBlock",
 		"LondonBlock",
@@ -335,6 +335,224 @@ func TestChainConfigForkSequenceFallbackMirrorsRuntimeFlags(t *testing.T) {
 			t.Fatalf("%s: validation substitutes the cancellation fee: %v, runtime flag: %v", name, got, want)
 		}
 	})
+}
+
+// TestCheckConfigForkOrderRejectsEthereumTrioBeforeTheXDCAnchor pins the
+// rejection surface that comes with declaring ConstantinopleBlock,
+// PetersburgBlock and IstanbulBlock at their effective heights: the trio now
+// sits after TIPXDCXCancellationFeeBlock in the validation order, so a custom
+// config that declares any of them at a Constantinople-era height while the XDC
+// forks are scheduled later is refused at startup.
+func TestCheckConfigForkOrderRejectsEthereumTrioBeforeTheXDCAnchor(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*ChainConfig)
+		wantErr string
+	}{
+		{
+			// The "Constantinople-era chain" shape: ConstantinopleBlock and
+			// PetersburgBlock declared right after Byzantium (IstanbulBlock
+			// keeps its built-in height) while every XDC fork is scheduled
+			// much later.
+			name: "constantinople and petersburg at the byzantium height",
+			mutate: func(cfg *ChainConfig) {
+				cfg.ConstantinopleBlock = big.NewInt(4)
+				cfg.PetersburgBlock = big.NewInt(4)
+			},
+			wantErr: "invalid chain config: wrong fork switch order: TIPXDCXCancellationFeeBlock 23779191 > ConstantinopleBlock 4: declare ConstantinopleBlock at or after TIPXDCXCancellationFeeBlock, or leave it unset",
+		},
+		{
+			// Dropping the cancellation-fee slot does not rescue the shape: the
+			// comparison anchor is the last declared fork before the trio, which
+			// degrades to TIPXDCXLendingBlock.
+			name: "constantinople at the byzantium height without cancellation fee",
+			mutate: func(cfg *ChainConfig) {
+				cfg.TIPXDCXCancellationFeeBlock = nil
+				cfg.ConstantinopleBlock = big.NewInt(4)
+			},
+			wantErr: "invalid chain config: wrong fork switch order: TIPXDCXLendingBlock 23779191 > ConstantinopleBlock 4: declare ConstantinopleBlock at or after TIPXDCXLendingBlock, or leave it unset",
+		},
+		{
+			// The PR description's own example: ConstantinopleBlock and
+			// PetersburgBlock declared at 0 together with a cancellation fee
+			// scheduled much later (IstanbulBlock keeps its built-in height).
+			// The first slot the scan collides with is ConstantinopleBlock, so
+			// that is the field the error names - not PetersburgBlock.
+			name: "trio below a later cancellation fee",
+			mutate: func(cfg *ChainConfig) {
+				cfg.ConstantinopleBlock = big.NewInt(0)
+				cfg.PetersburgBlock = big.NewInt(0)
+				cfg.TIPXDCXCancellationFeeBlock = big.NewInt(1_000_000_000)
+			},
+			wantErr: "invalid chain config: wrong fork switch order: TIPXDCXCancellationFeeBlock 1000000000 > ConstantinopleBlock 0: declare ConstantinopleBlock at or after TIPXDCXCancellationFeeBlock, or leave it unset",
+		},
+		{
+			// Petersburg is a required sequence slot, so dropping it is not a
+			// fix: with no cancellation-fee fallback and Constantinople
+			// declared, the pair check rejects the resulting config. The hint
+			// therefore must not suggest it. The earlier XDC slots move down to
+			// the same height so Petersburg is the first collision.
+			name: "petersburg below constantinople without the cancellation fee fallback",
+			mutate: func(cfg *ChainConfig) {
+				cfg.TIPSigningBlock = big.NewInt(200)
+				cfg.TIPRandomizeBlock = big.NewInt(200)
+				cfg.TIPIncreaseMasternodesBlock = big.NewInt(200)
+				cfg.DenylistBlock = big.NewInt(200)
+				cfg.TIPNoHalvingMNRewardBlock = big.NewInt(200)
+				cfg.TIPXDCXBlock = big.NewInt(200)
+				cfg.TIPXDCXLendingBlock = big.NewInt(200)
+				cfg.TIPXDCXCancellationFeeBlock = nil
+				cfg.ConstantinopleBlock = big.NewInt(200)
+				cfg.PetersburgBlock = big.NewInt(50)
+			},
+			wantErr: "invalid chain config: wrong fork switch order: ConstantinopleBlock 200 > PetersburgBlock 50: declare PetersburgBlock at or after ConstantinopleBlock",
+		},
+		{
+			// Nothing after Petersburg is scheduled, so the sequence scan cannot
+			// block the drop; the pair check alone does, because Constantinople
+			// is declared and there is no cancellation-fee fallback.
+			name: "petersburg below constantinople with nothing scheduled after it",
+			mutate: func(cfg *ChainConfig) {
+				cfg.TIPSigningBlock = big.NewInt(200)
+				cfg.TIPRandomizeBlock = big.NewInt(200)
+				cfg.TIPIncreaseMasternodesBlock = big.NewInt(200)
+				cfg.DenylistBlock = big.NewInt(200)
+				cfg.TIPNoHalvingMNRewardBlock = big.NewInt(200)
+				cfg.TIPXDCXBlock = big.NewInt(200)
+				cfg.TIPXDCXLendingBlock = big.NewInt(200)
+				cfg.TIPXDCXCancellationFeeBlock = nil
+				cfg.ConstantinopleBlock = big.NewInt(200)
+				cfg.PetersburgBlock = big.NewInt(50)
+				cfg.IstanbulBlock = nil
+				cfg.EIP1559Block = nil
+				cfg.ShanghaiBlock = nil
+				cfg.PragueBlock = nil
+				cfg.OsakaBlock = nil
+				cfg.AmsterdamBlock = nil
+			},
+			wantErr: "invalid chain config: wrong fork switch order: ConstantinopleBlock 200 > PetersburgBlock 50: declare PetersburgBlock at or after ConstantinopleBlock",
+		},
+		{
+			// Dropping Petersburg is the fix here: nothing after it in the
+			// sequence is scheduled and Constantinople stays unset, so neither
+			// the sequence scan nor the pair check rejects the result. The hint
+			// must offer that repair.
+			name: "petersburg below the lending fork with nothing scheduled after it",
+			mutate: func(cfg *ChainConfig) {
+				cfg.TIPSigningBlock = big.NewInt(200)
+				cfg.TIPRandomizeBlock = big.NewInt(200)
+				cfg.TIPIncreaseMasternodesBlock = big.NewInt(200)
+				cfg.DenylistBlock = big.NewInt(200)
+				cfg.TIPNoHalvingMNRewardBlock = big.NewInt(200)
+				cfg.TIPXDCXBlock = big.NewInt(200)
+				cfg.TIPXDCXLendingBlock = big.NewInt(200)
+				cfg.TIPXDCXCancellationFeeBlock = nil
+				cfg.ConstantinopleBlock = nil
+				cfg.PetersburgBlock = big.NewInt(50)
+				cfg.IstanbulBlock = nil
+				cfg.EIP1559Block = nil
+				cfg.ShanghaiBlock = nil
+				cfg.PragueBlock = nil
+				cfg.OsakaBlock = nil
+				cfg.AmsterdamBlock = nil
+			},
+			wantErr: "invalid chain config: wrong fork switch order: TIPXDCXLendingBlock 200 > PetersburgBlock 50: declare PetersburgBlock at or after TIPXDCXLendingBlock, or leave it unset",
+		},
+		{
+			// A later standard fork keeps the drop from being a fix, because the
+			// sequence scan then reports the dropped slot as missing.
+			name: "petersburg below the lending fork with a later standard fork scheduled",
+			mutate: func(cfg *ChainConfig) {
+				cfg.TIPSigningBlock = big.NewInt(200)
+				cfg.TIPRandomizeBlock = big.NewInt(200)
+				cfg.TIPIncreaseMasternodesBlock = big.NewInt(200)
+				cfg.DenylistBlock = big.NewInt(200)
+				cfg.TIPNoHalvingMNRewardBlock = big.NewInt(200)
+				cfg.TIPXDCXBlock = big.NewInt(200)
+				cfg.TIPXDCXLendingBlock = big.NewInt(200)
+				cfg.TIPXDCXCancellationFeeBlock = nil
+				cfg.ConstantinopleBlock = nil
+				cfg.PetersburgBlock = big.NewInt(50)
+				cfg.IstanbulBlock = nil
+				cfg.EIP1559Block = big.NewInt(300)
+				cfg.ShanghaiBlock = nil
+				cfg.PragueBlock = nil
+				cfg.OsakaBlock = nil
+				cfg.AmsterdamBlock = nil
+			},
+			wantErr: "invalid chain config: wrong fork switch order: TIPXDCXLendingBlock 200 > PetersburgBlock 50: declare PetersburgBlock at or after TIPXDCXLendingBlock",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := TestnetChainConfig.Clone()
+			test.mutate(cfg)
+			err := cfg.CheckConfigForkOrder()
+			if err == nil {
+				t.Fatal("CheckConfigForkOrder accepted a config that must be rejected")
+			}
+			if err.Error() != test.wantErr {
+				t.Fatalf("unexpected error:\nhave=%v\nwant=%v", err.Error(), test.wantErr)
+			}
+		})
+	}
+}
+
+// TestCheckConfigForkOrderAcceptsEthereumTrioAtOrAfterTheXDCAnchor mirrors
+// TestCheckConfigForkOrderRejectsEthereumTrioBeforeTheXDCAnchor: declaring the
+// trio at or after the XDC anchor keeps a custom config valid, which is the
+// shape the built-in networks now use.
+func TestCheckConfigForkOrderAcceptsEthereumTrioAtOrAfterTheXDCAnchor(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*ChainConfig)
+	}{
+		{
+			// The built-in shape: the trio declared at the anchor height
+			// (mainnet 38383838, testnet 23779191).
+			name: "constantinople, petersburg and istanbul at the anchor height",
+			mutate: func(cfg *ChainConfig) {
+				anchor := cfg.TIPXDCXCancellationFeeBlock
+				cfg.ConstantinopleBlock = new(big.Int).Set(anchor)
+				cfg.PetersburgBlock = new(big.Int).Set(anchor)
+				cfg.IstanbulBlock = new(big.Int).Set(anchor)
+			},
+		},
+		{
+			// The trio is accepted anywhere between the anchor and the next
+			// declared fork; here TIPTRC21FeeBlock - the fork scanned right
+			// after the trio (config_backfill_fields.json keys 18 and 19) -
+			// moves up to keep that window open.
+			name: "constantinople, petersburg and istanbul between the anchor and the next declared fork",
+			mutate: func(cfg *ChainConfig) {
+				anchor := cfg.TIPXDCXCancellationFeeBlock
+				cfg.TIPTRC21FeeBlock = new(big.Int).Add(anchor, big.NewInt(2))
+				cfg.ConstantinopleBlock = new(big.Int).Add(anchor, big.NewInt(1))
+				cfg.PetersburgBlock = new(big.Int).Add(anchor, big.NewInt(1))
+				cfg.IstanbulBlock = new(big.Int).Add(anchor, big.NewInt(1))
+			},
+		},
+		{
+			// Same shape as Localnet: the trio stays undeclared.
+			name: "constantinople, petersburg and istanbul undeclared",
+			mutate: func(cfg *ChainConfig) {
+				cfg.ConstantinopleBlock = nil
+				cfg.PetersburgBlock = nil
+				cfg.IstanbulBlock = nil
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := TestnetChainConfig.Clone()
+			test.mutate(cfg)
+			if err := cfg.CheckConfigForkOrder(); err != nil {
+				t.Fatalf("CheckConfigForkOrder refused a config that must be accepted: %v", err)
+			}
+		})
+	}
 }
 
 func TestForEachChainConfigForkOrderBlockMarksTIPTRC21FeeBlockOptional(t *testing.T) {

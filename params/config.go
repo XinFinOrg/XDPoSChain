@@ -512,6 +512,55 @@ func forkSequenceError(missing, scheduled string, value *big.Int) error {
 	return fmt.Errorf("invalid chain config: %w: %s is unset, but %s %v is scheduled", ErrWrongForkSwitchOrder, missing, scheduled, value)
 }
 
+// forkOrderError reports a fork that activates before its predecessor. The
+// ordered scan and the special-case rules both reject through this wording, so
+// it stays written once.
+func forkOrderError(before string, beforeValue *big.Int, after string, afterValue *big.Int, hint string) error {
+	return fmt.Errorf("invalid chain config: %w: %s %v > %s %v: declare %s at or after %s%s", ErrWrongForkSwitchOrder, before, beforeValue, after, afterValue, after, before, hint)
+}
+
+// chainConfigMandatoryXDCForkFields lists the fork fields an XDC-shaped config
+// must declare. CheckConfigForkOrder validates them up front, and the fork-order
+// diagnostics must not suggest dropping any of them.
+var chainConfigMandatoryXDCForkFields = []string{"TIPTRC21FeeBlock", "Gas50xBlock"}
+
+// chainConfigForkOrderSlotCanBeDropped reports whether leaving the named
+// required slot unset still passes the sequence checks. Dropping a required
+// slot is only a fix when nothing after it in the sequence is scheduled: the
+// scan then reports the dropped slot as missing. Petersburg is not covered by
+// that scan when the schedule stops at Constantinople, so its pair check is
+// consulted instead, through the same effective-value rule the check uses.
+func chainConfigForkOrderSlotCanBeDropped(cfg *ChainConfig, name string) bool {
+	var (
+		seen    bool
+		blocked bool
+	)
+	ForEachChainConfigForkSequenceBlock(cfg, func(slot string, value *big.Int, required bool) {
+		if blocked {
+			return
+		}
+		if slot == name {
+			seen = true
+			return
+		}
+		if !seen || !required {
+			return
+		}
+		if effective, _ := chainConfigForkSequenceEffectiveValue(cfg, slot, value); effective != nil {
+			blocked = true
+		}
+	})
+	if !seen || blocked {
+		return false
+	}
+	if name == chainConfigPetersburgBlockField {
+		if value, _ := chainConfigForkSequenceEffectiveValue(cfg, name, nil); value == nil && cfg.ConstantinopleBlock != nil {
+			return false
+		}
+	}
+	return true
+}
+
 // CheckConfigForkOrder validates that configured forks, required addresses, and
 // XDPoS settings are internally consistent and activate in a supported order.
 func (c *ChainConfig) CheckConfigForkOrder() error {
@@ -527,13 +576,16 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 	if c.ChainID == nil {
 		return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "ChainID")
 	}
-	if c.requiresXDCForkConfig() && c.TIPTRC21FeeBlock == nil {
-		return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "TIPTRC21FeeBlock")
-	}
-	if c.requiresXDCForkConfig() && c.Gas50xBlock == nil {
-		return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "Gas50xBlock")
-	}
 	if c.requiresXDCForkConfig() {
+		for _, name := range chainConfigMandatoryXDCForkFields {
+			field, ok := chainConfigForkBlockFieldByName(name)
+			if !ok {
+				panic("chain config mandatory fork field is not a known fork field: " + name)
+			}
+			if field.get(c) == nil {
+				return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, name)
+			}
+		}
 		requiredAddresses := make([]requiredAddress, 0, len(chainConfigXDCSystemContractFields))
 		for _, field := range chainConfigXDCSystemContractFields {
 			requiredAddresses = append(requiredAddresses, requiredAddress{name: field.name, value: field.get(c)})
@@ -544,6 +596,23 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 			}
 		}
 	}
+	// A field can be dropped outright unless the config shape demands it: the
+	// mandatory XDC fork fields are checked above, and a required sequence slot
+	// can only be dropped when nothing after it in the sequence is scheduled.
+	unsetHint := func(name string) string {
+		if c.requiresXDCForkConfig() && slices.Contains(chainConfigMandatoryXDCForkFields, name) {
+			return ""
+		}
+		for _, field := range chainConfigForkOrderFields {
+			if field.field.name == name && field.required {
+				if chainConfigForkOrderSlotCanBeDropped(c, name) {
+					return ", or leave it unset"
+				}
+				return ""
+			}
+		}
+		return ", or leave it unset"
+	}
 	var lastFork fork
 	var forkOrderErr error
 	ForEachChainConfigForkOrderBlock(c, func(name string, block *big.Int, optional bool) {
@@ -552,7 +621,7 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		}
 		cur := fork{name: name, block: block, optional: optional}
 		if lastFork.name != "" && lastFork.block != nil && cur.block != nil && lastFork.block.Cmp(cur.block) > 0 {
-			forkOrderErr = fmt.Errorf("invalid chain config: %w: %s %v > %s %v", ErrWrongForkSwitchOrder, lastFork.name, lastFork.block, cur.name, cur.block)
+			forkOrderErr = forkOrderError(lastFork.name, lastFork.block, cur.name, cur.block, unsetHint(cur.name))
 			return
 		}
 		if !cur.optional || cur.block != nil {
@@ -605,7 +674,7 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 			continue
 		}
 		if before.Cmp(after) > 0 {
-			return fmt.Errorf("invalid chain config: %w: %s %v > %s %v", ErrWrongForkSwitchOrder, rule.before.name, before, rule.after.name, after)
+			return forkOrderError(rule.before.name, before, rule.after.name, after, unsetHint(rule.after.name))
 		}
 	}
 	// The BASEFEE opcode is live from London, but XDC only fills the header base
@@ -705,15 +774,6 @@ func (c *ChainConfig) String() string {
 	if c.ByzantiumBlock != nil {
 		result += fmt.Sprintf(", Byzantium: %v", c.ByzantiumBlock)
 	}
-	if c.ConstantinopleBlock != nil {
-		result += fmt.Sprintf(", Constantinople: %v", c.ConstantinopleBlock)
-	}
-	if c.PetersburgBlock != nil {
-		result += fmt.Sprintf(", Petersburg: %v", c.PetersburgBlock)
-	}
-	if c.IstanbulBlock != nil {
-		result += fmt.Sprintf(", Istanbul: %v", c.IstanbulBlock)
-	}
 	if c.TIPSigningBlock != nil {
 		result += fmt.Sprintf(", TIPSigning: %v", c.TIPSigningBlock)
 	}
@@ -737,6 +797,15 @@ func (c *ChainConfig) String() string {
 	}
 	if c.TIPXDCXCancellationFeeBlock != nil {
 		result += fmt.Sprintf(", TIPXDCXCancellationFee: %v", c.TIPXDCXCancellationFeeBlock)
+	}
+	if c.ConstantinopleBlock != nil {
+		result += fmt.Sprintf(", Constantinople: %v", c.ConstantinopleBlock)
+	}
+	if c.PetersburgBlock != nil {
+		result += fmt.Sprintf(", Petersburg: %v", c.PetersburgBlock)
+	}
+	if c.IstanbulBlock != nil {
+		result += fmt.Sprintf(", Istanbul: %v", c.IstanbulBlock)
 	}
 	if c.TIPTRC21FeeBlock != nil {
 		result += fmt.Sprintf(", TIPTRC21Fee: %v", c.TIPTRC21FeeBlock)
@@ -842,9 +911,6 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - Tangerine Whistle (EIP 150): %-8v\n", c.EIP150Block)
 	banner += fmt.Sprintf("  - Spurious Dragon (EIP 155):   %-8v\n", c.EIP155Block)
 	banner += fmt.Sprintf("  - Byzantium:                   %-8v\n", c.ByzantiumBlock)
-	banner += fmt.Sprintf("  - Constantinople:              %-8v\n", c.ConstantinopleBlock)
-	banner += fmt.Sprintf("  - Petersburg:                  %-8v\n", c.PetersburgBlock)
-	banner += fmt.Sprintf("  - Istanbul:                    %-8v\n", c.IstanbulBlock)
 	banner += fmt.Sprintf("  - TIPSigning:                  %-8v\n", c.TIPSigningBlock)
 	banner += fmt.Sprintf("  - TIPRandomize:                %-8v\n", c.TIPRandomizeBlock)
 	banner += fmt.Sprintf("  - TIPIncreaseMasternodes:      %-8v\n", c.TIPIncreaseMasternodesBlock)
@@ -853,6 +919,9 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - TIPXDCX:                     %-8v\n", c.TIPXDCXBlock)
 	banner += fmt.Sprintf("  - TIPXDCXLending:              %-8v\n", c.TIPXDCXLendingBlock)
 	banner += fmt.Sprintf("  - TIPXDCXCancellationFee:      %-8v\n", c.TIPXDCXCancellationFeeBlock)
+	banner += fmt.Sprintf("  - Constantinople:              %-8v\n", c.ConstantinopleBlock)
+	banner += fmt.Sprintf("  - Petersburg:                  %-8v\n", c.PetersburgBlock)
+	banner += fmt.Sprintf("  - Istanbul:                    %-8v\n", c.IstanbulBlock)
 	banner += fmt.Sprintf("  - TIPTRC21Fee:                 %-8v\n", c.TIPTRC21FeeBlock)
 	banner += fmt.Sprintf("  - Berlin:                      %-8v\n", c.BerlinBlock)
 	banner += fmt.Sprintf("  - London:                      %-8v\n", c.LondonBlock)

@@ -310,23 +310,6 @@ var generatedChainConfigForkOrderFieldDefs = []struct {
 		required: true,
 	},
 	{
-		name:     "ConstantinopleBlock",
-		optional: alwaysOptionalChainConfigForkOrderField,
-		standard: true,
-	},
-	{
-		name:     "PetersburgBlock",
-		optional: alwaysOptionalChainConfigForkOrderField,
-		standard: true,
-		required: true,
-	},
-	{
-		name:     "IstanbulBlock",
-		optional: alwaysOptionalChainConfigForkOrderField,
-		standard: true,
-		required: true,
-	},
-	{
 		name:     "TIPSigningBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
 	},
@@ -357,6 +340,23 @@ var generatedChainConfigForkOrderFieldDefs = []struct {
 	{
 		name:     "TIPXDCXCancellationFeeBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+	},
+	{
+		name:     "ConstantinopleBlock",
+		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+	},
+	{
+		name:     "PetersburgBlock",
+		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
+	},
+	{
+		name:     "IstanbulBlock",
+		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
 	},
 	{
 		name:     "TIPTRC21FeeBlock",
