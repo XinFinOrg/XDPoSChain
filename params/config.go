@@ -796,9 +796,9 @@ func (c *ChainConfig) Description() string {
 	banner += ":\n"
 	banner += fmt.Sprintf("  - ChainID:                     %-8v\n", c.ChainID)
 	banner += fmt.Sprintf("  - Homestead:                   %-8v\n", c.HomesteadBlock)
+	banner += fmt.Sprintf("  - TIP2019:                     %-8v\n", c.TIP2019Block)
 	banner += fmt.Sprintf("  - DAO Fork:                    %-8v\n", c.DAOForkBlock)
 	banner += fmt.Sprintf("  - DAO Support:                 %-8v\n", c.DAOForkSupport)
-	banner += fmt.Sprintf("  - TIP2019:                     %-8v\n", c.TIP2019Block)
 	banner += fmt.Sprintf("  - Tangerine Whistle (EIP 150): %-8v\n", c.EIP150Block)
 	banner += fmt.Sprintf("  - Spurious Dragon (EIP 155):   %-8v\n", c.EIP155Block)
 	banner += fmt.Sprintf("  - Byzantium:                   %-8v\n", c.ByzantiumBlock)

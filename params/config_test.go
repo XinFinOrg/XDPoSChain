@@ -1413,13 +1413,16 @@ func TestChainConfigStringIncludesAllFields(t *testing.T) {
 	}
 }
 
-// TestChainConfigRenderingFollowsForkOrder pins the placement of the six fork
-// fields this change moves, plus TIPEpochHalving that follows them, in String
-// and Description. The expected order is read off chainConfigForkOrderFields, so
-// a later renumbering carries the expectation with it instead of leaving the
+// TestChainConfigRenderingFollowsForkOrder pins the eight fork fields whose fork
+// order entry and rendering order had diverged - the six that #2811 renumbered,
+// plus TIP2019 and DAOFork - along with TIPEpochHalving, the field that follows
+// them in fork order. The expected order is read off chainConfigForkOrderFields,
+// so a later renumbering carries the expectation with it instead of leaving the
 // renderings behind.
 func TestChainConfigRenderingFollowsForkOrder(t *testing.T) {
 	pinned := map[string]struct{}{
+		"TIP2019Block":           {},
+		"DAOForkBlock":           {},
 		"DynamicGasLimitBlock":   {},
 		"TIPUpgradeRewardBlock":  {},
 		"TIPUpgradePenaltyBlock": {},
@@ -1438,25 +1441,34 @@ func TestChainConfigRenderingFollowsForkOrder(t *testing.T) {
 
 	config := &ChainConfig{
 		ChainID:                big.NewInt(1),
-		DynamicGasLimitBlock:   big.NewInt(1),
-		TIPUpgradeRewardBlock:  big.NewInt(2),
-		TIPUpgradePenaltyBlock: big.NewInt(3),
-		PragueBlock:            big.NewInt(4),
-		OsakaBlock:             big.NewInt(5),
-		AmsterdamBlock:         big.NewInt(6),
-		TIPEpochHalvingBlock:   big.NewInt(7),
+		TIP2019Block:           big.NewInt(1),
+		DAOForkBlock:           big.NewInt(2),
+		DynamicGasLimitBlock:   big.NewInt(3),
+		TIPUpgradeRewardBlock:  big.NewInt(4),
+		TIPUpgradePenaltyBlock: big.NewInt(5),
+		PragueBlock:            big.NewInt(6),
+		OsakaBlock:             big.NewInt(7),
+		AmsterdamBlock:         big.NewInt(8),
+		TIPEpochHalvingBlock:   big.NewInt(9),
 	}
 	for _, rendering := range []struct {
 		name   string
 		prefix string
 		text   string
+		label  func(string) string
 	}{
-		{name: "String", prefix: ", ", text: config.String()},
-		{name: "Description", prefix: "  - ", text: config.Description()},
+		{name: "String", prefix: ", ", text: config.String(), label: func(name string) string { return name }},
+		{name: "Description", prefix: "  - ", text: config.Description(), label: func(name string) string {
+			if name == "DAOFork" {
+				return "DAO Fork"
+			}
+			return name
+		}},
 	} {
 		t.Run(rendering.name, func(t *testing.T) {
 			previous := -1
-			for _, label := range want {
+			for _, field := range want {
+				label := rendering.label(field)
 				index := strings.Index(rendering.text, rendering.prefix+label+":")
 				if index < 0 {
 					t.Fatalf("%s does not list %s: %q", rendering.name, label, rendering.text)
