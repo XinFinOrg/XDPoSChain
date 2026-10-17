@@ -4,13 +4,13 @@
 
 XDPoSChain compatibility is determined by the target EVM version, not by a single Solidity compiler version.
 
-Current network activation block numbers:
+Scheduled network activation block numbers (TBD means no activation block is scheduled):
 
-| Network |   Cancun | Prague | Osaka | Amsterdam |
-| :-----: | -------: | :----: | :---: | :-------: |
-| mainnet | 98802000 |  TBD   |  TBD  |    TBD    |
-| testnet | 71551800 |  TBD   |  TBD  |    TBD    |
-| devnet  |    25000 |  50000 |  TBD  |    TBD    |
+| Network |   Cancun |   Prague | Osaka | Amsterdam |
+| :------ | -------: | -------: | ----: | --------: |
+| mainnet | 98802000 |      TBD |   TBD |       TBD |
+| testnet | 71551800 | 87633000 |   TBD |       TBD |
+| devnet  |    25000 |    50000 |   TBD |       TBD |
 
 Recommended compiler settings:
 
@@ -32,13 +32,13 @@ Notes:
 
 ## Transaction and block size limits
 
-XDPoSChain enforces neither of the two caps Osaka introduces on Ethereum: EIP-7825 limits a transaction to 16,777,216 gas and EIP-7934 limits an RLP-encoded block to 8 MiB. Both are implemented here and both are gated behind Osaka, which no network has scheduled yet, so neither applies today. For reference, the public networks run with a block gas limit of 420,000,000, set through the node's `--targetgaslimit`; the in-repository default (`XDCGenesisGasLimit`) is 42,000,000.
+XDPoSChain enforces neither of the two caps Osaka introduces on Ethereum: EIP-7825 limits a transaction to 16,777,216 gas and EIP-7934 limits an RLP-encoded block to 8 MiB. Both are implemented here and both are gated behind Osaka, which no real network has scheduled yet, so neither applies today. For reference, the public networks run with a block gas limit of 420,000,000, set through the node's `--targetgaslimit`; the in-repository default (`XDCGenesisGasLimit`) is 42,000,000.
 
 A transaction or deployment that spends more than 16,777,216 gas therefore succeeds here but cannot be replayed on an Ethereum network that runs those caps, which makes such artifacts migrate one way only. Stay below the cap if the contract has to remain portable.
 
 Both caps take effect by themselves once Osaka is scheduled and active.
 
-Contract code and initcode are limited separately, by EIP-7954: 24,576 bytes of code and 49,152 of initcode today, rising to 65,536 and 131,072 once Amsterdam is active. That raise is gated on Amsterdam, which is where upstream go-ethereum has it, not on Osaka. No network has scheduled Amsterdam, so the lower pair applies everywhere today.
+Contract code and initcode are limited separately, by EIP-7954: 24,576 bytes of code and 49,152 of initcode today, rising to 65,536 and 131,072 once Amsterdam is active. That raise is gated on Amsterdam, which is where upstream go-ethereum has it, not on Osaka. No real network has scheduled Amsterdam, so the lower pair applies on every real network today.
 
 ## Prague / EIP-2935
 
@@ -73,7 +73,7 @@ Read the floor from the node with `eth_gasPrice` instead of hardcoding it.
 
 ### blobhash()
 
-XDPoSChain has no blob transactions (transaction type `0x03`) and no blob fields in the block header, so `blobhash(i)` always returns 0. That is the out-of-bounds value defined by EIP-4844, so `require(blobhash(i) != 0)` reverts as expected. The KZG point evaluation precompile (`0x0a`) is not implemented. On the networks that run the Prague precompile set (devnet from block 50000, localnet from the genesis block) its address is registered and every call to it fails, consuming the gas of the frame. No network runs the Osaka set yet, because every network configuration still leaves `osakaBlock` unset. On mainnet and Apothem, whose Prague and Osaka blocks are still unset, the address is not registered at all, so a call to it is handled as a call to an empty account: it succeeds and returns empty output.
+XDPoSChain has no blob transactions (transaction type `0x03`) and no blob fields in the block header, so `blobhash(i)` always returns 0. That is the out-of-bounds value defined by EIP-4844, so `require(blobhash(i) != 0)` reverts as expected. The KZG point evaluation precompile (`0x0a`) is not implemented. On the networks that run the Prague precompile set (devnet from block 50000, localnet from the genesis block) its address is registered and every call to it fails, consuming the gas of the frame. No real network runs the Osaka set yet, because none of them sets `osakaBlock`. On mainnet and Apothem, where Prague is not active yet (Apothem has it scheduled at 87633000) and Osaka is unset, the address is not registered at all, so a call to it is handled as a call to an empty account: it succeeds and returns empty output.
 
 ### block.blobbasefee
 
