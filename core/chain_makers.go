@@ -253,7 +253,10 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 
 		if b.engine != nil {
 			// Finalize and seal the block
-			block, _ := b.engine.Finalize(chainReader, b.header, statedb, statedb.Copy(), b.txs, b.uncles, b.receipts)
+			block, err := b.engine.Finalize(chainReader, b.header, statedb, statedb.Copy(), b.txs, b.uncles, b.receipts)
+			if err != nil {
+				panic(fmt.Sprintf("finalize error: %v", err))
+			}
 			// Write state changes to db
 			root, err := statedb.Commit(b.header.Number.Uint64(), config.IsEIP158(b.header.Number))
 			if err != nil {
