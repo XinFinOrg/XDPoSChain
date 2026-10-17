@@ -67,6 +67,16 @@ func TestBindLibraryDeploymentWait(t *testing.T) {
 			t.Errorf("test %q: generated binding substitutes library addresses into the package-level bytecode\n%s", test.name, code)
 		}
 		if !test.want {
+			// Without library dependencies there is no nonce to chain and no
+			// opts to copy.
+			for _, unwanted := range []string{
+				"opts := *auth",
+				"auth.Nonce = new(big.Int).SetUint64(tx.Nonce() + 1)",
+			} {
+				if strings.Contains(code, unwanted) {
+					t.Errorf("test %q: generated binding contains %q without library dependencies\n%s", test.name, unwanted, code)
+				}
+			}
 			continue
 		}
 		if want := `linkedBin = strings.ReplaceAll(linkedBin, "__$` + libPattern + `$__", libAddr.String0x()[2:])`; !strings.Contains(code, want) {
@@ -142,6 +152,34 @@ func TestBindLibraryDeploymentWait(t *testing.T) {
 		timeout := strings.Index(code, "ctx, cancel := context.WithTimeout(waitCtx, 5*time.Second)")
 		if waitCtx < 0 || authCtx < waitCtx || timeout < authCtx {
 			t.Errorf("test %q: generated binding does not derive the acceptance wait timeout from auth.Context\n%s", test.name, code)
+		}
+		// Deploying a chain of library dependencies has to advance the nonce
+		// itself: the pool updates its pending nonce asynchronously, so asking it
+		// for the next one can hand back the library's nonce and fail with
+		// "replacement transaction underpriced" (geth #35888). Advancing the nonce
+		// must not touch the caller's opts, hence the copy, and it must only
+		// happen for transactions that were actually submitted.
+		for _, want := range []string{
+			"opts := *auth",
+			"auth = &opts",
+			"auth.Nonce = new(big.Int).SetUint64(tx.Nonce() + 1)",
+		} {
+			if !strings.Contains(code, want) {
+				t.Errorf("test %q: generated binding does not contain %q\n%s", test.name, want, code)
+			}
+		}
+		// The bump has to sit between the acceptance wait and whatever follows it:
+		// the library transaction is only known to be in the chain once accepted,
+		// and the next deployment must not ask the pool for a stale nonce.
+		bump := strings.Index(code, "auth.Nonce = new(big.Int).SetUint64(tx.Nonce() + 1)")
+		if bump < 0 || waitLine < 0 || bump < waitLine {
+			t.Errorf("test %q: generated binding does not chain the nonce after the acceptance wait\n%s", test.name, code)
+		}
+		// A transaction that is not submitted at all cannot move the pool, so the
+		// bump belongs inside the NoSend guard rather than after it.
+		bumpLine := lineOf("auth.Nonce = new(big.Int).SetUint64(tx.Nonce() + 1)")
+		if guardLine < 0 || guardEnd < 0 || bumpLine < guardLine || bumpLine > guardEnd {
+			t.Errorf("test %q: generated binding chains the nonce outside the NoSend guard\n%s", test.name, code)
 		}
 	}
 }
