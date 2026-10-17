@@ -24,7 +24,9 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 	"text/template"
 	"unicode"
@@ -126,7 +128,11 @@ func Bind(types []string, abis []string, bytecodes []string, fsigs []map[string]
 			}
 		}
 
-		for _, original := range evmABI.Methods {
+		// Walk the methods in a stable order: two methods can normalize to the
+		// same identifier, and which one of them is the one that gets a suffix
+		// from resolveNameConflict must not depend on map iteration order.
+		for _, name := range slices.Sorted(maps.Keys(evmABI.Methods)) {
+			original := evmABI.Methods[name]
 			// Normalize the method for capital cases and non-anonymous inputs/outputs
 			normalized := original
 			normalizedName := abi.ToCamelCase(alias(aliases, original.Name))
@@ -176,7 +182,10 @@ func Bind(types []string, abis []string, bytecodes []string, fsigs []map[string]
 				transacts[original.Name] = &tmplMethod{Original: original, Normalized: normalized, Structured: structured(original.Outputs)}
 			}
 		}
-		for _, original := range evmABI.Events {
+		// Same reasoning as for the methods above: the identifier an event ends
+		// up with must not depend on map iteration order.
+		for _, name := range slices.Sorted(maps.Keys(evmABI.Events)) {
+			original := evmABI.Events[name]
 			// Skip anonymous events as they don't support explicit filtering
 			if original.Anonymous {
 				continue
