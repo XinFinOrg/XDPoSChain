@@ -1,12 +1,15 @@
 package XDPoS
 
 import (
+	"bytes"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/stretchr/testify/assert"
 )
@@ -133,4 +136,43 @@ func TestCacheNoneTIPSigningTxsWithRawReceiptRoundTrip(t *testing.T) {
 
 	assert.Len(t, cached, 1)
 	assert.Equal(t, signingTx.Hash(), cached[0].Hash())
+}
+
+// TestHandleProposedBlockSkipsNilHeader pins the wrapper-side nil-header
+// contract: the adaptor dispatches on BlockConsensusVersion(header.Number)
+// before the engine's own guard can run, so the wrapper must judge the nil
+// shapes itself — no panic, an Error-grade skip (a caller bug is graded
+// like a wiring bug), nil returned, and the engine is never reached.
+func TestHandleProposedBlockSkipsNilHeader(t *testing.T) {
+	database := rawdb.NewMemoryDatabase()
+	config := params.TestXDPoSMockChainConfig
+	engine, err := New(config, database)
+	assert.NoError(t, err)
+
+	// Capture the wrapper's logs and assert the nil-header skip surfaces
+	// at Error — a caller bug, graded like the wiring bugs.
+	var logBuf bytes.Buffer
+	prevLog := log.Root()
+	glog := log.NewGlogHandler(log.NewTerminalHandlerWithLevel(&logBuf, log.LevelInfo, false))
+	glog.Verbosity(log.LevelInfo)
+	log.SetDefault(log.NewLogger(glog))
+	defer log.SetDefault(prevLog)
+
+	// Both nil shapes must be judged before BlockConsensusVersion
+	// dereferences header.Number: a fully nil header and a header
+	// without a number.
+	shapes := map[string]*types.Header{"nil": nil, "nil number": {}}
+	for name, header := range shapes {
+		assert.Nil(t, engine.HandleProposedBlock(nil, header),
+			"a %s header is a caller bug and must skip, not panic or error", name)
+	}
+
+	found := 0
+	for _, line := range strings.Split(logBuf.String(), "\n") {
+		if strings.Contains(line, "skip block: nil header") {
+			assert.True(t, strings.HasPrefix(line, "ERROR"), "nil-header skip must log at Error, got line %q", line)
+			found++
+		}
+	}
+	assert.Equal(t, 2, found, "both nil shapes must be logged, have %q", logBuf.String())
 }
