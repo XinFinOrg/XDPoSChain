@@ -312,7 +312,7 @@ func (st *stateTransition) buyGas() error {
 	return nil
 }
 
-func (st *stateTransition) preCheck() error {
+func (st *stateTransition) preCheck(rules params.Rules) error {
 	// Only check transactions that are not fake
 	msg := st.msg
 	if !msg.SkipNonceChecks {
@@ -367,8 +367,15 @@ func (st *stateTransition) preCheck() error {
 			}
 		}
 	}
+	// Check that the access list is only present once EIP-2930 is active
+	if msg.AccessList != nil && !rules.IsBerlin {
+		return fmt.Errorf("%w: access list tx (sender %v)", ErrTxTypeNotSupported, msg.From)
+	}
 	// Check that EIP-7702 authorization list signatures are well formed.
 	if msg.SetCodeAuthorizations != nil {
+		if !rules.IsPrague {
+			return fmt.Errorf("%w: setcode tx (sender %v)", ErrTxTypeNotSupported, msg.From)
+		}
 		if msg.To == nil {
 			return fmt.Errorf("%w (sender %v)", ErrSetCodeTxCreate, msg.From)
 		}
@@ -400,14 +407,14 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 	// 5. there is no overflow when calculating intrinsic gas
 	// 6. caller has enough balance to cover asset transfer for **topmost** call
 
+	rules := st.evm.ChainConfig().Rules(st.evm.Context.BlockNumber)
 	// Check clauses 1-3, buy gas if everything is correct
-	if err := st.preCheck(); err != nil {
+	if err := st.preCheck(rules); err != nil {
 		return nil, err
 	}
 
 	var (
 		msg              = st.msg
-		rules            = st.evm.ChainConfig().Rules(st.evm.Context.BlockNumber)
 		contractCreation = msg.To == nil
 		floorDataGas     uint64
 	)

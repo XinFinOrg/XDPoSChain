@@ -2650,6 +2650,7 @@ func TestEIP2718Transition(t *testing.T) {
 		gspec   = &Genesis{
 			Config: &params.ChainConfig{
 				ChainID:                big.NewInt(1337),
+				BerlinBlock:            big.NewInt(0),
 				HomesteadBlock:         big.NewInt(0),
 				DAOForkBlock:           nil,
 				DAOForkSupport:         true,

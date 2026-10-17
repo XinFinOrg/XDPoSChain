@@ -5849,6 +5849,7 @@ func TestCreateAccessListWithoutTRC21Issuer(t *testing.T) {
 	backendCfg.config = &params.ChainConfig{
 		ChainID:        big.NewInt(1338),
 		HomesteadBlock: new(big.Int),
+		BerlinBlock:    new(big.Int),
 		Ethash:         new(params.EthashConfig),
 	}
 
