@@ -145,7 +145,7 @@ The practical rule is: if a field needs to distinguish "explicit zero/false/null
 | ------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Built-in network          | Matching bundled config for that genesis hash                            | Full missing-field backfill through `BackfillMissingFieldsFrom`. This includes all supported built-in fork fields, system-contract addresses, and XDPoS fields.                                                                                                                                                                                                                   |
 | Localnet                  | `params.LocalnetChainConfig`                                             | Full missing-field backfill through `BackfillMissingFieldsFrom`.                                                                                                                                                                                                                                                                                                                  |
-| Custom network            | `params.LocalnetChainConfig`                                             | Narrow compatibility backfill through `BackfillCustomMigratedFieldsFrom`. Only the historical migrated custom-network fields are backfilled, plus `XDPoS.MaxMasternodesV2`.                                                                                                                                                                                                       |
+| Custom network            | `params.LocalnetChainConfig`                                             | Narrow compatibility backfill through `BackfillCustomMigratedFieldsFrom`; the fields it covers are listed below.                                                                                                                                                                                                                                                                  |
 | Same-hash custom override | Stored custom config for that data directory, using custom-network rules | The chain remains custom for restart purposes. It only receives the same narrow custom compatibility backfill as an ordinary custom network: the historical migrated custom-network fields, migrated system-contract addresses, and `XDPoS.MaxMasternodesV2`. It does not inherit new built-in fork flags automatically just because the genesis hash matches a built-in network. |
 
 For ordinary custom XDPoS networks and same-hash custom override networks, the narrow backfill covers:
@@ -346,11 +346,11 @@ Recommended operator workflow:
 
 ## Minimal Upgrade Checklist For Strict XDC Fork Config Validation
 
-Nodes now reject any chain config that enables XDPoS or any XDC-specific fork field unless the following strict required fields are resolved to non-zero usable values.
+Nodes now reject any chain config that enables XDPoS or any XDC-specific fork field unless the following strict required fields are resolved: fork switches to a block number (`0` means active from genesis) and system-contract addresses to non-zero addresses.
 
 Operator checklist before the first restart on the upgraded binary:
 
-- Confirm which authoritative source you will trust for the repair: the persisted chain-config blob in the data directory, or the external `genesis.json` used for `XDC init` or writable repair.
+- Confirm which authoritative source you will trust for the repair: the persisted chain-config blob in the data directory, or the external `genesis.json` used for `XDC init` or writable repair. The field names below are Go names; the `genesis.json` keys are the JSON names shown in the example further down.
 - Confirm that source explicitly declares every required field below.
 
 Top-level XDC fork and system-contract fields:
@@ -395,7 +395,7 @@ Minimal `genesis.json` example for a custom XDPoS chain:
 
 - Use this as a shape reference for the strict-validation fields, not as a production template.
 - Replace the addresses, `chainId`, fork heights, and reward values with the authoritative values for your network.
-- The fork block values shown as `0` only demonstrate that the field must be declared. They are not universally valid defaults for an existing private chain.
+- The fork block values shown as `0` only demonstrate that the field must be declared. They are not universally valid defaults for an existing private chain. Also declare `pragueBlock`, `osakaBlock` and `amsterdamBlock` explicitly (`null` unless you schedule them), as the fork declaration requirement above asks.
 - If the chain is already initialized, merge these `config` fields into your existing `genesis.json`; do not change other genesis fields unless you intentionally want a different genesis hash.
 
 ```json
