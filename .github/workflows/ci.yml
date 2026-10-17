@@ -83,6 +83,52 @@ jobs:
         env:
           GO111MODULE: auto
 
+  # Runs the short suite under the race detector. It is a job of its own because
+  # the shards above each repeat the gofmt/tidy/generate steps, and because the
+  # detector is what makes an unsynchronised access visible at all (#2700).
+  race:
+    env:
+      GOPATH: ${{ github.workspace }}
+      GOBIN: ${{ github.workspace }}/bin
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.GOPATH }}/src/XDPoSChain
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+        with:
+          path: ${{ env.GOPATH }}/src/XDPoSChain
+      # Cache build tools to avoid downloading them each time
+      - uses: actions/cache@v5
+        with:
+          path: ${{ env.GOPATH }}/src/XDPoSChain/build/cache
+          key: ${{ runner.os }}-build-tools-cache-${{ hashFiles('**/build/checksums.txt') }}
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          cache: false
+          go-version: "1.25.x"
+      # The packages below still report races under the detector. Each one has its
+      # own ticket and its line is dropped from the exclusion as the ticket lands:
+      #   p2p         #2791  internal/testlog
+      #   p2p/enode   #2794  the tests write genIter.index without atomics
+      #   eth/bft     #2793  the handler tests read their counters without atomics
+      #   bmt         #2792  the hasher races between run() and finalise() (#2796 deletes the package)
+      # rpc is excluded for a different reason and runs in a step of its own below:
+      # TestClientWebsocketLargeMessage moves 32 MiB and gives up on the 30s liveness
+      # watchdog of the websocket codec while the package competes with others under
+      # the detector (two CI attempts, no data race reported in either).
+      - name: Run tests under the race detector
+        run: go run build/ci.go test -race -short -p 4 $(go list ./... | grep -vE "XDPoSChain/(bmt|eth/bft|p2p|p2p/enode|rpc)$")
+      - name: Run the rpc package under the race detector
+        run: go run build/ci.go test -race -short ./rpc/
+      # TestUniformSampleConcurrentUpdateCount guards Sample.Update against
+      # Sample.Count and skips itself in short mode, so the pass above never
+      # reaches it. See #2795.
+      - name: Run the short-mode race guard
+        run: go test -race -count=1 -run TestUniformSampleConcurrentUpdateCount ./metrics/
+
   tag_build:
     runs-on: ubuntu-latest
     needs: tests

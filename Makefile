@@ -41,6 +41,13 @@ test: all
 quick-test: all
 	go run build/ci.go test -short -failfast
 
+# race-test runs the whole short suite under the race detector. Unlike the race
+# job in .github/workflows/ci.yml it does not skip the packages that are still
+# known to race, so it exits non-zero until #2791, #2792, #2793 and #2794 land.
+#? race-test: Run tests under the race detector (short mode).
+race-test: all
+	go run build/ci.go test -race -short -p 4 -failfast
+
 #? lint: Run certain pre-selected linters.
 lint: ## Run linters.
 	$(GORUN) build/ci.go lint
