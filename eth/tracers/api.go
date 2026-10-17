@@ -26,6 +26,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/accounts"
@@ -1007,15 +1008,34 @@ func (api *API) traceTx(ctx context.Context, tx *types.Transaction, message *cor
 		}
 	}
 	deadlineCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	// The watcher must not stop a tracer whose execution already finished: the
+	// deferred cancel() fires it on every trace that ran to completion as well.
+	// The flag is set once the execution is over and before its result is read,
+	// so a watcher woken by the cancel the trace itself caused sees the trace as
+	// finished and never writes to the tracer while GetResult reads it. Watching
+	// a completion channel as well would leave the choice to select, which picks
+	// at random once both are closed, and would stop a tracer that already
+	// finished.
+	var finished atomic.Bool
 	go func() {
 		<-deadlineCtx.Done()
-		if errors.Is(deadlineCtx.Err(), context.DeadlineExceeded) {
-			tracer.Stop(errors.New("execution timeout"))
-			// Stop evm execution. Note cancellation is not necessarily immediate.
-			evm.Cancel()
+		if finished.Load() {
+			// The trace ran to completion, nothing to stop.
+			return
 		}
+		// Stop on any reason the deadline context is done, not only on its own
+		// timeout: a caller that went away cancels it, and the trace has to stop
+		// as well instead of running until the deadline it was given.
+		switch {
+		case errors.Is(deadlineCtx.Err(), context.DeadlineExceeded):
+			tracer.Stop(errors.New("execution timeout"))
+		default:
+			tracer.Stop(fmt.Errorf("execution aborted: %w", deadlineCtx.Err()))
+		}
+		// Stop evm execution. Note cancellation is not necessarily immediate.
+		evm.Cancel()
 	}()
-	defer cancel()
 
 	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	var balance *big.Int
@@ -1028,6 +1048,9 @@ func (api *API) traceTx(ctx context.Context, tx *types.Transaction, message *cor
 	// Call SetTxContext to clear out the statedb access list
 	statedb.SetTxContext(txctx.TxHash, txctx.TxIndex)
 	_, _, _, err = core.ApplyTransactionWithEVM(message, new(core.GasPool).AddGas(message.GasLimit), statedb, vmctx.BlockNumber, txctx.BlockHash, tx, &usedGas, evm, balance)
+	// The execution is over: a watcher woken from here on must leave the tracer
+	// alone, so mark the trace finished before its result is read.
+	finished.Store(true)
 	if err != nil {
 		return nil, fmt.Errorf("tracing failed: %w", err)
 	}
