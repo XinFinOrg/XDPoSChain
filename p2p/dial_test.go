@@ -401,7 +401,7 @@ func TestDialSchedulerCheckDialAllowsWhenNotConnected(t *testing.T) {
 	state := &dialScheduler{
 		dialConfig: dialConfig{},
 		dialing:    make(map[enode.ID]*dialTask),
-		peers:      make(map[enode.ID]connFlag),
+		peers:      make(map[enode.ID]struct{}),
 	}
 
 	err := state.checkDial(newNode(id, ""))
@@ -417,8 +417,8 @@ func TestDialSchedulerCheckDialRejectsWhenConnected(t *testing.T) {
 	state := &dialScheduler{
 		dialConfig: dialConfig{},
 		dialing:    make(map[enode.ID]*dialTask),
-		peers: map[enode.ID]connFlag{
-			id: dynDialedConn,
+		peers: map[enode.ID]struct{}{
+			id: struct{}{},
 		},
 	}
 
