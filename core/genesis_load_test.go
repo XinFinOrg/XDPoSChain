@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"math/big"
@@ -13,6 +14,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/startup"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	xdcgenesis "github.com/XinFinOrg/XDPoSChain/genesis"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
@@ -1258,4 +1260,268 @@ func capitalize(s string) string {
 		return s
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// storeDisabledTrioConfig commits the built-in mainnet genesis and rewrites
+// its stored chain config into the override shape that keeps the trio
+// disabled: the cancellation fee is an explicit null, the trio keys are
+// absent, and every standard fork after Istanbul is an explicit null. A
+// missing key would be backfilled from the source config at load, so the
+// disabled forks have to be present and null rather than absent.
+func storeDisabledTrioConfig(t *testing.T, db ethdb.Database) common.Hash {
+	t.Helper()
+	// Commit the real mainnet genesis so the load path resolves the stored
+	// override against the built-in mainnet config, which declares the trio. A
+	// custom chain would backfill from Localnet instead, where the trio is
+	// unset, and the gate could not be exercised at all.
+	block := DefaultGenesisBlock().MustCommit(db)
+
+	raw, err := rawdb.ReadChainConfigJSON(db, block.Hash())
+	if err != nil {
+		t.Fatalf("failed to read stored chain config: %v", err)
+	}
+	for _, field := range []string{"constantinopleBlock", "petersburgBlock", "istanbulBlock"} {
+		raw, err = removeTopLevelFieldFromRawConfig(raw, field)
+		if err != nil {
+			t.Fatalf("failed to remove %s from the stored config: %v", field, err)
+		}
+	}
+	for _, field := range []string{
+		"tipXDCXCancellationFeeBlock",
+		"berlinBlock", "londonBlock", "mergeBlock", "shanghaiBlock",
+		"cancunBlock", "eip1559Block", "pragueBlock", "osakaBlock", "amsterdamBlock",
+	} {
+		raw, err = setTopLevelFieldRawConfig(raw, field, json.RawMessage("null"))
+		if err != nil {
+			t.Fatalf("failed to disable %s in the stored config: %v", field, err)
+		}
+	}
+	if err := db.Put(testConfigKey(block.Hash()), raw); err != nil {
+		t.Fatalf("failed to write the stored chain config: %v", err)
+	}
+	// Mark the override as intentional: without the marker the load path treats
+	// a stored mainnet-hash config that differs from the built-in one as a
+	// conflict and never reaches the hydration decision.
+	rawdb.WriteChainConfigOverride(db, block.Hash())
+	return block.Hash()
+}
+
+// disabledTrioProvidedGenesis builds the provided-genesis variant of the same
+// shape, reusing the rewritten stored config so the JSON presence metadata of
+// the explicit nulls survives.
+func disabledTrioProvidedGenesis(t *testing.T) *Genesis {
+	t.Helper()
+	db := rawdb.NewMemoryDatabase()
+	hash := storeDisabledTrioConfig(t, db)
+	cfg, err := rawdb.ReadChainConfig(db, hash)
+	if err != nil {
+		t.Fatalf("failed to read the disabled-trio config: %v", err)
+	}
+	genesis := DefaultGenesisBlock()
+	genesis.Config = cfg
+	return genesis
+}
+
+// assertDisabledTrioConfig checks that a reload path left the disabled trio
+// unset and inactive: hydrating the built-in heights here would change the
+// execution rules from Byzantium to Istanbul on a chain that disabled them.
+func assertDisabledTrioConfig(t *testing.T, cfg *params.ChainConfig, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("reload failed: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected a resolved chain config")
+	}
+	for _, field := range []struct {
+		name string
+		got  *big.Int
+	}{
+		{name: "ConstantinopleBlock", got: cfg.ConstantinopleBlock},
+		{name: "PetersburgBlock", got: cfg.PetersburgBlock},
+		{name: "IstanbulBlock", got: cfg.IstanbulBlock},
+	} {
+		if field.got != nil {
+			t.Fatalf("%s must stay unset, have %v", field.name, field.got)
+		}
+	}
+	probe := big.NewInt(38383839)
+	if cfg.IsConstantinople(probe) || cfg.IsPetersburg(probe) || cfg.IsIstanbul(probe) {
+		t.Fatalf("the disabled trio must stay inactive at %v", probe)
+	}
+	if err := cfg.CheckConfigForkOrder(); err != nil {
+		t.Fatalf("CheckConfigForkOrder rejected the loaded config: %v", err)
+	}
+}
+
+// TestLoadChainConfigKeepsExplicitlyDisabledTrioInactive tests the two readonly
+// load paths: a stored override that declares the cancellation fee as null and
+// keeps every later fork off must not receive the built-in trio.
+func TestLoadChainConfigKeepsExplicitlyDisabledTrioInactive(t *testing.T) {
+	t.Run("stored", func(t *testing.T) {
+		db := rawdb.NewMemoryDatabase()
+		storeDisabledTrioConfig(t, db)
+		cfg, _, err := LoadChainConfig(db, nil)
+		assertDisabledTrioConfig(t, cfg, err)
+
+		cfg, _, _, err = LoadChainConfigWithCompat(db, nil)
+		assertDisabledTrioConfig(t, cfg, err)
+	})
+	t.Run("provided genesis", func(t *testing.T) {
+		db := rawdb.NewMemoryDatabase()
+		cfg, _, _, err := LoadChainConfigWithCompatWithOverride(db, disabledTrioProvidedGenesis(t), true)
+		assertDisabledTrioConfig(t, cfg, err)
+	})
+}
+
+// TestLoadChainConfigHydratesLegacyTrioBlobWithoutRewrite pins the upgrade
+// path: a stored config written by a binary that omitted the trio keys is
+// hydrated in memory, and because the result still matches the built-in
+// config the stored blob is left untouched.
+func TestLoadChainConfigHydratesLegacyTrioBlobWithoutRewrite(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	block := DefaultGenesisBlock().MustCommit(db)
+	raw, err := rawdb.ReadChainConfigJSON(db, block.Hash())
+	if err != nil {
+		t.Fatalf("failed to read stored chain config: %v", err)
+	}
+	for _, field := range []string{"constantinopleBlock", "petersburgBlock", "istanbulBlock"} {
+		raw, err = removeTopLevelFieldFromRawConfig(raw, field)
+		if err != nil {
+			t.Fatalf("failed to remove %s from the stored config: %v", field, err)
+		}
+	}
+	if err := db.Put(testConfigKey(block.Hash()), raw); err != nil {
+		t.Fatalf("failed to write the legacy stored config: %v", err)
+	}
+
+	cfg, _, err := LoadChainConfig(db, nil)
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+	anchor := big.NewInt(38383838)
+	for _, field := range []struct {
+		name string
+		got  *big.Int
+	}{
+		{name: "ConstantinopleBlock", got: cfg.ConstantinopleBlock},
+		{name: "PetersburgBlock", got: cfg.PetersburgBlock},
+		{name: "IstanbulBlock", got: cfg.IstanbulBlock},
+	} {
+		if field.got == nil || field.got.Cmp(anchor) != 0 {
+			t.Fatalf("%s must be hydrated to %v, have %v", field.name, anchor, field.got)
+		}
+	}
+
+	after, err := rawdb.ReadChainConfigJSON(db, block.Hash())
+	if err != nil {
+		t.Fatalf("failed to re-read stored chain config: %v", err)
+	}
+	if !bytes.Equal(after, raw) {
+		t.Fatalf("the legacy stored config must not be rewritten:\nbefore: %s\nafter:  %s", raw, after)
+	}
+}
+
+// TestSetupGenesisBlockWithOverrideKeepsExplicitlyDisabledTrioInactive tests
+// the writable startup path, which is the one a restarting node actually runs.
+func TestSetupGenesisBlockWithOverrideKeepsExplicitlyDisabledTrioInactive(t *testing.T) {
+	t.Run("stored", func(t *testing.T) {
+		db := rawdb.NewMemoryDatabase()
+		storeDisabledTrioConfig(t, db)
+		cfg, _, _, err := SetupGenesisBlockWithOverride(db, nil, true)
+		assertDisabledTrioConfig(t, cfg, err)
+	})
+	t.Run("provided genesis", func(t *testing.T) {
+		db := rawdb.NewMemoryDatabase()
+		cfg, _, _, err := SetupGenesisBlockWithOverride(db, disabledTrioProvidedGenesis(t), true)
+		assertDisabledTrioConfig(t, cfg, err)
+	})
+}
+
+// TestHydrateProvidedCustomChainConfigExplicitNullHintRepair pins the repair
+// the fork-order diagnostic names for a custom XDPoS chain against the startup
+// hydration itself: an omitted key is backfilled to the Localnet
+// cancellation-fee height and the violation returns, while an explicit null is
+// kept and validates.
+func TestHydrateProvidedCustomChainConfigExplicitNullHintRepair(t *testing.T) {
+	fixture := func() *params.ChainConfig {
+		return &params.ChainConfig{
+			ChainID:                     big.NewInt(9999),
+			HomesteadBlock:              big.NewInt(0),
+			EIP150Block:                 big.NewInt(0),
+			EIP155Block:                 big.NewInt(0),
+			EIP158Block:                 big.NewInt(0),
+			ByzantiumBlock:              big.NewInt(0),
+			TIPSigningBlock:             big.NewInt(200),
+			TIPRandomizeBlock:           big.NewInt(200),
+			TIPIncreaseMasternodesBlock: big.NewInt(200),
+			DenylistBlock:               big.NewInt(200),
+			TIPNoHalvingMNRewardBlock:   big.NewInt(200),
+			TIPXDCXBlock:                big.NewInt(200),
+			TIPXDCXLendingBlock:         big.NewInt(200),
+			TIPXDCXCancellationFeeBlock: big.NewInt(100),
+			TIPTRC21FeeBlock:            big.NewInt(300),
+			Gas50xBlock:                 big.NewInt(300),
+			TRC21IssuerSMC:              params.LocalnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:              params.LocalnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC:      params.LocalnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC:      params.LocalnetChainConfig.LendingRegistrationSMC,
+			XDPoS:                       params.LocalnetChainConfig.XDPoS.Clone(),
+		}
+	}
+	// decode writes the fixture as JSON, applies mutate to the object and reads
+	// it back, so the startup path sees the same field presence metadata.
+	decode := func(t *testing.T, mutate func(map[string]json.RawMessage)) *params.ChainConfig {
+		t.Helper()
+		raw, err := json.Marshal(fixture())
+		if err != nil {
+			t.Fatalf("failed to marshal the fixture: %v", err)
+		}
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &object); err != nil {
+			t.Fatalf("failed to decode the fixture: %v", err)
+		}
+		mutate(object)
+		raw, err = json.Marshal(object)
+		if err != nil {
+			t.Fatalf("failed to marshal the edited fixture: %v", err)
+		}
+		var cfg params.ChainConfig
+		if err := json.Unmarshal(raw, &cfg); err != nil {
+			t.Fatalf("failed to decode the edited fixture: %v", err)
+		}
+		return &cfg
+	}
+
+	// Removing the key is not the repair the hint asks for: the startup
+	// hydration backfills the Localnet height and the violation returns.
+	omitted := decode(t, func(object map[string]json.RawMessage) {
+		delete(object, "tipXDCXCancellationFeeBlock")
+	})
+	hydrated := hydrateProvidedCustomChainConfig(omitted)
+	if hydrated.TIPXDCXCancellationFeeBlock == nil || hydrated.TIPXDCXCancellationFeeBlock.Sign() != 0 {
+		t.Fatalf("the omitted cancellation fee must be backfilled to 0, have %v", hydrated.TIPXDCXCancellationFeeBlock)
+	}
+	err := hydrated.CheckConfigForkOrder()
+	if err == nil {
+		t.Fatal("removing the key must not validate after the startup hydration")
+	}
+	if want := "TIPXDCXLendingBlock 200 > TIPXDCXCancellationFeeBlock 0"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("unexpected hydrated error: %v", err)
+	}
+	if !strings.Contains(err.Error(), `, or set "tipXDCXCancellationFeeBlock" to null in the chain config`) {
+		t.Fatalf("the hydrated error must keep offering the explicit-null repair: %v", err)
+	}
+
+	// The explicit null survives the same hydration and ends the violation.
+	nulled := decode(t, func(object map[string]json.RawMessage) {
+		object["tipXDCXCancellationFeeBlock"] = json.RawMessage("null")
+	})
+	repaired := hydrateProvidedCustomChainConfig(nulled)
+	if repaired.TIPXDCXCancellationFeeBlock != nil {
+		t.Fatalf("an explicit null must not be backfilled, have %v", repaired.TIPXDCXCancellationFeeBlock)
+	}
+	if err := repaired.CheckConfigForkOrder(); err != nil {
+		t.Fatalf("the explicit null must validate, got %v", err)
+	}
 }

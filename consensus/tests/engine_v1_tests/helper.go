@@ -238,6 +238,7 @@ func legacyV1TestChainConfig(chainConfig *params.ChainConfig) *params.ChainConfi
 	legacy := *chainConfig
 	futureForkBlock := big.NewInt(1_000_000_000)
 	legacy.TIP2019Block = common.Big0
+	legacy.ConstantinopleBlock = new(big.Int).Set(futureForkBlock)
 	legacy.PetersburgBlock = new(big.Int).Set(futureForkBlock)
 	legacy.IstanbulBlock = new(big.Int).Set(futureForkBlock)
 	legacy.TIPSigningBlock = new(big.Int).Set(futureForkBlock)

@@ -174,6 +174,15 @@ func buildTemplateData(fields []forkFieldSpec) (templateData, error) {
 			data.Addresses = append(data.Addresses, field)
 		}
 	}
+	// The fork-order table is emitted sorted by the ForkOrder key, so the
+	// physical row order of its entries carries no semantics: it is not a
+	// validation sequence and has never been fully aligned with the key.
+	// ForkOrder is the only ordering input for that table. The common table
+	// keeps the JSON row order, and chainConfigForkBlockFields preserves it
+	// into the canonical encoding used by the semantic config digest, so
+	// reordering its rows changes that digest. The built-in table is emitted as
+	// the standard fields followed by the XDC-specific ones, each group in JSON
+	// row order, so only a move inside a group changes it.
 	slices.SortFunc(data.ForkOrder, func(a, b forkFieldSpec) int {
 		return a.ForkOrder - b.ForkOrder
 	})

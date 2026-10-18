@@ -38,9 +38,6 @@ const (
 	SpuriousDragon   // a.k.a. the EIP155 fork
 	EIP158
 	Byzantium
-	Constantinople
-	Petersburg
-	Istanbul
 	TIPSigning
 	TIPRandomize
 	TIPIncreaseMasternodes
@@ -49,6 +46,9 @@ const (
 	TIPXDCX
 	TIPXDCXLending
 	TIPXDCXCancellationFee
+	Constantinople
+	Petersburg
+	Istanbul
 	TIPTRC21Fee
 	Berlin
 	London
@@ -94,9 +94,6 @@ var forkToString = map[Fork]string{
 	SpuriousDragon:         "SpuriousDragon",
 	EIP158:                 "EIP158",
 	Byzantium:              "Byzantium",
-	Constantinople:         "Constantinople",
-	Petersburg:             "Petersburg",
-	Istanbul:               "Istanbul",
 	TIPSigning:             "TIPSigning",
 	TIPRandomize:           "TIPRandomize",
 	TIPIncreaseMasternodes: "TIPIncreaseMasternodes",
@@ -105,6 +102,9 @@ var forkToString = map[Fork]string{
 	TIPXDCX:                "TIPXDCX",
 	TIPXDCXLending:         "TIPXDCXLending",
 	TIPXDCXCancellationFee: "TIPXDCXCancellationFee",
+	Constantinople:         "Constantinople",
+	Petersburg:             "Petersburg",
+	Istanbul:               "Istanbul",
 	TIPTRC21Fee:            "TIPTRC21Fee",
 	Berlin:                 "Berlin",
 	London:                 "London",

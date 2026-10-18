@@ -58,11 +58,12 @@ func (c *ChainConfig) IsConstantinople(num *big.Int) bool {
 //
 // Backward compatibility note: legacy XDC chain configs may leave PetersburgBlock
 // unset and rely on TIPXDCXCancellationFeeBlock as the effective cutoff instead.
-// That is the case for the built-in XDC mainnet/testnet/devnet configs, which
-// historically encoded the XDC-specific cancellation-fee fork but still reuse
-// Ethereum fork helpers in downstream callers. Non-XDC or upstream-style configs
-// should set PetersburgBlock directly; if TIPXDCXCancellationFeeBlock is nil, the
-// fallback path is inert.
+// That is how the built-in XDC mainnet/testnet/devnet configs were encoded until
+// they declared PetersburgBlock explicitly, and it is still how the built-in
+// Localnet config is shaped; those configs historically encoded the XDC-specific
+// cancellation-fee fork but still reuse Ethereum fork helpers in downstream
+// callers. Non-XDC or upstream-style configs should set PetersburgBlock directly;
+// if TIPXDCXCancellationFeeBlock is nil, the fallback path is inert.
 func (c *ChainConfig) IsPetersburg(num *big.Int) bool {
 	return isForked(c.TIPXDCXCancellationFeeBlock, num) || isForked(c.PetersburgBlock, num)
 }
@@ -71,11 +72,12 @@ func (c *ChainConfig) IsPetersburg(num *big.Int) bool {
 //
 // Backward compatibility note: legacy XDC chain configs may leave IstanbulBlock
 // unset and rely on TIPXDCXCancellationFeeBlock as the effective cutoff instead.
-// That is the case for the built-in XDC mainnet/testnet/devnet configs, which
-// historically encoded the XDC-specific cancellation-fee fork but still reuse
-// Ethereum fork helpers in downstream callers. Non-XDC or upstream-style configs
-// should set IstanbulBlock directly; if TIPXDCXCancellationFeeBlock is nil, the
-// fallback path is inert.
+// That is how the built-in XDC mainnet/testnet/devnet configs were encoded until
+// they declared IstanbulBlock explicitly, and it is still how the built-in
+// Localnet config is shaped; those configs historically encoded the XDC-specific
+// cancellation-fee fork but still reuse Ethereum fork helpers in downstream
+// callers. Non-XDC or upstream-style configs should set IstanbulBlock directly;
+// if TIPXDCXCancellationFeeBlock is nil, the fallback path is inert.
 func (c *ChainConfig) IsIstanbul(num *big.Int) bool {
 	return isForked(c.TIPXDCXCancellationFeeBlock, num) || isForked(c.IstanbulBlock, num)
 }

@@ -20,10 +20,13 @@ package params
 // cloning a ChainConfig and before compatibility checks compare effective
 // values. CloneForBackfill prepares destination-side field-presence metadata so
 // BackfillMissingFieldsFrom can copy only omitted fields from a canonical
-// source config into the destination: generic fork blocks, system-contract
-// addresses, consensus-engine selectors, and nested XDPoS/V2 fields. The
-// narrower BackfillCustomMigratedFieldsFrom path is reserved for legacy custom
-// network migrations and copies only the historical XDC-specific whitelist.
+// source config into the destination: generic fork blocks, DAO fork support,
+// system-contract addresses, consensus-engine selectors, and nested XDPoS/V2
+// fields. The three Ethereum slots that share the XDC anchor (Constantinople,
+// Petersburg and Istanbul) are the exception: backfillForkSequenceTrioFrom
+// hydrates them last, as a single gated batch. The narrower
+// BackfillCustomMigratedFieldsFrom path is reserved for legacy custom network
+// migrations and copies only the historical XDC-specific whitelist.
 
 import (
 	"fmt"
@@ -140,6 +143,37 @@ func chainConfigForkBlockFieldByName(name string) (chainConfigBigIntField, bool)
 		}
 	}
 	return chainConfigBigIntField{}, false
+}
+
+// chainConfigForkSequenceTrio lists the Ethereum forks the built-in networks
+// declare at the XDC anchor height, in fork-order sequence. Backfill hydrates
+// them last, as a single batch, and only while every slot the stored config
+// takes a position on agrees with that height: see
+// backfillForkSequenceTrioFrom.
+var chainConfigForkSequenceTrio = func() []chainConfigBigIntField {
+	names := []string{
+		chainConfigConstantinopleBlockField,
+		chainConfigPetersburgBlockField,
+		chainConfigIstanbulBlockField,
+	}
+	fields := make([]chainConfigBigIntField, 0, len(names))
+	for _, name := range names {
+		field, ok := chainConfigForkBlockFieldByName(name)
+		if !ok {
+			panic("chain config fork sequence trio references unknown field: " + name)
+		}
+		fields = append(fields, field)
+	}
+	return fields
+}()
+
+func isChainConfigForkSequenceTrioKey(jsonKey string) bool {
+	for _, field := range chainConfigForkSequenceTrio {
+		if field.jsonKey == jsonKey {
+			return true
+		}
+	}
+	return false
 }
 
 // chainConfigForkOrderSpecialCaseRules holds the fork order relationships that
@@ -965,6 +999,11 @@ func (v2 *V2) backfillMissingFieldsFrom(src *V2) *V2 {
 // ChainConfig values directly in code, but a custom network that backfills from
 // LocalnetChainConfig should declare every fork explicitly if it needs to avoid
 // inheriting Localnet defaults.
+//
+// The fork-sequence trio (Constantinople, Petersburg and Istanbul) is not part
+// of the generic field loop: backfillForkSequenceTrioFrom hydrates it last, as
+// a single batch, and only while the resulting config still passes the
+// fork-order validation.
 func (c *ChainConfig) BackfillMissingFieldsFrom(src *ChainConfig) *ChainConfig {
 	if c == nil {
 		return c
@@ -982,6 +1021,11 @@ func (c *ChainConfig) BackfillMissingFieldsFrom(src *ChainConfig) *ChainConfig {
 	trackCustomLocalnetFallback := shouldWarnOnCustomLocalnetFallback(dest, src)
 
 	for _, field := range bigIntFields {
+		// The trio is hydrated after every other field, so the fork order can be
+		// evaluated against the complete config before a value is kept.
+		if isChainConfigForkSequenceTrioKey(field.key) {
+			continue
+		}
 		if dest.isJSONFieldMissing(field.key, *field.dst == nil) {
 			log.Info("Backfilled missing field", "field", field.key, "old", *field.dst, "new", field.src)
 			*field.dst = common.CloneBigInt(field.src)
@@ -1014,26 +1058,133 @@ func (c *ChainConfig) BackfillMissingFieldsFrom(src *ChainConfig) *ChainConfig {
 	}
 
 	dest.backfillMissingConsensusConfigsFrom(src)
+	dest.backfillXDPoSConfigFrom(src)
+	dest = dest.backfillForkSequenceTrioFrom(src)
 
-	if dest.XDPoS == nil {
-		log.Warn("XDPoS in destination chain config is nil", "chainId", dest.ChainID)
-	} else if src.XDPoS == nil {
-		log.Warn("XDPoS in source chain config is nil", "chainId", src.ChainID)
-		return dest
-	} else {
-		dest.XDPoS.backfillMissingScalarFieldsFrom(src.XDPoS)
-		if dest.XDPoS.isJSONFieldMissing("v2", dest.XDPoS.V2 == nil) {
-			log.Info("Backfilled missing field", "field", "XDPoS.v2", "old", dest.XDPoS.V2, "new", src.XDPoS.V2)
-			dest.XDPoS.V2 = src.XDPoS.V2.Clone()
-		} else if dest.XDPoS.V2 != nil && src.XDPoS.V2 != nil {
-			dest.XDPoS.V2 = dest.XDPoS.V2.backfillMissingFieldsFrom(src.XDPoS.V2)
-		}
-	}
 	if trackCustomLocalnetFallback && len(customLocalnetFallbackFields) > 0 {
 		log.Warn("Custom chain config used Localnet fallback defaults", "chainId", dest.ChainID, "jsonPresenceTracked", dest.runtime.json.tracked, "fields", strings.Join(customLocalnetFallbackFields, ","))
 	}
 
 	return dest
+}
+
+func (c *ChainConfig) backfillXDPoSConfigFrom(src *ChainConfig) {
+	if c == nil || src == nil {
+		return
+	}
+	if c.XDPoS == nil {
+		log.Warn("XDPoS in destination chain config is nil", "chainId", c.ChainID)
+		return
+	}
+	if src.XDPoS == nil {
+		log.Warn("XDPoS in source chain config is nil", "chainId", src.ChainID)
+		return
+	}
+	c.XDPoS.backfillMissingScalarFieldsFrom(src.XDPoS)
+	if c.XDPoS.isJSONFieldMissing("v2", c.XDPoS.V2 == nil) {
+		log.Info("Backfilled missing field", "field", "XDPoS.v2", "old", c.XDPoS.V2, "new", src.XDPoS.V2)
+		c.XDPoS.V2 = src.XDPoS.V2.Clone()
+	} else if c.XDPoS.V2 != nil && src.XDPoS.V2 != nil {
+		c.XDPoS.V2 = c.XDPoS.V2.backfillMissingFieldsFrom(src.XDPoS.V2)
+	}
+}
+
+// chainConfigForkSequenceTrioAnchor returns the height the source network
+// declares for all three trio slots. A source that does not declare one
+// coherent height has no anchor to hydrate from.
+func chainConfigForkSequenceTrioAnchor(src *ChainConfig) (*big.Int, bool) {
+	var anchor *big.Int
+	for _, field := range chainConfigForkSequenceTrio {
+		value := field.get(src)
+		if value == nil {
+			return nil, false
+		}
+		if anchor == nil {
+			anchor = value
+			continue
+		}
+		if anchor.Cmp(value) != 0 {
+			return nil, false
+		}
+	}
+	return anchor, true
+}
+
+// chainConfigForkSequenceTrioEffectiveValue returns the height the hydration
+// decision compares against the anchor: the slot's own value when declared, and
+// the XDC cancellation-fee height when it is missing. The fallback mirrors
+// IsPetersburg and IsIstanbul, which stay active at that height even when the
+// slot itself is unset. Constantinople has no runtime fallback, so the
+// cancellation fee is used here only to decide whether declaring the slot would
+// move the schedule, never to evaluate the fork.
+func chainConfigForkSequenceTrioEffectiveValue(c *ChainConfig, field chainConfigBigIntField) *big.Int {
+	if value := field.get(c); value != nil {
+		return value
+	}
+	return c.TIPXDCXCancellationFeeBlock
+}
+
+// backfillForkSequenceTrioFrom hydrates the trio the built-in networks declare
+// at the XDC anchor height, but only when doing so leaves the stored schedule
+// unchanged: a stored schedule that never declared them can be pushed out of
+// order by the injected values, which would turn a plain binary upgrade into a
+// startup failure.
+//
+// The slots move together: every slot the stored config takes a position on
+// must already agree with the anchor, otherwise none of them is written. A
+// missing slot is gated on its effective value (its own value, or the
+// cancellation-fee fallback); a declared slot is gated on its declared value. A
+// slot explicitly set to null is authoritative: it is neither hydrated nor used
+// to veto the others.
+//
+// Writing the slots one at a time is what produced the half-filled schedules
+// this guard exists to prevent: Constantinople is rejected when Petersburg is
+// missing, while Petersburg and Istanbul are accepted on their own, which
+// silently activates Istanbul on a chain that had disabled it.
+func (c *ChainConfig) backfillForkSequenceTrioFrom(src *ChainConfig) *ChainConfig {
+	if c == nil || src == nil {
+		return c
+	}
+	anchor, ok := chainConfigForkSequenceTrioAnchor(src)
+	if !ok {
+		return c
+	}
+
+	candidates := make([]chainConfigBigIntField, 0, len(chainConfigForkSequenceTrio))
+	for _, field := range chainConfigForkSequenceTrio {
+		missing := c.isJSONFieldMissing(field.jsonKey, field.get(c) == nil)
+		if !missing && field.get(c) == nil {
+			// Explicit null: a declared "never", not a candidate for hydration
+			// and not a reason to skip the other slots.
+			continue
+		}
+		if effective := chainConfigForkSequenceTrioEffectiveValue(c, field); effective == nil || effective.Cmp(anchor) != 0 {
+			log.Info("Skipped fork backfill that would change the fork schedule",
+				"field", field.jsonKey, "effective", effective, "anchor", anchor)
+			return c
+		}
+		if missing {
+			candidates = append(candidates, field)
+		}
+	}
+	if len(candidates) == 0 {
+		return c
+	}
+	for _, field := range candidates {
+		field.set(c, common.CloneBigInt(anchor))
+	}
+	if err := c.checkConfigForkOrder(false); err != nil {
+		for _, field := range candidates {
+			field.set(c, nil)
+		}
+		log.Info("Skipped fork backfill that would make the chain config invalid", "error", err)
+		return c
+	}
+	for _, field := range candidates {
+		log.Info("Backfilled missing field", "field", field.jsonKey, "old", nil, "new", anchor)
+		c.runtime.json.mark(field.jsonKey)
+	}
+	return c
 }
 
 // BackfillCustomMigratedFieldsFrom copies only the historical custom-network

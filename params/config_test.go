@@ -427,7 +427,7 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 		if !errors.Is(err, ErrWrongForkSwitchOrder) {
 			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
 		}
-		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: EIP158Block 100 > TIPTRC21FeeBlock 0" {
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: EIP158Block 100 > TIPTRC21FeeBlock 0: declare TIPTRC21FeeBlock at or after EIP158Block" {
 			t.Fatalf("unexpected error string: %v", err)
 		}
 	})
@@ -486,7 +486,7 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 		if !errors.Is(err, ErrWrongForkSwitchOrder) {
 			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
 		}
-		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: TIPTRC21FeeBlock 20 > Gas50xBlock 10" {
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: TIPTRC21FeeBlock 20 > Gas50xBlock 10: declare Gas50xBlock at or after TIPTRC21FeeBlock" {
 			t.Fatalf("unexpected error string: %v", err)
 		}
 	})
@@ -507,7 +507,7 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 		if !errors.Is(err, ErrWrongForkSwitchOrder) {
 			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
 		}
-		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: Gas50xBlock 20 > TIPXDCXMinerDisableBlock 10" {
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: Gas50xBlock 20 > TIPXDCXMinerDisableBlock 10: declare TIPXDCXMinerDisableBlock at or after Gas50xBlock, or set \"tipXDCXMinerDisableBlock\" to null in the chain config" {
 			t.Fatalf("unexpected error string: %v", err)
 		}
 	})
@@ -528,7 +528,7 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 		if !errors.Is(err, ErrWrongForkSwitchOrder) {
 			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
 		}
-		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: Gas50xBlock 20 > Gas2500xBlock 10" {
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: Gas50xBlock 20 > Gas2500xBlock 10: declare Gas2500xBlock at or after Gas50xBlock, or set \"gas2500xBlock\" to null in the chain config" {
 			t.Fatalf("unexpected error string: %v", err)
 		}
 	})
@@ -1362,6 +1362,46 @@ func TestGatherForksIncludesXDPoSV2SwitchBlock(t *testing.T) {
 	assert.Equal(t, []uint64{1000, 1500}, config.GatherForks())
 }
 
+// TestXDCNetworkConfigsGatherForks pins GatherForks for the three built-in
+// XDC networks whose Constantinople/Petersburg/Istanbul slots are declared
+// by this change; LocalnetChainConfig keeps the trio nil and is pinned by
+// TestXDCChainConfigsDeclareForkBlocks instead.
+func TestXDCNetworkConfigsGatherForks(t *testing.T) {
+	// ConstantinopleBlock, PetersburgBlock and IstanbulBlock now declare
+	// the same height as TIPXDCXCancellationFeeBlock. Petersburg and
+	// Istanbul were already aliased to that height at runtime, while
+	// Constantinople never had one. GatherForks collapses the duplicate
+	// heights, so the list - and therefore the fork id and the handshake
+	// filter - must stay byte-identical to the pre-declaration config.
+	tests := []struct {
+		name   string
+		config *ChainConfig
+		want   []uint64
+	}{
+		{
+			name:   "XDCMainnetChainConfig",
+			config: XDCMainnetChainConfig,
+			want:   []uint64{1, 2, 3, 4, 3000000, 3464000, 5000000, 38383838, 76321000, 80370000, 80370900, 98800200, 98802000},
+		},
+		{
+			name:   "TestnetChainConfig",
+			config: TestnetChainConfig,
+			want:   []uint64{1, 2, 3, 4, 3000000, 3464000, 5000000, 23779191, 56828700, 61290000, 66825000, 71550000, 71551800, 83600000, 87633000},
+		},
+		{
+			name:   "DevnetChainConfig",
+			config: DevnetChainConfig,
+			want:   []uint64{2700, 25000, 50000, 1385100},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, test.config.GatherForks())
+		})
+	}
+}
+
 // TestActiveForksReturnsAscendingASCIIOrder pins the production ordering: the
 // names come out in ascending ASCII order, the order the mirror sorts into and
 // the order the docs for the RPC field promise.
@@ -1781,23 +1821,31 @@ func TestChainConfigStringIncludesAllFields(t *testing.T) {
 	}
 }
 
-// TestChainConfigRenderingFollowsForkOrder pins the eight fork fields whose fork
+// TestChainConfigRenderingFollowsForkOrder pins the fork fields whose fork
 // order entry and rendering order had diverged - the six that #2811 renumbered,
-// plus TIP2019 and DAOFork - along with TIPEpochHalving, the field that follows
-// them in fork order. The expected order is read off chainConfigForkOrderFields,
-// so a later renumbering carries the expectation with it instead of leaving the
-// renderings behind.
+// plus TIP2019 and DAOFork - along with the Constantinople/Petersburg/Istanbul
+// trio that #2777 moved after TIPXDCXCancellationFee, that anchor slot (without
+// which the trio's position relative to it is not pinned), the TIPTRC21Fee slot
+// that follows the trio, and TIPEpochHalving, the last pinned field in fork
+// order. The expected order is read off
+// chainConfigForkOrderFields, so a later renumbering carries the expectation
+// with it instead of leaving the renderings behind.
 func TestChainConfigRenderingFollowsForkOrder(t *testing.T) {
 	pinned := map[string]struct{}{
-		"TIP2019Block":           {},
-		"DAOForkBlock":           {},
-		"DynamicGasLimitBlock":   {},
-		"TIPUpgradeRewardBlock":  {},
-		"TIPUpgradePenaltyBlock": {},
-		"PragueBlock":            {},
-		"OsakaBlock":             {},
-		"AmsterdamBlock":         {},
-		"TIPEpochHalvingBlock":   {},
+		"TIP2019Block":                {},
+		"DAOForkBlock":                {},
+		"TIPXDCXCancellationFeeBlock": {},
+		"ConstantinopleBlock":         {},
+		"PetersburgBlock":             {},
+		"IstanbulBlock":               {},
+		"TIPTRC21FeeBlock":            {},
+		"DynamicGasLimitBlock":        {},
+		"TIPUpgradeRewardBlock":       {},
+		"TIPUpgradePenaltyBlock":      {},
+		"PragueBlock":                 {},
+		"OsakaBlock":                  {},
+		"AmsterdamBlock":              {},
+		"TIPEpochHalvingBlock":        {},
 	}
 	var want []string
 	for _, field := range chainConfigForkOrderFields {
@@ -1808,16 +1856,21 @@ func TestChainConfigRenderingFollowsForkOrder(t *testing.T) {
 	assert.Len(t, want, len(pinned), "the fork order must still cover every pinned fork")
 
 	config := &ChainConfig{
-		ChainID:                big.NewInt(1),
-		TIP2019Block:           big.NewInt(1),
-		DAOForkBlock:           big.NewInt(2),
-		DynamicGasLimitBlock:   big.NewInt(3),
-		TIPUpgradeRewardBlock:  big.NewInt(4),
-		TIPUpgradePenaltyBlock: big.NewInt(5),
-		PragueBlock:            big.NewInt(6),
-		OsakaBlock:             big.NewInt(7),
-		AmsterdamBlock:         big.NewInt(8),
-		TIPEpochHalvingBlock:   big.NewInt(9),
+		ChainID:                     big.NewInt(1),
+		TIP2019Block:                big.NewInt(1),
+		DAOForkBlock:                big.NewInt(2),
+		TIPXDCXCancellationFeeBlock: big.NewInt(13),
+		ConstantinopleBlock:         big.NewInt(10),
+		PetersburgBlock:             big.NewInt(11),
+		IstanbulBlock:               big.NewInt(12),
+		TIPTRC21FeeBlock:            big.NewInt(14),
+		DynamicGasLimitBlock:        big.NewInt(3),
+		TIPUpgradeRewardBlock:       big.NewInt(4),
+		TIPUpgradePenaltyBlock:      big.NewInt(5),
+		PragueBlock:                 big.NewInt(6),
+		OsakaBlock:                  big.NewInt(7),
+		AmsterdamBlock:              big.NewInt(8),
+		TIPEpochHalvingBlock:        big.NewInt(9),
 	}
 	for _, rendering := range []struct {
 		name   string

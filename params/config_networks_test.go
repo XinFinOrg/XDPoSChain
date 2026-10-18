@@ -97,6 +97,9 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 		tipXDCXBlock                *big.Int
 		tipXDCXLendingBlock         *big.Int
 		tipXDCXCancellationFeeBlock *big.Int
+		constantinopleBlock         *big.Int
+		petersburgBlock             *big.Int
+		istanbulBlock               *big.Int
 		tipTRC21Fee                 *big.Int
 		berlinBlock                 *big.Int
 		londonBlock                 *big.Int
@@ -126,6 +129,9 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 			tipXDCXBlock:                big.NewInt(38383838),
 			tipXDCXLendingBlock:         big.NewInt(38383838),
 			tipXDCXCancellationFeeBlock: big.NewInt(38383838),
+			constantinopleBlock:         big.NewInt(38383838),
+			petersburgBlock:             big.NewInt(38383838),
+			istanbulBlock:               big.NewInt(38383838),
 			tipTRC21Fee:                 big.NewInt(38383838),
 			berlinBlock:                 big.NewInt(76321000),
 			londonBlock:                 big.NewInt(76321000),
@@ -155,6 +161,9 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 			tipXDCXBlock:                big.NewInt(23779191),
 			tipXDCXLendingBlock:         big.NewInt(23779191),
 			tipXDCXCancellationFeeBlock: big.NewInt(23779191),
+			constantinopleBlock:         big.NewInt(23779191),
+			petersburgBlock:             big.NewInt(23779191),
+			istanbulBlock:               big.NewInt(23779191),
 			tipTRC21Fee:                 big.NewInt(23779191),
 			berlinBlock:                 big.NewInt(61290000),
 			londonBlock:                 big.NewInt(61290000),
@@ -184,6 +193,9 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 			tipXDCXBlock:                big.NewInt(0),
 			tipXDCXLendingBlock:         big.NewInt(0),
 			tipXDCXCancellationFeeBlock: big.NewInt(0),
+			constantinopleBlock:         big.NewInt(0),
+			petersburgBlock:             big.NewInt(0),
+			istanbulBlock:               big.NewInt(0),
 			tipTRC21Fee:                 big.NewInt(0),
 			berlinBlock:                 big.NewInt(0),
 			londonBlock:                 big.NewInt(0),
@@ -213,6 +225,9 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 			tipXDCXBlock:                big.NewInt(0),
 			tipXDCXLendingBlock:         big.NewInt(0),
 			tipXDCXCancellationFeeBlock: big.NewInt(0),
+			constantinopleBlock:         nil,
+			petersburgBlock:             nil,
+			istanbulBlock:               nil,
 			tipTRC21Fee:                 big.NewInt(0),
 			berlinBlock:                 big.NewInt(0),
 			londonBlock:                 big.NewInt(0),
@@ -257,6 +272,9 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 			assertBlock(t, "TIPXDCX", test.config.TIPXDCXBlock, test.tipXDCXBlock)
 			assertBlock(t, "TIPXDCXLending", test.config.TIPXDCXLendingBlock, test.tipXDCXLendingBlock)
 			assertBlock(t, "TIPXDCXCancellationFee", test.config.TIPXDCXCancellationFeeBlock, test.tipXDCXCancellationFeeBlock)
+			assertBlock(t, "Constantinople", test.config.ConstantinopleBlock, test.constantinopleBlock)
+			assertBlock(t, "Petersburg", test.config.PetersburgBlock, test.petersburgBlock)
+			assertBlock(t, "Istanbul", test.config.IstanbulBlock, test.istanbulBlock)
 			assertBlock(t, "TIPTRC21Fee", test.config.TIPTRC21FeeBlock, test.tipTRC21Fee)
 			assertBlock(t, "Berlin", test.config.BerlinBlock, test.berlinBlock)
 			assertBlock(t, "London", test.config.LondonBlock, test.londonBlock)
@@ -273,6 +291,23 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 			assertBlock(t, "TIPUpgradeReward", test.config.TIPUpgradeRewardBlock, test.tipUpgradeRewardBlock)
 			assertBlock(t, "TIPUpgradePenalty", test.config.TIPUpgradePenaltyBlock, test.tipUpgradePenaltyBlock)
 			assertBlock(t, "TIPEpochHalving", test.config.TIPEpochHalvingBlock, test.tipEpochHalvingBlock)
+
+			// For the built-in networks, declaring the trio changes what is
+			// reported, not what executes: ActiveForks gains
+			// "Constantinople" wherever the slot is declared. Localnet keeps
+			// the trio nil because it is the hydration source for custom
+			// chains, so it is the one built-in config whose ActiveForks does
+			// not gain the entry; both config renderings print the trio in its
+			// new fork order position (TestChainConfigRenderingFollowsForkOrder).
+			// Custom configs that declare the trio below the XDC anchor are
+			// refused at startup instead; see
+			// TestCheckConfigForkOrderRejectsEthereumTrioBeforeTheXDCAnchor.
+			active := test.config.ActiveForks(big.NewInt(1_000_000_000))
+			if test.constantinopleBlock == nil {
+				assert.NotContains(t, active, "Constantinople")
+			} else {
+				assert.Contains(t, active, "Constantinople")
+			}
 		})
 	}
 }

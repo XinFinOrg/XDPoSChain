@@ -166,9 +166,6 @@ func TestForEachChainConfigForkOrderBlockCoversValidationOrder(t *testing.T) {
 		"EIP155Block",
 		"EIP158Block",
 		"ByzantiumBlock",
-		"ConstantinopleBlock",
-		"PetersburgBlock",
-		"IstanbulBlock",
 		"TIPSigningBlock",
 		"TIPRandomizeBlock",
 		"TIPIncreaseMasternodesBlock",
@@ -177,6 +174,9 @@ func TestForEachChainConfigForkOrderBlockCoversValidationOrder(t *testing.T) {
 		"TIPXDCXBlock",
 		"TIPXDCXLendingBlock",
 		"TIPXDCXCancellationFeeBlock",
+		"ConstantinopleBlock",
+		"PetersburgBlock",
+		"IstanbulBlock",
 		"TIPTRC21FeeBlock",
 		"BerlinBlock",
 		"LondonBlock",
@@ -335,6 +335,1086 @@ func TestChainConfigForkSequenceFallbackMirrorsRuntimeFlags(t *testing.T) {
 			t.Fatalf("%s: validation substitutes the cancellation fee: %v, runtime flag: %v", name, got, want)
 		}
 	})
+}
+
+// TestCheckConfigForkOrderRejectsEthereumTrioBeforeTheXDCAnchor pins the
+// rejection surface that comes with declaring ConstantinopleBlock,
+// PetersburgBlock and IstanbulBlock at their effective heights: the trio now
+// sits after TIPXDCXCancellationFeeBlock in the validation order, so a custom
+// config that declares any of them at a Constantinople-era height while the XDC
+// forks are scheduled later is refused at startup.
+func TestCheckConfigForkOrderRejectsEthereumTrioBeforeTheXDCAnchor(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*ChainConfig)
+		wantErr string
+	}{
+		{
+			// The "Constantinople-era chain" shape: ConstantinopleBlock and
+			// PetersburgBlock declared right after Byzantium (IstanbulBlock
+			// keeps its built-in height) while every XDC fork is scheduled
+			// much later.
+			name: "constantinople and petersburg at the byzantium height",
+			mutate: func(cfg *ChainConfig) {
+				cfg.ConstantinopleBlock = big.NewInt(4)
+				cfg.PetersburgBlock = big.NewInt(4)
+			},
+			// Petersburg is declared below the same fork, so dropping only
+			// Constantinople leaves the same violation and is not a repair.
+			wantErr: "invalid chain config: wrong fork switch order: TIPXDCXCancellationFeeBlock 23779191 > ConstantinopleBlock 4: declare ConstantinopleBlock at or after TIPXDCXCancellationFeeBlock",
+		},
+		{
+			// Dropping the cancellation-fee slot does not rescue the shape: the
+			// comparison anchor is the last declared fork before the trio, which
+			// degrades to TIPXDCXLendingBlock.
+			name: "constantinople at the byzantium height without cancellation fee",
+			mutate: func(cfg *ChainConfig) {
+				cfg.TIPXDCXCancellationFeeBlock = nil
+				cfg.ConstantinopleBlock = big.NewInt(4)
+			},
+			wantErr: "invalid chain config: wrong fork switch order: TIPXDCXLendingBlock 23779191 > ConstantinopleBlock 4: declare ConstantinopleBlock at or after TIPXDCXLendingBlock, or set \"constantinopleBlock\" to null in the chain config",
+		},
+		{
+			// The PR description's own example: ConstantinopleBlock and
+			// PetersburgBlock declared at 0 together with a cancellation fee
+			// scheduled much later (IstanbulBlock keeps its built-in height).
+			// The first slot the scan collides with is ConstantinopleBlock, so
+			// that is the field the error names - not PetersburgBlock.
+			name: "trio below a later cancellation fee",
+			mutate: func(cfg *ChainConfig) {
+				cfg.ConstantinopleBlock = big.NewInt(0)
+				cfg.PetersburgBlock = big.NewInt(0)
+				cfg.TIPXDCXCancellationFeeBlock = big.NewInt(1_000_000_000)
+			},
+			// Petersburg sits at the same height, so clearing only
+			// Constantinople leaves a violation behind: no drop hint.
+			wantErr: "invalid chain config: wrong fork switch order: TIPXDCXCancellationFeeBlock 1000000000 > ConstantinopleBlock 0: declare ConstantinopleBlock at or after TIPXDCXCancellationFeeBlock",
+		},
+		{
+			// Petersburg is a required sequence slot, so dropping it is not a
+			// fix: with no cancellation-fee fallback and Constantinople
+			// declared, the pair check rejects the resulting config. The hint
+			// therefore must not suggest it. The earlier XDC slots move down to
+			// the same height so Petersburg is the first collision.
+			name: "petersburg below constantinople without the cancellation fee fallback",
+			mutate: func(cfg *ChainConfig) {
+				cfg.TIPSigningBlock = big.NewInt(200)
+				cfg.TIPRandomizeBlock = big.NewInt(200)
+				cfg.TIPIncreaseMasternodesBlock = big.NewInt(200)
+				cfg.DenylistBlock = big.NewInt(200)
+				cfg.TIPNoHalvingMNRewardBlock = big.NewInt(200)
+				cfg.TIPXDCXBlock = big.NewInt(200)
+				cfg.TIPXDCXLendingBlock = big.NewInt(200)
+				cfg.TIPXDCXCancellationFeeBlock = nil
+				cfg.ConstantinopleBlock = big.NewInt(200)
+				cfg.PetersburgBlock = big.NewInt(50)
+			},
+			wantErr: "invalid chain config: wrong fork switch order: ConstantinopleBlock 200 > PetersburgBlock 50: declare PetersburgBlock at or after ConstantinopleBlock",
+		},
+		{
+			// Nothing after Petersburg is scheduled, so the sequence scan cannot
+			// block the drop; the pair check alone does, because Constantinople
+			// is declared and there is no cancellation-fee fallback.
+			name: "petersburg below constantinople with nothing scheduled after it",
+			mutate: func(cfg *ChainConfig) {
+				cfg.TIPSigningBlock = big.NewInt(200)
+				cfg.TIPRandomizeBlock = big.NewInt(200)
+				cfg.TIPIncreaseMasternodesBlock = big.NewInt(200)
+				cfg.DenylistBlock = big.NewInt(200)
+				cfg.TIPNoHalvingMNRewardBlock = big.NewInt(200)
+				cfg.TIPXDCXBlock = big.NewInt(200)
+				cfg.TIPXDCXLendingBlock = big.NewInt(200)
+				cfg.TIPXDCXCancellationFeeBlock = nil
+				cfg.ConstantinopleBlock = big.NewInt(200)
+				cfg.PetersburgBlock = big.NewInt(50)
+				cfg.IstanbulBlock = nil
+				cfg.BerlinBlock = nil
+				cfg.LondonBlock = nil
+				cfg.MergeBlock = nil
+				cfg.CancunBlock = nil
+				cfg.EIP1559Block = nil
+				cfg.ShanghaiBlock = nil
+				cfg.PragueBlock = nil
+				cfg.OsakaBlock = nil
+				cfg.AmsterdamBlock = nil
+			},
+			wantErr: "invalid chain config: wrong fork switch order: ConstantinopleBlock 200 > PetersburgBlock 50: declare PetersburgBlock at or after ConstantinopleBlock",
+		},
+		{
+			// Dropping Petersburg is the fix here: nothing after it in the
+			// sequence is scheduled and Constantinople stays unset, so neither
+			// the sequence scan nor the pair check rejects the result. The hint
+			// must offer that repair.
+			name: "petersburg below the lending fork with nothing scheduled after it",
+			mutate: func(cfg *ChainConfig) {
+				cfg.TIPSigningBlock = big.NewInt(200)
+				cfg.TIPRandomizeBlock = big.NewInt(200)
+				cfg.TIPIncreaseMasternodesBlock = big.NewInt(200)
+				cfg.DenylistBlock = big.NewInt(200)
+				cfg.TIPNoHalvingMNRewardBlock = big.NewInt(200)
+				cfg.TIPXDCXBlock = big.NewInt(200)
+				cfg.TIPXDCXLendingBlock = big.NewInt(200)
+				cfg.TIPXDCXCancellationFeeBlock = nil
+				cfg.ConstantinopleBlock = nil
+				cfg.PetersburgBlock = big.NewInt(50)
+				cfg.IstanbulBlock = nil
+				cfg.BerlinBlock = nil
+				cfg.LondonBlock = nil
+				cfg.MergeBlock = nil
+				cfg.CancunBlock = nil
+				cfg.EIP1559Block = nil
+				cfg.ShanghaiBlock = nil
+				cfg.PragueBlock = nil
+				cfg.OsakaBlock = nil
+				cfg.AmsterdamBlock = nil
+			},
+			wantErr: "invalid chain config: wrong fork switch order: TIPXDCXLendingBlock 200 > PetersburgBlock 50: declare PetersburgBlock at or after TIPXDCXLendingBlock, or set \"petersburgBlock\" to null in the chain config",
+		},
+		{
+			// A later standard fork keeps the drop from being a fix, because the
+			// sequence scan then reports the dropped slot as missing.
+			name: "petersburg below the lending fork with a later standard fork scheduled",
+			mutate: func(cfg *ChainConfig) {
+				cfg.TIPSigningBlock = big.NewInt(200)
+				cfg.TIPRandomizeBlock = big.NewInt(200)
+				cfg.TIPIncreaseMasternodesBlock = big.NewInt(200)
+				cfg.DenylistBlock = big.NewInt(200)
+				cfg.TIPNoHalvingMNRewardBlock = big.NewInt(200)
+				cfg.TIPXDCXBlock = big.NewInt(200)
+				cfg.TIPXDCXLendingBlock = big.NewInt(200)
+				cfg.TIPXDCXCancellationFeeBlock = nil
+				cfg.ConstantinopleBlock = nil
+				cfg.PetersburgBlock = big.NewInt(50)
+				cfg.IstanbulBlock = nil
+				cfg.EIP1559Block = big.NewInt(300)
+				cfg.ShanghaiBlock = nil
+				cfg.PragueBlock = nil
+				cfg.OsakaBlock = nil
+				cfg.AmsterdamBlock = nil
+			},
+			wantErr: "invalid chain config: wrong fork switch order: TIPXDCXLendingBlock 200 > PetersburgBlock 50: declare PetersburgBlock at or after TIPXDCXLendingBlock",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := TestnetChainConfig.Clone()
+			test.mutate(cfg)
+			err := cfg.CheckConfigForkOrder()
+			if err == nil {
+				t.Fatal("CheckConfigForkOrder accepted a config that must be rejected")
+			}
+			if err.Error() != test.wantErr {
+				t.Fatalf("unexpected error:\nhave=%v\nwant=%v", err.Error(), test.wantErr)
+			}
+		})
+	}
+}
+
+// TestCheckConfigForkOrderAcceptsEthereumTrioAtOrAfterTheXDCAnchor mirrors
+// TestCheckConfigForkOrderRejectsEthereumTrioBeforeTheXDCAnchor: declaring the
+// trio at or after the XDC anchor keeps a custom config valid, which is the
+// shape the built-in networks now use.
+func TestCheckConfigForkOrderAcceptsEthereumTrioAtOrAfterTheXDCAnchor(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*ChainConfig)
+	}{
+		{
+			// The built-in shape: the trio declared at the anchor height
+			// (mainnet 38383838, testnet 23779191).
+			name: "constantinople, petersburg and istanbul at the anchor height",
+			mutate: func(cfg *ChainConfig) {
+				anchor := cfg.TIPXDCXCancellationFeeBlock
+				cfg.ConstantinopleBlock = new(big.Int).Set(anchor)
+				cfg.PetersburgBlock = new(big.Int).Set(anchor)
+				cfg.IstanbulBlock = new(big.Int).Set(anchor)
+			},
+		},
+		{
+			// The trio is accepted anywhere between the anchor and the next
+			// declared fork; here TIPTRC21FeeBlock - the fork scanned right
+			// after the trio (the trio ends at key 18, TIPTRC21FeeBlock is
+			// key 19) - moves up to keep that window open.
+			name: "constantinople, petersburg and istanbul between the anchor and the next declared fork",
+			mutate: func(cfg *ChainConfig) {
+				anchor := cfg.TIPXDCXCancellationFeeBlock
+				cfg.TIPTRC21FeeBlock = new(big.Int).Add(anchor, big.NewInt(2))
+				cfg.ConstantinopleBlock = new(big.Int).Add(anchor, big.NewInt(1))
+				cfg.PetersburgBlock = new(big.Int).Add(anchor, big.NewInt(1))
+				cfg.IstanbulBlock = new(big.Int).Add(anchor, big.NewInt(1))
+			},
+		},
+		{
+			// Same shape as Localnet: the trio stays undeclared.
+			name: "constantinople, petersburg and istanbul undeclared",
+			mutate: func(cfg *ChainConfig) {
+				cfg.ConstantinopleBlock = nil
+				cfg.PetersburgBlock = nil
+				cfg.IstanbulBlock = nil
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := TestnetChainConfig.Clone()
+			test.mutate(cfg)
+			if err := cfg.CheckConfigForkOrder(); err != nil {
+				t.Fatalf("CheckConfigForkOrder refused a config that must be accepted: %v", err)
+			}
+		})
+	}
+}
+
+// forkSequenceTrioStoredConfig re-encodes cfg the way a binary that predates
+// the built-in trio persisted it: the three keys are absent, and cancunBlock
+// is removed as well so callers can prove unrelated missing fields are still
+// hydrated. Additional keys in extra are removed the same way.
+func forkSequenceTrioStoredConfig(t *testing.T, cfg *ChainConfig, extra ...string) *ChainConfig {
+	t.Helper()
+	return forkSequenceTrioStoredConfigWithOverrides(t, cfg, nil, append([]string{"cancunBlock"}, extra...)...)
+}
+
+// forkSequenceTrioStoredConfigWithOverrides strips the trio and every key in
+// strip, then applies raw JSON overrides. It lets a case put a subset of the
+// trio back, or declare an explicit null, while keeping the other fields so
+// the caller can assert that hydration changed nothing but the trio.
+func forkSequenceTrioStoredConfigWithOverrides(t *testing.T, cfg *ChainConfig, overrides map[string]json.RawMessage, strip ...string) *ChainConfig {
+	t.Helper()
+	cfg = cfg.CloneForJSON()
+	cfg.ConstantinopleBlock = nil
+	cfg.PetersburgBlock = nil
+	cfg.IstanbulBlock = nil
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("failed to marshal stored chain config: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatalf("failed to decode stored chain config: %v", err)
+	}
+	for _, key := range strip {
+		if _, ok := fields[key]; !ok {
+			t.Fatalf("test fixture expects %s in the marshaled config", key)
+		}
+		delete(fields, key)
+	}
+	trioKeys := []string{"constantinopleBlock", "petersburgBlock", "istanbulBlock"}
+	for _, key := range trioKeys {
+		delete(fields, key)
+	}
+	for key, value := range overrides {
+		fields[key] = value
+	}
+	raw, err = json.Marshal(fields)
+	if err != nil {
+		t.Fatalf("failed to marshal stripped chain config: %v", err)
+	}
+	var stored ChainConfig
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatalf("failed to decode stripped chain config: %v", err)
+	}
+	for _, key := range trioKeys {
+		if _, ok := overrides[key]; ok {
+			continue
+		}
+		if !stored.isJSONFieldMissing(key, false) {
+			t.Fatalf("expected %s to be absent from the stored config", key)
+		}
+	}
+	return &stored
+}
+
+// assertOnlyTrioHydrated fails when hydration changed a top-level fork field
+// other than the trio, so a caller asserting the trio's fate also proves the
+// rest of the stored schedule came through untouched.
+func assertOnlyTrioHydrated(t *testing.T, stored, hydrated *ChainConfig) {
+	t.Helper()
+	for _, field := range chainConfigForkBlockFields {
+		switch field.name {
+		case chainConfigConstantinopleBlockField, chainConfigPetersburgBlockField, chainConfigIstanbulBlockField:
+			continue
+		}
+		storedValue, hydratedValue := field.get(stored), field.get(hydrated)
+		if (storedValue == nil) != (hydratedValue == nil) {
+			t.Fatalf("%s changed during hydration: have %v want %v", field.name, hydratedValue, storedValue)
+		}
+		if storedValue != nil && storedValue.Cmp(hydratedValue) != 0 {
+			t.Fatalf("%s changed during hydration: have %v want %v", field.name, hydratedValue, storedValue)
+		}
+	}
+}
+
+// lowerXDCForkBlocks moves the XDC forks that precede the cancellation fee down
+// to height so a fixture can schedule the cancellation fee itself.
+func lowerXDCForkBlocks(cfg *ChainConfig, height int64) {
+	cfg.TIPSigningBlock = big.NewInt(height)
+	cfg.TIPRandomizeBlock = big.NewInt(height)
+	cfg.TIPIncreaseMasternodesBlock = big.NewInt(height)
+	cfg.DenylistBlock = big.NewInt(height)
+	cfg.TIPNoHalvingMNRewardBlock = big.NewInt(height)
+	cfg.TIPXDCXBlock = big.NewInt(height)
+	cfg.TIPXDCXLendingBlock = big.NewInt(height)
+}
+
+// TestBackfillForkSequenceTrioKeepsStoredScheduleValid pins the conditional
+// hydration of the built-in trio: the slots move as one batch, only while the
+// stored schedule agrees with the anchor, so an upgrade cannot turn a valid
+// override into a startup failure. The source column is the strongest
+// discriminator: only the skipped rows switch Petersburg and Istanbul to the
+// cancellation-fee fallback. A row that omits an earlier fork slot as well
+// pins the other half: the trio is hydrated after the fields its probe reads.
+func TestBackfillForkSequenceTrioKeepsStoredScheduleValid(t *testing.T) {
+	anchor := big.NewInt(38383838)
+	testnetAnchor := big.NewInt(23779191)
+	tests := []struct {
+		name                 string
+		builtin              *ChainConfig
+		mutate               func(*ChainConfig)
+		strip                []string
+		wantTrio             *big.Int
+		wantIstanbulSource   string
+		wantPetersburgSource string
+		istanbulProbe        *big.Int
+		wantIstanbul         bool
+		wantConstantinople   bool
+		wantStoredEqual      bool
+		wantCheckErr         string
+	}{
+		{
+			// The built-in shape: the stored fee equals the built-in trio
+			// height, so the injection keeps the order valid and lands on the
+			// height Petersburg and Istanbul were already effective at.
+			name:                 "vanilla mainnet",
+			builtin:              XDCMainnetChainConfig,
+			wantTrio:             anchor,
+			wantIstanbulSource:   "IstanbulBlock",
+			wantPetersburgSource: "PetersburgBlock",
+			istanbulProbe:        big.NewInt(38383839),
+			wantIstanbul:         true,
+			wantConstantinople:   true,
+			wantStoredEqual:      true,
+		},
+		{
+			// The trio is hydrated after every other field, so a stored config
+			// that also omits a slot preceding it in the fork order cannot make
+			// the trio's own probe fail: the cancellation fee fork is restored
+			// first and the trio lands at the height it always activated at.
+			name:                 "cancellation fee also missing",
+			builtin:              XDCMainnetChainConfig,
+			strip:                []string{"tipXDCXCancellationFeeBlock"},
+			wantTrio:             anchor,
+			wantIstanbulSource:   "IstanbulBlock",
+			wantPetersburgSource: "PetersburgBlock",
+			istanbulProbe:        big.NewInt(38383839),
+			wantIstanbul:         true,
+			wantConstantinople:   true,
+			wantStoredEqual:      true,
+		},
+		{
+			// The stored fee sits far below the built-in trio height. Injecting
+			// the trio would add a fork-ID boundary that the stored schedule
+			// never had, so the gate leaves the schedule alone even though
+			// Istanbul stays active through the cancellation-fee fallback.
+			name:    "non-vanilla mainnet",
+			builtin: XDCMainnetChainConfig,
+			mutate: func(cfg *ChainConfig) {
+				lowerXDCForkBlocks(cfg, 3000000)
+				cfg.TIPXDCXCancellationFeeBlock = big.NewInt(3000000)
+				cfg.TIPTRC21FeeBlock = big.NewInt(90000000)
+				cfg.BerlinBlock = big.NewInt(90000000)
+				cfg.LondonBlock = big.NewInt(90000000)
+				cfg.MergeBlock = big.NewInt(90000000)
+				cfg.ShanghaiBlock = big.NewInt(90000000)
+				cfg.Gas50xBlock = big.NewInt(90000000)
+				cfg.TIPXDCXMinerDisableBlock = big.NewInt(90000000)
+				cfg.TIPXDCXReceiverDisableBlock = big.NewInt(90000000)
+			},
+			wantTrio:             nil,
+			wantIstanbulSource:   "TIPXDCXCancellationFeeBlock",
+			wantPetersburgSource: "TIPXDCXCancellationFeeBlock",
+			istanbulProbe:        big.NewInt(38383839),
+			wantIstanbul:         true,
+			wantConstantinople:   false,
+		},
+		{
+			name:                 "vanilla testnet",
+			builtin:              TestnetChainConfig,
+			wantTrio:             testnetAnchor,
+			wantIstanbulSource:   "IstanbulBlock",
+			wantPetersburgSource: "PetersburgBlock",
+			istanbulProbe:        big.NewInt(23779192),
+			wantIstanbul:         true,
+			wantConstantinople:   true,
+			wantStoredEqual:      true,
+		},
+		{
+			// The cancellation fee sits above the built-in trio height, so an
+			// injected Constantinople would follow it at a smaller height.
+			name:    "cancellation fee above the built-in trio",
+			builtin: XDCMainnetChainConfig,
+			mutate: func(cfg *ChainConfig) {
+				cfg.TIPXDCXCancellationFeeBlock = big.NewInt(50000000)
+				cfg.TIPTRC21FeeBlock = big.NewInt(60000000)
+			},
+			wantIstanbulSource:   "TIPXDCXCancellationFeeBlock",
+			wantPetersburgSource: "TIPXDCXCancellationFeeBlock",
+			istanbulProbe:        big.NewInt(38383839),
+			wantIstanbul:         false,
+			wantConstantinople:   false,
+		},
+		{
+			// The successor direction takes the other violation branch: the
+			// injected Istanbul would precede tipTRC21FeeBlock at a larger
+			// height. The fee keeps Istanbul effective below the injected
+			// height, which is exactly the pre-PR runtime.
+			name:    "tipTRC21FeeBlock below the built-in trio",
+			builtin: XDCMainnetChainConfig,
+			mutate: func(cfg *ChainConfig) {
+				lowerXDCForkBlocks(cfg, 3000000)
+				cfg.TIPXDCXCancellationFeeBlock = big.NewInt(3000000)
+				cfg.TIPTRC21FeeBlock = big.NewInt(30000000)
+			},
+			wantIstanbulSource:   "TIPXDCXCancellationFeeBlock",
+			wantPetersburgSource: "TIPXDCXCancellationFeeBlock",
+			istanbulProbe:        big.NewInt(38383839),
+			wantIstanbul:         true,
+			wantConstantinople:   false,
+		},
+		{
+			// Already invalid before this change: the fee exceeds the TRC21
+			// fee fork. The trio must stay unset so the startup error keeps
+			// naming that existing violation instead of a backfilled slot.
+			name:    "cancellation fee above the remaining schedule",
+			builtin: XDCMainnetChainConfig,
+			mutate: func(cfg *ChainConfig) {
+				cfg.TIPXDCXCancellationFeeBlock = big.NewInt(1000000000)
+			},
+			wantIstanbulSource:   "TIPXDCXCancellationFeeBlock",
+			wantPetersburgSource: "TIPXDCXCancellationFeeBlock",
+			istanbulProbe:        big.NewInt(38383839),
+			wantIstanbul:         false,
+			wantConstantinople:   false,
+			wantCheckErr:         "TIPXDCXCancellationFeeBlock 1000000000 > TIPTRC21FeeBlock 38383838",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := test.builtin.Clone()
+			cfg := test.builtin.Clone()
+			if test.mutate != nil {
+				test.mutate(cfg)
+			}
+			stored := forkSequenceTrioStoredConfig(t, cfg, test.strip...)
+			hydrated := stored.CloneForBackfill().BackfillMissingFieldsFrom(source)
+
+			for _, name := range []string{"ConstantinopleBlock", "PetersburgBlock", "IstanbulBlock"} {
+				field, ok := chainConfigForkBlockFieldByName(name)
+				if !ok {
+					t.Fatalf("%s is not a known fork field", name)
+				}
+				got := field.get(hydrated)
+				if test.wantTrio == nil {
+					if got != nil {
+						t.Fatalf("%s must stay unset, have %v", name, got)
+					}
+					continue
+				}
+				if got == nil || got.Cmp(test.wantTrio) != 0 {
+					t.Fatalf("%s: have %v want %v", name, got, test.wantTrio)
+				}
+			}
+			// Hydration must not add a fork-id boundary: the injected rows only
+			// land on a height the cancellation fee already contributes, and the
+			// skipped rows write nothing. The fixture strips cancunBlock on
+			// purpose, so the expected set is the stored one plus that slot. The
+			// discriminating fork-id checks live in core/forkid, where the
+			// anchor is absent from the fixture altogether.
+			wantForks := slices.Clone(stored.GatherForks())
+			if source.CancunBlock != nil {
+				wantForks = append(wantForks, source.CancunBlock.Uint64())
+				slices.Sort(wantForks)
+				wantForks = slices.Compact(wantForks)
+			}
+			if got := hydrated.GatherForks(); !slices.Equal(got, wantForks) {
+				t.Fatalf("hydration changed the fork set beyond the stripped slot: have %v want %v", got, wantForks)
+			}
+			for _, probe := range []struct {
+				name string
+				want string
+			}{
+				{name: "IstanbulBlock", want: test.wantIstanbulSource},
+				{name: "PetersburgBlock", want: test.wantPetersburgSource},
+			} {
+				field, ok := chainConfigForkBlockFieldByName(probe.name)
+				if !ok {
+					t.Fatalf("%s is not a known fork field", probe.name)
+				}
+				_, gotSource := chainConfigForkSequenceEffectiveValue(hydrated, probe.name, field.get(hydrated))
+				if gotSource != probe.want {
+					t.Fatalf("%s source: have %q want %q", probe.name, gotSource, probe.want)
+				}
+			}
+			if got := hydrated.IsIstanbul(test.istanbulProbe); got != test.wantIstanbul {
+				t.Fatalf("IsIstanbul(%v): have %v want %v", test.istanbulProbe, got, test.wantIstanbul)
+			}
+			if got := hydrated.IsConstantinople(test.istanbulProbe); got != test.wantConstantinople {
+				t.Fatalf("IsConstantinople(%v): have %v want %v", test.istanbulProbe, got, test.wantConstantinople)
+			}
+			// Non-trio omissions are still hydrated, so a "never inject"
+			// implementation cannot turn these rows green.
+			if hydrated.CancunBlock == nil || hydrated.CancunBlock.Cmp(source.CancunBlock) != 0 {
+				t.Fatalf("cancunBlock: have %v want %v", hydrated.CancunBlock, source.CancunBlock)
+			}
+			// The compatibility gate compares the hydrated stored config with
+			// the built-in one semantically, so the vanilla rows must come out
+			// equal after hydration.
+			if got := hydrated.Equal(source); got != test.wantStoredEqual {
+				t.Fatalf("semantic equality with the built-in config: have %v want %v", got, test.wantStoredEqual)
+			}
+			hydratedErr := hydrated.CheckConfigForkOrder()
+			if test.wantCheckErr == "" {
+				if hydratedErr != nil {
+					t.Fatalf("CheckConfigForkOrder rejected the hydrated config: %v", hydratedErr)
+				}
+				return
+			}
+			if hydratedErr == nil || !strings.Contains(hydratedErr.Error(), test.wantCheckErr) {
+				t.Fatalf("CheckConfigForkOrder: have %v want it to contain %q", hydratedErr, test.wantCheckErr)
+			}
+			storedErr := stored.CheckConfigForkOrder()
+			if storedErr == nil || storedErr.Error() != hydratedErr.Error() {
+				t.Fatalf("hydration changed the existing rejection:\nstored=%v\nhydrated=%v", storedErr, hydratedErr)
+			}
+		})
+	}
+}
+
+// TestBackfillForkSequenceTrioRequiresTheWholeTrio pins the participant gate: a
+// stored config that takes a position on any trio slot only receives the
+// built-in heights when every slot it declares or omits agrees with the anchor.
+// Declaring a subset at another height vetoes the batch, so hydration cannot
+// create a fork-ID boundary the stored schedule never had, and an explicit null
+// is authoritative: it is neither hydrated nor used to veto the other slots.
+func TestBackfillForkSequenceTrioRequiresTheWholeTrio(t *testing.T) {
+	anchor := big.NewInt(38383838)
+	declared := big.NewInt(50000000)
+	raiseTail := func(cfg *ChainConfig) {
+		cfg.TIPTRC21FeeBlock = big.NewInt(60000000)
+	}
+	nullFields := func(keys ...string) map[string]json.RawMessage {
+		fields := make(map[string]json.RawMessage, len(keys))
+		for _, key := range keys {
+			fields[key] = json.RawMessage("null")
+		}
+		return fields
+	}
+	tests := []struct {
+		name                 string
+		mutate               func(*ChainConfig)
+		overrides            map[string]json.RawMessage
+		probe                *big.Int
+		wantConstantinople   *big.Int
+		wantPetersburg       *big.Int
+		wantIstanbul         *big.Int
+		wantIsConstantinople bool
+		wantIsPetersburg     bool
+		wantIsIstanbul       bool
+	}{
+		{
+			// The cancellation fee is the fallback source for Petersburg and
+			// Istanbul, so an explicit null removes the height that would
+			// justify the injection; none of the three slots may move. The
+			// schedule stops at the anchor, because a config that schedules
+			// Berlin while Istanbul is unset is rejected before hydration.
+			name: "cancellation fee declared null",
+			overrides: nullFields(
+				"tipXDCXCancellationFeeBlock",
+				"berlinBlock", "londonBlock", "mergeBlock", "shanghaiBlock",
+				"cancunBlock", "eip1559Block", "pragueBlock", "osakaBlock", "amsterdamBlock",
+			),
+			probe: big.NewInt(38383839),
+		},
+		{
+			// The missing slot reads through the nil fallback, so the batch is
+			// dropped even though the two declared slots sit at the anchor.
+			name: "nil fee with Petersburg and Istanbul at the anchor",
+			overrides: map[string]json.RawMessage{
+				"petersburgBlock":             json.RawMessage("38383838"),
+				"istanbulBlock":               json.RawMessage("38383838"),
+				"tipXDCXCancellationFeeBlock": json.RawMessage("null"),
+			},
+			probe:            big.NewInt(38383839),
+			wantPetersburg:   anchor,
+			wantIstanbul:     anchor,
+			wantIsPetersburg: true,
+			wantIsIstanbul:   true,
+		},
+		{
+			// A declared slot that disagrees with the anchor drops the batch:
+			// the missing Constantinople and Istanbul stay unset and the
+			// declared Petersburg keeps the value the operator wrote. This row
+			// cannot separate "the gate vetoed the batch" from "the batch was
+			// written and then rolled back by the order scan" (the injected
+			// Istanbul would precede Petersburg), so the participant rule is
+			// only discriminated by the row below.
+			name:             "declared Petersburg away from the anchor",
+			mutate:           raiseTail,
+			overrides:        map[string]json.RawMessage{"petersburgBlock": json.RawMessage("50000000")},
+			probe:            big.NewInt(50000001),
+			wantPetersburg:   declared,
+			wantIsPetersburg: true,
+			wantIsIstanbul:   true,
+		},
+		{
+			// Both declared slots disagree with the anchor, so the missing
+			// Constantinople is not filled and no slot is rewritten. This is
+			// the row that discriminates the participant rule: injecting here
+			// would keep the fork order valid, so a gate that ignored declared
+			// slots would fill Constantinople.
+			name:   "declared Petersburg and Istanbul away from the anchor",
+			mutate: raiseTail,
+			overrides: map[string]json.RawMessage{
+				"petersburgBlock": json.RawMessage("50000000"),
+				"istanbulBlock":   json.RawMessage("50000000"),
+			},
+			probe:            big.NewInt(50000001),
+			wantPetersburg:   declared,
+			wantIstanbul:     declared,
+			wantIsPetersburg: true,
+			wantIsIstanbul:   true,
+		},
+		{
+			// The residue shape: the declared slots already agree with the
+			// anchor, so the missing Constantinople is filled and the fork
+			// becomes active, which is the accepted behaviour.
+			name: "declared Petersburg and Istanbul at the anchor",
+			overrides: map[string]json.RawMessage{
+				"petersburgBlock": json.RawMessage("38383838"),
+				"istanbulBlock":   json.RawMessage("38383838"),
+			},
+			probe:                big.NewInt(38383839),
+			wantConstantinople:   anchor,
+			wantPetersburg:       anchor,
+			wantIstanbul:         anchor,
+			wantIsConstantinople: true,
+			wantIsPetersburg:     true,
+			wantIsIstanbul:       true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := XDCMainnetChainConfig.Clone()
+			if test.mutate != nil {
+				test.mutate(cfg)
+			}
+			stored := forkSequenceTrioStoredConfigWithOverrides(t, cfg, test.overrides)
+			hydrated := stored.CloneForBackfill().BackfillMissingFieldsFrom(XDCMainnetChainConfig)
+
+			for _, want := range []struct {
+				name  string
+				value *big.Int
+			}{
+				{name: chainConfigConstantinopleBlockField, value: test.wantConstantinople},
+				{name: chainConfigPetersburgBlockField, value: test.wantPetersburg},
+				{name: chainConfigIstanbulBlockField, value: test.wantIstanbul},
+			} {
+				field, ok := chainConfigForkBlockFieldByName(want.name)
+				if !ok {
+					t.Fatalf("%s is not a known fork field", want.name)
+				}
+				got := field.get(hydrated)
+				if want.value == nil {
+					if got != nil {
+						t.Fatalf("%s must stay unset, have %v", want.name, got)
+					}
+					continue
+				}
+				if got == nil || got.Cmp(want.value) != 0 {
+					t.Fatalf("%s: have %v want %v", want.name, got, want.value)
+				}
+			}
+			for _, probe := range []struct {
+				name string
+				got  bool
+				want bool
+			}{
+				{name: "IsConstantinople", got: hydrated.IsConstantinople(test.probe), want: test.wantIsConstantinople},
+				{name: "IsPetersburg", got: hydrated.IsPetersburg(test.probe), want: test.wantIsPetersburg},
+				{name: "IsIstanbul", got: hydrated.IsIstanbul(test.probe), want: test.wantIsIstanbul},
+			} {
+				if probe.got != probe.want {
+					t.Fatalf("%s(%v): have %v want %v", probe.name, test.probe, probe.got, probe.want)
+				}
+			}
+			if err := hydrated.CheckConfigForkOrder(); err != nil {
+				t.Fatalf("CheckConfigForkOrder rejected the hydrated config: %v", err)
+			}
+			assertOnlyTrioHydrated(t, stored, hydrated)
+		})
+	}
+}
+
+// TestBackfillForkSequenceTrioRequiresCoherentSource pins the source side of
+// the gate: a source whose trio slots do not all declare the same height has
+// no anchor, so nothing is hydrated even when the destination's effective
+// values agree with each other.
+func TestBackfillForkSequenceTrioRequiresCoherentSource(t *testing.T) {
+	assertNoTrio := func(t *testing.T, cfg *ChainConfig) {
+		t.Helper()
+		for _, field := range chainConfigForkSequenceTrio {
+			if got := field.get(cfg); got != nil {
+				t.Fatalf("%s must stay unset, have %v", field.name, got)
+			}
+		}
+	}
+	hydrate := func(t *testing.T, src *ChainConfig) *ChainConfig {
+		t.Helper()
+		dest := XDCMainnetChainConfig.Clone()
+		dest.ConstantinopleBlock = nil
+		dest.PetersburgBlock = nil
+		dest.IstanbulBlock = nil
+		return dest.CloneForBackfill().BackfillMissingFieldsFrom(src)
+	}
+
+	t.Run("source omits Istanbul", func(t *testing.T) {
+		src := XDCMainnetChainConfig.Clone()
+		src.IstanbulBlock = nil
+		assertNoTrio(t, hydrate(t, src))
+	})
+	t.Run("source declares conflicting heights", func(t *testing.T) {
+		src := XDCMainnetChainConfig.Clone()
+		src.IstanbulBlock = big.NewInt(50000000)
+		assertNoTrio(t, hydrate(t, src))
+	})
+	t.Run("source fully unset", func(t *testing.T) {
+		assertNoTrio(t, hydrate(t, LocalnetChainConfig))
+	})
+}
+
+// TestBackfillForkSequenceTrioKeepsUntrackedConfigValid pins the same
+// protection for a programmatic config that carries no JSON presence
+// metadata: a nil slot still counts as missing, so the trio is probed against
+// the complete schedule before a value is kept.
+func TestBackfillForkSequenceTrioKeepsUntrackedConfigValid(t *testing.T) {
+	cfg := XDCMainnetChainConfig.Clone()
+	cfg.runtime.json.clear()
+	lowerXDCForkBlocks(cfg, 3000000)
+	cfg.TIPXDCXCancellationFeeBlock = big.NewInt(3000000)
+	cfg.TIPTRC21FeeBlock = big.NewInt(30000000)
+	for _, field := range chainConfigForkSequenceTrio {
+		field.set(cfg, nil)
+	}
+	hydrated := cfg.BackfillMissingFieldsFrom(XDCMainnetChainConfig)
+	for _, field := range chainConfigForkSequenceTrio {
+		if got := field.get(hydrated); got != nil {
+			t.Fatalf("%s must stay unset, have %v", field.name, got)
+		}
+	}
+	if err := hydrated.CheckConfigForkOrder(); err != nil {
+		t.Fatalf("CheckConfigForkOrder rejected the hydrated config: %v", err)
+	}
+}
+
+func TestBackfillForkSequenceTrioKeepsDevnetStoredConfigEqual(t *testing.T) {
+	stored := forkSequenceTrioStoredConfig(t, DevnetChainConfig)
+	hydrated := stored.CloneForBackfill().BackfillMissingFieldsFrom(DevnetChainConfig)
+	for _, field := range chainConfigForkSequenceTrio {
+		if got := field.get(hydrated); got == nil || got.Sign() != 0 {
+			t.Fatalf("%s: have %v want 0", field.name, got)
+		}
+	}
+	if !hydrated.Equal(DevnetChainConfig) {
+		t.Fatalf("hydrated devnet config differs from the built-in config")
+	}
+}
+
+func TestBackfillForkSequenceTrioPreservesExplicitNull(t *testing.T) {
+	raw, err := json.Marshal(XDCMainnetChainConfig.CloneForJSON())
+	if err != nil {
+		t.Fatalf("failed to marshal chain config: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatalf("failed to decode chain config: %v", err)
+	}
+	fields["constantinopleBlock"] = json.RawMessage("null")
+	delete(fields, "petersburgBlock")
+	delete(fields, "istanbulBlock")
+	raw, err = json.Marshal(fields)
+	if err != nil {
+		t.Fatalf("failed to marshal explicit-null config: %v", err)
+	}
+	var stored ChainConfig
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatalf("failed to decode explicit-null config: %v", err)
+	}
+
+	hydrated := stored.CloneForBackfill().BackfillMissingFieldsFrom(XDCMainnetChainConfig)
+	if hydrated.ConstantinopleBlock != nil {
+		t.Fatalf("explicit null must not be backfilled, have %v", hydrated.ConstantinopleBlock)
+	}
+	if hydrated.IsConstantinople(big.NewInt(38383838)) {
+		t.Fatal("explicit null must keep Constantinople inactive")
+	}
+	if hydrated.PetersburgBlock == nil || hydrated.IstanbulBlock == nil {
+		t.Fatalf("omitted Petersburg/Istanbul must still be hydrated, have %v/%v", hydrated.PetersburgBlock, hydrated.IstanbulBlock)
+	}
+	if err := hydrated.CheckConfigForkOrder(); err != nil {
+		t.Fatalf("CheckConfigForkOrder rejected the hydrated config: %v", err)
+	}
+	assertOnlyTrioHydrated(t, &stored, hydrated)
+
+	roundTrippedRaw, err := json.Marshal(hydrated)
+	if err != nil {
+		t.Fatalf("failed to marshal hydrated config: %v", err)
+	}
+	var roundTripped map[string]json.RawMessage
+	if err := json.Unmarshal(roundTrippedRaw, &roundTripped); err != nil {
+		t.Fatalf("failed to decode hydrated config: %v", err)
+	}
+	if got, ok := roundTripped["constantinopleBlock"]; !ok || string(got) != "null" {
+		t.Fatalf("explicit null did not survive the round trip: %s", got)
+	}
+}
+
+// TestBackfillForkSequenceTrioDoesNotRepairExplicitViolations pins that the
+// conditional hydration never rewrites a value the operator wrote: an explicit
+// out-of-order declaration keeps failing, so the check is not relaxed.
+func TestBackfillForkSequenceTrioDoesNotRepairExplicitViolations(t *testing.T) {
+	cfg := XDCMainnetChainConfig.CloneForJSON()
+	cfg.ConstantinopleBlock = big.NewInt(4)
+	cfg.PetersburgBlock = big.NewInt(4)
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("failed to marshal chain config: %v", err)
+	}
+	var stored ChainConfig
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatalf("failed to decode chain config: %v", err)
+	}
+	hydrated := stored.CloneForBackfill().BackfillMissingFieldsFrom(XDCMainnetChainConfig)
+	if hydrated.ConstantinopleBlock == nil || hydrated.ConstantinopleBlock.Cmp(big.NewInt(4)) != 0 {
+		t.Fatalf("explicit ConstantinopleBlock must be preserved, have %v", hydrated.ConstantinopleBlock)
+	}
+	if hydrated.PetersburgBlock == nil || hydrated.PetersburgBlock.Cmp(big.NewInt(4)) != 0 {
+		t.Fatalf("explicit PetersburgBlock must be preserved, have %v", hydrated.PetersburgBlock)
+	}
+	if err := hydrated.CheckConfigForkOrder(); err == nil {
+		t.Fatal("an explicit order violation must still be rejected after hydration")
+	}
+}
+
+// TestCheckConfigForkOrderHintsAreExecutable pins that the explicit-null hint
+// only appears when clearing the named slot really validates: the hint is the
+// repair the operator is told to apply, so the next validation must accept it.
+func TestCheckConfigForkOrderHintsAreExecutable(t *testing.T) {
+	clearStandardForksAfterIstanbul := func(cfg *ChainConfig) {
+		cfg.BerlinBlock = nil
+		cfg.LondonBlock = nil
+		cfg.MergeBlock = nil
+		cfg.ShanghaiBlock = nil
+		cfg.CancunBlock = nil
+		cfg.EIP1559Block = nil
+		cfg.PragueBlock = nil
+		cfg.OsakaBlock = nil
+		cfg.AmsterdamBlock = nil
+	}
+	tests := []struct {
+		name        string
+		mutate      func(*ChainConfig)
+		drop        func(*ChainConfig)
+		wantHint    bool
+		wantHintKey string
+	}{
+		{
+			// The cancellation fee is the only effective source for Petersburg
+			// and Istanbul here, so clearing it leaves the later standard fork
+			// without a declared predecessor.
+			name: "cancellation fee feeds a later fork",
+			mutate: func(cfg *ChainConfig) {
+				lowerXDCForkBlocks(cfg, 200)
+				cfg.TIPXDCXCancellationFeeBlock = big.NewInt(100)
+				cfg.TIPTRC21FeeBlock = big.NewInt(300)
+				cfg.Gas50xBlock = big.NewInt(300)
+				clearStandardForksAfterIstanbul(cfg)
+				cfg.BerlinBlock = big.NewInt(300)
+				cfg.ConstantinopleBlock = nil
+				cfg.PetersburgBlock = nil
+				cfg.IstanbulBlock = nil
+			},
+			drop: func(cfg *ChainConfig) { cfg.TIPXDCXCancellationFeeBlock = nil },
+		},
+		{
+			// Same shape without a later fork: now clearing the slot is a
+			// complete repair, so the hint must offer it.
+			name: "cancellation fee without a later fork",
+			mutate: func(cfg *ChainConfig) {
+				lowerXDCForkBlocks(cfg, 200)
+				cfg.TIPXDCXCancellationFeeBlock = big.NewInt(100)
+				cfg.TIPTRC21FeeBlock = big.NewInt(300)
+				cfg.Gas50xBlock = big.NewInt(300)
+				clearStandardForksAfterIstanbul(cfg)
+				cfg.ConstantinopleBlock = nil
+				cfg.PetersburgBlock = nil
+				cfg.IstanbulBlock = nil
+			},
+			drop:        func(cfg *ChainConfig) { cfg.TIPXDCXCancellationFeeBlock = nil },
+			wantHint:    true,
+			wantHintKey: "tipXDCXCancellationFeeBlock",
+		},
+		{
+			// A later optional slot still carries a value, which the sequence
+			// scan rejects once Istanbul is dropped.
+			name: "later optional fork keeps Istanbul declared",
+			mutate: func(cfg *ChainConfig) {
+				lowerXDCForkBlocks(cfg, 200)
+				cfg.TIPXDCXCancellationFeeBlock = nil
+				cfg.ConstantinopleBlock = nil
+				cfg.PetersburgBlock = big.NewInt(200)
+				cfg.IstanbulBlock = big.NewInt(100)
+				cfg.TIPTRC21FeeBlock = big.NewInt(300)
+				cfg.Gas50xBlock = big.NewInt(300)
+				clearStandardForksAfterIstanbul(cfg)
+				cfg.BerlinBlock = big.NewInt(300)
+			},
+			drop: func(cfg *ChainConfig) { cfg.IstanbulBlock = nil },
+		},
+		{
+			name: "nothing after Istanbul",
+			mutate: func(cfg *ChainConfig) {
+				lowerXDCForkBlocks(cfg, 200)
+				cfg.TIPXDCXCancellationFeeBlock = nil
+				cfg.ConstantinopleBlock = nil
+				cfg.PetersburgBlock = big.NewInt(200)
+				cfg.IstanbulBlock = big.NewInt(100)
+				cfg.TIPTRC21FeeBlock = big.NewInt(300)
+				cfg.Gas50xBlock = big.NewInt(300)
+				clearStandardForksAfterIstanbul(cfg)
+			},
+			drop:        func(cfg *ChainConfig) { cfg.IstanbulBlock = nil },
+			wantHint:    true,
+			wantHintKey: "istanbulBlock",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := TestnetChainConfig.Clone()
+			test.mutate(cfg)
+			err := cfg.CheckConfigForkOrder()
+			if err == nil {
+				t.Fatal("expected the fixture to be rejected")
+			}
+			// Only a positive case knows the key: matching an empty key would
+			// leave every negative case passing without inspecting the error.
+			if got := strings.Contains(err.Error(), `, or set "`); got != test.wantHint {
+				t.Fatalf("drop hint: have %v want %v (error: %v)", got, test.wantHint, err)
+			}
+			if test.wantHint {
+				hint := `, or set "` + test.wantHintKey + `" to null in the chain config`
+				if !strings.Contains(err.Error(), hint) {
+					t.Fatalf("drop hint for %q missing: %v", test.wantHintKey, err)
+				}
+			}
+			dropped := cfg.Clone()
+			test.drop(dropped)
+			droppedErr := dropped.CheckConfigForkOrder()
+			if test.wantHint {
+				if droppedErr != nil {
+					t.Fatalf("the suggested removal does not validate: %v", droppedErr)
+				}
+				return
+			}
+			if droppedErr == nil {
+				t.Fatal("a removal that validates must be offered as a repair")
+			}
+		})
+	}
+}
+
+// TestCheckConfigForkOrderHintRepairSurvivesHydration pins that the repair the
+// diagnostic names is expressed the way the startup hydration reads it: an
+// omitted key is backfilled and the violation returns, an explicit null keeps
+// the slot cleared. The hint is computed on a bare ChainConfig, so only a JSON
+// round-trip through the backfill shows which edit actually repairs the node.
+func TestCheckConfigForkOrderHintRepairSurvivesHydration(t *testing.T) {
+	fixture := func() *ChainConfig {
+		cfg := TestnetChainConfig.Clone()
+		lowerXDCForkBlocks(cfg, 200)
+		cfg.TIPXDCXCancellationFeeBlock = big.NewInt(100)
+		cfg.TIPTRC21FeeBlock = big.NewInt(300)
+		cfg.Gas50xBlock = big.NewInt(300)
+		cfg.ConstantinopleBlock = nil
+		cfg.PetersburgBlock = nil
+		cfg.IstanbulBlock = nil
+		cfg.BerlinBlock = nil
+		cfg.LondonBlock = nil
+		cfg.MergeBlock = nil
+		cfg.ShanghaiBlock = nil
+		cfg.CancunBlock = nil
+		cfg.EIP1559Block = nil
+		cfg.PragueBlock = nil
+		cfg.OsakaBlock = nil
+		cfg.AmsterdamBlock = nil
+		return cfg
+	}
+	// roundTrip writes the fixture as JSON, applies mutate to the object and
+	// decodes it back, so field presence is tracked like a startup config.
+	roundTrip := func(t *testing.T, mutate func(map[string]json.RawMessage)) *ChainConfig {
+		t.Helper()
+		raw, err := json.Marshal(fixture())
+		if err != nil {
+			t.Fatalf("failed to marshal the fixture: %v", err)
+		}
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &object); err != nil {
+			t.Fatalf("failed to decode the fixture: %v", err)
+		}
+		mutate(object)
+		raw, err = json.Marshal(object)
+		if err != nil {
+			t.Fatalf("failed to marshal the edited fixture: %v", err)
+		}
+		cfg := new(ChainConfig)
+		if err := json.Unmarshal(raw, cfg); err != nil {
+			t.Fatalf("failed to decode the edited fixture: %v", err)
+		}
+		return cfg
+	}
+
+	// Removing the key is not the repair the hint asks for: the hydration
+	// backfills the Localnet height and the same violation returns.
+	omitted := roundTrip(t, func(object map[string]json.RawMessage) {
+		delete(object, "tipXDCXCancellationFeeBlock")
+	})
+	hydrated := omitted.BackfillCustomMigratedFieldsFrom(LocalnetChainConfig)
+	if hydrated.TIPXDCXCancellationFeeBlock == nil || hydrated.TIPXDCXCancellationFeeBlock.Sign() != 0 {
+		t.Fatalf("the omitted cancellation fee must be backfilled to 0, have %v", hydrated.TIPXDCXCancellationFeeBlock)
+	}
+	err := hydrated.CheckConfigForkOrder()
+	if err == nil {
+		t.Fatal("removing the key must not validate after hydration")
+	}
+	if want := "TIPXDCXLendingBlock 200 > TIPXDCXCancellationFeeBlock 0"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("unexpected error after hydration: %v", err)
+	}
+	if !strings.Contains(err.Error(), `, or set "tipXDCXCancellationFeeBlock" to null in the chain config`) {
+		t.Fatalf("the re-run error must keep offering the explicit-null repair: %v", err)
+	}
+
+	// The explicit null survives the same hydration and ends the violation.
+	nulled := roundTrip(t, func(object map[string]json.RawMessage) {
+		object["tipXDCXCancellationFeeBlock"] = json.RawMessage("null")
+	})
+	repaired := nulled.BackfillCustomMigratedFieldsFrom(LocalnetChainConfig)
+	if repaired.TIPXDCXCancellationFeeBlock != nil {
+		t.Fatalf("an explicit null must not be backfilled, have %v", repaired.TIPXDCXCancellationFeeBlock)
+	}
+	if err := repaired.CheckConfigForkOrder(); err != nil {
+		t.Fatalf("the explicit null must validate, got %v", err)
+	}
 }
 
 func TestForEachChainConfigForkOrderBlockMarksTIPTRC21FeeBlockOptional(t *testing.T) {

@@ -60,6 +60,77 @@ func TestSetupGenesisAcceptsProvidedBuiltInHashCustomConfigOnEmptyDBWithExplicit
 	}
 }
 
+// TestSetupGenesisKeepsDeferredForkTrioUnsetForSameHashOverride pins that a
+// same-hash override which defers the XDC anchor and every later fork keeps
+// starting. The trio never gets hydrated: every missing slot's effective height
+// is the cancellation fee, which differs from the anchor, so the batch gate
+// refuses it before a value is written. The fork-order check is a second line
+// of defence and would roll the same batch back. Pinning the gate on its own
+// takes a shape whose injected values still pass the order check.
+func TestSetupGenesisKeepsDeferredForkTrioUnsetForSameHashOverride(t *testing.T) {
+	const deferred = 1000000000
+
+	genesis := DefaultGenesisBlock()
+	genesis.Config = genesis.Config.Clone()
+	cfg := genesis.Config
+	cfg.ChainID = big.NewInt(9999)
+	cfg.ConstantinopleBlock = nil
+	cfg.PetersburgBlock = nil
+	cfg.IstanbulBlock = nil
+	for _, block := range []**big.Int{
+		&cfg.DenylistBlock,
+		&cfg.TIPNoHalvingMNRewardBlock,
+		&cfg.TIPXDCXBlock,
+		&cfg.TIPXDCXLendingBlock,
+		&cfg.TIPXDCXCancellationFeeBlock,
+		&cfg.TIPTRC21FeeBlock,
+		&cfg.BerlinBlock,
+		&cfg.LondonBlock,
+		&cfg.MergeBlock,
+		&cfg.ShanghaiBlock,
+		&cfg.Gas50xBlock,
+		&cfg.TIPXDCXMinerDisableBlock,
+		&cfg.TIPXDCXReceiverDisableBlock,
+		&cfg.EIP1559Block,
+		&cfg.CancunBlock,
+	} {
+		*block = big.NewInt(deferred)
+	}
+	if err := cfg.CheckConfigForkOrder(); err != nil {
+		t.Fatalf("test fixture must itself be a valid schedule: %v", err)
+	}
+
+	db := rawdb.NewMemoryDatabase()
+	resolved, hash, compatErr, err := SetupGenesisBlockWithOverride(db, genesis, true)
+	if err != nil {
+		t.Fatalf("SetupGenesisBlockWithOverride rejected the deferred override: %v", err)
+	}
+	if compatErr != nil {
+		t.Fatalf("unexpected compatibility error: %v", compatErr)
+	}
+	if hash != params.MainnetGenesisHash {
+		t.Fatalf("unexpected hash: have %s want %s", hash.Hex(), params.MainnetGenesisHash.Hex())
+	}
+	if resolved.ConstantinopleBlock != nil || resolved.PetersburgBlock != nil || resolved.IstanbulBlock != nil {
+		t.Fatalf("deferred override must keep the trio unset, have %v/%v/%v",
+			resolved.ConstantinopleBlock, resolved.PetersburgBlock, resolved.IstanbulBlock)
+	}
+	stored, err := rawdb.ReadChainConfig(db, hash)
+	if err != nil {
+		t.Fatalf("failed to read stored chain config: %v", err)
+	}
+	if stored == nil {
+		t.Fatal("expected stored chain config")
+	}
+	if stored.ConstantinopleBlock != nil || stored.PetersburgBlock != nil || stored.IstanbulBlock != nil {
+		t.Fatalf("stored override must keep the trio unset, have %v/%v/%v",
+			stored.ConstantinopleBlock, stored.PetersburgBlock, stored.IstanbulBlock)
+	}
+	if err := stored.CheckConfigForkOrder(); err != nil {
+		t.Fatalf("stored override must stay a valid schedule: %v", err)
+	}
+}
+
 // TestSetupGenesisReloadsPersistedBuiltInHashCustomConfigWithExplicitRecovery
 // tests setup genesis reloads a persisted built-in hash custom config when the
 // operator explicitly opts into built-in override recovery.
