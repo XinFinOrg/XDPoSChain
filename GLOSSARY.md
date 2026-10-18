@@ -4,6 +4,19 @@ Vocabulary for the XDPoS chain: the block schedule its validators run to, the bl
 
 ## Language
 
+### Schedule
+
+**gap block**:
+The block inside every epoch at which the next epoch's masternode set is prepared.
+_Avoid_: checkpoint block, gap height
+
+**XDPoS schedule**:
+The rule that places one gap block inside each epoch, fixed by the epoch length and the gap offset.
+_Avoid_: gap schedule, gap config, checkpoint schedule
+
+**reward checkpoint**:
+The block at which the v1 engine pays out masternode rewards, every `RewardCheckpoint` blocks. The interval is configured independently of the epoch, so a reward checkpoint is not necessarily an epoch boundary and can coincide with a gap block.
+
 ### Chain data
 
 **executed marker**:
