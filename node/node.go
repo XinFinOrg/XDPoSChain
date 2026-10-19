@@ -125,11 +125,16 @@ func New(conf *Config) (_ *Node, err error) {
 		return nil, err
 	}
 
-	// Release the instance directory if any later initialization step fails.
+	// Release resources acquired by any later initialization step that fails.
 	defer func() {
 		if err != nil {
+			if node.accman != nil {
+				_ = node.accman.Close()
+			}
 			if node.keyDirTemp {
-				_ = os.RemoveAll(node.keyDir)
+				if removeErr := os.RemoveAll(node.keyDir); removeErr != nil {
+					node.log.Warn("Failed to remove temporary keystore", "path", node.keyDir, "error", removeErr)
+				}
 			}
 			node.closeDataDir()
 		}

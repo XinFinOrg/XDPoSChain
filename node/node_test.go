@@ -25,9 +25,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
@@ -260,6 +262,42 @@ func TestNodeNewFailurePreservesConfiguredKeyStore(t *testing.T) {
 	}
 	if contents, err := os.ReadFile(marker); err != nil || string(contents) != "keep" {
 		t.Fatalf("configured keystore was changed: contents %q, error %v", contents, err)
+	}
+}
+
+func TestNodeNewFailureStopsAccountManager(t *testing.T) {
+	const attempts = 20
+	config := testNodeConfig()
+	config.DataDir = t.TempDir()
+	config.HTTPPathPrefix = "invalid"
+	before := countAccountManagerGoroutines()
+
+	for i := 0; i < attempts; i++ {
+		if node, err := New(config); node != nil || err == nil {
+			if node != nil {
+				node.Close()
+			}
+			t.Fatalf("New returned (%v, %v), want initialization error", node, err)
+		}
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for countAccountManagerGoroutines() != before && time.Now().Before(deadline) {
+		runtime.Gosched()
+	}
+	if after := countAccountManagerGoroutines(); after != before {
+		t.Fatalf("account manager goroutines changed from %d to %d after failed construction", before, after)
+	}
+}
+
+func countAccountManagerGoroutines() int {
+	buffer := make([]byte, 64<<10)
+	for {
+		n := runtime.Stack(buffer, true)
+		if n < len(buffer) {
+			return strings.Count(string(buffer[:n]), "accounts.(*Manager).update")
+		}
+		buffer = make([]byte, len(buffer)*2)
 	}
 }
 
