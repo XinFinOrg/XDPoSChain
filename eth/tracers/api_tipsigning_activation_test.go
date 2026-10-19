@@ -16,13 +16,12 @@
 
 // This file covers the block level TIPSigning removal from the tracer side. The two paths
 // that return nothing but per-transaction tracer results, traceBlock and traceChain, are
-// knowingly left without a case here: the removal goes through state.StateDB.DeleteAddress,
-// which deletes the account from the trie only and leaves the cached state object readable
-// in the same session (core/state/statedb.go, DeleteAddress -> deleteStateObject), and
-// neither path returns a state root. Nothing they return can therefore tell a replay that
-// ran the removal from one that did not, and a case asserting one of them would either pass
-// on both sides or need a state root the API does not expose. debug_intermediateRoots and
-// eth_simulateV1 both return a root, and they do carry the case for their own entry point.
+// knowingly left without a case here: since state.StateDB.DeleteAddress invalidates the
+// session cache, a contract reading the account would see the removal in-session, so a case
+// could in principle distinguish a replay that ran the removal from one that did not. It is
+// omitted as a deliberate trade-off — #2591 did not add one, and neither path returns a state
+// root to assert on. debug_intermediateRoots and eth_simulateV1 both return a root, and they
+// do carry the case for their own entry point.
 package tracers
 
 import (

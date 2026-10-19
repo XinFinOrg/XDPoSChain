@@ -38,10 +38,12 @@ import (
 // simulation that starts from the parent state without removing it reports calls and a state
 // root for a pre-state the chain never had.
 //
-// The fixture pins its premise by simulating the same block twice, once over a base state
-// that holds the legacy account and once over one that does not: with the removal in place
-// both simulations land on the same state root, and without it the first one keeps the
-// account and lands elsewhere.
+// The fixture pins its premise by simulating the same block over base states that differ
+// only in where the legacy account comes from: absent, part of the base state, or supplied
+// by a state override. With the removal in place all three land on the same state root;
+// without it the runs that hold the account keep it and land elsewhere. The override run
+// matters because the override is applied to the base state before the block level removal,
+// so DeleteAddress evicts the overridden account from the session cache as well.
 func TestSimulateV1AppliesTIPSigningActivation(t *testing.T) {
 	t.Parallel()
 
@@ -98,9 +100,9 @@ func TestSimulateV1AppliesTIPSigningActivation(t *testing.T) {
 		// would only extend the run to a fork it does not exercise.
 		config.AmsterdamBlock = nil
 
-		// The legacy account has to come from the genesis allocation rather than from a state
-		// override: DeleteAddress removes the account from the trie only, so an account the
-		// overrides created in memory would be written back by the block finalisation.
+		// The base state carries the legacy account only for the in-state run; the override
+		// run supplies it through the request instead, so the two paths stay apart and the
+		// override run can show that an in-memory account is removed too.
 		alloc := types.GenesisAlloc{
 			sender: {Balance: big.NewInt(params.Ether)},
 		}
