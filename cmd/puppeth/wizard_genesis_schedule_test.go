@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -86,6 +87,121 @@ func TestCheckGenesisInputScheduleKeys(t *testing.T) {
 				t.Errorf("refusal = %q, want it to start with %q", err, want)
 			}
 		})
+	}
+
+	// A schedule key with a field is applied by inputDocument, so it must not be refused.
+	// The refused set follows the field table, which is what lets a field come back (Gap
+	// was one until #2438) without a handwritten list contradicting it.
+	type withScheduleFields struct {
+		Gap         uint64
+		SwitchBlock uint64
+	}
+	var raw map[string]yaml.Node
+	if err := yaml.Unmarshal([]byte("gap: 450\nswitch_block: 900\n"), &raw); err != nil {
+		t.Fatalf("failed to decode the fixture: %v", err)
+	}
+	if err := checkScheduleKeys(raw, inputKeys(reflect.TypeOf(withScheduleFields{}))); err != nil {
+		t.Errorf("checkScheduleKeys = %v, want keys with a field to be accepted", err)
+	}
+}
+
+// TestInputDocumentFoldsKeys pins that a field spelled like its Go name still reaches
+// the struct, and that two spellings of one field are refused instead of one winning.
+func TestInputDocumentFoldsKeys(t *testing.T) {
+	decode := func(t *testing.T, input string) (*GenesisInput, error) {
+		t.Helper()
+		var raw map[string]yaml.Node
+		if err := yaml.Unmarshal([]byte(input), &raw); err != nil {
+			t.Fatalf("failed to decode test input: %v", err)
+		}
+		doc, err := inputDocument(raw)
+		if err != nil {
+			return nil, err
+		}
+		genesisInput := NewGenesisInput()
+		if err := doc.Decode(genesisInput); err != nil {
+			t.Fatalf("failed to decode the re-keyed document: %v", err)
+		}
+		return genesisInput, nil
+	}
+
+	input, err := decode(t, "Epoch: 451\nCHAIN_ID: 19420\nMasternodes_Owner: \"0xa4477b9b3dcfffb71db9e2aba579975ac756dade\"\n")
+	if err != nil {
+		t.Fatalf("inputDocument = %v, want no error", err)
+	}
+	if got, want := input.Epoch, uint64(451); got != want {
+		t.Errorf("Epoch = %d, want %d from Epoch:", got, want)
+	}
+	if got, want := input.ChainId, uint64(19420); got != want {
+		t.Errorf("ChainId = %d, want %d from CHAIN_ID:", got, want)
+	}
+	if got, want := input.MasternodesOwner, "0xa4477b9b3dcfffb71db9e2aba579975ac756dade"; got != want {
+		t.Errorf("MasternodesOwner = %q, want %q", got, want)
+	}
+
+	if _, err := decode(t, "epoch: 451\nEpoch: 900\n"); err == nil {
+		t.Fatal("two spellings of epoch were accepted")
+	}
+
+	// The refusal names the same pair on every run: the re-keyed document is built
+	// from a map, so the reported order is only stable if the keys are sorted.
+	const threeSpellings = "epoch: 1\nEpoch: 2\nEPOCH: 3\n"
+	refusals := make(map[string]bool)
+	for i := 0; i < 100; i++ {
+		var raw map[string]yaml.Node
+		if err := yaml.Unmarshal([]byte(threeSpellings), &raw); err != nil {
+			t.Fatalf("failed to decode test input: %v", err)
+		}
+		_, err := inputDocument(raw)
+		if err == nil {
+			t.Fatal("three spellings of epoch were accepted")
+		}
+		refusals[err.Error()] = true
+	}
+	if want := `keys "EPOCH" and "Epoch" both set epoch`; len(refusals) != 1 || !refusals[want] {
+		t.Errorf("refusals = %v, want only %q", refusals, want)
+	}
+}
+
+// TestInputKeysFollowYAMLMatching pins the key table against the rule yaml
+// matches fields by: a tag wins, otherwise the lowercased field name, and a "-"
+// tag accepts nothing. A key that passes the table but not yaml would be dropped
+// without a word.
+func TestInputKeysFollowYAMLMatching(t *testing.T) {
+	type fixture struct {
+		Plain       uint64
+		Under_Score uint64
+		Tagged      uint64 `yaml:"tagged_key"`
+		Optioned    uint64 `yaml:"opt_key,omitempty"`
+		Ignored     uint64 `yaml:"-"`
+		secret      uint64 // unexported: yaml matches no key, so the table must not either
+	}
+	keys := inputKeys(reflect.TypeOf(fixture{}))
+	// The unexported field is read through reflection only, so reference it here
+	// to keep the unused check from asking for its removal.
+	_ = fixture{}.secret
+	if _, ok := keys["secret"]; ok {
+		t.Errorf("inputKeys carries %q, but yaml matches no key for an unexported field", "secret")
+	}
+
+	const input = "plain: 1\nunder_score: 2\nTAGGED_KEY: 3\nopt_key: 4\nignored: 5\n"
+	var raw map[string]yaml.Node
+	if err := yaml.Unmarshal([]byte(input), &raw); err != nil {
+		t.Fatalf("failed to decode test input: %v", err)
+	}
+	doc, err := foldInputKeys(raw, keys)
+	if err != nil {
+		t.Fatalf("foldInputKeys = %v, want no error", err)
+	}
+	var got fixture
+	if err := doc.Decode(&got); err != nil {
+		t.Fatalf("failed to decode the re-keyed document: %v", err)
+	}
+	if got.Plain != 1 || got.Under_Score != 2 || got.Tagged != 3 || got.Optioned != 4 {
+		t.Errorf("decoded %+v, want plain 1, under_score 2, tagged_key 3, opt_key 4", got)
+	}
+	if got.Ignored != 0 {
+		t.Errorf("Ignored = %d, want the key of a field with a \"-\" tag left out", got.Ignored)
 	}
 }
 
@@ -507,5 +623,79 @@ stakingthreshold: 10000000
 	}
 	if got, want := disk.Config.XDPoS.Epoch, uint64(9223372036854775808); got != want {
 		t.Errorf("XDPoS.Epoch = %d, want %d", got, want)
+	}
+}
+
+// TestMakeGenesisAppliesFoldedInputKeys: a file spelled with Go field names must reach
+// the fields through loadGenesisInput, and a key with no field must say so instead of
+// vanishing. The child form is needed because the wizard writes and exits in process.
+func TestMakeGenesisAppliesFoldedInputKeys(t *testing.T) {
+	if path := os.Getenv("PUPPETH_FOLDED_INPUT"); path != "" {
+		w := &wizard{
+			network: "xdc-test",
+			in:      bufio.NewReader(strings.NewReader("")),
+		}
+		w.conf.path = path + ".out"
+		w.conf.inpath = path
+		w.makeGenesis()
+		return
+	}
+	dir := t.TempDir()
+	inPath := filepath.Join(dir, "input.yaml")
+	const inputYAML = `Epoch: 451
+Chain_ID: 19420
+Masternodes_Owner: "0xa4477b9b3dcfffb71db9e2aba579975ac756dade"
+Masternodes:
+  - "0x7e7d7b438abd152af3753bdc01512d2208305397"
+period: 2
+`
+	if err := os.WriteFile(inPath, []byte(inputYAML), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestMakeGenesisAppliesFoldedInputKeys$")
+	cmd.Env = append(os.Environ(), "PUPPETH_FOLDED_INPUT="+inPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("makeGenesis refused a file spelled with field names: %v; output:\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "Ignoring genesis input key with no GenesisInput field") {
+		t.Errorf("child output does not warn about the key with no field:\n%s", out)
+	}
+	blob, err := os.ReadFile(inPath + ".out")
+	if err != nil {
+		t.Fatalf("run wrote no genesis: %v; output:\n%s", err, out)
+	}
+	var disk struct {
+		Config struct {
+			ChainId uint64 `json:"chainId"`
+			XDPoS   struct {
+				Epoch uint64 `json:"epoch"`
+				Gap   uint64 `json:"gap"`
+			} `json:"XDPoS"`
+		} `json:"config"`
+		Alloc map[string]json.RawMessage `json:"alloc"`
+	}
+	if err := json.Unmarshal(blob, &disk); err != nil {
+		t.Fatalf("failed to decode the generated genesis: %v", err)
+	}
+	if got, want := disk.Config.XDPoS.Epoch, uint64(451); got != want {
+		t.Errorf("XDPoS.Epoch = %d, want %d from Epoch:", got, want)
+	}
+	if got, want := disk.Config.ChainId, uint64(19420); got != want {
+		t.Errorf("ChainId = %d, want %d from Chain_ID:", got, want)
+	}
+	if got, want := disk.Config.XDPoS.Gap, params.LocalnetChainConfig.XDPoS.Gap; got != want {
+		t.Errorf("XDPoS.Gap = %d, want the template's %d: the file cannot set gap", got, want)
+	}
+	// Alloc keys carry no 0x/xdc prefix in a genesis file, so compare the address itself.
+	const owner = "a4477b9b3dcfffb71db9e2aba579975ac756dade"
+	funded := false
+	for address := range disk.Alloc {
+		if strings.HasSuffix(strings.ToLower(address), owner) {
+			funded = true
+		}
+	}
+	if !funded {
+		t.Errorf("owner %s is not funded, so Masternodes_Owner did not reach the field", owner)
 	}
 }

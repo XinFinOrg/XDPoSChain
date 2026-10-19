@@ -24,6 +24,8 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -76,13 +78,106 @@ func NewGenesisInput() *GenesisInput {
 	}
 }
 
+// canonicalInputKey folds the spelling differences the schedule guard tolerates,
+// so Epoch and epoch reach the same field.
+func canonicalInputKey(key string) string {
+	return strings.ToLower(strings.ReplaceAll(key, "_", ""))
+}
+
+// yamlInputKey is the spelling yaml matches a field by: its yaml tag, or the
+// lowercased Go field name when there is no tag. A "-" tag makes yaml ignore the
+// field, so it accepts no key at all.
+func yamlInputKey(field reflect.StructField) string {
+	tag, _, _ := strings.Cut(field.Tag.Get("yaml"), ",")
+	switch tag {
+	case "-":
+		return ""
+	case "":
+		return strings.ToLower(field.Name)
+	}
+	return tag
+}
+
+// inputKeys maps every canonical spelling accepted for a struct onto the
+// spelling yaml matches, so a field with a tag or an underscore still receives
+// its value. The keys are derived from the fields, so a new field needs no
+// second list to keep in step.
+func inputKeys(t reflect.Type) map[string]string {
+	keys := make(map[string]string)
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		// yaml skips an unexported field unless it is anonymous, where the field
+		// name is the type name; the table has to leave out the same fields.
+		if field.PkgPath != "" && !field.Anonymous {
+			continue
+		}
+		if name := yamlInputKey(field); name != "" {
+			keys[canonicalInputKey(name)] = name
+		}
+	}
+	return keys
+}
+
+// genesisInputKeys maps the spellings accepted for GenesisInput onto the keys
+// yaml actually matches.
+var genesisInputKeys = inputKeys(reflect.TypeOf(GenesisInput{}))
+
+// inputDocument re-keys the fields yaml would recognise onto its spelling and
+// reports two spellings of one field as a conflict.
+func inputDocument(raw map[string]yaml.Node) (*yaml.Node, error) {
+	return foldInputKeys(raw, genesisInputKeys)
+}
+
+// foldInputKeys rewrites the recognised keys and leaves the rest out, since yaml
+// would drop them anyway; they are warned about instead of disappearing without
+// a word.
+func foldInputKeys(raw map[string]yaml.Node, keys map[string]string) (*yaml.Node, error) {
+	// Sorted so the same file is refused with the same message every run.
+	sorted := make([]string, 0, len(raw))
+	for key := range raw {
+		sorted = append(sorted, key)
+	}
+	sort.Strings(sorted)
+
+	doc := &yaml.Node{Kind: yaml.MappingNode}
+	seen := make(map[string]string, len(raw))
+	for _, key := range sorted {
+		value := raw[key]
+		canonical := canonicalInputKey(key)
+		name, ok := keys[canonical]
+		if !ok {
+			log.Warn("Ignoring genesis input key with no GenesisInput field", "key", key)
+			continue
+		}
+		if other, ok := seen[canonical]; ok {
+			return nil, fmt.Errorf("keys %q and %q both set %s", other, key, canonical)
+		}
+		seen[canonical] = key
+		doc.Content = append(doc.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: name}, &value)
+	}
+	return doc, nil
+}
+
 // checkGenesisInputScheduleKeys refuses gap, switchBlock and switchEpoch, which have no
-// GenesisInput field and would be dropped by yaml (period, rewardCheckpoint,
-// maxMasternodesV2, skipV1Validation and v2 are still dropped).
+// GenesisInput field and would be dropped by yaml. Every other key without a field warns
+// instead, for example period, reward, rewardCheckpoint, foundationWalletAddr,
+// maxMasternodesV2, skipV1Validation and v2.
 func checkGenesisInputScheduleKeys(raw map[string]yaml.Node) error {
+	return checkScheduleKeys(raw, genesisInputKeys)
+}
+
+// checkScheduleKeys refuses the schedule keys the field table has no field for. A key with
+// a field is applied by inputDocument, so it must not be refused here: the two lists are
+// read from the same table instead of drifting apart.
+func checkScheduleKeys(raw map[string]yaml.Node, keys map[string]string) error {
 	var gap, switchBlock, switchEpoch bool
 	for key := range raw {
-		switch strings.ToLower(strings.ReplaceAll(key, "_", "")) {
+		canonical := canonicalInputKey(key)
+		if _, hasField := keys[canonical]; hasField {
+			continue
+		}
+		switch canonical {
 		case "gap":
 			gap = true
 		case "switchblock":
@@ -121,8 +216,8 @@ func (w *wizard) loadGenesisInput() *GenesisInput {
 		os.Exit(1)
 		return nil
 	}
-	// Decoded twice: once for its keys (yaml matches lowercased field names exactly),
-	// once into the fields.
+	// Decoded twice: once for its keys, once for the fields, re-keyed onto the
+	// spelling yaml matches.
 	var raw map[string]yaml.Node
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		log.Warn("Failed to decode genesis input file (expect yaml format)", "err", err)
@@ -143,8 +238,14 @@ func (w *wizard) loadGenesisInput() *GenesisInput {
 		os.Exit(1)
 		return nil
 	}
+	doc, err := inputDocument(raw)
+	if err != nil {
+		log.Warn("Refusing the genesis input file", "err", err)
+		os.Exit(1)
+		return nil
+	}
 	input := NewGenesisInput()
-	if err := yaml.Unmarshal(data, input); err != nil {
+	if err := doc.Decode(input); err != nil {
 		log.Warn("Failed to decode genesis input file (expect yaml format)", "err", err)
 		os.Exit(1)
 		return nil
