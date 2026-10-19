@@ -1060,11 +1060,9 @@ func TestSimulateV1(t *testing.T) {
 				},
 			},
 			Calls: []TransactionArgs{{
-				From:                 &contractSender,
-				To:                   &recipient,
-				Nonce:                &nonceOne,
-				MaxFeePerGas:         (*hexutil.Big)(big.NewInt(2)),
-				MaxPriorityFeePerGas: (*hexutil.Big)(big.NewInt(1)),
+				From:  &contractSender,
+				To:    &recipient,
+				Nonce: &nonceOne,
 			}},
 		}},
 	}, nil)
@@ -5976,6 +5974,72 @@ func TestCreateAccessListBeforeEIP1559(t *testing.T) {
 	require.Equal(t, hexutil.Uint64(21803), result.GasUsed)
 }
 
+// TestCreateAccessListBeforeEIP1559WithoutFeeFields checks a block that has no
+// base fee while the chain head is already past EIP-1559. The fee defaults must
+// come from the target block: deriving them from the head fills the 1559 fields
+// and the state transition then rejects the call before the fork.
+func TestCreateAccessListBeforeEIP1559WithoutFeeFields(t *testing.T) {
+	t.Parallel()
+
+	var (
+		from     = common.HexToAddress("0x1111111111111111111111111111111111111111")
+		contract = common.HexToAddress("0x3333333333333333333333333333333333333333")
+		code     = hexutil.MustDecode("0x60005400") // PUSH1 0, SLOAD, STOP
+		gas      = hexutil.Uint64(100000)
+	)
+
+	backendCfg := newBackendMock() // chain head number 1100, past EIP-1559 at 1000
+	config := params.TestChainConfig.Clone()
+	config.ChainID = big.NewInt(1338)
+	config.EIP1559Block = big.NewInt(1000)
+	config.CancunBlock = big.NewInt(1000)
+	config.PragueBlock = big.NewInt(1000)
+	config.OsakaBlock = big.NewInt(1000)
+	config.AmsterdamBlock = big.NewInt(1000)
+	backendCfg.config = config
+
+	genesis := &core.Genesis{
+		Config: config,
+		Alloc: types.GenesisAlloc{
+			from:     {Balance: big.NewInt(params.Ether)},
+			contract: {Code: code},
+		},
+	}
+	db := rawdb.NewMemoryDatabase()
+	block := genesis.MustCommit(db)
+	stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+	require.NoError(t, err)
+
+	backend := &accessListStateOverrideBackendMock{
+		createAccessListBackendMock: &createAccessListBackendMock{
+			estimateBackendMock: &estimateBackendMock{
+				backendMock: backendCfg,
+				stateDB:     stateDB,
+				header:      block.Header(),
+				engine:      ethash.NewFaker(),
+			},
+			block: block,
+		},
+		xdcx: &XDCx.XDCX{StateCache: tradingstate.NewDatabase(rawdb.NewMemoryDatabase())},
+	}
+	api := NewBlockChainAPI(backend, nil)
+	latest := rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber)
+
+	// No fee fields: the defaults must be derived from the target block.
+	result, err := api.CreateAccessList(context.Background(), TransactionArgs{
+		From: &from,
+		To:   &contract,
+		Gas:  &gas,
+	}, &latest, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Empty(t, result.Error)
+	require.Len(t, *result.Accesslist, 1)
+	require.Equal(t, contract, (*result.Accesslist)[0].Address)
+	require.Len(t, (*result.Accesslist)[0].StorageKeys, 1)
+	require.Equal(t, hexutil.Uint64(21803), result.GasUsed)
+}
+
 // TestCreateAccessListRejectsCallerListBeforeEIP1559 checks that a list supplied
 // by the caller still reaches the message before EIP-1559 and is rejected there,
 // even though the tracer-produced list is no longer attached.
@@ -7220,11 +7284,9 @@ func TestSimulateV1BaseFeeNonValidationMode(t *testing.T) {
 				To:   &contract,
 				Gas:  &gas,
 			}, {
-				From:                 &sender,
-				To:                   &contract,
-				Gas:                  &gas,
-				MaxPriorityFeePerGas: (*hexutil.Big)(big.NewInt(1)),
-				MaxFeePerGas:         (*hexutil.Big)(big.NewInt(2)),
+				From: &sender,
+				To:   &contract,
+				Gas:  &gas,
 			}},
 		},
 		{

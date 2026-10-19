@@ -1769,7 +1769,7 @@ func AccessList(ctx context.Context, b Backend, blockNrOrHash rpc.BlockNumberOrH
 	}
 
 	// Ensure any missing fields are filled, extract the recipient and input data
-	if err := args.setDefaults(ctx, b, true); err != nil {
+	if err := args.setDefaultsWithHeader(ctx, b, header, true); err != nil {
 		return nil, 0, nil, err
 	}
 	if args.Nonce == nil {

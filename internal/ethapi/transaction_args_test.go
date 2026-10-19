@@ -230,7 +230,7 @@ func TestSetFeeDefaults(t *testing.T) {
 			b.deactivateLondon()
 		}
 		got := test.in
-		err := got.setFeeDefaults(ctx, b)
+		err := got.setFeeDefaults(ctx, b, b.CurrentHeader())
 		if err != nil && err.Error() == test.err.Error() {
 			// Test threw expected error.
 			continue
@@ -264,7 +264,7 @@ func TestSetFeeDefaultsUsesNextBlockGasTier(t *testing.T) {
 	}
 
 	args := new(TransactionArgs)
-	if err := args.setFeeDefaults(context.Background(), backend); err != nil {
+	if err := args.setFeeDefaults(context.Background(), backend, backend.CurrentHeader()); err != nil {
 		t.Fatalf("setFeeDefaults failed: %v", err)
 	}
 	if args.MaxFeePerGas == nil || args.MaxPriorityFeePerGas == nil {
@@ -281,6 +281,36 @@ type backendMock struct {
 	current *types.Header
 	config  *params.ChainConfig
 	engine  consensus.Engine
+}
+
+// TestCallDefaultsWithoutBaseFee tests that CallDefaults rejects 1559 fee fields
+// when there is no base fee, and accepts them when there is one.
+func TestCallDefaultsWithoutBaseFee(t *testing.T) {
+	t.Parallel()
+
+	zero := new(hexutil.Big)
+	baseFee := big.NewInt(1)
+	tests := []struct {
+		name    string
+		args    TransactionArgs
+		baseFee *big.Int
+		fail    bool
+	}{
+		{name: "no fee fields"},
+		{name: "gasPrice", args: TransactionArgs{GasPrice: zero}},
+		{name: "maxFeePerGas", args: TransactionArgs{MaxFeePerGas: zero}, fail: true},
+		{name: "maxPriorityFeePerGas", args: TransactionArgs{MaxPriorityFeePerGas: zero}, fail: true},
+		{name: "both fee fields", args: TransactionArgs{MaxFeePerGas: zero, MaxPriorityFeePerGas: zero}, fail: true},
+		{name: "base fee override", args: TransactionArgs{MaxFeePerGas: zero}, baseFee: baseFee},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.args.CallDefaults(0, tt.baseFee, big.NewInt(1))
+			if (err != nil) != tt.fail {
+				t.Fatalf("error mismatch, want fail=%v, have %v", tt.fail, err)
+			}
+		})
+	}
 }
 
 // TestToMessageDropsEmptyAccessList checks that an empty JSON access list
