@@ -11,8 +11,9 @@ The block inside every epoch at which the next epoch's masternode set is prepare
 _Avoid_: checkpoint block, gap height
 
 **XDPoS schedule**:
-The rule that places one gap block inside each epoch, fixed by the epoch length and the gap offset.
-_Avoid_: gap schedule, gap config, checkpoint schedule
+The rule that places one gap block inside each epoch, fixed by the epoch length and the gap offset. Core only starts a chain whose config satisfies `0 < gap < epoch`.
+_Avoid_: gap schedule, gap config, checkpoint schedule, epoch/gap pair, checkpoint spacing
+_See_: [ADR-0003](docs/adr/0003-enforce-gap-within-epoch.md)
 
 **reward checkpoint**:
 The block at which the v1 engine pays out masternode rewards, every `RewardCheckpoint` blocks. The interval is configured independently of the epoch, so a reward checkpoint is not necessarily an epoch boundary and can coincide with a gap block.

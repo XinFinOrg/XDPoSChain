@@ -42,8 +42,9 @@ func TestFilterBackendHeaderByNumberWithoutCommittedBlock(t *testing.T) {
 	// The mock config switches to v2 after block 900. Below the genesis block the
 	// engine is v2 from block 0, so the v2 branch needs no generated chain.
 	cfg := params.TestXDPoSMockChainConfig.Clone()
-	cfg.XDPoS.Epoch = 1
-	cfg.XDPoS.V2.SwitchBlock = big.NewInt(-1)
+	cfg.XDPoS.Epoch = 2
+	cfg.XDPoS.Gap = 1
+	cfg.XDPoS.V2.SwitchBlock = big.NewInt(-2)
 
 	gspec := &core.Genesis{
 		Config:     cfg,

@@ -847,10 +847,11 @@ func TestSetupGenesisConfigCompatibilityPathReturnsConfig(t *testing.T) {
 func TestSetupGenesisBlockDoesNotRewriteStoredCustomConfigOnCompatDrift(t *testing.T) {
 	newCustomXDPoSGenesis := func() *Genesis {
 		xdposCfg := params.TestnetChainConfig.XDPoS.Clone()
-		xdposCfg.Epoch = 1
+		xdposCfg.Epoch = 2
+		xdposCfg.Gap = 1
 		xdposCfg.V2 = xdposCfg.V2.Clone()
 		xdposCfg.V2.SwitchBlock = big.NewInt(2)
-		xdposCfg.V2.SwitchEpoch = 2
+		xdposCfg.V2.SwitchEpoch = 1
 		cfg := &params.ChainConfig{
 			ChainID:                big.NewInt(4444),
 			HomesteadBlock:         big.NewInt(0),
@@ -911,7 +912,7 @@ func TestSetupGenesisBlockDoesNotRewriteStoredCustomConfigOnCompatDrift(t *testi
 				if cfg == nil || cfg.XDPoS == nil || cfg.XDPoS.V2 == nil {
 					t.Fatalf("expected returned V2 config, have %v", cfg)
 				}
-				if cfg.XDPoS.V2.SwitchEpoch == 2 {
+				if cfg.XDPoS.V2.SwitchEpoch == 1 {
 					t.Fatalf("expected returned config to keep provided switchEpoch drift, have %d", cfg.XDPoS.V2.SwitchEpoch)
 				}
 			},
@@ -962,10 +963,11 @@ func TestSetupGenesisBlockDoesNotRewriteStoredCustomConfigOnCompatDrift(t *testi
 func TestSetupGenesisBlockReturnsCompatErrorWhenCompatDriftRewindsToZero(t *testing.T) {
 	newCustomXDPoSGenesis := func() *Genesis {
 		xdposCfg := params.TestnetChainConfig.XDPoS.Clone()
-		xdposCfg.Epoch = 1
+		xdposCfg.Epoch = 2
+		xdposCfg.Gap = 1
 		xdposCfg.V2 = xdposCfg.V2.Clone()
 		xdposCfg.V2.SwitchBlock = big.NewInt(2)
-		xdposCfg.V2.SwitchEpoch = 2
+		xdposCfg.V2.SwitchEpoch = 1
 		cfg := &params.ChainConfig{
 			ChainID:                big.NewInt(4444),
 			HomesteadBlock:         big.NewInt(0),

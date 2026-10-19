@@ -1026,10 +1026,11 @@ func TestLoadChainConfigInternalMatchesCompatWrapperWhenNoCompatError(t *testing
 func TestLoadChainConfigRejectsProvidedGenesisDriftForStoredCustomChain(t *testing.T) {
 	newCustomXDPoSGenesis := func() *Genesis {
 		xdposCfg := params.TestnetChainConfig.XDPoS.Clone()
-		xdposCfg.Epoch = 1
+		xdposCfg.Epoch = 2
+		xdposCfg.Gap = 1
 		xdposCfg.V2 = xdposCfg.V2.Clone()
 		xdposCfg.V2.SwitchBlock = big.NewInt(2)
-		xdposCfg.V2.SwitchEpoch = 2
+		xdposCfg.V2.SwitchEpoch = 1
 		return &Genesis{
 			Config: &params.ChainConfig{
 				ChainID:                big.NewInt(4545),

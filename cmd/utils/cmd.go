@@ -45,6 +45,8 @@ const (
 	importBatchSize = 2500
 
 	ChainConfigMismatchPolicyExitHint = "Hint: Use --chain-config-mismatch-policy to recover; Or restart with a matching XDC binary and the same network/genesis settings."
+
+	XDPoSScheduleRecoveryHint = "Hint: The chain config must satisfy 0 < gap < epoch. Supply a corrected XDPoS schedule in the genesis config and start a node once in writable mode with --chain-config-mismatch-policy=update-config-only, or re-initialise the chain from genesis."
 )
 
 // Fatalf formats a message to standard error and exits the program.
@@ -89,6 +91,9 @@ func FormatChainConfigError(err error) string {
 			return guidance
 		}
 		return message + ". " + ChainConfigMismatchPolicyExitHint
+	}
+	if errors.Is(err, core.ErrInvalidEpochGap) {
+		return message + ".\n" + XDPoSScheduleRecoveryHint
 	}
 	if !errors.Is(err, params.ErrMissingForkSwitch) {
 		return message

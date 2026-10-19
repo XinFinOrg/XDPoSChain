@@ -213,6 +213,14 @@ func loadChainConfig(db ethdb.Database, genesis *Genesis) (cfg *params.ChainConf
 
 func loadChainConfigInternal(db ethdb.Database, genesis *Genesis, returnCompat, allowBuiltInCustomRecovery bool) (cfg *params.ChainConfig, ghash common.Hash, compatErr *params.ConfigCompatError, err error) {
 	defer func() {
+		if err == nil {
+			// A rejected schedule is the only error worth reporting: the config
+			// never reaches the chain, so a compatibility rewind computed for it
+			// would be misleading. Clear it instead of returning both.
+			if scheduleErr := checkXDPoSSchedule(cfg); scheduleErr != nil {
+				err, compatErr = scheduleErr, nil
+			}
+		}
 		annotateResolvedCustomBuiltInConfig(ghash, cfg)
 	}()
 

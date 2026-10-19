@@ -17,7 +17,6 @@
 package core
 
 import (
-	"math/big"
 	"testing"
 	"time"
 
@@ -25,7 +24,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
-	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
@@ -104,11 +102,7 @@ func TestReorgSignalsEpochSwitchOnIntermediateBlock(t *testing.T) {
 	for _, signer := range []common.Address{{1}, {2}, {3}, {4}} {
 		extraData = append(extraData, signer.Bytes()...)
 	}
-	genesis := &Genesis{BaseFee: big.NewInt(params.InitialBaseFee), Config: cfg, ExtraData: extraData}
-	blockchain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, genesis, engine, vm.Config{})
-	if err != nil {
-		t.Fatalf("failed to create chain: %v", err)
-	}
+	blockchain, genesis := newChainOnMockSchedule(t, cfg, engine, extraData)
 	defer blockchain.Stop()
 
 	// Epoch blocks of this fixture are 3 and 6. The stored chain stops at 7 and the side chain
