@@ -31,6 +31,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/accounts"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
@@ -270,7 +271,39 @@ func TestNodeNewFailureStopsAccountManager(t *testing.T) {
 	config := testNodeConfig()
 	config.DataDir = t.TempDir()
 	config.HTTPPathPrefix = "invalid"
-	before := countAccountManagerGoroutines()
+
+	controlBaseline := accountManagerGoroutines()
+	control := accounts.NewManager(&accounts.Config{})
+	controlClosed := false
+	t.Cleanup(func() {
+		if !controlClosed {
+			if err := control.Close(); err != nil {
+				t.Errorf("failed to close control account manager: %v", err)
+			}
+		}
+	})
+	deadline := time.Now().Add(time.Second)
+	controlGoroutines := newAccountManagerGoroutines(controlBaseline)
+	for len(controlGoroutines) == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+		controlGoroutines = newAccountManagerGoroutines(controlBaseline)
+	}
+	if len(controlGoroutines) == 0 {
+		t.Fatal("account manager goroutine matcher did not find live control manager")
+	}
+	err := control.Close()
+	controlClosed = true
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(time.Second)
+	for accountManagerGoroutinesContain(controlGoroutines) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if accountManagerGoroutinesContain(controlGoroutines) {
+		t.Fatal("control account manager goroutine did not stop")
+	}
+	before := accountManagerGoroutines()
 
 	for i := 0; i < attempts; i++ {
 		if node, err := New(config); node != nil || err == nil {
@@ -281,24 +314,53 @@ func TestNodeNewFailureStopsAccountManager(t *testing.T) {
 		}
 	}
 
-	deadline := time.Now().Add(time.Second)
-	for countAccountManagerGoroutines() != before && time.Now().Before(deadline) {
-		runtime.Gosched()
+	deadline = time.Now().Add(time.Second)
+	leaked := newAccountManagerGoroutines(before)
+	for len(leaked) > 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+		leaked = newAccountManagerGoroutines(before)
 	}
-	if after := countAccountManagerGoroutines(); after != before {
-		t.Fatalf("account manager goroutines changed from %d to %d after failed construction", before, after)
+	if len(leaked) > 0 {
+		t.Fatalf("%d account manager goroutines remained after failed construction", len(leaked))
 	}
 }
 
-func countAccountManagerGoroutines() int {
+func accountManagerGoroutines() map[string]struct{} {
 	buffer := make([]byte, 64<<10)
 	for {
 		n := runtime.Stack(buffer, true)
 		if n < len(buffer) {
-			return strings.Count(string(buffer[:n]), "accounts.(*Manager).update")
+			goroutines := make(map[string]struct{})
+			for _, stack := range strings.Split(string(buffer[:n]), "\n\n") {
+				if !strings.Contains(stack, "accounts.(*Manager).update") {
+					continue
+				}
+				fields := strings.Fields(stack)
+				if len(fields) >= 2 && fields[0] == "goroutine" {
+					goroutines[fields[1]] = struct{}{}
+				}
+			}
+			return goroutines
 		}
 		buffer = make([]byte, len(buffer)*2)
 	}
+}
+
+func newAccountManagerGoroutines(baseline map[string]struct{}) map[string]struct{} {
+	newGoroutines := accountManagerGoroutines()
+	for id := range baseline {
+		delete(newGoroutines, id)
+	}
+	return newGoroutines
+}
+
+func accountManagerGoroutinesContain(want map[string]struct{}) bool {
+	for id := range accountManagerGoroutines() {
+		if _, ok := want[id]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func TestEphemeralKeyStoreLifecycle(t *testing.T) {
