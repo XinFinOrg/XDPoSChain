@@ -834,8 +834,9 @@ func (s *StateDB) ForEachStorage(addr common.Address, cb func(key, value common.
 	return nil
 }
 
-// Copy creates a deep, independent copy of the state.
-// Snapshots of the copied state cannot be applied to the copy.
+// Copy creates a deep, independent copy of the state. The copy carries the journal and its
+// revisions, so a snapshot taken before the copy can be reverted on the copy; the two
+// journals then evolve independently.
 func (s *StateDB) Copy() *StateDB {
 	// Copy all the basic fields, initialize the memory ones
 	state := &StateDB{
