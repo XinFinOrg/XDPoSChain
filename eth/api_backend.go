@@ -591,8 +591,12 @@ func (b *EthAPIBackend) GetVotersRewards(masternodeAddr common.Address) map[comm
 // GetVotersCap return all voters's capability at a checkpoint
 func (b *EthAPIBackend) GetVotersCap(checkpoint *big.Int, masterAddr common.Address, voters []common.Address) map[common.Address]*big.Int {
 	chain := b.eth.blockchain
-	checkpointBlock := chain.GetBlockByNumber(checkpoint.Uint64())
-	statedb, err := chain.StateAt(checkpointBlock.Root())
+	checkpointHeader := chain.GetHeaderByNumber(checkpoint.Uint64())
+	if checkpointHeader == nil {
+		log.Error("fail to get checkpoint header in GetVotersCap", "checkpoint", checkpoint)
+		return nil
+	}
+	statedb, err := chain.StateAt(checkpointHeader.Root)
 
 	if err != nil {
 		log.Error("fail to get state in GetVotersCap", "checkpoint", checkpoint, "err", err)

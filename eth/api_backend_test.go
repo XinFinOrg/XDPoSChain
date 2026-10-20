@@ -175,6 +175,24 @@ func TestFinalizedBlockNumberWithoutCommittedBlock(t *testing.T) {
 	}
 }
 
+// TestGetVotersCapMissingCheckpoint tests that GetVotersCap resolves the
+// checkpoint state from the header alone and reports a missing checkpoint
+// instead of dereferencing it.
+func TestGetVotersCapMissingCheckpoint(t *testing.T) {
+	t.Parallel()
+
+	backend := initBackend(t, false)
+	voters := []common.Address{address}
+
+	if caps := backend.GetVotersCap(big.NewInt(100), address, voters); caps != nil {
+		t.Fatalf("missing checkpoint: have %v, want nil", caps)
+	}
+	caps := backend.GetVotersCap(big.NewInt(0), address, voters)
+	if len(caps) != len(voters) {
+		t.Fatalf("genesis checkpoint: have %d voter caps, want %d", len(caps), len(voters))
+	}
+}
+
 func makeTx(nonce uint64, gasPrice *big.Int, amount *big.Int, key *ecdsa.PrivateKey) *types.Transaction {
 	if gasPrice == nil {
 		gasPrice = big.NewInt(params.GWei)
