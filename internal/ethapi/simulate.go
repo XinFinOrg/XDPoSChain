@@ -18,11 +18,13 @@ package ethapi
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
 	"math/big"
+	"slices"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -170,21 +172,8 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 	}
 	blockContext := core.NewEVMBlockContext(header, sim.newSimulatedChainContext(ctx, headers), nil)
 	precompiles := sim.activePrecompiles(header)
-	// The block level state changes below own the Multicall3 account: a Prague block installs
-	// the canonical code whatever the caller asked the account to be, so an override of it
-	// would either trip the panic that guards a diverging install or be undone by it. Reject
-	// it here, where the caller can be told, instead of running the block from a pre-state the
-	// caller did not choose. The install only raises the nonce while the account has no code,
-	// so the nonce stays overridable once the account carries the canonical one.
-	if sim.chainConfig.IsPrague(header.Number) && block.StateOverrides != nil {
-		if account, ok := (*block.StateOverrides)[params.Multicall3Address]; ok {
-			if account.Code != nil {
-				return nil, nil, &invalidParamsError{message: fmt.Sprintf("state override of %v sets code, which the Prague Multicall3 install owns", params.Multicall3Address)}
-			}
-			if account.Nonce != nil && len(sim.state.GetCode(params.Multicall3Address)) == 0 {
-				return nil, nil, &invalidParamsError{message: fmt.Sprintf("state override of %v sets the nonce, which the Prague Multicall3 install owns", params.Multicall3Address)}
-			}
-		}
+	if err := rejectOwnedAccountOverrides(sim.chainConfig, sim.state, precompiles, header, block.StateOverrides); err != nil {
+		return nil, nil, err
 	}
 	// State overrides are applied prior to execution of a block
 	if err := block.StateOverrides.Apply(sim.state, precompiles); err != nil {
@@ -212,13 +201,9 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 	if precompiles != nil {
 		evm.SetPrecompiles(precompiles)
 	}
-	// Block level state changes block processing applies before the first transaction of a
-	// block: TIPSigning removes the legacy block signers account at its activation block,
-	// Multicall3 is installed at the one that activates Prague. A simulated block starts from
-	// the base state, so selecting the activation block's parent reproduces either change.
+	// Block level state changes, applied the way block processing does.
 	core.ApplyTIPSigningHardFork(sim.chainConfig, tracingStateDB, header.Number)
 	core.ApplyMulticall3HardFork(sim.chainConfig, sim.state, header.Number)
-	// EIP-2935 parent hash history, written after those changes the way block processing does.
 	if sim.chainConfig.IsPrague(header.Number) {
 		core.ProcessParentBlockHash(header.ParentHash, evm)
 	}
@@ -269,6 +254,142 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 	b := types.NewBlock(header, &types.Body{Transactions: txes}, receipts, trie.NewStackTrie(nil))
 	repairLogs(callResults, b.Hash())
 	return b, callResults, nil
+}
+
+// ownedOverrideError names the block level change that owns the field.
+func ownedOverrideError(address common.Address, field, clause string) error {
+	return &invalidParamsError{message: fmt.Sprintf("state override of %v sets %s, %s", address, field, clause)}
+}
+
+// rejectOwnedAccountOverrides refuses an override of a field a block level state change
+// writes at the simulated block, which would silently undo it or trip the consensus panic.
+// A Prague block owns Multicall3 and the history contract (nonce, parent hash write), the
+// TIPSigning activation block the block signers account. Fields the block does not write
+// stay overridable, except a precompile move onto the history contract, which drops the
+// write; a move from an account the EVM does not serve as a precompile cannot shadow it,
+// and override.Apply rejects that move itself. The guard sees the simulated block alone;
+// code an earlier block planted is #2855.
+func rejectOwnedAccountOverrides(config *params.ChainConfig, statedb *state.StateDB, precompiles vm.PrecompiledContracts, header *types.Header, overrides *override.StateOverride) error {
+	if overrides == nil {
+		return nil
+	}
+	number := header.Number
+
+	if config.IsPrague(number) {
+		if account, ok := (*overrides)[params.Multicall3Address]; ok {
+			if account.Code != nil {
+				return ownedOverrideError(params.Multicall3Address, "code", "which the Prague Multicall3 install owns")
+			}
+			if account.Nonce != nil && len(statedb.GetCode(params.Multicall3Address)) == 0 {
+				return ownedOverrideError(params.Multicall3Address, "the nonce", "which the Prague Multicall3 install owns")
+			}
+		}
+		if account, ok := (*overrides)[params.HistoryStorageAddress]; ok {
+			// Refused whatever the bytes are: canonical code would skip the backfill.
+			if account.Code != nil {
+				return ownedOverrideError(params.HistoryStorageAddress, "code", "which the Prague EIP-2935 history install owns")
+			}
+			// Only a zero nonce is raised, so a nonzero one survives.
+			if account.Nonce != nil && len(statedb.GetCode(params.HistoryStorageAddress)) == 0 && *account.Nonce == 0 {
+				return ownedOverrideError(params.HistoryStorageAddress, "the nonce", "which the Prague EIP-2935 history install owns")
+			}
+			// A replacement wipes every slot, the written one included.
+			if account.State != nil {
+				return ownedOverrideError(params.HistoryStorageAddress, "a state replacement", "which the Prague EIP-2935 history write owns")
+			}
+			for _, slot := range slices.SortedFunc(maps.Keys(account.StateDiff), common.Hash.Cmp) {
+				if historyStorageSlotIsWritten(config, statedb, number, slot) {
+					return ownedOverrideError(params.HistoryStorageAddress, fmt.Sprintf("storage slot %v", slot), "which the Prague EIP-2935 history write owns")
+				}
+			}
+		}
+		// A move onto the history contract shadows it, so the parent hash write is dropped.
+		// The destination decides, not the named account, hence the address-ordered scan.
+		// Only a source the EVM serves as a precompile can shadow the contract; for any
+		// other one override.Apply rejects the move itself, before it runs. A move onto
+		// Multicall3 stays allowed: the install is a state write.
+		for _, source := range slices.SortedFunc(maps.Keys(*overrides), common.Address.Cmp) {
+			dest := (*overrides)[source].MovePrecompileTo
+			if dest == nil || *dest != params.HistoryStorageAddress {
+				continue
+			}
+			if _, ok := precompiles[source]; !ok {
+				continue
+			}
+			return ownedOverrideError(source, fmt.Sprintf("a precompile move onto %v", *dest), "whose account the Prague EIP-2935 history write owns")
+		}
+	}
+
+	// The TIPSigning activation block removes the block signers account.
+	if number.Sign() > 0 && config.TIPSigningBlock != nil && config.TIPSigningBlock.Cmp(number) == 0 {
+		if account, ok := (*overrides)[common.BlockSignersBinary]; ok {
+			for _, field := range []struct {
+				name string
+				set  bool
+			}{
+				{"the nonce", account.Nonce != nil},
+				{"code", account.Code != nil},
+				{"the balance", account.Balance != nil},
+				// An empty map sets no field, and the account is removed either way.
+				{"storage", len(account.State) > 0},
+				{"a storage diff", len(account.StateDiff) > 0},
+			} {
+				if field.set {
+					return ownedOverrideError(common.BlockSignersBinary, field.name, "which the block that activates TIPSigning removes with the account")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// historyStorageSlotIsWritten reports whether slot is one ProcessParentBlockHash writes at
+// blockNumber: the parent hash slot, plus the deploy and backfill slots. Skipped slots count.
+func historyStorageSlotIsWritten(config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, slot common.Hash) bool {
+	if blockNumber.Sign() == 0 {
+		return false
+	}
+	// The ring position sits in the low bytes, as core.historyStorageKey builds it.
+	for i := range common.HashLength - 8 {
+		if slot[i] != 0 {
+			return false
+		}
+	}
+	ring := binary.BigEndian.Uint64(slot[common.HashLength-8:])
+	// The contract wraps the ring at the serve window.
+	if ring >= params.HistoryServeWindow {
+		return false
+	}
+
+	// The parent hash lands in the ring position of the block below.
+	number := blockNumber.Uint64()
+	end := number - 1
+	if ring == end%params.HistoryServeWindow {
+		return true
+	}
+	// The deploy and backfill run only while the contract has no code.
+	if len(statedb.GetCode(params.HistoryStorageAddress)) > 0 {
+		return false
+	}
+	start := end
+	if end+1 > params.HistoryServeWindow {
+		start = end + 1 - params.HistoryServeWindow
+	}
+	// Prague can activate at block zero, where forkBlock-1 would underflow.
+	if forkBlock := config.PragueBlock; forkBlock.Sign() > 0 {
+		if forkStart := forkBlock.Uint64() - 1; forkStart > start {
+			start = forkStart
+		}
+	}
+	// The window wraps the ring at most once.
+	if end-start+1 >= params.HistoryServeWindow {
+		return true
+	}
+	startRing, endRing := start%params.HistoryServeWindow, end%params.HistoryServeWindow
+	if startRing <= endRing {
+		return ring >= startRing && ring <= endRing
+	}
+	return ring >= startRing || ring <= endRing
 }
 
 // repairLogs updates the block hash in the logs present in the result of

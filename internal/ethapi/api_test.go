@@ -1420,6 +1420,13 @@ func TestSimulateV1Multicall3StateOverride(t *testing.T) {
 		require.ErrorAs(t, err, &invalidReqErr, tc.name)
 		require.Contains(t, invalidReqErr.message, "Multicall3", tc.name)
 	}
+	// A move onto the account stays allowed: the install is a state write the move does not
+	// undo. The move is issued on the precompile's address, so the guard looks at the target.
+	movedToMulticall3 := params.Multicall3Address
+	require.NoError(t, simulate(t, override.StateOverride{
+		common.BytesToAddress([]byte{1}): {MovePrecompileTo: &movedToMulticall3},
+	}), "a precompile moved onto the Multicall3 account stays overridable")
+
 	// The install leaves the balance and the storage of the account alone, so they stay
 	// overridable, and so does every account it does not own.
 	require.NoError(t, simulate(t, override.StateOverride{

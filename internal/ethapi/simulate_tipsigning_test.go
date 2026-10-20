@@ -33,17 +33,12 @@ import (
 )
 
 // TestSimulateV1AppliesTIPSigningActivation verifies that eth_simulateV1 runs the block
-// level state changes block processing performs before the first transaction of a block.
-// TIPSigning removes the legacy block signers account at the block that activates it, and a
-// simulation that starts from the parent state without removing it reports calls and a state
-// root for a pre-state the chain never had.
+// level state changes before the first transaction: TIPSigning removes the legacy block
+// signers account at its activation block.
 //
-// The fixture pins its premise by simulating the same block over base states that differ
-// only in where the legacy account comes from: absent, part of the base state, or supplied
-// by a state override. With the removal in place all three land on the same state root;
-// without it the runs that hold the account keep it and land elsewhere. The override run
-// matters because the override is applied to the base state before the block level removal,
-// so DeleteAddress evicts the overridden account from the session cache as well.
+// The fixture simulates the same block over base states that differ only in where the
+// account comes from (absent, in the base state, or created by an override applied to the
+// base state): all three have to land on the same root.
 func TestSimulateV1AppliesTIPSigningActivation(t *testing.T) {
 	t.Parallel()
 
@@ -96,13 +91,10 @@ func TestSimulateV1AppliesTIPSigningActivation(t *testing.T) {
 		// roots compared below for a reason that has nothing to do with TIPSigning.
 		config.PragueBlock = big.NewInt(10)
 		config.OsakaBlock = big.NewInt(10)
-		// Amsterdam stays unset as well: it adds no state writes, so scheduling it
-		// would only extend the run to a fork it does not exercise.
+		// Amsterdam adds no state writes, so scheduling it would only extend the run.
 		config.AmsterdamBlock = nil
 
-		// The base state carries the legacy account only for the in-state run; the override
-		// run supplies it through the request instead, so the two paths stay apart and the
-		// override run can show that an in-memory account is removed too.
+		// The base state carries the account only for the in-state run.
 		alloc := types.GenesisAlloc{
 			sender: {Balance: big.NewInt(params.Ether)},
 		}
@@ -128,15 +120,17 @@ func TestSimulateV1AppliesTIPSigningActivation(t *testing.T) {
 		backend.config = &config
 		api := NewBlockChainAPI(backend, nil)
 
-		var stateOverrides *override.StateOverride
 		if source == legacyOverridden {
+			// The guard refuses a request level override here, so apply it to the base state.
 			overrides := override.StateOverride{
 				legacy: {Balance: (*hexutil.Big)(big.NewInt(1234))},
 			}
-			stateOverrides = &overrides
+			if err := overrides.Apply(statedb, nil); err != nil {
+				t.Fatalf("failed to apply the legacy account override: %v", err)
+			}
 		}
 		result, err := api.SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{{
-			StateOverrides: stateOverrides,
+			StateOverrides: nil,
 			Calls: []TransactionArgs{{
 				From:  &sender,
 				To:    &recipient,
@@ -161,9 +155,7 @@ func TestSimulateV1AppliesTIPSigningActivation(t *testing.T) {
 	if withAccount != withoutAccount {
 		t.Fatalf("simulating the TIPSigning activation block over a base state holding the legacy block signers account ended on %x, want the same root as over one without it (%x): the block level removal was not applied", withAccount, withoutAccount)
 	}
-	// The override is applied to the base state before the block level removal runs, and
-	// DeleteAddress evicts the account from the session cache, so an account that only the
-	// override put in memory is removed as well.
+	// The override creates the account in the mock's state objects only, never in the trie.
 	overridden := simulateBlock(t, legacyOverridden)
 	if overridden != withoutAccount {
 		t.Fatalf("simulating the TIPSigning activation block with the legacy block signers account supplied by a state override ended on %x, want the same root as over a base state without it (%x): the block level removal did not drop the overridden account", overridden, withoutAccount)
