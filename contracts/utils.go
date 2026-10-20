@@ -307,14 +307,24 @@ func GetRewardForCheckpoint(c *XDPoS.XDPoS, chain consensus.ChainReader, header 
 	data := make(map[common.Hash][]common.Address)
 	for i := prevCheckpoint + (rCheckpoint * 2) - 1; i >= startBlockNumber; i-- {
 		header = chain.GetHeader(header.ParentHash, i)
+		if header == nil {
+			return nil, fmt.Errorf("missing header #%d for reward checkpoint %d", i, number)
+		}
 		mapBlkHash[i] = header.Hash()
 		signingTxs, ok := c.GetCachedSigningTxs(header.Hash())
 		if !ok {
 			log.Debug("Failed get from cached", "hash", header.Hash(), "number", i)
 			block := chain.GetBlock(header.Hash(), i)
+			if block == nil {
+				return nil, fmt.Errorf("missing block body #%d (%x) for reward checkpoint %d", i, header.Hash(), number)
+			}
 			txs := block.Transactions()
 			if !chain.Config().IsTIPSigning(header.Number) {
 				receipts := rawdb.ReadRawReceipts(c.GetDb(), header.Hash(), i)
+				// Missing receipts would silently drop signers and pay a wrong reward.
+				if len(receipts) != len(txs) {
+					return nil, fmt.Errorf("missing receipts for block #%d (%x) for reward checkpoint %d: have %d, want %d", i, header.Hash(), number, len(receipts), len(txs))
+				}
 				signingTxs = c.CacheNoneTIPSigningTxs(header, txs, receipts)
 			} else {
 				signingTxs = c.CacheSigningTxs(header.Hash(), txs)
@@ -327,6 +337,9 @@ func GetRewardForCheckpoint(c *XDPoS.XDPoS, chain consensus.ChainReader, header 
 		}
 	}
 	header = chain.GetHeader(header.ParentHash, prevCheckpoint)
+	if header == nil {
+		return nil, fmt.Errorf("missing checkpoint header #%d for reward checkpoint %d", prevCheckpoint, number)
+	}
 	masternodes := c.GetMasternodesFromCheckpointHeader(header)
 
 	for i := startBlockNumber; i <= endBlockNumber; i++ {

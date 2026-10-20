@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"math/big"
 	"math/rand"
+	"strings"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/accounts"
@@ -317,6 +318,78 @@ func TestGetRewardForCheckpointReplaysSigningTxsFromRawReceipts(t *testing.T) {
 	}
 	if rewardLog.Sign != 1 {
 		t.Fatalf("unexpected signer count for %s: have %d want 1", acc1Addr, rewardLog.Sign)
+	}
+}
+
+// TestGetRewardForCheckpointMissingData tests that a header, block body or
+// receipts missing from the reward window is reported as an error rather than
+// dereferenced or silently counted as an unsigned block.
+func TestGetRewardForCheckpointMissingData(t *testing.T) {
+	config := params.TestXDPoSMockChainConfig
+	// The chain, which GetRewardForCheckpoint asks for fork rules, activates
+	// TIPSigning after the window so the raw receipts branch is taken. The
+	// engine keeps the original config, whose fork order it validates.
+	chainCfg := *config
+	chainCfg.TIPSigningBlock = big.NewInt(100)
+
+	checkpointExtra := append(bytes.Repeat([]byte{0x00}, utils.ExtraVanity), acc1Addr.Bytes()...)
+	checkpointExtra = append(checkpointExtra, make([]byte, utils.ExtraSeal)...)
+	block14 := types.NewBlock(&types.Header{Number: big.NewInt(14), Extra: checkpointExtra}, nil, nil, trie.NewStackTrie(nil))
+	block15 := types.NewBlock(&types.Header{Number: big.NewInt(15), ParentHash: block14.Hash()}, nil, nil, trie.NewStackTrie(nil))
+	block16 := types.NewBlock(&types.Header{Number: big.NewInt(16), ParentHash: block15.Hash()}, nil, nil, trie.NewStackTrie(nil))
+
+	signer := types.MakeSigner(config, big.NewInt(17))
+	signingTx, err := types.SignTx(CreateTxSign(big.NewInt(15), block15.Hash(), 0, common.BlockSignersBinary), signer, acc1Key)
+	if err != nil {
+		t.Fatalf("failed to sign tx: %v", err)
+	}
+	receipts := []*types.Receipt{{Status: types.ReceiptStatusSuccessful, CumulativeGasUsed: 200000, TxHash: signingTx.Hash()}}
+	block17 := types.NewBlock(&types.Header{Number: big.NewInt(17), ParentHash: block16.Hash()},
+		&types.Body{Transactions: []*types.Transaction{signingTx}}, receipts, trie.NewStackTrie(nil))
+	block18 := types.NewBlock(&types.Header{Number: big.NewInt(18), ParentHash: block17.Hash()}, nil, nil, trie.NewStackTrie(nil))
+
+	tests := []struct {
+		name          string
+		dropHeader    uint64
+		dropBlock     uint64
+		writeReceipts bool
+		want          string
+	}{
+		{name: "header", dropHeader: 16, writeReceipts: true, want: "missing header #16"},
+		{name: "checkpoint header", dropHeader: 14, writeReceipts: true, want: "missing checkpoint header #14"},
+		{name: "body", dropBlock: 17, writeReceipts: true, want: "missing block body #17"},
+		{name: "receipts", want: "missing receipts for block #17"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			database := rawdb.NewMemoryDatabase()
+			if tt.writeReceipts {
+				rawdb.WriteReceipts(database, block17.Hash(), block17.NumberU64(), receipts)
+			}
+			engine, err := XDPoS.New(config, database)
+			if err != nil {
+				t.Fatalf("failed to create XDPoS engine: %v", err)
+			}
+			chain := &rewardReplayChain{
+				config:  &chainCfg,
+				current: block18.Header(),
+				headers: map[uint64]*types.Header{},
+				blocks:  map[uint64]*types.Block{},
+			}
+			for _, b := range []*types.Block{block14, block15, block16, block17, block18} {
+				if b.NumberU64() != tt.dropHeader {
+					chain.headers[b.NumberU64()] = b.Header()
+				}
+				if b.NumberU64() != tt.dropBlock {
+					chain.blocks[b.NumberU64()] = b
+				}
+			}
+			totalSigner := uint64(0)
+			_, err = GetRewardForCheckpoint(engine, chain, block18.Header(), 2, &totalSigner)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("unexpected error: have %v, want %q", err, tt.want)
+			}
+		})
 	}
 }
 
