@@ -330,6 +330,10 @@ type (
 		dirtyCode      bool
 		selfDestructed bool
 		newContract    bool
+		// selfDestructedPreserveBalance is the EIP-8246 half of the destruct
+		// state; it has to travel with selfDestructed or a revert would restore
+		// an account that is destructed but no longer preserves its balance.
+		selfDestructedPreserveBalance bool
 
 		// Block-scoped state as it was before the removal. Every field carries a
 		// had flag so that a missing entry is restored as missing rather than as
@@ -364,6 +368,8 @@ func newDeleteAddressChange(obj *stateObject) deleteAddressChange {
 		dirtyCode:      obj.dirtyCode,
 		selfDestructed: obj.selfDestructed,
 		newContract:    obj.newContract,
+
+		selfDestructedPreserveBalance: obj.selfDestructedPreserveBalance,
 	}
 	ch.prevDestruct, ch.hadDestruct = s.stateObjectsDestruct[obj.address]
 	ch.prevDestruct = copyStateAccount(ch.prevDestruct)
@@ -408,6 +414,7 @@ func (ch deleteAddressChange) revert(s *StateDB) {
 	obj.dirtyCode = ch.dirtyCode
 	obj.selfDestructed = ch.selfDestructed
 	obj.newContract = ch.newContract
+	obj.selfDestructedPreserveBalance = ch.selfDestructedPreserveBalance
 	// Reattach the storage trie the removal orphaned. Without it the restored
 	// object would read and commit against a root whose nodes never reached the
 	// database; see the comment on the type.
@@ -477,6 +484,8 @@ func (ch deleteAddressChange) copy() journalEntry {
 		hadStorageOrigin:  ch.hadStorageOrigin,
 		prevStorageOrigin: copyStorageMap(ch.prevStorageOrigin),
 		hadMutation:       ch.hadMutation,
+
+		selfDestructedPreserveBalance: ch.selfDestructedPreserveBalance,
 	}
 	if ch.prevMutation != nil {
 		cpy.prevMutation = ch.prevMutation.copy()
@@ -521,7 +530,11 @@ func (ch createContractChange) copy() journalEntry {
 func (ch selfDestructChange) revert(s *StateDB) {
 	obj := s.getStateObject(ch.account)
 	if obj != nil {
+		// Both flags are set together on the first destruct of the transaction
+		// (see StateDB.selfDestruct), so clearing them restores the pre-destruct
+		// object without needing to journal the preserveBalance bit itself.
 		obj.selfDestructed = false
+		obj.selfDestructedPreserveBalance = false
 	}
 }
 
