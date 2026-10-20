@@ -22,7 +22,6 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1429,27 +1428,54 @@ func TestReorgDeliversRemovedLogsSynchronously(t *testing.T) {
 	}
 
 	// The subscriber stalls on purpose: a synchronous send has to wait for it,
-	// an asynchronous one would let the reorg return first.
+	// an asynchronous one would let the reorg return first. It announces that it
+	// is about to park on the receive before the handoff, because anything it
+	// records afterwards runs in parallel with the rest of the reorg and would
+	// make the check below depend on the scheduler. The receive is bounded too,
+	// so a reorg that never sends cannot strand this goroutine.
 	removed := make(chan RemovedLogsEvent)
 	sub := blockchain.SubscribeRemovedLogsEvent(removed)
 	defer sub.Unsubscribe()
 
-	const subscriberDelay = 250 * time.Millisecond
-	var delivered atomic.Bool
+	const (
+		subscriberDelay = 250 * time.Millisecond
+		deliveryTimeout = 5 * time.Second
+	)
+	var (
+		armed = make(chan struct{})
+		// Buffered so the delivery cannot block: the checks below may t.Fatalf
+		// and leave this goroutine behind.
+		got = make(chan int, 1)
+	)
 	go func() {
 		time.Sleep(subscriberDelay)
+		close(armed)
 		select {
-		case <-removed:
-			delivered.Store(true)
-		case <-time.After(5 * time.Second):
+		case ev := <-removed:
+			got <- len(ev.Logs)
+		case <-time.After(deliveryTimeout):
 		}
 	}()
 
 	if err := blockchain.reorg(blockchain.CurrentBlock(), fork[len(fork)-1].Header()); err != nil {
 		t.Fatalf("failed to reorg: %v", err)
 	}
-	if !delivered.Load() {
+	// The send completes on the unbuffered handoff: a reorg that is back before
+	// the subscriber armed never waited for it.
+	select {
+	case <-armed:
+	default:
 		t.Fatalf("reorg returned before the removed logs reached the subscriber, the send must be synchronous")
+	}
+	// reorg returned means the handoff is done and got is buffered, so this
+	// timeout only guards a starved goroutine.
+	select {
+	case n := <-got:
+		if want := len(canonical); n != want {
+			t.Fatalf("removed logs mismatch: have %d, want %d", n, want)
+		}
+	case <-time.After(deliveryTimeout):
+		t.Fatalf("reorg returned but the removed logs never reached the subscriber")
 	}
 }
 
