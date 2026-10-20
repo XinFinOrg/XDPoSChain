@@ -14,6 +14,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/eth/tracers"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -66,6 +67,17 @@ type supply struct {
 	delta       supplyInfo
 	txCallstack []supplyTxCallstack // Callstack for current transaction
 	logger      *lumberjack.Logger
+	chainConfig *params.ChainConfig
+
+	// burnsBalance reports whether SELFDESTRUCT still burns the balance of the
+	// destructed account in the block being traced. It is false from Amsterdam
+	// onwards, where EIP-8246 preserves that balance.
+	burnsBalance bool
+
+	// warnedNoConfig reports whether a missing chain configuration has already
+	// been logged. Only core.NewBlockChain delivers it, so every other mount
+	// point keeps the pre-fork accounting; warn once instead of on every block.
+	warnedNoConfig bool
 }
 
 type supplyTracerConfig struct {
@@ -93,18 +105,20 @@ func newSupply(cfg json.RawMessage) (*tracing.Hooks, error) {
 	}
 
 	t := &supply{
-		delta:  newSupplyInfo(),
-		logger: logger,
+		delta:        newSupplyInfo(),
+		logger:       logger,
+		burnsBalance: true, // until the chain config says otherwise
 	}
 	return &tracing.Hooks{
-		OnBlockStart:    t.OnBlockStart,
-		OnBlockEnd:      t.OnBlockEnd,
-		OnGenesisBlock:  t.OnGenesisBlock,
-		OnTxStart:       t.OnTxStart,
-		OnBalanceChange: t.OnBalanceChange,
-		OnEnter:         t.OnEnter,
-		OnExit:          t.OnExit,
-		OnClose:         t.OnClose,
+		OnBlockchainInit: t.OnBlockchainInit,
+		OnBlockStart:     t.OnBlockStart,
+		OnBlockEnd:       t.OnBlockEnd,
+		OnGenesisBlock:   t.OnGenesisBlock,
+		OnTxStart:        t.OnTxStart,
+		OnBalanceChange:  t.OnBalanceChange,
+		OnEnter:          t.OnEnter,
+		OnExit:           t.OnExit,
+		OnClose:          t.OnClose,
 	}, nil
 }
 
@@ -131,12 +145,35 @@ func (s *supply) resetDelta() {
 	s.delta = newSupplyInfo()
 }
 
+// OnBlockchainInit receives the chain configuration, which decides whether
+// SELFDESTRUCT still burns the destructed balance in a given block. core.
+// NewBlockChain invokes it for every live tracer attached to a chain; without
+// it the tracer assumes a chain that predates the fork.
+func (s *supply) OnBlockchainInit(chainConfig *params.ChainConfig) {
+	s.chainConfig = chainConfig
+}
+
 func (s *supply) OnBlockStart(ev tracing.BlockEvent) {
 	s.resetDelta()
 
 	s.delta.Number = ev.Block.NumberU64()
 	s.delta.Hash = ev.Block.Hash()
 	s.delta.ParentHash = ev.Block.ParentHash()
+
+	// EIP-8246 removes the SELFDESTRUCT burn from Amsterdam onwards, so the
+	// balance of a self-destructed account is no longer part of the burn for
+	// blocks at or after the fork. Treat a missing chain config as pre-fork to
+	// keep the previous accounting.
+	//
+	// The gate is only correct once the consensus side of EIP-8246 is in effect
+	// too: on a chain that schedules Amsterdam without it, the balance is still
+	// destroyed but no longer reported here, so the burn is under-reported. Ship
+	// the tracer change together with the consensus one.
+	if s.chainConfig == nil && !s.warnedNoConfig {
+		s.warnedNoConfig = true
+		log.Warn("Supply tracer has no chain config, accounting SELFDESTRUCT as burning the balance")
+	}
+	s.burnsBalance = s.chainConfig == nil || !s.chainConfig.IsAmsterdam(ev.Block.Number())
 
 	// Calculate Burn for this block
 	if ev.Block.BaseFee() != nil {
@@ -209,8 +246,9 @@ func (s *supply) OnEnter(depth int, typ byte, from common.Address, to common.Add
 	}
 
 	// This is a special case of burned amount which has to be handled here
-	// which happens when type == selfdestruct and from == to.
-	if vm.OpCode(typ) == vm.SELFDESTRUCT && from == to && value.Cmp(common.Big0) == 1 {
+	// which happens when type == selfdestruct and from == to. EIP-8246
+	// (Amsterdam) keeps that balance, so it is not a burn there.
+	if s.burnsBalance && vm.OpCode(typ) == vm.SELFDESTRUCT && from == to && value.Cmp(common.Big0) == 1 {
 		call.burn = value
 	}
 
