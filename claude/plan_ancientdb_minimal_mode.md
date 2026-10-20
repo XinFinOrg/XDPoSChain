@@ -429,14 +429,14 @@ resolves frozen receipts transparently. No change needed for Phase 1.
 
 | Site | Reads | Lookback depth | Nil guard |
 |---|---|---|---|
-| `contracts/utils.go:340-343` (`GetRewardForCheckpoint`) | bodies (`block.Transactions()`) **and receipts** (`rawdb.ReadRawReceipts`) | **~1800** (2 × `RewardCheckpoint`) | **none** |
-| `eth/hooks/engine_v1_hooks.go:45` | whole block → `GetSignersFromContract` → `statedb.GetSigners(block)` | **900** (one epoch) | **none** |
-| `eth/hooks/engine_v1_hooks.go:147-148` | `block.Transactions()` | **150** (`RangeReturnSigner`) | **none** |
+| `contracts/utils.go:340-343` (`GetRewardForCheckpoint`) | bodies (`block.Transactions()`) **and receipts** (`rawdb.ReadRawReceipts`) | **~1800** (2 × `RewardCheckpoint`) | ✅ returns an error on a missing header, body or receipts |
+| `eth/hooks/engine_v1_hooks.go:45` | whole block → `GetSignersFromContract` → `statedb.GetSigners(block)` | **900** (one epoch) | v1 only, see conclusion 3 |
+| `eth/hooks/engine_v1_hooks.go:147-148` | `block.Transactions()` | **150** (`RangeReturnSigner`) | v1 only, see conclusion 3 |
 | `eth/hooks/engine_v2_hooks.go:176-179` | `block.Transactions()` | 150 | `if block != nil` ✅ |
 | `eth/hooks/engine_v2_hooks.go:247-249` | `block.Transactions()` | 150 | `if block != nil` ✅ |
 | `eth/hooks/engine_v2_hooks.go:525-528` | `block.Transactions()` | ~1800 | `if block != nil` ✅ |
-| `consensus/XDPoS/engines/engine_v1/engine.go:1028-1029` (`removePenaltiesFromBlock`) | `GetBlock(...)` then `.Penalties()` — **header data only** | epoch boundary | **none** |
-| `eth/api_backend.go:584` (`GetVotersCap`) | `GetBlockByNumber(checkpoint).Root()` | **RPC-supplied, unbounded** | **none** |
+| `consensus/XDPoS/engines/engine_v1/engine.go:1028-1029` (`removePenaltiesFromBlock`) | `GetBlock(...)` then `.Penalties()` — **header data only** | epoch boundary | v1 only, see conclusion 3 |
+| `eth/api_backend.go:584` (`GetVotersCap`) | header `Root` only (was `GetBlockByNumber(checkpoint).Root()`) | latest checkpoint, ≤ 1 epoch | ✅ nil header → `nil` |
 
 Constants confirmed: `RewardCheckpoint = 900` on mainnet, testnet and devnet
 (`params/config_networks.go:305,413,474,540`) and in the local `genesis.json`;
@@ -451,24 +451,34 @@ Constants confirmed: `RewardCheckpoint = 900` on mainnet, testnet and devnet
    threshold every consensus lookback is served from leveldb; and where it does
    reach the freezer, reads resolve normally. No freezing-related breakage.
 2. **Phase 2 has a hard retention floor.** Minimal mode's tail must never rise
-   above `head - 2*RewardCheckpoint` (1800 blocks). This is a **consensus
+   above `head - 10000` (`params.MinFullImmutabilityThreshold`). The measured
+   consensus lookback is 1800 blocks (2 × `RewardCheckpoint`); the floor is set
+   at 10000 instead, for the same reason the immutability threshold is: room
+   for a future consensus change with a deeper lookback. This is a **consensus
    correctness requirement, not a tuning preference** — encode it as a constant
    with a comment pointing at `GetRewardForCheckpoint`, and clamp the pruner
    against it in addition to the data-file boundary rule from §4.2. In practice
    the file-boundary rule will usually dominate, but the clamp must exist so a
    small `XDC_FREEZER_TABLE_SIZE` in testing cannot prune into the window.
-3. **Five missing nil guards** should be fixed defensively regardless of mode —
-   the v2 hooks already show the intended pattern. The v1 paths and
-   `removePenaltiesFromBlock` predate it.
-4. **`removePenaltiesFromBlock` should not fetch a block at all.** It reads only
-   `block.Penalties()`, which is header data. Rewrite as
-   `chain.GetHeaderByNumber(epochNumber).Penalties` — removes a body read from
-   the epoch-switch path entirely, which is both a small performance win and one
-   less pruning hazard. Note it also dereferences `header` without a nil check.
-5. **`GetVotersCap` is an RPC-reachable panic vector** under minimal mode: the
-   caller supplies an arbitrary checkpoint number, and a pruned block yields
-   `nil` before `.Root()`. Guard it and return a clear error (this folds into
-   the §4.4 ethapi work).
+3. **The three v1 sites need no guard for the ancient DB.** The two
+   `engine_v1_hooks.go` sites and `removePenaltiesFromBlock` are reached only
+   from v1 `Prepare` and v1 `checkSignersOnCheckpoint`, which `XDPoS.go`
+   dispatches only for blocks at or below `V2.SwitchBlock`. A node past the
+   switch never runs them; fast sync never runs them either, because it
+   verifies with `checkFreq = 0` (no full verification, so no penalty check).
+   Full sync from genesis and `XDC import` of v1 blocks do run them, but then
+   the lookback (≤ 900) is relative to the block being imported, which is the
+   head, so it never reaches frozen or pruned data.
+4. **`GetRewardForCheckpoint` is guarded** (done): a missing header, body or
+   pre-TIPSigning receipts now returns an error instead of panicking or, for
+   receipts, silently paying a wrong reward. Locked by
+   `TestGetRewardForCheckpointMissingData`.
+5. **`GetVotersCap` is fixed** (done). The earlier "RPC-supplied, unbounded"
+   claim was wrong: its only caller, `GetStakerROIMasternode`, passes the
+   latest checkpoint. It needs only the state root, now read from the header,
+   which is never pruned, so it keeps working in minimal mode; a missing header
+   returns `nil` instead of panicking. Locked by
+   `TestGetVotersCapMissingCheckpoint`.
 
 ### 3.8 Phase 1 risks
 
@@ -574,7 +584,7 @@ calls `TruncateTail(ChainFreezerBlockDataGroup, tail)` where
 ```go
 tail = min(
     min(tailFileBoundary() over the group's tables),   // only delete whole files
-    head - xdposConsensusLookback,                     // §3.10 floor, MANDATORY
+    head - minimalRetention,                           // §3.10 floor, MANDATORY
 )
 ```
 
@@ -586,12 +596,18 @@ The second term is the **consensus retention floor** established by the §3.10
 audit:
 
 ```go
-// xdposConsensusLookback is the deepest a consensus code path reaches back
-// into block bodies and receipts. GetRewardForCheckpoint (contracts/utils.go)
-// walks 2*RewardCheckpoint blocks back reading Transactions() and raw
-// receipts. Pruning above this line breaks reward and penalty calculation.
-xdposConsensusLookback = 2 * chainConfig.XDPoS.RewardCheckpoint // 1800 on all networks
+// minimalRetention is how many recent blocks keep their bodies and receipts
+// in minimal mode. The deepest consensus lookback is GetRewardForCheckpoint
+// (contracts/utils.go), which walks 2*RewardCheckpoint (1800 on all networks)
+// blocks back reading Transactions() and raw receipts; pruning above that
+// line breaks reward and penalty calculation. The floor is the immutability
+// threshold's floor rather than 1800 to leave room for a deeper lookback.
+minimalRetention = params.MinFullImmutabilityThreshold // 10000
 ```
+
+Since the freezer only freezes blocks at least `FullImmutabilityThreshold`
+(itself floored at 10000) behind the head, this term only binds when the
+threshold is set to its floor; it still must exist and be tested directly.
 
 Do not treat this as belt-and-braces. The file-boundary term usually dominates
 at production `freezerTableSize`, which means a bug in the floor would stay
@@ -619,10 +635,9 @@ New file `core/rawdb/minimal_pruner.go` (or extend `chain_freezer.go`):
 | `eth/handler.go` `GetBlockBodies` / `GetReceipts` | Skip pruned entries (the protocol permits short responses) |
 | `internal/ethapi/api.go` | `eth_getBlockByNumber(fullTx=true)`, `eth_getTransactionByHash`, `eth_getTransactionReceipt`, `eth_getLogs` over pruned ranges → return a clear `"block body pruned; node runs in minimal history mode"` error. `fullTx=false` still works from headers. **This guard is mandatory, not optional — see §4.5.** |
 | `consensus/XDPoS/api.go` `GetV2BlockByNumber` etc. | Uses headers + snapshots; snapshots are hash-keyed in leveldb (§3.10) so they survive pruning |
-| `eth/hooks/engine_v1_hooks.go:45,147` | **Add nil guards** — currently dereference `chain.GetBlock(...)` unchecked. Mirror the `if block != nil` pattern already used in `engine_v2_hooks.go:177,248,526` |
-| `consensus/XDPoS/engines/engine_v1/engine.go:1028` `removePenaltiesFromBlock` | **Rewrite to read the header only** — `Penalties` is header data (§3.10), so the `GetBlock` call is unnecessary. Also add the missing nil check on `GetHeaderByNumber` |
-| `eth/api_backend.go:584` `GetVotersCap` | **RPC-reachable panic vector**: arbitrary caller-supplied checkpoint → `nil` block → `.Root()`. Guard and return the "pruned" error |
-| `contracts/utils.go:340-343` `GetRewardForCheckpoint` | Protected by the §4.2 retention floor, but add a nil guard + explicit error anyway; a silent wrong reward is worse than a loud failure |
+| `eth/hooks/engine_v1_hooks.go:45,147`, `engine_v1/engine.go` `removePenaltiesFromBlock` | Nothing: v1-only, never reach pruned data (§3.10 conclusion 3) |
+| `eth/api_backend.go` `GetVotersCap` | Done: reads the header root only, nil header → `nil` (§3.10 conclusion 5). Works unchanged in minimal mode |
+| `contracts/utils.go` `GetRewardForCheckpoint` | Done: protected by the §4.2 retention floor and returns an explicit error on missing data (§3.10 conclusion 4) |
 | snap/fast sync serving | A minimal node cannot serve receipts for old pivots. Log a startup warning; do not advertise as an archive peer. |
 
 ### 4.5 Deferred: tx-lookup index pruning (decision)
@@ -909,9 +924,10 @@ Phase 2:
 
 **XDPoS per-block data audit — completed, see §3.10.** Verdict: XDPoS snapshots
 are hash-keyed and leveldb-only, so nothing is orphaned by freezing; Phase 1 is
-safe with the default threshold. Phase 2 inherits a hard **1800-block retention
-floor** (2 × `RewardCheckpoint`) plus five defensive nil-guard fixes, all folded
-into §3.7, §4.2 and §4.4. The audit also invalidated the earlier proposed test
+safe with the default threshold. Phase 2 inherits a hard **10000-block retention
+floor** (`MinFullImmutabilityThreshold`, well above the measured 1800-block
+lookback of 2 × `RewardCheckpoint`). Of the five unguarded sites, the three v1
+ones cannot reach pruned data and the other two are fixed (§3.10). The audit also invalidated the earlier proposed test
 threshold of 200; the flag is now floored at 10000.
 
 ---
