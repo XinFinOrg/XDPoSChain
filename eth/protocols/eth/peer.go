@@ -20,8 +20,6 @@ import (
 	"fmt"
 	"math/big"
 	"sync"
-	"sync/atomic"
-	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -31,10 +29,18 @@ import (
 )
 
 const (
-	MaxKnownTxs        = 32768 // Maximum transactions hashes to keep in the known list (prevent DOS)
-	MaxKnownOrderTxs   = 32768 // Maximum transactions hashes to keep in the known list (prevent DOS)
-	MaxKnownLendingTxs = 32768 // Maximum transactions hashes to keep in the known list (prevent DOS)
-	MaxKnownBlocks     = 1024  // Maximum block hashes to keep in the known list (prevent DOS)
+	// MaxKnownTxs is the maximum number of transaction hashes to keep in the
+	// known list (prevent DOS).
+	MaxKnownTxs = 32768
+	// MaxKnownOrderTxs is the maximum number of order transaction hashes to keep
+	// in the known list (prevent DOS).
+	MaxKnownOrderTxs = 32768
+	// MaxKnownLendingTxs is the maximum number of lending transaction hashes to
+	// keep in the known list (prevent DOS).
+	MaxKnownLendingTxs = 32768
+	// maxKnownBlocks is the maximum number of block hashes to keep in the known
+	// list (prevent DOS).
+	maxKnownBlocks = 1024
 
 	// maxQueuedTxs is the maximum number of transactions to queue up before dropping
 	// older broadcasts.
@@ -59,9 +65,15 @@ const (
 	// a single transaction exceeds this size.
 	TxsyncPackSize = 100 * 1024
 
-	MaxKnownVote     = 131072 // Maximum transactions hashes to keep in the known list (prevent DOS)
-	MaxKnownTimeout  = 131072 // Maximum transactions hashes to keep in the known list (prevent DOS)
-	MaxKnownSyncInfo = 131072 // Maximum transactions hashes to keep in the known list (prevent DOS)
+	// MaxKnownVote is the maximum number of BFT vote hashes to keep in the known
+	// list (prevent DOS).
+	MaxKnownVote = 131072
+	// MaxKnownTimeout is the maximum number of BFT timeout hashes to keep in the
+	// known list (prevent DOS).
+	MaxKnownTimeout = 131072
+	// MaxKnownSyncInfo is the maximum number of BFT sync info hashes to keep in
+	// the known list (prevent DOS).
+	MaxKnownSyncInfo = 131072
 )
 
 // propEvent is a block propagation, waiting for its turn in the broadcast queue.
@@ -70,28 +82,31 @@ type propEvent struct {
 	td    *big.Int
 }
 
+// Peer is a remote peer on the eth wire protocol: it owns the message pipe and
+// the bookkeeping of what the remote side is known to have seen. It has no
+// reference back into the node: everything the peer needs arrives through its
+// constructor.
 type Peer struct {
 	id string
 
 	*p2p.Peer
 	rw p2p.MsgReadWriter
 
-	version  uint        // Protocol version negotiated
-	forkDrop *time.Timer // Timed connection dropper if forks aren't validated in time
+	version uint // Protocol version negotiated
 
 	head common.Hash
 	td   *big.Int
 	lock sync.RWMutex
 
-	tipNumber uint64 // Highest block number announced by the Peer (live network high-water mark)
+	tipNumber uint64 // Highest block number announced by the peer (live network high-water mark)
 
-	knownBlocks     mapset.Set[common.Hash] // Set of block hashes known to be known by this Peer
-	queuedBlocks    chan *propEvent         // Queue of blocks to broadcast to the Peer
-	queuedBlockAnns chan *types.Block       // Queue of blocks to announce to the Peer
+	knownBlocks     mapset.Set[common.Hash] // Set of block hashes known to be known by this peer
+	queuedBlocks    chan *propEvent         // Queue of blocks to broadcast to the peer
+	queuedBlockAnns chan *types.Block       // Queue of blocks to announce to the peer
 
-	knownTxs        mapset.Set[common.Hash] // Set of transaction hashes known to be known by this Peer
-	knownOrderTxs   mapset.Set[common.Hash] // Set of order transaction hashes known to be known by this Peer
-	knownLendingTxs mapset.Set[common.Hash] // Set of lending transaction hashes known to be known by this Peer
+	knownTxs        mapset.Set[common.Hash] // Set of transaction hashes known to be known by this peer
+	knownOrderTxs   mapset.Set[common.Hash] // Set of order transaction hashes known to be known by this peer
+	knownLendingTxs mapset.Set[common.Hash] // Set of lending transaction hashes known to be known by this peer
 	txBroadcast     chan []common.Hash      // Channel used to queue transaction propagation requests
 	txAnnounce      chan []common.Hash      // Channel used to queue transaction announcement requests
 
@@ -101,18 +116,22 @@ type Peer struct {
 	broadcastWg sync.WaitGroup // Tracks the broadcaster goroutines so they can be awaited
 	closeOnce   sync.Once      // Ensures term is closed exactly once
 
-	// removed is set exactly once to make peer removal idempotent.
-	removed atomic.Bool
-
-	knownVote     mapset.Set[common.Hash] // Set of BFT Vote known to be known by this Peer
-	knownTimeout  mapset.Set[common.Hash] // Set of BFT timeout known to be known by this Peer
-	knownSyncInfo mapset.Set[common.Hash] // Set of BFT Sync Info known to be known by this Peer
+	knownVote     mapset.Set[common.Hash] // Set of BFT Vote known to be known by this peer
+	knownTimeout  mapset.Set[common.Hash] // Set of BFT timeout known to be known by this peer
+	knownSyncInfo mapset.Set[common.Hash] // Set of BFT Sync Info known to be known by this peer
 }
 
+// NewPeer creates a new wire peer on top of the given message pipe, starting the
+// broadcast loops that push data towards the remote side. The returned peer must
+// be closed to stop those loops.
 func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, getPooledTx func(hash common.Hash) *types.Transaction) *Peer {
-	return &Peer{
+	mrw := newMeteredMsgWriter(rw)
+	if m, ok := mrw.(*meteredMsgReadWriter); ok {
+		m.Init(int(version))
+	}
+	peer := &Peer{
 		Peer:            p,
-		rw:              rw,
+		rw:              mrw,
 		version:         version,
 		id:              fmt.Sprintf("%x", p.ID().Bytes()[:8]),
 		knownTxs:        mapset.NewSet[common.Hash](),
@@ -130,18 +149,29 @@ func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, getPooledTx func(h
 		knownTimeout:  mapset.NewSet[common.Hash](),
 		knownSyncInfo: mapset.NewSet[common.Hash](),
 	}
+	// Start up all the broadcasters. They terminate when the peer is closed.
+	peer.broadcastWg.Go(peer.broadcastBlocks)
+	peer.broadcastWg.Go(peer.broadcastTransactions)
+	if version >= XDC165 {
+		peer.broadcastWg.Go(peer.announceTransactions)
+	}
+	return peer
 }
 
-// markRemoved claims the peer's removal, returning true only for the first
-// caller so the unregister sequence runs exactly once per peer.
-func (p *Peer) markRemoved() bool {
-	return !p.removed.Swap(true)
-}
-
-// close signals the broadcast goroutine to terminate. It is safe for
-// concurrent and repeated calls: only the first call closes term.
+// Close signals the broadcast goroutines to terminate. It is safe for concurrent
+// and repeated calls: only the first call closes term.
 func (p *Peer) Close() {
 	p.closeOnce.Do(func() { close(p.term) })
+}
+
+// ID retrieves the peer's unique identifier.
+func (p *Peer) ID() string {
+	return p.id
+}
+
+// Version retrieves the peer's negotiated protocol version.
+func (p *Peer) Version() uint {
+	return p.version
 }
 
 // Head retrieves a copy of the current head hash and total difficulty of the
@@ -186,10 +216,15 @@ func (p *Peer) SetTipNumber(number uint64) {
 // never be propagated to this particular peer.
 func (p *Peer) MarkBlock(hash common.Hash) {
 	// If we reached the memory allowance, drop a previously known block hash
-	for p.knownBlocks.Cardinality() >= MaxKnownBlocks {
+	for p.knownBlocks.Cardinality() >= maxKnownBlocks {
 		p.knownBlocks.Pop()
 	}
 	p.knownBlocks.Add(hash)
+}
+
+// KnownBlock returns whether the peer is known to already have the given block.
+func (p *Peer) KnownBlock(hash common.Hash) bool {
+	return p.knownBlocks.Contains(hash)
 }
 
 // MarkTransaction marks a transaction as known for the peer, ensuring that it
@@ -202,8 +237,14 @@ func (p *Peer) MarkTransaction(hash common.Hash) {
 	p.knownTxs.Add(hash)
 }
 
-// OrderMarkTransaction marks a order transaction as known for the peer, ensuring that it
-// will never be propagated to this particular peer.
+// KnownTransaction returns whether the peer is known to already have the given
+// transaction.
+func (p *Peer) KnownTransaction(hash common.Hash) bool {
+	return p.knownTxs.Contains(hash)
+}
+
+// MarkOrderTransaction marks an order transaction as known for the peer,
+// ensuring that it will never be propagated to this particular peer.
 func (p *Peer) MarkOrderTransaction(hash common.Hash) {
 	// If we reached the memory allowance, drop a previously known transaction hash
 	for p.knownOrderTxs.Cardinality() >= MaxKnownOrderTxs {
@@ -212,8 +253,14 @@ func (p *Peer) MarkOrderTransaction(hash common.Hash) {
 	p.knownOrderTxs.Add(hash)
 }
 
-// MarkLendingTransaction marks a lending transaction as known for the peer, ensuring that it
-// will never be propagated to this particular peer.
+// KnownOrderTransaction returns whether the peer is known to already have the
+// given order transaction.
+func (p *Peer) KnownOrderTransaction(hash common.Hash) bool {
+	return p.knownOrderTxs.Contains(hash)
+}
+
+// MarkLendingTransaction marks a lending transaction as known for the peer,
+// ensuring that it will never be propagated to this particular peer.
 func (p *Peer) MarkLendingTransaction(hash common.Hash) {
 	// If we reached the memory allowance, drop a previously known transaction hash
 	for p.knownLendingTxs.Cardinality() >= MaxKnownLendingTxs {
@@ -222,34 +269,57 @@ func (p *Peer) MarkLendingTransaction(hash common.Hash) {
 	p.knownLendingTxs.Add(hash)
 }
 
-// MarkVote marks a vote as known for the peer, ensuring that it
-// will never be propagated to this particular peer.
+// KnownLendingTransaction returns whether the peer is known to already have the
+// given lending transaction.
+func (p *Peer) KnownLendingTransaction(hash common.Hash) bool {
+	return p.knownLendingTxs.Contains(hash)
+}
+
+// MarkVote marks a vote as known for the peer, ensuring that it will never be
+// propagated to this particular peer.
 func (p *Peer) MarkVote(hash common.Hash) {
-	// If we reached the memory allowance, drop a previously known transaction hash
+	// If we reached the memory allowance, drop a previously known vote hash
 	for p.knownVote.Cardinality() >= MaxKnownVote {
 		p.knownVote.Pop()
 	}
 	p.knownVote.Add(hash)
 }
 
-// MarkTimeout marks a timeout as known for the peer, ensuring that it
-// will never be propagated to this particular peer.
+// KnownVote returns whether the peer is known to already have the given vote.
+func (p *Peer) KnownVote(hash common.Hash) bool {
+	return p.knownVote.Contains(hash)
+}
+
+// MarkTimeout marks a timeout as known for the peer, ensuring that it will never
+// be propagated to this particular peer.
 func (p *Peer) MarkTimeout(hash common.Hash) {
-	// If we reached the memory allowance, drop a previously known transaction hash
+	// If we reached the memory allowance, drop a previously known timeout hash
 	for p.knownTimeout.Cardinality() >= MaxKnownTimeout {
 		p.knownTimeout.Pop()
 	}
 	p.knownTimeout.Add(hash)
 }
 
-// MarkSyncInfo marks a syncInfo as known for the peer, ensuring that it
-// will never be propagated to this particular peer.
+// KnownTimeout returns whether the peer is known to already have the given
+// timeout.
+func (p *Peer) KnownTimeout(hash common.Hash) bool {
+	return p.knownTimeout.Contains(hash)
+}
+
+// MarkSyncInfo marks a sync info as known for the peer, ensuring that it will
+// never be propagated to this particular peer.
 func (p *Peer) MarkSyncInfo(hash common.Hash) {
-	// If we reached the memory allowance, drop a previously known transaction hash
+	// If we reached the memory allowance, drop a previously known sync info hash
 	for p.knownSyncInfo.Cardinality() >= MaxKnownSyncInfo {
 		p.knownSyncInfo.Pop()
 	}
 	p.knownSyncInfo.Add(hash)
+}
+
+// KnownSyncInfo returns whether the peer is known to already have the given sync
+// info.
+func (p *Peer) KnownSyncInfo(hash common.Hash) bool {
+	return p.knownSyncInfo.Contains(hash)
 }
 
 // SendTransactions64 sends transactions to the peer and includes the hashes
@@ -278,8 +348,8 @@ func (p *Peer) sendTransactions(txs types.Transactions) error {
 	return p2p.Send(p.rw, TransactionMsg, txs)
 }
 
-// SendTransactions sends transactions to the peer and includes the hashes
-// in its transaction hash set for future reference.
+// SendOrderTransactions sends order transactions to the peer and includes the
+// hashes in its transaction hash set for future reference.
 func (p *Peer) SendOrderTransactions(txs types.OrderTransactions) error {
 	for p.knownOrderTxs.Cardinality() >= MaxKnownOrderTxs {
 		p.knownOrderTxs.Pop()
@@ -291,8 +361,8 @@ func (p *Peer) SendOrderTransactions(txs types.OrderTransactions) error {
 	return p2p.Send(p.rw, OrderTxMsg, txs)
 }
 
-// SendTransactions sends transactions to the peer and includes the hashes
-// in its transaction hash set for future reference.
+// SendLendingTransactions sends lending transactions to the peer and includes
+// the hashes in its transaction hash set for future reference.
 func (p *Peer) SendLendingTransactions(txs types.LendingTransactions) error {
 	for p.knownLendingTxs.Cardinality() >= MaxKnownLendingTxs {
 		p.knownLendingTxs.Pop()
@@ -377,7 +447,7 @@ func (p *Peer) SendPooledTransactionsRLP(hashes []common.Hash, txs []rlp.RawValu
 // a hash notification.
 func (p *Peer) SendNewBlockHashes(hashes []common.Hash, numbers []uint64) error {
 	// Mark all the block hashes as known, but ensure we don't overflow our limits
-	for p.knownBlocks.Cardinality() > max(0, MaxKnownBlocks-len(hashes)) {
+	for p.knownBlocks.Cardinality() > max(0, maxKnownBlocks-len(hashes)) {
 		p.knownBlocks.Pop()
 	}
 	for _, hash := range hashes {
@@ -398,7 +468,7 @@ func (p *Peer) AsyncSendNewBlockHash(block *types.Block) {
 	select {
 	case p.queuedBlockAnns <- block:
 		// Mark all the block hash as known, but ensure we don't overflow our limits
-		for p.knownBlocks.Cardinality() >= MaxKnownBlocks {
+		for p.knownBlocks.Cardinality() >= maxKnownBlocks {
 			p.knownBlocks.Pop()
 		}
 		p.knownBlocks.Add(block.Hash())
@@ -410,11 +480,11 @@ func (p *Peer) AsyncSendNewBlockHash(block *types.Block) {
 // SendNewBlock propagates an entire block to a remote peer.
 func (p *Peer) SendNewBlock(block *types.Block, td *big.Int) error {
 	// Mark all the block hash as known, but ensure we don't overflow our limits
-	for p.knownBlocks.Cardinality() >= MaxKnownBlocks {
+	for p.knownBlocks.Cardinality() >= maxKnownBlocks {
 		p.knownBlocks.Pop()
 	}
 	p.knownBlocks.Add(block.Hash())
-	return p2p.Send(p.rw, NewBlockMsg, []interface{}{block, td})
+	return p2p.Send(p.rw, NewBlockMsg, &NewBlockPacket{Block: block, TD: td})
 }
 
 // AsyncSendNewBlock queues an entire block for propagation to a remote peer. If
@@ -423,7 +493,7 @@ func (p *Peer) AsyncSendNewBlock(block *types.Block, td *big.Int) {
 	select {
 	case p.queuedBlocks <- &propEvent{block: block, td: td}:
 		// Mark all the block hash as known, but ensure we don't overflow our limits
-		for p.knownBlocks.Cardinality() >= MaxKnownBlocks {
+		for p.knownBlocks.Cardinality() >= maxKnownBlocks {
 			p.knownBlocks.Pop()
 		}
 		p.knownBlocks.Add(block.Hash())
@@ -460,48 +530,35 @@ func (p *Peer) SendReceiptsRLP(receipts []rlp.RawValue) error {
 	return p2p.Send(p.rw, ReceiptsMsg, receipts)
 }
 
+// SendVote sends a BFT vote to the peer and marks it as known.
 func (p *Peer) SendVote(vote *types.Vote) error {
 	for p.knownVote.Cardinality() >= MaxKnownVote {
 		p.knownVote.Pop()
 	}
 
 	p.knownVote.Add(vote.Hash())
-	return p2p.Send(p.rw, VoteMsg, vote)
+	return p2p.Send(p.rw, VoteMsg, (*VotePacket)(vote))
 }
 
-/*
-func (p *Peer) AsyncSendVote() {
-
-}
-*/
+// SendTimeout sends a BFT timeout to the peer and marks it as known.
 func (p *Peer) SendTimeout(timeout *types.Timeout) error {
 	for p.knownTimeout.Cardinality() >= MaxKnownTimeout {
 		p.knownTimeout.Pop()
 	}
 
 	p.knownTimeout.Add(timeout.Hash())
-	return p2p.Send(p.rw, TimeoutMsg, timeout)
+	return p2p.Send(p.rw, TimeoutMsg, (*TimeoutPacket)(timeout))
 }
 
-/*
-func (p *Peer) AsyncSendTimeout() {
-
-}
-*/
+// SendSyncInfo sends a BFT sync info to the peer and marks it as known.
 func (p *Peer) SendSyncInfo(syncInfo *types.SyncInfo) error {
 	for p.knownSyncInfo.Cardinality() >= MaxKnownSyncInfo {
 		p.knownSyncInfo.Pop()
 	}
 
 	p.knownSyncInfo.Add(syncInfo.Hash())
-	return p2p.Send(p.rw, SyncInfoMsg, syncInfo)
+	return p2p.Send(p.rw, SyncInfoMsg, (*SyncInfoPacket)(syncInfo))
 }
-
-/*
-func (p *Peer) AsyncSendSyncInfo() {
-
-}
-*/
 
 // RequestOneHeader is a wrapper around the header query functions to fetch a
 // single header. It is used solely by the fetcher.

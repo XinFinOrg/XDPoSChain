@@ -104,10 +104,11 @@ func (p *Peer) broadcastTransactions() {
 			done = nil
 
 		case err := <-fail:
-			// p.term is only closed when the peer is removed from the peer set
-			// (removePeer -> Unregister -> close), which may lag the connection
-			// failure. Stay around as a reader, or
-			// AsyncSendTransactions would block forever.
+			// p.term is closed when the peer leaves the peer set
+			// (removePeer -> Unregister -> close) or when its Run loop returns
+			// (MakeProtocols defers Close). Both may lag the failed send, and a
+			// peer that never goes through Run is never closed at all, so stay
+			// around as a reader, or AsyncSendTransactions would block forever.
 			failed, queue, done = true, nil, nil
 			p.Log().Debug("Transaction broadcast send failed, draining queued events", "err", err)
 
@@ -176,10 +177,12 @@ func (p *Peer) announceTransactions() {
 			done = nil
 
 		case err := <-fail:
-			// p.term is only closed when the peer is removed from the peer set
-			// (removePeer -> Unregister -> close), which may lag the connection
-			// failure. Stay around as a reader, or
-			// AsyncSendPooledTransactionHashes would block forever.
+			// p.term is closed when the peer leaves the peer set
+			// (removePeer -> Unregister -> close) or when its Run loop returns
+			// (MakeProtocols defers Close). Both may lag the failed send, and a
+			// peer that never goes through Run is never closed at all, so stay
+			// around as a reader, or AsyncSendPooledTransactionHashes would block
+			// forever.
 			failed, queue, done = true, nil, nil
 			p.Log().Debug("Transaction announcement send failed, draining queued events", "err", err)
 
