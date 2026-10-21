@@ -34,18 +34,36 @@ const (
 	XDC165 = 165 // eth65
 )
 
-// protocolName is the official short name of the protocol used during capability negotiation.
-var ProtocolName = "eth"
+// ProtocolName is the official short name of the protocol used during capability
+// negotiation.
+//
+// Upstream go-ethereum made the name, version and length tables private in the
+// commit that introduced this package. They stay exported here so the devp2p
+// test suite can take the capability name from the wire layer, and so a later
+// alignment pass has a seam to move.
+const ProtocolName = "eth"
 
 // ProtocolVersions are the supported versions of the eth protocol (first is primary).
+//
+// The order is part of the wire contract: the first entry is the version the
+// node prefers during capability negotiation.
 var ProtocolVersions = []uint{XDC165, XDC164, XDC100}
 
-// protocolLengths are the number of implemented message corresponding to different protocol versions.
+// ProtocolLengths are the number of implemented messages corresponding to the
+// different protocol versions.
+//
+// These are message-code space bounds, not message counts: the bound covers the
+// XDC BFT codes (0xe0-0xe2) and the pooled transaction codes (0xe3-0xe5).
 var ProtocolLengths = map[uint]uint64{XDC165: 230, XDC164: 227, XDC100: 227}
 
 const protocolMaxMsgSize = 10 * 1024 * 1024 // Maximum cap on the size of a protocol message
 
 // eth protocol message codes
+//
+// The XDC layout deliberately diverges from upstream: OrderTxMsg and LendingTxMsg
+// occupy 0x08 and 0x09 (upstream puts the pooled transaction trio there), and the
+// transaction broadcast message keeps its pre-split name TransactionMsg. Both are
+// recorded here for a later alignment pass; changing either would be a wire change.
 const (
 	StatusMsg          = 0x00
 	NewBlockHashesMsg  = 0x01
@@ -104,16 +122,14 @@ var errorToString = map[int]string{
 	ErrExtraStatusMsg:          "Extra status message",
 }
 
-// statusData100 is the network packet for the status message for xdc/100.
-type StatusPacket100 struct {
-	ProtocolVersion uint32
-	NetworkId       uint64
-	TD              *big.Int
-	CurrentBlock    common.Hash
-	GenesisBlock    common.Hash
+// Packet represents a p2p message in the `eth` protocol.
+type Packet interface {
+	Name() string // Name returns a string corresponding to the message type.
+	Kind() byte   // Kind returns the message type.
 }
 
-// statusData is the network packet for the status message for eth/64, xdc/164 and later.
+// StatusPacket is the network packet for the status message for eth/64, xdc/164
+// and later.
 type StatusPacket struct {
 	ProtocolVersion uint32
 	NetworkID       uint64
@@ -123,13 +139,61 @@ type StatusPacket struct {
 	ForkID          forkid.ID
 }
 
-// newBlockHashesData is the network packet for the block announcements.
+// Name implements Packet.
+func (p *StatusPacket) Name() string { return "Status" }
+
+// Kind implements Packet.
+func (p *StatusPacket) Kind() byte { return StatusMsg }
+
+// StatusPacket100 is the network packet for the status message for xdc/100. It
+// has no upstream counterpart: the older XDC version predates the forkid field.
+type StatusPacket100 struct {
+	ProtocolVersion uint32
+	NetworkId       uint64
+	TD              *big.Int
+	CurrentBlock    common.Hash
+	GenesisBlock    common.Hash
+}
+
+// Name implements Packet.
+func (p *StatusPacket100) Name() string { return "Status" }
+
+// Kind implements Packet.
+func (p *StatusPacket100) Kind() byte { return StatusMsg }
+
+// NewBlockHashesPacket is the network packet for the block announcements.
 type NewBlockHashesPacket []struct {
 	Hash   common.Hash // Hash of one particular block being announced
 	Number uint64      // Number of one particular block being announced
 }
 
-// getBlockHeadersData represents a block header query.
+// Name implements Packet.
+func (p *NewBlockHashesPacket) Name() string { return "NewBlockHashes" }
+
+// Kind implements Packet.
+func (p *NewBlockHashesPacket) Kind() byte { return NewBlockHashesMsg }
+
+// TransactionsPacket is the network packet for broadcasting new transactions.
+type TransactionsPacket []*types.Transaction
+
+// Name implements Packet.
+func (p *TransactionsPacket) Name() string { return "Transaction" }
+
+// Kind implements Packet.
+func (p *TransactionsPacket) Kind() byte { return TransactionMsg }
+
+// sanityCheck verifies that the packet carries no nil transaction, as a peer
+// sending one must be dropped instead of crashing the transaction handling.
+func (p TransactionsPacket) sanityCheck() error {
+	for i, tx := range p {
+		if tx == nil {
+			return fmt.Errorf("transaction %d is nil", i)
+		}
+	}
+	return nil
+}
+
+// GetBlockHeadersPacket represents a block header query.
 type GetBlockHeadersPacket struct {
 	Origin  HashOrNumber // Block from which to retrieve headers
 	Amount  uint64       // Maximum number of headers to retrieve
@@ -137,13 +201,19 @@ type GetBlockHeadersPacket struct {
 	Reverse bool         // Query direction (false = rising towards latest, true = falling towards genesis)
 }
 
-// hashOrNumber is a combined field for specifying an origin block.
+// Name implements Packet.
+func (p *GetBlockHeadersPacket) Name() string { return "GetBlockHeaders" }
+
+// Kind implements Packet.
+func (p *GetBlockHeadersPacket) Kind() byte { return GetBlockHeadersMsg }
+
+// HashOrNumber is a combined field for specifying an origin block.
 type HashOrNumber struct {
 	Hash   common.Hash // Block hash from which to retrieve headers (excludes Number)
 	Number uint64      // Block number from which to retrieve headers (excludes Hash)
 }
 
-// EncodeRLP is a specialized encoder for hashOrNumber to encode only one of the
+// EncodeRLP is a specialized encoder for HashOrNumber to encode only one of the
 // two contained union fields.
 func (hn *HashOrNumber) EncodeRLP(w io.Writer) error {
 	if hn.Hash == (common.Hash{}) {
@@ -155,7 +225,7 @@ func (hn *HashOrNumber) EncodeRLP(w io.Writer) error {
 	return rlp.Encode(w, hn.Hash)
 }
 
-// DecodeRLP is a specialized decoder for hashOrNumber to decode the contents
+// DecodeRLP is a specialized decoder for HashOrNumber to decode the contents
 // into either a block hash or a block number.
 func (hn *HashOrNumber) DecodeRLP(s *rlp.Stream) error {
 	_, size, _ := s.Kind()
@@ -173,38 +243,60 @@ func (hn *HashOrNumber) DecodeRLP(s *rlp.Stream) error {
 	return err
 }
 
-// newBlockData is the network packet for the block propagation message.
+// BlockHeadersPacket is the network packet for the block headers response, and
+// for the batch of headers arriving to one of our previous requests.
+type BlockHeadersPacket []*types.Header
+
+// Name implements Packet.
+func (p *BlockHeadersPacket) Name() string { return "BlockHeaders" }
+
+// Kind implements Packet.
+func (p *BlockHeadersPacket) Kind() byte { return BlockHeadersMsg }
+
+// NewBlockPacket is the network packet for the block propagation message.
 type NewBlockPacket struct {
 	Block *types.Block
 	TD    *big.Int
 }
 
-// sanityCheck verifies that the values are reasonable, as a DoS protection
-func (request *NewBlockPacket) sanityCheck() error {
-	if err := request.Block.SanityCheck(); err != nil {
+// Name implements Packet.
+func (p *NewBlockPacket) Name() string { return "NewBlock" }
+
+// Kind implements Packet.
+func (p *NewBlockPacket) Kind() byte { return NewBlockMsg }
+
+// SanityCheck verifies that the values are reasonable, as a DoS protection.
+func (p *NewBlockPacket) SanityCheck() error {
+	if err := p.Block.SanityCheck(); err != nil {
 		return err
 	}
 	// TD is 34 bits at mainnet block 105048538
 	// TD is 32 bits at testnet block 84385810.
 	// If it becomes 100 million times larger, it will still fit within 100 bits.
-	if tdlen := request.TD.BitLen(); tdlen > 100 {
+	if tdlen := p.TD.BitLen(); tdlen > 100 {
 		return fmt.Errorf("too large block TD: bitlen %d", tdlen)
 	}
 	return nil
 }
 
-// blockBody represents the data content of a single block.
+// BlockBody represents the data content of a single block.
 type BlockBody struct {
 	Transactions []*types.Transaction // Transactions contained within a block
 	Uncles       []*types.Header      // Uncles contained within a block
 }
 
-// blockBodiesData is the network packet for block content distribution.
+// BlockBodiesPacket is the network packet for block content distribution.
 type BlockBodiesPacket []*BlockBody
 
-// sanityCheck verifies that the uncle headers are reasonable, as a DoS protection.
-func (request BlockBodiesPacket) sanityCheck() error {
-	for bodyIndex, body := range request {
+// Name implements Packet.
+func (p *BlockBodiesPacket) Name() string { return "BlockBodies" }
+
+// Kind implements Packet.
+func (p *BlockBodiesPacket) Kind() byte { return BlockBodiesMsg }
+
+// SanityCheck verifies that the uncle headers are reasonable, as a DoS protection.
+func (p BlockBodiesPacket) SanityCheck() error {
+	for bodyIndex, body := range p {
 		if body == nil {
 			return fmt.Errorf("nil block body at index %d", bodyIndex)
 		}
@@ -214,3 +306,134 @@ func (request BlockBodiesPacket) sanityCheck() error {
 	}
 	return nil
 }
+
+// NodeDataPacket is the network packet for the state data response.
+type NodeDataPacket [][]byte
+
+// Name implements Packet.
+func (p *NodeDataPacket) Name() string { return "NodeData" }
+
+// Kind implements Packet.
+func (p *NodeDataPacket) Kind() byte { return NodeDataMsg }
+
+// ReceiptsPacket is the network packet for the receipts response, decoded as one
+// receipt list per requested block.
+type ReceiptsPacket [][]*types.Receipt
+
+// Name implements Packet.
+func (p *ReceiptsPacket) Name() string { return "Receipts" }
+
+// Kind implements Packet.
+func (p *ReceiptsPacket) Kind() byte { return ReceiptsMsg }
+
+// NewPooledTransactionHashesPacket is the network packet for the transaction
+// announcement.
+type NewPooledTransactionHashesPacket []common.Hash
+
+// Name implements Packet.
+func (p *NewPooledTransactionHashesPacket) Name() string { return "NewPooledTransactionHashes" }
+
+// Kind implements Packet.
+func (p *NewPooledTransactionHashesPacket) Kind() byte { return NewPooledTransactionHashesMsg }
+
+// GetPooledTransactionsPacket is the network packet for the transaction query.
+type GetPooledTransactionsPacket []common.Hash
+
+// Name implements Packet.
+func (p *GetPooledTransactionsPacket) Name() string { return "GetPooledTransactions" }
+
+// Kind implements Packet.
+func (p *GetPooledTransactionsPacket) Kind() byte { return GetPooledTransactionsMsg }
+
+// PooledTransactionsPacket is the network packet for the transaction response.
+//
+// Responses are sent from already encoded transactions (see
+// SendPooledTransactionsRLP), but the inbound side decodes the full transactions,
+// which is what the node layer acts on.
+type PooledTransactionsPacket []*types.Transaction
+
+// Name implements Packet.
+func (p *PooledTransactionsPacket) Name() string { return "PooledTransactions" }
+
+// Kind implements Packet.
+func (p *PooledTransactionsPacket) Kind() byte { return PooledTransactionsMsg }
+
+// sanityCheck verifies that the packet carries no nil transaction, as a peer
+// sending one must be dropped instead of crashing the transaction handling.
+func (p PooledTransactionsPacket) sanityCheck() error {
+	for i, tx := range p {
+		if tx == nil {
+			return fmt.Errorf("transaction %d is nil", i)
+		}
+	}
+	return nil
+}
+
+// OrderTransactionsPacket is the network packet for the order transaction
+// propagation and response messages.
+type OrderTransactionsPacket []*types.OrderTransaction
+
+// Name implements Packet.
+func (p *OrderTransactionsPacket) Name() string { return "OrderTransactions" }
+
+// Kind implements Packet.
+func (p *OrderTransactionsPacket) Kind() byte { return OrderTxMsg }
+
+// sanityCheck verifies that the packet carries no nil transaction, as a peer
+// sending one must be dropped instead of crashing the transaction handling.
+func (p OrderTransactionsPacket) sanityCheck() error {
+	for i, tx := range p {
+		if tx == nil {
+			return fmt.Errorf("transaction %d is nil", i)
+		}
+	}
+	return nil
+}
+
+// LendingTransactionsPacket is the network packet for the lending transaction
+// propagation and response messages.
+type LendingTransactionsPacket []*types.LendingTransaction
+
+// Name implements Packet.
+func (p *LendingTransactionsPacket) Name() string { return "LendingTransactions" }
+
+// Kind implements Packet.
+func (p *LendingTransactionsPacket) Kind() byte { return LendingTxMsg }
+
+// sanityCheck verifies that the packet carries no nil transaction, as a peer
+// sending one must be dropped instead of crashing the transaction handling.
+func (p LendingTransactionsPacket) sanityCheck() error {
+	for i, tx := range p {
+		if tx == nil {
+			return fmt.Errorf("transaction %d is nil", i)
+		}
+	}
+	return nil
+}
+
+// VotePacket is the network packet for the BFT vote message.
+type VotePacket types.Vote
+
+// Name implements Packet.
+func (p *VotePacket) Name() string { return "Vote" }
+
+// Kind implements Packet.
+func (p *VotePacket) Kind() byte { return VoteMsg }
+
+// TimeoutPacket is the network packet for the BFT timeout message.
+type TimeoutPacket types.Timeout
+
+// Name implements Packet.
+func (p *TimeoutPacket) Name() string { return "Timeout" }
+
+// Kind implements Packet.
+func (p *TimeoutPacket) Kind() byte { return TimeoutMsg }
+
+// SyncInfoPacket is the network packet for the BFT sync info message.
+type SyncInfoPacket types.SyncInfo
+
+// Name implements Packet.
+func (p *SyncInfoPacket) Name() string { return "SyncInfo" }
+
+// Kind implements Packet.
+func (p *SyncInfoPacket) Kind() byte { return SyncInfoMsg }

@@ -280,8 +280,8 @@ func (p *Peer) sendTransactions(txs types.Transactions) error {
 	return p2p.Send(p.rw, TransactionMsg, txs)
 }
 
-// SendTransactions sends transactions to the peer and includes the hashes
-// in its transaction hash set for future reference.
+// SendOrderTransactions sends order transactions to the peer and includes the
+// hashes in its transaction hash set for future reference.
 func (p *Peer) SendOrderTransactions(txs types.OrderTransactions) error {
 	for p.knownOrderTxs.Cardinality() >= MaxKnownOrderTxs {
 		p.knownOrderTxs.Pop()
@@ -293,8 +293,8 @@ func (p *Peer) SendOrderTransactions(txs types.OrderTransactions) error {
 	return p2p.Send(p.rw, OrderTxMsg, txs)
 }
 
-// SendTransactions sends transactions to the peer and includes the hashes
-// in its transaction hash set for future reference.
+// SendLendingTransactions sends lending transactions to the peer and includes
+// the hashes in its transaction hash set for future reference.
 func (p *Peer) SendLendingTransactions(txs types.LendingTransactions) error {
 	for p.knownLendingTxs.Cardinality() >= MaxKnownLendingTxs {
 		p.knownLendingTxs.Pop()
@@ -416,7 +416,7 @@ func (p *Peer) SendNewBlock(block *types.Block, td *big.Int) error {
 		p.knownBlocks.Pop()
 	}
 	p.knownBlocks.Add(block.Hash())
-	return p2p.Send(p.rw, NewBlockMsg, []interface{}{block, td})
+	return p2p.Send(p.rw, NewBlockMsg, &NewBlockPacket{Block: block, TD: td})
 }
 
 // AsyncSendNewBlock queues an entire block for propagation to a remote peer. If
@@ -462,48 +462,35 @@ func (p *Peer) SendReceiptsRLP(receipts []rlp.RawValue) error {
 	return p2p.Send(p.rw, ReceiptsMsg, receipts)
 }
 
+// SendVote sends a BFT vote to the peer and marks it as known.
 func (p *Peer) SendVote(vote *types.Vote) error {
 	for p.knownVote.Cardinality() >= MaxKnownVote {
 		p.knownVote.Pop()
 	}
 
 	p.knownVote.Add(vote.Hash())
-	return p2p.Send(p.rw, VoteMsg, vote)
+	return p2p.Send(p.rw, VoteMsg, (*VotePacket)(vote))
 }
 
-/*
-func (p *Peer) AsyncSendVote() {
-
-}
-*/
+// SendTimeout sends a BFT timeout to the peer and marks it as known.
 func (p *Peer) SendTimeout(timeout *types.Timeout) error {
 	for p.knownTimeout.Cardinality() >= MaxKnownTimeout {
 		p.knownTimeout.Pop()
 	}
 
 	p.knownTimeout.Add(timeout.Hash())
-	return p2p.Send(p.rw, TimeoutMsg, timeout)
+	return p2p.Send(p.rw, TimeoutMsg, (*TimeoutPacket)(timeout))
 }
 
-/*
-func (p *Peer) AsyncSendTimeout() {
-
-}
-*/
+// SendSyncInfo sends a BFT sync info to the peer and marks it as known.
 func (p *Peer) SendSyncInfo(syncInfo *types.SyncInfo) error {
 	for p.knownSyncInfo.Cardinality() >= MaxKnownSyncInfo {
 		p.knownSyncInfo.Pop()
 	}
 
 	p.knownSyncInfo.Add(syncInfo.Hash())
-	return p2p.Send(p.rw, SyncInfoMsg, syncInfo)
+	return p2p.Send(p.rw, SyncInfoMsg, (*SyncInfoPacket)(syncInfo))
 }
-
-/*
-func (p *Peer) AsyncSendSyncInfo() {
-
-}
-*/
 
 // RequestOneHeader is a wrapper around the header query functions to fetch a
 // single header. It is used solely by the fetcher.
