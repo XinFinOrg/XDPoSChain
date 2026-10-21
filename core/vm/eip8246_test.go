@@ -95,7 +95,7 @@ func TestSelfdestruct6780EventForkGate(t *testing.T) {
 			CanTransfer: func(db StateDB, addr common.Address, amount *uint256.Int) bool {
 				return db.GetBalance(addr).Cmp(amount.ToBig()) >= 0
 			},
-			Transfer: func(db StateDB, from, to common.Address, amount *uint256.Int) {
+			Transfer: func(db StateDB, from, to common.Address, amount *uint256.Int, _ *params.Rules) {
 				if amount.Sign() == 0 {
 					return
 				}

@@ -159,7 +159,7 @@ func TestKZGPointEvaluationStubFails(t *testing.T) {
 	}
 	evm := NewEVM(BlockContext{
 		CanTransfer: func(StateDB, common.Address, *uint256.Int) bool { return true },
-		Transfer:    func(StateDB, common.Address, common.Address, *uint256.Int) {},
+		Transfer:    func(StateDB, common.Address, common.Address, *uint256.Int, *params.Rules) {},
 		BlockNumber: big.NewInt(1),
 		Time:        1,
 		Random:      &common.Hash{},

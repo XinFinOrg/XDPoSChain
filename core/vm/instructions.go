@@ -934,6 +934,14 @@ func opSelfdestruct6780(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, erro
 		evm.StateDB.AddBalance(beneficiary, balance, tracing.BalanceIncreaseSelfdestruct)
 	}
 	evm.StateDB.SelfDestruct6780(this, preserveBalance)
+	// EIP-7708: emit a transfer log for the moved balance. No burn log is
+	// emitted here: EIP-8246 (go-ethereum #35219) removes the SELFDESTRUCT burn entirely.
+	// From Amsterdam onwards the balance is only moved when the beneficiary
+	// differs from the destroyed account, so a self-destruct to self moves
+	// nothing and therefore logs nothing.
+	if evm.chainRules.IsAmsterdam && balance.Sign() != 0 && this != beneficiary {
+		evm.StateDB.AddLog(types.EthTransferLog(this, beneficiary, balance))
+	}
 	if tracer := evm.Config.Tracer; tracer != nil {
 		if tracer.OnEnter != nil {
 			tracer.OnEnter(evm.depth, byte(SELFDESTRUCT), this, beneficiary, []byte{}, 0, balance)
