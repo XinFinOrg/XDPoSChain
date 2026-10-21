@@ -179,13 +179,17 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 	if err := block.StateOverrides.Apply(sim.state, precompiles); err != nil {
 		return nil, nil, err
 	}
+	// Post-Amsterdam the protocol emits an EIP-7708 transfer log for every
+	// ether transfer, so synthesizing them would report each transfer twice.
+	traceTransfers := sim.traceTransfers && !sim.chainConfig.IsAmsterdam(header.Number)
+
 	var (
 		gasUsed     uint64
 		txes        = make([]*types.Transaction, len(block.Calls))
 		callResults = make([]simCallResult, len(block.Calls))
 		receipts    = make([]*types.Receipt, len(block.Calls))
 		// Block hash will be repaired after execution.
-		tracer   = newTracer(sim.traceTransfers, blockContext.BlockNumber.Uint64(), common.Hash{}, common.Hash{}, 0)
+		tracer   = newTracer(traceTransfers, blockContext.BlockNumber.Uint64(), common.Hash{}, common.Hash{}, 0)
 		vmConfig = &vm.Config{
 			NoBaseFee: !sim.validate,
 			Tracer:    tracer.Hooks(),
