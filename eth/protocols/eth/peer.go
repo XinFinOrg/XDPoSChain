@@ -59,8 +59,6 @@ const (
 	// a single transaction exceeds this size.
 	TxsyncPackSize = 100 * 1024
 
-	handshakeTimeout = 5 * time.Second
-
 	MaxKnownVote     = 131072 // Maximum transactions hashes to keep in the known list (prevent DOS)
 	MaxKnownTimeout  = 131072 // Maximum transactions hashes to keep in the known list (prevent DOS)
 	MaxKnownSyncInfo = 131072 // Maximum transactions hashes to keep in the known list (prevent DOS)
@@ -78,7 +76,7 @@ type Peer struct {
 	*p2p.Peer
 	rw p2p.MsgReadWriter
 
-	version  int         // Protocol version negotiated
+	version  uint        // Protocol version negotiated
 	forkDrop *time.Timer // Timed connection dropper if forks aren't validated in time
 
 	head common.Hash
@@ -111,7 +109,7 @@ type Peer struct {
 	knownSyncInfo mapset.Set[common.Hash] // Set of BFT Sync Info known to be known by this Peer
 }
 
-func NewPeer(version int, p *p2p.Peer, rw p2p.MsgReadWriter, getPooledTx func(hash common.Hash) *types.Transaction) *Peer {
+func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, getPooledTx func(hash common.Hash) *types.Transaction) *Peer {
 	return &Peer{
 		Peer:            p,
 		rw:              rw,
@@ -280,8 +278,8 @@ func (p *Peer) sendTransactions(txs types.Transactions) error {
 	return p2p.Send(p.rw, TransactionMsg, txs)
 }
 
-// SendOrderTransactions sends order transactions to the peer and includes the
-// hashes in its transaction hash set for future reference.
+// SendTransactions sends transactions to the peer and includes the hashes
+// in its transaction hash set for future reference.
 func (p *Peer) SendOrderTransactions(txs types.OrderTransactions) error {
 	for p.knownOrderTxs.Cardinality() >= MaxKnownOrderTxs {
 		p.knownOrderTxs.Pop()
@@ -293,8 +291,8 @@ func (p *Peer) SendOrderTransactions(txs types.OrderTransactions) error {
 	return p2p.Send(p.rw, OrderTxMsg, txs)
 }
 
-// SendLendingTransactions sends lending transactions to the peer and includes
-// the hashes in its transaction hash set for future reference.
+// SendTransactions sends transactions to the peer and includes the hashes
+// in its transaction hash set for future reference.
 func (p *Peer) SendLendingTransactions(txs types.LendingTransactions) error {
 	for p.knownLendingTxs.Cardinality() >= MaxKnownLendingTxs {
 		p.knownLendingTxs.Pop()
@@ -416,7 +414,7 @@ func (p *Peer) SendNewBlock(block *types.Block, td *big.Int) error {
 		p.knownBlocks.Pop()
 	}
 	p.knownBlocks.Add(block.Hash())
-	return p2p.Send(p.rw, NewBlockMsg, &NewBlockPacket{Block: block, TD: td})
+	return p2p.Send(p.rw, NewBlockMsg, []interface{}{block, td})
 }
 
 // AsyncSendNewBlock queues an entire block for propagation to a remote peer. If
@@ -462,35 +460,48 @@ func (p *Peer) SendReceiptsRLP(receipts []rlp.RawValue) error {
 	return p2p.Send(p.rw, ReceiptsMsg, receipts)
 }
 
-// SendVote sends a BFT vote to the peer and marks it as known.
 func (p *Peer) SendVote(vote *types.Vote) error {
 	for p.knownVote.Cardinality() >= MaxKnownVote {
 		p.knownVote.Pop()
 	}
 
 	p.knownVote.Add(vote.Hash())
-	return p2p.Send(p.rw, VoteMsg, (*VotePacket)(vote))
+	return p2p.Send(p.rw, VoteMsg, vote)
 }
 
-// SendTimeout sends a BFT timeout to the peer and marks it as known.
+/*
+func (p *Peer) AsyncSendVote() {
+
+}
+*/
 func (p *Peer) SendTimeout(timeout *types.Timeout) error {
 	for p.knownTimeout.Cardinality() >= MaxKnownTimeout {
 		p.knownTimeout.Pop()
 	}
 
 	p.knownTimeout.Add(timeout.Hash())
-	return p2p.Send(p.rw, TimeoutMsg, (*TimeoutPacket)(timeout))
+	return p2p.Send(p.rw, TimeoutMsg, timeout)
 }
 
-// SendSyncInfo sends a BFT sync info to the peer and marks it as known.
+/*
+func (p *Peer) AsyncSendTimeout() {
+
+}
+*/
 func (p *Peer) SendSyncInfo(syncInfo *types.SyncInfo) error {
 	for p.knownSyncInfo.Cardinality() >= MaxKnownSyncInfo {
 		p.knownSyncInfo.Pop()
 	}
 
 	p.knownSyncInfo.Add(syncInfo.Hash())
-	return p2p.Send(p.rw, SyncInfoMsg, (*SyncInfoPacket)(syncInfo))
+	return p2p.Send(p.rw, SyncInfoMsg, syncInfo)
 }
+
+/*
+func (p *Peer) AsyncSendSyncInfo() {
+
+}
+*/
 
 // RequestOneHeader is a wrapper around the header query functions to fetch a
 // single header. It is used solely by the fetcher.

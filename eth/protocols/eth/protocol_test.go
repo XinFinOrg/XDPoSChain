@@ -18,12 +18,208 @@ package eth
 
 import (
 	"bytes"
+	"math/big"
+	"reflect"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core"
+	"github.com/XinFinOrg/XDPoSChain/core/forkid"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
+
+// TestProtocolRegistration locks the capability-level wire invariants at the
+// p2p.Protocol registration seam: the capability name, the version numbers and
+// their order, and the message-code space bound of each version.
+func TestProtocolRegistration(t *testing.T) {
+	backend := newTestBackend(t, 0, nil)
+	protos := MakeProtocols(backend)
+
+	want := []struct {
+		version uint
+		length  uint64
+	}{
+		{XDC165, 230},
+		{XDC164, 227},
+		{XDC100, 227},
+	}
+	if len(protos) != len(want) {
+		t.Fatalf("protocol count mismatch: have %d, want %d", len(protos), len(want))
+	}
+	for i, proto := range protos {
+		if proto.Name != "eth" {
+			t.Errorf("protocol %d: name mismatch: have %q, want %q", i, proto.Name, "eth")
+		}
+		if proto.Version != want[i].version {
+			t.Errorf("protocol %d: version mismatch: have %d, want %d", i, proto.Version, want[i].version)
+		}
+		if proto.Length != want[i].length {
+			t.Errorf("protocol %d: length mismatch: have %d, want %d", i, proto.Length, want[i].length)
+		}
+		// The ENR attributes are set from inside the protocol construction, so
+		// the node layer never has to touch them.
+		if len(proto.Attributes) != 1 {
+			t.Fatalf("protocol %d: attribute count mismatch: have %d, want 1", i, len(proto.Attributes))
+		}
+		if key := proto.Attributes[0].ENRKey(); key != "eth" {
+			t.Errorf("protocol %d: ENR key mismatch: have %q, want %q", i, key, "eth")
+		}
+	}
+	// The exported tables are the same facts the registration uses.
+	if !reflect.DeepEqual(ProtocolVersions, []uint{XDC165, XDC164, XDC100}) {
+		t.Errorf("protocol versions mismatch: have %v", ProtocolVersions)
+	}
+	for _, version := range ProtocolVersions {
+		if ProtocolLengths[version] == 0 {
+			t.Errorf("protocol %d has no length declared", version)
+		}
+	}
+}
+
+// TestPacketRoundTrips checks that every packet the capability sends survives an
+// encode/decode cycle unchanged, and declares the message code it travels under.
+func TestPacketRoundTrips(t *testing.T) {
+	// Build a chain with one transaction-carrying block, so receipts and bodies
+	// are real payloads rather than empty ones.
+	backend := newTestBackend(t, 1, func(i int, block *core.BlockGen) {
+		fee := block.BaseFee()
+		if fee == nil {
+			fee = big.NewInt(params.InitialBaseFee)
+		}
+		tx, _ := types.SignTx(types.NewTransaction(block.TxNonce(testBank), common.Address{}, big.NewInt(1), params.TxGas, fee, nil), types.HomesteadSigner{}, testBankKey)
+		block.AddTx(tx)
+	})
+	block := backend.chain.GetBlockByNumber(1)
+	header := block.Header()
+	receipts := backend.chain.GetReceiptsByHash(block.Hash())
+	orderTx := types.NewOrderTransaction(1, big.NewInt(1), big.NewInt(1), common.Address{}, common.Address{}, common.Address{}, common.Address{}, "status", "side", "type", common.Hash{}, 1)
+	lendingTx := types.NewLendingTransaction(1, big.NewInt(1), 1, 1, common.Address{}, common.Address{}, common.Address{}, common.Address{}, false, "status", "side", "type", common.Hash{}, 1, 1, "")
+	vote := types.Vote{
+		ProposedBlockInfo: &types.BlockInfo{Hash: common.Hash{0x01}, Round: 2, Number: big.NewInt(3)},
+		Signature:         types.Signature{0x04},
+		GapNumber:         5,
+	}
+	timeout := types.Timeout{Round: 2, Signature: types.Signature{0x03}, GapNumber: 4}
+	syncInfo := types.SyncInfo{
+		HighestQuorumCert:  &types.QuorumCert{ProposedBlockInfo: &types.BlockInfo{Hash: common.Hash{0x02}, Round: 1, Number: big.NewInt(2)}, Signatures: []types.Signature{{0x05}}},
+		HighestTimeoutCert: &types.TimeoutCert{Round: 3, Signatures: []types.Signature{{0x06}}},
+	}
+	var (
+		hash       = common.Hash{0x07}
+		headers    = BlockHeadersPacket{header}
+		blockBodys = BlockBodiesPacket{{Transactions: block.Transactions(), Uncles: block.Uncles()}}
+	)
+
+	tests := []struct {
+		packet Packet
+		decode func() Packet
+	}{
+		{
+			&StatusPacket{ProtocolVersion: XDC164, NetworkID: 50, TD: big.NewInt(131), Head: hash, Genesis: hash, ForkID: forkid.ID{Hash: [4]byte{1, 2, 3, 4}, Next: 5}},
+			func() Packet { return new(StatusPacket) },
+		},
+		{
+			&StatusPacket100{ProtocolVersion: XDC100, NetworkId: 50, TD: big.NewInt(131), CurrentBlock: hash, GenesisBlock: hash},
+			func() Packet { return new(StatusPacket100) },
+		},
+		{
+			&NewBlockHashesPacket{{Hash: hash, Number: 314}},
+			func() Packet { return new(NewBlockHashesPacket) },
+		},
+		{
+			&TransactionsPacket{block.Transactions()[0]},
+			func() Packet { return new(TransactionsPacket) },
+		},
+		{
+			&GetBlockHeadersPacket{Origin: HashOrNumber{Number: 314}, Amount: 3, Skip: 1, Reverse: true},
+			func() Packet { return new(GetBlockHeadersPacket) },
+		},
+		{
+			&GetBlockHeadersPacket{Origin: HashOrNumber{Hash: hash}, Amount: 3, Skip: 1},
+			func() Packet { return new(GetBlockHeadersPacket) },
+		},
+		{
+			&headers,
+			func() Packet { return new(BlockHeadersPacket) },
+		},
+		{
+			&NewBlockPacket{Block: block, TD: big.NewInt(131)},
+			func() Packet { return new(NewBlockPacket) },
+		},
+		{
+			&blockBodys,
+			func() Packet { return new(BlockBodiesPacket) },
+		},
+		{
+			&NodeDataPacket{{0x01, 0x02, 0x03}},
+			func() Packet { return new(NodeDataPacket) },
+		},
+		{
+			&ReceiptsPacket{receipts},
+			func() Packet { return new(ReceiptsPacket) },
+		},
+		{
+			&NewPooledTransactionHashesPacket{hash},
+			func() Packet { return new(NewPooledTransactionHashesPacket) },
+		},
+		{
+			&GetPooledTransactionsPacket{hash},
+			func() Packet { return new(GetPooledTransactionsPacket) },
+		},
+		{
+			&PooledTransactionsPacket{block.Transactions()[0]},
+			func() Packet { return new(PooledTransactionsPacket) },
+		},
+		{
+			&OrderTransactionsPacket{orderTx},
+			func() Packet { return new(OrderTransactionsPacket) },
+		},
+		{
+			&LendingTransactionsPacket{lendingTx},
+			func() Packet { return new(LendingTransactionsPacket) },
+		},
+		{
+			(*VotePacket)(&vote),
+			func() Packet { return new(VotePacket) },
+		},
+		{
+			(*TimeoutPacket)(&timeout),
+			func() Packet { return new(TimeoutPacket) },
+		},
+		{
+			(*SyncInfoPacket)(&syncInfo),
+			func() Packet { return new(SyncInfoPacket) },
+		},
+	}
+	for i, tt := range tests {
+		enc, err := rlp.EncodeToBytes(tt.packet)
+		if err != nil {
+			t.Errorf("test %d (%s): failed to encode: %v", i, tt.packet.Name(), err)
+			continue
+		}
+		dec := tt.decode()
+		if err := rlp.DecodeBytes(enc, dec); err != nil {
+			t.Errorf("test %d (%s): failed to decode: %v", i, tt.packet.Name(), err)
+			continue
+		}
+		reenc, err := rlp.EncodeToBytes(dec)
+		if err != nil {
+			t.Errorf("test %d (%s): failed to re-encode: %v", i, tt.packet.Name(), err)
+			continue
+		}
+		if !bytes.Equal(enc, reenc) {
+			t.Errorf("test %d (%s): round trip mismatch:\nhave %x\nwant %x", i, tt.packet.Name(), reenc, enc)
+		}
+		if name := dec.Name(); name != tt.packet.Name() {
+			t.Errorf("test %d: name mismatch: have %q, want %q", i, name, tt.packet.Name())
+		}
+		if kind := dec.Kind(); kind != tt.packet.Kind() {
+			t.Errorf("test %d: kind mismatch: have %#x, want %#x", i, kind, tt.packet.Kind())
+		}
+	}
+}
 
 // TestMessageCodes locks the code values themselves: they are part of the wire
 // contract and are shared with peers running any other build.

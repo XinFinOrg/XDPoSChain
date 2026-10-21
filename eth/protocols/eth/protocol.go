@@ -38,9 +38,12 @@ const (
 // negotiation.
 //
 // Upstream go-ethereum made the name, version and length tables private in the
-// commit that introduced this package. They stay exported here so the devp2p
-// test suite can take the capability name from the wire layer, and so a later
-// alignment pass has a seam to move.
+// commit that introduced this package. They stay exported here as a seam for a
+// later alignment pass. Nothing outside this package consumes ProtocolName
+// today. The devp2p test client keeps its own copy of the length tables (see
+// cmd/devp2p/internal/ethtest/protocol.go), but it already imports this package
+// for the message codes (cmd/devp2p/internal/ethtest/conn.go), so a message-code
+// change here does reach it.
 const ProtocolName = "eth"
 
 // ProtocolVersions are the supported versions of the eth protocol (first is primary).

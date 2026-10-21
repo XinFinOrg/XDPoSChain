@@ -17,7 +17,6 @@
 package eth
 
 import (
-	"fmt"
 	"math/big"
 	"time"
 
@@ -25,6 +24,8 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/forkid"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 )
+
+const handshakeTimeout = 5 * time.Second
 
 // Handshake executes the eth protocol handshake, negotiating version number,
 // network IDs, difficulties, head and genesis blocks.
@@ -92,6 +93,7 @@ func (p *Peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis 
 	return nil
 }
 
+// readStatus100 reads and validates the xdc/100 status message from the peer.
 func (p *Peer) readStatus100(network uint64, status *StatusPacket100, genesis common.Hash) error {
 	msg, err := p.rw.ReadMsg()
 	if err != nil {
@@ -113,12 +115,14 @@ func (p *Peer) readStatus100(network uint64, status *StatusPacket100, genesis co
 	if status.NetworkId != network {
 		return errResp(ErrNetworkIDMismatch, "%d (!= %d)", status.NetworkId, network)
 	}
-	if int(status.ProtocolVersion) != p.version {
+	if int(status.ProtocolVersion) != int(p.version) {
 		return errResp(ErrProtocolVersionMismatch, "%d (!= %d)", status.ProtocolVersion, p.version)
 	}
 	return nil
 }
 
+// readStatus reads and validates the forkid-carrying status message from the
+// peer.
 func (p *Peer) readStatus(network uint64, status *StatusPacket, genesis common.Hash, forkFilter forkid.Filter) error {
 	msg, err := p.rw.ReadMsg()
 	if err != nil {
@@ -137,7 +141,7 @@ func (p *Peer) readStatus(network uint64, status *StatusPacket, genesis common.H
 	if status.NetworkID != network {
 		return errResp(ErrNetworkIDMismatch, "%d (!= %d)", status.NetworkID, network)
 	}
-	if int(status.ProtocolVersion) != p.version {
+	if int(status.ProtocolVersion) != int(p.version) {
 		return errResp(ErrProtocolVersionMismatch, "%d (!= %d)", status.ProtocolVersion, p.version)
 	}
 	if status.Genesis != genesis {
@@ -147,8 +151,4 @@ func (p *Peer) readStatus(network uint64, status *StatusPacket, genesis common.H
 		return errResp(ErrForkIDRejected, "%v", err)
 	}
 	return nil
-}
-
-func errResp(code errCode, format string, v ...interface{}) error {
-	return fmt.Errorf("%v - %v", code, fmt.Sprintf(format, v...))
 }
