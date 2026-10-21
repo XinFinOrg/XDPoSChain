@@ -1,10 +1,5 @@
 # This file contains sha256 checksums of optional build dependencies.
 
-# version:spec-tests v5.1.0
-# https://github.com/ethereum/execution-spec-tests/releases
-# https://github.com/ethereum/execution-spec-tests/releases/download/v5.1.0
-a3192784375acec7eaec492799d5c5d0c47a2909a3cc40178898e4ecd20cc416  fixtures_develop.tar.gz
-
 # version:golang 1.25.14
 # https://go.dev/dl/
 9e83f44f5fc297378861b4e16cc6aa114be8add7993fb3ceb2c512380aa4d582 go1.25.14.src.tar.gz
@@ -101,23 +96,6 @@ ff5479eaf0cb400241fa79f635ef4ac29480dcd7696195f46a13313bbd46fcd1  golangci-lint-
 1266ad2e315fa11297c67d65093c7b8de83c29ddbd192221878d8eeaef4f5fe8  golangci-lint-2.15.0-windows-386.zip
 cd7ea6063c95de245e17e5246e42bdc14bb221792c429dbd239ab3a6ade6ca6a  golangci-lint-2.15.0-windows-amd64.zip
 4fb8988abf186158e30af1b8a0fb3671cf2cb02bc91d7e6ce6996f4c1e922e9a  golangci-lint-2.15.0-windows-arm64.zip
-
-# This is the builder on PPA that will build Go itself (inception-y), don't modify!
-#
-# This version is fine to be old and full of security holes, we just use it
-# to build the latest Go. Don't change it.
-#
-# version:ppa-builder-1 1.19.6
-# https://go.dev/dl/
-d7f0013f82e6d7f862cc6cb5c8cdb48eef5f2e239b35baa97e2f1a7466043767  go1.19.6.src.tar.gz
-
-# version:ppa-builder-2 1.21.9
-# https://go.dev/dl/
-58f0c5ced45a0012bce2ff7a9df03e128abcc8818ebabe5027bb92bafe20e421  go1.21.9.src.tar.gz
-
-# version:ppa-builder-1.23 1.23.6
-# https://go.dev/dl/
-039c5b04e65279daceee8a6f71e70bd05cf5b801782b6f77c6e19e2ed0511222  go1.23.6.src.tar.gz
 
 # version:protoc 27.1
 # https://github.com/protocolbuffers/protobuf/releases/
