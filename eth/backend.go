@@ -724,7 +724,7 @@ func (e *Ethereum) Stop() error {
 }
 
 func (e *Ethereum) GetPeer() int {
-	return len(e.protocolManager.peers.peers)
+	return e.protocolManager.peers.Len()
 }
 
 func (e *Ethereum) GetXDCX() *XDCx.XDCX {
