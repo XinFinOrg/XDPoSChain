@@ -1427,18 +1427,16 @@ func TestReorgDeliversRemovedLogsSynchronously(t *testing.T) {
 		t.Fatalf("head moved onto the fork, want it kept as a side chain: have %x, want %x", head.Hash(), want.Hash())
 	}
 
-	// The subscriber stalls on purpose: a synchronous send has to wait for it,
-	// an asynchronous one would let the reorg return first. It announces that it
-	// is about to park on the receive before the handoff, because anything it
-	// records afterwards runs in parallel with the rest of the reorg and would
-	// make the check below depend on the scheduler. The receive is bounded too,
-	// so a reorg that never sends cannot strand this goroutine.
+	// The subscriber stalls before receiving: a synchronous send has to wait
+	// for it, a spawned one would let reorg return first.
 	removed := make(chan RemovedLogsEvent)
 	sub := blockchain.SubscribeRemovedLogsEvent(removed)
 	defer sub.Unsubscribe()
 
+	// The stall also budgets catching a spawned send: reorg hands the removals
+	// over early with ~20ms of work left under -race, so a second outlasts it.
 	const (
-		subscriberDelay = 250 * time.Millisecond
+		subscriberDelay = time.Second
 		deliveryTimeout = 5 * time.Second
 	)
 	var (
