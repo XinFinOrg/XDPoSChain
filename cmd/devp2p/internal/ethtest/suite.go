@@ -27,7 +27,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
-	"github.com/XinFinOrg/XDPoSChain/eth"
+	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/internal/utesting"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
@@ -170,7 +170,7 @@ func (s *Suite) TestGetBlockHeaders(t *utesting.T) {
 		Origin: hashOrNumber{Number: 0},
 		Amount: 1,
 	}
-	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, req); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, req); err != nil {
 		t.Fatalf("failed to write GetBlockHeaders: %v", err)
 	}
 	if err := s.expectHeadersResponse(conn, req, 1); err != nil {
@@ -190,7 +190,7 @@ func (s *Suite) TestGetBlockHeadersByHash(t *utesting.T) {
 		Origin: hashOrNumber{Hash: s.chain.blocks[0].Hash()},
 		Amount: 1,
 	}
-	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, req); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, req); err != nil {
 		t.Fatalf("failed to write GetBlockHeaders by hash: %v", err)
 	}
 	if err := s.expectHeadersResponse(conn, req, 1); err != nil {
@@ -211,7 +211,7 @@ func (s *Suite) TestGetBlockHeadersReverseFromGenesis(t *utesting.T) {
 		Amount:  3,
 		Reverse: true,
 	}
-	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, req); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, req); err != nil {
 		t.Fatalf("failed to write reverse GetBlockHeaders: %v", err)
 	}
 	if err := s.expectHeadersResponse(conn, req, 1); err != nil {
@@ -230,10 +230,10 @@ func (s *Suite) TestGetBlockHeadersSequentialRequests(t *utesting.T) {
 	first := &getBlockHeadersData{Origin: hashOrNumber{Number: 0}, Amount: 1}
 	second := &getBlockHeadersData{Origin: hashOrNumber{Hash: s.chain.blocks[0].Hash()}, Amount: 1}
 
-	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, first); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, first); err != nil {
 		t.Fatalf("failed to write first GetBlockHeaders request: %v", err)
 	}
-	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, second); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, second); err != nil {
 		t.Fatalf("failed to write second GetBlockHeaders request: %v", err)
 	}
 	if err := s.expectHeadersResponse(conn, first, 2); err != nil {
@@ -253,7 +253,7 @@ func (s *Suite) TestGetSequentialMixedRequests(t *utesting.T) {
 	defer conn.Close()
 
 	headersReq := &getBlockHeadersData{Origin: hashOrNumber{Number: 0}, Amount: 1}
-	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, headersReq); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, headersReq); err != nil {
 		t.Fatalf("failed to write GetBlockHeaders request: %v", err)
 	}
 	if err := s.expectHeadersResponse(conn, headersReq, 1); err != nil {
@@ -261,7 +261,7 @@ func (s *Suite) TestGetSequentialMixedRequests(t *utesting.T) {
 	}
 
 	bodiesReq := getBlockBodiesData{s.chain.blocks[0].Hash()}
-	if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &bodiesReq); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockBodiesMsg, &bodiesReq); err != nil {
 		t.Fatalf("failed to write GetBlockBodies request: %v", err)
 	}
 	if err := s.expectBlockBodiesResponse(conn, &bodiesReq, 1); err != nil {
@@ -269,7 +269,7 @@ func (s *Suite) TestGetSequentialMixedRequests(t *utesting.T) {
 	}
 
 	receiptsReq := getReceiptsData{s.chain.blocks[0].Hash()}
-	if err := conn.Write(ethProto, eth.GetReceiptsMsg, &receiptsReq); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetReceiptsMsg, &receiptsReq); err != nil {
 		t.Fatalf("failed to write GetReceipts request: %v", err)
 	}
 	if err := s.expectReceiptsResponse(conn, &receiptsReq, 1); err != nil {
@@ -289,7 +289,7 @@ func (s *Suite) TestGetNonexistentBlockHeaders(t *utesting.T) {
 		Origin: hashOrNumber{Number: ^uint64(0)},
 		Amount: 1,
 	}
-	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, badReq); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, badReq); err != nil {
 		t.Fatalf("failed to write nonexistent GetBlockHeaders request: %v", err)
 	}
 
@@ -297,7 +297,7 @@ func (s *Suite) TestGetNonexistentBlockHeaders(t *utesting.T) {
 		Origin: hashOrNumber{Number: 0},
 		Amount: 1,
 	}
-	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, goodReq); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, goodReq); err != nil {
 		t.Fatalf("failed to write follow-up GetBlockHeaders request: %v", err)
 	}
 
@@ -318,7 +318,7 @@ func (s *Suite) TestGetNonexistentBlockHeadersByHash(t *utesting.T) {
 		Origin: hashOrNumber{Hash: common.HexToHash("0x01")},
 		Amount: 1,
 	}
-	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, badReq); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, badReq); err != nil {
 		t.Fatalf("failed to write nonexistent hash GetBlockHeaders request: %v", err)
 	}
 
@@ -326,7 +326,7 @@ func (s *Suite) TestGetNonexistentBlockHeadersByHash(t *utesting.T) {
 		Origin: hashOrNumber{Hash: s.chain.blocks[0].Hash()},
 		Amount: 1,
 	}
-	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, goodReq); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, goodReq); err != nil {
 		t.Fatalf("failed to write follow-up hash GetBlockHeaders request: %v", err)
 	}
 
@@ -344,11 +344,11 @@ func (s *Suite) TestGetNonexistentHeadersThenBlockBodies(t *utesting.T) {
 	defer conn.Close()
 
 	badReq := &getBlockHeadersData{Origin: hashOrNumber{Number: ^uint64(0)}, Amount: 1}
-	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, badReq); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, badReq); err != nil {
 		t.Fatalf("failed to write nonexistent GetBlockHeaders request: %v", err)
 	}
 	goodReq := getBlockBodiesData{s.chain.blocks[0].Hash()}
-	if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &goodReq); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockBodiesMsg, &goodReq); err != nil {
 		t.Fatalf("failed to write follow-up GetBlockBodies request: %v", err)
 	}
 	if err := s.expectBlockBodiesResponse(conn, &goodReq, 2); err != nil {
@@ -365,11 +365,11 @@ func (s *Suite) TestGetNonexistentHeadersThenReceipts(t *utesting.T) {
 	defer conn.Close()
 
 	badReq := &getBlockHeadersData{Origin: hashOrNumber{Number: ^uint64(0)}, Amount: 1}
-	if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, badReq); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, badReq); err != nil {
 		t.Fatalf("failed to write nonexistent GetBlockHeaders request: %v", err)
 	}
 	goodReq := getReceiptsData{s.chain.blocks[0].Hash()}
-	if err := conn.Write(ethProto, eth.GetReceiptsMsg, &goodReq); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetReceiptsMsg, &goodReq); err != nil {
 		t.Fatalf("failed to write follow-up GetReceipts request: %v", err)
 	}
 	if err := s.expectReceiptsResponse(conn, &goodReq, 2); err != nil {
@@ -438,7 +438,7 @@ func (s *Suite) runTransactionSmoke(t *utesting.T, txs types.Transactions, nonce
 	}
 	defer conn.Close()
 
-	if err := conn.Write(ethProto, eth.TransactionMsg, txs); err != nil {
+	if err := conn.Write(ethProto, ethproto.TransactionMsg, txs); err != nil {
 		t.Fatalf("failed to write TxMsg: %v", err)
 	}
 	if skipWithoutSenders && nonceAdvance > 0 {
@@ -459,7 +459,7 @@ func (s *Suite) TestTransactionSmoke(t *utesting.T) {
 	}
 	s.runTransactionSmoke(t, txs, 1, true, "fixture has no sender accounts; skipping transaction smoke", func(conn *Conn) error {
 		req := &getBlockHeadersData{Origin: hashOrNumber{Number: 0}, Amount: 1}
-		if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, req); err != nil {
+		if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, req); err != nil {
 			return fmt.Errorf("failed to write follow-up GetBlockHeaders: %w", err)
 		}
 		if err := s.expectHeadersResponse(conn, req, 5); err != nil {
@@ -478,7 +478,7 @@ func (s *Suite) TestTransactionBatchSmoke(t *utesting.T) {
 	}
 	s.runTransactionSmoke(t, txs, 2, true, "fixture has no sender accounts; skipping transaction batch smoke", func(conn *Conn) error {
 		req := &getBlockHeadersData{Origin: hashOrNumber{Number: 0}, Amount: 1}
-		if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, req); err != nil {
+		if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, req); err != nil {
 			return fmt.Errorf("failed to write follow-up GetBlockHeaders: %w", err)
 		}
 		if err := s.expectHeadersResponse(conn, req, 5); err != nil {
@@ -492,7 +492,7 @@ func (s *Suite) TestTransactionEmptyListSmoke(t *utesting.T) {
 	t.Log(`This test sends an empty transaction list and verifies the peer remains responsive.`)
 	s.runTransactionSmoke(t, types.Transactions{}, 0, false, "", func(conn *Conn) error {
 		req := &getBlockHeadersData{Origin: hashOrNumber{Number: 0}, Amount: 1}
-		if err := conn.Write(ethProto, eth.GetBlockHeadersMsg, req); err != nil {
+		if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, req); err != nil {
 			return fmt.Errorf("failed to write follow-up GetBlockHeaders: %w", err)
 		}
 		if err := s.expectHeadersResponse(conn, req, 5); err != nil {
@@ -506,7 +506,7 @@ func (s *Suite) TestTransactionEmptyListThenBlockBodiesSmoke(t *utesting.T) {
 	t.Log(`This test sends an empty transaction list and then requests block bodies.`)
 	s.runTransactionSmoke(t, types.Transactions{}, 0, false, "", func(conn *Conn) error {
 		req := getBlockBodiesData{s.chain.blocks[0].Hash()}
-		if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &req); err != nil {
+		if err := conn.Write(ethProto, ethproto.GetBlockBodiesMsg, &req); err != nil {
 			return fmt.Errorf("failed to write follow-up GetBlockBodies: %w", err)
 		}
 		if err := s.expectBlockBodiesResponse(conn, &req, 5); err != nil {
@@ -520,7 +520,7 @@ func (s *Suite) TestTransactionEmptyListThenReceiptsSmoke(t *utesting.T) {
 	t.Log(`This test sends an empty transaction list and then requests receipts.`)
 	s.runTransactionSmoke(t, types.Transactions{}, 0, false, "", func(conn *Conn) error {
 		req := getReceiptsData{s.chain.blocks[0].Hash()}
-		if err := conn.Write(ethProto, eth.GetReceiptsMsg, &req); err != nil {
+		if err := conn.Write(ethProto, ethproto.GetReceiptsMsg, &req); err != nil {
 			return fmt.Errorf("failed to write follow-up GetReceipts: %w", err)
 		}
 		if err := s.expectReceiptsResponse(conn, &req, 5); err != nil {
@@ -539,7 +539,7 @@ func (s *Suite) TestTransactionThenBlockBodiesSmoke(t *utesting.T) {
 	}
 	s.runTransactionSmoke(t, txs, 1, true, "fixture has no sender accounts; skipping transaction block-bodies smoke", func(conn *Conn) error {
 		req := getBlockBodiesData{s.chain.blocks[0].Hash()}
-		if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &req); err != nil {
+		if err := conn.Write(ethProto, ethproto.GetBlockBodiesMsg, &req); err != nil {
 			return fmt.Errorf("failed to write follow-up GetBlockBodies: %w", err)
 		}
 		if err := s.expectBlockBodiesResponse(conn, &req, 5); err != nil {
@@ -558,7 +558,7 @@ func (s *Suite) TestTransactionThenReceiptsSmoke(t *utesting.T) {
 	}
 	s.runTransactionSmoke(t, txs, 1, true, "fixture has no sender accounts; skipping transaction receipts smoke", func(conn *Conn) error {
 		req := getReceiptsData{s.chain.blocks[0].Hash()}
-		if err := conn.Write(ethProto, eth.GetReceiptsMsg, &req); err != nil {
+		if err := conn.Write(ethProto, ethproto.GetReceiptsMsg, &req); err != nil {
 			return fmt.Errorf("failed to write follow-up GetReceipts: %w", err)
 		}
 		if err := s.expectReceiptsResponse(conn, &req, 5); err != nil {
@@ -577,7 +577,7 @@ func (s *Suite) TestTransactionBatchThenBlockBodiesSmoke(t *utesting.T) {
 	}
 	s.runTransactionSmoke(t, txs, 2, true, "fixture has no sender accounts; skipping batched transaction block-bodies smoke", func(conn *Conn) error {
 		req := getBlockBodiesData{s.chain.blocks[0].Hash()}
-		if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &req); err != nil {
+		if err := conn.Write(ethProto, ethproto.GetBlockBodiesMsg, &req); err != nil {
 			return fmt.Errorf("failed to write follow-up GetBlockBodies: %w", err)
 		}
 		if err := s.expectBlockBodiesResponse(conn, &req, 5); err != nil {
@@ -596,7 +596,7 @@ func (s *Suite) TestTransactionBatchThenReceiptsSmoke(t *utesting.T) {
 	}
 	s.runTransactionSmoke(t, txs, 2, true, "fixture has no sender accounts; skipping batched transaction receipts smoke", func(conn *Conn) error {
 		req := getReceiptsData{s.chain.blocks[0].Hash()}
-		if err := conn.Write(ethProto, eth.GetReceiptsMsg, &req); err != nil {
+		if err := conn.Write(ethProto, ethproto.GetReceiptsMsg, &req); err != nil {
 			return fmt.Errorf("failed to write follow-up GetReceipts: %w", err)
 		}
 		if err := s.expectReceiptsResponse(conn, &req, 5); err != nil {
@@ -615,7 +615,7 @@ func (s *Suite) TestGetBlockBodies(t *utesting.T) {
 	defer conn.Close()
 
 	req := getBlockBodiesData{s.chain.blocks[0].Hash()}
-	if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &req); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockBodiesMsg, &req); err != nil {
 		t.Fatalf("failed to write GetBlockBodies: %v", err)
 	}
 	if err := s.expectBlockBodiesResponse(conn, &req, 1); err != nil {
@@ -634,13 +634,13 @@ func (s *Suite) TestGetBlockBodiesSequentialRequests(t *utesting.T) {
 	first := getBlockBodiesData{s.chain.blocks[0].Hash()}
 	second := getBlockBodiesData{s.chain.blocks[0].Hash(), common.HexToHash("0x01")}
 
-	if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &first); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockBodiesMsg, &first); err != nil {
 		t.Fatalf("failed to write first GetBlockBodies request: %v", err)
 	}
 	if err := s.expectBlockBodiesResponse(conn, &first, 1); err != nil {
 		t.Fatalf("first sequential block bodies response validation failed: %v", err)
 	}
-	if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &second); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockBodiesMsg, &second); err != nil {
 		t.Fatalf("failed to write second GetBlockBodies request: %v", err)
 	}
 	if err := s.expectBlockBodiesResponse(conn, &second, 1); err != nil {
@@ -657,7 +657,7 @@ func (s *Suite) TestGetBlockBodiesMixedHashes(t *utesting.T) {
 	defer conn.Close()
 
 	req := getBlockBodiesData{s.chain.blocks[0].Hash(), common.HexToHash("0x01")}
-	if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &req); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockBodiesMsg, &req); err != nil {
 		t.Fatalf("failed to write mixed GetBlockBodies: %v", err)
 	}
 	if err := s.expectBlockBodiesResponse(conn, &req, 1); err != nil {
@@ -674,7 +674,7 @@ func (s *Suite) TestGetBlockBodiesUnknownOnly(t *utesting.T) {
 	defer conn.Close()
 
 	req := getBlockBodiesData{common.HexToHash("0x01")}
-	if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &req); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockBodiesMsg, &req); err != nil {
 		t.Fatalf("failed to write unknown-only GetBlockBodies: %v", err)
 	}
 	if err := s.expectBlockBodiesResponse(conn, &req, 2); err != nil {
@@ -691,11 +691,11 @@ func (s *Suite) TestGetBlockBodiesUnknownThenKnown(t *utesting.T) {
 	defer conn.Close()
 
 	badReq := getBlockBodiesData{common.HexToHash("0x01")}
-	if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &badReq); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockBodiesMsg, &badReq); err != nil {
 		t.Fatalf("failed to write unknown GetBlockBodies: %v", err)
 	}
 	goodReq := getBlockBodiesData{s.chain.blocks[0].Hash()}
-	if err := conn.Write(ethProto, eth.GetBlockBodiesMsg, &goodReq); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetBlockBodiesMsg, &goodReq); err != nil {
 		t.Fatalf("failed to write follow-up GetBlockBodies: %v", err)
 	}
 	if err := s.expectBlockBodiesResponse(conn, &goodReq, 2); err != nil {
@@ -712,7 +712,7 @@ func (s *Suite) TestGetReceipts(t *utesting.T) {
 	defer conn.Close()
 
 	req := getReceiptsData{s.chain.blocks[0].Hash()}
-	if err := conn.Write(ethProto, eth.GetReceiptsMsg, &req); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetReceiptsMsg, &req); err != nil {
 		t.Fatalf("failed to write GetReceipts: %v", err)
 	}
 	if err := s.expectReceiptsResponse(conn, &req, 1); err != nil {
@@ -731,13 +731,13 @@ func (s *Suite) TestGetReceiptsSequentialRequests(t *utesting.T) {
 	first := getReceiptsData{s.chain.blocks[0].Hash()}
 	second := getReceiptsData{s.chain.blocks[0].Hash(), common.HexToHash("0x01")}
 
-	if err := conn.Write(ethProto, eth.GetReceiptsMsg, &first); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetReceiptsMsg, &first); err != nil {
 		t.Fatalf("failed to write first GetReceipts request: %v", err)
 	}
 	if err := s.expectReceiptsResponse(conn, &first, 1); err != nil {
 		t.Fatalf("first sequential receipts response validation failed: %v", err)
 	}
-	if err := conn.Write(ethProto, eth.GetReceiptsMsg, &second); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetReceiptsMsg, &second); err != nil {
 		t.Fatalf("failed to write second GetReceipts request: %v", err)
 	}
 	if err := s.expectReceiptsResponse(conn, &second, 1); err != nil {
@@ -754,7 +754,7 @@ func (s *Suite) TestGetReceiptsMixedHashes(t *utesting.T) {
 	defer conn.Close()
 
 	req := getReceiptsData{s.chain.blocks[0].Hash(), common.HexToHash("0x01")}
-	if err := conn.Write(ethProto, eth.GetReceiptsMsg, &req); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetReceiptsMsg, &req); err != nil {
 		t.Fatalf("failed to write mixed GetReceipts: %v", err)
 	}
 	if err := s.expectReceiptsResponse(conn, &req, 1); err != nil {
@@ -771,7 +771,7 @@ func (s *Suite) TestGetReceiptsUnknownOnly(t *utesting.T) {
 	defer conn.Close()
 
 	req := getReceiptsData{common.HexToHash("0x01")}
-	if err := conn.Write(ethProto, eth.GetReceiptsMsg, &req); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetReceiptsMsg, &req); err != nil {
 		t.Fatalf("failed to write unknown-only GetReceipts: %v", err)
 	}
 	if err := s.expectReceiptsResponse(conn, &req, 2); err != nil {
@@ -788,11 +788,11 @@ func (s *Suite) TestGetReceiptsUnknownThenKnown(t *utesting.T) {
 	defer conn.Close()
 
 	badReq := getReceiptsData{common.HexToHash("0x01")}
-	if err := conn.Write(ethProto, eth.GetReceiptsMsg, &badReq); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetReceiptsMsg, &badReq); err != nil {
 		t.Fatalf("failed to write unknown GetReceipts: %v", err)
 	}
 	goodReq := getReceiptsData{s.chain.blocks[0].Hash()}
-	if err := conn.Write(ethProto, eth.GetReceiptsMsg, &goodReq); err != nil {
+	if err := conn.Write(ethProto, ethproto.GetReceiptsMsg, &goodReq); err != nil {
 		t.Fatalf("failed to write follow-up GetReceipts: %v", err)
 	}
 	if err := s.expectReceiptsResponse(conn, &goodReq, 2); err != nil {

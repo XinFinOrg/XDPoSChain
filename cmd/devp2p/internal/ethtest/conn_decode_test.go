@@ -6,7 +6,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
-	"github.com/XinFinOrg/XDPoSChain/eth"
+	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
@@ -16,7 +16,7 @@ func TestDecodeEthPayloadGetBlockHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode failed: %v", err)
 	}
-	msg, err := decodeEthPayload(eth.GetBlockHeadersMsg, b)
+	msg, err := decodeEthPayload(ethproto.GetBlockHeadersMsg, b)
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestDecodeEthPayloadGetReceipts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode failed: %v", err)
 	}
-	msg, err := decodeEthPayload(eth.GetReceiptsMsg, b)
+	msg, err := decodeEthPayload(ethproto.GetReceiptsMsg, b)
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestDecodeEthPayloadGetReceipts(t *testing.T) {
 
 func TestDecodeEthPayloadNewBlockHashesMsg(t *testing.T) {
 	raw := rlp.RawValue{0xc0}
-	msg, err := decodeEthPayload(eth.NewBlockHashesMsg, raw)
+	msg, err := decodeEthPayload(ethproto.NewBlockHashesMsg, raw)
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestDecodeEthPayloadNewBlockHashesMsg(t *testing.T) {
 
 func TestDecodeEthPayloadNewBlockMsg(t *testing.T) {
 	raw := rlp.RawValue{0xc0}
-	msg, err := decodeEthPayload(eth.NewBlockMsg, raw)
+	msg, err := decodeEthPayload(ethproto.NewBlockMsg, raw)
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestDecodeEthPayloadNewBlockMsg(t *testing.T) {
 
 func TestDecodeEthPayloadNodeDataMsgs(t *testing.T) {
 	raw := rlp.RawValue{0xc0}
-	for _, code := range []uint64{eth.GetNodeDataMsg, eth.NodeDataMsg} {
+	for _, code := range []uint64{ethproto.GetNodeDataMsg, ethproto.NodeDataMsg} {
 		msg, err := decodeEthPayload(code, raw)
 		if err != nil {
 			t.Fatalf("decode failed for code %d: %v", code, err)
@@ -103,7 +103,7 @@ func TestDecodeEthPayloadTxMsg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode failed: %v", err)
 	}
-	msg, err := decodeEthPayload(eth.TransactionMsg, b)
+	msg, err := decodeEthPayload(ethproto.TransactionMsg, b)
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestDecodeEthPayloadOrderTxMsg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode failed: %v", err)
 	}
-	msg, err := decodeEthPayload(eth.OrderTxMsg, b)
+	msg, err := decodeEthPayload(ethproto.OrderTxMsg, b)
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestDecodeEthPayloadLendingTxMsg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode failed: %v", err)
 	}
-	msg, err := decodeEthPayload(eth.LendingTxMsg, b)
+	msg, err := decodeEthPayload(ethproto.LendingTxMsg, b)
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestDecodeEthPayloadLendingTxMsg(t *testing.T) {
 
 func TestDecodeEthPayloadVoteMsg(t *testing.T) {
 	raw := rlp.RawValue{0xc0}
-	msg, err := decodeEthPayload(eth.VoteMsg, raw)
+	msg, err := decodeEthPayload(ethproto.VoteMsg, raw)
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestDecodeEthPayloadVoteMsg(t *testing.T) {
 
 func TestDecodeEthPayloadTimeoutMsg(t *testing.T) {
 	raw := rlp.RawValue{0xc0}
-	msg, err := decodeEthPayload(eth.TimeoutMsg, raw)
+	msg, err := decodeEthPayload(ethproto.TimeoutMsg, raw)
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestDecodeEthPayloadTimeoutMsg(t *testing.T) {
 
 func TestDecodeEthPayloadSyncInfoMsg(t *testing.T) {
 	raw := rlp.RawValue{0xc0}
-	msg, err := decodeEthPayload(eth.SyncInfoMsg, raw)
+	msg, err := decodeEthPayload(ethproto.SyncInfoMsg, raw)
 	if err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
