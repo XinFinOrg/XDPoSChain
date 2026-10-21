@@ -50,6 +50,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/eth/filters"
 	"github.com/XinFinOrg/XDPoSChain/eth/gasprice"
 	"github.com/XinFinOrg/XDPoSChain/eth/hooks"
+	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/eth/tracers"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
@@ -59,7 +60,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/miner"
 	"github.com/XinFinOrg/XDPoSChain/node"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
-	"github.com/XinFinOrg/XDPoSChain/p2p/enr"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
@@ -180,7 +180,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	if bcVersion != nil {
 		dbVer = fmt.Sprintf("%d", *bcVersion)
 	}
-	log.Info("Initialising Ethereum protocol", "versions", ProtocolVersions, "network", networkID, "dbversion", dbVer)
+	log.Info("Initialising Ethereum protocol", "versions", ethproto.ProtocolVersions, "network", networkID, "dbversion", dbVer)
 
 	// Create BlockChain object.
 	if !config.SkipBcVersionCheck {
@@ -654,25 +654,20 @@ func (e *Ethereum) EventMux() *event.TypeMux           { return e.eventMux }
 func (e *Ethereum) Engine() consensus.Engine           { return e.engine }
 func (e *Ethereum) ChainDb() ethdb.Database            { return e.chainDb }
 func (e *Ethereum) IsListening() bool                  { return true } // Always listening
-func (e *Ethereum) EthVersion() int                    { return int(ProtocolVersions[0]) }
+func (e *Ethereum) EthVersion() int                    { return int(ethproto.ProtocolVersions[0]) }
 func (e *Ethereum) NetVersion() uint64                 { return e.networkId }
 func (e *Ethereum) Downloader() *downloader.Downloader { return e.protocolManager.downloader }
 func (e *Ethereum) BloomIndexer() *core.ChainIndexer   { return e.bloomIndexer }
 
 // Protocols returns all the currently configured
 func (e *Ethereum) Protocols() []p2p.Protocol {
-	protos := make([]p2p.Protocol, len(ProtocolVersions))
-	for i, vsn := range ProtocolVersions {
-		protos[i] = e.protocolManager.makeProtocol(vsn)
-		protos[i].Attributes = []enr.Entry{e.currentEthEntry()}
-	}
-	return protos
+	return ethproto.MakeProtocols(ethHandler{e.protocolManager})
 }
 
 // Start implements node.Lifecycle, starting all internal goroutines needed by the
 // Ethereum protocol implementation.
 func (e *Ethereum) Start() error {
-	e.startEthEntryUpdate(e.p2pServer.LocalNode())
+	ethproto.StartENRUpdater(e.blockchain, e.p2pServer.LocalNode())
 
 	// Start the bloom bits servicing goroutines
 	e.startBloomHandlers(params.BloomBitsBlocks)

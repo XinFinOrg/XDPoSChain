@@ -25,8 +25,8 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
+	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/log"
-	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 )
 
 const (
@@ -45,10 +45,6 @@ const (
 	// A peer's failure count is forgotten once its backoff has been over for
 	// this long.
 	syncBackoffForget = time.Hour
-
-	// This is the target size for the packs of transactions sent by txsyncLoop.
-	// A pack can get larger than this if a single transactions exceeds this size.
-	txsyncPackSize = 100 * 1024
 
 	// syncStatusLogCycle is the interval at which the current sync status is
 	// reported at warn level, so it is visible even when info/debug logs are
@@ -84,7 +80,7 @@ func (pm *ProtocolManager) syncTransactions(p *peer) {
 	// The xdc/165 protocol introduces proper transaction announcements, so instead
 	// of dripping transactions across multiple peers, just send the entire list as
 	// an announcement and let the remote side decide what they need (likely nothing).
-	if p.version >= xdc165 {
+	if p.Version() >= ethproto.XDC165 {
 		hashes := make([]common.Hash, len(txs))
 		for i, tx := range txs {
 			hashes[i] = tx.Hash()
@@ -105,21 +101,21 @@ func (pm *ProtocolManager) syncTransactions(p *peer) {
 // the transactions in small packs to one peer at a time.
 func (pm *ProtocolManager) txsyncLoop64() {
 	var (
-		pending = make(map[enode.ID]*txsync)
+		pending = make(map[string]*txsync)
 		sending = false               // whether a send is active
 		pack    = new(txsync)         // the pack that is being sent
 		done    = make(chan error, 1) // result of the send
 	)
 	// send starts a sending a pack of transactions from the sync.
 	send := func(s *txsync) {
-		if s.p.version >= xdc165 {
+		if s.p.Version() >= ethproto.XDC165 {
 			panic("initial transaction syncer running on xdc/165+")
 		}
 		// Fill pack with transactions up to the target size.
 		size := common.StorageSize(0)
 		pack.p = s.p
 		pack.txs = pack.txs[:0]
-		for i := 0; i < len(s.txs) && size < txsyncPackSize; i++ {
+		for i := 0; i < len(s.txs) && size < ethproto.TxsyncPackSize; i++ {
 			pack.txs = append(pack.txs, s.txs[i])
 			size += common.StorageSize(s.txs[i].Size())
 		}
@@ -198,11 +194,11 @@ func (pm *ProtocolManager) syncer() {
 			return
 		}
 		syncing = true
-		go func() { syncDone <- syncResult{peer: peer.id, err: pm.synchronise(peer)} }()
+		go func() { syncDone <- syncResult{peer: peer.ID(), err: pm.synchronise(peer)} }()
 	}
 	bestPeer := func() *peer {
 		now := time.Now()
-		return pm.peers.BestPeerExcluding(func(p *peer) bool { return backoff.blocked(p.id, now) })
+		return pm.peers.BestPeerExcluding(func(p *peer) bool { return backoff.blocked(p.ID(), now) })
 	}
 
 	for {
@@ -216,7 +212,7 @@ func (pm *ProtocolManager) syncer() {
 
 		case p := <-pm.syncReqCh:
 			// A peer announced a heavier chain; sync with it unless it is backed off
-			if pm.peers.Peer(p.id) == nil || backoff.blocked(p.id, time.Now()) {
+			if pm.peers.Peer(p.ID()) == nil || backoff.blocked(p.ID(), time.Now()) {
 				break
 			}
 			startSync(p)
@@ -451,7 +447,7 @@ func (pm *ProtocolManager) synchronise(peer *peer) error {
 	defer pm.drainBFTQueue()
 
 	// Run the sync cycle, and disable fast sync if we've went past the pivot block
-	if err := pm.downloader.Synchronise(peer.id, pHead, pTd, mode); err != nil {
+	if err := pm.downloader.Synchronise(peer.ID(), pHead, pTd, mode); err != nil {
 		return err
 	}
 	if atomic.LoadUint32(&pm.snapSync) == 1 {

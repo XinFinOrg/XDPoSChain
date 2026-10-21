@@ -39,6 +39,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/eth/ethconfig"
+	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
@@ -198,6 +199,41 @@ type testPeer struct {
 	*peer
 }
 
+// newTestNodePeer creates a node-layer peer wrapping a wire peer over a fresh
+// message pipe. Both the peer and its pipe are closed when the test ends; the
+// tests that need a serving loop use newTestPeer instead.
+func newTestNodePeer(t *testing.T, version int, name string, getPooledTx func(common.Hash) *types.Transaction) *peer {
+	t.Helper()
+
+	app, net := p2p.MsgPipe()
+	// Cleanups run last-in-first-out, so the peer stops its broadcast
+	// goroutines before the pipe they write to is closed.
+	t.Cleanup(func() { app.Close() })
+
+	var id enode.ID
+	rand.Read(id[:])
+
+	p := &peer{
+		Peer: ethproto.NewPeer(uint(version), p2p.NewPeer(id, name, nil), net, getPooledTx),
+	}
+	t.Cleanup(p.Close)
+	return p
+}
+
+// testHandler is the inbound message loop a protocol manager hands to the wire
+// layer for a peer.
+func testHandler(pm *ProtocolManager) ethproto.Handler {
+	return func(p *ethproto.Peer) error { return ethproto.Handle(ethHandler{pm}, p) }
+}
+
+// newTestRawPeer creates a node-layer peer over an existing message pipe, without
+// registering it at a protocol manager.
+func newTestRawPeer(version uint, id enode.ID, rw p2p.MsgReadWriter, getPooledTx func(common.Hash) *types.Transaction) *peer {
+	return &peer{
+		Peer: ethproto.NewPeer(version, p2p.NewPeer(id, "", nil), rw, getPooledTx),
+	}
+}
+
 // newTestPeer creates a new peer registered at the given protocol manager.
 func newTestPeer(name string, version int, pm *ProtocolManager, shake bool) (*testPeer, <-chan error) {
 	// Create a message pipe to communicate through
@@ -207,14 +243,16 @@ func newTestPeer(name string, version int, pm *ProtocolManager, shake bool) (*te
 	var id enode.ID
 	rand.Read(id[:])
 
-	peer := pm.newPeer(version, p2p.NewPeer(id, name, nil), net, pm.txpool.Get)
+	peer := &peer{
+		Peer: ethproto.NewPeer(uint(version), p2p.NewPeer(id, name, nil), net, pm.txpool.Get),
+	}
 
 	// Start the peer on a new thread
 	errc := make(chan error, 1)
 	go func() {
 		select {
 		case pm.newPeerCh <- peer:
-			errc <- pm.handle(peer)
+			errc <- pm.handle(peer, testHandler(pm))
 		case <-pm.quitSync:
 			errc <- p2p.DiscQuitting
 		}
@@ -236,37 +274,38 @@ func newTestPeer(name string, version int, pm *ProtocolManager, shake bool) (*te
 // remote side as we are simulating locally.
 func (p *testPeer) handshake(t *testing.T, td *big.Int, head common.Hash, genesis common.Hash, forkID forkid.ID, forkFilter forkid.Filter) {
 	var msg interface{}
-	switch p.version {
-	case xdc165, xdc164:
-		msg = &statusData{
-			ProtocolVersion: uint32(p.version),
+	switch p.Version() {
+	case ethproto.XDC165, ethproto.XDC164:
+		msg = &ethproto.StatusPacket{
+			ProtocolVersion: uint32(p.Version()),
 			NetworkID:       ethconfig.Defaults.NetworkId,
 			TD:              td,
 			Head:            head,
 			Genesis:         genesis,
 			ForkID:          forkID,
 		}
-	case xdc100:
-		msg = &statusData100{
-			ProtocolVersion: uint32(p.version),
+	case ethproto.XDC100:
+		msg = &ethproto.StatusPacket100{
+			ProtocolVersion: uint32(p.Version()),
 			NetworkId:       ethconfig.Defaults.NetworkId,
 			TD:              td,
 			CurrentBlock:    head,
 			GenesisBlock:    genesis,
 		}
 	default:
-		panic(fmt.Sprintf("unsupported eth protocol version: %d", p.version))
+		panic(fmt.Sprintf("unsupported eth protocol version: %d", p.Version()))
 	}
-	if err := p2p.ExpectMsg(p.app, StatusMsg, msg); err != nil {
+	if err := p2p.ExpectMsg(p.app, ethproto.StatusMsg, msg); err != nil {
 		t.Fatalf("status recv: %v", err)
 	}
-	if err := p2p.Send(p.app, StatusMsg, msg); err != nil {
+	if err := p2p.Send(p.app, ethproto.StatusMsg, msg); err != nil {
 		t.Fatalf("status send: %v", err)
 	}
 }
 
-// close terminates the local side of the peer, notifying the remote protocol
-// manager of termination.
+// close stops the peer's broadcast goroutines and terminates the local side of
+// the message pipe, notifying the remote protocol manager of termination.
 func (p *testPeer) close() {
+	p.Close()
 	p.app.Close()
 }
