@@ -753,7 +753,7 @@ func validateV2ExpTimeoutConfig(cfg *V2Config, fieldPath string) error {
 		return nil
 	}
 	if cfg.ExpTimeoutConfig.MaxExponent >= 32 {
-		return fmt.Errorf("%s: max_exponent (%d)= >= max_exponent_upperbound (%d)", fieldPath, cfg.ExpTimeoutConfig.MaxExponent, 32)
+		return fmt.Errorf("%s: max_exponent (%d) >= max_exponent_upperbound (%d)", fieldPath, cfg.ExpTimeoutConfig.MaxExponent, 32)
 	}
 	if math.Pow(cfg.ExpTimeoutConfig.Base, float64(cfg.ExpTimeoutConfig.MaxExponent)) >= float64(math.MaxUint32) {
 		return fmt.Errorf("%s: base^max_exponent (%f^%d) should be less than 2^32", fieldPath, cfg.ExpTimeoutConfig.Base, cfg.ExpTimeoutConfig.MaxExponent)
