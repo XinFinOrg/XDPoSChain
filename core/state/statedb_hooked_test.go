@@ -26,25 +26,37 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 )
 
+// burnRecorder returns a counter for the reported selfdestruct burns, along
+// with a balance-change hook that accumulates into it.
+func burnRecorder() (*big.Int, tracing.BalanceChangeHook) {
+	burned := new(big.Int)
+	return burned, func(addr common.Address, prev, new *big.Int, reason tracing.BalanceChangeReason) {
+		if reason == tracing.BalanceDecreaseSelfdestructBurn {
+			burned.Add(burned, prev)
+		}
+	}
+}
+
 // This method tests that the 'burn' from sending-to-selfdestructed accounts
 // is accounted for.
-// (There is also a higher-level test in eth/tracers: TestSupplySelfDestruct )
+// (There is also a higher-level test in eth/tracers/live: TestSupplyBalanceChangeBurn)
 func TestBurn(t *testing.T) {
 	// Note: burn can happen even after EIP-6780, if within one single transaction,
 	// the following occur:
 	// 1. contract B creates contract A
 	// 2. contract A is destructed
 	// 3. contract B sends ether to A
+	//
+	// The burn of a destructed account has two halves, and both are reported:
+	// the balance the destruction itself cleared (100 below) and the ether paid
+	// into the account afterwards (200 below). The EVM hands a transferred
+	// balance to the beneficiary before it destructs, so what a destruct clears
+	// is what it really destroys; this test destructs without a transfer, so
+	// the whole 100 is burnt.
 
-	var burned = new(big.Int)
+	burned, balanceHook := burnRecorder()
 	s, _ := New(types.EmptyRootHash, NewDatabaseForTesting())
-	hooked := NewHookedState(s, &tracing.Hooks{
-		OnBalanceChange: func(addr common.Address, prev, new *big.Int, reason tracing.BalanceChangeReason) {
-			if reason == tracing.BalanceDecreaseSelfdestructBurn {
-				burned.Add(burned, prev)
-			}
-		},
-	})
+	hooked := NewHookedState(s, &tracing.Hooks{OnBalanceChange: balanceHook})
 	createAndDestroy := func(addr common.Address) {
 		hooked.AddBalance(addr, big.NewInt(100), tracing.BalanceChangeUnspecified)
 		hooked.CreateContract(addr)
@@ -71,8 +83,163 @@ func TestBurn(t *testing.T) {
 	hooked.Finalise(true)
 
 	s.Commit(0, false)
-	if have, want := burned, big.NewInt(600); have.Cmp(want) != 0 {
+	// Each address burns the 100 cleared by its destruction plus the 200 paid
+	// into it afterwards.
+	if have, want := burned, big.NewInt(900); have.Cmp(want) != 0 {
 		t.Fatalf("burn-count wrong, have %v want %v", have, want)
+	}
+}
+
+// TestSelfdestructBurnIntermediateRoot pins that the pre-Byzantium finalisation
+// path reports the burn as well: block processing builds the receipt root with
+// IntermediateRoot up to Byzantium, so it has to emit the same balance hook
+// Finalise does.
+func TestSelfdestructBurnIntermediateRoot(t *testing.T) {
+	burned, balanceHook := burnRecorder()
+	s, _ := New(types.EmptyRootHash, NewDatabaseForTesting())
+	hooked := NewHookedState(s, &tracing.Hooks{OnBalanceChange: balanceHook})
+
+	addr := common.Address{0xaa}
+	hooked.AddBalance(addr, big.NewInt(100), tracing.BalanceChangeUnspecified)
+	hooked.CreateContract(addr)
+	hooked.SelfDestruct(addr)
+
+	if have, want := hooked.IntermediateRoot(false), types.EmptyRootHash; have != want {
+		t.Errorf("post-destruct root = %x, want the empty root %x", have, want)
+	}
+	if hooked.Exist(addr) {
+		t.Error("destructed account still exists after IntermediateRoot")
+	}
+	if have, want := burned, big.NewInt(100); have.Cmp(want) != 0 {
+		t.Errorf("reported burn = %v, want %v", have, want)
+	}
+}
+
+// TestSelfdestructBurnReverted pins that the balance a destruct cleared is not
+// reported as burnt once the destruct is rolled back: the burn is only known to
+// survive at finalisation time.
+func TestSelfdestructBurnReverted(t *testing.T) {
+	burned, balanceHook := burnRecorder()
+	s, _ := New(types.EmptyRootHash, NewDatabaseForTesting())
+	hooked := NewHookedState(s, &tracing.Hooks{OnBalanceChange: balanceHook})
+	addr := common.Address{0xaa}
+	snap := hooked.Snapshot()
+	hooked.AddBalance(addr, big.NewInt(100), tracing.BalanceChangeUnspecified)
+	hooked.CreateContract(addr)
+	hooked.SelfDestruct(addr)
+	hooked.RevertToSnapshot(snap)
+	hooked.Finalise(true)
+
+	if burned.Sign() != 0 {
+		t.Fatalf("reverted destruct reported a burn of %v, want none", burned)
+	}
+}
+
+// TestSelfdestructBurnPreservedBalance pins that a destruct which keeps the
+// balance, the EIP-8246 (Amsterdam) flavour, reports no burn at all.
+func TestSelfdestructBurnPreservedBalance(t *testing.T) {
+	burned, balanceHook := burnRecorder()
+	s, _ := New(types.EmptyRootHash, NewDatabaseForTesting())
+	hooked := NewHookedState(s, &tracing.Hooks{OnBalanceChange: balanceHook})
+	addr := common.Address{0xaa}
+	hooked.AddBalance(addr, big.NewInt(100), tracing.BalanceChangeUnspecified)
+	hooked.CreateContract(addr)
+	hooked.SelfDestruct6780(addr, true)
+	hooked.Finalise(true)
+
+	if burned.Sign() != 0 {
+		t.Fatalf("destruct with a preserved balance reported a burn of %v, want none", burned)
+	}
+}
+
+// TestSelfdestructBurnSurvivesCopy pins that a state copied after a destruct
+// still reports the burn of that destruct: the balance waiting for finalisation
+// travels with the state objects.
+func TestSelfdestructBurnSurvivesCopy(t *testing.T) {
+	burned, balanceHook := burnRecorder()
+	s, _ := New(types.EmptyRootHash, NewDatabaseForTesting())
+	hooked := NewHookedState(s, &tracing.Hooks{})
+	addr := common.Address{0xaa}
+	hooked.AddBalance(addr, big.NewInt(100), tracing.BalanceChangeUnspecified)
+	hooked.CreateContract(addr)
+	hooked.SelfDestruct(addr)
+
+	copied := NewHookedState(s.Copy(), &tracing.Hooks{OnBalanceChange: balanceHook})
+	copied.Finalise(true)
+
+	if burned.Cmp(big.NewInt(100)) != 0 {
+		t.Fatalf("copy of a destructed state reported a burn of %v, want 100", burned)
+	}
+}
+
+// TestCopyIsolatesDestructedBalance pins that the burn a copied state reports
+// is its own: a destruct running on the original afterwards extends the
+// original's memory in place, and must not leak into the copy.
+func TestCopyIsolatesDestructedBalance(t *testing.T) {
+	burned, balanceHook := burnRecorder()
+	s, _ := New(types.EmptyRootHash, NewDatabaseForTesting())
+	hooked := NewHookedState(s, &tracing.Hooks{})
+	addr := common.Address{0xaa}
+
+	hooked.AddBalance(addr, big.NewInt(100), tracing.BalanceChangeUnspecified)
+	hooked.CreateContract(addr)
+	hooked.SelfDestruct(addr) // the destruct clears 100
+
+	copied := NewHookedState(s.Copy(), &tracing.Hooks{OnBalanceChange: balanceHook})
+
+	// A second destruct on the original extends its memory in place and must
+	// not reach the copy.
+	hooked.AddBalance(addr, big.NewInt(50), tracing.BalanceChangeUnspecified)
+	hooked.SelfDestruct(addr)
+
+	copied.Finalise(true)
+	if burned.Cmp(big.NewInt(100)) != 0 {
+		t.Fatalf("copy reported a burn of %v, want 100", burned)
+	}
+}
+
+// TestSelfdestructBurnSecondDestruct pins the accounting across successive
+// destructs of one account. Ether arriving between two destructs is burnt by
+// the second one. When the second destruct is reverted, only the first
+// destruct's burn survives: each destruct journals the cleared balance it is
+// about to extend, so the revert drops the second destruct's contribution
+// again.
+func TestSelfdestructBurnSecondDestruct(t *testing.T) {
+	trace := func(t *testing.T, script func(hooked *hookedStateDB)) *big.Int {
+		t.Helper()
+		burned, balanceHook := burnRecorder()
+		s, _ := New(types.EmptyRootHash, NewDatabaseForTesting())
+		hooked := NewHookedState(s, &tracing.Hooks{OnBalanceChange: balanceHook})
+		script(hooked)
+		hooked.Finalise(true)
+		return burned
+	}
+	addr := common.Address{0xaa}
+
+	// The ether that arrives between the two destructs is cleared by the
+	// second one, so the reported burn is the sum of both.
+	if burned := trace(t, func(hooked *hookedStateDB) {
+		hooked.AddBalance(addr, big.NewInt(100), tracing.BalanceChangeUnspecified)
+		hooked.CreateContract(addr)
+		hooked.SelfDestruct(addr)
+		hooked.AddBalance(addr, big.NewInt(50), tracing.BalanceChangeUnspecified)
+		hooked.SelfDestruct(addr)
+	}); burned.Cmp(big.NewInt(150)) != 0 {
+		t.Fatalf("successive destructs reported a burn of %v, want 150", burned)
+	}
+
+	// Reverting past the second destruct takes back the balance it added to
+	// the cleared one, leaving the first destruct's burn alone.
+	if burned := trace(t, func(hooked *hookedStateDB) {
+		hooked.AddBalance(addr, big.NewInt(100), tracing.BalanceChangeUnspecified)
+		hooked.CreateContract(addr)
+		hooked.SelfDestruct(addr)
+		snap := hooked.Snapshot()
+		hooked.AddBalance(addr, big.NewInt(50), tracing.BalanceChangeUnspecified)
+		hooked.SelfDestruct(addr)
+		hooked.RevertToSnapshot(snap)
+	}); burned.Cmp(big.NewInt(100)) != 0 {
+		t.Fatalf("second destruct reverted reported a burn of %v, want 100", burned)
 	}
 }
 

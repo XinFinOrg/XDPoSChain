@@ -338,8 +338,9 @@ func TestEIP8246HookedFinaliseSkipsBurn(t *testing.T) {
 }
 
 // TestSelfDestructHookedBurnWithoutEIP8246 pins the pre-Amsterdam hooks: the
-// destruct reports the balance decrease, and ether arriving afterwards is
-// reported as burnt at finalisation.
+// destruct reports the balance decrease, and the finalisation reports what the
+// destruction burnt, which is the balance it cleared plus the ether arriving
+// afterwards.
 func TestSelfDestructHookedBurnWithoutEIP8246(t *testing.T) {
 	sd, _ := newContractInTx(t, big.NewInt(1234))
 
@@ -366,8 +367,8 @@ func TestSelfDestructHookedBurnWithoutEIP8246(t *testing.T) {
 	if decreases != 1 {
 		t.Errorf("destruct reported %d decreases, want 1", decreases)
 	}
-	if burns != 1 || burned.Cmp(big.NewInt(7)) != 0 {
-		t.Errorf("finalise reported %d burns (total %v), want 1 burn of 7", burns, burned)
+	if burns != 1 || burned.Cmp(big.NewInt(1241)) != 0 {
+		t.Errorf("finalise reported %d burns (total %v), want 1 burn of 1241", burns, burned)
 	}
 }
 

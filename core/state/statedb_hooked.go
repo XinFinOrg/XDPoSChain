@@ -268,20 +268,27 @@ func (s *hookedStateDB) Finalise(deleteEmptyObjects bool) {
 		obj := s.inner.stateObjects[addr]
 		// Bingo: state object was self-destructed, call relevant hooks.
 
-		// If ether was sent to account post-selfdestruct, record as burnt.
+		// The burnt balance is what the destruct cleared from the account plus
+		// anything paid into it afterwards, which the destruct burns as well.
 		// EIP-8246 (Amsterdam) preserves that balance instead, so there is no
 		// burn to report. Only the burn hook is skipped: a preserved account
 		// still loses its nonce and code, so any other state-change hook added
 		// to this loop later must keep firing for it.
 		if !obj.selfDestructedPreserveBalance {
-			if bal := obj.Balance(); bal.Sign() != 0 {
-				s.hooks.OnBalanceChange(addr, bal, new(big.Int), tracing.BalanceDecreaseSelfdestructBurn)
+			burnt := new(big.Int)
+			if obj.destructedBalance != nil {
+				burnt.Set(obj.destructedBalance)
+			}
+			burnt.Add(burnt, obj.Balance())
+			if burnt.Sign() != 0 {
+				s.hooks.OnBalanceChange(addr, burnt, new(big.Int), tracing.BalanceDecreaseSelfdestructBurn)
 			}
 		}
 	}
 }
 
 func (s *hookedStateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
+	s.Finalise(deleteEmptyObjects)
 	return s.inner.IntermediateRoot(deleteEmptyObjects)
 }
 

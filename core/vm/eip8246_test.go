@@ -123,7 +123,9 @@ func TestSelfdestruct6780EventForkGate(t *testing.T) {
 		wantExists      bool
 		wantBeneficiary int64
 	}{
-		{"pre-amsterdam/new-contract", false, true, false, 2, 1, 0, 0, false, 0},
+		// Before Amsterdam the balance a same-transaction contract destroyed
+		// with itself is burnt, and the burn is reported at finalisation.
+		{"pre-amsterdam/new-contract", false, true, false, 2, 1, 1, 0, false, 0},
 		{"amsterdam/new-contract", true, true, false, 0, 0, 0, initialBalance, true, 0},
 		{"pre-amsterdam/existing-contract", false, false, false, 1, 1, 0, initialBalance, true, 0},
 		{"amsterdam/existing-contract", true, false, false, 0, 0, 0, initialBalance, true, 0},

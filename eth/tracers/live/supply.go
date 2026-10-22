@@ -11,10 +11,8 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
-	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/eth/tracers"
 	"github.com/XinFinOrg/XDPoSChain/log"
-	"github.com/XinFinOrg/XDPoSChain/params"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -58,26 +56,9 @@ type supplyInfo struct {
 	ParentHash common.Hash `json:"parentHash"`
 }
 
-type supplyTxCallstack struct {
-	calls []supplyTxCallstack
-	burn  *big.Int
-}
-
 type supply struct {
-	delta       supplyInfo
-	txCallstack []supplyTxCallstack // Callstack for current transaction
-	logger      *lumberjack.Logger
-	chainConfig *params.ChainConfig
-
-	// burnsBalance reports whether SELFDESTRUCT still burns the balance of the
-	// destructed account in the block being traced. It is false from Amsterdam
-	// onwards, where EIP-8246 preserves that balance.
-	burnsBalance bool
-
-	// warnedNoConfig reports whether a missing chain configuration has already
-	// been logged. Only core.NewBlockChain delivers it, so every other mount
-	// point keeps the pre-fork accounting; warn once instead of on every block.
-	warnedNoConfig bool
+	delta  supplyInfo
+	logger *lumberjack.Logger
 }
 
 type supplyTracerConfig struct {
@@ -105,20 +86,15 @@ func newSupply(cfg json.RawMessage) (*tracing.Hooks, error) {
 	}
 
 	t := &supply{
-		delta:        newSupplyInfo(),
-		logger:       logger,
-		burnsBalance: true, // until the chain config says otherwise
+		delta:  newSupplyInfo(),
+		logger: logger,
 	}
 	return &tracing.Hooks{
-		OnBlockchainInit: t.OnBlockchainInit,
-		OnBlockStart:     t.OnBlockStart,
-		OnBlockEnd:       t.OnBlockEnd,
-		OnGenesisBlock:   t.OnGenesisBlock,
-		OnTxStart:        t.OnTxStart,
-		OnBalanceChange:  t.OnBalanceChange,
-		OnEnter:          t.OnEnter,
-		OnExit:           t.OnExit,
-		OnClose:          t.OnClose,
+		OnBlockStart:    t.OnBlockStart,
+		OnBlockEnd:      t.OnBlockEnd,
+		OnGenesisBlock:  t.OnGenesisBlock,
+		OnBalanceChange: t.OnBalanceChange,
+		OnClose:         t.OnClose,
 	}, nil
 }
 
@@ -145,35 +121,12 @@ func (s *supply) resetDelta() {
 	s.delta = newSupplyInfo()
 }
 
-// OnBlockchainInit receives the chain configuration, which decides whether
-// SELFDESTRUCT still burns the destructed balance in a given block. core.
-// NewBlockChain invokes it for every live tracer attached to a chain; without
-// it the tracer assumes a chain that predates the fork.
-func (s *supply) OnBlockchainInit(chainConfig *params.ChainConfig) {
-	s.chainConfig = chainConfig
-}
-
 func (s *supply) OnBlockStart(ev tracing.BlockEvent) {
 	s.resetDelta()
 
 	s.delta.Number = ev.Block.NumberU64()
 	s.delta.Hash = ev.Block.Hash()
 	s.delta.ParentHash = ev.Block.ParentHash()
-
-	// EIP-8246 removes the SELFDESTRUCT burn from Amsterdam onwards, so the
-	// balance of a self-destructed account is no longer part of the burn for
-	// blocks at or after the fork. Treat a missing chain config as pre-fork to
-	// keep the previous accounting.
-	//
-	// The gate is only correct once the consensus side of EIP-8246 is in effect
-	// too: on a chain that schedules Amsterdam without it, the balance is still
-	// destroyed but no longer reported here, so the burn is under-reported. Ship
-	// the tracer change together with the consensus one.
-	if s.chainConfig == nil && !s.warnedNoConfig {
-		s.warnedNoConfig = true
-		log.Warn("Supply tracer has no chain config, accounting SELFDESTRUCT as burning the balance")
-	}
-	s.burnsBalance = s.chainConfig == nil || !s.chainConfig.IsAmsterdam(ev.Block.Number())
 
 	// Calculate Burn for this block
 	if ev.Block.BaseFee() != nil {
@@ -213,73 +166,15 @@ func (s *supply) OnBalanceChange(a common.Address, prevBalance, newBalance *big.
 		s.delta.Issuance.Withdrawals.Add(s.delta.Issuance.Withdrawals, diff)
 	case tracing.BalanceDecreaseSelfdestructBurn:
 		// BalanceDecreaseSelfdestructBurn is non-reversible as it happens
-		// at the end of the transaction.
+		// at the end of the transaction. It is also the only source of the
+		// selfdestruct burn: the state reports the balance a destruct really
+		// destroys, so the EVM does not have to guess it from the SELFDESTRUCT
+		// enter event, where a self-destruct to self keeps its balance from
+		// EIP-6780 (Cancun) onwards and from EIP-8246 (Amsterdam) onwards.
 		s.delta.Burn.Misc.Sub(s.delta.Burn.Misc, diff)
 	default:
 		return
 	}
-}
-
-func (s *supply) OnTxStart(vm *tracing.VMContext, tx *types.Transaction, from common.Address) {
-	s.txCallstack = make([]supplyTxCallstack, 0, 1)
-}
-
-// internalTxsHandler handles internal transactions burned amount
-func (s *supply) internalTxsHandler(call *supplyTxCallstack) {
-	// Handle Burned amount
-	if call.burn != nil {
-		s.delta.Burn.Misc.Add(s.delta.Burn.Misc, call.burn)
-	}
-
-	if len(call.calls) > 0 {
-		// Recursivelly handle internal calls
-		for _, call := range call.calls {
-			callCopy := call
-			s.internalTxsHandler(&callCopy)
-		}
-	}
-}
-
-func (s *supply) OnEnter(depth int, typ byte, from common.Address, to common.Address, input []byte, gas uint64, value *big.Int) {
-	call := supplyTxCallstack{
-		calls: make([]supplyTxCallstack, 0),
-	}
-
-	// This is a special case of burned amount which has to be handled here
-	// which happens when type == selfdestruct and from == to. EIP-8246
-	// (Amsterdam) keeps that balance, so it is not a burn there.
-	if s.burnsBalance && vm.OpCode(typ) == vm.SELFDESTRUCT && from == to && value.Cmp(common.Big0) == 1 {
-		call.burn = value
-	}
-
-	// Append call to the callstack, so we can fill the details in CaptureExit
-	s.txCallstack = append(s.txCallstack, call)
-}
-
-func (s *supply) OnExit(depth int, output []byte, gasUsed uint64, err error, reverted bool) {
-	if depth == 0 {
-		// No need to handle Burned amount if transaction is reverted
-		if !reverted {
-			s.internalTxsHandler(&s.txCallstack[0])
-		}
-		return
-	}
-
-	size := len(s.txCallstack)
-	if size <= 1 {
-		return
-	}
-	// Pop call
-	call := s.txCallstack[size-1]
-	s.txCallstack = s.txCallstack[:size-1]
-	size -= 1
-
-	// In case of a revert, we can drop the call and all its subcalls.
-	// Caution, that this has to happen after popping the call from the stack.
-	if reverted {
-		return
-	}
-	s.txCallstack[size-1].calls = append(s.txCallstack[size-1].calls, call)
 }
 
 func (s *supply) OnClose() {

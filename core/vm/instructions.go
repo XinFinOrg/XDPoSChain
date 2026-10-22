@@ -896,6 +896,12 @@ func opSelfdestruct(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	}
 	beneficiary := scope.Stack.pop()
 	balance := evm.StateDB.GetBalance(scope.Contract.Address())
+	// Move the balance with an explicit decrease/increase pair, as
+	// opSelfdestruct6780 does: the destruction below then clears only what was
+	// not handed to the beneficiary, which is the balance it really burns and
+	// what the state layer reports at finalisation. A self-destruct that
+	// appoints itself as recipient moves nothing and still burns the balance.
+	evm.StateDB.SubBalance(scope.Contract.Address(), balance, tracing.BalanceDecreaseSelfdestruct)
 	evm.StateDB.AddBalance(beneficiary.Bytes20(), balance, tracing.BalanceIncreaseSelfdestruct)
 	evm.StateDB.SelfDestruct(scope.Contract.Address())
 	if tracer := evm.Config.Tracer; tracer != nil {

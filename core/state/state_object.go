@@ -80,6 +80,18 @@ type stateObject struct {
 	// a balance-only account at transaction finalisation instead of being
 	// deleted.
 	selfDestructedPreserveBalance bool
+
+	// destructedBalance is the balance that selfDestruct cleared from this
+	// object, i.e. the part of its balance that is burnt by the destruction.
+	// It is reported at finalisation, once the destruction is known to survive
+	// the transaction, together with anything paid into the account afterwards.
+	//
+	// Re-creating the address within the same transaction would replace the
+	// object and with it this field, dropping the burn of the previous
+	// incarnation. That does not happen: a destructed account still exists in
+	// the state until finalisation, and the EVM refuses to create on an
+	// existing account (address collision).
+	destructedBalance *big.Int
 }
 
 // empty returns whether the account is considered empty.
@@ -407,6 +419,9 @@ func (s *stateObject) deepCopy(db *StateDB) *stateObject {
 	obj.selfDestructed = s.selfDestructed
 	obj.selfDestructedPreserveBalance = s.selfDestructedPreserveBalance
 	obj.newContract = s.newContract
+	if s.destructedBalance != nil {
+		obj.destructedBalance = new(big.Int).Set(s.destructedBalance)
+	}
 	return obj
 }
 

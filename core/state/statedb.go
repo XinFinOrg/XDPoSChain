@@ -592,6 +592,9 @@ func (s *StateDB) SetStorage(addr common.Address, storage map[common.Hash]common
 // SelfDestruct marks the given account as selfdestructed.
 // This clears the account balance.
 //
+// The EVM hands the beneficiary its share before calling this, so what is left
+// to clear is what the destruction really burns.
+//
 // This is the pre-EIP-6780 entry point: the balance is always burnt and no
 // EIP-8246 handling applies, because the method carries no fork rules. It is
 // unreachable on an Amsterdam chain, whose instruction set is built on Cancun
@@ -618,8 +621,19 @@ func (s *StateDB) selfDestruct(addr common.Address, preserveBalance bool) *big.I
 	prevBalance.Set(stateObject.Balance())
 	// Regardless of whether it is already destructed or not, we do have to
 	// journal the balance-change, if we set it to zero here.
+	//
+	// The cleared balance is the amount the destruction burns. It is remembered
+	// rather than reported right away, because a revert of this destruct has to
+	// take it back; hookedStateDB.Finalise reports it once the destruct
+	// survives. Successive destructs add up: ether paid into an already
+	// destructed account is burnt by the destruction that clears it.
 	if !preserveBalance && prevBalance.Sign() != 0 {
 		stateObject.SetBalance(new(big.Int))
+		s.journal.destructedBalance(addr, stateObject.destructedBalance)
+		if stateObject.destructedBalance == nil {
+			stateObject.destructedBalance = new(big.Int)
+		}
+		stateObject.destructedBalance.Add(stateObject.destructedBalance, prevBalance)
 	}
 	// If it is already marked as self-destructed, we do not need to add it
 	// for journalling a second time.
