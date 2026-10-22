@@ -393,8 +393,21 @@ func (hc *HeaderChain) GetAncestor(hash common.Hash, number, ancestor uint64, ma
 	}
 	for ancestor != 0 {
 		if hc.GetCanonicalHash(number) == hash {
-			number -= ancestor
-			return hc.GetCanonicalHash(number), number
+			// Read the ancestor before re-checking the origin: a reorganisation
+			// that rewrites the origin's own mapping between the two reads
+			// fails the re-check, and the walk below takes over instead of
+			// returning a hash that is not an ancestor of it. A reorganisation
+			// publishes its canonical mappings from low to high, so this check
+			// does not cover the window in which a lower mapping has already
+			// been replaced while the origin's has not: go-ethereum publishes
+			// the same way and is exposed to it the same way, and this function
+			// does not fix it. The interleaving is concurrent by nature and no
+			// test can pin it, so the two reads have to stay two.
+			ancestorHash := hc.GetCanonicalHash(number - ancestor)
+			if hc.GetCanonicalHash(number) == hash {
+				number -= ancestor
+				return ancestorHash, number
+			}
 		}
 		if *maxNonCanonical == 0 {
 			return common.Hash{}, 0
