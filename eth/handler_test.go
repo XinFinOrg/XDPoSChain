@@ -508,7 +508,7 @@ func TestProtocolManagerRemovePeerConcurrent(t *testing.T) {
 	// Poll briefly in case handle() is still undoing its registration.
 	deadline := time.After(2 * time.Second)
 	for {
-		if err := pm.downloader.RegisterPeer(tp.ID(), int(tp.Version()), tp); err == nil {
+		if err := pm.downloader.RegisterPeer(tp.ID(), tp.Version(), tp); err == nil {
 			break
 		}
 		select {
@@ -557,7 +557,7 @@ func TestRegisterDownloaderPeerUndoesRacedRemoval(t *testing.T) {
 		t.Fatalf("registerDownloaderPeer should abort with DiscUselessPeer a handshake whose removal was already claimed, got: %v", err)
 	}
 	// A reconnect of the same node id must not be blocked by a stale entry.
-	if err := pm.downloader.RegisterPeer(p.ID(), int(p.Version()), p); err != nil {
+	if err := pm.downloader.RegisterPeer(p.ID(), p.Version(), p); err != nil {
 		t.Fatalf("reconnect blocked by stale downloader entry: %v", err)
 	}
 	pm.downloader.UnregisterPeer(p.ID())

@@ -223,7 +223,7 @@ func TestVoteQueuedDuringSync(t *testing.T) {
 
 	// Hold the downloader in a synchronising state.
 	stub := newStalledDownloaderPeer(pm.downloader, peer.ID(), pm.blockchain.Genesis().Header())
-	if err := pm.downloader.RegisterPeer(peer.ID(), int(ethproto.XDC100), stub); err != nil {
+	if err := pm.downloader.RegisterPeer(peer.ID(), ethproto.XDC100, stub); err != nil {
 		t.Fatalf("failed to register downloader peer: %v", err)
 	}
 	defer pm.downloader.UnregisterPeer(peer.ID())

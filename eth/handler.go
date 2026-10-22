@@ -320,7 +320,7 @@ func (pm *ProtocolManager) removePeer(id string) {
 // DiscUselessPeer to abort the handshake, matching removePeer's disconnect
 // reason.
 func (pm *ProtocolManager) registerDownloaderPeer(p *peer) error {
-	if err := pm.downloader.RegisterPeer(p.ID(), int(p.Version()), p); err != nil {
+	if err := pm.downloader.RegisterPeer(p.ID(), p.Version(), p); err != nil {
 		return err
 	}
 	if p.removed.Load() {
