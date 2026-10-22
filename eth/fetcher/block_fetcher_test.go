@@ -95,6 +95,8 @@ type fetcherTester struct {
 	blocks map[common.Hash]*types.Block // Blocks belonging to the tester
 	drops  map[string]bool              // Map of peers dropped by the fetcher
 
+	syncing bool // Reports snap sync in progress to the fetcher
+
 	lock sync.RWMutex
 }
 
@@ -105,10 +107,26 @@ func newTester() *fetcherTester {
 		blocks: map[common.Hash]*types.Block{genesis.Hash(): genesis},
 		drops:  make(map[string]bool),
 	}
-	tester.fetcher = NewBlockFetcher(tester.getBlock, tester.verifyHeader, tester.handleProposedBlock, tester.broadcastBlock, tester.chainHeight, tester.insertBlock, tester.prepareBlock, tester.dropPeer)
+	tester.fetcher = NewBlockFetcher(tester.getBlock, tester.verifyHeader, tester.handleProposedBlock, tester.broadcastBlock, tester.chainHeight, tester.insertBlock, tester.prepareBlock, tester.dropPeer, tester.canonicalHash, func() bool { return tester.syncing })
 	tester.fetcher.Start()
 
 	return tester
+}
+
+// canonicalHash returns the hash of the tester's chain at the given number, or
+// the zero hash if that number is not on the chain. It looks the number up on
+// the tracked chain rather than indexing hashes, which the distant-block tests
+// overwrite with a non-genesis head.
+func (f *fetcherTester) canonicalHash(number uint64) common.Hash {
+	f.lock.RLock()
+	defer f.lock.RUnlock()
+
+	for _, hash := range f.hashes {
+		if block := f.blocks[hash]; block != nil && block.NumberU64() == number {
+			return hash
+		}
+	}
+	return common.Hash{}
 }
 
 // getBlock retrieves a block from the tester's block chain.
@@ -939,4 +957,834 @@ func TestBlockMemoryExhaustionAttack(t *testing.T) {
 		verifyImportEvent(t, imported, true)
 	}
 	verifyImportDone(t, imported)
+}
+
+// Tests that the consensus handler is skipped and the signing hook deferred
+// when the import reported success without the block actually reaching the
+// chain (e.g. the block or one of its ancestors was parked in the future
+// queue): signing and voting on an unimported block would corrupt consensus
+// state, while relaying it is safe and happens regardless.
+func TestUnimportedBlockSkipsConsensusHandling(t *testing.T) {
+	block := newParkedTestBlock(0x01)
+
+	// Simulate insertBlock queueing the block in the future queue and still
+	// reporting success: neither the sign hook nor the consensus handler may run.
+	tester := newTester()
+	testSkipConsensusHandlingForUnimportedBlock(t, tester, block)
+
+	// A block that actually lands in the chain keeps its consensus handling.
+	tester = newTester()
+	testConsensusHandlingForImportedBlock(t, tester, block)
+}
+
+// testSkipConsensusHandlingForUnimportedBlock injects a block whose import
+// reports success without storing anything and asserts that neither the
+// signing hook nor the consensus handler runs for it: both are consensus
+// actions reserved for blocks that actually reached the chain.
+func testSkipConsensusHandlingForUnimportedBlock(t *testing.T, tester *fetcherTester, block *types.Block) {
+	imported := make(chan *types.Block, 1)
+	tester.fetcher.insertBlock = func(block *types.Block) error {
+		imported <- block
+		return nil
+	}
+	signed := hookSigning(tester.fetcher)
+	proposed := make(chan *types.Header, 1)
+	tester.fetcher.handleProposedBlock = func(header *types.Header) error {
+		proposed <- header
+		return nil
+	}
+	tester.fetcher.Enqueue("test", block)
+
+	// Wait for the import attempt to finish before checking the hooks.
+	select {
+	case <-imported:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("import of the unimported block never finished")
+	}
+	// Stop the fetcher: the parked waiter exits with it, so no signature can
+	// run and the negative assertions need no long (and jitter-prone) window.
+	tester.fetcher.Stop()
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran for unimported block %v", b.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+	select {
+	case header := <-proposed:
+		t.Fatalf("consensus handler ran for unimported block %v", header.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// testConsensusHandlingForImportedBlock injects a block that reaches the
+// chain and asserts both the signing hook and the consensus handler run for it.
+func testConsensusHandlingForImportedBlock(t *testing.T, tester *fetcherTester, block *types.Block) {
+	signed := hookSigning(tester.fetcher)
+	proposed := make(chan *types.Header, 1)
+	tester.fetcher.handleProposedBlock = func(header *types.Header) error {
+		proposed <- header
+		return nil
+	}
+	tester.fetcher.Enqueue("test", block)
+
+	// The signing hook runs before the consensus handler.
+	select {
+	case b := <-signed:
+		if b.Hash() != block.Hash() {
+			t.Fatalf("sign hook ran for block %v, want %v", b.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("sign hook never ran for the imported block")
+	}
+	select {
+	case header := <-proposed:
+		if header.Hash() != block.Hash() {
+			t.Fatalf("consensus handler ran for block %v, want %v", header.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("consensus handler never ran for the imported block")
+	}
+}
+
+// TestParkedBlockSignsAfterFutureImport verifies that a block parked in the
+// future queue at delivery time still gets its signature transaction once
+// the future-block loop imports it, while the consensus handler stays
+// reserved for procFutureBlocks.
+func TestParkedBlockSignsAfterFutureImport(t *testing.T) {
+	block := newParkedTestBlock(0x01)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	imported := make(chan *types.Block, 1)
+	tester.fetcher.insertBlock = func(block *types.Block) error {
+		imported <- block
+		return nil // block parked, nothing stored
+	}
+	signed := hookSigning(tester.fetcher)
+	proposed := make(chan *types.Header, 1)
+	tester.fetcher.handleProposedBlock = func(header *types.Header) error {
+		proposed <- header
+		return nil
+	}
+	broadcasts := make(chan *types.Block, 1)
+	tester.fetcher.broadcastBlock = func(block *types.Block, propagate bool) {
+		broadcasts <- block
+	}
+	tester.fetcher.Enqueue("test", block)
+
+	// Wait for the import attempt: the block is parked, so the signing hook
+	// and the consensus handler must not run yet.
+	select {
+	case <-imported:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("import of the parked block never finished")
+	}
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran before the block was imported: %v", b.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+	// Relaying does not wait for the import.
+	select {
+	case b := <-broadcasts:
+		if b.Hash() != block.Hash() {
+			t.Fatalf("broadcast ran for block %v, want %v", b.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("parked block was never broadcast")
+	}
+
+	// Simulate the future-block loop importing the parked block.
+	tester.insertChain(types.Blocks{block})
+
+	// The deferred signing hook now runs for the imported block.
+	select {
+	case b := <-signed:
+		if b.Hash() != block.Hash() {
+			t.Fatalf("sign hook ran for block %v, want %v", b.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("sign hook never ran for the imported parked block")
+	}
+	// The consensus handler stays reserved for procFutureBlocks.
+	select {
+	case header := <-proposed:
+		t.Fatalf("consensus handler ran for parked block %v", header.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// parkedCount returns the number of blocks currently parked for signing.
+func parkedCount(f *BlockFetcher) int {
+	f.parkedMu.Lock()
+	defer f.parkedMu.Unlock()
+	return len(f.parked)
+}
+
+// waiterRunning reports whether the parked-signature waiter goroutine is active.
+func waiterRunning(f *BlockFetcher) bool {
+	f.parkedMu.Lock()
+	defer f.parkedMu.Unlock()
+	return f.parkedWaiter
+}
+
+// newParkedTestBlock builds a minimal child of the genesis block for the
+// parked-signature tests; extra lets a test vary the hash, e.g. one distinct
+// block per loop iteration.
+func newParkedTestBlock(extra byte) *types.Block {
+	return types.NewBlockWithHeader(&types.Header{
+		ParentHash: genesis.Hash(),
+		Number:     common.Big1,
+		Difficulty: common.Big1,
+		GasLimit:   params.GenesisGasLimit,
+		Extra:      []byte{extra},
+	}).WithBody(types.Body{})
+}
+
+// hookSigning wires the fetcher's sign hook to a buffered channel and returns
+// it, so a test can assert on the signatures that were created.
+func hookSigning(f *BlockFetcher) chan *types.Block {
+	signed := make(chan *types.Block, 1)
+	f.signHook = func(b *types.Block) error {
+		signed <- b
+		return nil
+	}
+	return signed
+}
+
+// TestParkedSignatureSkippedWhileSyncing verifies that a block delivered while
+// the node is still snap syncing is not parked: the inserter discards such
+// blocks outright, so waiting for them only accumulates state and logs.
+func TestParkedSignatureSkippedWhileSyncing(t *testing.T) {
+	block := newParkedTestBlock(0x01)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.syncing = true
+
+	tester.fetcher.insertBlock = func(*types.Block) error {
+		return nil // discarded while syncing, nothing stored
+	}
+	signed := hookSigning(tester.fetcher)
+	// The broadcast runs after insert() has made its park decision, so waiting
+	// on it proves the snapSync gate was actually exercised: the import signal
+	// alone fires before parkForSignature, which would leave this assertion
+	// vacuous.
+	broadcast := make(chan *types.Block, 1)
+	tester.fetcher.broadcastBlock = func(block *types.Block, propagate bool) {
+		broadcast <- block
+	}
+	tester.fetcher.Enqueue("test", block)
+
+	select {
+	case <-broadcast:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("discarded block was never broadcast")
+	}
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked %d signatures while snap syncing, want 0", n)
+	}
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran for a block discarded while syncing: %v", b.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// TestParkedSignatureWithoutSignHook verifies that a block delivered on a
+// node without a signing hook (non-XDPoS) is not parked: there is no signature
+// to defer, so no state is kept.
+func TestParkedSignatureWithoutSignHook(t *testing.T) {
+	block := newParkedTestBlock(0x01)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	tester.fetcher.insertBlock = func(*types.Block) error {
+		return nil // never stored
+	}
+	// Sync on the broadcast, which runs after insert() made its park decision;
+	// without it the parkedCount assertion would run before parkForSignature.
+	broadcast := make(chan *types.Block, 1)
+	tester.fetcher.broadcastBlock = func(block *types.Block, propagate bool) {
+		broadcast <- block
+	}
+	tester.fetcher.Enqueue("test", block)
+
+	select {
+	case <-broadcast:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("never-stored block was never broadcast")
+	}
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked %d signatures without a sign hook, want 0", n)
+	}
+}
+
+// TestParkedSignatureTimeoutDropsBlock verifies that a block that is never
+// stored is dropped once its deadline passes, without a signature.
+func TestParkedSignatureTimeoutDropsBlock(t *testing.T) {
+	block := newParkedTestBlock(0x01)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.parkedTimeout = 200 * time.Millisecond
+
+	tester.fetcher.insertBlock = func(*types.Block) error {
+		return nil // never stored
+	}
+	signed := hookSigning(tester.fetcher)
+	broadcast := make(chan *types.Block, 1)
+	tester.fetcher.broadcastBlock = func(block *types.Block, propagate bool) {
+		broadcast <- block
+	}
+	tester.fetcher.Enqueue("test", block)
+
+	select {
+	case <-broadcast:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("never-stored block was never broadcast")
+	}
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d, want 1 for the never-stored block", n)
+	}
+	deadline := time.After(3 * time.Second)
+	for parkedCount(tester.fetcher) != 0 {
+		select {
+		case <-deadline:
+			t.Fatalf("parked block was never dropped after its timeout")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran for a never-imported block: %v", b.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// TestParkedSignatureTimeoutDropsStoredButNeverSignable verifies the deadline
+// arm of the parked-signature scan for a block that was stored but never
+// became signable: it is dropped without a signature, silently at Debug level
+// rather than with the "not imported in time" warning that is reserved for
+// blocks no importer ever wrote.
+func TestParkedSignatureTimeoutDropsStoredButNeverSignable(t *testing.T) {
+	block := newParkedTestBlock(0x03)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.parkedTimeout = 200 * time.Millisecond
+
+	// Store the block as a side entry: readable by hash, never canonical.
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+
+	signed := hookSigning(tester.fetcher)
+	tester.fetcher.parkForSignature(block)
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d, want 1 for the stored-but-not-canonical block", n)
+	}
+	deadline := time.After(3 * time.Second)
+	for parkedCount(tester.fetcher) != 0 {
+		select {
+		case <-deadline:
+			t.Fatalf("parked block was never dropped after its timeout")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran for a stored-but-never-signable block: %v", b.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// TestParkedSignatureDroppedWhenStale verifies that a parked block whose height
+// the chain has already moved past is dropped without a signature.
+func TestParkedSignatureDroppedWhenStale(t *testing.T) {
+	hashes, blocks := makeChain(maxUncleDist+5, 0, genesis)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	signed := hookSigning(tester.fetcher)
+	// Advance the tester's chain well past the height of the block to park.
+	for i := len(hashes) - 2; i >= 0; i-- {
+		if _, err := tester.insertChain(types.Blocks{blocks[hashes[i]]}); err != nil {
+			t.Fatalf("failed to advance the chain: %v", err)
+		}
+	}
+	// A fork block at height 1 that never lands on the chain.
+	stale := newParkedTestBlock(0x01)
+
+	tester.fetcher.parkForSignature(stale)
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d, want 1", n)
+	}
+	tester.fetcher.scanParkedSignatures()
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("stale parked block was not dropped")
+	}
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran for a stale block: %v", b.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// TestParkedSignatureWaitsForCanonical verifies that a parked block another
+// importer stores as a side entry - readable by hash but not on the canonical
+// chain - is neither signed nor dropped: the body is written before the
+// canonical head (rawdb.WriteBlock vs adoptHead), so the block can become
+// canonical moments later. The signature is created once it does, or dropped at
+// the stale/deadline bound, never for being "not signable right now".
+func TestParkedSignatureWaitsForCanonical(t *testing.T) {
+	block := newParkedTestBlock(0x03)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	signed := hookSigning(tester.fetcher)
+	tester.fetcher.parkForSignature(block)
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d, want 1", n)
+	}
+	// Another importer stores it as a side entry: readable by hash, but not on
+	// the canonical chain.
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+
+	tester.fetcher.scanParkedSignatures()
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("stored-but-not-canonical block must stay parked, parked count = %d", n)
+	}
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran for a stored non-canonical block: %v", b.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// It becomes canonical: the parked signature is created and the entry cleared.
+	tester.insertChain(types.Blocks{block})
+	tester.fetcher.scanParkedSignatures()
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("canonical block was not cleared from the parked set, parked count = %d", n)
+	}
+	select {
+	case b := <-signed:
+		if b.Hash() != block.Hash() {
+			t.Fatalf("sign hook ran for %v, want %v", b.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("sign hook never ran for the now-canonical block")
+	}
+}
+
+// TestParkedSignatureWaiterStopsWhenEmpty verifies that the parked-signature
+// waiter is started by the first park and stops once the set drains, so an idle
+// fetcher runs no waiter.
+func TestParkedSignatureWaiterStopsWhenEmpty(t *testing.T) {
+	block := newParkedTestBlock(0x01)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.parkedTimeout = 50 * time.Millisecond
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	if waiterRunning(tester.fetcher) {
+		t.Fatalf("waiter is running before any block is parked")
+	}
+	tester.fetcher.parkForSignature(block)
+	if !waiterRunning(tester.fetcher) {
+		t.Fatalf("the first park did not start the waiter")
+	}
+	// The block is never stored, so the waiter drops it at its deadline and
+	// then exits.
+	deadline := time.Now().Add(2 * time.Second)
+	for parkedCount(tester.fetcher) != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked block was never dropped")
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for waiterRunning(tester.fetcher) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if waiterRunning(tester.fetcher) {
+		t.Fatalf("waiter did not stop after the parked set drained")
+	}
+}
+
+// TestParkedSignatureLimit verifies that the parked set is capped, so a master
+// equivocating at a height cannot accumulate unbounded state.
+func TestParkedSignatureLimit(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	for i := 0; i < maxParkedSignatures+8; i++ {
+		tester.fetcher.parkForSignature(newParkedTestBlock(byte(i)))
+	}
+	if n := parkedCount(tester.fetcher); n != maxParkedSignatures {
+		t.Fatalf("parked count = %d, want %d", n, maxParkedSignatures)
+	}
+}
+
+// TestImportedNonCanonicalBlockIsNotSigned verifies that a stored block that is
+// not on the canonical chain is not signed at delivery time: the existence gate
+// sees it, but the signature is a spending transaction and must not go to a
+// side entry. The refused signature is parked instead, so a later reorg that
+// adopts the block's branch revives it. The consensus handler keeps the
+// existence gate only.
+func TestImportedNonCanonicalBlockIsNotSigned(t *testing.T) {
+	block := newParkedTestBlock(0x02)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	// The import stores the block as a side entry: readable by hash, but not
+	// on the tester's canonical chain.
+	tester.fetcher.insertBlock = func(b *types.Block) error {
+		tester.lock.Lock()
+		tester.blocks[b.Hash()] = b
+		tester.lock.Unlock()
+		return nil
+	}
+	signed := hookSigning(tester.fetcher)
+	proposed := make(chan *types.Header, 1)
+	tester.fetcher.handleProposedBlock = func(h *types.Header) error {
+		proposed <- h
+		return nil
+	}
+	tester.fetcher.Enqueue("test", block)
+
+	// The consensus handler still runs for the stored block (existence gate).
+	select {
+	case h := <-proposed:
+		if h.Hash() != block.Hash() {
+			t.Fatalf("consensus handler ran for %v, want %v", h.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("consensus handler never ran for the stored side block")
+	}
+	// ...and the stored side entry is not signed, only parked.
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran for a non-canonical block: %v", b.Hash())
+	case <-time.After(200 * time.Millisecond):
+	}
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d, want 1 for the refused side block", n)
+	}
+
+	// A reorg adopting the side entry's branch makes the block canonical: the
+	// next scan revives the parked signature, exactly once.
+	tester.lock.Lock()
+	tester.hashes = append(tester.hashes, block.Hash())
+	tester.lock.Unlock()
+
+	tester.fetcher.scanParkedSignatures()
+	select {
+	case b := <-signed:
+		if b.Hash() != block.Hash() {
+			t.Fatalf("sign hook ran for block %v, want %v", b.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("parked signature was never revived after the block turned canonical")
+	}
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d, want 0 after the signature was created", n)
+	}
+	tester.fetcher.scanParkedSignatures()
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran twice for block %v", b.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// TestParkedSignaturePutsBackWhenNoLongerSignable pins the fifth-exit guard: a
+// block that was signable when the scan collected it but is not when the
+// signature is about to be created - a reorg landed in between - goes back to
+// the parked set with its original deadline instead of being dropped, so a
+// branch that is re-adopted later still gets its signature.
+func TestParkedSignaturePutsBackWhenNoLongerSignable(t *testing.T) {
+	block := newParkedTestBlock(0x06)
+
+	tester := newTester()
+	signed := hookSigning(tester.fetcher)
+	tester.fetcher.parkForSignature(block)
+	// Stop the fetcher and wait for the parked waiter to leave: this test drives
+	// the scan itself, and a waiter tick landing between the insert below and
+	// that scan would consume the single allowed canSign call first.
+	tester.fetcher.Stop()
+	deadline := time.Now().Add(2 * time.Second)
+	for waiterRunning(tester.fetcher) {
+		if time.Now().After(deadline) {
+			t.Fatalf("parked waiter did not stop after the fetcher was stopped")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	// Flip canonicality after the scan's collect pass: the first canSign call
+	// (inside the locked scan) passes, every later one fails. The flip is
+	// installed before the block is stored so a concurrent waiter scan cannot
+	// sign it first.
+	var calls int32
+	tester.fetcher.canonicalHash = func(number uint64) common.Hash {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			return block.Hash()
+		}
+		return common.Hash{}
+	}
+	tester.insertChain(types.Blocks{block})
+
+	tester.fetcher.scanParkedSignatures()
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran for a block that stopped being signable: %v", b.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("block unready at signing time must be put back, parked count = %d", n)
+	}
+
+	// The branch is re-adopted: the parked signature is created exactly once.
+	tester.fetcher.canonicalHash = tester.canonicalHash
+	tester.fetcher.scanParkedSignatures()
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("re-adopted block was not cleared from the parked set, parked count = %d", n)
+	}
+	select {
+	case b := <-signed:
+		if b.Hash() != block.Hash() {
+			t.Fatalf("sign hook ran for %v, want %v", b.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("sign hook never ran for the re-adopted block")
+	}
+}
+
+// TestRedeliveredParkedBlockIsSignedOnce verifies that a parked block which is
+// re-delivered after it became canonical is signed exactly once: the delivery
+// takes the parked entry over instead of leaving it for the scan, which would
+// spend a second signature transaction on the same block.
+func TestRedeliveredParkedBlockIsSignedOnce(t *testing.T) {
+	block := newParkedTestBlock(0x08)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	// Another importer stored the block as a side entry, so it is readable but
+	// not canonical, and its signature waits in the parked set. The entry is
+	// installed directly so no waiter competes with the delivery under test.
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+	tester.fetcher.parkedMu.Lock()
+	tester.fetcher.parked[block.Hash()] = &parkedBlock{block: block, deadline: time.Now().Add(time.Minute)}
+	tester.fetcher.parkedMu.Unlock()
+
+	// A reorg adopts the block's branch while the entry is still parked.
+	tester.lock.Lock()
+	tester.hashes = append(tester.hashes, block.Hash())
+	tester.lock.Unlock()
+
+	var signs int32
+	tester.fetcher.signHook = func(*types.Block) error {
+		atomic.AddInt32(&signs, 1)
+		return nil
+	}
+	proposed := make(chan struct{}, 1)
+	tester.fetcher.handleProposedBlock = func(*types.Header) error {
+		proposed <- struct{}{}
+		return nil
+	}
+	tester.fetcher.insertBlock = func(*types.Block) error { return nil }
+	tester.fetcher.insert("test", block)
+
+	// The consensus handler runs after the signature branch, so it marks the
+	// point where the delivery of the re-delivered block is done.
+	select {
+	case <-proposed:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("delivery of the re-delivered block never finished")
+	}
+	// The scan that follows must find neither the block nor a second signature.
+	tester.fetcher.scanParkedSignatures()
+	if n := atomic.LoadInt32(&signs); n != 1 {
+		t.Fatalf("sign hook ran %d times for the re-delivered block, want 1", n)
+	}
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d after the signature was created, want 0", n)
+	}
+}
+
+// TestParkedSignatureNotSignedTwiceByInsert verifies that the delivery path
+// leaves the signature to the scan once the scan has claimed the parked entry:
+// a re-delivery arriving while that signature is being created must not spend
+// a second transaction on the same block.
+func TestParkedSignatureNotSignedTwiceByInsert(t *testing.T) {
+	block := newParkedTestBlock(0x09)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	// Stored as a side entry, then adopted, with the signature parked. The
+	// entry is installed directly so only the scan below acts on it.
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+	tester.fetcher.parkedMu.Lock()
+	tester.fetcher.parked[block.Hash()] = &parkedBlock{block: block, deadline: time.Now().Add(time.Minute)}
+	tester.fetcher.parkedMu.Unlock()
+	tester.lock.Lock()
+	tester.hashes = append(tester.hashes, block.Hash())
+	tester.lock.Unlock()
+	tester.fetcher.insertBlock = func(*types.Block) error { return nil }
+
+	var signs int32
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	tester.fetcher.signHook = func(*types.Block) error {
+		// Block only the first call, so a second one (the bug under test) can
+		// finish and be counted instead of deadlocking the test.
+		if atomic.AddInt32(&signs, 1) == 1 {
+			entered <- struct{}{}
+			<-release
+		}
+		return nil
+	}
+	scanDone := make(chan struct{})
+	go func() {
+		tester.fetcher.scanParkedSignatures()
+		close(scanDone)
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("the scan never started the parked signature")
+	}
+	// The scan holds the claim while it signs: a re-delivery must stand down
+	// rather than create a second signature.
+	proposed := make(chan struct{}, 1)
+	tester.fetcher.handleProposedBlock = func(*types.Header) error {
+		proposed <- struct{}{}
+		return nil
+	}
+	tester.fetcher.insert("test", block)
+	select {
+	case <-proposed:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("delivery of the claimed block never finished")
+	}
+	if n := atomic.LoadInt32(&signs); n != 1 {
+		t.Fatalf("sign hook ran %d times while the scan was signing, want 1", n)
+	}
+	close(release)
+	<-scanDone
+	if n := atomic.LoadInt32(&signs); n != 1 {
+		t.Fatalf("sign hook ran %d times in total, want 1", n)
+	}
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d after the signature was created, want 0", n)
+	}
+}
+
+// TestImportedBlockRefusalReasons verifies that the delivery path tells the two
+// reasons a stored block is not signed apart: a block that is not canonical is
+// parked because a reorg can adopt it, while one that fell below the uncle
+// distance is not, since the head only moves further away from it.
+func TestImportedBlockRefusalReasons(t *testing.T) {
+	t.Run("not canonical", func(t *testing.T) {
+		block := newParkedTestBlock(0x0a)
+
+		tester := newTester()
+		defer tester.fetcher.Stop()
+
+		// The import stores the block as a side entry: readable by hash, but
+		// not on the tester's canonical chain.
+		tester.fetcher.insertBlock = func(b *types.Block) error {
+			tester.lock.Lock()
+			tester.blocks[b.Hash()] = b
+			tester.lock.Unlock()
+			return nil
+		}
+		signed := hookSigning(tester.fetcher)
+		proposed := make(chan struct{}, 1)
+		tester.fetcher.handleProposedBlock = func(*types.Header) error {
+			proposed <- struct{}{}
+			return nil
+		}
+		refused, stale := blockParkedRefusedMeter.Snapshot().Count(), blockParkedStaleMeter.Snapshot().Count()
+		tester.fetcher.Enqueue("test", block)
+
+		select {
+		case <-proposed:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("consensus handling never ran for the refused block")
+		}
+		if n := blockParkedRefusedMeter.Snapshot().Count() - refused; n != 1 {
+			t.Fatalf("refused meter moved by %d, want 1", n)
+		}
+		if n := blockParkedStaleMeter.Snapshot().Count() - stale; n != 0 {
+			t.Fatalf("stale meter moved by %d for a non-canonical block, want 0", n)
+		}
+		if n := parkedCount(tester.fetcher); n != 1 {
+			t.Fatalf("parked count = %d, want 1 for the refused block", n)
+		}
+		select {
+		case b := <-signed:
+			t.Fatalf("sign hook ran for a non-canonical block: %v", b.Hash())
+		case <-time.After(100 * time.Millisecond):
+		}
+	})
+	t.Run("below the uncle distance", func(t *testing.T) {
+		hashes, blocks := makeChain(maxUncleDist+5, 0, genesis)
+
+		tester := newTester()
+		defer tester.fetcher.Stop()
+
+		// Advance the tester's chain well past the height of the block below.
+		for i := len(hashes) - 2; i >= 0; i-- {
+			if _, err := tester.insertChain(types.Blocks{blocks[hashes[i]]}); err != nil {
+				t.Fatalf("failed to advance the chain: %v", err)
+			}
+		}
+		// The canonical block at height 1 is stored, but the head is more than
+		// the uncle distance past it: the signature is not worth a transaction.
+		block := blocks[hashes[len(hashes)-2]]
+		signed := hookSigning(tester.fetcher)
+		proposed := make(chan struct{}, 1)
+		tester.fetcher.handleProposedBlock = func(*types.Header) error {
+			proposed <- struct{}{}
+			return nil
+		}
+		refused, stale := blockParkedRefusedMeter.Snapshot().Count(), blockParkedStaleMeter.Snapshot().Count()
+		tester.fetcher.insert("test", block)
+
+		select {
+		case <-proposed:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("consensus handling never ran for the stale block")
+		}
+		if n := blockParkedStaleMeter.Snapshot().Count() - stale; n != 1 {
+			t.Fatalf("stale meter moved by %d, want 1", n)
+		}
+		if n := blockParkedRefusedMeter.Snapshot().Count() - refused; n != 0 {
+			t.Fatalf("refused meter moved by %d for a stale block, want 0", n)
+		}
+		if n := parkedCount(tester.fetcher); n != 0 {
+			t.Fatalf("parked count = %d for a stale block, want 0", n)
+		}
+		select {
+		case b := <-signed:
+			t.Fatalf("sign hook ran for a stale block: %v", b.Hash())
+		case <-time.After(100 * time.Millisecond):
+		}
+	})
 }
