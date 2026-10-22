@@ -19,6 +19,7 @@ package eth
 import (
 	"context"
 	"crypto/ecdsa"
+	"encoding/json"
 	"errors"
 	"math/big"
 	"reflect"
@@ -297,5 +298,59 @@ func TestSendTxTracksAlreadyKnown(t *testing.T) {
 	}
 	if tracked := reflect.ValueOf(b.eth.localTxTracker).Elem().FieldByName("all").Len(); tracked != 1 {
 		t.Fatalf("unexpected tracked tx count: have %d, want 1", tracked)
+	}
+}
+
+// TestDecodeRewardFileSkipsNonRewardEntries checks that a reward file written
+// after TIPProportionalReward, which carries a numeric top-level signSlots,
+// still decodes for eth_getRewardByHash instead of collapsing to an empty map.
+func TestDecodeRewardFileSkipsNonRewardEntries(t *testing.T) {
+	const signer = "0x703c4b2bd70c169f5717101caee543299fc946c7"
+	const holder = "0x0000000000000000000000000000000000000068"
+	preFork := `{
+		"signers": {"` + signer + `": {"sign": 30, "reward": 31710000000000000000}},
+		"rewards": {"` + signer + `": {"` + holder + `": 28539000000000000000}}
+	}`
+	postFork := `{
+		"signSlots": 60,
+		"signers": {"` + signer + `": {"sign": 30, "reward": 31710000000000000000}},
+		"rewards": {"` + signer + `": {"` + holder + `": 28539000000000000000}},
+		"signersProtector": {},
+		"rewardsProtector": {}
+	}`
+
+	var legacy map[string]map[string]map[string]*big.Int
+	if err := json.Unmarshal([]byte(postFork), &legacy); err == nil {
+		t.Fatal("expected the plain nested-map decode to reject a numeric top-level entry")
+	}
+
+	want, err := decodeRewardFile([]byte(preFork))
+	if err != nil {
+		t.Fatalf("decode pre-fork reward file: %v", err)
+	}
+	got, err := decodeRewardFile([]byte(postFork))
+	if err != nil {
+		t.Fatalf("decode post-fork reward file: %v", err)
+	}
+	if _, ok := got["signSlots"]; ok {
+		t.Fatal("signSlots must be skipped")
+	}
+	for _, key := range []string{"signers", "rewards"} {
+		if !reflect.DeepEqual(got[key], want[key]) {
+			t.Fatalf("%s: have %v want %v", key, got[key], want[key])
+		}
+	}
+	if got["signers"][signer]["sign"].Uint64() != 30 {
+		t.Fatalf("unexpected sign count %v", got["signers"][signer]["sign"])
+	}
+	if got["rewards"][signer][holder].String() != "28539000000000000000" {
+		t.Fatalf("unexpected holder reward %v", got["rewards"][signer][holder])
+	}
+	if _, ok := got["signersProtector"]; !ok {
+		t.Fatal("empty protector map must be kept")
+	}
+
+	if _, err := decodeRewardFile([]byte(`[]`)); err == nil {
+		t.Fatal("expected a non-object reward file to fail")
 	}
 }
