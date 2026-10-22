@@ -286,8 +286,8 @@
     "forkOrderOptional": true
   },
   {
-    "name": "TIPUpgradeRewardBlock",
-    "jsonKey": "tipUpgradeRewardBlock",
+    "name": "TIPFixedRewardBlock",
+    "jsonKey": "tipFixedRewardBlock",
     "backfillSet": "builtin",
     "xdcSpecific": true,
     "forkOrder": 29,
@@ -307,6 +307,14 @@
     "backfillSet": "builtin",
     "xdcSpecific": true,
     "forkOrder": 34,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "TIPProportionalRewardBlock",
+    "jsonKey": "tipProportionalRewardBlock",
+    "backfillSet": "builtin",
+    "xdcSpecific": true,
+    "forkOrder": 35,
     "forkOrderOptional": true
   },
   {

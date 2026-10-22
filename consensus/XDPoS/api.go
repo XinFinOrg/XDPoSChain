@@ -75,27 +75,27 @@ type SignerTypes struct {
 }
 
 // MasternodesStatus reports the node set at a block, split into masternodes,
-// penalties and standby nodes. From the TIPUpgradeReward fork onwards the standby
-// pool is further broken into the protector and observer reward tiers (signalled by
-// TipUpgradeReward); candidates beyond the tier caps stay in Standbynodes, so
+// penalties and standby nodes. From the TIPFixedReward or TIPProportionalReward fork
+// onwards the standby pool is further broken into the protector and observer reward
+// tiers (signalled by tipTieredReward); candidates beyond the tier caps stay in Standbynodes, so
 // Masternodes + Penalty + Protector + Observer + Standbynodes still reconciles to
 // the full candidate set.
 type MasternodesStatus struct {
-	Epoch            uint64
-	Number           uint64
-	Round            types.Round
-	tipUpgradeReward bool // whether the protector/observer tiers are active at this block
-	MasternodesLen   int
-	Masternodes      []common.Address
-	PenaltyLen       int
-	Penalty          []common.Address
-	ProtectorLen     int              `json:",omitempty"`
-	Protectornodes   []common.Address `json:",omitempty"`
-	ObserverLen      int              `json:",omitempty"`
-	Observernodes    []common.Address `json:",omitempty"`
-	StandbynodesLen  int              `json:",omitempty"`
-	Standbynodes     []common.Address `json:",omitempty"`
-	Error            error
+	Epoch           uint64
+	Number          uint64
+	Round           types.Round
+	tipTieredReward bool // whether the protector/observer tiers are active at this block
+	MasternodesLen  int
+	Masternodes     []common.Address
+	PenaltyLen      int
+	Penalty         []common.Address
+	ProtectorLen    int              `json:",omitempty"`
+	Protectornodes  []common.Address `json:",omitempty"`
+	ObserverLen     int              `json:",omitempty"`
+	Observernodes   []common.Address `json:",omitempty"`
+	StandbynodesLen int              `json:",omitempty"`
+	Standbynodes    []common.Address `json:",omitempty"`
+	Error           error
 }
 
 type AccountEpochReward struct {
@@ -210,7 +210,8 @@ func (api *API) GetSignersAtHash(hash common.Hash) ([]common.Address, error) {
 }
 
 // GetMasternodesByNumber reports the node set at the given block: masternodes,
-// penalties and standby nodes. From the TIPUpgradeReward fork onwards it also splits
+// penalties and standby nodes. From the TIPFixedReward or TIPProportionalReward fork
+// onwards it also splits
 // the standby pool into the protector and observer reward tiers (the standby list is
 // already stake-descending, so the split is just a slice).
 //
@@ -256,19 +257,19 @@ func (api *API) GetMasternodesByNumber(number *rpc.BlockNumber) MasternodesStatu
 	standbyPool := api.XDPoS.EngineV2.GetStandbynodes(api.chain, header)
 
 	info := MasternodesStatus{
-		Epoch:            epochNum,
-		Number:           header.Number.Uint64(),
-		Round:            round,
-		tipUpgradeReward: api.chain.Config().IsTIPUpgradeReward(header.Number),
-		MasternodesLen:   len(masterNodes),
-		Masternodes:      masterNodes,
-		PenaltyLen:       len(penalties),
-		Penalty:          penalties,
+		Epoch:           epochNum,
+		Number:          header.Number.Uint64(),
+		Round:           round,
+		tipTieredReward: api.chain.Config().IsTIPTieredReward(header.Number),
+		MasternodesLen:  len(masterNodes),
+		Masternodes:     masterNodes,
+		PenaltyLen:      len(penalties),
+		Penalty:         penalties,
 	}
 
 	// Before the reward upgrade there are no tiers; the whole standby pool stays
 	// standby (the caps are ignored in that case, so any value is fine here).
-	if !info.tipUpgradeReward {
+	if !info.tipTieredReward {
 		info.splitStandbyPool(standbyPool, 0, 0)
 		return info
 	}
@@ -279,12 +280,12 @@ func (api *API) GetMasternodesByNumber(number *rpc.BlockNumber) MasternodesStatu
 }
 
 // splitStandbyPool partitions the stake-descending standby pool into the reward
-// tiers. Before the TIPUpgradeReward fork the whole pool stays standby; from the
-// fork onwards the protector and observer tiers take the top maxProtector and
+// tiers. Before the TIPFixedReward or TIPProportionalReward fork the whole pool
+// stays standby; from either fork onwards the protector and observer tiers take the top maxProtector and
 // maxObserver candidates respectively, and any remainder stays standby. The three
 // tiers always concatenate back to the full pool, so the totals reconcile.
 func (info *MasternodesStatus) splitStandbyPool(standbyPool []common.Address, maxProtector, maxObserver int) {
-	if !info.tipUpgradeReward {
+	if !info.tipTieredReward {
 		info.Standbynodes = standbyPool
 		info.StandbynodesLen = len(standbyPool)
 		return

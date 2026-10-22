@@ -316,11 +316,11 @@ func TestCheckCompatible(t *testing.T) {
 			},
 		},
 		{
-			stored: &ChainConfig{TIPUpgradeRewardBlock: big.NewInt(10)},
-			new:    &ChainConfig{TIPUpgradeRewardBlock: big.NewInt(20)},
+			stored: &ChainConfig{TIPFixedRewardBlock: big.NewInt(10)},
+			new:    &ChainConfig{TIPFixedRewardBlock: big.NewInt(20)},
 			head:   15,
 			wantErr: &ConfigCompatError{
-				What:         "TIPUpgradeReward fork block",
+				What:         "TIPFixedReward fork block",
 				StoredConfig: big.NewInt(10),
 				NewConfig:    big.NewInt(20),
 				RewindTo:     9,
@@ -343,6 +343,17 @@ func TestCheckCompatible(t *testing.T) {
 			head:   15,
 			wantErr: &ConfigCompatError{
 				What:         "TIPEpochHalving fork block",
+				StoredConfig: big.NewInt(10),
+				NewConfig:    big.NewInt(20),
+				RewindTo:     9,
+			},
+		},
+		{
+			stored: &ChainConfig{TIPProportionalRewardBlock: big.NewInt(10)},
+			new:    &ChainConfig{TIPProportionalRewardBlock: big.NewInt(20)},
+			head:   15,
+			wantErr: &ConfigCompatError{
+				What:         "TIPProportionalReward fork block",
 				StoredConfig: big.NewInt(10),
 				NewConfig:    big.NewInt(20),
 				RewindTo:     9,

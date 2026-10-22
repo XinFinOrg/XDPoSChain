@@ -142,9 +142,10 @@ func TestForEachChainConfigForkBlockCoversStandardAndXDCForks(t *testing.T) {
 		"TIPXDCXMinerDisableBlock",
 		"TIPXDCXReceiverDisableBlock",
 		"DynamicGasLimitBlock",
-		"TIPUpgradeRewardBlock",
+		"TIPFixedRewardBlock",
 		"TIPUpgradePenaltyBlock",
 		"TIPEpochHalvingBlock",
+		"TIPProportionalRewardBlock",
 	}
 
 	if !reflect.DeepEqual(got, want) {
@@ -187,12 +188,13 @@ func TestForEachChainConfigForkOrderBlockCoversValidationOrder(t *testing.T) {
 		"EIP1559Block",
 		"CancunBlock",
 		"DynamicGasLimitBlock",
-		"TIPUpgradeRewardBlock",
+		"TIPFixedRewardBlock",
 		"TIPUpgradePenaltyBlock",
 		"PragueBlock",
 		"OsakaBlock",
 		"AmsterdamBlock",
 		"TIPEpochHalvingBlock",
+		"TIPProportionalRewardBlock",
 	}
 
 	if !reflect.DeepEqual(got, want) {

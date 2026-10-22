@@ -1125,16 +1125,16 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 		{
 			name: "upgrade reward before dynamic gas limit",
 			mutate: func(cfg *ChainConfig) {
-				cfg.TIPUpgradeRewardBlock = big.NewInt(cfg.DynamicGasLimitBlock.Int64() - 1)
+				cfg.TIPFixedRewardBlock = big.NewInt(cfg.DynamicGasLimitBlock.Int64() - 1)
 			},
 			wantField: "DynamicGasLimitBlock",
 		},
 		{
 			name: "upgrade penalty before upgrade reward",
 			mutate: func(cfg *ChainConfig) {
-				cfg.TIPUpgradePenaltyBlock = big.NewInt(cfg.TIPUpgradeRewardBlock.Int64() - 1)
+				cfg.TIPUpgradePenaltyBlock = big.NewInt(cfg.TIPFixedRewardBlock.Int64() - 1)
 			},
-			wantField: "TIPUpgradeRewardBlock",
+			wantField: "TIPFixedRewardBlock",
 		},
 		{
 			name: "prague before upgrade penalty",
@@ -1477,7 +1477,7 @@ func BenchmarkGatherForks(b *testing.B) {
 		PragueBlock:                 big.NewInt(28),
 		OsakaBlock:                  big.NewInt(29),
 		DynamicGasLimitBlock:        big.NewInt(30),
-		TIPUpgradeRewardBlock:       big.NewInt(31),
+		TIPFixedRewardBlock:         big.NewInt(31),
 		TIPUpgradePenaltyBlock:      big.NewInt(32),
 		TIPEpochHalvingBlock:        big.NewInt(33),
 		XDPoS: &XDPoSConfig{V2: &V2{
@@ -1533,7 +1533,7 @@ func BenchmarkActiveForks(b *testing.B) {
 		PragueBlock:                 big.NewInt(28),
 		OsakaBlock:                  big.NewInt(29),
 		DynamicGasLimitBlock:        big.NewInt(30),
-		TIPUpgradeRewardBlock:       big.NewInt(31),
+		TIPFixedRewardBlock:         big.NewInt(31),
 		TIPUpgradePenaltyBlock:      big.NewInt(32),
 		TIPEpochHalvingBlock:        big.NewInt(33),
 		XDPoS: &XDPoSConfig{V2: &V2{
@@ -1616,9 +1616,10 @@ func activeForksLegacyMapSort(c *ChainConfig, block *big.Int) []string {
 		"EIP1559":                c.IsEIP1559(block),
 		"Cancun":                 c.IsCancun(block),
 		"DynamicGasLimit":        c.IsDynamicGasLimit(block),
-		"TIPUpgradeReward":       c.IsTIPUpgradeReward(block),
+		"TIPFixedReward":         c.IsTIPFixedReward(block),
 		"TIPUpgradePenalty":      c.IsTIPUpgradePenalty(block),
 		"TIPEpochHalving":        c.IsTIPEpochHalving(block),
+		"TIPProportionalReward":  c.IsTIPProportionalReward(block),
 		"Prague":                 c.IsPrague(block),
 		"Osaka":                  c.IsOsaka(block),
 		"Amsterdam":              c.IsAmsterdam(block),
@@ -1738,7 +1739,7 @@ func TestChainConfigStringIncludesAllFields(t *testing.T) {
 		TIPXDCXMinerDisableBlock:    big.NewInt(29),
 		TIPXDCXReceiverDisableBlock: big.NewInt(30),
 		DynamicGasLimitBlock:        big.NewInt(31),
-		TIPUpgradeRewardBlock:       big.NewInt(32),
+		TIPFixedRewardBlock:         big.NewInt(32),
 		TIPUpgradePenaltyBlock:      big.NewInt(33),
 		TIPEpochHalvingBlock:        big.NewInt(34),
 		AmsterdamBlock:              big.NewInt(35),
@@ -1803,7 +1804,7 @@ func TestChainConfigStringIncludesAllFields(t *testing.T) {
 		"EIP1559:",
 		"Cancun:",
 		"DynamicGasLimit:",
-		"TIPUpgradeReward:",
+		"TIPFixedReward:",
 		"TIPUpgradePenalty:",
 		"Prague:",
 		"Osaka:",
@@ -1840,7 +1841,7 @@ func TestChainConfigRenderingFollowsForkOrder(t *testing.T) {
 		"IstanbulBlock":               {},
 		"TIPTRC21FeeBlock":            {},
 		"DynamicGasLimitBlock":        {},
-		"TIPUpgradeRewardBlock":       {},
+		"TIPFixedRewardBlock":         {},
 		"TIPUpgradePenaltyBlock":      {},
 		"PragueBlock":                 {},
 		"OsakaBlock":                  {},
@@ -1865,7 +1866,7 @@ func TestChainConfigRenderingFollowsForkOrder(t *testing.T) {
 		IstanbulBlock:               big.NewInt(12),
 		TIPTRC21FeeBlock:            big.NewInt(14),
 		DynamicGasLimitBlock:        big.NewInt(3),
-		TIPUpgradeRewardBlock:       big.NewInt(4),
+		TIPFixedRewardBlock:         big.NewInt(4),
 		TIPUpgradePenaltyBlock:      big.NewInt(5),
 		PragueBlock:                 big.NewInt(6),
 		OsakaBlock:                  big.NewInt(7),

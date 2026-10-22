@@ -32,7 +32,7 @@
     "cancunBlock": 71551800,
     "pragueBlock": 87633000,
     "dynamicGasLimitBlock": 83600000,
-    "tipUpgradeRewardBlock": 83600000,
+    "tipFixedRewardBlock": 83600000,
     "tipUpgradePenaltyBlock": 83600000,
     "trc21IssuerSMC": "0x0E2C88753131CE01c7551B726b28BFD04e44003F",
     "xdcxListingSMC": "0x14B2Bf043b9c31827A472CE4F94294fE9a6277e0",

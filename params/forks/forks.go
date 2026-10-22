@@ -62,9 +62,10 @@ const (
 	EIP1559
 	Cancun
 	DynamicGasLimit
-	TIPUpgradeReward
+	TIPFixedReward
 	TIPUpgradePenalty
 	TIPEpochHalving
+	TIPProportionalReward
 	Prague
 	Osaka
 	Amsterdam
@@ -118,9 +119,10 @@ var forkToString = map[Fork]string{
 	EIP1559:                "EIP1559",
 	Cancun:                 "Cancun",
 	DynamicGasLimit:        "DynamicGasLimit",
-	TIPUpgradeReward:       "TIPUpgradeReward",
+	TIPFixedReward:         "TIPFixedReward",
 	TIPUpgradePenalty:      "TIPUpgradePenalty",
 	TIPEpochHalving:        "TIPEpochHalving",
+	TIPProportionalReward:  "TIPProportionalReward",
 	Prague:                 "Prague",
 	Osaka:                  "Osaka",
 	Amsterdam:              "Amsterdam",

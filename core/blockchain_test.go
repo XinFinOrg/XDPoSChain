@@ -2273,7 +2273,7 @@ func setXinFinForksToFuture(cfg *params.ChainConfig, future *big.Int) {
 	cfg.PragueBlock = set()
 	cfg.OsakaBlock = set()
 	cfg.DynamicGasLimitBlock = set()
-	cfg.TIPUpgradeRewardBlock = set()
+	cfg.TIPFixedRewardBlock = set()
 	cfg.TIPUpgradePenaltyBlock = set()
 	cfg.TIPEpochHalvingBlock = set()
 	cfg.TRC21IssuerSMC = params.TestnetChainConfig.TRC21IssuerSMC

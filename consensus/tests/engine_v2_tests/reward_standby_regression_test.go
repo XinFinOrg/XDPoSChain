@@ -78,14 +78,14 @@ func TestGetSigningTxCountUsesHistoricalStandbynodes(t *testing.T) {
 	blockchain, _, currentBlock, signer, signFn := PrepareXDCTestBlockChainWithProtectorObserver(t, 2999, &config)
 
 	// The shared V2 test helper (legacyExecutionConfigForV2Tests) forces
-	// TIPUpgradeRewardBlock far into the future on the config it actually
+	// TIPFixedRewardBlock far into the future on the config it actually
 	// builds the chain with, regardless of what the caller set beforehand
 	// (AttachConsensusV2Hooks's chainConfig parameter is unused; HookReward
 	// always reads chain.Config(), i.e. blockchain.Config()). Flip it back on
 	// here so the protector/observer branch this commit touches is actually
 	// exercised, which is why the existing TestHookRewardAfterUpgrade /
 	// TestFinalizeAfterUpgrade never exercise it.
-	blockchain.Config().TIPUpgradeRewardBlock = big.NewInt(0)
+	blockchain.Config().TIPFixedRewardBlock = big.NewInt(0)
 
 	// Insert one hand-built block at 3000 containing a real vote transaction
 	// that raises observer2Addr's stake by 1e9 (from 999999 to ~1.001e9),
