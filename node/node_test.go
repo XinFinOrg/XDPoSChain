@@ -22,11 +22,16 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/accounts"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
@@ -103,6 +108,281 @@ func TestNodeUsedDataDir(t *testing.T) {
 	_, err = New(&Config{DataDir: dir})
 	if err != ErrDatadirUsed {
 		t.Fatalf("duplicate datadir failure mismatch: have %v, want %v", err, ErrDatadirUsed)
+	}
+}
+
+// Failed construction must not prevent a corrected configuration from using the datadir.
+func TestNodeNewFailureReleasesDataDir(t *testing.T) {
+	tests := []struct {
+		name      string
+		setup     func(*testing.T, *Config)
+		wantError string
+		checkErr  func(*testing.T, *Config, error)
+	}{
+		{
+			name: "keystore",
+			setup: func(t *testing.T, config *Config) {
+				config.KeyStoreDir = filepath.Join(t.TempDir(), "file")
+				if err := os.WriteFile(config.KeyStoreDir, nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			checkErr: func(t *testing.T, config *Config, err error) {
+				var pathErr *os.PathError
+				if !errors.As(err, &pathErr) || pathErr.Path != config.KeyStoreDir {
+					t.Fatalf("wrong keystore error: %v", err)
+				}
+			},
+		},
+		{
+			name:      "http-prefix",
+			setup:     func(_ *testing.T, config *Config) { config.HTTPPathPrefix = "invalid" },
+			wantError: "HTTP RPC path prefix",
+		},
+		{
+			name:      "ws-prefix",
+			setup:     func(_ *testing.T, config *Config) { config.WSPathPrefix = "invalid" },
+			wantError: "WebSocket RPC path prefix",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config := testNodeConfig()
+			config.DataDir = t.TempDir()
+			broken := *config
+			test.setup(t, &broken)
+			failed, err := New(&broken)
+			if failed != nil {
+				failed.Close()
+				t.Fatal("New returned a node for an invalid configuration")
+			}
+			if err == nil {
+				t.Fatal("New accepted an invalid configuration")
+			}
+			if test.checkErr != nil {
+				test.checkErr(t, &broken, err)
+			} else if !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("wrong prefix error: %v", err)
+			}
+
+			// No GC or process restart should be needed to retry initialization.
+			recovered, err := New(config)
+			if err != nil {
+				t.Fatalf("failed to reopen datadir after %s error: %v", test.name, err)
+			}
+			recoveredClosed := false
+			t.Cleanup(func() {
+				if !recoveredClosed {
+					if err := recovered.Close(); err != nil {
+						t.Errorf("failed to close recovered node: %v", err)
+					}
+				}
+			})
+
+			// Successful construction must retain the lock until Close.
+			duplicate, err := New(config)
+			if duplicate != nil {
+				duplicate.Close()
+				t.Fatal("second node acquired an in-use datadir")
+			}
+			if !errors.Is(err, ErrDatadirUsed) {
+				t.Fatalf("expected ErrDatadirUsed, got %v", err)
+			}
+			if err := recovered.Close(); err != nil {
+				t.Fatal(err)
+			}
+			recoveredClosed = true
+			reopened, err := New(config)
+			if err != nil {
+				t.Fatalf("failed to reopen datadir after Close: %v", err)
+			}
+			defer reopened.Close()
+		})
+	}
+}
+
+func TestNodeNewFailureCleansUpKeyStore(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*Config)
+		wantError string
+	}{
+		{
+			name:      "http-prefix",
+			configure: func(config *Config) { config.HTTPPathPrefix = "invalid" },
+			wantError: "HTTP RPC path prefix",
+		},
+		{
+			name:      "ws-prefix",
+			configure: func(config *Config) { config.WSPathPrefix = "invalid" },
+			wantError: "WebSocket RPC path prefix",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			t.Setenv("TMPDIR", tempDir)
+			t.Setenv("TMP", tempDir)
+			t.Setenv("TEMP", tempDir)
+
+			config := testNodeConfig()
+			test.configure(config)
+			node, err := New(config)
+			if node != nil {
+				node.Close()
+				t.Fatal("New returned a node for an invalid configuration")
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("wrong initialization error: %v", err)
+			}
+			entries, err := os.ReadDir(tempDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("temporary keystore was not removed: %s", entries[0].Name())
+			}
+		})
+	}
+}
+
+func TestNodeNewFailurePreservesConfiguredKeyStore(t *testing.T) {
+	keyDir := t.TempDir()
+	marker := filepath.Join(keyDir, "marker")
+	if err := os.WriteFile(marker, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config := testNodeConfig()
+	config.KeyStoreDir = keyDir
+	config.HTTPPathPrefix = "invalid"
+	if node, err := New(config); node != nil || err == nil {
+		if node != nil {
+			node.Close()
+		}
+		t.Fatalf("New returned (%v, %v), want initialization error", node, err)
+	}
+	if contents, err := os.ReadFile(marker); err != nil || string(contents) != "keep" {
+		t.Fatalf("configured keystore was changed: contents %q, error %v", contents, err)
+	}
+}
+
+func TestNodeNewFailureStopsAccountManager(t *testing.T) {
+	const attempts = 20
+	config := testNodeConfig()
+	config.DataDir = t.TempDir()
+	config.HTTPPathPrefix = "invalid"
+
+	controlBaseline := accountManagerGoroutines()
+	control := accounts.NewManager(&accounts.Config{})
+	controlClosed := false
+	t.Cleanup(func() {
+		if !controlClosed {
+			if err := control.Close(); err != nil {
+				t.Errorf("failed to close control account manager: %v", err)
+			}
+		}
+	})
+	deadline := time.Now().Add(time.Second)
+	controlGoroutines := newAccountManagerGoroutines(controlBaseline)
+	for len(controlGoroutines) == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+		controlGoroutines = newAccountManagerGoroutines(controlBaseline)
+	}
+	if len(controlGoroutines) == 0 {
+		t.Fatal("account manager goroutine matcher did not find live control manager")
+	}
+	err := control.Close()
+	controlClosed = true
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(time.Second)
+	for accountManagerGoroutinesContain(controlGoroutines) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if accountManagerGoroutinesContain(controlGoroutines) {
+		t.Fatal("control account manager goroutine did not stop")
+	}
+	before := accountManagerGoroutines()
+
+	for i := 0; i < attempts; i++ {
+		if node, err := New(config); node != nil || err == nil {
+			if node != nil {
+				node.Close()
+			}
+			t.Fatalf("New returned (%v, %v), want initialization error", node, err)
+		}
+	}
+
+	deadline = time.Now().Add(time.Second)
+	leaked := newAccountManagerGoroutines(before)
+	for len(leaked) > 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+		leaked = newAccountManagerGoroutines(before)
+	}
+	if len(leaked) > 0 {
+		t.Fatalf("%d account manager goroutines remained after failed construction", len(leaked))
+	}
+}
+
+func accountManagerGoroutines() map[string]struct{} {
+	buffer := make([]byte, 64<<10)
+	for {
+		n := runtime.Stack(buffer, true)
+		if n < len(buffer) {
+			goroutines := make(map[string]struct{})
+			for _, stack := range strings.Split(string(buffer[:n]), "\n\n") {
+				if !strings.Contains(stack, "accounts.(*Manager).update") {
+					continue
+				}
+				fields := strings.Fields(stack)
+				if len(fields) >= 2 && fields[0] == "goroutine" {
+					goroutines[fields[1]] = struct{}{}
+				}
+			}
+			return goroutines
+		}
+		buffer = make([]byte, len(buffer)*2)
+	}
+}
+
+func newAccountManagerGoroutines(baseline map[string]struct{}) map[string]struct{} {
+	newGoroutines := accountManagerGoroutines()
+	for id := range baseline {
+		delete(newGoroutines, id)
+	}
+	return newGoroutines
+}
+
+func accountManagerGoroutinesContain(want map[string]struct{}) bool {
+	for id := range accountManagerGoroutines() {
+		if _, ok := want[id]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func TestEphemeralKeyStoreLifecycle(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("TMPDIR", tempDir)
+	t.Setenv("TMP", tempDir)
+	t.Setenv("TEMP", tempDir)
+
+	node, err := New(testNodeConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDir := node.keyDir
+	if _, err := os.Stat(keyDir); err != nil {
+		node.Close()
+		t.Fatalf("ephemeral keystore missing before Close: %v", err)
+	}
+	if err := node.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(keyDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ephemeral keystore still exists after Close: %v", err)
 	}
 }
 
