@@ -283,4 +283,8 @@ func TestImportChainReportsTheBlockTheInsertFailedOn(t *testing.T) {
 	if want := "invalid block 2:"; !strings.HasPrefix(err.Error(), want) {
 		t.Fatalf("the failing block must be reported as %q, have %v", want, err)
 	}
+	// A root mismatch with no database error must not print the nil one through %w.
+	if strings.Contains(err.Error(), "%!w") {
+		t.Fatalf("the message must not carry a nil formatting verb: have %v", err)
+	}
 }
