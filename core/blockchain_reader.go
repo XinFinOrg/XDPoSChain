@@ -200,12 +200,6 @@ func (bc *BlockChain) GetBlocksHashCache(number uint64) []common.Hash {
 	return nil
 }
 
-// GetBlockHashesFromHash retrieves a number of block hashes starting at a given
-// hash, fetching towards the genesis block.
-func (bc *BlockChain) GetBlockHashesFromHash(hash common.Hash, max uint64) []common.Hash {
-	return bc.hc.GetBlockHashesFromHash(hash, max)
-}
-
 // GetAncestor retrieves the Nth ancestor of a given block, bounded by the
 // maxNonCanonical budget described on HeaderChain.GetAncestor.
 //
