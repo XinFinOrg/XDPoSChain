@@ -17,6 +17,7 @@
 package eth
 
 import (
+	"bytes"
 	"math"
 	"math/big"
 	"math/rand"
@@ -31,10 +32,10 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
-	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
 // Tests that block headers can be retrieved from a remote chain based on user queries.
@@ -43,7 +44,7 @@ func TestGetBlockHeaders164(t *testing.T) { testGetBlockHeaders(t, XDC164) }
 func TestGetBlockHeaders165(t *testing.T) { testGetBlockHeaders(t, XDC165) }
 
 func testGetBlockHeaders(t *testing.T, protocol uint) {
-	backend := newTestBackend(t, downloader.MaxHashFetch+15, nil)
+	backend := newTestBackend(t, 512+15, nil)
 	peer := newTestPeer(t, "peer", protocol, backend)
 	chain := backend.chain
 
@@ -221,7 +222,7 @@ func testGetBlockHeaders(t *testing.T, protocol uint) {
 // skip. The reply carries two headers whatever the skip is, so serving it may
 // not cost a skip-sized hash slice more than a benign query of the same size.
 func TestGetBlockHeadersSkipAllocation(t *testing.T) {
-	backend := newTestBackend(t, downloader.MaxHashFetch+15, nil)
+	backend := newTestBackend(t, 512+15, nil)
 	peer := newTestPeer(t, "peer", XDC165, backend)
 	chain := backend.chain
 
@@ -307,7 +308,7 @@ func writeSideChainHeaders(db ethdb.Database, parent *types.Header, length int) 
 // the canonical chain runs out of budget, so the reply stops after the origin
 // instead of continuing from wherever the walk happened to land.
 func TestGetBlockHeadersNonCanonicalBudget(t *testing.T) {
-	backend := newTestBackend(t, downloader.MaxHashFetch+15, nil)
+	backend := newTestBackend(t, 512+15, nil)
 	peer := newTestPeer(t, "peer", XDC165, backend)
 	chain := backend.chain
 
@@ -373,12 +374,12 @@ func TestGetBlockBodies164(t *testing.T) { testGetBlockBodies(t, XDC164) }
 func TestGetBlockBodies165(t *testing.T) { testGetBlockBodies(t, XDC165) }
 
 func testGetBlockBodies(t *testing.T, protocol uint) {
-	backend := newTestBackend(t, downloader.MaxBlockFetch+15, nil)
+	backend := newTestBackend(t, maxBodiesServe+15, nil)
 	peer := newTestPeer(t, "peer", protocol, backend)
 	chain := backend.chain
 
 	// Create a batch of tests for various scenarios
-	limit := downloader.MaxBlockFetch
+	limit := maxBodiesServe
 	tests := []struct {
 		random    int           // Number of blocks to fetch randomly from the chain
 		explicit  []common.Hash // Explicitly requested blocks
@@ -438,6 +439,68 @@ func testGetBlockBodies(t *testing.T, protocol uint) {
 			t.Errorf("test %d: bodies mismatch: %v", i, err)
 		}
 	}
+}
+
+// Tests that the lookups a body request may cost are bounded to twice the number
+// of bodies served. The request is a known prefix, then a hole of unknown hashes
+// that fills the budget up to its last slot, then two known bodies: the one at
+// the last budgeted index (2*maxBodiesServe-1) and the one just past it. Only the
+// first of the two may come back, which pins the budget at exactly twice the cap:
+// a smaller budget drops the boundary body, a larger one serves the body past it.
+// The prefix is half of maxBodiesServe, so the serve cap cannot stop the loop.
+func TestGetBlockBodiesLookupBudget(t *testing.T) {
+	backend := newTestBackend(t, 512+15, nil)
+	peer := newTestPeer(t, "peer", XDC165, backend)
+	chain := backend.chain
+
+	prefix := maxBodiesServe / 2
+	lastInBudget := chain.GetBlockByNumber(uint64(prefix))
+	firstOverBudget := chain.GetBlockByNumber(uint64(prefix + 1))
+
+	hashes := make([]common.Hash, 0, 2*maxBodiesServe+2)
+	bodies := make([]rlp.RawValue, 0, prefix+1)
+	for i := 0; i < prefix; i++ {
+		block := chain.GetBlockByNumber(uint64(i))
+		hashes = append(hashes, block.Hash())
+		bodies = append(bodies, chain.GetBodyRLP(block.Hash()))
+	}
+	for i := 0; i < 2*maxBodiesServe-prefix-1; i++ {
+		hashes = append(hashes, unknownHash(i))
+	}
+	hashes = append(hashes, lastInBudget.Hash())
+	bodies = append(bodies, chain.GetBodyRLP(lastInBudget.Hash()))
+	hashes = append(hashes, firstOverBudget.Hash())
+	// Send the hash request and verify that the budget stops before the body past it
+	if err := p2p.Send(peer.app, GetBlockBodiesMsg, hashes); err != nil {
+		t.Fatalf("failed to send bodies request: %v", err)
+	}
+
+	msg, err := peer.app.ReadMsg()
+	if err != nil {
+		t.Fatalf("failed to read bodies response: %v", err)
+	}
+	if msg.Code != BlockBodiesMsg {
+		t.Fatalf("response packet code mismatch: have %x, want %x", msg.Code, BlockBodiesMsg)
+	}
+	var served []rlp.RawValue
+	if err := msg.Decode(&served); err != nil {
+		t.Fatalf("failed to decode bodies response: %v", err)
+	}
+	if len(served) != len(bodies) {
+		t.Fatalf("served %d bodies out of %d requested hashes, want %d", len(served), len(hashes), len(bodies))
+	}
+	for i, want := range bodies {
+		if !bytes.Equal(served[i], want) {
+			t.Errorf("body %d mismatch: have %x, want %x", i, served[i], want)
+		}
+	}
+}
+
+// unknownHash returns a hash that is not in any test chain, distinct per index.
+func unknownHash(i int) common.Hash {
+	var hash common.Hash
+	hash[0], hash[1] = byte(i), byte(i>>8)
+	return hash
 }
 
 // Tests that the node state database can be retrieved based on hashes.
@@ -540,6 +603,72 @@ func testGetNodeData(t *testing.T, protocol uint) {
 	}
 }
 
+// Tests that the lookups a node data request may cost are bounded to twice the
+// number of trie nodes served, the same way as for block bodies. One known
+// self-transfer per block keeps the 32-byte keyspace dense, so the prefix and the
+// two boundary hashes all draw on keys the store is known to answer. The hashes
+// at the last budgeted index (2*maxNodeDataServe-1) and at the first index past it
+// are both answerable, so only the budget decides which of the two comes back.
+func TestGetNodeDataLookupBudget(t *testing.T) {
+	signer := types.HomesteadSigner{}
+	generator := func(i int, block *core.BlockGen) {
+		fee := block.BaseFee()
+		if fee == nil {
+			fee = big.NewInt(params.InitialBaseFee)
+		}
+		tx, _ := types.SignTx(types.NewTransaction(block.TxNonce(testBank), testBank, big.NewInt(1), params.TxGas, fee, nil), signer, testBankKey)
+		block.AddTx(tx)
+	}
+	backend := newTestBackend(t, 512+15, generator)
+	peer := newTestPeer(t, "peer", XDC165, backend)
+
+	// Collect the hashes the store answers, the same iteration testGetNodeData does
+	var known []common.Hash
+	it := backend.db.NewIterator(nil, nil)
+	for it.Next() {
+		if key := it.Key(); len(key) == len(common.Hash{}) {
+			known = append(known, common.BytesToHash(key))
+		}
+	}
+	it.Release()
+
+	prefix := maxNodeDataServe / 2
+	if len(known) < 2*prefix+2 {
+		t.Fatalf("test chain exposes %d answerable hashes, want at least %d", len(known), 2*prefix+2)
+	}
+	hashes := make([]common.Hash, 0, 2*maxNodeDataServe+2)
+	hashes = append(hashes, known[:prefix]...)
+	for i := range 2*maxNodeDataServe - prefix - 1 {
+		hashes = append(hashes, unknownHash(i))
+	}
+	hashes = append(hashes, known[prefix])   // last budgeted index, must be served
+	hashes = append(hashes, known[prefix+1]) // first index past the budget
+
+	// Send the hash request and verify that the budget stops before the second boundary hash
+	if err := p2p.Send(peer.app, GetNodeDataMsg, hashes); err != nil {
+		t.Fatalf("failed to send node data request: %v", err)
+	}
+	msg, err := peer.app.ReadMsg()
+	if err != nil {
+		t.Fatalf("failed to read node data response: %v", err)
+	}
+	if msg.Code != NodeDataMsg {
+		t.Fatalf("response packet code mismatch: have %x, want %x", msg.Code, NodeDataMsg)
+	}
+	var data [][]byte
+	if err := msg.Decode(&data); err != nil {
+		t.Fatalf("failed to decode node data response: %v", err)
+	}
+	if len(data) != prefix+1 {
+		t.Fatalf("served %d node data entries out of %d requested hashes, want %d", len(data), len(hashes), prefix+1)
+	}
+	for i, want := range known[:prefix+1] {
+		if hash := crypto.Keccak256Hash(data[i]); hash != want {
+			t.Errorf("data hash mismatch: have %x, want %x", hash, want)
+		}
+	}
+}
+
 // Tests that the transaction receipts can be retrieved based on hashes.
 func TestGetReceipt100(t *testing.T) { testGetReceipt(t, XDC100) }
 func TestGetReceipt164(t *testing.T) { testGetReceipt(t, XDC164) }
@@ -601,6 +730,48 @@ func testGetReceipt(t *testing.T, protocol uint) {
 	p2p.Send(peer.app, GetReceiptsMsg, hashes)
 	if err := p2p.ExpectMsg(peer.app, ReceiptsMsg, receipts); err != nil {
 		t.Errorf("receipts mismatch: %v", err)
+	}
+}
+
+// Tests that the lookups a receipt request may cost are bounded to twice the
+// number of receipts served, the same way as for block bodies. The reply length
+// is what pins the budget here: every block of the test chain has empty
+// receipts, so the served lists are indistinguishable from each other. The two
+// boundary blocks sit at the last budgeted index (2*maxReceiptsServe-1) and at
+// the first index past it, so only the budget decides which of them comes back.
+func TestGetReceiptsLookupBudget(t *testing.T) {
+	backend := newTestBackend(t, 512+15, nil)
+	peer := newTestPeer(t, "peer", XDC165, backend)
+	chain := backend.chain
+
+	prefix := maxReceiptsServe / 2
+	hashes := make([]common.Hash, 0, 2*maxReceiptsServe+2)
+	for i := 0; i < prefix; i++ {
+		hashes = append(hashes, chain.GetBlockByNumber(uint64(i+1)).Hash())
+	}
+	for i := 0; i < 2*maxReceiptsServe-prefix-1; i++ {
+		hashes = append(hashes, unknownHash(i))
+	}
+	hashes = append(hashes, chain.GetBlockByNumber(uint64(prefix+1)).Hash()) // last budgeted index, must be served
+	hashes = append(hashes, chain.GetBlockByNumber(uint64(prefix+2)).Hash()) // first index past the budget
+	// Send the hash request and verify that the budget stops before the block past it
+	if err := p2p.Send(peer.app, GetReceiptsMsg, hashes); err != nil {
+		t.Fatalf("failed to send receipts request: %v", err)
+	}
+
+	msg, err := peer.app.ReadMsg()
+	if err != nil {
+		t.Fatalf("failed to read receipts response: %v", err)
+	}
+	if msg.Code != ReceiptsMsg {
+		t.Fatalf("response packet code mismatch: have %x, want %x", msg.Code, ReceiptsMsg)
+	}
+	var served []rlp.RawValue
+	if err := msg.Decode(&served); err != nil {
+		t.Fatalf("failed to decode receipts response: %v", err)
+	}
+	if len(served) != prefix+1 {
+		t.Fatalf("served receipts for %d of %d requested hashes, want %d", len(served), len(hashes), prefix+1)
 	}
 }
 
@@ -774,5 +945,95 @@ func TestGetPooledTransactions(t *testing.T) {
 	}
 	if len(sent) != 1 || sent[0].Hash() != tx.Hash() {
 		t.Fatalf("transaction response mismatch: have %v, want %v", sent, []*types.Transaction{tx})
+	}
+}
+
+// Tests that the lookups a pooled transaction request may cost are bounded to
+// twice the number of transactions served, the same way as for block bodies.
+// The pool deliberately holds far fewer transactions than the serve cap: the
+// lookup budget is what keeps the known tail out of the reply, and it does not
+// care how full the pool is. The transactions at the last budgeted index
+// (2*maxPooledTransactionsServe-1) and at the first index past it are both in the
+// pool, so only the budget decides which of the two comes back.
+func TestGetPooledTransactionsLookupBudget(t *testing.T) {
+	backend := newTestBackend(t, 1, nil)
+	peer := newTestPeer(t, "peer", XDC165, backend)
+
+	prefix := 64
+	known := make([]common.Hash, 0, 2*prefix)
+	for i := range 2 * prefix {
+		tx := newTestTransaction(testBankKey, uint64(i), 0)
+		backend.txpool.Add([]*types.Transaction{tx}, false)
+		known = append(known, tx.Hash())
+	}
+	hashes := make([]common.Hash, 0, 2*maxPooledTransactionsServe+2)
+	hashes = append(hashes, known[:prefix]...)
+	for i := range 2*maxPooledTransactionsServe - prefix - 1 {
+		hashes = append(hashes, unknownHash(i))
+	}
+	hashes = append(hashes, known[prefix])   // last budgeted index, must be served
+	hashes = append(hashes, known[prefix+1]) // first index past the budget
+
+	// Send the hash request and verify that the budget stops before the second boundary hash
+	if err := p2p.Send(peer.app, GetPooledTransactionsMsg, hashes); err != nil {
+		t.Fatalf("failed to send pooled transactions request: %v", err)
+	}
+	msg, err := peer.app.ReadMsg()
+	if err != nil {
+		t.Fatalf("failed to read pooled transactions response: %v", err)
+	}
+	if msg.Code != PooledTransactionsMsg {
+		t.Fatalf("response packet code mismatch: have %x, want %x", msg.Code, PooledTransactionsMsg)
+	}
+	var sent []*types.Transaction
+	if err := msg.Decode(&sent); err != nil {
+		t.Fatalf("failed to decode pooled transactions response: %v", err)
+	}
+	if len(sent) != prefix+1 {
+		t.Fatalf("served %d transactions out of %d requested hashes, want %d", len(sent), len(hashes), prefix+1)
+	}
+	for i, want := range known[:prefix+1] {
+		if sent[i].Hash() != want {
+			t.Errorf("transaction %d mismatch: have %s, want %s", i, sent[i].Hash(), want)
+		}
+	}
+}
+
+// Tests that a request made entirely of unknown hashes gets an empty reply
+// from every data-serving loop of the wire protocol.
+func TestAllUnknownHashRequestsGetEmptyReplies(t *testing.T) {
+	backend := newTestBackend(t, 4, nil)
+	peer := newTestPeer(t, "peer", XDC165, backend)
+
+	tests := []struct {
+		request, reply uint64
+	}{
+		{GetBlockBodiesMsg, BlockBodiesMsg},
+		{GetNodeDataMsg, NodeDataMsg},
+		{GetReceiptsMsg, ReceiptsMsg},
+		{GetPooledTransactionsMsg, PooledTransactionsMsg},
+	}
+	hashes := make([]common.Hash, 3*maxReceiptsServe/2)
+	for i := range hashes {
+		hashes[i] = unknownHash(i)
+	}
+	for _, tt := range tests {
+		if err := p2p.Send(peer.app, tt.request, hashes); err != nil {
+			t.Fatalf("failed to send request %v: %v", tt.request, err)
+		}
+		msg, err := peer.app.ReadMsg()
+		if err != nil {
+			t.Fatalf("failed to read response to %v: %v", tt.request, err)
+		}
+		if msg.Code != tt.reply {
+			t.Fatalf("response packet code mismatch: have %x, want %x", msg.Code, tt.reply)
+		}
+		var served []rlp.RawValue
+		if err := msg.Decode(&served); err != nil {
+			t.Fatalf("failed to decode response to %v: %v", tt.request, err)
+		}
+		if len(served) != 0 {
+			t.Fatalf("request %v of %d unknown hashes served %d items", tt.request, len(hashes), len(served))
+		}
 	}
 }

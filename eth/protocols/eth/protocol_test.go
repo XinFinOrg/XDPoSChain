@@ -149,12 +149,24 @@ func TestPacketRoundTrips(t *testing.T) {
 			func() Packet { return new(NewBlockPacket) },
 		},
 		{
+			&GetBlockBodiesPacket{hash},
+			func() Packet { return new(GetBlockBodiesPacket) },
+		},
+		{
 			&blockBodys,
 			func() Packet { return new(BlockBodiesPacket) },
 		},
 		{
+			&GetNodeDataPacket{hash},
+			func() Packet { return new(GetNodeDataPacket) },
+		},
+		{
 			&NodeDataPacket{{0x01, 0x02, 0x03}},
 			func() Packet { return new(NodeDataPacket) },
+		},
+		{
+			&GetReceiptsPacket{hash},
+			func() Packet { return new(GetReceiptsPacket) },
 		},
 		{
 			&ReceiptsPacket{receipts},

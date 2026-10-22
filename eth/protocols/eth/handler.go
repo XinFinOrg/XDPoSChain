@@ -23,7 +23,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
-	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
@@ -35,7 +34,31 @@ const (
 	softResponseLimit = 2 * 1024 * 1024 // Target maximum size of returned blocks, headers or node data.
 	estHeaderRlpSize  = 500             // Approximate size of an RLP encoded block header
 
-	maxHeadersServe = 192 // Amount of block headers to serve per request
+	// maxHeadersServe is the maximum number of block headers to serve. It bounds
+	// the chain lookups a single query may cost; the reply payload is capped by
+	// softResponseLimit instead.
+	maxHeadersServe = 192
+
+	// maxBodiesServe is the maximum number of block bodies to serve. This number
+	// is there to limit the number of disk lookups, the payload itself being
+	// capped by softResponseLimit.
+	maxBodiesServe = 128
+
+	// maxNodeDataServe is the maximum number of state trie nodes to serve. It
+	// bounds the number of database lookups; the reply payload is capped by
+	// softResponseLimit.
+	maxNodeDataServe = 384
+
+	// maxReceiptsServe is the maximum number of block receipts to serve. This
+	// number is there to limit the number of disk lookups, the payload itself
+	// being capped by softResponseLimit.
+	maxReceiptsServe = 256
+
+	// maxPooledTransactionsServe is the maximum number of pooled transactions to
+	// serve. It is a backstop above what softResponseLimit allows for transactions
+	// of a realistic size: every hash in the request costs a pool lookup, served
+	// or not.
+	maxPooledTransactionsServe = 4096
 )
 
 func errResp(code errCode, format string, v ...interface{}) error {
@@ -251,25 +274,21 @@ func handleMessage(backend Backend, peer *Peer) error {
 		return backend.Handle(peer, &headers, msg.Size)
 
 	case msg.Code == GetBlockBodiesMsg:
-		// Decode the retrieval message
-		msgStream := rlp.NewStream(msg.Payload, uint64(msg.Size))
-		if _, err := msgStream.List(); err != nil {
-			return err
+		// Decode the block body retrieval message
+		var query GetBlockBodiesPacket
+		if err := msg.Decode(&query); err != nil {
+			return errResp(ErrDecode, "msg %v: %v", msg, err)
 		}
 		// Gather blocks until the fetch or network limits is reached
 		var (
-			hash   common.Hash
 			bytes  int
 			bodies []rlp.RawValue
 		)
-		for bytes < softResponseLimit && len(bodies) < downloader.MaxBlockFetch {
-			// Retrieve the hash of the next block
-			if err := msgStream.Decode(&hash); err == rlp.EOL {
+		for lookups, hash := range query {
+			if bytes >= softResponseLimit || len(bodies) >= maxBodiesServe || lookups >= 2*maxBodiesServe {
 				break
-			} else if err != nil {
-				return errResp(ErrDecode, "msg %v: %v", msg, err)
 			}
-			// Retrieve the requested block body, stopping if enough was found
+			// Retrieve the requested block body, skipping if unknown to us
 			if data := backend.Chain().GetBodyRLP(hash); len(data) != 0 {
 				bodies = append(bodies, data)
 				bytes += len(data)
@@ -286,25 +305,21 @@ func handleMessage(backend Backend, peer *Peer) error {
 		return backend.Handle(peer, &request, msg.Size)
 
 	case peer.version >= XDC100 && msg.Code == GetNodeDataMsg:
-		// Decode the retrieval message
-		msgStream := rlp.NewStream(msg.Payload, uint64(msg.Size))
-		if _, err := msgStream.List(); err != nil {
-			return err
+		// Decode the trie node data retrieval message
+		var query GetNodeDataPacket
+		if err := msg.Decode(&query); err != nil {
+			return errResp(ErrDecode, "msg %v: %v", msg, err)
 		}
 		// Gather state data until the fetch or network limits is reached
 		var (
-			hash  common.Hash
 			bytes int
 			data  [][]byte
 		)
-		for bytes < softResponseLimit && len(data) < downloader.MaxStateFetch {
-			// Retrieve the hash of the next state entry
-			if err := msgStream.Decode(&hash); err == rlp.EOL {
+		for lookups, hash := range query {
+			if bytes >= softResponseLimit || len(data) >= maxNodeDataServe || lookups >= 2*maxNodeDataServe {
 				break
-			} else if err != nil {
-				return errResp(ErrDecode, "msg %v: %v", msg, err)
 			}
-			// Retrieve the requested state entry, stopping if enough was found
+			// Retrieve the requested state entry, skipping if unknown to us
 			// todo now the code and trienode is mixed in the protocol level,
 			// separate these two types.
 			entry, err := backend.Chain().TrieNode(hash)
@@ -328,23 +343,19 @@ func handleMessage(backend Backend, peer *Peer) error {
 		return backend.Handle(peer, &data, msg.Size)
 
 	case peer.version >= XDC100 && msg.Code == GetReceiptsMsg:
-		// Decode the retrieval message
-		msgStream := rlp.NewStream(msg.Payload, uint64(msg.Size))
-		if _, err := msgStream.List(); err != nil {
-			return err
+		// Decode the block receipts retrieval message
+		var query GetReceiptsPacket
+		if err := msg.Decode(&query); err != nil {
+			return errResp(ErrDecode, "msg %v: %v", msg, err)
 		}
 		// Gather state data until the fetch or network limits is reached
 		var (
-			hash     common.Hash
 			bytes    int
 			receipts []rlp.RawValue
 		)
-		for bytes < softResponseLimit && len(receipts) < downloader.MaxReceiptFetch {
-			// Retrieve the hash of the next block
-			if err := msgStream.Decode(&hash); err == rlp.EOL {
+		for lookups, hash := range query {
+			if bytes >= softResponseLimit || len(receipts) >= maxReceiptsServe || lookups >= 2*maxReceiptsServe {
 				break
-			} else if err != nil {
-				return errResp(ErrDecode, "msg %v: %v", msg, err)
 			}
 			// Retrieve the requested block's receipts, skipping if unknown to us
 			results := backend.Chain().GetReceiptsByHash(hash)
@@ -401,24 +412,20 @@ func handleMessage(backend Backend, peer *Peer) error {
 		return backend.Handle(peer, &hashes, msg.Size)
 
 	case msg.Code == GetPooledTransactionsMsg && peer.version >= XDC165:
-		// Decode the retrieval message
-		msgStream := rlp.NewStream(msg.Payload, uint64(msg.Size))
-		if _, err := msgStream.List(); err != nil {
-			return err
+		// Decode the pooled transactions retrieval message
+		var query GetPooledTransactionsPacket
+		if err := msg.Decode(&query); err != nil {
+			return errResp(ErrDecode, "msg %v: %v", msg, err)
 		}
 		// Gather transactions until the fetch or network limits is reached
 		var (
-			hash   common.Hash
 			bytes  int
 			hashes []common.Hash
 			txs    []rlp.RawValue
 		)
-		for bytes < softResponseLimit {
-			// Retrieve the hash of the next transaction
-			if err := msgStream.Decode(&hash); err == rlp.EOL {
+		for lookups, hash := range query {
+			if bytes >= softResponseLimit || len(hashes) >= maxPooledTransactionsServe || lookups >= 2*maxPooledTransactionsServe {
 				break
-			} else if err != nil {
-				return errResp(ErrDecode, "msg %v: %v", msg, err)
 			}
 			// Retrieve the requested transaction, skipping if unknown to us
 			tx := backend.TxPool().Get(hash)

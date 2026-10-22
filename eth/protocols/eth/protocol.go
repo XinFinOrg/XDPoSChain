@@ -282,6 +282,15 @@ func (p *NewBlockPacket) SanityCheck() error {
 	return nil
 }
 
+// GetBlockBodiesPacket represents a block body query.
+type GetBlockBodiesPacket []common.Hash
+
+// Name implements Packet.
+func (p *GetBlockBodiesPacket) Name() string { return "GetBlockBodies" }
+
+// Kind implements Packet.
+func (p *GetBlockBodiesPacket) Kind() byte { return GetBlockBodiesMsg }
+
 // BlockBody represents the data content of a single block.
 type BlockBody struct {
 	Transactions []*types.Transaction // Transactions contained within a block
@@ -310,6 +319,15 @@ func (p BlockBodiesPacket) SanityCheck() error {
 	return nil
 }
 
+// GetNodeDataPacket represents a trie node data query.
+type GetNodeDataPacket []common.Hash
+
+// Name implements Packet.
+func (p *GetNodeDataPacket) Name() string { return "GetNodeData" }
+
+// Kind implements Packet.
+func (p *GetNodeDataPacket) Kind() byte { return GetNodeDataMsg }
+
 // NodeDataPacket is the network packet for the state data response.
 type NodeDataPacket [][]byte
 
@@ -318,6 +336,15 @@ func (p *NodeDataPacket) Name() string { return "NodeData" }
 
 // Kind implements Packet.
 func (p *NodeDataPacket) Kind() byte { return NodeDataMsg }
+
+// GetReceiptsPacket represents a block receipts query.
+type GetReceiptsPacket []common.Hash
+
+// Name implements Packet.
+func (p *GetReceiptsPacket) Name() string { return "GetReceipts" }
+
+// Kind implements Packet.
+func (p *GetReceiptsPacket) Kind() byte { return GetReceiptsMsg }
 
 // ReceiptsPacket is the network packet for the receipts response, decoded as one
 // receipt list per requested block.
