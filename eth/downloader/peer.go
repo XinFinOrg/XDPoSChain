@@ -114,13 +114,14 @@ func (w *lightPeerWrapper) RequestNodeData([]common.Hash) error {
 	panic("RequestNodeData not supported in light client mode sync")
 }
 
-// peerLogger creates a logger tagged with the peer id, truncated to keep the
-// sync logs readable. Short ids used by the tests are left untouched.
-func peerLogger(id string) log.Logger {
-	if len(id) > 16 {
-		id = id[:16]
+// shortPeerID returns the peer id as it belongs in a log line: trimmed to 16
+// characters to keep the sync logs readable, with short ids such as the ones the
+// tests use passed through untouched.
+func shortPeerID(id string) string {
+	if len(id) < 16 {
+		return id
 	}
-	return log.New("peer", id)
+	return id[:16]
 }
 
 // newPeerConnection creates a new downloader peer.
