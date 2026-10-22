@@ -73,9 +73,18 @@ func testBroadcastBlock(t *testing.T, totalPeers, broadcastExpected int) {
 	if err != nil {
 		t.Fatalf("failed to create new blockchain: %v", err)
 	}
-	pm, err := NewProtocolManager(config, downloader.FullSync, ethconfig.Defaults.NetworkId, evmux, &testTxPool{pool: make(map[common.Hash]*types.Transaction)}, pow, blockchain, db)
+	pm, err := newHandler(&handlerConfig{
+		Database:    db,
+		Chain:       blockchain,
+		TxPool:      &testTxPool{pool: make(map[common.Hash]*types.Transaction)},
+		Network:     ethconfig.Defaults.NetworkId,
+		Sync:        downloader.FullSync,
+		EventMux:    evmux,
+		ChainConfig: config,
+		Engine:      pow,
+	})
 	if err != nil {
-		t.Fatalf("failed to start test protocol manager: %v", err)
+		t.Fatalf("failed to start test handler: %v", err)
 	}
 	pm.Start(1000)
 	defer pm.Stop()
@@ -86,7 +95,7 @@ func testBroadcastBlock(t *testing.T, totalPeers, broadcastExpected int) {
 		peers = append(peers, peer)
 	}
 	// Peers are registered asynchronously once the handshake completes on the
-	// protocol manager side, wait for the peer set to catch up before broadcasting.
+	// handler side, wait for the peer set to catch up before broadcasting.
 	for deadline := time.Now().Add(10 * time.Second); pm.peers.Len() < totalPeers; {
 		if time.Now().After(deadline) {
 			t.Fatalf("timeout waiting for peer registration: have %d, want %d", pm.peers.Len(), totalPeers)
@@ -94,7 +103,7 @@ func testBroadcastBlock(t *testing.T, totalPeers, broadcastExpected int) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	chain, _ := core.GenerateChain(gspec.Config, genesis, ethash.NewFaker(), db, 1, func(i int, gen *core.BlockGen) {})
-	expectedTD := new(big.Int).Add(chain[0].Difficulty(), pm.blockchain.GetTd(chain[0].ParentHash(), chain[0].NumberU64()-1))
+	expectedTD := new(big.Int).Add(chain[0].Difficulty(), pm.chain.GetTd(chain[0].ParentHash(), chain[0].NumberU64()-1))
 
 	errCh := make(chan error, totalPeers)
 	doneCh := make(chan struct{}, totalPeers)
@@ -193,9 +202,18 @@ func testBroadcastMalformedBlock(t *testing.T, protocol int) {
 	if err != nil {
 		t.Fatalf("failed to create new blockchain: %v", err)
 	}
-	pm, err := NewProtocolManager(config, downloader.FullSync, ethconfig.Defaults.NetworkId, new(event.TypeMux), new(testTxPool), engine, blockchain, db)
+	pm, err := newHandler(&handlerConfig{
+		Database:    db,
+		Chain:       blockchain,
+		TxPool:      new(testTxPool),
+		Network:     ethconfig.Defaults.NetworkId,
+		Sync:        downloader.FullSync,
+		EventMux:    new(event.TypeMux),
+		ChainConfig: config,
+		Engine:      engine,
+	})
 	if err != nil {
-		t.Fatalf("failed to start test protocol manager: %v", err)
+		t.Fatalf("failed to start test handler: %v", err)
 	}
 	pm.Start(2)
 	defer pm.Stop()
@@ -252,29 +270,29 @@ func testBroadcastMalformedBlock(t *testing.T, protocol int) {
 // Tests that a propagated block is still queued into the block fetcher by the
 // node layer: the fetcher imports it, so the local chain advances onto it.
 func TestPropagatedBlockQueuedIntoFetcher(t *testing.T) {
-	pm, db := newTestProtocolManagerMust(t, downloader.FullSync, 8, nil, nil)
+	pm, db := newTestHandlerMust(t, downloader.FullSync, 8, nil, nil)
 	defer pm.Stop()
 
 	tp, _ := newTestPeer("propagate", int(ethproto.XDC165), pm, true)
 	defer tp.close()
 
 	// Build a block on top of our head that we do not have ourselves yet.
-	head := pm.blockchain.CurrentBlock()
-	chain, _ := core.GenerateChain(pm.blockchain.Config(), pm.blockchain.GetBlockByHash(head.Hash()), ethash.NewFaker(), db, 1, nil)
+	head := pm.chain.CurrentBlock()
+	chain, _ := core.GenerateChain(pm.chain.Config(), pm.chain.GetBlockByHash(head.Hash()), ethash.NewFaker(), db, 1, nil)
 	block := chain[0]
 
 	if err := p2p.Send(tp.app, ethproto.NewBlockMsg, []any{block, big.NewInt(131136)}); err != nil {
 		t.Fatalf("failed to send ethproto.NewBlockMsg: %v", err)
 	}
 	deadline := time.After(5 * time.Second)
-	for pm.blockchain.CurrentBlock().Number.Cmp(head.Number) <= 0 {
+	for pm.chain.CurrentBlock().Number.Cmp(head.Number) <= 0 {
 		select {
 		case <-deadline:
-			t.Fatalf("propagated block was not queued into the fetcher, head still at %d", pm.blockchain.CurrentBlock().Number.Uint64())
+			t.Fatalf("propagated block was not queued into the fetcher, head still at %d", pm.chain.CurrentBlock().Number.Uint64())
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
-	if got := pm.blockchain.CurrentBlock().Hash(); got != block.Hash() {
+	if got := pm.chain.CurrentBlock().Hash(); got != block.Hash() {
 		t.Errorf("chain advanced to the wrong block: have %v, want %v", got, block.Hash())
 	}
 }
@@ -305,7 +323,7 @@ func testDAOChallenge(t *testing.T, localForked, remoteForked bool, timeout bool
 		defer func(old time.Duration) { syncChallengeTimeout = old }(syncChallengeTimeout)
 		syncChallengeTimeout = 500 * time.Millisecond
 	}
-	// Create a DAO aware protocol manager
+	// Create a DAO aware handler
 	var (
 		evmux = new(event.TypeMux)
 		pow   = ethash.NewFaker()
@@ -315,9 +333,18 @@ func testDAOChallenge(t *testing.T, localForked, remoteForked bool, timeout bool
 		}
 		blockchain, _ = core.NewBlockChain(db, nil, gspec, pow, vm.Config{})
 	)
-	pm, err := NewProtocolManager(gspec.Config, downloader.FullSync, ethconfig.Defaults.NetworkId, evmux, &testTxPool{pool: make(map[common.Hash]*types.Transaction)}, pow, blockchain, db)
+	pm, err := newHandler(&handlerConfig{
+		Database:    db,
+		Chain:       blockchain,
+		TxPool:      &testTxPool{pool: make(map[common.Hash]*types.Transaction)},
+		Network:     ethconfig.Defaults.NetworkId,
+		Sync:        downloader.FullSync,
+		EventMux:    evmux,
+		ChainConfig: gspec.Config,
+		Engine:      pow,
+	})
 	if err != nil {
-		t.Fatalf("failed to start test protocol manager: %v", err)
+		t.Fatalf("failed to start test handler: %v", err)
 	}
 	pm.Start(1000)
 	defer pm.Stop()
@@ -412,8 +439,8 @@ func daoChallengeChainConfig(daoForkSupport bool) *params.ChainConfig {
 }
 
 // waitForPeerRegistration blocks until the peer with the given id has been
-// registered by the protocol manager's handle goroutine.
-func waitForPeerRegistration(t *testing.T, pm *ProtocolManager, id string) {
+// registered by the handler's handle goroutine.
+func waitForPeerRegistration(t *testing.T, pm *handler, id string) {
 	t.Helper()
 	deadline := time.After(2 * time.Second)
 	for pm.peers.Peer(id) == nil {
@@ -425,10 +452,10 @@ func waitForPeerRegistration(t *testing.T, pm *ProtocolManager, id string) {
 	}
 }
 
-// TestProtocolManagerRemovePeerIdempotent verifies that removing an already
+// TestHandlerRemovePeerIdempotent verifies that removing an already
 // removed peer is a silent no-op.
-func TestProtocolManagerRemovePeerIdempotent(t *testing.T) {
-	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+func TestHandlerRemovePeerIdempotent(t *testing.T) {
+	pm, _ := newTestHandlerMust(t, downloader.FullSync, 0, nil, nil)
 	defer pm.Stop()
 
 	// Register a peer through the normal protocol handshake path.
@@ -459,18 +486,18 @@ func TestProtocolManagerRemovePeerIdempotent(t *testing.T) {
 	}
 	// A duplicate removal must be a silent no-op. Note it is short-circuited by
 	// the peer == nil lookup above, so markRemoved's atomic branch is covered
-	// by TestPeerMarkRemovedOnce and TestProtocolManagerRemovePeerConcurrent.
+	// by TestPeerMarkRemovedOnce and TestHandlerRemovePeerConcurrent.
 	pm.removePeer(tp.ID())
 	if pm.peers.Len() != 0 {
 		t.Fatalf("peer set size mismatch after second removePeer: got %d want 0", pm.peers.Len())
 	}
 }
 
-// TestProtocolManagerRemovePeerConcurrent verifies that concurrent removePeer
+// TestHandlerRemovePeerConcurrent verifies that concurrent removePeer
 // calls for the same peer remove it exactly once, without panicking or racing
 // on the removal flag.
-func TestProtocolManagerRemovePeerConcurrent(t *testing.T) {
-	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+func TestHandlerRemovePeerConcurrent(t *testing.T) {
+	pm, _ := newTestHandlerMust(t, downloader.FullSync, 0, nil, nil)
 	defer pm.Stop()
 
 	// Register a peer through the normal protocol handshake path.
@@ -527,7 +554,7 @@ func TestProtocolManagerRemovePeerConcurrent(t *testing.T) {
 // registerDownloaderPeer, the downloader would keep a stale entry that blocks
 // a reconnect of the same node id.
 func TestRegisterDownloaderPeerUndoesRacedRemoval(t *testing.T) {
-	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	pm, _ := newTestHandlerMust(t, downloader.FullSync, 0, nil, nil)
 	defer pm.Stop()
 
 	// Register the peer in pm.peers only — the state handle() is in mid-window.

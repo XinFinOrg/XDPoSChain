@@ -78,8 +78,26 @@ func TestForkIDSplit(t *testing.T) {
 		blocksNoFork, _  = core.GenerateChain(configNoFork, genesisNoFork, engine, dbNoFork, 2, nil)
 		blocksProFork, _ = core.GenerateChain(configProFork, genesisProFork, engine, dbProFork, 2, nil)
 
-		ethNoFork, _  = NewProtocolManager(configNoFork, downloader.FullSync, 1, new(event.TypeMux), &testTxPool{pool: make(map[common.Hash]*types.Transaction)}, engine, chainNoFork, dbNoFork)
-		ethProFork, _ = NewProtocolManager(configProFork, downloader.FullSync, 1, new(event.TypeMux), &testTxPool{pool: make(map[common.Hash]*types.Transaction)}, engine, chainProFork, dbProFork)
+		ethNoFork, _ = newHandler(&handlerConfig{
+			Database:    dbNoFork,
+			Chain:       chainNoFork,
+			TxPool:      &testTxPool{pool: make(map[common.Hash]*types.Transaction)},
+			Network:     1,
+			Sync:        downloader.FullSync,
+			EventMux:    new(event.TypeMux),
+			ChainConfig: configNoFork,
+			Engine:      engine,
+		})
+		ethProFork, _ = newHandler(&handlerConfig{
+			Database:    dbProFork,
+			Chain:       chainProFork,
+			TxPool:      &testTxPool{pool: make(map[common.Hash]*types.Transaction)},
+			Network:     1,
+			Sync:        downloader.FullSync,
+			EventMux:    new(event.TypeMux),
+			ChainConfig: configProFork,
+			Engine:      engine,
+		})
 	)
 	ethNoFork.Start(1000)
 	ethProFork.Start(1000)
@@ -190,7 +208,7 @@ func TestRecvTransactions165(t *testing.T) { testRecvTransactions(t, int(ethprot
 
 func testRecvTransactions(t *testing.T, protocol int) {
 	txAdded := make(chan []*types.Transaction)
-	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, txAdded)
+	pm, _ := newTestHandlerMust(t, downloader.FullSync, 0, nil, txAdded)
 	pm.acceptTxs = 1 // mark synced to accept transactions
 	p, _ := newTestPeer("peer", protocol, pm, true)
 	defer pm.Stop()
@@ -218,7 +236,7 @@ func TestSendTransactions164(t *testing.T) { testSendTransactions(t, int(ethprot
 func TestSendTransactions165(t *testing.T) { testSendTransactions(t, int(ethproto.XDC165)) }
 
 func testSendTransactions(t *testing.T, protocol int) {
-	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	pm, _ := newTestHandlerMust(t, downloader.FullSync, 0, nil, nil)
 	defer pm.Stop()
 
 	// Fill the pool with big transactions (use a subscription to wait until all
@@ -311,10 +329,10 @@ func TestTransactionPropagation(t *testing.T)  { testSyncTransaction(t, true) }
 func TestTransactionAnnouncement(t *testing.T) { testSyncTransaction(t, false) }
 
 func testSyncTransaction(t *testing.T, propagation bool) {
-	// Create a protocol manager for transaction fetcher and sender
-	pmFetcher, _ := newTestProtocolManagerMust(t, downloader.FastSync, 0, nil, nil)
+	// Create a handler for transaction fetcher and sender
+	pmFetcher, _ := newTestHandlerMust(t, downloader.FastSync, 0, nil, nil)
 	defer pmFetcher.Stop()
-	pmSender, _ := newTestProtocolManagerMust(t, downloader.FastSync, 1024, nil, nil)
+	pmSender, _ := newTestHandlerMust(t, downloader.FastSync, 1024, nil, nil)
 	pmSender.broadcastTxAnnouncesOnly = !propagation
 	defer pmSender.Stop()
 

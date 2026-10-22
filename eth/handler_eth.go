@@ -32,27 +32,27 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 )
 
-// ethHandler adapts the protocol manager to the wire layer's Backend interface,
-// erasing the concrete type of the metadata the protocol manager exposes.
-type ethHandler struct{ *ProtocolManager }
+// ethHandler adapts the handler to the wire layer's Backend interface,
+// erasing the concrete type of the metadata the handler exposes.
+type ethHandler struct{ *handler }
 
 // NodeInfo implements ethproto.Backend, returning the node metadata the p2p layer
 // reports for this capability.
-func (h ethHandler) NodeInfo() interface{} { return h.ProtocolManager.NodeInfo() }
+func (h ethHandler) NodeInfo() interface{} { return h.handler.NodeInfo() }
 
 // Chain implements ethproto.Backend.
-func (pm *ProtocolManager) Chain() *core.BlockChain { return pm.blockchain }
+func (pm *handler) Chain() *core.BlockChain { return pm.chain }
 
 // TxPool implements ethproto.Backend.
-func (pm *ProtocolManager) TxPool() ethproto.TxPool { return pm.txpool }
+func (pm *handler) TxPool() ethproto.TxPool { return pm.txpool }
 
 // AcceptTxs implements ethproto.Backend. The node ignores inbound transaction
 // traffic until it has caught up with the chain.
-func (pm *ProtocolManager) AcceptTxs() bool { return atomic.LoadUint32(&pm.acceptTxs) != 0 }
+func (pm *handler) AcceptTxs() bool { return atomic.LoadUint32(&pm.acceptTxs) != 0 }
 
 // PeerInfo implements ethproto.Backend, returning the metadata the p2p layer reports
 // for a connected peer.
-func (pm *ProtocolManager) PeerInfo(id enode.ID) interface{} {
+func (pm *handler) PeerInfo(id enode.ID) interface{} {
 	if p := pm.peers.Peer(fmt.Sprintf("%x", id[:8])); p != nil {
 		return p.Info()
 	}
@@ -71,7 +71,7 @@ func (pm *ProtocolManager) PeerInfo(id enode.ID) interface{} {
 // returns "unregistered during callback" there instead; skipping is deliberate,
 // and costs at most one missed sync kick-off on the syncer hand-off, which
 // syncer()'s BestPeer loop retries.
-func (pm *ProtocolManager) Handle(p *ethproto.Peer, packet ethproto.Packet, size uint32) error {
+func (pm *handler) Handle(p *ethproto.Peer, packet ethproto.Packet, size uint32) error {
 	switch packet := packet.(type) {
 	case *ethproto.BlockHeadersPacket:
 		headers := []*types.Header(*packet)
@@ -86,8 +86,8 @@ func (pm *ProtocolManager) Handle(p *ethproto.Peer, packet ethproto.Packet, size
 
 				// If we already have a DAO header, we can check the peer's TD against it. If
 				// the peer's ahead of this, it too must have a reply to the DAO check
-				if daoHeader := pm.blockchain.GetHeaderByNumber(pm.blockchain.Config().DAOForkBlock.Uint64()); daoHeader != nil {
-					if _, td := p.Head(); td.Cmp(pm.blockchain.GetTd(daoHeader.Hash(), daoHeader.Number.Uint64())) >= 0 {
+				if daoHeader := pm.chain.GetHeaderByNumber(pm.chain.Config().DAOForkBlock.Uint64()); daoHeader != nil {
+					if _, td := p.Head(); td.Cmp(pm.chain.GetTd(daoHeader.Hash(), daoHeader.Number.Uint64())) >= 0 {
 						verifyDAO = false
 					}
 				}
@@ -104,13 +104,13 @@ func (pm *ProtocolManager) Handle(p *ethproto.Peer, packet ethproto.Packet, size
 		filter := len(headers) == 1
 		if filter {
 			// If it's a potential DAO fork check, validate against the rules
-			if peer := pm.peers.Peer(p.ID()); peer != nil && peer.forkDrop != nil && pm.blockchain.Config().DAOForkBlock.Cmp(headers[0].Number) == 0 {
+			if peer := pm.peers.Peer(p.ID()); peer != nil && peer.forkDrop != nil && pm.chain.Config().DAOForkBlock.Cmp(headers[0].Number) == 0 {
 				// Disable the fork drop timer
 				peer.forkDrop.Stop()
 				peer.forkDrop = nil
 
 				// Validate the header and either drop the peer or continue
-				if err := misc.VerifyDAOHeaderExtraData(pm.blockchain.Config(), headers[0]); err != nil {
+				if err := misc.VerifyDAOHeaderExtraData(pm.chain.Config(), headers[0]); err != nil {
 					peer.Log().Debug("Verified to be on the other side of the DAO fork, dropping")
 					return err
 				}
@@ -166,7 +166,7 @@ func (pm *ProtocolManager) Handle(p *ethproto.Peer, packet ethproto.Packet, size
 
 		// Mark the hashes as present at the remote node and track the highest
 		// plausible announced block as the peer's live tip.
-		height := pm.blockchain.CurrentBlock().Number.Uint64()
+		height := pm.chain.CurrentBlock().Number.Uint64()
 		var tip uint64
 		for _, block := range announces {
 			p.MarkBlock(block.Hash)
@@ -180,7 +180,7 @@ func (pm *ProtocolManager) Handle(p *ethproto.Peer, packet ethproto.Packet, size
 		// Schedule all the unknown hashes for retrieval
 		unknown := make(ethproto.NewBlockHashesPacket, 0, len(announces))
 		for _, block := range announces {
-			if !pm.blockchain.HasBlock(block.Hash, block.Number) {
+			if !pm.chain.HasBlock(block.Hash, block.Number) {
 				unknown = append(unknown, block)
 			}
 		}
@@ -192,7 +192,7 @@ func (pm *ProtocolManager) Handle(p *ethproto.Peer, packet ethproto.Packet, size
 		request := packet
 		// Track the peer's tip (only when the block number is within the
 		// fetcher's plausibility window) and schedule the block for import
-		if fetcher.IsPlausibleAnnouncement(request.Block.NumberU64(), pm.blockchain.CurrentBlock().Number.Uint64()) {
+		if fetcher.IsPlausibleAnnouncement(request.Block.NumberU64(), pm.chain.CurrentBlock().Number.Uint64()) {
 			p.SetTipNumber(request.Block.NumberU64())
 		}
 		pm.blockFetcher.Enqueue(p.ID(), request.Block)
@@ -210,8 +210,8 @@ func (pm *ProtocolManager) Handle(p *ethproto.Peer, packet ethproto.Packet, size
 			// Schedule a sync if above ours. Note, this will not fire a sync for a gap of
 			// a singe block (as the true TD is below the propagated block), however this
 			// scenario should easily be covered by the fetcher.
-			currentBlock := pm.blockchain.CurrentBlock()
-			if trueTD.Cmp(pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64())) > 0 {
+			currentBlock := pm.chain.CurrentBlock()
+			if trueTD.Cmp(pm.chain.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64())) > 0 {
 				// The syncer is handed the node-layer peer; one that is already
 				// gone has nobody to sync from.
 				if peer := pm.peers.Peer(p.ID()); peer != nil {
@@ -300,7 +300,7 @@ func (pm *ProtocolManager) Handle(p *ethproto.Peer, packet ethproto.Packet, size
 
 // handleTransactions reacts to an inbound batch of transactions: it marks them
 // as known to the peer and hands them to the transaction fetcher.
-func (pm *ProtocolManager) handleTransactions(peer *ethproto.Peer, txs []*types.Transaction, direct bool) {
+func (pm *handler) handleTransactions(peer *ethproto.Peer, txs []*types.Transaction, direct bool) {
 	for _, tx := range txs {
 		// Mark the remote transaction as known
 		peer.MarkTransaction(tx.Hash())
@@ -314,7 +314,7 @@ func (pm *ProtocolManager) handleTransactions(peer *ethproto.Peer, txs []*types.
 }
 
 // handleVote passes a vote to the BFT handler unless it is already known.
-func (pm *ProtocolManager) handleVote(peer string, vote *types.Vote) {
+func (pm *handler) handleVote(peer string, vote *types.Vote) {
 	if pm.knownVotes.Contains(vote.Hash()) {
 		log.Trace("Discarded vote, known vote", "vote hash", vote.Hash(), "voted block hash", vote.ProposedBlockInfo.Hash.Hex(), "number", vote.ProposedBlockInfo.Number, "round", vote.ProposedBlockInfo.Round)
 		return
@@ -324,7 +324,7 @@ func (pm *ProtocolManager) handleVote(peer string, vote *types.Vote) {
 }
 
 // handleTimeout passes a timeout to the BFT handler unless it is already known.
-func (pm *ProtocolManager) handleTimeout(peer string, timeout *types.Timeout) {
+func (pm *handler) handleTimeout(peer string, timeout *types.Timeout) {
 	if pm.knownTimeouts.Contains(timeout.Hash()) {
 		log.Trace("Discarded Timeout, known Timeout", "Signature", timeout.Signature, "hash", timeout.Hash(), "round", timeout.Round)
 		return
@@ -334,7 +334,7 @@ func (pm *ProtocolManager) handleTimeout(peer string, timeout *types.Timeout) {
 }
 
 // handleSyncInfo passes a syncInfo to the BFT handler unless it is already known.
-func (pm *ProtocolManager) handleSyncInfo(peer string, syncInfo *types.SyncInfo) {
+func (pm *handler) handleSyncInfo(peer string, syncInfo *types.SyncInfo) {
 	if pm.knownSyncInfos.Contains(syncInfo.Hash()) {
 		log.Trace("Discarded SyncInfo, known SyncInfo", "hash", syncInfo.Hash())
 		return
@@ -346,7 +346,7 @@ func (pm *ProtocolManager) handleSyncInfo(peer string, syncInfo *types.SyncInfo)
 // drainBFTQueue processes the BFT messages queued during a sync. It does
 // nothing if another sync is already running; that sync drains the queue when
 // it finishes.
-func (pm *ProtocolManager) drainBFTQueue() {
+func (pm *handler) drainBFTQueue() {
 	msgs := pm.bftQueue.takeUnless(pm.downloader.Synchronising)
 	if len(msgs) == 0 {
 		return

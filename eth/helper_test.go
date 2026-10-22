@@ -53,10 +53,10 @@ var (
 	testBank       = crypto.PubkeyToAddress(testBankKey.PublicKey)
 )
 
-// newTestProtocolManager creates a new protocol manager for testing purposes,
+// newTestHandler creates a new handler for testing purposes,
 // with the given number of blocks already known, and potential notification
 // channels for different events.
-func newTestProtocolManager(mode downloader.SyncMode, blocks int, generator func(int, *core.BlockGen), newtx chan<- []*types.Transaction) (*ProtocolManager, ethdb.Database, error) {
+func newTestHandler(mode downloader.SyncMode, blocks int, generator func(int, *core.BlockGen), newtx chan<- []*types.Transaction) (*handler, ethdb.Database, error) {
 	var (
 		evmux  = new(event.TypeMux)
 		engine = ethash.NewFaker()
@@ -75,7 +75,16 @@ func newTestProtocolManager(mode downloader.SyncMode, blocks int, generator func
 
 	txpool := newTestTxPool()
 	txpool.added = newtx
-	pm, err := NewProtocolManager(gspec.Config, mode, ethconfig.Defaults.NetworkId, evmux, &testTxPool{added: newtx, pool: make(map[common.Hash]*types.Transaction)}, engine, blockchain, db)
+	pm, err := newHandler(&handlerConfig{
+		Database:    db,
+		Chain:       blockchain,
+		TxPool:      &testTxPool{added: newtx, pool: make(map[common.Hash]*types.Transaction)},
+		Network:     ethconfig.Defaults.NetworkId,
+		Sync:        mode,
+		EventMux:    evmux,
+		ChainConfig: gspec.Config,
+		Engine:      engine,
+	})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -83,14 +92,14 @@ func newTestProtocolManager(mode downloader.SyncMode, blocks int, generator func
 	return pm, db, nil
 }
 
-// newTestProtocolManagerMust creates a new protocol manager for testing purposes,
+// newTestHandlerMust creates a new handler for testing purposes,
 // with the given number of blocks already known, and potential notification
 // channels for different events. In case of an error, the constructor force-
 // fails the test.
-func newTestProtocolManagerMust(t *testing.T, mode downloader.SyncMode, blocks int, generator func(int, *core.BlockGen), newtx chan<- []*types.Transaction) (*ProtocolManager, ethdb.Database) {
-	pm, db, err := newTestProtocolManager(mode, blocks, generator, newtx)
+func newTestHandlerMust(t *testing.T, mode downloader.SyncMode, blocks int, generator func(int, *core.BlockGen), newtx chan<- []*types.Transaction) (*handler, ethdb.Database) {
+	pm, db, err := newTestHandler(mode, blocks, generator, newtx)
 	if err != nil {
-		t.Fatalf("Failed to create protocol manager: %v", err)
+		t.Fatalf("Failed to create handler: %v", err)
 	}
 	return pm, db
 }
@@ -220,22 +229,22 @@ func newTestNodePeer(t *testing.T, version int, name string, getPooledTx func(co
 	return p
 }
 
-// testHandler is the inbound message loop a protocol manager hands to the wire
+// testHandler is the inbound message loop a handler hands to the wire
 // layer for a peer.
-func testHandler(pm *ProtocolManager) ethproto.Handler {
+func testHandler(pm *handler) ethproto.Handler {
 	return func(p *ethproto.Peer) error { return ethproto.Handle(ethHandler{pm}, p) }
 }
 
 // newTestRawPeer creates a node-layer peer over an existing message pipe, without
-// registering it at a protocol manager.
+// registering it at a handler.
 func newTestRawPeer(version uint, id enode.ID, rw p2p.MsgReadWriter, getPooledTx func(common.Hash) *types.Transaction) *peer {
 	return &peer{
 		Peer: ethproto.NewPeer(version, p2p.NewPeer(id, "", nil), rw, getPooledTx),
 	}
 }
 
-// newTestPeer creates a new peer registered at the given protocol manager.
-func newTestPeer(name string, version int, pm *ProtocolManager, shake bool) (*testPeer, <-chan error) {
+// newTestPeer creates a new peer registered at the given handler.
+func newTestPeer(name string, version int, pm *handler, shake bool) (*testPeer, <-chan error) {
 	// Create a message pipe to communicate through
 	app, net := p2p.MsgPipe()
 
@@ -261,11 +270,11 @@ func newTestPeer(name string, version int, pm *ProtocolManager, shake bool) (*te
 	// Execute any implicitly requested handshakes and return
 	if shake {
 		var (
-			genesis = pm.blockchain.Genesis()
-			head    = pm.blockchain.CurrentHeader()
-			td      = pm.blockchain.GetTd(head.Hash(), head.Number.Uint64())
+			genesis = pm.chain.Genesis()
+			head    = pm.chain.CurrentHeader()
+			td      = pm.chain.GetTd(head.Hash(), head.Number.Uint64())
 		)
-		tp.handshake(nil, td, head.Hash(), genesis.Hash(), forkid.NewID(pm.blockchain.Config(), genesis, head.Number.Uint64()), forkid.NewFilter(pm.blockchain))
+		tp.handshake(nil, td, head.Hash(), genesis.Hash(), forkid.NewID(pm.chain.Config(), genesis, head.Number.Uint64()), forkid.NewFilter(pm.chain))
 	}
 	return tp, errc
 }

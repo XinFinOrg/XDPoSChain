@@ -110,8 +110,8 @@ type lendingPool interface {
 	SubscribeTxPreEvent(chan<- core.LendingTxPreEvent) event.Subscription
 }
 
-type ProtocolManager struct {
-	networkId  uint64
+type handler struct {
+	networkID  uint64
 	forkFilter forkid.Filter // Fork ID filter, constant across the lifetime of the node
 
 	snapSync  uint32 // Flag whether snap sync is enabled (gets disabled if we already have blocks)
@@ -120,7 +120,7 @@ type ProtocolManager struct {
 	txpool      txPool
 	orderpool   orderPool
 	lendingpool lendingPool
-	blockchain  *core.BlockChain
+	chain       *core.BlockChain
 	maxPeers    int
 
 	downloader   *downloader.Downloader
@@ -163,27 +163,34 @@ type ProtocolManager struct {
 	bftQueue       *bftQueue // BFT messages received while synchronising
 }
 
-// NewProtocolManagerEx add order pool to protocol
-func NewProtocolManagerEx(config *params.ChainConfig, mode downloader.SyncMode, networkID uint64, mux *event.TypeMux, txpool txPool, orderpool orderPool, lendingpool lendingPool, engine consensus.Engine, blockchain *core.BlockChain, chaindb ethdb.Database) (*ProtocolManager, error) {
-	protocol, err := NewProtocolManager(config, mode, networkID, mux, txpool, engine, blockchain, chaindb)
-	if err != nil {
-		return nil, err
-	}
-	protocol.addOrderPoolProtocol(orderpool)
-	protocol.addLendingPoolProtocol(lendingpool)
-	return protocol, nil
+// handlerConfig configures a chain handler. It is a named struct rather than a
+// parameter list because the dependencies come from two sources: the ones
+// upstream has, and the ones only this tree has (the chain configuration, the
+// order pool, the lending pool and the consensus engine).
+type handlerConfig struct {
+	Database    ethdb.Database      // Database for direct sync insertions
+	Chain       *core.BlockChain    // Blockchain to serve data from
+	TxPool      txPool              // Transaction pool to propagate from
+	Network     uint64              // Network identifier to advertise
+	Sync        downloader.SyncMode // Whether to fast or full sync
+	EventMux    *event.TypeMux      // Legacy event mux, deprecate for `feed`
+	ChainConfig *params.ChainConfig // Chain configuration, for the XDPoS fork schedule
+	OrderPool   orderPool           // Order transaction pool to propagate from
+	LendingPool lendingPool         // Lending transaction pool to propagate from
+	Engine      consensus.Engine    // Consensus engine, for proposed-block handling
 }
 
-// NewProtocolManager returns a new ethereum sub protocol manager. The Ethereum sub protocol manages peers capable
-// with the ethereum network.
-func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, networkID uint64, mux *event.TypeMux, txpool txPool, engine consensus.Engine, blockchain *core.BlockChain, chaindb ethdb.Database) (*ProtocolManager, error) {
-	// Create the protocol manager with the base fields
-	manager := &ProtocolManager{
-		networkId:      networkID,
-		forkFilter:     forkid.NewFilter(blockchain),
-		eventMux:       mux,
-		txpool:         txpool,
-		blockchain:     blockchain,
+// newHandler returns a handler for all Ethereum chain management protocol.
+func newHandler(config *handlerConfig) (*handler, error) {
+	// Create the handler with the base fields
+	manager := &handler{
+		networkID:      config.Network,
+		forkFilter:     forkid.NewFilter(config.Chain),
+		eventMux:       config.EventMux,
+		txpool:         config.TxPool,
+		orderpool:      config.OrderPool,
+		lendingpool:    config.LendingPool,
+		chain:          config.Chain,
 		peers:          newPeerSet(),
 		newPeerCh:      make(chan *peer),
 		syncReqCh:      make(chan *peer, 1),
@@ -197,13 +204,10 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		knownSyncInfos: lru.NewCache[common.Hash, struct{}](ethproto.MaxKnownSyncInfo),
 		knownTimeouts:  lru.NewCache[common.Hash, struct{}](ethproto.MaxKnownTimeout),
 		bftQueue:       newBFTQueue(),
-		orderpool:      nil,
-		lendingpool:    nil,
-		orderTxSub:     nil,
-		lendingTxSub:   nil,
 	}
 	// Figure out whether to allow fast sync or not
-	if mode == downloader.FastSync && blockchain.CurrentBlock().Number.Sign() > 0 {
+	mode := config.Sync
+	if mode == downloader.FastSync && config.Chain.CurrentBlock().Number.Sign() > 0 {
 		log.Warn("Blockchain not empty, fast sync disabled")
 		mode = downloader.FullSync
 	}
@@ -212,9 +216,9 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 	}
 
 	var handleProposedBlock func(header *types.Header) error
-	if config.XDPoS != nil {
+	if config.ChainConfig.XDPoS != nil {
 		handleProposedBlock = func(header *types.Header) error {
-			return engine.(*XDPoS.XDPoS).HandleProposedBlock(blockchain, header)
+			return config.Engine.(*XDPoS.XDPoS).HandleProposedBlock(config.Chain, header)
 		}
 	} else {
 		handleProposedBlock = func(header *types.Header) error {
@@ -223,14 +227,14 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 	}
 
 	// Construct the different synchronisation mechanisms
-	manager.downloader = downloader.New(chaindb, manager.eventMux, blockchain, nil, manager.removePeer, handleProposedBlock)
+	manager.downloader = downloader.New(config.Database, manager.eventMux, config.Chain, nil, manager.removePeer, handleProposedBlock)
 
 	validator := func(header *types.Header) error {
-		return engine.VerifyHeader(blockchain, header, true)
+		return config.Engine.VerifyHeader(config.Chain, header, true)
 	}
 
 	heighter := func() uint64 {
-		return blockchain.CurrentBlock().Number.Uint64()
+		return config.Chain.CurrentBlock().Number.Uint64()
 	}
 
 	inserter := func(block *types.Block) error {
@@ -240,7 +244,7 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 			return nil
 		}
 		atomic.StoreUint32(&manager.acceptTxs, 1) // Mark initial sync done on any fetcher import
-		return manager.blockchain.InsertBlock(block)
+		return manager.chain.InsertBlock(block)
 	}
 
 	prepare := func(block *types.Block) error {
@@ -250,9 +254,9 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 			return nil
 		}
 		atomic.StoreUint32(&manager.acceptTxs, 1) // Mark initial sync done on any fetcher import
-		return manager.blockchain.PrepareBlock(block)
+		return manager.chain.PrepareBlock(block)
 	}
-	manager.blockFetcher = fetcher.NewBlockFetcher(blockchain.GetBlockByHash, validator, handleProposedBlock, manager.BroadcastBlock, heighter, inserter, prepare, manager.removePeer)
+	manager.blockFetcher = fetcher.NewBlockFetcher(config.Chain.GetBlockByHash, validator, handleProposedBlock, manager.BroadcastBlock, heighter, inserter, prepare, manager.removePeer)
 
 	fetchTx := func(peer string, hashes []common.Hash) error {
 		p := manager.peers.Peer(peer)
@@ -264,7 +268,7 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 	addTxs := func(txs []*types.Transaction) []error {
 		return manager.txpool.Add(txs, false)
 	}
-	manager.txFetcher = fetcher.NewTxFetcher(txpool.Has, addTxs, fetchTx)
+	manager.txFetcher = fetcher.NewTxFetcher(config.TxPool.Has, addTxs, fetchTx)
 
 	//Define bft function
 	broadcasts := bft.BroadcastFns{
@@ -272,24 +276,16 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		Timeout:  manager.BroadcastTimeout,
 		SyncInfo: manager.BroadcastSyncInfo,
 	}
-	manager.bft = bft.New(broadcasts, blockchain, heighter)
-	if blockchain.Config().XDPoS != nil {
+	manager.bft = bft.New(broadcasts, config.Chain, heighter)
+	if config.Chain.Config().XDPoS != nil {
 		manager.bft.InitEpochNumber()
-		manager.bft.SetConsensusFuns(engine)
+		manager.bft.SetConsensusFuns(config.Engine)
 	}
 
 	return manager, nil
 }
 
-func (pm *ProtocolManager) addOrderPoolProtocol(orderpool orderPool) {
-	pm.orderpool = orderpool
-}
-
-func (pm *ProtocolManager) addLendingPoolProtocol(lendingpool lendingPool) {
-	pm.lendingpool = lendingpool
-}
-
-func (pm *ProtocolManager) removePeer(id string) {
+func (pm *handler) removePeer(id string) {
 	// Short circuit if the peer was already removed
 	peer := pm.peers.Peer(id)
 	if peer == nil {
@@ -319,7 +315,7 @@ func (pm *ProtocolManager) removePeer(id string) {
 // stale entry would block a reconnect of the same node id. Returns
 // DiscUselessPeer to abort the handshake, matching removePeer's disconnect
 // reason.
-func (pm *ProtocolManager) registerDownloaderPeer(p *peer) error {
+func (pm *handler) registerDownloaderPeer(p *peer) error {
 	if err := pm.downloader.RegisterPeer(p.ID(), p.Version(), p); err != nil {
 		return err
 	}
@@ -331,7 +327,7 @@ func (pm *ProtocolManager) registerDownloaderPeer(p *peer) error {
 	return nil
 }
 
-func (pm *ProtocolManager) Start(maxPeers int) {
+func (pm *handler) Start(maxPeers int) {
 	pm.maxPeers = maxPeers
 
 	// broadcast and announce transactions (only new ones, not resurrected ones)
@@ -359,7 +355,7 @@ func (pm *ProtocolManager) Start(maxPeers int) {
 	go pm.txsyncLoop64() // TODO(karalabe): Legacy initial tx echange, drop with eth/64.
 }
 
-func (pm *ProtocolManager) Stop() {
+func (pm *handler) Stop() {
 	log.Info("Stopping Ethereum protocol")
 
 	pm.txsSub.Unsubscribe() // quits txBroadcastLoop
@@ -393,7 +389,7 @@ func (pm *ProtocolManager) Stop() {
 // RunPeer implements ethproto.Backend: it performs the node layer's side of the peer
 // life cycle (the handshake, the bookkeeping and the sync kick-off) and then
 // hands the peer over to the wire layer's inbound message loop.
-func (pm *ProtocolManager) RunPeer(p *ethproto.Peer, handler ethproto.Handler) error {
+func (pm *handler) RunPeer(p *ethproto.Peer, handler ethproto.Handler) error {
 	peer := &peer{Peer: p}
 	select {
 	case pm.newPeerCh <- peer:
@@ -408,7 +404,7 @@ func (pm *ProtocolManager) RunPeer(p *ethproto.Peer, handler ethproto.Handler) e
 
 // handle is the callback invoked to manage the life cycle of an eth peer. When
 // this function terminates, the peer is disconnected.
-func (pm *ProtocolManager) handle(p *peer, handler ethproto.Handler) error {
+func (pm *handler) handle(p *peer, handler ethproto.Handler) error {
 	// Ignore maxPeers if this is a trusted peer
 	if pm.peers.Len() >= pm.maxPeers && !p.Peer.Info().Network.Trusted {
 		return p2p.DiscTooManyPeers
@@ -417,13 +413,13 @@ func (pm *ProtocolManager) handle(p *peer, handler ethproto.Handler) error {
 
 	// Execute the Ethereum handshake
 	var (
-		genesis = pm.blockchain.Genesis()
-		head    = pm.blockchain.CurrentHeader()
+		genesis = pm.chain.Genesis()
+		head    = pm.chain.CurrentHeader()
 		hash    = head.Hash()
 		number  = head.Number.Uint64()
-		td      = pm.blockchain.GetTd(hash, number)
+		td      = pm.chain.GetTd(hash, number)
 	)
-	if err := p.Handshake(pm.networkId, td, hash, genesis.Hash(), forkid.NewID(pm.blockchain.Config(), genesis, number), pm.forkFilter); err != nil {
+	if err := p.Handshake(pm.networkID, td, hash, genesis.Hash(), forkid.NewID(pm.chain.Config(), genesis, number), pm.forkFilter); err != nil {
 		p.Log().Debug("Ethereum handshake failed", "err", err)
 		return err
 	}
@@ -444,7 +440,7 @@ func (pm *ProtocolManager) handle(p *peer, handler ethproto.Handler) error {
 	pm.syncTransactions(p)
 
 	// If we're DAO hard-fork aware, validate any remote peer with regard to the hard-fork
-	if daoBlock := pm.blockchain.Config().DAOForkBlock; daoBlock != nil {
+	if daoBlock := pm.chain.Config().DAOForkBlock; daoBlock != nil {
 		// Request the peer's DAO fork header for extra-data validation
 		if err := p.RequestHeadersByNumber(daoBlock.Uint64(), 1, 0, false); err != nil {
 			return err
@@ -468,7 +464,7 @@ func (pm *ProtocolManager) handle(p *peer, handler ethproto.Handler) error {
 
 // BroadcastBlock will either propagate a block to a subset of it's peers, or
 // will only announce it's availability (depending what's requested).
-func (pm *ProtocolManager) BroadcastBlock(block *types.Block, propagate bool) {
+func (pm *handler) BroadcastBlock(block *types.Block, propagate bool) {
 	hash := block.Hash()
 	peers := pm.peers.PeersWithoutBlock(hash)
 
@@ -476,8 +472,8 @@ func (pm *ProtocolManager) BroadcastBlock(block *types.Block, propagate bool) {
 	if propagate {
 		// Calculate the TD of the block (it's not imported yet, so block.Td is not valid)
 		var td *big.Int
-		if parent := pm.blockchain.GetBlock(block.ParentHash(), block.NumberU64()-1); parent != nil {
-			td = new(big.Int).Add(block.Difficulty(), pm.blockchain.GetTd(block.ParentHash(), block.NumberU64()-1))
+		if parent := pm.chain.GetBlock(block.ParentHash(), block.NumberU64()-1); parent != nil {
+			td = new(big.Int).Add(block.Difficulty(), pm.chain.GetTd(block.ParentHash(), block.NumberU64()-1))
 		} else {
 			log.Error("Propagating dangling block", "number", block.Number(), "hash", hash)
 			return
@@ -490,7 +486,7 @@ func (pm *ProtocolManager) BroadcastBlock(block *types.Block, propagate bool) {
 		return
 	}
 	// Otherwise if the block is indeed in out own chain, announce it
-	if pm.blockchain.HasBlock(hash, block.NumberU64()) {
+	if pm.chain.HasBlock(hash, block.NumberU64()) {
 		for _, peer := range peers {
 			peer.SendNewBlockHashes([]common.Hash{hash}, []uint64{block.NumberU64()})
 		}
@@ -500,7 +496,7 @@ func (pm *ProtocolManager) BroadcastBlock(block *types.Block, propagate bool) {
 
 // BroadcastTransactions will propagate a batch of transactions to all peers which are not known to
 // already have the given transaction.
-func (pm *ProtocolManager) BroadcastTransactions(txs types.Transactions, propagate bool) {
+func (pm *handler) BroadcastTransactions(txs types.Transactions, propagate bool) {
 	var (
 		txset = make(map[*peer][]common.Hash)
 		annos = make(map[*peer][]common.Hash)
@@ -547,7 +543,7 @@ func (pm *ProtocolManager) BroadcastTransactions(txs types.Transactions, propaga
 
 // BroadcastVote will propagate a Vote to all peers which are not known to
 // already have the given vote.
-func (pm *ProtocolManager) BroadcastVote(vote *types.Vote) {
+func (pm *handler) BroadcastVote(vote *types.Vote) {
 	hash := vote.Hash()
 	peers := pm.peers.PeersWithoutVote(hash)
 	if len(peers) > 0 {
@@ -564,7 +560,7 @@ func (pm *ProtocolManager) BroadcastVote(vote *types.Vote) {
 
 // BroadcastTimeout will propagate a Timeout to all peers which are not known to
 // already have the given timeout.
-func (pm *ProtocolManager) BroadcastTimeout(timeout *types.Timeout) {
+func (pm *handler) BroadcastTimeout(timeout *types.Timeout) {
 	hash := timeout.Hash()
 	peers := pm.peers.PeersWithoutTimeout(hash)
 	if len(peers) > 0 {
@@ -581,7 +577,7 @@ func (pm *ProtocolManager) BroadcastTimeout(timeout *types.Timeout) {
 
 // BroadcastSyncInfo will propagate a SyncInfo to all peers which are not known to
 // already have the given SyncInfo.
-func (pm *ProtocolManager) BroadcastSyncInfo(syncInfo *types.SyncInfo) {
+func (pm *handler) BroadcastSyncInfo(syncInfo *types.SyncInfo) {
 	hash := syncInfo.Hash()
 	peers := pm.peers.PeersWithoutSyncInfo(hash)
 	if len(peers) > 0 {
@@ -598,7 +594,7 @@ func (pm *ProtocolManager) BroadcastSyncInfo(syncInfo *types.SyncInfo) {
 
 // OrderBroadcastTx will propagate a transaction to all peers which are not known to
 // already have the given transaction.
-func (pm *ProtocolManager) OrderBroadcastTx(hash common.Hash, tx *types.OrderTransaction) {
+func (pm *handler) OrderBroadcastTx(hash common.Hash, tx *types.OrderTransaction) {
 	// Broadcast transaction to a batch of peers not knowing about it
 	peers := pm.peers.OrderPeersWithoutTx(hash)
 	//FIXME include this again: peers = peers[:int(math.Sqrt(float64(len(peers))))]
@@ -610,7 +606,7 @@ func (pm *ProtocolManager) OrderBroadcastTx(hash common.Hash, tx *types.OrderTra
 
 // LendingBroadcastTx will propagate a transaction to all peers which are not known to
 // already have the given transaction.
-func (pm *ProtocolManager) LendingBroadcastTx(hash common.Hash, tx *types.LendingTransaction) {
+func (pm *handler) LendingBroadcastTx(hash common.Hash, tx *types.LendingTransaction) {
 	// Broadcast transaction to a batch of peers not knowing about it
 	peers := pm.peers.LendingPeersWithoutTx(hash)
 	//FIXME include this again: peers = peers[:int(math.Sqrt(float64(len(peers))))]
@@ -621,7 +617,7 @@ func (pm *ProtocolManager) LendingBroadcastTx(hash common.Hash, tx *types.Lendin
 }
 
 // minedBroadcastLoop broadcast loop
-func (pm *ProtocolManager) minedBroadcastLoop() {
+func (pm *handler) minedBroadcastLoop() {
 	// automatically stops if unsubscribe
 	for obj := range pm.minedBlockSub.Chan() {
 		switch ev := obj.Data.(type) {
@@ -632,7 +628,7 @@ func (pm *ProtocolManager) minedBroadcastLoop() {
 	}
 }
 
-func (pm *ProtocolManager) txBroadcastLoop() {
+func (pm *handler) txBroadcastLoop() {
 	for {
 		select {
 		case event := <-pm.txsCh:
@@ -652,7 +648,7 @@ func (pm *ProtocolManager) txBroadcastLoop() {
 }
 
 // orderTxBroadcastLoop broadcast order
-func (pm *ProtocolManager) orderTxBroadcastLoop() {
+func (pm *handler) orderTxBroadcastLoop() {
 	if pm.orderTxSub == nil {
 		return
 	}
@@ -669,7 +665,7 @@ func (pm *ProtocolManager) orderTxBroadcastLoop() {
 }
 
 // lendingTxBroadcastLoop broadcast order
-func (pm *ProtocolManager) lendingTxBroadcastLoop() {
+func (pm *handler) lendingTxBroadcastLoop() {
 	if pm.lendingTxSub == nil {
 		return
 	}
@@ -696,16 +692,16 @@ type NodeInfo struct {
 }
 
 // NodeInfo retrieves some protocol metadata about the running host node.
-func (pm *ProtocolManager) NodeInfo() *NodeInfo {
-	currentBlock := pm.blockchain.CurrentBlock()
-	config := pm.blockchain.Config()
+func (pm *handler) NodeInfo() *NodeInfo {
+	currentBlock := pm.chain.CurrentBlock()
+	config := pm.chain.Config()
 	if config != nil {
 		config = config.CloneForJSON()
 	}
 	return &NodeInfo{
-		Network:    pm.networkId,
-		Difficulty: pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64()),
-		Genesis:    pm.blockchain.Genesis().Hash(),
+		Network:    pm.networkID,
+		Difficulty: pm.chain.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64()),
+		Genesis:    pm.chain.Genesis().Hash(),
 		Config:     config,
 		Head:       currentBlock.Hash(),
 	}

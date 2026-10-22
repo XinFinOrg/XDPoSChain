@@ -160,7 +160,7 @@ func TestSyncBackoffPerPeer(t *testing.T) {
 
 // Tests that requestSync never blocks the message handler.
 func TestRequestSyncDoesNotBlock(t *testing.T) {
-	pm := &ProtocolManager{syncReqCh: make(chan *peer, 1)}
+	pm := &handler{syncReqCh: make(chan *peer, 1)}
 	a, b := &peer{}, &peer{}
 
 	done := make(chan struct{})
@@ -204,7 +204,7 @@ func TestBestPeerExcluding(t *testing.T) {
 // Tests that a vote received while the downloader is synchronising is queued
 // instead of dropped, and handed to the BFT handler once the sync ends.
 func TestVoteQueuedDuringSync(t *testing.T) {
-	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	pm, _ := newTestHandlerMust(t, downloader.FullSync, 0, nil, nil)
 	defer pm.Stop()
 
 	app, net := p2p.MsgPipe()
@@ -217,12 +217,12 @@ func TestVoteQueuedDuringSync(t *testing.T) {
 	}
 	defer pm.peers.Unregister(peer.ID())
 
-	current := pm.blockchain.CurrentBlock()
-	localTD := pm.blockchain.GetTd(current.Hash(), current.Number.Uint64())
+	current := pm.chain.CurrentBlock()
+	localTD := pm.chain.GetTd(current.Hash(), current.Number.Uint64())
 	peer.SetHead(current.Hash(), new(big.Int).Add(localTD, big.NewInt(100)))
 
 	// Hold the downloader in a synchronising state.
-	stub := newStalledDownloaderPeer(pm.downloader, peer.ID(), pm.blockchain.Genesis().Header())
+	stub := newStalledDownloaderPeer(pm.downloader, peer.ID(), pm.chain.Genesis().Header())
 	if err := pm.downloader.RegisterPeer(peer.ID(), ethproto.XDC100, stub); err != nil {
 		t.Fatalf("failed to register downloader peer: %v", err)
 	}

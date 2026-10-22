@@ -77,9 +77,9 @@ type Ethereum struct {
 	// Channel for shutting down the service
 	shutdownChan chan bool
 
-	orderPool       *legacypool.OrderPool
-	lendingPool     *legacypool.LendingPool
-	protocolManager *ProtocolManager
+	orderPool   *legacypool.OrderPool
+	lendingPool *legacypool.LendingPool
+	handler     *handler
 
 	// DB interfaces
 	chainDb ethdb.Database // Block chain database
@@ -330,12 +330,23 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 		stack.RegisterLifecycle(eth.localTxTracker)
 	}
 
-	if eth.protocolManager, err = NewProtocolManagerEx(eth.blockchain.Config(), config.SyncMode, networkID, eth.eventMux, eth.txPool, eth.orderPool, eth.lendingPool, eth.engine, eth.blockchain, chainDb); err != nil {
+	if eth.handler, err = newHandler(&handlerConfig{
+		Database:    chainDb,
+		Chain:       eth.blockchain,
+		TxPool:      eth.txPool,
+		Network:     networkID,
+		Sync:        config.SyncMode,
+		EventMux:    eth.eventMux,
+		ChainConfig: eth.blockchain.Config(),
+		OrderPool:   eth.orderPool,
+		LendingPool: eth.lendingPool,
+		Engine:      eth.engine,
+	}); err != nil {
 		return nil, err
 	}
 	// Set fast sync pivot block if configured
 	if config.FastSyncPivotNumber != 0 {
-		eth.protocolManager.downloader.SetPivotBlock(config.FastSyncPivotNumber, config.FastSyncPivotHash, config.FastSyncPivotRoot)
+		eth.handler.downloader.SetPivotBlock(config.FastSyncPivotNumber, config.FastSyncPivotHash, config.FastSyncPivotRoot)
 	}
 	eth.miner = miner.New(eth, &config.Miner, eth.blockchain.Config(), eth.EventMux(), eth.engine, stack.Config().AnnounceTxs)
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
@@ -411,8 +422,8 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 			return block, false, nil
 		}
 
-		eth.protocolManager.blockFetcher.SetSignHook(signHook)
-		eth.protocolManager.blockFetcher.SetAppendM2HeaderHook(appendM2HeaderHook)
+		eth.handler.blockFetcher.SetSignHook(signHook)
+		eth.handler.blockFetcher.SetAppendM2HeaderHook(appendM2HeaderHook)
 
 		/*
 			XDPoS1.0 Specific hooks
@@ -533,7 +544,7 @@ func (e *Ethereum) APIs() []rpc.API {
 			Service:   NewMinerAPI(e),
 		}, {
 			Namespace: "eth",
-			Service:   downloader.NewDownloaderAPI(e.protocolManager.downloader, e.eventMux),
+			Service:   downloader.NewDownloaderAPI(e.handler.downloader, e.eventMux),
 		}, {
 			Namespace: "eth",
 			Service:   filters.NewFilterAPI(filters.NewFilterSystem(e.APIBackend, filters.Config{LogCacheSize: e.config.FilterLogCacheSize}), false),
@@ -634,7 +645,7 @@ func (e *Ethereum) StartStaking(local bool) error {
 		// mechanism introduced to speed sync times. CPU mining on mainnet is ludicrous
 		// so noone will ever hit this path, whereas marking sync done on CPU mining
 		// will ensure that private networks work in single miner mode too.
-		atomic.StoreUint32(&e.protocolManager.acceptTxs, 1)
+		atomic.StoreUint32(&e.handler.acceptTxs, 1)
 	}
 	go e.miner.Start(eb)
 	return nil
@@ -656,12 +667,12 @@ func (e *Ethereum) ChainDb() ethdb.Database            { return e.chainDb }
 func (e *Ethereum) IsListening() bool                  { return true } // Always listening
 func (e *Ethereum) EthVersion() int                    { return int(ethproto.ProtocolVersions[0]) }
 func (e *Ethereum) NetVersion() uint64                 { return e.networkId }
-func (e *Ethereum) Downloader() *downloader.Downloader { return e.protocolManager.downloader }
+func (e *Ethereum) Downloader() *downloader.Downloader { return e.handler.downloader }
 func (e *Ethereum) BloomIndexer() *core.ChainIndexer   { return e.bloomIndexer }
 
 // Protocols returns all the currently configured
 func (e *Ethereum) Protocols() []p2p.Protocol {
-	return ethproto.MakeProtocols(ethHandler{e.protocolManager})
+	return ethproto.MakeProtocols(ethHandler{e.handler})
 }
 
 // Start implements node.Lifecycle, starting all internal goroutines needed by the
@@ -681,7 +692,7 @@ func (e *Ethereum) Start() error {
 		maxPeers -= e.config.LightPeers
 	}
 	// Start the networking layer and the light server if requested
-	e.protocolManager.Start(maxPeers)
+	e.handler.Start(maxPeers)
 	return nil
 }
 
@@ -696,9 +707,9 @@ func (e *Ethereum) Stop() error {
 	e.blockchain.Stop()
 	log.Info("Ethereum blockchain stopped")
 
-	log.Info("Stopping Ethereum protocolManager start")
-	e.protocolManager.Stop()
-	log.Info("Ethereum protocolManager stopped")
+	log.Info("Stopping Ethereum protocol handler")
+	e.handler.Stop()
+	log.Info("Ethereum protocol handler stopped")
 
 	log.Info("Stopping Ethereum txPool start")
 	e.txPool.Close()
@@ -724,7 +735,7 @@ func (e *Ethereum) Stop() error {
 }
 
 func (e *Ethereum) GetPeer() int {
-	return e.protocolManager.peers.Len()
+	return e.handler.peers.Len()
 }
 
 func (e *Ethereum) GetXDCX() *XDCx.XDCX {

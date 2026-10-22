@@ -37,7 +37,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 )
 
-// lockedBuffer is a concurrency-safe log capture buffer. The protocol manager
+// lockedBuffer is a concurrency-safe log capture buffer. The handler
 // under test starts background goroutines (syncer, sync status logger, tx
 // broadcast loops) and, in some tests, peer handler goroutines that keep
 // emitting trace/debug logs while the test reads and resets the captured output,
@@ -166,7 +166,7 @@ func TestFastSyncDisabling165(t *testing.T) { testFastSyncDisabling(t, ethproto.
 // reporting the live network high-water mark from the peers' announced tips,
 // regardless of whether the node is catching up or already in sync.
 func TestSyncStatusLogger(t *testing.T) {
-	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	pm, _ := newTestHandlerMust(t, downloader.FullSync, 0, nil, nil)
 	defer pm.Stop()
 
 	// Capture the warn-level logs emitted by the sync status logger.
@@ -186,7 +186,7 @@ func TestSyncStatusLogger(t *testing.T) {
 	}
 	defer pm.peers.Unregister(peer.ID())
 
-	current := pm.blockchain.CurrentBlock().Number.Uint64()
+	current := pm.chain.CurrentBlock().Number.Uint64()
 
 	// A peer ahead of us must surface the gap...
 	peer.SetTipNumber(current + 5)
@@ -214,7 +214,7 @@ func TestSyncStatusLogger(t *testing.T) {
 // Tests that a real ethproto.NewBlockHashesMsg announcement updates the peer's tip, which
 // the sync status heartbeat then surfaces as the network high-water mark.
 func TestAnnouncementUpdatesPeerTip(t *testing.T) {
-	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 8, nil, nil)
+	pm, _ := newTestHandlerMust(t, downloader.FullSync, 8, nil, nil)
 	defer pm.Stop()
 
 	// Create a connected peer and deliver a real block-hash announcement for a
@@ -222,14 +222,14 @@ func TestAnnouncementUpdatesPeerTip(t *testing.T) {
 	tp, _ := newTestPeer("announce", int(ethproto.XDC165), pm, true)
 	defer tp.close()
 
-	block := pm.blockchain.GetBlockByNumber(5)
+	block := pm.chain.GetBlockByNumber(5)
 	if block == nil {
 		t.Fatalf("block #5 not found")
 	}
 	if err := p2p.Send(tp.app, ethproto.NewBlockHashesMsg, ethproto.NewBlockHashesPacket{{Hash: block.Hash(), Number: block.NumberU64()}}); err != nil {
 		t.Fatalf("failed to send block announcement: %v", err)
 	}
-	// Wait for the protocol handler to record the announced tip.
+	// Wait for the handler to record the announced tip.
 	deadline := time.After(5 * time.Second)
 	for tp.peer.TipNumber() != block.NumberU64() {
 		select {
@@ -247,7 +247,7 @@ func TestAnnouncementUpdatesPeerTip(t *testing.T) {
 // Tests that a far-future block announcement (which the fetcher would discard)
 // does not inflate the peer's recorded tip.
 func TestAnnouncementRejectsFarFutureTip(t *testing.T) {
-	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 8, nil, nil)
+	pm, _ := newTestHandlerMust(t, downloader.FullSync, 8, nil, nil)
 	defer pm.Stop()
 
 	tp, _ := newTestPeer("announce", int(ethproto.XDC165), pm, true)
@@ -255,7 +255,7 @@ func TestAnnouncementRejectsFarFutureTip(t *testing.T) {
 
 	// A plausible announcement within the fetcher's window is recorded as the
 	// peer's tip.
-	block := pm.blockchain.GetBlockByNumber(5)
+	block := pm.chain.GetBlockByNumber(5)
 	if err := p2p.Send(tp.app, ethproto.NewBlockHashesMsg, ethproto.NewBlockHashesPacket{{Hash: block.Hash(), Number: block.NumberU64()}}); err != nil {
 		t.Fatalf("failed to send block announcement: %v", err)
 	}
@@ -289,14 +289,14 @@ func TestAnnouncementRejectsFarFutureTip(t *testing.T) {
 // Tests that the ethproto.NewBlockMsg handler records the peer's tip only for blocks
 // within the fetcher's plausibility window, and ignores far-future blocks.
 func TestNewBlockMsgUpdatesTip(t *testing.T) {
-	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 8, nil, nil)
+	pm, _ := newTestHandlerMust(t, downloader.FullSync, 8, nil, nil)
 	defer pm.Stop()
 
 	tp, _ := newTestPeer("propagate", int(ethproto.XDC165), pm, true)
 	defer tp.close()
 
 	// A plausible propagated block records its number as the peer's tip.
-	plausible := pm.blockchain.GetBlockByNumber(5)
+	plausible := pm.chain.GetBlockByNumber(5)
 	if plausible == nil {
 		t.Fatalf("block #5 not found")
 	}
@@ -367,7 +367,7 @@ func TestComputeSyncStatus(t *testing.T) {
 // is paused deterministically at the downloader's bulk-download phase by a stub
 // peer, so the test never relies on a real sync still being in flight.
 func TestSyncStatusDuringSync(t *testing.T) {
-	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	pm, _ := newTestHandlerMust(t, downloader.FullSync, 0, nil, nil)
 	defer pm.Stop()
 
 	// Capture the warn-level logs emitted by the sync status logger.
@@ -388,14 +388,14 @@ func TestSyncStatusDuringSync(t *testing.T) {
 	}
 	defer pm.peers.Unregister(peer.ID())
 
-	current := pm.blockchain.CurrentBlock()
-	localTD := pm.blockchain.GetTd(current.Hash(), current.Number.Uint64())
+	current := pm.chain.CurrentBlock()
+	localTD := pm.chain.GetTd(current.Hash(), current.Number.Uint64())
 	peer.SetHead(current.Hash(), new(big.Int).Add(localTD, big.NewInt(100)))
 
 	// Register a stub downloader peer under the same id. It answers the height
 	// probe and the ancestor search, then blocks the bulk download, holding the
 	// downloader in a deterministic synchronising state with a known target.
-	stub := newStalledDownloaderPeer(pm.downloader, peer.ID(), pm.blockchain.Genesis().Header())
+	stub := newStalledDownloaderPeer(pm.downloader, peer.ID(), pm.chain.Genesis().Header())
 	if err := pm.downloader.RegisterPeer(peer.ID(), ethproto.XDC100, stub); err != nil {
 		t.Fatalf("failed to register downloader peer: %v", err)
 	}
@@ -438,14 +438,14 @@ func TestSyncStatusDuringSync(t *testing.T) {
 func testFastSyncDisabling(t *testing.T, protocol int) {
 	t.Parallel()
 
-	// Create a pristine protocol manager, check that fast sync is left enabled
-	pmEmpty, _ := newTestProtocolManagerMust(t, downloader.FastSync, 0, nil, nil)
+	// Create a pristine handler, check that fast sync is left enabled
+	pmEmpty, _ := newTestHandlerMust(t, downloader.FastSync, 0, nil, nil)
 	defer pmEmpty.Stop()
 	if atomic.LoadUint32(&pmEmpty.snapSync) == 0 {
 		t.Fatalf("snap sync disabled on pristine blockchain")
 	}
-	// Create a full protocol manager, check that snap sync gets disabled
-	pmFull, _ := newTestProtocolManagerMust(t, downloader.FastSync, 1024, nil, nil)
+	// Create a full handler, check that snap sync gets disabled
+	pmFull, _ := newTestHandlerMust(t, downloader.FastSync, 1024, nil, nil)
 	defer pmFull.Stop()
 	if atomic.LoadUint32(&pmFull.snapSync) == 1 {
 		t.Fatalf("snap sync not disabled on non-empty blockchain")
@@ -478,7 +478,7 @@ func testFastSyncDisabling(t *testing.T, protocol int) {
 // ended itself - here an interrupted import - leaves the peer's backoff alone,
 // while a batch the peer cannot link to our chain is recorded against it.
 func TestHandleSyncResult(t *testing.T) {
-	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	pm, _ := newTestHandlerMust(t, downloader.FullSync, 0, nil, nil)
 	defer pm.Stop()
 
 	const id = "sync-result-peer"
