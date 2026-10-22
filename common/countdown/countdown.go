@@ -106,7 +106,7 @@ func (t *CountdownTimer) setInitilised(value bool) {
 }
 
 func (t *CountdownTimer) isInitilised() bool {
-	t.lock.Lock()
-	defer t.lock.Unlock()
+	t.lock.RLock()
+	defer t.lock.RUnlock()
 	return t.initilised
 }
