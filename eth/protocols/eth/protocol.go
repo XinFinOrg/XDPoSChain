@@ -268,8 +268,8 @@ func (p *NewBlockPacket) Name() string { return "NewBlock" }
 // Kind implements Packet.
 func (p *NewBlockPacket) Kind() byte { return NewBlockMsg }
 
-// SanityCheck verifies that the values are reasonable, as a DoS protection.
-func (p *NewBlockPacket) SanityCheck() error {
+// sanityCheck verifies that the values are reasonable, as a DoS protection.
+func (p *NewBlockPacket) sanityCheck() error {
 	if err := p.Block.SanityCheck(); err != nil {
 		return err
 	}
@@ -306,8 +306,8 @@ func (p *BlockBodiesPacket) Name() string { return "BlockBodies" }
 // Kind implements Packet.
 func (p *BlockBodiesPacket) Kind() byte { return BlockBodiesMsg }
 
-// SanityCheck verifies that the uncle headers are reasonable, as a DoS protection.
-func (p BlockBodiesPacket) SanityCheck() error {
+// sanityCheck verifies that the uncle headers are reasonable, as a DoS protection.
+func (p BlockBodiesPacket) sanityCheck() error {
 	for bodyIndex, body := range p {
 		if body == nil {
 			return fmt.Errorf("nil block body at index %d", bodyIndex)

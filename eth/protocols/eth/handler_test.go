@@ -820,6 +820,131 @@ func TestOversizeMessage(t *testing.T) {
 	}
 }
 
+// sendPropagatedBlock hands a propagated block to the peer's message pipe the
+// way the transport layer does, including the frame's arrival stamp.
+func sendPropagatedBlock(app *p2p.MsgPipeRW, block *types.Block, td *big.Int, arrived time.Time) error {
+	size, payload, err := rlp.EncodeToReader([]any{block, td})
+	if err != nil {
+		return err
+	}
+	return app.WriteMsg(p2p.Msg{Code: NewBlockMsg, Size: uint32(size), Payload: payload, ReceivedAt: arrived})
+}
+
+// Tests that a propagated block reaches the backend stamped with the transport
+// facts and recorded as known for the peer that sent it.
+func TestPropagatedBlockReachesBackend(t *testing.T) {
+	backend := newTestBackend(t, 1, nil)
+
+	received := make(chan *NewBlockPacket, 1)
+	backend.handler = func(peer *Peer, packet Packet, size uint32) error {
+		received <- packet.(*NewBlockPacket)
+		return nil
+	}
+	peer := newTestPeer(t, "peer", XDC165, backend)
+
+	block := backend.chain.GetBlockByNumber(1)
+	arrived := time.Unix(1700000000, 0)
+	go func() { _ = sendPropagatedBlock(peer.app, block, big.NewInt(131136), arrived) }()
+
+	select {
+	case packet := <-received:
+		if packet.Block.Hash() != block.Hash() {
+			t.Fatalf("propagated block mismatch: have %v, want %v", packet.Block.Hash(), block.Hash())
+		}
+		if packet.Block.ReceivedFrom != peer.Peer {
+			t.Errorf("wrong sender stamp: have %v, want %v", packet.Block.ReceivedFrom, peer.Peer)
+		}
+		if !packet.Block.ReceivedAt.Equal(arrived) {
+			t.Errorf("wrong arrival stamp: have %v, want %v", packet.Block.ReceivedAt, arrived)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("propagated block was not handed to the backend within 2 seconds")
+	}
+	if !peer.Peer.KnownBlock(block.Hash()) {
+		t.Error("propagated block was not marked as known for the peer")
+	}
+}
+
+// Tests that a propagated block with a structurally invalid payload is dropped
+// in the wire loop: it never reaches the backend and the peer is not recorded as
+// knowing it, while a later valid block still does both.
+func TestInvalidPropagatedBlockNotMarked(t *testing.T) {
+	backend := newTestBackend(t, 1, nil)
+
+	received := make(chan *NewBlockPacket, 3)
+	backend.handler = func(peer *Peer, packet Packet, size uint32) error {
+		received <- packet.(*NewBlockPacket)
+		return nil
+	}
+	peer := newTestPeer(t, "peer", XDC165, backend)
+
+	block := backend.chain.GetBlockByNumber(1)
+	body := types.Body{Transactions: block.Transactions(), Uncles: block.Uncles()}
+
+	invalidUncles := block.Header()
+	invalidUncles.UncleHash[0]++
+	invalidBody := block.Header()
+	invalidBody.TxHash[0]++
+
+	invalid := []*types.Block{
+		types.NewBlockWithHeader(invalidUncles).WithBody(body),
+		types.NewBlockWithHeader(invalidBody).WithBody(body),
+	}
+	arrived := time.Unix(1700000000, 0)
+	go func() {
+		for _, announced := range append(invalid, block) {
+			if err := sendPropagatedBlock(peer.app, announced, big.NewInt(131136), arrived); err != nil {
+				return
+			}
+		}
+	}()
+	// The pipe is ordered, so the valid block arriving proves the invalid ones
+	// before it were already processed and dropped.
+	select {
+	case packet := <-received:
+		if packet.Block.Hash() != block.Hash() {
+			t.Fatalf("invalid propagated block reached the backend: %v", packet.Block.Hash())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("valid propagated block was not handed to the backend within 2 seconds")
+	}
+	for _, dropped := range invalid {
+		if peer.Peer.KnownBlock(dropped.Hash()) {
+			t.Errorf("invalid propagated block %v was marked as known for the peer", dropped.Hash())
+		}
+	}
+	if !peer.Peer.KnownBlock(block.Hash()) {
+		t.Error("valid propagated block was not marked as known for the peer")
+	}
+}
+
+// Tests that a block bodies payload carrying an oversized uncle is rejected in
+// the wire loop, before the backend sees it.
+func TestOversizedUncleBlockBodiesRejected(t *testing.T) {
+	backend := newTestBackend(t, 1, nil)
+
+	reached := make(chan Packet, 1)
+	backend.handler = func(peer *Peer, packet Packet, size uint32) error {
+		reached <- packet
+		return nil
+	}
+	peer := newTestPeer(t, "peer", XDC165, backend)
+
+	bodies := BlockBodiesPacket{{Uncles: []*types.Header{{Extra: bytes.Repeat([]byte{0x01}, 20*1024+1)}}}}
+	go func() { _ = p2p.Send(peer.app, BlockBodiesMsg, bodies) }()
+
+	select {
+	case packet := <-reached:
+		t.Fatalf("block bodies with an oversized uncle reached the backend: %v", packet)
+	case err := <-peer.errc:
+		if err == nil {
+			t.Fatal("block bodies with an oversized uncle were accepted")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("block bodies with an oversized uncle were not rejected within 2 seconds")
+	}
+}
+
 // Tests that the XDC-specific packets are decoded and handed to the backend
 // instead of being dropped.
 func TestXDCPacketsReachBackend(t *testing.T) {

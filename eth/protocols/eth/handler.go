@@ -28,6 +28,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enr"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
+	"github.com/XinFinOrg/XDPoSChain/trie"
 )
 
 const (
@@ -302,6 +303,9 @@ func handleMessage(backend Backend, peer *Peer) error {
 		if err := msg.Decode(&request); err != nil {
 			return errResp(ErrDecode, "msg %v: %v", msg, err)
 		}
+		if err := request.sanityCheck(); err != nil {
+			return err
+		}
 		return backend.Handle(peer, &request, msg.Size)
 
 	case peer.version >= XDC100 && msg.Code == GetNodeDataMsg:
@@ -395,9 +399,27 @@ func handleMessage(backend Backend, peer *Peer) error {
 		if err := msg.Decode(&request); err != nil {
 			return errResp(ErrDecode, "%v: %v", msg, err)
 		}
-		// Stamp the block with the transport facts: when the frame arrived and,
-		// later on, which peer it came from.
+		// Drop a block whose payload does not match its own header without
+		// disconnecting the peer: the remote may still be running an older build.
+		if hash := types.CalcUncleHash(request.Block.Uncles()); hash != request.Block.UncleHash() {
+			log.Warn("Propagated block has invalid uncles", "have", hash, "exp", request.Block.UncleHash())
+			return nil // TODO(karalabe): return error eventually, but wait a few releases
+		}
+		if hash := types.DeriveSha(request.Block.Transactions(), trie.NewStackTrie(nil)); hash != request.Block.TxHash() {
+			log.Warn("Propagated block has invalid body", "have", hash, "exp", request.Block.TxHash())
+			return nil // TODO(karalabe): return error eventually, but wait a few releases
+		}
+		if err := request.sanityCheck(); err != nil {
+			return err
+		}
+		// Stamp the block with the transport facts: when the frame arrived and
+		// which peer it came from.
 		request.Block.ReceivedAt = msg.ReceivedAt
+		request.Block.ReceivedFrom = peer
+
+		// Mark the peer as owning the block, so it is never propagated back to it
+		peer.MarkBlock(request.Block.Hash())
+
 		return backend.Handle(peer, &request, msg.Size)
 
 	case msg.Code == NewPooledTransactionHashesMsg && peer.version >= XDC165:

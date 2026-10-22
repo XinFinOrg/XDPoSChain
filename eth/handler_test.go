@@ -249,6 +249,36 @@ func testBroadcastMalformedBlock(t *testing.T, protocol int) {
 	}
 }
 
+// Tests that a propagated block is still queued into the block fetcher by the
+// node layer: the fetcher imports it, so the local chain advances onto it.
+func TestPropagatedBlockQueuedIntoFetcher(t *testing.T) {
+	pm, db := newTestProtocolManagerMust(t, downloader.FullSync, 8, nil, nil)
+	defer pm.Stop()
+
+	tp, _ := newTestPeer("propagate", int(ethproto.XDC165), pm, true)
+	defer tp.close()
+
+	// Build a block on top of our head that we do not have ourselves yet.
+	head := pm.blockchain.CurrentBlock()
+	chain, _ := core.GenerateChain(pm.blockchain.Config(), pm.blockchain.GetBlockByHash(head.Hash()), ethash.NewFaker(), db, 1, nil)
+	block := chain[0]
+
+	if err := p2p.Send(tp.app, ethproto.NewBlockMsg, []any{block, big.NewInt(131136)}); err != nil {
+		t.Fatalf("failed to send ethproto.NewBlockMsg: %v", err)
+	}
+	deadline := time.After(5 * time.Second)
+	for pm.blockchain.CurrentBlock().Number.Cmp(head.Number) <= 0 {
+		select {
+		case <-deadline:
+			t.Fatalf("propagated block was not queued into the fetcher, head still at %d", pm.blockchain.CurrentBlock().Number.Uint64())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if got := pm.blockchain.CurrentBlock().Hash(); got != block.Hash() {
+		t.Errorf("chain advanced to the wrong block: have %v, want %v", got, block.Hash())
+	}
+}
+
 // Tests that post eth protocol handshake, DAO fork-enabled clients also execute
 // a DAO "challenge" verifying each others' DAO fork headers to ensure they're on
 // compatible chains.

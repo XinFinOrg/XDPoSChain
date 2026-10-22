@@ -30,7 +30,6 @@ import (
 	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
-	"github.com/XinFinOrg/XDPoSChain/trie"
 )
 
 // ethHandler adapts the protocol manager to the wire layer's Backend interface,
@@ -129,9 +128,6 @@ func (pm *ProtocolManager) Handle(p *ethproto.Peer, packet ethproto.Packet, size
 
 	case *ethproto.BlockBodiesPacket:
 		request := *packet
-		if err := request.SanityCheck(); err != nil {
-			return err
-		}
 		// Deliver them all to the downloader for queuing
 		transactions := make([][]*types.Transaction, len(request))
 		uncles := make([][]*types.Header, len(request))
@@ -194,23 +190,8 @@ func (pm *ProtocolManager) Handle(p *ethproto.Peer, packet ethproto.Packet, size
 
 	case *ethproto.NewBlockPacket:
 		request := packet
-		if hash := types.CalcUncleHash(request.Block.Uncles()); hash != request.Block.UncleHash() {
-			log.Warn("Propagated block has invalid uncles", "have", hash, "exp", request.Block.UncleHash())
-			break // TODO(karalabe): return error eventually, but wait a few releases
-		}
-		if hash := types.DeriveSha(request.Block.Transactions(), trie.NewStackTrie(nil)); hash != request.Block.TxHash() {
-			log.Warn("Propagated block has invalid body", "have", hash, "exp", request.Block.TxHash())
-			break // TODO(karalabe): return error eventually, but wait a few releases
-		}
-		if err := request.SanityCheck(); err != nil {
-			return err
-		}
-		request.Block.ReceivedFrom = p
-
-		// Mark the peer as owning the block, track its tip (only when the block
-		// number is within the fetcher's plausibility window), and schedule it
-		// for import
-		p.MarkBlock(request.Block.Hash())
+		// Track the peer's tip (only when the block number is within the
+		// fetcher's plausibility window) and schedule the block for import
 		if fetcher.IsPlausibleAnnouncement(request.Block.NumberU64(), pm.blockchain.CurrentBlock().Number.Uint64()) {
 			p.SetTipNumber(request.Block.NumberU64())
 		}

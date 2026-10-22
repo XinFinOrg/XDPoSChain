@@ -277,7 +277,7 @@ func TestBlockBodiesDataSanityCheckUncleExtraSize(t *testing.T) {
 		}},
 	}}
 
-	if err := request.SanityCheck(); err == nil {
+	if err := request.sanityCheck(); err == nil {
 		t.Fatal("expected oversized uncle extra data to fail sanity check")
 	}
 }
