@@ -17,8 +17,10 @@
 package eth
 
 import (
+	"math"
 	"math/big"
 	"math/rand"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +32,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
+	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
@@ -50,7 +53,7 @@ func testGetBlockHeaders(t *testing.T, protocol uint) {
 		unknown[i] = byte(i)
 	}
 	// Create a batch of tests for various scenarios
-	limit := uint64(downloader.MaxHeaderFetch)
+	limit := uint64(maxHeadersServe)
 	tests := []struct {
 		query  *GetBlockHeadersPacket // The query to execute for header retrieval
 		expect []common.Hash          // The hashes of the block whose headers are expected
@@ -159,6 +162,13 @@ func testGetBlockHeaders(t *testing.T, protocol uint) {
 				chain.GetBlockByNumber(1).Hash(),
 			},
 		},
+		// Check a corner case where a reverse skip overflows and stops at the origin
+		{
+			&GetBlockHeadersPacket{Origin: HashOrNumber{Hash: chain.GetBlockByNumber(1).Hash()}, Amount: 2, Reverse: true, Skip: ^uint64(0)},
+			[]common.Hash{
+				chain.GetBlockByNumber(1).Hash(),
+			},
+		},
 		// Check that non existing headers aren't returned
 		{
 			&GetBlockHeadersPacket{Origin: HashOrNumber{Hash: unknown}, Amount: 1},
@@ -166,6 +176,18 @@ func testGetBlockHeaders(t *testing.T, protocol uint) {
 		}, {
 			&GetBlockHeadersPacket{Origin: HashOrNumber{Number: chain.CurrentBlock().Number.Uint64() + 1}, Amount: 1},
 			[]common.Hash{},
+		},
+		// Check that a request made entirely of hashes the node does not have
+		// stops after the origin instead of spending a lookup per header asked
+		{
+			&GetBlockHeadersPacket{Origin: HashOrNumber{Hash: unknown}, Amount: math.MaxInt32, Skip: 1},
+			[]common.Hash{},
+		},
+		// Check that a skip on the order of the chain height cannot turn into a
+		// reply of that size: the walk stops at the first header it cannot resolve
+		{
+			&GetBlockHeadersPacket{Origin: HashOrNumber{Hash: chain.CurrentBlock().Hash()}, Skip: chain.CurrentBlock().Number.Uint64(), Amount: math.MaxInt32},
+			[]common.Hash{chain.CurrentBlock().Hash()},
 		},
 	}
 	// Run each of the tests and verify the results against the chain
@@ -191,6 +213,145 @@ func testGetBlockHeaders(t *testing.T, protocol uint) {
 				}
 			}
 		}
+	}
+}
+
+// TestGetBlockHeadersSkipAllocation checks that a forward hash query whose skip
+// is on the order of the chain height does not allocate in proportion to that
+// skip. The reply carries two headers whatever the skip is, so serving it may
+// not cost a skip-sized hash slice more than a benign query of the same size.
+func TestGetBlockHeadersSkipAllocation(t *testing.T) {
+	backend := newTestBackend(t, downloader.MaxHashFetch+15, nil)
+	peer := newTestPeer(t, "peer", XDC165, backend)
+	chain := backend.chain
+
+	// A query starting one header above genesis and skipping forward by almost
+	// the whole chain height: the header the step lands on exists, so the walk
+	// has to resolve where the step came from.
+	var (
+		height = chain.CurrentBlock().Number.Uint64()
+		origin = chain.GetHeaderByNumber(1)
+		skip   = height - 2
+		target = chain.GetHeaderByNumber(1 + skip + 1)
+	)
+	if target == nil {
+		t.Fatalf("test chain is too short: no header at %d", 1+skip+1)
+	}
+	hostile := &GetBlockHeadersPacket{Origin: HashOrNumber{Hash: origin.Hash()}, Amount: 3, Skip: skip}
+	hostileExpect := []*types.Header{origin, target}
+
+	// The reference request answers three consecutive headers, the same amount
+	// of work as the hostile query but without a hash walk behind it.
+	benign := &GetBlockHeadersPacket{Origin: HashOrNumber{Number: 1}, Amount: 3}
+	benignExpect := []*types.Header{
+		chain.GetHeaderByNumber(1),
+		chain.GetHeaderByNumber(2),
+		chain.GetHeaderByNumber(3),
+	}
+	// allocatedPerRequest warms the peer, the header caches and the encoders up,
+	// then reports how many bytes one round trip allocates.
+	allocatedPerRequest := func(query *GetBlockHeadersPacket, expect []*types.Header) uint64 {
+		roundTrip := func() {
+			if err := p2p.Send(peer.app, GetBlockHeadersMsg, query); err != nil {
+				t.Fatalf("headers request failed: %v", err)
+			}
+			if err := p2p.ExpectMsg(peer.app, BlockHeadersMsg, expect); err != nil {
+				t.Fatalf("headers mismatch: %v", err)
+			}
+		}
+		roundTrip()
+
+		const runs = 16
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		for i := 0; i < runs; i++ {
+			roundTrip()
+		}
+		runtime.ReadMemStats(&after)
+		return (after.TotalAlloc - before.TotalAlloc) / runs
+	}
+	var (
+		benignAlloc  = allocatedPerRequest(benign, benignExpect)
+		hostileAlloc = allocatedPerRequest(hostile, hostileExpect)
+		perSkip      = skip * uint64(common.HashLength)
+	)
+	t.Logf("per request: benign %d bytes, hostile %d bytes, a skip-sized hash slice is %d bytes", benignAlloc, hostileAlloc, perSkip)
+	if hostileAlloc > benignAlloc+perSkip/2 {
+		t.Fatalf("serving a query with skip %d allocated %d bytes per request, %d more than the benign %d and over half the skip-sized hash slice of %d", skip, hostileAlloc, hostileAlloc-benignAlloc, benignAlloc, perSkip)
+	}
+}
+
+// writeSideChainHeaders writes a branch of the given length off parent straight
+// into the database, without making it canonical: the headers are readable by
+// hash and number, but the canonical index still maps their heights to the real
+// chain.
+func writeSideChainHeaders(db ethdb.Database, parent *types.Header, length int) []*types.Header {
+	headers := make([]*types.Header, length)
+	for i := range headers {
+		headers[i] = &types.Header{
+			ParentHash: parent.Hash(),
+			Number:     new(big.Int).SetUint64(parent.Number.Uint64() + 1),
+			Difficulty: parent.Difficulty,
+			GasLimit:   parent.GasLimit,
+			Time:       parent.Time + 1,
+		}
+		rawdb.WriteHeader(db, headers[i])
+		parent = headers[i]
+	}
+	return headers
+}
+
+// TestGetBlockHeadersNonCanonicalBudget sends a reverse hash query from the tip
+// of a side chain deeper than the non-canonical header budget. The walk back to
+// the canonical chain runs out of budget, so the reply stops after the origin
+// instead of continuing from wherever the walk happened to land.
+func TestGetBlockHeadersNonCanonicalBudget(t *testing.T) {
+	backend := newTestBackend(t, downloader.MaxHashFetch+15, nil)
+	peer := newTestPeer(t, "peer", XDC165, backend)
+	chain := backend.chain
+
+	side := writeSideChainHeaders(backend.db, chain.GetHeaderByNumber(100), 120) // heights 101..220
+	origin := side[len(side)-1]
+
+	// The walk back to the canonical chain costs one unit per side header, so a
+	// skip covering the whole branch spends more than the budget allows.
+	query := &GetBlockHeadersPacket{
+		Origin:  HashOrNumber{Hash: origin.Hash()},
+		Amount:  3,
+		Skip:    uint64(len(side) - 1),
+		Reverse: true,
+	}
+	if err := p2p.Send(peer.app, GetBlockHeadersMsg, query); err != nil {
+		t.Fatalf("headers request failed: %v", err)
+	}
+	if err := p2p.ExpectMsg(peer.app, BlockHeadersMsg, []*types.Header{origin}); err != nil {
+		t.Fatalf("headers mismatch: %v", err)
+	}
+}
+
+// TestGetBlockHeadersForwardSideChain sends a forward hash query from a side
+// chain whose skip lands on an existing canonical header. Walking back from
+// that header reaches the canonical hash at the origin's height rather than
+// the origin hash itself, so the walk stops at the origin instead of serving
+// canonical headers the peer did not ask for.
+func TestGetBlockHeadersForwardSideChain(t *testing.T) {
+	backend := newTestBackend(t, 512+15, nil)
+	peer := newTestPeer(t, "peer", XDC165, backend)
+	chain := backend.chain
+
+	side := writeSideChainHeaders(backend.db, chain.GetHeaderByNumber(100), 5) // heights 101..105
+	origin := side[0]
+	query := &GetBlockHeadersPacket{
+		Origin: HashOrNumber{Hash: origin.Hash()},
+		Amount: 3,
+		Skip:   3, // the step lands on the canonical header at 105
+	}
+	if err := p2p.Send(peer.app, GetBlockHeadersMsg, query); err != nil {
+		t.Fatalf("headers request failed: %v", err)
+	}
+	if err := p2p.ExpectMsg(peer.app, BlockHeadersMsg, []*types.Header{origin}); err != nil {
+		t.Fatalf("headers mismatch: %v", err)
 	}
 }
 

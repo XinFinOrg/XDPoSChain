@@ -34,6 +34,8 @@ import (
 const (
 	softResponseLimit = 2 * 1024 * 1024 // Target maximum size of returned blocks, headers or node data.
 	estHeaderRlpSize  = 500             // Approximate size of an RLP encoded block header
+
+	maxHeadersServe = 192 // Amount of block headers to serve per request
 )
 
 func errResp(code errCode, format string, v ...interface{}) error {
@@ -157,6 +159,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 			return errResp(ErrDecode, "%v: %v", msg, err)
 		}
 		hashMode := query.Origin.Hash != (common.Hash{})
+		first := true
 		maxNonCanonical := uint64(100)
 
 		// Gather headers until the fetch or network limits is reached
@@ -164,36 +167,44 @@ func handleMessage(backend Backend, peer *Peer) error {
 			bytes   common.StorageSize
 			headers []*types.Header
 			unknown bool
+			lookups int
 		)
-		for !unknown && len(headers) < int(query.Amount) && bytes < softResponseLimit && len(headers) < downloader.MaxHeaderFetch {
+		for !unknown && len(headers) < int(query.Amount) && bytes < softResponseLimit &&
+			len(headers) < maxHeadersServe && lookups < 2*maxHeadersServe {
+			lookups++
 			// Retrieve the next header satisfying the query
 			var origin *types.Header
 			if hashMode {
-				origin = backend.Chain().GetHeaderByHash(query.Origin.Hash)
+				if first {
+					first = false
+					origin = backend.Chain().GetHeaderByHash(query.Origin.Hash)
+					if origin != nil {
+						query.Origin.Number = origin.Number.Uint64()
+					}
+				} else {
+					origin = backend.Chain().GetHeader(query.Origin.Hash, query.Origin.Number)
+				}
 			} else {
 				origin = backend.Chain().GetHeaderByNumber(query.Origin.Number)
 			}
 			if origin == nil {
 				break
 			}
-			number := origin.Number.Uint64()
 			headers = append(headers, origin)
 			bytes += estHeaderRlpSize
 
 			// Advance to the next header of the query
 			switch {
-			case query.Origin.Hash != (common.Hash{}) && query.Reverse:
+			case hashMode && query.Reverse:
 				// Hash based traversal towards the genesis block
-				for i := 0; i < int(query.Skip)+1; i++ {
-					if header := backend.Chain().GetHeader(query.Origin.Hash, number); header != nil {
-						query.Origin.Hash = header.ParentHash
-						number--
-					} else {
-						unknown = true
-						break
-					}
+				ancestor := query.Skip + 1
+				if ancestor == 0 {
+					unknown = true
+				} else {
+					query.Origin.Hash, query.Origin.Number = backend.Chain().GetAncestor(query.Origin.Hash, query.Origin.Number, ancestor, &maxNonCanonical)
+					unknown = query.Origin.Hash == (common.Hash{})
 				}
-			case query.Origin.Hash != (common.Hash{}) && !query.Reverse:
+			case hashMode && !query.Reverse:
 				// Hash based traversal towards the leaf block
 				var (
 					current = origin.Number.Uint64()
@@ -206,8 +217,9 @@ func handleMessage(backend Backend, peer *Peer) error {
 				} else {
 					if header := backend.Chain().GetHeaderByNumber(next); header != nil {
 						nextHash := header.Hash()
-						if expOldHash, _ := backend.Chain().GetAncestor(nextHash, next, query.Skip+1, &maxNonCanonical); expOldHash == query.Origin.Hash {
-							query.Origin.Hash = nextHash
+						expOldHash, _ := backend.Chain().GetAncestor(nextHash, next, query.Skip+1, &maxNonCanonical)
+						if expOldHash == query.Origin.Hash {
+							query.Origin.Hash, query.Origin.Number = nextHash, next
 						} else {
 							unknown = true
 						}
