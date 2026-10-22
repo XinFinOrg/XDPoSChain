@@ -619,6 +619,11 @@ func CalculateRewardForSigner(chainReward *big.Int, signers map[common.Address]*
 }
 
 // Calculate reward for signers with fixed reward.
+//
+// This is the TIPFixedReward payout and its logic is wrong: a signer gets the
+// full chainReward as long as it signed at least one sign slot. Testnet already
+// ran blocks with it, so it must not change, or those blocks would no longer
+// replay. CalculateRewardForSignerProportional is the corrected payout.
 func CalculateRewardForSignerFixed(chainReward *big.Int, signers map[common.Address]*RewardLog) (map[common.Address]*big.Int, error) {
 	resultSigners := make(map[common.Address]*big.Int)
 	// Add reward for signers.
