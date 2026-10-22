@@ -19,6 +19,7 @@ package fetcher
 import (
 	"errors"
 	"math/big"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -318,6 +319,31 @@ func verifyProposeBlockHandlerCalled(t *testing.T, proposedBlockChan chan *types
 	case <-proposedBlockChan:
 	case <-time.After(50 * time.Millisecond):
 		t.Fatalf("did not call propose block handler")
+	}
+}
+
+// TestNewBlockFetcherStoresProposedHandler pins the constructor half of the
+// proposed-block wiring: the fetcher keeps exactly the closure it is handed
+// (identity, not a wrapper), and a nil handler is normalized to a callable
+// no-op so the import path needs no nil guard. The other half - eth's
+// NewProtocolManager handing the fetcher the snapSync-gated closure rather
+// than the bare consensus handler - is pinned at the call site (see
+// eth/handler.go): reading this field from outside the package required an
+// exported, test-only accessor, which was removed rather than kept as
+// supported API.
+func TestNewBlockFetcherStoresProposedHandler(t *testing.T) {
+	sentinel := func(*types.Header) error { return nil }
+	fetcher := NewBlockFetcher(nil, nil, sentinel, nil, nil, nil, nil, nil)
+	if fetcher.proposedBlockCallback() == nil {
+		t.Fatal("fetcher dropped the proposed-block handler it was given")
+	}
+	if got, want := reflect.ValueOf(fetcher.proposedBlockCallback()).Pointer(), reflect.ValueOf(sentinel).Pointer(); got != want {
+		t.Fatalf("fetcher wrapped or replaced the proposed-block handler, got %x want %x", got, want)
+	}
+	// A nil handler must still leave a callable no-op behind.
+	noop := NewBlockFetcher(nil, nil, nil, nil, nil, nil, nil, nil)
+	if err := noop.proposedBlockCallback()(&types.Header{}); err != nil {
+		t.Fatalf("normalized no-op handler returned error: %v", err)
 	}
 }
 
@@ -939,4 +965,19 @@ func TestBlockMemoryExhaustionAttack(t *testing.T) {
 		verifyImportEvent(t, imported, true)
 	}
 	verifyImportDone(t, imported)
+}
+
+// TestNewBlockFetcherNormalizesNilHandler pins the nil-callback contract: a
+// nil proposed-block handler means "not wired" and must be normalized to a
+// no-op inside NewBlockFetcher, mirroring the downloader's nil tolerance, so
+// the import path never needs a nil guard and a caller can never nil-panic
+// by copying the downloader's wiring style.
+func TestNewBlockFetcherNormalizesNilHandler(t *testing.T) {
+	f := NewBlockFetcher(nil, nil, nil, nil, nil, nil, nil, nil)
+	if f.handleProposedBlock == nil {
+		t.Fatal("nil proposed-block handler must be normalized to a no-op")
+	}
+	if err := f.handleProposedBlock(nil); err != nil {
+		t.Fatalf("normalized handler must be a no-op, got %v", err)
+	}
 }

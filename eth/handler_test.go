@@ -21,11 +21,14 @@ import (
 	"math"
 	"math/big"
 	"math/rand"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
@@ -36,6 +39,8 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/eth/ethconfig"
 	"github.com/XinFinOrg/XDPoSChain/event"
+	"github.com/XinFinOrg/XDPoSChain/log"
+	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -925,4 +930,679 @@ func TestRegisterDownloaderPeerUndoesRacedRemoval(t *testing.T) {
 		t.Fatalf("reconnect blocked by stale downloader entry: %v", err)
 	}
 	pm.downloader.UnregisterPeer(p.id)
+}
+
+// TestFetcherWiresProposedHandlerByConfig pins the branch of
+// NewProtocolManager that decides whether a proposed-block handler exists at
+// all: an XDPoS chain config resolves the consensus handler (the branch that
+// also builds the snapSync-gated fetcher closure), while a non-XDPoS config
+// leaves it nil, so the fetcher is wired with the explicit no-op and the
+// downloader keeps its nil. Which argument the fetcher is handed inside the
+// XDPoS branch - the gated closure, not the bare handler - is pinned at the
+// call site (see eth/handler.go): reading it back from here needed an
+// exported, test-only accessor on the fetcher, which was removed rather than
+// kept as supported API. The gate closure's behavior is covered by
+// TestFetcherProposedBlockHandlerGates and the constructor contract by the
+// fetcher package's TestNewBlockFetcherStoresProposedHandler.
+func TestFetcherWiresProposedHandlerByConfig(t *testing.T) {
+	// Non-XDPoS: the ethash test manager must leave the handler unresolved.
+	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	defer pm.Stop()
+	pm.parkedProposedMu.Lock()
+	handler := pm.proposedBlockHandler
+	pm.parkedProposedMu.Unlock()
+	if handler != nil {
+		t.Fatal("non-XDPoS manager must not resolve a proposed-block handler")
+	}
+
+	// XDPoS: the branch must resolve it. The manager is built by hand because
+	// the ethash test managers cannot carry an XDPoS engine.
+	db := rawdb.NewMemoryDatabase()
+	gspec := &core.Genesis{
+		Alloc:  types.GenesisAlloc{testBank: {Balance: new(big.Int).SetUint64(10000000000000000000)}},
+		Config: params.TestXDPoSMockChainConfig,
+		// The genesis commit rejects an XDPoS chain without signers: pad
+		// ExtraData past 32+65 bytes the way ethclient/simulated does.
+		ExtraData: append(make([]byte, 32), make([]byte, crypto.SignatureLength)...),
+	}
+	engine := XDPoS.NewFaker(db, gspec.Config)
+	if engine == nil {
+		t.Fatal("failed to create XDPoS fake engine")
+	}
+	blockchain, err := core.NewBlockChain(db, nil, gspec, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create XDPoS blockchain: %v", err)
+	}
+	xpm, err := NewProtocolManager(gspec.Config, downloader.FastSync, ethconfig.Defaults.NetworkId, new(event.TypeMux), &testTxPool{pool: make(map[common.Hash]*types.Transaction)}, engine, blockchain, db)
+	if err != nil {
+		t.Fatalf("failed to create XDPoS protocol manager: %v", err)
+	}
+	// Cleanup mirrors what pm.Stop() does for started managers, but this test
+	// never calls pm.Start(), so pm.Stop() itself would panic on the nil txsSub
+	// subscription. The downloader already runs qosTuner/stateFetcher goroutines
+	// from New, and the chain holds trie resources, so terminate both directly.
+	defer xpm.downloader.Terminate()
+	defer blockchain.Stop()
+	xpm.parkedProposedMu.Lock()
+	xhandler := xpm.proposedBlockHandler
+	xpm.parkedProposedMu.Unlock()
+	if xhandler == nil {
+		t.Fatal("XDPoS manager must resolve the proposed-block handler")
+	}
+}
+
+// TestFetcherProposedBlockHandlerGates exercises newFetcherProposedBlockHandler
+// directly (an ethash test manager wires the no-op — see
+// TestFetcherWiresProposedHandlerByConfig): fast sync skips before the handler;
+// full sync passes an executed
+// block through; a block whose state was never executed is skipped and counted;
+// a canonical block inside the stall window escalates to Error while the
+// fast-sync transition grace keeps one below the recorded post-commit head at
+// Warn; and a nil header or nil number fails the SkipNilHeader guard (Error,
+// uncounted) without panicking.
+func TestFetcherProposedBlockHandlerGates(t *testing.T) {
+	logBuf := new(lockedBuffer)
+	prevLog := log.Root()
+	glog := log.NewGlogHandler(log.NewTerminalHandlerWithLevel(logBuf, log.LevelDebug, false))
+	glog.Verbosity(log.LevelDebug)
+	log.SetDefault(log.NewLogger(glog))
+	defer log.SetDefault(prevLog)
+	// levelOf returns the level prefix of the first line carrying msg, so a
+	// grade change is caught even when the message text stays the same.
+	levelOf := func(msg string) string {
+		for _, line := range strings.Split(logBuf.String(), "\n") {
+			if strings.Contains(line, msg) {
+				return strings.Fields(line)[0]
+			}
+		}
+		return ""
+	}
+
+	// The chain is grown past proposedBlockStallWindow so the stale half of
+	// the escalation logic (canonical but far behind the head) can be
+	// exercised below; the earlier sections only need an executed head.
+	pm, db := newTestProtocolManagerMust(t, downloader.FullSync, proposedBlockStallWindow+2, nil, nil)
+	defer pm.Stop()
+	called := false
+	gated := newFetcherProposedBlockHandler(pm, func(*types.Header) error {
+		called = true
+		return nil
+	})
+
+	// During fast sync the closure must skip before reaching the handler.
+	atomic.StoreUint32(&pm.snapSync, 1)
+	snapSyncSkipsBefore := skippedProposedBlockSnapSync.Snapshot().Count()
+	if err := gated(pm.blockchain.CurrentBlock()); err != nil {
+		t.Fatalf("gated handler returned error in fast sync: %v", err)
+	}
+	if called {
+		t.Fatal("fast sync call must not reach the consensus handler")
+	}
+	if !strings.Contains(logBuf.String(), "skipped proposed block handler during fast sync") {
+		t.Fatalf("fast sync skip not logged, have %q", logBuf.String())
+	}
+	if got := skippedProposedBlockSnapSync.Snapshot().Count(); got != snapSyncSkipsBefore+1 {
+		t.Fatalf("fast sync skip not counted, before = %d, after = %d", snapSyncSkipsBefore, got)
+	}
+	logBuf.Reset()
+
+	// With fast sync off, the same call reaches the handler without the skip
+	// log: the guard must not over-block full sync.
+	atomic.StoreUint32(&pm.snapSync, 0)
+	if err := gated(pm.blockchain.CurrentBlock()); err != nil {
+		t.Fatalf("gated handler returned error in full sync: %v", err)
+	}
+	if !called {
+		t.Fatal("full sync call must reach the consensus handler")
+	}
+	if strings.Contains(logBuf.String(), "skipped proposed block handler") {
+		t.Fatalf("executed genesis block must pass both gates, have %q", logBuf.String())
+	}
+	logBuf.Reset()
+
+	// The snapSync flag alone is read too late: the fetcher runs signHook
+	// between its insert and this callback, so Synchronise can flip the
+	// flag to 0 inside that gap. A block whose inserter was skipped never
+	// had its state executed, so the state guard must catch it even with
+	// the flag already cleared. Forge such a block for real: write its
+	// header and body straight into the database so the hash-keyed GetBlock
+	// half of HasBlockAndExecutedState finds it, with a root that exists
+	// nowhere in the state database so the state half — the OpenTrie — is
+	// the part that fails. Merely mutating the current header's root would
+	// change its hash and fail the guard at the GetBlock half instead, never
+	// exercising the state check this scenario exists for.
+	current := pm.blockchain.CurrentBlock()
+	unexecuted := types.CopyHeader(current)
+	unexecuted.Root = common.HexToHash("0xdeadbeef")
+	unexecuted.Number = new(big.Int).Add(current.Number, big.NewInt(1))
+	rawdb.WriteBlock(db, types.NewBlockWithHeader(unexecuted))
+	called = false
+	before := skippedProposedBlockState.Snapshot().Count()
+	if err := gated(unexecuted); err != nil {
+		t.Fatalf("gated handler returned error for unexecuted state: %v", err)
+	}
+	if called {
+		t.Fatal("unexecuted-state call must not reach the consensus handler")
+	}
+	if !strings.Contains(logBuf.String(), "state not executed") {
+		t.Fatalf("state guard skip not logged, have %q", logBuf.String())
+	}
+	if got := skippedProposedBlockState.Snapshot().Count(); got != before+1 {
+		t.Fatalf("state guard skip not counted, before = %d, after = %d", before, got)
+	}
+	if strings.Contains(logBuf.String(), "skipped proposed block handler during fast sync") {
+		t.Fatalf("state guard must be independent of the snapSync flag, have %q", logBuf.String())
+	}
+	logBuf.Reset()
+	called = false
+
+	// The same check fails when the body was never stored, and the gate must
+	// name that cause instead of reporting unexecuted state: the two send
+	// triage down different paths and the state alert would be a false one.
+	// Write only the header — no body — and mark it canonical.
+	bodyless := types.CopyHeader(pm.blockchain.GetHeaderByNumber(1))
+	bodyless.Root = common.HexToHash("0x0badc0de")
+	rawdb.WriteHeader(db, bodyless)
+	rawdb.WriteCanonicalHash(db, bodyless.Hash(), bodyless.Number.Uint64())
+	before = skippedProposedBlockState.Snapshot().Count()
+	bodyBefore := skippedProposedBlockBody.Snapshot().Count()
+	if err := gated(bodyless); err != nil {
+		t.Fatalf("gated handler returned error for bodyless block: %v", err)
+	}
+	if called {
+		t.Fatal("bodyless block must not reach the consensus handler")
+	}
+	if !strings.Contains(logBuf.String(), "block body not stored") {
+		t.Fatalf("missing-body skip not logged as a body problem, have %q", logBuf.String())
+	}
+	if strings.Contains(logBuf.String(), "state not executed") {
+		t.Fatalf("missing-body skip must not be reported as unexecuted state, have %q", logBuf.String())
+	}
+	// The body cause has its own counter: charging it to the state counter
+	// would turn a routine transient into the stall signal.
+	if got := skippedProposedBlockBody.Snapshot().Count(); got != bodyBefore+1 {
+		t.Fatalf("missing-body skip not counted as a body problem, before = %d, after = %d", bodyBefore, got)
+	}
+	if got := skippedProposedBlockState.Snapshot().Count(); got != before {
+		t.Fatalf("missing-body skip must not move the state counter, before = %d, after = %d", before, got)
+	}
+	// The engine gate grades the same shape at Info (utils.SkipBodyNotStored);
+	// the fetcher gate must not give one shape two severities.
+	if level := levelOf("block body not stored"); level != "INFO" {
+		t.Fatalf("missing-body skip must log at Info like the engine gate, level = %q, have %q", level, logBuf.String())
+	}
+	logBuf.Reset()
+	called = false
+
+	// A canonical block near the head with unopenable state is the alertable
+	// form: voting depends on recent heights, so the skip escalates to Error.
+	// Forge one just past the head with a bad root and mark it canonical —
+	// GetHeaderByNumber answers from the canonical-hash marker.
+	stalled := types.CopyHeader(current)
+	stalled.Root = common.HexToHash("0xbeefdead")
+	stalled.Number = new(big.Int).Add(current.Number, big.NewInt(1))
+	rawdb.WriteBlock(db, types.NewBlockWithHeader(stalled))
+	rawdb.WriteCanonicalHash(db, stalled.Hash(), stalled.Number.Uint64())
+	if err := gated(stalled); err != nil {
+		t.Fatalf("gated handler returned error for stalled canonical block: %v", err)
+	}
+	if !strings.Contains(logBuf.String(), "voting stalled") {
+		t.Fatalf("near-head canonical skip must escalate to Error, have %q", logBuf.String())
+	}
+	logBuf.Reset()
+	called = false
+
+	// The same shape far behind the head is expected noise: fast sync stores
+	// only headers and bodies below the pivot, so old canonical blocks
+	// legitimately have no state there. It must stay at Warn and not pollute
+	// the stall alert. Height 1 is more than proposedBlockStallWindow behind
+	// the head, so the escalation bound must hold it at Warn.
+	base := pm.blockchain.GetHeaderByNumber(1)
+	old := types.CopyHeader(base)
+	old.Root = common.HexToHash("0xbeefcafe")
+	rawdb.WriteBlock(db, types.NewBlockWithHeader(old))
+	rawdb.WriteCanonicalHash(db, old.Hash(), old.Number.Uint64())
+	if err := gated(old); err != nil {
+		t.Fatalf("gated handler returned error for stale canonical block: %v", err)
+	}
+	if !strings.Contains(logBuf.String(), "state not executed") {
+		t.Fatalf("stale canonical skip not logged, have %q", logBuf.String())
+	}
+	if strings.Contains(logBuf.String(), "voting stalled") {
+		t.Fatalf("stale canonical skip must not escalate to Error, have %q", logBuf.String())
+	}
+	logBuf.Reset()
+	called = false
+
+	// A canonical block inside the fast-sync transition grace must stay at
+	// Warn: right after a fast sync commits, the head sits at the pivot and
+	// canonical blocks below it legitimately have no state even though they
+	// are within proposedBlockStallWindow of the head. Record the current
+	// head as the post-commit height, forge a canonical block midway below
+	// it with an unopenable root, and pin the Warn — without the grace this
+	// shape escalates to Error. A forged block above the recorded height
+	// still escalates: the grace covers only the below-pivot transition,
+	// not post-pivot stalls.
+	pm.fastSyncGraceHead.Store(current.Number.Uint64())
+	transition := types.CopyHeader(pm.blockchain.GetHeaderByNumber(10))
+	transition.Root = common.HexToHash("0xfeedface")
+	rawdb.WriteBlock(db, types.NewBlockWithHeader(transition))
+	rawdb.WriteCanonicalHash(db, transition.Hash(), transition.Number.Uint64())
+	if err := gated(transition); err != nil {
+		t.Fatalf("gated handler returned error for graced canonical block: %v", err)
+	}
+	if !strings.Contains(logBuf.String(), "state not executed") {
+		t.Fatalf("graced canonical skip not logged, have %q", logBuf.String())
+	}
+	if strings.Contains(logBuf.String(), "voting stalled") {
+		t.Fatalf("graced canonical skip must not escalate to Error, have %q", logBuf.String())
+	}
+	logBuf.Reset()
+	called = false
+
+	postGrace := types.CopyHeader(current)
+	postGrace.Root = common.HexToHash("0xdeadf00d")
+	postGrace.Number = new(big.Int).Add(current.Number, big.NewInt(1))
+	rawdb.WriteBlock(db, types.NewBlockWithHeader(postGrace))
+	rawdb.WriteCanonicalHash(db, postGrace.Hash(), postGrace.Number.Uint64())
+	if err := gated(postGrace); err != nil {
+		t.Fatalf("gated handler returned error for post-grace canonical block: %v", err)
+	}
+	if !strings.Contains(logBuf.String(), "voting stalled") {
+		t.Fatalf("post-grace canonical skip must escalate to Error, have %q", logBuf.String())
+	}
+	logBuf.Reset()
+	called = false
+	pm.fastSyncGraceHead.Store(0)
+
+	// A nil header or nil number must fail the SkipNilHeader guard — the same
+	// caller-bug contract as ShouldHandleProposedBlock — instead of panicking
+	// on the dereference, without reaching the handler or moving the state
+	// counter.
+	skippedBefore := skippedProposedBlockState.Snapshot().Count()
+	for _, nilCase := range []*types.Header{nil, {}} {
+		if err := gated(nilCase); err != nil {
+			t.Fatalf("gated handler returned error for nil header: %v", err)
+		}
+	}
+	if called {
+		t.Fatal("nil header must not reach the consensus handler")
+	}
+	if !strings.Contains(logBuf.String(), "nil header") {
+		t.Fatalf("nil header skip not logged, have %q", logBuf.String())
+	}
+	if got := skippedProposedBlockState.Snapshot().Count(); got != skippedBefore {
+		t.Fatalf("nil header must not move the state counter, before = %d, after = %d", skippedBefore, got)
+	}
+}
+
+// TestFetcherGateCounterNames pins the registered metric names of the
+// fetcher-gate counters. Every proposed-block skip counter shares the
+// skipped-proposed-block/ prefix (engine reason counters, this gate) so one
+// alert regex on that prefix aggregates them; the engine gates' total is named
+// proposed-block-skip-total and stays outside the prefix. A silent rename would
+// orphan external alerts.
+func TestFetcherGateCounterNames(t *testing.T) {
+	for _, name := range []string{
+		"skipped-proposed-block/state",
+		"skipped-proposed-block/fetcher-body-not-stored",
+		"skipped-proposed-block/snap-sync",
+		"skipped-proposed-block/park-full",
+	} {
+		if metrics.Get(name) == nil {
+			t.Fatalf("counter %q is not registered in the metrics registry", name)
+		}
+	}
+}
+
+// TestParkedProposedBlockRetriesUntilReady verifies that a proposed block the
+// fetcher gate cannot hand over yet (body/state not ready) is parked and
+// retried, and reaches the consensus handler once the block is stored and
+// executed, instead of being dropped for being "not signable right now".
+func TestParkedProposedBlockRetriesUntilReady(t *testing.T) {
+	pm, db := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	defer pm.Stop()
+
+	parkedLen := func() int {
+		pm.parkedProposedMu.Lock()
+		defer pm.parkedProposedMu.Unlock()
+		return len(pm.parkedProposed)
+	}
+
+	// A block that is not on the chain yet: the gate cannot hand it over.
+	genesis := pm.blockchain.Genesis()
+	chain, _ := core.GenerateChain(pm.blockchain.Config(), genesis, ethash.NewFaker(), db, 1, func(int, *core.BlockGen) {})
+	block := chain[0]
+
+	handled := make(chan *types.Header, 1)
+	pm.parkedProposedMu.Lock()
+	pm.proposedBlockHandler = func(header *types.Header) error {
+		handled <- header
+		return nil
+	}
+	pm.parkedProposedMu.Unlock()
+
+	pm.parkProposedBlock(block.Header())
+	if n := parkedLen(); n != 1 {
+		t.Fatalf("parked proposed count = %d, want 1", n)
+	}
+	pm.scanParkedProposed()
+	select {
+	case h := <-handled:
+		t.Fatalf("handler ran for a not-ready block %v", h.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+	if n := parkedLen(); n != 1 {
+		t.Fatalf("not-ready proposed block must stay parked, count = %d", n)
+	}
+
+	// The block lands and executes: the parked header must now reach the handler.
+	if _, err := pm.blockchain.InsertChain(chain); err != nil {
+		t.Fatalf("failed to insert the block: %v", err)
+	}
+	pm.scanParkedProposed()
+	select {
+	case h := <-handled:
+		if h.Hash() != block.Hash() {
+			t.Fatalf("handler ran for %v, want %v", h.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("parked proposed block never reached the handler after it was stored")
+	}
+	if n := parkedLen(); n != 0 {
+		t.Fatalf("parked proposed set not cleared, count = %d", n)
+	}
+}
+
+// TestParkProposedBlockDeduplicates verifies that parking the same header twice
+// keeps one entry and hands the consensus handler at most once, so a block
+// already queued for retry is not handed over twice.
+func TestParkProposedBlockDeduplicates(t *testing.T) {
+	pm, db := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	defer pm.Stop()
+
+	genesis := pm.blockchain.Genesis()
+	chain, _ := core.GenerateChain(pm.blockchain.Config(), genesis, ethash.NewFaker(), db, 1, func(int, *core.BlockGen) {})
+	block := chain[0]
+
+	calls := make(chan common.Hash, 4)
+	pm.parkedProposedMu.Lock()
+	pm.proposedBlockHandler = func(header *types.Header) error {
+		calls <- header.Hash()
+		return nil
+	}
+	pm.parkedProposedMu.Unlock()
+
+	pm.parkProposedBlock(block.Header())
+	pm.parkProposedBlock(block.Header()) // a duplicate park must not add an entry
+	pm.parkedProposedMu.Lock()
+	n := len(pm.parkedProposed)
+	pm.parkedProposedMu.Unlock()
+	if n != 1 {
+		t.Fatalf("parked proposed count = %d, want 1 after a duplicate park", n)
+	}
+
+	if _, err := pm.blockchain.InsertChain(chain); err != nil {
+		t.Fatalf("failed to insert the block: %v", err)
+	}
+	pm.scanParkedProposed()
+	select {
+	case h := <-calls:
+		if h != block.Hash() {
+			t.Fatalf("handler ran for %v, want %v", h, block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("handler never ran for the ready parked block")
+	}
+	// The same header must not be handed over a second time.
+	select {
+	case h := <-calls:
+		t.Fatalf("handler ran twice for %v", h)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// TestParkProposedBlockRefreshesDeadline pins the duplicate park: the entry is
+// not queued twice, but its deadline restarts, so a header re-observed shortly
+// before its wait expires - the knowns set is a bounded LRU, so the same block
+// can be announced again - is not dropped by the deadline exit right after the
+// re-announcement.
+func TestParkProposedBlockRefreshesDeadline(t *testing.T) {
+	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	defer pm.Stop()
+
+	header := &types.Header{Number: big.NewInt(0)}
+	pm.parkProposedBlock(header)
+
+	pm.parkedProposedMu.Lock()
+	p := pm.parkedProposed[header.Hash()]
+	if p == nil {
+		pm.parkedProposedMu.Unlock()
+		t.Fatal("parkProposedBlock did not record the header")
+	}
+	// Expire the entry by hand, so the refresh is observable without waiting
+	// out parkedProposedDeadline.
+	p.deadline = time.Now().Add(-time.Second)
+	pm.parkedProposedMu.Unlock()
+
+	pm.parkProposedBlock(header)
+
+	pm.parkedProposedMu.Lock()
+	defer pm.parkedProposedMu.Unlock()
+	if n := len(pm.parkedProposed); n != 1 {
+		t.Fatalf("parked proposed count = %d, want 1 after a duplicate park", n)
+	}
+	if got := pm.parkedProposed[header.Hash()]; got != p {
+		t.Fatal("a duplicate park must refresh the existing entry, not replace it")
+	}
+	if left := time.Until(p.deadline); left < parkedProposedDeadline/2 {
+		t.Fatalf("duplicate park did not refresh the deadline, %v left", left)
+	}
+}
+
+// TestClaimParkedProposedDeliversOnce pins the claim that makes delivery
+// at-most-once: overlapping scans (the waiter's 100ms tick against a caller)
+// can snapshot and classify the same entry as ready, but only the scan that
+// deletes it may hand it to the consensus handler.
+func TestClaimParkedProposedDeliversOnce(t *testing.T) {
+	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	defer pm.Stop()
+
+	const entries = 8
+	ready := make([]*parkedProposed, 0, entries)
+	pm.parkedProposedMu.Lock()
+	for i := 0; i < entries; i++ {
+		header := &types.Header{Number: new(big.Int).SetUint64(uint64(i))}
+		p := &parkedProposed{header: header, deadline: time.Now().Add(time.Hour)}
+		pm.parkedProposed[header.Hash()] = p
+		ready = append(ready, p)
+	}
+	pm.parkedProposedMu.Unlock()
+
+	// Both scans hold the same ready set, as two scans that classified the
+	// entries before either claimed them would.
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var delivered []common.Hash
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out := pm.claimParkedProposed(ready, nil)
+			mu.Lock()
+			for _, header := range out {
+				delivered = append(delivered, header.Hash())
+			}
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	if len(delivered) != entries {
+		t.Fatalf("delivered %d headers, want %d: an entry claimed twice must not be delivered twice", len(delivered), entries)
+	}
+	seen := make(map[common.Hash]struct{}, entries)
+	for _, hash := range delivered {
+		if _, ok := seen[hash]; ok {
+			t.Fatalf("header %v delivered twice", hash)
+		}
+		seen[hash] = struct{}{}
+	}
+	pm.parkedProposedMu.Lock()
+	n := len(pm.parkedProposed)
+	pm.parkedProposedMu.Unlock()
+	if n != 0 {
+		t.Fatalf("claimed entries left in the retry map, count = %d", n)
+	}
+}
+
+// TestFetcherGateParksOnStateSkip pins the wiring between the fetcher gate's
+// state skip and the retry map: the skip must park the header, not merely
+// count itself, or a block whose body or state lands moments later never
+// reaches the consensus handler. The park call itself is covered by
+// TestParkedProposedBlockRetriesUntilReady; what is pinned here is that the
+// gate reaches it.
+func TestFetcherGateParksOnStateSkip(t *testing.T) {
+	pm, db := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	defer pm.Stop()
+
+	// A block that is not on the chain yet: the gate cannot hand it over.
+	genesis := pm.blockchain.Genesis()
+	chain, _ := core.GenerateChain(pm.blockchain.Config(), genesis, ethash.NewFaker(), db, 1, func(int, *core.BlockGen) {})
+	block := chain[0]
+
+	gated := newFetcherProposedBlockHandler(pm, func(*types.Header) error {
+		t.Error("handler must not run for a block whose state is not executed")
+		return nil
+	})
+	if err := gated(block.Header()); err != nil {
+		t.Fatalf("state skip returned error: %v", err)
+	}
+	pm.parkedProposedMu.Lock()
+	_, parked := pm.parkedProposed[block.Hash()]
+	n := len(pm.parkedProposed)
+	pm.parkedProposedMu.Unlock()
+	if !parked {
+		t.Fatalf("state skip did not park the header, parked count = %d", n)
+	}
+}
+
+// TestFetcherGateSkipsSnapSyncWithoutParking pins the snapSync exit's shape:
+// the skip is counted and logged but does not park. Parking would not help:
+// fast sync means this node is behind, so voting on the block is meaningless
+// even if the downloader later executes it (fast sync imports above the pivot
+// through InsertChain, so a parked entry could turn ready), and a batch of
+// propagated headers would only fill the bounded retry map until their
+// deadlines. The drop's unrecoverability is a documented, warned consequence
+// (see the gate), not an oversight.
+func TestFetcherGateSkipsSnapSyncWithoutParking(t *testing.T) {
+	pm, _ := newTestProtocolManagerMust(t, downloader.FastSync, 0, nil, nil)
+	defer pm.Stop()
+
+	before := skippedProposedBlockSnapSync.Snapshot().Count()
+	gated := newFetcherProposedBlockHandler(pm, func(*types.Header) error {
+		t.Error("handler must not run during fast sync")
+		return nil
+	})
+	if err := gated(pm.blockchain.CurrentBlock()); err != nil {
+		t.Fatalf("snapSync skip returned error: %v", err)
+	}
+	if got := skippedProposedBlockSnapSync.Snapshot().Count(); got != before+1 {
+		t.Fatalf("snapSync skip not counted, before = %d, after = %d", before, got)
+	}
+	pm.parkedProposedMu.Lock()
+	n := len(pm.parkedProposed)
+	pm.parkedProposedMu.Unlock()
+	if n != 0 {
+		t.Fatalf("snapSync skip must not park, parked count = %d", n)
+	}
+}
+
+// TestScanParkedProposedDropsStaleEntry pins the stale exit of the retry wait:
+// once the chain has moved parkedProposedStaleDistance past a parked header it
+// can no longer become canonical, so the entry is dropped rather than retried.
+// The distance is read from the constant, so a wrong value fails here instead
+// of silently shortening or extending every wait.
+func TestScanParkedProposedDropsStaleEntry(t *testing.T) {
+	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, parkedProposedStaleDistance+2, nil, nil)
+	defer pm.Stop()
+
+	head := pm.blockchain.CurrentBlock().Number.Uint64()
+	// A synthetic header: its hash is not stored, so the entry is not ready,
+	// and its number sits one past the stale bound.
+	header := &types.Header{Number: new(big.Int).SetUint64(head - parkedProposedStaleDistance - 1)}
+	pm.parkedProposedMu.Lock()
+	pm.parkedProposed[header.Hash()] = &parkedProposed{header: header, deadline: time.Now().Add(time.Hour)}
+	pm.parkedProposedMu.Unlock()
+
+	pm.scanParkedProposed()
+
+	pm.parkedProposedMu.Lock()
+	n := len(pm.parkedProposed)
+	pm.parkedProposedMu.Unlock()
+	if n != 0 {
+		t.Fatalf("stale parked entry was not dropped, count = %d", n)
+	}
+}
+
+// TestScanParkedProposedDropsExpiredEntry pins the deadline exit of the retry
+// wait: an entry whose deadline has passed is dropped even though it is not
+// stale, so a wait cannot outlive parkedProposedDeadline. The deadline is
+// injected into the entry rather than waited out.
+func TestScanParkedProposedDropsExpiredEntry(t *testing.T) {
+	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	defer pm.Stop()
+
+	// Number 0 against a genesis-only head: not stale, so only the deadline
+	// can end this wait.
+	header := &types.Header{Number: big.NewInt(0)}
+	pm.parkedProposedMu.Lock()
+	pm.parkedProposed[header.Hash()] = &parkedProposed{header: header, deadline: time.Now().Add(-time.Second)}
+	pm.parkedProposedMu.Unlock()
+
+	pm.scanParkedProposed()
+
+	pm.parkedProposedMu.Lock()
+	n := len(pm.parkedProposed)
+	pm.parkedProposedMu.Unlock()
+	if n != 0 {
+		t.Fatalf("expired parked entry was not dropped, count = %d", n)
+	}
+}
+
+// TestIsStallEscalation pins the stall escalation's shapes directly: a
+// near-head canonical block whose state never executes escalates to Error,
+// while the expected fast-sync shapes do not - a block far behind the head is
+// stale noise, and so is one inside the post-pivot grace. The grace covers a
+// head still at the recorded pivot and a rollback below it, self-heals once
+// the head moves proposedBlockStallWindow past the recorded height, and a zero
+// graceHead disables it.
+func TestIsStallEscalation(t *testing.T) {
+	header := func(n uint64) *types.Header { return &types.Header{Number: new(big.Int).SetUint64(n)} }
+	window := uint64(proposedBlockStallWindow)
+
+	for _, tt := range []struct {
+		name      string
+		head      *types.Header
+		header    *types.Header
+		graceHead uint64
+		want      bool
+	}{
+		{"at head", header(100), header(100), 0, true},
+		{"nil head", nil, header(100), 0, true},
+		{"head behind header", header(100), header(101), 0, true},
+		{"just inside window", header(100), header(100 - window), 0, true},
+		{"window edge escalates", header(164), header(100), 0, true},
+		{"past window is stale", header(165), header(100), 0, false},
+		{"at pivot grace", header(500), header(499), 500, false},
+		{"rollback below grace", header(490), header(489), 500, false},
+		{"grace self-healed", header(565), header(505), 500, true},
+		{"zero grace disables", header(500), header(499), 0, true},
+		{"header above grace", header(151), header(150), 100, true},
+		{"grace above chain", header(100), header(100), math.MaxUint64, false},
+	} {
+		if got := isStallEscalation(tt.head, tt.header, tt.graceHead); got != tt.want {
+			t.Errorf("%s: isStallEscalation = %v, want %v", tt.name, got, tt.want)
+		}
+	}
 }

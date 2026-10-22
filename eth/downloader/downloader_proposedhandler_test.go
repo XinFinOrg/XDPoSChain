@@ -26,6 +26,28 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/event"
 )
 
+// batchBlocks returns the blocks of a shortened test chain the way the
+// downloader hands a batch to importBlockResults: the whole range above the
+// genesis block the tester starts at. The proposed-handler tests share this
+// shape, so it is built once here.
+func batchBlocks(chain *testChain) types.Blocks {
+	blocks := make(types.Blocks, 0, len(chain.chain)-1)
+	for _, hash := range chain.chain[1:] {
+		blocks = append(blocks, chain.blockm[hash])
+	}
+	return blocks
+}
+
+// batchResults wraps blocks into the fetch results importBlockResults
+// consumes.
+func batchResults(blocks types.Blocks) []*fetchResult {
+	out := make([]*fetchResult, len(blocks))
+	for i, block := range blocks {
+		out[i] = &fetchResult{Header: block.Header(), Uncles: block.Uncles(), Transactions: block.Transactions()}
+	}
+	return out
+}
+
 // TestImportBlockResultsGatesTheProposedBlockHandler pins that the downloader only hands the
 // engine a batch tail that became the canonical head. A nil error from InsertChain does not make
 // the tail one: a re-delivered range below the head, a fork batch, or a tail parked in the future
@@ -55,19 +77,9 @@ func TestImportBlockResultsGatesTheProposedBlockHandler(t *testing.T) {
 	if have := tester.downloader.blockchain.CurrentBlock(); have.Hash() == tail.Hash() {
 		t.Fatal("the tester must start below the batch tail, otherwise the batch cannot move the head")
 	}
-	blocks := make(types.Blocks, 0, len(chain.chain)-1)
-	for _, hash := range chain.chain[1:] {
-		blocks = append(blocks, chain.blockm[hash])
-	}
-	results := func(blocks types.Blocks) []*fetchResult {
-		out := make([]*fetchResult, len(blocks))
-		for i, block := range blocks {
-			out[i] = &fetchResult{Header: block.Header(), Uncles: block.Uncles(), Transactions: block.Transactions()}
-		}
-		return out
-	}
+	blocks := batchBlocks(chain)
 	// The batch that reaches the head: the tail is canonical, so the engine is told.
-	if err := tester.downloader.importBlockResults(results(blocks)); err != nil {
+	if err := tester.downloader.importBlockResults(batchResults(blocks)); err != nil {
 		t.Fatalf("failed to import the head batch: %v", err)
 	}
 	if seen := tester.proposedHandled(); len(seen) != 1 || seen[0].Hash() != chain.headBlock().Hash() {
@@ -75,7 +87,7 @@ func TestImportBlockResultsGatesTheProposedBlockHandler(t *testing.T) {
 	}
 	// A range below the head: InsertChain reports success, but its tail never became the
 	// head, so the engine must not be told about it.
-	if err := tester.downloader.importBlockResults(results(blocks[:2])); err != nil {
+	if err := tester.downloader.importBlockResults(batchResults(blocks[:2])); err != nil {
 		t.Fatalf("failed to re-deliver a range below the head: %v", err)
 	}
 	if seen := tester.proposedHandled(); len(seen) != 1 {
@@ -85,7 +97,7 @@ func TestImportBlockResultsGatesTheProposedBlockHandler(t *testing.T) {
 	// head it left behind, so the head does not move. The batch may still answer without an error,
 	// which is the point of the check: a nil error alone does not make its tail one the consensus
 	// state has to be advanced to.
-	if err := tester.downloader.importBlockResults(results(blocks)); err != nil {
+	if err := tester.downloader.importBlockResults(batchResults(blocks)); err != nil {
 		t.Fatalf("failed to re-deliver the head range: %v", err)
 	}
 	if seen := tester.proposedHandled(); len(seen) != 1 {
@@ -125,18 +137,12 @@ func TestImportBlockResultsHandsTheHeadWhenTheTailIsParked(t *testing.T) {
 	defer tester.terminate()
 
 	chain := testChainBase.shorten(4)
-	blocks := make(types.Blocks, 0, len(chain.chain)-1)
-	for _, hash := range chain.chain[1:] {
-		blocks = append(blocks, chain.blockm[hash])
-	}
+	blocks := batchBlocks(chain)
 	prefix, tail := blocks[len(blocks)-2], blocks[len(blocks)-1]
 	if prefix.Hash() == tail.Hash() {
 		t.Fatal("the batch needs a prefix of its own, otherwise the shape is not covered")
 	}
-	results := make([]*fetchResult, len(blocks))
-	for i, block := range blocks {
-		results[i] = &fetchResult{Header: block.Header(), Uncles: block.Uncles(), Transactions: block.Transactions()}
-	}
+	results := batchResults(blocks)
 	// The head sat at the genesis block, the batch imported up to the prefix, and the tail was
 	// left in the future queue.
 	wrapper := &parkedTailChain{
@@ -205,15 +211,9 @@ func TestImportBlockResultsHandsTheHeadWhenASegmentFails(t *testing.T) {
 			defer tester.terminate()
 
 			chain := testChainBase.shorten(4)
-			blocks := make(types.Blocks, 0, len(chain.chain)-1)
-			for _, hash := range chain.chain[1:] {
-				blocks = append(blocks, chain.blockm[hash])
-			}
+			blocks := batchBlocks(chain)
 			prefix := blocks[len(blocks)-2]
-			results := make([]*fetchResult, len(blocks))
-			for i, block := range blocks {
-				results[i] = &fetchResult{Header: block.Header(), Uncles: block.Uncles(), Transactions: block.Transactions()}
-			}
+			results := batchResults(blocks)
 			// The head sat at the genesis block; the batch imported up to the prefix when it
 			// moved the head, and stopped on the block above it.
 			after := chain.genesis.Header()

@@ -196,6 +196,13 @@ type BlockFetcher struct {
 
 // NewBlockFetcher creates a block fetcher to retrieve blocks based on hash announcements.
 func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, handleProposedBlock proposeBlockHandlerFn, broadcastBlock blockBroadcasterFn, chainHeight chainHeightFn, insertBlock blockInsertFn, prepareBlock blockPrepareFn, dropPeer peerDropFn) *BlockFetcher {
+	// A nil proposed-block handler means "not wired": normalize it to a no-op so
+	// the import path needs no nil guard. The downloader is not symmetric — it
+	// keeps the callback nil and checks it at the call site.
+	handler := handleProposedBlock
+	if handler == nil {
+		handler = func(*types.Header) error { return nil }
+	}
 	return &BlockFetcher{
 		notify:              make(chan *blockAnnounce),
 		inject:              make(chan *blockInject),
@@ -214,13 +221,29 @@ func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, h
 		knowns:              lru.NewCache[common.Hash, struct{}](blockLimit),
 		getBlock:            getBlock,
 		verifyHeader:        verifyHeader,
-		handleProposedBlock: handleProposedBlock,
+		handleProposedBlock: handler,
 		broadcastBlock:      broadcastBlock,
 		chainHeight:         chainHeight,
 		insertBlock:         insertBlock,
 		prepareBlock:        prepareBlock,
 		dropPeer:            dropPeer,
 	}
+}
+
+// proposedBlockCallback returns the proposed-block callback this fetcher was
+// wired with. The name avoids the overloaded ProposedBlockHandler the consensus
+// engine uses for the handler itself: this is only the callback, not the
+// handler. NewProtocolManager must pass the snapSync-gated closure, not the bare
+// consensus handler.
+//
+// Unexported on purpose: the only reader is this package's own constructor
+// test. Reading the field from eth (where the wiring happens) needed an
+// exported, test-only accessor - supported API surface for a test's benefit -
+// so the hop is pinned at the call site instead (see eth/handler.go), and the
+// constructor contract is pinned in-package by
+// TestNewBlockFetcherStoresProposedHandler.
+func (f *BlockFetcher) proposedBlockCallback() func(*types.Header) error {
+	return f.handleProposedBlock
 }
 
 // Start boots up the announcement based synchroniser, accepting and processing

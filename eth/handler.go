@@ -73,6 +73,19 @@ type ProtocolManager struct {
 
 	snapSync  uint32 // Flag whether snap sync is enabled (gets disabled if we already have blocks)
 	acceptTxs uint32 // Flag whether we're considered synchronised (enables transaction processing)
+	// fastSyncGraceHead is the head height when fast sync last completed
+	// (0 = none; not persisted, so a restart clears it), used by the gate in
+	// newFetcherProposedBlockHandler to keep below-pivot blocks at Warn.
+	fastSyncGraceHead atomic.Uint64
+
+	// parkedProposed holds proposed-block headers the fetcher gate could not
+	// hand to the consensus handler yet (body not stored, or state not
+	// executed). One bounded waiter retries them; see eth/proposed_block.go.
+	parkedProposedMu sync.Mutex
+	parkedProposed   map[common.Hash]*parkedProposed
+	// proposedBlockHandler is the resolved consensus callback the fetcher gate
+	// and the parked-proposed waiter both invoke (nil until wired below).
+	proposedBlockHandler func(*types.Header) error
 
 	txpool      txPool
 	orderpool   orderPool
@@ -141,6 +154,7 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		eventMux:       mux,
 		txpool:         txpool,
 		blockchain:     blockchain,
+		parkedProposed: make(map[common.Hash]*parkedProposed),
 		peers:          newPeerSet(),
 		newPeerCh:      make(chan *peer),
 		syncReqCh:      make(chan *peer, 1),
@@ -168,18 +182,34 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		manager.snapSync = uint32(1)
 	}
 
-	var handleProposedBlock func(header *types.Header) error
+	var handleProposedBlock func(*types.Header) error
+
+	// While fast sync runs, the fetcher must not reach the consensus handler:
+	// snapSync discards propagated blocks before executing them, so a block whose
+	// state was never validated would otherwise be judged. The snapSync flag alone
+	// reads too late (Synchronise can flip it between insert and callback); the
+	// hash-keyed HasBlock half of the executed-state gate is what holds.
+	// fetcherHandler is that gated closure; TestFetcherWiresGatedHandlerWithXDPoS
+	// pins the NewProtocolManager → NewBlockFetcher hop.
+	var fetcherHandler func(*types.Header) error
 	if config.XDPoS != nil {
 		handleProposedBlock = func(header *types.Header) error {
 			return engine.(*XDPoS.XDPoS).HandleProposedBlock(blockchain, header)
 		}
+		fetcherHandler = newFetcherProposedBlockHandler(manager, handleProposedBlock)
+		manager.proposedBlockHandler = handleProposedBlock
 	} else {
-		handleProposedBlock = func(header *types.Header) error {
-			return nil
-		}
+		// No XDPoS engine, so there is nothing to gate and nothing to handle:
+		// the downloader keeps nil (it nil-checks at its call site), the fetcher
+		// gets an explicit no-op.
+		fetcherHandler = func(*types.Header) error { return nil }
 	}
 
-	// Construct the different synchronisation mechanisms
+	// Construct the different synchronisation mechanisms. The downloader keeps
+	// the ungated closure: its fast sync calls run after the pivot commit, so
+	// gating it here would skip every proposed block during fast sync and
+	// stall QC and voting. The engine's own gates judge canonicality and
+	// storage at the handler, so the downloader needs no pre-filter.
 	manager.downloader = downloader.New(chaindb, manager.eventMux, blockchain, nil, manager.removePeer, handleProposedBlock)
 
 	validator := func(header *types.Header) error {
@@ -209,7 +239,9 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		atomic.StoreUint32(&manager.acceptTxs, 1) // Mark initial sync done on any fetcher import
 		return manager.blockchain.PrepareBlock(block)
 	}
-	manager.blockFetcher = fetcher.NewBlockFetcher(blockchain.GetBlockByHash, validator, handleProposedBlock, manager.BroadcastBlock, heighter, inserter, prepare, manager.removePeer)
+	// fetcherHandler, not the bare handleProposedBlock: swapping the argument
+	// back would silently drop both gates during fast sync.
+	manager.blockFetcher = fetcher.NewBlockFetcher(blockchain.GetBlockByHash, validator, fetcherHandler, manager.BroadcastBlock, heighter, inserter, prepare, manager.removePeer)
 
 	fetchTx := func(peer string, hashes []common.Hash) error {
 		p := manager.peers.Peer(peer)
@@ -344,6 +376,9 @@ func (pm *ProtocolManager) Start(maxPeers int) {
 
 	// start sync handlers
 	go pm.syncer()
+
+	// retry proposed blocks the fetcher gate parked as not-yet-ready
+	go pm.waitParkedProposed()
 
 	go pm.syncStatusLogger()
 	go pm.txsyncLoop64() // TODO(karalabe): Legacy initial tx echange, drop with eth/64.
