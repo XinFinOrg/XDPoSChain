@@ -99,10 +99,16 @@ type ChainConfig struct {
 	TIPXDCXMinerDisableBlock    *big.Int `json:"tipXDCXMinerDisableBlock,omitempty"`
 	TIPXDCXReceiverDisableBlock *big.Int `json:"tipXDCXReceiverDisableBlock,omitempty"`
 	DynamicGasLimitBlock        *big.Int `json:"dynamicGasLimitBlock,omitempty"`
-	TIPFixedRewardBlock         *big.Int `json:"tipFixedRewardBlock,omitempty"`
-	TIPUpgradePenaltyBlock      *big.Int `json:"tipUpgradePenaltyBlock,omitempty"`
-	TIPEpochHalvingBlock        *big.Int `json:"tipEpochHalvingBlock,omitempty"`
-	TIPProportionalRewardBlock  *big.Int `json:"tipProportionalRewardBlock,omitempty"`
+	// TIPFixedRewardBlock (formerly TIPUpgradeRewardBlock) switches on the
+	// tiered masternode/protector/observer reward with a fixed per-node payout.
+	// Its payout logic is wrong: any node that signs at least one sign slot in
+	// the rewarded epoch gets the full reward, however few slots it signed.
+	// It is already live on testnet, so it must stay as is to replay that
+	// history; new networks should use TIPProportionalRewardBlock instead.
+	TIPFixedRewardBlock        *big.Int `json:"tipFixedRewardBlock,omitempty"`
+	TIPUpgradePenaltyBlock     *big.Int `json:"tipUpgradePenaltyBlock,omitempty"`
+	TIPEpochHalvingBlock       *big.Int `json:"tipEpochHalvingBlock,omitempty"`
+	TIPProportionalRewardBlock *big.Int `json:"tipProportionalRewardBlock,omitempty"`
 
 	TRC21IssuerSMC         common.Address `json:"trc21IssuerSMC,omitempty"`
 	XDCXListingSMC         common.Address `json:"xdcxListingSMC,omitempty"`

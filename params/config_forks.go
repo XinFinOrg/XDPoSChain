@@ -188,6 +188,11 @@ func (c *ChainConfig) IsDynamicGasLimit(num *big.Int) bool {
 	return isForked(c.DynamicGasLimitBlock, num)
 }
 
+// IsTIPFixedReward returns whether num is either equal to the TIPFixedReward fork block or greater.
+//
+// The fixed reward pays every signer the full per-node reward no matter how
+// many sign slots it signed, which is wrong. It is kept unchanged only because
+// testnet already runs it; see TIPProportionalReward for the corrected payout.
 func (c *ChainConfig) IsTIPFixedReward(num *big.Int) bool {
 	return isForked(c.TIPFixedRewardBlock, num)
 }
