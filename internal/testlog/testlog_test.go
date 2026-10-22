@@ -172,3 +172,67 @@ func TestTerminalFormatKeepsSiblingAttributes(t *testing.T) {
 		t.Fatalf("sibling attribute was overwritten by terminalFormat: sibling=%q", got)
 	}
 }
+
+// blockingT is a T that parks inside its first Logf call, so that the logger
+// stays in the middle of its flush, holding the mutex With shares with it.
+type blockingT struct {
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newBlockingT() *blockingT {
+	return &blockingT{entered: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (t *blockingT) Logf(_ string, _ ...any) {
+	t.once.Do(func() {
+		close(t.entered)
+		<-t.release
+	})
+}
+
+func (t *blockingT) Helper() {}
+
+// TestWithIsSerializedAgainstLogging: deriving a sub-logger must not proceed
+// while a log call is in flight on the same logger, which is what stops With
+// from copying a record the caller is about to print.
+//
+// The logger is parked inside its flush instead of racing two goroutines, so
+// the outcome does not depend on scheduling.
+func TestWithIsSerializedAgainstLogging(t *testing.T) {
+	bt := newBlockingT()
+	root := Logger(bt, log.LvlTrace)
+	child := root.With("component", "child")
+
+	go root.Info("parent record")
+	// the log call is in flight and holds the logger mutex
+	select {
+	case <-bt.entered:
+	case <-time.After(5 * time.Second):
+		close(bt.release)
+		t.Fatal("the log call never reached the test log — was the record filtered at log.LvlTrace?")
+	}
+
+	started := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		close(started)
+		child.With("component", "grandchild")
+	}()
+	<-started
+
+	select {
+	case <-done:
+		close(bt.release)
+		t.Fatal("With returned while a log call was still in flight on the same logger")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(bt.release)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("With did not return after the log call completed")
+	}
+}

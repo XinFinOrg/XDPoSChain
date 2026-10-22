@@ -168,6 +168,8 @@ func (l *logger) Crit(msg string, ctx ...interface{}) {
 }
 
 func (l *logger) With(ctx ...interface{}) log.Logger {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	newLogger := l.l.With(ctx...)
 	return &logger{l.t, newLogger, l.mu, newLogger.Handler().(*bufHandler)}
 }
