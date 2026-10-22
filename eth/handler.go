@@ -488,8 +488,11 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			bytes   common.StorageSize
 			headers []*types.Header
 			unknown bool
+			lookups int
 		)
-		for !unknown && len(headers) < int(query.Amount) && bytes < softResponseLimit && len(headers) < downloader.MaxHeaderFetch {
+		for !unknown && len(headers) < int(query.Amount) && bytes < softResponseLimit &&
+			len(headers) < downloader.MaxHeaderFetch && lookups < 2*downloader.MaxHeaderFetch {
+			lookups++
 			// Retrieve the next header satisfying the query
 			var origin *types.Header
 			if hashMode {
