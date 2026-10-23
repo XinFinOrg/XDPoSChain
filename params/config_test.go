@@ -1743,6 +1743,7 @@ func TestChainConfigStringIncludesAllFields(t *testing.T) {
 		TIPUpgradePenaltyBlock:      big.NewInt(33),
 		TIPEpochHalvingBlock:        big.NewInt(34),
 		AmsterdamBlock:              big.NewInt(35),
+		TIPProportionalRewardBlock:  big.NewInt(36),
 		TRC21IssuerSMC:              common.HexToAddress("0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee"),
 		XDCXListingSMC:              common.HexToAddress("0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53"),
 		RelayerRegistrationSMC:      common.HexToAddress("0x16c63b79f9C8784168103C0b74E6A59EC2de4a02"),
@@ -1810,6 +1811,7 @@ func TestChainConfigStringIncludesAllFields(t *testing.T) {
 		"Osaka:",
 		"Amsterdam:",
 		"TIPEpochHalving:",
+		"TIPProportionalReward:",
 		"TRC21IssuerSMC:",
 		"XDCXListingSMC:",
 		"RelayerRegistrationSMC:",
@@ -1827,8 +1829,8 @@ func TestChainConfigStringIncludesAllFields(t *testing.T) {
 // plus TIP2019 and DAOFork - along with the Constantinople/Petersburg/Istanbul
 // trio that #2777 moved after TIPXDCXCancellationFee, that anchor slot (without
 // which the trio's position relative to it is not pinned), the TIPTRC21Fee slot
-// that follows the trio, and TIPEpochHalving, the last pinned field in fork
-// order. The expected order is read off
+// that follows the trio, TIPEpochHalving, and TIPProportionalReward, the last
+// pinned field in fork order. The expected order is read off
 // chainConfigForkOrderFields, so a later renumbering carries the expectation
 // with it instead of leaving the renderings behind.
 func TestChainConfigRenderingFollowsForkOrder(t *testing.T) {
@@ -1847,6 +1849,7 @@ func TestChainConfigRenderingFollowsForkOrder(t *testing.T) {
 		"OsakaBlock":                  {},
 		"AmsterdamBlock":              {},
 		"TIPEpochHalvingBlock":        {},
+		"TIPProportionalRewardBlock":  {},
 	}
 	var want []string
 	for _, field := range chainConfigForkOrderFields {
@@ -1872,6 +1875,7 @@ func TestChainConfigRenderingFollowsForkOrder(t *testing.T) {
 		OsakaBlock:                  big.NewInt(7),
 		AmsterdamBlock:              big.NewInt(8),
 		TIPEpochHalvingBlock:        big.NewInt(9),
+		TIPProportionalRewardBlock:  big.NewInt(15),
 	}
 	for _, rendering := range []struct {
 		name   string

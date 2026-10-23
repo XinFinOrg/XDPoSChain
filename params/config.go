@@ -265,6 +265,11 @@ const legacyTIPFixedRewardJSONKey = "tipUpgradeRewardBlock"
 // TIPFixedRewardBlock and rewrites raw to the current key, so field presence is
 // tracked under the name the config is marshaled with. Both keys carrying
 // different values is rejected rather than silently picking one.
+//
+// The mapping is one-way: once a node writes its config back, it is stored
+// under tipFixedRewardBlock, which older binaries do not know. They read the
+// fork as unset, so a node must not be downgraded on the same database after
+// running this binary.
 func (c *ChainConfig) decodeLegacyTIPFixedRewardBlock(raw map[string]json.RawMessage) error {
 	legacy, ok := raw[legacyTIPFixedRewardJSONKey]
 	if !ok {
@@ -973,7 +978,7 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - EIP1559:                     %-8v\n", c.EIP1559Block)
 	banner += fmt.Sprintf("  - Cancun:                      %-8v\n", c.CancunBlock)
 	banner += fmt.Sprintf("  - DynamicGasLimit:             %-8v\n", c.DynamicGasLimitBlock)
-	banner += fmt.Sprintf("  - TIPFixedReward:            %-8v\n", c.TIPFixedRewardBlock)
+	banner += fmt.Sprintf("  - TIPFixedReward:              %-8v\n", c.TIPFixedRewardBlock)
 	banner += fmt.Sprintf("  - TIPUpgradePenalty:           %-8v\n", c.TIPUpgradePenaltyBlock)
 	banner += fmt.Sprintf("  - Prague:                      %-8v\n", c.PragueBlock)
 	banner += fmt.Sprintf("  - Osaka:                       %-8v\n", c.OsakaBlock)
@@ -1016,7 +1021,7 @@ func (c *ChainConfig) GatherForks() []uint64 {
 // ActiveForks returns the list of active forks at the given block height.
 // The returned list is sorted in ascending ASCII order.
 func (c *ChainConfig) ActiveForks(block *big.Int) []string {
-	activeForks := make([]string, 0, 38)
+	activeForks := make([]string, 0, 39)
 	if c.IsAmsterdam(block) {
 		activeForks = append(activeForks, "Amsterdam")
 	}
