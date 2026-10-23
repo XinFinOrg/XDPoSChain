@@ -154,12 +154,6 @@ func Neg(x *big.Int) *big.Int {
 	return big.NewInt(0).Neg(x)
 }
 
-func ToBigInt(s string) *big.Int {
-	res := big.NewInt(0)
-	res.SetString(s, 10)
-	return res
-}
-
 func CloneBigInt(bigInt *big.Int) *big.Int {
 	return common.CloneBigInt(bigInt)
 }

@@ -671,52 +671,6 @@ func TestNewBlockChainReadOnlyFailsHeadStateRepair(t *testing.T) {
 	}
 }
 
-// TestNewBlockChainExReadOnlyResolvedHonorsReadOnly tests the XDCx-aware wrapper
-// forwards readonly startup options instead of silently defaulting to writable
-// recovery.
-func TestNewBlockChainExReadOnlyResolvedHonorsReadOnly(t *testing.T) {
-	var (
-		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
-		address = crypto.PubkeyToAddress(key.PublicKey)
-		funds   = big.NewInt(1000000000000000)
-		gspec   = &Genesis{
-			Alloc:   types.GenesisAlloc{address: {Balance: funds}},
-			BaseFee: big.NewInt(params.InitialBaseFee),
-			Config:  params.TestChainConfig,
-		}
-	)
-	db := rawdb.NewMemoryDatabase()
-	chain, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
-	if err != nil {
-		t.Fatalf("failed to create chain: %v", err)
-	}
-
-	_, blocks, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 3, nil)
-	if n, err := chain.InsertChain(blocks); err != nil {
-		chain.Stop()
-		t.Fatalf("failed to insert block %d: %v", n, err)
-	}
-	head := blocks[len(blocks)-1]
-	chain.Stop()
-
-	rawdb.DeleteLegacyTrieNode(db, head.Root())
-
-	reopened, err := NewBlockChainExReadOnlyResolved(db, nil, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil, DefaultChainConfigMismatchPolicy)
-	if err == nil {
-		reopened.Stop()
-		t.Fatal("expected readonly open to fail when head state repair would be required")
-	}
-	if !errors.Is(err, ErrReadOnlyHeadStateRepair) {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got := rawdb.ReadHeadBlockHash(db); got != head.Hash() {
-		t.Fatalf("expected readonly open to leave head hash unchanged: have %s want %s", got.Hex(), head.Hash().Hex())
-	}
-	if _, err := state.New(head.Root(), state.NewDatabase(db)); err == nil {
-		t.Fatal("expected readonly open to leave head state missing")
-	}
-}
-
 // TestNewBlockChainRewindsIncompatibleHead tests writable options-based open rewinds an incompatible head when compat metadata requires it.
 func TestNewBlockChainRewindsIncompatibleHead(t *testing.T) {
 	futureFork := big.NewInt(1_000_000)

@@ -131,7 +131,8 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 		return nil, err
 	}
 	// Resolve the effective chain config before constructing the consensus engine.
-	// NewBlockChainEx reruns SetupGenesisBlock and applies any required rewind.
+	// NewBlockChainResolved reuses the chain config resolved above and applies any
+	// required rewind while opening the chain.
 	chainConfig, genesisHash, compatErr, err := core.SetupGenesisBlockWithOverride(chainDb, config.Genesis, config.AllowBuiltInCustomRecovery)
 	if err != nil {
 		return nil, err
@@ -241,7 +242,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	compatPolicy := core.ChainConfigMismatchPolicy(config.ChainConfigMismatchPolicy)
 
 	// A negative --set-head value is an offset from the current head, but the
-	// head is not final until the chain is open: NewBlockChainExResolved below
+	// head is not final until the chain is open: NewBlockChainResolved below
 	// runs repair, which rewinds the head on its own when the head state is
 	// missing. Resolve the offset against the head recorded on disk first, so
 	// that repair and the SetHead call afterwards aim at the same block.
@@ -262,9 +263,8 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 		common.RollbackNumber = int64(rollbackTarget)
 	}
 
-	eth.blockchain, err = core.NewBlockChainExResolved(
+	eth.blockchain, err = core.NewBlockChainResolved(
 		chainDb,
-		XDCXServ.GetLevelDB(),
 		cacheConfig,
 		config.Genesis,
 		eth.engine,
