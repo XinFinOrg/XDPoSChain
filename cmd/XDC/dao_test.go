@@ -56,7 +56,7 @@ const daoFutureForkConfig = `
 		"pragueBlock" : 1000000000,
 		"osakaBlock" : 1000000000,
 		"dynamicGasLimitBlock" : 1000000000,
-		"tipUpgradeRewardBlock" : 1000000000,
+		"tipFixedRewardBlock" : 1000000000,
 		"tipUpgradePenaltyBlock" : 1000000000,
 		"tipEpochHalvingBlock" : 1000000000,
 		"trc21IssuerSMC" : "0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee",

@@ -99,9 +99,16 @@ type ChainConfig struct {
 	TIPXDCXMinerDisableBlock    *big.Int `json:"tipXDCXMinerDisableBlock,omitempty"`
 	TIPXDCXReceiverDisableBlock *big.Int `json:"tipXDCXReceiverDisableBlock,omitempty"`
 	DynamicGasLimitBlock        *big.Int `json:"dynamicGasLimitBlock,omitempty"`
-	TIPUpgradeRewardBlock       *big.Int `json:"tipUpgradeRewardBlock,omitempty"`
-	TIPUpgradePenaltyBlock      *big.Int `json:"tipUpgradePenaltyBlock,omitempty"`
-	TIPEpochHalvingBlock        *big.Int `json:"tipEpochHalvingBlock,omitempty"`
+	// TIPFixedRewardBlock (formerly TIPUpgradeRewardBlock) switches on the
+	// tiered masternode/protector/observer reward with a fixed per-node payout.
+	// Its payout logic is wrong: any node that signs at least one sign slot in
+	// the rewarded epoch gets the full reward, however few slots it signed.
+	// It is already live on testnet, so it must stay as is to replay that
+	// history; new networks should use TIPProportionalRewardBlock instead.
+	TIPFixedRewardBlock        *big.Int `json:"tipFixedRewardBlock,omitempty"`
+	TIPUpgradePenaltyBlock     *big.Int `json:"tipUpgradePenaltyBlock,omitempty"`
+	TIPEpochHalvingBlock       *big.Int `json:"tipEpochHalvingBlock,omitempty"`
+	TIPProportionalRewardBlock *big.Int `json:"tipProportionalRewardBlock,omitempty"`
 
 	TRC21IssuerSMC         common.Address `json:"trc21IssuerSMC,omitempty"`
 	XDCXListingSMC         common.Address `json:"xdcxListingSMC,omitempty"`
@@ -240,9 +247,47 @@ func (c *ChainConfig) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	next := ChainConfig(decoded)
+	if err := next.decodeLegacyTIPFixedRewardBlock(raw); err != nil {
+		return err
+	}
 	next.runtime = chainConfigRuntimeMetadata{}
 	*c = next
 	c.runtime.json.capture(raw)
+	return nil
+}
+
+// legacyTIPFixedRewardJSONKey is the key TIPFixedRewardBlock was stored under
+// before it was renamed from TIPUpgradeRewardBlock. Genesis files and chain
+// configs already persisted by older nodes still carry it.
+const legacyTIPFixedRewardJSONKey = "tipUpgradeRewardBlock"
+
+// decodeLegacyTIPFixedRewardBlock maps the legacy tipUpgradeRewardBlock key onto
+// TIPFixedRewardBlock and rewrites raw to the current key, so field presence is
+// tracked under the name the config is marshaled with. Both keys carrying
+// different values is rejected rather than silently picking one.
+//
+// The mapping is one-way: once a node writes its config back, it is stored
+// under tipFixedRewardBlock, which older binaries do not know. They read the
+// fork as unset, so a node must not be downgraded on the same database after
+// running this binary.
+func (c *ChainConfig) decodeLegacyTIPFixedRewardBlock(raw map[string]json.RawMessage) error {
+	legacy, ok := raw[legacyTIPFixedRewardJSONKey]
+	if !ok {
+		return nil
+	}
+	delete(raw, legacyTIPFixedRewardJSONKey)
+	var legacyBlock *big.Int
+	if err := json.Unmarshal(legacy, &legacyBlock); err != nil {
+		return fmt.Errorf("invalid chain config field %s: %w", legacyTIPFixedRewardJSONKey, err)
+	}
+	if _, ok := raw["tipFixedRewardBlock"]; ok {
+		if !configNumEqual(c.TIPFixedRewardBlock, legacyBlock) {
+			return fmt.Errorf("invalid chain config: tipFixedRewardBlock %v conflicts with legacy %s %v", c.TIPFixedRewardBlock, legacyTIPFixedRewardJSONKey, legacyBlock)
+		}
+		return nil
+	}
+	c.TIPFixedRewardBlock = legacyBlock
+	raw["tipFixedRewardBlock"] = legacy
 	return nil
 }
 
@@ -839,8 +884,8 @@ func (c *ChainConfig) String() string {
 	if c.DynamicGasLimitBlock != nil {
 		result += fmt.Sprintf(", DynamicGasLimit: %v", c.DynamicGasLimitBlock)
 	}
-	if c.TIPUpgradeRewardBlock != nil {
-		result += fmt.Sprintf(", TIPUpgradeReward: %v", c.TIPUpgradeRewardBlock)
+	if c.TIPFixedRewardBlock != nil {
+		result += fmt.Sprintf(", TIPFixedReward: %v", c.TIPFixedRewardBlock)
 	}
 	if c.TIPUpgradePenaltyBlock != nil {
 		result += fmt.Sprintf(", TIPUpgradePenalty: %v", c.TIPUpgradePenaltyBlock)
@@ -856,6 +901,9 @@ func (c *ChainConfig) String() string {
 	}
 	if c.TIPEpochHalvingBlock != nil {
 		result += fmt.Sprintf(", TIPEpochHalving: %v", c.TIPEpochHalvingBlock)
+	}
+	if c.TIPProportionalRewardBlock != nil {
+		result += fmt.Sprintf(", TIPProportionalReward: %v", c.TIPProportionalRewardBlock)
 	}
 	if !c.TRC21IssuerSMC.IsZero() {
 		result += fmt.Sprintf(", TRC21IssuerSMC: %s", c.TRC21IssuerSMC.Hex())
@@ -930,12 +978,13 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - EIP1559:                     %-8v\n", c.EIP1559Block)
 	banner += fmt.Sprintf("  - Cancun:                      %-8v\n", c.CancunBlock)
 	banner += fmt.Sprintf("  - DynamicGasLimit:             %-8v\n", c.DynamicGasLimitBlock)
-	banner += fmt.Sprintf("  - TIPUpgradeReward:            %-8v\n", c.TIPUpgradeRewardBlock)
+	banner += fmt.Sprintf("  - TIPFixedReward:              %-8v\n", c.TIPFixedRewardBlock)
 	banner += fmt.Sprintf("  - TIPUpgradePenalty:           %-8v\n", c.TIPUpgradePenaltyBlock)
 	banner += fmt.Sprintf("  - Prague:                      %-8v\n", c.PragueBlock)
 	banner += fmt.Sprintf("  - Osaka:                       %-8v\n", c.OsakaBlock)
 	banner += fmt.Sprintf("  - Amsterdam:                   %-8v\n", c.AmsterdamBlock)
 	banner += fmt.Sprintf("  - TIPEpochHalving:             %-8v\n", c.TIPEpochHalvingBlock)
+	banner += fmt.Sprintf("  - TIPProportionalReward:       %-8v\n", c.TIPProportionalRewardBlock)
 	banner += fmt.Sprintf("  - TRC21IssuerSMC:              %-8s\n", c.TRC21IssuerSMC)
 	banner += fmt.Sprintf("  - XDCXListingSMC:              %-8s\n", c.XDCXListingSMC)
 	banner += fmt.Sprintf("  - RelayerRegistrationSMC:      %-8s\n", c.RelayerRegistrationSMC)
@@ -972,7 +1021,7 @@ func (c *ChainConfig) GatherForks() []uint64 {
 // ActiveForks returns the list of active forks at the given block height.
 // The returned list is sorted in ascending ASCII order.
 func (c *ChainConfig) ActiveForks(block *big.Int) []string {
-	activeForks := make([]string, 0, 38)
+	activeForks := make([]string, 0, 39)
 	if c.IsAmsterdam(block) {
 		activeForks = append(activeForks, "Amsterdam")
 	}
@@ -1042,11 +1091,17 @@ func (c *ChainConfig) ActiveForks(block *big.Int) []string {
 	if c.IsTIPEpochHalving(block) {
 		activeForks = append(activeForks, "TIPEpochHalving")
 	}
+	if c.IsTIPFixedReward(block) {
+		activeForks = append(activeForks, "TIPFixedReward")
+	}
 	if c.IsTIPIncreaseMasternodes(block) {
 		activeForks = append(activeForks, "TIPIncreaseMasternodes")
 	}
 	if c.IsTIPNoHalvingMNReward(block) {
 		activeForks = append(activeForks, "TIPNoHalvingMNReward")
+	}
+	if c.IsTIPProportionalReward(block) {
+		activeForks = append(activeForks, "TIPProportionalReward")
 	}
 	if c.IsTIPRandomize(block) {
 		activeForks = append(activeForks, "TIPRandomize")
@@ -1059,9 +1114,6 @@ func (c *ChainConfig) ActiveForks(block *big.Int) []string {
 	}
 	if c.IsTIPUpgradePenalty(block) {
 		activeForks = append(activeForks, "TIPUpgradePenalty")
-	}
-	if c.IsTIPUpgradeReward(block) {
-		activeForks = append(activeForks, "TIPUpgradeReward")
 	}
 	if c.IsTIPXDCX(block) {
 		activeForks = append(activeForks, "TIPXDCX")

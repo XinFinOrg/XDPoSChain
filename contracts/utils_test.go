@@ -82,7 +82,7 @@ func getCommonBackend() *backends.SimulatedBackend {
 	legacyConfig.OsakaBlock = new(big.Int).Set(futureForkBlock)
 	legacyConfig.AmsterdamBlock = new(big.Int).Set(futureForkBlock)
 	legacyConfig.DynamicGasLimitBlock = new(big.Int).Set(futureForkBlock)
-	legacyConfig.TIPUpgradeRewardBlock = new(big.Int).Set(futureForkBlock)
+	legacyConfig.TIPFixedRewardBlock = new(big.Int).Set(futureForkBlock)
 	legacyConfig.TIPUpgradePenaltyBlock = new(big.Int).Set(futureForkBlock)
 	legacyConfig.TIPEpochHalvingBlock = new(big.Int).Set(futureForkBlock)
 

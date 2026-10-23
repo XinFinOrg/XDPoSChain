@@ -243,11 +243,11 @@ var generatedChainConfigBuiltInBackfillForkBlockFields = []chainConfigBigIntFiel
 		bind:        func(c *ChainConfig) **big.Int { return &c.DynamicGasLimitBlock },
 	},
 	{
-		name:        "TIPUpgradeRewardBlock",
-		jsonKey:     "tipUpgradeRewardBlock",
+		name:        "TIPFixedRewardBlock",
+		jsonKey:     "tipFixedRewardBlock",
 		xdcSpecific: true,
-		get:         func(c *ChainConfig) *big.Int { return c.TIPUpgradeRewardBlock },
-		bind:        func(c *ChainConfig) **big.Int { return &c.TIPUpgradeRewardBlock },
+		get:         func(c *ChainConfig) *big.Int { return c.TIPFixedRewardBlock },
+		bind:        func(c *ChainConfig) **big.Int { return &c.TIPFixedRewardBlock },
 	},
 	{
 		name:        "TIPUpgradePenaltyBlock",
@@ -262,6 +262,13 @@ var generatedChainConfigBuiltInBackfillForkBlockFields = []chainConfigBigIntFiel
 		xdcSpecific: true,
 		get:         func(c *ChainConfig) *big.Int { return c.TIPEpochHalvingBlock },
 		bind:        func(c *ChainConfig) **big.Int { return &c.TIPEpochHalvingBlock },
+	},
+	{
+		name:        "TIPProportionalRewardBlock",
+		jsonKey:     "tipProportionalRewardBlock",
+		xdcSpecific: true,
+		get:         func(c *ChainConfig) *big.Int { return c.TIPProportionalRewardBlock },
+		bind:        func(c *ChainConfig) **big.Int { return &c.TIPProportionalRewardBlock },
 	},
 }
 
@@ -406,7 +413,7 @@ var generatedChainConfigForkOrderFieldDefs = []struct {
 		optional: alwaysOptionalChainConfigForkOrderField,
 	},
 	{
-		name:     "TIPUpgradeRewardBlock",
+		name:     "TIPFixedRewardBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
 	},
 	{
@@ -433,6 +440,10 @@ var generatedChainConfigForkOrderFieldDefs = []struct {
 	},
 	{
 		name:     "TIPEpochHalvingBlock",
+		optional: alwaysOptionalChainConfigForkOrderField,
+	},
+	{
+		name:     "TIPProportionalRewardBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
 	},
 }

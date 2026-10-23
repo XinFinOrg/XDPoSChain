@@ -552,6 +552,15 @@ Use this procedure when the chain is already running and you want to add a new f
 - If the proposed config change would alter the genesis hash, treat it as a different chain and use a fresh data directory instead of trying to mutate the existing one in place.
 - If a new fork point is no longer entirely in the future, compatibility checks may return a `ConfigCompatError` and require a rewind or another migration workflow instead of an in-place update.
 
+## Reward Forks: TIPFixedReward and TIPProportionalReward
+
+- `tipUpgradeRewardBlock` is renamed to `tipFixedRewardBlock`. The legacy key is still accepted when a genesis file or a stored chain config is read, so testnet keeps its activation at `83600000` with no migration. A config that carries both keys with different values is rejected.
+- Downgrade warning: once this binary writes the chain config back, it is stored under `tipFixedRewardBlock`. Older binaries do not know that key and see the fixed-reward fork as unset, so they compute different rewards. Do not downgrade a node on the same data directory after it has run this binary; restore a backup taken before the upgrade instead.
+- `tipProportionalRewardBlock` pays each masternode, protector and observer `perNodeReward × min(sign, signSlots) / signSlots`; the unearned share is not minted. It does not depend on `tipFixedRewardBlock`, and when both are active it takes precedence.
+- Activation boundary: the reward model is chosen at the paying checkpoint, while the rewarded epoch is two epochs earlier. The first checkpoint at or after the activation height therefore pays an epoch that lies entirely before activation under the new model. With devnet's activation at `50000` and an epoch of 900, the first affected checkpoint is `50400`, paying epoch `[48601, 49499]`. TIPFixedReward behaves the same way.
+- Devnet: `tipFixedRewardBlock` is unset and `tipProportionalRewardBlock` is `50000`. That changes the rules of a fork that existing devnet databases have already passed, so the built-in devnet direct restart described in the compatibility matrix above does not apply to this change. Opening an existing devnet database fails with `provided genesis config conflicts with built-in chain config`; start devnet nodes from a fresh data directory.
+- Mainnet, testnet and localnet leave `tipProportionalRewardBlock` unset.
+
 ## Prague / EIP-2935
 
 The history storage contract at `HistoryStorageAddress` records the hashes of the last 8,191 blocks so that contracts can read them; `blockhash` itself still answers for 256 blocks only. What follows is how the contract gets into the state, which is where this chain differs from upstream go-ethereum.

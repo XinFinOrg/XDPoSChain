@@ -188,8 +188,13 @@ func (c *ChainConfig) IsDynamicGasLimit(num *big.Int) bool {
 	return isForked(c.DynamicGasLimitBlock, num)
 }
 
-func (c *ChainConfig) IsTIPUpgradeReward(num *big.Int) bool {
-	return isForked(c.TIPUpgradeRewardBlock, num)
+// IsTIPFixedReward returns whether num is either equal to the TIPFixedReward fork block or greater.
+//
+// The fixed reward pays every signer the full per-node reward no matter how
+// many sign slots it signed, which is wrong. It is kept unchanged only because
+// testnet already runs it; see TIPProportionalReward for the corrected payout.
+func (c *ChainConfig) IsTIPFixedReward(num *big.Int) bool {
+	return isForked(c.TIPFixedRewardBlock, num)
 }
 
 func (c *ChainConfig) IsTIPUpgradePenalty(num *big.Int) bool {
@@ -198,6 +203,19 @@ func (c *ChainConfig) IsTIPUpgradePenalty(num *big.Int) bool {
 
 func (c *ChainConfig) IsTIPEpochHalving(num *big.Int) bool {
 	return isForked(c.TIPEpochHalvingBlock, num)
+}
+
+// IsTIPProportionalReward returns whether num is either equal to the TIPProportionalReward fork block or greater.
+func (c *ChainConfig) IsTIPProportionalReward(num *big.Int) bool {
+	return isForked(c.TIPProportionalRewardBlock, num)
+}
+
+// IsTIPTieredReward reports whether the per-role reward model, with its
+// masternode, protector and observer tiers, is active at num. Both the fixed
+// and the proportional reward forks pay through it, and each one can be
+// scheduled without the other.
+func (c *ChainConfig) IsTIPTieredReward(num *big.Int) bool {
+	return c.IsTIPFixedReward(num) || c.IsTIPProportionalReward(num)
 }
 
 // IsPrague returns whether num is either equal to the Prague fork block or greater.

@@ -263,7 +263,7 @@ func legacyV1TestChainConfig(chainConfig *params.ChainConfig) *params.ChainConfi
 	legacy.OsakaBlock = new(big.Int).Set(futureForkBlock)
 	legacy.AmsterdamBlock = new(big.Int).Set(futureForkBlock)
 	legacy.DynamicGasLimitBlock = new(big.Int).Set(futureForkBlock)
-	legacy.TIPUpgradeRewardBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPFixedRewardBlock = new(big.Int).Set(futureForkBlock)
 	legacy.TIPUpgradePenaltyBlock = new(big.Int).Set(futureForkBlock)
 	legacy.TIPEpochHalvingBlock = new(big.Int).Set(futureForkBlock)
 	return refreshChainConfigPresence(&legacy)

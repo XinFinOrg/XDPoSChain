@@ -51,9 +51,11 @@ func TestForkActivationIgnoresCommonFallbacks(t *testing.T) {
 	assert.False(t, config.IsOsaka(big.NewInt(math.MaxInt64)))
 	assert.False(t, config.IsAmsterdam(big.NewInt(math.MaxInt64)))
 	assert.False(t, config.IsDynamicGasLimit(big.NewInt(math.MaxInt64)))
-	assert.False(t, config.IsTIPUpgradeReward(big.NewInt(math.MaxInt64)))
+	assert.False(t, config.IsTIPFixedReward(big.NewInt(math.MaxInt64)))
 	assert.False(t, config.IsTIPUpgradePenalty(big.NewInt(math.MaxInt64)))
 	assert.False(t, config.IsTIPEpochHalving(big.NewInt(math.MaxInt64)))
+	assert.False(t, config.IsTIPProportionalReward(big.NewInt(math.MaxInt64)))
+	assert.False(t, config.IsTIPTieredReward(big.NewInt(math.MaxInt64)))
 
 	description := config.Description()
 	assertDescriptionLineValue := func(t *testing.T, label, value string) {
@@ -88,11 +90,38 @@ func TestForkActivationIgnoresCommonFallbacks(t *testing.T) {
 	assertDescriptionLineValue(t, "Osaka:", "<nil>")
 	assertDescriptionLineValue(t, "Amsterdam:", "<nil>")
 	assertDescriptionLineValue(t, "DynamicGasLimit:", "<nil>")
-	assertDescriptionLineValue(t, "TIPUpgradeReward:", "<nil>")
+	assertDescriptionLineValue(t, "TIPFixedReward:", "<nil>")
 	assertDescriptionLineValue(t, "TIPUpgradePenalty:", "<nil>")
 	assertDescriptionLineValue(t, "TIPEpochHalving:", "<nil>")
+	assertDescriptionLineValue(t, "TIPProportionalReward:", "<nil>")
 	assertDescriptionLineValue(t, "TRC21IssuerSMC:", zeroAddress0x)
 	assertDescriptionLineValue(t, "XDCXListingSMC:", zeroAddress0x)
 	assertDescriptionLineValue(t, "RelayerRegistrationSMC:", zeroAddress0x)
 	assertDescriptionLineValue(t, "LendingRegistrationSMC:", zeroAddress0x)
+}
+
+// TestTIPRewardForksAreIndependent checks that the fixed and proportional reward
+// forks activate on their own, and that either one turns the tiered reward model on.
+func TestTIPRewardForksAreIndependent(t *testing.T) {
+	tests := []struct {
+		name                string
+		fixed, proportional *big.Int
+		wantFixed, wantProp bool
+		wantTiered          bool
+	}{
+		{name: "neither", wantFixed: false, wantProp: false, wantTiered: false},
+		{name: "fixed only", fixed: big.NewInt(10), wantFixed: true, wantProp: false, wantTiered: true},
+		{name: "proportional only", proportional: big.NewInt(10), wantFixed: false, wantProp: true, wantTiered: true},
+		{name: "both", fixed: big.NewInt(5), proportional: big.NewInt(10), wantFixed: true, wantProp: true, wantTiered: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config := &ChainConfig{TIPFixedRewardBlock: test.fixed, TIPProportionalRewardBlock: test.proportional}
+			block := big.NewInt(10)
+			assert.Equal(t, test.wantFixed, config.IsTIPFixedReward(block))
+			assert.Equal(t, test.wantProp, config.IsTIPProportionalReward(block))
+			assert.Equal(t, test.wantTiered, config.IsTIPTieredReward(block))
+			assert.False(t, config.IsTIPProportionalReward(big.NewInt(9)) && test.proportional != nil)
+		})
+	}
 }

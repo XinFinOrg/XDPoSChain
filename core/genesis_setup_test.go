@@ -36,7 +36,7 @@ func TestSetupGenesisNormalizesLocalnetChainConfig(t *testing.T) {
 			CancunBlock:                 big.NewInt(34),
 			PragueBlock:                 big.NewInt(34),
 			DynamicGasLimitBlock:        big.NewInt(34),
-			TIPUpgradeRewardBlock:       big.NewInt(34),
+			TIPFixedRewardBlock:         big.NewInt(34),
 			TIPUpgradePenaltyBlock:      big.NewInt(34),
 			TRC21IssuerSMC:              params.LocalnetChainConfig.TRC21IssuerSMC,
 			XDCXListingSMC:              params.LocalnetChainConfig.XDCXListingSMC,

@@ -113,9 +113,10 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 		osakaBlock                  *big.Int
 		amsterdamBlock              *big.Int
 		dynamicGasLimitBlock        *big.Int
-		tipUpgradeRewardBlock       *big.Int
+		tipFixedRewardBlock         *big.Int
 		tipUpgradePenaltyBlock      *big.Int
 		tipEpochHalvingBlock        *big.Int
+		tipProportionalRewardBlock  *big.Int
 	}{
 		{
 			name:                        "mainnet",
@@ -145,9 +146,10 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 			osakaBlock:                  nil,
 			amsterdamBlock:              nil,
 			dynamicGasLimitBlock:        nil,
-			tipUpgradeRewardBlock:       nil,
+			tipFixedRewardBlock:         nil,
 			tipUpgradePenaltyBlock:      nil,
 			tipEpochHalvingBlock:        nil,
+			tipProportionalRewardBlock:  nil,
 		},
 		{
 			name:                        "testnet",
@@ -177,9 +179,10 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 			osakaBlock:                  nil,
 			amsterdamBlock:              nil,
 			dynamicGasLimitBlock:        big.NewInt(83600000),
-			tipUpgradeRewardBlock:       big.NewInt(83600000),
+			tipFixedRewardBlock:         big.NewInt(83600000),
 			tipUpgradePenaltyBlock:      big.NewInt(83600000),
 			tipEpochHalvingBlock:        nil,
+			tipProportionalRewardBlock:  nil,
 		},
 		{
 			name:                        "devnet",
@@ -209,9 +212,10 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 			osakaBlock:                  nil,
 			amsterdamBlock:              nil,
 			dynamicGasLimitBlock:        big.NewInt(50000),
-			tipUpgradeRewardBlock:       big.NewInt(50000),
+			tipFixedRewardBlock:         nil,
 			tipUpgradePenaltyBlock:      big.NewInt(50000),
 			tipEpochHalvingBlock:        nil,
+			tipProportionalRewardBlock:  big.NewInt(50000),
 		},
 		{
 			name:                        "localnet",
@@ -241,9 +245,10 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 			osakaBlock:                  nil,
 			amsterdamBlock:              nil,
 			dynamicGasLimitBlock:        big.NewInt(0),
-			tipUpgradeRewardBlock:       big.NewInt(0),
+			tipFixedRewardBlock:         big.NewInt(0),
 			tipUpgradePenaltyBlock:      big.NewInt(0),
 			tipEpochHalvingBlock:        nil,
+			tipProportionalRewardBlock:  nil,
 		},
 	}
 
@@ -288,9 +293,10 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 			assertBlock(t, "Osaka", test.config.OsakaBlock, test.osakaBlock)
 			assertBlock(t, "Amsterdam", test.config.AmsterdamBlock, test.amsterdamBlock)
 			assertBlock(t, "DynamicGasLimit", test.config.DynamicGasLimitBlock, test.dynamicGasLimitBlock)
-			assertBlock(t, "TIPUpgradeReward", test.config.TIPUpgradeRewardBlock, test.tipUpgradeRewardBlock)
+			assertBlock(t, "TIPFixedReward", test.config.TIPFixedRewardBlock, test.tipFixedRewardBlock)
 			assertBlock(t, "TIPUpgradePenalty", test.config.TIPUpgradePenaltyBlock, test.tipUpgradePenaltyBlock)
 			assertBlock(t, "TIPEpochHalving", test.config.TIPEpochHalvingBlock, test.tipEpochHalvingBlock)
+			assertBlock(t, "TIPProportionalReward", test.config.TIPProportionalRewardBlock, test.tipProportionalRewardBlock)
 
 			// For the built-in networks, declaring the trio changes what is
 			// reported, not what executes: ActiveForks gains

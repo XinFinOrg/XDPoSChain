@@ -17,7 +17,7 @@ import (
 // The digest is computed in-process for each comparison and is never persisted
 // or exchanged, so the version byte has no cross-version path to fall back from:
 // a mixed version pair can only arise when a test injects its own encoder.
-const chainConfigDigestVersion byte = 3
+const chainConfigDigestVersion byte = 4
 
 func defaultHashChainConfigSemanticVersioned(cfg *params.ChainConfig) (byte, [32]byte) {
 	return chainConfigDigestVersion, hashChainConfigSemantic(cfg)

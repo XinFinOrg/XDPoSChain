@@ -54,7 +54,7 @@ func TestDAOForkRangeExtradata(t *testing.T) {
 		cfg.PragueBlock = set()
 		cfg.OsakaBlock = set()
 		cfg.DynamicGasLimitBlock = set()
-		cfg.TIPUpgradeRewardBlock = set()
+		cfg.TIPFixedRewardBlock = set()
 		cfg.TIPUpgradePenaltyBlock = set()
 		cfg.TIPEpochHalvingBlock = set()
 		cfg.TRC21IssuerSMC = params.XDCMainnetChainConfig.TRC21IssuerSMC
