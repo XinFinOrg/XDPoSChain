@@ -42,15 +42,21 @@ var (
 	}
 )
 
-// tradingExchangeObject is the Ethereum consensus representation of exchanges.
-// These objects are stored in the main orderId trie.
+// orderList is the value stored under each key of the trading state's per-price
+// tries: the volume aggregated at that key plus the merkle root of the trie
+// below it. It backs three levels -- the ask/bid price tries (child keys are
+// orderIds holding per-order quantities), the liquidation price trie (child keys
+// are lendingBook hashes whose values are nested orderLists) and the lending
+// book trie (child keys are tradeIds).
 type orderList struct {
 	Volume *big.Int
 	Root   common.Hash // merkle root of the storage trie
 }
 
-// tradingExchangeObject is the Ethereum consensus representation of exchanges.
-// These objects are stored in the main orderId trie.
+// tradingExchangeObject is the Ethereum consensus representation of one exchange
+// (token pair) in the main trie, keyed by the order book hash. It holds the roots
+// of that exchange's sub-tries: the ask/bid price tries, the orderId-keyed order
+// trie and the liquidation price trie.
 type tradingExchangeObject struct {
 	Nonce                  uint64
 	LastPrice              *big.Int

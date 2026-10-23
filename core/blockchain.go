@@ -224,7 +224,6 @@ type BlockChain struct {
 	cacheConfig *CacheConfig        // Cache configuration for pruning
 
 	db         ethdb.Database                   // Low level persistent database to store final content in
-	XDCxDb     ethdb.XDCxDatabase               // XDCx database
 	triegc     *prque.Prque[int64, trieGcEntry] // Priority queue mapping block numbers to tries to gc
 	gcproc     time.Duration                    // Accumulates canonical block processing for trie dumping
 	triedb     *trie.Database                   // The database handler for maintaining trie nodes.
@@ -637,60 +636,6 @@ func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus
 	bc.wg.Go(bc.futureBlocksLoop)
 
 	return bc, nil
-}
-
-// NewBlockChainEx extend old blockchain, add order state db
-func NewBlockChainEx(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, genesis *Genesis, engine consensus.Engine, vmConfig vm.Config) (*BlockChain, error) {
-	blockchain, err := NewBlockChain(db, cacheConfig, genesis, engine, vmConfig)
-	if err != nil {
-		return nil, err
-	}
-	if blockchain != nil {
-		blockchain.addXDCxDb(XDCxDb)
-	}
-	return blockchain, nil
-}
-
-// NewBlockChainExReadOnly opens an XDCx-aware readonly blockchain.
-func NewBlockChainExReadOnly(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, genesis *Genesis, engine consensus.Engine, vmConfig vm.Config) (*BlockChain, error) {
-	blockchain, err := NewBlockChainReadOnly(db, cacheConfig, genesis, engine, vmConfig)
-	if err != nil {
-		return nil, err
-	}
-	if blockchain != nil {
-		blockchain.addXDCxDb(XDCxDb)
-	}
-	return blockchain, nil
-}
-
-// NewBlockChainExResolved opens a writable XDCx-aware blockchain from caller-
-// supplied startup metadata.
-func NewBlockChainExResolved(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, compatPolicy ChainConfigMismatchPolicy) (*BlockChain, error) {
-	blockchain, err := NewBlockChainResolved(db, cacheConfig, recoveryGenesis, engine, vmConfig, chainConfig, genesisHash, compatErr, compatPolicy)
-	if err != nil {
-		return nil, err
-	}
-	if blockchain != nil {
-		blockchain.addXDCxDb(XDCxDb)
-	}
-	return blockchain, nil
-}
-
-// NewBlockChainExReadOnlyResolved opens a readonly XDCx-aware blockchain from
-// caller-supplied startup metadata.
-func NewBlockChainExReadOnlyResolved(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, compatPolicy ChainConfigMismatchPolicy) (*BlockChain, error) {
-	blockchain, err := NewBlockChainReadOnlyResolved(db, cacheConfig, recoveryGenesis, engine, vmConfig, chainConfig, genesisHash, compatErr, compatPolicy)
-	if err != nil {
-		return nil, err
-	}
-	if blockchain != nil {
-		blockchain.addXDCxDb(XDCxDb)
-	}
-	return blockchain, nil
-}
-
-func (bc *BlockChain) addXDCxDb(XDCxDb ethdb.XDCxDatabase) {
-	bc.XDCxDb = XDCxDb
 }
 
 // loadLastState loads the last known chain state from the database. This method
