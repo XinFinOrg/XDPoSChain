@@ -4,15 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"math/big"
-	"time"
-
-	"github.com/XinFinOrg/XDPoSChain/crypto"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
-)
-
-const (
-	OrderCacheLimit = 10000
 )
 
 var (
@@ -29,15 +22,6 @@ var EmptyHash = common.Hash{}
 var Zero = big.NewInt(0)
 var One = big.NewInt(1)
 
-var EmptyOrderList = orderList{
-	Volume: nil,
-	Root:   EmptyHash,
-}
-var EmptyExchangeOnject = tradingExchangeObject{
-	Nonce:   0,
-	AskRoot: EmptyHash,
-	BidRoot: EmptyHash,
-}
 var EmptyOrder = OrderItem{
 	Quantity: Zero,
 }
@@ -115,11 +99,6 @@ type TxMatchBatch struct {
 	TxHash    common.Hash
 }
 
-type MatchingResult struct {
-	Trades  []map[string]string
-	Rejects []*OrderItem
-}
-
 func EncodeTxMatchesBatch(txMatchBatch TxMatchBatch) ([]byte, error) {
 	data, err := json.Marshal(txMatchBatch)
 	if err != nil || data == nil {
@@ -136,25 +115,12 @@ func DecodeTxMatchesBatch(data []byte) (TxMatchBatch, error) {
 	return txMatchResult, nil
 }
 
-// use orderHash instead of orderId
-// because both takerOrders don't have orderId
-func GetOrderHistoryKey(baseToken, quoteToken common.Address, orderHash common.Hash) common.Hash {
-	return crypto.Keccak256Hash(baseToken.Bytes(), quoteToken.Bytes(), orderHash.Bytes())
-}
-
 func (tx TxDataMatch) DecodeOrder() (*OrderItem, error) {
 	order := &OrderItem{}
 	if err := DecodeBytesItem(tx.Order, order); err != nil {
 		return order, err
 	}
 	return order, nil
-}
-
-type OrderHistoryItem struct {
-	TxHash       common.Hash
-	FilledAmount *big.Int
-	Status       string
-	UpdatedAt    time.Time
 }
 
 // ToJSON : log json string
@@ -168,52 +134,14 @@ func ToJSON(object interface{}, args ...string) string {
 	return string(str)
 }
 
-func Mul(x, y *big.Int) *big.Int {
-	return big.NewInt(0).Mul(x, y)
-}
-
-func Div(x, y *big.Int) *big.Int {
-	return big.NewInt(0).Div(x, y)
-}
-
-func Add(x, y *big.Int) *big.Int {
-	return big.NewInt(0).Add(x, y)
-}
-
 func Sub(x, y *big.Int) *big.Int {
 	return big.NewInt(0).Sub(x, y)
-}
-
-func Neg(x *big.Int) *big.Int {
-	return big.NewInt(0).Neg(x)
-}
-
-func ToBigInt(s string) *big.Int {
-	res := big.NewInt(0)
-	res.SetString(s, 10)
-	return res
 }
 
 func CloneBigInt(bigInt *big.Int) *big.Int {
 	return common.CloneBigInt(bigInt)
 }
 
-func Exp(x, y *big.Int) *big.Int {
-	return big.NewInt(0).Exp(x, y, nil)
-}
-
-func Max(a, b *big.Int) *big.Int {
-	if a.Cmp(b) == 1 {
-		return a
-	} else {
-		return b
-	}
-}
-
 func GetTradingOrderBookHash(baseToken common.Address, quoteToken common.Address) common.Hash {
 	return common.BytesToHash(append(baseToken[:16], quoteToken[4:]...))
-}
-
-func GetMatchingResultCacheKey(order *OrderItem) common.Hash {
-	return crypto.Keccak256Hash(order.UserAddress.Bytes(), order.Nonce.Bytes())
 }

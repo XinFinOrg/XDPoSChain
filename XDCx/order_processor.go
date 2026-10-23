@@ -3,8 +3,6 @@ package XDCx
 import (
 	"encoding/json"
 	"math/big"
-	"strconv"
-	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -19,32 +17,31 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
-func (XDCx *XDCX) CommitOrder(header *types.Header, coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, tradingStateDB *tradingstate.TradingStateDB, orderBook common.Hash, order *tradingstate.OrderItem) ([]map[string]string, []*tradingstate.OrderItem, error) {
+func (XDCx *XDCX) CommitOrder(header *types.Header, coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, tradingStateDB *tradingstate.TradingStateDB, orderBook common.Hash, order *tradingstate.OrderItem) ([]*tradingstate.OrderItem, error) {
 	XDCxSnap := tradingStateDB.Snapshot()
 	dbSnap := statedb.Snapshot()
-	trades, rejects, err := XDCx.ApplyOrder(header, coinbase, chain, statedb, tradingStateDB, orderBook, order)
+	rejects, err := XDCx.ApplyOrder(header, coinbase, chain, statedb, tradingStateDB, orderBook, order)
 	if err != nil {
 		tradingStateDB.RevertToSnapshot(XDCxSnap)
 		statedb.RevertToSnapshot(dbSnap)
-		return nil, nil, err
+		return nil, err
 	}
-	return trades, rejects, err
+	return rejects, err
 }
 
-func (XDCx *XDCX) ApplyOrder(header *types.Header, coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, tradingStateDB *tradingstate.TradingStateDB, orderBook common.Hash, order *tradingstate.OrderItem) ([]map[string]string, []*tradingstate.OrderItem, error) {
+func (XDCx *XDCX) ApplyOrder(header *types.Header, coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, tradingStateDB *tradingstate.TradingStateDB, orderBook common.Hash, order *tradingstate.OrderItem) ([]*tradingstate.OrderItem, error) {
 	var (
 		rejects []*tradingstate.OrderItem
-		trades  []map[string]string
 		err     error
 	)
 	nonce := tradingStateDB.GetNonce(order.UserAddress.Hash())
 	log.Debug("ApplyOrder", "addr", order.UserAddress, "statenonce", nonce, "ordernonce", order.Nonce)
 	if big.NewInt(int64(nonce)).Cmp(order.Nonce) == -1 {
 		log.Debug("ApplyOrder ErrNonceTooHigh", "nonce", order.Nonce)
-		return nil, nil, ErrNonceTooHigh
+		return nil, ErrNonceTooHigh
 	} else if big.NewInt(int64(nonce)).Cmp(order.Nonce) == 1 {
 		log.Debug("ApplyOrder ErrNonceTooLow", "nonce", order.Nonce)
-		return nil, nil, ErrNonceTooLow
+		return nil, ErrNonceTooLow
 	}
 	// increase nonce
 	log.Debug("ApplyOrder set nonce", "nonce", nonce+1, "addr", order.UserAddress.Hex(), "status", order.Status, "oldnonce", nonce)
@@ -60,7 +57,7 @@ func (XDCx *XDCX) ApplyOrder(header *types.Header, coinbase common.Address, chai
 
 	if err := order.VerifyOrder(statedb); err != nil {
 		rejects = append(rejects, order)
-		return trades, rejects, nil
+		return rejects, nil
 	}
 	if order.Status == tradingstate.OrderStatusCancelled {
 		err, reject := XDCx.ProcessCancelOrder(header, tradingStateDB, statedb, chain, coinbase, orderBook, order)
@@ -68,48 +65,44 @@ func (XDCx *XDCX) ApplyOrder(header *types.Header, coinbase common.Address, chai
 			log.Debug("Reject cancelled order", "err", err)
 			rejects = append(rejects, order)
 		}
-		return trades, rejects, nil
+		return rejects, nil
 	}
 	if order.Type != tradingstate.Market {
 		if order.Price.Sign() == 0 || common.BigToHash(order.Price).Big().Cmp(order.Price) != 0 {
 			log.Debug("Reject order price invalid", "price", order.Price)
 			rejects = append(rejects, order)
-			return trades, rejects, nil
+			return rejects, nil
 		}
 	}
 	if order.Quantity.Sign() == 0 || common.BigToHash(order.Quantity).Big().Cmp(order.Quantity) != 0 {
 		log.Debug("Reject order quantity invalid", "quantity", order.Quantity)
 		rejects = append(rejects, order)
-		return trades, rejects, nil
+		return rejects, nil
 	}
 	orderType := order.Type
 	// if we do not use auto-increment orderid, we must set price slot to avoid conflict
 	if orderType == tradingstate.Market {
 		log.Debug("Process maket order", "side", order.Side, "quantity", order.Quantity, "price", order.Price)
-		trades, rejects, err = XDCx.processMarketOrder(coinbase, chain, statedb, tradingStateDB, orderBook, order)
+		rejects, err = XDCx.processMarketOrder(coinbase, chain, statedb, tradingStateDB, orderBook, order)
 		if err != nil {
 			log.Debug("Reject market order", "err", err, "order", tradingstate.ToJSON(order))
-			trades = []map[string]string{}
 			rejects = append(rejects, order)
 		}
 	} else {
 		log.Debug("Process limit order", "side", order.Side, "quantity", order.Quantity, "price", order.Price)
-		trades, rejects, err = XDCx.processLimitOrder(coinbase, chain, statedb, tradingStateDB, orderBook, order)
+		rejects, err = XDCx.processLimitOrder(coinbase, chain, statedb, tradingStateDB, orderBook, order)
 		if err != nil {
 			log.Debug("Reject limit order", "err", err, "order", tradingstate.ToJSON(order))
-			trades = []map[string]string{}
 			rejects = append(rejects, order)
 		}
 	}
 
-	return trades, rejects, nil
+	return rejects, nil
 }
 
 // processMarketOrder : process the market order
-func (XDCx *XDCX) processMarketOrder(coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, tradingStateDB *tradingstate.TradingStateDB, orderBook common.Hash, order *tradingstate.OrderItem) ([]map[string]string, []*tradingstate.OrderItem, error) {
+func (XDCx *XDCX) processMarketOrder(coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, tradingStateDB *tradingstate.TradingStateDB, orderBook common.Hash, order *tradingstate.OrderItem) ([]*tradingstate.OrderItem, error) {
 	var (
-		trades     []map[string]string
-		newTrades  []map[string]string
 		rejects    []*tradingstate.OrderItem
 		newRejects []*tradingstate.OrderItem
 		err        error
@@ -122,11 +115,10 @@ func (XDCx *XDCX) processMarketOrder(coinbase common.Address, chain consensus.Ch
 		bestPrice, volume := tradingStateDB.GetBestAskPrice(orderBook)
 		log.Debug("processMarketOrder ", "side", side, "bestPrice", bestPrice, "quantityToTrade", quantityToTrade, "volume", volume)
 		for quantityToTrade.Cmp(zero) > 0 && bestPrice.Cmp(zero) > 0 {
-			quantityToTrade, newTrades, newRejects, err = XDCx.processOrderList(coinbase, chain, statedb, tradingStateDB, tradingstate.Ask, orderBook, bestPrice, quantityToTrade, order)
+			quantityToTrade, newRejects, err = XDCx.processOrderList(coinbase, chain, statedb, tradingStateDB, tradingstate.Ask, orderBook, bestPrice, quantityToTrade, order)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
-			trades = append(trades, newTrades...)
 			rejects = append(rejects, newRejects...)
 			bestPrice, volume = tradingStateDB.GetBestAskPrice(orderBook)
 			log.Debug("processMarketOrder ", "side", side, "bestPrice", bestPrice, "quantityToTrade", quantityToTrade, "volume", volume)
@@ -135,25 +127,22 @@ func (XDCx *XDCX) processMarketOrder(coinbase common.Address, chain consensus.Ch
 		bestPrice, volume := tradingStateDB.GetBestBidPrice(orderBook)
 		log.Debug("processMarketOrder ", "side", side, "bestPrice", bestPrice, "quantityToTrade", quantityToTrade, "volume", volume)
 		for quantityToTrade.Cmp(zero) > 0 && bestPrice.Cmp(zero) > 0 {
-			quantityToTrade, newTrades, newRejects, err = XDCx.processOrderList(coinbase, chain, statedb, tradingStateDB, tradingstate.Bid, orderBook, bestPrice, quantityToTrade, order)
+			quantityToTrade, newRejects, err = XDCx.processOrderList(coinbase, chain, statedb, tradingStateDB, tradingstate.Bid, orderBook, bestPrice, quantityToTrade, order)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
-			trades = append(trades, newTrades...)
 			rejects = append(rejects, newRejects...)
 			bestPrice, volume = tradingStateDB.GetBestBidPrice(orderBook)
 			log.Debug("processMarketOrder ", "side", side, "bestPrice", bestPrice, "quantityToTrade", quantityToTrade, "volume", volume)
 		}
 	}
-	return trades, rejects, nil
+	return rejects, nil
 }
 
 // processLimitOrder : process the limit order, can change the quote
 // If not care for performance, we should make a copy of quote to prevent further reference problem
-func (XDCx *XDCX) processLimitOrder(coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, tradingStateDB *tradingstate.TradingStateDB, orderBook common.Hash, order *tradingstate.OrderItem) ([]map[string]string, []*tradingstate.OrderItem, error) {
+func (XDCx *XDCX) processLimitOrder(coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, tradingStateDB *tradingstate.TradingStateDB, orderBook common.Hash, order *tradingstate.OrderItem) ([]*tradingstate.OrderItem, error) {
 	var (
-		trades     []map[string]string
-		newTrades  []map[string]string
 		rejects    []*tradingstate.OrderItem
 		newRejects []*tradingstate.OrderItem
 		err        error
@@ -170,13 +159,12 @@ func (XDCx *XDCX) processLimitOrder(coinbase common.Address, chain consensus.Cha
 		log.Debug("processLimitOrder ", "side", side, "minPrice", minPrice, "orderPrice", price, "volume", volume)
 		for quantityToTrade.Cmp(zero) > 0 && price.Cmp(minPrice) >= 0 && minPrice.Cmp(zero) > 0 {
 			log.Debug("Min price in asks tree", "price", minPrice.String())
-			quantityToTrade, newTrades, newRejects, err = XDCx.processOrderList(coinbase, chain, statedb, tradingStateDB, tradingstate.Ask, orderBook, minPrice, quantityToTrade, order)
+			quantityToTrade, newRejects, err = XDCx.processOrderList(coinbase, chain, statedb, tradingStateDB, tradingstate.Ask, orderBook, minPrice, quantityToTrade, order)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
-			trades = append(trades, newTrades...)
 			rejects = append(rejects, newRejects...)
-			log.Debug("New trade found", "newTrades", newTrades, "quantityToTrade", quantityToTrade)
+			log.Debug("New trade found", "quantityToTrade", quantityToTrade)
 			minPrice, volume = tradingStateDB.GetBestAskPrice(orderBook)
 			log.Debug("processLimitOrder ", "side", side, "minPrice", minPrice, "orderPrice", price, "volume", volume)
 		}
@@ -185,13 +173,12 @@ func (XDCx *XDCX) processLimitOrder(coinbase common.Address, chain consensus.Cha
 		log.Debug("processLimitOrder ", "side", side, "maxPrice", maxPrice, "orderPrice", price, "volume", volume)
 		for quantityToTrade.Cmp(zero) > 0 && price.Cmp(maxPrice) <= 0 && maxPrice.Cmp(zero) > 0 {
 			log.Debug("Max price in bids tree", "price", maxPrice.String())
-			quantityToTrade, newTrades, newRejects, err = XDCx.processOrderList(coinbase, chain, statedb, tradingStateDB, tradingstate.Bid, orderBook, maxPrice, quantityToTrade, order)
+			quantityToTrade, newRejects, err = XDCx.processOrderList(coinbase, chain, statedb, tradingStateDB, tradingstate.Bid, orderBook, maxPrice, quantityToTrade, order)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
-			trades = append(trades, newTrades...)
 			rejects = append(rejects, newRejects...)
-			log.Debug("New trade found", "newTrades", newTrades, "quantityToTrade", quantityToTrade)
+			log.Debug("New trade found", "quantityToTrade", quantityToTrade)
 			maxPrice, volume = tradingStateDB.GetBestBidPrice(orderBook)
 			log.Debug("processLimitOrder ", "side", side, "maxPrice", maxPrice, "orderPrice", price, "volume", volume)
 		}
@@ -205,16 +192,14 @@ func (XDCx *XDCX) processLimitOrder(coinbase common.Address, chain consensus.Cha
 		tradingStateDB.InsertOrderItem(orderBook, orderIdHash, *order)
 		log.Debug("After matching, order (unmatched part) is now added to tree", "side", order.Side, "order", order)
 	}
-	return trades, rejects, nil
+	return rejects, nil
 }
 
 // processOrderList : process the order list
-func (XDCx *XDCX) processOrderList(coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, tradingStateDB *tradingstate.TradingStateDB, side string, orderBook common.Hash, price *big.Int, quantityStillToTrade *big.Int, order *tradingstate.OrderItem) (*big.Int, []map[string]string, []*tradingstate.OrderItem, error) {
+func (XDCx *XDCX) processOrderList(coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, tradingStateDB *tradingstate.TradingStateDB, side string, orderBook common.Hash, price *big.Int, quantityStillToTrade *big.Int, order *tradingstate.OrderItem) (*big.Int, []*tradingstate.OrderItem, error) {
 	quantityToTrade := tradingstate.CloneBigInt(quantityStillToTrade)
 	log.Debug("Process matching between order and orderlist", "quantityToTrade", quantityToTrade)
 	var (
-		trades []map[string]string
-
 		rejects []*tradingstate.OrderItem
 	)
 	for quantityToTrade.Sign() > 0 {
@@ -244,7 +229,7 @@ func (XDCx *XDCX) processOrderList(coinbase common.Address, chain consensus.Chai
 				inversePrice := tradingStateDB.GetLastPrice(tradingstate.GetTradingOrderBookHash(common.XDCNativeAddressBinary, oldestOrder.QuoteToken))
 				quoteTokenDecimal, err := XDCx.GetTokenDecimal(chain, statedb, oldestOrder.QuoteToken)
 				if err != nil || quoteTokenDecimal.Sign() == 0 {
-					return nil, nil, nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", oldestOrder.QuoteToken, err)
+					return nil, nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", oldestOrder.QuoteToken, err)
 				}
 				log.Debug("TryGet inversePrice XDC/QuoteToken", "inversePrice", inversePrice)
 				if inversePrice != nil && inversePrice.Sign() > 0 {
@@ -256,7 +241,7 @@ func (XDCx *XDCX) processOrderList(coinbase common.Address, chain consensus.Chai
 		} else {
 			quotePrice = common.BasePrice
 		}
-		tradedQuantity, rejectMaker, settleBalanceResult, err := XDCx.getTradeQuantity(quotePrice, coinbase, chain, statedb, order, &oldestOrder, maxTradedQuantity)
+		tradedQuantity, rejectMaker, err := XDCx.getTradeQuantity(quotePrice, coinbase, chain, statedb, order, &oldestOrder, maxTradedQuantity)
 		if err != nil && err == tradingstate.ErrQuantityTradeTooSmall {
 			if tradedQuantity.Cmp(maxTradedQuantity) == 0 {
 				if quantityToTrade.Cmp(amount) == 0 { // reject Taker & maker
@@ -265,7 +250,7 @@ func (XDCx *XDCX) processOrderList(coinbase common.Address, chain consensus.Chai
 					rejects = append(rejects, &oldestOrder)
 					err = tradingStateDB.CancelOrder(orderBook, &oldestOrder)
 					if err != nil {
-						return nil, nil, nil, err
+						return nil, nil, err
 					}
 					break
 				} else if quantityToTrade.Cmp(amount) < 0 { // reject Taker
@@ -276,7 +261,7 @@ func (XDCx *XDCX) processOrderList(coinbase common.Address, chain consensus.Chai
 					rejects = append(rejects, &oldestOrder)
 					err = tradingStateDB.CancelOrder(orderBook, &oldestOrder)
 					if err != nil {
-						return nil, nil, nil, err
+						return nil, nil, err
 					}
 					continue
 				}
@@ -285,7 +270,7 @@ func (XDCx *XDCX) processOrderList(coinbase common.Address, chain consensus.Chai
 					rejects = append(rejects, &oldestOrder)
 					err = tradingStateDB.CancelOrder(orderBook, &oldestOrder)
 					if err != nil {
-						return nil, nil, nil, err
+						return nil, nil, err
 					}
 					continue
 				} else { // reject Taker
@@ -295,7 +280,7 @@ func (XDCx *XDCX) processOrderList(coinbase common.Address, chain consensus.Chai
 				}
 			}
 		} else if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 		if tradedQuantity.Sign() == 0 && !rejectMaker {
 			log.Debug("Reject order Taker ", "tradedQuantity", tradedQuantity, "rejectMaker", rejectMaker)
@@ -312,26 +297,6 @@ func (XDCx *XDCX) processOrderList(coinbase common.Address, chain consensus.Chai
 			tradingStateDB.SetLastPrice(orderBook, price)
 			log.Debug("Update quantity for orderId", "orderId", orderId.Hex())
 			log.Debug("TRADE", "orderBook", orderBook, "Taker price", price, "maker price", order.Price, "Amount", tradedQuantity, "orderId", orderId, "side", side)
-
-			tradeRecord := make(map[string]string)
-			tradeRecord[tradingstate.TradeTakerOrderHash] = order.Hash.Hex()
-			tradeRecord[tradingstate.TradeMakerOrderHash] = oldestOrder.Hash.Hex()
-			tradeRecord[tradingstate.TradeTimestamp] = strconv.FormatInt(time.Now().Unix(), 10)
-			tradeRecord[tradingstate.TradeQuantity] = tradedQuantity.String()
-			tradeRecord[tradingstate.TradeMakerExchange] = oldestOrder.ExchangeAddress.String()
-			tradeRecord[tradingstate.TradeMaker] = oldestOrder.UserAddress.String()
-			tradeRecord[tradingstate.TradeBaseToken] = oldestOrder.BaseToken.String()
-			tradeRecord[tradingstate.TradeQuoteToken] = oldestOrder.QuoteToken.String()
-			if settleBalanceResult != nil {
-				tradeRecord[tradingstate.MakerFee] = settleBalanceResult.Maker.Fee.Text(10)
-				tradeRecord[tradingstate.TakerFee] = settleBalanceResult.Taker.Fee.Text(10)
-			}
-			// maker price is actual price
-			// Taker price is offer price
-			// tradedPrice is always actual price
-			tradeRecord[tradingstate.TradePrice] = oldestOrder.Price.String()
-			tradeRecord[tradingstate.MakerOrderType] = oldestOrder.Type
-			trades = append(trades, tradeRecord)
 
 			oldAveragePrice, oldTotalQuantity := tradingStateDB.GetMediumPriceAndTotalAmount(orderBook)
 
@@ -359,21 +324,21 @@ func (XDCx *XDCX) processOrderList(coinbase common.Address, chain consensus.Chai
 			rejects = append(rejects, &oldestOrder)
 			err := tradingStateDB.CancelOrder(orderBook, &oldestOrder)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, err
 			}
 		}
 	}
-	return quantityToTrade, trades, rejects, nil
+	return quantityToTrade, rejects, nil
 }
 
-func (XDCx *XDCX) getTradeQuantity(quotePrice *big.Int, coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, takerOrder *tradingstate.OrderItem, makerOrder *tradingstate.OrderItem, quantityToTrade *big.Int) (*big.Int, bool, *tradingstate.SettleBalance, error) {
+func (XDCx *XDCX) getTradeQuantity(quotePrice *big.Int, coinbase common.Address, chain consensus.ChainContext, statedb *state.StateDB, takerOrder *tradingstate.OrderItem, makerOrder *tradingstate.OrderItem, quantityToTrade *big.Int) (*big.Int, bool, error) {
 	baseTokenDecimal, err := XDCx.GetTokenDecimal(chain, statedb, makerOrder.BaseToken)
 	if err != nil || baseTokenDecimal.Sign() == 0 {
-		return tradingstate.Zero, false, nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", makerOrder.BaseToken, err)
+		return tradingstate.Zero, false, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", makerOrder.BaseToken, err)
 	}
 	quoteTokenDecimal, err := XDCx.GetTokenDecimal(chain, statedb, makerOrder.QuoteToken)
 	if err != nil || quoteTokenDecimal.Sign() == 0 {
-		return tradingstate.Zero, false, nil, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", makerOrder.QuoteToken, err)
+		return tradingstate.Zero, false, fmt.Errorf("fail to get tokenDecimal: Token: %v . Err: %v", makerOrder.QuoteToken, err)
 	}
 	if makerOrder.QuoteToken == common.XDCNativeAddressBinary {
 		quotePrice = quoteTokenDecimal
@@ -381,16 +346,16 @@ func (XDCx *XDCX) getTradeQuantity(quotePrice *big.Int, coinbase common.Address,
 	if takerOrder.ExchangeAddress == makerOrder.ExchangeAddress {
 		if err := tradingstate.CheckRelayerFee(takerOrder.ExchangeAddress, new(big.Int).Lsh(common.RelayerFee, 1), statedb); err != nil {
 			log.Debug("Reject order Taker Exchnage = Maker Exchange , relayer not enough fee ", "err", err)
-			return tradingstate.Zero, false, nil, nil
+			return tradingstate.Zero, false, nil
 		}
 	} else {
 		if err := tradingstate.CheckRelayerFee(takerOrder.ExchangeAddress, common.RelayerFee, statedb); err != nil {
 			log.Debug("Reject order Taker , relayer not enough fee ", "err", err)
-			return tradingstate.Zero, false, nil, nil
+			return tradingstate.Zero, false, nil
 		}
 		if err := tradingstate.CheckRelayerFee(makerOrder.ExchangeAddress, common.RelayerFee, statedb); err != nil {
 			log.Debug("Reject order maker , relayer not enough fee ", "err", err)
-			return tradingstate.Zero, true, nil, nil
+			return tradingstate.Zero, true, nil
 		}
 	}
 	takerFeeRate := tradingstate.GetExRelayerFee(takerOrder.ExchangeAddress, statedb)
@@ -417,9 +382,9 @@ func (XDCx *XDCX) getTradeQuantity(quotePrice *big.Int, coinbase common.Address,
 		if err == nil {
 			err = DoSettleBalance(coinbase, takerOrder, makerOrder, settleBalanceResult, statedb)
 		}
-		return quantity, rejectMaker, settleBalanceResult, err
+		return quantity, rejectMaker, err
 	}
-	return quantity, rejectMaker, settleBalanceResult, nil
+	return quantity, rejectMaker, nil
 }
 
 func GetTradeQuantity(takerSide string, takerFeeRate *big.Int, takerBalance *big.Int, makerPrice *big.Int, makerFeeRate *big.Int, makerBalance *big.Int, baseTokenDecimal *big.Int, quantityToTrade *big.Int) (*big.Int, bool) {

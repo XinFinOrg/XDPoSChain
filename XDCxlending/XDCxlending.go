@@ -54,9 +54,8 @@ func (l *Lending) GetLevelDB() XDCxDAO.XDCXDAO {
 	return l.XDCx.GetLevelDB()
 }
 
-func (l *Lending) ProcessOrderPending(header *types.Header, coinbase common.Address, chain consensus.ChainContext, pending map[common.Address]types.LendingTransactions, statedb *state.StateDB, lendingStatedb *lendingstate.LendingStateDB, tradingStateDb *tradingstate.TradingStateDB) ([]*lendingstate.LendingItem, map[common.Hash]lendingstate.MatchingResult) {
+func (l *Lending) ProcessOrderPending(header *types.Header, coinbase common.Address, chain consensus.ChainContext, pending map[common.Address]types.LendingTransactions, statedb *state.StateDB, lendingStatedb *lendingstate.LendingStateDB, tradingStateDb *tradingstate.TradingStateDB) []*lendingstate.LendingItem {
 	lendingItems := []*lendingstate.LendingItem{}
-	matchingResults := map[common.Hash]lendingstate.MatchingResult{}
 
 	txs := types.NewLendingTransactionByNonce(types.LendingTxSigner{}, pending)
 	for {
@@ -103,7 +102,7 @@ func (l *Lending) ProcessOrderPending(header *types.Header, coinbase common.Addr
 		*originalOrder = *order
 		originalOrder.Quantity = lendingstate.CloneBigInt(order.Quantity)
 
-		newTrades, newRejectedOrders, err := l.CommitOrder(header, coinbase, chain, statedb, lendingStatedb, tradingStateDb, lendingstate.GetLendingOrderBookHash(order.LendingToken, order.Term), order)
+		newRejectedOrders, err := l.CommitOrder(header, coinbase, chain, statedb, lendingStatedb, tradingStateDb, lendingstate.GetLendingOrderBookHash(order.LendingToken, order.Term), order)
 		for _, reject := range newRejectedOrders {
 			log.Debug("Reject order", "reject", *reject)
 		}
@@ -137,12 +136,8 @@ func (l *Lending) ProcessOrderPending(header *types.Header, coinbase common.Addr
 		originalOrder.LendingId = order.LendingId
 		originalOrder.ExtraData = order.ExtraData
 		lendingItems = append(lendingItems, originalOrder)
-		matchingResults[lendingstate.GetLendingCacheKey(order)] = lendingstate.MatchingResult{
-			Trades:  newTrades,
-			Rejects: newRejectedOrders,
-		}
 	}
-	return lendingItems, matchingResults
+	return lendingItems
 }
 
 func (l *Lending) GetLendingState(block *types.Block, author common.Address) (*lendingstate.LendingStateDB, error) {
