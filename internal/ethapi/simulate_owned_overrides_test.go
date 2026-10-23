@@ -37,16 +37,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// ringSlot builds a history storage key the way core.historyStorageKey does.
+func ringSlot(position uint64) common.Hash {
+	var key common.Hash
+	binary.BigEndian.PutUint64(key[common.HashLength-8:], position)
+	return key
+}
+
 // TestHistoryStorageWrittenSlots pins the slot arithmetic against core.ProcessParentBlockHash.
 func TestHistoryStorageWrittenSlots(t *testing.T) {
 	t.Parallel()
 
-	// ringSlot builds a key the way core.historyStorageKey does.
-	ringSlot := func(position uint64) common.Hash {
-		var key common.Hash
-		binary.BigEndian.PutUint64(key[common.HashLength-8:], position)
-		return key
-	}
 	baseState := func(t *testing.T, withCode bool) *state.StateDB {
 		t.Helper()
 		statedb, err := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
@@ -55,11 +56,6 @@ func TestHistoryStorageWrittenSlots(t *testing.T) {
 			statedb.SetCode(params.HistoryStorageAddress, params.HistoryStorageCode)
 		}
 		return statedb
-	}
-	pragueConfig := func(prague int64) *params.ChainConfig {
-		config := *params.MergedTestChainConfig
-		config.PragueBlock = big.NewInt(prague)
-		return &config
 	}
 	coreWrote := func(t *testing.T, config *params.ChainConfig, withCode bool, number int64) map[uint64]bool {
 		t.Helper()
@@ -99,21 +95,21 @@ func TestHistoryStorageWrittenSlots(t *testing.T) {
 	}{
 		{
 			name:      "the first Prague block deploys the contract and writes the slot of its parent",
-			config:    pragueConfig(0),
+			config:    pragueAt(0),
 			number:    1,
 			written:   []common.Hash{ringSlot(0)},
 			unwritten: []common.Hash{ringSlot(1)},
 		},
 		{
 			name:      "a later block writes the slot of its own parent hash",
-			config:    pragueConfig(0),
+			config:    pragueAt(0),
 			number:    3,
 			written:   []common.Hash{ringSlot(2)},
 			unwritten: []common.Hash{ringSlot(0), ringSlot(1), ringSlot(3)},
 		},
 		{
 			name:      "a contract the state already holds only gets the slot of its own parent hash",
-			config:    pragueConfig(0),
+			config:    pragueAt(0),
 			withCode:  true,
 			number:    3,
 			written:   []common.Hash{ringSlot(2)},
@@ -121,24 +117,32 @@ func TestHistoryStorageWrittenSlots(t *testing.T) {
 		},
 		{
 			name:      "the first Prague block of a later fork writes the slot of its parent",
-			config:    pragueConfig(10),
+			config:    pragueAt(10),
 			number:    10,
 			written:   []common.Hash{ringSlot(9)},
 			unwritten: []common.Hash{ringSlot(0), ringSlot(10)},
 		},
 		{
 			name:      "a deploy past the serve window backfills every ring position",
-			config:    pragueConfig(0),
+			config:    pragueAt(0),
 			number:    8192,
 			written:   []common.Hash{ringSlot(0), ringSlot(1), ringSlot(8190)},
 			unwritten: []common.Hash{ringSlot(params.HistoryServeWindow), ringSlot(100000)},
 		},
 		{
 			name:      "the backfill stops at the fork block and wraps around the ring",
-			config:    pragueConfig(5000),
+			config:    pragueAt(5000),
 			number:    8193,
 			written:   []common.Hash{ringSlot(4999), ringSlot(8190), ringSlot(0), ringSlot(1)},
 			unwritten: []common.Hash{ringSlot(4998), ringSlot(2), ringSlot(params.HistoryServeWindow)},
+		},
+		{
+			// ProcessParentBlockHash is a no-op below Prague: no slot counts, and the
+			// fork clamp must not turn the window size into a uint64 underflow.
+			name:      "a block below Prague writes no slot",
+			config:    pragueAt(10),
+			number:    3,
+			unwritten: []common.Hash{ringSlot(0), ringSlot(1), ringSlot(2), ringSlot(5)},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -163,17 +167,17 @@ func TestHistoryStorageWrittenSlots(t *testing.T) {
 	}
 
 	statedb := baseState(t, false)
-	require.False(t, historyStorageSlotIsWritten(pragueConfig(0), statedb, big.NewInt(8193), common.HexToHash("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")))
+	require.False(t, historyStorageSlotIsWritten(pragueAt(0), statedb, big.NewInt(8193), common.HexToHash("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")))
 
 	// A block below Prague runs no block level change, so go through the guard.
 	t.Run("a block below Prague owns no slot", func(t *testing.T) {
 		t.Parallel()
-		config := pragueConfig(10)
+		config := pragueAt(10)
 		statedb := baseState(t, false)
 		header := &types.Header{Number: big.NewInt(3)}
 		precompiles := vm.ActivePrecompiledContracts(config.Rules(header.Number))
 		for ring := uint64(0); ring < 3; ring++ {
-			require.NoError(t, rejectOwnedAccountOverrides(config, statedb, precompiles, header, &override.StateOverride{
+			require.NoError(t, rejectOwnedAccountOverrides(config, statedb, precompiles, header, requestSpan{lastBlock: big.NewInt(3)}, &override.StateOverride{
 				params.HistoryStorageAddress: override.OverrideAccount{
 					StateDiff: map[common.Hash]common.Hash{ringSlot(ring): common.BigToHash(big.NewInt(1))},
 				},
@@ -192,36 +196,21 @@ func TestSimulateV1HistoryStorageStateOverride(t *testing.T) {
 	)
 
 	// newAPI builds a chain that activates Prague at genesis.
-	newAPI := func(t *testing.T, withCode bool) (*BlockChainAPI, *params.ChainConfig, *big.Int) {
+	newAPI := func(t *testing.T, withCode bool) (*BlockChainAPI, *params.ChainConfig) {
 		t.Helper()
 		config := *params.MergedTestChainConfig
 		alloc := types.GenesisAlloc{sender: {Balance: big.NewInt(params.Ether)}}
 		if withCode {
 			alloc[params.HistoryStorageAddress] = types.Account{Code: params.HistoryStorageCode}
 		}
-		genesis := &core.Genesis{Config: &config, Alloc: alloc}
-		db := rawdb.NewMemoryDatabase()
-		block := genesis.MustCommit(db)
-		stateDB, err := state.New(block.Root(), state.NewDatabase(db))
-		require.NoError(t, err)
-		backend := &simulateBackendMock{
-			estimateBackendMock: &estimateBackendMock{
-				backendMock: newBackendMock(),
-				stateDB:     stateDB,
-				header:      block.Header(),
-				engine:      ethash.NewFaker(),
-			},
-			gasCap: 30_000_000,
-		}
-		// The mock backend carries its own config, so Prague has to be scheduled there too.
-		backend.config = &config
-		return NewBlockChainAPI(backend, nil), &config, block.Number()
+		api, _ := newSimulateChain(t, &config, alloc)
+		return api, &config
 	}
 	calls := []TransactionArgs{{From: &sender, To: &recipient, Value: (*hexutil.Big)(big.NewInt(1))}}
 	simulate := func(t *testing.T, withCode bool, overrides override.StateOverride) error {
 		t.Helper()
-		api, config, base := newAPI(t, withCode)
-		require.True(t, config.IsPrague(new(big.Int).Add(base, big.NewInt(1))),
+		api, config := newAPI(t, withCode)
+		require.True(t, config.IsPrague(big.NewInt(1)),
 			"the test chain must activate Prague at the first simulated block")
 		_, err := api.SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{{
 			StateOverrides: &overrides,
@@ -317,58 +306,16 @@ func TestSimulateV1BlockSignersStateOverride(t *testing.T) {
 		legacy    = common.BlockSignersBinary
 	)
 
-	// newAPI activates TIPSigning in block #1. Every later fork moves with it, since the
-	// config rejects one taking effect earlier; Prague stays ahead to keep EIP-2935 out.
+	// newAPI activates TIPSigning in block #1.
 	newAPI := func(t *testing.T) (*BlockChainAPI, *params.ChainConfig) {
 		t.Helper()
-		config := *params.MergedTestChainConfig
-		one := func() *big.Int { return big.NewInt(1) }
-		config.TIPSigningBlock = one()
-		config.TIPRandomizeBlock = one()
-		config.TIPIncreaseMasternodesBlock = one()
-		config.DenylistBlock = one()
-		config.TIPNoHalvingMNRewardBlock = one()
-		config.TIPXDCXBlock = one()
-		config.TIPXDCXLendingBlock = one()
-		config.TIPXDCXCancellationFeeBlock = one()
-		config.ConstantinopleBlock = one()
-		config.PetersburgBlock = one()
-		config.IstanbulBlock = one()
-		config.TIPTRC21FeeBlock = one()
-		config.Gas50xBlock = one()
-		config.BerlinBlock = one()
-		config.LondonBlock = one()
-		config.MergeBlock = one()
-		config.ShanghaiBlock = one()
-		config.EIP1559Block = one()
-		config.CancunBlock = one()
-		// EIP-2935 would write the history contract too, so Prague stays ahead.
-		config.PragueBlock = big.NewInt(10)
-		config.OsakaBlock = big.NewInt(10)
-		config.AmsterdamBlock = big.NewInt(10)
-
-		genesis := &core.Genesis{
-			Config: &config,
-			Alloc: types.GenesisAlloc{
-				sender: {Balance: big.NewInt(params.Ether)},
-				legacy: {Balance: big.NewInt(1234)},
-			},
+		config := tipSigningAt(1)
+		alloc := types.GenesisAlloc{
+			sender: {Balance: big.NewInt(params.Ether)},
+			legacy: {Balance: big.NewInt(1234)},
 		}
-		db := rawdb.NewMemoryDatabase()
-		block := genesis.MustCommit(db)
-		stateDB, err := state.New(block.Root(), state.NewDatabase(db))
-		require.NoError(t, err)
-		backend := &simulateBackendMock{
-			estimateBackendMock: &estimateBackendMock{
-				backendMock: newBackendMock(),
-				stateDB:     stateDB,
-				header:      block.Header(),
-				engine:      ethash.NewFaker(),
-			},
-			gasCap: 30_000_000,
-		}
-		backend.config = &config
-		return NewBlockChainAPI(backend, nil), &config
+		api, _ := newSimulateChain(t, config, alloc)
+		return api, config
 	}
 	calls := []TransactionArgs{{From: &sender, To: &recipient, Value: (*hexutil.Big)(big.NewInt(1))}}
 
@@ -437,16 +384,9 @@ func TestSimulateV1BlockSignersStateOverride(t *testing.T) {
 	// The jump to block #2 fills the gap with an empty block #1, so the activation runs first.
 	require.Len(t, results, 2)
 
-	type callSummary struct {
-		Status      string `json:"status"`
-		ReturnValue string `json:"returnData"`
-	}
-	type blockSummary struct {
-		Calls []callSummary `json:"calls"`
-	}
 	enc, err := json.Marshal(results)
 	require.NoError(t, err)
-	var summary []blockSummary
+	var summary []simulateBlockSummary
 	require.NoError(t, json.Unmarshal(enc, &summary))
 	require.Len(t, summary[1].Calls, 1)
 	require.Equal(t, "0x1", summary[1].Calls[0].Status)
@@ -471,7 +411,7 @@ func TestPrecompileMoveGuardIsStable(t *testing.T) {
 	// The error renders the source with %v (0x form), not Address.Hex() (xdc-prefixed).
 	source := fmt.Sprintf("%v", low)
 	for i := 0; i < 50; i++ {
-		err := rejectOwnedAccountOverrides(&config, statedb, precompiles, header, &overrides)
+		err := rejectOwnedAccountOverrides(&config, statedb, precompiles, header, requestSpan{lastBlock: header.Number}, &overrides)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), source, "the lowest source address has to be named every time")
 	}
@@ -489,11 +429,6 @@ func TestStateDiffGuardIsStable(t *testing.T) {
 	// Block 8193 deploys the contract over a state without code, so the backfill covers
 	// blocks 4999..8192 and writes both ring positions 0 and 1.
 	header := &types.Header{Number: big.NewInt(8193)}
-	ringSlot := func(position uint64) common.Hash {
-		var key common.Hash
-		binary.BigEndian.PutUint64(key[common.HashLength-8:], position)
-		return key
-	}
 	low, high := ringSlot(0), ringSlot(1)
 	overrides := override.StateOverride{
 		params.HistoryStorageAddress: override.OverrideAccount{
@@ -505,8 +440,335 @@ func TestStateDiffGuardIsStable(t *testing.T) {
 	}
 	precompiles := vm.ActivePrecompiledContracts(config.Rules(header.Number))
 	for i := 0; i < 50; i++ {
-		err := rejectOwnedAccountOverrides(&config, statedb, precompiles, header, &overrides)
+		err := rejectOwnedAccountOverrides(&config, statedb, precompiles, header, requestSpan{lastBlock: header.Number}, &overrides)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), fmt.Sprintf("storage slot %v", low), "the lowest written slot has to be named every time")
+	}
+}
+
+// tipSigningAt returns a config that activates TIPSigning at the given block and moves every
+// later fork with it, since the config rejects one taking effect earlier. Prague stays ahead
+// at 10 to keep EIP-2935 out: it would write the history contract too.
+func tipSigningAt(block int64) *params.ChainConfig {
+	config := *params.MergedTestChainConfig
+	at := func() *big.Int { return big.NewInt(block) }
+	config.TIPSigningBlock = at()
+	config.TIPRandomizeBlock = at()
+	config.TIPIncreaseMasternodesBlock = at()
+	config.DenylistBlock = at()
+	config.TIPNoHalvingMNRewardBlock = at()
+	config.TIPXDCXBlock = at()
+	config.TIPXDCXLendingBlock = at()
+	config.TIPXDCXCancellationFeeBlock = at()
+	config.ConstantinopleBlock = at()
+	config.PetersburgBlock = at()
+	config.IstanbulBlock = at()
+	config.TIPTRC21FeeBlock = at()
+	config.Gas50xBlock = at()
+	config.BerlinBlock = at()
+	config.LondonBlock = at()
+	config.MergeBlock = at()
+	config.ShanghaiBlock = at()
+	config.EIP1559Block = at()
+	config.CancunBlock = at()
+	config.PragueBlock = big.NewInt(10)
+	config.OsakaBlock = big.NewInt(10)
+	config.AmsterdamBlock = big.NewInt(10)
+	return &config
+}
+
+// pragueAt returns a config that activates Prague and every later fork at the given
+// block, since the config rejects one taking effect earlier.
+func pragueAt(block int64) *params.ChainConfig {
+	config := *params.MergedTestChainConfig
+	config.PragueBlock = big.NewInt(block)
+	config.OsakaBlock = big.NewInt(block)
+	config.AmsterdamBlock = big.NewInt(block)
+	return &config
+}
+
+// simulateCallSummary and simulateBlockSummary decode the response fields the tests assert on.
+type simulateCallSummary struct {
+	Status      string `json:"status"`
+	ReturnValue string `json:"returnData"`
+}
+
+type simulateBlockSummary struct {
+	Calls []simulateCallSummary `json:"calls"`
+}
+
+// newSimulateChain commits a genesis carrying alloc and returns an API whose simulated
+// request starts at the block after it, together with the state the request runs on.
+func newSimulateChain(t *testing.T, config *params.ChainConfig, alloc types.GenesisAlloc) (*BlockChainAPI, *state.StateDB) {
+	t.Helper()
+	genesis := &core.Genesis{Config: config, Alloc: alloc}
+	db := rawdb.NewMemoryDatabase()
+	block := genesis.MustCommit(db)
+	stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+	require.NoError(t, err)
+	backend := &simulateBackendMock{
+		estimateBackendMock: &estimateBackendMock{
+			backendMock: newBackendMock(),
+			stateDB:     stateDB,
+			header:      block.Header(),
+			engine:      ethash.NewFaker(),
+		},
+		gasCap: 30_000_000,
+	}
+	// The mock backend carries its own config, so every fork has to be scheduled there too.
+	backend.config = config
+	return NewBlockChainAPI(backend, nil), stateDB
+}
+
+// threeBlockRequest builds a request over three blocks with the same calls everywhere and the
+// given override on the block at index, if any.
+func threeBlockRequest(calls []TransactionArgs, index int, overrides *override.StateOverride) simOpts {
+	blocks := make([]simBlock, 3)
+	for i := range blocks {
+		blocks[i] = simBlock{Calls: calls}
+	}
+	blocks[index].StateOverrides = overrides
+	return simOpts{BlockStateCalls: blocks}
+}
+
+// TestSimulateV1CrossBlockPragueOverride covers an override the request carries from a
+// block before the Prague activation into the block that runs the Prague block level hooks.
+func TestSimulateV1CrossBlockPragueOverride(t *testing.T) {
+	t.Parallel()
+
+	var (
+		sender    = common.HexToAddress("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1")
+		recipient = common.HexToAddress("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+		// Code diverging from the canonical runtime code trips the consensus check.
+		diverging = hexutil.Bytes(common.FromHex("0x60006000fd"))
+		calls     = []TransactionArgs{{From: &sender, To: &recipient, Value: (*hexutil.Big)(big.NewInt(1))}}
+		alloc     = types.GenesisAlloc{sender: {Balance: big.NewInt(params.Ether)}}
+	)
+
+	// The request spans blocks #1 and #2 and Prague activates in #2: the override lands on
+	// a block that does not own the account, and the shared state carries it into the one
+	// that does. Every field the install at #2 overwrites is refused.
+	zeroNonce := (*hexutil.Uint64)(new(uint64))
+	for _, tc := range []struct {
+		name     string
+		address  common.Address
+		override override.OverrideAccount
+		field    string
+	}{
+		{"history code", params.HistoryStorageAddress, override.OverrideAccount{Code: &diverging}, "code"},
+		{"multicall code", params.Multicall3Address, override.OverrideAccount{Code: &diverging}, "code"},
+		{"history nonce of the contract the block deploys", params.HistoryStorageAddress, override.OverrideAccount{Nonce: zeroNonce}, "the nonce"},
+		{"history storage replacement", params.HistoryStorageAddress, override.OverrideAccount{State: map[common.Hash]common.Hash{common.BigToHash(big.NewInt(1)): common.BigToHash(big.NewInt(1))}}, "a state replacement"},
+		{"multicall nonce of the contract the block installs", params.Multicall3Address, override.OverrideAccount{Nonce: zeroNonce}, "the nonce"},
+	} {
+		api, _ := newSimulateChain(t, pragueAt(2), alloc)
+		overrides := override.StateOverride{tc.address: tc.override}
+		_, err := api.SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{
+			{StateOverrides: &overrides, Calls: calls},
+			{Calls: calls},
+		}}, nil)
+		var invalidReqErr *invalidParamsError
+		require.ErrorAs(t, err, &invalidReqErr, "%s: the install panic has to become a parameter error", tc.name)
+		require.Contains(t, invalidReqErr.message, fmt.Sprintf("%v", tc.address), tc.name)
+		require.Contains(t, invalidReqErr.message, tc.field, tc.name)
+		require.Contains(t, invalidReqErr.message, "block 2 of the request writes it", tc.name)
+	}
+
+	// With no Prague block inside the request nothing carries the override into a block
+	// level change, so the same override stays accepted.
+	api, _ := newSimulateChain(t, pragueAt(10), alloc)
+	overrides := override.StateOverride{params.HistoryStorageAddress: override.OverrideAccount{Code: &diverging}}
+	_, err := api.SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{
+		{StateOverrides: &overrides, Calls: calls},
+		{Calls: calls},
+	}}, nil)
+	require.NoError(t, err, "a request below Prague holds no block level change")
+
+	// The precompile move rule stays with the block that runs the parent hash write: at an
+	// earlier block the move only shadows the precompile for that block, so the write of a
+	// later block still lands. Ring position 1 cannot show it: the activation block
+	// backfills that slot with a state write, which survives the shadowing. Position 2 is
+	// written by the parent hash call of block 3 alone, so it proves the write ran.
+	shadows := params.HistoryStorageAddress
+	moveAPI, moveState := newSimulateChain(t, pragueAt(2), alloc)
+	_, err = moveAPI.SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{
+		{StateOverrides: &override.StateOverride{common.BytesToAddress([]byte{1}): {MovePrecompileTo: &shadows}}, Calls: calls},
+		{Calls: calls},
+		{Calls: calls},
+	}}, nil)
+	require.NoError(t, err, "a move before the activation block drops no parent hash write")
+	require.NotEqual(t, common.Hash{}, moveState.GetState(params.HistoryStorageAddress, ringSlot(2)),
+		"a move before the activation block must not shadow the parent hash write of block 3")
+
+	// The Multicall3 install writes code and a nonce only, so a whole State replacement
+	// survives it: unlike the history contract, there is no slot for it to wipe.
+	stateAPI, _ := newSimulateChain(t, pragueAt(2), alloc)
+	_, err = stateAPI.SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{
+		{StateOverrides: &override.StateOverride{params.Multicall3Address: override.OverrideAccount{
+			State: map[common.Hash]common.Hash{common.BigToHash(big.NewInt(1)): common.BigToHash(big.NewInt(1))},
+		}}, Calls: calls},
+		{Calls: calls},
+	}}, nil)
+	require.NoError(t, err, "the Multicall3 install fills no storage slot, so a state replacement survives it")
+
+	// The install leaves an account that already carries the canonical code alone, so an
+	// override of a nonce no block writes lands instead of being refused.
+	nonceAPI, nonceState := newSimulateChain(t, pragueAt(1), alloc)
+	nonce := hexutil.Uint64(7)
+	_, err = nonceAPI.SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{
+		{Calls: calls},
+		{StateOverrides: &override.StateOverride{params.Multicall3Address: override.OverrideAccount{Nonce: &nonce}}, Calls: calls},
+		{Calls: calls},
+	}}, nil)
+	require.NoError(t, err, "the install leaves the nonce of an account that already carries code")
+	require.Equal(t, uint64(nonce), nonceState.GetNonce(params.Multicall3Address),
+		"the override of a nonce no block writes has to land")
+}
+
+// TestSimulateV1CrossBlockBlockSignersOverride covers an override the request plants before
+// the block that activates TIPSigning removes the block signers account.
+func TestSimulateV1CrossBlockBlockSignersOverride(t *testing.T) {
+	t.Parallel()
+
+	var (
+		sender    = common.HexToAddress("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1")
+		recipient = common.HexToAddress("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+		legacy    = common.BlockSignersBinary
+		// Code returning the word one, so a call proves the override landed.
+		code  = hexutil.Bytes{0x60, 0x01, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3}
+		calls = []TransactionArgs{{From: &sender, To: &recipient, Value: (*hexutil.Big)(big.NewInt(1))}}
+		alloc = types.GenesisAlloc{
+			sender: {Balance: big.NewInt(params.Ether)},
+			legacy: {Balance: big.NewInt(1234)},
+		}
+	)
+	storage := map[common.Hash]common.Hash{common.BigToHash(big.NewInt(1)): common.BigToHash(big.NewInt(1))}
+	for _, tc := range []struct {
+		name     string
+		override override.OverrideAccount
+	}{
+		{"code", override.OverrideAccount{Code: &code}},
+		{"the nonce", override.OverrideAccount{Nonce: (*hexutil.Uint64)(new(uint64))}},
+		{"the balance", override.OverrideAccount{Balance: (*hexutil.Big)(big.NewInt(1))}},
+		{"storage", override.OverrideAccount{State: storage}},
+		// A replacement clears the slots the account holds before the activation block
+		// removes it, so unlike at the activation block an empty map is not a no-op.
+		{"an empty storage replacement", override.OverrideAccount{State: map[common.Hash]common.Hash{}}},
+		{"a storage diff", override.OverrideAccount{StateDiff: storage}},
+	} {
+		api, _ := newSimulateChain(t, tipSigningAt(2), alloc)
+		_, err := api.SimulateV1(context.Background(), threeBlockRequest(calls, 0, &override.StateOverride{legacy: tc.override}), nil)
+		var invalidReqErr *invalidParamsError
+		require.ErrorAs(t, err, &invalidReqErr, tc.name)
+		require.Contains(t, invalidReqErr.message, "the block that activates TIPSigning at 2 removes the account with it", tc.name)
+	}
+
+	// The block that holds the activation itself keeps its wording and its rules: there the
+	// same block removes the account, so an empty map sets no field that survives.
+	api, _ := newSimulateChain(t, tipSigningAt(2), alloc)
+	_, err := api.SimulateV1(context.Background(), threeBlockRequest(calls, 1, &override.StateOverride{
+		legacy: override.OverrideAccount{State: map[common.Hash]common.Hash{}},
+	}), nil)
+	require.NoError(t, err, "the activation block removes the account before an empty map can matter")
+
+	// The last block of the request can be the activation block itself: the shared state
+	// still carries the override into the account removal, so the span is refused.
+	api, _ = newSimulateChain(t, tipSigningAt(3), alloc)
+	_, err = api.SimulateV1(context.Background(), threeBlockRequest(calls, 0, &override.StateOverride{
+		legacy: override.OverrideAccount{Code: &code},
+	}), nil)
+	var boundaryErr *invalidParamsError
+	require.ErrorAs(t, err, &boundaryErr, "an override on the first block of a request activating TIPSigning in its last block")
+	require.Contains(t, boundaryErr.message, "the block that activates TIPSigning at 3 removes the account with it")
+
+	// An activation block outside the request drops nothing: the account removal happens
+	// after the last simulated block, so the override the request plants still lands.
+	api, outsideState := newSimulateChain(t, tipSigningAt(4), alloc)
+	_, err = api.SimulateV1(context.Background(), threeBlockRequest(calls, 0, &override.StateOverride{
+		legacy: override.OverrideAccount{Code: &code},
+	}), nil)
+	require.NoError(t, err, "the activation block is outside the request, so the override survives it")
+	require.Equal(t, []byte(code), outsideState.GetCode(legacy), "the override must still be in the state the request ran on")
+
+	// The block after the activation one leaves the account alone, so the override lands.
+	api, _ = newSimulateChain(t, tipSigningAt(2), alloc)
+	results, err := api.SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{
+		{Calls: calls},
+		{Calls: calls},
+		{StateOverrides: &override.StateOverride{legacy: override.OverrideAccount{Code: &code}}, Calls: []TransactionArgs{{From: &sender, To: &legacy}}},
+	}}, nil)
+	require.NoError(t, err, "the block after the activation one leaves the account alone")
+
+	enc, err := json.Marshal(results)
+	require.NoError(t, err)
+	var summary []simulateBlockSummary
+	require.NoError(t, json.Unmarshal(enc, &summary))
+	require.Len(t, summary, 3)
+	require.Len(t, summary[2].Calls, 1)
+	require.Equal(t, "0x1", summary[2].Calls[0].Status)
+	require.Equal(t, "0x0000000000000000000000000000000000000000000000000000000000000001", summary[2].Calls[0].ReturnValue)
+}
+
+// TestSimulateV1CrossBlockHistorySlotOverride covers the ring positions the request writes
+// after the block an override lands on. The request runs one state, so a later block's
+// parent hash write replaces whatever the override put in the same ring position.
+func TestSimulateV1CrossBlockHistorySlotOverride(t *testing.T) {
+	t.Parallel()
+
+	var (
+		sender    = common.HexToAddress("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1")
+		recipient = common.HexToAddress("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+		calls     = []TransactionArgs{{From: &sender, To: &recipient, Value: (*hexutil.Big)(big.NewInt(1))}}
+		slotValue = common.BigToHash(big.NewInt(1))
+	)
+	// Prague activates in block #2, so a request over blocks #1..#3 holds the deploy and
+	// backfill in #2 (ring position 1) and the parent hash write of #3 (ring position 2).
+	alloc := types.GenesisAlloc{sender: {Balance: big.NewInt(params.Ether)}}
+
+	for _, tc := range []struct {
+		name  string
+		index int
+		slot  common.Hash
+		want  string
+	}{
+		{
+			name:  "a slot the activation block writes",
+			index: 0,
+			slot:  ringSlot(1),
+			want:  "block 2 of the request writes it",
+		},
+		{
+			name:  "a slot a later block writes",
+			index: 0,
+			slot:  ringSlot(2),
+			want:  "block 3 of the request writes it",
+		},
+		{
+			// The activation block owns the account but not this slot: a later block writes
+			// it, which the single block guard could not see before the request view.
+			name:  "a slot owned by a block later than the one holding the override",
+			index: 1,
+			slot:  ringSlot(2),
+			want:  "block 3 of the request writes it",
+		},
+		{
+			name:  "a slot no block of the request writes",
+			index: 0,
+			slot:  ringSlot(0),
+			want:  "",
+		},
+	} {
+		api, _ := newSimulateChain(t, pragueAt(2), alloc)
+		_, err := api.SimulateV1(context.Background(), threeBlockRequest(calls, tc.index, &override.StateOverride{
+			params.HistoryStorageAddress: override.OverrideAccount{StateDiff: map[common.Hash]common.Hash{tc.slot: slotValue}},
+		}), nil)
+		if tc.want == "" {
+			require.NoError(t, err, tc.name)
+			continue
+		}
+		var invalidReqErr *invalidParamsError
+		require.ErrorAs(t, err, &invalidReqErr, tc.name)
+		require.Contains(t, invalidReqErr.message, tc.want, tc.name)
+		require.Contains(t, invalidReqErr.message, fmt.Sprintf("%v", params.HistoryStorageAddress), tc.name)
 	}
 }
