@@ -33,9 +33,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-type masterNodes map[string]big.Int
-type signersList map[string]bool
-
 const GAP = int(450)
 
 const testGasLimit uint64 = 1200000000 // The gas limit used in the v2 consensus tests
@@ -44,8 +41,6 @@ var (
 	acc1Key, _  = crypto.HexToECDSA("8a1f9a8f95be41cd7ccb6168179afb4504aefe388d1e14474d32c45c72ce7b7a")
 	acc2Key, _  = crypto.HexToECDSA("49a7b37aa6f6645917e7b807e9d1c00d4fa71f18343b0d4122a4d2df64dd6fee")
 	acc3Key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
-	acc4Key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f292")
-	acc5Key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f293")
 	voterKey, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee04aefe388d1e14474d32c45c72ce7b7a")
 	acc1Addr    = crypto.PubkeyToAddress(acc1Key.PublicKey)  //xdc703c4b2bD70c169f5717101CaeE543299Fc946C7
 	acc2Addr    = crypto.PubkeyToAddress(acc2Key.PublicKey)  //xdc0D3ab14BBaD3D99F4203bd7a11aCB94882050E7e
@@ -397,44 +392,6 @@ func signingTxWithSignerFn(header *types.Header, nonce uint64, signer common.Add
 		return nil, err
 	}
 	return signedTx, nil
-}
-
-func GetSnapshotSigner(bc *core.BlockChain, header *types.Header) (signersList, error) {
-	engine := bc.Engine().(*XDPoS.XDPoS)
-	snap, err := engine.GetSnapshot(bc, header)
-	if err != nil {
-		return nil, err
-	}
-	ms := make(signersList)
-
-	for addr := range snap.Signers {
-		ms[addr.Hex()] = true
-	}
-	return ms, nil
-}
-
-func GetCandidateFromCurrentSmartContract(backend bind.ContractBackend, t *testing.T) masterNodes {
-	addr := common.MasternodeVotingSMCBinary
-	validator, err := contractValidator.NewXDCValidator(addr, backend)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	opts := new(bind.CallOpts)
-	candidates, err := validator.GetCandidates(opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	ms := make(masterNodes)
-	for _, candidate := range candidates {
-		v, err := validator.GetCandidateCap(opts, candidate)
-		if err != nil {
-			t.Fatal(err)
-		}
-		ms[candidate.String()] = *v
-	}
-	return ms
 }
 
 // legacyExecutionConfigForV2Tests shifts execution-layer forks far into the
