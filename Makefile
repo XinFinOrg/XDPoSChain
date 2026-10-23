@@ -41,6 +41,32 @@ test: all
 quick-test: all
 	go run build/ci.go test -short -failfast
 
+# race-test mirrors the CI race job (.github/workflows/ci.yml): the bulk pass
+# runs four packages at a time without rpc, then rpc on its own. Under -p 4 the
+# 32 MiB websocket test trips the codec's 30s pong timeout and fails as a plain
+# connection error, hiding any real race in the packages that follow. -failfast
+# is left out on purpose: the sweep exists to report every race in one go.
+#
+# The package list is collected before testing it: an argument list throws the
+# substitution's exit status away, and an empty list makes build/ci.go fall back
+# to ./... with rpc included. make runs recipes with /bin/sh, which has no
+# pipefail, so this catches go list failing outright; a partial failure still
+# leaves every package path in the list, where go test reports it.
+#
+# -short skips the long consensus cases (skipLongInShortMode under
+# consensus/tests/engine_v2_tests), the discover UDP/lookup cases and the tests/
+# performance cases; only the plain CI shards run those, without -race.
+# race-test-full covers them when a change touches those paths.
+#? race-test: Run tests under the race detector (short mode).
+race-test: all
+	set -e; pkgs=$$(go list ./... | grep -vE "XDPoSChain/rpc$$"); go run build/ci.go test -race -short -p 4 $$pkgs
+	go run build/ci.go test -race -short ./rpc/
+
+#? race-test-full: Run the full (non-short) suite under the race detector.
+race-test-full: all
+	set -e; pkgs=$$(go list ./... | grep -vE "XDPoSChain/rpc$$"); go run build/ci.go test -race -p 4 $$pkgs
+	go run build/ci.go test -race ./rpc/
+
 #? lint: Run certain pre-selected linters.
 lint: ## Run linters.
 	$(GORUN) build/ci.go lint

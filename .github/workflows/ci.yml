@@ -83,9 +83,59 @@ jobs:
         env:
           GO111MODULE: auto
 
+  # Runs the short suite under the race detector. It is a job of its own because
+  # the shards above each repeat the gofmt/tidy/generate steps, and because the
+  # detector is what makes an unsynchronised access visible at all (#2700).
+  # -short leaves out the long consensus cases (skipLongInShortMode under
+  # consensus/tests/engine_v2_tests), the discover UDP/lookup cases and the
+  # tests/ performance cases; the plain shards above run those without -race, so
+  # `make race-test-full` sweeps them locally when a change touches those paths.
+  race:
+    env:
+      GOPATH: ${{ github.workspace }}
+      GOBIN: ${{ github.workspace }}/bin
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.GOPATH }}/src/XDPoSChain
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+        with:
+          path: ${{ env.GOPATH }}/src/XDPoSChain
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          cache: false
+          go-version: "1.25.x"
+      # rpc runs on its own below: its 32 MiB websocket test trips the codec's 30s
+      # pong timeout under -p 4, though no data race is reported. Four packages run
+      # at a time here, so a wall-clock timeout points at -p 4 contention first;
+      # hitting the cap below means the step hung, since the pass normally takes
+      # about 11 minutes. And it does hang: TestGethClient/TestSubscribePendingTxHashes
+      # once sat until go test's own 45m timeout while tag_build waited on this job,
+      # so timeout-minutes turns that stall into a bounded failure.
+      # A command substitution sitting in an argument list throws its own exit
+      # status away, so the package list is collected first: under pipefail the
+      # assignment carries `go list`'s failure and -e then fails the step.
+      - name: Run tests under the race detector
+        timeout-minutes: 25
+        run: |
+          set -o pipefail
+          pkgs=$(go list ./... | grep -vE "XDPoSChain/rpc$")
+          go run build/ci.go test -race -short -p 4 $pkgs
+      # Same watchdog in miniature: green in under a minute on its own.
+      - name: Run the rpc package under the race detector
+        timeout-minutes: 5
+        run: go run build/ci.go test -race -short ./rpc/
+
+  # A release artifact should not ship with a known race, so tag_build waits for
+  # the race job as well. devnet_build_push deliberately keeps waiting for tests
+  # only: it fires on every merge, and a flaky detector would hold up the devnet
+  # image on each one.
   tag_build:
     runs-on: ubuntu-latest
-    needs: tests
+    needs: [tests, race]
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/checkout@v5
