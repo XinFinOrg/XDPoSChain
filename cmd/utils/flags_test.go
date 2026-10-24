@@ -409,6 +409,20 @@ func TestFormatBlockChainOpenErrorReadOnly(t *testing.T) {
 	}
 }
 
+// TestFormatChainConfigErrorInvalidEpochGap pins the operator hint added for a
+// stored schedule outside 0 < gap < epoch: the bare error says what is wrong
+// but not how to recover.
+func TestFormatChainConfigErrorInvalidEpochGap(t *testing.T) {
+	t.Parallel()
+
+	err := fmt.Errorf("%w: XDPoS.Epoch 900, XDPoS.Gap 0 (want 0 < gap < epoch)", core.ErrInvalidEpochGap)
+	got := FormatChainConfigError(err)
+	want := "invalid XDPoS schedule: XDPoS.Epoch 900, XDPoS.Gap 0 (want 0 < gap < epoch).\n" + XDPoSScheduleRecoveryHint
+	if got != want {
+		t.Fatalf("unexpected message: have %q want %q", got, want)
+	}
+}
+
 func TestResolveChainConfigMismatchPolicyHonorsConfiguredWhenFlagNotSet(t *testing.T) {
 	t.Parallel()
 

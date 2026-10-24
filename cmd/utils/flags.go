@@ -1980,12 +1980,12 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool, configuredComp
 		// drift into a generic config conflict.
 		config, ghash, compatErr, err = core.LoadChainConfigWithCompatWithOverride(chainDb, gspec, ctx.Bool(AllowBuiltInConfigOverrideFlag.Name))
 		if err != nil {
-			makeChainFatalf("%v", err)
+			makeChainFatalf("%s", FormatChainConfigError(err))
 		}
 	} else {
 		config, ghash, compatErr, err = core.SetupGenesisBlockWithOverride(chainDb, gspec, ctx.Bool(AllowBuiltInConfigOverrideFlag.Name))
 		if err != nil {
-			makeChainFatalf("%v", err)
+			makeChainFatalf("%s", FormatChainConfigError(err))
 		}
 	}
 	var engine consensus.Engine

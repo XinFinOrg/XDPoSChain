@@ -4,6 +4,13 @@ Vocabulary for the XDPoS chain: the block schedule its validators run to, the bl
 
 ## Language
 
+### Block schedule
+
+**XDPoS schedule**:
+The epoch and gap of an XDPoS chain config, the pair every XDPoS engine derives its checkpoint and snapshot heights from; core only starts a chain whose config satisfies `0 < gap < epoch`.
+_Avoid_: epoch/gap pair, checkpoint spacing
+_See_: [ADR-0003](docs/adr/0003-enforce-gap-within-epoch.md)
+
 ### Chain data
 
 **executed marker**:

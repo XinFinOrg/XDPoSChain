@@ -989,11 +989,7 @@ func TestInsertChainAdoptsKnownBatchAheadOfHeadWithXDPoS(t *testing.T) {
 	for _, signer := range []common.Address{{1}, {2}, {3}, {4}} {
 		extraData = append(extraData, signer.Bytes()...)
 	}
-	genesis := &Genesis{BaseFee: big.NewInt(params.InitialBaseFee), Config: cfg, ExtraData: extraData}
-	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, genesis, engine, vm.Config{})
-	if err != nil {
-		t.Fatalf("failed to create chain: %v", err)
-	}
+	chain, genesis := newChainOnMockSchedule(t, cfg, engine, extraData)
 	defer chain.Stop()
 	signals := observeCheckpointSignals()
 	defer signals.stop() // block 3 switches the epoch and signals the staking loop

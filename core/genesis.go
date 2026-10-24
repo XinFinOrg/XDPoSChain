@@ -854,6 +854,9 @@ func (g *Genesis) commit(db ethdb.Database, allowCustomBuiltInConfig bool, skipH
 	if err := config.CheckConfigForkOrder(); err != nil {
 		return nil, err
 	}
+	if err := checkXDPoSSchedule(config); err != nil {
+		return nil, err
+	}
 	if config.XDPoS != nil && len(genesis.ExtraData) < 32+crypto.SignatureLength {
 		return nil, errors.New("can't start XDPoS chain without signers")
 	}

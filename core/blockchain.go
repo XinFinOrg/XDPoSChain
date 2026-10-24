@@ -460,6 +460,14 @@ func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus
 	if chainConfig == nil {
 		return nil, errors.New("nil chain config returned from SetupGenesisBlock")
 	}
+	// This gate cannot see a missing epoch on node startup: XDPoS.New rewrites
+	// Epoch == 0 to 900 in place before the chain is opened, so that case is
+	// rejected by Genesis.commit and the chain config resolvers instead. A
+	// caller-supplied config that skips them is still checked here, including
+	// a Gap outside the bound, which no engine rewrites.
+	if err := checkXDPoSSchedule(chainConfig); err != nil {
+		return nil, err
+	}
 	genesisHash := cfg.genesisHash
 	compatErr := cfg.compatErr
 	compatPolicy := cfg.compatPolicy
