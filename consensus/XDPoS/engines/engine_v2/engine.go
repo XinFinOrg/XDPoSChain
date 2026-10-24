@@ -470,11 +470,14 @@ func (x *XDPoS_v2) Finalize(chain consensus.ChainReader, header *types.Header, s
 		parentHeader := chain.GetHeaderByHash(header.ParentHash)
 		isMyTurn, err := x.yourturn(chain, decodedExtraField.Round, parentHeader, signer)
 		if err != nil {
-			log.Error("[Finalize] Error checking myturn", "err", err, "round", decodedExtraField.Round, "signer", signer, "parentHeader", parentHeader)
-			return nil, err
-		}
-
-		if !isMyTurn { // if myturn use Seal to save file
+			// Bookkeeping of this node rather than a fault of the block: yourturn only
+			// decides whether the reward file is written, and the import path replays
+			// historical and competing epoch-switch blocks through here, where rounds at
+			// or below the highest one this node sealed - or a gap snapshot this node
+			// cannot read - are ordinary. The rewards above are already applied; the
+			// seal-time check still enforces one block per round.
+			log.Warn("[Finalize] Error checking myturn, skipping the reward file", "err", err, "round", decodedExtraField.Round, "signer", signer, "parentHeader", parentHeader)
+		} else if !isMyTurn { // if myturn use Seal to save file
 			x.saveRewardToFile(header.Hash(), header.Number.Uint64())
 		}
 	}

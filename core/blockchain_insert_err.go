@@ -119,6 +119,13 @@ var insertErrClasses = []struct {
 	// Ahead of this node's clock, so the block is queued rather than failed. Not local on its
 	// own: the one path that hands it out wraps it in ErrLocalInsertAheadOfClock.
 	{consensus.ErrFutureBlock, insertErrClass{retryable: true}, ""},
+
+	// A block the consensus engine refused to finalize: the engines that can fail
+	// answer on the block, so it is a bad block. A local sentinel in the cause chain
+	// (ErrGapSnapshotUnavailable, ErrMissingCanonicalGapHeader) matches its own earlier
+	// row first, so a local engine failure is classified there without any wrapping -
+	// engines cannot import this package to wrap it in ErrLocalInsertCondition.
+	{ErrFinalize, insertErrClass{badBlock: true}, ""},
 }
 
 // lookupInsertErr reads the table once for the two questions its callers ask: the class of

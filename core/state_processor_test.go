@@ -795,6 +795,117 @@ func TestProcessBlockNoValidatorSnapshotsParentStateBeforeBlockLevelHooks(t *tes
 	}
 }
 
+// newFinalizeTestConfig returns a config with every fork past the processed
+// block, so only the Finalize call under test can fail.
+func newFinalizeTestConfig() *params.ChainConfig {
+	config := params.TestChainConfig.Clone()
+	setXinFinForksToFuture(config, big.NewInt(1_000_000_000))
+	// setXinFinForksToFuture leaves Amsterdam unset.
+	config.AmsterdamBlock = big.NewInt(1_000_000_000)
+	return config
+}
+
+// newFinalizeTestRig builds the chain the Finalize tests run on.
+func newFinalizeTestRig(t *testing.T, config *params.ChainConfig) (*BlockChain, *state.StateDB, *types.Block) {
+	t.Helper()
+
+	db := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{Config: config}
+	blockchain, err := NewBlockChain(db, nil, gspec, noopConsensusEngine{}, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	t.Cleanup(blockchain.Stop)
+
+	statedb, err := blockchain.State()
+	if err != nil {
+		t.Fatalf("failed to get state: %v", err)
+	}
+	return blockchain, statedb, GenerateBadBlock(t, gspec.ToBlock(), noopConsensusEngine{}, nil, config)
+}
+
+// stopOnFinalizeEngine raises the stop flag during Finalize and then fails: the
+// stop has to win over the engine's error.
+type stopOnFinalizeEngine struct {
+	noopConsensusEngine
+	calculated *CalculatedBlock
+}
+
+func (e *stopOnFinalizeEngine) Finalize(chain consensus.ChainReader, header *types.Header, state vm.StateDB, parentState *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
+	e.calculated.stop.Store(true)
+	return nil, errors.New("finalize failed")
+}
+
+// TestProcessReturnsFinalizeError pins that a Finalize failure surfaces as the
+// Process error, not as receipts from a block that was never finalized, and
+// that the engine's error stays reachable through the wrap.
+func TestProcessReturnsFinalizeError(t *testing.T) {
+	t.Parallel()
+
+	config := newFinalizeTestConfig()
+	blockchain, statedb, block := newFinalizeTestRig(t, config)
+	processor := NewStateProcessor(config, blockchain, failingFinalizeEngine{})
+
+	receipts, logs, usedGas, err := processor.Process(block, statedb, nil, vm.Config{}, map[common.Address]*big.Int{})
+	if err == nil {
+		t.Fatal("Process reported success despite a Finalize failure")
+	}
+	if !errors.Is(err, ErrFinalize) || !strings.Contains(err.Error(), "finalize error: finalize failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !errors.Is(err, errFinalizeFailed) {
+		t.Fatalf("the engine's error was lost from the chain: %v", err)
+	}
+	if receipts != nil || logs != nil || usedGas != 0 {
+		t.Fatalf("Process leaked a block that was never finalized: receipts=%v logs=%v gas=%d", receipts, logs, usedGas)
+	}
+}
+
+// TestProcessBlockNoValidatorReturnsFinalizeError pins the same contract on the
+// validator-free path, including the engine's error staying reachable through
+// the wrap.
+func TestProcessBlockNoValidatorReturnsFinalizeError(t *testing.T) {
+	t.Parallel()
+
+	config := newFinalizeTestConfig()
+	blockchain, statedb, block := newFinalizeTestRig(t, config)
+	processor := NewStateProcessor(config, blockchain, failingFinalizeEngine{})
+	calculating := &CalculatedBlock{block: block}
+
+	receipts, logs, usedGas, err := processor.ProcessBlockNoValidator(calculating, statedb, nil, vm.Config{}, map[common.Address]*big.Int{})
+	if err == nil {
+		t.Fatal("ProcessBlockNoValidator reported success despite a Finalize failure")
+	}
+	if !errors.Is(err, ErrFinalize) || !strings.Contains(err.Error(), "finalize error: finalize failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !errors.Is(err, errFinalizeFailed) {
+		t.Fatalf("the engine's error was lost from the chain: %v", err)
+	}
+	if receipts != nil || logs != nil || usedGas != 0 {
+		t.Fatalf("ProcessBlockNoValidator leaked a block that was never finalized: receipts=%v logs=%v gas=%d", receipts, logs, usedGas)
+	}
+}
+
+// TestProcessBlockNoValidatorReportsStopOverFinalizeError pins that a stopped
+// calculation reports the stop, not the Finalize error, to getResultBlock.
+func TestProcessBlockNoValidatorReportsStopOverFinalizeError(t *testing.T) {
+	t.Parallel()
+
+	config := newFinalizeTestConfig()
+	blockchain, statedb, block := newFinalizeTestRig(t, config)
+	calculating := &CalculatedBlock{block: block}
+	processor := NewStateProcessor(config, blockchain, &stopOnFinalizeEngine{calculated: calculating})
+
+	receipts, logs, usedGas, err := processor.ProcessBlockNoValidator(calculating, statedb, nil, vm.Config{}, map[common.Address]*big.Int{})
+	if !errors.Is(err, ErrStopPreparingBlock) {
+		t.Fatalf("a stopped calculation reported %v, want %v", err, ErrStopPreparingBlock)
+	}
+	if receipts != nil || logs != nil || usedGas != 0 {
+		t.Fatalf("a stopped calculation returned a partial result: receipts=%v logs=%v gas=%d", receipts, logs, usedGas)
+	}
+}
+
 // TestProcessReportsMulticall3InstallToTheTracer pins the production call site:
 // block processing hands the hooks the EVM it executes the transactions with,
 // so a tracer attached through vm.Config sees the install. Only Process and

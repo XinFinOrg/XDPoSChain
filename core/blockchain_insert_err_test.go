@@ -19,9 +19,16 @@ package core
 import (
 	"errors"
 	"fmt"
+	"math/big"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/consensus"
+	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/state"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/core/vm"
+	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
 // TestClassifyInsertErr pins the whole classification table. The insertion paths read flags
@@ -113,6 +120,11 @@ func TestClassifyInsertErr(t *testing.T) {
 			want: insertErrClass{local: true},
 		},
 		{
+			name: "a block the engine refused to finalize",
+			err:  ErrFinalize,
+			want: insertErrClass{badBlock: true},
+		},
+		{
 			name: "unknown ancestor",
 			err:  consensus.ErrUnknownAncestor,
 			want: insertErrClass{badBlock: true},
@@ -157,6 +169,13 @@ func TestClassifyInsertErrUnwraps(t *testing.T) {
 			err:  fmt.Errorf("download: %w", fmt.Errorf("%w: %w", ErrLocalInsertAheadOfClock, consensus.ErrFutureBlock)),
 			want: insertErrClass{retryable: true, local: true},
 		},
+		{
+			// What localConditionf produces when an engine calls its own Finalize
+			// failure local.
+			name: "a finalize failure an engine calls local",
+			err:  fmt.Errorf("download: %w", fmt.Errorf("%w: %w", ErrLocalInsertCondition, ErrFinalize)),
+			want: insertErrClass{local: true},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -183,6 +202,7 @@ func TestIsLocalInsertErrorIsTheLocalFlag(t *testing.T) {
 	}{
 		{"the peer can be held to an unknown ancestor", consensus.ErrUnknownAncestor, false},
 		{"a future block is queued, not failed", consensus.ErrFutureBlock, false},
+		{"a block the engine refused to finalize", ErrFinalize, false},
 		{"a failure this fork has not classified", errors.New("boom"), false},
 		{"an interrupted import", ErrInsertionInterrupted, true},
 		{"a stopped chain", ErrChainStopped, true},
@@ -257,6 +277,7 @@ func TestDescribeLocalInsertFailure(t *testing.T) {
 	for _, err := range []error{
 		consensus.ErrFutureBlock,
 		consensus.ErrUnknownAncestor,
+		ErrFinalize,
 		errors.New("derived state root mismatch"),
 		nil,
 	} {
@@ -286,5 +307,66 @@ func TestDescribeLocalInsertFailurePrefersTheNamedEntry(t *testing.T) {
 	}
 	if want := "already imported"; reason != want {
 		t.Errorf("DescribeLocalInsertFailure(%v) = %q, want the named entry's wording %q", err, reason, want)
+	}
+}
+
+// A finalize failure caused by a local condition must not be written to the bad
+// block database; a failure that is the block's fault still is.
+func TestReportBlockIfFaultSkipsLocalConditions(t *testing.T) {
+	_, _, blockchain, err := newCanonical(ethash.NewFaker(), 1, true)
+	if err != nil {
+		t.Fatalf("canonical chain: %v", err)
+	}
+	t.Cleanup(blockchain.Stop)
+	block := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(1), GasLimit: 8_000_000})
+
+	local := fmt.Errorf("%w: %w", ErrFinalize, fmt.Errorf("%w: gap block 1", consensus.ErrGapSnapshotUnavailable))
+	blockchain.reportBlockIfFault(block, local)
+	if bad := rawdb.ReadBadBlock(blockchain.db, block.Hash()); bad != nil {
+		t.Fatalf("local condition was recorded as a bad block: %v", local)
+	}
+
+	fault := fmt.Errorf("%w: %w", ErrFinalize, errors.New("engine refused the block"))
+	blockchain.reportBlockIfFault(block, fault)
+	if bad := rawdb.ReadBadBlock(blockchain.db, block.Hash()); bad == nil {
+		t.Fatalf("block fault was not recorded as a bad block: %v", fault)
+	}
+}
+
+// gapFinalizeEngine answers Finalize with a local sentinel, the shape the v2
+// epoch-switch replay produces when it cannot read the epoch gap snapshot.
+type gapFinalizeEngine struct{ consensus.Engine }
+
+func (e *gapFinalizeEngine) Finalize(chain consensus.ChainReader, header *types.Header, state vm.StateDB, parentState *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
+	return nil, fmt.Errorf("%w: gap block 1", consensus.ErrGapSnapshotUnavailable)
+}
+
+// A finalize failure whose cause is this node's own condition (a gap snapshot it
+// cannot read) must come back as an error without entering the bad block database:
+// the block is not at fault and must stay importable once the condition heals.
+func TestProcessBlockDoesNotRecordLocalFinalizeFailure(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{Config: params.TestChainConfig, GasLimit: 8_000_000}
+	blockchain, err := NewBlockChain(db, nil, gspec, &gapFinalizeEngine{Engine: ethash.NewFaker()}, vm.Config{})
+	if err != nil {
+		t.Fatalf("blockchain: %v", err)
+	}
+	t.Cleanup(blockchain.Stop)
+	genesis := blockchain.Genesis().Header()
+	block := types.NewBlockWithHeader(&types.Header{
+		ParentHash: genesis.Hash(), Number: big.NewInt(1), GasLimit: genesis.GasLimit,
+		Time: genesis.Time + 10, Difficulty: big.NewInt(1),
+	})
+	statedb, err := state.New(genesis.Root, state.NewDatabase(db))
+	if err != nil {
+		t.Fatalf("state: %v", err)
+	}
+	if _, err := blockchain.processBlock(block, genesis, statedb); err == nil {
+		t.Fatal("processBlock accepted a block whose finalize failed")
+	} else if !IsLocalInsertError(err) {
+		t.Fatalf("processBlock error %v is not classified local", err)
+	}
+	if bad := rawdb.ReadBadBlock(db, block.Hash()); bad != nil {
+		t.Fatal("local finalize failure was recorded as a bad block")
 	}
 }

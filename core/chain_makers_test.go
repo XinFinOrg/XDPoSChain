@@ -34,6 +34,10 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
+// errFinalizeFailed is the failure failingFinalizeEngine reports. Tests that
+// wrap the engine error assert errors.Is keeps reaching it.
+var errFinalizeFailed = errors.New("finalize failed")
+
 // failingFinalizeEngine is a consensus engine whose Finalize always fails. It
 // embeds the noop engine of the package so that only the Finalize path under
 // test needs to be overridden.
@@ -42,7 +46,7 @@ type failingFinalizeEngine struct {
 }
 
 func (failingFinalizeEngine) Finalize(chain consensus.ChainReader, header *types.Header, state vm.StateDB, parentState *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
-	return nil, errors.New("finalize failed")
+	return nil, errFinalizeFailed
 }
 
 // capturingParentStateEngine records the snapshot GenerateChain hands to

@@ -2973,7 +2973,9 @@ func (bc *BlockChain) processBlock(block *types.Block, parent *types.Header, sta
 	feeCapacity := statedb.GetTRC21FeeCapacityFromStateWithCache(parent.Root)
 	receipts, logs, usedGas, err := bc.processor.Process(block, statedb, tradingState, bc.vmConfig, feeCapacity)
 	if err != nil {
-		bc.reportBlock(block, receipts, err)
+		if classifyInsertErr(err).badBlock {
+			bc.reportBlock(block, receipts, err)
+		}
 		return nil, err
 	}
 	ptime := time.Since(pstart)
@@ -3618,7 +3620,7 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 	receipts, logs, usedGas, err := bc.processor.ProcessBlockNoValidator(calculatedBlock, statedb, tradingState, bc.vmConfig, feeCapacity)
 	process := time.Since(bstart)
 	if err != nil {
-		if !errors.Is(err, ErrStopPreparingBlock) {
+		if !errors.Is(err, ErrStopPreparingBlock) && classifyInsertErr(err).badBlock {
 			bc.reportBlock(block, receipts, err)
 		}
 		return nil, nestedEvents, nestedLogs, err
@@ -4305,9 +4307,10 @@ func (bc *BlockChain) futureBlocksLoop() {
 }
 
 // reportBlockIfFault records block as a bad block when err is a failure the classification
-// blames on the block, and does nothing for the local conditions and for a nil error: the
-// single place the insertion paths ask the question, so a sentinel registered in
-// classifyInsertErr is answered the same way wherever it stops a batch.
+// blames on the block, and does nothing for the local conditions and for a nil error. The
+// insertion paths without receipts ask here; the processor paths test badBlock themselves so
+// their report keeps the receipts. Either way a sentinel registered in classifyInsertErr is
+// answered the same way wherever it stops a batch.
 func (bc *BlockChain) reportBlockIfFault(block *types.Block, err error) {
 	if block == nil || err == nil || !classifyInsertErr(err).badBlock {
 		return

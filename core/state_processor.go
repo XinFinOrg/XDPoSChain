@@ -143,6 +143,7 @@ func ApplyBlockLevelHooks(parentHash common.Hash, evm *vm.EVM) {
 // Process returns the receipts and logs accumulated during the process and
 // returns the amount of gas that was used in the process. If any of the
 // transactions failed to execute due to insufficient gas it will return an error.
+// A Finalize failure is returned too, with the receipts, logs and gas discarded.
 func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, cfg vm.Config, tokensFee map[common.Address]*big.Int) (types.Receipts, []*types.Log, uint64, error) {
 	if err := statedb.EnsureChainConfig(p.config); err != nil {
 		return nil, nil, 0, err
@@ -236,7 +237,9 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 	tracingStateDB.UpdateTRC21Fee(balanceUpdated, totalFeeUsed)
 
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
-	p.engine.Finalize(p.bc, header, tracingStateDB, parentState, block.Transactions(), block.Uncles(), receipts)
+	if _, err := p.engine.Finalize(p.bc, header, tracingStateDB, parentState, block.Transactions(), block.Uncles(), receipts); err != nil {
+		return nil, nil, 0, fmt.Errorf("%w: %w", ErrFinalize, err)
+	}
 
 	return receipts, allLogs, *usedGas, nil
 }
@@ -347,7 +350,15 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 	tracingStateDB.UpdateTRC21Fee(balanceUpdated, totalFeeUsed)
 
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
-	p.engine.Finalize(p.bc, header, tracingStateDB, parentState, block.Transactions(), block.Uncles(), receipts)
+	if _, err := p.engine.Finalize(p.bc, header, tracingStateDB, parentState, block.Transactions(), block.Uncles(), receipts); err != nil {
+		// A calculation another entry point stopped is abandoned, not failed: the
+		// stop must win over the engine's error or getResultBlock records a bad
+		// block. A stop raised after Finalize returns is not re-checked.
+		if cBlock.stop.Load() {
+			return nil, nil, 0, ErrStopPreparingBlock
+		}
+		return nil, nil, 0, fmt.Errorf("%w: %w", ErrFinalize, err)
+	}
 	return receipts, allLogs, *usedGas, nil
 }
 
