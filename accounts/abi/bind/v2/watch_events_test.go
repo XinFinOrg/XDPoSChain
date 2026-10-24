@@ -18,6 +18,7 @@ package bind_test
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"testing"
 	"time"
@@ -207,5 +208,76 @@ func TestWatchEventsIgnoreMismatch(t *testing.T) {
 		case <-timeout.C:
 			t.Fatalf("timeout waiting for events, only got %d", e1Count)
 		}
+	}
+}
+
+// TestWatchEventsFailOnUnpackError pins the other half of the unpack error
+// handling in WatchEvents: only ErrEventSignatureMismatch is tolerated, and
+// any other error must terminate the subscription and surface on sub.Err()
+// rather than be dropped. The payload of a real log is corrupted for this
+// case, so the error travels the genuine decoding path of the generated
+// binding instead of being a value the test makes up.
+func TestWatchEventsFailOnUnpackError(t *testing.T) {
+	backend := watchTestBackend()
+	defer backend.Close()
+
+	deploymentParams := &bind.DeploymentParams{
+		Contracts: []*bind.MetaData{&events.CMetaData},
+	}
+	res, err := bind.LinkAndDeploy(deploymentParams, watchTestDeployer(backend.Client()))
+	if err != nil {
+		t.Fatalf("error deploying contract for testing: %v", err)
+	}
+	backend.Commit()
+
+	c := events.NewC()
+	instance := c.Instance(backend, res.Addresses[events.CMetaData.ID])
+
+	newCBasic1Ch := make(chan *events.CBasic1, 10)
+	watchOpts := &bind.WatchOpts{Context: context.Background()}
+
+	// Shorten the payload by one byte: the first topic still names basic1, but
+	// the data no longer holds the 32-byte word the ABI needs.
+	unpackTruncatedData := func(log *types.Log) (*events.CBasic1, error) {
+		truncated := *log
+		truncated.Data = log.Data[:len(log.Data)-1]
+		return c.UnpackBasic1Event(&truncated)
+	}
+
+	sub, err := bind.WatchEvents(instance, watchOpts, unpackTruncatedData, newCBasic1Ch)
+	if err != nil {
+		t.Fatalf("WatchEvents returned error: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	packedInput := c.PackEmitOne()
+	tx, err := bind.Transact(instance, watchTestTxAuth(), packedInput)
+	if err != nil {
+		t.Fatalf("failed to send transaction: %v", err)
+	}
+	backend.Commit()
+	if _, err := bind.WaitMined(context.Background(), backend, tx.Hash()); err != nil {
+		t.Fatalf("error waiting for tx to be mined: %v", err)
+	}
+
+	timeout := time.NewTimer(5 * time.Second)
+	select {
+	case ev := <-newCBasic1Ch:
+		t.Fatalf("log with truncated payload reached the sink: %v", ev)
+	case err := <-sub.Err():
+		if err == nil {
+			t.Fatal("expected the subscription to fail with an error, got nil")
+		}
+		if errors.Is(err, bind.ErrEventSignatureMismatch) {
+			t.Fatalf("expected a decoding error, got the mismatch sentinel: %v", err)
+		}
+	case <-timeout.C:
+		t.Fatal("timeout waiting for the subscription to fail")
+	}
+	// EmitOne emits a single basic1, so no event may sit in the buffer either.
+	select {
+	case ev := <-newCBasic1Ch:
+		t.Fatalf("unexpected event delivered: %v", ev)
+	default:
 	}
 }
