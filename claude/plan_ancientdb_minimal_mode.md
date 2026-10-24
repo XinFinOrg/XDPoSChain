@@ -2,7 +2,8 @@
 
 Branch: `feature-ancientdb-v1.14` (consider renaming to `feature-ancientdb-v1.17`)
 Author: gerui@xinfin.org
-Status: **Phase 1 implemented** (see §8 for what landed and what is outstanding).
+Status: **Phase 1 implemented** (§8), **Phase 2 implemented** (§9; its §5.5 soak
+has not run).
 Decisions in §7 resolved.
 
 ---
@@ -1130,3 +1131,116 @@ startup tests), `cmd/utils`, `ethclient/gethclient`, `metrics/...` and
 `rlp/rlpgen`. The same set fails on a clean worktree of the parent commit, so
 none of it comes from this work. `make tidy` and `make generate` likewise
 report CRLF-only differences there; compare with `git diff --ignore-cr-at-eol`.
+
+---
+
+## 9. Phase 2 implementation status
+
+`go build ./...` clean. Commits 14-18 of §6 landed; commit 19 (nightly CI for
+minimal mode) did not, see "Outstanding".
+
+### Landed
+
+- **`tailFileBoundary` (commit 14)**: `freezerTable.tailFileBoundary` binary
+  searches the index for the first item of the head data file;
+  `Freezer.tailFileBoundary(group)` takes the minimum over the group's tables.
+- **Pruner (commit 15)**, `core/rawdb/minimal_pruner.go`: truncates the
+  `blockdata` tail to `min(tailFileBoundary, head - minimalRetention)`, with
+  `minimalRetention = params.MinFullImmutabilityThreshold` (10000). Metrics:
+  `rawdb/minimal/tail` (gauge) and `rawdb/minimal/pruned/{bodies,receipts}`
+  (meters, bytes). Logs `Pruned ancient block data` with `tail`, `previous` and
+  `freed`. An in-memory freezer has no files, so it prunes straight to the floor.
+- **Readers (commit 16)**: `HasBody` / `HasReceipts` honour the tail, as upstream
+  does. `EthAPIBackend` returns `rawdb.ErrPrunedHistory` (message
+  `block body pruned; node runs in minimal history mode`, RPC code 4444, the
+  code upstream uses for pruned history) from `BlockByNumber`, `BlockByHash`,
+  `GetBlock`, `BlockByNumberOrHash`, `GetBody`, `GetReceipts` and `GetLogs`.
+  `ethapi` reports a transaction whose lookup entry points into a pruned block
+  as pruned in `eth_getTransactionByHash`, `eth_getRawTransactionByHash`,
+  `eth_getTransactionReceipt` and `GetTransactionAndReceiptProof`, instead of
+  as unknown (the §4.5 sharp edge). A block that does not exist is still `null`.
+- **Mode (commit 17)**: `--history.mode full|minimal`, `ethconfig.HistoryMode`
+  (`rawdb.HistoryMode`, a text-marshalled type, so TOML config works too). The
+  mode is persisted under the `HistoryMode` key. `eth.New` refuses
+  minimal + `--gcmode archive` and a minimal datadir started in full mode,
+  records a full -> minimal switch with a one-time warning, and prints the §4.6
+  banner on every minimal start. `db inspect` and the chain metadata dump show
+  the mode; the Items column already showed the `blockdata` tail.
+- **Tests (commit 18)**: `TestTailFileBoundary`,
+  `TestBlockDataGroupTailIndependent`, `TestMinimalPrunerKeepsNewestFile` (file
+  layout, reads below / above the tail, headers / hashes / TD intact, tail
+  survives a reopen), `TestMinimalPrunerRetentionFloor` (the floor binds against
+  a far looser file boundary, asserted directly as §4.2 demands),
+  `TestMinimalPrunerFullMode`, `TestMinimalPrunerMemoryFreezer`,
+  `TestPruneTarget`, `TestReadPruneHead`, `TestHistoryModeRoundTrip`,
+  `TestSetupHistoryMode`, `TestHistoryModeDowngradeRefused`,
+  `TestAPIBackendPrunedHistory`, `TestPrunedTransactionError`.
+
+### Deviations from §4 (all deliberate)
+
+- **The pruner runs at the top of every freeze cycle**, not right after a
+  `freezeRange` commit (§4.3). During a fast sync the downloader fills the
+  ancient store through `InsertReceiptChain` while the head block, and so the
+  freeze threshold, stays at genesis: a pruner that ran only after the freeze
+  loop's own commits would not run once during the sync, and the peak disk
+  would be the whole full-history ancient store, not "steady state plus up to a
+  data file" (§4.1). It is a no-op when nothing became prunable. For the same
+  reason the retention floor is measured from the higher of the head block and
+  the head fast block (`readPruneHead`). Peak overshoot is therefore what the
+  sync writes in one recheck interval (one minute) on top of a data file.
+- **Pruning follows the stored mode, not the flag.** Tools that open the
+  database (`import`, `export`, ...) keep a minimal datadir minimal without a
+  `--history.mode` of their own, and only `eth.New` validates the flag.
+- **`eth_getBlockByNumber(n, false)` on a pruned block returns the pruned
+  error**, not a header-only answer (§4.4 and §5.5 said "fullTx=false still
+  works from headers"). The response includes the transaction hashes, which
+  live in the pruned body, so a header-only object would be a silently
+  different answer. This matches upstream. Headers stay available through
+  `eth_getHeaderByNumber` and the XDPoS APIs.
+- **`eth_getLogs` errors on a pruned range only where a header bloom matches.**
+  Headers, and their blooms, are never pruned, so blocks that cannot hold a
+  match are still skipped without touching receipts.
+- No change in `eth/handler.go`: `GetBlockBodies` / `GetReceipts` already skip
+  what they cannot find.
+
+### Bugs found and fixed during implementation
+
+1. **A pruned minimal node could not restart.** `NewBlockChain` reads the
+   genesis block by number, and `ReadBodyRLP` / `ReadReceiptsRLP` served block 0
+   from the ancient store only, so pruning the `blockdata` tail made the genesis
+   body unreadable and startup failed with `genesis not found in chain`, even
+   though the freeze loop keeps a key-value copy of the genesis block on
+   purpose. The readers now fall back to the key-value store when the ancient
+   copy is pruned. Locked by `TestAPIBackendPrunedHistory` (which reopens the
+   chain over a pruned database) and the genesis assertions in
+   `checkPrunedReads`. Same lesson as §3.4: the freeze loop's "keep genesis in
+   the key-value store" only helps if the read path ever looks there.
+2. **Rewinding below the pruned tail killed the node.** `setHeadBeyondRoot`
+   calls `TruncateHead`, which fails below a table's tail, and the failure is a
+   `log.Crit`. `debug_setHead` to a pruned height, or a downloader rollback that
+   deep, would therefore exit the process. `setHeadBeyondRoot` now refuses up
+   front with an error. Asserted in `TestAPIBackendPrunedHistory`.
+
+### Known limitations
+
+- A minimal node cannot serve pruned bodies or receipts to syncing peers, which
+  may treat its empty answers as a stalling peer. This is the §4.6 accepted
+  risk; the banner is the mitigation.
+- `findAncestor`'s binary search probes `HasBlock` / `HasFastBlock`, which are
+  false for a pruned block. It only runs when the span search fails, and its
+  floor is `head - MaxForkAncestry` (90000), at or above the pruned tail with
+  the default immutability threshold. With the threshold lowered to its floor a
+  reorg deeper than ~10000 blocks could anchor too low; such a reorg cannot be
+  applied anyway, since it would have to rewind below the tail.
+- Leveldb still grows with TD and tx-lookup entries (§3.4, §4.5).
+
+### Outstanding for Phase 2
+
+- The §5.5 integration battery (single node and 3-node soak in minimal mode,
+  peak-disk sampling, mixed-mode control) has **not run**. The compose harness
+  it needs is not on this branch.
+- Commit 19, nightly CI for minimal mode, depends on that harness and the Phase
+  1 nightly job (commit 13), neither of which is on this branch.
+- Operator documentation: the "keep at least one full node per network" rule
+  and peak-disk sizing guidance (§4.1, §4.6) still need to be written for the
+  release notes.
