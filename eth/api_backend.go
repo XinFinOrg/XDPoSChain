@@ -166,11 +166,36 @@ func (b *EthAPIBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumbe
 	} else if number.Int64() < 0 {
 		return nil, fmt.Errorf("invalid block number %d", number.Int64())
 	}
-	return b.eth.blockchain.GetBlockByNumber(uint64(number)), nil
+	if block := b.eth.blockchain.GetBlockByNumber(uint64(number)); block != nil {
+		return block, nil
+	}
+	return nil, b.prunedError(uint64(number))
 }
 
 func (b *EthAPIBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
-	return b.eth.blockchain.GetBlockByHash(hash), nil
+	return b.blockByHash(hash)
+}
+
+// blockByHash retrieves a block by hash. A block whose body was pruned by
+// minimal history mode is reported as rawdb.ErrPrunedHistory, any other
+// missing block as nil without an error.
+func (b *EthAPIBackend) blockByHash(hash common.Hash) (*types.Block, error) {
+	if block := b.eth.blockchain.GetBlockByHash(hash); block != nil {
+		return block, nil
+	}
+	if number := rawdb.ReadHeaderNumber(b.eth.chainDb, hash); number != nil {
+		return nil, b.prunedError(*number)
+	}
+	return nil, nil
+}
+
+// prunedError returns rawdb.ErrPrunedHistory if the body and receipts of the
+// block at the given number were pruned by minimal history mode, nil otherwise.
+func (b *EthAPIBackend) prunedError(number uint64) error {
+	if rawdb.IsBlockDataPruned(b.eth.chainDb, number) {
+		return rawdb.ErrPrunedHistory
+	}
+	return nil
 }
 
 // GetBody returns body of a block. It does not resolve special block numbers.
@@ -180,6 +205,9 @@ func (b *EthAPIBackend) GetBody(ctx context.Context, hash common.Hash, number rp
 	}
 	if body := b.eth.blockchain.GetBody(hash); body != nil {
 		return body, nil
+	}
+	if err := b.prunedError(uint64(number)); err != nil {
+		return nil, err
 	}
 	return nil, errors.New("block body not found")
 }
@@ -198,6 +226,9 @@ func (b *EthAPIBackend) BlockByNumberOrHash(ctx context.Context, blockNrOrHash r
 		}
 		block := b.eth.blockchain.GetBlock(hash, header.Number.Uint64())
 		if block == nil {
+			if err := b.prunedError(header.Number.Uint64()); err != nil {
+				return nil, err
+			}
 			return nil, errors.New("header found, but block body is missing")
 		}
 		return block, nil
@@ -266,15 +297,24 @@ func (b *EthAPIBackend) GetHeader(ctx context.Context, hash common.Hash) *types.
 }
 
 func (b *EthAPIBackend) GetBlock(ctx context.Context, hash common.Hash) (*types.Block, error) {
-	return b.eth.blockchain.GetBlockByHash(hash), nil
+	return b.blockByHash(hash)
 }
 
 func (b *EthAPIBackend) GetReceipts(ctx context.Context, blockHash common.Hash) (types.Receipts, error) {
-	return b.eth.blockchain.GetReceiptsByHash(blockHash), nil
+	if receipts := b.eth.blockchain.GetReceiptsByHash(blockHash); receipts != nil {
+		return receipts, nil
+	}
+	if number := rawdb.ReadHeaderNumber(b.eth.chainDb, blockHash); number != nil {
+		return nil, b.prunedError(*number)
+	}
+	return nil, nil
 }
 
 func (b *EthAPIBackend) GetLogs(ctx context.Context, hash common.Hash, number uint64) ([][]*types.Log, error) {
-	return rawdb.ReadLogs(b.eth.chainDb, hash, number), nil
+	if logs := rawdb.ReadLogs(b.eth.chainDb, hash, number); logs != nil {
+		return logs, nil
+	}
+	return nil, b.prunedError(number)
 }
 
 func (b *EthAPIBackend) GetTd(ctx context.Context, hash common.Hash) *big.Int {

@@ -45,6 +45,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/eth/gasestimator"
 	"github.com/XinFinOrg/XDPoSChain/eth/tracers/logger"
+	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/internal/ethapi/override"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
@@ -335,7 +336,7 @@ func (api *BlockChainAPI) GetBalance(ctx context.Context, address common.Address
 func (api *BlockChainAPI) GetTransactionAndReceiptProof(ctx context.Context, hash common.Hash) (map[string]interface{}, error) {
 	tx, blockHash, _, index := rawdb.ReadTransaction(api.b.ChainDb(), hash)
 	if tx == nil {
-		return nil, nil
+		return nil, prunedTransactionError(api.b.ChainDb(), hash)
 	}
 	block, err := api.b.GetBlock(ctx, blockHash)
 	if err != nil {
@@ -1922,6 +1923,9 @@ func (s *TransactionAPI) GetTransactionByHash(ctx context.Context, hash common.H
 		}
 		return newRPCTransaction(tx, blockHash, blockNumber, header.Time, index, header.BaseFee, s.b.ChainConfig()), nil
 	}
+	if err := prunedTransactionError(s.b.ChainDb(), hash); err != nil {
+		return nil, err
+	}
 	// No finalized transaction, try to retrieve it from the pool
 	if tx := s.b.GetPoolTransaction(hash); tx != nil {
 		return newRPCPendingTransaction(tx, s.b.CurrentHeader(), s.b.ChainConfig()), nil
@@ -1936,6 +1940,9 @@ func (s *TransactionAPI) GetRawTransactionByHash(ctx context.Context, hash commo
 	// Retrieve a finalized transaction, or a pooled otherwise
 	tx, _, _, _ := rawdb.ReadTransaction(s.b.ChainDb(), hash)
 	if tx == nil {
+		if err := prunedTransactionError(s.b.ChainDb(), hash); err != nil {
+			return nil, err
+		}
 		if tx = s.b.GetPoolTransaction(hash); tx == nil {
 			// Transaction not found anywhere, abort
 			return nil, nil
@@ -1950,8 +1957,9 @@ func (s *TransactionAPI) GetTransactionReceipt(ctx context.Context, hash common.
 	tx, blockHash, blockNumber, index := rawdb.ReadTransaction(s.b.ChainDb(), hash)
 	if tx == nil {
 		// When the transaction doesn't exist, the RPC method should return JSON null
-		// as per specification.
-		return nil, nil
+		// as per specification. A transaction whose block body was pruned does
+		// exist, so report the pruning instead.
+		return nil, prunedTransactionError(s.b.ChainDb(), hash)
 	}
 	receipts, err := s.b.GetReceipts(ctx, blockHash)
 	if err != nil {
@@ -1966,6 +1974,17 @@ func (s *TransactionAPI) GetTransactionReceipt(ctx context.Context, hash common.
 	bigblock := new(big.Int).SetUint64(blockNumber)
 	signer := types.MakeSigner(s.b.ChainConfig(), bigblock)
 	return marshalReceipt(receipt, blockHash, blockNumber, signer, tx, int(index)), nil
+}
+
+// prunedTransactionError returns rawdb.ErrPrunedHistory if the transaction is
+// indexed in a block whose body was pruned by minimal history mode. The
+// transaction lookup index is not pruned with the bodies, so without this check
+// such a transaction would be reported as unknown.
+func prunedTransactionError(db ethdb.Reader, hash common.Hash) error {
+	if number := rawdb.ReadTxLookupEntry(db, hash); number != nil && rawdb.IsBlockDataPruned(db, *number) {
+		return rawdb.ErrPrunedHistory
+	}
+	return nil
 }
 
 // marshalReceipt marshals a transaction receipt into a JSON object.
