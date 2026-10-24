@@ -130,6 +130,9 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	if err != nil {
 		return nil, err
 	}
+	if err := setupHistoryMode(chainDb, config); err != nil {
+		return nil, err
+	}
 	// Resolve the effective chain config before constructing the consensus engine.
 	// NewBlockChainEx reruns SetupGenesisBlock and applies any required rewind.
 	chainConfig, genesisHash, compatErr, err := core.SetupGenesisBlockWithOverride(chainDb, config.Genesis, config.AllowBuiltInCustomRecovery)

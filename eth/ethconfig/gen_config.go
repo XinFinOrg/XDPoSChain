@@ -7,6 +7,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool/legacypool"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/eth/gasprice"
@@ -33,6 +34,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		DatabaseHandles            int  `toml:"-"`
 		DatabaseCache              int
 		DatabaseFreezer            string
+		HistoryMode                rawdb.HistoryMode
 		TrieCleanCache             int
 		TrieDirtyCache             int
 		TrieTimeout                time.Duration
@@ -68,6 +70,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.DatabaseHandles = c.DatabaseHandles
 	enc.DatabaseCache = c.DatabaseCache
 	enc.DatabaseFreezer = c.DatabaseFreezer
+	enc.HistoryMode = c.HistoryMode
 	enc.TrieCleanCache = c.TrieCleanCache
 	enc.TrieDirtyCache = c.TrieDirtyCache
 	enc.TrieTimeout = c.TrieTimeout
@@ -107,6 +110,7 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		DatabaseHandles            *int  `toml:"-"`
 		DatabaseCache              *int
 		DatabaseFreezer            *string
+		HistoryMode                *rawdb.HistoryMode
 		TrieCleanCache             *int
 		TrieDirtyCache             *int
 		TrieTimeout                *time.Duration
@@ -178,6 +182,9 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	}
 	if dec.DatabaseFreezer != nil {
 		c.DatabaseFreezer = *dec.DatabaseFreezer
+	}
+	if dec.HistoryMode != nil {
+		c.HistoryMode = *dec.HistoryMode
 	}
 	if dec.TrieCleanCache != nil {
 		c.TrieCleanCache = *dec.TrieCleanCache

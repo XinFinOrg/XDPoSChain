@@ -22,6 +22,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool/legacypool"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/eth/gasprice"
@@ -92,6 +93,7 @@ type Config struct {
 	DatabaseHandles    int  `toml:"-"`
 	DatabaseCache      int
 	DatabaseFreezer    string
+	HistoryMode        rawdb.HistoryMode // Block history to keep: "full", or "minimal" to prune old frozen bodies and receipts
 	TrieCleanCache     int
 	TrieDirtyCache     int
 	TrieTimeout        time.Duration

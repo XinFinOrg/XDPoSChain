@@ -98,6 +98,12 @@ var (
 		Hidden:   true,
 		Category: flags.EthCategory,
 	}
+	HistoryModeFlag = &cli.StringFlag{
+		Name:     "history.mode",
+		Usage:    `Block history to keep ("full", "minimal"). Minimal prunes old block bodies and receipts, irreversibly for the datadir`,
+		Value:    "full",
+		Category: flags.EthCategory,
+	}
 	KeyStoreDirFlag = &flags.DirectoryFlag{
 		Name:     "keystore",
 		Usage:    "Directory for the keystore (default = inside the datadir)",
@@ -1663,6 +1669,11 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		Fatalf("--%s must be either 'full' or 'archive'", GCModeFlag.Name)
 	}
 	cfg.NoPruning = ctx.String(GCModeFlag.Name) == "archive"
+	if ctx.IsSet(HistoryModeFlag.Name) {
+		if err := cfg.HistoryMode.UnmarshalText([]byte(ctx.String(HistoryModeFlag.Name))); err != nil {
+			Fatalf("invalid --%s flag: %v", HistoryModeFlag.Name, err)
+		}
+	}
 	cfg.Prefetch = ctx.Bool(CachePrefetchFlag.Name)
 	if ctx.IsSet(CachePreimagesFlag.Name) {
 		cfg.Preimages = ctx.Bool(CachePreimagesFlag.Name)
