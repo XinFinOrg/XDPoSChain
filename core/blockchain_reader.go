@@ -206,6 +206,18 @@ func (bc *BlockChain) GetBlockHashesFromHash(hash common.Hash, max uint64) []com
 	return bc.hc.GetBlockHashesFromHash(hash, max)
 }
 
+// GetAncestor retrieves the Nth ancestor of a given block, bounded by the
+// maxNonCanonical budget described on HeaderChain.GetAncestor.
+//
+// It deliberately takes no chainmu, even though HeaderChain documents itself
+// as not thread safe: an ancestor lookup must not wait behind a reorganisation.
+// go-ethereum made that change in #20079 by dropping the read lock that used to
+// be taken here, and the second canonical read inside the lookup is what
+// compensates for it. Do not take the lock here again.
+func (bc *BlockChain) GetAncestor(hash common.Hash, number, ancestor uint64, maxNonCanonical *uint64) (common.Hash, uint64) {
+	return bc.hc.GetAncestor(hash, number, ancestor, maxNonCanonical)
+}
+
 // GetReceiptsByHash retrieves the receipts for all transactions in a given block.
 func (bc *BlockChain) GetReceiptsByHash(hash common.Hash) types.Receipts {
 	if receipts, ok := bc.receiptsCache.Get(hash); ok {

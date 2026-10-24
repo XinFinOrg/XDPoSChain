@@ -361,6 +361,64 @@ func (hc *HeaderChain) GetBlockHashesFromHash(hash common.Hash, max uint64) []co
 	return chain
 }
 
+// GetAncestor retrieves the Nth ancestor of a given block. It assumes that
+// either the given block or a close ancestor of it is canonical.
+//
+// maxNonCanonical is a budget rather than a plain argument, and it must be
+// non-nil: it goes in as the number of headers the lookup may inspect one by
+// one on its way back to the canonical chain, and comes out as the part of it
+// that was left unused, so a caller can carry the remainder across several
+// queries. A canonical block is answered from the canonical hash index without
+// walking and without spending any of the budget; the ancestor == 1 shortcut
+// reads the origin header itself instead, still without spending any of the
+// budget. Only headers off the canonical chain cost one unit each.
+//
+// The zero value is returned for an ancestor beyond genesis
+// (ancestor > number), for an exhausted budget and for a hash the database
+// does not know. ancestor == number asks for genesis itself and answers with
+// its hash.
+//
+// Note: ancestor == 0 returns the same block, 1 returns its parent and so on.
+func (hc *HeaderChain) GetAncestor(hash common.Hash, number, ancestor uint64, maxNonCanonical *uint64) (common.Hash, uint64) {
+	if ancestor > number {
+		return common.Hash{}, 0
+	}
+	if ancestor == 1 {
+		// In this case it is cheaper to just read the header.
+		if header := hc.GetHeader(hash, number); header != nil {
+			return header.ParentHash, number - 1
+		}
+		return common.Hash{}, 0
+	}
+	for ancestor != 0 {
+		if hc.GetCanonicalHash(number) == hash {
+			// Read the ancestor before re-checking the origin: if the canonical
+			// chain is reorganised between the two reads, the origin is no
+			// longer canonical and the walk below takes over instead of
+			// returning a hash that is not an ancestor of it. The window is
+			// concurrent by nature and no test can pin it, so the two reads
+			// have to stay two.
+			ancestorHash := hc.GetCanonicalHash(number - ancestor)
+			if hc.GetCanonicalHash(number) == hash {
+				number -= ancestor
+				return ancestorHash, number
+			}
+		}
+		if *maxNonCanonical == 0 {
+			return common.Hash{}, 0
+		}
+		*maxNonCanonical--
+		ancestor--
+		header := hc.GetHeader(hash, number)
+		if header == nil {
+			return common.Hash{}, 0
+		}
+		hash = header.ParentHash
+		number--
+	}
+	return hash, number
+}
+
 // GetTd retrieves a block's total difficulty in the canonical chain from the
 // database by hash and number, caching it if found.
 func (hc *HeaderChain) GetTd(hash common.Hash, number uint64) *big.Int {
