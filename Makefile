@@ -72,10 +72,20 @@ clean:
 # You need to put $GOBIN (or $GOPATH/bin) in your PATH to use 'go generate'.
 
 #? devtools: Install recommended developer tools.
+# The versions are the ones the checked-in generated files were produced with.
+# Most `go:generate` directives are `go run <pkg>` and resolve their version
+# through go.mod, so keep stringer and gencodec in step with those requirements.
+# protoc is the exception: it shells out to protoc-gen-go on $PATH, whose
+# version is echoed into the headers of accounts/usbwallet/trezor.
+# TODO: protoc-gen-go is pinned here to v1.34.2, the release recorded in
+# build/checksums.txt, while go.mod's `tool` requirement still resolves it to
+# google.golang.org/protobuf v1.31.0. Align them once that runtime is raised.
+# protoc itself is installed outside this target: keep it at 27.1
+# (build/checksums.txt), otherwise those trezor headers move with it.
 devtools:
-	env GOBIN= go install golang.org/x/tools/cmd/stringer@latest
-	env GOBIN= go install github.com/fjl/gencodec@latest
-	env GOBIN= go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+	env GOBIN= go install golang.org/x/tools/cmd/stringer@v0.37.0
+	env GOBIN= go install github.com/fjl/gencodec@v0.1.2
+	env GOBIN= go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.34.2
 	env GOBIN= go install ./cmd/abigen
 	@type "solc" 2> /dev/null || echo 'Please install solc'
 	@type "protoc" 2> /dev/null || echo 'Please install protoc'
