@@ -913,14 +913,28 @@ func opSelfdestruct6780(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, erro
 	if evm.readOnly {
 		return nil, ErrWriteProtection
 	}
-	beneficiary := scope.Stack.pop()
-	balance := evm.StateDB.GetBalance(scope.Contract.Address())
-	evm.StateDB.SubBalance(scope.Contract.Address(), balance, tracing.BalanceDecreaseSelfdestruct)
-	evm.StateDB.AddBalance(beneficiary.Bytes20(), balance, tracing.BalanceIncreaseSelfdestruct)
-	evm.StateDB.SelfDestruct6780(scope.Contract.Address())
+	var (
+		this        = scope.Contract.Address()
+		balance     = evm.StateDB.GetBalance(this)
+		top         = scope.Stack.pop()
+		beneficiary = common.Address(top.Bytes20())
+	)
+	evm.StateDB.SubBalance(this, balance, tracing.BalanceDecreaseSelfdestruct)
+	evm.StateDB.AddBalance(beneficiary, balance, tracing.BalanceIncreaseSelfdestruct)
+	evm.StateDB.SelfDestruct6780(this)
+	// EIP-7708: emit a transfer log for the moved balance. No burn log is
+	// emitted here: EIP-8246 (#35219) removes the SELFDESTRUCT burn, and #2834
+	// lands that change in this tree. Until #2834 is merged a self-destruct
+	// still destroys balances - a same-transaction contract that self-destructs
+	// to itself, and a same-transaction contract that self-destructs and then
+	// receives funds, whose balance is destroyed at Finalise. Both destructions
+	// stay unlogged, which is why this change must merge after #2834.
+	if evm.chainRules.IsAmsterdam && balance.Sign() != 0 && this != beneficiary {
+		evm.StateDB.AddLog(types.EthTransferLog(this, beneficiary, balance))
+	}
 	if tracer := evm.Config.Tracer; tracer != nil {
 		if tracer.OnEnter != nil {
-			tracer.OnEnter(evm.depth, byte(SELFDESTRUCT), scope.Contract.Address(), beneficiary.Bytes20(), []byte{}, 0, balance)
+			tracer.OnEnter(evm.depth, byte(SELFDESTRUCT), this, beneficiary, []byte{}, 0, balance)
 		}
 		if tracer.OnExit != nil {
 			tracer.OnExit(evm.depth, []byte{}, 0, nil, false)

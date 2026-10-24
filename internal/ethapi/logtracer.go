@@ -39,8 +39,12 @@ var (
 // - call value
 // - self destructs
 //
+// From Amsterdam onwards the protocol emits these itself (EIP-7708), so the
+// caller turns the synthesis off and the transfer logs arrive through the OnLog
+// hook instead; the list above only describes the pre-fork behaviour.
+//
 // The log format for a transfer is:
-// - address: 0x0000000000000000000000000000000000000000
+// - address: 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE (ERC-7528)
 // - data: Value
 // - topics:
 //   - Transfer(address,address,uint256)

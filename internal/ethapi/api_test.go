@@ -1354,6 +1354,93 @@ func TestSimulateV1(t *testing.T) {
 	require.ErrorContains(t, err, "too many blocks")
 }
 
+// TestSimulateV1TransferLogs verifies that traceTransfers reports each ether
+// transfer exactly once across the Amsterdam boundary: before the fork the
+// tracer synthesizes an ERC-20 style log from the ERC-7528 sentinel address,
+// after it only the protocol-emitted EIP-7708 log remains.
+func TestSimulateV1TransferLogs(t *testing.T) {
+	t.Parallel()
+
+	var (
+		sender    = common.HexToAddress("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1")
+		recipient = common.HexToAddress("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+		value     = big.NewInt(1000)
+	)
+	run := func(t *testing.T, amsterdam bool, wantAddr common.Address) {
+		t.Helper()
+
+		// The genesis config only has to be valid; the simulator takes the fork
+		// rules from the backend config, so Amsterdam is scheduled there.
+		genesis := &core.Genesis{
+			Config: params.MergedTestChainConfig,
+			Alloc:  types.GenesisAlloc{sender: {Balance: big.NewInt(params.Ether)}},
+		}
+		db := rawdb.NewMemoryDatabase()
+		block := genesis.MustCommit(db)
+		stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+		require.NoError(t, err)
+
+		backend := &simulateBackendMock{
+			estimateBackendMock: &estimateBackendMock{
+				backendMock: newBackendMock(),
+				stateDB:     stateDB,
+				header:      block.Header(),
+				engine:      ethash.NewFaker(),
+			},
+			gasCap: 30_000_000,
+		}
+		if amsterdam {
+			backend.config.AmsterdamBlock = big.NewInt(0)
+		} else {
+			backend.config.AmsterdamBlock = nil
+		}
+		api := NewBlockChainAPI(backend, nil)
+		result, err := api.SimulateV1(context.Background(), simOpts{
+			TraceTransfers: true,
+			BlockStateCalls: []simBlock{{Calls: []TransactionArgs{{
+				From:  &sender,
+				To:    &recipient,
+				Value: (*hexutil.Big)(value),
+			}}}},
+		}, nil)
+		require.NoError(t, err)
+
+		type transferLog struct {
+			Address common.Address `json:"address"`
+			Topics  []common.Hash  `json:"topics"`
+			Data    hexutil.Bytes  `json:"data"`
+		}
+		type callSummary struct {
+			Logs []transferLog `json:"logs"`
+		}
+		type blockSummary struct {
+			Calls []callSummary `json:"calls"`
+		}
+		encoded, err := json.Marshal(result)
+		require.NoError(t, err)
+		var summary []blockSummary
+		require.NoError(t, json.Unmarshal(encoded, &summary))
+		require.Len(t, summary, 1)
+		require.Len(t, summary[0].Calls, 1)
+		require.Len(t, summary[0].Calls[0].Logs, 1, "transfer must be reported exactly once")
+
+		log := summary[0].Calls[0].Logs[0]
+		require.Equal(t, wantAddr, log.Address)
+		require.Equal(t, []common.Hash{
+			transferTopic,
+			common.BytesToHash(sender.Bytes()),
+			common.BytesToHash(recipient.Bytes()),
+		}, log.Topics)
+		require.Equal(t, common.BigToHash(value).Bytes(), []byte(log.Data))
+	}
+	t.Run("pre-amsterdam", func(t *testing.T) {
+		run(t, false, transferAddress)
+	})
+	t.Run("post-amsterdam", func(t *testing.T) {
+		run(t, true, params.SystemAddress)
+	})
+}
+
 // TestSimulateV1Multicall3StateOverride covers the account the Prague install owns. The
 // install runs after the caller's state overrides, so an override of its code would either
 // trip the consensus panic that guards a diverging contract or be undone by the install.
