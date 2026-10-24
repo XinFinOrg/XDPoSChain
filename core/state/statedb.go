@@ -592,9 +592,24 @@ func (s *StateDB) SetStorage(addr common.Address, storage map[common.Hash]common
 // SelfDestruct marks the given account as selfdestructed.
 // This clears the account balance.
 //
+// This is the pre-EIP-6780 entry point: the balance is always burnt and no
+// EIP-8246 handling applies, because the method carries no fork rules. It is
+// unreachable on an Amsterdam chain, whose instruction set is built on Cancun
+// and therefore routes SELFDESTRUCT to SelfDestruct6780, so a new caller must
+// go through SelfDestruct6780 with preserveBalance instead of expecting this
+// method to follow the fork.
+//
 // The account's state object is still available until the state is committed,
 // getStateObject will return a non-nil account after SelfDestruct.
 func (s *StateDB) SelfDestruct(addr common.Address) *big.Int {
+	return s.selfDestruct(addr, false)
+}
+
+// selfDestruct marks the given account as selfdestructed. The balance is
+// cleared unless preserveBalance is set, which selects the EIP-8246 flavour
+// used from Amsterdam onwards: the balance is left in place and the account is
+// turned into a balance-only account at transaction finalisation (see Finalise).
+func (s *StateDB) selfDestruct(addr common.Address, preserveBalance bool) *big.Int {
 	stateObject := s.getStateObject(addr)
 	prevBalance := new(big.Int)
 	if stateObject == nil {
@@ -603,25 +618,36 @@ func (s *StateDB) SelfDestruct(addr common.Address) *big.Int {
 	prevBalance.Set(stateObject.Balance())
 	// Regardless of whether it is already destructed or not, we do have to
 	// journal the balance-change, if we set it to zero here.
-	if prevBalance.Sign() != 0 {
+	if !preserveBalance && prevBalance.Sign() != 0 {
 		stateObject.SetBalance(new(big.Int))
 	}
 	// If it is already marked as self-destructed, we do not need to add it
 	// for journalling a second time.
 	if !stateObject.selfDestructed {
 		s.journal.destruct(addr)
-		stateObject.markSelfdestructed()
+		stateObject.markSelfdestructed(preserveBalance)
 	}
 	return prevBalance
 }
 
-func (s *StateDB) SelfDestruct6780(addr common.Address) (*big.Int, bool) {
+// SelfDestruct6780 is post-EIP-6780 selfdestruct, which means that it's a
+// send-all-to-beneficiary, unless the contract was created in this same
+// transaction, in which case it will be destructed.
+//
+// preserveBalance selects the EIP-8246 (Amsterdam) removal: the balance of the
+// destructed contract is kept instead of being burnt, and the account survives
+// transaction finalisation as a balance-only account (unless its balance is
+// zero, in which case EIP-161 deletes it).
+//
+// This method returns the prior balance, along with a boolean which is
+// true iff the object was indeed destructed.
+func (s *StateDB) SelfDestruct6780(addr common.Address, preserveBalance bool) (*big.Int, bool) {
 	stateObject := s.getStateObject(addr)
 	if stateObject == nil {
 		return new(big.Int), false
 	}
 	if stateObject.newContract {
-		return s.SelfDestruct(addr), true
+		return s.selfDestruct(addr, preserveBalance), true
 	}
 	return new(big.Int).Set(stateObject.Balance()), false
 }
@@ -915,6 +941,16 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 			continue
 		}
 
+		if obj.selfDestructed && obj.selfDestructedPreserveBalance && obj.Balance().Sign() != 0 {
+			// EIP-8246: a destructed account that still holds a balance is
+			// not deleted. It is reduced to a balance-only account instead:
+			// nonce reset to zero, code and storage cleared, balance
+			// untouched. A zero balance leaves nothing to preserve, so such an
+			// account falls through to the self-destruct branch below and is
+			// removed with the rest of the destructed set.
+			s.preserveDestructedBalance(obj)
+			continue
+		}
 		if obj.selfDestructed || (deleteEmptyObjects && obj.empty()) {
 			delete(s.stateObjects, obj.address)
 			s.markDelete(addr)
@@ -939,6 +975,52 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 	}
 	// Invalidate journal because reverting across transactions is not allowed.
 	s.clearJournalAndRefund()
+}
+
+// preserveDestructedBalance implements the EIP-8246 finalisation of an account
+// marked for destruction: instead of deleting it, the account keeps its balance
+// while its nonce, code and storage are cleared. The previous incarnation is
+// tracked as destructed so that handleDestruction wipes its storage at commit
+// time, exactly like a delete-and-resurrect sequence within one block.
+//
+// Upstream rebuilds the object with newObject(s, addr, obj.origin), which
+// inherits the origin's fields and relies on its storage root already being
+// empty in every reachable case. Here the object is rebuilt from nil instead,
+// which guarantees the empty nonce, code and root unconditionally, so the
+// storage of the previous incarnation has to be removed explicitly through
+// stateObjectsDestruct.
+//
+// Note that the createObjectChange journal entry does not clear
+// stateObjectsDestruct when it is reverted. That is safe today because a
+// preserved account stays in stateObjects, so Exist reports true and evm.create
+// never calls CreateAccount for it; a register-then-resurrect-then-revert
+// sequence is therefore unreachable.
+func (s *StateDB) preserveDestructedBalance(obj *stateObject) {
+	balance := new(big.Int).Set(obj.Balance())
+
+	// We need to maintain account deletions explicitly (will remain set
+	// indefinitely). Note only the first occurred self-destruct event is
+	// tracked.
+	if _, ok := s.stateObjectsDestruct[obj.address]; !ok {
+		s.stateObjectsDestruct[obj.address] = obj.origin
+	}
+	// Drop the diffs of the destroyed incarnation; the reborn object below
+	// starts from an empty account.
+	delete(s.accounts, obj.addrHash)
+	delete(s.storages, obj.addrHash)
+	delete(s.accountsOrigin, obj.address)
+	delete(s.storagesOrigin, obj.address)
+
+	// The reborn account starts empty: nonce 0, no code, empty storage root.
+	// Its data must not be inherited from the origin, since newObject copies
+	// the account it is handed, but the origin itself has to be kept: without
+	// it updateStateObject records the account as absent at block start in the
+	// block-level diff, and only handleDestruction repairs that at commit time.
+	reborn := newObject(s, obj.address, nil)
+	reborn.origin = obj.origin
+	reborn.setBalance(balance)
+	s.setStateObject(reborn)
+	s.markUpdate(obj.address)
 }
 
 // IntermediateRoot computes the current root hash of the state trie.
