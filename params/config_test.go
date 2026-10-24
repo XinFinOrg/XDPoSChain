@@ -2064,3 +2064,48 @@ func TestActiveSystemContractsTracksXDCActivationBlocks(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateV2ExpTimeoutConfigDurationRange checks that a chain config whose
+// largest exponential timeout does not fit in a time.Duration is rejected: the
+// countdown timer would otherwise saturate at math.MaxInt64 and never fire.
+func TestValidateV2ExpTimeoutConfigDurationRange(t *testing.T) {
+	tests := []struct {
+		name        string
+		timeout     int
+		base        float64
+		maxExponent uint8
+		wantErr     bool
+	}{
+		{name: "built-in network shape", timeout: 30, base: 1, maxExponent: 0},
+		{name: "largest timeout still fits", timeout: 59, base: 2, maxExponent: 27},
+		{name: "largest timeout overflows", timeout: 59, base: 2, maxExponent: 28, wantErr: true},
+		{name: "long period with large exponent", timeout: 30, base: 2, maxExponent: 30, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := &V2Config{
+				TimeoutPeriod: test.timeout,
+				ExpTimeoutConfig: ExpTimeoutConfig{
+					Base:        test.base,
+					MaxExponent: test.maxExponent,
+				},
+			}
+			err := validateV2ExpTimeoutConfig(cfg, "XDPoS.V2.CurrentConfig")
+			if !test.wantErr {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), "time.Duration range") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.Contains(err.Error(), "XDPoS.V2.CurrentConfig") {
+				t.Fatalf("error does not name the field: %v", err)
+			}
+		})
+	}
+}

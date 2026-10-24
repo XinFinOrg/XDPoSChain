@@ -33,6 +33,7 @@ import (
 	"math"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -755,8 +756,16 @@ func validateV2ExpTimeoutConfig(cfg *V2Config, fieldPath string) error {
 	if cfg.ExpTimeoutConfig.MaxExponent >= 32 {
 		return fmt.Errorf("%s: max_exponent (%d)= >= max_exponent_upperbound (%d)", fieldPath, cfg.ExpTimeoutConfig.MaxExponent, 32)
 	}
-	if math.Pow(cfg.ExpTimeoutConfig.Base, float64(cfg.ExpTimeoutConfig.MaxExponent)) >= float64(math.MaxUint32) {
+	power := math.Pow(cfg.ExpTimeoutConfig.Base, float64(cfg.ExpTimeoutConfig.MaxExponent))
+	if power >= float64(math.MaxUint32) {
 		return fmt.Errorf("%s: base^max_exponent (%f^%d) should be less than 2^32", fieldPath, cfg.ExpTimeoutConfig.Base, cfg.ExpTimeoutConfig.MaxExponent)
+	}
+	// common/countdown arms its timer with timeout_period * base^exp. A config
+	// whose largest timeout does not fit in a time.Duration saturates at
+	// math.MaxInt64 (~292 years) and never fires, stalling the pacemaker, so
+	// reject it at startup instead of degrading silently at runtime.
+	if power > 0 && float64(cfg.TimeoutPeriod)*power > float64(math.MaxInt64)/float64(time.Second) {
+		return fmt.Errorf("%s: timeout_period (%ds) * base^max_exponent (%f^%d) exceeds the time.Duration range", fieldPath, cfg.TimeoutPeriod, cfg.ExpTimeoutConfig.Base, cfg.ExpTimeoutConfig.MaxExponent)
 	}
 	return nil
 }
