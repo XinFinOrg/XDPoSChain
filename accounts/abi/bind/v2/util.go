@@ -77,16 +77,36 @@ func WaitDeployed(ctx context.Context, b DeployBackend, hash common.Hash) (commo
 }
 
 // WaitAccepted waits for txHash to be available on the backend, checking the pool of
-// pending transactions in addition to the blockchain. It stops waiting when the
-// context is canceled, returning its error.
+// pending transactions in addition to the blockchain. A backend that only serves
+// mined transactions never reports a pending one, so when the backend also supports
+// receipt lookups, an existing receipt counts as acceptance too. It stops waiting
+// when the context is canceled, returning its error.
 func WaitAccepted(ctx context.Context, d ContractBackend, txHash common.Hash) error {
 	queryTicker := time.NewTicker(time.Second)
 	defer queryTicker.Stop()
 	logger := log.New("hash", txHash)
+	// Receipts are probed through a type assertion because widening ContractBackend
+	// would break the generated bindings passing themselves along. The probe costs one
+	// extra request per second while the transaction lookup keeps failing; the ticker is
+	// fixed, so a generous budget also buys more requests.
+	receipts, hasReceipts := d.(DeployBackend)
+	if !hasReceipts {
+		// Without receipts the wait can only see pool and chain transaction lookups.
+		logger.Trace("Backend does not support receipt lookups")
+	}
 	for {
 		_, _, err := d.TransactionByHash(ctx, txHash)
 		if err == nil {
 			return nil
+		}
+		if hasReceipts {
+			if _, err := receipts.TransactionReceipt(ctx, txHash); err == nil {
+				return nil
+			} else if errors.Is(err, ethereum.ErrNotFound) {
+				logger.Trace("Receipt not available yet")
+			} else {
+				logger.Trace("Receipt lookup failed", "err", err)
+			}
 		}
 
 		// ethclient's TransactionByHash reports unknown hashes as ErrNotFound.
