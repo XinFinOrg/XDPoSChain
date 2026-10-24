@@ -834,6 +834,13 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64) error {
 	}
 	defer bc.chainmu.Unlock()
 
+	// Minimal history mode deletes the bodies and receipts below the block data
+	// tail, and the ancient store cannot be truncated below it. Refuse up front
+	// rather than fail halfway through the rewind.
+	if tail, err := bc.db.Tail(rawdb.ChainFreezerBlockDataGroup); err == nil && head+1 < tail {
+		return fmt.Errorf("cannot rewind to block %d: bodies and receipts below block %d are pruned (minimal history mode)", head, tail)
+	}
+
 	// delFn below reuses isGapBlockNumber to pick the snapshots a rewind deletes, and that
 	// predicate only matches when 0 < Gap <= Epoch. Outside that range no snapshot is
 	// deleted; the leftovers are keyed by block hash, so they are never loaded again - a
