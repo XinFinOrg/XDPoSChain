@@ -8,6 +8,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
+	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 )
@@ -159,8 +160,8 @@ func TestSyncBackoffPerPeer(t *testing.T) {
 
 // Tests that requestSync never blocks the message handler.
 func TestRequestSyncDoesNotBlock(t *testing.T) {
-	pm := &ProtocolManager{syncReqCh: make(chan *peer, 1)}
-	a, b := &peer{id: "a"}, &peer{id: "b"}
+	pm := &handler{syncReqCh: make(chan *peer, 1)}
+	a, b := &peer{}, &peer{}
 
 	done := make(chan struct{})
 	go func() {
@@ -174,7 +175,7 @@ func TestRequestSyncDoesNotBlock(t *testing.T) {
 		t.Fatal("requestSync blocked")
 	}
 	if p := <-pm.syncReqCh; p != a {
-		t.Fatalf("pending request: have %s, want %s", p.id, a.id)
+		t.Fatalf("pending request: have %p, want %p", p, a)
 	}
 }
 
@@ -182,15 +183,17 @@ func TestRequestSyncDoesNotBlock(t *testing.T) {
 // highest total difficulty.
 func TestBestPeerExcluding(t *testing.T) {
 	ps := newPeerSet()
-	high := &peer{id: "high", td: big.NewInt(100)}
-	low := &peer{id: "low", td: big.NewInt(10)}
-	ps.peers[high.id] = high
-	ps.peers[low.id] = low
+	high := newTestNodePeer(t, int(ethproto.XDC165), "high", nil)
+	low := newTestNodePeer(t, int(ethproto.XDC165), "low", nil)
+	high.SetHead(common.Hash{}, big.NewInt(100))
+	low.SetHead(common.Hash{}, big.NewInt(10))
+	ps.peers[high.ID()] = high
+	ps.peers[low.ID()] = low
 
 	if p := ps.BestPeerExcluding(func(*peer) bool { return false }); p != high {
 		t.Fatalf("best peer: have %v, want high", p)
 	}
-	if p := ps.BestPeerExcluding(func(p *peer) bool { return p.id == "high" }); p != low {
+	if p := ps.BestPeerExcluding(func(p *peer) bool { return p == high }); p != low {
 		t.Fatalf("best peer excluding high: have %v, want low", p)
 	}
 	if p := ps.BestPeerExcluding(func(*peer) bool { return true }); p != nil {
@@ -201,30 +204,29 @@ func TestBestPeerExcluding(t *testing.T) {
 // Tests that a vote received while the downloader is synchronising is queued
 // instead of dropped, and handed to the BFT handler once the sync ends.
 func TestVoteQueuedDuringSync(t *testing.T) {
-	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	pm, _ := newTestHandlerMust(t, downloader.FullSync, 0, nil, nil)
 	defer pm.Stop()
 
 	app, net := p2p.MsgPipe()
 	defer app.Close()
-	peer := pm.newPeer(xdc100, p2p.NewPeer(enode.ID{1}, "bft-queue-peer", nil), net, pm.txpool.Get)
+	peer := &peer{
+		Peer: ethproto.NewPeer(ethproto.XDC100, p2p.NewPeer(enode.ID{1}, "bft-queue-peer", nil), net, pm.txpool.Get),
+	}
 	if err := pm.peers.Register(peer); err != nil {
 		t.Fatalf("failed to register peer: %v", err)
 	}
-	defer pm.peers.Unregister(peer.id)
+	defer pm.peers.Unregister(peer.ID())
 
-	current := pm.blockchain.CurrentBlock()
-	localTD := pm.blockchain.GetTd(current.Hash(), current.Number.Uint64())
-	peer.lock.Lock()
-	peer.head = current.Hash()
-	peer.td = new(big.Int).Add(localTD, big.NewInt(100))
-	peer.lock.Unlock()
+	current := pm.chain.CurrentBlock()
+	localTD := pm.chain.GetTd(current.Hash(), current.Number.Uint64())
+	peer.SetHead(current.Hash(), new(big.Int).Add(localTD, big.NewInt(100)))
 
 	// Hold the downloader in a synchronising state.
-	stub := newStalledDownloaderPeer(pm.downloader, peer.id, pm.blockchain.Genesis().Header())
-	if err := pm.downloader.RegisterPeer(peer.id, xdc100, stub); err != nil {
+	stub := newStalledDownloaderPeer(pm.downloader, peer.ID(), pm.chain.Genesis().Header())
+	if err := pm.downloader.RegisterPeer(peer.ID(), ethproto.XDC100, stub); err != nil {
 		t.Fatalf("failed to register downloader peer: %v", err)
 	}
-	defer pm.downloader.UnregisterPeer(peer.id)
+	defer pm.downloader.UnregisterPeer(peer.ID())
 	defer stub.release()
 
 	syncDone := make(chan error, 1)
@@ -243,12 +245,19 @@ func TestVoteQueuedDuringSync(t *testing.T) {
 	// without verification once it is processed.
 	vote := &types.Vote{ProposedBlockInfo: &types.BlockInfo{Number: big.NewInt(1_000_000), Round: 1}}
 	hash := vote.Hash()
-	go p2p.Send(app, VoteMsg, vote)
-	if err := pm.handleMsg(peer); err != nil {
-		t.Fatalf("handleMsg failed: %v", err)
-	}
-	if n := pm.bftQueue.len(); n != 1 {
-		t.Fatalf("queued messages during sync: have %d, want 1", n)
+	go p2p.Send(app, ethproto.VoteMsg, vote)
+	// Serve the peer so the message travels the whole inbound path: the wire
+	// layer reads and decodes it, the node layer reacts to it. The loop blocks on
+	// the next message until the pipe is closed at the end of the test.
+	go func() { _ = ethproto.Handle(ethHandler{pm}, peer.Peer) }()
+
+	queued := time.After(5 * time.Second)
+	for pm.bftQueue.len() != 1 {
+		select {
+		case <-queued:
+			t.Fatalf("queued messages during sync: have %d, want 1", pm.bftQueue.len())
+		case <-time.After(time.Millisecond):
+		}
 	}
 	if pm.knownVotes.Contains(hash) {
 		t.Fatal("vote marked as known before it was processed")
@@ -256,7 +265,7 @@ func TestVoteQueuedDuringSync(t *testing.T) {
 
 	// End the sync; the queued vote must then be processed.
 	stub.release()
-	pm.downloader.UnregisterPeer(peer.id)
+	pm.downloader.UnregisterPeer(peer.ID())
 	select {
 	case <-syncDone:
 	case <-time.After(30 * time.Second):

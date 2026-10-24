@@ -143,7 +143,7 @@ func (d *Downloader) runStateSync(s *stateSync) *stateSync {
 			// Discard any data not requested (or previously timed out)
 			req := active[pack.PeerId()]
 			if req == nil {
-				log.Debug("Unrequested node data", "peer", pack.PeerId(), "len", pack.Items())
+				log.Debug("Unrequested node data", "peer", shortPeerID(pack.PeerId()), "len", pack.Items())
 				continue
 			}
 			// Finalize the request and queue up for processing
@@ -189,7 +189,7 @@ func (d *Downloader) runStateSync(s *stateSync) *stateSync {
 			// request is never honored, alas we must not silently overwrite it, as that
 			// causes valid requests to go missing and sync to get stuck.
 			if old := active[req.peer.id]; old != nil {
-				log.Warn("Busy peer assigned new state fetch", "peer", old.peer.id)
+				log.Warn("Busy peer assigned new state fetch", "peer", shortPeerID(old.peer.id))
 				// Move the previous request to the finished set
 				old.timer.Stop()
 				old.dropped = true
@@ -374,15 +374,15 @@ func (s *stateSync) loop() (err error) {
 
 		case req := <-s.deliver:
 			// Response, disconnect or timeout triggered, drop the peer if stalling
-			log.Trace("Received node data response", "peer", req.peer.id, "count", len(req.response), "dropped", req.dropped, "timeout", !req.dropped && req.timedOut())
+			log.Trace("Received node data response", "peer", shortPeerID(req.peer.id), "count", len(req.response), "dropped", req.dropped, "timeout", !req.dropped && req.timedOut())
 			if req.nItems <= 2 && !req.dropped && req.timedOut() {
 				// 2 items are the minimum requested, if even that times out, we've no use of
 				// this peer at the moment.
-				log.Warn("Stalling state sync, dropping peer", "peer", req.peer.id)
+				log.Warn("Stalling state sync, dropping peer", "peer", shortPeerID(req.peer.id))
 				if s.d.dropPeer == nil {
 					// The dropPeer method is nil when `--copydb` is used for a local copy.
 					// Timeouts can occur if e.g. compaction hits at the wrong time, and can be ignored
-					req.peer.log.Warn("Downloader wants to drop peer, but peerdrop-function is not set", "peer", req.peer.id)
+					req.peer.log.Warn("Downloader wants to drop peer, but peerdrop-function is not set", "peer", shortPeerID(req.peer.id))
 				} else {
 					s.d.dropPeer(req.peer.id)
 

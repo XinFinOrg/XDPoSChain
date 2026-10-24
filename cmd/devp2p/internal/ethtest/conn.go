@@ -11,19 +11,23 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
-	"github.com/XinFinOrg/XDPoSChain/eth"
+	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/p2p/rlpx"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
 const (
+	// ethProtoVersionXDpos2 is the xdc/100 wire version this client speaks. It is
+	// a second copy of a wire fact the node states in eth/protocols/eth; the
+	// client keeps it local on purpose, see the note on the protocol lengths in
+	// protocol.go.
 	ethProtoVersionXDpos2 uint = 100
 )
 
 const connTimeout = 2 * time.Second
 
-const statusMsgCode = eth.StatusMsg
+const statusMsgCode = ethproto.StatusMsg
 
 var errDisc = errors.New("disconnect")
 
@@ -241,39 +245,39 @@ func (c *Conn) ReadEth() (interface{}, error) {
 func decodeEthPayload(code uint64, data []byte) (interface{}, error) {
 	var msg interface{}
 	switch code {
-	case eth.StatusMsg:
+	case ethproto.StatusMsg:
 		msg = new(statusPacket)
-	case eth.NewBlockHashesMsg:
+	case ethproto.NewBlockHashesMsg:
 		msg = new(rlp.RawValue)
-	case eth.NewBlockMsg:
+	case ethproto.NewBlockMsg:
 		msg = new(rlp.RawValue)
-	case eth.GetBlockHeadersMsg:
+	case ethproto.GetBlockHeadersMsg:
 		msg = new(getBlockHeadersData)
-	case eth.BlockHeadersMsg:
+	case ethproto.BlockHeadersMsg:
 		msg = new(blockHeadersData)
-	case eth.GetBlockBodiesMsg:
+	case ethproto.GetBlockBodiesMsg:
 		msg = new(getBlockBodiesData)
-	case eth.BlockBodiesMsg:
+	case ethproto.BlockBodiesMsg:
 		msg = new(blockBodiesData)
-	case eth.GetNodeDataMsg:
+	case ethproto.GetNodeDataMsg:
 		msg = new(rlp.RawValue)
-	case eth.NodeDataMsg:
+	case ethproto.NodeDataMsg:
 		msg = new(rlp.RawValue)
-	case eth.GetReceiptsMsg:
+	case ethproto.GetReceiptsMsg:
 		msg = new(getReceiptsData)
-	case eth.ReceiptsMsg:
+	case ethproto.ReceiptsMsg:
 		msg = new(receiptsData)
-	case eth.TransactionMsg:
+	case ethproto.TransactionMsg:
 		msg = new(types.Transactions)
-	case eth.OrderTxMsg:
+	case ethproto.OrderTxMsg:
 		msg = new([]rlp.RawValue)
-	case eth.LendingTxMsg:
+	case ethproto.LendingTxMsg:
 		msg = new([]rlp.RawValue)
-	case eth.VoteMsg:
+	case ethproto.VoteMsg:
 		msg = new(rlp.RawValue)
-	case eth.TimeoutMsg:
+	case ethproto.TimeoutMsg:
 		msg = new(rlp.RawValue)
-	case eth.SyncInfoMsg:
+	case ethproto.SyncInfoMsg:
 		msg = new(rlp.RawValue)
 	default:
 		return nil, fmt.Errorf("unhandled eth msg code %d", code)

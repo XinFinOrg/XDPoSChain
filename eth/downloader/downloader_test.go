@@ -410,7 +410,7 @@ func (dl *downloadTester) Rollback(hashes []common.Hash) {
 }
 
 // newPeer registers a new block download source into the downloader.
-func (dl *downloadTester) newPeer(id string, version int, chain *testChain) error {
+func (dl *downloadTester) newPeer(id string, version uint, chain *testChain) error {
 	dl.lock.Lock()
 	defer dl.lock.Unlock()
 
@@ -605,7 +605,7 @@ func TestCanonicalSynchronisation165Light(t *testing.T) {
 	testCanonicalSynchronisation(t, xdc165, LightSync)
 }
 
-func testCanonicalSynchronisation(t *testing.T, protocol int, mode SyncMode) {
+func testCanonicalSynchronisation(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()
 
 	tester := newTester()
@@ -1261,7 +1261,7 @@ func TestThrottling164Fast(t *testing.T) { testThrottling(t, xdc164, FastSync) }
 func TestThrottling165Full(t *testing.T) { testThrottling(t, xdc165, FullSync) }
 func TestThrottling165Fast(t *testing.T) { testThrottling(t, xdc165, FastSync) }
 
-func testThrottling(t *testing.T, protocol int, mode SyncMode) {
+func testThrottling(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()
 	tester := newTester()
 
@@ -1346,7 +1346,7 @@ func TestForkedSync165Full(t *testing.T)  { testForkedSync(t, xdc165, FullSync) 
 func TestForkedSync165Fast(t *testing.T)  { testForkedSync(t, xdc165, FastSync) }
 func TestForkedSync165Light(t *testing.T) { testForkedSync(t, xdc165, LightSync) }
 
-func testForkedSync(t *testing.T, protocol int, mode SyncMode) {
+func testForkedSync(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()
 
 	tester := newTester()
@@ -1380,7 +1380,7 @@ func TestHeavyForkedSync165Full(t *testing.T)  { testHeavyForkedSync(t, xdc165, 
 func TestHeavyForkedSync165Fast(t *testing.T)  { testHeavyForkedSync(t, xdc165, FastSync) }
 func TestHeavyForkedSync165Light(t *testing.T) { testHeavyForkedSync(t, xdc165, LightSync) }
 
-func testHeavyForkedSync(t *testing.T, protocol int, mode SyncMode) {
+func testHeavyForkedSync(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()
 
 	tester := newTester()
@@ -1416,7 +1416,7 @@ func TestBoundedForkedSync165Full(t *testing.T)  { testBoundedForkedSync(t, xdc1
 func TestBoundedForkedSync165Fast(t *testing.T)  { testBoundedForkedSync(t, xdc165, FastSync) }
 func TestBoundedForkedSync165Light(t *testing.T) { testBoundedForkedSync(t, xdc165, LightSync) }
 
-func testBoundedForkedSync(t *testing.T, protocol int, mode SyncMode) {
+func testBoundedForkedSync(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()
 
 	tester := newTester()
@@ -1455,7 +1455,7 @@ func TestBoundedHeavyForkedSync165Light(t *testing.T) {
 	testBoundedHeavyForkedSync(t, xdc165, LightSync)
 }
 
-func testBoundedHeavyForkedSync(t *testing.T, protocol int, mode SyncMode) {
+func testBoundedHeavyForkedSync(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()
 	tester := newTester()
 
@@ -1508,7 +1508,7 @@ func TestCancel165Full(t *testing.T)  { testCancel(t, xdc165, FullSync) }
 func TestCancel165Fast(t *testing.T)  { testCancel(t, xdc165, FastSync) }
 func TestCancel165Light(t *testing.T) { testCancel(t, xdc165, LightSync) }
 
-func testCancel(t *testing.T, protocol int, mode SyncMode) {
+func testCancel(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()
 
 	tester := newTester()
@@ -1542,7 +1542,7 @@ func TestMultiSynchronisation165Full(t *testing.T)  { testMultiSynchronisation(t
 func TestMultiSynchronisation165Fast(t *testing.T)  { testMultiSynchronisation(t, xdc165, FastSync) }
 func TestMultiSynchronisation165Light(t *testing.T) { testMultiSynchronisation(t, xdc165, LightSync) }
 
-func testMultiSynchronisation(t *testing.T, protocol int, mode SyncMode) {
+func testMultiSynchronisation(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()
 
 	tester := newTester()
@@ -1573,7 +1573,7 @@ func TestMultiProtoSynchronisation165Full(t *testing.T)  { testMultiProtoSync(t,
 func TestMultiProtoSynchronisation165Fast(t *testing.T)  { testMultiProtoSync(t, xdc165, FastSync) }
 func TestMultiProtoSynchronisation165Light(t *testing.T) { testMultiProtoSync(t, xdc165, LightSync) }
 
-func testMultiProtoSync(t *testing.T, protocol int, mode SyncMode) {
+func testMultiProtoSync(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()
 
 	tester := newTester()
@@ -1613,7 +1613,7 @@ func TestEmptyShortCircuit165Full(t *testing.T)  { testEmptyShortCircuit(t, xdc1
 func TestEmptyShortCircuit165Fast(t *testing.T)  { testEmptyShortCircuit(t, xdc165, FastSync) }
 func TestEmptyShortCircuit165Light(t *testing.T) { testEmptyShortCircuit(t, xdc165, LightSync) }
 
-func testEmptyShortCircuit(t *testing.T, protocol int, mode SyncMode) {
+func testEmptyShortCircuit(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()
 
 	tester := newTester()
@@ -1668,7 +1668,7 @@ func TestMissingHeaderAttack165Full(t *testing.T)  { testMissingHeaderAttack(t, 
 func TestMissingHeaderAttack165Fast(t *testing.T)  { testMissingHeaderAttack(t, xdc165, FastSync) }
 func TestMissingHeaderAttack165Light(t *testing.T) { testMissingHeaderAttack(t, xdc165, LightSync) }
 
-func testMissingHeaderAttack(t *testing.T, protocol int, mode SyncMode) {
+func testMissingHeaderAttack(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()
 
 	tester := newTester()
@@ -1701,7 +1701,7 @@ func TestShiftedHeaderAttack165Full(t *testing.T)  { testShiftedHeaderAttack(t, 
 func TestShiftedHeaderAttack165Fast(t *testing.T)  { testShiftedHeaderAttack(t, xdc165, FastSync) }
 func TestShiftedHeaderAttack165Light(t *testing.T) { testShiftedHeaderAttack(t, xdc165, LightSync) }
 
-func testShiftedHeaderAttack(t *testing.T, protocol int, mode SyncMode) {
+func testShiftedHeaderAttack(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()
 
 	tester := newTester()
@@ -1736,7 +1736,7 @@ func TestInvalidHeaderRollback164Light(t *testing.T) { testInvalidHeaderRollback
 func TestInvalidHeaderRollback165Fast(t *testing.T)  { testInvalidHeaderRollback(t, xdc165, FastSync) }
 func TestInvalidHeaderRollback165Light(t *testing.T) { testInvalidHeaderRollback(t, xdc165, LightSync) }
 
-func testInvalidHeaderRollback(t *testing.T, protocol int, mode SyncMode) {
+func testInvalidHeaderRollback(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()
 
 	tester := newTester()
@@ -1837,7 +1837,7 @@ func TestHighTDStarvationAttack165Light(t *testing.T) {
 	testHighTDStarvationAttack(t, xdc165, LightSync)
 }
 
-func testHighTDStarvationAttack(t *testing.T, protocol int, mode SyncMode) {
+func testHighTDStarvationAttack(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()
 
 	tester := newTester()
@@ -1861,7 +1861,7 @@ func TestFastSyncHeaderHeadLag165(t *testing.T)  { testHeaderHeadLag(t, xdc165, 
 func TestLightSyncHeaderHeadLag164(t *testing.T) { testHeaderHeadLag(t, xdc164, LightSync) }
 func TestLightSyncHeaderHeadLag165(t *testing.T) { testHeaderHeadLag(t, xdc165, LightSync) }
 
-func testHeaderHeadLag(t *testing.T, protocol int, mode SyncMode) {
+func testHeaderHeadLag(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()
 
 	tester := newTester()
@@ -1882,7 +1882,7 @@ func TestBlockHeaderAttackerDropping100(t *testing.T) { testBlockHeaderAttackerD
 func TestBlockHeaderAttackerDropping164(t *testing.T) { testBlockHeaderAttackerDropping(t, xdc164) }
 func TestBlockHeaderAttackerDropping165(t *testing.T) { testBlockHeaderAttackerDropping(t, xdc165) }
 
-func testBlockHeaderAttackerDropping(t *testing.T, protocol int) {
+func testBlockHeaderAttackerDropping(t *testing.T, protocol uint) {
 	t.Parallel()
 
 	// Define the disconnection requirement for individual hash fetch errors
@@ -2005,7 +2005,7 @@ func TestSyncProgress165Full(t *testing.T)  { testSyncProgress(t, xdc165, FullSy
 func TestSyncProgress165Fast(t *testing.T)  { testSyncProgress(t, xdc165, FastSync) }
 func TestSyncProgress165Light(t *testing.T) { testSyncProgress(t, xdc165, LightSync) }
 
-func testSyncProgress(t *testing.T, protocol int, mode SyncMode) {
+func testSyncProgress(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()
 
 	tester := newTester()
@@ -2093,7 +2093,7 @@ func TestForkedSyncProgress165Full(t *testing.T)  { testForkedSyncProgress(t, xd
 func TestForkedSyncProgress165Fast(t *testing.T)  { testForkedSyncProgress(t, xdc165, FastSync) }
 func TestForkedSyncProgress165Light(t *testing.T) { testForkedSyncProgress(t, xdc165, LightSync) }
 
-func testForkedSyncProgress(t *testing.T, protocol int, mode SyncMode) {
+func testForkedSyncProgress(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()
 
 	tester := newTester()
@@ -2170,7 +2170,7 @@ func TestFailedSyncProgress165Full(t *testing.T)  { testFailedSyncProgress(t, xd
 func TestFailedSyncProgress165Fast(t *testing.T)  { testFailedSyncProgress(t, xdc165, FastSync) }
 func TestFailedSyncProgress165Light(t *testing.T) { testFailedSyncProgress(t, xdc165, LightSync) }
 
-func testFailedSyncProgress(t *testing.T, protocol int, mode SyncMode) {
+func testFailedSyncProgress(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()
 
 	tester := newTester()
@@ -2244,7 +2244,7 @@ func TestFakedSyncProgress165Full(t *testing.T)  { testFakedSyncProgress(t, xdc1
 func TestFakedSyncProgress165Fast(t *testing.T)  { testFakedSyncProgress(t, xdc165, FastSync) }
 func TestFakedSyncProgress165Light(t *testing.T) { testFakedSyncProgress(t, xdc165, LightSync) }
 
-func testFakedSyncProgress(t *testing.T, protocol int, mode SyncMode) {
+func testFakedSyncProgress(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()
 
 	tester := newTester()
@@ -2368,7 +2368,7 @@ func TestDeliverHeadersHang(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
-		protocol int
+		protocol uint
 		syncMode SyncMode
 	}{
 		{xdc100, FullSync},
@@ -2388,7 +2388,7 @@ func TestDeliverHeadersHang(t *testing.T) {
 	}
 }
 
-func testDeliverHeadersHang(t *testing.T, protocol int, mode SyncMode) {
+func testDeliverHeadersHang(t *testing.T, protocol uint, mode SyncMode) {
 	master := newTester()
 	defer master.terminate()
 	chain := testChainBase.shorten(15)
@@ -2596,7 +2596,7 @@ func TestReorgProtectionDoesNotStallSync165Full(t *testing.T) {
 	testReorgProtectionDoesNotStallSync(t, xdc165, FullSync)
 }
 
-func testReorgProtectionDoesNotStallSync(t *testing.T, protocol int, mode SyncMode) {
+func testReorgProtectionDoesNotStallSync(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()
 
 	// All gaps are > reorgProtThreshold (48) so reorg protection fires on the

@@ -139,6 +139,8 @@ func TestAccountRange(t *testing.T) {
 }
 
 func TestEmptyAccountRange(t *testing.T) {
+	t.Parallel()
+
 	var (
 		statedb = state.NewDatabase(rawdb.NewMemoryDatabase())
 		st, _   = state.New(common.Hash{}, statedb)
@@ -160,6 +162,8 @@ func TestEmptyAccountRange(t *testing.T) {
 }
 
 func TestStorageRangeAt(t *testing.T) {
+	t.Parallel()
+
 	// Create a state where account 0x010000... has a few storage entries.
 	var (
 		db       = rawdb.NewMemoryDatabase()

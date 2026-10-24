@@ -25,8 +25,8 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
+	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/log"
-	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 )
 
 const (
@@ -46,10 +46,6 @@ const (
 	// this long.
 	syncBackoffForget = time.Hour
 
-	// This is the target size for the packs of transactions sent by txsyncLoop.
-	// A pack can get larger than this if a single transactions exceeds this size.
-	txsyncPackSize = 100 * 1024
-
 	// syncStatusLogCycle is the interval at which the current sync status is
 	// reported at warn level, so it is visible even when info/debug logs are
 	// filtered out.
@@ -62,7 +58,7 @@ type txsync struct {
 }
 
 // syncTransactions starts sending all currently pending transactions to the given peer.
-func (pm *ProtocolManager) syncTransactions(p *peer) {
+func (pm *handler) syncTransactions(p *peer) {
 	// Assemble the set of transaction to broadcast or announce to the remote
 	// peer. Fun fact, this is quite an expensive operation as it needs to sort
 	// the transactions if the sorting is not cached yet. However, with a random
@@ -84,7 +80,7 @@ func (pm *ProtocolManager) syncTransactions(p *peer) {
 	// The xdc/165 protocol introduces proper transaction announcements, so instead
 	// of dripping transactions across multiple peers, just send the entire list as
 	// an announcement and let the remote side decide what they need (likely nothing).
-	if p.version >= xdc165 {
+	if p.Version() >= ethproto.XDC165 {
 		hashes := make([]common.Hash, len(txs))
 		for i, tx := range txs {
 			hashes[i] = tx.Hash()
@@ -103,23 +99,23 @@ func (pm *ProtocolManager) syncTransactions(p *peer) {
 // connection. When a new peer appears, we relay all currently pending
 // transactions. In order to minimise egress bandwidth usage, we send
 // the transactions in small packs to one peer at a time.
-func (pm *ProtocolManager) txsyncLoop64() {
+func (pm *handler) txsyncLoop64() {
 	var (
-		pending = make(map[enode.ID]*txsync)
+		pending = make(map[string]*txsync)
 		sending = false               // whether a send is active
 		pack    = new(txsync)         // the pack that is being sent
 		done    = make(chan error, 1) // result of the send
 	)
 	// send starts a sending a pack of transactions from the sync.
 	send := func(s *txsync) {
-		if s.p.version >= xdc165 {
+		if s.p.Version() >= ethproto.XDC165 {
 			panic("initial transaction syncer running on xdc/165+")
 		}
 		// Fill pack with transactions up to the target size.
 		size := common.StorageSize(0)
 		pack.p = s.p
 		pack.txs = pack.txs[:0]
-		for i := 0; i < len(s.txs) && size < txsyncPackSize; i++ {
+		for i := 0; i < len(s.txs) && size < ethproto.TxsyncPackSize; i++ {
 			pack.txs = append(pack.txs, s.txs[i])
 			size += common.StorageSize(s.txs[i].Size())
 		}
@@ -174,7 +170,7 @@ func (pm *ProtocolManager) txsyncLoop64() {
 
 // syncer is responsible for periodically synchronising with the network, both
 // downloading hashes and blocks as well as handling the announcement handler.
-func (pm *ProtocolManager) syncer() {
+func (pm *handler) syncer() {
 	// Start and ensure cleanup of sync mechanisms
 	pm.blockFetcher.Start()
 	pm.txFetcher.Start()
@@ -198,11 +194,11 @@ func (pm *ProtocolManager) syncer() {
 			return
 		}
 		syncing = true
-		go func() { syncDone <- syncResult{peer: peer.id, err: pm.synchronise(peer)} }()
+		go func() { syncDone <- syncResult{peer: peer.ID(), err: pm.synchronise(peer)} }()
 	}
 	bestPeer := func() *peer {
 		now := time.Now()
-		return pm.peers.BestPeerExcluding(func(p *peer) bool { return backoff.blocked(p.id, now) })
+		return pm.peers.BestPeerExcluding(func(p *peer) bool { return backoff.blocked(p.ID(), now) })
 	}
 
 	for {
@@ -216,7 +212,7 @@ func (pm *ProtocolManager) syncer() {
 
 		case p := <-pm.syncReqCh:
 			// A peer announced a heavier chain; sync with it unless it is backed off
-			if pm.peers.Peer(p.id) == nil || backoff.blocked(p.id, time.Now()) {
+			if pm.peers.Peer(p.ID()) == nil || backoff.blocked(p.ID(), time.Now()) {
 				break
 			}
 			startSync(p)
@@ -243,7 +239,7 @@ func (pm *ProtocolManager) syncer() {
 // the backoff has to agree with that verdict. See downloader.BackoffOnError. Leaving a
 // charged-for peer's recorded failures in place, rather than clearing them, is deliberate: the
 // cycle is no evidence either way.
-func (pm *ProtocolManager) handleSyncResult(res syncResult, backoff *syncBackoff) {
+func (pm *handler) handleSyncResult(res syncResult, backoff *syncBackoff) {
 	if res.err == nil {
 		backoff.succeed(res.peer)
 		return
@@ -260,7 +256,7 @@ func (pm *ProtocolManager) handleSyncResult(res syncResult, backoff *syncBackoff
 // chain, so the sync goes through the syncer's single-flight and backoff. The
 // request is dropped if another is already pending; the syncer also syncs
 // periodically.
-func (pm *ProtocolManager) requestSync(p *peer) {
+func (pm *handler) requestSync(p *peer) {
 	select {
 	case pm.syncReqCh <- p:
 	default:
@@ -338,7 +334,7 @@ func syncRetryDelay(failures int) time.Duration {
 // level so that it is always visible in the logs, regardless of whether
 // info/debug logs are enabled, and independent of the one-shot start/finish
 // logs emitted by the downloader itself.
-func (pm *ProtocolManager) syncStatusLogger() {
+func (pm *handler) syncStatusLogger() {
 	ticker := time.NewTicker(syncStatusLogCycle)
 	defer ticker.Stop()
 
@@ -356,7 +352,7 @@ func (pm *ProtocolManager) syncStatusLogger() {
 // reportSyncStatus emits a warn-level periodic sync status line, so that the
 // current sync state is always visible in the logs every cycle regardless of
 // whether the node is catching up or already in sync.
-func (pm *ProtocolManager) reportSyncStatus() {
+func (pm *handler) reportSyncStatus() {
 	var (
 		current uint64
 		highest uint64
@@ -371,7 +367,7 @@ func (pm *ProtocolManager) reportSyncStatus() {
 		progress := pm.downloader.Progress()
 		current, highest = progress.CurrentBlock, progress.HighestBlock
 	} else {
-		current = pm.blockchain.CurrentBlock().Number.Uint64()
+		current = pm.chain.CurrentBlock().Number.Uint64()
 	}
 	status := computeSyncStatus(current, highest, pm.peers.HighestTipNumber())
 	log.Warn("Block synchronisation status",
@@ -407,14 +403,14 @@ func computeSyncStatus(current, highest, announcedTip uint64) syncStatus {
 // synchronise tries to sync up our local block chain with a remote peer. It
 // returns the downloader error if a sync was attempted and failed, and nil if
 // the sync succeeded or was not needed.
-func (pm *ProtocolManager) synchronise(peer *peer) error {
+func (pm *handler) synchronise(peer *peer) error {
 	// Short circuit if no peers are available
 	if peer == nil {
 		return nil
 	}
 	// Make sure the peer's TD is higher than our own
-	currentBlock := pm.blockchain.CurrentBlock()
-	td := pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64())
+	currentBlock := pm.chain.CurrentBlock()
+	td := pm.chain.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64())
 	pHead, pTd := peer.Head()
 	if pTd.Cmp(td) <= 0 {
 		return nil
@@ -424,7 +420,7 @@ func (pm *ProtocolManager) synchronise(peer *peer) error {
 	if atomic.LoadUint32(&pm.snapSync) == 1 {
 		// Fast sync was explicitly requested, and explicitly granted
 		mode = downloader.FastSync
-	} else if currentBlock.Number.Sign() == 0 && pm.blockchain.CurrentSnapBlock().Number.Sign() > 0 {
+	} else if currentBlock.Number.Sign() == 0 && pm.chain.CurrentSnapBlock().Number.Sign() > 0 {
 		// The database seems empty as the current block is the genesis. Yet the fast
 		// block is ahead, so fast sync was enabled for this node at a certain point.
 		// The only scenario where this can happen is if the user manually (or via a
@@ -435,14 +431,14 @@ func (pm *ProtocolManager) synchronise(peer *peer) error {
 		// a node configured for full sync to fast sync: warn, since the blocks below
 		// the pivot are then stored without being executed.
 		log.Warn("[synchronise] Head block is at genesis but the snap head (highest block with stored body and receipts) is ahead: this node was likely rolled back to a block without state, re-enabling fast sync",
-			"snapHead", pm.blockchain.CurrentSnapBlock().Number)
+			"snapHead", pm.chain.CurrentSnapBlock().Number)
 		atomic.StoreUint32(&pm.snapSync, 1)
 		mode = downloader.FastSync
 	}
 
 	if mode == downloader.FastSync {
 		// Make sure the peer's total difficulty we are synchronizing is higher.
-		if pm.blockchain.GetTdByHash(pm.blockchain.CurrentSnapBlock().Hash()).Cmp(pTd) >= 0 {
+		if pm.chain.GetTdByHash(pm.chain.CurrentSnapBlock().Hash()).Cmp(pTd) >= 0 {
 			return nil
 		}
 	}
@@ -451,7 +447,7 @@ func (pm *ProtocolManager) synchronise(peer *peer) error {
 	defer pm.drainBFTQueue()
 
 	// Run the sync cycle, and disable fast sync if we've went past the pivot block
-	if err := pm.downloader.Synchronise(peer.id, pHead, pTd, mode); err != nil {
+	if err := pm.downloader.Synchronise(peer.ID(), pHead, pTd, mode); err != nil {
 		return err
 	}
 	if atomic.LoadUint32(&pm.snapSync) == 1 {
@@ -460,7 +456,7 @@ func (pm *ProtocolManager) synchronise(peer *peer) error {
 	}
 	atomic.StoreUint32(&pm.acceptTxs, 1) // Mark initial sync done
 	return nil
-	//if head := pm.blockchain.CurrentBlock(); head.NumberU64() > 0 {
+	//if head := pm.chain.CurrentBlock(); head.NumberU64() > 0 {
 	//	// We've completed a sync cycle, notify all peers of new state. This path is
 	//	// essential in star-topology networks where a gateway node needs to notify
 	//	// all its out-of-date peers of the availability of a new block. This failure

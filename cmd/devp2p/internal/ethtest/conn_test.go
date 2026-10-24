@@ -3,7 +3,7 @@ package ethtest
 import (
 	"testing"
 
-	"github.com/XinFinOrg/XDPoSChain/eth"
+	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 )
 
@@ -58,7 +58,7 @@ func TestMakeStatusPacketFromChain(t *testing.T) {
 }
 
 func TestStatusMsgCodeMatchesEthProtocol(t *testing.T) {
-	if statusMsgCode != eth.StatusMsg {
-		t.Fatalf("status msg code drift: have %d want %d", statusMsgCode, eth.StatusMsg)
+	if statusMsgCode != ethproto.StatusMsg {
+		t.Fatalf("status msg code drift: have %d want %d", statusMsgCode, ethproto.StatusMsg)
 	}
 }

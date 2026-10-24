@@ -73,7 +73,7 @@ func (b *EthAPIBackend) CurrentBlock() *types.Header {
 }
 
 func (b *EthAPIBackend) SetHead(number uint64) {
-	b.eth.protocolManager.downloader.Cancel()
+	b.eth.handler.downloader.Cancel()
 	b.eth.blockchain.SetHead(number)
 }
 
@@ -665,7 +665,7 @@ func (b *EthAPIBackend) LendingService() *XDCxlending.Lending {
 }
 
 func (b *EthAPIBackend) GetPeer() int {
-	return b.eth.protocolManager.peers.Len()
+	return b.eth.handler.peers.Len()
 }
 
 // ValidateMasternode checks if node's address is in set of masternodes

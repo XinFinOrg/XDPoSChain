@@ -17,9 +17,7 @@
 package eth
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
 	"math"
 	"math/big"
 	"sync"
@@ -30,27 +28,22 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common/lru"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
-	"github.com/XinFinOrg/XDPoSChain/consensus/misc"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/forkid"
+	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/bft"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/eth/fetcher"
+	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
-	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/params"
-	"github.com/XinFinOrg/XDPoSChain/rlp"
-	"github.com/XinFinOrg/XDPoSChain/trie"
 )
 
 const (
-	softResponseLimit = 2 * 1024 * 1024 // Target maximum size of returned blocks, headers or node data.
-	estHeaderRlpSize  = 500             // Approximate size of an RLP encoded block header
-
 	// txChanSize is the size of channel listening to NewTxsEvent.
 	// The number is referenced from the size of tx pool.
 	txChanSize = 4096
@@ -63,12 +56,62 @@ var (
 	syncChallengeTimeout = 15 * time.Second // Time allowance for a node to reply to the DAO handshake challenge
 )
 
-func errResp(code errCode, format string, v ...interface{}) error {
-	return fmt.Errorf("%v - %v", code, fmt.Sprintf(format, v...))
+// txPool defines the methods needed from a transaction pool implementation to
+// support all the operations needed by the Ethereum protocol.
+type txPool interface {
+	// Has returns an indicator whether txpool has a transaction
+	// cached with the given hash.
+	Has(hash common.Hash) bool
+
+	// Get retrieves the transaction from local txpool with given
+	// tx hash.
+	Get(hash common.Hash) *types.Transaction
+
+	// Add should add the given transactions to the pool.
+	Add(txs []*types.Transaction, sync bool) []error
+
+	// Pending should return pending transactions.
+	// The slice should be modifiable by the caller.
+	Pending(filter txpool.PendingFilter) map[common.Address][]*txpool.LazyTransaction
+
+	// SubscribeTransactions subscribes to new transaction events. The subscriber
+	// can decide whether to receive notifications only for newly seen transactions
+	// or also for reorged out ones.
+	SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool) event.Subscription
 }
 
-type ProtocolManager struct {
-	networkId  uint64
+// orderPool defines the methods needed from an order pool implementation to
+// support all the operations needed by the Ethereum protocol.
+type orderPool interface {
+	// AddRemotes should add the given transactions to the pool.
+	AddRemotes([]*types.OrderTransaction) []error
+
+	// Pending should return pending transactions.
+	// The slice should be modifiable by the caller.
+	Pending() (map[common.Address]types.OrderTransactions, error)
+
+	// SubscribeTxPreEvent should return an event subscription of
+	// TxPreEvent and send events to the given channel.
+	SubscribeTxPreEvent(chan<- core.OrderTxPreEvent) event.Subscription
+}
+
+// lendingPool defines the methods needed from a lending pool implementation to
+// support all the operations needed by the Ethereum protocol.
+type lendingPool interface {
+	// AddRemotes should add the given transactions to the pool.
+	AddRemotes([]*types.LendingTransaction) []error
+
+	// Pending should return pending transactions.
+	// The slice should be modifiable by the caller.
+	Pending() (map[common.Address]types.LendingTransactions, error)
+
+	// SubscribeTxPreEvent should return an event subscription of
+	// TxPreEvent and send events to the given channel.
+	SubscribeTxPreEvent(chan<- core.LendingTxPreEvent) event.Subscription
+}
+
+type handler struct {
+	networkID  uint64
 	forkFilter forkid.Filter // Fork ID filter, constant across the lifetime of the node
 
 	snapSync  uint32 // Flag whether snap sync is enabled (gets disabled if we already have blocks)
@@ -77,7 +120,7 @@ type ProtocolManager struct {
 	txpool      txPool
 	orderpool   orderPool
 	lendingpool lendingPool
-	blockchain  *core.BlockChain
+	chain       *core.BlockChain
 	maxPeers    int
 
 	downloader   *downloader.Downloader
@@ -120,47 +163,51 @@ type ProtocolManager struct {
 	bftQueue       *bftQueue // BFT messages received while synchronising
 }
 
-// NewProtocolManagerEx add order pool to protocol
-func NewProtocolManagerEx(config *params.ChainConfig, mode downloader.SyncMode, networkID uint64, mux *event.TypeMux, txpool txPool, orderpool orderPool, lendingpool lendingPool, engine consensus.Engine, blockchain *core.BlockChain, chaindb ethdb.Database) (*ProtocolManager, error) {
-	protocol, err := NewProtocolManager(config, mode, networkID, mux, txpool, engine, blockchain, chaindb)
-	if err != nil {
-		return nil, err
-	}
-	protocol.addOrderPoolProtocol(orderpool)
-	protocol.addLendingPoolProtocol(lendingpool)
-	return protocol, nil
+// handlerConfig configures a chain handler. It is a named struct rather than a
+// parameter list because the dependencies come from two sources: the ones
+// upstream has, and the ones only this tree has (the chain configuration, the
+// order pool, the lending pool and the consensus engine).
+type handlerConfig struct {
+	Database    ethdb.Database      // Database for direct sync insertions
+	Chain       *core.BlockChain    // Blockchain to serve data from
+	TxPool      txPool              // Transaction pool to propagate from
+	Network     uint64              // Network identifier to advertise
+	Sync        downloader.SyncMode // Whether to fast or full sync
+	EventMux    *event.TypeMux      // Legacy event mux, deprecate for `feed`
+	Config      *params.ChainConfig // Chain configuration, for the XDPoS fork schedule
+	OrderPool   orderPool           // Order transaction pool to propagate from
+	LendingPool lendingPool         // Lending transaction pool to propagate from
+	Engine      consensus.Engine    // Consensus engine, for proposed-block handling
 }
 
-// NewProtocolManager returns a new ethereum sub protocol manager. The Ethereum sub protocol manages peers capable
-// with the ethereum network.
-func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, networkID uint64, mux *event.TypeMux, txpool txPool, engine consensus.Engine, blockchain *core.BlockChain, chaindb ethdb.Database) (*ProtocolManager, error) {
-	// Create the protocol manager with the base fields
-	manager := &ProtocolManager{
-		networkId:      networkID,
-		forkFilter:     forkid.NewFilter(blockchain),
-		eventMux:       mux,
-		txpool:         txpool,
-		blockchain:     blockchain,
+// newHandler returns a handler for all Ethereum chain management protocol.
+func newHandler(config *handlerConfig) (*handler, error) {
+	// Create the handler with the base fields
+	manager := &handler{
+		networkID:      config.Network,
+		forkFilter:     forkid.NewFilter(config.Chain),
+		eventMux:       config.EventMux,
+		txpool:         config.TxPool,
+		orderpool:      config.OrderPool,
+		lendingpool:    config.LendingPool,
+		chain:          config.Chain,
 		peers:          newPeerSet(),
 		newPeerCh:      make(chan *peer),
 		syncReqCh:      make(chan *peer, 1),
 		noMorePeers:    make(chan struct{}),
 		txsyncCh:       make(chan *txsync),
 		quitSync:       make(chan struct{}),
-		knownTxs:       lru.NewCache[common.Hash, struct{}](maxKnownTxs),
-		knowOrderTxs:   lru.NewCache[common.Hash, struct{}](maxKnownOrderTxs),
-		knowLendingTxs: lru.NewCache[common.Hash, struct{}](maxKnownLendingTxs),
-		knownVotes:     lru.NewCache[common.Hash, struct{}](maxKnownVote),
-		knownSyncInfos: lru.NewCache[common.Hash, struct{}](maxKnownSyncInfo),
-		knownTimeouts:  lru.NewCache[common.Hash, struct{}](maxKnownTimeout),
+		knownTxs:       lru.NewCache[common.Hash, struct{}](ethproto.MaxKnownTxs),
+		knowOrderTxs:   lru.NewCache[common.Hash, struct{}](ethproto.MaxKnownOrderTxs),
+		knowLendingTxs: lru.NewCache[common.Hash, struct{}](ethproto.MaxKnownLendingTxs),
+		knownVotes:     lru.NewCache[common.Hash, struct{}](ethproto.MaxKnownVote),
+		knownSyncInfos: lru.NewCache[common.Hash, struct{}](ethproto.MaxKnownSyncInfo),
+		knownTimeouts:  lru.NewCache[common.Hash, struct{}](ethproto.MaxKnownTimeout),
 		bftQueue:       newBFTQueue(),
-		orderpool:      nil,
-		lendingpool:    nil,
-		orderTxSub:     nil,
-		lendingTxSub:   nil,
 	}
 	// Figure out whether to allow fast sync or not
-	if mode == downloader.FastSync && blockchain.CurrentBlock().Number.Sign() > 0 {
+	mode := config.Sync
+	if mode == downloader.FastSync && config.Chain.CurrentBlock().Number.Sign() > 0 {
 		log.Warn("Blockchain not empty, fast sync disabled")
 		mode = downloader.FullSync
 	}
@@ -169,9 +216,9 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 	}
 
 	var handleProposedBlock func(header *types.Header) error
-	if config.XDPoS != nil {
+	if config.Config.XDPoS != nil {
 		handleProposedBlock = func(header *types.Header) error {
-			return engine.(*XDPoS.XDPoS).HandleProposedBlock(blockchain, header)
+			return config.Engine.(*XDPoS.XDPoS).HandleProposedBlock(config.Chain, header)
 		}
 	} else {
 		handleProposedBlock = func(header *types.Header) error {
@@ -180,14 +227,14 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 	}
 
 	// Construct the different synchronisation mechanisms
-	manager.downloader = downloader.New(chaindb, manager.eventMux, blockchain, nil, manager.removePeer, handleProposedBlock)
+	manager.downloader = downloader.New(config.Database, manager.eventMux, config.Chain, nil, manager.removePeer, handleProposedBlock)
 
 	validator := func(header *types.Header) error {
-		return engine.VerifyHeader(blockchain, header, true)
+		return config.Engine.VerifyHeader(config.Chain, header, true)
 	}
 
 	heighter := func() uint64 {
-		return blockchain.CurrentBlock().Number.Uint64()
+		return config.Chain.CurrentBlock().Number.Uint64()
 	}
 
 	inserter := func(block *types.Block) error {
@@ -197,7 +244,7 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 			return nil
 		}
 		atomic.StoreUint32(&manager.acceptTxs, 1) // Mark initial sync done on any fetcher import
-		return manager.blockchain.InsertBlock(block)
+		return manager.chain.InsertBlock(block)
 	}
 
 	prepare := func(block *types.Block) error {
@@ -207,9 +254,9 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 			return nil
 		}
 		atomic.StoreUint32(&manager.acceptTxs, 1) // Mark initial sync done on any fetcher import
-		return manager.blockchain.PrepareBlock(block)
+		return manager.chain.PrepareBlock(block)
 	}
-	manager.blockFetcher = fetcher.NewBlockFetcher(blockchain.GetBlockByHash, validator, handleProposedBlock, manager.BroadcastBlock, heighter, inserter, prepare, manager.removePeer)
+	manager.blockFetcher = fetcher.NewBlockFetcher(config.Chain.GetBlockByHash, validator, handleProposedBlock, manager.BroadcastBlock, heighter, inserter, prepare, manager.removePeer)
 
 	fetchTx := func(peer string, hashes []common.Hash) error {
 		p := manager.peers.Peer(peer)
@@ -221,7 +268,7 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 	addTxs := func(txs []*types.Transaction) []error {
 		return manager.txpool.Add(txs, false)
 	}
-	manager.txFetcher = fetcher.NewTxFetcher(txpool.Has, addTxs, fetchTx)
+	manager.txFetcher = fetcher.NewTxFetcher(config.TxPool.Has, addTxs, fetchTx)
 
 	//Define bft function
 	broadcasts := bft.BroadcastFns{
@@ -229,57 +276,16 @@ func NewProtocolManager(config *params.ChainConfig, mode downloader.SyncMode, ne
 		Timeout:  manager.BroadcastTimeout,
 		SyncInfo: manager.BroadcastSyncInfo,
 	}
-	manager.bft = bft.New(broadcasts, blockchain, heighter)
-	if blockchain.Config().XDPoS != nil {
+	manager.bft = bft.New(broadcasts, config.Chain, heighter)
+	if config.Chain.Config().XDPoS != nil {
 		manager.bft.InitEpochNumber()
-		manager.bft.SetConsensusFuns(engine)
+		manager.bft.SetConsensusFuns(config.Engine)
 	}
 
 	return manager, nil
 }
 
-func (pm *ProtocolManager) addOrderPoolProtocol(orderpool orderPool) {
-	pm.orderpool = orderpool
-}
-
-func (pm *ProtocolManager) addLendingPoolProtocol(lendingpool lendingPool) {
-	pm.lendingpool = lendingpool
-}
-
-func (pm *ProtocolManager) makeProtocol(version uint) p2p.Protocol {
-	length, ok := protocolLengths[version]
-	if !ok {
-		panic("makeProtocol for unknown version")
-	}
-
-	return p2p.Protocol{
-		Name:    protocolName,
-		Version: version,
-		Length:  length,
-		Run: func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
-			peer := pm.newPeer(int(version), p, rw, pm.txpool.Get)
-			select {
-			case pm.newPeerCh <- peer:
-				pm.wg.Add(1)
-				defer pm.wg.Done()
-				return pm.handle(peer)
-			case <-pm.quitSync:
-				return p2p.DiscQuitting
-			}
-		},
-		NodeInfo: func() interface{} {
-			return pm.NodeInfo()
-		},
-		PeerInfo: func(id enode.ID) interface{} {
-			if p := pm.peers.Peer(fmt.Sprintf("%x", id[:8])); p != nil {
-				return p.Info()
-			}
-			return nil
-		},
-	}
-}
-
-func (pm *ProtocolManager) removePeer(id string) {
+func (pm *handler) removePeer(id string) {
 	// Short circuit if the peer was already removed
 	peer := pm.peers.Peer(id)
 	if peer == nil {
@@ -309,19 +315,19 @@ func (pm *ProtocolManager) removePeer(id string) {
 // stale entry would block a reconnect of the same node id. Returns
 // DiscUselessPeer to abort the handshake, matching removePeer's disconnect
 // reason.
-func (pm *ProtocolManager) registerDownloaderPeer(p *peer) error {
-	if err := pm.downloader.RegisterPeer(p.id, p.version, p); err != nil {
+func (pm *handler) registerDownloaderPeer(p *peer) error {
+	if err := pm.downloader.RegisterPeer(p.ID(), p.Version(), p); err != nil {
 		return err
 	}
 	if p.removed.Load() {
 		// Undo the registration; UnregisterPeer is a no-op if already removed.
-		pm.downloader.UnregisterPeer(p.id)
+		pm.downloader.UnregisterPeer(p.ID())
 		return p2p.DiscUselessPeer
 	}
 	return nil
 }
 
-func (pm *ProtocolManager) Start(maxPeers int) {
+func (pm *handler) Start(maxPeers int) {
 	pm.maxPeers = maxPeers
 
 	// broadcast and announce transactions (only new ones, not resurrected ones)
@@ -349,7 +355,7 @@ func (pm *ProtocolManager) Start(maxPeers int) {
 	go pm.txsyncLoop64() // TODO(karalabe): Legacy initial tx echange, drop with eth/64.
 }
 
-func (pm *ProtocolManager) Stop() {
+func (pm *handler) Stop() {
 	log.Info("Stopping Ethereum protocol")
 
 	pm.txsSub.Unsubscribe() // quits txBroadcastLoop
@@ -380,17 +386,25 @@ func (pm *ProtocolManager) Stop() {
 	log.Info("Ethereum protocol stopped")
 }
 
-func (pm *ProtocolManager) newPeer(pv int, p *p2p.Peer, rw p2p.MsgReadWriter, getPooledTx func(hash common.Hash) *types.Transaction) *peer {
-	mrw := newMeteredMsgWriter(rw)
-	if m, ok := mrw.(*meteredMsgReadWriter); ok {
-		m.Init(pv)
+// RunPeer implements ethproto.Backend: it performs the node layer's side of the peer
+// life cycle (the handshake, the bookkeeping and the sync kick-off) and then
+// hands the peer over to the wire layer's inbound message loop.
+func (pm *handler) RunPeer(p *ethproto.Peer, handler ethproto.Handler) error {
+	peer := &peer{Peer: p}
+	select {
+	case pm.newPeerCh <- peer:
+		pm.wg.Add(1)
+		defer pm.wg.Done()
+
+		return pm.handle(peer, handler)
+	case <-pm.quitSync:
+		return p2p.DiscQuitting
 	}
-	return newPeer(pv, p, mrw, getPooledTx)
 }
 
 // handle is the callback invoked to manage the life cycle of an eth peer. When
 // this function terminates, the peer is disconnected.
-func (pm *ProtocolManager) handle(p *peer) error {
+func (pm *handler) handle(p *peer, handler ethproto.Handler) error {
 	// Ignore maxPeers if this is a trusted peer
 	if pm.peers.Len() >= pm.maxPeers && !p.Peer.Info().Network.Trusted {
 		return p2p.DiscTooManyPeers
@@ -399,13 +413,13 @@ func (pm *ProtocolManager) handle(p *peer) error {
 
 	// Execute the Ethereum handshake
 	var (
-		genesis = pm.blockchain.Genesis()
-		head    = pm.blockchain.CurrentHeader()
+		genesis = pm.chain.Genesis()
+		head    = pm.chain.CurrentHeader()
 		hash    = head.Hash()
 		number  = head.Number.Uint64()
-		td      = pm.blockchain.GetTd(hash, number)
+		td      = pm.chain.GetTd(hash, number)
 	)
-	if err := p.Handshake(pm.networkId, td, hash, genesis.Hash(), forkid.NewID(pm.blockchain.Config(), genesis, number), pm.forkFilter); err != nil {
+	if err := p.Handshake(pm.networkID, td, hash, genesis.Hash(), forkid.NewID(pm.chain.Config(), genesis, number), pm.forkFilter); err != nil {
 		p.Log().Debug("Ethereum handshake failed", "err", err)
 		return err
 	}
@@ -414,19 +428,19 @@ func (pm *ProtocolManager) handle(p *peer) error {
 		p.Log().Error("Ethereum peer registration failed", "err", err)
 		return err
 	}
-	defer pm.removePeer(p.id)
+	defer pm.removePeer(p.ID())
 
 	// Register the peer in the downloader. If the downloader considers it banned, we disconnect
 	if err := pm.registerDownloaderPeer(p); err != nil {
 		return err
 	}
-	p.Log().Info("Register peer", "nodeid", p.ID().String(), "version", p.version, "addr", p.RemoteAddr())
+	p.Log().Info("Register peer", "nodeid", p.Peer.Peer.ID().String(), "version", p.Version(), "addr", p.RemoteAddr())
 	// Propagate existing transactions. new transactions appearing
 	// after this will be sent via broadcasts.
 	pm.syncTransactions(p)
 
 	// If we're DAO hard-fork aware, validate any remote peer with regard to the hard-fork
-	if daoBlock := pm.blockchain.Config().DAOForkBlock; daoBlock != nil {
+	if daoBlock := pm.chain.Config().DAOForkBlock; daoBlock != nil {
 		// Request the peer's DAO fork header for extra-data validation
 		if err := p.RequestHeadersByNumber(daoBlock.Uint64(), 1, 0, false); err != nil {
 			return err
@@ -434,7 +448,7 @@ func (pm *ProtocolManager) handle(p *peer) error {
 		// Start a timer to disconnect if the peer doesn't reply in time
 		p.forkDrop = time.AfterFunc(syncChallengeTimeout, func() {
 			p.Log().Debug("Timed out DAO fork-check, dropping")
-			pm.removePeer(p.id)
+			pm.removePeer(p.ID())
 		})
 		// Make sure it's cleaned up if the peer dies off
 		defer func() {
@@ -444,625 +458,13 @@ func (pm *ProtocolManager) handle(p *peer) error {
 			}
 		}()
 	}
-	// main loop. handle incoming messages.
-	for {
-		if err := pm.handleMsg(p); err != nil {
-			p.Log().Debug("Ethereum message handling failed", "err", err)
-			return err
-		}
-	}
-}
-
-// handleMsg is invoked whenever an inbound message is received from a remote
-// peer. The remote connection is torn down upon returning any error.
-func (pm *ProtocolManager) handleMsg(p *peer) error {
-	// Read the next message from the remote peer, and ensure it's fully consumed
-	msg, err := p.rw.ReadMsg()
-	if err != nil {
-		return err
-	}
-	if msg.Size > protocolMaxMsgSize {
-		return errResp(ErrMsgTooLarge, "%v > %v", msg.Size, protocolMaxMsgSize)
-	}
-	defer msg.Discard()
-
-	// Handle the message depending on its contents
-	switch {
-	case msg.Code == StatusMsg:
-		// Status messages should never arrive after the handshake
-		return errResp(ErrExtraStatusMsg, "uncontrolled status message")
-
-		// Block header query, collect the requested headers and reply
-	case msg.Code == GetBlockHeadersMsg:
-		// Decode the complex header query
-		var query getBlockHeadersData
-		if err := msg.Decode(&query); err != nil {
-			return errResp(ErrDecode, "%v: %v", msg, err)
-		}
-		hashMode := query.Origin.Hash != (common.Hash{})
-
-		// Gather headers until the fetch or network limits is reached
-		var (
-			bytes   common.StorageSize
-			headers []*types.Header
-			unknown bool
-		)
-		for !unknown && len(headers) < int(query.Amount) && bytes < softResponseLimit && len(headers) < downloader.MaxHeaderFetch {
-			// Retrieve the next header satisfying the query
-			var origin *types.Header
-			if hashMode {
-				origin = pm.blockchain.GetHeaderByHash(query.Origin.Hash)
-			} else {
-				origin = pm.blockchain.GetHeaderByNumber(query.Origin.Number)
-			}
-			if origin == nil {
-				break
-			}
-			number := origin.Number.Uint64()
-			headers = append(headers, origin)
-			bytes += estHeaderRlpSize
-
-			// Advance to the next header of the query
-			switch {
-			case query.Origin.Hash != (common.Hash{}) && query.Reverse:
-				// Hash based traversal towards the genesis block
-				for i := 0; i < int(query.Skip)+1; i++ {
-					if header := pm.blockchain.GetHeader(query.Origin.Hash, number); header != nil {
-						query.Origin.Hash = header.ParentHash
-						number--
-					} else {
-						unknown = true
-						break
-					}
-				}
-			case query.Origin.Hash != (common.Hash{}) && !query.Reverse:
-				// Hash based traversal towards the leaf block
-				var (
-					current = origin.Number.Uint64()
-					next    = current + query.Skip + 1
-				)
-				if next <= current {
-					infos, _ := json.MarshalIndent(p.Peer.Info(), "", "  ")
-					p.Log().Warn("GetBlockHeaders skip overflow attack", "current", current, "skip", query.Skip, "next", next, "attacker", infos)
-					unknown = true
-				} else {
-					if header := pm.blockchain.GetHeaderByNumber(next); header != nil {
-						if pm.blockchain.GetBlockHashesFromHash(header.Hash(), query.Skip+1)[query.Skip] == query.Origin.Hash {
-							query.Origin.Hash = header.Hash()
-						} else {
-							unknown = true
-						}
-					} else {
-						unknown = true
-					}
-				}
-			case query.Reverse:
-				// Number based traversal towards the genesis block
-				if query.Origin.Number >= query.Skip+1 {
-					query.Origin.Number -= query.Skip + 1
-				} else {
-					unknown = true
-				}
-
-			case !query.Reverse:
-				// Number based traversal towards the leaf block
-				query.Origin.Number += query.Skip + 1
-			}
-		}
-		return p.SendBlockHeaders(headers)
-
-	case msg.Code == BlockHeadersMsg:
-		// A batch of headers arrived to one of our previous requests
-		var headers []*types.Header
-		if err := msg.Decode(&headers); err != nil {
-			return errResp(ErrDecode, "msg %v: %v", msg, err)
-		}
-		if err := types.SanityCheckHeaders(headers); err != nil {
-			return err
-		}
-		// If no headers were received, but we're expending a DAO fork check, maybe it's that
-		if len(headers) == 0 && p.forkDrop != nil {
-			// Possibly an empty reply to the fork header checks, sanity check TDs
-			verifyDAO := true
-
-			// If we already have a DAO header, we can check the peer's TD against it. If
-			// the peer's ahead of this, it too must have a reply to the DAO check
-			if daoHeader := pm.blockchain.GetHeaderByNumber(pm.blockchain.Config().DAOForkBlock.Uint64()); daoHeader != nil {
-				if _, td := p.Head(); td.Cmp(pm.blockchain.GetTd(daoHeader.Hash(), daoHeader.Number.Uint64())) >= 0 {
-					verifyDAO = false
-				}
-			}
-			// If we're seemingly on the same chain, disable the drop timer
-			if verifyDAO {
-				p.Log().Debug("Seems to be on the same side of the DAO fork")
-				p.forkDrop.Stop()
-				p.forkDrop = nil
-				return nil
-			}
-		}
-		// Filter out any explicitly requested headers, deliver the rest to the downloader
-		filter := len(headers) == 1
-		if filter {
-			// If it's a potential DAO fork check, validate against the rules
-			if p.forkDrop != nil && pm.blockchain.Config().DAOForkBlock.Cmp(headers[0].Number) == 0 {
-				// Disable the fork drop timer
-				p.forkDrop.Stop()
-				p.forkDrop = nil
-
-				// Validate the header and either drop the peer or continue
-				if err := misc.VerifyDAOHeaderExtraData(pm.blockchain.Config(), headers[0]); err != nil {
-					p.Log().Debug("Verified to be on the other side of the DAO fork, dropping")
-					return err
-				}
-				p.Log().Debug("Verified to be on the same side of the DAO fork")
-				return nil
-			}
-			// Irrelevant of the fork checks, send the header to the fetcher just in case
-			headers = pm.blockFetcher.FilterHeaders(p.id, headers, time.Now())
-		}
-		if len(headers) > 0 || !filter {
-			err := pm.downloader.DeliverHeaders(p.id, headers)
-			if err != nil {
-				log.Debug("Failed to deliver headers", "err", err)
-			}
-		}
-
-	case msg.Code == GetBlockBodiesMsg:
-		// Decode the retrieval message
-		msgStream := rlp.NewStream(msg.Payload, uint64(msg.Size))
-		if _, err := msgStream.List(); err != nil {
-			return err
-		}
-		// Gather blocks until the fetch or network limits is reached
-		var (
-			hash   common.Hash
-			bytes  int
-			bodies []rlp.RawValue
-		)
-		for bytes < softResponseLimit && len(bodies) < downloader.MaxBlockFetch {
-			// Retrieve the hash of the next block
-			if err := msgStream.Decode(&hash); err == rlp.EOL {
-				break
-			} else if err != nil {
-				return errResp(ErrDecode, "msg %v: %v", msg, err)
-			}
-			// Retrieve the requested block body, stopping if enough was found
-			if data := pm.blockchain.GetBodyRLP(hash); len(data) != 0 {
-				bodies = append(bodies, data)
-				bytes += len(data)
-			}
-		}
-		return p.SendBlockBodiesRLP(bodies)
-
-	case msg.Code == BlockBodiesMsg:
-		// A batch of block bodies arrived to one of our previous requests
-		var request blockBodiesData
-		if err := msg.Decode(&request); err != nil {
-			return errResp(ErrDecode, "msg %v: %v", msg, err)
-		}
-		if err := request.sanityCheck(); err != nil {
-			return err
-		}
-		// Deliver them all to the downloader for queuing
-		trasactions := make([][]*types.Transaction, len(request))
-		uncles := make([][]*types.Header, len(request))
-
-		for i, body := range request {
-			trasactions[i] = body.Transactions
-			uncles[i] = body.Uncles
-		}
-		// Filter out any explicitly requested bodies, deliver the rest to the downloader
-		filter := len(trasactions) > 0 || len(uncles) > 0
-		if filter {
-			trasactions, uncles = pm.blockFetcher.FilterBodies(p.id, trasactions, uncles, time.Now())
-		}
-		if len(trasactions) > 0 || len(uncles) > 0 || !filter {
-			err := pm.downloader.DeliverBodies(p.id, trasactions, uncles)
-			if err != nil {
-				log.Debug("Failed to deliver bodies", "err", err)
-			}
-		}
-
-	case p.version >= xdc100 && msg.Code == GetNodeDataMsg:
-		// Decode the retrieval message
-		msgStream := rlp.NewStream(msg.Payload, uint64(msg.Size))
-		if _, err := msgStream.List(); err != nil {
-			return err
-		}
-		// Gather state data until the fetch or network limits is reached
-		var (
-			hash  common.Hash
-			bytes int
-			data  [][]byte
-		)
-		for bytes < softResponseLimit && len(data) < downloader.MaxStateFetch {
-			// Retrieve the hash of the next state entry
-			if err := msgStream.Decode(&hash); err == rlp.EOL {
-				break
-			} else if err != nil {
-				return errResp(ErrDecode, "msg %v: %v", msg, err)
-			}
-			// Retrieve the requested state entry, stopping if enough was found
-			// todo now the code and trienode is mixed in the protocol level,
-			// separate these two types.
-			entry, err := pm.blockchain.TrieNode(hash)
-			if len(entry) == 0 || err != nil {
-				// Read the contract code with prefix only to save unnecessary lookups.
-				entry, err = pm.blockchain.ContractCodeWithPrefix(hash)
-			}
-			if err == nil && len(entry) > 0 {
-				data = append(data, entry)
-				bytes += len(entry)
-			}
-		}
-		return p.SendNodeData(data)
-
-	case p.version >= xdc100 && msg.Code == NodeDataMsg:
-		// A batch of node state data arrived to one of our previous requests
-		var data [][]byte
-		if err := msg.Decode(&data); err != nil {
-			return errResp(ErrDecode, "msg %v: %v", msg, err)
-		}
-		// Deliver all to the downloader
-		if err := pm.downloader.DeliverNodeData(p.id, data); err != nil {
-			log.Debug("Failed to deliver node state data", "err", err)
-		}
-
-	case p.version >= xdc100 && msg.Code == GetReceiptsMsg:
-		// Decode the retrieval message
-		msgStream := rlp.NewStream(msg.Payload, uint64(msg.Size))
-		if _, err := msgStream.List(); err != nil {
-			return err
-		}
-		// Gather state data until the fetch or network limits is reached
-		var (
-			hash     common.Hash
-			bytes    int
-			receipts []rlp.RawValue
-		)
-		for bytes < softResponseLimit && len(receipts) < downloader.MaxReceiptFetch {
-			// Retrieve the hash of the next block
-			if err := msgStream.Decode(&hash); err == rlp.EOL {
-				break
-			} else if err != nil {
-				return errResp(ErrDecode, "msg %v: %v", msg, err)
-			}
-			// Retrieve the requested block's receipts, skipping if unknown to us
-			results := pm.blockchain.GetReceiptsByHash(hash)
-			if results == nil {
-				if header := pm.blockchain.GetHeaderByHash(hash); header == nil || header.ReceiptHash != types.EmptyRootHash {
-					continue
-				}
-			}
-			// If known, encode and queue for response packet
-			if encoded, err := rlp.EncodeToBytes(results); err != nil {
-				log.Error("Failed to encode receipt", "err", err)
-			} else {
-				receipts = append(receipts, encoded)
-				bytes += len(encoded)
-			}
-		}
-		return p.SendReceiptsRLP(receipts)
-
-	case p.version >= xdc100 && msg.Code == ReceiptsMsg:
-		// A batch of receipts arrived to one of our previous requests
-		var receipts [][]*types.Receipt
-		if err := msg.Decode(&receipts); err != nil {
-			return errResp(ErrDecode, "msg %v: %v", msg, err)
-		}
-		// Deliver all to the downloader
-		if err := pm.downloader.DeliverReceipts(p.id, receipts); err != nil {
-			log.Debug("Failed to deliver receipts", "err", err)
-		}
-
-	case msg.Code == NewBlockHashesMsg:
-		var announces newBlockHashesData
-		if err := msg.Decode(&announces); err != nil {
-			return errResp(ErrDecode, "%v: %v", msg, err)
-		}
-		// Mark the hashes as present at the remote node and track the highest
-		// plausible announced block as the peer's live tip.
-		height := pm.blockchain.CurrentBlock().Number.Uint64()
-		var tip uint64
-		for _, block := range announces {
-			p.MarkBlock(block.Hash)
-			if fetcher.IsPlausibleAnnouncement(block.Number, height) {
-				tip = max(tip, block.Number)
-			}
-		}
-		if tip > 0 {
-			p.SetTipNumber(tip)
-		}
-		// Schedule all the unknown hashes for retrieval
-		unknown := make(newBlockHashesData, 0, len(announces))
-		for _, block := range announces {
-			if !pm.blockchain.HasBlock(block.Hash, block.Number) {
-				unknown = append(unknown, block)
-			}
-		}
-		for _, block := range unknown {
-			pm.blockFetcher.Notify(p.id, block.Hash, block.Number, time.Now(), p.RequestOneHeader, p.RequestBodies)
-		}
-
-	case msg.Code == NewBlockMsg:
-		// Retrieve and decode the propagated block
-		var request newBlockData
-		if err := msg.Decode(&request); err != nil {
-			return errResp(ErrDecode, "%v: %v", msg, err)
-		}
-		if hash := types.CalcUncleHash(request.Block.Uncles()); hash != request.Block.UncleHash() {
-			log.Warn("Propagated block has invalid uncles", "have", hash, "exp", request.Block.UncleHash())
-			break // TODO(karalabe): return error eventually, but wait a few releases
-		}
-		if hash := types.DeriveSha(request.Block.Transactions(), trie.NewStackTrie(nil)); hash != request.Block.TxHash() {
-			log.Warn("Propagated block has invalid body", "have", hash, "exp", request.Block.TxHash())
-			break // TODO(karalabe): return error eventually, but wait a few releases
-		}
-		if err := request.sanityCheck(); err != nil {
-			return err
-		}
-		request.Block.ReceivedAt = msg.ReceivedAt
-		request.Block.ReceivedFrom = p
-
-		// Mark the peer as owning the block, track its tip (only when the block
-		// number is within the fetcher's plausibility window), and schedule it
-		// for import
-		p.MarkBlock(request.Block.Hash())
-		if fetcher.IsPlausibleAnnouncement(request.Block.NumberU64(), pm.blockchain.CurrentBlock().Number.Uint64()) {
-			p.SetTipNumber(request.Block.NumberU64())
-		}
-		pm.blockFetcher.Enqueue(p.id, request.Block)
-
-		// Assuming the block is importable by the peer, but possibly not yet done so,
-		// calculate the head hash and TD that the peer truly must have.
-		var (
-			trueHead = request.Block.ParentHash()
-			trueTD   = new(big.Int).Sub(request.TD, request.Block.Difficulty())
-		)
-		// Update the peers total difficulty if better than the previous
-		if _, td := p.Head(); trueTD.Cmp(td) > 0 {
-			p.SetHead(trueHead, trueTD)
-
-			// Schedule a sync if above ours. Note, this will not fire a sync for a gap of
-			// a singe block (as the true TD is below the propagated block), however this
-			// scenario should easily be covered by the fetcher.
-			currentBlock := pm.blockchain.CurrentBlock()
-			if trueTD.Cmp(pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64())) > 0 {
-				pm.requestSync(p)
-			}
-		}
-
-	case msg.Code == NewPooledTransactionHashesMsg && p.version >= xdc165:
-		// New transaction announcement arrived, make sure we have
-		// a valid and fresh chain to handle them
-		if atomic.LoadUint32(&pm.acceptTxs) == 0 {
-			break
-		}
-		var hashes []common.Hash
-		if err := msg.Decode(&hashes); err != nil {
-			return errResp(ErrDecode, "msg %v: %v", msg, err)
-		}
-		// Schedule all the unknown hashes for retrieval
-		for _, hash := range hashes {
-			p.MarkTransaction(hash)
-		}
-		pm.txFetcher.Notify(p.id, hashes)
-
-	case msg.Code == GetPooledTransactionsMsg && p.version >= xdc165:
-		// Decode the retrieval message
-		msgStream := rlp.NewStream(msg.Payload, uint64(msg.Size))
-		if _, err := msgStream.List(); err != nil {
-			return err
-		}
-		// Gather transactions until the fetch or network limits is reached
-		var (
-			hash   common.Hash
-			bytes  int
-			hashes []common.Hash
-			txs    []rlp.RawValue
-		)
-		for bytes < softResponseLimit {
-			// Retrieve the hash of the next block
-			if err := msgStream.Decode(&hash); err == rlp.EOL {
-				break
-			} else if err != nil {
-				return errResp(ErrDecode, "msg %v: %v", msg, err)
-			}
-			// Retrieve the requested transaction, skipping if unknown to us
-			tx := pm.txpool.Get(hash)
-			if tx == nil {
-				continue
-			}
-			// If known, encode and queue for response packet
-			if encoded, err := rlp.EncodeToBytes(tx); err != nil {
-				log.Error("Failed to encode transaction", "err", err)
-			} else {
-				hashes = append(hashes, hash)
-				txs = append(txs, encoded)
-				bytes += len(encoded)
-			}
-		}
-		return p.SendPooledTransactionsRLP(hashes, txs)
-
-	case msg.Code == TransactionMsg || (msg.Code == PooledTransactionsMsg && p.version >= xdc165):
-		// Transactions arrived, make sure we have a valid and fresh chain to handle them
-		if atomic.LoadUint32(&pm.acceptTxs) == 0 {
-			break
-		}
-		// Transactions can be processed, parse all of them and deliver to the pool
-		var txs []*types.Transaction
-		if err := msg.Decode(&txs); err != nil {
-			return errResp(ErrDecode, "msg %v: %v", msg, err)
-		}
-
-		for i, tx := range txs {
-			// Validate and mark the remote transaction
-			if tx == nil {
-				return errResp(ErrDecode, "transaction %d is nil", i)
-			}
-			p.MarkTransaction(tx.Hash())
-			if pm.knownTxs.Contains(tx.Hash()) {
-				log.Trace("Discard known tx", "hash", tx.Hash(), "nonce", tx.Nonce(), "to", tx.To())
-			} else {
-				pm.knownTxs.Add(tx.Hash(), struct{}{})
-			}
-		}
-		pm.txFetcher.Enqueue(p.id, txs, msg.Code == PooledTransactionsMsg)
-
-	case msg.Code == OrderTxMsg:
-		// Transactions arrived, make sure we have a valid and fresh chain to handle them
-		if atomic.LoadUint32(&pm.acceptTxs) == 0 {
-			break
-		}
-		// Transactions can be processed, parse all of them and deliver to the pool
-		var txs []*types.OrderTransaction
-		if err := msg.Decode(&txs); err != nil {
-			return errResp(ErrDecode, "msg %v: %v", msg, err)
-		}
-
-		for i, tx := range txs {
-			// Validate and mark the remote transaction
-			if tx == nil {
-				return errResp(ErrDecode, "transaction %d is nil", i)
-			}
-			p.MarkOrderTransaction(tx.Hash())
-			if pm.knowOrderTxs.Contains(tx.Hash()) {
-				log.Trace("Discard known tx", "hash", tx.Hash(), "nonce", tx.Nonce())
-			} else {
-				pm.knowOrderTxs.Add(tx.Hash(), struct{}{})
-			}
-		}
-
-		if pm.orderpool != nil {
-			pm.orderpool.AddRemotes(txs)
-		}
-
-	case msg.Code == LendingTxMsg:
-		// Transactions arrived, make sure we have a valid and fresh chain to handle them
-		if atomic.LoadUint32(&pm.acceptTxs) == 0 {
-			break
-		}
-		// Transactions can be processed, parse all of them and deliver to the pool
-		var txs []*types.LendingTransaction
-		if err := msg.Decode(&txs); err != nil {
-			return errResp(ErrDecode, "msg %v: %v", msg, err)
-		}
-
-		for i, tx := range txs {
-			// Validate and mark the remote transaction
-			if tx == nil {
-				return errResp(ErrDecode, "transaction %d is nil", i)
-			}
-			p.MarkLendingTransaction(tx.Hash())
-			if pm.knowLendingTxs.Contains(tx.Hash()) {
-				log.Trace("Discard known tx", "hash", tx.Hash(), "nonce", tx.Nonce())
-			} else {
-				pm.knowLendingTxs.Add(tx.Hash(), struct{}{})
-			}
-		}
-
-		if pm.lendingpool != nil {
-			pm.lendingpool.AddRemotes(txs)
-		}
-
-	case msg.Code == VoteMsg:
-		var vote types.Vote
-		if err := msg.Decode(&vote); err != nil {
-			return errResp(ErrDecode, "msg %v: %v", msg, err)
-		}
-		p.MarkVote(vote.Hash())
-
-		// The sender never resends a message it marked as known to us, so queue
-		// it while synchronising instead of dropping it.
-		if pm.bftQueue.enqueueIf(pm.downloader.Synchronising, p.id, vote.Hash(), msg.Size, &vote) {
-			break
-		}
-		pm.handleVote(p.id, &vote)
-
-	case msg.Code == TimeoutMsg:
-		var timeout types.Timeout
-		if err := msg.Decode(&timeout); err != nil {
-			return errResp(ErrDecode, "msg %v: %v", msg, err)
-		}
-		p.MarkTimeout(timeout.Hash())
-
-		if pm.bftQueue.enqueueIf(pm.downloader.Synchronising, p.id, timeout.Hash(), msg.Size, &timeout) {
-			break
-		}
-		pm.handleTimeout(p.id, &timeout)
-
-	case msg.Code == SyncInfoMsg:
-		var syncInfo types.SyncInfo
-		if err := msg.Decode(&syncInfo); err != nil {
-			return errResp(ErrDecode, "msg %v: %v", msg, err)
-		}
-		p.MarkSyncInfo(syncInfo.Hash())
-
-		if pm.bftQueue.enqueueIf(pm.downloader.Synchronising, p.id, syncInfo.Hash(), msg.Size, &syncInfo) {
-			break
-		}
-		pm.handleSyncInfo(p.id, &syncInfo)
-
-	default:
-		return errResp(ErrInvalidMsgCode, "%v", msg.Code)
-	}
-	return nil
-}
-
-// handleVote passes a vote to the BFT handler unless it is already known.
-func (pm *ProtocolManager) handleVote(peer string, vote *types.Vote) {
-	if pm.knownVotes.Contains(vote.Hash()) {
-		log.Trace("Discarded vote, known vote", "vote hash", vote.Hash(), "voted block hash", vote.ProposedBlockInfo.Hash.Hex(), "number", vote.ProposedBlockInfo.Number, "round", vote.ProposedBlockInfo.Round)
-		return
-	}
-	pm.knownVotes.Add(vote.Hash(), struct{}{})
-	go pm.bft.Vote(peer, vote)
-}
-
-// handleTimeout passes a timeout to the BFT handler unless it is already known.
-func (pm *ProtocolManager) handleTimeout(peer string, timeout *types.Timeout) {
-	if pm.knownTimeouts.Contains(timeout.Hash()) {
-		log.Trace("Discarded Timeout, known Timeout", "Signature", timeout.Signature, "hash", timeout.Hash(), "round", timeout.Round)
-		return
-	}
-	pm.knownTimeouts.Add(timeout.Hash(), struct{}{})
-	go pm.bft.Timeout(peer, timeout)
-}
-
-// handleSyncInfo passes a syncInfo to the BFT handler unless it is already known.
-func (pm *ProtocolManager) handleSyncInfo(peer string, syncInfo *types.SyncInfo) {
-	if pm.knownSyncInfos.Contains(syncInfo.Hash()) {
-		log.Trace("Discarded SyncInfo, known SyncInfo", "hash", syncInfo.Hash())
-		return
-	}
-	pm.knownSyncInfos.Add(syncInfo.Hash(), struct{}{})
-	go pm.bft.SyncInfo(peer, syncInfo)
-}
-
-// drainBFTQueue processes the BFT messages queued during a sync. It does
-// nothing if another sync is already running; that sync drains the queue when
-// it finishes.
-func (pm *ProtocolManager) drainBFTQueue() {
-	msgs := pm.bftQueue.takeUnless(pm.downloader.Synchronising)
-	if len(msgs) == 0 {
-		return
-	}
-	log.Debug("Processing BFT messages queued during sync", "count", len(msgs))
-	for _, m := range msgs {
-		switch v := m.msg.(type) {
-		case *types.Vote:
-			pm.handleVote(m.peer, v)
-		case *types.Timeout:
-			pm.handleTimeout(m.peer, v)
-		case *types.SyncInfo:
-			pm.handleSyncInfo(m.peer, v)
-		}
-	}
+	// Hand the peer over to the wire layer's inbound message loop
+	return handler(p.Peer)
 }
 
 // BroadcastBlock will either propagate a block to a subset of it's peers, or
 // will only announce it's availability (depending what's requested).
-func (pm *ProtocolManager) BroadcastBlock(block *types.Block, propagate bool) {
+func (pm *handler) BroadcastBlock(block *types.Block, propagate bool) {
 	hash := block.Hash()
 	peers := pm.peers.PeersWithoutBlock(hash)
 
@@ -1070,8 +472,8 @@ func (pm *ProtocolManager) BroadcastBlock(block *types.Block, propagate bool) {
 	if propagate {
 		// Calculate the TD of the block (it's not imported yet, so block.Td is not valid)
 		var td *big.Int
-		if parent := pm.blockchain.GetBlock(block.ParentHash(), block.NumberU64()-1); parent != nil {
-			td = new(big.Int).Add(block.Difficulty(), pm.blockchain.GetTd(block.ParentHash(), block.NumberU64()-1))
+		if parent := pm.chain.GetBlock(block.ParentHash(), block.NumberU64()-1); parent != nil {
+			td = new(big.Int).Add(block.Difficulty(), pm.chain.GetTd(block.ParentHash(), block.NumberU64()-1))
 		} else {
 			log.Error("Propagating dangling block", "number", block.Number(), "hash", hash)
 			return
@@ -1084,7 +486,7 @@ func (pm *ProtocolManager) BroadcastBlock(block *types.Block, propagate bool) {
 		return
 	}
 	// Otherwise if the block is indeed in out own chain, announce it
-	if pm.blockchain.HasBlock(hash, block.NumberU64()) {
+	if pm.chain.HasBlock(hash, block.NumberU64()) {
 		for _, peer := range peers {
 			peer.SendNewBlockHashes([]common.Hash{hash}, []uint64{block.NumberU64()})
 		}
@@ -1094,7 +496,7 @@ func (pm *ProtocolManager) BroadcastBlock(block *types.Block, propagate bool) {
 
 // BroadcastTransactions will propagate a batch of transactions to all peers which are not known to
 // already have the given transaction.
-func (pm *ProtocolManager) BroadcastTransactions(txs types.Transactions, propagate bool) {
+func (pm *handler) BroadcastTransactions(txs types.Transactions, propagate bool) {
 	var (
 		txset = make(map[*peer][]common.Hash)
 		annos = make(map[*peer][]common.Hash)
@@ -1131,7 +533,7 @@ func (pm *ProtocolManager) BroadcastTransactions(txs types.Transactions, propaga
 		}
 	}
 	for peer, hashes := range annos {
-		if peer.version >= xdc165 {
+		if peer.Version() >= ethproto.XDC165 {
 			peer.AsyncSendPooledTransactionHashes(hashes)
 		} else {
 			peer.AsyncSendTransactions(hashes)
@@ -1141,15 +543,15 @@ func (pm *ProtocolManager) BroadcastTransactions(txs types.Transactions, propaga
 
 // BroadcastVote will propagate a Vote to all peers which are not known to
 // already have the given vote.
-func (pm *ProtocolManager) BroadcastVote(vote *types.Vote) {
+func (pm *handler) BroadcastVote(vote *types.Vote) {
 	hash := vote.Hash()
 	peers := pm.peers.PeersWithoutVote(hash)
 	if len(peers) > 0 {
 		for _, peer := range peers {
 			err := peer.SendVote(vote)
 			if err != nil {
-				log.Debug("[BroadcastVote] Fail to broadcast vote message", "peerId", peer.id, "version", peer.version, "blockNum", vote.ProposedBlockInfo.Number, "err", err)
-				pm.removePeer(peer.id)
+				log.Debug("[BroadcastVote] Fail to broadcast vote message", "peerId", peer.ID(), "version", peer.Version(), "blockNum", vote.ProposedBlockInfo.Number, "err", err)
+				pm.removePeer(peer.ID())
 			}
 		}
 		log.Trace("Propagated Vote", "vote hash", vote.Hash(), "voted block hash", vote.ProposedBlockInfo.Hash.Hex(), "number", vote.ProposedBlockInfo.Number, "round", vote.ProposedBlockInfo.Round, "recipients", len(peers))
@@ -1158,15 +560,15 @@ func (pm *ProtocolManager) BroadcastVote(vote *types.Vote) {
 
 // BroadcastTimeout will propagate a Timeout to all peers which are not known to
 // already have the given timeout.
-func (pm *ProtocolManager) BroadcastTimeout(timeout *types.Timeout) {
+func (pm *handler) BroadcastTimeout(timeout *types.Timeout) {
 	hash := timeout.Hash()
 	peers := pm.peers.PeersWithoutTimeout(hash)
 	if len(peers) > 0 {
 		for _, peer := range peers {
 			err := peer.SendTimeout(timeout)
 			if err != nil {
-				log.Debug("[BroadcastTimeout] Fail to broadcast timeout message, remove peer", "peerId", peer.id, "version", peer.version, "timeout", timeout, "err", err)
-				pm.removePeer(peer.id)
+				log.Debug("[BroadcastTimeout] Fail to broadcast timeout message, remove peer", "peerId", peer.ID(), "version", peer.Version(), "timeout", timeout, "err", err)
+				pm.removePeer(peer.ID())
 			}
 		}
 		log.Trace("Propagated Timeout", "hash", hash, "recipients", len(peers))
@@ -1175,15 +577,15 @@ func (pm *ProtocolManager) BroadcastTimeout(timeout *types.Timeout) {
 
 // BroadcastSyncInfo will propagate a SyncInfo to all peers which are not known to
 // already have the given SyncInfo.
-func (pm *ProtocolManager) BroadcastSyncInfo(syncInfo *types.SyncInfo) {
+func (pm *handler) BroadcastSyncInfo(syncInfo *types.SyncInfo) {
 	hash := syncInfo.Hash()
 	peers := pm.peers.PeersWithoutSyncInfo(hash)
 	if len(peers) > 0 {
 		for _, peer := range peers {
 			err := peer.SendSyncInfo(syncInfo)
 			if err != nil {
-				log.Debug("[BroadcastSyncInfo] Fail to broadcast syncInfo message, remove peer", "peerId", peer.id, "version", peer.version, "syncInfo", syncInfo, "err", err)
-				pm.removePeer(peer.id)
+				log.Debug("[BroadcastSyncInfo] Fail to broadcast syncInfo message, remove peer", "peerId", peer.ID(), "version", peer.Version(), "syncInfo", syncInfo, "err", err)
+				pm.removePeer(peer.ID())
 			}
 		}
 		log.Trace("Propagated SyncInfo", "hash", hash, "recipients", len(peers))
@@ -1192,7 +594,7 @@ func (pm *ProtocolManager) BroadcastSyncInfo(syncInfo *types.SyncInfo) {
 
 // OrderBroadcastTx will propagate a transaction to all peers which are not known to
 // already have the given transaction.
-func (pm *ProtocolManager) OrderBroadcastTx(hash common.Hash, tx *types.OrderTransaction) {
+func (pm *handler) OrderBroadcastTx(hash common.Hash, tx *types.OrderTransaction) {
 	// Broadcast transaction to a batch of peers not knowing about it
 	peers := pm.peers.OrderPeersWithoutTx(hash)
 	//FIXME include this again: peers = peers[:int(math.Sqrt(float64(len(peers))))]
@@ -1204,7 +606,7 @@ func (pm *ProtocolManager) OrderBroadcastTx(hash common.Hash, tx *types.OrderTra
 
 // LendingBroadcastTx will propagate a transaction to all peers which are not known to
 // already have the given transaction.
-func (pm *ProtocolManager) LendingBroadcastTx(hash common.Hash, tx *types.LendingTransaction) {
+func (pm *handler) LendingBroadcastTx(hash common.Hash, tx *types.LendingTransaction) {
 	// Broadcast transaction to a batch of peers not knowing about it
 	peers := pm.peers.LendingPeersWithoutTx(hash)
 	//FIXME include this again: peers = peers[:int(math.Sqrt(float64(len(peers))))]
@@ -1215,7 +617,7 @@ func (pm *ProtocolManager) LendingBroadcastTx(hash common.Hash, tx *types.Lendin
 }
 
 // minedBroadcastLoop broadcast loop
-func (pm *ProtocolManager) minedBroadcastLoop() {
+func (pm *handler) minedBroadcastLoop() {
 	// automatically stops if unsubscribe
 	for obj := range pm.minedBlockSub.Chan() {
 		switch ev := obj.Data.(type) {
@@ -1226,7 +628,7 @@ func (pm *ProtocolManager) minedBroadcastLoop() {
 	}
 }
 
-func (pm *ProtocolManager) txBroadcastLoop() {
+func (pm *handler) txBroadcastLoop() {
 	for {
 		select {
 		case event := <-pm.txsCh:
@@ -1246,7 +648,7 @@ func (pm *ProtocolManager) txBroadcastLoop() {
 }
 
 // orderTxBroadcastLoop broadcast order
-func (pm *ProtocolManager) orderTxBroadcastLoop() {
+func (pm *handler) orderTxBroadcastLoop() {
 	if pm.orderTxSub == nil {
 		return
 	}
@@ -1263,7 +665,7 @@ func (pm *ProtocolManager) orderTxBroadcastLoop() {
 }
 
 // lendingTxBroadcastLoop broadcast order
-func (pm *ProtocolManager) lendingTxBroadcastLoop() {
+func (pm *handler) lendingTxBroadcastLoop() {
 	if pm.lendingTxSub == nil {
 		return
 	}
@@ -1290,16 +692,16 @@ type NodeInfo struct {
 }
 
 // NodeInfo retrieves some protocol metadata about the running host node.
-func (pm *ProtocolManager) NodeInfo() *NodeInfo {
-	currentBlock := pm.blockchain.CurrentBlock()
-	config := pm.blockchain.Config()
+func (pm *handler) NodeInfo() *NodeInfo {
+	currentBlock := pm.chain.CurrentBlock()
+	config := pm.chain.Config()
 	if config != nil {
 		config = config.CloneForJSON()
 	}
 	return &NodeInfo{
-		Network:    pm.networkId,
-		Difficulty: pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64()),
-		Genesis:    pm.blockchain.Genesis().Hash(),
+		Network:    pm.networkID,
+		Difficulty: pm.chain.GetTd(currentBlock.Hash(), currentBlock.Number.Uint64()),
+		Genesis:    pm.chain.Genesis().Hash(),
 		Config:     config,
 		Head:       currentBlock.Hash(),
 	}

@@ -30,6 +30,19 @@ const (
 )
 
 // Unexported devp2p protocol lengths from p2p package.
+//
+// These are a second copy of wire facts that the node also states in
+// eth/protocols/eth. A standalone client deliberately does not import the node's
+// tables, but the copies have drifted: ProtocolLengths in the wire layer is the
+// message-code space bound (230/227/227), while ethProtoLen here is the number of
+// messages the suites actually read. getProto() panics on any frame code that
+// falls outside the ranges built from these lengths, and the XDC BFT codes
+// (0xe0-0xe2) and the pooled transaction trio (0xe3-0xe5) frame to 240-245, well
+// past ethProtoLen's 16+18=34. Nothing breaks today because the live-node suites
+// never run in CI and the decode tests bypass getProto, but a node on xdc/100+
+// that sends a vote to this client would trip the panic. The values are kept as
+// they are: changing them is a behaviour change for the suite, tracked
+// separately.
 const (
 	baseProtoLen = 16
 	ethProtoLen  = 18
