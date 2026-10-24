@@ -27,8 +27,6 @@ repos:
   - repo: https://github.com/dnephin/pre-commit-golang
     rev: v0.5.1
     hooks:
-      - id: go-fmt
-        stages: [pre-commit]
       - id: go-vet
         stages: [pre-commit]
       - id: go-imports
@@ -37,6 +35,12 @@ repos:
         stages: [pre-commit]
   - repo: local
     hooks:
+      - id: go-fmt
+        name: go fmt
+        entry: gofmt -s -l -w
+        language: system
+        files: '\.go$'
+        stages: [pre-commit]
       - id: make-generate
         name: make generate
         entry: make generate

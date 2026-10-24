@@ -14,7 +14,7 @@ Before every commit, run **all** of the following checks and ensure they pass:
 Before committing, always run `gofmt` and `goimports` on all modified files:
 
 ```sh
-gofmt -w <modified files>
+gofmt -s -w <modified files>
 goimports -w <modified files>
 ```
 
