@@ -216,7 +216,7 @@ func doTest(cmdline []string) {
 	)
 	flag.CommandLine.Parse(cmdline)
 
-	// Load checksums file (needed for both spec tests and dlgo)
+	// Load checksums file (needed for dlgo)
 	csdb := download.MustLoadChecksums("build/checksums.txt")
 
 	// Configure the toolchain.
