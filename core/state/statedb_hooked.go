@@ -221,9 +221,11 @@ func (s *hookedStateDB) SelfDestruct(address common.Address) *big.Int {
 	return prev
 }
 
-func (s *hookedStateDB) SelfDestruct6780(address common.Address) (*big.Int, bool) {
-	prev, changed := s.inner.SelfDestruct6780(address)
-	if changed {
+func (s *hookedStateDB) SelfDestruct6780(address common.Address, preserveBalance bool) (*big.Int, bool) {
+	prev, changed := s.inner.SelfDestruct6780(address, preserveBalance)
+	// EIP-8246 (Amsterdam) leaves the balance untouched, so there is no
+	// decrease to report.
+	if changed && !preserveBalance {
 		if s.hooks.OnBalanceChange != nil {
 			s.hooks.OnBalanceChange(address, prev, new(big.Int), tracing.BalanceDecreaseSelfdestruct)
 		}
@@ -266,9 +268,21 @@ func (s *hookedStateDB) Finalise(deleteEmptyObjects bool) {
 		obj := s.inner.stateObjects[addr]
 		// Bingo: state object was self-destructed, call relevant hooks.
 
-		// If ether was sent to account post-selfdestruct, record as burnt.
-		if bal := obj.Balance(); bal.Sign() != 0 {
-			s.hooks.OnBalanceChange(addr, bal, new(big.Int), tracing.BalanceDecreaseSelfdestructBurn)
+		// The burnt balance is what the destruct cleared from the account plus
+		// anything paid into it afterwards, which the destruct burns as well.
+		// EIP-8246 (Amsterdam) preserves that balance instead, so there is no
+		// burn to report. Only the burn hook is skipped: a preserved account
+		// still loses its nonce and code, so any other state-change hook added
+		// to this loop later must keep firing for it.
+		if !obj.selfDestructedPreserveBalance {
+			burnt := new(big.Int)
+			if obj.destructedBalance != nil {
+				burnt.Set(obj.destructedBalance)
+			}
+			burnt.Add(burnt, obj.Balance())
+			if burnt.Sign() != 0 {
+				s.hooks.OnBalanceChange(addr, burnt, new(big.Int), tracing.BalanceDecreaseSelfdestructBurn)
+			}
 		}
 	}
 }

@@ -913,14 +913,30 @@ func opSelfdestruct6780(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, erro
 	if evm.readOnly {
 		return nil, ErrWriteProtection
 	}
-	beneficiary := scope.Stack.pop()
-	balance := evm.StateDB.GetBalance(scope.Contract.Address())
-	evm.StateDB.SubBalance(scope.Contract.Address(), balance, tracing.BalanceDecreaseSelfdestruct)
-	evm.StateDB.AddBalance(beneficiary.Bytes20(), balance, tracing.BalanceIncreaseSelfdestruct)
-	evm.StateDB.SelfDestruct6780(scope.Contract.Address())
+	var (
+		this            = scope.Contract.Address()
+		top             = scope.Stack.pop()
+		beneficiary     = top.Bytes20()
+		balance         = evm.StateDB.GetBalance(this)
+		preserveBalance = evm.chainRules.IsAmsterdam
+	)
+	// Move the balance to the beneficiary. Prior to EIP-8246 a contract created
+	// in this same transaction that self-destructs to itself still burns the
+	// balance, which this tree's StateDB performs by clearing it eagerly in
+	// SelfDestruct6780, so the historical transfer pair is kept there. From
+	// Amsterdam onwards EIP-8246 removes that burn: the balance is left
+	// untouched and the account survives finalisation as a balance-only
+	// account (see StateDB.Finalise). A pre-existing contract is not destructed
+	// by EIP-6780 at all, so a self-destruct to self leaves its balance
+	// untouched in every fork.
+	if this != beneficiary || !preserveBalance {
+		evm.StateDB.SubBalance(this, balance, tracing.BalanceDecreaseSelfdestruct)
+		evm.StateDB.AddBalance(beneficiary, balance, tracing.BalanceIncreaseSelfdestruct)
+	}
+	evm.StateDB.SelfDestruct6780(this, preserveBalance)
 	if tracer := evm.Config.Tracer; tracer != nil {
 		if tracer.OnEnter != nil {
-			tracer.OnEnter(evm.depth, byte(SELFDESTRUCT), scope.Contract.Address(), beneficiary.Bytes20(), []byte{}, 0, balance)
+			tracer.OnEnter(evm.depth, byte(SELFDESTRUCT), this, beneficiary, []byte{}, 0, balance)
 		}
 		if tracer.OnExit != nil {
 			tracer.OnExit(evm.depth, []byte{}, 0, nil, false)

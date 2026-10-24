@@ -11,7 +11,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
-	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/eth/tracers"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -176,7 +175,11 @@ func (s *supply) OnBalanceChange(a common.Address, prevBalance, newBalance *big.
 		s.delta.Issuance.Withdrawals.Add(s.delta.Issuance.Withdrawals, diff)
 	case tracing.BalanceDecreaseSelfdestructBurn:
 		// BalanceDecreaseSelfdestructBurn is non-reversible as it happens
-		// at the end of the transaction.
+		// at the end of the transaction. It is also the only source of the
+		// selfdestruct burn: the state reports the balance a destruct really
+		// destroys, so the EVM does not have to guess it from the SELFDESTRUCT
+		// enter event, where a self-destruct to self keeps its balance from
+		// EIP-6780 (Cancun) onwards and from EIP-8246 (Amsterdam) onwards.
 		s.delta.Burn.Misc.Sub(s.delta.Burn.Misc, diff)
 	default:
 		return
@@ -206,12 +209,6 @@ func (s *supply) internalTxsHandler(call *supplyTxCallstack) {
 func (s *supply) OnEnter(depth int, typ byte, from common.Address, to common.Address, input []byte, gas uint64, value *big.Int) {
 	call := supplyTxCallstack{
 		calls: make([]supplyTxCallstack, 0),
-	}
-
-	// This is a special case of burned amount which has to be handled here
-	// which happens when type == selfdestruct and from == to.
-	if vm.OpCode(typ) == vm.SELFDESTRUCT && from == to && value.Cmp(common.Big0) == 1 {
-		call.burn = value
 	}
 
 	// Append call to the callstack, so we can fill the details in CaptureExit

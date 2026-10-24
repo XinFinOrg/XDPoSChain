@@ -72,6 +72,20 @@ type stateObject struct {
 	// object was previously existent and is being deployed as a contract within
 	// the current transaction.
 	newContract bool
+
+	// This is an EIP-8246 flag indicating whether the object's balance must
+	// survive its destruction. It is set from the preserveBalance argument of
+	// markSelfdestructed, which core/vm/instructions.go derives from
+	// chainRules.IsAmsterdam; a destructed account carrying the flag is kept as
+	// a balance-only account at transaction finalisation instead of being
+	// deleted.
+	selfDestructedPreserveBalance bool
+
+	// destructedBalance is the balance that selfDestruct cleared from this
+	// object, i.e. the part of its balance that is burnt by the destruction.
+	// It is reported at finalisation, once the destruction is known to survive
+	// the transaction, together with anything paid into the account afterwards.
+	destructedBalance *big.Int
 }
 
 // empty returns whether the account is considered empty.
@@ -102,8 +116,12 @@ func (s *stateObject) EncodeRLP(w io.Writer) error {
 	return rlp.Encode(w, &s.data)
 }
 
-func (s *stateObject) markSelfdestructed() {
+// markSelfdestructed flags the object as destructed at the end of the current
+// transaction. If preserveBalance is set (EIP-8246, Amsterdam), the balance is
+// kept and the object survives finalisation as a balance-only account.
+func (s *stateObject) markSelfdestructed(preserveBalance bool) {
 	s.selfDestructed = true
+	s.selfDestructedPreserveBalance = preserveBalance
 }
 
 func (s *stateObject) touch() {
@@ -393,6 +411,7 @@ func (s *stateObject) deepCopy(db *StateDB) *stateObject {
 	obj.dirtyStorage = s.dirtyStorage.Copy()
 	obj.dirtyCode = s.dirtyCode
 	obj.selfDestructed = s.selfDestructed
+	obj.selfDestructedPreserveBalance = s.selfDestructedPreserveBalance
 	obj.newContract = s.newContract
 	return obj
 }

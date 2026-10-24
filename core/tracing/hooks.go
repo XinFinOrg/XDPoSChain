@@ -267,9 +267,10 @@ const (
 	BalanceIncreaseSelfdestruct BalanceChangeReason = 12
 	// BalanceDecreaseSelfdestruct is deducted from a contract due to self-destruct.
 	BalanceDecreaseSelfdestruct BalanceChangeReason = 13
-	// BalanceDecreaseSelfdestructBurn is ether that is sent to an already self-destructed
-	// account within the same tx (captured at end of tx).
-	// Note it doesn't account for a self-destruct which appoints itself as recipient.
+	// BalanceDecreaseSelfdestructBurn is the balance burnt by a self-destruct,
+	// reported at the end of the transaction: the balance the destruct cleared
+	// plus any ether that arrived in the destructed account afterwards. A
+	// self-destruct whose balance is preserved (EIP-8246) reports no burn.
 	BalanceDecreaseSelfdestructBurn BalanceChangeReason = 14
 
 	// BalanceChangeRevert is emitted when the balance is reverted back to a previous value due to call failure.
