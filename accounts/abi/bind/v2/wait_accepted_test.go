@@ -50,10 +50,23 @@ func (b *delayedBackend) TransactionByHash(ctx context.Context, hash common.Hash
 	return b.Backend.TransactionByHash(ctx, hash)
 }
 
+// minedOnlyBackend simulates a gateway that answers every eth_getTransactionByHash
+// lookup with not-found while still serving receipts, so acceptance of a mined
+// transaction can only be observed through its receipt.
+type minedOnlyBackend struct {
+	*simulated.Backend
+}
+
+func (b *minedOnlyBackend) TransactionByHash(ctx context.Context, hash common.Hash) (*types.Transaction, bool, error) {
+	return nil, false, ethereum.ErrNotFound
+}
+
 // TestWaitAccepted tests that WaitAccepted returns once the given transaction is
 // visible in the pool, that it keeps polling while the pool lookup misses until
-// the transaction turns up, that it honors the context deadline while the
-// transaction never turns up, and that the v1 binding forwards to it.
+// the transaction turns up, that a backend which only serves mined transactions
+// still reports a mined one through its receipt, that it honors the context
+// deadline while the transaction never turns up, and that the v1 binding
+// forwards to it.
 func TestWaitAccepted(t *testing.T) {
 	config := *params.TestXDPoSMockChainConfig
 	backend := simulated.New(
@@ -95,6 +108,17 @@ func TestWaitAccepted(t *testing.T) {
 	}
 	if delayed.calls < 2 {
 		t.Errorf("WaitAccepted gave up after %d lookups, want it to retry at least once", delayed.calls)
+	}
+
+	// A gateway that never reports transactions from eth_getTransactionByHash must
+	// not stall the wait once the transaction is mined: the receipt proves the
+	// pool accepted it.
+	backend.Commit()
+	minedOnly := &minedOnlyBackend{Backend: backend}
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := bind.WaitAccepted(ctx, minedOnly, tx.Hash()); err != nil {
+		t.Fatalf("WaitAccepted returned %v for a mined transaction on a backend that only serves receipts", err)
 	}
 
 	// A transaction that is not in the pool must not be reported as accepted,
