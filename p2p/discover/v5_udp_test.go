@@ -737,6 +737,11 @@ func newUDPV5Test(t *testing.T) *udpV5Test {
 		PrivateKey:   test.localkey,
 		Log:          testlog.Logger(t, log.LvlTrace),
 		ValidSchemes: enode.ValidSchemesForTesting,
+		// Keep table revalidation out of the test: the first revalidation is
+		// scheduled at a random point within this interval, so it effectively
+		// never fires while the test runs. Background pings would otherwise be
+		// written to the test pipe and fail tests expecting other packets.
+		PingInterval: 1000 * time.Hour,
 	})
 	test.udp.codec = &testCodec{test: test, id: ln.ID()}
 	test.table = test.udp.tab

@@ -19,6 +19,7 @@ package discover
 import (
 	"crypto/ecdsa"
 	"net"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common/mclock"
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -47,6 +48,10 @@ type Config struct {
 	Log          log.Logger         // if set, log messages go here
 	ValidSchemes enr.IdentityScheme // allowed identity schemes
 	Clock        mclock.Clock
+	// PingInterval is the interval between table revalidation pings. It must be
+	// positive: non-positive values are replaced by the default, and very small
+	// values make the table revalidate continuously.
+	PingInterval time.Duration
 }
 
 func (cfg Config) withDefaults() Config {
@@ -58,6 +63,12 @@ func (cfg Config) withDefaults() Config {
 	}
 	if cfg.Clock == nil {
 		cfg.Clock = mclock.System{}
+	}
+	if cfg.PingInterval <= 0 {
+		if cfg.PingInterval < 0 {
+			cfg.Log.Warn("Negative table revalidation interval, using default", "interval", cfg.PingInterval, "default", revalidateInterval)
+		}
+		cfg.PingInterval = revalidateInterval
 	}
 	return cfg
 }

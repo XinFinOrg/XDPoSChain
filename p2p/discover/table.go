@@ -71,13 +71,14 @@ type Table struct {
 	rand    *mrand.Rand       // source of randomness, periodically reseeded
 	ips     netutil.DistinctNetSet
 
-	log        log.Logger
-	db         *enode.DB // database of known nodes
-	net        transport
-	refreshReq chan chan struct{}
-	initDone   chan struct{}
-	closeReq   chan struct{}
-	closed     chan struct{}
+	log          log.Logger
+	db           *enode.DB // database of known nodes
+	net          transport
+	pingInterval time.Duration // interval between revalidation pings
+	refreshReq   chan chan struct{}
+	initDone     chan struct{}
+	closeReq     chan struct{}
+	closed       chan struct{}
 
 	nodeAddedHook func(*node) // for testing
 }
@@ -99,19 +100,21 @@ type bucket struct {
 	ips          netutil.DistinctNetSet
 }
 
-func newTable(t transport, db *enode.DB, bootnodes []*enode.Node, log log.Logger) (*Table, error) {
+func newTable(t transport, db *enode.DB, cfg Config) (*Table, error) {
+	cfg = cfg.withDefaults()
 	tab := &Table{
-		net:        t,
-		db:         db,
-		refreshReq: make(chan chan struct{}),
-		initDone:   make(chan struct{}),
-		closeReq:   make(chan struct{}),
-		closed:     make(chan struct{}),
-		rand:       mrand.New(mrand.NewSource(0)),
-		ips:        netutil.DistinctNetSet{Subnet: tableSubnet, Limit: tableIPLimit},
-		log:        log,
+		net:          t,
+		db:           db,
+		pingInterval: cfg.PingInterval,
+		refreshReq:   make(chan chan struct{}),
+		initDone:     make(chan struct{}),
+		closeReq:     make(chan struct{}),
+		closed:       make(chan struct{}),
+		rand:         mrand.New(mrand.NewSource(0)),
+		ips:          netutil.DistinctNetSet{Subnet: tableSubnet, Limit: tableIPLimit},
+		log:          cfg.Log,
 	}
-	if err := tab.setFallbackNodes(bootnodes); err != nil {
+	if err := tab.setFallbackNodes(cfg.Bootnodes); err != nil {
 		return nil, err
 	}
 	for i := range tab.buckets {
@@ -375,7 +378,7 @@ func (tab *Table) nextRevalidateTime() time.Duration {
 	tab.mutex.Lock()
 	defer tab.mutex.Unlock()
 
-	return time.Duration(tab.rand.Int63n(int64(revalidateInterval)))
+	return time.Duration(tab.rand.Int63n(int64(tab.pingInterval)))
 }
 
 // copyLiveNodes adds nodes from the table to the database if they have been in the table
