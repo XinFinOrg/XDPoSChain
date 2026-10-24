@@ -426,7 +426,7 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 			trieSize += size
 		default:
 			var accounted bool
-			for _, meta := range [][]byte{databaseVersionKey, headHeaderKey, headBlockKey, headFastBlockKey, fastTrieProgressKey, uncleanShutdownKey, badBlockKey} {
+			for _, meta := range [][]byte{databaseVersionKey, headHeaderKey, headBlockKey, headFastBlockKey, fastTrieProgressKey, uncleanShutdownKey, badBlockKey, historyModeKey} {
 				if bytes.Equal(key, meta) {
 					metadata += size
 					accounted = true
@@ -498,6 +498,7 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 	table.SetFooter([]string{"", "Total", total.String(), ""})
 	table.AppendBulk(stats)
 	table.Render()
+	fmt.Printf("History mode: %s\n", ReadHistoryMode(db))
 
 	if unaccounted > 0 {
 		log.Error("Database contains unaccounted data", "size", unaccounted)
@@ -529,5 +530,6 @@ func ReadChainMetadata(db ethdb.KeyValueStore) [][]string {
 		{"headBlockHash", fmt.Sprintf("%v", ReadHeadBlockHash(db))},
 		{"headFastBlockHash", fmt.Sprintf("%v", ReadHeadFastBlockHash(db))},
 		{"headHeaderHash", fmt.Sprintf("%v", ReadHeadHeaderHash(db))},
+		{"historyMode", ReadHistoryMode(db).String()},
 	}
 }

@@ -349,6 +349,33 @@ func (f *Freezer) TruncateTail(group string, tail uint64) (uint64, error) {
 	return prev, nil
 }
 
+// tailFileBoundary returns the largest tail of the given group that deletes
+// only whole data files: the lowest, across the group's tables, of the first
+// item stored in each table's newest data file.
+func (f *Freezer) tailFileBoundary(group string) (uint64, error) {
+	f.writeLock.RLock()
+	defer f.writeLock.RUnlock()
+
+	var (
+		boundary uint64 = math.MaxUint64
+		found    bool
+	)
+	for _, table := range f.tables {
+		if group == "" || table.config.tailGroup != group {
+			continue
+		}
+		b, err := table.tailFileBoundary()
+		if err != nil {
+			return 0, err
+		}
+		boundary, found = min(boundary, b), true
+	}
+	if !found {
+		return 0, fmt.Errorf("unknown tail group: %q", group)
+	}
+	return boundary, nil
+}
+
 // SyncAncient flushes all data tables to disk.
 func (f *Freezer) SyncAncient() error {
 	f.writeLock.RLock()

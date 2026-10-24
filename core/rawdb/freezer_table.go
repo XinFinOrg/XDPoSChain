@@ -25,6 +25,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -713,6 +714,44 @@ func (t *freezerTable) sizeHidden() (uint64, error) {
 		return 0, err
 	}
 	return uint64(indices[1].offset), nil
+}
+
+// tailFileBoundary returns the number of the first item stored in the newest
+// data file, i.e. the largest tail that truncateTail turns into whole deleted
+// data files without hiding part of the newest one. If the newest data file
+// holds no item yet, every item lives in an older file and the item count is
+// returned.
+func (t *freezerTable) tailFileBoundary() (uint64, error) {
+	t.lock.RLock()
+	defer t.lock.RUnlock()
+
+	if t.index == nil {
+		return 0, errClosed
+	}
+	var (
+		offset = t.itemOffset.Load()
+		count  = t.items.Load() - offset
+		buffer = make([]byte, indexEntrySize)
+		err    error
+	)
+	// Index entry i+1 records the file holding item offset+i, and file numbers
+	// never decrease along the index, so search for the first entry in the
+	// head file.
+	first := sort.Search(int(count), func(i int) bool {
+		if err != nil {
+			return true
+		}
+		if _, err = t.index.ReadAt(buffer, int64(i+1)*indexEntrySize); err != nil {
+			return true
+		}
+		var entry indexEntry
+		entry.unmarshalBinary(buffer)
+		return entry.filenum >= t.headId
+	})
+	if err != nil {
+		return 0, err
+	}
+	return offset + uint64(first), nil
 }
 
 // truncateTail discards any recent data before the provided threshold number.

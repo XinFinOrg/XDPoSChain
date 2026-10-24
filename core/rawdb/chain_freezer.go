@@ -210,6 +210,13 @@ func (f *chainFreezer) freeze(db ethdb.KeyValueStore) {
 				return
 			}
 		}
+		// Prune what earlier cycles froze before freezing more. This runs ahead
+		// of the threshold check on purpose: during a fast sync the ancient
+		// store is filled by the downloader while the head block, and so the
+		// freeze threshold, stays at genesis, and pruning must keep up anyway.
+		if err := f.pruneBlockData(nfdb); err != nil {
+			log.Error("Failed to prune ancient block data", "err", err)
+		}
 		threshold, err := f.freezeThreshold(nfdb)
 		if err != nil {
 			backoff = true

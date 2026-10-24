@@ -405,6 +405,11 @@ func ReadBodyRLP(db ethdb.Reader, hash common.Hash, number uint64) rlp.RawValue 
 		// Check if the data is in ancients
 		if isCanon(reader, number, hash) {
 			data, _ = reader.Ancient(ChainFreezerBodiesTable, number)
+			if len(data) == 0 {
+				// Pruned by minimal history mode. The freezer keeps a key-value
+				// copy of the genesis block, so look there before giving up.
+				data, _ = db.Get(blockBodyKey(number, hash))
+			}
 			return nil
 		}
 		// If not, try reading from leveldb
@@ -423,7 +428,9 @@ func WriteBodyRLP(db ethdb.KeyValueWriter, hash common.Hash, number uint64, rlp 
 
 // HasBody verifies the existence of a block body corresponding to the hash.
 func HasBody(db ethdb.Reader, hash common.Hash, number uint64) bool {
-	if isCanon(db, number, hash) {
+	// The block may be in the ancient store, but its body may have been
+	// pruned by minimal history mode.
+	if isCanon(db, number, hash) && !IsBlockDataPruned(db, number) {
 		return true
 	}
 	if has, err := db.Has(blockBodyKey(number, hash)); !has || err != nil {
@@ -504,7 +511,9 @@ func DeleteTd(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
 // HasReceipts verifies the existence of all the transaction receipts belonging
 // to a block.
 func HasReceipts(db ethdb.Reader, hash common.Hash, number uint64) bool {
-	if isCanon(db, number, hash) {
+	// The block may be in the ancient store, but its receipts may have been
+	// pruned by minimal history mode.
+	if isCanon(db, number, hash) && !IsBlockDataPruned(db, number) {
 		return true
 	}
 	if has, err := db.Has(blockReceiptsKey(number, hash)); !has || err != nil {
@@ -534,6 +543,11 @@ func ReadReceiptsRLP(db ethdb.Reader, hash common.Hash, number uint64) rlp.RawVa
 		// Check if the data is in ancients
 		if isCanon(reader, number, hash) {
 			data, _ = reader.Ancient(ChainFreezerReceiptTable, number)
+			if len(data) == 0 {
+				// Pruned by minimal history mode. The freezer keeps a key-value
+				// copy of the genesis block, so look there before giving up.
+				data, _ = db.Get(blockReceiptsKey(number, hash))
+			}
 			return nil
 		}
 		// If not, try reading from leveldb
