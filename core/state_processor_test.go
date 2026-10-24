@@ -795,6 +795,72 @@ func TestProcessBlockNoValidatorSnapshotsParentStateBeforeBlockLevelHooks(t *tes
 	}
 }
 
+// TestProcessReturnsFinalizeError pins the error contract of the import path: a
+// Finalize failure must surface as the Process error, not leave the receipts of
+// a block that was never finalized behind. The failing engine is the one
+// GenerateChain's error path already uses (core/chain_makers_test.go).
+func TestProcessReturnsFinalizeError(t *testing.T) {
+	t.Parallel()
+
+	config := params.TestChainConfig.Clone()
+	setXinFinForksToFuture(config, big.NewInt(1_000_000_000))
+	// setXinFinForksToFuture leaves Amsterdam unset.
+	config.AmsterdamBlock = big.NewInt(1_000_000_000)
+
+	db := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{Config: config}
+	blockchain, err := NewBlockChain(db, nil, gspec, noopConsensusEngine{}, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	defer blockchain.Stop()
+
+	statedb, err := blockchain.State()
+	if err != nil {
+		t.Fatalf("failed to get state: %v", err)
+	}
+	processor := NewStateProcessor(config, blockchain, failingFinalizeEngine{})
+	block := GenerateBadBlock(t, gspec.ToBlock(), noopConsensusEngine{}, nil, config)
+	if _, _, _, err := processor.Process(block, statedb, nil, vm.Config{}, map[common.Address]*big.Int{}); err == nil {
+		t.Fatal("Process reported success despite a Finalize failure")
+	} else if !strings.Contains(err.Error(), "finalize error: finalize failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestProcessBlockNoValidatorReturnsFinalizeError pins the same contract on the
+// validator-free path: the block calculation reports the Finalize failure
+// instead of finishing with the state the engine left behind.
+func TestProcessBlockNoValidatorReturnsFinalizeError(t *testing.T) {
+	t.Parallel()
+
+	config := params.TestChainConfig.Clone()
+	setXinFinForksToFuture(config, big.NewInt(1_000_000_000))
+	// setXinFinForksToFuture leaves Amsterdam unset.
+	config.AmsterdamBlock = big.NewInt(1_000_000_000)
+
+	db := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{Config: config}
+	blockchain, err := NewBlockChain(db, nil, gspec, noopConsensusEngine{}, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	defer blockchain.Stop()
+
+	statedb, err := blockchain.State()
+	if err != nil {
+		t.Fatalf("failed to get state: %v", err)
+	}
+	processor := NewStateProcessor(config, blockchain, failingFinalizeEngine{})
+	block := GenerateBadBlock(t, gspec.ToBlock(), noopConsensusEngine{}, nil, config)
+	calculating := &CalculatedBlock{block: block}
+	if _, _, _, err := processor.ProcessBlockNoValidator(calculating, statedb, nil, vm.Config{}, map[common.Address]*big.Int{}); err == nil {
+		t.Fatal("ProcessBlockNoValidator reported success despite a Finalize failure")
+	} else if !strings.Contains(err.Error(), "finalize error: finalize failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 // TestProcessReportsMulticall3InstallToTheTracer pins the production call site:
 // block processing hands the hooks the EVM it executes the transactions with,
 // so a tracer attached through vm.Config sees the install. Only Process and

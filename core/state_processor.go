@@ -236,7 +236,9 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 	tracingStateDB.UpdateTRC21Fee(balanceUpdated, totalFeeUsed)
 
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
-	p.engine.Finalize(p.bc, header, tracingStateDB, parentState, block.Transactions(), block.Uncles(), receipts)
+	if _, err := p.engine.Finalize(p.bc, header, tracingStateDB, parentState, block.Transactions(), block.Uncles(), receipts); err != nil {
+		return nil, nil, 0, fmt.Errorf("finalize error: %w", err)
+	}
 
 	return receipts, allLogs, *usedGas, nil
 }
@@ -347,7 +349,9 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 	tracingStateDB.UpdateTRC21Fee(balanceUpdated, totalFeeUsed)
 
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
-	p.engine.Finalize(p.bc, header, tracingStateDB, parentState, block.Transactions(), block.Uncles(), receipts)
+	if _, err := p.engine.Finalize(p.bc, header, tracingStateDB, parentState, block.Transactions(), block.Uncles(), receipts); err != nil {
+		return nil, nil, 0, fmt.Errorf("finalize error: %w", err)
+	}
 	return receipts, allLogs, *usedGas, nil
 }
 
