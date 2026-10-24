@@ -83,6 +83,7 @@ linters:
       - examples$
 formatters:
   enable:
+    - gofmt
     - goimports
   settings:
     gofmt:

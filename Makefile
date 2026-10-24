@@ -58,8 +58,11 @@ baddeps:
 	$(GORUN) build/ci.go baddeps
 
 #? fmt: Ensure consistent code formatting.
+# Enumerate the Go files of this checkout with git instead of find: the repo root
+# may contain nested checkouts (e.g. .worktrees/), which both blows up the
+# argument list and makes fmt rewrite files that belong to other checkouts.
 fmt:
-	gofmt -s -w $(shell find . -name "*.go")
+	git ls-files -z --cached --others --exclude-standard -- '*.go' | xargs -0r gofmt -s -w
 
 #? clean: Clean go cache, built executables, and the auto generated folder.
 clean:
