@@ -1057,5 +1057,4 @@ func TestSetupGenesisBlockReturnsCompatErrorWhenCompatDriftRewindsToZero(t *test
 	if storedCfg.TRC21IssuerSMC != storedGenesis.Config.TRC21IssuerSMC {
 		t.Fatalf("expected stored chain config to remain unchanged: have %s want %s", storedCfg.TRC21IssuerSMC.Hex(), storedGenesis.Config.TRC21IssuerSMC.Hex())
 	}
-
 }

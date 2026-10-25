@@ -225,7 +225,6 @@ func TestHookPenaltyParolee(t *testing.T) {
 	penalty, err = adaptor.EngineV2.HookPenalty(blockchain, big.NewInt(int64(config.XDPoS.Epoch*4)), header3600.ParentHash, masternodes)
 	assert.Nil(t, err)
 	assert.Equal(t, 1, len(penalty))
-
 }
 
 // TestHookPenaltyParoleePerformance tests hook penalty parolee performance.
@@ -273,5 +272,4 @@ func TestHookPenaltyParoleePerformance(t *testing.T) {
 	assert.Nil(t, err)
 	// The cached signing txs cancel the comeback path, so only the missing miner remains penalized.
 	assert.Equal(t, 1, len(penalty))
-
 }

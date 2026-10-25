@@ -861,7 +861,6 @@ func TestCall(t *testing.T) {
 	apiInvalidOverride := NewBlockChainAPI(backendInvalidOverride, nil)
 	_, err = apiInvalidOverride.Call(context.Background(), TransactionArgs{To: &to}, nil, &invalidOverrides, nil)
 	require.ErrorContains(t, err, "has both 'state' and 'stateDiff'")
-
 }
 
 // TestSimulateV1 tests simulate v 1.
