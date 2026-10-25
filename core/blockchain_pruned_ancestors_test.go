@@ -109,7 +109,7 @@ func makeSharedStateChainWithCode(t *testing.T, code []byte) (*Genesis, sharedSt
 	// A transfer into an account with code runs it, so the gas limit has to cover more than
 	// the transfer cost. It stays the transfer cost when there is no code, which keeps the
 	// chain of makeSharedStateChain byte for byte the one it always was.
-	gas := uint64(params.TxGas)
+	gas := params.TxGas
 	if code != nil {
 		gas += 10000
 	}

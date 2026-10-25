@@ -583,7 +583,7 @@ func (s *StateDB) SetStorage(addr common.Address, storage map[common.Hash]common
 	}
 	// Inherit the metadata of original object if it was existent
 	if obj != nil {
-		newObj.SetCode(common.BytesToHash(obj.CodeHash()), []byte(obj.code))
+		newObj.SetCode(common.BytesToHash(obj.CodeHash()), obj.code)
 		newObj.SetNonce(obj.Nonce())
 		newObj.SetBalance(obj.Balance())
 	}
