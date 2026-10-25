@@ -739,7 +739,7 @@ Vote workflow
 */
 func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainReader, vote *types.Vote) (bool, error) {
 	/*
-		  1. Check vote round with current round for fast fail(disqualifed)
+		  1. Check vote round with current round for fast fail(disqualified)
 		  2. Get masterNode list from snapshot by using vote.GapNumber
 		  3. Check signature:
 					- Use ecRecover to get the public key
