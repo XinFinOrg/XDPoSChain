@@ -1205,7 +1205,6 @@ func TestEmbeddedGenesisConfigMatchesParams(t *testing.T) {
 		{"devnet", xdcgenesis.DevnetGenesis, params.DevnetChainConfig},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			g := new(Genesis)
 			if err := json.Unmarshal(c.raw, g); err != nil {
@@ -1240,7 +1239,6 @@ func TestEmbeddedGenesisHashMatchesParams(t *testing.T) {
 		{"devnet", xdcgenesis.DevnetGenesis, params.DevnetGenesisHash},
 	}
 	for _, c := range cases {
-		c := c
 		t.Run(c.name, func(t *testing.T) {
 			g := new(Genesis)
 			if err := json.Unmarshal(c.raw, g); err != nil {

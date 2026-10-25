@@ -432,7 +432,6 @@ func chainConfigAddressFieldValue(cfg *ChainConfig, field chainConfigAddressFiel
 func chainConfigTopLevelBigIntFields(fields []chainConfigBigIntField) []chainConfigTopLevelField {
 	topLevelFields := make([]chainConfigTopLevelField, 0, len(fields))
 	for _, field := range fields {
-		field := field
 		topLevelFields = append(topLevelFields, chainConfigTopLevelField{
 			jsonKey: field.jsonKey,
 			clone: func(dst, src *ChainConfig) {
@@ -452,7 +451,6 @@ func chainConfigTopLevelBigIntFields(fields []chainConfigBigIntField) []chainCon
 func chainConfigTopLevelAddressFields(fields []chainConfigAddressField) []chainConfigTopLevelField {
 	topLevelFields := make([]chainConfigTopLevelField, 0, len(fields))
 	for _, field := range fields {
-		field := field
 		topLevelFields = append(topLevelFields, chainConfigTopLevelField{
 			jsonKey: field.jsonKey,
 			clone: func(dst, src *ChainConfig) {
