@@ -445,8 +445,7 @@ func (ethash *Ethash) Finalize(chain consensus.ChainReader, header *types.Header
 
 // Some weird constants to avoid constant memory allocs for them.
 var (
-	big8  = big.NewInt(8)
-	big32 = big.NewInt(32)
+	big8 = big.NewInt(8)
 )
 
 // AccumulateRewards credits the coinbase of the given block with the mining

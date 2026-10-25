@@ -778,15 +778,6 @@ func DeleteBlock(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
 	DeleteTd(db, hash, number)
 }
 
-// deleteBlockWithoutNumber removes all block data associated with a hash, except
-// the hash to number mapping.
-func deleteBlockWithoutNumber(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
-	DeleteReceipts(db, hash, number)
-	deleteHeaderWithoutNumber(db, hash, number)
-	DeleteBody(db, hash, number)
-	DeleteTd(db, hash, number)
-}
-
 const badBlockToKeep = 10
 
 type badBlock struct {

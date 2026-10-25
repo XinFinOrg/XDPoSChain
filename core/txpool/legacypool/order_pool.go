@@ -1059,15 +1059,6 @@ func (as *orderAccountSet) contains(addr common.Address) bool {
 	return exist
 }
 
-// containsTx checks if the sender of a given tx is within the set. If the sender
-// cannot be derived, this method returns false.
-func (as *orderAccountSet) containsTx(tx *types.OrderTransaction) bool {
-	if addr, err := types.OrderSender(as.signer, tx); err == nil {
-		return as.contains(addr)
-	}
-	return false
-}
-
 // add inserts a new address into the set to track.
 func (as *orderAccountSet) add(addr common.Address) {
 	as.accounts[addr] = struct{}{}

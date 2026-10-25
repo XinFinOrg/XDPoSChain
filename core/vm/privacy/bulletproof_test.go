@@ -2,11 +2,8 @@ package privacy
 
 import (
 	"crypto/rand"
-	"encoding/json"
 	"fmt"
-	"io"
 	"math/big"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -394,54 +391,6 @@ type BulletProof struct {
 	Ipp   IPP      `json:"Ipp"`
 }
 
-func parseTestData(filePath string) MultiRangeProof {
-	jsonFile, err := os.Open(filePath)
-
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	defer jsonFile.Close()
-
-	byteValue, _ := io.ReadAll(jsonFile)
-
-	// we initialize our Users array
-	// var result map[string]interface{}
-	result := BulletProof{}
-
-	json.Unmarshal(byteValue, &result)
-
-	fmt.Println("result ", result.Tau)
-	fmt.Println("result ", result.Th)
-	fmt.Println("result.Ipp ", result.Ipp)
-
-	ipp := result.Ipp
-
-	proof := MultiRangeProof{
-		Comms: MapECPointFromHex(result.Comms, ECPointFromHex),
-		A:     ECPointFromHex(result.A),
-		S:     ECPointFromHex(result.S),
-		T1:    ECPointFromHex(result.T1),
-		T2:    ECPointFromHex(result.T2),
-		Th:    bigIFromHex(result.Th),
-		Tau:   bigIFromHex(result.Tau),
-		Mu:    bigIFromHex(result.Mu),
-		Cx:    bigIFromHex(result.Cx),
-		Cy:    bigIFromHex(result.Cy),
-		Cz:    bigIFromHex(result.Cz),
-		IPP: InnerProdArg{
-			L:          MapECPoint(ipp.L, ECPointFromPoint),
-			R:          MapECPoint(ipp.R, ECPointFromPoint),
-			A:          bigIFromHex(ipp.A),
-			B:          bigIFromHex(ipp.B),
-			Challenges: MapBigI(ipp.Challenges, bigIFromHex),
-		},
-	}
-
-	fmt.Println(proof)
-	return proof
-}
-
 /*
 *
 Utils for parsing data from json
@@ -474,11 +423,6 @@ func MapECPoint(list []map[string]string, f func(Point) ECPoint) []ECPoint {
 		})
 	}
 	return result
-}
-
-func bigIFromHex(hex string) *big.Int {
-	tmp, _ := new(big.Int).SetString(hex, 16)
-	return tmp
 }
 
 func ECPointFromHex(hex string) ECPoint {

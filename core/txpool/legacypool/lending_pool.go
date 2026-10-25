@@ -1149,15 +1149,6 @@ func (as *lendingAccountSet) contains(addr common.Address) bool {
 	return exist
 }
 
-// containsTx checks if the sender of a given tx is within the set. If the sender
-// cannot be derived, this method returns false.
-func (as *lendingAccountSet) containsTx(tx *types.LendingTransaction) bool {
-	if addr, err := types.LendingSender(as.signer, tx); err == nil {
-		return as.contains(addr)
-	}
-	return false
-}
-
 // add inserts a new address into the set to track.
 func (as *lendingAccountSet) add(addr common.Address) {
 	as.accounts[addr] = struct{}{}

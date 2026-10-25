@@ -19,10 +19,6 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2"
 )
 
-type Bulletproof struct {
-	proofData []byte
-}
-
 var EC CryptoParams
 var VecLength = 512 // support maximum 8 spending value, each 64 bit (gwei is unit)
 var curve elliptic.Curve = crypto.S256()

@@ -54,8 +54,6 @@ import (
 )
 
 const (
-	defaultGasPrice = 50 * params.Shannon
-
 	// statuses of candidates
 	statusMasternode = "MASTERNODE"
 	statusSlashed    = "SLASHED"

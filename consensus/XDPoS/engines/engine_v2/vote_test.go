@@ -1,8 +1,6 @@
 package engine_v2
 
 import (
-	"context"
-	"log/slog"
 	"math/big"
 	"sync"
 	"testing"
@@ -12,41 +10,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/stretchr/testify/assert"
 )
-
-// memoryHandler captures log records for inspection in tests.
-type memoryHandler struct {
-	mu      sync.Mutex
-	attrs   []slog.Attr
-	records []slog.Record
-}
-
-func newMemoryHandler() *memoryHandler {
-	return &memoryHandler{}
-}
-
-func (h *memoryHandler) Enabled(_ context.Context, _ slog.Level) bool { return true }
-
-func (h *memoryHandler) Handle(_ context.Context, r slog.Record) error {
-	clone := r.Clone()
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.records = append(h.records, clone)
-	return nil
-}
-
-func (h *memoryHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &memoryHandler{attrs: append(append([]slog.Attr{}, h.attrs...), attrs...)}
-}
-
-func (h *memoryHandler) WithGroup(_ string) slog.Handler { return h }
-
-func (h *memoryHandler) Records() []slog.Record {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	out := make([]slog.Record, len(h.records))
-	copy(out, h.records)
-	return out
-}
 
 // MockChainReader is a mock implementation of consensus.ChainReader
 type MockChainReader struct {

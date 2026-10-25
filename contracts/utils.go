@@ -47,11 +47,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
-const (
-	extraVanity = 32 // Fixed number of extra-data prefix bytes reserved for signer vanity
-	extraSeal   = 65 // Fixed number of extra-data suffix bytes reserved for signer seal
-)
-
 type RewardLog struct {
 	Sign   uint64   `json:"sign"`
 	Reward *big.Int `json:"reward"`

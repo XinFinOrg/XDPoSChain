@@ -44,7 +44,6 @@ import (
 )
 
 type testBackend struct {
-	mux             *event.TypeMux
 	db              ethdb.Database
 	sections        uint64
 	txFeed          event.Feed
