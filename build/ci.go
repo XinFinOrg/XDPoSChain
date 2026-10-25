@@ -420,7 +420,10 @@ func doLint(cmdline []string) {
 		log.Fatal(err)
 	}
 
-	lflags := []string{"run", "--config", config}
+	// Report every occurrence of an issue instead of capping repeats at the
+	// default of 3 (golangci-lint v2 dropped the .golangci.yml key, so this
+	// can only be set on the command line).
+	lflags := []string{"run", "--config", config, "--max-same-issues", "0"}
 	packages := flag.CommandLine.Args()
 	if len(packages) > 0 {
 		build.MustRunCommandWithOutput(linter, append(lflags, packages...)...)
