@@ -415,9 +415,9 @@ func TestFormatBlockChainOpenErrorReadOnly(t *testing.T) {
 func TestFormatChainConfigErrorInvalidEpochGap(t *testing.T) {
 	t.Parallel()
 
-	err := fmt.Errorf("%w: XDPoS.Epoch 900, XDPoS.Gap 0 (want 0 < gap < epoch)", core.ErrInvalidEpochGap)
+	err := fmt.Errorf("%w: XDPoS.Gap 0 designates no gap block inside XDPoS.Epoch 900 (want 1 <= Gap < Epoch)", core.ErrInvalidEpochGap)
 	got := FormatChainConfigError(err)
-	want := "invalid XDPoS schedule: XDPoS.Epoch 900, XDPoS.Gap 0 (want 0 < gap < epoch).\n" + XDPoSScheduleRecoveryHint
+	want := "invalid XDPoS schedule: XDPoS.Gap 0 designates no gap block inside XDPoS.Epoch 900 (want 1 <= Gap < Epoch).\n" + XDPoSScheduleRecoveryHint
 	if got != want {
 		t.Fatalf("unexpected message: have %q want %q", got, want)
 	}

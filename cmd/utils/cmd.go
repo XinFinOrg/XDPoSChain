@@ -46,7 +46,17 @@ const (
 
 	ChainConfigMismatchPolicyExitHint = "Hint: Use --chain-config-mismatch-policy to recover; Or restart with a matching XDC binary and the same network/genesis settings."
 
-	XDPoSScheduleRecoveryHint = "Hint: The chain config must satisfy 0 < gap < epoch. Supply a corrected XDPoS schedule in the genesis config and start a node once in writable mode with --chain-config-mismatch-policy=update-config-only, or re-initialise the chain from genesis."
+	// XDPoSScheduleRecoveryHint is appended verbatim under the fatal message by
+	// FormatChainConfigError, so its line breaks are part of what an operator reads.
+	XDPoSScheduleRecoveryHint = "Hint: The chain config must satisfy 1 <= Gap < Epoch. " +
+		"Correct XDPoS.Epoch and XDPoS.Gap in the genesis, then pick the path that matches the data directory.\n" +
+		"  - No imported blocks: re-run init on the corrected genesis, which writes the corrected config.\n" +
+		"  - Imported blocks: init refuses the corrected schedule as a historical change and writes nothing; " +
+		"open the chain once in writable mode with the corrected config and --chain-config-mismatch-policy=update-config-only instead, " +
+		"which rewrites the stored config without moving the head.\n" +
+		"  No policy rescues an uncorrected config, because a rejected schedule produces no compatibility error to act on. " +
+		"A corrected schedule changes what the imported blocks were produced under, " +
+		"so resynchronise the directory from the corrected genesis when the schedule has to hold for that history."
 )
 
 // Fatalf formats a message to standard error and exits the program.
