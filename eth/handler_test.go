@@ -925,3 +925,21 @@ func TestRegisterDownloaderPeerUndoesRacedRemoval(t *testing.T) {
 	}
 	pm.downloader.UnregisterPeer(p.id)
 }
+
+// Tests that a hash based forward header query stops, rather than panics, when
+// a header between the origin and the next one is missing locally (e.g. mid-sync).
+func TestGetBlockHeadersMissingAncestry(t *testing.T) {
+	pm, db := newTestProtocolManagerMust(t, downloader.FullSync, 32, nil, nil)
+	peer, _ := newTestPeer("peer", xdc100, pm, true)
+	defer peer.close()
+
+	origin := pm.blockchain.GetBlockByNumber(10)
+	missing := pm.blockchain.GetBlockByNumber(11)
+	rawdb.DeleteHeader(db, missing.Hash(), missing.NumberU64())
+
+	query := &getBlockHeadersData{Origin: hashOrNumber{Hash: origin.Hash()}, Amount: 2, Skip: 1}
+	p2p.Send(peer.app, 0x03, query)
+	if err := p2p.ExpectMsg(peer.app, 0x04, []*types.Header{origin.Header()}); err != nil {
+		t.Fatalf("headers mismatch: %v", err)
+	}
+}

@@ -263,3 +263,59 @@ func TestInsertReceiptChainZeroLimitStaysLive(t *testing.T) {
 		}
 	}
 }
+
+// TestSetHeadTruncatesAncientsAboveHeaderHead covers a crash between an ancient
+// append and the head marker update: the freezer then holds items above the
+// header head. A SetHead to the header head walks no header, so it has to drop
+// those items itself, or the next ancient append fails as out of order.
+func TestSetHeadTruncatesAncientsAboveHeaderHead(t *testing.T) {
+	gspec := &Genesis{Config: params.TestChainConfig}
+	const (
+		numBlocks    = 64
+		ancientLimit = 40
+		crashHead    = 20
+	)
+	_, blocks, receipts := GenerateChainWithGenesis(gspec, ethash.NewFaker(), numBlocks, nil)
+
+	db := newFreezerChainDB(t)
+	chain, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("new blockchain: %v", err)
+	}
+	if n, err := chain.InsertReceiptChain(blocks[:ancientLimit-1], receipts[:ancientLimit-1], ancientLimit, 0); err != nil {
+		t.Fatalf("failed to insert receipt %d: %v", n, err)
+	}
+	chain.Stop()
+
+	// Roll the head markers back below the freezer head, as a crash before
+	// they were persisted would leave them.
+	crashed := blocks[crashHead-1]
+	rawdb.WriteHeadHeaderHash(db, crashed.Hash())
+	rawdb.WriteHeadFastBlockHash(db, crashed.Hash())
+
+	chain, err = NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
+	if err != nil {
+		t.Fatalf("reopen blockchain: %v", err)
+	}
+	defer chain.Stop()
+	if head := chain.CurrentHeader().Number.Uint64(); head != crashHead {
+		t.Fatalf("setup: head header got %d, want %d", head, crashHead)
+	}
+	if frozen, _ := db.Ancients(); frozen != ancientLimit {
+		t.Fatalf("setup: ancient item count got %d, want %d", frozen, ancientLimit)
+	}
+
+	if err := chain.SetHead(crashHead); err != nil {
+		t.Fatalf("SetHead: %v", err)
+	}
+	if frozen, _ := db.Ancients(); frozen != crashHead+1 {
+		t.Fatalf("ancient item count after SetHead: got %d, want %d", frozen, crashHead+1)
+	}
+	// The sync has to be able to append past the target again.
+	if n, err := chain.InsertReceiptChain(blocks[crashHead:], receipts[crashHead:], ancientLimit, 0); err != nil {
+		t.Fatalf("failed to re-insert receipt %d: %v", n, err)
+	}
+	if frozen, _ := db.Ancients(); frozen != ancientLimit {
+		t.Fatalf("ancient item count after re-insert: got %d, want %d", frozen, ancientLimit)
+	}
+}

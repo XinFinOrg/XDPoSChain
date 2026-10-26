@@ -943,6 +943,18 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64) error {
 	}
 	bc.hc.SetHead(head, updateFn, delFn)
 
+	// delFn only truncates the ancient store for the headers hc.SetHead walks
+	// down from the header head. A crash between an ancient append and the
+	// head marker update leaves frozen items above the header head, and those
+	// are never walked: drop them here, or every later append past the target
+	// fails as out of order.
+	if frozen, _ := bc.db.Ancients(); frozen > head+1 {
+		if _, err := bc.db.TruncateHead(head + 1); err != nil {
+			log.Crit("Failed to truncate ancient data", "number", head, "err", err)
+		}
+		log.Warn("Truncated ancient items above the header head", "target", head, "oldfrozen", frozen)
+	}
+
 	// Clear out any stale content from the caches
 	bc.bodyCache.Purge()
 	bc.bodyRLPCache.Purge()

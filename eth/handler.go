@@ -527,7 +527,9 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 					unknown = true
 				} else {
 					if header := pm.blockchain.GetHeaderByNumber(next); header != nil {
-						if pm.blockchain.GetBlockHashesFromHash(header.Hash(), query.Skip+1)[query.Skip] == query.Origin.Hash {
+						// The ancestry can come back short when a header on the way is missing
+						// (e.g. mid-sync), so check its length before indexing it.
+						if hashes := pm.blockchain.GetBlockHashesFromHash(header.Hash(), query.Skip+1); uint64(len(hashes)) > query.Skip && hashes[query.Skip] == query.Origin.Hash {
 							query.Origin.Hash = header.Hash()
 						} else {
 							unknown = true
