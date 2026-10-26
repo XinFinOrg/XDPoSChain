@@ -67,7 +67,7 @@ The pool accepts a transaction only when its gas price reaches that same value, 
 | mainnet | Gas50x (80370000)   |                        12.5 GWei |
 | testnet | Gas50x (56828700)   |                        12.5 GWei |
 | testnet | Gas2500x (83600000) |                         625 GWei |
-| devnet  | Gas2500x (1385100)  |                         625 GWei |
+| devnet  | Gas2500x (50000)  |                         625 GWei |
 
 Read the floor from the node with `eth_gasPrice` instead of hardcoding it.
 

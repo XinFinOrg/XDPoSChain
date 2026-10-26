@@ -1391,7 +1391,7 @@ func TestXDCNetworkConfigsGatherForks(t *testing.T) {
 		{
 			name:   "DevnetChainConfig",
 			config: DevnetChainConfig,
-			want:   []uint64{2700, 25000, 50000, 1385100},
+			want:   []uint64{2700, 25000, 50000},
 		},
 	}
 

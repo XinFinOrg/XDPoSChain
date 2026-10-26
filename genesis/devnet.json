@@ -24,7 +24,7 @@
     "mergeBlock": 0,
     "shanghaiBlock": 0,
     "gas50xBlock": 0,
-    "gas2500xBlock": 1385100,
+    "gas2500xBlock": 50000,
     "tipXDCXMinerDisableBlock": 0,
     "tipXDCXReceiverDisableBlock": 0,
     "eip1559Block": 25000,
