@@ -28,6 +28,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -646,7 +647,7 @@ func TestLifecycleTerminationGuarantee(t *testing.T) {
 // Tests whether a handler can be successfully mounted on the canonical HTTP server
 // on the given prefix
 func TestRegisterHandler_Successful(t *testing.T) {
-	node := createNode(t, 7878, 7979)
+	node := createNode(t, 0, 0)
 	defer node.Close()
 	// create and mount handler
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -660,7 +661,7 @@ func TestRegisterHandler_Successful(t *testing.T) {
 	}
 
 	// create HTTP request
-	httpReq, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:7878/test", nil)
+	httpReq, err := http.NewRequest(http.MethodGet, node.HTTPEndpoint()+"/test", nil)
 	if err != nil {
 		t.Error("could not issue new http request ", err)
 	}
@@ -798,15 +799,7 @@ func (test rpcPrefixTest) check(t *testing.T, node *Node) {
 }
 
 func TestWebsocketHTTPOnSeparatePort_WSRequest(t *testing.T) {
-	// try and get a free port
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal("can't listen:", err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
-
-	node := startHTTP(t, 0, port)
+	node, port := startHTTPOnSeparatePort(t)
 	defer node.Close()
 
 	wsOnHTTP := strings.Replace(node.HTTPEndpoint(), "http://", "ws://", 1)
@@ -829,6 +822,7 @@ func TestWebsocketHTTPOnSeparatePort_WSRequest(t *testing.T) {
 }
 
 func createNode(t *testing.T, httpPort, wsPort int) *Node {
+	t.Helper()
 	conf := &Config{
 		HTTPHost:     "127.0.0.1",
 		HTTPPort:     httpPort,
@@ -844,6 +838,7 @@ func createNode(t *testing.T, httpPort, wsPort int) *Node {
 }
 
 func startHTTP(t *testing.T, httpPort, wsPort int) *Node {
+	t.Helper()
 	node := createNode(t, httpPort, wsPort)
 	err := node.Start()
 	if err != nil {
@@ -851,6 +846,50 @@ func startHTTP(t *testing.T, httpPort, wsPort int) *Node {
 	}
 
 	return node
+}
+
+// freeports returns two distinct free ports. Both listeners stay open until
+// return, so the kernel cannot hand out the same port twice.
+func freeports(t *testing.T) (int, int) {
+	t.Helper()
+	first, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("can't listen: %v", err)
+	}
+	defer first.Close()
+
+	second, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("can't listen: %v", err)
+	}
+	defer second.Close()
+
+	return first.Addr().(*net.TCPAddr).Port, second.Addr().(*net.TCPAddr).Port
+}
+
+// startHTTPOnSeparatePort starts a node with HTTP and WebSocket on separate
+// ports and returns it with the WebSocket port, which must be picked up front
+// (a dedicated WebSocket server exists only when its port differs from HTTP).
+// Pinning both keeps the kernel from handing the probed port to HTTP; a port
+// stolen before bind is retried on EADDRINUSE (a no-op on Windows, WSA errno).
+func startHTTPOnSeparatePort(t *testing.T) (*Node, int) {
+	t.Helper()
+	const attempts = 10
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		httpPort, wsPort := freeports(t)
+		node := createNode(t, httpPort, wsPort)
+		if err := node.Start(); err != nil {
+			if errors.Is(err, syscall.EADDRINUSE) {
+				lastErr = err
+				continue
+			}
+			t.Fatalf("could not start the node: %v", err)
+		}
+		return node, wsPort
+	}
+	t.Fatalf("could not start the node after %d attempts: %v", attempts, lastErr)
+	return nil, 0
 }
 
 func doHTTPRequest(t *testing.T, req *http.Request) *http.Response {
