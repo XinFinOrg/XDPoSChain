@@ -225,6 +225,50 @@ Operational guidance:
 - `update-config-only` and `ignore-mismatch` are advanced escape hatches and **high-risk options**. They do **not** reprocess blocks that were already imported past the changed fork boundary, so the running head can diverge in state/consensus from a node that rewound. `update-config-only` additionally marks the mismatch as resolved on disk, so the warning will not recur even though no reprocessing happened. Treat both as `may cause state/consensus divergence; expert use only` and use them only when you fully understand the consensus implications.
 - `rewind-and-update` and `update-config-only` require a writable open. In readonly mode they refuse to start so the database is never mutated; reopen in writable mode, or use `exit`/`ignore-mismatch`, to proceed without writes.
 
+## XDPoS Schedule Rule (`1 <= Gap < Epoch`)
+
+`params.XDPoSConfig.CheckSchedule` is part of `ChainConfig.CheckConfigForkOrder` (`params/config.go:792`), so every caller of `CheckConfigForkOrder` judges the XDPoS schedule before a chain or an engine is built.
+
+### What is refused
+
+A chain config that declares an `XDPoS` section must satisfy `1 <= Gap < Epoch`. These shapes are refused, each with the message of the tier it falls in (`Gap == 0` and `Gap > Epoch` share one):
+
+- `Gap == 0`: no gap block exists, so the refresh before the epoch switch never runs.
+- `Gap == Epoch`: the gap trigger lands on the epoch switch block, which would have to consume the candidate set the gap block samples.
+- `Gap > Epoch`: the checkpoint-minus-`Gap` lookup of the v1 engine addresses heights core's gap predicates never report.
+- `Epoch == 0` and `Epoch == 1`: no `gap` satisfies `1 <= gap < epoch`.
+- `Gap` or `Epoch` left out entirely, which reads as `0`.
+
+Two gates enforce it:
+
+1. Core's gate, `checkXDPoSSchedule` (`core/xdpos_schedule.go`), sits where a config enters the chain: `Genesis.commit` (`core/genesis.go:857`), the genesis and config resolvers (`core/genesis_load.go:220` in the resolver's defer, `core/genesis_setup.go:79`, `:272`) and `newBlockChain` (`core/blockchain.go:460`).
+2. The `params` gate inside `CheckConfigForkOrder` reaches every caller of that function, including `XDPoS.New`/`XDPoS.NewFaker` (`consensus/XDPoS/XDPoS.go:89`, `:135`) and the config backfill and hint validators.
+
+Core's earlier gate is kept because it sees a config before `XDPoS.New` rewrites a missing epoch to `900`. The schedule is judged before the `SwitchBlock % Epoch` alignment, so a config that is both out of bound and misaligned reports the schedule; the alignment check then divides by an epoch the bound has proven to be at least 2.
+
+### Omitted `epoch` is now refused
+
+`XDPoS.New` still repairs `Epoch == 0` to `900` (`consensus/XDPoS/XDPoS.go:86-88`), but only on its own path and only after the config has been judged elsewhere. Paths that previously ran with `epoch` omitted now refuse through their `CheckConfigForkOrder` call:
+
+- `core/genesis_load.go:32`, `:76`, `:81`, `:118`, `:141`, `:308`
+- `core/genesis_setup.go:73`, `:266`
+
+A custom network whose genesis declares `XDPoS` but omits `epoch`/`gap` therefore no longer starts with a defaulted epoch; declare both explicitly. The refusal covers a genesis whose hash does not match a bundled network: a built-in hash keeps hydrating its sparse genesis from the bundled config, `epoch` and `gap` included.
+
+### Why `--chain-config-mismatch-policy` does not cover it
+
+The policy reacts to a `ConfigCompatError`, and the resolvers deliberately do not report one for a rejected schedule: the defer in `core/genesis_load.go:215` replaces the error with the schedule refusal and clears `compatErr`, because a config the chain never accepts must not be reported as a rewind target. With an uncorrected config there is no compatibility error for the policy to act on, so no policy value can rescue it.
+
+### Recovery
+
+Correct the schedule first, then pick the path that matches the data directory:
+
+- Data directory that has imported no blocks: re-run `XDC init --datadir <dir> <genesis.json>` with the corrected genesis, which writes the corrected config.
+- Data directory that has imported blocks: the corrected schedule is a historical change, so `XDC init` fails with the `ConfigCompatError` and writes nothing. Start the node once in writable mode with the corrected config and `--chain-config-mismatch-policy=update-config-only`, which persists it without moving the head.
+- If the correction has to change history rather than relabel it, resynchronise the directory from the corrected genesis.
+
+`update-config-only` does not reprocess already-imported blocks; the consensus risk is described in the policy section above.
+
 ## Startup API Semantics
 
 The startup helpers now have distinct writable vs. readonly roles:

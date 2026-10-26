@@ -10,8 +10,12 @@ Vocabulary for the XDPoS chain: the block schedule its validators run to, the bl
 The block inside every epoch at which the next epoch's masternode set is prepared.
 _Avoid_: checkpoint block, gap height
 
+**gap trigger**:
+The height inside each epoch at which the gap block falls, `Epoch - Gap`.
+_Avoid_: gap height, checkpoint trigger
+
 **XDPoS schedule**:
-The rule that places one gap block inside each epoch, fixed by the epoch length and the gap offset. Core only starts a chain whose config satisfies `0 < gap < epoch`.
+The rule that places one gap block inside each epoch, fixed by the epoch length and the gap offset. `(*params.XDPoSConfig).CheckSchedule` is the judgement, reached through `CheckConfigForkOrder`; `core` keeps the earlier gate.
 _Avoid_: gap schedule, gap config, checkpoint schedule, epoch/gap pair, checkpoint spacing
 _See_: [ADR-0003](docs/adr/0003-enforce-gap-within-epoch.md)
 
