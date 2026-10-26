@@ -35,7 +35,9 @@ jobs:
           - name: C-[a-m] tests
             script: go run build/ci.go test -coverage $(go list ./... | grep "github.com/XinFinOrg/XDPoSChain/c[a-m].*")
           - name: C-[n-o] tests
-            script: go run build/ci.go test -coverage $(go list ./... | grep "github.com/XinFinOrg/XDPoSChain/c[n-o].*")
+            script: go run build/ci.go test -coverage $(go list ./... | grep "github.com/XinFinOrg/XDPoSChain/c[n-o].*" | grep -v "github.com/XinFinOrg/XDPoSChain/consensus/tests/engine_v2_tests")
+          - name: Engine v2 tests
+            script: go run build/ci.go test -coverage github.com/XinFinOrg/XDPoSChain/consensus/tests/engine_v2_tests
           - name: C-[p-z] tests
             script: go run build/ci.go test -coverage $(go list ./... | grep "github.com/XinFinOrg/XDPoSChain/c[p-z].*")
           - name: D-I tests
