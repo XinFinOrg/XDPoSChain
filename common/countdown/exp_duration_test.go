@@ -51,6 +51,48 @@ func TestExpDuration(t *testing.T) {
 	assert.Equal(t, duration, result)
 }
 
+// TestExpDurationRoundDiff pins the exponent at literal round differences
+// instead of re-deriving it from the implementation formula. A round
+// difference of 257 or more whose low 8 bits fall in [1, maxExponent] makes
+// the uint8-truncated exponent too small (e.g. 513); 256 sits exactly on the
+// wrap point, where uint8(256)-1 wraps to 255 and the old formula happens to
+// be correct, so it is kept as a control.
+func TestExpDurationRoundDiff(t *testing.T) {
+	const duration = time.Second
+	base := float64(2.0)
+	tests := []struct {
+		name        string
+		maxExponent uint8
+		diff        uint64
+		want        time.Duration
+	}{
+		{"maxExponent=0 diff=1", 0, 1, duration},
+		{"maxExponent=0 diff=256", 0, 256, duration},
+		{"maxExponent=0 diff=513", 0, 513, duration},
+		{"maxExponent=3 diff=1", 3, 1, duration},
+		{"maxExponent=3 diff=2", 3, 2, 2 * duration},
+		{"maxExponent=3 diff=4 saturates", 3, 4, 8 * duration},
+		{"maxExponent=3 diff=5 saturates", 3, 5, 8 * duration},
+		{"maxExponent=3 diff=256 saturates", 3, 256, 8 * duration},
+		{"maxExponent=3 diff=257 saturates", 3, 257, 8 * duration},
+		{"maxExponent=3 diff=258 saturates", 3, 258, 8 * duration},
+		{"maxExponent=3 diff=259 saturates", 3, 259, 8 * duration},
+		{"maxExponent=3 diff=513 saturates", 3, 513, 8 * duration},
+		{"maxExponent=31 diff=1", 31, 1, duration},
+		{"maxExponent=31 diff=32 saturates", 31, 32, duration * (1 << 31)},
+		{"maxExponent=31 diff=256 saturates", 31, 256, duration * (1 << 31)},
+		{"maxExponent=31 diff=257 saturates", 31, 257, duration * (1 << 31)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			helper, err := NewExpTimeoutDuration(duration, base, test.maxExponent)
+			assert.NoError(t, err)
+			got := helper.GetTimeoutDuration(types.Round(test.diff), types.Round(0))
+			assert.Equal(t, test.want, got)
+		})
+	}
+}
+
 func TestInvalidParameter(t *testing.T) {
 	base := float64(2.0)
 	max_exponent := uint8(32)
