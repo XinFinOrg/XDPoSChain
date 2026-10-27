@@ -20,5 +20,5 @@ const (
 	Major = 3           // Major version component of the current release
 	Minor = 0           // Minor version component of the current release
 	Patch = 0           // Patch version component of the current release
-	Meta  = "testnet-1" // Version metadata to append to the version string
+	Meta  = "testnet-2" // Version metadata to append to the version string
 )
