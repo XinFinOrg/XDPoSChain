@@ -1,0 +1,241 @@
+// Code generated - DO NOT EDIT.
+// This file is a generated binding and any manual changes will be lost.
+
+package bindtest
+
+import (
+	"context"
+	"errors"
+	"math/big"
+	"strings"
+	"time"
+
+	ethereum "github.com/XinFinOrg/XDPoSChain"
+	"github.com/XinFinOrg/XDPoSChain/accounts/abi"
+	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
+	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/event"
+)
+
+// Reference imports to suppress errors if they are not otherwise used.
+var (
+	_ = errors.New
+	_ = big.NewInt
+	_ = strings.NewReader
+	_ = ethereum.ErrNotFound
+	_ = bind.Bind
+	_ = common.Big1
+	_ = types.BloomLookup
+	_ = event.NewSubscription
+	_ = abi.ConvertType
+	_ = time.Tick
+	_ = context.Background
+)
+
+// RangeKeywordMetaData contains all meta data concerning the RangeKeyword contract.
+var RangeKeywordMetaData = &bind.MetaData{
+	ABI: "[{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"range\",\"type\":\"uint256\"}],\"name\":\"functionWithKeywordParameter\",\"outputs\":[],\"stateMutability\":\"pure\",\"type\":\"function\"}]",
+	Bin: "0x608060405234801561001057600080fd5b5060dc8061001f6000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c8063527a119f14602d575b600080fd5b60436004803603810190603f9190605b565b6045565b005b50565b6000813590506055816092565b92915050565b600060208284031215606e57606d608d565b5b6000607a848285016048565b91505092915050565b6000819050919050565b600080fd5b6099816083565b811460a357600080fd5b5056fea2646970667358221220d4f4525e2615516394055d369fb17df41c359e5e962734f27fd683ea81fd9db164736f6c63430008070033",
+}
+
+// RangeKeywordABI is the input ABI used to generate the binding from.
+// Deprecated: Use RangeKeywordMetaData.ABI instead.
+var RangeKeywordABI = RangeKeywordMetaData.ABI
+
+// RangeKeywordBin is the compiled bytecode used for deploying new contracts.
+// Deprecated: Use RangeKeywordMetaData.Bin instead.
+var RangeKeywordBin = RangeKeywordMetaData.Bin
+
+// DeployRangeKeyword deploys a new Ethereum contract, binding an instance of RangeKeyword to it.
+func DeployRangeKeyword(auth *bind.TransactOpts, backend bind.ContractBackend) (common.Address, *types.Transaction, *RangeKeyword, error) {
+	parsed, err := RangeKeywordMetaData.GetAbi()
+	if err != nil {
+		return common.Address{}, nil, nil, err
+	}
+	if parsed == nil {
+		return common.Address{}, nil, nil, errors.New("GetABI returned nil")
+	}
+	// Library addresses are substituted into a local copy of the bytecode: the
+	// package-level RangeKeywordBin is shared by every caller, so substituting in
+	// it would leave any later deployment linked to the addresses substituted
+	// by an earlier one.
+	linkedBin := RangeKeywordBin
+
+	address, tx, contract, err := bind.DeployContract(auth, *parsed, common.FromHex(linkedBin), backend)
+	if err != nil {
+		return common.Address{}, nil, nil, err
+	}
+	return address, tx, &RangeKeyword{RangeKeywordCaller: RangeKeywordCaller{contract: contract}, RangeKeywordTransactor: RangeKeywordTransactor{contract: contract}, RangeKeywordFilterer: RangeKeywordFilterer{contract: contract}}, nil
+}
+
+// RangeKeyword is an auto generated Go binding around an Ethereum contract.
+type RangeKeyword struct {
+	RangeKeywordCaller     // Read-only binding to the contract
+	RangeKeywordTransactor // Write-only binding to the contract
+	RangeKeywordFilterer   // Log filterer for contract events
+}
+
+// RangeKeywordCaller is an auto generated read-only Go binding around an Ethereum contract.
+type RangeKeywordCaller struct {
+	contract *bind.BoundContract // Generic contract wrapper for the low level calls
+}
+
+// RangeKeywordTransactor is an auto generated write-only Go binding around an Ethereum contract.
+type RangeKeywordTransactor struct {
+	contract *bind.BoundContract // Generic contract wrapper for the low level calls
+}
+
+// RangeKeywordFilterer is an auto generated log filtering Go binding around an Ethereum contract events.
+type RangeKeywordFilterer struct {
+	contract *bind.BoundContract // Generic contract wrapper for the low level calls
+}
+
+// RangeKeywordSession is an auto generated Go binding around an Ethereum contract,
+// with pre-set call and transact options.
+type RangeKeywordSession struct {
+	Contract     *RangeKeyword     // Generic contract binding to set the session for
+	CallOpts     bind.CallOpts     // Call options to use throughout this session
+	TransactOpts bind.TransactOpts // Transaction auth options to use throughout this session
+}
+
+// RangeKeywordCallerSession is an auto generated read-only Go binding around an Ethereum contract,
+// with pre-set call options.
+type RangeKeywordCallerSession struct {
+	Contract *RangeKeywordCaller // Generic contract caller binding to set the session for
+	CallOpts bind.CallOpts       // Call options to use throughout this session
+}
+
+// RangeKeywordTransactorSession is an auto generated write-only Go binding around an Ethereum contract,
+// with pre-set transact options.
+type RangeKeywordTransactorSession struct {
+	Contract     *RangeKeywordTransactor // Generic contract transactor binding to set the session for
+	TransactOpts bind.TransactOpts       // Transaction auth options to use throughout this session
+}
+
+// RangeKeywordRaw is an auto generated low-level Go binding around an Ethereum contract.
+type RangeKeywordRaw struct {
+	Contract *RangeKeyword // Generic contract binding to access the raw methods on
+}
+
+// RangeKeywordCallerRaw is an auto generated low-level read-only Go binding around an Ethereum contract.
+type RangeKeywordCallerRaw struct {
+	Contract *RangeKeywordCaller // Generic read-only contract binding to access the raw methods on
+}
+
+// RangeKeywordTransactorRaw is an auto generated low-level write-only Go binding around an Ethereum contract.
+type RangeKeywordTransactorRaw struct {
+	Contract *RangeKeywordTransactor // Generic write-only contract binding to access the raw methods on
+}
+
+// NewRangeKeyword creates a new instance of RangeKeyword, bound to a specific deployed contract.
+func NewRangeKeyword(address common.Address, backend bind.ContractBackend) (*RangeKeyword, error) {
+	contract, err := bindRangeKeyword(address, backend, backend, backend)
+	if err != nil {
+		return nil, err
+	}
+	return &RangeKeyword{RangeKeywordCaller: RangeKeywordCaller{contract: contract}, RangeKeywordTransactor: RangeKeywordTransactor{contract: contract}, RangeKeywordFilterer: RangeKeywordFilterer{contract: contract}}, nil
+}
+
+// NewRangeKeywordCaller creates a new read-only instance of RangeKeyword, bound to a specific deployed contract.
+func NewRangeKeywordCaller(address common.Address, caller bind.ContractCaller) (*RangeKeywordCaller, error) {
+	contract, err := bindRangeKeyword(address, caller, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &RangeKeywordCaller{contract: contract}, nil
+}
+
+// NewRangeKeywordTransactor creates a new write-only instance of RangeKeyword, bound to a specific deployed contract.
+func NewRangeKeywordTransactor(address common.Address, transactor bind.ContractTransactor) (*RangeKeywordTransactor, error) {
+	contract, err := bindRangeKeyword(address, nil, transactor, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &RangeKeywordTransactor{contract: contract}, nil
+}
+
+// NewRangeKeywordFilterer creates a new log filterer instance of RangeKeyword, bound to a specific deployed contract.
+func NewRangeKeywordFilterer(address common.Address, filterer bind.ContractFilterer) (*RangeKeywordFilterer, error) {
+	contract, err := bindRangeKeyword(address, nil, nil, filterer)
+	if err != nil {
+		return nil, err
+	}
+	return &RangeKeywordFilterer{contract: contract}, nil
+}
+
+// bindRangeKeyword binds a generic wrapper to an already deployed contract.
+func bindRangeKeyword(address common.Address, caller bind.ContractCaller, transactor bind.ContractTransactor, filterer bind.ContractFilterer) (*bind.BoundContract, error) {
+	parsed, err := RangeKeywordMetaData.GetAbi()
+	if err != nil {
+		return nil, err
+	}
+	return bind.NewBoundContract(address, *parsed, caller, transactor, filterer), nil
+}
+
+// Call invokes the (constant) contract method with params as input values and
+// sets the output to result. The result type might be a single field for simple
+// returns, a slice of interfaces for anonymous returns and a struct for named
+// returns.
+func (_RangeKeyword *RangeKeywordRaw) Call(opts *bind.CallOpts, result *[]interface{}, method string, params ...interface{}) error {
+	return _RangeKeyword.Contract.RangeKeywordCaller.contract.Call(opts, result, method, params...)
+}
+
+// Transfer initiates a plain transaction to move funds to the contract, calling
+// its default method if one is available.
+func (_RangeKeyword *RangeKeywordRaw) Transfer(opts *bind.TransactOpts) (*types.Transaction, error) {
+	return _RangeKeyword.Contract.RangeKeywordTransactor.contract.Transfer(opts)
+}
+
+// Transact invokes the (paid) contract method with params as input values.
+func (_RangeKeyword *RangeKeywordRaw) Transact(opts *bind.TransactOpts, method string, params ...interface{}) (*types.Transaction, error) {
+	return _RangeKeyword.Contract.RangeKeywordTransactor.contract.Transact(opts, method, params...)
+}
+
+// Call invokes the (constant) contract method with params as input values and
+// sets the output to result. The result type might be a single field for simple
+// returns, a slice of interfaces for anonymous returns and a struct for named
+// returns.
+func (_RangeKeyword *RangeKeywordCallerRaw) Call(opts *bind.CallOpts, result *[]interface{}, method string, params ...interface{}) error {
+	return _RangeKeyword.Contract.contract.Call(opts, result, method, params...)
+}
+
+// Transfer initiates a plain transaction to move funds to the contract, calling
+// its default method if one is available.
+func (_RangeKeyword *RangeKeywordTransactorRaw) Transfer(opts *bind.TransactOpts) (*types.Transaction, error) {
+	return _RangeKeyword.Contract.contract.Transfer(opts)
+}
+
+// Transact invokes the (paid) contract method with params as input values.
+func (_RangeKeyword *RangeKeywordTransactorRaw) Transact(opts *bind.TransactOpts, method string, params ...interface{}) (*types.Transaction, error) {
+	return _RangeKeyword.Contract.contract.Transact(opts, method, params...)
+}
+
+// FunctionWithKeywordParameter is a free data retrieval call binding the contract method 0x527a119f.
+//
+// Solidity: function functionWithKeywordParameter(uint256 range) pure returns()
+func (_RangeKeyword *RangeKeywordCaller) FunctionWithKeywordParameter(opts *bind.CallOpts, arg0 *big.Int) error {
+	var out []interface{}
+	err := _RangeKeyword.contract.Call(opts, &out, "functionWithKeywordParameter", arg0)
+
+	if err != nil {
+		return err
+	}
+
+	return err
+
+}
+
+// FunctionWithKeywordParameter is a free data retrieval call binding the contract method 0x527a119f.
+//
+// Solidity: function functionWithKeywordParameter(uint256 range) pure returns()
+func (_RangeKeyword *RangeKeywordSession) FunctionWithKeywordParameter(arg0 *big.Int) error {
+	return _RangeKeyword.Contract.FunctionWithKeywordParameter(&_RangeKeyword.CallOpts, arg0)
+}
+
+// FunctionWithKeywordParameter is a free data retrieval call binding the contract method 0x527a119f.
+//
+// Solidity: function functionWithKeywordParameter(uint256 range) pure returns()
+func (_RangeKeyword *RangeKeywordCallerSession) FunctionWithKeywordParameter(arg0 *big.Int) error {
+	return _RangeKeyword.Contract.FunctionWithKeywordParameter(&_RangeKeyword.CallOpts, arg0)
+}

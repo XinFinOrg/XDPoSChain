@@ -22,8 +22,14 @@ import (
 
 // LookupInstructionSet returns the instruction set for the fork configured by
 // the rules.
+//
+// It has no production caller: the EVM selects its table inline in NewEVM. Keep
+// the two in sync; TestAmsterdamJumpTableSelection pins this one against the
+// table NewEVM picks for the same rules.
 func LookupInstructionSet(rules params.Rules) (JumpTable, error) {
 	switch {
+	case rules.IsAmsterdam:
+		return newAmsterdamInstructionSet(), nil
 	case rules.IsOsaka:
 		return newOsakaInstructionSet(), nil
 	case rules.IsPrague:

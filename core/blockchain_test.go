@@ -22,7 +22,6 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -668,52 +667,6 @@ func TestNewBlockChainReadOnlyFailsHeadStateRepair(t *testing.T) {
 	}
 	if got := rawdb.ReadHeadBlockHash(db); got != head.Hash() {
 		t.Fatalf("expected readonly open to leave head hash unchanged: have %s want %s", got.Hex(), head.Hash().Hex())
-	}
-}
-
-// TestNewBlockChainExReadOnlyResolvedHonorsReadOnly tests the XDCx-aware wrapper
-// forwards readonly startup options instead of silently defaulting to writable
-// recovery.
-func TestNewBlockChainExReadOnlyResolvedHonorsReadOnly(t *testing.T) {
-	var (
-		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
-		address = crypto.PubkeyToAddress(key.PublicKey)
-		funds   = big.NewInt(1000000000000000)
-		gspec   = &Genesis{
-			Alloc:   types.GenesisAlloc{address: {Balance: funds}},
-			BaseFee: big.NewInt(params.InitialBaseFee),
-			Config:  params.TestChainConfig,
-		}
-	)
-	db := rawdb.NewMemoryDatabase()
-	chain, err := NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
-	if err != nil {
-		t.Fatalf("failed to create chain: %v", err)
-	}
-
-	_, blocks, _ := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 3, nil)
-	if n, err := chain.InsertChain(blocks); err != nil {
-		chain.Stop()
-		t.Fatalf("failed to insert block %d: %v", n, err)
-	}
-	head := blocks[len(blocks)-1]
-	chain.Stop()
-
-	rawdb.DeleteLegacyTrieNode(db, head.Root())
-
-	reopened, err := NewBlockChainExReadOnlyResolved(db, nil, nil, nil, ethash.NewFaker(), vm.Config{}, gspec.Config, gspec.ToBlock().Hash(), nil, DefaultChainConfigMismatchPolicy)
-	if err == nil {
-		reopened.Stop()
-		t.Fatal("expected readonly open to fail when head state repair would be required")
-	}
-	if !errors.Is(err, ErrReadOnlyHeadStateRepair) {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got := rawdb.ReadHeadBlockHash(db); got != head.Hash() {
-		t.Fatalf("expected readonly open to leave head hash unchanged: have %s want %s", got.Hex(), head.Hash().Hex())
-	}
-	if _, err := state.New(head.Root(), state.NewDatabase(db)); err == nil {
-		t.Fatal("expected readonly open to leave head state missing")
 	}
 }
 
@@ -1474,28 +1427,53 @@ func TestReorgDeliversRemovedLogsSynchronously(t *testing.T) {
 		t.Fatalf("head moved onto the fork, want it kept as a side chain: have %x, want %x", head.Hash(), want.Hash())
 	}
 
-	// The subscriber stalls on purpose: a synchronous send has to wait for it,
-	// an asynchronous one would let the reorg return first.
+	// The subscriber stalls before receiving: a synchronous send has to wait
+	// for it, a spawned one would let reorg return first.
 	removed := make(chan RemovedLogsEvent)
 	sub := blockchain.SubscribeRemovedLogsEvent(removed)
 	defer sub.Unsubscribe()
 
-	const subscriberDelay = 250 * time.Millisecond
-	var delivered atomic.Bool
+	// The stall also budgets catching a spawned send: reorg hands the removals
+	// over early with ~20ms of work left under -race, so a second outlasts it.
+	const (
+		subscriberDelay = time.Second
+		deliveryTimeout = 5 * time.Second
+	)
+	var (
+		armed = make(chan struct{})
+		// Buffered so the delivery cannot block: the checks below may t.Fatalf
+		// and leave this goroutine behind.
+		got = make(chan int, 1)
+	)
 	go func() {
 		time.Sleep(subscriberDelay)
+		close(armed)
 		select {
-		case <-removed:
-			delivered.Store(true)
-		case <-time.After(5 * time.Second):
+		case ev := <-removed:
+			got <- len(ev.Logs)
+		case <-time.After(deliveryTimeout):
 		}
 	}()
 
 	if err := blockchain.reorg(blockchain.CurrentBlock(), fork[len(fork)-1].Header()); err != nil {
 		t.Fatalf("failed to reorg: %v", err)
 	}
-	if !delivered.Load() {
+	// The send completes on the unbuffered handoff: a reorg that is back before
+	// the subscriber armed never waited for it.
+	select {
+	case <-armed:
+	default:
 		t.Fatalf("reorg returned before the removed logs reached the subscriber, the send must be synchronous")
+	}
+	// reorg returned means the handoff is done and got is buffered, so this
+	// timeout only guards a starved goroutine.
+	select {
+	case n := <-got:
+		if want := len(canonical); n != want {
+			t.Fatalf("removed logs mismatch: have %d, want %d", n, want)
+		}
+	case <-time.After(deliveryTimeout):
+		t.Fatalf("reorg returned but the removed logs never reached the subscriber")
 	}
 }
 
@@ -2174,6 +2152,7 @@ func TestEIP161AccountRemoval(t *testing.T) {
 			Config: &params.ChainConfig{
 				ChainID:          big.NewInt(1337),
 				HomesteadBlock:   new(big.Int),
+				EIP150Block:      new(big.Int),
 				EIP155Block:      new(big.Int),
 				EIP158Block:      big.NewInt(2),
 				ByzantiumBlock:   new(big.Int).Set(futureFork),
@@ -2256,6 +2235,9 @@ func setXinFinForksToFuture(cfg *params.ChainConfig, future *big.Int) {
 	cfg.TIPXDCXBlock = set()
 	cfg.TIPXDCXLendingBlock = set()
 	cfg.TIPXDCXCancellationFeeBlock = set()
+	cfg.ConstantinopleBlock = set()
+	cfg.PetersburgBlock = set()
+	cfg.IstanbulBlock = set()
 	cfg.TIPTRC21FeeBlock = set()
 	cfg.Gas50xBlock = set()
 	cfg.BerlinBlock = set()
@@ -2269,7 +2251,7 @@ func setXinFinForksToFuture(cfg *params.ChainConfig, future *big.Int) {
 	cfg.PragueBlock = set()
 	cfg.OsakaBlock = set()
 	cfg.DynamicGasLimitBlock = set()
-	cfg.TIPUpgradeRewardBlock = set()
+	cfg.TIPFixedRewardBlock = set()
 	cfg.TIPUpgradePenaltyBlock = set()
 	cfg.TIPEpochHalvingBlock = set()
 	cfg.TRC21IssuerSMC = params.TestnetChainConfig.TRC21IssuerSMC

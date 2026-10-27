@@ -138,10 +138,12 @@ func TestCloneChainConfigDeepCopiesMigratedForkBlocks(t *testing.T) {
 		CancunBlock:                 big.NewInt(150),
 		PragueBlock:                 big.NewInt(160),
 		OsakaBlock:                  big.NewInt(170),
+		AmsterdamBlock:              big.NewInt(175),
 		DynamicGasLimitBlock:        big.NewInt(180),
-		TIPUpgradeRewardBlock:       big.NewInt(190),
+		TIPFixedRewardBlock:         big.NewInt(190),
 		TIPUpgradePenaltyBlock:      big.NewInt(200),
 		TIPEpochHalvingBlock:        big.NewInt(210),
+		TIPProportionalRewardBlock:  big.NewInt(220),
 	}
 	clone := original.Clone()
 	if clone == nil {

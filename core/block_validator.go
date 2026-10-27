@@ -122,7 +122,11 @@ func (v *BlockValidator) ValidateState(block *types.Block, statedb *state.StateD
 	// Validate the state root against the received state root and throw
 	// an error if they don't match.
 	if root := statedb.IntermediateRoot(v.config.IsEIP158(header.Number)); header.Root != root {
-		return fmt.Errorf("invalid merkle root (remote: %x local: %x) dberr: %w", header.Root, root, statedb.Error())
+		// A plain root mismatch has no database error, and %w would render it as "%!w(<nil>)".
+		if dberr := statedb.Error(); dberr != nil {
+			return fmt.Errorf("invalid merkle root (remote: %x local: %x) dberr: %w", header.Root, root, dberr)
+		}
+		return fmt.Errorf("invalid merkle root (remote: %x local: %x)", header.Root, root)
 	}
 	return nil
 }
@@ -137,7 +141,6 @@ func (v *BlockValidator) ValidateTradingOrder(statedb *state.StateDB, XDCxStated
 		return errors.New("XDCx not found")
 	}
 	log.Debug("verify matching transaction found a TxMatches Batch", "numTxMatches", len(txMatchBatch.Data))
-	tradingResult := map[common.Hash]tradingstate.MatchingResult{}
 	for _, txMatch := range txMatchBatch.Data {
 		// verify orderItem
 		order, err := txMatch.DecodeOrder()
@@ -148,13 +151,9 @@ func (v *BlockValidator) ValidateTradingOrder(statedb *state.StateDB, XDCxStated
 
 		log.Debug("process tx match", "order", order)
 		// process Matching Engine
-		newTrades, newRejectedOrders, err := XDCXService.ApplyOrder(header, coinbase, v.bc, statedb, XDCxStatedb, tradingstate.GetTradingOrderBookHash(order.BaseToken, order.QuoteToken), order)
+		_, err = XDCXService.ApplyOrder(header, coinbase, v.bc, statedb, XDCxStatedb, tradingstate.GetTradingOrderBookHash(order.BaseToken, order.QuoteToken), order)
 		if err != nil {
 			return err
-		}
-		tradingResult[tradingstate.GetMatchingResultCacheKey(order)] = tradingstate.MatchingResult{
-			Trades:  newTrades,
-			Rejects: newRejectedOrders,
 		}
 	}
 	return nil
@@ -174,19 +173,14 @@ func (v *BlockValidator) ValidateLendingOrder(statedb *state.StateDB, lendingSta
 		return errors.New("lendingService not found")
 	}
 	log.Debug("verify lendingItem ", "numItems", len(batch.Data))
-	lendingResult := map[common.Hash]lendingstate.MatchingResult{}
 	for _, l := range batch.Data {
 		// verify lendingItem
 
 		log.Debug("process lending tx", "lendingItem", lendingstate.ToJSON(l))
 		// process Matching Engine
-		newTrades, newRejectedOrders, err := lendingService.ApplyOrder(header, coinbase, v.bc, statedb, lendingStateDb, XDCxStatedb, lendingstate.GetLendingOrderBookHash(l.LendingToken, l.Term), l)
+		_, err := lendingService.ApplyOrder(header, coinbase, v.bc, statedb, lendingStateDb, XDCxStatedb, lendingstate.GetLendingOrderBookHash(l.LendingToken, l.Term), l)
 		if err != nil {
 			return err
-		}
-		lendingResult[lendingstate.GetLendingCacheKey(l)] = lendingstate.MatchingResult{
-			Trades:  newTrades,
-			Rejects: newRejectedOrders,
 		}
 	}
 	return nil

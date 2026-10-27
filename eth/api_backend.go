@@ -484,16 +484,14 @@ func (b *EthAPIBackend) GetRewardByHash(hash common.Hash) map[string]map[string]
 	if header != nil {
 		data, err := os.ReadFile(filepath.Join(common.StoreRewardFolder, header.Number.String()+"."+header.Hash().Hex()))
 		if err == nil {
-			rewards := make(map[string]map[string]map[string]*big.Int)
-			err = json.Unmarshal(data, &rewards)
+			rewards, err := decodeRewardFile(data)
 			if err == nil {
 				return rewards
 			}
 		} else {
 			data, err = os.ReadFile(filepath.Join(common.StoreRewardFolder, header.Number.String()+"."+header.HashNoValidator().Hex()))
 			if err == nil {
-				rewards := make(map[string]map[string]map[string]*big.Int)
-				err = json.Unmarshal(data, &rewards)
+				rewards, err := decodeRewardFile(data)
 				if err == nil {
 					return rewards
 				}
@@ -501,6 +499,26 @@ func (b *EthAPIBackend) GetRewardByHash(hash common.Hash) map[string]map[string]
 		}
 	}
 	return make(map[string]map[string]map[string]*big.Int)
+}
+
+// decodeRewardFile decodes a reward file into the nested signer/holder maps that
+// eth_getRewardByHash returns. Top-level entries of any other shape, such as the
+// numeric signSlots recorded from TIPProportionalReward on, are skipped instead
+// of failing the whole file.
+func decodeRewardFile(data []byte) (map[string]map[string]map[string]*big.Int, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	rewards := make(map[string]map[string]map[string]*big.Int, len(raw))
+	for key, value := range raw {
+		var entry map[string]map[string]*big.Int
+		if err := json.Unmarshal(value, &entry); err != nil {
+			continue
+		}
+		rewards[key] = entry
+	}
+	return rewards, nil
 }
 
 // GetVotersRewards return a map of voters of snapshot at given block hash

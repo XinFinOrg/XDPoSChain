@@ -14,6 +14,7 @@ import (
 )
 
 var chainConfigDigestCoveredFields = []string{
+	"AmsterdamBlock",
 	"BerlinBlock",
 	"ByzantiumBlock",
 	"CancunBlock",
@@ -45,11 +46,12 @@ var chainConfigDigestCoveredFields = []string{
 	"TIPEpochHalvingBlock",
 	"TIPIncreaseMasternodesBlock",
 	"TIPNoHalvingMNRewardBlock",
+	"TIPProportionalRewardBlock",
 	"TIPRandomizeBlock",
 	"TIPSigningBlock",
 	"TIPTRC21FeeBlock",
 	"TIPUpgradePenaltyBlock",
-	"TIPUpgradeRewardBlock",
+	"TIPFixedRewardBlock",
 	"TIPXDCXCancellationFeeBlock",
 	"TIPXDCXBlock",
 	"TIPXDCXLendingBlock",
@@ -477,10 +479,10 @@ func TestHashChainConfigSemanticGoldenVectors(t *testing.T) {
 		cfg  *params.ChainConfig
 		want string
 	}{
-		{name: "nil", cfg: nil, want: "99be5efb88ca2013bd8e4eb035fd42d5245468fe9afa70d8ba9c1c419a48c4e8"},
-		{name: "testnet", cfg: params.TestnetChainConfig.Clone(), want: "f7a73f240ff2b0b507e641ab69c3a48abe1863774fce972e5b8b0a4cc9f2186d"},
-		{name: "mainnet", cfg: params.XDCMainnetChainConfig.Clone(), want: "15aaee6e7bacf3d540729402b76de2c6c446027dbfad49609c03df7dd8577b45"},
-		{name: "testnet-berlin-drift", cfg: testnetBerlinDrift, want: "18baa77c0abaea3befa5fe15768b52d1591d827c90c689c395f007701ed45ba5"},
+		{name: "nil", cfg: nil, want: "c0ba8a33ac67f44abff5984dfbb6f56c46b880ac2b86e1f23e7fa9c402c53ae7"},
+		{name: "testnet", cfg: params.TestnetChainConfig.Clone(), want: "124c2cd03ffab90e8e706ada58da4c45245102427e24b6cf1bce90c83d520066"},
+		{name: "mainnet", cfg: params.XDCMainnetChainConfig.Clone(), want: "1d8599bc0f149980f9829f36aa0cf20cc36f9ea0ba31685e0526e0faaf57b254"},
+		{name: "testnet-berlin-drift", cfg: testnetBerlinDrift, want: "95c857b3e59c909602120cba49efe3eec4adfb04e6b3a9d5b4af54af0aecd4f4"},
 	}
 
 	for _, test := range tests {

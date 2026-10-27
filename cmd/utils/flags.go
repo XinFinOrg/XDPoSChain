@@ -308,14 +308,14 @@ var (
 	CacheTrieFlag = &cli.IntFlag{
 		Name:     "cache-trie",
 		Aliases:  []string{"cache.trie"},
-		Usage:    "Percentage of cache memory allowance to use for trie caching (default = 15% full mode, 30% archive mode)",
+		Usage:    "Percentage of cache memory allowance to use for trie caching (default = 5% full mode, 30% archive mode)",
 		Value:    5,
 		Category: flags.PerfCategory,
 	}
 	CacheGCFlag = &cli.IntFlag{
 		Name:     "cache-gc",
 		Aliases:  []string{"cache.gc"},
-		Usage:    "Percentage of cache memory allowance to use for trie pruning (default = 25% full mode, 0% archive mode)",
+		Usage:    "Percentage of cache memory allowance to use for trie pruning (default = 34% full mode, 0% archive mode)",
 		Value:    34,
 		Category: flags.PerfCategory,
 	}
@@ -1933,40 +1933,12 @@ func formatBlockChainOpenError(err error, readonly bool) string {
 
 var makeChainFatalf = Fatalf
 
-// MakeChain creates a chain manager from set command line flags.
-func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool, configuredCompatPolicy string) (*core.BlockChain, ethdb.Database) {
-	var (
-		gspec        = MakeGenesis(ctx)
-		chainDb      = MakeChainDatabase(ctx, stack, readonly)
-		config       *params.ChainConfig
-		ghash        common.Hash
-		compatErr    *params.ConfigCompatError
-		compatPolicy = core.ChainConfigMismatchPolicy(resolveChainConfigMismatchPolicyOrFatal(ctx, configuredCompatPolicy))
-		err          error
-	)
-	if readonly {
-		// Readonly startup still needs compatibility metadata so chain open can
-		// surface ErrReadOnlyConfigRewind instead of collapsing rewindable config
-		// drift into a generic config conflict.
-		config, ghash, compatErr, err = core.LoadChainConfigWithCompatWithOverride(chainDb, gspec, ctx.Bool(AllowBuiltInConfigOverrideFlag.Name))
-		if err != nil {
-			makeChainFatalf("%v", err)
-		}
-	} else {
-		config, ghash, compatErr, err = core.SetupGenesisBlockWithOverride(chainDb, gspec, ctx.Bool(AllowBuiltInConfigOverrideFlag.Name))
-		if err != nil {
-			makeChainFatalf("%v", err)
-		}
-	}
-	var engine consensus.Engine
-	if config.XDPoS != nil {
-		engine, err = XDPoS.New(config, chainDb)
-		if err != nil {
-			makeChainFatalf("%s", FormatChainConfigError(err))
-		}
-	} else {
-		makeChainFatalf("Only support XDPoS consensus")
-	}
+// makeCacheConfig assembles the trie cache configuration from the cache and GC
+// mode flags. It mirrors the mapping SetEthConfig applies to the same flags:
+// --cache is the whole allowance, --cache-trie sizes the clean trie cache and
+// --cache-gc the dirty one. Archive mode disables the dirty cache and forces
+// preimage recording.
+func makeCacheConfig(ctx *cli.Context) *core.CacheConfig {
 	if gcmode := ctx.String(GCModeFlag.Name); gcmode != "full" && gcmode != "archive" {
 		makeChainFatalf("--%s must be either 'full' or 'archive'", GCModeFlag.Name)
 	}
@@ -1986,8 +1958,46 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool, configuredComp
 		cache.TrieCleanLimit = ctx.Int(CacheFlag.Name) * ctx.Int(CacheTrieFlag.Name) / 100
 	}
 	if ctx.IsSet(CacheFlag.Name) || ctx.IsSet(CacheGCFlag.Name) {
-		cache.TrieCleanLimit = ctx.Int(CacheFlag.Name) * ctx.Int(CacheGCFlag.Name) / 100
+		cache.TrieDirtyLimit = ctx.Int(CacheFlag.Name) * ctx.Int(CacheGCFlag.Name) / 100
 	}
+	return cache
+}
+
+// MakeChain creates a chain manager from set command line flags.
+func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool, configuredCompatPolicy string) (*core.BlockChain, ethdb.Database) {
+	var (
+		gspec        = MakeGenesis(ctx)
+		chainDb      = MakeChainDatabase(ctx, stack, readonly)
+		config       *params.ChainConfig
+		ghash        common.Hash
+		compatErr    *params.ConfigCompatError
+		compatPolicy = core.ChainConfigMismatchPolicy(resolveChainConfigMismatchPolicyOrFatal(ctx, configuredCompatPolicy))
+		err          error
+	)
+	if readonly {
+		// Readonly startup still needs compatibility metadata so chain open can
+		// surface ErrReadOnlyConfigRewind instead of collapsing rewindable config
+		// drift into a generic config conflict.
+		config, ghash, compatErr, err = core.LoadChainConfigWithCompatWithOverride(chainDb, gspec, ctx.Bool(AllowBuiltInConfigOverrideFlag.Name))
+		if err != nil {
+			makeChainFatalf("%s", FormatChainConfigError(err))
+		}
+	} else {
+		config, ghash, compatErr, err = core.SetupGenesisBlockWithOverride(chainDb, gspec, ctx.Bool(AllowBuiltInConfigOverrideFlag.Name))
+		if err != nil {
+			makeChainFatalf("%s", FormatChainConfigError(err))
+		}
+	}
+	var engine consensus.Engine
+	if config.XDPoS != nil {
+		engine, err = XDPoS.New(config, chainDb)
+		if err != nil {
+			makeChainFatalf("%s", FormatChainConfigError(err))
+		}
+	} else {
+		makeChainFatalf("Only support XDPoS consensus")
+	}
+	cache := makeCacheConfig(ctx)
 	vmcfg := vm.Config{EnablePreimageRecording: ctx.Bool(VMEnableDebugFlag.Name)}
 	if ctx.IsSet(VMTraceFlag.Name) {
 		if name := ctx.String(VMTraceFlag.Name); name != "" {

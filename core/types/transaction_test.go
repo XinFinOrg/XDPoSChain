@@ -544,7 +544,6 @@ func TestLatestSignerNilConfigPanics(t *testing.T) {
 		}
 	}()
 	LatestSigner(nil)
-
 }
 
 // TestMakeSignerNilConfigPanics tests make signer fails fast for nil config.

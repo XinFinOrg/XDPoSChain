@@ -281,9 +281,6 @@ func testUniformSampleStatistics(t *testing.T, s *sampleSnapshot) {
 // concurrent Update and Count calls on Sample when test is called with -race
 // argument
 func TestUniformSampleConcurrentUpdateCount(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping in short mode")
-	}
 	s := NewUniformSample(100)
 	for i := 0; i < 100; i++ {
 		s.Update(int64(i))

@@ -4,27 +4,65 @@
 package contract
 
 import (
+	"context"
+	"errors"
+	"math/big"
 	"strings"
+	"time"
 
+	ethereum "github.com/XinFinOrg/XDPoSChain"
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi"
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/event"
 )
 
+// Reference imports to suppress errors if they are not otherwise used.
+var (
+	_ = errors.New
+	_ = big.NewInt
+	_ = strings.NewReader
+	_ = ethereum.ErrNotFound
+	_ = bind.Bind
+	_ = common.Big1
+	_ = types.BloomLookup
+	_ = event.NewSubscription
+	_ = abi.ConvertType
+	_ = time.Tick
+	_ = context.Background
+)
+
+// XDCXListingMetaData contains all meta data concerning the XDCXListing contract.
+var XDCXListingMetaData = &bind.MetaData{
+	ABI: "[{\"constant\":true,\"inputs\":[],\"name\":\"tokens\",\"outputs\":[{\"name\":\"\",\"type\":\"address[]\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[{\"name\":\"token\",\"type\":\"address\"}],\"name\":\"getTokenStatus\",\"outputs\":[{\"name\":\"\",\"type\":\"bool\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":false,\"inputs\":[{\"name\":\"token\",\"type\":\"address\"}],\"name\":\"apply\",\"outputs\":[],\"payable\":true,\"stateMutability\":\"payable\",\"type\":\"function\"}]",
+	Bin: "0x608060405234801561001057600080fd5b506102be806100206000396000f3006080604052600436106100565763ffffffff7c01000000000000000000000000000000000000000000000000000000006000350416639d63848a811461005b578063a3ff31b5146100c0578063c6b32f34146100f5575b600080fd5b34801561006757600080fd5b5061007061010b565b60408051602080825283518183015283519192839290830191858101910280838360005b838110156100ac578181015183820152602001610094565b505050509050019250505060405180910390f35b3480156100cc57600080fd5b506100e1600160a060020a036004351661016d565b604080519115158252519081900360200190f35b610109600160a060020a036004351661018b565b005b6060600080548060200260200160405190810160405280929190818152602001828054801561016357602002820191906000526020600020905b8154600160a060020a03168152600190910190602001808311610145575b5050505050905090565b600160a060020a031660009081526001602052604090205460ff1690565b80600160a060020a03811615156101a157600080fd5b600160a060020a03811660009081526001602081905260409091205460ff16151514156101cd57600080fd5b683635c9adc5dea0000034146101e257600080fd5b6040516068903480156108fc02916000818181858888f1935050505015801561020f573d6000803e3d6000fd5b505060008054600180820183557f290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563909101805473ffffffffffffffffffffffffffffffffffffffff1916600160a060020a039490941693841790556040805160208082018352838252948452919093529190209051815460ff19169015151790555600a165627a7a723058206d2dc0ce827743c25efa82f99e7830ade39d28e17f4d651573f89e0460a6626a0029",
+}
+
 // XDCXListingABI is the input ABI used to generate the binding from.
-const XDCXListingABI = "[{\"constant\":true,\"inputs\":[],\"name\":\"tokens\",\"outputs\":[{\"name\":\"\",\"type\":\"address[]\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":true,\"inputs\":[{\"name\":\"token\",\"type\":\"address\"}],\"name\":\"getTokenStatus\",\"outputs\":[{\"name\":\"\",\"type\":\"bool\"}],\"payable\":false,\"stateMutability\":\"view\",\"type\":\"function\"},{\"constant\":false,\"inputs\":[{\"name\":\"token\",\"type\":\"address\"}],\"name\":\"apply\",\"outputs\":[],\"payable\":true,\"stateMutability\":\"payable\",\"type\":\"function\"}]"
+// Deprecated: Use XDCXListingMetaData.ABI instead.
+var XDCXListingABI = XDCXListingMetaData.ABI
 
 // XDCXListingBin is the compiled bytecode used for deploying new contracts.
-const XDCXListingBin = `0x608060405234801561001057600080fd5b506102be806100206000396000f3006080604052600436106100565763ffffffff7c01000000000000000000000000000000000000000000000000000000006000350416639d63848a811461005b578063a3ff31b5146100c0578063c6b32f34146100f5575b600080fd5b34801561006757600080fd5b5061007061010b565b60408051602080825283518183015283519192839290830191858101910280838360005b838110156100ac578181015183820152602001610094565b505050509050019250505060405180910390f35b3480156100cc57600080fd5b506100e1600160a060020a036004351661016d565b604080519115158252519081900360200190f35b610109600160a060020a036004351661018b565b005b6060600080548060200260200160405190810160405280929190818152602001828054801561016357602002820191906000526020600020905b8154600160a060020a03168152600190910190602001808311610145575b5050505050905090565b600160a060020a031660009081526001602052604090205460ff1690565b80600160a060020a03811615156101a157600080fd5b600160a060020a03811660009081526001602081905260409091205460ff16151514156101cd57600080fd5b683635c9adc5dea0000034146101e257600080fd5b6040516068903480156108fc02916000818181858888f1935050505015801561020f573d6000803e3d6000fd5b505060008054600180820183557f290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563909101805473ffffffffffffffffffffffffffffffffffffffff1916600160a060020a039490941693841790556040805160208082018352838252948452919093529190209051815460ff19169015151790555600a165627a7a723058206d2dc0ce827743c25efa82f99e7830ade39d28e17f4d651573f89e0460a6626a0029`
+// Deprecated: Use XDCXListingMetaData.Bin instead.
+var XDCXListingBin = XDCXListingMetaData.Bin
 
 // DeployXDCXListing deploys a new Ethereum contract, binding an instance of XDCXListing to it.
 func DeployXDCXListing(auth *bind.TransactOpts, backend bind.ContractBackend) (common.Address, *types.Transaction, *XDCXListing, error) {
-	parsed, err := abi.JSON(strings.NewReader(XDCXListingABI))
+	parsed, err := XDCXListingMetaData.GetAbi()
 	if err != nil {
 		return common.Address{}, nil, nil, err
 	}
-	address, tx, contract, err := bind.DeployContract(auth, parsed, common.FromHex(XDCXListingBin), backend)
+	if parsed == nil {
+		return common.Address{}, nil, nil, errors.New("GetABI returned nil")
+	}
+	// Library addresses are substituted into a local copy of the bytecode: the
+	// package-level XDCXListingBin is shared by every caller, so substituting in
+	// it would leave any later deployment linked to the addresses substituted
+	// by an earlier one.
+	linkedBin := XDCXListingBin
+
+	address, tx, contract, err := bind.DeployContract(auth, *parsed, common.FromHex(linkedBin), backend)
 	if err != nil {
 		return common.Address{}, nil, nil, err
 	}
@@ -128,11 +166,11 @@ func NewXDCXListingFilterer(address common.Address, filterer bind.ContractFilter
 
 // bindXDCXListing binds a generic wrapper to an already deployed contract.
 func bindXDCXListing(address common.Address, caller bind.ContractCaller, transactor bind.ContractTransactor, filterer bind.ContractFilterer) (*bind.BoundContract, error) {
-	parsed, err := abi.JSON(strings.NewReader(XDCXListingABI))
+	parsed, err := XDCXListingMetaData.GetAbi()
 	if err != nil {
 		return nil, err
 	}
-	return bind.NewBoundContract(address, parsed, caller, transactor, filterer), nil
+	return bind.NewBoundContract(address, *parsed, caller, transactor, filterer), nil
 }
 
 // Call invokes the (constant) contract method with params as input values and
@@ -175,77 +213,83 @@ func (_XDCXListing *XDCXListingTransactorRaw) Transact(opts *bind.TransactOpts, 
 
 // GetTokenStatus is a free data retrieval call binding the contract method 0xa3ff31b5.
 //
-// Solidity: function getTokenStatus(token address) constant returns(bool)
+// Solidity: function getTokenStatus(address token) view returns(bool)
 func (_XDCXListing *XDCXListingCaller) GetTokenStatus(opts *bind.CallOpts, token common.Address) (bool, error) {
-	var (
-		ret0 = new(bool)
-	)
-	out := &[]interface{}{
-		ret0,
+	var out []interface{}
+	err := _XDCXListing.contract.Call(opts, &out, "getTokenStatus", token)
+
+	if err != nil {
+		return *new(bool), err
 	}
-	err := _XDCXListing.contract.Call(opts, out, "getTokenStatus", token)
-	return *ret0, err
+
+	out0 := *abi.ConvertType(out[0], new(bool)).(*bool)
+
+	return out0, err
+
 }
 
 // GetTokenStatus is a free data retrieval call binding the contract method 0xa3ff31b5.
 //
-// Solidity: function getTokenStatus(token address) constant returns(bool)
+// Solidity: function getTokenStatus(address token) view returns(bool)
 func (_XDCXListing *XDCXListingSession) GetTokenStatus(token common.Address) (bool, error) {
 	return _XDCXListing.Contract.GetTokenStatus(&_XDCXListing.CallOpts, token)
 }
 
 // GetTokenStatus is a free data retrieval call binding the contract method 0xa3ff31b5.
 //
-// Solidity: function getTokenStatus(token address) constant returns(bool)
+// Solidity: function getTokenStatus(address token) view returns(bool)
 func (_XDCXListing *XDCXListingCallerSession) GetTokenStatus(token common.Address) (bool, error) {
 	return _XDCXListing.Contract.GetTokenStatus(&_XDCXListing.CallOpts, token)
 }
 
 // Tokens is a free data retrieval call binding the contract method 0x9d63848a.
 //
-// Solidity: function tokens() constant returns(address[])
+// Solidity: function tokens() view returns(address[])
 func (_XDCXListing *XDCXListingCaller) Tokens(opts *bind.CallOpts) ([]common.Address, error) {
-	var (
-		ret0 = new([]common.Address)
-	)
-	out := &[]interface{}{
-		ret0,
+	var out []interface{}
+	err := _XDCXListing.contract.Call(opts, &out, "tokens")
+
+	if err != nil {
+		return *new([]common.Address), err
 	}
-	err := _XDCXListing.contract.Call(opts, out, "tokens")
-	return *ret0, err
+
+	out0 := *abi.ConvertType(out[0], new([]common.Address)).(*[]common.Address)
+
+	return out0, err
+
 }
 
 // Tokens is a free data retrieval call binding the contract method 0x9d63848a.
 //
-// Solidity: function tokens() constant returns(address[])
+// Solidity: function tokens() view returns(address[])
 func (_XDCXListing *XDCXListingSession) Tokens() ([]common.Address, error) {
 	return _XDCXListing.Contract.Tokens(&_XDCXListing.CallOpts)
 }
 
 // Tokens is a free data retrieval call binding the contract method 0x9d63848a.
 //
-// Solidity: function tokens() constant returns(address[])
+// Solidity: function tokens() view returns(address[])
 func (_XDCXListing *XDCXListingCallerSession) Tokens() ([]common.Address, error) {
 	return _XDCXListing.Contract.Tokens(&_XDCXListing.CallOpts)
 }
 
 // Apply is a paid mutator transaction binding the contract method 0xc6b32f34.
 //
-// Solidity: function apply(token address) returns()
+// Solidity: function apply(address token) payable returns()
 func (_XDCXListing *XDCXListingTransactor) Apply(opts *bind.TransactOpts, token common.Address) (*types.Transaction, error) {
 	return _XDCXListing.contract.Transact(opts, "apply", token)
 }
 
 // Apply is a paid mutator transaction binding the contract method 0xc6b32f34.
 //
-// Solidity: function apply(token address) returns()
+// Solidity: function apply(address token) payable returns()
 func (_XDCXListing *XDCXListingSession) Apply(token common.Address) (*types.Transaction, error) {
 	return _XDCXListing.Contract.Apply(&_XDCXListing.TransactOpts, token)
 }
 
 // Apply is a paid mutator transaction binding the contract method 0xc6b32f34.
 //
-// Solidity: function apply(token address) returns()
+// Solidity: function apply(address token) payable returns()
 func (_XDCXListing *XDCXListingTransactorSession) Apply(token common.Address) (*types.Transaction, error) {
 	return _XDCXListing.Contract.Apply(&_XDCXListing.TransactOpts, token)
 }

@@ -62,12 +62,6 @@ const (
 	messageSizeLimit = 15 * 1024 * 1024
 )
 
-type consensusEngine interface {
-	// SubscribeForensicsEvent should return an event subscription of
-	// ForensicsEvent and send events to the given channel.
-	SubscribeForensicsEvent(chan<- types.ForensicsEvent) event.Subscription
-}
-
 // backend encompasses the bare-minimum functionality needed for ethstats reporting
 type backend interface {
 	SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription
@@ -245,19 +239,11 @@ func (s *Service) Stop() error {
 // loop keeps trying to connect to the netstats server, reporting chain events
 // until termination.
 func (s *Service) loop(chainHeadCh chan core.ChainHeadEvent, txEventCh chan core.NewTxsEvent) {
-	// Forensics events
-	forensicsEventCh := make(chan types.ForensicsEvent)
-	if engine, ok := s.engine.(consensusEngine); ok && engine != nil {
-		forensicsSub := engine.SubscribeForensicsEvent(forensicsEventCh)
-		defer forensicsSub.Unsubscribe()
-	}
-
 	// Start a goroutine that exhausts the subscriptions to avoid events piling up
 	var (
-		quitCh      = make(chan struct{})
-		headCh      = make(chan *types.Block, 1)
-		txCh        = make(chan struct{}, 1)
-		forensicsCh = make(chan *types.ForensicProof, 1)
+		quitCh = make(chan struct{})
+		headCh = make(chan *types.Block, 1)
+		txCh   = make(chan struct{}, 1)
 	)
 	go func() {
 		var lastTx mclock.AbsTime
@@ -265,11 +251,6 @@ func (s *Service) loop(chainHeadCh chan core.ChainHeadEvent, txEventCh chan core
 	HandleLoop:
 		for {
 			select {
-			case forensics := <-forensicsEventCh:
-				select {
-				case forensicsCh <- forensics.ForensicsProof:
-				default:
-				}
 			// Notify of chain head events, but drop if too frequent
 			case head := <-chainHeadCh:
 				select {
@@ -381,10 +362,6 @@ func (s *Service) loop(chainHeadCh chan core.ChainHeadEvent, txEventCh chan core
 				case <-txCh:
 					if err = s.reportPending(conn); err != nil {
 						log.Warn("Transaction stats report failed", "err", err)
-					}
-				case forensicsReport := <-forensicsCh:
-					if err = s.reportForensics(conn, forensicsReport); err != nil {
-						log.Error("Forensics proof stats report failed", "err", err)
 					}
 				}
 			}
@@ -683,20 +660,6 @@ func (s *Service) reportBlock(conn *connWrapper, block *types.Block) error {
 		"emit": {"block", stats},
 	}
 
-	return conn.WriteJSON(report)
-}
-
-// reportForensics forward the forensics repors it to the stats server.
-func (s *Service) reportForensics(conn *connWrapper, forensicsProof *types.ForensicProof) error {
-	log.Info("Sending Forensics report to ethstats", "ForensicsType", forensicsProof.ForensicsType)
-
-	stats := map[string]interface{}{
-		"id":             s.node,
-		"forensicsProof": forensicsProof,
-	}
-	report := map[string][]interface{}{
-		"emit": {"forensics", stats},
-	}
 	return conn.WriteJSON(report)
 }
 

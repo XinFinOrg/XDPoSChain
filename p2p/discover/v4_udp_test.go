@@ -74,6 +74,10 @@ func newUDPTest(t *testing.T) *udpTest {
 	test.udp, _ = ListenV4(test.pipe, ln, Config{
 		PrivateKey: test.localkey,
 		Log:        testlog.Logger(t, log.LvlTrace),
+		// Same as the v5 harness (#34109): keep background revalidation pings
+		// out of the test pipe. Unlike upstream, the v4 tests here run long
+		// enough for the default 10s interval to fire.
+		PingInterval: 1000 * time.Hour,
 	})
 	test.table = test.udp.tab
 	// Wait for initial refresh so the table doesn't send unexpected findnode.

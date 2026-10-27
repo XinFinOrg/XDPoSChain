@@ -363,6 +363,11 @@ func TestWorkerCommitTransactionsSkipsInvalidSpecialApplyTx(t *testing.T) {
 func TestWorkerCheckPreCommitXDPoSMismatch(t *testing.T) {
 	config := &params.ChainConfig{
 		ChainID:                big.NewInt(1),
+		HomesteadBlock:         big.NewInt(0),
+		EIP150Block:            big.NewInt(0),
+		EIP155Block:            big.NewInt(0),
+		EIP158Block:            big.NewInt(0),
+		ByzantiumBlock:         big.NewInt(0),
 		TIPTRC21FeeBlock:       big.NewInt(0),
 		Gas50xBlock:            big.NewInt(0),
 		TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
@@ -370,6 +375,8 @@ func TestWorkerCheckPreCommitXDPoSMismatch(t *testing.T) {
 		RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
 		LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
 		XDPoS: &params.XDPoSConfig{
+			Epoch:                900,
+			Gap:                  450,
 			FoundationWalletAddr: common.HexToAddress("0x0000000000000000000000000000000000000068"),
 			MaxMasternodesV2:     1, // required to avoid missing fork switch error
 			V2: &params.V2{

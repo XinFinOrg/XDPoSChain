@@ -121,6 +121,12 @@ var generatedChainConfigBuiltInBackfillForkBlockFields = []chainConfigBigIntFiel
 		bind:    func(c *ChainConfig) **big.Int { return &c.OsakaBlock },
 	},
 	{
+		name:    "AmsterdamBlock",
+		jsonKey: "amsterdamBlock",
+		get:     func(c *ChainConfig) *big.Int { return c.AmsterdamBlock },
+		bind:    func(c *ChainConfig) **big.Int { return &c.AmsterdamBlock },
+	},
+	{
 		name:           "TIP2019Block",
 		jsonKey:        "tip2019Block",
 		customMigrated: true,
@@ -237,11 +243,11 @@ var generatedChainConfigBuiltInBackfillForkBlockFields = []chainConfigBigIntFiel
 		bind:        func(c *ChainConfig) **big.Int { return &c.DynamicGasLimitBlock },
 	},
 	{
-		name:        "TIPUpgradeRewardBlock",
-		jsonKey:     "tipUpgradeRewardBlock",
+		name:        "TIPFixedRewardBlock",
+		jsonKey:     "tipFixedRewardBlock",
 		xdcSpecific: true,
-		get:         func(c *ChainConfig) *big.Int { return c.TIPUpgradeRewardBlock },
-		bind:        func(c *ChainConfig) **big.Int { return &c.TIPUpgradeRewardBlock },
+		get:         func(c *ChainConfig) *big.Int { return c.TIPFixedRewardBlock },
+		bind:        func(c *ChainConfig) **big.Int { return &c.TIPFixedRewardBlock },
 	},
 	{
 		name:        "TIPUpgradePenaltyBlock",
@@ -257,15 +263,26 @@ var generatedChainConfigBuiltInBackfillForkBlockFields = []chainConfigBigIntFiel
 		get:         func(c *ChainConfig) *big.Int { return c.TIPEpochHalvingBlock },
 		bind:        func(c *ChainConfig) **big.Int { return &c.TIPEpochHalvingBlock },
 	},
+	{
+		name:        "TIPProportionalRewardBlock",
+		jsonKey:     "tipProportionalRewardBlock",
+		xdcSpecific: true,
+		get:         func(c *ChainConfig) *big.Int { return c.TIPProportionalRewardBlock },
+		bind:        func(c *ChainConfig) **big.Int { return &c.TIPProportionalRewardBlock },
+	},
 }
 
 var generatedChainConfigForkOrderFieldDefs = []struct {
 	name     string
 	optional func(*ChainConfig) bool
+	standard bool
+	required bool
 }{
 	{
 		name:     "HomesteadBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
 	},
 	{
 		name:     "TIP2019Block",
@@ -278,30 +295,26 @@ var generatedChainConfigForkOrderFieldDefs = []struct {
 	{
 		name:     "EIP150Block",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
 	},
 	{
 		name:     "EIP155Block",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
 	},
 	{
 		name:     "EIP158Block",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
 	},
 	{
 		name:     "ByzantiumBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
-	},
-	{
-		name:     "ConstantinopleBlock",
-		optional: alwaysOptionalChainConfigForkOrderField,
-	},
-	{
-		name:     "PetersburgBlock",
-		optional: alwaysOptionalChainConfigForkOrderField,
-	},
-	{
-		name:     "IstanbulBlock",
-		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
 	},
 	{
 		name:     "TIPSigningBlock",
@@ -336,24 +349,45 @@ var generatedChainConfigForkOrderFieldDefs = []struct {
 		optional: alwaysOptionalChainConfigForkOrderField,
 	},
 	{
+		name:     "ConstantinopleBlock",
+		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+	},
+	{
+		name:     "PetersburgBlock",
+		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
+	},
+	{
+		name:     "IstanbulBlock",
+		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
+	},
+	{
 		name:     "TIPTRC21FeeBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
 	},
 	{
 		name:     "BerlinBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
 	},
 	{
 		name:     "LondonBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
 	},
 	{
 		name:     "MergeBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
 	},
 	{
 		name:     "ShanghaiBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
 	},
 	{
 		name:     "TIPXDCXMinerDisableBlock",
@@ -366,17 +400,20 @@ var generatedChainConfigForkOrderFieldDefs = []struct {
 	{
 		name:     "EIP1559Block",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
 	},
 	{
 		name:     "CancunBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
 	},
 	{
 		name:     "DynamicGasLimitBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
 	},
 	{
-		name:     "TIPUpgradeRewardBlock",
+		name:     "TIPFixedRewardBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
 	},
 	{
@@ -386,13 +423,27 @@ var generatedChainConfigForkOrderFieldDefs = []struct {
 	{
 		name:     "PragueBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
 	},
 	{
 		name:     "OsakaBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
+	},
+	{
+		name:     "AmsterdamBlock",
+		optional: alwaysOptionalChainConfigForkOrderField,
+		standard: true,
+		required: true,
 	},
 	{
 		name:     "TIPEpochHalvingBlock",
+		optional: alwaysOptionalChainConfigForkOrderField,
+	},
+	{
+		name:     "TIPProportionalRewardBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
 	},
 }

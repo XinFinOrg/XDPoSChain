@@ -1,0 +1,241 @@
+// Code generated - DO NOT EDIT.
+// This file is a generated binding and any manual changes will be lost.
+
+package bindtest
+
+import (
+	"context"
+	"errors"
+	"math/big"
+	"strings"
+	"time"
+
+	ethereum "github.com/XinFinOrg/XDPoSChain"
+	"github.com/XinFinOrg/XDPoSChain/accounts/abi"
+	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
+	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/event"
+)
+
+// Reference imports to suppress errors if they are not otherwise used.
+var (
+	_ = errors.New
+	_ = big.NewInt
+	_ = strings.NewReader
+	_ = ethereum.ErrNotFound
+	_ = bind.Bind
+	_ = common.Big1
+	_ = types.BloomLookup
+	_ = event.NewSubscription
+	_ = abi.ConvertType
+	_ = time.Tick
+	_ = context.Background
+)
+
+// NewErrorsMetaData contains all meta data concerning the NewErrors contract.
+var NewErrorsMetaData = &bind.MetaData{
+	ABI: "[{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"MyError\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"MyError1\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"name\":\"MyError2\",\"type\":\"error\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"a\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"b\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"c\",\"type\":\"uint256\"}],\"name\":\"MyError3\",\"type\":\"error\"},{\"inputs\":[],\"name\":\"Error\",\"outputs\":[],\"stateMutability\":\"pure\",\"type\":\"function\"}]",
+	Bin: "0x6080604052348015600f57600080fd5b5060998061001e6000396000f3fe6080604052348015600f57600080fd5b506004361060285760003560e01c8063726c638214602d575b600080fd5b60336035565b005b60405163024876cd60e61b815260016004820152600260248201526003604482015260640160405180910390fdfea264697066735822122093f786a1bc60216540cd999fbb4a6109e0fef20abcff6e9107fb2817ca968f3c64736f6c63430008070033",
+}
+
+// NewErrorsABI is the input ABI used to generate the binding from.
+// Deprecated: Use NewErrorsMetaData.ABI instead.
+var NewErrorsABI = NewErrorsMetaData.ABI
+
+// NewErrorsBin is the compiled bytecode used for deploying new contracts.
+// Deprecated: Use NewErrorsMetaData.Bin instead.
+var NewErrorsBin = NewErrorsMetaData.Bin
+
+// DeployNewErrors deploys a new Ethereum contract, binding an instance of NewErrors to it.
+func DeployNewErrors(auth *bind.TransactOpts, backend bind.ContractBackend) (common.Address, *types.Transaction, *NewErrors, error) {
+	parsed, err := NewErrorsMetaData.GetAbi()
+	if err != nil {
+		return common.Address{}, nil, nil, err
+	}
+	if parsed == nil {
+		return common.Address{}, nil, nil, errors.New("GetABI returned nil")
+	}
+	// Library addresses are substituted into a local copy of the bytecode: the
+	// package-level NewErrorsBin is shared by every caller, so substituting in
+	// it would leave any later deployment linked to the addresses substituted
+	// by an earlier one.
+	linkedBin := NewErrorsBin
+
+	address, tx, contract, err := bind.DeployContract(auth, *parsed, common.FromHex(linkedBin), backend)
+	if err != nil {
+		return common.Address{}, nil, nil, err
+	}
+	return address, tx, &NewErrors{NewErrorsCaller: NewErrorsCaller{contract: contract}, NewErrorsTransactor: NewErrorsTransactor{contract: contract}, NewErrorsFilterer: NewErrorsFilterer{contract: contract}}, nil
+}
+
+// NewErrors is an auto generated Go binding around an Ethereum contract.
+type NewErrors struct {
+	NewErrorsCaller     // Read-only binding to the contract
+	NewErrorsTransactor // Write-only binding to the contract
+	NewErrorsFilterer   // Log filterer for contract events
+}
+
+// NewErrorsCaller is an auto generated read-only Go binding around an Ethereum contract.
+type NewErrorsCaller struct {
+	contract *bind.BoundContract // Generic contract wrapper for the low level calls
+}
+
+// NewErrorsTransactor is an auto generated write-only Go binding around an Ethereum contract.
+type NewErrorsTransactor struct {
+	contract *bind.BoundContract // Generic contract wrapper for the low level calls
+}
+
+// NewErrorsFilterer is an auto generated log filtering Go binding around an Ethereum contract events.
+type NewErrorsFilterer struct {
+	contract *bind.BoundContract // Generic contract wrapper for the low level calls
+}
+
+// NewErrorsSession is an auto generated Go binding around an Ethereum contract,
+// with pre-set call and transact options.
+type NewErrorsSession struct {
+	Contract     *NewErrors        // Generic contract binding to set the session for
+	CallOpts     bind.CallOpts     // Call options to use throughout this session
+	TransactOpts bind.TransactOpts // Transaction auth options to use throughout this session
+}
+
+// NewErrorsCallerSession is an auto generated read-only Go binding around an Ethereum contract,
+// with pre-set call options.
+type NewErrorsCallerSession struct {
+	Contract *NewErrorsCaller // Generic contract caller binding to set the session for
+	CallOpts bind.CallOpts    // Call options to use throughout this session
+}
+
+// NewErrorsTransactorSession is an auto generated write-only Go binding around an Ethereum contract,
+// with pre-set transact options.
+type NewErrorsTransactorSession struct {
+	Contract     *NewErrorsTransactor // Generic contract transactor binding to set the session for
+	TransactOpts bind.TransactOpts    // Transaction auth options to use throughout this session
+}
+
+// NewErrorsRaw is an auto generated low-level Go binding around an Ethereum contract.
+type NewErrorsRaw struct {
+	Contract *NewErrors // Generic contract binding to access the raw methods on
+}
+
+// NewErrorsCallerRaw is an auto generated low-level read-only Go binding around an Ethereum contract.
+type NewErrorsCallerRaw struct {
+	Contract *NewErrorsCaller // Generic read-only contract binding to access the raw methods on
+}
+
+// NewErrorsTransactorRaw is an auto generated low-level write-only Go binding around an Ethereum contract.
+type NewErrorsTransactorRaw struct {
+	Contract *NewErrorsTransactor // Generic write-only contract binding to access the raw methods on
+}
+
+// NewNewErrors creates a new instance of NewErrors, bound to a specific deployed contract.
+func NewNewErrors(address common.Address, backend bind.ContractBackend) (*NewErrors, error) {
+	contract, err := bindNewErrors(address, backend, backend, backend)
+	if err != nil {
+		return nil, err
+	}
+	return &NewErrors{NewErrorsCaller: NewErrorsCaller{contract: contract}, NewErrorsTransactor: NewErrorsTransactor{contract: contract}, NewErrorsFilterer: NewErrorsFilterer{contract: contract}}, nil
+}
+
+// NewNewErrorsCaller creates a new read-only instance of NewErrors, bound to a specific deployed contract.
+func NewNewErrorsCaller(address common.Address, caller bind.ContractCaller) (*NewErrorsCaller, error) {
+	contract, err := bindNewErrors(address, caller, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &NewErrorsCaller{contract: contract}, nil
+}
+
+// NewNewErrorsTransactor creates a new write-only instance of NewErrors, bound to a specific deployed contract.
+func NewNewErrorsTransactor(address common.Address, transactor bind.ContractTransactor) (*NewErrorsTransactor, error) {
+	contract, err := bindNewErrors(address, nil, transactor, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &NewErrorsTransactor{contract: contract}, nil
+}
+
+// NewNewErrorsFilterer creates a new log filterer instance of NewErrors, bound to a specific deployed contract.
+func NewNewErrorsFilterer(address common.Address, filterer bind.ContractFilterer) (*NewErrorsFilterer, error) {
+	contract, err := bindNewErrors(address, nil, nil, filterer)
+	if err != nil {
+		return nil, err
+	}
+	return &NewErrorsFilterer{contract: contract}, nil
+}
+
+// bindNewErrors binds a generic wrapper to an already deployed contract.
+func bindNewErrors(address common.Address, caller bind.ContractCaller, transactor bind.ContractTransactor, filterer bind.ContractFilterer) (*bind.BoundContract, error) {
+	parsed, err := NewErrorsMetaData.GetAbi()
+	if err != nil {
+		return nil, err
+	}
+	return bind.NewBoundContract(address, *parsed, caller, transactor, filterer), nil
+}
+
+// Call invokes the (constant) contract method with params as input values and
+// sets the output to result. The result type might be a single field for simple
+// returns, a slice of interfaces for anonymous returns and a struct for named
+// returns.
+func (_NewErrors *NewErrorsRaw) Call(opts *bind.CallOpts, result *[]interface{}, method string, params ...interface{}) error {
+	return _NewErrors.Contract.NewErrorsCaller.contract.Call(opts, result, method, params...)
+}
+
+// Transfer initiates a plain transaction to move funds to the contract, calling
+// its default method if one is available.
+func (_NewErrors *NewErrorsRaw) Transfer(opts *bind.TransactOpts) (*types.Transaction, error) {
+	return _NewErrors.Contract.NewErrorsTransactor.contract.Transfer(opts)
+}
+
+// Transact invokes the (paid) contract method with params as input values.
+func (_NewErrors *NewErrorsRaw) Transact(opts *bind.TransactOpts, method string, params ...interface{}) (*types.Transaction, error) {
+	return _NewErrors.Contract.NewErrorsTransactor.contract.Transact(opts, method, params...)
+}
+
+// Call invokes the (constant) contract method with params as input values and
+// sets the output to result. The result type might be a single field for simple
+// returns, a slice of interfaces for anonymous returns and a struct for named
+// returns.
+func (_NewErrors *NewErrorsCallerRaw) Call(opts *bind.CallOpts, result *[]interface{}, method string, params ...interface{}) error {
+	return _NewErrors.Contract.contract.Call(opts, result, method, params...)
+}
+
+// Transfer initiates a plain transaction to move funds to the contract, calling
+// its default method if one is available.
+func (_NewErrors *NewErrorsTransactorRaw) Transfer(opts *bind.TransactOpts) (*types.Transaction, error) {
+	return _NewErrors.Contract.contract.Transfer(opts)
+}
+
+// Transact invokes the (paid) contract method with params as input values.
+func (_NewErrors *NewErrorsTransactorRaw) Transact(opts *bind.TransactOpts, method string, params ...interface{}) (*types.Transaction, error) {
+	return _NewErrors.Contract.contract.Transact(opts, method, params...)
+}
+
+// Error is a free data retrieval call binding the contract method 0x726c6382.
+//
+// Solidity: function Error() pure returns()
+func (_NewErrors *NewErrorsCaller) Error(opts *bind.CallOpts) error {
+	var out []interface{}
+	err := _NewErrors.contract.Call(opts, &out, "Error")
+
+	if err != nil {
+		return err
+	}
+
+	return err
+
+}
+
+// Error is a free data retrieval call binding the contract method 0x726c6382.
+//
+// Solidity: function Error() pure returns()
+func (_NewErrors *NewErrorsSession) Error() error {
+	return _NewErrors.Contract.Error(&_NewErrors.CallOpts)
+}
+
+// Error is a free data retrieval call binding the contract method 0x726c6382.
+//
+// Solidity: function Error() pure returns()
+func (_NewErrors *NewErrorsCallerSession) Error() error {
+	return _NewErrors.Contract.Error(&_NewErrors.CallOpts)
+}

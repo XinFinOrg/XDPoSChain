@@ -4,15 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"math/big"
-	"time"
-
-	"github.com/XinFinOrg/XDPoSChain/crypto"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
-)
-
-const (
-	OrderCacheLimit = 10000
 )
 
 var (
@@ -29,15 +22,6 @@ var EmptyHash = common.Hash{}
 var Zero = big.NewInt(0)
 var One = big.NewInt(1)
 
-var EmptyOrderList = orderList{
-	Volume: nil,
-	Root:   EmptyHash,
-}
-var EmptyExchangeOnject = tradingExchangeObject{
-	Nonce:   0,
-	AskRoot: EmptyHash,
-	BidRoot: EmptyHash,
-}
 var EmptyOrder = OrderItem{
 	Quantity: Zero,
 }
@@ -58,15 +42,21 @@ var (
 	}
 )
 
-// tradingExchangeObject is the Ethereum consensus representation of exchanges.
-// These objects are stored in the main orderId trie.
+// orderList is the value stored under each key of the trading state's per-price
+// tries: the volume aggregated at that key plus the merkle root of the trie
+// below it. It backs three levels -- the ask/bid price tries (child keys are
+// orderIds holding per-order quantities), the liquidation price trie (child keys
+// are lendingBook hashes whose values are nested orderLists) and the lending
+// book trie (child keys are tradeIds).
 type orderList struct {
 	Volume *big.Int
 	Root   common.Hash // merkle root of the storage trie
 }
 
-// tradingExchangeObject is the Ethereum consensus representation of exchanges.
-// These objects are stored in the main orderId trie.
+// tradingExchangeObject is the Ethereum consensus representation of one exchange
+// (token pair) in the main trie, keyed by the order book hash. It holds the roots
+// of that exchange's sub-tries: the ask/bid price tries, the orderId-keyed order
+// trie and the liquidation price trie.
 type tradingExchangeObject struct {
 	Nonce                  uint64
 	LastPrice              *big.Int
@@ -115,11 +105,6 @@ type TxMatchBatch struct {
 	TxHash    common.Hash
 }
 
-type MatchingResult struct {
-	Trades  []map[string]string
-	Rejects []*OrderItem
-}
-
 func EncodeTxMatchesBatch(txMatchBatch TxMatchBatch) ([]byte, error) {
 	data, err := json.Marshal(txMatchBatch)
 	if err != nil || data == nil {
@@ -136,25 +121,12 @@ func DecodeTxMatchesBatch(data []byte) (TxMatchBatch, error) {
 	return txMatchResult, nil
 }
 
-// use orderHash instead of orderId
-// because both takerOrders don't have orderId
-func GetOrderHistoryKey(baseToken, quoteToken common.Address, orderHash common.Hash) common.Hash {
-	return crypto.Keccak256Hash(baseToken.Bytes(), quoteToken.Bytes(), orderHash.Bytes())
-}
-
 func (tx TxDataMatch) DecodeOrder() (*OrderItem, error) {
 	order := &OrderItem{}
 	if err := DecodeBytesItem(tx.Order, order); err != nil {
 		return order, err
 	}
 	return order, nil
-}
-
-type OrderHistoryItem struct {
-	TxHash       common.Hash
-	FilledAmount *big.Int
-	Status       string
-	UpdatedAt    time.Time
 }
 
 // ToJSON : log json string
@@ -168,52 +140,14 @@ func ToJSON(object interface{}, args ...string) string {
 	return string(str)
 }
 
-func Mul(x, y *big.Int) *big.Int {
-	return big.NewInt(0).Mul(x, y)
-}
-
-func Div(x, y *big.Int) *big.Int {
-	return big.NewInt(0).Div(x, y)
-}
-
-func Add(x, y *big.Int) *big.Int {
-	return big.NewInt(0).Add(x, y)
-}
-
 func Sub(x, y *big.Int) *big.Int {
 	return big.NewInt(0).Sub(x, y)
-}
-
-func Neg(x *big.Int) *big.Int {
-	return big.NewInt(0).Neg(x)
-}
-
-func ToBigInt(s string) *big.Int {
-	res := big.NewInt(0)
-	res.SetString(s, 10)
-	return res
 }
 
 func CloneBigInt(bigInt *big.Int) *big.Int {
 	return common.CloneBigInt(bigInt)
 }
 
-func Exp(x, y *big.Int) *big.Int {
-	return big.NewInt(0).Exp(x, y, nil)
-}
-
-func Max(a, b *big.Int) *big.Int {
-	if a.Cmp(b) == 1 {
-		return a
-	} else {
-		return b
-	}
-}
-
 func GetTradingOrderBookHash(baseToken common.Address, quoteToken common.Address) common.Hash {
 	return common.BytesToHash(append(baseToken[:16], quoteToken[4:]...))
-}
-
-func GetMatchingResultCacheKey(order *OrderItem) common.Hash {
-	return crypto.Keccak256Hash(order.UserAddress.Bytes(), order.Nonce.Bytes())
 }

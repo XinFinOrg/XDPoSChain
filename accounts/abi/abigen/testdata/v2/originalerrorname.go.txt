@@ -53,6 +53,9 @@ func (c *OriginalErrorName) Instance(backend bind.ContractBackend, addr common.A
 // UnpackError attempts to decode the provided error data using user-defined
 // error definitions.
 func (originalErrorName *OriginalErrorName) UnpackError(raw []byte) (any, error) {
+	if len(raw) < 4 {
+		return nil, errors.New("Unknown error")
+	}
 	if bytes.Equal(raw[:4], originalErrorName.abi.Errors["bad_thing"].ID.Bytes()[:4]) {
 		return originalErrorName.UnpackBadThingError(raw[4:])
 	}

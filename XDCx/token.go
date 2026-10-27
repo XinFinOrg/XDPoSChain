@@ -2,7 +2,6 @@ package XDCx
 
 import (
 	"math/big"
-	"strings"
 
 	"github.com/XinFinOrg/XDPoSChain"
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi"
@@ -13,15 +12,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
-
-// GetTokenAbi return token abi
-func GetTokenAbi() (*abi.ABI, error) {
-	contractABI, err := abi.JSON(strings.NewReader(contract.TRC21ABI))
-	if err != nil {
-		return nil, err
-	}
-	return &contractABI, nil
-}
 
 // RunContract run smart contract
 func RunContract(chain consensus.ChainContext, statedb *state.StateDB, contractAddr common.Address, abi *abi.ABI, method string, args ...interface{}) (interface{}, error) {
@@ -61,7 +51,7 @@ func (XDCx *XDCX) GetTokenDecimal(chain consensus.ChainContext, statedb *state.S
 	defer func() {
 		log.Debug("GetTokenDecimal from ", "relayerSMC", relayerSMC, "tokenAddr", tokenAddr.Hex(), "decimals", decimals)
 	}()
-	contractABI, err := GetTokenAbi()
+	contractABI, err := contract.TRC21MetaData.GetAbi()
 	if err != nil {
 		return nil, err
 	}

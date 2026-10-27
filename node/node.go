@@ -78,7 +78,7 @@ const (
 )
 
 // New creates a new P2P node, ready for protocol registration.
-func New(conf *Config) (*Node, error) {
+func New(conf *Config) (_ *Node, err error) {
 	// Copy config and resolve the datadir so future changes to the current
 	// working directory don't affect the node.
 	confCopy := *conf
@@ -124,6 +124,21 @@ func New(conf *Config) (*Node, error) {
 	if err := node.openDataDir(); err != nil {
 		return nil, err
 	}
+
+	// Release resources acquired by any later initialization step that fails.
+	defer func() {
+		if err != nil {
+			if node.accman != nil {
+				_ = node.accman.Close()
+			}
+			if node.keyDirTemp {
+				if removeErr := os.RemoveAll(node.keyDir); removeErr != nil {
+					node.log.Warn("Failed to remove temporary keystore", "path", node.keyDir, "error", removeErr)
+				}
+			}
+			node.closeDataDir()
+		}
+	}()
 
 	keyDir, isEphem, err := conf.GetKeyStoreDir()
 	if err != nil {

@@ -16,13 +16,12 @@
 
 // This file covers the block level TIPSigning removal from the tracer side. The two paths
 // that return nothing but per-transaction tracer results, traceBlock and traceChain, are
-// knowingly left without a case here: the removal goes through state.StateDB.DeleteAddress,
-// which deletes the account from the trie only and leaves the cached state object readable
-// in the same session (core/state/statedb.go, DeleteAddress -> deleteStateObject), and
-// neither path returns a state root. Nothing they return can therefore tell a replay that
-// ran the removal from one that did not, and a case asserting one of them would either pass
-// on both sides or need a state root the API does not expose. debug_intermediateRoots and
-// eth_simulateV1 both return a root, and they do carry the case for their own entry point.
+// knowingly left without a case here: since state.StateDB.DeleteAddress invalidates the
+// session cache, a contract reading the account would see the removal in-session, so a case
+// could in principle distinguish a replay that ran the removal from one that did not. It is
+// omitted as a deliberate trade-off — #2591 did not add one, and neither path returns a state
+// root to assert on. debug_intermediateRoots and eth_simulateV1 both return a root, and they
+// do carry the case for their own entry point.
 package tracers
 
 import (
@@ -58,14 +57,9 @@ func blockProcessingRoots(t *testing.T, backend *testBackend, config *params.Cha
 	}
 	signer := types.MakeSigner(config, block.Number())
 	evm := vm.NewEVM(core.NewEVMBlockContext(block.Header(), backend.chain, nil), statedb, nil, config, vm.Config{})
-	// Block level pre-execution, mirroring what both debug_intermediateRoots and block
+	// Block level hooks, mirroring what both debug_intermediateRoots and block
 	// processing do before the first transaction.
-	core.ApplyTIPSigningHardFork(config, statedb, block.Number())
-	core.ApplyMulticall3HardFork(config, statedb, block.Number())
-	if config.IsPrague(block.Number()) {
-		// EIP-2935, written after those changes the way block processing does.
-		core.ProcessParentBlockHash(block.ParentHash(), evm)
-	}
+	core.ApplyBlockLevelHooks(block.ParentHash(), evm)
 	feeCapacity := statedb.GetTRC21FeeCapacityFromState()
 	var (
 		usedGas  uint64
@@ -139,6 +133,9 @@ func TestIntermediateRootsMatchesBlockProcessingAtTIPSigningActivation(t *testin
 	config.TIPXDCXBlock = one()
 	config.TIPXDCXLendingBlock = one()
 	config.TIPXDCXCancellationFeeBlock = one()
+	config.ConstantinopleBlock = one()
+	config.PetersburgBlock = one()
+	config.IstanbulBlock = one()
 	config.TIPTRC21FeeBlock = one()
 	config.Gas50xBlock = one()
 	config.BerlinBlock = one()
@@ -149,6 +146,7 @@ func TestIntermediateRootsMatchesBlockProcessingAtTIPSigningActivation(t *testin
 	config.CancunBlock = one()
 	config.PragueBlock = one()
 	config.OsakaBlock = one()
+	config.AmsterdamBlock = one()
 
 	genesis := &core.Genesis{
 		Config: &config,

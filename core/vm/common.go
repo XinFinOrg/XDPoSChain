@@ -27,11 +27,13 @@ import (
 
 // CheckMaxInitCodeSize checks the size of contract initcode against the protocol-defined limit.
 func CheckMaxInitCodeSize(rules *params.Rules, size uint64) error {
-	if rules.IsOsaka {
-		if size > params.MaxInitCodeSizeOsaka {
-			return fmt.Errorf("%w: code size %v limit %v", ErrMaxInitCodeSizeExceeded, size, params.MaxInitCodeSizeOsaka)
+	if rules.IsAmsterdam {
+		if size > params.MaxInitCodeSizeAmsterdam {
+			return fmt.Errorf("%w: code size %v limit %v", ErrMaxInitCodeSizeExceeded, size, params.MaxInitCodeSizeAmsterdam)
 		}
-	} else if rules.IsEIP1559 {
+	} else if rules.IsEIP1559 || rules.IsOsaka {
+		// Osaka keeps this limit even when a chain schedules it without EIP1559,
+		// which the fork order permits, so naming Osaka here is not redundant.
 		if size > params.MaxInitCodeSize {
 			return fmt.Errorf("%w: code size %v limit %v", ErrMaxInitCodeSizeExceeded, size, params.MaxInitCodeSize)
 		}
@@ -42,11 +44,13 @@ func CheckMaxInitCodeSize(rules *params.Rules, size uint64) error {
 
 // CheckMaxCodeSize checks the size of contract code against the protocol-defined limit.
 func CheckMaxCodeSize(rules *params.Rules, size uint64) error {
-	if rules.IsOsaka {
-		if size > params.MaxCodeSizeOsaka {
-			return fmt.Errorf("%w: code size %v limit %v", ErrMaxCodeSizeExceeded, size, params.MaxCodeSizeOsaka)
+	if rules.IsAmsterdam {
+		if size > params.MaxCodeSizeAmsterdam {
+			return fmt.Errorf("%w: code size %v limit %v", ErrMaxCodeSizeExceeded, size, params.MaxCodeSizeAmsterdam)
 		}
-	} else if rules.IsEIP158 {
+	} else if rules.IsEIP158 || rules.IsOsaka {
+		// Osaka keeps this limit even when a chain schedules it without EIP158,
+		// which the fork order permits, so naming Osaka here is not redundant.
 		if size > params.MaxCodeSize {
 			return fmt.Errorf("%w: code size %v limit %v", ErrMaxCodeSizeExceeded, size, params.MaxCodeSize)
 		}

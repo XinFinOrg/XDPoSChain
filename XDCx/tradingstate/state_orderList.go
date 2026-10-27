@@ -27,7 +27,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
-// stateObject represents an Ethereum orderId which is being modified.
+// stateObject represents a price level's order list which is being modified.
 //
 // The usage pattern is as follows:
 // First you need to obtain a state object.

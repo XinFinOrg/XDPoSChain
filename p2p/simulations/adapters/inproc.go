@@ -169,6 +169,12 @@ type SimNode struct {
 	running      map[string]node.Lifecycle
 	client       *rpc.Client
 	registerOnce sync.Once
+
+	// startMu guards the startup sequence. The protocol list is appended by
+	// node.RegisterProtocols from the service constructors, and the p2p
+	// server fills in its local node record and listen address while it
+	// starts, so a concurrent NodeInfo has to wait for the startup to finish.
+	startMu sync.RWMutex
 }
 
 // Close closes the underlaying node.Node to release
@@ -239,6 +245,11 @@ func (sn *SimNode) Snapshots() (map[string][]byte, error) {
 
 // Start registers the services and starts the underlying devp2p node
 func (sn *SimNode) Start(snapshots map[string][]byte) error {
+	// Hold the startup lock for the whole sequence so that a concurrent
+	// NodeInfo never observes a half-initialised p2p server.
+	sn.startMu.Lock()
+	defer sn.startMu.Unlock()
+
 	// ensure we only register the services once in the case of the node
 	// being stopped and then started again
 	var regErr error
@@ -339,6 +350,11 @@ func (sn *SimNode) SubscribeEvents(ch chan *p2p.PeerEvent) event.Subscription {
 
 // NodeInfo returns information about the node
 func (sn *SimNode) NodeInfo() *p2p.NodeInfo {
+	// Wait for a startup in flight, the p2p server is only fully populated
+	// once Start returns.
+	sn.startMu.RLock()
+	defer sn.startMu.RUnlock()
+
 	server := sn.Server()
 	if server == nil {
 		return &p2p.NodeInfo{

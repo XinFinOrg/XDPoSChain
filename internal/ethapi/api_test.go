@@ -32,6 +32,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
@@ -860,7 +861,6 @@ func TestCall(t *testing.T) {
 	apiInvalidOverride := NewBlockChainAPI(backendInvalidOverride, nil)
 	_, err = apiInvalidOverride.Call(context.Background(), TransactionArgs{To: &to}, nil, &invalidOverrides, nil)
 	require.ErrorContains(t, err, "has both 'state' and 'stateDiff'")
-
 }
 
 // TestSimulateV1 tests simulate v 1.
@@ -1059,11 +1059,9 @@ func TestSimulateV1(t *testing.T) {
 				},
 			},
 			Calls: []TransactionArgs{{
-				From:                 &contractSender,
-				To:                   &recipient,
-				Nonce:                &nonceOne,
-				MaxFeePerGas:         (*hexutil.Big)(big.NewInt(2)),
-				MaxPriorityFeePerGas: (*hexutil.Big)(big.NewInt(1)),
+				From:  &contractSender,
+				To:    &recipient,
+				Nonce: &nonceOne,
 			}},
 		}},
 	}, nil)
@@ -1421,6 +1419,13 @@ func TestSimulateV1Multicall3StateOverride(t *testing.T) {
 		require.ErrorAs(t, err, &invalidReqErr, tc.name)
 		require.Contains(t, invalidReqErr.message, "Multicall3", tc.name)
 	}
+	// A move onto the account stays allowed: the install is a state write the move does not
+	// undo. The move is issued on the precompile's address, so the guard looks at the target.
+	movedToMulticall3 := params.Multicall3Address
+	require.NoError(t, simulate(t, override.StateOverride{
+		common.BytesToAddress([]byte{1}): {MovePrecompileTo: &movedToMulticall3},
+	}), "a precompile moved onto the Multicall3 account stays overridable")
+
 	// The install leaves the balance and the storage of the account alone, so they stay
 	// overridable, and so does every account it does not own.
 	require.NoError(t, simulate(t, override.StateOverride{
@@ -5092,6 +5097,41 @@ func TestFillTransactionDynamicFeeExplicit(t *testing.T) {
 	require.Equal(t, accessList, tx2.AccessList())
 }
 
+// TestFillTransactionPreservesAccessListWithGasPrice checks that an explicit access list
+// survives transaction construction with gasPrice, including the returned raw transaction.
+func TestFillTransactionPreservesAccessListWithGasPrice(t *testing.T) {
+	t.Parallel()
+
+	backend := newBackendMock()
+	api := NewTransactionAPI(backend, new(AddrLocker))
+
+	from := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	to := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	gas, nonce := hexutil.Uint64(60000), hexutil.Uint64(7)
+	gasPrice := big.NewInt(1000000000)
+	accessList := types.AccessList{{Address: to, StorageKeys: []common.Hash{{0x01}}}}
+
+	res, err := api.FillTransaction(context.Background(), TransactionArgs{
+		From:       &from,
+		To:         &to,
+		Gas:        &gas,
+		Nonce:      &nonce,
+		GasPrice:   (*hexutil.Big)(gasPrice),
+		AccessList: &accessList,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, res.Tx)
+	require.EqualValues(t, types.AccessListTxType, res.Tx.Type())
+	require.Equal(t, gasPrice, res.Tx.GasPrice())
+	require.Equal(t, accessList, res.Tx.AccessList())
+
+	var tx2 types.Transaction
+	require.NoError(t, tx2.UnmarshalBinary(res.Raw))
+	require.EqualValues(t, types.AccessListTxType, tx2.Type())
+	require.Equal(t, gasPrice, tx2.GasPrice())
+	require.Equal(t, accessList, tx2.AccessList())
+}
+
 // TestFillTransactionSetCodeBasic tests fill transaction set code basic.
 func TestFillTransactionSetCodeBasic(t *testing.T) {
 	t.Parallel()
@@ -5853,6 +5893,216 @@ func TestCreateAccessListWithoutTRC21Issuer(t *testing.T) {
 	require.NotNil(t, result)
 	require.NotNil(t, result.Accesslist)
 	require.Empty(t, result.Error)
+}
+
+// TestCreateAccessListBeforeEIP1559 checks a block that has Berlin but not
+// EIP-1559. The list the tracer produces must not be attached there, otherwise
+// the state transition rejects the call as a type-1 transaction, and its
+// EIP-2930 intrinsic cost must not be charged either.
+func TestCreateAccessListBeforeEIP1559(t *testing.T) {
+	t.Parallel()
+
+	var (
+		from     = common.HexToAddress("0x1111111111111111111111111111111111111111")
+		to       = common.HexToAddress("0x2222222222222222222222222222222222222222")
+		contract = common.HexToAddress("0x3333333333333333333333333333333333333333")
+		code     = hexutil.MustDecode("0x60005400") // PUSH1 0, SLOAD, STOP
+		gas      = hexutil.Uint64(100000)
+	)
+
+	backendCfg := newBackendMock()
+	config := params.TestChainConfig.Clone()
+	config.ChainID = big.NewInt(1338)
+	config.EIP1559Block = big.NewInt(1000)
+	config.CancunBlock = big.NewInt(1000)
+	config.PragueBlock = big.NewInt(1000)
+	config.OsakaBlock = big.NewInt(1000)
+	config.AmsterdamBlock = big.NewInt(1000)
+	backendCfg.config = config
+
+	genesis := &core.Genesis{
+		Config: backendCfg.config,
+		Alloc: types.GenesisAlloc{
+			from:     {Balance: big.NewInt(params.Ether)},
+			to:       {Balance: big.NewInt(params.Ether)},
+			contract: {Code: code},
+		},
+	}
+	db := rawdb.NewMemoryDatabase()
+	block := genesis.MustCommit(db)
+	stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+	require.NoError(t, err)
+
+	backend := &accessListStateOverrideBackendMock{
+		createAccessListBackendMock: &createAccessListBackendMock{
+			estimateBackendMock: &estimateBackendMock{
+				backendMock: backendCfg,
+				stateDB:     stateDB,
+				header:      block.Header(),
+				engine:      ethash.NewFaker(),
+			},
+			block: block,
+		},
+		xdcx: &XDCx.XDCX{StateCache: tradingstate.NewDatabase(rawdb.NewMemoryDatabase())},
+	}
+	api := NewBlockChainAPI(backend, nil)
+	latest := rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber)
+
+	result, err := api.CreateAccessList(context.Background(), TransactionArgs{
+		From:     &from,
+		To:       &to,
+		Gas:      &gas,
+		GasPrice: (*hexutil.Big)(big.NewInt(1)),
+	}, &latest, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Accesslist)
+	require.Empty(t, result.Error)
+	require.Empty(t, *result.Accesslist)
+
+	// The computed list must be returned but not attached to the message. If it
+	// were attached, the call would be rejected as a type-1 transaction and the
+	// EIP-2930 intrinsic cost would be charged as well. EIP-2929 starts with
+	// EIP-1559 here, so SLOAD still costs 800: 21000 + 3 + 800 is the whole
+	// bill, without the 2400 + 1900 the list would add.
+	result, err = api.CreateAccessList(context.Background(), TransactionArgs{
+		From:     &from,
+		To:       &contract,
+		Gas:      &gas,
+		GasPrice: (*hexutil.Big)(big.NewInt(1)),
+	}, &latest, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Empty(t, result.Error)
+	require.Len(t, *result.Accesslist, 1)
+	require.Equal(t, contract, (*result.Accesslist)[0].Address)
+	require.Len(t, (*result.Accesslist)[0].StorageKeys, 1)
+	require.Equal(t, hexutil.Uint64(21803), result.GasUsed)
+}
+
+// TestCreateAccessListBeforeEIP1559WithoutFeeFields checks a block that has no
+// base fee while the chain head is already past EIP-1559. The fee defaults must
+// come from the target block: deriving them from the head fills the 1559 fields
+// and the state transition then rejects the call before the fork.
+func TestCreateAccessListBeforeEIP1559WithoutFeeFields(t *testing.T) {
+	t.Parallel()
+
+	var (
+		from     = common.HexToAddress("0x1111111111111111111111111111111111111111")
+		contract = common.HexToAddress("0x3333333333333333333333333333333333333333")
+		code     = hexutil.MustDecode("0x60005400") // PUSH1 0, SLOAD, STOP
+		gas      = hexutil.Uint64(100000)
+	)
+
+	backendCfg := newBackendMock() // chain head number 1100, past EIP-1559 at 1000
+	config := params.TestChainConfig.Clone()
+	config.ChainID = big.NewInt(1338)
+	config.EIP1559Block = big.NewInt(1000)
+	config.CancunBlock = big.NewInt(1000)
+	config.PragueBlock = big.NewInt(1000)
+	config.OsakaBlock = big.NewInt(1000)
+	config.AmsterdamBlock = big.NewInt(1000)
+	backendCfg.config = config
+
+	genesis := &core.Genesis{
+		Config: config,
+		Alloc: types.GenesisAlloc{
+			from:     {Balance: big.NewInt(params.Ether)},
+			contract: {Code: code},
+		},
+	}
+	db := rawdb.NewMemoryDatabase()
+	block := genesis.MustCommit(db)
+	stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+	require.NoError(t, err)
+
+	backend := &accessListStateOverrideBackendMock{
+		createAccessListBackendMock: &createAccessListBackendMock{
+			estimateBackendMock: &estimateBackendMock{
+				backendMock: backendCfg,
+				stateDB:     stateDB,
+				header:      block.Header(),
+				engine:      ethash.NewFaker(),
+			},
+			block: block,
+		},
+		xdcx: &XDCx.XDCX{StateCache: tradingstate.NewDatabase(rawdb.NewMemoryDatabase())},
+	}
+	api := NewBlockChainAPI(backend, nil)
+	latest := rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber)
+
+	// No fee fields: the defaults must be derived from the target block.
+	result, err := api.CreateAccessList(context.Background(), TransactionArgs{
+		From: &from,
+		To:   &contract,
+		Gas:  &gas,
+	}, &latest, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Empty(t, result.Error)
+	require.Len(t, *result.Accesslist, 1)
+	require.Equal(t, contract, (*result.Accesslist)[0].Address)
+	require.Len(t, (*result.Accesslist)[0].StorageKeys, 1)
+	require.Equal(t, hexutil.Uint64(21803), result.GasUsed)
+}
+
+// TestCreateAccessListRejectsCallerListBeforeEIP1559 checks that a list supplied
+// by the caller still reaches the message before EIP-1559 and is rejected there,
+// even though the tracer-produced list is no longer attached.
+func TestCreateAccessListRejectsCallerListBeforeEIP1559(t *testing.T) {
+	t.Parallel()
+
+	from := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	to := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	gas := hexutil.Uint64(50000)
+
+	backendCfg := newBackendMock()
+	config := params.TestChainConfig.Clone()
+	config.ChainID = big.NewInt(1338)
+	config.EIP1559Block = big.NewInt(1000)
+	config.CancunBlock = big.NewInt(1000)
+	config.PragueBlock = big.NewInt(1000)
+	config.OsakaBlock = big.NewInt(1000)
+	config.AmsterdamBlock = big.NewInt(1000)
+	backendCfg.config = config
+
+	genesis := &core.Genesis{
+		Config: backendCfg.config,
+		Alloc: types.GenesisAlloc{
+			from: {Balance: big.NewInt(params.Ether)},
+			to:   {Balance: big.NewInt(params.Ether)},
+		},
+	}
+	db := rawdb.NewMemoryDatabase()
+	block := genesis.MustCommit(db)
+	stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+	require.NoError(t, err)
+
+	backend := &accessListStateOverrideBackendMock{
+		createAccessListBackendMock: &createAccessListBackendMock{
+			estimateBackendMock: &estimateBackendMock{
+				backendMock: backendCfg,
+				stateDB:     stateDB,
+				header:      block.Header(),
+				engine:      ethash.NewFaker(),
+			},
+			block: block,
+		},
+		xdcx: &XDCx.XDCX{StateCache: tradingstate.NewDatabase(rawdb.NewMemoryDatabase())},
+	}
+	api := NewBlockChainAPI(backend, nil)
+	latest := rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber)
+
+	callerList := types.AccessList{{Address: to}}
+	_, err = api.CreateAccessList(context.Background(), TransactionArgs{
+		From:       &from,
+		To:         &to,
+		Gas:        &gas,
+		GasPrice:   (*hexutil.Big)(big.NewInt(1)),
+		AccessList: &callerList,
+	}, &latest, nil)
+	require.ErrorContains(t, err, "transaction type not supported")
+	require.ErrorContains(t, err, "access list tx")
 }
 
 func (b *callBackendMock) HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Header, error) {
@@ -7040,11 +7290,9 @@ func TestSimulateV1BaseFeeNonValidationMode(t *testing.T) {
 				To:   &contract,
 				Gas:  &gas,
 			}, {
-				From:                 &sender,
-				To:                   &contract,
-				Gas:                  &gas,
-				MaxPriorityFeePerGas: (*hexutil.Big)(big.NewInt(1)),
-				MaxFeePerGas:         (*hexutil.Big)(big.NewInt(2)),
+				From: &sender,
+				To:   &contract,
+				Gas:  &gas,
 			}},
 		},
 		{
@@ -7100,6 +7348,153 @@ func TestSimulateV1BaseFeeNonValidationMode(t *testing.T) {
 	require.Equal(t, "invalid opcode: BASEFEE", summary[0].Calls[1].Error.Message)
 	require.Equal(t, "invalid opcode: BASEFEE", summary[1].Calls[0].Error.Message)
 	require.Equal(t, "invalid opcode: BASEFEE", summary[1].Calls[1].Error.Message)
+}
+
+// TestSimulateV1RejectsAuthorizationListBeforePrague checks the scenario that
+// motivated the fork validation: a simulation on a post-EIP-1559, pre-Prague
+// block must not accept an authorization list and hand back a type-4
+// transaction that the pool rejects.
+func TestSimulateV1RejectsAuthorizationListBeforePrague(t *testing.T) {
+	t.Parallel()
+
+	var (
+		sender    = common.HexToAddress("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1")
+		recipient = common.HexToAddress("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+		gas       = hexutil.Uint64(100000)
+	)
+
+	backendCfg := newBackendMock()
+	config := params.TestChainConfig.Clone()
+	config.PragueBlock = big.NewInt(1000)
+	config.OsakaBlock = big.NewInt(1000)
+	config.AmsterdamBlock = big.NewInt(1000)
+	backendCfg.config = config
+
+	genesis := &core.Genesis{
+		Config: backendCfg.config,
+		Alloc: types.GenesisAlloc{
+			sender:    {Balance: big.NewInt(params.Ether)},
+			recipient: {Balance: big.NewInt(params.Ether)},
+		},
+	}
+	db := rawdb.NewMemoryDatabase()
+	block := genesis.MustCommit(db)
+	stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+	require.NoError(t, err)
+
+	backend := &simulateBackendMock{
+		estimateBackendMock: &estimateBackendMock{
+			backendMock: backendCfg,
+			stateDB:     stateDB,
+			header:      block.Header(),
+			engine:      ethash.NewFaker(),
+		},
+		gasCap: 30_000_000,
+	}
+	api := NewBlockChainAPI(backend, nil)
+
+	key, err := crypto.HexToECDSA("8a1f9a8f95be41cd7ccb6168179afb4504aefe388d1e14474d32c45c72ce7b7a")
+	require.NoError(t, err)
+	auth, err := types.SignSetCode(key, types.SetCodeAuthorization{
+		ChainID: *uint256.MustFromBig(config.ChainID),
+		Address: recipient,
+		Nonce:   0,
+	})
+	require.NoError(t, err)
+
+	_, err = api.SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{{
+		Calls: []TransactionArgs{{
+			From:              &sender,
+			To:                &recipient,
+			Gas:               &gas,
+			AuthorizationList: []types.SetCodeAuthorization{auth},
+		}},
+	}}}, nil)
+	require.ErrorContains(t, err, "transaction type not supported")
+	require.ErrorContains(t, err, "setcode tx")
+}
+
+// TestSimulateV1EmptyAccessListBeforeEIP1559 checks that an explicit empty
+// access list is treated like an omitted one in the block handed back to the
+// caller. ToTransaction reads the raw argument before ToMessage normalizes it,
+// so without the normalization in sanitizeCall the response would carry a
+// type-1 transaction the pool rejects before EIP-1559.
+func TestSimulateV1EmptyAccessListBeforeEIP1559(t *testing.T) {
+	t.Parallel()
+
+	var (
+		sender    = common.HexToAddress("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1")
+		recipient = common.HexToAddress("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	)
+	backendCfg := newBackendMock()
+	config := params.TestChainConfig.Clone()
+	config.ChainID = big.NewInt(1338)
+	config.EIP1559Block = big.NewInt(1000)
+	config.CancunBlock = big.NewInt(1000)
+	config.PragueBlock = big.NewInt(1000)
+	config.OsakaBlock = big.NewInt(1000)
+	config.AmsterdamBlock = big.NewInt(1000)
+	backendCfg.config = config
+
+	genesis := &core.Genesis{
+		Config: backendCfg.config,
+		Alloc: types.GenesisAlloc{
+			sender: {Balance: big.NewInt(params.Ether)},
+		},
+	}
+	db := rawdb.NewMemoryDatabase()
+	block := genesis.MustCommit(db)
+	require.Nil(t, block.BaseFee())
+
+	stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+	require.NoError(t, err)
+
+	backend := &simulateBackendMock{
+		estimateBackendMock: &estimateBackendMock{
+			backendMock: backendCfg,
+			stateDB:     stateDB,
+			header:      block.Header(),
+			engine:      ethash.NewFaker(),
+		},
+		gasCap: 30_000_000,
+	}
+	api := NewBlockChainAPI(backend, nil)
+
+	empty := types.AccessList{}
+	result, err := api.SimulateV1(context.Background(), simOpts{
+		ReturnFullTransactions: true,
+		BlockStateCalls: []simBlock{{
+			Calls: []TransactionArgs{{
+				From:       &sender,
+				To:         &recipient,
+				AccessList: &empty,
+			}},
+		}},
+	}, nil)
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+
+	txs, ok := result[0]["transactions"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, txs, 1)
+	tx, ok := txs[0].(*RPCTransaction)
+	require.True(t, ok)
+	require.Equal(t, hexutil.Uint64(types.LegacyTxType), tx.Type)
+	require.Zero(t, tx.GasPrice.ToInt().Sign())
+
+	// A non-empty list is still a type-1 marker: the normalization must not
+	// weaken the fork guard.
+	nonEmpty := types.AccessList{{Address: recipient}}
+	_, err = api.SimulateV1(context.Background(), simOpts{
+		BlockStateCalls: []simBlock{{
+			Calls: []TransactionArgs{{
+				From:       &sender,
+				To:         &recipient,
+				AccessList: &nonEmpty,
+			}},
+		}},
+	}, nil)
+	require.ErrorContains(t, err, "access list tx")
 }
 
 // TestSimulateV1InvalidTimestampOrder tests simulate v 1 invalid timestamp order.
@@ -7167,4 +7562,30 @@ func TestSimulateV1CallLimitTotal(t *testing.T) {
 	var rpcErr interface{ ErrorCode() int }
 	require.ErrorAs(t, err, &rpcErr)
 	require.Equal(t, errCodeClientLimitExceeded, rpcErr.ErrorCode())
+}
+
+// TestFindNearestSignedBlockWhenEngineIsNotXDPoS pins the engine guard of
+// findNearestSignedBlock for the pair #2708 reports: a config that names XDPoS
+// while the engine is not XDPoS. The guard answers nil, which both callers take
+// as nothing to report, and it runs before the header reads below it, so the
+// pair needs no chain: the mock's engine alone picks the branch.
+func TestFindNearestSignedBlockWhenEngineIsNotXDPoS(t *testing.T) {
+	t.Parallel()
+
+	backend := newBackendMock()
+	backend.engine = ethash.NewFaker()
+	backend.config.XDPoS = &params.XDPoSConfig{Epoch: 900, Gap: 450}
+
+	if backend.ChainConfig().XDPoS == nil {
+		t.Fatal("test setup needs a config that names XDPoS")
+	}
+	if _, ok := backend.Engine().(*XDPoS.XDPoS); ok {
+		t.Fatal("test setup needs an engine that is not XDPoS")
+	}
+
+	api := NewBlockChainAPI(backend, nil)
+	block := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(1100)})
+	if got := api.findNearestSignedBlock(context.Background(), block); got != nil {
+		t.Fatalf("findNearestSignedBlock with a non-XDPoS engine: have %v, want nil", got)
+	}
 }

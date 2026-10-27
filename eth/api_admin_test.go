@@ -91,7 +91,9 @@ func newUnmarkedBatchChain(t *testing.T) (*core.BlockChain, *types.Block, *types
 	// A database that predates the marker holds none of them: the head block the import has to
 	// run again is the one the marker would have vouched for.
 	for _, b := range append(types.Blocks{genesis}, blocks...) {
-		rawdb.DeleteExecutedMarker(chain.ChainDb(), b.Hash(), b.NumberU64())
+		if err := rawdb.DeleteExecutedMarker(chain.ChainDb(), b.Hash(), b.NumberU64()); err != nil {
+			t.Fatalf("block %d: failed to drop the executed marker: %v", b.NumberU64(), err)
+		}
 	}
 	if head := chain.CurrentBlock(); head == nil || head.Number.Uint64() != 1 {
 		t.Fatalf("the chain must be sitting on block 1, have %v", head)

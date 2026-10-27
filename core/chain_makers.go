@@ -236,15 +236,15 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 		if config.DAOForkSupport && config.DAOForkBlock != nil && config.DAOForkBlock.Cmp(b.header.Number) == 0 {
 			misc.ApplyDAOHardFork(statedb)
 		}
-		ApplyTIPSigningHardFork(config, statedb, b.header.Number)
-		ApplyMulticall3HardFork(config, statedb, b.header.Number)
-
-		if config.IsPrague(b.header.Number) {
-			// EIP-2935
-			blockContext := NewEVMBlockContext(b.header, chainReader, &b.header.Coinbase)
-			evm := vm.NewEVM(blockContext, statedb, nil, config, vm.Config{})
-			ProcessParentBlockHash(b.header.ParentHash, evm)
-		}
+		// parentState is the snapshot Finalize hands to HookReward: take it
+		// before the hooks and before the transactions, as Process and
+		// ProcessBlockNoValidator do. The baseline copied the
+		// post-transaction state inside the Finalize call instead.
+		parentState := statedb.Copy()
+		// Apply the block level hooks.
+		blockContext := NewEVMBlockContext(b.header, chainReader, &b.header.Coinbase)
+		evm := vm.NewEVM(blockContext, statedb, nil, config, vm.Config{})
+		ApplyBlockLevelHooks(b.header.ParentHash, evm)
 
 		// Execute any user modifications to the block
 		if gen != nil {
@@ -253,7 +253,10 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 
 		if b.engine != nil {
 			// Finalize and seal the block
-			block, _ := b.engine.Finalize(chainReader, b.header, statedb, statedb.Copy(), b.txs, b.uncles, b.receipts)
+			block, err := b.engine.Finalize(chainReader, b.header, statedb, parentState, b.txs, b.uncles, b.receipts)
+			if err != nil {
+				panic(fmt.Sprintf("finalize error: %v", err))
+			}
 			// Write state changes to db
 			root, err := statedb.Commit(b.header.Number.Uint64(), config.IsEIP158(b.header.Number))
 			if err != nil {

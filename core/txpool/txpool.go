@@ -512,15 +512,15 @@ func (p *TxPool) Status(hash common.Hash) TxStatus {
 }
 
 // SetSigner sets the function to identify signer accounts.
-func (pool *TxPool) SetSigner(f func(address common.Address) bool) {
-	for _, subpool := range pool.subpools {
+func (p *TxPool) SetSigner(f func(address common.Address) bool) {
+	for _, subpool := range p.subpools {
 		subpool.SetSigner(f)
 	}
 }
 
 // IsSigner checks if the given address is a signer.
-func (pool *TxPool) IsSigner(addr common.Address) bool {
-	for _, subpool := range pool.subpools {
+func (p *TxPool) IsSigner(addr common.Address) bool {
+	for _, subpool := range p.subpools {
 		if subpool.IsSigner(addr) {
 			return true
 		}

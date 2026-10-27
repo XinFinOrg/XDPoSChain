@@ -21,7 +21,13 @@ import "fmt"
 // Fork is a numerical identifier of specific network upgrades (forks).
 type Fork int
 
-// Forks are ordered by XDC mainnet activation height; unscheduled forks go last.
+// The order below is a naming registry for the fork labels returned by String:
+// it carries no consensus meaning. The order CheckConfigForkOrder enforces is
+// chainConfigForkOrderFields in params/config_backfill.go, plus the extra
+// pairings in chainConfigForkOrderSpecialCaseRules: the Gas50x and Gas2500x
+// placements, which have no linear slot there. The standard fork sequence scan
+// keeps Amsterdam off a schedule that never switches Osaka on. Both chain config
+// renderings follow that order.
 const (
 	Frontier Fork = iota
 	FrontierThawing
@@ -32,9 +38,6 @@ const (
 	SpuriousDragon   // a.k.a. the EIP155 fork
 	EIP158
 	Byzantium
-	Constantinople
-	Petersburg
-	Istanbul
 	TIPSigning
 	TIPRandomize
 	TIPIncreaseMasternodes
@@ -43,6 +46,9 @@ const (
 	TIPXDCX
 	TIPXDCXLending
 	TIPXDCXCancellationFee
+	Constantinople
+	Petersburg
+	Istanbul
 	TIPTRC21Fee
 	Berlin
 	London
@@ -56,11 +62,13 @@ const (
 	EIP1559
 	Cancun
 	DynamicGasLimit
-	TIPUpgradeReward
+	TIPFixedReward
 	TIPUpgradePenalty
 	TIPEpochHalving
+	TIPProportionalReward
 	Prague
 	Osaka
+	Amsterdam
 	Gas2500x
 
 	// lastFork is a sentinel marking the end of the enum, not a real fork.
@@ -87,9 +95,6 @@ var forkToString = map[Fork]string{
 	SpuriousDragon:         "SpuriousDragon",
 	EIP158:                 "EIP158",
 	Byzantium:              "Byzantium",
-	Constantinople:         "Constantinople",
-	Petersburg:             "Petersburg",
-	Istanbul:               "Istanbul",
 	TIPSigning:             "TIPSigning",
 	TIPRandomize:           "TIPRandomize",
 	TIPIncreaseMasternodes: "TIPIncreaseMasternodes",
@@ -98,6 +103,9 @@ var forkToString = map[Fork]string{
 	TIPXDCX:                "TIPXDCX",
 	TIPXDCXLending:         "TIPXDCXLending",
 	TIPXDCXCancellationFee: "TIPXDCXCancellationFee",
+	Constantinople:         "Constantinople",
+	Petersburg:             "Petersburg",
+	Istanbul:               "Istanbul",
 	TIPTRC21Fee:            "TIPTRC21Fee",
 	Berlin:                 "Berlin",
 	London:                 "London",
@@ -111,10 +119,12 @@ var forkToString = map[Fork]string{
 	EIP1559:                "EIP1559",
 	Cancun:                 "Cancun",
 	DynamicGasLimit:        "DynamicGasLimit",
-	TIPUpgradeReward:       "TIPUpgradeReward",
+	TIPFixedReward:         "TIPFixedReward",
 	TIPUpgradePenalty:      "TIPUpgradePenalty",
 	TIPEpochHalving:        "TIPEpochHalving",
+	TIPProportionalReward:  "TIPProportionalReward",
 	Prague:                 "Prague",
 	Osaka:                  "Osaka",
+	Amsterdam:              "Amsterdam",
 	Gas2500x:               "Gas2500x",
 }
