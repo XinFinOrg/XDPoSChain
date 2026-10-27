@@ -24,6 +24,7 @@ import (
 	"sort"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 )
 
@@ -165,6 +166,10 @@ func (j *journal) destruct(addr common.Address) {
 	j.append(selfDestructChange{account: addr})
 }
 
+func (j *journal) deleteAddress(obj *stateObject) {
+	j.append(newDeleteAddressChange(obj))
+}
+
 func (j *journal) storageChange(addr common.Address, key, prev, origin common.Hash) {
 	j.append(storageChange{
 		account:   addr,
@@ -289,7 +294,201 @@ type (
 		account       common.Address
 		key, prevalue common.Hash
 	}
+
+	// deleteAddressChange is the journal entry for StateDB.DeleteAddress. The
+	// removal marks the account destructed and drops it from the live cache, but the
+	// account trie entry itself is deleted by the next IntermediateRoot, the same
+	// way Finalise defers the self-destruct deletion. The revert therefore restores
+	// the object and the block-scoped bookkeeping without writing to the trie.
+	//
+	// The entry carries copies of the account state rather than pointers, because
+	// journal.copy (used by StateDB.Copy) has no StateDB to deep copy a live object
+	// into, and the pending mutation would otherwise be overwritten by markDelete.
+	// The database handle stays shared with the StateDB; the storage trie is the one
+	// reference the copy has to duplicate, through Database.CopyTrie (see below).
+	//
+	// The storage trie handle is carried along with the object. Dropping the object
+	// drops the only reference to its trie, and the trie is not replaceable from
+	// data.Root once updateTrie has run: updateTrie moves the pending writes into
+	// the trie and clears pendingStorage, while the new nodes reach the database
+	// only through stateObject.commit. A reverted object that reopened its trie from
+	// data.Root would therefore name nodes that were never persisted, reading zeros
+	// and committing a root without the storage behind it. revert reattaches the
+	// handle, which the removal left without other holders, and copy takes an
+	// independent copy through Database.CopyTrie so that two StateDBs never alias
+	// one live trie.
+	deleteAddressChange struct {
+		account        common.Address
+		db             Database
+		trie           Trie
+		origin         *types.StateAccount
+		data           types.StateAccount
+		code           []byte
+		originStorage  Storage
+		pendingStorage Storage
+		dirtyStorage   Storage
+		dirtyCode      bool
+		selfDestructed bool
+		newContract    bool
+
+		// Block-scoped state as it was before the removal. Every field carries a
+		// had flag so that a missing entry is restored as missing rather than as
+		// an empty value.
+		hadDestruct       bool
+		prevDestruct      *types.StateAccount
+		hadAccount        bool
+		prevAccount       []byte
+		hadStorage        bool
+		prevStorage       map[common.Hash][]byte
+		hadAccountOrigin  bool
+		prevAccountOrigin []byte
+		hadStorageOrigin  bool
+		prevStorageOrigin map[common.Hash][]byte
+		hadMutation       bool
+		prevMutation      *mutation
+	}
 )
+
+func newDeleteAddressChange(obj *stateObject) deleteAddressChange {
+	s := obj.db
+	ch := deleteAddressChange{
+		account:        obj.address,
+		db:             s.db,
+		trie:           obj.trie,
+		origin:         copyStateAccount(obj.origin),
+		data:           *obj.data.Copy(),
+		code:           common.CopyBytes(obj.code),
+		originStorage:  obj.originStorage.Copy(),
+		pendingStorage: obj.pendingStorage.Copy(),
+		dirtyStorage:   obj.dirtyStorage.Copy(),
+		dirtyCode:      obj.dirtyCode,
+		selfDestructed: obj.selfDestructed,
+		newContract:    obj.newContract,
+	}
+	ch.prevDestruct, ch.hadDestruct = s.stateObjectsDestruct[obj.address]
+	ch.prevDestruct = copyStateAccount(ch.prevDestruct)
+	ch.prevAccount, ch.hadAccount = s.accounts[obj.addrHash]
+	ch.prevAccount = common.CopyBytes(ch.prevAccount)
+	ch.prevStorage, ch.hadStorage = s.storages[obj.addrHash]
+	ch.prevStorage = copyStorageMap(ch.prevStorage)
+	ch.prevAccountOrigin, ch.hadAccountOrigin = s.accountsOrigin[obj.address]
+	ch.prevAccountOrigin = common.CopyBytes(ch.prevAccountOrigin)
+	ch.prevStorageOrigin, ch.hadStorageOrigin = s.storagesOrigin[obj.address]
+	ch.prevStorageOrigin = copyStorageMap(ch.prevStorageOrigin)
+	if m, ok := s.mutations[obj.address]; ok {
+		ch.hadMutation = true
+		ch.prevMutation = m.copy()
+	}
+	return ch
+}
+
+// copyStorageMap deep-copies a map of storage slot keys to values, nil-safe.
+func copyStorageMap(m map[common.Hash][]byte) map[common.Hash][]byte {
+	if m == nil {
+		return nil
+	}
+	return copySet(m)
+}
+
+// copyStateAccount returns a deep copy of acct, nil-safe.
+func copyStateAccount(acct *types.StateAccount) *types.StateAccount {
+	if acct == nil {
+		return nil
+	}
+	return acct.Copy()
+}
+
+func (ch deleteAddressChange) revert(s *StateDB) {
+	obj := newObject(s, ch.account, ch.origin)
+	obj.data = ch.data
+	obj.code = ch.code
+	obj.originStorage = ch.originStorage
+	obj.pendingStorage = ch.pendingStorage
+	obj.dirtyStorage = ch.dirtyStorage
+	obj.dirtyCode = ch.dirtyCode
+	obj.selfDestructed = ch.selfDestructed
+	obj.newContract = ch.newContract
+	// Reattach the storage trie the removal orphaned. Without it the restored
+	// object would read and commit against a root whose nodes never reached the
+	// database; see the comment on the type.
+	obj.trie = ch.trie
+
+	s.setStateObject(obj)
+
+	// Restore the block-scoped bookkeeping the removal overwrote. The account
+	// trie entry was never dropped, so nothing has to be written back here.
+	if ch.hadDestruct {
+		s.stateObjectsDestruct[ch.account] = ch.prevDestruct
+	} else {
+		delete(s.stateObjectsDestruct, ch.account)
+	}
+	if ch.hadAccount {
+		s.accounts[obj.addrHash] = ch.prevAccount
+	} else {
+		delete(s.accounts, obj.addrHash)
+	}
+	if ch.hadStorage {
+		s.storages[obj.addrHash] = ch.prevStorage
+	} else {
+		delete(s.storages, obj.addrHash)
+	}
+	if ch.hadAccountOrigin {
+		s.accountsOrigin[ch.account] = ch.prevAccountOrigin
+	} else {
+		delete(s.accountsOrigin, ch.account)
+	}
+	if ch.hadStorageOrigin {
+		s.storagesOrigin[ch.account] = ch.prevStorageOrigin
+	} else {
+		delete(s.storagesOrigin, ch.account)
+	}
+	if ch.hadMutation {
+		s.mutations[ch.account] = ch.prevMutation.copy()
+	} else {
+		delete(s.mutations, ch.account)
+	}
+}
+
+func (ch deleteAddressChange) dirtied() *common.Address {
+	return &ch.account
+}
+
+func (ch deleteAddressChange) copy() journalEntry {
+	cpy := deleteAddressChange{
+		account:           ch.account,
+		db:                ch.db,
+		origin:            copyStateAccount(ch.origin),
+		data:              *ch.data.Copy(),
+		code:              common.CopyBytes(ch.code),
+		originStorage:     ch.originStorage.Copy(),
+		pendingStorage:    ch.pendingStorage.Copy(),
+		dirtyStorage:      ch.dirtyStorage.Copy(),
+		dirtyCode:         ch.dirtyCode,
+		selfDestructed:    ch.selfDestructed,
+		newContract:       ch.newContract,
+		hadDestruct:       ch.hadDestruct,
+		prevDestruct:      copyStateAccount(ch.prevDestruct),
+		hadAccount:        ch.hadAccount,
+		prevAccount:       common.CopyBytes(ch.prevAccount),
+		hadStorage:        ch.hadStorage,
+		prevStorage:       copyStorageMap(ch.prevStorage),
+		hadAccountOrigin:  ch.hadAccountOrigin,
+		prevAccountOrigin: common.CopyBytes(ch.prevAccountOrigin),
+		hadStorageOrigin:  ch.hadStorageOrigin,
+		prevStorageOrigin: copyStorageMap(ch.prevStorageOrigin),
+		hadMutation:       ch.hadMutation,
+	}
+	if ch.prevMutation != nil {
+		cpy.prevMutation = ch.prevMutation.copy()
+	}
+	// CopyTrie panics on a nil trie, and an object without a storage write has
+	// none to carry. A shared handle would alias one live trie between the two
+	// StateDBs, so the copy takes its own.
+	if ch.trie != nil {
+		cpy.trie = ch.db.CopyTrie(ch.trie)
+	}
+	return cpy
+}
 
 func (ch createObjectChange) revert(s *StateDB) {
 	delete(s.stateObjects, ch.account)

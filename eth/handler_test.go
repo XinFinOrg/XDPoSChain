@@ -768,8 +768,9 @@ func daoChallengeChainConfig(daoForkSupport bool) *params.ChainConfig {
 	config.CancunBlock = new(big.Int).Set(futureForkBlock)
 	config.PragueBlock = new(big.Int).Set(futureForkBlock)
 	config.OsakaBlock = new(big.Int).Set(futureForkBlock)
+	config.AmsterdamBlock = new(big.Int).Set(futureForkBlock)
 	config.DynamicGasLimitBlock = new(big.Int).Set(futureForkBlock)
-	config.TIPUpgradeRewardBlock = new(big.Int).Set(futureForkBlock)
+	config.TIPFixedRewardBlock = new(big.Int).Set(futureForkBlock)
 	config.TIPUpgradePenaltyBlock = new(big.Int).Set(futureForkBlock)
 	config.TIPEpochHalvingBlock = new(big.Int).Set(futureForkBlock)
 

@@ -40,11 +40,11 @@ import (
 // debug_traceCall rebuild that block from its parent state through this function, so without
 // the removal they run against an account canonical execution had already removed.
 //
-// The removal is asserted through the state root, not through the in-session balance: the
-// removal goes through state.StateDB.DeleteAddress, which only deletes the account from the
-// trie and leaves the cached state object readable in the same session (core/state/statedb.go
-// DeleteAddress -> deleteStateObject). Rebuilding the state from the root the replay produced
-// is therefore the only way to observe the removal from this function's return value.
+// The removal is asserted through the state root because this helper returns the reconstructed
+// state, not because the removal is invisible in-session: state.StateDB.DeleteAddress also drops
+// the cached object and marks the account destructed, so reads in the same session report it
+// absent. Rebuilding the state from the root the replay produced is how this function's return
+// value is checked.
 //
 // The fixture pins its premise from both sides: the account is in the parent state (otherwise
 // the removal would change nothing) and it is gone from the state the imported block carries,
@@ -70,6 +70,9 @@ func TestStateAtTransactionAppliesBlockLevelHardForksAtActivation(t *testing.T) 
 	config.TIPXDCXBlock = one()
 	config.TIPXDCXLendingBlock = one()
 	config.TIPXDCXCancellationFeeBlock = one()
+	config.ConstantinopleBlock = one()
+	config.PetersburgBlock = one()
+	config.IstanbulBlock = one()
 	config.TIPTRC21FeeBlock = one()
 	config.Gas50xBlock = one()
 	config.BerlinBlock = one()
@@ -80,6 +83,7 @@ func TestStateAtTransactionAppliesBlockLevelHardForksAtActivation(t *testing.T) 
 	config.CancunBlock = one()
 	config.PragueBlock = one()
 	config.OsakaBlock = one()
+	config.AmsterdamBlock = one()
 
 	genesis := &core.Genesis{
 		Config: config,
@@ -155,9 +159,15 @@ func TestStateAtTransactionAppliesBlockLevelHardForksAtActivation(t *testing.T) 
 	if statedb == nil {
 		t.Fatal("expected the pre-state of the first transaction")
 	}
-	// The removal goes through DeleteAddress, which only deletes the account from the trie
-	// and leaves the cached state object readable in this session, so the replay result is
-	// read back through the trie: commit the replayed state and rebuild from its root.
+	// DeleteAddress also invalidates the session cache, so this session already sees the
+	// account as absent; the replay result is still read back through the trie: commit the
+	// replayed state and rebuild from its root.
+	if statedb.Exist(legacySigners) {
+		t.Fatal("the replayed pre-state still reports the legacy block signers account in-session")
+	}
+	if have := statedb.GetBalance(legacySigners); have.Sign() != 0 {
+		t.Fatalf("the replayed pre-state still reports a balance for the legacy block signers account in-session: have %v", have)
+	}
 	root, err := statedb.Commit(block.NumberU64(), config.IsEIP158(block.Number()))
 	if err != nil {
 		t.Fatalf("failed to commit the replayed state: %v", err)

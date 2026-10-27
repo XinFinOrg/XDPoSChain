@@ -20,10 +20,13 @@ package params
 // cloning a ChainConfig and before compatibility checks compare effective
 // values. CloneForBackfill prepares destination-side field-presence metadata so
 // BackfillMissingFieldsFrom can copy only omitted fields from a canonical
-// source config into the destination: generic fork blocks, system-contract
-// addresses, consensus-engine selectors, and nested XDPoS/V2 fields. The
-// narrower BackfillCustomMigratedFieldsFrom path is reserved for legacy custom
-// network migrations and copies only the historical XDC-specific whitelist.
+// source config into the destination: generic fork blocks, DAO fork support,
+// system-contract addresses, consensus-engine selectors, and nested XDPoS/V2
+// fields. The three Ethereum slots that share the XDC anchor (Constantinople,
+// Petersburg and Istanbul) are the exception: backfillForkSequenceTrioFrom
+// hydrates them last, as a single gated batch. The narrower
+// BackfillCustomMigratedFieldsFrom path is reserved for legacy custom network
+// migrations and copies only the historical XDC-specific whitelist.
 
 import (
 	"fmt"
@@ -68,6 +71,8 @@ type chainConfigBigIntBackfillField struct {
 type chainConfigForkOrderField struct {
 	field    chainConfigBigIntField
 	optional func(*ChainConfig) bool
+	standard bool
+	required bool
 }
 
 type chainConfigForkOrderSpecialCaseRule struct {
@@ -119,6 +124,18 @@ var chainConfigForkBlockFields = func() []chainConfigBigIntField {
 	return fields
 }()
 
+// The sequence validation and the compatibility scan name these fields directly
+// instead of resolving them through chainConfigForkBlockFields on every call, so
+// a rename in the field table has to fail at init rather than silently change
+// which slots take the cancellation-fee fallback, which pair Petersburg is
+// checked against, or which field the compatibility scan treats as special.
+const (
+	chainConfigIstanbulBlockField               = "IstanbulBlock"
+	chainConfigPetersburgBlockField             = "PetersburgBlock"
+	chainConfigConstantinopleBlockField         = "ConstantinopleBlock"
+	chainConfigTIPXDCXCancellationFeeBlockField = "TIPXDCXCancellationFeeBlock"
+)
+
 func chainConfigForkBlockFieldByName(name string) (chainConfigBigIntField, bool) {
 	for _, field := range chainConfigForkBlockFields {
 		if field.name == name {
@@ -128,10 +145,41 @@ func chainConfigForkBlockFieldByName(name string) (chainConfigBigIntField, bool)
 	return chainConfigBigIntField{}, false
 }
 
-// chainConfigForkOrderFields is the authoritative fork activation order used
-// by CheckConfigForkOrder. It reuses the unified fork field descriptors and
-// fails fast if any known fork field is missing from this order or the
-// explicitly handled special-case rules below.
+// chainConfigForkSequenceTrio lists the Ethereum forks the built-in networks
+// declare at the XDC anchor height, in fork-order sequence. Backfill hydrates
+// them last, as a single batch, and only while every slot the stored config
+// takes a position on agrees with that height: see
+// backfillForkSequenceTrioFrom.
+var chainConfigForkSequenceTrio = func() []chainConfigBigIntField {
+	names := []string{
+		chainConfigConstantinopleBlockField,
+		chainConfigPetersburgBlockField,
+		chainConfigIstanbulBlockField,
+	}
+	fields := make([]chainConfigBigIntField, 0, len(names))
+	for _, name := range names {
+		field, ok := chainConfigForkBlockFieldByName(name)
+		if !ok {
+			panic("chain config fork sequence trio references unknown field: " + name)
+		}
+		fields = append(fields, field)
+	}
+	return fields
+}()
+
+func isChainConfigForkSequenceTrioKey(jsonKey string) bool {
+	for _, field := range chainConfigForkSequenceTrio {
+		if field.jsonKey == jsonKey {
+			return true
+		}
+	}
+	return false
+}
+
+// chainConfigForkOrderSpecialCaseRules holds the fork order relationships that
+// the linear order cannot express: pairs that sit outside the main sequence.
+// A scheduled fork whose required predecessor is unset is the standard fork
+// sequence scan's job, not a rule here.
 var chainConfigForkOrderSpecialCaseRules = func() []chainConfigForkOrderSpecialCaseRule {
 	ruleDefs := []struct {
 		before         string
@@ -214,7 +262,7 @@ var chainConfigForkOrderFields = func() []chainConfigForkOrderField {
 			panic("duplicate chain config fork order field: " + entry.name)
 		}
 		seen[entry.name] = struct{}{}
-		resolved = append(resolved, chainConfigForkOrderField{field: field, optional: entry.optional})
+		resolved = append(resolved, chainConfigForkOrderField{field: field, optional: entry.optional, standard: entry.standard, required: entry.required})
 	}
 	if len(seen)+len(chainConfigForkOrderSpecialCaseFieldNames) != len(chainConfigForkBlockFields) {
 		for _, field := range chainConfigForkBlockFields {
@@ -232,12 +280,25 @@ var chainConfigForkOrderFields = func() []chainConfigForkOrderField {
 			panic("chain config fork order special case references unknown field: " + fieldName)
 		}
 	}
+	for _, fieldName := range []string{
+		chainConfigIstanbulBlockField,
+		chainConfigPetersburgBlockField,
+		chainConfigConstantinopleBlockField,
+		chainConfigTIPXDCXCancellationFeeBlockField,
+	} {
+		if _, ok := fieldByName[fieldName]; !ok {
+			panic("chain config fork sequence references unknown field: " + fieldName)
+		}
+		if _, ok := chainConfigForkOrderFieldNames[fieldName]; !ok {
+			panic("chain config fork sequence references unknown fork order field: " + fieldName)
+		}
+	}
 	return resolved
 }()
 
 var chainConfigCompatibilitySpecialCaseFieldNames = func() map[string]struct{} {
 	fieldNames := map[string]struct{}{
-		"PetersburgBlock": {},
+		chainConfigPetersburgBlockField: {},
 	}
 	for fieldName := range fieldNames {
 		if _, ok := chainConfigForkBlockFieldByName(fieldName); !ok {
@@ -371,7 +432,6 @@ func chainConfigAddressFieldValue(cfg *ChainConfig, field chainConfigAddressFiel
 func chainConfigTopLevelBigIntFields(fields []chainConfigBigIntField) []chainConfigTopLevelField {
 	topLevelFields := make([]chainConfigTopLevelField, 0, len(fields))
 	for _, field := range fields {
-		field := field
 		topLevelFields = append(topLevelFields, chainConfigTopLevelField{
 			jsonKey: field.jsonKey,
 			clone: func(dst, src *ChainConfig) {
@@ -391,7 +451,6 @@ func chainConfigTopLevelBigIntFields(fields []chainConfigBigIntField) []chainCon
 func chainConfigTopLevelAddressFields(fields []chainConfigAddressField) []chainConfigTopLevelField {
 	topLevelFields := make([]chainConfigTopLevelField, 0, len(fields))
 	for _, field := range fields {
-		field := field
 		topLevelFields = append(topLevelFields, chainConfigTopLevelField{
 			jsonKey: field.jsonKey,
 			clone: func(dst, src *ChainConfig) {
@@ -518,6 +577,77 @@ func ForEachChainConfigForkOrderBlock(cfg *ChainConfig, visit func(name string, 
 	}
 }
 
+// ForEachChainConfigForkSequenceBlock visits the standard fork blocks in
+// validation order, flagging the ones a schedule has to declare before any
+// later standard fork is scheduled. The last slot (Amsterdam) is flagged too:
+// its own rules are read directly, so it stays in the set even though no later
+// standard fork can trigger it. XDC-specific slots are not enumerated here and
+// are never required, but one of them can still decide a rejection: when the
+// effective-value rule below substitutes TIPXDCXCancellationFeeBlock for an
+// unset IstanbulBlock or PetersburgBlock, that field is what the check reports
+// as the scheduled fork.
+func ForEachChainConfigForkSequenceBlock(cfg *ChainConfig, visit func(name string, value *big.Int, required bool)) {
+	for _, field := range chainConfigForkOrderFields {
+		if !field.standard {
+			continue
+		}
+		visit(field.field.name, chainConfigBigIntFieldValue(cfg, field.field), field.required)
+	}
+}
+
+// chainConfigForkSequenceEffectiveValue resolves the activation of a standard
+// fork for the existence check, together with the field the value comes from.
+// Two slots have a second activation path: legacy XDC chains leave IstanbulBlock
+// and PetersburgBlock unset and activate them through
+// TIPXDCXCancellationFeeBlock, so an unset slot takes that field's value,
+// mirroring ChainConfig.IsIstanbul and ChainConfig.IsPetersburg existence for
+// existence. When both paths are set the runtime predicates OR them and the fork
+// activates at the earlier of the two, while this helper keeps the explicit
+// value: the check asks only whether the fork is active at all, and the field a
+// rejection must name is the one the operator actually wrote. Nothing else is
+// substituted here; in particular TIPXDCXMinerDisableBlock does not count,
+// because the XDCv2 precompile bag it selects replaces the Istanbul bag only
+// above its own activation block, while the skipped Istanbul bag would still
+// apply below it.
+//
+// The source name is returned so that a rejection names the field the operator
+// wrote rather than the slot its value stands in for.
+func chainConfigForkSequenceEffectiveValue(cfg *ChainConfig, name string, value *big.Int) (*big.Int, string) {
+	if name != chainConfigIstanbulBlockField && name != chainConfigPetersburgBlockField {
+		return value, name
+	}
+	if value != nil {
+		return value, name
+	}
+	if fallback := cfg.TIPXDCXCancellationFeeBlock; fallback != nil {
+		return fallback, chainConfigTIPXDCXCancellationFeeBlockField
+	}
+	return value, name
+}
+
+// chainConfigForkSequencePetersburgPair reports the one required member whose
+// activation no later slot implies. The sequence scan only reports a gap once a
+// slot that carries a value follows, so it cannot see a schedule that stops at
+// ConstantinopleBlock: IsConstantinople is then true from that block on while
+// IsPetersburg stays false, and the SSTORE gate
+// `IsPetersburg || !IsConstantinople` (core/vm/gas_table.go) keeps the
+// net-metered EIP-1283 rule that Petersburg exists to revert. Upstream accepts
+// that shape too, because its existence branch needs a later non-optional slot
+// to carry a value and none follows when the schedule stops at Constantinople;
+// this repository rejects it, which is the one place where the check is stricter
+// than upstream. See docs/adr/0002-require-standard-fork-sequence.md. The
+// returned unmet flag is true when the pair is violated, i.e. the caller must
+// reject.
+func chainConfigForkSequencePetersburgPair(cfg *ChainConfig) (missing, trigger string, triggerValue *big.Int, unmet bool) {
+	if cfg.ConstantinopleBlock == nil {
+		return "", "", nil, false
+	}
+	if value, _ := chainConfigForkSequenceEffectiveValue(cfg, chainConfigPetersburgBlockField, cfg.PetersburgBlock); value != nil {
+		return "", "", nil, false
+	}
+	return chainConfigPetersburgBlockField, chainConfigConstantinopleBlockField, cfg.ConstantinopleBlock, true
+}
+
 // ForEachChainConfigForkOrderBlockPair visits fork block pairs in validation order.
 func ForEachChainConfigForkOrderBlockPair(a, b *ChainConfig, visit func(name string, aValue, bValue *big.Int)) {
 	for _, field := range chainConfigForkOrderFields {
@@ -608,7 +738,6 @@ func (c *XDPoSConfig) cloneWithInferredFieldPresence() *XDPoSConfig {
 	return clone
 }
 
-// HasJSONFieldPresence reports whether this config tracks which JSON fields
 // isJSONFieldMissing reports whether key was omitted from the source JSON.
 func (c *ChainConfig) isJSONFieldMissing(key string, fallback bool) bool {
 	if c == nil {
@@ -622,7 +751,7 @@ func validateV2ExpTimeoutConfig(cfg *V2Config, fieldPath string) error {
 		return nil
 	}
 	if cfg.ExpTimeoutConfig.MaxExponent >= 32 {
-		return fmt.Errorf("%s: max_exponent (%d)= >= max_exponent_upperbound (%d)", fieldPath, cfg.ExpTimeoutConfig.MaxExponent, 32)
+		return fmt.Errorf("%s: max_exponent (%d) >= max_exponent_upperbound (%d)", fieldPath, cfg.ExpTimeoutConfig.MaxExponent, 32)
 	}
 	if math.Pow(cfg.ExpTimeoutConfig.Base, float64(cfg.ExpTimeoutConfig.MaxExponent)) >= float64(math.MaxUint32) {
 		return fmt.Errorf("%s: base^max_exponent (%f^%d) should be less than 2^32", fieldPath, cfg.ExpTimeoutConfig.Base, cfg.ExpTimeoutConfig.MaxExponent)
@@ -868,6 +997,11 @@ func (v2 *V2) backfillMissingFieldsFrom(src *V2) *V2 {
 // ChainConfig values directly in code, but a custom network that backfills from
 // LocalnetChainConfig should declare every fork explicitly if it needs to avoid
 // inheriting Localnet defaults.
+//
+// The fork-sequence trio (Constantinople, Petersburg and Istanbul) is not part
+// of the generic field loop: backfillForkSequenceTrioFrom hydrates it last, as
+// a single batch, and only while the resulting config still passes the
+// fork-order validation.
 func (c *ChainConfig) BackfillMissingFieldsFrom(src *ChainConfig) *ChainConfig {
 	if c == nil {
 		return c
@@ -885,6 +1019,11 @@ func (c *ChainConfig) BackfillMissingFieldsFrom(src *ChainConfig) *ChainConfig {
 	trackCustomLocalnetFallback := shouldWarnOnCustomLocalnetFallback(dest, src)
 
 	for _, field := range bigIntFields {
+		// The trio is hydrated after every other field, so the fork order can be
+		// evaluated against the complete config before a value is kept.
+		if isChainConfigForkSequenceTrioKey(field.key) {
+			continue
+		}
 		if dest.isJSONFieldMissing(field.key, *field.dst == nil) {
 			log.Info("Backfilled missing field", "field", field.key, "old", *field.dst, "new", field.src)
 			*field.dst = common.CloneBigInt(field.src)
@@ -917,26 +1056,133 @@ func (c *ChainConfig) BackfillMissingFieldsFrom(src *ChainConfig) *ChainConfig {
 	}
 
 	dest.backfillMissingConsensusConfigsFrom(src)
+	dest.backfillXDPoSConfigFrom(src)
+	dest = dest.backfillForkSequenceTrioFrom(src)
 
-	if dest.XDPoS == nil {
-		log.Warn("XDPoS in destination chain config is nil", "chainId", dest.ChainID)
-	} else if src.XDPoS == nil {
-		log.Warn("XDPoS in source chain config is nil", "chainId", src.ChainID)
-		return dest
-	} else {
-		dest.XDPoS.backfillMissingScalarFieldsFrom(src.XDPoS)
-		if dest.XDPoS.isJSONFieldMissing("v2", dest.XDPoS.V2 == nil) {
-			log.Info("Backfilled missing field", "field", "XDPoS.v2", "old", dest.XDPoS.V2, "new", src.XDPoS.V2)
-			dest.XDPoS.V2 = src.XDPoS.V2.Clone()
-		} else if dest.XDPoS.V2 != nil && src.XDPoS.V2 != nil {
-			dest.XDPoS.V2 = dest.XDPoS.V2.backfillMissingFieldsFrom(src.XDPoS.V2)
-		}
-	}
 	if trackCustomLocalnetFallback && len(customLocalnetFallbackFields) > 0 {
 		log.Warn("Custom chain config used Localnet fallback defaults", "chainId", dest.ChainID, "jsonPresenceTracked", dest.runtime.json.tracked, "fields", strings.Join(customLocalnetFallbackFields, ","))
 	}
 
 	return dest
+}
+
+func (c *ChainConfig) backfillXDPoSConfigFrom(src *ChainConfig) {
+	if c == nil || src == nil {
+		return
+	}
+	if c.XDPoS == nil {
+		log.Warn("XDPoS in destination chain config is nil", "chainId", c.ChainID)
+		return
+	}
+	if src.XDPoS == nil {
+		log.Warn("XDPoS in source chain config is nil", "chainId", src.ChainID)
+		return
+	}
+	c.XDPoS.backfillMissingScalarFieldsFrom(src.XDPoS)
+	if c.XDPoS.isJSONFieldMissing("v2", c.XDPoS.V2 == nil) {
+		log.Info("Backfilled missing field", "field", "XDPoS.v2", "old", c.XDPoS.V2, "new", src.XDPoS.V2)
+		c.XDPoS.V2 = src.XDPoS.V2.Clone()
+	} else if c.XDPoS.V2 != nil && src.XDPoS.V2 != nil {
+		c.XDPoS.V2 = c.XDPoS.V2.backfillMissingFieldsFrom(src.XDPoS.V2)
+	}
+}
+
+// chainConfigForkSequenceTrioAnchor returns the height the source network
+// declares for all three trio slots. A source that does not declare one
+// coherent height has no anchor to hydrate from.
+func chainConfigForkSequenceTrioAnchor(src *ChainConfig) (*big.Int, bool) {
+	var anchor *big.Int
+	for _, field := range chainConfigForkSequenceTrio {
+		value := field.get(src)
+		if value == nil {
+			return nil, false
+		}
+		if anchor == nil {
+			anchor = value
+			continue
+		}
+		if anchor.Cmp(value) != 0 {
+			return nil, false
+		}
+	}
+	return anchor, true
+}
+
+// chainConfigForkSequenceTrioEffectiveValue returns the height the hydration
+// decision compares against the anchor: the slot's own value when declared, and
+// the XDC cancellation-fee height when it is missing. The fallback mirrors
+// IsPetersburg and IsIstanbul, which stay active at that height even when the
+// slot itself is unset. Constantinople has no runtime fallback, so the
+// cancellation fee is used here only to decide whether declaring the slot would
+// move the schedule, never to evaluate the fork.
+func chainConfigForkSequenceTrioEffectiveValue(c *ChainConfig, field chainConfigBigIntField) *big.Int {
+	if value := field.get(c); value != nil {
+		return value
+	}
+	return c.TIPXDCXCancellationFeeBlock
+}
+
+// backfillForkSequenceTrioFrom hydrates the trio the built-in networks declare
+// at the XDC anchor height, but only when doing so leaves the stored schedule
+// unchanged: a stored schedule that never declared them can be pushed out of
+// order by the injected values, which would turn a plain binary upgrade into a
+// startup failure.
+//
+// The slots move together: every slot the stored config takes a position on
+// must already agree with the anchor, otherwise none of them is written. A
+// missing slot is gated on its effective value (its own value, or the
+// cancellation-fee fallback); a declared slot is gated on its declared value. A
+// slot explicitly set to null is authoritative: it is neither hydrated nor used
+// to veto the others.
+//
+// Writing the slots one at a time is what produced the half-filled schedules
+// this guard exists to prevent: Constantinople is rejected when Petersburg is
+// missing, while Petersburg and Istanbul are accepted on their own, which
+// silently activates Istanbul on a chain that had disabled it.
+func (c *ChainConfig) backfillForkSequenceTrioFrom(src *ChainConfig) *ChainConfig {
+	if c == nil || src == nil {
+		return c
+	}
+	anchor, ok := chainConfigForkSequenceTrioAnchor(src)
+	if !ok {
+		return c
+	}
+
+	candidates := make([]chainConfigBigIntField, 0, len(chainConfigForkSequenceTrio))
+	for _, field := range chainConfigForkSequenceTrio {
+		missing := c.isJSONFieldMissing(field.jsonKey, field.get(c) == nil)
+		if !missing && field.get(c) == nil {
+			// Explicit null: a declared "never", not a candidate for hydration
+			// and not a reason to skip the other slots.
+			continue
+		}
+		if effective := chainConfigForkSequenceTrioEffectiveValue(c, field); effective == nil || effective.Cmp(anchor) != 0 {
+			log.Info("Skipped fork backfill that would change the fork schedule",
+				"field", field.jsonKey, "effective", effective, "anchor", anchor)
+			return c
+		}
+		if missing {
+			candidates = append(candidates, field)
+		}
+	}
+	if len(candidates) == 0 {
+		return c
+	}
+	for _, field := range candidates {
+		field.set(c, common.CloneBigInt(anchor))
+	}
+	if err := c.checkConfigForkOrder(false); err != nil {
+		for _, field := range candidates {
+			field.set(c, nil)
+		}
+		log.Info("Skipped fork backfill that would make the chain config invalid", "error", err)
+		return c
+	}
+	for _, field := range candidates {
+		log.Info("Backfilled missing field", "field", field.jsonKey, "old", nil, "new", anchor)
+		c.runtime.json.mark(field.jsonKey)
+	}
+	return c
 }
 
 // BackfillCustomMigratedFieldsFrom copies only the historical custom-network

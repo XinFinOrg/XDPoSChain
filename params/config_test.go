@@ -29,6 +29,22 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// declareStandardForkPrefix declares, at block 0, the standard forks these
+// fixtures schedule past: Homestead through Byzantium plus Petersburg and
+// Istanbul. Constantinople is deliberately left out: it is a trigger-only slot,
+// and its one consumer tolerates its absence.
+// The required slots past that prefix (EIP1559 through Amsterdam) are not
+// declared here; the fixtures that go further declare those slots themselves.
+func declareStandardForkPrefix(cfg *ChainConfig) {
+	cfg.HomesteadBlock = big.NewInt(0)
+	cfg.EIP150Block = big.NewInt(0)
+	cfg.EIP155Block = big.NewInt(0)
+	cfg.EIP158Block = big.NewInt(0)
+	cfg.ByzantiumBlock = big.NewInt(0)
+	cfg.PetersburgBlock = big.NewInt(0)
+	cfg.IstanbulBlock = big.NewInt(0)
+}
+
 func TestChainConfigValidateForStartup(t *testing.T) {
 	t.Run("missing field", func(t *testing.T) {
 		cfg := &ChainConfig{}
@@ -101,6 +117,345 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 			t.Fatalf("ValidateForStartup failed for plain custom ethash config: %v", err)
 		}
 	})
+	t.Run("standard fork sequence rejects a skipped fork", func(t *testing.T) {
+		shanghaiPrefix := &ChainConfig{ChainID: big.NewInt(1234), Ethash: new(EthashConfig)}
+		declareStandardForkPrefix(shanghaiPrefix)
+		shanghaiPrefix.BerlinBlock = big.NewInt(0)
+		shanghaiPrefix.LondonBlock = big.NewInt(0)
+		shanghaiPrefix.MergeBlock = big.NewInt(0)
+		shanghaiPrefix.ShanghaiBlock = big.NewInt(0)
+		shanghaiPrefix.OsakaBlock = big.NewInt(0)
+
+		tests := []struct {
+			name string
+			cfg  *ChainConfig
+			want string
+		}{
+			{
+				name: "osaka without prague",
+				cfg:  &ChainConfig{ChainID: big.NewInt(1234), OsakaBlock: big.NewInt(0), Ethash: new(EthashConfig)},
+				want: "invalid chain config: wrong fork switch order: PragueBlock is unset, but OsakaBlock 0 is scheduled",
+			},
+			{
+				name: "cancun without eip1559",
+				cfg:  &ChainConfig{ChainID: big.NewInt(1234), CancunBlock: big.NewInt(0), Ethash: new(EthashConfig)},
+				want: "invalid chain config: wrong fork switch order: EIP1559Block is unset, but CancunBlock 0 is scheduled",
+			},
+			{
+				name: "prague without eip1559",
+				cfg:  &ChainConfig{ChainID: big.NewInt(1234), PragueBlock: big.NewInt(0), Ethash: new(EthashConfig)},
+				want: "invalid chain config: wrong fork switch order: EIP1559Block is unset, but PragueBlock 0 is scheduled",
+			},
+			{
+				name: "eip1559 without istanbul",
+				cfg:  &ChainConfig{ChainID: big.NewInt(1234), EIP1559Block: big.NewInt(0), Ethash: new(EthashConfig)},
+				want: "invalid chain config: wrong fork switch order: IstanbulBlock is unset, but EIP1559Block 0 is scheduled",
+			},
+			{
+				name: "berlin without istanbul",
+				cfg:  &ChainConfig{ChainID: big.NewInt(1234), BerlinBlock: big.NewInt(0), Ethash: new(EthashConfig)},
+				want: "invalid chain config: wrong fork switch order: IstanbulBlock is unset, but BerlinBlock 0 is scheduled",
+			},
+			{
+				// The remaining trigger-only slots, covered so that each one is
+				// pinned as a rejection source rather than only as a slot the
+				// scan walks past.
+				name: "constantinople without byzantium",
+				cfg: &ChainConfig{
+					ChainID:             big.NewInt(1234),
+					HomesteadBlock:      big.NewInt(0),
+					EIP150Block:         big.NewInt(0),
+					EIP155Block:         big.NewInt(0),
+					EIP158Block:         big.NewInt(0),
+					ConstantinopleBlock: big.NewInt(0),
+					PetersburgBlock:     big.NewInt(0),
+					Ethash:              new(EthashConfig),
+				},
+				want: "invalid chain config: wrong fork switch order: ByzantiumBlock is unset, but ConstantinopleBlock 0 is scheduled",
+			},
+			{
+				name: "london without istanbul",
+				cfg: &ChainConfig{
+					ChainID:        big.NewInt(1234),
+					HomesteadBlock: big.NewInt(0),
+					EIP150Block:    big.NewInt(0),
+					EIP155Block:    big.NewInt(0),
+					EIP158Block:    big.NewInt(0),
+					ByzantiumBlock: big.NewInt(0),
+					LondonBlock:    big.NewInt(0),
+					Ethash:         new(EthashConfig),
+				},
+				want: "invalid chain config: wrong fork switch order: IstanbulBlock is unset, but LondonBlock 0 is scheduled",
+			},
+			{
+				name: "merge without istanbul",
+				cfg: &ChainConfig{
+					ChainID:        big.NewInt(1234),
+					HomesteadBlock: big.NewInt(0),
+					EIP150Block:    big.NewInt(0),
+					EIP155Block:    big.NewInt(0),
+					EIP158Block:    big.NewInt(0),
+					ByzantiumBlock: big.NewInt(0),
+					MergeBlock:     big.NewInt(0),
+					Ethash:         new(EthashConfig),
+				},
+				want: "invalid chain config: wrong fork switch order: IstanbulBlock is unset, but MergeBlock 0 is scheduled",
+			},
+			{
+				name: "shanghai without istanbul",
+				cfg: &ChainConfig{
+					ChainID:        big.NewInt(1234),
+					HomesteadBlock: big.NewInt(0),
+					EIP150Block:    big.NewInt(0),
+					EIP155Block:    big.NewInt(0),
+					EIP158Block:    big.NewInt(0),
+					ByzantiumBlock: big.NewInt(0),
+					ShanghaiBlock:  big.NewInt(0),
+					Ethash:         new(EthashConfig),
+				},
+				want: "invalid chain config: wrong fork switch order: IstanbulBlock is unset, but ShanghaiBlock 0 is scheduled",
+			},
+			{
+				name: "issue 2771 reproduction",
+				cfg:  shanghaiPrefix,
+				want: "invalid chain config: wrong fork switch order: PragueBlock is unset, but OsakaBlock 0 is scheduled",
+			},
+			{
+				// The shape upstream rejects too: Istanbul is scheduled while
+				// Petersburg is unset, and neither ConstantinopleBlock nor the
+				// cancellation-fee fallback is declared.
+				name: "petersburg absent without constantinople",
+				cfg: &ChainConfig{
+					ChainID:        big.NewInt(1234),
+					HomesteadBlock: big.NewInt(0),
+					EIP150Block:    big.NewInt(0),
+					EIP155Block:    big.NewInt(0),
+					EIP158Block:    big.NewInt(0),
+					ByzantiumBlock: big.NewInt(0),
+					IstanbulBlock:  big.NewInt(0),
+					BerlinBlock:    big.NewInt(10),
+					Ethash:         new(EthashConfig),
+				},
+				want: "invalid chain config: wrong fork switch order: PetersburgBlock is unset, but IstanbulBlock 0 is scheduled",
+			},
+			{
+				// Petersburg must be declared before Istanbul is scheduled.
+				name: "petersburg skipped while constantinople is declared",
+				cfg: &ChainConfig{
+					ChainID:             big.NewInt(1234),
+					HomesteadBlock:      big.NewInt(0),
+					EIP150Block:         big.NewInt(0),
+					EIP155Block:         big.NewInt(0),
+					EIP158Block:         big.NewInt(0),
+					ByzantiumBlock:      big.NewInt(0),
+					ConstantinopleBlock: big.NewInt(0),
+					IstanbulBlock:       big.NewInt(0),
+					Ethash:              new(EthashConfig),
+				},
+				want: "invalid chain config: wrong fork switch order: PetersburgBlock is unset, but IstanbulBlock 0 is scheduled",
+			},
+			{
+				// The pair check needs no later fork: IsConstantinople is true from
+				// block 0 on, so the net-metered SSTORE rule runs although no fork
+				// declares it.
+				name: "petersburg skipped with nothing later scheduled",
+				cfg: &ChainConfig{
+					ChainID:             big.NewInt(1234),
+					HomesteadBlock:      big.NewInt(0),
+					EIP150Block:         big.NewInt(0),
+					EIP155Block:         big.NewInt(0),
+					EIP158Block:         big.NewInt(0),
+					ByzantiumBlock:      big.NewInt(0),
+					ConstantinopleBlock: big.NewInt(0),
+					Ethash:              new(EthashConfig),
+				},
+				want: "invalid chain config: wrong fork switch order: PetersburgBlock is unset, but ConstantinopleBlock 0 is scheduled",
+			},
+		}
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				err := test.cfg.CheckConfigForkOrder()
+				if !errors.Is(err, ErrWrongForkSwitchOrder) {
+					t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+				}
+				if err == nil || err.Error() != test.want {
+					t.Fatalf("unexpected error string:\nhave %v\nwant %v", err, test.want)
+				}
+			})
+		}
+	})
+	t.Run("standard fork sequence accepts a declared prefix", func(t *testing.T) {
+		cancunGap := &ChainConfig{ChainID: big.NewInt(1234), Ethash: new(EthashConfig)}
+		declareStandardForkPrefix(cancunGap)
+		cancunGap.BerlinBlock = big.NewInt(10)
+		cancunGap.LondonBlock = big.NewInt(10)
+		cancunGap.MergeBlock = big.NewInt(10)
+		cancunGap.ShanghaiBlock = big.NewInt(10)
+		cancunGap.EIP1559Block = big.NewInt(10)
+		cancunGap.PragueBlock = big.NewInt(20)
+		cancunGap.OsakaBlock = big.NewInt(20)
+
+		// Petersburg scheduled after Constantinople is valid, and its
+		// IsPetersburg is false before PetersburgBlock just like this
+		// repository's, so the window between the two is not a divergence.
+		petersburgDeclaredAfterConstantinople := &ChainConfig{ChainID: big.NewInt(1234), Ethash: new(EthashConfig)}
+		declareStandardForkPrefix(petersburgDeclaredAfterConstantinople)
+		petersburgDeclaredAfterConstantinople.ConstantinopleBlock = big.NewInt(0)
+		petersburgDeclaredAfterConstantinople.PetersburgBlock = big.NewInt(10)
+		petersburgDeclaredAfterConstantinople.IstanbulBlock = big.NewInt(10)
+
+		// The same holds when the migrated cancellation-fee fork supplies the
+		// effective Petersburg activation; the XDC fields come along because
+		// setting one triggers requiresXDCForkConfig().
+		petersburgViaCancellationFee := &ChainConfig{
+			ChainID:                     big.NewInt(1234),
+			HomesteadBlock:              big.NewInt(0),
+			EIP150Block:                 big.NewInt(0),
+			EIP155Block:                 big.NewInt(0),
+			EIP158Block:                 big.NewInt(0),
+			ByzantiumBlock:              big.NewInt(0),
+			ConstantinopleBlock:         big.NewInt(0),
+			TIPXDCXCancellationFeeBlock: big.NewInt(0),
+			TIPTRC21FeeBlock:            big.NewInt(0),
+			Gas50xBlock:                 big.NewInt(0),
+			TRC21IssuerSMC:              TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:              TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC:      TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC:      TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                      new(EthashConfig),
+		}
+
+		istanbulViaCancellationFee := &ChainConfig{
+			ChainID:                     big.NewInt(1234),
+			HomesteadBlock:              big.NewInt(0),
+			EIP150Block:                 big.NewInt(0),
+			EIP155Block:                 big.NewInt(0),
+			EIP158Block:                 big.NewInt(0),
+			ByzantiumBlock:              big.NewInt(0),
+			BerlinBlock:                 big.NewInt(10),
+			TIPXDCXCancellationFeeBlock: big.NewInt(0),
+			TIPTRC21FeeBlock:            big.NewInt(0),
+			Gas50xBlock:                 big.NewInt(0),
+			TRC21IssuerSMC:              TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:              TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC:      TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC:      TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                      new(EthashConfig),
+		}
+
+		for _, test := range []struct {
+			name string
+			cfg  *ChainConfig
+		}{
+			{name: "cancun skipped between eip1559 and prague", cfg: cancunGap},
+			{name: "petersburg declared after constantinople", cfg: petersburgDeclaredAfterConstantinople},
+			{name: "petersburg activated through the cancellation fee fork", cfg: petersburgViaCancellationFee},
+			{name: "istanbul activated through the cancellation fee fork", cfg: istanbulViaCancellationFee},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				if err := test.cfg.CheckConfigForkOrder(); err != nil {
+					t.Fatalf("CheckConfigForkOrder rejected a declared standard prefix: %v", err)
+				}
+			})
+		}
+	})
+	t.Run("miner disable does not substitute for istanbul", func(t *testing.T) {
+		cfg := &ChainConfig{
+			ChainID:                  big.NewInt(1234),
+			HomesteadBlock:           big.NewInt(0),
+			EIP150Block:              big.NewInt(0),
+			EIP155Block:              big.NewInt(0),
+			EIP158Block:              big.NewInt(0),
+			ByzantiumBlock:           big.NewInt(0),
+			BerlinBlock:              big.NewInt(10),
+			TIPXDCXMinerDisableBlock: big.NewInt(20),
+			TIPTRC21FeeBlock:         big.NewInt(0),
+			Gas50xBlock:              big.NewInt(0),
+			TRC21IssuerSMC:           TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:           TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC:   TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC:   TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                   new(EthashConfig),
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: IstanbulBlock is unset, but BerlinBlock 10 is scheduled" {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("miner disable without a later standard fork stays accepted", func(t *testing.T) {
+		// The sequence scan is one-way: with no standard fork scheduled after
+		// the missing Istanbul slot it stays silent by design, even though
+		// IsIstanbul is false. Scheduling Berlin here would make the case above.
+		cfg := &ChainConfig{
+			ChainID:                  big.NewInt(1234),
+			TIPXDCXMinerDisableBlock: big.NewInt(20),
+			TIPTRC21FeeBlock:         big.NewInt(0),
+			Gas50xBlock:              big.NewInt(0),
+			TRC21IssuerSMC:           TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:           TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC:   TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC:   TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                   new(EthashConfig),
+		}
+		if err := cfg.CheckConfigForkOrder(); err != nil {
+			t.Fatalf("CheckConfigForkOrder rejected a config with no scheduled standard fork: %v", err)
+		}
+		if cfg.IsIstanbul(big.NewInt(20)) {
+			t.Fatal("fixture is supposed to leave Istanbul inactive")
+		}
+	})
+	t.Run("linear comparison keeps reporting a real inversion first", func(t *testing.T) {
+		// The sequence scan runs after the linear comparison, so a config that
+		// both inverts a pair and skips a required fork keeps the inversion's
+		// error. Moving the sequence scan earlier changes this string.
+		cfg := &ChainConfig{
+			ChainID:                  big.NewInt(1234),
+			EIP158Block:              big.NewInt(100),
+			TIPTRC21FeeBlock:         big.NewInt(0),
+			Gas50xBlock:              big.NewInt(0),
+			TRC21IssuerSMC:           TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:           TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC:   TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC:   TestnetChainConfig.LendingRegistrationSMC,
+			TIPXDCXMinerDisableBlock: big.NewInt(50),
+			Ethash:                   new(EthashConfig),
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: EIP158Block 100 > TIPTRC21FeeBlock 0: declare TIPTRC21FeeBlock at or after EIP158Block" {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
+	t.Run("effective petersburg activation names the field it came from", func(t *testing.T) {
+		// A config whose Petersburg is activated by the migrated cancellation-fee
+		// fork instead of PetersburgBlock must name that field: the operator has
+		// no PetersburgBlock to look at. Istanbul shares the same fallback, but its
+		// slot follows Petersburg, so this rejection is only ever reported for
+		// Petersburg; the accepted-prefix group above covers Istanbul.
+		cfg := &ChainConfig{
+			ChainID:                     big.NewInt(1234),
+			TIPTRC21FeeBlock:            big.NewInt(0),
+			Gas50xBlock:                 big.NewInt(0),
+			TRC21IssuerSMC:              TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:              TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC:      TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC:      TestnetChainConfig.LendingRegistrationSMC,
+			TIPXDCXCancellationFeeBlock: big.NewInt(0),
+			Ethash:                      new(EthashConfig),
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: ByzantiumBlock is unset, but TIPXDCXCancellationFeeBlock 0 is scheduled" {
+			t.Fatalf("unexpected error string: %v", err)
+		}
+	})
 	t.Run("gas50x block requires tiptrc21 fee block", func(t *testing.T) {
 		cfg := &ChainConfig{
 			ChainID:     big.NewInt(1234),
@@ -131,7 +486,7 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 		if !errors.Is(err, ErrWrongForkSwitchOrder) {
 			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
 		}
-		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: TIPTRC21FeeBlock 20 > Gas50xBlock 10" {
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: TIPTRC21FeeBlock 20 > Gas50xBlock 10: declare Gas50xBlock at or after TIPTRC21FeeBlock" {
 			t.Fatalf("unexpected error string: %v", err)
 		}
 	})
@@ -152,7 +507,7 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 		if !errors.Is(err, ErrWrongForkSwitchOrder) {
 			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
 		}
-		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: Gas50xBlock 20 > TIPXDCXMinerDisableBlock 10" {
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: Gas50xBlock 20 > TIPXDCXMinerDisableBlock 10: declare TIPXDCXMinerDisableBlock at or after Gas50xBlock, or set \"tipXDCXMinerDisableBlock\" to null in the chain config" {
 			t.Fatalf("unexpected error string: %v", err)
 		}
 	})
@@ -173,7 +528,7 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 		if !errors.Is(err, ErrWrongForkSwitchOrder) {
 			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
 		}
-		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: Gas50xBlock 20 > Gas2500xBlock 10" {
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: Gas50xBlock 20 > Gas2500xBlock 10: declare Gas2500xBlock at or after Gas50xBlock, or set \"gas2500xBlock\" to null in the chain config" {
 			t.Fatalf("unexpected error string: %v", err)
 		}
 	})
@@ -227,6 +582,7 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
 			Ethash:                 new(EthashConfig),
 		}
+		declareStandardForkPrefix(cfg)
 
 		if err := cfg.CheckConfigForkOrder(); err != nil {
 			t.Fatalf("CheckConfigForkOrder rejected gas2500x after eip1559: %v", err)
@@ -246,6 +602,7 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
 			Ethash:                 new(EthashConfig),
 		}
+		declareStandardForkPrefix(cfg)
 
 		err := cfg.CheckConfigForkOrder()
 		if !errors.Is(err, ErrWrongForkSwitchOrder) {
@@ -269,9 +626,14 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
 			Ethash:                 new(EthashConfig),
 		}
+		declareStandardForkPrefix(cfg)
 
-		if err := cfg.CheckConfigForkOrder(); !errors.Is(err, ErrWrongForkSwitchOrder) {
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
 			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: Gas2500xBlock 0 takes effect before EIP1559Block 20 fills the header base fee" {
+			t.Fatalf("unexpected error string: %v", err)
 		}
 	})
 	t.Run("gas2500x block is accepted when the basefee opcode window is empty", func(t *testing.T) {
@@ -288,6 +650,7 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
 			Ethash:                 new(EthashConfig),
 		}
+		declareStandardForkPrefix(cfg)
 
 		if err := cfg.CheckConfigForkOrder(); err != nil {
 			t.Fatalf("CheckConfigForkOrder rejected an empty basefee opcode window: %v", err)
@@ -306,9 +669,14 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
 			Ethash:                 new(EthashConfig),
 		}
+		declareStandardForkPrefix(cfg)
 
-		if err := cfg.CheckConfigForkOrder(); !errors.Is(err, ErrWrongForkSwitchOrder) {
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
 			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if err == nil || err.Error() != "invalid chain config: wrong fork switch order: Gas2500xBlock 20 takes effect before EIP1559Block <nil> fills the header base fee" {
+			t.Fatalf("unexpected error string: %v", err)
 		}
 	})
 	t.Run("gas2500x block without london block is accepted", func(t *testing.T) {
@@ -757,16 +1125,16 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 		{
 			name: "upgrade reward before dynamic gas limit",
 			mutate: func(cfg *ChainConfig) {
-				cfg.TIPUpgradeRewardBlock = big.NewInt(cfg.DynamicGasLimitBlock.Int64() - 1)
+				cfg.TIPFixedRewardBlock = big.NewInt(cfg.DynamicGasLimitBlock.Int64() - 1)
 			},
 			wantField: "DynamicGasLimitBlock",
 		},
 		{
 			name: "upgrade penalty before upgrade reward",
 			mutate: func(cfg *ChainConfig) {
-				cfg.TIPUpgradePenaltyBlock = big.NewInt(cfg.TIPUpgradeRewardBlock.Int64() - 1)
+				cfg.TIPUpgradePenaltyBlock = big.NewInt(cfg.TIPFixedRewardBlock.Int64() - 1)
 			},
-			wantField: "TIPUpgradeRewardBlock",
+			wantField: "TIPFixedRewardBlock",
 		},
 		{
 			name: "prague before upgrade penalty",
@@ -781,6 +1149,21 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 				cfg.OsakaBlock = big.NewInt(cfg.PragueBlock.Int64() - 1)
 			},
 			wantField: "PragueBlock",
+		},
+		{
+			name: "amsterdam before osaka",
+			mutate: func(cfg *ChainConfig) {
+				cfg.OsakaBlock = big.NewInt(cfg.PragueBlock.Int64())
+				cfg.AmsterdamBlock = big.NewInt(cfg.OsakaBlock.Int64() - 1)
+			},
+			wantField: "OsakaBlock",
+		},
+		{
+			name: "amsterdam without osaka",
+			mutate: func(cfg *ChainConfig) {
+				cfg.AmsterdamBlock = big.NewInt(cfg.PragueBlock.Int64())
+			},
+			wantField: "OsakaBlock",
 		},
 		{
 			name: "epoch halving before osaka",
@@ -979,30 +1362,79 @@ func TestGatherForksIncludesXDPoSV2SwitchBlock(t *testing.T) {
 	assert.Equal(t, []uint64{1000, 1500}, config.GatherForks())
 }
 
-func TestActiveForksReturnsAlphabeticalNames(t *testing.T) {
+// TestXDCNetworkConfigsGatherForks pins GatherForks for the three built-in
+// XDC networks whose Constantinople/Petersburg/Istanbul slots are declared
+// by this change; LocalnetChainConfig keeps the trio nil and is pinned by
+// TestXDCChainConfigsDeclareForkBlocks instead.
+func TestXDCNetworkConfigsGatherForks(t *testing.T) {
+	// ConstantinopleBlock, PetersburgBlock and IstanbulBlock now declare
+	// the same height as TIPXDCXCancellationFeeBlock. Petersburg and
+	// Istanbul were already aliased to that height at runtime, while
+	// Constantinople never had one. GatherForks collapses the duplicate
+	// heights, so the list - and therefore the fork id and the handshake
+	// filter - must stay byte-identical to the pre-declaration config.
+	tests := []struct {
+		name   string
+		config *ChainConfig
+		want   []uint64
+	}{
+		{
+			name:   "XDCMainnetChainConfig",
+			config: XDCMainnetChainConfig,
+			want:   []uint64{1, 2, 3, 4, 3000000, 3464000, 5000000, 38383838, 76321000, 80370000, 80370900, 98800200, 98802000},
+		},
+		{
+			name:   "TestnetChainConfig",
+			config: TestnetChainConfig,
+			want:   []uint64{1, 2, 3, 4, 3000000, 3464000, 5000000, 23779191, 56828700, 61290000, 66825000, 71550000, 71551800, 83600000, 84333000},
+		},
+		{
+			name:   "DevnetChainConfig",
+			config: DevnetChainConfig,
+			want:   []uint64{2700, 25000, 50000},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, test.config.GatherForks())
+		})
+	}
+}
+
+// TestActiveForksReturnsAscendingASCIIOrder pins the production ordering: the
+// names come out in ascending ASCII order, the order the mirror sorts into and
+// the order the docs for the RPC field promise.
+func TestActiveForksReturnsAscendingASCIIOrder(t *testing.T) {
 	config := &ChainConfig{
 		HomesteadBlock:           big.NewInt(1),
 		ByzantiumBlock:           big.NewInt(1),
 		BerlinBlock:              big.NewInt(1),
 		EIP150Block:              big.NewInt(1),
 		EIP1559Block:             big.NewInt(1),
+		Gas2500xBlock:            big.NewInt(1),
 		TIP2019Block:             big.NewInt(1),
+		TIPEpochHalvingBlock:     big.NewInt(1),
 		TIPTRC21FeeBlock:         big.NewInt(1),
 		TIPXDCXBlock:             big.NewInt(1),
 		TIPXDCXMinerDisableBlock: big.NewInt(1),
 		DynamicGasLimitBlock:     big.NewInt(1),
+		AmsterdamBlock:           big.NewInt(1),
 		XDPoS: &XDPoSConfig{V2: &V2{
 			SwitchBlock: big.NewInt(1),
 		}},
 	}
 
 	assert.Equal(t, []string{
+		"Amsterdam",
 		"Berlin",
 		"Byzantium",
 		"DynamicGasLimit",
 		"EIP1559",
+		"Gas2500x",
 		"Homestead",
 		"TIP2019",
+		"TIPEpochHalving",
 		"TIPTRC21Fee",
 		"TIPXDCX",
 		"TIPXDCXReceiver",
@@ -1045,7 +1477,7 @@ func BenchmarkGatherForks(b *testing.B) {
 		PragueBlock:                 big.NewInt(28),
 		OsakaBlock:                  big.NewInt(29),
 		DynamicGasLimitBlock:        big.NewInt(30),
-		TIPUpgradeRewardBlock:       big.NewInt(31),
+		TIPFixedRewardBlock:         big.NewInt(31),
 		TIPUpgradePenaltyBlock:      big.NewInt(32),
 		TIPEpochHalvingBlock:        big.NewInt(33),
 		XDPoS: &XDPoSConfig{V2: &V2{
@@ -1089,6 +1521,7 @@ func BenchmarkActiveForks(b *testing.B) {
 		TIPXDCXCancellationFeeBlock: big.NewInt(17),
 		TIPTRC21FeeBlock:            big.NewInt(18),
 		Gas50xBlock:                 big.NewInt(19),
+		Gas2500xBlock:               big.NewInt(19),
 		BerlinBlock:                 big.NewInt(20),
 		LondonBlock:                 big.NewInt(21),
 		MergeBlock:                  big.NewInt(22),
@@ -1100,7 +1533,7 @@ func BenchmarkActiveForks(b *testing.B) {
 		PragueBlock:                 big.NewInt(28),
 		OsakaBlock:                  big.NewInt(29),
 		DynamicGasLimitBlock:        big.NewInt(30),
-		TIPUpgradeRewardBlock:       big.NewInt(31),
+		TIPFixedRewardBlock:         big.NewInt(31),
 		TIPUpgradePenaltyBlock:      big.NewInt(32),
 		TIPEpochHalvingBlock:        big.NewInt(33),
 		XDPoS: &XDPoSConfig{V2: &V2{
@@ -1174,6 +1607,7 @@ func activeForksLegacyMapSort(c *ChainConfig, block *big.Int) []string {
 		"London":                 c.IsLondon(block),
 		"Merge":                  c.IsMerge(block),
 		"Shanghai":               c.IsShanghai(block),
+		"Gas2500x":               c.IsGas2500x(block),
 		"Gas50x":                 c.IsGas50x(block),
 		"XDPoSV2":                c.IsXDPoSV2(block),
 		"TIPXDCXMiner":           c.IsTIPXDCXMiner(block),
@@ -1182,11 +1616,13 @@ func activeForksLegacyMapSort(c *ChainConfig, block *big.Int) []string {
 		"EIP1559":                c.IsEIP1559(block),
 		"Cancun":                 c.IsCancun(block),
 		"DynamicGasLimit":        c.IsDynamicGasLimit(block),
-		"TIPUpgradeReward":       c.IsTIPUpgradeReward(block),
+		"TIPFixedReward":         c.IsTIPFixedReward(block),
 		"TIPUpgradePenalty":      c.IsTIPUpgradePenalty(block),
 		"TIPEpochHalving":        c.IsTIPEpochHalving(block),
+		"TIPProportionalReward":  c.IsTIPProportionalReward(block),
 		"Prague":                 c.IsPrague(block),
 		"Osaka":                  c.IsOsaka(block),
+		"Amsterdam":              c.IsAmsterdam(block),
 	}
 	activeForks := make([]string, 0)
 	for fork, active := range features {
@@ -1196,6 +1632,77 @@ func activeForksLegacyMapSort(c *ChainConfig, block *big.Int) []string {
 	}
 	slices.Sort(activeForks)
 	return activeForks
+}
+
+// TestActiveForksLegacyMirrorMatchesActiveForks pins the benchmark-only mirror
+// to the production list, so the benchmark keeps comparing implementations that
+// enumerate the same forks in the same order.
+func TestActiveForksLegacyMirrorMatchesActiveForks(t *testing.T) {
+	newConfig := func() *ChainConfig {
+		config := TestChainConfig.Clone()
+		for _, field := range chainConfigForkBlockFields {
+			field.set(config, big.NewInt(0))
+		}
+		config.XDPoS = &XDPoSConfig{V2: &V2{SwitchBlock: big.NewInt(0)}}
+		return config
+	}
+	block := big.NewInt(1)
+
+	// Scheduling the two Disable fork blocks turns TIPXDCXMiner and
+	// TIPXDCXReceiver off and XDCxDisable on, so one config cannot activate every
+	// name; the two runs below cover all of them between them.
+	config := newConfig()
+	first := config.ActiveForks(block)
+	assert.Equal(t, first, activeForksLegacyMapSort(config, block))
+	assert.Contains(t, first, "XDCxDisable")
+	assert.NotContains(t, first, "TIPXDCXMiner")
+	assert.NotContains(t, first, "TIPXDCXReceiver")
+
+	config = newConfig()
+	config.TIPXDCXMinerDisableBlock = nil
+	config.TIPXDCXReceiverDisableBlock = nil
+	second := config.ActiveForks(block)
+	assert.Equal(t, second, activeForksLegacyMapSort(config, block))
+	assert.Contains(t, second, "TIPXDCXMiner")
+	assert.Contains(t, second, "TIPXDCXReceiver")
+	assert.NotContains(t, second, "XDCxDisable")
+
+	covered := make(map[string]struct{}, len(first)+len(second))
+	firstSet := make(map[string]struct{}, len(first))
+	for _, name := range first {
+		covered[name] = struct{}{}
+		firstSet[name] = struct{}{}
+	}
+	secondSet := make(map[string]struct{}, len(second))
+	for _, name := range second {
+		covered[name] = struct{}{}
+		secondSet[name] = struct{}{}
+	}
+	// Every top-level fork field contributes one name, except that TIPXDCXBlock
+	// contributes three (TIPXDCX, TIPXDCXMiner, TIPXDCXReceiver) and
+	// TIPXDCXReceiverDisableBlock only gates TIPXDCXReceiver without
+	// contributing one; that nets +1. XDPoSV2 is driven by XDPoS.V2 rather than
+	// a top-level field, making the total len(chainConfigForkBlockFields) + 2.
+	wantNames := len(chainConfigForkBlockFields) + 2
+	assert.Len(t, covered, wantNames, "the two runs must cover every fork name")
+
+	// Pinning the symmetric difference pins which names each run contributes:
+	// every name outside this pair is active in both runs, so a name that moves
+	// from one run to the other cannot slip past the union length above.
+	onlyFirst := make(map[string]struct{}, len(first))
+	for _, name := range first {
+		if _, ok := secondSet[name]; !ok {
+			onlyFirst[name] = struct{}{}
+		}
+	}
+	onlySecond := make(map[string]struct{}, len(second))
+	for _, name := range second {
+		if _, ok := firstSet[name]; !ok {
+			onlySecond[name] = struct{}{}
+		}
+	}
+	assert.Equal(t, map[string]struct{}{"XDCxDisable": {}}, onlyFirst, "only XDCxDisable belongs to run 1 alone")
+	assert.Equal(t, map[string]struct{}{"TIPXDCXMiner": {}, "TIPXDCXReceiver": {}}, onlySecond, "only the two TIPXDCX names belong to run 2 alone")
 }
 
 func TestChainConfigStringIncludesAllFields(t *testing.T) {
@@ -1232,9 +1739,11 @@ func TestChainConfigStringIncludesAllFields(t *testing.T) {
 		TIPXDCXMinerDisableBlock:    big.NewInt(29),
 		TIPXDCXReceiverDisableBlock: big.NewInt(30),
 		DynamicGasLimitBlock:        big.NewInt(31),
-		TIPUpgradeRewardBlock:       big.NewInt(32),
+		TIPFixedRewardBlock:         big.NewInt(32),
 		TIPUpgradePenaltyBlock:      big.NewInt(33),
 		TIPEpochHalvingBlock:        big.NewInt(34),
+		AmsterdamBlock:              big.NewInt(35),
+		TIPProportionalRewardBlock:  big.NewInt(36),
 		TRC21IssuerSMC:              common.HexToAddress("0x8c0faeb5C6bEd2129b8674F262Fd45c4e9468bee"),
 		XDCXListingSMC:              common.HexToAddress("0xDE34dD0f536170993E8CFF639DdFfCF1A85D3E53"),
 		RelayerRegistrationSMC:      common.HexToAddress("0x16c63b79f9C8784168103C0b74E6A59EC2de4a02"),
@@ -1295,12 +1804,14 @@ func TestChainConfigStringIncludesAllFields(t *testing.T) {
 		"TIPXDCXReceiverDisable:",
 		"EIP1559:",
 		"Cancun:",
+		"DynamicGasLimit:",
+		"TIPFixedReward:",
+		"TIPUpgradePenalty:",
 		"Prague:",
 		"Osaka:",
-		"DynamicGasLimit:",
-		"TIPUpgradeReward:",
-		"TIPUpgradePenalty:",
+		"Amsterdam:",
 		"TIPEpochHalving:",
+		"TIPProportionalReward:",
 		"TRC21IssuerSMC:",
 		"XDCXListingSMC:",
 		"RelayerRegistrationSMC:",
@@ -1310,6 +1821,90 @@ func TestChainConfigStringIncludesAllFields(t *testing.T) {
 		"XDPoS:",
 	} {
 		assert.Contains(t, got, label)
+	}
+}
+
+// TestChainConfigRenderingFollowsForkOrder pins the fork fields whose fork
+// order entry and rendering order had diverged - the six that #2811 renumbered,
+// plus TIP2019 and DAOFork - along with the Constantinople/Petersburg/Istanbul
+// trio that #2777 moved after TIPXDCXCancellationFee, that anchor slot (without
+// which the trio's position relative to it is not pinned), the TIPTRC21Fee slot
+// that follows the trio, TIPEpochHalving, and TIPProportionalReward, the last
+// pinned field in fork order. The expected order is read off
+// chainConfigForkOrderFields, so a later renumbering carries the expectation
+// with it instead of leaving the renderings behind.
+func TestChainConfigRenderingFollowsForkOrder(t *testing.T) {
+	pinned := map[string]struct{}{
+		"TIP2019Block":                {},
+		"DAOForkBlock":                {},
+		"TIPXDCXCancellationFeeBlock": {},
+		"ConstantinopleBlock":         {},
+		"PetersburgBlock":             {},
+		"IstanbulBlock":               {},
+		"TIPTRC21FeeBlock":            {},
+		"DynamicGasLimitBlock":        {},
+		"TIPFixedRewardBlock":         {},
+		"TIPUpgradePenaltyBlock":      {},
+		"PragueBlock":                 {},
+		"OsakaBlock":                  {},
+		"AmsterdamBlock":              {},
+		"TIPEpochHalvingBlock":        {},
+		"TIPProportionalRewardBlock":  {},
+	}
+	var want []string
+	for _, field := range chainConfigForkOrderFields {
+		if _, ok := pinned[field.field.name]; ok {
+			want = append(want, strings.TrimSuffix(field.field.name, "Block"))
+		}
+	}
+	assert.Len(t, want, len(pinned), "the fork order must still cover every pinned fork")
+
+	config := &ChainConfig{
+		ChainID:                     big.NewInt(1),
+		TIP2019Block:                big.NewInt(1),
+		DAOForkBlock:                big.NewInt(2),
+		TIPXDCXCancellationFeeBlock: big.NewInt(13),
+		ConstantinopleBlock:         big.NewInt(10),
+		PetersburgBlock:             big.NewInt(11),
+		IstanbulBlock:               big.NewInt(12),
+		TIPTRC21FeeBlock:            big.NewInt(14),
+		DynamicGasLimitBlock:        big.NewInt(3),
+		TIPFixedRewardBlock:         big.NewInt(4),
+		TIPUpgradePenaltyBlock:      big.NewInt(5),
+		PragueBlock:                 big.NewInt(6),
+		OsakaBlock:                  big.NewInt(7),
+		AmsterdamBlock:              big.NewInt(8),
+		TIPEpochHalvingBlock:        big.NewInt(9),
+		TIPProportionalRewardBlock:  big.NewInt(15),
+	}
+	for _, rendering := range []struct {
+		name   string
+		prefix string
+		text   string
+		label  func(string) string
+	}{
+		{name: "String", prefix: ", ", text: config.String(), label: func(name string) string { return name }},
+		{name: "Description", prefix: "  - ", text: config.Description(), label: func(name string) string {
+			if name == "DAOFork" {
+				return "DAO Fork"
+			}
+			return name
+		}},
+	} {
+		t.Run(rendering.name, func(t *testing.T) {
+			previous := -1
+			for _, field := range want {
+				label := rendering.label(field)
+				index := strings.Index(rendering.text, rendering.prefix+label+":")
+				if index < 0 {
+					t.Fatalf("%s does not list %s: %q", rendering.name, label, rendering.text)
+				}
+				if index < previous {
+					t.Fatalf("%s lists %s out of fork order: %q", rendering.name, label, rendering.text)
+				}
+				previous = index
+			}
+		})
 	}
 }
 

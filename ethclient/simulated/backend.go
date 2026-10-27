@@ -66,6 +66,18 @@ var (
 	errTransactionDoesNotExist = errors.New("transaction does not exist")
 )
 
+// errEngineNotXDPoS answers a committed-block lookup on a chain whose head is
+// in the XDPoS v2 era while the engine is something else: naming v2 in the
+// config does not make the engine XDPoS, and another engine has no committed
+// block to report.
+var errEngineNotXDPoS = errors.New("the engine is not XDPoS, so no committed block can be looked up")
+
+// errNotXDPoSV2 answers a committed-block lookup on a chain whose head is not
+// in the XDPoS v2 era: either the config names an XDPoS other than v2, or it
+// names v2 without a switch block, or the head is still at or before the
+// switch block. Either way there is no committed block to look up.
+var errNotXDPoSV2 = errors.New("only XDPoS v2 can lookup committed block")
+
 // SimulatedBackend implements bind.ContractBackend, simulating a blockchain in
 // the background. Its main purpose is to allow for easy testing of contract bindings.
 // Simulated backend implements the following interfaces:
@@ -1258,13 +1270,18 @@ func (fb *filterBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNum
 			return nil, errors.New("current block is nil")
 		}
 		if fb.bc.Config().XDPoS.BlockConsensusVersion(current.Number) == params.ConsensusEngineVersion2 {
-			info := fb.bc.Engine().(*XDPoS.XDPoS).EngineV2.GetLatestCommittedBlockInfo()
+			// Naming XDPoS v2 in the config does not make the engine XDPoS.
+			engine, ok := fb.bc.Engine().(*XDPoS.XDPoS)
+			if !ok {
+				return nil, errEngineNotXDPoS
+			}
+			info := engine.EngineV2.GetLatestCommittedBlockInfo()
 			if info == nil {
 				return nil, errors.New("no committed block info available yet")
 			}
 			return fb.bc.GetHeaderByHash(info.Hash), nil
 		}
-		return nil, errors.New("only XDPoS v2 can lookup committed block")
+		return nil, errNotXDPoSV2
 	default:
 		return fb.bc.GetHeaderByNumber(uint64(number.Int64())), nil
 	}

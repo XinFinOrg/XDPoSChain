@@ -33,7 +33,6 @@ func TestHistoricalBalanceBypassApply(t *testing.T) {
 	})
 
 	for _, block := range blocks {
-		block := block
 		t.Run(new(big.Int).SetUint64(block).String(), func(t *testing.T) {
 			statedb := newHistoricalBypassStateDB(t)
 			rule := historicalBalanceBypassByBlock[block]

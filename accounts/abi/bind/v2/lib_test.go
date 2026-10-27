@@ -378,3 +378,15 @@ func TestErrors(t *testing.T) {
 		t.Fatalf("bad unpacked error result: expected Arg4 to be false.  got true")
 	}
 }
+
+func TestUnpackErrorShortRevertData(t *testing.T) {
+	// revert data shorter than a 4-byte selector (e.g. an empty revert) must
+	// not panic, but return the unknown-error result.
+	c := solc_errors.NewC()
+	for _, raw := range [][]byte{nil, {}, {0x01}, {0x01, 0x02}, {0x01, 0x02, 0x03}} {
+		unpacked, err := c.UnpackError(raw)
+		if err == nil || err.Error() != "Unknown error" {
+			t.Fatalf("expected \"Unknown error\" for %d bytes of revert data, got %v (err: %v)", len(raw), unpacked, err)
+		}
+	}
+}

@@ -238,6 +238,7 @@ func legacyV1TestChainConfig(chainConfig *params.ChainConfig) *params.ChainConfi
 	legacy := *chainConfig
 	futureForkBlock := big.NewInt(1_000_000_000)
 	legacy.TIP2019Block = common.Big0
+	legacy.ConstantinopleBlock = new(big.Int).Set(futureForkBlock)
 	legacy.PetersburgBlock = new(big.Int).Set(futureForkBlock)
 	legacy.IstanbulBlock = new(big.Int).Set(futureForkBlock)
 	legacy.TIPSigningBlock = new(big.Int).Set(futureForkBlock)
@@ -260,8 +261,9 @@ func legacyV1TestChainConfig(chainConfig *params.ChainConfig) *params.ChainConfi
 	legacy.CancunBlock = new(big.Int).Set(futureForkBlock)
 	legacy.PragueBlock = new(big.Int).Set(futureForkBlock)
 	legacy.OsakaBlock = new(big.Int).Set(futureForkBlock)
+	legacy.AmsterdamBlock = new(big.Int).Set(futureForkBlock)
 	legacy.DynamicGasLimitBlock = new(big.Int).Set(futureForkBlock)
-	legacy.TIPUpgradeRewardBlock = new(big.Int).Set(futureForkBlock)
+	legacy.TIPFixedRewardBlock = new(big.Int).Set(futureForkBlock)
 	legacy.TIPUpgradePenaltyBlock = new(big.Int).Set(futureForkBlock)
 	legacy.TIPEpochHalvingBlock = new(big.Int).Set(futureForkBlock)
 	return refreshChainConfigPresence(&legacy)

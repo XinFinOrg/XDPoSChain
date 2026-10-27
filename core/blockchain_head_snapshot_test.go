@@ -772,3 +772,149 @@ func TestReorgTipGapSnapshotIsWrittenOnce(t *testing.T) {
 		t.Fatalf("the set the gap block stored is not the one derived from its state: err=%v", err)
 	}
 }
+
+// TestGapBlockRefreshSkipsWhenEngineIsNotXDPoS pins the ErrNotXDPoS tolerance
+// the two UpdateM1At call sites share: a chain that names XDPoS in its config
+// while running another engine has no masternode set to refresh, so the refresh
+// has to be skipped instead of halting the process. Removing the tolerance
+// fails this test by exiting the binary, since the shared refresh turns every
+// other error into log.Crit, which is os.Exit(1).
+//
+// The fixture is the pair the issue reports: an ethash engine under an XDPoS
+// config, built through the exported NewBlockChain plus SetChainConfig, which
+// is the only way to build it - CreateConsensusEngine derives the engine from
+// the same config, so a normally started node cannot. A v1 schedule is what
+// puts the refresh on the UpdateM1At path: with no v2 switch the gap block owes
+// no v2 snapshot, so the refresh is the one UpdateM1At performs. The two
+// sub-cases cover both call sites: the head refresh in adoptHead, where the
+// gap block is adopted directly, and the refresh in the reorg apply loop,
+// which the gap block reaches as an intermediate block of the reorg that
+// adopts the block written above it.
+func TestGapBlockRefreshSkipsWhenEngineIsNotXDPoS(t *testing.T) {
+	// v1GapConfig schedules block (10-gap) as the gap block of its epoch
+	// without a v2 era, so needsNextEpochSnapshot is false for it: the refresh
+	// then runs through UpdateM1At, which is the path under test.
+	v1GapConfig := func(gap uint64) *params.ChainConfig {
+		cfg := params.AllEthashProtocolChanges.Clone()
+		cfg.XDPoS = &params.XDPoSConfig{
+			Epoch: 10,
+			Gap:   gap,
+		}
+		return cfg
+	}
+
+	// requireGapRefreshable asserts the block is one the refresh runs for: the
+	// gap block of its epoch and owing no v2 snapshot, so it goes through
+	// UpdateM1At rather than being carried by the batch.
+	requireGapRefreshable := func(t *testing.T, chain *BlockChain, block *types.Block) {
+		t.Helper()
+
+		if !chain.isGapBlock(block) {
+			t.Fatalf("block %d is not scheduled as a gap block, so no refresh would run", block.NumberU64())
+		}
+		if chain.needsNextEpochSnapshot(block.Number()) {
+			t.Fatalf("block %d owes a v2 snapshot, so the refresh would be skipped by the batch instead", block.NumberU64())
+		}
+	}
+
+	// insertGapBlock drives block through writeBlockWithState under the chain
+	// write lock and asserts the chain adopted it, which is all a chain without
+	// the XDPoS engine can do with the refresh: skip it. want names the path the
+	// block took and only shows up in the failure message.
+	insertGapBlock := func(t *testing.T, chain *BlockChain, block *types.Block, statedb *state.StateDB, want string) {
+		t.Helper()
+
+		requireGapRefreshable(t, chain, block)
+
+		chain.chainmu.MustLock()
+		_, err := chain.writeBlockWithState(block, nil, statedb, nil, nil)
+		chain.chainmu.Unlock()
+		if err != nil {
+			t.Fatalf("the insertion of the gap block failed: %v", err)
+		}
+		if got := chain.CurrentBlock().Hash(); got != block.Hash() {
+			t.Fatalf("the head is %s after the %s, want the gap block %s", got, want, block.Hash())
+		}
+	}
+
+	t.Run("head refresh", func(t *testing.T) {
+		_, blockchain, head := newHeadWriteChain(t)
+		blockchain.SetChainConfig(v1GapConfig(7)) // 10-7 == 3, so block 3 is the gap block
+
+		state, err := blockchain.State()
+		if err != nil {
+			t.Fatalf("failed to open the head state: %v", err)
+		}
+		// The gap block sits directly on the head, so the insertion adopts it
+		// without a reorg and the refresh runs in adoptHead.
+		block := types.NewBlockWithHeader(&types.Header{
+			ParentHash: head.Hash(),
+			Number:     big.NewInt(3),
+			Difficulty: new(big.Int).Add(head.Difficulty(), big.NewInt(1)),
+			Root:       state.IntermediateRoot(false),
+			Time:       head.Time() + 1,
+		})
+		insertGapBlock(t, blockchain, block, state, "insertion")
+	})
+
+	t.Run("reorg refresh", func(t *testing.T) {
+		_, blockchain, head := newHeadWriteChain(t)
+		blockchain.SetChainConfig(v1GapConfig(8)) // 10-8 == 2, so the head's own number is the gap block
+
+		state, err := blockchain.State()
+		if err != nil {
+			t.Fatalf("failed to open the head state: %v", err)
+		}
+		// A gap block at the head's own number and difficulty, built on the block
+		// below it: the same total difficulty and the same number lose fork
+		// choice, so this write stores the block without adopting it. It has to
+		// be stored first, because the reorg below carries it as an intermediate
+		// block of the new chain rather than as the new head, and the apply loop
+		// of a reorg skips the new head.
+		side := types.NewBlockWithHeader(&types.Header{
+			ParentHash: head.ParentHash(),
+			Number:     new(big.Int).Set(head.Number()),
+			Difficulty: new(big.Int).Set(head.Difficulty()),
+			Root:       state.IntermediateRoot(false),
+			Time:       head.Time() + 1,
+		})
+		requireGapRefreshable(t, blockchain, side)
+
+		blockchain.chainmu.MustLock()
+		_, err = blockchain.writeBlockWithState(side, nil, state, nil, nil)
+		blockchain.chainmu.Unlock()
+		if err != nil {
+			t.Fatalf("the insertion of the side block failed: %v", err)
+		}
+		if got := blockchain.CurrentBlock().Hash(); got != head.Hash() {
+			t.Fatalf("the head moved to %s on a side block that does not beat it, want %s", got, head.Hash())
+		}
+
+		// A block on top of the side one, higher than the head: adopting it reorgs
+		// the chain onto [this block, the side block], so the apply loop walks the
+		// gap block and runs the refresh there, not in adoptHead, which is the
+		// caller that writes this new head. The state has to be opened again: the
+		// write above committed the one it was handed.
+		state, err = blockchain.State()
+		if err != nil {
+			t.Fatalf("failed to reopen the head state: %v", err)
+		}
+		top := types.NewBlockWithHeader(&types.Header{
+			ParentHash: side.Hash(),
+			Number:     new(big.Int).Add(head.Number(), big.NewInt(1)),
+			Difficulty: new(big.Int).Add(head.Difficulty(), big.NewInt(1)),
+			Root:       state.IntermediateRoot(false),
+			Time:       head.Time() + 2,
+		})
+
+		blockchain.chainmu.MustLock()
+		_, err = blockchain.writeBlockWithState(top, nil, state, nil, nil)
+		blockchain.chainmu.Unlock()
+		if err != nil {
+			t.Fatalf("the insertion of the block above the side chain failed: %v", err)
+		}
+		if got := blockchain.CurrentBlock().Hash(); got != top.Hash() {
+			t.Fatalf("the head is %s after the reorg, want the block above the side chain %s", got, top.Hash())
+		}
+	})
+}

@@ -1,0 +1,437 @@
+// Code generated - DO NOT EDIT.
+// This file is a generated binding and any manual changes will be lost.
+
+package bindtest
+
+import (
+	"context"
+	"errors"
+	"math/big"
+	"strings"
+	"time"
+
+	ethereum "github.com/XinFinOrg/XDPoSChain"
+	"github.com/XinFinOrg/XDPoSChain/accounts/abi"
+	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
+	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/event"
+)
+
+// Reference imports to suppress errors if they are not otherwise used.
+var (
+	_ = errors.New
+	_ = big.NewInt
+	_ = strings.NewReader
+	_ = ethereum.ErrNotFound
+	_ = bind.Bind
+	_ = common.Big1
+	_ = types.BloomLookup
+	_ = event.NewSubscription
+	_ = abi.ConvertType
+	_ = time.Tick
+	_ = context.Background
+)
+
+// NumericMethodNameMetaData contains all meta data concerning the NumericMethodName contract.
+var NumericMethodNameMetaData = &bind.MetaData{
+	ABI: "[{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"address\",\"name\":\"_param\",\"type\":\"address\"}],\"name\":\"_1TestEvent\",\"type\":\"event\"},{\"inputs\":[],\"name\":\"_1test\",\"outputs\":[],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"__1test\",\"outputs\":[],\"stateMutability\":\"pure\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"__2test\",\"outputs\":[],\"stateMutability\":\"pure\",\"type\":\"function\"}]",
+	Bin: "0x6080604052348015600f57600080fd5b5060958061001e6000396000f3fe6080604052348015600f57600080fd5b5060043610603c5760003560e01c80639d993132146041578063d02767c7146049578063ffa02795146051575b600080fd5b60476059565b005b604f605b565b005b6057605d565b005b565b565b56fea26469706673582212200382ca602dff96a7e2ba54657985e2b4ac423a56abe4a1f0667bc635c4d4371f64736f6c63430008110033",
+}
+
+// NumericMethodNameABI is the input ABI used to generate the binding from.
+// Deprecated: Use NumericMethodNameMetaData.ABI instead.
+var NumericMethodNameABI = NumericMethodNameMetaData.ABI
+
+// NumericMethodNameBin is the compiled bytecode used for deploying new contracts.
+// Deprecated: Use NumericMethodNameMetaData.Bin instead.
+var NumericMethodNameBin = NumericMethodNameMetaData.Bin
+
+// DeployNumericMethodName deploys a new Ethereum contract, binding an instance of NumericMethodName to it.
+func DeployNumericMethodName(auth *bind.TransactOpts, backend bind.ContractBackend) (common.Address, *types.Transaction, *NumericMethodName, error) {
+	parsed, err := NumericMethodNameMetaData.GetAbi()
+	if err != nil {
+		return common.Address{}, nil, nil, err
+	}
+	if parsed == nil {
+		return common.Address{}, nil, nil, errors.New("GetABI returned nil")
+	}
+	// Library addresses are substituted into a local copy of the bytecode: the
+	// package-level NumericMethodNameBin is shared by every caller, so substituting in
+	// it would leave any later deployment linked to the addresses substituted
+	// by an earlier one.
+	linkedBin := NumericMethodNameBin
+
+	address, tx, contract, err := bind.DeployContract(auth, *parsed, common.FromHex(linkedBin), backend)
+	if err != nil {
+		return common.Address{}, nil, nil, err
+	}
+	return address, tx, &NumericMethodName{NumericMethodNameCaller: NumericMethodNameCaller{contract: contract}, NumericMethodNameTransactor: NumericMethodNameTransactor{contract: contract}, NumericMethodNameFilterer: NumericMethodNameFilterer{contract: contract}}, nil
+}
+
+// NumericMethodName is an auto generated Go binding around an Ethereum contract.
+type NumericMethodName struct {
+	NumericMethodNameCaller     // Read-only binding to the contract
+	NumericMethodNameTransactor // Write-only binding to the contract
+	NumericMethodNameFilterer   // Log filterer for contract events
+}
+
+// NumericMethodNameCaller is an auto generated read-only Go binding around an Ethereum contract.
+type NumericMethodNameCaller struct {
+	contract *bind.BoundContract // Generic contract wrapper for the low level calls
+}
+
+// NumericMethodNameTransactor is an auto generated write-only Go binding around an Ethereum contract.
+type NumericMethodNameTransactor struct {
+	contract *bind.BoundContract // Generic contract wrapper for the low level calls
+}
+
+// NumericMethodNameFilterer is an auto generated log filtering Go binding around an Ethereum contract events.
+type NumericMethodNameFilterer struct {
+	contract *bind.BoundContract // Generic contract wrapper for the low level calls
+}
+
+// NumericMethodNameSession is an auto generated Go binding around an Ethereum contract,
+// with pre-set call and transact options.
+type NumericMethodNameSession struct {
+	Contract     *NumericMethodName // Generic contract binding to set the session for
+	CallOpts     bind.CallOpts      // Call options to use throughout this session
+	TransactOpts bind.TransactOpts  // Transaction auth options to use throughout this session
+}
+
+// NumericMethodNameCallerSession is an auto generated read-only Go binding around an Ethereum contract,
+// with pre-set call options.
+type NumericMethodNameCallerSession struct {
+	Contract *NumericMethodNameCaller // Generic contract caller binding to set the session for
+	CallOpts bind.CallOpts            // Call options to use throughout this session
+}
+
+// NumericMethodNameTransactorSession is an auto generated write-only Go binding around an Ethereum contract,
+// with pre-set transact options.
+type NumericMethodNameTransactorSession struct {
+	Contract     *NumericMethodNameTransactor // Generic contract transactor binding to set the session for
+	TransactOpts bind.TransactOpts            // Transaction auth options to use throughout this session
+}
+
+// NumericMethodNameRaw is an auto generated low-level Go binding around an Ethereum contract.
+type NumericMethodNameRaw struct {
+	Contract *NumericMethodName // Generic contract binding to access the raw methods on
+}
+
+// NumericMethodNameCallerRaw is an auto generated low-level read-only Go binding around an Ethereum contract.
+type NumericMethodNameCallerRaw struct {
+	Contract *NumericMethodNameCaller // Generic read-only contract binding to access the raw methods on
+}
+
+// NumericMethodNameTransactorRaw is an auto generated low-level write-only Go binding around an Ethereum contract.
+type NumericMethodNameTransactorRaw struct {
+	Contract *NumericMethodNameTransactor // Generic write-only contract binding to access the raw methods on
+}
+
+// NewNumericMethodName creates a new instance of NumericMethodName, bound to a specific deployed contract.
+func NewNumericMethodName(address common.Address, backend bind.ContractBackend) (*NumericMethodName, error) {
+	contract, err := bindNumericMethodName(address, backend, backend, backend)
+	if err != nil {
+		return nil, err
+	}
+	return &NumericMethodName{NumericMethodNameCaller: NumericMethodNameCaller{contract: contract}, NumericMethodNameTransactor: NumericMethodNameTransactor{contract: contract}, NumericMethodNameFilterer: NumericMethodNameFilterer{contract: contract}}, nil
+}
+
+// NewNumericMethodNameCaller creates a new read-only instance of NumericMethodName, bound to a specific deployed contract.
+func NewNumericMethodNameCaller(address common.Address, caller bind.ContractCaller) (*NumericMethodNameCaller, error) {
+	contract, err := bindNumericMethodName(address, caller, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &NumericMethodNameCaller{contract: contract}, nil
+}
+
+// NewNumericMethodNameTransactor creates a new write-only instance of NumericMethodName, bound to a specific deployed contract.
+func NewNumericMethodNameTransactor(address common.Address, transactor bind.ContractTransactor) (*NumericMethodNameTransactor, error) {
+	contract, err := bindNumericMethodName(address, nil, transactor, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &NumericMethodNameTransactor{contract: contract}, nil
+}
+
+// NewNumericMethodNameFilterer creates a new log filterer instance of NumericMethodName, bound to a specific deployed contract.
+func NewNumericMethodNameFilterer(address common.Address, filterer bind.ContractFilterer) (*NumericMethodNameFilterer, error) {
+	contract, err := bindNumericMethodName(address, nil, nil, filterer)
+	if err != nil {
+		return nil, err
+	}
+	return &NumericMethodNameFilterer{contract: contract}, nil
+}
+
+// bindNumericMethodName binds a generic wrapper to an already deployed contract.
+func bindNumericMethodName(address common.Address, caller bind.ContractCaller, transactor bind.ContractTransactor, filterer bind.ContractFilterer) (*bind.BoundContract, error) {
+	parsed, err := NumericMethodNameMetaData.GetAbi()
+	if err != nil {
+		return nil, err
+	}
+	return bind.NewBoundContract(address, *parsed, caller, transactor, filterer), nil
+}
+
+// Call invokes the (constant) contract method with params as input values and
+// sets the output to result. The result type might be a single field for simple
+// returns, a slice of interfaces for anonymous returns and a struct for named
+// returns.
+func (_NumericMethodName *NumericMethodNameRaw) Call(opts *bind.CallOpts, result *[]interface{}, method string, params ...interface{}) error {
+	return _NumericMethodName.Contract.NumericMethodNameCaller.contract.Call(opts, result, method, params...)
+}
+
+// Transfer initiates a plain transaction to move funds to the contract, calling
+// its default method if one is available.
+func (_NumericMethodName *NumericMethodNameRaw) Transfer(opts *bind.TransactOpts) (*types.Transaction, error) {
+	return _NumericMethodName.Contract.NumericMethodNameTransactor.contract.Transfer(opts)
+}
+
+// Transact invokes the (paid) contract method with params as input values.
+func (_NumericMethodName *NumericMethodNameRaw) Transact(opts *bind.TransactOpts, method string, params ...interface{}) (*types.Transaction, error) {
+	return _NumericMethodName.Contract.NumericMethodNameTransactor.contract.Transact(opts, method, params...)
+}
+
+// Call invokes the (constant) contract method with params as input values and
+// sets the output to result. The result type might be a single field for simple
+// returns, a slice of interfaces for anonymous returns and a struct for named
+// returns.
+func (_NumericMethodName *NumericMethodNameCallerRaw) Call(opts *bind.CallOpts, result *[]interface{}, method string, params ...interface{}) error {
+	return _NumericMethodName.Contract.contract.Call(opts, result, method, params...)
+}
+
+// Transfer initiates a plain transaction to move funds to the contract, calling
+// its default method if one is available.
+func (_NumericMethodName *NumericMethodNameTransactorRaw) Transfer(opts *bind.TransactOpts) (*types.Transaction, error) {
+	return _NumericMethodName.Contract.contract.Transfer(opts)
+}
+
+// Transact invokes the (paid) contract method with params as input values.
+func (_NumericMethodName *NumericMethodNameTransactorRaw) Transact(opts *bind.TransactOpts, method string, params ...interface{}) (*types.Transaction, error) {
+	return _NumericMethodName.Contract.contract.Transact(opts, method, params...)
+}
+
+// M1test is a free data retrieval call binding the contract method 0xffa02795.
+//
+// Solidity: function _1test() pure returns()
+func (_NumericMethodName *NumericMethodNameCaller) M1test(opts *bind.CallOpts) error {
+	var out []interface{}
+	err := _NumericMethodName.contract.Call(opts, &out, "_1test")
+
+	if err != nil {
+		return err
+	}
+
+	return err
+
+}
+
+// M1test is a free data retrieval call binding the contract method 0xffa02795.
+//
+// Solidity: function _1test() pure returns()
+func (_NumericMethodName *NumericMethodNameSession) M1test() error {
+	return _NumericMethodName.Contract.M1test(&_NumericMethodName.CallOpts)
+}
+
+// M1test is a free data retrieval call binding the contract method 0xffa02795.
+//
+// Solidity: function _1test() pure returns()
+func (_NumericMethodName *NumericMethodNameCallerSession) M1test() error {
+	return _NumericMethodName.Contract.M1test(&_NumericMethodName.CallOpts)
+}
+
+// M1test0 is a free data retrieval call binding the contract method 0xd02767c7.
+//
+// Solidity: function __1test() pure returns()
+func (_NumericMethodName *NumericMethodNameCaller) M1test0(opts *bind.CallOpts) error {
+	var out []interface{}
+	err := _NumericMethodName.contract.Call(opts, &out, "__1test")
+
+	if err != nil {
+		return err
+	}
+
+	return err
+
+}
+
+// M1test0 is a free data retrieval call binding the contract method 0xd02767c7.
+//
+// Solidity: function __1test() pure returns()
+func (_NumericMethodName *NumericMethodNameSession) M1test0() error {
+	return _NumericMethodName.Contract.M1test0(&_NumericMethodName.CallOpts)
+}
+
+// M1test0 is a free data retrieval call binding the contract method 0xd02767c7.
+//
+// Solidity: function __1test() pure returns()
+func (_NumericMethodName *NumericMethodNameCallerSession) M1test0() error {
+	return _NumericMethodName.Contract.M1test0(&_NumericMethodName.CallOpts)
+}
+
+// M2test is a free data retrieval call binding the contract method 0x9d993132.
+//
+// Solidity: function __2test() pure returns()
+func (_NumericMethodName *NumericMethodNameCaller) M2test(opts *bind.CallOpts) error {
+	var out []interface{}
+	err := _NumericMethodName.contract.Call(opts, &out, "__2test")
+
+	if err != nil {
+		return err
+	}
+
+	return err
+
+}
+
+// M2test is a free data retrieval call binding the contract method 0x9d993132.
+//
+// Solidity: function __2test() pure returns()
+func (_NumericMethodName *NumericMethodNameSession) M2test() error {
+	return _NumericMethodName.Contract.M2test(&_NumericMethodName.CallOpts)
+}
+
+// M2test is a free data retrieval call binding the contract method 0x9d993132.
+//
+// Solidity: function __2test() pure returns()
+func (_NumericMethodName *NumericMethodNameCallerSession) M2test() error {
+	return _NumericMethodName.Contract.M2test(&_NumericMethodName.CallOpts)
+}
+
+// NumericMethodNameE1TestEventIterator is returned from FilterE1TestEvent and is used to iterate over the raw logs and unpacked data for E1TestEvent events raised by the NumericMethodName contract.
+type NumericMethodNameE1TestEventIterator struct {
+	Event *NumericMethodNameE1TestEvent // Event containing the contract specifics and raw log
+
+	contract *bind.BoundContract // Generic contract to use for unpacking event data
+	event    string              // Event name to use for unpacking event data
+
+	logs chan types.Log        // Log channel receiving the found contract events
+	sub  ethereum.Subscription // Subscription for errors, completion and termination
+	done bool                  // Whether the subscription completed delivering logs
+	fail error                 // Occurred error to stop iteration
+}
+
+// Next advances the iterator to the subsequent event, returning whether there
+// are any more events found. In case of a retrieval or parsing error, false is
+// returned and Error() can be queried for the exact failure.
+func (it *NumericMethodNameE1TestEventIterator) Next() bool {
+	// If the iterator failed, stop iterating
+	if it.fail != nil {
+		return false
+	}
+	// If the iterator completed, deliver directly whatever's available
+	if it.done {
+		select {
+		case log := <-it.logs:
+			it.Event = new(NumericMethodNameE1TestEvent)
+			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+				it.fail = err
+				return false
+			}
+			it.Event.Raw = log
+			return true
+
+		default:
+			return false
+		}
+	}
+	// Iterator still in progress, wait for either a data or an error event
+	select {
+	case log := <-it.logs:
+		it.Event = new(NumericMethodNameE1TestEvent)
+		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
+			it.fail = err
+			return false
+		}
+		it.Event.Raw = log
+		return true
+
+	case err := <-it.sub.Err():
+		it.done = true
+		it.fail = err
+		return it.Next()
+	}
+}
+
+// Error returns any retrieval or parsing error occurred during filtering.
+func (it *NumericMethodNameE1TestEventIterator) Error() error {
+	return it.fail
+}
+
+// Close terminates the iteration process, releasing any pending underlying
+// resources.
+func (it *NumericMethodNameE1TestEventIterator) Close() error {
+	it.sub.Unsubscribe()
+	return nil
+}
+
+// NumericMethodNameE1TestEvent represents a E1TestEvent event raised by the NumericMethodName contract.
+type NumericMethodNameE1TestEvent struct {
+	Param common.Address
+	Raw   types.Log // Blockchain specific contextual infos
+}
+
+// FilterE1TestEvent is a free log retrieval operation binding the contract event 0x2a9f7839908404cfe84d8d9afac1575695fa96641ff70652321f37864eb247a4.
+//
+// Solidity: event _1TestEvent(address _param)
+func (_NumericMethodName *NumericMethodNameFilterer) FilterE1TestEvent(opts *bind.FilterOpts) (*NumericMethodNameE1TestEventIterator, error) {
+
+	logs, sub, err := _NumericMethodName.contract.FilterLogs(opts, "_1TestEvent")
+	if err != nil {
+		return nil, err
+	}
+	return &NumericMethodNameE1TestEventIterator{contract: _NumericMethodName.contract, event: "_1TestEvent", logs: logs, sub: sub}, nil
+}
+
+// WatchE1TestEvent is a free log subscription operation binding the contract event 0x2a9f7839908404cfe84d8d9afac1575695fa96641ff70652321f37864eb247a4.
+//
+// Solidity: event _1TestEvent(address _param)
+func (_NumericMethodName *NumericMethodNameFilterer) WatchE1TestEvent(opts *bind.WatchOpts, sink chan<- *NumericMethodNameE1TestEvent) (event.Subscription, error) {
+
+	logs, sub, err := _NumericMethodName.contract.WatchLogs(opts, "_1TestEvent")
+	if err != nil {
+		return nil, err
+	}
+	return event.NewSubscription(func(quit <-chan struct{}) error {
+		defer sub.Unsubscribe()
+		for {
+			select {
+			case log := <-logs:
+				// New log arrived, parse the event and forward to the user
+				event := new(NumericMethodNameE1TestEvent)
+				if err := _NumericMethodName.contract.UnpackLog(event, "_1TestEvent", log); err != nil {
+					// If the signature doesn't match, skip this log.
+					if errors.Is(err, bind.ErrEventSignatureMismatch) {
+						continue
+					}
+					return err
+				}
+				event.Raw = log
+
+				select {
+				case sink <- event:
+				case err := <-sub.Err():
+					return err
+				case <-quit:
+					return nil
+				}
+			case err := <-sub.Err():
+				return err
+			case <-quit:
+				return nil
+			}
+		}
+	}), nil
+}
+
+// ParseE1TestEvent is a log parse operation binding the contract event 0x2a9f7839908404cfe84d8d9afac1575695fa96641ff70652321f37864eb247a4.
+//
+// Solidity: event _1TestEvent(address _param)
+func (_NumericMethodName *NumericMethodNameFilterer) ParseE1TestEvent(log types.Log) (*NumericMethodNameE1TestEvent, error) {
+	event := new(NumericMethodNameE1TestEvent)
+	if err := _NumericMethodName.contract.UnpackLog(event, "_1TestEvent", log); err != nil {
+		return nil, err
+	}
+	event.Raw = log
+	return event, nil
+}

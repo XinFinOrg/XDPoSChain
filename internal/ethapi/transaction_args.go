@@ -82,7 +82,15 @@ func (args *TransactionArgs) data() []byte {
 
 // setDefaults fills in default values for unspecified tx fields.
 func (args *TransactionArgs) setDefaults(ctx context.Context, b Backend, skipGasEstimation bool) error {
-	if err := args.setFeeDefaults(ctx, b); err != nil {
+	return args.setDefaultsWithHeader(ctx, b, b.CurrentHeader(), skipGasEstimation)
+}
+
+// setDefaultsWithHeader is setDefaults for a specific block. Calls that target a
+// block (eth_createAccessList) must derive the fee defaults from that block's
+// header, not from the chain head: the two can sit on different sides of a fee
+// fork.
+func (args *TransactionArgs) setDefaultsWithHeader(ctx context.Context, b Backend, head *types.Header, skipGasEstimation bool) error {
+	if err := args.setFeeDefaults(ctx, b, head); err != nil {
 		return err
 	}
 	if args.Value == nil {
@@ -155,7 +163,7 @@ func (args *TransactionArgs) setDefaults(ctx context.Context, b Backend, skipGas
 }
 
 // setFeeDefaults fills in default fee values for unspecified tx fields.
-func (args *TransactionArgs) setFeeDefaults(ctx context.Context, b Backend) error {
+func (args *TransactionArgs) setFeeDefaults(ctx context.Context, b Backend, head *types.Header) error {
 	// If both gasPrice and at least one of the EIP-1559 fee parameters are specified, error.
 	if args.GasPrice != nil && (args.MaxFeePerGas != nil || args.MaxPriorityFeePerGas != nil) {
 		return errors.New("both gasPrice and (maxFeePerGas or maxPriorityFeePerGas) specified")
@@ -183,7 +191,6 @@ func (args *TransactionArgs) setFeeDefaults(ctx context.Context, b Backend) erro
 		return nil // No need to set anything, user already set MaxFeePerGas and MaxPriorityFeePerGas
 	}
 	// Sanity check the non-EIP-1559 fee parameters.
-	head := b.CurrentHeader()
 	isEIP1559 := b.ChainConfig().IsEIP1559(head.Number)
 	if args.GasPrice != nil && !eip1559ParamsSet {
 		// Zero gas-price is not allowed after London fork
@@ -279,7 +286,12 @@ func (args *TransactionArgs) CallDefaults(globalGasCap uint64, baseFee *big.Int,
 		args.Value = new(hexutil.Big)
 	}
 	if baseFee == nil {
-		// If there's no basefee, then it must be a non-1559 execution
+		// If there's no basefee, then it must be a non-1559 execution. Reject
+		// the 1559 fields instead of dropping them, which would run the call at
+		// GASPRICE 0 and build a transaction the pool rejects before the fork.
+		if args.MaxFeePerGas != nil || args.MaxPriorityFeePerGas != nil {
+			return errors.New("maxFeePerGas and maxPriorityFeePerGas are not valid before EIP-1559 is active")
+		}
 		if args.GasPrice == nil {
 			args.GasPrice = new(hexutil.Big)
 		}
@@ -328,8 +340,11 @@ func (args *TransactionArgs) ToMessage(b AccountBackend, baseFee *big.Int, skipN
 			}
 		}
 	}
+	// An empty JSON array ("accessList": []) decodes to a non-nil empty slice.
+	// Treat it like an omitted list: the state transition reads a non-nil list
+	// as a type-1 transaction and rejects it before the fork.
 	var accessList types.AccessList
-	if args.AccessList != nil {
+	if args.AccessList != nil && len(*args.AccessList) > 0 {
 		accessList = *args.AccessList
 	}
 
@@ -371,9 +386,13 @@ func (args *TransactionArgs) ToTransaction(defaultType int) *types.Transaction {
 	case args.AccessList != nil || defaultType == types.AccessListTxType:
 		usedType = types.AccessListTxType
 	}
-	// Make it possible to default to newer tx, but use legacy if gasprice is provided
+	// gasPrice selects the non-1559 fee style, but an explicit access list
+	// still requires an EIP-2930 transaction.
 	if args.GasPrice != nil {
 		usedType = types.LegacyTxType
+		if args.AccessList != nil {
+			usedType = types.AccessListTxType
+		}
 	}
 	var data types.TxData
 	switch usedType {

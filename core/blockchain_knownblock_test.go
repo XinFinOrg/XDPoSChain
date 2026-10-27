@@ -989,11 +989,7 @@ func TestInsertChainAdoptsKnownBatchAheadOfHeadWithXDPoS(t *testing.T) {
 	for _, signer := range []common.Address{{1}, {2}, {3}, {4}} {
 		extraData = append(extraData, signer.Bytes()...)
 	}
-	genesis := &Genesis{BaseFee: big.NewInt(params.InitialBaseFee), Config: cfg, ExtraData: extraData}
-	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, genesis, engine, vm.Config{})
-	if err != nil {
-		t.Fatalf("failed to create chain: %v", err)
-	}
+	chain, genesis := newChainOnMockSchedule(t, cfg, engine, extraData)
 	defer chain.Stop()
 	signals := observeCheckpointSignals()
 	defer signals.stop() // block 3 switches the epoch and signals the staking loop
@@ -1057,7 +1053,9 @@ func TestKnownNotAdoptedMeterIgnoresKnownBlocksBelowTheHead(t *testing.T) {
 	// executed with on disk. It is this node's own execution that is not recorded on it, so the
 	// import runs it again - and running it is what writes the marker back.
 	first := blocks[2]
-	rawdb.DeleteExecutedMarker(chain.ChainDb(), first.Hash(), first.NumberU64())
+	if err := rawdb.DeleteExecutedMarker(chain.ChainDb(), first.Hash(), first.NumberU64()); err != nil {
+		t.Fatalf("block %d: failed to drop the executed marker: %v", first.NumberU64(), err)
+	}
 	if chain.HasExecutedBlock(first.Hash(), first.NumberU64()) {
 		t.Fatal("the batch must not open with a known block, otherwise the skip loop consumes it")
 	}

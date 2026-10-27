@@ -249,7 +249,6 @@ func (x *XDPoS_v2) processTC(blockChainReader consensus.ChainReader, timeoutCert
 	}
 	if timeoutCert.Round >= x.currentRound {
 		x.setNewRound(blockChainReader, timeoutCert.Round+1)
-
 	}
 	return nil
 }

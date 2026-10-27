@@ -146,11 +146,12 @@ func TestKZGPointEvaluationStubFails(t *testing.T) {
 		caller = common.HexToAddress("0x000000000000000000000000000000000000dead")
 		zero   = uint256.NewInt(0)
 	)
-	// AllEthashProtocolChanges activates every fork including Osaka, so the
-	// Osaka block has to be cleared to pin the rules to Prague.
+	// AllEthashProtocolChanges activates every fork including Osaka and Amsterdam,
+	// so the later ones have to be cleared to pin the rules to Prague.
 	chainConfig := *params.AllEthashProtocolChanges
 	chainConfig.PragueBlock = big.NewInt(0)
 	chainConfig.OsakaBlock = nil
+	chainConfig.AmsterdamBlock = nil
 
 	statedb, err := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
 	if err != nil {

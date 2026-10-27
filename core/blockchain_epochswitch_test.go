@@ -21,12 +21,30 @@ import (
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
+
+// newChainOnMockSchedule opens a chain for a fixture whose schedule is outside
+// the bound startup accepts: the chain is opened on the mock 900/450 schedule
+// and switched over before the first insert. Only bc.chainConfig and the engine
+// take the out-of-bound config; the header chain, validator and processor keep
+// the mock schedule they were built with. Returns the chain and the mock
+// genesis it was opened on.
+func newChainOnMockSchedule(t *testing.T, cfg *params.ChainConfig, engine consensus.Engine, extraData []byte) (*BlockChain, *Genesis) {
+	t.Helper()
+	genesis := &Genesis{BaseFee: big.NewInt(params.InitialBaseFee), Config: params.TestXDPoSMockChainConfig.Clone(), ExtraData: extraData}
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, genesis, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+	chain.SetChainConfig(cfg)
+	return chain, genesis
+}
 
 // TestNotifyEpochSwitchDoesNotReportABadBlock pins the policy of the notify path: a header whose
 // epoch switch the engine cannot read is logged, never reported. The failure is unreachable through
@@ -50,11 +68,7 @@ func TestNotifyEpochSwitchDoesNotReportABadBlock(t *testing.T) {
 	for _, signer := range []common.Address{{1}, {2}, {3}, {4}} {
 		extraData = append(extraData, signer.Bytes()...)
 	}
-	genesis := &Genesis{BaseFee: big.NewInt(params.InitialBaseFee), Config: cfg, ExtraData: extraData}
-	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, genesis, engine, vm.Config{})
-	if err != nil {
-		t.Fatalf("failed to create chain: %v", err)
-	}
+	chain, genesis := newChainOnMockSchedule(t, cfg, engine, extraData)
 	defer chain.Stop()
 
 	// Vanity only: no quorum certificate for the engine to read the epoch switch out of. The

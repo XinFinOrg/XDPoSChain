@@ -58,11 +58,12 @@ func (c *ChainConfig) IsConstantinople(num *big.Int) bool {
 //
 // Backward compatibility note: legacy XDC chain configs may leave PetersburgBlock
 // unset and rely on TIPXDCXCancellationFeeBlock as the effective cutoff instead.
-// That is the case for the built-in XDC mainnet/testnet/devnet configs, which
-// historically encoded the XDC-specific cancellation-fee fork but still reuse
-// Ethereum fork helpers in downstream callers. Non-XDC or upstream-style configs
-// should set PetersburgBlock directly; if TIPXDCXCancellationFeeBlock is nil, the
-// fallback path is inert.
+// That is how the built-in XDC mainnet/testnet/devnet configs were encoded until
+// they declared PetersburgBlock explicitly, and it is still how the built-in
+// Localnet config is shaped; those configs historically encoded the XDC-specific
+// cancellation-fee fork but still reuse Ethereum fork helpers in downstream
+// callers. Non-XDC or upstream-style configs should set PetersburgBlock directly;
+// if TIPXDCXCancellationFeeBlock is nil, the fallback path is inert.
 func (c *ChainConfig) IsPetersburg(num *big.Int) bool {
 	return isForked(c.TIPXDCXCancellationFeeBlock, num) || isForked(c.PetersburgBlock, num)
 }
@@ -71,11 +72,12 @@ func (c *ChainConfig) IsPetersburg(num *big.Int) bool {
 //
 // Backward compatibility note: legacy XDC chain configs may leave IstanbulBlock
 // unset and rely on TIPXDCXCancellationFeeBlock as the effective cutoff instead.
-// That is the case for the built-in XDC mainnet/testnet/devnet configs, which
-// historically encoded the XDC-specific cancellation-fee fork but still reuse
-// Ethereum fork helpers in downstream callers. Non-XDC or upstream-style configs
-// should set IstanbulBlock directly; if TIPXDCXCancellationFeeBlock is nil, the
-// fallback path is inert.
+// That is how the built-in XDC mainnet/testnet/devnet configs were encoded until
+// they declared IstanbulBlock explicitly, and it is still how the built-in
+// Localnet config is shaped; those configs historically encoded the XDC-specific
+// cancellation-fee fork but still reuse Ethereum fork helpers in downstream
+// callers. Non-XDC or upstream-style configs should set IstanbulBlock directly;
+// if TIPXDCXCancellationFeeBlock is nil, the fallback path is inert.
 func (c *ChainConfig) IsIstanbul(num *big.Int) bool {
 	return isForked(c.TIPXDCXCancellationFeeBlock, num) || isForked(c.IstanbulBlock, num)
 }
@@ -186,8 +188,13 @@ func (c *ChainConfig) IsDynamicGasLimit(num *big.Int) bool {
 	return isForked(c.DynamicGasLimitBlock, num)
 }
 
-func (c *ChainConfig) IsTIPUpgradeReward(num *big.Int) bool {
-	return isForked(c.TIPUpgradeRewardBlock, num)
+// IsTIPFixedReward returns whether num is either equal to the TIPFixedReward fork block or greater.
+//
+// The fixed reward pays every signer the full per-node reward no matter how
+// many sign slots it signed, which is wrong. It is kept unchanged only because
+// testnet already runs it; see TIPProportionalReward for the corrected payout.
+func (c *ChainConfig) IsTIPFixedReward(num *big.Int) bool {
+	return isForked(c.TIPFixedRewardBlock, num)
 }
 
 func (c *ChainConfig) IsTIPUpgradePenalty(num *big.Int) bool {
@@ -198,6 +205,19 @@ func (c *ChainConfig) IsTIPEpochHalving(num *big.Int) bool {
 	return isForked(c.TIPEpochHalvingBlock, num)
 }
 
+// IsTIPProportionalReward returns whether num is either equal to the TIPProportionalReward fork block or greater.
+func (c *ChainConfig) IsTIPProportionalReward(num *big.Int) bool {
+	return isForked(c.TIPProportionalRewardBlock, num)
+}
+
+// IsTIPTieredReward reports whether the per-role reward model, with its
+// masternode, protector and observer tiers, is active at num. Both the fixed
+// and the proportional reward forks pay through it, and each one can be
+// scheduled without the other.
+func (c *ChainConfig) IsTIPTieredReward(num *big.Int) bool {
+	return c.IsTIPFixedReward(num) || c.IsTIPProportionalReward(num)
+}
+
 // IsPrague returns whether num is either equal to the Prague fork block or greater.
 func (c *ChainConfig) IsPrague(num *big.Int) bool {
 	return isForked(c.PragueBlock, num)
@@ -206,6 +226,11 @@ func (c *ChainConfig) IsPrague(num *big.Int) bool {
 // IsOsaka returns whether num is either equal to the Osaka fork block or greater.
 func (c *ChainConfig) IsOsaka(num *big.Int) bool {
 	return isForked(c.OsakaBlock, num)
+}
+
+// IsAmsterdam returns whether num is either equal to the Amsterdam fork block or greater.
+func (c *ChainConfig) IsAmsterdam(num *big.Int) bool {
+	return isForked(c.AmsterdamBlock, num)
 }
 
 // GasTable returns the gas table corresponding to the current phase (homestead or homestead reprice).
@@ -251,6 +276,7 @@ type Rules struct {
 	IsCancun         bool
 	IsPrague         bool
 	IsOsaka          bool
+	IsAmsterdam      bool
 }
 
 // Rules returns the fork rules that apply at the given block number.
@@ -261,8 +287,8 @@ type Rules struct {
 // devnet and the dev test configs set 0, mainnet sets 76321000, and custom chains
 // may leave it nil. Copying upstream's
 // `IsShanghai: isMerge && c.IsShanghai(num, timestamp)` shape would silently
-// disable Shanghai/Cancun/Prague/Osaka on every chain whose MergeBlock is nil or
-// not yet reached.
+// disable Shanghai/Cancun/Prague/Osaka/Amsterdam on every chain whose MergeBlock
+// is nil or not yet reached.
 func (c *ChainConfig) Rules(num *big.Int) Rules {
 	chainId := c.ChainID
 	if chainId == nil {
@@ -287,5 +313,6 @@ func (c *ChainConfig) Rules(num *big.Int) Rules {
 		IsCancun:         c.IsCancun(num),
 		IsPrague:         c.IsPrague(num),
 		IsOsaka:          c.IsOsaka(num),
+		IsAmsterdam:      c.IsAmsterdam(num),
 	}
 }

@@ -304,7 +304,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 		currentConfig := adaptor.EngineV2.Config(uint64(round))
 
 		// Get signers/signing tx count, and burned tokens in one epoch
-		signers, burnedInOneEpoch, err := GetSigningTxCount(adaptor, chain, header, currentConfig)
+		signers, signSlots, burnedInOneEpoch, err := GetSigningTxCount(adaptor, chain, header, currentConfig)
 
 		log.Debug("Time Get Signers", "block", header.Number.Uint64(), "time", common.PrettyDuration(time.Since(start)))
 		if err != nil {
@@ -313,7 +313,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 		}
 		rewardsMap["signers"] = signers[MasterNodeBeneficiary]
 
-		if !chain.Config().IsTIPUpgradeReward(header.Number) {
+		if !chain.Config().IsTIPTieredReward(header.Number) {
 			// Get reward inflation.
 			originalReward := new(big.Int).Mul(new(big.Int).SetUint64(chain.Config().XDPoS.Reward), new(big.Int).SetUint64(params.Ether))
 			chainReward := util.RewardInflation(chain, originalReward, number, common.BlocksPerYear)
@@ -341,6 +341,10 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 		} else {
 			rewardsMap["signersProtector"] = signers[ProtectorNodeBeneficiary]
 			rewardsMap["signersObserver"] = signers[ObserverNodeBeneficiary]
+			proportional := chain.Config().IsTIPProportionalReward(header.Number)
+			if proportional {
+				rewardsMap["signSlots"] = signSlots
+			}
 			rewardSum := new(big.Int)
 			type rewardWithType struct {
 				r   float64
@@ -355,7 +359,12 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				originalRewardFloat := new(big.Float).Mul(new(big.Float).SetFloat64(rwt.r), new(big.Float).SetUint64(params.Ether))
 				originalReward, _ := originalRewardFloat.Int(nil)
 				chainReward := util.RewardInflation(chain, originalReward, number, common.BlocksPerYear)
-				rewardSigners, err := CalculateRewardForSignerFixed(chainReward, signers[rwt.t])
+				var rewardSigners map[common.Address]*big.Int
+				if proportional {
+					rewardSigners, err = CalculateRewardForSignerProportional(chainReward, signers[rwt.t], signSlots)
+				} else {
+					rewardSigners, err = CalculateRewardForSignerFixed(chainReward, signers[rwt.t])
+				}
 				if err != nil {
 					log.Error("[HookReward] Fail to calculate reward type 0 for masternode, 1 for protector, 2 for observer", "error", err, "type", rwt.t)
 					return nil, err
@@ -426,6 +435,8 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 
 // GetSigningTxCount counts, per beneficiary, how many signing txs each address
 // sent for the epoch being rewarded. header should be a new epoch switch block.
+// It also returns signSlots, the number of MergeSignRange blocks in the rewarded
+// epoch, which is the most any single address can have signed.
 //
 // Mirrors V1's contracts.GetRewardForCheckpoint (prevCheckpoint = number -
 // rCheckpoint*2): rewards are always for the epoch that started two epoch
@@ -444,7 +455,7 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 // found anywhere in this "buffer" epoch is still collected into data[],
 // because it may be a late-arriving confirmation of a block in the epoch
 // being rewarded.
-func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *types.Header, currentConfig *params.V2Config) (map[Beneficiary]map[common.Address]*RewardLog, *big.Int, error) {
+func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *types.Header, currentConfig *params.V2Config) (map[Beneficiary]map[common.Address]*RewardLog, uint64, *big.Int, error) {
 	number := header.Number.Uint64()
 	rewardEpochCount := 2
 	signEpochCount := 1
@@ -457,9 +468,11 @@ func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *type
 
 	burnedInOneEpoch := new(big.Int)
 
+	var signSlots uint64
+
 	// prevent overflow
 	if number == 0 {
-		return signers, burnedInOneEpoch, nil
+		return signers, signSlots, burnedInOneEpoch, nil
 	}
 
 	data := make(map[common.Hash][]common.Address)
@@ -474,7 +487,7 @@ func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *type
 		h = chain.GetHeader(parentHash, i)
 		if h == nil {
 			log.Error("[GetSigningTxCount] fail to get header", "number", i, "hash", parentHash)
-			return nil, burnedInOneEpoch, fmt.Errorf("fail to get header in GetSigningTxCount at number: %v, hash: %v", i, parentHash)
+			return nil, signSlots, burnedInOneEpoch, fmt.Errorf("fail to get header in GetSigningTxCount at number: %v, hash: %v", i, parentHash)
 		}
 		if epochCount == 0 && h.BaseFee != nil {
 			// add burned for the first epoch during loop
@@ -482,7 +495,7 @@ func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *type
 		}
 		isEpochSwitch, _, err := c.IsEpochSwitch(h)
 		if err != nil {
-			return nil, burnedInOneEpoch, err
+			return nil, signSlots, burnedInOneEpoch, err
 		}
 		if isEpochSwitch && i != chain.Config().XDPoS.V2.SwitchBlock.Uint64()+1 {
 			epochCount += 1
@@ -498,7 +511,7 @@ func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *type
 				startBlockNumber = h.Number.Uint64() + 1
 				nodesToKeep[MasterNodeBeneficiary] = c.GetMasternodesFromCheckpointHeader(h)
 				// in reward upgrade, add protector and observer nodes
-				if chain.Config().IsTIPUpgradeReward(header.Number) {
+				if chain.Config().IsTIPTieredReward(header.Number) {
 					// GetStandbynodes derives the pool from h's own historical epoch
 					// snapshot: already stake-sorted and already filtered of h's
 					// masternodes/penalties, same as XDPoS_getMasternodesByNumber uses.
@@ -528,12 +541,13 @@ func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *type
 		}
 		// prevent overflow
 		if i == 0 {
-			return signers, burnedInOneEpoch, nil
+			return signers, signSlots, burnedInOneEpoch, nil
 		}
 	}
 
 	for i := startBlockNumber; i <= endBlockNumber; i++ {
 		if i%common.MergeSignRange == 0 {
+			signSlots++
 			addrs := data[mapBlkHash[i]]
 			// Filter duplicate address.
 			if len(addrs) > 0 {
@@ -571,9 +585,9 @@ func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *type
 		}
 	}
 
-	log.Info("Calculate reward at checkpoint", "startBlock", startBlockNumber, "endBlock", endBlockNumber)
+	log.Info("Calculate reward at checkpoint", "startBlock", startBlockNumber, "endBlock", endBlockNumber, "signSlots", signSlots)
 
-	return signers, burnedInOneEpoch, nil
+	return signers, signSlots, burnedInOneEpoch, nil
 }
 
 // Calculate reward for signers.
@@ -605,6 +619,11 @@ func CalculateRewardForSigner(chainReward *big.Int, signers map[common.Address]*
 }
 
 // Calculate reward for signers with fixed reward.
+//
+// This is the TIPFixedReward payout and its logic is wrong: a signer gets the
+// full chainReward as long as it signed at least one sign slot. Testnet already
+// ran blocks with it, so it must not change, or those blocks would no longer
+// replay. CalculateRewardForSignerProportional is the corrected payout.
 func CalculateRewardForSignerFixed(chainReward *big.Int, signers map[common.Address]*RewardLog) (map[common.Address]*big.Int, error) {
 	resultSigners := make(map[common.Address]*big.Int)
 	// Add reward for signers.
@@ -616,6 +635,31 @@ func CalculateRewardForSignerFixed(chainReward *big.Int, signers map[common.Addr
 	}
 
 	log.Info("Signers data", "percapitaReward", chainReward)
+	for addr, signer := range signers {
+		log.Debug("Signer reward", "signer", addr, "sign", signer.Sign, "reward", signer.Reward)
+	}
+
+	return resultSigners, nil
+}
+
+// Calculate reward for signers in proportion to the sign slots they signed:
+// each signer gets chainReward * sign / signSlots, rounded down. The share a
+// signer did not earn is not paid to anyone. With no sign slots every signer
+// is kept with a zero reward.
+func CalculateRewardForSignerProportional(chainReward *big.Int, signers map[common.Address]*RewardLog, signSlots uint64) (map[common.Address]*big.Int, error) {
+	resultSigners := make(map[common.Address]*big.Int)
+	for signer, rLog := range signers {
+		calcReward := new(big.Int)
+		if signSlots > 0 {
+			sign := min(rLog.Sign, signSlots)
+			calcReward.Mul(chainReward, new(big.Int).SetUint64(sign))
+			calcReward.Div(calcReward, new(big.Int).SetUint64(signSlots))
+		}
+		rLog.Reward = calcReward
+		resultSigners[signer] = calcReward
+	}
+
+	log.Info("Signers data", "percapitaReward", chainReward, "signSlots", signSlots)
 	for addr, signer := range signers {
 		log.Debug("Signer reward", "signer", addr, "sign", signer.Sign, "reward", signer.Reward)
 	}

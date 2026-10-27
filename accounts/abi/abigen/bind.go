@@ -24,7 +24,9 @@ import (
 	"bytes"
 	"fmt"
 	"go/format"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 	"text/template"
 	"unicode"
@@ -126,7 +128,14 @@ func Bind(types []string, abis []string, bytecodes []string, fsigs []map[string]
 			}
 		}
 
-		for _, original := range evmABI.Methods {
+		// Walk the methods in a stable order: a method name that starts with a
+		// digit gets an "M" prefix and, on a collision, a numeric suffix from
+		// resolveNameConflict, and which of two such methods keeps the
+		// unsuffixed identifier must not depend on map iteration order.
+		// Collisions between names that do not start with a digit are a hard
+		// duplicated-identifier error either way.
+		for _, name := range slices.Sorted(maps.Keys(evmABI.Methods)) {
+			original := evmABI.Methods[name]
 			// Normalize the method for capital cases and non-anonymous inputs/outputs
 			normalized := original
 			normalizedName := abi.ToCamelCase(alias(aliases, original.Name))
@@ -176,7 +185,12 @@ func Bind(types []string, abis []string, bytecodes []string, fsigs []map[string]
 				transacts[original.Name] = &tmplMethod{Original: original, Normalized: normalized, Structured: structured(original.Outputs)}
 			}
 		}
-		for _, original := range evmABI.Events {
+		// Same reasoning as for the methods above: a digit-leading event name
+		// gets the "E" prefix and, on a collision, a suffix from
+		// resolveNameConflict, so the identifier it ends up with must not
+		// depend on map iteration order.
+		for _, name := range slices.Sorted(maps.Keys(evmABI.Events)) {
+			original := evmABI.Events[name]
 			// Skip anonymous events as they don't support explicit filtering
 			if original.Anonymous {
 				continue

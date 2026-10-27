@@ -89,8 +89,8 @@ func TestSequentialVotes(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	if int(verifyCounter) != targetVotes || int(handlerCounter) != targetVotes || int(broadcastCounter) != targetVotes {
-		t.Fatalf("count mismatch: have %v on verify, %v on handler, %v on broadcast, want %v", verifyCounter, handlerCounter, broadcastCounter, targetVotes)
+	if int(atomic.LoadUint32(&verifyCounter)) != targetVotes || int(atomic.LoadUint32(&handlerCounter)) != targetVotes || int(atomic.LoadUint32(&broadcastCounter)) != targetVotes {
+		t.Fatalf("count mismatch: have %v on verify, %v on handler, %v on broadcast, want %v", atomic.LoadUint32(&verifyCounter), atomic.LoadUint32(&handlerCounter), atomic.LoadUint32(&broadcastCounter), targetVotes)
 	}
 }
 
@@ -117,8 +117,8 @@ func TestNotBoardcastInvalidVote(t *testing.T) {
 	tester.bfter.Vote(peerID, &vote)
 
 	time.Sleep(50 * time.Millisecond)
-	if int(handlerCounter) != targetVotes || int(broadcastCounter) != targetVotes {
-		t.Fatalf("count mismatch: have %v on handler, %v on broadcast, want %v", handlerCounter, broadcastCounter, targetVotes)
+	if int(atomic.LoadUint32(&handlerCounter)) != targetVotes || int(atomic.LoadUint32(&broadcastCounter)) != targetVotes {
+		t.Fatalf("count mismatch: have %v on handler, %v on broadcast, want %v", atomic.LoadUint32(&handlerCounter), atomic.LoadUint32(&broadcastCounter), targetVotes)
 	}
 }
 
@@ -144,8 +144,8 @@ func TestBoardcastButNotProcessDisqualifiedVotes(t *testing.T) {
 	tester.bfter.Vote(peerID, &vote)
 
 	time.Sleep(50 * time.Millisecond)
-	if int(handlerCounter) != targetVotes || int(broadcastCounter) != 0 {
-		t.Fatalf("count mismatch: have %v on handler, %v on broadcast, want %v", handlerCounter, broadcastCounter, targetVotes)
+	if int(atomic.LoadUint32(&handlerCounter)) != targetVotes || int(atomic.LoadUint32(&broadcastCounter)) != 0 {
+		t.Fatalf("count mismatch: have %v on handler, %v on broadcast, want %v", atomic.LoadUint32(&handlerCounter), atomic.LoadUint32(&broadcastCounter), targetVotes)
 	}
 }
 
@@ -171,8 +171,8 @@ func TestBoardcastButNotProcessDisqualifiedTimeout(t *testing.T) {
 	tester.bfter.Timeout(peerID, &timeout)
 
 	time.Sleep(50 * time.Millisecond)
-	if int(handlerCounter) != targetTimeout || int(broadcastCounter) != 0 {
-		t.Fatalf("count mismatch: have %v on handler, %v on broadcast, want %v", handlerCounter, broadcastCounter, targetTimeout)
+	if int(atomic.LoadUint32(&handlerCounter)) != targetTimeout || int(atomic.LoadUint32(&broadcastCounter)) != 0 {
+		t.Fatalf("count mismatch: have %v on handler, %v on broadcast, want %v", atomic.LoadUint32(&handlerCounter), atomic.LoadUint32(&broadcastCounter), targetTimeout)
 	}
 }
 
@@ -198,8 +198,8 @@ func TestBoardcastButNotProcessDisqualifiedSyncInfo(t *testing.T) {
 	tester.bfter.SyncInfo(peerID, &syncInfo)
 
 	time.Sleep(50 * time.Millisecond)
-	if int(handlerCounter) != targetSyncInfo || int(broadcastCounter) != 0 {
-		t.Fatalf("count mismatch: have %v on handler, %v on broadcast, want %v", handlerCounter, broadcastCounter, targetSyncInfo)
+	if int(atomic.LoadUint32(&handlerCounter)) != targetSyncInfo || int(atomic.LoadUint32(&broadcastCounter)) != 0 {
+		t.Fatalf("count mismatch: have %v on handler, %v on broadcast, want %v", atomic.LoadUint32(&handlerCounter), atomic.LoadUint32(&broadcastCounter), targetSyncInfo)
 	}
 }
 
@@ -233,8 +233,8 @@ func TestTimeoutHandler(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	if int(verifyCounter) != targetVotes || int(handlerCounter) != targetVotes || int(broadcastCounter) != targetVotes {
-		t.Fatalf("count mismatch: have %v on verify, %v on handler, %v on broadcast, want %v", verifyCounter, handlerCounter, broadcastCounter, targetVotes)
+	if int(atomic.LoadUint32(&verifyCounter)) != targetVotes || int(atomic.LoadUint32(&handlerCounter)) != targetVotes || int(atomic.LoadUint32(&broadcastCounter)) != targetVotes {
+		t.Fatalf("count mismatch: have %v on verify, %v on handler, %v on broadcast, want %v", atomic.LoadUint32(&verifyCounter), atomic.LoadUint32(&handlerCounter), atomic.LoadUint32(&broadcastCounter), targetVotes)
 	}
 }
 
@@ -285,8 +285,8 @@ func TestSyncInfoHandler(t *testing.T) {
 	tester.bfter.SyncInfo(peerID, &syncInfo)
 
 	time.Sleep(50 * time.Millisecond)
-	if int(verifyCounter) != targetSyncInfo || int(handlerCounter) != targetSyncInfo || int(broadcastCounter) != 1 {
-		t.Fatalf("count mismatch: have %v on verify, have %v on handler, %v on broadcast, want %v", verifyCounter, handlerCounter, broadcastCounter, targetSyncInfo)
+	if int(atomic.LoadUint32(&verifyCounter)) != targetSyncInfo || int(atomic.LoadUint32(&handlerCounter)) != targetSyncInfo || int(atomic.LoadUint32(&broadcastCounter)) != 1 {
+		t.Fatalf("count mismatch: have %v on verify, have %v on handler, %v on broadcast, want %v", atomic.LoadUint32(&verifyCounter), atomic.LoadUint32(&handlerCounter), atomic.LoadUint32(&broadcastCounter), targetSyncInfo)
 	}
 }
 
@@ -323,8 +323,8 @@ func TestTooFarVotes(t *testing.T) {
 	}
 
 	time.Sleep(100 * time.Millisecond)
-	if int(verifyCounter) != targetVotes || int(handlerCounter) != targetVotes || int(broadcastCounter) != targetVotes {
-		t.Fatalf("count mismatch: have %v on verify, %v on handler, %v on broadcast, want %v", verifyCounter, handlerCounter, broadcastCounter, targetVotes)
+	if int(atomic.LoadUint32(&verifyCounter)) != targetVotes || int(atomic.LoadUint32(&handlerCounter)) != targetVotes || int(atomic.LoadUint32(&broadcastCounter)) != targetVotes {
+		t.Fatalf("count mismatch: have %v on verify, %v on handler, %v on broadcast, want %v", atomic.LoadUint32(&verifyCounter), atomic.LoadUint32(&handlerCounter), atomic.LoadUint32(&broadcastCounter), targetVotes)
 	}
 }
 
@@ -360,8 +360,8 @@ func TestTooFarTimeout(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	if int(verifyCounter) != targetTimeout || int(handlerCounter) != targetTimeout || int(broadcastCounter) != targetTimeout {
-		t.Fatalf("count mismatch: have %v on verify, %v on handler, %v on broadcast, want %v", verifyCounter, handlerCounter, broadcastCounter, targetTimeout)
+	if int(atomic.LoadUint32(&verifyCounter)) != targetTimeout || int(atomic.LoadUint32(&handlerCounter)) != targetTimeout || int(atomic.LoadUint32(&broadcastCounter)) != targetTimeout {
+		t.Fatalf("count mismatch: have %v on verify, %v on handler, %v on broadcast, want %v", atomic.LoadUint32(&verifyCounter), atomic.LoadUint32(&handlerCounter), atomic.LoadUint32(&broadcastCounter), targetTimeout)
 	}
 }
 
@@ -389,8 +389,8 @@ func TestTooFarSyncInfo(t *testing.T) {
 	tester.bfter.SyncInfo(peerID, &syncInfo)
 
 	time.Sleep(50 * time.Millisecond)
-	if int(verifyCounter) != targetSyncInfo || int(handlerCounter) != targetSyncInfo || int(broadcastCounter) != targetSyncInfo {
-		t.Fatalf("count mismatch: have %v on verify, have %v on handler, %v on broadcast, want %v", verifyCounter, handlerCounter, broadcastCounter, targetSyncInfo)
+	if int(atomic.LoadUint32(&verifyCounter)) != targetSyncInfo || int(atomic.LoadUint32(&handlerCounter)) != targetSyncInfo || int(atomic.LoadUint32(&broadcastCounter)) != targetSyncInfo {
+		t.Fatalf("count mismatch: have %v on verify, have %v on handler, %v on broadcast, want %v", atomic.LoadUint32(&verifyCounter), atomic.LoadUint32(&handlerCounter), atomic.LoadUint32(&broadcastCounter), targetSyncInfo)
 	}
 }
 

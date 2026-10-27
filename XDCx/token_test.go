@@ -75,3 +75,43 @@ func TestGetTokenDecimalWithoutRelayerConfigDoesNotPanic(t *testing.T) {
 		t.Fatal("expected GetTokenDecimal to surface the contract call error")
 	}
 }
+
+// TestGetTokenDecimalUnpacksWithCachedTRC21ABI tests that GetTokenDecimal packs
+// the decimals call with the TRC21 ABI and decodes its uint8 return value, so a
+// wrong ABI source surfaces as an error instead of going unnoticed.
+func TestGetTokenDecimalUnpacksWithCachedTRC21ABI(t *testing.T) {
+	t.Parallel()
+
+	statedb, err := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
+	if err != nil {
+		t.Fatalf("failed to create state db: %v", err)
+	}
+	if err := statedb.EnsureChainConfig(&params.ChainConfig{}); err != nil {
+		t.Fatalf("failed to attach chain config: %v", err)
+	}
+
+	chain := &tokenDecimalTestChain{
+		header: &types.Header{
+			Number:     big.NewInt(1),
+			Difficulty: big.NewInt(0),
+			GasLimit:   1000000,
+		},
+		config: params.TestChainConfig,
+		engine: ethash.NewFaker(),
+	}
+
+	tokenAddr := common.HexToAddress("0x1000000000000000000000000000000000000003")
+	// Runtime code returning 6 as a single 32-byte word:
+	// PUSH1 6, PUSH1 0, MSTORE, PUSH1 32, PUSH1 0, RETURN.
+	statedb.SetCode(tokenAddr, []byte{0x60, 0x06, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3})
+
+	XDCx := &XDCX{tokenDecimalCache: lru.NewCache[common.Address, *big.Int](defaultCacheLimit)}
+	decimal, err := XDCx.GetTokenDecimal(chain, statedb, tokenAddr)
+	if err != nil {
+		t.Fatalf("GetTokenDecimal returned error: %v", err)
+	}
+	want := new(big.Int).Exp(big.NewInt(10), big.NewInt(6), nil)
+	if decimal.Cmp(want) != 0 {
+		t.Fatalf("unexpected token decimal: have %v, want %v", decimal, want)
+	}
+}

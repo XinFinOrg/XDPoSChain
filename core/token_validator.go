@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand"
-	"strings"
 
 	ethereum "github.com/XinFinOrg/XDPoSChain"
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi"
@@ -40,15 +39,6 @@ const (
 
 type SimulatedBackend interface {
 	CallContractWithState(call ethereum.CallMsg, chain consensus.ChainContext, statedb *state.StateDB) ([]byte, error)
-}
-
-// GetTokenAbi return token abi
-func GetTokenAbi(tokenAbi string) (*abi.ABI, error) {
-	contractABI, err := abi.JSON(strings.NewReader(tokenAbi))
-	if err != nil {
-		return nil, err
-	}
-	return &contractABI, nil
 }
 
 // RunContract run smart contract
@@ -137,7 +127,7 @@ func ValidateXDCXApplyTransaction(chain consensus.ChainContext, blockNumber *big
 	if !chain.Config().IsTIPXDCXReceiver(blockNumber) {
 		return nil
 	}
-	contractABI, err := GetTokenAbi(contract.TRC21ABI)
+	contractABI, err := contract.TRC21MetaData.GetAbi()
 	if err != nil {
 		return fmt.Errorf("ValidateXDCXApplyTransaction: cannot parse ABI. Err: %v", err)
 	}
@@ -159,7 +149,7 @@ func ValidateXDCZApplyTransaction(chain consensus.ChainContext, blockNumber *big
 	if !chain.Config().IsTIPXDCXReceiver(blockNumber) {
 		return nil
 	}
-	contractABI, err := GetTokenAbi(contract.TRC21ABI)
+	contractABI, err := contract.TRC21MetaData.GetAbi()
 	if err != nil {
 		return fmt.Errorf("ValidateXDCZApplyTransaction: cannot parse ABI. Err: %v", err)
 	}

@@ -44,7 +44,7 @@ func (t *XDCxLastPrice) SetTradingState(tradingStateDB *tradingstate.TradingStat
 	}
 }
 
-func (c *XDCxLastPrice) Name() string {
+func (t *XDCxLastPrice) Name() string {
 	return "XDCX_LAST_PRICE"
 }
 
@@ -74,6 +74,6 @@ func (t *XDCxEpochPrice) SetTradingState(tradingStateDB *tradingstate.TradingSta
 	}
 }
 
-func (c *XDCxEpochPrice) Name() string {
+func (t *XDCxEpochPrice) Name() string {
 	return "XDCX_EPOCH_PRICE"
 }

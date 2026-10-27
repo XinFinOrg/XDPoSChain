@@ -48,6 +48,7 @@ var (
 		cfg.CancunBlock = nil
 		cfg.PragueBlock = nil
 		cfg.OsakaBlock = nil
+		cfg.AmsterdamBlock = nil
 		return &cfg
 	}()
 

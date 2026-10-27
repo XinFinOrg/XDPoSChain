@@ -48,6 +48,13 @@ func newStatePrefetcher(config *params.ChainConfig, bc *BlockChain, engine conse
 // the transaction messages using the statedb, but any changes are discarded. The
 // only goal is to pre-cache transaction signatures and state trie nodes.
 func (p *statePrefetcher) Prefetch(block *types.Block, statedb *state.StateDB, cfg vm.Config, interrupt *atomic.Bool) {
+	// A nil state carries nothing to pre-cache. Callers are not expected to
+	// pass one, but dereferencing it here panics the goroutine and takes the
+	// whole node down, so bail out instead of crashing (issue #1738, the path
+	// #1742 left open).
+	if statedb == nil {
+		return
+	}
 	var (
 		header       = block.Header()
 		gaspool      = new(GasPool).AddGas(block.GasLimit())

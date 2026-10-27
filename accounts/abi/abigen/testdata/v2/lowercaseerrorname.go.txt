@@ -53,6 +53,9 @@ func (c *LowercaseErrorName) Instance(backend bind.ContractBackend, addr common.
 // UnpackError attempts to decode the provided error data using user-defined
 // error definitions.
 func (lowercaseErrorName *LowercaseErrorName) UnpackError(raw []byte) (any, error) {
+	if len(raw) < 4 {
+		return nil, errors.New("Unknown error")
+	}
 	if bytes.Equal(raw[:4], lowercaseErrorName.abi.Errors["myError"].ID.Bytes()[:4]) {
 		return lowercaseErrorName.UnpackMyErrorError(raw[4:])
 	}

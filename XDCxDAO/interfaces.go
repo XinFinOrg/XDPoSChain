@@ -1,7 +1,7 @@
 // Copyright 2019 The XDPoSChain Authors
 // This file is part of the Core XDPoSChain infrastructure
 // https://XDPoSChain.com
-// Package XDCxDAO provides an interface to work with XDCx database, including leveldb for masternode and mongodb for SDK node
+// Package XDCxDAO provides an interface to work with XDCx database backed by leveldb
 
 package XDCxDAO
 
@@ -13,18 +13,8 @@ import (
 const defaultCacheLimit = 1024
 
 type XDCXDAO interface {
-	// for both leveldb and mongodb
 	IsEmptyKey(key []byte) bool
 	Close() error
-	GetObject(hash common.Hash, val interface{}) (interface{}, error)
-
-	// basic XDCx
-	InitBulk()
-	CommitBulk() error
-
-	// XDCx lending
-	InitLendingBulk()
-	CommitLendingBulk() error
 
 	// leveldb methods
 	Put(key []byte, value []byte) error
