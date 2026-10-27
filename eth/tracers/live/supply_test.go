@@ -129,3 +129,65 @@ func readSupplyBurn(t *testing.T, dir string) *big.Int {
 	}
 	return info.Burn.Misc
 }
+
+// TestSupplyBalanceChangeBurn pins the state-layer half of the selfdestruct
+// burn accounting: a BalanceDecreaseSelfdestructBurn reported by the state is
+// added to burn.misc, the other selfdestruct reasons are ignored, and the
+// accounting does not depend on the fork, because the state layer already
+// decides whether a balance is burnt (EIP-8246 removes that decision from the
+// SELFDESTRUCT inference in OnEnter, not from this hook).
+func TestSupplyBalanceChangeBurn(t *testing.T) {
+	var (
+		addr  = common.HexToAddress("0x8246")
+		tests = []struct {
+			name      string
+			amsterdam *big.Int // nil keeps the fork out of the block
+			burns     []int64  // amounts reported as BalanceDecreaseSelfdestructBurn
+			noise     []int64  // amounts reported with non-burn selfdestruct reasons
+			wantBurn  *big.Int
+		}{
+			{"single-burn", nil, []int64{100}, nil, big.NewInt(100)},
+			{"accumulates", nil, []int64{100, 50}, nil, big.NewInt(150)},
+			{"other-reasons", nil, nil, []int64{100, 7}, nil},
+			{"amsterdam-still-accounted", big.NewInt(0), []int64{100}, nil, big.NewInt(100)},
+		}
+	)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := *params.AllEthashProtocolChanges
+			config.AmsterdamBlock = tt.amsterdam
+
+			dir := t.TempDir()
+			hooks, err := newSupply(json.RawMessage(fmt.Sprintf(`{"path":%q}`, dir)))
+			if err != nil {
+				t.Fatalf("failed to create the supply tracer: %v", err)
+			}
+			// core.NewBlockChain invokes this hook when a live tracer is
+			// attached; deliver it for every case so the block start sees the
+			// same state as on a real chain.
+			hooks.OnBlockchainInit(&config)
+			block := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(1)})
+			hooks.OnBlockStart(tracing.BlockEvent{Block: block})
+
+			for _, amount := range tt.burns {
+				hooks.OnBalanceChange(addr, big.NewInt(amount), new(big.Int), tracing.BalanceDecreaseSelfdestructBurn)
+			}
+			for _, amount := range tt.noise {
+				hooks.OnBalanceChange(addr, big.NewInt(amount), new(big.Int), tracing.BalanceDecreaseSelfdestruct)
+			}
+			hooks.OnBlockEnd(nil)
+			hooks.OnClose()
+
+			got := readSupplyBurn(t, dir)
+			if tt.wantBurn == nil {
+				if got.Sign() != 0 {
+					t.Errorf("reported burn = %v, want none", got)
+				}
+				return
+			}
+			if got.Cmp(tt.wantBurn) != 0 {
+				t.Errorf("reported burn = %v, want %v", got, tt.wantBurn)
+			}
+		})
+	}
+}
