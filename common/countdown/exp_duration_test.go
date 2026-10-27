@@ -93,6 +93,26 @@ func TestExpDurationRoundDiff(t *testing.T) {
 	}
 }
 
+// TestExpDurationOverflowSaturates checks that a timeout outside the int64 range
+// saturates at the maximum duration instead of wrapping around to a negative
+// (or arbitrarily small) one.
+func TestExpDurationOverflowSaturates(t *testing.T) {
+	helper, err := NewExpTimeoutDuration(59*time.Second, float64(2.0), 31)
+	assert.NoError(t, err)
+	// 59s * 2^27 fits in a time.Duration (about 251 years), 59s * 2^28 overflows.
+	assert.Equal(t, 59*time.Second*(1<<27), helper.GetTimeoutDuration(types.Round(28), types.Round(0)))
+	assert.Equal(t, time.Duration(math.MaxInt64), helper.GetTimeoutDuration(types.Round(29), types.Round(0)))
+	assert.Equal(t, time.Duration(math.MaxInt64), helper.GetTimeoutDuration(types.Round(31), types.Round(0)))
+	assert.Equal(t, time.Duration(math.MaxInt64), helper.GetTimeoutDuration(types.Round(256), types.Round(0)))
+	assert.Equal(t, time.Duration(math.MaxInt64), helper.GetTimeoutDuration(types.Round(257), types.Round(0)))
+	assert.Equal(t, time.Duration(math.MaxInt64), helper.GetTimeoutDuration(types.Round(513), types.Round(0)))
+	// The guard must be a strict inequality: at the exact boundary the product
+	// is MaxInt64-1 and still fits, so it must not saturate.
+	exact, err := NewExpTimeoutDuration(9223372036854775806/3, float64(3.0), 1)
+	assert.NoError(t, err)
+	assert.Equal(t, time.Duration(9223372036854775806), exact.GetTimeoutDuration(types.Round(2), types.Round(0)))
+}
+
 func TestInvalidParameter(t *testing.T) {
 	base := float64(2.0)
 	max_exponent := uint8(32)

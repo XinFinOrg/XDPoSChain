@@ -62,7 +62,17 @@ func (d *ExpTimeoutDuration) GetTimeoutDuration(currentRound, highestRound types
 		exp := min(uint64(currentRound-highestRound)-1, uint64(maxExponent))
 		power = math.Pow(base, float64(exp))
 	}
-	return duration * time.Duration(power)
+	// duration*power can exceed the range of time.Duration for a long round
+	// difference and a large base; saturate instead of wrapping around to a
+	// negative timeout, which would retrigger the timer immediately. A chain
+	// whose maximum exponential timeout is unrepresentable is rejected by the
+	// chain config validation at startup, so this branch is a backstop for
+	// configs that bypass that check.
+	multiplier := int64(power)
+	if multiplier > 0 && int64(duration) > math.MaxInt64/multiplier {
+		return time.Duration(math.MaxInt64)
+	}
+	return time.Duration(int64(duration) * multiplier)
 }
 
 // SetParams replaces the whole parameter set; an invalid set is rejected
