@@ -33,6 +33,7 @@ import (
 	"math"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -753,8 +754,21 @@ func validateV2ExpTimeoutConfig(cfg *V2Config, fieldPath string) error {
 	if cfg.ExpTimeoutConfig.MaxExponent >= 32 {
 		return fmt.Errorf("%s: max_exponent (%d) >= max_exponent_upperbound (%d)", fieldPath, cfg.ExpTimeoutConfig.MaxExponent, 32)
 	}
-	if math.Pow(cfg.ExpTimeoutConfig.Base, float64(cfg.ExpTimeoutConfig.MaxExponent)) >= float64(math.MaxUint32) {
+	power := math.Pow(cfg.ExpTimeoutConfig.Base, float64(cfg.ExpTimeoutConfig.MaxExponent))
+	if power >= float64(math.MaxUint32) {
 		return fmt.Errorf("%s: base^max_exponent (%f^%d) should be less than 2^32", fieldPath, cfg.ExpTimeoutConfig.Base, cfg.ExpTimeoutConfig.MaxExponent)
+	}
+	// The engine converts the period with time.Duration(TimeoutPeriod) * time.Second
+	// and common/countdown then multiplies it by base^exp. Both steps must fit in a
+	// time.Duration: a saturated timeout is math.MaxInt64 (~292 years), so the timer
+	// never fires and the pacemaker silently stops. Reject such a config at startup.
+	const maxTimeoutSeconds = math.MaxInt64 / int64(time.Second)
+	if int64(cfg.TimeoutPeriod) > maxTimeoutSeconds {
+		return fmt.Errorf("%s: timeout_period (%ds) exceeds the time.Duration range", fieldPath, cfg.TimeoutPeriod)
+	}
+	ns := int64(cfg.TimeoutPeriod) * int64(time.Second)
+	if multiplier := int64(power); multiplier > 0 && ns > math.MaxInt64/multiplier {
+		return fmt.Errorf("%s: timeout_period (%ds) * base^max_exponent (%f^%d) exceeds the time.Duration range", fieldPath, cfg.TimeoutPeriod, cfg.ExpTimeoutConfig.Base, cfg.ExpTimeoutConfig.MaxExponent)
 	}
 	return nil
 }

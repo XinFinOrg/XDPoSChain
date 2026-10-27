@@ -19,9 +19,11 @@ package params
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"math/big"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -2068,4 +2070,116 @@ func TestActiveSystemContractsTracksXDCActivationBlocks(t *testing.T) {
 			assert.Equal(t, test.want, config.ActiveSystemContracts(test.block))
 		})
 	}
+}
+
+// expTimeoutTestChainConfig builds an XDC chain config that satisfies every
+// CheckConfigForkOrder requirement except the exponential timeout bounds under
+// test, so the validation reaches the checks this test targets.
+func expTimeoutTestChainConfig(timeoutPeriod int, base float64, maxExponent uint8) *ChainConfig {
+	newV2Config := func() *V2Config {
+		return &V2Config{
+			SwitchRound:   0,
+			MinePeriod:    2,
+			TimeoutPeriod: timeoutPeriod,
+			ExpTimeoutConfig: ExpTimeoutConfig{
+				Base:        base,
+				MaxExponent: maxExponent,
+			},
+		}
+	}
+	return &ChainConfig{
+		ChainID:                big.NewInt(1234),
+		TIPTRC21FeeBlock:       big.NewInt(0),
+		Gas50xBlock:            big.NewInt(0),
+		TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+		XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+		RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+		LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+		XDPoS: &XDPoSConfig{
+			Epoch:                900,
+			FoundationWalletAddr: TestnetChainConfig.XDPoS.FoundationWalletAddr,
+			MaxMasternodesV2:     108,
+			V2: &V2{
+				SwitchEpoch:   1,
+				SwitchBlock:   big.NewInt(900),
+				CurrentConfig: newV2Config(),
+				AllConfigs: map[uint64]*V2Config{
+					0: newV2Config(),
+				},
+			},
+		},
+	}
+}
+
+// TestValidateV2ExpTimeoutConfigDurationRange checks that a chain config whose
+// largest exponential timeout does not fit in a time.Duration is rejected: the
+// countdown timer would otherwise saturate at math.MaxInt64 and never fire.
+func TestValidateV2ExpTimeoutConfigDurationRange(t *testing.T) {
+	tests := []struct {
+		name        string
+		timeout     int64
+		base        float64
+		maxExponent uint8
+		wantErr     bool
+	}{
+		{name: "built-in network shape", timeout: 30, base: 1, maxExponent: 0},
+		{name: "largest timeout still fits", timeout: 59, base: 2, maxExponent: 27},
+		// At the exact product boundary the timeout is representable and must
+		// be accepted: 3e9 ns * 3074457345 == 9223372035000000000 <= MaxInt64.
+		{name: "largest product fits at the exact boundary", timeout: 3, base: 3074457345, maxExponent: 1},
+		{name: "largest timeout overflows", timeout: 59, base: 2, maxExponent: 28, wantErr: true},
+		{name: "long period with large exponent", timeout: 30, base: 2, maxExponent: 30, wantErr: true},
+		// The engine converts the period to nanoseconds before applying
+		// base^exp, so the conversion overflows even though base < 1 shrinks
+		// the multiplier.
+		{name: "period conversion overflows with shrinking base", timeout: 18_000_000_000, base: 0.5, maxExponent: 1, wantErr: true},
+		{name: "period conversion boundary still fits", timeout: 9_223_372_036, base: 1, maxExponent: 0},
+		{name: "period conversion boundary overflows", timeout: 9_223_372_037, base: 1, maxExponent: 0, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.timeout > math.MaxInt32 && strconv.IntSize == 32 {
+				t.Skip("timeout_period exceeds the 32-bit int range")
+			}
+			cfg := expTimeoutTestChainConfig(int(test.timeout), test.base, test.maxExponent)
+			err := cfg.CheckConfigForkOrder()
+			if !test.wantErr {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrWrongForkSwitchOrder) {
+				t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+			}
+			if !strings.Contains(err.Error(), "XDPoS.V2.CurrentConfig.ExpTimeoutConfig") {
+				t.Fatalf("error does not name the field: %v", err)
+			}
+			if !strings.Contains(err.Error(), "time.Duration range") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+	t.Run("all configs entry is validated", func(t *testing.T) {
+		cfg := expTimeoutTestChainConfig(30, 1, 0)
+		cfg.XDPoS.V2.AllConfigs[10] = &V2Config{
+			SwitchRound:   10,
+			MinePeriod:    2,
+			TimeoutPeriod: 59,
+			ExpTimeoutConfig: ExpTimeoutConfig{
+				Base:        2,
+				MaxExponent: 28,
+			},
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if !strings.Contains(err.Error(), "XDPoS.V2.AllConfigs[10].ExpTimeoutConfig") {
+			t.Fatalf("error does not name the all-configs entry: %v", err)
+		}
+		if !strings.Contains(err.Error(), "time.Duration range") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
 }
