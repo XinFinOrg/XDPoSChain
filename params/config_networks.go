@@ -446,7 +446,7 @@ var (
 		TIPFixedRewardBlock:         big.NewInt(83600000),
 		TIPUpgradePenaltyBlock:      big.NewInt(83600000),
 		TIPEpochHalvingBlock:        nil,
-		TIPProportionalRewardBlock:  nil,
+		TIPProportionalRewardBlock:  big.NewInt(84733000),
 		TRC21IssuerSMC:              common.HexToAddress("0x0E2C88753131CE01c7551B726b28BFD04e44003F"),
 		XDCXListingSMC:              common.HexToAddress("0x14B2Bf043b9c31827A472CE4F94294fE9a6277e0"),
 		RelayerRegistrationSMC:      common.HexToAddress("0xA1996F69f47ba14Cb7f661010A7C31974277958c"),

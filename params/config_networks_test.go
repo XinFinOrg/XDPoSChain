@@ -182,7 +182,7 @@ func TestXDCChainConfigsDeclareForkBlocks(t *testing.T) {
 			tipFixedRewardBlock:         big.NewInt(83600000),
 			tipUpgradePenaltyBlock:      big.NewInt(83600000),
 			tipEpochHalvingBlock:        nil,
-			tipProportionalRewardBlock:  nil,
+			tipProportionalRewardBlock:  big.NewInt(84733000),
 		},
 		{
 			name:                        "devnet",

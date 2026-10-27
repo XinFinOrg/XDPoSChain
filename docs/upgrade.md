@@ -559,7 +559,8 @@ Use this procedure when the chain is already running and you want to add a new f
 - `tipProportionalRewardBlock` pays each masternode, protector and observer `perNodeReward × min(sign, signSlots) / signSlots`; the unearned share is not minted. It does not depend on `tipFixedRewardBlock`, and when both are active it takes precedence.
 - Activation boundary: the reward model is chosen at the paying checkpoint, while the rewarded epoch is two epochs earlier. The first checkpoint at or after the activation height therefore pays an epoch that lies entirely before activation under the new model. With devnet's activation at `50000` and an epoch of 900, the first affected checkpoint is `50400`, paying epoch `[48601, 49499]`. TIPFixedReward behaves the same way.
 - Devnet: `tipFixedRewardBlock` is unset and `tipProportionalRewardBlock` is `50000`. That changes the rules of a fork that existing devnet databases have already passed, so the built-in devnet direct restart described in the compatibility matrix above does not apply to this change. Opening an existing devnet database fails with `provided genesis config conflicts with built-in chain config`; start devnet nodes from a fresh data directory.
-- Mainnet, testnet and localnet leave `tipProportionalRewardBlock` unset.
+- Testnet: `tipProportionalRewardBlock` is `84733000` (around 2026-10-30). Testnet has not reached that height yet, so upgraded nodes restart on their existing data directory; every testnet node must run this binary before the activation height.
+- Mainnet and localnet leave `tipProportionalRewardBlock` unset.
 
 ## Prague / EIP-2935
 
