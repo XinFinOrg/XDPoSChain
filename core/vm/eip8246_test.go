@@ -29,8 +29,8 @@ import (
 )
 
 // TestSelfdestruct6780EventForkGate pins the balance-change events emitted by a
-// SELFDESTRUCT with the executing account as beneficiary, across the EIP-8246
-// fork boundary.
+// SELFDESTRUCT with the executing account or a distinct address as beneficiary,
+// across the EIP-8246 fork boundary.
 //
 // The fork gate in opSelfdestruct6780 only shapes the hook layer: the final
 // state is decided by the preserveBalance flag handed to the state layer, so a
@@ -39,13 +39,22 @@ import (
 // increase of the full balance on top of the destruct decrease), exactly as
 // the pre-EIP-8246 code did with its unconditional SubBalance/AddBalance.
 // Amsterdam drops the pair and leaves the balance in place.
+//
+// The to-other rows pin the other half of the gate: a distinct beneficiary keeps
+// the transfer pair on both sides of the fork, and only the self-beneficiary
+// part is dropped. The extra decrease of pre-amsterdam/new-contract-to-other is
+// the 0 -> 0 destruct decrease that hookedStateDB.SelfDestruct6780 raises after
+// the instruction already moved the balance to the beneficiary; the
+// self-beneficiary rows pin the same quirk.
 func TestSelfdestruct6780EventForkGate(t *testing.T) {
 	var (
 		addr           = common.HexToAddress("0x8246824682468246824682468246824682468246")
-		code           = []byte{0x30, 0xff} // ADDRESS; SELFDESTRUCT
+		beneficiary    = common.HexToAddress("0xbe")
+		code           = []byte{0x30, 0xff}       // ADDRESS; SELFDESTRUCT
+		toOtherCode    = []byte{0x60, 0xbe, 0xff} // PUSH1 0xbe; SELFDESTRUCT
 		initialBalance = int64(1000)
 	)
-	run := func(t *testing.T, amsterdam, newContract bool) (decrease, increase, burn int, balance int64, exists bool) {
+	run := func(t *testing.T, amsterdam, newContract, toOther bool) (decrease, increase, burn int, balance, beneficiaryBalance int64, exists bool) {
 		t.Helper()
 
 		config := *params.AllEthashProtocolChanges
@@ -62,7 +71,11 @@ func TestSelfdestruct6780EventForkGate(t *testing.T) {
 		} else {
 			statedb.SetNonce(addr, 1, tracing.NonceChangeUnspecified)
 		}
-		statedb.SetCode(addr, code)
+		evmCode := code
+		if toOther {
+			evmCode = toOtherCode
+		}
+		statedb.SetCode(addr, evmCode)
 		statedb.AddBalance(addr, big.NewInt(initialBalance), tracing.BalanceChangeUnspecified)
 
 		hooked := state.NewHookedState(statedb, &tracing.Hooks{
@@ -95,32 +108,41 @@ func TestSelfdestruct6780EventForkGate(t *testing.T) {
 			t.Fatalf("call failed: %v", err)
 		}
 		hooked.Finalise(true)
-		return decrease, increase, burn, hooked.GetBalance(addr).Int64(), hooked.Exist(addr)
+		return decrease, increase, burn, hooked.GetBalance(addr).Int64(), hooked.GetBalance(beneficiary).Int64(), hooked.Exist(addr)
 	}
 
 	for _, tc := range []struct {
-		name         string
-		amsterdam    bool
-		newContract  bool
-		wantDecrease int
-		wantIncrease int
-		wantBurn     int
-		wantBalance  int64
-		wantExists   bool
+		name            string
+		amsterdam       bool
+		newContract     bool
+		toOther         bool
+		wantDecrease    int
+		wantIncrease    int
+		wantBurn        int
+		wantBalance     int64
+		wantExists      bool
+		wantBeneficiary int64
 	}{
-		{"pre-amsterdam/new-contract", false, true, 2, 1, 0, 0, false},
-		{"amsterdam/new-contract", true, true, 0, 0, 0, initialBalance, true},
-		{"pre-amsterdam/existing-contract", false, false, 1, 1, 0, initialBalance, true},
-		{"amsterdam/existing-contract", true, false, 0, 0, 0, initialBalance, true},
+		{"pre-amsterdam/new-contract", false, true, false, 2, 1, 0, 0, false, 0},
+		{"amsterdam/new-contract", true, true, false, 0, 0, 0, initialBalance, true, 0},
+		{"pre-amsterdam/existing-contract", false, false, false, 1, 1, 0, initialBalance, true, 0},
+		{"amsterdam/existing-contract", true, false, false, 0, 0, 0, initialBalance, true, 0},
+		{"pre-amsterdam/existing-contract-to-other", false, false, true, 1, 1, 0, 0, true, initialBalance},
+		{"amsterdam/existing-contract-to-other", true, false, true, 1, 1, 0, 0, true, initialBalance},
+		{"pre-amsterdam/new-contract-to-other", false, true, true, 2, 1, 0, 0, false, initialBalance},
+		{"amsterdam/new-contract-to-other", true, true, true, 1, 1, 0, 0, false, initialBalance},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			decrease, increase, burn, balance, exists := run(t, tc.amsterdam, tc.newContract)
+			decrease, increase, burn, balance, beneficiaryBalance, exists := run(t, tc.amsterdam, tc.newContract, tc.toOther)
 			if decrease != tc.wantDecrease || increase != tc.wantIncrease || burn != tc.wantBurn {
 				t.Errorf("balance events = %d decreases, %d increases, %d burns, want %d, %d, %d",
 					decrease, increase, burn, tc.wantDecrease, tc.wantIncrease, tc.wantBurn)
 			}
 			if balance != tc.wantBalance {
 				t.Errorf("post-finalise balance = %d, want %d", balance, tc.wantBalance)
+			}
+			if beneficiaryBalance != tc.wantBeneficiary {
+				t.Errorf("post-finalise beneficiary balance = %d, want %d", beneficiaryBalance, tc.wantBeneficiary)
 			}
 			if exists != tc.wantExists {
 				t.Errorf("post-finalise existence = %v, want %v", exists, tc.wantExists)
