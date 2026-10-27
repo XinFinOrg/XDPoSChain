@@ -90,6 +90,46 @@ func TestCheckSchedule(t *testing.T) {
 	}
 }
 
+// TestCheckConfigForkOrderRejectsInvalidSchedule pins the gate on the config
+// level: every built-in XDPoS config still passes, and the same configs fail
+// once their schedule leaves the bound.
+func TestCheckConfigForkOrderRejectsInvalidSchedule(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		cfg  *ChainConfig
+	}{
+		{name: "XDCMainnetChainConfig", cfg: XDCMainnetChainConfig},
+		{name: "AllDevChainProtocolChanges", cfg: AllDevChainProtocolChanges},
+		{name: "TestnetChainConfig", cfg: TestnetChainConfig},
+		{name: "DevnetChainConfig", cfg: DevnetChainConfig},
+		{name: "LocalnetChainConfig", cfg: LocalnetChainConfig},
+		{name: "TestXDPoSMockChainConfig", cfg: TestXDPoSMockChainConfig},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.cfg.CheckConfigForkOrder(); err != nil {
+				t.Fatalf("built-in config rejected: %v", err)
+			}
+			for _, mutate := range []struct {
+				name  string
+				apply func(*XDPoSConfig)
+			}{
+				{name: "zero gap", apply: func(c *XDPoSConfig) { c.Gap = 0 }},
+				{name: "zero epoch", apply: func(c *XDPoSConfig) { c.Epoch = 0 }},
+				{name: "gap equal to the epoch", apply: func(c *XDPoSConfig) { c.Gap = c.Epoch }},
+				{name: "gap above the epoch", apply: func(c *XDPoSConfig) { c.Gap = c.Epoch + 1 }},
+			} {
+				t.Run(mutate.name, func(t *testing.T) {
+					clone := test.cfg.Clone()
+					mutate.apply(clone.XDPoS)
+					if err := clone.CheckConfigForkOrder(); !errors.Is(err, ErrInvalidEpochGap) {
+						t.Fatalf("CheckConfigForkOrder = %v, want ErrInvalidEpochGap", err)
+					}
+				})
+			}
+		})
+	}
+}
+
 // TestSwitchEpochFor pins the pairing arithmetic the puppeth wizard derives
 // XDPoS.V2.SwitchEpoch with: the quotient of the big.Int block by the epoch, and
 // whether that quotient is a uint64 at all.

@@ -347,23 +347,26 @@ func TestNeedsNextEpochSnapshot(t *testing.T) {
 	}
 
 	// A schedule without a usable gap offset has no gap block and must not
-	// divide by zero.
+	// divide by zero. Each shape is probed at a height that would match if its
+	// guard were gone: Gap == Epoch puts the gap trigger on every epoch switch,
+	// so that shape is probed at block 10 rather than at the gap block of 900/450.
 	for _, schedule := range []struct {
 		epoch, gap uint64
+		number     uint64
 	}{
-		{0, 4},  // no epoch length
-		{10, 0}, // no gap offset
-		{10, 10},
-		{10, 20},
+		{0, 4, 6},    // no epoch length
+		{10, 0, 6},   // no gap offset
+		{10, 10, 10}, // gap trigger on the epoch switch
+		{10, 20, 6},  // gap beyond the epoch
 	} {
 		cfg := v2Config()
 		cfg.XDPoS.Epoch, cfg.XDPoS.Gap = schedule.epoch, schedule.gap
 		blockchain.SetChainConfig(cfg)
-		if blockchain.isNextEpochGapBlock(6) {
-			t.Fatalf("isNextEpochGapBlock(6) is true for epoch %d, gap %d", schedule.epoch, schedule.gap)
+		if blockchain.isNextEpochGapBlock(schedule.number) {
+			t.Fatalf("isNextEpochGapBlock(%d) is true for epoch %d, gap %d", schedule.number, schedule.epoch, schedule.gap)
 		}
-		if blockchain.needsNextEpochSnapshot(big.NewInt(6)) {
-			t.Fatalf("needsNextEpochSnapshot(6) is true for epoch %d, gap %d", schedule.epoch, schedule.gap)
+		if blockchain.needsNextEpochSnapshot(new(big.Int).SetUint64(schedule.number)) {
+			t.Fatalf("needsNextEpochSnapshot(%d) is true for epoch %d, gap %d", schedule.number, schedule.epoch, schedule.gap)
 		}
 	}
 }

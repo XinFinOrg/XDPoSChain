@@ -783,10 +783,11 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64) error {
 	}
 	defer bc.chainmu.Unlock()
 
-	// delFn below reuses isGapBlockNumber to pick the snapshots a rewind deletes, and that
-	// predicate only matches when 0 < Gap <= Epoch. Outside that range no snapshot is
-	// deleted; the leftovers are keyed by block hash, so they are never loaded again - a
-	// leak, not a wrong answer.
+	// delFn below reuses isGapBlockNumber to pick the snapshots a rewind deletes. The
+	// predicate matches nothing for Epoch 0 (it guards its division), for Gap 0 (it compares
+	// against Epoch, which the modulo never yields) and for Gap > Epoch (the wrapped offset
+	// is out of the modulo's range); all three are refused at startup, so only a config
+	// installed after startup reaches here. Leftovers stay keyed by hash: leaked, not wrong.
 	if xdpos := bc.chainConfig.XDPoS; xdpos != nil && (xdpos.Epoch == 0 || xdpos.Gap == 0 || xdpos.Gap > xdpos.Epoch) {
 		log.Warn("Rewinding with no gap snapshot to delete: the gap predicate cannot match this configuration",
 			"epoch", xdpos.Epoch, "gap", xdpos.Gap)
@@ -1746,21 +1747,23 @@ func (bc *BlockChain) WriteBlockWithState(block *types.Block, receipts []*types.
 // writeKnownBlock and reorg - turn a rejection from that engine into a log.Crit: a block this
 // predicate accepts and the engine refuses halts the node.
 //
-// The (num+Gap)%Epoch == 0 form kept before, which engine_v1 stores and loads its snapshots
-// with, only agrees with the engine for 0 < Gap <= Epoch: with Gap == 0 it holds at every epoch
-// boundary, and with Gap > Epoch, where Epoch-Gap underflows, at offsets the engine cannot
-// express. Every configuration in params/config_networks.go uses 0 < Gap < Epoch.
+// The schedule bound `0 < Gap < Epoch` is a startup invariant - params.CheckSchedule runs
+// from CheckConfigForkOrder - so the only guard left is the one the expression itself needs:
+// `Epoch != 0` before the modulo, which keeps a config installed after startup from dividing
+// by zero. Outside the bound the comparison cannot match anyway: `Gap == 0` compares against
+// Epoch, which num%Epoch never equals, and `Gap > Epoch` wraps `Epoch-Gap` to a value at or
+// above Epoch+1, out of the modulo's range. `Gap == Epoch` stays inside the range and matches
+// every epoch switch, which is what the engine's condition does as well.
 //
-// setHeadBeyondRoot used the old form to pick the snapshots a rewind deletes and now asks this
-// predicate instead, so a chain with Gap == 0 or Gap > Epoch deletes no snapshot and the entries
-// engine_v1 wrote stay in the database. They are keyed by block hash, so a rewound block's
-// snapshot is never loaded again: leaked, not wrong.
+// setHeadBeyondRoot asks this predicate to pick the snapshots a rewind deletes; engine_v1 keys
+// them by block hash, so a rewound block's snapshot is never loaded again even when it is left
+// behind: leaked, not wrong.
 func (bc *BlockChain) isGapBlockNumber(num uint64) bool {
 	if bc.chainConfig.XDPoS == nil {
 		return false
 	}
 	epoch, gap := bc.chainConfig.XDPoS.Epoch, bc.chainConfig.XDPoS.Gap
-	return epoch != 0 && gap != 0 && gap <= epoch && num%epoch == epoch-gap
+	return epoch != 0 && num%epoch == epoch-gap
 }
 
 // isGapBlock reports whether block is the gap block of its epoch.
@@ -4384,7 +4387,11 @@ func (bc *BlockChain) InsertHeaderChain(chain []*types.Header, checkFreq int) (i
 	return bc.hc.InsertHeaderChain(chain, whFunc, start)
 }
 
-// SetChainConfig sets the chain config for test.
+// SetChainConfig replaces the chain config without validating it. It exists for tests and
+// config overrides; every production path must reach the chain through CheckConfigForkOrder,
+// which judges the XDPoS schedule. The block predicates stay total over whatever config is
+// installed here: a schedule with Epoch 0 makes them report no gap block rather than divide
+// by zero.
 func (bc *BlockChain) SetChainConfig(config *params.ChainConfig) {
 	bc.chainConfig = config
 }
@@ -4407,7 +4414,8 @@ func (bc *BlockChain) GetClient() (bind.ContractBackend, error) {
 // isNextEpochGapBlock reports whether the block at number is the gap block of
 // its epoch, i.e. the block whose committed state the masternode set of the next
 // epoch is derived from. A schedule without a usable gap offset has no gap block
-// at all, which also keeps the modulo below from dividing by zero.
+// at all - Gap >= Epoch covers Epoch 0 too, where every offset qualifies - so the
+// modulo below never divides by zero.
 //
 // A usable offset is positive and smaller than the epoch. Gap == 0 and
 // Gap > Epoch designate no gap block either way - number%Epoch is never the epoch
@@ -4427,8 +4435,7 @@ func (bc *BlockChain) GetClient() (bind.ContractBackend, error) {
 // would find them looking for a snapshot this code no longer writes. No built-in
 // network uses one.
 func (bc *BlockChain) isNextEpochGapBlock(number uint64) bool {
-	if bc.chainConfig.XDPoS == nil || bc.chainConfig.XDPoS.Epoch == 0 ||
-		bc.chainConfig.XDPoS.Gap == 0 || bc.chainConfig.XDPoS.Gap >= bc.chainConfig.XDPoS.Epoch {
+	if bc.chainConfig.XDPoS == nil || bc.chainConfig.XDPoS.Gap >= bc.chainConfig.XDPoS.Epoch {
 		return false
 	}
 	return (number % bc.chainConfig.XDPoS.Epoch) == (bc.chainConfig.XDPoS.Epoch - bc.chainConfig.XDPoS.Gap)

@@ -534,6 +534,30 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 			t.Fatalf("unexpected error string: %v", err)
 		}
 	})
+	t.Run("fork order hint survives an invalid schedule", func(t *testing.T) {
+		// Both errors are present. The hint belongs to the fork-order error, so
+		// the schedule - which no fork slot can repair - must not remove it.
+		cfg := &ChainConfig{
+			ChainID:                  big.NewInt(1234),
+			TIPTRC21FeeBlock:         big.NewInt(0),
+			Gas50xBlock:              big.NewInt(20),
+			TIPXDCXMinerDisableBlock: big.NewInt(10),
+			TRC21IssuerSMC:           TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:           TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC:   TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC:   TestnetChainConfig.LendingRegistrationSMC,
+			XDPoS:                    TestXDPoSMockChainConfig.XDPoS.Clone(),
+		}
+		cfg.XDPoS.Gap = 0
+
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if err == nil || !strings.Contains(err.Error(), `, or set "tipXDCXMinerDisableBlock" to null in the chain config`) {
+			t.Fatalf("fork-order hint missing: %v", err)
+		}
+	})
 	t.Run("gas2500x block requires gas50x block", func(t *testing.T) {
 		cfg := &ChainConfig{
 			ChainID:                big.NewInt(1234),
@@ -877,6 +901,7 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
 			XDPoS: &XDPoSConfig{
 				Epoch:                900,
+				Gap:                  450,
 				FoundationWalletAddr: TestnetChainConfig.XDPoS.FoundationWalletAddr,
 				MaxMasternodesV2:     108,
 				V2: &V2{
@@ -2097,6 +2122,7 @@ func expTimeoutTestChainConfig(timeoutPeriod int, base float64, maxExponent uint
 		LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
 		XDPoS: &XDPoSConfig{
 			Epoch:                900,
+			Gap:                  450,
 			FoundationWalletAddr: TestnetChainConfig.XDPoS.FoundationWalletAddr,
 			MaxMasternodesV2:     108,
 			V2: &V2{

@@ -370,3 +370,63 @@ func makeSealedChain(t *testing.T, cfg *params.ChainConfig, genesis *Genesis, en
 	}
 	return blocks
 }
+
+// shortEpochMasternodes is the masternode set of the short-epoch fixtures: it is the signer list
+// their genesis names and, through masternodeVotingStorage, the candidate set their voting
+// contract holds.
+var shortEpochMasternodes = []common.Address{{1}, {2}, {3}, {4}}
+
+// masternodeVotingStorage lays out the candidate array of the voting contract for a genesis
+// alloc, so StateDB.GetCandidates answers with these candidates without the contract being
+// deployed. A gap block owes the masternode refresh of the next epoch and that refresh reads the
+// set off the state, so a chain without one stops the node at its first gap block.
+func masternodeVotingStorage(candidates []common.Address) map[common.Hash]common.Hash {
+	storage := map[common.Hash]common.Hash{
+		candidatesLengthSlot(): common.BigToHash(new(big.Int).SetUint64(uint64(len(candidates)))),
+	}
+	for i, candidate := range candidates {
+		storage[candidateSlot(uint64(i))] = candidate.Hash()
+		// Stakes strictly decreasing over the stored order, so the descending-stake sort the
+		// refresh applies keeps the order the genesis declares.
+		storage[candidateCapSlot(candidate)] = common.BigToHash(big.NewInt(int64(len(candidates) - i)))
+	}
+	return storage
+}
+
+// newShortEpochXDPoSChain opens the chain the epoch-switch fixtures share: an XDPoS faker on a
+// schedule short enough for its epoch switch blocks to sit inside the chain. The schedule is
+// inside the bound from construction to teardown - Epoch 3 with Gap 1 puts a gap block at the end
+// of every epoch - and the genesis carries the masternode set those gap blocks refresh, so the
+// refresh runs instead of stopping the node. Returns the chain, the genesis it was opened on, and
+// the config and engine both were built from.
+func newShortEpochXDPoSChain(t *testing.T) (*BlockChain, *Genesis, *params.ChainConfig, *XDPoS.XDPoS) {
+	t.Helper()
+
+	cfg := params.TestXDPoSMockChainConfig.Clone()
+	cfg.XDPoS.Epoch = 3
+	cfg.XDPoS.Gap = 1
+	cfg.XDPoS.SkipV1Validation = true
+
+	// An XDPoS genesis has to name signers, and the faker engine never reads them.
+	extraData := make([]byte, 32)
+	for _, signer := range shortEpochMasternodes {
+		extraData = append(extraData, signer.Bytes()...)
+	}
+	genesis := &Genesis{
+		Alloc: types.GenesisAlloc{
+			common.MasternodeVotingSMCBinary: {Storage: masternodeVotingStorage(shortEpochMasternodes)},
+		},
+		BaseFee:   big.NewInt(params.InitialBaseFee),
+		Config:    cfg,
+		ExtraData: extraData,
+	}
+	engine := XDPoS.NewFaker(rawdb.NewMemoryDatabase(), cfg)
+	if engine == nil {
+		t.Fatal("failed to create the XDPoS faker engine")
+	}
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, genesis, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+	return chain, genesis, cfg, engine
+}

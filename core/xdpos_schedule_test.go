@@ -44,7 +44,7 @@ func TestCheckXDPoSSchedule(t *testing.T) {
 			name:    "zero gap",
 			cfg:     xdpScheduleConfig(900, 0),
 			wantErr: true,
-			wantMsg: "invalid XDPoS schedule: XDPoS.Epoch 900, XDPoS.Gap 0 (want 0 < gap < epoch)",
+			wantMsg: "invalid XDPoS schedule: XDPoS.Gap 0 designates no gap block inside XDPoS.Epoch 900 (want 1 <= Gap < Epoch)",
 		},
 		{name: "gap equal to epoch", cfg: xdpScheduleConfig(900, 900), wantErr: true},
 		{name: "gap above epoch", cfg: xdpScheduleConfig(900, 901), wantErr: true},

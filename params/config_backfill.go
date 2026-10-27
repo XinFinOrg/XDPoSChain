@@ -1185,7 +1185,7 @@ func (c *ChainConfig) backfillForkSequenceTrioFrom(src *ChainConfig) *ChainConfi
 	for _, field := range candidates {
 		field.set(c, common.CloneBigInt(anchor))
 	}
-	if err := c.checkConfigForkOrder(false); err != nil {
+	if err := c.checkConfigForkOrder(false, false); err != nil {
 		for _, field := range candidates {
 			field.set(c, nil)
 		}

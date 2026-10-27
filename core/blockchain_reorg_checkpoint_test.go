@@ -82,27 +82,12 @@ func TestReorgSignalsEpochSwitchOnIntermediateBlock(t *testing.T) {
 	defer signals.stop()
 
 	// The fixture is an XDPoS chain that stays on v1, where IsEpochSwitch is decided by the block
-	// number, with a small epoch so the epoch switch block sits next to the head. Gap == 0 keeps
-	// the masternode-set refresh (UpdateM1, which needs snapshots) out of the reorg, so this test
-	// exercises the checkpoint signal alone. The mock config's v2 switch (block 900) is far above
-	// the blocks below and stays a multiple of the epoch, as the config validation asks.
-	cfg := params.TestXDPoSMockChainConfig.Clone()
-	xdpos := *cfg.XDPoS
-	xdpos.Epoch = 3
-	xdpos.Gap = 0
-	xdpos.SkipV1Validation = true
-	cfg.XDPoS = &xdpos
-
-	engine := XDPoS.NewFaker(rawdb.NewMemoryDatabase(), cfg)
-	if engine == nil {
-		t.Fatal("failed to create the XDPoS faker engine")
-	}
-	// An XDPoS genesis has to name signers, and the faker engine never reads them.
-	extraData := make([]byte, 32)
-	for _, signer := range []common.Address{{1}, {2}, {3}, {4}} {
-		extraData = append(extraData, signer.Bytes()...)
-	}
-	blockchain, genesis := newChainOnMockSchedule(t, cfg, engine, extraData)
+	// number, with a small epoch so the epoch switch block sits next to the head. Its gap blocks
+	// refresh the masternode set of the next epoch, which the genesis carries, so the reorg runs
+	// that refresh too and the checkpoint signal is still what the assertions below read. The mock
+	// config's v2 switch (block 900) is far above the blocks below and stays a multiple of the
+	// epoch, as the config validation asks.
+	blockchain, genesis, cfg, engine := newShortEpochXDPoSChain(t)
 	defer blockchain.Stop()
 
 	// Epoch blocks of this fixture are 3 and 6. The stored chain stops at 7 and the side chain

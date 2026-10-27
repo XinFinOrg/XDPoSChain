@@ -1,36 +1,35 @@
 package core
 
 import (
-	"errors"
-	"fmt"
-
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
 // ErrInvalidEpochGap reports an XDPoS chain config whose schedule cannot place
-// a gap block inside an epoch.
-var ErrInvalidEpochGap = errors.New("invalid XDPoS schedule")
+// a gap block inside an epoch. It is the params sentinel, so a config rejected
+// by either gate satisfies the same errors.Is check.
+var ErrInvalidEpochGap = params.ErrInvalidEpochGap
 
-// checkXDPoSSchedule enforces 0 < gap < epoch on the configs core accepts. A
-// chain config without an XDPoS section is not an XDPoS chain and is left
-// alone. Outside the bound a schedule has no consistent meaning: the two gap
-// predicates disagree on Gap == Epoch (isGapBlockNumber accepts it,
-// isNextEpochGapBlock refuses it), and for Gap > Epoch the v1 engine's
-// checkpoint-minus-Gap lookup addresses heights those predicates never report.
-// A violating config is therefore rejected where it enters the chain rather
-// than interpreted.
+// checkXDPoSSchedule enforces the XDPoS schedule bound core accepts. The rule
+// and its rationale live in params.XDPoSConfig.CheckSchedule, which
+// ChainConfig.CheckConfigForkOrder also runs; this helper keeps core's earlier
+// gate, which sees a config before XDPoS.New rewrites a missing epoch to 900.
+// A chain config without an XDPoS section is not an XDPoS chain and is left
+// alone.
 //
 // The call sites do not cover the same inputs. Genesis.commit and the genesis
 // and config resolvers run before XDPoS.New, so they see Epoch == 0 as well;
 // the newBlockChain gate runs after the engine has rewritten it to 900 and
 // only catches a caller-supplied Gap outside the bound.
+//
+// Three of the four call sites also run immediately after CheckConfigForkOrder,
+// whose params gate judges the same set, so on those paths this helper cannot
+// reject anything that call accepts; they stay as the gate position, not as a
+// second rule. newBlockChain is the one no other check covers: the
+// NewBlockChain*Resolved opens take a caller-supplied config and skip
+// CheckConfigForkOrder.
 func checkXDPoSSchedule(cfg *params.ChainConfig) error {
-	if cfg == nil || cfg.XDPoS == nil {
+	if cfg == nil {
 		return nil
 	}
-	epoch, gap := cfg.XDPoS.Epoch, cfg.XDPoS.Gap
-	if gap == 0 || gap >= epoch {
-		return fmt.Errorf("%w: XDPoS.Epoch %d, XDPoS.Gap %d (want 0 < gap < epoch)", ErrInvalidEpochGap, epoch, gap)
-	}
-	return nil
+	return cfg.XDPoS.CheckSchedule()
 }
