@@ -92,13 +92,14 @@ type StateDB struct {
 	// might also occur in the 'stateObjects' map due to account
 	// resurrection. The account value is tracked as the original value
 	// before the transition. This map is populated at the transaction
-	// boundaries.
+	// boundaries, and by the block-level DeleteAddress call.
 	stateObjectsDestruct map[common.Address]*types.StateAccount
 
 	// This map tracks the account mutations that occurred during the
 	// transition. Uncommitted mutations belonging to the same account
 	// can be merged into a single one which is equivalent from database's
-	// perspective. This map is populated at the transaction boundaries.
+	// perspective. This map is populated at the transaction boundaries,
+	// and by the block-level DeleteAddress call.
 	mutations map[common.Address]*mutation
 
 	// DB error.
@@ -582,7 +583,7 @@ func (s *StateDB) SetStorage(addr common.Address, storage map[common.Hash]common
 	}
 	// Inherit the metadata of original object if it was existent
 	if obj != nil {
-		newObj.SetCode(common.BytesToHash(obj.CodeHash()), []byte(obj.code))
+		newObj.SetCode(common.BytesToHash(obj.CodeHash()), obj.code)
 		newObj.SetNonce(obj.Nonce())
 		newObj.SetBalance(obj.Balance())
 	}
@@ -691,11 +692,37 @@ func (s *StateDB) deleteStateObject(addr common.Address) {
 	}
 }
 
-// DeleteAddress removes the address from the state trie.
+// DeleteAddress removes the address from the live cache and marks it
+// destructed, so the removal is visible to the rest of the session immediately.
+// A self-destructed object, in contrast, stays readable until Finalise runs at
+// the end of the transaction. Both paths share the destruct bookkeeping, but at
+// different times: DeleteAddress runs it immediately, while the self-destruct
+// path defers it to Finalise. The account trie entry is deleted by the next
+// IntermediateRoot, like the self-destruct path. The removal is journalled:
+// reverting to a snapshot taken before the call puts the object, its storage
+// trie handle and the block-scoped bookkeeping back.
 func (s *StateDB) DeleteAddress(addr common.Address) {
 	stateObject := s.getStateObject(addr)
 	if stateObject != nil {
-		s.deleteStateObject(stateObject.address)
+		s.journal.deleteAddress(stateObject)
+
+		// Mirror the self-destruct path: drop the cached object, replace a
+		// pending update with a deletion, and let handleDestruction clear the
+		// original storage at commit.
+		delete(s.stateObjects, addr)
+		s.markDelete(addr)
+		// Keep the first origin: a second removal can run for an account that
+		// was resurrected in the same block, and its recreated object carries no
+		// origin to record.
+		if _, ok := s.stateObjectsDestruct[addr]; !ok {
+			s.stateObjectsDestruct[addr] = stateObject.origin
+		}
+		// Clear the per-address diff caches, as Finalise does for a destructed
+		// object, so a later resurrect starts from a clean slate.
+		delete(s.accounts, stateObject.addrHash)
+		delete(s.storages, stateObject.addrHash)
+		delete(s.accountsOrigin, addr)
+		delete(s.storagesOrigin, addr)
 	}
 }
 
@@ -807,8 +834,9 @@ func (s *StateDB) ForEachStorage(addr common.Address, cb func(key, value common.
 	return nil
 }
 
-// Copy creates a deep, independent copy of the state.
-// Snapshots of the copied state cannot be applied to the copy.
+// Copy creates a deep, independent copy of the state. The copy carries the journal and its
+// revisions, so a snapshot taken before the copy can be reverted on the copy; the two
+// journals then evolve independently.
 func (s *StateDB) Copy() *StateDB {
 	// Copy all the basic fields, initialize the memory ones
 	state := &StateDB{

@@ -82,6 +82,7 @@ type ChainConfig struct {
 	CancunBlock     *big.Int `json:"cancunBlock,omitempty"`
 	PragueBlock     *big.Int `json:"pragueBlock,omitempty"`
 	OsakaBlock      *big.Int `json:"osakaBlock,omitempty"`
+	AmsterdamBlock  *big.Int `json:"amsterdamBlock,omitempty"`
 
 	TIP2019Block                *big.Int `json:"tip2019Block,omitempty"`
 	TIPSigningBlock             *big.Int `json:"tipSigningBlock,omitempty"`
@@ -98,9 +99,16 @@ type ChainConfig struct {
 	TIPXDCXMinerDisableBlock    *big.Int `json:"tipXDCXMinerDisableBlock,omitempty"`
 	TIPXDCXReceiverDisableBlock *big.Int `json:"tipXDCXReceiverDisableBlock,omitempty"`
 	DynamicGasLimitBlock        *big.Int `json:"dynamicGasLimitBlock,omitempty"`
-	TIPUpgradeRewardBlock       *big.Int `json:"tipUpgradeRewardBlock,omitempty"`
-	TIPUpgradePenaltyBlock      *big.Int `json:"tipUpgradePenaltyBlock,omitempty"`
-	TIPEpochHalvingBlock        *big.Int `json:"tipEpochHalvingBlock,omitempty"`
+	// TIPFixedRewardBlock (formerly TIPUpgradeRewardBlock) switches on the
+	// tiered masternode/protector/observer reward with a fixed per-node payout.
+	// Its payout logic is wrong: any node that signs at least one sign slot in
+	// the rewarded epoch gets the full reward, however few slots it signed.
+	// It is already live on testnet, so it must stay as is to replay that
+	// history; new networks should use TIPProportionalRewardBlock instead.
+	TIPFixedRewardBlock        *big.Int `json:"tipFixedRewardBlock,omitempty"`
+	TIPUpgradePenaltyBlock     *big.Int `json:"tipUpgradePenaltyBlock,omitempty"`
+	TIPEpochHalvingBlock       *big.Int `json:"tipEpochHalvingBlock,omitempty"`
+	TIPProportionalRewardBlock *big.Int `json:"tipProportionalRewardBlock,omitempty"`
 
 	TRC21IssuerSMC         common.Address `json:"trc21IssuerSMC,omitempty"`
 	XDCXListingSMC         common.Address `json:"xdcxListingSMC,omitempty"`
@@ -239,9 +247,47 @@ func (c *ChainConfig) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	next := ChainConfig(decoded)
+	if err := next.decodeLegacyTIPFixedRewardBlock(raw); err != nil {
+		return err
+	}
 	next.runtime = chainConfigRuntimeMetadata{}
 	*c = next
 	c.runtime.json.capture(raw)
+	return nil
+}
+
+// legacyTIPFixedRewardJSONKey is the key TIPFixedRewardBlock was stored under
+// before it was renamed from TIPUpgradeRewardBlock. Genesis files and chain
+// configs already persisted by older nodes still carry it.
+const legacyTIPFixedRewardJSONKey = "tipUpgradeRewardBlock"
+
+// decodeLegacyTIPFixedRewardBlock maps the legacy tipUpgradeRewardBlock key onto
+// TIPFixedRewardBlock and rewrites raw to the current key, so field presence is
+// tracked under the name the config is marshaled with. Both keys carrying
+// different values is rejected rather than silently picking one.
+//
+// The mapping is one-way: once a node writes its config back, it is stored
+// under tipFixedRewardBlock, which older binaries do not know. They read the
+// fork as unset, so a node must not be downgraded on the same database after
+// running this binary.
+func (c *ChainConfig) decodeLegacyTIPFixedRewardBlock(raw map[string]json.RawMessage) error {
+	legacy, ok := raw[legacyTIPFixedRewardJSONKey]
+	if !ok {
+		return nil
+	}
+	delete(raw, legacyTIPFixedRewardJSONKey)
+	var legacyBlock *big.Int
+	if err := json.Unmarshal(legacy, &legacyBlock); err != nil {
+		return fmt.Errorf("invalid chain config field %s: %w", legacyTIPFixedRewardJSONKey, err)
+	}
+	if _, ok := raw["tipFixedRewardBlock"]; ok {
+		if !configNumEqual(c.TIPFixedRewardBlock, legacyBlock) {
+			return fmt.Errorf("invalid chain config: tipFixedRewardBlock %v conflicts with legacy %s %v", c.TIPFixedRewardBlock, legacyTIPFixedRewardJSONKey, legacyBlock)
+		}
+		return nil
+	}
+	c.TIPFixedRewardBlock = legacyBlock
+	raw["tipFixedRewardBlock"] = legacy
 	return nil
 }
 
@@ -504,9 +550,57 @@ func (c *ChainConfig) requiresXDCForkConfig() bool {
 	return c.XDPoS != nil
 }
 
+// forkSequenceError reports a standard fork that later slots build on but that
+// no schedule declared. The sequence scan and the Petersburg pair check both
+// reject through this wording, so it stays written once.
+func forkSequenceError(missing, scheduled string, value *big.Int) error {
+	return fmt.Errorf("invalid chain config: %w: %s is unset, but %s %v is scheduled", ErrWrongForkSwitchOrder, missing, scheduled, value)
+}
+
+// forkOrderError reports a fork that activates before its predecessor. The
+// ordered scan and the special-case rules both reject through this wording, so
+// it stays written once.
+func forkOrderError(before string, beforeValue *big.Int, after string, afterValue *big.Int, hint string) error {
+	return fmt.Errorf("invalid chain config: %w: %s %v > %s %v: declare %s at or after %s%s", ErrWrongForkSwitchOrder, before, beforeValue, after, afterValue, after, before, hint)
+}
+
+// chainConfigMandatoryXDCForkFields lists the fork fields an XDC-shaped config
+// must declare. CheckConfigForkOrder validates them up front, and the fork-order
+// diagnostics must not suggest dropping any of them.
+var chainConfigMandatoryXDCForkFields = []string{"TIPTRC21FeeBlock", "Gas50xBlock"}
+
+// chainConfigForkOrderSlotCanBeDropped reports whether clearing the named slot
+// is a complete repair: it clears the slot and validates the result again. A
+// diagnostic only recommends the removal when that config passes, so the
+// suggestion cannot be a change the next validation rejects. An operator
+// performs the removal as an explicit null in the chain config: an omitted key
+// stays open to startup hydration, which refills the slots the backfill source
+// declares, and only an explicit null is authoritative on either path. The
+// re-validation runs without hints, which is also what keeps the hint
+// computation from recursing.
+func chainConfigForkOrderSlotCanBeDropped(cfg *ChainConfig, name string) bool {
+	if cfg == nil {
+		return false
+	}
+	field, ok := chainConfigForkBlockFieldByName(name)
+	if !ok {
+		return false
+	}
+	cleared := cfg.Clone()
+	field.set(cleared, nil)
+	return cleared.checkConfigForkOrder(false) == nil
+}
+
 // CheckConfigForkOrder validates that configured forks, required addresses, and
 // XDPoS settings are internally consistent and activate in a supported order.
 func (c *ChainConfig) CheckConfigForkOrder() error {
+	return c.checkConfigForkOrder(true)
+}
+
+// checkConfigForkOrder implements CheckConfigForkOrder. Fork-order errors carry
+// a repair hint only when withHints is set; the droppable-slot check evaluates
+// candidate repairs by calling this with hints off.
+func (c *ChainConfig) checkConfigForkOrder(withHints bool) error {
 	type fork struct {
 		name     string
 		block    *big.Int
@@ -519,13 +613,16 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 	if c.ChainID == nil {
 		return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "ChainID")
 	}
-	if c.requiresXDCForkConfig() && c.TIPTRC21FeeBlock == nil {
-		return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "TIPTRC21FeeBlock")
-	}
-	if c.requiresXDCForkConfig() && c.Gas50xBlock == nil {
-		return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "Gas50xBlock")
-	}
 	if c.requiresXDCForkConfig() {
+		for _, name := range chainConfigMandatoryXDCForkFields {
+			field, ok := chainConfigForkBlockFieldByName(name)
+			if !ok {
+				panic("chain config mandatory fork field is not a known fork field: " + name)
+			}
+			if field.get(c) == nil {
+				return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, name)
+			}
+		}
 		requiredAddresses := make([]requiredAddress, 0, len(chainConfigXDCSystemContractFields))
 		for _, field := range chainConfigXDCSystemContractFields {
 			requiredAddresses = append(requiredAddresses, requiredAddress{name: field.name, value: field.get(c)})
@@ -536,6 +633,27 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 			}
 		}
 	}
+	// A slot is only offered as droppable when its removal leaves a config that
+	// validates. The mandatory XDC fork fields are never offered: the shape
+	// requires them even though the sequence scan can pass without them.
+	unsetHint := func(string) string { return "" }
+	if withHints {
+		unsetHint = func(name string) string {
+			if c.requiresXDCForkConfig() && slices.Contains(chainConfigMandatoryXDCForkFields, name) {
+				return ""
+			}
+			field, ok := chainConfigForkBlockFieldByName(name)
+			if !ok {
+				return ""
+			}
+			if chainConfigForkOrderSlotCanBeDropped(c, name) {
+				// The operator edits the chain config file, where the Go field
+				// name does not appear: name the JSON key instead.
+				return fmt.Sprintf(", or set %q to null in the chain config", field.jsonKey)
+			}
+			return ""
+		}
+	}
 	var lastFork fork
 	var forkOrderErr error
 	ForEachChainConfigForkOrderBlock(c, func(name string, block *big.Int, optional bool) {
@@ -544,7 +662,7 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		}
 		cur := fork{name: name, block: block, optional: optional}
 		if lastFork.name != "" && lastFork.block != nil && cur.block != nil && lastFork.block.Cmp(cur.block) > 0 {
-			forkOrderErr = fmt.Errorf("invalid chain config: %w: %s %v > %s %v", ErrWrongForkSwitchOrder, lastFork.name, lastFork.block, cur.name, cur.block)
+			forkOrderErr = forkOrderError(lastFork.name, lastFork.block, cur.name, cur.block, unsetHint(cur.name))
 			return
 		}
 		if !cur.optional || cur.block != nil {
@@ -554,6 +672,42 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 	if forkOrderErr != nil {
 		return forkOrderErr
 	}
+	// A fork that later standard forks build on must be declared before any
+	// later standard fork is scheduled. The linear scan above only compares two
+	// forks when both are configured, so a skipped fork slips through it: every
+	// slot in this chain config is optional by design.
+	var skippedForkErr error
+	declared := true
+	lastRequired := ""
+	ForEachChainConfigForkSequenceBlock(c, func(name string, value *big.Int, required bool) {
+		if skippedForkErr != nil {
+			return
+		}
+		// scheduled names the field the value comes from, which is not always the
+		// slot itself: Istanbul and Petersburg can be activated through their
+		// fallback.
+		scheduled := name
+		if required {
+			value, scheduled = chainConfigForkSequenceEffectiveValue(c, name, value)
+		}
+		if value != nil && !declared {
+			skippedForkErr = forkSequenceError(lastRequired, scheduled, value)
+			return
+		}
+		if required {
+			declared = value != nil
+			lastRequired = name
+		}
+	})
+	if skippedForkErr != nil {
+		return skippedForkErr
+	}
+	// That scan reports a gap only when a later slot carries a value. Petersburg
+	// is paired with Constantinople instead of with a later fork, so a schedule
+	// that stops at Constantinople needs a check of its own.
+	if missing, trigger, triggerValue, unmet := chainConfigForkSequencePetersburgPair(c); unmet {
+		return forkSequenceError(missing, trigger, triggerValue)
+	}
 	for _, rule := range chainConfigForkOrderSpecialCaseRules {
 		before := rule.before.get(c)
 		after := rule.after.get(c)
@@ -561,7 +715,7 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 			continue
 		}
 		if before.Cmp(after) > 0 {
-			return fmt.Errorf("invalid chain config: %w: %s %v > %s %v", ErrWrongForkSwitchOrder, rule.before.name, before, rule.after.name, after)
+			return forkOrderError(rule.before.name, before, rule.after.name, after, unsetHint(rule.after.name))
 		}
 	}
 	// The BASEFEE opcode is live from London, but XDC only fills the header base
@@ -661,15 +815,6 @@ func (c *ChainConfig) String() string {
 	if c.ByzantiumBlock != nil {
 		result += fmt.Sprintf(", Byzantium: %v", c.ByzantiumBlock)
 	}
-	if c.ConstantinopleBlock != nil {
-		result += fmt.Sprintf(", Constantinople: %v", c.ConstantinopleBlock)
-	}
-	if c.PetersburgBlock != nil {
-		result += fmt.Sprintf(", Petersburg: %v", c.PetersburgBlock)
-	}
-	if c.IstanbulBlock != nil {
-		result += fmt.Sprintf(", Istanbul: %v", c.IstanbulBlock)
-	}
 	if c.TIPSigningBlock != nil {
 		result += fmt.Sprintf(", TIPSigning: %v", c.TIPSigningBlock)
 	}
@@ -693,6 +838,15 @@ func (c *ChainConfig) String() string {
 	}
 	if c.TIPXDCXCancellationFeeBlock != nil {
 		result += fmt.Sprintf(", TIPXDCXCancellationFee: %v", c.TIPXDCXCancellationFeeBlock)
+	}
+	if c.ConstantinopleBlock != nil {
+		result += fmt.Sprintf(", Constantinople: %v", c.ConstantinopleBlock)
+	}
+	if c.PetersburgBlock != nil {
+		result += fmt.Sprintf(", Petersburg: %v", c.PetersburgBlock)
+	}
+	if c.IstanbulBlock != nil {
+		result += fmt.Sprintf(", Istanbul: %v", c.IstanbulBlock)
 	}
 	if c.TIPTRC21FeeBlock != nil {
 		result += fmt.Sprintf(", TIPTRC21Fee: %v", c.TIPTRC21FeeBlock)
@@ -727,23 +881,29 @@ func (c *ChainConfig) String() string {
 	if c.CancunBlock != nil {
 		result += fmt.Sprintf(", Cancun: %v", c.CancunBlock)
 	}
+	if c.DynamicGasLimitBlock != nil {
+		result += fmt.Sprintf(", DynamicGasLimit: %v", c.DynamicGasLimitBlock)
+	}
+	if c.TIPFixedRewardBlock != nil {
+		result += fmt.Sprintf(", TIPFixedReward: %v", c.TIPFixedRewardBlock)
+	}
+	if c.TIPUpgradePenaltyBlock != nil {
+		result += fmt.Sprintf(", TIPUpgradePenalty: %v", c.TIPUpgradePenaltyBlock)
+	}
 	if c.PragueBlock != nil {
 		result += fmt.Sprintf(", Prague: %v", c.PragueBlock)
 	}
 	if c.OsakaBlock != nil {
 		result += fmt.Sprintf(", Osaka: %v", c.OsakaBlock)
 	}
-	if c.DynamicGasLimitBlock != nil {
-		result += fmt.Sprintf(", DynamicGasLimit: %v", c.DynamicGasLimitBlock)
-	}
-	if c.TIPUpgradeRewardBlock != nil {
-		result += fmt.Sprintf(", TIPUpgradeReward: %v", c.TIPUpgradeRewardBlock)
-	}
-	if c.TIPUpgradePenaltyBlock != nil {
-		result += fmt.Sprintf(", TIPUpgradePenalty: %v", c.TIPUpgradePenaltyBlock)
+	if c.AmsterdamBlock != nil {
+		result += fmt.Sprintf(", Amsterdam: %v", c.AmsterdamBlock)
 	}
 	if c.TIPEpochHalvingBlock != nil {
 		result += fmt.Sprintf(", TIPEpochHalving: %v", c.TIPEpochHalvingBlock)
+	}
+	if c.TIPProportionalRewardBlock != nil {
+		result += fmt.Sprintf(", TIPProportionalReward: %v", c.TIPProportionalRewardBlock)
 	}
 	if !c.TRC21IssuerSMC.IsZero() {
 		result += fmt.Sprintf(", TRC21IssuerSMC: %s", c.TRC21IssuerSMC.Hex())
@@ -789,15 +949,12 @@ func (c *ChainConfig) Description() string {
 	banner += ":\n"
 	banner += fmt.Sprintf("  - ChainID:                     %-8v\n", c.ChainID)
 	banner += fmt.Sprintf("  - Homestead:                   %-8v\n", c.HomesteadBlock)
+	banner += fmt.Sprintf("  - TIP2019:                     %-8v\n", c.TIP2019Block)
 	banner += fmt.Sprintf("  - DAO Fork:                    %-8v\n", c.DAOForkBlock)
 	banner += fmt.Sprintf("  - DAO Support:                 %-8v\n", c.DAOForkSupport)
-	banner += fmt.Sprintf("  - TIP2019:                     %-8v\n", c.TIP2019Block)
 	banner += fmt.Sprintf("  - Tangerine Whistle (EIP 150): %-8v\n", c.EIP150Block)
 	banner += fmt.Sprintf("  - Spurious Dragon (EIP 155):   %-8v\n", c.EIP155Block)
 	banner += fmt.Sprintf("  - Byzantium:                   %-8v\n", c.ByzantiumBlock)
-	banner += fmt.Sprintf("  - Constantinople:              %-8v\n", c.ConstantinopleBlock)
-	banner += fmt.Sprintf("  - Petersburg:                  %-8v\n", c.PetersburgBlock)
-	banner += fmt.Sprintf("  - Istanbul:                    %-8v\n", c.IstanbulBlock)
 	banner += fmt.Sprintf("  - TIPSigning:                  %-8v\n", c.TIPSigningBlock)
 	banner += fmt.Sprintf("  - TIPRandomize:                %-8v\n", c.TIPRandomizeBlock)
 	banner += fmt.Sprintf("  - TIPIncreaseMasternodes:      %-8v\n", c.TIPIncreaseMasternodesBlock)
@@ -806,6 +963,9 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - TIPXDCX:                     %-8v\n", c.TIPXDCXBlock)
 	banner += fmt.Sprintf("  - TIPXDCXLending:              %-8v\n", c.TIPXDCXLendingBlock)
 	banner += fmt.Sprintf("  - TIPXDCXCancellationFee:      %-8v\n", c.TIPXDCXCancellationFeeBlock)
+	banner += fmt.Sprintf("  - Constantinople:              %-8v\n", c.ConstantinopleBlock)
+	banner += fmt.Sprintf("  - Petersburg:                  %-8v\n", c.PetersburgBlock)
+	banner += fmt.Sprintf("  - Istanbul:                    %-8v\n", c.IstanbulBlock)
 	banner += fmt.Sprintf("  - TIPTRC21Fee:                 %-8v\n", c.TIPTRC21FeeBlock)
 	banner += fmt.Sprintf("  - Berlin:                      %-8v\n", c.BerlinBlock)
 	banner += fmt.Sprintf("  - London:                      %-8v\n", c.LondonBlock)
@@ -817,12 +977,14 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - TIPXDCXReceiverDisable:      %-8v\n", c.TIPXDCXReceiverDisableBlock)
 	banner += fmt.Sprintf("  - EIP1559:                     %-8v\n", c.EIP1559Block)
 	banner += fmt.Sprintf("  - Cancun:                      %-8v\n", c.CancunBlock)
+	banner += fmt.Sprintf("  - DynamicGasLimit:             %-8v\n", c.DynamicGasLimitBlock)
+	banner += fmt.Sprintf("  - TIPFixedReward:              %-8v\n", c.TIPFixedRewardBlock)
+	banner += fmt.Sprintf("  - TIPUpgradePenalty:           %-8v\n", c.TIPUpgradePenaltyBlock)
 	banner += fmt.Sprintf("  - Prague:                      %-8v\n", c.PragueBlock)
 	banner += fmt.Sprintf("  - Osaka:                       %-8v\n", c.OsakaBlock)
-	banner += fmt.Sprintf("  - DynamicGasLimit:             %-8v\n", c.DynamicGasLimitBlock)
-	banner += fmt.Sprintf("  - TIPUpgradeReward:            %-8v\n", c.TIPUpgradeRewardBlock)
-	banner += fmt.Sprintf("  - TIPUpgradePenalty:           %-8v\n", c.TIPUpgradePenaltyBlock)
+	banner += fmt.Sprintf("  - Amsterdam:                   %-8v\n", c.AmsterdamBlock)
 	banner += fmt.Sprintf("  - TIPEpochHalving:             %-8v\n", c.TIPEpochHalvingBlock)
+	banner += fmt.Sprintf("  - TIPProportionalReward:       %-8v\n", c.TIPProportionalRewardBlock)
 	banner += fmt.Sprintf("  - TRC21IssuerSMC:              %-8s\n", c.TRC21IssuerSMC)
 	banner += fmt.Sprintf("  - XDCXListingSMC:              %-8s\n", c.XDCXListingSMC)
 	banner += fmt.Sprintf("  - RelayerRegistrationSMC:      %-8s\n", c.RelayerRegistrationSMC)
@@ -857,9 +1019,12 @@ func (c *ChainConfig) GatherForks() []uint64 {
 }
 
 // ActiveForks returns the list of active forks at the given block height.
-// The returned list is sorted in alphabetical order.
+// The returned list is sorted in ascending ASCII order.
 func (c *ChainConfig) ActiveForks(block *big.Int) []string {
-	activeForks := make([]string, 0, 37)
+	activeForks := make([]string, 0, 39)
+	if c.IsAmsterdam(block) {
+		activeForks = append(activeForks, "Amsterdam")
+	}
 	if c.IsBerlin(block) {
 		activeForks = append(activeForks, "Berlin")
 	}
@@ -923,11 +1088,20 @@ func (c *ChainConfig) ActiveForks(block *big.Int) []string {
 	if c.IsTIP2019(block) {
 		activeForks = append(activeForks, "TIP2019")
 	}
+	if c.IsTIPEpochHalving(block) {
+		activeForks = append(activeForks, "TIPEpochHalving")
+	}
+	if c.IsTIPFixedReward(block) {
+		activeForks = append(activeForks, "TIPFixedReward")
+	}
 	if c.IsTIPIncreaseMasternodes(block) {
 		activeForks = append(activeForks, "TIPIncreaseMasternodes")
 	}
 	if c.IsTIPNoHalvingMNReward(block) {
 		activeForks = append(activeForks, "TIPNoHalvingMNReward")
+	}
+	if c.IsTIPProportionalReward(block) {
+		activeForks = append(activeForks, "TIPProportionalReward")
 	}
 	if c.IsTIPRandomize(block) {
 		activeForks = append(activeForks, "TIPRandomize")
@@ -940,9 +1114,6 @@ func (c *ChainConfig) ActiveForks(block *big.Int) []string {
 	}
 	if c.IsTIPUpgradePenalty(block) {
 		activeForks = append(activeForks, "TIPUpgradePenalty")
-	}
-	if c.IsTIPUpgradeReward(block) {
-		activeForks = append(activeForks, "TIPUpgradeReward")
 	}
 	if c.IsTIPXDCX(block) {
 		activeForks = append(activeForks, "TIPXDCX")
@@ -961,9 +1132,6 @@ func (c *ChainConfig) ActiveForks(block *big.Int) []string {
 	}
 	if c.IsEIP150(block) {
 		activeForks = append(activeForks, "TangerineWhistle")
-	}
-	if c.IsTIPEpochHalving(block) {
-		activeForks = append(activeForks, "TIPEpochHalving")
 	}
 	if c.IsXDCxDisable(block) {
 		activeForks = append(activeForks, "XDCxDisable")

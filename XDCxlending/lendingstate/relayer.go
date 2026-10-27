@@ -63,68 +63,6 @@ func GetRelayerOwner(relayer common.Address, statedb *state.StateDB) common.Addr
 	return common.BytesToAddress(statedb.GetState(contract, locHash).Bytes())
 }
 
-// return true if relayer request to resign and have not withdraw locked fund
-func IsResignedRelayer(relayer common.Address, statedb *state.StateDB) bool {
-	contract, ok := relayerRegistrationSMC(statedb)
-	if !ok {
-		return false
-	}
-	slot := RelayerMappingSlot["RESIGN_REQUESTS"]
-	locBig := GetLocMappingAtKey(relayer.Hash(), slot)
-	locHash := common.BigToHash(locBig)
-	return statedb.GetState(contract, locHash) != (common.Hash{})
-}
-
-func GetBaseTokenLength(relayer common.Address, statedb *state.StateDB) uint64 {
-	contract, ok := relayerRegistrationSMC(statedb)
-	if !ok {
-		return 0
-	}
-	slot := RelayerMappingSlot["RELAYER_LIST"]
-	locBig := GetLocMappingAtKey(relayer.Hash(), slot)
-	locBig = new(big.Int).Add(locBig, RelayerStructMappingSlot["_fromTokens"])
-	locHash := common.BigToHash(locBig)
-	return statedb.GetState(contract, locHash).Big().Uint64()
-}
-
-func GetBaseTokenAtIndex(relayer common.Address, statedb *state.StateDB, index uint64) common.Address {
-	contract, ok := relayerRegistrationSMC(statedb)
-	if !ok {
-		return common.Address{}
-	}
-	slot := RelayerMappingSlot["RELAYER_LIST"]
-	locBig := GetLocMappingAtKey(relayer.Hash(), slot)
-	locBig = new(big.Int).Add(locBig, RelayerStructMappingSlot["_fromTokens"])
-	locHash := common.BigToHash(locBig)
-	loc := state.GetLocDynamicArrAtElement(locHash, index, 1)
-	return common.BytesToAddress(statedb.GetState(contract, loc).Bytes())
-}
-
-func GetQuoteTokenLength(relayer common.Address, statedb *state.StateDB) uint64 {
-	contract, ok := relayerRegistrationSMC(statedb)
-	if !ok {
-		return 0
-	}
-	slot := RelayerMappingSlot["RELAYER_LIST"]
-	locBig := GetLocMappingAtKey(relayer.Hash(), slot)
-	locBig = new(big.Int).Add(locBig, RelayerStructMappingSlot["_toTokens"])
-	locHash := common.BigToHash(locBig)
-	return statedb.GetState(contract, locHash).Big().Uint64()
-}
-
-func GetQuoteTokenAtIndex(relayer common.Address, statedb *state.StateDB, index uint64) common.Address {
-	contract, ok := relayerRegistrationSMC(statedb)
-	if !ok {
-		return common.Address{}
-	}
-	slot := RelayerMappingSlot["RELAYER_LIST"]
-	locBig := GetLocMappingAtKey(relayer.Hash(), slot)
-	locBig = new(big.Int).Add(locBig, RelayerStructMappingSlot["_toTokens"])
-	locHash := common.BigToHash(locBig)
-	loc := state.GetLocDynamicArrAtElement(locHash, index, 1)
-	return common.BytesToAddress(statedb.GetState(contract, loc).Bytes())
-}
-
 func SubRelayerFee(relayer common.Address, fee *big.Int, statedb *state.StateDB) error {
 	contract, err := requireRelayerRegistrationSMC(statedb)
 	if err != nil {

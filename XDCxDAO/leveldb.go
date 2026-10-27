@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 
-	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -51,10 +50,6 @@ func (db *BatchDatabase) IsEmptyKey(key []byte) bool {
 	return len(key) == 0 || bytes.Equal(key, db.emptyKey)
 }
 
-func (db *BatchDatabase) GetObject(hash common.Hash, val interface{}) (interface{}, error) {
-	return nil, nil
-}
-
 func (db *BatchDatabase) Put(key []byte, val []byte) error {
 	return db.db.Put(key, val)
 }
@@ -81,31 +76,6 @@ func (db *BatchDatabase) NewBatch() ethdb.Batch {
 
 func (db *BatchDatabase) NewBatchWithSize(size int) ethdb.Batch {
 	return db.db.NewBatch()
-}
-
-func (db *BatchDatabase) DeleteItemByTxHash(txhash common.Hash, val interface{}) {
-}
-
-func (db *BatchDatabase) GetListItemByTxHash(txhash common.Hash, val interface{}) interface{} {
-	return []interface{}{}
-}
-
-func (db *BatchDatabase) GetListItemByHashes(hashes []string, val interface{}) interface{} {
-	return []interface{}{}
-}
-
-func (db *BatchDatabase) InitBulk() {
-}
-
-func (db *BatchDatabase) CommitBulk() error {
-	return nil
-}
-
-func (db *BatchDatabase) InitLendingBulk() {
-}
-
-func (db *BatchDatabase) CommitLendingBulk() error {
-	return nil
 }
 
 var errNotSupported = errors.New("this operation is not supported")

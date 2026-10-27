@@ -17,18 +17,113 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
+
+// failingFinalizeEngine is a consensus engine whose Finalize always fails. It
+// embeds the noop engine of the package so that only the Finalize path under
+// test needs to be overridden.
+type failingFinalizeEngine struct {
+	noopConsensusEngine
+}
+
+func (failingFinalizeEngine) Finalize(chain consensus.ChainReader, header *types.Header, state vm.StateDB, parentState *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
+	return nil, errors.New("finalize failed")
+}
+
+// capturingParentStateEngine records the snapshot GenerateChain hands to
+// Finalize, so a test can assert what the reward path sees. It touches nothing
+// itself.
+type capturingParentStateEngine struct {
+	noopConsensusEngine
+	watched             common.Address
+	called              bool
+	parentBalance       *big.Int
+	parentHasMulticall3 bool
+	stateHasMulticall3  bool
+}
+
+func (e *capturingParentStateEngine) Finalize(chain consensus.ChainReader, header *types.Header, state vm.StateDB, parentState *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
+	e.called = true
+	e.parentBalance = new(big.Int).Set(parentState.GetBalance(e.watched))
+	e.parentHasMulticall3 = len(parentState.GetCode(params.Multicall3Address)) > 0
+	e.stateHasMulticall3 = len(state.GetCode(params.Multicall3Address)) > 0
+	return types.NewBlockWithHeader(header).WithBody(types.Body{Transactions: txs, Uncles: uncles}), nil
+}
+
+// TestGenerateChainSnapshotsParentStateBeforeTransactions pins the snapshot a
+// generated block hands to Finalize: Process and the miner take it before the
+// transactions, while GenerateChain used to copy the post-transaction state
+// inside the Finalize call.
+func TestGenerateChainSnapshotsParentStateBeforeTransactions(t *testing.T) {
+	var (
+		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		addr    = crypto.PubkeyToAddress(key.PublicKey)
+		watched = common.HexToAddress("0x00000000000000000000000000000000000000bb")
+		db      = rawdb.NewMemoryDatabase()
+	)
+	gspec := &Genesis{
+		Config: &params.ChainConfig{
+			ChainID:        big.NewInt(1337),
+			HomesteadBlock: new(big.Int),
+			Ethash:         new(params.EthashConfig),
+		},
+		Alloc: types.GenesisAlloc{addr: {Balance: big.NewInt(1000000)}},
+	}
+	genesis := gspec.MustCommit(db)
+
+	engine := &capturingParentStateEngine{watched: watched}
+	GenerateChain(gspec.Config, genesis, engine, db, 1, func(i int, gen *BlockGen) {
+		tx, err := types.SignTx(types.NewTransaction(gen.TxNonce(addr), watched, big.NewInt(1), params.TxGas, nil, nil), types.HomesteadSigner{}, key)
+		if err != nil {
+			t.Fatalf("failed to sign transaction: %v", err)
+		}
+		gen.AddTx(tx)
+	})
+	if !engine.called {
+		t.Fatal("engine Finalize was not called")
+	}
+	if have := engine.parentBalance; have.Sign() != 0 {
+		t.Fatalf("the parent snapshot already carries the block's transfer: balance %v", have)
+	}
+}
+
+// TestGenerateChainSnapshotsParentStateBeforeBlockLevelHooks pins the ordering:
+// Finalize's parentState predates the block level hooks, as in Process and
+// ProcessBlockNoValidator.
+func TestGenerateChainSnapshotsParentStateBeforeBlockLevelHooks(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	// Prague at block 1 makes the Multicall3 install the observable hook: the
+	// snapshot has to miss it while the processed state carries it.
+	gspec := &Genesis{Config: multicall3Config(big.NewInt(1))}
+	genesis := gspec.MustCommit(db)
+
+	engine := &capturingParentStateEngine{}
+	GenerateChain(gspec.Config, genesis, engine, db, 1, nil)
+	if !engine.called {
+		t.Fatal("engine Finalize was not called")
+	}
+	if engine.parentHasMulticall3 {
+		t.Fatal("the parent snapshot was taken after the block level hooks: Multicall3 already installed")
+	}
+	if !engine.stateHasMulticall3 {
+		t.Fatal("the block level hooks did not run: Multicall3 not installed")
+	}
+}
 
 // TestGenerateChainAddTxWithoutTRC21Issuer tests generate chain add tx without trc 21 issuer.
 func TestGenerateChainAddTxWithoutTRC21Issuer(t *testing.T) {
@@ -68,6 +163,33 @@ func TestGenerateChainAddTxWithoutTRC21Issuer(t *testing.T) {
 	}
 }
 
+// TestGenerateChainFinalizeError tests that GenerateChain surfaces a failing
+// Finalize of the consensus engine instead of discarding the error and
+// committing the state anyway.
+func TestGenerateChainFinalizeError(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{
+		Config: &params.ChainConfig{
+			ChainID:        big.NewInt(1337),
+			HomesteadBlock: new(big.Int),
+			Ethash:         new(params.EthashConfig),
+		},
+	}
+	genesis := gspec.MustCommit(db)
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected GenerateChain to panic when Finalize fails")
+		}
+		msg, ok := r.(string)
+		if !ok || !strings.Contains(msg, "finalize error") || !strings.Contains(msg, "finalize failed") {
+			t.Fatalf("unexpected panic value: %v", r)
+		}
+	}()
+	GenerateChain(gspec.Config, genesis, failingFinalizeEngine{}, db, 1, nil)
+}
+
 func ExampleGenerateChain() {
 	var (
 		key1, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
@@ -84,6 +206,10 @@ func ExampleGenerateChain() {
 		Config: &params.ChainConfig{
 			ChainID:                big.NewInt(1337),
 			HomesteadBlock:         new(big.Int),
+			EIP150Block:            new(big.Int).Set(futureFork),
+			EIP155Block:            new(big.Int).Set(futureFork),
+			EIP158Block:            new(big.Int).Set(futureFork),
+			ByzantiumBlock:         new(big.Int).Set(futureFork),
 			TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
 			XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
 			RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,

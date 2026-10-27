@@ -1,0 +1,217 @@
+// Code generated - DO NOT EDIT.
+// This file is a generated binding and any manual changes will be lost.
+
+package bindtest
+
+import (
+	"context"
+	"errors"
+	"math/big"
+	"strings"
+	"time"
+
+	ethereum "github.com/XinFinOrg/XDPoSChain"
+	"github.com/XinFinOrg/XDPoSChain/accounts/abi"
+	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
+	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/event"
+)
+
+// Reference imports to suppress errors if they are not otherwise used.
+var (
+	_ = errors.New
+	_ = big.NewInt
+	_ = strings.NewReader
+	_ = ethereum.ErrNotFound
+	_ = bind.Bind
+	_ = common.Big1
+	_ = types.BloomLookup
+	_ = event.NewSubscription
+	_ = abi.ConvertType
+	_ = time.Tick
+	_ = context.Background
+)
+
+// ConstructorWithStructParamStructType is an auto generated low-level Go binding around an user-defined struct.
+type ConstructorWithStructParamStructType struct {
+	Field *big.Int
+}
+
+// ConstructorWithStructParamMetaData contains all meta data concerning the ConstructorWithStructParam contract.
+var ConstructorWithStructParamMetaData = &bind.MetaData{
+	ABI: "[{\"inputs\":[{\"components\":[{\"internalType\":\"uint256\",\"name\":\"field\",\"type\":\"uint256\"}],\"internalType\":\"structConstructorWithStructParam.StructType\",\"name\":\"st\",\"type\":\"tuple\"}],\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"}]",
+	Bin: "0x608060405234801561001057600080fd5b506040516101c43803806101c48339818101604052810190610032919061014a565b50610177565b6000604051905090565b600080fd5b600080fd5b6000601f19601f8301169050919050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052604160045260246000fd5b6100958261004c565b810181811067ffffffffffffffff821117156100b4576100b361005d565b5b80604052505050565b60006100c7610038565b90506100d3828261008c565b919050565b6000819050919050565b6100eb816100d8565b81146100f657600080fd5b50565b600081519050610108816100e2565b92915050565b60006020828403121561012457610123610047565b5b61012e60206100bd565b9050600061013e848285016100f9565b60008301525092915050565b6000602082840312156101605761015f610042565b5b600061016e8482850161010e565b91505092915050565b603f806101856000396000f3fe6080604052600080fdfea2646970667358221220cdffa667affecefac5561f65f4a4ba914204a8d4eb859d8cd426fb306e5c12a364736f6c634300080a0033",
+}
+
+// ConstructorWithStructParamABI is the input ABI used to generate the binding from.
+// Deprecated: Use ConstructorWithStructParamMetaData.ABI instead.
+var ConstructorWithStructParamABI = ConstructorWithStructParamMetaData.ABI
+
+// ConstructorWithStructParamBin is the compiled bytecode used for deploying new contracts.
+// Deprecated: Use ConstructorWithStructParamMetaData.Bin instead.
+var ConstructorWithStructParamBin = ConstructorWithStructParamMetaData.Bin
+
+// DeployConstructorWithStructParam deploys a new Ethereum contract, binding an instance of ConstructorWithStructParam to it.
+func DeployConstructorWithStructParam(auth *bind.TransactOpts, backend bind.ContractBackend, st ConstructorWithStructParamStructType) (common.Address, *types.Transaction, *ConstructorWithStructParam, error) {
+	parsed, err := ConstructorWithStructParamMetaData.GetAbi()
+	if err != nil {
+		return common.Address{}, nil, nil, err
+	}
+	if parsed == nil {
+		return common.Address{}, nil, nil, errors.New("GetABI returned nil")
+	}
+	// Library addresses are substituted into a local copy of the bytecode: the
+	// package-level ConstructorWithStructParamBin is shared by every caller, so substituting in
+	// it would leave any later deployment linked to the addresses substituted
+	// by an earlier one.
+	linkedBin := ConstructorWithStructParamBin
+
+	address, tx, contract, err := bind.DeployContract(auth, *parsed, common.FromHex(linkedBin), backend, st)
+	if err != nil {
+		return common.Address{}, nil, nil, err
+	}
+	return address, tx, &ConstructorWithStructParam{ConstructorWithStructParamCaller: ConstructorWithStructParamCaller{contract: contract}, ConstructorWithStructParamTransactor: ConstructorWithStructParamTransactor{contract: contract}, ConstructorWithStructParamFilterer: ConstructorWithStructParamFilterer{contract: contract}}, nil
+}
+
+// ConstructorWithStructParam is an auto generated Go binding around an Ethereum contract.
+type ConstructorWithStructParam struct {
+	ConstructorWithStructParamCaller     // Read-only binding to the contract
+	ConstructorWithStructParamTransactor // Write-only binding to the contract
+	ConstructorWithStructParamFilterer   // Log filterer for contract events
+}
+
+// ConstructorWithStructParamCaller is an auto generated read-only Go binding around an Ethereum contract.
+type ConstructorWithStructParamCaller struct {
+	contract *bind.BoundContract // Generic contract wrapper for the low level calls
+}
+
+// ConstructorWithStructParamTransactor is an auto generated write-only Go binding around an Ethereum contract.
+type ConstructorWithStructParamTransactor struct {
+	contract *bind.BoundContract // Generic contract wrapper for the low level calls
+}
+
+// ConstructorWithStructParamFilterer is an auto generated log filtering Go binding around an Ethereum contract events.
+type ConstructorWithStructParamFilterer struct {
+	contract *bind.BoundContract // Generic contract wrapper for the low level calls
+}
+
+// ConstructorWithStructParamSession is an auto generated Go binding around an Ethereum contract,
+// with pre-set call and transact options.
+type ConstructorWithStructParamSession struct {
+	Contract     *ConstructorWithStructParam // Generic contract binding to set the session for
+	CallOpts     bind.CallOpts               // Call options to use throughout this session
+	TransactOpts bind.TransactOpts           // Transaction auth options to use throughout this session
+}
+
+// ConstructorWithStructParamCallerSession is an auto generated read-only Go binding around an Ethereum contract,
+// with pre-set call options.
+type ConstructorWithStructParamCallerSession struct {
+	Contract *ConstructorWithStructParamCaller // Generic contract caller binding to set the session for
+	CallOpts bind.CallOpts                     // Call options to use throughout this session
+}
+
+// ConstructorWithStructParamTransactorSession is an auto generated write-only Go binding around an Ethereum contract,
+// with pre-set transact options.
+type ConstructorWithStructParamTransactorSession struct {
+	Contract     *ConstructorWithStructParamTransactor // Generic contract transactor binding to set the session for
+	TransactOpts bind.TransactOpts                     // Transaction auth options to use throughout this session
+}
+
+// ConstructorWithStructParamRaw is an auto generated low-level Go binding around an Ethereum contract.
+type ConstructorWithStructParamRaw struct {
+	Contract *ConstructorWithStructParam // Generic contract binding to access the raw methods on
+}
+
+// ConstructorWithStructParamCallerRaw is an auto generated low-level read-only Go binding around an Ethereum contract.
+type ConstructorWithStructParamCallerRaw struct {
+	Contract *ConstructorWithStructParamCaller // Generic read-only contract binding to access the raw methods on
+}
+
+// ConstructorWithStructParamTransactorRaw is an auto generated low-level write-only Go binding around an Ethereum contract.
+type ConstructorWithStructParamTransactorRaw struct {
+	Contract *ConstructorWithStructParamTransactor // Generic write-only contract binding to access the raw methods on
+}
+
+// NewConstructorWithStructParam creates a new instance of ConstructorWithStructParam, bound to a specific deployed contract.
+func NewConstructorWithStructParam(address common.Address, backend bind.ContractBackend) (*ConstructorWithStructParam, error) {
+	contract, err := bindConstructorWithStructParam(address, backend, backend, backend)
+	if err != nil {
+		return nil, err
+	}
+	return &ConstructorWithStructParam{ConstructorWithStructParamCaller: ConstructorWithStructParamCaller{contract: contract}, ConstructorWithStructParamTransactor: ConstructorWithStructParamTransactor{contract: contract}, ConstructorWithStructParamFilterer: ConstructorWithStructParamFilterer{contract: contract}}, nil
+}
+
+// NewConstructorWithStructParamCaller creates a new read-only instance of ConstructorWithStructParam, bound to a specific deployed contract.
+func NewConstructorWithStructParamCaller(address common.Address, caller bind.ContractCaller) (*ConstructorWithStructParamCaller, error) {
+	contract, err := bindConstructorWithStructParam(address, caller, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &ConstructorWithStructParamCaller{contract: contract}, nil
+}
+
+// NewConstructorWithStructParamTransactor creates a new write-only instance of ConstructorWithStructParam, bound to a specific deployed contract.
+func NewConstructorWithStructParamTransactor(address common.Address, transactor bind.ContractTransactor) (*ConstructorWithStructParamTransactor, error) {
+	contract, err := bindConstructorWithStructParam(address, nil, transactor, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &ConstructorWithStructParamTransactor{contract: contract}, nil
+}
+
+// NewConstructorWithStructParamFilterer creates a new log filterer instance of ConstructorWithStructParam, bound to a specific deployed contract.
+func NewConstructorWithStructParamFilterer(address common.Address, filterer bind.ContractFilterer) (*ConstructorWithStructParamFilterer, error) {
+	contract, err := bindConstructorWithStructParam(address, nil, nil, filterer)
+	if err != nil {
+		return nil, err
+	}
+	return &ConstructorWithStructParamFilterer{contract: contract}, nil
+}
+
+// bindConstructorWithStructParam binds a generic wrapper to an already deployed contract.
+func bindConstructorWithStructParam(address common.Address, caller bind.ContractCaller, transactor bind.ContractTransactor, filterer bind.ContractFilterer) (*bind.BoundContract, error) {
+	parsed, err := ConstructorWithStructParamMetaData.GetAbi()
+	if err != nil {
+		return nil, err
+	}
+	return bind.NewBoundContract(address, *parsed, caller, transactor, filterer), nil
+}
+
+// Call invokes the (constant) contract method with params as input values and
+// sets the output to result. The result type might be a single field for simple
+// returns, a slice of interfaces for anonymous returns and a struct for named
+// returns.
+func (_ConstructorWithStructParam *ConstructorWithStructParamRaw) Call(opts *bind.CallOpts, result *[]interface{}, method string, params ...interface{}) error {
+	return _ConstructorWithStructParam.Contract.ConstructorWithStructParamCaller.contract.Call(opts, result, method, params...)
+}
+
+// Transfer initiates a plain transaction to move funds to the contract, calling
+// its default method if one is available.
+func (_ConstructorWithStructParam *ConstructorWithStructParamRaw) Transfer(opts *bind.TransactOpts) (*types.Transaction, error) {
+	return _ConstructorWithStructParam.Contract.ConstructorWithStructParamTransactor.contract.Transfer(opts)
+}
+
+// Transact invokes the (paid) contract method with params as input values.
+func (_ConstructorWithStructParam *ConstructorWithStructParamRaw) Transact(opts *bind.TransactOpts, method string, params ...interface{}) (*types.Transaction, error) {
+	return _ConstructorWithStructParam.Contract.ConstructorWithStructParamTransactor.contract.Transact(opts, method, params...)
+}
+
+// Call invokes the (constant) contract method with params as input values and
+// sets the output to result. The result type might be a single field for simple
+// returns, a slice of interfaces for anonymous returns and a struct for named
+// returns.
+func (_ConstructorWithStructParam *ConstructorWithStructParamCallerRaw) Call(opts *bind.CallOpts, result *[]interface{}, method string, params ...interface{}) error {
+	return _ConstructorWithStructParam.Contract.contract.Call(opts, result, method, params...)
+}
+
+// Transfer initiates a plain transaction to move funds to the contract, calling
+// its default method if one is available.
+func (_ConstructorWithStructParam *ConstructorWithStructParamTransactorRaw) Transfer(opts *bind.TransactOpts) (*types.Transaction, error) {
+	return _ConstructorWithStructParam.Contract.contract.Transfer(opts)
+}
+
+// Transact invokes the (paid) contract method with params as input values.
+func (_ConstructorWithStructParam *ConstructorWithStructParamTransactorRaw) Transact(opts *bind.TransactOpts, method string, params ...interface{}) (*types.Transaction, error) {
+	return _ConstructorWithStructParam.Contract.contract.Transact(opts, method, params...)
+}

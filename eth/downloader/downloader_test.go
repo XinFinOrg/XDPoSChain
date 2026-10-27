@@ -1935,7 +1935,6 @@ func testBlockHeaderAttackerDropping(t *testing.T, protocol int) {
 func TestSyncBatchAncestorErrDropPeer(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []SyncMode{LightSync, FastSync} {
-		mode := mode
 		t.Run(mode.String(), func(t *testing.T) {
 			tester := newTester()
 			defer tester.terminate()
@@ -1972,7 +1971,6 @@ func TestSyncBatchAncestorErrDropPeer(t *testing.T) {
 func TestSyncBatchNoAncestorErrKeepPeer(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []SyncMode{LightSync, FastSync} {
-		mode := mode
 		t.Run(mode.String(), func(t *testing.T) {
 			tester := newTester()
 			defer tester.terminate()
@@ -2611,7 +2609,6 @@ func testReorgProtectionDoesNotStallSync(t *testing.T, protocol int, mode SyncMo
 	}
 
 	for _, gap := range gaps {
-		gap := gap
 		t.Run(fmt.Sprintf("gap=%d", gap), func(t *testing.T) {
 			t.Parallel()
 

@@ -84,6 +84,20 @@ func validate(jt JumpTable) JumpTable {
 	return jt
 }
 
+// newAmsterdamInstructionSet builds the Amsterdam instruction set.
+//
+// The table is intentionally incomplete with respect to upstream go-ethereum:
+// upstream's Amsterdam instruction set is Osaka plus EIP-7843 (SLOTNUM),
+// EIP-8024, EIP-8037 (state gas metering) and EIP-8038 (state access repricing),
+// and this table carries EIP-8024 only. EIP-8037 and EIP-8038 reprice state
+// access and replace the single-value gas ledger with a two-dimensional one, so
+// they cannot be enabled without porting that ledger first, and that port stays
+// with #2730. EIP-7843 needs a slot number this chain has no source for, which
+// is tracked in #2760. The rest of upstream Amsterdam sits outside the
+// instruction set: EIP-7954 raises the code and initcode size limits, and moves
+// with the fork separately. No production network schedules Amsterdam, so the
+// fork stays inert there until those pieces land, while the dev and test
+// configs that run every fork from block zero do reach the table.
 func newAmsterdamInstructionSet() JumpTable {
 	instructionSet := newOsakaInstructionSet()
 	enable8024(&instructionSet) // EIP-8024 (Backward compatible SWAPN, DUPN, EXCHANGE)

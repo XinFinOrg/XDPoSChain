@@ -32,7 +32,7 @@ Config object fields:
 - activationBlock: uint64, the block height used to anchor this configuration snapshot.
 - chainId: big.Int, the configured chain ID represented as a hexadecimal string.
 - forkId: hex-encoded bytes string, the fork identifier derived from the configured fork schedule (for example, `"0x4f9a9c51"`).
-- activeForks: array of string, the modeled forks active at this `activationBlock`. Values use the RPC's fork labels as returned by `forks.Fork.String()` (for example, `"EIP1559"`, `"Prague"`, `"Cancun"`).
+- activeForks: array of string, the modeled forks active at this `activationBlock`, sorted in ascending ASCII order. Values use the RPC's fork labels as returned by `forks.Fork.String()` (for example, `"Cancun"`, `"EIP1559"`, `"Prague"`).
 - precompiles: object, a map of active precompile names to contract addresses.
 - systemContracts: object, a map of system contract names to contract addresses that are active at this `activationBlock` snapshot.
 

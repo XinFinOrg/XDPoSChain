@@ -480,7 +480,11 @@ func (api *FilterAPI) GetFilterChanges(id rpc.ID) (interface{}, error) {
 		case PendingTransactionsSubscription:
 			txs := f.txs
 			f.txs = nil
-			return txs, nil
+			hashes := make([]common.Hash, len(txs))
+			for i, tx := range txs {
+				hashes[i] = tx.Hash()
+			}
+			return hashes, nil
 		case LogsSubscription, MinedAndPendingLogsSubscription:
 			logs := f.logs
 			f.logs = nil

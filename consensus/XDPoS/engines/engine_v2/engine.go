@@ -739,7 +739,7 @@ Vote workflow
 */
 func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainReader, vote *types.Vote) (bool, error) {
 	/*
-		  1. Check vote round with current round for fast fail(disqualifed)
+		  1. Check vote round with current round for fast fail(disqualified)
 		  2. Get masterNode list from snapshot by using vote.GapNumber
 		  3. Check signature:
 					- Use ecRecover to get the public key
@@ -1263,7 +1263,7 @@ func (x *XDPoS_v2) GetPreviousPenaltyByHash(chain consensus.ChainReader, hash co
 func (x *XDPoS_v2) FindParentBlockToAssign(chain consensus.ChainReader) *types.Block {
 	parent := chain.GetBlock(x.highestQuorumCert.ProposedBlockInfo.Hash, x.highestQuorumCert.ProposedBlockInfo.Number.Uint64())
 	if parent == nil {
-		log.Error("[FindParentBlockToAssign] Can not find parent block from highestQC proposedBlockInfo", "x.highestQuorumCert.ProposedBlockInfo.Hash", x.highestQuorumCert.ProposedBlockInfo.Hash, "x.highestQuorumCert.ProposedBlockInfo.Number", x.highestQuorumCert.ProposedBlockInfo.Number.Uint64())
+		log.Warn("[FindParentBlockToAssign] Can not find parent block from highestQC proposedBlockInfo", "x.highestQuorumCert.ProposedBlockInfo.Hash", x.highestQuorumCert.ProposedBlockInfo.Hash, "x.highestQuorumCert.ProposedBlockInfo.Number", x.highestQuorumCert.ProposedBlockInfo.Number.Uint64())
 	}
 	return parent
 }

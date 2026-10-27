@@ -9,7 +9,9 @@
     "jsonKey": "homesteadBlock",
     "backfillSet": "common",
     "forkOrder": 1,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
   },
   {
     "name": "TIP2019Block",
@@ -32,49 +34,36 @@
     "jsonKey": "eip150Block",
     "backfillSet": "common",
     "forkOrder": 4,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
   },
   {
     "name": "EIP155Block",
     "jsonKey": "eip155Block",
     "backfillSet": "common",
     "forkOrder": 5,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
   },
   {
     "name": "EIP158Block",
     "jsonKey": "eip158Block",
     "backfillSet": "common",
     "forkOrder": 6,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
   },
   {
     "name": "ByzantiumBlock",
     "jsonKey": "byzantiumBlock",
     "backfillSet": "common",
     "forkOrder": 7,
-    "forkOrderOptional": true
-  },
-  {
-    "name": "ConstantinopleBlock",
-    "jsonKey": "constantinopleBlock",
-    "backfillSet": "common",
-    "forkOrder": 8,
-    "forkOrderOptional": true
-  },
-  {
-    "name": "PetersburgBlock",
-    "jsonKey": "petersburgBlock",
-    "backfillSet": "common",
-    "forkOrder": 9,
-    "forkOrderOptional": true
-  },
-  {
-    "name": "IstanbulBlock",
-    "jsonKey": "istanbulBlock",
-    "backfillSet": "common",
-    "forkOrder": 10,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
   },
   {
     "name": "TIPSigningBlock",
@@ -82,7 +71,7 @@
     "backfillSet": "builtin",
     "customMigrated": true,
     "xdcSpecific": true,
-    "forkOrder": 11,
+    "forkOrder": 8,
     "forkOrderOptional": true
   },
   {
@@ -91,7 +80,7 @@
     "backfillSet": "builtin",
     "customMigrated": true,
     "xdcSpecific": true,
-    "forkOrder": 12,
+    "forkOrder": 9,
     "forkOrderOptional": true
   },
   {
@@ -100,7 +89,7 @@
     "backfillSet": "builtin",
     "customMigrated": true,
     "xdcSpecific": true,
-    "forkOrder": 13,
+    "forkOrder": 10,
     "forkOrderOptional": true
   },
   {
@@ -109,7 +98,7 @@
     "backfillSet": "builtin",
     "customMigrated": true,
     "xdcSpecific": true,
-    "forkOrder": 14,
+    "forkOrder": 11,
     "forkOrderOptional": true
   },
   {
@@ -118,7 +107,7 @@
     "backfillSet": "builtin",
     "customMigrated": true,
     "xdcSpecific": true,
-    "forkOrder": 15,
+    "forkOrder": 12,
     "forkOrderOptional": true
   },
   {
@@ -127,7 +116,7 @@
     "backfillSet": "builtin",
     "customMigrated": true,
     "xdcSpecific": true,
-    "forkOrder": 16,
+    "forkOrder": 13,
     "forkOrderOptional": true
   },
   {
@@ -136,7 +125,7 @@
     "backfillSet": "builtin",
     "customMigrated": true,
     "xdcSpecific": true,
-    "forkOrder": 17,
+    "forkOrder": 14,
     "forkOrderOptional": true
   },
   {
@@ -145,8 +134,34 @@
     "backfillSet": "builtin",
     "customMigrated": true,
     "xdcSpecific": true,
-    "forkOrder": 18,
+    "forkOrder": 15,
     "forkOrderOptional": true
+  },
+  {
+    "name": "ConstantinopleBlock",
+    "jsonKey": "constantinopleBlock",
+    "backfillSet": "common",
+    "forkOrder": 16,
+    "forkOrderOptional": true,
+    "forkOrderStandard": true
+  },
+  {
+    "name": "PetersburgBlock",
+    "jsonKey": "petersburgBlock",
+    "backfillSet": "common",
+    "forkOrder": 17,
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
+  },
+  {
+    "name": "IstanbulBlock",
+    "jsonKey": "istanbulBlock",
+    "backfillSet": "common",
+    "forkOrder": 18,
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
   },
   {
     "name": "TIPTRC21FeeBlock",
@@ -162,56 +177,76 @@
     "jsonKey": "berlinBlock",
     "backfillSet": "builtin",
     "forkOrder": 20,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true
   },
   {
     "name": "LondonBlock",
     "jsonKey": "londonBlock",
     "backfillSet": "builtin",
     "forkOrder": 21,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true
   },
   {
     "name": "MergeBlock",
     "jsonKey": "mergeBlock",
     "backfillSet": "builtin",
     "forkOrder": 22,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true
   },
   {
     "name": "ShanghaiBlock",
     "jsonKey": "shanghaiBlock",
     "backfillSet": "builtin",
     "forkOrder": 23,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true
   },
   {
     "name": "EIP1559Block",
     "jsonKey": "eip1559Block",
     "backfillSet": "builtin",
     "forkOrder": 26,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
   },
   {
     "name": "CancunBlock",
     "jsonKey": "cancunBlock",
     "backfillSet": "builtin",
     "forkOrder": 27,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true
   },
   {
     "name": "PragueBlock",
     "jsonKey": "pragueBlock",
     "backfillSet": "builtin",
     "forkOrder": 31,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
   },
   {
     "name": "OsakaBlock",
     "jsonKey": "osakaBlock",
     "backfillSet": "builtin",
     "forkOrder": 32,
-    "forkOrderOptional": true
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
+  },
+  {
+    "name": "AmsterdamBlock",
+    "jsonKey": "amsterdamBlock",
+    "backfillSet": "builtin",
+    "forkOrder": 33,
+    "forkOrderOptional": true,
+    "forkOrderStandard": true,
+    "forkSequenceRequired": true
   },
   {
     "name": "Gas50xBlock",
@@ -251,8 +286,8 @@
     "forkOrderOptional": true
   },
   {
-    "name": "TIPUpgradeRewardBlock",
-    "jsonKey": "tipUpgradeRewardBlock",
+    "name": "TIPFixedRewardBlock",
+    "jsonKey": "tipFixedRewardBlock",
     "backfillSet": "builtin",
     "xdcSpecific": true,
     "forkOrder": 29,
@@ -271,7 +306,15 @@
     "jsonKey": "tipEpochHalvingBlock",
     "backfillSet": "builtin",
     "xdcSpecific": true,
-    "forkOrder": 33,
+    "forkOrder": 34,
+    "forkOrderOptional": true
+  },
+  {
+    "name": "TIPProportionalRewardBlock",
+    "jsonKey": "tipProportionalRewardBlock",
+    "backfillSet": "builtin",
+    "xdcSpecific": true,
+    "forkOrder": 35,
     "forkOrderOptional": true
   },
   {

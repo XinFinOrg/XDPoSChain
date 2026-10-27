@@ -270,13 +270,13 @@ func standbyAddrs(n int) []common.Address {
 	return out
 }
 
-// TestSplitStandbyPoolPreUpgrade asserts that before the TIPUpgradeReward fork the
+// TestSplitStandbyPoolPreUpgrade asserts that before the TIPFixedReward fork the
 // whole standby pool is returned unsplit and no protector/observer tier is set,
 // regardless of the configured caps.
 func TestSplitStandbyPoolPreUpgrade(t *testing.T) {
 	pool := standbyAddrs(5)
 
-	info := MasternodesStatus{tipUpgradeReward: false}
+	info := MasternodesStatus{tipTieredReward: false}
 	info.splitStandbyPool(pool, 3, 1) // caps must be ignored pre-upgrade
 
 	assert.Equal(t, pool, info.Standbynodes)
@@ -287,7 +287,7 @@ func TestSplitStandbyPoolPreUpgrade(t *testing.T) {
 	assert.Zero(t, info.ObserverLen)
 }
 
-// TestSplitStandbyPoolPostUpgrade asserts that from the TIPUpgradeReward fork the
+// TestSplitStandbyPoolPostUpgrade asserts that from the TIPFixedReward fork the
 // standby pool is split deterministically according to the protector/observer caps,
 // clamped to the pool size, and that the three tiers always reconcile back to the
 // full pool.
@@ -312,7 +312,7 @@ func TestSplitStandbyPoolPostUpgrade(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			info := MasternodesStatus{tipUpgradeReward: true}
+			info := MasternodesStatus{tipTieredReward: true}
 			info.splitStandbyPool(pool, tt.maxProtector, tt.maxObserver)
 
 			assert.Equal(t, tt.wantProtector, info.ProtectorLen)

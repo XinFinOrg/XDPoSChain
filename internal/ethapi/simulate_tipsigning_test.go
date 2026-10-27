@@ -28,19 +28,17 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/internal/ethapi/override"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
 // TestSimulateV1AppliesTIPSigningActivation verifies that eth_simulateV1 runs the block
-// level state changes block processing performs before the first transaction of a block.
-// TIPSigning removes the legacy block signers account at the block that activates it, and a
-// simulation that starts from the parent state without removing it reports calls and a state
-// root for a pre-state the chain never had.
+// level state changes before the first transaction: TIPSigning removes the legacy block
+// signers account at its activation block.
 //
-// The fixture pins its premise by simulating the same block twice, once over a base state
-// that holds the legacy account and once over one that does not: with the removal in place
-// both simulations land on the same state root, and without it the first one keeps the
-// account and lands elsewhere.
+// The fixture simulates the same block over base states that differ only in where the
+// account comes from (absent, in the base state, or created by an override applied to the
+// base state): all three have to land on the same root.
 func TestSimulateV1AppliesTIPSigningActivation(t *testing.T) {
 	t.Parallel()
 
@@ -50,10 +48,18 @@ func TestSimulateV1AppliesTIPSigningActivation(t *testing.T) {
 		legacy    = common.BlockSignersBinary
 	)
 
+	// legacySource says where the legacy block signers account comes from in a run.
+	type legacySource int
+	const (
+		legacyAbsent legacySource = iota
+		legacyInState
+		legacyOverridden
+	)
+
 	// simulateBlock traces block #1 over a base state that optionally holds the legacy block
 	// signers account. TIPSigning is activated in block #1, which makeHeaders numbers one
 	// above the base block, so the simulation goes through the activation path.
-	simulateBlock := func(t *testing.T, withLegacyAccount bool) common.Hash {
+	simulateBlock := func(t *testing.T, source legacySource) common.Hash {
 		t.Helper()
 
 		config := *params.MergedTestChainConfig
@@ -69,6 +75,9 @@ func TestSimulateV1AppliesTIPSigningActivation(t *testing.T) {
 		config.TIPXDCXBlock = one()
 		config.TIPXDCXLendingBlock = one()
 		config.TIPXDCXCancellationFeeBlock = one()
+		config.ConstantinopleBlock = one()
+		config.PetersburgBlock = one()
+		config.IstanbulBlock = one()
 		config.TIPTRC21FeeBlock = one()
 		config.Gas50xBlock = one()
 		config.BerlinBlock = one()
@@ -82,14 +91,14 @@ func TestSimulateV1AppliesTIPSigningActivation(t *testing.T) {
 		// roots compared below for a reason that has nothing to do with TIPSigning.
 		config.PragueBlock = big.NewInt(10)
 		config.OsakaBlock = big.NewInt(10)
+		// Amsterdam adds no state writes, so scheduling it would only extend the run.
+		config.AmsterdamBlock = nil
 
-		// The legacy account has to come from the genesis allocation rather than from a state
-		// override: DeleteAddress removes the account from the trie only, so an account the
-		// overrides created in memory would be written back by the block finalisation.
+		// The base state carries the account only for the in-state run.
 		alloc := types.GenesisAlloc{
 			sender: {Balance: big.NewInt(params.Ether)},
 		}
-		if withLegacyAccount {
+		if source == legacyInState {
 			alloc[legacy] = types.Account{Balance: big.NewInt(1234)}
 		}
 		genesis := &core.Genesis{Config: &config, Alloc: alloc}
@@ -111,7 +120,17 @@ func TestSimulateV1AppliesTIPSigningActivation(t *testing.T) {
 		backend.config = &config
 		api := NewBlockChainAPI(backend, nil)
 
+		if source == legacyOverridden {
+			// The guard refuses a request level override here, so apply it to the base state.
+			overrides := override.StateOverride{
+				legacy: {Balance: (*hexutil.Big)(big.NewInt(1234))},
+			}
+			if err := overrides.Apply(statedb, nil); err != nil {
+				t.Fatalf("failed to apply the legacy account override: %v", err)
+			}
+		}
 		result, err := api.SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{{
+			StateOverrides: nil,
 			Calls: []TransactionArgs{{
 				From:  &sender,
 				To:    &recipient,
@@ -131,9 +150,14 @@ func TestSimulateV1AppliesTIPSigningActivation(t *testing.T) {
 		return root
 	}
 
-	withAccount := simulateBlock(t, true)
-	withoutAccount := simulateBlock(t, false)
+	withAccount := simulateBlock(t, legacyInState)
+	withoutAccount := simulateBlock(t, legacyAbsent)
 	if withAccount != withoutAccount {
 		t.Fatalf("simulating the TIPSigning activation block over a base state holding the legacy block signers account ended on %x, want the same root as over one without it (%x): the block level removal was not applied", withAccount, withoutAccount)
+	}
+	// The override creates the account in the mock's state objects only, never in the trie.
+	overridden := simulateBlock(t, legacyOverridden)
+	if overridden != withoutAccount {
+		t.Fatalf("simulating the TIPSigning activation block with the legacy block signers account supplied by a state override ended on %x, want the same root as over a base state without it (%x): the block level removal did not drop the overridden account", overridden, withoutAccount)
 	}
 }

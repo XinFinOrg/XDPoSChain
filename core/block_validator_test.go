@@ -81,6 +81,9 @@ func TestValidateBodyBlockOversizedOsakaByBlockNumber(t *testing.T) {
 	testdb := rawdb.NewMemoryDatabase()
 	cfg := *params.TestChainConfig
 	cfg.OsakaBlock = big.NewInt(2)
+	// Amsterdam stays unset: the block size cap is an Osaka rule and the fork
+	// order check rejects Osaka activating after a scheduled Amsterdam.
+	cfg.AmsterdamBlock = nil
 	gspec := &Genesis{Config: &cfg}
 	genesis := gspec.MustCommit(testdb)
 

@@ -22,7 +22,6 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"os"
 	"path/filepath"
@@ -358,7 +357,6 @@ func TestTestVectorsV5(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			net := newHandshakeTest()
 			defer net.close()
@@ -582,7 +580,7 @@ func (n *handshakeTestNode) id() enode.ID {
 // hexFile reads the given file and decodes the hex data contained in it.
 // Whitespace and any lines beginning with the # character are ignored.
 func hexFile(file string) []byte {
-	fileContent, err := ioutil.ReadFile(file)
+	fileContent, err := os.ReadFile(file)
 	if err != nil {
 		panic(err)
 	}

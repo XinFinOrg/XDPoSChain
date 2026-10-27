@@ -19,10 +19,14 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand"
 	"os"
+	"reflect"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -50,10 +54,12 @@ import (
 // on v1 throughout. It must be a whole number of epochs and must not be 0.
 const deployChainV2SwitchBlock = 900
 
+// GenesisInput is what the non-interactive input file carries. Epoch is the only
+// schedule field it can express; checkGenesisInputScheduleKeys refuses the rest.
 type GenesisInput struct {
 	Name                    string   // informational network name
 	ChainId                 uint64   // network id
-	Epoch                   uint64   // epoch length; baked into the BlockSigner contract
+	Epoch                   uint64   // epoch length; applied to the template, baked into BlockSigner
 	MasternodesOwner        string   // owner registered for the initial masternodes
 	Masternodes             []string // initial masternode (validator) set
 	StakingThreshold        uint64   // per-masternode deposit in whole coins; sizes validator caps
@@ -64,12 +70,137 @@ type GenesisInput struct {
 func NewGenesisInput() *GenesisInput {
 	return &GenesisInput{
 		Name:                    "xdc-custom-network",
-		ChainId:                 5151,
-		Epoch:                   900,
+		ChainId:                 params.LocalnetChainConfig.ChainID.Uint64(),
+		Epoch:                   params.LocalnetChainConfig.XDPoS.Epoch,
 		StakingThreshold:        10_000_000, // 10M
 		RewardYield:             10,         // 10% APY
 		FoundationWalletAddress: common.FoundationAddrBinary.Hex(),
 	}
+}
+
+// canonicalInputKey folds the spelling differences the schedule guard tolerates,
+// so Epoch and epoch reach the same field.
+func canonicalInputKey(key string) string {
+	return strings.ToLower(strings.ReplaceAll(key, "_", ""))
+}
+
+// yamlInputKey is the spelling yaml matches a field by: its yaml tag, or the
+// lowercased Go field name when there is no tag. A "-" tag makes yaml ignore the
+// field, so it accepts no key at all.
+func yamlInputKey(field reflect.StructField) string {
+	tag, _, _ := strings.Cut(field.Tag.Get("yaml"), ",")
+	switch tag {
+	case "-":
+		return ""
+	case "":
+		return strings.ToLower(field.Name)
+	}
+	return tag
+}
+
+// inputKeys maps every canonical spelling accepted for a struct onto the
+// spelling yaml matches, so a field with a tag or an underscore still receives
+// its value. The keys are derived from the fields, so a new field needs no
+// second list to keep in step.
+func inputKeys(t reflect.Type) map[string]string {
+	keys := make(map[string]string)
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		// yaml skips an unexported field unless it is anonymous, where the field
+		// name is the type name; the table has to leave out the same fields.
+		if field.PkgPath != "" && !field.Anonymous {
+			continue
+		}
+		if name := yamlInputKey(field); name != "" {
+			keys[canonicalInputKey(name)] = name
+		}
+	}
+	return keys
+}
+
+// genesisInputKeys maps the spellings accepted for GenesisInput onto the keys
+// yaml actually matches.
+var genesisInputKeys = inputKeys(reflect.TypeOf(GenesisInput{}))
+
+// inputDocument re-keys the fields yaml would recognise onto its spelling and
+// reports two spellings of one field as a conflict.
+func inputDocument(raw map[string]yaml.Node) (*yaml.Node, error) {
+	return foldInputKeys(raw, genesisInputKeys)
+}
+
+// foldInputKeys rewrites the recognised keys and leaves the rest out, since yaml
+// would drop them anyway; they are warned about instead of disappearing without
+// a word.
+func foldInputKeys(raw map[string]yaml.Node, keys map[string]string) (*yaml.Node, error) {
+	// Sorted so the same file is refused with the same message every run.
+	sorted := make([]string, 0, len(raw))
+	for key := range raw {
+		sorted = append(sorted, key)
+	}
+	sort.Strings(sorted)
+
+	doc := &yaml.Node{Kind: yaml.MappingNode}
+	seen := make(map[string]string, len(raw))
+	for _, key := range sorted {
+		value := raw[key]
+		canonical := canonicalInputKey(key)
+		name, ok := keys[canonical]
+		if !ok {
+			log.Warn("Ignoring genesis input key with no GenesisInput field", "key", key)
+			continue
+		}
+		if other, ok := seen[canonical]; ok {
+			return nil, fmt.Errorf("keys %q and %q both set %s", other, key, canonical)
+		}
+		seen[canonical] = key
+		doc.Content = append(doc.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: name}, &value)
+	}
+	return doc, nil
+}
+
+// checkGenesisInputScheduleKeys refuses gap, switchBlock and switchEpoch, which have no
+// GenesisInput field and would be dropped by yaml. Every other key without a field warns
+// instead, for example period, reward, rewardCheckpoint, foundationWalletAddr,
+// maxMasternodesV2, skipV1Validation and v2.
+func checkGenesisInputScheduleKeys(raw map[string]yaml.Node) error {
+	return checkScheduleKeys(raw, genesisInputKeys)
+}
+
+// checkScheduleKeys refuses the schedule keys the field table has no field for. A key with
+// a field is applied by inputDocument, so it must not be refused here: the two lists are
+// read from the same table instead of drifting apart.
+func checkScheduleKeys(raw map[string]yaml.Node, keys map[string]string) error {
+	var gap, switchBlock, switchEpoch bool
+	for key := range raw {
+		canonical := canonicalInputKey(key)
+		if _, hasField := keys[canonical]; hasField {
+			continue
+		}
+		switch canonical {
+		case "gap":
+			gap = true
+		case "switchblock":
+			switchBlock = true
+		case "switchepoch":
+			switchEpoch = true
+		}
+	}
+	var present []string
+	if gap {
+		present = append(present, "gap")
+	}
+	if switchBlock {
+		present = append(present, "switchBlock")
+	}
+	if switchEpoch {
+		present = append(present, "switchEpoch")
+	}
+	if len(present) == 0 {
+		return nil
+	}
+	return fmt.Errorf("input file carries %s, but only epoch can be applied; remove them or use the interactive path",
+		strings.Join(present, ", "))
 }
 
 func (w *wizard) loadGenesisInput() *GenesisInput {
@@ -77,18 +208,44 @@ func (w *wizard) loadGenesisInput() *GenesisInput {
 	if w.conf.inpath == "" {
 		return nil
 	}
-	input := NewGenesisInput()
-	file, err := os.Open(w.conf.inpath)
+	log.Info("Decoding genesis input file", "path", w.conf.inpath)
+
+	data, err := os.ReadFile(w.conf.inpath)
 	if err != nil {
 		log.Warn("Failed to open genesis input file", "err", err)
 		os.Exit(1)
 		return nil
 	}
-	defer file.Close()
-
-	log.Info("Decoding genesis input file", "path", w.conf.inpath)
-	decoder := yaml.NewDecoder(file)
-	if err := decoder.Decode(&input); err != nil {
+	// Decoded twice: once for its keys, once for the fields, re-keyed onto the
+	// spelling yaml matches.
+	var raw map[string]yaml.Node
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		log.Warn("Failed to decode genesis input file (expect yaml format)", "err", err)
+		os.Exit(1)
+		return nil
+	}
+	// A file with no fields at all - empty, only comments, or an explicitly empty
+	// mapping like {} - would otherwise decode to nothing and silently produce the
+	// template's defaults; yaml decodes the mapping to a non-nil empty map, so the
+	// length has to be judged alongside the nil.
+	if raw == nil || len(raw) == 0 {
+		log.Warn("Refusing the genesis input file (no fields in it)", "path", w.conf.inpath)
+		os.Exit(1)
+		return nil
+	}
+	if err := checkGenesisInputScheduleKeys(raw); err != nil {
+		log.Warn("Refusing the genesis input file", "err", err)
+		os.Exit(1)
+		return nil
+	}
+	doc, err := inputDocument(raw)
+	if err != nil {
+		log.Warn("Refusing the genesis input file", "err", err)
+		os.Exit(1)
+		return nil
+	}
+	input := NewGenesisInput()
+	if err := doc.Decode(input); err != nil {
 		log.Warn("Failed to decode genesis input file (expect yaml format)", "err", err)
 		os.Exit(1)
 		return nil
@@ -136,6 +293,37 @@ func calcMasternodeRewards(period, epoch, threshold, yield uint64, masternodes i
 		ProtectorReward:  math.Round(rewardPerEpochPerMN*0.8*10000) / 10000,
 		ObserverReward:   math.Round(rewardPerEpochPerMN*0.4*10000) / 10000,
 	}, true
+}
+
+// errGapOutsideEpoch marks the gap refusal, the only schedule error an input file can
+// cause by an epoch at or below the template's gap.
+var errGapOutsideEpoch = errors.New("gap must designate a block inside the epoch")
+
+// interactiveGapDefault is half the epoch, which is inside 0 < gap < epoch for every
+// epoch the prompt accepts: 1 at epoch 2, 50 at epoch 100, 450 at epoch 900.
+func interactiveGapDefault(epoch uint64) uint64 {
+	return epoch / 2
+}
+
+// checkXDPoSSchedule rejects a gap outside 0 < gap < epoch, or an epoch below 2.
+// The bound is open-coded pending ChainConfig.CheckConfigForkOrder (#2822), and
+// core already guards it two ways: isNextEpochGapBlock refuses Gap == Epoch as
+// this check does, while isGapBlockNumber accepts it.
+func checkXDPoSSchedule(cfg *params.XDPoSConfig) error {
+	if cfg == nil {
+		return errors.New("missing XDPoS config")
+	}
+	if cfg.Epoch < 2 {
+		// An unset epoch keeps its own wording; both cases are the same bound.
+		if cfg.Epoch == 0 {
+			return errors.New("epoch must be greater than 0")
+		}
+		return fmt.Errorf("epoch must be at least 2 so that a gap block exists inside the epoch (1 <= gap < epoch), got %d", cfg.Epoch)
+	}
+	if cfg.Gap == 0 || cfg.Gap >= cfg.Epoch {
+		return fmt.Errorf("%w (1 <= gap < %d), got %d", errGapOutsideEpoch, cfg.Epoch, cfg.Gap)
+	}
+	return nil
 }
 
 func (w *wizard) makeGenesis() {
@@ -281,16 +469,31 @@ func (w *wizard) makeGenesis() {
 			}
 		}
 
-		fmt.Println()
-		fmt.Println("How many blocks per epoch? (default = 900)")
+		// Ask these only inline: the file overwrites the epoch and never reads the gap.
 		if input == nil {
-			genesis.Config.XDPoS.Epoch = uint64(w.readDefaultInt(900))
-		}
+			fmt.Println()
+			fmt.Println("How many blocks per epoch? (default = 900, must be at least 2)")
+			epoch := w.readDefaultInt(900)
+			if epoch < 2 {
+				log.Crit("Epoch must be at least 2 so that a gap block exists inside it", "epoch", epoch)
+			}
+			genesis.Config.XDPoS.Epoch = uint64(epoch)
 
-		fmt.Println()
-		fmt.Println("How many blocks before checkpoint need to prepare new set of masternodes? (default = 450)")
-		if input == nil {
-			genesis.Config.XDPoS.Gap = uint64(w.readDefaultInt(450))
+			defaultGap := interactiveGapDefault(genesis.Config.XDPoS.Epoch)
+			fmt.Println()
+			fmt.Printf("How many blocks before the end of the epoch should the gap block fall? "+
+				"(1 <= gap < %d, default = %d)\n", genesis.Config.XDPoS.Epoch, defaultGap)
+			// Zero means unspecified; judge both answers before the uint64 conversion.
+			gap := w.readDefaultInt(int(defaultGap))
+			if gap < 0 {
+				log.Crit("Gap must not be negative", "gap", gap)
+			}
+			if gap == 0 {
+				gap = int(defaultGap)
+			} else if gap >= epoch {
+				log.Crit("Unusable XDPoS schedule", "err", fmt.Errorf("epoch must be greater than gap (1 <= gap < epoch), got epoch %d, gap %d", epoch, gap))
+			}
+			genesis.Config.XDPoS.Gap = uint64(gap)
 		}
 
 		fmt.Println()
@@ -311,11 +514,19 @@ func (w *wizard) makeGenesis() {
 		} else {
 			yield = uint64(w.readDefaultInt(10))
 		}
+		// The file can only set the epoch; the gap keeps the template value.
 		if input != nil {
-			if input.Epoch == 0 {
-				log.Crit("Invalid epoch length", "epoch", input.Epoch)
-			}
 			genesis.Config.XDPoS.Epoch = input.Epoch
+		}
+		// Judge the pair before anything is derived from it: the epoch is baked
+		// into BlockSigner, the gap is not.
+		if err := checkXDPoSSchedule(genesis.Config.XDPoS); err != nil {
+			// Name the template value and the ways out, but only for a gap refusal: the
+			// file cannot set gap, so an epoch below 2 has nothing to do with it.
+			if input != nil && errors.Is(err, errGapOutsideEpoch) {
+				err = fmt.Errorf("%w; the input file cannot set gap: use an epoch above %d or the interactive path", err, params.LocalnetChainConfig.XDPoS.Gap)
+			}
+			log.Crit("Unusable XDPoS schedule", "err", err)
 		}
 		if rewards, ok := calcMasternodeRewards(genesis.Config.XDPoS.Period, genesis.Config.XDPoS.Epoch, threshold, yield, len(signers)); ok {
 			fmt.Println()
@@ -428,7 +639,7 @@ func (w *wizard) makeGenesis() {
 		}
 
 		// Block Signers Smart Contract
-		blockSignerAddress, _, err := blockSignerContract.DeployBlockSigner(transactOpts, contractBackend, big.NewInt(int64(genesis.Config.XDPoS.Epoch)))
+		blockSignerAddress, _, err := blockSignerContract.DeployBlockSigner(transactOpts, contractBackend, new(big.Int).SetUint64(genesis.Config.XDPoS.Epoch))
 		if err != nil {
 			log.Crit("Failed to deploy BlockSigners contract", "err", err)
 		}

@@ -44,7 +44,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
-	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/ethclient"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
@@ -197,6 +196,15 @@ type ResultProcessBlock struct {
 	usedGas      uint64
 }
 
+// trieGcEntry is one entry of the trie garbage collector's queue: the state root to dereference
+// once the head has passed its height, and the block whose execution left that root behind. The
+// block hash travels with the root because the executed marker is keyed by it, and this entry is
+// the last place the two are still known together. See writeBlockWithState.
+type trieGcEntry struct {
+	root common.Hash // State root to dereference
+	hash common.Hash // Block whose execution wrote it
+}
+
 // BlockChain represents the canonical chain given a database with a genesis
 // block. The Blockchain manages chain imports, reverts, chain reorganisations.
 //
@@ -216,8 +224,7 @@ type BlockChain struct {
 	cacheConfig *CacheConfig        // Cache configuration for pruning
 
 	db         ethdb.Database                   // Low level persistent database to store final content in
-	XDCxDb     ethdb.XDCxDatabase               // XDCx database
-	triegc     *prque.Prque[int64, common.Hash] // Priority queue mapping block numbers to tries to gc
+	triegc     *prque.Prque[int64, trieGcEntry] // Priority queue mapping block numbers to tries to gc
 	gcproc     time.Duration                    // Accumulates canonical block processing for trie dumping
 	triedb     *trie.Database                   // The database handler for maintaining trie nodes.
 	stateCache state.Database                   // State database to reuse between imports (contains state cache)
@@ -273,12 +280,6 @@ type BlockChain struct {
 	// Blocks hash array by block number
 	// cache field for tracking finality purpose, can't use for tracking block vs block relationship
 	blocksHashCache *lru.Cache[uint64, []common.Hash]
-
-	resultTrade         *lru.Cache[common.Hash, interface{}] // trades result: key - takerOrderHash, value: trades corresponding to takerOrder
-	rejectedOrders      *lru.Cache[common.Hash, interface{}] // rejected orders: key - takerOrderHash, value: rejected orders corresponding to takerOrder
-	resultLendingTrade  *lru.Cache[common.Hash, interface{}]
-	rejectedLendingItem *lru.Cache[common.Hash, interface{}]
-	finalizedTrade      *lru.Cache[common.Hash, interface{}] // include both trades which force update to closed/liquidated by the protocol
 }
 
 type blockchainOpenConfig struct {
@@ -451,6 +452,14 @@ func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus
 	if chainConfig == nil {
 		return nil, errors.New("nil chain config returned from SetupGenesisBlock")
 	}
+	// This gate cannot see a missing epoch on node startup: XDPoS.New rewrites
+	// Epoch == 0 to 900 in place before the chain is opened, so that case is
+	// rejected by Genesis.commit and the chain config resolvers instead. A
+	// caller-supplied config that skips them is still checked here, including
+	// a Gap outside the bound, which no engine rewrites.
+	if err := checkXDPoSSchedule(chainConfig); err != nil {
+		return nil, err
+	}
 	genesisHash := cfg.genesisHash
 	compatErr := cfg.compatErr
 	compatPolicy := cfg.compatPolicy
@@ -478,30 +487,25 @@ func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus
 		cacheConfig: cacheConfig,
 		db:          db,
 		triedb:      triedb,
-		triegc:      prque.New[int64, common.Hash](nil),
+		triegc:      prque.New[int64, trieGcEntry](nil),
 		stateCache: state.NewDatabaseWithConfig(db, &trie.Config{
 			Cache:     cacheConfig.TrieCleanLimit,
 			Preimages: cacheConfig.Preimages,
 		}),
-		quit:                make(chan struct{}),
-		chainmu:             syncx.NewClosableMutex(),
-		bodyCache:           lru.NewCache[common.Hash, *types.Body](bodyCacheLimit),
-		bodyRLPCache:        lru.NewCache[common.Hash, rlp.RawValue](bodyCacheLimit),
-		receiptsCache:       lru.NewCache[common.Hash, types.Receipts](receiptsCacheLimit),
-		blockCache:          lru.NewCache[common.Hash, *types.Block](blockCacheLimit),
-		futureBlocks:        lru.NewCache[common.Hash, *types.Block](maxFutureBlocks),
-		resultProcess:       lru.NewCache[common.Hash, *ResultProcessBlock](blockCacheLimit),
-		calculatingBlock:    lru.NewCache[common.Hash, *CalculatedBlock](blockCacheLimit),
-		downloadingBlock:    lru.NewCache[common.Hash, struct{}](blockCacheLimit),
-		engine:              engine,
-		vmConfig:            vmConfig,
-		logger:              vmConfig.Tracer,
-		blocksHashCache:     lru.NewCache[uint64, []common.Hash](blocksHashCacheLimit),
-		resultTrade:         lru.NewCache[common.Hash, interface{}](tradingstate.OrderCacheLimit),
-		rejectedOrders:      lru.NewCache[common.Hash, interface{}](tradingstate.OrderCacheLimit),
-		resultLendingTrade:  lru.NewCache[common.Hash, interface{}](tradingstate.OrderCacheLimit),
-		rejectedLendingItem: lru.NewCache[common.Hash, interface{}](tradingstate.OrderCacheLimit),
-		finalizedTrade:      lru.NewCache[common.Hash, interface{}](tradingstate.OrderCacheLimit),
+		quit:             make(chan struct{}),
+		chainmu:          syncx.NewClosableMutex(),
+		bodyCache:        lru.NewCache[common.Hash, *types.Body](bodyCacheLimit),
+		bodyRLPCache:     lru.NewCache[common.Hash, rlp.RawValue](bodyCacheLimit),
+		receiptsCache:    lru.NewCache[common.Hash, types.Receipts](receiptsCacheLimit),
+		blockCache:       lru.NewCache[common.Hash, *types.Block](blockCacheLimit),
+		futureBlocks:     lru.NewCache[common.Hash, *types.Block](maxFutureBlocks),
+		resultProcess:    lru.NewCache[common.Hash, *ResultProcessBlock](blockCacheLimit),
+		calculatingBlock: lru.NewCache[common.Hash, *CalculatedBlock](blockCacheLimit),
+		downloadingBlock: lru.NewCache[common.Hash, struct{}](blockCacheLimit),
+		engine:           engine,
+		vmConfig:         vmConfig,
+		logger:           vmConfig.Tracer,
+		blocksHashCache:  lru.NewCache[uint64, []common.Hash](blocksHashCacheLimit),
 	}
 	bc.stateCache = state.NewDatabaseWithNodeDB(bc.db, bc.triedb)
 	bc.validator = NewBlockValidator(chainConfig, bc, engine)
@@ -640,60 +644,6 @@ func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus
 	bc.wg.Go(bc.futureBlocksLoop)
 
 	return bc, nil
-}
-
-// NewBlockChainEx extend old blockchain, add order state db
-func NewBlockChainEx(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, genesis *Genesis, engine consensus.Engine, vmConfig vm.Config) (*BlockChain, error) {
-	blockchain, err := NewBlockChain(db, cacheConfig, genesis, engine, vmConfig)
-	if err != nil {
-		return nil, err
-	}
-	if blockchain != nil {
-		blockchain.addXDCxDb(XDCxDb)
-	}
-	return blockchain, nil
-}
-
-// NewBlockChainExReadOnly opens an XDCx-aware readonly blockchain.
-func NewBlockChainExReadOnly(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, genesis *Genesis, engine consensus.Engine, vmConfig vm.Config) (*BlockChain, error) {
-	blockchain, err := NewBlockChainReadOnly(db, cacheConfig, genesis, engine, vmConfig)
-	if err != nil {
-		return nil, err
-	}
-	if blockchain != nil {
-		blockchain.addXDCxDb(XDCxDb)
-	}
-	return blockchain, nil
-}
-
-// NewBlockChainExResolved opens a writable XDCx-aware blockchain from caller-
-// supplied startup metadata.
-func NewBlockChainExResolved(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, compatPolicy ChainConfigMismatchPolicy) (*BlockChain, error) {
-	blockchain, err := NewBlockChainResolved(db, cacheConfig, recoveryGenesis, engine, vmConfig, chainConfig, genesisHash, compatErr, compatPolicy)
-	if err != nil {
-		return nil, err
-	}
-	if blockchain != nil {
-		blockchain.addXDCxDb(XDCxDb)
-	}
-	return blockchain, nil
-}
-
-// NewBlockChainExReadOnlyResolved opens a readonly XDCx-aware blockchain from
-// caller-supplied startup metadata.
-func NewBlockChainExReadOnlyResolved(db ethdb.Database, XDCxDb ethdb.XDCxDatabase, cacheConfig *CacheConfig, recoveryGenesis *Genesis, engine consensus.Engine, vmConfig vm.Config, chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, compatPolicy ChainConfigMismatchPolicy) (*BlockChain, error) {
-	blockchain, err := NewBlockChainReadOnlyResolved(db, cacheConfig, recoveryGenesis, engine, vmConfig, chainConfig, genesisHash, compatErr, compatPolicy)
-	if err != nil {
-		return nil, err
-	}
-	if blockchain != nil {
-		blockchain.addXDCxDb(XDCxDb)
-	}
-	return blockchain, nil
-}
-
-func (bc *BlockChain) addXDCxDb(XDCxDb ethdb.XDCxDatabase) {
-	bc.XDCxDb = XDCxDb
 }
 
 // loadLastState loads the last known chain state from the database. This method
@@ -920,7 +870,9 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64) error {
 			// The receipts move to the ancient store when the block freezes, but the executed
 			// marker stays active, so TruncateAncients above does not take it away: drop it
 			// here as well.
-			rawdb.DeleteExecutedMarker(db, hash, num)
+			if err := rawdb.DeleteExecutedMarker(db, hash, num); err != nil {
+				log.Crit("Failed to delete the executed-block marker", "number", num, "hash", hash, "err", err)
+			}
 		} else {
 			// Remove relative body and receipts from the active store.
 			// The header, total difficulty and canonical hash will be
@@ -1351,8 +1303,27 @@ func (bc *BlockChain) saveData() {
 				}
 			}
 		}
+		// The queue is drained here and its roots are dereferenced, but the markers of the
+		// heights it still holds are left alone while the head sits at the last block the write
+		// path executed: what is left at shutdown is then the state window itself, and there the
+		// marker still decides over a state committed just above, so taking those markers would
+		// turn "this node ran the block" into an execution for every height whose state outlives
+		// the restart - the direction the write path avoids. Above TriesInMemory the write path
+		// leaves no entry at or below this line, so the delete is a guard; a head adopted past
+		// the last written block reaches it, and there it cuts by the cursor, deliberately.
+		chosen := uint64(0)
+		if head := bc.CurrentBlock().Number.Uint64(); head > TriesInMemory {
+			chosen = head - TriesInMemory
+		}
 		for !bc.triegc.Empty() {
-			triedb.Dereference(bc.triegc.PopItem())
+			entry, number := bc.triegc.Pop()
+			height := uint64(-number)
+			if height <= chosen {
+				if err := rawdb.DeleteExecutedMarker(bc.db, entry.hash, height); err != nil {
+					log.Error("Failed to delete the executed-block marker", "number", height, "err", err)
+				}
+			}
+			triedb.Dereference(entry.root)
 		}
 		if tradingTriedb != nil && lendingTriedb != nil {
 			if tradingService.GetTriegc() != nil {
@@ -1933,15 +1904,15 @@ func (bc *BlockChain) adoptHead(block *types.Block, current *types.Header, snap 
 	// lives in the checkpoint header extra data, and a v2 set just stored must not be read back
 	// out of the head state instead.
 	//
-	// The head is already persisted, so this failure cannot be rolled back and must halt the
+	// The head is already persisted, so a failure here cannot be rolled back and must halt the
 	// node: the next epoch validates against the masternode set, and a missing snapshot is
 	// only repaired by Initial -> RepairGapSnapshots on the next start. Retrying is not an
 	// option either, the gap block being the head and no longer winning fork choice.
-	if bc.isGapBlock(block) && !bc.needsNextEpochSnapshot(block.Number()) {
-		if err := bc.UpdateM1At(block.Header()); err != nil {
-			log.Crit(critMsg, "number", block.Number, "hash", block.Hash().Hex(), "err", err)
-		}
-	}
+	//
+	// The one exception is the engine the set would have to come from: a chain that names
+	// XDPoS while running another engine has no set and no epoch to validate one, which is
+	// what refreshMasternodesForGapBlock skips rather than halts on.
+	bc.refreshMasternodesForGapBlock(block, critMsg)
 	return nil
 }
 
@@ -2258,7 +2229,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	} else {
 		// Full but not archive node, do proper garbage collection
 		bc.triedb.Reference(root, common.Hash{}) // metadata reference to keep trie alive
-		bc.triegc.Push(root, -int64(block.NumberU64()))
+		bc.triegc.Push(trieGcEntry{root: root, hash: block.Hash()}, -int64(block.NumberU64()))
 		if tradingTrieDb != nil {
 			tradingTrieDb.Reference(tradingRoot, common.Hash{})
 		}
@@ -2325,14 +2296,38 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 					}
 				}
 			}
-			// Garbage collect anything below our required write retention
+			// Garbage collect anything below our required write retention. The executed marker of
+			// a block goes with the state that is dereferenced here: below head-TriesInMemory a
+			// marker cannot change any answer on a node that prunes, because HasExecutedBlock asks
+			// for the state as well - on the heights whose state the write path dropped, which is
+			// what the probe below asks. An archive node never reaches this loop and keeps every marker.
+			//
+			// Whether the state is gone is asked of the trie database rather than assumed from the
+			// height, and the dereference comes first: a root the flush above committed - or an
+			// earlier flush, or Cap - stays readable on disk, and a root another queued height
+			// still references stays readable in memory, so on those heights the state half of
+			// HasExecutedBlock rests on the same read the probe makes, apart from the TIPXDCX conjuncts, and
+			// the marker is the half that decides. Under a height-only rule nothing but one height per call
+			// would have its state gone, and the markers of the rest would be taken with a state that was still
+			// there. Probing makes the two lifetimes the same one on every height. See DeleteExecutedMarker.
 			for !bc.triegc.Empty() {
-				root, number := bc.triegc.Pop()
-				if uint64(-number) > chosen {
-					bc.triegc.Push(root, number)
+				entry, number := bc.triegc.Pop()
+				// The queue is ordered by the negated height, so the height is recovered once for
+				// the bound and the report below.
+				height := uint64(-number)
+				if height > chosen {
+					bc.triegc.Push(entry, number)
 					break
 				}
-				bc.triedb.Dereference(root)
+				bc.triedb.Dereference(entry.root)
+				// A refusal is reported and skipped rather than fatal: this height is behind the
+				// cursor and will not be asked about again, so the cost is one stale marker and
+				// not the block. The commits above are the ones that cannot be skipped.
+				if !bc.HasState(entry.root) {
+					if err := rawdb.DeleteExecutedMarker(bc.db, entry.hash, height); err != nil {
+						log.Error("Failed to delete the executed-block marker", "number", height, "err", err)
+					}
+				}
 			}
 			if tradingService != nil {
 				for !tradingService.GetTriegc().Empty() {
@@ -2822,19 +2817,22 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (n int, 
 		var followupInterrupt atomic.Bool
 		if bc.cacheConfig.TrieCleanPrefetch {
 			if followup, err := it.peek(); followup != nil && err == nil {
-				throwaway, _ := state.NewWithChainConfig(parent.Root, bc.stateCache, bc.chainConfig)
+				// Prefetching is best effort: when the throwaway state cannot
+				// be opened the block is imported without it, so only start
+				// the prefetch on success.
+				if throwaway, prefetchErr := state.NewWithChainConfig(parent.Root, bc.stateCache, bc.chainConfig); prefetchErr == nil {
+					go func(start time.Time, followup *types.Block, throwaway *state.StateDB, interrupt *atomic.Bool) {
+						// Disable tracing for prefetcher executions.
+						vmCfg := bc.vmConfig
+						vmCfg.Tracer = nil
+						bc.prefetcher.Prefetch(followup, throwaway, vmCfg, interrupt)
 
-				go func(start time.Time, followup *types.Block, throwaway *state.StateDB, interrupt *atomic.Bool) {
-					// Disable tracing for prefetcher executions.
-					vmCfg := bc.vmConfig
-					vmCfg.Tracer = nil
-					bc.prefetcher.Prefetch(followup, throwaway, vmCfg, interrupt)
-
-					blockPrefetchExecuteTimer.Update(time.Since(start))
-					if interrupt.Load() {
-						blockPrefetchInterruptMeter.Mark(1)
-					}
-				}(time.Now(), followup, throwaway, &followupInterrupt)
+						blockPrefetchExecuteTimer.Update(time.Since(start))
+						if interrupt.Load() {
+							blockPrefetchInterruptMeter.Mark(1)
+						}
+					}(time.Now(), followup, throwaway, &followupInterrupt)
+				}
 			}
 		}
 
@@ -4212,11 +4210,7 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 		// database again, outside the batch just written, and cache it there.
 		// The refresh stays behind the head write because the head is what it
 		// refreshes.
-		if bc.isGapBlock(block) && !bc.needsNextEpochSnapshot(block.Number()) {
-			if err := bc.UpdateM1At(block.Header()); err != nil {
-				log.Crit("Fail to update masternodes during reorg", "number", block.Number, "hash", block.Hash().Hex(), "err", err)
-			}
-		}
+		bc.refreshMasternodesForGapBlock(block, "Fail to update masternodes during reorg")
 		// An epoch switch block reaches the canonical chain here whenever this reorg rewrites
 		// one: the staking loop in cmd/XDC has to revalidate the consensus parameters and the
 		// masternode duty for the new epoch. The import paths signal only for the block they
@@ -4539,23 +4533,21 @@ func (bc *BlockChain) UpdateM1At(header *types.Header) error {
 	return nil
 }
 
-func (bc *BlockChain) AddMatchingResult(txHash common.Hash, matchingResults map[common.Hash]tradingstate.MatchingResult) {
-	for hash, result := range matchingResults {
-		cacheKey := crypto.Keccak256Hash(txHash.Bytes(), hash.Bytes())
-		bc.resultTrade.Add(cacheKey, result.Trades)
-		bc.rejectedOrders.Add(cacheKey, result.Rejects)
+// refreshMasternodesForGapBlock refreshes the v1 masternode set of the block when it is the gap
+// block of its epoch and the write that stored it did not already carry the set. A chain that
+// names XDPoS while running another engine has no set to refresh, so the ErrNotXDPoS UpdateM1At
+// reports for it is skipped with a warning; every other failure halts the node, logging critMsg.
+func (bc *BlockChain) refreshMasternodesForGapBlock(block *types.Block, critMsg string) {
+	if !bc.isGapBlock(block) || bc.needsNextEpochSnapshot(block.Number()) {
+		return
 	}
-}
-
-func (bc *BlockChain) AddLendingResult(txHash common.Hash, lendingResults map[common.Hash]lendingstate.MatchingResult) {
-	for hash, result := range lendingResults {
-		bc.resultLendingTrade.Add(crypto.Keccak256Hash(txHash.Bytes(), hash.Bytes()), result.Trades)
-		bc.rejectedLendingItem.Add(crypto.Keccak256Hash(txHash.Bytes(), hash.Bytes()), result.Rejects)
+	if err := bc.UpdateM1At(block.Header()); err != nil {
+		if errors.Is(err, ErrNotXDPoS) {
+			log.Warn("Skipping the masternode refresh, the engine is not XDPoS", "number", block.Number(), "hash", block.Hash().Hex())
+			return
+		}
+		log.Crit(critMsg, "number", block.Number(), "hash", block.Hash().Hex(), "err", err)
 	}
-}
-
-func (bc *BlockChain) AddFinalizedTrades(txHash common.Hash, trades map[common.Hash]*lendingstate.LendingTrade) {
-	bc.finalizedTrade.Add(txHash, trades)
 }
 
 // processTradingAndLendingStates processes the trading and lending states for a given block in the blockchain.

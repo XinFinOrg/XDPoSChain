@@ -98,6 +98,9 @@ func (c *C) TryPackFoo() ([]byte, error) {
 // UnpackError attempts to decode the provided error data using user-defined
 // error definitions.
 func (c *C) UnpackError(raw []byte) (any, error) {
+	if len(raw) < 4 {
+		return nil, errors.New("Unknown error")
+	}
 	if bytes.Equal(raw[:4], c.abi.Errors["BadThing"].ID.Bytes()[:4]) {
 		return c.UnpackBadThingError(raw[4:])
 	}
@@ -213,6 +216,9 @@ func (c2 *C2) TryPackFoo() ([]byte, error) {
 // UnpackError attempts to decode the provided error data using user-defined
 // error definitions.
 func (c2 *C2) UnpackError(raw []byte) (any, error) {
+	if len(raw) < 4 {
+		return nil, errors.New("Unknown error")
+	}
 	if bytes.Equal(raw[:4], c2.abi.Errors["BadThing"].ID.Bytes()[:4]) {
 		return c2.UnpackBadThingError(raw[4:])
 	}
