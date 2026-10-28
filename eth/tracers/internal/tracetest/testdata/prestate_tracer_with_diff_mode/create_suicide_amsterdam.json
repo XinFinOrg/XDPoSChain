@@ -1,0 +1,86 @@
+{
+  "context": {
+    "difficulty": "0",
+    "gasLimit": "8000000",
+    "miner": "0x2445e8c26a2bf3d1e59f1bb9b1d442caf90768e0",
+    "number": "1",
+    "timestamp": "1000",
+    "baseFeePerGas": "7"
+  },
+  "genesis": {
+    "baseFeePerGas": "7",
+    "alloc": {
+      "0x2445e8c26a2bf3d1e59f1bb9b1d442caf90768e0": {
+        "balance": "0x0",
+        "nonce": "0",
+        "code": "0x",
+        "storage": {}
+      },
+      "0x2c7536e3605d9c16a7a3d7b1898e529396a65c23": {
+        "balance": "0xde0b6b3a7640000",
+        "nonce": "0",
+        "code": "0x",
+        "storage": {}
+      }
+    },
+    "config": {
+      "chainId": 12345,
+      "homesteadBlock": 0,
+      "eip150Block": 0,
+      "eip155Block": 0,
+      "eip158Block": 0,
+      "byzantiumBlock": 0,
+      "constantinopleBlock": 0,
+      "petersburgBlock": 0,
+      "istanbulBlock": 0,
+      "muirGlacierBlock": 0,
+      "berlinBlock": 0,
+      "londonBlock": 0,
+      "eip1559Block": 0,
+      "arrowGlacierBlock": 0,
+      "grayGlacierBlock": 0,
+      "mergeBlock": 0,
+      "shanghaiBlock": 0,
+      "cancunBlock": 0,
+      "pragueBlock": 0,
+      "osakaBlock": 0,
+      "amsterdamBlock": 0
+    },
+    "difficulty": "0",
+    "extraData": "0x",
+    "gasLimit": "8000000",
+    "hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "miner": "0x2445e8c26a2bf3d1e59f1bb9b1d442caf90768e0",
+    "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "nonce": "0x0000000000000000",
+    "number": "0",
+    "stateRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "timestamp": "0"
+  },
+  "input": "0xf858800a830493e080830f424087602a60055530ff826095a01057fe1144dd38dde3b6216ee3f0501c065394922f6ae89a32dbbc4b548bf687a07e51bdc235862f9ab6387f5d52f41279d585ef8f52280823b8e27982fe25f2cf",
+  "tracerConfig": {
+    "diffMode": true
+  },
+  "result": {
+    "post": {
+      "0x2445e8c26a2bf3d1e59f1bb9b1d442caf90768e0": {
+        "balance": "0x3ac1a"
+      },
+      "0x2c7536e3605d9c16a7a3d7b1898e529396a65c23": {
+        "balance": "0xde0b6b3a7488014",
+        "nonce": 1
+      },
+      "0xc0aae1edd7a76c8cf99e5ba3ca69599ed29540ea": {
+        "balance": "0xf4240"
+      }
+    },
+    "pre": {
+      "0x2445e8c26a2bf3d1e59f1bb9b1d442caf90768e0": {
+        "balance": "0x0"
+      },
+      "0x2c7536e3605d9c16a7a3d7b1898e529396a65c23": {
+        "balance": "0xde0b6b3a7640000"
+      }
+    }
+  }
+}
