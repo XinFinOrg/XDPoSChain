@@ -2223,8 +2223,8 @@ func TestEIP161AccountRemoval(t *testing.T) {
 	}
 }
 
-// setXinFinForksToFuture moves XDC-specific forks behind a common future block
-// for tests that need pre-fork execution rules.
+// setXinFinForksToFuture moves every fork behind a common future block for
+// tests that need pre-fork execution rules.
 func setXinFinForksToFuture(cfg *params.ChainConfig, future *big.Int) {
 	set := func() *big.Int { return new(big.Int).Set(future) }
 	cfg.TIPSigningBlock = set()
