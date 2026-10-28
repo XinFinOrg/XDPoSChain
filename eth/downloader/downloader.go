@@ -1874,13 +1874,13 @@ func (d *Downloader) splitBlocksForVerification(blocks []*types.Block) [][]*type
 	for i, block := range blocks {
 		number := block.NumberU64()
 		// Cut right after each gap block, but never after the very last block
-		// (that would just create an empty trailing segment). A schedule without
-		// a usable offset (Gap 0, or Gap >= Epoch) has no gap block at all, and
-		// this cut does not make one: the fallback that would read it walks back
-		// an unusable number of steps and UpdateM1At never fires on such a
-		// schedule, so this cut only keeps the epoch-switch cut below from
-		// costing anything there.
-		if gap != 0 && gap < epoch && number%epoch == epoch-gap && i < len(blocks)-1 {
+		// (that would just create an empty trailing segment). The bound
+		// `0 < Gap < Epoch` holds for any config that starts, so `epoch-gap` names
+		// the gap block of every epoch. Outside it there is no gap block to cut
+		// after: `Gap > Epoch` underflows the offset, and `Gap == Epoch` would cut
+		// after the switch rather than before it, which is why the startup gate
+		// refuses both.
+		if number%epoch == epoch-gap && i < len(blocks)-1 {
 			segments = append(segments, blocks[start:i+1])
 			start = i + 1
 			continue

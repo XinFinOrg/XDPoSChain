@@ -143,6 +143,23 @@ func TestGapPivotNumbersWithoutXDPoS(t *testing.T) {
 	}
 }
 
+// TestGapPivotNumbersWithoutEpoch pins the other schedule a running chain cannot hold: a
+// config with no epoch length makes the lookup's modulo undefined, so it must report no
+// pivots instead of dividing by zero. Only a test can install the shape; the startup gate
+// refuses it.
+func TestGapPivotNumbersWithoutEpoch(t *testing.T) {
+	t.Parallel()
+
+	tester := newTester()
+	defer tester.terminate()
+	cfg := params.TestXDPoSMockChainConfig.Clone()
+	cfg.XDPoS.Epoch = 0
+	tester.configOverride = cfg
+	if gaps := tester.downloader.gapPivotNumbers(2251); gaps != nil {
+		t.Fatalf("gap pivots without an epoch = %v, want none", gaps)
+	}
+}
+
 // assertGapSnapshot checks that the snapshot of gap block number is stored under hash
 // and names that block and the test masternodes.
 func assertGapSnapshot(t *testing.T, tester *downloadTester, number uint64, hash common.Hash) {
