@@ -398,8 +398,8 @@ func routeTransaction(config *params.ChainConfig, blockNumber *big.Int, tx *type
 // *state.StateDB behind it. With a tracer configured that state is a hookedStateDB, and
 // its Finalise reports the balance burnt by self-destructed accounts to the tracer
 // (core/state/statedb_hooked.go); finalising the raw state instead would drop those
-// events. hookedStateDB.IntermediateRoot forwards unchanged, so the pre-Byzantium branch
-// is equivalent either way.
+// events. hookedStateDB.IntermediateRoot finalises through the hook as well, so the
+// pre-Byzantium branch reports the same burn.
 //
 // The sign and empty routes hand in evm.StateDB as well, even though they never enter the
 // EVM: no account self-destructs on those paths, so the hooked state reports no extra event.
