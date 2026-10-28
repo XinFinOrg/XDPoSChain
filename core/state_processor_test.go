@@ -686,8 +686,6 @@ func TestProcessSnapshotsParentStateBeforeBlockLevelHooks(t *testing.T) {
 
 	config := params.TestChainConfig.Clone()
 	setXinFinForksToFuture(config, big.NewInt(1_000_000_000))
-	// setXinFinForksToFuture leaves Amsterdam unset.
-	config.AmsterdamBlock = big.NewInt(1_000_000_000)
 	config.TIPSigningBlock = big.NewInt(1)
 
 	db := rawdb.NewMemoryDatabase()
@@ -732,8 +730,6 @@ func TestProcessBlockNoValidatorSnapshotsParentStateBeforeBlockLevelHooks(t *tes
 
 	config := params.TestChainConfig.Clone()
 	setXinFinForksToFuture(config, big.NewInt(1_000_000_000))
-	// setXinFinForksToFuture leaves Amsterdam unset.
-	config.AmsterdamBlock = big.NewInt(1_000_000_000)
 	config.TIPSigningBlock = big.NewInt(1)
 
 	db := rawdb.NewMemoryDatabase()
@@ -800,8 +796,6 @@ func TestProcessBlockNoValidatorSnapshotsParentStateBeforeBlockLevelHooks(t *tes
 func newFinalizeTestConfig() *params.ChainConfig {
 	config := params.TestChainConfig.Clone()
 	setXinFinForksToFuture(config, big.NewInt(1_000_000_000))
-	// setXinFinForksToFuture leaves Amsterdam unset.
-	config.AmsterdamBlock = big.NewInt(1_000_000_000)
 	return config
 }
 

@@ -2250,6 +2250,7 @@ func setXinFinForksToFuture(cfg *params.ChainConfig, future *big.Int) {
 	cfg.CancunBlock = set()
 	cfg.PragueBlock = set()
 	cfg.OsakaBlock = set()
+	cfg.AmsterdamBlock = set()
 	cfg.DynamicGasLimitBlock = set()
 	cfg.TIPFixedRewardBlock = set()
 	cfg.TIPUpgradePenaltyBlock = set()
