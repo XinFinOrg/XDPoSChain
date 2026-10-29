@@ -14,6 +14,7 @@ import (
 // gap block, drops its snapshot and re-imports the already executed blocks:
 // the known-block path must move the head forward and rewrite the snapshot.
 func TestInsertChainKnownGapBlockRefreshesSnapshot(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	config := params.TestXDPoSMockChainConfig
 	gapNumber := config.XDPoS.V2.SwitchBlock.Uint64() + config.XDPoS.Epoch - config.XDPoS.Gap // 1350

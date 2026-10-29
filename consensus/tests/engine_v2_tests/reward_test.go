@@ -16,6 +16,7 @@ import (
 
 // TestHookRewardV2 tests hook reward v 2.
 func TestHookRewardV2(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
@@ -99,6 +100,7 @@ func TestHookRewardV2(t *testing.T) {
 
 // TestHookRewardV2SplitReward tests hook reward v 2 split reward.
 func TestHookRewardV2SplitReward(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
@@ -171,6 +173,7 @@ func TestHookRewardV2SplitReward(t *testing.T) {
 
 // TestHookRewardAfterUpgrade tests hook reward after upgrade.
 func TestHookRewardAfterUpgrade(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
@@ -270,6 +273,7 @@ func TestHookRewardAfterUpgrade(t *testing.T) {
 
 // TestFinalizeAfterUpgrade tests finalize after upgrade.
 func TestFinalizeAfterUpgrade(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
@@ -372,6 +376,7 @@ func TestRewardHalvingVanishing(t *testing.T) {
 
 // TestRewardHalvingSplit tests reward halving split.
 func TestRewardHalvingSplit(t *testing.T) {
+	t.Parallel()
 	billion := big.NewInt(1000000000)
 	epochRewardTotal := big.NewInt(16000)
 	epochRewardTotal.Mul(epochRewardTotal, billion)

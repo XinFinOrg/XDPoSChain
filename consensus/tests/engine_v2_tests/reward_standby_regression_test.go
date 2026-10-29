@@ -53,6 +53,7 @@ func voteTXForCandidateWithAmount(gasLimit uint64, nonce uint64, addr string, am
 // against the fixed code's own documented contract rather than hardcoded
 // magic addresses.
 func TestGetSigningTxCountUsesHistoricalStandbynodes(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)

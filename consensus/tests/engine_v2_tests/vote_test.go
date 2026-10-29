@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/accounts"
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind/backends"
@@ -18,6 +17,7 @@ import (
 
 // VoteHandler
 func TestVoteMessageHandlerSuccessfullyGeneratedAndProcessQCForFistV2Round(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 901, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -95,6 +95,7 @@ func TestVoteMessageHandlerSuccessfullyGeneratedAndProcessQCForFistV2Round(t *te
 }
 
 func TestVoteMessageHandlerSuccessfullyGeneratedAndProcessQC(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -194,6 +195,7 @@ func TestVoteMessageHandlerSuccessfullyGeneratedAndProcessQC(t *testing.T) {
 }
 
 func TestThrowErrorIfVoteMsgRoundIsMoreThanOneRoundAwayFromCurrentRound(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -228,6 +230,7 @@ func TestThrowErrorIfVoteMsgRoundIsMoreThanOneRoundAwayFromCurrentRound(t *testi
 }
 
 func TestProcessVoteMsgThenTimeoutMsg(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -370,6 +373,7 @@ func TestProcessVoteMsgThenTimeoutMsg(t *testing.T) {
 }
 
 func TestVoteMessageShallNotThrowErrorIfBlockNotYetExist(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -450,6 +454,7 @@ func TestVoteMessageShallNotThrowErrorIfBlockNotYetExist(t *testing.T) {
 }
 
 func TestProcessVoteMsgFailIfVerifyBlockInfoFail(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -513,6 +518,7 @@ func TestProcessVoteMsgFailIfVerifyBlockInfoFail(t *testing.T) {
 }
 
 func TestVerifyVoteMsg(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 915, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -562,6 +568,7 @@ func TestVerifyVoteMsg(t *testing.T) {
 }
 
 func TestVoteMsgMissingSnapshot(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 915, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -588,6 +595,7 @@ func TestVoteMsgMissingSnapshot(t *testing.T) {
 }
 
 func TestVoteMessageHandlerWrongGapNumber(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -639,6 +647,7 @@ func TestVoteMessageHandlerWrongGapNumber(t *testing.T) {
 }
 
 func TestVotePoolKeepGoodHygiene(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
@@ -711,10 +720,8 @@ func TestVotePoolKeepGoodHygiene(t *testing.T) {
 	}
 	engineV2.VoteHandler(blockchain, voteMsg)
 
-	// Let's keep good Hygiene
+	// The hygiene pass is synchronous, so the pool is already clean.
 	engineV2.HygieneVotePoolFaker()
-	// Let's wait for 5 second for the goroutine
-	<-time.After(5 * time.Second)
 	keyList := engineV2.GetVotePoolKeyListFaker()
 
 	assert.Equal(t, 2, len(keyList))

@@ -17,6 +17,7 @@ import (
 )
 
 func TestCountdownTimeoutToSendTimeoutMessage(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 901, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
@@ -30,6 +31,7 @@ func TestCountdownTimeoutToSendTimeoutMessage(t *testing.T) {
 }
 
 func TestCountdownTimeoutNotToSendTimeoutMessageIfNotInMasternodeList(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 901, params.TestXDPoSMockChainConfig, nil)
 
@@ -39,16 +41,21 @@ func TestCountdownTimeoutNotToSendTimeoutMessageIfNotInMasternodeList(t *testing
 	// Let's change the address
 	engineV2.Authorize(differentSigner, differentSignFn)
 
+	// Drop what the fixture and the re-authorize left behind; a timeout from the
+	// new round is the one this case must not see.
+	drainBroadcast(engineV2.BroadcastCh)
+
 	engineV2.SetNewRoundFaker(blockchain, 1, true)
 
 	select {
 	case <-engineV2.BroadcastCh:
 		t.Fatalf("Not suppose to receive timeout msg")
-	case <-time.After(10 * time.Second): //Countdown is only 1s wait, let's wait for 3s here
+	case <-time.After(2 * time.Second): // Countdown period is 1s, wait for two periods
 	}
 }
 
 func TestSyncInfoAfterReachTimeoutSyncThreadhold(t *testing.T) {
+	// Not parallel: it counts messages over consecutive countdown periods.
 	skipLongInShortMode(t)
 	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 901, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
@@ -88,6 +95,7 @@ func TestSyncInfoAfterReachTimeoutSyncThreadhold(t *testing.T) {
 }
 
 func TestTimeoutPeriodAndThreadholdConfigChange(t *testing.T) {
+	// Not parallel: it counts messages over consecutive countdown periods.
 	skipLongInShortMode(t)
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 1799, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
@@ -144,6 +152,7 @@ func TestTimeoutPeriodAndThreadholdConfigChange(t *testing.T) {
 
 // Timeout handler
 func TestTimeoutMessageHandlerSuccessfullyGenerateTCandSyncInfoAfterReachingThreshold(t *testing.T) {
+	t.Parallel()
 	// skipLongInShortMode(t)
 	blockchain, _, _, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
@@ -222,6 +231,7 @@ func TestTimeoutMessageHandlerSuccessfullyGenerateTCandSyncInfoAfterReachingThre
 }
 
 func TestThrowErrorIfTimeoutMsgRoundNotEqualToCurrentRound(t *testing.T) {
+	t.Parallel()
 	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 11, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -246,6 +256,7 @@ func TestThrowErrorIfTimeoutMsgRoundNotEqualToCurrentRound(t *testing.T) {
 }
 
 func TestShouldVerifyTimeoutMessageForFirstV2Block(t *testing.T) {
+	t.Parallel()
 	blockchain, _, _, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 901, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -283,6 +294,7 @@ func TestShouldVerifyTimeoutMessageForFirstV2Block(t *testing.T) {
 }
 
 func TestShouldVerifyTimeoutMessage(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 2251, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
@@ -303,6 +315,7 @@ func TestShouldVerifyTimeoutMessage(t *testing.T) {
 }
 
 func TestTimeoutPoolKeyGoodHygiene(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	blockchain, _, _, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
@@ -350,10 +363,8 @@ func TestTimeoutPoolKeyGoodHygiene(t *testing.T) {
 	engineV2.SetNewRoundFaker(blockchain, types.Round(17), false)
 	engineV2.TimeoutHandler(blockchain, timeoutMsg)
 
-	// Let's keep good Hygiene
+	// The hygiene pass is synchronous, so the pool is already clean.
 	engineV2.HygieneTimeoutPoolFaker()
-	// Let's wait for 5 second for the goroutine
-	<-time.After(5 * time.Second)
 	keyList := engineV2.GetTimeoutPoolKeyListFaker()
 
 	assert.Equal(t, 2, len(keyList))
@@ -367,6 +378,7 @@ func TestTimeoutPoolKeyGoodHygiene(t *testing.T) {
 }
 
 func TestGetTCEpochInfo(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	// First epoch, round 1, switch block 901
 	// Second epoch, round 901, block 1800
