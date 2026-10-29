@@ -766,7 +766,20 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 			log.Warn("Propagated block import failed", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
 			return
 		}
-
+		// A nil import error does not mean the block is in the chain: the inserter
+		// discards it while fast syncing and parks a batch tail in the future queue.
+		// Signing or voting on it corrupts consensus state; relaying is safe.
+		if f.getBlock(block.Hash()) == nil {
+			log.Debug("Propagated block was not imported, skipping signature", "peer", peer, "number", block.Number(), "hash", hash)
+			if isM2 {
+				blockBroadcastOutTimer.UpdateSince(block.ReceivedAt)
+				go f.broadcastBlock(block, true)
+			} else {
+				blockAnnounceOutTimer.UpdateSince(block.ReceivedAt)
+				go f.broadcastBlock(block, false)
+			}
+			return
+		}
 		if f.signHook != nil {
 			if err := f.signHook(block); err != nil {
 				log.Error("Can't sign the imported block", "err", err)

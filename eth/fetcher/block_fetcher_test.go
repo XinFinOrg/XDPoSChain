@@ -940,3 +940,93 @@ func TestBlockMemoryExhaustionAttack(t *testing.T) {
 	}
 	verifyImportDone(t, imported)
 }
+
+func TestUnimportedBlockSkipsConsensusHandling(t *testing.T) {
+	block := types.NewBlockWithHeader(&types.Header{
+		ParentHash: genesis.Hash(),
+		Number:     common.Big1,
+		Difficulty: common.Big1,
+		GasLimit:   params.GenesisGasLimit,
+	}).WithBody(types.Body{})
+
+	tester := newTester()
+	testSkipConsensusHandlingForUnimportedBlock(t, tester, block)
+
+	tester = newTester()
+	defer tester.fetcher.Stop() // the second tester is stopped nowhere else
+	testConsensusHandlingForImportedBlock(t, tester, block)
+}
+
+// testSkipConsensusHandlingForUnimportedBlock asserts that neither hook runs for an unimported block.
+func testSkipConsensusHandlingForUnimportedBlock(t *testing.T, tester *fetcherTester, block *types.Block) {
+	stop := sync.OnceFunc(tester.fetcher.Stop)
+	defer stop()
+
+	imported := make(chan *types.Block, 1)
+	tester.fetcher.insertBlock = func(block *types.Block) error {
+		imported <- block
+		return nil
+	}
+	signed := make(chan *types.Block, 1)
+	tester.fetcher.signHook = func(block *types.Block) error {
+		signed <- block
+		return nil
+	}
+	proposed := make(chan *types.Header, 1)
+	tester.fetcher.handleProposedBlock = func(header *types.Header) error {
+		proposed <- header
+		return nil
+	}
+	tester.fetcher.Enqueue("test", block)
+
+	select {
+	case <-imported:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("import of the unimported block never finished")
+	}
+	// Stop the fetcher before the negative assertions: nothing can sign or
+	// vote after that, so the checks need no long (and jitter-prone) window.
+	stop()
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran for unimported block %v", b.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+	select {
+	case header := <-proposed:
+		t.Fatalf("consensus handler ran for unimported block %v", header.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// testConsensusHandlingForImportedBlock asserts both hooks run for an imported block.
+func testConsensusHandlingForImportedBlock(t *testing.T, tester *fetcherTester, block *types.Block) {
+	signed := make(chan *types.Block, 1)
+	tester.fetcher.signHook = func(block *types.Block) error {
+		signed <- block
+		return nil
+	}
+	proposed := make(chan *types.Header, 1)
+	tester.fetcher.handleProposedBlock = func(header *types.Header) error {
+		proposed <- header
+		return nil
+	}
+	tester.fetcher.Enqueue("test", block)
+
+	select {
+	case b := <-signed:
+		if b.Hash() != block.Hash() {
+			t.Fatalf("sign hook ran for block %v, want %v", b.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("sign hook never ran for the imported block")
+	}
+	select {
+	case header := <-proposed:
+		if header.Hash() != block.Hash() {
+			t.Fatalf("consensus handler ran for block %v, want %v", header.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("consensus handler never ran for the imported block")
+	}
+}
