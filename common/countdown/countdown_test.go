@@ -5,15 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/stretchr/testify/assert"
 )
-
-func skipLongInShortMode(t *testing.T) {
-	t.Helper()
-	if testing.Short() {
-		t.Skip("skipping long-running test in -short mode")
-	}
-}
 
 func TestCountdownWillCallback(t *testing.T) {
 	var fakeI interface{}
@@ -32,7 +26,7 @@ func TestCountdownWillCallback(t *testing.T) {
 }
 
 func TestCountdownShouldReset(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 
 	var fakeI interface{}
 	called := make(chan int)
@@ -85,7 +79,7 @@ firstReset:
 }
 
 func TestCountdownShouldResetEvenIfErrored(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 
 	var fakeI interface{}
 	called := make(chan int)
@@ -138,7 +132,7 @@ firstReset:
 }
 
 func TestCountdownShouldBeAbleToStop(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 
 	var fakeI interface{}
 	called := make(chan int)
@@ -163,7 +157,7 @@ func TestCountdownShouldBeAbleToStop(t *testing.T) {
 }
 
 func TestCountdownShouldAvoidDeadlock(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 
 	var fakeI interface{}
 	called := make(chan int)

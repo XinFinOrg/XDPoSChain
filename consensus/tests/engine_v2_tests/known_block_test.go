@@ -6,6 +6,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/stretchr/testify/assert"
 )
@@ -15,7 +16,7 @@ import (
 // the known-block path must move the head forward and rewrite the snapshot.
 func TestInsertChainKnownGapBlockRefreshesSnapshot(t *testing.T) {
 	t.Parallel()
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	config := params.TestXDPoSMockChainConfig
 	gapNumber := config.XDPoS.V2.SwitchBlock.Uint64() + config.XDPoS.Epoch - config.XDPoS.Gap // 1350
 	// The helper deliberately mis-signs every block whose round%5 == 3 (see

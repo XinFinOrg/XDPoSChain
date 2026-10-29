@@ -11,6 +11,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind/backends"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/stretchr/testify/assert"
@@ -22,7 +23,7 @@ const messageTimeout = 10 * time.Second
 
 func TestCountdownTimeoutToSendTimeoutMessage(t *testing.T) {
 	t.Parallel()
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 901, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -36,7 +37,7 @@ func TestCountdownTimeoutToSendTimeoutMessage(t *testing.T) {
 
 func TestCountdownTimeoutNotToSendTimeoutMessageIfNotInMasternodeList(t *testing.T) {
 	t.Parallel()
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 901, params.TestXDPoSMockChainConfig, nil)
 
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
@@ -60,7 +61,7 @@ func TestCountdownTimeoutNotToSendTimeoutMessageIfNotInMasternodeList(t *testing
 
 func TestSyncInfoAfterReachTimeoutSyncThreadhold(t *testing.T) {
 	// Not parallel: it counts messages over consecutive countdown periods.
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 901, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 	engineV2.SetNewRoundFaker(blockchain, 1, true)
@@ -100,7 +101,7 @@ func TestSyncInfoAfterReachTimeoutSyncThreadhold(t *testing.T) {
 
 func TestTimeoutPeriodAndThreadholdConfigChange(t *testing.T) {
 	// Not parallel: it counts messages over consecutive countdown periods.
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 1799, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 	// engineV2.SetNewRoundFaker(blockchain, 1, true)
@@ -165,7 +166,7 @@ func TestTimeoutPeriodAndThreadholdConfigChange(t *testing.T) {
 // Timeout handler
 func TestTimeoutMessageHandlerSuccessfullyGenerateTCandSyncInfoAfterReachingThreshold(t *testing.T) {
 	t.Parallel()
-	// skipLongInShortMode(t)
+	// testshort.Skip(t)
 	blockchain, _, _, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -307,7 +308,7 @@ func TestShouldVerifyTimeoutMessageForFirstV2Block(t *testing.T) {
 
 func TestShouldVerifyTimeoutMessage(t *testing.T) {
 	t.Parallel()
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 2251, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -328,7 +329,7 @@ func TestShouldVerifyTimeoutMessage(t *testing.T) {
 
 func TestTimeoutPoolKeyGoodHygiene(t *testing.T) {
 	t.Parallel()
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	blockchain, _, _, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -391,7 +392,7 @@ func TestTimeoutPoolKeyGoodHygiene(t *testing.T) {
 
 func TestGetTCEpochInfo(t *testing.T) {
 	t.Parallel()
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	// First epoch, round 1, switch block 901
 	// Second epoch, round 901, block 1800
 	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 1805, params.TestXDPoSMockChainConfig, nil)

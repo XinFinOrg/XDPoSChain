@@ -10,6 +10,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/hooks"
 	"github.com/XinFinOrg/XDPoSChain/eth/util"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/stretchr/testify/assert"
 )
@@ -17,7 +18,7 @@ import (
 // TestHookRewardV2 tests hook reward v 2.
 func TestHookRewardV2(t *testing.T) {
 	t.Parallel()
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	configString := string(b)
@@ -101,7 +102,7 @@ func TestHookRewardV2(t *testing.T) {
 // TestHookRewardV2SplitReward tests hook reward v 2 split reward.
 func TestHookRewardV2SplitReward(t *testing.T) {
 	t.Parallel()
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	configString := string(b)
@@ -174,7 +175,7 @@ func TestHookRewardV2SplitReward(t *testing.T) {
 // TestHookRewardAfterUpgrade tests hook reward after upgrade.
 func TestHookRewardAfterUpgrade(t *testing.T) {
 	t.Parallel()
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	configString := string(b)
@@ -274,7 +275,7 @@ func TestHookRewardAfterUpgrade(t *testing.T) {
 // TestFinalizeAfterUpgrade tests finalize after upgrade.
 func TestFinalizeAfterUpgrade(t *testing.T) {
 	t.Parallel()
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	configString := string(b)
@@ -343,7 +344,7 @@ func TestFinalizeAfterUpgrade(t *testing.T) {
 
 // TestRewardHalvingVanishing tests reward halving vanishing.
 func TestRewardHalvingVanishing(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	billion := big.NewInt(1000000000)
 	epochRewardTotal := big.NewInt(16000)
 	epochRewardTotal.Mul(epochRewardTotal, billion)

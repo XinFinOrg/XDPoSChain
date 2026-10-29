@@ -24,13 +24,14 @@ import (
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/p2p/discover/v4wire"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enr"
 )
 
 func TestUDPv4_Lookup(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	test := newUDPTest(t)
@@ -67,7 +68,7 @@ func TestUDPv4_Lookup(t *testing.T) {
 }
 
 func TestUDPv4_LookupIterator(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	test := newUDPTest(t)
