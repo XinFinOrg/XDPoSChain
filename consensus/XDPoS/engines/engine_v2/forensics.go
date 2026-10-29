@@ -2,6 +2,7 @@ package engine_v2
 
 import (
 	"errors"
+	"sync"
 
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
@@ -15,6 +16,8 @@ const (
 
 // Forensics instance. Placeholder for future properties to be added
 type Forensics struct {
+	mu sync.Mutex
+	// HighestCommittedQCs is written from a commitBlocks goroutine; read it via GetCommittedQCs.
 	HighestCommittedQCs []types.QuorumCert
 }
 
@@ -29,6 +32,8 @@ func (f *Forensics) ForensicsMonitoring(chain consensus.ChainReader, engine *XDP
 }
 
 // Set the forensics committed QCs list. The order is from grandparent to current header. i.e it shall follow the QC in its header as follow [hcqc1, hcqc2, hcqc3]
+//
+// mu serializes concurrent commits; the last writer wins, which need not be the most recent commit.
 func (f *Forensics) SetCommittedQCs(headers []types.Header, incomingQC types.QuorumCert) error {
 	// highestCommitQCs is an array, assign the parentBlockQc and its child as well as its grandchild QC into this array for forensics purposes.
 	if len(headers) != NUM_OF_FORENSICS_QC-1 {
@@ -59,8 +64,19 @@ func (f *Forensics) SetCommittedQCs(headers []types.Header, incomingQC types.Quo
 
 		committedQCs = append(committedQCs, *decodedExtraField.QuorumCert)
 	}
+	f.mu.Lock()
 	f.HighestCommittedQCs = append(committedQCs, incomingQC)
+	f.mu.Unlock()
 	return nil
+}
+
+// GetCommittedQCs returns a shallow copy of the recorded QCs under mu. The
+// QuorumCert values are copied; ProposedBlockInfo and Signatures still alias
+// the record, so callers must not mutate them.
+func (f *Forensics) GetCommittedQCs() []types.QuorumCert {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]types.QuorumCert(nil), f.HighestCommittedQCs...)
 }
 
 // ProcessForensics is the entry point for processing forensics, triggered
