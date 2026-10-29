@@ -102,7 +102,6 @@ func TestHookRewardV2(t *testing.T) {
 // TestHookRewardV2SplitReward tests hook reward v 2 split reward.
 func TestHookRewardV2SplitReward(t *testing.T) {
 	t.Parallel()
-	testshort.Skip(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	configString := string(b)
@@ -175,7 +174,6 @@ func TestHookRewardV2SplitReward(t *testing.T) {
 // TestHookRewardAfterUpgrade tests hook reward after upgrade.
 func TestHookRewardAfterUpgrade(t *testing.T) {
 	t.Parallel()
-	testshort.Skip(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	configString := string(b)
@@ -275,7 +273,6 @@ func TestHookRewardAfterUpgrade(t *testing.T) {
 // TestFinalizeAfterUpgrade tests finalize after upgrade.
 func TestFinalizeAfterUpgrade(t *testing.T) {
 	t.Parallel()
-	testshort.Skip(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	configString := string(b)

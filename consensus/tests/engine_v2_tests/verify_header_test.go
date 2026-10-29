@@ -284,7 +284,6 @@ func TestConfigSwitchOnDifferentCertThreshold(t *testing.T) {
 // TestConfigSwitchOnDifferentMasternodeCount tests config switch on different masternode count.
 func TestConfigSwitchOnDifferentMasternodeCount(t *testing.T) {
 	t.Parallel()
-	testshort.Skip(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	configString := string(b)
@@ -518,7 +517,6 @@ func TestShouldVerifyHeadersEvenIfParentsNotYetWrittenIntoDB(t *testing.T) {
 // TestShouldVerifyMixedHeadersWhenParentLookupByHashIsMasked tests should verify mixed headers when parent lookup by hash is masked.
 func TestShouldVerifyMixedHeadersWhenParentLookupByHashIsMasked(t *testing.T) {
 	t.Parallel()
-	testshort.Skip(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 
@@ -556,7 +554,6 @@ func TestShouldVerifyMixedHeadersWhenParentLookupByHashIsMasked(t *testing.T) {
 // TestShouldVerifyPureV2EpochSwitchHeadersEvenIfParentNotYetWrittenIntoDB tests should verify pure v 2 epoch switch headers even if parent not yet written into db.
 func TestShouldVerifyPureV2EpochSwitchHeadersEvenIfParentNotYetWrittenIntoDB(t *testing.T) {
 	t.Parallel()
-	testshort.Skip(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 
@@ -627,7 +624,6 @@ func TestShouldVerifyPureV2EpochSwitchHeadersEvenIfParentNotYetWrittenIntoDB(t *
 // TestVerifyHeadersDoesNotFabricateBatchBlocksForHookPenalty tests verify headers does not fabricate batch blocks for hook penalty.
 func TestVerifyHeadersDoesNotFabricateBatchBlocksForHookPenalty(t *testing.T) {
 	t.Parallel()
-	testshort.Skip(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 
@@ -709,7 +705,6 @@ func TestVerifyHeadersDoesNotFabricateBatchBlocksForHookPenalty(t *testing.T) {
 // delivery as an invalid chain, which makes the downloader drop the peer.
 func TestFutureTimestampCheckPrecedesParentLookup(t *testing.T) {
 	t.Parallel()
-	testshort.Skip(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	configString := string(b)

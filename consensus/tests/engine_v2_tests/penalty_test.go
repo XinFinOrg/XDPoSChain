@@ -18,7 +18,6 @@ import (
 // TestHookPenaltyV2Mining tests hook penalty v 2 mining.
 func TestHookPenaltyV2Mining(t *testing.T) {
 	t.Parallel()
-	testshort.Skip(t)
 	config := params.TestXDPoSMockChainConfig
 	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, int(config.XDPoS.Epoch)*3, config, nil)
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
@@ -73,7 +72,6 @@ func TestHookPenaltyV2Mining(t *testing.T) {
 // TestHookPenaltyV2Comeback tests hook penalty v 2 comeback.
 func TestHookPenaltyV2Comeback(t *testing.T) {
 	t.Parallel()
-	testshort.Skip(t)
 	config := params.TestXDPoSMockChainConfig
 	blockchain, _, _, signer, signFn := PrepareXDCTestBlockChainWithPenaltyForV2Engine(t, int(config.XDPoS.Epoch)*3, config)
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
@@ -106,7 +104,6 @@ func TestHookPenaltyV2Comeback(t *testing.T) {
 // TestHookPenaltyV2Jump tests hook penalty v 2 jump.
 func TestHookPenaltyV2Jump(t *testing.T) {
 	t.Parallel()
-	testshort.Skip(t)
 	config := params.TestXDPoSMockChainConfig
 	end := int(config.XDPoS.Epoch)*3 - common.MergeSignRange
 	blockchain, _, _, _, _ := PrepareXDCTestBlockChainWithPenaltyForV2Engine(t, int(config.XDPoS.Epoch)*3, config)
@@ -132,7 +129,6 @@ func TestHookPenaltyV2Jump(t *testing.T) {
 // Test calculate penalty under startRange blocks, currently is 150
 func TestHookPenaltyV2LessThen150Blocks(t *testing.T) {
 	t.Parallel()
-	testshort.Skip(t)
 	config := params.TestXDPoSMockChainConfig
 	blockchain, _, _, _, _ := PrepareXDCTestBlockChainWithPenaltyForV2Engine(t, int(config.XDPoS.Epoch)*3, config)
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
@@ -157,7 +153,6 @@ func TestHookPenaltyV2LessThen150Blocks(t *testing.T) {
 // TestGetPenalties tests get penalties.
 func TestGetPenalties(t *testing.T) {
 	t.Parallel()
-	testshort.Skip(t)
 	config := params.TestXDPoSMockChainConfig
 	blockchain, _, _, _, _ := PrepareXDCTestBlockChainWithPenaltyForV2Engine(t, int(config.XDPoS.Epoch)*3, config)
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
