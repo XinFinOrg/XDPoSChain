@@ -1407,6 +1407,71 @@ func TestParkedSignatureSkippedWhileSyncing(t *testing.T) {
 	}
 }
 
+func TestStoredBlockSignatureRespectsSnapSync(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		syncing bool
+		want    int32
+	}{
+		{"syncing", true, 0},
+		{"synced", false, 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			block := newParkedTestBlock(0x19)
+
+			tester := newTester()
+			defer tester.fetcher.Stop()
+			tester.syncing.Store(tt.syncing)
+
+			tester.fetcher.insertBlock = func(b *types.Block) error {
+				_, err := tester.insertChain(types.Blocks{b})
+				return err
+			}
+			var signs int32
+			signed := make(chan *types.Block, 1)
+			tester.fetcher.signHook = func(b *types.Block) error {
+				atomic.AddInt32(&signs, 1)
+				select {
+				case signed <- b:
+				default:
+				}
+				return nil
+			}
+			proposed := make(chan struct{}, 1)
+			tester.fetcher.handleProposedBlock = func(*types.Header) error {
+				proposed <- struct{}{}
+				return nil
+			}
+			tester.fetcher.Enqueue("test", block)
+
+			select {
+			case <-proposed:
+			case <-time.After(5 * time.Second):
+				t.Fatalf("delivery never finished")
+			}
+			if n := atomic.LoadInt32(&signs); n != tt.want {
+				t.Fatalf("sign hook ran %d times while syncing=%v, want %d", n, tt.syncing, tt.want)
+			}
+			if tt.want == 0 {
+				select {
+				case b := <-signed:
+					t.Fatalf("sign hook ran for block %v while syncing", b.Hash())
+				default:
+				}
+				return
+			}
+			select {
+			case b := <-signed:
+				if b.Hash() != block.Hash() {
+					t.Fatalf("sign hook ran for block %v, want %v", b.Hash(), block.Hash())
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatalf("sign hook never ran after sync")
+			}
+		})
+	}
+}
+
 func TestParkedSignatureWithoutSignHook(t *testing.T) {
 	block := newParkedTestBlock(0x01)
 
@@ -2990,6 +3055,48 @@ func TestRefusedClaimParksEntrylessClaim(t *testing.T) {
 	}
 	if n := signingCount(tester.fetcher); n != 0 {
 		t.Fatalf("in-flight signature count = %d, want 0", n)
+	}
+}
+
+func TestStoredBlockSignatureRespectsSnapSyncAfterClaim(t *testing.T) {
+	block := newParkedTestBlock(0x25)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+	adoptCanonical(t, tester, block)
+	tester.fetcher.insertBlock = func(*types.Block) error { return nil }
+
+	var signs int32
+	tester.fetcher.signHook = func(*types.Block) error {
+		atomic.AddInt32(&signs, 1)
+		return nil
+	}
+	// The claim-time gate sees a synced node; the re-check sees the sync starting.
+	var syncCalls int32
+	tester.fetcher.syncing = func() bool {
+		return atomic.AddInt32(&syncCalls, 1) > 1
+	}
+	proposed := make(chan struct{}, 1)
+	tester.fetcher.handleProposedBlock = func(*types.Header) error {
+		proposed <- struct{}{}
+		return nil
+	}
+	tester.fetcher.insert("test", block)
+
+	select {
+	case <-proposed:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("delivery of the deferred-signature block never finished")
+	}
+	if n := atomic.LoadInt32(&signs); n != 0 {
+		t.Fatalf("sign hook ran %d times for a block whose claim overlapped snap sync, want 0", n)
+	}
+	if n := signingCount(tester.fetcher); n != 0 {
+		t.Fatalf("in-flight signature count = %d after the deferred signature, want 0", n)
 	}
 }
 

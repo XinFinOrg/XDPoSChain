@@ -821,9 +821,9 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 			f.relayBlock(block, isM2)
 			return
 		}
-		// The signature spends a transaction, so the block must be canonical and
-		// fresh. This gate must not return on a refusal.
-		if f.signHook != nil {
+		// The signature spends a transaction, so the block must be canonical, fresh
+		// and not snap syncing. This gate must not return on a refusal.
+		if f.signHook != nil && !f.syncing() {
 			switch f.signatureVerdictOf(block) {
 			case signNow:
 				// The parked set may already own it; signing on both paths spends two transactions.
@@ -832,8 +832,13 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 					log.Debug("Imported block's signature is already in flight or its parked entry expired", "peer", peer, "number", block.Number(), "hash", hash)
 					break
 				}
-				// Taking the claim can wait behind a scan, and a reorg can land in that
-				// window: re-check before signing. A refused block keeps its entry.
+				// Taking the claim can wait behind a scan, and a reorg or snap sync can land
+				// in that window: re-check before signing. A refused block keeps its entry.
+				if f.syncing() {
+					log.Debug("Imported block's signature deferred: snap sync started while its claim was taken", "peer", peer, "number", block.Number(), "hash", hash)
+					f.resolveParked(block.Hash(), false)
+					break
+				}
 				switch f.signatureVerdictOf(block) {
 				case signNow:
 					err := f.signBlock(block)
