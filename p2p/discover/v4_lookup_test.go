@@ -105,6 +105,7 @@ func TestUDPv4_LookupIterator(t *testing.T) {
 // TestUDPv4_LookupIteratorClose checks that lookupIterator ends when its Close
 // method is called.
 func TestUDPv4_LookupIteratorClose(t *testing.T) {
+	testshort.Skip(t)
 	t.Parallel()
 	test := newUDPTest(t)
 	defer test.close()

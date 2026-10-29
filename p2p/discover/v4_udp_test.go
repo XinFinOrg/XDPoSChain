@@ -140,6 +140,7 @@ func (test *udpTest) waitPacketOut(validate interface{}) (closed bool) {
 }
 
 func TestUDPv4_packetErrors(t *testing.T) {
+	testshort.Skip(t)
 	test := newUDPTest(t)
 	defer test.close()
 
@@ -150,6 +151,7 @@ func TestUDPv4_packetErrors(t *testing.T) {
 }
 
 func TestUDP_pingPacketRejected(t *testing.T) {
+	testshort.Skip(t)
 	test := newUDPTest(t)
 	defer test.close()
 
@@ -329,6 +331,7 @@ func TestUDPv4_findnodeTimeout(t *testing.T) {
 }
 
 func TestUDPv4_findnode(t *testing.T) {
+	testshort.Skip(t)
 	test := newUDPTest(t)
 	defer test.close()
 
@@ -442,6 +445,7 @@ func TestUDPv4_findnodeMultiReply(t *testing.T) {
 
 // This test checks that reply matching of pong verifies the ping hash.
 func TestUDPv4_pingMatch(t *testing.T) {
+	testshort.Skip(t)
 	test := newUDPTest(t)
 	defer test.close()
 
@@ -456,6 +460,7 @@ func TestUDPv4_pingMatch(t *testing.T) {
 
 // This test checks that reply matching of pong verifies the sender IP address.
 func TestUDPv4_pingMatchIP(t *testing.T) {
+	testshort.Skip(t)
 	test := newUDPTest(t)
 	defer test.close()
 
@@ -473,6 +478,7 @@ func TestUDPv4_pingMatchIP(t *testing.T) {
 }
 
 func TestUDPv4_successfulPing(t *testing.T) {
+	testshort.Skip(t)
 	test := newUDPTest(t)
 	added := make(chan *node, 1)
 	test.table.nodeAddedHook = func(n *node) { added <- n }

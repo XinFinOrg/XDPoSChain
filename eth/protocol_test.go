@@ -34,6 +34,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/event"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -325,8 +326,11 @@ func testSendTransactions(t *testing.T, protocol int) {
 	wg.Wait()
 }
 
-func TestTransactionPropagation(t *testing.T)  { testSyncTransaction(t, true) }
-func TestTransactionAnnouncement(t *testing.T) { testSyncTransaction(t, false) }
+func TestTransactionPropagation(t *testing.T) { testSyncTransaction(t, true) }
+func TestTransactionAnnouncement(t *testing.T) {
+	testshort.Skip(t)
+	testSyncTransaction(t, false)
+}
 
 func testSyncTransaction(t *testing.T, propagation bool) {
 	// Create a handler for transaction fetcher and sender
