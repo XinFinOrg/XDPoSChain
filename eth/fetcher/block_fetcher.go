@@ -20,6 +20,7 @@ package fetcher
 import (
 	"errors"
 	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -45,6 +46,13 @@ const (
 	blockLimit   = 64  // Maximum number of unique blocks a peer may have delivered
 )
 
+const (
+	parkedImportTimeout      = 90 * time.Second
+	parkedImportPollInterval = 100 * time.Millisecond // same cadence as futureBlocksLoop's ticker in core/blockchain.go
+
+	maxParkedSignatures = 64
+)
+
 // IsPlausibleAnnouncement reports whether a block announcement at the given
 // number is within the fetcher's plausibility window of the current chain
 // height. Untrusted announced numbers must be gated on this check before being
@@ -58,6 +66,10 @@ func IsPlausibleAnnouncement(number, height uint64) bool {
 		return height <= number+maxUncleDist
 	}
 	return number <= height+maxQueueDist
+}
+
+func belowUncleDist(number, height uint64) bool {
+	return number+maxUncleDist < height
 }
 
 var (
@@ -78,6 +90,11 @@ var (
 	headerFilterOutMeter = metrics.NewRegisteredMeter("eth/fetcher/block/filter/headers/out", nil)
 	bodyFilterInMeter    = metrics.NewRegisteredMeter("eth/fetcher/block/filter/bodies/in", nil)
 	bodyFilterOutMeter   = metrics.NewRegisteredMeter("eth/fetcher/block/filter/bodies/out", nil)
+
+	blockParkedRefusedMeter  = metrics.NewRegisteredMeter("eth/fetcher/block/parked/refused", nil)
+	blockParkedStaleMeter    = metrics.NewRegisteredMeter("eth/fetcher/block/parked/stale", nil)
+	blockParkedDeadlineMeter = metrics.NewRegisteredMeter("eth/fetcher/block/parked/deadline", nil)
+	blockParkedFullMeter     = metrics.NewRegisteredMeter("eth/fetcher/block/parked/full", nil)
 )
 
 var (
@@ -134,7 +151,7 @@ type headerFilterTask struct {
 	time    time.Time       // Arrival time of the headers
 }
 
-// headerFilterTask represents a batch of block bodies (transactions and uncles)
+// bodyFilterTask represents a batch of block bodies (transactions and uncles)
 // needing fetcher filtering.
 type bodyFilterTask struct {
 	peer         string                 // The source peer of block bodies
@@ -147,6 +164,17 @@ type bodyFilterTask struct {
 type blockInject struct {
 	origin string
 	block  *types.Block
+}
+
+type parkedBlock struct {
+	block    *types.Block
+	deadline time.Time
+	claimed  bool // a caller (scan or delivery) owns the entry and is creating its signature
+}
+
+type readySignature struct {
+	block    *types.Block
+	deadline time.Time
 }
 
 // BlockFetcher is responsible for accumulating block announcements from various peers
@@ -175,15 +203,25 @@ type BlockFetcher struct {
 	queued map[common.Hash]*blockInject      // Set of already queued blocks (to dedup imports)
 	knowns *lru.Cache[common.Hash, struct{}]
 
+	parkedMu      sync.Mutex
+	parked        map[common.Hash]*parkedBlock
+	signing       map[common.Hash]struct{} // signature hooks currently running; a hash with no entry is recorded too, and the marker outlives a parked entry evicted at its deadline (guarded by parkedMu)
+	signingBatch  bool                     // a waiter-dispatched signing batch is running (guarded by parkedMu)
+	parkedWaiter  bool                     // waitParkedSignatures is running (guarded by parkedMu)
+	parkedTimeout time.Duration            // bound per parked block; a field so tests can shrink it before anything is parked (read under parkedMu; tests write it before the first park, where no reader can race)
+
 	// Callbacks
 	getBlock            blockRetrievalFn      // Retrieves a block from the local chain
 	verifyHeader        headerVerifierFn      // Checks if a block's headers have a valid proof of work
-	handleProposedBlock proposeBlockHandlerFn // Consensus v2 specific: Hanle new proposed block
+	handleProposedBlock proposeBlockHandlerFn // Consensus v2 specific: Handle new proposed block
 	broadcastBlock      blockBroadcasterFn    // Broadcasts a block to connected peers
 	chainHeight         chainHeightFn         // Retrieves the current chain's height
 	insertBlock         blockInsertFn         // Injects a batch of blocks into the chain
 	prepareBlock        blockPrepareFn
 	dropPeer            peerDropFn // Drops a peer for misbehaving
+
+	canonicalHash func(number uint64) common.Hash // Returns the canonical hash at a height, or the zero hash
+	syncing       func() bool                     // Reports whether the node is still snap syncing
 
 	// Testing hooks
 	announceChangeHook func(common.Hash, bool) // Method to call upon adding or deleting a hash from the blockAnnounce list
@@ -195,7 +233,7 @@ type BlockFetcher struct {
 }
 
 // NewBlockFetcher creates a block fetcher to retrieve blocks based on hash announcements.
-func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, handleProposedBlock proposeBlockHandlerFn, broadcastBlock blockBroadcasterFn, chainHeight chainHeightFn, insertBlock blockInsertFn, prepareBlock blockPrepareFn, dropPeer peerDropFn) *BlockFetcher {
+func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, handleProposedBlock proposeBlockHandlerFn, broadcastBlock blockBroadcasterFn, chainHeight chainHeightFn, insertBlock blockInsertFn, prepareBlock blockPrepareFn, dropPeer peerDropFn, canonicalHash func(number uint64) common.Hash, syncing func() bool) *BlockFetcher {
 	return &BlockFetcher{
 		notify:              make(chan *blockAnnounce),
 		inject:              make(chan *blockInject),
@@ -212,6 +250,11 @@ func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, h
 		queues:              make(map[string]int),
 		queued:              make(map[common.Hash]*blockInject),
 		knowns:              lru.NewCache[common.Hash, struct{}](blockLimit),
+		parked:              make(map[common.Hash]*parkedBlock),
+		signing:             make(map[common.Hash]struct{}),
+		parkedTimeout:       parkedImportTimeout,
+		canonicalHash:       canonicalHash,
+		syncing:             syncing,
 		getBlock:            getBlock,
 		verifyHeader:        verifyHeader,
 		handleProposedBlock: handleProposedBlock,
@@ -754,6 +797,8 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 				return
 			}
 			block = newBlock
+			// block is the M2 rewrite: block.Hash() is the on-chain identity, while hash
+			// stays the delivery identity and must not be updated here.
 			goto again
 		default:
 			// Something went very wrong, drop the peer
@@ -766,24 +811,56 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 			log.Warn("Propagated block import failed", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
 			return
 		}
+
 		// A nil import error does not mean the block is in the chain: the inserter
 		// discards it while fast syncing and parks a batch tail in the future queue.
 		// Signing or voting on it corrupts consensus state; relaying is safe.
 		if f.getBlock(block.Hash()) == nil {
-			log.Debug("Propagated block was not imported, skipping signature", "peer", peer, "number", block.Number(), "hash", hash)
-			if isM2 {
-				blockBroadcastOutTimer.UpdateSince(block.ReceivedAt)
-				go f.broadcastBlock(block, true)
-			} else {
-				blockAnnounceOutTimer.UpdateSince(block.ReceivedAt)
-				go f.broadcastBlock(block, false)
-			}
+			log.Debug("Propagated block was not imported, deferring signing", "peer", peer, "number", block.Number(), "hash", hash)
+			f.parkForSignature(block)
+			f.relayBlock(block, isM2)
 			return
 		}
+		// The signature spends a transaction, so the block must be canonical and
+		// fresh. This gate must not return on a refusal.
 		if f.signHook != nil {
-			if err := f.signHook(block); err != nil {
-				log.Error("Can't sign the imported block", "err", err)
-				return
+			switch f.signatureVerdictOf(block) {
+			case signNow:
+				// The parked set may already own it; signing on both paths spends two transactions.
+				ok, tookEntry := f.claimParkedSignature(block.Hash())
+				if !ok {
+					log.Debug("Imported block's signature is already in flight or its parked entry expired", "peer", peer, "number", block.Number(), "hash", hash)
+					break
+				}
+				// Taking the claim can wait behind a scan, and a reorg can land in that
+				// window: re-check before signing. A refused block keeps its entry.
+				switch f.signatureVerdictOf(block) {
+				case signNow:
+					err := f.signBlock(block)
+					f.resolveParked(block.Hash(), true)
+					if err != nil {
+						return
+					}
+				case signNotCanonical:
+					blockParkedRefusedMeter.Mark(1)
+					log.Debug("Imported block stopped being canonical while its signature was claimed, parking it", "peer", peer, "number", block.Number(), "hash", hash)
+					// Release and re-park in one critical section, or a scan in between would let
+					// this park recreate the entry. An entry the claim took over keeps its deadline.
+					f.settleRefusedClaim(block, tookEntry)
+				case signBelowUncleDist:
+					log.Debug("Imported block fell below the uncle distance while its signature was claimed, not signing", "peer", peer, "number", block.Number(), "hash", hash)
+					f.resolveParked(block.Hash(), false)
+				default:
+					f.resolveParked(block.Hash(), false)
+				}
+			case signNotCanonical:
+				blockParkedRefusedMeter.Mark(1)
+				log.Debug("Imported block is not canonical, parking the signature", "peer", peer, "number", block.Number(), "hash", hash)
+				f.parkForSignature(block)
+			case signBelowUncleDist:
+				blockParkedStaleMeter.Mark(1)
+				log.Debug("Imported block fell below the uncle distance, not signing", "peer", peer, "number", block.Number(), "hash", hash)
+				// The head only moves away below the uncle distance, so do not park it.
 			}
 		}
 		err = f.handleProposedBlock(block.Header())
@@ -792,14 +869,340 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 			return
 		}
 		// If import succeeded, broadcast the block
-		if isM2 {
-			blockBroadcastOutTimer.UpdateSince(block.ReceivedAt)
-			go f.broadcastBlock(block, true)
-		} else {
-			blockAnnounceOutTimer.UpdateSince(block.ReceivedAt)
-			go f.broadcastBlock(block, false)
-		}
+		f.relayBlock(block, isM2)
 	}()
+}
+
+func (f *BlockFetcher) relayBlock(block *types.Block, isM2 bool) {
+	if isM2 {
+		blockBroadcastOutTimer.UpdateSince(block.ReceivedAt)
+		go f.broadcastBlock(block, true)
+	} else {
+		blockAnnounceOutTimer.UpdateSince(block.ReceivedAt)
+		go f.broadcastBlock(block, false)
+	}
+}
+
+func (f *BlockFetcher) signBlock(block *types.Block) error {
+	if err := f.signHook(block); err != nil {
+		log.Error("Can't sign the imported block", "err", err)
+		return err
+	}
+	return nil
+}
+
+// parkForSignature parks a block whose signature cannot be created yet; the
+// wait is bounded by parkedImportTimeout and maxParkedSignatures.
+func (f *BlockFetcher) parkForSignature(block *types.Block) {
+	if f.signHook == nil || f.syncing() {
+		return
+	}
+	select {
+	case <-f.quit:
+		return
+	default:
+	}
+	f.parkedMu.Lock()
+	start := f.parkLocked(block)
+	f.parkedMu.Unlock()
+
+	if start {
+		go f.waitParkedSignatures()
+	}
+}
+
+// parkLocked inserts an entry unless one or its in-flight marker is present or
+// the set is full; start tells the caller to start waitParkedSignatures.
+func (f *BlockFetcher) parkLocked(block *types.Block) (start bool) {
+	hash := block.Hash()
+	if _, ok := f.signing[hash]; ok {
+		return false
+	}
+	if _, ok := f.parked[hash]; ok {
+		return false
+	}
+	if len(f.parked) >= maxParkedSignatures {
+		blockParkedFullMeter.Mark(1)
+		// Debug on purpose: a peer can reach this gate repeatedly, so the meter is the signal.
+		log.Debug("Too many blocks parked for signing, dropping signature", "number", block.Number(), "hash", hash)
+		return false
+	}
+	f.parked[hash] = &parkedBlock{block: block, deadline: time.Now().Add(f.parkedTimeout)}
+	start = !f.parkedWaiter
+	f.parkedWaiter = true
+	return start
+}
+
+// settleRefusedClaim settles a refused claim in one critical section: drop the
+// marker and either unclaim or drop the entry, or park an entry-less claim.
+func (f *BlockFetcher) settleRefusedClaim(block *types.Block, tookEntry bool) {
+	hash := block.Hash()
+
+	f.parkedMu.Lock()
+	delete(f.signing, hash)
+	if tookEntry {
+		if parked, ok := f.parked[hash]; ok {
+			if time.Now().After(parked.deadline) {
+				blockParkedDeadlineMeter.Mark(1)
+				log.Debug("Parked block's signature expired while its claim was held, dropping the entry", "number", block.Number(), "hash", hash)
+				delete(f.parked, hash)
+			} else {
+				parked.claimed = false
+			}
+		}
+		f.parkedMu.Unlock()
+		return
+	}
+	if f.signHook == nil || f.syncing() {
+		f.parkedMu.Unlock()
+		return
+	}
+	select {
+	case <-f.quit:
+		f.parkedMu.Unlock()
+		return
+	default:
+	}
+	start := f.parkLocked(block)
+	f.parkedMu.Unlock()
+
+	if start {
+		go f.waitParkedSignatures()
+	}
+}
+
+func (f *BlockFetcher) stopWaiter() {
+	f.parkedMu.Lock()
+	f.parkedWaiter = false
+	f.parkedMu.Unlock()
+}
+
+// waitParkedSignatures drains the parked set on one ticker. It evicts every tick
+// but signs in its own goroutine, so a blocked hook stalls neither eviction nor the set.
+func (f *BlockFetcher) waitParkedSignatures() {
+	ticker := time.NewTicker(parkedImportPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-f.quit:
+			// The parked entries are left for the GC: clearing them would break tests that drive the scan.
+			f.stopWaiter()
+			return
+		case <-ticker.C:
+			// A tick that wins the race against a stop must still check quit before scanning.
+			select {
+			case <-f.quit:
+				f.stopWaiter()
+				return
+			default:
+			}
+			// One batch at a time, so a blocked hook cannot accumulate goroutines and claims.
+			if ready := f.collectSignableParked(!f.signingBatchRunning()); len(ready) > 0 {
+				f.markSigningBatch(true)
+				go f.runSigningBatch(ready)
+			}
+
+			f.parkedMu.Lock()
+			empty := len(f.parked) == 0
+			if empty {
+				f.parkedWaiter = false
+			}
+			f.parkedMu.Unlock()
+			if empty {
+				return
+			}
+		}
+	}
+}
+
+func (f *BlockFetcher) signingBatchRunning() bool {
+	f.parkedMu.Lock()
+	defer f.parkedMu.Unlock()
+	return f.signingBatch
+}
+
+func (f *BlockFetcher) markSigningBatch(running bool) {
+	f.parkedMu.Lock()
+	defer f.parkedMu.Unlock()
+	f.signingBatch = running
+}
+
+func (f *BlockFetcher) runSigningBatch(ready []readySignature) {
+	f.signReadyParked(ready, f.quit)
+	f.markSigningBatch(false)
+}
+
+// scanParkedSignatures signs the parked blocks that became signable and drops the
+// rest at the uncle-distance or deadline bound; a block merely not canonical yet
+// stays parked. The scan claims each entry before signing, so the delivery path
+// cannot sign it too.
+func (f *BlockFetcher) scanParkedSignatures() {
+	f.signReadyParked(f.collectSignableParked(true), nil)
+}
+
+// collectSignableParked evicts at the two bounds and, when claim is true, claims
+// the signable entries.
+func (f *BlockFetcher) collectSignableParked(claim bool) []readySignature {
+	// Signing during snap sync would spend a transaction on a block the inserter
+	// discards. The scan returns before reading the set, so the bounds wait.
+	if f.syncing() {
+		return nil
+	}
+	var ready []readySignature
+
+	// The chain reads below run under parkedMu on purpose: they call only read-only
+	// caches that never call back into the fetcher, so there is no lock inversion.
+	// Reading outside the lock would open an ABA window; the set is capped.
+	f.parkedMu.Lock()
+	for hash, parked := range f.parked {
+		// A previous pass claimed the entry and is about to sign it. An entry past its
+		// deadline is dropped here so a blocked hook cannot pin the slot forever.
+		if parked.claimed {
+			if time.Now().After(parked.deadline) {
+				blockParkedDeadlineMeter.Mark(1)
+				log.Warn("Parked block's signature did not finish before its deadline, dropping the entry", "number", parked.block.Number(), "hash", hash)
+				// Keep the signing marker until the owner settles, so a re-delivery cannot sign.
+				delete(f.parked, hash)
+			}
+			continue
+		}
+		// Bounds are checked before readiness: an entry past its deadline is dropped even
+		// if the block just became signable.
+		if belowUncleDist(parked.block.NumberU64(), f.chainHeight()) {
+			blockParkedStaleMeter.Mark(1)
+			log.Debug("Parked block fell below the uncle distance, dropping signature", "number", parked.block.Number(), "hash", hash)
+			delete(f.parked, hash)
+			continue
+		}
+		if time.Now().After(parked.deadline) {
+			blockParkedDeadlineMeter.Mark(1)
+			if f.getBlock(hash) != nil {
+				log.Debug("Parked block was stored but never became signable, dropping its signature", "number", parked.block.Number(), "hash", hash)
+			} else {
+				log.Warn("Block was not imported in time, dropping its signature", "number", parked.block.Number(), "hash", hash)
+			}
+			delete(f.parked, hash)
+			continue
+		}
+		if block := f.getBlock(hash); block != nil && f.canSign(block) {
+			// Not reachable today, kept as a guard: a second signature would cost a transaction.
+			if _, ok := f.signing[hash]; ok {
+				continue
+			}
+			if !claim {
+				continue
+			}
+			parked.claimed = true
+			f.signing[hash] = struct{}{}
+			ready = append(ready, readySignature{block: block, deadline: parked.deadline})
+		}
+	}
+	f.parkedMu.Unlock()
+
+	return ready
+}
+
+// signReadyParked signs every collected block and settles its claim. Each block is
+// re-checked against its parked deadline, so a slow hook does not sign the ones behind it.
+func (f *BlockFetcher) signReadyParked(ready []readySignature, stop <-chan struct{}) {
+	for i, sig := range ready {
+		select {
+		case <-stop:
+			for _, rest := range ready[i:] {
+				f.resolveParked(rest.block.Hash(), false)
+			}
+			return
+		default:
+		}
+		// The deadline is an upper bound on the wait: an earlier hook can outlive this
+		// block's, so only release the claim and let the waiter count the eviction.
+		if time.Now().After(sig.deadline) {
+			log.Debug("Parked block's deadline passed before its signature started, dropping it", "number", sig.block.Number(), "hash", sig.block.Hash())
+			f.resolveParked(sig.block.Hash(), false)
+			continue
+		}
+		// Re-check both gates: a reorg or a snap sync can land after the collect.
+		if f.syncing() || !f.canSign(sig.block) {
+			log.Debug("Parked block is no longer signable, releasing it", "number", sig.block.Number(), "hash", sig.block.Hash())
+			f.resolveParked(sig.block.Hash(), false)
+			continue
+		}
+		// A signing failure is logged by signBlock and deliberately not retried here.
+		_ = f.signBlock(sig.block)
+		f.resolveParked(sig.block.Hash(), true)
+	}
+}
+
+// resolveParked settles a claimed signature: an attempt removes the entry, a
+// failed re-check only releases the claim. The in-flight marker always goes.
+func (f *BlockFetcher) resolveParked(hash common.Hash, signed bool) {
+	f.parkedMu.Lock()
+	defer f.parkedMu.Unlock()
+
+	delete(f.signing, hash)
+	parked, ok := f.parked[hash]
+	if !ok {
+		return
+	}
+	if !signed {
+		parked.claimed = false
+		return
+	}
+	delete(f.parked, hash)
+}
+
+// claimParkedSignature takes the parked entry so the scan cannot sign the block
+// too, and reports whether the caller may sign now and whether the claim took an
+// entry over. The claim marks the entry instead of removing it.
+func (f *BlockFetcher) claimParkedSignature(hash common.Hash) (ok bool, tookEntry bool) {
+	f.parkedMu.Lock()
+	defer f.parkedMu.Unlock()
+
+	if _, ok := f.signing[hash]; ok {
+		return false, false
+	}
+	parked, ok := f.parked[hash]
+	if !ok {
+		f.signing[hash] = struct{}{}
+		return true, false
+	}
+	if parked.claimed {
+		return false, false
+	}
+	if time.Now().After(parked.deadline) {
+		blockParkedDeadlineMeter.Mark(1)
+		log.Debug("Parked block's signature expired before delivery claimed it, dropping it", "number", parked.block.Number(), "hash", hash)
+		delete(f.parked, hash)
+		return false, false
+	}
+	parked.claimed = true
+	f.signing[hash] = struct{}{}
+	return true, true
+}
+
+type signatureVerdict int
+
+const (
+	signNow            signatureVerdict = iota // canonical and still fresh
+	signNotCanonical                           // another chain is canonical at this height
+	signBelowUncleDist                         // too far below the head: only a rewind can change it
+)
+
+func (f *BlockFetcher) canSign(block *types.Block) bool {
+	return f.signatureVerdictOf(block) == signNow
+}
+
+// signatureVerdictOf reports whether a stored block is worth a signature, and if
+// not, why. The irreversible bound is tested first, so no reorg can revive a stale block.
+func (f *BlockFetcher) signatureVerdictOf(block *types.Block) signatureVerdict {
+	if belowUncleDist(block.NumberU64(), f.chainHeight()) {
+		return signBelowUncleDist
+	}
+	if f.canonicalHash(block.NumberU64()) != block.Hash() {
+		return signNotCanonical
+	}
+	return signNow
 }
 
 // forgetHash removes all traces of a block announcement from the fetcher's
@@ -858,12 +1261,14 @@ func (f *BlockFetcher) forgetBlock(hash common.Hash) {
 	}
 }
 
-// Bind double validate hook before block imported into chain.
+// SetSignHook wires the XDPoS signature hook. Install it before Start: a block
+// delivered without a hook is not parked, so its signature is never created.
+// nil is valid (non-XDPoS), and the setter is not synchronized.
 func (f *BlockFetcher) SetSignHook(signHook func(*types.Block) error) {
 	f.signHook = signHook
 }
 
-// Bind append m2 to block header hook when imported into chain.
+// SetAppendM2HeaderHook wires the M2 rewrite hook, with SetSignHook's wiring rules.
 func (f *BlockFetcher) SetAppendM2HeaderHook(appendM2HeaderHook func(*types.Block) (*types.Block, bool, error)) {
 	f.appendM2HeaderHook = appendM2HeaderHook
 }

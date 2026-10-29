@@ -256,7 +256,10 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		atomic.StoreUint32(&manager.acceptTxs, 1) // Mark initial sync done on any fetcher import
 		return manager.chain.PrepareBlock(block)
 	}
-	manager.blockFetcher = fetcher.NewBlockFetcher(config.Chain.GetBlockByHash, validator, handleProposedBlock, manager.BroadcastBlock, heighter, inserter, prepare, manager.removePeer)
+	// The fetcher must not sign a block that is not on the canonical chain,
+	// and must not wait for a block the snap-sync inserter discards outright.
+	// Both gates are constructor arguments, so they cannot be forgotten.
+	manager.blockFetcher = fetcher.NewBlockFetcher(config.Chain.GetBlockByHash, validator, handleProposedBlock, manager.BroadcastBlock, heighter, inserter, prepare, manager.removePeer, config.Chain.GetCanonicalHash, func() bool { return atomic.LoadUint32(&manager.snapSync) == 1 })
 
 	fetchTx := func(peer string, hashes []common.Hash) error {
 		p := manager.peers.Peer(peer)

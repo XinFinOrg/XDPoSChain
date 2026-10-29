@@ -28,6 +28,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/trie"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -95,6 +96,8 @@ type fetcherTester struct {
 	blocks map[common.Hash]*types.Block // Blocks belonging to the tester
 	drops  map[string]bool              // Map of peers dropped by the fetcher
 
+	syncing atomic.Bool // Reports snap sync in progress to the fetcher
+
 	lock sync.RWMutex
 }
 
@@ -105,10 +108,22 @@ func newTester() *fetcherTester {
 		blocks: map[common.Hash]*types.Block{genesis.Hash(): genesis},
 		drops:  make(map[string]bool),
 	}
-	tester.fetcher = NewBlockFetcher(tester.getBlock, tester.verifyHeader, tester.handleProposedBlock, tester.broadcastBlock, tester.chainHeight, tester.insertBlock, tester.prepareBlock, tester.dropPeer)
+	tester.fetcher = NewBlockFetcher(tester.getBlock, tester.verifyHeader, tester.handleProposedBlock, tester.broadcastBlock, tester.chainHeight, tester.insertBlock, tester.prepareBlock, tester.dropPeer, tester.canonicalHash, func() bool { return tester.syncing.Load() })
 	tester.fetcher.Start()
 
 	return tester
+}
+
+func (f *fetcherTester) canonicalHash(number uint64) common.Hash {
+	f.lock.RLock()
+	defer f.lock.RUnlock()
+
+	for _, hash := range f.hashes {
+		if block := f.blocks[hash]; block != nil && block.NumberU64() == number {
+			return hash
+		}
+	}
+	return common.Hash{}
 }
 
 // getBlock retrieves a block from the tester's block chain.
@@ -179,6 +194,17 @@ func (f *fetcherTester) insertBlock(block *types.Block) error {
 	f.blocks[block.Hash()] = block
 
 	return nil
+}
+
+func (f *fetcherTester) watchImports(imported chan *types.Block) {
+	insertBlock := f.fetcher.insertBlock
+	f.fetcher.insertBlock = func(block *types.Block) error {
+		err := insertBlock(block)
+		if err == nil {
+			imported <- block
+		}
+		return err
+	}
 }
 
 // insertBlock injects a new blocks into the simulated chain.
@@ -336,12 +362,9 @@ func testSequentialAnnouncements(t *testing.T, protocol int) {
 	headerFetcher := tester.makeHeaderFetcher("valid", blocks, -gatherSlack)
 	bodyFetcher := tester.makeBodyFetcher("valid", blocks, 0)
 
-	// Iteratively announce blocks until all are imported
+	// Iteratively announce blocks until all are imported.
 	imported := make(chan *types.Block)
-	tester.fetcher.signHook = func(block *types.Block) error {
-		imported <- block
-		return nil
-	}
+	tester.watchImports(imported)
 	handleProposedBlockChan := make(chan *types.Header)
 	tester.fetcher.handleProposedBlock = func(header *types.Header) error {
 		go func() { handleProposedBlockChan <- header }()
@@ -383,12 +406,9 @@ func testConcurrentAnnouncements(t *testing.T, protocol int) {
 		atomic.AddUint32(&counter, 1)
 		return secondHeaderFetcher(hash)
 	}
-	// Iteratively announce blocks until all are imported
+	// Iteratively announce blocks until all are imported.
 	imported := make(chan *types.Block)
-	tester.fetcher.signHook = func(block *types.Block) error {
-		imported <- block
-		return nil
-	}
+	tester.watchImports(imported)
 
 	for i := len(hashes) - 2; i >= 0; i-- {
 		tester.fetcher.Notify("first", hashes[i], uint64(len(hashes)-i-1), time.Now().Add(-arriveTimeout), firstHeaderWrapper, firstBodyFetcher)
@@ -425,10 +445,7 @@ func testOverlappingAnnouncements(t *testing.T, protocol int) {
 	for i := 0; i < overlap; i++ {
 		imported <- nil
 	}
-	tester.fetcher.signHook = func(block *types.Block) error {
-		imported <- block
-		return nil
-	}
+	tester.watchImports(imported)
 
 	for i := len(hashes) - 2; i >= 0; i-- {
 		tester.fetcher.Notify("valid", hashes[i], uint64(len(hashes)-i-1), time.Now().Add(-arriveTimeout), headerFetcher, bodyFetcher)
@@ -502,10 +519,7 @@ func testRandomArrivalImport(t *testing.T, protocol int) {
 
 	// Iteratively announce blocks, skipping one entry
 	imported := make(chan *types.Block, len(hashes)-1)
-	tester.fetcher.signHook = func(block *types.Block) error {
-		imported <- block
-		return nil
-	}
+	tester.watchImports(imported)
 
 	for i := len(hashes) - 1; i >= 0; i-- {
 		if i != skip {
@@ -536,10 +550,7 @@ func testQueueGapFill(t *testing.T, protocol int) {
 
 	// Iteratively announce blocks, skipping one entry
 	imported := make(chan *types.Block, len(hashes)-1)
-	tester.fetcher.signHook = func(block *types.Block) error {
-		imported <- block
-		return nil
-	}
+	tester.watchImports(imported)
 
 	for i := len(hashes) - 1; i >= 0; i-- {
 		if i != skip {
@@ -576,10 +587,7 @@ func testImportDeduplication(t *testing.T, protocol int) {
 	fetching := make(chan []common.Hash)
 	imported := make(chan *types.Block, len(hashes)-1)
 	tester.fetcher.fetchingHook = func(hashes []common.Hash) { fetching <- hashes }
-	tester.fetcher.signHook = func(block *types.Block) error {
-		imported <- block
-		return nil
-	}
+	tester.watchImports(imported)
 
 	// Announce the duplicating block, wait for retrieval, and also propagate directly
 	tester.fetcher.Notify("valid", hashes[0], 1, time.Now().Add(-arriveTimeout), headerFetcher, bodyFetcher)
@@ -739,10 +747,7 @@ func testInvalidNumberAnnouncement(t *testing.T, protocol int) {
 
 	imported := make(chan *types.Block)
 	announced := make(chan interface{})
-	tester.fetcher.signHook = func(block *types.Block) error {
-		imported <- block
-		return nil
-	}
+	tester.watchImports(imported)
 
 	// Announce a block with a bad number, check for immediate drop
 	tester.fetcher.announceChangeHook = func(hash common.Hash, b bool) {
@@ -809,10 +814,7 @@ func testEmptyBlockShortCircuit(t *testing.T, protocol int) {
 	tester.fetcher.completingHook = func(hashes []common.Hash) { completing <- hashes }
 
 	imported := make(chan *types.Block)
-	tester.fetcher.signHook = func(block *types.Block) error {
-		imported <- block
-		return nil
-	}
+	tester.watchImports(imported)
 
 	// Iteratively announce blocks until all are imported
 	for i := len(hashes) - 2; i >= 0; i-- {
@@ -842,10 +844,7 @@ func testHashMemoryExhaustionAttack(t *testing.T, protocol int) {
 	tester := newTester()
 
 	imported, announces := make(chan *types.Block), int32(0)
-	tester.fetcher.signHook = func(block *types.Block) error {
-		imported <- block
-		return nil
-	}
+	tester.watchImports(imported)
 	tester.fetcher.announceChangeHook = func(hash common.Hash, added bool) {
 		if added {
 			atomic.AddInt32(&announces, 1)
@@ -892,10 +891,7 @@ func TestBlockMemoryExhaustionAttack(t *testing.T) {
 	tester := newTester()
 
 	imported, enqueued := make(chan *types.Block), int32(0)
-	tester.fetcher.signHook = func(block *types.Block) error {
-		imported <- block
-		return nil
-	}
+	tester.watchImports(imported)
 	tester.fetcher.queueChangeHook = func(hash common.Hash, added bool) {
 		if added {
 			atomic.AddInt32(&enqueued, 1)
@@ -942,12 +938,7 @@ func TestBlockMemoryExhaustionAttack(t *testing.T) {
 }
 
 func TestUnimportedBlockSkipsConsensusHandling(t *testing.T) {
-	block := types.NewBlockWithHeader(&types.Header{
-		ParentHash: genesis.Hash(),
-		Number:     common.Big1,
-		Difficulty: common.Big1,
-		GasLimit:   params.GenesisGasLimit,
-	}).WithBody(types.Body{})
+	block := newParkedTestBlock(0x01)
 
 	tester := newTester()
 	testSkipConsensusHandlingForUnimportedBlock(t, tester, block)
@@ -967,11 +958,7 @@ func testSkipConsensusHandlingForUnimportedBlock(t *testing.T, tester *fetcherTe
 		imported <- block
 		return nil
 	}
-	signed := make(chan *types.Block, 1)
-	tester.fetcher.signHook = func(block *types.Block) error {
-		signed <- block
-		return nil
-	}
+	signed := hookSigning(tester.fetcher)
 	proposed := make(chan *types.Header, 1)
 	tester.fetcher.handleProposedBlock = func(header *types.Header) error {
 		proposed <- header
@@ -984,8 +971,7 @@ func testSkipConsensusHandlingForUnimportedBlock(t *testing.T, tester *fetcherTe
 	case <-time.After(5 * time.Second):
 		t.Fatalf("import of the unimported block never finished")
 	}
-	// Stop the fetcher before the negative assertions: nothing can sign or
-	// vote after that, so the checks need no long (and jitter-prone) window.
+	// Stop the fetcher: the waiter exits with it, so no signature can run.
 	stop()
 	select {
 	case b := <-signed:
@@ -1001,11 +987,7 @@ func testSkipConsensusHandlingForUnimportedBlock(t *testing.T, tester *fetcherTe
 
 // testConsensusHandlingForImportedBlock asserts both hooks run for an imported block.
 func testConsensusHandlingForImportedBlock(t *testing.T, tester *fetcherTester, block *types.Block) {
-	signed := make(chan *types.Block, 1)
-	tester.fetcher.signHook = func(block *types.Block) error {
-		signed <- block
-		return nil
-	}
+	signed := hookSigning(tester.fetcher)
 	proposed := make(chan *types.Header, 1)
 	tester.fetcher.handleProposedBlock = func(header *types.Header) error {
 		proposed <- header
@@ -1028,5 +1010,2065 @@ func testConsensusHandlingForImportedBlock(t *testing.T, tester *fetcherTester, 
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatalf("consensus handler never ran for the imported block")
+	}
+}
+
+func TestM2BlockSignatureUsesOnchainHash(t *testing.T) {
+	original := types.NewBlockWithHeader(&types.Header{
+		ParentHash: genesis.Hash(),
+		Number:     common.Big1,
+		Difficulty: common.Big1,
+		GasLimit:   params.GenesisGasLimit,
+		Extra:      []byte{0x31},
+	}).WithBody(types.Body{})
+	m2 := types.NewBlockWithHeader(&types.Header{
+		ParentHash: genesis.Hash(),
+		Number:     common.Big1,
+		Difficulty: common.Big1,
+		GasLimit:   params.GenesisGasLimit,
+		Extra:      []byte{0x31, 0x2d},
+	}).WithBody(types.Body{})
+	if original.Hash() == m2.Hash() {
+		t.Fatalf("the M2 rewrite must change the block hash")
+	}
+	wireM2 := func(tester *fetcherTester) {
+		tester.fetcher.verifyHeader = func(header *types.Header) error {
+			if header.Hash() == original.Hash() {
+				return consensus.ErrNoValidatorSignature
+			}
+			return nil
+		}
+		tester.fetcher.appendM2HeaderHook = func(*types.Block) (*types.Block, bool, error) {
+			return m2, true, nil
+		}
+	}
+	watchRelay := func(tester *fetcherTester) chan *types.Block {
+		relayed := make(chan *types.Block, 1)
+		tester.fetcher.broadcastBlock = func(block *types.Block, propagate bool) {
+			if propagate {
+				select {
+				case relayed <- block:
+				default:
+				}
+			}
+		}
+		return relayed
+	}
+
+	t.Run("not stored", func(t *testing.T) {
+		tester := newTester()
+		defer tester.fetcher.Stop()
+		wireM2(tester)
+
+		imported := make(chan *types.Block, 1)
+		tester.fetcher.insertBlock = func(block *types.Block) error {
+			imported <- block
+			return nil // another importer stores it later, nothing stored here
+		}
+		var signs int32
+		signed := make(chan *types.Block, 1)
+		tester.fetcher.signHook = func(block *types.Block) error {
+			atomic.AddInt32(&signs, 1)
+			select {
+			case signed <- block:
+			default:
+			}
+			return nil
+		}
+		relayed := watchRelay(tester)
+		tester.fetcher.Enqueue("test", original)
+
+		select {
+		case block := <-imported:
+			if block.Hash() != m2.Hash() {
+				t.Fatalf("import saw block %v, want the M2 rewrite %v", block.Hash(), m2.Hash())
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("import of the M2 block never ran")
+		}
+		select {
+		case block := <-relayed:
+			if block.Hash() != m2.Hash() {
+				t.Fatalf("relay carried block %v, want the M2 rewrite %v", block.Hash(), m2.Hash())
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("M2 block was never relayed")
+		}
+		tester.fetcher.parkedMu.Lock()
+		_, parked := tester.fetcher.parked[m2.Hash()]
+		_, parkedByDelivery := tester.fetcher.parked[original.Hash()]
+		tester.fetcher.parkedMu.Unlock()
+		if !parked {
+			t.Fatalf("M2 block is not parked under its on-chain hash")
+		}
+		if parkedByDelivery {
+			t.Fatalf("M2 block is parked under its delivery hash")
+		}
+		if n := atomic.LoadInt32(&signs); n != 0 {
+			t.Fatalf("sign hook ran %d times before the block was stored", n)
+		}
+
+		tester.insertChain(types.Blocks{m2})
+		select {
+		case block := <-signed:
+			if block.Hash() != m2.Hash() {
+				t.Fatalf("sign hook ran for block %v, want the M2 rewrite %v", block.Hash(), m2.Hash())
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("parked M2 block was never signed after it was stored")
+		}
+		waitParkedCount(t, tester.fetcher, 0)
+		if n := atomic.LoadInt32(&signs); n != 1 {
+			t.Fatalf("sign hook ran %d times, want 1", n)
+		}
+	})
+
+	t.Run("stored", func(t *testing.T) {
+		tester := newTester()
+		defer tester.fetcher.Stop()
+		wireM2(tester)
+
+		tester.fetcher.insertBlock = func(block *types.Block) error {
+			if _, err := tester.insertChain(types.Blocks{block}); err != nil {
+				return err
+			}
+			return nil
+		}
+		var signs int32
+		signed := make(chan *types.Block, 1)
+		tester.fetcher.signHook = func(block *types.Block) error {
+			atomic.AddInt32(&signs, 1)
+			select {
+			case signed <- block:
+			default:
+			}
+			return nil
+		}
+		relayed := watchRelay(tester)
+		tester.fetcher.Enqueue("test", original)
+
+		// A signature present when the relay arrives proves the immediate path ran.
+		select {
+		case block := <-relayed:
+			if block.Hash() != m2.Hash() {
+				t.Fatalf("relay carried block %v, want the M2 rewrite %v", block.Hash(), m2.Hash())
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("M2 block was never relayed")
+		}
+		select {
+		case block := <-signed:
+			if block.Hash() != m2.Hash() {
+				t.Fatalf("sign hook ran for block %v, want the M2 rewrite %v", block.Hash(), m2.Hash())
+			}
+		default:
+			t.Fatalf("stored M2 block was not signed at delivery, only a later parked scan could sign it")
+		}
+		if n := atomic.LoadInt32(&signs); n != 1 {
+			t.Fatalf("sign hook ran %d times, want 1", n)
+		}
+		if n := parkedCount(tester.fetcher); n != 0 {
+			t.Fatalf("parked count = %d for a stored M2 block, want 0", n)
+		}
+	})
+}
+
+func TestParkedBlockSignsAfterFutureImport(t *testing.T) {
+	block := newParkedTestBlock(0x01)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	imported := make(chan *types.Block, 1)
+	tester.fetcher.insertBlock = func(block *types.Block) error {
+		imported <- block
+		return nil // block parked, nothing stored
+	}
+	signed := hookSigning(tester.fetcher)
+	proposed := make(chan *types.Header, 1)
+	tester.fetcher.handleProposedBlock = func(header *types.Header) error {
+		proposed <- header
+		return nil
+	}
+	// Only the park path's relay carries propagate=false.
+	relayed := make(chan *types.Block, 1)
+	tester.fetcher.broadcastBlock = func(block *types.Block, propagate bool) {
+		if !propagate {
+			relayed <- block
+		}
+	}
+	tester.fetcher.Enqueue("test", block)
+
+	select {
+	case <-imported:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("import of the parked block never finished")
+	}
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran before the block was imported: %v", b.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+	select {
+	case b := <-relayed:
+		if b.Hash() != block.Hash() {
+			t.Fatalf("relay ran for block %v, want %v", b.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("parked block was never relayed")
+	}
+
+	tester.insertChain(types.Blocks{block})
+
+	select {
+	case b := <-signed:
+		if b.Hash() != block.Hash() {
+			t.Fatalf("sign hook ran for block %v, want %v", b.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("sign hook never ran for the imported parked block")
+	}
+	select {
+	case header := <-proposed:
+		t.Fatalf("consensus handler ran for parked block %v", header.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func parkedCount(f *BlockFetcher) int {
+	f.parkedMu.Lock()
+	defer f.parkedMu.Unlock()
+	return len(f.parked)
+}
+
+func signingCount(f *BlockFetcher) int {
+	f.parkedMu.Lock()
+	defer f.parkedMu.Unlock()
+	return len(f.signing)
+}
+
+func waitSigningCount(t *testing.T, f *BlockFetcher, want int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if n := signingCount(f); n == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("in-flight signature count = %d, want %d", signingCount(f), want)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// waitParkedCount waits for the parked set to reach want; the waiter may own an entry meanwhile.
+func waitParkedCount(t *testing.T, f *BlockFetcher, want int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if n := parkedCount(f); n == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("parked count = %d, want %d", parkedCount(f), want)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func waiterRunning(f *BlockFetcher) bool {
+	f.parkedMu.Lock()
+	defer f.parkedMu.Unlock()
+	return f.parkedWaiter
+}
+
+func parkedDeadline(f *BlockFetcher, hash common.Hash) time.Time {
+	f.parkedMu.Lock()
+	defer f.parkedMu.Unlock()
+	if parked := f.parked[hash]; parked != nil {
+		return parked.deadline
+	}
+	return time.Time{}
+}
+
+func newParkedTestBlock(extra byte) *types.Block {
+	return types.NewBlockWithHeader(&types.Header{
+		ParentHash: genesis.Hash(),
+		Number:     common.Big1,
+		Difficulty: common.Big1,
+		GasLimit:   params.GenesisGasLimit,
+		Extra:      []byte{extra},
+	}).WithBody(types.Body{})
+}
+
+// hookSigning reports signatures on a buffered channel without blocking.
+func hookSigning(f *BlockFetcher) chan *types.Block {
+	signed := make(chan *types.Block, 1)
+	f.signHook = func(b *types.Block) error {
+		select {
+		case signed <- b:
+		default:
+		}
+		return nil
+	}
+	return signed
+}
+
+// parkTestEntry installs a parked entry directly, so no waiter competes.
+func parkTestEntry(t *testing.T, f *BlockFetcher, block *types.Block, deadline time.Time, claimed bool) {
+	t.Helper()
+
+	f.parkedMu.Lock()
+	defer f.parkedMu.Unlock()
+	f.parked[block.Hash()] = &parkedBlock{block: block, deadline: deadline, claimed: claimed}
+}
+
+func adoptCanonical(t *testing.T, tester *fetcherTester, block *types.Block) {
+	t.Helper()
+
+	tester.lock.Lock()
+	defer tester.lock.Unlock()
+	tester.hashes = append(tester.hashes, block.Hash())
+}
+
+// reorgAfterCollect makes the first canonicalHash call pass and later ones fail.
+func reorgAfterCollect(t *testing.T, tester *fetcherTester, block *types.Block) {
+	t.Helper()
+
+	tester.lock.Lock()
+	for i, hash := range tester.hashes {
+		if hash == block.Hash() {
+			tester.hashes = append(tester.hashes[:i], tester.hashes[i+1:]...)
+			break
+		}
+	}
+	tester.lock.Unlock()
+
+	var calls int32
+	tester.fetcher.canonicalHash = func(number uint64) common.Hash {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			return block.Hash()
+		}
+		return tester.canonicalHash(number)
+	}
+}
+
+// stopAndDrainWaiter stops the fetcher and waits until no signature can run.
+func stopAndDrainWaiter(t *testing.T, f *BlockFetcher) {
+	t.Helper()
+
+	f.Stop()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		f.parkedMu.Lock()
+		drained := !f.parkedWaiter && len(f.signing) == 0
+		f.parkedMu.Unlock()
+		if drained {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("parked waiter or its in-flight signature did not stop after the fetcher was stopped")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestParkedSignatureSkippedWhileSyncing(t *testing.T) {
+	block := newParkedTestBlock(0x01)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.syncing.Store(true)
+
+	tester.fetcher.insertBlock = func(*types.Block) error {
+		return nil // discarded while syncing, nothing stored
+	}
+	signed := hookSigning(tester.fetcher)
+	relayed := make(chan *types.Block, 1)
+	tester.fetcher.broadcastBlock = func(block *types.Block, propagate bool) {
+		if !propagate {
+			relayed <- block
+		}
+	}
+	tester.fetcher.Enqueue("test", block)
+
+	select {
+	case <-relayed:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("discarded block was never relayed")
+	}
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked %d signatures while snap syncing, want 0", n)
+	}
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran for a block discarded while syncing: %v", b.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestParkedSignatureWithoutSignHook(t *testing.T) {
+	block := newParkedTestBlock(0x01)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	tester.fetcher.insertBlock = func(*types.Block) error {
+		return nil // never stored
+	}
+	broadcast := make(chan *types.Block, 1)
+	tester.fetcher.broadcastBlock = func(block *types.Block, propagate bool) {
+		if !propagate {
+			broadcast <- block
+		}
+	}
+	tester.fetcher.Enqueue("test", block)
+
+	select {
+	case <-broadcast:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("never-stored block was never broadcast")
+	}
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked %d signatures without a sign hook, want 0", n)
+	}
+}
+
+func TestParkedSignatureTimeoutDropsBlock(t *testing.T) {
+	block := newParkedTestBlock(0x01)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.parkedTimeout = 200 * time.Millisecond
+
+	tester.fetcher.insertBlock = func(*types.Block) error {
+		return nil // never stored
+	}
+	deadlineMeter := blockParkedDeadlineMeter.Snapshot().Count()
+	signed := hookSigning(tester.fetcher)
+	broadcast := make(chan *types.Block, 1)
+	tester.fetcher.broadcastBlock = func(block *types.Block, propagate bool) {
+		if !propagate {
+			broadcast <- block
+		}
+	}
+	tester.fetcher.Enqueue("test", block)
+
+	select {
+	case <-broadcast:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("never-stored block was never broadcast")
+	}
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d, want 1 for the never-stored block", n)
+	}
+	deadline := time.After(3 * time.Second)
+	for parkedCount(tester.fetcher) != 0 {
+		select {
+		case <-deadline:
+			t.Fatalf("parked block was never dropped after its timeout")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if n := blockParkedDeadlineMeter.Snapshot().Count() - deadlineMeter; n != 1 {
+		t.Fatalf("deadline meter moved by %d, want 1", n)
+	}
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran for a never-imported block: %v", b.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestParkedSignatureTimeoutDropsStoredButNeverSignable(t *testing.T) {
+	block := newParkedTestBlock(0x03)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.parkedTimeout = 200 * time.Millisecond
+
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+
+	deadlineMeter := blockParkedDeadlineMeter.Snapshot().Count()
+	signed := hookSigning(tester.fetcher)
+	tester.fetcher.parkForSignature(block)
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d, want 1 for the stored-but-not-canonical block", n)
+	}
+	deadline := time.After(3 * time.Second)
+	for parkedCount(tester.fetcher) != 0 {
+		select {
+		case <-deadline:
+			t.Fatalf("parked block was never dropped after its timeout")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if n := blockParkedDeadlineMeter.Snapshot().Count() - deadlineMeter; n != 1 {
+		t.Fatalf("deadline meter moved by %d, want 1", n)
+	}
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran for a stored-but-never-signable block: %v", b.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestParkedSignatureExpiredBeforeReadyIsDropped(t *testing.T) {
+	block := types.NewBlockWithHeader(&types.Header{
+		ParentHash: genesis.Hash(),
+		Number:     common.Big1,
+		Difficulty: common.Big1,
+		GasLimit:   params.GenesisGasLimit,
+		Extra:      []byte{0x16},
+	}).WithBody(types.Body{})
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	if _, err := tester.insertChain(types.Blocks{block}); err != nil {
+		t.Fatalf("failed to store the parked block: %v", err)
+	}
+	tester.fetcher.parkedMu.Lock()
+	tester.fetcher.parked[block.Hash()] = &parkedBlock{block: block, deadline: time.Now().Add(-time.Second)}
+	tester.fetcher.parkedMu.Unlock()
+
+	var signs int32
+	tester.fetcher.signHook = func(*types.Block) error {
+		atomic.AddInt32(&signs, 1)
+		return nil
+	}
+	tester.fetcher.scanParkedSignatures()
+
+	if n := atomic.LoadInt32(&signs); n != 0 {
+		t.Fatalf("sign hook ran %d times for an entry past its deadline, want 0", n)
+	}
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d after the deadline, want 0", n)
+	}
+}
+
+func TestParkedSignatureDroppedWhenStale(t *testing.T) {
+	hashes, blocks := makeChain(maxUncleDist+5, 0, genesis)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	signed := hookSigning(tester.fetcher)
+	for i := len(hashes) - 2; i >= 0; i-- {
+		if _, err := tester.insertChain(types.Blocks{blocks[hashes[i]]}); err != nil {
+			t.Fatalf("failed to advance the chain: %v", err)
+		}
+	}
+	stale := newParkedTestBlock(0x01)
+
+	tester.fetcher.parkForSignature(stale)
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d, want 1", n)
+	}
+	tester.fetcher.scanParkedSignatures()
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("stale parked block was not dropped")
+	}
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran for a stale block: %v", b.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestParkedSignatureStaleBoundary(t *testing.T) {
+	const headNumber = maxUncleDist + 4
+	hashes, blocks := makeChain(headNumber, 0, genesis)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	for i := len(hashes) - 2; i >= 0; i-- {
+		if _, err := tester.insertChain(types.Blocks{blocks[hashes[i]]}); err != nil {
+			t.Fatalf("failed to advance the chain: %v", err)
+		}
+	}
+
+	for _, tt := range []struct {
+		name   string
+		number uint64
+		parked bool
+	}{
+		{"at the bound", headNumber - maxUncleDist, true},
+		{"one below the bound", headNumber - maxUncleDist - 1, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			block := types.NewBlockWithHeader(&types.Header{
+				ParentHash: hashes[tt.number-1],
+				Number:     new(big.Int).SetUint64(tt.number),
+				Difficulty: common.Big1,
+				GasLimit:   params.GenesisGasLimit,
+				Extra:      []byte{0x21},
+			}).WithBody(types.Body{})
+			parkTestEntry(t, tester.fetcher, block, time.Now().Add(time.Minute), false)
+			tester.fetcher.scanParkedSignatures()
+
+			tester.fetcher.parkedMu.Lock()
+			_, ok := tester.fetcher.parked[block.Hash()]
+			tester.fetcher.parkedMu.Unlock()
+			if ok != tt.parked {
+				t.Fatalf("parked = %v after the scan at distance %d, want %v", ok, headNumber-tt.number, tt.parked)
+			}
+		})
+	}
+}
+
+func TestParkedSignatureWaitsForCanonical(t *testing.T) {
+	block := newParkedTestBlock(0x03)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	signed := hookSigning(tester.fetcher)
+	tester.fetcher.parkForSignature(block)
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d, want 1", n)
+	}
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+
+	tester.fetcher.scanParkedSignatures()
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("stored-but-not-canonical block must stay parked, parked count = %d", n)
+	}
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran for a stored non-canonical block: %v", b.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// Wait for the entry to be removed: the hook sends before resolveParked.
+	tester.insertChain(types.Blocks{block})
+	tester.fetcher.scanParkedSignatures()
+	waitParkedCount(t, tester.fetcher, 0)
+	select {
+	case b := <-signed:
+		if b.Hash() != block.Hash() {
+			t.Fatalf("sign hook ran for %v, want %v", b.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("sign hook never ran for the now-canonical block")
+	}
+}
+
+func TestParkedSignatureWaiterStopsWhenEmpty(t *testing.T) {
+	block := newParkedTestBlock(0x01)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.parkedTimeout = 50 * time.Millisecond
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	if waiterRunning(tester.fetcher) {
+		t.Fatalf("waiter is running before any block is parked")
+	}
+	tester.fetcher.parkForSignature(block)
+	if !waiterRunning(tester.fetcher) {
+		t.Fatalf("the first park did not start the waiter")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for parkedCount(tester.fetcher) != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked block was never dropped")
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for waiterRunning(tester.fetcher) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if waiterRunning(tester.fetcher) {
+		t.Fatalf("waiter did not stop after the parked set drained")
+	}
+}
+
+func TestParkedSignatureLimit(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	full := blockParkedFullMeter.Snapshot().Count()
+	for i := 0; i < maxParkedSignatures+8; i++ {
+		tester.fetcher.parkForSignature(newParkedTestBlock(byte(i)))
+	}
+	if n := parkedCount(tester.fetcher); n != maxParkedSignatures {
+		t.Fatalf("parked count = %d, want %d", n, maxParkedSignatures)
+	}
+	if n := blockParkedFullMeter.Snapshot().Count() - full; n != 8 {
+		t.Fatalf("full meter moved by %d, want 8 for the overflow", n)
+	}
+}
+
+func TestImportedNonCanonicalBlockIsNotSigned(t *testing.T) {
+	block := newParkedTestBlock(0x02)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	tester.fetcher.insertBlock = func(b *types.Block) error {
+		tester.lock.Lock()
+		tester.blocks[b.Hash()] = b
+		tester.lock.Unlock()
+		return nil
+	}
+	signed := hookSigning(tester.fetcher)
+	proposed := make(chan *types.Header, 1)
+	tester.fetcher.handleProposedBlock = func(h *types.Header) error {
+		proposed <- h
+		return nil
+	}
+	tester.fetcher.Enqueue("test", block)
+
+	select {
+	case h := <-proposed:
+		if h.Hash() != block.Hash() {
+			t.Fatalf("consensus handler ran for %v, want %v", h.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("consensus handler never ran for the stored side block")
+	}
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran for a non-canonical block: %v", b.Hash())
+	case <-time.After(200 * time.Millisecond):
+	}
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d, want 1 for the refused side block", n)
+	}
+
+	// A reorg adopts the branch: the scan revives the signature, exactly once.
+	adoptCanonical(t, tester, block)
+
+	tester.fetcher.scanParkedSignatures()
+	select {
+	case b := <-signed:
+		if b.Hash() != block.Hash() {
+			t.Fatalf("sign hook ran for block %v, want %v", b.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("parked signature was never revived after the block turned canonical")
+	}
+	waitParkedCount(t, tester.fetcher, 0)
+	tester.fetcher.scanParkedSignatures()
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran twice for block %v", b.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestParkedSignaturePutsBackWhenNoLongerSignable(t *testing.T) {
+	block := newParkedTestBlock(0x06)
+
+	tester := newTester()
+	signed := hookSigning(tester.fetcher)
+	tester.fetcher.parkForSignature(block)
+	// Stop the waiter so the test drives the scan and owns the single canSign call.
+	stopAndDrainWaiter(t, tester.fetcher)
+
+	// Flip canonicality after the collect: the first canSign passes, later ones fail.
+	tester.insertChain(types.Blocks{block})
+	reorgAfterCollect(t, tester, block)
+
+	tester.fetcher.scanParkedSignatures()
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran for a block that stopped being signable: %v", b.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("block unready at signing time must be put back, parked count = %d", n)
+	}
+
+	// The branch is re-adopted: the parked signature is created exactly once.
+	tester.fetcher.canonicalHash = tester.canonicalHash
+	adoptCanonical(t, tester, block)
+	tester.fetcher.scanParkedSignatures()
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("re-adopted block was not cleared from the parked set, parked count = %d", n)
+	}
+	select {
+	case b := <-signed:
+		if b.Hash() != block.Hash() {
+			t.Fatalf("sign hook ran for %v, want %v", b.Hash(), block.Hash())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("sign hook never ran for the re-adopted block")
+	}
+}
+
+func TestRedeliveredParkedBlockIsSignedOnce(t *testing.T) {
+	block := newParkedTestBlock(0x08)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+	parkTestEntry(t, tester.fetcher, block, time.Now().Add(time.Minute), false)
+
+	adoptCanonical(t, tester, block)
+
+	var signs int32
+	tester.fetcher.signHook = func(*types.Block) error {
+		atomic.AddInt32(&signs, 1)
+		return nil
+	}
+	proposed := make(chan struct{}, 1)
+	tester.fetcher.handleProposedBlock = func(*types.Header) error {
+		proposed <- struct{}{}
+		return nil
+	}
+	tester.fetcher.insertBlock = func(*types.Block) error { return nil }
+	tester.fetcher.insert("test", block)
+
+	select {
+	case <-proposed:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("delivery of the re-delivered block never finished")
+	}
+	tester.fetcher.scanParkedSignatures()
+	if n := atomic.LoadInt32(&signs); n != 1 {
+		t.Fatalf("sign hook ran %d times for the re-delivered block, want 1", n)
+	}
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d after the signature was created, want 0", n)
+	}
+}
+
+func TestClaimedParkedSignatureRechecksCanonicality(t *testing.T) {
+	block := newParkedTestBlock(0x0a)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+	adoptCanonical(t, tester, block)
+	deadline := time.Now().Add(time.Minute)
+	parkTestEntry(t, tester.fetcher, block, deadline, false)
+
+	// The claim-time verdict passes; the post-claim re-check fails.
+	reorgAfterCollect(t, tester, block)
+	var signs int32
+	tester.fetcher.signHook = func(*types.Block) error {
+		atomic.AddInt32(&signs, 1)
+		return nil
+	}
+	proposed := make(chan struct{}, 1)
+	tester.fetcher.handleProposedBlock = func(*types.Header) error {
+		proposed <- struct{}{}
+		return nil
+	}
+	tester.fetcher.insertBlock = func(*types.Block) error { return nil }
+	tester.fetcher.insert("test", block)
+
+	select {
+	case <-proposed:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("delivery of the claimed block never finished")
+	}
+	if n := atomic.LoadInt32(&signs); n != 0 {
+		t.Fatalf("sign hook ran %d times for a block that stopped being canonical, want 0", n)
+	}
+	tester.fetcher.parkedMu.Lock()
+	parked, ok := tester.fetcher.parked[block.Hash()]
+	claimed := ok && parked.claimed
+	tester.fetcher.parkedMu.Unlock()
+	if !ok {
+		t.Fatalf("entry was dropped instead of being put back")
+	}
+	if claimed {
+		t.Fatalf("entry stayed claimed after the re-check failed")
+	}
+	if got := parkedDeadline(tester.fetcher, block.Hash()); !got.Equal(deadline) {
+		t.Fatalf("entry deadline = %v, want the original %v", got, deadline)
+	}
+
+	// The branch is re-adopted: the parked signature is created exactly once.
+	tester.fetcher.canonicalHash = tester.canonicalHash
+	adoptCanonical(t, tester, block)
+	tester.fetcher.scanParkedSignatures()
+	if n := atomic.LoadInt32(&signs); n != 1 {
+		t.Fatalf("sign hook ran %d times after the block became canonical again, want 1", n)
+	}
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d after the signature was created, want 0", n)
+	}
+}
+
+func TestClaimedParkedSignatureStartsParkWhenRefused(t *testing.T) {
+	block := newParkedTestBlock(0x15)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+	adoptCanonical(t, tester, block)
+
+	// The claim-time verdict passes; the post-claim re-check fails.
+	reorgAfterCollect(t, tester, block)
+
+	var signs int32
+	tester.fetcher.signHook = func(*types.Block) error {
+		atomic.AddInt32(&signs, 1)
+		return nil
+	}
+	proposed := make(chan struct{}, 1)
+	tester.fetcher.handleProposedBlock = func(*types.Header) error {
+		proposed <- struct{}{}
+		return nil
+	}
+	tester.fetcher.insertBlock = func(*types.Block) error { return nil }
+	refused := blockParkedRefusedMeter.Snapshot().Count()
+	tester.fetcher.insert("test", block)
+
+	select {
+	case <-proposed:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("delivery of the refused block never finished")
+	}
+	if n := atomic.LoadInt32(&signs); n != 0 {
+		t.Fatalf("sign hook ran %d times for a block that stopped being canonical, want 0", n)
+	}
+	if n := blockParkedRefusedMeter.Snapshot().Count() - refused; n != 1 {
+		t.Fatalf("refused meter moved by %d, want 1", n)
+	}
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d for the refused block, want 1 (a fresh entry)", n)
+	}
+	tester.fetcher.parkedMu.Lock()
+	parked, ok := tester.fetcher.parked[block.Hash()]
+	claimed := ok && parked.claimed
+	tester.fetcher.parkedMu.Unlock()
+	if !ok {
+		t.Fatalf("the refused signature was not parked")
+	}
+	if claimed {
+		t.Fatalf("the fresh entry stayed claimed")
+	}
+
+	// The branch is re-adopted: the parked signature is created exactly once.
+	// The waiter this test started can own the entry, and the sign hook sends
+	// before resolveParked removes it, so wait for the removal before counting.
+	adoptCanonical(t, tester, block)
+	tester.fetcher.scanParkedSignatures()
+	waitParkedCount(t, tester.fetcher, 0)
+	if n := atomic.LoadInt32(&signs); n != 1 {
+		t.Fatalf("sign hook ran %d times after the block became canonical again, want 1", n)
+	}
+}
+
+func TestParkedSignatureNotSignedTwiceByInsert(t *testing.T) {
+	block := newParkedTestBlock(0x09)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+	parkTestEntry(t, tester.fetcher, block, time.Now().Add(time.Minute), false)
+	adoptCanonical(t, tester, block)
+	tester.fetcher.insertBlock = func(*types.Block) error { return nil }
+
+	var signs int32
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	// sync.OnceFunc: the deferred and explicit cleanup must not double-close.
+	unblock := sync.OnceFunc(func() { close(release) })
+	defer unblock()
+	tester.fetcher.signHook = func(*types.Block) error {
+		// Only the first call blocks, so a second signature is counted.
+		if atomic.AddInt32(&signs, 1) == 1 {
+			entered <- struct{}{}
+			<-release
+		}
+		return nil
+	}
+	scanDone := make(chan struct{})
+	go func() {
+		tester.fetcher.scanParkedSignatures()
+		close(scanDone)
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("the scan never started the parked signature")
+	}
+	// The scan holds the claim while signing, so a re-delivery stands down.
+	proposed := make(chan struct{}, 1)
+	tester.fetcher.handleProposedBlock = func(*types.Header) error {
+		proposed <- struct{}{}
+		return nil
+	}
+	tester.fetcher.insert("test", block)
+	select {
+	case <-proposed:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("delivery of the claimed block never finished")
+	}
+	if n := atomic.LoadInt32(&signs); n != 1 {
+		t.Fatalf("sign hook ran %d times while the scan was signing, want 1", n)
+	}
+	unblock()
+	<-scanDone
+	if n := atomic.LoadInt32(&signs); n != 1 {
+		t.Fatalf("sign hook ran %d times in total, want 1", n)
+	}
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d after the signature was created, want 0", n)
+	}
+}
+
+func TestImportedBlockRefusalReasons(t *testing.T) {
+	t.Run("not canonical", func(t *testing.T) {
+		block := newParkedTestBlock(0x0a)
+
+		tester := newTester()
+		defer tester.fetcher.Stop()
+
+		tester.fetcher.insertBlock = func(b *types.Block) error {
+			tester.lock.Lock()
+			tester.blocks[b.Hash()] = b
+			tester.lock.Unlock()
+			return nil
+		}
+		signed := hookSigning(tester.fetcher)
+		proposed := make(chan struct{}, 1)
+		tester.fetcher.handleProposedBlock = func(*types.Header) error {
+			proposed <- struct{}{}
+			return nil
+		}
+		refused, stale := blockParkedRefusedMeter.Snapshot().Count(), blockParkedStaleMeter.Snapshot().Count()
+		tester.fetcher.Enqueue("test", block)
+
+		select {
+		case <-proposed:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("consensus handling never ran for the refused block")
+		}
+		if n := blockParkedRefusedMeter.Snapshot().Count() - refused; n != 1 {
+			t.Fatalf("refused meter moved by %d, want 1", n)
+		}
+		if n := blockParkedStaleMeter.Snapshot().Count() - stale; n != 0 {
+			t.Fatalf("stale meter moved by %d for a non-canonical block, want 0", n)
+		}
+		if n := parkedCount(tester.fetcher); n != 1 {
+			t.Fatalf("parked count = %d, want 1 for the refused block", n)
+		}
+		select {
+		case b := <-signed:
+			t.Fatalf("sign hook ran for a non-canonical block: %v", b.Hash())
+		case <-time.After(100 * time.Millisecond):
+		}
+	})
+	t.Run("below the uncle distance", func(t *testing.T) {
+		hashes, blocks := makeChain(maxUncleDist+5, 0, genesis)
+
+		tester := newTester()
+		defer tester.fetcher.Stop()
+
+		for i := len(hashes) - 2; i >= 0; i-- {
+			if _, err := tester.insertChain(types.Blocks{blocks[hashes[i]]}); err != nil {
+				t.Fatalf("failed to advance the chain: %v", err)
+			}
+		}
+		block := blocks[hashes[len(hashes)-2]]
+		signed := hookSigning(tester.fetcher)
+		proposed := make(chan struct{}, 1)
+		tester.fetcher.handleProposedBlock = func(*types.Header) error {
+			proposed <- struct{}{}
+			return nil
+		}
+		refused, stale := blockParkedRefusedMeter.Snapshot().Count(), blockParkedStaleMeter.Snapshot().Count()
+		tester.fetcher.insert("test", block)
+
+		select {
+		case <-proposed:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("consensus handling never ran for the stale block")
+		}
+		if n := blockParkedStaleMeter.Snapshot().Count() - stale; n != 1 {
+			t.Fatalf("stale meter moved by %d, want 1", n)
+		}
+		if n := blockParkedRefusedMeter.Snapshot().Count() - refused; n != 0 {
+			t.Fatalf("refused meter moved by %d for a stale block, want 0", n)
+		}
+		if n := parkedCount(tester.fetcher); n != 0 {
+			t.Fatalf("parked count = %d for a stale block, want 0", n)
+		}
+		select {
+		case b := <-signed:
+			t.Fatalf("sign hook ran for a stale block: %v", b.Hash())
+		case <-time.After(100 * time.Millisecond):
+		}
+	})
+	t.Run("not canonical and below the uncle distance", func(t *testing.T) {
+		hashes, blocks := makeChain(maxUncleDist+5, 0, genesis)
+
+		tester := newTester()
+		defer tester.fetcher.Stop()
+
+		for i := len(hashes) - 2; i >= 0; i-- {
+			if _, err := tester.insertChain(types.Blocks{blocks[hashes[i]]}); err != nil {
+				t.Fatalf("failed to advance the chain: %v", err)
+			}
+		}
+		// Off the chain and far below the head: reported stale, so it takes no slot.
+		block := newParkedTestBlock(0x0f)
+		tester.lock.Lock()
+		tester.blocks[block.Hash()] = block
+		tester.lock.Unlock()
+
+		signed := hookSigning(tester.fetcher)
+		proposed := make(chan struct{}, 1)
+		tester.fetcher.handleProposedBlock = func(*types.Header) error {
+			proposed <- struct{}{}
+			return nil
+		}
+		tester.fetcher.insertBlock = func(*types.Block) error { return nil }
+		refused, stale := blockParkedRefusedMeter.Snapshot().Count(), blockParkedStaleMeter.Snapshot().Count()
+		tester.fetcher.insert("test", block)
+
+		select {
+		case <-proposed:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("consensus handling never ran for the stale side block")
+		}
+		if n := blockParkedStaleMeter.Snapshot().Count() - stale; n != 1 {
+			t.Fatalf("stale meter moved by %d, want 1", n)
+		}
+		if n := blockParkedRefusedMeter.Snapshot().Count() - refused; n != 0 {
+			t.Fatalf("refused meter moved by %d for a stale side block, want 0", n)
+		}
+		if n := parkedCount(tester.fetcher); n != 0 {
+			t.Fatalf("parked count = %d for a stale side block, want 0", n)
+		}
+		select {
+		case b := <-signed:
+			t.Fatalf("sign hook ran for a stale side block: %v", b.Hash())
+		case <-time.After(100 * time.Millisecond):
+		}
+	})
+}
+
+func TestParkedSignatureRedeliveryKeepsDeadline(t *testing.T) {
+	block := newParkedTestBlock(0x0b)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	tester.fetcher.parkForSignature(block)
+	first := parkedDeadline(tester.fetcher, block.Hash())
+	if first.IsZero() {
+		t.Fatalf("block was not parked")
+	}
+	tester.fetcher.parkForSignature(block)
+
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d after a re-delivery, want 1", n)
+	}
+	if second := parkedDeadline(tester.fetcher, block.Hash()); !second.Equal(first) {
+		t.Fatalf("re-delivery moved the deadline from %v to %v", first, second)
+	}
+}
+
+func TestParkedSignatureIgnoredAfterStop(t *testing.T) {
+	tester := newTester()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+	tester.fetcher.Stop()
+
+	tester.fetcher.parkForSignature(newParkedTestBlock(0x0c))
+
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d after Stop, want 0", n)
+	}
+	if waiterRunning(tester.fetcher) {
+		t.Fatalf("parked waiter was started after Stop")
+	}
+}
+
+func TestParkedSignatureFailureIsNotRetried(t *testing.T) {
+	block := newParkedTestBlock(0x0d)
+
+	tester := newTester()
+	var signs int32
+	tester.fetcher.signHook = func(*types.Block) error {
+		atomic.AddInt32(&signs, 1)
+		return errors.New("signing backend unavailable")
+	}
+	tester.fetcher.parkForSignature(block)
+	stopAndDrainWaiter(t, tester.fetcher)
+	if _, err := tester.insertChain(types.Blocks{block}); err != nil {
+		t.Fatalf("failed to store the parked block: %v", err)
+	}
+
+	tester.fetcher.scanParkedSignatures()
+	if n := atomic.LoadInt32(&signs); n != 1 {
+		t.Fatalf("sign hook ran %d times, want 1", n)
+	}
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d after a failed signature, want 0", n)
+	}
+	tester.fetcher.scanParkedSignatures()
+	if n := atomic.LoadInt32(&signs); n != 1 {
+		t.Fatalf("sign hook ran %d times after the retry scan, want 1", n)
+	}
+}
+
+func TestDeliverySignatureFailureIsNotRetried(t *testing.T) {
+	block := newParkedTestBlock(0x0e)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+	adoptCanonical(t, tester, block)
+	tester.fetcher.insertBlock = func(*types.Block) error { return nil }
+
+	var signs int32
+	signed := make(chan struct{}, 1)
+	tester.fetcher.signHook = func(*types.Block) error {
+		// Only the first call signals, so a second is counted without blocking.
+		if atomic.AddInt32(&signs, 1) == 1 {
+			signed <- struct{}{}
+		}
+		return errors.New("signing backend unavailable")
+	}
+	proposed := make(chan struct{}, 1)
+	tester.fetcher.handleProposedBlock = func(*types.Header) error {
+		proposed <- struct{}{}
+		return nil
+	}
+
+	tester.fetcher.insert("test", block)
+	select {
+	case <-signed:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("the delivery never attempted a signature")
+	}
+	// A failed signature returns before the consensus handler runs.
+	select {
+	case <-proposed:
+		t.Fatalf("consensus handling ran after a failed signature")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if n := atomic.LoadInt32(&signs); n != 1 {
+		t.Fatalf("sign hook ran %d times, want 1", n)
+	}
+	tester.fetcher.scanParkedSignatures()
+	if n := atomic.LoadInt32(&signs); n != 1 {
+		t.Fatalf("sign hook ran %d times after a scan, want 1", n)
+	}
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d after a failed signature, want 0", n)
+	}
+}
+
+func TestClaimedParkedSignatureFallsBelowUncleDist(t *testing.T) {
+	block := newParkedTestBlock(0x10)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+	adoptCanonical(t, tester, block)
+	parkTestEntry(t, tester.fetcher, block, time.Now().Add(time.Minute), false)
+
+	// The head overtakes the block while the delivery waits for its claim.
+	firstVerdict := make(chan struct{}, 1)
+	tester.fetcher.canonicalHash = func(uint64) common.Hash {
+		select {
+		case firstVerdict <- struct{}{}:
+		default:
+		}
+		return block.Hash()
+	}
+	far := types.NewBlockWithHeader(&types.Header{
+		ParentHash: block.Hash(),
+		Number:     new(big.Int).SetUint64(block.NumberU64() + maxUncleDist + 1),
+		Difficulty: common.Big1,
+		GasLimit:   params.GenesisGasLimit,
+		Extra:      []byte{0x11},
+	}).WithBody(types.Body{})
+
+	var signs int32
+	tester.fetcher.signHook = func(*types.Block) error {
+		atomic.AddInt32(&signs, 1)
+		return nil
+	}
+	proposed := make(chan struct{}, 1)
+	tester.fetcher.handleProposedBlock = func(*types.Header) error {
+		proposed <- struct{}{}
+		return nil
+	}
+	tester.fetcher.insertBlock = func(*types.Block) error { return nil }
+	stale := blockParkedStaleMeter.Snapshot().Count()
+
+	// Hold parkedMu so the delivery waits for its claim while the head moves.
+	tester.fetcher.parkedMu.Lock()
+	tester.fetcher.insert("test", block)
+	select {
+	case <-firstVerdict:
+	case <-time.After(5 * time.Second):
+		tester.fetcher.parkedMu.Unlock()
+		t.Fatalf("the delivery never took the first verdict")
+	}
+	tester.lock.Lock()
+	tester.blocks[far.Hash()] = far
+	tester.lock.Unlock()
+	adoptCanonical(t, tester, far)
+	tester.fetcher.parkedMu.Unlock()
+
+	select {
+	case <-proposed:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("delivery of the claimed block never finished")
+	}
+	if n := atomic.LoadInt32(&signs); n != 0 {
+		t.Fatalf("sign hook ran %d times for a block that fell below the uncle distance, want 0", n)
+	}
+	if n := blockParkedStaleMeter.Snapshot().Count() - stale; n != 0 {
+		t.Fatalf("stale meter moved by %d on the delivery re-check, want 0 (the scan counts it once)", n)
+	}
+	tester.fetcher.parkedMu.Lock()
+	parked, ok := tester.fetcher.parked[block.Hash()]
+	claimed := ok && parked.claimed
+	tester.fetcher.parkedMu.Unlock()
+	if !ok {
+		t.Fatalf("entry was dropped instead of being released")
+	}
+	if claimed {
+		t.Fatalf("entry stayed claimed after the re-check refused the signature")
+	}
+	// The scan drops the released entry on the stale bound and counts it.
+	tester.fetcher.scanParkedSignatures()
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d after the stale bound, want 0", n)
+	}
+	if n := blockParkedStaleMeter.Snapshot().Count() - stale; n != 1 {
+		t.Fatalf("stale meter moved by %d after the scan dropped the entry, want 1", n)
+	}
+}
+
+func TestClaimedParkedSignatureEvictedAtDeadline(t *testing.T) {
+	block := newParkedTestBlock(0x12)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	// A claimed entry past its deadline, installed directly; the marker models the hook.
+	parkTestEntry(t, tester.fetcher, block, time.Now().Add(-time.Second), true)
+	tester.fetcher.parkedMu.Lock()
+	tester.fetcher.signing[block.Hash()] = struct{}{}
+	tester.fetcher.parkedMu.Unlock()
+
+	deadline := blockParkedDeadlineMeter.Snapshot().Count()
+	tester.fetcher.scanParkedSignatures()
+
+	if n := blockParkedDeadlineMeter.Snapshot().Count() - deadline; n != 1 {
+		t.Fatalf("deadline meter moved by %d, want 1", n)
+	}
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d for a claimed entry past its deadline, want 0", n)
+	}
+	if n := signingCount(tester.fetcher); n != 1 {
+		t.Fatalf("in-flight signature count = %d after the slot was freed, want 1", n)
+	}
+
+	tester.fetcher.resolveParked(block.Hash(), true)
+	if n := signingCount(tester.fetcher); n != 0 {
+		t.Fatalf("in-flight signature count = %d after settle, want 0", n)
+	}
+}
+
+func TestRedeliveryDuringPendingClaimedSignatureIsNotSigned(t *testing.T) {
+	block := newParkedTestBlock(0x16)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+	adoptCanonical(t, tester, block)
+	parkTestEntry(t, tester.fetcher, block, time.Now().Add(time.Minute), false)
+
+	var signs int32
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseSigner := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseSigner()
+
+	tester.fetcher.signHook = func(*types.Block) error {
+		if atomic.AddInt32(&signs, 1) == 1 {
+			entered <- struct{}{}
+			<-release
+		}
+		return nil
+	}
+	scanDone := make(chan struct{})
+	go func() {
+		tester.fetcher.scanParkedSignatures()
+		close(scanDone)
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("the scan never started the parked signature")
+	}
+
+	// The deadline passes while the signature is blocked: the slot frees, the marker stays.
+	tester.fetcher.parkedMu.Lock()
+	if parked := tester.fetcher.parked[block.Hash()]; parked != nil {
+		parked.deadline = time.Now().Add(-time.Second)
+	}
+	tester.fetcher.parkedMu.Unlock()
+	tester.fetcher.scanParkedSignatures()
+	evicted := parkedCount(tester.fetcher) == 0
+	marked := signingCount(tester.fetcher) == 1
+
+	tester.fetcher.insertBlock = func(*types.Block) error { return nil }
+	proposed := make(chan struct{}, 1)
+	tester.fetcher.handleProposedBlock = func(*types.Header) error {
+		proposed <- struct{}{}
+		return nil
+	}
+	tester.fetcher.insert("test", block)
+	select {
+	case <-proposed:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("redelivery of the claimed block never finished")
+	}
+	releaseSigner()
+	<-scanDone
+	waitSigningCount(t, tester.fetcher, 0)
+
+	if !evicted {
+		t.Fatalf("the claimed entry was not evicted at its deadline")
+	}
+	if !marked {
+		t.Fatalf("the in-flight marker was lost when the parked slot was freed")
+	}
+	if n := atomic.LoadInt32(&signs); n != 1 {
+		t.Fatalf("sign hook ran %d times while the first signature was pending, want 1", n)
+	}
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d after settle, want 0", n)
+	}
+}
+
+func TestRedeliveryOfExpiredParkedEntryIsNotSigned(t *testing.T) {
+	block := newParkedTestBlock(0x18)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+	adoptCanonical(t, tester, block)
+	parkTestEntry(t, tester.fetcher, block, time.Now().Add(-time.Second), false)
+
+	var signs int32
+	tester.fetcher.signHook = func(*types.Block) error {
+		atomic.AddInt32(&signs, 1)
+		return nil
+	}
+	tester.fetcher.insertBlock = func(*types.Block) error { return nil }
+	proposed := make(chan struct{}, 1)
+	tester.fetcher.handleProposedBlock = func(*types.Header) error {
+		proposed <- struct{}{}
+		return nil
+	}
+	deadline := blockParkedDeadlineMeter.Snapshot().Count()
+	tester.fetcher.insert("test", block)
+
+	select {
+	case <-proposed:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("redelivery of the expired entry never finished")
+	}
+	if n := atomic.LoadInt32(&signs); n != 0 {
+		t.Fatalf("sign hook ran %d times for an expired entry, want 0", n)
+	}
+	if n := blockParkedDeadlineMeter.Snapshot().Count() - deadline; n != 1 {
+		t.Fatalf("deadline meter moved by %d, want 1", n)
+	}
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d for the expired entry, want 0", n)
+	}
+	if n := signingCount(tester.fetcher); n != 0 {
+		t.Fatalf("in-flight signature count = %d for the expired entry, want 0", n)
+	}
+}
+
+func TestParkedSignatureInFlightBlocksRestore(t *testing.T) {
+	block := newParkedTestBlock(0x17)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	if ok, _ := tester.fetcher.claimParkedSignature(block.Hash()); !ok {
+		t.Fatalf("the empty parked set refused a claim")
+	}
+	if n := signingCount(tester.fetcher); n != 1 {
+		t.Fatalf("in-flight signature count = %d after the claim, want 1", n)
+	}
+	tester.fetcher.parkForSignature(block)
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d for a hash whose signature is in flight, want 0", n)
+	}
+
+	tester.fetcher.resolveParked(block.Hash(), false)
+	if n := signingCount(tester.fetcher); n != 0 {
+		t.Fatalf("in-flight signature count = %d after settle, want 0", n)
+	}
+	tester.fetcher.parkForSignature(block)
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d after the signature settled, want 1", n)
+	}
+}
+
+func TestParkedSignatureScanSkippedWhileSyncing(t *testing.T) {
+	block := newParkedTestBlock(0x13)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+	adoptCanonical(t, tester, block)
+	parkTestEntry(t, tester.fetcher, block, time.Now().Add(time.Minute), false)
+
+	var signs int32
+	tester.fetcher.signHook = func(*types.Block) error {
+		atomic.AddInt32(&signs, 1)
+		return nil
+	}
+	tester.syncing.Store(true)
+	tester.fetcher.scanParkedSignatures()
+	if n := atomic.LoadInt32(&signs); n != 0 {
+		t.Fatalf("sign hook ran %d times while snap syncing, want 0", n)
+	}
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d while snap syncing, want 1", n)
+	}
+
+	tester.syncing.Store(false)
+	tester.fetcher.scanParkedSignatures()
+	if n := atomic.LoadInt32(&signs); n != 1 {
+		t.Fatalf("sign hook ran %d times after the sync, want 1", n)
+	}
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d after the signature, want 0", n)
+	}
+}
+
+func TestParkedSignatureScanBoundsFrozenWhileSyncing(t *testing.T) {
+	block := newParkedTestBlock(0x27)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	parkTestEntry(t, tester.fetcher, block, time.Now().Add(-time.Second), false)
+	tester.syncing.Store(true)
+	tester.fetcher.scanParkedSignatures()
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d while snap syncing, want 1: the scan must not evaluate the bounds during the sync", n)
+	}
+
+	tester.syncing.Store(false)
+	tester.fetcher.scanParkedSignatures()
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d after the sync, want 0 for the expired entry", n)
+	}
+}
+
+func TestParkedSignatureWaiterDoesNotSignAfterStop(t *testing.T) {
+	block := newParkedTestBlock(0x14)
+
+	tester := newTester()
+	tester.fetcher.parkedTimeout = time.Minute
+
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+	adoptCanonical(t, tester, block)
+	var signs int32
+	tester.fetcher.signHook = func(*types.Block) error {
+		atomic.AddInt32(&signs, 1)
+		return nil
+	}
+	tester.fetcher.parkForSignature(block)
+	tester.fetcher.Stop()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for waiterRunning(tester.fetcher) {
+		if time.Now().After(deadline) {
+			t.Fatalf("parked waiter did not stop after the fetcher was stopped")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	// Two tick periods past the stop: a slipped scan would have signed by now.
+	time.Sleep(2 * parkedImportPollInterval)
+	if n := atomic.LoadInt32(&signs); n != 0 {
+		t.Fatalf("sign hook ran %d times after Stop, want 0", n)
+	}
+}
+
+func TestParkedSignatureStopsBetweenReadyBlocks(t *testing.T) {
+	blockA := newParkedTestBlock(0x1a)
+	blockB := types.NewBlockWithHeader(&types.Header{
+		ParentHash: blockA.Hash(),
+		Number:     common.Big2,
+		Difficulty: common.Big1,
+		GasLimit:   params.GenesisGasLimit,
+		Extra:      []byte{0x1b},
+	}).WithBody(types.Body{})
+
+	tester := newTester()
+	stop := sync.OnceFunc(func() { tester.fetcher.Stop() })
+	defer stop()
+
+	tester.lock.Lock()
+	tester.blocks[blockA.Hash()] = blockA
+	tester.blocks[blockB.Hash()] = blockB
+	tester.lock.Unlock()
+	adoptCanonical(t, tester, blockA)
+	adoptCanonical(t, tester, blockB)
+
+	var signs int32
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	defer unblock()
+	tester.fetcher.signHook = func(block *types.Block) error {
+		atomic.AddInt32(&signs, 1)
+		if block.Hash() == blockA.Hash() {
+			entered <- struct{}{}
+			<-release
+		}
+		return nil
+	}
+	parkTestEntry(t, tester.fetcher, blockA, time.Now().Add(time.Minute), true)
+	parkTestEntry(t, tester.fetcher, blockB, time.Now().Add(time.Minute), true)
+	tester.fetcher.parkedMu.Lock()
+	tester.fetcher.signing[blockA.Hash()] = struct{}{}
+	tester.fetcher.signing[blockB.Hash()] = struct{}{}
+	tester.fetcher.parkedMu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		tester.fetcher.signReadyParked([]readySignature{
+			{block: blockA, deadline: time.Now().Add(time.Minute)},
+			{block: blockB, deadline: time.Now().Add(time.Minute)},
+		}, tester.fetcher.quit)
+		close(done)
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("sign hook never ran for the first ready block")
+	}
+	stop()
+	unblock()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("signing did not return after Stop")
+	}
+
+	if n := atomic.LoadInt32(&signs); n != 1 {
+		t.Fatalf("sign hook ran %d times, want 1: the block after the stopped one must not be signed", n)
+	}
+	tester.fetcher.parkedMu.Lock()
+	parked, ok := tester.fetcher.parked[blockB.Hash()]
+	_, inFlight := tester.fetcher.signing[blockB.Hash()]
+	tester.fetcher.parkedMu.Unlock()
+	if !ok {
+		t.Fatalf("the unattempted entry was dropped instead of released")
+	}
+	if parked.claimed {
+		t.Fatalf("the unattempted entry stayed claimed after Stop")
+	}
+	if inFlight {
+		t.Fatalf("the unattempted entry kept its in-flight marker after Stop")
+	}
+}
+
+func TestParkedSignatureRecheckRespectsSnapSync(t *testing.T) {
+	block := newParkedTestBlock(0x1d)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+	adoptCanonical(t, tester, block)
+
+	var signs int32
+	tester.fetcher.signHook = func(*types.Block) error {
+		atomic.AddInt32(&signs, 1)
+		return nil
+	}
+	parkTestEntry(t, tester.fetcher, block, time.Now().Add(time.Minute), true)
+	tester.fetcher.parkedMu.Lock()
+	tester.fetcher.signing[block.Hash()] = struct{}{}
+	tester.fetcher.parkedMu.Unlock()
+
+	tester.syncing.Store(true)
+	tester.fetcher.signReadyParked([]readySignature{{block: block, deadline: time.Now().Add(time.Minute)}}, tester.fetcher.quit)
+	if n := atomic.LoadInt32(&signs); n != 0 {
+		t.Fatalf("sign hook ran %d times during a snap sync, want 0", n)
+	}
+	tester.fetcher.parkedMu.Lock()
+	parked, ok := tester.fetcher.parked[block.Hash()]
+	claimed := parked != nil && parked.claimed
+	_, inFlight := tester.fetcher.signing[block.Hash()]
+	tester.fetcher.parkedMu.Unlock()
+	if !ok {
+		t.Fatalf("the entry was dropped instead of released")
+	}
+	if claimed {
+		t.Fatalf("the entry stayed claimed during the sync")
+	}
+	if inFlight {
+		t.Fatalf("the entry kept its in-flight marker during the sync")
+	}
+	// The entry is still usable: once the sync ends, a scan signs it.
+	tester.syncing.Store(false)
+	tester.fetcher.scanParkedSignatures()
+	if n := atomic.LoadInt32(&signs); n != 1 {
+		t.Fatalf("sign hook ran %d times after the sync ended, want 1", n)
+	}
+}
+
+func TestParkedSignatureWaiterStopsMidBatch(t *testing.T) {
+	blockA := newParkedTestBlock(0x1e)
+	blockB := types.NewBlockWithHeader(&types.Header{
+		ParentHash: blockA.Hash(),
+		Number:     common.Big2,
+		Difficulty: common.Big1,
+		GasLimit:   params.GenesisGasLimit,
+		Extra:      []byte{0x1f},
+	}).WithBody(types.Body{})
+
+	tester := newTester()
+	stop := sync.OnceFunc(func() { tester.fetcher.Stop() })
+	defer stop()
+
+	tester.lock.Lock()
+	tester.blocks[blockA.Hash()] = blockA
+	tester.blocks[blockB.Hash()] = blockB
+	tester.lock.Unlock()
+	adoptCanonical(t, tester, blockA)
+	adoptCanonical(t, tester, blockB)
+
+	var signs int32
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	defer unblock()
+	tester.fetcher.signHook = func(*types.Block) error {
+		// Only the first call blocks, so a second signature is counted.
+		if atomic.AddInt32(&signs, 1) == 1 {
+			entered <- struct{}{}
+			<-release
+		}
+		return nil
+	}
+	// Both entries are installed under one lock before the waiter starts, so its
+	// first tick collects one batch; two parks could split it.
+	tester.fetcher.parkedMu.Lock()
+	tester.fetcher.parkLocked(blockA)
+	tester.fetcher.parkLocked(blockB)
+	tester.fetcher.parkedMu.Unlock()
+	go tester.fetcher.waitParkedSignatures()
+	waitSigningCount(t, tester.fetcher, 2)
+
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("the waiter never started a signature")
+	}
+	stop()
+	unblock()
+	waitSigningCount(t, tester.fetcher, 0)
+
+	if n := atomic.LoadInt32(&signs); n != 1 {
+		t.Fatalf("sign hook ran %d times, want 1: the block after the stopped one must not be signed", n)
+	}
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d after the stop, want 1: the unattempted entry must survive", n)
+	}
+	tester.fetcher.parkedMu.Lock()
+	var surviving *parkedBlock
+	for _, parked := range tester.fetcher.parked {
+		surviving = parked
+	}
+	tester.fetcher.parkedMu.Unlock()
+	if surviving == nil {
+		t.Fatalf("the unattempted entry was dropped instead of kept")
+	}
+	if surviving.claimed {
+		t.Fatalf("the unattempted entry stayed claimed after the stop")
+	}
+}
+
+func TestParkedSignatureEvictionContinuesWhileHookBlocked(t *testing.T) {
+	blockA := newParkedTestBlock(0x1c)
+	blockB := newParkedTestBlock(0x1d)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	tester.lock.Lock()
+	tester.blocks[blockA.Hash()] = blockA
+	tester.lock.Unlock()
+	adoptCanonical(t, tester, blockA)
+
+	var inHook int32
+	release := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	defer unblock()
+	tester.fetcher.signHook = func(*types.Block) error {
+		atomic.StoreInt32(&inHook, 1)
+		<-release
+		atomic.StoreInt32(&inHook, 0)
+		return nil
+	}
+	// A blocks the hook; B is never stored, so only its deadline can remove it.
+	tester.fetcher.parkForSignature(blockA)
+	parkTestEntry(t, tester.fetcher, blockB, time.Now().Add(150*time.Millisecond), false)
+
+	timeout := time.Now().Add(5 * time.Second)
+	for atomic.LoadInt32(&inHook) == 0 || parkedCount(tester.fetcher) != 1 {
+		if time.Now().After(timeout) {
+			t.Fatalf("the expired entry was not evicted while the hook was blocked: parked count = %d", parkedCount(tester.fetcher))
+		}
+		time.Sleep(time.Millisecond)
+	}
+	unblock()
+	waitParkedCount(t, tester.fetcher, 0)
+}
+
+func TestParkedSignatureBatchBoundWhileHookBlocked(t *testing.T) {
+	blockA := newParkedTestBlock(0x21)
+	blockB := types.NewBlockWithHeader(&types.Header{
+		ParentHash: blockA.Hash(),
+		Number:     common.Big2,
+		Difficulty: common.Big1,
+		GasLimit:   params.GenesisGasLimit,
+		Extra:      []byte{0x22},
+	}).WithBody(types.Body{})
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	tester.lock.Lock()
+	tester.blocks[blockA.Hash()] = blockA
+	tester.blocks[blockB.Hash()] = blockB
+	tester.lock.Unlock()
+	adoptCanonical(t, tester, blockA)
+	adoptCanonical(t, tester, blockB)
+
+	var signs int32
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	defer unblock()
+	tester.fetcher.signHook = func(block *types.Block) error {
+		atomic.AddInt32(&signs, 1)
+		if block.Hash() == blockA.Hash() {
+			entered <- struct{}{}
+			<-release
+		}
+		return nil
+	}
+	tester.fetcher.parkForSignature(blockA)
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("the first parked signature never ran")
+	}
+	tester.fetcher.parkForSignature(blockB)
+	time.Sleep(3 * parkedImportPollInterval)
+
+	if n := signingCount(tester.fetcher); n != 1 {
+		t.Fatalf("in-flight signature count = %d while the hook is blocked, want 1", n)
+	}
+	if n := atomic.LoadInt32(&signs); n != 1 {
+		t.Fatalf("sign hook ran %d times while blocked, want 1", n)
+	}
+	tester.fetcher.parkedMu.Lock()
+	parked, ok := tester.fetcher.parked[blockB.Hash()]
+	claimed := ok && parked.claimed
+	tester.fetcher.parkedMu.Unlock()
+	if !ok {
+		t.Fatalf("the second block was dropped instead of parked")
+	}
+	if claimed {
+		t.Fatalf("the second block was claimed while an earlier batch was still running")
+	}
+
+	unblock()
+	waitParkedCount(t, tester.fetcher, 0)
+	if n := atomic.LoadInt32(&signs); n != 2 {
+		t.Fatalf("sign hook ran %d times after the blocked batch finished, want 2", n)
+	}
+}
+
+func TestRefusedClaimKeepsParkedDeadline(t *testing.T) {
+	block := newParkedTestBlock(0x23)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	parkTestEntry(t, tester.fetcher, block, time.Now().Add(20*time.Millisecond), false)
+	ok, tookEntry := tester.fetcher.claimParkedSignature(block.Hash())
+	if !ok || !tookEntry {
+		t.Fatalf("claim = (%v, %v), want (true, true)", ok, tookEntry)
+	}
+	time.Sleep(40 * time.Millisecond)
+
+	expired := blockParkedDeadlineMeter.Snapshot().Count()
+	tester.fetcher.settleRefusedClaim(block, tookEntry)
+
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d after an expired claim was refused, want 0 (no recreated entry)", n)
+	}
+	if n := signingCount(tester.fetcher); n != 0 {
+		t.Fatalf("in-flight signature count = %d after the refused claim, want 0", n)
+	}
+	if n := blockParkedDeadlineMeter.Snapshot().Count() - expired; n != 1 {
+		t.Fatalf("deadline meter moved by %d, want 1", n)
+	}
+}
+
+func TestRefusedClaimParksEntrylessClaim(t *testing.T) {
+	block := newParkedTestBlock(0x24)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	ok, tookEntry := tester.fetcher.claimParkedSignature(block.Hash())
+	if !ok || tookEntry {
+		t.Fatalf("claim = (%v, %v), want (true, false)", ok, tookEntry)
+	}
+	before := time.Now()
+	tester.fetcher.settleRefusedClaim(block, tookEntry)
+
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d for an entry-less refused claim, want 1", n)
+	}
+	deadline := parkedDeadline(tester.fetcher, block.Hash())
+	if deadline.Before(before.Add(tester.fetcher.parkedTimeout - time.Second)) {
+		t.Fatalf("recreated entry deadline = %v, want a fresh bound", deadline)
+	}
+	if n := signingCount(tester.fetcher); n != 0 {
+		t.Fatalf("in-flight signature count = %d, want 0", n)
+	}
+}
+
+func TestParkedSignatureDroppedWhenDeadlinePassesDuringBlockedHook(t *testing.T) {
+	blockA := newParkedTestBlock(0x26)
+	blockB := types.NewBlockWithHeader(&types.Header{
+		ParentHash: blockA.Hash(),
+		Number:     common.Big2,
+		Difficulty: common.Big1,
+		GasLimit:   params.GenesisGasLimit,
+		Extra:      []byte{0x27},
+	}).WithBody(types.Body{})
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	tester.lock.Lock()
+	tester.blocks[blockA.Hash()] = blockA
+	tester.blocks[blockB.Hash()] = blockB
+	tester.lock.Unlock()
+	adoptCanonical(t, tester, blockA)
+	adoptCanonical(t, tester, blockB)
+
+	var signs int32
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	defer unblock()
+	tester.fetcher.signHook = func(block *types.Block) error {
+		atomic.AddInt32(&signs, 1)
+		if block.Hash() == blockA.Hash() {
+			entered <- struct{}{}
+			<-release
+		}
+		return nil
+	}
+	deadlineB := time.Now().Add(80 * time.Millisecond)
+	parkTestEntry(t, tester.fetcher, blockA, time.Now().Add(time.Minute), true)
+	parkTestEntry(t, tester.fetcher, blockB, deadlineB, true)
+	tester.fetcher.parkedMu.Lock()
+	tester.fetcher.signing[blockA.Hash()] = struct{}{}
+	tester.fetcher.signing[blockB.Hash()] = struct{}{}
+	tester.fetcher.parkedMu.Unlock()
+
+	ready := []readySignature{
+		{block: blockA, deadline: time.Now().Add(time.Minute)},
+		{block: blockB, deadline: deadlineB},
+	}
+	done := make(chan struct{})
+	go func() {
+		tester.fetcher.signReadyParked(ready, nil)
+		close(done)
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("the first ready block was never signed")
+	}
+	for time.Now().Before(deadlineB) {
+		time.Sleep(time.Millisecond)
+	}
+	unblock()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("signing did not return after the blocked hook was released")
+	}
+
+	if n := atomic.LoadInt32(&signs); n != 1 {
+		t.Fatalf("sign hook ran %d times, want 1: a block whose deadline passed during the batch must not be signed", n)
+	}
+	tester.fetcher.parkedMu.Lock()
+	_, inFlight := tester.fetcher.signing[blockB.Hash()]
+	_, parked := tester.fetcher.parked[blockB.Hash()]
+	tester.fetcher.parkedMu.Unlock()
+	if inFlight {
+		t.Fatalf("the expired block's in-flight marker was not released")
+	}
+	if !parked {
+		t.Fatalf("the expired entry was dropped instead of left to the scan's bound")
 	}
 }
