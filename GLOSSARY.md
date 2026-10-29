@@ -1,6 +1,6 @@
 # XDPoS domain
 
-Vocabulary for the XDPoS chain: the block schedule its validators run to, the block processing steps applied before the first transaction, the chain data those blocks are stored in, and the wire protocol its nodes speak.
+Vocabulary for the XDPoS chain: the block schedule its validators run to, the block processing steps applied before the first transaction, the calldata pricing its transactions pay, the chain data those blocks are stored in, and the wire protocol its nodes speak.
 
 ## Language
 
@@ -67,6 +67,18 @@ _See_: [ADR-0001](docs/adr/0001-bound-executed-marker-to-state-lifetime.md)
 The state changes block processing applies before the first transaction of a block: the TIPSigning removal of the legacy block signers account, the Multicall3 install after Prague whenever the account has no code and the EIP-2935 parent hash write. The DAO fork change is not one of them: only the paths that process or generate a block apply it, each on its own at `DAOForkBlock`, the way upstream `core.PreExecution` leaves it out.
 _Avoid_: pre-execution calls, system calls
 _See_: [ApplyBlockLevelHooks](core/state_processor.go)
+
+### Transaction pricing
+
+**calldata floor**:
+The minimum gas a transaction pays for its calldata, counted in calldata tokens; a gas limit below it rejects the transaction before execution, and an execution that used less is topped up to it. From Amsterdam it depends on the byte count alone, so zero and non-zero bytes cost the same 64 gas each.
+_Avoid_: data gas, calldata gas
+_See_: [core/state_transition.go:117](core/state_transition.go), [ADR-0005](docs/adr/0005-port-amsterdam-eips-standalone.md)
+
+**calldata token**:
+The unit the calldata floor is counted in — one per zero byte and four per non-zero byte before Amsterdam, four per byte from Amsterdam on — multiplied by the per-token cost to obtain the floor.
+_Avoid_: byte weight, token count
+_See_: [params/protocol_params.go:71](params/protocol_params.go)
 
 ### Wire protocol
 
