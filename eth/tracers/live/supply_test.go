@@ -102,3 +102,96 @@ func readSupplyBurn(t *testing.T, dir string) *big.Int {
 	}
 	return info.Burn.Misc
 }
+
+// TestSupplyRewardAccounting pins that both block and uncle rewards are added
+// to issuance.reward. The two reasons share one case body because Go's switch
+// does not fall through; before go-ethereum #31882 the uncle reason sat in its
+// own empty case and the reward was silently dropped.
+func TestSupplyRewardAccounting(t *testing.T) {
+	type rewardEvent struct {
+		reason tracing.BalanceChangeReason
+		amount int64
+	}
+	var (
+		addr  = common.HexToAddress("0x31882")
+		tests = []struct {
+			name    string
+			rewards []rewardEvent
+			noise   []int64 // amounts reported with a non-reward reason
+			want    *big.Int
+		}{
+			{
+				name:    "block-reward",
+				rewards: []rewardEvent{{tracing.BalanceIncreaseRewardMineBlock, 100}},
+				want:    big.NewInt(100),
+			},
+			{
+				name:    "uncle-reward",
+				rewards: []rewardEvent{{tracing.BalanceIncreaseRewardMineUncle, 50}},
+				want:    big.NewInt(50),
+			},
+			{
+				name: "accumulates",
+				rewards: []rewardEvent{
+					{tracing.BalanceIncreaseRewardMineBlock, 100},
+					{tracing.BalanceIncreaseRewardMineUncle, 50},
+				},
+				want: big.NewInt(150),
+			},
+			{
+				name:  "other-reasons",
+				noise: []int64{100, 7},
+			},
+		}
+	)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			hooks, err := newSupply(json.RawMessage(fmt.Sprintf(`{"path":%q}`, dir)))
+			if err != nil {
+				t.Fatalf("failed to create the supply tracer: %v", err)
+			}
+			block := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(1)})
+			hooks.OnBlockStart(tracing.BlockEvent{Block: block})
+
+			for _, ev := range tt.rewards {
+				hooks.OnBalanceChange(addr, new(big.Int), big.NewInt(ev.amount), ev.reason)
+			}
+			for _, amount := range tt.noise {
+				hooks.OnBalanceChange(addr, big.NewInt(amount), new(big.Int), tracing.BalanceChangeTransfer)
+			}
+			hooks.OnBlockEnd(nil)
+			hooks.OnClose()
+
+			got := readSupplyReward(t, dir)
+			if tt.want == nil {
+				if got.Sign() != 0 {
+					t.Errorf("reported reward = %v, want none", got)
+				}
+				return
+			}
+			if got.Cmp(tt.want) != 0 {
+				t.Errorf("reported reward = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// readSupplyReward reads the produced supply log and returns the reward of its
+// single block.
+func readSupplyReward(t *testing.T, dir string) *big.Int {
+	t.Helper()
+
+	raw, err := os.ReadFile(filepath.Join(dir, "supply.jsonl"))
+	if err != nil {
+		t.Fatalf("failed to read the supply log: %v", err)
+	}
+	var info supplyInfo
+	if err := json.Unmarshal(bytes.TrimSpace(raw), &info); err != nil {
+		t.Fatalf("failed to decode the supply log: %v", err)
+	}
+	if info.Issuance == nil || info.Issuance.Reward == nil {
+		return new(big.Int)
+	}
+	return info.Issuance.Reward
+}
