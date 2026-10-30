@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,9 +98,17 @@ func runXDC(t *testing.T, args ...string) *testXDC {
 // legacy "ipc:" and "rpc:" prefixes are not accepted here even though the attach
 // command accepts them: resolveConsoleEndpoint strips those prefixes for
 // dialRPC, and this helper goes through neither.
-func waitForEndpoint(t *testing.T, endpoint string, timeout time.Duration) {
+//
+// A node that cannot start exits before it opens the endpoint, so the helper
+// gives up as soon as the process logs a fatal error instead of polling a dead
+// endpoint until the timeout runs out.
+func waitForEndpoint(t *testing.T, node *testXDC, endpoint string, timeout time.Duration) {
+	probeTimeout := 10 * time.Second
+	if probeTimeout > timeout {
+		probeTimeout = timeout
+	}
 	probe := func() bool {
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 		defer cancel()
 		c, err := rpc.DialContext(ctx, endpoint)
 		if c != nil {
@@ -113,9 +123,70 @@ func waitForEndpoint(t *testing.T, endpoint string, timeout time.Duration) {
 		if probe() {
 			return
 		}
+		if out := node.StderrText(); strings.Contains(out, "Fatal: ") {
+			t.Fatalf("endpoint %s was never opened, the node failed to start:\n%s", endpoint, lastLines(out, 20))
+		}
 		if time.Since(start) > timeout {
-			t.Fatal("endpoint", endpoint, "did not open within", timeout)
+			t.Fatalf("endpoint %s did not open within %s", endpoint, timeout)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+// waitForPort waits for the node to report the address it listens on and returns
+// the port. Tests pass --http-port 0 / --ws-port 0 so the kernel picks a free
+// port: guessing one can land on a port another package under test is already
+// using (Linux hands out ephemeral ports from 32768-60999, and the race shards
+// run four packages at once), and the node then dies with "bind: address
+// already in use".
+//
+// The marker is the log field carrying the address: "endpoint=" for the HTTP
+// server and "url=ws://" for the websocket one.
+func waitForPort(t *testing.T, node *testXDC, marker string, timeout time.Duration) string {
+	start := time.Now()
+	for {
+		out := node.StderrText()
+		if port := scanPort(out, marker); port != "" {
+			return port
+		}
+		if strings.Contains(out, "Fatal: ") {
+			t.Fatalf("the node never reported a listening address, it failed to start:\n%s", lastLines(out, 20))
+		}
+		if time.Since(start) > timeout {
+			t.Fatalf("the node did not report a listening address matching %q within %s", marker, timeout)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// scanPort returns the port from the address that follows marker, e.g. from
+// "endpoint=127.0.0.1:41234" or "url=ws://[::1]:41234". A marker whose address
+// has not been fully written yet is skipped, so the caller can poll.
+func scanPort(log, marker string) string {
+	for _, chunk := range strings.Split(log, marker)[1:] {
+		// The address is complete only once it is followed by whitespace. A
+		// chunk that runs to the end of the buffer may be a partial write, and
+		// taking a truncated port would point the test at the wrong endpoint.
+		i := strings.IndexAny(chunk, " \t\n")
+		if i < 0 {
+			continue
+		}
+		addr := chunk[:i]
+		if j := strings.LastIndexByte(addr, ':'); j >= 0 {
+			if port, err := strconv.Atoi(addr[j+1:]); err == nil && port > 0 && port < 65536 {
+				return strconv.Itoa(port)
+			}
+		}
+	}
+	return ""
+}
+
+// lastLines returns at most n trailing lines of s, keeping failure messages
+// readable when the node logged a full startup banner before dying.
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
