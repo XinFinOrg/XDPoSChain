@@ -328,6 +328,12 @@ func testSendTransactions(t *testing.T, protocol int) {
 func TestTransactionPropagation(t *testing.T)  { testSyncTransaction(t, true) }
 func TestTransactionAnnouncement(t *testing.T) { testSyncTransaction(t, false) }
 
+// txSyncIdleTimeout is how long the fetcher may go without delivering a single
+// transaction before the test gives up. It bounds liveness, not latency: the
+// batch only has to keep moving, so a slow worker shuffling 1024 transactions
+// cannot fail the test the way a fixed total budget does.
+const txSyncIdleTimeout = 10 * time.Second
+
 func testSyncTransaction(t *testing.T, propagation bool) {
 	// Create a handler for transaction fetcher and sender
 	pmFetcher, _ := newTestHandlerMust(t, downloader.FastSync, 0, nil, nil)
@@ -358,17 +364,17 @@ func testSyncTransaction(t *testing.T, propagation bool) {
 	pmSender.txpool.Add(alltxs, false)
 
 	var got int
-	timeout := time.After(time.Second)
-loop:
+	deadline := time.Now().Add(txSyncIdleTimeout)
 	for {
 		select {
 		case ev := <-newTxs:
 			got += len(ev.Txs)
-			if got == 1024 {
-				break loop
+			if got >= len(alltxs) {
+				return
 			}
-		case <-timeout:
-			t.Fatal("Failed to retrieve all transaction")
+			deadline = time.Now().Add(txSyncIdleTimeout)
+		case <-time.After(time.Until(deadline)):
+			t.Fatalf("Failed to retrieve all transactions: got %d, want %d", got, len(alltxs))
 		}
 	}
 }
