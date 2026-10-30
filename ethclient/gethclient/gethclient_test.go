@@ -20,10 +20,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"math/big"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -73,11 +71,22 @@ func newTestBackend(t *testing.T) (*node.Node, []*types.Block, []common.Hash) {
 	if err != nil {
 		t.Fatalf("can't create new node: %v", err)
 	}
-	xdcxDir := filepath.Join(t.TempDir(), "xdcx")
-	if err := os.MkdirAll(xdcxDir, 0o755); err != nil {
-		t.Fatalf("can't create XDCx data dir: %v", err)
-	}
+	// XDCx has no lifecycle hook, so nothing closes its database when the node
+	// is torn down; on Windows that open file keeps t.TempDir from removing the
+	// directory. Close the node first (its services may still use the database)
+	// and then the database, before the temp dir is removed. Registering this
+	// here also covers the setup failures below, which return before the caller
+	// can defer a node close.
+	xdcxDir := t.TempDir()
 	xdcx := XDCx.New(n, &XDCx.Config{DataDir: xdcxDir})
+	t.Cleanup(func() {
+		if err := n.Close(); err != nil && !errors.Is(err, node.ErrNodeStopped) {
+			t.Logf("closing the test node: %v", err)
+		}
+		if err := xdcx.GetLevelDB().Close(); err != nil {
+			t.Logf("closing the XDCx database: %v", err)
+		}
+	})
 	lending := XDCxlending.New(n, xdcx)
 	// Create Ethereum Service
 	config := &ethconfig.Config{Genesis: genesis, RPCGasCap: 1000000}
@@ -148,15 +157,8 @@ func generateTestChain(t *testing.T) (*core.Genesis, []*types.Block, []common.Ha
 
 // TestGethClient tests geth client.
 func TestGethClient(t *testing.T) {
-	// The XDCx database holds its log file open for the lifetime of the node,
-	// which keeps t.TempDir's cleanup from removing it on Windows. The test
-	// itself is platform independent, so run it on the other platforms only.
-	if runtime.GOOS == "windows" {
-		t.Skip("the XDCx database keeps its log file open, so TempDir cleanup fails on Windows")
-	}
 	backend, _, txHashes := newTestBackend(t)
 	client := backend.Attach()
-	defer backend.Close()
 	defer client.Close()
 
 	tests := []struct {
