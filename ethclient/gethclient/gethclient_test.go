@@ -419,40 +419,62 @@ func testCallContract(t *testing.T, client *rpc.Client) {
 	msg := ethereum.CallMsg{
 		From:     testAddr,
 		To:       &common.Address{},
-		Gas:      21000,
+		Gas:      100000,
 		GasPrice: baseFee,
 		Value:    big.NewInt(1),
 	}
-	// CallContract without override
-	if _, err := ec.CallContract(context.Background(), msg, big.NewInt(0), nil); err != nil {
+	// CallContract without override: the target account is empty, so the call
+	// returns nothing.
+	res, err := ec.CallContract(context.Background(), msg, big.NewInt(0), nil)
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// CallContract with override
+	if len(res) != 0 {
+		t.Fatalf("unexpected return data from an empty account: %x", res)
+	}
+	// CallContract with override. The override has to change what the call
+	// returns: asserting only that it does not error would pass whether or not
+	// it reached the EVM.
 	override := OverrideAccount{
-		Nonce: 1,
+		Code: common.FromHex("0x602a60005260206000f3"), // returns 32 bytes holding 0x2a
 	}
 	mapAcc := make(map[common.Address]OverrideAccount)
-	mapAcc[testAddr] = override
-	if _, err := ec.CallContract(context.Background(), msg, big.NewInt(0), &mapAcc); err != nil {
+	mapAcc[common.Address{}] = override
+	res, err = ec.CallContract(context.Background(), msg, big.NewInt(0), &mapAcc)
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := common.LeftPadBytes([]byte{0x2a}, 32); !bytes.Equal(res, want) {
+		t.Fatalf("override did not reach the EVM: have %x, want %x", res, want)
 	}
 }
 
 func testTraceTransactions(t *testing.T, client *rpc.Client, txHashes []common.Hash) {
 	ec := New(client)
 	for _, txHash := range txHashes {
-		// Struct logger
-		_, err := ec.TraceTransaction(context.Background(), txHash, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		// Struct logger
-		_, err = ec.TraceTransaction(context.Background(), txHash,
-			&tracers.TraceConfig{},
-		)
-		if err != nil {
-			t.Fatal(err)
+		// The struct logger, default config and an explicit empty one: both
+		// must produce the same trace of a transfer that succeeded.
+		for _, config := range []*tracers.TraceConfig{nil, {}} {
+			trace, err := ec.TraceTransaction(context.Background(), txHash, config)
+			if err != nil {
+				t.Fatalf("trace of %s failed: %v", txHash, err)
+			}
+			result, ok := trace.(map[string]any)
+			if !ok {
+				t.Fatalf("trace of %s is a %T, want an object", txHash, trace)
+			}
+			if failed, _ := result["failed"].(bool); failed {
+				t.Fatalf("trace of %s reports a failed transaction", txHash)
+			}
+			// Intrinsic gas plus the ecrecover call the fixture makes.
+			gas, ok := result["gas"].(float64)
+			if want := params.TxGas + params.EcrecoverGas; !ok || uint64(gas) != want {
+				t.Fatalf("trace of %s reports gas %v, want %d", txHash, result["gas"], want)
+			}
+			// A plain transfer executes no opcode.
+			if logs, ok := result["structLogs"].([]any); !ok || len(logs) != 0 {
+				t.Fatalf("trace of %s has struct logs for a plain transfer: %v", txHash, result["structLogs"])
+			}
 		}
 	}
 }
