@@ -60,6 +60,17 @@ var (
 // forever.
 const pendingTxTimeout = 10 * time.Second
 
+// callTimeout bounds the RPC calls one test case makes: the node runs in this
+// process, and a handler that wedges would otherwise block the test until the
+// package timeout.
+const callTimeout = 30 * time.Second
+
+// rpcCtx returns a context for one test, bounded by callTimeout.
+func rpcCtx(t *testing.T) (context.Context, context.CancelFunc) {
+	t.Helper()
+	return context.WithTimeout(context.Background(), callTimeout)
+}
+
 func newTestBackend(t *testing.T) (*node.Node, []*types.Block, []common.Hash) {
 	// Generate test chain.
 	genesis, blocks, txHashes := generateTestChain(t)
@@ -212,6 +223,8 @@ func TestGethClient(t *testing.T) {
 
 func testAccessList(t *testing.T, client *rpc.Client) {
 	ec := New(client)
+	ctx, cancel := rpcCtx(t)
+	defer cancel()
 	baseFee := new(big.Int).SetUint64(params.InitialBaseFee)
 
 	for i, tc := range []struct {
@@ -273,7 +286,7 @@ func testAccessList(t *testing.T, client *rpc.Client) {
 			wantAL:  `[]`,
 		},
 	} {
-		al, gas, vmErr, err := ec.CreateAccessList(context.Background(), tc.msg)
+		al, gas, vmErr, err := ec.CreateAccessList(ctx, tc.msg)
 		if tc.wantErr != "" {
 			// A nil error is the regression this case exists to catch, so it
 			// has to be reported: err.Error() below would dereference it and
@@ -303,7 +316,9 @@ func testAccessList(t *testing.T, client *rpc.Client) {
 
 func testGCStats(t *testing.T, client *rpc.Client) {
 	ec := New(client)
-	_, err := ec.GCStats(context.Background())
+	ctx, cancel := rpcCtx(t)
+	defer cancel()
+	_, err := ec.GCStats(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +326,9 @@ func testGCStats(t *testing.T, client *rpc.Client) {
 
 func testMemStats(t *testing.T, client *rpc.Client) {
 	ec := New(client)
-	stats, err := ec.MemStats(context.Background())
+	ctx, cancel := rpcCtx(t)
+	defer cancel()
+	stats, err := ec.MemStats(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +339,9 @@ func testMemStats(t *testing.T, client *rpc.Client) {
 
 func testGetNodeInfo(t *testing.T, client *rpc.Client) {
 	ec := New(client)
-	info, err := ec.GetNodeInfo(context.Background())
+	ctx, cancel := rpcCtx(t)
+	defer cancel()
+	info, err := ec.GetNodeInfo(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +353,9 @@ func testGetNodeInfo(t *testing.T, client *rpc.Client) {
 
 func testSetHead(t *testing.T, client *rpc.Client) {
 	ec := New(client)
-	err := ec.SetHead(context.Background(), big.NewInt(0))
+	ctx, cancel := rpcCtx(t)
+	defer cancel()
+	err := ec.SetHead(ctx, big.NewInt(0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,12 +363,14 @@ func testSetHead(t *testing.T, client *rpc.Client) {
 
 func testSubscribePendingTransactions(t *testing.T, client *rpc.Client) {
 	ec := New(client)
+	ctx, cancel := rpcCtx(t)
+	defer cancel()
 	ethcl := ethclient.NewClient(client)
 	baseFee := new(big.Int).SetUint64(params.InitialBaseFee)
 
 	// Subscribe to Transactions
 	ch1 := make(chan common.Hash)
-	sub1, err := ec.SubscribePendingTransactions(context.Background(), ch1)
+	sub1, err := ec.SubscribePendingTransactions(ctx, ch1)
 	if err != nil {
 		t.Fatalf("can't subscribe to pending transaction hashes: %v", err)
 	}
@@ -355,18 +378,18 @@ func testSubscribePendingTransactions(t *testing.T, client *rpc.Client) {
 
 	// Subscribe to Transactions
 	ch2 := make(chan *types.Transaction)
-	sub2, err := ec.SubscribeFullPendingTransactions(context.Background(), ch2)
+	sub2, err := ec.SubscribeFullPendingTransactions(ctx, ch2)
 	if err != nil {
 		t.Fatalf("can't subscribe to full pending transactions: %v", err)
 	}
 	defer sub2.Unsubscribe()
 
 	// Send a transaction
-	chainID, err := ethcl.ChainID(context.Background())
+	chainID, err := ethcl.ChainID(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	nonce, err := ethcl.NonceAt(context.Background(), testAddr, nil)
+	nonce, err := ethcl.NonceAt(ctx, testAddr, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +405,7 @@ func testSubscribePendingTransactions(t *testing.T, client *rpc.Client) {
 		t.Fatal(err)
 	}
 	// Send transaction
-	err = ethcl.SendTransaction(context.Background(), signedTx)
+	err = ethcl.SendTransaction(ctx, signedTx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,6 +438,8 @@ func testSubscribePendingTransactions(t *testing.T, client *rpc.Client) {
 
 func testCallContract(t *testing.T, client *rpc.Client) {
 	ec := New(client)
+	ctx, cancel := rpcCtx(t)
+	defer cancel()
 	baseFee := new(big.Int).SetUint64(params.InitialBaseFee)
 	msg := ethereum.CallMsg{
 		From:     testAddr,
@@ -425,7 +450,7 @@ func testCallContract(t *testing.T, client *rpc.Client) {
 	}
 	// CallContract without override: the target account is empty, so the call
 	// returns nothing.
-	res, err := ec.CallContract(context.Background(), msg, big.NewInt(0), nil)
+	res, err := ec.CallContract(ctx, msg, big.NewInt(0), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -440,7 +465,7 @@ func testCallContract(t *testing.T, client *rpc.Client) {
 	}
 	mapAcc := make(map[common.Address]OverrideAccount)
 	mapAcc[common.Address{}] = override
-	res, err = ec.CallContract(context.Background(), msg, big.NewInt(0), &mapAcc)
+	res, err = ec.CallContract(ctx, msg, big.NewInt(0), &mapAcc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -451,11 +476,13 @@ func testCallContract(t *testing.T, client *rpc.Client) {
 
 func testTraceTransactions(t *testing.T, client *rpc.Client, txHashes []common.Hash) {
 	ec := New(client)
+	ctx, cancel := rpcCtx(t)
+	defer cancel()
 	for _, txHash := range txHashes {
 		// The struct logger, default config and an explicit empty one: both
 		// must produce the same trace of a transfer that succeeded.
 		for _, config := range []*tracers.TraceConfig{nil, {}} {
-			trace, err := ec.TraceTransaction(context.Background(), txHash, config)
+			trace, err := ec.TraceTransaction(ctx, txHash, config)
 			if err != nil {
 				t.Fatalf("trace of %s failed: %v", txHash, err)
 			}
@@ -569,6 +596,8 @@ func TestBlockOverridesMarshal(t *testing.T) {
 
 func testCallContractWithBlockOverrides(t *testing.T, client *rpc.Client) {
 	ec := New(client)
+	ctx, cancel := rpcCtx(t)
+	defer cancel()
 	baseFee := new(big.Int).SetUint64(params.InitialBaseFee)
 	msg := ethereum.CallMsg{
 		From:     testAddr,
@@ -583,7 +612,7 @@ func testCallContractWithBlockOverrides(t *testing.T, client *rpc.Client) {
 	}
 	mapAcc := make(map[common.Address]OverrideAccount)
 	mapAcc[common.Address{}] = override
-	res, err := ec.CallContract(context.Background(), msg, big.NewInt(0), &mapAcc)
+	res, err := ec.CallContract(ctx, msg, big.NewInt(0), &mapAcc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -595,7 +624,7 @@ func testCallContractWithBlockOverrides(t *testing.T, client *rpc.Client) {
 	bo := BlockOverrides{
 		Coinbase: common.HexToAddress("0x1111111111111111111111111111111111111111"),
 	}
-	res, err = ec.CallContractWithBlockOverrides(context.Background(), msg, big.NewInt(0), &mapAcc, bo)
+	res, err = ec.CallContractWithBlockOverrides(ctx, msg, big.NewInt(0), &mapAcc, bo)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -606,9 +635,11 @@ func testCallContractWithBlockOverrides(t *testing.T, client *rpc.Client) {
 
 func testTraceTransactionWithCallTracer(t *testing.T, client *rpc.Client, txHashes []common.Hash) {
 	ec := New(client)
+	ctx, cancel := rpcCtx(t)
+	defer cancel()
 	for _, txHash := range txHashes {
 		// With nil config (defaults).
-		result, err := ec.TraceTransactionWithCallTracer(context.Background(), txHash, nil)
+		result, err := ec.TraceTransactionWithCallTracer(ctx, txHash, nil)
 		if err != nil {
 			t.Fatalf("nil config: %v", err)
 		}
@@ -623,7 +654,7 @@ func testTraceTransactionWithCallTracer(t *testing.T, client *rpc.Client, txHash
 		}
 
 		// With explicit config.
-		result, err = ec.TraceTransactionWithCallTracer(context.Background(), txHash,
+		result, err = ec.TraceTransactionWithCallTracer(ctx, txHash,
 			&CallTracerConfig{},
 		)
 		if err != nil {
@@ -637,6 +668,8 @@ func testTraceTransactionWithCallTracer(t *testing.T, client *rpc.Client, txHash
 
 func testTraceCallWithCallTracer(t *testing.T, client *rpc.Client) {
 	ec := New(client)
+	ctx, cancel := rpcCtx(t)
+	defer cancel()
 	baseFee := new(big.Int).SetUint64(params.InitialBaseFee)
 	msg := ethereum.CallMsg{
 		From:     testAddr,
@@ -645,7 +678,7 @@ func testTraceCallWithCallTracer(t *testing.T, client *rpc.Client) {
 		GasPrice: baseFee,
 		Value:    big.NewInt(1),
 	}
-	result, err := ec.TraceCallWithCallTracer(context.Background(), msg,
+	result, err := ec.TraceCallWithCallTracer(ctx, msg,
 		rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber), nil, nil, nil,
 	)
 	if err != nil {
