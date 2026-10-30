@@ -121,12 +121,16 @@ func generateTestChain(t *testing.T) (*core.Genesis, []*types.Block, []common.Ha
 		g.OffsetTime(5)
 		g.SetExtra([]byte("test"))
 
+		// Address 0x01 is the ecrecover precompile, so this "transfer" runs it
+		// and costs EcrecoverGas on top of the intrinsic gas. With exactly
+		// params.TxGas the message ran out of gas and every generated
+		// transaction landed as a failure - which the trace tests then traced.
 		to := common.BytesToAddress([]byte{byte(i + 1)})
 		tx := types.NewTx(&types.LegacyTx{
 			Nonce:    uint64(i),
 			To:       &to,
 			Value:    big.NewInt(int64(2*i + 1)),
-			Gas:      params.TxGas,
+			Gas:      3 * params.TxGas,
 			GasPrice: big.NewInt(params.InitialBaseFee),
 			Data:     nil,
 		})
