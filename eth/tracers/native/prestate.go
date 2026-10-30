@@ -123,7 +123,11 @@ func (t *prestateTracer) OnOpcode(pc uint64, opcode byte, gas, cost uint64, scop
 		addr := common.Address(stackData[stackLen-1].Bytes20())
 		t.lookupAccount(addr)
 		if op == vm.SELFDESTRUCT {
-			t.deleted[caller] = true
+			// EIP-6780: from Cancun onwards only a same-transaction creation is
+			// removed by SELFDESTRUCT.
+			if !t.chainConfig.IsCancun(t.env.BlockNumber) || t.created[caller] {
+				t.deleted[caller] = true
+			}
 		}
 	case stackLen >= 5 && (op == vm.DELEGATECALL || op == vm.CALL || op == vm.STATICCALL || op == vm.CALLCODE):
 		addr := common.Address(stackData[stackLen-2].Bytes20())
@@ -229,8 +233,10 @@ func (t *prestateTracer) Stop(err error) {
 
 func (t *prestateTracer) processDiffState() {
 	for addr, state := range t.pre {
-		// The deleted account's state is pruned from `post` but kept in `pre`
-		if _, ok := t.deleted[addr]; ok {
+		// The deleted account's state is pruned from `post` but kept in `pre`.
+		// The finalised state decides: EIP-6780 and EIP-8246 both keep a
+		// destructed account alive.
+		if _, ok := t.deleted[addr]; ok && !t.env.StateDB.Exist(addr) {
 			continue
 		}
 		modified := false
