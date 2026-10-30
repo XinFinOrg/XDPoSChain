@@ -16,6 +16,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// messageTimeout bounds how long the engine may stay silent before a test calls
+// it a dropped broadcast. It leaves room for several 1s and 2s countdown periods.
+const messageTimeout = 10 * time.Second
+
 func TestCountdownTimeoutToSendTimeoutMessage(t *testing.T) {
 	t.Parallel()
 	skipLongInShortMode(t)
@@ -101,22 +105,32 @@ func TestTimeoutPeriodAndThreadholdConfigChange(t *testing.T) {
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 	// engineV2.SetNewRoundFaker(blockchain, 1, true)
 
-	// Because messages are sending async and on random order, so use this way to test
+	// The split between timeout and syncInfo depends on where the parameter
+	// update below lands inside a period, so only the count is asserted: the
+	// engine emits one message per period, and a silent period fails the read.
 	var timeoutCounter, syncInfoCounter int
-	for i := 0; i < 3; i++ {
-		obj := <-engineV2.BroadcastCh
-		switch v := obj.(type) {
-		case *types.Timeout:
-			timeoutCounter++
-		case *types.SyncInfo:
-			syncInfoCounter++
-		default:
-			log.Error("Unknown message type received", "value", v)
+	readMessage := func(purpose string) {
+		select {
+		case obj := <-engineV2.BroadcastCh:
+			switch v := obj.(type) {
+			case *types.Timeout:
+				timeoutCounter++
+			case *types.SyncInfo:
+				syncInfoCounter++
+			default:
+				t.Fatalf("%s: unknown message type received: %T", purpose, v)
+			}
+		case <-time.After(messageTimeout):
+			t.Fatalf("%s: no message in %v (timeout=%d syncinfo=%d)", purpose, messageTimeout, timeoutCounter, syncInfoCounter)
 		}
 	}
 
-	assert.Equal(t, 2, timeoutCounter)
-	assert.Equal(t, 1, syncInfoCounter)
+	// Three messages from the periods before the parameter update.
+	for i := 0; i < 3; i++ {
+		readMessage("before the parameter update")
+	}
+	assert.GreaterOrEqual(t, timeoutCounter, 2)
+	assert.GreaterOrEqual(t, syncInfoCounter, 1)
 
 	// Create another block to trigger update parameters
 	blockNum := 1800
@@ -129,24 +143,22 @@ func TestTimeoutPeriodAndThreadholdConfigChange(t *testing.T) {
 
 	engineV2.UpdateParams(currentBlockHeader) // it will be triggered automatically on the real code by other process
 
+	// The update must repoint the engine at the round-900 config; the engine
+	// keeps its own copy, so read it from the engine.
+	afterUpdate := engineV2.GetCurrentConfigFaker()
+	assert.Equal(t, uint64(900), afterUpdate.SwitchRound, "UpdateParams must switch to the round-900 config")
+	assert.Equal(t, 4, afterUpdate.TimeoutSyncThreshold)
+	assert.Equal(t, 2, afterUpdate.TimeoutPeriod)
+
 	t.Log("waiting for another consecutive period")
-	// another consecutive period
+	// Five more messages; readMessage fails if a period goes quiet.
 	t1 := time.Now()
 	for i := 0; i < 5; i++ {
-		obj := <-engineV2.BroadcastCh
-		switch v := obj.(type) {
-		case *types.Timeout:
-			timeoutCounter++
-		case *types.SyncInfo:
-			syncInfoCounter++
-		default:
-			log.Error("Unknown message type received", "value", v)
-		}
+		readMessage("after the parameter update")
 	}
 	t2 := time.Now()
 	timediff := t2.Sub(t1).Seconds()
-	assert.Equal(t, 6, timeoutCounter)
-	assert.Equal(t, 2, syncInfoCounter)
+
 	assert.Less(t, timediff, float64(20))
 }
 
