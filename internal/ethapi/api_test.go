@@ -7676,3 +7676,185 @@ func TestFindNearestSignedBlockWhenEngineIsNotXDPoS(t *testing.T) {
 		t.Fatalf("findNearestSignedBlock with a non-XDPoS engine: have %v, want nil", got)
 	}
 }
+
+// newSimulateTracerTestAPI builds a BlockChainAPI over a fresh in-memory chain
+// that holds alloc and funds sender with one ether. Every fork up to Amsterdam
+// is enabled.
+func newSimulateTracerTestAPI(t *testing.T, sender common.Address, alloc types.GenesisAlloc) *BlockChainAPI {
+	t.Helper()
+
+	config := *params.AllEthashProtocolChanges
+	funded := types.GenesisAlloc{sender: {Balance: big.NewInt(params.Ether)}}
+	for addr, account := range alloc {
+		funded[addr] = account
+	}
+	genesis := &core.Genesis{Config: &config, Alloc: funded}
+	db := rawdb.NewMemoryDatabase()
+	block := genesis.MustCommit(db)
+	stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+	require.NoError(t, err)
+
+	backend := &simulateBackendMock{
+		estimateBackendMock: &estimateBackendMock{
+			backendMock: newBackendMock(),
+			stateDB:     stateDB,
+			header:      block.Header(),
+			engine:      ethash.NewFaker(),
+		},
+		gasCap: 30_000_000,
+	}
+	backend.config = &config
+	return NewBlockChainAPI(backend, nil)
+}
+
+// simulateLogs runs one simulated block and returns the log index of every
+// reported log, in call order.
+func simulateLogs(t *testing.T, api *BlockChainAPI, calls []TransactionArgs) []uint64 {
+	t.Helper()
+
+	result, err := api.SimulateV1(context.Background(), simOpts{
+		BlockStateCalls: []simBlock{{Calls: calls}},
+	}, nil)
+	require.NoError(t, err)
+
+	type logSummary struct {
+		Index hexutil.Uint64 `json:"logIndex"`
+	}
+	type callSummary struct {
+		Status hexutil.Uint64 `json:"status"`
+		Logs   []logSummary   `json:"logs"`
+	}
+	type blockSummary struct {
+		Calls []callSummary `json:"calls"`
+	}
+	encoded, err := json.Marshal(result)
+	require.NoError(t, err)
+	var summary []blockSummary
+	require.NoError(t, json.Unmarshal(encoded, &summary))
+	require.Len(t, summary, 1)
+
+	var indexes []uint64
+	for _, call := range summary[0].Calls {
+		for _, log := range call.Logs {
+			indexes = append(indexes, uint64(log.Index))
+		}
+	}
+	return indexes
+}
+
+// TestSimulateV1LogIndex checks that logs dropped because their call or an inner
+// call frame failed do not consume a log index, so the reported indices match the
+// numbering in receipts (geth #35841).
+func TestSimulateV1LogIndex(t *testing.T) {
+	t.Parallel()
+
+	var (
+		sender   = common.HexToAddress("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1")
+		reverter = common.HexToAddress("0xc0de000000000000000000000000000000000001")
+		emitter  = common.HexToAddress("0xc0de000000000000000000000000000000000002")
+		outer    = common.HexToAddress("0xc0de000000000000000000000000000000000003")
+		invalid  = common.HexToAddress("0xc0de000000000000000000000000000000000004")
+		// PUSH1 0, PUSH1 0, LOG0, PUSH1 0, PUSH1 0, REVERT
+		reverterCode = hexutil.Bytes{0x60, 0x00, 0x60, 0x00, 0xa0, 0x60, 0x00, 0x60, 0x00, 0xfd}
+		// PUSH1 0, PUSH1 0, LOG0, STOP
+		emitterCode = hexutil.Bytes{0x60, 0x00, 0x60, 0x00, 0xa0, 0x00}
+		// PUSH1 0, PUSH1 0, LOG0, INVALID
+		invalidCode = hexutil.Bytes{0x60, 0x00, 0x60, 0x00, 0xa0, 0xfe}
+		// INVALID uses all the gas of its call.
+		invalidGas = hexutil.Uint64(100_000)
+		// LOG0, CALL(gas, reverter, 0, 0, 0, 0, 0) POP, LOG0, STOP
+		outerCode = append(append(
+			hexutil.Bytes{0x60, 0x00, 0x60, 0x00, 0xa0, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x73},
+			reverter.Bytes()...),
+			0x5a, 0xf1, 0x50, 0x60, 0x00, 0x60, 0x00, 0xa0, 0x00,
+		)
+		alloc = types.GenesisAlloc{
+			reverter: {Code: reverterCode},
+			emitter:  {Code: emitterCode},
+			outer:    {Code: outerCode},
+			invalid:  {Code: invalidCode},
+		}
+	)
+	for _, tc := range []struct {
+		name  string
+		calls []TransactionArgs
+		want  []uint64
+	}{
+		{
+			name:  "failed call before a successful one",
+			calls: []TransactionArgs{{From: &sender, To: &reverter}, {From: &sender, To: &emitter}},
+			want:  []uint64{0},
+		},
+		{
+			name:  "failed call without revert",
+			calls: []TransactionArgs{{From: &sender, To: &invalid, Gas: &invalidGas}, {From: &sender, To: &emitter}},
+			want:  []uint64{0},
+		},
+		{
+			name:  "reverted inner frame",
+			calls: []TransactionArgs{{From: &sender, To: &outer}},
+			want:  []uint64{0, 1},
+		},
+		{
+			name:  "indices continue across calls",
+			calls: []TransactionArgs{{From: &sender, To: &emitter}, {From: &sender, To: &reverter}, {From: &sender, To: &emitter}},
+			want:  []uint64{0, 1},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := newSimulateTracerTestAPI(t, sender, alloc)
+			require.Equal(t, tc.want, simulateLogs(t, api, tc.calls))
+		})
+	}
+}
+
+// TestTransferTracerSkipsCallCode pins that the synthetic transfer log is skipped
+// for CALLCODE frames, which move no value, while a plain CALL still captures one
+// (geth #35248).
+func TestTransferTracerSkipsCallCode(t *testing.T) {
+	t.Parallel()
+
+	var (
+		from = common.HexToAddress("0x00000000000000000000000000000000000000a1")
+		to   = common.HexToAddress("0x00000000000000000000000000000000000000a2")
+	)
+	tr := newTracer(true, 1, common.Hash{}, common.Hash{}, 0)
+	tr.reset(common.HexToHash("0x01"), 0)
+	hooks := tr.Hooks()
+
+	hooks.OnEnter(0, byte(vm.CALL), from, to, nil, 100_000, big.NewInt(1))
+	hooks.OnEnter(1, byte(vm.CALLCODE), from, to, nil, 100_000, big.NewInt(1))
+	hooks.OnExit(1, nil, 0, nil, false)
+	hooks.OnExit(0, nil, 0, nil, false)
+
+	logs := tr.Logs()
+	require.Len(t, logs, 1, "only the CALL frame moves value")
+	require.Equal(t, transferAddress, logs[0].Address)
+}
+
+// TestTransferTracerReleasesRevertedIndexes pins that a reverted frame releases
+// the log indices it consumed, so the next log reuses them (geth #35841).
+func TestTransferTracerReleasesRevertedIndexes(t *testing.T) {
+	t.Parallel()
+
+	var (
+		from = common.HexToAddress("0x00000000000000000000000000000000000000b1")
+		to   = common.HexToAddress("0x00000000000000000000000000000000000000b2")
+	)
+	tr := newTracer(false, 1, common.Hash{}, common.Hash{}, 0)
+	tr.reset(common.HexToHash("0x02"), 0)
+	hooks := tr.Hooks()
+
+	hooks.OnEnter(0, byte(vm.CALL), from, to, nil, 100_000, nil)
+	hooks.OnLog(&types.Log{Address: from})
+	hooks.OnEnter(1, byte(vm.CALL), from, to, nil, 100_000, nil)
+	hooks.OnLog(&types.Log{Address: to})
+	hooks.OnExit(1, nil, 0, nil, true)
+	hooks.OnLog(&types.Log{Address: from})
+	hooks.OnExit(0, nil, 0, nil, false)
+
+	logs := tr.Logs()
+	require.Len(t, logs, 2, "the reverted frame's log is dropped")
+	require.Equal(t, uint(0), logs[0].Index)
+	require.Equal(t, uint(1), logs[1].Index, "the dropped index is reused")
+}
