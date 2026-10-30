@@ -1,8 +1,9 @@
-// Ring signatures are built on the cgo secp256k1 BitCurve (see ringct.go),
-// and these tests assert that curve type, so without cgo (the default on
-// Windows) every test here panics. Compile the file only where cgo is enabled.
+// Ring signatures are built on the cgo secp256k1 BitCurve (see ringct.go), and
+// these tests assert that curve type, so without cgo (the default on Windows)
+// every test here panics: compile only where cgo is enabled. Opt-in like
+// bulletproof_test.go: the package is unused and slated for deletion (#2895).
 //
-//go:build cgo
+//go:build cgo && privacytests
 
 package privacy
 
