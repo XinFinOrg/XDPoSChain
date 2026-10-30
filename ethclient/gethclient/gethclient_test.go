@@ -64,7 +64,7 @@ const pendingTxTimeout = 10 * time.Second
 
 func newTestBackend(t *testing.T) (*node.Node, []*types.Block, []common.Hash) {
 	// Generate test chain.
-	genesis, blocks, txHashes := generateTestChain()
+	genesis, blocks, txHashes := generateTestChain(t)
 	// Create node
 	n, err := node.New(&node.Config{
 		DataDir:     t.TempDir(),
@@ -103,7 +103,8 @@ func newTestBackend(t *testing.T) (*node.Node, []*types.Block, []common.Hash) {
 	return n, blocks, txHashes
 }
 
-func generateTestChain() (*core.Genesis, []*types.Block, []common.Hash) {
+func generateTestChain(t *testing.T) (*core.Genesis, []*types.Block, []common.Hash) {
+	t.Helper()
 	chainConfig := *params.AllEthashProtocolChanges
 	genesis := &core.Genesis{
 		Config: &chainConfig,
@@ -129,7 +130,10 @@ func generateTestChain() (*core.Genesis, []*types.Block, []common.Hash) {
 			GasPrice: big.NewInt(params.InitialBaseFee),
 			Data:     nil,
 		})
-		tx, _ = types.SignTx(tx, types.LatestSignerForChainID(chainConfig.ChainID), testKey)
+		tx, err := types.SignTx(tx, types.LatestSignerForChainID(chainConfig.ChainID), testKey)
+		if err != nil {
+			t.Fatalf("can't sign test transaction: %v", err)
+		}
 		g.AddTx(tx)
 		txHashes = append(txHashes, tx.Hash())
 	}
