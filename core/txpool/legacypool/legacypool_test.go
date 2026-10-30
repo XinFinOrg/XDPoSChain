@@ -40,6 +40,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/event"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/trie"
 	"github.com/holiman/uint256"
@@ -2572,6 +2573,7 @@ func TestQueueGlobalLimiting(t *testing.T) {
 // This logic should not hold for local transactions, unless the local tracking
 // mechanism is disabled.
 func TestQueueTimeLimiting(t *testing.T) {
+	testshort.Skip(t)
 	// Reduce the eviction interval to a testable amount
 	defer func(old time.Duration) { evictionInterval = old }(evictionInterval)
 	evictionInterval = time.Millisecond * 100

@@ -27,6 +27,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 )
 
 const teardownTestTimeout = 10 * time.Second
@@ -580,6 +582,7 @@ func TestClientCloseEndsTeardownOfUnpublishedConnection(t *testing.T) {
 // upper bound only: they keep the grace from growing, while an implementation
 // that ends the wait sooner (see #2640) stays acceptable.
 func TestClientTeardownGraceBoundsCallerWait(t *testing.T) {
+	testshort.Skip(t)
 	// The teardown is entered with this call registered and the caller's
 	// deadline expires while the grace runs. Depending on whether dispatch
 	// handles the completion of the write or the read error first, the call is
@@ -768,6 +771,7 @@ func TestHandlerCloseAbortBoundedDrainForIgnoringCall(t *testing.T) {
 // is released once the drain elapsed instead of staying alive until the call
 // returns.
 func TestServerTeardownReleasesConnectionWhenCallIgnoresContext(t *testing.T) {
+	testshort.Skip(t)
 	t.Run("peer closes", func(t *testing.T) {
 		srv := NewServer()
 		svc := newIgnoringService()

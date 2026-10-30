@@ -7,13 +7,14 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/stretchr/testify/assert"
 )
 
 // TestInitialFirstV2Block tests initial first v 2 block.
 func TestInitialFirstV2Block(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 900, params.TestXDPoSMockChainConfig, nil)
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
 	header := currentBlock.Header()
@@ -121,7 +122,6 @@ func TestInitialOtherV2Block(t *testing.T) {
 // TestSnapshotShouldAlreadyBeCreatedByGapRefresh tests snapshot should already be created
 // by the gap block refresh, which writes it together with the head markers.
 func TestSnapshotShouldAlreadyBeCreatedByGapRefresh(t *testing.T) {
-	skipLongInShortMode(t)
 	// insert new block with new extra fields
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 1800, params.TestXDPoSMockChainConfig, nil)
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)

@@ -10,11 +10,13 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 )
 
 // TestTransactionRollbackBehavior tests that calling Rollback on the simulated backend doesn't prevent subsequent
 // addition of new transactions
 func TestTransactionRollbackBehavior(t *testing.T) {
+	testshort.Skip(t)
 	sim := New(
 		types.GenesisAlloc{
 			testAddr:  {Balance: big.NewInt(10000000000000000)},

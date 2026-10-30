@@ -234,7 +234,6 @@ func TestVerifySyncInfoIfTCRoundIsAtNextEpoch(t *testing.T) {
 }
 
 func TestVerifySyncInfoIfTcUseDifferentEpoch(t *testing.T) {
-	skipLongInShortMode(t)
 	config := params.TestXDPoSMockChainConfig
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 1349, config, nil)
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)

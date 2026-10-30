@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 )
 
 var bindTests = []struct {
@@ -2045,6 +2046,7 @@ var bindTests = []struct {
 // the requested tester run against it.
 func TestBindings(t *testing.T) {
 	t.Parallel()
+	testshort.Skip(t)
 	// Skip the test if no Go command can be found
 	gocmd := runtime.GOROOT() + "/bin/go"
 	if !common.FileExist(gocmd) {

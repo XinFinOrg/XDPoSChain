@@ -10,6 +10,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/hooks"
 	"github.com/XinFinOrg/XDPoSChain/eth/util"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,7 +24,7 @@ import (
 // The same signing set is then rewarded with only TIPFixedReward active, which
 // must pay the full per-node reward and leave signSlots out of the result.
 func TestHookRewardProportional(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	var config params.ChainConfig

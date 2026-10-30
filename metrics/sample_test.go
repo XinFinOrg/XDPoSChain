@@ -5,6 +5,8 @@ import (
 	"math/rand"
 	"testing"
 	"time"
+
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 )
 
 const epsilonPercentile = .00000000001
@@ -281,6 +283,7 @@ func testUniformSampleStatistics(t *testing.T, s *sampleSnapshot) {
 // concurrent Update and Count calls on Sample when test is called with -race
 // argument
 func TestUniformSampleConcurrentUpdateCount(t *testing.T) {
+	testshort.Skip(t)
 	s := NewUniformSample(100)
 	for i := 0; i < 100; i++ {
 		s.Update(int64(i))

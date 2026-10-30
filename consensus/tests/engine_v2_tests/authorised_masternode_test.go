@@ -7,6 +7,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/stretchr/testify/assert"
 )
@@ -34,7 +35,7 @@ func TestIsAuthorisedMNForConsensusV2(t *testing.T) {
 
 // TestIsYourTurnConsensusV2 tests is your turn consensus v 2.
 func TestIsYourTurnConsensusV2(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	// we skip test for v1 since it's hard to make a real genesis block
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 900, params.TestXDPoSMockChainConfig, nil)
 	minePeriod := params.UnitTestV2Configs[0].MinePeriod
@@ -87,7 +88,7 @@ func TestIsYourTurnConsensusV2(t *testing.T) {
 
 // TestIsYourTurnConsensusV2CrossConfig tests is your turn consensus v 2 cross config.
 func TestIsYourTurnConsensusV2CrossConfig(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	// we skip test for v1 since it's hard to make a real genesis block
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 909, params.TestXDPoSMockChainConfig, nil)
 	firstMinePeriod := blockchain.Config().XDPoS.V2.CurrentConfig.MinePeriod

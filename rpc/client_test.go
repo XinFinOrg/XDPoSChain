@@ -33,6 +33,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/davecgh/go-spew/spew"
 )
@@ -567,6 +568,7 @@ func (b *unsubscribeBlocker) readBatch() ([]*jsonrpcMessage, bool, error) {
 // It reproducers the issue https://github.com/ethereum/go-ethereum/issues/30156
 func TestUnsubscribeTimeout(t *testing.T) {
 	t.Parallel()
+	testshort.Skip(t)
 
 	srv := NewServer()
 	srv.RegisterName("nftest", new(notificationTestService))

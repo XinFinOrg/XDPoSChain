@@ -10,6 +10,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/hooks"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/stretchr/testify/assert"
 )
@@ -53,7 +54,7 @@ func voteTXForCandidateWithAmount(gasLimit uint64, nonce uint64, addr string, am
 // against the fixed code's own documented contract rather than hardcoded
 // magic addresses.
 func TestGetSigningTxCountUsesHistoricalStandbynodes(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	configString := string(b)
