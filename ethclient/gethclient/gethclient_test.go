@@ -267,6 +267,12 @@ func testAccessList(t *testing.T, client *rpc.Client) {
 	} {
 		al, gas, vmErr, err := ec.CreateAccessList(context.Background(), tc.msg)
 		if tc.wantErr != "" {
+			// A nil error is the regression this case exists to catch, so it
+			// has to be reported: err.Error() below would dereference it and
+			// turn a wrong result into a panic.
+			if err == nil {
+				t.Fatalf("test %d: expected error %q, got none", i, tc.wantErr)
+			}
 			if !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("test %d: wrong error: %v", i, err)
 			}
