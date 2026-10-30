@@ -1532,6 +1532,33 @@ func testCancel(t *testing.T, protocol uint, mode SyncMode) {
 	}
 }
 
+// Tests that a Cancel racing the registration of a new sync's fetchers does not
+// touch the fetcher WaitGroup concurrently: an Add from a zero counter must not
+// race Wait, which the race detector reports as a data race.
+func TestCancelRacingSpawnSync(t *testing.T) {
+	tester := newTester()
+	defer tester.terminate()
+
+	d := tester.downloader
+	for i := 0; i < 200; i++ {
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			_ = d.spawnSync([]func() error{func() error { return nil }})
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			d.Cancel()
+		}()
+		close(start)
+		wg.Wait()
+	}
+}
+
 // Tests that synchronisation from multiple peers works as intended (multi thread sanity test).
 func TestMultiSynchronisation100Full(t *testing.T)  { testMultiSynchronisation(t, xdc100, FullSync) }
 func TestMultiSynchronisation100Fast(t *testing.T)  { testMultiSynchronisation(t, xdc100, FastSync) }

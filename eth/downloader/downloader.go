@@ -166,6 +166,7 @@ type Downloader struct {
 	cancelCh   chan struct{}  // Channel to cancel mid-flight syncs
 	cancelLock sync.RWMutex   // Lock to protect the cancel channel and peer in delivers
 	cancelWg   sync.WaitGroup // Make sure all fetcher goroutines have exited.
+	cancelGate sync.Mutex     // Serialises cancelWg.Add against cancelWg.Wait
 
 	quitCh   chan struct{} // Quit channel to signal termination
 	quitLock sync.Mutex    // Lock to prevent double closes
@@ -592,7 +593,12 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td *big.I
 // separate goroutines, returning the first error that appears.
 func (d *Downloader) spawnSync(fetchers []func() error) error {
 	errc := make(chan error, len(fetchers))
+	// Register under cancelGate so a concurrent Cancel either waits for these
+	// fetchers or starts before they were added: WaitGroup forbids Add from a
+	// zero counter racing Wait.
+	d.cancelGate.Lock()
 	d.cancelWg.Add(len(fetchers))
+	d.cancelGate.Unlock()
 	for _, fn := range fetchers {
 		go func() { defer d.cancelWg.Done(); errc <- fn() }()
 	}
@@ -639,7 +645,12 @@ func (d *Downloader) cancel() {
 func (d *Downloader) Cancel() {
 	d.blockchain.InterruptInsert(true)
 	d.cancel()
+	// Hold cancelGate while waiting so a spawnSync that is registering its
+	// fetchers right now is either fully tracked by this wait, or starts after
+	// it and immediately sees the closed cancel channel.
+	d.cancelGate.Lock()
 	d.cancelWg.Wait()
+	d.cancelGate.Unlock()
 	d.blockchain.InterruptInsert(false)
 }
 
