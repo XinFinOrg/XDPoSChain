@@ -184,8 +184,9 @@ func TestInsertReceiptChainReportsOnlyWhatReachedDisk(t *testing.T) {
 		payload = make([]byte, 4096)
 	)
 	db := &interruptingDB{Database: rawdb.NewMemoryDatabase()}
+	// The gas limit covers the Amsterdam calldata floor for the body above.
 	_, blocks, receipts := GenerateChainWithGenesis(gspec, ethash.NewFaker(), 40, func(i int, block *BlockGen) {
-		tx, err := types.SignTx(types.NewTransaction(block.TxNonce(address), common.Address{0x00}, big.NewInt(1), 100000, block.header.BaseFee, payload), signer, key)
+		tx, err := types.SignTx(types.NewTransaction(block.TxNonce(address), common.Address{0x00}, big.NewInt(1), 300000, block.header.BaseFee, payload), signer, key)
 		if err != nil {
 			t.Fatalf("block %d: failed to sign the transaction: %v", i, err)
 		}

@@ -68,6 +68,18 @@ The state changes block processing applies before the first transaction of a blo
 _Avoid_: pre-execution calls, system calls
 _See_: [ApplyBlockLevelHooks](core/state_processor.go)
 
+### Transaction pricing
+
+**calldata floor**:
+The minimum gas a transaction pays for its calldata, counted in calldata tokens; a gas limit below it rejects the transaction before execution, and an execution that used less is topped up to it. From Amsterdam it depends on the byte count alone, so zero and non-zero bytes cost the same 64 gas each.
+_Avoid_: data gas, calldata gas
+_See_: [core/state_transition.go:117](core/state_transition.go), [ADR-0005](docs/adr/0005-port-amsterdam-eips-standalone.md)
+
+**calldata token**:
+The unit the calldata floor is counted in — one per zero byte and four per non-zero byte before Amsterdam, four per byte from Amsterdam on — multiplied by the per-token cost to obtain the floor.
+_Avoid_: byte weight, token count
+_See_: [params/protocol_params.go:70](params/protocol_params.go)
+
 ### Wire protocol
 
 **eth capability**:

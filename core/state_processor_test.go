@@ -191,7 +191,7 @@ func TestStateProcessorErrors(t *testing.T) {
 		}
 		tooBigInitCodeRequiredGas := tooBigInitCodeIntrinsicGas
 		if rules.IsPrague {
-			tooBigInitCodeFloorGas, err := FloorDataGas(tooBigInitCode)
+			tooBigInitCodeFloorGas, err := FloorDataGas(rules, tooBigInitCode)
 			if err != nil {
 				t.Fatal(err)
 			}

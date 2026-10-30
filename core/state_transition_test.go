@@ -17,6 +17,7 @@
 package core
 
 import (
+	"bytes"
 	"errors"
 	"math/big"
 	"strings"
@@ -198,4 +199,115 @@ func TestApplyMessageAcceptsAccessListAtEIP1559(t *testing.T) {
 	if _, err := ApplyMessage(evm, msg, new(GasPool).AddGas(msg.GasLimit), common.Address{}); err != nil {
 		t.Fatalf("ApplyMessage rejected the access list at EIP-1559: %v", err)
 	}
+}
+
+// TestFloorDataGas checks the calldata floor on both sides of Amsterdam. EIP-7623
+// prices a zero byte at one token (10 gas) and a non-zero byte at four (40 gas);
+// EIP-7976 counts every byte as four tokens at 16 gas per token (64/64).
+func TestFloorDataGas(t *testing.T) {
+	t.Parallel()
+
+	var (
+		prague    = params.Rules{IsPrague: true}
+		amsterdam = params.Rules{IsPrague: true, IsAmsterdam: true}
+
+		zeros = make([]byte, 32)
+		ones  = bytes.Repeat([]byte{0xff}, 32)
+		mixed = append(bytes.Repeat([]byte{0xff}, 16), make([]byte, 16)...)
+	)
+	tests := []struct {
+		name      string
+		data      []byte
+		prague    uint64
+		amsterdam uint64
+	}{
+		{"empty", nil, 21_000, 21_000},
+		{"one zero byte", []byte{0}, 21_010, 21_064},
+		{"32 zero bytes", zeros, 21_320, 23_048},
+		{"32 non-zero bytes", ones, 22_280, 23_048},
+		{"16 zero + 16 non-zero", mixed, 21_800, 23_048},
+	}
+	for _, tt := range tests {
+		for _, fork := range []struct {
+			name  string
+			rules params.Rules
+			want  uint64
+		}{
+			{"prague", prague, tt.prague},
+			{"amsterdam", amsterdam, tt.amsterdam},
+		} {
+			got, err := FloorDataGas(fork.rules, tt.data)
+			if err != nil {
+				t.Errorf("%s/%s: unexpected error: %v", fork.name, tt.name, err)
+				continue
+			}
+			if got != fork.want {
+				t.Errorf("%s/%s: floor = %d, want %d", fork.name, tt.name, got, fork.want)
+			}
+		}
+	}
+}
+
+// TestApplyMessageCalldataFloor checks that execute resolves the fork rules and
+// applies them to the floor, both when rejecting and when charging.
+func TestApplyMessageCalldataFloor(t *testing.T) {
+	t.Parallel()
+
+	var (
+		data           = bytes.Repeat([]byte{0xff}, 100)
+		tokens         = uint64(len(data)) * params.TxTokenPerNonZeroByte
+		amsterdamFloor = params.TxGas + tokens*params.TxCostFloorPerToken7976
+		pragueFloor    = params.TxGas + tokens*params.TxCostFloorPerToken
+	)
+	apply := func(t *testing.T, config *params.ChainConfig, gasLimit uint64) (*ExecutionResult, error) {
+		t.Helper()
+
+		statedb, err := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
+		if err != nil {
+			t.Fatalf("failed to open state: %v", err)
+		}
+		header := &types.Header{
+			Number:     common.Big1,
+			Difficulty: new(big.Int),
+			GasLimit:   8_000_000,
+			BaseFee:    new(big.Int),
+		}
+		author := common.Address{}
+		evm := vm.NewEVM(NewEVMBlockContext(header, nil, &author), statedb, nil, config, vm.Config{NoBaseFee: true})
+
+		msg := newTestMessage()
+		msg.Data = data
+		msg.GasLimit = gasLimit
+		return ApplyMessage(evm, msg, new(GasPool).AddGas(gasLimit), common.Address{})
+	}
+
+	amsterdam := params.TestChainConfig.Clone()
+	amsterdam.AmsterdamBlock = big.NewInt(0)
+
+	t.Run("reject below floor", func(t *testing.T) {
+		if _, err := apply(t, amsterdam, amsterdamFloor-1); !errors.Is(err, ErrFloorDataGas) {
+			t.Fatalf("error = %v, want %v", err, ErrFloorDataGas)
+		}
+	})
+	t.Run("charge floor", func(t *testing.T) {
+		res, err := apply(t, amsterdam, amsterdamFloor)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.UsedGas != amsterdamFloor {
+			t.Fatalf("used gas = %d, want floor %d", res.UsedGas, amsterdamFloor)
+		}
+	})
+	t.Run("prague pricing", func(t *testing.T) {
+		prague := params.TestChainConfig.Clone()
+		prague.AmsterdamBlock = nil
+
+		res, err := apply(t, prague, amsterdamFloor)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.UsedGas != pragueFloor {
+			t.Fatalf("used gas = %d, want pre-Amsterdam floor %d", res.UsedGas, pragueFloor)
+		}
+	})
 }
