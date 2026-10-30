@@ -99,10 +99,10 @@ func TestExecutedMarkerSurvivesOnTheFlushedHeight(t *testing.T) {
 		t.Fatalf("failed to create tester chain: %v", err)
 	}
 	t.Cleanup(chain.Stop)
-	// The flush every pass triggers moves the package-level lastWrite, so save it and put it
+	// The flush every pass triggers moves this chain's lastWrite, so save it and put it
 	// back rather than leaking it into the cases that follow.
-	saved := lastWrite
-	t.Cleanup(func() { lastWrite = saved })
+	saved := chain.lastWrite
+	t.Cleanup(func() { chain.lastWrite = saved })
 	if n, err := chain.InsertChain(blocks); err != nil {
 		t.Fatalf("block %d: failed to insert into chain: %v", n, err)
 	}
@@ -274,10 +274,9 @@ func makeLongSharedStateChain(t *testing.T, count, emptyIdx int) (*Genesis, shar
 // both being the flushed root, so ValidateBody stops answering it as known while the parent check
 // below still passes and the re-delivery runs Process over the block again.
 //
-// The single flush is forced through bc.gcproc rather than through the time limit, so the pass that
-// writes a state out is named by the fixture instead of by the clock, and the fixture does not
-// depend on the package-level lastWrite the throttle also compares against: it saves that variable
-// before forcing the flush and puts it back afterwards, as the sibling case below does.
+// The single flush is forced through bc.gcproc rather than through the time limit, so the
+// fixture names the pass instead of the clock; it saves lastWrite and restores it afterwards,
+// as the sibling case below does.
 func TestExecutedMarkerSurvivesOnASharedRootHeight(t *testing.T) {
 	// The height the flush below writes is TriesInMemory+1, and the height above it is left without
 	// a transaction, so it names the state root of its parent - the root that flush puts on disk.
@@ -289,9 +288,8 @@ func TestExecutedMarkerSurvivesOnASharedRootHeight(t *testing.T) {
 	}
 	t.Cleanup(chain.Stop)
 
-	// Up to the block below the one whose chosen is the boundary height. No pass here can flush:
-	// chosen is at most TriesInMemory, and the throttle needs current > lastWrite+2*TriesInMemory,
-	// whatever the package-level lastWrite is by now.
+	// No pass here can flush: chosen is at most TriesInMemory, and the throttle needs
+	// current > lastWrite+2*TriesInMemory.
 	if n, err := chain.InsertChain(blocks[:2*TriesInMemory]); err != nil {
 		t.Fatalf("block %d: failed to insert into chain: %v", n, err)
 	}
@@ -302,11 +300,10 @@ func TestExecutedMarkerSurvivesOnASharedRootHeight(t *testing.T) {
 		t.Fatalf("marker for pruned block %d is still on disk", blocks[0].NumberU64())
 	}
 
-	// The one pass that writes a state out: it is the call whose chosen is height
-	// TriesInMemory+1, which is the block at index TriesInMemory. The flush moves the package-level
-	// lastWrite, so save it and put it back rather than leaking it into the cases that follow.
-	saved := lastWrite
-	t.Cleanup(func() { lastWrite = saved })
+	// The one pass that writes a state out (chosen is TriesInMemory+1, the block at index
+	// TriesInMemory) moves lastWrite; save and restore it so it does not leak.
+	saved := chain.lastWrite
+	t.Cleanup(func() { chain.lastWrite = saved })
 	chain.gcproc = 2 * time.Hour
 	if n, err := chain.InsertChain(blocks[2*TriesInMemory : 2*TriesInMemory+1]); err != nil {
 		t.Fatalf("block %d: failed to insert the boundary block: %v", n, err)
@@ -349,9 +346,9 @@ func TestExecutedMarkerSurvivesOnASharedRootHeight(t *testing.T) {
 // and nothing has written the root to disk. Recorded under Consequences in
 // docs/adr/0001-bound-executed-marker-to-state-lifetime.md.
 func TestExecutedMarkerSurvivesOnAHeightAnotherEntryStillReferences(t *testing.T) {
-	// No pass here can flush, whatever the package-level lastWrite holds by the time this case
-	// runs: the fixture pins it at one window before the import below, and a flush then needs a
-	// chosen above twice the window, while the farthest this chain reaches is TriesInMemory+3.
+	// No pass here can flush, whatever lastWrite holds: the fixture pins it a window behind,
+	// and a flush needs a chosen above twice the window while this chain reaches at most
+	// TriesInMemory+3.
 	// Neither height of the pair below is a height a flush reaches, so the probe has to answer
 	// from the reference count rather than from the disk.
 	gspec, engine, blocks := makeLongSharedStateChain(t, 2*TriesInMemory+3, TriesInMemory+2)
@@ -361,13 +358,11 @@ func TestExecutedMarkerSurvivesOnAHeightAnotherEntryStillReferences(t *testing.T
 	}
 	t.Cleanup(chain.Stop)
 
-	// The flush throttle compares against the package-level lastWrite, whose value this case
-	// cannot assume: it is shared with every other test that flushes, so the schedule would
-	// otherwise be that of whichever case ran last. Pin it at one window, which no pass below
-	// can reach, and put it back so no case after this one inherits the pin.
-	saved := lastWrite
-	lastWrite = TriesInMemory
-	t.Cleanup(func() { lastWrite = saved })
+	// Pin lastWrite a window behind, which no pass below can reach, and restore it so no
+	// later case inherits the pin.
+	saved := chain.lastWrite
+	chain.lastWrite = TriesInMemory
+	t.Cleanup(func() { chain.lastWrite = saved })
 
 	if n, err := chain.InsertChain(blocks); err != nil {
 		t.Fatalf("block %d: failed to insert into chain: %v", n, err)

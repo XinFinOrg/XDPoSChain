@@ -15,6 +15,7 @@ import (
 )
 
 func TestProcessQcShallSetForensicsCommittedQc(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -85,11 +86,13 @@ func TestProcessQcShallSetForensicsCommittedQc(t *testing.T) {
 	err = engineV2.VoteHandler(blockchain, voteMsg)
 	assert.Nil(t, err)
 
-	time.Sleep(5000 * time.Millisecond)
+	// The update runs in a goroutine; one second is ample.
+	time.Sleep(1000 * time.Millisecond)
 	assert.Equal(t, 3, len(engineV2.GetForensicsFaker().HighestCommittedQCs))
 }
 
 func TestSetCommittedQCsInOrder(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	forensics := blockchain.Engine().(*XDPoS.XDPoS).EngineV2.GetForensicsFaker()
 
@@ -116,6 +119,7 @@ func TestSetCommittedQCsInOrder(t *testing.T) {
 
 // Happty path
 func TestForensicsMonitoring(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 915, params.TestXDPoSMockChainConfig, nil)
 	forensics := blockchain.Engine().(*XDPoS.XDPoS).EngineV2.GetForensicsFaker()
 	var decodedCurrentblockExtraField types.ExtraFields_v2

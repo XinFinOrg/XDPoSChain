@@ -14,6 +14,7 @@ import (
 )
 
 func TestSyncInfoShouldSuccessfullyUpdateByQC(t *testing.T) {
+	t.Parallel()
 	// Block 901 is the first v2 block with starting round of 0
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
@@ -45,6 +46,7 @@ func TestSyncInfoShouldSuccessfullyUpdateByQC(t *testing.T) {
 }
 
 func TestSyncInfoShouldSuccessfullyUpdateByTC(t *testing.T) {
+	t.Parallel()
 	// Block 901 is the first v2 block with starting round of 0
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
@@ -75,6 +77,7 @@ func TestSyncInfoShouldSuccessfullyUpdateByTC(t *testing.T) {
 }
 
 func TestSkipVerifySyncInfoIfBothQcTcNotQualified(t *testing.T) {
+	t.Parallel()
 	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -107,6 +110,7 @@ func TestSkipVerifySyncInfoIfBothQcTcNotQualified(t *testing.T) {
 // puts it into every syncInfo it sends. The QC in such a message is the only way for a
 // node that missed a QC to catch up, so the placeholder TC must not invalidate it.
 func TestVerifySyncInfoWithNewerQCAndBootstrapTC(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -147,6 +151,7 @@ func TestVerifySyncInfoWithNewerQCAndBootstrapTC(t *testing.T) {
 // need. Verifying only the certificate that is ahead of ours would avoid that, at the cost
 // of a broader change to the syncInfo path.
 func TestVerifySyncInfoStillVerifiesNonEmptyTC(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -185,6 +190,7 @@ func TestVerifySyncInfoStillVerifiesNonEmptyTC(t *testing.T) {
 }
 
 func TestVerifySyncInfoIfTCRoundIsAtNextEpoch(t *testing.T) {
+	t.Parallel()
 	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -234,6 +240,7 @@ func TestVerifySyncInfoIfTCRoundIsAtNextEpoch(t *testing.T) {
 }
 
 func TestVerifySyncInfoIfTcUseDifferentEpoch(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	config := params.TestXDPoSMockChainConfig
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 1349, config, nil)

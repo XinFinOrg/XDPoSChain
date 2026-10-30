@@ -77,6 +77,35 @@ func skipLongInShortMode(t *testing.T) {
 	}
 }
 
+// drainBroadcast drops everything already pending on ch without blocking.
+func drainBroadcast(ch chan interface{}) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
+		}
+	}
+}
+
+// expectNoVote fails the test if a vote arrives on ch within window. Other
+// broadcasts (timeout, sync-info) are ignored.
+func expectNoVote(t *testing.T, ch chan interface{}, window time.Duration) {
+	t.Helper()
+	timer := time.NewTimer(window)
+	defer timer.Stop()
+	for {
+		select {
+		case msg := <-ch:
+			if _, ok := msg.(*types.Vote); ok {
+				t.Fatalf("should not broadcast a vote, got %T", msg)
+			}
+		case <-timer.C:
+			return
+		}
+	}
+}
+
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 func RandStringBytes(n int) string {
@@ -394,13 +423,46 @@ func signingTxWithSignerFn(header *types.Header, nonce uint64, signer common.Add
 	return signedTx, nil
 }
 
+// v2TestTimings shortens the V2 periods for this package. Round 10 stays above
+// round 0 because TestIsYourTurnConsensusV2CrossConfig needs a larger period.
+var v2TestTimings = map[uint64]struct {
+	timeoutPeriod int
+	minePeriod    int
+}{
+	0:   {timeoutPeriod: 1, minePeriod: 1},
+	10:  {timeoutPeriod: 1, minePeriod: 2},
+	900: {timeoutPeriod: 2, minePeriod: 2},
+}
+
+// shortenV2Timings rewrites the V2 timing knobs of cfg, which must be a clone.
+func shortenV2Timings(cfg *params.ChainConfig) {
+	if cfg == nil || cfg.XDPoS == nil || cfg.XDPoS.V2 == nil {
+		return
+	}
+	v2 := cfg.XDPoS.V2
+	for round, timing := range v2TestTimings {
+		if c, ok := v2.AllConfigs[round]; ok && c != nil {
+			c.TimeoutPeriod = timing.timeoutPeriod
+			c.MinePeriod = timing.minePeriod
+		}
+	}
+	if c := v2.CurrentConfig; c != nil {
+		if timing, ok := v2TestTimings[c.SwitchRound]; ok {
+			c.TimeoutPeriod = timing.timeoutPeriod
+			c.MinePeriod = timing.minePeriod
+		}
+	}
+}
+
 // legacyExecutionConfigForV2Tests shifts execution-layer forks far into the
 // future so V2 tests isolate consensus behavior from execution fork changes.
 func legacyExecutionConfigForV2Tests(chainConfig *params.ChainConfig) *params.ChainConfig {
 	if chainConfig == nil {
 		return nil
 	}
-	legacy := *chainConfig
+	// Clone so the timing rewrite cannot leak into the shared test config.
+	legacy := chainConfig.Clone()
+	shortenV2Timings(legacy)
 	futureForkBlock := big.NewInt(1_000_000_000)
 	legacy.ConstantinopleBlock = new(big.Int).Set(futureForkBlock)
 	legacy.PetersburgBlock = new(big.Int).Set(futureForkBlock)
@@ -430,7 +492,7 @@ func legacyExecutionConfigForV2Tests(chainConfig *params.ChainConfig) *params.Ch
 	legacy.TIPFixedRewardBlock = new(big.Int).Set(futureForkBlock)
 	legacy.TIPUpgradePenaltyBlock = new(big.Int).Set(futureForkBlock)
 	legacy.TIPEpochHalvingBlock = new(big.Int).Set(futureForkBlock)
-	return refreshChainConfigPresence(&legacy)
+	return refreshChainConfigPresence(legacy)
 }
 
 // refreshChainConfigPresence round-trips a chain config through JSON so tests

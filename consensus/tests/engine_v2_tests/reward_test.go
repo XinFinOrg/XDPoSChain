@@ -3,6 +3,7 @@ package engine_v2_tests
 import (
 	"encoding/json"
 	"math/big"
+	"sort"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -16,6 +17,7 @@ import (
 
 // TestHookRewardV2 tests hook reward v 2.
 func TestHookRewardV2(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
@@ -99,6 +101,7 @@ func TestHookRewardV2(t *testing.T) {
 
 // TestHookRewardV2SplitReward tests hook reward v 2 split reward.
 func TestHookRewardV2SplitReward(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
@@ -171,6 +174,7 @@ func TestHookRewardV2SplitReward(t *testing.T) {
 
 // TestHookRewardAfterUpgrade tests hook reward after upgrade.
 func TestHookRewardAfterUpgrade(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
@@ -270,6 +274,7 @@ func TestHookRewardAfterUpgrade(t *testing.T) {
 
 // TestFinalizeAfterUpgrade tests finalize after upgrade.
 func TestFinalizeAfterUpgrade(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
@@ -337,8 +342,10 @@ func TestFinalizeAfterUpgrade(t *testing.T) {
 	assert.True(t, minted.IsZero())
 }
 
-// TestRewardHalvingVanishing tests reward halving vanishing.
+// TestRewardHalvingVanishing checks that the reward series vanishes and never
+// sums past the halving supply. The sum is checked on a scaled-down series.
 func TestRewardHalvingVanishing(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	billion := big.NewInt(1000000000)
 	epochRewardTotal := big.NewInt(16000)
@@ -352,26 +359,57 @@ func TestRewardHalvingVanishing(t *testing.T) {
 	// 45 Billion - 39 Billion XDC (1 XDC = 10^9 wei)
 	halvingSupply := big.NewInt(6000000000)
 	halvingSupply.Mul(halvingSupply, billion)
+
+	epochReward := func(epoch uint64) *big.Int {
+		r := new(big.Int).Add(util.RewardHalving(epochReward1, epochRewardTotal, halvingSupply, epoch), util.RewardHalving(epochReward2, epochRewardTotal, halvingSupply, epoch))
+		return r.Add(r, util.RewardHalving(epochReward3, epochRewardTotal, halvingSupply, epoch))
+	}
+
+	// Rewards decrease monotonically, so binary search finds the first zero epoch.
+	const iterMax = uint64(30000000)
+	firstZero := sort.Search(int(iterMax), func(i int) bool {
+		return epochReward(uint64(i)).Sign() == 0
+	})
+	if firstZero == int(iterMax) {
+		t.Fatal("reward should be 0 at end")
+	}
+	t.Log("reward be 0 at i=", firstZero) // 11225088, which is more than 200 years in the future
+	if assert.Greater(t, firstZero, 0, "reward must not vanish at the first epoch") {
+		assert.True(t, epochReward(uint64(firstZero-1)).Sign() > 0, "reward must still be paid one epoch before it vanishes")
+	}
+
+	// Same economics scaled down (base 1-16000/16000000): the series vanishes
+	// after ~9.2k epochs instead of ~11.2M.
+	scaledTotal := big.NewInt(16000)
+	scaledSupply := big.NewInt(16000000)
+	scaledRewards := []*big.Int{big.NewInt(10000), big.NewInt(4000), big.NewInt(2000)}
 	sum := big.NewInt(0)
-	iterMax := uint64(30000000)
-	for i := uint64(0); i < iterMax; i++ {
-		r := new(big.Int).Add(util.RewardHalving(epochReward1, epochRewardTotal, halvingSupply, i), util.RewardHalving(epochReward2, epochRewardTotal, halvingSupply, i))
-		r.Add(r, util.RewardHalving(epochReward3, epochRewardTotal, halvingSupply, i))
+	for i := uint64(0); ; i++ {
+		r := new(big.Int)
+		for j, reward := range scaledRewards {
+			halved := util.RewardHalving(reward, scaledTotal, scaledSupply, i)
+			if j == 0 {
+				r.Set(halved)
+				continue
+			}
+			r.Add(r, halved)
+		}
 		if r.BitLen() == 0 {
-			t.Log("reward be 0 at i=", i) // reward be 0 at i= 11225088, which is more than 200 years in the future
+			t.Log("scaled reward be 0 at i=", i)
 			break
 		}
-		sum.Add(sum, r)
-		if i == iterMax-1 {
-			t.Fatal("reward should be 0 at end")
+		if i >= iterMax {
+			t.Fatal("scaled reward should be 0 at end")
 		}
+		sum.Add(sum, r)
 	}
-	t.Log("sum", sum) // sum 5999999999982635022, which is less than total, and never reach totoal
-	assert.True(t, sum.Cmp(halvingSupply) < 0)
+	t.Log("sum", sum)
+	assert.True(t, sum.Cmp(scaledSupply) < 0, "summed rewards must stay below the halving supply")
 }
 
 // TestRewardHalvingSplit tests reward halving split.
 func TestRewardHalvingSplit(t *testing.T) {
+	t.Parallel()
 	billion := big.NewInt(1000000000)
 	epochRewardTotal := big.NewInt(16000)
 	epochRewardTotal.Mul(epochRewardTotal, billion)

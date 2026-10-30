@@ -1,3 +1,12 @@
+// The privacy precompiles are unreachable - RING_SIG_VERIFY and
+// BULLET_PROOF_VERIFY have never been called on mainnet or Apothem (#2895) -
+// and the package is scheduled for deletion, so no CI lane runs these tests.
+// Keep the exhaustive crypto cases out of the default suite as well:
+//
+//	go test -tags=privacytests ./core/vm/privacy
+//
+//go:build privacytests
+
 package privacy
 
 import (
