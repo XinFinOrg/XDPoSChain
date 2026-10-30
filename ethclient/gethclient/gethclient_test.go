@@ -26,6 +26,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	ethereum "github.com/XinFinOrg/XDPoSChain"
 	"github.com/XinFinOrg/XDPoSChain/XDCx"
@@ -55,6 +56,11 @@ var (
 	testValue    = crypto.Keccak256Hash(testSlot[:])
 	testBalance  = big.NewInt(2e15)
 )
+
+// pendingTxTimeout bounds the wait for a subscription notification. The node
+// delivers them asynchronously, and without a bound a lost one blocks the test
+// forever.
+const pendingTxTimeout = 10 * time.Second
 
 func newTestBackend(t *testing.T) (*node.Node, []*types.Block, []common.Hash) {
 	// Generate test chain.
@@ -327,11 +333,19 @@ func testSubscribePendingTransactions(t *testing.T, client *rpc.Client) {
 
 	// Subscribe to Transactions
 	ch1 := make(chan common.Hash)
-	ec.SubscribePendingTransactions(context.Background(), ch1)
+	sub1, err := ec.SubscribePendingTransactions(context.Background(), ch1)
+	if err != nil {
+		t.Fatalf("can't subscribe to pending transaction hashes: %v", err)
+	}
+	defer sub1.Unsubscribe()
 
 	// Subscribe to Transactions
 	ch2 := make(chan *types.Transaction)
-	ec.SubscribeFullPendingTransactions(context.Background(), ch2)
+	sub2, err := ec.SubscribeFullPendingTransactions(context.Background(), ch2)
+	if err != nil {
+		t.Fatalf("can't subscribe to full pending transactions: %v", err)
+	}
+	defer sub2.Unsubscribe()
 
 	// Send a transaction
 	chainID, err := ethcl.ChainID(context.Background())
@@ -358,15 +372,30 @@ func testSubscribePendingTransactions(t *testing.T, client *rpc.Client) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Check that the transaction was sent over the channel
-	hash := <-ch1
-	if hash != signedTx.Hash() {
-		t.Fatalf("Invalid tx hash received, got %v, want %v", hash, signedTx.Hash())
+	// Check that the transaction was sent over the channel. The notification
+	// arrives asynchronously and a lost one used to block here forever: the
+	// package then hung until the CI job's watchdog killed it, so no goroutine
+	// dump ever named the test.
+	select {
+	case hash := <-ch1:
+		if hash != signedTx.Hash() {
+			t.Fatalf("Invalid tx hash received, got %v, want %v", hash, signedTx.Hash())
+		}
+	case err := <-sub1.Err():
+		t.Fatalf("pending transaction hash subscription ended: %v", err)
+	case <-time.After(pendingTxTimeout):
+		t.Fatalf("no pending transaction hash arrived within %v", pendingTxTimeout)
 	}
 	// Check that the transaction was sent over the channel
-	tx = <-ch2
-	if tx.Hash() != signedTx.Hash() {
-		t.Fatalf("Invalid tx hash received, got %v, want %v", tx.Hash(), signedTx.Hash())
+	select {
+	case got := <-ch2:
+		if got.Hash() != signedTx.Hash() {
+			t.Fatalf("Invalid tx hash received, got %v, want %v", got.Hash(), signedTx.Hash())
+		}
+	case err := <-sub2.Err():
+		t.Fatalf("full pending transaction subscription ended: %v", err)
+	case <-time.After(pendingTxTimeout):
+		t.Fatalf("no full pending transaction arrived within %v", pendingTxTimeout)
 	}
 }
 
