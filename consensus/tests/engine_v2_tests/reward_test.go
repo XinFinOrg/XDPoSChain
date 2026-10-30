@@ -338,36 +338,56 @@ func TestFinalizeAfterUpgrade(t *testing.T) {
 }
 
 // TestRewardHalvingVanishing tests reward halving vanishing.
+//
+// It checks the two properties the geometric schedule is meant to have: the
+// per-epoch reward dies out, and what is issued never reaches the supply it was
+// started from.
+//
+// The sweep runs on a scaled-down supply. The series converges to the supply for
+// any parameter pair - the reward/supply ratio only sets how fast - so a
+// 6,000,000 wei supply against a 16,000 wei epoch reward walks the whole curve in
+// 3,450 epochs. The mainnet numbers cannot be swept: they need 11,225,088 epochs
+// of big.Float arithmetic, ~25 s without the detector and ~13 min with it. They
+// are checked around the break point instead, which is the only thing the walk
+// pinned down about them.
 func TestRewardHalvingVanishing(t *testing.T) {
-	skipLongInShortMode(t)
-	billion := big.NewInt(1000000000)
+	// Scaled-down curve: the same 10:4:2 split of a 16,000 wei epoch reward.
 	epochRewardTotal := big.NewInt(16000)
-	epochRewardTotal.Mul(epochRewardTotal, billion)
-	epochReward1 := big.NewInt(10000)
-	epochReward1.Mul(epochReward1, billion)
-	epochReward2 := big.NewInt(4000)
-	epochReward2.Mul(epochReward2, billion)
-	epochReward3 := big.NewInt(2000)
-	epochReward3.Mul(epochReward3, billion)
-	// 45 Billion - 39 Billion XDC (1 XDC = 10^9 wei)
-	halvingSupply := big.NewInt(6000000000)
-	halvingSupply.Mul(halvingSupply, billion)
+	halvingSupply := big.NewInt(6000000)
+	epochRewards := []*big.Int{big.NewInt(10000), big.NewInt(4000), big.NewInt(2000)}
+
+	const iterMax = uint64(100000) // 3,450 epochs is the break point; the rest is slack
+	var (
+		vanished   bool
+		vanishedAt uint64
+	)
 	sum := big.NewInt(0)
-	iterMax := uint64(30000000)
 	for i := uint64(0); i < iterMax; i++ {
-		r := new(big.Int).Add(util.RewardHalving(epochReward1, epochRewardTotal, halvingSupply, i), util.RewardHalving(epochReward2, epochRewardTotal, halvingSupply, i))
-		r.Add(r, util.RewardHalving(epochReward3, epochRewardTotal, halvingSupply, i))
-		if r.BitLen() == 0 {
-			t.Log("reward be 0 at i=", i) // reward be 0 at i= 11225088, which is more than 200 years in the future
+		r := big.NewInt(0)
+		for _, reward := range epochRewards {
+			r.Add(r, util.RewardHalving(reward, epochRewardTotal, halvingSupply, i))
+		}
+		if r.Sign() == 0 {
+			vanished, vanishedAt = true, i
 			break
 		}
 		sum.Add(sum, r)
-		if i == iterMax-1 {
-			t.Fatal("reward should be 0 at end")
-		}
 	}
-	t.Log("sum", sum) // sum 5999999999982635022, which is less than total, and never reach totoal
-	assert.True(t, sum.Cmp(halvingSupply) < 0)
+	assert.True(t, vanished, "reward should be 0 before epoch %d", iterMax)
+	t.Logf("reward is 0 from epoch %d, issued %s of %s wei", vanishedAt, sum, halvingSupply)
+	assert.Negative(t, sum.Cmp(halvingSupply), "issued %s wei shall stay below the halving supply %s", sum, halvingSupply)
+
+	// Mainnet's own numbers, at the two epochs the full walk used to pin down:
+	// the last one that still pays and the first one that pays nothing.
+	billion := big.NewInt(1000000000)
+	realValue := func(v int64) *big.Int { return new(big.Int).Mul(big.NewInt(v), billion) }
+	realEpochRewardTotal := realValue(16000)
+	realHalvingSupply := realValue(6000000000) // 45 Billion - 39 Billion XDC (1 XDC = 10^9 wei)
+	realMasternodeReward := realValue(10000)
+	last := util.RewardHalving(realMasternodeReward, realEpochRewardTotal, realHalvingSupply, 11225087)
+	gone := util.RewardHalving(realMasternodeReward, realEpochRewardTotal, realHalvingSupply, 11225088)
+	assert.Positive(t, last.Sign(), "the 10,000 XDC reward shall still be paid at epoch 11,225,087, got %s", last)
+	assert.Zero(t, gone.Sign(), "the 10,000 XDC reward shall pay nothing from epoch 11,225,088, got %s", gone)
 }
 
 // TestRewardHalvingSplit tests reward halving split.

@@ -9,9 +9,20 @@ on:
     tags:
       - "*"
 
+concurrency:
+  # One run per pull request, the newest one. A push that supersedes another
+  # used to leave both running: fifteen jobs each, and the older one only
+  # reported a verdict nobody was waiting for. Pushes to a branch keep their
+  # run - every commit that lands there is meant to be validated.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   GOPROXY: https://proxy.golang.org,direct
   GO111MODULE: on
+  # The number of bulk lanes in the race matrix, read by the lanes themselves
+  # and checked against the matrix by the static job.
+  RACE_SHARDS: "2"
   tf_version: "1.3.0"
   tf_init_cli_options: "-input=false"
   tf_validation_cli_options: ""
@@ -19,35 +30,19 @@ env:
   tf_apply_cli_options: "-auto-approve -input=false"
 
 jobs:
-  tests:
+  # Formatting, tidiness and generated files once per run. The detector is the
+  # only job that builds and tests, so these would otherwise not run at all.
+  static:
     env:
       GOPATH: ${{ github.workspace }}
       GOBIN: ${{ github.workspace }}/bin
     runs-on: ubuntu-latest
+    # gofmt, tidy and generate take 84s warm. Without a bound a wedged generator
+    # holds a runner for the default six hours.
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: ${{ env.GOPATH }}/src/XDPoSChain
-    strategy:
-      matrix:
-        include:
-          - name: A-B tests
-            script: go run build/ci.go test -coverage $(go list ./... | grep "github.com/XinFinOrg/XDPoSChain/[a-b].*")
-          - name: C-[a-m] tests
-            script: go run build/ci.go test -coverage $(go list ./... | grep "github.com/XinFinOrg/XDPoSChain/c[a-m].*")
-          - name: C-[n-o] tests
-            script: go run build/ci.go test -coverage $(go list ./... | grep "github.com/XinFinOrg/XDPoSChain/c[n-o].*" | grep -v "github.com/XinFinOrg/XDPoSChain/consensus/tests/engine_v2_tests")
-          - name: Engine v2 tests
-            script: go run build/ci.go test -coverage github.com/XinFinOrg/XDPoSChain/consensus/tests/engine_v2_tests
-          - name: C-[p-z] tests
-            script: go run build/ci.go test -coverage $(go list ./... | grep "github.com/XinFinOrg/XDPoSChain/c[p-z].*")
-          - name: D-I tests
-            script: go run build/ci.go test -coverage $(go list ./... | grep "github.com/XinFinOrg/XDPoSChain/[d-i].*")
-          - name: J-N tests
-            script: go run build/ci.go test -coverage $(go list ./... | grep "github.com/XinFinOrg/XDPoSChain/[j-n].*")
-          - name: O-S tests
-            script: go run build/ci.go test -coverage $(go list ./... | grep "github.com/XinFinOrg/XDPoSChain/[o-s].*")
-          - name: T-Z tests
-            script: go run build/ci.go test -coverage $(go list ./... | grep "github.com/XinFinOrg/XDPoSChain/[t-zT-Z].*")
     steps:
       - name: Check out code
         uses: actions/checkout@v5
@@ -58,6 +53,17 @@ jobs:
         with:
           path: ${{ env.GOPATH }}/src/XDPoSChain/build/cache
           key: ${{ runner.os }}-build-tools-cache-${{ hashFiles('**/build/checksums.txt') }}
+      # `go generate ./...` compiles stringer, gencodec, abigen and
+      # protoc-gen-go before it can run any of them, and without a build cache
+      # that was 75s of this job on every push.
+      - name: Restore the Go build cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-go-build-static-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-go-build-static-${{ hashFiles('**/go.sum') }}-
+            ${{ runner.os }}-go-build-static-
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
@@ -80,29 +86,93 @@ jobs:
       - name: Validate generated files
         run: |
           go run build/ci.go generate
-      - name: Run tests
-        run: ${{ matrix.script }}
-        env:
-          GO111MODULE: auto
+      # The bulk lanes are numbered by hand, so the count is read back from the
+      # workflow: a lane dropped without the total moving would leave its
+      # packages out of every lane, silently. A stale pin and an empty slice are
+      # caught here too, in seconds instead of in a lane that timed out.
+      - name: Check the shard split
+        run: make check-shards RACE_SHARDS=$RACE_SHARDS
 
-  # The short suite under the race detector (#2700): four slices in parallel,
-  # then rpc alone. The long consensus, discover and tests/ cases stay above.
+  # A diff with no Go code in it cannot introduce a race, and a CI or docs pull
+  # request should not wait a couple of minutes for the detector. The build files are
+  # the exception: they decide which packages the lanes run, so a change to the
+  # split has to be exercised here or it is only verified by the next pull
+  # request that happens to touch Go. Decide once here and let every lane read
+  # the answer: fetching the base commit costs a second, while a full-history
+  # checkout in each of the twelve lanes does not.
+  race-scope:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.diff.outputs.run }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: diff
+        name: Check the diff for Go code
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+          # A new branch or a force push has no base to compare against: run
+          # the detector rather than guess.
+          if [ -z "$base" ] || ! git fetch --no-tags --depth=1 origin "$base" 2>/dev/null; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only FETCH_HEAD HEAD -- '*.go' 'go.mod' 'go.sum' 'Makefile' 'build' '.github/workflows' | grep -q .; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "no Go changes since $base"
+          fi
+
+  # The full suite under the race detector (#2700), and the only job that runs
+  # the tests: the non-race shards it replaces covered the same packages with one
+  # exception, core/vm/privacy, which has no lane here either (#2895) and is
+  # unused. The lanes are cut by measured -race time, not by position: by
+  # position, engine_v2_tests (624s), core/vm/privacy (328s) and core (308s)
+  # landed in the same slice and made a 479s job that set the run's wall clock.
+  # engine_v2_tests and core run as test-name slices of their own - engine_v2 in
+  # five, because 624s of tests in three lanes left the slowest at 234s and it
+  # set the run's wall clock again; core in two - and cmd/XDC in two, because at
+  # 79s it is one package that no split of the tree can move. rpc stands alone
+  # because its 32 MiB websocket test trips the codec's 30s pong timeout under
+  # -p 4. Skipping the long cases saved 26% of the detector's time and hid the
+  # races they cover, so the carve-out is gone. The bulk slices are derived from
+  # the import path (build/shard.sh), so a new package lands in one of them and
+  # does not shift the boundary the split was measured against.
   race:
     env:
       GOPATH: ${{ github.workspace }}
       GOBIN: ${{ github.workspace }}/bin
     runs-on: ubuntu-latest
     name: race (${{ matrix.name }})
+    needs: race-scope
+    # `race-scope` answers whether there is Go code to test. The refs that
+    # deploy are tested regardless: the jobs that build and push wait for this
+    # one, and a skipped dependency skips them too.
+    if: needs.race-scope.outputs.run == 'true' || github.ref == 'refs/heads/dev-upgrade' || startsWith(github.ref, 'refs/tags/')
     strategy:
       fail-fast: false
       matrix:
-        # `name` labels the check, `shard` is what make slices on.
+        # `kind` picks the step. `shard` is the index into RACE_REST_PKGS, split
+        # by import path (build/shard.sh); `pkg`/`i`/`n` are the enumeration
+        # slice of a heavy package (see race-test-full-group).
         include:
-          - { name: "bulk 1/4", shard: "1" }
-          - { name: "bulk 2/4", shard: "2" }
-          - { name: "bulk 3/4", shard: "3" }
-          - { name: "bulk 4/4", shard: "4" }
-          - { name: "rpc", shard: "rpc" }
+          - { name: "bulk 1/2", kind: "bulk", shard: "1" }
+          - { name: "bulk 2/2", kind: "bulk", shard: "2" }
+          - { name: "engine_v2 1/5", kind: "group", pkg: "./consensus/tests/engine_v2_tests", i: "1", n: "5" }
+          - { name: "engine_v2 2/5", kind: "group", pkg: "./consensus/tests/engine_v2_tests", i: "2", n: "5" }
+          - { name: "engine_v2 3/5", kind: "group", pkg: "./consensus/tests/engine_v2_tests", i: "3", n: "5" }
+          - { name: "engine_v2 4/5", kind: "group", pkg: "./consensus/tests/engine_v2_tests", i: "4", n: "5" }
+          - { name: "engine_v2 5/5", kind: "group", pkg: "./consensus/tests/engine_v2_tests", i: "5", n: "5" }
+          - { name: "core 1/2", kind: "group", pkg: "./core", i: "1", n: "2" }
+          - { name: "core 2/2", kind: "group", pkg: "./core", i: "2", n: "2" }
+          - { name: "cmd XDC 1/2", kind: "group", pkg: "./cmd/XDC", i: "1", n: "2" }
+          - { name: "cmd XDC 2/2", kind: "group", pkg: "./cmd/XDC", i: "2", n: "2" }
+          - { name: "rpc", kind: "rpc" }
     defaults:
       run:
         working-directory: ${{ env.GOPATH }}/src/XDPoSChain
@@ -116,27 +186,34 @@ jobs:
         with:
           cache: false
           go-version: "1.25.x"
-      # Keyed by go.sum, not the commit, so a slice refills only when deps move:
-      # 660 MB unpacked, 156 MB stored of 10 GB. Test results are cached too.
+      # 660 MB unpacked, 156 MB stored of 10 GB; test results are cached here
+      # too, which is why the commit belongs in the key.
       - name: Restore the Go build cache
         uses: actions/cache@v5
         with:
           path: ~/.cache/go-build
-          key: ${{ runner.os }}-go-build-race-${{ matrix.shard }}-${{ hashFiles('**/go.sum') }}
+          key: ${{ runner.os }}-go-build-race-${{ strategy.job-index }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-go-build-race-${{ matrix.shard }}-
+            ${{ runner.os }}-go-build-race-${{ strategy.job-index }}-${{ hashFiles('**/go.sum') }}-
+            ${{ runner.os }}-go-build-race-${{ strategy.job-index }}-
             ${{ runner.os }}-go-build-race-
-      # Hang guards, not budgets: a warm slice runs two minutes, and one
-      # subscription test once ran to go test's own 45m timeout.
-      - name: Run tests under the race detector
-        if: matrix.shard != 'rpc'
+      # Hang guards, not budgets: a warm lane runs two minutes, and one
+      # subscription test once ran to go test's own 45m timeout. The lanes also
+      # pass -timeout 10m (4m for rpc), below the watchdog, so a hung test
+      # panics with a stack dump instead of being killed silently.
+      - name: Run a slice of the tree under the race detector
+        if: matrix.kind == 'bulk'
         timeout-minutes: 12
-        run: make race-test-bulk RACE_SHARD=${{ matrix.shard }} RACE_SHARDS=4
+        run: make race-test-full-bulk RACE_SHARD=${{ matrix.shard }} RACE_SHARDS=${{ env.RACE_SHARDS }}
+      - name: Run a slice of a heavy package under the race detector
+        if: matrix.kind == 'group'
+        timeout-minutes: 12
+        run: make race-test-full-group GROUP_PKG=${{ matrix.pkg }} GROUP_I=${{ matrix.i }} GROUP_N=${{ matrix.n }}
       # rpc alone, the same watchdog in miniature.
       - name: Run the rpc package under the race detector
-        if: matrix.shard == 'rpc'
+        if: matrix.kind == 'rpc'
         timeout-minutes: 5
-        run: make race-test-rpc
+        run: make race-test-full-rpc
 
   # Runs the linters (build/ci.go lint, golangci-lint version pinned in
   # build/checksums.txt) on every push and pull request. Deliberately not wired
@@ -147,6 +224,8 @@ jobs:
       GOPATH: ${{ github.workspace }}
       GOBIN: ${{ github.workspace }}/bin
     runs-on: ubuntu-latest
+    # 102s warm; the bound is for a linter that wedges, not for the work.
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: ${{ env.GOPATH }}/src/XDPoSChain
@@ -155,7 +234,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           path: ${{ env.GOPATH }}/src/XDPoSChain
-      # Same tools cache as the tests job: holds the golangci-lint archive that
+      # Same tools cache as the static job: holds the golangci-lint archive that
       # build/ci.go lint unpacks from the URL recorded in build/checksums.txt.
       - uses: actions/cache@v5
         with:
@@ -172,7 +251,7 @@ jobs:
   # tag_build waits for the detector; devnet_build_push fires on every merge.
   tag_build:
     runs-on: ubuntu-latest
-    needs: [tests, race]
+    needs: [race, static]
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/checkout@v5
@@ -186,7 +265,7 @@ jobs:
   devnet_build_push:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/dev-upgrade' && !startsWith(github.ref, 'refs/tags/')
-    needs: tests
+    needs: [race, static]
     outputs:
       output1: ${{ steps.docker.outputs.image_name }}
     steps:

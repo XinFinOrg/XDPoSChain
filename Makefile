@@ -50,25 +50,92 @@ quick-test: all
 race-test: all race-test-bulk race-test-rpc
 
 #? race-test-full: Run the full (non-short) suite under the race detector.
-race-test-full: all race-test-full-bulk race-test-full-rpc
+race-test-full: all race-test-full-bulk race-test-full-groups race-test-full-rpc
 
-# One slice per shard, four in CI; the default is the whole pass.
+# One slice per shard, two in CI; the default is the whole pass. Membership is a
+# function of the import path (build/shard.sh).
 RACE_SHARDS ?= 1
 RACE_SHARD ?= 1
 RACE_PKGS = go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./... | grep -v "XDPoSChain/rpc$$"
 
+# The packages that cost more than a lane on their own, and the list everything
+# else is sliced from: they run as test-name slices (race-test-full-group) and
+# the rest is split by import path, see build/shard.sh. cmd/XDC has 41 tests and
+# costs 79s: one package, so no split of the tree can move it.
+RACE_HEAVY = consensus/tests/engine_v2_tests core cmd/XDC
+
+# No race lane at all for this one. The RingCT and Bulletproof verifiers it
+# covers are reachable only through RING_SIG_VERIFY (0x1e) and
+# BULLET_PROOF_VERIFY (0x28), and no transaction has ever called either on
+# mainnet or Apothem (#2895); its own suite is 328s of the detector's 1827s.
+# The precompile call paths still run under -race through core/vm, so this drops
+# the exhaustive crypto tests, not the code they exercise. Delete this line when
+# the package itself goes.
+RACE_SKIP = core/vm/privacy
+
+# rpc and the two lists above never appear in a bulk slice: one grep, so a
+# package cannot be dropped from the lanes by adding it to a list here and
+# forgetting the pattern.
+empty :=
+space := $(empty) $(empty)
+RACE_ABSENT = rpc $(RACE_HEAVY) $(RACE_SKIP)
+RACE_REST_PKGS = go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./... \
+	| grep -vE "XDPoSChain/($(subst $(space),|,$(RACE_ABSENT)))$$"
+
 race-test-bulk:
-	set -e; pkgs=$$($(RACE_PKGS) | awk -v i=$(RACE_SHARD) -v n=$(RACE_SHARDS) 'NR % n == i - 1'); \
+	set -e; pkgs=$$($(RACE_PKGS) | build/shard.sh $(RACE_SHARD) $(RACE_SHARDS)); \
 	[ -n "$$pkgs" ]; go run build/ci.go test -race -short -p 4 $$pkgs
 
 race-test-rpc:
 	go run build/ci.go test -race -short ./rpc/
 
+# The timeout belongs below the step's watchdog, not above it: ci.go defaults to
+# 45m, which outlives the 12m the lane allows, so a hung test was killed with the
+# runner and left no goroutine dump - the shape of the 12m timeout in #2942.
+# Ten minutes is still several times the slowest lane.
 race-test-full-bulk:
-	set -e; pkgs=$$($(RACE_PKGS)); [ -n "$$pkgs" ]; go run build/ci.go test -race -p 4 $$pkgs
+	set -e; pkgs=$$($(RACE_REST_PKGS) | build/shard.sh $(RACE_SHARD) $(RACE_SHARDS)); \
+	[ -n "$$pkgs" ]; go run build/ci.go test -race -timeout 10m -p 4 $$pkgs
+
+# The test names of a heavy package are not listed anywhere: a lane asks the
+# package for them, sorts them and takes every GROUP_N-th one, so a test added
+# later runs in exactly one lane and no table needs maintaining.
+GROUP_PKG ?=
+GROUP_I ?= 1
+GROUP_N ?= 1
+race-test-full-group:
+	set -e; tests=$$(go test -tags=integrationtests -list '^Test' $(GROUP_PKG) \
+		| grep -E '^Test[A-Za-z0-9_]+$$' | sort \
+		| awk -v i=$(GROUP_I) -v n=$(GROUP_N) 'NR % n == i - 1'); \
+	[ -n "$$tests" ]; \
+	pattern=$$(printf '%s\n' "$$tests" | paste -sd '|' -); \
+	go run build/ci.go test -race -timeout 10m -run "^($$pattern)$$" $(GROUP_PKG)
+
+# The whole of each heavy package, plus the one the CI lanes skip, for a
+# local full pass.
+race-test-full-groups:
+	set -e; for p in $(RACE_HEAVY) $(RACE_SKIP); do go run build/ci.go test -race -p 4 ./$$p || exit 1; done
 
 race-test-full-rpc:
-	go run build/ci.go test -race ./rpc/
+	go run build/ci.go test -race -timeout 4m ./rpc/
+
+#? check-shards: Verify the detector's shard split covers its package list.
+# The split is derived from the package names, so it cannot drop a package; what
+# it can do is leave a shard empty (the lane then fails on `[ -n "$pkgs" ]`) or
+# keep a pin for a package that was renamed. Both are cheap to catch here and
+# expensive to debug in a job that timed out. CI runs this in the static job, so
+# a pull request that touches the split is checked even when the race lanes are
+# skipped for having no Go changes.
+#
+# The lane count is a hand-written list in the workflow, so it is counted there:
+# a lane dropped without RACE_SHARDS moving would take its packages out of the
+# run without any shard coming out empty.
+check-shards:
+	@set -e; \
+	lanes=$$(grep -cE 'name: "bulk [0-9]+/[0-9]+"' .github/workflows/ci.yml); \
+	[ "$$lanes" = "$(RACE_SHARDS)" ] || { \
+		echo "error: ci.yml has $$lanes bulk lanes, RACE_SHARDS is $(RACE_SHARDS)" >&2; exit 1; }; \
+	$(RACE_REST_PKGS) | build/shard.sh --check $(RACE_SHARDS)
 
 #? lint: Run certain pre-selected linters.
 lint: ## Run linters.
