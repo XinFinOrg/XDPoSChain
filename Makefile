@@ -78,9 +78,11 @@ race-test-bulk:
 race-test-rpc:
 	go run build/ci.go test -race -short ./rpc/
 
+# -timeout stays below the step watchdog: ci.go defaults to 45m, which outlives
+# the 20m lane and would leave no goroutine dump.
 race-test-full-bulk:
 	set -e; pkgs=$$($(RACE_REST_PKGS) | build/shard.sh $(RACE_SHARD) $(RACE_SHARDS)); \
-	[ -n "$$pkgs" ]; go run build/ci.go test -race -p 4 $$pkgs
+	[ -n "$$pkgs" ]; go run build/ci.go test -race -timeout 10m -p 4 $$pkgs
 
 # Tests, examples and fuzz targets are enumerated per lane and sliced by
 # position, so a case added later runs in exactly one lane. `-run` selects all
@@ -94,14 +96,14 @@ race-test-full-group:
 		| awk -v i=$(GROUP_I) -v n=$(GROUP_N) 'NR % n == i - 1'); \
 	[ -n "$$tests" ]; \
 	pattern=$$(printf '%s\n' "$$tests" | paste -sd '|' -); \
-	go run build/ci.go test -race -run "^($$pattern)$$" $(GROUP_PKG)
+	go run build/ci.go test -race -timeout 10m -run "^($$pattern)$$" $(GROUP_PKG)
 
 # The whole of each heavy package, for a local full pass.
 race-test-full-groups:
 	set -e; for p in $(RACE_HEAVY); do go run build/ci.go test -race -p 4 ./$$p || exit 1; done
 
 race-test-full-rpc:
-	go run build/ci.go test -race ./rpc/
+	go run build/ci.go test -race -timeout 4m ./rpc/
 
 #? check-shards: Verify the detector's shard split covers its package list.
 # The bulk lane count is read back from the workflow (unless the caller passes

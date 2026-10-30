@@ -49,6 +49,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/internal/build"
@@ -214,6 +215,7 @@ func doTest(cmdline []string) {
 		threads  = flag.Int("p", 1, "Number of CPU threads to use for testing")
 		failfast = flag.Bool("failfast", false, "Do not start new tests after the first test failure")
 		runtests = flag.String("run", "", "Run only the tests matching the regular expression")
+		timeout  = flag.Duration("timeout", 45*time.Minute, "Timeout for a single test run")
 	)
 	flag.CommandLine.Parse(cmdline)
 
@@ -228,8 +230,9 @@ func doTest(cmdline []string) {
 
 	gotest := tc.Go("test")
 
-	// CI needs a bit more time for the statetests (default 45m).
-	gotest.Args = append(gotest.Args, "-timeout=45m")
+	// 45m for a local full pass; CI passes 10m (4m for rpc) so a hung test
+	// dumps before the step watchdog fires.
+	gotest.Args = append(gotest.Args, "-timeout", (*timeout).String())
 
 	// Enable integration-tests
 	gotest.Args = append(gotest.Args, "-tags=integrationtests")

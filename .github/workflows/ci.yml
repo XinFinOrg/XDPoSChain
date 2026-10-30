@@ -9,6 +9,14 @@ on:
     tags:
       - "*"
 
+concurrency:
+  # Runs of one ref wait in a FIFO queue, up to 100 deep: a run starts only
+  # after the previous run of the same ref has finished, and none is dropped.
+  # Each pull request has its own ref, so different PRs never queue behind
+  # each other.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  queue: max
+
 env:
   GOPROXY: https://proxy.golang.org,direct
   GO111MODULE: on
@@ -27,6 +35,8 @@ jobs:
       GOPATH: ${{ github.workspace }}
       GOBIN: ${{ github.workspace }}/bin
     runs-on: ubuntu-latest
+    # 84s warm; the bound catches a wedged generator.
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: ${{ env.GOPATH }}/src/XDPoSChain
@@ -79,6 +89,8 @@ jobs:
   # diff is skipped.
   race-scope:
     runs-on: ubuntu-latest
+    # One depth-1 fetch and a diff; measured at 5s.
+    timeout-minutes: 5
     outputs:
       run: ${{ steps.diff.outputs.run }}
     steps:
@@ -121,6 +133,8 @@ jobs:
       GOBIN: ${{ github.workspace }}/bin
     runs-on: ubuntu-latest
     name: race (${{ matrix.name }})
+    # No job-level bound: the three run steps are mutually exclusive and bounded
+    # (20m/20m/9m); checkout and cache restore take seconds.
     needs: race-scope
     # Deploying refs are tested even when `race-scope` says otherwise.
     if: needs.race-scope.outputs.run == 'true' || github.ref == 'refs/heads/dev-upgrade' || startsWith(github.ref, 'refs/tags/')
@@ -166,17 +180,20 @@ jobs:
             ${{ runner.os }}-go-build-race-${{ strategy.job-index }}-${{ hashFiles('**/go.sum') }}-
             ${{ runner.os }}-go-build-race-${{ strategy.job-index }}-
             ${{ runner.os }}-go-build-race-
-      # A warm lane runs two minutes, and one subscription test once ran to
-      # go test's own 45m timeout.
+      # Hang guards: -timeout (10m, 4m for rpc) sits below the step bound, so a
+      # hung test panics and prints its dump instead of being killed with the runner.
       - name: Run a slice of the tree under the race detector
         if: matrix.kind == 'bulk'
+        timeout-minutes: 20
         run: make race-test-full-bulk RACE_SHARD=${{ matrix.shard }} RACE_SHARDS=${{ env.RACE_SHARDS }}
       - name: Run a slice of a heavy package under the race detector
         if: matrix.kind == 'group'
+        timeout-minutes: 20
         run: make race-test-full-group GROUP_PKG=${{ matrix.pkg }} GROUP_I=${{ matrix.i }} GROUP_N=${{ matrix.n }}
-      # rpc alone, the same guard in miniature.
+      # rpc alone, the same watchdog in miniature.
       - name: Run the rpc package under the race detector
         if: matrix.kind == 'rpc'
+        timeout-minutes: 9
         run: make race-test-full-rpc
 
   # Linters. Not a dependency of the deploy jobs: a lint finding should not hold
@@ -186,6 +203,8 @@ jobs:
       GOPATH: ${{ github.workspace }}
       GOBIN: ${{ github.workspace }}/bin
     runs-on: ubuntu-latest
+    # 102s warm; the bound is for a linter that wedges, not for the work.
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: ${{ env.GOPATH }}/src/XDPoSChain
@@ -211,6 +230,8 @@ jobs:
   # tag_build waits for the detector; devnet_build_push fires on every merge.
   tag_build:
     runs-on: ubuntu-latest
+    # The image compiles the whole tree; the bound is for a wedged docker build.
+    timeout-minutes: 45
     needs: [race, static]
     if: startsWith(github.ref, 'refs/tags/')
     steps:
@@ -224,6 +245,8 @@ jobs:
 
   devnet_build_push:
     runs-on: ubuntu-latest
+    # Same build as tag_build, plus the pull, tag and three pushes.
+    timeout-minutes: 45
     if: github.ref == 'refs/heads/dev-upgrade' && !startsWith(github.ref, 'refs/tags/')
     needs: [race, static]
     outputs:
@@ -250,6 +273,8 @@ jobs:
 
   k8_update_start_script:
     runs-on: ubuntu-latest
+    # Three curl fetches and three configmap applies.
+    timeout-minutes: 10
     if: github.ref == 'refs/heads/dev-upgrade' && !startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Set up kubectl
@@ -276,6 +301,8 @@ jobs:
 
   devnet_k8_apply:
     runs-on: ubuntu-latest
+    # A batch of kubectl set image calls, run 32 at a time.
+    timeout-minutes: 20
     if: github.ref == 'refs/heads/dev-upgrade' && !startsWith(github.ref, 'refs/tags/')
     needs: devnet_build_push
     steps:
@@ -320,6 +347,8 @@ jobs:
 
   devnet_send_notification:
     runs-on: ubuntu-latest
+    # One curl POST; the bound is a wedged webhook.
+    timeout-minutes: 10
     needs: devnet_k8_apply
     if: github.ref == 'refs/heads/dev-upgrade' && !startsWith(github.ref, 'refs/tags/')
     steps:
