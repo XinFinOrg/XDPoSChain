@@ -1532,6 +1532,42 @@ func testCancel(t *testing.T, protocol uint, mode SyncMode) {
 	}
 }
 
+// Tests that Cancel's wait on the fetcher WaitGroup does not run concurrently
+// with spawnSync's registration: an Add from a zero counter must not race Wait.
+// The Add/Wait violation itself is only reported under -race; the ran counter
+// below is a tripwire for the fetchers not running at all.
+// TestCancelWaitsForStartingSync covers the ordering itself.
+func TestCancelRacingSpawnSync(t *testing.T) {
+	tester := newTester()
+	defer tester.terminate()
+
+	d := tester.downloader
+	var ran int32
+	for i := 0; i < 200; i++ {
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			_ = d.spawnSync([]func() error{func() error {
+				atomic.AddInt32(&ran, 1)
+				return nil
+			}})
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			d.Cancel()
+		}()
+		close(start)
+		wg.Wait()
+	}
+	if got := atomic.LoadInt32(&ran); got != 200 {
+		t.Fatalf("fetchers ran %d times, want 200", got)
+	}
+}
+
 // Tests that synchronisation from multiple peers works as intended (multi thread sanity test).
 func TestMultiSynchronisation100Full(t *testing.T)  { testMultiSynchronisation(t, xdc100, FullSync) }
 func TestMultiSynchronisation100Fast(t *testing.T)  { testMultiSynchronisation(t, xdc100, FastSync) }
