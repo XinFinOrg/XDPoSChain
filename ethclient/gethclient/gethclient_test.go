@@ -188,10 +188,6 @@ func TestGethClient(t *testing.T) {
 			"TestTraceCallWithCallTracer",
 			func(t *testing.T) { testTraceCallWithCallTracer(t, client) },
 		},
-		// The testaccesslist is a bit time-sensitive: the newTestBackend imports
-		// one block. The `testAccessList` fails if the miner has not yet created a
-		// new pending-block after the import event.
-		// Hence: this test should be last, execute the tests serially.
 		{
 			"TestAccessList",
 			func(t *testing.T) { testAccessList(t, client) },
@@ -200,6 +196,8 @@ func TestGethClient(t *testing.T) {
 			"TestTraceTransaction",
 			func(t *testing.T) { testTraceTransactions(t, client, txHashes) },
 		},
+		// TestSetHead rewinds the chain to genesis, so everything that reads the
+		// imported block has to run before it: keep this case last.
 		{
 			"TestSetHead",
 			func(t *testing.T) { testSetHead(t, client) },
