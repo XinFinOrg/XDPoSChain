@@ -2,6 +2,7 @@ package engine_v2_tests
 
 import (
 	"math/big"
+	"sync"
 	"testing"
 	"time"
 
@@ -86,7 +87,7 @@ func TestProcessQcShallSetForensicsCommittedQc(t *testing.T) {
 	assert.Nil(t, err)
 
 	time.Sleep(5000 * time.Millisecond)
-	assert.Equal(t, 3, len(engineV2.GetForensicsFaker().HighestCommittedQCs))
+	assert.Equal(t, 3, len(engineV2.GetForensicsFaker().GetCommittedQCs()))
 }
 
 func TestSetCommittedQCsInOrder(t *testing.T) {
@@ -104,14 +105,46 @@ func TestSetCommittedQCsInOrder(t *testing.T) {
 
 	err = forensics.SetCommittedQCs(append(headers, *blockchain.GetHeaderByNumber(903), *blockchain.GetHeaderByNumber(904)), *decodedExtraField.QuorumCert)
 	assert.Nil(t, err)
-	assert.Equal(t, 3, len(forensics.HighestCommittedQCs))
+	assert.Equal(t, 3, len(forensics.GetCommittedQCs()))
 
 	// Test previous blocks
 	err = utils.DecodeBytesExtraFields(blockchain.GetHeaderByNumber(904).Extra, &decodedExtraField)
 	assert.Nil(t, err)
 	err = forensics.SetCommittedQCs(append(headers, *blockchain.GetHeaderByNumber(902), *blockchain.GetHeaderByNumber(903)), *decodedExtraField.QuorumCert)
 	assert.Nil(t, err)
-	assert.Equal(t, 3, len(forensics.HighestCommittedQCs))
+	assert.Equal(t, 3, len(forensics.GetCommittedQCs()))
+}
+
+// TestSetCommittedQCsConcurrent records from several goroutines at once, the
+// way commitBlocks does: the race detector is the assertion.
+func TestSetCommittedQCsConcurrent(t *testing.T) {
+	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
+	forensics := blockchain.Engine().(*XDPoS.XDPoS).EngineV2.GetForensicsFaker()
+
+	var decodedExtraField types.ExtraFields_v2
+	err := utils.DecodeBytesExtraFields(currentBlock.Header().Extra, &decodedExtraField)
+	assert.Nil(t, err)
+	headers := []types.Header{*blockchain.GetHeaderByNumber(903), *blockchain.GetHeaderByNumber(904)}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				if err := forensics.SetCommittedQCs(headers, *decodedExtraField.QuorumCert); err != nil {
+					t.Errorf("SetCommittedQCs failed: %v", err)
+					return
+				}
+				if got := len(forensics.GetCommittedQCs()); got != 3 {
+					t.Errorf("GetCommittedQCs returned %d QCs, want 3", got)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	assert.Equal(t, 3, len(forensics.GetCommittedQCs()))
 }
 
 // Happty path

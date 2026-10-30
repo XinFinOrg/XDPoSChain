@@ -2,6 +2,7 @@ package engine_v2
 
 import (
 	"errors"
+	"sync"
 
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
@@ -15,6 +16,7 @@ const (
 
 // Forensics instance. Placeholder for future properties to be added
 type Forensics struct {
+	mu                  sync.Mutex
 	HighestCommittedQCs []types.QuorumCert
 }
 
@@ -59,8 +61,19 @@ func (f *Forensics) SetCommittedQCs(headers []types.Header, incomingQC types.Quo
 
 		committedQCs = append(committedQCs, *decodedExtraField.QuorumCert)
 	}
+	f.mu.Lock()
 	f.HighestCommittedQCs = append(committedQCs, incomingQC)
+	f.mu.Unlock()
 	return nil
+}
+
+// GetCommittedQCs returns the last recorded committed QCs. Readers must use
+// this rather than the field: commitBlocks records them from a goroutine of
+// its own, so the field is written concurrently.
+func (f *Forensics) GetCommittedQCs() []types.QuorumCert {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]types.QuorumCert(nil), f.HighestCommittedQCs...)
 }
 
 // ProcessForensics is the entry point for processing forensics, triggered
