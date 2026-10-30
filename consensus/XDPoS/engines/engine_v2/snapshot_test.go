@@ -637,3 +637,73 @@ func TestGetSnapshotReportsAnUnavailableSnapshot(t *testing.T) {
 		}
 	})
 }
+
+// bootstrapExtra lays out a V2 switch block Extra the way puppeth writes the
+// genesis one: vanity, the masternode addresses, then the seal.
+func bootstrapExtra(addrs []common.Address) []byte {
+	extra := make([]byte, utils.ExtraVanity+len(addrs)*common.AddressLength+utils.ExtraSeal)
+	for i, addr := range addrs {
+		copy(extra[utils.ExtraVanity+i*common.AddressLength:], addr[:])
+	}
+	return extra
+}
+
+// newBootstrapEngine is newRepairEngine with the V2 switch at block 0, the
+// layout a freshly generated private network genesis has.
+func newBootstrapEngine(db ethdb.Database) *XDPoS_v2 {
+	x := newRepairEngine(db)
+	x.config.V2.SwitchBlock = big.NewInt(0)
+	return x
+}
+
+// On a fresh chain the bft goroutine can verify a vote for block 1 before
+// initial() has stored the gap 0 snapshot. getSnapshot must rebuild it from the
+// V2 switch header rather than returning not-found: dropping those votes means
+// no QC ever forms for block 1 and the chain stalls at height 1 forever.
+func TestGetSnapshotRebuildsBootstrapSnapshot(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	x := newBootstrapEngine(db)
+	masternodes := []common.Address{{0x1}, {0x2}, {0x3}}
+	chain := &repairTestChain{db: db}
+	chain.addHeader(&types.Header{Number: big.NewInt(0), Extra: bootstrapExtra(masternodes)})
+
+	snap, err := x.getSnapshot(chain, 0, true)
+	if err != nil {
+		t.Fatalf("getSnapshot() = %v, want a rebuilt snapshot", err)
+	}
+	if len(snap.NextEpochCandidates) != len(masternodes) {
+		t.Fatalf("candidates = %v, want %v", snap.NextEpochCandidates, masternodes)
+	}
+	// It must also be persisted, so the next lookup is a plain hit.
+	assertSnapshotStored(t, db, gapHash(t, chain, 0), masternodes)
+}
+
+// Only the snapshot initial() owns is rebuilt. A hole at any other gap block
+// stays an error, so a genuinely missing masternode set is never masked.
+func TestGetSnapshotDoesNotRebuildOtherGaps(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	x := newBootstrapEngine(db)
+	chain := &repairTestChain{db: db}
+	chain.addHeader(&types.Header{Number: big.NewInt(0), Extra: bootstrapExtra([]common.Address{{0x1}})})
+	chain.addHeader(&types.Header{Number: new(big.Int).SetUint64(testRepairEpoch), Extra: bootstrapExtra([]common.Address{{0x2}})})
+
+	if _, err := x.getSnapshot(chain, testRepairEpoch, true); err == nil {
+		t.Fatal("getSnapshot() = nil, want an error for a non-bootstrap gap block")
+	}
+}
+
+// A switch header carrying no masternodes must not produce an empty snapshot:
+// storing one would load back fine and permanently mask the hole.
+func TestGetSnapshotRebuildRejectsEmptyMasternodes(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	x := newBootstrapEngine(db)
+	chain := &repairTestChain{db: db}
+	chain.addHeader(&types.Header{Number: big.NewInt(0), Extra: bootstrapExtra(nil)})
+
+	if _, err := x.getSnapshot(chain, 0, true); err == nil {
+		t.Fatal("getSnapshot() = nil, want an error when the switch header has no masternodes")
+	}
+	if _, err := loadSnapshot(db, gapHash(t, chain, 0)); err == nil {
+		t.Fatal("an empty snapshot was stored")
+	}
+}
