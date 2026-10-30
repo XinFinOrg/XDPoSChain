@@ -213,6 +213,7 @@ func doTest(cmdline []string) {
 		short    = flag.Bool("short", false, "Pass the 'short'-flag to go test")
 		threads  = flag.Int("p", 1, "Number of CPU threads to use for testing")
 		failfast = flag.Bool("failfast", false, "Do not start new tests after the first test failure")
+		runtests = flag.String("run", "", "Run only the tests matching the regular expression")
 	)
 	flag.CommandLine.Parse(cmdline)
 
@@ -250,6 +251,9 @@ func doTest(cmdline []string) {
 	}
 	if *short {
 		gotest.Args = append(gotest.Args, "-short")
+	}
+	if *runtests != "" {
+		gotest.Args = append(gotest.Args, "-run", *runtests)
 	}
 
 	packages := flag.CommandLine.Args()

@@ -44,7 +44,7 @@ Before committing, run the full test suite to ensure all tests pass:
 make test
 ```
 
-CI also runs the short suite under the race detector (the `race` job). `make race-test` mirrors it; `make race-test-full` adds the cases `-short` skips, for changes that touch them.
+CI runs the full suite under the race detector (the `race` job); `make race-test-full` mirrors it, and `make race-test` is the short variant.
 
 ### 4. Tidy
 
