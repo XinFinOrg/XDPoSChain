@@ -38,6 +38,64 @@ type getReceiptsData []common.Hash
 // receiptsData represents a receipts response list aligned to requested blocks.
 type receiptsData []types.Receipts
 
+type getNodeDataPacket []common.Hash
+
+type nodeDataPacket [][]byte
+
+type getPooledTransactionsData []common.Hash
+
+// Payload fields must stay exported; rlp drops embedded unexported fields
+
+type getBlockHeadersPacket66 struct {
+	RequestId uint64
+	Request   *getBlockHeadersData
+}
+
+type blockHeadersPacket66 struct {
+	RequestId uint64
+	Headers   blockHeadersData
+}
+
+type getBlockBodiesPacket66 struct {
+	RequestId uint64
+	Hashes    getBlockBodiesData
+}
+
+type blockBodiesPacket66 struct {
+	RequestId uint64
+	Bodies    blockBodiesData
+}
+
+type getNodeDataPacket66 struct {
+	RequestId uint64
+	Hashes    getNodeDataPacket
+}
+
+type nodeDataPacket66 struct {
+	RequestId uint64
+	Data      nodeDataPacket
+}
+
+type getReceiptsPacket66 struct {
+	RequestId uint64
+	Hashes    getReceiptsData
+}
+
+type receiptsPacket66 struct {
+	RequestId uint64
+	Receipts  receiptsData
+}
+
+type getPooledTransactionsPacket66 struct {
+	RequestId uint64
+	Hashes    getPooledTransactionsData
+}
+
+type pooledTransactionsPacket66 struct {
+	RequestId uint64
+	Txs       types.Transactions
+}
+
 // hashOrNumber is a union for specifying header request origin.
 type hashOrNumber struct {
 	Hash   common.Hash
