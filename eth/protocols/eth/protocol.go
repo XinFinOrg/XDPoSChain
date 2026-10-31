@@ -32,6 +32,7 @@ const (
 	XDC100 = 100
 	XDC164 = 164 // eth64
 	XDC165 = 165 // eth65
+	XDC166 = 166 // eth66, request ids echoed back but not matched yet
 )
 
 // ProtocolName is the official short name of the protocol used during capability
@@ -50,14 +51,14 @@ const ProtocolName = "eth"
 //
 // The order is part of the wire contract: the first entry is the version the
 // node prefers during capability negotiation.
-var ProtocolVersions = []uint{XDC165, XDC164, XDC100}
+var ProtocolVersions = []uint{XDC166, XDC165, XDC164, XDC100}
 
 // ProtocolLengths are the number of implemented messages corresponding to the
 // different protocol versions.
 //
 // These are message-code space bounds, not message counts: the bound covers the
 // XDC BFT codes (0xe0-0xe2) and the pooled transaction codes (0xe3-0xe5).
-var ProtocolLengths = map[uint]uint64{XDC165: 230, XDC164: 227, XDC100: 227}
+var ProtocolLengths = map[uint]uint64{XDC166: 230, XDC165: 230, XDC164: 227, XDC100: 227}
 
 const protocolMaxMsgSize = 10 * 1024 * 1024 // Maximum cap on the size of a protocol message
 
@@ -210,6 +211,25 @@ func (p *GetBlockHeadersPacket) Name() string { return "GetBlockHeaders" }
 // Kind implements Packet.
 func (p *GetBlockHeadersPacket) Kind() byte { return GetBlockHeadersMsg }
 
+// Request ids over xdc/166 (the *66 wrappers below).
+//
+// A request carries a uint64 id that the responder echoes back verbatim on the
+// reply. Nothing matches a response to its request by id: the requester only
+// generates it, the responder only copies it, and both sides hand the embedded
+// legacy packet to the code that used to serve the unversioned pair. Responses
+// are therefore still paired by arrival order, so the xdc/165 rule of one
+// in-flight request per kind per peer stays in force on xdc/166. A second
+// concurrent request of the same kind would produce two replies the caller
+// cannot tell apart; that half arrives with the dispatcher (geth #23576).
+//
+// GetBlockHeadersPacket66 is the network packet for the block header query over
+// xdc/166. The xdc/166 handlers dispatch on the message code and unwrap the
+// embedded legacy packet.
+type GetBlockHeadersPacket66 struct {
+	RequestId uint64
+	*GetBlockHeadersPacket
+}
+
 // HashOrNumber is a combined field for specifying an origin block.
 type HashOrNumber struct {
 	Hash   common.Hash // Block hash from which to retrieve headers (excludes Number)
@@ -256,6 +276,13 @@ func (p *BlockHeadersPacket) Name() string { return "BlockHeaders" }
 // Kind implements Packet.
 func (p *BlockHeadersPacket) Kind() byte { return BlockHeadersMsg }
 
+// BlockHeadersPacket66 is the network packet for the block headers response over
+// xdc/166.
+type BlockHeadersPacket66 struct {
+	RequestId uint64
+	BlockHeadersPacket
+}
+
 // NewBlockPacket is the network packet for the block propagation message.
 type NewBlockPacket struct {
 	Block *types.Block
@@ -291,6 +318,13 @@ func (p *GetBlockBodiesPacket) Name() string { return "GetBlockBodies" }
 // Kind implements Packet.
 func (p *GetBlockBodiesPacket) Kind() byte { return GetBlockBodiesMsg }
 
+// GetBlockBodiesPacket66 is the network packet for the block body query over
+// xdc/166.
+type GetBlockBodiesPacket66 struct {
+	RequestId uint64
+	GetBlockBodiesPacket
+}
+
 // BlockBody represents the data content of a single block.
 type BlockBody struct {
 	Transactions []*types.Transaction // Transactions contained within a block
@@ -319,6 +353,24 @@ func (p BlockBodiesPacket) sanityCheck() error {
 	return nil
 }
 
+// BlockBodiesPacket66 is the network packet for block content distribution over
+// xdc/166.
+type BlockBodiesPacket66 struct {
+	RequestId uint64
+	BlockBodiesPacket
+}
+
+// BlockBodiesRLPPacket is used for replying to block body requests, in cases
+// where we already have them RLP-encoded, and thus can avoid the decode-encode
+// roundtrip.
+type BlockBodiesRLPPacket []rlp.RawValue
+
+// BlockBodiesRLPPacket66 is the BlockBodiesRLPPacket over xdc/166.
+type BlockBodiesRLPPacket66 struct {
+	RequestId uint64
+	BlockBodiesRLPPacket
+}
+
 // GetNodeDataPacket represents a trie node data query.
 type GetNodeDataPacket []common.Hash
 
@@ -327,6 +379,13 @@ func (p *GetNodeDataPacket) Name() string { return "GetNodeData" }
 
 // Kind implements Packet.
 func (p *GetNodeDataPacket) Kind() byte { return GetNodeDataMsg }
+
+// GetNodeDataPacket66 is the network packet for the trie node data query over
+// xdc/166.
+type GetNodeDataPacket66 struct {
+	RequestId uint64
+	GetNodeDataPacket
+}
 
 // NodeDataPacket is the network packet for the state data response.
 type NodeDataPacket [][]byte
@@ -337,6 +396,12 @@ func (p *NodeDataPacket) Name() string { return "NodeData" }
 // Kind implements Packet.
 func (p *NodeDataPacket) Kind() byte { return NodeDataMsg }
 
+// NodeDataPacket66 is the network packet for the state data response over xdc/166.
+type NodeDataPacket66 struct {
+	RequestId uint64
+	NodeDataPacket
+}
+
 // GetReceiptsPacket represents a block receipts query.
 type GetReceiptsPacket []common.Hash
 
@@ -345,6 +410,13 @@ func (p *GetReceiptsPacket) Name() string { return "GetReceipts" }
 
 // Kind implements Packet.
 func (p *GetReceiptsPacket) Kind() byte { return GetReceiptsMsg }
+
+// GetReceiptsPacket66 is the network packet for the block receipts query over
+// xdc/166.
+type GetReceiptsPacket66 struct {
+	RequestId uint64
+	GetReceiptsPacket
+}
 
 // ReceiptsPacket is the network packet for the receipts response, decoded as one
 // receipt list per requested block.
@@ -355,6 +427,21 @@ func (p *ReceiptsPacket) Name() string { return "Receipts" }
 
 // Kind implements Packet.
 func (p *ReceiptsPacket) Kind() byte { return ReceiptsMsg }
+
+// ReceiptsPacket66 is the network packet for the receipts response over xdc/166.
+type ReceiptsPacket66 struct {
+	RequestId uint64
+	ReceiptsPacket
+}
+
+// ReceiptsRLPPacket is used for receipts, when we already have it RLP-encoded.
+type ReceiptsRLPPacket []rlp.RawValue
+
+// ReceiptsRLPPacket66 is the ReceiptsRLPPacket over xdc/166.
+type ReceiptsRLPPacket66 struct {
+	RequestId uint64
+	ReceiptsRLPPacket
+}
 
 // NewPooledTransactionHashesPacket is the network packet for the transaction
 // announcement.
@@ -374,6 +461,13 @@ func (p *GetPooledTransactionsPacket) Name() string { return "GetPooledTransacti
 
 // Kind implements Packet.
 func (p *GetPooledTransactionsPacket) Kind() byte { return GetPooledTransactionsMsg }
+
+// GetPooledTransactionsPacket66 is the network packet for the transaction query
+// over xdc/166.
+type GetPooledTransactionsPacket66 struct {
+	RequestId uint64
+	GetPooledTransactionsPacket
+}
 
 // PooledTransactionsPacket is the network packet for the transaction response.
 //
@@ -397,6 +491,24 @@ func (p PooledTransactionsPacket) sanityCheck() error {
 		}
 	}
 	return nil
+}
+
+// PooledTransactionsPacket66 is the network packet for the transaction response
+// over xdc/166.
+type PooledTransactionsPacket66 struct {
+	RequestId uint64
+	PooledTransactionsPacket
+}
+
+// PooledTransactionsRLPPacket is used for replying to transaction requests, in
+// cases where we already have them RLP-encoded, and thus can avoid the
+// decode-encode roundtrip.
+type PooledTransactionsRLPPacket []rlp.RawValue
+
+// PooledTransactionsRLPPacket66 is the PooledTransactionsRLPPacket over xdc/166.
+type PooledTransactionsRLPPacket66 struct {
+	RequestId uint64
+	PooledTransactionsRLPPacket
 }
 
 // OrderTransactionsPacket is the network packet for the order transaction

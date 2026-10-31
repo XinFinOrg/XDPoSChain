@@ -206,6 +206,7 @@ func TestForkIDSplit(t *testing.T) {
 func TestRecvTransactions100(t *testing.T) { testRecvTransactions(t, int(ethproto.XDC100)) }
 func TestRecvTransactions164(t *testing.T) { testRecvTransactions(t, int(ethproto.XDC164)) }
 func TestRecvTransactions165(t *testing.T) { testRecvTransactions(t, int(ethproto.XDC165)) }
+func TestRecvTransactions166(t *testing.T) { testRecvTransactions(t, int(ethproto.XDC166)) }
 
 func testRecvTransactions(t *testing.T, protocol int) {
 	txAdded := make(chan []*types.Transaction)
@@ -235,6 +236,7 @@ func testRecvTransactions(t *testing.T, protocol int) {
 func TestSendTransactions100(t *testing.T) { testSendTransactions(t, int(ethproto.XDC100)) }
 func TestSendTransactions164(t *testing.T) { testSendTransactions(t, int(ethproto.XDC164)) }
 func TestSendTransactions165(t *testing.T) { testSendTransactions(t, int(ethproto.XDC165)) }
+func TestSendTransactions166(t *testing.T) { testSendTransactions(t, int(ethproto.XDC166)) }
 
 func testSendTransactions(t *testing.T, protocol int) {
 	pm, _ := newTestHandlerMust(t, downloader.FullSync, 0, nil, nil)
@@ -284,7 +286,7 @@ func testSendTransactions(t *testing.T, protocol int) {
 						callback(tx.Hash())
 					}
 				}
-			case ethproto.XDC165:
+			case ethproto.XDC165, ethproto.XDC166:
 				msg, err := p.app.ReadMsg()
 				if err != nil {
 					t.Errorf("%v: read error: %v", p.Peer, err)
@@ -303,6 +305,11 @@ func testSendTransactions(t *testing.T, protocol int) {
 						callback(h)
 					}
 				}
+			default:
+				// A protocol version added without a case here would otherwise
+				// leave forAllHashes nil and panic in the loop below.
+				t.Errorf("%v: unsupported protocol version %d", p.Peer, protocol)
+				return
 			}
 			forAllHashes(func(hash common.Hash) {
 				seentx, want := seen[hash]
