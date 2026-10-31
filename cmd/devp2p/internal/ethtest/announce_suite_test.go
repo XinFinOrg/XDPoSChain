@@ -7,9 +7,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
-// TestLargeHeaderFailsSanityCheck verifies the oversized announcement payload
-// trips the node's header sanity check, which is the rejection path the large
-// announcement cases assert on.
+// The large announcement cases assert on this rejection path
 func TestLargeHeaderFailsSanityCheck(t *testing.T) {
 	header := largeHeader()
 	if err := header.SanityCheck(); err == nil {
@@ -17,9 +15,8 @@ func TestLargeHeaderFailsSanityCheck(t *testing.T) {
 	}
 }
 
-// TestLargeBlockBodyHashesConsistent verifies the oversized header carries
-// body hashes consistent with its empty body, so a node rejects the payload
-// for its size instead of silently dropping it for a body mismatch.
+// A body mismatch would make the node drop the payload silently instead of
+// rejecting it for size
 func TestLargeBlockBodyHashesConsistent(t *testing.T) {
 	header := largeHeader()
 	if header.TxHash != types.EmptyRootHash {
@@ -30,28 +27,22 @@ func TestLargeBlockBodyHashesConsistent(t *testing.T) {
 	}
 }
 
-// TestLargeBlockFitsFrameButNotChecks verifies the oversized announcement
-// payload fits inside the wire frame size cap, so a node's rejection must come
-// from the announcement sanity checks rather than the frame limit.
+// Inside the frame cap, so a rejection must come from the sanity checks
 func TestLargeBlockFitsFrameButNotChecks(t *testing.T) {
 	b, err := rlp.EncodeToBytes(largeBlock())
 	if err != nil {
 		t.Fatalf("failed to encode oversized block: %v", err)
 	}
-	// The two multi-megabyte header fields alone exceed four megabytes.
 	if len(b) < 4*1024*1024 {
 		t.Fatalf("oversized block unexpectedly small: %d bytes", len(b))
 	}
-	// The node's protocol frame cap is 10MB; a payload past it would be
-	// dropped at the frame layer and never reach the sanity checks.
+	// Past the 10MB frame cap the payload would never reach the sanity checks
 	if len(b) >= 10*1024*1024 {
 		t.Fatalf("oversized block exceeds the frame cap: %d bytes", len(b))
 	}
 }
 
-// TestUnknownSuccessorHashIsPlausible verifies the hash announced by the block
-// hash announcement cases is unknown to the fixture chain and points one block
-// past its head, which keeps it inside the fetcher's plausibility window.
+// One block past the head keeps it inside the fetcher plausibility window
 func TestUnknownSuccessorHashIsPlausible(t *testing.T) {
 	s := loadTestSuite(t)
 	hash, number := s.unknownSuccessorHash()

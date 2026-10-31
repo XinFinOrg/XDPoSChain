@@ -7,8 +7,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 )
 
-// TestCompareReceivedTxs verifies the announcement comparison splits received
-// hashes into present and missing transactions.
 func TestCompareReceivedTxs(t *testing.T) {
 	s := loadTestSuite(t)
 	if len(s.chain.senders) == 0 {
@@ -29,9 +27,6 @@ func TestCompareReceivedTxs(t *testing.T) {
 	}
 }
 
-// TestInvalidTxGeneratorsBuild verifies the oversized-transaction generators
-// produce signed transactions, and that the stale-nonce generator reports the
-// consumed-nonce prerequisite faithfully.
 func TestInvalidTxGeneratorsBuild(t *testing.T) {
 	s := loadTestSuite(t)
 	if len(s.chain.senders) == 0 {
@@ -56,8 +51,7 @@ func TestInvalidTxGeneratorsBuild(t *testing.T) {
 	}
 }
 
-// TestOldChainTxFindsIncludedTx verifies the already-included transaction
-// search only returns transactions from blocks below the fixture head.
+// Only blocks below the head count as already included
 func TestOldChainTxFindsIncludedTx(t *testing.T) {
 	s := loadTestSuite(t)
 	tx, ok := s.oldChainTx()

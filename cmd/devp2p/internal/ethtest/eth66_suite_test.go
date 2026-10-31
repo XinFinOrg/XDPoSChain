@@ -213,8 +213,6 @@ func TestEth66DecodeRejectsLegacyShape(t *testing.T) {
 	}
 }
 
-// TestHeadersMatch66AcceptsChainHeaders verifies the SameRequestID header
-// checker accepts the fixture chain's own headers.
 func TestHeadersMatch66AcceptsChainHeaders(t *testing.T) {
 	s := loadTestSuite(t)
 	headers := blockHeadersData{s.chain.blocks[0].Header()}
@@ -224,8 +222,6 @@ func TestHeadersMatch66AcceptsChainHeaders(t *testing.T) {
 	}
 }
 
-// TestHeadersMatch66ReportsMismatch verifies the SameRequestID header checker
-// rejects a corrupted header with a want/have detail naming the divergence.
 func TestHeadersMatch66ReportsMismatch(t *testing.T) {
 	s := loadTestSuite(t)
 	header := *s.chain.blocks[0].Header()
@@ -239,8 +235,6 @@ func TestHeadersMatch66ReportsMismatch(t *testing.T) {
 	}
 }
 
-// TestHeadersMatch66RejectsUnknownBlock verifies the SameRequestID header
-// checker rejects a header for a block the fixture chain does not have.
 func TestHeadersMatch66RejectsUnknownBlock(t *testing.T) {
 	s := loadTestSuite(t)
 	header := *s.chain.blocks[0].Header()

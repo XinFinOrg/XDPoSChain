@@ -24,7 +24,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 )
 
-// largeNumber returns a very large big.Int.
 func largeNumber(megabytes int) *big.Int {
 	buf := make([]byte, megabytes*1024*1024)
 	rand.Read(buf)
@@ -33,7 +32,6 @@ func largeNumber(megabytes int) *big.Int {
 	return bigint
 }
 
-// largeBuffer returns a very large buffer.
 func largeBuffer(megabytes int) []byte {
 	buf := make([]byte, megabytes*1024*1024)
 	rand.Read(buf)
@@ -44,20 +42,15 @@ func largeBlock() *types.Block {
 	return types.NewBlockWithHeader(largeHeader())
 }
 
-// randHash returns a random hash.
 func randHash() common.Hash {
 	var h common.Hash
 	rand.Read(h[:])
 	return h
 }
 
-// largeHeader returns a header whose number and difficulty each carry
-// multiple megabytes of payload.
-//
-// The body hashes are kept consistent with the header's empty body: the node
-// tears the connection down only for announcements that survive its
-// body-consistency checks, and an inconsistent body would be dropped silently
-// instead, hiding the oversized-field rejection the announcement cases assert.
+// largeHeader keeps the body hashes consistent with the empty body: the node
+// drops inconsistent bodies silently, which would hide the oversized-field
+// rejection these cases assert on
 func largeHeader() *types.Header {
 	return &types.Header{
 		MixDigest:   randHash(),

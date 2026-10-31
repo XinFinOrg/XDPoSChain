@@ -17,6 +17,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/core"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
@@ -53,7 +54,21 @@ func NewChain(dir string) (*Chain, error) {
 	if err != nil {
 		return nil, err
 	}
-	gblock := gen.ToBlock()
+	// A naive ToBlock produces a different hash: the setup path normalizes the
+	// XDC-specific header fields the node stores, and Status/Genesis
+	// comparisons must match it byte for byte
+	db := rawdb.NewMemoryDatabase()
+	config, genesisHash, compatErr, err := core.SetupGenesisBlockWithOverride(db, &gen, false)
+	if err != nil {
+		return nil, err
+	}
+	if compatErr != nil {
+		return nil, fmt.Errorf("chain config compat: %v", compatErr)
+	}
+	gblock := rawdb.ReadBlock(db, genesisHash, 0)
+	if gblock == nil {
+		return nil, fmt.Errorf("setup path did not persist genesis block %x", genesisHash)
+	}
 
 	blocks, err := blocksFromFile(filepath.Join(dir, "chain.rlp"), gblock)
 	if err != nil {
@@ -84,7 +99,7 @@ func NewChain(dir string) (*Chain, error) {
 		blocks:  blocks,
 		state:   stateDump,
 		senders: accounts,
-		config:  gen.Config,
+		config:  config,
 		txInfo:  info,
 	}, nil
 }
