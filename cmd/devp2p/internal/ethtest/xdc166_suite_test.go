@@ -260,3 +260,44 @@ func TestXdc166DecodeAnnouncement(t *testing.T) {
 		t.Fatalf("announcement mismatch: id %d, have %+v", id, hashes)
 	}
 }
+
+// TestHeadersMatchXdc166AcceptsChainHeaders verifies the SameRequestID header
+// checker accepts the fixture chain's own headers.
+func TestHeadersMatchXdc166AcceptsChainHeaders(t *testing.T) {
+	s := loadTestSuite(t)
+	headers := blockHeadersData{s.chain.blocks[0].Header()}
+	matched, detail := headersMatchXdc166(s.chain, headers)
+	if !matched {
+		t.Fatalf("expected chain headers to match, got: %s", detail)
+	}
+}
+
+// TestHeadersMatchXdc166ReportsMismatch verifies the SameRequestID header checker
+// rejects a corrupted header with a want/have detail naming the divergence.
+func TestHeadersMatchXdc166ReportsMismatch(t *testing.T) {
+	s := loadTestSuite(t)
+	header := *s.chain.blocks[0].Header()
+	header.Extra = []byte("corrupted")
+	matched, detail := headersMatchXdc166(s.chain, blockHeadersData{&header})
+	if matched {
+		t.Fatal("expected corrupted header to mismatch")
+	}
+	if detail == "" {
+		t.Fatal("expected mismatch detail for corrupted header")
+	}
+}
+
+// TestHeadersMatchXdc166RejectsUnknownBlock verifies the SameRequestID header
+// checker rejects a header for a block the fixture chain does not have.
+func TestHeadersMatchXdc166RejectsUnknownBlock(t *testing.T) {
+	s := loadTestSuite(t)
+	header := *s.chain.blocks[0].Header()
+	header.Number = big.NewInt(int64(s.chain.Len()) + 1)
+	matched, detail := headersMatchXdc166(s.chain, blockHeadersData{&header})
+	if matched {
+		t.Fatal("expected out-of-range header to mismatch")
+	}
+	if detail == "" {
+		t.Fatal("expected mismatch detail for out-of-range header")
+	}
+}
