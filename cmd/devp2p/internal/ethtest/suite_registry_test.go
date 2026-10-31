@@ -107,3 +107,27 @@ func TestEthTestsIncludesTransactionBatchThenBlockBodiesSmokeCase(t *testing.T) 
 func TestEthTestsIncludesTransactionBatchThenReceiptsSmokeCase(t *testing.T) {
 	assertEthTestsInclude(t, "TransactionBatchThenReceiptsSmoke")
 }
+
+func TestEthTestsIncludesStatusXdc166Case(t *testing.T) {
+	assertEthTestsInclude(t, "Status_Xdc166")
+}
+
+func TestEthTestsIncludesGetBlockHeadersXdc166Case(t *testing.T) {
+	assertEthTestsInclude(t, "GetBlockHeaders_Xdc166")
+}
+
+func TestEthTestsIncludesGetBlockBodiesXdc166Case(t *testing.T) {
+	assertEthTestsInclude(t, "GetBlockBodies_Xdc166")
+}
+
+func TestEthTestsIncludesGetNodeDataXdc166Case(t *testing.T) {
+	assertEthTestsInclude(t, "GetNodeData_Xdc166")
+}
+
+func TestEthTestsIncludesGetReceiptsXdc166Case(t *testing.T) {
+	assertEthTestsInclude(t, "GetReceipts_Xdc166")
+}
+
+func TestEthTestsIncludesGetPooledTransactionsXdc166Case(t *testing.T) {
+	assertEthTestsInclude(t, "GetPooledTransactions_Xdc166")
+}
