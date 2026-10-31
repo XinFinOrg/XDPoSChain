@@ -284,7 +284,7 @@ func newTestPeer(name string, version int, pm *handler, shake bool) (*testPeer, 
 func (p *testPeer) handshake(t *testing.T, td *big.Int, head common.Hash, genesis common.Hash, forkID forkid.ID, forkFilter forkid.Filter) {
 	var msg interface{}
 	switch p.Version() {
-	case ethproto.XDC165, ethproto.XDC164:
+	case ethproto.XDC165, ethproto.XDC164, ethproto.XDC166:
 		msg = &ethproto.StatusPacket{
 			ProtocolVersion: uint32(p.Version()),
 			NetworkID:       ethconfig.Defaults.NetworkId,

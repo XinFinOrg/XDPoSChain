@@ -50,11 +50,12 @@ func init() {
 
 // Protocol versions accepted by the downloader, mirroring the constants of the
 // eth package, which cannot be imported here without creating an import cycle.
-// xdc100 and xdc165 are the current minProtocolVer and maxProtocolVer bounds.
+// xdc100 and xdc166 are the current minProtocolVer and maxProtocolVer bounds.
 const (
 	xdc100 = 100
 	xdc164 = 164
 	xdc165 = 165
+	xdc166 = 166
 )
 
 // downloadTester is a test simulator for mocking out local block chain.
@@ -603,6 +604,9 @@ func TestCanonicalSynchronisation165Fast(t *testing.T) {
 }
 func TestCanonicalSynchronisation165Light(t *testing.T) {
 	testCanonicalSynchronisation(t, xdc165, LightSync)
+}
+func TestCanonicalSynchronisation166Full(t *testing.T) {
+	testCanonicalSynchronisation(t, xdc166, FullSync)
 }
 
 func testCanonicalSynchronisation(t *testing.T, protocol uint, mode SyncMode) {
@@ -1260,6 +1264,7 @@ func TestThrottling164Full(t *testing.T) { testThrottling(t, xdc164, FullSync) }
 func TestThrottling164Fast(t *testing.T) { testThrottling(t, xdc164, FastSync) }
 func TestThrottling165Full(t *testing.T) { testThrottling(t, xdc165, FullSync) }
 func TestThrottling165Fast(t *testing.T) { testThrottling(t, xdc165, FastSync) }
+func TestThrottling166Full(t *testing.T) { testThrottling(t, xdc166, FullSync) }
 
 func testThrottling(t *testing.T, protocol uint, mode SyncMode) {
 	t.Parallel()

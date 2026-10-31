@@ -74,7 +74,7 @@ func statusOf(backend *testBackend) chainStatus {
 // for the given chain state.
 func handshakePayload(version uint, status chainStatus) (interface{}, error) {
 	switch version {
-	case XDC165, XDC164:
+	case XDC165, XDC164, XDC166:
 		return &StatusPacket{
 			ProtocolVersion: uint32(version),
 			NetworkID:       testNetworkID,
@@ -99,7 +99,7 @@ func handshakePayload(version uint, status chainStatus) (interface{}, error) {
 // as the node layer would.
 func serveHandshake(peer *Peer, version uint, status chainStatus, filter forkid.Filter) error {
 	switch version {
-	case XDC165, XDC164:
+	case XDC165, XDC164, XDC166:
 		return peer.Handshake(testNetworkID, status.td, status.head, status.genesis, status.forkID, filter)
 	case XDC100:
 		return peer.Handshake(testNetworkID, status.td, status.head, status.genesis, status.forkID, nil)
@@ -119,6 +119,14 @@ func TestHandshake100(t *testing.T) {
 func TestHandshake164(t *testing.T) {
 	backend := newTestBackend(t, 1, nil)
 	testHandshake(t, backend, XDC164)
+}
+
+// TestHandshake166 checks that both peers complete the request-id-capable form
+// of the handshake — same forkid-carrying status shape as xdc/164 — and end up
+// carrying each other's head and total difficulty.
+func TestHandshake166(t *testing.T) {
+	backend := newTestBackend(t, 1, nil)
+	testHandshake(t, backend, XDC166)
 }
 
 func testHandshake(t *testing.T, backend *testBackend, version uint) {

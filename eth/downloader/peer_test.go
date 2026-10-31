@@ -25,12 +25,12 @@ import (
 )
 
 // TestIdlePeersProtocolVersions verifies that peers running every supported
-// protocol version (xdc100, xdc164, xdc165) are eligible for concurrent
+// protocol version (xdc100, xdc164, xdc165, xdc166) are eligible for concurrent
 // downloads. A regression here silently disables skeleton filling and body,
 // receipt and state fetches, stalling any node that falls behind.
 func TestIdlePeersProtocolVersions(t *testing.T) {
 	ps := newPeerSet()
-	for i, version := range []uint{xdc100, xdc164, xdc165} {
+	for i, version := range []uint{xdc100, xdc164, xdc165, xdc166} {
 		id := fmt.Sprintf("peer-%d", i)
 		if err := ps.Register(newPeerConnection(id, version, nil, log.New("id", id))); err != nil {
 			t.Fatalf("failed to register version %d peer: %v", version, err)
@@ -41,10 +41,10 @@ func TestIdlePeersProtocolVersions(t *testing.T) {
 		peers func() ([]*peerConnection, int)
 		total int
 	}{
-		{"HeaderIdlePeers", ps.HeaderIdlePeers, 3},
-		{"BodyIdlePeers", ps.BodyIdlePeers, 3},
-		{"ReceiptIdlePeers", ps.ReceiptIdlePeers, 3},
-		{"NodeDataIdlePeers", ps.NodeDataIdlePeers, 3},
+		{"HeaderIdlePeers", ps.HeaderIdlePeers, 4},
+		{"BodyIdlePeers", ps.BodyIdlePeers, 4},
+		{"ReceiptIdlePeers", ps.ReceiptIdlePeers, 4},
+		{"NodeDataIdlePeers", ps.NodeDataIdlePeers, 4},
 	}
 	for _, tt := range tests {
 		idle, total := tt.peers()

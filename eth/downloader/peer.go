@@ -38,7 +38,7 @@ const (
 	measurementImpact = 0.1  // The impact a single measurement has on a peer's final throughput value.
 
 	minProtocolVer = 100 // xdc100
-	maxProtocolVer = 165 // xdc165
+	maxProtocolVer = 166 // xdc166
 )
 
 var (

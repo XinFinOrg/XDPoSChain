@@ -31,6 +31,11 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/trie"
 )
 
+// pooledTxsMinVersion is the minimum negotiated protocol version serving the
+// pooled transactions request/response pair. The pair was introduced with
+// xdc/165 and xdc/166 inherits the gate unchanged.
+const pooledTxsMinVersion = XDC165
+
 const (
 	softResponseLimit = 2 * 1024 * 1024 // Target maximum size of returned blocks, headers or node data.
 	estHeaderRlpSize  = 500             // Approximate size of an RLP encoded block header
@@ -177,9 +182,20 @@ func handleMessage(backend Backend, peer *Peer) error {
 
 		// Block header query, collect the requested headers and reply
 	case msg.Code == GetBlockHeadersMsg:
-		// Decode the complex header query
-		var query GetBlockHeadersPacket
-		if err := msg.Decode(&query); err != nil {
+		// Decode the complex header query. Over xdc/166 the request carries a
+		// request id that must be echoed back verbatim on the response.
+		var (
+			query     GetBlockHeadersPacket
+			requestID uint64
+		)
+		if peer.version >= XDC166 {
+			var wrapped GetBlockHeadersPacket66
+			if err := msg.Decode(&wrapped); err != nil {
+				return errResp(ErrDecode, "%v: %v", msg, err)
+			}
+			query = *wrapped.GetBlockHeadersPacket
+			requestID = wrapped.RequestId
+		} else if err := msg.Decode(&query); err != nil {
 			return errResp(ErrDecode, "%v: %v", msg, err)
 		}
 		hashMode := query.Origin.Hash != (common.Hash{})
@@ -264,10 +280,23 @@ func handleMessage(backend Backend, peer *Peer) error {
 				query.Origin.Number += query.Skip + 1
 			}
 		}
+		if peer.version >= XDC166 {
+			return peer.ReplyBlockHeaders(requestID, headers)
+		}
 		return peer.SendBlockHeaders(headers)
 
 	case msg.Code == BlockHeadersMsg:
 		// A batch of headers arrived to one of our previous requests
+		if peer.version >= XDC166 {
+			var res BlockHeadersPacket66
+			if err := msg.Decode(&res); err != nil {
+				return errResp(ErrDecode, "msg %v: %v", msg, err)
+			}
+			// Unwrap the embedded legacy packet: the backend type switch only
+			// recognizes legacy types, so delivering the *66 wrapper would
+			// silently drop the response.
+			return backend.Handle(peer, &res.BlockHeadersPacket, msg.Size)
+		}
 		var headers BlockHeadersPacket
 		if err := msg.Decode(&headers); err != nil {
 			return errResp(ErrDecode, "msg %v: %v", msg, err)
@@ -275,9 +304,20 @@ func handleMessage(backend Backend, peer *Peer) error {
 		return backend.Handle(peer, &headers, msg.Size)
 
 	case msg.Code == GetBlockBodiesMsg:
-		// Decode the block body retrieval message
-		var query GetBlockBodiesPacket
-		if err := msg.Decode(&query); err != nil {
+		// Decode the block body retrieval message. Over xdc/166 the request
+		// carries a request id that must be echoed back verbatim on the response.
+		var (
+			query     GetBlockBodiesPacket
+			requestID uint64
+		)
+		if peer.version >= XDC166 {
+			var wrapped GetBlockBodiesPacket66
+			if err := msg.Decode(&wrapped); err != nil {
+				return errResp(ErrDecode, "%v: %v", msg, err)
+			}
+			query = wrapped.GetBlockBodiesPacket
+			requestID = wrapped.RequestId
+		} else if err := msg.Decode(&query); err != nil {
 			return errResp(ErrDecode, "msg %v: %v", msg, err)
 		}
 		// Gather blocks until the fetch or network limits is reached
@@ -295,10 +335,29 @@ func handleMessage(backend Backend, peer *Peer) error {
 				bytes += len(data)
 			}
 		}
+		if peer.version >= XDC166 {
+			return peer.ReplyBlockBodiesRLP(requestID, bodies)
+		}
 		return peer.SendBlockBodiesRLP(bodies)
 
 	case msg.Code == BlockBodiesMsg:
 		// A batch of block bodies arrived to one of our previous requests
+		if peer.version >= XDC166 {
+			var res BlockBodiesPacket66
+			if err := msg.Decode(&res); err != nil {
+				return errResp(ErrDecode, "msg %v: %v", msg, err)
+			}
+			// Keep the legacy hardening over xdc/166: the sanity check bounds
+			// the uncle headers (e.g. the 20 KB Extra cap) before the backend
+			// sees them.
+			if err := res.BlockBodiesPacket.sanityCheck(); err != nil {
+				return err
+			}
+			// Unwrap the embedded legacy packet: the backend type switch only
+			// recognizes legacy types, so delivering the *66 wrapper would
+			// silently drop the response.
+			return backend.Handle(peer, &res.BlockBodiesPacket, msg.Size)
+		}
 		var request BlockBodiesPacket
 		if err := msg.Decode(&request); err != nil {
 			return errResp(ErrDecode, "msg %v: %v", msg, err)
@@ -309,9 +368,20 @@ func handleMessage(backend Backend, peer *Peer) error {
 		return backend.Handle(peer, &request, msg.Size)
 
 	case peer.version >= XDC100 && msg.Code == GetNodeDataMsg:
-		// Decode the trie node data retrieval message
-		var query GetNodeDataPacket
-		if err := msg.Decode(&query); err != nil {
+		// Decode the trie node data retrieval message. Over xdc/166 the request
+		// carries a request id that must be echoed back verbatim on the response.
+		var (
+			query     GetNodeDataPacket
+			requestID uint64
+		)
+		if peer.version >= XDC166 {
+			var wrapped GetNodeDataPacket66
+			if err := msg.Decode(&wrapped); err != nil {
+				return errResp(ErrDecode, "%v: %v", msg, err)
+			}
+			query = wrapped.GetNodeDataPacket
+			requestID = wrapped.RequestId
+		} else if err := msg.Decode(&query); err != nil {
 			return errResp(ErrDecode, "msg %v: %v", msg, err)
 		}
 		// Gather state data until the fetch or network limits is reached
@@ -336,10 +406,23 @@ func handleMessage(backend Backend, peer *Peer) error {
 				bytes += len(entry)
 			}
 		}
+		if peer.version >= XDC166 {
+			return peer.ReplyNodeData(requestID, data)
+		}
 		return peer.SendNodeData(data)
 
 	case peer.version >= XDC100 && msg.Code == NodeDataMsg:
 		// A batch of node state data arrived to one of our previous requests
+		if peer.version >= XDC166 {
+			var res NodeDataPacket66
+			if err := msg.Decode(&res); err != nil {
+				return errResp(ErrDecode, "msg %v: %v", msg, err)
+			}
+			// Unwrap the embedded legacy packet: the backend type switch only
+			// recognizes legacy types, so delivering the *66 wrapper would
+			// silently drop the response.
+			return backend.Handle(peer, &res.NodeDataPacket, msg.Size)
+		}
 		var data NodeDataPacket
 		if err := msg.Decode(&data); err != nil {
 			return errResp(ErrDecode, "msg %v: %v", msg, err)
@@ -347,9 +430,20 @@ func handleMessage(backend Backend, peer *Peer) error {
 		return backend.Handle(peer, &data, msg.Size)
 
 	case peer.version >= XDC100 && msg.Code == GetReceiptsMsg:
-		// Decode the block receipts retrieval message
-		var query GetReceiptsPacket
-		if err := msg.Decode(&query); err != nil {
+		// Decode the block receipts retrieval message. Over xdc/166 the request
+		// carries a request id that must be echoed back verbatim on the response.
+		var (
+			query     GetReceiptsPacket
+			requestID uint64
+		)
+		if peer.version >= XDC166 {
+			var wrapped GetReceiptsPacket66
+			if err := msg.Decode(&wrapped); err != nil {
+				return errResp(ErrDecode, "%v: %v", msg, err)
+			}
+			query = wrapped.GetReceiptsPacket
+			requestID = wrapped.RequestId
+		} else if err := msg.Decode(&query); err != nil {
 			return errResp(ErrDecode, "msg %v: %v", msg, err)
 		}
 		// Gather state data until the fetch or network limits is reached
@@ -376,10 +470,23 @@ func handleMessage(backend Backend, peer *Peer) error {
 				bytes += len(encoded)
 			}
 		}
+		if peer.version >= XDC166 {
+			return peer.ReplyReceiptsRLP(requestID, receipts)
+		}
 		return peer.SendReceiptsRLP(receipts)
 
 	case peer.version >= XDC100 && msg.Code == ReceiptsMsg:
 		// A batch of receipts arrived to one of our previous requests
+		if peer.version >= XDC166 {
+			var res ReceiptsPacket66
+			if err := msg.Decode(&res); err != nil {
+				return errResp(ErrDecode, "msg %v: %v", msg, err)
+			}
+			// Unwrap the embedded legacy packet: the backend type switch only
+			// recognizes legacy types, so delivering the *66 wrapper would
+			// silently drop the response.
+			return backend.Handle(peer, &res.ReceiptsPacket, msg.Size)
+		}
 		var receipts ReceiptsPacket
 		if err := msg.Decode(&receipts); err != nil {
 			return errResp(ErrDecode, "msg %v: %v", msg, err)
@@ -433,10 +540,22 @@ func handleMessage(backend Backend, peer *Peer) error {
 		}
 		return backend.Handle(peer, &hashes, msg.Size)
 
-	case msg.Code == GetPooledTransactionsMsg && peer.version >= XDC165:
-		// Decode the pooled transactions retrieval message
-		var query GetPooledTransactionsPacket
-		if err := msg.Decode(&query); err != nil {
+	case msg.Code == GetPooledTransactionsMsg && peer.version >= pooledTxsMinVersion:
+		// Decode the pooled transactions retrieval message. Over xdc/166 the
+		// request carries a request id that must be echoed back verbatim on
+		// the response.
+		var (
+			query     GetPooledTransactionsPacket
+			requestID uint64
+		)
+		if peer.version >= XDC166 {
+			var wrapped GetPooledTransactionsPacket66
+			if err := msg.Decode(&wrapped); err != nil {
+				return errResp(ErrDecode, "%v: %v", msg, err)
+			}
+			query = wrapped.GetPooledTransactionsPacket
+			requestID = wrapped.RequestId
+		} else if err := msg.Decode(&query); err != nil {
 			return errResp(ErrDecode, "msg %v: %v", msg, err)
 		}
 		// Gather transactions until the fetch or network limits is reached
@@ -463,6 +582,9 @@ func handleMessage(backend Backend, peer *Peer) error {
 				bytes += len(encoded)
 			}
 		}
+		if peer.version >= XDC166 {
+			return peer.ReplyPooledTransactionsRLP(requestID, hashes, txs)
+		}
 		return peer.SendPooledTransactionsRLP(hashes, txs)
 
 	case msg.Code == TransactionMsg:
@@ -479,10 +601,25 @@ func handleMessage(backend Backend, peer *Peer) error {
 		}
 		return backend.Handle(peer, &txs, msg.Size)
 
-	case msg.Code == PooledTransactionsMsg && peer.version >= XDC165:
+	case msg.Code == PooledTransactionsMsg && peer.version >= pooledTxsMinVersion:
 		// Transactions arrived, make sure we have a valid and fresh chain to handle them
 		if !backend.AcceptTxs() {
 			return nil
+		}
+		if peer.version >= XDC166 {
+			var res PooledTransactionsPacket66
+			if err := msg.Decode(&res); err != nil {
+				return errResp(ErrDecode, "msg %v: %v", msg, err)
+			}
+			// Keep the legacy hardening over xdc/166: a nil transaction in the
+			// payload must not reach the transaction handling.
+			if err := res.PooledTransactionsPacket.sanityCheck(); err != nil {
+				return errResp(ErrDecode, "%v", err)
+			}
+			// Unwrap the embedded legacy packet: the backend type switch only
+			// recognizes legacy types, so delivering the *66 wrapper would
+			// silently drop the response.
+			return backend.Handle(peer, &res.PooledTransactionsPacket, msg.Size)
 		}
 		var txs PooledTransactionsPacket
 		if err := msg.Decode(&txs); err != nil {

@@ -41,10 +41,50 @@ import (
 // Tests that block headers can be retrieved from a remote chain based on user queries.
 func TestGetBlockHeaders100(t *testing.T) { testGetBlockHeaders(t, XDC100) }
 func TestGetBlockHeaders164(t *testing.T) { testGetBlockHeaders(t, XDC164) }
+
+// backendPacketRecorder captures the concrete packet type delivered to
+// backend.Handle. Over xdc/166 the recorded packet must be the legacy type: the
+// *66 response is unwrapped before backend.Handle, otherwise the backend type
+// switch silently drops it and the peer stalls.
+type backendPacketRecorder struct {
+	gotPacket     Packet
+	packetHandled chan struct{}
+}
+
+func newBackendPacketRecorder(backend *testBackend, protocol uint) *backendPacketRecorder {
+	r := &backendPacketRecorder{packetHandled: make(chan struct{}, 1)}
+	if protocol >= XDC166 {
+		backend.handler = func(_ *Peer, packet Packet, _ uint32) error {
+			r.gotPacket = packet
+			r.packetHandled <- struct{}{}
+			return nil
+		}
+	}
+	return r
+}
+
+// waitBackendPacket blocks until the backend received a packet and asserts it
+// is of the wanted legacy type; on timeout it fails the test with timeoutMsg.
+func waitBackendPacket[T Packet](t *testing.T, r *backendPacketRecorder, timeoutMsg string) T {
+	t.Helper()
+	select {
+	case <-r.packetHandled:
+	case <-time.After(5 * time.Second):
+		t.Fatal(timeoutMsg)
+	}
+	packet, ok := r.gotPacket.(T)
+	if !ok {
+		t.Fatalf("backend received %T, want %T", r.gotPacket, *new(T))
+	}
+	return packet
+}
+
 func TestGetBlockHeaders165(t *testing.T) { testGetBlockHeaders(t, XDC165) }
+func TestGetBlockHeaders166(t *testing.T) { testGetBlockHeaders(t, XDC166) }
 
 func testGetBlockHeaders(t *testing.T, protocol uint) {
 	backend := newTestBackend(t, 512+15, nil)
+	recorder := newBackendPacketRecorder(backend, protocol)
 	peer := newTestPeer(t, "peer", protocol, backend)
 	chain := backend.chain
 
@@ -199,21 +239,60 @@ func testGetBlockHeaders(t *testing.T, protocol uint) {
 			headers = append(headers, chain.GetBlockByHash(hash).Header())
 		}
 		// Send the hash request and verify the response
-		p2p.Send(peer.app, GetBlockHeadersMsg, tt.query)
-		if err := p2p.ExpectMsg(peer.app, BlockHeadersMsg, headers); err != nil {
-			t.Errorf("test %d: headers mismatch: %v", i, err)
+		if protocol <= XDC165 {
+			p2p.Send(peer.app, GetBlockHeadersMsg, tt.query)
+			if err := p2p.ExpectMsg(peer.app, BlockHeadersMsg, headers); err != nil {
+				t.Errorf("test %d: headers mismatch: %v", i, err)
+			}
+		} else {
+			p2p.Send(peer.app, GetBlockHeadersMsg, GetBlockHeadersPacket66{
+				RequestId:             123,
+				GetBlockHeadersPacket: tt.query,
+			})
+			if err := p2p.ExpectMsg(peer.app, BlockHeadersMsg, BlockHeadersPacket66{
+				RequestId:          123,
+				BlockHeadersPacket: headers,
+			}); err != nil {
+				t.Errorf("test %d: headers mismatch: %v", i, err)
+			}
 		}
 		// If the test used number origins, repeat with hashes as the too
 		if tt.query.Origin.Hash == (common.Hash{}) {
 			if origin := chain.GetBlockByNumber(tt.query.Origin.Number); origin != nil {
 				tt.query.Origin.Hash, tt.query.Origin.Number = origin.Hash(), 0
 
-				p2p.Send(peer.app, GetBlockHeadersMsg, tt.query)
-				if err := p2p.ExpectMsg(peer.app, BlockHeadersMsg, headers); err != nil {
-					t.Errorf("test %d: headers mismatch: %v", i, err)
+				if protocol <= XDC165 {
+					p2p.Send(peer.app, GetBlockHeadersMsg, tt.query)
+					if err := p2p.ExpectMsg(peer.app, BlockHeadersMsg, headers); err != nil {
+						t.Errorf("test %d: headers mismatch: %v", i, err)
+					}
+				} else {
+					p2p.Send(peer.app, GetBlockHeadersMsg, GetBlockHeadersPacket66{
+						RequestId:             456,
+						GetBlockHeadersPacket: tt.query,
+					})
+					if err := p2p.ExpectMsg(peer.app, BlockHeadersMsg, BlockHeadersPacket66{
+						RequestId:          456,
+						BlockHeadersPacket: headers,
+					}); err != nil {
+						t.Errorf("test %d: headers mismatch: %v", i, err)
+					}
 				}
 			}
 		}
+	}
+	// Over xdc/166, deliver a 66-encoded headers response and assert the
+	// backend observed the unwrapped legacy packet, not the *66 wrapper.
+	if protocol >= XDC166 {
+		headers := []*types.Header{
+			chain.GetBlockByNumber(1).Header(),
+			chain.GetBlockByNumber(2).Header(),
+		}
+		p2p.Send(peer.app, BlockHeadersMsg, BlockHeadersPacket66{
+			RequestId:          789,
+			BlockHeadersPacket: headers,
+		})
+		waitBackendPacket[*BlockHeadersPacket](t, recorder, "headers response never reached the backend")
 	}
 }
 
@@ -372,9 +451,11 @@ func headerHashRange(chain *core.BlockChain, top, count uint64) []common.Hash {
 func TestGetBlockBodies100(t *testing.T) { testGetBlockBodies(t, XDC100) }
 func TestGetBlockBodies164(t *testing.T) { testGetBlockBodies(t, XDC164) }
 func TestGetBlockBodies165(t *testing.T) { testGetBlockBodies(t, XDC165) }
+func TestGetBlockBodies166(t *testing.T) { testGetBlockBodies(t, XDC166) }
 
 func testGetBlockBodies(t *testing.T, protocol uint) {
 	backend := newTestBackend(t, maxBodiesServe+15, nil)
+	recorder := newBackendPacketRecorder(backend, protocol)
 	peer := newTestPeer(t, "peer", protocol, backend)
 	chain := backend.chain
 
@@ -434,10 +515,36 @@ func testGetBlockBodies(t *testing.T, protocol uint) {
 			}
 		}
 		// Send the hash request and verify the response
-		p2p.Send(peer.app, GetBlockBodiesMsg, hashes)
-		if err := p2p.ExpectMsg(peer.app, BlockBodiesMsg, bodies); err != nil {
-			t.Errorf("test %d: bodies mismatch: %v", i, err)
+		if protocol <= XDC165 {
+			p2p.Send(peer.app, GetBlockBodiesMsg, hashes)
+			if err := p2p.ExpectMsg(peer.app, BlockBodiesMsg, bodies); err != nil {
+				t.Errorf("test %d: bodies mismatch: %v", i, err)
+			}
+		} else {
+			p2p.Send(peer.app, GetBlockBodiesMsg, GetBlockBodiesPacket66{
+				RequestId:            123,
+				GetBlockBodiesPacket: hashes,
+			})
+			// The server answers from the already RLP-encoded bodies, so the
+			// reply is a BlockBodiesRLPPacket66; it encodes to the same bytes
+			// as the decoded wrapper expected here.
+			if err := p2p.ExpectMsg(peer.app, BlockBodiesMsg, BlockBodiesPacket66{
+				RequestId:         123,
+				BlockBodiesPacket: bodies,
+			}); err != nil {
+				t.Errorf("test %d: bodies mismatch: %v", i, err)
+			}
 		}
+	}
+	// Over xdc/166, deliver a 66-encoded bodies response and assert the
+	// backend observed the unwrapped legacy packet, not the *66 wrapper.
+	if protocol >= XDC166 {
+		block := chain.GetBlockByNumber(1)
+		p2p.Send(peer.app, BlockBodiesMsg, BlockBodiesPacket66{
+			RequestId:         789,
+			BlockBodiesPacket: BlockBodiesPacket{{Transactions: block.Transactions(), Uncles: block.Uncles()}},
+		})
+		waitBackendPacket[*BlockBodiesPacket](t, recorder, "bodies response never reached the backend")
 	}
 }
 
@@ -507,6 +614,7 @@ func unknownHash(i int) common.Hash {
 func TestGetNodeData100(t *testing.T) { testGetNodeData(t, XDC100) }
 func TestGetNodeData164(t *testing.T) { testGetNodeData(t, XDC164) }
 func TestGetNodeData165(t *testing.T) { testGetNodeData(t, XDC165) }
+func TestGetNodeData166(t *testing.T) { testGetNodeData(t, XDC166) }
 
 func testGetNodeData(t *testing.T, protocol uint) {
 	// Define three accounts to simulate transactions with
@@ -550,6 +658,7 @@ func testGetNodeData(t *testing.T, protocol uint) {
 	}
 	// Assemble the test environment
 	backend := newTestBackend(t, 4, generator)
+	recorder := newBackendPacketRecorder(backend, protocol)
 	peer := newTestPeer(t, "peer", protocol, backend)
 	db := backend.db
 
@@ -562,7 +671,14 @@ func testGetNodeData(t *testing.T, protocol uint) {
 			hashes = append(hashes, common.BytesToHash(key))
 		}
 	}
-	p2p.Send(peer.app, GetNodeDataMsg, hashes)
+	if protocol <= XDC165 {
+		p2p.Send(peer.app, GetNodeDataMsg, hashes)
+	} else {
+		p2p.Send(peer.app, GetNodeDataMsg, GetNodeDataPacket66{
+			RequestId:         123,
+			GetNodeDataPacket: hashes,
+		})
+	}
 	msg, err := peer.app.ReadMsg()
 	if err != nil {
 		t.Fatalf("failed to read node data response: %v", err)
@@ -571,8 +687,19 @@ func testGetNodeData(t *testing.T, protocol uint) {
 		t.Fatalf("response packet code mismatch: have %x, want %x", msg.Code, NodeDataMsg)
 	}
 	var data [][]byte
-	if err := msg.Decode(&data); err != nil {
-		t.Fatalf("failed to decode response node data: %v", err)
+	if protocol <= XDC165 {
+		if err := msg.Decode(&data); err != nil {
+			t.Fatalf("failed to decode response node data: %v", err)
+		}
+	} else {
+		var res NodeDataPacket66
+		if err := msg.Decode(&res); err != nil {
+			t.Fatalf("failed to decode response node data: %v", err)
+		}
+		if res.RequestId != 123 {
+			t.Fatalf("request id mismatch: have %d, want 123", res.RequestId)
+		}
+		data = res.NodeDataPacket
 	}
 	// Verify that all hashes correspond to the requested data, and reconstruct a state tree
 	for i, want := range hashes {
@@ -600,6 +727,15 @@ func testGetNodeData(t *testing.T, protocol uint) {
 				t.Errorf("test %d, account %d: balance mismatch: have %v, want %v", i, j, bh, bw)
 			}
 		}
+	}
+	// Over xdc/166, deliver a 66-encoded node data response and assert the
+	// backend observed the unwrapped legacy packet, not the *66 wrapper.
+	if protocol >= XDC166 {
+		p2p.Send(peer.app, NodeDataMsg, NodeDataPacket66{
+			RequestId:      789,
+			NodeDataPacket: NodeDataPacket{{0x01}},
+		})
+		waitBackendPacket[*NodeDataPacket](t, recorder, "node data response never reached the backend")
 	}
 }
 
@@ -673,6 +809,7 @@ func TestGetNodeDataLookupBudget(t *testing.T) {
 func TestGetReceipt100(t *testing.T) { testGetReceipt(t, XDC100) }
 func TestGetReceipt164(t *testing.T) { testGetReceipt(t, XDC164) }
 func TestGetReceipt165(t *testing.T) { testGetReceipt(t, XDC165) }
+func TestGetReceipt166(t *testing.T) { testGetReceipt(t, XDC166) }
 
 func testGetReceipt(t *testing.T, protocol uint) {
 	// Define three accounts to simulate transactions with
@@ -716,10 +853,11 @@ func testGetReceipt(t *testing.T, protocol uint) {
 	}
 	// Assemble the test environment
 	backend := newTestBackend(t, 4, generator)
+	recorder := newBackendPacketRecorder(backend, protocol)
 	peer := newTestPeer(t, "peer", protocol, backend)
 
 	// Collect the hashes to request, and the response to expect
-	hashes, receipts := []common.Hash{}, []types.Receipts{}
+	hashes, receipts := []common.Hash{}, ReceiptsPacket{}
 	for i := uint64(0); i <= backend.chain.CurrentBlock().Number.Uint64(); i++ {
 		block := backend.chain.GetBlockByNumber(i)
 
@@ -727,9 +865,34 @@ func testGetReceipt(t *testing.T, protocol uint) {
 		receipts = append(receipts, backend.chain.GetReceiptsByHash(block.Hash()))
 	}
 	// Send the hash request and verify the response
-	p2p.Send(peer.app, GetReceiptsMsg, hashes)
-	if err := p2p.ExpectMsg(peer.app, ReceiptsMsg, receipts); err != nil {
-		t.Errorf("receipts mismatch: %v", err)
+	if protocol <= XDC165 {
+		p2p.Send(peer.app, GetReceiptsMsg, hashes)
+		if err := p2p.ExpectMsg(peer.app, ReceiptsMsg, receipts); err != nil {
+			t.Errorf("receipts mismatch: %v", err)
+		}
+	} else {
+		p2p.Send(peer.app, GetReceiptsMsg, GetReceiptsPacket66{
+			RequestId:         123,
+			GetReceiptsPacket: hashes,
+		})
+		// The server answers from the already RLP-encoded receipts, so the
+		// reply is a ReceiptsRLPPacket66; it encodes to the same bytes as the
+		// decoded wrapper expected here.
+		if err := p2p.ExpectMsg(peer.app, ReceiptsMsg, ReceiptsPacket66{
+			RequestId:      123,
+			ReceiptsPacket: receipts,
+		}); err != nil {
+			t.Errorf("receipts mismatch: %v", err)
+		}
+	}
+	// Over xdc/166, deliver a 66-encoded receipts response and assert the
+	// backend observed the unwrapped legacy packet, not the *66 wrapper.
+	if protocol >= XDC166 {
+		p2p.Send(peer.app, ReceiptsMsg, ReceiptsPacket66{
+			RequestId:      789,
+			ReceiptsPacket: receipts[:1],
+		})
+		waitBackendPacket[*ReceiptsPacket](t, recorder, "receipts response never reached the backend")
 	}
 }
 
@@ -945,6 +1108,89 @@ func TestOversizedUncleBlockBodiesRejected(t *testing.T) {
 	}
 }
 
+// Tests that the xdc/166 response branches keep the hardening the legacy
+// branches apply (plan M9c). Two subtests are the red-if-dropped guards:
+// oversized_uncle_extra turns red if BlockBodiesPacket.sanityCheck is dropped
+// from the 166 bodies branch, and pooled_transactions_gate turns red if the
+// AcceptTxs gate is dropped from the 166 pooled branch. The nil body and nil
+// pooled transaction subtests are wire-rejection assertions only — RLP
+// decoding rejects nil pointers before any check runs, so they cannot detect a
+// dropped check; they document the end-to-end teardown path instead. The
+// checks themselves stay in the 166 branches regardless, copied from the
+// legacy ones.
+func TestRejectMalformed166Responses(t *testing.T) {
+	// reject asserts that the given 66-wrapped payload is rejected in the wire
+	// loop: the peer is torn down with an error and the backend never runs.
+	reject := func(t *testing.T, backend *testBackend, code uint64, payload interface{}) {
+		t.Helper()
+		peer := newTestPeer(t, "peer", XDC166, backend)
+		go func() { _ = p2p.Send(peer.app, code, payload) }()
+
+		select {
+		case err := <-peer.errc:
+			if err == nil {
+				t.Fatal("malformed 166 response was accepted")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("malformed 166 response was not rejected within 2 seconds")
+		}
+	}
+
+	t.Run("oversized uncle extra", func(t *testing.T) {
+		backend := newTestBackend(t, 1, nil)
+		// The payload decodes cleanly, so the retained sanity check is the only
+		// thing that can reject it: dropping the check makes this subtest fail
+		// through the backend receipt below.
+		bodies := BlockBodiesPacket{{Uncles: []*types.Header{{Extra: bytes.Repeat([]byte{0x01}, 20*1024+1)}}}}
+		reject(t, backend, BlockBodiesMsg, BlockBodiesPacket66{
+			RequestId:         123,
+			BlockBodiesPacket: bodies,
+		})
+	})
+	t.Run("nil block body", func(t *testing.T) {
+		backend := newTestBackend(t, 1, nil)
+		reject(t, backend, BlockBodiesMsg, BlockBodiesPacket66{
+			RequestId:         123,
+			BlockBodiesPacket: BlockBodiesPacket{nil},
+		})
+	})
+	t.Run("nil pooled transaction", func(t *testing.T) {
+		backend := newTestBackend(t, 1, nil)
+		// The pooled transactions response case is gated on the node accepting
+		// transactions; lift the gate so the payload is actually decoded and
+		// checked instead of being dropped before it.
+		backend.accepted.Store(true)
+		reject(t, backend, PooledTransactionsMsg, PooledTransactionsPacket66{
+			RequestId:                123,
+			PooledTransactionsPacket: PooledTransactionsPacket{nil},
+		})
+	})
+	t.Run("pooled transactions gate", func(t *testing.T) {
+		backend := newTestBackend(t, 1, nil)
+		reached := make(chan Packet, 1)
+		backend.handler = func(peer *Peer, packet Packet, size uint32) error {
+			reached <- packet
+			return nil
+		}
+		peer := newTestPeer(t, "peer", XDC166, backend)
+
+		// The backend keeps refusing transactions: the pooled transactions
+		// response must be dropped in the wire loop, before the backend sees
+		// it. Dropping the AcceptTxs gate from the 166 branch lets the payload
+		// through and fails this subtest.
+		tx := newTestTransaction(testBankKey, 0, 0)
+		p2p.Send(peer.app, PooledTransactionsMsg, PooledTransactionsPacket66{
+			RequestId:                123,
+			PooledTransactionsPacket: PooledTransactionsPacket{tx},
+		})
+		select {
+		case packet := <-reached:
+			t.Fatalf("pooled transactions response reached the backend despite the gate: %v", packet)
+		case <-time.After(500 * time.Millisecond):
+		}
+	})
+}
+
 // Tests that the XDC-specific packets are decoded and handed to the backend
 // instead of being dropped.
 func TestXDCPacketsReachBackend(t *testing.T) {
@@ -1049,27 +1295,79 @@ func TestTransactionGate(t *testing.T) {
 }
 
 // Tests that transactions are served from the pool on request.
-func TestGetPooledTransactions(t *testing.T) {
+func TestGetPooledTransactions(t *testing.T) { testGetPooledTransactions(t, XDC165) }
+
+// TestGetPooledTransactions166 doubles as the guard for the version bound on
+// the pooled transaction cases (plan M5): the wire cases are guarded by
+// `peer.version >= XDC165`, so xdc/166 passes the gate automatically, and a
+// future edit that moves the bound fails this test instead of silently
+// dropping xdc/166 from the pooled transaction service.
+func TestGetPooledTransactions166(t *testing.T) { testGetPooledTransactions(t, XDC166) }
+
+func testGetPooledTransactions(t *testing.T, protocol uint) {
 	backend := newTestBackend(t, 1, nil)
 	tx := newTestTransaction(testBankKey, 0, 0)
 	backend.txpool.Add([]*types.Transaction{tx}, false)
 
-	peer := newTestPeer(t, "peer", XDC165, backend)
+	recorder := newBackendPacketRecorder(backend, protocol)
+	if protocol >= XDC166 {
+		// The pooled transactions response case is gated on the node accepting
+		// transactions; the test backend starts out refusing them.
+		backend.accepted.Store(true)
+	}
+	peer := newTestPeer(t, "peer", protocol, backend)
 
-	p2p.Send(peer.app, GetPooledTransactionsMsg, []common.Hash{tx.Hash(), {0x02}})
-	msg, err := peer.app.ReadMsg()
-	if err != nil {
-		t.Fatalf("failed to read transactions response: %v", err)
+	if protocol <= XDC165 {
+		p2p.Send(peer.app, GetPooledTransactionsMsg, []common.Hash{tx.Hash(), {0x02}})
+		msg, err := peer.app.ReadMsg()
+		if err != nil {
+			t.Fatalf("failed to read transactions response: %v", err)
+		}
+		if msg.Code != PooledTransactionsMsg {
+			t.Fatalf("response packet code mismatch: have %x, want %x", msg.Code, PooledTransactionsMsg)
+		}
+		var sent []*types.Transaction
+		if err := msg.Decode(&sent); err != nil {
+			t.Fatalf("failed to decode transactions response: %v", err)
+		}
+		if len(sent) != 1 || sent[0].Hash() != tx.Hash() {
+			t.Fatalf("transaction response mismatch: have %v, want %v", sent, []*types.Transaction{tx})
+		}
+	} else {
+		p2p.Send(peer.app, GetPooledTransactionsMsg, GetPooledTransactionsPacket66{
+			RequestId:                   123,
+			GetPooledTransactionsPacket: []common.Hash{tx.Hash(), {0x02}},
+		})
+		msg, err := peer.app.ReadMsg()
+		if err != nil {
+			t.Fatalf("failed to read transactions response: %v", err)
+		}
+		if msg.Code != PooledTransactionsMsg {
+			t.Fatalf("response packet code mismatch: have %x, want %x", msg.Code, PooledTransactionsMsg)
+		}
+		// The server answers from the already RLP-encoded transactions, so the
+		// reply is a PooledTransactionsRLPPacket66; decoding it into the
+		// decoded wrapper recovers the same transactions.
+		var res PooledTransactionsPacket66
+		if err := msg.Decode(&res); err != nil {
+			t.Fatalf("failed to decode transactions response: %v", err)
+		}
+		if res.RequestId != 123 {
+			t.Fatalf("request id mismatch: have %d, want 123", res.RequestId)
+		}
+		if len(res.PooledTransactionsPacket) != 1 || res.PooledTransactionsPacket[0].Hash() != tx.Hash() {
+			t.Fatalf("transaction response mismatch: have %v, want %v", res.PooledTransactionsPacket, PooledTransactionsPacket{tx})
+		}
 	}
-	if msg.Code != PooledTransactionsMsg {
-		t.Fatalf("response packet code mismatch: have %x, want %x", msg.Code, PooledTransactionsMsg)
-	}
-	var sent []*types.Transaction
-	if err := msg.Decode(&sent); err != nil {
-		t.Fatalf("failed to decode transactions response: %v", err)
-	}
-	if len(sent) != 1 || sent[0].Hash() != tx.Hash() {
-		t.Fatalf("transaction response mismatch: have %v, want %v", sent, []*types.Transaction{tx})
+	// Over xdc/166, deliver a 66-encoded pooled transactions response and
+	// assert the backend observed the unwrapped legacy packet, not the *66
+	// wrapper.
+	if protocol >= XDC166 {
+		p2p.Send(peer.app, PooledTransactionsMsg, PooledTransactionsPacket66{
+			RequestId:                789,
+			PooledTransactionsPacket: PooledTransactionsPacket{tx},
+		})
+		waitBackendPacket[*PooledTransactionsPacket](t, recorder, "pooled transactions response never reached the backend")
 	}
 }
 
@@ -1080,6 +1378,19 @@ func TestGetPooledTransactions(t *testing.T) {
 // care how full the pool is. The transactions at the last budgeted index
 // (2*maxPooledTransactionsServe-1) and at the first index past it are both in the
 // pool, so only the budget decides which of the two comes back.
+// TestPooledTxsMinVersionPinsGate pins the pooled-tx gate bound: the pair was
+// introduced with xdc/165 and must stay reachable by xdc/166 peers unchanged.
+// TestGetPooledTransactions and TestGetPooledTransactions166 cover both sides
+// behaviourally over the wire.
+func TestPooledTxsMinVersionPinsGate(t *testing.T) {
+	if pooledTxsMinVersion != XDC165 {
+		t.Fatalf("pooled-tx gate bound moved off xdc/165: %d", pooledTxsMinVersion)
+	}
+	if pooledTxsMinVersion > XDC166 {
+		t.Fatalf("pooled-tx gate excludes xdc/166: min version %d", pooledTxsMinVersion)
+	}
+}
+
 func TestGetPooledTransactionsLookupBudget(t *testing.T) {
 	backend := newTestBackend(t, 1, nil)
 	peer := newTestPeer(t, "peer", XDC165, backend)

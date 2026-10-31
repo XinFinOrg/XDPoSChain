@@ -76,7 +76,7 @@ _Avoid_: xdc capability
 _See_: [ADR-0004](docs/adr/0004-split-eth-wire-layer-into-protocols-eth.md)
 
 **xdc version**:
-A wire-protocol version of the eth capability — `xdc165`, `xdc164`, `xdc100` — numbered apart from geth's eth6x series on purpose.
+A wire-protocol version of the eth capability — `xdc166`, `xdc165`, `xdc164`, `xdc100` — numbered apart from geth's eth6x series on purpose.
 _Avoid_: eth version, protocol version
 _See_: [ADR-0004](docs/adr/0004-split-eth-wire-layer-into-protocols-eth.md)
 

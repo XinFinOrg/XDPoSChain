@@ -39,7 +39,7 @@ func (p *Peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis 
 	)
 	go func() {
 		switch p.version {
-		case XDC165, XDC164:
+		case XDC165, XDC164, XDC166:
 			errc <- p2p.Send(p.rw, StatusMsg, &StatusPacket{
 				ProtocolVersion: uint32(p.version),
 				NetworkID:       network,
@@ -62,7 +62,7 @@ func (p *Peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis 
 	}()
 	go func() {
 		switch p.version {
-		case XDC165, XDC164:
+		case XDC165, XDC164, XDC166:
 			errc <- p.readStatus(network, &status, genesis, forkFilter)
 		case XDC100:
 			errc <- p.readStatus100(network, &status100, genesis)
@@ -83,7 +83,7 @@ func (p *Peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis 
 		}
 	}
 	switch p.version {
-	case XDC165, XDC164:
+	case XDC165, XDC164, XDC166:
 		p.td, p.head = status.TD, status.Head
 	case XDC100:
 		p.td, p.head = status100.TD, status100.CurrentBlock
