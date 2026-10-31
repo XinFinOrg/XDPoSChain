@@ -261,8 +261,6 @@ func TestXdc166DecodeAnnouncement(t *testing.T) {
 	}
 }
 
-// TestHeadersMatchXdc166AcceptsChainHeaders verifies the SameRequestID header
-// checker accepts the fixture chain's own headers.
 func TestHeadersMatchXdc166AcceptsChainHeaders(t *testing.T) {
 	s := loadTestSuite(t)
 	headers := blockHeadersData{s.chain.blocks[0].Header()}
@@ -272,8 +270,6 @@ func TestHeadersMatchXdc166AcceptsChainHeaders(t *testing.T) {
 	}
 }
 
-// TestHeadersMatchXdc166ReportsMismatch verifies the SameRequestID header checker
-// rejects a corrupted header with a want/have detail naming the divergence.
 func TestHeadersMatchXdc166ReportsMismatch(t *testing.T) {
 	s := loadTestSuite(t)
 	header := *s.chain.blocks[0].Header()
@@ -287,8 +283,6 @@ func TestHeadersMatchXdc166ReportsMismatch(t *testing.T) {
 	}
 }
 
-// TestHeadersMatchXdc166RejectsUnknownBlock verifies the SameRequestID header
-// checker rejects a header for a block the fixture chain does not have.
 func TestHeadersMatchXdc166RejectsUnknownBlock(t *testing.T) {
 	s := loadTestSuite(t)
 	header := *s.chain.blocks[0].Header()

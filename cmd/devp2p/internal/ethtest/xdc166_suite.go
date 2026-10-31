@@ -140,12 +140,9 @@ func (s *Suite) TestGetPooledTransactions_Xdc166(t *utesting.T) {
 	}
 }
 
-// TestSameRequestID_Xdc166 sends two xdc/166 header queries carrying the same
-// request id, so both requests are in flight on one connection at the same
-// time, and asserts that both responses echo the shared id. The requests are
-// written sequentially to avoid a concurrent-write race on the connection,
-// which is what made the upstream original flaky (upstream #22754, with the
-// #22757 CI hardening folded in).
+// TestSameRequestID_Xdc166 keeps two requests in flight on one connection; the
+// writes are sequential because the upstream goroutine version raced the
+// connection (#22754)
 func (s *Suite) TestSameRequestID_Xdc166(t *utesting.T) {
 	t.Log(`This test sends two xdc/166 GetBlockHeaders requests with the same request id and asserts both responses echo it.`)
 	conn, ok := s.setupConnectionXdc166(t)
@@ -155,49 +152,48 @@ func (s *Suite) TestSameRequestID_Xdc166(t *utesting.T) {
 	defer conn.Close()
 
 	reqID := uint64(1234)
+	// Anchor on the head and genesis the node reported in status; fixture block
+	// numbers mean nothing on a live devnet
 	request1 := &getBlockHeadersPacket166{
 		RequestId: reqID,
 		Request: &getBlockHeadersData{
-			Origin: hashOrNumber{Number: 1},
-			Amount: 2,
+			Origin: hashOrNumber{Hash: conn.remoteHead},
+			Amount: 1,
 		},
 	}
 	request2 := &getBlockHeadersPacket166{
 		RequestId: reqID,
 		Request: &getBlockHeadersData{
-			Origin: hashOrNumber{Number: 33},
-			Amount: 2,
+			Origin: hashOrNumber{Hash: s.chain.blocks[0].Hash()},
+			Amount: 1,
 		},
 	}
-	// Write the first request without reading its response, leaving two
-	// outstanding requests that share one request id.
 	if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, request1); err != nil {
 		t.Fatalf("could not write to connection: %v", err)
 	}
-	// Perform the second request and collect its response.
 	headers2, err := s.getBlockHeadersXdc166(conn, request2, reqID)
 	if err != nil {
 		t.Fatalf("could not get block headers: %v", err)
 	}
-	// Wait for the response to the first request.
 	headers1, err := s.waitForBlockHeadersResponseXdc166(conn, reqID)
 	if err != nil {
 		t.Fatalf("could not get BlockHeaders response: %v", err)
 	}
-	// The two responses may arrive in either order; every received header must
-	// match the fixture chain's block for its own number.
-	for i, headers := range []blockHeadersData{headers1, headers2} {
-		if matched, detail := headersMatchXdc166(s.chain, headers); !matched {
-			t.Fatalf("received wrong header(s) in response %d: %s", i+1, detail)
+	// Responses may arrive in either order; compare as a set
+	got := map[common.Hash]bool{headers1[0].Hash(): true, headers2[0].Hash(): true}
+	want := map[common.Hash]bool{conn.remoteHead: true, s.chain.blocks[0].Hash(): true}
+	if len(headers1) != 1 || len(headers2) != 1 {
+		t.Fatalf("expected one header per response, got %d and %d", len(headers1), len(headers2))
+	}
+	for h := range want {
+		if !got[h] {
+			t.Fatalf("responses missing header %s (got %x and %x)", h, headers1[0].Hash(), headers2[0].Hash())
 		}
 	}
 }
 
-// waitForBlockHeadersResponseXdc166 reads until a xdc/166 BlockHeaders response
-// with the expected request id arrives, serving any inbound block header
-// queries along the way. It returns errors instead of failing the test so the
-// request-id reuse cases control their own failure output (upstream #22754,
-// with the want/have failure detail of upstream #22482).
+// Returns errors so the request-id reuse cases control their own failure
+// output (#22754, #22482)
 func (s *Suite) waitForBlockHeadersResponseXdc166(conn *Conn, expectedID uint64) (blockHeadersData, error) {
 	for i := 0; i < maxXdc166ResponseReads; i++ {
 		id, msg, err := s.readMsgXdc166(conn)
@@ -216,8 +212,6 @@ func (s *Suite) waitForBlockHeadersResponseXdc166(conn *Conn, expectedID uint64)
 	return nil, fmt.Errorf("did not receive BlockHeaders response within %d read(s)", maxXdc166ResponseReads)
 }
 
-// getBlockHeadersXdc166 writes a xdc/166 header query and waits for the response
-// carrying the expected request id.
 func (s *Suite) getBlockHeadersXdc166(conn *Conn, req *getBlockHeadersPacket166, expectedID uint64) (blockHeadersData, error) {
 	if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, req); err != nil {
 		return nil, fmt.Errorf("could not write to connection: %w", err)
@@ -225,10 +219,7 @@ func (s *Suite) getBlockHeadersXdc166(conn *Conn, req *getBlockHeadersPacket166,
 	return s.waitForBlockHeadersResponseXdc166(conn, expectedID)
 }
 
-// headersMatchXdc166 reports whether every received header is the fixture chain's
-// header for the same block number. On mismatch it returns a want/have detail
-// naming the divergence, so a failing case prints the offending header instead
-// of a bare count (upstream #22754/#22482 failure-output shape).
+// Reports the diverging header instead of a bare count (#22482)
 func headersMatchXdc166(chain *Chain, headers blockHeadersData) (bool, string) {
 	for _, header := range headers {
 		if header == nil {

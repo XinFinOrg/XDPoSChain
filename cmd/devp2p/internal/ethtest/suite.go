@@ -100,7 +100,6 @@ func (s *Suite) EthTests() []utesting.Test {
 		{Name: "TransactionBatchThenReceiptsSmoke", Fn: s.TestTransactionBatchThenReceiptsSmoke},
 		{Name: "TransactionEmptyListThenReceiptsSmoke", Fn: s.TestTransactionEmptyListThenReceiptsSmoke},
 
-		// Invalid transaction rejection conformance.
 		{Name: "MaliciousTx", Fn: s.TestMaliciousTx},
 		{Name: "GetBlockBodies", Fn: s.TestGetBlockBodies},
 		{Name: "GetBlockBodiesSequentialRequests", Fn: s.TestGetBlockBodiesSequentialRequests},
@@ -113,7 +112,6 @@ func (s *Suite) EthTests() []utesting.Test {
 		{Name: "GetReceiptsUnknownOnly", Fn: s.TestGetReceiptsUnknownOnly},
 		{Name: "GetReceiptsUnknownThenKnown", Fn: s.TestGetReceiptsUnknownThenKnown},
 
-		// Block announcement conformance.
 		{Name: "LargeAnnounce", Fn: s.TestLargeAnnounce},
 		{Name: "OldAnnounce", Fn: s.TestOldAnnounce},
 		{Name: "BlockHashAnnounce", Fn: s.TestBlockHashAnnounce},
@@ -369,11 +367,8 @@ func (s *Suite) TestGetNonexistentBlockHeadersByHash(t *utesting.T) {
 	}
 }
 
-// TestGetNonexistentBlockHeadersRepeated sends GetBlockHeaders requests for
-// unlikely block numbers repeatedly and verifies the peer stays connected
-// (upstream #31506). Some clients are lenient on the first few invalid
-// requests, so the case checks that none of a full streak of them makes the
-// node disconnect.
+// Some clients only punish after several invalid requests, so a full streak is
+// sent (#31506)
 func (s *Suite) TestGetNonexistentBlockHeadersRepeated(t *utesting.T) {
 	t.Log(`This test sends GetBlockHeaders requests for nonexistent blocks repeatedly and verifies the node does not disconnect.`)
 	conn, err := s.dialAndPeer(nil)
@@ -391,10 +386,8 @@ func (s *Suite) TestGetNonexistentBlockHeadersRepeated(t *utesting.T) {
 			t.Fatalf("peer disconnected after %d request(s): %v", i, err)
 		}
 	}
-	// Check whether the peer disconnected at the end. The node may legitimately
-	// answer the invalid streak with an empty headers response, and a quiet
-	// peer simply reads as a timeout; both mean the connection survived. A
-	// disconnect reason frame or a torn-down connection means it did not.
+	// An empty response or a read timeout both mean the connection survived; a
+	// disconnect frame or a torn-down connection means it did not
 	code, _, err := conn.Read()
 	if err == nil && code != discMsg {
 		t.Logf("connection survived the invalid streak (frame code %d)", code)
