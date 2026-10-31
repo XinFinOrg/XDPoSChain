@@ -1,0 +1,30 @@
+{
+  "masternodes": {
+    "0x914bb398ce2977881340709bdc18c771a99729ac": {
+      "key": "0x8790bf8aba12481077b5db25a348f92c0d922ac743395c4d83dded8d16aee40e"
+    },
+    "0x654b61bd2e9950885111e699e2629ae7247e5040": {
+      "key": "0x4883ca0d44af0e695d86ae8874d64bb5ba2db5c45711ae7ba70b1fef96e01832"
+    },
+    "0xbe8eb457a67bc5aca26f405a2a5a3d335644d99c": {
+      "key": "0x53bc816ae13179e4d8e676e1eb6d3de7702f86f6109d00ee5e64e7e8ac6cf7e1"
+    },
+    "0xb44da3035575d5aa05dfeb8ff57237803570f325": {
+      "key": "0x9cb31bb1c296e1f3929fd22991f49fcf2ad8471d4c38db409dd046f2b97431de"
+    }
+  },
+  "senders": {
+    "0x672341d5f78e7d08e0aad4b28e37d5e214a3b9b3": {
+      "key": "0xde2ec93244c80feeedbc097c6ef461a093d4b2f0de09cd94293ac16b301695ec"
+    },
+    "0x4debcc102e6537ceb2d47b56d1c7c35393184bfa": {
+      "key": "0x38592ee6160cb5e382d5ea81d6813cf0168b3d631aada2e1833ef9ca1d7135df"
+    },
+    "0x85cbffc722ad208dce52e2845f53b152f39e5d3c": {
+      "key": "0x55d263dc27cde555807826bfe6711badcafa554b821f17850cd0c456de217422"
+    },
+    "0x4e0c7a18feadc1b98d6d2f25e9a51bca7bcfe373": {
+      "key": "0xb442f95b4c684b6f02bff8804c0a93b2f47f1f761823b79508e6decbfb2dbdf8"
+    }
+  }
+}
