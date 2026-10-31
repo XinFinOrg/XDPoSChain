@@ -18,6 +18,7 @@ package ethtest
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -139,6 +140,111 @@ func (s *Suite) TestGetPooledTransactions_66(t *utesting.T) {
 	}
 }
 
+// TestSameRequestID_66 sends two xdc/166 header queries carrying the same
+// request id, so both requests are in flight on one connection at the same
+// time, and asserts that both responses echo the shared id. The requests are
+// written sequentially to avoid a concurrent-write race on the connection,
+// which is what made the upstream original flaky (upstream #22754, with the
+// #22757 CI hardening folded in).
+func (s *Suite) TestSameRequestID_66(t *utesting.T) {
+	t.Log(`This test sends two xdc/166 GetBlockHeaders requests with the same request id and asserts both responses echo it.`)
+	conn, ok := s.setupConnection66(t)
+	if !ok {
+		return
+	}
+	defer conn.Close()
+
+	reqID := uint64(1234)
+	request1 := &getBlockHeadersPacket66{
+		RequestId: reqID,
+		Request: &getBlockHeadersData{
+			Origin: hashOrNumber{Number: 1},
+			Amount: 2,
+		},
+	}
+	request2 := &getBlockHeadersPacket66{
+		RequestId: reqID,
+		Request: &getBlockHeadersData{
+			Origin: hashOrNumber{Number: 33},
+			Amount: 2,
+		},
+	}
+	// Write the first request without reading its response, leaving two
+	// outstanding requests that share one request id.
+	if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, request1); err != nil {
+		t.Fatalf("could not write to connection: %v", err)
+	}
+	// Perform the second request and collect its response.
+	headers2, err := s.getBlockHeaders66(conn, request2, reqID)
+	if err != nil {
+		t.Fatalf("could not get block headers: %v", err)
+	}
+	// Wait for the response to the first request.
+	headers1, err := s.waitForBlockHeadersResponse66(conn, reqID)
+	if err != nil {
+		t.Fatalf("could not get BlockHeaders response: %v", err)
+	}
+	// The two responses may arrive in either order; every received header must
+	// match the fixture chain's block for its own number.
+	for i, headers := range []blockHeadersData{headers1, headers2} {
+		if matched, detail := headersMatch66(s.chain, headers); !matched {
+			t.Fatalf("received wrong header(s) in response %d: %s", i+1, detail)
+		}
+	}
+}
+
+// waitForBlockHeadersResponse66 reads until a xdc/166 BlockHeaders response
+// with the expected request id arrives, serving any inbound block header
+// queries along the way. It returns errors instead of failing the test so the
+// request-id reuse cases control their own failure output (upstream #22754,
+// with the want/have failure detail of upstream #22482).
+func (s *Suite) waitForBlockHeadersResponse66(conn *Conn, expectedID uint64) (blockHeadersData, error) {
+	for i := 0; i < max66ResponseReads; i++ {
+		id, msg, err := s.readMsg66(conn)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read BlockHeaders response: %w", err)
+		}
+		headers, ok := msg.(*blockHeadersData)
+		if !ok {
+			continue
+		}
+		if id != expectedID {
+			return nil, fmt.Errorf("request ID mismatch: wanted %d, got %d", expectedID, id)
+		}
+		return *headers, nil
+	}
+	return nil, fmt.Errorf("did not receive BlockHeaders response within %d read(s)", max66ResponseReads)
+}
+
+// getBlockHeaders66 writes a xdc/166 header query and waits for the response
+// carrying the expected request id.
+func (s *Suite) getBlockHeaders66(conn *Conn, req *getBlockHeadersPacket66, expectedID uint64) (blockHeadersData, error) {
+	if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, req); err != nil {
+		return nil, fmt.Errorf("could not write to connection: %w", err)
+	}
+	return s.waitForBlockHeadersResponse66(conn, expectedID)
+}
+
+// headersMatch66 reports whether every received header is the fixture chain's
+// header for the same block number. On mismatch it returns a want/have detail
+// naming the divergence, so a failing case prints the offending header instead
+// of a bare count (upstream #22754/#22482 failure-output shape).
+func headersMatch66(chain *Chain, headers blockHeadersData) (bool, string) {
+	for _, header := range headers {
+		if header == nil {
+			return false, "nil header in BlockHeaders response"
+		}
+		num := header.Number.Uint64()
+		if num >= uint64(chain.Len()) {
+			return false, fmt.Sprintf("header for unknown block %d (fixture chain head is %d)", num, chain.Len()-1)
+		}
+		if !reflect.DeepEqual(chain.blocks[num].Header(), header) {
+			return false, fmt.Sprintf("wrong header for block %d: have hash %s, want hash %s", num, header.Hash(), chain.blocks[num].Hash())
+		}
+	}
+	return true, ""
+}
+
 // setupConnection66 returns ok=false when the peer did not negotiate xdc/166
 func (s *Suite) setupConnection66(t *utesting.T) (*Conn, bool) {
 	conn, err := s.dial166()
@@ -149,6 +255,9 @@ func (s *Suite) setupConnection66(t *utesting.T) (*Conn, bool) {
 		conn.Close()
 		t.Fatalf("handshake failed: %v", err)
 	}
+	// Negotiation gate: the 66-shaped dialect is only spoken on a connection
+	// that actually negotiated xdc/166. On an xdc/100 connection every
+	// 66-shaped request would be misread as a legacy packet.
 	// 66-shaped requests on an xdc/100 connection would be misread as legacy packets
 	if conn.negotiatedProtoVersion != ethProtoVersionXDpos166 {
 		conn.Close()

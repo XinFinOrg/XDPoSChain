@@ -212,3 +212,44 @@ func TestEth66DecodeRejectsLegacyShape(t *testing.T) {
 		t.Fatal("expected legacy-shaped BlockHeaders payload to fail 66 decode")
 	}
 }
+
+// TestHeadersMatch66AcceptsChainHeaders verifies the SameRequestID header
+// checker accepts the fixture chain's own headers.
+func TestHeadersMatch66AcceptsChainHeaders(t *testing.T) {
+	s := loadTestSuite(t)
+	headers := blockHeadersData{s.chain.blocks[0].Header()}
+	matched, detail := headersMatch66(s.chain, headers)
+	if !matched {
+		t.Fatalf("expected chain headers to match, got: %s", detail)
+	}
+}
+
+// TestHeadersMatch66ReportsMismatch verifies the SameRequestID header checker
+// rejects a corrupted header with a want/have detail naming the divergence.
+func TestHeadersMatch66ReportsMismatch(t *testing.T) {
+	s := loadTestSuite(t)
+	header := *s.chain.blocks[0].Header()
+	header.Extra = []byte("corrupted")
+	matched, detail := headersMatch66(s.chain, blockHeadersData{&header})
+	if matched {
+		t.Fatal("expected corrupted header to mismatch")
+	}
+	if detail == "" {
+		t.Fatal("expected mismatch detail for corrupted header")
+	}
+}
+
+// TestHeadersMatch66RejectsUnknownBlock verifies the SameRequestID header
+// checker rejects a header for a block the fixture chain does not have.
+func TestHeadersMatch66RejectsUnknownBlock(t *testing.T) {
+	s := loadTestSuite(t)
+	header := *s.chain.blocks[0].Header()
+	header.Number = big.NewInt(int64(s.chain.Len()) + 1)
+	matched, detail := headersMatch66(s.chain, blockHeadersData{&header})
+	if matched {
+		t.Fatal("expected out-of-range header to mismatch")
+	}
+	if detail == "" {
+		t.Fatal("expected mismatch detail for out-of-range header")
+	}
+}
