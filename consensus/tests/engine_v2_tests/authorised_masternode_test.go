@@ -55,16 +55,17 @@ func TestIsYourTurnConsensusV2(t *testing.T) {
 	assert.False(t, isYourTurn)
 
 	time.Sleep(time.Duration(minePeriod) * time.Second)
-	// The second address is valid as the round starting from 1
-	isYourTurn, err = adaptor.YourTurn(blockchain, currentBlockHeader, common.HexToAddress("xdc0D3ab14BBaD3D99F4203bd7a11aCB94882050E7e"))
+	// The head 901 consumed round 1, so the engine waits on round 2 with
+	// 0x7156... as its leader.
+	isYourTurn, err = adaptor.YourTurn(blockchain, currentBlockHeader, common.HexToAddress("xdc71562b71999873DB5b286dF957af199Ec94617F7"))
 	assert.Nil(t, err)
 	assert.True(t, isYourTurn)
 
-	// The first and third address are not valid
-	isYourTurn, err = adaptor.YourTurn(blockchain, currentBlock.Header(), common.HexToAddress("xdc703c4b2bD70c169f5717101CaeE543299Fc946C7"))
+	// The other addresses are not valid
+	isYourTurn, err = adaptor.YourTurn(blockchain, currentBlock.Header(), common.HexToAddress("xdc0D3ab14BBaD3D99F4203bd7a11aCB94882050E7e"))
 	assert.Nil(t, err)
 	assert.False(t, isYourTurn)
-	isYourTurn, err = adaptor.YourTurn(blockchain, currentBlock.Header(), common.HexToAddress("xdc71562b71999873DB5b286dF957af199Ec94617F7"))
+	isYourTurn, err = adaptor.YourTurn(blockchain, currentBlock.Header(), common.HexToAddress("xdc703c4b2bD70c169f5717101CaeE543299Fc946C7"))
 	assert.Nil(t, err)
 	assert.False(t, isYourTurn)
 

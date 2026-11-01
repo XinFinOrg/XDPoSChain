@@ -71,6 +71,15 @@ type XDPoS_v2 struct {
 	highestSelfMinedRound types.Round
 	highestVotedRound     types.Round
 	highestQuorumCert     *types.QuorumCert
+	// syntheticHighestQC marks a highestQuorumCert reconstructed from the
+	// canonical head at initialisation (no signatures available). Prepare
+	// then embeds the head's own QC in the wire extra; processQC clears it
+	// on a strictly higher QC.
+	syntheticHighestQC bool
+	// wireHighestQC is the last QC with signatures. While syntheticHighestQC
+	// is set it is what SyncInfo advertises, since a signatureless QC would
+	// fail every peer's verifyQC.
+	wireHighestQC *types.QuorumCert
 	// lockQuorumCert in XDPoS Consensus 2.0, used in voting rule
 	lockQuorumCert     *types.QuorumCert
 	highestTimeoutCert *types.TimeoutCert
@@ -200,7 +209,7 @@ func (x *XDPoS_v2) Initial(chain consensus.ChainReader, header *types.Header) er
 	x.lock.Lock()
 	defer x.lock.Unlock()
 
-	if err := x.initial(chain, header); err != nil {
+	if err := x.initial(chain, header, true); err != nil {
 		return err
 	}
 	// Startup-only repair, skipped for chain readers that cannot open state.
@@ -216,7 +225,12 @@ func (x *XDPoS_v2) Initial(chain consensus.ChainReader, header *types.Header) er
 // initial sets the v2 parameters from the chain. It must only be called while
 // holding x.lock, from either the startup path (Initial) or header verification.
 // The startup-only gap snapshot repair is deliberately kept in Initial, not here.
-func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) error {
+//
+// reconcile asks for the head recovery described at the reconciliation step
+// below, and only the callers that pass the node's own head may request it:
+// header verification hands in the header being verified, which is not evidence
+// about this node's view.
+func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header, reconcile bool) error {
 	log.Warn("[initial] initial v2 related parameters")
 
 	if x.highestQuorumCert.ProposedBlockInfo.Hash != (common.Hash{}) { // already initialized
@@ -249,13 +263,44 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 		x.highestQuorumCert = quorumCert
 	} else {
 		log.Info("[initial] highest QC from current header")
-		quorumCert, _, _, err = x.getExtraFields(header)
+		var headRound types.Round
+		quorumCert, headRound, _, err = x.getExtraFields(header)
 		if err != nil {
 			return err
 		}
 		err = x.processQC(chain, quorumCert)
 		if err != nil {
 			return err
+		}
+		// The head N itself proves round headRound was produced, but QC(N)
+		// lives only in the not-yet-existing N+1. Recovering with QC(N-1)
+		// alone makes a restarted (or freshly imported) validator re-propose
+		// N, which every node rejects as non-canonical and deadlocks the
+		// network. Point the view at N instead; Prepare keeps carrying
+		// QC(N-1) on the wire, since verifyQC rejects a signatureless QC.
+		if reconcile && headRound >= x.currentRound {
+			x.highestQuorumCert = &types.QuorumCert{
+				ProposedBlockInfo: &types.BlockInfo{
+					Hash:   header.Hash(),
+					Round:  headRound,
+					Number: header.Number,
+				},
+				Signatures: nil,
+				GapNumber:  quorumCert.GapNumber,
+			}
+			// QC(N-1) is the QC the new view is the child of: keep
+			// lockQuorumCert on it, or the lock trails highestQuorumCert by two
+			// blocks and the voting rule's first branch (the proposal's QC round
+			// merely has to beat the lock) stops requiring the proposal to
+			// extend the locked block.
+			if x.lockQuorumCert == nil || quorumCert.ProposedBlockInfo.Round > x.lockQuorumCert.ProposedBlockInfo.Round {
+				x.lockQuorumCert = quorumCert
+			}
+			// The reconstructed view has no signatures and must stay off the
+			// wire; SyncInfo advertises the last QC that has them instead.
+			x.wireHighestQC = quorumCert
+			x.syntheticHighestQC = true
+			x.setNewRound(chain, headRound+1)
 		}
 	}
 
@@ -319,7 +364,7 @@ func (x *XDPoS_v2) YourTurn(chain consensus.ChainReader, parent *types.Header, s
 	defer x.lock.RUnlock()
 
 	if !x.isInitilised {
-		err := x.initial(chain, parent)
+		err := x.initial(chain, parent, true)
 		if err != nil {
 			log.Error("[YourTurn] Error while initialising last v2 variables", "ParentBlockHash", parent.Hash(), "Error", err)
 			return false, err
@@ -348,6 +393,7 @@ func (x *XDPoS_v2) Prepare(chain consensus.ChainReader, header *types.Header) er
 	x.lock.RLock()
 	currentRound := x.currentRound
 	highestQC := x.highestQuorumCert
+	syntheticQC := x.syntheticHighestQC
 	x.lock.RUnlock()
 
 	if header.ParentHash != highestQC.ProposedBlockInfo.Hash {
@@ -355,9 +401,25 @@ func (x *XDPoS_v2) Prepare(chain consensus.ChainReader, header *types.Header) er
 		return consensus.ErrNotReadyToPropose
 	}
 
+	// A synthetic QC has no signatures and would fail every peer's verifyQC;
+	// embed the head's own QC instead until a real QC with a higher round
+	// arrives (see initial).
+	qcForExtra := highestQC
+	if syntheticQC {
+		parentHeader := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1)
+		if parentHeader == nil {
+			return consensus.ErrUnknownAncestor
+		}
+		parentQC, _, _, err := x.getExtraFields(parentHeader)
+		if err != nil {
+			return err
+		}
+		qcForExtra = parentQC
+	}
+
 	extra := types.ExtraFields_v2{
 		Round:      currentRound,
-		QuorumCert: highestQC,
+		QuorumCert: qcForExtra,
 	}
 
 	extraBytes, err := extra.EncodeToBytes()
@@ -964,12 +1026,23 @@ func (x *XDPoS_v2) verifyQC(blockChainReader consensus.ChainReader, quorumCert *
 		return utils.ErrInvalidQC
 	}
 
+	// The last batch predecessor is the QC's block only while the QC certifies
+	// the parent of the header under verification. Every block has that shape
+	// except the one a reconciled validator produces: initial points the view at
+	// the head N and Prepare keeps embedding QC(N-1) in block N+1, because QC(N)
+	// cannot be signed. Fall back to the by-hash lookups the single-header path
+	// already uses, or a batch import would reject the very block that a
+	// one-by-one gossip accepts.
+	qcParents := parents
+	if len(qcParents) != 0 && qcParents[len(qcParents)-1].Hash() != quorumCert.ProposedBlockInfo.Hash {
+		qcParents = nil
+	}
 	// Find the parent header from the parents slice if available
 	var parentHeader *types.Header
-	if len(parents) != 0 {
-		parentHeader = parents[len(parents)-1]
+	if len(qcParents) != 0 {
+		parentHeader = qcParents[len(qcParents)-1]
 	}
-	epochInfo, err := x.getEpochSwitchInfo(blockChainReader, parents, quorumCert.ProposedBlockInfo.Hash)
+	epochInfo, err := x.getEpochSwitchInfo(blockChainReader, qcParents, quorumCert.ProposedBlockInfo.Hash)
 	if err != nil {
 		log.Error("[verifyQC] Error when getting epoch switch Info to verify QC", "Error", err)
 		return errors.New("fail to verify QC due to failure in getting epoch switch info")
@@ -1054,6 +1127,8 @@ func (x *XDPoS_v2) processQC(blockChainReader consensus.ChainReader, incomingQuo
 	if incomingQuorumCert.ProposedBlockInfo.Round > x.highestQuorumCert.ProposedBlockInfo.Round {
 		log.Debug("[processQC] update x.highestQuorumCert", "blockNum", incomingQuorumCert.ProposedBlockInfo.Number, "round", incomingQuorumCert.ProposedBlockInfo.Round, "hash", incomingQuorumCert.ProposedBlockInfo.Hash)
 		x.highestQuorumCert = incomingQuorumCert
+		x.syntheticHighestQC = false
+		x.wireHighestQC = nil
 	}
 	// 2. Get QC from header and update lockQuorumCert(lockQuorumCert is the parent of highestQC)
 	proposedBlockHeader := blockChainReader.GetHeaderByHash(incomingQuorumCert.ProposedBlockInfo.Hash)
@@ -1116,8 +1191,16 @@ func (x *XDPoS_v2) broadcastToBftChannel(msg interface{}) {
 }
 
 func (x *XDPoS_v2) getSyncInfo() *types.SyncInfo {
+	qc := x.highestQuorumCert
+	if x.syntheticHighestQC && x.wireHighestQC != nil {
+		// The reconstructed view carries no signatures and would fail every
+		// peer's verifyQC; advertise the last QC that has them instead. The
+		// whole message would be dropped with it, TC included, and the TC has
+		// no other carrier.
+		qc = x.wireHighestQC
+	}
 	return &types.SyncInfo{
-		HighestQuorumCert:  x.highestQuorumCert,
+		HighestQuorumCert:  qc,
 		HighestTimeoutCert: x.highestTimeoutCert,
 	}
 }

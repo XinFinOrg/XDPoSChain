@@ -19,7 +19,10 @@ import (
 // Verify individual header
 func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Header, parents []*types.Header, fullVerify bool) error {
 	if !x.isInitilised {
-		if err := x.initial(chain, header); err != nil {
+		// Header verification is not evidence about this node's head, so the
+		// head recovery stays off here: the header being verified may be a
+		// block this node neither has nor is mining on.
+		if err := x.initial(chain, header, false); err != nil {
 			return err
 		}
 	}
