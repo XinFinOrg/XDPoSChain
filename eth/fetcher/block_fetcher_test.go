@@ -1437,10 +1437,22 @@ func parkedCount(f *BlockFetcher) int {
 	return len(f.parked)
 }
 
+func parkedStoredCount(f *BlockFetcher) int {
+	f.parkedMu.Lock()
+	defer f.parkedMu.Unlock()
+	return f.parkedStoredLocked()
+}
+
 func signingCount(f *BlockFetcher) int {
 	f.parkedMu.Lock()
 	defer f.parkedMu.Unlock()
 	return len(f.signing)
+}
+
+func pendingCount(f *BlockFetcher) int {
+	f.parkedMu.Lock()
+	defer f.parkedMu.Unlock()
+	return len(f.pending)
 }
 
 func waitSigningCount(t *testing.T, f *BlockFetcher, want int) {
@@ -1514,9 +1526,10 @@ func hookSigning(f *BlockFetcher) chan *types.Block {
 func parkTestEntry(t *testing.T, f *BlockFetcher, block *types.Block, deadline time.Time, claimed bool) {
 	t.Helper()
 
+	stored := f.getBlock(block.Hash()) != nil
 	f.parkedMu.Lock()
 	defer f.parkedMu.Unlock()
-	f.parked[block.Hash()] = &parkedBlock{block: block, deadline: deadline, claimed: claimed}
+	f.parked[block.Hash()] = &parkedBlock{block: block, deadline: deadline, claimed: claimed, stored: stored}
 }
 
 func adoptCanonical(t *testing.T, tester *fetcherTester, block *types.Block) {
@@ -1709,6 +1722,9 @@ func TestParkedSignatureSkippedWhenNotASigner(t *testing.T) {
 	if n := parkedCount(tester.fetcher); n != 0 {
 		t.Fatalf("parked %d entries on a node that cannot sign, want 0", n)
 	}
+	if n := signingCount(tester.fetcher); n != 0 {
+		t.Fatalf("in-flight signature count = %d after a non-signer park, want 0", n)
+	}
 	select {
 	case b := <-signed:
 		t.Fatalf("sign hook ran for a block a non-signer parked: %v", b.Hash())
@@ -1819,7 +1835,7 @@ func TestParkedSignatureExpiredBeforeReadyIsDropped(t *testing.T) {
 		t.Fatalf("failed to store the parked block: %v", err)
 	}
 	tester.fetcher.parkedMu.Lock()
-	tester.fetcher.parked[block.Hash()] = &parkedBlock{block: block, deadline: time.Now().Add(-time.Second)}
+	tester.fetcher.parked[block.Hash()] = &parkedBlock{block: block, deadline: time.Now().Add(-time.Second), stored: true}
 	tester.fetcher.parkedMu.Unlock()
 
 	var signs int32
@@ -1991,6 +2007,143 @@ func TestParkedSignatureLimit(t *testing.T) {
 	}
 	if n := blockParkedFullMeter.Snapshot().Count() - full; n != 8 {
 		t.Fatalf("full meter moved by %d, want 8 for the overflow", n)
+	}
+}
+
+func TestParkedSignatureStoredBudgetReservesSlots(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	full := blockParkedFullMeter.Snapshot().Count()
+
+	// One stored block must fit: a zero budget would refuse every side block.
+	tester.fetcher.parkForSignatureStored(newParkedTestBlock(0x01), true)
+	if n := parkedStoredCount(tester.fetcher); n != 1 {
+		t.Fatalf("stored entries = %d after parking one stored block, want 1", n)
+	}
+	for i := 2; i <= maxParkedStored; i++ {
+		tester.fetcher.parkForSignatureStored(newParkedTestBlock(byte(i)), true)
+	}
+	if n := parkedStoredCount(tester.fetcher); n != maxParkedStored {
+		t.Fatalf("stored entries = %d after filling the stored budget, want %d", n, maxParkedStored)
+	}
+
+	// The reserve is the point of the split: an unimported block still gets a slot.
+	tester.fetcher.parkForSignatureStored(newParkedTestBlock(0xf0), false)
+	if n := parkedCount(tester.fetcher); n != maxParkedStored+1 {
+		t.Fatalf("parked count = %d after parking an unimported block, want %d", n, maxParkedStored+1)
+	}
+	if n := blockParkedFullMeter.Snapshot().Count() - full; n != 0 {
+		t.Fatalf("full meter moved by %d while the stored budget had room, want 0", n)
+	}
+
+	// The set holds maxParkedStored+1 entries here, so the total gate cannot be
+	// what refuses this one: only the stored sub-budget can.
+	tester.fetcher.parkForSignatureStored(newParkedTestBlock(0xf1), true)
+	if n := parkedCount(tester.fetcher); n != maxParkedStored+1 {
+		t.Fatalf("parked count = %d after an over-budget stored block, want %d", n, maxParkedStored+1)
+	}
+	if n := blockParkedFullMeter.Snapshot().Count() - full; n != 1 {
+		t.Fatalf("full meter moved by %d for the refused stored block, want 1", n)
+	}
+}
+
+func TestParkedSignatureStoredBudgetRefreshedByScan(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	block := newParkedTestBlock(0x2b)
+	tester.fetcher.parkForSignatureStored(block, false)
+
+	// Only the map: a canonical block would be claimed and signed by the same scan.
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+
+	tester.fetcher.scanParkedSignatures()
+
+	if n := parkedStoredCount(tester.fetcher); n != 1 {
+		t.Fatalf("stored entries = %d after the scan refreshed a stored block, want 1", n)
+	}
+}
+
+// TestParkedSignatureStoredBudgetIsAdmissionOnly pins the documented soft cap: a
+// batch that lands in one tick flips the whole reserve to stored and takes the
+// stored subset past maxParkedStored, up to the total set.
+func TestParkedSignatureStoredBudgetIsAdmissionOnly(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	for i := 0; i < maxParkedStored; i++ {
+		tester.fetcher.parkForSignatureStored(newParkedTestBlock(byte(0x10+i)), true)
+	}
+	reserve := maxParkedSignatures - maxParkedStored
+	var unimported []*types.Block
+	for i := 0; i < reserve; i++ {
+		block := newParkedTestBlock(byte(0x40 + i))
+		unimported = append(unimported, block)
+		tester.fetcher.parkForSignatureStored(block, false)
+	}
+	if n := parkedCount(tester.fetcher); n != maxParkedSignatures {
+		t.Fatalf("parked count = %d after filling both budgets, want %d", n, maxParkedSignatures)
+	}
+
+	// Land the reserve in one batch: the scan flips every entry in a single tick.
+	tester.lock.Lock()
+	for _, block := range unimported {
+		tester.blocks[block.Hash()] = block
+	}
+	tester.lock.Unlock()
+	tester.fetcher.scanParkedSignatures()
+
+	if n := parkedStoredCount(tester.fetcher); n != maxParkedSignatures {
+		t.Fatalf("stored entries = %d after the scan flipped the reserve, want %d (the cap is checked at admission only)", n, maxParkedSignatures)
+	}
+	if n := parkedCount(tester.fetcher); n != maxParkedSignatures {
+		t.Fatalf("parked count = %d after the scan flipped the reserve, want %d", n, maxParkedSignatures)
+	}
+}
+
+// TestParkedSignatureTotalBudgetRefusesAfterStoredFlip proves the total set is the
+// runtime bound: with the stored subset already past its cap, the next admission
+// is refused by the total gate, not the stored one.
+func TestParkedSignatureTotalBudgetRefusesAfterStoredFlip(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	for i := 0; i < maxParkedSignatures; i++ {
+		tester.fetcher.parkForSignatureStored(newParkedTestBlock(byte(0x60+i)), false)
+	}
+	tester.fetcher.parkedMu.Lock()
+	blocks := make([]*types.Block, 0, len(tester.fetcher.parked))
+	for _, parked := range tester.fetcher.parked {
+		blocks = append(blocks, parked.block)
+	}
+	tester.fetcher.parkedMu.Unlock()
+
+	// Only the map: a canonical block would be claimed and signed by the same scan.
+	tester.lock.Lock()
+	for _, block := range blocks {
+		tester.blocks[block.Hash()] = block
+	}
+	tester.lock.Unlock()
+	tester.fetcher.scanParkedSignatures()
+
+	if n := parkedStoredCount(tester.fetcher); n != maxParkedSignatures {
+		t.Fatalf("stored entries = %d after the scan flipped the set, want %d", n, maxParkedSignatures)
+	}
+
+	full := blockParkedFullMeter.Snapshot().Count()
+	tester.fetcher.parkForSignatureStored(newParkedTestBlock(0xff), false)
+	if n := parkedCount(tester.fetcher); n != maxParkedSignatures {
+		t.Fatalf("parked count = %d after an admission past the total set, want %d", n, maxParkedSignatures)
+	}
+	if n := blockParkedFullMeter.Snapshot().Count() - full; n != 1 {
+		t.Fatalf("full meter moved by %d for the refused admission, want 1", n)
 	}
 }
 
@@ -3090,8 +3243,8 @@ func TestParkedSignatureWaiterStopsMidBatch(t *testing.T) {
 	// Both entries are installed under one lock before the waiter starts, so its
 	// first tick collects one batch; two parks could split it.
 	tester.fetcher.parkedMu.Lock()
-	tester.fetcher.parkLocked(blockA)
-	tester.fetcher.parkLocked(blockB)
+	tester.fetcher.parkLocked(blockA, true)
+	tester.fetcher.parkLocked(blockB, true)
 	tester.fetcher.parkedMu.Unlock()
 	go tester.fetcher.waitParkedSignatures()
 	waitSigningCount(t, tester.fetcher, 2)
@@ -3272,6 +3425,9 @@ func TestRefusedClaimParksEntrylessClaim(t *testing.T) {
 	if n := parkedCount(tester.fetcher); n != 1 {
 		t.Fatalf("parked count = %d for an entry-less refused claim, want 1", n)
 	}
+	if n := parkedStoredCount(tester.fetcher); n != 1 {
+		t.Fatalf("stored entries = %d for an entry-less refused claim, want 1", n)
+	}
 	deadline := parkedDeadline(tester.fetcher, block.Hash())
 	if deadline.Before(before.Add(tester.fetcher.parkedTimeout - time.Second)) {
 		t.Fatalf("recreated entry deadline = %v, want a fresh bound", deadline)
@@ -3443,5 +3599,373 @@ func TestParkedSignatureRefusedClaimParksOnSigner(t *testing.T) {
 	}
 	if n := signingCount(tester.fetcher); n != 0 {
 		t.Fatalf("in-flight signature count = %d after parking, want 0", n)
+	}
+}
+
+// TestParkedSignatureRefusedClaimSkipsSignerGateWhenFull pins the refusal order:
+// a full set answers before the signer gate, so a peer cannot make the fetcher pay
+// the gate's backend lock and chain read per refused claim.
+func TestParkedSignatureRefusedClaimSkipsSignerGateWhenFull(t *testing.T) {
+	var gateCalls atomic.Int32
+	tester := newTesterWithGate(func() bool {
+		gateCalls.Add(1)
+		return true
+	})
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	for i := 0; i < maxParkedSignatures; i++ {
+		tester.fetcher.parkForSignatureStored(newParkedTestBlock(byte(i)), false)
+	}
+	if n := parkedCount(tester.fetcher); n != maxParkedSignatures {
+		t.Fatalf("parked count = %d after filling the set, want %d", n, maxParkedSignatures)
+	}
+	gateCalls.Store(0)
+
+	full := blockParkedFullMeter.Snapshot().Count()
+	block := newParkedTestBlock(0xfe)
+	for i := 0; i < 8; i++ {
+		tester.fetcher.settleRefusedClaim(block, false)
+	}
+	if n := gateCalls.Load(); n != 0 {
+		t.Fatalf("signer gate ran %d times while the set was full, want 0", n)
+	}
+	if n := blockParkedFullMeter.Snapshot().Count() - full; n != 8 {
+		t.Fatalf("full meter moved by %d for 8 refused claims, want 8", n)
+	}
+	if n := parkedCount(tester.fetcher); n != maxParkedSignatures {
+		t.Fatalf("parked count = %d after the refused claims, want %d", n, maxParkedSignatures)
+	}
+}
+
+// TestParkedSignatureStoredDerivedByWrapper pins the wrapper's chain lookup: a
+// block already on disk must count against the stored budget when it is parked
+// through parkForSignature.
+func TestParkedSignatureStoredDerivedByWrapper(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	block := newParkedTestBlock(0x30)
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+
+	tester.fetcher.parkForSignature(block)
+	if n := parkedStoredCount(tester.fetcher); n != 1 {
+		t.Fatalf("stored entries = %d for a block parked through the wrapper, want 1", n)
+	}
+}
+
+// TestParkedSignatureDeliveryUnimportedIsNotStored pins the delivery path's
+// stored argument for a block that never landed: its entry must take a reserve
+// slot, not one of the stored budget.
+func TestParkedSignatureDeliveryUnimportedIsNotStored(t *testing.T) {
+	block := newParkedTestBlock(0x33)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.insertBlock = func(*types.Block) error {
+		return nil // never stored: the delivery path takes the park branch
+	}
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+	tester.fetcher.Enqueue("test", block)
+
+	waitParkedCount(t, tester.fetcher, 1)
+	if n := parkedStoredCount(tester.fetcher); n != 0 {
+		t.Fatalf("stored entries = %d for a delivery of an unimported block, want 0", n)
+	}
+}
+
+// TestParkedSignatureDeliveryStoredRespectsStoredBudget pins the delivery path's
+// stored argument for an imported but non-canonical block: with the stored budget
+// full the entry must be refused like any other stored one. The full budget makes
+// the argument observable, because the scan flips the flag once the block is on
+// disk and would hide the admission value.
+func TestParkedSignatureDeliveryStoredRespectsStoredBudget(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	for i := 0; i < maxParkedStored; i++ {
+		tester.fetcher.parkForSignatureStored(newParkedTestBlock(byte(0x40+i)), true)
+	}
+	if n := parkedCount(tester.fetcher); n != maxParkedStored {
+		t.Fatalf("parked count = %d after filling the stored budget, want %d", n, maxParkedStored)
+	}
+
+	block := newParkedTestBlock(0x34)
+	tester.fetcher.insertBlock = func(b *types.Block) error {
+		tester.lock.Lock()
+		tester.blocks[b.Hash()] = b
+		tester.lock.Unlock()
+		return nil
+	}
+	handled := make(chan struct{}, 1)
+	tester.fetcher.handleProposedBlock = func(*types.Header) error {
+		handled <- struct{}{}
+		return nil
+	}
+	tester.fetcher.Enqueue("test", block)
+
+	// The consensus handler runs after the park decision, so this signal orders
+	// the assertion without a timeout: the entry is either in or refused.
+	select {
+	case <-handled:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("the delivered side block never reached the consensus handler")
+	}
+	if n := parkedCount(tester.fetcher); n != maxParkedStored {
+		t.Fatalf("parked count = %d after a stored delivery with the budget full, want %d", n, maxParkedStored)
+	}
+}
+
+func TestParkedSignatureParkSkipsSignerGateWhenFull(t *testing.T) {
+	var gateCalls atomic.Int32
+	tester := newTesterWithGate(func() bool {
+		gateCalls.Add(1)
+		return true
+	})
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	for i := 0; i < maxParkedSignatures; i++ {
+		tester.fetcher.parkForSignatureStored(newParkedTestBlock(byte(i)), false)
+	}
+	if n := parkedCount(tester.fetcher); n != maxParkedSignatures {
+		t.Fatalf("parked count = %d after filling the set, want %d", n, maxParkedSignatures)
+	}
+	gateCalls.Store(0)
+
+	full := blockParkedFullMeter.Snapshot().Count()
+	tester.fetcher.parkForSignatureStored(newParkedTestBlock(0xfe), false)
+	if n := gateCalls.Load(); n != 0 {
+		t.Fatalf("signer gate ran %d times while the set was full, want 0", n)
+	}
+	if n := blockParkedFullMeter.Snapshot().Count() - full; n != 1 {
+		t.Fatalf("full meter moved by %d for the refused park, want 1", n)
+	}
+	if n := parkedCount(tester.fetcher); n != maxParkedSignatures {
+		t.Fatalf("parked count = %d after the refused park, want %d", n, maxParkedSignatures)
+	}
+}
+
+func TestParkedSignatureRefusedClaimKeepsMarkerAcrossSignerGate(t *testing.T) {
+	block := newParkedTestBlock(0x3a)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	var markerHeld, concurrentClaim atomic.Bool
+	tester.fetcher.SetSignerGate(func() bool {
+		tester.fetcher.parkedMu.Lock()
+		_, held := tester.fetcher.signing[block.Hash()]
+		tester.fetcher.parkedMu.Unlock()
+		markerHeld.Store(held)
+		ok, _ := tester.fetcher.claimParkedSignature(block.Hash())
+		concurrentClaim.Store(ok)
+		return true
+	})
+
+	tester.fetcher.parkedMu.Lock()
+	tester.fetcher.signing[block.Hash()] = struct{}{}
+	tester.fetcher.parkedMu.Unlock()
+
+	tester.fetcher.settleRefusedClaim(block, false)
+
+	if !markerHeld.Load() {
+		t.Fatalf("the in-flight marker was released before the signer gate finished")
+	}
+	if concurrentClaim.Load() {
+		t.Fatalf("a concurrent delivery claimed the same block while its claim was settling")
+	}
+	if n := signingCount(tester.fetcher); n != 0 {
+		t.Fatalf("in-flight signature count = %d after settling, want 0", n)
+	}
+}
+
+// TestParkedSignatureParkKeepsMarkerAcrossSignerGate mirrors the refused-claim
+// test for the park path: the admission marker must be held across the gate.
+func TestParkedSignatureParkKeepsMarkerAcrossSignerGate(t *testing.T) {
+	block := newParkedTestBlock(0x3b)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	var markerHeld, concurrentClaim atomic.Bool
+	tester.fetcher.SetSignerGate(func() bool {
+		tester.fetcher.parkedMu.Lock()
+		_, held := tester.fetcher.signing[block.Hash()]
+		tester.fetcher.parkedMu.Unlock()
+		markerHeld.Store(held)
+		ok, _ := tester.fetcher.claimParkedSignature(block.Hash())
+		concurrentClaim.Store(ok)
+		return true
+	})
+
+	tester.fetcher.parkForSignatureStored(block, false)
+
+	if !markerHeld.Load() {
+		t.Fatalf("the admission marker was released before the signer gate finished")
+	}
+	if concurrentClaim.Load() {
+		t.Fatalf("a concurrent delivery claimed the block while its park was gated")
+	}
+	if n := signingCount(tester.fetcher); n != 0 {
+		t.Fatalf("in-flight signature count = %d after parking, want 0", n)
+	}
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d after the park, want 1", n)
+	}
+}
+
+// TestParkedSignatureReservesSlotAcrossSignerGate pins the reservation: with one
+// slot left, an admission waiting on the signer gate keeps it, so an admission
+// that runs inside the gate is refused instead of taking the slot.
+func TestParkedSignatureReservesSlotAcrossSignerGate(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	for i := 0; i < maxParkedSignatures-1; i++ {
+		tester.fetcher.parkForSignatureStored(newParkedTestBlock(byte(i)), false)
+	}
+
+	var (
+		entered  bool
+		reserved int
+		nested   int
+	)
+	tester.fetcher.SetSignerGate(func() bool {
+		if entered {
+			return true
+		}
+		entered = true
+		tester.fetcher.parkedMu.Lock()
+		reserved = len(tester.fetcher.parked) + len(tester.fetcher.pending)
+		tester.fetcher.parkedMu.Unlock()
+		tester.fetcher.parkForSignatureStored(newParkedTestBlock(0xfd), false)
+		nested = parkedCount(tester.fetcher)
+		return true
+	})
+
+	block := newParkedTestBlock(0xfc)
+	tester.fetcher.parkForSignatureStored(block, false)
+
+	if reserved != maxParkedSignatures {
+		t.Fatalf("slots held across the gate = %d, want %d", reserved, maxParkedSignatures)
+	}
+	if nested != maxParkedSignatures-1 {
+		t.Fatalf("parked count = %d after an admission inside the gate, want %d", nested, maxParkedSignatures-1)
+	}
+	if n := parkedCount(tester.fetcher); n != maxParkedSignatures {
+		t.Fatalf("parked count = %d after the gated admission, want %d", n, maxParkedSignatures)
+	}
+	tester.fetcher.parkedMu.Lock()
+	_, parked := tester.fetcher.parked[block.Hash()]
+	tester.fetcher.parkedMu.Unlock()
+	if !parked {
+		t.Fatalf("the block admitted before the gate was not parked")
+	}
+	if n := pendingCount(tester.fetcher); n != 0 {
+		t.Fatalf("reservations left after the park = %d, want 0", n)
+	}
+}
+
+// TestParkedSignatureReservesStoredSlotAcrossSignerGate covers the stored budget:
+// its last slot is reserved the same way and the admission is booked.
+func TestParkedSignatureReservesStoredSlotAcrossSignerGate(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	for i := 0; i < maxParkedStored-1; i++ {
+		tester.fetcher.parkForSignatureStored(newParkedTestBlock(byte(i)), true)
+	}
+
+	var (
+		entered  bool
+		reserved int
+		nested   int
+	)
+	tester.fetcher.SetSignerGate(func() bool {
+		if entered {
+			return true
+		}
+		entered = true
+		tester.fetcher.parkedMu.Lock()
+		reserved = tester.fetcher.parkedStoredLocked() + tester.fetcher.pendingStoredLocked()
+		tester.fetcher.parkedMu.Unlock()
+		tester.fetcher.parkForSignatureStored(newParkedTestBlock(0xfd), true)
+		nested = parkedStoredCount(tester.fetcher)
+		return true
+	})
+
+	tester.fetcher.parkForSignatureStored(newParkedTestBlock(0xfc), true)
+
+	if reserved != maxParkedStored {
+		t.Fatalf("stored slots held across the gate = %d, want %d", reserved, maxParkedStored)
+	}
+	if nested != maxParkedStored-1 {
+		t.Fatalf("stored entries = %d after an admission inside the gate, want %d", nested, maxParkedStored-1)
+	}
+	if n := parkedStoredCount(tester.fetcher); n != maxParkedStored {
+		t.Fatalf("stored entries = %d after the gated admission, want %d", n, maxParkedStored)
+	}
+	if n := pendingCount(tester.fetcher); n != 0 {
+		t.Fatalf("reservations left after the park = %d, want 0", n)
+	}
+}
+
+// TestParkedSignatureReleasesReservationWhenGateRefuses pins the release: a
+// refused gate leaves neither an entry, nor a marker, nor a reservation.
+func TestParkedSignatureReleasesReservationWhenGateRefuses(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+	tester.fetcher.SetSignerGate(func() bool { return false })
+
+	tester.fetcher.parkForSignatureStored(newParkedTestBlock(0x3c), false)
+
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d after a refused gate, want 0", n)
+	}
+	if n := signingCount(tester.fetcher); n != 0 {
+		t.Fatalf("in-flight markers left after a refused gate = %d, want 0", n)
+	}
+	if n := pendingCount(tester.fetcher); n != 0 {
+		t.Fatalf("reservations left after a refused gate = %d, want 0", n)
+	}
+}
+
+// TestParkedSignatureReleasesReservationWhenGatePanics pins the release on a
+// panicking gate: neither the marker nor the slot may outlive the admission.
+func TestParkedSignatureReleasesReservationWhenGatePanics(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+	tester.fetcher.SetSignerGate(func() bool { panic("gate boom") })
+
+	func() {
+		defer func() { _ = recover() }()
+		tester.fetcher.parkForSignatureStored(newParkedTestBlock(0x3d), false)
+	}()
+
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d after a panicking gate, want 0", n)
+	}
+	if n := signingCount(tester.fetcher); n != 0 {
+		t.Fatalf("in-flight markers left after a panicking gate = %d, want 0", n)
+	}
+	if n := pendingCount(tester.fetcher); n != 0 {
+		t.Fatalf("reservations left after a panicking gate = %d, want 0", n)
+	}
+
+	tester.fetcher.SetSignerGate(func() bool { return true })
+	tester.fetcher.parkForSignatureStored(newParkedTestBlock(0x3d), false)
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d after the gate recovered, want 1", n)
 	}
 }
