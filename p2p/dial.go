@@ -78,6 +78,8 @@ var (
 	errAlreadyConnected = errors.New("already connected")
 	errRecentlyDialed   = errors.New("recently dialed")
 	errNotWhitelisted   = errors.New("not contained in netrestrict whitelist")
+	errNotAllowlisted   = errors.New("peer is not in allowlist")
+	errDenylisted       = errors.New("peer is in denylist")
 	errNoPort           = errors.New("node does not provide TCP port")
 )
 
@@ -129,10 +131,12 @@ type dialScheduler struct {
 type dialSetupFunc func(net.Conn, connFlag, *enode.Node) error
 
 type dialConfig struct {
-	self           enode.ID         // our own ID
-	maxDialPeers   int              // maximum number of dialed peers
-	maxActiveDials int              // maximum number of active dials
-	netRestrict    *netutil.Netlist // IP whitelist, disabled if nil
+	self           enode.ID              // our own ID
+	maxDialPeers   int                   // maximum number of dialed peers
+	maxActiveDials int                   // maximum number of active dials
+	netRestrict    *netutil.Netlist      // IP whitelist, disabled if nil
+	allowPeers     map[enode.ID]struct{} // peer ID allowlist, disabled if empty
+	denyPeers      map[enode.ID]struct{} // peer ID denylist, disabled if empty
 	resolver       nodeResolver
 	dialer         NodeDialer
 	log            log.Logger
@@ -282,8 +286,10 @@ loop:
 			}
 			task := newDialTask(node, staticDialedConn)
 			d.static[id] = task
-			if d.checkDial(node) == nil {
+			if err := d.checkDial(node); err == nil {
 				d.addToStaticPool(task)
+			} else {
+				d.log.Trace("Discarding dial candidate", "id", node.ID(), "ip", node.IP(), "reason", err)
 			}
 
 		case node := <-d.remStaticCh:
@@ -402,6 +408,9 @@ func (d *dialScheduler) checkDial(n *enode.Node) error {
 	}
 	if d.netRestrict != nil && !d.netRestrict.Contains(n.IP()) {
 		return errNotWhitelisted
+	}
+	if err := checkPeerID(d.allowPeers, d.denyPeers, n.ID()); err != nil {
+		return err
 	}
 	if d.history.contains(string(n.ID().Bytes())) {
 		return errRecentlyDialed

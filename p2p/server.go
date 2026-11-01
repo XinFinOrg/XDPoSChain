@@ -168,6 +168,26 @@ type Config struct {
 	clock mclock.Clock
 }
 
+// checkPeerID returns nil when the peer with the given ID is accepted by the
+// allowlist and denylist. Empty lists accept every peer.
+func checkPeerID(allow, deny map[enode.ID]struct{}, id enode.ID) error {
+	if len(allow) > 0 {
+		if _, ok := allow[id]; !ok {
+			return errNotAllowlisted
+		}
+	}
+	if _, ok := deny[id]; ok {
+		return errDenylisted
+	}
+	return nil
+}
+
+// CheckPeerID reports why the peer with the given ID is refused by the
+// configured allowlist and denylist. It returns nil if the peer is acceptable.
+func (cfg *Config) CheckPeerID(id enode.ID) error {
+	return checkPeerID(cfg.AllowPeers, cfg.DenyPeers, id)
+}
+
 // Server manages all peer connections.
 type Server struct {
 	// Config fields may not be modified while the server is running.
@@ -636,6 +656,8 @@ func (srv *Server) setupDialScheduler() {
 		maxActiveDials: srv.MaxPendingPeers,
 		log:            srv.Logger,
 		netRestrict:    srv.NetRestrict,
+		allowPeers:     srv.AllowPeers,
+		denyPeers:      srv.DenyPeers,
 		dialer:         srv.Dialer,
 		clock:          srv.clock,
 	}
@@ -992,15 +1014,15 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) erro
 		c.node = nodeFromConn(remotePubkey, c.fd)
 	}
 	clog := srv.log.New("id", c.node.ID(), "addr", c.fd.RemoteAddr(), "conn", c.flags)
-	if len(srv.AllowPeers) > 0 {
-		if _, ok := srv.AllowPeers[c.node.ID()]; !ok {
-			clog.Debug("Reject non-allowlisted peer")
-			return DiscNonAllowlistedPeer
+	// Enforce the peer allowlist/denylist. Outbound dials are already
+	// filtered in checkDial; inbound connections only learn the remote ID
+	// after the RLPx handshake, so this is their only enforcement point.
+	if err := srv.CheckPeerID(c.node.ID()); err != nil {
+		clog.Debug("Reject peer", "reason", err)
+		if err == errDenylisted {
+			return DiscDenylistedPeer
 		}
-	}
-	if _, ok := srv.DenyPeers[c.node.ID()]; ok {
-		clog.Debug("Reject blacklisted peer")
-		return DiscDenylistedPeer
+		return DiscNonAllowlistedPeer
 	}
 	err = srv.checkpoint(c, srv.checkpointPostHandshake)
 	if err != nil {

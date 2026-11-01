@@ -65,15 +65,9 @@ func (api *adminAPI) AddPeer(url string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("invalid enode: %v", err)
 	}
-	// only accept the node which is in peer allowlist if the list is not empty
-	if len(server.AllowPeers) > 0 {
-		if _, ok := server.AllowPeers[node.ID()]; !ok {
-			return false, fmt.Errorf("peer is not in allowlist: %v, ID: %s", url, node.ID())
-		}
-	}
-	// reject the node which is in peer blacklist
-	if _, ok := server.DenyPeers[node.ID()]; ok {
-		return false, fmt.Errorf("peer is in blacklist: %v, ID: %s", url, node.ID())
+	// Refuse the node if the peer allowlist or denylist excludes it.
+	if err := server.CheckPeerID(node.ID()); err != nil {
+		return false, fmt.Errorf("%v: %v, ID: %s", err, url, node.ID())
 	}
 	server.AddPeer(node)
 	return true, nil
@@ -106,15 +100,9 @@ func (api *adminAPI) AddTrustedPeer(url string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("invalid enode: %v", err)
 	}
-	// only accept the node which is in peer allowlist if the list is not empty
-	if len(server.AllowPeers) > 0 {
-		if _, ok := server.AllowPeers[node.ID()]; !ok {
-			return false, fmt.Errorf("trusted peer is not in allowlist: %v, ID: %s", url, node.ID())
-		}
-	}
-	// reject the node which is in peer blacklist
-	if _, ok := server.DenyPeers[node.ID()]; ok {
-		return false, fmt.Errorf("trusted peer is in blacklist: %v, ID: %s", url, node.ID())
+	// Refuse the node if the peer allowlist or denylist excludes it.
+	if err := server.CheckPeerID(node.ID()); err != nil {
+		return false, fmt.Errorf("%v: %v, ID: %s", err, url, node.ID())
 	}
 	server.AddTrustedPeer(node)
 	return true, nil
