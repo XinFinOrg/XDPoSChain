@@ -1224,10 +1224,13 @@ func (f *BlockFetcher) collectSignableParked(claim bool) []readySignature {
 		}
 		if time.Now().After(parked.deadline) {
 			blockParkedDeadlineMeter.Mark(1)
+			// A block that never landed is what an operator must see; a stored block
+			// that never became signable lost a fork race. Read the chain, not the
+			// flag: the scan refreshes it, so it can lag the import by a tick.
 			if f.getBlock(hash) != nil {
-				log.Debug("Parked block was stored but never became signable, dropping its signature", "number", parked.block.Number(), "hash", hash)
+				log.Debug("Parked block was stored but never became signable, dropping its signature", "number", parked.block.Number(), "hash", hash, "stored", true)
 			} else {
-				log.Warn("Block was not imported in time, dropping its signature", "number", parked.block.Number(), "hash", hash)
+				log.Warn("Block was not imported in time, dropping its signature", "number", parked.block.Number(), "hash", hash, "stored", false)
 			}
 			delete(f.parked, hash)
 			continue

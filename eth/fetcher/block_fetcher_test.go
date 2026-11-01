@@ -17,8 +17,10 @@
 package fetcher
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -34,6 +36,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
@@ -1601,6 +1604,36 @@ func stopAndDrainWaiter(t *testing.T, f *BlockFetcher) {
 	}
 }
 
+// logCapture keeps the records the fetcher emits while it is the default handler.
+// The default logger is process wide and its handler is asked for every level, so
+// any goroutine can reach it: guard the slice, and only accept the levels the
+// tests assert on.
+type logCapture struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (c *logCapture) Enabled(_ context.Context, level slog.Level) bool {
+	return level >= slog.LevelDebug
+}
+
+func (c *logCapture) Handle(_ context.Context, record slog.Record) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.records = append(c.records, record.Clone())
+	return nil
+}
+
+func (c *logCapture) WithAttrs([]slog.Attr) slog.Handler { return c }
+func (c *logCapture) WithGroup(string) slog.Handler      { return c }
+
+// snapshot copies the records, safe to read while other goroutines log.
+func (c *logCapture) snapshot() []slog.Record {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]slog.Record(nil), c.records...)
+}
+
 func TestParkedSignatureSkippedWhileSyncing(t *testing.T) {
 	block := newParkedTestBlock(0x01)
 
@@ -1872,6 +1905,71 @@ func TestParkedSignatureTimeoutDropsStoredButNeverSignable(t *testing.T) {
 	case b := <-signed:
 		t.Fatalf("sign hook ran for a stored-but-never-signable block: %v", b.Hash())
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestParkedSignatureDeadlineDropIsLogged(t *testing.T) {
+	const (
+		storedMessage     = "Parked block was stored but never became signable, dropping its signature"
+		unimportedMessage = "Block was not imported in time, dropping its signature"
+	)
+
+	tests := []struct {
+		name        string
+		stored      bool // flag as the scan last refreshed it
+		onDisk      bool
+		wantLevel   slog.Level
+		wantStored  bool
+		wantMessage string
+	}{
+		{"stored but never signable", true, true, slog.LevelDebug, true, storedMessage},
+		{"never imported", false, false, slog.LevelWarn, false, unimportedMessage},
+		{"landed after the last refresh", false, true, slog.LevelDebug, true, storedMessage},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			block := newParkedTestBlock(0x2c)
+
+			tester := newTester()
+			defer tester.fetcher.Stop()
+			tester.fetcher.signHook = func(*types.Block) error { return nil }
+			if tt.onDisk {
+				tester.lock.Lock()
+				tester.blocks[block.Hash()] = block
+				tester.lock.Unlock()
+			}
+			tester.fetcher.parkedMu.Lock()
+			tester.fetcher.parked[block.Hash()] = &parkedBlock{block: block, deadline: time.Now().Add(-time.Second), stored: tt.stored}
+			tester.fetcher.parkedMu.Unlock()
+
+			capture := &logCapture{}
+			prevLog := log.Root()
+			log.SetDefault(log.NewLogger(capture))
+			defer log.SetDefault(prevLog)
+
+			tester.fetcher.scanParkedSignatures()
+
+			for _, record := range capture.snapshot() {
+				if record.Message != tt.wantMessage {
+					continue
+				}
+				if record.Level != tt.wantLevel {
+					t.Fatalf("deadline drop logged at %s, want %s", record.Level, tt.wantLevel)
+				}
+				var stored bool
+				record.Attrs(func(attr slog.Attr) bool {
+					if attr.Key == "stored" && attr.Value.Kind() == slog.KindBool {
+						stored = attr.Value.Bool()
+					}
+					return true
+				})
+				if stored != tt.wantStored {
+					t.Fatalf("deadline drop logged stored=%v, want %v", stored, tt.wantStored)
+				}
+				return
+			}
+			t.Fatalf("deadline drop was not logged")
+		})
 	}
 }
 
