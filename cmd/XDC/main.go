@@ -110,7 +110,7 @@ var (
 		utils.NATFlag,
 		utils.NoDiscoverFlag,
 		//utils.DiscoveryV5Flag,
-		//utils.NetrestrictFlag,
+		utils.NetrestrictFlag,
 		utils.NodeKeyFileFlag,
 		utils.NodeKeyHexFlag,
 		//utils.DeveloperFlag,
