@@ -1169,6 +1169,9 @@ func TestM2BlockSignatureUsesOnchainHash(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatalf("M2 block was never relayed")
 		}
+		// The relay now fires before the park decision, so the entry may still be
+		// on its way when the broadcast arrives.
+		waitParkedCount(t, tester.fetcher, 1)
 		tester.fetcher.parkedMu.Lock()
 		_, parked := tester.fetcher.parked[m2.Hash()]
 		_, parkedByDelivery := tester.fetcher.parked[original.Hash()]
@@ -1357,6 +1360,22 @@ func waitParkedCount(t *testing.T, f *BlockFetcher, want int) {
 	}
 }
 
+// watchParkStaysEmpty samples the parked set across a window: the delivery
+// goroutine reaches its park decision after the relay, so a single sample taken
+// at a fixed delay can miss a regression.
+func watchParkStaysEmpty(t *testing.T, f *BlockFetcher, window time.Duration) {
+	t.Helper()
+	for deadline := time.Now().Add(window); time.Now().Before(deadline); {
+		if n := parkedCount(f); n != 0 {
+			t.Fatalf("parked %d signatures, want 0", n)
+		}
+		if waiterRunning(f) {
+			t.Fatalf("a parked waiter started, want none")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func waiterRunning(f *BlockFetcher) bool {
 	f.parkedMu.Lock()
 	defer f.parkedMu.Unlock()
@@ -1479,9 +1498,9 @@ func TestParkedSignatureSkippedWhileSyncing(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatalf("discarded block was never relayed")
 	}
-	if n := parkedCount(tester.fetcher); n != 0 {
-		t.Fatalf("parked %d signatures while snap syncing, want 0", n)
-	}
+	// The relay fires before the park decision, so watch the set instead of
+	// sampling it once: a parked entry would keep either the set or a waiter alive.
+	watchParkStaysEmpty(t, tester.fetcher, 200*time.Millisecond)
 	select {
 	case b := <-signed:
 		t.Fatalf("sign hook ran for a block discarded while syncing: %v", b.Hash())
@@ -1576,9 +1595,9 @@ func TestParkedSignatureWithoutSignHook(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatalf("never-stored block was never broadcast")
 	}
-	if n := parkedCount(tester.fetcher); n != 0 {
-		t.Fatalf("parked %d signatures without a sign hook, want 0", n)
-	}
+	// The relay fires before the park decision, so watch the set instead of
+	// sampling it once: a parked entry would keep either the set or a waiter alive.
+	watchParkStaysEmpty(t, tester.fetcher, 200*time.Millisecond)
 }
 
 func TestParkedSignatureSkippedWhenNotASigner(t *testing.T) {
@@ -1608,6 +1627,45 @@ func TestParkedSignatureSkippedWhenNotASigner(t *testing.T) {
 	}
 }
 
+// TestParkedSignatureRelayDoesNotWaitForParking pins the order of the delivery
+// path: the block leaves before the signature is booked, so a scan holding
+// parkedMu cannot delay propagation.
+func TestParkedSignatureRelayDoesNotWaitForParking(t *testing.T) {
+	block := newParkedTestBlock(0x2d)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	tester.fetcher.insertBlock = func(*types.Block) error {
+		return nil // never stored: the delivery path takes the park branch
+	}
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+	broadcast := make(chan *types.Block, 1)
+	tester.fetcher.broadcastBlock = func(block *types.Block, propagate bool) {
+		if !propagate {
+			broadcast <- block
+		}
+	}
+
+	// Hold the park lock across the whole delivery: with the relay first the block
+	// still leaves, while the old order would block here and never broadcast.
+	tester.fetcher.parkedMu.Lock()
+	tester.fetcher.Enqueue("test", block)
+	select {
+	case <-broadcast:
+	case <-time.After(5 * time.Second):
+		tester.fetcher.parkedMu.Unlock()
+		t.Fatalf("block was not relayed while the park lock was held")
+	}
+	if n := len(tester.fetcher.parked); n != 0 {
+		tester.fetcher.parkedMu.Unlock()
+		t.Fatalf("parked %d entries while its lock was held, want 0", n)
+	}
+	tester.fetcher.parkedMu.Unlock()
+
+	waitParkedCount(t, tester.fetcher, 1)
+}
+
 func TestParkedSignatureTimeoutDropsBlock(t *testing.T) {
 	block := newParkedTestBlock(0x01)
 
@@ -1633,9 +1691,7 @@ func TestParkedSignatureTimeoutDropsBlock(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatalf("never-stored block was never broadcast")
 	}
-	if n := parkedCount(tester.fetcher); n != 1 {
-		t.Fatalf("parked count = %d, want 1 for the never-stored block", n)
-	}
+	waitParkedCount(t, tester.fetcher, 1)
 	deadline := time.After(3 * time.Second)
 	for parkedCount(tester.fetcher) != 0 {
 		select {
