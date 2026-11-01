@@ -824,9 +824,11 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 		// Signing or voting on it corrupts consensus state; relaying is safe.
 		if f.getBlock(block.Hash()) == nil {
 			log.Debug("Propagated block was not imported, deferring signing", "peer", peer, "number", block.Number(), "hash", hash)
+			// Relay first: parking waits on parkedMu, which a scan may hold across
+			// its chain reads, while a signature can wait and the block cannot.
+			f.relayBlock(block, isM2)
 			// Reuse the miss above instead of looking the block up again.
 			f.parkForSignatureStored(block, false)
-			f.relayBlock(block, isM2)
 			return
 		}
 		// The signature spends a transaction, so the block must be canonical, fresh
