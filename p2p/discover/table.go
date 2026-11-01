@@ -74,7 +74,8 @@ type Table struct {
 	log          log.Logger
 	db           *enode.DB // database of known nodes
 	net          transport
-	pingInterval time.Duration // interval between revalidation pings
+	netrestrict  *netutil.Netlist // network netrestrict list, disabled if nil
+	pingInterval time.Duration    // interval between revalidation pings
 	refreshReq   chan chan struct{}
 	initDone     chan struct{}
 	closeReq     chan struct{}
@@ -105,6 +106,7 @@ func newTable(t transport, db *enode.DB, cfg Config) (*Table, error) {
 	tab := &Table{
 		net:          t,
 		db:           db,
+		netrestrict:  cfg.NetRestrict,
 		pingInterval: cfg.PingInterval,
 		refreshReq:   make(chan chan struct{}),
 		initDone:     make(chan struct{}),
@@ -188,12 +190,18 @@ func (tab *Table) close() {
 // are used to connect to the network if the table is empty and there
 // are no known nodes in the database.
 func (tab *Table) setFallbackNodes(nodes []*enode.Node) error {
+	nursery := make([]*node, 0, len(nodes))
 	for _, n := range nodes {
 		if err := n.ValidateComplete(); err != nil {
 			return fmt.Errorf("bad bootstrap node %q: %v", n, err)
 		}
+		if tab.netrestrict != nil && !tab.netrestrict.Contains(n.IP()) {
+			tab.log.Error("Bootstrap node filtered by netrestrict", "id", n.ID(), "ip", n.IP())
+			continue
+		}
+		nursery = append(nursery, wrapNode(n))
 	}
-	tab.nursery = wrapNodes(nodes)
+	tab.nursery = nursery
 	return nil
 }
 

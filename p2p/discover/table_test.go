@@ -437,3 +437,30 @@ func newkey() *ecdsa.PrivateKey {
 	}
 	return key
 }
+
+// This test checks that bootstrap nodes not matching the netrestrict list are
+// kept out of the nursery.
+func TestTableBootnodesNetRestrict(t *testing.T) {
+	restrict, err := netutil.ParseNetlist("10.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := enode.OpenDB("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	allowed := enode.NewV4(&newkey().PublicKey, net.IP{10, 1, 2, 3}, 30303, 30303)
+	filtered := enode.NewV4(&newkey().PublicKey, net.IP{192, 168, 1, 1}, 30303, 30303)
+	tab, err := newTable(newPingRecorder(), db, Config{
+		NetRestrict: restrict,
+		Bootnodes:   []*enode.Node{allowed, filtered},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tab.nursery) != 1 || tab.nursery[0].ID() != allowed.ID() {
+		t.Fatalf("wrong nursery: have %d nodes, want only %v", len(tab.nursery), allowed.ID())
+	}
+}
