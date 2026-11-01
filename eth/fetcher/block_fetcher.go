@@ -222,6 +222,7 @@ type BlockFetcher struct {
 
 	canonicalHash func(number uint64) common.Hash // Returns the canonical hash at a height, or the zero hash
 	syncing       func() bool                     // Reports whether the node is still snap syncing
+	signerGate    func() bool                     // Reports whether this node can sign at all; nil means always ready
 
 	// Testing hooks
 	announceChangeHook func(common.Hash, bool) // Method to call upon adding or deleting a hash from the blockAnnounce list
@@ -899,7 +900,7 @@ func (f *BlockFetcher) signBlock(block *types.Block) error {
 // parkForSignature parks a block whose signature cannot be created yet; the
 // wait is bounded by parkedImportTimeout and maxParkedSignatures.
 func (f *BlockFetcher) parkForSignature(block *types.Block) {
-	if f.signHook == nil || f.syncing() {
+	if f.signHook == nil || f.syncing() || !f.signerReady() {
 		return
 	}
 	select {
@@ -942,6 +943,11 @@ func (f *BlockFetcher) parkLocked(block *types.Block) (start bool) {
 // marker and either unclaim or drop the entry, or park an entry-less claim.
 func (f *BlockFetcher) settleRefusedClaim(block *types.Block, tookEntry bool) {
 	hash := block.Hash()
+	// The gates run before the lock on purpose: the signer gate reaches the backend
+	// lock and the chain, past the read-only caches parkedMu may cover. A claim that
+	// took over an entry is settled in place and needs no gate answer, so the
+	// short-circuit keeps the gate off that path.
+	allowed := !tookEntry && f.signHook != nil && !f.syncing() && f.signerReady()
 
 	f.parkedMu.Lock()
 	delete(f.signing, hash)
@@ -958,7 +964,11 @@ func (f *BlockFetcher) settleRefusedClaim(block *types.Block, tookEntry bool) {
 		f.parkedMu.Unlock()
 		return
 	}
-	if f.signHook == nil || f.syncing() {
+	// signHook == nil is unreachable from the delivery path, kept as a guard.
+	if f.signHook == nil || !allowed {
+		// The delivery path logged that it was parking the block; with the gates closed
+		// the claim is settled without an entry instead.
+		log.Debug("Refused claim dropped without parking", "number", block.Number(), "hash", hash)
 		f.parkedMu.Unlock()
 		return
 	}
@@ -1276,4 +1286,17 @@ func (f *BlockFetcher) SetSignHook(signHook func(*types.Block) error) {
 // SetAppendM2HeaderHook wires the M2 rewrite hook, with SetSignHook's wiring rules.
 func (f *BlockFetcher) SetAppendM2HeaderHook(appendM2HeaderHook func(*types.Block) (*types.Block, bool, error)) {
 	f.appendM2HeaderHook = appendM2HeaderHook
+}
+
+// SetSignerGate wires the gate that reports whether this node can sign at all,
+// with SetSignHook's wiring rules. nil means always ready, so non-XDPoS chains
+// and existing callers are unaffected. The gate guards parking only: a node that
+// cannot sign would just build entries and report their drops.
+func (f *BlockFetcher) SetSignerGate(signerGate func() bool) {
+	f.signerGate = signerGate
+}
+
+// signerReady reports whether the node can sign at all; a nil gate is ready.
+func (f *BlockFetcher) signerReady() bool {
+	return f.signerGate == nil || f.signerGate()
 }

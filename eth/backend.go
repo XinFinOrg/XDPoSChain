@@ -458,6 +458,16 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 			return c.IsAuthorisedAddress(eth.blockchain, eth.blockchain.CurrentHeader(), address)
 		}
 		eth.txPool.SetSigner(isSigner)
+		// Gate parking on the same check the sign hook starts with: a node that
+		// cannot sign would only build parked entries and report their drops.
+		// Installed after SetSigner so the dependency reads in order.
+		eth.handler.blockFetcher.SetSignerGate(func() bool {
+			eb, err := eth.Etherbase()
+			if err != nil {
+				return false
+			}
+			return eth.txPool.IsSigner(eb)
+		})
 	}
 	// Start the RPC service
 	eth.netRPCService = ethapi.NewNetAPI(eth.p2pServer, eth.NetVersion())

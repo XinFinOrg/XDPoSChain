@@ -103,12 +103,19 @@ type fetcherTester struct {
 
 // newTester creates a new fetcher test mocker.
 func newTester() *fetcherTester {
+	return newTesterWithGate(nil)
+}
+
+// newTesterWithGate builds a started tester whose signer gate is installed before
+// Start, the way the backend wires it. A nil gate means always ready.
+func newTesterWithGate(gate func() bool) *fetcherTester {
 	tester := &fetcherTester{
 		hashes: []common.Hash{genesis.Hash()},
 		blocks: map[common.Hash]*types.Block{genesis.Hash(): genesis},
 		drops:  make(map[string]bool),
 	}
 	tester.fetcher = NewBlockFetcher(tester.getBlock, tester.verifyHeader, tester.handleProposedBlock, tester.broadcastBlock, tester.chainHeight, tester.insertBlock, tester.prepareBlock, tester.dropPeer, tester.canonicalHash, func() bool { return tester.syncing.Load() })
+	tester.fetcher.SetSignerGate(gate)
 	tester.fetcher.Start()
 
 	return tester
@@ -1564,6 +1571,33 @@ func TestParkedSignatureWithoutSignHook(t *testing.T) {
 	}
 	if n := parkedCount(tester.fetcher); n != 0 {
 		t.Fatalf("parked %d signatures without a sign hook, want 0", n)
+	}
+}
+
+func TestParkedSignatureSkippedWhenNotASigner(t *testing.T) {
+	block := newParkedTestBlock(0x2a)
+
+	// A live gate: parking reads it per call instead of caching the first answer.
+	var allow atomic.Bool
+	tester := newTesterWithGate(func() bool { return allow.Load() })
+	defer tester.fetcher.Stop()
+
+	signed := hookSigning(tester.fetcher)
+
+	tester.fetcher.parkForSignature(block)
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked %d entries on a node that cannot sign, want 0", n)
+	}
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran for a block a non-signer parked: %v", b.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	allow.Store(true)
+	tester.fetcher.parkForSignature(block)
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d after the node became a signer, want 1", n)
 	}
 }
 
@@ -3245,5 +3279,48 @@ func TestParkedSignatureDroppedWhenDeadlinePassesDuringBlockedHook(t *testing.T)
 	}
 	if !parked {
 		t.Fatalf("the expired entry was dropped instead of left to the scan's bound")
+	}
+}
+
+// TestParkedSignatureRefusedClaimDroppedWithoutSigner covers the delivery path's
+// entry-less claim: a node that cannot sign must drop the claim, not park it.
+func TestParkedSignatureRefusedClaimDroppedWithoutSigner(t *testing.T) {
+	block := newParkedTestBlock(0x2e)
+
+	tester := newTesterWithGate(func() bool { return false })
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	// The claim left its in-flight marker behind; settling must clear it either way.
+	tester.fetcher.parkedMu.Lock()
+	tester.fetcher.signing[block.Hash()] = struct{}{}
+	tester.fetcher.parkedMu.Unlock()
+
+	tester.fetcher.settleRefusedClaim(block, false)
+
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked %d entries on a node that cannot sign, want 0", n)
+	}
+	if n := signingCount(tester.fetcher); n != 0 {
+		t.Fatalf("in-flight signature count = %d after the claim was dropped, want 0", n)
+	}
+}
+
+// TestParkedSignatureRefusedClaimParksOnSigner proves the assertion above is not
+// vacuous: the same entry-less claim is parked once the gate is open.
+func TestParkedSignatureRefusedClaimParksOnSigner(t *testing.T) {
+	block := newParkedTestBlock(0x2f)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	tester.fetcher.settleRefusedClaim(block, false)
+
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d after a signer settled an entry-less claim, want 1", n)
+	}
+	if n := signingCount(tester.fetcher); n != 0 {
+		t.Fatalf("in-flight signature count = %d after parking, want 0", n)
 	}
 }
