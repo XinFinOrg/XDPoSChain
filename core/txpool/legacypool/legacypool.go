@@ -160,7 +160,7 @@ type Config struct {
 	Journal   string           // Journal of local transactions to survive node restarts
 	Rejournal time.Duration    // Time interval to regenerate the local transaction journal
 
-	PriceLimit uint64 // Minimum gas price to enforce for acceptance into the pool
+	PriceLimit uint64 // Minimum gas price tip to enforce for acceptance into the pool
 	PriceBump  uint64 // Minimum price bump percentage to replace an already existing transaction (nonce)
 
 	AccountSlots uint64 // Number of executable transaction slots guaranteed per account
