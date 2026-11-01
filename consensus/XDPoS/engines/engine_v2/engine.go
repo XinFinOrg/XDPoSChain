@@ -103,6 +103,9 @@ func New(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh chan i
 	if config == nil || config.V2 == nil || config.V2.SwitchBlock == nil || config.V2.CurrentConfig == nil || len(config.V2.AllConfigs) == 0 {
 		return nil, errors.New("engine_v2.New requires startup-validated XDPoS V2 config")
 	}
+	if err := config.CheckSchedule(); err != nil {
+		return nil, err
+	}
 	// Setup timeoutTimer
 	duration := time.Duration(config.V2.CurrentConfig.TimeoutPeriod) * time.Second
 	timeoutTimer, err := countdown.NewExpCountDown(duration, config.V2.CurrentConfig.ExpTimeoutConfig.Base, config.V2.CurrentConfig.ExpTimeoutConfig.MaxExponent)

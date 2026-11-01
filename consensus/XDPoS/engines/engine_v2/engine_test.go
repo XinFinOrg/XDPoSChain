@@ -27,6 +27,15 @@ func TestNewRequiresStartupValidatedV2Config(t *testing.T) {
 	assert.EqualError(t, err, "engine_v2.New requires startup-validated XDPoS V2 config")
 }
 
+func TestNewRejectsInvalidSchedule(t *testing.T) {
+	chainConfig := params.TestXDPoSMockChainConfig.Clone()
+	chainConfig.XDPoS.Gap = chainConfig.XDPoS.Epoch
+
+	engine, err := New(chainConfig, rawdb.NewMemoryDatabase(), make(chan int), make(chan types.Round, 1))
+	assert.Nil(t, engine)
+	assert.ErrorIs(t, err, params.ErrInvalidEpochGap)
+}
+
 // After a head rewind the stored highestQuorumCert can still name a block the
 // chain reader no longer holds. The lookup must then return nil, leaving the
 // caller (XDPoS.FindParentBlockToAssign) to fall back to the current head, and

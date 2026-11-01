@@ -4407,12 +4407,18 @@ func (bc *BlockChain) InsertHeaderChain(chain []*types.Header, checkFreq int) (i
 	return bc.hc.InsertHeaderChain(chain, whFunc, start)
 }
 
-// SetChainConfig replaces the chain config without validating it. It exists for tests and
-// config overrides; every production path must reach the chain through CheckConfigForkOrder,
-// which judges the XDPoS schedule. The block predicates stay total over whatever config is
-// installed here: a schedule with Epoch 0 makes them report no gap block rather than divide
-// by zero.
+// SetChainConfig replaces the chain config without rejecting it: it exists for tests and
+// config overrides. An XDPoS schedule outside the CheckSchedule bound is logged, because the
+// gap predicates answer false for it and the consensus paths would skip that work without a
+// trace. Production paths reach the chain through CheckConfigForkOrder, which refuses such a
+// config. The predicates stay total over whatever config is installed here: a schedule with
+// Epoch 0 makes them report no gap block rather than divide by zero.
 func (bc *BlockChain) SetChainConfig(config *params.ChainConfig) {
+	if config != nil {
+		if err := config.XDPoS.CheckSchedule(); err != nil {
+			log.Error("Chain config has an invalid XDPoS schedule", "err", err)
+		}
+	}
 	bc.chainConfig = config
 }
 
