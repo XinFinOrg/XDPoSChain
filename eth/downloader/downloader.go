@@ -303,18 +303,26 @@ func (d *Downloader) SetPivotBlock(number uint64, hash common.Hash, root common.
 // gapPivotNumbers returns the gap blocks below a fast sync pivot whose snapshots the
 // epoch switches after the pivot read: N - N%Epoch - Gap and every later gap block
 // below N. Blocks below the pivot are never executed, so these snapshots have to be
-// built from state synced for them. It returns nil when XDPoS is not configured.
+// built from state synced for them. It returns nil when XDPoS is not configured or
+// the schedule designates no gap block.
 func (d *Downloader) gapPivotNumbers(number uint64) []uint64 {
 	cfg := d.blockchain.Config().XDPoS
-	if cfg == nil || cfg.Epoch == 0 {
+	if cfg == nil {
+		return nil
+	}
+	trigger, ok := cfg.GapTrigger()
+	if !ok {
 		return nil
 	}
 	epoch, gap := cfg.Epoch, cfg.Gap
 	epochBase := number - number%epoch
-	var baseGap uint64
-	if epochBase < gap {
-		baseGap = epoch - gap
-	} else {
+	// The epoch start anchors the list, unless it sits within the first gap of the
+	// chain: the pivot is then inside the first epoch and the trigger itself is the
+	// smallest gap height strictly below it. This is deliberately not
+	// GapBlockNumber's answer, which reports 0 for that shape; SetPivotBlock walks
+	// the list to sync the snapshots those heights carry, and 0 carries none.
+	baseGap := trigger
+	if epochBase >= gap {
 		baseGap = epochBase - gap
 	}
 	var gaps []uint64
@@ -1657,6 +1665,18 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 	}
 }
 
+// flushAtBoundary reports whether the block sitting at residue number inside its
+// epoch ends an import boundary for full sync. The epoch boundaries are always a
+// boundary; the gap boundary is added only when the schedule designates one
+// (hasGap), so a schedule without a gap block keeps the epoch flushes and never
+// matches a residue the trigger does not select.
+func flushAtBoundary(number, epoch, trigger uint64, hasGap bool) bool {
+	if number == 0 || number == epoch-1 {
+		return true
+	}
+	return hasGap && number == trigger
+}
+
 // processFullSyncContent takes fetch results from the queue and imports them into the chain.
 func (d *Downloader) processFullSyncContent(height uint64) error {
 	for {
@@ -1664,13 +1684,19 @@ func (d *Downloader) processFullSyncContent(height uint64) error {
 		if len(results) == 0 {
 			return nil
 		}
-		if d.blockchain.Config() != nil && d.blockchain.Config().XDPoS != nil {
-			epoch := d.blockchain.Config().XDPoS.Epoch
-			gap := d.blockchain.Config().XDPoS.Gap
+		cfg := d.blockchain.Config()
+		// An unset epoch has no boundary inside the batch to cut at, so it shares the
+		// single-batch path of a chain without XDPoS instead of dividing by zero. An
+		// epoch that is set keeps its epoch boundaries whether or not the schedule
+		// designates a gap block: core's block import depends on the switch block
+		// being the first of its segment.
+		if cfg != nil && cfg.XDPoS != nil && cfg.XDPoS.Epoch != 0 {
+			epoch := cfg.XDPoS.Epoch
+			trigger, hasGap := cfg.XDPoS.GapTrigger()
 			inserts := []*fetchResult{}
 			for i := 0; i < len(results); i++ {
 				number := results[i].Header.Number.Uint64() % epoch
-				if number == 0 || number == epoch-1 || number == epoch-gap {
+				if flushAtBoundary(number, epoch, trigger, hasGap) {
 					inserts = append(inserts, results[i])
 					if d.chainInsertHook != nil {
 						d.chainInsertHook(inserts)
@@ -1911,23 +1937,22 @@ func (d *Downloader) splitBlocksForVerification(blocks []*types.Block) [][]*type
 	if cfg == nil || cfg.XDPoS == nil || len(blocks) <= 1 {
 		return [][]*types.Block{blocks}
 	}
-	epoch, gap := cfg.XDPoS.Epoch, cfg.XDPoS.Gap
+	epoch := cfg.XDPoS.Epoch
 	if epoch == 0 {
 		return [][]*types.Block{blocks}
 	}
+	trigger, hasGap := cfg.XDPoS.GapTrigger()
 
 	var segments [][]*types.Block
 	start := 0
 	for i, block := range blocks {
 		number := block.NumberU64()
 		// Cut right after each gap block, but never after the very last block
-		// (that would just create an empty trailing segment). The bound
-		// `0 < Gap < Epoch` holds for any config that starts, so `epoch-gap` names
-		// the gap block of every epoch. Outside it there is no gap block to cut
-		// after: `Gap > Epoch` underflows the offset, and `Gap == Epoch` would cut
-		// after the switch rather than before it, which is why the startup gate
-		// refuses both.
-		if number%epoch == epoch-gap && i < len(blocks)-1 {
+		// (that would just create an empty trailing segment). GapTrigger answers
+		// false for every schedule the startup gate refuses, so those have no gap
+		// cut to make: Gap == Epoch used to cut after the switch rather than before
+		// it, and Gap > Epoch wrapped the offset.
+		if hasGap && number%epoch == trigger && i < len(blocks)-1 {
 			segments = append(segments, blocks[start:i+1])
 			start = i + 1
 			continue
