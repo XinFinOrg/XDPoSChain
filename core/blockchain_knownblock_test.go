@@ -304,11 +304,11 @@ func TestIsGapBlock(t *testing.T) {
 	if noGap.isGapBlock(block(900)) || noGap.isGapBlock(block(1800)) {
 		t.Fatalf("a zero gap must not turn an epoch boundary into a gap block")
 	}
-	// A gap equal to the epoch puts the gap block on the epoch switch block, which is
-	// num%Epoch == Epoch-Gap == 0 for the engine and this predicate alike.
+	// A gap equal to the epoch designates no gap block: the trigger would sit on the
+	// epoch switch block, which has to consume the candidate set it samples.
 	fullGap := &BlockChain{chainConfig: &params.ChainConfig{XDPoS: &params.XDPoSConfig{Epoch: 900, Gap: 900}}}
-	if !fullGap.isGapBlock(block(900)) {
-		t.Fatalf("with Gap == Epoch the epoch switch block is the gap block")
+	if fullGap.isGapBlock(block(900)) {
+		t.Fatalf("with Gap == Epoch the epoch switch block is not a gap block")
 	}
 	if fullGap.isGapBlock(block(450)) {
 		t.Fatalf("with Gap == Epoch no mid-epoch block is a gap block")

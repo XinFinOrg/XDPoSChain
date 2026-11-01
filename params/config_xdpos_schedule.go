@@ -30,12 +30,12 @@ var ErrInvalidEpochGap = errors.New("invalid XDPoS schedule")
 
 // CheckSchedule enforces 0 < gap < epoch on an XDPoS schedule. A nil receiver
 // is a chain config without an XDPoS section, which is not an XDPoS chain and
-// is left alone. Outside the bound a schedule has no consistent meaning: the
-// two gap predicates disagree on Gap == Epoch (isGapBlockNumber accepts it,
-// isNextEpochGapBlock refuses it), and for Gap > Epoch the v1 engine's
-// checkpoint-minus-Gap lookup addresses heights those predicates never report.
-// A violating config is therefore rejected where it enters the chain rather
-// than interpreted.
+// is left alone. Outside the bound a schedule has no consistent meaning:
+// Gap == Epoch puts the gap trigger on the epoch switch block, which would
+// have to consume the candidate set it samples, and for Gap > Epoch the v1
+// engine's checkpoint-minus-Gap lookup addresses heights the gap predicate
+// never reports. A violating config is therefore rejected where it enters the
+// chain rather than interpreted.
 //
 // ChainConfig.checkConfigForkOrder calls this just before the alignment check,
 // so a config that declares no schedule is rejected here rather than left to
