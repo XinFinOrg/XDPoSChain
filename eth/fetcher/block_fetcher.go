@@ -1139,11 +1139,10 @@ func (f *BlockFetcher) collectSignableParked(claim bool) []readySignature {
 		}
 		if time.Now().After(parked.deadline) {
 			blockParkedDeadlineMeter.Mark(1)
-			if f.getBlock(hash) != nil {
-				log.Debug("Parked block was stored but never became signable, dropping its signature", "number", parked.block.Number(), "hash", hash)
-			} else {
-				log.Warn("Block was not imported in time, dropping its signature", "number", parked.block.Number(), "hash", hash)
-			}
+			// One message for both cases: a block that was never imported and a stored
+			// block that never became signable. The field tells them apart, and it is the
+			// value the scan last refreshed, which can lag the import by a tick.
+			log.Warn("Dropping a parked signature at its deadline", "number", parked.block.Number(), "hash", hash, "stored", parked.stored)
 			delete(f.parked, hash)
 			continue
 		}
