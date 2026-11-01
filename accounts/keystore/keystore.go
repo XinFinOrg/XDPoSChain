@@ -25,7 +25,6 @@ import (
 	crand "crypto/rand"
 	"errors"
 	"math/big"
-	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -241,15 +240,14 @@ func (ks *KeyStore) Delete(a accounts.Account, passphrase string) error {
 	if err != nil {
 		return err
 	}
-	// The order is crucial here. The key is dropped from the
-	// cache after the file is gone so that a reload happening in
-	// between won't insert it into the cache again.
-	err = os.Remove(a.URL.Path)
-	if err == nil {
-		ks.cache.delete(a)
-		ks.refreshWallets()
+	if err := ks.cache.deleteFile(a); err != nil {
+		return err
 	}
-	return err
+	// refreshWallets must stay outside accountCache.scanMu: while the watcher
+	// is not running, it may scan the directory, and a scan locks scanMu
+	// itself (sync.Mutex is not reentrant).
+	ks.refreshWallets()
+	return nil
 }
 
 // SignHash calculates a ECDSA signature for the given hash. The produced
