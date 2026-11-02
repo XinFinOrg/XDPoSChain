@@ -175,6 +175,13 @@ func TestFairMixRemoveSource(t *testing.T) {
 	mix.AddSource(CycleNodes([]*Node{wantNode}))
 	n := <-sig
 
+	// The mixer may have picked the source added above before reaching the closed
+	// one, which is only dropped by a later Next call. Two sources rotate in
+	// order, so one more call reaches it. Reading the list here is safe: the
+	// mixer goroutine already returned from Next and changes happen under lock.
+	for i := 0; i < 2 && len(mix.sources) != 1; i++ {
+		mix.Next()
+	}
 	if len(mix.sources) != 1 {
 		t.Fatalf("have %d sources, want one", len(mix.sources))
 	}
