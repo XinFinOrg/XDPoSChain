@@ -235,14 +235,11 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 			Round:  types.Round(0),
 			Number: header.Number,
 		}
+		gapNumber, _ := x.config.GapBlockNumber(header.Number.Uint64())
 		quorumCert = &types.QuorumCert{
 			ProposedBlockInfo: blockInfo,
 			Signatures:        nil,
-			GapNumber:         header.Number.Uint64() - x.config.Gap,
-		}
-		// prevent overflow
-		if header.Number.Uint64() < x.config.Gap {
-			quorumCert.GapNumber = 0
+			GapNumber:         gapNumber,
 		}
 		// can not call processQC because round is equal to default
 		x.currentRound = 1
@@ -260,10 +257,7 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 	}
 
 	// Initial first v2 snapshot
-	lastGapNum := uint64(0)
-	if x.config.V2.SwitchBlock.Uint64() > x.config.Gap {
-		lastGapNum = x.config.V2.SwitchBlock.Uint64() - x.config.Gap
-	}
+	lastGapNum, _ := x.config.GapBlockNumber(x.config.V2.SwitchBlock.Uint64())
 	lastGapHeader := chain.GetHeaderByNumber(lastGapNum)
 
 	snap, _ := loadSnapshot(x.db, lastGapHeader.Hash())
@@ -621,7 +615,7 @@ func (x *XDPoS_v2) GetSnapshot(chain consensus.ChainReader, header *types.Header
 func (x *XDPoS_v2) UpdateMasternodes(chain consensus.ChainReader, header *types.Header, ms []utils.Masternode) error {
 	number := header.Number.Uint64()
 	log.Trace("[UpdateMasternodes]", "number", number, "hash", header.Hash())
-	if number%x.config.Epoch != x.config.Epoch-x.config.Gap {
+	if !x.config.IsGapBlock(number) {
 		return fmt.Errorf("[UpdateMasternodes] not gap block, number: %d, epoch: %d,gap: %d", number, x.config.Epoch, x.config.Gap)
 	}
 
@@ -1033,12 +1027,7 @@ func (x *XDPoS_v2) verifyQC(blockChainReader consensus.ChainReader, quorumCert *
 		return err
 	}
 	epochSwitchNumber := epochInfo.EpochSwitchBlockInfo.Number.Uint64()
-	gapNumber := epochSwitchNumber - epochSwitchNumber%x.config.Epoch
-	if gapNumber > x.config.Gap {
-		gapNumber -= x.config.Gap
-	} else {
-		gapNumber = 0
-	}
+	gapNumber, _ := x.config.GapBlockNumber(epochSwitchNumber)
 	if gapNumber != quorumCert.GapNumber {
 		log.Error("[verifyQC] QC gap number mismatch", "epochSwitchNumber", epochSwitchNumber, "BlockNum", quorumCert.ProposedBlockInfo.Number, "BlockInfoHash", quorumCert.ProposedBlockInfo.Hash, "Gap", quorumCert.GapNumber, "GapShouldBe", gapNumber)
 		return fmt.Errorf("gap number mismatch QC Gap %d, shouldBe %d", quorumCert.GapNumber, gapNumber)

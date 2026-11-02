@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -377,6 +378,22 @@ func TestRepairGapCandidates(t *testing.T) {
 				t.Fatalf("head %d: got %v, want %v", tt.head, got, tt.want)
 			}
 		}
+	}
+}
+
+// TestGetSnapshotRejectsUnsetEpoch pins the guard on the modulo branch: an unset
+// epoch names no gap block and would divide by zero, and the refusal is a plain
+// error rather than a consensus sentinel core would read as a chain-data fault.
+func TestGetSnapshotRejectsUnsetEpoch(t *testing.T) {
+	x := newRepairEngine(rawdb.NewMemoryDatabase())
+	x.config.Epoch = 0
+
+	_, err := x.getSnapshot(&repairTestChain{}, 1350, false)
+	if err == nil || !strings.Contains(err.Error(), "XDPoS.Epoch is unset") {
+		t.Fatalf("getSnapshot() = %v, want an unset-epoch error", err)
+	}
+	if errors.Is(err, consensus.ErrMissingCanonicalGapHeader) || errors.Is(err, consensus.ErrGapSnapshotUnavailable) {
+		t.Fatalf("a config error must not be reported as a consensus sentinel: %v", err)
 	}
 }
 
