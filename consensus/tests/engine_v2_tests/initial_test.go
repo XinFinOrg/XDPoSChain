@@ -14,7 +14,6 @@ import (
 // TestInitialFirstV2Block tests initial first v 2 block.
 func TestInitialFirstV2Block(t *testing.T) {
 	t.Parallel()
-	skipLongInShortMode(t)
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 900, params.TestXDPoSMockChainConfig, nil)
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
 	header := currentBlock.Header()
@@ -125,7 +124,6 @@ func TestInitialOtherV2Block(t *testing.T) {
 // by the gap block refresh, which writes it together with the head markers.
 func TestSnapshotShouldAlreadyBeCreatedByGapRefresh(t *testing.T) {
 	t.Parallel()
-	skipLongInShortMode(t)
 	// insert new block with new extra fields
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 1800, params.TestXDPoSMockChainConfig, nil)
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)

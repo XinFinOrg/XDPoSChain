@@ -70,13 +70,6 @@ func SignHashByPK(pk *ecdsa.PrivateKey, itemToSign []byte) []byte {
 	return signedHash
 }
 
-func skipLongInShortMode(t *testing.T) {
-	t.Helper()
-	if testing.Short() {
-		t.Skip("skipping long-running test in -short mode")
-	}
-}
-
 // drainBroadcast drops everything already pending on ch without blocking.
 func drainBroadcast(ch chan interface{}) {
 	for {

@@ -10,6 +10,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/hooks"
 	"github.com/XinFinOrg/XDPoSChain/eth/util"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,7 +25,7 @@ import (
 // must pay the full per-node reward and leave signSlots out of the result.
 func TestHookRewardProportional(t *testing.T) {
 	t.Parallel()
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	var config params.ChainConfig

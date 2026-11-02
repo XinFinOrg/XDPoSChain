@@ -30,6 +30,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
@@ -186,30 +187,22 @@ func BenchmarkChainRead_full_10k(b *testing.B) {
 }
 
 func BenchmarkChainRead_header_100k(b *testing.B) {
-	if testing.Short() {
-		b.Skip("Skipping in short-mode")
-	}
+	testshort.Skip(b)
 	benchReadChain(b, false, 100000)
 }
 
 func BenchmarkChainRead_full_100k(b *testing.B) {
-	if testing.Short() {
-		b.Skip("Skipping in short-mode")
-	}
+	testshort.Skip(b)
 	benchReadChain(b, true, 100000)
 }
 
 func BenchmarkChainRead_header_500k(b *testing.B) {
-	if testing.Short() {
-		b.Skip("Skipping in short-mode")
-	}
+	testshort.Skip(b)
 	benchReadChain(b, false, 500000)
 }
 
 func BenchmarkChainRead_full_500k(b *testing.B) {
-	if testing.Short() {
-		b.Skip("Skipping in short-mode")
-	}
+	testshort.Skip(b)
 	benchReadChain(b, true, 500000)
 }
 
@@ -230,16 +223,12 @@ func BenchmarkChainWrite_full_100k(b *testing.B) {
 }
 
 func BenchmarkChainWrite_header_500k(b *testing.B) {
-	if testing.Short() {
-		b.Skip("Skipping in short-mode")
-	}
+	testshort.Skip(b)
 	benchWriteChain(b, false, 500000)
 }
 
 func BenchmarkChainWrite_full_500k(b *testing.B) {
-	if testing.Short() {
-		b.Skip("Skipping in short-mode")
-	}
+	testshort.Skip(b)
 	benchWriteChain(b, true, 500000)
 }
 

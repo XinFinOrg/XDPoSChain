@@ -34,7 +34,6 @@ import (
 // producing the set, and the block would not be imported at all.
 func TestNextEpochSnapshotDoesNotNeedAnIPCEndpoint(t *testing.T) {
 	t.Parallel()
-	skipLongInShortMode(t)
 	config := params.TestXDPoSMockChainConfig
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, int(config.XDPoS.Epoch+config.XDPoS.Gap)-1, config, nil)
 

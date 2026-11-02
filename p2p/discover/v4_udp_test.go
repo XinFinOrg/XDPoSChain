@@ -34,6 +34,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/internal/testlog"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/p2p/discover/v4wire"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
@@ -139,6 +140,7 @@ func (test *udpTest) waitPacketOut(validate interface{}) (closed bool) {
 }
 
 func TestUDPv4_packetErrors(t *testing.T) {
+	testshort.Skip(t)
 	test := newUDPTest(t)
 	defer test.close()
 
@@ -149,6 +151,7 @@ func TestUDPv4_packetErrors(t *testing.T) {
 }
 
 func TestUDP_pingPacketRejected(t *testing.T) {
+	testshort.Skip(t)
 	test := newUDPTest(t)
 	defer test.close()
 
@@ -176,7 +179,7 @@ func TestUDP_pingPacketRejected(t *testing.T) {
 }
 
 func TestUDPv4_pingTimeout(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	test := newUDPTest(t)
@@ -191,7 +194,7 @@ func TestUDPv4_pingTimeout(t *testing.T) {
 }
 
 func TestUDPv4_resolveReturnsNilWhenUnresolved(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 
 	test := newUDPTest(t)
 	defer test.close()
@@ -212,7 +215,7 @@ func TestUDPv4_resolveReturnsNilWhenUnresolved(t *testing.T) {
 }
 
 func TestUDPv4_resolveReturnsNilWhenLookupMisses(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 
 	test := newUDPTest(t)
 	defer test.close()
@@ -235,7 +238,7 @@ func (req testPacket) Kind() byte   { return byte(req) }
 func (req testPacket) Name() string { return "" }
 
 func TestUDPv4_responseTimeouts(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	test := newUDPTest(t)
@@ -309,7 +312,7 @@ func TestUDPv4_responseTimeouts(t *testing.T) {
 }
 
 func TestUDPv4_findnodeTimeout(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	test := newUDPTest(t)
@@ -328,6 +331,7 @@ func TestUDPv4_findnodeTimeout(t *testing.T) {
 }
 
 func TestUDPv4_findnode(t *testing.T) {
+	testshort.Skip(t)
 	test := newUDPTest(t)
 	defer test.close()
 
@@ -383,7 +387,7 @@ func TestUDPv4_findnode(t *testing.T) {
 }
 
 func TestUDPv4_findnodeMultiReply(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 
 	test := newUDPTest(t)
 	defer test.close()
@@ -441,6 +445,7 @@ func TestUDPv4_findnodeMultiReply(t *testing.T) {
 
 // This test checks that reply matching of pong verifies the ping hash.
 func TestUDPv4_pingMatch(t *testing.T) {
+	testshort.Skip(t)
 	test := newUDPTest(t)
 	defer test.close()
 
@@ -455,6 +460,7 @@ func TestUDPv4_pingMatch(t *testing.T) {
 
 // This test checks that reply matching of pong verifies the sender IP address.
 func TestUDPv4_pingMatchIP(t *testing.T) {
+	testshort.Skip(t)
 	test := newUDPTest(t)
 	defer test.close()
 
@@ -472,6 +478,7 @@ func TestUDPv4_pingMatchIP(t *testing.T) {
 }
 
 func TestUDPv4_successfulPing(t *testing.T) {
+	testshort.Skip(t)
 	test := newUDPTest(t)
 	added := make(chan *node, 1)
 	test.table.nodeAddedHook = func(n *node) { added <- n }
@@ -538,7 +545,7 @@ func TestUDPv4_successfulPing(t *testing.T) {
 
 // This test checks that EIP-868 requests work.
 func TestUDPv4_EIP868(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 
 	test := newUDPTest(t)
 	defer test.close()
@@ -578,7 +585,7 @@ func TestUDPv4_EIP868(t *testing.T) {
 
 // This test verifies that a small network of nodes can boot up into a healthy state.
 func TestUDPv4_smallNetConvergence(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	// Start the network.

@@ -648,7 +648,6 @@ func TestVoteMessageHandlerWrongGapNumber(t *testing.T) {
 
 func TestVotePoolKeepGoodHygiene(t *testing.T) {
 	t.Parallel()
-	skipLongInShortMode(t)
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
