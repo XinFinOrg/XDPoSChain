@@ -22,6 +22,7 @@ import (
 )
 
 func TestShouldSendVoteMsgAndCommitGrandGrandParentBlock(t *testing.T) {
+	t.Parallel()
 	// Block 901 is the first v2 block with round of 1
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 901, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
@@ -37,12 +38,11 @@ func TestShouldSendVoteMsgAndCommitGrandGrandParentBlock(t *testing.T) {
 		t.Fatal("Fail propose proposedBlock handler", err)
 	}
 
-	voteMsg := <-engineV2.BroadcastCh
-	poolSize := engineV2.GetVotePoolSizeFaker(voteMsg.(*types.Vote))
+	voteMsg := expectVote(t, engineV2.BroadcastCh, 5*time.Second)
+	poolSize := engineV2.GetVotePoolSizeFaker(voteMsg)
 
 	assert.Equal(t, poolSize, 1)
-	assert.NotNil(t, voteMsg)
-	assert.Equal(t, currentBlock.Hash(), voteMsg.(*types.Vote).ProposedBlockInfo.Hash)
+	assert.Equal(t, currentBlock.Hash(), voteMsg.ProposedBlockInfo.Hash)
 
 	round, _, highestQC, _, _, _ := engineV2.GetPropertiesFaker()
 	// Shoud trigger setNewRound
@@ -61,8 +61,7 @@ func TestShouldSendVoteMsgAndCommitGrandGrandParentBlock(t *testing.T) {
 		t.Fatal("Fail propose proposedBlock handler", err)
 	}
 	// Trigger send vote again but for a new round
-	voteMsg = <-engineV2.BroadcastCh
-	assert.NotNil(t, voteMsg)
+	voteMsg = expectVote(t, engineV2.BroadcastCh, 5*time.Second)
 	round, _, highestQC, _, _, _ = engineV2.GetPropertiesFaker()
 	// Shoud trigger setNewRound
 	assert.Equal(t, types.Round(2), round)
@@ -79,8 +78,7 @@ func TestShouldSendVoteMsgAndCommitGrandGrandParentBlock(t *testing.T) {
 		t.Fatal("Fail propose proposedBlock handler", err)
 	}
 	// Trigger send vote again but for a new round
-	voteMsg = <-engineV2.BroadcastCh
-	assert.NotNil(t, voteMsg)
+	voteMsg = expectVote(t, engineV2.BroadcastCh, 5*time.Second)
 	round, _, highestQC, _, _, highestCommitBlock := engineV2.GetPropertiesFaker()
 	// Shoud NOT trigger setNewRound as the new block parent QC is round 1 but the currentRound is already 2
 	assert.Equal(t, types.Round(3), round)
@@ -98,8 +96,7 @@ func TestShouldSendVoteMsgAndCommitGrandGrandParentBlock(t *testing.T) {
 		t.Fatal("Fail propose proposedBlock handler", err)
 	}
 	// Trigger send vote again but for a new round
-	voteMsg = <-engineV2.BroadcastCh
-	assert.NotNil(t, voteMsg)
+	voteMsg = expectVote(t, engineV2.BroadcastCh, 5*time.Second)
 	round, _, highestQC, _, _, highestCommitBlock = engineV2.GetPropertiesFaker()
 
 	assert.Equal(t, types.Round(4), round)
@@ -110,6 +107,7 @@ func TestShouldSendVoteMsgAndCommitGrandGrandParentBlock(t *testing.T) {
 }
 
 func TestShouldNotCommitIfRoundsNotContinousFor3Rounds(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	// Block 901 is the first v2 block with round of 1
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
@@ -186,6 +184,7 @@ func TestShouldNotCommitIfRoundsNotContinousFor3Rounds(t *testing.T) {
 }
 
 func TestProposedBlockMessageHandlerSuccessfullyGenerateVote(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 906, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -203,9 +202,8 @@ func TestProposedBlockMessageHandlerSuccessfullyGenerateVote(t *testing.T) {
 		t.Fatal("Fail propose proposedBlock handler", err)
 	}
 
-	voteMsg := <-engineV2.BroadcastCh
-	assert.NotNil(t, voteMsg)
-	assert.Equal(t, currentBlock.Hash(), voteMsg.(*types.Vote).ProposedBlockInfo.Hash)
+	voteMsg := expectVote(t, engineV2.BroadcastCh, 5*time.Second)
+	assert.Equal(t, currentBlock.Hash(), voteMsg.ProposedBlockInfo.Hash)
 
 	round, _, highestQC, _, _, _ := engineV2.GetPropertiesFaker()
 	// Shoud trigger setNewRound
@@ -216,6 +214,7 @@ func TestProposedBlockMessageHandlerSuccessfullyGenerateVote(t *testing.T) {
 // Should not set new round if proposedBlockInfo round is less than currentRound.
 // NOTE: This shall not even happen because we have `verifyQC` before being passed into ProposedBlockHandler
 func TestShouldNotSetNewRound(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 906, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -234,12 +233,13 @@ func TestShouldNotSetNewRound(t *testing.T) {
 	}
 
 	round, _, highestQC, _, _, _ := engineV2.GetPropertiesFaker()
-	// Shoud not trigger setNewRound
+	// Should not trigger setNewRound
 	assert.Equal(t, types.Round(6), round)
 	assert.Equal(t, extraField.QuorumCert.Signatures, highestQC.Signatures)
 }
 
 func TestShouldNotSendVoteMessageIfAlreadyVoteForThisRound(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 906, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
@@ -252,9 +252,8 @@ func TestShouldNotSendVoteMessageIfAlreadyVoteForThisRound(t *testing.T) {
 		t.Fatal("Fail propose proposedBlock handler", err)
 	}
 
-	voteMsg := <-engineV2.BroadcastCh
-	assert.NotNil(t, voteMsg)
-	assert.Equal(t, currentBlock.Hash(), voteMsg.(*types.Vote).ProposedBlockInfo.Hash)
+	voteMsg := expectVote(t, engineV2.BroadcastCh, 5*time.Second)
+	assert.Equal(t, currentBlock.Hash(), voteMsg.ProposedBlockInfo.Hash)
 
 	round, _, _, _, highestVotedRound, _ := engineV2.GetPropertiesFaker()
 	// Shoud trigger setNewRound
@@ -266,19 +265,15 @@ func TestShouldNotSendVoteMessageIfAlreadyVoteForThisRound(t *testing.T) {
 	if err != nil {
 		t.Fatal("Fail propose proposedBlock handler again", err)
 	}
-	// Should not receive anything from the channel
-	select {
-	case <-engineV2.BroadcastCh:
-		t.Fatal("Should not trigger vote")
-	case <-time.After(3 * time.Second):
-		// Shoud not trigger setNewRound
-		round, _, _, _, highestVotedRound, _ = engineV2.GetPropertiesFaker()
-		assert.Equal(t, types.Round(6), round)
-		assert.Equal(t, types.Round(6), highestVotedRound)
-	}
+	expectNoVote(t, engineV2.BroadcastCh, time.Second)
+	// Should not trigger setNewRound
+	round, _, _, _, highestVotedRound, _ = engineV2.GetPropertiesFaker()
+	assert.Equal(t, types.Round(6), round)
+	assert.Equal(t, types.Round(6), highestVotedRound)
 }
 
 func TestShouldNotSendVoteMsgIfBlockInfoRoundNotEqualCurrentRound(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 906, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
@@ -296,15 +291,10 @@ func TestShouldNotSendVoteMsgIfBlockInfoRoundNotEqualCurrentRound(t *testing.T) 
 	if err != nil {
 		t.Fatal("Fail propose proposedBlock handler", err)
 	}
-	// Should not receive anything from the channel
-	select {
-	case <-engineV2.BroadcastCh:
-		t.Fatal("Should not trigger vote")
-	case <-time.After(3 * time.Second):
-		// Shoud not trigger setNewRound
-		round, _, _, _, _, _ := engineV2.GetPropertiesFaker()
-		assert.Equal(t, types.Round(8), round)
-	}
+	expectNoVote(t, engineV2.BroadcastCh, time.Second)
+	// Should not trigger setNewRound
+	round, _, _, _, _, _ := engineV2.GetPropertiesFaker()
+	assert.Equal(t, types.Round(8), round)
 }
 
 /*
@@ -313,6 +303,7 @@ func TestShouldNotSendVoteMsgIfBlockInfoRoundNotEqualCurrentRound(t *testing.T) 
 	            \ 14'(7)
 */
 func TestShouldNotSendVoteMsgIfBlockNotExtendedFromAncestor(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	// Block number 905, 906 have forks and forkedBlock is the 906th
 	var numOfForks = new(int)
@@ -348,23 +339,18 @@ func TestShouldNotSendVoteMsgIfBlockNotExtendedFromAncestor(t *testing.T) {
 	if err != nil {
 		t.Fatal("Fail propose proposedBlock handler", err)
 	}
-	// Should not receive anything from the channel
-	select {
-	case <-engineV2.BroadcastCh:
-		t.Fatal("Should not trigger vote")
-	case <-time.After(3 * time.Second):
-		// Shoud not trigger setNewRound
-		round, _, _, _, _, _ := engineV2.GetPropertiesFaker()
-		assert.Equal(t, types.Round(3), round)
-	}
+	expectNoVote(t, engineV2.BroadcastCh, time.Second)
+	// Should not trigger setNewRound
+	round, _, _, _, _, _ := engineV2.GetPropertiesFaker()
+	assert.Equal(t, types.Round(3), round)
 
 	// Positive control: block 906 extends the locked ancestor.
 	err = engineV2.ProposedBlockHandler(blockchain, currentBlock.Header())
 	if err != nil {
 		t.Fatal("Error while handling block 16", err)
 	}
-	vote := <-engineV2.BroadcastCh
-	assert.Equal(t, types.Round(6), vote.(*types.Vote).ProposedBlockInfo.Round)
+	vote := expectVote(t, engineV2.BroadcastCh, 5*time.Second)
+	assert.Equal(t, types.Round(6), vote.ProposedBlockInfo.Round)
 }
 
 /*
@@ -425,21 +411,17 @@ func TestShouldNotSendVoteMsgIfCanonicalBlockNotExtendedFromForkedAncestor(t *te
 	if err != nil {
 		t.Fatal("Fail propose proposedBlock handler", err)
 	}
-	// Should not receive anything from the channel
-	select {
-	case <-engineV2.BroadcastCh:
-		t.Fatal("Should not trigger vote")
-	case <-time.After(3 * time.Second):
-		// Should not trigger setNewRound
-		round, lockQC, _, _, _, _ := engineV2.GetPropertiesFaker()
-		assert.Equal(t, types.Round(6), round)
-		if assert.NotNil(t, lockQC) {
-			assert.Equal(t, forkedAncestor.Hash(), lockQC.ProposedBlockInfo.Hash)
-		}
+	expectNoVote(t, engineV2.BroadcastCh, time.Second)
+	// Should not trigger setNewRound
+	round, lockQC, _, _, _, _ := engineV2.GetPropertiesFaker()
+	assert.Equal(t, types.Round(6), round)
+	if assert.NotNil(t, lockQC) {
+		assert.Equal(t, forkedAncestor.Hash(), lockQC.ProposedBlockInfo.Hash)
 	}
 }
 
 func TestShouldSendVoteMsg(t *testing.T) {
+	t.Parallel()
 	// Block number 15, 16 have forks and forkedBlock is the 16th
 	blockchain, _, _, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 903, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
@@ -453,12 +435,13 @@ func TestShouldSendVoteMsg(t *testing.T) {
 		}
 		round, _, _, _, _, _ := engineV2.GetPropertiesFaker()
 		assert.Equal(t, types.Round(i-900), round)
-		vote := <-engineV2.BroadcastCh
-		assert.Equal(t, round, vote.(*types.Vote).ProposedBlockInfo.Round)
+		vote := expectVote(t, engineV2.BroadcastCh, 5*time.Second)
+		assert.Equal(t, round, vote.ProposedBlockInfo.Round)
 	}
 }
 
 func TestProposedBlockMessageHandlerNotGenerateVoteIfSignerNotInMNlist(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 906, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
@@ -481,15 +464,10 @@ func TestProposedBlockMessageHandlerNotGenerateVoteIfSignerNotInMNlist(t *testin
 		t.Fatal("Fail propose proposedBlock handler", err)
 	}
 
-	// Should not receive anything from the channel
-	select {
-	case <-engineV2.BroadcastCh:
-		t.Fatal("Should not trigger vote")
-	case <-time.After(2 * time.Second):
-		// Shoud not trigger setNewRound
-		round, _, _, _, _, _ := engineV2.GetPropertiesFaker()
-		assert.Equal(t, types.Round(6), round)
-	}
+	expectNoVote(t, engineV2.BroadcastCh, time.Second)
+	// Should not trigger setNewRound
+	round, _, _, _, _, _ := engineV2.GetPropertiesFaker()
+	assert.Equal(t, types.Round(6), round)
 }
 
 // TestProposedBlockHandlerSkipsNonCanonicalBlock covers the re-check in front of
@@ -530,12 +508,8 @@ func TestProposedBlockHandlerSkipsNonCanonicalBlock(t *testing.T) {
 	default:
 	}
 
-	// A non-canonical block must not reach the vote broadcast either.
-	select {
-	case vote := <-engineV2.BroadcastCh:
-		t.Fatalf("non-canonical block must not trigger a vote, got round %v", vote.(*types.Vote).ProposedBlockInfo.Round)
-	case <-time.After(2 * time.Second):
-	}
+	// Countdown timeouts and sync-infos are not votes.
+	expectNoVote(t, engineV2.BroadcastCh, time.Second)
 }
 
 // reorgingChainReader simulates a reorg landing inside the handler: x.lock does
@@ -610,12 +584,7 @@ func TestProposedBlockHandlerSkipsReorgedBlockBeforeProcessQC(t *testing.T) {
 	assert.Equal(t, beforeVotedRound, afterVotedRound)
 	assert.Equal(t, beforeCommitBlock, afterCommitBlock)
 
-	// Nothing may be broadcast either.
-	select {
-	case vote := <-engineV2.BroadcastCh:
-		t.Fatalf("a block reorged away before processQC must not be voted for, got vote for round %v hash %v", vote.(*types.Vote).ProposedBlockInfo.Round, vote.(*types.Vote).ProposedBlockInfo.Hash)
-	case <-time.After(2 * time.Second):
-	}
+	expectNoVote(t, engineV2.BroadcastCh, time.Second)
 
 	// truthfulGates is 0, so every read of the watched height sees the fork.
 }
@@ -663,12 +632,8 @@ func TestProposedBlockHandlerDropsVoteForReorgedBlock(t *testing.T) {
 	assert.NotNil(t, afterLockQC, "processQC must have locked a parent QC")
 	assert.NotNil(t, afterCommitBlock, "processQC must have committed a block")
 
-	// The block was reorged away before the vote: nothing may be broadcast.
-	select {
-	case vote := <-engineV2.BroadcastCh:
-		t.Fatalf("a block reorged away before the vote must not be voted for, got vote for round %v hash %v", vote.(*types.Vote).ProposedBlockInfo.Round, vote.(*types.Vote).ProposedBlockInfo.Hash)
-	case <-time.After(2 * time.Second):
-	}
+	// The block was reorged away before the vote: no vote may be broadcast.
+	expectNoVote(t, engineV2.BroadcastCh, time.Second)
 }
 
 // TestProposedBlockHandlerSkipsBlockWithoutBody covers the storage half: the
@@ -694,12 +659,7 @@ func TestProposedBlockHandlerSkipsBlockWithoutBody(t *testing.T) {
 	if err != nil {
 		t.Fatal("Fail propose proposedBlock handler", err)
 	}
-	// Should not receive anything from the channel
-	select {
-	case <-engineV2.BroadcastCh:
-		t.Fatal("Should not trigger vote")
-	case <-time.After(3 * time.Second):
-	}
+	expectNoVote(t, engineV2.BroadcastCh, time.Second)
 
 	// No QC processed, nothing voted, no round advanced.
 	after, afterLockQC, afterHighQC, afterHighTC, afterVotedRound, afterCommitBlock := engineV2.GetPropertiesFaker()
@@ -831,11 +791,7 @@ func TestProposedBlockHandlerSkipsUnjudgeableChain(t *testing.T) {
 	}
 	assert.True(t, found, "unjudgeable skip line not found in logs: %q", logBuf.String())
 
-	select {
-	case vote := <-engineV2.BroadcastCh:
-		t.Fatalf("unjudgeable chain must not drive the vote path, got %v", vote)
-	case <-time.After(2 * time.Second):
-	}
+	expectNoVote(t, engineV2.BroadcastCh, time.Second)
 }
 
 // skippedProposedBlockCount reads the engine gates' counter from the registry.

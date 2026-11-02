@@ -13,6 +13,7 @@ import (
 
 // TestInitialFirstV2Block tests initial first v 2 block.
 func TestInitialFirstV2Block(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 900, params.TestXDPoSMockChainConfig, nil)
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
@@ -47,9 +48,9 @@ func TestInitialFirstV2Block(t *testing.T) {
 
 	// Test Running channels
 	minePeriod := <-adaptor.MinePeriodCh
-	assert.Equal(t, params.TestXDPoSMockChainConfig.XDPoS.V2.CurrentConfig.MinePeriod, minePeriod)
+	assert.Equal(t, blockchain.Config().XDPoS.V2.GetCurrentConfig().MinePeriod, minePeriod)
 
-	t.Logf("Waiting %d secs for timeout to happen", params.TestXDPoSMockChainConfig.XDPoS.V2.CurrentConfig.TimeoutPeriod)
+	t.Logf("Waiting %d secs for timeout to happen", blockchain.Config().XDPoS.V2.GetCurrentConfig().TimeoutPeriod)
 	timeoutMsg := <-adaptor.EngineV2.BroadcastCh
 	assert.NotNil(t, timeoutMsg)
 	assert.Equal(t, types.Round(1), timeoutMsg.(*types.Timeout).Round)
@@ -57,6 +58,7 @@ func TestInitialFirstV2Block(t *testing.T) {
 
 // TestInitialOtherV2Block tests initial other v 2 block.
 func TestInitialOtherV2Block(t *testing.T) {
+	t.Parallel()
 	// insert new block with new extra fields
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 900, params.TestXDPoSMockChainConfig, nil)
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
@@ -122,6 +124,7 @@ func TestInitialOtherV2Block(t *testing.T) {
 // TestSnapshotShouldAlreadyBeCreatedByGapRefresh tests snapshot should already be created
 // by the gap block refresh, which writes it together with the head markers.
 func TestSnapshotShouldAlreadyBeCreatedByGapRefresh(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	// insert new block with new extra fields
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 1800, params.TestXDPoSMockChainConfig, nil)
@@ -134,6 +137,7 @@ func TestSnapshotShouldAlreadyBeCreatedByGapRefresh(t *testing.T) {
 
 // TestInitialWithWrongSwitchNumber tests initial with wrong switch number.
 func TestInitialWithWrongSwitchNumber(t *testing.T) {
+	t.Parallel()
 	config := params.TestXDPoSMockChainConfig.Clone()
 	if config == nil {
 		t.Fatal("expected cloned config")

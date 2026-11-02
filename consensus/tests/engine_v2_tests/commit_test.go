@@ -12,6 +12,7 @@ import (
 )
 
 func TestNormalReorgWhenNotInvolveCommittedBlock(t *testing.T) {
+	t.Parallel()
 	// create 3 forking blockss, so the committed block is not in the forking numbers
 	var numOfForks = new(int)
 	*numOfForks = 3
@@ -32,6 +33,7 @@ func TestNormalReorgWhenNotInvolveCommittedBlock(t *testing.T) {
 }
 
 func TestShouldNotReorgCommittedBlock(t *testing.T) {
+	t.Parallel()
 	// create 4 forking blocks, so the committed block is in the forking numbers
 	var numOfForks = new(int)
 	*numOfForks = 4

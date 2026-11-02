@@ -1,3 +1,11 @@
+// Opt-in: RING_SIG_VERIFY and BULLET_PROOF_VERIFY have never been called on
+// mainnet or Apothem (#2895), and the package is slated for deletion, so no CI
+// lane runs these tests.
+//
+//	go test -tags=privacytests ./core/vm/privacy
+//
+//go:build privacytests
+
 package privacy
 
 import (

@@ -13,6 +13,7 @@ import (
 )
 
 func TestGetMissedRoundsInEpochByBlockNumOnlyForV2Consensus(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	_, bc, _, _, _ := PrepareXDCTestBlockChainWith128Candidates(t, 1802, params.TestXDPoSMockChainConfig)
 
@@ -26,6 +27,7 @@ func TestGetMissedRoundsInEpochByBlockNumOnlyForV2Consensus(t *testing.T) {
 }
 
 func TestGetMissedRoundsInEpochByBlockNumReturnEmptyForV2(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	_, bc, cb, _, _ := PrepareXDCTestBlockChainWith128Candidates(t, 1802, params.TestXDPoSMockChainConfig)
 
@@ -59,6 +61,7 @@ func TestGetMissedRoundsInEpochByBlockNumReturnEmptyForV2(t *testing.T) {
 }
 
 func TestGetMissedRoundsInEpochByBlockNumReturnEmptyForV2FistEpoch(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	_, bc, _, _, _ := PrepareXDCTestBlockChainWith128Candidates(t, 1802, params.TestXDPoSMockChainConfig)
 
@@ -74,6 +77,7 @@ func TestGetMissedRoundsInEpochByBlockNumReturnEmptyForV2FistEpoch(t *testing.T)
 }
 
 func TestGetMissedRoundsInEpochByBlockNum(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	blockchain, bc, currentBlock, signer, signFn := PrepareXDCTestBlockChainWith128Candidates(t, 1802, params.TestXDPoSMockChainConfig)
 	chainConfig := params.TestXDPoSMockChainConfig
@@ -110,6 +114,7 @@ func TestGetMissedRoundsInEpochByBlockNum(t *testing.T) {
 }
 
 func TestGetEpochNumbersBetween(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	_, bc, _, _, _ := PrepareXDCTestBlockChainWith128Candidates(t, 1802, params.TestXDPoSMockChainConfig)
 
@@ -168,6 +173,7 @@ func TestGetEpochNumbersBetween(t *testing.T) {
 	assert.EqualError(t, err, "illegal begin block number 1803")
 }
 func TestGetBlockByEpochNumber(t *testing.T) {
+	t.Parallel()
 	skipLongInShortMode(t)
 	blockchain, _, currentBlock, signer, signFn := PrepareXDCTestBlockChainWithPenaltyForV2Engine(t, 1802, params.TestXDPoSMockChainConfig)
 

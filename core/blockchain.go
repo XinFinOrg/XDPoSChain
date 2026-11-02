@@ -226,6 +226,7 @@ type BlockChain struct {
 	db         ethdb.Database                   // Low level persistent database to store final content in
 	triegc     *prque.Prque[int64, trieGcEntry] // Priority queue mapping block numbers to tries to gc
 	gcproc     time.Duration                    // Accumulates canonical block processing for trie dumping
+	lastWrite  uint64                           // Last block when the state was flushed
 	triedb     *trie.Database                   // The database handler for maintaining trie nodes.
 	stateCache state.Database                   // State database to reuse between imports (contains state cache)
 
@@ -1733,8 +1734,6 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 	return 0, nil
 }
 
-var lastWrite uint64
-
 // writeBlockWithoutState writes only the block and its metadata to the database,
 // but does not write any state. This is used to construct competing side forks
 // up to the point where they exceed the canonical total difficulty.
@@ -2285,7 +2284,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 			if nodes > limit || imgs > 4*1024*1024 {
 				bc.triedb.Cap(limit - ethdb.IdealBatchSize)
 			}
-			if bc.gcproc > bc.cacheConfig.TrieTimeLimit || chosen > lastWrite+TriesInMemory {
+			if bc.gcproc > bc.cacheConfig.TrieTimeLimit || chosen > bc.lastWrite+TriesInMemory {
 				// If the header is missing (canonical chain behind), we're reorging a low
 				// diff sidechain. Suspend committing until this operation is completed.
 				header := bc.GetHeaderByNumber(chosen)
@@ -2294,8 +2293,8 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 				} else {
 					// If we're exceeding limits but haven't reached a large enough memory gap,
 					// warn the user that the system is becoming unstable.
-					if chosen < lastWrite+TriesInMemory && bc.gcproc >= 2*bc.cacheConfig.TrieTimeLimit {
-						log.Info("State in memory for too long, committing", "time", bc.gcproc, "allowance", bc.cacheConfig.TrieTimeLimit, "optimum", float64(chosen-lastWrite)/TriesInMemory)
+					if chosen < bc.lastWrite+TriesInMemory && bc.gcproc >= 2*bc.cacheConfig.TrieTimeLimit {
+						log.Info("State in memory for too long, committing", "time", bc.gcproc, "allowance", bc.cacheConfig.TrieTimeLimit, "optimum", float64(chosen-bc.lastWrite)/TriesInMemory)
 					}
 					// Flush an entire trie and restart the counters. A refusal is logged
 					// rather than returned: the block is already on disk, and what is
@@ -2304,7 +2303,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 					if err := bc.triedb.Commit(header.Root, true); err != nil {
 						log.Error("Failed to flush the trie being collected", "number", chosen, "root", header.Root, "err", err)
 					}
-					lastWrite = chosen
+					bc.lastWrite = chosen
 					bc.gcproc = 0
 					if tradingTrieDb != nil && lendingTrieDb != nil {
 						b := bc.GetBlock(header.Hash(), current-TriesInMemory)

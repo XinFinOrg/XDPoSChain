@@ -11,6 +11,7 @@ import (
 )
 
 func TestShouldVerifyBlockInfo(t *testing.T) {
+	t.Parallel()
 	// Block 901 is the first v2 block with round of 1
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 901, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
