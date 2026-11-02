@@ -16,7 +16,7 @@ var DevnetConstant = constant{
 	tipXDCX:                big.NewInt(0),
 	tipXDCXLending:         big.NewInt(0),
 	tipXDCXCancellationFee: big.NewInt(0),
-	tipTRC21Fee:            big.NewInt(10800),
+	tipTRC21Fee:            big.NewInt(0),
 	tipIncreaseMasternodes: big.NewInt(0),
 	berlinBlock:            big.NewInt(0),
 	londonBlock:            big.NewInt(0),
