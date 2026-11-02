@@ -113,19 +113,37 @@ func IntrinsicGas(data []byte, accessList types.AccessList, authList []types.Set
 	return gas, nil
 }
 
-// FloorDataGas computes the minimum gas required for a transaction based on its data tokens (EIP-7623).
-func FloorDataGas(data []byte) (uint64, error) {
+// FloorDataGas computes the minimum gas required for a transaction based on its
+// data tokens. The per-token price follows EIP-7623 before Amsterdam and
+// EIP-7976 from Amsterdam on.
+func FloorDataGas(rules params.Rules, data []byte) (uint64, error) {
 	var (
-		z      = uint64(bytes.Count(data, []byte{0}))
-		nz     = uint64(len(data)) - z
-		tokens = nz*params.TxTokenPerNonZeroByte + z
+		tokens    uint64
+		tokenCost uint64
 	)
+	if rules.IsAmsterdam {
+		// EIP-7976 changes how calldata is priced.
+		// From 10/40 to 64/64 for zero/non-zero bytes.
+		dataLen := uint64(len(data))
+		if math.MaxUint64/params.TxTokenPerNonZeroByte < dataLen {
+			return 0, ErrGasUintOverflow
+		}
+		tokens = dataLen * params.TxTokenPerNonZeroByte
+		tokenCost = params.TxCostFloorPerToken7976
+	} else {
+		var (
+			z  = uint64(bytes.Count(data, []byte{0}))
+			nz = uint64(len(data)) - z
+		)
+		tokens = nz*params.TxTokenPerNonZeroByte + z
+		tokenCost = params.TxCostFloorPerToken
+	}
 	// Check for overflow
-	if (math.MaxUint64-params.TxGas)/params.TxCostFloorPerToken < tokens {
+	if (math.MaxUint64-params.TxGas)/tokenCost < tokens {
 		return 0, ErrGasUintOverflow
 	}
-	// Minimum gas required for a transaction based on its data tokens (EIP-7623).
-	return params.TxGas + tokens*params.TxCostFloorPerToken, nil
+	// Minimum gas required for a transaction based on its data tokens.
+	return params.TxGas + tokens*tokenCost, nil
 }
 
 // toWordSize returns the ceiled word size required for init code payment calculation.
@@ -431,7 +449,7 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 	}
 	// Gas limit suffices for the floor data cost (EIP-7623)
 	if rules.IsPrague {
-		floorDataGas, err = FloorDataGas(msg.Data)
+		floorDataGas, err = FloorDataGas(rules, msg.Data)
 		if err != nil {
 			return nil, err
 		}
