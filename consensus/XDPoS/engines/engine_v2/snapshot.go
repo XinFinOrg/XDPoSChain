@@ -120,6 +120,13 @@ func (x *XDPoS_v2) getSnapshot(chain consensus.ChainReader, number uint64, isGap
 	// If an on-disk checkpoint snapshot can be found, use that
 	snap, err := loadSnapshot(x.db, gapBlockHash)
 	if err != nil {
+		// initial() owns the snapshot at the V2 switch gap block, and the bft
+		// goroutine can reach this lookup before it has been stored.
+		if rebuilt, rerr := x.rebuildBootstrapSnapshot(chain, gapBlockNum, gapBlockHash); rerr == nil {
+			return rebuilt, nil
+		} else if !errors.Is(rerr, errNotBootstrapSnapshot) {
+			log.Warn("[getSnapshot] cannot rebuild bootstrap snapshot", "number", gapBlockNum, "hash", gapBlockHash, "err", rerr)
+		}
 		// Reported as a sentinel rather than as a bare error: the header above is this node's
 		// own canonical gap block, so an entry that is absent, unreadable or undecodable is a
 		// condition of its database rather than a fault of the batch under verification. core's
@@ -131,6 +138,44 @@ func (x *XDPoS_v2) getSnapshot(chain consensus.ChainReader, number uint64, isGap
 
 	log.Trace("Loaded snapshot from disk", "number", gapBlockNum, "hash", gapBlockHash)
 	x.snapshots.Add(snap.Hash, snap)
+	return snap, nil
+}
+
+// errNotBootstrapSnapshot marks a getSnapshot miss that rebuildBootstrapSnapshot
+// deliberately leaves alone, so callers can stay quiet about it.
+var errNotBootstrapSnapshot = errors.New("not the bootstrap gap block")
+
+// rebuildBootstrapSnapshot recreates the V2 switch gap snapshot that initial()
+// writes, from the same switch header. A vote verified before initial() stores
+// it would otherwise miss, drop every vote for block 1 and stall the chain.
+func (x *XDPoS_v2) rebuildBootstrapSnapshot(chain consensus.ChainReader, gapBlockNum uint64, gapBlockHash common.Hash) (*SnapshotV2, error) {
+	switchBlock := x.config.V2.SwitchBlock.Uint64()
+	lastGapNum := uint64(0)
+	if switchBlock > x.config.Gap {
+		lastGapNum = switchBlock - x.config.Gap
+	}
+	if gapBlockNum != lastGapNum {
+		return nil, errNotBootstrapSnapshot
+	}
+
+	checkpointHeader := chain.GetHeaderByNumber(switchBlock)
+	if checkpointHeader == nil {
+		return nil, fmt.Errorf("missing v2 switch header %d", switchBlock)
+	}
+	_, _, masternodes, err := x.getExtraFields(checkpointHeader)
+	if err != nil {
+		return nil, fmt.Errorf("reading masternodes from v2 switch header %d: %w", switchBlock, err)
+	}
+	if len(masternodes) == 0 {
+		return nil, fmt.Errorf("no masternodes at v2 switch block %d", switchBlock)
+	}
+
+	snap := NewSnapshot(lastGapNum, gapBlockHash, masternodes)
+	if err := StoreSnapshot(snap, x.db); err != nil {
+		return nil, fmt.Errorf("storing bootstrap snapshot: %w", err)
+	}
+	x.snapshots.Add(snap.Hash, snap)
+	log.Warn("[getSnapshot] rebuilt bootstrap snapshot ahead of initial()", "number", lastGapNum, "hash", gapBlockHash, "masternodes", len(masternodes))
 	return snap, nil
 }
 
