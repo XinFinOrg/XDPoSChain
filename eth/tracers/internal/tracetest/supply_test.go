@@ -153,6 +153,51 @@ func TestSupplyRewards(t *testing.T) {
 	compareAsJSON(t, expected, out[expected.Number])
 }
 
+// TestSupplyRewardsWithUncle checks that the reward of an uncle is reported as
+// issuance together with the block reward and the uncle-inclusion reward.
+func TestSupplyRewardsWithUncle(t *testing.T) {
+	config := *params.AllEthashProtocolChanges
+	gspec := &core.Genesis{
+		Config: &config,
+	}
+
+	// Base reward for the miner
+	baseReward := new(big.Int).Set(ethash.ByzantiumBlockReward)
+	// Miner reward for uncle inclusion is 1/32 of the base reward
+	uncleInclusionReward := new(big.Int).Rsh(baseReward, 5)
+	// Uncle miner reward for an uncle that is 1 block behind is 7/8 of the base reward
+	uncleReward := new(big.Int).Mul(big.NewInt(7), baseReward)
+	uncleReward.Rsh(uncleReward, 3)
+	totalReward := new(big.Int).Add(baseReward, uncleInclusionReward)
+	totalReward.Add(totalReward, uncleReward)
+
+	// Generate a new chain where block 3 includes an uncle
+	uncleGenerationFunc := func(b *core.BlockGen) {
+		if b.Number().Uint64() == 3 {
+			prevBlock := b.PrevBlock(1) // Block 2
+			uncle := types.CopyHeader(prevBlock.Header())
+			uncle.Extra = []byte("uncle!")
+			b.AddUncle(uncle)
+		}
+	}
+
+	out, chain, err := testSupplyTracer(t, gspec, uncleGenerationFunc, 3)
+	if err != nil {
+		t.Fatalf("failed to test supply tracer: %v", err)
+	}
+
+	head := chain.CurrentBlock()
+	expected := supplyInfo{
+		Issuance: &supplyInfoIssuance{
+			Reward: (*hexutil.Big)(totalReward),
+		},
+		Number:     3,
+		Hash:       head.Hash(),
+		ParentHash: head.ParentHash,
+	}
+	compareAsJSON(t, expected, out[expected.Number])
+}
+
 // TestSupplyEip1559Burn checks that the base fee of a block with a dynamic fee
 // transaction is reported as burnt.
 func TestSupplyEip1559Burn(t *testing.T) {
