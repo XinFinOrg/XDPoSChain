@@ -92,12 +92,12 @@ func (x *XDPoS_v2) getSnapshot(chain consensus.ChainReader, number uint64, isGap
 	if isGapNumber {
 		gapBlockNum = number
 	} else {
-		gapBlockNum = number - number%x.config.Epoch
-		if gapBlockNum > x.config.Gap {
-			gapBlockNum -= x.config.Gap
-		} else {
-			gapBlockNum = 0
+		if x.config.Epoch == 0 {
+			// A config error, not a consensus sentinel: core reads the sentinels as
+			// a local condition of the chain data
+			return nil, fmt.Errorf("[getSnapshot] XDPoS.Epoch is unset, so no gap block backs number %d", number)
 		}
+		gapBlockNum, _ = x.config.GapBlockNumber(number)
 	}
 
 	gapHeader := chain.GetHeaderByNumber(gapBlockNum)
@@ -150,10 +150,7 @@ var errNotBootstrapSnapshot = errors.New("not the bootstrap gap block")
 // it would otherwise miss, drop every vote for block 1 and stall the chain.
 func (x *XDPoS_v2) rebuildBootstrapSnapshot(chain consensus.ChainReader, gapBlockNum uint64, gapBlockHash common.Hash) (*SnapshotV2, error) {
 	switchBlock := x.config.V2.SwitchBlock.Uint64()
-	lastGapNum := uint64(0)
-	if switchBlock > x.config.Gap {
-		lastGapNum = switchBlock - x.config.Gap
-	}
+	lastGapNum, _ := x.config.GapBlockNumber(switchBlock)
 	if gapBlockNum != lastGapNum {
 		return nil, errNotBootstrapSnapshot
 	}

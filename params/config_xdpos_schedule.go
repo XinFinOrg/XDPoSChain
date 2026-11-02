@@ -39,7 +39,7 @@ var ErrInvalidEpochGap = errors.New("invalid XDPoS schedule")
 //
 // ChainConfig.checkConfigForkOrder calls this just before the alignment check,
 // so a config that declares no schedule is rejected here rather than left to
-// the engines, which rewrite a missing epoch but never a missing gap.
+// the engines, which no longer repair a missing epoch.
 //
 // The refusal names the shape it found, because the four shapes need different
 // answers: an unset epoch has to be supplied, an epoch of one cannot satisfy
