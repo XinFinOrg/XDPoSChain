@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/accounts"
-	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	math "github.com/XinFinOrg/XDPoSChain/common/math"
@@ -35,7 +34,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/consensus/misc/eip1559"
-	contractValidator "github.com/XinFinOrg/XDPoSChain/contracts/validator/contract"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
@@ -699,25 +697,11 @@ func (api *BlockChainAPI) GetCandidateStatus(ctx context.Context, coinbaseAddres
 	}
 
 	// list of candidates (masternode, slash, propose) at block checkpoint
+	candidatesBlock := checkpointNumber
 	if epoch == rpc.LatestEpochNumber {
-		candidates, err = api.getCandidatesFromSmartContract()
-	} else {
-		statedb, _, err := api.b.StateAndHeaderByNumber(ctx, checkpointNumber)
-		if err != nil {
-			result[fieldSuccess] = false
-			return result, err
-		}
-		if statedb == nil {
-			result[fieldSuccess] = false
-			return result, errors.New("nil statedb in GetCandidateStatus")
-		}
-		candidatesAddresses := statedb.GetCandidates()
-		candidates = make([]utils.Masternode, 0, len(candidatesAddresses))
-		for _, address := range candidatesAddresses {
-			v := statedb.GetCandidateCap(address)
-			candidates = append(candidates, utils.Masternode{Address: address, Stake: v})
-		}
+		candidatesBlock = rpc.LatestBlockNumber
 	}
+	candidates, err = api.getCandidatesFromState(ctx, candidatesBlock)
 	if err != nil || len(candidates) == 0 {
 		log.Debug("Candidates list cannot be found", "len(candidates)", len(candidates), "err", err)
 		result[fieldSuccess] = false
@@ -856,25 +840,11 @@ func (api *BlockChainAPI) GetCandidates(ctx context.Context, epoch rpc.EpochNumb
 		return result, errEmptyHeader
 	}
 	// list of candidates (masternode, slash, propose) at block checkpoint
+	candidatesBlock := checkpointNumber
 	if epoch == rpc.LatestEpochNumber {
-		candidates, err = api.getCandidatesFromSmartContract()
-	} else {
-		statedb, _, err := api.b.StateAndHeaderByNumber(ctx, checkpointNumber)
-		if err != nil {
-			result[fieldSuccess] = false
-			return result, err
-		}
-		if statedb == nil {
-			result[fieldSuccess] = false
-			return result, errors.New("nil statedb in GetCandidates")
-		}
-		candidatesAddresses := statedb.GetCandidates()
-		candidates = make([]utils.Masternode, 0, len(candidatesAddresses))
-		for _, address := range candidatesAddresses {
-			v := statedb.GetCandidateCap(address)
-			candidates = append(candidates, utils.Masternode{Address: address, Stake: v})
-		}
+		candidatesBlock = rpc.LatestBlockNumber
 	}
+	candidates, err = api.getCandidatesFromState(ctx, candidatesBlock)
 
 	if err != nil || len(candidates) == 0 {
 		log.Debug("Candidates list cannot be found", "len(candidates)", len(candidates), "err", err)
@@ -1014,39 +984,37 @@ func (api *BlockChainAPI) GetCheckpointFromEpoch(ctx context.Context, epochNum r
 	return rpc.BlockNumber(checkpointNumber), epochNum
 }
 
-// getCandidatesFromSmartContract returns all candidates with their capacities at the current time
-func (api *BlockChainAPI) getCandidatesFromSmartContract() ([]utils.Masternode, error) {
-	client, err := api.b.GetIPCClient()
+// getCandidatesFromState returns the voting contract's candidates and their capacities as they
+// stand in the state of the given block.
+//
+// It reads what the contract getters read: the candidate array is the contract's `candidates`,
+// whose zero entries are skipped, and a candidate's capacity is `validatorsState[candidate].cap`.
+// The slots are the ones core/state derives from the voting contract's layout - candidate slot 8,
+// validatorsState slot 1 with cap one slot on, see slotValidatorMapping in
+// core/state/statedb_utils.go - so a layout change in the contract has to be mirrored there.
+// The same data used to come back through the node's own IPC endpoint, which made both candidate
+// RPCs need an endpoint at all - a node started with --ipcdisable failed them - and cost an
+// eth_call for the list plus one per candidate.
+func (api *BlockChainAPI) getCandidatesFromState(ctx context.Context, blockNr rpc.BlockNumber) ([]utils.Masternode, error) {
+	statedb, _, err := api.b.StateAndHeaderByNumber(ctx, blockNr)
 	if err != nil {
-		return []utils.Masternode{}, err
+		return nil, err
 	}
-
-	addr := common.MasternodeVotingSMCBinary
-	validator, err := contractValidator.NewXDCValidator(addr, client)
-	if err != nil {
-		return []utils.Masternode{}, err
+	if statedb == nil {
+		return nil, errors.New("nil statedb reading the candidates")
 	}
-
-	opts := new(bind.CallOpts)
-	candidates, err := validator.GetCandidates(opts)
-	if err != nil {
-		return []utils.Masternode{}, err
+	candidatesAddresses := statedb.GetCandidates()
+	candidates := make([]utils.Masternode, 0, len(candidatesAddresses))
+	for _, address := range candidatesAddresses {
+		candidates = append(candidates, utils.Masternode{Address: address, Stake: statedb.GetCandidateCap(address)})
 	}
-
-	candidatesWithStakeInfo := make([]utils.Masternode, 0, len(candidates))
-
-	for _, candidate := range candidates {
-		if !candidate.IsZero() {
-			v, err := validator.GetCandidateCap(opts, candidate)
-			if err != nil {
-				return []utils.Masternode{}, err
-			}
-
-			candidatesWithStakeInfo = append(candidatesWithStakeInfo, utils.Masternode{Address: candidate, Stake: v})
-		}
+	// GetCandidates and GetCandidateCap return zero values when the voting contract storage
+	// cannot be read, memoizing the failure in StateDB.Error(). A list derived from such reads
+	// would be empty or partial, so surface the error instead of reporting it as the chain's.
+	if err := statedb.Error(); err != nil {
+		return nil, fmt.Errorf("reading the candidates of block %d from state: %w", blockNr, err)
 	}
-
-	return candidatesWithStakeInfo, nil
+	return candidates, nil
 }
 
 // ChainContextBackend provides methods required to implement ChainContext.
