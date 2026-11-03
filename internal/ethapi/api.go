@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	gomath "math"
 	"math/big"
 	"strings"
 	"time"
@@ -1093,7 +1094,17 @@ func doCall(ctx context.Context, b Backend, args TransactionArgs, state *state.S
 	// Make sure the context is cancelled when the call has completed
 	// this makes sure resources are cleaned up.
 	defer cancel()
-	return applyMessage(ctx, b, args, state, block, timeout, new(core.GasPool).AddGas(globalGasCap), &blockCtx, &vm.Config{NoBaseFee: true}, precompiles)
+
+	// A zero cap means unlimited, but a zero gas pool funds nothing:
+	// CallDefaults would hand out MaxUint64/2 gas, which buyGas then rejects
+	// against the empty pool before the EVM runs.
+	gp := new(core.GasPool)
+	if globalGasCap == 0 {
+		gp.AddGas(gomath.MaxUint64)
+	} else {
+		gp.AddGas(globalGasCap)
+	}
+	return applyMessage(ctx, b, args, state, block, timeout, gp, &blockCtx, &vm.Config{NoBaseFee: true}, precompiles)
 }
 
 func applyMessage(ctx context.Context, b Backend, args TransactionArgs, state *state.StateDB, block *types.Block, timeout time.Duration, gp *core.GasPool, blockContext *vm.BlockContext, vmConfig *vm.Config, precompiles vm.PrecompiledContracts) (*core.ExecutionResult, error) {
