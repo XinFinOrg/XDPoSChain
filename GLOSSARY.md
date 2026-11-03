@@ -71,12 +71,12 @@ _See_: [ApplyBlockLevelHooks](core/state_processor.go)
 ### Transaction pricing
 
 **calldata floor**:
-The minimum gas a transaction pays for its calldata, counted in calldata tokens; a gas limit below it rejects the transaction before execution, and an execution that used less is topped up to it. From Amsterdam it depends on the byte count alone, so zero and non-zero bytes cost the same 64 gas each.
+The minimum gas a transaction pays for its data, counted in calldata tokens; a gas limit below it rejects the transaction before execution, and an execution that used less is topped up to it. Before Amsterdam it counts the calldata bytes only, zero ones cheaper than non-zero; from Amsterdam every calldata byte costs the same four tokens, 64 gas, and the access list adds 20 bytes per address and 32 per storage key at the same rate — 1,280 and 2,048 gas (EIP-7981).
 _Avoid_: data gas, calldata gas
-_See_: [core/state_transition.go:117](core/state_transition.go), [ADR-0005](docs/adr/0005-port-amsterdam-eips-standalone.md)
+_See_: [core/state_transition.go:141](core/state_transition.go), [ADR-0005](docs/adr/0005-port-amsterdam-eips-standalone.md)
 
 **calldata token**:
-The unit the calldata floor is counted in — one per zero byte and four per non-zero byte before Amsterdam, four per byte from Amsterdam on — multiplied by the per-token cost to obtain the floor.
+The unit the calldata floor is counted in — one per zero byte and four per non-zero byte before Amsterdam, four per byte from Amsterdam on, with an access list entry adding 20 bytes per address and 32 per storage key (EIP-7981) — multiplied by the per-token cost to obtain the floor.
 _Avoid_: byte weight, token count
 _See_: [params/protocol_params.go:71](params/protocol_params.go)
 

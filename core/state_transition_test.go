@@ -214,18 +214,39 @@ func TestFloorDataGas(t *testing.T) {
 		zeros = make([]byte, 32)
 		ones  = bytes.Repeat([]byte{0xff}, 32)
 		mixed = append(bytes.Repeat([]byte{0xff}, 16), make([]byte, 16)...)
+
+		oneAddress = types.AccessList{
+			{Address: common.HexToAddress("0x1111111111111111111111111111111111111111")},
+		}
+		oneAddressTwoKeys = types.AccessList{{
+			Address: common.HexToAddress("0x1111111111111111111111111111111111111111"),
+			StorageKeys: []common.Hash{
+				common.HexToHash("0xaa"),
+				common.HexToHash("0xbb"),
+			},
+		}}
 	)
 	tests := []struct {
-		name      string
-		data      []byte
-		prague    uint64
-		amsterdam uint64
+		name       string
+		data       []byte
+		accessList types.AccessList
+		prague     uint64
+		amsterdam  uint64
 	}{
-		{"empty", nil, 21_000, 21_000},
-		{"one zero byte", []byte{0}, 21_010, 21_064},
-		{"32 zero bytes", zeros, 21_320, 23_048},
-		{"32 non-zero bytes", ones, 22_280, 23_048},
-		{"16 zero + 16 non-zero", mixed, 21_800, 23_048},
+		{"empty", nil, nil, 21_000, 21_000},
+		{"one zero byte", []byte{0}, nil, 21_010, 21_064},
+		{"32 zero bytes", zeros, nil, 21_320, 23_048},
+		{"32 non-zero bytes", ones, nil, 22_280, 23_048},
+		{"16 zero + 16 non-zero", mixed, nil, 21_800, 23_048},
+		// EIP-7981 charges the access list as tokens on Amsterdam only:
+		// one address is 20 bytes * 4 tokens * 16 gas = 1280.
+		{"access list address", nil, oneAddress, 21_000, 22_280},
+		// One address and two storage keys: (20 + 2*32) * 4 * 16 = 5376.
+		{"access list with storage keys", nil, oneAddressTwoKeys, 21_000, 26_376},
+		// Calldata and the access list together: 32*4 data tokens plus
+		// (20 + 2*32)*4 access list tokens, all at 16 gas on Amsterdam; the
+		// access list adds nothing to the Prague floor.
+		{"32 non-zero bytes with access list", ones, oneAddressTwoKeys, 22_280, 28_424},
 	}
 	for _, tt := range tests {
 		for _, fork := range []struct {
@@ -236,7 +257,7 @@ func TestFloorDataGas(t *testing.T) {
 			{"prague", prague, tt.prague},
 			{"amsterdam", amsterdam, tt.amsterdam},
 		} {
-			got, err := FloorDataGas(fork.rules, tt.data)
+			got, err := FloorDataGas(fork.rules, tt.data, tt.accessList)
 			if err != nil {
 				t.Errorf("%s/%s: unexpected error: %v", fork.name, tt.name, err)
 				continue
@@ -307,6 +328,110 @@ func TestApplyMessageCalldataFloor(t *testing.T) {
 		}
 		if res.UsedGas != pragueFloor {
 			t.Fatalf("used gas = %d, want pre-Amsterdam floor %d", res.UsedGas, pragueFloor)
+		}
+	})
+}
+
+// TestApplyMessageAccessListAmsterdam checks the EIP-7981 access list charge
+// through the whole message path: the intrinsic cost moves with the fork, a
+// transaction below the Amsterdam intrinsic cost is rejected, and with enough
+// calldata the floor, which prices the access list as well, is the binding cost.
+func TestApplyMessageAccessListAmsterdam(t *testing.T) {
+	t.Parallel()
+
+	var (
+		accessList = types.AccessList{
+			{
+				Address:     common.HexToAddress("0x1111111111111111111111111111111111111111"),
+				StorageKeys: []common.Hash{common.HexToHash("0xaa"), common.HexToHash("0xbb")},
+			},
+			{
+				Address:     common.HexToAddress("0x2222222222222222222222222222222222222222"),
+				StorageKeys: []common.Hash{common.HexToHash("0xaa")},
+			},
+		}
+		// 2 addresses and 3 storage keys under EIP-2930.
+		base = params.TxGas + 2*params.TxAccessListAddressGas + 3*params.TxAccessListStorageKeyGas
+		// EIP-7981 adds (2*20 + 3*32) bytes * 4 tokens * 16 gas.
+		amsterdamIntrinsic = base + (2*common.AddressLength+3*common.HashLength)*params.TxTokenPerNonZeroByte*params.TxCostFloorPerToken7976
+		// 256 non-zero calldata bytes push the floor above the intrinsic cost,
+		// so the access-list tokens in the floor have to be charged for the
+		// message to be accepted.
+		data          = bytes.Repeat([]byte{0xff}, 256)
+		dataIntrinsic = amsterdamIntrinsic + uint64(len(data))*params.TxDataNonZeroGasEIP2028
+		dataFloor     = params.TxGas + (uint64(len(data))+uint64(2*common.AddressLength+3*common.HashLength))*params.TxTokenPerNonZeroByte*params.TxCostFloorPerToken7976
+	)
+	apply := func(t *testing.T, config *params.ChainConfig, input []byte, gasLimit uint64) (*ExecutionResult, error) {
+		t.Helper()
+
+		statedb, err := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
+		if err != nil {
+			t.Fatalf("failed to open state: %v", err)
+		}
+		header := &types.Header{
+			Number:     common.Big1,
+			Difficulty: new(big.Int),
+			GasLimit:   8_000_000,
+			BaseFee:    new(big.Int),
+		}
+		author := common.Address{}
+		evm := vm.NewEVM(NewEVMBlockContext(header, nil, &author), statedb, nil, config, vm.Config{NoBaseFee: true})
+
+		msg := newTestMessage()
+		msg.Data = input
+		msg.AccessList = accessList
+		msg.GasLimit = gasLimit
+		return ApplyMessage(evm, msg, new(GasPool).AddGas(gasLimit), common.Address{})
+	}
+
+	amsterdam := params.TestChainConfig.Clone()
+	amsterdam.AmsterdamBlock = big.NewInt(0)
+
+	berlin := params.TestChainConfig.Clone()
+	berlin.AmsterdamBlock = nil
+
+	t.Run("reject below the Amsterdam intrinsic gas", func(t *testing.T) {
+		if _, err := apply(t, amsterdam, nil, amsterdamIntrinsic-1); !errors.Is(err, ErrIntrinsicGas) {
+			t.Fatalf("error = %v, want %v", err, ErrIntrinsicGas)
+		}
+	})
+	t.Run("charge the Amsterdam intrinsic gas", func(t *testing.T) {
+		res, err := apply(t, amsterdam, nil, amsterdamIntrinsic)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.UsedGas != amsterdamIntrinsic {
+			t.Fatalf("used gas = %d, want %d", res.UsedGas, amsterdamIntrinsic)
+		}
+	})
+	t.Run("pre-Amsterdam intrinsic gas", func(t *testing.T) {
+		res, err := apply(t, berlin, nil, base)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.UsedGas != base {
+			t.Fatalf("used gas = %d, want %d", res.UsedGas, base)
+		}
+	})
+	t.Run("reject below the Amsterdam floor with calldata", func(t *testing.T) {
+		if _, err := apply(t, amsterdam, data, dataFloor-1); !errors.Is(err, ErrFloorDataGas) {
+			t.Fatalf("error = %v, want %v", err, ErrFloorDataGas)
+		}
+	})
+	t.Run("reject at the Amsterdam intrinsic gas with calldata", func(t *testing.T) {
+		if _, err := apply(t, amsterdam, data, dataIntrinsic); !errors.Is(err, ErrFloorDataGas) {
+			t.Fatalf("error = %v, want %v", err, ErrFloorDataGas)
+		}
+	})
+	t.Run("charge the Amsterdam floor with calldata", func(t *testing.T) {
+		for _, limit := range []uint64{dataFloor, 100_000} {
+			res, err := apply(t, amsterdam, data, limit)
+			if err != nil {
+				t.Fatalf("limit %d: unexpected error: %v", limit, err)
+			}
+			if res.UsedGas != dataFloor {
+				t.Fatalf("limit %d: used gas = %d, want floor %d", limit, res.UsedGas, dataFloor)
+			}
 		}
 	})
 }

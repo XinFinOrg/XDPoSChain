@@ -63,9 +63,9 @@ func (result *ExecutionResult) Revert() []byte {
 // IntrinsicGas computes the 'intrinsic gas' for a message with the given data.
 // isContractCreation charges the contract creation base cost, isHomestead the
 // Homestead variant of it, isEIP2028 the reduced non-zero calldata byte price,
-// which XDC activates with the Prague fork, and isEIP3860 the initcode word
-// cost.
-func IntrinsicGas(data []byte, accessList types.AccessList, authList []types.SetCodeAuthorization, isContractCreation, isHomestead, isEIP2028, isEIP3860 bool) (uint64, error) {
+// which XDC activates with the Prague fork, isEIP3860 the initcode word cost,
+// and isAmsterdam the EIP-7981 access list data charge.
+func IntrinsicGas(data []byte, accessList types.AccessList, authList []types.SetCodeAuthorization, isContractCreation, isHomestead, isEIP2028, isEIP3860, isAmsterdam bool) (uint64, error) {
 	// Set the starting gas for the raw transaction
 	var gas uint64
 	if isContractCreation && isHomestead {
@@ -104,8 +104,33 @@ func IntrinsicGas(data []byte, accessList types.AccessList, authList []types.Set
 		}
 	}
 	if accessList != nil {
-		gas += uint64(len(accessList)) * params.TxAccessListAddressGas
-		gas += uint64(accessList.StorageKeys()) * params.TxAccessListStorageKeyGas
+		addresses := uint64(len(accessList))
+		storageKeys := uint64(accessList.StorageKeys())
+
+		if (math.MaxUint64-gas)/params.TxAccessListAddressGas < addresses {
+			return 0, ErrGasUintOverflow
+		}
+		gas += addresses * params.TxAccessListAddressGas
+		if (math.MaxUint64-gas)/params.TxAccessListStorageKeyGas < storageKeys {
+			return 0, ErrGasUintOverflow
+		}
+		gas += storageKeys * params.TxAccessListStorageKeyGas
+
+		// EIP-7981: access list data is charged in addition to the base charge.
+		if isAmsterdam {
+			const (
+				addressCost    = common.AddressLength * params.TxCostFloorPerToken7976 * params.TxTokenPerNonZeroByte
+				storageKeyCost = common.HashLength * params.TxCostFloorPerToken7976 * params.TxTokenPerNonZeroByte
+			)
+			if (math.MaxUint64-gas)/addressCost < addresses {
+				return 0, ErrGasUintOverflow
+			}
+			gas += addresses * addressCost
+			if (math.MaxUint64-gas)/storageKeyCost < storageKeys {
+				return 0, ErrGasUintOverflow
+			}
+			gas += storageKeys * storageKeyCost
+		}
 	}
 	if authList != nil {
 		gas += uint64(len(authList)) * params.CallNewAccountGas
@@ -115,8 +140,8 @@ func IntrinsicGas(data []byte, accessList types.AccessList, authList []types.Set
 
 // FloorDataGas computes the minimum gas required for a transaction based on its
 // data tokens. The per-token price follows EIP-7623 before Amsterdam and
-// EIP-7976 from Amsterdam on.
-func FloorDataGas(rules params.Rules, data []byte) (uint64, error) {
+// EIP-7976 from Amsterdam on; EIP-7981 charges the access list as tokens too.
+func FloorDataGas(rules params.Rules, data []byte, accessList types.AccessList) (uint64, error) {
 	var (
 		tokens    uint64
 		tokenCost uint64
@@ -130,12 +155,35 @@ func FloorDataGas(rules params.Rules, data []byte) (uint64, error) {
 		}
 		tokens = dataLen * params.TxTokenPerNonZeroByte
 		tokenCost = params.TxCostFloorPerToken7976
+
+		// EIP-7981 adds additional tokens for every entry in the access list.
+		const addressTokenCost = uint64(common.AddressLength) * params.TxTokenPerNonZeroByte
+		addresses := uint64(len(accessList))
+		if (math.MaxUint64-tokens)/addressTokenCost < addresses {
+			return 0, ErrGasUintOverflow
+		}
+		tokens += addresses * addressTokenCost
+
+		const storageKeyTokenCost = uint64(common.HashLength) * params.TxTokenPerNonZeroByte
+		storageKeys := uint64(accessList.StorageKeys())
+		if (math.MaxUint64-tokens)/storageKeyTokenCost < storageKeys {
+			return 0, ErrGasUintOverflow
+		}
+		tokens += storageKeys * storageKeyTokenCost
 	} else {
 		var (
 			z  = uint64(bytes.Count(data, []byte{0}))
 			nz = uint64(len(data)) - z
 		)
-		tokens = nz*params.TxTokenPerNonZeroByte + z
+		// Pre-Amsterdam
+		if math.MaxUint64/params.TxTokenPerNonZeroByte < nz {
+			return 0, ErrGasUintOverflow
+		}
+		tokens = nz * params.TxTokenPerNonZeroByte
+		if math.MaxUint64-tokens < z {
+			return 0, ErrGasUintOverflow
+		}
+		tokens += z
 		tokenCost = params.TxCostFloorPerToken
 	}
 	// Check for overflow
@@ -440,7 +488,7 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 
 	// Check clauses 4-5, subtract intrinsic gas if everything is correct.
 	// XDC schedules the EIP-2028 calldata pricing with the Prague fork.
-	gas, err := IntrinsicGas(msg.Data, msg.AccessList, msg.SetCodeAuthorizations, contractCreation, rules.IsHomestead, rules.IsPrague, rules.IsEIP1559)
+	gas, err := IntrinsicGas(msg.Data, msg.AccessList, msg.SetCodeAuthorizations, contractCreation, rules.IsHomestead, rules.IsPrague, rules.IsEIP1559, rules.IsAmsterdam)
 	if err != nil {
 		return nil, err
 	}
@@ -449,7 +497,7 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 	}
 	// Gas limit suffices for the floor data cost (EIP-7623)
 	if rules.IsPrague {
-		floorDataGas, err = FloorDataGas(rules, msg.Data)
+		floorDataGas, err = FloorDataGas(rules, msg.Data, msg.AccessList)
 		if err != nil {
 			return nil, err
 		}
