@@ -58,6 +58,8 @@ func NewEVMBlockContext(header *types.Header, chain ChainContext, author *common
 	// since xdpos chain do not use difficulty and mixdigest, we use hash of the block number as random
 	// NOTE: random is predictable, do not use it in real business
 	random = crypto.Keccak256Hash(header.Number.Bytes())
+	// EIP-7843: a slot is a block on this chain, so the header number is the
+	// slot number and SLOTNUM needs no header field (docs/adr/0006-define-slot-number-as-block-number.md).
 	return vm.BlockContext{
 		CanTransfer: CanTransfer,
 		Transfer:    Transfer,
@@ -69,6 +71,7 @@ func NewEVMBlockContext(header *types.Header, chain ChainContext, author *common
 		BaseFee:     baseFee,
 		GasLimit:    header.GasLimit,
 		Random:      &random,
+		SlotNum:     header.Number.Uint64(),
 	}
 }
 

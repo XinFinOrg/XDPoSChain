@@ -148,6 +148,7 @@ func (t *VMTest) newEVM(statedb *state.StateDB, vmconfig vm.Config) *vm.EVM {
 		Time:        t.json.Env.Timestamp,
 		GasLimit:    t.json.Env.GasLimit,
 		Difficulty:  t.json.Env.Difficulty,
+		SlotNum:     t.json.Env.Number,
 	}
 	chainConfig := t.chainConfig
 	if chainConfig == nil {

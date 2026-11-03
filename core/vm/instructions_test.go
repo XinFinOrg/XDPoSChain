@@ -1029,6 +1029,33 @@ func TestOpCLZ(t *testing.T) {
 	}
 }
 
+// TestOpSlotNum pins the SLOTNUM opcode (EIP-7843): it pushes the slot number
+// carried by the block context and costs the EIP's fixed 2 gas.
+func TestOpSlotNum(t *testing.T) {
+	evm := NewEVM(BlockContext{SlotNum: 42}, nil, nil, params.TestChainConfig, Config{})
+	stack := newstack()
+	pc := uint64(0)
+
+	opSlotNum(&pc, evm, &ScopeContext{Stack: stack})
+	if stack.len() != 1 {
+		t.Fatalf("stack length = %d; want 1", stack.len())
+	}
+	result := stack.pop()
+	if got := result.Uint64(); got != 42 {
+		t.Fatalf("SLOTNUM = %d; want 42", got)
+	}
+	op := amsterdamInstructionSet[SLOTNUM]
+	if op.constantGas != GasQuickStep {
+		t.Errorf("constantGas = %d; want %d", op.constantGas, GasQuickStep)
+	}
+	if op.minStack != 0 {
+		t.Errorf("minStack = %d; want 0", op.minStack)
+	}
+	if want := int(params.StackLimit) - 1; op.maxStack != want {
+		t.Errorf("maxStack = %d; want %d", op.maxStack, want)
+	}
+}
+
 // TestPush sanity-checks how code with immediates are handled when the code size is
 // smaller than the size of the immediate.
 func TestPush(t *testing.T) {
