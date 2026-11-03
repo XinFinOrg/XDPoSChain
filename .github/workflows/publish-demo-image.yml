@@ -1,0 +1,71 @@
+name: Publish Demo XDC image
+
+on:
+  push:
+    branches:
+      - demo-*
+
+concurrency:
+  # One build per branch: a new commit supersedes the build still running for it.
+  group: publish-demo-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: build and push demo image to registry
+    runs-on: ubuntu-latest
+
+    if: >-
+      contains(fromJSON(vars.IMAGE_PUBLISHERS), github.actor) &&
+      contains(fromJSON(vars.IMAGE_PUBLISHERS), github.triggering_actor)
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+
+      - name: Docker login
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+
+      - name: Build and Push Docker image
+        id: docker
+        run: |
+          image_name=xinfinorg/devnet:$GITHUB_REF_NAME
+          docker build --build-arg GIT_COMMIT=${GITHUB_SHA} -t $image_name -f cicd/Dockerfile .
+          docker push $image_name
+          echo "image_name=$image_name"
+          echo "image_name=$image_name" >> "$GITHUB_OUTPUT"
+
+
+      - name: Job summary
+        if: success()
+        env:
+          IMAGE: ${{ steps.docker.outputs.image_name }}
+          REF_NAME: ${{ github.ref_name }}
+          REVISION: ${{ github.sha }}
+          ACTOR: ${{ github.triggering_actor }}
+        run: |
+          # Env-passed: a branch name is arbitrary text and would otherwise be
+          # command-substituted by these quoted printf arguments.
+          {
+            echo "### Image published"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            printf '| Image | `%s` |\n' "$IMAGE"
+            printf '| Branch | `%s` |\n' "$REF_NAME"
+            printf '| Built commit | `%s` |\n' "$REVISION"
+            printf '| Published by | @%s |\n' "$ACTOR"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Docker logout
+        if: always()
+        run: docker logout
