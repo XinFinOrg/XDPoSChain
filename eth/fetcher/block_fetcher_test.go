@@ -266,53 +266,93 @@ func (f *fetcherTester) makeBodyFetcher(peer string, blocks map[common.Hash]*typ
 	}
 }
 
+const (
+	// arriveWait bounds the announce-request step. A Notify backdated by
+	// arriveTimeout has already consumed the fetcher's own allowance, so the
+	// request is due at once; the window is scheduling slack, sized at two
+	// announce windows so a saturated runner cannot fail the test while the
+	// fetcher is still acting promptly.
+	arriveWait = 2 * arriveTimeout
+
+	// fetchWait bounds a requested block coming back and the local import that
+	// follows, by the fetcher's own fetchTimeout.
+	fetchWait = fetchTimeout
+
+	// quietWait is how long a negative assertion watches a channel. One gather
+	// interval is the granularity at which the fetcher batches announces, so an
+	// event belonging to the announcement just processed arrives well inside it.
+	quietWait = 2 * gatherSlack
+)
+
 // verifyFetchingEvent verifies that one single event arrive on an fetching channel.
 func verifyFetchingEvent(t *testing.T, fetching chan []common.Hash, arrive bool) {
+	t.Helper()
+
 	if arrive {
 		select {
 		case <-fetching:
-		case <-time.After(time.Second):
-			t.Fatalf("fetching timeout")
+		case <-time.After(arriveWait):
+			t.Fatalf("fetching timeout after %v (announce->request)", arriveWait)
 		}
 	} else {
 		select {
 		case <-fetching:
-			t.Fatalf("fetching invoked")
-		case <-time.After(10 * time.Millisecond):
+			t.Fatalf("fetching invoked (announce->request)")
+		case <-time.After(quietWait):
 		}
 	}
 }
 
 // verifyCompletingEvent verifies that one single event arrive on an completing channel.
 func verifyCompletingEvent(t *testing.T, completing chan []common.Hash, arrive bool) {
+	t.Helper()
+
 	if arrive {
 		select {
 		case <-completing:
-		case <-time.After(time.Second):
-			t.Fatalf("completing timeout")
+		case <-time.After(fetchWait):
+			t.Fatalf("completing timeout after %v (request->body)", fetchWait)
 		}
 	} else {
 		select {
 		case <-completing:
-			t.Fatalf("completing invoked")
-		case <-time.After(10 * time.Millisecond):
+			t.Fatalf("completing invoked (request->body)")
+		case <-time.After(quietWait):
 		}
+	}
+}
+
+// verifyCompletingSkipped verifies that the fetcher did not request a body for
+// the block it just imported. The check is sound because completingHook fires
+// in the fetcher loop before the body request is launched (block_fetcher.go
+// completeTimer case) and empty headers are enqueued straight from the header
+// filter without reaching that hook; keep that ordering when refactoring the
+// import path.
+func verifyCompletingSkipped(t *testing.T, completing chan []common.Hash) {
+	t.Helper()
+
+	select {
+	case <-completing:
+		t.Fatalf("completing invoked for a block without data")
+	default:
 	}
 }
 
 // verifyImportEvent verifies that one single event arrive on an import channel.
 func verifyImportEvent(t *testing.T, imported chan *types.Block, arrive bool) {
+	t.Helper()
+
 	if arrive {
 		select {
 		case <-imported:
-		case <-time.After(time.Second):
-			t.Fatalf("import timeout")
+		case <-time.After(fetchWait):
+			t.Fatalf("import timeout after %v (body->import)", fetchWait)
 		}
 	} else {
 		select {
 		case <-imported:
-			t.Fatalf("import invoked")
-		case <-time.After(20 * time.Millisecond):
+			t.Fatalf("import invoked (body->import)")
+		case <-time.After(quietWait):
 		}
 	}
 }
@@ -320,11 +360,13 @@ func verifyImportEvent(t *testing.T, imported chan *types.Block, arrive bool) {
 // verifyImportCount verifies that exactly count number of events arrive on an
 // import hook channel.
 func verifyImportCount(t *testing.T, imported chan *types.Block, count int) {
+	t.Helper()
+
 	for i := 0; i < count; i++ {
 		select {
 		case <-imported:
-		case <-time.After(time.Second):
-			t.Fatalf("block %d: import timeout", i+1)
+		case <-time.After(fetchWait):
+			t.Fatalf("block %d: import timeout after %v (body->import)", i+1, fetchWait)
 		}
 	}
 	verifyImportDone(t, imported)
@@ -332,18 +374,46 @@ func verifyImportCount(t *testing.T, imported chan *types.Block, count int) {
 
 // verifyImportDone verifies that no more events are arriving on an import channel.
 func verifyImportDone(t *testing.T, imported chan *types.Block) {
+	t.Helper()
+
 	select {
 	case <-imported:
-		t.Fatalf("extra block imported")
-	case <-time.After(50 * time.Millisecond):
+		t.Fatalf("extra block imported within %v", quietWait)
+	case <-time.After(quietWait):
+	}
+}
+
+// waitEnqueued waits until the fetcher reports want blocks in its queue, bounded
+// by fetchWait instead of a fixed sleep. A depth above want means a peer got past
+// the queue cap and is reported on the first sample that reads it, so an
+// overshoot fails at once instead of waiting out the deadline and reporting the
+// settled count.
+func waitEnqueued(t *testing.T, enqueued *int32, want int32) {
+	t.Helper()
+
+	deadline := time.Now().Add(fetchWait)
+	for {
+		have := atomic.LoadInt32(enqueued)
+		if have > want {
+			t.Fatalf("queued block count exceeded: have %d, want %d", have, want)
+		}
+		if have == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("queued block count mismatch: have %d, want %d (after %v)", have, want, fetchWait)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
 func verifyProposeBlockHandlerCalled(t *testing.T, proposedBlockChan chan *types.Header) {
+	t.Helper()
+
 	select {
 	case <-proposedBlockChan:
-	case <-time.After(50 * time.Millisecond):
-		t.Fatalf("did not call propose block handler")
+	case <-time.After(fetchWait):
+		t.Fatalf("did not call propose block handler after %v", fetchWait)
 	}
 }
 
@@ -451,8 +521,8 @@ func testOverlappingAnnouncements(t *testing.T, protocol int) {
 		tester.fetcher.Notify("valid", hashes[i], uint64(len(hashes)-i-1), time.Now().Add(-arriveTimeout), headerFetcher, bodyFetcher)
 		select {
 		case <-imported:
-		case <-time.After(time.Second):
-			t.Fatalf("block %d: import timeout", len(hashes)-i)
+		case <-time.After(fetchWait):
+			t.Fatalf("block %d: import timeout after %v (body->import)", len(hashes)-i, fetchWait)
 		}
 	}
 	// Wait for all the imports to complete and check count
@@ -718,14 +788,14 @@ func testDistantAnnouncementDiscarding(t *testing.T, protocol int) {
 	// Ensure that a block with a lower number than the threshold is discarded
 	tester.fetcher.Notify("lower", hashes[low], blocks[hashes[low]].NumberU64(), time.Now().Add(-arriveTimeout), headerFetcher, bodyFetcher)
 	select {
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(quietWait):
 	case <-fetching:
 		t.Fatalf("fetcher requested stale header")
 	}
 	// Ensure that a block with a higher number than the threshold is discarded
 	tester.fetcher.Notify("higher", hashes[high], blocks[hashes[high]].NumberU64(), time.Now().Add(-arriveTimeout), headerFetcher, bodyFetcher)
 	select {
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(quietWait):
 	case <-fetching:
 		t.Fatalf("fetcher requested future header")
 	}
@@ -759,9 +829,8 @@ func testInvalidNumberAnnouncement(t *testing.T, protocol int) {
 			select {
 			case <-announced:
 				continue
-			case <-time.After(1 * time.Second):
-				t.Fatal("announce timeout")
-				return
+			case <-time.After(arriveWait):
+				t.Fatalf("announce timeout after %v", arriveWait)
 			}
 		}
 	}
@@ -810,7 +879,7 @@ func testEmptyBlockShortCircuit(t *testing.T, protocol int) {
 	fetching := make(chan []common.Hash)
 	tester.fetcher.fetchingHook = func(hashes []common.Hash) { fetching <- hashes }
 
-	completing := make(chan []common.Hash)
+	completing := make(chan []common.Hash, len(hashes))
 	tester.fetcher.completingHook = func(hashes []common.Hash) { completing <- hashes }
 
 	imported := make(chan *types.Block)
@@ -824,10 +893,15 @@ func testEmptyBlockShortCircuit(t *testing.T, protocol int) {
 		verifyFetchingEvent(t, fetching, true)
 
 		// Only blocks with data contents should request bodies
-		verifyCompletingEvent(t, completing, len(blocks[hashes[i]].Transactions()) > 0 || len(blocks[hashes[i]].Uncles()) > 0)
-
+		hasData := len(blocks[hashes[i]].Transactions()) > 0 || len(blocks[hashes[i]].Uncles()) > 0
+		if hasData {
+			verifyCompletingEvent(t, completing, true)
+		}
 		// Irrelevant of the construct, import should succeed
 		verifyImportEvent(t, imported, true)
+		if !hasData {
+			verifyCompletingSkipped(t, completing)
+		}
 	}
 	verifyImportDone(t, imported)
 }
@@ -913,18 +987,12 @@ func TestBlockMemoryExhaustionAttack(t *testing.T) {
 	for _, block := range attack {
 		tester.fetcher.Enqueue("attacker", block)
 	}
-	time.Sleep(200 * time.Millisecond)
-	if queued := atomic.LoadInt32(&enqueued); queued != blockLimit {
-		t.Fatalf("queued block count mismatch: have %d, want %d", queued, blockLimit)
-	}
+	waitEnqueued(t, &enqueued, blockLimit)
 	// Queue up a batch of valid blocks, and check that a new peer is allowed to do so
 	for i := 0; i < maxQueueDist-1; i++ {
 		tester.fetcher.Enqueue("valid", blocks[hashes[len(hashes)-3-i]])
 	}
-	time.Sleep(100 * time.Millisecond)
-	if queued := atomic.LoadInt32(&enqueued); queued != blockLimit+maxQueueDist-1 {
-		t.Fatalf("queued block count mismatch: have %d, want %d", queued, blockLimit+maxQueueDist-1)
-	}
+	waitEnqueued(t, &enqueued, blockLimit+maxQueueDist-1)
 	// Insert the missing piece (and sanity check the import)
 	tester.fetcher.Enqueue("valid", blocks[hashes[len(hashes)-2]])
 	verifyImportCount(t, imported, maxQueueDist)
