@@ -39,6 +39,11 @@ The attempt counter inside an epoch, `types.Round`; a validator's turn is decide
 _Avoid_: step, attempt
 _See_: [core/types/consensus_v2.go:12](core/types/consensus_v2.go), [consensus/XDPoS/engines/engine_v2/engine.go:1061](consensus/XDPoS/engines/engine_v2/engine.go)
 
+**slot number**:
+The position a block occupies in the chain, which on XDC is its block number: one block per slot, and no header field carries it separately.
+_Avoid_: slot, slot height, slot index
+_See_: [ADR-0006](docs/adr/0006-define-slot-number-as-block-number.md), [core/evm.go:43](core/evm.go)
+
 **masternode**:
 A node in the validator set that signs blocks and votes, capped by `MaxMasternodes`; the set is snapshotted at each epoch's gap block.
 _Avoid_: master node, witness
