@@ -2574,16 +2574,17 @@ func TestQueueGlobalLimiting(t *testing.T) {
 // mechanism is disabled.
 func TestQueueTimeLimiting(t *testing.T) {
 	testshort.Skip(t)
-	// Reduce the eviction interval to a testable amount
+	// Keep the interval and lifetime in proportion: the sleeps count
+	// intervals, the assertions compare ages against the lifetime
 	defer func(old time.Duration) { evictionInterval = old }(evictionInterval)
-	evictionInterval = time.Millisecond * 100
+	evictionInterval = time.Millisecond * 25
 
 	// Create the pool to test the non-expiration enforcement
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
 	blockchain := newTestBlockChain(params.TestChainConfig, 1000000, statedb, new(event.Feed))
 
 	config := testTxPoolConfig
-	config.Lifetime = time.Second
+	config.Lifetime = 250 * time.Millisecond
 
 	pool := New(config, blockchain)
 	pool.Init(config.PriceLimit, blockchain.CurrentBlock(), newReserver())
