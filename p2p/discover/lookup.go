@@ -129,8 +129,12 @@ func (it *lookup) startQueries() bool {
 	return it.queries > 0
 }
 
+// lookupSlowdownInterval is how long a lookup on an empty table waits before it
+// gives up. It is a variable so tests can shorten the wait.
+var lookupSlowdownInterval = 1 * time.Second
+
 func (it *lookup) slowdown() {
-	sleep := time.NewTimer(1 * time.Second)
+	sleep := time.NewTimer(lookupSlowdownInterval)
 	defer sleep.Stop()
 	select {
 	case <-sleep.C:

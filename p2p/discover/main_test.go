@@ -25,6 +25,7 @@ import (
 // TestMain shortens the waits that would otherwise dominate the run time of
 // tests creating a UDP transport. They keep their production defaults.
 func TestMain(m *testing.M) {
+	lookupSlowdownInterval = time.Millisecond
 	ensureBondWait = time.Millisecond
 	os.Exit(m.Run())
 }
