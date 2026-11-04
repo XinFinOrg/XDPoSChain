@@ -52,10 +52,41 @@ func (s *stubHeaderOnlyChain) GetHeaderByNumber(number uint64) *types.Header {
 	return s.headers[number]
 }
 
+// v2Header builds the header shape the judgment reads a round from: a v2 extra
+// carrying the round, on the given parent.
+func v2Header(height uint64, parent common.Hash, round types.Round) *types.Header {
+	extra, err := (&types.ExtraFields_v2{
+		Round: round,
+		QuorumCert: &types.QuorumCert{
+			ProposedBlockInfo: &types.BlockInfo{
+				Hash:   parent,
+				Round:  round - 1,
+				Number: new(big.Int).SetUint64(height - 1),
+			},
+		},
+	}).EncodeToBytes()
+	if err != nil {
+		panic(err)
+	}
+	return &types.Header{Number: new(big.Int).SetUint64(height), ParentHash: parent, Extra: extra}
+}
+
 func TestShouldHandleProposedBlock(t *testing.T) {
 	const height = uint64(906)
 	canonical := &types.Header{Number: big.NewInt(int64(height)), Coinbase: common.BytesToAddress([]byte{0x01})}
 	fork := &types.Header{Number: big.NewInt(int64(height)), Coinbase: common.BytesToAddress([]byte{0x02})}
+
+	// The re-proposal cases compare rounds, so they need v2 extras: two proposals
+	// for one parent, one round apart.
+	parent := common.BytesToHash([]byte{0xaa})
+	canonicalV2 := v2Header(height, parent, 6)
+	newerSibling := v2Header(height, parent, 7)
+	olderSibling := v2Header(height, parent, 5)
+	equalSibling := v2Header(height, parent, 6)
+	// Same round, different block: the round alone is not what makes a sibling.
+	equalSibling.Coinbase = common.BytesToAddress([]byte{0x04})
+	otherParentSibling := v2Header(height, common.BytesToHash([]byte{0xbb}), 7)
+	unreadableExtra := &types.Header{Number: big.NewInt(int64(height)), ParentHash: parent, Extra: []byte{2, 0xff, 0xff}}
 
 	for _, c := range []struct {
 		name          string
@@ -106,6 +137,59 @@ func TestShouldHandleProposedBlock(t *testing.T) {
 			wantOK:        false,
 			wantReason:    SkipNonCanonical,
 			wantCanonHash: canonical.Hash(),
+		},
+		{
+			name:          "a newer round on the same parent is a re-proposal",
+			headers:       map[uint64]*types.Header{height: canonicalV2},
+			bodies:        map[common.Hash]bool{newerSibling.Hash(): true},
+			header:        newerSibling,
+			wantOK:        true,
+			wantCanonHash: canonicalV2.Hash(),
+		},
+		{
+			name:          "an older round on the same parent is still non-canonical",
+			headers:       map[uint64]*types.Header{height: canonicalV2},
+			bodies:        map[common.Hash]bool{olderSibling.Hash(): true},
+			header:        olderSibling,
+			wantOK:        false,
+			wantReason:    SkipNonCanonical,
+			wantCanonHash: canonicalV2.Hash(),
+		},
+		{
+			name:          "an equal round on the same parent is still non-canonical",
+			headers:       map[uint64]*types.Header{height: canonicalV2},
+			bodies:        map[common.Hash]bool{equalSibling.Hash(): true},
+			header:        equalSibling,
+			wantOK:        false,
+			wantReason:    SkipNonCanonical,
+			wantCanonHash: canonicalV2.Hash(),
+		},
+		{
+			name:          "a newer round on another parent is still non-canonical",
+			headers:       map[uint64]*types.Header{height: canonicalV2},
+			bodies:        map[common.Hash]bool{otherParentSibling.Hash(): true},
+			header:        otherParentSibling,
+			wantOK:        false,
+			wantReason:    SkipNonCanonical,
+			wantCanonHash: canonicalV2.Hash(),
+		},
+		{
+			name:          "an unreadable extra is not a re-proposal",
+			headers:       map[uint64]*types.Header{height: canonicalV2},
+			bodies:        map[common.Hash]bool{},
+			header:        unreadableExtra,
+			wantOK:        false,
+			wantReason:    SkipNonCanonical,
+			wantCanonHash: canonicalV2.Hash(),
+		},
+		{
+			name:          "a newer re-proposal needs its body stored too",
+			headers:       map[uint64]*types.Header{height: canonicalV2},
+			bodies:        map[common.Hash]bool{},
+			header:        newerSibling,
+			wantOK:        false,
+			wantReason:    SkipBodyNotStored,
+			wantCanonHash: canonicalV2.Hash(),
 		},
 		{
 			name: "canonical header without stored body",
