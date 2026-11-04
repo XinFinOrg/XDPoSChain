@@ -31,6 +31,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/consensus/misc"
 	"github.com/XinFinOrg/XDPoSChain/consensus/misc/eip1559"
 	"github.com/XinFinOrg/XDPoSChain/contracts"
@@ -174,10 +175,16 @@ type worker struct {
 	unconfirmed *unconfirmedBlocks // set of locally mined blocks pending canonicalness confirmations
 
 	// atomic status counters
-	mining                int32
-	atWork                int32
-	announceTxs           bool
+	mining      int32
+	atWork      int32
+	announceTxs bool
+
+	// lastParentBlockCommit and lastParentBlockRound remember the parent and the
+	// round of the last work committed for sealing. A round that loses its votes
+	// recovers by re-proposing on the same parent, so the memory is scoped to a
+	// single round: once the engine moves on, the parent can be built on again.
 	lastParentBlockCommit string
+	lastParentBlockRound  types.Round
 }
 
 func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus.Engine, eth Backend, mux *event.TypeMux, announceTxs bool) *worker {
@@ -774,7 +781,7 @@ func (w *worker) checkPreCommit() (*types.Block, bool) {
 		log.Debug("XDPoS config enabled but consensus engine is not XDPoS")
 		return parent, true
 	}
-	if parent.Hash().Hex() == w.lastParentBlockCommit {
+	if w.committedForRound(parent, xdposEngine) {
 		return parent, true
 	}
 	if !w.announceTxs && atomic.LoadInt32(&w.mining) == 0 {
@@ -798,6 +805,31 @@ func (w *worker) checkPreCommit() (*types.Block, bool) {
 	}
 
 	return parent, false
+}
+
+// committedForRound reports whether work was already committed for parent in a
+// round the engine has not moved past yet. Proposing again on the same parent is
+// useful only once a new round has started: the round that lost its votes can
+// never produce a quorum cert, so the next speaker has to build a sibling there.
+func (w *worker) committedForRound(parent *types.Block, xdposEngine *XDPoS.XDPoS) bool {
+	if parent.Hash().Hex() != w.lastParentBlockCommit {
+		return false
+	}
+	// Without an XDPoS engine, or on a v1 block that carries no rounds, the
+	// engine reports round 0 and the memory keeps its round-agnostic scope.
+	return xdposEngine == nil || xdposEngine.CurrentRound() <= w.lastParentBlockRound
+}
+
+// committedRound returns the round the header of a freshly committed work
+// carries, so the memory is keyed on the round the block was built for rather
+// than on whatever round the engine has moved to by the time the work is done.
+func committedRound(header *types.Header) types.Round {
+	var extra types.ExtraFields_v2
+	if err := utils.DecodeBytesExtraFields(header.Extra, &extra); err != nil {
+		// v1 and non-XDPoS headers carry no round.
+		return 0
+	}
+	return extra.Round
 }
 
 func (w *worker) commitNewWork() {
@@ -1069,6 +1101,7 @@ func (w *worker) commitNewWork() {
 		blockTotalTimer.Update(totalElapsed)
 		w.unconfirmed.Shift(work.Block.NumberU64() - 1)
 		w.lastParentBlockCommit = parent.Hash().Hex()
+		w.lastParentBlockRound = committedRound(work.Block.Header())
 	}
 	w.push(work)
 	w.updateSnapshot()

@@ -1295,6 +1295,13 @@ func (x *XDPoS_v2) GetPreviousPenaltyByHash(chain consensus.ChainReader, hash co
 	return common.ExtractAddressFromBytes(header.Penalties)
 }
 
+// CurrentRound returns the BFT round the engine is currently in.
+func (x *XDPoS_v2) CurrentRound() types.Round {
+	x.lock.RLock()
+	defer x.lock.RUnlock()
+	return x.currentRound
+}
+
 func (x *XDPoS_v2) FindParentBlockToAssign(chain consensus.ChainReader) *types.Block {
 	parent := chain.GetBlock(x.highestQuorumCert.ProposedBlockInfo.Hash, x.highestQuorumCert.ProposedBlockInfo.Number.Uint64())
 	if parent == nil {
