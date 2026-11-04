@@ -91,8 +91,8 @@ func TestIPCAttachWelcome(t *testing.T) {
 		"--port", "0", "--maxpeers", "0", "--nodiscover", "--nat", "none",
 		"--miner-etherbase", coinbase, "--ipcpath", ipc)
 
-	t.Cleanup(XDC.Kill) // also killed on the t.Fatal path of waitForEndpoint
-	waitForEndpoint(t, ipc, 2*time.Minute)
+	t.Cleanup(XDC.Kill) // also killed when the wait helpers fail
+	waitForEndpoint(t, XDC, ipc, 2*time.Minute)
 	testAttachWelcome(t, XDC, "ipc:"+ipc, ipcAPIs)
 
 	XDC.Interrupt()
@@ -101,16 +101,15 @@ func TestIPCAttachWelcome(t *testing.T) {
 
 func TestHTTPAttachWelcome(t *testing.T) {
 	coinbase := "0x8605cdbbdb6d264aa742e77020dcbc58fcdce182"
-	port := strconv.Itoa(trulyRandInt(1024, 65536)) // Yeah, sometimes this will fail, sorry :P
 	datadir := t.TempDir()
 	XDC := runXDC(t,
 		"--datadir", datadir, "--XDCx-datadir", datadir+"/XDCx",
 		"--port", "0", "--maxpeers", "0", "--nodiscover", "--nat", "none",
-		"--miner-etherbase", coinbase, "--http", "--http-port", port, "--http-api", "eth,net,rpc,web3")
+		"--miner-etherbase", coinbase, "--http", "--http-port", "0", "--http-api", "eth,net,rpc,web3")
 
-	t.Cleanup(XDC.Kill) // also killed on the t.Fatal path of waitForEndpoint
-	endpoint := "http://localhost:" + port
-	waitForEndpoint(t, endpoint, 2*time.Minute)
+	t.Cleanup(XDC.Kill) // also killed when the wait helpers fail
+	endpoint := "http://localhost:" + waitForPort(t, XDC, "endpoint=", 2*time.Minute)
+	waitForEndpoint(t, XDC, endpoint, 2*time.Minute)
 	testAttachWelcome(t, XDC, endpoint, httpAPIs)
 
 	XDC.Interrupt()
@@ -119,16 +118,15 @@ func TestHTTPAttachWelcome(t *testing.T) {
 
 func TestWSAttachWelcome(t *testing.T) {
 	coinbase := "0x8605cdbbdb6d264aa742e77020dcbc58fcdce182"
-	port := strconv.Itoa(trulyRandInt(1024, 65536)) // Yeah, sometimes this will fail, sorry :P
 	datadir := t.TempDir()
 	XDC := runXDC(t,
 		"--datadir", datadir, "--XDCx-datadir", datadir+"/XDCx",
 		"--port", "0", "--maxpeers", "0", "--nodiscover", "--nat", "none",
-		"--miner-etherbase", coinbase, "--ws", "--ws-port", port, "--ws-api", "eth,net,rpc,web3")
+		"--miner-etherbase", coinbase, "--ws", "--ws-port", "0", "--ws-api", "eth,net,rpc,web3")
 
-	t.Cleanup(XDC.Kill) // also killed on the t.Fatal path of waitForEndpoint
-	endpoint := "ws://localhost:" + port
-	waitForEndpoint(t, endpoint, 2*time.Minute)
+	t.Cleanup(XDC.Kill) // also killed when the wait helpers fail
+	endpoint := "ws://localhost:" + waitForPort(t, XDC, "url=ws://", 2*time.Minute)
+	waitForEndpoint(t, XDC, endpoint, 2*time.Minute)
 	testAttachWelcome(t, XDC, endpoint, httpAPIs)
 
 	XDC.Interrupt()
@@ -245,7 +243,7 @@ func TestDialRPCRejectsWindowsDrivePaths(t *testing.T) {
 }
 
 // trulyRandInt generates a crypto random integer used by the console tests to
-// not clash network ports with other tests running cocurrently.
+// give the Windows IPC pipe endpoint a name of its own.
 func trulyRandInt(lo, hi int) int {
 	num, _ := rand.Int(rand.Reader, big.NewInt(int64(hi-lo)))
 	return int(num.Int64()) + lo

@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,9 +98,21 @@ func runXDC(t *testing.T, args ...string) *testXDC {
 // legacy "ipc:" and "rpc:" prefixes are not accepted here even though the attach
 // command accepts them: resolveConsoleEndpoint strips those prefixes for
 // dialRPC, and this helper goes through neither.
-func waitForEndpoint(t *testing.T, endpoint string, timeout time.Duration) {
+//
+// A node that dies through utils.Fatalf writes a "Fatal:" line to stderr
+// before exiting, and the helper gives up as soon as it sees one instead of
+// polling a dead endpoint until the timeout runs out. That is the path the
+// protocol stack takes when it cannot listen. Other exits (an error returned
+// by app.Run, log.Crit, a panic) print no such prefix and still wait out the
+// timeout. cmd/utils.Fatalf writes the line to stdout only on Windows, where
+// the fast path cannot see it either.
+func waitForEndpoint(t *testing.T, node *testXDC, endpoint string, timeout time.Duration) {
+	probeTimeout := 10 * time.Second
+	if probeTimeout > timeout {
+		probeTimeout = timeout
+	}
 	probe := func() bool {
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 		defer cancel()
 		c, err := rpc.DialContext(ctx, endpoint)
 		if c != nil {
@@ -113,9 +127,127 @@ func waitForEndpoint(t *testing.T, endpoint string, timeout time.Duration) {
 		if probe() {
 			return
 		}
+		if out := node.StderrText(); strings.Contains(out, "Fatal: ") {
+			t.Fatalf("endpoint %s was never opened, the node failed to start:\n%s", endpoint, lastLines(out, 20))
+		}
 		if time.Since(start) > timeout {
-			t.Fatal("endpoint", endpoint, "did not open within", timeout)
+			t.Fatalf("endpoint %s did not open within %s", endpoint, timeout)
 		}
 		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// waitForPort waits for the node to report the address it listens on and returns
+// the port. Tests pass --http-port 0 / --ws-port 0 so the kernel picks a free
+// port: guessing one can land on a port another package under test is already
+// using (Linux hands out ephemeral ports from 32768-60999, and the race shards
+// run four packages at once), and the node then dies with "bind: address
+// already in use".
+//
+// The marker is the log field carrying the address: "endpoint=" for the HTTP
+// server and "url=ws://" for the websocket one.
+func waitForPort(t *testing.T, node *testXDC, marker string, timeout time.Duration) string {
+	start := time.Now()
+	for {
+		out := node.StderrText()
+		if port := scanPort(out, marker); port != "" {
+			return port
+		}
+		if strings.Contains(out, "Fatal: ") {
+			t.Fatalf("the node never reported a listening address, it failed to start:\n%s", lastLines(out, 20))
+		}
+		if time.Since(start) > timeout {
+			t.Fatalf("the node did not report a listening address matching %q within %s", marker, timeout)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// scanPort returns the port from the address that follows marker, e.g. from
+// "endpoint=127.0.0.1:41234" or "url=ws://[::1]:41234/ws". A marker whose
+// address has not been fully written yet is skipped, so the caller can poll.
+// The auth RPC server logs the same "endpoint=" field with auth=true; those
+// lines are skipped because they do not serve the APIs these tests use.
+func scanPort(log, marker string) string {
+	for _, chunk := range strings.Split(log, marker)[1:] {
+		// Both the unauthenticated HTTP server and the auth RPC server log
+		// "HTTP server started ... endpoint=<addr>"; drop the latter.
+		line := chunk
+		if end := strings.IndexByte(line, '\n'); end >= 0 {
+			line = line[:end]
+		}
+		if strings.Contains(line, "auth=true") {
+			continue
+		}
+		// The address is complete only once it is followed by whitespace. A
+		// chunk that runs to the end of the buffer may be a partial write, and
+		// taking a truncated port would point the test at the wrong endpoint.
+		i := strings.IndexAny(chunk, " \t\n")
+		if i < 0 {
+			continue
+		}
+		addr := chunk[:i]
+		j := strings.LastIndexByte(addr, ':')
+		if j < 0 {
+			continue
+		}
+		// The websocket URL carries the configured path prefix after the port,
+		// e.g. "url=ws://127.0.0.1:41234/ws": drop it, or Atoi sees "41234/ws".
+		digits := addr[j+1:]
+		if k := strings.IndexByte(digits, '/'); k >= 0 {
+			digits = digits[:k]
+		}
+		if port, err := strconv.Atoi(digits); err == nil && port > 0 && port < 65536 {
+			return strconv.Itoa(port)
+		}
+	}
+	return ""
+}
+
+// lastLines returns at most n trailing lines of s, keeping failure messages
+// readable when the node logged a full startup banner before dying.
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func TestScanPort(t *testing.T) {
+	tests := []struct {
+		name   string
+		log    string
+		marker string
+		want   string
+	}{
+		{name: "http endpoint", log: "INFO [11-01|18:15:21] HTTP server started endpoint=127.0.0.1:41234 auth=false", marker: "endpoint=", want: "41234"},
+		{name: "ipv6 wildcard listen address", log: "HTTP server started endpoint=[::]:41234\n", marker: "endpoint=", want: "41234"},
+		{name: "ws url", log: "WebSocket enabled url=ws://127.0.0.1:41497 path=/", marker: "url=ws://", want: "41497"},
+		{name: "ws url with path prefix", log: "WebSocket enabled url=ws://[::1]:41497/ws\n", marker: "url=ws://", want: "41497"},
+		{name: "partially written address is skipped", log: "HTTP server started endpoint=[::]:41234", marker: "endpoint=", want: ""},
+		{name: "partially written port is skipped", log: "HTTP server started endpoint=127.0.0.1:4123", marker: "endpoint=", want: ""},
+		{name: "port zero is not an address", log: "endpoint=127.0.0.1:0 auth=false", marker: "endpoint=", want: ""},
+		{name: "out of range port", log: "endpoint=127.0.0.1:70000 ", marker: "endpoint=", want: ""},
+		{name: "incomplete first marker falls through to the next", log: "endpoint=[::]:4123endpoint=[::]:41234 auth=false", marker: "endpoint=", want: "41234"},
+		{name: "first complete marker wins", log: "endpoint=[::]:41234 auth=false\nendpoint=[::]:41235 auth=false", marker: "endpoint=", want: "41234"},
+		{name: "authenticated server line is skipped", log: "HTTP server started endpoint=127.0.0.1:8551 auth=true prefix= cors= vhosts=localhost\nHTTP server started endpoint=127.0.0.1:41234 auth=false prefix= cors= vhosts=*", marker: "endpoint=", want: "41234"},
+		{name: "marker absent", log: "IPC endpoint opened url=/tmp/XDC.ipc", marker: "endpoint=", want: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := scanPort(test.log, test.marker); got != test.want {
+				t.Errorf("scanPort(%q, %q) = %q, want %q", test.log, test.marker, got, test.want)
+			}
+		})
+	}
+}
+
+func TestLastLines(t *testing.T) {
+	if got, want := lastLines("a\nb\nc\nd\n", 2), "c\nd"; got != want {
+		t.Errorf("lastLines kept %q, want %q", got, want)
+	}
+	if got, want := lastLines("only\n", 20), "only"; got != want {
+		t.Errorf("lastLines kept %q, want %q", got, want)
 	}
 }
