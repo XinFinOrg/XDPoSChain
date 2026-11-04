@@ -541,6 +541,12 @@ func (x *XDPoS) GetAuthorisedSignersFromSnapshot(chain consensus.ChainReader, he
 	}
 }
 
+// CurrentRound returns the round the v2 engine is currently in. XDPoS v1 has no
+// rounds, so the value is only meaningful on a v2 chain.
+func (x *XDPoS) CurrentRound() types.Round {
+	return x.EngineV2.CurrentRound()
+}
+
 func (x *XDPoS) FindParentBlockToAssign(chain consensus.ChainReader, currentBlock *types.Header) *types.Block {
 	var parent *types.Block = nil
 	if x.config.BlockConsensusVersion(currentBlock.Number) == params.ConsensusEngineVersion2 {

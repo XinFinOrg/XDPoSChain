@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
@@ -659,6 +660,103 @@ func mustSignLegacyTx(t *testing.T, key *ecdsa.PrivateKey, signer types.Signer, 
 		t.Fatalf("failed to sign legacy tx: %v", err)
 	}
 	return signed
+}
+
+// TestWorkerCheckPreCommitReproposesAfterRoundAdvances covers the timeout recovery
+// path: a round that collects no quorum cert leaves the quorum block as the parent,
+// so the worker has to build another block on it once the engine moves to a later
+// round. The parent memory must still hold the line within a single round.
+func TestWorkerCheckPreCommitReproposesAfterRoundAdvances(t *testing.T) {
+	config := params.TestXDPoSMockChainConfig
+	extraData := make([]byte, 0, utils.ExtraVanity+common.AddressLength+utils.ExtraSeal)
+	extraData = append(extraData, make([]byte, utils.ExtraVanity)...)
+	extraData = append(extraData, common.HexToAddress("0x0000000000000000000000000000000000000001").Bytes()...)
+	extraData = append(extraData, make([]byte, utils.ExtraSeal)...)
+	genesis := &core.Genesis{
+		Config:     config,
+		GasLimit:   params.XDCGenesisGasLimit,
+		Difficulty: big.NewInt(1),
+		Alloc:      types.GenesisAlloc{},
+		ExtraData:  extraData,
+	}
+	db := rawdb.NewMemoryDatabase()
+	if _, err := genesis.Commit(db); err != nil {
+		t.Fatalf("failed to commit genesis: %v", err)
+	}
+	engine := XDPoS.NewFaker(db, nil)
+	if engine == nil {
+		t.Fatal("failed to create the XDPoS faker engine")
+	}
+	chain, err := core.NewBlockChain(db, nil, genesis, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	defer chain.Stop()
+
+	parent := chain.GetBlockByNumber(0)
+	if parent == nil {
+		t.Fatal("expected genesis block")
+	}
+
+	const builtRound = types.Round(5)
+	engine.EngineV2.SetNewRoundFaker(chain, builtRound, false)
+	worker := &worker{
+		chainConfig:           config,
+		engine:                engine,
+		chain:                 chain,
+		announceTxs:           true,
+		lastParentBlockCommit: parent.Hash().Hex(),
+		lastParentBlockRound:  builtRound,
+	}
+
+	if _, shouldReturn := worker.checkPreCommitWithLock(); !shouldReturn {
+		t.Fatal("expected the worker to skip a parent it already committed for in the current round")
+	}
+
+	engine.EngineV2.SetNewRoundFaker(chain, builtRound+1, false)
+	gotParent, shouldReturn := worker.checkPreCommitWithLock()
+	if shouldReturn {
+		t.Fatal("expected the worker to build again on the same parent once the round advanced")
+	}
+	if gotParent.Hash() != parent.Hash() {
+		t.Fatalf("expected parent %s, got %s", parent.Hash(), gotParent.Hash())
+	}
+
+	worker.lastParentBlockCommit = common.HexToHash("0xdead").Hex()
+	if _, shouldReturn := worker.checkPreCommitWithLock(); shouldReturn {
+		t.Fatal("expected the worker to build on a parent it has not committed for")
+	}
+}
+
+// TestCommittedRoundFromHeader verifies the round recorded for a committed work
+// comes from the header the block carries, and that headers without a v2 extra
+// field (XDPoS v1 or non-XDPoS) report round 0.
+func TestCommittedRoundFromHeader(t *testing.T) {
+	v2Extra, err := (&types.ExtraFields_v2{
+		Round: 42,
+		QuorumCert: &types.QuorumCert{
+			ProposedBlockInfo: &types.BlockInfo{Hash: common.HexToHash("0xbeef"), Round: 41, Number: big.NewInt(7)},
+			Signatures:        []types.Signature{},
+			GapNumber:         0,
+		},
+	}).EncodeToBytes()
+	if err != nil {
+		t.Fatalf("failed to encode v2 extra: %v", err)
+	}
+	if round := committedRound(&types.Header{Extra: v2Extra}); round != 42 {
+		t.Fatalf("expected round 42 from a v2 header, got %d", round)
+	}
+
+	v1Extra := make([]byte, 0, utils.ExtraVanity+common.AddressLength+utils.ExtraSeal)
+	v1Extra = append(v1Extra, make([]byte, utils.ExtraVanity)...)
+	v1Extra = append(v1Extra, common.Address{}.Bytes()...)
+	v1Extra = append(v1Extra, make([]byte, utils.ExtraSeal)...)
+	if round := committedRound(&types.Header{Extra: v1Extra}); round != 0 {
+		t.Fatalf("expected round 0 from a v1 header, got %d", round)
+	}
+	if round := committedRound(&types.Header{}); round != 0 {
+		t.Fatalf("expected round 0 from a header without extra data, got %d", round)
+	}
 }
 
 func mustSignDynamicBoundaryTx(t *testing.T, key *ecdsa.PrivateKey, signer types.Signer, chainID *big.Int, nonce uint64, baseFee *big.Int, to common.Address) *types.Transaction {
