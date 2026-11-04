@@ -173,10 +173,13 @@ func testSideImport(t *testing.T, numCanonBlocksInSidechain, blocksBetweenCommon
 		t.Errorf("block %d pruned", firstNonPrunedBlock.NumberU64())
 	}
 
-	// Generate the fork chain, make it longer than the canonical one
+	// Generate the fork chain, make it longer than the canonical one. One block
+	// past the canonical head is all fork choice needs: every block above it
+	// carries no assertion, and at twice the state window the generator spent
+	// another window of work in the void.
 	parentIndex := lastPrunedIndex + blocksBetweenCommonAncestorAndPruneblock
 	parent := blocks[parentIndex]
-	fork, _ := GenerateChain(params.TestChainConfig, parent, engine, genDb, 2*TriesInMemory, func(i int, b *BlockGen) {
+	fork, _ := GenerateChain(params.TestChainConfig, parent, engine, genDb, len(blocks)-parentIndex, func(i int, b *BlockGen) {
 		b.SetCoinbase(common.Address{2})
 	})
 	// Prepend the canonical blocks the sidechain shares with the canonical chain
