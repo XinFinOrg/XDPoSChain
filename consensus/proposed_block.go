@@ -25,6 +25,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/metrics"
+	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
 // unjudgeableProposedBlock counts SkipUnjudgeable; consensus/
@@ -66,9 +67,10 @@ const (
 )
 
 // ShouldHandleProposedBlock reports whether a header may reach the consensus
-// handler: it must be the canonical block at its height, with its body stored.
-// The reads are not atomic, so the engine re-checks before processQC and before
-// sendVote; a caller with a weaker storage guarantee must add its own gate.
+// handler: it must be the canonical block at its height, or a newer proposal for
+// that block's parent, with its body stored. The reads are not atomic, so the
+// engine re-checks before processQC and before sendVote; a caller with a weaker
+// storage guarantee must add its own gate.
 func ShouldHandleProposedBlock(chain CanonicalChain, header *types.Header) (bool, SkipReason, common.Hash) {
 	if header == nil || header.Number == nil {
 		return false, SkipNilHeader, common.Hash{}
@@ -82,13 +84,53 @@ func ShouldHandleProposedBlock(chain CanonicalChain, header *types.Header) (bool
 	if canonical == nil {
 		return false, SkipNoCanonicalHeader, common.Hash{}
 	}
-	if canonical.Hash() != header.Hash() {
+	if canonical.Hash() != header.Hash() && !isNewerProposalForSameParent(header, canonical) {
 		return false, SkipNonCanonical, canonical.Hash()
 	}
 	if !storer.HasBlock(header.Hash(), header.Number.Uint64()) {
 		return false, SkipBodyNotStored, canonical.Hash()
 	}
 	return true, "", canonical.Hash()
+}
+
+// isNewerProposalForSameParent reports whether header is a later round's proposal
+// for the parent of the canonical block at its height.
+//
+// A height keeps the first proposal of a round as its canonical block until a QC
+// commits it, so a timeout round re-proposes the same parent and produces a
+// sibling. Only one of them can be canonical — a same-height block never wins fork
+// choice, since both carry the same total difficulty — and rejecting the sibling
+// as non-canonical would leave the height without a QC for good: the canonical
+// one's round is already over, so no vote can be collected for it any more.
+func isNewerProposalForSameParent(header, canonical *types.Header) bool {
+	if header.ParentHash != canonical.ParentHash {
+		return false
+	}
+	proposalRound, ok := v2Round(header)
+	if !ok {
+		return false
+	}
+	canonicalRound, ok := v2Round(canonical)
+	if !ok {
+		return false
+	}
+	return proposalRound > canonicalRound
+}
+
+// v2Round decodes the round of a v2 header. A header that is not v2, or whose
+// extra does not decode, reports false and keeps the strict judgment: a proposal
+// this node cannot read the round of is not a re-proposal.
+func v2Round(header *types.Header) (types.Round, bool) {
+	// Version byte 2 marks the v2 extra; v1 headers and the v1 switch block carry
+	// something else.
+	if len(header.Extra) == 0 || header.Extra[0] != 2 {
+		return 0, false
+	}
+	var extra types.ExtraFields_v2
+	if err := rlp.DecodeBytes(header.Extra[1:], &extra); err != nil {
+		return 0, false
+	}
+	return extra.Round, true
 }
 
 // skipGrades is the single registration table for every SkipReason; an

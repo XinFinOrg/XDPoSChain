@@ -467,10 +467,12 @@ func TestProposedBlockMessageHandlerNotGenerateVoteIfSignerNotInMNlist(t *testin
 
 // TestProposedBlockHandlerSkipsNonCanonicalBlock covers the re-check in front of
 // processQC: a stored side-chain block passes processQC's own existence check,
-// but is not canonical at its height.
+// but is not canonical at its height. Two forked blocks, so the fork's own parent
+// is a fork too - the branch a reorg left behind. A same-parent sibling is a
+// legal re-proposal instead, see TestProposedBlockHandlerVotesForNewerSibling.
 func TestProposedBlockHandlerSkipsNonCanonicalBlock(t *testing.T) {
 	var numOfForks = new(int)
-	*numOfForks = 1
+	*numOfForks = 2
 	blockchain, _, currentBlock, _, _, forkedBlock := PrepareXDCTestBlockChainForV2Engine(t, 906, params.TestXDPoSMockChainConfig, &ForkedBlockOptions{numOfForkedBlocks: numOfForks})
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -505,6 +507,46 @@ func TestProposedBlockHandlerSkipsNonCanonicalBlock(t *testing.T) {
 
 	// Countdown timeouts and sync-infos are not votes.
 	expectNoVote(t, engineV2.BroadcastCh, time.Second)
+}
+
+// TestProposedBlockHandlerVotesForNewerSibling covers the re-proposal a timeout
+// round produces: the height keeps the first round's proposal as its canonical
+// block, and the next round proposes another block for the same parent. The
+// sibling can never become canonical through fork choice — a same-height block
+// never wins on equal total difficulty — so dropping its vote would leave the
+// height without a QC for good.
+func TestProposedBlockHandlerVotesForNewerSibling(t *testing.T) {
+	var numOfForks = new(int)
+	*numOfForks = 1
+	blockchain, _, currentBlock, _, _, forkedBlock := PrepareXDCTestBlockChainForV2Engine(t, 906, params.TestXDPoSMockChainConfig, &ForkedBlockOptions{numOfForkedBlocks: numOfForks})
+	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
+
+	// Precondition: one parent, two proposals, the sibling one round newer.
+	assert.Equal(t, currentBlock.ParentHash(), forkedBlock.ParentHash())
+	assert.NotEqual(t, currentBlock.Hash(), forkedBlock.Hash())
+	var canonicalExtra, forkExtra types.ExtraFields_v2
+	assert.Nil(t, utils.DecodeBytesExtraFields(currentBlock.Extra(), &canonicalExtra))
+	assert.Nil(t, utils.DecodeBytesExtraFields(forkedBlock.Extra(), &forkExtra))
+	assert.Greater(t, forkExtra.Round, canonicalExtra.Round)
+
+	// The engine sits in the re-proposal's round, the way a node that timed out
+	// into it does.
+	engineV2.SetNewRoundFaker(blockchain, forkExtra.Round, false)
+
+	skippedBefore := skippedProposedBlockCount(t)
+	err := engineV2.ProposedBlockHandler(blockchain, forkedBlock.Header())
+	assert.Nil(t, err)
+	assert.Equal(t, skippedBefore, skippedProposedBlockCount(t), "a newer sibling must not be counted as a skip")
+
+	voteMsg := expectVote(t, engineV2.BroadcastCh, 5*time.Second)
+	assert.Equal(t, forkedBlock.Hash(), voteMsg.ProposedBlockInfo.Hash)
+	assert.Equal(t, forkExtra.Round, voteMsg.ProposedBlockInfo.Round)
+
+	// processQC still ran, and the QC it carried is older than the round, so the
+	// round must not be pulled back.
+	round, _, highestQC, _, _, _ := engineV2.GetPropertiesFaker()
+	assert.Equal(t, forkExtra.Round, round)
+	assert.Equal(t, forkedBlock.ParentHash(), highestQC.ProposedBlockInfo.Hash)
 }
 
 // reorgingChainReader simulates a reorg landing inside the handler: x.lock does
@@ -697,7 +739,7 @@ func (b *lockedBuffer) Reset() {
 // drown the level reserved for anomalies.
 func TestProposedBlockHandlerGradesSkipLogLevelByReason(t *testing.T) {
 	var numOfForks = new(int)
-	*numOfForks = 1
+	*numOfForks = 2
 	blockchain, _, currentBlock, signer, signFn, forkedBlock := PrepareXDCTestBlockChainForV2Engine(t, 906, params.TestXDPoSMockChainConfig, &ForkedBlockOptions{numOfForkedBlocks: numOfForks})
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -718,7 +760,8 @@ func TestProposedBlockHandlerGradesSkipLogLevelByReason(t *testing.T) {
 		return ""
 	}
 
-	// A fork block is a genuine reorg-race skip: it must stay at Warn.
+	// A block on a fork whose parent is a fork too is a genuine reorg-race skip:
+	// it must stay at Warn.
 	err := engineV2.ProposedBlockHandler(blockchain, forkedBlock.Header())
 	assert.Nil(t, err)
 	assert.Equal(t, "WARN", levelOf("skip block before processQC"),
