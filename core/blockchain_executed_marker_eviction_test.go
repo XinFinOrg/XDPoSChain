@@ -31,6 +31,8 @@ import (
 // prunes: the marker of a block goes when the state it guards goes, and nothing inside the state
 // window is touched.
 func TestExecutedMarkerIsEvictedWithTheState(t *testing.T) {
+	t.Parallel()
+
 	chain, blocks, _, _ := newPrunedCanonicalChain(t)
 
 	// Outside the state window: the block is on disk and canonical, its state is gone, and the
@@ -83,6 +85,8 @@ func TestExecutedMarkerIsEvictedWithTheState(t *testing.T) {
 // TestExecutedMarkerIsEvictedWithTheState, and the heights that name the flushed root without being
 // it by TestExecutedMarkerSurvivesOnASharedRootHeight.
 func TestExecutedMarkerSurvivesOnTheFlushedHeight(t *testing.T) {
+	t.Parallel()
+
 	engine := ethash.NewFaker()
 	gspec := &Genesis{
 		Alloc:   types.GenesisAlloc{},
@@ -142,6 +146,8 @@ func TestExecutedMarkerSurvivesOnTheFlushedHeight(t *testing.T) {
 // dereferences state keeps every marker, because there the marker is the only thing separating a
 // block this node ran from one whose root merely resolves.
 func TestExecutedMarkerSurvivesOnAnArchiveNode(t *testing.T) {
+	t.Parallel()
+
 	engine := ethash.NewFaker()
 	gspec := &Genesis{
 		Alloc:   types.GenesisAlloc{},
@@ -188,6 +194,8 @@ func TestExecutedMarkerSurvivesOnAnArchiveNode(t *testing.T) {
 // the marker still decides, so deleting one would cost an execution rather than save a key.
 // The write path is what evicts, and the first test above is where that is pinned.
 func TestExecutedMarkerSurvivesTheShutdownDrain(t *testing.T) {
+	t.Parallel()
+
 	chain, blocks, _, _ := newPrunedCanonicalChain(t)
 
 	// The head is still queued after the import: the write path breaks on the first entry
@@ -272,6 +280,8 @@ func makeLongSharedStateChain(t *testing.T, count, emptyIdx int) (*Genesis, shar
 //
 // The single flush is forced through bc.gcproc, so the fixture names the pass.
 func TestExecutedMarkerSurvivesOnASharedRootHeight(t *testing.T) {
+	t.Parallel()
+
 	// The height the flush below writes is TriesInMemory+1, and the height above it is left without
 	// a transaction, so it names the state root of its parent - the root that flush puts on disk.
 	gspec, engine, blocks := makeLongSharedStateChain(t, 2*TriesInMemory+2, TriesInMemory+1)
@@ -338,6 +348,8 @@ func TestExecutedMarkerSurvivesOnASharedRootHeight(t *testing.T) {
 // and nothing has written the root to disk. Recorded under Consequences in
 // docs/adr/0001-bound-executed-marker-to-state-lifetime.md.
 func TestExecutedMarkerSurvivesOnAHeightAnotherEntryStillReferences(t *testing.T) {
+	t.Parallel()
+
 	// No pass here can flush: a flush needs a chosen above twice the window,
 	// while this chain reaches at most TriesInMemory+3.
 	// Neither height of the pair below is a height a flush reaches, so the probe has to answer

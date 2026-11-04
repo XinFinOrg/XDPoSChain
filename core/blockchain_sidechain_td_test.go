@@ -34,6 +34,8 @@ import (
 // The block that stopped the scan is not written to disk, the record being checked before the
 // accumulation and before the write, and the index handed back is that block's.
 func TestInsertSideChainReportsMissingParentTd(t *testing.T) {
+	t.Parallel()
+
 	chain, blocks, engine, genDb := newPrunedCanonicalChain(t)
 
 	// A fork reached from a canonical block whose record is dropped below, so the scan
