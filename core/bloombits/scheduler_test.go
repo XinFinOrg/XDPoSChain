@@ -26,13 +26,20 @@ import (
 	"time"
 )
 
+// schedulerRequests is how many sections each client asks for, and the count
+// every deduplication assertion is written against. Five thousand spent eight
+// seconds in this package to run the same four code paths; a thousand still
+// feeds the fetchers a work list long enough for the client and fetcher
+// concurrency to interleave.
+const schedulerRequests = 1000
+
 // Tests that the scheduler can deduplicate and forward retrieval requests to
 // underlying fetchers and serve responses back, irrelevant of the concurrency
 // of the requesting clients or serving data fetchers.
-func TestSchedulerSingleClientSingleFetcher(t *testing.T) { testScheduler(t, 1, 1, 5000) }
-func TestSchedulerSingleClientMultiFetcher(t *testing.T)  { testScheduler(t, 1, 10, 5000) }
-func TestSchedulerMultiClientSingleFetcher(t *testing.T)  { testScheduler(t, 10, 1, 5000) }
-func TestSchedulerMultiClientMultiFetcher(t *testing.T)   { testScheduler(t, 10, 10, 5000) }
+func TestSchedulerSingleClientSingleFetcher(t *testing.T) { testScheduler(t, 1, 1, schedulerRequests) }
+func TestSchedulerSingleClientMultiFetcher(t *testing.T)  { testScheduler(t, 1, 10, schedulerRequests) }
+func TestSchedulerMultiClientSingleFetcher(t *testing.T)  { testScheduler(t, 10, 1, schedulerRequests) }
+func TestSchedulerMultiClientMultiFetcher(t *testing.T)   { testScheduler(t, 10, 10, schedulerRequests) }
 
 func testScheduler(t *testing.T, clients int, fetchers int, requests int) {
 	f := newScheduler(0)
