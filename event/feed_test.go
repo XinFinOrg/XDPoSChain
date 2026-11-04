@@ -25,6 +25,14 @@ import (
 	"time"
 )
 
+// feedTestTimeout bounds each wait in TestFeed and TestFeedOf: delivery to the
+// subscribers, and the drain of their unsubscriptions. It guards against a hang,
+// not against a latency regression. Unsubscribing is quadratic in the subscriber
+// count (removal scans sendCases and shifts it under the send lock) and the drain
+// is serialised, so a loaded four-vCPU race shard takes seconds for a drain that
+// costs ~40ms when idle.
+const feedTestTimeout = 30 * time.Second
+
 func TestFeedPanics(t *testing.T) {
 	{
 		var f Feed
@@ -86,7 +94,7 @@ func TestFeed(t *testing.T) {
 
 		subchan := make(chan int)
 		sub := feed.Subscribe(subchan)
-		timeout := time.NewTimer(2 * time.Second)
+		timeout := time.NewTimer(feedTestTimeout)
 		defer timeout.Stop()
 		subscribed.Done()
 
