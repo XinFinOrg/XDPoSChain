@@ -166,7 +166,7 @@ type Downloader struct {
 	cancelCh   chan struct{}  // Channel to cancel mid-flight syncs
 	cancelLock sync.RWMutex   // Lock to protect the cancel channel and peer in delivers
 	cancelWg   sync.WaitGroup // Make sure all fetcher goroutines have exited.
-	cancelGate sync.Mutex     // Serialises cancelWg.Add against cancelWg.Wait
+	cancelGate sync.Mutex     // Serialises cancelWg.Add against cancelWg.Wait; never acquire it while holding cancelLock
 
 	quitCh   chan struct{} // Quit channel to signal termination
 	quitLock sync.Mutex    // Lock to prevent double closes
@@ -483,8 +483,9 @@ func (d *Downloader) synchronise(id string, hash common.Hash, td *big.Int, mode 
 		}
 	}
 	// Create cancel channel for aborting mid-flight and mark the master peer
+	cancelCh := make(chan struct{})
 	d.cancelLock.Lock()
-	d.cancelCh = make(chan struct{})
+	d.cancelCh = cancelCh
 	d.cancelPeer = id
 	d.cancelLock.Unlock()
 
@@ -498,7 +499,7 @@ func (d *Downloader) synchronise(id string, hash common.Hash, td *big.Int, mode 
 	if p == nil {
 		return errUnknownPeer
 	}
-	return d.syncWithPeer(p, hash, td)
+	return d.syncWithPeer(p, hash, td, cancelCh)
 }
 
 func (d *Downloader) getMode() SyncMode {
@@ -507,7 +508,7 @@ func (d *Downloader) getMode() SyncMode {
 
 // syncWithPeer starts a block synchronization based on the hash chain from the
 // specified peer and head hash.
-func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td *big.Int) (err error) {
+func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td *big.Int, cancelCh chan struct{}) (err error) {
 	d.mux.Post(StartEvent{})
 	defer func() {
 		// reset on error
@@ -586,19 +587,32 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td *big.I
 	} else if mode == FullSync {
 		fetchers = append(fetchers, func() error { return d.processFullSyncContent(height) })
 	}
-	return d.spawnSync(fetchers)
+	return d.spawnSync(fetchers, cancelCh)
 }
 
 // spawnSync runs d.process and all given fetcher functions to completion in
 // separate goroutines, returning the first error that appears.
-func (d *Downloader) spawnSync(fetchers []func() error) error {
+func (d *Downloader) spawnSync(fetchers []func() error, cancelCh chan struct{}) error {
 	errc := make(chan error, len(fetchers))
+
 	// Register under cancelGate so a concurrent Cancel either waits for these
-	// fetchers or starts before they were added: WaitGroup forbids Add from a
-	// zero counter racing Wait.
+	// fetchers or observes the sync as already cancelled: WaitGroup forbids Add
+	// from a zero counter racing Wait, and a sync cancelled before it could
+	// register must not start fetchers after Cancel returns.
 	d.cancelGate.Lock()
+	if syncCancelled(cancelCh) {
+		// The sync was cancelled after it installed its cancel channel but
+		// before any fetcher was registered. Nothing is in flight, so report
+		// the cancellation and leave the fetchers unstarted. Close the queue
+		// before releasing the gate so this sync stops touching it before a
+		// concurrent Cancel returns.
+		d.queue.Close()
+		d.cancelGate.Unlock()
+		return errCanceled
+	}
 	d.cancelWg.Add(len(fetchers))
 	d.cancelGate.Unlock()
+
 	for _, fn := range fetchers {
 		go func() { defer d.cancelWg.Done(); errc <- fn() }()
 	}
@@ -629,6 +643,8 @@ func (d *Downloader) spawnSync(fetchers []func() error) error {
 func (d *Downloader) cancel() {
 	// Close the current cancel channel
 	d.cancelLock.Lock()
+	defer d.cancelLock.Unlock()
+
 	if d.cancelCh != nil {
 		select {
 		case <-d.cancelCh:
@@ -637,18 +653,37 @@ func (d *Downloader) cancel() {
 			close(d.cancelCh)
 		}
 	}
-	d.cancelLock.Unlock()
 }
 
-// Cancel aborts all of the operations and waits for all download goroutines to
-// finish before returning.
+// syncCancelled reports whether the cancel channel of a starting sync was
+// closed before it could register its fetchers. The caller must hold
+// cancelGate: Cancel closes the channel before it takes the gate, so the spawn
+// either observes the close here or registers before Cancel waits.
+//
+// The channel is passed in instead of read from d.cancelCh, so the check cannot
+// observe a channel installed by another sync. spawnSync called directly by
+// tests passes nil and every registration proceeds.
+func syncCancelled(cancelCh chan struct{}) bool {
+	if cancelCh == nil {
+		return false
+	}
+	select {
+	case <-cancelCh:
+		return true
+	default:
+		return false
+	}
+}
+
+// Cancel aborts all of the operations and waits for the fetchers that the sync
+// it cancelled had registered. A sync that installed its cancel channel but has
+// not registered its fetchers yet never starts them: spawnSync observes the
+// closed channel and returns errCanceled, so Cancel does not have to wait for a
+// registration that may sit behind unrelated work. A sync that starts after
+// this call has returned is not cancelled by it.
 func (d *Downloader) Cancel() {
 	d.blockchain.InterruptInsert(true)
 	d.cancel()
-	// Hold cancelGate while waiting so a spawnSync that is registering its
-	// fetchers right now is either fully tracked by this wait, or registers
-	// after it returned. The latter is not covered: synchronise installs a
-	// fresh cancelCh, possibly after cancel() closed the one targeted here.
 	d.cancelGate.Lock()
 	d.cancelWg.Wait()
 	d.cancelGate.Unlock()
