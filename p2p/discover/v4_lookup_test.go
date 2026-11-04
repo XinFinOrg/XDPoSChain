@@ -149,10 +149,32 @@ func serveTestnet(test *udpTest, testnet *preminedTestnet) {
 				test.packetInFrom(nil, key, to, &v4wire.Pong{Expiration: futureExp, ReplyTok: hash})
 			case *v4wire.Findnode:
 				dist := enode.LogDist(n.ID(), testnet.target.id())
-				nodes := testnet.nodesAtDistance(dist - 1)
-				test.packetInFrom(nil, key, to, &v4wire.Neighbors{Expiration: futureExp, Nodes: nodes})
+				replyNeighbors(test, key, to, testnet.nodesAtDistance(dist-1))
 			}
 		})
+	}
+}
+
+// replyNeighbors answers a findnode request with the given neighbor set. The
+// reply matcher in findnode only completes once bucketSize entries have
+// arrived and waits for respTimeout otherwise, while no distance level of the
+// test net is that large. Repeat the set until it is: the extra entries are
+// nodes the caller has already seen, so the lookup drops them, but they fill
+// the matcher instead of letting it time out. Each packet keeps to
+// v4wire.MaxNeighbors, the same limit a real node applies.
+func replyNeighbors(test *udpTest, key *ecdsa.PrivateKey, to *net.UDPAddr, nodes []v4wire.Node) {
+	if len(nodes) == 0 {
+		test.packetInFrom(nil, key, to, &v4wire.Neighbors{Expiration: futureExp})
+		return
+	}
+	filled := make([]v4wire.Node, 0, bucketSize)
+	for len(filled) < bucketSize {
+		filled = append(filled, nodes[len(filled)%len(nodes)])
+	}
+	for len(filled) > 0 {
+		n := min(len(filled), v4wire.MaxNeighbors)
+		test.packetInFrom(nil, key, to, &v4wire.Neighbors{Expiration: futureExp, Nodes: filled[:n]})
+		filled = filled[n:]
 	}
 }
 
