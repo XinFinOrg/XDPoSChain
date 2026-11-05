@@ -134,6 +134,33 @@ The test suite can now be executed using the devp2p tool.
 
 Repeat the above process (re-initialising the node) in order to run the Eth Protocol test suite again.
 
+### XDC fixture chain
+
+The bundled fixture above is a hive-generated PoS chain that an XDC node cannot
+run. `testdata/xdc` carries an XDC-compatible equivalent (XDPoS v2 genesis, chain
+id 5152, 600 sealed blocks). Point the node and the suite at the same files:
+
+    XDC --datadir <datadir> init cmd/devp2p/internal/ethtest/testdata/xdc/genesis.json
+    XDC --datadir <datadir> import cmd/devp2p/internal/ethtest/testdata/xdc/chain.rlp
+    XDC --datadir <datadir> --networkid 5152 <start flags>
+
+    devp2p rlpx eth-test \
+        --chain cmd/devp2p/internal/ethtest/testdata/xdc \
+        --node enode://....
+
+The imported chain is frozen: a peerless node that does not mine never flips
+its `acceptTxs` gate, so inbound transactions and announcements are dropped
+before they are decoded or reach the pool. The transaction cases therefore
+exercise message framing and peer responsiveness only, not pool acceptance or
+relay; pool or inclusion checks need the gate enabled, for example by a mining
+peer. The fixture carries no receipts and no large-receipt transaction
+(`txinfo.json` holds a null marker), so the receipt cases pin hash handling
+only. `mkchain-xdc.sh` regenerates the whole set; the committed files are the
+source of truth because BFT seals cannot be replayed byte-for-byte.
+Verify a regenerated set with:
+
+    go test ./cmd/devp2p/internal/ethtest -run 'TestXDCFixture'
+
 [eth]: https://github.com/ethereum/devp2p/blob/master/caps/eth.md
 [dns-tutorial]: https://geth.ethereum.org/docs/developers/geth-developer/dns-discovery-setup
 [discv4]: https://github.com/ethereum/devp2p/tree/master/discv4.md

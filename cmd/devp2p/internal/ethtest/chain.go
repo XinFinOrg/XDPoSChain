@@ -135,11 +135,26 @@ func (c *Chain) IncNonce(addr common.Address, amt uint64) {
 	c.senders[addr].Nonce += amt
 }
 
-// Balance returns the account balance from head-state dump.
+// Balance returns the account balance from the head-state dump, falling back
+// to the genesis allocation for accounts the dump cannot resolve.
+//
+// The dump only carries the accounts whose preimages the datadir resolved, so
+// genesis-funded accounts that never transacted drop out of it entirely. Such
+// an account cannot have changed since genesis (any touch would have recorded
+// a preimage), so its head balance is still the genesis allocation. Destroyed
+// accounts also drop out of the dump; the fixture carries no self-destructs,
+// so the fallback does not distinguish them.
 func (c *Chain) Balance(addr common.Address) *big.Int {
 	bal := new(big.Int)
 	if acc, ok := c.state[addr]; ok {
-		bal, _ = bal.SetString(acc.Balance, 10)
+		if parsed, ok := new(big.Int).SetString(acc.Balance, 10); ok {
+			return parsed
+		}
+		// A malformed balance leaves the dump entry unusable; treat it like an
+		// account the dump cannot resolve and fall through to the genesis alloc.
+	}
+	if acc, ok := c.genesis.Alloc[addr]; ok && acc.Balance != nil {
+		bal.Set(acc.Balance)
 	}
 	return bal
 }
