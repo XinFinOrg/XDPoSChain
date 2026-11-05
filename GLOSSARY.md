@@ -88,9 +88,14 @@ _Avoid_: xdc capability
 _See_: [ADR-0004](docs/adr/0004-split-eth-wire-layer-into-protocols-eth.md)
 
 **xdc version**:
-A wire-protocol version of the eth capability — `xdc165`, `xdc164`, `xdc100` — numbered apart from geth's eth6x series on purpose.
+A wire-protocol version of the eth capability — `xdc166`, `xdc165`, `xdc164`, `xdc100` — numbered apart from geth's eth6x series on purpose.
 _Avoid_: eth version, protocol version
 _See_: [ADR-0004](docs/adr/0004-split-eth-wire-layer-into-protocols-eth.md)
+
+**request id**:
+The `uint64` a `xdc166` request carries and the responder echoes back on the reply. It is transported only: nothing pairs a response with its request by id, so one in-flight request per kind per peer remains the rule, as on `xdc165` and older.
+_Avoid_: correlation id, nonce, sequence number
+_See_: [eth/protocols/eth/protocol.go:214](eth/protocols/eth/protocol.go)
 
 **BFT message**:
 One of the three consensus messages the eth capability carries: vote, timeout, and sync info.

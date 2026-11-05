@@ -17,6 +17,7 @@
 package eth
 
 import (
+	"bytes"
 	"crypto/rand"
 	"math/big"
 	"sync"
@@ -205,6 +206,108 @@ func TestPeerSends(t *testing.T) {
 
 			if err := p2p.ExpectMsg(app, tt.code, tt.want); err != nil {
 				t.Fatalf("unexpected message: %v", err)
+			}
+			if err := <-sent; err != nil {
+				t.Fatalf("send failed: %v", err)
+			}
+		})
+	}
+}
+
+// TestPeerSendsRequests166 checks that every request the xdc/166 wire can send
+// carries a request id in front of the legacy payload.
+func TestPeerSendsRequests166(t *testing.T) {
+	var id enode.ID
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatalf("failed to generate random peer id: %v", err)
+	}
+	hash := common.Hash{0x01}
+	tests := []struct {
+		name string
+		send func(*Peer) error
+		code uint64
+		want interface{}
+	}{
+		{
+			name: "RequestOneHeader",
+			send: func(p *Peer) error { return p.RequestOneHeader(hash) },
+			code: GetBlockHeadersMsg,
+			want: &GetBlockHeadersPacket{Origin: HashOrNumber{Hash: hash}, Amount: 1},
+		},
+		{
+			name: "RequestHeadersByHash",
+			send: func(p *Peer) error { return p.RequestHeadersByHash(hash, 3, 1, true) },
+			code: GetBlockHeadersMsg,
+			want: &GetBlockHeadersPacket{Origin: HashOrNumber{Hash: hash}, Amount: 3, Skip: 1, Reverse: true},
+		},
+		{
+			name: "RequestHeadersByNumber",
+			send: func(p *Peer) error { return p.RequestHeadersByNumber(314, 3, 1, false) },
+			code: GetBlockHeadersMsg,
+			want: &GetBlockHeadersPacket{Origin: HashOrNumber{Number: 314}, Amount: 3, Skip: 1},
+		},
+		{
+			name: "RequestBodies",
+			send: func(p *Peer) error { return p.RequestBodies([]common.Hash{hash}) },
+			code: GetBlockBodiesMsg,
+			want: []common.Hash{hash},
+		},
+		{
+			name: "RequestNodeData",
+			send: func(p *Peer) error { return p.RequestNodeData([]common.Hash{hash}) },
+			code: GetNodeDataMsg,
+			want: []common.Hash{hash},
+		},
+		{
+			name: "RequestReceipts",
+			send: func(p *Peer) error { return p.RequestReceipts([]common.Hash{hash}) },
+			code: GetReceiptsMsg,
+			want: []common.Hash{hash},
+		},
+		{
+			name: "RequestTxs",
+			send: func(p *Peer) error { return p.RequestTxs([]common.Hash{hash}) },
+			code: GetPooledTransactionsMsg,
+			want: []common.Hash{hash},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app, net := p2p.MsgPipe()
+			defer app.Close()
+
+			peer := NewPeer(XDC166, p2p.NewPeer(id, "peer", nil), net, func(common.Hash) *types.Transaction { return nil })
+			defer peer.Close()
+
+			sent := make(chan error, 1)
+			go func() { sent <- tt.send(peer) }()
+
+			msg, err := app.ReadMsg()
+			if err != nil {
+				t.Fatalf("failed to read request: %v", err)
+			}
+			defer msg.Discard()
+
+			if msg.Code != tt.code {
+				t.Fatalf("request code mismatch: have %x, want %x", msg.Code, tt.code)
+			}
+			var fields []rlp.RawValue
+			if err := msg.Decode(&fields); err != nil {
+				t.Fatalf("failed to decode request: %v", err)
+			}
+			if len(fields) != 2 {
+				t.Fatalf("request has %d fields, want 2 (request id + payload)", len(fields))
+			}
+			var requestID uint64
+			if err := rlp.DecodeBytes(fields[0], &requestID); err != nil {
+				t.Fatalf("failed to decode request id: %v", err)
+			}
+			want, err := rlp.EncodeToBytes(tt.want)
+			if err != nil {
+				t.Fatalf("failed to encode want: %v", err)
+			}
+			if !bytes.Equal(fields[1], want) {
+				t.Errorf("payload mismatch: have %x, want %x", fields[1], want)
 			}
 			if err := <-sent; err != nil {
 				t.Fatalf("send failed: %v", err)
