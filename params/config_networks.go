@@ -207,7 +207,8 @@ var (
 		70000: {
 			SwitchRound:               70000,
 			MaxMasternodes:            108,
-			MaxProtectorNodes:         432,
+			// MaxProtectorNodes:         432,
+			MaxProtectorNodes:         324,
 			MaxObserverNodes:          99999,
 			CertThreshold:             0.667,
 			TimeoutSyncThreshold:      3,
