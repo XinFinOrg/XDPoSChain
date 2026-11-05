@@ -1532,6 +1532,146 @@ func testCancel(t *testing.T, protocol uint, mode SyncMode) {
 	}
 }
 
+// Tests that Cancel's wait on the fetcher WaitGroup does not run concurrently
+// with spawnSync's registration: an Add from a zero counter must not race Wait.
+// The Add/Wait violation itself is only reported under -race; the ran counter
+// below is a tripwire for the fetchers not running at all. spawnSync is called
+// directly here, so no cancel channel is installed and every registration
+// proceeds; TestCancelPreventsStartingSync covers the cancelled case.
+func TestCancelRacingSpawnSync(t *testing.T) {
+	tester := newTester()
+	defer tester.terminate()
+
+	d := tester.downloader
+	var ran int32
+	for i := 0; i < 200; i++ {
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			_ = d.spawnSync([]func() error{func() error {
+				atomic.AddInt32(&ran, 1)
+				return nil
+			}}, nil)
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			d.Cancel()
+		}()
+		close(start)
+		wg.Wait()
+	}
+	if got := atomic.LoadInt32(&ran); got != 200 {
+		t.Fatalf("fetchers ran %d times, want 200", got)
+	}
+}
+
+// Tests that a sync cancelled before it registered its fetchers never starts
+// them, and that Cancel does not wait for such a sync to reach spawnSync.
+func TestCancelPreventsStartingSync(t *testing.T) {
+	tester := newTester()
+	defer tester.terminate()
+
+	tester.newPeer("peer", xdc100, testChainBase.shorten(MaxHeaderFetch))
+
+	started, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	// Release the hook from the failure path too: t.Fatal runs the deferred
+	// terminate, whose Cancel would otherwise wait on a sync parked in the hook.
+	defer unblock()
+
+	tester.downloader.syncInitHook = func(uint64, uint64) {
+		close(started)
+		<-release
+	}
+	errc := make(chan error, 1)
+	go func() { errc <- tester.sync("peer", nil, FullSync) }()
+	<-started
+
+	cancelReturned := make(chan struct{})
+	go func() {
+		tester.downloader.Cancel()
+		close(cancelReturned)
+	}()
+	select {
+	case <-cancelReturned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Cancel blocked on a sync that has not registered its fetchers")
+	}
+	unblock()
+
+	if err := <-errc; !errors.Is(err, errCanceled) {
+		t.Fatalf("sync error = %v, want %v", err, errCanceled)
+	}
+	if imported := len(tester.ownHashes); imported != 1 {
+		t.Fatalf("headers imported = %d, want 1 (genesis only)", imported)
+	}
+}
+
+// Tests that Cancel does not wait on event delivery: a sync-status subscriber
+// that stops draining must not keep Cancel blocked behind a sync that has not
+// registered its fetchers yet.
+func TestCancelWithStalledSyncSubscriber(t *testing.T) {
+	tester := newTester()
+	defer tester.terminate()
+
+	tester.newPeer("peer", xdc100, testChainBase.shorten(MaxHeaderFetch))
+
+	// Subscribe without reading: the sync parks in the synchronous StartEvent
+	// delivery before it can reach spawnSync.
+	stalled := tester.downloader.mux.Subscribe(StartEvent{})
+	// Unsubscribing is idempotent and releases the blocked Post, so the deferred
+	// terminate in a timeout failure does not wait on it.
+	defer stalled.Unsubscribe()
+
+	errc := make(chan error, 1)
+	go func() { errc <- tester.sync("peer", nil, FullSync) }()
+
+	// Wait until the sync has installed its cancel channel. Cancel closes that
+	// channel and waits for the fetchers registered after it, so landing before
+	// the installation would cancel a stale channel and let the sync run to
+	// completion. The stalled subscriber parks the sync at StartEvent.Post, so
+	// once the channel exists Cancel also always precedes spawnSync.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		tester.downloader.cancelLock.RLock()
+		installed := tester.downloader.cancelCh != nil
+		tester.downloader.cancelLock.RUnlock()
+		if installed {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("sync did not install its cancel channel")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	cancelReturned := make(chan struct{})
+	go func() {
+		tester.downloader.Cancel()
+		close(cancelReturned)
+	}()
+	select {
+	case <-cancelReturned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Cancel blocked on a stalled sync-status subscriber")
+	}
+	select {
+	case err := <-errc:
+		t.Fatalf("sync finished before the subscriber was released: %v", err)
+	default:
+	}
+
+	stalled.Unsubscribe()
+	if err := <-errc; !errors.Is(err, errCanceled) {
+		t.Fatalf("sync error = %v, want %v", err, errCanceled)
+	}
+}
+
 // Tests that synchronisation from multiple peers works as intended (multi thread sanity test).
 func TestMultiSynchronisation100Full(t *testing.T)  { testMultiSynchronisation(t, xdc100, FullSync) }
 func TestMultiSynchronisation100Fast(t *testing.T)  { testMultiSynchronisation(t, xdc100, FastSync) }
