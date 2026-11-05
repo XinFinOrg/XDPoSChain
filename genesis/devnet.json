@@ -92,7 +92,7 @@
           },
           "70000": {
             "maxMasternodes": 108,
-            "maxProtectorNodes": 432,
+            "maxProtectorNodes": 324,
             "maxObserverNodes": 99999,
             "switchRound": 70000,
             "minePeriod": 2,
