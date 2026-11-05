@@ -24,6 +24,9 @@ repos:
         stages: [pre-commit]
       - id: check-added-large-files
         stages: [pre-commit]
+        # Fixture chains under ethtest/testdata are intentional binaries: the XDC
+        # chain.rlp is 519 KiB, above the hook's 500 KiB default.
+        exclude: ^cmd/devp2p/internal/ethtest/testdata/
   - repo: https://github.com/dnephin/pre-commit-golang
     rev: v0.5.1
     hooks:
