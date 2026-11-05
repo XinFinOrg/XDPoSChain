@@ -25,6 +25,7 @@ import (
 	"net"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +35,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/p2p/discover/v5wire"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enr"
+	"github.com/XinFinOrg/XDPoSChain/p2p/netutil"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
@@ -839,5 +841,44 @@ func (test *udpV5Test) close() {
 	}
 	if len(test.pipe.queue) != 0 {
 		test.t.Fatalf("%d unmatched UDP packets in queue", len(test.pipe.queue))
+	}
+}
+
+// This test checks that node records in discovery responses are rejected
+// when they fall outside the netrestrict list.
+func TestUDPv5_verifyResponseNodeNetRestrict(t *testing.T) {
+	restrict, err := netutil.ParseNetlist("10.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	udp := startLocalhostV5(t, Config{NetRestrict: restrict})
+	defer udp.Close()
+
+	call := &callV5{node: udp.Self()}
+	for _, tt := range []struct {
+		ip      net.IP
+		wantErr bool
+	}{
+		{net.IP{10, 1, 2, 3}, false},
+		{net.IP{192, 168, 1, 1}, true},
+	} {
+		var rec enr.Record
+		rec.Set(enr.IP(tt.ip))
+		rec.Set(enr.UDP(30303))
+		if err := enode.SignV4(&rec, newkey()); err != nil {
+			t.Fatal(err)
+		}
+		got, err := udp.verifyResponseNode(call, &rec, nil, make(map[enode.ID]struct{}))
+		if tt.wantErr {
+			if err == nil {
+				t.Errorf("IP %v: expected netrestrict error, got node %v", tt.ip, got.ID())
+			} else if !strings.Contains(err.Error(), "netrestrict") {
+				t.Errorf("IP %v: unexpected error: %v", tt.ip, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("IP %v: unexpected error: %v", tt.ip, err)
+		}
 	}
 }

@@ -77,7 +77,7 @@ var (
 	errAlreadyDialing   = errors.New("already dialing")
 	errAlreadyConnected = errors.New("already connected")
 	errRecentlyDialed   = errors.New("recently dialed")
-	errNotWhitelisted   = errors.New("not contained in netrestrict whitelist")
+	errNetRestrict      = errors.New("not contained in netrestrict list")
 	errNotAllowlisted   = errors.New("peer is not in allowlist")
 	errDenylisted       = errors.New("peer is in denylist")
 	errNoPort           = errors.New("node does not provide TCP port")
@@ -134,7 +134,7 @@ type dialConfig struct {
 	self           enode.ID              // our own ID
 	maxDialPeers   int                   // maximum number of dialed peers
 	maxActiveDials int                   // maximum number of active dials
-	netRestrict    *netutil.Netlist      // IP whitelist, disabled if nil
+	netRestrict    *netutil.Netlist      // IP netrestrict list, disabled if nil
 	allowPeers     map[enode.ID]struct{} // peer ID allowlist, disabled if empty
 	denyPeers      map[enode.ID]struct{} // peer ID denylist, disabled if empty
 	resolver       nodeResolver
@@ -407,7 +407,7 @@ func (d *dialScheduler) checkDial(n *enode.Node) error {
 		return errAlreadyConnected
 	}
 	if d.netRestrict != nil && !d.netRestrict.Contains(n.IP()) {
-		return errNotWhitelisted
+		return errNetRestrict
 	}
 	if err := checkPeerID(d.allowPeers, d.denyPeers, n.ID()); err != nil {
 		return err
