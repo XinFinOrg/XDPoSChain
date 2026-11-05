@@ -72,6 +72,7 @@ type accountCache struct {
 	throttle *time.Timer
 	notify   chan struct{}
 	fileC    fileCache
+	scanMu   sync.Mutex // serializes directory scans against key file removal
 }
 
 func newAccountCache(keydir string) (*accountCache, chan struct{}) {
@@ -127,6 +128,25 @@ func (ac *accountCache) delete(removed accounts.Account) {
 	} else {
 		ac.byAddr[removed.Address] = ba
 	}
+}
+
+// deleteFile removes the key file of the given account and drops it from the
+// cache. It cannot interleave with a scan, which could otherwise read the file
+// before it is removed and add the account back after it is dropped.
+//
+// A failed removal keeps the cache entry: the file may still exist (e.g. a
+// permission error), and dropping the entry would hide an existing key from
+// the wallet list while Delete reports the removal as failed. A later scan
+// drops the entry once the file is really gone.
+func (ac *accountCache) deleteFile(removed accounts.Account) error {
+	ac.scanMu.Lock()
+	defer ac.scanMu.Unlock()
+
+	if err := os.Remove(removed.URL.Path); err != nil {
+		return err
+	}
+	ac.delete(removed)
+	return nil
 }
 
 // deleteByFile removes an account referenced by the given path.
@@ -237,8 +257,15 @@ func (ac *accountCache) close() {
 }
 
 // scanAccounts checks if any changes have occurred on the filesystem, and
-// updates the account cache accordingly
+// updates the account cache accordingly.
+//
+// The lock covers the whole scan, directory listing included: it is the
+// read-then-add sequence below that must not interleave with a key removal,
+// and a delete is rare enough to wait for a scan to finish.
 func (ac *accountCache) scanAccounts() error {
+	ac.scanMu.Lock()
+	defer ac.scanMu.Unlock()
+
 	// Scan the entire folder metadata for file changes
 	creates, deletes, updates, err := ac.fileC.scan(ac.keydir)
 	if err != nil {
