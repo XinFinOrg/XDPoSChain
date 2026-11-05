@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -34,9 +35,11 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
+	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/eth/ethconfig"
 	"github.com/XinFinOrg/XDPoSChain/node"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/urfave/cli/v2"
 )
@@ -674,4 +677,56 @@ func TestMakeCacheConfigRejectsInvalidGCMode(t *testing.T) {
 
 	makeCacheConfig(newCacheConfigTestCLIContext(t, map[string]string{GCModeFlag.Name: "bogus"}))
 	t.Fatal("expected makeCacheConfig to terminate via fatal hook")
+}
+
+// TestRemoveDenylistedPeers checks that denylisted peers are dropped from the
+// bootstrap, v5 bootstrap and static node lists.
+func TestRemoveDenylistedPeers(t *testing.T) {
+	t.Parallel()
+
+	newNode := func() *enode.Node {
+		key, err := crypto.GenerateKey()
+		if err != nil {
+			t.Fatalf("can't generate node key: %v", err)
+		}
+		return enode.NewV4(&key.PublicKey, net.IP{127, 0, 0, 1}, 30303, 30303)
+	}
+	var (
+		boot1, boot2     = newNode(), newNode()
+		bootv51, bootv52 = newNode(), newNode()
+		static1, static2 = newNode(), newNode()
+	)
+	cfg := &p2p.Config{
+		BootstrapNodes:   []*enode.Node{boot1, boot2},
+		BootstrapNodesV5: []*enode.Node{bootv51, bootv52},
+		StaticNodes:      []*enode.Node{static1, static2},
+		DenyPeers: map[enode.ID]struct{}{
+			boot1.ID():   {},
+			bootv51.ID(): {},
+			static1.ID(): {},
+		},
+	}
+	removeDenylistedPeers(cfg)
+
+	if len(cfg.BootstrapNodes) != 1 || cfg.BootstrapNodes[0].ID() != boot2.ID() {
+		t.Fatalf("bootstrap nodes = %v, want only %v", cfg.BootstrapNodes, boot2.ID())
+	}
+	if len(cfg.BootstrapNodesV5) != 1 || cfg.BootstrapNodesV5[0].ID() != bootv52.ID() {
+		t.Fatalf("v5 bootstrap nodes = %v, want only %v", cfg.BootstrapNodesV5, bootv52.ID())
+	}
+	if len(cfg.StaticNodes) != 1 || cfg.StaticNodes[0].ID() != static2.ID() {
+		t.Fatalf("static nodes = %v, want only %v", cfg.StaticNodes, static2.ID())
+	}
+
+	// Without a denylist the configured nodes must be left untouched.
+	cfg = &p2p.Config{
+		BootstrapNodes:   []*enode.Node{boot1},
+		BootstrapNodesV5: []*enode.Node{bootv51},
+		StaticNodes:      []*enode.Node{static1},
+	}
+	removeDenylistedPeers(cfg)
+	if len(cfg.BootstrapNodes) != 1 || len(cfg.BootstrapNodesV5) != 1 || len(cfg.StaticNodes) != 1 {
+		t.Fatalf("nodes dropped without denylist: bootstrap=%v bootstrap-v5=%v static=%v",
+			cfg.BootstrapNodes, cfg.BootstrapNodesV5, cfg.StaticNodes)
+	}
 }

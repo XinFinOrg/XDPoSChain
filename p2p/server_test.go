@@ -419,10 +419,12 @@ func TestServerSetupConn(t *testing.T) {
 		srvpub            = &srvkey.PublicKey
 	)
 	tests := []struct {
-		dontstart bool
-		tt        *setupTransport
-		flags     connFlag
-		dialDest  *enode.Node
+		dontstart  bool
+		tt         *setupTransport
+		flags      connFlag
+		dialDest   *enode.Node
+		allowPeers map[enode.ID]struct{}
+		denyPeers  map[enode.ID]struct{}
 
 		wantCloseErr error
 		wantCalls    string
@@ -465,6 +467,20 @@ func TestServerSetupConn(t *testing.T) {
 			wantCalls:    "doEncHandshake,doProtoHandshake,close,",
 			wantCloseErr: DiscUselessPeer,
 		},
+		{
+			tt:           &setupTransport{pubkey: clientpub, phs: protoHandshake{ID: crypto.FromECDSAPub(clientpub)[1:]}},
+			flags:        inboundConn,
+			denyPeers:    map[enode.ID]struct{}{enode.PubkeyToIDV4(clientpub): {}},
+			wantCalls:    "doEncHandshake,close,",
+			wantCloseErr: DiscDenylistedPeer,
+		},
+		{
+			tt:           &setupTransport{pubkey: clientpub, phs: protoHandshake{ID: crypto.FromECDSAPub(clientpub)[1:]}},
+			flags:        inboundConn,
+			allowPeers:   map[enode.ID]struct{}{randomID(): {}},
+			wantCalls:    "doEncHandshake,close,",
+			wantCloseErr: DiscNonAllowlistedPeer,
+		},
 	}
 
 	for i, test := range tests {
@@ -476,6 +492,8 @@ func TestServerSetupConn(t *testing.T) {
 				NoDiscovery: true,
 				Protocols:   []Protocol{discard},
 				Logger:      testlog.Logger(t, log.LvlTrace),
+				AllowPeers:  test.allowPeers,
+				DenyPeers:   test.denyPeers,
 			}
 			srv := &Server{
 				Config:       cfg,
@@ -678,5 +696,64 @@ func syncAddPeer(srv *Server, node *enode.Node) bool {
 		case <-timeout:
 			return false
 		}
+	}
+}
+
+// This test checks that CheckPeerID applies the configured lists and treats
+// empty lists as "accept everything".
+func TestCheckPeerID(t *testing.T) {
+	t.Parallel()
+
+	var (
+		id    = uintID(0x01)
+		other = uintID(0x02)
+		allow = map[enode.ID]struct{}{id: {}}
+		deny  = map[enode.ID]struct{}{id: {}}
+	)
+	tests := []struct {
+		name string
+		cfg  Config
+		id   enode.ID
+		want error
+	}{
+		{"no lists", Config{}, id, nil},
+		{"allowlisted", Config{AllowPeers: allow}, id, nil},
+		{"not allowlisted", Config{AllowPeers: allow}, other, errNotAllowlisted},
+		{"denylisted", Config{DenyPeers: deny}, id, errDenylisted},
+		{"not denylisted", Config{DenyPeers: deny}, other, nil},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.cfg.CheckPeerID(test.id); err != test.want {
+				t.Fatalf("CheckPeerID = %v, want %v", err, test.want)
+			}
+		})
+	}
+}
+
+// This test checks that the configured peer ID lists reach the dial scheduler.
+func TestServerDialSchedulerPeerLists(t *testing.T) {
+	t.Parallel()
+
+	allow := map[enode.ID]struct{}{uintID(0x01): {}}
+	deny := map[enode.ID]struct{}{uintID(0x02): {}}
+	srv := &Server{Config: Config{
+		Name:        "test",
+		MaxPeers:    10,
+		ListenAddr:  "127.0.0.1:0",
+		NoDiscovery: true,
+		PrivateKey:  newkey(),
+		Logger:      testlog.Logger(t, log.LvlTrace),
+		AllowPeers:  allow,
+		DenyPeers:   deny,
+	}}
+	if err := srv.Start(); err != nil {
+		t.Fatalf("couldn't start server: %v", err)
+	}
+	defer srv.Stop()
+
+	if !reflect.DeepEqual(srv.dialsched.allowPeers, allow) || !reflect.DeepEqual(srv.dialsched.denyPeers, deny) {
+		t.Fatalf("dial scheduler lists = %v/%v, want %v/%v",
+			srv.dialsched.allowPeers, srv.dialsched.denyPeers, allow, deny)
 	}
 }

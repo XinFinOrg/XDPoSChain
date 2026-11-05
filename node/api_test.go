@@ -26,6 +26,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 	"github.com/stretchr/testify/assert"
 )
@@ -349,6 +351,71 @@ func TestStartHTTPLocalAPIsRemainHidden(t *testing.T) {
 	if !ok || rpcErr.ErrorCode() != -32601 {
 		t.Fatalf("expected method-not-found for hidden local-only API, got %v", err)
 	}
+}
+
+// This test checks that admin_addPeer and admin_addTrustedPeer refuse peers
+// rejected by the configured allowlist or denylist.
+func TestAdminPeerLists(t *testing.T) {
+	var (
+		allowed  = testEnode(t)
+		denied   = testEnode(t) // present in both lists: the denylist must win
+		unlisted = testEnode(t)
+	)
+	config := Config{NoUSB: true}
+	config.P2P.NoDiscovery = true
+	config.P2P.AllowPeers = map[enode.ID]struct{}{allowed.ID(): {}, denied.ID(): {}}
+	config.P2P.DenyPeers = map[enode.ID]struct{}{denied.ID(): {}}
+
+	stack, err := New(&config)
+	if err != nil {
+		t.Fatal("can't create node:", err)
+	}
+	defer stack.Close()
+	if err := stack.Start(); err != nil {
+		t.Fatal("can't start node:", err)
+	}
+	api := &adminAPI{stack}
+
+	tests := []struct {
+		name    string
+		node    *enode.Node
+		wantOK  bool
+		wantErr string
+	}{
+		{"allowed peer", allowed, true, ""},
+		{"denylisted peer", denied, false, "peer is in denylist"},
+		{"peer outside allowlist", unlisted, false, "peer is not in allowlist"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for name, add := range map[string]func(string) (bool, error){
+				"addPeer":        api.AddPeer,
+				"addTrustedPeer": api.AddTrustedPeer,
+			} {
+				ok, err := add(test.node.URLv4())
+				if ok != test.wantOK {
+					t.Errorf("%s: ok = %v, want %v", name, ok, test.wantOK)
+				}
+				if test.wantErr == "" {
+					if err != nil {
+						t.Errorf("%s: unexpected error: %v", name, err)
+					}
+				} else if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Errorf("%s: error = %v, want containing %q", name, err, test.wantErr)
+				}
+			}
+		})
+	}
+}
+
+// testEnode returns a random V4 node reachable at 127.0.0.1:30303.
+func testEnode(t *testing.T) *enode.Node {
+	t.Helper()
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal("can't generate key:", err)
+	}
+	return enode.NewV4(&key.PublicKey, net.IP{127, 0, 0, 1}, 30303, 30303)
 }
 
 // checkReachable checks if the TCP endpoint in rawurl is open.

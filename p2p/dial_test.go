@@ -152,6 +152,142 @@ func TestDialSchedNetRestrict(t *testing.T) {
 	})
 }
 
+// This test checks that candidates contained in the peer denylist are not dialed.
+func TestDialSchedDenylist(t *testing.T) {
+	t.Parallel()
+
+	nodes := []*enode.Node{
+		newNode(uintID(0x01), "127.0.0.1:30303"),
+		newNode(uintID(0x02), "127.0.0.2:30303"),
+		newNode(uintID(0x03), "127.0.0.3:30303"),
+		newNode(uintID(0x04), "127.0.0.4:30303"),
+	}
+	config := dialConfig{
+		denyPeers: map[enode.ID]struct{}{
+			uintID(0x01): {},
+			uintID(0x03): {},
+		},
+		maxActiveDials: 10,
+		maxDialPeers:   10,
+	}
+	runDialTest(t, config, []dialTestRound{
+		{
+			discovered:   nodes,
+			wantNewDials: []*enode.Node{nodes[1], nodes[3]},
+		},
+		{
+			succeeded: []enode.ID{
+				nodes[1].ID(),
+				nodes[3].ID(),
+			},
+		},
+	})
+}
+
+// This test checks that only candidates contained in the peer allowlist are dialed.
+func TestDialSchedAllowlist(t *testing.T) {
+	t.Parallel()
+
+	nodes := []*enode.Node{
+		newNode(uintID(0x01), "127.0.0.1:30303"),
+		newNode(uintID(0x02), "127.0.0.2:30303"),
+		newNode(uintID(0x03), "127.0.0.3:30303"),
+		newNode(uintID(0x04), "127.0.0.4:30303"),
+	}
+	config := dialConfig{
+		allowPeers: map[enode.ID]struct{}{
+			uintID(0x02): {},
+			uintID(0x04): {},
+		},
+		maxActiveDials: 10,
+		maxDialPeers:   10,
+	}
+	runDialTest(t, config, []dialTestRound{
+		{
+			discovered:   nodes,
+			wantNewDials: []*enode.Node{nodes[1], nodes[3]},
+		},
+		{
+			succeeded: []enode.ID{
+				nodes[1].ID(),
+				nodes[3].ID(),
+			},
+		},
+	})
+}
+
+// This test checks that static nodes contained in the peer denylist are not dialed.
+func TestDialSchedDenylistStatic(t *testing.T) {
+	t.Parallel()
+
+	nodes := []*enode.Node{
+		newNode(uintID(0x01), "127.0.0.1:30303"),
+		newNode(uintID(0x02), "127.0.0.2:30303"),
+		newNode(uintID(0x03), "127.0.0.3:30303"),
+		newNode(uintID(0x04), "127.0.0.4:30303"),
+	}
+	config := dialConfig{
+		denyPeers: map[enode.ID]struct{}{
+			uintID(0x01): {},
+			uintID(0x03): {},
+		},
+		maxActiveDials: 10,
+		maxDialPeers:   10,
+	}
+	runDialTest(t, config, []dialTestRound{
+		{
+			update: func(d *dialScheduler) {
+				for _, node := range nodes {
+					d.addStatic(node)
+				}
+			},
+			wantNewDials: []*enode.Node{nodes[1], nodes[3]},
+		},
+		{
+			succeeded: []enode.ID{
+				nodes[1].ID(),
+				nodes[3].ID(),
+			},
+		},
+	})
+}
+
+// This test checks that only static nodes contained in the peer allowlist are dialed.
+func TestDialSchedAllowlistStatic(t *testing.T) {
+	t.Parallel()
+
+	nodes := []*enode.Node{
+		newNode(uintID(0x01), "127.0.0.1:30303"),
+		newNode(uintID(0x02), "127.0.0.2:30303"),
+		newNode(uintID(0x03), "127.0.0.3:30303"),
+		newNode(uintID(0x04), "127.0.0.4:30303"),
+	}
+	config := dialConfig{
+		allowPeers: map[enode.ID]struct{}{
+			uintID(0x02): {},
+			uintID(0x04): {},
+		},
+		maxActiveDials: 10,
+		maxDialPeers:   10,
+	}
+	runDialTest(t, config, []dialTestRound{
+		{
+			update: func(d *dialScheduler) {
+				for _, node := range nodes {
+					d.addStatic(node)
+				}
+			},
+			wantNewDials: []*enode.Node{nodes[1], nodes[3]},
+		},
+		{
+			succeeded: []enode.ID{
+				nodes[1].ID(),
+				nodes[3].ID(),
+			},
+		},
+	})
+}
+
 // This test checks that static dials work and obey the limits.
 func TestDialSchedStaticDial(t *testing.T) {
 	t.Parallel()
