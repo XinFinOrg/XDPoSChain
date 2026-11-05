@@ -204,11 +204,15 @@ func checkIPLimitInvariant(t *testing.T, tab *Table) {
 func TestTable_findnodeByID(t *testing.T) {
 	t.Parallel()
 
+	// The table only reads the database, and the timers that write to it
+	// cannot fire within one iteration, so a single one can be shared.
+	db, _ := enode.OpenDB("")
+	defer db.Close()
+
 	test := func(test *closeTest) bool {
 		// for any node table, Target and N
 		transport := newPingRecorder()
-		tab, db := newTestTable(transport)
-		defer db.Close()
+		tab := newTestTableWithDB(transport, db)
 		defer tab.close()
 		fillTable(tab, test.All)
 
