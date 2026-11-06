@@ -18,13 +18,17 @@ package ethtest
 
 import (
 	"crypto/ecdsa"
+	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/common/bitutil"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
@@ -36,6 +40,16 @@ import (
 )
 
 const handshakeTimeout = 5 * time.Second
+
+// idleWindow is how long the suite waits for another frame before treating a
+// stayed-connected peer as accepting the handshake. The peer's own Hello always
+// arrives first because the devp2p handshake is a concurrent exchange.
+const idleWindow = 1200 * time.Millisecond
+
+// deadlineSlack absorbs the delay between a frame arriving and being accounted
+// for, so a frame received at the first-frame deadline can still be watched for
+// a full idle window under the hard deadline.
+const deadlineSlack = 100 * time.Millisecond
 
 // Suite represents a minimal conformance test set that is compatible with
 // the protocol packages available in this repository snapshot.
@@ -915,14 +929,17 @@ func (s *Suite) TestHelloWithoutEthCap(t *utesting.T) {
 	s.runMalformedHelloNamedCase(t, "HelloWithoutEthCap")
 }
 
+// TestHelloWithZeroVersion expects acceptance: the Hello version is not
+// validated, and upstream go-ethereum behaves the same (issue #2967).
 func (s *Suite) TestHelloWithZeroVersion(t *utesting.T) {
-	t.Log(`This test sends a hello with protocol version zero and expects a disconnect.`)
-	s.runMalformedHelloNamedCase(t, "HelloWithZeroVersion")
+	t.Log(`This test sends a hello with protocol version zero and expects the node to accept it.`)
+	s.runStayConnectedHelloNamedCase(t, "HelloWithZeroVersion")
 }
 
+// TestHelloWithMaxVersion expects acceptance for the same reason.
 func (s *Suite) TestHelloWithMaxVersion(t *utesting.T) {
-	t.Log(`This test sends a hello with max uint64 version and expects a disconnect.`)
-	s.runMalformedHelloNamedCase(t, "HelloWithMaxVersion")
+	t.Log(`This test sends a hello with max uint64 version and expects the node to accept it.`)
+	s.runStayConnectedHelloNamedCase(t, "HelloWithMaxVersion")
 }
 
 func (s *Suite) TestHelloWithZeroVersionAndEmptyCaps(t *utesting.T) {
@@ -1058,12 +1075,16 @@ func (s *Suite) TestHelloPayloadVersionWrongType(t *utesting.T) {
 	})
 }
 
+// TestHelloWithDuplicateEthCaps expects acceptance: capabilities are not
+// deduplicated, and upstream go-ethereum behaves the same (issue #2967).
 func (s *Suite) TestHelloWithDuplicateEthCaps(t *utesting.T) {
-	t.Log(`This test sends a hello with duplicate eth capabilities and expects a disconnect.`)
-	s.runMalformedHelloNamedCase(t, "HelloWithDuplicateEthCaps")
+	t.Log(`This test sends a hello with duplicate eth capabilities and expects the node to accept it.`)
+	s.runStayConnectedHelloNamedCase(t, "HelloWithDuplicateEthCaps")
 }
 
-func malformedHelloByCase(name string, pub0 []byte) *protoHandshake {
+// helloByCase builds the hello for a named case (malformed for disconnect
+// cases, valid for accept cases); payload-level cases pass raw RLP instead.
+func helloByCase(name string, pub0 []byte) *protoHandshake {
 	base := &protoHandshake{
 		Version: 5,
 		Caps:    []p2p.Cap{{Name: "eth", Version: ethProtoVersionXDpos2}},
@@ -1146,13 +1167,21 @@ func malformedHelloByCase(name string, pub0 []byte) *protoHandshake {
 	if builder, ok := builders[name]; ok {
 		return builder()
 	}
-	panic("unknown malformed hello case: " + name)
+	panic("unknown hello case: " + name)
 }
 
 func (s *Suite) runMalformedHelloNamedCase(t *utesting.T, caseName string) {
 	s.withRLPxConnAndKey(t, func(conn *rlpx.Conn, key *ecdsa.PrivateKey) {
 		pub0 := crypto.FromECDSAPub(&key.PublicKey)[1:]
-		s.expectDisconnectAfterHello(t, conn, malformedHelloByCase(caseName, pub0))
+		s.expectDisconnectAfterHello(t, conn, helloByCase(caseName, pub0))
+	})
+}
+
+// runStayConnectedHelloNamedCase runs a case that must be accepted.
+func (s *Suite) runStayConnectedHelloNamedCase(t *utesting.T, caseName string) {
+	s.withRLPxConnAndKey(t, func(conn *rlpx.Conn, key *ecdsa.PrivateKey) {
+		pub0 := crypto.FromECDSAPub(&key.PublicKey)[1:]
+		s.expectStayConnectedAfterHello(t, conn, helloByCase(caseName, pub0))
 	})
 }
 
@@ -1180,27 +1209,150 @@ func (s *Suite) expectDisconnectAfterHello(t *utesting.T, conn *rlpx.Conn, hello
 	if err != nil {
 		t.Fatalf("failed to encode malformed hello: %v", err)
 	}
-	s.expectDisconnectAfterHelloPayload(t, conn, payload)
+	s.expectDisconnectWithin(t, conn, handshakeMsg, payload, nodeEnablesSnappy(hello), handshakeTimeout, idleWindow)
 }
 
 func (s *Suite) expectDisconnectAfterHelloPayload(t *utesting.T, conn *rlpx.Conn, payload []byte) {
 	s.expectDisconnectAfterMessage(t, conn, handshakeMsg, payload)
 }
 
+// nodeEnablesSnappy mirrors the node's framing upgrade (p2p/transport.go
+// doProtoHandshake): compression starts only after the node has read our
+// Hello, and only when its version is at least 5 and its ID is well-formed.
+// A Hello rejected while reading leaves the node's disconnect uncompressed.
+func nodeEnablesSnappy(hello *protoHandshake) bool {
+	return hello.Version >= 5 && len(hello.ID) == 64 && bitutil.TestBytes(hello.ID)
+}
+
+// expectStayConnectedAfterHello sends a hello and asserts acceptance.
+func (s *Suite) expectStayConnectedAfterHello(t *utesting.T, conn *rlpx.Conn, hello *protoHandshake) {
+	payload, err := rlp.EncodeToBytes(hello)
+	if err != nil {
+		t.Fatalf("failed to encode hello: %v", err)
+	}
+	s.expectStayConnectedAfterMessage(t, conn, handshakeMsg, payload, hello.Version >= 5)
+}
+
+// isPeerTeardown reports whether err is the peer closing the connection: EOF,
+// a truncated frame, or a reset. Frame-decode errors are local failures, not a
+// disconnect, so a peer sending garbage after its Hello cannot pass.
+func isPeerTeardown(err error) bool {
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNRESET)
+}
+
+// expectDisconnectAfterMessage is the payload-level entry: raw payloads never
+// make the node upgrade framing, so frames are read uncompressed.
 func (s *Suite) expectDisconnectAfterMessage(t *utesting.T, conn *rlpx.Conn, code uint64, payload []byte) {
+	s.expectDisconnectWithin(t, conn, code, payload, false, handshakeTimeout, idleWindow)
+}
+
+// expectDisconnectWithin is expectDisconnectAfterMessage with explicit windows
+// and framing, so regression tests can exercise both without the production
+// values.
+func (s *Suite) expectDisconnectWithin(t *utesting.T, conn *rlpx.Conn, code uint64, payload []byte, snappy bool, firstFrameTimeout, idle time.Duration) {
 	if _, err := conn.Write(code, payload); err != nil {
 		t.Fatalf("failed to write test message: %v", err)
 	}
 
-	conn.SetReadDeadline(time.Now().Add(handshakeTimeout))
-	code, _, _, err := conn.Read()
-	if err != nil {
-		return
+	// Drain until the peer disconnects: protocol frames (its Hello, a ping) do
+	// not mean acceptance. The first frame is bounded by firstFrameTimeout; the
+	// hard deadline adds one idle window so a close right after a late frame is
+	// still observed. Each frame extends the window, capped at hardDeadline so a
+	// trickling peer cannot stall the suite.
+	firstFrameDeadline := time.Now().Add(firstFrameTimeout)
+	hardDeadline := firstFrameDeadline.Add(idle + deadlineSlack)
+	deadline := firstFrameDeadline
+	sawHello := false
+	for {
+		conn.SetReadDeadline(deadline)
+		code, _, _, err := conn.Read()
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				t.Fatalf("expected disconnect after test message, connection still open")
+			}
+			if !isPeerTeardown(err) {
+				t.Fatalf("expected disconnect after test message, got read error: %v", err)
+			}
+			return
+		}
+		if code == discMsg {
+			return
+		}
+		if !sawHello {
+			sawHello = true
+			if code == handshakeMsg {
+				conn.SetSnappy(snappy)
+			}
+		}
+		if next := time.Now().Add(idle); next.Before(hardDeadline) {
+			deadline = next
+		} else {
+			deadline = hardDeadline
+		}
 	}
-	if code == discMsg {
-		return
+}
+
+// expectStayConnectedAfterMessage asserts acceptance under the production
+// windows; see expectStayConnectedWithin.
+func (s *Suite) expectStayConnectedAfterMessage(t *utesting.T, conn *rlpx.Conn, code uint64, payload []byte, snappy bool) {
+	s.expectStayConnectedWithin(t, conn, code, payload, snappy, handshakeTimeout, idleWindow)
+}
+
+// expectStayConnectedWithin asserts acceptance: the first frame must be a
+// decodable Hello and the connection must stay open for a full idle window
+// after the last frame, or until the hard deadline. The first frame is bounded
+// by firstFrameTimeout; the hard deadline adds one idle window plus slack, so a
+// Hello arriving late in that budget still gets a full window unless the cap
+// cuts it short. snappy enables compression for the frames read after the peer
+// Hello: the peer keys compression off the version we advertise in our own
+// Hello.
+func (s *Suite) expectStayConnectedWithin(t *utesting.T, conn *rlpx.Conn, code uint64, payload []byte, snappy bool, firstFrameTimeout, idle time.Duration) {
+	if _, err := conn.Write(code, payload); err != nil {
+		t.Fatalf("failed to write test message: %v", err)
 	}
-	t.Fatalf("expected disconnect after test message, got msg code %d", code)
+
+	firstFrameDeadline := time.Now().Add(firstFrameTimeout)
+	hardDeadline := firstFrameDeadline.Add(idle + deadlineSlack)
+	deadline := firstFrameDeadline
+	sawHello := false
+	var lastFrame time.Time
+	for {
+		conn.SetReadDeadline(deadline)
+		code, data, _, err := conn.Read()
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				if !sawHello {
+					t.Fatalf("expected the peer hello, got no frame within %v", firstFrameTimeout)
+				}
+				// A timeout at the hard deadline means the peer stayed open; the cap
+				// can cut the window short when the last frame is accounted late.
+				return // still open at the hard deadline: accepted
+			}
+			t.Fatalf("expected the peer to keep the connection open, got: %v", err)
+		}
+		if code == discMsg {
+			t.Fatalf("expected the peer to keep the connection open, got disconnect")
+		}
+		if !sawHello {
+			if code != handshakeMsg {
+				t.Fatalf("expected the peer hello as first frame, got msg code %d", code)
+			}
+			var hello protoHandshake
+			if err := rlp.DecodeBytes(data, &hello); err != nil {
+				t.Fatalf("expected a decodable peer hello as first frame, got: %v", err)
+			}
+			sawHello = true
+			conn.SetSnappy(snappy)
+		}
+		lastFrame = time.Now()
+		if next := lastFrame.Add(idle); next.Before(hardDeadline) {
+			deadline = next
+		} else {
+			deadline = hardDeadline
+		}
+	}
 }
 
 func (s *Suite) dialConn(key *ecdsa.PrivateKey) (*rlpx.Conn, error) {
