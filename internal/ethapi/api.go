@@ -1220,13 +1220,20 @@ func (api *BlockChainAPI) SimulateV1(ctx context.Context, opts simOpts, blockNrO
 	if state == nil || err != nil {
 		return nil, err
 	}
+	// A zero cap means unlimited, but a zero gas pool funds nothing: without
+	// this buyGas rejects every simulated call.
+	gasCap := api.b.RPCGasCap()
+	if gasCap == 0 {
+		gasCap = gomath.MaxUint64
+	}
 	sim := &simulator{
 		b:           api.b,
 		state:       state,
 		base:        base,
 		chainConfig: api.b.ChainConfig(),
-		// Each tx and all the series of txes shouldn't consume more gas than cap
-		gp:             new(core.GasPool).AddGas(api.b.RPCGasCap()),
+		// Each tx and all the series of txes shouldn't consume more gas than the
+		// cap; a zero cap is MaxUint64 here, which leaves the run unbounded.
+		gp:             new(core.GasPool).AddGas(gasCap),
 		traceTransfers: opts.TraceTransfers,
 		validate:       opts.Validation,
 		fullTx:         opts.ReturnFullTransactions,

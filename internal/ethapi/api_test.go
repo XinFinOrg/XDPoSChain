@@ -1620,6 +1620,181 @@ func TestSimulateV1TxSender(t *testing.T) {
 	require.Equal(t, common.Address{}, summary[1].Transactions[0].From)
 }
 
+// TestSimulateV1ZeroGasCap tests that a zero RPC gas cap, documented as
+// unlimited, does not leave the simulator gas pool empty. The pool used to hold
+// no gas, so buyGas rejected every call before the EVM ran.
+func TestSimulateV1ZeroGasCap(t *testing.T) {
+	t.Parallel()
+
+	var (
+		sender    = common.HexToAddress("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1")
+		recipient = common.HexToAddress("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	)
+	// Each subtest gets its own backend: SimulateV1 mutates the state, so a
+	// shared one would leak nonces and balances between the cases.
+	newAPI := func(t *testing.T, gasCap uint64) *BlockChainAPI {
+		t.Helper()
+		base := newBackendMock()
+		// newBackendMock schedules EIP-1559 at block 1000 while the request starts
+		// at block 1. Schedule London and EIP-1559 at genesis, as the genesis
+		// config does, so validation mode runs the fee checks instead of skipping
+		// them. The genesis keeps MergedTestChainConfig: the mock's reduced config
+		// carries no XDPoS fork switch, so the genesis commit rejects it.
+		base.config.LondonBlock = big.NewInt(0)
+		base.config.EIP1559Block = big.NewInt(0)
+		genesis := &core.Genesis{
+			Config: params.MergedTestChainConfig,
+			Alloc: types.GenesisAlloc{
+				sender: {Balance: big.NewInt(params.Ether)},
+			},
+		}
+		db := rawdb.NewMemoryDatabase()
+		block := genesis.MustCommit(db)
+		stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+		require.NoError(t, err)
+		mock := &simulateBackendMock{
+			estimateBackendMock: &estimateBackendMock{
+				backendMock: base,
+				stateDB:     stateDB,
+				header:      block.Header(),
+				engine:      ethash.NewFaker(),
+			},
+			gasCap: gasCap,
+		}
+		// simulateBackendMock maps a zero gasCap field to the 30M default, so only
+		// the wrapper can report the zero cap that the flag documents as unlimited.
+		var backend Backend = mock
+		if gasCap == 0 {
+			backend = &zeroGasCapSimulateBackendMock{simulateBackendMock: mock}
+		}
+		return NewBlockChainAPI(backend, nil)
+	}
+	// callStatuses flattens the response to one status list per simulated block.
+	callStatuses := func(t *testing.T, results []map[string]interface{}) [][]string {
+		t.Helper()
+		enc, err := json.Marshal(results)
+		require.NoError(t, err)
+		var summary []struct {
+			Calls []struct {
+				Status string `json:"status"`
+			} `json:"calls"`
+		}
+		require.NoError(t, json.Unmarshal(enc, &summary))
+		statuses := make([][]string, len(summary))
+		for i, block := range summary {
+			for _, call := range block.Calls {
+				statuses[i] = append(statuses[i], call.Status)
+			}
+		}
+		return statuses
+	}
+	transfer := func(value int64) TransactionArgs {
+		return TransactionArgs{From: &sender, To: &recipient, Value: (*hexutil.Big)(big.NewInt(value))}
+	}
+
+	t.Run("default gas", func(t *testing.T) {
+		results, err := newAPI(t, 0).SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{{
+			Calls: []TransactionArgs{transfer(1)},
+		}}}, nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]string{{"0x1"}}, callStatuses(t, results))
+	})
+
+	t.Run("explicit gas", func(t *testing.T) {
+		gas := hexutil.Uint64(25_000)
+		call := transfer(1)
+		call.Gas = &gas
+		results, err := newAPI(t, 0).SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{{
+			Calls: []TransactionArgs{call},
+		}}}, nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]string{{"0x1"}}, callStatuses(t, results))
+	})
+
+	t.Run("multiple blocks", func(t *testing.T) {
+		results, err := newAPI(t, 0).SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{
+			{Calls: []TransactionArgs{transfer(1)}},
+			{Calls: []TransactionArgs{transfer(2)}},
+		}}, nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]string{{"0x1"}, {"0x1"}}, callStatuses(t, results))
+	})
+
+	t.Run("block gas limit still applies", func(t *testing.T) {
+		limit := hexutil.Uint64(100_000)
+		firstGas, secondGas := hexutil.Uint64(100_000), hexutil.Uint64(100_000)
+		first, second := transfer(1), transfer(2)
+		first.Gas, second.Gas = &firstGas, &secondGas
+		_, err := newAPI(t, 0).SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{{
+			BlockOverrides: &override.BlockOverrides{GasLimit: &limit},
+			Calls:          []TransactionArgs{first, second},
+		}}}, nil)
+		require.ErrorContains(t, err, "block gas limit reached")
+	})
+
+	t.Run("explicit gas over the block limit", func(t *testing.T) {
+		// A call gas near MaxUint64 must not wrap the block limit check below the
+		// limit: the first call has already used gas, so a sum would overflow.
+		first := transfer(1)
+		huge := hexutil.Uint64(math.MaxUint64)
+		second := transfer(2)
+		second.Gas = &huge
+		_, err := newAPI(t, 0).SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{{
+			Calls: []TransactionArgs{first, second},
+		}}}, nil)
+		require.ErrorContains(t, err, "block gas limit reached")
+	})
+
+	t.Run("non-zero cap still applies", func(t *testing.T) {
+		// Both calls fit the block gas limit but not the 21k request wide cap:
+		// the first one drains the pool, the second is rejected by buyGas.
+		firstGas, secondGas := hexutil.Uint64(21_000), hexutil.Uint64(21_000)
+		first, second := transfer(1), transfer(2)
+		first.Gas, second.Gas = &firstGas, &secondGas
+		_, err := newAPI(t, 21_000).SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{{
+			Calls: []TransactionArgs{first, second},
+		}}}, nil)
+		require.ErrorContains(t, err, "gas limit reached")
+	})
+
+	t.Run("tiny non-zero cap still applies", func(t *testing.T) {
+		// The cap is a limit even at one gas: CallDefaults squeezes the call gas
+		// down to the pool, so the EVM rejects it for intrinsic gas. Treating
+		// small caps as unlimited would run the call instead.
+		_, err := newAPI(t, 1).SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{{
+			Calls: []TransactionArgs{transfer(1)},
+		}}}, nil)
+		require.ErrorContains(t, err, "intrinsic gas too low")
+	})
+
+	t.Run("cap funds one call", func(t *testing.T) {
+		// A pool stuck at zero would also error the two-call case above, so
+		// verify that a call fitting under the cap still runs.
+		gas := hexutil.Uint64(21_000)
+		call := transfer(1)
+		call.Gas = &gas
+		results, err := newAPI(t, 21_000).SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{{
+			Calls: []TransactionArgs{call},
+		}}}, nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]string{{"0x1"}}, callStatuses(t, results))
+	})
+
+	t.Run("validation", func(t *testing.T) {
+		// Validation mode keeps the base fee, so the call carries explicit fee caps
+		// at least as high as the overridden base fee.
+		call := transfer(1)
+		call.MaxFeePerGas = (*hexutil.Big)(big.NewInt(2))
+		call.MaxPriorityFeePerGas = (*hexutil.Big)(big.NewInt(1))
+		results, err := newAPI(t, 0).SimulateV1(context.Background(), simOpts{Validation: true, BlockStateCalls: []simBlock{{
+			BlockOverrides: &override.BlockOverrides{BaseFeePerGas: (*hexutil.Big)(big.NewInt(1))},
+			Calls:          []TransactionArgs{call},
+		}}}, nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]string{{"0x1"}}, callStatuses(t, results))
+	})
+}
+
 // TestSignTransaction tests sign transaction.
 func TestSignTransaction(t *testing.T) {
 	t.Parallel()
@@ -4898,6 +5073,15 @@ type simulateBackendMock struct {
 	*estimateBackendMock
 	gasCap uint64
 }
+
+// zeroGasCapSimulateBackendMock reports a zero RPC gas cap, which the flag
+// documents as unlimited. simulateBackendMock cannot express it: its zero gasCap
+// field means the 30M default.
+type zeroGasCapSimulateBackendMock struct {
+	*simulateBackendMock
+}
+
+func (b *zeroGasCapSimulateBackendMock) RPCGasCap() uint64 { return 0 }
 
 // TestSignTransactionSetCodeBasic tests sign transaction set code basic.
 func TestSignTransactionSetCodeBasic(t *testing.T) {
