@@ -90,9 +90,9 @@ func (t *CountdownTimer) startTimer(i interface{}, currentRound, highestRound ty
 			highestRound = info.highestRound
 			duration := t.durationHelper.GetTimeoutDuration(currentRound, highestRound)
 			log.Debug("Reset countdown timer", "duration", duration, "currentRound", currentRound, "highestRound", highestRound)
-			if !timer.Stop() {
-				<-timer.C
-			}
+			// Reset stops and re-arms the timer in one step. Draining timer.C
+			// after Stop reports false blocks forever once the select above has
+			// taken the value: Go 1.23+ timer channels are unbuffered.
 			timer.Reset(duration)
 		}
 	}
