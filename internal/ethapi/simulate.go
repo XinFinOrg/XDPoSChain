@@ -667,6 +667,7 @@ func (sim *simulator) makeHeaders(blocks []simBlock) ([]*types.Header, error) {
 			Coinbase:    header.Coinbase,
 			Difficulty:  header.Difficulty,
 			GasLimit:    header.GasLimit,
+			Subnet:      sim.chainConfig.IsSubnet(),
 		})
 		res[bi] = header
 	}

@@ -669,7 +669,6 @@ func (api *BlockChainAPI) GetCandidateStatus(ctx context.Context, coinbaseAddres
 		epochNumber              rpc.EpochNumber // if epoch == "latest", print the latest epoch number to epochNumber
 		masternodes, penaltyList []common.Address
 		candidates               []utils.Masternode
-		penalties                []byte
 		err                      error
 	)
 
@@ -678,8 +677,6 @@ func (api *BlockChainAPI) GetCandidateStatus(ctx context.Context, coinbaseAddres
 		fieldCapacity: 0,
 		fieldSuccess:  true,
 	}
-
-	epochConfig := api.b.ChainConfig().XDPoS.Epoch
 
 	// checkpoint block
 	checkpointNumber, epochNumber = api.GetCheckpointFromEpoch(ctx, epoch)
@@ -770,22 +767,7 @@ func (api *BlockChainAPI) GetCandidateStatus(ctx context.Context, coinbaseAddres
 		utils.SortMasternodesByStakeDesc(candidates)
 	}
 
-	// Get penalties list
-	penalties = append(penalties, header.Penalties...)
-	// check last 5 epochs to find penalize masternodes
-	for i := 1; i <= common.LimitPenaltyEpoch; i++ {
-		if header.Number.Uint64() < epochConfig*uint64(i) {
-			break
-		}
-		blockNum := header.Number.Uint64() - epochConfig*uint64(i)
-		checkpointHeader, err := api.b.HeaderByNumber(ctx, rpc.BlockNumber(blockNum))
-		if checkpointHeader == nil || err != nil {
-			log.Error("Failed to get header by number", "num", blockNum, "err", err)
-			continue
-		}
-		penalties = append(penalties, checkpointHeader.Penalties...)
-	}
-	penaltyList = common.ExtractAddressFromBytes(penalties)
+	penaltyList = api.checkpointPenalties(ctx, header)
 
 	// map slashing status
 	total := len(masternodes)
@@ -817,14 +799,11 @@ func (api *BlockChainAPI) GetCandidates(ctx context.Context, epoch rpc.EpochNumb
 		masternodes      []common.Address
 		penaltyList      []common.Address
 		candidates       []utils.Masternode
-		penalties        []byte
 		err              error
 	)
 	result := map[string]interface{}{
 		fieldSuccess: true,
 	}
-	epochConfig := api.b.ChainConfig().XDPoS.Epoch
-
 	checkpointNumber, epochNumber = api.GetCheckpointFromEpoch(ctx, epoch)
 	result[fieldEpoch] = epochNumber.Int64()
 
@@ -914,27 +893,12 @@ func (api *BlockChainAPI) GetCandidates(ctx context.Context, epoch rpc.EpochNumb
 		utils.SortMasternodesByStakeDesc(candidates)
 	}
 
-	// Get penalties list
-	penalties = append(penalties, header.Penalties...)
-	// check last 5 epochs to find penalize masternodes
-	for i := 1; i <= common.LimitPenaltyEpoch; i++ {
-		if header.Number.Uint64() < epochConfig*uint64(i) {
-			break
-		}
-		blockNum := header.Number.Uint64() - epochConfig*uint64(i)
-		checkpointHeader, err := api.b.HeaderByNumber(ctx, rpc.BlockNumber(blockNum))
-		if checkpointHeader == nil || err != nil {
-			log.Error("Failed to get header by number", "num", blockNum, "err", err)
-			continue
-		}
-		penalties = append(penalties, checkpointHeader.Penalties...)
-	}
 	// map slashing status
-	if len(penalties) == 0 {
+	penaltyList = api.checkpointPenalties(ctx, header)
+	if len(penaltyList) == 0 {
 		result[fieldCandidates] = candidatesStatusMap
 		return result, nil
 	}
-	penaltyList = common.ExtractAddressFromBytes(penalties)
 
 	// check penalties from checkpoint headers and modify status of a node to SLASHED if it's in top maxMasternodes candidates.
 	// if it's SLASHED but it's out of top maxMasternodes, the status should be still PROPOSED.
@@ -955,6 +919,36 @@ func (api *BlockChainAPI) GetCandidates(ctx context.Context, epoch rpc.EpochNumb
 	// update result
 	result[fieldCandidates] = candidatesStatusMap
 	return result, nil
+}
+
+// checkpointPenalties returns the penalties in force at a checkpoint header.
+// The XDPoS chain records them in the checkpoint headers, so those of the last
+// LimitPenaltyEpoch epochs are gathered. A subnet publishes them in the block
+// after the gap block instead and carries them over itself, so the epoch's own
+// list, kept by the engine, is complete.
+func (api *BlockChainAPI) checkpointPenalties(ctx context.Context, header *types.Header) []common.Address {
+	if api.b.ChainConfig().IsSubnet() {
+		if engine, ok := api.b.Engine().(*XDPoS.XDPoS); ok {
+			return engine.EngineV2.GetPenalties(api.chainReader, header)
+		}
+		return nil
+	}
+	epochConfig := api.b.ChainConfig().XDPoS.Epoch
+	penalties := common.CopyBytes(header.Penalties)
+	// check last 5 epochs to find penalize masternodes
+	for i := 1; i <= common.LimitPenaltyEpoch; i++ {
+		if header.Number.Uint64() < epochConfig*uint64(i) {
+			break
+		}
+		blockNum := header.Number.Uint64() - epochConfig*uint64(i)
+		checkpointHeader, err := api.b.HeaderByNumber(ctx, rpc.BlockNumber(blockNum))
+		if checkpointHeader == nil || err != nil {
+			log.Error("Failed to get header by number", "num", blockNum, "err", err)
+			continue
+		}
+		penalties = append(penalties, checkpointHeader.Penalties...)
+	}
+	return common.ExtractAddressFromBytes(penalties)
 }
 
 // GetCheckpointFromEpoch returns header of the previous checkpoint
@@ -1004,7 +998,7 @@ func (api *BlockChainAPI) getCandidatesFromState(ctx context.Context, blockNr rp
 	if statedb == nil {
 		return nil, errors.New("nil statedb reading the candidates")
 	}
-	candidatesAddresses := statedb.GetCandidates()
+	candidatesAddresses := statedb.GetCandidatesFor(api.b.ChainConfig().IsSubnet())
 	candidates := make([]utils.Masternode, 0, len(candidatesAddresses))
 	for _, address := range candidatesAddresses {
 		candidates = append(candidates, utils.Masternode{Address: address, Stake: statedb.GetCandidateCap(address)})
@@ -1318,6 +1312,13 @@ func RPCMarshalHeader(head *types.Header) map[string]interface{} {
 		"validators":       hexutil.Bytes(head.Validators),
 		"validator":        hexutil.Bytes(head.Validator),
 		"penalties":        hexutil.Bytes(head.Penalties),
+	}
+	// A subnet header lists its address fields, as the other subnet clients
+	// report them.
+	if head.Subnet {
+		result["validators"] = common.ExtractAddressFromBytes(head.Validators)
+		result["nextValidators"] = common.ExtractAddressFromBytes(head.NextValidators)
+		result["penalties"] = common.ExtractAddressFromBytes(head.Penalties)
 	}
 
 	if head.BaseFee != nil {
@@ -2596,7 +2597,7 @@ func (api *BlockChainAPI) GetTokenStats(ctx context.Context, epochNr rpc.EpochNu
 		return nil, errors.New("mintedRecordAddress is not initialized due to Reward Upgrade is not applied")
 	}
 	currentRound, err := engine.EngineV2.GetRoundNumber(header)
-	currentEpoch := api.b.ChainConfig().XDPoS.V2.SwitchEpoch + uint64(currentRound)/api.b.ChainConfig().XDPoS.Epoch
+	currentEpoch := engine.EngineV2.EpochNumber(header.Number.Uint64(), currentRound)
 	if err != nil {
 		return nil, err
 	}
