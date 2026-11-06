@@ -205,6 +205,12 @@ func (x *XDPoS_v2) BuildGapSnapshot(chain consensus.ChainReader, statedb *state.
 	return snap, nil
 }
 
+// stateReader is a chain reader that can open state, such as the chain or the
+// reader the XDPoS adaptor wraps it in for header verification.
+type stateReader interface {
+	StateAt(root common.Hash) (*state.StateDB, error)
+}
+
 // errNotSubnetGapBlock reports a snapshot lookup for a block that holds none.
 var errNotSubnetGapBlock = errors.New("not a subnet gap block")
 
@@ -233,10 +239,12 @@ func (x *XDPoS_v2) getSnapshotByHash(chain consensus.ChainReader, hash common.Ha
 	if number%x.config.Epoch != x.config.Epoch-x.config.Gap {
 		return nil, fmt.Errorf("%w: block %d (%s)", errNotSubnetGapBlock, number, hash.Hex())
 	}
-	stateChain, ok := chain.(GapStateReader)
+	stateChain, ok := chain.(stateReader)
 	if !ok {
 		return nil, fmt.Errorf("%w: gap block %d (%s): chain cannot open state", consensus.ErrGapSnapshotUnavailable, number, hash.Hex())
 	}
+	// A gap block of the batch under verification has no state yet; the error
+	// is local, so the import keeps the blocks before it and comes back.
 	statedb, err := stateChain.StateAt(header.Root)
 	if err != nil {
 		return nil, fmt.Errorf("%w: gap block %d (%s): %w", consensus.ErrGapSnapshotUnavailable, number, hash.Hex(), err)
