@@ -195,8 +195,6 @@ func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Heade
 		if err := x.verifySubnetHeader(chain, header, fullVerify); err != nil {
 			return err
 		}
-	} else if len(header.NextValidators) != 0 {
-		return utils.ErrInvalidHeaderLayout
 	}
 
 	verified, validatorAddress, err := x.verifyMsgSignature(sigHash(header), header.Validator, masterNodes)
