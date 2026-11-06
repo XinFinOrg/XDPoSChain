@@ -238,6 +238,12 @@ func hydrateCustomChainConfig(cfg *params.ChainConfig, clearAtBoundary bool) *pa
 	if cfg == nil {
 		return nil
 	}
+	// Subnet configs are never backfilled: there is no legacy subnet config to
+	// stay compatible with, and the defaults of the other networks (EIP-1559,
+	// their fork schedule) would change what the subnet header and EVM are.
+	if cfg.IsSubnet() {
+		return cfg.Clone()
+	}
 
 	var hydrated *params.ChainConfig
 	if localnet := localnetChainConfigByChainID(cfg.ChainID); localnet != nil {
@@ -780,6 +786,13 @@ func (g *Genesis) toBlockWithRoot(root common.Hash) *types.Block {
 		} else {
 			head.BaseFee = params.BaseFeeForBlock(g.Config, common.Big0)
 		}
+	}
+	// A subnet genesis uses the subnet header layout, which has no base fee
+	// field: a baseFeePerGas in the genesis file is ignored, as the other
+	// subnet clients do.
+	if g.Config.IsSubnet() {
+		head.Subnet = true
+		head.BaseFee = nil
 	}
 	return types.NewBlock(head, nil, nil, trie.NewStackTrie(nil))
 }
