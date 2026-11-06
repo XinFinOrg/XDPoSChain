@@ -710,8 +710,8 @@ func TestCallVariantGasOpcodeCost(t *testing.T) {
 		op     OpCode
 		target common.Address
 		value  byte
-		// Constant 100 (warm access, EIP-2929) + cold access 2500 + intrinsic + the
-		// 255 granted to the callee.
+		// 100 warm + 2500 cold + intrinsic + the 255 requested; a value transfer
+		// also grants the stipend to the callee outside this cost
 		want uint64
 	}{
 		{"call to an empty account with value", CALL, emptyAddr, 1, 100 + 2500 + params.CallValueTransferGas + params.CallNewAccountGas + 255},
@@ -753,6 +753,127 @@ func TestCallVariantGasOpcodeCost(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCallVariantGasColdAccessTracerReason pins that the cold-access charge is
+// reported once, by the interpreter's opcode event rather than the wrapper
+func TestCallVariantGasColdAccessTracerReason(t *testing.T) {
+	t.Run("EIP-2929 wrapper", func(t *testing.T) {
+		var reasons []tracing.GasChangeReason
+		evm := newCallGasTestEVM(t, newCallGasTestStateDB(t), params.Rules{IsEIP150: true, IsEIP158: true, IsBerlin: true})
+		evm.Config.Tracer = &tracing.Hooks{OnGasChange: func(_, _ uint64, reason tracing.GasChangeReason) {
+			reasons = append(reasons, reason)
+		}}
+		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), 100000, nil)
+		stack := callGasTestStack(0, common.HexToAddress("0xaa"), new(uint256.Int))
+		defer returnStack(stack)
+
+		if _, err := gasCallEIP2929(evm, contract, stack, NewMemory(), 0); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(reasons) != 0 {
+			t.Errorf("cold access reported to the tracer: %v", reasons)
+		}
+	})
+	t.Run("EIP-7702 wrapper", func(t *testing.T) {
+		var reasons []tracing.GasChangeReason
+		statedb := newCallGasTestStateDB(t)
+		target := common.HexToAddress("0xdead")
+		statedb.SetCode(target, types.AddressToDelegation(common.HexToAddress("0xbbb")))
+		evm := newCallGasTestEVM(t, statedb, params.Rules{IsEIP150: true, IsEIP158: true, IsPrague: true})
+		evm.Config.Tracer = &tracing.Hooks{OnGasChange: func(_, _ uint64, reason tracing.GasChangeReason) {
+			reasons = append(reasons, reason)
+		}}
+		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), 100000, nil)
+		stack := callGasTestStack(0, target, new(uint256.Int))
+		defer returnStack(stack)
+
+		if _, err := gasCallEIP7702(evm, contract, stack, NewMemory(), 0); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(reasons) != 0 {
+			t.Errorf("cold access reported to the tracer: %v", reasons)
+		}
+	})
+	t.Run("interpreter reports the whole budget once", func(t *testing.T) {
+		for _, tt := range []struct {
+			name     string
+			config   func(*params.ChainConfig)
+			delegate bool
+			wantCost uint64
+		}{
+			// Cancun is the newest fork the mainnet schedules and runs the
+			// EIP-2929 wrapper; apothem schedules Prague at 87633000 and the
+			// devnet at 50000, where the EIP-7702 wrapper takes over.
+			{"Cancun (EIP-2929 wrapper)", func(c *params.ChainConfig) {
+				c.PragueBlock = nil
+				c.OsakaBlock = nil
+				c.AmsterdamBlock = nil
+			}, false, 2855},
+			// Prague wires the EIP-7702 wrapper; the mainnet schedules none
+			{"Prague (EIP-7702 wrapper)", func(c *params.ChainConfig) {
+				c.OsakaBlock = nil
+				c.AmsterdamBlock = nil
+			}, true, 5455},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				var (
+					caller       = common.HexToAddress("0xc0de")
+					target       = common.HexToAddress("0xaa")
+					coldReported int
+					opcodeDeltas []uint64
+				)
+				statedb := newCallGasTestStateDB(t)
+				code := []byte{byte(PUSH1), 0x00, byte(PUSH1), 0x00, byte(PUSH1), 0x00, byte(PUSH1), 0x00, byte(PUSH1), 0x00}
+				code = append(code, byte(PUSH20))
+				code = append(code, target.Bytes()...)
+				code = append(code, byte(PUSH1), 0xff, byte(CALL), byte(POP), byte(STOP))
+				statedb.SetCode(caller, code)
+				if tt.delegate {
+					statedb.SetCode(target, types.AddressToDelegation(common.HexToAddress("0xbbb")))
+				}
+
+				chainConfig := *params.TestChainConfig
+				tt.config(&chainConfig)
+
+				evm := NewEVM(BlockContext{
+					BlockNumber: big.NewInt(0),
+					CanTransfer: func(StateDB, common.Address, *uint256.Int) bool { return true },
+					Transfer:    func(StateDB, common.Address, common.Address, *uint256.Int, *params.Rules) {},
+				}, statedb, nil, &chainConfig, Config{Tracer: &tracing.Hooks{
+					OnGasChange: func(old, new uint64, reason tracing.GasChangeReason) {
+						switch reason {
+						case tracing.GasChangeCallStorageColdAccess:
+							coldReported++
+						case tracing.GasChangeCallOpCode:
+							if old > new {
+								opcodeDeltas = append(opcodeDeltas, old-new)
+							}
+						}
+					},
+				}})
+				const startGas = uint64(1000000)
+				if _, _, err := evm.Call(common.Address{}, caller, nil, startGas, new(uint256.Int)); err != nil {
+					t.Fatalf("call failed: %v", err)
+				}
+				if coldReported != 0 {
+					t.Errorf("cold access reported as its own gas event %d times", coldReported)
+				}
+				// The whole CALL budget: 100 + 2500 + the 255 requested, plus 2600
+				// cold delegation on Prague; it must appear exactly once
+				callCost := tt.wantCost
+				var reported int
+				for _, delta := range opcodeDeltas {
+					if delta == callCost {
+						reported++
+					}
+				}
+				if reported != 1 {
+					t.Errorf("CALL budget reported %d times, want 1 (deltas: %v)", reported, opcodeDeltas)
+				}
+			})
+		}
+	})
 }
 
 // TestCallVariantGasEIP2929BindingPosition pins the stack position each of the

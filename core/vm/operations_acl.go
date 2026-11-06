@@ -163,9 +163,8 @@ func makeCallVariantGasCallEIP2929(oldCalculator gasFunc, addressPosition int) g
 		coldCost := params.ColdAccountAccessCostEIP2929 - params.WarmStorageReadCostEIP2929
 		if !warmAccess {
 			evm.StateDB.AddAddressToAccessList(addr)
-			// Charge the remaining difference here already, to correctly calculate available
-			// gas for call
-			if !contract.UseGas(coldCost, evm.Config.Tracer, tracing.GasChangeCallStorageColdAccess) {
+			// Charge now so the calculator below prices the reduced budget
+			if !contract.UseGas(coldCost, evm.Config.Tracer, tracing.GasChangeIgnored) {
 				return 0, ErrOutOfGas
 			}
 		}
@@ -173,10 +172,7 @@ func makeCallVariantGasCallEIP2929(oldCalculator gasFunc, addressPosition int) g
 		if warmAccess || err != nil {
 			return gas, err
 		}
-		// In case of a cold access, we temporarily add the cold charge back, and also
-		// add it to the returned gas. By adding it to the return, it will be charged
-		// outside of this function, as part of the dynamic gas, and that will make it
-		// also become correctly reported to tracers.
+		// Return the cold charge as part of the cost so the tracer sees it once
 		contract.Gas += coldCost
 
 		var overflow bool
@@ -279,9 +275,8 @@ func makeCallVariantGasCallEIP7702(intrinsicFunc gasFunc) gasFunc {
 			// The warm part is already a constant cost, so charge only the difference
 			eip2929Cost = params.ColdAccountAccessCostEIP2929 - params.WarmStorageReadCostEIP2929
 
-			// Charge the remaining difference here already, to correctly calculate
-			// available gas for call
-			if !contract.UseGas(eip2929Cost, evm.Config.Tracer, tracing.GasChangeCallStorageColdAccess) {
+			// Charge now so the intrinsic and nested budget see the reduced gas
+			if !contract.UseGas(eip2929Cost, evm.Config.Tracer, tracing.GasChangeIgnored) {
 				return 0, ErrOutOfGas
 			}
 		}
@@ -303,7 +298,7 @@ func makeCallVariantGasCallEIP7702(intrinsicFunc gasFunc) gasFunc {
 				evm.StateDB.AddAddressToAccessList(target)
 				eip7702Cost = params.ColdAccountAccessCostEIP2929
 			}
-			if !contract.UseGas(eip7702Cost, evm.Config.Tracer, tracing.GasChangeCallStorageColdAccess) {
+			if !contract.UseGas(eip7702Cost, evm.Config.Tracer, tracing.GasChangeIgnored) {
 				return 0, ErrOutOfGas
 			}
 		}
@@ -312,10 +307,7 @@ func makeCallVariantGasCallEIP7702(intrinsicFunc gasFunc) gasFunc {
 		if err != nil {
 			return 0, err
 		}
-		// Temporarily add the gas charge back to the contract and return value. By
-		// adding it to the return, it will be charged outside of this function, as
-		// part of the dynamic gas. This will ensure it is correctly reported to
-		// tracers.
+		// Return the charges as part of the cost so the tracer sees them once
 		contract.Gas += eip2929Cost + eip7702Cost
 
 		var (
