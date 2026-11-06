@@ -754,3 +754,51 @@ func TestCallVariantGasOpcodeCost(t *testing.T) {
 		})
 	}
 }
+
+// TestCallVariantGasEIP2929BindingPosition pins the stack position each of the
+// four EIP-2929 wrappers reads the call target from. The requested gas differs
+// between the two calls, so a wrapper reading the target from position 0 lands
+// on a different address and charges the cold access twice; the access list
+// assertion covers a wrapper reading it from position 2 (the value operand).
+func TestCallVariantGasEIP2929BindingPosition(t *testing.T) {
+	target := common.HexToAddress("0xaa")
+	noValue := new(uint256.Int)
+	coldCost := params.ColdAccountAccessCostEIP2929 - params.WarmStorageReadCostEIP2929
+	tests := []struct {
+		name    string
+		gasFunc gasFunc
+	}{
+		{"call", gasCallEIP2929},
+		{"call code", gasCallCodeEIP2929},
+		{"delegate call", gasDelegateCallEIP2929},
+		{"static call", gasStaticCallEIP2929},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			statedb := newCallGasTestStateDB(t)
+			statedb.SetCode(target, []byte{byte(STOP)})
+			evm := newCallGasTestEVM(t, statedb, params.Rules{IsEIP150: true, IsEIP158: true, IsBerlin: true})
+			contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), 100000, nil)
+
+			var got [2]uint64
+			for i, requested := range []uint64{0, 1} {
+				stack := callGasTestStack(requested, target, noValue)
+				gas, err := tt.gasFunc(evm, contract, stack, NewMemory(), 0)
+				returnStack(stack)
+				if err != nil {
+					t.Fatalf("call %d: unexpected error: %v", i, err)
+				}
+				got[i] = gas
+			}
+			if !statedb.AddressInAccessList(target) {
+				t.Errorf("call target was not added to the access list")
+			}
+			if got[0] != coldCost {
+				t.Errorf("first call: have %d, want %d", got[0], coldCost)
+			}
+			if got[1] != 1 {
+				t.Errorf("second call to the same address is not warm: have %d, want 1", got[1])
+			}
+		})
+	}
+}
