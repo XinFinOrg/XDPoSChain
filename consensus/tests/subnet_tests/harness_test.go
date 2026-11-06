@@ -68,6 +68,7 @@ type subnetHarness struct {
 	bc     *core.BlockChain
 	engine *XDPoS.XDPoS
 
+	genesis    *core.Genesis
 	nodes      []*testNode // candidates of the validator contract
 	byAddr     map[common.Address]*testNode
 	genesisMNs []common.Address
@@ -151,12 +152,36 @@ func newSubnetHarness(t *testing.T, maxMasternodes int, stakes []int64, genesisM
 	for _, n := range h.nodes {
 		genesis.Alloc[n.addr] = types.Account{Balance: new(big.Int).Mul(big.NewInt(1000), big.NewInt(1e18))}
 	}
+	h.genesis = genesis
+	h.start()
+	return h
+}
 
+// replica starts a second node of the same subnet, with its own database.
+func (h *subnetHarness) replica() *subnetHarness {
+	r := &subnetHarness{
+		t:          h.t,
+		config:     h.config,
+		db:         rawdb.NewMemoryDatabase(),
+		genesis:    h.genesis,
+		nodes:      h.nodes,
+		byAddr:     h.byAddr,
+		genesisMNs: h.genesisMNs,
+		offline:    h.offline,
+		round:      h.round,
+	}
+	r.start()
+	return r
+}
+
+// start opens the chain and the engine, as a node does at startup.
+func (h *subnetHarness) start() {
+	t := h.t
 	engine, err := XDPoS.New(h.config, h.db)
 	if err != nil {
 		t.Fatalf("engine: %v", err)
 	}
-	bc, err := core.NewBlockChain(h.db, nil, genesis, engine, vm.Config{})
+	bc, err := core.NewBlockChain(h.db, nil, h.genesis, engine, vm.Config{})
 	if err != nil {
 		t.Fatalf("blockchain: %v", err)
 	}
@@ -180,7 +205,6 @@ func newSubnetHarness(t *testing.T, maxMasternodes int, stakes []int64, genesisM
 		for range engine.NewRoundCh {
 		}
 	}()
-	return h
 }
 
 // genesisExtra lays out the genesis masternodes the way the v1 extra data does:
@@ -224,6 +248,25 @@ func (h *subnetHarness) head() *types.Block {
 	return h.bc.GetBlockByHash(h.bc.CurrentBlock().Hash())
 }
 
+// gapSnapshot returns the snapshot of a gap block: the stored one, or for a
+// gap block on a fork that is not canonical, which has none stored yet, the
+// one derived from its state.
+func (h *subnetHarness) gapSnapshot(gap *types.Header) *engine_v2.SnapshotV2 {
+	h.t.Helper()
+	if has, _ := rawdb.HasXdposV2Snapshot(h.db, gap.Hash()); has {
+		return h.storedSnapshot(gap.Hash())
+	}
+	statedb, err := h.bc.StateAt(gap.Root)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	snap, err := h.engine.EngineV2.BuildGapSnapshot(h.bc, statedb, gap)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return snap
+}
+
 // storedSnapshot reads the snapshot the chain stored for a gap block.
 func (h *subnetHarness) storedSnapshot(gapHash common.Hash) *engine_v2.SnapshotV2 {
 	h.t.Helper()
@@ -253,8 +296,7 @@ func (h *subnetHarness) masternodesOf(header *types.Header) []common.Address {
 // expectedMasternodes computes, from the stored snapshot of its gap block, the
 // masternodes of the epoch that starts at number on top of parent.
 func (h *subnetHarness) expectedMasternodes(parent *types.Header, number uint64) []common.Address {
-	gap := h.ancestor(parent, number-testGap)
-	snap := h.storedSnapshot(gap.Hash())
+	snap := h.gapSnapshot(h.ancestor(parent, number-testGap))
 	var mns []common.Address
 	for _, c := range snap.NextEpochCandidates {
 		if !slices.Contains(snap.NextEpochPenalties, c) && len(mns) < h.config.XDPoS.V2.Config(0).MaxMasternodes {
@@ -316,7 +358,7 @@ func (h *subnetHarness) buildBlock(parent *types.Block, opts blockOpts) *types.B
 	if number == 1 {
 		header.NextValidators = types.PackAddresses(h.genesisMNs)
 	} else if number%testEpoch == testEpoch-testGap+1 {
-		snap := h.storedSnapshot(parent.Hash())
+		snap := h.gapSnapshot(parent.Header())
 		header.NextValidators = types.PackAddresses(snap.NextEpochCandidates)
 		header.Penalties = types.PackAddresses(snap.NextEpochPenalties)
 	}

@@ -25,7 +25,9 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/accounts"
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
@@ -344,5 +346,174 @@ func TestSubnetMasternodeCap(t *testing.T) {
 	// Genesis listed three masternodes; the cap only applies from epoch 1.
 	if mns := h.engine.EngineV2.GetMasternodes(h.bc, h.bc.GetHeaderByNumber(1)); !slices.Equal(mns, candidates[:3]) {
 		t.Fatalf("epoch 0 masternodes %v", mns)
+	}
+}
+
+// A gap block snapshot missing from the database is rebuilt at startup with
+// the same candidates and penalties.
+func TestSubnetRepairGapSnapshot(t *testing.T) {
+	h := newSubnetHarness(t, 4, []int64{50_000, 40_000, 30_000, 20_000, 10_000}, 4)
+	offline := h.nodes[1].addr
+	h.extend(testEpoch-1, nil)
+	h.offline[offline] = true
+	h.extend(2*testEpoch+testGap/2, nil)
+
+	gap := h.bc.GetHeaderByNumber(2*testEpoch - testGap)
+	want := h.storedSnapshot(gap.Hash())
+	if len(want.NextEpochPenalties) != 1 {
+		t.Fatalf("expected one penalty, got %v", want.NextEpochPenalties)
+	}
+	rawdb.DeleteXdposSnapshot(h.db, gap.Hash())
+	h.engine.EngineV2.RepairGapSnapshots(h.bc)
+	got := h.storedSnapshot(gap.Hash())
+	if !slices.Equal(got.NextEpochCandidates, want.NextEpochCandidates) || !slices.Equal(got.NextEpochPenalties, want.NextEpochPenalties) {
+		t.Fatalf("repaired snapshot %+v, want %+v", got, want)
+	}
+}
+
+// A fork right at the gap block: the block after a gap block that is not
+// canonical yet is verified against the snapshot derived from that gap block,
+// and the longer fork wins.
+func TestSubnetForkAtGapBlock(t *testing.T) {
+	h := newSubnetHarness(t, 4, []int64{50_000, 40_000, 30_000, 20_000, 10_000}, 4)
+	h.extend(2*testEpoch-testGap-1, nil)
+	parent := h.head()
+
+	canonical := h.buildBlock(parent, blockOpts{})
+	h.insert(canonical)
+	// A competing gap block from a later round, built on the same parent.
+	sibling := h.buildBlock(parent, blockOpts{round: h.round[canonical.Hash()] + 1})
+	if sibling.Hash() == canonical.Hash() {
+		t.Fatal("sibling equals the canonical block")
+	}
+	h.insert(sibling)
+	child := h.buildBlock(sibling, blockOpts{})
+	h.insert(child)
+	if h.head().Hash() != child.Hash() {
+		t.Fatalf("head %d %s, want the child of the sibling gap block", h.head().NumberU64(), h.head().Hash().Hex())
+	}
+	// Once canonical, the sibling's snapshot is stored with the chain, and it
+	// holds what the replaced gap block held: both sample the same parent.
+	got, want := h.storedSnapshot(sibling.Hash()), h.storedSnapshot(canonical.Hash())
+	if !slices.Equal(got.NextEpochCandidates, want.NextEpochCandidates) || !slices.Equal(got.NextEpochPenalties, want.NextEpochPenalties) {
+		t.Fatalf("sibling snapshot %+v, want %+v", got, want)
+	}
+	h.extend(3*testEpoch, nil)
+}
+
+// Rewards are paid at the epoch switch for the epoch two switches back, to the
+// owners (90%) and the foundation (10%) of the masternodes listed in the
+// epoch switch header that signed its MergeSignRange blocks. The genesis epoch,
+// whose header lists no masternodes, pays nothing.
+func TestSubnetRewards(t *testing.T) {
+	h := newSubnetHarness(t, 4, []int64{50_000, 40_000, 30_000, 20_000, 10_000}, 4)
+	signers := h.nodes[:3]
+	// signBlock makes the signers sign the MergeSignRange block just mined, in
+	// the next block.
+	signBlock := func(n uint64) blockOpts {
+		if (n-1)%common.MergeSignRange != 0 || n == 1 {
+			return blockOpts{}
+		}
+		target := h.head()
+		return blockOpts{txs: func(*types.Header) []*types.Transaction {
+			state := h.stateAtHead()
+			var txs []*types.Transaction
+			for _, s := range signers {
+				txs = append(txs, h.signingTx(s, state.GetNonce(s.addr), target.NumberU64(), target.Hash()))
+			}
+			return txs
+		}}
+	}
+	h.extend(2*testEpoch-1, signBlock)
+	before := h.stateAtHead()
+	h.extend(2*testEpoch, signBlock)
+	after := h.stateAtHead()
+	for _, n := range h.nodes {
+		if before.GetBalance(n.addr).Cmp(after.GetBalance(n.addr)) != 0 {
+			t.Fatalf("the genesis epoch paid %v", n.addr)
+		}
+	}
+
+	h.extend(3*testEpoch-1, signBlock)
+	before = h.stateAtHead()
+	foundationBefore := before.GetBalance(testFoundation)
+	h.extend(3*testEpoch, signBlock)
+	after = h.stateAtHead()
+
+	// Epoch 1 (blocks 21..39) holds one MergeSignRange block, 30, signed by
+	// three masternodes: each gets a third of the reward.
+	reward := new(big.Int).Mul(big.NewInt(int64(h.config.XDPoS.Reward)), big.NewInt(1e18))
+	perSigner := new(big.Int).Div(reward, big.NewInt(int64(len(signers))))
+	ownerShare := new(big.Int).Div(new(big.Int).Mul(perSigner, big.NewInt(90)), big.NewInt(100))
+	foundationShare := new(big.Int).Div(perSigner, big.NewInt(10))
+	for i, n := range h.nodes {
+		got := new(big.Int).Sub(after.GetBalance(n.addr), before.GetBalance(n.addr))
+		want := new(big.Int)
+		if i < len(signers) {
+			want = ownerShare
+		}
+		if got.Cmp(want) != 0 {
+			t.Fatalf("node %d reward %v, want %v", i, got, want)
+		}
+	}
+	gotFoundation := new(big.Int).Sub(after.GetBalance(testFoundation), foundationBefore)
+	if want := new(big.Int).Mul(foundationShare, big.NewInt(int64(len(signers)))); gotFoundation.Cmp(want) != 0 {
+		t.Fatalf("foundation reward %v, want %v", gotFoundation, want)
+	}
+}
+
+// A node syncing the subnet imports it in batches. A batch holding both a gap
+// block and the block after it cannot verify the latter before the gap block
+// is processed, so the import stops there with a local error and the next one
+// resumes, as the downloader does; the replica ends with the same chain.
+func TestSubnetBatchSync(t *testing.T) {
+	h := newSubnetHarness(t, 4, []int64{50_000, 40_000, 30_000, 20_000, 10_000}, 4)
+	// A transaction in every gap block gives it a state of its own, which the
+	// replica only has once it has processed the block.
+	withTx := func(n uint64) blockOpts {
+		if n%testEpoch != testEpoch-testGap {
+			return blockOpts{}
+		}
+		parent := h.head()
+		return blockOpts{txs: func(*types.Header) []*types.Transaction {
+			sender := h.nodes[0]
+			return []*types.Transaction{h.signingTx(sender, h.stateAtHead().GetNonce(sender.addr), parent.NumberU64(), parent.Hash())}
+		}}
+	}
+	h.extend(testEpoch-1, withTx)
+	h.offline[h.nodes[2].addr] = true
+	h.extend(4*testEpoch+3, withTx)
+
+	var blocks types.Blocks
+	for n := uint64(1); n <= h.head().NumberU64(); n++ {
+		blocks = append(blocks, h.bc.GetBlockByNumber(n))
+	}
+	r := h.replica()
+	for rounds := 0; len(blocks) > 0; rounds++ {
+		if rounds > 20 {
+			t.Fatal("the batch import makes no progress")
+		}
+		n, err := r.bc.InsertChain(blocks)
+		if err == nil {
+			t.Logf("synced in %d imports", rounds+1)
+			break
+		}
+		if n == 0 {
+			t.Fatalf("no block of the batch imported: %v", err)
+		}
+		if !errors.Is(err, consensus.ErrGapSnapshotUnavailable) || blocks[n].NumberU64()%testEpoch != testEpoch-testGap+1 {
+			t.Fatalf("unexpected import error at %d: %v", blocks[n].NumberU64(), err)
+		}
+		blocks = blocks[n:]
+	}
+	if r.head().Hash() != h.head().Hash() {
+		t.Fatalf("replica head %d, want %d", r.head().NumberU64(), h.head().NumberU64())
+	}
+	for gap := uint64(testEpoch - testGap); gap < h.head().NumberU64(); gap += testEpoch {
+		hash := h.bc.GetHeaderByNumber(gap).Hash()
+		got, want := r.storedSnapshot(hash), h.storedSnapshot(hash)
+		if !slices.Equal(got.NextEpochCandidates, want.NextEpochCandidates) || !slices.Equal(got.NextEpochPenalties, want.NextEpochPenalties) {
+			t.Fatalf("replica snapshot of gap block %d differs", gap)
+		}
 	}
 }
