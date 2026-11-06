@@ -547,7 +547,9 @@ func (sim *simulator) sanitizeCall(call *TransactionArgs, state vm.StateDB, head
 		remaining := blockContext.GasLimit - *gasUsed
 		call.Gas = (*hexutil.Uint64)(&remaining)
 	}
-	if *gasUsed+uint64(*call.Gas) > blockContext.GasLimit {
+	// Compare with a subtraction: adding gasUsed and call.Gas would wrap for a
+	// call gas near MaxUint64 and let the call through.
+	if *gasUsed > blockContext.GasLimit || uint64(*call.Gas) > blockContext.GasLimit-*gasUsed {
 		return &blockGasLimitReachedError{fmt.Sprintf("block gas limit reached: %d >= %d", *gasUsed, blockContext.GasLimit)}
 	}
 	// A set-code transaction needs the EIP-1559 fee fields, so gasPrice cannot be

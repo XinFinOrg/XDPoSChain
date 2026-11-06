@@ -1732,6 +1732,19 @@ func TestSimulateV1ZeroGasCap(t *testing.T) {
 		require.ErrorContains(t, err, "block gas limit reached")
 	})
 
+	t.Run("explicit gas over the block limit", func(t *testing.T) {
+		// A call gas near MaxUint64 must not wrap the block limit check below the
+		// limit: the first call has already used gas, so a sum would overflow.
+		first := transfer(1)
+		huge := hexutil.Uint64(math.MaxUint64)
+		second := transfer(2)
+		second.Gas = &huge
+		_, err := newAPI(t, 0).SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{{
+			Calls: []TransactionArgs{first, second},
+		}}}, nil)
+		require.ErrorContains(t, err, "block gas limit reached")
+	})
+
 	t.Run("non-zero cap still applies", func(t *testing.T) {
 		// Both calls fit the block gas limit but not the 21k request wide cap:
 		// the first one drains the pool, the second is rejected by buyGas.
