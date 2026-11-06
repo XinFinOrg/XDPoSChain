@@ -32,6 +32,11 @@ func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Heade
 	if header.Number == nil {
 		return utils.ErrUnknownBlock
 	}
+	// The layout is part of the block hash, so a subnet only accepts subnet
+	// headers and any other chain only legacy ones.
+	if header.Subnet != x.config.IsSubnet {
+		return utils.ErrInvalidHeaderLayout
+	}
 
 	if len(header.Validator) == 0 {
 		// This should never happen, if it does, then it means the peer is sending us invalid data.
@@ -144,7 +149,13 @@ func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Heade
 			}
 
 			validatorsAddress := common.ExtractAddressFromBytes(header.Validators)
-			if !utils.CompareSignersLists(localMasterNodes, validatorsAddress) {
+			if x.config.IsSubnet {
+				if !sameSubnetMasternodes(localMasterNodes, validatorsAddress) {
+					logAddresses("[verifyHeader] localMasterNodes", localMasterNodes)
+					logAddresses("[verifyHeader] validatorsAddress", validatorsAddress)
+					return utils.ErrValidatorsNotLegit
+				}
+			} else if !utils.CompareSignersLists(localMasterNodes, validatorsAddress) {
 				for i, addr := range localMasterNodes {
 					log.Warn("[verifyHeader] localMasterNodes", "i", i, "addr", addr.Hex())
 				}
@@ -154,8 +165,10 @@ func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Heade
 				return utils.ErrValidatorsNotLegit
 			}
 
+			// A subnet epoch switch carries no penalties, which the gap block
+			// rules below enforce.
 			penaltiesAddress := common.ExtractAddressFromBytes(header.Penalties)
-			if !utils.CompareSignersLists(localPenalties, penaltiesAddress) {
+			if !x.config.IsSubnet && !utils.CompareSignersLists(localPenalties, penaltiesAddress) {
 				for i, addr := range localPenalties {
 					log.Warn("[verifyHeader] localPenalties", "i", i, "addr", addr.Hex())
 				}
@@ -172,11 +185,18 @@ func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Heade
 			log.Warn("[verifyHeader] Validators shall not have values in non-epochSwitch block", "Hash", header.Hash(), "Number", header.Number, "header.Validators", header.Validators)
 			return utils.ErrInvalidFieldInNonEpochSwitch
 		}
-		if len(header.Penalties) != 0 {
+		if len(header.Penalties) != 0 && !x.config.IsSubnet {
 			log.Warn("[verifyHeader] Penalties shall not have values in non-epochSwitch block", "Hash", header.Hash(), "Number", header.Number, "header.Penalties", header.Penalties)
 			return utils.ErrInvalidFieldInNonEpochSwitch
 		}
 		masterNodes = x.GetMasternodes(chain, header)
+	}
+	if x.config.IsSubnet {
+		if err := x.verifySubnetHeader(chain, header, fullVerify); err != nil {
+			return err
+		}
+	} else if len(header.NextValidators) != 0 {
+		return utils.ErrInvalidHeaderLayout
 	}
 
 	verified, validatorAddress, err := x.verifyMsgSignature(sigHash(header), header.Validator, masterNodes)

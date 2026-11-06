@@ -119,7 +119,7 @@ func (x *XDPoS_v2) getTCEpochInfo(chain consensus.ChainReader, timeoutRound type
 	}
 
 	epochRound := epochSwitchInfo.EpochSwitchBlockInfo.Round
-	tempTCEpoch := x.config.V2.SwitchEpoch + uint64(epochRound)/x.config.Epoch
+	tempTCEpoch := x.EpochNumber(epochSwitchInfo.EpochSwitchBlockInfo.Number.Uint64(), epochRound)
 
 	epochBlockInfo := &types.BlockInfo{
 		Hash:   epochSwitchInfo.EpochSwitchBlockInfo.Hash,
