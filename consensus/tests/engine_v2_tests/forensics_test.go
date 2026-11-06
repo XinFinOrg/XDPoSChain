@@ -11,14 +11,12 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
-	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestProcessQcShallSetForensicsCommittedQc(t *testing.T) {
 	t.Parallel()
-	testshort.Skip(t)
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -89,8 +87,29 @@ func TestProcessQcShallSetForensicsCommittedQc(t *testing.T) {
 	err = engineV2.VoteHandler(blockchain, voteMsg)
 	assert.Nil(t, err)
 
-	time.Sleep(5000 * time.Millisecond)
-	assert.Equal(t, 3, len(engineV2.GetForensicsFaker().GetCommittedQCs()))
+	// The committer goroutine records the QCs after the votes, and the read is
+	// under the forensics lock, so poll until all three are recorded instead
+	// of sleeping a fixed five seconds.
+	const (
+		pollInterval = 10 * time.Millisecond
+		pollTimeout  = 5 * time.Second
+		wantQCs      = 3
+	)
+	forensics := engineV2.GetForensicsFaker()
+	deadline := time.Now().Add(pollTimeout)
+	var committedQCs []types.QuorumCert
+	for {
+		committedQCs = forensics.GetCommittedQCs()
+		if len(committedQCs) >= wantQCs || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(pollInterval)
+	}
+	if assert.Len(t, committedQCs, wantQCs) {
+		// The last recorded QC is the incoming one, i.e. the QC for the
+		// voted block 905.
+		assert.Equal(t, currentBlock.Hash(), committedQCs[wantQCs-1].ProposedBlockInfo.Hash)
+	}
 }
 
 func TestSetCommittedQCsInOrder(t *testing.T) {
