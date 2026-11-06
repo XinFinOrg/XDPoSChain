@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"strings"
 	"testing"
@@ -6369,6 +6370,79 @@ func TestDoCallInvalidStateOverride(t *testing.T) {
 
 	_, err = DoCall(context.Background(), backend, TransactionArgs{To: &to}, latest, &overrides, nil, 0, 0)
 	require.ErrorContains(t, err, "has both 'state' and 'stateDiff'")
+}
+
+// zeroGasCapBackendMock adds the XDCx service and EVM plumbing that
+// applyMessage needs on top of callBackendMock.
+type zeroGasCapBackendMock struct {
+	*callBackendMock
+}
+
+func (b *zeroGasCapBackendMock) ChainConfig() *params.ChainConfig {
+	return params.MergedTestChainConfig
+}
+
+func (b *zeroGasCapBackendMock) XDCxService() *XDCx.XDCX {
+	return &XDCx.XDCX{StateCache: tradingstate.NewDatabase(rawdb.NewMemoryDatabase())}
+}
+
+func (b *zeroGasCapBackendMock) GetEVM(ctx context.Context, state *state.StateDB, XDCxState *tradingstate.TradingStateDB, header *types.Header, vmConfig *vm.Config, blockContext *vm.BlockContext) (*vm.EVM, func() error, error) {
+	return vm.NewEVM(*blockContext, state, XDCxState, b.ChainConfig(), *vmConfig), func() error { return nil }, nil
+}
+
+// TestDoCallZeroGasCap checks that a zero RPC gas cap leaves the call with an
+// effectively unlimited pool rather than an empty one.
+func TestDoCallZeroGasCap(t *testing.T) {
+	t.Parallel()
+
+	db := rawdb.NewMemoryDatabase()
+	genesis := (&core.Genesis{Config: params.MergedTestChainConfig}).MustCommit(db)
+	stateDB, err := state.New(genesis.Root(), state.NewDatabase(db))
+	require.NoError(t, err)
+
+	block := types.NewBlock(genesis.Header(), &types.Body{}, nil, newHasher())
+	from := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	to := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	backend := &zeroGasCapBackendMock{
+		callBackendMock: &callBackendMock{
+			backendMock: newBackendMock(),
+			stateDB:     stateDB,
+			header:      genesis.Header(),
+			block:       block,
+		},
+	}
+	latest := rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber)
+
+	// GAS; PUSH1 0; MSTORE; PUSH1 32; PUSH1 0; RETURN returns the gas left at
+	// entry as a 32-byte word, so a finite cap cannot pass for an unbounded pool.
+	code := hexutil.Bytes{0x5a, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3}
+	overrides := override.StateOverride{to: override.OverrideAccount{Code: &code}}
+
+	tests := []struct {
+		name      string
+		gasCap    uint64
+		unbounded bool
+	}{
+		{"zero cap is unlimited", 0, true},
+		{"finite cap still bounds the call", 50_000, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := DoCall(context.Background(), backend, TransactionArgs{From: &from, To: &to}, latest, &overrides, nil, 0, tt.gasCap)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Len(t, result.ReturnData, 32)
+
+			gasLeft := new(big.Int).SetBytes(result.ReturnData).Uint64()
+			if tt.unbounded {
+				require.Greater(t, gasLeft, uint64(math.MaxUint64)-1_000_000)
+			} else {
+				require.Less(t, gasLeft, tt.gasCap)
+			}
+			// The contract returns immediately; the unbounded pool must not be spent.
+			require.Less(t, result.UsedGas, uint64(100_000))
+		})
+	}
 }
 
 // TestRPCMarshalHeaderBaseFeeField tests rpc marshal header base fee field.
