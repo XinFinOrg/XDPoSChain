@@ -140,7 +140,7 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	// Ensure the transaction has more gas than the bare minimum needed to
 	// cover the transaction metadata.
 	// XDC schedules the EIP-2028 calldata pricing with the Prague fork.
-	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, true, rules.IsPrague, rules.IsEIP1559)
+	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, true, rules.IsPrague, rules.IsEIP1559, rules.IsAmsterdam)
 	if err != nil {
 		return err
 	}
@@ -149,7 +149,7 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	}
 	// Ensure the transaction can cover floor data gas.
 	if rules.IsPrague {
-		floorDataGas, err := core.FloorDataGas(rules, tx.Data())
+		floorDataGas, err := core.FloorDataGas(rules, tx.Data(), tx.AccessList())
 		if err != nil {
 			return err
 		}

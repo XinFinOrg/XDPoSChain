@@ -28,6 +28,7 @@ Implement each Amsterdam EIP on its own branch, commit and PR, porting the upstr
 
 - The intermediate state has `IntrinsicGas` boolean-driven and `FloorDataGas` rules-driven — exactly upstream's state between #34748 and #35318. A reader comparing against geth master sees a deliberate lag, not drift.
 - `FloorDataGas`'s signature changes twice more: #2763 adds `accessList`, #2759 adds `from`, `to`, `value` and swaps its base to `intrinsicBaseGasEIP2780`. Each change touches the call sites in `core/state_transition.go`, `core/txpool/validation.go` and the core tests.
+- Amsterdam and Prague are separate switches in this tree, while the calldata floor only runs under Prague: a network that schedules Amsterdam without it would charge the EIP-7981 access-list tokens with no EIP-7623/EIP-7976 floor and no EIP-2028 calldata price. The Amsterdam activation has to schedule Prague at or before Amsterdam.
 
 ## Out of scope
 
