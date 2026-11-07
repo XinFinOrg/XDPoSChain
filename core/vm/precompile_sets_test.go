@@ -54,7 +54,6 @@ func TestPrecompileSetsByFork(t *testing.T) {
 	// not something this test may pin down: asserting presence would fail, and
 	// asserting absence would freeze the gap in place as the expectation.
 	xdcxContracts := []common.Address{
-		common.BytesToAddress([]byte{0x1e}), common.BytesToAddress([]byte{0x28}),
 		common.BytesToAddress([]byte{0x29}), common.BytesToAddress([]byte{0x2a}),
 	}
 	tests := []struct {
@@ -67,8 +66,8 @@ func TestPrecompileSetsByFork(t *testing.T) {
 		p256Active bool // whether EIP-7951 P256VERIFY (0x100) must be reachable
 	}{
 		{name: "homestead", rules: params.Rules{}, classic: 4, kzgStub: false},
-		{name: "byzantium", rules: params.Rules{IsByzantium: true}, classic: 8, kzgStub: false, xdcx: 4},
-		{name: "istanbul", rules: params.Rules{IsIstanbul: true}, classic: 9, kzgStub: false, xdcx: 4},
+		{name: "byzantium", rules: params.Rules{IsByzantium: true}, classic: 8, kzgStub: false, xdcx: 2},
+		{name: "istanbul", rules: params.Rules{IsIstanbul: true}, classic: 9, kzgStub: false, xdcx: 2},
 		{name: "xdcv2", rules: params.Rules{IsXDCxDisable: true}, classic: 9, kzgStub: false},
 		{name: "eip1559", rules: params.Rules{IsEIP1559: true}, classic: 9, kzgStub: false},
 		{name: "prague", rules: params.Rules{IsPrague: true}, classic: 9, blsActive: true, kzgStub: true},

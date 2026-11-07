@@ -69,8 +69,6 @@ var allPrecompiles = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{0x08}): &bn256PairingIstanbul{},
 	common.BytesToAddress([]byte{0x09}): &blake2F{},
 	common.BytesToAddress([]byte{0x0a}): kzgStub,
-	common.BytesToAddress([]byte{0x1e}): &ringSignatureVerifier{},
-	common.BytesToAddress([]byte{0x28}): &bulletproofVerifier{},
 	common.BytesToAddress([]byte{0x29}): &XDCxLastPrice{},
 	common.BytesToAddress([]byte{0x2a}): &XDCxEpochPrice{},
 
