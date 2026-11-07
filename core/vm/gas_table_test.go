@@ -876,11 +876,9 @@ func TestCallVariantGasColdAccessTracerReason(t *testing.T) {
 	})
 }
 
-// TestCallVariantGasEIP2929BindingPosition pins the stack position each of the
-// four EIP-2929 wrappers reads the call target from. The requested gas differs
-// between the two calls, so a wrapper reading the target from position 0 lands
-// on a different address and charges the cold access twice; the access list
-// assertion covers a wrapper reading it from position 2 (the value operand).
+// TestCallVariantGasEIP2929BindingPosition pins the stack position each wrapper
+// reads the target from (a wrong position charges the cold access twice) and
+// that the cold charge is handed back to the caller.
 func TestCallVariantGasEIP2929BindingPosition(t *testing.T) {
 	target := common.HexToAddress("0xaa")
 	noValue := new(uint256.Int)
@@ -899,7 +897,8 @@ func TestCallVariantGasEIP2929BindingPosition(t *testing.T) {
 			statedb := newCallGasTestStateDB(t)
 			statedb.SetCode(target, []byte{byte(STOP)})
 			evm := newCallGasTestEVM(t, statedb, params.Rules{IsEIP150: true, IsEIP158: true, IsBerlin: true})
-			contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), 100000, nil)
+			const startGas = uint64(100000)
+			contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), startGas, nil)
 
 			var got [2]uint64
 			for i, requested := range []uint64{0, 1} {
@@ -908,6 +907,9 @@ func TestCallVariantGasEIP2929BindingPosition(t *testing.T) {
 				returnStack(stack)
 				if err != nil {
 					t.Fatalf("call %d: unexpected error: %v", i, err)
+				}
+				if contract.Gas != startGas {
+					t.Errorf("call %d: contract gas not restored: have %d, want %d", i, contract.Gas, startGas)
 				}
 				got[i] = gas
 			}
