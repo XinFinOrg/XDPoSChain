@@ -485,7 +485,12 @@ func TestCopyObjectState(t *testing.T) {
 
 // TestSnapshotRandom tests snapshot random.
 func TestSnapshotRandom(t *testing.T) {
-	config := &quick.Config{MaxCount: 1000}
+	// Each iteration replays a random action sequence once per snapshot taken in
+	// it, so the cost of the check grows faster than the count: a thousand
+	// sequences spent 14s under the race detector to walk the same action types a
+	// fifth of that already covers. Every sequence still exercises all of them,
+	// and the checks inside one sequence are deterministic.
+	config := &quick.Config{MaxCount: 200}
 	err := quick.Check((*snapshotTest).run, config)
 	if cerr, ok := err.(*quick.CheckError); ok {
 		test := cerr.In[0].(*snapshotTest)
