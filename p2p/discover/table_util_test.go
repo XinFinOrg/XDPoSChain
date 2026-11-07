@@ -26,6 +26,7 @@ import (
 	"net"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -41,9 +42,13 @@ func init() {
 	nullNode = enode.SignNull(&r, enode.ID{})
 }
 
+// newTestTable creates a table for a test. Background revalidation is pushed
+// out of reach: the first revalidation delay is a random value below the ping
+// interval, and the test transport answers every ping, so revalidation can move
+// bucket entries while the test reads them.
 func newTestTable(t transport) (*Table, *enode.DB) {
 	db, _ := enode.OpenDB("")
-	tab, _ := newTable(t, db, Config{Log: log.Root()})
+	tab, _ := newTable(t, db, Config{Log: log.Root(), PingInterval: 1000 * time.Hour})
 	go tab.loop()
 	return tab, db
 }
