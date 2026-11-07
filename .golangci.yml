@@ -2,6 +2,8 @@
 version: '2'
 run:
   tests: true
+  # Queue concurrent runs instead of failing after the 5s lock timeout
+  allow-serial-runners: true
 linters:
   default: none
   enable:
