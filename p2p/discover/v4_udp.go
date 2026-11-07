@@ -568,6 +568,10 @@ func (t *UDPv4) checkBond(id enode.ID, ip net.IP) bool {
 	return time.Since(t.db.LastPongReceived(id, ip)) < bondExpiration
 }
 
+// ensureBondWait is the pause after a successful bonding ping, giving the remote
+// node time to process our pong. It is a variable so tests can shorten the wait.
+var ensureBondWait = respTimeout
+
 // ensureBond solicits a ping from a node if we haven't seen a ping from it for a while.
 // This ensures there is a valid endpoint proof on the remote end.
 func (t *UDPv4) ensureBond(toid enode.ID, toaddr *net.UDPAddr) {
@@ -576,7 +580,7 @@ func (t *UDPv4) ensureBond(toid enode.ID, toaddr *net.UDPAddr) {
 		rm := t.sendPing(toid, toaddr, nil)
 		<-rm.errc
 		// Wait for them to ping back and process our pong.
-		time.Sleep(respTimeout)
+		time.Sleep(ensureBondWait)
 	}
 }
 
