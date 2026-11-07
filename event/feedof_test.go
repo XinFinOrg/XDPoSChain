@@ -30,7 +30,7 @@ func TestFeedOf(t *testing.T) {
 
 		subchan := make(chan int)
 		sub := feed.Subscribe(subchan)
-		timeout := time.NewTimer(2 * time.Second)
+		timeout := time.NewTimer(feedTestTimeout)
 		defer timeout.Stop()
 		subscribed.Done()
 
