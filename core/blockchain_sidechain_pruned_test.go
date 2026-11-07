@@ -25,6 +25,8 @@ import "testing"
 // rebuilt while a block dropped from the queue is never offered again by the downloader. Folding
 // this shape into the same eviction rule would trade repeated verification for a stalled range.
 func TestProcFutureBlocksKeepsPrunedAncestorParkedBlock(t *testing.T) {
+	t.Parallel()
+
 	chain, blocks, _, _ := newPrunedCanonicalChain(t)
 
 	// A canonical block below the state window: it is on disk, its state is gone.
@@ -46,9 +48,27 @@ func TestProcFutureBlocksKeepsPrunedAncestorParkedBlock(t *testing.T) {
 // not be mistaken for a ghost-state attack, and the batch must still be routed as a sidechain import
 // after that prefix is trimmed.
 func TestPrunedImportSide(t *testing.T) {
-	testSideImport(t, 3, 3)
-	testSideImport(t, 3, -3)
-	testSideImport(t, 10, 0)
-	testSideImport(t, 1, 10)
-	testSideImport(t, 1, -10)
+	t.Parallel()
+
+	// The cases differ in how much of the canonical chain is prepended to the
+	// sidechain and where the fork leaves it: above, at or below the prune
+	// point. Every case builds its own chain and database, so they run side by
+	// side instead of one after the other.
+	for _, tc := range []struct {
+		name                 string
+		canonicalInSidechain int
+		belowPrunePoint      int
+	}{
+		{"three canonical blocks, fork above the prune point", 3, 3},
+		{"three canonical blocks, fork below the prune point", 3, -3},
+		{"ten canonical blocks, fork at the prune point", 10, 0},
+		{"one canonical block, fork ten above the prune point", 1, 10},
+		{"one canonical block, fork ten below the prune point", 1, -10},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			testSideImport(t, tc.canonicalInSidechain, tc.belowPrunePoint)
+		})
+	}
 }
