@@ -23,6 +23,7 @@
 package discover
 
 import (
+	"context"
 	crand "crypto/rand"
 	"encoding/binary"
 	"fmt"
@@ -33,6 +34,7 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/p2p/netutil"
@@ -81,6 +83,7 @@ type Table struct {
 	closeReq     chan struct{}
 	closed       chan struct{}
 
+	nodeFeed      event.FeedOf[*enode.Node]
 	nodeAddedHook func(*node) // for testing
 }
 
@@ -498,6 +501,7 @@ func (tab *Table) addSeenNode(n *node) {
 	b.entries = append(b.entries, n)
 	b.replacements = deleteNode(b.replacements, n)
 	n.addedAt = time.Now()
+	tab.nodeFeed.Send(unwrapNode(n))
 	if tab.nodeAddedHook != nil {
 		tab.nodeAddedHook(n)
 	}
@@ -540,6 +544,7 @@ func (tab *Table) addVerifiedNode(n *node) {
 	b.entries, _ = pushNode(b.entries, n, bucketSize)
 	b.replacements = deleteNode(b.replacements, n)
 	n.addedAt = time.Now()
+	tab.nodeFeed.Send(unwrapNode(n))
 	if tab.nodeAddedHook != nil {
 		tab.nodeAddedHook(n)
 	}
@@ -672,6 +677,72 @@ func deleteNode(list []*node, n *node) []*node {
 		}
 	}
 	return list
+}
+
+// waitForNodes blocks until the table contains at least n nodes.
+func (tab *Table) waitForNodes(ctx context.Context, n int) error {
+	// Wrap ctx so the forwarder goroutine exits when waitForNodes returns,
+	// regardless of whether the caller's ctx is canceled.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Set up a notification channel that gets unblocked when there was any activity on
+	// the table. Ultimately this reads from the table's nodeFeed, but can't use the feed
+	// directly on the same goroutine that takes Table.mutex, it would deadlock.
+	var notify chan struct{}
+	var notifyErr error
+	initsub := func() event.Subscription {
+		notify = make(chan struct{}, 1)
+		newnode := make(chan *enode.Node, 1)
+		sub := tab.nodeFeed.Subscribe(newnode)
+		go func() {
+			defer close(notify)
+			for {
+				select {
+				case <-newnode:
+					select {
+					case notify <- struct{}{}:
+					default:
+					}
+				case <-ctx.Done():
+					notifyErr = ctx.Err()
+					return
+				case <-tab.closeReq:
+					notifyErr = errClosed
+					return
+				}
+			}
+		}()
+		return sub
+	}
+
+	getlength := func() (count int) {
+		for _, b := range &tab.buckets {
+			count += len(b.entries)
+		}
+		return count
+	}
+
+	for {
+		tab.mutex.Lock()
+		if getlength() >= n {
+			tab.mutex.Unlock()
+			return nil
+		}
+		if notify == nil {
+			// Lazily init the subscription. Do this while holding the
+			// lock so we don't miss any events that change the node count.
+			sub := initsub()
+			defer sub.Unsubscribe()
+		}
+		tab.mutex.Unlock()
+
+		// Wait for table event.
+		if _, ok := <-notify; !ok {
+			break
+		}
+	}
+	return notifyErr
 }
 
 // nodesByDistance is a list of nodes, ordered by distance to target.

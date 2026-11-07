@@ -17,6 +17,7 @@
 package discover
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"fmt"
 	"math/rand"
@@ -462,5 +463,44 @@ func TestTableBootnodesNetRestrict(t *testing.T) {
 	}
 	if len(tab.nursery) != 1 || tab.nursery[0].ID() != allowed.ID() {
 		t.Fatalf("wrong nursery: have %d nodes, want only %v", len(tab.nursery), allowed.ID())
+	}
+}
+
+// This test checks that waitForNodes does not block addSeenNode.
+// See https://github.com/ethereum/go-ethereum/issues/34881.
+func TestTable_waitForNodesLocking(t *testing.T) {
+	transport := newPingRecorder()
+	tab, db := newTestTable(transport)
+	defer db.Close()
+	defer tab.close()
+	<-tab.initDone
+
+	// waitForNodes will never reach this count, so it stays subscribed
+	// to nodeFeed and looping for the duration of the test.
+	waitCtx, cancelWait := context.WithCancel(context.Background())
+	defer cancelWait()
+	waitDone := make(chan struct{})
+	go func() {
+		defer close(waitDone)
+		tab.waitForNodes(waitCtx, 1<<20)
+	}()
+
+	// Call addSeenNode in loop to send to the feed.
+	addDone := make(chan struct{})
+	go func() {
+		defer close(addDone)
+		for i := range 10000 {
+			d := 240 + (i % 17)
+			n := nodeAtDistance(tab.self().ID(), d, intIP(i))
+			tab.addSeenNode(n)
+		}
+	}()
+
+	select {
+	case <-addDone:
+		cancelWait()
+		<-waitDone
+	case <-time.After(10 * time.Second):
+		t.Fatal("deadlock detected: add loop did not finish within 10s")
 	}
 }
