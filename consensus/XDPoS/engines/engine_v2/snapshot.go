@@ -92,12 +92,13 @@ func (x *XDPoS_v2) getSnapshot(chain consensus.ChainReader, number uint64, isGap
 	if isGapNumber {
 		gapBlockNum = number
 	} else {
-		gapBlockNum = number - number%x.config.Epoch
-		if gapBlockNum > x.config.Gap {
-			gapBlockNum -= x.config.Gap
-		} else {
-			gapBlockNum = 0
+		if x.config.Epoch == 0 {
+			// An unset epoch names no gap block and would divide by zero below. A
+			// plain error, not a consensus sentinel: core classifies the sentinels as
+			// a local condition of the chain data, and this is a config error.
+			return nil, fmt.Errorf("[getSnapshot] XDPoS.Epoch is unset, so no gap block backs number %d", number)
 		}
+		gapBlockNum, _ = x.config.GapBlockNumber(number)
 	}
 
 	gapHeader := chain.GetHeaderByNumber(gapBlockNum)

@@ -20,6 +20,8 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+
+	"github.com/XinFinOrg/XDPoSChain/common"
 )
 
 // ErrInvalidEpochGap reports an XDPoS chain config whose schedule cannot place
@@ -28,16 +30,16 @@ var ErrInvalidEpochGap = errors.New("invalid XDPoS schedule")
 
 // CheckSchedule enforces 0 < gap < epoch on an XDPoS schedule. A nil receiver
 // is a chain config without an XDPoS section, which is not an XDPoS chain and
-// is left alone. Outside the bound a schedule has no consistent meaning: the
-// two gap predicates disagree on Gap == Epoch (isGapBlockNumber accepts it,
-// isNextEpochGapBlock refuses it), and for Gap > Epoch the v1 engine's
-// checkpoint-minus-Gap lookup addresses heights those predicates never report.
-// A violating config is therefore rejected where it enters the chain rather
-// than interpreted.
+// is left alone. Outside the bound a schedule has no consistent meaning:
+// Gap == Epoch puts the gap trigger on the epoch switch block, which would
+// have to consume the candidate set it samples, and for Gap > Epoch the v1
+// engine's checkpoint-minus-Gap lookup addresses heights the gap predicate
+// never reports. A violating config is therefore rejected where it enters the
+// chain rather than interpreted.
 //
 // ChainConfig.checkConfigForkOrder calls this just before the alignment check,
 // so a config that declares no schedule is rejected here rather than left to
-// the engines, which rewrite a missing epoch but never a missing gap.
+// the engines, which no longer repair a missing epoch.
 //
 // The refusal names the shape it found, because the four shapes need different
 // answers: an unset epoch has to be supplied, an epoch of one cannot satisfy
@@ -61,6 +63,94 @@ func (c *XDPoSConfig) CheckSchedule() error {
 	default:
 		return fmt.Errorf("%w: XDPoS.Gap %d designates no gap block inside XDPoS.Epoch %d (want 1 <= Gap < Epoch)", ErrInvalidEpochGap, c.Gap, c.Epoch)
 	}
+}
+
+// GapTrigger returns the height inside each epoch at which the gap block falls,
+// Epoch-Gap, and whether the schedule designates a gap block at all.
+//
+// It is the one place the schedule's shape is judged on the consumer side. A
+// schedule outside the bound CheckSchedule enforces answers false rather than
+// producing a height: a zero gap names no block inside the epoch, Gap == Epoch
+// puts the trigger on the epoch switch block itself, Gap > Epoch wraps Epoch-Gap
+// past the end of the epoch, and an unset Epoch has no inside to speak of. The
+// predicate therefore neither divides nor
+// wraps, which is what lets callers that can be reached with an unvalidated
+// config (BlockChain.SetChainConfig, an engine built directly) use it without
+// repeating a guard. False is not an error to report: the schedule is refused
+// on every startup path, so a caller falls back rather than halting.
+func (c *XDPoSConfig) GapTrigger() (uint64, bool) {
+	if c == nil || c.Gap == 0 || c.Gap >= c.Epoch {
+		return 0, false
+	}
+	return c.Epoch - c.Gap, true
+}
+
+// GapBlockNumber returns the gap block that governs the epoch containing
+// number, and whether the schedule designates one at all.
+//
+// It resolves number to the start of its epoch and steps back by Gap, so the
+// height it returns lies in the previous epoch: that is the block whose
+// committed state the epoch switch reads, not a block inside the epoch its
+// number falls in. An epoch that starts no farther than Gap into the chain has
+// no earlier gap block to point at; the answer is then the first block of the
+// chain, (0, true) - a fallback for the chain start rather than a height the
+// trigger selects, since the trigger stays inside the epoch. False is reserved
+// for a schedule with no gap block at all, and like the other predicates it is
+// not an error for a caller to report.
+func (c *XDPoSConfig) GapBlockNumber(number uint64) (uint64, bool) {
+	if _, ok := c.GapTrigger(); !ok {
+		return 0, false
+	}
+	epochStart := number - number%c.Epoch
+	if epochStart > c.Gap {
+		return epochStart - c.Gap, true
+	}
+	return 0, true
+}
+
+// IsGapBlock reports whether number is the gap block the schedule designates,
+// i.e. whether the trigger sits on its residue in the epoch.
+//
+// Block production and block import ask this same question about the same
+// height - core's masternode refresh and engine_v2.UpdateMasternodes - so it is
+// judged here once. A schedule without a gap block, including an unset Epoch
+// that would otherwise divide, answers false and never an error.
+func (c *XDPoSConfig) IsGapBlock(number uint64) bool {
+	trigger, ok := c.GapTrigger()
+	return ok && number%c.Epoch == trigger
+}
+
+// IsSameEpoch reports whether the two heights fall inside the same chain epoch,
+// the question XDCxlending asks to tell whether a price a contract recorded is
+// still current for the header being processed.
+//
+// It compares the epoch starts rather than the quotients: for a non-zero epoch
+// the two relations are the same, and the modulo form keeps the judgement next
+// to IsGapBlock's. A missing schedule or an unset epoch answers false instead
+// of dividing by zero; the open-coded divisions this replaces carried no such
+// guard.
+func (c *XDPoSConfig) IsSameEpoch(first, second uint64) bool {
+	if c == nil || c.Epoch == 0 {
+		return false
+	}
+	return first-first%c.Epoch == second-second%c.Epoch
+}
+
+// IsLendingLiquidationBlock reports whether number is the height at which
+// XDCxlending liquidates open trades, i.e. whether its residue is
+// common.LiquidateLendingTradeBlock.
+//
+// Block production and block import both ask this question about the same
+// height - the miner decides whether to attach the liquidation work, the
+// importer decides whether to expect it - so they share the definition here. A
+// missing schedule or an unset epoch answers false rather than dividing by
+// zero; the branch that admits these callers only skips blocks at or below the
+// epoch, which an unset epoch does not cover for a real block.
+func (c *XDPoSConfig) IsLendingLiquidationBlock(number uint64) bool {
+	if c == nil || c.Epoch == 0 {
+		return false
+	}
+	return number%c.Epoch == common.LiquidateLendingTradeBlock
 }
 
 // SwitchEpochFor returns the epoch number a switch block falls on under epoch,

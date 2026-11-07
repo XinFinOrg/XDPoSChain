@@ -90,11 +90,9 @@ func (x *XDPoS_v1) SigHash(header *types.Header) (hash common.Hash) {
 // signers set to the ones provided by the user.
 func New(chainConfig *params.ChainConfig, db ethdb.Database) *XDPoS_v1 {
 	config := chainConfig.XDPoS
-	// Set any missing consensus parameters to their defaults
+	// The config is expected to have been validated at startup; the copy keeps this
+	// engine from following later changes to chainConfig.XDPoS.
 	conf := *config
-	if conf.Epoch == 0 {
-		conf.Epoch = utils.EpochLength
-	}
 
 	return &XDPoS_v1{
 		chainConfig: chainConfig,

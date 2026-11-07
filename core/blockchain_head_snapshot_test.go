@@ -362,8 +362,8 @@ func TestNeedsNextEpochSnapshot(t *testing.T) {
 		cfg := v2Config()
 		cfg.XDPoS.Epoch, cfg.XDPoS.Gap = schedule.epoch, schedule.gap
 		blockchain.SetChainConfig(cfg)
-		if blockchain.isNextEpochGapBlock(schedule.number) {
-			t.Fatalf("isNextEpochGapBlock(%d) is true for epoch %d, gap %d", schedule.number, schedule.epoch, schedule.gap)
+		if blockchain.isGapBlockNumber(schedule.number) {
+			t.Fatalf("isGapBlockNumber(%d) is true for epoch %d, gap %d", schedule.number, schedule.epoch, schedule.gap)
 		}
 		if blockchain.needsNextEpochSnapshot(new(big.Int).SetUint64(schedule.number)) {
 			t.Fatalf("needsNextEpochSnapshot(%d) is true for epoch %d, gap %d", schedule.number, schedule.epoch, schedule.gap)

@@ -2998,6 +2998,76 @@ func TestSetPivotBlockGapCalculation(t *testing.T) {
 	}
 }
 
+// TestFullSyncFlushBoundary pins which residues end a full-sync import batch. The
+// epoch boundaries are a boundary whether or not the schedule designates a gap
+// block, while the gap boundary is only added when it does.
+func TestFullSyncFlushBoundary(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		number  uint64
+		epoch   uint64
+		trigger uint64
+		hasGap  bool
+		want    bool
+	}{
+		{"epoch start", 0, 900, 450, true, true},
+		{"epoch start without a gap schedule", 0, 900, 450, false, true},
+		{"last block of the epoch", 899, 900, 450, true, true},
+		{"last block of the epoch without a gap schedule", 899, 900, 450, false, true},
+		{"gap block", 450, 900, 450, true, true},
+		{"gap residue without a gap schedule", 450, 900, 450, false, false},
+		{"ordinary block", 300, 900, 450, true, false},
+		{"ordinary block without a gap schedule", 300, 900, 450, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := flushAtBoundary(tt.number, tt.epoch, tt.trigger, tt.hasGap); got != tt.want {
+				t.Fatalf("flushAtBoundary(%d, %d, %d, %v) = %v, want %v", tt.number, tt.epoch, tt.trigger, tt.hasGap, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestFullSyncUnusableGapScheduleStillSyncs pins the full-sync batching against the
+// schedule: an unset epoch imports the batch whole, and an epoch that is set keeps
+// its epoch boundaries while a schedule without a gap block adds none of its own.
+func TestFullSyncUnusableGapScheduleStillSyncs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cfg  *params.XDPoSConfig
+	}{
+		{"unset epoch", &params.XDPoSConfig{Epoch: 0, Gap: 450}},
+		{"zero gap", &params.XDPoSConfig{Epoch: 900, Gap: 0}},
+		{"gap equal to epoch", &params.XDPoSConfig{Epoch: 900, Gap: 900}},
+		{"gap above epoch", &params.XDPoSConfig{Epoch: 900, Gap: 1200}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tester := newTester()
+			// The override only drives the batching; the tester chain itself is the
+			// standard test chain.
+			tester.configOverride = &params.ChainConfig{XDPoS: tt.cfg}
+			defer tester.terminate()
+
+			chain := testChainBase.shorten(blockCacheMaxItems - 15)
+			tester.newPeer("peer", xdc100, chain)
+
+			if err := tester.sync("peer", nil, FullSync); err != nil {
+				t.Fatalf("full sync with an unusable gap schedule failed: %v", err)
+			}
+			assertOwnChain(t, tester, chain.len())
+		})
+	}
+}
+
 // TestFastSyncPivotHashMismatch checks that processFastSyncContent returns a
 // descriptive "pivot block hash mismatch" error when the configured pivot hash
 // does not match the actual downloaded pivot block.

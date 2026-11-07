@@ -226,3 +226,153 @@ func TestCheckSwitchBlockAlignment(t *testing.T) {
 		})
 	}
 }
+
+// TestGapTrigger pins the height the gap block falls on inside an epoch and the
+// schedules that designate no gap block at all.
+func TestGapTrigger(t *testing.T) {
+	var nilSchedule *XDPoSConfig
+	for _, test := range []struct {
+		name     string
+		schedule *XDPoSConfig
+		want     uint64
+		wantOK   bool
+	}{
+		{name: "nil schedule", schedule: nilSchedule},
+		{name: "default schedule", schedule: &XDPoSConfig{Epoch: 900, Gap: 450}, want: 450, wantOK: true},
+		{name: "smallest usable schedule", schedule: &XDPoSConfig{Epoch: 2, Gap: 1}, want: 1, wantOK: true},
+		{name: "zero gap", schedule: &XDPoSConfig{Epoch: 900, Gap: 0}},
+		{name: "gap equal to the epoch", schedule: &XDPoSConfig{Epoch: 900, Gap: 900}},
+		{name: "gap above the epoch", schedule: &XDPoSConfig{Epoch: 900, Gap: 1200}},
+		{name: "zero epoch", schedule: &XDPoSConfig{Epoch: 0, Gap: 450}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			trigger, ok := test.schedule.GapTrigger()
+			if trigger != test.want || ok != test.wantOK {
+				t.Fatalf("GapTrigger() = (%d, %v), want (%d, %v)", trigger, ok, test.want, test.wantOK)
+			}
+		})
+	}
+}
+
+// TestGapBlockNumber pins the height-side answer: the gap block governing the
+// epoch containing the number, the chain-start fallback of (0, true), and the
+// schedules that designate no gap block at all.
+func TestGapBlockNumber(t *testing.T) {
+	var nilSchedule *XDPoSConfig
+	defaultSchedule := &XDPoSConfig{Epoch: 900, Gap: 450}
+	for _, test := range []struct {
+		name     string
+		schedule *XDPoSConfig
+		number   uint64
+		want     uint64
+		wantOK   bool
+	}{
+		{name: "nil schedule", schedule: nilSchedule, number: 1800},
+		{name: "genesis", schedule: defaultSchedule, number: 0, want: 0, wantOK: true},
+		{name: "first epoch start", schedule: defaultSchedule, number: 900, want: 450, wantOK: true},
+		{name: "first epoch, last block", schedule: defaultSchedule, number: 1799, want: 450, wantOK: true},
+		{name: "second epoch start", schedule: defaultSchedule, number: 1800, want: 1350, wantOK: true},
+		// epochStart == Gap has no earlier gap block to point at.
+		{name: "epoch start equal to gap", schedule: defaultSchedule, number: 450, want: 0, wantOK: true},
+		{name: "zero gap", schedule: &XDPoSConfig{Epoch: 900, Gap: 0}, number: 1800},
+		{name: "gap equal to the epoch", schedule: &XDPoSConfig{Epoch: 900, Gap: 900}, number: 1800},
+		{name: "gap above the epoch", schedule: &XDPoSConfig{Epoch: 900, Gap: 1200}, number: 1800},
+		{name: "zero epoch", schedule: &XDPoSConfig{Epoch: 0, Gap: 450}, number: 1800},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			number, ok := test.schedule.GapBlockNumber(test.number)
+			if number != test.want || ok != test.wantOK {
+				t.Fatalf("GapBlockNumber(%d) = (%d, %v), want (%d, %v)", test.number, number, ok, test.want, test.wantOK)
+			}
+		})
+	}
+}
+
+// TestIsGapBlock pins the height predicate both block production and block
+// import ask, including the schedules that must answer false instead of
+// dividing.
+func TestIsGapBlock(t *testing.T) {
+	var nilSchedule *XDPoSConfig
+	defaultSchedule := &XDPoSConfig{Epoch: 900, Gap: 450}
+	for _, test := range []struct {
+		name     string
+		schedule *XDPoSConfig
+		number   uint64
+		want     bool
+	}{
+		{name: "gap block of the first epoch", schedule: defaultSchedule, number: 450, want: true},
+		{name: "gap block of the second epoch", schedule: defaultSchedule, number: 1350, want: true},
+		{name: "genesis", schedule: defaultSchedule, number: 0},
+		{name: "before the gap block", schedule: defaultSchedule, number: 449},
+		{name: "epoch switch block", schedule: defaultSchedule, number: 900},
+		{name: "last block of the epoch", schedule: defaultSchedule, number: 1799},
+		{name: "zero gap", schedule: &XDPoSConfig{Epoch: 900, Gap: 0}, number: 450},
+		{name: "gap equal to the epoch", schedule: &XDPoSConfig{Epoch: 900, Gap: 900}, number: 900},
+		{name: "gap above the epoch", schedule: &XDPoSConfig{Epoch: 900, Gap: 1200}, number: 450},
+		{name: "zero epoch", schedule: &XDPoSConfig{Epoch: 0, Gap: 450}, number: 0},
+		{name: "nil schedule", schedule: nilSchedule, number: 450},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.schedule.IsGapBlock(test.number); got != test.want {
+				t.Fatalf("IsGapBlock(%d) = %v, want %v", test.number, got, test.want)
+			}
+		})
+	}
+}
+
+// TestIsSameEpoch pins the epoch-start comparison, including the boundary
+// between adjacent epochs and the unset-epoch answer.
+func TestIsSameEpoch(t *testing.T) {
+	var nilSchedule *XDPoSConfig
+	defaultSchedule := &XDPoSConfig{Epoch: 900, Gap: 450}
+	for _, test := range []struct {
+		name     string
+		schedule *XDPoSConfig
+		first    uint64
+		second   uint64
+		want     bool
+	}{
+		{name: "inside the same epoch", schedule: defaultSchedule, first: 0, second: 899, want: true},
+		{name: "same epoch, reversed", schedule: defaultSchedule, first: 899, second: 0, want: true},
+		{name: "inside the second epoch", schedule: defaultSchedule, first: 900, second: 1799, want: true},
+		{name: "same height", schedule: defaultSchedule, first: 1800, second: 1800, want: true},
+		{name: "adjacent epochs", schedule: defaultSchedule, first: 899, second: 900},
+		{name: "adjacent epochs, reversed", schedule: defaultSchedule, first: 900, second: 899},
+		{name: "across the epoch boundary", schedule: defaultSchedule, first: 1799, second: 1800},
+		{name: "zero epoch", schedule: &XDPoSConfig{Epoch: 0, Gap: 450}, first: 0, second: 0},
+		{name: "nil schedule", schedule: nilSchedule, first: 0, second: 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.schedule.IsSameEpoch(test.first, test.second); got != test.want {
+				t.Fatalf("IsSameEpoch(%d, %d) = %v, want %v", test.first, test.second, got, test.want)
+			}
+		})
+	}
+}
+
+// TestIsLendingLiquidationBlock pins the height XDCxlending liquidates at and
+// the unset-epoch answer.
+func TestIsLendingLiquidationBlock(t *testing.T) {
+	var nilSchedule *XDPoSConfig
+	defaultSchedule := &XDPoSConfig{Epoch: 900, Gap: 450}
+	for _, test := range []struct {
+		name     string
+		schedule *XDPoSConfig
+		number   uint64
+		want     bool
+	}{
+		{name: "liquidation height", schedule: defaultSchedule, number: 100, want: true},
+		{name: "liquidation height of the second epoch", schedule: defaultSchedule, number: 1000, want: true},
+		{name: "one before", schedule: defaultSchedule, number: 99},
+		{name: "one after", schedule: defaultSchedule, number: 101},
+		{name: "epoch switch block", schedule: defaultSchedule, number: 900},
+		{name: "zero epoch", schedule: &XDPoSConfig{Epoch: 0, Gap: 450}, number: 100},
+		{name: "nil schedule", schedule: nilSchedule, number: 100},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.schedule.IsLendingLiquidationBlock(test.number); got != test.want {
+				t.Fatalf("IsLendingLiquidationBlock(%d) = %v, want %v", test.number, got, test.want)
+			}
+		})
+	}
+}
