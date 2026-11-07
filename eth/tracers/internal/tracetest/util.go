@@ -55,6 +55,7 @@ func (c *callContext) toBlockContext(genesis *core.Genesis) vm.BlockContext {
 		Transfer:    core.Transfer,
 		Coinbase:    c.Miner,
 		BlockNumber: new(big.Int).SetUint64(uint64(c.Number)),
+		SlotNum:     uint64(c.Number),
 		Time:        uint64(c.Time),
 		Difficulty:  (*big.Int)(c.Difficulty),
 		GasLimit:    uint64(c.GasLimit),

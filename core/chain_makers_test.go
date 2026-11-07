@@ -282,3 +282,60 @@ func ExampleGenerateChain() {
 	// balance of addr2: 10000
 	// balance of addr3: 19687500000000001000
 }
+
+// TestGenerateChainSlotNum pins EIP-7843 through the block path: SLOTNUM has to
+// report the number of the block it executes in, and to stay undefined before
+// Amsterdam. The contract writes what it saw into storage, so a value that never
+// left the test would show up as a mismatched slot.
+func TestGenerateChainSlotNum(t *testing.T) {
+	var (
+		key, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		addr   = crypto.PubkeyToAddress(key.PublicKey)
+		probe  = common.HexToAddress("0x00000000000000000000000000000000000000e1")
+		// SLOTNUM, PUSH1 0x00, SSTORE: store the slot number in slot 0.
+		code = common.FromHex("0x4b600055")
+	)
+	for _, tt := range []struct {
+		name       string
+		amsterdam  *big.Int
+		wantStatus uint64
+		wantSlot   uint64
+	}{
+		{name: "amsterdam", amsterdam: big.NewInt(0), wantStatus: types.ReceiptStatusSuccessful, wantSlot: 1},
+		{name: "before amsterdam", amsterdam: nil, wantStatus: types.ReceiptStatusFailed, wantSlot: 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var (
+				db     = rawdb.NewMemoryDatabase()
+				config = *params.TestChainConfig
+			)
+			config.AmsterdamBlock = tt.amsterdam
+			genesis := (&Genesis{
+				Config: &config,
+				Alloc: types.GenesisAlloc{
+					addr:  {Balance: big.NewInt(1e18)},
+					probe: {Code: code},
+				},
+			}).MustCommit(db)
+
+			blocks, receipts := GenerateChain(&config, genesis, ethash.NewFaker(), db, 1, func(i int, gen *BlockGen) {
+				tx, err := types.SignTx(types.NewTransaction(gen.TxNonce(addr), probe, new(big.Int), 100000, big.NewInt(20_000_000_000), nil), types.HomesteadSigner{}, key)
+				if err != nil {
+					t.Fatalf("failed to sign transaction: %v", err)
+				}
+				gen.AddTx(tx)
+			})
+			if have := receipts[0][0].Status; have != tt.wantStatus {
+				t.Fatalf("receipt status = %d, want %d", have, tt.wantStatus)
+			}
+			statedb, err := state.New(blocks[0].Root(), state.NewDatabase(db))
+			if err != nil {
+				t.Fatalf("failed to open the state at root %x: %v", blocks[0].Root(), err)
+			}
+			want := common.BigToHash(new(big.Int).SetUint64(tt.wantSlot))
+			if have := statedb.GetState(probe, common.Hash{}); have != want {
+				t.Fatalf("slot 0 = %x, want %x", have, want)
+			}
+		})
+	}
+}

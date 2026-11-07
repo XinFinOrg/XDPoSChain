@@ -18,6 +18,7 @@ package override
 
 import (
 	"maps"
+	"math/big"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -25,6 +26,8 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
+	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/holiman/uint256"
 )
 
 type precompileContract struct{}
@@ -132,6 +135,61 @@ func TestStateOverrideMovePrecompile(t *testing.T) {
 				t.Errorf("test %d: precompile not found: %s", i, k.String())
 			}
 		}
+	}
+}
+
+// TestBlockOverridesApplySlotNum pins EIP-7843 under a block-number override:
+// a slot is a block on this chain, so SLOTNUM has to move with NUMBER (docs/adr/0006-define-slot-number-as-block-number.md).
+func TestBlockOverridesApplySlotNum(t *testing.T) {
+	ctx := vm.BlockContext{BlockNumber: big.NewInt(19), SlotNum: 19}
+	(&BlockOverrides{Number: (*hexutil.Big)(big.NewInt(1000))}).Apply(&ctx)
+	if ctx.BlockNumber.Uint64() != 1000 || ctx.SlotNum != 1000 {
+		t.Fatalf("after a number override: BlockNumber = %v, SlotNum = %d; want 1000 for both", ctx.BlockNumber, ctx.SlotNum)
+	}
+	// An override without a number leaves both fields alone.
+	untouched := vm.BlockContext{BlockNumber: big.NewInt(19), SlotNum: 19}
+	(&BlockOverrides{}).Apply(&untouched)
+	if untouched.BlockNumber.Uint64() != 19 || untouched.SlotNum != 19 {
+		t.Fatalf("without a number override: BlockNumber = %v, SlotNum = %d; want 19 for both", untouched.BlockNumber, untouched.SlotNum)
+	}
+}
+
+// TestBlockOverridesSlotNumExecutes pins the behaviour ADR-0006 promises for
+// RPC overrides: after a block-number override the EVM reports the overridden
+// number from SLOTNUM, not just that the context field moved.
+func TestBlockOverridesSlotNumExecutes(t *testing.T) {
+	var (
+		caller = common.HexToAddress("0x00000000000000000000000000000000000000aa")
+		probe  = common.HexToAddress("0x00000000000000000000000000000000000000e1")
+		// SLOTNUM, PUSH1 0, MSTORE, PUSH1 32, PUSH1 0, RETURN: return the slot number.
+		code = common.FromHex("0x4b60005260206000f3")
+	)
+	statedb, err := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()))
+	if err != nil {
+		t.Fatalf("failed to create statedb: %v", err)
+	}
+	statedb.SetCode(probe, code)
+
+	config := *params.TestChainConfig
+	config.AmsterdamBlock = big.NewInt(0)
+	ctx := vm.BlockContext{
+		BlockNumber: big.NewInt(19),
+		SlotNum:     19,
+		GasLimit:    100000,
+		CanTransfer: func(db vm.StateDB, a common.Address, amount *uint256.Int) bool { return true },
+		Transfer: func(db vm.StateDB, a, b common.Address, amount *uint256.Int, rules *params.Rules) {
+		},
+	}
+	(&BlockOverrides{Number: (*hexutil.Big)(big.NewInt(1000))}).Apply(&ctx)
+
+	evm := vm.NewEVM(ctx, statedb, nil, &config, vm.Config{})
+	evm.SetTxContext(vm.TxContext{Origin: caller, GasPrice: new(big.Int)})
+	ret, _, err := evm.Call(caller, probe, nil, 100000, new(uint256.Int))
+	if err != nil {
+		t.Fatalf("call failed: %v", err)
+	}
+	if got := new(big.Int).SetBytes(ret).Uint64(); got != 1000 {
+		t.Fatalf("SLOTNUM returned %d after a number override; want 1000", got)
 	}
 }
 
