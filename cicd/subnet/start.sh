@@ -66,4 +66,7 @@ if [ -n "$STATS_SERVICE_ADDRESS" ]; then
 fi
 
 echo "Starting subnet node $wallet"
-XDC "${args[@]}" 2>&1 | tee -a "$DATA_DIR/xdc.log"
+# exec, so XDC receives the container's stop signal and shuts down cleanly,
+# writing its state; behind a pipe the signal would reach this shell instead
+# and the node would be killed, losing the state of its recent blocks.
+exec XDC "${args[@]}" > >(tee -a "$DATA_DIR/xdc.log") 2>&1
