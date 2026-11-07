@@ -17,7 +17,9 @@
 package fetcher
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -33,6 +35,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
@@ -103,12 +106,19 @@ type fetcherTester struct {
 
 // newTester creates a new fetcher test mocker.
 func newTester() *fetcherTester {
+	return newTesterWithGate(nil)
+}
+
+// newTesterWithGate builds a started tester whose signer gate is installed before
+// Start, the way the backend wires it. A nil gate means always ready.
+func newTesterWithGate(gate func() bool) *fetcherTester {
 	tester := &fetcherTester{
 		hashes: []common.Hash{genesis.Hash()},
 		blocks: map[common.Hash]*types.Block{genesis.Hash(): genesis},
 		drops:  make(map[string]bool),
 	}
 	tester.fetcher = NewBlockFetcher(tester.getBlock, tester.verifyHeader, tester.handleProposedBlock, tester.broadcastBlock, tester.chainHeight, tester.insertBlock, tester.prepareBlock, tester.dropPeer, tester.canonicalHash, func() bool { return tester.syncing.Load() })
+	tester.fetcher.SetSignerGate(gate)
 	tester.fetcher.Start()
 
 	return tester
@@ -1162,6 +1172,9 @@ func TestM2BlockSignatureUsesOnchainHash(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatalf("M2 block was never relayed")
 		}
+		// The relay now fires before the park decision, so the entry may still be
+		// on its way when the broadcast arrives.
+		waitParkedCount(t, tester.fetcher, 1)
 		tester.fetcher.parkedMu.Lock()
 		_, parked := tester.fetcher.parked[m2.Hash()]
 		_, parkedByDelivery := tester.fetcher.parked[original.Hash()]
@@ -1309,6 +1322,12 @@ func parkedCount(f *BlockFetcher) int {
 	return len(f.parked)
 }
 
+func parkedStoredCount(f *BlockFetcher) int {
+	f.parkedMu.Lock()
+	defer f.parkedMu.Unlock()
+	return f.parkedStoredLocked()
+}
+
 func signingCount(f *BlockFetcher) int {
 	f.parkedMu.Lock()
 	defer f.parkedMu.Unlock()
@@ -1339,6 +1358,22 @@ func waitParkedCount(t *testing.T, f *BlockFetcher, want int) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("parked count = %d, want %d", parkedCount(f), want)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// watchParkStaysEmpty samples the parked set across a window: the delivery
+// goroutine reaches its park decision after the relay, so a single sample taken
+// at a fixed delay can miss a regression.
+func watchParkStaysEmpty(t *testing.T, f *BlockFetcher, window time.Duration) {
+	t.Helper()
+	for deadline := time.Now().Add(window); time.Now().Before(deadline); {
+		if n := parkedCount(f); n != 0 {
+			t.Fatalf("parked %d signatures, want 0", n)
+		}
+		if waiterRunning(f) {
+			t.Fatalf("a parked waiter started, want none")
 		}
 		time.Sleep(time.Millisecond)
 	}
@@ -1386,9 +1421,10 @@ func hookSigning(f *BlockFetcher) chan *types.Block {
 func parkTestEntry(t *testing.T, f *BlockFetcher, block *types.Block, deadline time.Time, claimed bool) {
 	t.Helper()
 
+	stored := f.getBlock(block.Hash()) != nil
 	f.parkedMu.Lock()
 	defer f.parkedMu.Unlock()
-	f.parked[block.Hash()] = &parkedBlock{block: block, deadline: deadline, claimed: claimed}
+	f.parked[block.Hash()] = &parkedBlock{block: block, deadline: deadline, claimed: claimed, stored: stored}
 }
 
 func adoptCanonical(t *testing.T, tester *fetcherTester, block *types.Block) {
@@ -1441,6 +1477,36 @@ func stopAndDrainWaiter(t *testing.T, f *BlockFetcher) {
 	}
 }
 
+// logCapture keeps the records the fetcher emits while it is the default handler.
+// The default logger is process wide and its handler is asked for every level, so
+// any goroutine can reach it: guard the slice, and only accept the levels the
+// tests assert on.
+type logCapture struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (c *logCapture) Enabled(_ context.Context, level slog.Level) bool {
+	return level >= slog.LevelWarn
+}
+
+func (c *logCapture) Handle(_ context.Context, record slog.Record) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.records = append(c.records, record.Clone())
+	return nil
+}
+
+func (c *logCapture) WithAttrs([]slog.Attr) slog.Handler { return c }
+func (c *logCapture) WithGroup(string) slog.Handler      { return c }
+
+// snapshot copies the records, safe to read while other goroutines log.
+func (c *logCapture) snapshot() []slog.Record {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]slog.Record(nil), c.records...)
+}
+
 func TestParkedSignatureSkippedWhileSyncing(t *testing.T) {
 	block := newParkedTestBlock(0x01)
 
@@ -1465,9 +1531,9 @@ func TestParkedSignatureSkippedWhileSyncing(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatalf("discarded block was never relayed")
 	}
-	if n := parkedCount(tester.fetcher); n != 0 {
-		t.Fatalf("parked %d signatures while snap syncing, want 0", n)
-	}
+	// The relay fires before the park decision, so watch the set instead of
+	// sampling it once: a parked entry would keep either the set or a waiter alive.
+	watchParkStaysEmpty(t, tester.fetcher, 200*time.Millisecond)
 	select {
 	case b := <-signed:
 		t.Fatalf("sign hook ran for a block discarded while syncing: %v", b.Hash())
@@ -1562,9 +1628,75 @@ func TestParkedSignatureWithoutSignHook(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatalf("never-stored block was never broadcast")
 	}
+	// The relay fires before the park decision, so watch the set instead of
+	// sampling it once: a parked entry would keep either the set or a waiter alive.
+	watchParkStaysEmpty(t, tester.fetcher, 200*time.Millisecond)
+}
+
+func TestParkedSignatureSkippedWhenNotASigner(t *testing.T) {
+	block := newParkedTestBlock(0x2a)
+
+	// A live gate: parking reads it per call instead of caching the first answer.
+	var allow atomic.Bool
+	tester := newTesterWithGate(func() bool { return allow.Load() })
+	defer tester.fetcher.Stop()
+
+	signed := hookSigning(tester.fetcher)
+
+	tester.fetcher.parkForSignature(block)
 	if n := parkedCount(tester.fetcher); n != 0 {
-		t.Fatalf("parked %d signatures without a sign hook, want 0", n)
+		t.Fatalf("parked %d entries on a node that cannot sign, want 0", n)
 	}
+	select {
+	case b := <-signed:
+		t.Fatalf("sign hook ran for a block a non-signer parked: %v", b.Hash())
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	allow.Store(true)
+	tester.fetcher.parkForSignature(block)
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d after the node became a signer, want 1", n)
+	}
+}
+
+// TestParkedSignatureRelayDoesNotWaitForParking pins the order of the delivery
+// path: the block leaves before the signature is booked, so a scan holding
+// parkedMu cannot delay propagation.
+func TestParkedSignatureRelayDoesNotWaitForParking(t *testing.T) {
+	block := newParkedTestBlock(0x2d)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	tester.fetcher.insertBlock = func(*types.Block) error {
+		return nil // never stored: the delivery path takes the park branch
+	}
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+	broadcast := make(chan *types.Block, 1)
+	tester.fetcher.broadcastBlock = func(block *types.Block, propagate bool) {
+		if !propagate {
+			broadcast <- block
+		}
+	}
+
+	// Hold the park lock across the whole delivery: with the relay first the block
+	// still leaves, while the old order would block here and never broadcast.
+	tester.fetcher.parkedMu.Lock()
+	tester.fetcher.Enqueue("test", block)
+	select {
+	case <-broadcast:
+	case <-time.After(5 * time.Second):
+		tester.fetcher.parkedMu.Unlock()
+		t.Fatalf("block was not relayed while the park lock was held")
+	}
+	if n := len(tester.fetcher.parked); n != 0 {
+		tester.fetcher.parkedMu.Unlock()
+		t.Fatalf("parked %d entries while its lock was held, want 0", n)
+	}
+	tester.fetcher.parkedMu.Unlock()
+
+	waitParkedCount(t, tester.fetcher, 1)
 }
 
 func TestParkedSignatureTimeoutDropsBlock(t *testing.T) {
@@ -1592,9 +1724,7 @@ func TestParkedSignatureTimeoutDropsBlock(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatalf("never-stored block was never broadcast")
 	}
-	if n := parkedCount(tester.fetcher); n != 1 {
-		t.Fatalf("parked count = %d, want 1 for the never-stored block", n)
-	}
+	waitParkedCount(t, tester.fetcher, 1)
 	deadline := time.After(3 * time.Second)
 	for parkedCount(tester.fetcher) != 0 {
 		select {
@@ -1648,6 +1778,48 @@ func TestParkedSignatureTimeoutDropsStoredButNeverSignable(t *testing.T) {
 	}
 }
 
+func TestParkedSignatureDeadlineDropIsLogged(t *testing.T) {
+	block := newParkedTestBlock(0x2c)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+	// Stored but not canonical: the entry lives until its deadline and is dropped there.
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+	parkTestEntry(t, tester.fetcher, block, time.Now().Add(-time.Second), false)
+
+	capture := &logCapture{}
+	prevLog := log.Root()
+	log.SetDefault(log.NewLogger(capture))
+	defer log.SetDefault(prevLog)
+
+	tester.fetcher.scanParkedSignatures()
+
+	const want = "Dropping a parked signature at its deadline"
+	for _, record := range capture.snapshot() {
+		if record.Message != want {
+			continue
+		}
+		if record.Level != slog.LevelWarn {
+			t.Fatalf("deadline drop logged at %s, want warn", record.Level)
+		}
+		var stored bool
+		record.Attrs(func(attr slog.Attr) bool {
+			if attr.Key == "stored" && attr.Value.Kind() == slog.KindBool {
+				stored = attr.Value.Bool()
+			}
+			return true
+		})
+		if !stored {
+			t.Fatalf("deadline drop of a stored block logged stored=false")
+		}
+		return
+	}
+	t.Fatalf("deadline drop was not logged")
+}
+
 func TestParkedSignatureExpiredBeforeReadyIsDropped(t *testing.T) {
 	block := types.NewBlockWithHeader(&types.Header{
 		ParentHash: genesis.Hash(),
@@ -1664,7 +1836,7 @@ func TestParkedSignatureExpiredBeforeReadyIsDropped(t *testing.T) {
 		t.Fatalf("failed to store the parked block: %v", err)
 	}
 	tester.fetcher.parkedMu.Lock()
-	tester.fetcher.parked[block.Hash()] = &parkedBlock{block: block, deadline: time.Now().Add(-time.Second)}
+	tester.fetcher.parked[block.Hash()] = &parkedBlock{block: block, deadline: time.Now().Add(-time.Second), stored: true}
 	tester.fetcher.parkedMu.Unlock()
 
 	var signs int32
@@ -1836,6 +2008,65 @@ func TestParkedSignatureLimit(t *testing.T) {
 	}
 	if n := blockParkedFullMeter.Snapshot().Count() - full; n != 8 {
 		t.Fatalf("full meter moved by %d, want 8 for the overflow", n)
+	}
+}
+
+func TestParkedSignatureStoredBudgetReservesSlots(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	full := blockParkedFullMeter.Snapshot().Count()
+
+	// One stored block must fit: a zero budget would refuse every side block.
+	tester.fetcher.parkForSignatureStored(newParkedTestBlock(0x01), true)
+	if n := parkedStoredCount(tester.fetcher); n != 1 {
+		t.Fatalf("stored entries = %d after parking one stored block, want 1", n)
+	}
+	for i := 2; i <= maxParkedStored; i++ {
+		tester.fetcher.parkForSignatureStored(newParkedTestBlock(byte(i)), true)
+	}
+	if n := parkedStoredCount(tester.fetcher); n != maxParkedStored {
+		t.Fatalf("stored entries = %d after filling the stored budget, want %d", n, maxParkedStored)
+	}
+
+	// The reserve is the point of the split: an unimported block still gets a slot.
+	tester.fetcher.parkForSignatureStored(newParkedTestBlock(0xf0), false)
+	if n := parkedCount(tester.fetcher); n != maxParkedStored+1 {
+		t.Fatalf("parked count = %d after parking an unimported block, want %d", n, maxParkedStored+1)
+	}
+	if n := blockParkedFullMeter.Snapshot().Count() - full; n != 0 {
+		t.Fatalf("full meter moved by %d while the stored budget had room, want 0", n)
+	}
+
+	// The set holds maxParkedStored+1 entries here, so the total gate cannot be
+	// what refuses this one: only the stored sub-budget can.
+	tester.fetcher.parkForSignatureStored(newParkedTestBlock(0xf1), true)
+	if n := parkedCount(tester.fetcher); n != maxParkedStored+1 {
+		t.Fatalf("parked count = %d after an over-budget stored block, want %d", n, maxParkedStored+1)
+	}
+	if n := blockParkedFullMeter.Snapshot().Count() - full; n != 1 {
+		t.Fatalf("full meter moved by %d for the refused stored block, want 1", n)
+	}
+}
+
+func TestParkedSignatureStoredBudgetRefreshedByScan(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	block := newParkedTestBlock(0x2b)
+	tester.fetcher.parkForSignatureStored(block, false)
+
+	// Only the map: a canonical block would be claimed and signed by the same scan.
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+
+	tester.fetcher.scanParkedSignatures()
+
+	if n := parkedStoredCount(tester.fetcher); n != 1 {
+		t.Fatalf("stored entries = %d after the scan refreshed a stored block, want 1", n)
 	}
 }
 
@@ -2935,8 +3166,8 @@ func TestParkedSignatureWaiterStopsMidBatch(t *testing.T) {
 	// Both entries are installed under one lock before the waiter starts, so its
 	// first tick collects one batch; two parks could split it.
 	tester.fetcher.parkedMu.Lock()
-	tester.fetcher.parkLocked(blockA)
-	tester.fetcher.parkLocked(blockB)
+	tester.fetcher.parkLocked(blockA, true)
+	tester.fetcher.parkLocked(blockB, true)
 	tester.fetcher.parkedMu.Unlock()
 	go tester.fetcher.waitParkedSignatures()
 	waitSigningCount(t, tester.fetcher, 2)
@@ -3117,6 +3348,9 @@ func TestRefusedClaimParksEntrylessClaim(t *testing.T) {
 	if n := parkedCount(tester.fetcher); n != 1 {
 		t.Fatalf("parked count = %d for an entry-less refused claim, want 1", n)
 	}
+	if n := parkedStoredCount(tester.fetcher); n != 1 {
+		t.Fatalf("stored entries = %d for an entry-less refused claim, want 1", n)
+	}
 	deadline := parkedDeadline(tester.fetcher, block.Hash())
 	if deadline.Before(before.Add(tester.fetcher.parkedTimeout - time.Second)) {
 		t.Fatalf("recreated entry deadline = %v, want a fresh bound", deadline)
@@ -3245,5 +3479,130 @@ func TestParkedSignatureDroppedWhenDeadlinePassesDuringBlockedHook(t *testing.T)
 	}
 	if !parked {
 		t.Fatalf("the expired entry was dropped instead of left to the scan's bound")
+	}
+}
+
+// TestParkedSignatureRefusedClaimDroppedWithoutSigner covers the delivery path's
+// entry-less claim: a node that cannot sign must drop the claim, not park it.
+func TestParkedSignatureRefusedClaimDroppedWithoutSigner(t *testing.T) {
+	block := newParkedTestBlock(0x2e)
+
+	tester := newTesterWithGate(func() bool { return false })
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	// The claim left its in-flight marker behind; settling must clear it either way.
+	tester.fetcher.parkedMu.Lock()
+	tester.fetcher.signing[block.Hash()] = struct{}{}
+	tester.fetcher.parkedMu.Unlock()
+
+	tester.fetcher.settleRefusedClaim(block, false)
+
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked %d entries on a node that cannot sign, want 0", n)
+	}
+	if n := signingCount(tester.fetcher); n != 0 {
+		t.Fatalf("in-flight signature count = %d after the claim was dropped, want 0", n)
+	}
+}
+
+// TestParkedSignatureRefusedClaimParksOnSigner proves the assertion above is not
+// vacuous: the same entry-less claim is parked once the gate is open.
+func TestParkedSignatureRefusedClaimParksOnSigner(t *testing.T) {
+	block := newParkedTestBlock(0x2f)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	tester.fetcher.settleRefusedClaim(block, false)
+
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d after a signer settled an entry-less claim, want 1", n)
+	}
+	if n := signingCount(tester.fetcher); n != 0 {
+		t.Fatalf("in-flight signature count = %d after parking, want 0", n)
+	}
+}
+
+// TestParkedSignatureStoredDerivedByWrapper pins the wrapper's chain lookup: a
+// block already on disk must count against the stored budget when it is parked
+// through parkForSignature.
+func TestParkedSignatureStoredDerivedByWrapper(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	block := newParkedTestBlock(0x30)
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+
+	tester.fetcher.parkForSignature(block)
+	if n := parkedStoredCount(tester.fetcher); n != 1 {
+		t.Fatalf("stored entries = %d for a block parked through the wrapper, want 1", n)
+	}
+}
+
+// TestParkedSignatureDeliveryUnimportedIsNotStored pins the delivery path's
+// stored argument for a block that never landed: its entry must take a reserve
+// slot, not one of the stored budget.
+func TestParkedSignatureDeliveryUnimportedIsNotStored(t *testing.T) {
+	block := newParkedTestBlock(0x33)
+
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.insertBlock = func(*types.Block) error {
+		return nil // never stored: the delivery path takes the park branch
+	}
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+	tester.fetcher.Enqueue("test", block)
+
+	waitParkedCount(t, tester.fetcher, 1)
+	if n := parkedStoredCount(tester.fetcher); n != 0 {
+		t.Fatalf("stored entries = %d for a delivery of an unimported block, want 0", n)
+	}
+}
+
+// TestParkedSignatureDeliveryStoredRespectsStoredBudget pins the delivery path's
+// stored argument for an imported but non-canonical block: with the stored budget
+// full the entry must be refused like any other stored one. The full budget makes
+// the argument observable, because the scan flips the flag once the block is on
+// disk and would hide the admission value.
+func TestParkedSignatureDeliveryStoredRespectsStoredBudget(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	for i := 0; i < maxParkedStored; i++ {
+		tester.fetcher.parkForSignatureStored(newParkedTestBlock(byte(0x40+i)), true)
+	}
+	if n := parkedCount(tester.fetcher); n != maxParkedStored {
+		t.Fatalf("parked count = %d after filling the stored budget, want %d", n, maxParkedStored)
+	}
+
+	block := newParkedTestBlock(0x34)
+	tester.fetcher.insertBlock = func(b *types.Block) error {
+		tester.lock.Lock()
+		tester.blocks[b.Hash()] = b
+		tester.lock.Unlock()
+		return nil
+	}
+	handled := make(chan struct{}, 1)
+	tester.fetcher.handleProposedBlock = func(*types.Header) error {
+		handled <- struct{}{}
+		return nil
+	}
+	tester.fetcher.Enqueue("test", block)
+
+	// The consensus handler runs after the park decision, so this signal orders
+	// the assertion without a timeout: the entry is either in or refused.
+	select {
+	case <-handled:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("the delivered side block never reached the consensus handler")
+	}
+	if n := parkedCount(tester.fetcher); n != maxParkedStored {
+		t.Fatalf("parked count = %d after a stored delivery with the budget full, want %d", n, maxParkedStored)
 	}
 }
