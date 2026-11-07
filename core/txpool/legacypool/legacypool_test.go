@@ -2574,16 +2574,20 @@ func TestQueueGlobalLimiting(t *testing.T) {
 // mechanism is disabled.
 func TestQueueTimeLimiting(t *testing.T) {
 	testshort.Skip(t)
-	// Reduce the eviction interval to a testable amount
+	// Reduce the eviction interval to a testable amount. Both the interval and
+	// the lifetime are scaled by the same factor: the test only asserts where a
+	// transaction sits relative to a lifetime, never that a specific wall-clock
+	// time passed, so a shorter lifetime keeps every ratio the sleeps rely on and
+	// drops four seconds of waiting.
 	defer func(old time.Duration) { evictionInterval = old }(evictionInterval)
-	evictionInterval = time.Millisecond * 100
+	evictionInterval = time.Millisecond * 25
 
 	// Create the pool to test the non-expiration enforcement
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
 	blockchain := newTestBlockChain(params.TestChainConfig, 1000000, statedb, new(event.Feed))
 
 	config := testTxPoolConfig
-	config.Lifetime = time.Second
+	config.Lifetime = 250 * time.Millisecond
 
 	pool := New(config, blockchain)
 	pool.Init(config.PriceLimit, blockchain.CurrentBlock(), newReserver())
