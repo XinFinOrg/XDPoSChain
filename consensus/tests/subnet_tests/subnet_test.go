@@ -182,12 +182,18 @@ func TestSubnetHeaderVerification(t *testing.T) {
 		t.Fatalf("gap+1 with reordered candidates: %v", err)
 	}
 
-	// The epoch switch block must list the masternodes in candidate order.
+	// The epoch switch masternodes are compared as a set too, as on mainnet.
 	h.extend(testEpoch-1, nil)
-	expect("epoch switch with reordered validators", h.buildBlock(h.head(), blockOpts{mutate: func(hd *types.Header) {
+	reorderedSwitch := h.buildBlock(h.head(), blockOpts{mutate: func(hd *types.Header) {
 		addrs := common.ExtractAddressFromBytes(hd.Validators)
 		addrs[0], addrs[1] = addrs[1], addrs[0]
 		hd.Validators = types.PackAddresses(addrs)
+	}})
+	if err := verify(reorderedSwitch); err != nil {
+		t.Fatalf("epoch switch with reordered validators: %v", err)
+	}
+	expect("epoch switch missing a masternode", h.buildBlock(h.head(), blockOpts{mutate: func(hd *types.Header) {
+		hd.Validators = types.PackAddresses(candidates[:3])
 	}}), utils.ErrValidatorsNotLegit)
 	expect("epoch switch over the cap", h.buildBlock(h.head(), blockOpts{mutate: func(hd *types.Header) {
 		hd.Validators = types.PackAddresses(candidates)

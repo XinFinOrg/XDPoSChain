@@ -26,7 +26,7 @@ is the fraction of masternodes that must sign) and the same leader rotation,
 | Penalties computed | at the epoch switch | at the gap block, stored in its snapshot |
 | Penalties published | `penalties` of the epoch switch header | `penalties` of the block after the gap block |
 | Next-epoch candidates published | nowhere | `nextValidators` of the block after the gap block |
-| Epoch switch `validators` | candidates minus penalties, any order | candidates minus penalties, in candidate order |
+| Epoch switch `validators` | candidates minus penalties, compared as a set | candidates minus penalties, compared as a set |
 | Header layout | legacy | subnet (see below) |
 | EIP-1559 | optional | off |
 | Reward | per fork schedule | flat, no halving, masternodes of the epoch switch header |
@@ -42,8 +42,9 @@ With `E = epoch` and `G = gap`:
   empty. Peers compare them with their own snapshot of the parent block.
 - **Epoch switch** `n % E == 0`. `validators` holds the masternodes of the new
   epoch: the snapshot candidates of gap block `n - G` without its penalties, in
-  candidate order, capped at `maxMasternodes`. Peers require that exact order,
-  since it decides the leader of each round.
+  candidate order, capped at `maxMasternodes`. Peers compare the list with
+  their own as a set, as on mainnet; the order written in the header then
+  decides the leader of each round of the epoch.
 
 **Penalties.** At gap block `g`, the node walks back from `g - 1` to the
 previous gap block (block 1 for the first epochs), counting the blocks each
@@ -205,10 +206,16 @@ masternode account unlocked as for any XDPoS network.
 - **Exponential timeouts.** Nethermind has no counterpart for
   `expTimeoutConfig`; in a mixed subnet set it to `base 1, maxExponent 0` so all
   clients time out after `timeoutPeriod`.
-- **Equal stakes.** Equal-stake candidates are ordered by the XDPoS sort, which
-  Nethermind also implements. The Go XDC-Subnet client uses the standard library
-  sort instead, which orders seven or more equal stakes differently, so it
-  cannot share a subnet of that size with this client or Nethermind.
+- **Equal stakes.** Equal-stake candidates are ordered by the XDPoS sort, the
+  frozen pre-1.19 `sort.Slice`, which XDC-Subnet and Nethermind (`XdcSort`) use
+  too, so every client derives the same masternode order.
+- **Nethermind's order check.** Nethermind's subnet engine requires the epoch
+  switch `validators` in exactly the computed order, while this client, like
+  XDPoS mainnet and XDC-Subnet, compares them as a set. Blocks from honest
+  producers pass both; a block listing the masternodes in another order would
+  be accepted by this client and rejected by Nethermind nodes.
+- **Masternode cap.** Set `maxMasternodes` to 108 to match XDC-Subnet, which
+  ignores the config and always caps at 108.
 - **Nodes and threshold.** A quorum certificate needs
   `ceil(masternodes * certificateThreshold)` signatures; with the default 0.667
   a subnet of three masternodes stops whenever one is down, while four or more

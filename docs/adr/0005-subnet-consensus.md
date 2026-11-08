@@ -35,20 +35,24 @@ and the epoch switch info. A separate engine package would have duplicated
 some 5000 lines that change upstream every week. Mainnet code paths are
 unchanged when the flag is off, which the existing engine tests check.
 
-**Nethermind's subnet engine is the reference.** Where XDC-Subnet and Nethermind
-disagree, this client follows Nethermind, because that is what a mixed subnet
-needs:
+**The masternode rules are the XDPoS ones.** Where the Go XDC-Subnet client and
+Nethermind's subnet engine disagree, this client keeps the behaviour of XDPoS
+mainnet:
 
-- the epoch switch `validators` must match the computed masternodes in order
-  (XDC-Subnet accepts any order);
-- equal-stake candidates are ordered by `utils.SortMasternodesByStakeDesc`, of
-  which Nethermind's `XdcSort` is a port (XDC-Subnet's standard library sort
-  orders seven or more equal stakes differently);
-- the masternode cap is the v2 config's `maxMasternodes` (XDC-Subnet hardcodes
-  108).
+- the epoch switch `validators` are compared with the computed masternodes as
+  a set (`utils.CompareSignersLists`), as on mainnet, in XDC-Subnet and in
+  Nethermind's mainnet engine. Nethermind's subnet engine alone requires the
+  exact order (`SequenceEqual` in `XdcSubnetSealValidator`), with no recorded
+  reason. Honest producers all write the candidate order, so both checks
+  accept their blocks, but a reordered list would be accepted here and
+  rejected by Nethermind until it switches to `ListsAreEqual`;
+- the masternode cap is the v2 config's `maxMasternodes`, as on mainnet and in
+  Nethermind (XDC-Subnet hardcodes 108, which is what the generator's genesis
+  should set).
 
-Branch `subnet-consensus-xdc-subnet-rules` implements the XDC-Subnet choices
-for comparison.
+All three clients order equal-stake candidates the same way:
+`utils.SortMasternodesByStakeDesc`, XDC-Subnet's frozen `common/sort` copy and
+Nethermind's `XdcSort` are the same algorithm.
 
 **The header layout is chosen per header.** Subnet headers must hash and travel
 in the subnet RLP layout (address lists, `nextValidators`, no base fee), while

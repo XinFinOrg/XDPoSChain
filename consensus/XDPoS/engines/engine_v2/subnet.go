@@ -35,15 +35,14 @@ package engine_v2
 //     Block 1 does the same for the genesis snapshot.
 //   - The epoch switch block carries only the masternodes of the new epoch in
 //     Validators: the snapshot candidates minus its penalties, in candidate
-//     order, capped at MaxMasternodes. They must match the local computation
-//     in that exact order, since the order decides the leader rotation.
+//     order, capped at MaxMasternodes. As on mainnet and in the Go XDC-Subnet
+//     client, they are compared with the local computation as a set.
 //   - Headers use the subnet RLP layout (see core/types/block_subnet.go).
 
 import (
 	"errors"
 	"fmt"
 	"math/big"
-	"slices"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
@@ -163,13 +162,6 @@ func (x *XDPoS_v2) verifySubnetHeader(chain consensus.ChainReader, header *types
 		return utils.ErrPenaltiesNotLegit
 	}
 	return nil
-}
-
-// sameSubnetMasternodes reports whether the epoch switch Validators equal the
-// computed masternodes in order. The order matters on a subnet: it decides the
-// leader of each round, and the other subnet clients reject any other order.
-func sameSubnetMasternodes(local, header []common.Address) bool {
-	return slices.Equal(local, header)
 }
 
 func logAddresses(msg string, addrs []common.Address) {
