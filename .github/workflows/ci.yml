@@ -213,12 +213,12 @@ jobs:
         uses: actions/checkout@v5
         with:
           path: ${{ env.GOPATH }}/src/XDPoSChain
-      # Same tools cache as the static job: holds the golangci-lint archive that
-      # build/ci.go lint unpacks from the URL recorded in build/checksums.txt.
+      # Entries are immutable per key: static saves its protoc-only payload
+      # first under build-tools-cache, so lint needs its own key for the archive
       - uses: actions/cache@v5
         with:
           path: ${{ env.GOPATH }}/src/XDPoSChain/build/cache
-          key: ${{ runner.os }}-build-tools-cache-${{ hashFiles('**/build/checksums.txt') }}
+          key: ${{ runner.os }}-build-tools-lint-${{ hashFiles('**/build/checksums.txt') }}
       # Both are cold today: lint recompiles ci.go and re-analyses the whole
       # tree on every run.
       - name: Restore the Go build cache
