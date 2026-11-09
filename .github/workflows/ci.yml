@@ -21,7 +21,7 @@ env:
   GOPROXY: https://proxy.golang.org,direct
   GO111MODULE: on
   # Bulk lane count; the lanes and `make check-shards` both read it.
-  RACE_SHARDS: "4"
+  RACE_SHARDS: "2"
   tf_version: "1.3.0"
   tf_init_cli_options: "-input=false"
   tf_validation_cli_options: ""
@@ -128,8 +128,8 @@ jobs:
           fi
 
   # The whole suite under the race detector, and the only job that runs tests.
-  # Bulk slices are cut by import path (build/shard.sh); engine_v2_tests (5) and
-  # core (2) by test name, cmd/XDC and rpc as single lanes. No -short carve-out.
+  # Bulk slices are cut by import path (build/shard.sh); engine_v2_tests (2) and
+  # core (1) by test name, cmd/XDC and rpc as single lanes. No -short carve-out.
   race:
     env:
       GOPATH: ${{ github.workspace }}
@@ -147,17 +147,11 @@ jobs:
         # `kind` picks the step; `shard` indexes RACE_REST_PKGS, `pkg`/`i`/`n`
         # slice a heavy package by test name (see race-test-full-group).
         include:
-          - { name: "bulk 1/4", kind: "bulk", shard: "1" }
-          - { name: "bulk 2/4", kind: "bulk", shard: "2" }
-          - { name: "bulk 3/4", kind: "bulk", shard: "3" }
-          - { name: "bulk 4/4", kind: "bulk", shard: "4" }
-          - { name: "engine_v2 1/5", kind: "group", pkg: "./consensus/tests/engine_v2_tests", i: "1", n: "5" }
-          - { name: "engine_v2 2/5", kind: "group", pkg: "./consensus/tests/engine_v2_tests", i: "2", n: "5" }
-          - { name: "engine_v2 3/5", kind: "group", pkg: "./consensus/tests/engine_v2_tests", i: "3", n: "5" }
-          - { name: "engine_v2 4/5", kind: "group", pkg: "./consensus/tests/engine_v2_tests", i: "4", n: "5" }
-          - { name: "engine_v2 5/5", kind: "group", pkg: "./consensus/tests/engine_v2_tests", i: "5", n: "5" }
-          - { name: "core 1/2", kind: "group", pkg: "./core", i: "1", n: "2" }
-          - { name: "core 2/2", kind: "group", pkg: "./core", i: "2", n: "2" }
+          - { name: "bulk 1/2", kind: "bulk", shard: "1" }
+          - { name: "bulk 2/2", kind: "bulk", shard: "2" }
+          - { name: "engine_v2 1/2", kind: "group", pkg: "./consensus/tests/engine_v2_tests", i: "1", n: "2" }
+          - { name: "engine_v2 2/2", kind: "group", pkg: "./consensus/tests/engine_v2_tests", i: "2", n: "2" }
+          - { name: "core", kind: "group", pkg: "./core", i: "1", n: "1" }
           - { name: "cmd XDC", kind: "group", pkg: "./cmd/XDC", i: "1", n: "1" }
           - { name: "rpc", kind: "rpc" }
     defaults:

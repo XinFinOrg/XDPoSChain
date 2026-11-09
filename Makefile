@@ -52,7 +52,7 @@ race-test: all race-test-bulk race-test-rpc
 #? race-test-full: Run the full (non-short) suite under the race detector.
 race-test-full: all race-test-full-bulk race-test-full-groups race-test-full-rpc
 
-# One slice per shard, four in CI; the default is the whole pass. Shard is
+# One slice per shard, two in CI; the default is the whole pass. Shard is
 # cksum(import path) % total (build/shard.sh).
 RACE_SHARDS ?= 1
 RACE_SHARD ?= 1
