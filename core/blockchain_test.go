@@ -1621,6 +1621,8 @@ func testInsertNonceError(t *testing.T, full bool) {
 // Tests that fast importing a block chain produces the same chain data as the
 // classical full block processing.
 func TestFastVsFullChains(t *testing.T) {
+	t.Parallel()
+
 	// Configure and generate a sample block chain
 	var (
 		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
@@ -1706,6 +1708,8 @@ func TestFastVsFullChains(t *testing.T) {
 // Tests that various import methods move the chain head pointers to the correct
 // positions.
 func TestLightVsFastVsFullChainHeads(t *testing.T) {
+	t.Parallel()
+
 	// Configure and generate a sample block chain
 	var (
 		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
@@ -2310,6 +2314,8 @@ func TestBlockchainHeaderchainReorgConsistency(t *testing.T) {
 // Tests that importing small side forks doesn't leave junk in the trie database
 // cache (which would eventually cause memory issues).
 func TestTrieForkGC(t *testing.T) {
+	t.Parallel()
+
 	// Generate a canonical chain to act as the main dataset
 	engine := ethash.NewFaker()
 	genesis := &Genesis{
@@ -2356,6 +2362,8 @@ func TestTrieForkGC(t *testing.T) {
 // Tests that doing large reorgs works even if the state associated with the
 // forking point is not available any more.
 func TestLargeReorgTrieGC(t *testing.T) {
+	t.Parallel()
+
 	// Generate the original common chain segment and the two competing forks
 	engine := ethash.NewFaker()
 	genesis := &Genesis{
@@ -3108,6 +3116,8 @@ func TestInsertSidechainReportsMissingLocalTd(t *testing.T) {
 // competitor whose parent total difficulty this node cannot read is not a bad block, it
 // just cannot be weighed, and the arithmetic used to dereference the missing value.
 func TestGetResultBlockReportsMissingTd(t *testing.T) {
+	t.Parallel()
+
 	chain, blocks, engine, genDb := newMissingTdChain(t, 2*TriesInMemory, 2*TriesInMemory)
 
 	// Forking on a block whose state is already pruned makes ValidateBody report the
@@ -3132,6 +3142,8 @@ func TestGetResultBlockReportsMissingTd(t *testing.T) {
 // this node cannot read, and the comparison against it used to dereference the missing
 // value.
 func TestGetResultBlockReportsMissingLocalTd(t *testing.T) {
+	t.Parallel()
+
 	chain, blocks, engine, genDb := newMissingTdChain(t, 2*TriesInMemory, 2*TriesInMemory)
 
 	// Forking on a block whose state is already pruned makes ValidateBody report the
