@@ -281,7 +281,15 @@ jobs:
           docker pull xinfinorg/devnet:latest
           docker tag xinfinorg/devnet:latest xinfinorg/devnet:previous
           docker rmi xinfinorg/devnet:latest
-          docker build --build-arg GIT_COMMIT=${GITHUB_SHA} -t xinfinorg/devnet:latest -f cicd/Dockerfile .
+          # --load keeps the image in the local daemon for the tag and pushes below.
+          # The registry cache carries the Go build cache mount between runners;
+          # ignore-error keeps a cache push failure from failing the build.
+          docker buildx create --use --driver docker-container --name cache
+          docker buildx build --load \
+            --build-arg GIT_COMMIT=${GITHUB_SHA} \
+            --cache-from type=registry,ref=xinfinorg/devnet:buildcache \
+            --cache-to type=registry,ref=xinfinorg/devnet:buildcache,mode=max,ignore-error=true \
+            -t xinfinorg/devnet:latest -f cicd/Dockerfile .
           docker tag xinfinorg/devnet:latest $image_name
           docker push $image_name
           docker push xinfinorg/devnet:latest
