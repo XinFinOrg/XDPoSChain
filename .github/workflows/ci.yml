@@ -343,6 +343,11 @@ jobs:
           export git_hash
           echo "Total masternode deployments: $(echo "$masternodes" | wc -l)"
 
+          # Record failures instead of swallowing them: the notification step
+          # reports a deployment even when a set image failed.
+          failures=$(mktemp)
+          export failures
+
           echo "$masternodes" | xargs -r -P 32 -I {} bash -c '
             name="$1"
             # # Skip masternode1 through masternode25, update the rest.
@@ -355,13 +360,19 @@ jobs:
             #   fi
             # fi
             echo "Updating deployment: $name"
-            kubectl set image "deployment/$name" "$name=xinfinorg/devnet:dev-upgrade-${git_hash}" || true
+            kubectl set image "deployment/$name" "$name=xinfinorg/devnet:dev-upgrade-${git_hash}" || echo "$name" >> "$failures"
           ' _ {}
 
           echo "$rpcs" | xargs -r -P 32 -I {} bash -c '
             name="$1"
-            kubectl set image "deployment/$name" "$name=xinfinorg/devnet:dev-upgrade-${git_hash}" || true
+            kubectl set image "deployment/$name" "$name=xinfinorg/devnet:dev-upgrade-${git_hash}" || echo "$name" >> "$failures"
           ' _ {}
+
+          if [ -s "$failures" ]; then
+            echo "Failed to update:"
+            cat "$failures"
+            exit 1
+          fi
 
   devnet_send_notification:
     runs-on: ubuntu-latest
