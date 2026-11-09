@@ -460,7 +460,7 @@ func (p *Peer) ReplyPooledTransactionsRLP(id uint64, hashes []common.Hash, txs [
 		p.knownTxs.Add(hash)
 	}
 	// Not packed into PooledTransactionsPacket to avoid RLP decoding
-	return p2p.Send(p.rw, PooledTransactionsMsg, PooledTransactionsRLPPacket66{
+	return p2p.Send(p.rw, PooledTransactionsMsg, PooledTransactionsRLPPacket166{
 		RequestId:                   id,
 		PooledTransactionsRLPPacket: txs,
 	})
@@ -532,7 +532,7 @@ func (p *Peer) SendBlockHeaders(headers []*types.Header) error {
 
 // ReplyBlockHeaders is the xdc/166 version of SendBlockHeaders.
 func (p *Peer) ReplyBlockHeaders(id uint64, headers []*types.Header) error {
-	return p2p.Send(p.rw, BlockHeadersMsg, BlockHeadersPacket66{
+	return p2p.Send(p.rw, BlockHeadersMsg, BlockHeadersPacket166{
 		RequestId:          id,
 		BlockHeadersPacket: headers,
 	})
@@ -552,7 +552,7 @@ func (p *Peer) SendBlockBodiesRLP(bodies []rlp.RawValue) error {
 // ReplyBlockBodiesRLP is the xdc/166 version of SendBlockBodiesRLP.
 func (p *Peer) ReplyBlockBodiesRLP(id uint64, bodies []rlp.RawValue) error {
 	// Not packed into BlockBodiesPacket to avoid RLP decoding
-	return p2p.Send(p.rw, BlockBodiesMsg, BlockBodiesRLPPacket66{
+	return p2p.Send(p.rw, BlockBodiesMsg, BlockBodiesRLPPacket166{
 		RequestId:            id,
 		BlockBodiesRLPPacket: bodies,
 	})
@@ -566,7 +566,7 @@ func (p *Peer) SendNodeData(data [][]byte) error {
 
 // ReplyNodeData is the xdc/166 response to GetNodeData.
 func (p *Peer) ReplyNodeData(id uint64, data [][]byte) error {
-	return p2p.Send(p.rw, NodeDataMsg, NodeDataPacket66{
+	return p2p.Send(p.rw, NodeDataMsg, NodeDataPacket166{
 		RequestId:      id,
 		NodeDataPacket: data,
 	})
@@ -580,7 +580,7 @@ func (p *Peer) SendReceiptsRLP(receipts []rlp.RawValue) error {
 
 // ReplyReceiptsRLP is the xdc/166 response to GetReceipts.
 func (p *Peer) ReplyReceiptsRLP(id uint64, receipts []rlp.RawValue) error {
-	return p2p.Send(p.rw, ReceiptsMsg, ReceiptsRLPPacket66{
+	return p2p.Send(p.rw, ReceiptsMsg, ReceiptsRLPPacket166{
 		RequestId:         id,
 		ReceiptsRLPPacket: receipts,
 	})
@@ -627,7 +627,7 @@ func (p *Peer) RequestOneHeader(hash common.Hash) error {
 		Reverse: false,
 	}
 	if p.Version() >= XDC166 {
-		return p2p.Send(p.rw, GetBlockHeadersMsg, &GetBlockHeadersPacket66{
+		return p2p.Send(p.rw, GetBlockHeadersMsg, &GetBlockHeadersPacket166{
 			RequestId:             rand.Uint64(),
 			GetBlockHeadersPacket: &query,
 		})
@@ -646,7 +646,7 @@ func (p *Peer) RequestHeadersByHash(origin common.Hash, amount int, skip int, re
 		Reverse: reverse,
 	}
 	if p.Version() >= XDC166 {
-		return p2p.Send(p.rw, GetBlockHeadersMsg, &GetBlockHeadersPacket66{
+		return p2p.Send(p.rw, GetBlockHeadersMsg, &GetBlockHeadersPacket166{
 			RequestId:             rand.Uint64(),
 			GetBlockHeadersPacket: &query,
 		})
@@ -665,7 +665,7 @@ func (p *Peer) RequestHeadersByNumber(origin uint64, amount int, skip int, rever
 		Reverse: reverse,
 	}
 	if p.Version() >= XDC166 {
-		return p2p.Send(p.rw, GetBlockHeadersMsg, &GetBlockHeadersPacket66{
+		return p2p.Send(p.rw, GetBlockHeadersMsg, &GetBlockHeadersPacket166{
 			RequestId:             rand.Uint64(),
 			GetBlockHeadersPacket: &query,
 		})
@@ -678,7 +678,7 @@ func (p *Peer) RequestHeadersByNumber(origin uint64, amount int, skip int, rever
 func (p *Peer) RequestBodies(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of block bodies", "count", len(hashes))
 	if p.Version() >= XDC166 {
-		return p2p.Send(p.rw, GetBlockBodiesMsg, &GetBlockBodiesPacket66{
+		return p2p.Send(p.rw, GetBlockBodiesMsg, &GetBlockBodiesPacket166{
 			RequestId:            rand.Uint64(),
 			GetBlockBodiesPacket: hashes,
 		})
@@ -691,7 +691,7 @@ func (p *Peer) RequestBodies(hashes []common.Hash) error {
 func (p *Peer) RequestNodeData(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of state data", "count", len(hashes))
 	if p.Version() >= XDC166 {
-		return p2p.Send(p.rw, GetNodeDataMsg, &GetNodeDataPacket66{
+		return p2p.Send(p.rw, GetNodeDataMsg, &GetNodeDataPacket166{
 			RequestId:         rand.Uint64(),
 			GetNodeDataPacket: hashes,
 		})
@@ -703,7 +703,7 @@ func (p *Peer) RequestNodeData(hashes []common.Hash) error {
 func (p *Peer) RequestReceipts(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of receipts", "count", len(hashes))
 	if p.Version() >= XDC166 {
-		return p2p.Send(p.rw, GetReceiptsMsg, &GetReceiptsPacket66{
+		return p2p.Send(p.rw, GetReceiptsMsg, &GetReceiptsPacket166{
 			RequestId:         rand.Uint64(),
 			GetReceiptsPacket: hashes,
 		})
@@ -715,7 +715,7 @@ func (p *Peer) RequestReceipts(hashes []common.Hash) error {
 func (p *Peer) RequestTxs(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of transactions", "count", len(hashes))
 	if p.Version() >= XDC166 {
-		return p2p.Send(p.rw, GetPooledTransactionsMsg, &GetPooledTransactionsPacket66{
+		return p2p.Send(p.rw, GetPooledTransactionsMsg, &GetPooledTransactionsPacket166{
 			RequestId:                   rand.Uint64(),
 			GetPooledTransactionsPacket: hashes,
 		})

@@ -245,11 +245,11 @@ func testGetBlockHeaders(t *testing.T, protocol uint) {
 				t.Errorf("test %d: headers mismatch: %v", i, err)
 			}
 		} else {
-			p2p.Send(peer.app, GetBlockHeadersMsg, GetBlockHeadersPacket66{
+			p2p.Send(peer.app, GetBlockHeadersMsg, GetBlockHeadersPacket166{
 				RequestId:             123,
 				GetBlockHeadersPacket: tt.query,
 			})
-			if err := p2p.ExpectMsg(peer.app, BlockHeadersMsg, BlockHeadersPacket66{
+			if err := p2p.ExpectMsg(peer.app, BlockHeadersMsg, BlockHeadersPacket166{
 				RequestId:          123,
 				BlockHeadersPacket: headers,
 			}); err != nil {
@@ -267,11 +267,11 @@ func testGetBlockHeaders(t *testing.T, protocol uint) {
 						t.Errorf("test %d: headers mismatch: %v", i, err)
 					}
 				} else {
-					p2p.Send(peer.app, GetBlockHeadersMsg, GetBlockHeadersPacket66{
+					p2p.Send(peer.app, GetBlockHeadersMsg, GetBlockHeadersPacket166{
 						RequestId:             456,
 						GetBlockHeadersPacket: tt.query,
 					})
-					if err := p2p.ExpectMsg(peer.app, BlockHeadersMsg, BlockHeadersPacket66{
+					if err := p2p.ExpectMsg(peer.app, BlockHeadersMsg, BlockHeadersPacket166{
 						RequestId:          456,
 						BlockHeadersPacket: headers,
 					}); err != nil {
@@ -288,7 +288,7 @@ func testGetBlockHeaders(t *testing.T, protocol uint) {
 			chain.GetBlockByNumber(1).Header(),
 			chain.GetBlockByNumber(2).Header(),
 		}
-		p2p.Send(peer.app, BlockHeadersMsg, BlockHeadersPacket66{
+		p2p.Send(peer.app, BlockHeadersMsg, BlockHeadersPacket166{
 			RequestId:          789,
 			BlockHeadersPacket: headers,
 		})
@@ -521,14 +521,14 @@ func testGetBlockBodies(t *testing.T, protocol uint) {
 				t.Errorf("test %d: bodies mismatch: %v", i, err)
 			}
 		} else {
-			p2p.Send(peer.app, GetBlockBodiesMsg, GetBlockBodiesPacket66{
+			p2p.Send(peer.app, GetBlockBodiesMsg, GetBlockBodiesPacket166{
 				RequestId:            123,
 				GetBlockBodiesPacket: hashes,
 			})
 			// The server answers from the already RLP-encoded bodies, so the
-			// reply is a BlockBodiesRLPPacket66; it encodes to the same bytes
+			// reply is a BlockBodiesRLPPacket166; it encodes to the same bytes
 			// as the decoded wrapper expected here.
-			if err := p2p.ExpectMsg(peer.app, BlockBodiesMsg, BlockBodiesPacket66{
+			if err := p2p.ExpectMsg(peer.app, BlockBodiesMsg, BlockBodiesPacket166{
 				RequestId:         123,
 				BlockBodiesPacket: bodies,
 			}); err != nil {
@@ -540,7 +540,7 @@ func testGetBlockBodies(t *testing.T, protocol uint) {
 	// backend observed the unwrapped legacy packet, not the *66 wrapper.
 	if protocol >= XDC166 {
 		block := chain.GetBlockByNumber(1)
-		p2p.Send(peer.app, BlockBodiesMsg, BlockBodiesPacket66{
+		p2p.Send(peer.app, BlockBodiesMsg, BlockBodiesPacket166{
 			RequestId:         789,
 			BlockBodiesPacket: BlockBodiesPacket{{Transactions: block.Transactions(), Uncles: block.Uncles()}},
 		})
@@ -674,7 +674,7 @@ func testGetNodeData(t *testing.T, protocol uint) {
 	if protocol < XDC166 {
 		p2p.Send(peer.app, GetNodeDataMsg, hashes)
 	} else {
-		p2p.Send(peer.app, GetNodeDataMsg, GetNodeDataPacket66{
+		p2p.Send(peer.app, GetNodeDataMsg, GetNodeDataPacket166{
 			RequestId:         123,
 			GetNodeDataPacket: hashes,
 		})
@@ -692,7 +692,7 @@ func testGetNodeData(t *testing.T, protocol uint) {
 			t.Fatalf("failed to decode response node data: %v", err)
 		}
 	} else {
-		var res NodeDataPacket66
+		var res NodeDataPacket166
 		if err := msg.Decode(&res); err != nil {
 			t.Fatalf("failed to decode response node data: %v", err)
 		}
@@ -731,7 +731,7 @@ func testGetNodeData(t *testing.T, protocol uint) {
 	// Over xdc/166, deliver a 66-encoded node data response and assert the
 	// backend observed the unwrapped legacy packet, not the *66 wrapper.
 	if protocol >= XDC166 {
-		p2p.Send(peer.app, NodeDataMsg, NodeDataPacket66{
+		p2p.Send(peer.app, NodeDataMsg, NodeDataPacket166{
 			RequestId:      789,
 			NodeDataPacket: NodeDataPacket{{0x01}},
 		})
@@ -871,14 +871,14 @@ func testGetReceipt(t *testing.T, protocol uint) {
 			t.Errorf("receipts mismatch: %v", err)
 		}
 	} else {
-		p2p.Send(peer.app, GetReceiptsMsg, GetReceiptsPacket66{
+		p2p.Send(peer.app, GetReceiptsMsg, GetReceiptsPacket166{
 			RequestId:         123,
 			GetReceiptsPacket: hashes,
 		})
 		// The server answers from the already RLP-encoded receipts, so the
-		// reply is a ReceiptsRLPPacket66; it encodes to the same bytes as the
+		// reply is a ReceiptsRLPPacket166; it encodes to the same bytes as the
 		// decoded wrapper expected here.
-		if err := p2p.ExpectMsg(peer.app, ReceiptsMsg, ReceiptsPacket66{
+		if err := p2p.ExpectMsg(peer.app, ReceiptsMsg, ReceiptsPacket166{
 			RequestId:      123,
 			ReceiptsPacket: receipts,
 		}); err != nil {
@@ -888,7 +888,7 @@ func testGetReceipt(t *testing.T, protocol uint) {
 	// Over xdc/166, deliver a 66-encoded receipts response and assert the
 	// backend observed the unwrapped legacy packet, not the *66 wrapper.
 	if protocol >= XDC166 {
-		p2p.Send(peer.app, ReceiptsMsg, ReceiptsPacket66{
+		p2p.Send(peer.app, ReceiptsMsg, ReceiptsPacket166{
 			RequestId:      789,
 			ReceiptsPacket: receipts[:1],
 		})
@@ -1143,14 +1143,14 @@ func TestRejectMalformed166Responses(t *testing.T) {
 		// the packet silently, so the peer is never torn down and this subtest
 		// fails when the 2 s rejection window in reject expires.
 		bodies := BlockBodiesPacket{{Uncles: []*types.Header{{Extra: bytes.Repeat([]byte{0x01}, 20*1024+1)}}}}
-		reject(t, backend, BlockBodiesMsg, BlockBodiesPacket66{
+		reject(t, backend, BlockBodiesMsg, BlockBodiesPacket166{
 			RequestId:         123,
 			BlockBodiesPacket: bodies,
 		})
 	})
 	t.Run("nil block body", func(t *testing.T) {
 		backend := newTestBackend(t, 1, nil)
-		reject(t, backend, BlockBodiesMsg, BlockBodiesPacket66{
+		reject(t, backend, BlockBodiesMsg, BlockBodiesPacket166{
 			RequestId:         123,
 			BlockBodiesPacket: BlockBodiesPacket{nil},
 		})
@@ -1161,7 +1161,7 @@ func TestRejectMalformed166Responses(t *testing.T) {
 		// transactions; lift the gate so the payload is actually decoded and
 		// checked instead of being dropped before it.
 		backend.accepted.Store(true)
-		reject(t, backend, PooledTransactionsMsg, PooledTransactionsPacket66{
+		reject(t, backend, PooledTransactionsMsg, PooledTransactionsPacket166{
 			RequestId:                123,
 			PooledTransactionsPacket: PooledTransactionsPacket{nil},
 		})
@@ -1180,7 +1180,7 @@ func TestRejectMalformed166Responses(t *testing.T) {
 		// it. Dropping the AcceptTxs gate from the 166 branch lets the payload
 		// through and fails this subtest.
 		tx := newTestTransaction(testBankKey, 0, 0)
-		p2p.Send(peer.app, PooledTransactionsMsg, PooledTransactionsPacket66{
+		p2p.Send(peer.app, PooledTransactionsMsg, PooledTransactionsPacket166{
 			RequestId:                123,
 			PooledTransactionsPacket: PooledTransactionsPacket{tx},
 		})
@@ -1335,7 +1335,7 @@ func testGetPooledTransactions(t *testing.T, protocol uint) {
 			t.Fatalf("transaction response mismatch: have %v, want %v", sent, []*types.Transaction{tx})
 		}
 	} else {
-		p2p.Send(peer.app, GetPooledTransactionsMsg, GetPooledTransactionsPacket66{
+		p2p.Send(peer.app, GetPooledTransactionsMsg, GetPooledTransactionsPacket166{
 			RequestId:                   123,
 			GetPooledTransactionsPacket: []common.Hash{tx.Hash(), {0x02}},
 		})
@@ -1347,9 +1347,9 @@ func testGetPooledTransactions(t *testing.T, protocol uint) {
 			t.Fatalf("response packet code mismatch: have %x, want %x", msg.Code, PooledTransactionsMsg)
 		}
 		// The server answers from the already RLP-encoded transactions, so the
-		// reply is a PooledTransactionsRLPPacket66; decoding it into the
+		// reply is a PooledTransactionsRLPPacket166; decoding it into the
 		// decoded wrapper recovers the same transactions.
-		var res PooledTransactionsPacket66
+		var res PooledTransactionsPacket166
 		if err := msg.Decode(&res); err != nil {
 			t.Fatalf("failed to decode transactions response: %v", err)
 		}
@@ -1364,7 +1364,7 @@ func testGetPooledTransactions(t *testing.T, protocol uint) {
 	// assert the backend observed the unwrapped legacy packet, not the *66
 	// wrapper.
 	if protocol >= XDC166 {
-		p2p.Send(peer.app, PooledTransactionsMsg, PooledTransactionsPacket66{
+		p2p.Send(peer.app, PooledTransactionsMsg, PooledTransactionsPacket166{
 			RequestId:                789,
 			PooledTransactionsPacket: PooledTransactionsPacket{tx},
 		})

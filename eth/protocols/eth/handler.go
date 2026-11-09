@@ -190,7 +190,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 			requestID uint64
 		)
 		if peer.version >= XDC166 {
-			var wrapped GetBlockHeadersPacket66
+			var wrapped GetBlockHeadersPacket166
 			if err := msg.Decode(&wrapped); err != nil {
 				return errResp(ErrDecode, "%v: %v", msg, err)
 			}
@@ -289,7 +289,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 	case msg.Code == BlockHeadersMsg:
 		// A batch of headers arrived to one of our previous requests
 		if peer.version >= XDC166 {
-			var res BlockHeadersPacket66
+			var res BlockHeadersPacket166
 			if err := msg.Decode(&res); err != nil {
 				return errResp(ErrDecode, "msg %v: %v", msg, err)
 			}
@@ -312,7 +312,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 			requestID uint64
 		)
 		if peer.version >= XDC166 {
-			var wrapped GetBlockBodiesPacket66
+			var wrapped GetBlockBodiesPacket166
 			if err := msg.Decode(&wrapped); err != nil {
 				return errResp(ErrDecode, "msg %v: %v", msg, err)
 			}
@@ -344,7 +344,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 	case msg.Code == BlockBodiesMsg:
 		// A batch of block bodies arrived to one of our previous requests
 		if peer.version >= XDC166 {
-			var res BlockBodiesPacket66
+			var res BlockBodiesPacket166
 			if err := msg.Decode(&res); err != nil {
 				return errResp(ErrDecode, "msg %v: %v", msg, err)
 			}
@@ -374,7 +374,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 			requestID uint64
 		)
 		if peer.version >= XDC166 {
-			var wrapped GetNodeDataPacket66
+			var wrapped GetNodeDataPacket166
 			if err := msg.Decode(&wrapped); err != nil {
 				return errResp(ErrDecode, "msg %v: %v", msg, err)
 			}
@@ -413,7 +413,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 	case peer.version >= XDC100 && msg.Code == NodeDataMsg:
 		// A batch of node state data arrived to one of our previous requests
 		if peer.version >= XDC166 {
-			var res NodeDataPacket66
+			var res NodeDataPacket166
 			if err := msg.Decode(&res); err != nil {
 				return errResp(ErrDecode, "msg %v: %v", msg, err)
 			}
@@ -434,7 +434,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 			requestID uint64
 		)
 		if peer.version >= XDC166 {
-			var wrapped GetReceiptsPacket66
+			var wrapped GetReceiptsPacket166
 			if err := msg.Decode(&wrapped); err != nil {
 				return errResp(ErrDecode, "msg %v: %v", msg, err)
 			}
@@ -475,7 +475,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 	case peer.version >= XDC100 && msg.Code == ReceiptsMsg:
 		// A batch of receipts arrived to one of our previous requests
 		if peer.version >= XDC166 {
-			var res ReceiptsPacket66
+			var res ReceiptsPacket166
 			if err := msg.Decode(&res); err != nil {
 				return errResp(ErrDecode, "msg %v: %v", msg, err)
 			}
@@ -544,7 +544,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 			requestID uint64
 		)
 		if peer.version >= XDC166 {
-			var wrapped GetPooledTransactionsPacket66
+			var wrapped GetPooledTransactionsPacket166
 			if err := msg.Decode(&wrapped); err != nil {
 				return errResp(ErrDecode, "msg %v: %v", msg, err)
 			}
@@ -602,7 +602,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 			return nil
 		}
 		if peer.version >= XDC166 {
-			var res PooledTransactionsPacket66
+			var res PooledTransactionsPacket166
 			if err := msg.Decode(&res); err != nil {
 				return errResp(ErrDecode, "msg %v: %v", msg, err)
 			}
