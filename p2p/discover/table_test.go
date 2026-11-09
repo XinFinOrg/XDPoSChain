@@ -17,11 +17,14 @@
 package discover
 
 import (
+	"context"
 	"crypto/ecdsa"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
 	"reflect"
+	"sync"
 	"testing"
 	"testing/quick"
 	"time"
@@ -466,5 +469,199 @@ func TestTableBootnodesNetRestrict(t *testing.T) {
 	}
 	if len(tab.nursery) != 1 || tab.nursery[0].ID() != allowed.ID() {
 		t.Fatalf("wrong nursery: have %d nodes, want only %v", len(tab.nursery), allowed.ID())
+	}
+}
+
+// This test checks that waitForNodes does not block addSeenNode.
+// See https://github.com/ethereum/go-ethereum/issues/34881.
+func TestTable_waitForNodesLocking(t *testing.T) {
+	transport := newPingRecorder()
+	tab, db := newTestTable(transport)
+	defer db.Close()
+	defer tab.close()
+	<-tab.initDone
+
+	// waitForNodes will never reach this count, so it stays subscribed
+	// to nodeFeed and looping for the duration of the test.
+	waitCtx, cancelWait := context.WithCancel(context.Background())
+	defer cancelWait()
+	waitDone := make(chan struct{})
+	go func() {
+		defer close(waitDone)
+		tab.waitForNodes(waitCtx, 1<<20)
+	}()
+
+	// Call addSeenNode in loop to send to the feed.
+	addDone := make(chan struct{})
+	go func() {
+		defer close(addDone)
+		for i := range 10000 {
+			d := 240 + (i % 17)
+			n := nodeAtDistance(tab.self().ID(), d, intIP(i))
+			tab.addSeenNode(n)
+		}
+	}()
+
+	select {
+	case <-addDone:
+		cancelWait()
+		<-waitDone
+	case <-time.After(10 * time.Second):
+		t.Fatal("deadlock detected: add loop did not finish within 10s")
+	}
+}
+
+// This test checks the return conditions of waitForNodes.
+func TestTable_waitForNodes(t *testing.T) {
+	t.Run("Populated", func(t *testing.T) {
+		tab, db := newTestTable(newPingRecorder())
+		defer db.Close()
+		defer tab.close()
+		<-tab.initDone
+		tab.addSeenNode(nodeAtDistance(tab.self().ID(), 240, intIP(1)))
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := tab.waitForNodes(ctx, tab.len()); err != nil {
+			t.Fatalf("waitForNodes returned error: %v", err)
+		}
+	})
+
+	t.Run("WaitsForInsertion", func(t *testing.T) {
+		tab, db := newTestTable(newPingRecorder())
+		defer db.Close()
+		defer tab.close()
+		<-tab.initDone
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		done := make(chan error, 1)
+		want := tab.len() + 1
+		go func() { done <- tab.waitForNodes(ctx, want) }()
+		select {
+		case err := <-done:
+			t.Fatalf("waitForNodes returned before the table filled: %v", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+		tab.addSeenNode(nodeAtDistance(tab.self().ID(), 240, intIP(1)))
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("waitForNodes returned error: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("waitForNodes did not return after the table filled")
+		}
+	})
+
+	t.Run("Canceled", func(t *testing.T) {
+		tab, db := newTestTable(newPingRecorder())
+		defer db.Close()
+		defer tab.close()
+		<-tab.initDone
+
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		launched := make(chan struct{})
+		go func() {
+			close(launched)
+			done <- tab.waitForNodes(ctx, 1<<20)
+		}()
+		<-launched
+		cancel()
+
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("waitForNodes returned %v, want %v", err, context.Canceled)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("waitForNodes did not return after cancel")
+		}
+	})
+
+	t.Run("Closed", func(t *testing.T) {
+		tab, db := newTestTable(newPingRecorder())
+		defer db.Close()
+		<-tab.initDone
+		tab.close() // closing twice panics, so this subtest has no deferred close
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := tab.waitForNodes(ctx, 1<<20); !errors.Is(err, errClosed) {
+			t.Fatalf("waitForNodes returned %v, want %v", err, errClosed)
+		}
+	})
+}
+
+// This test checks that canceling the waitForNodes context while nodes are being added
+// does not block addSeenNode.
+func TestTable_waitForNodesCancelLocking(t *testing.T) {
+	transport := newPingRecorder()
+	tab, db := newTestTable(transport)
+	defer db.Close()
+	defer func() {
+		// tab.close() waits for the table loop, which cannot exit while the
+		// deadlock this test looks for is present.
+		if !t.Failed() {
+			tab.close()
+		}
+	}()
+	<-tab.initDone
+
+	// waitForNodes will never reach this count, so it stays subscribed until cancel.
+	waitCtx, cancelWait := context.WithCancel(context.Background())
+	waitDone := make(chan error, 1)
+	go func() {
+		waitDone <- tab.waitForNodes(waitCtx, 1<<20)
+	}()
+	// Give the waiter a chance to subscribe. The subscription cannot be observed
+	// from outside; without this hint a cancel landing before it turns the test
+	// into a no-op.
+	time.Sleep(5 * time.Millisecond)
+
+	// Wait until every sender has completed an add, so the cancel below overlaps
+	// with feed traffic instead of racing the goroutine start.
+	const senders = 8
+	var wg sync.WaitGroup
+	started := make(chan struct{}, senders)
+	for g := 0; g < senders; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < 2000; i++ {
+				d := 240 + (i % 17)
+				n := nodeAtDistance(tab.self().ID(), d, intIP(g*10000+i))
+				tab.addSeenNode(n)
+				if i == 0 {
+					started <- struct{}{}
+				}
+				tab.delete(n)
+			}
+		}(g)
+	}
+	for i := 0; i < senders; i++ {
+		select {
+		case <-started:
+		case <-time.After(10 * time.Second):
+			t.Fatal("senders did not start within 10s")
+		}
+	}
+	cancelWait()
+
+	addDone := make(chan struct{})
+	go func() { wg.Wait(); close(addDone) }()
+	select {
+	case <-addDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("deadlock detected: addSeenNode did not finish after waitForNodes cancel")
+	}
+	select {
+	case err := <-waitDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("waitForNodes returned %v, want %v", err, context.Canceled)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("deadlock detected: waitForNodes did not return after cancel")
 	}
 }
