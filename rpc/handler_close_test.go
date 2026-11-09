@@ -107,6 +107,7 @@ func waitForCodecRelease(t *testing.T, srv *Server) {
 // (see go-ethereum #19430), and with a grace period the response of a peer that
 // can still read would be dropped as well.
 func TestHandlerCloseKeepsRunningCallAlive(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		teardown func(h *handler)
@@ -163,6 +164,7 @@ func TestHandlerCloseKeepsRunningCallAlive(t *testing.T) {
 // delivered anymore, and it must not turn into a wait either: the teardown
 // returns within zeroGraceTestBound here.
 func TestHandlerCloseAbortReturnsWhileCallWaitsForContext(t *testing.T) {
+	t.Parallel()
 	serverConn, clientConn := net.Pipe()
 	defer serverConn.Close()
 	defer clientConn.Close()
@@ -196,6 +198,7 @@ func TestHandlerCloseAbortReturnsWhileCallWaitsForContext(t *testing.T) {
 // In both cases a call that only returns once its context is cancelled must not
 // keep the teardown, and with it the codec, alive.
 func TestServerTeardownCancelsCallWaitingForContext(t *testing.T) {
+	t.Parallel()
 	t.Run("peer closes", func(t *testing.T) {
 		srv := NewServer()
 		svc := newBlockingService()
@@ -272,6 +275,7 @@ func (s *delayedService) Result(ctx context.Context) (string, error) {
 // receives the response. Cancelling the call contexts as soon as the read side
 // dies replaces that response with a cancellation error.
 func TestServerTeardownDeliversResponseToHalfClosedPeer(t *testing.T) {
+	t.Parallel()
 	srv := NewServer()
 	if err := srv.RegisterName("delayed", &delayedService{delay: 100 * time.Millisecond}); err != nil {
 		t.Fatal(err)
@@ -318,6 +322,7 @@ func TestServerTeardownDeliversResponseToHalfClosedPeer(t *testing.T) {
 // connection it has, and the codec being closed locally (Server.Stop), after
 // which a response would not reach the peer anymore.
 func TestHandlerCloseAbortStoppedBySignal(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		signal   func(codec ServerCodec, abort, clientAbort chan struct{})
@@ -435,6 +440,7 @@ func waitForTeardownGrace(t *testing.T, client *Client, peer net.Conn, reader *b
 // connection down, which ends the wait right away and cancels the call parked
 // on its context.
 func TestClientCloseStopsTeardownGrace(t *testing.T) {
+	t.Parallel()
 	peerConn, clientConn := net.Pipe()
 	defer peerConn.Close()
 	defer clientConn.Close()
@@ -466,6 +472,7 @@ func TestClientCloseStopsTeardownGrace(t *testing.T) {
 // this node started a new one, so its calls are cancelled without waiting the
 // grace out, the same way Client.Close ends it through the client wide signal.
 func TestClientReconnectStopsTeardownGrace(t *testing.T) {
+	t.Parallel()
 	firstPeer, firstConn := net.Pipe()
 	defer firstPeer.Close()
 	defer firstConn.Close()
@@ -530,6 +537,7 @@ func TestClientReconnectStopsTeardownGrace(t *testing.T) {
 // so a Close taking the curConn snapshot between the two would otherwise leave
 // the running teardown waiting the grace out.
 func TestClientCloseEndsTeardownOfUnpublishedConnection(t *testing.T) {
+	t.Parallel()
 	peerConn, clientConn := net.Pipe()
 	defer peerConn.Close()
 	defer clientConn.Close()
@@ -582,6 +590,7 @@ func TestClientCloseEndsTeardownOfUnpublishedConnection(t *testing.T) {
 // upper bound only: they keep the grace from growing, while an implementation
 // that ends the wait sooner (see #2640) stays acceptable.
 func TestClientTeardownGraceBoundsCallerWait(t *testing.T) {
+	t.Parallel()
 	testshort.Skip(t)
 	// The teardown is entered with this call registered and the caller's
 	// deadline expires while the grace runs. Depending on whether dispatch
@@ -720,6 +729,7 @@ func (s *ignoringService) IgnoreContext() error {
 // still reaches the peer, and it must return afterwards, so the connection is
 // released even though the call keeps running.
 func TestHandlerCloseAbortBoundedDrainForIgnoringCall(t *testing.T) {
+	t.Parallel()
 	serverConn, clientConn := net.Pipe()
 	defer serverConn.Close()
 	defer clientConn.Close()
@@ -771,6 +781,7 @@ func TestHandlerCloseAbortBoundedDrainForIgnoringCall(t *testing.T) {
 // is released once the drain elapsed instead of staying alive until the call
 // returns.
 func TestServerTeardownReleasesConnectionWhenCallIgnoresContext(t *testing.T) {
+	t.Parallel()
 	testshort.Skip(t)
 	t.Run("peer closes", func(t *testing.T) {
 		srv := NewServer()
@@ -840,6 +851,7 @@ func TestServerTeardownReleasesConnectionWhenCallIgnoresContext(t *testing.T) {
 // context: the call keeps running, but the connection it held is released and
 // Close returns.
 func TestClientCloseReleasesConnectionWhenCallIgnoresContext(t *testing.T) {
+	t.Parallel()
 	peerConn, clientConn := net.Pipe()
 	defer peerConn.Close()
 	defer clientConn.Close()
@@ -882,6 +894,7 @@ func TestClientCloseReleasesConnectionWhenCallIgnoresContext(t *testing.T) {
 // registers must be failed right away, because the teardown already cancelled
 // the subscriptions of the connection and nothing would ever close this one.
 func TestHandlerCloseAbortFailsSubscriptionRegisteredAfterTeardown(t *testing.T) {
+	t.Parallel()
 	serverConn, clientConn := net.Pipe()
 	defer serverConn.Close()
 	defer clientConn.Close()
