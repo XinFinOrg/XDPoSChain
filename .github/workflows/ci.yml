@@ -219,6 +219,24 @@ jobs:
         with:
           path: ${{ env.GOPATH }}/src/XDPoSChain/build/cache
           key: ${{ runner.os }}-build-tools-cache-${{ hashFiles('**/build/checksums.txt') }}
+      # Both are cold today: lint recompiles ci.go and re-analyses the whole
+      # tree on every run.
+      - name: Restore the Go build cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/go-build
+          key: ${{ runner.os }}-go-build-lint-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-go-build-lint-${{ hashFiles('**/go.sum') }}-
+            ${{ runner.os }}-go-build-lint-
+      - name: Restore the golangci-lint analysis cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/golangci-lint
+          key: ${{ runner.os }}-golangci-lint-${{ hashFiles('**/go.sum', '.golangci.yml') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-golangci-lint-${{ hashFiles('**/go.sum', '.golangci.yml') }}-
+            ${{ runner.os }}-golangci-lint-
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
