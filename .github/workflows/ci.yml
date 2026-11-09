@@ -31,6 +31,9 @@ env:
 jobs:
   # gofmt, tidy, generate and the shard checks, once per run.
   static:
+    # Markdown-only diffs skip it; deploying refs always run (see the race lanes).
+    needs: race-scope
+    if: needs.race-scope.outputs.run == 'true' || github.ref == 'refs/heads/dev-upgrade' || startsWith(github.ref, 'refs/tags/')
     env:
       GOPATH: ${{ github.workspace }}
       GOBIN: ${{ github.workspace }}/bin
@@ -199,6 +202,9 @@ jobs:
   # Linters. Not a dependency of the deploy jobs: a lint finding should not hold
   # a release.
   lint:
+    # Same gate as static.
+    needs: race-scope
+    if: needs.race-scope.outputs.run == 'true' || github.ref == 'refs/heads/dev-upgrade' || startsWith(github.ref, 'refs/tags/')
     env:
       GOPATH: ${{ github.workspace }}
       GOBIN: ${{ github.workspace }}/bin
