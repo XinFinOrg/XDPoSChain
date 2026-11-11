@@ -1524,6 +1524,153 @@ func TestSimulateV1Multicall3StateOverride(t *testing.T) {
 	}))
 }
 
+// TestSimulateV1DeterministicFactoryStateOverride covers the account the Amsterdam
+// EIP-7997 install owns. The install runs after the caller's state overrides, so an
+// override of its code would either trip the consensus panic that guards a diverging
+// contract or be undone by the install, and an override of its nonce would be replaced
+// by the nonce 1 the install writes. The fields the install does not touch stay
+// overridable.
+func TestSimulateV1DeterministicFactoryStateOverride(t *testing.T) {
+	t.Parallel()
+
+	sender := common.HexToAddress("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1")
+	newAPI := func(t *testing.T, amsterdamBlock *big.Int, extraAlloc types.GenesisAlloc) (*BlockChainAPI, *params.ChainConfig, *big.Int) {
+		t.Helper()
+		alloc := types.GenesisAlloc{sender: {Balance: big.NewInt(params.Ether)}}
+		for addr, account := range extraAlloc {
+			alloc[addr] = account
+		}
+		genesis := &core.Genesis{
+			Config: params.MergedTestChainConfig,
+			Alloc:  alloc,
+		}
+		db := rawdb.NewMemoryDatabase()
+		block := genesis.MustCommit(db)
+		stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+		require.NoError(t, err)
+		backend := &simulateBackendMock{
+			estimateBackendMock: &estimateBackendMock{
+				backendMock: newBackendMock(),
+				stateDB:     stateDB,
+				header:      block.Header(),
+				engine:      ethash.NewFaker(),
+			},
+			gasCap: 30_000_000,
+		}
+		// The mock backend carries its own chain config, so the forks have to be
+		// scheduled there too for the simulated blocks to take their state changes.
+		backend.config.PragueBlock = big.NewInt(0)
+		backend.config.OsakaBlock = big.NewInt(0)
+		backend.config.AmsterdamBlock = amsterdamBlock
+		return NewBlockChainAPI(backend, nil), backend.config, block.Number()
+	}
+	recipient := common.HexToAddress("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	calls := []TransactionArgs{{From: &sender, To: &recipient, Value: (*hexutil.Big)(big.NewInt(1))}}
+	simulate := func(t *testing.T, api *BlockChainAPI, overrides override.StateOverride, extra ...simBlock) error {
+		t.Helper()
+		req := append([]simBlock{{StateOverrides: &overrides, Calls: calls}}, extra...)
+		_, err := api.SimulateV1(context.Background(), simOpts{BlockStateCalls: req}, nil)
+		return err
+	}
+	assertRefused := func(t *testing.T, err error, want string, msgAndArgs ...interface{}) {
+		t.Helper()
+		var invalidReqErr *invalidParamsError
+		require.ErrorAs(t, err, &invalidReqErr, msgAndArgs...)
+		require.Contains(t, invalidReqErr.message, want, msgAndArgs...)
+	}
+
+	nonCanonicalCode := hexutil.Bytes(common.FromHex("0x60006000fd"))
+	canonicalCode := hexutil.Bytes(params.DeterministicFactoryCode)
+	emptyCode := hexutil.Bytes{}
+	zeroNonce := (*hexutil.Uint64)(new(uint64))
+	foreignNonce := (*hexutil.Uint64)(new(uint64))
+	*foreignNonce = 5
+	for _, tc := range []struct {
+		name     string
+		override override.OverrideAccount
+	}{
+		{"code diverging from the canonical runtime code", override.OverrideAccount{Code: &nonCanonicalCode}},
+		{"empty code", override.OverrideAccount{Code: &emptyCode}},
+		{"canonical code", override.OverrideAccount{Code: &canonicalCode}},
+		{"zero nonce of an account the install will create", override.OverrideAccount{Nonce: zeroNonce}},
+	} {
+		api, config, base := newAPI(t, big.NewInt(0), nil)
+		require.True(t, config.IsAmsterdam(new(big.Int).Add(base, big.NewInt(1))),
+			"the test chain must activate Amsterdam at the first simulated block")
+		assertRefused(t, simulate(t, api, override.StateOverride{params.DeterministicFactoryAddress: tc.override}), "EIP-7997", tc.name)
+	}
+	// The request shares one state, so an override planted before the activation still
+	// reaches the first Amsterdam-active block and its install.
+	api, config, base := newAPI(t, big.NewInt(3), nil)
+	require.False(t, config.IsAmsterdam(new(big.Int).Add(base, big.NewInt(1))),
+		"the test chain must activate Amsterdam after the block the override lands on")
+	err := simulate(t, api, override.StateOverride{
+		params.DeterministicFactoryAddress: override.OverrideAccount{Code: &nonCanonicalCode},
+	}, simBlock{Calls: calls}, simBlock{Calls: calls})
+	assertRefused(t, err, "block 3 of the request writes it")
+
+	// The install leaves the balance and the storage of the account alone, so they stay
+	// overridable, and so does every account it does not own.
+	api, _, _ = newAPI(t, big.NewInt(0), nil)
+	require.NoError(t, simulate(t, api, override.StateOverride{
+		params.DeterministicFactoryAddress: override.OverrideAccount{Balance: (*hexutil.Big)(big.NewInt(1))},
+	}))
+	// A storage override survives the install the same way: the install writes the code
+	// and the nonce only. A fresh backend is needed for the same reason as below.
+	api, _, _ = newAPI(t, big.NewInt(0), nil)
+	require.NoError(t, simulate(t, api, override.StateOverride{
+		params.DeterministicFactoryAddress: override.OverrideAccount{State: map[common.Hash]common.Hash{{0x01}: {0x02}}},
+	}), "a storage override survives the install")
+	// The install raises a zero nonce to 1 and preserves any other, so a nonzero
+	// override survives on the account the install builds. A fresh backend is needed:
+	// the mock hands out one state, which the call above already installed into.
+	api, _, _ = newAPI(t, big.NewInt(0), nil)
+	require.NoError(t, simulate(t, api, override.StateOverride{
+		params.DeterministicFactoryAddress: override.OverrideAccount{Nonce: foreignNonce},
+	}), "a nonzero nonce override survives the install")
+	// A chain that already carries the canonical code (the upstream genesis way, or
+	// any block after the install) keeps the nonce overridable: the install skips an
+	// account whose code is present and never writes the nonce.
+	api, _, _ = newAPI(t, big.NewInt(0), types.GenesisAlloc{
+		params.DeterministicFactoryAddress: {Nonce: 1, Code: params.DeterministicFactoryCode, Balance: big.NewInt(0)},
+	})
+	require.NoError(t, simulate(t, api, override.StateOverride{
+		params.DeterministicFactoryAddress: override.OverrideAccount{Nonce: zeroNonce},
+	}), "a nonce override stays allowed once the canonical code is installed")
+	require.NoError(t, simulate(t, api, override.StateOverride{
+		recipient: override.OverrideAccount{Code: &nonCanonicalCode},
+	}))
+	// A move onto the account stays allowed, as the install is a state write the move
+	// does not undo. The move is issued on the precompile's address, so the guard looks
+	// at the target.
+	movedToFactory := params.DeterministicFactoryAddress
+	require.NoError(t, simulate(t, api, override.StateOverride{
+		common.BytesToAddress([]byte{1}): {MovePrecompileTo: &movedToFactory},
+	}), "a precompile moved onto the factory account stays overridable")
+
+	// The install judges the state the request produced, not only the overrides: a block
+	// before the activation can create a contract at the keyless address the factory was
+	// deployed from (0x3fab... at nonce 0), which the first Amsterdam block would refuse
+	// by panicking, so the guard reports a validation error instead.
+	keyless := common.HexToAddress("0x3fab184622dc19b6109349b94811493bf2a45362")
+	init := hexutil.Bytes(common.FromHex("0x60016000f3")) // returns the runtime code 0x00
+	nonce, gas := hexutil.Uint64(0), hexutil.Uint64(100_000)
+	create := TransactionArgs{From: &keyless, Nonce: &nonce, Input: &init, Gas: &gas}
+
+	api, config, base = newAPI(t, big.NewInt(3), nil)
+	require.False(t, config.IsAmsterdam(new(big.Int).Add(base, big.NewInt(1))),
+		"the test chain must activate Amsterdam after the block that runs the create")
+	err = simulate(t, api, override.StateOverride{}, simBlock{Calls: []TransactionArgs{create}}, simBlock{Calls: calls})
+	assertRefused(t, err, "EIP-7997", "a cross-fork create at the factory address")
+
+	// A block before the activation does not run the install, so it judges no code.
+	api, _, _ = newAPI(t, big.NewInt(3), types.GenesisAlloc{
+		params.DeterministicFactoryAddress: {Nonce: 1, Code: nonCanonicalCode},
+	})
+	require.NoError(t, simulate(t, api, override.StateOverride{}, simBlock{Calls: calls}),
+		"a block before the activation does not judge the factory code")
+}
+
 // TestSimulateV1ChainLinkage tests simulate v 1 chain linkage.
 func TestSimulateV1ChainLinkage(t *testing.T) {
 	t.Parallel()
