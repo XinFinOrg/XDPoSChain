@@ -73,9 +73,14 @@ _See_: [ADR-0001](docs/adr/0001-bound-executed-marker-to-state-lifetime.md)
 ### Block processing
 
 **block level hooks**:
-The state changes block processing applies before the first transaction of a block: the TIPSigning removal of the legacy block signers account, the Multicall3 install after Prague whenever the account has no code and the EIP-2935 parent hash write. The DAO fork change is not one of them: only the paths that process or generate a block apply it, each on its own at `DAOForkBlock`, the way upstream `core.PreExecution` leaves it out.
+The state changes block processing applies before the first transaction of a block: the TIPSigning removal of the legacy block signers account, the Multicall3 install after Prague whenever the account has no code, the EIP-7997 factory install after Amsterdam on the same condition and the EIP-2935 parent hash write. The DAO fork change is not one of them: only the paths that process or generate a block apply it, each on its own at `DAOForkBlock`, the way upstream `core.PreExecution` leaves it out.
 _Avoid_: pre-execution calls, system calls
 _See_: [ApplyBlockLevelHooks](core/state_processor.go)
+
+**deterministic deployment factory**:
+The keyless CREATE2 factory at `0x4e59b44847b379578588920cA78FbF26c0B4956C` (EIP-7997), installed into the state by the block level hooks on Amsterdam-active blocks with nonce 1 and the EIP's runtime code. Its address and code are shared with other EVM chains so CREATE2 deployments land at the same addresses, but no network schedules Amsterdam yet.
+_Avoid_: CREATE2 factory, universal deployer, singleton factory
+_See_: [ApplyEIP7997HardFork](core/state_processor.go), [params/protocol_params.go](params/protocol_params.go)
 
 ### Transaction pricing
 

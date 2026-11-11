@@ -125,14 +125,35 @@ func ApplyMulticall3HardFork(config *params.ChainConfig, statedb vm.StateDB, blo
 	statedb.SetNonce(params.Multicall3Address, 1, tracing.NonceChangeUnspecified)
 }
 
+// ApplyEIP7997HardFork reinstalls the factory on any Amsterdam-active block
+// whose address has no code, so a node that lost the account recovers.
+func ApplyEIP7997HardFork(config *params.ChainConfig, statedb vm.StateDB, blockNumber *big.Int) {
+	if blockNumber.Sign() == 0 || !config.IsAmsterdam(blockNumber) {
+		return
+	}
+	if code := statedb.GetCode(params.DeterministicFactoryAddress); len(code) > 0 {
+		if !bytes.Equal(code, params.DeterministicFactoryCode) {
+			log.Error("deterministic factory code mismatch",
+				"have", crypto.Keccak256Hash(code),
+				"want", crypto.Keccak256Hash(params.DeterministicFactoryCode),
+			)
+			panic("deterministic factory code mismatch")
+		}
+		return
+	}
+	statedb.SetCode(params.DeterministicFactoryAddress, params.DeterministicFactoryCode)
+	statedb.SetNonce(params.DeterministicFactoryAddress, 1, tracing.NonceChangeUnspecified)
+}
+
 // ApplyBlockLevelHooks applies the block level state changes block processing
-// performs before the first transaction: the two statedb mutations, then the
+// performs before the first transaction: the statedb mutations, then the
 // parent hash history write. The caller owns the EVM; the DAO fork stays out,
 // as upstream core.PreExecution leaves it out (ethereum/go-ethereum#34812).
 func ApplyBlockLevelHooks(parentHash common.Hash, evm *vm.EVM) {
 	config, blockNumber := evm.ChainConfig(), evm.Context.BlockNumber
 	ApplyTIPSigningHardFork(config, evm.StateDB, blockNumber)
 	ApplyMulticall3HardFork(config, evm.StateDB, blockNumber)
+	ApplyEIP7997HardFork(config, evm.StateDB, blockNumber)
 	ProcessParentBlockHash(parentHash, evm)
 }
 
