@@ -19,6 +19,7 @@ package gasestimator
 import (
 	"context"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -91,5 +92,74 @@ func TestEstimateCapsHiAtMaxTxGasOnOsaka(t *testing.T) {
 	}
 	if estimate > params.MaxTxGas {
 		t.Fatalf("estimate exceeds maxTxGas: got %d, max %d", estimate, params.MaxTxGas)
+	}
+}
+
+// TestEstimateHonoursBaseGasCap checks that the caller's gas cap is measured
+// against the transaction base of the active fork: on Amsterdam a 14,000 cap is
+// above the EIP-2780 base and therefore honoured, so a call needing 15,000 fails
+// instead of being re-estimated against the header limit; before Amsterdam the
+// same cap is below the flat 21,000 and raised to the header limit.
+func TestEstimateHonoursBaseGasCap(t *testing.T) {
+	t.Parallel()
+
+	from := common.HexToAddress("0x1001")
+	to := common.HexToAddress("0x1002")
+
+	preAmsterdam := params.MergedTestChainConfig.Clone()
+	preAmsterdam.AmsterdamBlock = nil
+
+	for _, tt := range []struct {
+		name    string
+		config  *params.ChainConfig
+		wantErr string
+	}{
+		{"amsterdam", params.MergedTestChainConfig, "gas required exceeds allowance (14000)"},
+		{"pre-amsterdam", preAmsterdam, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			genesis := &core.Genesis{
+				Config: tt.config,
+				Alloc:  types.GenesisAlloc{from: {Balance: big.NewInt(params.Ether)}},
+			}
+			db := rawdb.NewMemoryDatabase()
+			block := genesis.MustCommit(db)
+
+			stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+			if err != nil {
+				t.Fatalf("failed to create state db: %v", err)
+			}
+			header := types.CopyHeader(block.Header())
+			header.GasLimit = 8_000_000
+
+			opts := &Options{
+				Config: tt.config,
+				Chain:  &testChainContext{engine: ethash.NewFaker()},
+				Header: header,
+				State:  stateDB,
+			}
+			msg := &core.Message{
+				From:      from,
+				To:        &to,
+				Value:     new(big.Int),
+				GasLimit:  14_000,
+				GasPrice:  new(big.Int),
+				GasFeeCap: new(big.Int),
+				GasTipCap: new(big.Int),
+			}
+			estimate, _, err := Estimate(context.Background(), msg, opts, 0)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if estimate != params.TxGas {
+				t.Fatalf("estimate = %d, want %d", estimate, params.TxGas)
+			}
+		})
 	}
 }
