@@ -182,6 +182,12 @@ type parkedBlock struct {
 	retryAfter time.Time // a skipped signature is not retried before this; zero means ready
 }
 
+type parkedAdmission struct {
+	stored     bool
+	victim     common.Hash
+	victimPark *parkedBlock
+}
+
 type readySignature struct {
 	block    *types.Block
 	deadline time.Time
@@ -215,11 +221,11 @@ type BlockFetcher struct {
 
 	parkedMu      sync.Mutex
 	parked        map[common.Hash]*parkedBlock
-	pending       map[common.Hash]bool     // slots reserved across the signer gate, valued by the stored flag; every entry is released when the gate answers, so forgetHash need not clear it (guarded by parkedMu)
-	signing       map[common.Hash]struct{} // signatures in flight: a running hook, or a park admission holding the hash across the signer gate; a hash with no entry is recorded too, and the marker outlives a parked entry evicted at its deadline (guarded by parkedMu)
-	signingBatch  bool                     // a waiter-dispatched signing batch is running (guarded by parkedMu)
-	parkedWaiter  bool                     // waitParkedSignatures is running (guarded by parkedMu)
-	parkedTimeout time.Duration            // bound per parked block; a field so tests can shrink it before anything is parked (read under parkedMu; tests write it before the first park, where no reader can race)
+	pending       map[common.Hash]parkedAdmission // Only the gate releases a booking, so forgetHash leaves it alone (guarded by parkedMu)
+	signing       map[common.Hash]struct{}        // signatures in flight: a running hook, or a park admission holding the hash across the signer gate; a hash with no entry is recorded too, and the marker outlives a parked entry evicted at its deadline (guarded by parkedMu)
+	signingBatch  bool                            // a waiter-dispatched signing batch is running (guarded by parkedMu)
+	parkedWaiter  bool                            // waitParkedSignatures is running (guarded by parkedMu)
+	parkedTimeout time.Duration                   // bound per parked block; a field so tests can shrink it before anything is parked (read under parkedMu; tests write it before the first park, where no reader can race)
 
 	// Callbacks
 	getBlock            blockRetrievalFn      // Retrieves a block from the local chain
@@ -263,7 +269,7 @@ func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, h
 		queued:              make(map[common.Hash]*blockInject),
 		knowns:              lru.NewCache[common.Hash, struct{}](blockLimit),
 		parked:              make(map[common.Hash]*parkedBlock),
-		pending:             make(map[common.Hash]bool),
+		pending:             make(map[common.Hash]parkedAdmission),
 		signing:             make(map[common.Hash]struct{}),
 		parkedTimeout:       parkedImportTimeout,
 		canonicalHash:       canonicalHash,
@@ -987,8 +993,14 @@ func (f *BlockFetcher) parkForSignatureWithin(block *types.Block, stored, held b
 		f.parkedMu.Unlock()
 		return
 	}
+	var (
+		victim     common.Hash
+		victimPark *parkedBlock
+	)
 	if reason := f.parkedFullLocked(stored); reason != "" {
-		if !f.reclaimSkippedLocked(stored) {
+		var ok bool
+		victim, victimPark, ok = f.reclaimSkippedLocked(stored)
+		if !ok {
 			blockParkedFullMeter.Mark(1)
 			if held {
 				delete(f.signing, hash)
@@ -1002,7 +1014,7 @@ func (f *BlockFetcher) parkForSignatureWithin(block *types.Block, stored, held b
 	// sign the block before the park books it, and reserve the slot, so a
 	// concurrent admission cannot take it before the entry is inserted.
 	f.signing[hash] = struct{}{}
-	f.pending[hash] = stored
+	f.pending[hash] = parkedAdmission{stored: stored, victim: victim, victimPark: victimPark}
 	f.parkedMu.Unlock()
 	if !f.gateReady(hash) {
 		log.Debug("Not parking the block's signature, this node is not a signer", "number", block.Number(), "hash", block.Hash())
@@ -1015,11 +1027,32 @@ func (f *BlockFetcher) parkForSignatureWithin(block *types.Block, stored, held b
 	default:
 	}
 	f.parkedMu.Lock()
+	// No production path clears a booking behind its admission: the gate answer
+	// settles it, and clearAdmission covers a stop. The check stays as a guard.
+	_, booked := f.pending[hash]
 	delete(f.signing, hash)
 	delete(f.pending, hash)
-	start := f.parkLocked(block, stored)
-	if parked, ok := f.parked[hash]; ok {
-		parked.retryAfter = retryAfter
+	var start bool
+	if booked {
+		admitted := victimPark == nil
+		// The gate runs outside parkedMu, so a victim may become unclaimable
+		if victimPark != nil {
+			if parked, ok := f.parked[victim]; ok && parked == victimPark && !parked.claimed && time.Now().Before(parked.retryAfter) {
+				delete(f.parked, victim)
+				blockParkedReclaimedMeter.Mark(1)
+				admitted = true
+			}
+		}
+		if admitted {
+			start = f.parkLocked(block, stored)
+			if parked, ok := f.parked[hash]; ok {
+				parked.retryAfter = retryAfter
+			}
+		} else {
+			blockParkedFullMeter.Mark(1)
+		}
+	} else {
+		log.Debug("Not parking the block's signature, its booking was cleared while the gate ran", "number", block.Number(), "hash", hash)
 	}
 	f.parkedMu.Unlock()
 
@@ -1028,11 +1061,6 @@ func (f *BlockFetcher) parkForSignatureWithin(block *types.Block, stored, held b
 	}
 }
 
-// parkLocked turns a slot reserved across the signer gate into an entry. The
-// capacity gates belong to admission and are not re-applied here; the total check
-// below is a backstop only, since admission keeps parked+pending at or below
-// maxParkedSignatures and no booking reaches it. start tells the caller to start
-// waitParkedSignatures.
 func (f *BlockFetcher) parkLocked(block *types.Block, stored bool) (start bool) {
 	hash := block.Hash()
 	if _, ok := f.signing[hash]; ok {
@@ -1042,7 +1070,7 @@ func (f *BlockFetcher) parkLocked(block *types.Block, stored bool) (start bool) 
 		return false
 	}
 	// Debug on purpose: a peer can reach this guard repeatedly, so the meter is the signal.
-	if len(f.parked)+len(f.pending) >= maxParkedSignatures {
+	if len(f.parked)+f.pendingFreeLocked() >= maxParkedSignatures {
 		blockParkedFullMeter.Mark(1)
 		log.Debug("Too many blocks parked for signing, dropping signature", "number", block.Number(), "hash", hash)
 		return false
@@ -1054,11 +1082,11 @@ func (f *BlockFetcher) parkLocked(block *types.Block, stored bool) (start bool) 
 }
 
 // parkedFullLocked names the closed admission gate, if any: the set itself or the
-// stored subset. Naming it keeps the per-gate log the meter counts. Slots reserved
-// across the signer gate count as taken, so a booking cannot lose them.
+// stored subset. Naming it keeps the per-gate log the meter counts. Free slots
+// reserved across the signer gate count as taken, so a booking cannot lose them.
 func (f *BlockFetcher) parkedFullLocked(stored bool) string {
 	storedClosed := stored && f.parkedStoredLocked()+f.pendingStoredLocked() >= maxParkedStored
-	if len(f.parked)+len(f.pending) >= maxParkedSignatures {
+	if len(f.parked)+f.pendingFreeLocked() >= maxParkedSignatures {
 		return "Too many blocks parked for signing, dropping signature"
 	}
 	if storedClosed {
@@ -1067,15 +1095,37 @@ func (f *BlockFetcher) parkedFullLocked(stored bool) string {
 	return ""
 }
 
-// pendingStoredLocked counts the reservations whose block is on disk.
+// pendingStoredLocked counts free stored reservations; a victim-backed one replaces a stored entry
 func (f *BlockFetcher) pendingStoredLocked() int {
 	stored := 0
-	for _, isStored := range f.pending {
-		if isStored {
+	for _, admission := range f.pending {
+		if admission.stored && admission.victimPark == nil {
 			stored++
 		}
 	}
 	return stored
+}
+
+// A reclaim-backed reservation is paid by its victim, which f.parked still counts
+func (f *BlockFetcher) pendingFreeLocked() int {
+	free := 0
+	for _, admission := range f.pending {
+		if admission.victimPark == nil {
+			free++
+		}
+	}
+	return free
+}
+
+// Two bookings on the same victim would both count its slot
+func (f *BlockFetcher) reservedVictimsLocked() map[common.Hash]struct{} {
+	reserved := make(map[common.Hash]struct{})
+	for _, admission := range f.pending {
+		if admission.victimPark != nil {
+			reserved[admission.victim] = struct{}{}
+		}
+	}
+	return reserved
 }
 
 // parkedStoredLocked counts the entries whose block is on disk. It only walks the
@@ -1090,25 +1140,23 @@ func (f *BlockFetcher) parkedStoredLocked() int {
 	return stored
 }
 
-// reclaimSkippedLocked drops one unclaimed entry whose skip backoff has not
-// expired, so an entry known to be unsignable now does not keep a slot a fresh
-// block needs. An entry past its backoff is due: the scan retries it instead. A
-// stored admission may only drop a stored entry, so it cannot take a slot reserved
-// for a block the downloader is still importing; an unimported admission may drop
-// either, since dropping a stored one only widens the reserve. It frees the entry
-// only when the counts after the reclaim and the booking stay within the caps the
-// admission must respect.
-func (f *BlockFetcher) reclaimSkippedLocked(stored bool) bool {
+// reclaimSkippedLocked picks an unclaimed entry whose skip backoff has not
+// expired. A due entry belongs to the scan, and a stored admission may only pick
+// a stored entry so the reserve for unimported blocks stays available.
+func (f *BlockFetcher) reclaimSkippedLocked(stored bool) (common.Hash, *parkedBlock, bool) {
 	var (
 		oldest         common.Hash
 		oldestDeadline time.Time
 	)
 	now := time.Now()
+	reserved := f.reservedVictimsLocked()
 	for hash, parked := range f.parked {
+		if _, taken := reserved[hash]; taken {
+			continue
+		}
 		if parked.claimed || parked.retryAfter.IsZero() {
 			continue
 		}
-		// Due for a retry: the scan owns it, so it is not a dead slot.
 		if !now.Before(parked.retryAfter) {
 			continue
 		}
@@ -1120,13 +1168,10 @@ func (f *BlockFetcher) reclaimSkippedLocked(stored bool) bool {
 		}
 	}
 	if oldestDeadline.IsZero() {
-		return false
+		return common.Hash{}, nil, false
 	}
-	// One deletion and one booking cancel out, so the counts after the admission
-	// equal the counts now. The total check is a backstop that no production path
-	// reaches, since admission keeps parked+pending at or below the cap; the stored
-	// check is the one that refuses in production.
-	totalAfter := len(f.parked) + len(f.pending)
+	// One removal reopens at most one closed gate
+	totalAfter := len(f.parked) + f.pendingFreeLocked()
 	storedAfter := f.parkedStoredLocked() + f.pendingStoredLocked()
 	if f.parked[oldest].stored {
 		storedAfter--
@@ -1135,11 +1180,9 @@ func (f *BlockFetcher) reclaimSkippedLocked(stored bool) bool {
 		storedAfter++
 	}
 	if totalAfter > maxParkedSignatures || (stored && storedAfter > maxParkedStored) {
-		return false
+		return common.Hash{}, nil, false
 	}
-	delete(f.parked, oldest)
-	blockParkedReclaimedMeter.Mark(1)
-	return true
+	return oldest, f.parked[oldest], true
 }
 
 // settleRefusedClaim holds the in-flight marker until parking finishes, so a
@@ -1178,8 +1221,14 @@ func (f *BlockFetcher) settleRefusedClaim(block *types.Block, tookEntry bool) {
 		f.parkedMu.Unlock()
 		return
 	}
+	var (
+		victim     common.Hash
+		victimPark *parkedBlock
+	)
 	if reason := f.parkedFullLocked(true); reason != "" {
-		if !f.reclaimSkippedLocked(true) {
+		var ok bool
+		victim, victimPark, ok = f.reclaimSkippedLocked(true)
+		if !ok {
 			blockParkedFullMeter.Mark(1)
 			delete(f.signing, hash)
 			f.parkedMu.Unlock()
@@ -1187,7 +1236,7 @@ func (f *BlockFetcher) settleRefusedClaim(block *types.Block, tookEntry bool) {
 			return
 		}
 	}
-	f.pending[hash] = true
+	f.pending[hash] = parkedAdmission{stored: true, victim: victim, victimPark: victimPark}
 	f.parkedMu.Unlock()
 
 	// The signer gate runs outside parkedMu on purpose: it reaches the backend lock
@@ -1205,9 +1254,27 @@ func (f *BlockFetcher) settleRefusedClaim(block *types.Block, tookEntry bool) {
 	// The delivery path only parks entry-less claims for a block it just found in
 	// the chain, so the entry is a stored one.
 	f.parkedMu.Lock()
+	_, booked := f.pending[hash]
 	delete(f.signing, hash)
 	delete(f.pending, hash)
-	start := f.parkLocked(block, true)
+	var start bool
+	if booked {
+		admitted := victimPark == nil
+		if victimPark != nil {
+			if parked, ok := f.parked[victim]; ok && parked == victimPark && !parked.claimed && time.Now().Before(parked.retryAfter) {
+				delete(f.parked, victim)
+				blockParkedReclaimedMeter.Mark(1)
+				admitted = true
+			}
+		}
+		if admitted {
+			start = f.parkLocked(block, true)
+		} else {
+			blockParkedFullMeter.Mark(1)
+		}
+	} else {
+		log.Debug("Refused claim dropped without parking, its booking was cleared while the gate ran", "number", block.Number(), "hash", hash)
+	}
 	f.parkedMu.Unlock()
 
 	if start {

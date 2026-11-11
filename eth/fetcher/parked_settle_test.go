@@ -50,3 +50,36 @@ func TestSettleRefusedClaimReleasesBookingOnStopDuringGate(t *testing.T) {
 		t.Fatalf("in-flight markers left after a stop during the gate = %d, want 0", n)
 	}
 }
+
+// TestSettleRefusedClaimBookingClearedWhileWaitingOnGate pins the booking check
+// in settleRefusedClaim: a booking cleared while the gate runs must not be
+// parked again. No production path clears it there; the test clears it under
+// parkedMu to exercise the guard.
+func TestSettleRefusedClaimBookingClearedWhileWaitingOnGate(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	block := newParkedTestBlock(0x61)
+	tester.fetcher.parkedMu.Lock()
+	tester.fetcher.signing[block.Hash()] = struct{}{}
+	tester.fetcher.parkedMu.Unlock()
+
+	tester.fetcher.SetSignerGate(func() bool {
+		tester.fetcher.parkedMu.Lock()
+		delete(tester.fetcher.pending, block.Hash())
+		tester.fetcher.parkedMu.Unlock()
+		return true
+	})
+	tester.fetcher.settleRefusedClaim(block, false)
+
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked %d entries for a booking cleared while the gate ran, want 0", n)
+	}
+	if n := pendingCount(tester.fetcher); n != 0 {
+		t.Fatalf("reservations left after a cleared booking = %d, want 0", n)
+	}
+	if n := signingCount(tester.fetcher); n != 0 {
+		t.Fatalf("in-flight markers left after a cleared booking = %d, want 0", n)
+	}
+}

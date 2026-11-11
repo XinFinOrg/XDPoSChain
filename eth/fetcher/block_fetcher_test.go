@@ -110,15 +110,23 @@ func newTester() *fetcherTester {
 	return newTesterWithGate(nil)
 }
 
-// newTesterWithGate builds a started tester whose signer gate is installed before
-// Start, the way the backend wires it. A nil gate means always ready.
-func newTesterWithGate(gate func() bool) *fetcherTester {
+// newIdleTester builds a tester whose loop never starts. Tests that drive the
+// bookkeeping directly need no loop goroutine, and forgetHash may only run on it:
+// Stop closes quit but does not wait for the loop, which reads the announce maps.
+func newIdleTester() *fetcherTester {
 	tester := &fetcherTester{
 		hashes: []common.Hash{genesis.Hash()},
 		blocks: map[common.Hash]*types.Block{genesis.Hash(): genesis},
 		drops:  make(map[string]bool),
 	}
 	tester.fetcher = NewBlockFetcher(tester.getBlock, tester.verifyHeader, tester.handleProposedBlock, tester.broadcastBlock, tester.chainHeight, tester.insertBlock, tester.prepareBlock, tester.dropPeer, tester.canonicalHash, func() bool { return tester.syncing.Load() })
+	return tester
+}
+
+// newTesterWithGate builds a started tester whose signer gate is installed before
+// Start, the way the backend wires it. A nil gate means always ready.
+func newTesterWithGate(gate func() bool) *fetcherTester {
+	tester := newIdleTester()
 	tester.fetcher.SetSignerGate(gate)
 	tester.fetcher.Start()
 
@@ -4413,5 +4421,64 @@ func TestParkedSignatureReclaimSkipsNonStoredWhenStoredFull(t *testing.T) {
 	}
 	if n := len(tester.fetcher.parked); n != maxParkedStored+1 {
 		t.Fatalf("parked count = %d, want %d", n, maxParkedStored+1)
+	}
+}
+
+// TestParkedSignatureBookingClearedWhileWaitingOnGate pins the gate answer check:
+// a booking cleared while its admission waits on the signer gate must not be
+// parked again. No production path clears it there; the test clears it under
+// parkedMu to exercise the guard.
+func TestParkedSignatureBookingClearedWhileWaitingOnGate(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	block := newParkedTestBlock(0x4e)
+	var gateRan atomic.Bool
+	tester.fetcher.SetSignerGate(func() bool {
+		gateRan.Store(true)
+		tester.fetcher.parkedMu.Lock()
+		delete(tester.fetcher.pending, block.Hash())
+		tester.fetcher.parkedMu.Unlock()
+		return true
+	})
+	tester.fetcher.parkForSignatureStored(block, true)
+
+	if !gateRan.Load() {
+		t.Fatalf("the signer gate never ran")
+	}
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked %d entries for a booking cleared while the gate ran, want 0", n)
+	}
+	if n := pendingCount(tester.fetcher); n != 0 {
+		t.Fatalf("reservations left after a cleared booking = %d, want 0", n)
+	}
+	if n := signingCount(tester.fetcher); n != 0 {
+		t.Fatalf("in-flight markers left after a cleared booking = %d, want 0", n)
+	}
+}
+
+// TestParkedSignatureBookingReleasedOnStopDuringGate pins the quit check after
+// the signer gate: a stop that lands while the gate runs must release the
+// booking instead of parking the block.
+func TestParkedSignatureBookingReleasedOnStopDuringGate(t *testing.T) {
+	tester := newIdleTester()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	block := newParkedTestBlock(0x4f)
+	tester.fetcher.SetSignerGate(func() bool {
+		tester.fetcher.Stop()
+		return true
+	})
+	tester.fetcher.parkForSignatureStored(block, true)
+
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked %d entries for a booking stopped during the gate, want 0", n)
+	}
+	if n := pendingCount(tester.fetcher); n != 0 {
+		t.Fatalf("reservations left after a stop during the gate = %d, want 0", n)
+	}
+	if n := signingCount(tester.fetcher); n != 0 {
+		t.Fatalf("in-flight markers left after a stop during the gate = %d, want 0", n)
 	}
 }

@@ -39,7 +39,7 @@ func TestParkedSignaturePendingStoredFlag(t *testing.T) {
 			block := newParkedTestBlock(0xc1)
 			var (
 				booked        bool
-				value         bool
+				value         parkedAdmission
 				storedPending int
 			)
 			tester.fetcher.SetSignerGate(func() bool {
@@ -54,7 +54,7 @@ func TestParkedSignaturePendingStoredFlag(t *testing.T) {
 			if !booked {
 				t.Fatalf("no booking visible to the signer gate")
 			}
-			if value != tt.wantStored {
+			if value.stored != tt.wantStored {
 				t.Fatalf("booking stored flag = %v, want %v", value, tt.wantStored)
 			}
 			want := 0
@@ -80,7 +80,7 @@ func TestParkedSignatureRefusedClaimBooksStoredPending(t *testing.T) {
 
 	var (
 		booked        bool
-		value         bool
+		value         parkedAdmission
 		storedPending int
 	)
 	tester.fetcher.SetSignerGate(func() bool {
@@ -95,7 +95,7 @@ func TestParkedSignatureRefusedClaimBooksStoredPending(t *testing.T) {
 	if !booked {
 		t.Fatalf("no booking visible to the signer gate")
 	}
-	if !value {
+	if !value.stored {
 		t.Fatalf("refused claim booked as unimported, want stored")
 	}
 	if storedPending != 1 {
