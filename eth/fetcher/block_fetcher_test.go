@@ -4123,3 +4123,295 @@ func TestParkedSignatureReleasesReservationWhenGatePanics(t *testing.T) {
 		t.Fatalf("parked count = %d after the gate recovered, want 1", n)
 	}
 }
+
+// TestParkedSignatureKeptWhenSignHookSkips pins the hook contract: a skipped
+// signature releases the claim and keeps the entry for a later attempt.
+func TestParkedSignatureKeptWhenSignHookSkips(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	var skip atomic.Bool
+	skip.Store(true)
+	signed := make(chan *types.Block, 1)
+	tester.fetcher.signHook = func(block *types.Block) error {
+		if skip.Load() {
+			return ErrSignatureSkipped
+		}
+		select {
+		case signed <- block:
+		default:
+		}
+		return nil
+	}
+
+	block := newParkedTestBlock(0x3e)
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.hashes = append(tester.hashes, block.Hash())
+	tester.lock.Unlock()
+
+	tester.fetcher.parkForSignatureStored(block, false)
+	waitParkedCount(t, tester.fetcher, 1)
+
+	tester.fetcher.scanParkedSignatures()
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d after a skipped signature, want 1", n)
+	}
+	if n := signingCount(tester.fetcher); n != 0 {
+		t.Fatalf("in-flight markers after a skipped signature = %d, want 0", n)
+	}
+
+	skip.Store(false)
+	tester.fetcher.scanParkedSignatures()
+	if n := parkedCount(tester.fetcher); n != 0 {
+		t.Fatalf("parked count = %d after the signature succeeded, want 0", n)
+	}
+	select {
+	case got := <-signed:
+		if got.Hash() != block.Hash() {
+			t.Fatalf("signed block hash = %v, want %v", got.Hash(), block.Hash())
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("sign hook was not called after the skip cleared")
+	}
+}
+
+// TestImportedBlockSignatureSkippedKeepsEntry pins the delivery path: a skipped
+// signature releases the claim and keeps the parked entry.
+func TestImportedBlockSignatureSkippedKeepsEntry(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	block := newParkedTestBlock(0x3f)
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.lock.Unlock()
+	adoptCanonical(t, tester, block)
+	parkTestEntry(t, tester.fetcher, block, time.Now().Add(time.Minute), false)
+
+	tester.fetcher.signHook = func(*types.Block) error { return ErrSignatureSkipped }
+	tester.fetcher.insertBlock = func(*types.Block) error { return nil }
+	proposed := make(chan struct{}, 1)
+	tester.fetcher.handleProposedBlock = func(*types.Header) error {
+		proposed <- struct{}{}
+		return nil
+	}
+	tester.fetcher.insert("test", block)
+
+	select {
+	case <-proposed:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("delivery of the skipped block never finished")
+	}
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d after a skipped delivery signature, want 1", n)
+	}
+	if n := signingCount(tester.fetcher); n != 0 {
+		t.Fatalf("in-flight markers after a skipped delivery signature = %d, want 0", n)
+	}
+}
+
+// TestImportedBlockSignatureSkippedParksWithoutEntry pins the delivery path for a
+// claim that took no entry over: a skipped signature must park the stored block so
+// a later scan retries, and the signer gate must still refuse to park on a node
+// that cannot sign.
+func TestImportedBlockSignatureSkippedParksWithoutEntry(t *testing.T) {
+	deliver := func(gate func() bool, extra byte) *fetcherTester {
+		tester := newTesterWithGate(gate)
+		block := newParkedTestBlock(extra)
+		tester.lock.Lock()
+		tester.blocks[block.Hash()] = block
+		tester.lock.Unlock()
+		adoptCanonical(t, tester, block)
+
+		tester.fetcher.signHook = func(*types.Block) error { return ErrSignatureSkipped }
+		tester.fetcher.insertBlock = func(*types.Block) error { return nil }
+		proposed := make(chan struct{}, 1)
+		tester.fetcher.handleProposedBlock = func(*types.Header) error {
+			proposed <- struct{}{}
+			return nil
+		}
+		tester.fetcher.insert("test", block)
+
+		select {
+		case <-proposed:
+		case <-time.After(5 * time.Second):
+			tester.fetcher.Stop()
+			t.Fatalf("delivery of the skipped block never finished")
+		}
+		return tester
+	}
+
+	t.Run("signer", func(t *testing.T) {
+		tester := deliver(func() bool { return true }, 0x45)
+		defer tester.fetcher.Stop()
+
+		if n := parkedCount(tester.fetcher); n != 1 {
+			t.Fatalf("parked count = %d after an entry-less skipped delivery, want 1", n)
+		}
+		if n := parkedStoredCount(tester.fetcher); n != 1 {
+			t.Fatalf("stored entries = %d after an entry-less skipped delivery, want 1", n)
+		}
+		if n := signingCount(tester.fetcher); n != 0 {
+			t.Fatalf("in-flight markers after an entry-less skipped delivery = %d, want 0", n)
+		}
+		if n := pendingCount(tester.fetcher); n != 0 {
+			t.Fatalf("reservations after an entry-less skipped delivery = %d, want 0", n)
+		}
+	})
+	t.Run("not a signer", func(t *testing.T) {
+		tester := deliver(func() bool { return false }, 0x46)
+		defer tester.fetcher.Stop()
+
+		if n := parkedCount(tester.fetcher); n != 0 {
+			t.Fatalf("parked %d entries on a node that cannot sign, want 0", n)
+		}
+		if n := signingCount(tester.fetcher); n != 0 {
+			t.Fatalf("in-flight markers on a node that cannot sign = %d, want 0", n)
+		}
+		if n := pendingCount(tester.fetcher); n != 0 {
+			t.Fatalf("reservations on a node that cannot sign = %d, want 0", n)
+		}
+	})
+}
+
+// TestParkedSignatureSkipBackoff pins the retry cadence: a skipped signature is
+// retried once per parkedSkipBackoff, not once per scan tick.
+func TestParkedSignatureSkipBackoff(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	var calls atomic.Int32
+	tester.fetcher.signHook = func(*types.Block) error {
+		calls.Add(1)
+		return ErrSignatureSkipped
+	}
+
+	block := newParkedTestBlock(0x40)
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.hashes = append(tester.hashes, block.Hash())
+	tester.lock.Unlock()
+
+	tester.fetcher.parkForSignatureStored(block, false)
+	waitParkedCount(t, tester.fetcher, 1)
+
+	// The ticker alone drives the retries here, so the call count is the cadence.
+	time.Sleep(1200 * time.Millisecond)
+	if got := calls.Load(); got > 3 {
+		t.Fatalf("hook calls in 1.2s = %d, want <= 3 with a %v backoff", got, parkedSkipBackoff)
+	}
+	if n := parkedCount(tester.fetcher); n != 1 {
+		t.Fatalf("parked count = %d after a skipped signature, want 1", n)
+	}
+}
+
+// TestParkedSignatureReclaimsSkippedEntryWhenFull pins that a full set frees a
+// skipped entry instead of refusing the fresh block.
+func TestParkedSignatureReclaimsSkippedEntryWhenFull(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return ErrSignatureSkipped }
+
+	block := newParkedTestBlock(0x41)
+	tester.lock.Lock()
+	tester.blocks[block.Hash()] = block
+	tester.hashes = append(tester.hashes, block.Hash())
+	tester.lock.Unlock()
+
+	deadline := time.Now().Add(time.Minute)
+	tester.fetcher.parkedMu.Lock()
+	for i := 0; i < maxParkedSignatures; i++ {
+		hash := common.BytesToHash([]byte{0x01, byte(i)})
+		tester.fetcher.parked[hash] = &parkedBlock{
+			block:      block,
+			deadline:   deadline,
+			retryAfter: time.Now().Add(time.Minute),
+		}
+	}
+	tester.fetcher.parkedMu.Unlock()
+
+	tester.fetcher.parkForSignatureStored(block, false)
+
+	tester.fetcher.parkedMu.Lock()
+	defer tester.fetcher.parkedMu.Unlock()
+	if _, ok := tester.fetcher.parked[block.Hash()]; !ok {
+		t.Fatalf("the fresh block was not parked after reclaiming a skipped entry")
+	}
+	if n := len(tester.fetcher.parked); n != maxParkedSignatures {
+		t.Fatalf("parked count = %d, want %d", n, maxParkedSignatures)
+	}
+}
+
+// TestParkedSignatureReclaimTargetsClosedGate pins that a reclaim frees a slot of
+// the gate that actually closed: with the stored subset full, only a stored entry
+// may be reclaimed, so a non-stored one keeps its slot.
+func TestParkedSignatureReclaimTargetsClosedGate(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	var (
+		storedSkipped    = common.BytesToHash([]byte{0x02, 0x01})
+		notStoredSkipped = common.BytesToHash([]byte{0x02, 0x02})
+	)
+	tester.fetcher.parkedMu.Lock()
+	for i := 0; i < maxParkedStored-1; i++ {
+		hash := common.BytesToHash([]byte{0x03, byte(i)})
+		tester.fetcher.parked[hash] = &parkedBlock{block: newParkedTestBlock(byte(i)), deadline: time.Now().Add(time.Minute), stored: true}
+	}
+	// The non-stored entry has the earlier deadline, so a gate-blind reclaim would
+	// pick it deterministically.
+	tester.fetcher.parked[storedSkipped] = &parkedBlock{block: newParkedTestBlock(0x49), deadline: time.Now().Add(time.Minute), stored: true, retryAfter: time.Now().Add(time.Minute)}
+	tester.fetcher.parked[notStoredSkipped] = &parkedBlock{block: newParkedTestBlock(0x4a), deadline: time.Now().Add(30 * time.Second), retryAfter: time.Now().Add(time.Minute)}
+	tester.fetcher.parkedMu.Unlock()
+
+	// The stored subset is full, the total set is not: the reclaim must take the
+	// stored skipped entry and leave the non-stored one alone.
+	block := newParkedTestBlock(0x4b)
+	tester.fetcher.parkForSignatureStored(block, true)
+
+	tester.fetcher.parkedMu.Lock()
+	defer tester.fetcher.parkedMu.Unlock()
+	if _, ok := tester.fetcher.parked[storedSkipped]; ok {
+		t.Fatalf("the stored skipped entry was not reclaimed for a stored admission")
+	}
+	if _, ok := tester.fetcher.parked[notStoredSkipped]; !ok {
+		t.Fatalf("a non-stored skipped entry was reclaimed while only the stored subset was full")
+	}
+	if _, ok := tester.fetcher.parked[block.Hash()]; !ok {
+		t.Fatalf("the stored admission was not parked after reclaiming a stored entry")
+	}
+	if n := len(tester.fetcher.parked); n != maxParkedStored+1 {
+		t.Fatalf("parked count = %d, want %d", n, maxParkedStored+1)
+	}
+}
+
+// TestParkedSignatureReclaimSkipsNonStoredWhenStoredFull pins the refusal when the
+// stored subset is full and no stored entry was skipped: a non-stored skipped entry
+// must not be evicted to admit a stored block.
+func TestParkedSignatureReclaimSkipsNonStoredWhenStoredFull(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+	tester.fetcher.signHook = func(*types.Block) error { return nil }
+
+	notStoredSkipped := common.BytesToHash([]byte{0x02, 0x03})
+	tester.fetcher.parkedMu.Lock()
+	for i := 0; i < maxParkedStored; i++ {
+		hash := common.BytesToHash([]byte{0x04, byte(i)})
+		tester.fetcher.parked[hash] = &parkedBlock{block: newParkedTestBlock(byte(i)), deadline: time.Now().Add(time.Minute), stored: true}
+	}
+	tester.fetcher.parked[notStoredSkipped] = &parkedBlock{block: newParkedTestBlock(0x4c), deadline: time.Now().Add(time.Minute), retryAfter: time.Now().Add(time.Minute)}
+	tester.fetcher.parkedMu.Unlock()
+
+	tester.fetcher.parkForSignatureStored(newParkedTestBlock(0x4d), true)
+
+	tester.fetcher.parkedMu.Lock()
+	defer tester.fetcher.parkedMu.Unlock()
+	if _, ok := tester.fetcher.parked[notStoredSkipped]; !ok {
+		t.Fatalf("a non-stored skipped entry was reclaimed for a stored admission")
+	}
+	if n := len(tester.fetcher.parked); n != maxParkedStored+1 {
+		t.Fatalf("parked count = %d, want %d", n, maxParkedStored+1)
+	}
+}

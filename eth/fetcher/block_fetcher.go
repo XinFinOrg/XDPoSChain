@@ -54,6 +54,10 @@ const (
 	// maxParkedStored caps the entries for blocks already on disk, so the blocks
 	// the downloader is still importing keep the slots reserved for them.
 	maxParkedStored = 48
+	// parkedSkipBackoff holds a signature the hook skipped back to one retry a
+	// second; the scan ticks every 100ms, so an unthrottled retry costs ten
+	// hook calls a second for the whole parked timeout.
+	parkedSkipBackoff = time.Second
 )
 
 // IsPlausibleAnnouncement reports whether a block announcement at the given
@@ -94,10 +98,11 @@ var (
 	bodyFilterInMeter    = metrics.NewRegisteredMeter("eth/fetcher/block/filter/bodies/in", nil)
 	bodyFilterOutMeter   = metrics.NewRegisteredMeter("eth/fetcher/block/filter/bodies/out", nil)
 
-	blockParkedRefusedMeter  = metrics.NewRegisteredMeter("eth/fetcher/block/parked/refused", nil)
-	blockParkedStaleMeter    = metrics.NewRegisteredMeter("eth/fetcher/block/parked/stale", nil)
-	blockParkedDeadlineMeter = metrics.NewRegisteredMeter("eth/fetcher/block/parked/deadline", nil)
-	blockParkedFullMeter     = metrics.NewRegisteredMeter("eth/fetcher/block/parked/full", nil)
+	blockParkedRefusedMeter   = metrics.NewRegisteredMeter("eth/fetcher/block/parked/refused", nil)
+	blockParkedStaleMeter     = metrics.NewRegisteredMeter("eth/fetcher/block/parked/stale", nil)
+	blockParkedDeadlineMeter  = metrics.NewRegisteredMeter("eth/fetcher/block/parked/deadline", nil)
+	blockParkedFullMeter      = metrics.NewRegisteredMeter("eth/fetcher/block/parked/full", nil)
+	blockParkedReclaimedMeter = metrics.NewRegisteredMeter("eth/fetcher/block/parked/reclaimed", nil)
 )
 
 var (
@@ -170,10 +175,11 @@ type blockInject struct {
 }
 
 type parkedBlock struct {
-	block    *types.Block
-	deadline time.Time
-	claimed  bool // a caller (scan or delivery) owns the entry and is creating its signature
-	stored   bool // the block is on disk as of admission or the last scan; the scan refreshes it
+	block      *types.Block
+	deadline   time.Time
+	claimed    bool      // a caller (scan or delivery) owns the entry and is creating its signature
+	stored     bool      // the block is on disk as of admission or the last scan; the scan refreshes it
+	retryAfter time.Time // a skipped signature is not retried before this; zero means ready
 }
 
 type readySignature struct {
@@ -839,7 +845,7 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 				// The parked set may already own it; signing on both paths spends two transactions.
 				ok, tookEntry := f.claimParkedSignature(block.Hash())
 				if !ok {
-					log.Debug("Imported block's signature is already in flight or its parked entry expired", "peer", peer, "number", block.Number(), "hash", hash)
+					log.Debug("Imported block's signature is already in flight, parked in backoff or expired", "peer", peer, "number", block.Number(), "hash", hash)
 					break
 				}
 				// Taking the claim can wait behind a scan, and a reorg or snap sync can land
@@ -852,6 +858,18 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 				switch f.signatureVerdictOf(block) {
 				case signNow:
 					err := f.signBlock(block)
+					if errors.Is(err, ErrSignatureSkipped) {
+						if tookEntry {
+							log.Debug("Imported block's signature was skipped, keeping the parked entry", "peer", peer, "number", block.Number(), "hash", hash)
+							f.deferParked(block.Hash())
+							break
+						}
+						// No entry to keep: hold the claim across the park, so a concurrent
+						// delivery cannot sign the block before its entry exists.
+						log.Debug("Imported block's signature was skipped, parking it for a later attempt", "peer", peer, "number", block.Number(), "hash", hash)
+						f.parkForSignatureSkipped(block, true)
+						break
+					}
 					f.resolveParked(block.Hash(), true)
 					if err != nil {
 						return
@@ -896,12 +914,16 @@ func (f *BlockFetcher) relayBlock(block *types.Block, isM2 bool) {
 	}
 }
 
+// ErrSignatureSkipped reports that a sign hook did not create a signature and the
+// parked entry must stay for a later attempt.
+var ErrSignatureSkipped = errors.New("block signature skipped")
+
 func (f *BlockFetcher) signBlock(block *types.Block) error {
-	if err := f.signHook(block); err != nil {
+	err := f.signHook(block)
+	if err != nil && !errors.Is(err, ErrSignatureSkipped) {
 		log.Error("Can't sign the imported block", "err", err)
-		return err
 	}
-	return nil
+	return err
 }
 
 // parkForSignature parks a block whose signature cannot be created yet; the
@@ -919,29 +941,62 @@ func (f *BlockFetcher) parkForSignature(block *types.Block) {
 // is still importing. The cap is checked at admission only; the scan flips an
 // entry to stored when its block lands, which can push the count past the cap.
 func (f *BlockFetcher) parkForSignatureStored(block *types.Block, stored bool) {
+	f.parkForSignatureWithin(block, stored, false, time.Time{})
+}
+
+// parkForSignatureSkipped parks a block whose sign hook just skipped it. held
+// keeps the caller's entry-less claim marker, so a concurrent delivery cannot
+// sign the block while the gate runs, and the fresh entry carries the skip
+// backoff instead of a retry on the next tick.
+func (f *BlockFetcher) parkForSignatureSkipped(block *types.Block, stored bool) {
+	f.parkForSignatureWithin(block, stored, true, time.Now().Add(parkedSkipBackoff))
+}
+
+// parkForSignatureWithin is the shared admission body; held reports a caller's
+// claim marker already in f.signing, released on every refusal path.
+func (f *BlockFetcher) parkForSignatureWithin(block *types.Block, stored, held bool, retryAfter time.Time) {
+	hash := block.Hash()
 	if f.signHook == nil || f.syncing() {
+		if held {
+			f.clearAdmission(hash)
+		}
 		return
 	}
 	select {
 	case <-f.quit:
+		if held {
+			f.clearAdmission(hash)
+		}
 		return
 	default:
 	}
-	hash := block.Hash()
 	f.parkedMu.Lock()
-	if _, ok := f.signing[hash]; ok {
+	if held {
+		if _, ok := f.signing[hash]; !ok {
+			f.parkedMu.Unlock()
+			return
+		}
+	} else if _, ok := f.signing[hash]; ok {
 		f.parkedMu.Unlock()
 		return
 	}
 	if _, ok := f.parked[hash]; ok {
+		if held {
+			delete(f.signing, hash)
+		}
 		f.parkedMu.Unlock()
 		return
 	}
 	if reason := f.parkedFullLocked(stored); reason != "" {
-		blockParkedFullMeter.Mark(1)
-		f.parkedMu.Unlock()
-		log.Debug(reason, "number", block.Number(), "hash", hash)
-		return
+		if !f.reclaimSkippedLocked(stored) {
+			blockParkedFullMeter.Mark(1)
+			if held {
+				delete(f.signing, hash)
+			}
+			f.parkedMu.Unlock()
+			log.Debug(reason, "number", block.Number(), "hash", hash)
+			return
+		}
 	}
 	// Hold the admission marker across the gate, so a concurrent claim cannot
 	// sign the block before the park books it, and reserve the slot, so a
@@ -963,6 +1018,9 @@ func (f *BlockFetcher) parkForSignatureStored(block *types.Block, stored bool) {
 	delete(f.signing, hash)
 	delete(f.pending, hash)
 	start := f.parkLocked(block, stored)
+	if parked, ok := f.parked[hash]; ok {
+		parked.retryAfter = retryAfter
+	}
 	f.parkedMu.Unlock()
 
 	if start {
@@ -970,8 +1028,10 @@ func (f *BlockFetcher) parkForSignatureStored(block *types.Block, stored bool) {
 	}
 }
 
-// parkLocked inserts an entry unless one or its in-flight marker is present or
-// the set, or the stored subset, is full; start tells the caller to start
+// parkLocked turns a slot reserved across the signer gate into an entry. The
+// capacity gates belong to admission and are not re-applied here; the total check
+// below is a backstop only, since admission keeps parked+pending at or below
+// maxParkedSignatures and no booking reaches it. start tells the caller to start
 // waitParkedSignatures.
 func (f *BlockFetcher) parkLocked(block *types.Block, stored bool) (start bool) {
 	hash := block.Hash()
@@ -981,10 +1041,10 @@ func (f *BlockFetcher) parkLocked(block *types.Block, stored bool) (start bool) 
 	if _, ok := f.parked[hash]; ok {
 		return false
 	}
-	// Debug on purpose: a peer can reach these gates repeatedly, so the meter is the signal.
-	if reason := f.parkedFullLocked(stored); reason != "" {
+	// Debug on purpose: a peer can reach this guard repeatedly, so the meter is the signal.
+	if len(f.parked)+len(f.pending) >= maxParkedSignatures {
 		blockParkedFullMeter.Mark(1)
-		log.Debug(reason, "number", block.Number(), "hash", hash)
+		log.Debug("Too many blocks parked for signing, dropping signature", "number", block.Number(), "hash", hash)
 		return false
 	}
 	f.parked[hash] = &parkedBlock{block: block, deadline: time.Now().Add(f.parkedTimeout), stored: stored}
@@ -997,10 +1057,11 @@ func (f *BlockFetcher) parkLocked(block *types.Block, stored bool) (start bool) 
 // stored subset. Naming it keeps the per-gate log the meter counts. Slots reserved
 // across the signer gate count as taken, so a booking cannot lose them.
 func (f *BlockFetcher) parkedFullLocked(stored bool) string {
+	storedClosed := stored && f.parkedStoredLocked()+f.pendingStoredLocked() >= maxParkedStored
 	if len(f.parked)+len(f.pending) >= maxParkedSignatures {
 		return "Too many blocks parked for signing, dropping signature"
 	}
-	if stored && f.parkedStoredLocked()+f.pendingStoredLocked() >= maxParkedStored {
+	if storedClosed {
 		return "Too many stored blocks parked for signing, dropping signature"
 	}
 	return ""
@@ -1027,6 +1088,58 @@ func (f *BlockFetcher) parkedStoredLocked() int {
 		}
 	}
 	return stored
+}
+
+// reclaimSkippedLocked drops one unclaimed entry whose skip backoff has not
+// expired, so an entry known to be unsignable now does not keep a slot a fresh
+// block needs. An entry past its backoff is due: the scan retries it instead. A
+// stored admission may only drop a stored entry, so it cannot take a slot reserved
+// for a block the downloader is still importing; an unimported admission may drop
+// either, since dropping a stored one only widens the reserve. It frees the entry
+// only when the counts after the reclaim and the booking stay within the caps the
+// admission must respect.
+func (f *BlockFetcher) reclaimSkippedLocked(stored bool) bool {
+	var (
+		oldest         common.Hash
+		oldestDeadline time.Time
+	)
+	now := time.Now()
+	for hash, parked := range f.parked {
+		if parked.claimed || parked.retryAfter.IsZero() {
+			continue
+		}
+		// Due for a retry: the scan owns it, so it is not a dead slot.
+		if !now.Before(parked.retryAfter) {
+			continue
+		}
+		if stored && !parked.stored {
+			continue
+		}
+		if oldestDeadline.IsZero() || parked.deadline.Before(oldestDeadline) {
+			oldest, oldestDeadline = hash, parked.deadline
+		}
+	}
+	if oldestDeadline.IsZero() {
+		return false
+	}
+	// One deletion and one booking cancel out, so the counts after the admission
+	// equal the counts now. The total check is a backstop that no production path
+	// reaches, since admission keeps parked+pending at or below the cap; the stored
+	// check is the one that refuses in production.
+	totalAfter := len(f.parked) + len(f.pending)
+	storedAfter := f.parkedStoredLocked() + f.pendingStoredLocked()
+	if f.parked[oldest].stored {
+		storedAfter--
+	}
+	if stored {
+		storedAfter++
+	}
+	if totalAfter > maxParkedSignatures || (stored && storedAfter > maxParkedStored) {
+		return false
+	}
+	delete(f.parked, oldest)
+	blockParkedReclaimedMeter.Mark(1)
+	return true
 }
 
 // settleRefusedClaim holds the in-flight marker until parking finishes, so a
@@ -1066,11 +1179,13 @@ func (f *BlockFetcher) settleRefusedClaim(block *types.Block, tookEntry bool) {
 		return
 	}
 	if reason := f.parkedFullLocked(true); reason != "" {
-		blockParkedFullMeter.Mark(1)
-		delete(f.signing, hash)
-		f.parkedMu.Unlock()
-		log.Debug(reason, "number", block.Number(), "hash", hash)
-		return
+		if !f.reclaimSkippedLocked(true) {
+			blockParkedFullMeter.Mark(1)
+			delete(f.signing, hash)
+			f.parkedMu.Unlock()
+			log.Debug(reason, "number", block.Number(), "hash", hash)
+			return
+		}
 	}
 	f.pending[hash] = true
 	f.parkedMu.Unlock()
@@ -1145,7 +1260,7 @@ func (f *BlockFetcher) waitParkedSignatures() {
 			default:
 			}
 			// One batch at a time, so a blocked hook cannot accumulate goroutines and claims.
-			if ready := f.collectSignableParked(!f.signingBatchRunning()); len(ready) > 0 {
+			if ready := f.collectSignableParked(!f.signingBatchRunning(), true); len(ready) > 0 {
 				f.markSigningBatch(true)
 				go f.runSigningBatch(ready)
 			}
@@ -1185,12 +1300,13 @@ func (f *BlockFetcher) runSigningBatch(ready []readySignature) {
 // stays parked. The scan claims each entry before signing, so the delivery path
 // cannot sign it too.
 func (f *BlockFetcher) scanParkedSignatures() {
-	f.signReadyParked(f.collectSignableParked(true), nil)
+	f.signReadyParked(f.collectSignableParked(true, false), nil)
 }
 
 // collectSignableParked evicts at the two bounds and, when claim is true, claims
-// the signable entries.
-func (f *BlockFetcher) collectSignableParked(claim bool) []readySignature {
+// the signable entries. respectBackoff skips the entries a skipped signature
+// held back; the ticker path sets it, a manual scan does not.
+func (f *BlockFetcher) collectSignableParked(claim bool, respectBackoff bool) []readySignature {
 	// Signing during snap sync would spend a transaction on a block the inserter
 	// discards. The scan returns before reading the set, so the bounds wait.
 	if f.syncing() {
@@ -1241,6 +1357,9 @@ func (f *BlockFetcher) collectSignableParked(claim bool) []readySignature {
 			// slot once it lands.
 			// This flip is not re-capped; the budget is only checked at admission.
 			parked.stored = true
+			if respectBackoff && time.Now().Before(parked.retryAfter) {
+				continue
+			}
 			if !f.canSign(block) {
 				continue
 			}
@@ -1287,7 +1406,12 @@ func (f *BlockFetcher) signReadyParked(ready []readySignature, stop <-chan struc
 			continue
 		}
 		// A signing failure is logged by signBlock and deliberately not retried here.
-		_ = f.signBlock(sig.block)
+		err := f.signBlock(sig.block)
+		if errors.Is(err, ErrSignatureSkipped) {
+			log.Debug("Parked block's signature was skipped, keeping the entry", "number", sig.block.Number(), "hash", sig.block.Hash())
+			f.deferParked(sig.block.Hash())
+			continue
+		}
 		f.resolveParked(sig.block.Hash(), true)
 	}
 }
@@ -1310,6 +1434,22 @@ func (f *BlockFetcher) resolveParked(hash common.Hash, signed bool) {
 	delete(f.parked, hash)
 }
 
+// deferParked releases a claim whose signature the hook skipped and holds the
+// entry back to parkedSkipBackoff, so the scan retries it once a second instead
+// of once per tick.
+func (f *BlockFetcher) deferParked(hash common.Hash) {
+	f.parkedMu.Lock()
+	defer f.parkedMu.Unlock()
+
+	delete(f.signing, hash)
+	parked, ok := f.parked[hash]
+	if !ok {
+		return
+	}
+	parked.claimed = false
+	parked.retryAfter = time.Now().Add(parkedSkipBackoff)
+}
+
 // claimParkedSignature takes the parked entry so the scan cannot sign the block
 // too, and reports whether the caller may sign now and whether the claim took an
 // entry over. The claim marks the entry instead of removing it.
@@ -1326,6 +1466,9 @@ func (f *BlockFetcher) claimParkedSignature(hash common.Hash) (ok bool, tookEntr
 		return true, false
 	}
 	if parked.claimed {
+		return false, false
+	}
+	if time.Now().Before(parked.retryAfter) {
 		return false, false
 	}
 	if time.Now().After(parked.deadline) {
