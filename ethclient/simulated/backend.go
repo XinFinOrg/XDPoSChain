@@ -927,9 +927,11 @@ func (b *Backend) EstimateGas(ctx context.Context, call ethereum.CallMsg) (uint6
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Determine the lowest and highest possible gas limits to binary search in between
+	// Determine the lowest and highest possible gas limits to binary search in between.
+	// EIP-2780 lowers the cheapest transaction base below the flat 21,000, so the
+	// search must start below it.
 	var (
-		lo  uint64 = params.TxGas - 1
+		lo  uint64 = params.TxBaseCost2780 - 1
 		hi  uint64
 		cap uint64
 	)

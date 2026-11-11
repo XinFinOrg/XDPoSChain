@@ -73,6 +73,14 @@ const (
 	TxAccessListStorageKeyGas uint64 = 1900  // Per storage key specified in EIP 2930 access list
 	TxAuthTupleGas            uint64 = 12500 // Per auth tuple code specified in EIP-7702
 
+	// EIP-2780: resource-based intrinsic transaction gas.
+	TxBaseCost2780  uint64 = 12000 // Sender cost: signature recovery, account access and write, transaction inclusion.
+	TxValueCost2780 uint64 = 6000  // Recipient balance write and transfer log of a value transfer.
+
+	// EIP-8038 state-access prices, referenced by the EIP-2780 intrinsic base.
+	ColdAccountAccessAmsterdam uint64 = 3000  // COLD_ACCOUNT_ACCESS
+	CreateAccessAmsterdam      uint64 = 11000 // CREATE_ACCESS = ACCOUNT_WRITE + COLD_STORAGE_ACCESS
+
 	TxDataNonZeroGas uint64 = 68 // Per byte of data attached to a transaction that is not equal to zero. NOTE: Not payable on data of calls between transactions.
 
 	InitialBaseFee = 12500000000 // Initial base fee for EIP-1559 blocks.

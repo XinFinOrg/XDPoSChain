@@ -377,7 +377,8 @@ func TestEstimateGas(t *testing.T) {
 
 	// A data heavy call whose calldata floor prices it above the intrinsic gas,
 	// so the estimate must land on the floor. After Amsterdam every byte is four
-	// tokens at 16 gas per token: 21000 + 204*4*16 = 34056.
+	// tokens at 16 gas per token, and a zero-value call bases at 15,000:
+	// 15000 + 204*4*16 = 28056.
 	floorData := append(common.Hex2Bytes("e09fface"), make([]byte, 200)...)
 
 	cases := []struct {
@@ -386,14 +387,14 @@ func TestEstimateGas(t *testing.T) {
 		expectError error
 		expectData  interface{}
 	}{
-		{ethereum.CallMsg{From: addr, To: &addr, GasPrice: big.NewInt(0), Value: big.NewInt(1)}, params.TxGas, nil, nil},
+		{ethereum.CallMsg{From: addr, To: &addr, GasPrice: big.NewInt(0), Value: big.NewInt(1)}, params.TxBaseCost2780, nil, nil},
 		{ethereum.CallMsg{From: addr, To: &contractAddr, GasPrice: big.NewInt(0), Value: big.NewInt(1)}, 0, errors.New("execution reverted"), nil},
 		{ethereum.CallMsg{From: addr, To: &contractAddr, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("d8b98391")}, 0, errors.New("execution reverted: revert reason"), "0x08c379a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000d72657665727420726561736f6e00000000000000000000000000000000000000"},
 		{ethereum.CallMsg{From: addr, To: &contractAddr, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("aa8b1d30")}, 0, errors.New("execution reverted"), nil},
 		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: 100000, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("50f6fe34")}, 0, errors.New("gas required exceeds allowance (100000)"), nil},
 		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: 100000, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("b9b046f9")}, 0, errors.New("invalid opcode: INVALID"), nil},
-		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: 100000, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("e09fface")}, 21275, nil, nil},
-		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: 100000, GasPrice: big.NewInt(0), Data: floorData}, 34056, nil, nil},
+		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: 100000, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("e09fface")}, 15275, nil, nil},
+		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: 100000, GasPrice: big.NewInt(0), Data: floorData}, 28056, nil, nil},
 	}
 	for _, c := range cases {
 		got, err := sim.EstimateGas(context.Background(), c.message)
@@ -1099,8 +1100,9 @@ func TestEstimateGasSimpleTransfer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("estimate gas failed: %v", err)
 	}
-	if gas < params.TxGas {
-		t.Fatalf("estimated gas too low: got %d want >= %d", gas, params.TxGas)
+	// A self-transfer pays only the EIP-2780 sender base.
+	if gas != params.TxBaseCost2780 {
+		t.Fatalf("estimated gas = %d, want %d", gas, params.TxBaseCost2780)
 	}
 }
 

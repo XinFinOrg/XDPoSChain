@@ -28,6 +28,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/holiman/uint256"
 )
 
 // pendingBlockNumber returns the height a pooled transaction is priced at: it
@@ -102,6 +103,10 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if val.BitLen() > 256 {
 		return types.ErrUint256Overflow
 	}
+	value, overflow := uint256.FromBig(val)
+	if overflow {
+		return types.ErrUint256Overflow
+	}
 	// Ensure the transaction doesn't exceed the current block limit gas
 	if head.GasLimit < tx.Gas() {
 		return ErrGasLimit
@@ -139,8 +144,7 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	}
 	// Ensure the transaction has more gas than the bare minimum needed to
 	// cover the transaction metadata.
-	// XDC schedules the EIP-2028 calldata pricing with the Prague fork.
-	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, true, rules.IsPrague, rules.IsEIP1559, rules.IsAmsterdam)
+	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), from, tx.To(), value, rules)
 	if err != nil {
 		return err
 	}
@@ -149,7 +153,7 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	}
 	// Ensure the transaction can cover floor data gas.
 	if rules.IsPrague {
-		floorDataGas, err := core.FloorDataGas(rules, tx.Data(), tx.AccessList())
+		floorDataGas, err := core.FloorDataGas(rules, from, tx.To(), value, tx.Data(), tx.AccessList())
 		if err != nil {
 			return err
 		}
