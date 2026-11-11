@@ -94,9 +94,9 @@ func TestSlotNumForkGating(t *testing.T) {
 		evm := NewEVM(BlockContext{BlockNumber: big.NewInt(1), SlotNum: 1}, nil, nil, cfg, Config{})
 		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), 100000, nil)
 		contract.Code = []byte{byte(SLOTNUM)}
-		before := contract.Gas
+		before := contract.Gas.RegularGas
 		_, err := evm.Run(contract, nil, false)
-		return before - contract.Gas, err
+		return before - contract.Gas.RegularGas, err
 	}
 	gas, err := run(&params.ChainConfig{OsakaBlock: big.NewInt(0), AmsterdamBlock: big.NewInt(0)})
 	if err != nil {

@@ -362,8 +362,8 @@ func TestCallVariantIntrinsicGas(t *testing.T) {
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("error mismatch: have %v, want %v", err, tt.wantErr)
 			}
-			if got != tt.want {
-				t.Errorf("gas mismatch: have %d, want %d", got, tt.want)
+			if got.RegularGas != tt.want {
+				t.Errorf("gas mismatch: have %d, want %d", got.RegularGas, tt.want)
 			}
 		})
 	}
@@ -415,8 +415,8 @@ func TestCallVariantGasBinding(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if got != tt.want {
-				t.Errorf("gas mismatch: have %d, want %d", got, tt.want)
+			if got.RegularGas != tt.want {
+				t.Errorf("gas mismatch: have %d, want %d", got.RegularGas, tt.want)
 			}
 		})
 	}
@@ -466,8 +466,8 @@ func TestCallVariantGasCost(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if got != tt.want {
-				t.Errorf("gas mismatch: have %d, want %d", got, tt.want)
+			if got.RegularGas != tt.want {
+				t.Errorf("gas mismatch: have %d, want %d", got.RegularGas, tt.want)
 			}
 			if evm.callGasTemp != tt.wantCallGas {
 				t.Errorf("callGasTemp mismatch: have %d, want %d", evm.callGasTemp, tt.wantCallGas)
@@ -528,14 +528,14 @@ func TestCallVariantGasEIP7702(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if got != tt.want {
-				t.Errorf("gas mismatch: have %d, want %d", got, tt.want)
+			if got.RegularGas != tt.want {
+				t.Errorf("gas mismatch: have %d, want %d", got.RegularGas, tt.want)
 			}
 			if evm.callGasTemp != tt.wantCallGas {
 				t.Errorf("callGasTemp mismatch: have %d, want %d", evm.callGasTemp, tt.wantCallGas)
 			}
-			if contract.Gas != tt.contractGas {
-				t.Errorf("contract gas not restored: have %d, want %d", contract.Gas, tt.contractGas)
+			if contract.Gas.RegularGas != tt.contractGas {
+				t.Errorf("contract gas not restored: have %d, want %d", contract.Gas.RegularGas, tt.contractGas)
 			}
 		})
 	}
@@ -619,8 +619,8 @@ func TestCallVariantGasEarlyOut(t *testing.T) {
 		if statedb.AddressInAccessList(emptyAddr) {
 			t.Errorf("target joined the access list before the write protection check")
 		}
-		if contract.Gas != 100000 {
-			t.Errorf("contract gas changed: have %d, want %d", contract.Gas, 100000)
+		if contract.Gas.RegularGas != 100000 {
+			t.Errorf("contract gas changed: have %d, want %d", contract.Gas.RegularGas, 100000)
 		}
 	})
 	t.Run("2929 wrapper propagates the early out", func(t *testing.T) {
@@ -656,8 +656,8 @@ func TestCallVariantGasEarlyOut(t *testing.T) {
 		if err != nil {
 			t.Fatalf("exactly covered intrinsic rejected: %v", err)
 		}
-		if gas != params.CallValueTransferGas {
-			t.Errorf("gas mismatch: have %d, want %d", gas, params.CallValueTransferGas)
+		if gas.RegularGas != params.CallValueTransferGas {
+			t.Errorf("gas mismatch: have %d, want %d", gas.RegularGas, params.CallValueTransferGas)
 		}
 	})
 	t.Run("7702 accepts an exactly covered intrinsic", func(t *testing.T) {
@@ -676,8 +676,8 @@ func TestCallVariantGasEarlyOut(t *testing.T) {
 		if err != nil {
 			t.Fatalf("exactly covered intrinsic rejected: %v", err)
 		}
-		if want := coldCost + params.CallValueTransferGas; gas != want {
-			t.Errorf("gas mismatch: have %d, want %d", gas, want)
+		if want := coldCost + params.CallValueTransferGas; gas.RegularGas != want {
+			t.Errorf("gas mismatch: have %d, want %d", gas.RegularGas, want)
 		}
 	})
 }
@@ -908,10 +908,10 @@ func TestCallVariantGasEIP2929BindingPosition(t *testing.T) {
 				if err != nil {
 					t.Fatalf("call %d: unexpected error: %v", i, err)
 				}
-				if contract.Gas != startGas {
-					t.Errorf("call %d: contract gas not restored: have %d, want %d", i, contract.Gas, startGas)
+				if contract.Gas.RegularGas != startGas {
+					t.Errorf("call %d: contract gas not restored: have %d, want %d", i, contract.Gas.RegularGas, startGas)
 				}
-				got[i] = gas
+				got[i] = gas.RegularGas
 			}
 			if !statedb.AddressInAccessList(target) {
 				t.Errorf("call target was not added to the access list")
