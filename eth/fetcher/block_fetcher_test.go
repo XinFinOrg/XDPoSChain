@@ -18,6 +18,7 @@ package fetcher
 
 import (
 	"errors"
+	"fmt"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -196,15 +197,23 @@ func (f *fetcherTester) insertBlock(block *types.Block) error {
 	return nil
 }
 
-func (f *fetcherTester) watchImports(imported chan *types.Block) {
+func (f *fetcherTester) watchImports(imported chan *types.Block) *importBudget {
+	b := newImportBudget(f.fetcher)
 	insertBlock := f.fetcher.insertBlock
 	f.fetcher.insertBlock = func(block *types.Block) error {
+		atomic.AddInt32(&b.insertCalls, 1)
+		b.lastInsertCall.Store(time.Now().UnixNano())
 		err := insertBlock(block)
 		if err == nil {
+			atomic.AddInt32(&b.inSend, 1)
 			imported <- block
+			atomic.AddInt32(&b.inSend, -1)
 		}
+		atomic.AddInt32(&b.insertSends, 1)
+		b.lastInsertSend.Store(time.Now().UnixNano())
 		return err
 	}
+	return b
 }
 
 // insertBlock injects a new blocks into the simulated chain.
@@ -338,36 +347,159 @@ func verifyCompletingSkipped(t *testing.T, completing chan []common.Hash) {
 	}
 }
 
-// verifyImportEvent verifies that one single event arrive on an import channel.
-func verifyImportEvent(t *testing.T, imported chan *types.Block, arrive bool) {
-	t.Helper()
+// One budget per test rather than per wait, so the phase is bounded instead of resetting its allowance on every import
+type importBudget struct {
+	once         sync.Once
+	started      time.Time
+	hardDeadline time.Time
+	timer        *time.Timer
+	expired      <-chan time.Time
+	enqueued     int32
+	added        int32
+	removed      int32
+	imports      int32
 
-	if arrive {
+	insertCalls int32
+	insertSends int32
+	inSend      int32
+
+	lastInsertCall  atomic.Int64
+	lastInsertSend  atomic.Int64
+	lastQueueChange atomic.Int64
+}
+
+func newImportBudget(f *BlockFetcher) *importBudget {
+	b := &importBudget{}
+	f.queueChangeHook = func(hash common.Hash, added bool) {
+		b.lastQueueChange.Store(time.Now().UnixNano())
+		if added {
+			atomic.AddInt32(&b.enqueued, 1)
+			atomic.AddInt32(&b.added, 1)
+		} else {
+			atomic.AddInt32(&b.enqueued, -1)
+			atomic.AddInt32(&b.removed, 1)
+		}
+	}
+	return b
+}
+
+// arm starts the phase clock at the first wait, so setup is not charged to the budget.
+func (b *importBudget) arm() {
+	b.once.Do(func() {
+		b.started = time.Now()
+		b.hardDeadline = b.started.Add(10 * fetchWait)
+		b.timer = time.NewTimer(fetchWait)
+		b.expired = b.timer.C
+	})
+}
+
+func sinceNano(ns int64) string {
+	if ns == 0 {
+		return "never"
+	}
+	return time.Since(time.Unix(0, ns)).String()
+}
+
+const progressGrace = 200 * time.Millisecond
+
+func (b *importBudget) progressing() bool {
+	latest := b.lastInsertCall.Load()
+	if v := b.lastInsertSend.Load(); v > latest {
+		latest = v
+	}
+	if v := b.lastQueueChange.Load(); v > latest {
+		latest = v
+	}
+	return latest != 0 && time.Since(time.Unix(0, latest)) < progressGrace
+}
+
+func (b *importBudget) reset() {
+	if !b.timer.Stop() {
+		select {
+		case <-b.timer.C:
+		default:
+		}
+	}
+	wait := time.Until(b.hardDeadline)
+	if wait > fetchWait {
+		wait = fetchWait
+	}
+	if wait < 0 {
+		wait = 0
+	}
+	b.timer.Reset(wait)
+}
+
+func (b *importBudget) waitImport(t *testing.T, imported chan *types.Block, label string) {
+	t.Helper()
+	b.arm()
+
+	for {
 		select {
 		case <-imported:
-		case <-time.After(fetchWait):
-			t.Fatalf("import timeout after %v (body->import)", fetchWait)
+			atomic.AddInt32(&b.imports, 1)
+			return
+		case <-b.expired:
+			// The expiry may be picked while an import is already queued.
+			select {
+			case <-imported:
+				atomic.AddInt32(&b.imports, 1)
+				b.reset()
+				return
+			default:
+			}
+			if b.progressing() && time.Now().Before(b.hardDeadline) {
+				b.reset()
+				continue
+			}
+			t.Fatalf("%s: import timeout after %v (body->import): %s", label, fetchWait, b.state())
 		}
-	} else {
+	}
+}
+
+// TestImportBudgetResetBound verifies a reset near the hard deadline waits only the remaining budget instead of another full fetchWait.
+func TestImportBudgetResetBound(t *testing.T) {
+	b := &importBudget{}
+	b.arm()
+	b.hardDeadline = time.Now().Add(100 * time.Millisecond)
+	b.reset()
+
+	select {
+	case <-b.expired:
+	case <-time.After(time.Second):
+		t.Fatal("budget timer did not expire within 1s of a 100ms hard deadline")
+	}
+}
+
+func (b *importBudget) state() string {
+	return fmt.Sprintf("imports %d, queue depth %d (added %d, removed %d), inserts %d/%d (in send %d), last insert call/send/queue %s/%s/%s, %v elapsed",
+		atomic.LoadInt32(&b.imports), atomic.LoadInt32(&b.enqueued),
+		atomic.LoadInt32(&b.added), atomic.LoadInt32(&b.removed),
+		atomic.LoadInt32(&b.insertCalls), atomic.LoadInt32(&b.insertSends),
+		atomic.LoadInt32(&b.inSend),
+		sinceNano(b.lastInsertCall.Load()), sinceNano(b.lastInsertSend.Load()),
+		sinceNano(b.lastQueueChange.Load()), time.Since(b.started))
+}
+
+func (b *importBudget) verifyImportEvent(t *testing.T, imported chan *types.Block, arrive bool) {
+	t.Helper()
+
+	if !arrive {
 		select {
 		case <-imported:
 			t.Fatalf("import invoked (body->import)")
 		case <-time.After(quietWait):
 		}
+		return
 	}
+	b.waitImport(t, imported, "import")
 }
 
-// verifyImportCount verifies that exactly count number of events arrive on an
-// import hook channel.
-func verifyImportCount(t *testing.T, imported chan *types.Block, count int) {
+func (b *importBudget) verifyImportCount(t *testing.T, imported chan *types.Block, count int) {
 	t.Helper()
 
 	for i := 0; i < count; i++ {
-		select {
-		case <-imported:
-		case <-time.After(fetchWait):
-			t.Fatalf("block %d: import timeout after %v (body->import)", i+1, fetchWait)
-		}
+		b.waitImport(t, imported, fmt.Sprintf("block %d", i+1))
 	}
 	verifyImportDone(t, imported)
 }
@@ -434,7 +566,7 @@ func testSequentialAnnouncements(t *testing.T, protocol int) {
 
 	// Iteratively announce blocks until all are imported.
 	imported := make(chan *types.Block)
-	tester.watchImports(imported)
+	budget := tester.watchImports(imported)
 	handleProposedBlockChan := make(chan *types.Header)
 	tester.fetcher.handleProposedBlock = func(header *types.Header) error {
 		go func() { handleProposedBlockChan <- header }()
@@ -443,7 +575,7 @@ func testSequentialAnnouncements(t *testing.T, protocol int) {
 
 	for i := len(hashes) - 2; i >= 0; i-- {
 		tester.fetcher.Notify("valid", hashes[i], uint64(len(hashes)-i-1), time.Now().Add(-arriveTimeout), headerFetcher, bodyFetcher)
-		verifyImportEvent(t, imported, true)
+		budget.verifyImportEvent(t, imported, true)
 	}
 	verifyImportDone(t, imported)
 	verifyProposeBlockHandlerCalled(t, handleProposedBlockChan)
@@ -478,13 +610,13 @@ func testConcurrentAnnouncements(t *testing.T, protocol int) {
 	}
 	// Iteratively announce blocks until all are imported.
 	imported := make(chan *types.Block)
-	tester.watchImports(imported)
+	budget := tester.watchImports(imported)
 
 	for i := len(hashes) - 2; i >= 0; i-- {
 		tester.fetcher.Notify("first", hashes[i], uint64(len(hashes)-i-1), time.Now().Add(-arriveTimeout), firstHeaderWrapper, firstBodyFetcher)
 		tester.fetcher.Notify("second", hashes[i], uint64(len(hashes)-i-1), time.Now().Add(-arriveTimeout+time.Millisecond), secondHeaderWrapper, secondBodyFetcher)
 		tester.fetcher.Notify("second", hashes[i], uint64(len(hashes)-i-1), time.Now().Add(-arriveTimeout-time.Millisecond), secondHeaderWrapper, secondBodyFetcher)
-		verifyImportEvent(t, imported, true)
+		budget.verifyImportEvent(t, imported, true)
 	}
 	verifyImportDone(t, imported)
 
@@ -515,18 +647,14 @@ func testOverlappingAnnouncements(t *testing.T, protocol int) {
 	for i := 0; i < overlap; i++ {
 		imported <- nil
 	}
-	tester.watchImports(imported)
+	budget := tester.watchImports(imported)
 
 	for i := len(hashes) - 2; i >= 0; i-- {
 		tester.fetcher.Notify("valid", hashes[i], uint64(len(hashes)-i-1), time.Now().Add(-arriveTimeout), headerFetcher, bodyFetcher)
-		select {
-		case <-imported:
-		case <-time.After(fetchWait):
-			t.Fatalf("block %d: import timeout after %v (body->import)", len(hashes)-i, fetchWait)
-		}
+		budget.verifyImportEvent(t, imported, true)
 	}
 	// Wait for all the imports to complete and check count
-	verifyImportCount(t, imported, overlap)
+	budget.verifyImportCount(t, imported, overlap)
 }
 
 // Tests that announces already being retrieved will not be duplicated.
@@ -589,7 +717,7 @@ func testRandomArrivalImport(t *testing.T, protocol int) {
 
 	// Iteratively announce blocks, skipping one entry
 	imported := make(chan *types.Block, len(hashes)-1)
-	tester.watchImports(imported)
+	budget := tester.watchImports(imported)
 
 	for i := len(hashes) - 1; i >= 0; i-- {
 		if i != skip {
@@ -599,7 +727,7 @@ func testRandomArrivalImport(t *testing.T, protocol int) {
 	}
 	// Finally announce the skipped entry and check full import
 	tester.fetcher.Notify("valid", hashes[skip], uint64(len(hashes)-skip-1), time.Now().Add(-arriveTimeout), headerFetcher, bodyFetcher)
-	verifyImportCount(t, imported, len(hashes)-1)
+	budget.verifyImportCount(t, imported, len(hashes)-1)
 }
 
 // Tests that direct block enqueues (due to block propagation vs. hash announce)
@@ -620,7 +748,7 @@ func testQueueGapFill(t *testing.T, protocol int) {
 
 	// Iteratively announce blocks, skipping one entry
 	imported := make(chan *types.Block, len(hashes)-1)
-	tester.watchImports(imported)
+	budget := tester.watchImports(imported)
 
 	for i := len(hashes) - 1; i >= 0; i-- {
 		if i != skip {
@@ -630,7 +758,7 @@ func testQueueGapFill(t *testing.T, protocol int) {
 	}
 	// Fill the missing block directly as if propagated
 	tester.fetcher.Enqueue("valid", blocks[hashes[skip]])
-	verifyImportCount(t, imported, len(hashes)-1)
+	budget.verifyImportCount(t, imported, len(hashes)-1)
 }
 
 // Tests that blocks arriving from various sources (multiple propagations, hash
@@ -657,7 +785,7 @@ func testImportDeduplication(t *testing.T, protocol int) {
 	fetching := make(chan []common.Hash)
 	imported := make(chan *types.Block, len(hashes)-1)
 	tester.fetcher.fetchingHook = func(hashes []common.Hash) { fetching <- hashes }
-	tester.watchImports(imported)
+	budget := tester.watchImports(imported)
 
 	// Announce the duplicating block, wait for retrieval, and also propagate directly
 	tester.fetcher.Notify("valid", hashes[0], 1, time.Now().Add(-arriveTimeout), headerFetcher, bodyFetcher)
@@ -669,7 +797,7 @@ func testImportDeduplication(t *testing.T, protocol int) {
 
 	// Fill the missing block directly as if propagated, and check import uniqueness
 	tester.fetcher.Enqueue("valid", blocks[hashes[1]])
-	verifyImportCount(t, imported, 2)
+	budget.verifyImportCount(t, imported, 2)
 
 	if counter != 2 {
 		t.Fatalf("import invocation count mismatch: have %v, want %v", counter, 2)
@@ -817,7 +945,7 @@ func testInvalidNumberAnnouncement(t *testing.T, protocol int) {
 
 	imported := make(chan *types.Block)
 	announced := make(chan interface{})
-	tester.watchImports(imported)
+	budget := tester.watchImports(imported)
 
 	// Announce a block with a bad number, check for immediate drop
 	tester.fetcher.announceChangeHook = func(hash common.Hash, b bool) {
@@ -835,7 +963,7 @@ func testInvalidNumberAnnouncement(t *testing.T, protocol int) {
 		}
 	}
 	verifyAnnounce()
-	verifyImportEvent(t, imported, false)
+	budget.verifyImportEvent(t, imported, false)
 	tester.lock.RLock()
 	dropped := tester.drops["bad"]
 	tester.lock.RUnlock()
@@ -849,7 +977,7 @@ func testInvalidNumberAnnouncement(t *testing.T, protocol int) {
 	// Make sure a good announcement passes without a drop
 	tester.fetcher.Notify("good", hashes[0], 1, time.Now().Add(-arriveTimeout), goodHeaderFetcher, goodBodyFetcher)
 	verifyAnnounce()
-	verifyImportEvent(t, imported, true)
+	budget.verifyImportEvent(t, imported, true)
 
 	tester.lock.RLock()
 	dropped = tester.drops["good"]
@@ -883,7 +1011,7 @@ func testEmptyBlockShortCircuit(t *testing.T, protocol int) {
 	tester.fetcher.completingHook = func(hashes []common.Hash) { completing <- hashes }
 
 	imported := make(chan *types.Block)
-	tester.watchImports(imported)
+	budget := tester.watchImports(imported)
 
 	// Iteratively announce blocks until all are imported
 	for i := len(hashes) - 2; i >= 0; i-- {
@@ -898,7 +1026,7 @@ func testEmptyBlockShortCircuit(t *testing.T, protocol int) {
 			verifyCompletingEvent(t, completing, true)
 		}
 		// Irrelevant of the construct, import should succeed
-		verifyImportEvent(t, imported, true)
+		budget.verifyImportEvent(t, imported, true)
 		if !hasData {
 			verifyCompletingSkipped(t, completing)
 		}
@@ -918,7 +1046,7 @@ func testHashMemoryExhaustionAttack(t *testing.T, protocol int) {
 	tester := newTester()
 
 	imported, announces := make(chan *types.Block), int32(0)
-	tester.watchImports(imported)
+	budget := tester.watchImports(imported)
 	tester.fetcher.announceChangeHook = func(hash common.Hash, added bool) {
 		if added {
 			atomic.AddInt32(&announces, 1)
@@ -947,12 +1075,12 @@ func testHashMemoryExhaustionAttack(t *testing.T, protocol int) {
 		t.Fatalf("queued announce count mismatch: have %d, want %d", count, hashLimit+maxQueueDist)
 	}
 	// Wait for fetches to complete
-	verifyImportCount(t, imported, maxQueueDist)
+	budget.verifyImportCount(t, imported, maxQueueDist)
 
 	// Feed the remaining valid hashes to ensure DOS protection state remains clean
 	for i := len(hashes) - maxQueueDist - 2; i >= 0; i-- {
 		tester.fetcher.Notify("valid", hashes[i], uint64(len(hashes)-i-1), time.Now().Add(-arriveTimeout), validHeaderFetcher, validBodyFetcher)
-		verifyImportEvent(t, imported, true)
+		budget.verifyImportEvent(t, imported, true)
 	}
 	verifyImportDone(t, imported)
 }
@@ -964,15 +1092,8 @@ func TestBlockMemoryExhaustionAttack(t *testing.T) {
 	// Create a tester with instrumented import hooks
 	tester := newTester()
 
-	imported, enqueued := make(chan *types.Block), int32(0)
-	tester.watchImports(imported)
-	tester.fetcher.queueChangeHook = func(hash common.Hash, added bool) {
-		if added {
-			atomic.AddInt32(&enqueued, 1)
-		} else {
-			atomic.AddInt32(&enqueued, -1)
-		}
-	}
+	imported := make(chan *types.Block)
+	budget := tester.watchImports(imported)
 	// Create a valid chain and a batch of dangling (but in range) blocks
 	targetBlocks := hashLimit + 2*maxQueueDist
 	hashes, blocks := makeChain(targetBlocks, 0, genesis)
@@ -987,20 +1108,20 @@ func TestBlockMemoryExhaustionAttack(t *testing.T) {
 	for _, block := range attack {
 		tester.fetcher.Enqueue("attacker", block)
 	}
-	waitEnqueued(t, &enqueued, blockLimit)
+	waitEnqueued(t, &budget.enqueued, blockLimit)
 	// Queue up a batch of valid blocks, and check that a new peer is allowed to do so
 	for i := 0; i < maxQueueDist-1; i++ {
 		tester.fetcher.Enqueue("valid", blocks[hashes[len(hashes)-3-i]])
 	}
-	waitEnqueued(t, &enqueued, blockLimit+maxQueueDist-1)
+	waitEnqueued(t, &budget.enqueued, blockLimit+maxQueueDist-1)
 	// Insert the missing piece (and sanity check the import)
 	tester.fetcher.Enqueue("valid", blocks[hashes[len(hashes)-2]])
-	verifyImportCount(t, imported, maxQueueDist)
+	budget.verifyImportCount(t, imported, maxQueueDist)
 
 	// Insert the remaining blocks in chunks to ensure clean DOS protection
 	for i := maxQueueDist; i < len(hashes)-1; i++ {
 		tester.fetcher.Enqueue("valid", blocks[hashes[len(hashes)-2-i]])
-		verifyImportEvent(t, imported, true)
+		budget.verifyImportEvent(t, imported, true)
 	}
 	verifyImportDone(t, imported)
 }
