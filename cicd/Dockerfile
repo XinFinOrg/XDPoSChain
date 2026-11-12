@@ -9,7 +9,9 @@ WORKDIR /builder
 
 COPY . .
 
-RUN make puppeth && make
+# A BuildKit cache mount: `COPY . .` invalidates this layer on every commit, so
+# the Go build cache is the only thing that survives across builds.
+RUN --mount=type=cache,target=/root/.cache/go-build make puppeth && make
 
 # The runtime image
 FROM alpine:3
