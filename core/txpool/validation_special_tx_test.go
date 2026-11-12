@@ -27,6 +27,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/holiman/uint256"
 )
 
 // TestValidateSpecialTx checks that special transactions the execution side runs
@@ -158,6 +159,61 @@ func TestValidateSpecialTx(t *testing.T) {
 			})
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("error = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateSpecialSetCodeTxRejectsEmptyAuthList(t *testing.T) {
+	t.Parallel()
+
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+	config := params.TestChainConfig.Clone()
+	config.PragueBlock = big.NewInt(0)
+	config.AmsterdamBlock = nil
+	config.TIPSigningBlock = nil
+	signer := types.LatestSigner(config)
+	head := &types.Header{Number: big.NewInt(1), GasLimit: 8_000_000}
+
+	for _, tt := range []struct {
+		name     string
+		to       common.Address
+		authList []types.SetCodeAuthorization
+		wantErr  bool
+	}{
+		{"randomize empty auth list", common.RandomizeSMCBinary, []types.SetCodeAuthorization{}, true},
+		{"block signers empty auth list", common.BlockSignersBinary, []types.SetCodeAuthorization{}, true},
+		{"randomize with auth list", common.RandomizeSMCBinary, []types.SetCodeAuthorization{{}}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tx, err := types.SignNewTx(key, signer, &types.SetCodeTx{
+				ChainID:   uint256.MustFromBig(config.ChainID),
+				GasTipCap: uint256.NewInt(1),
+				GasFeeCap: uint256.NewInt(1),
+				Gas:       200_000,
+				To:        tt.to,
+				Value:     uint256.NewInt(0),
+				AuthList:  tt.authList,
+			})
+			if err != nil {
+				t.Fatalf("failed to sign tx: %v", err)
+			}
+			err = ValidateTransaction(tx, head, signer, &ValidationOptions{
+				Config:    config,
+				Accept:    1 << types.SetCodeTxType,
+				MaxSize:   tx.Size(),
+				MinTip:    big.NewInt(0),
+				NotSigner: func(common.Address) bool { return false },
+			})
+			if tt.wantErr {
+				if err == nil || err.Error() != "set code tx must have at least one authorization tuple" {
+					t.Fatalf("error = %v, want empty auth list rejection", err)
+				}
+			} else if err != nil {
+				t.Fatalf("error = %v, want nil", err)
 			}
 		})
 	}

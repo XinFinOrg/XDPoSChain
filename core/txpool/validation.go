@@ -136,7 +136,10 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 		if core.IsSignTransactionRoute(opts.Config, pendingBlockNumber(head.Number), tx) {
 			return nil
 		}
-		return validateIntrinsicAndFloor(tx, rules)
+		if err := validateIntrinsicAndFloor(tx, rules); err != nil {
+			return err
+		}
+		return validateSetCodeAuthorizations(tx)
 	}
 	// Check zero gas price.
 	if tx.GasPrice().Sign() == 0 {
@@ -149,10 +152,15 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if tx.GasTipCapIntCmp(opts.MinTip) < 0 {
 		return fmt.Errorf("%w: gas tip cap %v, minimum needed %v", ErrTxGasPriceTooLow, tx.GasTipCap(), opts.MinTip)
 	}
-	if tx.Type() == types.SetCodeTxType {
-		if len(tx.SetCodeAuthorizations()) == 0 {
-			return errors.New("set code tx must have at least one authorization tuple")
-		}
+	if err := validateSetCodeAuthorizations(tx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateSetCodeAuthorizations(tx *types.Transaction) error {
+	if tx.Type() == types.SetCodeTxType && len(tx.SetCodeAuthorizations()) == 0 {
+		return errors.New("set code tx must have at least one authorization tuple")
 	}
 	return nil
 }
