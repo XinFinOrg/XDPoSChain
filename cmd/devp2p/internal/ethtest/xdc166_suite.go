@@ -18,6 +18,7 @@ package ethtest
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -137,6 +138,102 @@ func (s *Suite) TestGetPooledTransactions_Xdc166(t *utesting.T) {
 	if err := s.expectPooledTransactionsResponseXdc166(conn, req.RequestId, 0); err != nil {
 		t.Fatalf("pooled transactions response validation failed: %v", err)
 	}
+}
+
+// TestSameRequestID_Xdc166 keeps two requests in flight on one connection; the
+// writes are sequential because the upstream goroutine version raced the
+// connection (#22754)
+func (s *Suite) TestSameRequestID_Xdc166(t *utesting.T) {
+	t.Log(`This test sends two xdc/166 GetBlockHeaders requests with the same request id and asserts both responses echo it.`)
+	conn, ok := s.setupConnectionXdc166(t)
+	if !ok {
+		return
+	}
+	defer conn.Close()
+
+	reqID := uint64(1234)
+	// Anchor on the head and genesis the node reported in status; fixture block
+	// numbers mean nothing on a live devnet
+	request1 := &getBlockHeadersPacket166{
+		RequestId: reqID,
+		Request: &getBlockHeadersData{
+			Origin: hashOrNumber{Hash: conn.remoteHead},
+			Amount: 1,
+		},
+	}
+	request2 := &getBlockHeadersPacket166{
+		RequestId: reqID,
+		Request: &getBlockHeadersData{
+			Origin: hashOrNumber{Hash: s.chain.blocks[0].Hash()},
+			Amount: 1,
+		},
+	}
+	if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, request1); err != nil {
+		t.Fatalf("could not write to connection: %v", err)
+	}
+	headers2, err := s.getBlockHeadersXdc166(conn, request2, reqID)
+	if err != nil {
+		t.Fatalf("could not get block headers: %v", err)
+	}
+	headers1, err := s.waitForBlockHeadersResponseXdc166(conn, reqID)
+	if err != nil {
+		t.Fatalf("could not get BlockHeaders response: %v", err)
+	}
+	// Responses may arrive in either order; compare as a set
+	got := map[common.Hash]bool{headers1[0].Hash(): true, headers2[0].Hash(): true}
+	want := map[common.Hash]bool{conn.remoteHead: true, s.chain.blocks[0].Hash(): true}
+	if len(headers1) != 1 || len(headers2) != 1 {
+		t.Fatalf("expected one header per response, got %d and %d", len(headers1), len(headers2))
+	}
+	for h := range want {
+		if !got[h] {
+			t.Fatalf("responses missing header %s (got %x and %x)", h, headers1[0].Hash(), headers2[0].Hash())
+		}
+	}
+}
+
+// Returns errors so the request-id reuse cases control their own failure
+// output (#22754, #22482)
+func (s *Suite) waitForBlockHeadersResponseXdc166(conn *Conn, expectedID uint64) (blockHeadersData, error) {
+	for i := 0; i < maxXdc166ResponseReads; i++ {
+		id, msg, err := s.readMsgXdc166(conn)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read BlockHeaders response: %w", err)
+		}
+		headers, ok := msg.(*blockHeadersData)
+		if !ok {
+			continue
+		}
+		if id != expectedID {
+			return nil, fmt.Errorf("request ID mismatch: wanted %d, got %d", expectedID, id)
+		}
+		return *headers, nil
+	}
+	return nil, fmt.Errorf("did not receive BlockHeaders response within %d read(s)", maxXdc166ResponseReads)
+}
+
+func (s *Suite) getBlockHeadersXdc166(conn *Conn, req *getBlockHeadersPacket166, expectedID uint64) (blockHeadersData, error) {
+	if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, req); err != nil {
+		return nil, fmt.Errorf("could not write to connection: %w", err)
+	}
+	return s.waitForBlockHeadersResponseXdc166(conn, expectedID)
+}
+
+// Reports the diverging header instead of a bare count (#22482)
+func headersMatchXdc166(chain *Chain, headers blockHeadersData) (bool, string) {
+	for _, header := range headers {
+		if header == nil {
+			return false, "nil header in BlockHeaders response"
+		}
+		num := header.Number.Uint64()
+		if num >= uint64(chain.Len()) {
+			return false, fmt.Sprintf("header for unknown block %d (fixture chain head is %d)", num, chain.Len()-1)
+		}
+		if !reflect.DeepEqual(chain.blocks[num].Header(), header) {
+			return false, fmt.Sprintf("wrong header for block %d: have hash %s, want hash %s", num, header.Hash(), chain.blocks[num].Hash())
+		}
+	}
+	return true, ""
 }
 
 // setupConnectionXdc166 returns ok=false when the peer did not negotiate xdc/166

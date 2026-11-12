@@ -9,7 +9,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
-// getBlockHeadersData represents a block header query payload for eth protocol.
 type getBlockHeadersData struct {
 	Origin  hashOrNumber
 	Amount  uint64
@@ -17,25 +16,19 @@ type getBlockHeadersData struct {
 	Reverse bool
 }
 
-// blockHeadersData represents a list of block header payloads.
 type blockHeadersData []*types.Header
 
-// getBlockBodiesData represents a block body query payload for eth protocol.
 type getBlockBodiesData []common.Hash
 
-// blockBody represents a block body payload in response.
 type blockBody struct {
 	Transactions []*types.Transaction
 	Uncles       []*types.Header
 }
 
-// blockBodiesData represents a list of block body payloads.
 type blockBodiesData []*blockBody
 
-// getReceiptsData represents a receipts query payload for eth protocol.
 type getReceiptsData []common.Hash
 
-// receiptsData represents a receipts response list aligned to requested blocks.
 type receiptsData []types.Receipts
 
 type getNodeDataPacket []common.Hash

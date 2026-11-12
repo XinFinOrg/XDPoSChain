@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/forkid"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
@@ -18,11 +19,10 @@ import (
 )
 
 const (
-	// ethProtoVersionXDpos2 is the xdc/100 wire version this client speaks. It is
-	// a second copy of a wire fact the node states in eth/protocols/eth; the
-	// client keeps it local on purpose, see the note on the protocol lengths in
-	// protocol.go.
+	// Local copy of the wire version the node states in eth/protocols/eth, kept
+	// here on purpose (see protocol.go)
 	ethProtoVersionXDpos2   uint = 100
+	ethProtoVersionXDpos164 uint = 164
 	ethProtoVersionXDpos166 uint = 166
 )
 
@@ -40,6 +40,17 @@ type statusPacket struct {
 	GenesisBlock    common.Hash
 }
 
+// Sixth fork-id field the node validates from xdc/164 on; xdc/100 keeps the
+// five-field shape
+type statusPacketFork struct {
+	ProtocolVersion uint32
+	NetworkId       uint64
+	TD              *big.Int
+	CurrentBlock    common.Hash
+	GenesisBlock    common.Hash
+	ForkID          forkid.ID
+}
+
 // Conn represents an individual RLPx connection used by ethtest.
 type Conn struct {
 	*rlpx.Conn
@@ -47,6 +58,10 @@ type Conn struct {
 	negotiatedProtoVersion uint
 	ourHighestProtoVersion uint
 	caps                   []p2p.Cap
+	// Reported by the node in status; live cases anchor on these instead of the
+	// fixture chain
+	remoteHead common.Hash
+	remoteTD   *big.Int
 }
 
 func (s *Suite) dial() (*Conn, error) {
@@ -181,17 +196,30 @@ func (c *Conn) handshake() error {
 	return nil
 }
 
-func makeStatusPacket(chain *Chain, version uint) *statusPacket {
-	return &statusPacket{
+// From xdc/164 on the node validates the fork id, so the packet gains the
+// sixth field, derived from the same chain config the node runs
+func makeStatusPacket(chain *Chain, version uint) interface{} {
+	base := statusPacketFork{
 		ProtocolVersion: uint32(version),
 		NetworkId:       chain.config.ChainID.Uint64(),
 		TD:              chain.TD(),
 		CurrentBlock:    chain.Head().Hash(),
 		GenesisBlock:    chain.blocks[0].Hash(),
 	}
+	if version >= ethProtoVersionXDpos164 {
+		base.ForkID = forkid.NewID(chain.config, chain.blocks[0], chain.Head().NumberU64())
+		return &base
+	}
+	return &statusPacket{
+		ProtocolVersion: base.ProtocolVersion,
+		NetworkId:       base.NetworkId,
+		TD:              base.TD,
+		CurrentBlock:    base.CurrentBlock,
+		GenesisBlock:    base.GenesisBlock,
+	}
 }
 
-func (c *Conn) statusExchange(chain *Chain, status *statusPacket) error {
+func (c *Conn) statusExchange(chain *Chain, status interface{}) error {
 	statusCode := protoOffset(ethProto) + statusMsgCode
 forRead:
 	for {
@@ -201,12 +229,27 @@ forRead:
 		}
 		switch code {
 		case statusCode:
-			msg := new(statusPacket)
-			if err := rlp.DecodeBytes(data, msg); err != nil {
-				return fmt.Errorf("error decoding status packet: %w", err)
+			// The six-field payload fails the five-field shape
+			var genesisBlock common.Hash
+			if c.negotiatedProtoVersion >= ethProtoVersionXDpos164 {
+				msg := new(statusPacketFork)
+				if err := rlp.DecodeBytes(data, msg); err != nil {
+					return fmt.Errorf("error decoding status packet: %w", err)
+				}
+				genesisBlock = msg.GenesisBlock
+				c.remoteHead = msg.CurrentBlock
+				c.remoteTD = msg.TD
+			} else {
+				msg := new(statusPacket)
+				if err := rlp.DecodeBytes(data, msg); err != nil {
+					return fmt.Errorf("error decoding status packet: %w", err)
+				}
+				genesisBlock = msg.GenesisBlock
+				c.remoteHead = msg.CurrentBlock
+				c.remoteTD = msg.TD
 			}
-			if msg.GenesisBlock != chain.blocks[0].Hash() {
-				return fmt.Errorf("wrong genesis block in status: have %#x want %#x", msg.GenesisBlock, chain.blocks[0].Hash())
+			if genesisBlock != chain.blocks[0].Hash() {
+				return fmt.Errorf("wrong genesis block in status: have %#x want %#x", genesisBlock, chain.blocks[0].Hash())
 			}
 			break forRead
 		case discMsg:
@@ -321,6 +364,10 @@ func decodeEthPayload(code uint64, data []byte) (interface{}, error) {
 		msg = new(receiptsData)
 	case ethproto.TransactionMsg:
 		msg = new(types.Transactions)
+	case ethproto.NewPooledTransactionHashesMsg:
+		// Broadcasts reach every peer; response waiters must be able to skip
+		// them
+		msg = new(ethproto.NewPooledTransactionHashesPacket)
 	case ethproto.OrderTxMsg:
 		msg = new([]rlp.RawValue)
 	case ethproto.LendingTxMsg:

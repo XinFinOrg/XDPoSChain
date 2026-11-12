@@ -87,6 +87,7 @@ func (s *Suite) EthTests() []utesting.Test {
 		{Name: "GetSequentialMixedRequests", Fn: s.TestGetSequentialMixedRequests},
 		{Name: "GetNonexistentBlockHeaders", Fn: s.TestGetNonexistentBlockHeaders},
 		{Name: "GetNonexistentBlockHeadersByHash", Fn: s.TestGetNonexistentBlockHeadersByHash},
+		{Name: "GetNonexistentBlockHeadersRepeated", Fn: s.TestGetNonexistentBlockHeadersRepeated},
 		{Name: "GetNonexistentHeadersThenBlockBodies", Fn: s.TestGetNonexistentHeadersThenBlockBodies},
 		{Name: "GetNonexistentHeadersThenReceipts", Fn: s.TestGetNonexistentHeadersThenReceipts},
 		{Name: "TransactionSmoke", Fn: s.TestTransactionSmoke},
@@ -98,6 +99,8 @@ func (s *Suite) EthTests() []utesting.Test {
 		{Name: "TransactionBatchThenBlockBodiesSmoke", Fn: s.TestTransactionBatchThenBlockBodiesSmoke},
 		{Name: "TransactionBatchThenReceiptsSmoke", Fn: s.TestTransactionBatchThenReceiptsSmoke},
 		{Name: "TransactionEmptyListThenReceiptsSmoke", Fn: s.TestTransactionEmptyListThenReceiptsSmoke},
+
+		{Name: "MaliciousTx", Fn: s.TestMaliciousTx},
 		{Name: "GetBlockBodies", Fn: s.TestGetBlockBodies},
 		{Name: "GetBlockBodiesSequentialRequests", Fn: s.TestGetBlockBodiesSequentialRequests},
 		{Name: "GetBlockBodiesMixedHashes", Fn: s.TestGetBlockBodiesMixedHashes},
@@ -109,12 +112,20 @@ func (s *Suite) EthTests() []utesting.Test {
 		{Name: "GetReceiptsUnknownOnly", Fn: s.TestGetReceiptsUnknownOnly},
 		{Name: "GetReceiptsUnknownThenKnown", Fn: s.TestGetReceiptsUnknownThenKnown},
 
+		{Name: "LargeAnnounce", Fn: s.TestLargeAnnounce},
+		{Name: "OldAnnounce", Fn: s.TestOldAnnounce},
+		{Name: "BlockHashAnnounce", Fn: s.TestBlockHashAnnounce},
+
 		{Name: "Status_Xdc166", Fn: s.TestStatus_Xdc166},
 		{Name: "GetBlockHeaders_Xdc166", Fn: s.TestGetBlockHeaders_Xdc166},
 		{Name: "GetBlockBodies_Xdc166", Fn: s.TestGetBlockBodies_Xdc166},
 		{Name: "GetNodeData_Xdc166", Fn: s.TestGetNodeData_Xdc166},
 		{Name: "GetReceipts_Xdc166", Fn: s.TestGetReceipts_Xdc166},
 		{Name: "GetPooledTransactions_Xdc166", Fn: s.TestGetPooledTransactions_Xdc166},
+		{Name: "SameRequestID_Xdc166", Fn: s.TestSameRequestID_Xdc166},
+		{Name: "BlockHashAnnounce_Xdc166", Fn: s.TestBlockHashAnnounce_Xdc166},
+		{Name: "NewPooledTxs_Xdc166", Fn: s.TestNewPooledTxs_Xdc166},
+		{Name: "LargeTxRequest_Xdc166", Fn: s.TestLargeTxRequest_Xdc166},
 
 		// Identity-focused hello boundary tests.
 		{Name: "MalformedHello", Fn: s.TestMalformedHello},
@@ -354,6 +365,39 @@ func (s *Suite) TestGetNonexistentBlockHeadersByHash(t *utesting.T) {
 	if err := s.expectHeadersResponse(conn, goodReq, 2); err != nil {
 		t.Fatalf("follow-up valid hash-based headers response was not received: %v", err)
 	}
+}
+
+// Some clients only punish after several invalid requests, so a full streak is
+// sent (#31506)
+func (s *Suite) TestGetNonexistentBlockHeadersRepeated(t *utesting.T) {
+	t.Log(`This test sends GetBlockHeaders requests for nonexistent blocks repeatedly and verifies the node does not disconnect.`)
+	conn, err := s.dialAndPeer(nil)
+	if err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
+	defer conn.Close()
+
+	badReq := &getBlockHeadersData{
+		Origin: hashOrNumber{Number: ^uint64(0)},
+		Amount: 1,
+	}
+	for i := 0; i < 10; i++ {
+		if err := conn.Write(ethProto, ethproto.GetBlockHeadersMsg, badReq); err != nil {
+			t.Fatalf("peer disconnected after %d request(s): %v", i, err)
+		}
+	}
+	// An empty response or a read timeout both mean the connection survived; a
+	// disconnect frame or a torn-down connection means it did not
+	code, _, err := conn.Read()
+	if err == nil && code != discMsg {
+		t.Logf("connection survived the invalid streak (frame code %d)", code)
+		return
+	}
+	var netErr net.Error
+	if err != nil && errors.As(err, &netErr) && netErr.Timeout() {
+		return
+	}
+	t.Fatal("peer improperly disconnected")
 }
 
 func (s *Suite) TestGetNonexistentHeadersThenBlockBodies(t *utesting.T) {

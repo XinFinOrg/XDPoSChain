@@ -260,3 +260,38 @@ func TestXdc166DecodeAnnouncement(t *testing.T) {
 		t.Fatalf("announcement mismatch: id %d, have %+v", id, hashes)
 	}
 }
+
+func TestHeadersMatchXdc166AcceptsChainHeaders(t *testing.T) {
+	s := loadTestSuite(t)
+	headers := blockHeadersData{s.chain.blocks[0].Header()}
+	matched, detail := headersMatchXdc166(s.chain, headers)
+	if !matched {
+		t.Fatalf("expected chain headers to match, got: %s", detail)
+	}
+}
+
+func TestHeadersMatchXdc166ReportsMismatch(t *testing.T) {
+	s := loadTestSuite(t)
+	header := *s.chain.blocks[0].Header()
+	header.Extra = []byte("corrupted")
+	matched, detail := headersMatchXdc166(s.chain, blockHeadersData{&header})
+	if matched {
+		t.Fatal("expected corrupted header to mismatch")
+	}
+	if detail == "" {
+		t.Fatal("expected mismatch detail for corrupted header")
+	}
+}
+
+func TestHeadersMatchXdc166RejectsUnknownBlock(t *testing.T) {
+	s := loadTestSuite(t)
+	header := *s.chain.blocks[0].Header()
+	header.Number = big.NewInt(int64(s.chain.Len()) + 1)
+	matched, detail := headersMatchXdc166(s.chain, blockHeadersData{&header})
+	if matched {
+		t.Fatal("expected out-of-range header to mismatch")
+	}
+	if detail == "" {
+		t.Fatal("expected mismatch detail for out-of-range header")
+	}
+}
