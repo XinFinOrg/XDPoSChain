@@ -44,10 +44,12 @@ func TestIsYourTurnConsensusV2(t *testing.T) {
 	blockCoinBase := "0x111000000000000000000000000000000123"
 	currentBlock = CreateBlock(blockchain, params.TestXDPoSMockChainConfig, currentBlock, blockNum, 1, blockCoinBase, signer, signFn, nil, nil, "")
 	currentBlockHeader := currentBlock.Header()
-	currentBlockHeader.Time = uint64(time.Now().Unix())
 	err := blockchain.InsertBlock(currentBlock)
 	assert.Nil(t, err)
 	adaptor.Initial(blockchain, currentBlockHeader)
+	now := time.Now()
+	time.Sleep(now.Truncate(time.Second).Add(time.Second).Sub(now))
+	currentBlockHeader.Time = uint64(time.Now().Unix())
 
 	// Less then Mine Period
 	isYourTurn, err := adaptor.YourTurn(blockchain, currentBlockHeader, common.HexToAddress("xdc0D3ab14BBaD3D99F4203bd7a11aCB94882050E7e"))
