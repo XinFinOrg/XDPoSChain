@@ -82,10 +82,8 @@ func New(chainConfig *params.ChainConfig, db ethdb.Database) (*XDPoS, error) {
 		return nil, errors.New("missing chain config")
 	}
 	config := chainConfig.XDPoS
-	// Set any missing consensus parameters to their defaults
-	if config != nil && config.Epoch == 0 {
-		config.Epoch = utils.EpochLength
-	}
+	// The schedule is judged by the CheckConfigForkOrder below, which reaches
+	// CheckSchedule: a missing epoch is refused there rather than repaired here.
 	if err := chainConfig.CheckConfigForkOrder(); err != nil {
 		return nil, err
 	}
@@ -127,19 +125,19 @@ func (x *XDPoS) Stop() {
 // accepts all blocks as valid without enforcing consensus rules.
 func NewFaker(db ethdb.Database, chainConfig *params.ChainConfig) *XDPoS {
 	var fakeEngine *XDPoS
-	// Set any missing consensus parameters to their defaults
 	fakeChainConfig := params.TestXDPoSMockChainConfig
 	if chainConfig != nil {
 		fakeChainConfig = chainConfig
 	}
-	if err := fakeChainConfig.CheckConfigForkOrder(); err != nil {
-		return nil
-	}
+	// A faker is the declared unvalidated path (#2743): it builds an engine for
+	// whatever config it is handed, so a schedule the startup gate would refuse can
+	// be exercised here. The consequence is on the caller: an Epoch of zero divides
+	// on first use instead of returning nil from this constructor.
 	conf := fakeChainConfig.XDPoS
 
 	minePeriodCh := make(chan int)
 	newRoundCh := make(chan types.Round, newRoundChanSize)
-	engineV2, err := engine_v2.New(fakeChainConfig, db, minePeriodCh, newRoundCh)
+	engineV2, err := engine_v2.NewFaker(fakeChainConfig, db, minePeriodCh, newRoundCh)
 	if err != nil {
 		return nil
 	}

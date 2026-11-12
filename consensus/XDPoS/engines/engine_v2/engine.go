@@ -93,6 +93,16 @@ type XDPoS_v2 struct {
 }
 
 func New(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh chan int, newRoundCh chan types.Round) (*XDPoS_v2, error) {
+	return newEngine(chainConfig, db, minePeriodCh, newRoundCh, true)
+}
+
+// NewFaker builds an engine without judging the XDPoS schedule: the faker is
+// the declared unvalidated path (#2743).
+func NewFaker(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh chan int, newRoundCh chan types.Round) (*XDPoS_v2, error) {
+	return newEngine(chainConfig, db, minePeriodCh, newRoundCh, false)
+}
+
+func newEngine(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh chan int, newRoundCh chan types.Round, validateSchedule bool) (*XDPoS_v2, error) {
 	if chainConfig == nil {
 		return nil, errors.New("engine_v2.New requires startup-validated XDPoS V2 config")
 	}
@@ -102,6 +112,11 @@ func New(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh chan i
 	// instead of nil-dereferencing deeper in constructor setup.
 	if config == nil || config.V2 == nil || config.V2.SwitchBlock == nil || config.V2.CurrentConfig == nil || len(config.V2.AllConfigs) == 0 {
 		return nil, errors.New("engine_v2.New requires startup-validated XDPoS V2 config")
+	}
+	if validateSchedule {
+		if err := config.CheckSchedule(); err != nil {
+			return nil, err
+		}
 	}
 	// Setup timeoutTimer
 	duration := time.Duration(config.V2.CurrentConfig.TimeoutPeriod) * time.Second
@@ -235,14 +250,11 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 			Round:  types.Round(0),
 			Number: header.Number,
 		}
+		gapNumber, _ := x.config.GapBlockNumber(header.Number.Uint64())
 		quorumCert = &types.QuorumCert{
 			ProposedBlockInfo: blockInfo,
 			Signatures:        nil,
-			GapNumber:         header.Number.Uint64() - x.config.Gap,
-		}
-		// prevent overflow
-		if header.Number.Uint64() < x.config.Gap {
-			quorumCert.GapNumber = 0
+			GapNumber:         gapNumber,
 		}
 		// can not call processQC because round is equal to default
 		x.currentRound = 1
@@ -260,10 +272,7 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 	}
 
 	// Initial first v2 snapshot
-	lastGapNum := uint64(0)
-	if x.config.V2.SwitchBlock.Uint64() > x.config.Gap {
-		lastGapNum = x.config.V2.SwitchBlock.Uint64() - x.config.Gap
-	}
+	lastGapNum, _ := x.config.GapBlockNumber(x.config.V2.SwitchBlock.Uint64())
 	lastGapHeader := chain.GetHeaderByNumber(lastGapNum)
 
 	snap, _ := loadSnapshot(x.db, lastGapHeader.Hash())
@@ -621,7 +630,7 @@ func (x *XDPoS_v2) GetSnapshot(chain consensus.ChainReader, header *types.Header
 func (x *XDPoS_v2) UpdateMasternodes(chain consensus.ChainReader, header *types.Header, ms []utils.Masternode) error {
 	number := header.Number.Uint64()
 	log.Trace("[UpdateMasternodes]", "number", number, "hash", header.Hash())
-	if number%x.config.Epoch != x.config.Epoch-x.config.Gap {
+	if !x.config.IsGapBlock(number) {
 		return fmt.Errorf("[UpdateMasternodes] not gap block, number: %d, epoch: %d,gap: %d", number, x.config.Epoch, x.config.Gap)
 	}
 
@@ -1033,12 +1042,7 @@ func (x *XDPoS_v2) verifyQC(blockChainReader consensus.ChainReader, quorumCert *
 		return err
 	}
 	epochSwitchNumber := epochInfo.EpochSwitchBlockInfo.Number.Uint64()
-	gapNumber := epochSwitchNumber - epochSwitchNumber%x.config.Epoch
-	if gapNumber > x.config.Gap {
-		gapNumber -= x.config.Gap
-	} else {
-		gapNumber = 0
-	}
+	gapNumber, _ := x.config.GapBlockNumber(epochSwitchNumber)
 	if gapNumber != quorumCert.GapNumber {
 		log.Error("[verifyQC] QC gap number mismatch", "epochSwitchNumber", epochSwitchNumber, "BlockNum", quorumCert.ProposedBlockInfo.Number, "BlockInfoHash", quorumCert.ProposedBlockInfo.Hash, "Gap", quorumCert.GapNumber, "GapShouldBe", gapNumber)
 		return fmt.Errorf("gap number mismatch QC Gap %d, shouldBe %d", quorumCert.GapNumber, gapNumber)

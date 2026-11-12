@@ -1083,7 +1083,10 @@ func generateV2Extra(roundNumber int64, currentBlock *types.Block, signer common
 		Round:  round,
 		Number: currentBlock.Number(),
 	}
-	gapNumber := currentBlock.Number().Uint64() - currentBlock.Number().Uint64()%params.TestXDPoSMockChainConfig.XDPoS.Epoch - params.TestXDPoSMockChainConfig.XDPoS.Gap
+	gapNumber, ok := params.TestXDPoSMockChainConfig.XDPoS.GapBlockNumber(currentBlock.Number().Uint64())
+	if !ok {
+		panic("TestXDPoSMockChainConfig designates no gap block")
+	}
 	voteForSign := &types.VoteForSign{
 		ProposedBlockInfo: proposedBlockInfo,
 		GapNumber:         gapNumber,

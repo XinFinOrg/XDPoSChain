@@ -18,6 +18,7 @@ package downloader
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"testing"
 
@@ -157,6 +158,29 @@ func TestGapPivotNumbersWithoutEpoch(t *testing.T) {
 	tester.configOverride = cfg
 	if gaps := tester.downloader.gapPivotNumbers(2251); gaps != nil {
 		t.Fatalf("gap pivots without an epoch = %v, want none", gaps)
+	}
+}
+
+// TestGapPivotNumbersWithoutGapBlock pins every shape GapTrigger refuses: none of
+// them designates a gap pivot.
+func TestGapPivotNumbersWithoutGapBlock(t *testing.T) {
+	t.Parallel()
+
+	for _, schedule := range []*params.XDPoSConfig{
+		{Epoch: 900, Gap: 0},
+		{Epoch: 900, Gap: 900},
+		{Epoch: 900, Gap: 1200},
+	} {
+		t.Run(fmt.Sprintf("epoch_%d_gap_%d", schedule.Epoch, schedule.Gap), func(t *testing.T) {
+			t.Parallel()
+
+			tester := newTester()
+			tester.configOverride = &params.ChainConfig{XDPoS: schedule}
+			defer tester.terminate()
+			if gaps := tester.downloader.gapPivotNumbers(2251); gaps != nil {
+				t.Fatalf("gap pivots = %v, want none", gaps)
+			}
+		})
 	}
 }
 

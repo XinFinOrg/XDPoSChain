@@ -1,6 +1,7 @@
 package XDPoS
 
 import (
+	"errors"
 	"math/big"
 	"testing"
 
@@ -45,6 +46,63 @@ func TestNewAllowsStartupValidatedV2ScheduleGaps(t *testing.T) {
 	engine, err := New(config, database)
 	assert.Nil(t, engine)
 	assert.ErrorIs(t, err, params.ErrMissingForkSwitch)
+}
+
+// TestNewRejectsInvalidSchedule pins the schedule gate on the constructor: the
+// four out-of-bound shapes are refused before an engine is built, via the
+// CheckConfigForkOrder call the constructor already made.
+func TestNewRejectsInvalidSchedule(t *testing.T) {
+	for _, schedule := range []struct {
+		name  string
+		epoch uint64
+		gap   uint64
+	}{
+		{name: "unset epoch", epoch: 0, gap: 450},
+		{name: "zero gap", epoch: 900, gap: 0},
+		{name: "gap equal to the epoch", epoch: 900, gap: 900},
+		{name: "gap above the epoch", epoch: 900, gap: 1200},
+	} {
+		t.Run(schedule.name, func(t *testing.T) {
+			config := params.TestXDPoSMockChainConfig.Clone()
+			config.XDPoS.Epoch = schedule.epoch
+			config.XDPoS.Gap = schedule.gap
+
+			engine, err := New(config, rawdb.NewMemoryDatabase())
+			if engine != nil {
+				t.Fatalf("New() = %v, want no engine", engine)
+			}
+			if !errors.Is(err, params.ErrInvalidEpochGap) {
+				t.Fatalf("New() error = %v, want ErrInvalidEpochGap", err)
+			}
+		})
+	}
+}
+
+// TestNewDoesNotRepairUnsetEpoch pins the removal of the Epoch == 0 -> 900
+// rewrite: the config is refused instead of being completed in place.
+func TestNewDoesNotRepairUnsetEpoch(t *testing.T) {
+	config := params.TestXDPoSMockChainConfig.Clone()
+	config.XDPoS.Epoch = 0
+
+	engine, err := New(config, rawdb.NewMemoryDatabase())
+	if engine != nil || !errors.Is(err, params.ErrInvalidEpochGap) {
+		t.Fatalf("New() = (%v, %v), want ErrInvalidEpochGap", engine, err)
+	}
+	if config.XDPoS.Epoch != 0 {
+		t.Fatalf("New() rewrote XDPoS.Epoch to %d", config.XDPoS.Epoch)
+	}
+}
+
+// TestNewFakerAcceptsUnvalidatedSchedule pins the declared unvalidated path: the
+// faker builds an engine for a gap the startup gate would refuse instead of
+// returning nil as it did while it validated the schedule.
+func TestNewFakerAcceptsUnvalidatedSchedule(t *testing.T) {
+	config := params.TestXDPoSMockChainConfig.Clone()
+	config.XDPoS.Gap = config.XDPoS.Epoch + 300
+
+	if engine := NewFaker(rawdb.NewMemoryDatabase(), config); engine == nil {
+		t.Fatal("NewFaker() = nil for a schedule it does not validate")
+	}
 }
 
 func TestCacheNoneTIPSigningTxsSupportsRawReceiptsWithoutTxHash(t *testing.T) {

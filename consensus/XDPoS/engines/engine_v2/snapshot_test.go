@@ -4,10 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/common/countdown"
 	"github.com/XinFinOrg/XDPoSChain/common/lru"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
@@ -380,6 +383,22 @@ func TestRepairGapCandidates(t *testing.T) {
 	}
 }
 
+// TestGetSnapshotRejectsUnsetEpoch pins the guard on the modulo branch: an unset
+// epoch names no gap block, and the refusal is a plain error rather than a
+// consensus sentinel core would read as a chain-data fault.
+func TestGetSnapshotRejectsUnsetEpoch(t *testing.T) {
+	x := newRepairEngine(rawdb.NewMemoryDatabase())
+	x.config.Epoch = 0
+
+	_, err := x.getSnapshot(&repairTestChain{}, 1350, false)
+	if err == nil || !strings.Contains(err.Error(), "XDPoS.Epoch is unset") {
+		t.Fatalf("getSnapshot() = %v, want an unset-epoch error", err)
+	}
+	if errors.Is(err, consensus.ErrMissingCanonicalGapHeader) || errors.Is(err, consensus.ErrGapSnapshotUnavailable) {
+		t.Fatalf("a config error must not be reported as a consensus sentinel: %v", err)
+	}
+}
+
 // Invalid schedules must yield no candidates. In particular, with gap == 0 the
 // offset math would target epoch-switch blocks, whose snapshots are owned by
 // the epoch transition, not by this repair.
@@ -676,6 +695,69 @@ func TestGetSnapshotRebuildsBootstrapSnapshot(t *testing.T) {
 	}
 	// It must also be persisted, so the next lookup is a plain hit.
 	assertSnapshotStored(t, db, gapHash(t, chain, 0), masternodes)
+}
+
+// A switch block that is not epoch-aligned must still resolve to the same gap
+// block initial() stored, because both go through GapBlockNumber.
+func TestGetSnapshotRebuildsBootstrapSnapshotUnalignedSwitch(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	x := newRepairEngine(db)
+	switchBlock := testRepairEpoch + testRepairEpoch/2
+	x.config.V2.SwitchBlock = new(big.Int).SetUint64(switchBlock)
+	x.highestQuorumCert = &types.QuorumCert{ProposedBlockInfo: &types.BlockInfo{}}
+	// Initial() completes the startup wiring initial() expects: a current V2
+	// config and the countdown timer it kicks off at the switch block.
+	x.config.V2.CurrentConfig = &params.V2Config{
+		MinePeriod:       5,
+		TimeoutPeriod:    10,
+		ExpTimeoutConfig: params.ExpTimeoutConfig{Base: 2, MaxExponent: 4},
+	}
+	x.minePeriodCh = make(chan int, 1)
+	x.timeoutWorker, _ = countdown.NewExpCountDown(10*time.Second, 2, 4)
+	x.timeoutWorker.OnTimeoutFn = func(time.Time, interface{}) error { return nil }
+	defer x.timeoutWorker.StopTimer()
+	gapMasternodes := []common.Address{{0x1}}
+	switchMasternodes := []common.Address{{0x2}, {0x3}, {0x4}}
+	chain := &repairTestChain{db: db}
+	switchGap, ok := x.config.GapBlockNumber(switchBlock)
+	if !ok {
+		t.Fatal("the schedule designates no gap block")
+	}
+	chain.addHeader(&types.Header{Number: new(big.Int).SetUint64(switchGap), Extra: bootstrapExtra(gapMasternodes)})
+	// The height the switch-aligned formula would name instead: without this
+	// header a regression panics in initial() rather than failing an assertion.
+	chain.addHeader(&types.Header{Number: new(big.Int).SetUint64(switchBlock - testRepairGap)})
+	switchHeader := &types.Header{Number: new(big.Int).SetUint64(switchBlock), Extra: bootstrapExtra(switchMasternodes)}
+	chain.addHeader(switchHeader)
+
+	// initial() is the storing side: it names the same height in the QC it builds
+	// and in the snapshot it persists.
+	if err := x.Initial(chain, switchHeader); err != nil {
+		t.Fatalf("Initial() = %v", err)
+	}
+	if got := x.highestQuorumCert.GapNumber; got != switchGap {
+		t.Fatalf("initial() GapNumber = %d, want %d", got, switchGap)
+	}
+	if has, err := rawdb.HasXdposV2Snapshot(db, gapHash(t, chain, switchGap)); err != nil || !has {
+		t.Fatalf("initial() stored no bootstrap snapshot at %d (err %v)", switchGap, err)
+	}
+
+	// A second engine on an empty database has to rebuild that snapshot at the
+	// height the header sits, which is the same height initial() stored.
+	rebuild := newRepairEngine(rawdb.NewMemoryDatabase())
+	rebuild.config.V2.SwitchBlock = new(big.Int).SetUint64(switchBlock)
+	snap, err := rebuild.getSnapshot(chain, switchGap, true)
+	if err != nil {
+		t.Fatalf("getSnapshot() = %v, want a rebuilt snapshot", err)
+	}
+	if len(snap.NextEpochCandidates) != len(switchMasternodes) {
+		t.Fatalf("candidates = %v, want %v", snap.NextEpochCandidates, switchMasternodes)
+	}
+	for i, want := range switchMasternodes {
+		if snap.NextEpochCandidates[i] != want {
+			t.Fatalf("candidates = %v, want %v", snap.NextEpochCandidates, switchMasternodes)
+		}
+	}
 }
 
 // Only the snapshot initial() owns is rebuilt. A hole at any other gap block
