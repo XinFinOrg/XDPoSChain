@@ -26,6 +26,7 @@ import (
 	"net"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -50,7 +51,8 @@ func newTestTable(t transport) (*Table, *enode.DB) {
 // database dominates the cost of short-lived tables, so tests that create many
 // of them share one.
 func newTestTableWithDB(t transport, db *enode.DB) *Table {
-	tab, _ := newTable(t, db, Config{Log: log.Root()})
+	// Keep revalidation out of the test: it would move entries while the test reads them
+	tab, _ := newTable(t, db, Config{Log: log.Root(), PingInterval: 1000 * time.Hour})
 	go tab.loop()
 	return tab
 }
