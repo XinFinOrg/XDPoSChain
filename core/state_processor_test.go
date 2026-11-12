@@ -1698,13 +1698,14 @@ func TestProcessParentBlockHashPragueGuard(t *testing.T) {
 	}
 }
 
-// TestApplyBlockLevelHooksGate covers the activation gate shared by the three
+// TestApplyBlockLevelHooksGate covers the activation gate shared by the four
 // block level hooks: they all follow the EVM they are handed, so the block
 // before activation is a no-op and the activation block applies every write.
 func TestApplyBlockLevelHooksGate(t *testing.T) {
 	config := *params.MergedTestChainConfig
 	config.TIPSigningBlock = big.NewInt(10)
 	config.PragueBlock = big.NewInt(10)
+	config.AmsterdamBlock = big.NewInt(10)
 
 	newState := func() *state.StateDB {
 		t.Helper()
@@ -1739,7 +1740,10 @@ func TestApplyBlockLevelHooksGate(t *testing.T) {
 	if code := pre.GetCode(params.HistoryStorageAddress); len(code) != 0 {
 		t.Fatalf("history contract installed before Prague: %x", code)
 	}
-	// The activation block applies all three writes.
+	if code := pre.GetCode(params.DeterministicFactoryAddress); len(code) != 0 {
+		t.Fatalf("factory installed before Amsterdam: %x", code)
+	}
+	// The activation block applies every write.
 	parentHash := common.Hash{0x02}
 	act := newState()
 	ApplyBlockLevelHooks(parentHash, newEVM(act, 10))
@@ -1751,6 +1755,12 @@ func TestApplyBlockLevelHooksGate(t *testing.T) {
 	}
 	if nonce := act.GetNonce(params.Multicall3Address); nonce != 1 {
 		t.Fatalf("Multicall3 nonce = %d, want 1", nonce)
+	}
+	if code := act.GetCode(params.DeterministicFactoryAddress); !bytes.Equal(code, params.DeterministicFactoryCode) {
+		t.Fatalf("factory not installed at Amsterdam: %x", code)
+	}
+	if nonce := act.GetNonce(params.DeterministicFactoryAddress); nonce != 1 {
+		t.Fatalf("factory nonce = %d, want 1", nonce)
 	}
 	if code := act.GetCode(params.HistoryStorageAddress); !bytes.Equal(code, params.HistoryStorageCode) {
 		t.Fatalf("history contract not installed at Prague: %x", code)
