@@ -380,11 +380,11 @@ const (
 // through. ApplyTransactionWithEVM and the replay path both call it so state
 // replay can never drift from block processing.
 func routeTransaction(config *params.ChainConfig, blockNumber *big.Int, tx *types.Transaction) txRoute {
+	if IsSignTransactionRoute(config, blockNumber, tx) {
+		return routeSign
+	}
 	to := tx.To()
 	if to != nil {
-		if *to == common.BlockSignersBinary && config.IsTIPSigning(blockNumber) {
-			return routeSign
-		}
 		if *to == common.TradingStateAddrBinary && config.IsTIPXDCXReceiver(blockNumber) {
 			return routeEmpty
 		}
@@ -399,6 +399,14 @@ func routeTransaction(config *params.ChainConfig, blockNumber *big.Int, tx *type
 		return routeEmpty
 	}
 	return routeEVM
+}
+
+// IsSignTransactionRoute reports whether the execution side routes tx to
+// ApplySignTransaction at the given block. The pool shares this predicate and
+// passes the earliest block a transaction can be included in.
+func IsSignTransactionRoute(config *params.ChainConfig, blockNumber *big.Int, tx *types.Transaction) bool {
+	to := tx.To()
+	return to != nil && *to == common.BlockSignersBinary && config.IsTIPSigning(blockNumber)
 }
 
 // finaliseTxState writes the pending state changes of a single transaction to the trie,

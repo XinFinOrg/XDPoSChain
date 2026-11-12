@@ -126,36 +126,24 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if tx.Nonce()+1 < tx.Nonce() {
 		return core.ErrNonceMax
 	}
-	// Skip further validation for special transactions
+	// Special transactions are exempt from the gas price checks below, but the
+	// execution side still charges intrinsic and floor gas unless it routes them
+	// to ApplySignTransaction
 	if tx.IsSpecialTransaction() {
 		if opts.NotSigner(from) {
 			return fmt.Errorf("%w: %s", ErrSpecialTxNotFromSigner, from.Hex())
 		}
-		return nil
+		if core.IsSignTransactionRoute(opts.Config, pendingBlockNumber(head.Number), tx) {
+			return nil
+		}
+		return validateIntrinsicAndFloor(tx, rules)
 	}
 	// Check zero gas price.
 	if tx.GasPrice().Sign() == 0 {
 		return ErrZeroGasPrice
 	}
-	// Ensure the transaction has more gas than the bare minimum needed to
-	// cover the transaction metadata.
-	// XDC schedules the EIP-2028 calldata pricing with the Prague fork.
-	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, true, rules.IsPrague, rules.IsEIP1559, rules.IsAmsterdam)
-	if err != nil {
+	if err := validateIntrinsicAndFloor(tx, rules); err != nil {
 		return err
-	}
-	if tx.Gas() < intrGas {
-		return fmt.Errorf("%w: gas %v, minimum needed %v", core.ErrIntrinsicGas, tx.Gas(), intrGas)
-	}
-	// Ensure the transaction can cover floor data gas.
-	if rules.IsPrague {
-		floorDataGas, err := core.FloorDataGas(rules, tx.Data(), tx.AccessList())
-		if err != nil {
-			return err
-		}
-		if tx.Gas() < floorDataGas {
-			return fmt.Errorf("%w: gas %v, minimum needed %v", core.ErrFloorDataGas, tx.Gas(), floorDataGas)
-		}
 	}
 	// Ensure the gas price is high enough to cover the requirement of the calling pool
 	if tx.GasTipCapIntCmp(opts.MinTip) < 0 {
@@ -164,6 +152,29 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if tx.Type() == types.SetCodeTxType {
 		if len(tx.SetCodeAuthorizations()) == 0 {
 			return errors.New("set code tx must have at least one authorization tuple")
+		}
+	}
+	return nil
+}
+
+// validateIntrinsicAndFloor applies the same intrinsic gas and calldata floor
+// checks as the regular pool path; rules follow the head block.
+func validateIntrinsicAndFloor(tx *types.Transaction, rules params.Rules) error {
+	// XDC schedules the EIP-2028 calldata pricing with the Prague fork
+	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, true, rules.IsPrague, rules.IsEIP1559, rules.IsAmsterdam)
+	if err != nil {
+		return err
+	}
+	if tx.Gas() < intrGas {
+		return fmt.Errorf("%w: gas %v, minimum needed %v", core.ErrIntrinsicGas, tx.Gas(), intrGas)
+	}
+	if rules.IsPrague {
+		floorDataGas, err := core.FloorDataGas(rules, tx.Data(), tx.AccessList())
+		if err != nil {
+			return err
+		}
+		if tx.Gas() < floorDataGas {
+			return fmt.Errorf("%w: gas %v, minimum needed %v", core.ErrFloorDataGas, tx.Gas(), floorDataGas)
 		}
 	}
 	return nil

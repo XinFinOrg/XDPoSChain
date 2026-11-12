@@ -2716,3 +2716,33 @@ func TestApplyTransactionForReplayPaysTheTRC21FeeOfAFailedTransaction(t *testing
 		t.Fatalf("replay credited the issuer with %v, block processing %v", got.Big(), wantIssuer.Big())
 	}
 }
+
+func TestRouteTransactionSignRoute(t *testing.T) {
+	config := &params.ChainConfig{ChainID: big.NewInt(1), TIPSigningBlock: big.NewInt(2)}
+	signTx := types.NewTransaction(0, common.BlockSignersBinary, big.NewInt(0), params.TxGas, big.NewInt(0), nil)
+	regularTx := types.NewTransaction(0, common.Address{1}, big.NewInt(0), params.TxGas, big.NewInt(0), nil)
+	createTx := types.NewContractCreation(0, big.NewInt(0), params.TxGas, big.NewInt(0), nil)
+
+	for _, tt := range []struct {
+		name   string
+		number int64
+		tx     *types.Transaction
+		want   txRoute
+	}{
+		{"sign route before fork", 1, signTx, routeEVM},
+		{"sign route at fork", 2, signTx, routeSign},
+		{"sign route after fork", 3, signTx, routeSign},
+		{"regular address at fork", 2, regularTx, routeEVM},
+		{"contract creation at fork", 2, createTx, routeEVM},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			number := big.NewInt(tt.number)
+			if got := routeTransaction(config, number, tt.tx); got != tt.want {
+				t.Fatalf("routeTransaction = %v, want %v", got, tt.want)
+			}
+			if got, want := IsSignTransactionRoute(config, number, tt.tx), tt.want == routeSign; got != want {
+				t.Fatalf("IsSignTransactionRoute = %v, want %v", got, want)
+			}
+		})
+	}
+}
