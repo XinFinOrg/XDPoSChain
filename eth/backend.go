@@ -47,6 +47,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/eth/ethconfig"
+	"github.com/XinFinOrg/XDPoSChain/eth/fetcher"
 	"github.com/XinFinOrg/XDPoSChain/eth/filters"
 	"github.com/XinFinOrg/XDPoSChain/eth/gasprice"
 	"github.com/XinFinOrg/XDPoSChain/eth/hooks"
@@ -380,7 +381,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 			}
 			ok := eth.txPool.IsSigner(eb)
 			if !ok {
-				return nil
+				return fetcher.ErrSignatureSkipped
 			}
 			if block.NumberU64()%common.MergeSignRange == 0 || !chainConfig.IsTIP2019(block.Number()) {
 				// The state half of the proposed-block gate, shared with the
@@ -390,7 +391,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 				// nothing pay nothing.
 				if !eth.handler.proposedBlockStateReady(block.Header()) {
 					log.Debug("skipped block signature: state not executed", "hash", block.Hash(), "number", block.Number())
-					return nil
+					return fetcher.ErrSignatureSkipped
 				}
 				if err := contracts.CreateTransactionSign(chainConfig, eth.txPool, eth.accountManager, block, chainDb, eb); err != nil {
 					return fmt.Errorf("fail to create tx sign for importing block: %v", err)
@@ -447,17 +448,14 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 			return eth.Downloader().Synchronising()
 		}
 
-		isSigner := func(address common.Address) bool {
-			// During sync the head snapshot isn't built yet, so IsAuthorisedAddress
-			// would fail and spam "[IsAuthorisedAddress] Can't get snapshot". The
-			// signer check is meaningless before the chain is synced, so skip it; it
-			// is re-evaluated normally once syncing completes.
-			if eth.Downloader().Synchronising() {
-				return false
-			}
+		isSigner := signerPredicate(eth.Downloader().Synchronising, func(address common.Address) bool {
 			return c.IsAuthorisedAddress(eth.blockchain, eth.blockchain.CurrentHeader(), address)
-		}
+		})
 		eth.txPool.SetSigner(isSigner)
+		// Gate parking on the same check the sign hook starts with: a node that
+		// cannot sign would only build parked entries and report their drops.
+		// Installed after SetSigner so the dependency reads in order.
+		eth.handler.blockFetcher.SetSignerGate(signerGateFor(eth.Etherbase, eth.txPool.IsSigner))
 	}
 	// Start the RPC service
 	eth.netRPCService = ethapi.NewNetAPI(eth.p2pServer, eth.NetVersion())
@@ -467,6 +465,34 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	stack.RegisterProtocols(eth.Protocols())
 	stack.RegisterLifecycle(eth)
 	return eth, nil
+}
+
+// signerPredicate builds the txpool signer test. A sync has no head snapshot, so
+// IsAuthorisedAddress would fail and spam the log; the predicate answers false
+// instead and re-evaluates once the sync completes.
+func signerPredicate(syncing func() bool, isAuthorised func(common.Address) bool) func(common.Address) bool {
+	return func(address common.Address) bool {
+		if syncing() {
+			return false
+		}
+		return isAuthorised(address)
+	}
+}
+
+// signerGateFor reports whether parking is worthwhile for this node: a node that
+// cannot sign would only build entries and report their drops. The signer test
+// answers false for the whole run of a sync, so a syncing node parks nothing:
+// the parked deadline is shorter than a full sync, an entry booked now would
+// expire before the sync ends, and the sign hook would skip every attempt in
+// between. The sign hook re-checks before it signs.
+func signerGateFor(etherbase func() (common.Address, error), isSigner func(common.Address) bool) func() bool {
+	return func() bool {
+		eb, err := etherbase()
+		if err != nil {
+			return false
+		}
+		return isSigner(eb)
+	}
 }
 
 // rollbackHeadNumber reports the head block number recorded on disk, before the
