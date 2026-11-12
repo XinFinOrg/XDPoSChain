@@ -2895,7 +2895,8 @@ func TestEIP3651(t *testing.T) {
 
 	// 1+2: Ensure EIP-1559 access lists are accounted for via gas usage.
 	innerGas := vm.GasQuickStep*2 + params.ColdSloadCostEIP2929*2
-	expectedGas := params.TxGas + 5*vm.GasFastestStep + vm.GasQuickStep + 100 + innerGas // 100 because 0xaaaa is in access list
+	// The zero-value call pays the EIP-2780 base instead of the flat 21,000.
+	expectedGas := params.TxBaseCost2780 + params.ColdAccountAccessAmsterdam + 5*vm.GasFastestStep + vm.GasQuickStep + 100 + innerGas // 100 because 0xaaaa is in access list
 	if block.GasUsed() != expectedGas {
 		t.Fatalf("incorrect amount of gas spent: expected %d, got %d", expectedGas, block.GasUsed())
 	}

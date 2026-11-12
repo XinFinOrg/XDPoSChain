@@ -64,10 +64,10 @@
   "result": {
     "post": {
       "0x2445e8c26a2bf3d1e59f1bb9b1d442caf90768e0": {
-        "balance": "0x3ac1a"
+        "balance": "0x24c8a"
       },
       "0x2c7536e3605d9c16a7a3d7b1898e529396a65c23": {
-        "balance": "0xde0b6b3a7488014",
+        "balance": "0xde0b6b3a74d13f4",
         "nonce": 1
       },
       "0xc0aae1edd7a76c8cf99e5ba3ca69599ed29540ea": {
