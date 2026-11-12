@@ -31,6 +31,9 @@ const (
 
 	// egressMeterName is the prefix of the per-packet outbound metrics.
 	egressMeterName = "p2p/egress"
+
+	// HandleHistName is the prefix of the per-packet serving time histograms.
+	HandleHistName = "p2p/handle"
 )
 
 var (
