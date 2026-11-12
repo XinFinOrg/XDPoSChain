@@ -32,7 +32,7 @@ const (
 	XDC100 = 100
 	XDC164 = 164 // eth64
 	XDC165 = 165 // eth65
-	XDC166 = 166 // eth66, request ids echoed back but not matched yet
+	XDC166 = 166 // xdc166, request ids echoed back but not matched yet
 )
 
 // ProtocolName is the official short name of the protocol used during capability
@@ -222,10 +222,10 @@ func (p *GetBlockHeadersPacket) Kind() byte { return GetBlockHeadersMsg }
 // concurrent request of the same kind would produce two replies the caller
 // cannot tell apart; that half arrives with the dispatcher (geth #23576).
 //
-// GetBlockHeadersPacket66 is the network packet for the block header query over
+// GetBlockHeadersPacket166 is the network packet for the block header query over
 // xdc/166. The xdc/166 handlers dispatch on the message code and unwrap the
 // embedded legacy packet.
-type GetBlockHeadersPacket66 struct {
+type GetBlockHeadersPacket166 struct {
 	RequestId uint64
 	*GetBlockHeadersPacket
 }
@@ -276,9 +276,9 @@ func (p *BlockHeadersPacket) Name() string { return "BlockHeaders" }
 // Kind implements Packet.
 func (p *BlockHeadersPacket) Kind() byte { return BlockHeadersMsg }
 
-// BlockHeadersPacket66 is the network packet for the block headers response over
+// BlockHeadersPacket166 is the network packet for the block headers response over
 // xdc/166.
-type BlockHeadersPacket66 struct {
+type BlockHeadersPacket166 struct {
 	RequestId uint64
 	BlockHeadersPacket
 }
@@ -318,9 +318,9 @@ func (p *GetBlockBodiesPacket) Name() string { return "GetBlockBodies" }
 // Kind implements Packet.
 func (p *GetBlockBodiesPacket) Kind() byte { return GetBlockBodiesMsg }
 
-// GetBlockBodiesPacket66 is the network packet for the block body query over
+// GetBlockBodiesPacket166 is the network packet for the block body query over
 // xdc/166.
-type GetBlockBodiesPacket66 struct {
+type GetBlockBodiesPacket166 struct {
 	RequestId uint64
 	GetBlockBodiesPacket
 }
@@ -353,9 +353,9 @@ func (p BlockBodiesPacket) sanityCheck() error {
 	return nil
 }
 
-// BlockBodiesPacket66 is the network packet for block content distribution over
+// BlockBodiesPacket166 is the network packet for block content distribution over
 // xdc/166.
-type BlockBodiesPacket66 struct {
+type BlockBodiesPacket166 struct {
 	RequestId uint64
 	BlockBodiesPacket
 }
@@ -365,8 +365,8 @@ type BlockBodiesPacket66 struct {
 // roundtrip.
 type BlockBodiesRLPPacket []rlp.RawValue
 
-// BlockBodiesRLPPacket66 is the BlockBodiesRLPPacket over xdc/166.
-type BlockBodiesRLPPacket66 struct {
+// BlockBodiesRLPPacket166 is the BlockBodiesRLPPacket over xdc/166.
+type BlockBodiesRLPPacket166 struct {
 	RequestId uint64
 	BlockBodiesRLPPacket
 }
@@ -380,9 +380,9 @@ func (p *GetNodeDataPacket) Name() string { return "GetNodeData" }
 // Kind implements Packet.
 func (p *GetNodeDataPacket) Kind() byte { return GetNodeDataMsg }
 
-// GetNodeDataPacket66 is the network packet for the trie node data query over
+// GetNodeDataPacket166 is the network packet for the trie node data query over
 // xdc/166.
-type GetNodeDataPacket66 struct {
+type GetNodeDataPacket166 struct {
 	RequestId uint64
 	GetNodeDataPacket
 }
@@ -396,8 +396,8 @@ func (p *NodeDataPacket) Name() string { return "NodeData" }
 // Kind implements Packet.
 func (p *NodeDataPacket) Kind() byte { return NodeDataMsg }
 
-// NodeDataPacket66 is the network packet for the state data response over xdc/166.
-type NodeDataPacket66 struct {
+// NodeDataPacket166 is the network packet for the state data response over xdc/166.
+type NodeDataPacket166 struct {
 	RequestId uint64
 	NodeDataPacket
 }
@@ -411,9 +411,9 @@ func (p *GetReceiptsPacket) Name() string { return "GetReceipts" }
 // Kind implements Packet.
 func (p *GetReceiptsPacket) Kind() byte { return GetReceiptsMsg }
 
-// GetReceiptsPacket66 is the network packet for the block receipts query over
+// GetReceiptsPacket166 is the network packet for the block receipts query over
 // xdc/166.
-type GetReceiptsPacket66 struct {
+type GetReceiptsPacket166 struct {
 	RequestId uint64
 	GetReceiptsPacket
 }
@@ -428,8 +428,8 @@ func (p *ReceiptsPacket) Name() string { return "Receipts" }
 // Kind implements Packet.
 func (p *ReceiptsPacket) Kind() byte { return ReceiptsMsg }
 
-// ReceiptsPacket66 is the network packet for the receipts response over xdc/166.
-type ReceiptsPacket66 struct {
+// ReceiptsPacket166 is the network packet for the receipts response over xdc/166.
+type ReceiptsPacket166 struct {
 	RequestId uint64
 	ReceiptsPacket
 }
@@ -437,8 +437,8 @@ type ReceiptsPacket66 struct {
 // ReceiptsRLPPacket is used for receipts, when we already have it RLP-encoded.
 type ReceiptsRLPPacket []rlp.RawValue
 
-// ReceiptsRLPPacket66 is the ReceiptsRLPPacket over xdc/166.
-type ReceiptsRLPPacket66 struct {
+// ReceiptsRLPPacket166 is the ReceiptsRLPPacket over xdc/166.
+type ReceiptsRLPPacket166 struct {
 	RequestId uint64
 	ReceiptsRLPPacket
 }
@@ -462,9 +462,9 @@ func (p *GetPooledTransactionsPacket) Name() string { return "GetPooledTransacti
 // Kind implements Packet.
 func (p *GetPooledTransactionsPacket) Kind() byte { return GetPooledTransactionsMsg }
 
-// GetPooledTransactionsPacket66 is the network packet for the transaction query
+// GetPooledTransactionsPacket166 is the network packet for the transaction query
 // over xdc/166.
-type GetPooledTransactionsPacket66 struct {
+type GetPooledTransactionsPacket166 struct {
 	RequestId uint64
 	GetPooledTransactionsPacket
 }
@@ -493,9 +493,9 @@ func (p PooledTransactionsPacket) sanityCheck() error {
 	return nil
 }
 
-// PooledTransactionsPacket66 is the network packet for the transaction response
+// PooledTransactionsPacket166 is the network packet for the transaction response
 // over xdc/166.
-type PooledTransactionsPacket66 struct {
+type PooledTransactionsPacket166 struct {
 	RequestId uint64
 	PooledTransactionsPacket
 }
@@ -505,8 +505,8 @@ type PooledTransactionsPacket66 struct {
 // decode-encode roundtrip.
 type PooledTransactionsRLPPacket []rlp.RawValue
 
-// PooledTransactionsRLPPacket66 is the PooledTransactionsRLPPacket over xdc/166.
-type PooledTransactionsRLPPacket66 struct {
+// PooledTransactionsRLPPacket166 is the PooledTransactionsRLPPacket over xdc/166.
+type PooledTransactionsRLPPacket166 struct {
 	RequestId uint64
 	PooledTransactionsRLPPacket
 }
