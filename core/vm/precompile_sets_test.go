@@ -50,11 +50,9 @@ func TestPrecompileSetsByFork(t *testing.T) {
 		common.BytesToAddress([]byte{0x09}),
 	}
 	// The XDCx precompiles only ever lived in the Byzantium and Istanbul
-	// buckets. Later buckets miss them too, but that is a pre-existing gap and
-	// not something this test may pin down: asserting presence would fail, and
-	// asserting absence would freeze the gap in place as the expectation.
+	// buckets. Later buckets miss them too, and that pre-existing gap stays
+	// unpinned: their rows leave xdcx at zero instead of asserting absence.
 	xdcxContracts := []common.Address{
-		common.BytesToAddress([]byte{0x1e}), common.BytesToAddress([]byte{0x28}),
 		common.BytesToAddress([]byte{0x29}), common.BytesToAddress([]byte{0x2a}),
 	}
 	tests := []struct {
@@ -67,8 +65,8 @@ func TestPrecompileSetsByFork(t *testing.T) {
 		p256Active bool // whether EIP-7951 P256VERIFY (0x100) must be reachable
 	}{
 		{name: "homestead", rules: params.Rules{}, classic: 4, kzgStub: false},
-		{name: "byzantium", rules: params.Rules{IsByzantium: true}, classic: 8, kzgStub: false, xdcx: 4},
-		{name: "istanbul", rules: params.Rules{IsIstanbul: true}, classic: 9, kzgStub: false, xdcx: 4},
+		{name: "byzantium", rules: params.Rules{IsByzantium: true}, classic: 8, kzgStub: false, xdcx: 2},
+		{name: "istanbul", rules: params.Rules{IsIstanbul: true}, classic: 9, kzgStub: false, xdcx: 2},
 		{name: "xdcv2", rules: params.Rules{IsXDCxDisable: true}, classic: 9, kzgStub: false},
 		{name: "eip1559", rules: params.Rules{IsEIP1559: true}, classic: 9, kzgStub: false},
 		{name: "prague", rules: params.Rules{IsPrague: true}, classic: 9, blsActive: true, kzgStub: true},
@@ -129,6 +127,23 @@ func TestPrecompileSetsByFork(t *testing.T) {
 				}
 				if xdcxFound != test.xdcx {
 					t.Errorf("active set holds %d XDCx precompiles, want %d", xdcxFound, test.xdcx)
+				}
+			}
+			// 0x1e and 0x28 were the privacy precompiles and left with the
+			// package; re-adding either would change what past Byzantium and
+			// Istanbul blocks mean. Explorer history is supporting evidence
+			// only, since zero-value calls may go unindexed, so #2895 still
+			// gates the removal on a mainnet replay or trace audit over the
+			// window in which those tables were active
+			for _, addr := range []common.Address{
+				common.BytesToAddress([]byte{0x1e}),
+				common.BytesToAddress([]byte{0x28}),
+			} {
+				if _, ok := set[addr]; ok {
+					t.Errorf("%v: removed privacy precompile is active in the %s bucket", addr, test.name)
+				}
+				if listed[addr] {
+					t.Errorf("%v: removed privacy precompile is listed by ActivePrecompiles in the %s bucket", addr, test.name)
 				}
 			}
 			for _, contract := range blsContracts {

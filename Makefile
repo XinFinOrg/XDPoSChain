@@ -62,8 +62,6 @@ RACE_PKGS = go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end
 # from the bulk pool; everything else is split by import path.
 RACE_HEAVY = consensus/tests/engine_v2_tests core cmd/XDC
 
-# core/vm/privacy is absent on purpose: its tests need -tags=privacytests
-# (`go test -tags=privacytests ./core/vm/privacy`), so no lane has run them.
 # rpc and RACE_HEAVY never appear in a bulk slice; one grep keeps them out.
 empty :=
 space := $(empty) $(empty)
