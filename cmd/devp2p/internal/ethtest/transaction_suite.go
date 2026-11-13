@@ -32,6 +32,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/internal/utesting"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
@@ -308,12 +309,10 @@ func (s *Suite) TestLargeTxRequest_Xdc166(t *utesting.T) {
 		hashMap = make(map[common.Hash]common.Hash, numTxs)
 		txs = make(types.Transactions, 0, numTxs)
 		signer := types.LatestSignerForChainID(s.chain.config.ChainID)
+		floor := s.chainGasPriceFloor()
 		for i := 0; i < numTxs; i++ {
 			salt := fmt.Sprintf("matrix-salt-%d-%d", time.Now().UnixNano(), i)
-			// The devnet hydrated floor is DefaultMinGasPrice x 2500 (gas2500x
-			// defaults to genesis when the spec omits the fork); a cheaper batch
-			// is dropped silently
-			unsigned := types.NewTransaction(nonceStart+uint64(i), invalidTxRecipient, big.NewInt(1), 100000, big.NewInt(common.DefaultMinGasPrice*2500), []byte(salt))
+			unsigned := types.NewTransaction(nonceStart+uint64(i), invalidTxRecipient, big.NewInt(1), 100000, floor, []byte(salt))
 			signed, err := types.SignTx(unsigned, signer, key)
 			if err != nil {
 				t.Fatalf("failed to sign matrix tx %d: %v", i, err)
@@ -493,18 +492,27 @@ func (s *Suite) sendMultipleSuccessfulTxs(t *utesting.T, sendConn *Conn, txs typ
 	t.Fatalf("missing %d txs", len(missing))
 }
 
+func (s *Suite) chainGasPriceFloor() *big.Int {
+	pending := new(big.Int).Add(s.chain.Head().Number(), common.Big1)
+	return params.GetMinGasPrice(pending, s.chain.config)
+}
+
 func (s *Suite) generateTxs(numTxs int) (map[common.Hash]common.Hash, types.Transactions, error) {
 	if len(s.chain.senders) == 0 {
 		return nil, nil, fmt.Errorf("fixture has no sender accounts")
 	}
 	from, nonce := s.chain.GetSender(0)
+	floor := s.chainGasPriceFloor()
 	hashMap := make(map[common.Hash]common.Hash, numTxs)
 	txs := make(types.Transactions, 0, numTxs)
 	for i := 0; i < numTxs; i++ {
-		unsigned := types.NewTransaction(nonce+uint64(i), invalidTxRecipient, big.NewInt(1), 21000, big.NewInt(1), nil)
+		unsigned := types.NewTransaction(nonce+uint64(i), invalidTxRecipient, big.NewInt(1), 21000, floor, nil)
 		signed, err := s.chain.SignTx(from, unsigned)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to sign tx %d: %w", i, err)
+		}
+		if signed.GasPriceIntCmp(floor) < 0 {
+			return nil, nil, fmt.Errorf("tx %d priced below the chain floor %v", i, floor)
 		}
 		hashMap[signed.Hash()] = signed.Hash()
 		txs = append(txs, signed)
