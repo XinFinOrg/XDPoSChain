@@ -143,7 +143,7 @@ func (s *Suite) dialXdc166() (*Conn, error) {
 	return conn, nil
 }
 
-func (s *Suite) dialAndPeer(status *statusPacket) (*Conn, error) {
+func (s *Suite) dialAndPeer(status interface{}) (*Conn, error) {
 	c, err := s.dial()
 	if err != nil {
 		return nil, err
@@ -155,7 +155,7 @@ func (s *Suite) dialAndPeer(status *statusPacket) (*Conn, error) {
 	return c, nil
 }
 
-func (c *Conn) peer(chain *Chain, status *statusPacket) error {
+func (c *Conn) peer(chain *Chain, status interface{}) error {
 	if err := c.handshake(); err != nil {
 		return fmt.Errorf("handshake failed: %v", err)
 	}
