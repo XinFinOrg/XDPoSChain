@@ -732,6 +732,9 @@ func (c *XDPoSConfig) cloneWithInferredFieldPresence() *XDPoSConfig {
 	if clone.SkipV1Validation || len(clone.json.keys) > 0 || clone.V2 != nil {
 		clone.json.mark("SkipV1Validation")
 	}
+	if clone.IsSubnet {
+		clone.json.mark("isSubnet")
+	}
 	if clone.V2 != nil {
 		clone.json.mark("v2")
 		clone.V2 = clone.V2.cloneWithInferredFieldPresence()

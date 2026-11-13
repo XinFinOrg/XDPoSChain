@@ -2180,7 +2180,7 @@ func (d *Downloader) syncGapPivots(P *fetchResult, gapNumbers []uint64, pendingG
 			log.Error("Failed to create state for gap pivot snapshot", "number", gapNum, "root", root, "err", err)
 			return err
 		}
-		snap, err := d.generateSnapshot(statedb, gapNum, gapHash)
+		snap, err := d.generateSnapshot(statedb, gapNum, gapHash, P.Header)
 		if err != nil {
 			// Abort fast sync instead of persisting an empty or partial
 			// snapshot that would permanently mask the gap. A normal chain
@@ -2415,9 +2415,27 @@ func (d *Downloader) requestTTL() time.Duration {
 }
 
 // generateSnapshot derives the masternode snapshot of a gap block from the
-// given state, stores it and returns it.
-func (d *Downloader) generateSnapshot(statedb *state.StateDB, number uint64, hash common.Hash) (*engine_v2.SnapshotV2, error) {
-	snap, err := engine_v2.BuildSnapshotFromState(statedb, number, hash)
+// given state, stores it and returns it. pivot is the sync pivot the gap block
+// is an ancestor of.
+//
+// A subnet snapshot also holds the next-epoch penalties, which cannot be
+// recomputed here: that walks the bodies of the epoch before the gap block,
+// which fast sync has not imported yet. They are taken from the block after
+// the gap block instead, which published them.
+func (d *Downloader) generateSnapshot(statedb *state.StateDB, number uint64, hash common.Hash, pivot *types.Header) (*engine_v2.SnapshotV2, error) {
+	var (
+		snap *engine_v2.SnapshotV2
+		err  error
+	)
+	if d.blockchain != nil && d.blockchain.Config().IsSubnet() {
+		next := d.localAncestor(pivot, number+1)
+		if next == nil || next.ParentHash != hash {
+			return nil, fmt.Errorf("subnet gap pivot %d (%s): the next block, which publishes the penalties, is not available locally", number, hash.Hex())
+		}
+		snap, err = engine_v2.BuildSubnetSnapshotFromState(statedb, number, hash, common.ExtractAddressFromBytes(next.Penalties))
+	} else {
+		snap, err = engine_v2.BuildSnapshotFromState(statedb, number, hash)
+	}
 	if err != nil {
 		return nil, err
 	}

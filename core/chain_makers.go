@@ -318,6 +318,7 @@ func makeHeader(chain consensus.ChainReader, parent *types.Block, state *state.S
 	}
 
 	header.BaseFee = eip1559.CalcBaseFee(chain.Config(), header)
+	header.Subnet = chain.Config().IsSubnet()
 
 	return header
 }

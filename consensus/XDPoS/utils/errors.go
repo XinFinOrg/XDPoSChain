@@ -52,6 +52,11 @@ var (
 	ErrValidatorsNotLegit = errors.New("validators does not match what's stored in snapshot minus its penalty")
 	ErrPenaltiesNotLegit  = errors.New("penalties does not match")
 
+	// Subnet rules, see engine_v2/subnet.go.
+	ErrNextEpochValidatorsNotLegit      = errors.New("next epoch validators does not match the candidates stored in the gap block snapshot")
+	ErrInvalidFieldInNonGapPlusOneBlock = errors.New("next epoch validators or penalties set outside the block after the gap block")
+	ErrInvalidHeaderLayout              = errors.New("header layout does not match the chain: subnet headers on a subnet, legacy headers elsewhere")
+
 	// errInvalidMixDigest is returned if a block's mix digest is non-zero.
 	ErrInvalidMixDigest = errors.New("non-zero mix digest")
 

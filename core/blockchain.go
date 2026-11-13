@@ -1904,7 +1904,7 @@ func (bc *BlockChain) adoptHead(block *types.Block, current *types.Header, snap 
 			return fmt.Errorf("failed to open the state of gap block %d (%s) for the masternode update: %w",
 				block.NumberU64(), block.Hash().Hex(), err)
 		}
-		derived, err := bc.nextEpochSnapshotOf(statedb, block.NumberU64(), block.Hash())
+		derived, err := bc.nextEpochSnapshotOf(statedb, block.Header())
 		if err != nil {
 			return err
 		}
@@ -2161,7 +2161,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	// which is why the derivation happens now rather than after the commit.
 	var snap *engine_v2.SnapshotV2
 	if canonical && bc.needsNextEpochSnapshot(block.Number()) {
-		derived, err := bc.nextEpochSnapshotOf(state, block.NumberU64(), block.Hash())
+		derived, err := bc.nextEpochSnapshotOf(state, block.Header())
 		if err != nil {
 			return NonStatTy, err
 		}
@@ -4078,7 +4078,7 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 			// this node, not of the blocks.
 			return localConditionf("failed to open state of gap block %d (%s) for the masternode update: %w", header.Number.Uint64(), header.Hash().Hex(), err)
 		}
-		snap, err := bc.nextEpochSnapshotOf(statedb, header.Number.Uint64(), header.Hash())
+		snap, err := bc.nextEpochSnapshotOf(statedb, header)
 		if err != nil {
 			return err
 		}
@@ -4455,8 +4455,21 @@ func (bc *BlockChain) needsNextEpochSnapshot(number *big.Int) bool {
 // read fails the derivation instead of producing a set that belongs to another
 // block. The ready line is not logged here: deriving is not yet storing, and it
 // is writeHeadBlock that reports the set once its batch is on disk.
-func (bc *BlockChain) nextEpochSnapshotOf(statedb *state.StateDB, number uint64, hash common.Hash) (*engine_v2.SnapshotV2, error) {
-	snap, err := engine_v2.BuildSnapshotFromState(statedb, number, hash)
+//
+// A subnet also computes the penalties of the next epoch here, from the blocks
+// before the gap block, which the engine reaches through the header: they are
+// published with the candidates in the block after the gap block.
+func (bc *BlockChain) nextEpochSnapshotOf(statedb *state.StateDB, header *types.Header) (*engine_v2.SnapshotV2, error) {
+	number, hash := header.Number.Uint64(), header.Hash()
+	var (
+		snap *engine_v2.SnapshotV2
+		err  error
+	)
+	if engine, ok := bc.engine.(*XDPoS.XDPoS); ok && engine.EngineV2 != nil {
+		snap, err = engine.EngineV2.BuildGapSnapshot(bc, statedb, header)
+	} else {
+		snap, err = engine_v2.BuildSnapshotFromState(statedb, number, hash)
+	}
 	if err != nil {
 		// The set is read off state this node committed itself, so the failure is a condition
 		// of this node rather than a fault of the blocks: reported as local so the downloader

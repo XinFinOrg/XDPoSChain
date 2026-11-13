@@ -150,6 +150,9 @@ func checkXDPoSCompatible(stored, newcfg *XDPoSConfig, head *big.Int, xdposRound
 	if stored.SkipV1Validation != newcfg.SkipV1Validation {
 		return newCompatError("XDPoS.SkipV1Validation", xdposCompatBlock(stored), xdposCompatBlock(newcfg))
 	}
+	if stored.IsSubnet != newcfg.IsSubnet {
+		return newCompatError("XDPoS.IsSubnet", xdposCompatBlock(stored), xdposCompatBlock(newcfg))
+	}
 	if stored.V2 == nil || newcfg.V2 == nil {
 		if stored.V2 == newcfg.V2 {
 			return nil

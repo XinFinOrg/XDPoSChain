@@ -434,6 +434,7 @@ func chainConfigSemanticXDPoSEqual(a, b *XDPoSConfig) bool {
 		a.FoundationWalletAddr == b.FoundationWalletAddr &&
 		a.MaxMasternodesV2 == b.MaxMasternodesV2 &&
 		a.SkipV1Validation == b.SkipV1Validation &&
+		a.IsSubnet == b.IsSubnet &&
 		chainConfigSemanticV2Equal(a.V2, b.V2)
 }
 
@@ -795,6 +796,9 @@ func (c *ChainConfig) checkConfigForkOrder(withHints, skipXDPoSSchedule bool) er
 			if err := CheckSwitchBlockAlignment(c.XDPoS.V2.SwitchBlock, c.XDPoS.Epoch); err != nil {
 				return fmt.Errorf("invalid chain config: %w", err)
 			}
+		}
+		if err := c.checkSubnetConfig(); err != nil {
+			return fmt.Errorf("invalid chain config: %w", err)
 		}
 	}
 	return nil

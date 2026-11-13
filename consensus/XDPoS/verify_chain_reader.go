@@ -1,8 +1,11 @@
 package XDPoS
 
 import (
+	"errors"
+
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
+	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
@@ -111,4 +114,16 @@ func (r *verifyChainReader) GetBlock(hash common.Hash, number uint64) *types.Blo
 		return nil
 	}
 	return r.chain.GetBlock(hash, number)
+}
+
+// StateAt opens a state through the wrapped chain. The engine uses it to derive
+// the snapshot of a subnet gap block that is stored but not canonical yet; the
+// blocks of the batch under verification have no state yet and fail here.
+func (r *verifyChainReader) StateAt(root common.Hash) (*state.StateDB, error) {
+	if chain, ok := r.chain.(interface {
+		StateAt(common.Hash) (*state.StateDB, error)
+	}); ok {
+		return chain.StateAt(root)
+	}
+	return nil, errors.New("chain cannot open state")
 }

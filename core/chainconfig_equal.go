@@ -17,7 +17,7 @@ import (
 // The digest is computed in-process for each comparison and is never persisted
 // or exchanged, so the version byte has no cross-version path to fall back from:
 // a mixed version pair can only arise when a test injects its own encoder.
-const chainConfigDigestVersion byte = 4
+const chainConfigDigestVersion byte = 5
 
 func defaultHashChainConfigSemanticVersioned(cfg *params.ChainConfig) (byte, [32]byte) {
 	return chainConfigDigestVersion, hashChainConfigSemantic(cfg)
@@ -158,6 +158,7 @@ func (d *chainConfigDigest) writeXDPoS(cfg *params.XDPoSConfig) {
 	d.writeAddress(cfg.FoundationWalletAddr)
 	d.writeInt(cfg.MaxMasternodesV2)
 	d.writeBool(cfg.SkipV1Validation)
+	d.writeBool(cfg.IsSubnet)
 	d.writeV2(cfg.V2)
 }
 

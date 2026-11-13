@@ -70,6 +70,11 @@ func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, headers []*ty
 		}
 
 		penalties := common.ExtractAddressFromBytes(h.Penalties)
+		if x.config.IsSubnet {
+			// A subnet epoch switch carries no penalties: they are published
+			// with the candidates and kept in the gap block snapshot, read below.
+			penalties = []common.Address{}
+		}
 		standbynodes := []common.Address{}
 		snap, err := x.getSnapshot(chain, h.Number.Uint64(), false)
 		if err != nil {
@@ -82,6 +87,9 @@ func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, headers []*ty
 				log.Warn("[getEpochSwitchInfo] getSnapshot has error, cannot get standbynodes", "err", err)
 			}
 		} else {
+			if x.config.IsSubnet {
+				penalties = snap.NextEpochPenalties
+			}
 			candidates := snap.NextEpochCandidates
 			if len(masternodes) != len(candidates) {
 				standbynodes = candidates
@@ -126,6 +134,10 @@ func (x *XDPoS_v2) getEpochSwitchInfo(chain consensus.ChainReader, headers []*ty
 
 // IsEpochSwitchAtRound() is used by miner to check whether it mines a block in the same epoch with parent
 func (x *XDPoS_v2) isEpochSwitchAtRound(round types.Round, parentHeader *types.Header) (bool, uint64, error) {
+	if x.config.IsSubnet {
+		isEpochSwitch, epochNum := x.subnetIsEpochSwitch(parentHeader.Number.Uint64() + 1)
+		return isEpochSwitch, epochNum, nil
+	}
 	epochNum := x.config.V2.SwitchEpoch + uint64(round)/x.config.Epoch
 	// if parent is last v1 block and this is first v2 block, this is treated as epoch switch
 	if parentHeader.Number.Cmp(x.config.V2.SwitchBlock) == 0 {
@@ -147,6 +159,10 @@ func (x *XDPoS_v2) isEpochSwitchAtRound(round types.Round, parentHeader *types.H
 }
 
 func (x *XDPoS_v2) GetCurrentEpochSwitchBlock(chain consensus.ChainReader, blockNum *big.Int) (uint64, uint64, error) {
+	if x.config.IsSubnet {
+		num := blockNum.Uint64()
+		return num - num%x.config.Epoch, num / x.config.Epoch, nil
+	}
 	header := chain.GetHeaderByNumber(blockNum.Uint64())
 	epochSwitchInfo, err := x.getEpochSwitchInfo(chain, []*types.Header{header}, header.Hash())
 	if err != nil {
@@ -160,6 +176,10 @@ func (x *XDPoS_v2) GetCurrentEpochSwitchBlock(chain consensus.ChainReader, block
 }
 
 func (x *XDPoS_v2) IsEpochSwitch(header *types.Header) (bool, uint64, error) {
+	if x.config.IsSubnet {
+		isEpochSwitch, epochNum := x.subnetIsEpochSwitch(header.Number.Uint64())
+		return isEpochSwitch, epochNum, nil
+	}
 	// Return true directly if we are examing the last v1 block. This could happen if the calling function is examing parent block
 	if header.Number.Cmp(x.config.V2.SwitchBlock) == 0 {
 		log.Info("[IsEpochSwitch] examing last v1 block")
