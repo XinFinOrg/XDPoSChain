@@ -259,7 +259,7 @@ forRead:
 				return fmt.Errorf("failed to reply pong: %w", err)
 			}
 		default:
-			if getProto(code) == baseProto {
+			if proto := getProto(code); proto == baseProto || proto == unknownProto {
 				continue
 			}
 			return fmt.Errorf("bad status message: code %d", code)
@@ -301,8 +301,7 @@ func (c *Conn) ReadEth() (interface{}, error) {
 	}
 }
 
-// isXdc166MsgCode admits only codes decodeXdc166Payload decodes, and avoids getProto,
-// which panics on pooled codes past the drifted ethProtoLen
+// isXdc166MsgCode admits only codes decodeXdc166Payload decodes
 func isXdc166MsgCode(code uint64) bool {
 	if code < protoOffset(ethProto) {
 		return false
