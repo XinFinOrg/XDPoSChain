@@ -601,7 +601,14 @@ func (x *XDPoS_v2) CalcDifficulty(chain consensus.ChainReader, time uint64, pare
 func (x *XDPoS_v2) IsAuthorisedAddress(chain consensus.ChainReader, header *types.Header, address common.Address) bool {
 	snap, err := x.GetSnapshot(chain, header)
 	if err != nil {
-		log.Error("[IsAuthorisedAddress] Can't get snapshot with at ", "number", header.Number, "hash", header.Hash().Hex(), "err", err)
+		// The txpool asks this for every incoming special transaction, also while
+		// the node is syncing, when the head snapshot may not be built yet. That is
+		// expected, so log at Debug then and keep Error for a synced head.
+		logFn := log.Error
+		if x.HookSyncing != nil && x.HookSyncing() {
+			logFn = log.Debug
+		}
+		logFn("[IsAuthorisedAddress] Can't get snapshot with at ", "number", header.Number, "hash", header.Hash().Hex(), "err", err)
 		return false
 	}
 	for _, mn := range snap.NextEpochCandidates {

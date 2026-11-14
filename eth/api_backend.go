@@ -686,8 +686,9 @@ func (b *EthAPIBackend) GetPeer() int {
 	return b.eth.handler.peers.Len()
 }
 
-// ValidateMasternode checks if node's address is in set of masternodes
-func (b *EthAPIBackend) ValidateMasternode() (bool, error) {
+// ValidateMasternode reports whether the node's etherbase is an authorised signer;
+// known is false while the node is syncing. See Ethereum.ValidateMasternode.
+func (b *EthAPIBackend) ValidateMasternode() (authorised, known bool, err error) {
 	return b.eth.ValidateMasternode()
 }
 

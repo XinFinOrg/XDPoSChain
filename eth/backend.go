@@ -106,6 +106,11 @@ type Ethereum struct {
 	lock    sync.RWMutex // Protects the variadic fields (e.g. gas price and etherbase)
 	XDCX    *XDCx.XDCX
 	Lending *XDCxlending.Lending
+
+	// signerStatus reports whether an address is an authorised signer at the
+	// current head, and whether that answer is known. Nil unless the chain runs
+	// XDPoS. See signerStatusFor.
+	signerStatus func(common.Address) (authorised, known bool)
 }
 
 // New creates a new Ethereum object (including the
@@ -379,8 +384,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 				log.Error("Cannot get etherbase for append m2 header", "err", err)
 				return fmt.Errorf("etherbase missing: %v", err)
 			}
-			ok := eth.txPool.IsSigner(eb)
-			if !ok {
+			if !eth.canSign(eb) {
 				return fetcher.ErrSignatureSkipped
 			}
 			if block.NumberU64()%common.MergeSignRange == 0 || !chainConfig.IsTIP2019(block.Number()) {
@@ -448,14 +452,14 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 			return eth.Downloader().Synchronising()
 		}
 
-		isSigner := signerPredicate(eth.Downloader().Synchronising, func(address common.Address) bool {
+		admit, status := signerChecks(eth.Downloader().Synchronising, func(address common.Address) bool {
 			return c.IsAuthorisedAddress(eth.blockchain, eth.blockchain.CurrentHeader(), address)
 		})
-		eth.txPool.SetSigner(isSigner)
+		eth.signerStatus = status
+		eth.txPool.SetSigner(admit)
 		// Gate parking on the same check the sign hook starts with: a node that
 		// cannot sign would only build parked entries and report their drops.
-		// Installed after SetSigner so the dependency reads in order.
-		eth.handler.blockFetcher.SetSignerGate(signerGateFor(eth.Etherbase, eth.txPool.IsSigner))
+		eth.handler.blockFetcher.SetSignerGate(signerGateFor(eth.Etherbase, eth.canSign))
 	}
 	// Start the RPC service
 	eth.netRPCService = ethapi.NewNetAPI(eth.p2pServer, eth.NetVersion())
@@ -467,21 +471,48 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	return eth, nil
 }
 
-// signerPredicate builds the txpool signer test. A sync has no head snapshot, so
-// IsAuthorisedAddress would fail and spam the log; the predicate answers false
-// instead and re-evaluates once the sync completes.
-func signerPredicate(syncing func() bool, isAuthorised func(common.Address) bool) func(common.Address) bool {
-	return func(address common.Address) bool {
+// signerChecks splits the signer question by who asks it.
+//
+// admit is the txpool's test: is the sender of a special transaction a signer?
+// That is a fact about the sender, not about this node, so it does not depend on
+// this node's sync state. A syncing node that answered false here would reject
+// every candidate's sign transaction, and announce-once propagation would never
+// offer it again.
+//
+// status is this node's own question, see signerStatusFor.
+func signerChecks(syncing func() bool, isAuthorised func(common.Address) bool) (admit func(common.Address) bool, status func(common.Address) (authorised, known bool)) {
+	return isAuthorised, signerStatusFor(syncing, isAuthorised)
+}
+
+// signerStatusFor builds the test this node runs on itself before it signs a
+// block or decides whether to stake. While the downloader is syncing, the head
+// snapshot may not be built yet, so IsAuthorisedAddress would fail and spam the
+// log: the answer is unknown and known is false. What an unknown answer means is
+// up to the caller: signing and parking treat it as "no", the staking loop keeps
+// its current state. It must never be read as "not a signer" by a caller that
+// changes state on it.
+func signerStatusFor(syncing func() bool, isAuthorised func(common.Address) bool) func(common.Address) (authorised, known bool) {
+	return func(address common.Address) (bool, bool) {
 		if syncing() {
-			return false
+			return false, false
 		}
-		return isAuthorised(address)
+		return isAuthorised(address), true
 	}
 }
 
+// canSign reports whether address may sign a block now: it must be an authorised
+// signer, and the answer must be known, which it is not during a sync.
+func (e *Ethereum) canSign(address common.Address) bool {
+	if e.signerStatus == nil {
+		return false
+	}
+	authorised, known := e.signerStatus(address)
+	return known && authorised
+}
+
 // signerGateFor reports whether parking is worthwhile for this node: a node that
-// cannot sign would only build entries and report their drops. The signer test
-// answers false for the whole run of a sync, so a syncing node parks nothing:
+// cannot sign would only build entries and report their drops. canSign answers
+// false for the whole run of a sync, so a syncing node parks nothing:
 // the parked deadline is shorter than a full sync, an entry booked now would
 // expire before the sync ends, and the sign hook would skip every attempt in
 // between. The sign hook re-checks before it signs.
@@ -640,25 +671,19 @@ func (e *Ethereum) SetEtherbase(etherbase common.Address) {
 	e.miner.SetEtherbase(etherbase)
 }
 
-// ValidateMasternode checks if node's address is in set of masternodes
-func (e *Ethereum) ValidateMasternode() (bool, error) {
+// ValidateMasternode reports whether the node's etherbase is an authorised signer
+// at the current head. known is false while the downloader is syncing: the
+// answer is unknown then, and the caller must not read it as "not a masternode".
+func (e *Ethereum) ValidateMasternode() (authorised, known bool, err error) {
 	eb, err := e.Etherbase()
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
-	if e.blockchain.Config().XDPoS != nil {
-		//check if miner's wallet is in set of validators
-		c := e.engine.(*XDPoS.XDPoS)
-
-		authorized := c.IsAuthorisedAddress(e.blockchain, e.blockchain.CurrentHeader(), eb)
-		if !authorized {
-			//This miner doesn't belong to set of validators
-			return false, nil
-		}
-	} else {
-		return false, errors.New("only verify masternode permission in XDPoS protocol")
+	if e.signerStatus == nil {
+		return false, false, errors.New("only verify masternode permission in XDPoS protocol")
 	}
-	return true, nil
+	authorised, known = e.signerStatus(eb)
+	return authorised, known, nil
 }
 
 func (e *Ethereum) StartStaking(local bool) error {
