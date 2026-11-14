@@ -143,7 +143,7 @@ func (s *Suite) dialXdc166() (*Conn, error) {
 	return conn, nil
 }
 
-func (s *Suite) dialAndPeer(status *statusPacket) (*Conn, error) {
+func (s *Suite) dialAndPeer(status interface{}) (*Conn, error) {
 	c, err := s.dial()
 	if err != nil {
 		return nil, err
@@ -155,7 +155,7 @@ func (s *Suite) dialAndPeer(status *statusPacket) (*Conn, error) {
 	return c, nil
 }
 
-func (c *Conn) peer(chain *Chain, status *statusPacket) error {
+func (c *Conn) peer(chain *Chain, status interface{}) error {
 	if err := c.handshake(); err != nil {
 		return fmt.Errorf("handshake failed: %v", err)
 	}
@@ -259,7 +259,7 @@ forRead:
 				return fmt.Errorf("failed to reply pong: %w", err)
 			}
 		default:
-			if getProto(code) == baseProto {
+			if proto := getProto(code); proto == baseProto || proto == unknownProto {
 				continue
 			}
 			return fmt.Errorf("bad status message: code %d", code)
@@ -301,8 +301,7 @@ func (c *Conn) ReadEth() (interface{}, error) {
 	}
 }
 
-// isXdc166MsgCode admits only codes decodeXdc166Payload decodes, and avoids getProto,
-// which panics on pooled codes past the drifted ethProtoLen
+// isXdc166MsgCode admits only codes decodeXdc166Payload decodes
 func isXdc166MsgCode(code uint64) bool {
 	if code < protoOffset(ethProto) {
 		return false
