@@ -40,7 +40,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/contracts/blocksigner/contract"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
-	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -54,8 +53,20 @@ type RewardLog struct {
 
 var TxSignMu sync.RWMutex
 
+// SignTxPool is the part of the txpool that CreateTransactionSign may use;
+// *txpool.TxPool implements it. It deliberately offers only the on-chain nonce:
+// a sign tx must take the nonce of the account's oldest unmined tx, so that it
+// replaces a stuck one instead of queueing behind it (#3056). Leaving PoolNonce
+// out makes the pending nonce impossible to pick by mistake; the sign tx nonce
+// flipped between the two several times after upstream renamed them.
+type SignTxPool interface {
+	// Nonce returns the account's on-chain nonce, see txpool.TxPool.Nonce.
+	Nonce(addr common.Address) uint64
+	AddLocal(tx *types.Transaction, sync bool) error
+}
+
 // Send tx sign for block number to smart contract blockSigner.
-func CreateTransactionSign(chainConfig *params.ChainConfig, pool *txpool.TxPool, manager *accounts.Manager, block *types.Block, chainDb ethdb.Database, eb common.Address) error {
+func CreateTransactionSign(chainConfig *params.ChainConfig, pool SignTxPool, manager *accounts.Manager, block *types.Block, chainDb ethdb.Database, eb common.Address) error {
 	TxSignMu.Lock()
 	defer TxSignMu.Unlock()
 	if chainConfig.XDPoS != nil {
@@ -83,10 +94,8 @@ func CreateTransactionSign(chainConfig *params.ChainConfig, pool *txpool.TxPool,
 		// special tx always claims its nonce, see list.Add) instead of queueing
 		// behind it. With the pending nonce, one sign tx that never reaches a block
 		// producer leaves every later one beyond the receivers' nonce window, and
-		// the backlog grows until the pool is full (#3056).
-		//
-		// Mind the names: TxPool.Nonce is the on-chain nonce, TxPool.PoolNonce the
-		// pending one, and LegacyPool.Nonce is the pending one as well.
+		// the backlog grows until the pool is full (#3056). SignTxPool offers only
+		// the on-chain nonce (TxPool.Nonce), not the pending nonce (TxPool.PoolNonce).
 		nonce := pool.Nonce(account.Address)
 		tx := CreateTxSign(block.Number(), block.Hash(), nonce, common.BlockSignersBinary)
 		txSigned, err := wallet.SignTx(account, tx, chainConfig.ChainID)
