@@ -872,17 +872,42 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64) error {
 	}
 	start := time.Now()
 
+	// Below the last fast sync pivot no state was ever stored, so a search for
+	// a block with state stops there and falls back to genesis. A node that
+	// was never fast synced (or synced before the marker existed) has no
+	// pivot, and the search then runs until a block is missing.
+	pivot := rawdb.ReadLastPivotNumber(bc.db)
+
 	updateFn := func(db ethdb.KeyValueWriter, header *types.Header) {
-		// Rewind the block chain, ensuring we don't end up with a stateless head block
+		// Rewind the block chain, ensuring we don't end up with a stateless head block.
+		// hc.SetHead calls this once per rewound header, from high to low. If the
+		// header's block has no state, walk its parents down to the nearest block
+		// that has state: with --gcmode full most heights have none, and giving up
+		// at the first of them would leave the head block at genesis for good,
+		// since no later (lower) header passes the check below again.
 		if currentBlock := bc.CurrentBlock(); currentBlock != nil && header.Number.Uint64() < currentBlock.Number.Uint64() {
 			newHeadBlock := bc.GetBlock(header.Hash(), header.Number.Uint64())
 			if newHeadBlock == nil {
+				log.Error("Gap in the chain, rewinding to genesis", "number", header.Number, "hash", header.Hash())
 				newHeadBlock = bc.genesisBlock
-			} else {
-				if !bc.HasState(newHeadBlock.Root()) {
-					// Rewound state missing, rolled back to before pivot, reset to genesis
+			}
+			for newHeadBlock.NumberU64() > 0 && !bc.HasState(newHeadBlock.Root()) {
+				if pivot != nil && newHeadBlock.NumberU64() <= *pivot {
+					log.Warn("Rewind passed fast sync pivot, aiming genesis", "number", newHeadBlock.NumberU64(), "hash", newHeadBlock.Hash(), "pivot", *pivot)
 					newHeadBlock = bc.genesisBlock
+					break
 				}
+				log.Trace("Block state missing, rewinding further", "number", newHeadBlock.NumberU64(), "hash", newHeadBlock.Hash())
+				parent := bc.GetBlock(newHeadBlock.ParentHash(), newHeadBlock.NumberU64()-1)
+				if parent == nil {
+					log.Error("Missing block in the middle, aiming genesis", "number", newHeadBlock.NumberU64()-1, "hash", newHeadBlock.ParentHash())
+					newHeadBlock = bc.genesisBlock
+					break
+				}
+				newHeadBlock = parent
+			}
+			if newHeadBlock.NumberU64() < header.Number.Uint64() {
+				log.Debug("Rewound head block to block with state", "header", header.Number, "number", newHeadBlock.NumberU64(), "hash", newHeadBlock.Hash())
 			}
 			rawdb.WriteHeadBlockHash(db, newHeadBlock.Hash())
 
@@ -966,6 +991,12 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64) error {
 	if err := bc.loadLastState(); err != nil {
 		return err
 	}
+	// The head block lands on the highest block at or below the target that
+	// has state, which can be well below the target, or genesis when none is
+	// left. Say so, or the operator only finds out from eth.blockNumber.
+	if headBlock := bc.CurrentBlock(); headBlock.Number.Uint64() < head {
+		log.Warn("Head block rewound below the target for lack of state", "target", head, "headblock", headBlock.Number, "headheader", bc.CurrentHeader().Number)
+	}
 	elapsed := time.Since(start)
 	// Average rate over the whole rewind, i.e. the starting height down to the
 	// target. Note that elapsed also covers the dangling sweep, so this sits
@@ -998,6 +1029,9 @@ func (bc *BlockChain) FastSyncCommitHead(hash common.Hash) error {
 	}
 	bc.currentBlock.Store(block.Header())
 	headBlockGauge.Update(int64(block.NumberU64()))
+	// Remember the pivot: no state exists below it, which bounds the search
+	// for a block with state when SetHead rewinds.
+	rawdb.WriteLastPivotNumber(bc.db, block.NumberU64())
 	bc.chainmu.Unlock()
 
 	log.Info("Committed new head block", "number", block.Number(), "hash", hash)

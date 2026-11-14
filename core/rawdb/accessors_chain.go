@@ -286,6 +286,24 @@ func WriteHeadFastBlockHash(db ethdb.KeyValueWriter, hash common.Hash) {
 	}
 }
 
+// ReadLastPivotNumber retrieves the number of the last pivot block. If the node
+// was never fast synced, nil is returned.
+func ReadLastPivotNumber(db ethdb.KeyValueReader) *uint64 {
+	data, _ := db.Get(lastPivotKey)
+	if len(data) != 8 {
+		return nil
+	}
+	pivot := binary.BigEndian.Uint64(data)
+	return &pivot
+}
+
+// WriteLastPivotNumber stores the number of the last pivot block.
+func WriteLastPivotNumber(db ethdb.KeyValueWriter, pivot uint64) {
+	if err := db.Put(lastPivotKey, encodeBlockNumber(pivot)); err != nil {
+		log.Crit("Failed to store pivot block number", "err", err)
+	}
+}
+
 // ReadFastTrieProgress retrieves the number of tries nodes fast synced to allow
 // reportinc correct numbers across restarts.
 func ReadFastTrieProgress(db ethdb.KeyValueReader) uint64 {

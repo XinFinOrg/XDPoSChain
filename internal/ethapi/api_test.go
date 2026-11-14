@@ -310,6 +310,16 @@ func TestDebugSetHeadTransportExposure(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestSetHeadReturnsBackendError checks that debug_setHead reports a refused
+// rewind instead of returning null.
+func TestSetHeadReturnsBackendError(t *testing.T) {
+	backend := newBackendMock()
+	backend.setHeadErr = errors.New("cannot rewind to block 0: bodies and receipts below block 10 are pruned (minimal history mode)")
+
+	err := setHead(backend, 0)
+	require.ErrorIs(t, err, backend.setHeadErr)
+}
+
 func isMethodNotFound(err error) bool {
 	rpcErr, ok := err.(rpc.Error)
 	return ok && rpcErr.ErrorCode() == -32601
