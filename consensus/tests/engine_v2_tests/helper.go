@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand"
-	"os"
 	"testing"
 	"time"
 
@@ -138,22 +137,24 @@ func RandStringBytes(n int) string {
 	return string(b)
 }
 
+// getSignerAndSignFn returns pk's address and a sign function that behaves like
+// an unlocked keystore's SignHash: it signs with pk and refuses other accounts.
+//
+// It signs directly instead of importing pk into a throwaway keystore. Every
+// keystore starts a filesystem watcher that nothing here closes, and on macOS
+// (kqueue) each watcher goroutine blocks in a syscall and holds an OS thread
+// until the test binary exits. This helper runs hundreds of times per package
+// run, which drove the binary into macOS's 4096 threads-per-process limit
+// (runtime/cgo: pthread_create failed).
 func getSignerAndSignFn(pk *ecdsa.PrivateKey) (common.Address, func(account accounts.Account, hash []byte) ([]byte, error), error) {
-	veryLightScryptN := 2
-	veryLightScryptP := 1
-	dir, _ := os.MkdirTemp("", fmt.Sprintf("eth-getSignerAndSignFn-test-%v", RandStringBytes(5)))
-	defer os.RemoveAll(dir)
-
-	ks := keystore.NewKeyStore(dir, veryLightScryptN, veryLightScryptP)
-	pass := "" // not used but required by API
-	a1, err := ks.ImportECDSA(pk, pass)
-	if err != nil {
-		return common.Address{}, nil, err
+	signer := crypto.PubkeyToAddress(pk.PublicKey)
+	signFn := func(account accounts.Account, hash []byte) ([]byte, error) {
+		if account.Address != signer {
+			return nil, keystore.ErrLocked
+		}
+		return crypto.Sign(hash, pk)
 	}
-	if err := ks.Unlock(a1, ""); err != nil {
-		return a1.Address, nil, err
-	}
-	return a1.Address, ks.SignHash, nil
+	return signer, signFn, nil
 }
 
 func voteTX(gasLimit uint64, nonce uint64, addr string) (*types.Transaction, error) {
