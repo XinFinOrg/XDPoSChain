@@ -350,3 +350,60 @@ func TestDeliverTxFramesStopsAfterBoundedAttempts(t *testing.T) {
 		t.Fatalf("got %d write rounds, want %d", writes, maxTxDeliveryAttempts)
 	}
 }
+
+func TestGenerateTxsFromUsesDedicatedSender(t *testing.T) {
+	chain, err := NewChain("testdata")
+	if err != nil {
+		t.Fatalf("failed to load chain fixtures: %v", err)
+	}
+	s := &Suite{chain: chain}
+	_, base, err := s.generateTxs(2)
+	if err != nil {
+		t.Fatalf("generateTxs: %v", err)
+	}
+	_, dedicated, err := s.generateTxsFrom(1, 2)
+	if err != nil {
+		t.Fatalf("generateTxsFrom: %v", err)
+	}
+	if len(base) != 2 || len(dedicated) != 2 {
+		t.Fatalf("unexpected batch sizes: %d / %d", len(base), len(dedicated))
+	}
+	if base[0].Hash() == dedicated[0].Hash() {
+		t.Fatal("dedicated sender produced the same tx as the default sender")
+	}
+	if dedicated[0].Nonce() != 0 || dedicated[1].Nonce() != 1 {
+		t.Fatalf("dedicated sender nonces are not contiguous from zero: %d, %d", dedicated[0].Nonce(), dedicated[1].Nonce())
+	}
+}
+
+func TestReadTxAnnouncementCountsMinedTxs(t *testing.T) {
+	client, peer := newFramePeer(t)
+	conn := &Conn{Conn: client}
+	txs := frameTestTxs(3)
+	header := &types.Header{Number: big.NewInt(1), Difficulty: big.NewInt(1), GasLimit: 1000000, Time: 1}
+	block := types.NewBlockWithHeader(header).WithBody(types.Body{Transactions: txs})
+	data, err := rlp.EncodeToBytes(&ethproto.NewBlockPacket{Block: block, TD: big.NewInt(1)})
+	if err != nil {
+		t.Fatalf("encode NewBlockPacket: %v", err)
+	}
+	written := make(chan error, 1)
+	go func() {
+		_, err := peer.Write(protoOffset(ethProto)+ethproto.NewBlockMsg, data)
+		written <- err
+	}()
+	hashes, err := readTxAnnouncement(conn, 0)
+	if err != nil {
+		t.Fatalf("readTxAnnouncement: %v", err)
+	}
+	if err := <-written; err != nil {
+		t.Fatalf("peer write: %v", err)
+	}
+	if len(hashes) != len(txs) {
+		t.Fatalf("got %d hashes, want %d", len(hashes), len(txs))
+	}
+	for i, h := range hashes {
+		if h != txs[i].Hash() {
+			t.Fatalf("hash %d = %v, want %v", i, h, txs[i].Hash())
+		}
+	}
+}

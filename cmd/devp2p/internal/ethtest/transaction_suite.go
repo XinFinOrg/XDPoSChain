@@ -324,7 +324,7 @@ func (s *Suite) TestLargeTxRequest_Xdc166(t *utesting.T) {
 		_ = sender
 	} else {
 		var err error
-		hashMap, txs, err = s.generateTxs(numTxs)
+		hashMap, txs, err = s.generateTxsFrom(1, numTxs)
 		if err != nil {
 			t.Fatalf("failed to generate transactions: %v", err)
 		}
@@ -384,7 +384,7 @@ func (s *Suite) TestLargeTxRequest_Xdc166(t *utesting.T) {
 		}
 	} else {
 		s.sendMultipleSuccessfulTxs(t, sendConn, txs)
-		from, _ := s.chain.GetSender(0)
+		from, _ := s.chain.GetSender(1)
 		s.chain.IncNonce(from, uint64(len(txs)))
 	}
 
@@ -556,10 +556,14 @@ func (s *Suite) sendMultipleSuccessfulTxs(t *utesting.T, sendConn *Conn, txs typ
 }
 
 func (s *Suite) generateTxs(numTxs int) (map[common.Hash]common.Hash, types.Transactions, error) {
+	return s.generateTxsFrom(0, numTxs)
+}
+
+func (s *Suite) generateTxsFrom(senderIdx, numTxs int) (map[common.Hash]common.Hash, types.Transactions, error) {
 	if len(s.chain.senders) == 0 {
 		return nil, nil, fmt.Errorf("fixture has no sender accounts")
 	}
-	from, nonce := s.chain.GetSender(0)
+	from, nonce := s.chain.GetSender(senderIdx)
 	hashMap := make(map[common.Hash]common.Hash, numTxs)
 	txs := make(types.Transactions, 0, numTxs)
 	for i := 0; i < numTxs; i++ {
@@ -619,6 +623,13 @@ func readTxAnnouncement(conn *Conn, window time.Duration) ([]common.Hash, error)
 				var announced []common.Hash
 				if rlp.DecodeBytes(data, &announced) == nil {
 					hashes = append(hashes, announced...)
+				}
+			case ethproto.NewBlockMsg:
+				var packet ethproto.NewBlockPacket
+				if rlp.DecodeBytes(data, &packet) == nil && packet.Block != nil {
+					for _, tx := range packet.Block.Transactions() {
+						hashes = append(hashes, tx.Hash())
+					}
 				}
 			}
 		}
