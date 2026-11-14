@@ -78,7 +78,16 @@ func CreateTransactionSign(chainConfig *params.ChainConfig, pool *txpool.TxPool,
 			}
 		}
 
-		nonce := pool.PoolNonce(account.Address)
+		// Sign at the on-chain nonce, not the pool's pending nonce. A sign tx still
+		// unmined when the next round starts is then replaced by the fresh one (a
+		// special tx always claims its nonce, see list.Add) instead of queueing
+		// behind it. With the pending nonce, one sign tx that never reaches a block
+		// producer leaves every later one beyond the receivers' nonce window, and
+		// the backlog grows until the pool is full (#3056).
+		//
+		// Mind the names: TxPool.Nonce is the on-chain nonce, TxPool.PoolNonce the
+		// pending one, and LegacyPool.Nonce is the pending one as well.
+		nonce := pool.Nonce(account.Address)
 		tx := CreateTxSign(block.Number(), block.Hash(), nonce, common.BlockSignersBinary)
 		txSigned, err := wallet.SignTx(account, tx, chainConfig.ChainID)
 		if err != nil {

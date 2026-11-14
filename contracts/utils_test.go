@@ -437,77 +437,74 @@ func (createTxSignTestChain) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEve
 	})
 }
 
-type nonceGuardSubPool struct {
-	seededNonce0 bool
+// recordingSubPool accepts every transaction and records it, and reports a fixed
+// pending nonce, so a test can tell which nonce source CreateTransactionSign uses.
+type recordingSubPool struct {
+	pendingNonce uint64
 	added        []*types.Transaction
 }
 
-func (s *nonceGuardSubPool) Filter(tx *types.Transaction) bool { return true }
+func (s *recordingSubPool) Filter(tx *types.Transaction) bool { return true }
 
-func (s *nonceGuardSubPool) Init(gasTip uint64, head *types.Header, reserver txpool.Reserver) error {
+func (s *recordingSubPool) Init(gasTip uint64, head *types.Header, reserver txpool.Reserver) error {
 	return nil
 }
 
-func (s *nonceGuardSubPool) Close() error { return nil }
+func (s *recordingSubPool) Close() error { return nil }
 
-func (s *nonceGuardSubPool) Reset(oldHead, newHead *types.Header) {}
+func (s *recordingSubPool) Reset(oldHead, newHead *types.Header) {}
 
-func (s *nonceGuardSubPool) SetGasTip(tip *big.Int) error { return nil }
+func (s *recordingSubPool) SetGasTip(tip *big.Int) error { return nil }
 
-func (s *nonceGuardSubPool) Has(hash common.Hash) bool { return false }
+func (s *recordingSubPool) Has(hash common.Hash) bool { return false }
 
-func (s *nonceGuardSubPool) Get(hash common.Hash) *types.Transaction { return nil }
+func (s *recordingSubPool) Get(hash common.Hash) *types.Transaction { return nil }
 
-func (s *nonceGuardSubPool) ValidateTxBasics(tx *types.Transaction) error { return nil }
+func (s *recordingSubPool) ValidateTxBasics(tx *types.Transaction) error { return nil }
 
-func (s *nonceGuardSubPool) Add(txs []*types.Transaction, sync bool) []error {
-	errs := make([]error, len(txs))
-	for i, tx := range txs {
-		if tx.Nonce() == 0 && s.seededNonce0 {
-			errs[i] = txpool.ErrReplaceUnderpriced
-			continue
-		}
-		s.added = append(s.added, tx)
-		if tx.Nonce() == 0 {
-			s.seededNonce0 = true
-		}
-	}
-	return errs
+func (s *recordingSubPool) Add(txs []*types.Transaction, sync bool) []error {
+	s.added = append(s.added, txs...)
+	return make([]error, len(txs))
 }
 
-func (s *nonceGuardSubPool) Pending(filter txpool.PendingFilter) map[common.Address][]*txpool.LazyTransaction {
+func (s *recordingSubPool) Pending(filter txpool.PendingFilter) map[common.Address][]*txpool.LazyTransaction {
 	return map[common.Address][]*txpool.LazyTransaction{}
 }
 
-func (s *nonceGuardSubPool) SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool) event.Subscription {
+func (s *recordingSubPool) SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool) event.Subscription {
 	return event.NewSubscription(func(quit <-chan struct{}) error {
 		<-quit
 		return nil
 	})
 }
 
-func (s *nonceGuardSubPool) Nonce(addr common.Address) uint64 { return 1 }
+func (s *recordingSubPool) Nonce(addr common.Address) uint64 { return s.pendingNonce }
 
-func (s *nonceGuardSubPool) Stats() (int, int) { return 0, 0 }
+func (s *recordingSubPool) Stats() (int, int) { return 0, 0 }
 
-func (s *nonceGuardSubPool) Content() (map[common.Address][]*types.Transaction, map[common.Address][]*types.Transaction) {
+func (s *recordingSubPool) Content() (map[common.Address][]*types.Transaction, map[common.Address][]*types.Transaction) {
 	return map[common.Address][]*types.Transaction{}, map[common.Address][]*types.Transaction{}
 }
 
-func (s *nonceGuardSubPool) ContentFrom(addr common.Address) ([]*types.Transaction, []*types.Transaction) {
+func (s *recordingSubPool) ContentFrom(addr common.Address) ([]*types.Transaction, []*types.Transaction) {
 	return nil, nil
 }
 
-func (s *nonceGuardSubPool) Status(hash common.Hash) txpool.TxStatus { return txpool.TxStatusUnknown }
+func (s *recordingSubPool) Status(hash common.Hash) txpool.TxStatus { return txpool.TxStatusUnknown }
 
-func (s *nonceGuardSubPool) SetSigner(f func(address common.Address) bool) {}
+func (s *recordingSubPool) SetSigner(f func(address common.Address) bool) {}
 
-func (s *nonceGuardSubPool) IsSigner(addr common.Address) bool { return false }
+func (s *recordingSubPool) IsSigner(addr common.Address) bool { return false }
 
-func TestCreateTransactionSignUsesPendingNonce(t *testing.T) {
+// createTxSignWithPendingNonce runs CreateTransactionSign for a block at the given
+// height against a pool whose pending nonce is pendingNonce, while the on-chain
+// nonce is 0 (createTxSignTestChain starts from an empty state). It returns the
+// transactions the pool received.
+func createTxSignWithPendingNonce(t *testing.T, pendingNonce uint64, number int64) []*types.Transaction {
+	t.Helper()
+
 	password := "test-pass"
 	ks := keystore.NewKeyStore(t.TempDir(), keystore.LightScryptN, keystore.LightScryptP)
-
 	account, err := ks.ImportECDSA(acc1Key, password)
 	if err != nil {
 		t.Fatalf("failed to import signer account: %v", err)
@@ -515,59 +512,75 @@ func TestCreateTransactionSignUsesPendingNonce(t *testing.T) {
 	if err := ks.Unlock(account, password); err != nil {
 		t.Fatalf("failed to unlock signer account: %v", err)
 	}
-
 	manager := accounts.NewManager(nil, ks)
-	defer manager.Close()
+	t.Cleanup(func() { manager.Close() })
 
-	subpool := &nonceGuardSubPool{}
+	subpool := &recordingSubPool{pendingNonce: pendingNonce}
 	pool, err := txpool.New(0, createTxSignTestChain{}, []txpool.SubPool{subpool})
 	if err != nil {
 		t.Fatalf("failed to create txpool: %v", err)
 	}
-	defer pool.Close()
+	t.Cleanup(func() { pool.Close() })
 
 	chainConfig := params.TestXDPoSMockChainConfig
 	if chainConfig == nil || chainConfig.XDPoS == nil {
 		t.Fatal("test requires XDPoS chain config")
 	}
-
-	// Set up a divergence between the two nonce sources so the test can tell which
-	// one CreateTransactionSign uses:
-	//   - chain STATE nonce = 0: createTxSignTestChain starts from an empty state,
-	//     so the account has never transacted (GetNonce == 0). pool.Nonce() reports
-	//     this.
-	//   - PENDING nonce = 1: a pool's pending nonce is "state nonce + number of
-	//     consecutive pending txs". nonceGuardSubPool.Nonce() is hard-coded to 1 to
-	//     model a pool that already holds one pending tx at nonce 0 (0 + 1 = 1).
-	//     pool.PoolNonce() (the max nonce across subpools) reports this.
-	// Seeding a real sign tx at nonce 0 keeps the subpool self-consistent: it both
-	// reports pending nonce 1 and, via Add, rejects a second tx at nonce 0.
-	seedTx := CreateTxSign(big.NewInt(0), common.Hash{0x1}, 0, common.BlockSignersBinary)
-	seedSigned, err := types.SignTx(seedTx, types.LatestSignerForChainID(chainConfig.ChainID), acc1Key)
-	if err != nil {
-		t.Fatalf("failed to sign seed tx: %v", err)
+	if got := pool.Nonce(account.Address); got != 0 {
+		t.Fatalf("test setup: on-chain nonce = %d, want 0", got)
 	}
-	if err := pool.AddLocal(seedSigned, true); err != nil {
-		t.Fatalf("failed to seed pending nonce 0 tx: %v", err)
+	if got := pool.PoolNonce(account.Address); got != pendingNonce {
+		t.Fatalf("test setup: pending nonce = %d, want %d", got, pendingNonce)
 	}
 
-	// CreateTransactionSign must derive the nonce from pool pending state (1), not
-	// from chain state (0). Since nonce 0 is already pending, using pending nonce 1
-	// should add a second tx successfully without replacement errors.
-	block := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(0)})
+	block := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(number)})
 	if err := CreateTransactionSign(chainConfig, pool, manager, block, rawdb.NewMemoryDatabase(), account.Address); err != nil {
 		t.Fatalf("CreateTransactionSign returned error: %v", err)
 	}
+	return subpool.added
+}
 
-	if len(subpool.added) != 2 {
-		t.Fatalf("expected seed tx plus a new sign tx at pending nonce, got %d txs", len(subpool.added))
+// TestCreateTransactionSignUsesOnchainNonce pins #3056: the sign tx takes the
+// on-chain nonce, so it replaces a stuck sign tx at that nonce instead of being
+// appended behind a backlog the receivers will never admit.
+func TestCreateTransactionSignUsesOnchainNonce(t *testing.T) {
+	// A pending nonce of 5 over an on-chain nonce of 0 models a node whose sign tx
+	// at nonce 0 never got mined and that has queued four more behind it.
+	added := createTxSignWithPendingNonce(t, 5, 0)
+
+	if len(added) != 1 {
+		t.Fatalf("pool received %d txs, want the sign tx only", len(added))
 	}
-	// The empty test state reports on-chain nonce 0, while the pool's pending
-	// nonce (mock Nonce) is 1; the signing tx must use the on-chain nonce.
-	if got := subpool.added[0].Nonce(); got != 0 {
-		t.Fatalf("tx sign used nonce %d, want on-chain nonce 0 (not pending nonce 1)", got)
+	if to := added[0].To(); to == nil || *to != common.BlockSignersBinary {
+		t.Fatalf("tx goes to %v, want the BlockSigners contract", to)
 	}
-	if got := subpool.added[1].Nonce(); got != 1 {
-		t.Fatalf("newly added sign tx nonce mismatch: got %d, want 1", got)
+	if got := added[0].Nonce(); got != 0 {
+		t.Fatalf("sign tx used nonce %d, want the on-chain nonce 0 (not the pending nonce 5)", got)
+	}
+}
+
+// TestCreateTransactionSignRandomizeFollowsOnchainNonce checks that the randomize
+// tx created in the same pass takes the nonce right after the sign tx's, so both
+// replace stuck txs rather than being appended to a backlog.
+func TestCreateTransactionSignRandomizeFollowsOnchainNonce(t *testing.T) {
+	// Block 810 of a 900-block epoch is inside the secret window [800, 850), so
+	// the pass creates a sign tx and a setSecret tx.
+	number := int64(common.EpocBlockSecret + 10)
+	added := createTxSignWithPendingNonce(t, 5, number)
+
+	if len(added) != 2 {
+		t.Fatalf("pool received %d txs, want a sign tx and a secret tx", len(added))
+	}
+	if to := added[0].To(); to == nil || *to != common.BlockSignersBinary {
+		t.Fatalf("first tx goes to %v, want the BlockSigners contract", to)
+	}
+	if to := added[1].To(); to == nil || *to != common.RandomizeSMCBinary {
+		t.Fatalf("second tx goes to %v, want the randomize contract", to)
+	}
+	if got := added[0].Nonce(); got != 0 {
+		t.Fatalf("sign tx used nonce %d, want the on-chain nonce 0", got)
+	}
+	if got := added[1].Nonce(); got != 1 {
+		t.Fatalf("secret tx used nonce %d, want on-chain nonce + 1 = 1", got)
 	}
 }
