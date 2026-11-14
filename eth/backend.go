@@ -58,6 +58,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/internal/ethapi"
 	"github.com/XinFinOrg/XDPoSChain/internal/version"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/miner"
 	"github.com/XinFinOrg/XDPoSChain/node"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
@@ -384,10 +385,15 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 				log.Error("Cannot get etherbase for append m2 header", "err", err)
 				return fmt.Errorf("etherbase missing: %v", err)
 			}
+			signSlot := block.NumberU64()%common.MergeSignRange == 0 || !chainConfig.IsTIP2019(block.Number())
 			if !eth.canSign(eb) {
+				if _, known := eth.signerStatus(eb); signSlot && !known {
+					skippedSignatureSyncing.Inc(1)
+					log.Debug("Skipped block signature: node is syncing", "number", block.Number(), "hash", block.Hash())
+				}
 				return fetcher.ErrSignatureSkipped
 			}
-			if block.NumberU64()%common.MergeSignRange == 0 || !chainConfig.IsTIP2019(block.Number()) {
+			if signSlot {
 				// The state half of the proposed-block gate, shared with the
 				// fetcher's consensus callback: a block whose state this node
 				// cannot open is not voted for, so no signature may go out for
@@ -509,6 +515,9 @@ func (e *Ethereum) canSign(address common.Address) bool {
 	authorised, known := e.signerStatus(address)
 	return known && authorised
 }
+
+// skippedSignatureSyncing counts sign slots skipped because the node was syncing.
+var skippedSignatureSyncing = metrics.NewRegisteredCounter("eth/skipped-signature-syncing", nil)
 
 // signerGateFor reports whether parking is worthwhile for this node: a node that
 // cannot sign would only build entries and report their drops. canSign answers
