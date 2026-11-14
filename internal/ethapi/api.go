@@ -2421,8 +2421,7 @@ func setHead(b Backend, number hexutil.Uint64) error {
 	if header.Number.Uint64() <= uint64(number) {
 		return errors.New("not allowed to rewind to a future block")
 	}
-	b.SetHead(uint64(number))
-	return nil
+	return b.SetHead(uint64(number))
 }
 
 // SetHead rewinds the head of the blockchain to a previous block.
