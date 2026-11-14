@@ -350,18 +350,13 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, cfg X
 	if engine, ok := ethBackend.Engine().(*XDPoS.XDPoS); ok {
 		go func() {
 			started := false
-			ok := false
-			var err error
-			// Skip masternode validation while syncing: IsAuthorisedAddress would
-			// query a snapshot for an unsynced head (failing/noisy and pointlessly
-			// expensive). Staking is (re)evaluated on the first checkpoint after sync.
-			if !ethBackend.Downloader().Synchronising() {
-				ok, err = ethBackend.ValidateMasternode()
-				if err != nil {
-					utils.Fatalf("Can't verify masternode permission: %v", err)
-				}
+			// While syncing the answer is unknown (known is false) and staking stays
+			// off; it is evaluated again at the first checkpoint after the sync.
+			ok, known, err := ethBackend.ValidateMasternode()
+			if err != nil {
+				utils.Fatalf("Can't verify masternode permission: %v", err)
 			}
-			if ok {
+			if ok && known {
 				log.Info("Masternode found. Enabling staking mode...")
 				// Use a reduced number of threads if requested
 				if threads := ctx.Int(utils.MinerThreadsFlag.Name); threads > 0 {
@@ -388,18 +383,16 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, cfg X
 				chain := ethBackend.BlockChain()
 				engine.UpdateParams(chain.CurrentHeader())
 
-				// While syncing, skip masternode validation (IsAuthorisedAddress ->
-				// GetSnapshot on the just-imported head). The signals coalesce, so receiving is all
-				// this loop has to do, and the staking state is left alone: an unknown result must
-				// not be read as "not a masternode".
-				if ethBackend.Downloader().Synchronising() {
-					continue
-				}
-				ok, err = ethBackend.ValidateMasternode()
+				ok, known, err = ethBackend.ValidateMasternode()
 				if err != nil {
 					utils.Fatalf("Can't verify masternode permission: %v", err)
 				}
-
+				// While syncing the answer is unknown. The signals coalesce, so receiving is
+				// all this loop has to do, and the staking state is left alone: an unknown
+				// result must not be read as "not a masternode".
+				if !known {
+					continue
+				}
 				if !ok {
 					if started {
 						log.Info("Only masternode can propose and verify blocks. Cancelling staking on this node...")

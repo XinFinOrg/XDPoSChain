@@ -49,33 +49,114 @@ func TestSignerGateFor(t *testing.T) {
 	}
 }
 
-func TestSignerPredicate(t *testing.T) {
+func TestSignerStatusFor(t *testing.T) {
 	syncing := false
 	checked := 0
-	authorised := func(common.Address) bool {
+	authorised := true
+	status := signerStatusFor(func() bool { return syncing }, func(common.Address) bool {
 		checked++
-		return true
-	}
-	isSigner := signerPredicate(func() bool { return syncing }, authorised)
+		return authorised
+	})
 
 	syncing = true
-	if isSigner(common.Address{}) {
-		t.Fatal("predicate reported a signer during a sync")
+	if ok, known := status(common.Address{}); ok || known {
+		t.Fatalf("status during a sync = (%v, %v), want (false, false)", ok, known)
 	}
 	if checked != 0 {
 		t.Fatalf("authorised check ran %d times during a sync, want 0", checked)
 	}
 
 	syncing = false
-	if !isSigner(common.Address{}) {
-		t.Fatal("predicate reported no signer after the sync")
+	if ok, known := status(common.Address{}); !ok || !known {
+		t.Fatalf("status after the sync = (%v, %v), want (true, true)", ok, known)
 	}
 	if checked != 1 {
 		t.Fatalf("authorised check ran %d times after the sync, want 1", checked)
 	}
 
-	notAuthorised := signerPredicate(func() bool { return false }, func(common.Address) bool { return false })
-	if notAuthorised(common.Address{}) {
-		t.Fatal("predicate reported an unauthorised address as a signer")
+	authorised = false
+	if ok, known := status(common.Address{}); ok || !known {
+		t.Fatalf("status of an unauthorised address = (%v, %v), want (false, true)", ok, known)
+	}
+}
+
+// TestSignerChecksAdmitIgnoresSync pins the #3057 fix: the txpool's admission
+// test answers for the sender, so a syncing node still admits a candidate's
+// special transaction, while this node's own status stays unknown.
+func TestSignerChecksAdmitIgnoresSync(t *testing.T) {
+	candidate := common.HexToAddress("0x01")
+	stranger := common.HexToAddress("0x02")
+	isAuthorised := func(a common.Address) bool { return a == candidate }
+
+	admit, status := signerChecks(func() bool { return true }, isAuthorised)
+
+	if !admit(candidate) {
+		t.Fatal("a syncing node rejected a candidate's special transaction")
+	}
+	if admit(stranger) {
+		t.Fatal("a syncing node admitted a special transaction from a non-candidate")
+	}
+	if ok, known := status(candidate); ok || known {
+		t.Fatalf("own status during a sync = (%v, %v), want (false, false)", ok, known)
+	}
+}
+
+func TestCanSign(t *testing.T) {
+	tests := []struct {
+		name   string
+		status func(common.Address) (bool, bool)
+		want   bool
+	}{
+		{"no XDPoS", nil, false},
+		{"syncing", func(common.Address) (bool, bool) { return false, false }, false},
+		{"not a signer", func(common.Address) (bool, bool) { return false, true }, false},
+		{"signer", func(common.Address) (bool, bool) { return true, true }, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := &Ethereum{signerStatus: tt.status}
+			if got := e.canSign(common.Address{}); got != tt.want {
+				t.Fatalf("canSign() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateMasternode(t *testing.T) {
+	etherbase := common.HexToAddress("0xb8e36187c560bd9c26272c2fcd9a603fe56d5514")
+
+	tests := []struct {
+		name           string
+		status         func(common.Address) (bool, bool)
+		wantAuthorised bool
+		wantKnown      bool
+		wantErr        bool
+	}{
+		{"no XDPoS", nil, false, false, true},
+		{"syncing", func(common.Address) (bool, bool) { return false, false }, false, false, false},
+		{"not a masternode", func(common.Address) (bool, bool) { return false, true }, false, true, false},
+		{"masternode", func(common.Address) (bool, bool) { return true, true }, true, true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var asked common.Address
+			e := &Ethereum{etherbase: etherbase}
+			if tt.status != nil {
+				e.signerStatus = func(a common.Address) (bool, bool) {
+					asked = a
+					return tt.status(a)
+				}
+			}
+			authorised, known, err := e.ValidateMasternode()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if authorised != tt.wantAuthorised || known != tt.wantKnown {
+				t.Fatalf("ValidateMasternode() = (%v, %v), want (%v, %v)", authorised, known, tt.wantAuthorised, tt.wantKnown)
+			}
+			if tt.status != nil && asked != etherbase {
+				t.Fatalf("status asked about %s, want the etherbase %s", asked, etherbase)
+			}
+		})
 	}
 }
