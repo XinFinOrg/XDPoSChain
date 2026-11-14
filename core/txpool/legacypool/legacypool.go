@@ -621,10 +621,6 @@ func (pool *LegacyPool) validateTx(tx *types.Transaction) error {
 
 		Trc21FeeCapacity: pool.trc21FeeCapacity,
 
-		PendingNonce: func(addr common.Address) uint64 {
-			return pool.pendingNonces.get(addr)
-		},
-
 		CurrentNumber: func() *big.Int {
 			header := pool.currentHead.Load()
 			if header == nil {
@@ -943,7 +939,13 @@ func (pool *LegacyPool) promoteTx(addr common.Address, hash common.Hash, tx *typ
 	return true
 }
 
-func (pool *LegacyPool) promoteSpecialTx(addr common.Address, tx *types.Transaction) (bool, error) {
+// promoteSpecialTx inserts a special transaction from a signer straight into the
+// pending list at the account's pending nonce. Like add, it reports whether the
+// transaction replaced an existing one, not merely whether it was inserted: on a
+// plain insertion add's caller must mark the account dirty, so that the reorg
+// promotes the transactions queued behind this nonce right away rather than at
+// the next chain head.
+func (pool *LegacyPool) promoteSpecialTx(addr common.Address, tx *types.Transaction) (replaced bool, err error) {
 	list := pool.pending[addr]
 	newPending := list == nil
 	if newPending {
@@ -1000,7 +1002,7 @@ func (pool *LegacyPool) promoteSpecialTx(addr common.Address, tx *types.Transact
 	pool.queue.bump(addr)
 	pool.pendingNonces.set(addr, tx.Nonce()+1)
 	pool.queueTxEvent(tx)
-	return true, nil
+	return old != nil, nil
 }
 
 // AddRemotes enqueues a batch of transactions into the pool if they are valid.
