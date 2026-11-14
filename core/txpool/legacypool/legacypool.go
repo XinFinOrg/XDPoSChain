@@ -468,8 +468,10 @@ func (pool *LegacyPool) SetGasTip(tip *big.Int) error {
 	return nil
 }
 
-// Nonce returns the next nonce of an account, with all transactions executable
-// by the pool already applied on top.
+// Nonce returns the PENDING nonce of an account: the next nonce with all
+// transactions executable by the pool already applied on top. It implements
+// SubPool.Nonce, which TxPool.PoolNonce aggregates. Note that TxPool.Nonce,
+// despite the same name, returns the on-chain nonce instead.
 func (pool *LegacyPool) Nonce(addr common.Address) uint64 {
 	pool.mu.RLock()
 	defer pool.mu.RUnlock()

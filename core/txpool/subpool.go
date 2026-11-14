@@ -138,8 +138,10 @@ type SubPool interface {
 	// or also for reorged out ones.
 	SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool) event.Subscription
 
-	// Nonce returns the next nonce of an account, with all transactions executable
-	// by the pool already applied on top.
+	// Nonce returns the PENDING nonce of an account: the next nonce with all
+	// transactions executable by the pool already applied on top. TxPool.PoolNonce
+	// aggregates it across subpools. Note that TxPool.Nonce, despite the same
+	// name, returns the on-chain nonce instead.
 	Nonce(addr common.Address) uint64
 
 	// Stats retrieves the current pool stats, namely the number of pending and the
