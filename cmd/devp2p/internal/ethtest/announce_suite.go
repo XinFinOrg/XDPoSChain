@@ -27,6 +27,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/internal/utesting"
+	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
 const announceTimeout = 20 * time.Second
@@ -86,7 +87,7 @@ func (s *Suite) TestOldAnnounce(t *utesting.T) {
 	}
 	// Twice the base timeout, as upstream: absence of propagation is only
 	// meaningful once the node had ample time to forward it
-	if err := expectNoBlockAnnouncement(recvConn, 2*announceTimeout); err != nil {
+	if err := expectNoBlockAnnouncement(recvConn, 2*announceTimeout, old.Hash()); err != nil {
 		t.Fatalf("old block was propagated: %v", err)
 	}
 }
@@ -207,13 +208,13 @@ func expectDisconnectWithin(conn *Conn, window time.Duration) error {
 	}
 }
 
-// Frames are classified by message code because the XDC BFT chatter shares the
-// opaque announcement payload shape; an early teardown fails the wait since it
-// could hide a propagation that was about to arrive
-func expectNoBlockAnnouncement(conn *Conn, window time.Duration) error {
+// Unrelated mined blocks arrive throughout the window, so only the announced
+// hash counts as propagation; an early teardown fails the wait since it could
+// hide a propagation that was about to arrive
+func expectNoBlockAnnouncement(conn *Conn, window time.Duration, watched common.Hash) error {
 	deadline := time.Now().Add(window)
 	for {
-		code, _, err := conn.Read()
+		code, data, err := conn.Read()
 		if err != nil {
 			var netErr net.Error
 			if errors.As(err, &netErr) && netErr.Timeout() {
@@ -226,8 +227,24 @@ func expectNoBlockAnnouncement(conn *Conn, window time.Duration) error {
 		}
 		if isXdc166MsgCode(code) {
 			switch code - protoOffset(ethProto) {
-			case ethproto.NewBlockMsg, ethproto.NewBlockHashesMsg:
-				return fmt.Errorf("received announcement frame with code %d", code)
+			case ethproto.NewBlockMsg:
+				var packet ethproto.NewBlockPacket
+				if rlp.DecodeBytes(data, &packet) != nil || packet.Block == nil {
+					return fmt.Errorf("received undecodable announcement frame with code %d", code)
+				}
+				if packet.Block.Hash() == watched {
+					return fmt.Errorf("announced block %v was propagated", watched)
+				}
+			case ethproto.NewBlockHashesMsg:
+				var hashes ethproto.NewBlockHashesPacket
+				if rlp.DecodeBytes(data, &hashes) != nil {
+					return fmt.Errorf("received undecodable announcement frame with code %d", code)
+				}
+				for _, h := range hashes {
+					if h.Hash == watched {
+						return fmt.Errorf("announced block %v was propagated", watched)
+					}
+				}
 			}
 		}
 		switch code {
