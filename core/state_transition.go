@@ -468,7 +468,7 @@ func (st *stateTransition) preCheck(rules params.Rules) error {
 			}
 			// This will panic if baseFee is nil, but basefee presence is verified
 			// as part of header validation.
-			if !types.IsSpecialTx(msg.To) && msg.GasFeeCap.Cmp(st.evm.Context.BaseFee) < 0 {
+			if !types.IsSpecialTx(st.evm.ChainConfig(), st.evm.Context.BlockNumber, msg.To) && msg.GasFeeCap.Cmp(st.evm.Context.BaseFee) < 0 {
 				return fmt.Errorf("%w: address %v, maxFeePerGas: %s baseFee: %s", ErrFeeCapTooLow,
 					msg.From.Hex(), msg.GasFeeCap, st.evm.Context.BaseFee)
 			}
@@ -626,7 +626,7 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 	st.returnGas()
 
 	// GasPrice of special tx is always 0, so we can skip AddBalance
-	if !types.IsSpecialTx(msg.To) {
+	if !types.IsSpecialTx(st.evm.ChainConfig(), st.evm.Context.BlockNumber, msg.To) {
 		cfg := st.evm.ChainConfig()
 		if cfg != nil && cfg.TIPTRC21FeeBlock != nil && st.evm.Context.BlockNumber.Cmp(cfg.TIPTRC21FeeBlock) > 0 {
 			if (owner != common.Address{}) {

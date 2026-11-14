@@ -2022,8 +2022,8 @@ func (s *TransactionAPI) sign(addr common.Address, tx *types.Transaction) (*type
 
 // SubmitTransaction is a helper function that submits tx to txPool and logs a message.
 func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (common.Hash, error) {
-	if tx.IsSpecialTransaction() {
-		return common.Hash{}, errors.New("don't allow transaction sent to BlockSigners & RandomizeSMC smart contract via API")
+	if tx.IsSpecialTransaction(b.ChainConfig(), new(big.Int).Add(b.CurrentBlock().Number, common.Big1)) {
+		return common.Hash{}, errors.New("don't allow special transactions (to BlockSigners, or to RandomizeSMC before TIPRandomizeDisable) via API")
 	}
 
 	// If the transaction fee cap is already specified, ensure the

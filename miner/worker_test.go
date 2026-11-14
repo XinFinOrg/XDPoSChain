@@ -444,7 +444,7 @@ func TestWorkerPacksSubLegacyBaseTxAfterAmsterdam(t *testing.T) {
 	}
 	txs, specialTxs := newTransactionsByPriceAndNonce(worker.current.signer, map[common.Address][]*txpool.LazyTransaction{
 		from: {lazy(transfer), lazy(call)},
-	}, nil, header.BaseFee)
+	}, nil, header.BaseFee, worker.chainConfig, header.Number)
 
 	worker.current.commitTransactions(new(event.TypeMux), map[common.Address]*big.Int{}, txs, specialTxs, chain, &event.Feed{})
 	if worker.current.tcount != 2 {

@@ -304,7 +304,11 @@ func (l *list) Contains(nonce uint64) bool {
 //
 // If the new transaction is accepted into the list, the lists' cost and gas
 // thresholds are also potentially updated.
-func (l *list) Add(tx *types.Transaction, priceBump uint64) (bool, *types.Transaction) {
+//
+// isSpecial classifies a transaction for the replacement rules below. The list
+// has no chain context, and whether a tx is special depends on the block it
+// lands in (see types.IsSpecialTx), so the caller supplies it.
+func (l *list) Add(tx *types.Transaction, priceBump uint64, isSpecial func(*types.Transaction) bool) (bool, *types.Transaction) {
 	base := new(uint256.Int).Set(l.totalcost)
 	// If there's an older better transaction, abort
 	old := l.txs.Get(tx.Nonce())
@@ -324,9 +328,9 @@ func (l *list) Add(tx *types.Transaction, priceBump uint64) (bool, *types.Transa
 		//                                 both fee cap and tip by at least priceBump%.
 		//
 		// In every accepted case we fall through to the cost accounting below.
-		if tx.IsSpecialTransaction() {
+		if isSpecial(tx) {
 			// new special: always wins its nonce, no further checks.
-		} else if old.IsSpecialTransaction() {
+		} else if isSpecial(old) {
 			// old special, new regular: protect the pending special tx.
 			return false, nil
 		} else {

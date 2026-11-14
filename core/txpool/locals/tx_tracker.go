@@ -162,9 +162,9 @@ func (tracker *TxTracker) TrackAll(txs []*types.Transaction) {
 				log.Debug("Ignoring tracked local transaction the pool superseded", "nonce", tx.Nonce(),
 					"kept", replaced.Hash(), "ignored", tx.Hash())
 				continue
-			case tx.IsSpecialTransaction():
+			case tracker.pool.IsSpecialTransaction(tx):
 				// A special transaction always claims its nonce.
-			case replaced.IsSpecialTransaction():
+			case tracker.pool.IsSpecialTransaction(replaced):
 				// A regular transaction must not evict a pending special one,
 				// however much dearer it is.
 				log.Debug("Ignoring tracked local transaction that would evict a special one", "nonce", tx.Nonce(),
@@ -227,7 +227,7 @@ func (tracker *TxTracker) recheck(journalCheck bool) []*types.Transaction {
 			// reinstates them, and the pool does not bring back what it swept.
 			// They stay tracked, so recheck picks them up again on its own.
 			// Special transactions are exempt, exactly as during admission.
-			if !tx.IsSpecialTransaction() && tx.GasPriceIntCmp(floor) < 0 {
+			if !tracker.pool.IsSpecialTransaction(tx) && tx.GasPriceIntCmp(floor) < 0 {
 				numBelowFloor++
 				continue
 			}

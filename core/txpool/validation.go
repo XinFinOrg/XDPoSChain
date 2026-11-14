@@ -130,8 +130,9 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	}
 	// Special transactions are exempt from the gas price checks below, but the
 	// execution side still charges intrinsic and floor gas unless it routes them
-	// to ApplySignTransaction
-	if tx.IsSpecialTransaction() {
+	// to ApplySignTransaction. Whether a tx is special depends on the block it
+	// lands in; the earliest is the one after head.
+	if tx.IsSpecialTransaction(opts.Config, pendingBlockNumber(head.Number)) {
 		if opts.NotSigner(from) {
 			return fmt.Errorf("%w: %s", ErrSpecialTxNotFromSigner, from.Hex())
 		}
@@ -323,7 +324,7 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	}
 
 	// Validate gas price
-	if !tx.IsSpecialTransaction() {
+	if !tx.IsSpecialTransaction(opts.Config, pendingNumber) {
 		minGasPrice := params.GetMinGasPrice(pendingNumber, opts.Config)
 		if tx.GasPriceIntCmp(minGasPrice) < 0 {
 			return ErrUnderMinGasPrice

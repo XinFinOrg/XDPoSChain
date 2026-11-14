@@ -1647,6 +1647,7 @@ func activeForksLegacyMapSort(c *ChainConfig, block *big.Int) []string {
 		"TIPUpgradePenalty":      c.IsTIPUpgradePenalty(block),
 		"TIPEpochHalving":        c.IsTIPEpochHalving(block),
 		"TIPProportionalReward":  c.IsTIPProportionalReward(block),
+		"TIPRandomizeDisable":    c.IsTIPRandomizeDisable(block),
 		"Prague":                 c.IsPrague(block),
 		"Osaka":                  c.IsOsaka(block),
 		"Amsterdam":              c.IsAmsterdam(block),

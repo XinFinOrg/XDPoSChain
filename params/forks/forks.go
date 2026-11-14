@@ -66,6 +66,7 @@ const (
 	TIPUpgradePenalty
 	TIPEpochHalving
 	TIPProportionalReward
+	TIPRandomizeDisable
 	Prague
 	Osaka
 	Amsterdam
@@ -123,6 +124,7 @@ var forkToString = map[Fork]string{
 	TIPUpgradePenalty:      "TIPUpgradePenalty",
 	TIPEpochHalving:        "TIPEpochHalving",
 	TIPProportionalReward:  "TIPProportionalReward",
+	TIPRandomizeDisable:    "TIPRandomizeDisable",
 	Prague:                 "Prague",
 	Osaka:                  "Osaka",
 	Amsterdam:              "Amsterdam",

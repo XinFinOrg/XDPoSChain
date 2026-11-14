@@ -571,3 +571,56 @@ func TestCreateTransactionSignUsesPendingNonce(t *testing.T) {
 		t.Fatalf("newly added sign tx nonce mismatch: got %d, want 1", got)
 	}
 }
+
+// TestCreateTransactionSignStopsRandomizeBeforeTIPRandomizeDisable checks that a
+// node stops creating randomize txs one epoch before TIPRandomizeDisable, so none
+// can be left to land after the fork as an invalid zero-price regular tx. The
+// sign tx is still created.
+func TestCreateTransactionSignStopsRandomizeBeforeTIPRandomizeDisable(t *testing.T) {
+	// Block 810 of a 900-block epoch is in the secret window, so a pass there
+	// normally creates a sign tx and a setSecret tx.
+	number := int64(common.EpocBlockSecret + 10)
+
+	for _, tt := range []struct {
+		name string
+		fork *big.Int
+		want int
+	}{
+		{"fork unscheduled", nil, 2},
+		{"fork more than an epoch away", big.NewInt(number + 900 + 1), 2},
+		{"fork within an epoch", big.NewInt(number + 900), 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ks := keystore.NewKeyStore(t.TempDir(), keystore.LightScryptN, keystore.LightScryptP)
+			account, err := ks.ImportECDSA(acc1Key, "")
+			if err != nil {
+				t.Fatalf("failed to import signer account: %v", err)
+			}
+			if err := ks.Unlock(account, ""); err != nil {
+				t.Fatalf("failed to unlock signer account: %v", err)
+			}
+			manager := accounts.NewManager(nil, ks)
+			defer manager.Close()
+
+			subpool := &nonceGuardSubPool{}
+			pool, err := txpool.New(0, createTxSignTestChain{}, []txpool.SubPool{subpool})
+			if err != nil {
+				t.Fatalf("failed to create txpool: %v", err)
+			}
+			defer pool.Close()
+
+			chainConfig := params.TestXDPoSMockChainConfig.Clone()
+			chainConfig.TIPRandomizeDisableBlock = tt.fork
+			block := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(number)})
+			if err := CreateTransactionSign(chainConfig, pool, manager, block, rawdb.NewMemoryDatabase(), account.Address); err != nil {
+				t.Fatalf("CreateTransactionSign returned error: %v", err)
+			}
+			if len(subpool.added) != tt.want {
+				t.Fatalf("pool received %d txs, want %d", len(subpool.added), tt.want)
+			}
+			if to := subpool.added[0].To(); to == nil || *to != common.BlockSignersBinary {
+				t.Fatalf("first tx goes to %v, want the BlockSigners contract", to)
+			}
+		})
+	}
+}

@@ -23,6 +23,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/holiman/uint256"
 )
 
@@ -123,7 +124,11 @@ type transactionsByPriceAndNonce struct {
 //
 // Note, the input map is reowned so the caller should not interact any more with
 // if after providing it to the constructor.
-func newTransactionsByPriceAndNonce(signer types.Signer, txs map[common.Address][]*txpool.LazyTransaction, payersSwap map[common.Address]*big.Int, baseFee *big.Int) (*transactionsByPriceAndNonce, types.Transactions) {
+//
+// Special transactions are split off for the miner to commit first; config and
+// number are the chain config and the number of the block being built, which
+// decide what is special (see types.IsSpecialTx).
+func newTransactionsByPriceAndNonce(signer types.Signer, txs map[common.Address][]*txpool.LazyTransaction, payersSwap map[common.Address]*big.Int, baseFee *big.Int, config *params.ChainConfig, number *big.Int) (*transactionsByPriceAndNonce, types.Transactions) {
 	// Convert the basefee from header format to uint256 format
 	var baseFeeUint *uint256.Int
 	if baseFee != nil {
@@ -138,7 +143,7 @@ func newTransactionsByPriceAndNonce(signer types.Signer, txs map[common.Address]
 	for from, accTxs := range txs {
 		var normalTxs []*txpool.LazyTransaction
 		for _, lazyTx := range accTxs {
-			if tx := lazyTx.Resolve(); tx.IsSpecialTransaction() {
+			if tx := lazyTx.Resolve(); tx.IsSpecialTransaction(config, number) {
 				specialTxs = append(specialTxs, tx)
 			} else {
 				normalTxs = append(normalTxs, lazyTx)
