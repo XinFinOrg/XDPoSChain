@@ -32,6 +32,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/internal/utesting"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
@@ -308,12 +309,10 @@ func (s *Suite) TestLargeTxRequest_Xdc166(t *utesting.T) {
 		hashMap = make(map[common.Hash]common.Hash, numTxs)
 		txs = make(types.Transactions, 0, numTxs)
 		signer := types.LatestSignerForChainID(s.chain.config.ChainID)
+		floor := s.chainGasPriceFloor()
 		for i := 0; i < numTxs; i++ {
 			salt := fmt.Sprintf("matrix-salt-%d-%d", time.Now().UnixNano(), i)
-			// The devnet hydrated floor is DefaultMinGasPrice x 2500 (gas2500x
-			// defaults to genesis when the spec omits the fork); a cheaper batch
-			// is dropped silently
-			unsigned := types.NewTransaction(nonceStart+uint64(i), invalidTxRecipient, big.NewInt(1), 100000, big.NewInt(common.DefaultMinGasPrice*2500), []byte(salt))
+			unsigned := types.NewTransaction(nonceStart+uint64(i), invalidTxRecipient, big.NewInt(1), 100000, floor, []byte(salt))
 			signed, err := types.SignTx(unsigned, signer, key)
 			if err != nil {
 				t.Fatalf("failed to sign matrix tx %d: %v", i, err)
@@ -324,7 +323,7 @@ func (s *Suite) TestLargeTxRequest_Xdc166(t *utesting.T) {
 		_ = sender
 	} else {
 		var err error
-		hashMap, txs, err = s.generateTxs(numTxs)
+		hashMap, txs, err = s.generateTxsFrom(1, numTxs)
 		if err != nil {
 			t.Fatalf("failed to generate transactions: %v", err)
 		}
@@ -384,7 +383,7 @@ func (s *Suite) TestLargeTxRequest_Xdc166(t *utesting.T) {
 		}
 	} else {
 		s.sendMultipleSuccessfulTxs(t, sendConn, txs)
-		from, _ := s.chain.GetSender(0)
+		from, _ := s.chain.GetSender(1)
 		s.chain.IncNonce(from, uint64(len(txs)))
 	}
 
@@ -423,88 +422,163 @@ func (s *Suite) TestLargeTxRequest_Xdc166(t *utesting.T) {
 	t.Fatalf("did not receive PooledTransactions response within %d read(s)", maxXdc166ResponseReads)
 }
 
-func (s *Suite) sendMultipleSuccessfulTxs(t *utesting.T, sendConn *Conn, txs types.Transactions) {
-	t.Logf("announcing %d txs", len(txs))
-	hashMap := make(map[common.Hash]*types.Transaction, len(txs))
-	hashes := make([]common.Hash, 0, len(txs))
-	for _, tx := range txs {
-		hashMap[tx.Hash()] = tx
-		hashes = append(hashes, tx.Hash())
+// A single message cannot advance the pending nonce, so each frame stays
+// within the LimitThresholdNonceInQueue admission window
+const txDeliveryWindow = common.LimitThresholdNonceInQueue + 1
+
+func txDeliveryFrames(txs types.Transactions) ([]types.Transactions, error) {
+	for i := 1; i < len(txs); i++ {
+		if txs[i].Nonce() != txs[i-1].Nonce()+1 {
+			return nil, fmt.Errorf("tx %d breaks nonce continuity: %d after %d", i, txs[i].Nonce(), txs[i-1].Nonce())
+		}
 	}
-	// The receiver must be connected before the announcement: the validators
-	// mine every 2 seconds, so a late receiver misses the broadcast and the
-	// batch is mined away under it
+	frames := make([]types.Transactions, 0, (len(txs)+txDeliveryWindow-1)/txDeliveryWindow)
+	for start := 0; start < len(txs); start += txDeliveryWindow {
+		frames = append(frames, txs[start:min(start+txDeliveryWindow, len(txs))])
+	}
+	return frames, nil
+}
+
+func writeTxFrames(conn *Conn, frames []types.Transactions) error {
+	want := 0
+	for _, frame := range frames {
+		want += len(frame)
+	}
+	sent := 0
+	for _, frame := range frames {
+		if err := conn.Write(ethProto, ethproto.TransactionMsg, frame); err != nil {
+			return fmt.Errorf("failed to send txs %d-%d: %w", sent, sent+len(frame), err)
+		}
+		sent += len(frame)
+	}
+	if sent != want {
+		return fmt.Errorf("sent %d of %d txs", sent, want)
+	}
+	return nil
+}
+
+func sendTxFrames(conn *Conn, txs types.Transactions) error {
+	frames, err := txDeliveryFrames(txs)
+	if err != nil {
+		return err
+	}
+	return writeTxFrames(conn, frames)
+}
+
+const (
+	maxTxDeliveryAttempts = 3
+	txDeliveryReadWindows = 3
+)
+
+// Whole frames are retried because a frame's nonces must stay contiguous
+func txFramesToRetry(frames []types.Transactions, seen map[common.Hash]struct{}) []types.Transactions {
+	var retry []types.Transactions
+	for _, frame := range frames {
+		for _, tx := range frame {
+			if _, ok := seen[tx.Hash()]; !ok {
+				retry = append(retry, frame)
+				break
+			}
+		}
+	}
+	return retry
+}
+
+// Pool promotion runs after Add returns, so a frame can be rejected before the
+// previous one advances the pending nonce
+func deliverTxFrames(txs types.Transactions, writeFrames func([]types.Transactions) error, readAnnouncement func() ([]common.Hash, error)) error {
+	frames, err := txDeliveryFrames(txs)
+	if err != nil {
+		return err
+	}
+	seen := make(map[common.Hash]struct{}, len(txs))
+	recvHashes := make([]common.Hash, 0, len(txs))
+	for attempt := range maxTxDeliveryAttempts {
+		toSend := frames
+		if attempt > 0 {
+			toSend = txFramesToRetry(frames, seen)
+		}
+		if len(toSend) == 0 {
+			break
+		}
+		if err := writeFrames(toSend); err != nil {
+			return err
+		}
+		for range txDeliveryReadWindows {
+			hashes, err := readAnnouncement()
+			if err != nil {
+				return err
+			}
+			for _, hash := range hashes {
+				if _, ok := seen[hash]; !ok {
+					seen[hash] = struct{}{}
+					recvHashes = append(recvHashes, hash)
+				}
+			}
+			if checkTxCoverage(recvHashes, txs) == nil {
+				return nil
+			}
+		}
+	}
+	return checkTxCoverage(recvHashes, txs)
+}
+
+func checkTxCoverage(recv []common.Hash, txs types.Transactions) error {
+	present, missing := compareReceivedTxs(recv, txs)
+	if len(present) != len(txs) {
+		return fmt.Errorf("received %d of %d txs, first missing %v", len(present), len(txs), missing[0].Hash())
+	}
+	return nil
+}
+
+func (s *Suite) sendMultipleSuccessfulTxs(t *utesting.T, sendConn *Conn, txs types.Transactions) {
+	t.Logf("sending %d txs", len(txs))
+	// The receiver must be connected before the batch: validators mine every
+	// 2 seconds and mine it away before a late receiver sees the broadcast
 	recvConn, ok := s.setupConnectionXdc166(t)
 	if !ok {
 		return
 	}
 	defer recvConn.Close()
-	if err := sendConn.Write(ethProto, ethproto.NewPooledTransactionHashesMsg, ethproto.NewPooledTransactionHashesPacket(hashes)); err != nil {
-		t.Fatalf("failed to write pooled tx announcement: %v", err)
+	err := deliverTxFrames(txs,
+		func(frames []types.Transactions) error {
+			return writeTxFrames(sendConn, frames)
+		},
+		func() ([]common.Hash, error) {
+			return readTxAnnouncement(recvConn, announceTimeout)
+		},
+	)
+	if err != nil {
+		t.Fatalf("failed to deliver transactions: %v", err)
 	}
-	deadline := time.Now().Add(announceTimeout)
-	for time.Now().Before(deadline) {
-		code, data, err := sendConn.Read()
-		if err != nil {
-			var netErr net.Error
-			if errors.As(err, &netErr) && netErr.Timeout() {
-				continue
-			}
-			t.Fatalf("failed to read pooled tx request: %v", err)
-		}
-		if !isXdc166MsgCode(code) || code-protoOffset(ethProto) != ethproto.GetPooledTransactionsMsg {
-			continue
-		}
-		var req getPooledTransactionsPacket166
-		if err := rlp.DecodeBytes(data, &req); err != nil {
-			t.Fatalf("failed to decode pooled tx request: %v", err)
-		}
-		serve := make(types.Transactions, 0, len(req.Hashes))
-		for _, hash := range req.Hashes {
-			if tx, ok := hashMap[hash]; ok {
-				serve = append(serve, tx)
-			}
-		}
-		if err := sendConn.Write(ethProto, ethproto.PooledTransactionsMsg, &pooledTransactionsPacket166{
-			RequestId: req.RequestId,
-			Txs:       serve,
-		}); err != nil {
-			t.Fatalf("failed to write pooled tx bodies: %v", err)
-		}
-		break
-	}
-	recvHashes := make([]common.Hash, 0)
-	for i := 0; i < 3; i++ {
-		announced, err := readTxAnnouncement(recvConn, announceTimeout)
-		if err != nil {
-			t.Fatalf("failed to read tx announcement: %v", err)
-		}
-		recvHashes = append(recvHashes, announced...)
-		_, missing := compareReceivedTxs(recvHashes, txs)
-		if len(missing) == 0 {
-			t.Logf("successfully received all %d txs", len(txs))
-			return
-		}
-	}
-	_, missing := compareReceivedTxs(recvHashes, txs)
-	for _, tx := range missing {
-		t.Logf("missing tx: %v", tx.Hash())
-	}
-	t.Fatalf("missing %d txs", len(missing))
+	t.Logf("successfully received all %d txs", len(txs))
+}
+
+func (s *Suite) chainGasPriceFloor() *big.Int {
+	pending := new(big.Int).Add(s.chain.Head().Number(), common.Big1)
+	return params.GetMinGasPrice(pending, s.chain.config)
 }
 
 func (s *Suite) generateTxs(numTxs int) (map[common.Hash]common.Hash, types.Transactions, error) {
+	return s.generateTxsFrom(0, numTxs)
+}
+
+func (s *Suite) generateTxsFrom(senderIdx, numTxs int) (map[common.Hash]common.Hash, types.Transactions, error) {
 	if len(s.chain.senders) == 0 {
 		return nil, nil, fmt.Errorf("fixture has no sender accounts")
 	}
-	from, nonce := s.chain.GetSender(0)
+	from, nonce := s.chain.GetSender(senderIdx)
+	floor := s.chainGasPriceFloor()
 	hashMap := make(map[common.Hash]common.Hash, numTxs)
 	txs := make(types.Transactions, 0, numTxs)
 	for i := 0; i < numTxs; i++ {
-		unsigned := types.NewTransaction(nonce+uint64(i), invalidTxRecipient, big.NewInt(1), 21000, big.NewInt(1), nil)
+		unsigned := types.NewTransaction(nonce+uint64(i), invalidTxRecipient, big.NewInt(1), 21000, floor, nil)
 		signed, err := s.chain.SignTx(from, unsigned)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to sign tx %d: %w", i, err)
+		}
+		if signed.GasPriceIntCmp(floor) < 0 {
+			return nil, nil, fmt.Errorf("tx %d priced below the chain floor %v", i, floor)
 		}
 		hashMap[signed.Hash()] = signed.Hash()
 		txs = append(txs, signed)
@@ -557,6 +631,13 @@ func readTxAnnouncement(conn *Conn, window time.Duration) ([]common.Hash, error)
 				var announced []common.Hash
 				if rlp.DecodeBytes(data, &announced) == nil {
 					hashes = append(hashes, announced...)
+				}
+			case ethproto.NewBlockMsg:
+				var packet ethproto.NewBlockPacket
+				if rlp.DecodeBytes(data, &packet) == nil && packet.Block != nil {
+					for _, tx := range packet.Block.Transactions() {
+						hashes = append(hashes, tx.Hash())
+					}
 				}
 			}
 		}
