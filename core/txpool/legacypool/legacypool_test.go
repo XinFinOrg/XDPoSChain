@@ -1662,6 +1662,64 @@ func TestSpecialTxReplacementThroughPool(t *testing.T) {
 	})
 }
 
+// TestSpecialTxReplacesHeadOfStuckBacklog models the sign-tx reset of #3056: a
+// signer's special txs at nonces 0..3 are pending but never mined, and the next
+// sign tx, created at the on-chain nonce 0, replaces the head of that backlog.
+// The tail stays, and neither the pending count nor the pending nonce grows.
+func TestSpecialTxReplacesHeadOfStuckBacklog(t *testing.T) {
+	t.Parallel()
+
+	pool, _ := setupPool()
+	defer pool.Close()
+	pool.SetSigner(func(common.Address) bool { return true })
+
+	key, _ := crypto.GenerateKey()
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	testAddBalance(pool, addr, big.NewInt(1_000_000_000_000_000))
+
+	// Sign txs carry a zero gas price; the payload only makes the hashes differ.
+	mkSpecial := func(nonce uint64, payload byte) *types.Transaction {
+		tx, err := types.SignTx(types.NewTransaction(nonce, common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), []byte{payload}), types.HomesteadSigner{}, key)
+		if err != nil {
+			t.Fatalf("failed to sign special tx: %v", err)
+		}
+		return tx
+	}
+	var backlog []*types.Transaction
+	for nonce := uint64(0); nonce < 4; nonce++ {
+		tx := mkSpecial(nonce, 0x01)
+		if err := pool.addRemoteSync(tx); err != nil {
+			t.Fatalf("failed to add backlog tx %d: %v", nonce, err)
+		}
+		backlog = append(backlog, tx)
+	}
+	if got := pool.Nonce(addr); got != 4 {
+		t.Fatalf("pending nonce with the backlog = %d, want 4", got)
+	}
+
+	fresh := mkSpecial(0, 0x02)
+	if err := pool.addRemoteSync(fresh); err != nil {
+		t.Fatalf("fresh sign tx at the on-chain nonce was rejected: %v", err)
+	}
+	if pool.all.Get(fresh.Hash()) == nil {
+		t.Fatal("fresh sign tx is not in the pool")
+	}
+	if pool.all.Get(backlog[0].Hash()) != nil {
+		t.Fatal("stuck sign tx at the on-chain nonce was not replaced")
+	}
+	for _, tx := range backlog[1:] {
+		if pool.all.Get(tx.Hash()) == nil {
+			t.Fatalf("backlog tx at nonce %d was dropped, want it kept", tx.Nonce())
+		}
+	}
+	if pending, queued := pool.Stats(); pending != 4 || queued != 0 {
+		t.Fatalf("pool stats = (%d pending, %d queued), want (4, 0)", pending, queued)
+	}
+	if got := pool.Nonce(addr); got != 4 {
+		t.Fatalf("pending nonce after the replacement = %d, want 4", got)
+	}
+}
+
 // TestPromoteSpecialTxOverflowReturnsErrorWithoutMutation tests promote special tx overflow returns error without mutation.
 func TestPromoteSpecialTxOverflowReturnsErrorWithoutMutation(t *testing.T) {
 	pool, key := setupPool()
