@@ -34,7 +34,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.30
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.29
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.64.1
-	github.com/btcsuite/btcd/btcec/v2 v2.2.0
 	github.com/cloudflare/cloudflare-go v0.117.0
 	github.com/consensys/gnark-crypto v0.18.1
 	github.com/deckarep/golang-set/v2 v2.7.0
