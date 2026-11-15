@@ -556,3 +556,46 @@ func TestGetBlockHeadersDataEncodeDecode(t *testing.T) {
 		}
 	}
 }
+
+func TestHashOrNumberDecodeRLP(t *testing.T) {
+	var hash common.Hash
+	for i := range hash {
+		hash[i] = byte(i)
+	}
+	number, err := rlp.EncodeToBytes(uint64(314))
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin, err := rlp.EncodeToBytes(hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid, err := rlp.EncodeToBytes([]byte("123456789"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name    string
+		input   []byte
+		initial HashOrNumber
+		want    HashOrNumber
+		wantErr bool
+	}{
+		{"number clears stale hash", number, HashOrNumber{Hash: hash, Number: 7}, HashOrNumber{Number: 314}, false},
+		{"hash clears stale number", origin, HashOrNumber{Number: 7}, HashOrNumber{Hash: hash}, false},
+		{"invalid size", invalid, HashOrNumber{}, HashOrNumber{}, true},
+		{"empty input", nil, HashOrNumber{}, HashOrNumber{}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hn := tt.initial
+			err := rlp.DecodeBytes(tt.input, &hn)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("error mismatch: have %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && hn != tt.want {
+				t.Fatalf("decoded origin mismatch: have %+v, want %+v", hn, tt.want)
+			}
+		})
+	}
+}
