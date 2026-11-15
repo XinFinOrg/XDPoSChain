@@ -89,8 +89,8 @@ func newHeadTestEnv(t *testing.T, n int) (*core.BlockChain, *txpool.TxPool) {
 // TestHeadEventDeliveredAfterNew verifies that the pool observes the head moved
 // by InsertChain right after New. Before the subscription moved into New, the
 // loop subscribed asynchronously and could miss the head event, leaving the
-// pool's pending nonce at genesis and rejecting a fresh transaction as
-// ErrNonceTooHigh.
+// pool's pending nonce at genesis, so a fresh transaction would never become
+// pending.
 func TestHeadEventDeliveredAfterNew(t *testing.T) {
 	chain, pool := newHeadTestEnv(t, 10)
 	defer chain.Stop()
@@ -115,8 +115,8 @@ func TestHeadEventDeliveredAfterNew(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	// A transaction at the current head nonce must be accepted; a pool that
-	// missed the head event would reject it as ErrNonceTooHigh.
+	// A transaction at the current head nonce must be accepted and pending; a
+	// pool that missed the head event would only queue it behind a nonce gap.
 	gasPrice := big.NewInt(params.InitialBaseFee)
 	if head.BaseFee != nil {
 		gasPrice = new(big.Int).Set(head.BaseFee)

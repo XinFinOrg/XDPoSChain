@@ -197,8 +197,6 @@ type ValidationOptionsWithState struct {
 
 	Trc21FeeCapacity map[common.Address]*big.Int
 
-	PendingNonce func(addr common.Address) uint64
-
 	CurrentNumber func() *big.Int
 }
 
@@ -231,9 +229,11 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	if next > tx.Nonce() {
 		return fmt.Errorf("%w: next nonce %v, tx nonce %v", core.ErrNonceTooLow, next, tx.Nonce())
 	}
-	if opts.PendingNonce(from)+common.LimitThresholdNonceInQueue < tx.Nonce() {
-		return core.ErrNonceTooHigh
-	}
+	// A future nonce is not rejected here: like upstream, the pool queues it and
+	// AccountQueue / GlobalQueue bound the queue. Rejecting it would make an
+	// out-of-order delivery permanent, since the tx fetcher fetches announced
+	// hashes in random order and never offers a rejected hash again (#3056).
+	//
 	// Ensure the transaction doesn't produce a nonce gap in pools that do not
 	// support arbitrary orderings
 	if opts.FirstNonceGap != nil {
