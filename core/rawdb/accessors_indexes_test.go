@@ -109,3 +109,33 @@ func TestLookupStorage(t *testing.T) {
 		})
 	}
 }
+
+// TestWriteMissingTxLookupEntriesByBlock pins what a re-delivered block gets:
+// every transaction without a lookup is written at the block's height, while an
+// entry already pointing at another height is left alone.
+func TestWriteMissingTxLookupEntriesByBlock(t *testing.T) {
+	db := NewMemoryDatabase()
+	defer db.Close()
+
+	shared := types.NewTransaction(0, common.Address{0xaa}, big.NewInt(0), 21000, big.NewInt(1), nil)
+	missing := types.NewTransaction(1, common.Address{0xbb}, big.NewInt(0), 21000, big.NewInt(1), nil)
+	block := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(2)}).WithBody(types.Body{
+		Transactions: []*types.Transaction{shared, missing},
+	})
+	if err := db.Put(txLookupKey(shared.Hash()), big.NewInt(1).Bytes()); err != nil {
+		t.Fatalf("failed to seed the lookup: %v", err)
+	}
+	WriteMissingTxLookupEntriesByBlock(db, db, block)
+
+	if entry := ReadTxLookupEntry(db, shared.Hash()); entry == nil || *entry != 1 {
+		t.Fatalf("existing entry overwritten: have %v want 1", entry)
+	}
+	if entry := ReadTxLookupEntry(db, missing.Hash()); entry == nil || *entry != 2 {
+		t.Fatalf("missing entry not written: have %v want 2", entry)
+	}
+	// A second delivery of the same block writes nothing.
+	WriteMissingTxLookupEntriesByBlock(db, db, block)
+	if entry := ReadTxLookupEntry(db, shared.Hash()); entry == nil || *entry != 1 {
+		t.Fatalf("existing entry changed on the second run: %v", entry)
+	}
+}

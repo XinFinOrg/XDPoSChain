@@ -209,6 +209,67 @@ func DeleteDanglingHashes(db ethdb.KeyValueStore, head uint64, contentFn func(et
 	return batch.Write()
 }
 
+// DeleteCanonicalAbove removes every canonical number->hash assignment above
+// head, together with the transaction lookups of the blocks they name. The
+// block content stays in place: the range is expected to be re-imported.
+//
+// The walk starts at head+1, which is what bounds it; the heights are read back
+// from the keys because the segment may not be contiguous.
+//
+// A head rewind commits its markers before the blocks they orphan are deleted,
+// and the startup repair lowers the markers on its own, so a crash in either
+// window leaves these assignments behind and RPC answers by number from them.
+func DeleteCanonicalAbove(db ethdb.Database, head uint64) (uint64, error) {
+	// canonical-hash key = headerPrefix + num (8 bytes) + headerHashSuffix
+	hashKeyLen := len(headerPrefix) + 8 + len(headerHashSuffix)
+
+	// Guard against uint64 overflow when head == max.
+	start := head + 1
+	if start == 0 {
+		return 0, nil
+	}
+	batch := db.NewBatch()
+	it := db.NewIterator(headerPrefix, encodeBlockNumber(start))
+	defer it.Release()
+
+	var removed uint64
+	for it.Next() {
+		key := it.Key()
+		// Skip header and total-difficulty keys, which are longer.
+		if len(key) != hashKeyLen {
+			continue
+		}
+		number := binary.BigEndian.Uint64(key[len(headerPrefix) : len(headerPrefix)+8])
+		hash := common.BytesToHash(it.Value())
+		if body := ReadBody(db, hash, number); body != nil {
+			for _, tx := range body.Transactions {
+				// An interrupted reorg promotes a chain that re-includes the
+				// transactions of the blocks it abandons, so this one may be
+				// indexed in a canonical block below the head: keep it there.
+				// Only an entry read back above the head is stale: a failure
+				// to read it must not turn into a missing entry.
+				entry := ReadTxLookupEntry(db, tx.Hash())
+				if entry == nil || *entry <= head {
+					continue
+				}
+				DeleteTxLookupEntry(batch, tx.Hash())
+			}
+		}
+		DeleteCanonicalHash(batch, number)
+		removed++
+		if batch.ValueSize() >= ethdb.IdealBatchSize {
+			if err := batch.Write(); err != nil {
+				return removed, err
+			}
+			batch.Reset()
+		}
+	}
+	if err := it.Error(); err != nil {
+		return removed, err
+	}
+	return removed, batch.Write()
+}
+
 // ReadHeaderNumber returns the header number assigned to a hash.
 func ReadHeaderNumber(db ethdb.KeyValueReader, hash common.Hash) *uint64 {
 	data, _ := db.Get(headerNumberKey(hash))

@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"math/rand/v2"
 	"os"
@@ -931,4 +932,192 @@ func BenchmarkDecodeRLPLogs(b *testing.B) {
 			}
 		}
 	})
+}
+
+func TestDeleteCanonicalAbove(t *testing.T) {
+	db := NewMemoryDatabase()
+	defer db.Close()
+
+	// Three canonical blocks with one transaction each; a head of 1 leaves the
+	// other two above it.
+	var (
+		hashes = make([]common.Hash, 3)
+		txs    = make([]*types.Transaction, 3)
+	)
+	for i := uint64(0); i < 3; i++ {
+		txs[i] = types.NewTransaction(i, common.Address{0xaa}, big.NewInt(0), params.TxGas, big.NewInt(1), nil)
+		header := &types.Header{Number: new(big.Int).SetUint64(i + 1)}
+		block := types.NewBlockWithHeader(header).WithBody(types.Body{Transactions: []*types.Transaction{txs[i]}})
+		hashes[i] = block.Hash()
+		WriteBlock(db, block)
+		WriteCanonicalHash(db, hashes[i], i+1)
+		WriteTxLookupEntriesByBlock(db, block)
+	}
+
+	removed, err := DeleteCanonicalAbove(db, 1)
+	if err != nil {
+		t.Fatalf("failed to delete canonical assignments: %v", err)
+	}
+	if removed != 2 {
+		t.Fatalf("unexpected removed count: have %d want 2", removed)
+	}
+	for i, number := range []uint64{1, 2, 3} {
+		if got := ReadCanonicalHash(db, number); number <= 1 {
+			if got != hashes[i] {
+				t.Fatalf("canonical assignment at #%d removed: have %s want %s", number, got, hashes[i])
+			}
+		} else if got != (common.Hash{}) {
+			t.Fatalf("canonical assignment at #%d kept: %s", number, got)
+		}
+		if !HasHeader(db, hashes[i], number) {
+			t.Fatalf("header of #%d deleted, want kept for the re-import", number)
+		}
+		if !HasBody(db, hashes[i], number) {
+			t.Fatalf("body of #%d deleted, want kept for the re-import", number)
+		}
+		if entry := ReadTxLookupEntry(db, txs[i].Hash()); number <= 1 {
+			if entry == nil || *entry != number {
+				t.Fatalf("transaction lookup of #%d missing or wrong", number)
+			}
+		} else if entry != nil {
+			t.Fatalf("transaction lookup of #%d kept: %d", number, *entry)
+		}
+	}
+	// A second run over an empty range is a no-op.
+	if removed, err := DeleteCanonicalAbove(db, 1); err != nil || removed != 0 {
+		t.Fatalf("second run: removed %d err %v, want 0 nil", removed, err)
+	}
+}
+
+// TestDeleteCanonicalAboveKeepsLookupOfCanonicalTx pins the shape an interrupted
+// reorg leaves: the promoted chain re-includes a transaction of the block it
+// abandoned, so its lookup points at the canonical block below the head while
+// the abandoned assignment above the head still names it. The sweep must keep
+// that lookup.
+func TestDeleteCanonicalAboveKeepsLookupOfCanonicalTx(t *testing.T) {
+	db := NewMemoryDatabase()
+	defer db.Close()
+
+	var (
+		shared    = types.NewTransaction(0, common.Address{0xaa}, big.NewInt(0), params.TxGas, big.NewInt(1), nil)
+		abandoned = types.NewTransaction(1, common.Address{0xbb}, big.NewInt(0), params.TxGas, big.NewInt(1), nil)
+	)
+	header := func(number uint64) *types.Header {
+		return &types.Header{Number: new(big.Int).SetUint64(number)}
+	}
+	canonical := types.NewBlockWithHeader(header(1)).WithBody(types.Body{Transactions: []*types.Transaction{shared}})
+	residue := types.NewBlockWithHeader(header(2)).WithBody(types.Body{Transactions: []*types.Transaction{shared, abandoned}})
+	WriteBlock(db, canonical)
+	WriteBlock(db, residue)
+	WriteCanonicalHash(db, canonical.Hash(), 1)
+	WriteCanonicalHash(db, residue.Hash(), 2)
+	// The abandoned block wrote its lookups first, the canonical one rewrote the
+	// shared transaction afterwards: this is the order a reorg leaves on disk.
+	WriteTxLookupEntriesByBlock(db, residue)
+	WriteTxLookupEntriesByBlock(db, canonical)
+
+	removed, err := DeleteCanonicalAbove(db, 1)
+	if err != nil {
+		t.Fatalf("failed to delete canonical assignments: %v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("unexpected removed count: have %d want 1", removed)
+	}
+	if entry := ReadTxLookupEntry(db, shared.Hash()); entry == nil || *entry != 1 {
+		t.Fatalf("lookup of the canonical transaction dropped: have %v want 1", entry)
+	}
+	if entry := ReadTxLookupEntry(db, abandoned.Hash()); entry != nil {
+		t.Fatalf("lookup of the abandoned transaction kept: %d", *entry)
+	}
+}
+
+// failingLookupDB fails the read of one transaction lookup key, so the sweep
+// sees the same nil a missing entry produces.
+type failingLookupDB struct {
+	ethdb.Database
+	key []byte
+}
+
+func (db *failingLookupDB) Get(key []byte) ([]byte, error) {
+	if bytes.Equal(key, db.key) {
+		return nil, errors.New("injected lookup read failure")
+	}
+	return db.Database.Get(key)
+}
+
+// TestDeleteCanonicalAboveKeepsLookupOnReadError pins the difference between an
+// unreadable entry and a missing one: the sweep deletes only an entry it read
+// back above the head, so a storage error cannot drop a canonical lookup.
+func TestDeleteCanonicalAboveKeepsLookupOnReadError(t *testing.T) {
+	db := NewMemoryDatabase()
+	defer db.Close()
+
+	var (
+		shared    = types.NewTransaction(0, common.Address{0xaa}, big.NewInt(0), params.TxGas, big.NewInt(1), nil)
+		abandoned = types.NewTransaction(1, common.Address{0xbb}, big.NewInt(0), params.TxGas, big.NewInt(1), nil)
+	)
+	header := func(number uint64) *types.Header {
+		return &types.Header{Number: new(big.Int).SetUint64(number)}
+	}
+	canonical := types.NewBlockWithHeader(header(1)).WithBody(types.Body{Transactions: []*types.Transaction{shared}})
+	residue := types.NewBlockWithHeader(header(2)).WithBody(types.Body{Transactions: []*types.Transaction{shared, abandoned}})
+	WriteBlock(db, canonical)
+	WriteBlock(db, residue)
+	WriteCanonicalHash(db, canonical.Hash(), 1)
+	WriteCanonicalHash(db, residue.Hash(), 2)
+	WriteTxLookupEntriesByBlock(db, residue)
+	WriteTxLookupEntriesByBlock(db, canonical)
+
+	failing := &failingLookupDB{Database: db, key: txLookupKey(shared.Hash())}
+	removed, err := DeleteCanonicalAbove(failing, 1)
+	if err != nil {
+		t.Fatalf("failed to delete canonical assignments: %v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("unexpected removed count: have %d want 1", removed)
+	}
+	if entry := ReadTxLookupEntry(db, shared.Hash()); entry == nil || *entry != 1 {
+		t.Fatalf("lookup of the canonical transaction dropped on a read error: have %v want 1", entry)
+	}
+	if entry := ReadTxLookupEntry(db, abandoned.Hash()); entry != nil {
+		t.Fatalf("lookup of the abandoned transaction kept: %d", *entry)
+	}
+}
+
+// TestDeleteCanonicalAboveAtMaxUint64 pins the overflow guard: a head at the
+// numeric limit must be a no-op instead of a walk that starts from zero and
+// sweeps every assignment in the database.
+func TestDeleteCanonicalAboveAtMaxUint64(t *testing.T) {
+	db := NewMemoryDatabase()
+	defer db.Close()
+
+	var (
+		hashes = make([]common.Hash, 3)
+		txs    = make([]*types.Transaction, 3)
+	)
+	for i := uint64(0); i < 3; i++ {
+		txs[i] = types.NewTransaction(i, common.Address{0xaa}, big.NewInt(0), params.TxGas, big.NewInt(1), nil)
+		header := &types.Header{Number: new(big.Int).SetUint64(i + 1)}
+		block := types.NewBlockWithHeader(header).WithBody(types.Body{Transactions: []*types.Transaction{txs[i]}})
+		hashes[i] = block.Hash()
+		WriteBlock(db, block)
+		WriteCanonicalHash(db, hashes[i], i+1)
+		WriteTxLookupEntriesByBlock(db, block)
+	}
+
+	removed, err := DeleteCanonicalAbove(db, math.MaxUint64)
+	if err != nil {
+		t.Fatalf("failed to delete canonical assignments: %v", err)
+	}
+	if removed != 0 {
+		t.Fatalf("unexpected removed count at the numeric limit: have %d want 0", removed)
+	}
+	for i, number := range []uint64{1, 2, 3} {
+		if got := ReadCanonicalHash(db, number); got != hashes[i] {
+			t.Fatalf("canonical assignment at #%d dropped: have %s want %s", number, got, hashes[i])
+		}
+		if entry := ReadTxLookupEntry(db, txs[i].Hash()); entry == nil || *entry != number {
+			t.Fatalf("transaction lookup of #%d dropped or wrong: %v", number, entry)
+		}
+	}
 }

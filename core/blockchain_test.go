@@ -571,6 +571,14 @@ func TestNewBlockChainRepairsMissingHeadStateConsistently(t *testing.T) {
 	if got := rawdb.ReadHeadBlockHash(db); got != repaired.Hash() {
 		t.Fatalf("unexpected repaired persisted head block: have %s want %s", got.Hex(), repaired.Hash().Hex())
 	}
+	// The canonical assignment of the rolled-back block goes with the markers;
+	// otherwise RPC keeps serving it by number after the restart.
+	if got := rawdb.ReadCanonicalHash(db, repaired.NumberU64()+1); got != (common.Hash{}) {
+		t.Fatalf("canonical assignment above repaired head kept: %s", got)
+	}
+	if got := reopened.GetBlockByNumber(repaired.NumberU64() + 1); got != nil {
+		t.Fatalf("block #%d above repaired head still served", got.NumberU64())
+	}
 }
 
 // TestNewBlockChainRepairsMissingHeadStateRespectsRollbackTarget ensures
