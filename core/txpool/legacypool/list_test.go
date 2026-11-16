@@ -17,6 +17,7 @@
 package legacypool
 
 import (
+	"math"
 	"math/big"
 	"math/rand"
 	"testing"
@@ -275,5 +276,150 @@ func BenchmarkListCapOneTx(b *testing.B) {
 		b.StartTimer()
 		list.Cap(list.Len() - 1)
 		b.StopTimer()
+	}
+}
+
+// TestSortedMapRunLengthTracksMutations compares the cached contiguous-run
+// length against a fresh scan after every mutation kind the map supports.
+func TestSortedMapRunLengthTracksMutations(t *testing.T) {
+	m := NewSortedMap()
+	tx := func(nonce uint64) *types.Transaction {
+		return types.NewTransaction(nonce, common.Address{}, big.NewInt(1), 21000, big.NewInt(1), nil)
+	}
+	scan := func(base uint64) uint64 {
+		var run uint64
+		for m.items[base+run] != nil {
+			run++
+		}
+		return run
+	}
+	check := func(base uint64) {
+		t.Helper()
+		if cached, want := m.RunLength(base), scan(base); cached != want {
+			t.Fatalf("base %d: cached run length %d, want %d", base, cached, want)
+		}
+	}
+	put := func(nonces ...uint64) {
+		for _, nonce := range nonces {
+			m.Put(tx(nonce))
+		}
+	}
+	// Extending the run one nonce at a time, then filling a gap below a nonce
+	// that was already queued: the cache must count what sits above the gap.
+	put(10, 11, 12, 13)
+	check(10)
+	put(16)
+	check(10)
+	put(14)
+	check(10)
+	put(15)
+	check(10)
+	// Insertions and removals below the base leave the run untouched.
+	put(5)
+	check(10)
+	m.Remove(5)
+	check(10)
+	m.Remove(17)
+	check(10)
+	// A removal inside the run breaks it.
+	m.Remove(12)
+	check(10)
+	put(12)
+	check(10)
+	// Ready removes a prefix, Filter a suffix, Forward everything below a nonce
+	// and Cap the highest nonces.
+	if ready := m.Ready(10); len(ready) != 7 {
+		t.Fatalf("ready count %d, want 7", len(ready))
+	}
+	check(10)
+	put(10, 11, 12, 13, 14, 15, 16)
+	check(10)
+	m.Filter(func(tx *types.Transaction) bool { return tx.Nonce() >= 14 })
+	check(10)
+	put(12, 13)
+	check(10)
+	m.Forward(13)
+	check(10)
+	put(10, 11, 12, 13, 14, 15, 16, 17, 18, 19)
+	check(10)
+	m.Cap(5)
+	check(10)
+	// The cache is keyed by base, a different base must not reuse it.
+	put(30)
+	check(10)
+	check(30)
+	// FirstNonce tracks the smallest nonce across all mutations.
+	first, ok := m.FirstNonce()
+	if !ok || m.items[first] == nil {
+		t.Fatalf("first nonce %d (present %v) is not in the map", first, ok)
+	}
+	for nonce := range m.items {
+		if nonce < first {
+			t.Fatalf("nonce %d below reported first nonce %d", nonce, first)
+		}
+	}
+	if _, ok := NewSortedMap().FirstNonce(); ok {
+		t.Fatal("FirstNonce reported a nonce for an empty map")
+	}
+}
+
+// Tests that run lengths stay inside the uint64 nonce range: neither the scan
+// nor the cached extension may wrap from math.MaxUint64 back to nonce zero.
+func TestSortedMapRunLengthTopNonce(t *testing.T) {
+	tx := func(nonce uint64) *types.Transaction {
+		return types.NewTransaction(nonce, common.Address{}, big.NewInt(1), 21000, big.NewInt(1), nil)
+	}
+	m := NewSortedMap()
+	m.Put(tx(math.MaxUint64))
+	if run := m.RunLength(math.MaxUint64); run != 1 {
+		t.Fatalf("run length %d, want 1", run)
+	}
+	if !m.Remove(math.MaxUint64) {
+		t.Fatal("failed to remove the top nonce")
+	}
+	if run := m.RunLength(math.MaxUint64); run != 0 {
+		t.Fatalf("cached run length %d after removal, want 0", run)
+	}
+	// Nonce zero is not the successor of the top nonce: a fresh scan must stop
+	// at math.MaxUint64 instead of wrapping onto it.
+	m = NewSortedMap()
+	m.Put(tx(0))
+	m.Put(tx(math.MaxUint64))
+	if run := m.RunLength(math.MaxUint64); run != 1 {
+		t.Fatalf("run length %d over nonces 0 and MaxUint64, want 1", run)
+	}
+	if !m.Remove(0) {
+		t.Fatal("failed to remove nonce 0")
+	}
+	if run := m.RunLength(math.MaxUint64); run != 1 {
+		t.Fatalf("cached run length %d after removing nonce 0, want 1", run)
+	}
+	// A cached run must ignore nonce zero too, both when it is inserted below
+	// the base and when it is removed again.
+	m = NewSortedMap()
+	m.Put(tx(math.MaxUint64))
+	if run := m.RunLength(math.MaxUint64); run != 1 {
+		t.Fatalf("run length %d, want 1", run)
+	}
+	m.Put(tx(0))
+	if run := m.RunLength(math.MaxUint64); run != 1 {
+		t.Fatalf("run length %d after inserting nonce 0, want 1", run)
+	}
+	if !m.Remove(0) {
+		t.Fatal("failed to remove nonce 0")
+	}
+	if run := m.RunLength(math.MaxUint64); run != 1 {
+		t.Fatalf("cached run length %d after removing nonce 0, want 1", run)
+	}
+	// A run ending at the top nonce must not be extended past it either.
+	m = NewSortedMap()
+	m.Put(tx(math.MaxUint64 - 1))
+	m.Put(tx(0))
+	if run := m.RunLength(math.MaxUint64 - 1); run != 1 {
+		t.Fatalf("run length %d below the top nonce, want 1", run)
+	}
+	m.Put(tx(math.MaxUint64))
+	if run := m.RunLength(math.MaxUint64 - 1); run != 2 {
+		t.Fatalf("run length %d after extending onto the top nonce, want 2", run)
 	}
 }

@@ -44,6 +44,10 @@ func IsTemporaryReject(err error) bool {
 		return true
 	case errors.Is(err, legacypool.ErrTxPoolOverflow):
 		return true
+	case errors.Is(err, txpool.ErrAccountLimitExceeded):
+		// Account capacity is pool state, unlike the gas floor: filling a gap
+		// promotes the run, and trimming, replacement or expiry can make room.
+		return true
 	case errors.Is(err, legacypool.ErrFutureReplacePending):
 		return true
 	default:

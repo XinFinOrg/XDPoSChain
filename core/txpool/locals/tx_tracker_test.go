@@ -17,6 +17,7 @@
 package locals
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"math/big"
@@ -732,6 +733,109 @@ func TestRecheckResumesAfterFloorDrops(t *testing.T) {
 	resubmits := env.tracker.recheck(false)
 	if len(resubmits) != 1 || resubmits[0].Hash() != tx.Hash() {
 		t.Fatalf("transaction must be resubmitted once the floor drops: %v", resubmits)
+	}
+}
+
+// TestAddLocalTracksQueueAdmissionReject pins the local protection across the
+// admission bound: a transaction refused because the account's future queue is
+// full is tracked anyway, and the tracker puts it in once the gap that fills
+// the queue is closed and the run promotes.
+func TestAddLocalTracksQueueAdmissionReject(t *testing.T) {
+	env := newTestEnv(t, 10, 0, "")
+	defer env.close()
+
+	env.pool.SetLocalTracker(env.tracker)
+
+	base := env.nonce()
+	mk := func(n uint64) *types.Transaction {
+		tx, err := types.SignTx(types.NewTransaction(n, common.Address{0x00}, big.NewInt(1000), params.TxGas, env.gasPrice(), nil), env.signer, key)
+		if err != nil {
+			t.Fatalf("failed to sign transaction %d: %v", n, err)
+		}
+		return tx
+	}
+	// Fill the future queue to the bound, every transaction gapped behind base.
+	queue := legacypool.DefaultConfig.AccountQueue
+	for i := uint64(1); i <= queue; i++ {
+		if err := env.pool.Add([]*types.Transaction{mk(base + i)}, true)[0]; err != nil {
+			t.Fatalf("failed to fill the queue at nonce %d: %v", base+i, err)
+		}
+	}
+	if _, queued := env.pool.ContentFrom(address); len(queued) != int(queue) {
+		t.Fatalf("queued transaction count mismatch: have %d, want %d", len(queued), queue)
+	}
+	// A local transaction above everything queued is refused at admission, and
+	// must not be forgotten with it.
+	next := mk(base + queue + 1)
+	if err := env.pool.AddLocal(next, true); !errors.Is(err, txpool.ErrAccountLimitExceeded) {
+		t.Fatalf("unexpected error above the bound: have %v, want %v", err, txpool.ErrAccountLimitExceeded)
+	}
+	env.tracker.mu.Lock()
+	_, tracked := env.tracker.all[next.Hash()]
+	env.tracker.mu.Unlock()
+	if !tracked {
+		t.Fatalf("a local transaction rejected at the queue bound must stay tracked")
+	}
+	// Closing the gap promotes the whole run, which empties the queue.
+	if err := env.pool.Add([]*types.Transaction{mk(base)}, true)[0]; err != nil {
+		t.Fatalf("failed to add the gap filler: %v", err)
+	}
+	if _, queued := env.pool.ContentFrom(address); len(queued) != 0 {
+		t.Fatalf("queue must drain once the gap is filled, have %d queued", len(queued))
+	}
+	// The tracker finds it missing from the pool and re-submits it.
+	resubmits := env.tracker.recheck(false)
+	if len(resubmits) != 1 || resubmits[0].Hash() != next.Hash() {
+		t.Fatalf("unexpected transactions to resubmit: %v", resubmits)
+	}
+	if err := env.pool.Add(resubmits, true)[0]; err != nil {
+		t.Fatalf("failed to resubmit after the queue drained: %v", err)
+	}
+	if !env.pool.Has(next.Hash()) {
+		t.Fatalf("transaction must enter the pool once the queue drained")
+	}
+}
+
+// TestAddLocalDoesNotTrackInvalidQueueReject pins the other side of the
+// admission bound: a transaction refused there is only retryable while it is
+// valid. A permanent state failure must reach the caller and stay out of the
+// tracker, or the submitting RPC would report success and the journal would keep
+// a transaction that can never be accepted.
+func TestAddLocalDoesNotTrackInvalidQueueReject(t *testing.T) {
+	env := newTestEnv(t, 10, 0, "")
+	defer env.close()
+
+	env.pool.SetLocalTracker(env.tracker)
+
+	base := env.nonce()
+	mk := func(n uint64, value *big.Int) *types.Transaction {
+		tx, err := types.SignTx(types.NewTransaction(n, common.Address{0x00}, value, params.TxGas, env.gasPrice(), nil), env.signer, key)
+		if err != nil {
+			t.Fatalf("failed to sign transaction %d: %v", n, err)
+		}
+		return tx
+	}
+	// Fill the future queue to the bound, every transaction gapped behind base.
+	queue := legacypool.DefaultConfig.AccountQueue
+	for i := uint64(1); i <= queue; i++ {
+		if err := env.pool.Add([]*types.Transaction{mk(base+i, big.NewInt(1000))}, true)[0]; err != nil {
+			t.Fatalf("failed to fill the queue at nonce %d: %v", base+i, err)
+		}
+	}
+	// Spending the whole balance fails the stateful check permanently, which
+	// admission must not turn into a temporary capacity error.
+	invalid := mk(base+queue+1, funds)
+	if err := env.pool.AddLocal(invalid, true); !errors.Is(err, core.ErrInsufficientFunds) {
+		t.Fatalf("unexpected error above the bound: have %v, want %v", err, core.ErrInsufficientFunds)
+	}
+	env.tracker.mu.Lock()
+	_, tracked := env.tracker.all[invalid.Hash()]
+	env.tracker.mu.Unlock()
+	if tracked {
+		t.Fatalf("a permanently invalid transaction must not be tracked for retry")
+	}
+	if resubmits := env.tracker.recheck(false); len(resubmits) != 0 {
+		t.Fatalf("unexpected transactions to resubmit: %v", resubmits)
 	}
 }
 

@@ -60,6 +60,12 @@ type SortedMap struct {
 	index   *nonceHeap                    // Heap of nonces of all the stored transactions (non-strict mode)
 	cache   types.Transactions            // Cache of the transactions already sorted
 	cacheMu sync.Mutex                    // Mutex covering the cache
+
+	// Cache of the run returned by RunLength: a transaction inserted directly
+	// above it extends it, a removal inside it drops it.
+	runBase  uint64
+	runLen   uint64
+	runValid bool
 }
 
 // NewSortedMap creates a new nonce-sorted transaction map.
@@ -67,6 +73,48 @@ func NewSortedMap() *SortedMap {
 	return &SortedMap{
 		items: make(map[uint64]*types.Transaction),
 		index: new(nonceHeap),
+	}
+}
+
+// RunLength returns the number of consecutive nonces present in the map starting
+// at base. The result is cached and extended in place when a transaction is
+// inserted right above the run, so a queue growing one consecutive transaction
+// at a time does not rescan the prefix on every insertion.
+func (m *SortedMap) RunLength(base uint64) uint64 {
+	if m.runValid && m.runBase == base {
+		return m.runLen
+	}
+	var run uint64
+	for nonce := base; m.items[nonce] != nil; nonce++ {
+		run++
+		if nonce == math.MaxUint64 {
+			break
+		}
+	}
+	m.runBase, m.runLen, m.runValid = base, run, true
+	return run
+}
+
+// FirstNonce returns the smallest nonce stored in the map. Index entries whose
+// transaction has already been filtered out are discarded on the way.
+func (m *SortedMap) FirstNonce() (uint64, bool) {
+	for m.index.Len() > 0 {
+		nonce := (*m.index)[0]
+		if m.items[nonce] != nil {
+			return nonce, true
+		}
+		heap.Pop(m.index)
+	}
+	return 0, false
+}
+
+// Range calls fn for every transaction in the map, in no particular nonce order.
+// Iteration stops when fn returns false. The map must not be modified by fn.
+func (m *SortedMap) Range(fn func(tx *types.Transaction) bool) {
+	for _, tx := range m.items {
+		if !fn(tx) {
+			return
+		}
 	}
 }
 
@@ -81,6 +129,12 @@ func (m *SortedMap) Put(tx *types.Transaction) {
 	nonce := tx.Nonce()
 	if m.items[nonce] == nil {
 		heap.Push(m.index, nonce)
+		if m.runValid && nonce >= m.runBase && nonce-m.runBase == m.runLen {
+			m.runLen++
+			for next := nonce; next != math.MaxUint64 && m.items[next+1] != nil; next++ {
+				m.runLen++
+			}
+		}
 	}
 	m.cacheMu.Lock()
 	m.items[nonce], m.cache = tx, nil
@@ -98,6 +152,9 @@ func (m *SortedMap) Forward(threshold uint64) types.Transactions {
 		nonce := heap.Pop(m.index).(uint64)
 		removed = append(removed, m.items[nonce])
 		delete(m.items, nonce)
+	}
+	if len(removed) > 0 {
+		m.runValid = false
 	}
 	// If we had a cached order, shift the front
 	m.cacheMu.Lock()
@@ -146,6 +203,7 @@ func (m *SortedMap) filter(filterFunc func(*types.Transaction) bool) types.Trans
 		}
 	}
 	if len(removed) > 0 {
+		m.runValid = false
 		m.cacheMu.Lock()
 		m.cache = nil
 		m.cacheMu.Unlock()
@@ -169,6 +227,9 @@ func (m *SortedMap) Cap(threshold int) types.Transactions {
 		delete(m.items, (*m.index)[size-1])
 	}
 	*m.index = (*m.index)[:threshold]
+	if len(drops) > 0 {
+		m.runValid = false
+	}
 	// The sorted m.index slice is still a valid heap, so there is no need to
 	// reheap after deleting tail items.
 
@@ -197,6 +258,10 @@ func (m *SortedMap) Remove(nonce uint64) bool {
 		}
 	}
 	delete(m.items, nonce)
+	// Compare the offset against the length: runBase+runLen can overflow.
+	if m.runValid && nonce >= m.runBase && nonce-m.runBase < m.runLen {
+		m.runValid = false
+	}
 	m.cacheMu.Lock()
 	m.cache = nil
 	m.cacheMu.Unlock()
@@ -222,6 +287,9 @@ func (m *SortedMap) Ready(start uint64) types.Transactions {
 		ready = append(ready, m.items[next])
 		delete(m.items, next)
 		heap.Pop(m.index)
+	}
+	if len(ready) > 0 {
+		m.runValid = false
 	}
 	m.cacheMu.Lock()
 	m.cache = nil

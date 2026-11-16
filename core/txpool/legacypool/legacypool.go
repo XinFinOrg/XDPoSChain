@@ -96,6 +96,7 @@ var (
 	queuedDiscardMeter   = metrics.NewRegisteredMeter("txpool/queued/discard", nil)
 	queuedReplaceMeter   = metrics.NewRegisteredMeter("txpool/queued/replace", nil)
 	queuedRateLimitMeter = metrics.NewRegisteredMeter("txpool/queued/ratelimit", nil) // Dropped due to rate limiting
+	queuedAdmissionMeter = metrics.NewRegisteredMeter("txpool/queued/admission", nil) // Rejected at admission
 	queuedNofundsMeter   = metrics.NewRegisteredMeter("txpool/queued/nofunds", nil)   // Dropped due to out-of-funds
 	queuedEvictionMeter  = metrics.NewRegisteredMeter("txpool/queued/eviction", nil)  // Dropped due to lifetime
 
@@ -862,6 +863,156 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 	return replaced, nil
 }
 
+// admitFutureTx checks whether tx may enter the account's future queue. The
+// bound used to be enforced only by trimming the queue at promote time, which
+// dropped the transaction after the caller had already been told it was
+// accepted. A replacement never grows the queue, and a transaction that fills
+// or extends the contiguous run from the pending nonce is promoted right after
+// the batch, so neither is rejected here. ahead carries the nonces still to be
+// inserted from the same batch: a gap filler behind this transaction makes it
+// part of that run, so the batch is judged by the queue it produces instead of
+// the intermediate queue the transaction arrives in.
+//
+// A transaction below the highest queued nonce is admitted as well: the
+// promote-time trim drops the highest nonces, so this one would have survived,
+// and rejecting it would stall an account whose transactions arrived out of
+// order. The highest queued transactions are trimmed after the insertion
+// instead, which keeps the queue at AccountQueue. A transaction above
+// everything queued is refused only if the gapped part it joins would still
+// exceed AccountQueue once the run is promoted.
+func (pool *LegacyPool) admitFutureTx(tx *types.Transaction, ahead map[uint64]int) error {
+	from, _ := types.Sender(pool.signer, tx) // already validated
+	list, ok := pool.queue.get(from)
+	if !ok || uint64(list.Len()) < pool.config.AccountQueue {
+		return nil
+	}
+	// Transactions already covered by a pending transaction at the same nonce
+	// can never be promoted; drop them before measuring the future queue.
+	pool.pruneStaleQueued(from)
+	if list, ok = pool.queue.get(from); !ok || uint64(list.Len()) < pool.config.AccountQueue {
+		return nil
+	}
+	if list.Contains(tx.Nonce()) {
+		return nil
+	}
+	// Walk the contiguous run above the pending nonce instead of trusting the
+	// queue length to prove continuity.
+	next := pool.pendingNonces.get(from)
+	if tx.Nonce() <= next {
+		return nil
+	}
+	run := contiguousRun(list, next)
+	// The executable prefix is promoted right after the batch, so it does not
+	// occupy the future-queue bound; only the gapped part does.
+	if uint64(list.Len())-run < pool.config.AccountQueue {
+		return nil
+	}
+	if tx.Nonce() <= next+run {
+		return nil
+	}
+	// Only a transaction above the cached run has to look at the rest of the
+	// batch, and only once the gapped part has reached the bound: a gap filler
+	// later in the batch makes it executable, so it is admitted as well.
+	end, covered := pool.runEndWith(list, next, ahead)
+	if tx.Nonce() < end {
+		return nil
+	}
+	// The projected run is promoted right after the batch and frees the slots it
+	// occupies, so a transaction the queue can hold once the run is gone is
+	// admitted as well.
+	if uint64(list.Len()-covered) < pool.config.AccountQueue {
+		return nil
+	}
+	if last := list.LastElement(); last != nil && tx.Nonce() < last.Nonce() {
+		return nil
+	}
+	return fmt.Errorf("%w: queued %d txs", txpool.ErrAccountLimitExceeded, list.Len())
+}
+
+// contiguousRun returns the number of queued transactions above next that form
+// an uninterrupted nonce sequence starting at next. The count is cached by the
+// underlying nonce map, so admitting a batch of consecutive transactions does
+// not rescan the prefix that each insertion extends.
+func contiguousRun(list *list, next uint64) uint64 {
+	return list.txs.RunLength(next)
+}
+
+// runEndWith returns the exclusive end of the contiguous nonce run that starts
+// at next through the queue, extended by the extra nonces, together with the
+// number of queued transactions the run covers. The walk stops at
+// math.MaxUint64 so it cannot wrap onto nonce zero.
+func (pool *LegacyPool) runEndWith(list *list, next uint64, extra map[uint64]int) (uint64, int) {
+	end := next + contiguousRun(list, next)
+	covered := int(end - next)
+	for end != math.MaxUint64 {
+		if list.Contains(end) {
+			end++
+			covered++
+			continue
+		}
+		if extra[end] == 0 {
+			break
+		}
+		end++
+	}
+	return end, covered
+}
+
+// futureQueueOverLimit reports whether the account's future queue still exceeds
+// AccountQueue once the executable prefix is discounted.
+func (pool *LegacyPool) futureQueueOverLimit(from common.Address) bool {
+	list, ok := pool.queue.get(from)
+	if !ok {
+		return false
+	}
+	run := contiguousRun(list, pool.pendingNonces.get(from))
+	return uint64(list.Len())-run > pool.config.AccountQueue
+}
+
+// pruneStaleQueued drops queued transactions whose nonce is already covered by
+// a pending transaction. A signer special transaction can take a pending nonce
+// without passing through the queue, and a pending replacement changes the hash
+// at a nonce, leaving the queued transaction at that nonce impossible to
+// promote. Such entries must not occupy future-queue capacity or be counted by
+// the promote-time trim.
+func (pool *LegacyPool) pruneStaleQueued(addr common.Address) {
+	pending, ok := pool.pending[addr]
+	if !ok {
+		return
+	}
+	list, ok := pool.queue.get(addr)
+	if !ok {
+		return
+	}
+	// A queued transaction can only be superseded by a pending transaction at the
+	// same nonce if it sits below the account's pending nonce: pending starts at
+	// that nonce, so the collision is created by an insertion that advances it,
+	// and only entries the advance left behind are stale. Skip the scan when the
+	// whole queue is at or above it, which is the layout of a consecutive batch.
+	if first, ok := list.txs.FirstNonce(); !ok || first >= pool.pendingNonces.get(addr) {
+		return
+	}
+	// Iterate the queue instead of its flattened view: pruning needs no nonce
+	// order, and sorting a queue that grows with every insertion of a batch would
+	// cost O(n log n) per insertion.
+	var stale types.Transactions
+	list.txs.Range(func(tx *types.Transaction) bool {
+		if !pending.Contains(tx.Nonce()) {
+			return true
+		}
+		if current := pending.txs.Get(tx.Nonce()); current != nil && current.Hash() == tx.Hash() {
+			return true
+		}
+		stale = append(stale, tx)
+		return true
+	})
+	for _, tx := range stale {
+		pool.queue.remove(addr, tx)
+		pool.all.Remove(tx.Hash())
+		pool.priced.Removed(1)
+	}
+}
+
 // isGapped reports whether the given transaction is immediately executable.
 func (pool *LegacyPool) isGapped(from common.Address, tx *types.Transaction) bool {
 	// Short circuit if transaction falls within the scope of the pending list
@@ -1072,7 +1223,7 @@ func (pool *LegacyPool) Add(txs []*types.Transaction, sync bool) []error {
 	// While holding the pool lock, process all txs and let addTxsLocked
 	// populate errs in-place for those that passed the basic prechecks.
 	pool.mu.Lock()
-	dirtyAddrs := pool.addTxsLocked(txs, errs)
+	dirtyAddrs := pool.addTxsLocked(txs, errs, true)
 	pool.mu.Unlock()
 
 	// Reorg the pool internals if needed and return
@@ -1089,26 +1240,268 @@ func (pool *LegacyPool) Add(txs []*types.Transaction, sync bool) []error {
 // We only try to add txs that have no error set in the errs slice.
 // If adding the transaction returns an error, we set the error in the errs slice.
 // Requires len(txs) == len(errs).
-func (pool *LegacyPool) addTxsLocked(txs []*types.Transaction, errs []error) *accountSet {
+//
+// enforceQueueLimit applies the per-account queue bound at admission. External
+// submissions enforce it; transactions reinjected after a reorg skip admission
+// and the trim, so a reorg cannot reject one of them for lack of room. The
+// reorg still promotes the queue and applies the global and per-account limits
+// afterwards, so those can drop it.
+func (pool *LegacyPool) addTxsLocked(txs []*types.Transaction, errs []error, enforceQueueLimit bool) *accountSet {
 	var (
 		dirty = newAccountSet(pool.signer)
 		valid int64
 	)
+	// A batch is decided as a whole: a gap filler delivered after the
+	// transactions above the gap still makes them executable, so admission and
+	// trimming must not judge the intermediate queue the batch passes through.
+	// ahead holds the nonces of a sender with a candidate still to be inserted;
+	// unfilled holds the nonces of the batch minus the ones that entered the
+	// pool, which is what the final recheck judges the batch by.
+	var (
+		ahead    map[common.Address]map[uint64]int
+		unfilled map[common.Address]map[uint64]struct{}
+		start    map[common.Address]uint64
+		last     map[common.Address]*types.Transaction
+		inserted map[common.Hash]int
+		senders  []common.Address
+	)
+	if enforceQueueLimit {
+		ahead = make(map[common.Address]map[uint64]int)
+		unfilled = make(map[common.Address]map[uint64]struct{})
+		start = make(map[common.Address]uint64)
+		last = make(map[common.Address]*types.Transaction)
+		inserted = make(map[common.Hash]int)
+		for i, tx := range txs {
+			if errs[i] != nil {
+				continue
+			}
+			from, _ := types.Sender(pool.signer, tx)
+			set, ok := ahead[from]
+			if !ok {
+				set = make(map[uint64]int)
+				ahead[from] = set
+				unfilled[from] = make(map[uint64]struct{})
+				start[from] = pool.pendingNonces.get(from)
+				senders = append(senders, from)
+			}
+			set[tx.Nonce()]++
+			unfilled[from][tx.Nonce()] = struct{}{}
+		}
+	}
+	// dropAhead ends one candidate's claim on its nonce. The nonce keeps
+	// justifying the transactions above it only until the batch has no candidate
+	// left for it, so a replacement arriving later still counts.
+	dropAhead := func(from common.Address, nonce uint64) {
+		set := ahead[from]
+		if set[nonce] <= 1 {
+			delete(set, nonce)
+			return
+		}
+		set[nonce]--
+	}
+	// revoke reports every transaction this batch inserted and a trim then
+	// withdrew: a nil error told the submitter it was pooled, and the remote
+	// fetcher treats it as delivered. The trim takes the highest gapped nonces,
+	// so in a batch that arrived out of order the victims can be any accepted
+	// transaction, not just the last one. A victim an earlier call admitted is
+	// left alone: this batch is not the one that accepted it.
+	revoke := func(from common.Address, evicted types.Transactions) {
+		for _, tx := range evicted {
+			idx, ok := inserted[tx.Hash()]
+			if !ok {
+				continue
+			}
+			errs[idx] = pool.futureQueueLimitError(from)
+			queuedAdmissionMeter.Mark(1)
+			valid--
+		}
+	}
 	for i, tx := range txs {
 		if errs[i] != nil {
 			continue
 		}
+		from, _ := types.Sender(pool.signer, tx)
+		if enforceQueueLimit {
+			if err := pool.admitFutureTx(tx, ahead[from]); err != nil {
+				// This nonce will not be delivered by the batch, so it must stop
+				// justifying the transactions above it.
+				dropAhead(from, tx.Nonce())
+				// Admission runs before the stateful validation add performs, so
+				// a transaction that can never be accepted would surface as a
+				// temporary capacity error: the local tracker journals those and
+				// the submitting RPC reports success. Validate the rejected
+				// candidate and let its own error win; only a valid transaction
+				// is refused for lack of room.
+				if verr := pool.validateTx(tx); verr != nil {
+					log.Trace("Discarding invalid transaction", "hash", tx.Hash(), "err", verr)
+					invalidTxMeter.Mark(1)
+					errs[i] = verr
+					continue
+				}
+				queuedAdmissionMeter.Mark(1)
+				errs[i] = err
+				continue
+			}
+		}
 		replaced, err := pool.add(tx)
 		errs[i] = err
-		if err == nil {
-			if !replaced {
-				dirty.addTx(tx)
+		if err != nil {
+			if enforceQueueLimit {
+				// Same as an admission rejection: the nonce never entered the
+				// pool, so the rest of the batch cannot lean on it. Admitting a
+				// later transaction on its behalf would make room in a globally
+				// full pool by evicting another sender's transaction, only for
+				// the final recheck to revoke the admission.
+				dropAhead(from, tx.Nonce())
+				// Once the batch has no candidate left for the failed nonce,
+				// nothing justifies the admissions that leaned on it: settle
+				// them before the next admission judges the queue, or a
+				// speculative entry kept alive by the failure would let a later
+				// transaction evict a queued one and then be withdrawn itself.
+				if ahead[from][tx.Nonce()] == 0 {
+					revoke(from, pool.trimFutureQueue(from, nil, ahead[from]))
+				}
 			}
-			valid++
+			continue
+		}
+		// Trim only after the new transaction has been inserted: a rejected
+		// insertion must leave the queue untouched. The insertion itself may
+		// have dropped queued transactions while making room in a globally full
+		// pool, including the executable prefix the admission decision relied
+		// on, so the bound is enforced again on the resulting queue. Promotion
+		// drops the highest queued nonces, so trimming from the top keeps the
+		// admission bound and the promote-time trim in agreement. The incoming
+		// transaction is never a victim: admission accepted it, so reporting a
+		// later rejection would contradict that decision. Transactions accepted
+		// earlier are evicted instead, which is the deliberate tradeoff for an
+		// account whose transactions arrive out of order; it is only traced,
+		// never reported to that submitter.
+		if enforceQueueLimit {
+			dropAhead(from, tx.Nonce())
+			delete(unfilled[from], tx.Nonce())
+			last[from] = tx
+			inserted[tx.Hash()] = i
+			revoke(from, pool.trimFutureQueue(from, tx, ahead[from]))
+		}
+		if !replaced {
+			dirty.addTx(tx)
+		}
+		valid++
+	}
+	if enforceQueueLimit {
+		// The batch may have failed to deliver a gap filler an admission relied
+		// on, or a globally full pool may have discarded queued transactions
+		// after the last insertion. Re-check every sender on the queue the batch
+		// produced.
+		for _, from := range senders {
+			protect := last[from]
+			if protect == nil {
+				continue
+			}
+			// A gap filler that never made it into the pool breaks the promise
+			// the admission made: the batch no longer completes the run it was
+			// admitted for, so the last transaction is not protected either.
+			for nonce := range unfilled[from] {
+				if nonce >= start[from] && nonce < protect.Nonce() {
+					protect = nil
+					break
+				}
+			}
+			revoke(from, pool.trimFutureQueue(from, protect, nil))
 		}
 	}
 	validTxMeter.Mark(valid)
 	return dirty
+}
+
+// trimFutureQueue evicts the highest gapped queued transactions until the
+// account's future queue is back within AccountQueue, returning the removed
+// transactions. Transactions that are part of the executable run, transactions
+// the rest of the batch will make executable, and protect are never victims.
+// The run is promoted right after the batch and frees its slots, so only the
+// part of the queue the run does not cover counts against the bound.
+func (pool *LegacyPool) trimFutureQueue(from common.Address, protect *types.Transaction, ahead map[uint64]int) types.Transactions {
+	// Must run before removeTx below: removeTx drops a pending transaction by
+	// nonce without comparing hashes, so a queued transaction sharing a nonce
+	// with a pending one would take that pending transaction with it.
+	pool.pruneStaleQueued(from)
+	list, ok := pool.queue.get(from)
+	if !ok {
+		return nil
+	}
+	// Nothing is evicted unless the gapped part exceeds the bound. Checking
+	// that before the lookahead keeps a batch that only grows the executable
+	// run from walking the rest of the batch on every insertion.
+	if !pool.futureQueueOverLimit(from) {
+		return nil
+	}
+	next := pool.pendingNonces.get(from)
+	runEnd, covered := pool.runEndWith(list, next, ahead)
+	// The projected run is promoted right after the batch and frees the slots it
+	// occupies, so only the part of the queue it does not cover counts against
+	// the bound. Its entries are never victims, which also keeps a batch whose
+	// head nonce arrives last from building a snapshot only to skip it.
+	excess := list.Len() - covered - int(pool.config.AccountQueue)
+	if excess <= 0 {
+		return nil
+	}
+	var (
+		victims types.Transactions
+		evicted types.Transactions
+		index   int
+	)
+	for excess > 0 {
+		if victims == nil {
+			// Select every victim from one ordered snapshot: removeTx
+			// invalidates the sorted cache, so picking each victim through
+			// LastElement would re-sort the whole queue on every eviction. The
+			// queue only shrinks here and the victims stay above the executable
+			// prefix, so one snapshot is enough.
+			victims = list.Flatten()
+			index = len(victims)
+		}
+		var victim *types.Transaction
+		for index > 0 {
+			index--
+			candidate := victims[index]
+			if nonce := candidate.Nonce(); nonce >= next && nonce < runEnd {
+				// The contiguous run is promoted right after the batch.
+				continue
+			}
+			if protect != nil && candidate.Hash() == protect.Hash() {
+				// Admission accepted the incoming transaction, so this trim
+				// must not reject it. A globally full pool may have just
+				// discarded the executable prefix the admission decision relied
+				// on, which puts the queue over the bound again; evicting
+				// transactions accepted earlier keeps the admission promise. A
+				// replacement does not consume a new slot either, so it is
+				// protected for the same reason.
+				continue
+			}
+			victim = candidate
+			break
+		}
+		if victim == nil {
+			break
+		}
+		queued := list.Len()
+		log.Trace("Removing over-limit queued transaction", "hash", victim.Hash(), "nonce", victim.Nonce(), "queued", queued)
+		pool.removeTx(victim.Hash(), true, true)
+		queuedRateLimitMeter.Mark(1)
+		evicted = append(evicted, victim)
+		excess--
+	}
+	return evicted
+}
+
+// futureQueueLimitError reports the admission capacity error for an account,
+// including the queue length the trim left behind.
+func (pool *LegacyPool) futureQueueLimitError(from common.Address) error {
+	queued := 0
+	if list, ok := pool.queue.get(from); ok {
+		queued = list.Len()
+	}
+	return fmt.Errorf("%w: queued %d txs", txpool.ErrAccountLimitExceeded, queued)
 }
 
 // Status returns the status (unknown/pending/queued) of a batch of transactions
@@ -1525,7 +1918,7 @@ func (pool *LegacyPool) reset(oldHead, newHead *types.Header) {
 	// Inject any transactions discarded due to reorgs
 	log.Debug("Reinjecting stale transactions", "count", len(reinject))
 	core.SenderCacher().Recover(pool.signer, reinject)
-	pool.addTxsLocked(reinject, make([]error, len(reinject)))
+	pool.addTxsLocked(reinject, make([]error, len(reinject)), false)
 }
 
 // promoteExecutables moves transactions that have become processable from the
@@ -1534,6 +1927,12 @@ func (pool *LegacyPool) reset(oldHead, newHead *types.Header) {
 func (pool *LegacyPool) promoteExecutables(accounts []common.Address) []*types.Transaction {
 	head := pool.currentHead.Load()
 	gasLimit := head.GasLimit
+	// Queued transactions superseded by a pending transaction at the same nonce
+	// are dead weight: promotion can never select them, and the queue Cap below
+	// would otherwise count them against AccountQueue.
+	for _, addr := range accounts {
+		pool.pruneStaleQueued(addr)
+	}
 	// Pooled txs can only be included from the next block onwards, so affordability
 	// checks below resolve the gas schedule at that height.
 	nextNumber := new(big.Int).Add(head.Number, common.Big1)
