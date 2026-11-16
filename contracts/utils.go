@@ -54,11 +54,8 @@ type RewardLog struct {
 var TxSignMu sync.RWMutex
 
 // SignTxPool is the part of the txpool that CreateTransactionSign may use;
-// *txpool.TxPool implements it. It deliberately offers only the on-chain nonce:
-// a sign tx must take the nonce of the account's oldest unmined tx, so that it
-// replaces a stuck one instead of queueing behind it (#3056). Leaving PoolNonce
-// out makes the pending nonce impossible to pick by mistake; the sign tx nonce
-// flipped between the two several times after upstream renamed them.
+// *txpool.TxPool implements it. It deliberately offers only the on-chain nonce,
+// so the pending nonce (TxPool.PoolNonce) cannot be picked by mistake (#3056).
 type SignTxPool interface {
 	// Nonce returns the account's on-chain nonce, see txpool.TxPool.Nonce.
 	Nonce(addr common.Address) uint64
@@ -89,13 +86,8 @@ func CreateTransactionSign(chainConfig *params.ChainConfig, pool SignTxPool, man
 			}
 		}
 
-		// Sign at the on-chain nonce, not the pool's pending nonce. A sign tx still
-		// unmined when the next round starts is then replaced by the fresh one (a
-		// special tx always claims its nonce, see list.Add) instead of queueing
-		// behind it. With the pending nonce, one sign tx that never reaches a block
-		// producer leaves every later one beyond the receivers' nonce window, and
-		// the backlog grows until the pool is full (#3056). SignTxPool offers only
-		// the on-chain nonce (TxPool.Nonce), not the pending nonce (TxPool.PoolNonce).
+		// Sign at the on-chain nonce: a stuck sign tx is then replaced by the fresh
+		// one (see LegacyPool.promoteSpecialTx) instead of queueing behind it.
 		nonce := pool.Nonce(account.Address)
 		tx := CreateTxSign(block.Number(), block.Hash(), nonce, common.BlockSignersBinary)
 		txSigned, err := wallet.SignTx(account, tx, chainConfig.ChainID)
