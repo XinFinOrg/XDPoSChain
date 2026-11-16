@@ -1287,18 +1287,11 @@ func (bc *BlockChain) saveData() {
 		var lendingTriedb *trie.Database
 		var tradingService utils.TradingService
 		var lendingService utils.LendingService
+		// Resolved on the first retained block that still carries auxiliary state,
+		// so a head past the receiver fork asks for no XDCx handle.
+		servicesLoaded := false
 		triedb := bc.triedb
 		engine, _ := bc.Engine().(*XDPoS.XDPoS)
-		if bc.Config().IsTIPXDCX(bc.CurrentBlock().Number) && bc.chainConfig.XDPoS != nil && bc.CurrentBlock().Number.Uint64() > bc.chainConfig.XDPoS.Epoch && engine != nil {
-			tradingService = engine.GetXDCXService()
-			if tradingService != nil && tradingService.GetStateCache() != nil {
-				tradingTriedb = tradingService.GetStateCache().TrieDB()
-			}
-			lendingService = engine.GetLendingService()
-			if lendingService != nil && lendingService.GetStateCache() != nil {
-				lendingTriedb = lendingService.GetStateCache().TrieDB()
-			}
-		}
 		for _, offset := range []uint64{0, 1, TriesInMemory - 1} {
 			if number := bc.CurrentBlock().Number.Uint64(); number > offset {
 				recent := bc.GetBlockByNumber(number - offset)
@@ -1308,6 +1301,17 @@ func (bc *BlockChain) saveData() {
 					log.Error("Failed to commit recent state trie", "err", err)
 				}
 				if bc.Config().IsTIPXDCXReceiver(recent.Number()) && bc.chainConfig.XDPoS != nil && recent.NumberU64() > bc.chainConfig.XDPoS.Epoch && engine != nil {
+					if !servicesLoaded {
+						servicesLoaded = true
+						tradingService = engine.GetXDCXService()
+						if tradingService != nil && tradingService.GetStateCache() != nil {
+							tradingTriedb = tradingService.GetStateCache().TrieDB()
+						}
+						lendingService = engine.GetLendingService()
+						if lendingService != nil && lendingService.GetStateCache() != nil {
+							lendingTriedb = lendingService.GetStateCache().TrieDB()
+						}
+					}
 					author, _ := bc.Engine().Author(recent.Header())
 					if tradingService != nil {
 						tradingRoot, _ := tradingService.GetTradingStateRoot(recent, author)

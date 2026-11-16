@@ -43,6 +43,7 @@ type probeTradingService struct {
 	stateCalls int
 	hasCalls   int
 	rootCalls  int
+	cacheCalls int
 	hasState   bool
 }
 
@@ -65,7 +66,10 @@ func (p *probeTradingService) HasTradingState(*types.Block, common.Address) bool
 	return p.hasState
 }
 
-func (p *probeTradingService) GetStateCache() tradingstate.Database { return nil }
+func (p *probeTradingService) GetStateCache() tradingstate.Database {
+	p.cacheCalls++
+	return nil
+}
 
 func (p *probeTradingService) GetTriegc() *prque.Prque[int64, common.Hash] { return nil }
 
@@ -376,6 +380,58 @@ func TestLoadLastStateSkipsXDCXAfterReceiverDisable(t *testing.T) {
 			t.Fatalf("head = %d, want %d", got, chain.blocks[3].NumberU64())
 		}
 	})
+}
+
+// TestSaveDataSkipsXDCXAfterReceiverDisable pins the shutdown flush: a node that
+// stops past the receiver fork no longer fetches the XDCx trie handles, nor reads
+// the roots their authors declared.
+func TestSaveDataSkipsXDCXAfterReceiverDisable(t *testing.T) {
+	tests := []struct {
+		name             string
+		receiverDisabled bool
+		wantXDCX         bool
+	}{
+		{name: "receiver active", receiverDisabled: false, wantXDCX: true},
+		{name: "receiver disabled", receiverDisabled: true, wantXDCX: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chain := newXDCXTestChain(t, tt.receiverDisabled)
+			trading := &probeTradingService{}
+			chain.setProbeServices(trading, &probeLendingService{})
+
+			chain.chain.saveData()
+			if got := trading.cacheCalls > 0; got != tt.wantXDCX {
+				t.Fatalf("XDCx trie handles fetched = %v, want %v", got, tt.wantXDCX)
+			}
+			if got := trading.rootCalls > 0; got != tt.wantXDCX {
+				t.Fatalf("XDCx roots read = %v, want %v", got, tt.wantXDCX)
+			}
+		})
+	}
+}
+
+// TestSaveDataFlushesPreDisableRetainedRoots pins the other half of the shutdown
+// flush: with the head at the receiver disable fork, the retained height below it
+// is still behind the fork, so the flush has to fetch the handles to read its root.
+func TestSaveDataFlushesPreDisableRetainedRoots(t *testing.T) {
+	chain := newXDCXTestChainWithDisables(t, nil, big.NewInt(5))
+	if _, err := chain.chain.InsertChain(chain.blocks[4:]); err != nil {
+		t.Fatalf("failed to insert the fifth block: %v", err)
+	}
+	trading := &probeTradingService{}
+	chain.setProbeServices(trading, &probeLendingService{})
+
+	chain.chain.saveData()
+	if trading.cacheCalls != 1 {
+		t.Fatalf("XDCx trie handles fetched %d times, want 1", trading.cacheCalls)
+	}
+	if trading.rootCalls != 1 {
+		t.Fatalf("XDCx roots read %d times, want 1", trading.rootCalls)
+	}
+	if trading.stateCalls != 0 {
+		t.Fatalf("XDCx state read %d times, want 0", trading.stateCalls)
+	}
 }
 
 // TestXDCXWindowStillReadsState pins the receiver half-window the miner fork
