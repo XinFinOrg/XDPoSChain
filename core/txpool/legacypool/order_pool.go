@@ -50,6 +50,10 @@ var (
 	ErrInvalidOrderPrice       = errors.New("invalid order price")
 	ErrInvalidOrderHash        = errors.New("invalid order hash")
 	ErrInvalidCancelledOrder   = errors.New("invalid cancel orderid")
+
+	// ErrOrderPoolStateNotInitialised is returned when a transaction reaches
+	// validation before reset has loaded the chain state.
+	ErrOrderPoolStateNotInitialised = errors.New("order pool state not initialised")
 )
 
 var (
@@ -524,6 +528,11 @@ func (pool *OrderPool) validateOrder(tx *types.OrderTransaction) error {
 // validateTx checks whether a transaction is valid according to the consensus
 // rules and adheres to some heuristic limits of the local node (price and size).
 func (pool *OrderPool) validateTx(tx *types.OrderTransaction, local bool) error {
+	// reset may not have loaded the state yet (fork off, first epoch, or a failed
+	// load); validateOrder and the pending nonce check dereference them.
+	if pool.currentRootState == nil || pool.currentOrderState == nil || pool.pendingState == nil {
+		return ErrOrderPoolStateNotInitialised
+	}
 	// check if sender is in denylist
 	if common.IsInDenylist(tx.From()) {
 		return fmt.Errorf("reject transaction with sender in denylist: %v", tx.From().Hex())
@@ -744,6 +753,11 @@ func (pool *OrderPool) addTx(tx *types.OrderTransaction, local bool) error {
 
 // addTxs attempts to queue a batch of transactions if they are valid.
 func (pool *OrderPool) addTxs(txs []*types.OrderTransaction, local bool) []error {
+	// addTx drops transactions while the receiver fork is off; batch callers
+	// must not validate against state reset never loaded.
+	if !pool.chainconfig.IsTIPXDCXReceiver(pool.chain.CurrentBlock().Number) {
+		return make([]error, len(txs))
+	}
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 

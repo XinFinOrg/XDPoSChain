@@ -50,6 +50,10 @@ var (
 	ErrInvalidCancelledLending   = errors.New("invalid cancel lending id")
 	ErrInvalidLendingTradeID     = errors.New("invalid lending trade ID")
 	ErrInvalidLendingCollateral  = errors.New("invalid collateral")
+
+	// ErrLendingPoolStateNotInitialised is returned when a transaction reaches
+	// validation before reset has loaded the chain state.
+	ErrLendingPoolStateNotInitialised = errors.New("lending pool state not initialised")
 )
 
 var (
@@ -622,6 +626,11 @@ func (pool *LendingPool) validateLending(tx *types.LendingTransaction) error {
 // validateTx checks whether a transaction is valid according to the consensus
 // rules and adheres to some heuristic limits of the local node (price and size).
 func (pool *LendingPool) validateTx(tx *types.LendingTransaction, local bool) error {
+	// reset may not have loaded the state yet (fork off, first epoch, or a failed
+	// load); validateLending and the pending nonce check dereference them.
+	if pool.currentRootState == nil || pool.currentLendingState == nil || pool.pendingState == nil {
+		return ErrLendingPoolStateNotInitialised
+	}
 	// check if sender is in denylist
 	if common.IsInDenylist(tx.From()) {
 		return fmt.Errorf("reject transaction with sender in denylist: %v", tx.From().Hex())
@@ -835,6 +844,11 @@ func (pool *LendingPool) addTx(tx *types.LendingTransaction, local bool) error {
 
 // addTxs attempts to queue a batch of transactions if they are valid.
 func (pool *LendingPool) addTxs(txs []*types.LendingTransaction, local bool) []error {
+	// addTx drops transactions while the receiver fork is off; batch callers
+	// must not validate against state reset never loaded.
+	if !pool.chainconfig.IsTIPXDCXReceiver(pool.chain.CurrentBlock().Number) {
+		return make([]error, len(txs))
+	}
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 
