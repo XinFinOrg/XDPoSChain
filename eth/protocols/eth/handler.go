@@ -68,6 +68,27 @@ const (
 	// of a realistic size: every hash in the request costs a pool lookup, served
 	// or not.
 	maxPooledTransactionsServe = 4096
+
+	// maxBlockHashesAnnounce is the per-message announcement cap. The fetcher
+	// tracks at most hashLimit (256) per peer, so a larger batch buys no
+	// retrieval, and exceeding the cap drops the peer as a protocol violation
+	// (nodes announce one per message).
+	maxBlockHashesAnnounce = 1024
+
+	// maxAnnounceRLPSize is the worst-case wire cost of one announcement: list
+	// header, 32-byte hash and 64-bit number.
+	maxAnnounceRLPSize = 43
+
+	// maxAnnounceFrameSize is maxBlockHashesAnnounce entries at the worst-case
+	// size plus list header slack, so an over-cap frame fails before the RLP
+	// decode.
+	maxAnnounceFrameSize = maxBlockHashesAnnounce*maxAnnounceRLPSize + 8
+
+	// maxAnnounceRate is the per-peer budget in announcements per second,
+	// refilled into a bucket of maxAnnounceBurst; a node announces one hash per
+	// block, so it sits far above honest traffic.
+	maxAnnounceRate  = 256
+	maxAnnounceBurst = maxBlockHashesAnnounce
 )
 
 func errResp(code errCode, format string, v ...interface{}) error {
@@ -504,9 +525,21 @@ func handleMessage(backend Backend, peer *Peer) error {
 		return backend.Handle(peer, &receipts, msg.Size)
 
 	case msg.Code == NewBlockHashesMsg:
+		if msg.Size > maxAnnounceFrameSize {
+			propHashInRejectedMeter.Mark(1)
+			return errResp(ErrMsgTooLarge, "announce frame %v > %v", msg.Size, maxAnnounceFrameSize)
+		}
 		var announces NewBlockHashesPacket
 		if err := msg.Decode(&announces); err != nil {
 			return errResp(ErrDecode, "%v: %v", msg, err)
+		}
+		if len(announces) > maxBlockHashesAnnounce {
+			propHashInRejectedMeter.Mark(1)
+			return errResp(ErrMsgTooLarge, "%d announcements > %d", len(announces), maxBlockHashesAnnounce)
+		}
+		if !peer.spendAnnounceBudget(len(announces)) {
+			propHashInRejectedMeter.Mark(1)
+			return errResp(ErrMsgTooLarge, "%d announcements over the per-peer budget", len(announces))
 		}
 		return backend.Handle(peer, &announces, msg.Size)
 
