@@ -360,6 +360,101 @@ func TestWorkerCommitTransactionsSkipsInvalidSpecialApplyTx(t *testing.T) {
 	}
 }
 
+// TestWorkerPacksSubLegacyBaseTxAfterAmsterdam checks that the packing loop does
+// not stop at the flat 21,000 once EIP-2780 lowers the minimal transaction gas to
+// 12,000: with 15,000 gas left in the block, a 15,000-gas call is still packed.
+func TestWorkerPacksSubLegacyBaseTxAfterAmsterdam(t *testing.T) {
+	key, err := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	if err != nil {
+		t.Fatalf("failed to create test key: %v", err)
+	}
+	from := crypto.PubkeyToAddress(key.PublicKey)
+	chainConfig := &params.ChainConfig{
+		ChainID:             big.NewInt(1338),
+		HomesteadBlock:      new(big.Int),
+		EIP150Block:         new(big.Int),
+		EIP155Block:         new(big.Int),
+		EIP158Block:         new(big.Int),
+		ByzantiumBlock:      new(big.Int),
+		ConstantinopleBlock: new(big.Int),
+		PetersburgBlock:     new(big.Int),
+		IstanbulBlock:       new(big.Int),
+		BerlinBlock:         new(big.Int),
+		LondonBlock:         new(big.Int),
+		EIP1559Block:        new(big.Int),
+		MergeBlock:          new(big.Int),
+		ShanghaiBlock:       new(big.Int),
+		CancunBlock:         new(big.Int),
+		PragueBlock:         new(big.Int),
+		OsakaBlock:          new(big.Int),
+		AmsterdamBlock:      new(big.Int),
+		Ethash:              new(params.EthashConfig),
+	}
+	genesis := &core.Genesis{
+		Config:     chainConfig,
+		Alloc:      types.GenesisAlloc{from: {Balance: big.NewInt(params.Ether)}},
+		Difficulty: big.NewInt(1),
+		GasLimit:   params.XDCGenesisGasLimit,
+	}
+	engine := ethash.NewFaker()
+	chain, err := core.NewBlockChain(rawdb.NewMemoryDatabase(), nil, genesis, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	defer chain.Stop()
+
+	parent := chain.GetBlockByNumber(0)
+	if parent == nil {
+		t.Fatal("expected genesis block")
+	}
+	// Room for one 21,000-gas transfer and one 15,000-gas call.
+	header := &types.Header{
+		ParentHash: parent.Hash(),
+		Difficulty: big.NewInt(1),
+		Number:     big.NewInt(1),
+		Time:       parent.Time() + 1,
+		GasLimit:   36_000,
+		BaseFee:    new(big.Int),
+	}
+	worker := &worker{
+		config:      &Config{GasCeil: params.XDCGenesisGasLimit, GasPrice: big.NewInt(1)},
+		chainConfig: chainConfig,
+		engine:      engine,
+		chain:       chain,
+	}
+	if err := worker.makeCurrent(parent, header); err != nil {
+		t.Fatalf("failed to create current work: %v", err)
+	}
+
+	signer := types.LatestSigner(chainConfig)
+	transfer, err := types.SignTx(types.NewTransaction(0, common.HexToAddress("0x00000000000000000000000000000000000000aa"), big.NewInt(1),
+		params.TxBaseCost2780+params.ColdAccountAccessAmsterdam+params.TxValueCost2780, big.NewInt(1), nil), signer, key)
+	if err != nil {
+		t.Fatalf("failed to sign transfer: %v", err)
+	}
+	call, err := types.SignTx(types.NewTransaction(1, common.HexToAddress("0x00000000000000000000000000000000000000bb"), new(big.Int),
+		params.TxBaseCost2780+params.ColdAccountAccessAmsterdam, big.NewInt(1), nil), signer, key)
+	if err != nil {
+		t.Fatalf("failed to sign call: %v", err)
+	}
+
+	lazy := func(tx *types.Transaction) *txpool.LazyTransaction {
+		fee := uint256.NewInt(1)
+		return &txpool.LazyTransaction{Hash: tx.Hash(), Tx: tx, Time: time.Now(), GasFeeCap: fee, GasTipCap: fee, Gas: tx.Gas()}
+	}
+	txs, specialTxs := newTransactionsByPriceAndNonce(worker.current.signer, map[common.Address][]*txpool.LazyTransaction{
+		from: {lazy(transfer), lazy(call)},
+	}, nil, header.BaseFee)
+
+	worker.current.commitTransactions(new(event.TypeMux), map[common.Address]*big.Int{}, txs, specialTxs, chain, &event.Feed{})
+	if worker.current.tcount != 2 {
+		t.Fatalf("packed %d transactions, want 2: 15,000 gas left must still fit a 15,000-gas call", worker.current.tcount)
+	}
+	if len(worker.current.txs) != 2 {
+		t.Fatalf("committed %d transactions, want 2", len(worker.current.txs))
+	}
+}
+
 // TestWorkerCheckPreCommitXDPoSMismatch tests worker check pre commit xd po s mismatch.
 func TestWorkerCheckPreCommitXDPoSMismatch(t *testing.T) {
 	config := &params.ChainConfig{

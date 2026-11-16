@@ -1109,6 +1109,11 @@ func (w *worker) commitNewWork() {
 
 func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Address]*big.Int, txs *transactionsByPriceAndNonce, specialTxs types.Transactions, bc *core.BlockChain, pendingLogsFeed *event.Feed) {
 	gp := new(core.GasPool).AddGas(w.header.GasLimit)
+	// EIP-2780 lowers the minimal gas a transaction can carry after Amsterdam.
+	minTxGas := params.TxGas
+	if w.config.IsAmsterdam(w.header.Number) {
+		minTxGas = params.TxBaseCost2780
+	}
 	balanceUpdated := map[common.Address]*big.Int{}
 	totalFeeUsed := big.NewInt(0)
 	var coalescedLogs []*types.Log
@@ -1150,8 +1155,8 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			}
 		}
 
-		if gp.Gas() < params.TxGas && tx.Gas() > 0 {
-			log.Warn("Not enough gas for further transactions", "hash", tx.Hash().Hex(), "tx.Gas", tx.Gas(), "gp", gp, "need", params.TxGas)
+		if gp.Gas() < minTxGas && tx.Gas() > 0 {
+			log.Warn("Not enough gas for further transactions", "hash", tx.Hash().Hex(), "tx.Gas", tx.Gas(), "gp", gp, "need", minTxGas)
 			break
 		}
 		// Error may be ignored here. The error has already been checked
@@ -1213,8 +1218,8 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 	}
 	for {
 		// If we don't have enough gas for any further transactions then we're done
-		if gp.Gas() < params.TxGas {
-			log.Warn("Not enough gas for further transactions", "gp", gp, "need", params.TxGas)
+		if gp.Gas() < minTxGas {
+			log.Warn("Not enough gas for further transactions", "gp", gp, "need", minTxGas)
 			break
 		}
 		if txs == nil {
