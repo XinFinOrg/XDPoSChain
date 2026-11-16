@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/XDCx/tradingstate"
 	"github.com/XinFinOrg/XDPoSChain/accounts"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
@@ -1107,13 +1108,28 @@ func doCall(ctx context.Context, b Backend, args TransactionArgs, state *state.S
 	return applyMessage(ctx, b, args, state, block, timeout, gp, &blockCtx, &vm.Config{NoBaseFee: true}, precompiles)
 }
 
+// xdcxTradingState returns the trading state the EVM can read at block, or nil
+// once the XDCx receiver fork is off: no precompile reads it below that fork.
+// executionNumber is the height the call runs at, which a block override can move
+// away from the block the root is read from.
+func xdcxTradingState(b Backend, block *types.Block, author common.Address, executionNumber *big.Int) (*tradingstate.TradingStateDB, error) {
+	if !b.ChainConfig().IsTIPXDCXReceiver(executionNumber) {
+		return nil, nil
+	}
+	service := b.XDCxService()
+	if service == nil {
+		return nil, nil
+	}
+	return service.GetTradingState(block, author)
+}
+
 func applyMessage(ctx context.Context, b Backend, args TransactionArgs, state *state.StateDB, block *types.Block, timeout time.Duration, gp *core.GasPool, blockContext *vm.BlockContext, vmConfig *vm.Config, precompiles vm.PrecompiledContracts) (*core.ExecutionResult, error) {
 	header := block.Header()
 	author, err := b.Engine().Author(header)
 	if err != nil {
 		return nil, err
 	}
-	XDCxState, err := b.XDCxService().GetTradingState(block, author)
+	XDCxState, err := xdcxTradingState(b, block, author, blockContext.BlockNumber)
 	if err != nil {
 		return nil, err
 	}
@@ -1743,7 +1759,7 @@ func AccessList(ctx context.Context, b Backend, blockNrOrHash rpc.BlockNumberOrH
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	XDCxState, err := b.XDCxService().GetTradingState(block, author)
+	XDCxState, err := xdcxTradingState(b, block, author, header.Number)
 	if err != nil {
 		return nil, 0, nil, err
 	}
