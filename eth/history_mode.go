@@ -27,9 +27,10 @@ import (
 )
 
 var (
-	// errHistoryModeArchive is returned when minimal history mode is combined
-	// with an archive node, a self-contradictory configuration.
-	errHistoryModeArchive = errors.New("--history.mode minimal cannot be combined with --gcmode archive")
+	// errHistoryModeArchive is returned when minimal history mode, configured
+	// or recorded in the datadir, is combined with an archive node, a
+	// self-contradictory configuration.
+	errHistoryModeArchive = errors.New("minimal history mode cannot be combined with --gcmode archive")
 
 	// errHistoryModeDowngrade is returned when a datadir that runs in minimal
 	// history mode is started in full mode.
@@ -49,10 +50,11 @@ func setupHistoryMode(db ethdb.KeyValueStore, config *ethconfig.Config) error {
 	if !mode.IsValid() {
 		return fmt.Errorf("invalid history mode %d", uint32(mode))
 	}
-	if mode == rawdb.HistoryModeMinimal && config.NoPruning {
+	stored := rawdb.ReadHistoryMode(db)
+	if config.NoPruning && (mode == rawdb.HistoryModeMinimal || stored == rawdb.HistoryModeMinimal) {
 		return errHistoryModeArchive
 	}
-	switch stored := rawdb.ReadHistoryMode(db); {
+	switch {
 	case stored == rawdb.HistoryModeMinimal && mode == rawdb.HistoryModeFull:
 		return errHistoryModeDowngrade
 	case stored == rawdb.HistoryModeFull && mode == rawdb.HistoryModeMinimal:

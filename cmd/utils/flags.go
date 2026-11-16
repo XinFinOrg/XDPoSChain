@@ -41,6 +41,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/core"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool/legacypool"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
@@ -1674,6 +1675,9 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 			Fatalf("invalid --%s flag: %v", HistoryModeFlag.Name, err)
 		}
 	}
+	if cfg.NoPruning && cfg.HistoryMode == rawdb.HistoryModeMinimal {
+		Fatalf("--%s minimal cannot be combined with --%s archive", HistoryModeFlag.Name, GCModeFlag.Name)
+	}
 	cfg.Prefetch = ctx.Bool(CachePrefetchFlag.Name)
 	if ctx.IsSet(CachePreimagesFlag.Name) {
 		cfg.Preimages = ctx.Bool(CachePreimagesFlag.Name)
@@ -1972,6 +1976,10 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool, configuredComp
 		compatPolicy = core.ChainConfigMismatchPolicy(resolveChainConfigMismatchPolicyOrFatal(ctx, configuredCompatPolicy))
 		err          error
 	)
+	// A minimal datadir has pruned history, which contradicts an archive node.
+	if ctx.String(GCModeFlag.Name) == "archive" && rawdb.ReadHistoryMode(chainDb) == rawdb.HistoryModeMinimal {
+		makeChainFatalf("--%s archive cannot be used on a datadir in minimal history mode", GCModeFlag.Name)
+	}
 	if readonly {
 		// Readonly startup still needs compatibility metadata so chain open can
 		// surface ErrReadOnlyConfigRewind instead of collapsing rewindable config

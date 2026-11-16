@@ -314,6 +314,52 @@ func TestMakeChainReadOnlyModeFormatsCompatRewindForOperators(t *testing.T) {
 	t.Fatal("expected MakeChain to terminate via fatal hook")
 }
 
+// TestMakeChainRefusesArchiveOnMinimalDatadir checks that chain commands refuse
+// --gcmode archive on a datadir whose history is pruned.
+func TestMakeChainRefusesArchiveOnMinimalDatadir(t *testing.T) {
+	stack, err := node.New(&node.Config{Name: "makechain-archive-minimal-test", DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("failed to create node: %v", err)
+	}
+	defer stack.Close()
+
+	chainDb, err := stack.OpenDatabaseWithFreezer("chaindata", 0, 0, "", "", false)
+	if err != nil {
+		t.Fatalf("failed to open chain database: %v", err)
+	}
+	rawdb.WriteHistoryMode(chainDb, rawdb.HistoryModeMinimal)
+	if err := chainDb.Close(); err != nil {
+		t.Fatalf("failed to close prepared chain database: %v", err)
+	}
+
+	ctx := newMakeChainTestCLIContext(t, map[string]string{
+		TestnetFlag.Name: "true",
+		GCModeFlag.Name:  "archive",
+	})
+
+	const sentinel = "fatal called"
+	var got string
+	originalFatalf := makeChainFatalf
+	makeChainFatalf = func(format string, args ...interface{}) {
+		got = fmt.Sprintf(format, args...)
+		panic(sentinel)
+	}
+	defer func() { makeChainFatalf = originalFatalf }()
+
+	defer func() {
+		if recovered := recover(); recovered != sentinel {
+			t.Fatalf("expected sentinel panic, have %v", recovered)
+		}
+		want := "--gcmode archive cannot be used on a datadir in minimal history mode"
+		if got != want {
+			t.Fatalf("unexpected fatal message: have %q want %q", got, want)
+		}
+	}()
+
+	MakeChain(ctx, stack, false, "")
+	t.Fatal("expected MakeChain to terminate via fatal hook")
+}
+
 // TestFormatBlockChainOpenErrorReadOnly tests format block chain open error read only.
 func TestFormatBlockChainOpenErrorReadOnly(t *testing.T) {
 	t.Parallel()

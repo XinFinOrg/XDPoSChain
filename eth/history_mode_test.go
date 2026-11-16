@@ -62,6 +62,12 @@ func TestSetupHistoryMode(t *testing.T) {
 	if err := setupHistoryMode(db, &ethconfig.Config{HistoryMode: rawdb.HistoryModeMinimal}); err != nil {
 		t.Fatalf("restarting in minimal mode: %v", err)
 	}
+	// A minimal datadir cannot be run as an archive node, whatever the configured mode.
+	for _, mode := range []rawdb.HistoryMode{rawdb.HistoryModeFull, rawdb.HistoryModeMinimal} {
+		if err := setupHistoryMode(db, &ethconfig.Config{HistoryMode: mode, NoPruning: true}); !errors.Is(err, errHistoryModeArchive) {
+			t.Fatalf("archive node on a minimal datadir (configured %v): got %v, want %v", mode, err, errHistoryModeArchive)
+		}
+	}
 }
 
 // TestHistoryModeDowngradeRefused checks that a minimal datadir, whose history
