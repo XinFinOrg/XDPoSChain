@@ -678,7 +678,7 @@ func (bc *BlockChain) loadLastState() error {
 		if ok {
 			tradingService := engine.GetXDCXService()
 			lendingService := engine.GetLendingService()
-			if bc.Config().IsTIPXDCX(headBlock.Number()) && bc.chainConfig.XDPoS != nil && headBlock.NumberU64() > bc.chainConfig.XDPoS.Epoch && tradingService != nil && lendingService != nil {
+			if bc.Config().IsTIPXDCXReceiver(headBlock.Number()) && bc.chainConfig.XDPoS != nil && headBlock.NumberU64() > bc.chainConfig.XDPoS.Epoch && tradingService != nil && lendingService != nil {
 				author, _ := bc.Engine().Author(headBlock.Header())
 				tradingRoot, err := tradingService.GetTradingStateRoot(headBlock, author)
 				if err != nil {
@@ -952,7 +952,7 @@ func (bc *BlockChain) OrderStateAt(block *types.Block) (*tradingstate.TradingSta
 	engine, ok := bc.Engine().(*XDPoS.XDPoS)
 	if ok {
 		XDCXService := engine.GetXDCXService()
-		if bc.Config().IsTIPXDCX(block.Number()) && bc.chainConfig.XDPoS != nil && block.NumberU64() > bc.chainConfig.XDPoS.Epoch && XDCXService != nil {
+		if bc.Config().IsTIPXDCXReceiver(block.Number()) && bc.chainConfig.XDPoS != nil && block.NumberU64() > bc.chainConfig.XDPoS.Epoch && XDCXService != nil {
 			author, _ := bc.Engine().Author(block.Header())
 			log.Debug("OrderStateAt", "blocknumber", block.Header().Number)
 			XDCxState, err := XDCXService.GetTradingState(block, author)
@@ -978,7 +978,7 @@ func (bc *BlockChain) LendingStateAt(block *types.Block) (*lendingstate.LendingS
 	engine, ok := bc.Engine().(*XDPoS.XDPoS)
 	if ok {
 		lendingService := engine.GetLendingService()
-		if bc.Config().IsTIPXDCX(block.Number()) && bc.chainConfig.XDPoS != nil && block.NumberU64() > bc.chainConfig.XDPoS.Epoch && lendingService != nil {
+		if bc.Config().IsTIPXDCXReceiver(block.Number()) && bc.chainConfig.XDPoS != nil && block.NumberU64() > bc.chainConfig.XDPoS.Epoch && lendingService != nil {
 			author, _ := bc.Engine().Author(block.Header())
 			log.Debug("LendingStateAt", "blocknumber", block.Header().Number)
 			lendingState, err := lendingService.GetLendingState(block, author)
@@ -1195,7 +1195,7 @@ func (bc *BlockChain) HasFullState(block *types.Block) bool {
 		return false
 	}
 	engine, _ := bc.Engine().(*XDPoS.XDPoS)
-	if bc.Config().IsTIPXDCX(block.Number()) && bc.chainConfig.XDPoS != nil && engine != nil && block.NumberU64() > bc.chainConfig.XDPoS.Epoch {
+	if bc.Config().IsTIPXDCXReceiver(block.Number()) && bc.chainConfig.XDPoS != nil && engine != nil && block.NumberU64() > bc.chainConfig.XDPoS.Epoch {
 		tradingService := engine.GetXDCXService()
 		lendingService := engine.GetLendingService()
 		author, _ := bc.Engine().Author(block.Header())
@@ -3627,8 +3627,8 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 		return nil, nestedEvents, nestedLogs, err
 	}
 	// Process block using the parent state as reference point.
-	isTIPXDCX := bc.Config().IsTIPXDCX(block.Number())
-	tradingState, lendingState, err := bc.processTradingAndLendingStates(isTIPXDCX, block, parent, statedb)
+	isTIPXDCXReceiver := bc.Config().IsTIPXDCXReceiver(block.Number())
+	tradingState, lendingState, err := bc.processTradingAndLendingStates(isTIPXDCXReceiver, block, parent, statedb)
 	if err != nil {
 		bc.reportBlock(block, nil, err)
 		return nil, nestedEvents, nestedLogs, err
@@ -4553,7 +4553,7 @@ func (bc *BlockChain) refreshMasternodesForGapBlock(block *types.Block, critMsg 
 // processTradingAndLendingStates processes the trading and lending states for a given block in the blockchain.
 //
 // Parameters:
-//   - isValidBlockNumber: A boolean indicating whether the block number is valid for processing trading and lending states.
+//   - isXDCXEnabled: A boolean indicating whether XDCx state is read and validated for the block.
 //   - block: The current block being processed.
 //   - parent: The parent block of the current block.
 //   - statedb: The current state database for the blockchain.
@@ -4572,8 +4572,8 @@ func (bc *BlockChain) refreshMasternodesForGapBlock(block *types.Block, critMsg 
 //  6. Validates trading and lending orders using the block's transactions and state.
 //  7. Processes liquidation data for lending trades if the block is a liquidation block.
 //  8. Verifies the integrity of the trading and lending state roots by comparing the computed roots with the expected roots.
-func (bc *BlockChain) processTradingAndLendingStates(isValidBlockNumber bool, block *types.Block, parent *types.Header, statedb *state.StateDB) (*tradingstate.TradingStateDB, *lendingstate.LendingStateDB, error) {
-	if !isValidBlockNumber || bc.chainConfig.XDPoS == nil || block.NumberU64() <= bc.chainConfig.XDPoS.Epoch {
+func (bc *BlockChain) processTradingAndLendingStates(isXDCXEnabled bool, block *types.Block, parent *types.Header, statedb *state.StateDB) (*tradingstate.TradingStateDB, *lendingstate.LendingStateDB, error) {
+	if !isXDCXEnabled || bc.chainConfig.XDPoS == nil || block.NumberU64() <= bc.chainConfig.XDPoS.Epoch {
 		return nil, nil, nil
 	}
 

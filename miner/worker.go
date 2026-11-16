@@ -694,6 +694,13 @@ func (w *worker) updateSnapshot() {
 	w.snapshotState = w.current.state.Copy()
 }
 
+// xdcxStateEnabled reports whether the miner still has to load XDCx state: the
+// miner writes the declared roots and the receiver reads them, each behind its own fork.
+func (w *worker) xdcxStateEnabled(header *types.Header) bool {
+	return w.chainConfig.XDPoS != nil &&
+		(w.chainConfig.IsTIPXDCXMiner(header.Number) || w.chainConfig.IsTIPXDCXReceiver(header.Number))
+}
+
 // makeCurrent creates a new environment for the current cycle.
 func (w *worker) makeCurrent(parent *types.Block, header *types.Header) error {
 	// Retrieve the parent state to execute on top and start a prefetcher for
@@ -706,7 +713,7 @@ func (w *worker) makeCurrent(parent *types.Block, header *types.Header) error {
 	author, _ := w.chain.Engine().Author(parent.Header())
 	var XDCxState *tradingstate.TradingStateDB
 	var lendingState *lendingstate.LendingStateDB
-	if w.chainConfig.XDPoS != nil {
+	if w.xdcxStateEnabled(header) {
 		XDCX := w.eth.GetXDCX()
 		XDCxState, err = XDCX.GetTradingState(parent, author)
 		if err != nil {
