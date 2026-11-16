@@ -30,6 +30,11 @@ import (
 
 // Tests that transactions can be added to strict lists and list contents and
 // nonce boundaries are correctly maintained.
+
+// preForkSpecial classifies txs as before TIPRandomizeDisable: txs to
+// BlockSigners and to the randomize contract are both special.
+func preForkSpecial(tx *types.Transaction) bool { return tx.IsSpecialTransaction(nil, nil) }
+
 func TestStrictListAdd(t *testing.T) {
 	// Generate a list of transactions to insert
 	key, _ := crypto.GenerateKey()
@@ -41,7 +46,7 @@ func TestStrictListAdd(t *testing.T) {
 	// Insert the transactions in a random order
 	list := newList(true)
 	for _, v := range rand.Perm(len(txs)) {
-		list.Add(txs[v], DefaultConfig.PriceBump)
+		list.Add(txs[v], DefaultConfig.PriceBump, preForkSpecial)
 	}
 	// Verify internal state
 	if len(list.txs.items) != len(txs) {
@@ -65,7 +70,7 @@ func TestListAddVeryExpensive(t *testing.T) {
 		gaslimit := uint64(i)
 		tx, _ := types.SignTx(types.NewTransaction(uint64(i), common.Address{}, value, gaslimit, gasprice, nil), types.HomesteadSigner{}, key)
 		t.Logf("cost: %x bitlen: %d\n", tx.Cost(), tx.Cost().BitLen())
-		list.Add(tx, DefaultConfig.PriceBump)
+		list.Add(tx, DefaultConfig.PriceBump, preForkSpecial)
 	}
 }
 
@@ -139,7 +144,7 @@ func TestListFilterUsesGas50xBlockForTokenFeeTransactions(t *testing.T) {
 	to := common.HexToAddress("0x1000000000000000000000000000000000000001")
 	tx := types.NewTransaction(0, to, big.NewInt(0), 1, big.NewInt(1), nil)
 	list := newList(true)
-	list.Add(tx, DefaultConfig.PriceBump)
+	list.Add(tx, DefaultConfig.PriceBump, preForkSpecial)
 	cfg := &params.ChainConfig{Gas50xBlock: big.NewInt(0)}
 
 	removed, invalids := list.Filter(big.NewInt(0), tx.Gas(), map[common.Address]*big.Int{to: big.NewInt(1)}, big.NewInt(0), cfg)
@@ -176,7 +181,7 @@ func TestListFilterDoesNotShortCircuitTokenFeeTransactions(t *testing.T) {
 	to := common.HexToAddress("0x1000000000000000000000000000000000000002")
 	tx := types.NewTransaction(0, to, big.NewInt(0), 1, big.NewInt(1), nil)
 	list := newList(true)
-	list.Add(tx, DefaultConfig.PriceBump)
+	list.Add(tx, DefaultConfig.PriceBump, preForkSpecial)
 	cfg := &params.ChainConfig{Gas50xBlock: big.NewInt(0)}
 
 	removed, invalids := list.Filter(big.NewInt(1), tx.Gas(), map[common.Address]*big.Int{to: big.NewInt(0)}, big.NewInt(0), cfg)
@@ -195,7 +200,7 @@ func TestListHasTRC21ReceiverCacheTracksMutations(t *testing.T) {
 
 	list := newList(false)
 	txIssuer := types.NewTransaction(0, issuer, big.NewInt(0), 1, big.NewInt(1), nil)
-	if ok, _ := list.Add(txIssuer, DefaultConfig.PriceBump); !ok {
+	if ok, _ := list.Add(txIssuer, DefaultConfig.PriceBump, preForkSpecial); !ok {
 		t.Fatalf("failed to add issuer transaction")
 	}
 	if !list.hasTRC21Receiver(issuers) {
@@ -203,7 +208,7 @@ func TestListHasTRC21ReceiverCacheTracksMutations(t *testing.T) {
 	}
 
 	txOtherReplacement := types.NewTransaction(0, other, big.NewInt(0), 1, big.NewInt(2), nil)
-	if ok, _ := list.Add(txOtherReplacement, DefaultConfig.PriceBump); !ok {
+	if ok, _ := list.Add(txOtherReplacement, DefaultConfig.PriceBump, preForkSpecial); !ok {
 		t.Fatalf("failed to replace issuer transaction")
 	}
 	if list.hasTRC21Receiver(issuers) {
@@ -212,10 +217,10 @@ func TestListHasTRC21ReceiverCacheTracksMutations(t *testing.T) {
 
 	txIssuerA := types.NewTransaction(1, issuer, big.NewInt(0), 1, big.NewInt(1), nil)
 	txIssuerB := types.NewTransaction(2, issuer, big.NewInt(0), 1, big.NewInt(1), nil)
-	if ok, _ := list.Add(txIssuerA, DefaultConfig.PriceBump); !ok {
+	if ok, _ := list.Add(txIssuerA, DefaultConfig.PriceBump, preForkSpecial); !ok {
 		t.Fatalf("failed to add first issuer transaction")
 	}
-	if ok, _ := list.Add(txIssuerB, DefaultConfig.PriceBump); !ok {
+	if ok, _ := list.Add(txIssuerB, DefaultConfig.PriceBump, preForkSpecial); !ok {
 		t.Fatalf("failed to add second issuer transaction")
 	}
 	if !list.hasTRC21Receiver(issuers) {
@@ -251,7 +256,7 @@ func BenchmarkListAdd(t *testing.B) {
 	priceLimit := big.NewInt(int64(DefaultConfig.PriceLimit))
 	t.ResetTimer()
 	for _, v := range rand.Perm(len(txs)) {
-		list.Add(txs[v], DefaultConfig.PriceBump)
+		list.Add(txs[v], DefaultConfig.PriceBump, preForkSpecial)
 		list.Filter(priceLimit, DefaultConfig.PriceBump, nil, nil, nil)
 	}
 }
@@ -270,10 +275,51 @@ func BenchmarkListCapOneTx(b *testing.B) {
 		list := newList(true)
 		// Insert the transactions in a random order
 		for _, v := range rand.Perm(len(txs)) {
-			list.Add(txs[v], DefaultConfig.PriceBump)
+			list.Add(txs[v], DefaultConfig.PriceBump, preForkSpecial)
 		}
 		b.StartTimer()
 		list.Cap(list.Len() - 1)
 		b.StopTimer()
+	}
+}
+
+// TestListAddRandomizeAfterTIPRandomizeDisable checks that the replacement rules
+// follow the fork: before it a tx to the randomize contract is special and takes
+// its nonce without a price bump; from the fork on it is a regular tx and needs
+// the bump like any other.
+func TestListAddRandomizeAfterTIPRandomizeDisable(t *testing.T) {
+	key, _ := crypto.GenerateKey()
+	signer := types.HomesteadSigner{}
+	mk := func(price int64, payload byte) *types.Transaction {
+		tx, err := types.SignTx(types.NewTransaction(0, common.RandomizeSMCBinary, big.NewInt(0), 100000, big.NewInt(price), []byte{payload}), signer, key)
+		if err != nil {
+			t.Fatalf("failed to sign tx: %v", err)
+		}
+		return tx
+	}
+	const fork = 10
+	config := params.TestChainConfig.Clone()
+	config.TIPRandomizeDisableBlock = big.NewInt(fork)
+	at := func(number int64) func(*types.Transaction) bool {
+		return func(tx *types.Transaction) bool { return tx.IsSpecialTransaction(config, big.NewInt(number)) }
+	}
+
+	for _, tt := range []struct {
+		name      string
+		isSpecial func(*types.Transaction) bool
+		want      bool
+	}{
+		{"before the fork, special: replaced without a bump", at(fork - 1), true},
+		{"after the fork, regular: needs the bump", at(fork), false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			l := newList(true)
+			if ok, _ := l.Add(mk(100, 0x01), DefaultConfig.PriceBump, tt.isSpecial); !ok {
+				t.Fatal("failed to insert the first tx")
+			}
+			if ok, _ := l.Add(mk(100, 0x02), DefaultConfig.PriceBump, tt.isSpecial); ok != tt.want {
+				t.Fatalf("same-price replacement accepted = %v, want %v", ok, tt.want)
+			}
+		})
 	}
 }

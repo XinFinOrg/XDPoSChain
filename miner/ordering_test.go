@@ -27,6 +27,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/holiman/uint256"
 )
 
@@ -98,7 +99,7 @@ func testTransactionPriceNonceSort(t *testing.T, baseFee *big.Int) {
 		expectedCount += count
 	}
 	// Sort the transactions and cross check the nonce ordering
-	txset, _ := newTransactionsByPriceAndNonce(signer, groups, map[common.Address]*big.Int{}, baseFee)
+	txset, _ := newTransactionsByPriceAndNonce(signer, groups, map[common.Address]*big.Int{}, baseFee, nil, nil)
 
 	txs := types.Transactions{}
 	for tx := txset.Peek(); tx != nil; tx = txset.Peek() {
@@ -161,7 +162,7 @@ func TestTransactionTimeSort(t *testing.T) {
 		})
 	}
 	// Sort the transactions and cross check the nonce ordering
-	txset, _ := newTransactionsByPriceAndNonce(signer, groups, map[common.Address]*big.Int{}, nil)
+	txset, _ := newTransactionsByPriceAndNonce(signer, groups, map[common.Address]*big.Int{}, nil, nil, nil)
 
 	txs := types.Transactions{}
 	for tx := txset.Peek(); tx != nil; tx = txset.Peek() {
@@ -244,14 +245,14 @@ func TestNewTransactionsByPriceAndNonce_SpecialSeparation(t *testing.T) {
 			if len(txs) > 0 {
 				group[addr] = txs
 			}
-			txset, specialTxs := newTransactionsByPriceAndNonce(signer, group, map[common.Address]*big.Int{}, nil)
+			txset, specialTxs := newTransactionsByPriceAndNonce(signer, group, map[common.Address]*big.Int{}, nil, nil, nil)
 
 			// Check special transactions
 			if len(specialTxs) != tc.expectSpecial {
 				t.Errorf("expected %d special txs, got %d", tc.expectSpecial, len(specialTxs))
 			}
 			for _, tx := range specialTxs {
-				if !tx.IsSpecialTransaction() {
+				if !tx.IsSpecialTransaction(nil, nil) {
 					t.Errorf("specialTxs contains non-special tx: %v", tx)
 				}
 			}
@@ -260,7 +261,7 @@ func TestNewTransactionsByPriceAndNonce_SpecialSeparation(t *testing.T) {
 			normalCount := 0
 			for tx := txset.Peek(); tx != nil; tx = txset.Peek() {
 				resolved := tx.Resolve()
-				if resolved == nil || resolved.IsSpecialTransaction() {
+				if resolved == nil || resolved.IsSpecialTransaction(nil, nil) {
 					t.Errorf("txset contains special tx: %v", resolved)
 				}
 				normalCount++
@@ -268,6 +269,55 @@ func TestNewTransactionsByPriceAndNonce_SpecialSeparation(t *testing.T) {
 			}
 			if normalCount != tc.expectNormal {
 				t.Errorf("expected %d normal txs, got %d", tc.expectNormal, normalCount)
+			}
+		})
+	}
+}
+
+// TestNewTransactionsByPriceAndNonceTIPRandomizeDisable checks that the miner
+// splits special txs off by the block being built: from TIPRandomizeDisable on, a
+// tx to the randomize contract is ordered by price with the regular txs, while a
+// tx to BlockSigners is still committed first.
+func TestNewTransactionsByPriceAndNonceTIPRandomizeDisable(t *testing.T) {
+	signer := types.HomesteadSigner{}
+	const fork = 10
+	config := params.TestChainConfig.Clone()
+	config.TIPRandomizeDisableBlock = big.NewInt(fork)
+
+	lazy := func(to common.Address) (common.Address, *txpool.LazyTransaction) {
+		key, _ := crypto.GenerateKey()
+		tx, _ := types.SignTx(types.NewTransaction(0, to, big.NewInt(0), 100000, big.NewInt(1), nil), signer, key)
+		return crypto.PubkeyToAddress(key.PublicKey), &txpool.LazyTransaction{Tx: tx, Hash: tx.Hash(), Time: tx.Time(), GasFeeCap: uint256.MustFromBig(tx.GasFeeCap()), GasTipCap: uint256.MustFromBig(tx.GasTipCap())}
+	}
+	for _, tt := range []struct {
+		name        string
+		number      int64
+		wantSpecial int
+		wantNormal  int
+	}{
+		{"before the fork", fork - 1, 2, 0},
+		{"at the fork", fork, 1, 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			group := map[common.Address][]*txpool.LazyTransaction{}
+			for _, to := range []common.Address{common.BlockSignersBinary, common.RandomizeSMCBinary} {
+				addr, tx := lazy(to)
+				group[addr] = []*txpool.LazyTransaction{tx}
+			}
+			txset, specialTxs := newTransactionsByPriceAndNonce(signer, group, map[common.Address]*big.Int{}, nil, config, big.NewInt(tt.number))
+			if len(specialTxs) != tt.wantSpecial {
+				t.Fatalf("got %d special txs, want %d", len(specialTxs), tt.wantSpecial)
+			}
+			normal := 0
+			for tx := txset.Peek(); tx != nil; tx = txset.Peek() {
+				if to := tx.Resolve().To(); to == nil || *to != common.RandomizeSMCBinary {
+					t.Fatalf("regular txs contain a tx to %v, want only the randomize contract", to)
+				}
+				normal++
+				txset.Shift()
+			}
+			if normal != tt.wantNormal {
+				t.Fatalf("got %d regular txs, want %d", normal, tt.wantNormal)
 			}
 		})
 	}

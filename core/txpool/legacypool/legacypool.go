@@ -541,7 +541,7 @@ func (pool *LegacyPool) Pending(filter txpool.PendingFilter) map[common.Address]
 		if filter.MinTip != nil || filter.GasLimitCap != 0 {
 			for i, tx := range txs {
 				if filter.MinTip != nil {
-					if !tx.IsSpecialTransaction() && tx.EffectiveGasTipIntCmp(filter.MinTip, filter.BaseFee) < 0 {
+					if !pool.isSpecial(tx) && tx.EffectiveGasTipIntCmp(filter.MinTip, filter.BaseFee) < 0 {
 						txs = txs[:i]
 						break
 					}
@@ -762,7 +762,7 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 
 	// Special transactions must also honor the reservation semantics to keep
 	// the coordinator's ownership accounting balanced.
-	if tx.IsSpecialTransaction() && pool.IsSigner(from) && pool.pendingNonces.get(from) == tx.Nonce() {
+	if pool.isSpecial(tx) && pool.IsSigner(from) && pool.pendingNonces.get(from) == tx.Nonce() {
 		return pool.promoteSpecialTx(from, tx)
 	}
 
@@ -829,7 +829,7 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 	// Try to replace an existing transaction in the pending pool
 	if list := pool.pending[from]; list != nil && list.Contains(tx.Nonce()) {
 		// Nonce already pending, check if required price bump is met
-		inserted, old := list.Add(tx, pool.config.PriceBump)
+		inserted, old := list.Add(tx, pool.config.PriceBump, pool.isSpecial)
 		if !inserted {
 			pendingDiscardMeter.Mark(1)
 			return false, txpool.ErrReplaceUnderpriced
@@ -887,7 +887,7 @@ func (pool *LegacyPool) isGapped(from common.Address, tx *types.Transaction) boo
 //
 // Note, this method assumes the pool lock is held!
 func (pool *LegacyPool) enqueueTx(hash common.Hash, tx *types.Transaction, addAll bool) (bool, error) {
-	replaced, err := pool.queue.add(tx)
+	replaced, err := pool.queue.add(tx, pool.isSpecial)
 	if err != nil {
 		return false, err
 	}
@@ -918,7 +918,7 @@ func (pool *LegacyPool) promoteTx(addr common.Address, hash common.Hash, tx *typ
 	}
 	list := pool.pending[addr]
 
-	inserted, old := list.Add(tx, pool.config.PriceBump)
+	inserted, old := list.Add(tx, pool.config.PriceBump, pool.isSpecial)
 	if !inserted {
 		// An older transaction was better, discard this
 		pool.all.Remove(hash)
@@ -953,7 +953,7 @@ func (pool *LegacyPool) promoteSpecialTx(addr common.Address, tx *types.Transact
 	base := new(uint256.Int).Set(list.totalcost)
 	old := list.txs.Get(tx.Nonce())
 	if old != nil {
-		if old.IsSpecialTransaction() {
+		if pool.isSpecial(old) {
 			return false, txpool.ErrDuplicateSpecialTransaction
 		}
 		// Old is being replaced, subtract old cost
@@ -1753,7 +1753,7 @@ func (pool *LegacyPool) sweepUnderpriced(minGasPrice *big.Int) int {
 		return 0
 	}
 	return pool.dropWhere(func(tx *types.Transaction) bool {
-		return tx.IsSpecialTransaction() || tx.GasPriceIntCmp(minGasPrice) >= 0
+		return pool.isSpecial(tx) || tx.GasPriceIntCmp(minGasPrice) >= 0
 	}, "below-gas-price-floor")
 }
 
@@ -1798,6 +1798,17 @@ func (pool *LegacyPool) SetSigner(f func(address common.Address) bool) {
 // IsSigner checks if the given address is a signer.
 func (pool *LegacyPool) IsSigner(addr common.Address) bool {
 	return pool.isSigner != nil && pool.isSigner(addr)
+}
+
+// isSpecial reports whether tx gets special-transaction treatment, judged at
+// the block after the pool's head: the earliest block it can be mined in, so
+// the pool agrees with the miner and block processing at a fork boundary.
+func (pool *LegacyPool) isSpecial(tx *types.Transaction) bool {
+	var next *big.Int
+	if head := pool.currentHead.Load(); head != nil {
+		next = new(big.Int).Add(head.Number, common.Big1)
+	}
+	return tx.IsSpecialTransaction(pool.chainconfig, next)
 }
 
 // accountSet is simply a set of addresses to check for existence, and a signer

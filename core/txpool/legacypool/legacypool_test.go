@@ -206,7 +206,7 @@ func TestDemoteUnexecutablesUsesNextBlockGasSchedule(t *testing.T) {
 			from, _ := types.Sender(pool.signer, tx)
 
 			list := newList(true)
-			list.Add(tx, pool.config.PriceBump)
+			list.Add(tx, pool.config.PriceBump, preForkSpecial)
 			pool.pending[from] = list
 			pool.all.Add(tx)
 
@@ -705,7 +705,7 @@ func TestSweepUnderpricedKeepsSpecialTransactions(t *testing.T) {
 	for _, tx := range []*types.Transaction{special, regular} {
 		from, _ := types.Sender(pool.signer, tx)
 		list := newList(true)
-		list.Add(tx, pool.config.PriceBump)
+		list.Add(tx, pool.config.PriceBump, preForkSpecial)
 		pool.pending[from] = list
 		pool.all.Add(tx)
 		pool.priced.Put(tx)
@@ -742,7 +742,7 @@ func TestSweepUnderpricedNilFloor(t *testing.T) {
 	pool.mu.Lock()
 	from, _ := types.Sender(pool.signer, tx)
 	list := newList(true)
-	list.Add(tx, pool.config.PriceBump)
+	list.Add(tx, pool.config.PriceBump, preForkSpecial)
 	pool.pending[from] = list
 	pool.all.Add(tx)
 	pool.priced.Put(tx)
@@ -1376,7 +1376,7 @@ func TestPromoteSpecialTxUpdatesTotalCost(t *testing.T) {
 	pool.pending[addr] = newList(true)
 	list := pool.pending[addr]
 
-	inserted, _ := list.Add(normal, pool.config.PriceBump)
+	inserted, _ := list.Add(normal, pool.config.PriceBump, preForkSpecial)
 	if !inserted {
 		t.Fatal("failed to insert baseline transaction")
 	}
@@ -1418,11 +1418,11 @@ func TestListAddReplacementAvoidsIntermediateOverflow(t *testing.T) {
 	}
 
 	list := newList(true)
-	inserted, _ := list.Add(oldTx, 0)
+	inserted, _ := list.Add(oldTx, 0, preForkSpecial)
 	if !inserted {
 		t.Fatal("failed to insert baseline transaction")
 	}
-	inserted, replaced := list.Add(newTx, 0)
+	inserted, replaced := list.Add(newTx, 0, preForkSpecial)
 	if !inserted {
 		t.Fatal("replacement transaction should not overflow after subtracting old cost")
 	}
@@ -1468,7 +1468,7 @@ func TestPromoteSpecialTxReplacementAvoidsIntermediateOverflow(t *testing.T) {
 
 	pool.pending[addr] = newList(true)
 	list := pool.pending[addr]
-	inserted, _ := list.Add(oldTx, 0)
+	inserted, _ := list.Add(oldTx, 0, preForkSpecial)
 	if !inserted {
 		t.Fatal("failed to insert baseline transaction")
 	}
@@ -1518,19 +1518,19 @@ func TestListAddSpecialTxReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to sign regular tx: %v", err)
 	}
-	if !oldSpecial.IsSpecialTransaction() || !newSpecial.IsSpecialTransaction() || regular.IsSpecialTransaction() {
+	if !oldSpecial.IsSpecialTransaction(nil, nil) || !newSpecial.IsSpecialTransaction(nil, nil) || regular.IsSpecialTransaction(nil, nil) {
 		t.Fatal("test setup: tx special-ness is wrong")
 	}
 
 	l := newList(true)
 
 	// Seed the pending list with a special tx.
-	if inserted, _ := l.Add(oldSpecial, 0); !inserted {
+	if inserted, _ := l.Add(oldSpecial, 0, preForkSpecial); !inserted {
 		t.Fatal("failed to insert baseline special tx")
 	}
 
 	// A regular tx must NOT replace the pending special tx.
-	if inserted, _ := l.Add(regular, 0); inserted {
+	if inserted, _ := l.Add(regular, 0, preForkSpecial); inserted {
 		t.Fatal("regular tx should not be able to replace a special tx")
 	}
 	if tx := l.txs.Get(0); tx == nil || tx.Hash() != oldSpecial.Hash() {
@@ -1539,10 +1539,10 @@ func TestListAddSpecialTxReplacement(t *testing.T) {
 
 	// A special tx must be able to evict a pending regular tx at the same nonce.
 	l2 := newList(true)
-	if inserted, _ := l2.Add(regular, 0); !inserted {
+	if inserted, _ := l2.Add(regular, 0, preForkSpecial); !inserted {
 		t.Fatal("failed to insert baseline regular tx")
 	}
-	if inserted, replaced := l2.Add(oldSpecial, 0); !inserted || replaced == nil || replaced.Hash() != regular.Hash() {
+	if inserted, replaced := l2.Add(oldSpecial, 0, preForkSpecial); !inserted || replaced == nil || replaced.Hash() != regular.Hash() {
 		t.Fatal("special tx should evict a pending regular tx at the same nonce")
 	}
 	if tx := l2.txs.Get(0); tx == nil || tx.Hash() != oldSpecial.Hash() {
@@ -1550,7 +1550,7 @@ func TestListAddSpecialTxReplacement(t *testing.T) {
 	}
 
 	// Another special tx MUST replace the pending special tx.
-	inserted, replaced := l.Add(newSpecial, 0)
+	inserted, replaced := l.Add(newSpecial, 0, preForkSpecial)
 	if !inserted {
 		t.Fatal("special tx should replace existing special tx")
 	}
@@ -4424,7 +4424,7 @@ func TestPendingKeepsLocalAndSpecialTransactions(t *testing.T) {
 		t.Fatalf("unexpected special account tx count: have %d, want %d", len(specialPending), 2)
 	}
 	first := specialPending[0].Resolve()
-	if first == nil || first.Nonce() != 0 || !first.IsSpecialTransaction() {
+	if first == nil || first.Nonce() != 0 || !first.IsSpecialTransaction(nil, nil) {
 		t.Fatalf("special tx should survive filtering at nonce 0")
 	}
 	second := specialPending[1].Resolve()
@@ -4635,7 +4635,7 @@ func TestSpecialTxPromotionDoesNotBlockOnTxFeed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to sign special tx: %v", err)
 	}
-	if !specialTx.IsSpecialTransaction() {
+	if !specialTx.IsSpecialTransaction(nil, nil) {
 		t.Fatal("test setup: transaction is not special")
 	}
 
@@ -4712,7 +4712,7 @@ func TestSpecialTxEventDeliveredInSingleReorg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to sign special tx: %v", err)
 	}
-	if !tx.IsSpecialTransaction() {
+	if !tx.IsSpecialTransaction(nil, nil) {
 		t.Fatal("test setup: transaction is not special")
 	}
 

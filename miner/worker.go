@@ -460,7 +460,7 @@ func (w *worker) update() {
 					})
 				}
 				feeCapacity := w.current.state.GetTRC21FeeCapacityFromState()
-				txset, specialTxs := newTransactionsByPriceAndNonce(w.current.signer, txs, feeCapacity, w.current.header.BaseFee)
+				txset, specialTxs := newTransactionsByPriceAndNonce(w.current.signer, txs, feeCapacity, w.current.header.BaseFee, w.chainConfig, w.current.header.Number)
 
 				tcount := w.current.tcount
 				w.current.commitTransactions(w.mux, feeCapacity, txset, specialTxs, w.chain, &w.pendingLogsFeed)
@@ -941,7 +941,7 @@ func (w *worker) commitNewWork() {
 			minGasPrice := w.tip
 			filter := pendingFilterForHeader(minGasPrice, header, w.chainConfig)
 			pending := w.eth.TxPool().Pending(filter)
-			txs, specialTxs = newTransactionsByPriceAndNonce(w.current.signer, pending, feeCapacity, header.BaseFee)
+			txs, specialTxs = newTransactionsByPriceAndNonce(w.current.signer, pending, feeCapacity, header.BaseFee, w.chainConfig, header.Number)
 		}
 	}
 	if atomic.LoadInt32(&w.mining) == 1 {

@@ -455,6 +455,17 @@ func (p *TxPool) MinGasPrice() *big.Int {
 	return params.GetMinGasPrice(pendingBlockNumber(number), p.chain.Config())
 }
 
+// IsSpecialTransaction reports whether tx gets special-transaction treatment,
+// judged at the block after the chain head: the earliest block it can be mined
+// in, as the subpools judge it. See types.IsSpecialTx.
+func (p *TxPool) IsSpecialTransaction(tx *types.Transaction) bool {
+	var number *big.Int
+	if head := p.chain.CurrentBlock(); head != nil {
+		number = head.Number
+	}
+	return tx.IsSpecialTransaction(p.chain.Config(), pendingBlockNumber(number))
+}
+
 // Stats retrieves the current pool stats, namely the number of pending and the
 // number of queued (non-executable) transactions.
 func (p *TxPool) Stats() (int, int) {

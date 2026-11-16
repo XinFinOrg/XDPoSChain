@@ -551,12 +551,29 @@ func (tx *Transaction) TxCost(number *big.Int, cfg *params.ChainConfig) *big.Int
 	return total
 }
 
-func IsSpecialTx(to *common.Address) bool {
-	return to != nil && (*to == common.BlockSignersBinary || *to == common.RandomizeSMCBinary)
+// IsSpecialTx reports whether a transaction to `to` gets special-transaction
+// treatment in block `number`: zero gas price, no fee, signer-only admission and
+// first place in blocks. Txs to BlockSigners (0x89) always do. Txs to the
+// randomize contract (0x90) only do before TIPRandomizeDisable; from then on it
+// is a regular contract and a tx to it pays gas like any other. A nil config
+// has no such fork.
+func IsSpecialTx(config *params.ChainConfig, number *big.Int, to *common.Address) bool {
+	if to == nil {
+		return false
+	}
+	switch *to {
+	case common.BlockSignersBinary:
+		return true
+	case common.RandomizeSMCBinary:
+		return config == nil || !config.IsTIPRandomizeDisable(number)
+	}
+	return false
 }
 
-func (tx *Transaction) IsSpecialTransaction() bool {
-	return tx != nil && IsSpecialTx(tx.To())
+// IsSpecialTransaction reports whether tx gets special-transaction treatment in
+// block `number`. See IsSpecialTx.
+func (tx *Transaction) IsSpecialTransaction(config *params.ChainConfig, number *big.Int) bool {
+	return tx != nil && IsSpecialTx(config, number, tx.To())
 }
 
 func (tx *Transaction) IsTradingTransaction() bool {

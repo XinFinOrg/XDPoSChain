@@ -270,6 +270,13 @@ var generatedChainConfigBuiltInBackfillForkBlockFields = []chainConfigBigIntFiel
 		get:         func(c *ChainConfig) *big.Int { return c.TIPProportionalRewardBlock },
 		bind:        func(c *ChainConfig) **big.Int { return &c.TIPProportionalRewardBlock },
 	},
+	{
+		name:        "TIPRandomizeDisableBlock",
+		jsonKey:     "tipRandomizeDisableBlock",
+		xdcSpecific: true,
+		get:         func(c *ChainConfig) *big.Int { return c.TIPRandomizeDisableBlock },
+		bind:        func(c *ChainConfig) **big.Int { return &c.TIPRandomizeDisableBlock },
+	},
 }
 
 var generatedChainConfigForkOrderFieldDefs = []struct {
@@ -444,6 +451,10 @@ var generatedChainConfigForkOrderFieldDefs = []struct {
 	},
 	{
 		name:     "TIPProportionalRewardBlock",
+		optional: alwaysOptionalChainConfigForkOrderField,
+	},
+	{
+		name:     "TIPRandomizeDisableBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
 	},
 }

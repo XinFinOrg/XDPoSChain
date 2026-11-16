@@ -210,6 +210,12 @@ func (c *ChainConfig) IsTIPProportionalReward(num *big.Int) bool {
 	return isForked(c.TIPProportionalRewardBlock, num)
 }
 
+// IsTIPRandomizeDisable reports whether the randomize contract (0x90) has lost
+// its special-transaction treatment at num. See TIPRandomizeDisableBlock.
+func (c *ChainConfig) IsTIPRandomizeDisable(num *big.Int) bool {
+	return isForked(c.TIPRandomizeDisableBlock, num)
+}
+
 // IsTIPTieredReward reports whether the per-role reward model, with its
 // masternode, protector and observer tiers, is active at num. Both the fixed
 // and the proportional reward forks pay through it, and each one can be

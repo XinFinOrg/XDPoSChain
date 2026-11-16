@@ -92,6 +92,14 @@ func CreateTransactionSign(chainConfig *params.ChainConfig, pool *txpool.TxPool,
 			return err
 		}
 
+		// The randomize txs below only feed XDPoS v1. They stop one epoch before
+		// TIPRandomizeDisable, after which a tx to the randomize contract is no
+		// longer special: one created later could be mined after the fork as a
+		// zero-price regular tx, which is invalid and would hold the nonce.
+		if chainConfig.IsTIPRandomizeDisable(new(big.Int).Add(block.Number(), new(big.Int).SetUint64(chainConfig.XDPoS.Epoch))) {
+			return nil
+		}
+
 		// Create secret tx.
 		blockNumber := block.Number().Uint64()
 		checkNumber := blockNumber % chainConfig.XDPoS.Epoch

@@ -146,6 +146,7 @@ func TestForEachChainConfigForkBlockCoversStandardAndXDCForks(t *testing.T) {
 		"TIPUpgradePenaltyBlock",
 		"TIPEpochHalvingBlock",
 		"TIPProportionalRewardBlock",
+		"TIPRandomizeDisableBlock",
 	}
 
 	if !reflect.DeepEqual(got, want) {
@@ -195,6 +196,7 @@ func TestForEachChainConfigForkOrderBlockCoversValidationOrder(t *testing.T) {
 		"AmsterdamBlock",
 		"TIPEpochHalvingBlock",
 		"TIPProportionalRewardBlock",
+		"TIPRandomizeDisableBlock",
 	}
 
 	if !reflect.DeepEqual(got, want) {
