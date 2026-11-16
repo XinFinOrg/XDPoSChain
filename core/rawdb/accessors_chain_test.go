@@ -908,29 +908,74 @@ func TestDeleteDanglingHashesCleanWalk(t *testing.T) {
 
 // TestDeleteCanonicalHashesAbove checks that the purge removes every assignment
 // above head, including one at a height whose header key is already gone, while
-// leaving lower assignments and the neighbouring header and TD entries alone.
+// leaving lower assignments and the neighbouring header, TD and transaction
+// lookup entries alone. A lookup is resolved through the assignment at its
+// height, so one above the head is inert once the assignment is gone; deleting
+// it as well would take the lookup of a transaction that a canonical block below
+// the head still indexes.
 func TestDeleteCanonicalHashesAbove(t *testing.T) {
 	db := NewMemoryDatabase()
 	defer db.Close()
 
-	// A hole at 2: a contiguous walk would stop there and leave 3 and 4 behind
-	for _, number := range []uint64{0, 1, 3, 4} {
+	// A hole at 2: a contiguous walk would stop there and leave 4 behind
+	for _, number := range []uint64{0, 1, 4} {
 		WriteCanonicalHash(db, common.Hash{0: byte(number + 1)}, number)
 	}
-	// Header and TD at height 3 must survive: the purge only touches assignments
+	// Header, TD, body and transaction lookup at height 3 must survive: the purge
+	// only touches assignments, and a lookup whose block is still canonical below
+	// the head has to stay.
 	header := &types.Header{Number: new(big.Int).SetUint64(3)}
-	WriteHeader(db, header)
-	WriteTd(db, header.Hash(), 3, big.NewInt(3))
+	block := types.NewBlockWithHeader(header).WithBody(types.Body{
+		Transactions: []*types.Transaction{types.NewTransaction(0, common.Address{0xaa}, big.NewInt(0), params.TxGas, big.NewInt(1), nil)},
+	})
+	WriteBlock(db, block)
+	WriteTd(db, block.Hash(), 3, big.NewInt(3))
+	WriteCanonicalHash(db, block.Hash(), 3)
+	WriteTxLookupEntriesByBlock(db, block)
+	// A header above the head must not end the walk: its leading number byte is
+	// zero, and the assignment at 7 sorts after it, so a walk that stops at the
+	// first non-assignment key would leave 7 behind.
+	WriteHeader(db, &types.Header{Number: new(big.Int).SetUint64(6)})
+	WriteCanonicalHash(db, common.Hash{0: 0x07}, 7)
 
-	if err := DeleteCanonicalHashesAbove(db, 1); err != nil {
+	removed, bound, err := DeleteCanonicalHashesAbove(db, 1, 0)
+	if err != nil {
 		t.Fatalf("purge returned an error: %v", err)
+	}
+	if want := uint64(3); removed != want {
+		t.Fatalf("unexpected removed count: have %d want %d", removed, want)
+	}
+	if want := uint64(7); bound != want {
+		t.Fatalf("unexpected highest removed assignment: have #%d want #%d", bound, want)
+	}
+	// The sweep commits the bound with the deletion batches.
+	if persisted, err := ReadSweptCanonicalBound(db); err != nil || persisted != bound {
+		t.Fatalf("bound after the sweep: have #%d err %v, want #%d", persisted, err, bound)
+	}
+	// Every dropped assignment is recorded at its own height, with the hash the
+	// assignment named, so a replay can match the header exactly.
+	for _, want := range []struct {
+		number uint64
+		hash   common.Hash
+	}{
+		{3, block.Hash()}, {4, common.Hash{0: 5}}, {7, common.Hash{0: 0x07}},
+	} {
+		hash, ok, err := ReadSweptCanonicalHash(db, want.number)
+		if err != nil || !ok || hash != want.hash {
+			t.Fatalf("record at #%d: have %s ok=%t err %v, want %s", want.number, hash, ok, err, want.hash)
+		}
+	}
+	for _, number := range []uint64{0, 1, 5} {
+		if _, ok, err := ReadSweptCanonicalHash(db, number); err != nil || ok {
+			t.Fatalf("record at #%d: have ok=%t err %v, want absent", number, ok, err)
+		}
 	}
 	for _, number := range []uint64{0, 1} {
 		if marker := ReadCanonicalHash(db, number); marker == (common.Hash{}) {
 			t.Fatalf("canonical marker of height %d was removed: it is at or below head", number)
 		}
 	}
-	for _, number := range []uint64{3, 4} {
+	for _, number := range []uint64{3, 4, 7} {
 		if marker := ReadCanonicalHash(db, number); marker != (common.Hash{}) {
 			t.Fatalf("canonical marker of height %d survived the purge: %s", number, marker)
 		}
@@ -938,16 +983,371 @@ func TestDeleteCanonicalHashesAbove(t *testing.T) {
 	if entry := ReadHeader(db, header.Hash(), 3); entry == nil {
 		t.Fatalf("the purge removed the header at height 3")
 	}
+	if entry := ReadHeader(db, (&types.Header{Number: big.NewInt(6)}).Hash(), 6); entry == nil {
+		t.Fatalf("the purge removed the header at height 6")
+	}
 	if td := ReadTd(db, header.Hash(), 3); td == nil {
 		t.Fatalf("the purge removed the total difficulty at height 3")
 	}
+	if entry := ReadTxLookupEntry(db, block.Transactions()[0].Hash()); entry == nil || *entry != 3 {
+		t.Fatalf("the purge removed the transaction lookup of height 3: %v", entry)
+	}
+	// A second run over an empty range removes nothing and keeps the bound.
+	if removed, again, err := DeleteCanonicalHashesAbove(db, 1, bound); err != nil || removed != 0 || again != bound {
+		t.Fatalf("second run: removed %d bound #%d err %v, want 0 #%d nil", removed, again, err, bound)
+	}
 	// head == max must not wrap into a walk from the start of the keyspace
 	WriteCanonicalHash(db, common.Hash{0: 0xff}, 5)
-	if err := DeleteCanonicalHashesAbove(db, ^uint64(0)); err != nil {
-		t.Fatalf("head=max returned an error: %v", err)
+	if removed, again, err := DeleteCanonicalHashesAbove(db, ^uint64(0), bound); err != nil || removed != 0 || again != bound {
+		t.Fatalf("head=max: removed %d bound #%d err %v, want 0 #%d nil", removed, again, err, bound)
 	}
 	if marker := ReadCanonicalHash(db, 5); marker == (common.Hash{}) {
 		t.Fatalf("head=max removed the canonical marker of height 5")
+	}
+}
+
+// TestSweptCanonicalBoundRoundTrip checks the recovery bound the startup sweep
+// persists for the next start.
+func TestSweptCanonicalBoundRoundTrip(t *testing.T) {
+	db := NewMemoryDatabase()
+	defer db.Close()
+
+	if got, err := ReadSweptCanonicalBound(db); err != nil || got != 0 {
+		t.Fatalf("empty database: have #%d err %v, want zero", got, err)
+	}
+	if err := WriteSweptCanonicalBound(db, 13); err != nil {
+		t.Fatalf("failed to write the bound: %v", err)
+	}
+	if got, err := ReadSweptCanonicalBound(db); err != nil || got != 13 {
+		t.Fatalf("bound after write: have #%d err %v, want #13", got, err)
+	}
+	if err := DeleteSweptCanonicalHashes(db); err != nil {
+		t.Fatalf("failed to delete the bound: %v", err)
+	}
+	if got, err := ReadSweptCanonicalBound(db); err != nil || got != 0 {
+		t.Fatalf("bound after delete: have #%d err %v, want zero", got, err)
+	}
+	// A malformed record has to be reported, not read as a height.
+	for _, data := range [][]byte{{1, 2, 3}, make([]byte, 8+common.HashLength)} {
+		if err := db.Put(sweptCanonicalBoundKey, data); err != nil {
+			t.Fatalf("failed to write the malformed bound: %v", err)
+		}
+		if _, err := ReadSweptCanonicalBound(db); err == nil {
+			t.Fatalf("malformed bound of %d bytes read without an error", len(data))
+		}
+	}
+	// A read failure is not an absent record: the restore point would be retired
+	// silently if it were read as one.
+	wantErr := errors.New("boom")
+	if _, err := ReadSweptCanonicalBound(&errorReader{hasResult: true, getErr: wantErr}); !errors.Is(err, wantErr) {
+		t.Fatalf("read error not propagated: %v", err)
+	}
+	if got, err := ReadSweptCanonicalBound(&errorReader{hasResult: false, getErr: wantErr}); err != nil || got != 0 {
+		t.Fatalf("absent bound: have #%d err %v, want zero nil", got, err)
+	}
+}
+
+// TestSweptCanonicalHashRoundTrip checks the per-height records the startup sweep
+// writes for the replay to match against.
+func TestSweptCanonicalHashRoundTrip(t *testing.T) {
+	db := NewMemoryDatabase()
+	defer db.Close()
+
+	if _, ok, err := ReadSweptCanonicalHash(db, 7); err != nil || ok {
+		t.Fatalf("empty database: have ok=%t err %v, want absent", ok, err)
+	}
+	want := common.Hash{0: 0x07}
+	if err := WriteSweptCanonicalHash(db, 7, want); err != nil {
+		t.Fatalf("failed to write the record: %v", err)
+	}
+	if got, ok, err := ReadSweptCanonicalHash(db, 7); err != nil || !ok || got != want {
+		t.Fatalf("record after write: have %s ok=%t err %v, want %s", got, ok, err, want)
+	}
+	// A malformed record has to be reported, not read as a hash.
+	if err := db.Put(sweptCanonicalKey(8), []byte{1, 2, 3}); err != nil {
+		t.Fatalf("failed to write the malformed record: %v", err)
+	}
+	if _, ok, err := ReadSweptCanonicalHash(db, 8); err == nil || ok {
+		t.Fatalf("malformed record read without an error: ok=%t err %v", ok, err)
+	}
+	// A read failure is not an absent record.
+	wantErr := errors.New("boom")
+	if _, ok, err := ReadSweptCanonicalHash(&errorReader{hasResult: true, getErr: wantErr}, 7); !errors.Is(err, wantErr) || ok {
+		t.Fatalf("read error not propagated: ok=%t err %v", ok, err)
+	}
+	if _, ok, err := ReadSweptCanonicalHash(&errorReader{hasResult: false, getErr: wantErr}, 7); err != nil || ok {
+		t.Fatalf("absent record: have ok=%t err %v, want absent nil", ok, err)
+	}
+}
+
+// TestDeleteCanonicalHashesAboveKeepsHigherBound covers a sweep that drops less
+// than the pending bound: the records below it are still pending, so the higher
+// bound survives.
+func TestDeleteCanonicalHashesAboveKeepsHigherBound(t *testing.T) {
+	db := NewMemoryDatabase()
+	defer db.Close()
+
+	for number := uint64(1); number <= 6; number++ {
+		WriteCanonicalHash(db, common.Hash{0: byte(number)}, number)
+	}
+	removed, bound, err := DeleteCanonicalHashesAbove(db, 3, 10)
+	if err != nil {
+		t.Fatalf("purge returned an error: %v", err)
+	}
+	if removed != 3 {
+		t.Fatalf("unexpected removed count: have %d want 3", removed)
+	}
+	if bound != 10 {
+		t.Fatalf("the sweep shrank the pending bound: have #%d want #10", bound)
+	}
+	if persisted, err := ReadSweptCanonicalBound(db); err != nil || persisted != 10 {
+		t.Fatalf("bound after the sweep: have #%d err %v, want #10", persisted, err)
+	}
+	// The records of the heights this sweep dropped are written regardless of the
+	// higher pending bound: the replay matches them by height and hash.
+	for _, number := range []uint64{4, 5, 6} {
+		if hash, ok, err := ReadSweptCanonicalHash(db, number); err != nil || !ok || hash != (common.Hash{0: byte(number)}) {
+			t.Fatalf("record at #%d: have %s ok=%t err %v, want %s", number, hash, ok, err, common.Hash{0: byte(number)})
+		}
+	}
+}
+
+// TestPruneSweptCanonicalHashes checks that a head advance spends the records it
+// passed and keeps the ones still pending.
+func TestPruneSweptCanonicalHashes(t *testing.T) {
+	db := NewMemoryDatabase()
+	defer db.Close()
+
+	for number := uint64(4); number <= 6; number++ {
+		if err := WriteSweptCanonicalHash(db, number, common.Hash{0: byte(number)}); err != nil {
+			t.Fatalf("failed to write the record at #%d: %v", number, err)
+		}
+	}
+	if err := WriteSweptCanonicalBound(db, 6); err != nil {
+		t.Fatalf("failed to write the bound: %v", err)
+	}
+	if err := PruneSweptCanonicalHashes(db, 5); err != nil {
+		t.Fatalf("failed to prune the records: %v", err)
+	}
+	for _, number := range []uint64{4, 5} {
+		if _, ok, err := ReadSweptCanonicalHash(db, number); err != nil || ok {
+			t.Fatalf("record at #%d survived the prune: ok=%t err %v", number, ok, err)
+		}
+	}
+	if _, ok, err := ReadSweptCanonicalHash(db, 6); err != nil || !ok {
+		t.Fatalf("record at #6 dropped by the prune: ok=%t err %v", ok, err)
+	}
+	if bound, err := ReadSweptCanonicalBound(db); err != nil || bound != 6 {
+		t.Fatalf("bound changed by a partial prune: have #%d err %v, want #6", bound, err)
+	}
+	if err := DeleteSweptCanonicalHashes(db); err != nil {
+		t.Fatalf("failed to clear the records: %v", err)
+	}
+	if _, ok, err := ReadSweptCanonicalHash(db, 6); err != nil || ok {
+		t.Fatalf("record at #6 survived the clear: ok=%t err %v", ok, err)
+	}
+	if bound, err := ReadSweptCanonicalBound(db); err != nil || bound != 0 {
+		t.Fatalf("bound survived the clear: have #%d err %v, want zero", bound, err)
+	}
+}
+
+// TestPurgeCanonicalHashesAboveDoesNotRecord checks the Reset variant: it drops
+// every assignment without writing records the caller would delete right away.
+func TestPurgeCanonicalHashesAboveDoesNotRecord(t *testing.T) {
+	db := NewMemoryDatabase()
+	defer db.Close()
+
+	for number := uint64(1); number <= 3; number++ {
+		WriteCanonicalHash(db, common.Hash{0: byte(number)}, number)
+	}
+	if err := PurgeCanonicalHashesAbove(db, 1); err != nil {
+		t.Fatalf("purge returned an error: %v", err)
+	}
+	for _, number := range []uint64{2, 3} {
+		if marker := ReadCanonicalHash(db, number); marker != (common.Hash{}) {
+			t.Fatalf("assignment at #%d survived the purge: %s", number, marker)
+		}
+		if _, ok, err := ReadSweptCanonicalHash(db, number); err != nil || ok {
+			t.Fatalf("purge recorded #%d: ok=%t err %v", number, ok, err)
+		}
+	}
+	if bound, err := ReadSweptCanonicalBound(db); err != nil || bound != 0 {
+		t.Fatalf("purge wrote a bound: have #%d err %v, want zero", bound, err)
+	}
+}
+
+// failingBatchDB shapes the batches the sweep writes: the batch reports itself
+// full after a few deletions, so the intermediate flush path runs on a small
+// database, and the configured write fails, so the crash window between two
+// deletion batches can be replayed without a real crash.
+type failingBatchDB struct {
+	ethdb.KeyValueStore
+	failAt int
+	writes int
+}
+
+func (db *failingBatchDB) NewBatch() ethdb.Batch {
+	return &failingBatch{Batch: db.KeyValueStore.NewBatch(), db: db}
+}
+
+type failingBatch struct {
+	ethdb.Batch
+	db      *failingBatchDB
+	deletes int
+}
+
+func (b *failingBatch) Delete(key []byte) error {
+	err := b.Batch.Delete(key)
+	b.deletes++
+	return err
+}
+
+func (b *failingBatch) ValueSize() int {
+	if b.deletes >= 4 {
+		return ethdb.IdealBatchSize
+	}
+	return b.Batch.ValueSize()
+}
+
+func (b *failingBatch) Reset() {
+	b.Batch.Reset()
+	b.deletes = 0
+}
+
+func (b *failingBatch) Write() error {
+	b.db.writes++
+	if b.db.writes == b.db.failAt {
+		return errors.New("simulated crash between deletion batches")
+	}
+	return b.Batch.Write()
+}
+
+// TestDeleteCanonicalHashesAboveRecordsBoundPerBatch pins the records to every
+// deletion batch: a crash after an intermediate flush still leaves the bound and
+// the per-height records of the assignments committed with it, and the next
+// sweep covers the rest.
+func TestDeleteCanonicalHashesAboveRecordsBoundPerBatch(t *testing.T) {
+	db := NewMemoryDatabase()
+	defer db.Close()
+
+	total := uint64(10)
+	for number := uint64(1); number <= total; number++ {
+		WriteCanonicalHash(db, common.Hash{0: byte(number)}, number)
+	}
+	wrapped := &failingBatchDB{KeyValueStore: db, failAt: 2}
+	if _, _, err := DeleteCanonicalHashesAbove(wrapped, 3, 0); err == nil {
+		t.Fatal("the interrupted sweep returned no error")
+	}
+	bound, err := ReadSweptCanonicalBound(db)
+	if err != nil {
+		t.Fatalf("failed to read the bound of the interrupted sweep: %v", err)
+	}
+	if bound <= 3 || bound >= total {
+		t.Fatalf("bound after the interrupted sweep: have #%d, want an intermediate height in (%d, %d)", bound, 3, total)
+	}
+	// The assignment the bound names was committed with its record; the ones of
+	// the failed batch are still on disk, without a record.
+	if marker := ReadCanonicalHash(db, bound); marker != (common.Hash{}) {
+		t.Fatalf("assignment at #%d survived the flush that recorded it: %s", bound, marker)
+	}
+	if hash, ok, err := ReadSweptCanonicalHash(db, bound); err != nil || !ok || hash != (common.Hash{0: byte(bound)}) {
+		t.Fatalf("record at #%d: have %s ok=%t err %v", bound, hash, ok, err)
+	}
+	if marker := ReadCanonicalHash(db, total); marker == (common.Hash{}) {
+		t.Fatalf("assignment at #%d was committed without its record", total)
+	}
+	if _, ok, err := ReadSweptCanonicalHash(db, total); err != nil || ok {
+		t.Fatalf("record at #%d exists before its deletion was committed: ok=%t err %v", total, ok, err)
+	}
+	// The next startup sweeps the rest and raises the bound to the true top.
+	removed, rest, err := DeleteCanonicalHashesAbove(db, 3, bound)
+	if err != nil {
+		t.Fatalf("second sweep returned an error: %v", err)
+	}
+	if removed == 0 || rest != total {
+		t.Fatalf("second sweep: removed %d bound #%d, want the rest and #%d", removed, rest, total)
+	}
+	if hash, ok, err := ReadSweptCanonicalHash(db, total); err != nil || !ok || hash != (common.Hash{0: byte(total)}) {
+		t.Fatalf("record at #%d after the second sweep: have %s ok=%t err %v", total, hash, ok, err)
+	}
+}
+
+// countingIteratorDB counts the keys iterated on a database, so a regression
+// that drops the early stop of a keyspace walk shows up as a proportional step
+// count.
+type countingIteratorDB struct {
+	ethdb.KeyValueStore
+	steps *int
+}
+
+func (db *countingIteratorDB) NewIterator(prefix []byte, start []byte) ethdb.Iterator {
+	return &countingIterator{Iterator: db.KeyValueStore.NewIterator(prefix, start), steps: db.steps}
+}
+
+type countingIterator struct {
+	ethdb.Iterator
+	steps *int
+}
+
+func (it *countingIterator) Next() bool {
+	*it.steps = *it.steps + 1
+	return it.Iterator.Next()
+}
+
+// TestDeleteCanonicalHashesAboveStopsScanning checks that the purge stops at the
+// end of the canonical-hash range instead of reading the legacy trie nodes that
+// share the "h" prefix, while still removing every assignment above the head.
+func TestDeleteCanonicalHashesAboveStopsScanning(t *testing.T) {
+	db := NewMemoryDatabase()
+	defer db.Close()
+
+	// Legacy hash-scheme trie nodes are stored under their bare 32-byte hash.
+	// Plant the slice of them that shares the "h" prefix and sorts after the
+	// canonical assignments, plus one whose leading number bytes are all zero
+	// and whose remaining bytes spell a number between the assignments at 9 and
+	// 300: its length alone must not end the walk, and the assignment behind it
+	// still has to be removed.
+	const planted = 100000
+	for i := 0; i < planted; i++ {
+		var key common.Hash
+		key[0] = 'h'
+		key[1] = byte(i>>16) + 1 // non-zero leading number byte
+		key[2] = byte(i >> 8)
+		key[3] = byte(i)
+		if err := db.Put(key[:], []byte{1}); err != nil {
+			t.Fatalf("failed to plant trie node %d: %v", i, err)
+		}
+	}
+	var inside common.Hash
+	inside[0] = 'h'
+	inside[7] = 0x01 // number field reads 265, between the assignments at 9 and 300
+	inside[8] = 0x09
+	inside[9] = 0xff // sorts after the assignment at 9, whose key ends in "n"
+	if err := db.Put(inside[:], []byte{1}); err != nil {
+		t.Fatalf("failed to plant trie node inside the number range: %v", err)
+	}
+	for _, number := range []uint64{1, 2, 9, 300} {
+		WriteCanonicalHash(db, common.Hash{0: byte(number)}, number)
+	}
+	steps := 0
+	removed, bound, err := DeleteCanonicalHashesAbove(&countingIteratorDB{KeyValueStore: db, steps: &steps}, 3, 0)
+	if err != nil {
+		t.Fatalf("purge returned an error: %v", err)
+	}
+	if want := uint64(2); removed != want {
+		t.Fatalf("unexpected removed count: have %d want %d", removed, want)
+	}
+	if want := uint64(300); bound != want {
+		t.Fatalf("unexpected highest removed assignment: have #%d want #%d", bound, want)
+	}
+	for _, number := range []uint64{9, 300} {
+		if marker := ReadCanonicalHash(db, number); marker != (common.Hash{}) {
+			t.Fatalf("canonical marker of height %d survived the purge: %s", number, marker)
+		}
+	}
+	// A walk that runs through the planted slice reads all of it.
+	if steps > 100 {
+		t.Fatalf("purge walked %d keys, want a scan bounded by the canonical range", steps)
 	}
 }
 

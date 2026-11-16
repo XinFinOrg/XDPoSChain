@@ -40,6 +40,18 @@ var (
 	// headFastBlockKey tracks the latest known incomplete block's hash during fast sync.
 	headFastBlockKey = []byte("LastFast")
 
+	// sweptCanonicalBoundKey tracks the highest height the startup sweep has
+	// dropped a canonical assignment at. Nothing above it was dropped, so the
+	// header import has nothing to look up above it; which assignments were
+	// dropped is kept per height under sweptCanonicalPrefix.
+	sweptCanonicalBoundKey = []byte("SweptCanonicalBound")
+
+	// sweptCanonicalPrefix + num (uint64 big endian) -> hash the startup sweep
+	// dropped from the canonical index at that height, written in the same batch
+	// as the deletion. A known header replayed by the import is restored only
+	// when the record at its height names it.
+	sweptCanonicalPrefix = []byte("SweptCanonical-")
+
 	// fastTrieProgressKey tracks the number of trie entries imported during fast sync.
 	fastTrieProgressKey = []byte("TrieSync")
 
@@ -149,6 +161,11 @@ func headerTDKey(number uint64, hash common.Hash) []byte {
 // headerHashKey = headerPrefix + num (uint64 big endian) + headerHashSuffix
 func headerHashKey(number uint64) []byte {
 	return append(append(headerPrefix, encodeBlockNumber(number)...), headerHashSuffix...)
+}
+
+// sweptCanonicalKey = sweptCanonicalPrefix + num (uint64 big endian)
+func sweptCanonicalKey(number uint64) []byte {
+	return append(sweptCanonicalPrefix, encodeBlockNumber(number)...)
 }
 
 // headerNumberKey = headerNumberPrefix + hash

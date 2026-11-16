@@ -83,6 +83,11 @@ type HeaderChain struct {
 	currentHeader     atomic.Value // Current head of the header chain (may be above the block chain!)
 	currentHeaderHash common.Hash  // Hash of the current head of the header chain (prevent recomputing all the time)
 
+	// sweptTo is the highest canonical assignment the startup sweep removed, or 0
+	// when it removed none. Only heights up to it can need a restore: above it no
+	// assignment was dropped, and a known header there is just a side header.
+	sweptTo uint64
+
 	headerCache *lru.Cache[common.Hash, *types.Header]
 	tdCache     *lru.Cache[common.Hash, *big.Int] // most recent total difficulties
 	numberCache *lru.Cache[common.Hash, uint64]   // most recent block numbers
@@ -146,7 +151,9 @@ func (hc *HeaderChain) GetBlockNumber(hash common.Hash) *uint64 {
 
 // WriteHeader writes a header into the local chain, given that its parent is
 // already known. If the total difficulty of the newly inserted header becomes
-// greater than the current known TD, the canonical chain is re-routed.
+// greater than the current known TD, the canonical chain is re-routed. A header
+// that would enter the canonical chain is written only once its ancestry has
+// been walked successfully, so an error means nothing was written.
 //
 // Note: This method is not concurrent-safe with inserting blocks simultaneously
 // into the chain, as side effects caused by reorganisations cannot be emulated
@@ -167,27 +174,26 @@ func (hc *HeaderChain) WriteHeader(header *types.Header) (status WriteStatus, er
 	localTd := hc.GetTd(hc.currentHeaderHash, hc.CurrentHeader().Number.Uint64())
 	externTd := new(big.Int).Add(header.Difficulty, ptd)
 
-	// Irrelevant of the canonical status, write the td and header to the database
-	//
-	// Note all the components of header(td, hash->number index and header) should
-	// be written atomically.
-	headerBatch := hc.chainDb.NewBatch()
-	rawdb.WriteTd(headerBatch, hash, number, externTd)
-	rawdb.WriteHeader(headerBatch, header)
-	if err := headerBatch.Write(); err != nil {
-		log.Crit("Failed to write header into disk", "err", err)
-	}
 	// If the total difficulty is higher than our known, add it to the canonical chain
 	// Second clause in the if statement reduces the vulnerability to selfish mining.
 	// Please refer to http://www.cs.cornell.edu/~ie53/publications/btcProcFC.pdf
-	if externTd.Cmp(localTd) > 0 || (externTd.Cmp(localTd) == 0 && mrand.Float64() < 0.5) {
+	canonical := externTd.Cmp(localTd) > 0 || (externTd.Cmp(localTd) == 0 && mrand.Float64() < 0.5)
+
+	// The canonical branch below walks the ancestry, and the walk can stop at a
+	// gap an interrupted sweep or rewind left behind. It has to run before the
+	// header is committed: a header stored by a failed insertion is known to
+	// InsertHeaderChain, which skips known headers, so a replay after the gap is
+	// repaired would report success without ever redoing the insertion. Side
+	// headers take no walk and are written either way.
+	var markerBatch ethdb.Batch
+	if canonical {
 		// If the header can be added into canonical chain, adjust the
 		// header chain markers(canonical indexes and head header flag).
 		//
 		// Note all markers should be written atomically.
 
 		// Delete any canonical number assignments above the new head
-		markerBatch := hc.chainDb.NewBatch()
+		markerBatch = hc.chainDb.NewBatch()
 		for i := number + 1; ; i++ {
 			hash := rawdb.ReadCanonicalHash(hc.chainDb, i)
 			if hash == (common.Hash{}) {
@@ -204,7 +210,16 @@ func (hc *HeaderChain) WriteHeader(header *types.Header) (status WriteStatus, er
 		)
 		for rawdb.ReadCanonicalHash(hc.chainDb, headNumber) != headHash {
 			rawdb.WriteCanonicalHash(markerBatch, headHash, headNumber)
-
+			if headNumber == 0 {
+				break // unreachable: the genesis assignment is always in place
+			}
+			// The walk reads one header per step and links through its parent. A
+			// gap in the ancestry (an interrupted sweep or rewind) is this node's
+			// condition and leaves nothing to link through, so it must not become
+			// a nil dereference.
+			if headHeader == nil {
+				return NonStatTy, localConditionf("no header for ancestor #%d (%v) of header #%d (%v)", headNumber, headHash, number, hash)
+			}
 			headHash = headHeader.ParentHash
 			headNumber = headHeader.Number.Uint64() - 1
 			headHeader = hc.GetHeader(headHash, headNumber)
@@ -212,6 +227,18 @@ func (hc *HeaderChain) WriteHeader(header *types.Header) (status WriteStatus, er
 		// Extend the canonical chain with the new header
 		rawdb.WriteCanonicalHash(markerBatch, hash, number)
 		rawdb.WriteHeadHeaderHash(markerBatch, hash)
+	}
+	// Irrelevant of the canonical status, write the td and header to the database
+	//
+	// Note all the components of header(td, hash->number index and header) should
+	// be written atomically.
+	headerBatch := hc.chainDb.NewBatch()
+	rawdb.WriteTd(headerBatch, hash, number, externTd)
+	rawdb.WriteHeader(headerBatch, header)
+	if err := headerBatch.Write(); err != nil {
+		log.Crit("Failed to write header into disk", "err", err)
+	}
+	if canonical {
 		if err := markerBatch.Write(); err != nil {
 			log.Crit("Failed to write header markers into disk", "err", err)
 		}
@@ -236,6 +263,18 @@ func (hc *HeaderChain) WriteHeader(header *types.Header) (status WriteStatus, er
 // necessary since chain events are sent after inserting blocks. Second, the
 // header writes should be protected by the parent chain mutex individually.
 type WhCallback func(*types.Header) error
+
+// setSweptBound points header imports at the canonical assignments the startup
+// sweep dropped. A zero bound clears the restore state.
+func (hc *HeaderChain) setSweptBound(bound uint64) {
+	hc.sweptTo = bound
+}
+
+// clearSweptBound drops the restore state once the head has passed every
+// assignment the startup sweep removed.
+func (hc *HeaderChain) clearSweptBound() {
+	hc.sweptTo = 0
+}
 
 func (hc *HeaderChain) ValidateHeaderChain(chain []*types.Header, checkFreq int) (int, error) {
 	// Do a sanity check that the provided chain is actually ordered and linked
@@ -303,6 +342,41 @@ func (hc *HeaderChain) ValidateHeaderChain(chain []*types.Header, checkFreq int)
 func (hc *HeaderChain) InsertHeaderChain(chain []*types.Header, writeHeader WhCallback, start time.Time) (int, error) {
 	// Collect some import statistics to report on
 	stats := struct{ processed, ignored int }{}
+	// A known header above the current head is not fully known: its canonical
+	// assignment may have been dropped by the startup sweep, and the skip in the
+	// loop below never runs WriteHeader's ancestor walk-back. The restore point
+	// has to be chosen before the loop: a header the loop stores is above the
+	// head as well, and writing it a second time would only repeat its
+	// fork-choice draw. Only heights the sweep dropped can be missing, and the
+	// sweep records every dropped assignment at its height: a known header is
+	// restored only when the record names it, so a known side header above the
+	// rewound head, which may beat it in total difficulty although it lost the
+	// fork-choice before the rewind, is left alone.
+	var (
+		restore      *types.Header
+		restoreIndex int
+	)
+	if hc.sweptTo != 0 {
+		head := hc.CurrentHeader()
+		for i := len(chain) - 1; i >= 0; i-- {
+			number := chain[i].Number.Uint64()
+			if number <= head.Number.Uint64() {
+				break
+			}
+			if number > hc.sweptTo || !hc.HasHeader(chain[i].Hash(), number) {
+				continue
+			}
+			dropped, ok, err := rawdb.ReadSweptCanonicalHash(hc.chainDb, number)
+			if err != nil {
+				return i, localConditionf("failed to read the canonical assignment dropped at #%d: %v", number, err)
+			}
+			if !ok || dropped != chain[i].Hash() {
+				continue
+			}
+			restore, restoreIndex = chain[i], i
+			break
+		}
+	}
 	// All headers passed verification, import them into the database
 	for i, header := range chain {
 		// Short circuit insertion if shutting down
@@ -320,9 +394,49 @@ func (hc *HeaderChain) InsertHeaderChain(chain []*types.Header, writeHeader WhCa
 		}
 		stats.processed++
 	}
+	// Write the highest known header the sweep dropped back so the range below
+	// it is restored and the head advances over it. The record proves the header
+	// was the canonical assignment the sweep dropped, and its total difficulty
+	// exceeds the rewound head's; the ancestor walk-back of WriteHeader writes
+	// the rest of the dropped range.
+	if restore != nil {
+		head := hc.CurrentHeader()
+		if restore.Number.Uint64() > head.Number.Uint64() {
+			// WriteHeader compares the restored header's total difficulty against the
+			// current head's and links through the parent, so both records have to be
+			// readable. A missing one is this node's condition, not a verdict on the
+			// peer that replayed a header this node already holds, so it is reported as
+			// one instead of being left to the nil dereference or ErrUnknownAncestor.
+			if hc.GetTd(hc.currentHeaderHash, head.Number.Uint64()) == nil {
+				return restoreIndex, localConditionf("no total difficulty for the current head header #%d (%v)", head.Number, hc.currentHeaderHash)
+			}
+			if hc.GetTd(restore.ParentHash, restore.Number.Uint64()-1) == nil {
+				return restoreIndex, localConditionf("no total difficulty for the parent of the known header #%d (%v)", restore.Number, restore.ParentHash)
+			}
+			if err := writeHeader(restore); err != nil {
+				return restoreIndex, err
+			}
+			log.Debug("Restored canonical headers above the head", "number", restore.Number, "hash", restore.Hash())
+			// The ancestor walk-back rewrote every assignment below the restored
+			// header, so their records are spent and the next restart should not
+			// walk them again.
+			if err := rawdb.PruneSweptCanonicalHashes(hc.chainDb, hc.CurrentHeader().Number.Uint64()); err != nil {
+				log.Warn("Failed to prune the spent swept canonical records", "err", err)
+			}
+		}
+	}
+	// Once the header head has passed every assignment the startup sweep
+	// removed, the restore point is spent: drop the records and the bound so a
+	// later restart does not search for it again.
+	if hc.sweptTo != 0 && hc.CurrentHeader().Number.Uint64() >= hc.sweptTo {
+		if err := rawdb.DeleteSweptCanonicalHashes(hc.chainDb); err != nil {
+			log.Warn("Failed to clear the swept canonical records", "err", err)
+		} else {
+			hc.clearSweptBound()
+		}
+	}
 	// Report some public statistics so the user has a clue what's going on
 	last := chain[len(chain)-1]
-
 	context := []interface{}{
 		"count", stats.processed, "elapsed", common.PrettyDuration(time.Since(start)),
 		"number", last.Number, "hash", last.Hash(),

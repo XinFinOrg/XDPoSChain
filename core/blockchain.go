@@ -684,6 +684,59 @@ func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus
 		}
 	}
 
+	// A rewind commits the lowered head markers before deleting the blocks they
+	// orphan, and the repair above lowers the markers on its own; a crash in
+	// either window leaves canonical assignments of abandoned blocks behind,
+	// which RPC answers by number from. A reorg has the same shape: it moves the
+	// head block by block and deletes the abandoned tail in a batch afterwards.
+	// Drop them before the node serves, up to the header head: the assignments
+	// between the block head and the header head belong to a node that executes
+	// behind the headers it already stored.
+	//
+	// The transaction lookups of the dropped blocks stay: they are resolved
+	// through the assignment at their height, so they answer nil while it is
+	// gone, and a range that is re-imported later finds them in place.
+	if !cfg.readOnly {
+		if head := bc.CurrentHeader(); head != nil {
+			// A sweep that committed but stopped before any header replay left its
+			// records on disk: heights the head has already passed are spent, and
+			// the bound says whether anything above it is still pending.
+			bound, err := rawdb.ReadSweptCanonicalBound(db)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read the swept canonical bound: %w", err)
+			}
+			if bound != 0 {
+				if err := rawdb.PruneSweptCanonicalHashes(db, head.Number.Uint64()); err != nil {
+					return nil, fmt.Errorf("failed to prune the spent swept canonical records: %w", err)
+				}
+				if bound <= head.Number.Uint64() {
+					// The head already passed every dropped assignment, so the
+					// records are spent and the import has nothing left to restore.
+					if err := rawdb.DeleteSweptCanonicalHashes(db); err != nil {
+						return nil, fmt.Errorf("failed to clear the spent swept canonical records: %w", err)
+					}
+					bound = 0
+				}
+			}
+			bc.hc.setSweptBound(bound)
+
+			// The sweep records every dropped assignment in the same batch as its
+			// deletion and keeps the higher of the bound and the pending one: a
+			// sweep that finds fewer assignments than an earlier one dropped must
+			// not shrink the bound below records that are still pending.
+			removed, rest, err := rawdb.DeleteCanonicalHashesAbove(db, head.Number.Uint64(), bound)
+			if err != nil {
+				return nil, fmt.Errorf("failed to drop canonical assignments above the head: %w", err)
+			}
+			if removed > 0 {
+				// Only a dropped assignment can need a restore; with nothing dropped
+				// the header import keeps skipping known headers.
+				bc.hc.setSweptBound(rest)
+				log.Warn("Dropped canonical assignments above the head", "head", head.Number, "removed", removed)
+			}
+		}
+	}
+
 	// Start future block processor.
 	bc.wg.Go(bc.futureBlocksLoop)
 
@@ -1050,9 +1103,15 @@ func (bc *BlockChain) ResetWithGenesisBlock(genesis *types.Block) error {
 
 	// The rewind only visits assignments through their header keys, so one at a
 	// height whose header is gone survives it. Genesis is the only one to keep.
-	if err := rawdb.DeleteCanonicalHashesAbove(bc.db, 0); err != nil {
+	if err := rawdb.PurgeCanonicalHashesAbove(bc.db, 0); err != nil {
 		return err
 	}
+	// The purge also drops the restore records of any earlier sweep; one left
+	// behind would point header imports at a range that no longer exists.
+	if err := rawdb.DeleteSweptCanonicalHashes(bc.db); err != nil {
+		return err
+	}
+	bc.hc.clearSweptBound()
 
 	// Prepare the genesis block and reinitialise the chain
 	batch := bc.db.NewBatch()
