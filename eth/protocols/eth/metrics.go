@@ -54,6 +54,7 @@ var (
 	miscInTrafficMeter        = metrics.NewRegisteredMeter("eth/misc/in/traffic", nil)
 	miscOutPacketsMeter       = metrics.NewRegisteredMeter("eth/misc/out/packets", nil)
 	miscOutTrafficMeter       = metrics.NewRegisteredMeter("eth/misc/out/traffic", nil)
+	propHashInRejectedMeter   = metrics.NewRegisteredMeter("eth/prop/hashes/in/rejected", nil)
 )
 
 // meteredMsgReadWriter is a wrapper around a p2p.MsgReadWriter, capable of

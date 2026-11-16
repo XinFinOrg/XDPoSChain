@@ -68,6 +68,32 @@ const (
 	// of a realistic size: every hash in the request costs a pool lookup, served
 	// or not.
 	maxPooledTransactionsServe = 4096
+
+	// maxBlockHashesAnnounce is the maximum number of announcements a single
+	// NewBlockHashes message may carry. The fetcher tracks at most hashLimit (256)
+	// outstanding announcements per peer, so a larger batch buys no retrieval.
+	// Going over the cap is a protocol violation (nodes announce one per message)
+	// and drops the peer. The cap is per message: repeat at-cap messages each cost
+	// up to one chain lookup per announcement.
+	maxBlockHashesAnnounce = 1024
+
+	// maxAnnounceRLPSize bounds the wire cost of one announcement: a two-item
+	// list header (1 byte), a 32-byte hash (33 bytes) and a 64-bit number (9
+	// bytes).
+	maxAnnounceRLPSize = 43
+
+	// maxAnnounceFrameSize is the largest frame that can still hold
+	// maxBlockHashesAnnounce announcements (the entry bound plus the outer list
+	// header). A larger frame carries more entries than the cap allows, so it is
+	// refused before the RLP decode instead of after it.
+	maxAnnounceFrameSize = maxBlockHashesAnnounce*maxAnnounceRLPSize + 8
+
+	// maxAnnounceRate is the per-peer announcement budget in announcements per
+	// second, refilled into a bucket of maxAnnounceBurst. A node announces one
+	// hash per block, so the budget sits orders of magnitude above honest
+	// traffic while bounding the chain lookups one peer's announcements buy.
+	maxAnnounceRate  = 256
+	maxAnnounceBurst = maxBlockHashesAnnounce
 )
 
 func errResp(code errCode, format string, v ...interface{}) error {
@@ -504,9 +530,25 @@ func handleMessage(backend Backend, peer *Peer) error {
 		return backend.Handle(peer, &receipts, msg.Size)
 
 	case msg.Code == NewBlockHashesMsg:
+		// Refuse a frame that is too large to hold a legal batch before decoding
+		// it, so an over-cap frame is not decoded first.
+		if msg.Size > maxAnnounceFrameSize {
+			propHashInRejectedMeter.Mark(1)
+			return errResp(ErrMsgTooLarge, "announce frame %v > %v", msg.Size, maxAnnounceFrameSize)
+		}
 		var announces NewBlockHashesPacket
 		if err := msg.Decode(&announces); err != nil {
 			return errResp(ErrDecode, "%v: %v", msg, err)
+		}
+		if len(announces) > maxBlockHashesAnnounce {
+			propHashInRejectedMeter.Mark(1)
+			return errResp(ErrMsgTooLarge, "%d announcements > %d", len(announces), maxBlockHashesAnnounce)
+		}
+		// Charge the batch against the peer's announcement budget, so a peer
+		// cannot keep the chain lookups flowing with repeated at-cap messages.
+		if !peer.spendAnnounceBudget(len(announces)) {
+			propHashInRejectedMeter.Mark(1)
+			return errResp(ErrMsgTooLarge, "%d announcements over the per-peer budget", len(announces))
 		}
 		return backend.Handle(peer, &announces, msg.Size)
 
