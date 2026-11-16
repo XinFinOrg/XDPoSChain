@@ -48,6 +48,12 @@ Prague adds a history storage contract at `HistoryStorageAddress`, `0x0000F90827
 
 The contract is only present once Prague is active on the network, so there is nothing to call on mainnet or testnet yet (devnet has it active from block 50000).
 
+## Amsterdam / EIP-7997
+
+Amsterdam installs the deterministic deployment factory (the keyless CREATE2 factory) at `0x4e59b44847b379578588920cA78FbF26c0B4956C` with the EIP-7997 runtime code and a nonzero nonce: 1 on a fresh account, kept as is when the account already carries one. It is injected by the block level hooks on Amsterdam-active blocks, not added to the genesis allocation: the mainnet, testnet and devnet genesis allocations are fixed constants. A chain that activates Amsterdam at genesis gets it from the first processed block instead.
+
+No network schedules Amsterdam yet. Mainnet and testnet already carry this runtime code at the standard address from their historical keyless deployment, with a nonzero nonce, so deployment tooling can use it there today and the Amsterdam install is a no-op on both; a chain that activates Amsterdam without the account gets it from the first Amsterdam-active block instead. CREATE2 calls through the factory produce the same addresses as on other EVM chains. The caveats in note 7 above still apply: Amsterdam is not a sound compiler target until EIP-8037 and EIP-8038 land.
+
 ## Special variables
 
 ### block.prevrandao

@@ -17,6 +17,7 @@
 package ethapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -106,11 +107,12 @@ type simulator struct {
 }
 
 // requestSpan is the request level view the owner guard judges an override against: the
-// first Prague-active block, when the request holds one, and the last block. The last
-// block is always set.
+// first Prague-active and the first Amsterdam-active block, when the request holds one,
+// and the last block. The last block is always set.
 type requestSpan struct {
-	firstPrague *big.Int
-	lastBlock   *big.Int
+	firstPrague    *big.Int
+	firstAmsterdam *big.Int
+	lastBlock      *big.Int
 }
 
 // execute runs the simulation of a series of blocks.
@@ -144,11 +146,16 @@ func (sim *simulator) execute(ctx context.Context, blocks []simBlock) ([]map[str
 	// Every block of the request runs on one state, so an override planted on an earlier
 	// block is still in effect when a later block runs its block level hooks. The guard
 	// needs the request level view of that: the first Prague-active block, whose changes
-	// the request cannot undo, and the last block.
+	// the request cannot undo, the first Amsterdam-active block, and the last block.
 	span := requestSpan{lastBlock: new(big.Int).Set(headers[len(headers)-1].Number)}
 	for _, header := range headers {
-		if sim.chainConfig.IsPrague(header.Number) {
+		if span.firstPrague == nil && sim.chainConfig.IsPrague(header.Number) {
 			span.firstPrague = new(big.Int).Set(header.Number)
+		}
+		if span.firstAmsterdam == nil && sim.chainConfig.IsAmsterdam(header.Number) {
+			span.firstAmsterdam = new(big.Int).Set(header.Number)
+		}
+		if span.firstPrague != nil && span.firstAmsterdam != nil {
 			break
 		}
 	}
@@ -223,6 +230,9 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 	// move them to another address.
 	if precompiles != nil {
 		evm.SetPrecompiles(precompiles)
+	}
+	if err := rejectForeignFactoryCode(sim.chainConfig, sim.state, header.Number); err != nil {
+		return nil, nil, err
 	}
 	// Block level state changes, applied the way block processing does.
 	core.ApplyBlockLevelHooks(header.ParentHash, evm)
@@ -307,15 +317,31 @@ func pragueHookOwner(config *params.ChainConfig, number, firstPrague *big.Int) *
 	return nil
 }
 
+// amsterdamHookOwner returns the block whose Amsterdam block level hooks the guard has to
+// check: the simulated block when Amsterdam is active there, otherwise the first
+// Amsterdam-active block of the request, whose changes carry into the simulated one. It
+// returns nil when the request holds no Amsterdam-active block.
+func amsterdamHookOwner(config *params.ChainConfig, number, firstAmsterdam *big.Int) *big.Int {
+	if config.IsAmsterdam(number) {
+		return number
+	}
+	// firstAmsterdam comes from an Amsterdam-active header, so only its order needs checking.
+	if firstAmsterdam != nil && number.Cmp(firstAmsterdam) < 0 {
+		return firstAmsterdam
+	}
+	return nil
+}
+
 // rejectOwnedAccountOverrides refuses an override of a field a block level hook writes,
 // which would silently undo it or trip the consensus panic. A Prague block owns
-// Multicall3 and the history contract (nonce, parent hash write), the TIPSigning activation
-// block the block signers account. The request runs every block on one state, so the change
-// of a later block owns its fields as well: the guard judges the simulated block against
-// the block the change runs at, and names that block when it is not the simulated one.
-// Fields a block does not write stay overridable, except a precompile move onto the history
-// contract, which drops the write; a move from an account the EVM does not serve as a
-// precompile cannot shadow it, and override.Apply rejects that move itself.
+// Multicall3 and the history contract (nonce, parent hash write), an Amsterdam block the
+// EIP-7997 factory install, the TIPSigning activation block the block signers account.
+// The request runs every block on one state, so the change of a later block owns its
+// fields as well: the guard judges the simulated block against the block the change runs
+// at, and names that block when it is not the simulated one. Fields a block does not write
+// stay overridable, except a precompile move onto the history contract, which drops the
+// write; a move from an account the EVM does not serve as a precompile cannot shadow it,
+// and override.Apply rejects that move itself.
 func rejectOwnedAccountOverrides(config *params.ChainConfig, statedb *state.StateDB, precompiles vm.PrecompiledContracts, header *types.Header, span requestSpan, overrides *override.StateOverride) error {
 	if overrides == nil {
 		return nil
@@ -323,7 +349,57 @@ func rejectOwnedAccountOverrides(config *params.ChainConfig, statedb *state.Stat
 	if err := rejectPragueOwnedOverrides(config, statedb, precompiles, header.Number, span, overrides); err != nil {
 		return err
 	}
+	if err := rejectAmsterdamOwnedOverrides(config, statedb, header.Number, span, overrides); err != nil {
+		return err
+	}
 	return rejectTIPSigningRemovalOverrides(config, header.Number, span, overrides)
+}
+
+// rejectAmsterdamOwnedOverrides refuses an override of a field the Amsterdam block level
+// hooks write at the owning block amsterdamHookOwner returns: the EIP-7997 factory install
+// owns the code and, on an account without code, a zero nonce. A precompile move onto the
+// account and every other field stay overridable, as the install does not touch them.
+func rejectAmsterdamOwnedOverrides(config *params.ChainConfig, statedb *state.StateDB, number *big.Int, span requestSpan, overrides *override.StateOverride) error {
+	owner := amsterdamHookOwner(config, number, span.firstAmsterdam)
+	if owner == nil {
+		return nil
+	}
+	atBlock := owner.Cmp(number) == 0
+	refuse := func(addr common.Address, field, clause string) error {
+		if atBlock {
+			return ownedOverrideError(addr, field, clause)
+		}
+		return crossBlockOverrideError(addr, field, owner)
+	}
+	if account, ok := (*overrides)[params.DeterministicFactoryAddress]; ok {
+		// Refused whatever the bytes are: canonical code would keep the nonce the chain's
+		// account does not carry, anything else trips the hook's mismatch panic, and empty
+		// code would be undone by the install.
+		if account.Code != nil {
+			return refuse(params.DeterministicFactoryAddress, "code", "which the Amsterdam EIP-7997 factory install owns")
+		}
+		// The install raises a zero nonce to 1 on an account without code, so only a
+		// zero override is undone.
+		if account.Nonce != nil && len(statedb.GetCode(params.DeterministicFactoryAddress)) == 0 && *account.Nonce == 0 {
+			return refuse(params.DeterministicFactoryAddress, "the nonce", "which the Amsterdam EIP-7997 factory install owns")
+		}
+	}
+	return nil
+}
+
+// rejectForeignFactoryCode refuses code at the factory address other than the canonical
+// runtime code once Amsterdam is active: the install panics on it, and a request can put
+// such code there without an override by creating a contract at the keyless address the
+// factory was deployed from, so the panic would escape as an RPC crash.
+func rejectForeignFactoryCode(config *params.ChainConfig, statedb *state.StateDB, number *big.Int) error {
+	if !config.IsAmsterdam(number) {
+		return nil
+	}
+	code := statedb.GetCode(params.DeterministicFactoryAddress)
+	if len(code) == 0 || bytes.Equal(code, params.DeterministicFactoryCode) {
+		return nil
+	}
+	return &invalidParamsError{message: fmt.Sprintf("code at %v differs from the canonical EIP-7997 factory runtime code, which the Amsterdam install requires", params.DeterministicFactoryAddress)}
 }
 
 // rejectPragueOwnedOverrides refuses an override of a field the Prague block level hooks
