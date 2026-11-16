@@ -1722,7 +1722,8 @@ func TestSpecialTxReplacesHeadOfStuckBacklog(t *testing.T) {
 
 // TestSpecialTxReplacementOnFullPool checks that a signer's sign tx is admitted
 // on a full pool, both at the next pending nonce and when it replaces a stuck
-// one, and that it stays out of the price heap so ordinary txs cannot evict it.
+// one, and that it is kept out of the price heap at admission, so ordinary txs
+// admitted before the next reheap cannot evict it.
 func TestSpecialTxReplacementOnFullPool(t *testing.T) {
 	t.Parallel()
 
@@ -1793,7 +1794,8 @@ func TestSpecialTxReplacementOnFullPool(t *testing.T) {
 		}
 	}
 
-	// Better-paying ordinary txs evict ordinary txs, never the sign txs.
+	// Until the next reheap, better-paying ordinary txs evict ordinary txs, not
+	// the sign txs.
 	otherKey, _ := crypto.GenerateKey()
 	testAddBalance(pool, crypto.PubkeyToAddress(otherKey.PublicKey), big.NewInt(1_000_000_000_000_000))
 	for nonce := uint64(0); nonce < 2; nonce++ {

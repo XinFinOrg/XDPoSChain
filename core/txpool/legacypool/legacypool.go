@@ -763,8 +763,9 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 	// Special transactions must also honor the reservation semantics to keep
 	// the coordinator's ownership accounting balanced. A signer's special tx at
 	// the next pending nonce, or replacing one it already has pending, bypasses
-	// the pool-full and price checks, so a sign tx is not refused or evicted
-	// on price. A replacement takes the old tx's slot and does not grow the pool.
+	// the pool-full check and is kept out of the price heap at admission, so a
+	// sign tx is not refused on price. A replacement takes the old tx's slot and
+	// does not grow the pool. Like any tx, it can be evicted after a reheap.
 	if tx.IsSpecialTransaction() && pool.IsSigner(from) &&
 		(pool.pendingNonces.get(from) == tx.Nonce() || (hasPending && pool.pending[from].Contains(tx.Nonce()))) {
 		return pool.promoteSpecialTx(from, tx)
