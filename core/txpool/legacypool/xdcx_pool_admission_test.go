@@ -2,10 +2,15 @@ package legacypool
 
 import (
 	"crypto/ecdsa"
+	"errors"
 	"math/big"
 	"testing"
 
+	"github.com/XinFinOrg/XDPoSChain/XDCx/tradingstate"
+	"github.com/XinFinOrg/XDPoSChain/XDCxlending/lendingstate"
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -171,5 +176,165 @@ func TestLendingPoolAddRemotesRejectsWithoutState(t *testing.T) {
 	}
 	if len(pool.all) != 0 {
 		t.Fatalf("pool accepted %d transactions without state", len(pool.all))
+	}
+}
+
+// resetOrderChain makes the order state load and the root state fail, so
+// reset's failure branch runs with one of the two states already fetched.
+type resetOrderChain struct {
+	blockChainXDCx
+	cfg     *params.ChainConfig
+	head    *types.Header
+	block   *types.Block
+	trading *tradingstate.TradingStateDB
+	root    *state.StateDB
+}
+
+func (s *resetOrderChain) CurrentBlock() *types.Header               { return s.head }
+func (s *resetOrderChain) Config() *params.ChainConfig               { return s.cfg }
+func (s *resetOrderChain) GetBlock(common.Hash, uint64) *types.Block { return s.block }
+func (s *resetOrderChain) OrderStateAt(*types.Block) (*tradingstate.TradingStateDB, error) {
+	return s.trading, nil
+}
+func (s *resetOrderChain) StateAt(common.Hash) (*state.StateDB, error) {
+	if s.root == nil {
+		return nil, errors.New("state unavailable")
+	}
+	return s.root, nil
+}
+
+type resetLendingChain struct {
+	blockChainLending
+	cfg     *params.ChainConfig
+	head    *types.Header
+	block   *types.Block
+	lending *lendingstate.LendingStateDB
+	root    *state.StateDB
+}
+
+func (s *resetLendingChain) CurrentBlock() *types.Header               { return s.head }
+func (s *resetLendingChain) Config() *params.ChainConfig               { return s.cfg }
+func (s *resetLendingChain) GetBlock(common.Hash, uint64) *types.Block { return s.block }
+func (s *resetLendingChain) LendingStateAt(*types.Block) (*lendingstate.LendingStateDB, error) {
+	return s.lending, nil
+}
+func (s *resetLendingChain) StateAt(common.Hash) (*state.StateDB, error) {
+	if s.root == nil {
+		return nil, errors.New("state unavailable")
+	}
+	return s.root, nil
+}
+
+func TestOrderPoolResetDiscardsPartialSnapshot(t *testing.T) {
+	tradingState, err := tradingstate.New(common.Hash{}, tradingstate.NewDatabase(rawdb.NewMemoryDatabase()))
+	if err != nil {
+		t.Fatalf("failed to build trading state: %v", err)
+	}
+	cfg := receiverActiveConfig()
+	cfg.XDPoS = &params.XDPoSConfig{Epoch: 100}
+	head := &types.Header{Number: big.NewInt(200)}
+	pool := &OrderPool{
+		chainconfig: cfg,
+		chain: &resetOrderChain{
+			cfg:     cfg,
+			head:    head,
+			block:   types.NewBlockWithHeader(head),
+			trading: tradingState,
+		},
+		signer: types.OrderTxSigner{},
+		all:    make(map[common.Hash]*types.OrderTransaction),
+	}
+	pool.reset(head)
+
+	if pool.currentOrderState != nil || pool.pendingState != nil || pool.currentRootState != nil {
+		t.Fatalf("reset published a partial snapshot: order=%v pending=%v root=%v", pool.currentOrderState, pool.pendingState, pool.currentRootState)
+	}
+}
+
+func TestLendingPoolResetDiscardsPartialSnapshot(t *testing.T) {
+	lendingState, err := lendingstate.New(common.Hash{}, lendingstate.NewDatabase(rawdb.NewMemoryDatabase()))
+	if err != nil {
+		t.Fatalf("failed to build lending state: %v", err)
+	}
+	cfg := receiverActiveConfig()
+	cfg.XDPoS = &params.XDPoSConfig{Epoch: 100}
+	head := &types.Header{Number: big.NewInt(200)}
+	pool := &LendingPool{
+		chainconfig: cfg,
+		chain: &resetLendingChain{
+			cfg:     cfg,
+			head:    head,
+			block:   types.NewBlockWithHeader(head),
+			lending: lendingState,
+		},
+		signer: types.LendingTxSigner{},
+		all:    make(map[common.Hash]*types.LendingTransaction),
+	}
+	pool.reset(head)
+
+	if pool.currentLendingState != nil || pool.pendingState != nil || pool.currentRootState != nil {
+		t.Fatalf("reset published a partial snapshot: lending=%v pending=%v root=%v", pool.currentLendingState, pool.pendingState, pool.currentRootState)
+	}
+}
+
+func TestOrderPoolResetPublishesFullSnapshot(t *testing.T) {
+	tradingState, err := tradingstate.New(common.Hash{}, tradingstate.NewDatabase(rawdb.NewMemoryDatabase()))
+	if err != nil {
+		t.Fatalf("failed to build trading state: %v", err)
+	}
+	rootState, err := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()))
+	if err != nil {
+		t.Fatalf("failed to build root state: %v", err)
+	}
+	cfg := receiverActiveConfig()
+	cfg.XDPoS = &params.XDPoSConfig{Epoch: 100}
+	head := &types.Header{Number: big.NewInt(200)}
+	pool := &OrderPool{
+		chainconfig: cfg,
+		chain: &resetOrderChain{
+			cfg:     cfg,
+			head:    head,
+			block:   types.NewBlockWithHeader(head),
+			trading: tradingState,
+			root:    rootState,
+		},
+		signer: types.OrderTxSigner{},
+		all:    make(map[common.Hash]*types.OrderTransaction),
+	}
+	pool.reset(head)
+
+	if pool.currentOrderState == nil || pool.pendingState == nil || pool.currentRootState == nil {
+		t.Fatalf("reset did not publish the full snapshot: order=%v pending=%v root=%v", pool.currentOrderState != nil, pool.pendingState != nil, pool.currentRootState != nil)
+	}
+}
+
+func TestLendingPoolResetPublishesFullSnapshot(t *testing.T) {
+	lendingState, err := lendingstate.New(common.Hash{}, lendingstate.NewDatabase(rawdb.NewMemoryDatabase()))
+	if err != nil {
+		t.Fatalf("failed to build lending state: %v", err)
+	}
+	rootState, err := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()))
+	if err != nil {
+		t.Fatalf("failed to build root state: %v", err)
+	}
+	cfg := receiverActiveConfig()
+	cfg.XDPoS = &params.XDPoSConfig{Epoch: 100}
+	head := &types.Header{Number: big.NewInt(200)}
+	pool := &LendingPool{
+		chainconfig: cfg,
+		chain: &resetLendingChain{
+			cfg:     cfg,
+			head:    head,
+			block:   types.NewBlockWithHeader(head),
+			lending: lendingState,
+			root:    rootState,
+		},
+		signer: types.LendingTxSigner{},
+		all:    make(map[common.Hash]*types.LendingTransaction),
+	}
+	pool.reset(head)
+
+	if pool.currentLendingState == nil || pool.pendingState == nil || pool.currentRootState == nil {
+		t.Fatalf("reset did not publish the full snapshot: lending=%v pending=%v root=%v", pool.currentLendingState != nil, pool.pendingState != nil, pool.currentRootState != nil)
 	}
 }

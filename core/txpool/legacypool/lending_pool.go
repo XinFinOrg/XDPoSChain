@@ -297,14 +297,14 @@ func (pool *LendingPool) reset(newHead *types.Header) {
 		log.Error("Failed to reset LendingPool state", "err", err)
 		return
 	}
-	pool.currentLendingState = lendingState
-	pool.pendingState = lendingstate.ManageState(lendingState)
-
 	state, err := pool.chain.StateAt(newHead.Root)
 	if err != nil {
 		log.Error("Failed to reset pool state", "err", err)
 		return
 	}
+	// Publish both states together so a failed load never leaves a mixed snapshot.
+	pool.currentLendingState = lendingState
+	pool.pendingState = lendingstate.ManageState(lendingState)
 	pool.currentRootState = state
 
 	// Inject any transactions discarded due to reorgs

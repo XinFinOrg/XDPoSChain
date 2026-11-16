@@ -303,14 +303,14 @@ func (pool *OrderPool) reset(newHead *types.Header) {
 		log.Error("Failed to reset OrderPool state", "err", err)
 		return
 	}
-	pool.currentOrderState = orderstate
-	pool.pendingState = tradingstate.ManageState(orderstate)
-
 	state, err := pool.chain.StateAt(newHead.Root)
 	if err != nil {
 		log.Error("Failed to reset pool state", "err", err)
 		return
 	}
+	// Publish both states together so a failed load never leaves a mixed snapshot.
+	pool.currentOrderState = orderstate
+	pool.pendingState = tradingstate.ManageState(orderstate)
 	pool.currentRootState = state
 
 	// Inject any transactions discarded due to reorgs
