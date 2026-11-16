@@ -433,6 +433,14 @@ func IsSignTransactionRoute(config *params.ChainConfig, blockNumber *big.Int, tx
 	return to != nil && *to == common.BlockSignersBinary && config.IsTIPSigning(blockNumber)
 }
 
+// IsXDCXSystemTxDisabled reports whether tx targets an XDCx system address at a
+// block where the miner no longer writes or the receiver no longer reads XDCx state.
+func IsXDCXSystemTxDisabled(config *params.ChainConfig, blockNumber *big.Int, tx *types.Transaction) bool {
+	return config.IsTIPXDCX(blockNumber) &&
+		(!config.IsTIPXDCXMiner(blockNumber) || !config.IsTIPXDCXReceiver(blockNumber)) &&
+		tx.IsXDCXSystemTransaction()
+}
+
 // finaliseTxState writes the pending state changes of a single transaction to the trie,
 // the same way block processing does before it builds the receipt: the state is finalised
 // once per transaction, and the pre-Byzantium root is only kept for the receipt.

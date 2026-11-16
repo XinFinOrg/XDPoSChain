@@ -78,6 +78,10 @@ var (
 	// ErrFutureReplacePending is returned if a future transaction replaces a pending
 	// one. Future transactions should only be able to replace other future transactions.
 	ErrFutureReplacePending = errors.New("future transaction tries to replace pending")
+
+	// ErrXDCXSystemTxDisabled is returned when a transaction targets an XDCx system
+	// address after the receiver disable fork.
+	ErrXDCXSystemTxDisabled = errors.New("XDCx system transaction after the disable fork")
 )
 
 var (
@@ -597,6 +601,15 @@ func (pool *LegacyPool) ValidateTxBasics(tx *types.Transaction) error {
 // validateTx checks whether a transaction is valid according to the consensus
 // rules and adheres to some heuristic limits of the local node (price and size).
 func (pool *LegacyPool) validateTx(tx *types.Transaction) error {
+	// XDCx system transactions lose their meaning once the receiver fork is off:
+	// the broadcast import path still applies them as XDCx batches while the sync
+	// path skips the processing, so the pool does not take them.
+	if head := pool.currentHead.Load(); head != nil && pool.chainconfig != nil {
+		next := new(big.Int).Add(head.Number, common.Big1)
+		if core.IsXDCXSystemTxDisabled(pool.chainconfig, next, tx) {
+			return ErrXDCXSystemTxDisabled
+		}
+	}
 	opts := &txpool.ValidationOptionsWithState{
 		Config: pool.chainconfig,
 

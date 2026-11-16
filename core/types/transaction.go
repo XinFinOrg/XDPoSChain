@@ -574,8 +574,8 @@ func (tx *Transaction) IsLendingFinalizedTradeTransaction() bool {
 	return to != nil && *to == common.XDCXLendingFinalizedTradeAddressBinary
 }
 
-func (tx *Transaction) IsSkipNonceTransaction() bool {
-	to := tx.To()
+// isXDCXSystemAddress reports whether to is one of the XDCx system addresses.
+func isXDCXSystemAddress(to *common.Address) bool {
 	if to == nil {
 		return false
 	}
@@ -589,6 +589,10 @@ func (tx *Transaction) IsSkipNonceTransaction() bool {
 	default:
 		return false
 	}
+}
+
+func (tx *Transaction) IsXDCXSystemTransaction() bool {
+	return isXDCXSystemAddress(tx.To())
 }
 
 // IsNonEVMTx returns true if the transaction is a "special transaction" that
@@ -608,20 +612,7 @@ func (tx *Transaction) IsNonEVMTx() bool {
 		return false
 	}
 	to := tx.To()
-	if to == nil {
-		return false
-	}
-
-	switch *to {
-	case common.BlockSignersBinary,
-		common.XDCXAddrBinary,
-		common.TradingStateAddrBinary,
-		common.XDCXLendingAddressBinary,
-		common.XDCXLendingFinalizedTradeAddressBinary:
-		return true
-	default:
-		return false
-	}
+	return to != nil && (*to == common.BlockSignersBinary || isXDCXSystemAddress(to))
 }
 
 func (tx *Transaction) IsSigningTransaction() bool {

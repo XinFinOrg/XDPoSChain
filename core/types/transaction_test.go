@@ -839,3 +839,25 @@ func TestApplyTransactionClassifiersRequireConfiguredSystemAddresses(t *testing.
 		})
 	}
 }
+
+func TestIsXDCXSystemTransaction(t *testing.T) {
+	tests := []struct {
+		name string
+		tx   *Transaction
+		want bool
+	}{
+		{"batch", NewTransaction(0, common.XDCXAddrBinary, common.Big0, 21000, common.Big1, nil), true},
+		{"trading state root", NewTransaction(0, common.TradingStateAddrBinary, common.Big0, 21000, common.Big1, nil), true},
+		{"lending batch", NewTransaction(0, common.XDCXLendingAddressBinary, common.Big0, 21000, common.Big1, nil), true},
+		{"lending finalized trade", NewTransaction(0, common.XDCXLendingFinalizedTradeAddressBinary, common.Big0, 21000, common.Big1, nil), true},
+		{"regular transfer", NewTransaction(0, common.Address{0x01}, common.Big0, 21000, common.Big1, nil), false},
+		{"contract creation", NewContractCreation(0, common.Big0, 21000, common.Big1, nil), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.tx.IsXDCXSystemTransaction(); got != tt.want {
+				t.Fatalf("IsXDCXSystemTransaction() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

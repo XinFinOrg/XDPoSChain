@@ -99,7 +99,7 @@ func replayIntermediateRoots(t *testing.T, backend *testBackend, config *params.
 // the transaction is routed to ApplyEmptyTransaction, which neither checks nor increments
 // the sender nonce, so the follower reuses nonce 0; without the fork the transaction is an
 // ordinary EVM call that bumps the nonce, so the follower carries nonce 1. The base skipped
-// such a transaction outright through tx.IsSkipNonceTransaction(), which loses the nonce
+// such a transaction outright through tx.IsXDCXSystemTransaction(), which loses the nonce
 // increment the follower relies on once the fork is off and truncates the root list.
 var intermediateRootsForkCases = []struct {
 	name          string

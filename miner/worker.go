@@ -123,6 +123,12 @@ func (w *Work) txFitsSize(tx *types.Transaction) bool {
 	return true
 }
 
+// rejectsXDCXSystemTx reports whether the block being built has moved past the
+// XDCx disable fork, where system-address transactions are no longer defined.
+func (w *Work) rejectsXDCXSystemTx(tx *types.Transaction) bool {
+	return core.IsXDCXSystemTxDisabled(w.config, w.header.Number, tx)
+}
+
 type Result struct {
 	Work  *Work
 	Block *types.Block
@@ -1186,7 +1192,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 		w.state.SetTxContext(hash, w.tcount)
 
 		nonce := w.state.GetNonce(from)
-		if nonce != tx.Nonce() && !tx.IsSkipNonceTransaction() {
+		if nonce != tx.Nonce() && !tx.IsXDCXSystemTransaction() {
 			log.Trace("Skipping account with special transaction invalid nonce", "sender", from, "nonce", nonce, "tx nonce ", tx.Nonce(), "to", to)
 			continue
 		}
@@ -1243,6 +1249,12 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			break
 		}
 		to := tx.To()
+		if w.rejectsXDCXSystemTx(tx) {
+			log.Debug("Skipping XDCx system transaction after the disable fork", "hash", tx.Hash().Hex())
+			// Pop drops the sender's remaining transactions too: they are equally meaningless.
+			txs.Pop()
+			continue
+		}
 		if w.config.IsDenylist(w.header.Number) {
 			from := tx.From()
 			// check if sender is in denylist
