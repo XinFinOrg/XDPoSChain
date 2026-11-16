@@ -761,8 +761,13 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 	}
 
 	// Special transactions must also honor the reservation semantics to keep
-	// the coordinator's ownership accounting balanced.
-	if tx.IsSpecialTransaction() && pool.IsSigner(from) && pool.pendingNonces.get(from) == tx.Nonce() {
+	// the coordinator's ownership accounting balanced. A signer's special tx at
+	// the next pending nonce, or replacing one it already has pending, bypasses
+	// the pool-full check and is kept out of the price heap at admission, so a
+	// sign tx is not refused on price. A replacement takes the old tx's slot and
+	// does not grow the pool. Like any tx, it can be evicted after a reheap.
+	if tx.IsSpecialTransaction() && pool.IsSigner(from) &&
+		(pool.pendingNonces.get(from) == tx.Nonce() || (hasPending && pool.pending[from].Contains(tx.Nonce()))) {
 		return pool.promoteSpecialTx(from, tx)
 	}
 
@@ -953,10 +958,8 @@ func (pool *LegacyPool) promoteSpecialTx(addr common.Address, tx *types.Transact
 	base := new(uint256.Int).Set(list.totalcost)
 	old := list.txs.Get(tx.Nonce())
 	if old != nil {
-		if old.IsSpecialTransaction() {
-			return false, txpool.ErrDuplicateSpecialTransaction
-		}
-		// Old is being replaced, subtract old cost
+		// Old is being replaced, subtract old cost. A special tx replaces any
+		// tx at its nonce, special or not, as list.Add does.
 		if _, underflow := base.SubOverflow(base, uint256.MustFromBig(old.Cost())); underflow {
 			panic("totalcost underflow")
 		}
@@ -996,9 +999,12 @@ func (pool *LegacyPool) promoteSpecialTx(addr common.Address, tx *types.Transact
 	if pool.all.Get(tx.Hash()) == nil {
 		pool.all.Add(tx)
 	}
-	// Set the potentially new pending nonce and notify any subsystems of the new tx
+	// Set the potentially new pending nonce and notify any subsystems of the new tx.
+	// A replacement keeps the pending nonce: it may sit below the list's tail.
 	pool.queue.bump(addr)
-	pool.pendingNonces.set(addr, tx.Nonce()+1)
+	if old == nil {
+		pool.pendingNonces.set(addr, tx.Nonce()+1)
+	}
 	pool.queueTxEvent(tx)
 	return true, nil
 }
