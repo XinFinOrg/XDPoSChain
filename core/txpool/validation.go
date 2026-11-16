@@ -128,19 +128,48 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if tx.Nonce()+1 < tx.Nonce() {
 		return core.ErrNonceMax
 	}
-	// Skip further validation for special transactions
+	// Special transactions are exempt from the gas price checks below, but the
+	// execution side still charges intrinsic and floor gas unless it routes them
+	// to ApplySignTransaction
 	if tx.IsSpecialTransaction() {
 		if opts.NotSigner(from) {
 			return fmt.Errorf("%w: %s", ErrSpecialTxNotFromSigner, from.Hex())
 		}
-		return nil
+		if core.IsSignTransactionRoute(opts.Config, pendingBlockNumber(head.Number), tx) {
+			return nil
+		}
+		if err := validateIntrinsicAndFloor(tx, from, value, rules); err != nil {
+			return err
+		}
+		return validateSetCodeAuthorizations(tx)
 	}
 	// Check zero gas price.
 	if tx.GasPrice().Sign() == 0 {
 		return ErrZeroGasPrice
 	}
-	// Ensure the transaction has more gas than the bare minimum needed to
-	// cover the transaction metadata.
+	if err := validateIntrinsicAndFloor(tx, from, value, rules); err != nil {
+		return err
+	}
+	// Ensure the gas price is high enough to cover the requirement of the calling pool
+	if tx.GasTipCapIntCmp(opts.MinTip) < 0 {
+		return fmt.Errorf("%w: gas tip cap %v, minimum needed %v", ErrTxGasPriceTooLow, tx.GasTipCap(), opts.MinTip)
+	}
+	if err := validateSetCodeAuthorizations(tx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateSetCodeAuthorizations(tx *types.Transaction) error {
+	if tx.Type() == types.SetCodeTxType && len(tx.SetCodeAuthorizations()) == 0 {
+		return errors.New("set code tx must have at least one authorization tuple")
+	}
+	return nil
+}
+
+// validateIntrinsicAndFloor applies the same intrinsic gas and calldata floor
+// checks as the regular pool path; rules follow the head block.
+func validateIntrinsicAndFloor(tx *types.Transaction, from common.Address, value *uint256.Int, rules params.Rules) error {
 	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), from, tx.To(), value, rules)
 	if err != nil {
 		return err
@@ -148,7 +177,6 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if tx.Gas() < intrGas {
 		return fmt.Errorf("%w: gas %v, minimum needed %v", core.ErrIntrinsicGas, tx.Gas(), intrGas)
 	}
-	// Ensure the transaction can cover floor data gas.
 	if rules.IsPrague {
 		floorDataGas, err := core.FloorDataGas(rules, from, tx.To(), value, tx.Data(), tx.AccessList())
 		if err != nil {
@@ -156,15 +184,6 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 		}
 		if tx.Gas() < floorDataGas {
 			return fmt.Errorf("%w: gas %v, minimum needed %v", core.ErrFloorDataGas, tx.Gas(), floorDataGas)
-		}
-	}
-	// Ensure the gas price is high enough to cover the requirement of the calling pool
-	if tx.GasTipCapIntCmp(opts.MinTip) < 0 {
-		return fmt.Errorf("%w: gas tip cap %v, minimum needed %v", ErrTxGasPriceTooLow, tx.GasTipCap(), opts.MinTip)
-	}
-	if tx.Type() == types.SetCodeTxType {
-		if len(tx.SetCodeAuthorizations()) == 0 {
-			return errors.New("set code tx must have at least one authorization tuple")
 		}
 	}
 	return nil
