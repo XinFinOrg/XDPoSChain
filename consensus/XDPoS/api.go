@@ -66,6 +66,10 @@ type NetworkInformation struct {
 	XDCZAddress                common.Address
 	LendingAddress             common.Address
 	ConsensusConfigs           params.XDPoSConfig
+	// Subnet metadata from the chain config, read by the subnet relayer and
+	// services. Omitted when the config leaves them empty.
+	NetworkName string `json:",omitempty"`
+	Denom       string `json:",omitempty"`
 }
 
 type SignerTypes struct {
@@ -251,7 +255,7 @@ func (api *API) GetMasternodesByNumber(number *rpc.BlockNumber) MasternodesStatu
 		}
 	}
 
-	epochNum := api.XDPoS.config.V2.SwitchEpoch + uint64(round)/api.XDPoS.config.Epoch
+	epochNum := api.XDPoS.EngineV2.EpochNumber(header.Number.Uint64(), round)
 	masterNodes := api.XDPoS.EngineV2.GetMasternodes(api.chain, header)
 	penalties := api.XDPoS.EngineV2.GetPenalties(api.chain, header)
 	standbyPool := api.XDPoS.EngineV2.GetStandbynodes(api.chain, header)
@@ -418,6 +422,8 @@ func (api *API) NetworkInformation() NetworkInformation {
 	info.XDCXListingAddress = config.XDCXListingSMC
 	info.XDCZAddress = config.TRC21IssuerSMC
 	info.ConsensusConfigs = *api.XDPoS.config
+	info.NetworkName = api.XDPoS.config.NetworkName
+	info.Denom = api.XDPoS.config.Denom
 
 	return info
 }

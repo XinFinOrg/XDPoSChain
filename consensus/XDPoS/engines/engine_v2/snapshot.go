@@ -24,6 +24,10 @@ type SnapshotV2 struct {
 	// candidates will get assigned on updateM1
 	// NOTE: must keep JSON tag "masterNodes", ref: PR #517
 	NextEpochCandidates []common.Address `json:"masterNodes"` // Set of authorized candidates nodes at this moment for next epoch
+
+	// NextEpochPenalties is only used by subnets, which compute the penalties
+	// of the next epoch at the gap block. See subnet.go.
+	NextEpochPenalties []common.Address `json:"penalties,omitempty"`
 }
 
 // NewSnapshot creates a new snapshot for next epoch to use
@@ -196,8 +200,28 @@ var ErrNoCandidates = errors.New("no masternode candidates in state")
 // Downloader.generateSnapshot must delegate here instead of reimplementing the
 // derivation.
 func BuildSnapshotFromState(statedb *state.StateDB, number uint64, hash common.Hash) (*SnapshotV2, error) {
+	return buildSnapshotFromCandidates(statedb, statedb.GetCandidates(), number, hash)
+}
+
+// BuildSubnetSnapshotFromState derives the snapshot of a subnet gap block from
+// the state committed at that block and the penalties that the next block, the
+// one after the gap block, published. It serves the paths that cannot compute
+// the penalties themselves, which takes the bodies of the epoch before the gap
+// block; see XDPoS_v2.BuildGapSnapshot for the one that can.
+func BuildSubnetSnapshotFromState(statedb *state.StateDB, number uint64, hash common.Hash, penalties []common.Address) (*SnapshotV2, error) {
+	snap, err := buildSnapshotFromCandidates(statedb, statedb.GetSubnetCandidates(), number, hash)
+	if err != nil {
+		return nil, err
+	}
+	snap.NextEpochPenalties = penalties
+	return snap, nil
+}
+
+// buildSnapshotFromCandidates sorts the candidates read from statedb by their
+// stake in that state and returns them as the snapshot of the gap block.
+func buildSnapshotFromCandidates(statedb *state.StateDB, candidates []common.Address, number uint64, hash common.Hash) (*SnapshotV2, error) {
 	var ms []utils.Masternode
-	for _, candidate := range statedb.GetCandidates() {
+	for _, candidate := range candidates {
 		if candidate.IsZero() {
 			continue
 		}
@@ -224,11 +248,11 @@ func BuildSnapshotFromState(statedb *state.StateDB, number uint64, hash common.H
 		log.Info("next-epoch masternode", "number", number, "hash", hash.Hex(), "i", i, "addr", m.Address, "stake", m.Stake)
 	}
 
-	candidates := make([]common.Address, len(ms))
+	sorted := make([]common.Address, len(ms))
 	for i, m := range ms {
-		candidates[i] = m.Address
+		sorted[i] = m.Address
 	}
-	return NewSnapshot(number, hash, candidates), nil
+	return NewSnapshot(number, hash, sorted), nil
 }
 
 // repairGapCandidates returns the gap block numbers at or below head whose
@@ -295,7 +319,7 @@ func (x *XDPoS_v2) RepairGapSnapshots(chain GapStateReader) {
 			log.Warn("[RepairGapSnapshots] gap block state unavailable", "number", gapNum, "hash", gapHash, "root", gapHeader.Root, "err", err)
 			continue
 		}
-		snap, err := BuildSnapshotFromState(statedb, gapNum, gapHash)
+		snap, err := x.BuildGapSnapshot(chain, statedb, gapHeader)
 		if err != nil {
 			log.Warn("[RepairGapSnapshots] cannot derive snapshot", "number", gapNum, "hash", gapHash, "err", err)
 			continue

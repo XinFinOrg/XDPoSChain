@@ -424,8 +424,17 @@ func (x *XDPoS_v2) Prepare(chain consensus.ChainReader, header *types.Header) er
 		for _, v := range masterNodes {
 			header.Validators = append(header.Validators, v[:]...)
 		}
-		for _, v := range penalties {
-			header.Penalties = append(header.Penalties, v[:]...)
+		// A subnet publishes its penalties with the next-epoch candidates
+		// instead, in prepareSubnetHeader below.
+		if !x.config.IsSubnet {
+			for _, v := range penalties {
+				header.Penalties = append(header.Penalties, v[:]...)
+			}
+		}
+	}
+	if x.config.IsSubnet {
+		if err := x.prepareSubnetHeader(chain, header); err != nil {
+			return err
 		}
 	}
 
@@ -1227,6 +1236,9 @@ func (x *XDPoS_v2) GetStandbynodes(chain consensus.ChainReader, header *types.He
 
 // Calculate masternodes for a block number and parent hash. In V2, truncating candidates[:MaxMasternodes] is done in this function.
 func (x *XDPoS_v2) calcMasternodes(chain consensus.ChainReader, blockNum *big.Int, parentHash common.Hash, round types.Round) ([]common.Address, []common.Address, error) {
+	if x.config.IsSubnet {
+		return x.calcSubnetMasternodes(chain, blockNum, round)
+	}
 	// using new max masterndoes
 	maxMasternodes := x.config.V2.Config(uint64(round)).MaxMasternodes
 	snap, err := x.getSnapshot(chain, blockNum.Uint64(), false)
@@ -1285,7 +1297,7 @@ func (x *XDPoS_v2) GetPreviousPenaltyByHash(chain consensus.ChainReader, hash co
 	if limit == 0 {
 		return currentEpochSwitchInfo.Penalties
 	}
-	epochNum := x.config.V2.SwitchEpoch + uint64(currentEpochSwitchInfo.EpochSwitchBlockInfo.Round)/x.config.Epoch
+	epochNum := x.EpochNumber(currentEpochSwitchInfo.EpochSwitchBlockInfo.Number.Uint64(), currentEpochSwitchInfo.EpochSwitchBlockInfo.Round)
 	if epochNum < uint64(limit) {
 		// avoid negative number
 		log.Error("[GetPreviousPenaltyByHash] Adaptor v2 getPreviousEpochSwitchInfoByHash has error, too large limit", "limit", limit)

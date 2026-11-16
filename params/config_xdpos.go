@@ -52,6 +52,16 @@ type XDPoSConfig struct {
 	SkipV1Validation     bool           //Skip Block Validation for testing purpose, V1 consensus only
 	V2                   *V2            `json:"v2"`
 
+	// IsSubnet switches the v2 engine to the XDC subnet consensus rules: epoch
+	// switches by block number, the next-epoch candidates and penalties are
+	// published in the block after the gap block, and headers use the subnet
+	// layout. See consensus/XDPoS/engines/engine_v2/subnet.go.
+	IsSubnet bool `json:"isSubnet,omitempty"`
+	// NetworkName and Denom are informational subnet metadata reported by the
+	// XDPoS_networkInformation API. They take no part in consensus.
+	NetworkName string `json:"networkName,omitempty"`
+	Denom       string `json:"denom,omitempty"`
+
 	json jsonFieldPresence `json:"-"`
 }
 
@@ -73,6 +83,9 @@ func (c *XDPoSConfig) UnmarshalJSON(data []byte) error {
 		LegacyFoudationWalletAddr common.Address `json:"foudationWalletAddr"`
 		SkipV1Validation          bool           `json:"SkipV1Validation"`
 		V2                        *V2            `json:"v2"`
+		IsSubnet                  bool           `json:"isSubnet"`
+		NetworkName               string         `json:"networkName"`
+		Denom                     string         `json:"denom"`
 	}
 	var decoded xdpJSON
 	if err := json.Unmarshal(data, &decoded); err != nil {
@@ -91,6 +104,9 @@ func (c *XDPoSConfig) UnmarshalJSON(data []byte) error {
 	}
 	c.SkipV1Validation = decoded.SkipV1Validation
 	c.V2 = decoded.V2
+	c.IsSubnet = decoded.IsSubnet
+	c.NetworkName = decoded.NetworkName
+	c.Denom = decoded.Denom
 	c.json.capture(raw)
 
 	return nil
@@ -407,6 +423,10 @@ func XDPoSConfigEqual(a, b *XDPoSConfig) bool {
 		log.Warn("[XDPoSConfigEqual] SkipV1Validation mismatch", "a.SkipV1Validation", a.SkipV1Validation, "b.SkipV1Validation", b.SkipV1Validation)
 		return false
 	}
+	if a.IsSubnet != b.IsSubnet {
+		log.Warn("[XDPoSConfigEqual] IsSubnet mismatch", "a.IsSubnet", a.IsSubnet, "b.IsSubnet", b.IsSubnet)
+		return false
+	}
 	return V2Equal(a.V2, b.V2)
 }
 
@@ -489,7 +509,7 @@ func (c *XDPoSConfig) String() string {
 		return "XDPoSConfig: <nil>"
 	}
 
-	return fmt.Sprintf("XDPoSConfig{Period: %v, Epoch: %v, Reward: %v, RewardCheckpoint: %v, Gap: %v, MaxMasternodesV2: %v, FoundationWalletAddr: %v, SkipV1Validation: %v, V2: %s}", c.Period, c.Epoch, c.Reward, c.RewardCheckpoint, c.Gap, c.MaxMasternodesV2, c.FoundationWalletAddr.String0x(), c.SkipV1Validation, c.V2.String())
+	return fmt.Sprintf("XDPoSConfig{Period: %v, Epoch: %v, Reward: %v, RewardCheckpoint: %v, Gap: %v, MaxMasternodesV2: %v, FoundationWalletAddr: %v, SkipV1Validation: %v, IsSubnet: %v, V2: %s}", c.Period, c.Epoch, c.Reward, c.RewardCheckpoint, c.Gap, c.MaxMasternodesV2, c.FoundationWalletAddr.String0x(), c.SkipV1Validation, c.IsSubnet, c.V2.String())
 }
 
 // Description returns a human-readable description of XDPoSConfig
@@ -509,6 +529,9 @@ func (c *XDPoSConfig) Description(indent int) string {
 	banner += fmt.Sprintf("%s- MaxMasternodesV2: %v\n", prefix, c.MaxMasternodesV2)
 	banner += fmt.Sprintf("%s- FoundationWalletAddr: %v\n", prefix, c.FoundationWalletAddr.Hex())
 	banner += fmt.Sprintf("%s- SkipV1Validation: %v\n", prefix, c.SkipV1Validation)
+	if c.IsSubnet {
+		banner += fmt.Sprintf("%s- IsSubnet: %v\n", prefix, c.IsSubnet)
+	}
 	banner += fmt.Sprintf("%s- %s", prefix, c.V2.Description(indent+2))
 	return banner
 }
@@ -624,6 +647,11 @@ func (c ExpTimeoutConfig) String() string {
 }
 
 func (c *XDPoSConfig) BlockConsensusVersion(num *big.Int) string {
+	// A subnet has no v1 era: every block, the genesis included, belongs to the
+	// v2 engine, which then applies the subnet rules.
+	if c.IsSubnet {
+		return ConsensusEngineVersion2
+	}
 	if c.V2 != nil && c.V2.SwitchBlock != nil && num.Cmp(c.V2.SwitchBlock) > 0 {
 		return ConsensusEngineVersion2
 	}

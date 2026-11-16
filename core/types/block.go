@@ -83,6 +83,14 @@ type Header struct {
 	Validator   []byte         `json:"validator"        gencodec:"required"`
 	Penalties   []byte         `json:"penalties"        gencodec:"required"`
 
+	// NextValidators is only used by subnet headers: the next-epoch candidates
+	// published in the block after the gap block, packed like Validators.
+	NextValidators []byte `json:"nextValidators,omitempty" rlp:"-"`
+	// Subnet selects the XDC subnet RLP layout for this header, see
+	// block_subnet.go. It is not serialized: decoding sets it from the layout
+	// found on the wire, and the engine sets it on the headers it prepares.
+	Subnet bool `json:"-" rlp:"-"`
+
 	// BaseFee was added by EIP-1559 and is ignored in legacy headers.
 	BaseFee *big.Int `json:"baseFeePerGas" rlp:"optional"`
 }
@@ -100,6 +108,8 @@ type headerMarshaling struct {
 	Penalties  hexutil.Bytes
 	BaseFee    *hexutil.Big
 	Hash       common.Hash `json:"hash"` // adds call to Hash() in MarshalJSON
+
+	NextValidators hexutil.Bytes
 }
 
 // Hash returns the block hash of the header, which is simply the keccak256 hash of its
@@ -127,8 +137,13 @@ func (h *Header) HashNoNonce() common.Hash {
 	})
 }
 
-// HashNoNonce returns the hash which is used as input for the proof-of-work search.
+// HashNoValidator returns the hash of the header without its seal.
 func (h *Header) HashNoValidator() common.Hash {
+	if h.Subnet {
+		cpy := *h
+		cpy.Validator = nil
+		return rlpHash(&cpy)
+	}
 	return rlpHash([]interface{}{
 		h.ParentHash,
 		h.UncleHash,
@@ -169,7 +184,7 @@ func (h *Header) Size() common.StorageSize {
 	if h.BaseFee != nil {
 		baseFeeBits = h.BaseFee.BitLen()
 	}
-	return headerSize + common.StorageSize(len(h.Extra)+len(h.Validators)+len(h.Validator)+len(h.Penalties)+(h.Difficulty.BitLen()+h.Number.BitLen()+baseFeeBits)/8)
+	return headerSize + common.StorageSize(len(h.Extra)+len(h.Validators)+len(h.Validator)+len(h.Penalties)+len(h.NextValidators)+(h.Difficulty.BitLen()+h.Number.BitLen()+baseFeeBits)/8)
 }
 
 // SanityCheck checks a few basic things -- these checks are way beyond what
@@ -193,6 +208,7 @@ func (h *Header) SanityCheck() error {
 		{name: "validators", size: len(h.Validators)},
 		{name: "validator", size: len(h.Validator)},
 		{name: "penalties", size: len(h.Penalties)},
+		{name: "nextValidators", size: len(h.NextValidators)},
 	} {
 		if err := checkHeaderByteFieldSize(field.name, field.size); err != nil {
 			return err
@@ -372,6 +388,10 @@ func CopyHeader(h *Header) *Header {
 	if len(h.Penalties) > 0 {
 		cpy.Penalties = make([]byte, len(h.Penalties))
 		copy(cpy.Penalties, h.Penalties)
+	}
+	if len(h.NextValidators) > 0 {
+		cpy.NextValidators = make([]byte, len(h.NextValidators))
+		copy(cpy.NextValidators, h.NextValidators)
 	}
 	return &cpy
 }

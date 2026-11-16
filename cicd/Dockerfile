@@ -27,6 +27,7 @@ COPY --from=builder /builder/build/bin/XDC /usr/bin/XDC
 
 # # Copy over files
 ADD cicd/local /work/local
+ADD cicd/subnet /work/subnet
 ADD cicd/entry.sh /work/entry.sh
 ADD cicd/puppeth.sh /work/puppeth.sh
 
