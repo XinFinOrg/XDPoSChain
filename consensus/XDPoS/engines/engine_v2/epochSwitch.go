@@ -200,8 +200,7 @@ func (x *XDPoS_v2) GetEpochSwitchInfoBetween(chain consensus.ChainReader, begin,
 	// after the first iteration, it becomes the parent hash of the epoch switch block
 	iteratorHash := end.Hash()
 	iteratorNum := end.Number
-	// when iterator is strictly > begin number, do the search
-	for iteratorNum.Cmp(begin.Number) > 0 {
+	for iteratorNum.Cmp(begin.Number) >= 0 {
 		epochSwitchInfo, err := x.getEpochSwitchInfo(chain, []*types.Header{iteratorHeader}, iteratorHash)
 		if err != nil {
 			log.Error("[GetEpochSwitchInfoBetween] Adaptor v2 getEpochSwitchInfo has error, potentially bug", "err", err)
