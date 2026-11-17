@@ -961,7 +961,7 @@ func (bc *BlockChain) OrderStateAt(block *types.Block) (*tradingstate.TradingSta
 			} else {
 				return nil, err
 			}
-		} else {
+		} else if XDCXService != nil {
 			XDCxState, err := XDCXService.GetEmptyTradingState()
 			if err == nil {
 				return XDCxState, nil
@@ -988,7 +988,7 @@ func (bc *BlockChain) LendingStateAt(block *types.Block) (*lendingstate.LendingS
 			return nil, err
 		}
 	}
-	return nil, errors.New("fail to et lending state")
+	return nil, errors.New("fail to get lending state")
 }
 
 // Reset purges the entire blockchain, restoring it to its genesis state.

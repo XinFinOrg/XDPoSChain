@@ -476,3 +476,14 @@ func TestXDCXWindowStillReadsState(t *testing.T) {
 		t.Fatal("the trading state was read after the receiver fork")
 	}
 }
+
+// TestOrderStateAtWithoutService pins the missing-service fallback: an XDPoS
+// engine without an XDCx service has to report an error, not dereference the
+// nil service while constructing the empty trading state.
+func TestOrderStateAtWithoutService(t *testing.T) {
+	chain := newXDCXTestChain(t, true)
+	// No probe services are installed here, so the engine answers nil.
+	if _, err := chain.chain.OrderStateAt(chain.blocks[3]); err == nil {
+		t.Fatal("OrderStateAt must report an error when the XDCx service is missing")
+	}
+}
