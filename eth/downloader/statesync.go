@@ -397,6 +397,25 @@ func (s *stateSync) loop() (err error) {
 					}
 				}
 			}
+			if len(req.response) > int(req.nItems) {
+				log.Warn("Oversized node data response, dropping peer", "peer", shortPeerID(req.peer.id), "requested", req.nItems, "received", len(req.response))
+				if s.d.dropPeer == nil {
+					req.peer.log.Warn("Downloader wants to drop peer, but peerdrop-function is not set", "peer", shortPeerID(req.peer.id))
+				} else {
+					s.d.dropPeer(req.peer.id)
+					s.d.cancelLock.RLock()
+					master := req.peer.id == s.d.cancelPeer
+					s.d.cancelLock.RUnlock()
+					if master {
+						s.d.cancel()
+						return fmt.Errorf("%w: oversized node data response (%d > %d)", errBadPeer, len(req.response), req.nItems)
+					}
+				}
+				// process hashes every blob in req.response. A nil response is the
+				// timeout shape: nothing is hashed, and the requested items go back
+				// on the retry queue. fillTasks already removed them from the sync.
+				req.response = nil
+			}
 			// Process all the received blobs and check for stale delivery
 			delivered, err := s.process(req)
 			req.peer.SetNodeDataIdle(delivered, req.delivered)
