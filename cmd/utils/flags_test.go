@@ -369,7 +369,7 @@ func TestFormatBlockChainOpenErrorReadOnly(t *testing.T) {
 		{
 			name: "head repair",
 			err:  core.ErrReadOnlyHeadStateRepair,
-			want: "Can't open blockchain in readonly mode: head state is missing and requires repair. Reopen the database in writable mode to repair the missing head state, then retry.",
+			want: "Can't open blockchain in readonly mode: the head state is missing or the head marker names no stored block, and the chain requires repair. Reopen the database in writable mode to repair it, then retry; a head marker that names no stored block resets the chain to genesis.",
 		},
 		{
 			name: "bad hash rewind",

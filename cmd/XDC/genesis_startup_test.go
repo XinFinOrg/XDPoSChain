@@ -349,6 +349,39 @@ func injectCanonicalHeadBlockWithRoot(t *testing.T, datadir string, genesisHash 
 	return head.Hash()
 }
 
+// injectUnusableHeadMarker stores a block at height 1 and then points the head
+// block marker at a hash that names no stored block. The header markers stay on
+// the stored block: startup resolves them before the chain is opened.
+func injectUnusableHeadMarker(t *testing.T, datadir string, genesisHash common.Hash) (marker, blockHash common.Hash) {
+	t.Helper()
+
+	path := filepath.Join(datadir, "XDC", "chaindata")
+	db := openTestChainDB(t, path)
+	defer db.Close()
+
+	genesis := rawdb.ReadBlock(db, genesisHash, 0)
+	if genesis == nil {
+		t.Fatal("expected stored genesis block")
+	}
+	head := types.NewBlockWithHeader(&types.Header{
+		Number:     big.NewInt(1),
+		ParentHash: genesisHash,
+		Root:       genesis.Root(),
+		Time:       genesis.Time() + 1,
+		GasLimit:   genesis.GasLimit(),
+		Difficulty: genesis.Difficulty(),
+	})
+	rawdb.WriteTd(db, head.Hash(), 1, new(big.Int).Add(genesis.Difficulty(), big.NewInt(1)))
+	rawdb.WriteBlock(db, head)
+	rawdb.WriteCanonicalHash(db, head.Hash(), 1)
+	rawdb.WriteHeadHeaderHash(db, head.Hash())
+	rawdb.WriteHeadFastBlockHash(db, head.Hash())
+
+	marker = common.HexToHash("0xdeadbeef")
+	rawdb.WriteHeadBlockHash(db, marker)
+	return marker, head.Hash()
+}
+
 // deleteStoredGenesisState removes the persisted genesis trie node and returns
 // the genesis hash and root.
 func deleteStoredGenesisState(t *testing.T, datadir string) (common.Hash, common.Hash) {
@@ -907,7 +940,7 @@ func TestOfflineExportFailsReadonlyHeadStateRepairWithoutMutation(t *testing.T) 
 	injectedHeadHash := injectCanonicalHeadBlockWithRoot(t, datadir, genesisHash, 1, missingRoot)
 
 	exportCmd := runXDC(t, "--datadir", datadir, "--testnet", "export", exportFile)
-	assertCommandFailsWithChainConfigError(t, exportCmd, "Can't open blockchain in readonly mode: head state is missing and requires repair. Reopen the database in writable mode to repair the missing head state, then retry.")
+	assertCommandFailsWithChainConfigError(t, exportCmd, "Can't open blockchain in readonly mode: the head state is missing or the head marker names no stored block, and the chain requires repair. Reopen the database in writable mode to repair it, then retry; a head marker that names no stored block resets the chain to genesis.")
 	if _, err := os.Stat(exportFile); err == nil {
 		t.Fatalf("expected export to fail without creating %s", exportFile)
 	} else if !os.IsNotExist(err) {
@@ -923,6 +956,40 @@ func TestOfflineExportFailsReadonlyHeadStateRepairWithoutMutation(t *testing.T) 
 	}
 	if _, err := state.New(missingRoot, state.NewDatabase(db)); err == nil {
 		t.Fatal("expected failed readonly export to leave head state missing")
+	}
+}
+
+// TestOfflineExportFailsReadonlyUnusableHeadMarkerWithoutMutation tests offline
+// export fails readonly startup when the head marker names no stored block.
+func TestOfflineExportFailsReadonlyUnusableHeadMarkerWithoutMutation(t *testing.T) {
+	datadir := t.TempDir()
+	exportFile := filepath.Join(datadir, "chain.rlp")
+
+	startTestnetConsole(t, datadir)
+
+	genesisHash, _ := readStoredChainConfig(t, datadir)
+	marker, blockHash := injectUnusableHeadMarker(t, datadir, genesisHash)
+
+	exportCmd := runXDC(t, "--datadir", datadir, "--testnet", "export", exportFile)
+	assertCommandFailsWithChainConfigError(t, exportCmd, "Can't open blockchain in readonly mode: the head state is missing or the head marker names no stored block, and the chain requires repair. Reopen the database in writable mode to repair it, then retry; a head marker that names no stored block resets the chain to genesis.")
+	if _, err := os.Stat(exportFile); err == nil {
+		t.Fatalf("expected export to fail without creating %s", exportFile)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("failed to stat export file: %v", err)
+	}
+
+	path := filepath.Join(datadir, "XDC", "chaindata")
+	db := openTestChainDB(t, path)
+	defer db.Close()
+
+	if got := rawdb.ReadHeadBlockHash(db); got != marker {
+		t.Fatalf("expected failed readonly export to leave head hash unchanged: have %s want %s", got.Hex(), marker.Hex())
+	}
+	if got := rawdb.ReadCanonicalHash(db, 1); got != blockHash {
+		t.Fatalf("expected failed readonly export to leave canonical #1 unchanged: have %s want %s", got.Hex(), blockHash.Hex())
+	}
+	if block := rawdb.ReadBlock(db, blockHash, 1); block == nil {
+		t.Fatal("expected failed readonly export to leave block #1 stored")
 	}
 }
 
