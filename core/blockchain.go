@@ -3581,11 +3581,22 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 
 		parent := bc.GetBlock(block.ParentHash(), block.NumberU64()-1)
 		if parent == nil {
-			return nil, nil, nil, fmt.Errorf("fail to get parent block at number: %v, hash: %v", block.NumberU64()-1, block.ParentHash())
+			return nil, nil, nil, localConditionf("parent %d (%v) has no stored body", block.NumberU64()-1, block.ParentHash())
 		}
 		for !bc.HasFullState(parent) {
 			winner = append(winner, parent)
-			parent = bc.GetBlock(parent.ParentHash(), parent.NumberU64()-1)
+			if parent.NumberU64() == 0 {
+				// Genesis without state: there is nothing left to replay from.
+				return nil, nil, nil, localConditionf("pruned ancestry reaches genesis without state")
+			}
+			next := bc.GetBlock(parent.ParentHash(), parent.NumberU64()-1)
+			if next == nil {
+				// The walk has just read this block, whose parent is referenced by hash, so a
+				// missing parent is a pruned or corrupt database rather than a wrong block.
+				return nil, nil, nil, localConditionf("pruned ancestor %d (%v) has no stored body",
+					parent.NumberU64()-1, parent.ParentHash())
+			}
+			parent = next
 		}
 		// fix issue #1765, return at once if winner is empty
 		if len(winner) == 0 {
