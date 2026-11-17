@@ -983,6 +983,214 @@ func TestOversizeMessage(t *testing.T) {
 	}
 }
 
+// Tests that a NewBlockHashes message over the announce cap is rejected while
+// one at the cap is still delivered to the node layer.
+func TestNewBlockHashesAnnounceLimit(t *testing.T) {
+	base := propHashInRejectedMeter.Snapshot().Count()
+	backend := newTestBackend(t, 1, nil)
+	handled := make(chan int, 1)
+	backend.handler = func(_ *Peer, packet Packet, _ uint32) error {
+		handled <- len(*packet.(*NewBlockHashesPacket))
+		return nil
+	}
+	peer := newTestPeer(t, "peer", XDC165, backend)
+
+	announces := func(n int) NewBlockHashesPacket {
+		packet := make(NewBlockHashesPacket, n)
+		for i := range packet {
+			packet[i].Hash = common.BytesToHash([]byte{byte(i), byte(i >> 8), byte(i >> 16)})
+			packet[i].Number = uint64(i) + 1
+		}
+		return packet
+	}
+	// A message at the cap is still delivered.
+	go p2p.Send(peer.app, NewBlockHashesMsg, announces(maxBlockHashesAnnounce))
+
+	select {
+	case got := <-handled:
+		if got != maxBlockHashesAnnounce {
+			t.Fatalf("delivered %d announcements, want %d", got, maxBlockHashesAnnounce)
+		}
+	case err := <-peer.errc:
+		t.Fatalf("at-cap message rejected: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("at-cap message was not handled within 2 seconds")
+	}
+	if got := propHashInRejectedMeter.Snapshot().Count() - base; got != 0 {
+		t.Fatalf("at-cap message marked rejected meter %d times, want 0", got)
+	}
+	before := propHashInRejectedMeter.Snapshot().Count()
+	// One entry over the cap tears the peer down before delivery.
+	go p2p.Send(peer.app, NewBlockHashesMsg, announces(maxBlockHashesAnnounce+1))
+
+	select {
+	case err := <-peer.errc:
+		if err == nil {
+			t.Fatal("over-cap message was accepted")
+		}
+		if got := propHashInRejectedMeter.Snapshot().Count() - before; got != 1 {
+			t.Errorf("rejected announce packets metered %d, want 1", got)
+		}
+		if want := errCode(ErrMsgTooLarge).String(); !strings.Contains(err.Error(), want) {
+			t.Errorf("wrong error: got %v, want a %q error", err, want)
+		}
+		if !strings.Contains(err.Error(), "announcements >") {
+			t.Errorf("over-cap refusal did not come from the count gate: %v", err)
+		}
+	case got := <-handled:
+		t.Fatalf("over-cap message reached the backend with %d announcements", got)
+	case <-time.After(2 * time.Second):
+		t.Fatal("over-cap message was not rejected within 2 seconds")
+	}
+}
+
+// Tests that a frame too large to hold a legal batch is refused before the RLP
+// decode, while the worst-case legal batch (cap entries, 64-bit numbers) still
+// passes the frame bound.
+func TestNewBlockHashesAnnounceFrameLimit(t *testing.T) {
+	base := propHashInRejectedMeter.Snapshot().Count()
+	backend := newTestBackend(t, 1, nil)
+	handled := make(chan int, 1)
+	backend.handler = func(_ *Peer, packet Packet, _ uint32) error {
+		handled <- len(*packet.(*NewBlockHashesPacket))
+		return nil
+	}
+	peer := newTestPeer(t, "peer", XDC165, backend)
+
+	announces := func(n int, number uint64) NewBlockHashesPacket {
+		packet := make(NewBlockHashesPacket, n)
+		for i := range packet {
+			packet[i].Hash = common.BytesToHash([]byte{byte(i), byte(i >> 8), byte(i >> 16)})
+			packet[i].Number = number
+		}
+		return packet
+	}
+	// The worst-case at-cap frame is 44,035 bytes and must still get through.
+	go p2p.Send(peer.app, NewBlockHashesMsg, announces(maxBlockHashesAnnounce, ^uint64(0)))
+
+	select {
+	case got := <-handled:
+		if got != maxBlockHashesAnnounce {
+			t.Fatalf("delivered %d announcements, want %d", got, maxBlockHashesAnnounce)
+		}
+	case err := <-peer.errc:
+		t.Fatalf("worst-case at-cap frame rejected: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("worst-case at-cap frame was not handled within 2 seconds")
+	}
+	if got := propHashInRejectedMeter.Snapshot().Count() - base; got != 0 {
+		t.Fatalf("at-cap message marked rejected meter %d times, want 0", got)
+	}
+	before := propHashInRejectedMeter.Snapshot().Count()
+	// One entry past the cap with 64-bit numbers overflows the frame bound too,
+	// so the refusal comes from the pre-decode gate, not from the entry count.
+	go p2p.Send(peer.app, NewBlockHashesMsg, announces(maxBlockHashesAnnounce+1, ^uint64(0)))
+
+	select {
+	case err := <-peer.errc:
+		if err == nil {
+			t.Fatal("over-size announce frame was accepted")
+		}
+		if !strings.Contains(err.Error(), "announce frame") {
+			t.Errorf("wrong error: got %v, want the pre-decode frame gate", err)
+		}
+		if got := propHashInRejectedMeter.Snapshot().Count() - before; got != 1 {
+			t.Errorf("rejected announce frames metered %d, want 1", got)
+		}
+	case got := <-handled:
+		t.Fatalf("over-size announce frame reached the backend with %d announcements", got)
+	case <-time.After(2 * time.Second):
+		t.Fatal("over-size announce frame was not rejected within 2 seconds")
+	}
+}
+
+// Tests that the per-peer announcement budget survives one at-cap message and
+// refuses the next one before it reaches the node layer.
+func TestNewBlockHashesAnnounceBudget(t *testing.T) {
+	base := propHashInRejectedMeter.Snapshot().Count()
+	backend := newTestBackend(t, 1, nil)
+	handled := make(chan int, 1)
+	backend.handler = func(_ *Peer, packet Packet, _ uint32) error {
+		handled <- len(*packet.(*NewBlockHashesPacket))
+		return nil
+	}
+	peer := newTestPeer(t, "peer", XDC165, backend)
+
+	announces := func(n int) NewBlockHashesPacket {
+		packet := make(NewBlockHashesPacket, n)
+		for i := range packet {
+			packet[i].Hash = common.BytesToHash([]byte{byte(i), byte(i >> 8), byte(i >> 16)})
+			packet[i].Number = uint64(i) + 1
+		}
+		return packet
+	}
+	go p2p.Send(peer.app, NewBlockHashesMsg, announces(maxBlockHashesAnnounce))
+
+	select {
+	case got := <-handled:
+		if got != maxBlockHashesAnnounce {
+			t.Fatalf("delivered %d announcements, want %d", got, maxBlockHashesAnnounce)
+		}
+	case err := <-peer.errc:
+		t.Fatalf("at-cap message rejected: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("at-cap message was not handled within 2 seconds")
+	}
+	if got := propHashInRejectedMeter.Snapshot().Count() - base; got != 0 {
+		t.Fatalf("at-cap message marked rejected meter %d times, want 0", got)
+	}
+	before := propHashInRejectedMeter.Snapshot().Count()
+	// Sink the bucket far below zero so refill cannot pay for the second batch
+	// no matter how long the test thread stalls between the two sends.
+	peer.Peer.announceTokens = -float64(maxAnnounceRate * maxAnnounceBurst)
+	go p2p.Send(peer.app, NewBlockHashesMsg, announces(maxBlockHashesAnnounce))
+
+	select {
+	case err := <-peer.errc:
+		if err == nil {
+			t.Fatal("over-budget message was accepted")
+		}
+		if !strings.Contains(err.Error(), "per-peer budget") {
+			t.Errorf("wrong error: got %v, want the per-peer budget refusal", err)
+		}
+		if got := propHashInRejectedMeter.Snapshot().Count() - before; got != 1 {
+			t.Errorf("over-budget packets metered %d, want 1", got)
+		}
+	case got := <-handled:
+		t.Fatalf("over-budget message reached the backend with %d announcements", got)
+	case <-time.After(2 * time.Second):
+		t.Fatal("over-budget message was not rejected within 2 seconds")
+	}
+}
+
+// Tests the announcement budget bucket arithmetic, including the refill rate
+// and the burst ceiling.
+func TestAnnounceBudget(t *testing.T) {
+	peer := new(Peer)
+	if !peer.spendAnnounceBudget(maxAnnounceBurst) {
+		t.Fatal("fresh peer refused a full burst")
+	}
+	if peer.spendAnnounceBudget(maxAnnounceRate) {
+		t.Fatal("empty bucket paid another announcement")
+	}
+	// One second of refill buys maxAnnounceRate announcements, not more.
+	peer.announceRefill = peer.announceRefill.Add(-time.Second)
+	if !peer.spendAnnounceBudget(maxAnnounceRate) {
+		t.Fatalf("one second of refill did not buy %d announcements", maxAnnounceRate)
+	}
+	if peer.spendAnnounceBudget(maxAnnounceRate) {
+		t.Fatal("bucket paid beyond the refill")
+	}
+	// The bucket never refills above the burst.
+	peer.announceRefill = peer.announceRefill.Add(-time.Hour)
+	if !peer.spendAnnounceBudget(maxAnnounceBurst) {
+		t.Fatal("an hour of refill did not reach the burst")
+	}
+	if peer.spendAnnounceBudget(maxAnnounceRate) {
+		t.Fatal("bucket exceeded the burst after a long refill")
+	}
+}
+
 // sendPropagatedBlock hands a propagated block to the peer's message pipe the
 // way the transport layer does, including the frame's arrival stamp.
 func sendPropagatedBlock(app *p2p.MsgPipeRW, block *types.Block, td *big.Int, arrived time.Time) error {
