@@ -269,6 +269,7 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 		if err != nil {
 			return err
 		}
+		x.restoreCommittedBlock(chain, header)
 	}
 
 	// Initial first v2 snapshot
@@ -1180,6 +1181,50 @@ func (x *XDPoS_v2) commitBlocks(blockChainReader consensus.ChainReader, proposed
 	headerQcToBeCommitted := []types.Header{*parentBlock, *proposedBlockHeader}
 	go x.ForensicsProcessor.ForensicsMonitoring(blockChainReader, x, headerQcToBeCommitted, *incomingQc)
 	return true, nil
+}
+
+// restoreCommittedBlock recovers highestCommitBlock at startup when processing the head's QC
+// did not set it. commitBlocks applies the 3-chain rule to that one QC only, so a timeout among
+// the three blocks below the head leaves the value nil. Every v2 header carries the QC of its
+// parent, so walking down from the head finds the most recent 3-chain on disk.
+//
+// The walk applies exactly the rule commitBlocks applies: the certified block, its parent and
+// its grandparent must have consecutive rounds. Committing on anything weaker would mark a block
+// final that is not, and the side-chain gate and reorg would then refuse a legitimate fork.
+// It is bounded by one epoch; a chain with no 3-chain over a whole epoch leaves the value nil,
+// and the gate keeps today's behaviour. It does not run the forensics monitor that commitBlocks
+// starts, because no new QC is being processed. The caller holds x.lock.
+func (x *XDPoS_v2) restoreCommittedBlock(chain consensus.ChainReader, head *types.Header) {
+	if x.highestCommitBlock != nil || head.Number.Sign() == 0 {
+		return
+	}
+	// commitBlocks skips a certified block at or below SwitchBlock+2; so does this walk.
+	floor := new(big.Int).Add(x.config.V2.SwitchBlock, big.NewInt(2))
+
+	// The head's QC certifies the head's parent; each further step moves down one block.
+	certified := chain.GetHeader(head.ParentHash, head.Number.Uint64()-1)
+	for i := uint64(0); certified != nil && certified.Number.Cmp(floor) > 0 && i < x.config.Epoch; i++ {
+		parent := chain.GetHeader(certified.ParentHash, certified.Number.Uint64()-1)
+		if parent == nil {
+			return
+		}
+		grand := chain.GetHeader(parent.ParentHash, parent.Number.Uint64()-1)
+		if grand == nil {
+			return
+		}
+		_, r0, _, err0 := x.getExtraFields(certified)
+		_, r1, _, err1 := x.getExtraFields(parent)
+		_, r2, _, err2 := x.getExtraFields(grand)
+		if err0 != nil || err1 != nil || err2 != nil {
+			return
+		}
+		if r0 >= 2 && r1 == r0-1 && r2 == r0-2 {
+			x.highestCommitBlock = &types.BlockInfo{Number: grand.Number, Hash: grand.Hash(), Round: r2}
+			log.Info("[initial] Restored committed block", "number", grand.Number, "round", r2, "hash", grand.Hash())
+			return
+		}
+		certified = parent
+	}
 }
 
 // Get master nodes over extra data of epoch switch block.

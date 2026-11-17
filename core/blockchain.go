@@ -131,6 +131,11 @@ var (
 	errInvalidOldChain = errors.New("invalid old chain")
 	errInvalidNewChain = errors.New("invalid new chain")
 
+	// errSideChainBelowFinality is reported for a side block at or below the XDPoS v2
+	// committed block: reorg refuses to cross that block, so the side block can never become
+	// canonical and storing it would only consume disk.
+	errSideChainBelowFinality = errors.New("side block at or below the committed block")
+
 	// CheckpointCh carries the "an epoch switch block reached the head" signal to the staking
 	// loop in cmd/XDC. Every sender goes through SignalCheckpoint, which never waits: the
 	// buffer absorbs one pending signal, and a second arriving before it drains is dropped,
@@ -3055,6 +3060,20 @@ func (bc *BlockChain) headTd(head *types.Header) (*big.Int, error) {
 	return td, nil
 }
 
+// latestCommittedNumber returns the height of the XDPoS v2 committed block, or false when the
+// engine is not XDPoS v2 or has not committed a block yet (startup, v1 range).
+func (bc *BlockChain) latestCommittedNumber() (uint64, bool) {
+	xdpos, ok := bc.Engine().(*XDPoS.XDPoS)
+	if !ok || xdpos.EngineV2 == nil {
+		return 0, false
+	}
+	info := xdpos.EngineV2.GetLatestCommittedBlockInfo()
+	if info == nil || info.Number == nil {
+		return 0, false
+	}
+	return info.Number.Uint64(), true
+}
+
 // insertSideChain is called when an import batch hits upon a pruned ancestor
 // error, which happens when a sidechain with a sufficiently old fork-block is
 // found.
@@ -3126,6 +3145,14 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, ve
 				// mechanism.
 				return it.index, nil, nil, errors.New("sidechain ghost-state attack")
 			}
+		}
+		// A side block at or below the committed block can never be adopted, so refuse it before
+		// it reaches the disk. The verdict comes from this node's own finality, so it is reported
+		// as a local refusal and does not drop the peer: an honest peer may still relay a stale fork.
+		if committed, ok := bc.latestCommittedNumber(); ok && block.NumberU64() <= committed {
+			log.Debug("Refused side block below finality", "number", block.NumberU64(),
+				"hash", block.Hash(), "committed", committed)
+			return it.index, nil, nil, fmt.Errorf("%w: %w", ErrLocalInsertRefused, errSideChainBelowFinality)
 		}
 		if externTd == nil {
 			// big.Int.Add dereferences its operands, so the read is checked before the
