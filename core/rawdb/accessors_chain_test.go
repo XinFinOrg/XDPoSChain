@@ -906,6 +906,55 @@ func TestDeleteDanglingHashesCleanWalk(t *testing.T) {
 	}
 }
 
+// TestDeleteCanonicalHashesAbove checks that the purge removes every assignment
+// above head, including one at a height whose header key is already gone, and
+// that it leaves both the assignments at or below head and the neighbouring
+// header and total-difficulty entries alone.
+func TestDeleteCanonicalHashesAbove(t *testing.T) {
+	db := NewMemoryDatabase()
+	defer db.Close()
+
+	// Assignments at 0..4 with a hole at 2: a contiguous loop would stop there and
+	// leave 3 and 4 behind.
+	for _, number := range []uint64{0, 1, 3, 4} {
+		WriteCanonicalHash(db, common.Hash{0: byte(number + 1)}, number)
+	}
+	// The header and its total difficulty at height 3 must survive: the purge only
+	// touches canonical assignments.
+	header := &types.Header{Number: new(big.Int).SetUint64(3)}
+	WriteHeader(db, header)
+	WriteTd(db, header.Hash(), 3, big.NewInt(3))
+
+	if err := DeleteCanonicalHashesAbove(db, 1); err != nil {
+		t.Fatalf("purge returned an error: %v", err)
+	}
+	for _, number := range []uint64{0, 1} {
+		if marker := ReadCanonicalHash(db, number); marker == (common.Hash{}) {
+			t.Fatalf("canonical marker of height %d was removed: it is at or below head", number)
+		}
+	}
+	for _, number := range []uint64{3, 4} {
+		if marker := ReadCanonicalHash(db, number); marker != (common.Hash{}) {
+			t.Fatalf("canonical marker of height %d survived the purge: %s", number, marker)
+		}
+	}
+	if entry := ReadHeader(db, header.Hash(), 3); entry == nil {
+		t.Fatalf("the purge removed the header at height 3")
+	}
+	if td := ReadTd(db, header.Hash(), 3); td == nil {
+		t.Fatalf("the purge removed the total difficulty at height 3")
+	}
+	// head == max is a no-op: head+1 would wrap to zero and the walk would start
+	// from the beginning of the keyspace.
+	WriteCanonicalHash(db, common.Hash{0: 0xff}, 5)
+	if err := DeleteCanonicalHashesAbove(db, ^uint64(0)); err != nil {
+		t.Fatalf("head=max returned an error: %v", err)
+	}
+	if marker := ReadCanonicalHash(db, 5); marker == (common.Hash{}) {
+		t.Fatalf("head=max removed the canonical marker of height 5")
+	}
+}
+
 // BenchmarkDecodeRLPLogs benchmarks decode rlp logs.
 func BenchmarkDecodeRLPLogs(b *testing.B) {
 	// Encoded receipts from block 0x14ee094309fbe8f70b65f45ebcc08fb33f126942d97464aad5eb91cfd1e2d269

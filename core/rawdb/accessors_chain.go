@@ -66,6 +66,50 @@ func DeleteCanonicalHash(db ethdb.KeyValueWriter, number uint64) {
 	}
 }
 
+// DeleteCanonicalHashesAbove removes every canonical-hash assignment whose block
+// number is strictly greater than head. Unlike DeleteDanglingHashes, which walks
+// heights through their header keys and therefore cannot see an assignment whose
+// header key is already gone, this scans the canonical-hash keyspace directly and
+// makes no assumption that the assignments are contiguous. Deletions are streamed
+// into a batch that is flushed at ethdb.IdealBatchSize, bounding memory usage.
+func DeleteCanonicalHashesAbove(db ethdb.KeyValueStore, head uint64) error {
+	// Guard against uint64 overflow when head == max.
+	start := head + 1
+	if start == 0 {
+		return nil
+	}
+	// canonical-hash key = headerPrefix + num (8 bytes) + headerHashSuffix
+	keyLen := len(headerPrefix) + 8 + len(headerHashSuffix)
+
+	batch := db.NewBatch()
+	it := db.NewIterator(headerPrefix, encodeBlockNumber(start))
+	defer it.Release()
+
+	for it.Next() {
+		key := it.Key()
+		// Header, total-difficulty and the canonical-hash key share the prefix but
+		// only the last one has this length.
+		if len(key) != keyLen {
+			continue
+		}
+		number := binary.BigEndian.Uint64(key[len(headerPrefix) : len(headerPrefix)+8])
+		if number <= head {
+			continue
+		}
+		DeleteCanonicalHash(batch, number)
+		if batch.ValueSize() >= ethdb.IdealBatchSize {
+			if err := batch.Write(); err != nil {
+				return err
+			}
+			batch.Reset()
+		}
+	}
+	if err := it.Error(); err != nil {
+		return err
+	}
+	return batch.Write()
+}
+
 // ReadAllHashes retrieves all the hashes assigned to blocks at a certain height,
 // both canonical and reorged forks included.
 //
@@ -95,8 +139,11 @@ func ReadAllHashes(db ethdb.Iteratee, number uint64) []common.Hash {
 // duplicated with a cross-reference on both sides.
 const sweepReportInterval = 30 * time.Second
 
-// DeleteDanglingHashes removes every header, total-difficulty and canonical-hash
-// entry whose block number is strictly greater than head. It walks the header
+// DeleteDanglingHashes removes every header and total-difficulty entry whose block
+// number is strictly greater than head, together with the canonical-hash entry of
+// every height that still holds a header key. A leftover at a height whose header
+// keys are already gone is invisible to this walk and is removed by
+// DeleteCanonicalHashesAbove instead. It walks the header
 // keyspace directly (rather than scanning contiguous heights), so orphaned
 // side-fork segments left above the chain head by an aborted sync are wiped even
 // when their heights are not contiguous (i.e. separated by gaps). For each

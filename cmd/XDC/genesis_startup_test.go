@@ -907,7 +907,7 @@ func TestOfflineExportFailsReadonlyHeadStateRepairWithoutMutation(t *testing.T) 
 	injectedHeadHash := injectCanonicalHeadBlockWithRoot(t, datadir, genesisHash, 1, missingRoot)
 
 	exportCmd := runXDC(t, "--datadir", datadir, "--testnet", "export", exportFile)
-	assertCommandFailsWithChainConfigError(t, exportCmd, "Can't open blockchain in readonly mode: head state is missing and requires repair. Reopen the database in writable mode to repair the missing head state, then retry.")
+	assertCommandFailsWithChainConfigError(t, exportCmd, "Can't open blockchain in readonly mode: the head state is missing or the head marker names no stored block, and the chain requires repair. Reopen the database in writable mode to repair it, then retry.")
 	if _, err := os.Stat(exportFile); err == nil {
 		t.Fatalf("expected export to fail without creating %s", exportFile)
 	} else if !os.IsNotExist(err) {

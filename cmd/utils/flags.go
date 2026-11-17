@@ -1925,7 +1925,7 @@ func formatBlockChainOpenError(err error, readonly bool) string {
 	case errors.Is(err, core.ErrReadOnlyGenesisStateRecovery):
 		return "Can't open blockchain in readonly mode: genesis state is missing and requires recovery. Reopen the database in writable mode to recover the missing genesis state, then retry."
 	case errors.Is(err, core.ErrReadOnlyHeadStateRepair):
-		return "Can't open blockchain in readonly mode: head state is missing and requires repair. Reopen the database in writable mode to repair the missing head state, then retry."
+		return "Can't open blockchain in readonly mode: the head state is missing or the head marker names no stored block, and the chain requires repair. Reopen the database in writable mode to repair it, then retry."
 	case errors.Is(err, core.ErrReadOnlyBadHashRewind):
 		return "Can't open blockchain in readonly mode: the local chain contains a denylisted hash and requires rewind. Reopen the database in writable mode so the chain can rewind past the denylisted hash, then retry."
 	case errors.Is(err, core.ErrReadOnlyConfigRewind):
