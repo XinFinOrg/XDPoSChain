@@ -29,6 +29,13 @@ func (x *XDPoS_v2) ProcessQCFaker(chain consensus.ChainReader, qc *types.QuorumC
 	return x.processQC(chain, qc)
 }
 
+// SetHighestCommitBlockFaker sets the committed block, for tests only.
+func (x *XDPoS_v2) SetHighestCommitBlockFaker(info *types.BlockInfo) {
+	x.lock.Lock()
+	defer x.lock.Unlock()
+	x.highestCommitBlock = info
+}
+
 // GetCurrentConfigFaker returns the v2 config the engine applies. The engine
 // holds its own copy, so this is not the chain reader's Config().
 func (x *XDPoS_v2) GetCurrentConfigFaker() *params.V2Config {
