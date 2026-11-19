@@ -31,6 +31,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
+	"github.com/XinFinOrg/XDPoSChain/consensus/misc/eip1559"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
@@ -531,6 +532,74 @@ func TestSweepUnderpricedAfterAbortedReset(t *testing.T) {
 	}
 	if pool.all.Get(cheap.Hash()) != nil {
 		t.Fatal("underpriced transaction survived the reset that recovered from an abort")
+	}
+	if err := validatePoolInternals(pool); err != nil {
+		t.Fatalf("pool internal state corrupted: %v", err)
+	}
+}
+
+// TestAbortedResetKeepsPoolOnPreviousHead verifies that a reset which cannot
+// open the requested head's state leaves the pool exactly on its previous head:
+// no repricing for the requested head and no pending set changes.
+func TestAbortedResetKeepsPoolOnPreviousHead(t *testing.T) {
+	t.Parallel()
+
+	config := gasTierTestConfig()
+	config.EIP1559Block = common.Big0
+	pool, key := setupPoolWithConfig(config)
+	defer pool.Close()
+
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	testAddBalance(pool, addr, big.NewInt(1000000000000000000))
+
+	// Head 198 makes 199 the pending block, the last one on the gas50x tier;
+	// head 199 would make 200, on the gas2500x tier, the pending block.
+	<-pool.requestReset(nil, newTestHeader(198))
+	keptFee := eip1559.CalcBaseFeeForBlockNumber(pool.chainconfig, big.NewInt(199))
+	requestedFee := eip1559.CalcBaseFeeForBlockNumber(pool.chainconfig, big.NewInt(200))
+	if keptFee.Cmp(requestedFee) == 0 {
+		t.Fatalf("test needs distinct base fees around the fork, both are %v", keptFee)
+	}
+	tx := pricedTransaction(0, 100000, scaledGasPrice(2500), key)
+	if err := pool.addRemotesSync([]*types.Transaction{tx})[0]; err != nil {
+		t.Fatalf("failed to add transaction: %v", err)
+	}
+	baseFee := func() *big.Int {
+		pool.mu.RLock()
+		defer pool.mu.RUnlock()
+		return pool.priced.urgent.baseFee.ToBig()
+	}
+	if have := baseFee(); have.Cmp(keptFee) != 0 {
+		t.Fatalf("base fee before the aborted reset: have %v want %v", have, keptFee)
+	}
+
+	pool.mu.Lock()
+	chain := pool.chain
+	pool.chain = statelessBlockChain{chain}
+	pool.mu.Unlock()
+
+	<-pool.requestReset(newTestHeader(198), newTestHeader(199))
+
+	if head := pool.currentHead.Load(); head.Number.Uint64() != 198 {
+		t.Fatalf("head advanced past an aborted reset: have %d want 198", head.Number)
+	}
+	if have := baseFee(); have.Cmp(keptFee) != 0 {
+		t.Fatalf("aborted reset repriced the pool for the requested head: have %v want %v", have, keptFee)
+	}
+	if pending, queued := pool.Stats(); pending != 1 || queued != 0 {
+		t.Fatalf("pool status after the aborted reset: have %d pending %d queued, want 1 and 0", pending, queued)
+	}
+	pool.mu.Lock()
+	pool.chain = chain
+	pool.mu.Unlock()
+
+	// The next reset that can open its state moves the pool and reprices it.
+	<-pool.requestReset(newTestHeader(198), newTestHeader(199))
+	if head := pool.currentHead.Load(); head.Number.Uint64() != 199 {
+		t.Fatalf("head after the recovered reset: have %d want 199", head.Number)
+	}
+	if have := baseFee(); have.Cmp(requestedFee) != 0 {
+		t.Fatalf("base fee after the recovered reset: have %v want %v", have, requestedFee)
 	}
 	if err := validatePoolInternals(pool); err != nil {
 		t.Fatalf("pool internal state corrupted: %v", err)
