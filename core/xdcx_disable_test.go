@@ -415,7 +415,7 @@ func TestSaveDataSkipsXDCXAfterReceiverDisable(t *testing.T) {
 // flush: with the head at the receiver disable fork, the retained height below it
 // is still behind the fork, so the flush has to fetch the handles to read its root.
 func TestSaveDataFlushesPreDisableRetainedRoots(t *testing.T) {
-	chain := newXDCXTestChainWithDisables(t, nil, big.NewInt(5))
+	chain := newXDCXTestChainWithDisables(t, big.NewInt(5), big.NewInt(5))
 	if _, err := chain.chain.InsertChain(chain.blocks[4:]); err != nil {
 		t.Fatalf("failed to insert the fifth block: %v", err)
 	}

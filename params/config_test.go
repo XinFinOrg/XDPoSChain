@@ -1099,6 +1099,13 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 			wantField: "TIPXDCXMinerDisableBlock",
 		},
 		{
+			name: "receiver disable without miner disable",
+			mutate: func(cfg *ChainConfig) {
+				cfg.TIPXDCXMinerDisableBlock = nil
+			},
+			wantField: "TIPXDCXMinerDisableBlock",
+		},
+		{
 			name: "berlin before trc21",
 			mutate: func(cfg *ChainConfig) {
 				cfg.BerlinBlock = big.NewInt(cfg.TIPTRC21FeeBlock.Int64() - 1)
@@ -1213,6 +1220,35 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), test.wantField) {
 				t.Fatalf("unexpected error string: %v", err)
+			}
+		})
+	}
+}
+
+// TestCheckConfigForkOrderAcceptsXDCXDisablePairs pins the schedules the XDCx
+// disable check must not refuse: the miner fork may be absent, or fall on or
+// before the receiver fork.
+func TestCheckConfigForkOrderAcceptsXDCXDisablePairs(t *testing.T) {
+	minerDisable := big.NewInt(62000000)
+	receiverDisable := big.NewInt(63000000)
+	tests := []struct {
+		name     string
+		miner    *big.Int
+		receiver *big.Int
+	}{
+		{name: "neither declared"},
+		{name: "miner only", miner: minerDisable},
+		{name: "both at the same block", miner: minerDisable, receiver: minerDisable},
+		{name: "miner before receiver", miner: minerDisable, receiver: receiverDisable},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := TestnetChainConfig.Clone()
+			cfg.TIPXDCXMinerDisableBlock = test.miner
+			cfg.TIPXDCXReceiverDisableBlock = test.receiver
+
+			if err := cfg.CheckConfigForkOrder(); err != nil {
+				t.Fatalf("unexpected error: %v", err)
 			}
 		})
 	}

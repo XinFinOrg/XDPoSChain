@@ -550,9 +550,10 @@ func (c *ChainConfig) requiresXDCForkConfig() bool {
 	return c.XDPoS != nil
 }
 
-// forkSequenceError reports a standard fork that later slots build on but that
-// no schedule declared. The sequence scan and the Petersburg pair check both
-// reject through this wording, so it stays written once.
+// forkSequenceError reports a fork that later slots build on but that no
+// schedule declared. The sequence scan, the Petersburg pair check and the XDCx
+// receiver disable check all reject through this wording, so it stays written
+// once.
 func forkSequenceError(missing, scheduled string, value *big.Int) error {
 	return fmt.Errorf("invalid chain config: %w: %s is unset, but %s %v is scheduled", ErrWrongForkSwitchOrder, missing, scheduled, value)
 }
@@ -721,6 +722,14 @@ func (c *ChainConfig) checkConfigForkOrder(withHints, skipXDPoSSchedule bool) er
 		if before.Cmp(after) > 0 {
 			return forkOrderError(rule.before.name, before, rule.after.name, after, unsetHint(rule.after.name))
 		}
+	}
+	// The receiver only validates the roots the miner writes, so it must not be
+	// disabled while the miner fork is unset: the miner would keep matching and
+	// writing state that import, gated on the receiver fork, no longer replays,
+	// and every block the miner builds would fail the importer's root check.
+	// The ordered scan above already keeps the receiver at or after the miner.
+	if c.TIPXDCXReceiverDisableBlock != nil && c.TIPXDCXMinerDisableBlock == nil {
+		return forkSequenceError("TIPXDCXMinerDisableBlock", "TIPXDCXReceiverDisableBlock", c.TIPXDCXReceiverDisableBlock)
 	}
 	// The BASEFEE opcode is live from London, but XDC only fills the header base
 	// fee from EIP-1559 on; in between the opcode falls back to BaseFeeForOpcode,
