@@ -112,8 +112,9 @@ var insertErrClasses = []struct {
 	// way until the sidechain it sits on is imported: local, and not worth parking.
 	{consensus.ErrMissingCanonicalGapHeader, insertErrClass{local: true}, "the epoch gap block is not canonical"},
 
-	// The stored set of that gap block is this node's own record, and an absent, unreadable or
-	// undecodable one is read the same way on the next attempt: local, and not worth parking.
+	// The stored set of that gap block is this node's own record, and an absent, unreadable,
+	// undecodable or candidate-less one keeps failing this way for the rest of the run: local,
+	// and not worth parking.
 	{consensus.ErrGapSnapshotUnavailable, insertErrClass{local: true}, "the epoch gap block snapshot is unavailable"},
 
 	// Ahead of this node's clock, so the block is queued rather than failed. Not local on its

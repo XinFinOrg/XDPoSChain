@@ -35,11 +35,14 @@ var (
 	ErrMissingCanonicalGapHeader = errors.New("missing canonical gap header")
 
 	// ErrGapSnapshotUnavailable is returned when the snapshot of a gap block resolves by
-	// canonical number (the snapshot walk) but the stored set cannot be loaded: no entry is
-	// stored under the block's hash, the read was refused, or the blob does not decode. The
-	// write path stores the set in the batch that makes the gap block canonical, so an entry
-	// this node cannot read is a condition of its own database rather than of the batch under
-	// verification: core's classification reads it as a local failure.
+	// canonical number (the snapshot walk) but the stored set cannot be served: no entry is
+	// stored under the block's hash, the read was refused, the blob does not decode, or the
+	// record carries no candidates. The write path stores the set in the batch that makes the
+	// gap block canonical and refuses an empty one, so a record this node cannot serve is a
+	// condition of its own database rather than of the batch under verification: core's
+	// classification reads it as a local failure. A restart runs the repair that rebuilds at
+	// most the two most recent gap snapshots from their gap block state when that state is
+	// still readable (RepairGapSnapshots; initial() owns the V2 switch gap block).
 	ErrGapSnapshotUnavailable = errors.New("gap snapshot is unavailable")
 
 	// ErrFutureBlock is returned when a block's timestamp is in the future according
