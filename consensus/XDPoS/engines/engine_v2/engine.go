@@ -22,6 +22,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/consensus/clique"
 	"github.com/XinFinOrg/XDPoSChain/consensus/misc"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
@@ -165,6 +166,11 @@ func newEngine(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh 
 		highestVotedRound:  types.Round(0),
 		highestCommitBlock: nil,
 		ForensicsProcessor: NewForensics(),
+	}
+	// Resume from the highest round this node voted in before a restart, so
+	// it never votes twice in the same round.
+	if db != nil {
+		engine.highestVotedRound = types.Round(rawdb.ReadXdposV2HighestVotedRound(db))
 	}
 	// Add callback to the timer
 	timeoutTimer.OnTimeoutFn = engine.OnCountdownTimeout
