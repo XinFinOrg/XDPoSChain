@@ -589,11 +589,12 @@ func TestSweepUnderpricedSuppressesStaleAnnouncements(t *testing.T) {
 	}
 }
 
-// TestSweepUnderpricedAnnouncesSweptAddEvents verifies that an announcement
-// already queued for a transaction the gas schedule fork sweeps away is still
-// sent, matching upstream behaviour: announcements are hints, and peers that
-// request the transaction simply get nothing back.
-func TestSweepUnderpricedAnnouncesSweptAddEvents(t *testing.T) {
+// TestSweepUnderpricedSuppressesSweptAddEvents verifies that an announcement
+// already queued for a transaction the gas schedule fork sweeps away is not
+// sent: only transactions still in the pool are announced, since a peer told
+// about a dropped hash marks it as known and would not relay an identical
+// re-submission later. This deliberately departs from upstream geth.
+func TestSweepUnderpricedSuppressesSweptAddEvents(t *testing.T) {
 	t.Parallel()
 
 	pool, key := setupPoolWithConfig(gasTierTestConfig())
@@ -626,8 +627,8 @@ func TestSweepUnderpricedAnnouncesSweptAddEvents(t *testing.T) {
 	if pool.all.Get(cheap.Hash()) != nil {
 		t.Fatal("underpriced transaction survived the gas schedule fork")
 	}
-	if err := validateEvents(feed, 1); err != nil {
-		t.Fatalf("queued announcement was dropped: %v", err)
+	if err := validateEvents(feed, 0); err != nil {
+		t.Fatalf("swept transaction was announced: %v", err)
 	}
 	if err := validatePoolInternals(pool); err != nil {
 		t.Fatalf("pool internal state corrupted: %v", err)
@@ -1241,12 +1242,13 @@ func TestOsakaGasCapCoalescedResetUsesActualHead(t *testing.T) {
 	env.validateInternals(t)
 }
 
-// TestOsakaGasCapAnnouncesDiscarded verifies that an announcement queued for a
-// transaction the Osaka gas cap discards is still sent, matching upstream
-// behaviour: announcements are hints, and peers that request the transaction
-// simply get nothing back. A transaction surviving the crossing is announced
-// as well.
-func TestOsakaGasCapAnnouncesDiscarded(t *testing.T) {
+// TestOsakaGasCapSuppressesDiscarded verifies that an announcement queued for a
+// transaction the Osaka gas cap discards is not sent, while a transaction
+// surviving the crossing is still announced. Only transactions still in the
+// pool are announced: a peer told about a dropped hash marks it as known and
+// would not relay an identical re-submission later. This deliberately departs
+// from upstream geth, which announces queued transactions unconditionally.
+func TestOsakaGasCapSuppressesDiscarded(t *testing.T) {
 	t.Parallel()
 
 	env := newStartedEnv(t)
@@ -1266,24 +1268,13 @@ func TestOsakaGasCapAnnouncesDiscarded(t *testing.T) {
 	env.pool.queueTxEvent(oversized)
 	env.pool.queueTxEvent(normal)
 	env.crossForkExpectDrop(t, oversized, env.parkedHead(), "the Osaka fork")
-	// Both the discarded transaction and the one surviving the crossing are
-	// announced: queued announcements are deliberately not pruned, mirroring
-	// upstream geth.
-	announced := make(map[common.Hash]struct{})
-	for len(announced) < 2 {
-		select {
-		case ev := <-feed:
-			for _, tx := range ev.Txs {
-				announced[tx.Hash()] = struct{}{}
-			}
-		case <-time.After(time.Second):
-			t.Fatalf("expected both transactions to be announced, have %d", len(announced))
+	// Only the transaction surviving the crossing is announced.
+	select {
+	case ev := <-feed:
+		if len(ev.Txs) != 1 || ev.Txs[0].Hash() != normal.Hash() {
+			t.Fatalf("announced %d transactions, want only the surviving one", len(ev.Txs))
 		}
-	}
-	if _, ok := announced[oversized.Hash()]; !ok {
-		t.Fatal("over-cap transaction announcement was suppressed")
-	}
-	if _, ok := announced[normal.Hash()]; !ok {
+	case <-time.After(time.Second):
 		t.Fatal("surviving transaction was not announced")
 	}
 	if err := validateEvents(feed, 0); err != nil {
@@ -3038,6 +3029,74 @@ func TestPendingGlobalLimiting(t *testing.T) {
 	}
 	if pending > int(config.GlobalSlots) {
 		t.Fatalf("total pending transactions overflow allowance: %d > %d", pending, config.GlobalSlots)
+	}
+	if err := validatePoolInternals(pool); err != nil {
+		t.Fatalf("pool internal state corrupted: %v", err)
+	}
+}
+
+// Tests that a transaction promoted and then evicted by the pending limit in the
+// same reorg is not announced. Announcing it would make peers mark the hash as
+// known, so an identical re-submission would not be relayed to them later.
+func TestPendingLimitEvictedTxsNotAnnounced(t *testing.T) {
+	t.Parallel()
+
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
+	blockchain := newTestBlockChain(params.TestChainConfig, 1000000, statedb, new(event.Feed))
+
+	// Small limits keep every nonce within the pool's queued-nonce threshold.
+	config := testTxPoolConfig
+	config.AccountSlots = 2
+	config.GlobalSlots = 10
+
+	pool := New(config, blockchain)
+	pool.Init(config.PriceLimit, blockchain.CurrentBlock(), newReserver())
+	defer pool.Close()
+
+	events := make(chan core.NewTxsEvent, 1024)
+	sub := pool.txFeed.Subscribe(events)
+	defer sub.Unsubscribe()
+
+	keys := make([]*ecdsa.PrivateKey, 5)
+	for i := 0; i < len(keys); i++ {
+		keys[i], _ = crypto.GenerateKey()
+		testAddBalance(pool, crypto.PubkeyToAddress(keys[i].PublicKey), big.NewInt(params.Ether))
+	}
+	// Twice the global pending allowance: every transaction is promoted in the
+	// same reorg, and the pending limit then evicts half of them.
+	price := big.NewInt(common.DefaultMinGasPrice)
+	txs := types.Transactions{}
+	for _, key := range keys {
+		for j := 0; j < int(config.GlobalSlots)/len(keys)*2; j++ {
+			txs = append(txs, pricedTransaction(uint64(j), 100000, price, key))
+		}
+	}
+	for i, err := range pool.addRemotesSync(txs) {
+		if err != nil {
+			t.Fatalf("transaction %d rejected: %v", i, err)
+		}
+	}
+
+	var announced []*types.Transaction
+	for done := false; !done; {
+		select {
+		case ev := <-events:
+			announced = append(announced, ev.Txs...)
+		case <-time.After(200 * time.Millisecond):
+			done = true
+		}
+	}
+	pending, _ := pool.Stats()
+	if pending >= len(txs) {
+		t.Fatalf("pending limit not reached: %d pending of %d added", pending, len(txs))
+	}
+	for _, tx := range announced {
+		if pool.all.Get(tx.Hash()) == nil {
+			t.Errorf("announced transaction %x was evicted from the pool", tx.Hash())
+		}
+	}
+	if len(announced) != pending {
+		t.Fatalf("announced %d transactions, want the %d left pending", len(announced), pending)
 	}
 	if err := validatePoolInternals(pool); err != nil {
 		t.Fatalf("pool internal state corrupted: %v", err)
