@@ -1,6 +1,7 @@
 package engine_v2
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -35,7 +36,7 @@ func TestGetMasterNodes(t *testing.T) {
 }
 
 func TestStoreLoadSnapshot(t *testing.T) {
-	snap := NewSnapshot(1, common.Hash{0x1}, nil)
+	snap := NewSnapshot(1, common.Hash{0x1}, []common.Address{{0x1}})
 	dir := t.TempDir()
 	db, err := leveldb.New(dir, 256, 0, "", false)
 	if err != nil {
@@ -51,6 +52,54 @@ func TestStoreLoadSnapshot(t *testing.T) {
 	restoredSnapshot, err := loadSnapshot(lddb, snap.Hash)
 	if err != nil || restoredSnapshot.Hash != snap.Hash {
 		t.Error("load snapshot failed", err)
+	}
+}
+
+// storeRawSnapshot persists a snapshot the way an older build could have left
+// it, bypassing EncodeSnapshot: the write-side guard must not be able to hide
+// the records these tests model.
+func storeRawSnapshot(t *testing.T, db ethdb.Database, number uint64, hash common.Hash) {
+	t.Helper()
+	blob, err := json.Marshal(&SnapshotV2{Number: number, Hash: hash})
+	if err != nil {
+		t.Fatalf("marshal raw snapshot: %v", err)
+	}
+	if err := rawdb.WriteXdposV2Snapshot(db, hash, blob); err != nil {
+		t.Fatalf("store raw snapshot: %v", err)
+	}
+}
+
+// An empty persisted snapshot is what the fast-sync writer before 1ad18f63 could
+// leave behind: it must not load back as a usable set.
+func TestLoadSnapshotRejectsEmptyCandidates(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	hash := common.Hash{0x35}
+	storeRawSnapshot(t, db, 1350, hash)
+
+	if _, err := loadSnapshot(db, hash); !errors.Is(err, errUnusableSnapshot) {
+		t.Fatalf("loadSnapshot() = %v, want %v", err, errUnusableSnapshot)
+	}
+}
+
+func TestLoadSnapshotRejectsUndecodableRecord(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	hash := common.Hash{0x35}
+	if err := rawdb.WriteXdposV2Snapshot(db, hash, []byte("not a snapshot")); err != nil {
+		t.Fatalf("store undecodable snapshot: %v", err)
+	}
+
+	if _, err := loadSnapshot(db, hash); !errors.Is(err, errUnusableSnapshot) {
+		t.Fatalf("loadSnapshot() = %v, want %v", err, errUnusableSnapshot)
+	}
+}
+
+func TestEncodeSnapshotRejectsEmptyCandidates(t *testing.T) {
+	snap := NewSnapshot(1, common.Hash{0x1}, nil)
+	if _, err := EncodeSnapshot(snap); !errors.Is(err, errUnusableSnapshot) {
+		t.Fatalf("EncodeSnapshot() = %v, want %v", err, errUnusableSnapshot)
+	}
+	if err := StoreSnapshot(snap, rawdb.NewMemoryDatabase()); !errors.Is(err, errUnusableSnapshot) {
+		t.Fatalf("StoreSnapshot() = %v, want %v", err, errUnusableSnapshot)
 	}
 }
 
@@ -572,6 +621,53 @@ func TestRepairGapSnapshotsSkipsEmptyCandidates(t *testing.T) {
 	}
 }
 
+// A record written by an older build must be rebuilt, not kept forever: it is
+// the set every vote, timeout and epoch switch block it backs verifies against.
+func TestRepairGapSnapshotsRebuildsEmptySnapshot(t *testing.T) {
+	candidate := common.Address{0x1}
+	x, chain, db := newRepairFixture(t, 1350, []common.Address{candidate}, []*big.Int{big.NewInt(10)})
+	storeRawSnapshot(t, db, 1350, gapHash(t, chain, 1350))
+
+	x.RepairGapSnapshots(chain)
+
+	assertSnapshotStored(t, db, gapHash(t, chain, 1350), []common.Address{candidate})
+	if chain.stateCalls != 1 {
+		t.Fatalf("stateCalls = %d, want 1", chain.stateCalls)
+	}
+}
+
+func TestRepairGapSnapshotsRebuildsUndecodableSnapshot(t *testing.T) {
+	candidate := common.Address{0x1}
+	x, chain, db := newRepairFixture(t, 1350, []common.Address{candidate}, []*big.Int{big.NewInt(10)})
+	if err := rawdb.WriteXdposV2Snapshot(db, gapHash(t, chain, 1350), []byte("not a snapshot")); err != nil {
+		t.Fatalf("store undecodable snapshot: %v", err)
+	}
+
+	x.RepairGapSnapshots(chain)
+
+	assertSnapshotStored(t, db, gapHash(t, chain, 1350), []common.Address{candidate})
+	if chain.stateCalls != 1 {
+		t.Fatalf("stateCalls = %d, want 1", chain.stateCalls)
+	}
+}
+
+// A record the database refuses to read may still be good, so it is never
+// overwritten.
+func TestRepairGapSnapshotsSkipsUnreadableStoredSnapshot(t *testing.T) {
+	x, chain, db := newRepairFixture(t, 1350, []common.Address{{0x1}}, []*big.Int{big.NewInt(10)})
+	storeRawSnapshot(t, db, 1350, gapHash(t, chain, 1350))
+	chain.db = &refusingSnapshotDB{Database: db}
+
+	x.RepairGapSnapshots(chain)
+
+	if chain.stateCalls != 0 {
+		t.Fatalf("stateCalls = %d, want 0", chain.stateCalls)
+	}
+	if _, err := loadSnapshot(db, gapHash(t, chain, 1350)); err == nil {
+		t.Fatal("an unreadable record was overwritten")
+	}
+}
+
 // gapSnapshotReadFailure is what the database of the refused-read case answers with, named so a
 // test can tell that the sentinel keeps the storage error as its cause.
 var gapSnapshotReadFailure = errors.New("simulated gap snapshot read failure")
@@ -653,6 +749,21 @@ func TestGetSnapshotReportsAnUnavailableSnapshot(t *testing.T) {
 		_, err := x.getSnapshot(chain, number, false)
 		if !errors.Is(err, consensus.ErrGapSnapshotUnavailable) {
 			t.Fatalf("getSnapshot() = %v, want %v", err, consensus.ErrGapSnapshotUnavailable)
+		}
+	})
+
+	t.Run("the stored snapshot has no candidates", func(t *testing.T) {
+		db := rawdb.NewMemoryDatabase()
+		x := newRepairEngine(db)
+		chain := newChain(true)
+		storeRawSnapshot(t, db, testRepairGap, chain.GetHeaderByNumber(testRepairGap).Hash())
+
+		_, err := x.getSnapshot(chain, number, false)
+		if !errors.Is(err, consensus.ErrGapSnapshotUnavailable) {
+			t.Fatalf("getSnapshot() = %v, want %v", err, consensus.ErrGapSnapshotUnavailable)
+		}
+		if !errors.Is(err, errUnusableSnapshot) {
+			t.Fatalf("getSnapshot() = %v, want the empty record kept as its cause", err)
 		}
 	})
 }
@@ -758,6 +869,45 @@ func TestGetSnapshotRebuildsBootstrapSnapshotUnalignedSwitch(t *testing.T) {
 			t.Fatalf("candidates = %v, want %v", snap.NextEpochCandidates, switchMasternodes)
 		}
 	}
+}
+
+// An empty bootstrap snapshot left by an older build must be rebuilt by the same
+// startup step that would have written it.
+func TestInitialRebuildsEmptyBootstrapSnapshot(t *testing.T) {
+	db := rawdb.NewMemoryDatabase()
+	x := newRepairEngine(db)
+	switchBlock := testRepairEpoch + testRepairEpoch/2
+	x.config.V2.SwitchBlock = new(big.Int).SetUint64(switchBlock)
+	x.highestQuorumCert = &types.QuorumCert{ProposedBlockInfo: &types.BlockInfo{}}
+	x.config.V2.CurrentConfig = &params.V2Config{
+		MinePeriod:       5,
+		TimeoutPeriod:    10,
+		ExpTimeoutConfig: params.ExpTimeoutConfig{Base: 2, MaxExponent: 4},
+	}
+	x.minePeriodCh = make(chan int, 1)
+	timeoutWorker, err := countdown.NewExpCountDown(10*time.Second, 2, 4)
+	if err != nil {
+		t.Fatalf("new countdown: %v", err)
+	}
+	x.timeoutWorker = timeoutWorker
+	x.timeoutWorker.OnTimeoutFn = func(time.Time, interface{}) error { return nil }
+	defer x.timeoutWorker.StopTimer()
+	switchMasternodes := []common.Address{{0x2}, {0x3}, {0x4}}
+	chain := &repairTestChain{db: db}
+	switchGap, ok := x.config.GapBlockNumber(switchBlock)
+	if !ok {
+		t.Fatal("the schedule designates no gap block")
+	}
+	chain.addHeader(&types.Header{Number: new(big.Int).SetUint64(switchGap)})
+	switchHeader := &types.Header{Number: new(big.Int).SetUint64(switchBlock), Extra: bootstrapExtra(switchMasternodes)}
+	chain.addHeader(switchHeader)
+	storeRawSnapshot(t, db, switchGap, gapHash(t, chain, switchGap))
+
+	if err := x.Initial(chain, switchHeader); err != nil {
+		t.Fatalf("Initial() = %v", err)
+	}
+
+	assertSnapshotStored(t, db, gapHash(t, chain, switchGap), switchMasternodes)
 }
 
 // Only the snapshot initial() owns is rebuilt. A hole at any other gap block
