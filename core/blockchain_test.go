@@ -1413,25 +1413,23 @@ func TestReorgDeliversRemovedLogsSynchronously(t *testing.T) {
 		b.AddTx(tx)
 	}
 	canonical, _ := GenerateChain(gspec.Config, blockchain.Genesis(), engine, genDb, 4, emit)
-	fork, _ := GenerateChain(gspec.Config, blockchain.Genesis(), engine, genDb, 4, func(i int, b *BlockGen) {
+	// The fork is longer so fork choice adopts it without a manual reorg call.
+	fork, _ := GenerateChain(gspec.Config, blockchain.Genesis(), engine, genDb, 5, func(i int, b *BlockGen) {
 		b.SetCoinbase(common.Address{0: 0x02})
 		emit(i, b)
 	})
 	if _, err := blockchain.InsertChain(canonical); err != nil {
 		t.Fatalf("failed to insert canonical chain: %v", err)
 	}
-	if _, err := blockchain.InsertChain(fork); err != nil {
-		t.Fatalf("failed to insert the fork: %v", err)
-	}
-	if head, want := blockchain.CurrentBlock(), canonical[len(canonical)-1]; head.Hash() != want.Hash() {
-		t.Fatalf("head moved onto the fork, want it kept as a side chain: have %x, want %x", head.Hash(), want.Hash())
-	}
 
 	// The subscriber stalls before receiving: a synchronous send has to wait
 	// for it, a spawned one would let reorg return first.
 	removed := make(chan RemovedLogsEvent)
+	hold := make(chan RemovedLogsEvent)
 	sub := blockchain.SubscribeRemovedLogsEvent(removed)
 	defer sub.Unsubscribe()
+	holdSub := blockchain.SubscribeRemovedLogsEvent(hold)
+	defer holdSub.Unsubscribe()
 
 	// The stall also budgets catching a spawned send: reorg hands the removals
 	// over early with ~20ms of work left under -race, so a second outlasts it.
@@ -1439,24 +1437,32 @@ func TestReorgDeliversRemovedLogsSynchronously(t *testing.T) {
 		subscriberDelay = time.Second
 		deliveryTimeout = 5 * time.Second
 	)
+	type delivery struct {
+		logs int
+		head common.Hash
+	}
 	var (
 		armed = make(chan struct{})
 		// Buffered so the delivery cannot block: the checks below may t.Fatalf
 		// and leave this goroutine behind.
-		got = make(chan int, 1)
+		got = make(chan delivery, 1)
 	)
 	go func() {
 		time.Sleep(subscriberDelay)
 		close(armed)
 		select {
 		case ev := <-removed:
-			got <- len(ev.Logs)
+			head := blockchain.CurrentBlock().Hash()
+			// The send is still blocked on hold here (it has no receiver until this
+			// read returns), so an early publication cannot move the head before it.
+			<-hold
+			got <- delivery{len(ev.Logs), head}
 		case <-time.After(deliveryTimeout):
 		}
 	}()
 
-	if err := blockchain.reorg(blockchain.CurrentBlock(), fork[len(fork)-1].Header()); err != nil {
-		t.Fatalf("failed to reorg: %v", err)
+	if _, err := blockchain.InsertChain(fork); err != nil {
+		t.Fatalf("failed to insert the longer fork: %v", err)
 	}
 	// The send completes on the unbuffered handoff: a reorg that is back before
 	// the subscriber armed never waited for it.
@@ -1468,9 +1474,14 @@ func TestReorgDeliversRemovedLogsSynchronously(t *testing.T) {
 	// reorg returned means the handoff is done and got is buffered, so this
 	// timeout only guards a starved goroutine.
 	select {
-	case n := <-got:
-		if want := len(canonical); n != want {
-			t.Fatalf("removed logs mismatch: have %d, want %d", n, want)
+	case o := <-got:
+		if want := len(canonical); o.logs != want {
+			t.Fatalf("removed logs mismatch: have %d, want %d", o.logs, want)
+		}
+		// The send must follow the head write: a subscriber that reads the chain on
+		// the removal must see the adopted head, not the one the log came from.
+		if want := fork[len(fork)-1].Hash(); o.head != want {
+			t.Fatalf("removed logs observed at head %x, want the adopted head %x", o.head, want)
 		}
 	case <-time.After(deliveryTimeout):
 		t.Fatalf("reorg returned but the removed logs never reached the subscriber")

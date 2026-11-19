@@ -235,6 +235,16 @@ func (bc *BlockChain) GetReceiptsByHash(hash common.Hash) types.Receipts {
 	return receipts
 }
 
+// ReadTransaction returns the transaction and its canonical position, blocking while a
+// reorg rewrites the lookups it reads. The write side covers the reorg and the head write
+// that restores the canonical markers the reorg deletes, so a reader never observes a
+// half-updated index.
+func (bc *BlockChain) ReadTransaction(hash common.Hash) (*types.Transaction, common.Hash, uint64, uint64) {
+	bc.txLookupLock.RLock()
+	defer bc.txLookupLock.RUnlock()
+	return rawdb.ReadTransaction(bc.db, hash)
+}
+
 // GetUnclesInChain retrieves all the uncles from a given block backwards until
 // a specific distance is reached.
 func (bc *BlockChain) GetUnclesInChain(block *types.Block, length int) []*types.Header {
