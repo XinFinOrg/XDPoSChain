@@ -49,6 +49,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
+	"github.com/XinFinOrg/XDPoSChain/trie"
 )
 
 const (
@@ -2487,13 +2488,9 @@ func GetSignersFromBlocks(b Backend, blockNumber uint64, blockHash common.Hash, 
 			limitNumber = currentNumber
 		}
 		for i := blockNumber + 1; i <= limitNumber; i++ {
-			header, err := b.HeaderByNumber(context.TODO(), rpc.BlockNumber(i))
-			if err != nil {
-				return addrs, err
-			}
-			if header == nil {
-				return addrs, errors.New("nil header in GetSignersFromBlocks")
-			}
+			// Read the block once and cache its signing txs under its own hash: the
+			// cache is shared with the reward and penalty hooks, so the key and the
+			// transactions must come from the same block.
 			blockData, err := b.BlockByNumber(context.TODO(), rpc.BlockNumber(i))
 			if err != nil {
 				return addrs, err
@@ -2501,7 +2498,10 @@ func GetSignersFromBlocks(b Backend, blockNumber uint64, blockHash common.Hash, 
 			if blockData == nil {
 				return addrs, errors.New("nil blockData in GetSignersFromBlocks")
 			}
-			signTxs := engine.CacheSigningTxs(header.Hash(), blockData.Transactions())
+			if txHash := types.DeriveSha(blockData.Transactions(), trie.NewStackTrie(nil)); txHash != blockData.TxHash() {
+				return addrs, fmt.Errorf("block %d body does not match its transaction root: have %x, want %x", i, txHash, blockData.TxHash())
+			}
+			signTxs := engine.CacheSigningTxs(blockData.Hash(), blockData.Transactions())
 			for _, signtx := range signTxs {
 				blkHash := common.BytesToHash(signtx.Data()[len(signtx.Data())-32:])
 				from, _ := types.Sender(signer, signtx)
