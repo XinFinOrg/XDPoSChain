@@ -36,7 +36,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/consensus/misc/eip1559"
 	"github.com/XinFinOrg/XDPoSChain/core"
-	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -330,7 +329,7 @@ func (api *BlockChainAPI) GetBalance(ctx context.Context, address common.Address
 
 // GetTransactionAndReceiptProof returns the Trie transaction and receipt proof of the given transaction hash.
 func (api *BlockChainAPI) GetTransactionAndReceiptProof(ctx context.Context, hash common.Hash) (map[string]interface{}, error) {
-	tx, blockHash, _, index := rawdb.ReadTransaction(api.b.ChainDb(), hash)
+	tx, blockHash, _, index := api.b.ReadTransaction(hash)
 	if tx == nil {
 		return nil, nil
 	}
@@ -1912,7 +1911,7 @@ func (s *TransactionAPI) GetTransactionCount(ctx context.Context, address common
 // GetTransactionByHash returns the transaction for the given hash
 func (s *TransactionAPI) GetTransactionByHash(ctx context.Context, hash common.Hash) (*RPCTransaction, error) {
 	// Try to return an already finalized transaction
-	tx, blockHash, blockNumber, index := rawdb.ReadTransaction(s.b.ChainDb(), hash)
+	tx, blockHash, blockNumber, index := s.b.ReadTransaction(hash)
 	if tx != nil {
 		header, err := s.b.HeaderByHash(ctx, blockHash)
 		if err != nil {
@@ -1932,7 +1931,7 @@ func (s *TransactionAPI) GetTransactionByHash(ctx context.Context, hash common.H
 // GetRawTransactionByHash returns the bytes of the transaction for the given hash.
 func (s *TransactionAPI) GetRawTransactionByHash(ctx context.Context, hash common.Hash) (hexutil.Bytes, error) {
 	// Retrieve a finalized transaction, or a pooled otherwise
-	tx, _, _, _ := rawdb.ReadTransaction(s.b.ChainDb(), hash)
+	tx, _, _, _ := s.b.ReadTransaction(hash)
 	if tx == nil {
 		if tx = s.b.GetPoolTransaction(hash); tx == nil {
 			// Transaction not found anywhere, abort
@@ -1945,7 +1944,7 @@ func (s *TransactionAPI) GetRawTransactionByHash(ctx context.Context, hash commo
 
 // GetTransactionReceipt returns the transaction receipt for the given transaction hash.
 func (s *TransactionAPI) GetTransactionReceipt(ctx context.Context, hash common.Hash) (map[string]interface{}, error) {
-	tx, blockHash, blockNumber, index := rawdb.ReadTransaction(s.b.ChainDb(), hash)
+	tx, blockHash, blockNumber, index := s.b.ReadTransaction(hash)
 	if tx == nil {
 		// When the transaction doesn't exist, the RPC method should return JSON null
 		// as per specification.

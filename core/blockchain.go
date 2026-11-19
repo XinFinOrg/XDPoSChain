@@ -250,13 +250,18 @@ type BlockChain struct {
 	currentBlock     atomic.Pointer[types.Header] // Current head of the chain
 	currentSnapBlock atomic.Pointer[types.Header] // Current head of snap-sync
 
-	bodyCache        *lru.Cache[common.Hash, *types.Body]         // Cache for the most recent block bodies
-	bodyRLPCache     *lru.Cache[common.Hash, rlp.RawValue]        // Cache for the most recent block bodies in RLP encoded format
-	receiptsCache    *lru.Cache[common.Hash, types.Receipts]      // Cache for the most recent block receipts
-	blockCache       *lru.Cache[common.Hash, *types.Block]        // Cache for the most recent entire blocks
-	resultProcess    *lru.Cache[common.Hash, *ResultProcessBlock] // Cache for processed blocks
-	calculatingBlock *lru.Cache[common.Hash, *CalculatedBlock]    // Cache for processing blocks
-	downloadingBlock *lru.Cache[common.Hash, struct{}]            // Cache for downloading blocks (avoid duplication from fetcher)
+	bodyCache     *lru.Cache[common.Hash, *types.Body]         // Cache for the most recent block bodies
+	bodyRLPCache  *lru.Cache[common.Hash, rlp.RawValue]        // Cache for the most recent block bodies in RLP encoded format
+	receiptsCache *lru.Cache[common.Hash, types.Receipts]      // Cache for the most recent block receipts
+	blockCache    *lru.Cache[common.Hash, *types.Block]        // Cache for the most recent entire blocks
+	resultProcess *lru.Cache[common.Hash, *ResultProcessBlock] // Cache for processed blocks
+
+	// txLookupLock blocks transaction lookups while a reorg rewrites the indexes they
+	// read, so a lookup cannot observe the chain half way through the rewrite.
+	txLookupLock sync.RWMutex
+
+	calculatingBlock *lru.Cache[common.Hash, *CalculatedBlock] // Cache for processing blocks
+	downloadingBlock *lru.Cache[common.Hash, struct{}]         // Cache for downloading blocks (avoid duplication from fetcher)
 
 	// future blocks are blocks added for later processing
 	futureBlocks *lru.Cache[common.Hash, *types.Block]
@@ -1951,6 +1956,12 @@ func (bc *BlockChain) cacheSigningTxs(block *types.Block) {
 	engine.CacheSigningTxs(block.Header().Hash(), block.Transactions())
 }
 
+// testHookAfterReorg runs between a successful reorg and the head write that restores the
+// canonical marker the reorg deleted. Tests use it to observe that window; it is nil in
+// production. The pointer is atomic so a test clearing the hook cannot race with an import
+// reading it.
+var testHookAfterReorg atomic.Pointer[func()]
+
 // adoptHead writes block as the canonical head, reorganising the chain first when block does
 // not sit directly on top of current. reorg deliberately leaves the new head to its caller, so
 // this is the single place that writes the head after a reorg.
@@ -1978,12 +1989,32 @@ func (bc *BlockChain) adoptHead(block *types.Block, current *types.Header, snap 
 		}
 		snap = derived
 	}
+	var removed, reborn []*types.Block
 	if block.ParentHash() != current.Hash() {
-		if err := bc.reorg(current, block.Header()); err != nil {
+		// The reorg deletes the canonical marker of the head it is about to install, and only
+		// the head write below puts it back. Hold the lookup lock across both: a reader
+		// admitted in between resolves a retained lookup against the missing marker and reads
+		// nil for a transaction the node still serves as canonical.
+		bc.txLookupLock.Lock()
+		var err error
+		removed, reborn, err = bc.reorgLocked(current, block.Header())
+		if err != nil {
+			bc.txLookupLock.Unlock()
 			return err
 		}
+		if hook := testHookAfterReorg.Load(); hook != nil {
+			(*hook)()
+		}
+		bc.writeHeadBlock(block, snap)
+		bc.txLookupLock.Unlock()
+	} else {
+		bc.writeHeadBlock(block, snap)
 	}
-	bc.writeHeadBlock(block, snap)
+	// The events announce the rewrite, so they go out only once the head they describe is
+	// the one the node serves: a subscriber that queries on the event must not read the
+	// chain the event just removed. The lock is released above: a subscriber's lookup would
+	// otherwise wait on the writer blocked in Feed.Send.
+	bc.publishReorgLogs(removed, reborn)
 	// A gap block reaching the head still refreshes the masternode set here unless the batch
 	// written just above carried it, which is what needsNextEpochSnapshot reports: the v1 set
 	// lives in the checkpoint header extra data, and a v2 set just stored must not be read back
@@ -4004,20 +4035,32 @@ func (bc *BlockChain) collectLogs(b *types.Block, removed bool) []*types.Log {
 	return logs
 }
 
-// reorg takes two blocks, an old chain and a new chain and will reconstruct the
+// reorgLocked takes two blocks, an old chain and a new chain and will reconstruct the
 // blocks and inserts them to be part of the new canonical chain and accumulates
-// potential missing transactions and post an event about them.
+// potential missing transactions and returns the blocks of the rewrite instead of posting their
+// logs: the caller decodes the receipts and publishes them once the head it writes is the one
+// the node serves, so the walk itself never holds more than the blocks it already reads.
 //
 // The new head block is deliberately not processed here: the caller has to write it with
 // writeHeadBlock once reorg returns successfully, and must not write it a second time.
-// adoptHead is the single caller that does so today.
+// adoptHead is the single caller that does so today, and it calls reorgLocked: the lock has to
+// stay held until that head write restores the canonical marker this reorg deletes.
 //
-// A failed reorg can leave the head on one of the blocks it promoted: the forward loop writes
-// the head of every block it walks past, so a later block whose body this node does not hold
-// (errInvalidNewChain) returns with the head marker still on the previous one. That block is on
-// the new chain and this node holds it, so the head is not corrupt - it is simply not the one
-// the caller asked to adopt, and no head event is raised for it.
-func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
+// A failed reorg writes nothing: before the forward loop writes the first head it reads every
+// body the loop will walk, so a record this node cannot read (errInvalidOldChain,
+// errInvalidNewChain) fails the reorganisation with the head, the canonical markers and the
+// transaction index still the old chain's. The loop itself cannot fail after that pass: it
+// applies the bodies the pass retained, and writes the head of every block it walks past.
+//
+// reorgLocked is the reorg body with bc.txLookupLock already held for writing. The caller must
+// keep it until the head write that restores the canonical marker this reorg deletes.
+//
+// The two returned slices are the blocks whose receipts hold the removed and the reborn logs,
+// in the order the logs were delivered before: removals ascend from the fork point to the old
+// head (the forward order the legacy comment below keeps for compatibility), reborns ascend
+// through the new chain. The blocks are the ones this function already read, so handing them
+// over adds no failure point to the publication.
+func (bc *BlockChain) reorgLocked(oldHead, newHead *types.Header) ([]*types.Block, []*types.Block, error) {
 	log.Warn("Reorg", "OldHash", oldHead.Hash().Hex(), "OldNum", oldHead.Number, "NewHash", newHead.Hash().Hex(), "NewNum", newHead.Number)
 
 	var (
@@ -4039,10 +4082,10 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 		}
 	}
 	if oldHead == nil {
-		return errInvalidOldChain
+		return nil, nil, errInvalidOldChain
 	}
 	if newHead == nil {
-		return errInvalidNewChain
+		return nil, nil, errInvalidNewChain
 	}
 
 	// Both sides of the reorg are at the same number, reduce both until the common
@@ -4060,11 +4103,11 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 		// Step back with both chains
 		oldHead = bc.GetHeader(oldHead.ParentHash, oldHead.Number.Uint64()-1)
 		if oldHead == nil {
-			return errInvalidOldChain
+			return nil, nil, errInvalidOldChain
 		}
 		newHead = bc.GetHeader(newHead.ParentHash, newHead.Number.Uint64()-1)
 		if newHead == nil {
-			return errInvalidNewChain
+			return nil, nil, errInvalidNewChain
 		}
 	}
 
@@ -4080,7 +4123,7 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 							log.Error("Impossible reorg, please file an issue", "OldNum", oldBlock.Number, "OldHash", oldBlock.Hash().Hex(), "LatestCommittedHash", latestCommittedBlock.Hash.Hex())
 						} else {
 							log.Warn("Stop reorg, blockchain is under forking attack", "OldCommittedNum", oldBlock.Number, "OldCommittedHash", oldBlock.Hash().Hex())
-							return fmt.Errorf("stop reorg, blockchain is under forking attack. OldCommitted num %d, hash %s", oldBlock.Number, oldBlock.Hash().Hex())
+							return nil, nil, fmt.Errorf("stop reorg, blockchain is under forking attack. OldCommitted num %d, hash %s", oldBlock.Number, oldBlock.Hash().Hex())
 						}
 					}
 				}
@@ -4137,7 +4180,7 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 		if err != nil {
 			// A presence check this node's own database refused says nothing about the blocks of
 			// the new chain: a condition of this node, not of the blocks.
-			return localConditionf("failed to read the stored next-epoch snapshot of gap block %d (%s): %w", header.Number.Uint64(), header.Hash().Hex(), err)
+			return nil, nil, localConditionf("failed to read the stored next-epoch snapshot of gap block %d (%s): %w", header.Number.Uint64(), header.Hash().Hex(), err)
 		}
 		if has {
 			switch _, lerr := engine_v2.LoadSnapshot(bc.db, header.Hash()); {
@@ -4149,18 +4192,18 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 				// A load this node's own database refused says nothing about the blocks of the
 				// new chain either: a condition of this node, not of the blocks. Failing here
 				// keeps the markers below from moving over a record the epoch cannot serve.
-				return localConditionf("failed to read the stored next-epoch snapshot of gap block %d (%s): %w", header.Number.Uint64(), header.Hash().Hex(), lerr)
+				return nil, nil, localConditionf("failed to read the stored next-epoch snapshot of gap block %d (%s): %w", header.Number.Uint64(), header.Hash().Hex(), lerr)
 			}
 		}
 		statedb, err := bc.StateAt(header.Root)
 		if err != nil {
 			// State this node committed itself and can no longer open is a condition of
 			// this node, not of the blocks.
-			return localConditionf("failed to open state of gap block %d (%s) for the masternode update: %w", header.Number.Uint64(), header.Hash().Hex(), err)
+			return nil, nil, localConditionf("failed to open state of gap block %d (%s) for the masternode update: %w", header.Number.Uint64(), header.Hash().Hex(), err)
 		}
 		snap, err := bc.nextEpochSnapshotOf(statedb, header.Number.Uint64(), header.Hash())
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		snapshots[header.Hash()] = snap
 	}
@@ -4189,19 +4232,17 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 		log.Error("Impossible reorg, please file an issue", "oldnum", oldHead.Number, "oldhash", oldHead.Hash(), "oldblocks", len(oldChain), "newnum", newHead.Number, "newhash", newHead.Hash(), "newblocks", len(newChain))
 	}
 
-	// Acquire the tx-lookup lock before mutation. This step is essential
-	// as the txlookups should be changed atomically, and all subsequent
-	// reads should be blocked until the mutation is complete.
-	// bc.txLookupLock.Lock()
-
+	// The tx lookup lock is already held by the caller: the lookups below are rewritten as
+	// one unit, and readers stay out until this function and, on the adoptHead path, the
+	// head write that follows it are done.
 	// Reorg can be executed, start reducing the chain's old blocks and appending
 	// the new blocks
 	var (
 		deletedTxs []common.Hash
 		rebirthTxs []common.Hash
 
-		deletedLogs []*types.Log
-		rebirthLogs []*types.Log
+		removedBlocks []*types.Block
+		rebornBlocks  []*types.Block
 	)
 
 	// Deleted log emission on the API uses forward order, which is borked, but
@@ -4209,30 +4250,19 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 	//
 	// TODO(karalabe): This should be nuked out, no idea how, deprecate some APIs?
 	//
-	// The removals are delivered synchronously, like the reborn logs below and the
-	// canonical logs in PostChainEvents. Spawning the send let a subscriber observe
-	// the logs of the new chain before the removals of the blocks they revert
-	// (geth #19396).
-	{
-		for i := len(oldChain) - 1; i >= 0; i-- {
-			block := bc.GetBlock(oldChain[i].Hash(), oldChain[i].Number.Uint64())
-			if block == nil {
-				return errInvalidOldChain // Corrupt database, mostly here to avoid weird panics
-			}
-			if logs := bc.collectLogs(block, true); len(logs) > 0 {
-				deletedLogs = append(deletedLogs, logs...)
-			}
-			if len(deletedLogs) > 512 {
-				bc.rmLogsFeed.Send(RemovedLogsEvent{deletedLogs})
-				deletedLogs = nil
-			}
-			// TODO(daniel): remove chainSideFeed, reference PR #30601
-			// Also send event for blocks removed from the canon chain.
-			// bc.chainSideFeed.Send(ChainSideEvent{Block: block})
+	// The blocks of the removals are retained here and their receipts decoded by adoptHead
+	// once the new head is on disk: sending from this function let a subscriber read the
+	// chain this reorg is replacing (XDC-26), and decoding here kept every log of the reorg
+	// in memory until then. Removed still goes out before reborn, as it did.
+	for i := len(oldChain) - 1; i >= 0; i-- {
+		block := bc.GetBlock(oldChain[i].Hash(), oldChain[i].Number.Uint64())
+		if block == nil {
+			return nil, nil, errInvalidOldChain // Corrupt database, mostly here to avoid weird panics
 		}
-		if len(deletedLogs) > 0 {
-			bc.rmLogsFeed.Send(RemovedLogsEvent{deletedLogs})
-		}
+		removedBlocks = append(removedBlocks, block)
+		// TODO(daniel): remove chainSideFeed, reference PR #30601
+		// Also send event for blocks removed from the canon chain.
+		// bc.chainSideFeed.Send(ChainSideEvent{Block: block})
 	}
 
 	// Undo old blocks in reverse order
@@ -4240,7 +4270,7 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 		// Collect all the deleted transactions
 		block := bc.GetBlock(oldChain[i].Hash(), oldChain[i].Number.Uint64())
 		if block == nil {
-			return errInvalidOldChain // Corrupt database, mostly here to avoid weird panics
+			return nil, nil, errInvalidOldChain // Corrupt database, mostly here to avoid weird panics
 		}
 		for _, tx := range block.Transactions() {
 			deletedTxs = append(deletedTxs, tx.Hash())
@@ -4259,43 +4289,52 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 	if len(newChain) > 0 {
 		head := bc.GetBlock(newChain[0].Hash(), newChain[0].Number.Uint64())
 		if head == nil {
-			return errInvalidNewChain // Corrupt database, mostly here to avoid weird panics
+			return nil, nil, errInvalidNewChain // Corrupt database, mostly here to avoid weird panics
 		}
 		for _, tx := range head.Transactions() {
 			rebirthTxs = append(rebirthTxs, tx.Hash())
 		}
 	}
-	// Apply the rest of the new blocks in forward order. The loop stops at index 1, the
-	// upstream bound: this function does not handle the new chain head, so neither its markers
-	// nor, for a gap block, its UpdateM1 are written here.
+	// Read every block the loop below will walk before it writes its first head, and keep
+	// them for that loop. The loop advances the head as it goes, so a block whose body this
+	// node does not hold has to fail the reorg while the head, the canonical markers and the
+	// index are still the old chain's: returned from inside the loop, errInvalidNewChain
+	// would leave the head on a promoted block and adoptHead would drop the removals it
+	// collected. The head itself was read above, and the loop stops at index 1.
+	newBlocks := make([]*types.Block, len(newChain))
 	for i := len(newChain) - 1; i >= 1; i-- {
-		// Collect all the included transactions
 		block := bc.GetBlock(newChain[i].Hash(), newChain[i].Number.Uint64())
 		if block == nil {
-			return errInvalidNewChain // Corrupt database, mostly here to avoid weird panics
+			return nil, nil, errInvalidNewChain // Corrupt database, mostly here to avoid weird panics
 		}
+		newBlocks[i] = block
+	}
+	// Apply the rest of the new blocks in forward order. The loop stops at index 1, the
+	// upstream bound: this function does not handle the new chain head, so neither its markers
+	// nor, for a gap block, its UpdateM1 are written here. The loop walks the blocks the
+	// preflight retained, so it cannot fail: it only writes.
+	for i := len(newChain) - 1; i >= 1; i-- {
+		// Collect all the included transactions
+		block := newBlocks[i]
 		for _, tx := range block.Transactions() {
 			rebirthTxs = append(rebirthTxs, tx.Hash())
 		}
-		// Collect inserted logs and emit them, but only for blocks promoted to the canonical
-		// chain for the first time. A rollback only rewinds the head markers and leaves the
-		// canonical mappings in place, so re-importing a known block across them lands here
-		// with those retained blocks as intermediates; their logs were already delivered.
+		// Retain the inserted block for the publication, but only for blocks promoted to the
+		// canonical chain for the first time. A rollback only rewinds the head markers and
+		// leaves the canonical mappings in place, so re-importing a known block across them
+		// lands here with those retained blocks as intermediates; their logs were already
+		// delivered. The canonicality check has to run inside the rewrite: the head write that
+		// follows makes every block this loop walked canonical, so asking then would drop them
+		// all.
 		if bc.GetCanonicalHash(block.NumberU64()) != block.Hash() {
-			if logs := bc.collectLogs(block, false); len(logs) > 0 {
-				rebirthLogs = append(rebirthLogs, logs...)
-			}
-			if len(rebirthLogs) > 512 {
-				bc.logsFeed.Send(rebirthLogs)
-				rebirthLogs = nil
-			}
+			rebornBlocks = append(rebornBlocks, block)
 		}
 		// Update the head block. The body is on disk already: the ancestors were
 		// persisted by the writeBlockWithState call that imported them, and the
-		// head by the block batch committed before reorg was entered. The GetBlock
-		// above only guards a corrupt database, it is not what writes the body.
-		// Keep that order, or the markers written here can outlive the block
-		// they point at.
+		// head by the block batch committed before reorg was entered. The
+		// preflight above only guards a corrupt database, it is not what writes
+		// the body. Keep that order, or the markers written here can outlive the
+		// block they point at.
 		//
 		// The next-epoch masternode set of this block was derived before any side
 		// effect, so advancing the head here can no longer fail: the set travels
@@ -4326,9 +4365,6 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 			SignalCheckpoint()
 		}
 	}
-	if len(rebirthLogs) > 0 {
-		bc.logsFeed.Send(rebirthLogs)
-	}
 
 	// Delete useless indexes right now which includes the non-canonical
 	// transaction indexes, canonical chain indexes which above the head.
@@ -4357,13 +4393,58 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 		log.Crit("Failed to delete useless indexes", "err", err)
 	}
 
-	// Reset the tx lookup cache to clear stale txlookup cache.
-	// bc.txLookupCache.Purge()
+	return removedBlocks, rebornBlocks, nil
+}
 
-	// Release the tx-lookup lock after mutation.
-	// bc.txLookupLock.Unlock()
+// publishReorgLogs delivers the logs a reorg rewrote, once the head it wrote is the one the
+// node serves. The reorg hands over blocks, not logs: decoding their receipts during the walk
+// held every log of the rewrite until the head write, and only the rollback side of a reorg is
+// bounded by the engine's committed-block guard - the new chain segment is not. Decoding one
+// block at a time here keeps the publication's footprint at that block's logs plus the batch
+// below, and the blocks themselves were read by the reorg already.
+//
+// Removals go out before any reborn log, as they always did. The publication fills batches with
+// at most 512 logs, and each batch is sent with its capacity capped at its length, so a
+// subscriber appending to a batch allocates instead of overwriting the first log of the next one.
+func (bc *BlockChain) publishReorgLogs(removed, reborn []*types.Block) {
+	bc.publishBlockLogs(removed, true)
+	bc.publishBlockLogs(reborn, false)
+}
 
-	return nil
+// publishBlockLogs sends the logs of blocks in order, filling batches of up to 512 logs across
+// block boundaries so the batch shape does not depend on how the logs are distributed.
+func (bc *BlockChain) publishBlockLogs(blocks []*types.Block, removed bool) {
+	var batch []*types.Log
+	flush := func() {
+		if len(batch) > 0 {
+			bc.flushReorgLogs(batch, removed)
+			batch = nil
+		}
+	}
+	for _, block := range blocks {
+		logs := bc.collectLogs(block, removed)
+		for len(logs) > 0 {
+			n := min(len(logs), 512-len(batch))
+			batch = append(batch, logs[:n]...)
+			logs = logs[n:]
+			if len(batch) == 512 {
+				flush()
+			}
+		}
+	}
+	flush()
+}
+
+// flushReorgLogs sends one batch of the publication. The three-index slice caps the batch at its
+// length, so a subscriber appending to it allocates instead of overwriting the first log of the
+// next batch.
+func (bc *BlockChain) flushReorgLogs(batch []*types.Log, removed bool) {
+	batch = batch[:len(batch):len(batch)]
+	if removed {
+		bc.rmLogsFeed.Send(RemovedLogsEvent{batch})
+		return
+	}
+	bc.logsFeed.Send(batch)
 }
 
 // PostChainEvents iterates over the events generated by a chain insertion and

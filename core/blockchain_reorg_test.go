@@ -19,6 +19,7 @@ package core
 import (
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
@@ -29,7 +30,17 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
-// TestReorgLeavesNewHeadToCaller pins the contract documented on BlockChain.reorg: the new head
+// reorgForTest is the test-only entry point to the reorg body: it takes the tx lookup lock for
+// the mutation and releases it when it returns. That is not enough for production - the lock has
+// to stay held until adoptHead writes the head that restores the canonical marker this reorg
+// deletes - so production reaches reorgLocked through adoptHead instead.
+func (bc *BlockChain) reorgForTest(oldHead, newHead *types.Header) ([]*types.Block, []*types.Block, error) {
+	bc.txLookupLock.Lock()
+	defer bc.txLookupLock.Unlock()
+	return bc.reorgLocked(oldHead, newHead)
+}
+
+// TestReorgLeavesNewHeadToCaller pins the contract documented on BlockChain.reorgLocked: the new head
 // block is not processed there and its canonical markers are written by the caller. Handling the
 // head inside reorg too would write the same markers twice and refresh the masternode set
 // (UpdateM1) twice for a gap block.
@@ -59,7 +70,7 @@ func TestReorgLeavesNewHeadToCaller(t *testing.T) {
 	oldHead := blockchain.CurrentBlock()
 	newHead := fork[len(fork)-1]
 	closeAfterReorg(t, blockchain, newHead)
-	if err := blockchain.reorg(oldHead, newHead.Header()); err != nil {
+	if _, _, err := blockchain.reorgForTest(oldHead, newHead.Header()); err != nil {
 		t.Fatalf("failed to reorg: %v", err)
 	}
 	// Every non-head block of the new chain must be canonical...
@@ -132,7 +143,7 @@ func TestReorgKeepsTheNewHeadTxLookup(t *testing.T) {
 	closeAfterReorg(t, blockchain, fork[1])
 	// Run the reorg the way writeBlockWithState does, stopping before the caller writes the
 	// new head: the lookup entry has to be intact already at that point.
-	if err := blockchain.reorg(blockchain.CurrentBlock(), fork[1].Header()); err != nil {
+	if _, _, err := blockchain.reorgForTest(blockchain.CurrentBlock(), fork[1].Header()); err != nil {
 		t.Fatalf("failed to reorg: %v", err)
 	}
 	if entry := rawdb.ReadTxLookupEntry(blockchain.ChainDb(), tx.Hash()); entry == nil {
@@ -140,11 +151,139 @@ func TestReorgKeepsTheNewHeadTxLookup(t *testing.T) {
 	}
 }
 
+// TestReorgTxLookupLockCoversHeadWrite pins that the reorg's write lock is still held when the
+// head write restores the canonical marker the reorg deleted. A reader admitted in between would
+// resolve a lookup retained from a transaction both heads carry against a missing marker and read
+// nil for a transaction the node still serves as canonical.
+func TestReorgTxLookupLockCoversHeadWrite(t *testing.T) {
+	key, emitter, gspec := newReorgLogGenesis(t)
+	// The full faker accepts the higher difficulty below, which the generator's own rule would
+	// reject; XDPoS v1 gets the same shape from its turn-based difficulty.
+	engine := ethash.NewFullFaker()
+	genDb := rawdb.NewMemoryDatabase()
+	if _, err := gspec.Commit(genDb); err != nil {
+		t.Fatalf("failed to commit genesis: %v", err)
+	}
+	newTx := func(nonce, value int64) *types.Transaction {
+		tx, err := types.SignTx(types.NewTransaction(uint64(nonce), emitter, big.NewInt(value), 100000, big.NewInt(1), nil), types.HomesteadSigner{}, key)
+		if err != nil {
+			t.Fatalf("failed to sign the transaction: %v", err)
+		}
+		return tx
+	}
+	bc, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+	canonical, _ := GenerateChain(gspec.Config, bc.Genesis(), engine, genDb, 4, func(i int, b *BlockGen) {
+		b.AddTx(newTx(int64(i), int64(i)+1))
+	})
+	// One competing block on the canonical head's parent, carrying the same transaction as the
+	// head. The extra difficulty makes it outrank the head at the same height, so the import
+	// takes the writeBlockWithState -> adoptHead path instead of stopping at the side chain.
+	fork, _ := GenerateChain(gspec.Config, canonical[2], engine, genDb, 1, func(i int, b *BlockGen) {
+		b.SetCoinbase(common.Address{0: 0x02})
+		b.AddTx(newTx(3, 4))
+	})
+	if fork[0].Transactions()[0].Hash() != canonical[3].Transactions()[0].Hash() {
+		t.Fatal("test setup: the fork block does not carry the head's transaction")
+	}
+	forkHead := fork[0].Header()
+	forkHead.Difficulty = new(big.Int).Add(canonical[3].Difficulty(), common.Big1)
+	fork[0] = fork[0].WithSeal(forkHead)
+
+	if _, err := bc.InsertChain(canonical); err != nil {
+		t.Fatalf("failed to insert the canonical chain: %v", err)
+	}
+	tx := canonical[3].Transactions()[0]
+	if got, hash, num, _ := bc.ReadTransaction(tx.Hash()); got == nil || hash != canonical[3].Hash() || num != 4 {
+		t.Fatal("test setup: the transaction is not readable at the canonical head")
+	}
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	insertDone := make(chan struct{})
+	hook := func() {
+		close(entered)
+		<-release
+	}
+	testHookAfterReorg.Store(&hook)
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+		select {
+		case <-insertDone:
+		case <-time.After(5 * time.Second):
+		}
+		testHookAfterReorg.Store(nil)
+		bc.Stop()
+	}()
+
+	insertErr := make(chan error, 1)
+	go func() {
+		defer close(insertDone)
+		_, err := bc.InsertChain(types.Blocks{fork[0]})
+		insertErr <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the import never reached the window between the reorg and the head write")
+	}
+	// The cleanup batch has run: the head's canonical marker is gone while the lookup entry is
+	// retained, and the node still serves the old head.
+	if head := bc.CurrentBlock(); head.Hash() != canonical[3].Hash() {
+		t.Fatalf("head moved before the head write: have %x, want %x", head.Hash(), canonical[3].Hash())
+	}
+	if have := rawdb.ReadCanonicalHash(bc.db, 4); have != (common.Hash{}) {
+		t.Fatalf("canonical marker at 4 still present: %x", have)
+	}
+	if entry := rawdb.ReadTxLookupEntry(bc.db, tx.Hash()); entry == nil || *entry != 4 {
+		t.Fatalf("lookup entry moved before the head write: %v", entry)
+	}
+	// The lock has to cover the head write: a successful read lock here would admit the reader
+	// into exactly the window above.
+	if bc.txLookupLock.TryRLock() {
+		bc.txLookupLock.RUnlock()
+		t.Fatal("the lookup lock is not held across the head write")
+	}
+	resumed := make(chan struct{})
+	go func() {
+		bc.ReadTransaction(tx.Hash())
+		close(resumed)
+	}()
+	select {
+	case <-resumed:
+		t.Fatal("a transaction lookup returned inside the reorg-to-head-write window")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case err := <-insertErr:
+		if err != nil {
+			t.Fatalf("failed to insert the fork head: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the import did not finish after the head write")
+	}
+	select {
+	case <-resumed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the transaction lookup did not resume after the head write")
+	}
+	if got, hash, num, _ := bc.ReadTransaction(tx.Hash()); got == nil || hash != fork[0].Hash() || num != 4 {
+		t.Fatal("the transaction is not readable at the adopted head")
+	}
+}
+
 // closeAfterReorg stops the chain in the state the reorg contract leaves it: the reorg has run and
 // the caller has not written the new head yet. Stop cannot work from it, because saveData resolves
 // the head by number while its canonical marker is gone, so it panics on a nil block, and a panic
 // raised in cleanup buries whatever the test asserted. Writing the caller's half first keeps the
-// assertions readable on the passing and failing paths alike. See BlockChain.reorg.
+// assertions readable on the passing and failing paths alike. See BlockChain.reorgLocked.
 func closeAfterReorg(t *testing.T, chain *BlockChain, newHead *types.Block) {
 	t.Helper()
 	t.Cleanup(func() {
