@@ -1532,7 +1532,17 @@ func (pool *LegacyPool) reset(oldHead, newHead *types.Header) bool {
 	// Inject any transactions discarded due to reorgs
 	log.Debug("Reinjecting stale transactions", "count", len(reinject))
 	core.SenderCacher().Recover(pool.signer, reinject)
-	pool.addTxsLocked(reinject, make([]error, len(reinject)))
+	// Reinjected transactions skip the basic validation Add runs. A special
+	// transaction runs it anyway: the pool admits fewer of them than block
+	// validation does before TIPSignTxRules, so a dropped block can carry
+	// special transactions the pool would refuse.
+	errs := make([]error, len(reinject))
+	for i, tx := range reinject {
+		if tx.IsSpecialTransaction() {
+			errs[i] = pool.ValidateTxBasics(tx)
+		}
+	}
+	pool.addTxsLocked(reinject, errs)
 	return true
 }
 

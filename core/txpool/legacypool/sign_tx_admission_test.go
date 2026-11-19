@@ -17,15 +17,21 @@
 package legacypool
 
 import (
+	"crypto/ecdsa"
 	"errors"
 	"math/big"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/event"
+	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/XinFinOrg/XDPoSChain/trie"
 )
 
 // TestSignTxAdmissionRules checks that the pool admits only sign transactions
@@ -74,5 +80,79 @@ func TestSignTxAdmissionRules(t *testing.T) {
 				t.Fatalf("in pool = %v, want %v", inPool, tt.want == nil)
 			}
 		})
+	}
+}
+
+// reorgTestChain is a testBlockChain that also serves blocks by hash, so a
+// pool reset can walk a reorg.
+type reorgTestChain struct {
+	*testBlockChain
+	blocks map[common.Hash]*types.Block
+}
+
+func (bc *reorgTestChain) GetBlock(hash common.Hash, number uint64) *types.Block {
+	return bc.blocks[hash]
+}
+
+// TestReorgReinjectionChecksSpecialTxs checks that the special transactions of
+// a block dropped by a reorg go through the pool's basic validation before
+// they are reinjected, while regular transactions are reinjected as before.
+func TestReorgReinjectionChecksSpecialTxs(t *testing.T) {
+	t.Parallel()
+
+	candidateKey, _ := crypto.GenerateKey()
+	otherCandidateKey, _ := crypto.GenerateKey()
+	outsiderKey, _ := crypto.GenerateKey()
+	payerKey, _ := crypto.GenerateKey()
+	candidate := crypto.PubkeyToAddress(candidateKey.PublicKey)
+	otherCandidate := crypto.PubkeyToAddress(otherCandidateKey.PublicKey)
+	payer := crypto.PubkeyToAddress(payerKey.PublicKey)
+
+	diskdb := rawdb.NewMemoryDatabase()
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(diskdb))
+	chain := &reorgTestChain{
+		testBlockChain: newTestBlockChain(params.TestChainConfig, 10000000, statedb, new(event.Feed)),
+		blocks:         make(map[common.Hash]*types.Block),
+	}
+	pool, _ := setupPoolWithChain(chain)
+	defer pool.Close()
+	pool.SetSigner(func(addr common.Address) bool { return addr == candidate || addr == otherCandidate })
+	testAddBalance(pool, payer, big.NewInt(1_000_000_000_000_000))
+
+	signer := pool.signer
+	signTx := func(key *ecdsa.PrivateKey, nonce uint64, data []byte) *types.Transaction {
+		return types.MustSignNewTx(key, signer, &types.LegacyTx{Nonce: nonce, To: &common.BlockSignersBinary, Gas: 200000, GasPrice: big.NewInt(0), Value: big.NewInt(0), Data: data})
+	}
+	valid := signTx(candidateKey, 0, signTxData(0))
+	// Each sign tx has its own sender at nonce 0, so only the checks under
+	// test decide whether it comes back.
+	malformed := signTx(otherCandidateKey, 0, make([]byte, 100))
+	outsider := signTx(outsiderKey, 0, signTxData(0))
+	regular := pricedTransaction(0, 100000, big.NewInt(common.DefaultMinGasPrice), payerKey)
+
+	genesis := types.NewBlock(&types.Header{Number: big.NewInt(0), Root: types.EmptyRootHash, GasLimit: 10000000}, nil, nil, trie.NewStackTrie(nil))
+	dropped := types.NewBlock(&types.Header{ParentHash: genesis.Hash(), Number: big.NewInt(1), Root: types.EmptyRootHash, GasLimit: 10000000},
+		&types.Body{Transactions: types.Transactions{valid, malformed, outsider, regular}}, nil, trie.NewStackTrie(nil))
+	canonical := types.NewBlock(&types.Header{ParentHash: genesis.Hash(), Number: big.NewInt(1), Root: types.EmptyRootHash, GasLimit: 10000000, Extra: []byte("canonical")},
+		nil, nil, trie.NewStackTrie(nil))
+	for _, block := range []*types.Block{genesis, dropped, canonical} {
+		chain.blocks[block.Hash()] = block
+	}
+
+	<-pool.requestReset(dropped.Header(), canonical.Header())
+
+	for _, want := range []struct {
+		name string
+		tx   *types.Transaction
+		in   bool
+	}{
+		{"valid sign tx", valid, true},
+		{"malformed sign tx", malformed, false},
+		{"sign tx from a non-signer", outsider, false},
+		{"regular tx", regular, true},
+	} {
+		if inPool := pool.all.Get(want.tx.Hash()) != nil; inPool != want.in {
+			t.Errorf("%s: in pool = %v, want %v", want.name, inPool, want.in)
+		}
 	}
 }
