@@ -1328,7 +1328,10 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 	}(time.Now())
 	defer close(done)
 
-	var promoteAddrs []common.Address
+	var (
+		promoteAddrs []common.Address
+		moved        bool // whether a reset moved the pool to the requested head
+	)
 	if dirtyAccounts != nil && reset == nil {
 		// Only dirty accounts need to be promoted, unless we're resetting.
 		// For resets, all addresses in the tx queue will be promoted and
@@ -1347,7 +1350,7 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 		oldPoolHead := pool.currentHead.Load()
 
 		// Reset from the old head to the new, rescheduling any reorged transactions
-		pool.reset(reset.oldHead, reset.newHead)
+		moved = pool.reset(reset.oldHead, reset.newHead)
 		newPoolHead := pool.currentHead.Load()
 
 		// Discard transactions whose gas limit exceeds the cap once the reset
@@ -1383,8 +1386,10 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 
 	// If a new block appeared, validate the pool of pending transactions. This will
 	// remove any transaction that has been included in the block or was invalidated
-	// because of another transaction (e.g. higher gas price).
-	if reset != nil {
+	// because of another transaction (e.g. higher gas price). Skip it when the
+	// reset was aborted: the pool is still on its previous head and state, and
+	// repricing for the requested head would put it out of step with them.
+	if moved {
 		pool.demoteUnexecutables()
 		if reset.newHead != nil {
 			nextNumber := new(big.Int).Add(reset.newHead.Number, common.Big1)
@@ -1429,8 +1434,10 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 }
 
 // reset retrieves the current state of the blockchain and ensures the content
-// of the transaction pool is valid with regard to the chain state.
-func (pool *LegacyPool) reset(oldHead, newHead *types.Header) {
+// of the transaction pool is valid with regard to the chain state. It reports
+// whether the pool moved to newHead; on false the pool stays on its previous
+// head and state.
+func (pool *LegacyPool) reset(oldHead, newHead *types.Header) bool {
 	// If we're reorging an old state, reinject all dropped transactions
 	var reinject types.Transactions
 
@@ -1456,7 +1463,7 @@ func (pool *LegacyPool) reset(oldHead, newHead *types.Header) {
 					// If we reorged to a same or higher number, then it's not a case of setHead
 					log.Warn("Transaction pool reset with missing old head",
 						"old", oldHead.Hash(), "oldnum", oldNum, "new", newHead.Hash(), "newnum", newNum)
-					return
+					return false
 				}
 				// If the reorg ended up on a lower number, it's indicative of setHead being the cause
 				log.Debug("Skipping transaction reset caused by setHead",
@@ -1469,33 +1476,33 @@ func (pool *LegacyPool) reset(oldHead, newHead *types.Header) {
 					// reorg caused by sync-reversion or explicit sethead back to an
 					// earlier block.
 					log.Warn("Transaction pool reset with missing new head", "number", newHead.Number, "hash", newHead.Hash())
-					return
+					return false
 				}
 				var discarded, included types.Transactions
 				for rem.NumberU64() > add.NumberU64() {
 					discarded = append(discarded, rem.Transactions()...)
 					if rem = pool.chain.GetBlock(rem.ParentHash(), rem.NumberU64()-1); rem == nil {
 						log.Error("Unrooted old chain seen by tx pool", "block", oldHead.Number, "hash", oldHead.Hash())
-						return
+						return false
 					}
 				}
 				for add.NumberU64() > rem.NumberU64() {
 					included = append(included, add.Transactions()...)
 					if add = pool.chain.GetBlock(add.ParentHash(), add.NumberU64()-1); add == nil {
 						log.Error("Unrooted new chain seen by tx pool", "block", newHead.Number, "hash", newHead.Hash())
-						return
+						return false
 					}
 				}
 				for rem.Hash() != add.Hash() {
 					discarded = append(discarded, rem.Transactions()...)
 					if rem = pool.chain.GetBlock(rem.ParentHash(), rem.NumberU64()-1); rem == nil {
 						log.Error("Unrooted old chain seen by tx pool", "block", oldHead.Number, "hash", oldHead.Hash())
-						return
+						return false
 					}
 					included = append(included, add.Transactions()...)
 					if add = pool.chain.GetBlock(add.ParentHash(), add.NumberU64()-1); add == nil {
 						log.Error("Unrooted new chain seen by tx pool", "block", newHead.Number, "hash", newHead.Hash())
-						return
+						return false
 					}
 				}
 				lost := make([]*types.Transaction, 0, len(discarded))
@@ -1515,7 +1522,7 @@ func (pool *LegacyPool) reset(oldHead, newHead *types.Header) {
 	statedb, err := pool.chain.StateAt(newHead.Root)
 	if err != nil {
 		log.Error("Failed to reset txpool state", "err", err)
-		return
+		return false
 	}
 	pool.currentHead.Store(newHead)
 	pool.currentState = statedb
@@ -1526,6 +1533,7 @@ func (pool *LegacyPool) reset(oldHead, newHead *types.Header) {
 	log.Debug("Reinjecting stale transactions", "count", len(reinject))
 	core.SenderCacher().Recover(pool.signer, reinject)
 	pool.addTxsLocked(reinject, make([]error, len(reinject)))
+	return true
 }
 
 // promoteExecutables moves transactions that have become processable from the
