@@ -136,7 +136,9 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 			return fmt.Errorf("%w: %s", ErrSpecialTxNotFromSigner, from.Hex())
 		}
 		if core.IsSignTransactionRoute(opts.Config, pendingBlockNumber(head.Number), tx) {
-			return nil
+			// A sign transaction has to be valid for the next block under the
+			// rules block validation applies; the sender rule is NotSigner above.
+			return core.CheckSignTxFields(opts.Config, pendingBlockNumber(head.Number), tx)
 		}
 		if err := validateIntrinsicAndFloor(tx, from, value, rules); err != nil {
 			return err

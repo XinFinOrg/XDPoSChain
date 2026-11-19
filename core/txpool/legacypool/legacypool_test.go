@@ -764,7 +764,7 @@ func TestSweepUnderpricedKeepsSpecialTransactions(t *testing.T) {
 
 	regularKey, _ := crypto.GenerateKey()
 
-	special, err := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, common.Big0, 100000, common.Big0, nil), types.HomesteadSigner{}, key)
+	special, err := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, common.Big0, 100000, common.Big0, signTxData(0)), types.HomesteadSigner{}, key)
 	if err != nil {
 		t.Fatalf("failed to sign special transaction: %v", err)
 	}
@@ -1575,11 +1575,11 @@ func TestListAddSpecialTxReplacement(t *testing.T) {
 
 	// Two distinct special (block-signing) txs sharing nonce 0; the differing
 	// payload gives them different hashes.
-	oldSpecial, err := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, common.Big0, 100000, big.NewInt(1), []byte{0x01}), types.HomesteadSigner{}, key)
+	oldSpecial, err := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, common.Big0, 100000, big.NewInt(1), signTxData(0x01)), types.HomesteadSigner{}, key)
 	if err != nil {
 		t.Fatalf("failed to sign old special tx: %v", err)
 	}
-	newSpecial, err := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, common.Big0, 100000, big.NewInt(1), []byte{0x02}), types.HomesteadSigner{}, key)
+	newSpecial, err := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, common.Big0, 100000, big.NewInt(1), signTxData(0x02)), types.HomesteadSigner{}, key)
 	if err != nil {
 		t.Fatalf("failed to sign new special tx: %v", err)
 	}
@@ -1666,7 +1666,7 @@ func TestSpecialTxReplacementThroughPool(t *testing.T) {
 		addr := crypto.PubkeyToAddress(key.PublicKey)
 		testAddBalance(pool, addr, big.NewInt(1_000_000_000_000_000))
 
-		special := mkSpecial(key, []byte{0x01})
+		special := mkSpecial(key, signTxData(0x01))
 		if err := pool.addRemoteSync(special); err != nil {
 			t.Fatalf("failed to add special tx: %v", err)
 		}
@@ -1690,8 +1690,8 @@ func TestSpecialTxReplacementThroughPool(t *testing.T) {
 		addr := crypto.PubkeyToAddress(key.PublicKey)
 		testAddBalance(pool, addr, big.NewInt(1_000_000_000_000_000))
 
-		oldSpecial := mkSpecial(key, []byte{0x01})
-		newSpecial := mkSpecial(key, []byte{0x02})
+		oldSpecial := mkSpecial(key, signTxData(0x01))
+		newSpecial := mkSpecial(key, signTxData(0x02))
 		if err := pool.addRemoteSync(oldSpecial); err != nil {
 			t.Fatalf("failed to add old special tx: %v", err)
 		}
@@ -1718,7 +1718,7 @@ func TestSpecialTxReplacementThroughPool(t *testing.T) {
 		if err := pool.addRemoteSync(regular); err != nil {
 			t.Fatalf("failed to add regular tx: %v", err)
 		}
-		special := mkSpecial(key, []byte{0x01})
+		special := mkSpecial(key, signTxData(0x01))
 		if err := pool.addRemoteSync(special); err != nil {
 			t.Fatalf("special tx should evict regular tx, got err: %v", err)
 		}
@@ -1748,7 +1748,7 @@ func TestSpecialTxReplacesHeadOfStuckBacklog(t *testing.T) {
 
 	// Sign txs carry a zero gas price; the payload only makes the hashes differ.
 	mkSpecial := func(nonce uint64, payload byte) *types.Transaction {
-		tx, err := types.SignTx(types.NewTransaction(nonce, common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), []byte{payload}), types.HomesteadSigner{}, key)
+		tx, err := types.SignTx(types.NewTransaction(nonce, common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), signTxData(payload)), types.HomesteadSigner{}, key)
 		if err != nil {
 			t.Fatalf("failed to sign special tx: %v", err)
 		}
@@ -1806,7 +1806,7 @@ func TestSpecialTxReplacementOnFullPool(t *testing.T) {
 	signer := crypto.PubkeyToAddress(signerKey.PublicKey)
 	testAddBalance(pool, signer, big.NewInt(1_000_000_000_000_000))
 	mkSpecial := func(nonce uint64, payload byte) *types.Transaction {
-		tx, err := types.SignTx(types.NewTransaction(nonce, common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), []byte{payload}), types.HomesteadSigner{}, signerKey)
+		tx, err := types.SignTx(types.NewTransaction(nonce, common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), signTxData(payload)), types.HomesteadSigner{}, signerKey)
 		if err != nil {
 			t.Fatalf("failed to sign special tx: %v", err)
 		}
@@ -1897,7 +1897,7 @@ func TestSignerSpecialTxEvictsPendingRegular(t *testing.T) {
 	if err := pool.addRemoteSync(regular); err != nil {
 		t.Fatalf("failed to add regular tx: %v", err)
 	}
-	special, err := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), nil), types.HomesteadSigner{}, key)
+	special, err := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), signTxData(0)), types.HomesteadSigner{}, key)
 	if err != nil {
 		t.Fatalf("failed to sign special tx: %v", err)
 	}
@@ -2813,7 +2813,7 @@ func TestOutOfOrderDeliveryPromotesAll(t *testing.T) {
 
 		// Sign txs from a candidate: zero gas price, to the BlockSigners contract.
 		for nonce := count - 1; nonce >= 0; nonce-- {
-			tx, err := types.SignTx(types.NewTransaction(uint64(nonce), common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), nil), types.HomesteadSigner{}, key)
+			tx, err := types.SignTx(types.NewTransaction(uint64(nonce), common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), signTxData(0)), types.HomesteadSigner{}, key)
 			if err != nil {
 				t.Fatalf("failed to sign special tx %d: %v", nonce, err)
 			}
@@ -4716,7 +4716,7 @@ func TestPendingKeepsLocalAndSpecialTransactions(t *testing.T) {
 	specialAddr := crypto.PubkeyToAddress(specialKey.PublicKey)
 	testAddBalance(pool, specialAddr, big.NewInt(1_000_000_000_000_000))
 
-	specialTx, _ := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, big.NewInt(1), 100000, new(big.Int).Add(new(big.Int).Set(minGasTip), big.NewInt(1)), nil), types.HomesteadSigner{}, specialKey)
+	specialTx, _ := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, big.NewInt(0), 100000, new(big.Int).Add(new(big.Int).Set(minGasTip), big.NewInt(1)), signTxData(0)), types.HomesteadSigner{}, specialKey)
 	if err := pool.addRemoteSync(specialTx); err != nil {
 		t.Fatalf("failed to add special tx: %v", err)
 	}
@@ -4947,7 +4947,7 @@ func TestSpecialTxPromotionDoesNotBlockOnTxFeed(t *testing.T) {
 	defer sub.Unsubscribe()
 
 	gasPrice := new(big.Int).SetUint64(common.DefaultMinGasPrice + 1)
-	specialTx, err := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, big.NewInt(1), 100000, gasPrice, nil), types.HomesteadSigner{}, key)
+	specialTx, err := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, big.NewInt(0), 100000, gasPrice, signTxData(0)), types.HomesteadSigner{}, key)
 	if err != nil {
 		t.Fatalf("failed to sign special tx: %v", err)
 	}
@@ -5024,7 +5024,7 @@ func TestSpecialTxEventDeliveredInSingleReorg(t *testing.T) {
 	defer sub.Unsubscribe()
 
 	gasPrice := new(big.Int).SetUint64(common.DefaultMinGasPrice + 1)
-	tx, err := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, big.NewInt(1), 100000, gasPrice, nil), types.HomesteadSigner{}, key)
+	tx, err := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, big.NewInt(0), 100000, gasPrice, signTxData(0)), types.HomesteadSigner{}, key)
 	if err != nil {
 		t.Fatalf("failed to sign special tx: %v", err)
 	}
