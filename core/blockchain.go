@@ -1058,6 +1058,7 @@ func (bc *BlockChain) ResetWithGenesisBlock(genesis *types.Block) error {
 // This method only rolls back the current block. The current header and current
 // fast block are left intact.
 func (bc *BlockChain) repair(head **types.Block) error {
+	const unrecoverableChain = "the local chain cannot be repaired, restore the database from a backup or resync it"
 	for {
 		// Abort if we've rewound to a head block that does have associated state.
 		// RollbackNumber already holds an absolute target by the time repair runs:
@@ -1100,9 +1101,12 @@ func (bc *BlockChain) repair(head **types.Block) error {
 			log.Info("Rewound blockchain to past state", "number", (*head).Number(), "hash", (*head).Hash())
 		}
 		// Otherwise rewind one block and recheck state availability there
+		if (*head).NumberU64() == 0 {
+			return fmt.Errorf("repair failed: genesis state missing for hash %s; %s", (*head).Hash(), unrecoverableChain)
+		}
 		block := bc.GetBlock((*head).ParentHash(), (*head).NumberU64()-1)
 		if block == nil {
-			panic(fmt.Sprintf("repair fail to get block at number: %v, hash: %v", (*head).NumberU64()-1, (*head).ParentHash()))
+			return fmt.Errorf("repair failed: missing ancestor block #%d [%x..]; %s", (*head).NumberU64()-1, (*head).ParentHash().Bytes()[:4], unrecoverableChain)
 		}
 		(*head) = block
 	}
