@@ -67,9 +67,15 @@ type SignerSource interface {
 }
 
 // CheckSignTxFields applies the per-transaction sign transaction rules that
-// need no chain context: transaction type, call data, value and the signed
-// block number, judged for a transaction going into block number. It returns
-// nil for a transaction that is not a sign transaction at that block.
+// need no chain context: transaction type, call data, value, and that the
+// signed block is a merge block no more than two epochs below block number,
+// the block the transaction goes into. It returns nil for a transaction that is
+// not a sign transaction at that block.
+//
+// It does not require the signed block to be below number: the pool judges a
+// transaction against the block after its own head, which can lag behind the
+// block a node has just imported and signs. SignTxRules adds that rule for the
+// block actually being built or processed.
 func CheckSignTxFields(config *params.ChainConfig, number *big.Int, tx *types.Transaction) error {
 	if !IsSignTransactionRoute(config, number, tx) {
 		return nil
@@ -83,9 +89,11 @@ func CheckSignTxFields(config *params.ChainConfig, number *big.Int, tx *types.Tr
 	if tx.Value().Sign() != 0 {
 		return fmt.Errorf("%w: %v", ErrSignTxValue, tx.Value())
 	}
-	signed := new(big.Int).SetBytes(tx.Data()[4:36])
-	if signed.Cmp(number) >= 0 {
-		return fmt.Errorf("%w: signed %v, block %v", ErrSignTxFutureBlock, signed, number)
+	signed := signedBlockNumber(tx)
+	// No block number reaches 2^64; rejecting such a number here also keeps
+	// the merge check below from reading a truncated value.
+	if !signed.IsUint64() {
+		return fmt.Errorf("%w: signed %v", ErrSignTxFutureBlock, signed)
 	}
 	// Before TIP2019 every block was signed, after it only merge blocks are.
 	if config.IsTIP2019(number) && signed.Uint64()%common.MergeSignRange != 0 {
@@ -93,19 +101,26 @@ func CheckSignTxFields(config *params.ChainConfig, number *big.Int, tx *types.Tr
 	}
 	if config.XDPoS != nil && config.XDPoS.Epoch > 0 {
 		window := new(big.Int).SetUint64(signTxWindowEpochs * config.XDPoS.Epoch)
-		if new(big.Int).Sub(number, signed).Cmp(window) > 0 {
+		if signed.Cmp(number) < 0 && new(big.Int).Sub(number, signed).Cmp(window) > 0 {
 			return fmt.Errorf("%w: signed %v, block %v", ErrSignTxOutOfWindow, signed, number)
 		}
 	}
 	return nil
 }
 
+// signedBlockNumber returns the block number a sign transaction signs. The
+// call data must already have passed tx.IsSigningTransaction.
+func signedBlockNumber(tx *types.Transaction) *big.Int {
+	return new(big.Int).SetBytes(tx.Data()[4:36])
+}
+
 // SignTxRules checks the sign transactions of one block: the per-transaction
-// rules of CheckSignTxFields, that the sender is a candidate in the parent
-// block's snapshot, and that each sender has at most one sign transaction in
-// the block. Block processing applies it from TIPSignTxRules on, and the miner
-// applies it to the block it builds, so a miner never seals a block the rules
-// reject. A SignTxRules is used for one block only.
+// rules of CheckSignTxFields, that the signed block is below this block, that
+// the sender is a candidate in the parent block's snapshot, and that each
+// sender has at most one sign transaction in the block. Block processing
+// applies it from TIPSignTxRules on, and the miner applies it to the block it
+// builds, so a miner never seals a block the rules reject. A SignTxRules is
+// used for one block only.
 type SignTxRules struct {
 	config *params.ChainConfig
 	number *big.Int
@@ -164,6 +179,9 @@ func (r *SignTxRules) Check(tx *types.Transaction, from common.Address) error {
 	}
 	if err := CheckSignTxFields(r.config, r.number, tx); err != nil {
 		return err
+	}
+	if signed := signedBlockNumber(tx); signed.Cmp(r.number) >= 0 {
+		return fmt.Errorf("%w: signed %v, block %v", ErrSignTxFutureBlock, signed, r.number)
 	}
 	if r.candidates != nil {
 		if r.loaded == nil {

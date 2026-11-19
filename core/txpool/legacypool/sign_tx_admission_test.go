@@ -156,3 +156,40 @@ func TestReorgReinjectionChecksSpecialTxs(t *testing.T) {
 		}
 	}
 }
+
+// laggingHeadChain is a testBlockChain whose head is a given block number.
+type laggingHeadChain struct {
+	*testBlockChain
+	head uint64
+}
+
+func (bc *laggingHeadChain) CurrentBlock() *types.Header {
+	header := bc.testBlockChain.CurrentBlock()
+	header.Number = new(big.Int).SetUint64(bc.head)
+	return header
+}
+
+// TestSignTxAdmittedWhilePoolHeadLags checks that the pool admits the sign
+// transaction a node creates for a block it has just imported or mined, before
+// the pool has reset to that block. The pool moves to a new head
+// asynchronously, so its head can still be the signed block's parent.
+func TestSignTxAdmittedWhilePoolHeadLags(t *testing.T) {
+	t.Parallel()
+
+	key, _ := crypto.GenerateKey()
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
+	// The node imported block 15, a merge block; the pool is still at 14.
+	chain := &laggingHeadChain{testBlockChain: newTestBlockChain(params.TestChainConfig, 10000000, statedb, new(event.Feed)), head: 14}
+	pool, _ := setupPoolWithChain(chain)
+	defer pool.Close()
+	pool.SetSigner(func(a common.Address) bool { return a == addr })
+
+	data := common.Hex2Bytes(common.HexSignMethod)
+	data = append(data, common.LeftPadBytes(big.NewInt(15).Bytes(), 32)...)
+	data = append(data, common.Hash{0x15}.Bytes()...)
+	tx := types.MustSignNewTx(key, pool.signer, &types.LegacyTx{To: &common.BlockSignersBinary, Gas: 200000, GasPrice: big.NewInt(0), Value: big.NewInt(0), Data: data})
+	if err := pool.Add([]*types.Transaction{tx}, true)[0]; err != nil {
+		t.Fatalf("sign tx for the block just imported was rejected: %v", err)
+	}
+}

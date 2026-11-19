@@ -41,9 +41,33 @@ func signTxRulesConfig() *params.ChainConfig {
 
 // signData is the call data of a sign(number, hash) call.
 func signData(number uint64, hash common.Hash) []byte {
+	return signDataBig(new(big.Int).SetUint64(number), hash)
+}
+
+// signDataBig is signData for a number that may not fit in uint64.
+func signDataBig(number *big.Int, hash common.Hash) []byte {
 	data := common.Hex2Bytes(common.HexSignMethod)
-	data = append(data, common.LeftPadBytes(new(big.Int).SetUint64(number).Bytes(), 32)...)
+	data = append(data, common.LeftPadBytes(number.Bytes(), 32)...)
 	return append(data, hash.Bytes()...)
+}
+
+func TestSignTxRulesFutureBlock(t *testing.T) {
+	cfg := signTxRulesConfig()
+	rules := core.NewSignTxRules(cfg, big.NewInt(2010), nil, nil, nil)
+	for _, tt := range []struct {
+		name   string
+		signed int64
+		want   error
+	}{
+		{"below the block", 1995, nil},
+		{"the block itself", 2010, core.ErrSignTxFutureBlock},
+		{"a later block", 2025, core.ErrSignTxFutureBlock},
+	} {
+		tx := contracts.CreateTxSign(big.NewInt(tt.signed), common.Hash{1}, 0, common.BlockSignersBinary)
+		if err := rules.Check(tx, common.HexToAddress("0xa1")); !errors.Is(err, tt.want) || (tt.want == nil && err != nil) {
+			t.Fatalf("%s: err = %v, want %v", tt.name, err, tt.want)
+		}
+	}
 }
 
 // staticSigners is a SignerSource with a fixed candidate list.
@@ -79,8 +103,11 @@ func TestCheckSignTxFields(t *testing.T) {
 		{"long data", legacy(common.BlockSignersBinary, big.NewInt(0), append(signData(1995, common.Hash{1}), 0)), core.ErrSignTxData},
 		{"wrong selector", legacy(common.BlockSignersBinary, big.NewInt(0), append([]byte{1, 2, 3, 4}, signData(1995, common.Hash{1})[4:]...)), core.ErrSignTxData},
 		{"value", legacy(common.BlockSignersBinary, big.NewInt(1), signData(1995, common.Hash{1})), core.ErrSignTxValue},
-		{"signs the including block", legacy(common.BlockSignersBinary, big.NewInt(0), signData(2010, common.Hash{1})), core.ErrSignTxFutureBlock},
-		{"signs a future block", legacy(common.BlockSignersBinary, big.NewInt(0), signData(2025, common.Hash{1})), core.ErrSignTxFutureBlock},
+		// The pool's view of the next block can lag the block a node signs, so
+		// the field rules leave "below the including block" to SignTxRules.
+		{"signs the including block", legacy(common.BlockSignersBinary, big.NewInt(0), signData(2010, common.Hash{1})), nil},
+		{"signs a later block", legacy(common.BlockSignersBinary, big.NewInt(0), signData(2025, common.Hash{1})), nil},
+		{"signed number beyond uint64", legacy(common.BlockSignersBinary, big.NewInt(0), signDataBig(new(big.Int).Lsh(big.NewInt(1), 64), common.Hash{1})), core.ErrSignTxFutureBlock},
 		{"not a merge block", legacy(common.BlockSignersBinary, big.NewInt(0), signData(1996, common.Hash{1})), core.ErrSignTxNotMergeBlock},
 		{"out of window", legacy(common.BlockSignersBinary, big.NewInt(0), signData(195, common.Hash{1})), core.ErrSignTxOutOfWindow},
 	}
