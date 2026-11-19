@@ -56,6 +56,11 @@ func invalidParamsErr(format string, args ...any) error {
 const (
 	// The maximum number of topic criteria allowed, vm.LOG4 - vm.LOG0
 	maxTopics = 4
+
+	// pendingTxsChanSize is the number of pending transaction batches buffered
+	// for one subscriber. The event system drops a batch for a subscriber whose
+	// buffer is full, so a slow client never stalls it.
+	pendingTxsChanSize = 128
 )
 
 // filter is a helper struct that holds meta information over the filter type
@@ -135,7 +140,7 @@ func (api *FilterAPI) timeoutLoop(timeout time.Duration) {
 // https://github.com/ethereum/wiki/wiki/JSON-RPC#eth_newpendingtransactionfilter
 func (api *FilterAPI) NewPendingTransactionFilter() rpc.ID {
 	var (
-		pendingTxs   = make(chan []*types.Transaction)
+		pendingTxs   = make(chan []*types.Transaction, pendingTxsChanSize)
 		pendingTxSub = api.events.SubscribePendingTxs(pendingTxs)
 	)
 
@@ -176,7 +181,7 @@ func (api *FilterAPI) NewPendingTransactions(ctx context.Context, fullTx *bool) 
 
 	var (
 		rpcSub       = notifier.CreateSubscription()
-		txs          = make(chan []*types.Transaction, 128)
+		txs          = make(chan []*types.Transaction, pendingTxsChanSize)
 		pendingTxSub = api.events.SubscribePendingTxs(txs)
 	)
 

@@ -459,9 +459,18 @@ func (es *EventSystem) handlePendingLogs(filters filterIndex, ev []*types.Log) {
 	}
 }
 
+// handleTxsEvent hands a batch of new pool transactions to every pending
+// transaction subscriber without waiting for it. A subscriber whose buffer is
+// full misses the batch: waiting would stall the event loop, then the txsCh
+// buffer, and finally the transaction pool, which delivers its events
+// synchronously at the end of every reorg. Pending transaction notifications
+// are best effort for a client that does not keep up.
 func (es *EventSystem) handleTxsEvent(filters filterIndex, ev core.NewTxsEvent) {
 	for _, f := range filters[PendingTransactionsSubscription] {
-		f.txs <- ev.Txs
+		select {
+		case f.txs <- ev.Txs:
+		default:
+		}
 	}
 }
 

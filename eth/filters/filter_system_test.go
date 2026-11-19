@@ -951,6 +951,56 @@ func TestPendingTxFilterDeadlock(t *testing.T) {
 	}
 }
 
+// TestPendingTxSubscriberDoesNotStallFeed checks that a pending transaction
+// subscriber that never reads cannot block the transaction feed: the pool sends
+// its events synchronously at the end of every reorg, so a stalled event loop
+// would stall the pool. Other subscribers must still receive every batch.
+func TestPendingTxSubscriberDoesNotStallFeed(t *testing.T) {
+	t.Parallel()
+
+	var (
+		db           = rawdb.NewMemoryDatabase()
+		backend, sys = newTestFilterSystem(t, db, Config{})
+		api          = NewFilterAPI(sys, false)
+
+		// More batches than the event system's txsCh buffer, so the feed
+		// blocks once the event loop stops draining it.
+		batches = txChanSize + 100
+
+		stuck = make(chan []*types.Transaction) // never read
+		live  = make(chan []*types.Transaction, batches)
+	)
+	// Unsubscribe the stuck subscriber first: Unsubscribe drains its channel,
+	// which releases an event loop blocked on it when the test fails.
+	liveSub := api.events.SubscribePendingTxs(live)
+	defer liveSub.Unsubscribe()
+	stuckSub := api.events.SubscribePendingTxs(stuck)
+	defer stuckSub.Unsubscribe()
+
+	tx := types.NewTransaction(0, common.HexToAddress("0xb794f5ea0ba39494ce83a213fffba74279579268"), new(big.Int), 0, new(big.Int), nil)
+	sent := make(chan struct{})
+	go func() {
+		defer close(sent)
+		for i := 0; i < batches; i++ {
+			backend.txFeed.Send(core.NewTxsEvent{Txs: []*types.Transaction{tx}})
+		}
+	}()
+	select {
+	case <-sent:
+	case <-time.After(10 * time.Second):
+		t.Fatal("transaction feed blocked by a subscriber that does not read")
+	}
+
+	timeout := time.After(10 * time.Second)
+	for received := 0; received < batches; received++ {
+		select {
+		case <-live:
+		case <-timeout:
+			t.Fatalf("live subscriber received %d of %d batches", received, batches)
+		}
+	}
+}
+
 func flattenLogs(pl [][]*types.Log) []*types.Log {
 	var logs []*types.Log
 	for _, l := range pl {
