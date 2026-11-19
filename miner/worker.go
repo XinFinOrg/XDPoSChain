@@ -1370,16 +1370,21 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 }
 
 func (w *Work) commitTransaction(balanceFee map[common.Address]*big.Int, tx *types.Transaction, gp *core.GasPool) ([]*types.Log, bool, uint64, error) {
-	snap := w.state.Snapshot()
-
-	receipt, gas, tokenFeeUsed, err := core.ApplyTransaction(balanceFee, w.evm, gp, w.state, w.header, tx, &w.header.GasUsed)
+	var (
+		snap = w.state.Snapshot()
+		gas  = gp.Gas()
+	)
+	receipt, used, tokenFeeUsed, err := core.ApplyTransaction(balanceFee, w.evm, gp, w.state, w.header, tx, &w.header.GasUsed)
 	if err != nil {
+		// A transaction that is not included must not keep any of the block gas
+		// it bought before failing.
 		w.state.RevertToSnapshot(snap)
+		gp.SetGas(gas)
 		return nil, false, 0, err
 	}
 	w.txs = append(w.txs, tx)
 	w.receipts = append(w.receipts, receipt)
 	w.size += tx.Size()
 
-	return receipt.Logs, tokenFeeUsed, gas, nil
+	return receipt.Logs, tokenFeeUsed, used, nil
 }

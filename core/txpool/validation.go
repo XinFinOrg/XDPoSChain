@@ -278,6 +278,11 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 			if !opts.State.ValidateTRC21Tx(from, *to, tx.Data()) {
 				return core.ErrInsufficientFunds
 			}
+			// The issuer's fee capacity only pays for gas: execution moves the
+			// value out of the sender's own balance, so the sender must hold it.
+			if balance.Cmp(tx.Value()) < 0 {
+				return fmt.Errorf("%w: balance %v, tx value %v", core.ErrInsufficientFundsForTransfer, balance, tx.Value())
+			}
 			cost = tx.TxCost(pendingNumber, opts.Config)
 		}
 	}
