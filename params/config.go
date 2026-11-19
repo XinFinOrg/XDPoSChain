@@ -109,6 +109,11 @@ type ChainConfig struct {
 	TIPUpgradePenaltyBlock     *big.Int `json:"tipUpgradePenaltyBlock,omitempty"`
 	TIPEpochHalvingBlock       *big.Int `json:"tipEpochHalvingBlock,omitempty"`
 	TIPProportionalRewardBlock *big.Int `json:"tipProportionalRewardBlock,omitempty"`
+	// TIPSignTxRulesBlock makes the sign transaction rules part of block
+	// validation: from this block on, a transaction to BlockSigners must be a
+	// legacy sign call from a current candidate for a recent merge block, with at
+	// most one per sender per block. See core.SignTxRules.
+	TIPSignTxRulesBlock *big.Int `json:"tipSignTxRulesBlock,omitempty"`
 
 	TRC21IssuerSMC         common.Address `json:"trc21IssuerSMC,omitempty"`
 	XDCXListingSMC         common.Address `json:"xdcxListingSMC,omitempty"`
@@ -918,6 +923,9 @@ func (c *ChainConfig) String() string {
 	if c.TIPEpochHalvingBlock != nil {
 		result += fmt.Sprintf(", TIPEpochHalving: %v", c.TIPEpochHalvingBlock)
 	}
+	if c.TIPSignTxRulesBlock != nil {
+		result += fmt.Sprintf(", TIPSignTxRules: %v", c.TIPSignTxRulesBlock)
+	}
 	if !c.TRC21IssuerSMC.IsZero() {
 		result += fmt.Sprintf(", TRC21IssuerSMC: %s", c.TRC21IssuerSMC.Hex())
 	}
@@ -998,6 +1006,7 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - Osaka:                       %-8v\n", c.OsakaBlock)
 	banner += fmt.Sprintf("  - Amsterdam:                   %-8v\n", c.AmsterdamBlock)
 	banner += fmt.Sprintf("  - TIPEpochHalving:             %-8v\n", c.TIPEpochHalvingBlock)
+	banner += fmt.Sprintf("  - TIPSignTxRules:              %-8v\n", c.TIPSignTxRulesBlock)
 	banner += fmt.Sprintf("  - TRC21IssuerSMC:              %-8s\n", c.TRC21IssuerSMC)
 	banner += fmt.Sprintf("  - XDCXListingSMC:              %-8s\n", c.XDCXListingSMC)
 	banner += fmt.Sprintf("  - RelayerRegistrationSMC:      %-8s\n", c.RelayerRegistrationSMC)
@@ -1118,6 +1127,9 @@ func (c *ChainConfig) ActiveForks(block *big.Int) []string {
 	}
 	if c.IsTIPRandomize(block) {
 		activeForks = append(activeForks, "TIPRandomize")
+	}
+	if c.IsTIPSignTxRules(block) {
+		activeForks = append(activeForks, "TIPSignTxRules")
 	}
 	if c.IsTIPSigning(block) {
 		activeForks = append(activeForks, "TIPSigning")
