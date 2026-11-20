@@ -131,6 +131,11 @@ var (
 	errInvalidOldChain = errors.New("invalid old chain")
 	errInvalidNewChain = errors.New("invalid new chain")
 
+	// ErrResetRequired reports a head marker whose block is missing from the
+	// database. Only the caller that opened the chain may reset it, outside
+	// chainmu: Reset re-enters SetHead, which takes the same mutex.
+	ErrResetRequired = errors.New("head marker unusable, reset required")
+
 	// CheckpointCh carries the "an epoch switch block reached the head" signal to the staking
 	// loop in cmd/XDC. Every sender goes through SignalCheckpoint, which never waits: the
 	// buffer absorbs one pending signal, and a second arriving before it drains is dropped,
@@ -537,7 +542,17 @@ func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus
 
 	// Load blockchain state from disk.
 	if err := bc.loadLastState(); err != nil {
-		return nil, err
+		if !errors.Is(err, ErrResetRequired) {
+			return nil, err
+		}
+		// Only a reset repairs an unusable head marker, and it has to run here,
+		// where chainmu is not held: Reset rewinds the chain through SetHead.
+		if cfg.readOnly {
+			return nil, fmt.Errorf("%w: unusable head marker", ErrReadOnlyHeadStateRepair)
+		}
+		if err := bc.Reset(); err != nil {
+			return nil, err
+		}
 	}
 	// Make sure the state associated with the block is available.
 	head := bc.CurrentBlock()
@@ -655,21 +670,23 @@ func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus
 }
 
 // loadLastState loads the last known chain state from the database. This method
-// assumes that the chain manager mutex is held.
+// assumes that the chain manager mutex is held. An unusable head marker is
+// reported as ErrResetRequired instead of being reset here, because Reset
+// re-enters SetHead and would block on the mutex this caller holds.
 func (bc *BlockChain) loadLastState() error {
 	// Restore the last known head block
 	head := rawdb.ReadHeadBlockHash(bc.db)
 	if head == (common.Hash{}) {
 		// Corrupt or empty database, init from scratch
-		log.Warn("Empty database, resetting chain")
-		return bc.Reset()
+		log.Warn("Empty database, reset required")
+		return ErrResetRequired
 	}
 	// Make sure the entire head block is available
 	headBlock := bc.GetBlockByHash(head)
 	if headBlock == nil {
 		// Corrupt or empty database, init from scratch
-		log.Warn("Head block missing, resetting chain", "hash", head)
-		return bc.Reset()
+		log.Warn("Head block missing, reset required", "hash", head)
+		return ErrResetRequired
 	}
 	// Make sure the auxiliary state associated with the block is available.
 	repair := false
@@ -761,6 +778,9 @@ func (bc *BlockChain) loadLastState() error {
 // SetHead rewinds the local chain to a new head. Depending on whether the node
 // was fast synced or full synced and in which state, the method will try to
 // delete minimal data from disk whilst retaining chain consistency.
+//
+// An unusable head marker is reported as ErrResetRequired: only the code that
+// opens the chain may reset it, outside chainmu.
 func (bc *BlockChain) SetHead(head uint64) error {
 	if err := bc.setHeadBeyondRoot(head); err != nil {
 		return err
@@ -999,14 +1019,23 @@ func (bc *BlockChain) Reset() error {
 // ResetWithGenesisBlock purges the entire blockchain, restoring it to the
 // specified genesis state.
 func (bc *BlockChain) ResetWithGenesisBlock(genesis *types.Block) error {
-	// Dump the entire block chain and purge the caches
-	if err := bc.SetHead(0); err != nil {
+	// Dump the entire block chain and purge the caches. An unusable head marker
+	// is the condition this reset repairs, so the rewind reporting it is not an
+	// error: the genesis markers written below replace it.
+	if err := bc.SetHead(0); err != nil && !errors.Is(err, ErrResetRequired) {
 		return err
 	}
 	if !bc.chainmu.TryLock() {
 		return ErrChainStopped
 	}
 	defer bc.chainmu.Unlock()
+
+	// The rewind above only reaches a canonical assignment through a header key,
+	// so a height whose header is already gone keeps its assignment. Genesis is
+	// the only one this chain should keep.
+	if err := rawdb.DeleteCanonicalHashesAbove(bc.db, 0); err != nil {
+		return err
+	}
 
 	// Prepare the genesis block and reinitialise the chain
 	batch := bc.db.NewBatch()

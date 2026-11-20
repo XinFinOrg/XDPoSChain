@@ -17,10 +17,13 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 	"testing"
+	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
@@ -497,5 +500,234 @@ func TestSetHeadRemovesExecutedMarkers(t *testing.T) {
 		if !rawdb.HasExecutedMarker(db, block.Hash(), number) {
 			t.Errorf("block #%d is at or below the new head, its marker must stay", number)
 		}
+	}
+}
+
+// TestNewBlockChainResetsOnUnusableHeadMarker pins XDC-25: a head marker that
+// points at no stored block used to reset the chain while chainmu was held, and
+// the nested SetHead blocked on the same mutex forever.
+func TestNewBlockChainResetsOnUnusableHeadMarker(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		marker common.Hash
+	}{
+		{name: "missing", marker: common.Hash{}},
+		{name: "dangling", marker: common.HexToHash("0xdeadbeef")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var (
+				engine  = ethash.NewFaker()
+				genesis = &Genesis{BaseFee: big.NewInt(params.InitialBaseFee), Config: params.TestChainConfig}
+				db      = rawdb.NewMemoryDatabase()
+			)
+			chain, err := NewBlockChain(db, nil, genesis, engine, vm.Config{})
+			if err != nil {
+				t.Fatalf("failed to create chain: %v", err)
+			}
+			_, blocks, _ := GenerateChainWithGenesis(genesis, engine, 3, nil)
+			if _, err := chain.InsertChain(blocks); err != nil {
+				chain.Stop()
+				t.Fatalf("failed to insert blocks: %v", err)
+			}
+			chain.Stop()
+			rawdb.WriteHeadBlockHash(db, tt.marker)
+
+			// A reset that re-enters SetHead under chainmu never returns, so the
+			// reopen has to be bounded or a regression hangs the whole package.
+			type opened struct {
+				chain *BlockChain
+				err   error
+			}
+			done := make(chan opened, 1)
+			go func() {
+				reopened, err := NewBlockChain(db, nil, genesis, engine, vm.Config{})
+				done <- opened{reopened, err}
+			}()
+			var reopened *BlockChain
+			select {
+			case res := <-done:
+				if res.err != nil {
+					t.Fatalf("reopen failed: %v", res.err)
+				}
+				reopened = res.chain
+			case <-time.After(30 * time.Second):
+				t.Fatal("reopening with an unusable head marker did not return")
+			}
+			defer reopened.Stop()
+
+			if got := reopened.CurrentBlock().Number.Uint64(); got != 0 {
+				t.Fatalf("head after reset = %d, want the genesis block", got)
+			}
+			if got, want := rawdb.ReadHeadBlockHash(db), genesis.ToBlock().Hash(); got != want {
+				t.Fatalf("persisted head marker = %s, want %s", got.Hex(), want.Hex())
+			}
+			if got := rawdb.ReadCanonicalHash(db, 1); got != (common.Hash{}) {
+				t.Fatalf("canonical hash #1 = %s, want it removed by the reset", got.Hex())
+			}
+		})
+	}
+}
+
+// TestNewBlockChainResetsCanonicalWithoutHeader pins the other half of the reset
+// contract: an assignment left at a height whose header key is already gone is
+// invisible to the dangling sweep, which walks heights through their header keys,
+// so the reset has to purge it separately.
+func TestNewBlockChainResetsCanonicalWithoutHeader(t *testing.T) {
+	var (
+		engine  = ethash.NewFaker()
+		genesis = &Genesis{BaseFee: big.NewInt(params.InitialBaseFee), Config: params.TestChainConfig}
+		db      = rawdb.NewMemoryDatabase()
+	)
+	chain, err := NewBlockChain(db, nil, genesis, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+	_, blocks, _ := GenerateChainWithGenesis(genesis, engine, 4, nil)
+	if _, err := chain.InsertChain(blocks); err != nil {
+		chain.Stop()
+		t.Fatalf("failed to insert blocks: %v", err)
+	}
+	chain.Stop()
+
+	// Drop block #1's header and total difficulty but keep its canonical
+	// assignment: exactly what a partially wiped database can leave behind.
+	rawdb.DeleteHeader(db, blocks[0].Hash(), 1)
+	rawdb.DeleteTd(db, blocks[0].Hash(), 1)
+	if got := rawdb.ReadCanonicalHash(db, 1); got != blocks[0].Hash() {
+		t.Fatalf("fixture: canonical hash #1 = %s, want %s", got.Hex(), blocks[0].Hash().Hex())
+	}
+	rawdb.WriteHeadBlockHash(db, common.Hash{})
+
+	// A reset that re-enters SetHead under chainmu never returns, so the reopen
+	// has to be bounded or a regression hangs the whole package. A timed-out run
+	// deliberately skips Stop, which blocks on the mutex such a run never releases.
+	type opened struct {
+		chain *BlockChain
+		err   error
+	}
+	done := make(chan opened, 1)
+	go func() {
+		reopened, err := NewBlockChain(db, nil, genesis, engine, vm.Config{})
+		done <- opened{reopened, err}
+	}()
+	var reopened *BlockChain
+	select {
+	case res := <-done:
+		if res.err != nil {
+			t.Fatalf("reopen failed: %v", res.err)
+		}
+		reopened = res.chain
+	case <-time.After(30 * time.Second):
+		t.Fatal("reopening with an unusable head marker did not return")
+	}
+	defer reopened.Stop()
+
+	if got := reopened.CurrentBlock().Number.Uint64(); got != 0 {
+		t.Fatalf("head after reset = %d, want the genesis block", got)
+	}
+	if got, want := rawdb.ReadHeadBlockHash(db), genesis.ToBlock().Hash(); got != want {
+		t.Fatalf("persisted head marker = %s, want %s", got.Hex(), want.Hex())
+	}
+	// Heights 2..4 are removed by the sweep through their headers; height 1 has no
+	// header left, which is the case this test exists for.
+	for _, number := range []uint64{1, 2, 3, 4} {
+		if got := rawdb.ReadCanonicalHash(db, number); got != (common.Hash{}) {
+			t.Fatalf("canonical hash #%d = %s, want it removed by the reset", number, got.Hex())
+		}
+	}
+}
+
+// TestNewBlockChainReadOnlyFailsOnUnusableHeadMarker pins the read-only half of
+// XDC-25: an unresolvable head marker must be reported instead of reset, which
+// would wipe a database the caller opened read-only.
+func TestNewBlockChainReadOnlyFailsOnUnusableHeadMarker(t *testing.T) {
+	var (
+		engine  = ethash.NewFaker()
+		genesis = &Genesis{BaseFee: big.NewInt(params.InitialBaseFee), Config: params.TestChainConfig}
+		db      = rawdb.NewMemoryDatabase()
+	)
+	chain, err := NewBlockChain(db, nil, genesis, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+	_, blocks, _ := GenerateChainWithGenesis(genesis, engine, 3, nil)
+	if _, err := chain.InsertChain(blocks); err != nil {
+		chain.Stop()
+		t.Fatalf("failed to insert blocks: %v", err)
+	}
+	chain.Stop()
+
+	marker := common.HexToHash("0xdeadbeef")
+	rawdb.WriteHeadBlockHash(db, marker)
+
+	// Bound the open: a regression that resets from loadLastState never returns,
+	// and a hung open would stall the package until the go test timeout.
+	done := make(chan error, 1)
+	go func() {
+		_, err := NewBlockChainReadOnly(db, nil, genesis, engine, vm.Config{})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrReadOnlyHeadStateRepair) {
+			t.Fatalf("read-only open error = %v, want %v", err, ErrReadOnlyHeadStateRepair)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("read-only open with an unusable head marker did not return")
+	}
+	if got := rawdb.ReadHeadBlockHash(db); got != marker {
+		t.Fatalf("read-only open rewrote the head marker: have %s want %s", got.Hex(), marker.Hex())
+	}
+}
+
+// TestSetHeadWithUnusableHeadMarker pins the contract that keeps the reset
+// startup-only: a rewind that deletes headers rewrites the
+// head marker before loadLastState reads it, while a no-op rewind reports the
+// unusable marker to the SetHead caller instead of resetting under chainmu.
+func TestSetHeadWithUnusableHeadMarker(t *testing.T) {
+	var (
+		engine  = ethash.NewFaker()
+		genesis = &Genesis{BaseFee: big.NewInt(params.InitialBaseFee), Config: params.TestChainConfig}
+		db      = rawdb.NewMemoryDatabase()
+	)
+	chain, err := NewBlockChain(db, nil, genesis, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create chain: %v", err)
+	}
+	_, blocks, _ := GenerateChainWithGenesis(genesis, engine, 3, nil)
+	if _, err := chain.InsertChain(blocks); err != nil {
+		chain.Stop()
+		t.Fatalf("failed to insert blocks: %v", err)
+	}
+	// Simulate a head marker that names no stored block while the chain is open.
+	rawdb.WriteHeadBlockHash(db, common.HexToHash("0xdeadbeef"))
+
+	// A no-op rewind deletes no header, so nothing rewrites the marker: the
+	// report reaches the caller rather than a nested Reset blocking on chainmu.
+	// Bound the call: a regression that resets from loadLastState never returns,
+	// and Stop would block on the mutex such a run never releases.
+	done := make(chan error, 1)
+	go func() { done <- chain.SetHead(3) }()
+	var setHeadErr error
+	select {
+	case setHeadErr = <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("SetHead on an unusable head marker did not return")
+	}
+	defer chain.Stop()
+
+	if !errors.Is(setHeadErr, ErrResetRequired) {
+		t.Fatalf("SetHead(3) error = %v, want %v", setHeadErr, ErrResetRequired)
+	}
+	// A rewind that deletes headers rewrites the marker to the target block
+	// before loadLastState reads it, so the report never escapes.
+	if err := chain.SetHead(2); err != nil {
+		t.Fatalf("SetHead(2) = %v, want nil", err)
+	}
+	if got := chain.CurrentBlock().Number.Uint64(); got != 2 {
+		t.Fatalf("head after rewind = %d, want 2", got)
+	}
+	if got, want := rawdb.ReadHeadBlockHash(db), blocks[1].Hash(); got != want {
+		t.Fatalf("persisted head marker = %s, want block #2 %s", got.Hex(), want.Hex())
 	}
 }
