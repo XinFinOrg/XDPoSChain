@@ -62,6 +62,21 @@ func WriteTxLookupEntriesByBlock(db ethdb.KeyValueWriter, block *types.Block) {
 	}
 }
 
+// WriteMissingTxLookupEntriesByBlock stores a lookup entry for every transaction
+// of block that has none. An entry already on disk is kept: the readers check
+// that the canonical block at that height carries the transaction, so an entry
+// pointing elsewhere is inert rather than wrong.
+func WriteMissingTxLookupEntriesByBlock(reader ethdb.Reader, writer ethdb.KeyValueWriter, block *types.Block) {
+	for _, tx := range block.Transactions() {
+		if ReadTxLookupEntry(reader, tx.Hash()) != nil {
+			continue
+		}
+		if err := writer.Put(txLookupKey(tx.Hash()), block.Number().Bytes()); err != nil {
+			log.Crit("Failed to store transaction lookup entry", "err", err)
+		}
+	}
+}
+
 // DeleteTxLookupEntry removes all transaction data associated with a hash.
 func DeleteTxLookupEntry(db ethdb.KeyValueWriter, hash common.Hash) {
 	db.Delete(txLookupKey(hash))

@@ -648,6 +648,24 @@ func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus
 		}
 	}
 
+	// A rewind commits the lowered head markers before deleting the blocks they
+	// orphan, and the repair above lowers the markers on its own; a crash in
+	// either window leaves canonical assignments of abandoned blocks behind,
+	// which RPC answers by number from. A reorg has the same shape: it moves the
+	// head block by block and deletes the abandoned tail in a batch afterwards.
+	// Drop them before the node serves.
+	if !cfg.readOnly {
+		if head := bc.CurrentHeader(); head != nil {
+			removed, err := rawdb.DeleteCanonicalAbove(db, head.Number.Uint64())
+			if err != nil {
+				return nil, fmt.Errorf("failed to drop canonical assignments above the head: %w", err)
+			}
+			if removed > 0 {
+				log.Warn("Dropped canonical assignments above the head", "head", head.Number, "removed", removed)
+			}
+		}
+	}
+
 	// Start future block processor.
 	bc.wg.Go(bc.futureBlocksLoop)
 
@@ -1653,10 +1671,15 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			// The block is on disk, so it belongs to the prefix firstPending describes - but
 			// only while nothing is pending: a batch already holding writes would reach the
 			// database after this block, and counting this one would claim that batch too.
-			// firstPending == i says exactly that.
+			// firstPending == i says exactly that. The index repair below adds no block
+			// data, so it does not change what firstPending claims; a repair a dropped
+			// batch takes with it is redone when the block is delivered again.
 			if firstPending == i {
 				firstPending = i + 1
 			}
+			// A block kept above a rewound head lost its lookups to the startup sweep,
+			// rebuild them from the delivery.
+			rawdb.WriteMissingTxLookupEntriesByBlock(bc.db, batch, block)
 			stats.ignored++
 			continue
 		}
@@ -4185,6 +4208,7 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 			rebirthTxs = append(rebirthTxs, tx.Hash())
 		}
 	}
+
 	// Apply the rest of the new blocks in forward order. The loop stops at index 1, the
 	// upstream bound: this function does not handle the new chain head, so neither its markers
 	// nor, for a gap block, its UpdateM1 are written here.
