@@ -18,9 +18,11 @@ package eth
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"math/big"
 	"math/rand"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -1491,11 +1493,6 @@ func TestTransactionGate(t *testing.T) {
 // Tests that transactions are served from the pool on request.
 func TestGetPooledTransactions(t *testing.T) { testGetPooledTransactions(t, XDC165) }
 
-// TestGetPooledTransactions166 doubles as the guard for the version bound on
-// the pooled transaction cases: the wire cases are guarded by
-// `peer.version >= pooledTxsMinVersion`, so xdc/166 passes the gate
-// automatically, and a future edit that moves the bound fails this test
-// instead of silently dropping xdc/166 from the pooled transaction service.
 func TestGetPooledTransactions166(t *testing.T) { testGetPooledTransactions(t, XDC166) }
 
 func testGetPooledTransactions(t *testing.T, protocol uint) {
@@ -1565,16 +1562,142 @@ func testGetPooledTransactions(t *testing.T, protocol uint) {
 	}
 }
 
-// TestPooledTxsMinVersionPinsGate pins the pooled-tx gate bound: the three
-// pooled-tx messages were introduced with xdc/165 and must stay reachable by
-// xdc/166 peers unchanged. TestGetPooledTransactions and
-// TestGetPooledTransactions166 cover both sides behaviourally over the wire.
-func TestPooledTxsMinVersionPinsGate(t *testing.T) {
-	if pooledTxsMinVersion != XDC165 {
-		t.Fatalf("pooled-tx gate bound moved off xdc/165: %d", pooledTxsMinVersion)
+// TestHandlerTables pins each version's handler table: a code missing from a
+// table turns a previously served message into ErrInvalidMsgCode and drops the peer.
+func TestHandlerTables(t *testing.T) {
+	reqid66 := map[uint64]msgHandler{
+		GetBlockHeadersMsg:       handleGetBlockHeaders66,
+		BlockHeadersMsg:          handleBlockHeaders66,
+		GetBlockBodiesMsg:        handleGetBlockBodies66,
+		BlockBodiesMsg:           handleBlockBodies66,
+		GetNodeDataMsg:           handleGetNodeData66,
+		NodeDataMsg:              handleNodeData66,
+		GetReceiptsMsg:           handleGetReceipts66,
+		ReceiptsMsg:              handleReceipts66,
+		GetPooledTransactionsMsg: handleGetPooledTransactions66,
+		PooledTransactionsMsg:    handlePooledTransactions66,
 	}
-	if pooledTxsMinVersion > XDC166 {
-		t.Fatalf("pooled-tx gate excludes xdc/166: min version %d", pooledTxsMinVersion)
+	legacyHandlers := map[uint64]msgHandler{
+		StatusMsg:          handleStatus,
+		NewBlockHashesMsg:  handleNewBlockHashes,
+		TransactionMsg:     handleTransactions,
+		GetBlockHeadersMsg: handleGetBlockHeaders,
+		BlockHeadersMsg:    handleBlockHeaders,
+		GetBlockBodiesMsg:  handleGetBlockBodies,
+		BlockBodiesMsg:     handleBlockBodies,
+		NewBlockMsg:        handleNewBlock,
+		OrderTxMsg:         handleOrderTransactions,
+		LendingTxMsg:       handleLendingTransactions,
+		GetNodeDataMsg:     handleGetNodeData,
+		NodeDataMsg:        handleNodeData,
+		GetReceiptsMsg:     handleGetReceipts,
+		ReceiptsMsg:        handleReceipts,
+		VoteMsg:            handleVote,
+		TimeoutMsg:         handleTimeout,
+		SyncInfoMsg:        handleSyncInfo,
+	}
+	pooledHandlers := map[uint64]msgHandler{
+		NewPooledTransactionHashesMsg: handleNewPooledTransactionHashes,
+		GetPooledTransactionsMsg:      handleGetPooledTransactions,
+		PooledTransactionsMsg:         handlePooledTransactions,
+	}
+
+	tables := []struct {
+		version uint
+		table   map[uint64]msgHandler
+		codes   int
+	}{
+		{XDC100, eth100, 17},
+		{XDC164, eth100, 17},
+		{XDC165, eth165, 20},
+		{XDC166, eth166, 20},
+	}
+	for _, tt := range tables {
+		got := handlersFor(tt.version)
+		if len(got) != tt.codes {
+			t.Errorf("xdc/%d: %d handlers, want %d", tt.version, len(got), tt.codes)
+		}
+		if reflect.ValueOf(got).Pointer() != reflect.ValueOf(tt.table).Pointer() {
+			t.Errorf("xdc/%d: dispatched to the wrong table", tt.version)
+		}
+		for code := range got {
+			if code >= ProtocolLengths[tt.version] {
+				t.Errorf("xdc/%d: code %#x outside the advertised length %d", tt.version, code, ProtocolLengths[tt.version])
+			}
+		}
+		for code := range pooledHandlers {
+			if _, ok := got[code]; ok != (tt.version >= XDC165) {
+				t.Errorf("xdc/%d: pooled-tx code %#x reachable=%v", tt.version, code, ok)
+			}
+		}
+	}
+	// Length and union prove a code is listed, not that it is wired to the right
+	// handler. xdc/100 and xdc/164 have no other dispatch test for the XDC
+	// packets, so a swapped mapping would otherwise go unnoticed.
+	for code, want := range legacyHandlers {
+		if reflect.ValueOf(eth100[code]).Pointer() != reflect.ValueOf(want).Pointer() {
+			t.Errorf("xdc/100,164: code %#x wired to the wrong handler", code)
+		}
+		if reflect.ValueOf(eth165[code]).Pointer() != reflect.ValueOf(want).Pointer() {
+			t.Errorf("xdc/165: code %#x wired to the wrong handler", code)
+		}
+	}
+	for code, want := range pooledHandlers {
+		if reflect.ValueOf(eth165[code]).Pointer() != reflect.ValueOf(want).Pointer() {
+			t.Errorf("xdc/165: pooled-tx code %#x wired to the wrong handler", code)
+		}
+	}
+	union := make(map[uint64]bool)
+	for _, tt := range tables {
+		for code := range tt.table {
+			union[code] = true
+		}
+	}
+	if len(union) != 20 {
+		t.Errorf("handler tables cover %d codes, want 20", len(union))
+	}
+	for code, handler := range eth165 {
+		want := handler
+		if h, ok := reqid66[code]; ok {
+			want = h
+		}
+		got, ok := eth166[code]
+		if !ok {
+			t.Errorf("xdc/166 is missing code %#x", code)
+			continue
+		}
+		if reflect.ValueOf(got).Pointer() != reflect.ValueOf(want).Pointer() {
+			t.Errorf("xdc/166: code %#x wired to the wrong handler", code)
+		}
+	}
+	if len(eth166) != len(eth165) {
+		t.Errorf("xdc/166 has %d handlers, want %d", len(eth166), len(eth165))
+	}
+}
+
+// TestExtraStatusMsgRejected pins the StatusMsg table entry: a status message
+// arriving after the handshake must be rejected as an extra status message on
+// every version, not fall through to the invalid-code path.
+func TestExtraStatusMsgRejected(t *testing.T) {
+	for _, version := range []uint{XDC100, XDC164, XDC165, XDC166} {
+		t.Run(fmt.Sprintf("%d", version), func(t *testing.T) {
+			backend := newTestBackend(t, 1, nil)
+			peer := newTestPeer(t, "peer", version, backend)
+
+			go p2p.Send(peer.app, StatusMsg, []interface{}{})
+
+			select {
+			case err := <-peer.errc:
+				if err == nil {
+					t.Fatal("extra status message was accepted")
+				}
+				if want := errCode(ErrExtraStatusMsg).String(); !strings.Contains(err.Error(), want) {
+					t.Errorf("wrong error: got %v, want a %q error", err, want)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("extra status message was not rejected within 2 seconds")
+			}
+		})
 	}
 }
 
