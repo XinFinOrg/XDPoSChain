@@ -162,7 +162,7 @@ clean:
 # protoc itself is installed outside this target: keep it at 27.1
 # (build/checksums.txt), otherwise those trezor headers move with it.
 devtools:
-	env GOBIN= go install golang.org/x/tools/cmd/stringer@v0.37.0
+	env GOBIN= go install golang.org/x/tools/cmd/stringer@v0.49.0
 	env GOBIN= go install github.com/fjl/gencodec@v0.1.2
 	env GOBIN= go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.34.2
 	env GOBIN= go install ./cmd/abigen
