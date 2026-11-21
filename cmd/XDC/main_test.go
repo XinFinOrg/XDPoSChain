@@ -17,6 +17,9 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -48,5 +51,34 @@ func TestNetrestrictFlag(t *testing.T) {
 		if stderr := XDC.StderrText(); !strings.Contains(stderr, invalidCIDR) {
 			t.Errorf("bad CIDR: missing parse error, stderr:\n%s", stderr)
 		}
+	}
+}
+
+// This test checks that dumpconfig keeps the configured password environment
+// variable names and never prints the keystore passwords they resolve to.
+func TestDumpConfigDoesNotResolvePasswords(t *testing.T) {
+	const (
+		envVar   = "DUMPCONFIG_TEST_PASSWORD"
+		password = "hunter2-secret"
+	)
+	t.Setenv(envVar, password)
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	config := fmt.Sprintf("[Account]\nPasswords = [%q]\n", envVar)
+	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	XDC := runXDC(t, "--config", path, "dumpconfig")
+	_, groups := XDC.ExpectRegexp(`(?s)(.*)`)
+	XDC.ExpectExit()
+	if have, want := XDC.ExitStatus(), 0; have != want {
+		t.Fatalf("exit status %d, want %d", have, want)
+	}
+	out := groups[1]
+	if strings.Contains(out, password) {
+		t.Errorf("dumpconfig printed the resolved password:\n%s", out)
+	}
+	if want := fmt.Sprintf(`Passwords = [%q]`, envVar); !strings.Contains(out, want) {
+		t.Errorf("dumpconfig does not keep the password environment variable:\n%s", out)
 	}
 }
