@@ -107,7 +107,9 @@ func TestInspectDatabaseIteratorError(t *testing.T) {
 	var totals int
 	for _, line := range strings.Split(report, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) < 4 || !strings.EqualFold(fields[1], "TOTAL") {
+		// The stub renderer keeps the footer's empty first cell, so "Total"
+		// sits behind the leading border and that empty cell.
+		if len(fields) < 4 || !strings.EqualFold(fields[2], "TOTAL") {
 			continue
 		}
 		totals++
