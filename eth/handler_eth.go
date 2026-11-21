@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
-	"github.com/XinFinOrg/XDPoSChain/consensus/misc"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/eth/fetcher"
@@ -64,13 +63,12 @@ func (pm *handler) PeerInfo(id enode.ID) interface{} {
 // served by the wire layer, everything here is a reaction to peer activity.
 //
 // Everything the common path needs lives on the wire peer: its id, the marks and
-// the head bookkeeping. The node-layer peer is looked up only in the two branches
-// that need node state (the DAO fork-check timer and the syncer hand-off), and a
-// miss there skips that reaction instead of failing the message loop: a miss means
-// the peer is already being removed, which is idempotent elsewhere. Upstream
-// returns "unregistered during callback" there instead; skipping is deliberate,
-// and costs at most one missed sync kick-off on the syncer hand-off, which
-// syncer()'s BestPeer loop retries.
+// the head bookkeeping. The node-layer peer is looked up only in the branch that
+// needs node state (the syncer hand-off), and a miss there skips that reaction
+// instead of failing the message loop: a miss means the peer is already being
+// removed, which is idempotent elsewhere. Upstream returns "unregistered during
+// callback" there instead; skipping is deliberate, and costs at most one missed
+// sync kick-off on the syncer hand-off, which syncer()'s BestPeer loop retries.
 func (pm *handler) Handle(p *ethproto.Peer, packet ethproto.Packet, size uint32) error {
 	switch packet := packet.(type) {
 	case *ethproto.BlockHeadersPacket:
@@ -78,46 +76,10 @@ func (pm *handler) Handle(p *ethproto.Peer, packet ethproto.Packet, size uint32)
 		if err := types.SanityCheckHeaders(headers); err != nil {
 			return err
 		}
-		// If no headers were received, but we're expending a DAO fork check, maybe it's that
-		if len(headers) == 0 {
-			if peer := pm.peers.Peer(p.ID()); peer != nil && peer.forkDrop != nil {
-				// Possibly an empty reply to the fork header checks, sanity check TDs
-				verifyDAO := true
-
-				// If we already have a DAO header, we can check the peer's TD against it. If
-				// the peer's ahead of this, it too must have a reply to the DAO check
-				if daoHeader := pm.chain.GetHeaderByNumber(pm.chain.Config().DAOForkBlock.Uint64()); daoHeader != nil {
-					if _, td := p.Head(); td.Cmp(pm.chain.GetTd(daoHeader.Hash(), daoHeader.Number.Uint64())) >= 0 {
-						verifyDAO = false
-					}
-				}
-				// If we're seemingly on the same chain, disable the drop timer
-				if verifyDAO {
-					peer.Log().Debug("Seems to be on the same side of the DAO fork")
-					peer.forkDrop.Stop()
-					peer.forkDrop = nil
-					return nil
-				}
-			}
-		}
 		// Filter out any explicitly requested headers, deliver the rest to the downloader
 		filter := len(headers) == 1
 		if filter {
-			// If it's a potential DAO fork check, validate against the rules
-			if peer := pm.peers.Peer(p.ID()); peer != nil && peer.forkDrop != nil && pm.chain.Config().DAOForkBlock.Cmp(headers[0].Number) == 0 {
-				// Disable the fork drop timer
-				peer.forkDrop.Stop()
-				peer.forkDrop = nil
-
-				// Validate the header and either drop the peer or continue
-				if err := misc.VerifyDAOHeaderExtraData(pm.chain.Config(), headers[0]); err != nil {
-					peer.Log().Debug("Verified to be on the other side of the DAO fork, dropping")
-					return err
-				}
-				peer.Log().Debug("Verified to be on the same side of the DAO fork")
-				return nil
-			}
-			// Irrelevant of the fork checks, send the header to the fetcher just in case
+			// Send the header to the fetcher just in case
 			headers = pm.blockFetcher.FilterHeaders(p.ID(), headers, time.Now())
 		}
 		if len(headers) > 0 || !filter {

@@ -53,10 +53,6 @@ const (
 	minBroadcastPeers = 4
 )
 
-var (
-	syncChallengeTimeout = 15 * time.Second // Time allowance for a node to reply to the DAO handshake challenge
-)
-
 // skippedProposedBlockState counts fetcher-gate skips on unexecuted state; the
 // gate ignores XDCX trading/lending completeness, so growth means a stall.
 var skippedProposedBlockState = metrics.NewRegisteredCounter("eth/skipped-proposed-block-state", nil)
@@ -504,25 +500,6 @@ func (pm *handler) handle(p *peer, handler ethproto.Handler) error {
 	// after this will be sent via broadcasts.
 	pm.syncTransactions(p)
 
-	// If we're DAO hard-fork aware, validate any remote peer with regard to the hard-fork
-	if daoBlock := pm.chain.Config().DAOForkBlock; daoBlock != nil {
-		// Request the peer's DAO fork header for extra-data validation
-		if err := p.RequestHeadersByNumber(daoBlock.Uint64(), 1, 0, false); err != nil {
-			return err
-		}
-		// Start a timer to disconnect if the peer doesn't reply in time
-		p.forkDrop = time.AfterFunc(syncChallengeTimeout, func() {
-			p.Log().Debug("Timed out DAO fork-check, dropping")
-			pm.removePeer(p.ID())
-		})
-		// Make sure it's cleaned up if the peer dies off
-		defer func() {
-			if p.forkDrop != nil {
-				p.forkDrop.Stop()
-				p.forkDrop = nil
-			}
-		}()
-	}
 	// Hand the peer over to the wire layer's inbound message loop
 	return handler(p.Peer)
 }
