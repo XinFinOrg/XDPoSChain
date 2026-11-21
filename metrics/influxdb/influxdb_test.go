@@ -25,7 +25,9 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/metrics/internal"
@@ -79,11 +81,18 @@ func TestExampleV2(t *testing.T) {
 	}
 
 	r := internal.ExampleMetrics()
-	var have, want string
+	wantB, err := os.ReadFile("./testdata/influxdbv2.want")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := string(wantB)
+
+	var have strings.Builder
+	haveCh := make(chan string, 16)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		haveB, _ := io.ReadAll(r.Body)
-		have = string(haveB)
 		r.Body.Close()
+		haveCh <- string(haveB)
 	}))
 	defer ts.Close()
 
@@ -92,20 +101,22 @@ func TestExampleV2(t *testing.T) {
 		endpoint:  ts.URL,
 		namespace: "goth.",
 	}
-	rep.client = influxdb2.NewClient(rep.endpoint, rep.token)
+	rep.client = influxdb2.NewClientWithOptions(rep.endpoint, rep.token, influxdb2.DefaultOptions().SetFlushInterval(50))
 	defer rep.client.Close()
 	rep.write = rep.client.WriteAPI(rep.organization, rep.bucket)
 
 	rep.send(978307200)
 
-	if wantB, err := os.ReadFile("./testdata/influxdbv2.want"); err != nil {
-		t.Fatal(err)
-	} else {
-		want = string(wantB)
-	}
-	if have != want {
-		t.Errorf("\nhave:\n%v\nwant:\n%v\n", have, want)
-		t.Logf("have vs want:\n%v", findFirstDiffPos(have, want))
+	// The client flushes on its own ticker, so one send may arrive as several
+	// HTTP requests. Accumulate bodies until the complete fixture has arrived.
+	deadline := time.After(5 * time.Second)
+	for have.String() != want {
+		select {
+		case body := <-haveCh:
+			have.WriteString(body)
+		case <-deadline:
+			t.Fatalf("timed out waiting for InfluxDB write\nhave:\n%v\nwant:\n%v", have.String(), want)
+		}
 	}
 }
 
@@ -120,4 +131,54 @@ func findFirstDiffPos(a, b string) string {
 		}
 	}
 	return ""
+}
+
+func TestV2ReporterRetriesAfterWriteFailure(t *testing.T) {
+	var reqs int32
+	delivered := make(chan string, 8)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+		if atomic.AddInt32(&reqs, 1) <= 2 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		select {
+		case delivered <- string(body):
+		default:
+		}
+	}))
+	defer ts.Close()
+
+	reg := metrics.NewRegistry()
+	gauge := metrics.GetOrRegisterGauge("probe/gauge", reg)
+	gauge.Update(7)
+
+	rep := &v2Reporter{
+		reg:       reg,
+		endpoint:  ts.URL,
+		namespace: "goth.",
+	}
+	opts := influxdb2.DefaultOptions().SetFlushInterval(20).SetRetryInterval(50).SetMaxRetries(5).SetRetryBufferLimit(500000)
+	rep.client = influxdb2.NewClientWithOptions(rep.endpoint, rep.token, opts)
+	defer rep.client.Close()
+	rep.write = rep.client.WriteAPI(rep.organization, rep.bucket)
+	go func() {
+		for range rep.write.Errors() {
+		}
+	}()
+
+	rep.send(0)
+	gauge.Update(8)
+	for i := 0; i < 100; i++ {
+		select {
+		case body := <-delivered:
+			if strings.Contains(body, "goth.probe/gauge.gauge value=7i ") {
+				return
+			}
+		case <-time.After(50 * time.Millisecond):
+		}
+		rep.send(0)
+	}
+	t.Fatalf("timed out waiting for the retried batch (requests=%d)", atomic.LoadInt32(&reqs))
 }
