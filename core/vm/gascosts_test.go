@@ -41,6 +41,61 @@ func TestGasCostsSumAndString(t *testing.T) {
 	}
 }
 
+func TestGasBudget(t *testing.T) {
+	budget := NewGasBudget(100)
+	if budget.RegularGas != 100 || budget.StateGas != 0 {
+		t.Fatalf("NewGasBudget: have %v, want <100,0>", budget)
+	}
+	if !budget.CanAfford(GasCosts{RegularGas: 100}) {
+		t.Error("CanAfford: exactly covered cost rejected")
+	}
+	if budget.CanAfford(GasCosts{RegularGas: 101}) {
+		t.Error("CanAfford: uncovered cost accepted")
+	}
+	if prior, ok := budget.Charge(GasCosts{RegularGas: 100}); !ok || prior != 100 || budget.RegularGas != 0 {
+		t.Errorf("Charge exact: prior %d, ok %v, left %d", prior, ok, budget.RegularGas)
+	}
+
+	insufficient := NewGasBudget(99)
+	if prior, ok := insufficient.Charge(GasCosts{RegularGas: 100}); ok || prior != 99 || insufficient.RegularGas != 99 {
+		t.Errorf("Charge short: prior %d, ok %v, left %d", prior, ok, insufficient.RegularGas)
+	}
+	withState := GasBudget{RegularGas: 1, StateGas: 1000}
+	if _, ok := withState.Charge(GasCosts{RegularGas: 2}); ok {
+		t.Error("Charge: state gas covered a regular shortfall")
+	}
+
+	refunding := NewGasBudget(10)
+	if prior, changed := refunding.Refund(GasBudget{}); changed || prior != 10 || refunding.RegularGas != 10 {
+		t.Errorf("Refund zero: prior %d, changed %v, left %d", prior, changed, refunding.RegularGas)
+	}
+	if prior, changed := refunding.Refund(NewGasBudget(5)); !changed || prior != 10 || refunding.RegularGas != 15 {
+		t.Errorf("Refund: prior %d, changed %v, left %d", prior, changed, refunding.RegularGas)
+	}
+
+	start := GasBudget{RegularGas: 100, StateGas: 50}
+	end := GasBudget{RegularGas: 70, StateGas: 999}
+	if used := end.Used(start); used != 30 {
+		t.Errorf("Used: have %d, want 30", used)
+	}
+
+	exhausted := GasBudget{RegularGas: 7, StateGas: 5}
+	exhausted.Exhaust()
+	if exhausted.RegularGas != 0 || exhausted.StateGas != 0 {
+		t.Errorf("Exhaust: have %v, want <0,0>", exhausted)
+	}
+
+	src := GasBudget{RegularGas: 7, StateGas: 5}
+	cp := src.Copy()
+	src.RegularGas = 1
+	if cp.RegularGas != 7 || cp.StateGas != 5 {
+		t.Errorf("Copy: have %v, want <7,5>", cp)
+	}
+	if got := (GasBudget{RegularGas: 7, StateGas: 5}).String(); got != "<7,5>" {
+		t.Errorf("String: have %q, want %q", got, "<7,5>")
+	}
+}
+
 func TestGasCostsStateGasIsZero(t *testing.T) {
 	target := common.HexToAddress("0xaa")
 	rules := params.Rules{IsEIP150: true, IsEIP158: true}
@@ -77,7 +132,7 @@ func TestGasCostsStateGasIsZero(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			statedb := newCallGasTestStateDB(t)
 			evm := newCallGasTestEVM(t, statedb, rules)
-			contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), 100000, nil)
+			contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), NewGasBudget(100000), nil)
 			stack := callGasTestStack(0, target, new(uint256.Int))
 			defer returnStack(stack)
 
