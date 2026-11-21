@@ -425,7 +425,7 @@ func TestReorgGapSnapshotDerivationFailsBeforeAnySideEffect(t *testing.T) {
 	oldHead := blockchain.CurrentHeader()
 	// reorg expects the chain mutex to be held by its caller.
 	blockchain.chainmu.MustLock()
-	err := blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
+	_, _, err := blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
 	blockchain.chainmu.Unlock()
 
 	if err == nil {
@@ -471,7 +471,7 @@ func TestReorgTakesAGapSnapshotItAlreadyStored(t *testing.T) {
 
 	oldHead := blockchain.CurrentHeader()
 	blockchain.chainmu.MustLock()
-	err = blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
+	_, _, err = blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
 	blockchain.chainmu.Unlock()
 	if err != nil {
 		t.Fatalf("the stored set did not spare the unreadable state, so the reorg derived it again: %v", err)
@@ -607,7 +607,7 @@ func TestReorgDerivesAGapSnapshotItDoesNotHave(t *testing.T) {
 	oldHead := blockchain.CurrentHeader()
 	// reorg expects the chain mutex to be held by its caller.
 	blockchain.chainmu.MustLock()
-	err = blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
+	_, _, err = blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
 	blockchain.chainmu.Unlock()
 	if err != nil {
 		t.Fatalf("the reorg over a gap block with a derivable set failed: %v", err)
@@ -661,7 +661,7 @@ func TestReorgFailsOnSnapshotProbeError(t *testing.T) {
 	oldHead := blockchain.CurrentHeader()
 	// reorg expects the chain mutex to be held by its caller.
 	blockchain.chainmu.MustLock()
-	err := blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
+	_, _, err := blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
 	blockchain.chainmu.Unlock()
 
 	if err == nil {

@@ -2822,6 +2822,10 @@ func (b *receiptBackendMock) ChainDb() ethdb.Database {
 	return b.db
 }
 
+func (b *receiptBackendMock) ReadTransaction(hash common.Hash) (*types.Transaction, common.Hash, uint64, uint64) {
+	return rawdb.ReadTransaction(b.db, hash)
+}
+
 func (b *receiptBackendMock) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
 	if b.err != nil {
 		return nil, b.err
@@ -3806,6 +3810,10 @@ func (b *txLookupBackendMock) ChainDb() ethdb.Database {
 	return b.db
 }
 
+func (b *txLookupBackendMock) ReadTransaction(hash common.Hash) (*types.Transaction, common.Hash, uint64, uint64) {
+	return rawdb.ReadTransaction(b.db, hash)
+}
+
 func (b *txLookupBackendMock) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
 	if b.headerErr != nil {
 		return nil, b.headerErr
@@ -3948,6 +3956,10 @@ func (b *ethereumAPIBackendMock) Downloader() *downloader.Downloader {
 
 func (b *proofBackendMock) ChainDb() ethdb.Database {
 	return b.db
+}
+
+func (b *proofBackendMock) ReadTransaction(hash common.Hash) (*types.Transaction, common.Hash, uint64, uint64) {
+	return rawdb.ReadTransaction(b.db, hash)
 }
 
 func (b *proofBackendMock) GetBlock(ctx context.Context, hash common.Hash) (*types.Block, error) {
