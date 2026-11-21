@@ -22,7 +22,7 @@ import (
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/internal/cmdtest"
-	"github.com/docker/docker/pkg/reexec"
+	"github.com/XinFinOrg/XDPoSChain/internal/reexec"
 )
 
 type testEthkey struct {
