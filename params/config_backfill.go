@@ -751,6 +751,18 @@ func validateV2ExpTimeoutConfig(cfg *V2Config, fieldPath string) error {
 	if cfg == nil {
 		return nil
 	}
+	// timeout_period is a sibling of expTimeoutConfig, so errors about the
+	// period alone name the V2Config path instead of the timeout object.
+	cfgPath := strings.TrimSuffix(fieldPath, ".ExpTimeoutConfig")
+	if cfg.TimeoutPeriod <= 0 {
+		return fmt.Errorf("%s: timeout_period (%ds) must be positive", cfgPath, cfg.TimeoutPeriod)
+	}
+	// At maxExponent zero the exponent is always zero and math.Pow returns 1
+	// for every base, so base only matters once it can be applied. A legacy
+	// custom network that omits expTimeoutConfig carries base 0 and exponent 0.
+	if cfg.ExpTimeoutConfig.MaxExponent > 0 && cfg.ExpTimeoutConfig.Base < 1 {
+		return fmt.Errorf("%s: base (%f) must be at least 1 when max_exponent is %d", fieldPath, cfg.ExpTimeoutConfig.Base, cfg.ExpTimeoutConfig.MaxExponent)
+	}
 	if cfg.ExpTimeoutConfig.MaxExponent >= 32 {
 		return fmt.Errorf("%s: max_exponent (%d) >= max_exponent_upperbound (%d)", fieldPath, cfg.ExpTimeoutConfig.MaxExponent, 32)
 	}
@@ -764,7 +776,7 @@ func validateV2ExpTimeoutConfig(cfg *V2Config, fieldPath string) error {
 	// never fires and the pacemaker silently stops. Reject such a config at startup.
 	const maxTimeoutSeconds = math.MaxInt64 / int64(time.Second)
 	if int64(cfg.TimeoutPeriod) > maxTimeoutSeconds {
-		return fmt.Errorf("%s: timeout_period (%ds) exceeds the time.Duration range", fieldPath, cfg.TimeoutPeriod)
+		return fmt.Errorf("%s: timeout_period (%ds) exceeds the time.Duration range", cfgPath, cfg.TimeoutPeriod)
 	}
 	ns := int64(cfg.TimeoutPeriod) * int64(time.Second)
 	if multiplier := int64(power); multiplier > 0 && ns > math.MaxInt64/multiplier {

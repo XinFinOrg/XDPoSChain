@@ -269,6 +269,30 @@ Correct the schedule first, then pick the path that matches the data directory:
 
 `update-config-only` does not reprocess already-imported blocks; the consensus risk is described in the policy section above.
 
+## XDPoS v2 Exponential Timeout Lower Bounds
+
+`params.validateV2ExpTimeoutConfig` runs inside `ChainConfig.CheckConfigForkOrder`, so the bounds are judged on every path that admits a chain config: genesis load, stored-config load and the puppeth wizard. `common/countdown.checkExpParams` enforces the same bounds where the duration and the multiplier are computed.
+
+### What is refused
+
+- `timeoutPeriod <= 0`: the engine converts the period with `time.Duration(TimeoutPeriod) * time.Second`, and a non-positive duration makes `time.NewTimer` fire immediately; `startTimer` then re-arms with the same value after every timeout message.
+- `expTimeoutConfig.base < 1` while `expTimeoutConfig.maxExponent > 0`: the multiplier is `int64(math.Pow(base, exp))`, so a base below one truncates it to zero once an exponent can occur. At `maxExponent == 0` the exponent is always zero and `math.Pow(base, 0)` is 1 for every base, so `base` is not judged there. `base == 1` is legal.
+
+### Who is affected
+
+- Built-in networks (matched by genesis hash) and the Localnet chain ID (`5151`) backfill omitted `timeoutPeriod` / `expTimeoutConfig` from their bundled configs, so sparse legacy genesis files keep starting.
+- Custom/private networks receive only the narrow compatibility backfill (`BackfillCustomMigratedFieldsFrom`), which does not cover the v2 timeout fields. A custom genesis that omits `timeoutPeriod` (decoded as `0`) is refused; one that omits `expTimeoutConfig` is not, because its zero value sits below the exponent gate above.
+- `allConfigs` rounds that a built-in/Localnet backfill source does not contain are not backfilled either; the same split applies to them.
+
+### Why `--chain-config-mismatch-policy` does not cover it
+
+The policy reacts to a `ConfigCompatError`; a config rejected by `CheckConfigForkOrder` never produces one, so no policy value can start it.
+
+### Recovery
+
+- A genesis that only omits `expTimeoutConfig` needs no recovery: it starts as is.
+- A genesis whose `timeoutPeriod` is not positive must declare one. The genesis hash does not change, and a period correction is not a historical schedule change (`v2ConsensusConfigEqual` does not compare the timeout fields), so re-running `XDC init --datadir <dir> <genesis.json>` with the corrected genesis rewrites the stored config without a rewind. If a `ConfigCompatError` is reported for other reasons, follow the mismatch-policy section above; resynchronise when the correction has to change history.
+
 ## Startup API Semantics
 
 The startup helpers now have distinct writable vs. readonly roles:

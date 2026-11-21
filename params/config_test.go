@@ -875,9 +875,9 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 				V2: &V2{
 					SwitchEpoch:   1,
 					SwitchBlock:   big.NewInt(900),
-					CurrentConfig: &V2Config{SwitchRound: 0, MinePeriod: 3, TimeoutPeriod: 10},
+					CurrentConfig: &V2Config{SwitchRound: 0, MinePeriod: 3, TimeoutPeriod: 10, ExpTimeoutConfig: ExpTimeoutConfig{Base: 1}},
 					AllConfigs: map[uint64]*V2Config{
-						0: {SwitchRound: 0, MinePeriod: 2, TimeoutPeriod: 10},
+						0: {SwitchRound: 0, MinePeriod: 2, TimeoutPeriod: 10, ExpTimeoutConfig: ExpTimeoutConfig{Base: 1}},
 					},
 				},
 			},
@@ -907,9 +907,9 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 				V2: &V2{
 					SwitchEpoch:   1,
 					SwitchBlock:   big.NewInt(901),
-					CurrentConfig: &V2Config{SwitchRound: 0, MinePeriod: 2, TimeoutPeriod: 10},
+					CurrentConfig: &V2Config{SwitchRound: 0, MinePeriod: 2, TimeoutPeriod: 10, ExpTimeoutConfig: ExpTimeoutConfig{Base: 1}},
 					AllConfigs: map[uint64]*V2Config{
-						0: {SwitchRound: 0, MinePeriod: 2, TimeoutPeriod: 10},
+						0: {SwitchRound: 0, MinePeriod: 2, TimeoutPeriod: 10, ExpTimeoutConfig: ExpTimeoutConfig{Base: 1}},
 					},
 				},
 			},
@@ -2137,30 +2137,51 @@ func expTimeoutTestChainConfig(timeoutPeriod int, base float64, maxExponent uint
 	}
 }
 
-// TestValidateV2ExpTimeoutConfigDurationRange checks that a chain config whose
-// largest exponential timeout does not fit in a time.Duration is rejected: the
-// countdown timer would otherwise saturate at math.MaxInt64 and never fire.
+// TestValidateV2ExpTimeoutConfigDurationRange checks the bounds of the
+// exponential timeout: a product outside time.Duration is rejected because the
+// countdown would otherwise saturate at math.MaxInt64 and never fire, and a
+// non-positive period or a shrinking base is rejected because the timer would
+// otherwise fire immediately and retrigger itself.
 func TestValidateV2ExpTimeoutConfigDurationRange(t *testing.T) {
+	const (
+		v2ConfigPath   = "XDPoS.V2.CurrentConfig"
+		expTimeoutPath = v2ConfigPath + ".ExpTimeoutConfig"
+	)
 	tests := []struct {
 		name        string
 		timeout     int64
 		base        float64
 		maxExponent uint8
 		wantErr     bool
+		wantErrMsg  string
+		wantPath    string
 	}{
 		{name: "built-in network shape", timeout: 30, base: 1, maxExponent: 0},
+		{name: "base above one at zero exponent", timeout: 30, base: 1.5, maxExponent: 0},
+		// A base below one never reaches the multiplier while maxExponent is
+		// zero, so legacy custom configs that omit expTimeoutConfig keep
+		// validating.
+		{name: "zero base at zero exponent", timeout: 30, base: 0, maxExponent: 0},
+		{name: "fractional base at zero exponent", timeout: 30, base: 0.5, maxExponent: 0},
 		{name: "largest timeout still fits", timeout: 59, base: 2, maxExponent: 27},
 		// At the exact product boundary the timeout is representable and must
 		// be accepted: 3e9 ns * 3074457345 == 9223372035000000000 <= MaxInt64.
 		{name: "largest product fits at the exact boundary", timeout: 3, base: 3074457345, maxExponent: 1},
-		{name: "largest timeout overflows", timeout: 59, base: 2, maxExponent: 28, wantErr: true},
-		{name: "long period with large exponent", timeout: 30, base: 2, maxExponent: 30, wantErr: true},
+		{name: "largest timeout overflows", timeout: 59, base: 2, maxExponent: 28, wantErr: true, wantErrMsg: "time.Duration range", wantPath: expTimeoutPath},
+		{name: "long period with large exponent", timeout: 30, base: 2, maxExponent: 30, wantErr: true, wantErrMsg: "time.Duration range", wantPath: expTimeoutPath},
+		// A non-positive period makes the timer fire immediately; a base below
+		// one truncates the multiplier to zero once an exponent can occur.
+		// Either way the timer retriggers itself after every timeout.
+		{name: "zero timeout period", timeout: 0, base: 1, maxExponent: 0, wantErr: true, wantErrMsg: "must be positive", wantPath: v2ConfigPath},
+		{name: "negative timeout period", timeout: -5, base: 1, maxExponent: 0, wantErr: true, wantErrMsg: "must be positive", wantPath: v2ConfigPath},
+		{name: "zero base", timeout: 30, base: 0, maxExponent: 1, wantErr: true, wantErrMsg: "must be at least 1 when max_exponent is", wantPath: expTimeoutPath},
+		{name: "fractional base", timeout: 30, base: 0.5, maxExponent: 3, wantErr: true, wantErrMsg: "must be at least 1 when max_exponent is", wantPath: expTimeoutPath},
+		{name: "negative base", timeout: 30, base: -2, maxExponent: 1, wantErr: true, wantErrMsg: "must be at least 1 when max_exponent is", wantPath: expTimeoutPath},
 		// The engine converts the period to nanoseconds before applying
-		// base^exp, so the conversion overflows even though base < 1 shrinks
-		// the multiplier.
-		{name: "period conversion overflows with shrinking base", timeout: 18_000_000_000, base: 0.5, maxExponent: 1, wantErr: true},
+		// base^exp, so the conversion can overflow on its own.
+		{name: "period conversion overflows", timeout: 18_000_000_000, base: 1, maxExponent: 0, wantErr: true, wantErrMsg: "time.Duration range", wantPath: v2ConfigPath},
 		{name: "period conversion boundary still fits", timeout: 9_223_372_036, base: 1, maxExponent: 0},
-		{name: "period conversion boundary overflows", timeout: 9_223_372_037, base: 1, maxExponent: 0, wantErr: true},
+		{name: "period conversion boundary overflows", timeout: 9_223_372_037, base: 1, maxExponent: 0, wantErr: true, wantErrMsg: "time.Duration range", wantPath: v2ConfigPath},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -2178,10 +2199,18 @@ func TestValidateV2ExpTimeoutConfigDurationRange(t *testing.T) {
 			if !errors.Is(err, ErrWrongForkSwitchOrder) {
 				t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
 			}
-			if !strings.Contains(err.Error(), "XDPoS.V2.CurrentConfig.ExpTimeoutConfig") {
+			if test.wantErrMsg == "" {
+				t.Fatalf("case %q sets wantErr without wantErrMsg", test.name)
+			}
+			if !strings.Contains(err.Error(), test.wantPath) {
 				t.Fatalf("error does not name the field: %v", err)
 			}
-			if !strings.Contains(err.Error(), "time.Duration range") {
+			// v2ConfigPath is a prefix of expTimeoutPath, so a period-only
+			// error must also be checked against the longer path.
+			if test.wantPath == v2ConfigPath && strings.Contains(err.Error(), expTimeoutPath) {
+				t.Fatalf("period-only error names the timeout object: %v", err)
+			}
+			if !strings.Contains(err.Error(), test.wantErrMsg) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
@@ -2205,6 +2234,27 @@ func TestValidateV2ExpTimeoutConfigDurationRange(t *testing.T) {
 			t.Fatalf("error does not name the all-configs entry: %v", err)
 		}
 		if !strings.Contains(err.Error(), "time.Duration range") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	t.Run("all configs entry rejects non-positive timeout", func(t *testing.T) {
+		cfg := expTimeoutTestChainConfig(30, 1, 0)
+		cfg.XDPoS.V2.AllConfigs[10] = &V2Config{
+			SwitchRound:   10,
+			MinePeriod:    2,
+			TimeoutPeriod: -5,
+			ExpTimeoutConfig: ExpTimeoutConfig{
+				Base: 1,
+			},
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if !strings.Contains(err.Error(), "XDPoS.V2.AllConfigs[10]: timeout_period") {
+			t.Fatalf("error does not name the all-configs entry: %v", err)
+		}
+		if !strings.Contains(err.Error(), "must be positive") {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
