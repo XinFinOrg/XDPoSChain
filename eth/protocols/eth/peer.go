@@ -113,6 +113,10 @@ type Peer struct {
 
 	getPooledTx func(common.Hash) *types.Transaction // Callback used to retrieve transaction from txpool
 
+	reqDispatch chan *request  // Dispatch channel to send requests and track them until fulfilment
+	reqCancel   chan *cancel   // Dispatch channel to cancel pending requests and untrack them
+	resDispatch chan *response // Dispatch channel to fulfil pending requests and untrack them
+
 	term        chan struct{}  // Termination channel to stop the broadcaster
 	broadcastWg sync.WaitGroup // Tracks the broadcaster goroutines so they can be awaited
 	closeOnce   sync.Once      // Ensures term is closed exactly once
@@ -144,6 +148,9 @@ func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, getPooledTx func(h
 		queuedBlockAnns: make(chan *types.Block, maxQueuedBlockAnns),
 		txBroadcast:     make(chan []common.Hash),
 		txAnnounce:      make(chan []common.Hash),
+		reqDispatch:     make(chan *request),
+		reqCancel:       make(chan *cancel),
+		resDispatch:     make(chan *response),
 		getPooledTx:     getPooledTx,
 		term:            make(chan struct{}),
 
@@ -157,6 +164,7 @@ func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, getPooledTx func(h
 	if version >= XDC165 {
 		peer.broadcastWg.Go(peer.announceTransactions)
 	}
+	peer.broadcastWg.Go(peer.dispatcher)
 	return peer
 }
 
