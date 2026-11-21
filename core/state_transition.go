@@ -347,12 +347,12 @@ func ApplyMessage(evm *vm.EVM, msg *Message, gp *GasPool, owner common.Address) 
 //  5. Run Script section
 //  6. Derive new state root
 type stateTransition struct {
-	gp           *GasPool
-	msg          *Message
-	gasRemaining uint64
-	initialGas   uint64
-	state        vm.StateDB
-	evm          *vm.EVM
+	gp            *GasPool
+	msg           *Message
+	initialBudget vm.GasBudget
+	gasRemaining  vm.GasBudget
+	state         vm.StateDB
+	evm           *vm.EVM
 }
 
 // newStateTransition initialises and returns a new state transition object.
@@ -410,9 +410,8 @@ func (st *stateTransition) buyGas() error {
 	if st.evm.Config.Tracer != nil && st.evm.Config.Tracer.OnGasChange != nil {
 		st.evm.Config.Tracer.OnGasChange(0, st.msg.GasLimit, tracing.GasChangeTxInitialBalance)
 	}
-	st.gasRemaining += st.msg.GasLimit
-
-	st.initialGas = st.msg.GasLimit
+	st.gasRemaining = vm.NewGasBudget(st.msg.GasLimit)
+	st.initialBudget = st.gasRemaining.Copy()
 	if st.msg.BalanceTokenFee == nil {
 		st.state.SubBalance(st.msg.From, mgval, tracing.BalanceDecreaseGasBuy)
 	}
@@ -533,12 +532,16 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 	}
 
 	// Check clauses 4-5, subtract intrinsic gas if everything is correct.
-	gas, err := IntrinsicGas(msg.Data, msg.AccessList, msg.SetCodeAuthorizations, msg.From, msg.To, value, rules)
+	cost, err := IntrinsicGas(msg.Data, msg.AccessList, msg.SetCodeAuthorizations, msg.From, msg.To, value, rules)
 	if err != nil {
 		return nil, err
 	}
-	if st.gasRemaining < gas {
-		return nil, fmt.Errorf("%w: have %d, want %d", ErrIntrinsicGas, st.gasRemaining, gas)
+	prior, sufficient := st.gasRemaining.Charge(vm.GasCosts{RegularGas: cost})
+	if !sufficient {
+		return nil, fmt.Errorf("%w: have %d, want %d", ErrIntrinsicGas, st.gasRemaining.RegularGas, cost)
+	}
+	if t := st.evm.Config.Tracer; t != nil && t.OnGasChange != nil {
+		t.OnGasChange(prior, st.gasRemaining.RegularGas, tracing.GasChangeTxIntrinsicGas)
 	}
 	// Gas limit suffices for the floor data cost (EIP-7623)
 	if rules.IsPrague {
@@ -550,10 +553,6 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 			return nil, fmt.Errorf("%w: have %d, want %d", ErrFloorDataGas, msg.GasLimit, floorDataGas)
 		}
 	}
-	if t := st.evm.Config.Tracer; t != nil && t.OnGasChange != nil {
-		t.OnGasChange(st.gasRemaining, st.gasRemaining-gas, tracing.GasChangeTxIntrinsicGas)
-	}
-	st.gasRemaining -= gas
 
 	// Check clause 6
 	if !value.IsZero() && !st.evm.Context.CanTransfer(st.state, msg.From, value) {
@@ -608,15 +607,14 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 	peakGasUsed := st.gasUsed()
 
 	// Compute refund counter, capped to a refund quotient.
-	st.gasRemaining += st.calcRefund()
+	st.gasRemaining.Refund(st.calcRefund())
 
 	if rules.IsPrague {
 		// After EIP-7623: Data-heavy transactions pay the floor gas.
-		if st.gasUsed() < floorDataGas {
-			prev := st.gasRemaining
-			st.gasRemaining = st.initialGas - floorDataGas
+		if used := st.gasUsed(); used < floorDataGas {
+			prior, _ := st.gasRemaining.Charge(vm.GasCosts{RegularGas: floorDataGas - used})
 			if t := st.evm.Config.Tracer; t != nil && t.OnGasChange != nil {
-				t.OnGasChange(prev, st.gasRemaining, tracing.GasChangeTxDataFloor)
+				t.OnGasChange(prior, st.gasRemaining.RegularGas, tracing.GasChangeTxDataFloor)
 			}
 		}
 		if peakGasUsed < floorDataGas {
@@ -716,7 +714,7 @@ func (st *stateTransition) applyAuthorization(msg *Message, auth *types.SetCodeA
 }
 
 // calcRefund computes refund counter, capped to a refund quotient.
-func (st *stateTransition) calcRefund() uint64 {
+func (st *stateTransition) calcRefund() vm.GasBudget {
 	var refund uint64
 	if !st.evm.ChainConfig().IsEIP1559(st.evm.Context.BlockNumber) {
 		// Before EIP-3529: refunds were capped to gasUsed / 2
@@ -729,30 +727,30 @@ func (st *stateTransition) calcRefund() uint64 {
 		refund = st.state.GetRefund()
 	}
 	if st.evm.Config.Tracer != nil && st.evm.Config.Tracer.OnGasChange != nil && refund > 0 {
-		st.evm.Config.Tracer.OnGasChange(st.gasRemaining, st.gasRemaining+refund, tracing.GasChangeTxRefunds)
+		st.evm.Config.Tracer.OnGasChange(st.gasRemaining.RegularGas, st.gasRemaining.RegularGas+refund, tracing.GasChangeTxRefunds)
 	}
-	return refund
+	return vm.NewGasBudget(refund)
 }
 
 // returnGas returns ETH for remaining gas,
 // exchanged at the original rate.
 func (st *stateTransition) returnGas() {
 	if st.msg.BalanceTokenFee == nil {
-		remaining := new(big.Int).SetUint64(st.gasRemaining)
+		remaining := new(big.Int).SetUint64(st.gasRemaining.RegularGas)
 		remaining.Mul(remaining, st.msg.GasPrice)
 		st.state.AddBalance(st.from(), remaining, tracing.BalanceIncreaseGasReturn)
 	}
 
-	if st.evm.Config.Tracer != nil && st.evm.Config.Tracer.OnGasChange != nil && st.gasRemaining > 0 {
-		st.evm.Config.Tracer.OnGasChange(st.gasRemaining, 0, tracing.GasChangeTxLeftOverReturned)
+	if st.evm.Config.Tracer != nil && st.evm.Config.Tracer.OnGasChange != nil && st.gasRemaining.RegularGas > 0 {
+		st.evm.Config.Tracer.OnGasChange(st.gasRemaining.RegularGas, 0, tracing.GasChangeTxLeftOverReturned)
 	}
 
 	// Also return remaining gas to the block gas counter so it is
 	// available for the next transaction.
-	st.gp.AddGas(st.gasRemaining)
+	st.gp.AddGas(st.gasRemaining.RegularGas)
 }
 
 // gasUsed returns the amount of gas used up by the state transition.
 func (st *stateTransition) gasUsed() uint64 {
-	return st.initialGas - st.gasRemaining
+	return st.gasRemaining.Used(st.initialBudget)
 }

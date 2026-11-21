@@ -165,7 +165,7 @@ func makeCallVariantGasCallEIP2929(oldCalculator gasFunc, addressPosition int) g
 		if !warmAccess {
 			evm.StateDB.AddAddressToAccessList(addr)
 			// Charge now so the calculator below prices the reduced budget
-			if !contract.UseGas(coldCost, evm.Config.Tracer, tracing.GasChangeIgnored) {
+			if !contract.UseGas(GasCosts{RegularGas: coldCost}, evm.Config.Tracer, tracing.GasChangeIgnored) {
 				return GasCosts{}, ErrOutOfGas
 			}
 		}
@@ -278,7 +278,7 @@ func makeCallVariantGasCallEIP7702(intrinsicFunc gasFunc) gasFunc {
 			eip2929Cost = params.ColdAccountAccessCostEIP2929 - params.WarmStorageReadCostEIP2929
 
 			// Charge now so the intrinsic and nested budget see the reduced gas
-			if !contract.UseGas(eip2929Cost, evm.Config.Tracer, tracing.GasChangeIgnored) {
+			if !contract.UseGas(GasCosts{RegularGas: eip2929Cost}, evm.Config.Tracer, tracing.GasChangeIgnored) {
 				return GasCosts{}, ErrOutOfGas
 			}
 		}
@@ -300,7 +300,7 @@ func makeCallVariantGasCallEIP7702(intrinsicFunc gasFunc) gasFunc {
 				evm.StateDB.AddAddressToAccessList(target)
 				eip7702Cost = params.ColdAccountAccessCostEIP2929
 			}
-			if !contract.UseGas(eip7702Cost, evm.Config.Tracer, tracing.GasChangeIgnored) {
+			if !contract.UseGas(GasCosts{RegularGas: eip7702Cost}, evm.Config.Tracer, tracing.GasChangeIgnored) {
 				return GasCosts{}, ErrOutOfGas
 			}
 		}

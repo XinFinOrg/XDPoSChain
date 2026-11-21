@@ -104,7 +104,7 @@ func TestSelfdestruct6780EventForkGate(t *testing.T) {
 			},
 		}, hooked, nil, &config, Config{})
 
-		if _, _, err := evm.Call(common.Address{}, addr, nil, 100_000, new(uint256.Int)); err != nil {
+		if _, _, err := evm.Call(common.Address{}, addr, nil, NewGasBudget(100_000), new(uint256.Int)); err != nil {
 			t.Fatalf("call failed: %v", err)
 		}
 		hooked.Finalise(true)

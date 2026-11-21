@@ -184,7 +184,7 @@ func TestBlockOverridesSlotNumExecutes(t *testing.T) {
 
 	evm := vm.NewEVM(ctx, statedb, nil, &config, vm.Config{})
 	evm.SetTxContext(vm.TxContext{Origin: caller, GasPrice: new(big.Int)})
-	ret, _, err := evm.Call(caller, probe, nil, 100000, new(uint256.Int))
+	ret, _, err := evm.Call(caller, probe, nil, vm.NewGasBudget(100000), new(uint256.Int))
 	if err != nil {
 		t.Fatalf("call failed: %v", err)
 	}
