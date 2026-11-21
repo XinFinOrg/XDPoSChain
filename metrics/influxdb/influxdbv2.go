@@ -91,6 +91,4 @@ func (r *v2Reporter) send(tstamp int64) {
 		pt := influxdb2.NewPoint(measurement, r.tags, fields, now)
 		r.write.WritePoint(pt)
 	})
-	// Force all unwritten data to be sent
-	r.write.Flush()
 }
