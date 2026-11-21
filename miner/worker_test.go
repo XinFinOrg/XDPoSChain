@@ -477,9 +477,9 @@ func TestWorkerCheckPreCommitXDPoSMismatch(t *testing.T) {
 			MaxMasternodesV2:     1, // required to avoid missing fork switch error
 			V2: &params.V2{
 				SwitchBlock:   big.NewInt(0),
-				CurrentConfig: &params.V2Config{MinePeriod: 2},
+				CurrentConfig: &params.V2Config{MinePeriod: 2, TimeoutPeriod: 10, ExpTimeoutConfig: params.ExpTimeoutConfig{Base: 1}},
 				AllConfigs: map[uint64]*params.V2Config{
-					0: {MinePeriod: 2},
+					0: {MinePeriod: 2, TimeoutPeriod: 10, ExpTimeoutConfig: params.ExpTimeoutConfig{Base: 1}},
 				},
 			},
 		},
