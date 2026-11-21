@@ -96,6 +96,7 @@ var (
 	queuedDiscardMeter   = metrics.NewRegisteredMeter("txpool/queued/discard", nil)
 	queuedReplaceMeter   = metrics.NewRegisteredMeter("txpool/queued/replace", nil)
 	queuedRateLimitMeter = metrics.NewRegisteredMeter("txpool/queued/ratelimit", nil) // Dropped due to rate limiting
+	queuedAdmissionMeter = metrics.NewRegisteredMeter("txpool/queued/admission", nil) // Rejected at admission
 	queuedNofundsMeter   = metrics.NewRegisteredMeter("txpool/queued/nofunds", nil)   // Dropped due to out-of-funds
 	queuedEvictionMeter  = metrics.NewRegisteredMeter("txpool/queued/eviction", nil)  // Dropped due to lifetime
 
@@ -859,6 +860,71 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 	return replaced, nil
 }
 
+// admitFutureTx checks whether tx may enter the account's future queue and
+// reports the queued transaction that must be evicted after the insertion has
+// succeeded. The bound used to be enforced only by trimming the queue at
+// promote time, which dropped the transaction after the caller had already been
+// told it was accepted. A replacement never grows the queue, and a transaction
+// that fills or extends the contiguous run from the pending nonce is promoted
+// right after the batch, so neither is rejected here.
+//
+// A transaction below the highest queued nonce is admitted as well: the
+// promote-time trim drops the highest nonces, so this one would have survived,
+// and rejecting it would stall an account whose transactions arrived out of
+// order. The highest queued transaction is evicted instead, which keeps the
+// queue at AccountQueue. Only a transaction above everything queued is refused,
+// since that is the one the trim would have dropped.
+func (pool *LegacyPool) admitFutureTx(tx *types.Transaction) (*types.Transaction, error) {
+	from, _ := types.Sender(pool.signer, tx) // already validated
+	list, ok := pool.queue.get(from)
+	if !ok || uint64(list.Len()) < pool.config.AccountQueue {
+		return nil, nil
+	}
+	if list.Contains(tx.Nonce()) {
+		return nil, nil
+	}
+	// Walk the contiguous run above the pending nonce instead of trusting the
+	// queue length to prove continuity.
+	next := pool.pendingNonces.get(from)
+	if tx.Nonce() <= next {
+		return nil, nil
+	}
+	run := contiguousRun(list, next)
+	// The executable prefix is promoted right after the batch, so it does not
+	// occupy the future-queue bound; only the gapped part does.
+	if uint64(list.Len())-run < pool.config.AccountQueue {
+		return nil, nil
+	}
+	if tx.Nonce() <= next+run {
+		return nil, nil
+	}
+	if last := list.LastElement(); last != nil && tx.Nonce() < last.Nonce() {
+		return last, nil
+	}
+	return nil, fmt.Errorf("%w: queued %d txs", txpool.ErrAccountLimitExceeded, list.Len())
+}
+
+// contiguousRun returns the number of queued transactions above next that form
+// an uninterrupted nonce sequence starting at next.
+func contiguousRun(list *list, next uint64) uint64 {
+	var run uint64
+	for list.Contains(next + run) {
+		run++
+	}
+	return run
+}
+
+// futureQueueOverLimit reports whether the account's future queue still exceeds
+// AccountQueue once the executable prefix is discounted.
+func (pool *LegacyPool) futureQueueOverLimit(from common.Address) bool {
+	list, ok := pool.queue.get(from)
+	if !ok {
+		return false
+	}
+	run := contiguousRun(list, pool.pendingNonces.get(from))
+	return uint64(list.Len())-run > pool.config.AccountQueue
+}
+
 // isGapped reports whether the given transaction is immediately executable.
 func (pool *LegacyPool) isGapped(from common.Address, tx *types.Transaction) bool {
 	// Short circuit if transaction falls within the scope of the pending list
@@ -1062,7 +1128,7 @@ func (pool *LegacyPool) Add(txs []*types.Transaction, sync bool) []error {
 	// While holding the pool lock, process all txs and let addTxsLocked
 	// populate errs in-place for those that passed the basic prechecks.
 	pool.mu.Lock()
-	dirtyAddrs := pool.addTxsLocked(txs, errs)
+	dirtyAddrs := pool.addTxsLocked(txs, errs, true)
 	pool.mu.Unlock()
 
 	// Reorg the pool internals if needed and return
@@ -1079,7 +1145,11 @@ func (pool *LegacyPool) Add(txs []*types.Transaction, sync bool) []error {
 // We only try to add txs that have no error set in the errs slice.
 // If adding the transaction returns an error, we set the error in the errs slice.
 // Requires len(txs) == len(errs).
-func (pool *LegacyPool) addTxsLocked(txs []*types.Transaction, errs []error) *accountSet {
+//
+// enforceQueueLimit applies the per-account queue bound at admission. External
+// submissions enforce it; transactions reinjected after a reorg do not, so a
+// reorg can never be the reason a previously pooled transaction is lost.
+func (pool *LegacyPool) addTxsLocked(txs []*types.Transaction, errs []error, enforceQueueLimit bool) *accountSet {
 	var (
 		dirty = newAccountSet(pool.signer)
 		valid int64
@@ -1088,14 +1158,36 @@ func (pool *LegacyPool) addTxsLocked(txs []*types.Transaction, errs []error) *ac
 		if errs[i] != nil {
 			continue
 		}
+		var victim *types.Transaction
+		if enforceQueueLimit {
+			v, err := pool.admitFutureTx(tx)
+			if err != nil {
+				queuedAdmissionMeter.Mark(1)
+				errs[i] = err
+				continue
+			}
+			victim = v
+		}
 		replaced, err := pool.add(tx)
 		errs[i] = err
-		if err == nil {
-			if !replaced {
-				dirty.addTx(tx)
-			}
-			valid++
+		if err != nil {
+			continue
 		}
+		// Evict only after the new transaction has been inserted: a rejected
+		// insertion must leave the queue untouched. The insertion itself may
+		// have dropped queued transactions while making room in a globally full
+		// pool, so the bound is rechecked before dropping the victim as well.
+		if victim != nil {
+			from, _ := types.Sender(pool.signer, tx) // already validated
+			if pool.futureQueueOverLimit(from) {
+				pool.removeTx(victim.Hash(), true, true)
+				queuedRateLimitMeter.Mark(1)
+			}
+		}
+		if !replaced {
+			dirty.addTx(tx)
+		}
+		valid++
 	}
 	validTxMeter.Mark(valid)
 	return dirty
@@ -1515,7 +1607,7 @@ func (pool *LegacyPool) reset(oldHead, newHead *types.Header) {
 	// Inject any transactions discarded due to reorgs
 	log.Debug("Reinjecting stale transactions", "count", len(reinject))
 	core.SenderCacher().Recover(pool.signer, reinject)
-	pool.addTxsLocked(reinject, make([]error, len(reinject)))
+	pool.addTxsLocked(reinject, make([]error, len(reinject)), false)
 }
 
 // promoteExecutables moves transactions that have become processable from the

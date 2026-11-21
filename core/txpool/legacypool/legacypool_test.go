@@ -2460,15 +2460,11 @@ func TestGapFilling(t *testing.T) {
 	}
 }
 
-// Tests that if the transaction count belonging to a single account goes above
-// some threshold, the higher transactions are dropped to prevent DOS attacks.
+// Tests that a transaction that would grow a single account's future queue
+// past AccountQueue is rejected at admission instead of being trimmed later.
 func TestQueueAccountLimiting(t *testing.T) {
 	t.Parallel()
 
-	// Create the pool to test the per-account queue limit enforcement with.
-	// The limit has to sit below LimitThresholdNonceInQueue, because validation
-	// rejects transactions more than that many nonces ahead of the pending nonce,
-	// so a limit equal to it could never be exceeded by the loop below.
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
 	blockchain := newTestBlockChain(params.TestChainConfig, 1000000, statedb, new(event.Feed))
 
@@ -2487,24 +2483,26 @@ func TestQueueAccountLimiting(t *testing.T) {
 	account := crypto.PubkeyToAddress(key.PublicKey)
 	testAddBalance(pool, account, big.NewInt(300000000000000))
 
-	// Keep queuing up transactions and make sure all above a limit are dropped
-	for i := uint64(1); i <= accountQueue+1; i++ {
+	// Fill the queue up to the limit; every transaction is gapped behind nonce 0.
+	for i := uint64(1); i <= accountQueue; i++ {
 		if err := pool.addRemoteSync(pricedTransaction(i, 100000, big.NewInt(300000000), key)); err != nil {
 			t.Fatalf("tx %d: failed to add transaction: %v", i, err)
 		}
 		if len(pool.pending) != 0 {
 			t.Errorf("tx %d: pending pool size mismatch: have %d, want %d", i, len(pool.pending), 0)
 		}
-		list, _ := pool.queue.get(account)
-		if i <= accountQueue {
-			if list.Len() != int(i) {
-				t.Errorf("tx %d: queue size mismatch: have %d, want %d", i, list.Len(), i)
-			}
-		} else {
-			if list.Len() != int(accountQueue) {
-				t.Errorf("tx %d: queue limit mismatch: have %d, want %d", i, list.Len(), accountQueue)
-			}
+		if list, _ := pool.queue.get(account); list.Len() != int(i) {
+			t.Errorf("tx %d: queue size mismatch: have %d, want %d", i, list.Len(), i)
 		}
+	}
+	// The next gapped transaction is refused at admission with an error the
+	// caller can observe, and the queue is left untouched.
+	err := pool.addRemoteSync(pricedTransaction(accountQueue+1, 100000, big.NewInt(300000000), key))
+	if !errors.Is(err, txpool.ErrAccountLimitExceeded) {
+		t.Fatalf("tx %d: error mismatch: have %v, want %v", accountQueue+1, err, txpool.ErrAccountLimitExceeded)
+	}
+	if list, _ := pool.queue.get(account); list.Len() != int(accountQueue) {
+		t.Errorf("queue size mismatch: have %d, want %d", list.Len(), accountQueue)
 	}
 	if pool.all.Count() != int(accountQueue) {
 		t.Errorf("total transaction mismatch: have %d, want %d", pool.all.Count(), accountQueue)
