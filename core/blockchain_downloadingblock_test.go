@@ -18,11 +18,15 @@ package core
 
 import (
 	"math/big"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/XDCx/tradingstate"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
+	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -97,4 +101,215 @@ func TestInsertChainClearsDownloadingBlockMarks(t *testing.T) {
 		t.Fatalf("head did not reach the third block: have %x, want %x", have, blocks[2].Hash())
 	}
 	assertNotMarkedAsDownloading(t, chain, types.Blocks{blocks[2], bad})
+}
+
+// pausingProcessor counts how often each block is executed and holds the first execution
+// of one target block, which leaves a batch in flight with its marks readable.
+type pausingProcessor struct {
+	Processor
+	target  common.Hash
+	entered chan struct{} // closed when the target's first execution starts
+	release chan struct{} // closed to let that execution continue
+
+	mu     sync.Mutex
+	counts map[common.Hash]int
+}
+
+func (p *pausingProcessor) record(block *types.Block) {
+	p.mu.Lock()
+	p.counts[block.Hash()]++
+	calls := p.counts[block.Hash()]
+	p.mu.Unlock()
+
+	if block.Hash() == p.target && calls == 1 {
+		close(p.entered)
+		<-p.release
+	}
+}
+
+func (p *pausingProcessor) count(hash common.Hash) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.counts[hash]
+}
+
+func (p *pausingProcessor) Process(block *types.Block, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, cfg vm.Config, balanceFee map[common.Address]*big.Int) (types.Receipts, []*types.Log, uint64, error) {
+	p.record(block)
+	return p.Processor.Process(block, statedb, tradingState, cfg, balanceFee)
+}
+
+func (p *pausingProcessor) ProcessBlockNoValidator(block *CalculatedBlock, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, cfg vm.Config, balanceFee map[common.Address]*big.Int) (types.Receipts, []*types.Log, uint64, error) {
+	p.record(block.block)
+	return p.Processor.ProcessBlockNoValidator(block, statedb, tradingState, cfg, balanceFee)
+}
+
+// TestInsertBlockSkipsABlockAnInFlightBatchIsImporting pins that the marks insertChain puts
+// on its whole batch survive it: a batch larger than the 256-entry cache the marks used to
+// share with the block caches lost the marks of its earliest blocks, and a fetcher
+// delivery of one of them ran the block a second time before the import made the same check
+// answer "already imported".
+func TestInsertBlockSkipsABlockAnInFlightBatchIsImporting(t *testing.T) {
+	t.Parallel()
+
+	// More blocks than the old cache held: the first block is the one a too small cache
+	// evicts first.
+	chain, blocks := newDownloadingMarkTester(t, 300)
+	target := blocks[0].Hash()
+
+	proc := &pausingProcessor{
+		Processor: chain.processor,
+		target:    target,
+		entered:   make(chan struct{}),
+		release:   make(chan struct{}),
+		counts:    make(map[common.Hash]int),
+	}
+	chain.processor = proc
+
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(proc.release) }) }
+	defer release()
+
+	batchDone := make(chan error, 1)
+	go func() {
+		_, err := chain.InsertChain(blocks)
+		batchDone <- err
+	}()
+	select {
+	case <-proc.entered:
+	case <-time.After(30 * time.Second):
+		t.Fatal("timed out waiting for the batch to execute its first block")
+	}
+	// The marks cover the whole batch before any of it is executed, so the first block is
+	// still marked here when the cache holds the batch.
+	if !chain.downloadingBlock.Contains(target) {
+		t.Fatal("the batch lost the mark of a block it has not imported yet")
+	}
+	// A fetcher delivery of the same block is answered by the mark, without executing it
+	// and without waiting for the batch.
+	insertDone := make(chan error, 1)
+	go func() {
+		insertDone <- chain.InsertBlock(blocks[0])
+	}()
+	select {
+	case err := <-insertDone:
+		if err != nil {
+			t.Fatalf("delivery of a downloading block failed: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the fetcher path did not answer the downloading mark")
+	}
+	if calls := proc.count(target); calls != 1 {
+		t.Fatalf("block was executed %d times, want 1", calls)
+	}
+
+	release()
+	select {
+	case err := <-batchDone:
+		if err != nil {
+			t.Fatalf("batch import failed: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("timed out waiting for the batch to finish")
+	}
+}
+
+// newReimportMarkTester builds the batch shape that makes insertChain rebuild stored
+// ancestors before it imports: chunk blocks stored the way insertSidechain stores them - no
+// state - and batch blocks running on top of them. The state roots differ per block, so the
+// stored ancestors really are the ones without state.
+func newReimportMarkTester(t *testing.T, chunk, batch int) (*BlockChain, types.Blocks) {
+	t.Helper()
+
+	var (
+		config = *params.TestChainConfig
+		engine = sharedStateEngine{ethash.NewFaker()}
+	)
+	gspec := &Genesis{Config: &config, BaseFee: big.NewInt(params.InitialBaseFee)}
+	db := rawdb.NewMemoryDatabase()
+	gspec.MustCommit(db)
+
+	_, blocks, _ := GenerateChainWithGenesis(gspec, engine, chunk+batch, nil)
+
+	chain, err := NewBlockChain(db, nil, gspec, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create the chain: %v", err)
+	}
+	t.Cleanup(chain.Stop)
+
+	writeStateless(t, chain, blocks[:chunk])
+	return chain, blocks
+}
+
+// TestInsertBlockSkipsABlockWhileTheReimportChunkRuns pins the pair of batches that can be
+// marked at the same time: the batch insertChain is handed, and the one reimport chunk it
+// imports for that batch without releasing the chain mutex. The downloader hands over at
+// most maxResultsProcess blocks, and a rebuild imports one chunk at a time, so the marks
+// have to hold both. A limit of one chunk evicts the outer batch's earliest marks while
+// the rebuild runs, and a fetcher delivery of one of those blocks runs it again.
+func TestInsertBlockSkipsABlockWhileTheReimportChunkRuns(t *testing.T) {
+	t.Parallel()
+
+	chain, blocks := newReimportMarkTester(t, prunedAncestorsImportChunk, prunedAncestorsImportChunk)
+	// The rebuild runs before the batch and oldest ancestor first, so block 0 is the first
+	// execution to pause on; the batch's first block is the one a too small cache evicts first.
+	rebuildTarget := blocks[0].Hash()
+	outerFirst := blocks[prunedAncestorsImportChunk].Hash()
+
+	proc := &pausingProcessor{
+		Processor: chain.processor,
+		target:    rebuildTarget,
+		entered:   make(chan struct{}),
+		release:   make(chan struct{}),
+		counts:    make(map[common.Hash]int),
+	}
+	chain.processor = proc
+
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(proc.release) }) }
+	defer release()
+
+	batchDone := make(chan error, 1)
+	go func() {
+		_, err := chain.InsertChain(blocks[prunedAncestorsImportChunk:])
+		batchDone <- err
+	}()
+	select {
+	case <-proc.entered:
+	case <-time.After(60 * time.Second):
+		t.Fatal("timed out waiting for the batch to rebuild its ancestors")
+	}
+	// Both batches are marked here: the chunk being executed and the batch waiting for it.
+	if !chain.downloadingBlock.Contains(outerFirst) {
+		t.Fatal("the outer batch lost the mark of a block it has not imported yet")
+	}
+	// A fetcher delivery of that block is answered by the mark, without executing it and
+	// without waiting for the rebuild.
+	insertDone := make(chan error, 1)
+	go func() {
+		insertDone <- chain.InsertBlock(blocks[prunedAncestorsImportChunk])
+	}()
+	select {
+	case err := <-insertDone:
+		if err != nil {
+			t.Fatalf("delivery of a downloading block failed: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the fetcher path did not answer the downloading mark")
+	}
+	if calls := proc.count(outerFirst); calls != 0 {
+		t.Fatalf("block was executed %d times before the batch reached it, want 0", calls)
+	}
+
+	release()
+	select {
+	case err := <-batchDone:
+		if err != nil {
+			t.Fatalf("batch import failed: %v", err)
+		}
+	case <-time.After(60 * time.Second):
+		t.Fatal("timed out waiting for the batch to finish")
+	}
+	if calls := proc.count(outerFirst); calls != 1 {
+		t.Fatalf("block was executed %d times, want 1", calls)
+	}
 }
