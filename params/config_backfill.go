@@ -751,6 +751,12 @@ func validateV2ExpTimeoutConfig(cfg *V2Config, fieldPath string) error {
 	if cfg == nil {
 		return nil
 	}
+	if cfg.TimeoutPeriod <= 0 {
+		return fmt.Errorf("%s: timeout_period (%ds) must be positive", fieldPath, cfg.TimeoutPeriod)
+	}
+	if cfg.ExpTimeoutConfig.Base < 1 {
+		return fmt.Errorf("%s: base (%f) should be at least 1", fieldPath, cfg.ExpTimeoutConfig.Base)
+	}
 	if cfg.ExpTimeoutConfig.MaxExponent >= 32 {
 		return fmt.Errorf("%s: max_exponent (%d) >= max_exponent_upperbound (%d)", fieldPath, cfg.ExpTimeoutConfig.MaxExponent, 32)
 	}
