@@ -101,11 +101,12 @@ func TestEIP2200(t *testing.T) {
 		}
 		evm := NewEVM(vmctx, statedb, nil, params.AllEthashProtocolChanges, Config{ExtraEips: []int{2200}})
 
-		_, gas, err := evm.Call(common.Address{}, address, nil, tt.gaspool, new(uint256.Int))
+		initialGas := NewGasBudget(tt.gaspool)
+		_, leftOver, err := evm.Call(common.Address{}, address, nil, initialGas.Copy(), new(uint256.Int))
 		if !errors.Is(err, tt.failure) {
 			t.Errorf("test %d: failure mismatch: have %v, want %v", i, err, tt.failure)
 		}
-		if used := tt.gaspool - gas; used != tt.used {
+		if used := leftOver.Used(initialGas); used != tt.used {
 			t.Errorf("test %d: gas used mismatch: have %v, want %v", i, used, tt.used)
 		}
 		if refund := evm.StateDB.GetRefund(); refund != tt.refund {
@@ -152,7 +153,7 @@ func TestEIP2200UsesCombinedStateGetter(t *testing.T) {
 	}
 	evm := NewEVM(vmctx, countingDB, nil, params.AllEthashProtocolChanges, Config{ExtraEips: []int{2200}})
 
-	_, _, err := evm.Call(common.Address{}, address, nil, math.MaxUint64, new(uint256.Int))
+	_, _, err := evm.Call(common.Address{}, address, nil, NewGasBudget(math.MaxUint64), new(uint256.Int))
 	if err != nil {
 		t.Fatalf("call failed: %v", err)
 	}
@@ -227,12 +228,12 @@ func TestCreateGas(t *testing.T) {
 			}
 
 			evm := NewEVM(vmctx, statedb, nil, chainConfig, config)
-			var startGas = uint64(testGas)
-			ret, gas, err := evm.Call(common.Address{}, address, nil, startGas, new(uint256.Int))
+			initialGas := NewGasBudget(uint64(testGas))
+			ret, leftOver, err := evm.Call(common.Address{}, address, nil, initialGas.Copy(), new(uint256.Int))
 			if err != nil {
 				return false
 			}
-			gasUsed = startGas - gas
+			gasUsed = leftOver.Used(initialGas)
 			if len(ret) != 32 {
 				t.Fatalf("test %d: expected 32 bytes returned, have %d", i, len(ret))
 			}
@@ -354,7 +355,7 @@ func TestCallVariantIntrinsicGas(t *testing.T) {
 			evm := newCallGasTestEVM(t, statedb, tt.rules)
 			evm.readOnly = tt.readOnly
 
-			contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), tt.contractGas, nil)
+			contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), NewGasBudget(tt.contractGas), nil)
 			stack := callGasTestStack(0, tt.target, tt.value)
 			defer returnStack(stack)
 
@@ -407,7 +408,7 @@ func TestCallVariantGasBinding(t *testing.T) {
 			evm := newCallGasTestEVM(t, statedb, rules)
 			evm.readOnly = tt.readOnly
 
-			contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), 100000, nil)
+			contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), NewGasBudget(100000), nil)
 			stack := callGasTestStack(0, emptyAddr, oneWei)
 			defer returnStack(stack)
 
@@ -458,7 +459,7 @@ func TestCallVariantGasCost(t *testing.T) {
 			statedb.SetCode(fundedAddr, []byte{byte(STOP)})
 			evm := newCallGasTestEVM(t, statedb, tt.rules)
 
-			contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), tt.contractGas, nil)
+			contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), NewGasBudget(tt.contractGas), nil)
 			stack := callGasTestStack(tt.requested, fundedAddr, tt.value)
 			defer returnStack(stack)
 
@@ -520,7 +521,7 @@ func TestCallVariantGasEIP7702(t *testing.T) {
 			}
 			evm := newCallGasTestEVM(t, statedb, eip150And158)
 
-			contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), tt.contractGas, nil)
+			contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), NewGasBudget(tt.contractGas), nil)
 			stack := callGasTestStack(huge, tt.account, tt.value)
 			defer returnStack(stack)
 
@@ -559,7 +560,7 @@ func TestCallVariantGasEarlyOut(t *testing.T) {
 		evm := newCallGasTestEVM(t, statedb, rules)
 
 		// One unit short of the value transfer charge
-		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), params.CallValueTransferGas-1, nil)
+		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), NewGasBudget(params.CallValueTransferGas-1), nil)
 		stack := callGasTestStack(0, emptyAddr, oneWei)
 		defer returnStack(stack)
 
@@ -574,7 +575,7 @@ func TestCallVariantGasEarlyOut(t *testing.T) {
 		statedb := &callGasCountingStateDB{StateDB: newCallGasTestStateDB(t)}
 		evm := newCallGasTestEVM(t, statedb, rules)
 
-		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), 100000, nil)
+		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), NewGasBudget(100000), nil)
 		stack := callGasTestStack(0, emptyAddr, oneWei)
 		defer returnStack(stack)
 
@@ -591,7 +592,7 @@ func TestCallVariantGasEarlyOut(t *testing.T) {
 
 		// Enough for the cold charge and the stateless half, but not for the
 		// new-account charge on an empty target
-		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), 36000, nil)
+		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), NewGasBudget(36000), nil)
 		stack := callGasTestStack(0, emptyAddr, oneWei)
 		defer returnStack(stack)
 
@@ -609,7 +610,7 @@ func TestCallVariantGasEarlyOut(t *testing.T) {
 
 		// Rejected before the access-list write and cold charge; the intrinsic
 		// check would fire only after both
-		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), 100000, nil)
+		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), NewGasBudget(100000), nil)
 		stack := callGasTestStack(0, emptyAddr, oneWei)
 		defer returnStack(stack)
 
@@ -630,7 +631,7 @@ func TestCallVariantGasEarlyOut(t *testing.T) {
 		// After the cold charge, one unit short of the value transfer charge, so
 		// the stateless half is uncovered and the target must stay unread
 		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int),
-			params.ColdAccountAccessCostEIP2929-params.WarmStorageReadCostEIP2929+params.CallValueTransferGas-1, nil)
+			NewGasBudget(params.ColdAccountAccessCostEIP2929-params.WarmStorageReadCostEIP2929+params.CallValueTransferGas-1), nil)
 		stack := callGasTestStack(0, emptyAddr, oneWei)
 		defer returnStack(stack)
 
@@ -648,7 +649,7 @@ func TestCallVariantGasEarlyOut(t *testing.T) {
 
 		// An existing account with value costs exactly the transfer charge, and
 		// an exact fit is accepted; only a shortfall is rejected
-		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), params.CallValueTransferGas, nil)
+		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), NewGasBudget(params.CallValueTransferGas), nil)
 		stack := callGasTestStack(0, fundedAddr, oneWei)
 		defer returnStack(stack)
 
@@ -668,7 +669,7 @@ func TestCallVariantGasEarlyOut(t *testing.T) {
 		// After the cold charge, what is left covers the intrinsic exactly
 		coldCost := params.ColdAccountAccessCostEIP2929 - params.WarmStorageReadCostEIP2929
 		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int),
-			coldCost+params.CallValueTransferGas, nil)
+			NewGasBudget(coldCost+params.CallValueTransferGas), nil)
 		stack := callGasTestStack(0, fundedAddr, oneWei)
 		defer returnStack(stack)
 
@@ -742,7 +743,7 @@ func TestCallVariantGasOpcodeCost(t *testing.T) {
 					}
 				},
 			}})
-			if _, _, err := evm.Call(common.Address{}, caller, nil, 1000000, new(uint256.Int)); err != nil {
+			if _, _, err := evm.Call(common.Address{}, caller, nil, NewGasBudget(1000000), new(uint256.Int)); err != nil {
 				t.Fatalf("call failed: %v", err)
 			}
 			if !traced {
@@ -764,7 +765,7 @@ func TestCallVariantGasColdAccessTracerReason(t *testing.T) {
 		evm.Config.Tracer = &tracing.Hooks{OnGasChange: func(_, _ uint64, reason tracing.GasChangeReason) {
 			reasons = append(reasons, reason)
 		}}
-		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), 100000, nil)
+		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), NewGasBudget(100000), nil)
 		stack := callGasTestStack(0, common.HexToAddress("0xaa"), new(uint256.Int))
 		defer returnStack(stack)
 
@@ -784,7 +785,7 @@ func TestCallVariantGasColdAccessTracerReason(t *testing.T) {
 		evm.Config.Tracer = &tracing.Hooks{OnGasChange: func(_, _ uint64, reason tracing.GasChangeReason) {
 			reasons = append(reasons, reason)
 		}}
-		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), 100000, nil)
+		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), NewGasBudget(100000), nil)
 		stack := callGasTestStack(0, target, new(uint256.Int))
 		defer returnStack(stack)
 
@@ -853,7 +854,7 @@ func TestCallVariantGasColdAccessTracerReason(t *testing.T) {
 					},
 				}})
 				const startGas = uint64(1000000)
-				if _, _, err := evm.Call(common.Address{}, caller, nil, startGas, new(uint256.Int)); err != nil {
+				if _, _, err := evm.Call(common.Address{}, caller, nil, NewGasBudget(startGas), new(uint256.Int)); err != nil {
 					t.Fatalf("call failed: %v", err)
 				}
 				if coldReported != 0 {
@@ -898,7 +899,7 @@ func TestCallVariantGasEIP2929BindingPosition(t *testing.T) {
 			statedb.SetCode(target, []byte{byte(STOP)})
 			evm := newCallGasTestEVM(t, statedb, params.Rules{IsEIP150: true, IsEIP158: true, IsBerlin: true})
 			const startGas = uint64(100000)
-			contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), startGas, nil)
+			contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), NewGasBudget(startGas), nil)
 
 			var got [2]GasCosts
 			for i, requested := range []uint64{0, 1} {
