@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"sync"
@@ -311,6 +312,37 @@ func testHTTPServer(t *testing.T) (*Network, *httptest.Server) {
 		DefaultService: "test",
 	})
 	return network, httptest.NewServer(NewServer(network))
+}
+
+// TestStreamNetworkEventsHead checks that HEAD requests return headers without
+// subscribing to the event stream.
+func TestStreamNetworkEventsHead(t *testing.T) {
+	adapter := adapters.NewSimAdapter(testServices)
+	network := NewNetwork(adapter, &NetworkConfig{
+		DefaultService: "test",
+	})
+	srv := NewServer(network)
+
+	req := httptest.NewRequest(http.MethodHead, "/events", nil)
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		srv.StreamNetworkEvents(rec, req)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HEAD /events did not return; handler must not subscribe")
+	}
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: got %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got, want := rec.Header().Get("Content-Type"), "text/event-stream; charset=utf-8"; got != want {
+		t.Fatalf("unexpected Content-Type: got %q, want %q", got, want)
+	}
 }
 
 // TestHTTPNetwork tests interacting with a simulation network using the HTTP
