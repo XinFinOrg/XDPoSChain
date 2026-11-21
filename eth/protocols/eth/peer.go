@@ -21,6 +21,7 @@ import (
 	"math/big"
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
@@ -84,12 +85,18 @@ type propEvent struct {
 	td    *big.Int
 }
 
+// peerConnSeq hands out a process-unique connection id. Request tracking is
+// scoped to the connection, not the peer id: a reconnect may reuse the peer id
+// while the previous connection's teardown is still in flight.
+var peerConnSeq atomic.Uint64
+
 // Peer is a remote peer on the eth wire protocol: it owns the message pipe and
 // the bookkeeping of what the remote side is known to have seen. It has no
 // reference back into the node: everything the peer needs arrives through its
 // constructor.
 type Peer struct {
-	id string
+	id   string
+	conn uint64 // Process-unique connection id for request tracking
 
 	*p2p.Peer
 	rw p2p.MsgReadWriter
@@ -118,6 +125,10 @@ type Peer struct {
 
 	getPooledTx func(common.Hash) *types.Transaction // Callback used to retrieve transaction from txpool
 
+	reqDispatch chan *request  // Dispatch channel to send requests and track them until fulfilment
+	reqCancel   chan *cancel   // Dispatch channel to cancel pending requests and untrack them
+	resDispatch chan *response // Dispatch channel to fulfil pending requests and untrack them
+
 	term        chan struct{}  // Termination channel to stop the broadcaster
 	broadcastWg sync.WaitGroup // Tracks the broadcaster goroutines so they can be awaited
 	closeOnce   sync.Once      // Ensures term is closed exactly once
@@ -128,8 +139,9 @@ type Peer struct {
 }
 
 // NewPeer creates a new wire peer on top of the given message pipe, starting the
-// broadcast loops that push data towards the remote side. The returned peer must
-// be closed to stop those loops.
+// broadcast loops that push data towards the remote side and the dispatcher that
+// serves request/reply traffic. The returned peer must be closed to stop those
+// loops.
 func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, getPooledTx func(hash common.Hash) *types.Transaction) *Peer {
 	mrw := newMeteredMsgWriter(rw)
 	if m, ok := mrw.(*meteredMsgReadWriter); ok {
@@ -141,6 +153,7 @@ func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, getPooledTx func(h
 		version:         version,
 		td:              new(big.Int),
 		id:              fmt.Sprintf("%x", p.ID().Bytes()[:8]),
+		conn:            peerConnSeq.Add(1),
 		knownTxs:        mapset.NewSet[common.Hash](),
 		knownBlocks:     mapset.NewSet[common.Hash](),
 		knownOrderTxs:   mapset.NewSet[common.Hash](),
@@ -149,6 +162,9 @@ func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, getPooledTx func(h
 		queuedBlockAnns: make(chan *types.Block, maxQueuedBlockAnns),
 		txBroadcast:     make(chan []common.Hash),
 		txAnnounce:      make(chan []common.Hash),
+		reqDispatch:     make(chan *request),
+		reqCancel:       make(chan *cancel),
+		resDispatch:     make(chan *response),
 		getPooledTx:     getPooledTx,
 		term:            make(chan struct{}),
 
@@ -156,17 +172,20 @@ func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, getPooledTx func(h
 		knownTimeout:  mapset.NewSet[common.Hash](),
 		knownSyncInfo: mapset.NewSet[common.Hash](),
 	}
-	// Start up all the broadcasters. They terminate when the peer is closed.
+	// Start up the broadcasters and the request dispatcher. They terminate when
+	// the peer is closed.
 	peer.broadcastWg.Go(peer.broadcastBlocks)
 	peer.broadcastWg.Go(peer.broadcastTransactions)
 	if version >= XDC165 {
 		peer.broadcastWg.Go(peer.announceTransactions)
 	}
+	peer.broadcastWg.Go(peer.dispatcher)
 	return peer
 }
 
-// Close signals the broadcast goroutines to terminate. It is safe for concurrent
-// and repeated calls: only the first call closes term.
+// Close signals the broadcast goroutines and the request dispatcher to
+// terminate. It is safe for concurrent and repeated calls: only the first call
+// closes term.
 func (p *Peer) Close() {
 	p.closeOnce.Do(func() { close(p.term) })
 }

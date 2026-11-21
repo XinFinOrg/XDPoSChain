@@ -444,6 +444,26 @@ func (c *countingMsgWriter) WriteMsg(msg p2p.Msg) error {
 	return c.MsgReadWriter.WriteMsg(msg)
 }
 
+// closePeerAndWait terminates a test peer and waits for its goroutines to exit.
+// The dispatcher loop consults the package-level request tracker while handling
+// the teardown, so a test that swaps that singleton must not leave the loop
+// running into the next test.
+func closePeerAndWait(t *testing.T, peer *Peer) {
+	t.Helper()
+	peer.Close()
+
+	done := make(chan struct{})
+	go func() {
+		peer.broadcastWg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Errorf("peer loops did not exit after Close")
+	}
+}
+
 // newBroadcastTestPeer assembles a peer whose network connection is already
 // broken, so the first send from any broadcast loop fails. The returned
 // terminate function closes the peer exactly once and is safe to call from
@@ -466,7 +486,7 @@ func newBroadcastTestPeer(t *testing.T, name string) (*Peer, *types.Transaction,
 	counter := &countingMsgWriter{MsgReadWriter: net}
 	peer := NewPeer(XDC100, p2p.NewPeer(id, name, nil), counter, func(common.Hash) *types.Transaction { return tx })
 	terminate := peer.Close
-	t.Cleanup(terminate)
+	t.Cleanup(func() { closePeerAndWait(t, peer) })
 	app.Close()
 	return peer, tx, counter, terminate
 }
@@ -563,7 +583,7 @@ func TestAnnounceTransactionsKeepsDrainingAfterSendFailure(t *testing.T) {
 	// version.
 	peer := NewPeer(XDC165, p2p.NewPeer(id, "announcer", nil), counter, func(common.Hash) *types.Transaction { return tx })
 	terminate := peer.Close
-	t.Cleanup(terminate)
+	t.Cleanup(func() { closePeerAndWait(t, peer) })
 	app.Close()
 
 	runDrainCheck(t, "AsyncSendPooledTransactionHashes", func() { peer.AsyncSendPooledTransactionHashes([]common.Hash{tx.Hash()}) }, terminate)
