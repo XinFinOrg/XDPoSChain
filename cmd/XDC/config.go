@@ -161,9 +161,19 @@ func loadBaseConfig(ctx *cli.Context) XDCConfig {
 		common.Enable0xPrefix = false
 	}
 
-	// read passwords from environment
+	utils.SetNetworkFlagById(ctx, &cfg.Eth)
+
+	// Apply flags.
+	utils.SetNodeConfig(ctx, &cfg.Node)
+	return cfg
+}
+
+// resolvePasswordEnvs replaces each environment variable name in envs with the
+// passwords it holds. Only the node startup path resolves them: dumpconfig
+// keeps the names, so that it never prints the passwords.
+func resolvePasswordEnvs(envs []string) []string {
 	passwords := []string{}
-	for _, env := range cfg.Account.Passwords {
+	for _, env := range envs {
 		if trimmed := strings.TrimSpace(env); trimmed != "" {
 			value := os.Getenv(trimmed)
 			for info := range strings.SplitSeq(value, ",") {
@@ -173,13 +183,7 @@ func loadBaseConfig(ctx *cli.Context) XDCConfig {
 			}
 		}
 	}
-	cfg.Account.Passwords = passwords
-
-	utils.SetNetworkFlagById(ctx, &cfg.Eth)
-
-	// Apply flags.
-	utils.SetNodeConfig(ctx, &cfg.Node)
-	return cfg
+	return passwords
 }
 
 // makeConfigNode loads geth configuration and creates a blank node instance.
@@ -209,6 +213,7 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, XDCConfig) {
 // makeFullNode loads geth configuration and creates the Ethereum backend.
 func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend, XDCConfig) {
 	stack, cfg := makeConfigNode(ctx)
+	cfg.Account.Passwords = resolvePasswordEnvs(cfg.Account.Passwords)
 
 	// Start metrics export if enabled
 	utils.SetupMetrics(&cfg.Metrics)
