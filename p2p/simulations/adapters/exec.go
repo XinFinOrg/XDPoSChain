@@ -34,12 +34,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/internal/reexec"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/node"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
-	"github.com/docker/docker/pkg/reexec"
 	"github.com/gorilla/websocket"
 )
 

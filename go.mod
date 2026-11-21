@@ -6,7 +6,6 @@ require (
 	github.com/VictoriaMetrics/fastcache v1.12.2
 	github.com/cespare/cp v1.1.1
 	github.com/davecgh/go-spew v1.1.1
-	github.com/docker/docker v1.4.2-0.20180625184442-8e610b2b55bf
 	github.com/fatih/color v1.13.0
 	github.com/golang/snappy v0.0.5-0.20220116011046-fa5810519dcb
 	github.com/gorilla/websocket v1.5.0
@@ -108,7 +107,6 @@ require (
 	golang.org/x/mod v0.28.0 // indirect
 	golang.org/x/net v0.44.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	gotest.tools v2.2.0+incompatible // indirect
 )
 
 tool (
