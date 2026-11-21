@@ -355,3 +355,15 @@ func TestDecodeRewardFileSkipsNonRewardEntries(t *testing.T) {
 		t.Fatal("expected a non-object reward file to fail")
 	}
 }
+
+// TestGetVotersRewardsWithoutXDPoSEngine pins the engine guard of
+// GetVotersRewards: a backend whose engine is not XDPoS has no voters to
+// report, and the type assertion must not panic.
+func TestGetVotersRewardsWithoutXDPoSEngine(t *testing.T) {
+	t.Parallel()
+
+	backend := &EthAPIBackend{eth: &Ethereum{engine: ethash.NewFaker()}}
+	if rewards := backend.GetVotersRewards(common.Address{}); rewards != nil {
+		t.Fatalf("GetVotersRewards with a non-XDPoS engine: have %v, want nil", rewards)
+	}
+}
