@@ -530,10 +530,13 @@ func decodeRewardFile(data []byte) (map[string]map[string]map[string]*big.Int, e
 // 3. Find out the list signers_reward for input masternode's reward
 // 4. Calculate voters's rewards for input masternode
 func (b *EthAPIBackend) GetVotersRewards(masternodeAddr common.Address) map[common.Address]*big.Int {
+	engine, ok := b.Engine().(*XDPoS.XDPoS)
+	if !ok {
+		return nil
+	}
 	chain := b.eth.blockchain
 	header := chain.CurrentBlock()
 	number := header.Number.Uint64()
-	engine := b.Engine().(*XDPoS.XDPoS)
 	foundationWalletAddr := chain.Config().XDPoS.FoundationWalletAddr
 
 	// calculate for 2 epochs ago

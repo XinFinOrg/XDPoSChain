@@ -68,7 +68,10 @@ const (
 // be requested in a single eth_getStorageValues call.
 const maxGetStorageSlots = 1024
 
-var errEmptyHeader = errors.New("empty header")
+var (
+	errEmptyHeader        = errors.New("empty header")
+	errXDPoSConfigMissing = errors.New("xdpos config is nil")
+)
 
 // EthereumAPI provides an API to access Ethereum related information.
 // It offers only methods that operate on public data that is freely available to anyone.
@@ -662,6 +665,9 @@ func (api *BlockChainAPI) GetMasternodes(ctx context.Context, b *types.Block) ([
 
 // GetCandidateStatus returns status of the given candidate at a specified epochNumber
 func (api *BlockChainAPI) GetCandidateStatus(ctx context.Context, coinbaseAddress common.Address, epoch rpc.EpochNumber) (map[string]interface{}, error) {
+	if api.b.ChainConfig().XDPoS == nil {
+		return nil, errXDPoSConfigMissing
+	}
 	var (
 		block                    *types.Block
 		header                   *types.Header
@@ -809,6 +815,9 @@ func (api *BlockChainAPI) GetCandidateStatus(ctx context.Context, coinbaseAddres
 
 // GetCandidates returns status of all candidates at a specified epochNumber
 func (api *BlockChainAPI) GetCandidates(ctx context.Context, epoch rpc.EpochNumber) (map[string]interface{}, error) {
+	if api.b.ChainConfig().XDPoS == nil {
+		return nil, errXDPoSConfigMissing
+	}
 	var (
 		block            *types.Block
 		header           *types.Header
@@ -959,6 +968,9 @@ func (api *BlockChainAPI) GetCandidates(ctx context.Context, epoch rpc.EpochNumb
 
 // GetCheckpointFromEpoch returns header of the previous checkpoint
 func (api *BlockChainAPI) GetCheckpointFromEpoch(ctx context.Context, epochNum rpc.EpochNumber) (rpc.BlockNumber, rpc.EpochNumber) {
+	if api.b.ChainConfig().XDPoS == nil {
+		return 0, epochNum
+	}
 	var checkpointNumber uint64
 	epoch := api.b.ChainConfig().XDPoS.Epoch
 
@@ -2509,14 +2521,17 @@ func GetSignersFromBlocks(b Backend, blockNumber uint64, blockHash common.Hash, 
 // Formular:
 //
 //	ROI = average_latest_epoch_reward_for_voters*number_of_epoch_per_year/latest_total_cap*100
-func (api *BlockChainAPI) GetStakerROI() float64 {
+func (api *BlockChainAPI) GetStakerROI() (float64, error) {
+	if api.b.ChainConfig().XDPoS == nil {
+		return 0, errXDPoSConfigMissing
+	}
 	blockNumber := api.b.CurrentBlock().Number.Uint64()
 	lastCheckpointNumber := blockNumber - (blockNumber % api.b.ChainConfig().XDPoS.Epoch) - api.b.ChainConfig().XDPoS.Epoch // calculate for 2 epochs ago
 	totalCap := new(big.Int).SetUint64(0)
 
 	mastersCap := api.b.GetMasternodesCap(lastCheckpointNumber)
 	if mastersCap == nil {
-		return 0
+		return 0, nil
 	}
 
 	masternodeReward := new(big.Int).Mul(new(big.Int).SetUint64(api.b.ChainConfig().XDPoS.Reward), new(big.Int).SetUint64(params.Ether))
@@ -2528,7 +2543,7 @@ func (api *BlockChainAPI) GetStakerROI() float64 {
 	holderReward := new(big.Int).Rsh(masternodeReward, 1)
 	EpochPerYear := 365 * 86400 / api.b.GetEpochDuration().Uint64()
 	voterRewardAYear := new(big.Int).Mul(holderReward, new(big.Int).SetUint64(EpochPerYear))
-	return 100.0 / float64(totalCap.Div(totalCap, voterRewardAYear).Uint64())
+	return 100.0 / float64(totalCap.Div(totalCap, voterRewardAYear).Uint64()), nil
 }
 
 // GetStakerROIMasternode Estimate ROI for stakers of a specific masternode using the last epoc reward
@@ -2536,10 +2551,13 @@ func (api *BlockChainAPI) GetStakerROI() float64 {
 // Formular:
 //
 //	ROI = latest_epoch_reward_for_voters*number_of_epoch_per_year/latest_total_cap*100
-func (api *BlockChainAPI) GetStakerROIMasternode(masternode common.Address) float64 {
+func (api *BlockChainAPI) GetStakerROIMasternode(masternode common.Address) (float64, error) {
+	if api.b.ChainConfig().XDPoS == nil {
+		return 0, errXDPoSConfigMissing
+	}
 	votersReward := api.b.GetVotersRewards(masternode)
 	if votersReward == nil {
-		return 0
+		return 0, nil
 	}
 
 	masternodeReward := new(big.Int).SetUint64(0) // this includes all reward for this masternode
@@ -2563,7 +2581,7 @@ func (api *BlockChainAPI) GetStakerROIMasternode(masternode common.Address) floa
 	EpochPerYear := 365 * 86400 / api.b.GetEpochDuration().Uint64()
 	voterRewardAYear := new(big.Int).Mul(holderReward, new(big.Int).SetUint64(EpochPerYear))
 
-	return 100.0 / float64(totalCap.Div(totalCap, voterRewardAYear).Uint64())
+	return 100.0 / float64(totalCap.Div(totalCap, voterRewardAYear).Uint64()), nil
 }
 
 type supplyV1 struct {
@@ -2586,6 +2604,10 @@ type tokenSupply struct {
 }
 
 func (api *BlockChainAPI) GetTokenStats(ctx context.Context, epochNr rpc.EpochNumber) (*tokenSupply, error) {
+	config := api.b.ChainConfig().XDPoS
+	if config == nil {
+		return nil, errXDPoSConfigMissing
+	}
 	engine, ok := api.b.Engine().(*XDPoS.XDPoS)
 	if !ok {
 		return nil, errors.New("undefined XDPoS consensus engine")
@@ -2618,10 +2640,6 @@ func (api *BlockChainAPI) GetTokenStats(ctx context.Context, epochNr rpc.EpochNu
 	targetHeader, err := api.b.HeaderByNumber(ctx, rpc.BlockNumber(number.Int64()))
 	if err != nil {
 		return nil, err
-	}
-	config := api.b.ChainConfig().XDPoS
-	if config == nil {
-		return nil, errors.New("xdpos config is nil")
 	}
 	preEpochMinted := new(big.Int).Mul(new(big.Int).SetUint64(config.Reward), new(big.Int).SetUint64(params.Ether))
 	onsetEpochMinus := onsetEpoch
