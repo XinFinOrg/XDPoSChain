@@ -149,6 +149,17 @@ const (
 	maxTimeFutureBlocks = 30
 	TriesInMemory       = 1024
 
+	// prunedAncestorsImportChunk is how many blocks reimportPrunedAncestors hands to
+	// insertChain at a time.
+	prunedAncestorsImportChunk = 2048
+	// downloadingBlockLimit covers the batches insertChain can have marked at the same
+	// time: the downloader's outer batch (maxResultsProcess, 2048 in eth/downloader) and
+	// the one reimport chunk it can trigger without releasing the chain mutex. insertChain
+	// marks a whole batch before executing it, so a smaller cache loses the marks of the
+	// blocks it runs last and the fetcher executes them a second time. A larger batch (the
+	// admin import) still loses its earliest marks and only wastes execution.
+	downloadingBlockLimit = 2 * prunedAncestorsImportChunk
+
 	// BlockChainVersion ensures that an incompatible database forces a resync from scratch.
 	//
 	// Changelog:
@@ -509,7 +520,7 @@ func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus
 		futureBlocks:     lru.NewCache[common.Hash, *types.Block](maxFutureBlocks),
 		resultProcess:    lru.NewCache[common.Hash, *ResultProcessBlock](blockCacheLimit),
 		calculatingBlock: lru.NewCache[common.Hash, *CalculatedBlock](blockCacheLimit),
-		downloadingBlock: lru.NewCache[common.Hash, struct{}](blockCacheLimit),
+		downloadingBlock: lru.NewCache[common.Hash, struct{}](downloadingBlockLimit),
 		engine:           engine,
 		vmConfig:         vmConfig,
 		logger:           vmConfig.Tracer,
@@ -3393,7 +3404,7 @@ func (bc *BlockChain) reimportPrunedAncestors(from *types.Header, localTd, exter
 		// If memory use grew too large, import and continue. Sadly we need to discard
 		// all raised events and logs from notifications since we're too heavy on the
 		// memory here.
-		if len(blocks) >= 2048 || memory > 64*1024*1024 {
+		if len(blocks) >= prunedAncestorsImportChunk || memory > 64*1024*1024 {
 			log.Info("Importing heavy sidechain segment", "blocks", len(blocks), "start", blocks[0].NumberU64(), "end", block.NumberU64())
 			// insertChain also reports a block that fails verification or body
 			// validation in the middle of the segment: abort the sidechain import
