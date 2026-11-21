@@ -19,7 +19,6 @@ package eth
 import (
 	"math/big"
 	"sync/atomic"
-	"time"
 
 	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 )
@@ -42,8 +41,6 @@ type PeerInfo struct {
 // short id, and the full enode.ID is only reachable as p.Peer.Peer.ID().
 type peer struct {
 	*ethproto.Peer
-
-	forkDrop *time.Timer // Timed connection dropper if forks aren't validated in time
 
 	// removed is set exactly once to make peer removal idempotent.
 	removed atomic.Bool
