@@ -27,7 +27,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/beacon/merkle"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
-	"github.com/go-yaml/yaml"
+	"gopkg.in/yaml.v3"
 )
 
 // syncCommitteeDomain specifies the signatures specific use to avoid clashes
