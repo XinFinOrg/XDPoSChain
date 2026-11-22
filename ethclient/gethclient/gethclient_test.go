@@ -82,25 +82,18 @@ func newTestBackend(t *testing.T) (*node.Node, []*types.Block, []common.Hash) {
 	if err != nil {
 		t.Fatalf("can't create new node: %v", err)
 	}
-	// XDCx has no lifecycle hook, so nothing closes its database when the node
-	// is torn down; on Windows that open file keeps t.TempDir from removing the
-	// directory. Close the node first (its services may still use the database)
-	// and then the database, before the temp dir is removed. Registering this
-	// here also covers the setup failures below, which return before the caller
-	// can defer a node close.
 	xdcxDir := t.TempDir()
-	xdcx, err := XDCx.New(n, &XDCx.Config{DataDir: xdcxDir})
-	if err != nil {
-		t.Fatalf("can't create the XDCx service: %v", err)
-	}
+	// Registering the close here also covers the setup failures below, which
+	// return before the caller can defer a node close.
 	t.Cleanup(func() {
 		if err := n.Close(); err != nil && !errors.Is(err, node.ErrNodeStopped) {
 			t.Logf("closing the test node: %v", err)
 		}
-		if err := xdcx.GetLevelDB().Close(); err != nil {
-			t.Logf("closing the XDCx database: %v", err)
-		}
 	})
+	xdcx, err := XDCx.New(n, &XDCx.Config{DataDir: xdcxDir})
+	if err != nil {
+		t.Fatalf("can't create the XDCx service: %v", err)
+	}
 	lending := XDCxlending.New(n, xdcx)
 	// Create Ethereum Service
 	config := &ethconfig.Config{Genesis: genesis, RPCGasCap: 1000000}
