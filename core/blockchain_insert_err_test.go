@@ -120,6 +120,13 @@ func TestClassifyInsertErr(t *testing.T) {
 			want: insertErrClass{local: true},
 		},
 		{
+			// Local but not retryable: a historical epoch block this node does not hold is not
+			// there on the next attempt either.
+			name: "missing penalty block",
+			err:  consensus.ErrMissingPenaltyBlock,
+			want: insertErrClass{local: true},
+		},
+		{
 			name: "a block the engine refused to finalize",
 			err:  ErrFinalize,
 			want: insertErrClass{badBlock: true},
@@ -215,6 +222,7 @@ func TestIsLocalInsertErrorIsTheLocalFlag(t *testing.T) {
 		{"an ancestor state this node no longer holds", consensus.ErrPrunedAncestor, true},
 		{"an epoch gap block that is not canonical", consensus.ErrMissingCanonicalGapHeader, true},
 		{"a gap block snapshot this node cannot read", consensus.ErrGapSnapshotUnavailable, true},
+		{"an epoch penalty block this node does not hold", consensus.ErrMissingPenaltyBlock, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -254,6 +262,7 @@ func TestDescribeLocalInsertFailure(t *testing.T) {
 		{"pruned ancestor", consensus.ErrPrunedAncestor, "ancestor state is pruned"},
 		{"missing canonical gap header", consensus.ErrMissingCanonicalGapHeader, "the epoch gap block is not canonical"},
 		{"gap snapshot unavailable", consensus.ErrGapSnapshotUnavailable, "the epoch gap block snapshot is unavailable"},
+		{"missing penalty block", consensus.ErrMissingPenaltyBlock, "the epoch penalty block is unavailable"},
 		{"interrupted import", ErrInsertionInterrupted, "interrupted during import"},
 		{"stopped chain", ErrChainStopped, "interrupted during import"},
 		// Not "interrupted during import": an inconsistent local chain is not a state a file or

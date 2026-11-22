@@ -231,10 +231,10 @@ type BlockChain interface {
 	// InsertReceiptChain inserts a batch of receipts into the local chain.
 	InsertReceiptChain(types.Blocks, []types.Receipts) (int, error)
 
-	// IsLocalInsertError reports whether an InsertChain or InsertReceiptChain failure
-	// describes a local condition of this node rather than a fault of the blocks. The chain
-	// owns the classification; the downloader needs the verdict to decide whether the peer may
-	// be blamed.
+	// IsLocalInsertError reports whether an InsertChain, InsertReceiptChain or
+	// InsertHeaderChain failure describes a local condition of this node rather than a fault
+	// of the blocks. The chain owns the classification; the downloader needs the verdict to
+	// decide whether the peer may be blamed.
 	IsLocalInsertError(err error) bool
 
 	// TrieDB retrieves the low level trie database used for interacting
@@ -1615,8 +1615,13 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 						if n > 0 {
 							rollback = append(rollback, chunk[:n]...)
 						}
+						// A local condition says nothing about the peer that served the headers, so
+						// it must not become the errInvalidChain that drops it. See localInsertFailure.
+						if d.blockchain.IsLocalInsertError(err) {
+							return d.localInsertFailure(localInsertStop{where: whereHeaders, from: chunk[0].Number, index: n}, err)
+						}
 						log.Debug("Invalid header encountered", "number", chunk[n].Number, "hash", chunk[n].Hash(), "parent", chunk[n].ParentHash, "err", err)
-						return fmt.Errorf("%w: %v", errInvalidChain, err)
+						return fmt.Errorf("%w: %w", errInvalidChain, err)
 					}
 					// All verifications passed, store newly found uncertain headers
 					rollback = append(rollback, unknown...)
@@ -1742,11 +1747,12 @@ func (d *Downloader) headNumber() uint64 {
 	return 0
 }
 
-// localInsertWhere names the batch an insert stopped on: block segments, receipt batches, or the
-// fast sync pivot.
+// localInsertWhere names the batch an insert stopped on: header-only batches, block segments,
+// receipt batches, or the fast sync pivot.
 type localInsertWhere string
 
 const (
+	whereHeaders  localInsertWhere = "headers"
 	whereBlocks   localInsertWhere = "blocks"
 	whereReceipts localInsertWhere = "receipts"
 	wherePivot    localInsertWhere = "pivot"

@@ -45,6 +45,13 @@ var (
 	// still readable (RepairGapSnapshots; initial() owns the V2 switch gap block).
 	ErrGapSnapshotUnavailable = errors.New("gap snapshot is unavailable")
 
+	// ErrMissingPenaltyBlock is returned when the v1 engine reads the penalty set of a recent
+	// epoch checkpoint and this node holds no canonical header or no block body for it. The
+	// penalty set decides the checkpoint signer list, so a missing block cannot be skipped as
+	// "no penalties"; the read is a condition of this node's own chain, not of the batch under
+	// verification: core's classification reads it as a local failure.
+	ErrMissingPenaltyBlock = errors.New("missing epoch penalty block")
+
 	// ErrFutureBlock is returned when a block's timestamp is in the future according
 	// to the current node.
 	ErrFutureBlock = errors.New("block in the future")
