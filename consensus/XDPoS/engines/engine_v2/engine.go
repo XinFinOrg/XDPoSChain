@@ -786,8 +786,20 @@ func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainReader, vote *types.Vo
 					- Use the above xdc address to check against the master node list from step 1(For the running epoch)
 			4. Broadcast(Not part of consensus)
 	*/
+	if vote == nil || vote.ProposedBlockInfo == nil || vote.ProposedBlockInfo.Number == nil {
+		return false, nil
+	}
 	if vote.ProposedBlockInfo.Round < x.currentRound {
 		log.Debug("[VerifyVoteMessage] Disqualified vote message as the proposed round does not match currentRound", "voteHash", vote.Hash(), "voteProposedBlockInfoRound", vote.ProposedBlockInfo.Round, "currentRound", x.currentRound)
+		return false, nil
+	}
+
+	// GapNumber is attacker-controlled until here, and getSnapshot would read a
+	// canonical header for any height. Only a gap block can back a vote, plus the
+	// chain-start fallback 0, which names no gap block but is what GapBlockNumber
+	// returns for an epoch that starts no farther than Gap into the chain.
+	if _, ok := x.config.GapTrigger(); ok && vote.GapNumber != 0 && !x.config.IsGapBlock(vote.GapNumber) {
+		log.Debug("[VerifyVoteMessage] Disqualified vote message as the gap number is not a gap block", "voteHash", vote.Hash(), "gapNumber", vote.GapNumber)
 		return false, nil
 	}
 
@@ -801,10 +813,7 @@ func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainReader, vote *types.Vo
 		GapNumber:         vote.GapNumber,
 	}), vote.Signature, snapshot.NextEpochCandidates)
 	if err != nil {
-		for i, mn := range snapshot.NextEpochCandidates {
-			log.Warn("[VerifyVoteMessage] Master node list item", "index", i, "Master node", mn.Hex())
-		}
-		log.Warn("[VerifyVoteMessage] Error while verifying vote message", "votedBlockNum", vote.ProposedBlockInfo.Number.Uint64(), "votedBlockHash", vote.ProposedBlockInfo.Hash.Hex(), "voteHash", vote.Hash(), "error", err.Error())
+		log.Debug("[VerifyVoteMessage] Error while verifying vote message", "votedBlockNum", vote.ProposedBlockInfo.Number.Uint64(), "votedBlockHash", vote.ProposedBlockInfo.Hash.Hex(), "voteHash", vote.Hash(), "candidates", len(snapshot.NextEpochCandidates), "signer", signer, "error", err.Error())
 		return false, err
 	}
 	vote.SetSigner(signer)

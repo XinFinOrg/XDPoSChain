@@ -418,3 +418,127 @@ func TestVoteReturnsAfterBftStop(t *testing.T) {
 		t.Fatal("Vote blocks after bft loop is stopped")
 	}
 }
+
+// TestVoteRejectsGapNumberOutsideWindow pins the DB-free gap gate: a vote whose
+// GapNumber is far from the head must not reach verification, which would read
+// a canonical header for that height.
+func TestVoteRejectsGapNumberOutsideWindow(t *testing.T) {
+	tester := newTester()
+	verifyCounter := uint32(0)
+	tester.bfter.consensus.verifyVote = func(chain consensus.ChainReader, vote *types.Vote) (bool, error) {
+		atomic.AddUint32(&verifyCounter, 1)
+		return true, nil
+	}
+	tester.bfter.consensus.voteHandler = func(chain consensus.ChainReader, vote *types.Vote) error {
+		return nil
+	}
+	tester.bfter.broadcast.Vote = func(*types.Vote) {}
+
+	vote := types.Vote{
+		ProposedBlockInfo: &types.BlockInfo{Number: big.NewInt(1350)},
+		Signature:         []byte{1},
+		// newTester reports head 1351 and the configured epoch is 900, so this
+		// is 1 past the epoch*3 window.
+		GapNumber: 1351 + 2700 + 1,
+	}
+	if err := tester.bfter.Vote(peerID, &vote); err != nil {
+		t.Fatal(err)
+	}
+	if n := atomic.LoadUint32(&verifyCounter); n != 0 {
+		t.Fatalf("verifyVote called %d times for an out-of-window gap number, want 0", n)
+	}
+}
+
+// TestVoteRejectsOversizedBlockNumber covers the Int64 truncation: 2^64+1350
+// used to compare as 1350 and pass the head±7 gate.
+func TestVoteRejectsOversizedBlockNumber(t *testing.T) {
+	tester := newTester()
+	verifyCounter := uint32(0)
+	tester.bfter.consensus.verifyVote = func(chain consensus.ChainReader, vote *types.Vote) (bool, error) {
+		atomic.AddUint32(&verifyCounter, 1)
+		return true, nil
+	}
+	tester.bfter.consensus.voteHandler = func(chain consensus.ChainReader, vote *types.Vote) error {
+		return nil
+	}
+	tester.bfter.broadcast.Vote = func(*types.Vote) {}
+
+	number := new(big.Int).Lsh(big.NewInt(1), 64)
+	number.Add(number, big.NewInt(1350))
+	vote := types.Vote{
+		ProposedBlockInfo: &types.BlockInfo{Number: number},
+		Signature:         []byte{1},
+		GapNumber:         450,
+	}
+	if err := tester.bfter.Vote(peerID, &vote); err != nil {
+		t.Fatal(err)
+	}
+	if n := atomic.LoadUint32(&verifyCounter); n != 0 {
+		t.Fatalf("verifyVote called %d times for a 2^64+1350 block number, want 0", n)
+	}
+}
+
+// TestVoteGapNumberWindowLowerBound covers the lower half of the window: a gap
+// number far below the head. newTester reports head 1351, which is inside the
+// 2700 window, so the head has to be raised to reach the bound. Without this
+// half, a peer could drive getSnapshot for gap blocks of long finished epochs
+// and evict the live snapshot from the 128-entry LRU.
+func TestVoteGapNumberWindowLowerBound(t *testing.T) {
+	tester := newTester()
+	tester.bfter.chainHeight = func() uint64 { return 100000 }
+
+	for _, tc := range []struct {
+		name string
+		gap  uint64
+		want uint32
+	}{
+		{"boundary inside", 100000 - 2700, 1},
+		{"one past the boundary", 100000 - 2700 - 1, 0},
+		{"gap block of a finished epoch", 450, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			verifyCounter := uint32(0)
+			tester.bfter.consensus.verifyVote = func(chain consensus.ChainReader, vote *types.Vote) (bool, error) {
+				atomic.AddUint32(&verifyCounter, 1)
+				return false, nil
+			}
+
+			vote := types.Vote{
+				ProposedBlockInfo: &types.BlockInfo{Number: big.NewInt(100000)},
+				Signature:         []byte{1},
+				GapNumber:         tc.gap,
+			}
+			if err := tester.bfter.Vote(peerID, &vote); err != nil {
+				t.Fatal(err)
+			}
+			if n := atomic.LoadUint32(&verifyCounter); n != tc.want {
+				t.Fatalf("verifyVote called %d times, want %d", n, tc.want)
+			}
+		})
+	}
+}
+
+// TestSyncInfoRejectsOversizedBlockNumber covers the same Int64 truncation on
+// the QC block number: 2^64+1350 used to compare as 1350 and pass the head±7 gate.
+func TestSyncInfoRejectsOversizedBlockNumber(t *testing.T) {
+	tester := newTester()
+	verifyCounter := uint32(0)
+	tester.bfter.consensus.verifySyncInfo = func(chain consensus.ChainReader, syncInfo *types.SyncInfo) (bool, error) {
+		atomic.AddUint32(&verifyCounter, 1)
+		return false, nil
+	}
+
+	number := new(big.Int).Lsh(big.NewInt(1), 64)
+	number.Add(number, big.NewInt(1350))
+	syncInfo := types.SyncInfo{
+		HighestQuorumCert: &types.QuorumCert{
+			ProposedBlockInfo: &types.BlockInfo{Number: number},
+		},
+	}
+	if err := tester.bfter.SyncInfo(peerID, &syncInfo); err != nil {
+		t.Fatal(err)
+	}
+	if n := atomic.LoadUint32(&verifyCounter); n != 0 {
+		t.Fatalf("verifySyncInfo called %d times for a 2^64+1350 QC block number, want 0", n)
+	}
+}
