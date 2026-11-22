@@ -75,6 +75,31 @@ func TestSideChainBelowCommittedIsNotStored(t *testing.T) {
 	}
 }
 
+// TestSideChainWithOffCanonicalCommittedIsStored covers a committed block that is not on the
+// canonical chain, which a QC for another fork produces: processQC looks the certified header up
+// by hash. reorg does not stop a node from moving to that fork, so the gate must not either, or a
+// node left on a minority fork could never follow the fork the network finalised.
+func TestSideChainWithOffCanonicalCommittedIsStored(t *testing.T) {
+	chain, engine, side := newFinalityGateChain(t)
+	head := chain.CurrentBlock()
+	// The engine committed the side fork's block at the head height, not the canonical one.
+	engine.EngineV2.SetHighestCommitBlockFaker(&types.BlockInfo{Number: side.Number(), Hash: side.Hash()})
+	if chain.GetCanonicalHash(side.NumberU64()) == side.Hash() {
+		t.Fatal("precondition: the committed block is canonical")
+	}
+
+	block, it := sidechainSegmentIterator(t, chain, types.Blocks{side})
+	if _, _, _, err := chain.insertSideChain(block, it, true); errors.Is(err, errSideChainBelowFinality) {
+		t.Fatalf("the gate refused a side block below an off-canonical committed block: %v", err)
+	}
+	if !chain.HasBlock(side.Hash(), side.NumberU64()) {
+		t.Fatal("the side block was not stored")
+	}
+	if h := chain.CurrentBlock(); h.Hash() != head.Hash() {
+		t.Fatalf("unexpected head: have #%d want the unchanged #%d", h.Number.Uint64(), head.Number.Uint64())
+	}
+}
+
 // TestSideChainWithoutCommittedIsStored covers the gate staying out of the way while the engine
 // knows no committed block: the side block is stored as before, and the head comparison is what
 // keeps the head in place.

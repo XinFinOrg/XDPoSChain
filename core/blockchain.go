@@ -3060,9 +3060,15 @@ func (bc *BlockChain) headTd(head *types.Header) (*big.Int, error) {
 	return td, nil
 }
 
-// latestCommittedNumber returns the height of the XDPoS v2 committed block, or false when the
-// engine is not XDPoS v2 or has not committed a block yet (startup, v1 range).
-func (bc *BlockChain) latestCommittedNumber() (uint64, bool) {
+// canonicalCommittedNumber returns the height of the XDPoS v2 committed block when that block is
+// on the canonical chain, or false when the engine is not XDPoS v2, has not committed a block yet
+// (startup, v1 range), or committed a block off the canonical chain.
+//
+// The last case matters: processQC looks a certified header up by hash, so a QC for another fork
+// commits a block of that fork. reorg refuses only to remove the committed block from the
+// canonical chain, and with that block off it, it still lets this node move over to its fork.
+// Gating on height alone would then refuse the very reorg that brings the node back.
+func (bc *BlockChain) canonicalCommittedNumber() (uint64, bool) {
 	xdpos, ok := bc.Engine().(*XDPoS.XDPoS)
 	if !ok || xdpos.EngineV2 == nil {
 		return 0, false
@@ -3071,7 +3077,11 @@ func (bc *BlockChain) latestCommittedNumber() (uint64, bool) {
 	if info == nil || info.Number == nil {
 		return 0, false
 	}
-	return info.Number.Uint64(), true
+	number := info.Number.Uint64()
+	if bc.GetCanonicalHash(number) != info.Hash {
+		return 0, false
+	}
+	return number, true
 }
 
 // insertSideChain is called when an import batch hits upon a pruned ancestor
@@ -3146,10 +3156,12 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, ve
 				return it.index, nil, nil, errors.New("sidechain ghost-state attack")
 			}
 		}
-		// A side block at or below the committed block can never be adopted, so refuse it before
-		// it reaches the disk. The verdict comes from this node's own finality, so it is reported
-		// as a local refusal and does not drop the peer: an honest peer may still relay a stale fork.
-		if committed, ok := bc.latestCommittedNumber(); ok && block.NumberU64() <= committed {
+		// A side block at or below a canonical committed block forks off below it, and reorg
+		// refuses to remove that block from the canonical chain, so the side block can never be
+		// adopted: refuse it before it reaches the disk. The verdict comes from this node's own
+		// finality, so it is reported as a local refusal and does not drop the peer: an honest
+		// peer may still relay a stale fork.
+		if committed, ok := bc.canonicalCommittedNumber(); ok && block.NumberU64() <= committed {
 			log.Debug("Refused side block below finality", "number", block.NumberU64(),
 				"hash", block.Hash(), "committed", committed)
 			return it.index, nil, nil, fmt.Errorf("%w: %w", ErrLocalInsertRefused, errSideChainBelowFinality)

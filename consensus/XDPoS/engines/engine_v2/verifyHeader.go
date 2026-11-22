@@ -18,10 +18,8 @@ import (
 
 // Verify individual header
 func (x *XDPoS_v2) verifyHeader(chain consensus.ChainReader, header *types.Header, parents []*types.Header, fullVerify bool) error {
-	if !x.isInitilised {
-		if err := x.initial(chain, header); err != nil {
-			return err
-		}
+	if err := x.ensureInitialised(chain, header); err != nil {
+		return err
 	}
 
 	_, ok := x.verifiedHeaders.Get(header.Hash())

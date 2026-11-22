@@ -228,6 +228,25 @@ func (x *XDPoS_v2) Initial(chain consensus.ChainReader, header *types.Header) er
 	return nil
 }
 
+// ensureInitialised runs initial once, for the paths that reach the engine before Initial did:
+// a node started below the v2 switch block meets its first v2 header in header verification or
+// in YourTurn. Both run concurrently with each other, so the flag is checked again under the
+// write lock that initial requires, and only one of them initialises.
+func (x *XDPoS_v2) ensureInitialised(chain consensus.ChainReader, header *types.Header) error {
+	x.lock.RLock()
+	initialised := x.isInitilised
+	x.lock.RUnlock()
+	if initialised {
+		return nil
+	}
+	x.lock.Lock()
+	defer x.lock.Unlock()
+	if x.isInitilised {
+		return nil
+	}
+	return x.initial(chain, header)
+}
+
 // initial sets the v2 parameters from the chain. It must only be called while
 // holding x.lock, from either the startup path (Initial) or header verification.
 // The startup-only gap snapshot repair is deliberately kept in Initial, not here.
@@ -325,16 +344,13 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 
 // Check if it's my turn to mine a block. Note: The second return value `preIndex` is useless in V2 engine
 func (x *XDPoS_v2) YourTurn(chain consensus.ChainReader, parent *types.Header, signer common.Address) (bool, error) {
+	if err := x.ensureInitialised(chain, parent); err != nil {
+		log.Error("[YourTurn] Error while initialising last v2 variables", "ParentBlockHash", parent.Hash(), "Error", err)
+		return false, err
+	}
+
 	x.lock.RLock()
 	defer x.lock.RUnlock()
-
-	if !x.isInitilised {
-		err := x.initial(chain, parent)
-		if err != nil {
-			log.Error("[YourTurn] Error while initialising last v2 variables", "ParentBlockHash", parent.Hash(), "Error", err)
-			return false, err
-		}
-	}
 
 	waitedTime := time.Now().Unix() - int64(parent.Time)
 	minePeriod := x.config.V2.Config(uint64(x.currentRound)).MinePeriod
@@ -1392,7 +1408,12 @@ func (x *XDPoS_v2) periodicJob() {
 	}()
 }
 
+// GetLatestCommittedBlockInfo returns the highest committed block. It reads under x.lock because
+// commitBlocks writes the value under it, and it is called from outside the engine only, so no
+// caller already holds the lock.
 func (x *XDPoS_v2) GetLatestCommittedBlockInfo() *types.BlockInfo {
+	x.lock.RLock()
+	defer x.lock.RUnlock()
 	return x.highestCommitBlock
 }
 

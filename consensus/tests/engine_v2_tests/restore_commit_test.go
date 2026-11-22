@@ -3,6 +3,7 @@ package engine_v2_tests
 import (
 	"testing"
 
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/engines/engine_v2"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -48,6 +49,27 @@ func TestInitialRestoresCommittedBlockAfterTimeout(t *testing.T) {
 		assert.Equal(t, blockchain.GetHeaderByNumber(904).Hash(), committed.Hash)
 		assert.Equal(t, types.Round(4), committed.Round)
 	}
+}
+
+// TestLatestCommittedBlockInfoIsSynchronised reads the committed block while the engine writes it
+// under its lock, as commitBlocks does. The chain reads it on every side-chain import, so the read
+// has to take the lock too; the race detector reports it otherwise.
+func TestLatestCommittedBlockInfoIsSynchronised(t *testing.T) {
+	t.Parallel()
+	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 901, params.TestXDPoSMockChainConfig, nil)
+	engine := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 1000; i++ {
+			engine.SetHighestCommitBlockFaker(&types.BlockInfo{Number: currentBlock.Number(), Hash: currentBlock.Hash(), Round: types.Round(i)})
+		}
+	}()
+	for i := 0; i < 1000; i++ {
+		_ = engine.GetLatestCommittedBlockInfo()
+	}
+	<-done
 }
 
 // TestInitialDoesNotCommitWithoutThreeChain covers a chain whose stored headers hold no 3-chain:
