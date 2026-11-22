@@ -213,6 +213,45 @@ func TestSpecialLaneRandomizeReplacement(t *testing.T) {
 	}
 }
 
+// TestSpecialLaneDuplicateSignTx checks that a sender may pool one sign
+// transaction per signed block: another one for the same block at a different
+// nonce, pending or queued, is refused, while other blocks, other senders and
+// randomize transactions are unaffected.
+func TestSpecialLaneDuplicateSignTx(t *testing.T) {
+	t.Parallel()
+
+	pool, _ := setupPool()
+	defer pool.Close()
+	pool.SetSigner(func(common.Address) bool { return true })
+	<-pool.requestReset(nil, newTestHeader(60))
+
+	key := laneKey(pool)
+	if err := pool.addRemoteSync(laneSignTx(t, key, 0, 30, 1)); err != nil {
+		t.Fatalf("failed to add sign tx: %v", err)
+	}
+	for _, nonce := range []uint64{1, 7} {
+		if err := pool.addRemoteSync(laneSignTx(t, key, nonce, 30, 2)); !errors.Is(err, ErrDuplicateSignTx) {
+			t.Fatalf("second sign tx for block 30 at nonce %d: err = %v, want %v", nonce, err, ErrDuplicateSignTx)
+		}
+	}
+	if err := pool.addRemoteSync(laneSignTx(t, key, 1, 45, 2)); err != nil {
+		t.Fatalf("sign tx for another block rejected: %v", err)
+	}
+	if err := pool.addRemoteSync(laneRandomizeTx(t, key, 2, 1)); err != nil {
+		t.Fatalf("randomize tx rejected: %v", err)
+	}
+	// A replacement may not sign a block another nonce already signs either.
+	if err := pool.addRemoteSync(laneSignTx(t, key, 0, 45, 3)); !errors.Is(err, ErrDuplicateSignTx) {
+		t.Fatalf("replacement signing an already signed block: err = %v, want %v", err, ErrDuplicateSignTx)
+	}
+	if err := pool.addRemoteSync(laneSignTx(t, laneKey(pool), 0, 30, 1)); err != nil {
+		t.Fatalf("another sender's sign tx for the same block rejected: %v", err)
+	}
+	if pending, queued := pool.Stats(); pending != 4 || queued != 0 {
+		t.Fatalf("pool stats = (%d pending, %d queued), want (4, 0)", pending, queued)
+	}
+}
+
 // TestSpecialLaneSenderCap checks that one sender may pool at most
 // maxSpecialTxsPerAccount special transactions, pending and queued together,
 // that replacing one of them at the same nonce is still accepted at the cap,

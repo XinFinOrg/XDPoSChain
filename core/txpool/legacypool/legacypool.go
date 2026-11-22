@@ -94,6 +94,10 @@ var (
 	// transaction at the same nonce without being a sign transaction for a newer
 	// block.
 	ErrSignTxNotNewer = errors.New("pooled sign transaction can only be replaced by a sign transaction for a newer block")
+
+	// ErrDuplicateSignTx is returned if the sender already has a sign transaction
+	// for the same block pooled at another nonce.
+	ErrDuplicateSignTx = errors.New("sign transaction for this block already pooled")
 )
 
 var (
@@ -932,10 +936,21 @@ func (pool *LegacyPool) pooledSpecials(from common.Address) []*types.Transaction
 //   - a pooled sign transaction is replaced only by a sign transaction for a
 //     newer block, which an honest node re-signing a stuck nonce always sends.
 //     A pooled randomize transaction is replaced by any transaction, so it
-//     never blocks its sender's nonce (see list.Add for regular replacements).
+//     never blocks its sender's nonce (see list.Add for regular replacements);
+//   - a sender may pool one sign transaction per signed block: one signing a
+//     block the sender already has a sign transaction for at another nonce is
+//     refused, as only one of them could ever count.
 //
 // Note, this method assumes the pool lock is held!
 func (pool *LegacyPool) checkSpecialTx(from common.Address, tx *types.Transaction) error {
+	if tx.IsSigningTransaction() {
+		signed := signTxNumber(tx)
+		for _, pooled := range pool.pooledSpecials(from) {
+			if pooled.Nonce() != tx.Nonce() && pooled.IsSigningTransaction() && signTxNumber(pooled).Cmp(signed) == 0 {
+				return fmt.Errorf("%w: block %v at nonce %d", ErrDuplicateSignTx, signed, pooled.Nonce())
+			}
+		}
+	}
 	if old := pool.pooledAt(from, tx.Nonce()); old != nil && old.IsSpecialTransaction() {
 		return checkSignTxReplacement(old, tx)
 	}
