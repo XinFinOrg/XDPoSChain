@@ -45,23 +45,17 @@ func TestInsertBlockDoesNotPrecomputeAnExecutedBlock(t *testing.T) {
 	if have, want := chain.CurrentBlock().Number.Uint64(), blocks[3].NumberU64(); have != want {
 		t.Fatalf("unexpected head after rollback: have %d want %d", have, want)
 	}
-	// The imports above ran every block they were handed, and getResultBlock records that in
-	// calculatingBlock without ever removing it. Clear this block's entry, so that one found
-	// after the import below can only have been written by that import.
-	chain.calculatingBlock.Remove(target.HashNoValidator())
-	if chain.calculatingBlock.Contains(target.HashNoValidator()) {
-		t.Fatal("precondition: the block is still recorded as being calculated")
-	}
+	// The imports above ran every block they were handed. Count executions from here on:
+	// a calculation entry is gone once it returns, so it cannot tell an adoption from a re-run.
+	counter := countExecutions(chain)
 	if err := chain.InsertBlock(target); err != nil {
 		t.Fatalf("failed to re-import the known block: %v", err)
 	}
 	if have, want := chain.CurrentBlock().Number.Uint64(), target.NumberU64(); have != want {
 		t.Fatalf("head did not advance over the known block: have %d want %d", have, want)
 	}
-	// getResultBlock is what records a block it is about to run. An entry here means the already
-	// executed block was executed a second time, only for the result to be thrown away.
-	if chain.calculatingBlock.Contains(target.HashNoValidator()) {
-		t.Fatal("an already executed block was precomputed instead of adopted")
+	if n := counter.calls.Load(); n != 0 {
+		t.Fatalf("an already executed block was precomputed %d time(s) instead of adopted", n)
 	}
 }
 

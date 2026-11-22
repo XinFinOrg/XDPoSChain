@@ -54,6 +54,9 @@ type CalculatedBlock struct {
 	// (getResultBlock) and polled by the goroutine running that calculation
 	// (ProcessBlockNoValidator), with nothing ordering the two, hence atomic.
 	stop atomic.Bool
+	// done is set when this entry's calculation returns, so a reader that already holds the
+	// entry cannot take it for one still in flight.
+	done atomic.Bool
 }
 
 // NewStateProcessor initialises a new StateProcessor.
