@@ -59,6 +59,13 @@ const (
 	// more expensive to propagate; larger transactions also take more resources
 	// to validate whether they fit into the pool or not.
 	txMaxSize = 2 * txSlotSize // 64KB, don't bump without EIP-2464 support
+
+	// maxSpecialTxsPerAccount is the number of special transactions (to the
+	// BlockSigners and Randomize contracts) one account may have in the pool,
+	// pending and queued together. Special transactions take no slots from the
+	// pool capacity, so this bounds their share of it. An honest signer has
+	// about one sign transaction and one or two randomize transactions pooled.
+	maxSpecialTxsPerAccount = 16
 )
 
 var (
@@ -78,6 +85,10 @@ var (
 	// ErrFutureReplacePending is returned if a future transaction replaces a pending
 	// one. Future transactions should only be able to replace other future transactions.
 	ErrFutureReplacePending = errors.New("future transaction tries to replace pending")
+
+	// ErrSpecialTxLimit is returned if a special transaction would take its sender
+	// over maxSpecialTxsPerAccount pooled special transactions.
+	ErrSpecialTxLimit = errors.New("too many special transactions from sender")
 )
 
 var (
@@ -758,6 +769,14 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 		}()
 	}
 
+	// Special transactions follow their own admission rules, see checkSpecialTx.
+	if tx.IsSpecialTransaction() {
+		if err := pool.checkSpecialTx(from, tx); err != nil {
+			log.Trace("Discarding special transaction", "hash", hash, "err", err)
+			return false, err
+		}
+	}
+
 	// Special transactions must also honor the reservation semantics to keep
 	// the coordinator's ownership accounting balanced. A signer's special tx at
 	// the next pending nonce, or replacing one it already has pending, bypasses
@@ -862,6 +881,57 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 
 	log.Trace("Pooled new future transaction", "hash", hash, "from", from, "to", tx.To())
 	return replaced, nil
+}
+
+// pooledAt returns the sender's pooled transaction at the given nonce, pending
+// or queued, or nil if there is none.
+func (pool *LegacyPool) pooledAt(from common.Address, nonce uint64) *types.Transaction {
+	if list := pool.pending[from]; list != nil {
+		if tx := list.txs.Get(nonce); tx != nil {
+			return tx
+		}
+	}
+	if list, ok := pool.queue.get(from); ok {
+		return list.txs.Get(nonce)
+	}
+	return nil
+}
+
+// pooledSpecials returns the sender's pooled special transactions, pending and
+// queued.
+func (pool *LegacyPool) pooledSpecials(from common.Address) []*types.Transaction {
+	var specials []*types.Transaction
+	collect := func(l *list) {
+		for _, tx := range l.Flatten() {
+			if tx.IsSpecialTransaction() {
+				specials = append(specials, tx)
+			}
+		}
+	}
+	if list := pool.pending[from]; list != nil {
+		collect(list)
+	}
+	if list, ok := pool.queue.get(from); ok {
+		collect(list)
+	}
+	return specials
+}
+
+// checkSpecialTx applies the pool rules for a special transaction from sender
+// from: special transactions take no slots from the pool capacity, so each
+// sender may pool at most maxSpecialTxsPerAccount of them. A transaction
+// replacing one of the sender's special transactions at the same nonce does
+// not grow that count.
+//
+// Note, this method assumes the pool lock is held!
+func (pool *LegacyPool) checkSpecialTx(from common.Address, tx *types.Transaction) error {
+	if old := pool.pooledAt(from, tx.Nonce()); old != nil && old.IsSpecialTransaction() {
+		return nil
+	}
+	if len(pool.pooledSpecials(from)) >= maxSpecialTxsPerAccount {
+		return fmt.Errorf("%w: limit %d", ErrSpecialTxLimit, maxSpecialTxsPerAccount)
+	}
+	return nil
 }
 
 // isGapped reports whether the given transaction is immediately executable.

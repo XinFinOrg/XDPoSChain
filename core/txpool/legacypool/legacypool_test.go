@@ -2824,18 +2824,16 @@ func TestOutOfOrderDeliveryPromotesAll(t *testing.T) {
 		pool.SetSigner(func(common.Address) bool { return true })
 		testAddBalance(pool, crypto.PubkeyToAddress(key.PublicKey), big.NewInt(1_000_000_000_000_000))
 
-		// Sign txs from a candidate: zero gas price, to the BlockSigners contract.
-		for nonce := count - 1; nonce >= 0; nonce-- {
-			tx, err := types.SignTx(types.NewTransaction(uint64(nonce), common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), signTxData(0)), types.HomesteadSigner{}, key)
-			if err != nil {
-				t.Fatalf("failed to sign special tx %d: %v", nonce, err)
-			}
-			if err := pool.addRemoteSync(tx); err != nil {
+		// Special txs from a candidate: zero gas price, to the Randomize
+		// contract, as many as one sender may pool.
+		const specials = maxSpecialTxsPerAccount
+		for nonce := specials - 1; nonce >= 0; nonce-- {
+			if err := pool.addRemoteSync(laneRandomizeTx(t, key, uint64(nonce), byte(nonce))); err != nil {
 				t.Fatalf("special tx %d rejected: %v", nonce, err)
 			}
 		}
-		if pending, queued := pool.Stats(); pending != count || queued != 0 {
-			t.Fatalf("pool stats = (%d pending, %d queued), want (%d, 0)", pending, queued, count)
+		if pending, queued := pool.Stats(); pending != specials || queued != 0 {
+			t.Fatalf("pool stats = (%d pending, %d queued), want (%d, 0)", pending, queued, specials)
 		}
 	})
 }
