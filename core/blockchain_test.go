@@ -3169,6 +3169,8 @@ func TestGetResultBlockReportsMissingLocalTd(t *testing.T) {
 // block to HasFullState, which crashed the node; it is a fault of this node's database,
 // so it has to be reported as a local condition and leave the head where it is.
 func TestGetResultBlockReportsMissingAncestorBody(t *testing.T) {
+	t.Parallel()
+
 	chain, blocks, engine, genDb := newMissingTdChain(t, 4, 3) // head at #3, #4 is unknown
 	head := chain.CurrentBlock()
 
