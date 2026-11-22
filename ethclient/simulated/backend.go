@@ -86,6 +86,7 @@ var errNotXDPoSV2 = errors.New("only XDPoS v2 can lookup committed block")
 type Backend struct {
 	database   ethdb.Database   // In memory database to store our testing data
 	blockchain *core.BlockChain // Ethereum blockchain to handle the consensus
+	stack      *node.Node       // Node owning the trading database, nil for the ethash backend
 
 	mu              sync.Mutex
 	pendingBlock    *types.Block   // Currently pending block that will be imported on request
@@ -96,6 +97,16 @@ type Backend struct {
 	filterSystem *filters.FilterSystem // for filtering database logs
 
 	config *params.ChainConfig
+
+	// closeOnce runs the shutdown once. A concurrent Close waits for the first
+	// one and reports its error instead of closing the node, and with it the
+	// trading database, while the chain is still stopping.
+	closeOnce sync.Once
+	closeErr  error
+
+	// testHookBeforeStackClose runs after the blockchain stopped and before the
+	// node is closed. Tests use it to hold a shutdown open.
+	testHookBeforeStackClose func()
 }
 
 // Client exposes the methods provided by the simulated backend client.
@@ -166,12 +177,16 @@ func newXDCSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64, chainConf
 	}
 	stack, err := node.New(&node.Config{DataDir: ""})
 	if err != nil {
-		log.Error("Could not create new node: %v", err)
+		log.Error("Could not create new node", "err", err)
 		return nil
 	}
-	defer stack.Close()
 
-	XDCXServ := XDCx.New(stack, &DefaultConfig)
+	XDCXServ, err := XDCx.New(stack, &DefaultConfig)
+	if err != nil {
+		log.Error("Could not create XDCx service", "err", err)
+		stack.Close()
+		return nil
+	}
 
 	lendingServ := XDCxlending.New(stack, XDCXServ)
 
@@ -193,6 +208,7 @@ func newXDCSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64, chainConf
 	backend := &Backend{
 		database:   database,
 		blockchain: blockchain,
+		stack:      stack,
 		config:     genesis.Config,
 	}
 
@@ -248,10 +264,23 @@ func newEthashSimulatedBackendWithConfig(alloc types.GenesisAlloc, gasLimit uint
 	return backend
 }
 
-// Close terminates the underlying blockchain's update loop.
+// Close terminates the underlying blockchain's update loop and releases the
+// node that owns the trading database. It is safe to call concurrently: the
+// shutdown runs once and every caller reports the same error.
 func (b *Backend) Close() error {
-	b.blockchain.Stop()
-	return nil
+	b.closeOnce.Do(func() {
+		b.blockchain.Stop()
+		if b.stack == nil {
+			return
+		}
+		if b.testHookBeforeStackClose != nil {
+			b.testHookBeforeStackClose()
+		}
+		if err := b.stack.Close(); err != nil && !errors.Is(err, node.ErrNodeStopped) {
+			b.closeErr = err
+		}
+	})
+	return b.closeErr
 }
 
 // Commit imports all the pending transactions as a single block and starts a

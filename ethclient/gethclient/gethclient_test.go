@@ -89,7 +89,10 @@ func newTestBackend(t *testing.T) (*node.Node, []*types.Block, []common.Hash) {
 	// here also covers the setup failures below, which return before the caller
 	// can defer a node close.
 	xdcxDir := t.TempDir()
-	xdcx := XDCx.New(n, &XDCx.Config{DataDir: xdcxDir})
+	xdcx, err := XDCx.New(n, &XDCx.Config{DataDir: xdcxDir})
+	if err != nil {
+		t.Fatalf("can't create the XDCx service: %v", err)
+	}
 	t.Cleanup(func() {
 		if err := n.Close(); err != nil && !errors.Is(err, node.ErrNodeStopped) {
 			t.Logf("closing the test node: %v", err)

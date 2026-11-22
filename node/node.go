@@ -746,6 +746,25 @@ func (n *Node) OpenDatabase(name string, cache, handles int, namespace string, r
 	return db, err
 }
 
+// TrackDatabase registers db to be closed when the node is closed, even if the
+// node was never started. The returned database removes itself from the node
+// when closed by the caller. Tracking is only possible before the node starts.
+func (n *Node) TrackDatabase(db ethdb.Database) (ethdb.Database, error) {
+	if db == nil {
+		return nil, errors.New("nil database")
+	}
+	n.lock.Lock()
+	defer n.lock.Unlock()
+	switch n.state {
+	case initializingState:
+		return n.wrapDatabase(db), nil
+	case closedState:
+		return nil, ErrNodeStopped
+	default:
+		return nil, ErrNodeRunning
+	}
+}
+
 // ResolvePath returns the absolute path of a resource in the instance directory.
 func (n *Node) ResolvePath(x string) string {
 	return n.config.ResolvePath(x)

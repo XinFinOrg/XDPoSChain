@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
+	"sync"
 
 	"github.com/XinFinOrg/XDPoSChain/XDCx/tradingstate"
 	"github.com/XinFinOrg/XDPoSChain/XDCxDAO"
@@ -14,8 +15,10 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/node"
+	"github.com/syndtr/goleveldb/leveldb"
 )
 
 const (
@@ -40,31 +43,75 @@ var DefaultConfig = Config{
 
 type XDCX struct {
 	// Order related
-	db         XDCxDAO.XDCXDAO
+	db         XDCxDAO.XDCXDAO                  // closes db and unregisters it from the node
 	Triegc     *prque.Prque[int64, common.Hash] // Priority queue mapping block numbers to tries to gc
 	StateCache tradingstate.Database            // State database to reuse between imports (contains state cache)    *XDCx_state.TradingStateDB
 
 	tokenDecimalCache *lru.Cache[common.Address, *big.Int]
 }
 
-func NewLDBEngine(cfg *Config) *XDCxDAO.BatchDatabase {
-	datadir := cfg.DataDir
-	batchDB := XDCxDAO.NewBatchDatabaseWithEncode(datadir, 0)
-	return batchDB
+// trackedDatabase routes Close through the node's close tracker, so closing the
+// trading database through GetLevelDB unregisters it from the node instead of
+// leaving a second close to the node's shutdown. Close is idempotent: closing
+// the handle after the node already closed the database reports success.
+type trackedDatabase struct {
+	XDCxDAO.XDCXDAO
+	nodeHandle ethdb.Database
+	once       sync.Once
+	err        error
 }
 
-func New(stack *node.Node, cfg *Config) *XDCX {
+func (db *trackedDatabase) Close() error {
+	db.once.Do(func() {
+		db.err = db.nodeHandle.Close()
+		if errors.Is(db.err, leveldb.ErrClosed) {
+			db.err = nil
+		}
+	})
+	return db.err
+}
+
+func NewLDBEngine(cfg *Config) (*XDCxDAO.BatchDatabase, error) {
+	datadir := cfg.DataDir
+	return XDCxDAO.NewBatchDatabaseWithEncode(datadir, 0)
+}
+
+func New(stack *node.Node, cfg *Config) (*XDCX, error) {
+	// default DBEngine: levelDB
+	db, err := NewLDBEngine(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("open XDCx database: %w", err)
+	}
+	trackedDB, err := stack.TrackDatabase(db)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("track the XDCx database: %w", err)
+	}
+
 	XDCX := &XDCX{
+		db:                &trackedDatabase{XDCXDAO: db, nodeHandle: trackedDB},
 		Triegc:            prque.New[int64, common.Hash](nil),
 		tokenDecimalCache: lru.NewCache[common.Address, *big.Int](defaultCacheLimit),
 	}
-
-	// default DBEngine: levelDB
-	XDCX.db = NewLDBEngine(cfg)
-
 	XDCX.StateCache = tradingstate.NewDatabase(XDCX.db)
 
-	return XDCX
+	// Register before eth is registered, so that the node stops this service
+	// after Ethereum.Stop: the trading database is read while importing and
+	// validating blocks.
+	stack.RegisterLifecycle(XDCX)
+
+	return XDCX, nil
+}
+
+// Start implements node.Lifecycle. The database is opened in New, before the
+// node starts.
+func (XDCx *XDCX) Start() error {
+	return nil
+}
+
+// Stop implements node.Lifecycle.
+func (XDCx *XDCX) Stop() error {
+	return XDCx.db.Close()
 }
 
 func (XDCx *XDCX) GetLevelDB() XDCxDAO.XDCXDAO {

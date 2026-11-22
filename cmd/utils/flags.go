@@ -1791,7 +1791,10 @@ func RegisterEthStatsService(stack *node.Node, backend ethapi.Backend, url strin
 
 func RegisterXDCXService(stack *node.Node, cfg *XDCx.Config) (*XDCx.XDCX, *XDCxlending.Lending) {
 	// register XDCx service
-	XDCX := XDCx.New(stack, cfg)
+	XDCX, err := XDCx.New(stack, cfg)
+	if err != nil {
+		Fatalf("Failed to register the XDCx service: %v", err)
+	}
 	// register XDCxlending service
 	lendingServ := XDCxlending.New(stack, XDCX)
 	return XDCX, lendingServ

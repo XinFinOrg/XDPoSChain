@@ -25,13 +25,16 @@ import (
 	"math/rand"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	ethereum "github.com/XinFinOrg/XDPoSChain"
+	"github.com/XinFinOrg/XDPoSChain/XDCx"
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi"
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -1405,5 +1408,95 @@ func calledEventQuery(contractAddr common.Address, calledEventID common.Hash, fr
 		ToBlock:   toBlock,
 		Addresses: []common.Address{contractAddr},
 		Topics:    [][]common.Hash{{calledEventID}},
+	}
+}
+
+// TestXDCSimulatedBackendTradingDatabaseLifetime pins the in-memory trading
+// database to the backend lifetime: the constructor must leave it open, and
+// Backend.Close must release it.
+func TestXDCSimulatedBackendTradingDatabaseLifetime(t *testing.T) {
+	backend := New(types.GenesisAlloc{}, 10000000, params.TestXDPoSMockChainConfig)
+	engine, ok := backend.blockchain.Engine().(*XDPoS.XDPoS)
+	if !ok {
+		t.Fatalf("engine is %T, want *XDPoS.XDPoS", backend.blockchain.Engine())
+	}
+	service, ok := engine.GetXDCXService().(*XDCx.XDCX)
+	if !ok {
+		t.Fatalf("trading service is %T, want *XDCx.XDCX", engine.GetXDCXService())
+	}
+	db := service.GetLevelDB()
+
+	// A batch flush writes into the memorydb map, so it panics if the database
+	// was closed when the constructor returned.
+	batch := db.NewBatch()
+	batch.Put([]byte("trading-db-lifetime"), []byte("open"))
+	if err := batch.Write(); err != nil {
+		t.Fatalf("writing the trading database after construction: %v", err)
+	}
+
+	if err := backend.Close(); err != nil {
+		t.Fatalf("closing the backend: %v", err)
+	}
+	if err := db.Put([]byte("trading-db-lifetime"), []byte("closed")); err == nil {
+		t.Fatal("trading database is still writable after Backend.Close")
+	}
+}
+
+// TestXDCSimulatedBackendConcurrentCloseKeepsTheTradingDatabaseOpen pins the
+// shutdown to a single run: a Close that starts while the first one is still
+// stopping the chain must wait for it instead of releasing the node, and with
+// it the trading database, underneath the running shutdown.
+func TestXDCSimulatedBackendConcurrentCloseKeepsTheTradingDatabaseOpen(t *testing.T) {
+	backend := New(types.GenesisAlloc{}, 10000000, params.TestXDPoSMockChainConfig)
+	engine, ok := backend.blockchain.Engine().(*XDPoS.XDPoS)
+	if !ok {
+		t.Fatalf("engine is %T, want *XDPoS.XDPoS", backend.blockchain.Engine())
+	}
+	service, ok := engine.GetXDCXService().(*XDCx.XDCX)
+	if !ok {
+		t.Fatalf("trading service is %T, want *XDCx.XDCX", engine.GetXDCXService())
+	}
+	db := service.GetLevelDB()
+
+	// Hold the first shutdown after the chain stopped and before the node is
+	// closed. Only the first caller blocks, so a Close without the guard runs
+	// straight through to the node.
+	var held atomic.Bool
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	backend.testHookBeforeStackClose = func() {
+		if held.CompareAndSwap(false, true) {
+			close(entered)
+			<-release
+		}
+	}
+
+	first := make(chan error, 1)
+	go func() { first <- backend.Close() }()
+	<-entered
+
+	second := make(chan error, 1)
+	go func() { second <- backend.Close() }()
+
+	// The second Close must wait for the first shutdown instead of reporting
+	// success while it is still in progress.
+	select {
+	case err := <-second:
+		t.Fatalf("the second Close returned (%v) while the first shutdown was still in progress", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	// The trading database must still be open: an import interrupted by the
+	// first Close writes it, and a non-empty batch on a closed in-memory
+	// database panics.
+	if err := db.Put([]byte("concurrent-close"), []byte("open")); err != nil {
+		t.Fatalf("trading database closed while the first shutdown was still in progress: %v", err)
+	}
+
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := <-second; err != nil {
+		t.Fatalf("second Close: %v", err)
 	}
 }

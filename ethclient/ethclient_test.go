@@ -143,7 +143,11 @@ func newTestBackend(config *node.Config) (*node.Node, []*types.Block, error) {
 		return nil, nil, fmt.Errorf("can't create new node: %v", err)
 	}
 	// Create XDCx and lending services required by eth.New
-	xdcx := XDCx.New(n, &XDCx.Config{DataDir: filepath.Join(config.DataDir, "XDCx")})
+	xdcx, err := XDCx.New(n, &XDCx.Config{DataDir: filepath.Join(config.DataDir, "XDCx")})
+	if err != nil {
+		n.Close()
+		return nil, nil, fmt.Errorf("can't create the XDCx service: %v", err)
+	}
 	lending := XDCxlending.New(n, xdcx)
 	// Create Ethereum Service
 	ecfg := &ethconfig.Config{Genesis: genesis, RPCGasCap: 1000000}
