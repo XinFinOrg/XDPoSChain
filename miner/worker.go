@@ -1161,9 +1161,13 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			}
 		}
 
-		if gp.Gas() < minTxGas && tx.Gas() > 0 {
-			log.Warn("Not enough gas for further transactions", "hash", tx.Hash().Hex(), "tx.Gas", tx.Gas(), "gp", gp, "need", minTxGas)
-			break
+		// A sign transaction on the sign route takes no block gas, so a low gas
+		// pool does not stop it. Any other special transaction that no longer
+		// fits is skipped on its own, without ending the loop for the ones after
+		// it.
+		if gp.Gas() < minTxGas && tx.Gas() > 0 && !core.IsSignTransactionRoute(w.config, w.header.Number, tx) {
+			log.Debug("Skipping special transaction, not enough block gas left", "hash", tx.Hash(), "tx.Gas", tx.Gas(), "gp", gp, "need", minTxGas)
+			continue
 		}
 		// Error may be ignored here. The error has already been checked
 		// during transaction acceptance is the transaction pool.
