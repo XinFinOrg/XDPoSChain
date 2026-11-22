@@ -59,6 +59,13 @@ var (
 // matches the window the reward hook counts signing transactions over.
 const signTxWindowEpochs = 2
 
+// signTxLookahead is how far above the block it is judged for a sign
+// transaction may sign. The pool judges against the block after its own head;
+// with this lookahead it accepts a signature for any block up to one merge
+// range past that head, so an honest sign transaction is not refused while the
+// pool head lags behind the block just imported.
+const signTxLookahead = common.MergeSignRange - 1
+
 // SignerSource is implemented by a consensus engine that keeps the candidate
 // list sign transactions are checked against. XDPoS implements it; the list is
 // the same one the transaction pool's signer check reads.
@@ -74,8 +81,11 @@ type SignerSource interface {
 //
 // It does not require the signed block to be below number: the pool judges a
 // transaction against the block after its own head, which can lag behind the
-// block a node has just imported and signs. SignTxRules adds that rule for the
-// block actually being built or processed.
+// block a node has just imported and signs. It only caps the signed block at
+// signTxLookahead blocks above number, enough for a pool head that lags up to a
+// merge range, so a far-future sign transaction is refused. SignTxRules adds
+// the stricter rule, signed block below number, for the block actually being
+// built or processed.
 func CheckSignTxFields(config *params.ChainConfig, number *big.Int, tx *types.Transaction) error {
 	if !IsSignTransactionRoute(config, number, tx) {
 		return nil
@@ -94,6 +104,9 @@ func CheckSignTxFields(config *params.ChainConfig, number *big.Int, tx *types.Tr
 	// the merge check below from reading a truncated value.
 	if !signed.IsUint64() {
 		return fmt.Errorf("%w: signed %v", ErrSignTxFutureBlock, signed)
+	}
+	if limit := new(big.Int).Add(number, big.NewInt(signTxLookahead)); signed.Cmp(limit) > 0 {
+		return fmt.Errorf("%w: signed %v, block %v", ErrSignTxFutureBlock, signed, number)
 	}
 	// Before TIP2019 every block was signed, after it only merge blocks are.
 	if config.IsTIP2019(number) && signed.Uint64()%common.MergeSignRange != 0 {

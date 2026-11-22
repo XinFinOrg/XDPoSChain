@@ -104,9 +104,10 @@ func TestCheckSignTxFields(t *testing.T) {
 		{"wrong selector", legacy(common.BlockSignersBinary, big.NewInt(0), append([]byte{1, 2, 3, 4}, signData(1995, common.Hash{1})[4:]...)), core.ErrSignTxData},
 		{"value", legacy(common.BlockSignersBinary, big.NewInt(1), signData(1995, common.Hash{1})), core.ErrSignTxValue},
 		// The pool's view of the next block can lag the block a node signs, so
-		// the field rules leave "below the including block" to SignTxRules.
+		// the field rules leave "below the including block" to SignTxRules and
+		// only cap the signed block at 14 blocks above the including block.
 		{"signs the including block", legacy(common.BlockSignersBinary, big.NewInt(0), signData(2010, common.Hash{1})), nil},
-		{"signs a later block", legacy(common.BlockSignersBinary, big.NewInt(0), signData(2025, common.Hash{1})), nil},
+		{"signs past the lookahead", legacy(common.BlockSignersBinary, big.NewInt(0), signData(2025, common.Hash{1})), core.ErrSignTxFutureBlock},
 		{"signed number beyond uint64", legacy(common.BlockSignersBinary, big.NewInt(0), signDataBig(new(big.Int).Lsh(big.NewInt(1), 64), common.Hash{1})), core.ErrSignTxFutureBlock},
 		{"not a merge block", legacy(common.BlockSignersBinary, big.NewInt(0), signData(1996, common.Hash{1})), core.ErrSignTxNotMergeBlock},
 		{"out of window", legacy(common.BlockSignersBinary, big.NewInt(0), signData(195, common.Hash{1})), core.ErrSignTxOutOfWindow},
@@ -114,6 +115,32 @@ func TestCheckSignTxFields(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := core.CheckSignTxFields(cfg, block, tt.tx)
+			if !errors.Is(err, tt.want) || (tt.want == nil && err != nil) {
+				t.Fatalf("err = %v, want %v", err, tt.want)
+			}
+		})
+	}
+}
+
+// TestCheckSignTxFieldsLookahead pins the cap on how far ahead a sign
+// transaction may sign: up to one merge range past the pool head, which is the
+// block before the one the transaction is judged for.
+func TestCheckSignTxFieldsLookahead(t *testing.T) {
+	cfg := signTxRulesConfig()
+	block := big.NewInt(2011) // the pool head is 2010
+	tests := []struct {
+		name   string
+		signed int64
+		want   error
+	}{
+		{"head + 15, the last allowed", 2025, nil},
+		{"head + 30, beyond the cap", 2040, core.ErrSignTxFutureBlock},
+		{"far future", 1_000_005, core.ErrSignTxFutureBlock},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tx := contracts.CreateTxSign(big.NewInt(tt.signed), common.Hash{1}, 0, common.BlockSignersBinary)
+			err := core.CheckSignTxFields(cfg, block, tx)
 			if !errors.Is(err, tt.want) || (tt.want == nil && err != nil) {
 				t.Fatalf("err = %v, want %v", err, tt.want)
 			}

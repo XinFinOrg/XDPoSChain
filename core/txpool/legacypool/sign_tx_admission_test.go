@@ -193,3 +193,39 @@ func TestSignTxAdmittedWhilePoolHeadLags(t *testing.T) {
 		t.Fatalf("sign tx for the block just imported was rejected: %v", err)
 	}
 }
+
+// TestSignTxAdmissionLookahead checks the cap on how far past its head the pool
+// accepts a signed block: a pool head lagging a whole merge range still admits
+// the honest sign transaction, while one signing further ahead is refused.
+func TestSignTxAdmissionLookahead(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		signed int64
+		want   error
+	}{
+		{"pool head lags a merge range", 30, nil},
+		{"beyond one merge range", 45, core.ErrSignTxFutureBlock},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key, _ := crypto.GenerateKey()
+			addr := crypto.PubkeyToAddress(key.PublicKey)
+			statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
+			chain := &laggingHeadChain{testBlockChain: newTestBlockChain(params.TestChainConfig, 10000000, statedb, new(event.Feed)), head: 15}
+			pool, _ := setupPoolWithChain(chain)
+			defer pool.Close()
+			pool.SetSigner(func(a common.Address) bool { return a == addr })
+
+			data := common.Hex2Bytes(common.HexSignMethod)
+			data = append(data, common.LeftPadBytes(big.NewInt(tt.signed).Bytes(), 32)...)
+			data = append(data, common.Hash{0x15}.Bytes()...)
+			tx := types.MustSignNewTx(key, pool.signer, &types.LegacyTx{To: &common.BlockSignersBinary, Gas: 200000, GasPrice: big.NewInt(0), Value: big.NewInt(0), Data: data})
+			err := pool.Add([]*types.Transaction{tx}, true)[0]
+			if !errors.Is(err, tt.want) || (tt.want == nil && err != nil) {
+				t.Fatalf("err = %v, want %v", err, tt.want)
+			}
+		})
+	}
+}
