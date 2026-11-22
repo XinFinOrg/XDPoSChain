@@ -26,7 +26,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/XDCx/tradingstate"
 	"github.com/XinFinOrg/XDPoSChain/XDCxlending"
 	"github.com/XinFinOrg/XDPoSChain/accounts"
-	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/core"
@@ -94,7 +93,6 @@ type Backend interface {
 	ChainConfig() *params.ChainConfig
 	Engine() consensus.Engine
 	CurrentBlock() *types.Header
-	GetIPCClient() (bind.ContractBackend, error)
 	GetRewardByHash(hash common.Hash) map[string]map[string]map[string]*big.Int
 
 	GetVotersRewards(common.Address) map[common.Address]*big.Int
