@@ -1695,6 +1695,7 @@ func TestSpecialTxReplacementThroughPool(t *testing.T) {
 	})
 
 	// Case 2: a fresh special tx replaces a pending special tx at the same nonce.
+	// A sign tx replacing a sign tx must sign a newer block.
 	t.Run("special replaces special", func(t *testing.T) {
 		pool, _ := setupPool()
 		defer pool.Close()
@@ -1702,8 +1703,8 @@ func TestSpecialTxReplacementThroughPool(t *testing.T) {
 		addr := crypto.PubkeyToAddress(key.PublicKey)
 		testAddBalance(pool, addr, big.NewInt(1_000_000_000_000_000))
 
-		oldSpecial := mkSpecial(key, signTxData(0x01))
-		newSpecial := mkSpecial(key, signTxData(0x02))
+		oldSpecial := mkSpecial(key, signTxDataAt(0, 0x01))
+		newSpecial := mkSpecial(key, signTxDataAt(15, 0x02))
 		if err := pool.addRemoteSync(oldSpecial); err != nil {
 			t.Fatalf("failed to add old special tx: %v", err)
 		}
@@ -1758,9 +1759,13 @@ func TestSpecialTxReplacesHeadOfStuckBacklog(t *testing.T) {
 	addr := crypto.PubkeyToAddress(key.PublicKey)
 	testAddBalance(pool, addr, big.NewInt(1_000_000_000_000_000))
 
-	// Sign txs carry a zero gas price; the payload only makes the hashes differ.
-	mkSpecial := func(nonce uint64, payload byte) *types.Transaction {
-		tx, err := types.SignTx(types.NewTransaction(nonce, common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), signTxData(payload)), types.HomesteadSigner{}, key)
+	// At head 60 the merge blocks 0 to 75 can be signed. Each backlog tx signs
+	// its own merge block, as an honest signer's stuck sign txs do.
+	<-pool.requestReset(nil, newTestHeader(60))
+
+	// Sign txs carry a zero gas price.
+	mkSpecial := func(nonce, signed uint64, payload byte) *types.Transaction {
+		tx, err := types.SignTx(types.NewTransaction(nonce, common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), signTxDataAt(signed, payload)), types.HomesteadSigner{}, key)
 		if err != nil {
 			t.Fatalf("failed to sign special tx: %v", err)
 		}
@@ -1768,7 +1773,7 @@ func TestSpecialTxReplacesHeadOfStuckBacklog(t *testing.T) {
 	}
 	var backlog []*types.Transaction
 	for nonce := uint64(0); nonce < 4; nonce++ {
-		tx := mkSpecial(nonce, 0x01)
+		tx := mkSpecial(nonce, 15*nonce, 0x01)
 		if err := pool.addRemoteSync(tx); err != nil {
 			t.Fatalf("failed to add backlog tx %d: %v", nonce, err)
 		}
@@ -1778,7 +1783,8 @@ func TestSpecialTxReplacesHeadOfStuckBacklog(t *testing.T) {
 		t.Fatalf("pending nonce with the backlog = %d, want 4", got)
 	}
 
-	fresh := mkSpecial(0, 0x02)
+	// The fresh sign tx signs the newest merge block.
+	fresh := mkSpecial(0, 60, 0x02)
 	if err := pool.addRemoteSync(fresh); err != nil {
 		t.Fatalf("fresh sign tx at the on-chain nonce was rejected: %v", err)
 	}
@@ -1817,8 +1823,11 @@ func TestSpecialTxReplacementOnFullPool(t *testing.T) {
 	signerKey, _ := crypto.GenerateKey()
 	signer := crypto.PubkeyToAddress(signerKey.PublicKey)
 	testAddBalance(pool, signer, big.NewInt(1_000_000_000_000_000))
-	mkSpecial := func(nonce uint64, payload byte) *types.Transaction {
-		tx, err := types.SignTx(types.NewTransaction(nonce, common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), signTxData(payload)), types.HomesteadSigner{}, signerKey)
+	// At head 60 the merge blocks 0 to 75 can be signed; each sign tx signs its
+	// own merge block, as an honest signer's do.
+	<-pool.requestReset(nil, newTestHeader(60))
+	mkSpecial := func(nonce, signed uint64, payload byte) *types.Transaction {
+		tx, err := types.SignTx(types.NewTransaction(nonce, common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), signTxDataAt(signed, payload)), types.HomesteadSigner{}, signerKey)
 		if err != nil {
 			t.Fatalf("failed to sign special tx: %v", err)
 		}
@@ -1837,8 +1846,8 @@ func TestSpecialTxReplacementOnFullPool(t *testing.T) {
 
 	// Two stuck sign txs, then fill the pool with ordinary txs: special txs
 	// take no slots from the pool capacity.
-	stuck := mkSpecial(0, 0x01)
-	for _, tx := range []*types.Transaction{stuck, mkSpecial(1, 0x01)} {
+	stuck := mkSpecial(0, 0, 0x01)
+	for _, tx := range []*types.Transaction{stuck, mkSpecial(1, 15, 0x01)} {
 		if err := pool.addRemoteSync(tx); err != nil {
 			t.Fatalf("failed to add stuck sign tx %d: %v", tx.Nonce(), err)
 		}
@@ -1855,7 +1864,7 @@ func TestSpecialTxReplacementOnFullPool(t *testing.T) {
 	}
 
 	// A fresh sign tx at the on-chain nonce replaces the stuck one.
-	fresh := mkSpecial(0, 0x02)
+	fresh := mkSpecial(0, 30, 0x02)
 	if err := pool.addRemoteSync(fresh); err != nil {
 		t.Fatalf("sign tx replacing a stuck one on a full pool was rejected: %v", err)
 	}
@@ -1866,7 +1875,7 @@ func TestSpecialTxReplacementOnFullPool(t *testing.T) {
 		t.Fatalf("pending nonce after the replacement = %d, want 2", got)
 	}
 	// A sign tx at the next pending nonce is admitted too.
-	next := mkSpecial(2, 0x01)
+	next := mkSpecial(2, 45, 0x01)
 	if err := pool.addRemoteSync(next); err != nil {
 		t.Fatalf("sign tx at the pending nonce on a full pool was rejected: %v", err)
 	}

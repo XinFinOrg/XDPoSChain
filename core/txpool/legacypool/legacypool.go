@@ -89,6 +89,11 @@ var (
 	// ErrSpecialTxLimit is returned if a special transaction would take its sender
 	// over maxSpecialTxsPerAccount pooled special transactions.
 	ErrSpecialTxLimit = errors.New("too many special transactions from sender")
+
+	// ErrSignTxNotNewer is returned if a transaction would replace a pooled sign
+	// transaction at the same nonce without being a sign transaction for a newer
+	// block.
+	ErrSignTxNotNewer = errors.New("pooled sign transaction can only be replaced by a sign transaction for a newer block")
 )
 
 var (
@@ -918,20 +923,49 @@ func (pool *LegacyPool) pooledSpecials(from common.Address) []*types.Transaction
 }
 
 // checkSpecialTx applies the pool rules for a special transaction from sender
-// from: special transactions take no slots from the pool capacity, so each
-// sender may pool at most maxSpecialTxsPerAccount of them. A transaction
-// replacing one of the sender's special transactions at the same nonce does
-// not grow that count.
+// from. Special transactions take no slots from the pool capacity and no price
+// orders them, so:
+//
+//   - each sender may pool at most maxSpecialTxsPerAccount of them; replacing
+//     one of the sender's special transactions at the same nonce does not grow
+//     that count;
+//   - a pooled sign transaction is replaced only by a sign transaction for a
+//     newer block, which an honest node re-signing a stuck nonce always sends.
+//     A pooled randomize transaction is replaced by any transaction, so it
+//     never blocks its sender's nonce (see list.Add for regular replacements).
 //
 // Note, this method assumes the pool lock is held!
 func (pool *LegacyPool) checkSpecialTx(from common.Address, tx *types.Transaction) error {
 	if old := pool.pooledAt(from, tx.Nonce()); old != nil && old.IsSpecialTransaction() {
-		return nil
+		return checkSignTxReplacement(old, tx)
 	}
 	if len(pool.pooledSpecials(from)) >= maxSpecialTxsPerAccount {
 		return fmt.Errorf("%w: limit %d", ErrSpecialTxLimit, maxSpecialTxsPerAccount)
 	}
 	return nil
+}
+
+// checkSignTxReplacement reports whether tx may replace the pooled transaction
+// old at the same nonce, as far as old being a sign transaction is concerned: a
+// pooled sign transaction is replaced only by a sign transaction that signs a
+// strictly newer block. It returns nil when old is not a sign transaction.
+func checkSignTxReplacement(old, tx *types.Transaction) error {
+	if to := old.To(); to == nil || *to != common.BlockSignersBinary || !old.IsSpecialTransaction() {
+		return nil
+	}
+	if !tx.IsSigningTransaction() {
+		return fmt.Errorf("%w: replacement to %v", ErrSignTxNotNewer, tx.To())
+	}
+	if old.IsSigningTransaction() && signTxNumber(tx).Cmp(signTxNumber(old)) <= 0 {
+		return fmt.Errorf("%w: signs %v, pooled signs %v", ErrSignTxNotNewer, signTxNumber(tx), signTxNumber(old))
+	}
+	return nil
+}
+
+// signTxNumber returns the block number a sign transaction signs. The
+// transaction must pass tx.IsSigningTransaction.
+func signTxNumber(tx *types.Transaction) *big.Int {
+	return new(big.Int).SetBytes(tx.Data()[4:36])
 }
 
 // isGapped reports whether the given transaction is immediately executable.

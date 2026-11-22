@@ -17,6 +17,8 @@
 package legacypool
 
 import (
+	"math/big"
+
 	"github.com/XinFinOrg/XDPoSChain/common"
 )
 
@@ -24,8 +26,15 @@ import (
 // valid for every block the test pools build on. tag varies the signed hash,
 // so two calls with different tags give different transactions.
 func signTxData(tag byte) []byte {
+	return signTxDataAt(0, tag)
+}
+
+// signTxDataAt is a well-formed sign(uint256,bytes32) call that signs block
+// number. It must be a merge block (a multiple of 15) the pool head allows:
+// at most one merge range past it.
+func signTxDataAt(number uint64, tag byte) []byte {
 	data := common.Hex2Bytes(common.HexSignMethod)
-	data = append(data, make([]byte, 32)...)
+	data = append(data, common.LeftPadBytes(new(big.Int).SetUint64(number).Bytes(), 32)...)
 	hash := common.Hash{tag, 0x01}
 	return append(data, hash.Bytes()...)
 }

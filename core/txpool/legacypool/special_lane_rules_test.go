@@ -22,7 +22,9 @@ import (
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/crypto"
 )
 
 // TestSpecialLaneFloodAtCap checks that many candidates, each at the special
@@ -66,6 +68,145 @@ func TestSpecialLaneFloodAtCap(t *testing.T) {
 	}
 	if pending, _ := pool.Stats(); pending != candidates*maxSpecialTxsPerAccount+4 {
 		t.Fatalf("pending = %d, want %d", pending, candidates*maxSpecialTxsPerAccount+4)
+	}
+	if err := validatePoolInternals(pool); err != nil {
+		t.Fatalf("pool internal state corrupted: %v", err)
+	}
+}
+
+// TestSpecialLaneSignTxReplacement checks that a pooled sign transaction,
+// pending or queued, is replaced only by a sign transaction for a strictly
+// newer block: a randomize transaction, a regular transaction, or a sign
+// transaction for the same or an older block is refused.
+func TestSpecialLaneSignTxReplacement(t *testing.T) {
+	t.Parallel()
+
+	pool, _ := setupPool()
+	defer pool.Close()
+	pool.SetSigner(func(common.Address) bool { return true })
+	// At head 60 the merge blocks 0 to 75 can be signed.
+	<-pool.requestReset(nil, newTestHeader(60))
+
+	key := laneKey(pool)
+	pending := laneSignTx(t, key, 0, 30, 1)
+	queued := laneSignTx(t, key, 5, 15, 1)
+	for _, tx := range []*types.Transaction{pending, queued} {
+		if err := pool.addRemoteSync(tx); err != nil {
+			t.Fatalf("failed to add sign tx %d: %v", tx.Nonce(), err)
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		tx   *types.Transaction
+		want error
+	}{
+		{"pending, same block", laneSignTx(t, key, 0, 30, 2), ErrSignTxNotNewer},
+		{"pending, older block", laneSignTx(t, key, 0, 0, 2), ErrSignTxNotNewer},
+		{"pending, randomize", laneRandomizeTx(t, key, 0, 2), ErrSignTxNotNewer},
+		{"pending, regular", pricedTransaction(0, 100000, big.NewInt(2*common.DefaultMinGasPrice), key), txpool.ErrReplaceUnderpriced},
+		{"queued, same block", laneSignTx(t, key, 5, 15, 2), ErrSignTxNotNewer},
+		{"queued, older block", laneSignTx(t, key, 5, 0, 2), ErrSignTxNotNewer},
+		{"queued, randomize", laneRandomizeTx(t, key, 5, 2), ErrSignTxNotNewer},
+		{"queued, regular", pricedTransaction(5, 100000, big.NewInt(2*common.DefaultMinGasPrice), key), txpool.ErrReplaceUnderpriced},
+	} {
+		if err := pool.addRemoteSync(tc.tx); !errors.Is(err, tc.want) {
+			t.Fatalf("%s: err = %v, want %v", tc.name, err, tc.want)
+		}
+		if pool.all.Get(tc.tx.Hash()) != nil {
+			t.Fatalf("%s: the refused replacement is pooled", tc.name)
+		}
+	}
+	if pool.all.Get(pending.Hash()) == nil || pool.all.Get(queued.Hash()) == nil {
+		t.Fatal("a refused replacement evicted the pooled sign tx")
+	}
+	// Newer blocks replace, any number of times.
+	for _, signed := range []uint64{45, 60, 75} {
+		tx := laneSignTx(t, key, 0, signed, 3)
+		if err := pool.addRemoteSync(tx); err != nil {
+			t.Fatalf("pending sign tx for block %d rejected: %v", signed, err)
+		}
+		if pool.all.Get(tx.Hash()) == nil {
+			t.Fatalf("pending sign tx for block %d not pooled", signed)
+		}
+	}
+	if err := pool.addRemoteSync(laneSignTx(t, key, 5, 30, 3)); err != nil {
+		t.Fatalf("queued sign tx for a newer block rejected: %v", err)
+	}
+	if pool.all.Get(pending.Hash()) != nil || pool.all.Get(queued.Hash()) != nil {
+		t.Fatal("replaced sign txs are still pooled")
+	}
+	if err := validatePoolInternals(pool); err != nil {
+		t.Fatalf("pool internal state corrupted: %v", err)
+	}
+}
+
+// TestSpecialLaneRandomizeReplacement checks that a pooled randomize
+// transaction, pending or queued, is replaced by any transaction at its nonce:
+// another randomize transaction (any number of times), a sign transaction, or
+// a regular one without a price bump. A regular replacement moves the slot
+// from the special budget to the regular one. Replacements by special
+// transactions still work on a full pool.
+func TestSpecialLaneRandomizeReplacement(t *testing.T) {
+	t.Parallel()
+
+	pool, _ := setupPool()
+	defer pool.Close()
+	pool.SetSigner(func(common.Address) bool { return true })
+	pool.config.GlobalSlots = 2
+	pool.config.GlobalQueue = 0
+	<-pool.requestReset(nil, newTestHeader(60))
+
+	key := laneKey(pool)
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	for _, tx := range []*types.Transaction{laneSignTx(t, key, 0, 60, 1), laneRandomizeTx(t, key, 1, 1), laneRandomizeTx(t, key, 2, 1), laneRandomizeTx(t, key, 6, 1)} {
+		if err := pool.addRemoteSync(tx); err != nil {
+			t.Fatalf("failed to add special tx %d: %v", tx.Nonce(), err)
+		}
+	}
+	// Fill the pool with regular transactions from another sender.
+	user := laneKey(pool)
+	for nonce := uint64(0); nonce < 2; nonce++ {
+		if err := pool.addRemoteSync(pricedTransaction(nonce, 100000, big.NewInt(common.DefaultMinGasPrice), user)); err != nil {
+			t.Fatalf("failed to fill the pool, tx %d: %v", nonce, err)
+		}
+	}
+	// Randomize replaced by randomize, repeatedly, on the full pool.
+	for tag := byte(2); tag <= 4; tag++ {
+		tx := laneRandomizeTx(t, key, 1, tag)
+		if err := pool.addRemoteSync(tx); err != nil {
+			t.Fatalf("randomize replacing randomize (tag %d) rejected: %v", tag, err)
+		}
+		if pool.all.Get(tx.Hash()) == nil {
+			t.Fatalf("randomize replacement (tag %d) not pooled", tag)
+		}
+	}
+	// Randomize replaced by a sign tx, on the full pool.
+	bySign := laneSignTx(t, key, 1, 45, 1)
+	if err := pool.addRemoteSync(bySign); err != nil {
+		t.Fatalf("sign tx replacing randomize rejected: %v", err)
+	}
+	if pool.all.Get(bySign.Hash()) == nil {
+		t.Fatal("sign tx replacing randomize not pooled")
+	}
+	// Make room for regular transactions, then replace a pending and a queued
+	// randomize tx by regular ones at the minimum price, without a price bump.
+	pool.config.GlobalSlots = 16
+	specialsBefore := len(pool.pooledSpecials(addr))
+	slotsBefore := pool.all.Slots()
+	for _, nonce := range []uint64{2, 6} {
+		tx := pricedTransaction(nonce, 100000, big.NewInt(common.DefaultMinGasPrice), key)
+		if err := pool.addRemoteSync(tx); err != nil {
+			t.Fatalf("regular tx replacing the randomize tx at nonce %d rejected: %v", nonce, err)
+		}
+		if pool.all.Get(tx.Hash()) == nil {
+			t.Fatalf("regular replacement at nonce %d not pooled", nonce)
+		}
+	}
+	if have := len(pool.pooledSpecials(addr)); have != specialsBefore-2 {
+		t.Fatalf("pooled special txs = %d, want %d", have, specialsBefore-2)
+	}
+	if have := pool.all.Slots(); have != slotsBefore+2 {
+		t.Fatalf("regular slots = %d, want %d", have, slotsBefore+2)
 	}
 	if err := validatePoolInternals(pool); err != nil {
 		t.Fatalf("pool internal state corrupted: %v", err)
