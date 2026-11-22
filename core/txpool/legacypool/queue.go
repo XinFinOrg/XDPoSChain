@@ -220,10 +220,17 @@ func (q *queue) promoteExecutables(accounts []common.Address, gasLimit uint64, c
 // number is below the configured limit. Returns the hashes of all dropped
 // transactions and the addresses of accounts that became empty due to
 // the truncation.
+//
+// Special transactions have their own budget, bounded per sender at admission:
+// they do not count toward the limit and are never dropped here.
 func (q *queue) truncate() ([]common.Hash, []common.Address) {
 	queued := uint64(0)
 	for _, list := range q.queued {
-		queued += uint64(list.Len())
+		for _, tx := range list.Flatten() {
+			if !tx.IsSpecialTransaction() {
+				queued++
+			}
+		}
 	}
 	if queued <= q.config.GlobalQueue {
 		return nil, nil
@@ -236,35 +243,28 @@ func (q *queue) truncate() ([]common.Hash, []common.Address) {
 	}
 	sort.Sort(sort.Reverse(addresses))
 
-	// Drop transactions until the total is below the limit
+	// Drop transactions until the total is below the limit, newest nonces first
 	var (
 		removed          = make([]common.Hash, 0)
 		removedAddresses = make([]common.Address, 0)
 	)
 	for drop := queued - q.config.GlobalQueue; drop > 0 && len(addresses) > 0; {
 		addr := addresses[len(addresses)-1]
-		list := q.queued[addr.address]
-
 		addresses = addresses[:len(addresses)-1]
 
-		// Drop all transactions if they are less than the overflow
-		if size := uint64(list.Len()); size <= drop {
-			for _, tx := range list.Flatten() {
-				q.remove(addr.address, tx)
-				removed = append(removed, tx.Hash())
-			}
-			drop -= size
-			queuedRateLimitMeter.Mark(int64(size))
-			removedAddresses = append(removedAddresses, addr.address)
-			continue
-		}
-		// Otherwise drop only last few transactions
-		txs := list.Flatten()
+		txs := q.queued[addr.address].Flatten()
 		for i := len(txs) - 1; i >= 0 && drop > 0; i-- {
+			if txs[i].IsSpecialTransaction() {
+				continue
+			}
 			q.remove(addr.address, txs[i])
 			removed = append(removed, txs[i].Hash())
 			drop--
 			queuedRateLimitMeter.Mark(1)
+		}
+		// remove deletes the account entry once its last transaction is gone
+		if _, ok := q.queued[addr.address]; !ok {
+			removedAddresses = append(removedAddresses, addr.address)
 		}
 	}
 

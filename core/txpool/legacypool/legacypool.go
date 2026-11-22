@@ -769,8 +769,10 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 		return pool.promoteSpecialTx(from, tx)
 	}
 
-	// If the transaction pool is full, discard underpriced transactions
-	if uint64(pool.all.Slots()+numSlots(tx)) > pool.config.GlobalSlots+pool.config.GlobalQueue {
+	// If the transaction pool is full, discard underpriced transactions. Special
+	// transactions have their own budget, bounded per sender, and neither need
+	// room from nor take room from regular ones.
+	if !tx.IsSpecialTransaction() && uint64(pool.all.Slots()+numSlots(tx)) > pool.config.GlobalSlots+pool.config.GlobalQueue {
 		// If the new transaction is underpriced, don't accept it
 		if pool.priced.Underpriced(tx) {
 			log.Trace("Discarding underpriced transaction", "hash", hash, "gasTipCap", tx.GasTipCap(), "gasFeeCap", tx.GasFeeCap())
@@ -840,7 +842,7 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 		// New transaction is better, replace old one
 		if old != nil {
 			pool.all.Remove(old.Hash())
-			pool.priced.Removed(1)
+			pool.priced.Removed(countPriced(old))
 			pendingReplaceMeter.Mark(1)
 		}
 		pool.all.Add(tx)
@@ -925,14 +927,14 @@ func (pool *LegacyPool) promoteTx(addr common.Address, hash common.Hash, tx *typ
 	if !inserted {
 		// An older transaction was better, discard this
 		pool.all.Remove(hash)
-		pool.priced.Removed(1)
+		pool.priced.Removed(countPriced(tx))
 		pendingDiscardMeter.Mark(1)
 		return false
 	}
 	// Otherwise discard any previous transaction and mark this
 	if old != nil {
 		pool.all.Remove(old.Hash())
-		pool.priced.Removed(1)
+		pool.priced.Removed(countPriced(old))
 		pendingReplaceMeter.Mark(1)
 	} else {
 		// Nothing was replaced, bump the pending counter
@@ -986,7 +988,7 @@ func (pool *LegacyPool) promoteSpecialTx(addr common.Address, tx *types.Transact
 	// Otherwise discard any previous transaction and mark this
 	if old != nil {
 		pool.all.Remove(old.Hash())
-		pool.priced.Removed(1)
+		pool.priced.Removed(countPriced(old))
 		pendingReplaceMeter.Mark(1)
 	} else {
 		// Nothing was replaced, bump the pending counter
@@ -1194,7 +1196,7 @@ func (pool *LegacyPool) removeTx(hash common.Hash, outofbound bool, unreserve bo
 	// Remove it from the list of known transactions
 	pool.all.Remove(hash)
 	if outofbound {
-		pool.priced.Removed(1)
+		pool.priced.Removed(countPriced(tx))
 	}
 	// Remove the transaction from the pending lists and reset the account nonce
 	if pending := pool.pending[addr]; pending != nil {
@@ -1569,10 +1571,12 @@ func (pool *LegacyPool) promoteExecutables(accounts []common.Address) []*types.T
 	}
 
 	// remove all removable transactions
+	priced := 0
 	for _, hash := range dropped {
+		priced += countPriced(pool.all.Get(hash))
 		pool.all.Remove(hash)
 	}
-	pool.priced.Removed(len(dropped))
+	pool.priced.Removed(priced)
 
 	// release all accounts that have no more transactions in the pool
 	for _, addr := range removedAddresses {
@@ -1587,14 +1591,34 @@ func (pool *LegacyPool) promoteExecutables(accounts []common.Address) []*types.T
 // truncatePending removes transactions from the pending queue if the pool is above the
 // pending limit. The algorithm tries to reduce transaction counts by an approximately
 // equal number for all for accounts with many pending transactions.
+//
+// Only regular transactions count toward the limit and only they are evicted:
+// special transactions have their own budget, bounded per sender at admission.
+// An account is reduced from its highest nonce down, so one whose highest
+// pending transaction is special is not reduced further.
 func (pool *LegacyPool) truncatePending() {
 	pending := uint64(0)
 
+	// Count each account's special transactions once: eviction below only ever
+	// removes regular ones, so these counts stay valid throughout.
+	specials := make(map[common.Address]int)
+	regularLen := func(addr common.Address) int {
+		list := pool.pending[addr]
+		if list == nil {
+			return 0
+		}
+		return list.Len() - specials[addr]
+	}
 	// Assemble a spam order to penalize large transactors first
 	spammers := prque.New[uint64, common.Address](nil)
 	for addr, list := range pool.pending {
+		for _, tx := range list.Flatten() {
+			if tx.IsSpecialTransaction() {
+				specials[addr]++
+			}
+		}
 		// Only evict transactions from high rollers
-		length := uint64(list.Len())
+		length := uint64(regularLen(addr))
 		pending += length
 		if length > pool.config.AccountSlots {
 			spammers.Push(addr, length)
@@ -1605,6 +1629,27 @@ func (pool *LegacyPool) truncatePending() {
 	}
 	pendingBeforeCap := pending
 
+	// capTail drops the account's highest-nonce pending transaction if it is a
+	// regular one, and reports whether it dropped one.
+	capTail := func(addr common.Address) bool {
+		list := pool.pending[addr]
+		if list == nil || list.Empty() || list.LastElement().IsSpecialTransaction() {
+			return false
+		}
+		caps := list.Cap(list.Len() - 1)
+		for _, tx := range caps {
+			// Drop the transaction from the global pools too
+			hash := tx.Hash()
+			pool.all.Remove(hash)
+
+			// Update the account nonce to the dropped transaction
+			pool.pendingNonces.setIfLower(addr, tx.Nonce())
+			log.Trace("Removed fairness-exceeding pending transaction", "hash", hash)
+		}
+		pool.priced.Removed(countPriced(caps...))
+		pendingGauge.Dec(int64(len(caps)))
+		return len(caps) > 0
+	}
 	// Gradually drop transactions from offenders
 	offenders := []common.Address{}
 	for pending > pool.config.GlobalSlots && !spammers.Empty() {
@@ -1615,26 +1660,19 @@ func (pool *LegacyPool) truncatePending() {
 		// Equalize balances until all the same or below threshold
 		if len(offenders) > 1 {
 			// Calculate the equalization threshold for all current offenders
-			threshold := pool.pending[offender].Len()
+			threshold := regularLen(offender)
 
 			// Iteratively reduce all offenders until below limit or threshold reached
-			for pending > pool.config.GlobalSlots && pool.pending[offenders[len(offenders)-2]].Len() > threshold {
+			for pending > pool.config.GlobalSlots && regularLen(offenders[len(offenders)-2]) > threshold {
+				progress := false
 				for i := 0; i < len(offenders)-1; i++ {
-					list := pool.pending[offenders[i]]
-
-					caps := list.Cap(list.Len() - 1)
-					for _, tx := range caps {
-						// Drop the transaction from the global pools too
-						hash := tx.Hash()
-						pool.all.Remove(hash)
-
-						// Update the account nonce to the dropped transaction
-						pool.pendingNonces.setIfLower(offenders[i], tx.Nonce())
-						log.Trace("Removed fairness-exceeding pending transaction", "hash", hash)
+					if capTail(offenders[i]) {
+						pending--
+						progress = true
 					}
-					pool.priced.Removed(len(caps))
-					pendingGauge.Dec(int64(len(caps)))
-					pending--
+				}
+				if !progress {
+					break
 				}
 			}
 		}
@@ -1642,23 +1680,16 @@ func (pool *LegacyPool) truncatePending() {
 
 	// If still above threshold, reduce to limit or min allowance
 	if pending > pool.config.GlobalSlots && len(offenders) > 0 {
-		for pending > pool.config.GlobalSlots && uint64(pool.pending[offenders[len(offenders)-1]].Len()) > pool.config.AccountSlots {
+		for pending > pool.config.GlobalSlots && uint64(regularLen(offenders[len(offenders)-1])) > pool.config.AccountSlots {
+			progress := false
 			for _, addr := range offenders {
-				list := pool.pending[addr]
-
-				caps := list.Cap(list.Len() - 1)
-				for _, tx := range caps {
-					// Drop the transaction from the global pools too
-					hash := tx.Hash()
-					pool.all.Remove(hash)
-
-					// Update the account nonce to the dropped transaction
-					pool.pendingNonces.setIfLower(addr, tx.Nonce())
-					log.Trace("Removed fairness-exceeding pending transaction", "hash", hash)
+				if capTail(addr) {
+					pending--
+					progress = true
 				}
-				pool.priced.Removed(len(caps))
-				pendingGauge.Dec(int64(len(caps)))
-				pending--
+			}
+			if !progress {
+				break
 			}
 		}
 	}
@@ -1670,10 +1701,12 @@ func (pool *LegacyPool) truncateQueue() {
 	removed, removedAddresses := pool.queue.truncate()
 
 	// Remove all removable transactions from the lookup and global price list
+	priced := 0
 	for _, hash := range removed {
+		priced += countPriced(pool.all.Get(hash))
 		pool.all.Remove(hash)
 	}
-	pool.priced.Removed(len(removed))
+	pool.priced.Removed(priced)
 
 	for _, addr := range removedAddresses {
 		_, hasPending := pool.pending[addr]
@@ -1723,7 +1756,7 @@ func (pool *LegacyPool) demoteUnexecutables() {
 			// Internal shuffle shouldn't touch the lookup set.
 			pool.enqueueTx(hash, tx, false)
 		}
-		pool.priced.Removed(len(olds) + len(drops))
+		pool.priced.Removed(countPriced(olds...) + countPriced(drops...))
 		pendingGauge.Dec(int64(len(olds) + len(drops) + len(invalids)))
 
 		// If there's a gap in front, alert (should never happen) and postpone all transactions
@@ -1806,16 +1839,18 @@ func (pool *LegacyPool) dropWhere(keep func(tx *types.Transaction) bool, reason 
 		return true
 	})
 
-	dropped := 0
+	dropped, priced := 0, 0
 	for _, hash := range hashes {
-		if pool.all.Get(hash) == nil {
+		tx := pool.all.Get(hash)
+		if tx == nil {
 			continue
 		}
 		pool.removeTx(hash, false, true)
 		log.Trace("Dropped pooled transaction", "hash", hash, "reason", reason)
 		dropped++
+		priced += countPriced(tx)
 	}
-	pool.priced.Removed(dropped)
+	pool.priced.Removed(priced)
 	return dropped
 }
 
@@ -1934,7 +1969,9 @@ func (t *lookup) Count() int {
 	return len(t.txs)
 }
 
-// Slots returns the current number of slots used in the lookup.
+// Slots returns the current number of slots used in the lookup by regular
+// transactions. Special transactions have their own budget, bounded per
+// sender, and take no slots from the pool capacity.
 func (t *lookup) Slots() int {
 	t.lock.RLock()
 	defer t.lock.RUnlock()
@@ -1947,9 +1984,10 @@ func (t *lookup) Add(tx *types.Transaction) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
 
-	t.slots += numSlots(tx)
-	slotsGauge.Update(int64(t.slots))
-
+	if !tx.IsSpecialTransaction() {
+		t.slots += numSlots(tx)
+		slotsGauge.Update(int64(t.slots))
+	}
 	t.txs[tx.Hash()] = tx
 	t.addAuthorities(tx)
 }
@@ -1965,9 +2003,10 @@ func (t *lookup) Remove(hash common.Hash) {
 		log.Error("No transaction found to be deleted", "hash", hash)
 		return
 	}
-	t.slots -= numSlots(tx)
-	slotsGauge.Update(int64(t.slots))
-
+	if !tx.IsSpecialTransaction() {
+		t.slots -= numSlots(tx)
+		slotsGauge.Update(int64(t.slots))
+	}
 	delete(t.txs, hash)
 }
 
@@ -1982,10 +2021,11 @@ func (t *lookup) Clear() {
 }
 
 // TxsBelowTip finds all remote transactions below the given tip threshold.
+// Special transactions carry no price and are never dropped on price.
 func (t *lookup) TxsBelowTip(threshold *big.Int) types.Transactions {
 	found := make(types.Transactions, 0, 128)
 	t.Range(func(hash common.Hash, tx *types.Transaction) bool {
-		if tx.GasTipCapIntCmp(threshold) < 0 {
+		if !tx.IsSpecialTransaction() && tx.GasTipCapIntCmp(threshold) < 0 {
 			found = append(found, tx)
 		}
 		return true

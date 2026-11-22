@@ -675,10 +675,28 @@ func newPricedList(all *lookup) *pricedList {
 	}
 }
 
-// Put inserts a new transaction into the heap.
+// Put inserts a new transaction into the heap. Special transactions are never
+// tracked: they carry no price and are bounded per sender instead, so they can
+// never be priced out of the pool.
 func (l *pricedList) Put(tx *types.Transaction) {
+	if tx.IsSpecialTransaction() {
+		return
+	}
 	// Insert every new transaction to the urgent heap first; Discard will balance the heaps
 	heap.Push(&l.urgent, tx)
+}
+
+// countPriced returns how many of txs the heap tracks, so callers report only
+// those to Removed: special transactions are never in the heap and would
+// otherwise inflate the stale counter.
+func countPriced(txs ...*types.Transaction) int {
+	n := 0
+	for _, tx := range txs {
+		if tx != nil && !tx.IsSpecialTransaction() {
+			n++
+		}
+	}
+	return n
 }
 
 // Removed notifies the prices transaction list that an old transaction dropped
@@ -775,7 +793,9 @@ func (l *pricedList) Reheap() {
 	l.stales.Store(0)
 	l.urgent.list = make([]*types.Transaction, 0, l.all.Count())
 	l.all.Range(func(hash common.Hash, tx *types.Transaction) bool {
-		l.urgent.list = append(l.urgent.list, tx)
+		if !tx.IsSpecialTransaction() {
+			l.urgent.list = append(l.urgent.list, tx)
+		}
 		return true
 	})
 	heap.Init(&l.urgent)

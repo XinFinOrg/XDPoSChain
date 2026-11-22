@@ -1371,10 +1371,22 @@ func validatePoolInternals(pool *LegacyPool) error {
 	if total := pool.all.Count(); total != pending+queued {
 		return fmt.Errorf("total transaction count %d != %d pending + %d queued", total, pending, queued)
 	}
+	// Special transactions are kept out of the price heap and take no slots
+	// from the pool capacity.
 	pool.priced.Reheap()
-	priced, remote := pool.priced.urgent.Len()+pool.priced.floating.Len(), pool.all.Count()
-	if priced != remote {
+	remote, slots := 0, 0
+	pool.all.Range(func(hash common.Hash, tx *types.Transaction) bool {
+		if !tx.IsSpecialTransaction() {
+			remote++
+			slots += numSlots(tx)
+		}
+		return true
+	})
+	if priced := pool.priced.urgent.Len() + pool.priced.floating.Len(); priced != remote {
 		return fmt.Errorf("total priced transaction count %d != %d", priced, remote)
+	}
+	if have := pool.all.Slots(); have != slots {
+		return fmt.Errorf("pool slots %d != %d used by regular transactions", have, slots)
 	}
 	// Ensure the next nonce to assign is the correct one
 	for addr, txs := range pool.pending {
@@ -1823,7 +1835,8 @@ func TestSpecialTxReplacementOnFullPool(t *testing.T) {
 		return false
 	}
 
-	// Fill the pool: two stuck sign txs plus two ordinary txs.
+	// Two stuck sign txs, then fill the pool with ordinary txs: special txs
+	// take no slots from the pool capacity.
 	stuck := mkSpecial(0, 0x01)
 	for _, tx := range []*types.Transaction{stuck, mkSpecial(1, 0x01)} {
 		if err := pool.addRemoteSync(tx); err != nil {
@@ -1832,7 +1845,7 @@ func TestSpecialTxReplacementOnFullPool(t *testing.T) {
 	}
 	userKey, _ := crypto.GenerateKey()
 	testAddBalance(pool, crypto.PubkeyToAddress(userKey.PublicKey), big.NewInt(1_000_000_000_000_000))
-	for nonce := uint64(0); nonce < 2; nonce++ {
+	for nonce := uint64(0); nonce < 4; nonce++ {
 		if err := pool.addRemoteSync(pricedTransaction(nonce, 100000, big.NewInt(common.DefaultMinGasPrice), userKey)); err != nil {
 			t.Fatalf("failed to add ordinary tx %d: %v", nonce, err)
 		}
