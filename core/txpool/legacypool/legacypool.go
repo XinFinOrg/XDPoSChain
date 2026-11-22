@@ -977,6 +977,51 @@ func checkSignTxReplacement(old, tx *types.Transaction) error {
 	return nil
 }
 
+// dropInvalidSignTxs re-checks the pooled sign transactions, pending and
+// queued, against the block after the pool head, with the rules admission
+// applies: the shared sign transaction field rules and the signer check. A sign
+// transaction admitted earlier fails them once the block it signs leaves the
+// signing window, or once its sender stops being a candidate; it could then
+// never be mined and would block the sender's later nonces. Each one is
+// removed, and the sender's later pending transactions are moved back to the
+// queue as for any removal. Only special transactions are looked at. It
+// returns the number of transactions dropped.
+//
+// Note, this method assumes the pool lock is held!
+func (pool *LegacyPool) dropInvalidSignTxs() int {
+	head := pool.currentHead.Load()
+	if head == nil {
+		return 0
+	}
+	next := new(big.Int).Add(head.Number, common.Big1)
+
+	var drop []common.Hash
+	check := func(addr common.Address, txs types.Transactions) {
+		signer := pool.isSigner == nil || pool.isSigner(addr)
+		for _, tx := range txs {
+			if !core.IsSignTransactionRoute(pool.chainconfig, next, tx) {
+				continue
+			}
+			if !signer || core.CheckSignTxFields(pool.chainconfig, next, tx) != nil {
+				drop = append(drop, tx.Hash())
+			}
+		}
+	}
+	for addr, list := range pool.pending {
+		check(addr, list.Flatten())
+	}
+	for _, addr := range pool.queue.addresses() {
+		if list, ok := pool.queue.get(addr); ok {
+			check(addr, list.Flatten())
+		}
+	}
+	for _, hash := range drop {
+		pool.removeTx(hash, true, true)
+		log.Trace("Dropped sign transaction no longer valid", "hash", hash)
+	}
+	return len(drop)
+}
+
 // signTxNumber returns the block number a sign transaction signs. The
 // transaction must pass tx.IsSigningTransaction.
 func signTxNumber(tx *types.Transaction) *big.Int {
@@ -1473,6 +1518,12 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 		// Reset from the old head to the new, rescheduling any reorged transactions
 		moved = pool.reset(reset.oldHead, reset.newHead)
 		newPoolHead := pool.currentHead.Load()
+
+		// Sign transactions valid when admitted can stop being valid at a new
+		// head: drop them before promotion, so they cannot sit in the pool.
+		if dropped := pool.dropInvalidSignTxs(); dropped > 0 {
+			log.Debug("Dropped sign transactions no longer valid", "dropped", dropped, "head", newPoolHead.Number)
+		}
 
 		// Discard transactions whose gas limit exceeds the cap once the reset
 		// actually moved the pool across the Osaka fork boundary.
