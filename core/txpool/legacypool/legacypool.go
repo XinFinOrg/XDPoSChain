@@ -1535,7 +1535,8 @@ func (pool *LegacyPool) reset(oldHead, newHead *types.Header) bool {
 	// Reinjected transactions skip the basic validation Add runs. A special
 	// transaction runs it anyway: the pool admits fewer of them than block
 	// validation does before TIPSignTxRules, so a dropped block can carry
-	// special transactions the pool would refuse.
+	// special transactions the pool would refuse. While syncing the signer
+	// check answers false, so reinjected special transactions are dropped.
 	errs := make([]error, len(reinject))
 	for i, tx := range reinject {
 		if tx.IsSpecialTransaction() {
