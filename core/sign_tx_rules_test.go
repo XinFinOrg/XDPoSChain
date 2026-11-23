@@ -128,13 +128,18 @@ func TestCheckSignTxFields(t *testing.T) {
 func TestCheckSignTxFieldsLookahead(t *testing.T) {
 	cfg := signTxRulesConfig()
 	block := big.NewInt(2011) // the pool head is 2010
+	// The cap is block + MergeSignRange - 1, which is a merge block here.
+	limit := block.Int64() + common.MergeSignRange - 1
 	tests := []struct {
 		name   string
 		signed int64
 		want   error
 	}{
-		{"head + 15, the last allowed", 2025, nil},
-		{"head + 30, beyond the cap", 2040, core.ErrSignTxFutureBlock},
+		{"head + 15, the last allowed", limit, nil},
+		// One past the cap is not a merge block either; the lookahead check
+		// runs first, so the error pins the cap itself.
+		{"one past the cap", limit + 1, core.ErrSignTxFutureBlock},
+		{"head + 30, beyond the cap", limit + common.MergeSignRange, core.ErrSignTxFutureBlock},
 		{"far future", 1_000_005, core.ErrSignTxFutureBlock},
 	}
 	for _, tt := range tests {
