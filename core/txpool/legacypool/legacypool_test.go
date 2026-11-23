@@ -219,6 +219,66 @@ func TestDemoteUnexecutablesUsesNextBlockGasSchedule(t *testing.T) {
 	}
 }
 
+// TestDemoteUnexecutablesDropsTRC21TxValueAboveBalance checks that a TRC21
+// transaction admitted while its sender held the value is evicted once the
+// sender's own balance drops below the value, although the issuer's fee
+// capacity still covers fee and value together. A sender who still holds the
+// value keeps its transaction.
+func TestDemoteUnexecutablesDropsTRC21TxValueAboveBalance(t *testing.T) {
+	t.Parallel()
+
+	pool, key := setupPool()
+	defer pool.Close()
+	honestKey, _ := crypto.GenerateKey()
+
+	var (
+		token    = common.HexToAddress("0x00000000000000000000000000000000000000cc")
+		capacity = new(big.Int).Mul(big.NewInt(params.Ether), big.NewInt(1000))
+		value    = big.NewInt(1000)
+		from     = crypto.PubkeyToAddress(key.PublicKey)
+		honest   = crypto.PubkeyToAddress(honestKey.PublicKey)
+	)
+	pool.mu.Lock()
+	pool.trc21FeeCapacity = map[common.Address]*big.Int{token: capacity}
+	pool.mu.Unlock()
+	testAddBalance(pool, from, value)
+	testAddBalance(pool, honest, value)
+
+	sign := func(key *ecdsa.PrivateKey) *types.Transaction {
+		tx, err := types.SignTx(types.NewTransaction(0, token, value, 50000, big.NewInt(common.DefaultMinGasPrice), []byte{0x01, 0x02, 0x03, 0x04}), types.HomesteadSigner{}, key)
+		if err != nil {
+			t.Fatalf("failed to sign transaction: %v", err)
+		}
+		return tx
+	}
+	tx, honestTx := sign(key), sign(honestKey)
+	for i, err := range pool.addRemotesSync([]*types.Transaction{tx, honestTx}) {
+		if err != nil {
+			t.Fatalf("failed to add transaction %d: %v", i, err)
+		}
+	}
+	if pending, _ := pool.Stats(); pending != 2 {
+		t.Fatalf("pending transactions mismatched: have %d want 2", pending)
+	}
+
+	// The sender spends part of its own XDC: the fee capacity still covers
+	// fee and value together, but execution takes the value from the sender.
+	pool.mu.Lock()
+	pool.currentState.SubBalance(from, big.NewInt(1), tracing.BalanceChangeUnspecified)
+	pool.demoteUnexecutables()
+	pool.mu.Unlock()
+
+	if pool.all.Get(tx.Hash()) != nil {
+		t.Fatal("transaction with value above the sender's balance still pooled")
+	}
+	if pool.all.Get(honestTx.Hash()) == nil {
+		t.Fatal("transaction with value held by the sender evicted")
+	}
+	if err := validatePoolInternals(pool); err != nil {
+		t.Fatalf("pool internal state corrupted: %v", err)
+	}
+}
+
 // gasTierTestConfig is the chain config the gas schedule tests run on. With
 // gas2500x at block 200, head 198 makes 199 the last pending block still on
 // the gas50x tier, so moving the head to 199 crosses the fork.
