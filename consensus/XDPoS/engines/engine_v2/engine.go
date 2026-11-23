@@ -169,9 +169,7 @@ func newEngine(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh 
 	}
 	// Resume from the highest round this node voted in before a restart, so
 	// it never votes twice in the same round.
-	if db != nil {
-		engine.highestVotedRound = types.Round(rawdb.ReadXdposV2HighestVotedRound(db))
-	}
+	engine.highestVotedRound = types.Round(rawdb.ReadXdposV2HighestVotedRound(db))
 	// Add callback to the timer
 	timeoutTimer.OnTimeoutFn = engine.OnCountdownTimeout
 
