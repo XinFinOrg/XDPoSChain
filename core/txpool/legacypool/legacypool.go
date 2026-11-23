@@ -896,11 +896,11 @@ func (pool *LegacyPool) pooledAt(from common.Address, nonce uint64) *types.Trans
 }
 
 // pooledSpecials returns the sender's pooled special transactions, pending and
-// queued.
+// queued, in no particular order.
 func (pool *LegacyPool) pooledSpecials(from common.Address) []*types.Transaction {
 	var specials []*types.Transaction
 	collect := func(l *list) {
-		for _, tx := range l.Flatten() {
+		for _, tx := range l.txs.items {
 			if tx.IsSpecialTransaction() {
 				specials = append(specials, tx)
 			}
@@ -932,10 +932,11 @@ func (pool *LegacyPool) pooledSpecials(from common.Address) []*types.Transaction
 //
 // Note, this method assumes the pool lock is held!
 func (pool *LegacyPool) checkSpecialTx(from common.Address, tx *types.Transaction) error {
+	specials := pool.pooledSpecials(from)
 	if tx.IsSigningTransaction() {
-		signed := signTxNumber(tx)
-		for _, pooled := range pool.pooledSpecials(from) {
-			if pooled.Nonce() != tx.Nonce() && pooled.IsSigningTransaction() && signTxNumber(pooled).Cmp(signed) == 0 {
+		signed := core.SignedBlockNumber(tx)
+		for _, pooled := range specials {
+			if pooled.Nonce() != tx.Nonce() && pooled.IsSigningTransaction() && core.SignedBlockNumber(pooled).Cmp(signed) == 0 {
 				return fmt.Errorf("%w: block %v at nonce %d", ErrDuplicateSignTx, signed, pooled.Nonce())
 			}
 		}
@@ -943,7 +944,7 @@ func (pool *LegacyPool) checkSpecialTx(from common.Address, tx *types.Transactio
 	if old := pool.pooledAt(from, tx.Nonce()); old != nil && old.IsSpecialTransaction() {
 		return checkSignTxReplacement(old, tx)
 	}
-	if len(pool.pooledSpecials(from)) >= maxSpecialTxsPerAccount {
+	if len(specials) >= maxSpecialTxsPerAccount {
 		return fmt.Errorf("%w: limit %d", ErrSpecialTxLimit, maxSpecialTxsPerAccount)
 	}
 	return nil
@@ -960,8 +961,8 @@ func checkSignTxReplacement(old, tx *types.Transaction) error {
 	if !tx.IsSigningTransaction() {
 		return fmt.Errorf("%w: replacement to %v", ErrSignTxNotNewer, tx.To())
 	}
-	if old.IsSigningTransaction() && signTxNumber(tx).Cmp(signTxNumber(old)) <= 0 {
-		return fmt.Errorf("%w: signs %v, pooled signs %v", ErrSignTxNotNewer, signTxNumber(tx), signTxNumber(old))
+	if old.IsSigningTransaction() && core.SignedBlockNumber(tx).Cmp(core.SignedBlockNumber(old)) <= 0 {
+		return fmt.Errorf("%w: signs %v, pooled signs %v", ErrSignTxNotNewer, core.SignedBlockNumber(tx), core.SignedBlockNumber(old))
 	}
 	return nil
 }
@@ -1027,12 +1028,6 @@ func (pool *LegacyPool) dropInvalidSignTxs() int {
 		log.Trace("Dropped sign transaction no longer valid", "hash", hash)
 	}
 	return len(drop)
-}
-
-// signTxNumber returns the block number a sign transaction signs. The
-// transaction must pass tx.IsSigningTransaction.
-func signTxNumber(tx *types.Transaction) *big.Int {
-	return new(big.Int).SetBytes(tx.Data()[4:36])
 }
 
 // isGapped reports whether the given transaction is immediately executable.

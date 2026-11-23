@@ -105,7 +105,7 @@ func checkSignTxFields(config *params.ChainConfig, number *big.Int, tx *types.Tr
 	if tx.Value().Sign() != 0 {
 		return fmt.Errorf("%w: %v", ErrSignTxValue, tx.Value())
 	}
-	signed := signedBlockNumber(tx)
+	signed := SignedBlockNumber(tx)
 	// No block number reaches 2^64; rejecting such a number here also keeps
 	// the merge check below from reading a truncated value.
 	if !signed.IsUint64() {
@@ -127,9 +127,9 @@ func checkSignTxFields(config *params.ChainConfig, number *big.Int, tx *types.Tr
 	return nil
 }
 
-// signedBlockNumber returns the block number a sign transaction signs. The
+// SignedBlockNumber returns the block number a sign transaction signs. The
 // call data must already have passed tx.IsSigningTransaction.
-func signedBlockNumber(tx *types.Transaction) *big.Int {
+func SignedBlockNumber(tx *types.Transaction) *big.Int {
 	return new(big.Int).SetBytes(tx.Data()[4:36])
 }
 
@@ -213,7 +213,7 @@ func (r *SignTxRules) Check(tx *types.Transaction, from common.Address) error {
 	if err := checkSignTxFields(r.config, r.number, tx); err != nil {
 		return err
 	}
-	if signed := signedBlockNumber(tx); signed.Cmp(r.number) >= 0 {
+	if signed := SignedBlockNumber(tx); signed.Cmp(r.number) >= 0 {
 		return fmt.Errorf("%w: signed %v, block %v", ErrSignTxFutureBlock, signed, r.number)
 	}
 	if r.candidates != nil {
