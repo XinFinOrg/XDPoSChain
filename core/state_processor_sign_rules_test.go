@@ -19,6 +19,7 @@ package core
 import (
 	"crypto/ecdsa"
 	"errors"
+	"fmt"
 	"math/big"
 	"testing"
 
@@ -139,5 +140,70 @@ func TestProcessAppliesSignTxRulesFromFork(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestSignTxRulesUnknownParentIsLocal checks that a sign transaction checked
+// against a parent this node does not have fails as a local condition, not as
+// a bad block: the missing header is this node's state, not the block's fault.
+func TestSignTxRulesUnknownParentIsLocal(t *testing.T) {
+	t.Parallel()
+
+	key, _ := crypto.GenerateKey()
+	candidate := crypto.PubkeyToAddress(key.PublicKey)
+	config := params.TestChainConfig
+	rules := NewSignTxRules(config, big.NewInt(1), &signerSourceEngine{signers: []common.Address{candidate}}, nil, nil)
+
+	err := rules.Check(signRuleTx(t, config, key, 0, signCallData(0, common.Hash{1})), candidate)
+	if err == nil {
+		t.Fatal("Check passed without a parent header")
+	}
+	if errors.Is(err, ErrSignTxNotCandidate) {
+		t.Fatalf("err = %v, the sender is blamed for a missing parent", err)
+	}
+	if !IsLocalInsertError(err) || classifyInsertErr(err).badBlock {
+		t.Fatalf("err = %v: local = %v, badBlock = %v, want a local condition that is not a bad block", err, IsLocalInsertError(err), classifyInsertErr(err).badBlock)
+	}
+}
+
+// failingSignerSource is a no-op engine whose candidate list cannot be read.
+type failingSignerSource struct {
+	noopConsensusEngine
+	err error
+}
+
+func (e *failingSignerSource) GetAuthorisedSignersFromSnapshot(consensus.ChainReader, *types.Header) ([]common.Address, error) {
+	return nil, e.err
+}
+
+// TestProcessSignTxSnapshotFailureIsLocal checks that a candidate list the
+// engine cannot read fails block processing as a local condition, not as a
+// bad block.
+func TestProcessSignTxSnapshotFailureIsLocal(t *testing.T) {
+	t.Parallel()
+
+	key, _ := crypto.GenerateKey()
+	config := params.TestChainConfig.Clone()
+	config.TIPSignTxRulesBlock = big.NewInt(1)
+	gspec := &Genesis{Config: config, Alloc: types.GenesisAlloc{common.BlockSignersBinary: {Balance: big.NewInt(1)}}}
+	blockchain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, noopConsensusEngine{}, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	defer blockchain.Stop()
+
+	block := GenerateBadBlock(t, gspec.ToBlock(), noopConsensusEngine{}, types.Transactions{signRuleTx(t, config, key, 0, signCallData(0, common.Hash{1}))}, config)
+	engine := &failingSignerSource{err: fmt.Errorf("%w", consensus.ErrGapSnapshotUnavailable)}
+	processor := NewStateProcessor(config, blockchain, engine)
+	statedb, err := blockchain.State()
+	if err != nil {
+		t.Fatalf("state: %v", err)
+	}
+	_, _, _, err = processor.Process(block, statedb, nil, vm.Config{}, map[common.Address]*big.Int{})
+	if !errors.Is(err, consensus.ErrGapSnapshotUnavailable) {
+		t.Fatalf("err = %v, want %v", err, consensus.ErrGapSnapshotUnavailable)
+	}
+	if !IsLocalInsertError(err) || classifyInsertErr(err).badBlock {
+		t.Fatalf("err = %v: local = %v, badBlock = %v, want a local condition that is not a bad block", err, IsLocalInsertError(err), classifyInsertErr(err).badBlock)
 	}
 }

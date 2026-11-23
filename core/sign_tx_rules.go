@@ -182,8 +182,10 @@ func NewSignTxRules(config *params.ChainConfig, number *big.Int, source SignerSo
 	}
 	if source != nil {
 		r.candidates = func() (map[common.Address]struct{}, error) {
+			// The parent is this node's record, not the block's: a missing one
+			// is a local condition and must not mark the block bad.
 			if parent == nil {
-				return nil, fmt.Errorf("%w: parent of block %v unknown", ErrSignTxNotCandidate, number)
+				return nil, localConditionf("no header for the parent of block %v to load the sign transaction candidates", number)
 			}
 			signers, err := source.GetAuthorisedSignersFromSnapshot(chain, parent)
 			if err != nil {
