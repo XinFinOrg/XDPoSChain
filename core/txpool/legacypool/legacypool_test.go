@@ -1373,7 +1373,6 @@ func validatePoolInternals(pool *LegacyPool) error {
 	}
 	// Special transactions are kept out of the price heap and take no slots
 	// from the pool capacity.
-	pool.priced.Reheap()
 	remote, slots := 0, 0
 	pool.all.Range(func(hash common.Hash, tx *types.Transaction) bool {
 		if !tx.IsSpecialTransaction() {
@@ -1382,6 +1381,13 @@ func validatePoolInternals(pool *LegacyPool) error {
 		}
 		return true
 	})
+	// Before the heap is rebuilt, every entry beyond the pooled regular
+	// transactions must be counted as stale: a removal reported for a
+	// transaction the heap never held, or one not reported, breaks this.
+	if heaped, stales := pool.priced.urgent.Len()+pool.priced.floating.Len(), int(pool.priced.stales.Load()); heaped != remote+stales {
+		return fmt.Errorf("price heap holds %d entries, want %d regular + %d stale", heaped, remote, stales)
+	}
+	pool.priced.Reheap()
 	if priced := pool.priced.urgent.Len() + pool.priced.floating.Len(); priced != remote {
 		return fmt.Errorf("total priced transaction count %d != %d", priced, remote)
 	}
