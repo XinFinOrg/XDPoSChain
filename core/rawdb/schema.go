@@ -81,6 +81,13 @@ var (
 	bloomBitsPrefix = []byte("B") // bloomBitsPrefix + bit (uint16 big endian) + section (uint64 big endian) + hash -> bloom bits
 	codePrefix      = []byte("c") // codePrefix + code hash -> account code
 
+	// new log index
+	filterMapsPrefix         = "fm-"
+	filterMapsRangeKey       = []byte(filterMapsPrefix + "R")
+	filterMapRowPrefix       = []byte(filterMapsPrefix + "r") // filterMapRowPrefix + mapRowIndex (uint64 big endian) -> filter row
+	filterMapLastBlockPrefix = []byte(filterMapsPrefix + "b") // filterMapLastBlockPrefix + mapIndex (uint32 big endian) -> block number (uint64 big endian)
+	filterMapBlockLVPrefix   = []byte(filterMapsPrefix + "p") // filterMapBlockLVPrefix + num (uint64 big endian) -> log value pointer (uint64 big endian)
+
 	// used by old db, now only used for conversion
 	oldReceiptsPrefix = []byte("receipts-")
 
@@ -307,4 +314,35 @@ func sectionHeadKey(section uint64) []byte {
 	var data [8]byte
 	binary.BigEndian.PutUint64(data[:], section)
 	return append(sectionHeadKeyPrefix, data[:]...)
+}
+
+// filterMapRowKey = filterMapRowPrefix + mapRowIndex (uint64 big endian)
+func filterMapRowKey(mapRowIndex uint64, base bool) []byte {
+	extLen := 8
+	if base {
+		extLen = 9
+	}
+	l := len(filterMapRowPrefix)
+	key := make([]byte, l+extLen)
+	copy(key[:l], filterMapRowPrefix)
+	binary.BigEndian.PutUint64(key[l:l+8], mapRowIndex)
+	return key
+}
+
+// filterMapLastBlockKey = filterMapLastBlockPrefix + mapIndex (uint32 big endian)
+func filterMapLastBlockKey(mapIndex uint32) []byte {
+	l := len(filterMapLastBlockPrefix)
+	key := make([]byte, l+4)
+	copy(key[:l], filterMapLastBlockPrefix)
+	binary.BigEndian.PutUint32(key[l:], mapIndex)
+	return key
+}
+
+// filterMapBlockLVKey = filterMapBlockLVPrefix + num (uint64 big endian)
+func filterMapBlockLVKey(number uint64) []byte {
+	l := len(filterMapBlockLVPrefix)
+	key := make([]byte, l+8)
+	copy(key[:l], filterMapBlockLVPrefix)
+	binary.BigEndian.PutUint64(key[l:], number)
+	return key
 }
