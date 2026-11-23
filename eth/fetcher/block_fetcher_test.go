@@ -376,6 +376,8 @@ type importBudget struct {
 	added        int32
 	removed      int32
 	imports      int32
+	releases     int32
+	releaseDrops int32
 
 	insertCalls int32
 	insertSends int32
@@ -384,6 +386,7 @@ type importBudget struct {
 	lastInsertCall  atomic.Int64
 	lastInsertSend  atomic.Int64
 	lastQueueChange atomic.Int64
+	lastRelease     atomic.Int64
 }
 
 func newImportBudget(f *BlockFetcher) *importBudget {
@@ -399,6 +402,22 @@ func newImportBudget(f *BlockFetcher) *importBudget {
 		}
 	}
 	return b
+}
+
+// watchReleases reports every block whose peer allowance was released. The hook
+// runs on the fetcher's loop, so it must never block it: the channel needs one
+// free slot per block the caller keeps in flight, and a missing slot is recorded
+// for waitRelease to fail on instead of parking the loop.
+func (b *importBudget) watchReleases(f *BlockFetcher, released chan common.Hash) {
+	f.queueReleaseHook = func(hash common.Hash) {
+		b.lastRelease.Store(time.Now().UnixNano())
+		atomic.AddInt32(&b.releases, 1)
+		select {
+		case released <- hash:
+		default:
+			atomic.AddInt32(&b.releaseDrops, 1)
+		}
+	}
 }
 
 // arm starts the phase clock at the first wait, so setup is not charged to the budget.
@@ -426,6 +445,9 @@ func (b *importBudget) progressing() bool {
 		latest = v
 	}
 	if v := b.lastQueueChange.Load(); v > latest {
+		latest = v
+	}
+	if v := b.lastRelease.Load(); v > latest {
 		latest = v
 	}
 	return latest != 0 && time.Since(time.Unix(0, latest)) < progressGrace
@@ -475,6 +497,40 @@ func (b *importBudget) waitImport(t *testing.T, imported chan *types.Block, labe
 	}
 }
 
+func (b *importBudget) waitRelease(t *testing.T, released chan common.Hash, want common.Hash, label string) {
+	t.Helper()
+	b.arm()
+	if drops := atomic.LoadInt32(&b.releaseDrops); drops > 0 {
+		t.Fatalf("%s: %d allowance release(s) dropped, provision one slot per block in flight", label, drops)
+	}
+
+	for {
+		select {
+		case hash := <-released:
+			if hash != want {
+				t.Fatalf("%s: released allowance for %s, want %s", label, hash, want)
+			}
+			return
+		case <-b.expired:
+			// The expiry may be picked while a release is already queued.
+			select {
+			case hash := <-released:
+				if hash != want {
+					t.Fatalf("%s: released allowance for %s, want %s", label, hash, want)
+				}
+				b.reset()
+				return
+			default:
+			}
+			if b.progressing() && time.Now().Before(b.hardDeadline) {
+				b.reset()
+				continue
+			}
+			t.Fatalf("%s: allowance release timeout after %v: %s", label, fetchWait, b.state())
+		}
+	}
+}
+
 // TestImportBudgetResetBound verifies a reset near the hard deadline waits only the remaining budget instead of another full fetchWait.
 func TestImportBudgetResetBound(t *testing.T) {
 	b := &importBudget{}
@@ -490,13 +546,13 @@ func TestImportBudgetResetBound(t *testing.T) {
 }
 
 func (b *importBudget) state() string {
-	return fmt.Sprintf("imports %d, queue depth %d (added %d, removed %d), inserts %d/%d (in send %d), last insert call/send/queue %s/%s/%s, %v elapsed",
-		atomic.LoadInt32(&b.imports), atomic.LoadInt32(&b.enqueued),
+	return fmt.Sprintf("imports %d, releases %d (dropped %d), queue depth %d (added %d, removed %d), inserts %d/%d (in send %d), last insert call/send/queue/release %s/%s/%s/%s, %v elapsed",
+		atomic.LoadInt32(&b.imports), atomic.LoadInt32(&b.releases), atomic.LoadInt32(&b.releaseDrops), atomic.LoadInt32(&b.enqueued),
 		atomic.LoadInt32(&b.added), atomic.LoadInt32(&b.removed),
 		atomic.LoadInt32(&b.insertCalls), atomic.LoadInt32(&b.insertSends),
 		atomic.LoadInt32(&b.inSend),
 		sinceNano(b.lastInsertCall.Load()), sinceNano(b.lastInsertSend.Load()),
-		sinceNano(b.lastQueueChange.Load()), time.Since(b.started))
+		sinceNano(b.lastQueueChange.Load()), sinceNano(b.lastRelease.Load()), time.Since(b.started))
 }
 
 func (b *importBudget) verifyImportEvent(t *testing.T, imported chan *types.Block, arrive bool) {
@@ -1149,6 +1205,76 @@ func TestBlockMemoryExhaustionAttack(t *testing.T) {
 		tester.fetcher.Enqueue(peer, blocks[hashes[len(hashes)-2-i]])
 		budget.verifyImportEvent(t, imported, true)
 	}
+	verifyImportDone(t, imported)
+}
+
+// Tests that a peer's delivered-block allowance is released as its blocks are
+// imported, so a peer that keeps delivering over time is not capped forever.
+func TestBlockDeliveryAllowanceRelease(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	imported := make(chan *types.Block)
+	budget := tester.watchImports(imported)
+	released := make(chan common.Hash, 1)
+	budget.watchReleases(tester.fetcher, released)
+
+	// Deliver more blocks than the allowance through a single peer, but only
+	// after the previous block's allowance is released.
+	hashes, blocks := makeChain(blockLimit+2, 0, genesis)
+	for i := len(hashes) - 2; i >= 0; i-- {
+		tester.fetcher.Enqueue("valid", blocks[hashes[i]])
+		budget.verifyImportEvent(t, imported, true)
+		budget.waitRelease(t, released, hashes[i], fmt.Sprintf("block %d", len(hashes)-1-i))
+	}
+	verifyImportDone(t, imported)
+}
+
+// Tests that a block that leaves the queue without being imported still releases
+// its peer's allowance, so a peer cannot fill its quota with blocks that never
+// import.
+func TestBlockDeliveryAllowanceReleaseStale(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	imported := make(chan *types.Block)
+	budget := tester.watchImports(imported)
+	released := make(chan common.Hash, 1)
+	budget.watchReleases(tester.fetcher, released)
+
+	// Import a prefix of the chain so a block can be delivered while it is still
+	// too high to import; it stays queued instead of producing an import event.
+	hashes, blocks := makeChain(blockLimit+2, 0, genesis)
+	const head, stale = 10, 41
+	for n := 1; n <= head; n++ {
+		hash := hashes[len(hashes)-1-n]
+		tester.fetcher.Enqueue("valid", blocks[hash])
+		budget.verifyImportEvent(t, imported, true)
+		budget.waitRelease(t, released, hash, fmt.Sprintf("block %d", n))
+	}
+	staleHash := hashes[len(hashes)-1-stale]
+	tester.fetcher.Enqueue("valid", blocks[staleHash])
+	// The loop reads the chain height inside enqueue, so wait until the block is
+	// actually queued: jumping the head first would make it too far behind.
+	waitEnqueued(t, &budget.enqueued, 1)
+
+	// Jump the head past the queued block in one locked batch, so the fetcher
+	// cannot import it on the way; stale+maxUncleDist < head makes it stale.
+	batch := make(types.Blocks, 0, stale+maxUncleDist+1-head)
+	for n := head + 1; n <= stale+maxUncleDist+1; n++ {
+		batch = append(batch, blocks[hashes[len(hashes)-1-n]])
+	}
+	if _, err := tester.insertChain(batch); err != nil {
+		t.Fatalf("chain insert failed: %v", err)
+	}
+	// A queued block never wakes the loop, so deliver one that is still too high
+	// to import: the drain pops the stale block first and forgets it.
+	wake := stale + maxUncleDist + 3
+	tester.fetcher.Enqueue("valid", blocks[hashes[len(hashes)-1-wake]])
+
+	// The release must come from the pop path (block_fetcher.go:424), not from a
+	// done event: the stale block was never imported.
+	budget.waitRelease(t, released, staleHash, "stale block")
 	verifyImportDone(t, imported)
 }
 
