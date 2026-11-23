@@ -1137,8 +1137,16 @@ func TestBlockMemoryExhaustionAttack(t *testing.T) {
 	budget.verifyImportCount(t, imported, maxQueueDist)
 
 	// Insert the remaining blocks in chunks to ensure clean DOS protection
+	// Rotate the peer because blockLimit is released by the fetcher's done
+	// event, which trails the import, so a single peer would exhaust the cap.
+	// Size the rotation from the allowance: even if every release stayed queued
+	// behind the imports, a peer is credited at most once per delivery, so
+	// remaining/blockLimit+1 peers keep every one of them below the cap.
+	remaining := len(hashes) - 1 - maxQueueDist
+	peers := remaining/blockLimit + 1
 	for i := maxQueueDist; i < len(hashes)-1; i++ {
-		tester.fetcher.Enqueue("valid", blocks[hashes[len(hashes)-2-i]])
+		peer := fmt.Sprintf("valid-%d", (i-maxQueueDist)%peers)
+		tester.fetcher.Enqueue(peer, blocks[hashes[len(hashes)-2-i]])
 		budget.verifyImportEvent(t, imported, true)
 	}
 	verifyImportDone(t, imported)
