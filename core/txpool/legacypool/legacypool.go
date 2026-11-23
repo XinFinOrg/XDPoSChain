@@ -1765,7 +1765,10 @@ func (pool *LegacyPool) promoteExecutables(accounts []common.Address) []*types.T
 // Only regular transactions count toward the limit and only they are evicted:
 // special transactions have their own budget, bounded per sender at admission.
 // An account is reduced from its highest nonce down, so one whose highest
-// pending transaction is special is not reduced further.
+// pending transaction is special is not reduced further. Every other account
+// is reduced only down to its own floor, the equalization threshold or
+// AccountSlots, never further to make up for one that cannot be reduced; as
+// AccountSlots is at least one, no pending list is emptied.
 func (pool *LegacyPool) truncatePending() {
 	pending := uint64(0)
 
@@ -1836,7 +1839,7 @@ func (pool *LegacyPool) truncatePending() {
 			for pending > pool.config.GlobalSlots && regularLen(offenders[len(offenders)-2]) > threshold {
 				progress := false
 				for i := 0; i < len(offenders)-1; i++ {
-					if capTail(offenders[i]) {
+					if regularLen(offenders[i]) > threshold && capTail(offenders[i]) {
 						pending--
 						progress = true
 					}
@@ -1853,7 +1856,7 @@ func (pool *LegacyPool) truncatePending() {
 		for pending > pool.config.GlobalSlots && uint64(regularLen(offenders[len(offenders)-1])) > pool.config.AccountSlots {
 			progress := false
 			for _, addr := range offenders {
-				if capTail(addr) {
+				if uint64(regularLen(addr)) > pool.config.AccountSlots && capTail(addr) {
 					pending--
 					progress = true
 				}

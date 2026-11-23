@@ -248,3 +248,55 @@ func TestSpecialLaneNotTruncated(t *testing.T) {
 		t.Fatalf("pool internal state corrupted: %v", err)
 	}
 }
+
+// TestSpecialLaneTruncateKeepsAccountSlots checks that an offender whose
+// highest pending transaction is special, and so cannot be reduced, does not
+// make truncatePending reduce the other offenders below AccountSlots or leave
+// empty pending lists behind.
+func TestSpecialLaneTruncateKeepsAccountSlots(t *testing.T) {
+	t.Parallel()
+
+	pool, _ := setupPool()
+	defer pool.Close()
+	pool.SetSigner(func(common.Address) bool { return true })
+
+	signer := laneKey(pool)
+	var txs []*types.Transaction
+	for nonce := uint64(0); nonce < 3; nonce++ {
+		txs = append(txs, pricedTransaction(nonce, 100000, big.NewInt(common.DefaultMinGasPrice), signer))
+	}
+	txs = append(txs, laneRandomizeTx(t, signer, 3, 1))
+	users := []*ecdsa.PrivateKey{laneKey(pool), laneKey(pool)}
+	for _, user := range users {
+		for nonce := uint64(0); nonce < 10; nonce++ {
+			txs = append(txs, pricedTransaction(nonce, 100000, big.NewInt(common.DefaultMinGasPrice), user))
+		}
+	}
+	for _, tx := range txs {
+		if err := pool.addRemoteSync(tx); err != nil {
+			t.Fatalf("failed to add tx %d: %v", tx.Nonce(), err)
+		}
+	}
+	pool.mu.Lock()
+	pool.config.GlobalSlots = 4
+	pool.config.AccountSlots = 2
+	pool.truncatePending()
+	pool.mu.Unlock()
+
+	for addr, list := range pool.pending {
+		if list.Empty() {
+			t.Fatalf("empty pending list left for %v", addr)
+		}
+	}
+	for i, user := range users {
+		if list := pool.pending[crypto.PubkeyToAddress(user.PublicKey)]; list == nil || uint64(list.Len()) < pool.config.AccountSlots {
+			t.Fatalf("user %d: reduced below AccountSlots (%d)", i, pool.config.AccountSlots)
+		}
+	}
+	if list := pool.pending[crypto.PubkeyToAddress(signer.PublicKey)]; list == nil || list.Len() != 4 {
+		t.Fatal("the signer's pending txs were reduced although its tail is special")
+	}
+	if err := validatePoolInternals(pool); err != nil {
+		t.Fatalf("pool internal state corrupted: %v", err)
+	}
+}
