@@ -211,20 +211,30 @@ func TestClientWebsocketPing(t *testing.T) {
 	var (
 		sendPing = make(chan struct{})
 		server   = wsPingTestServer(t, sendPing)
-		// The deadline only needs to expire before the ping below.
-		ctx, cancel = context.WithTimeout(context.Background(), 200*time.Millisecond)
 	)
-	defer cancel()
-	defer server.Shutdown(ctx)
+	// Shutdown waits for the server's connections to become idle, so it needs a
+	// bound of its own as well.
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelShutdown()
+	defer server.Shutdown(shutdownCtx)
 
-	client, err := DialContext(ctx, "ws://"+server.Addr)
+	// The handshake gets a bound of its own: it must not eat into the budget that
+	// has to expire before the ping below, but a hung server should fail the test
+	// instead of blocking it until the go test timeout.
+	dialCtx, cancelDial := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelDial()
+	client, err := DialContext(dialCtx, "ws://"+server.Addr)
 	if err != nil {
 		t.Fatalf("client dial error: %v", err)
 	}
 	defer client.Close()
 
 	resultChan := make(chan int)
-	sub, err := client.EthSubscribe(ctx, resultChan, "foo")
+	// A deadline, not a cancel: expiring it before the ping is what reproduces
+	// https://github.com/ethereum/go-ethereum/issues/19798.
+	subCtx, cancelSub := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancelSub()
+	sub, err := client.EthSubscribe(subCtx, resultChan, "foo")
 	if err != nil {
 		t.Fatalf("client subscribe error: %v", err)
 	}
@@ -232,8 +242,7 @@ func TestClientWebsocketPing(t *testing.T) {
 	// server can't handle the request.
 
 	// Wait for the context's deadline to be reached before proceeding.
-	// This is important for reproducing https://github.com/ethereum/go-ethereum/issues/19798
-	<-ctx.Done()
+	<-subCtx.Done()
 	close(sendPing)
 
 	// Wait for the subscription result.
