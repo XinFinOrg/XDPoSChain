@@ -38,7 +38,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/contracts"
 	"github.com/XinFinOrg/XDPoSChain/core"
-	"github.com/XinFinOrg/XDPoSChain/core/bloombits"
 	"github.com/XinFinOrg/XDPoSChain/core/filtermaps"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool"
@@ -90,9 +89,6 @@ type Ethereum struct {
 	eventMux       *event.TypeMux
 	engine         consensus.Engine
 	accountManager *accounts.Manager
-
-	bloomRequests chan chan *bloombits.Retrieval // Channel receiving bloom data retrieval requests
-	bloomIndexer  *core.ChainIndexer             // Bloom indexer operating during block imports
 
 	filterMaps      *filtermaps.FilterMaps
 	closeFilterMaps chan chan struct{}
@@ -174,8 +170,6 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 		networkId:      networkID,
 		gasPrice:       config.Miner.GasPrice,
 		etherbase:      config.Miner.Etherbase,
-		bloomRequests:  make(chan chan *bloombits.Retrieval),
-		bloomIndexer:   NewBloomIndexer(chainDb, params.BloomBitsBlocks, params.BloomConfirms),
 		p2pServer:      stack.Server(),
 	}
 	// Inject XDCX Service into main Eth Service.
@@ -314,8 +308,6 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 			return nil, err
 		}
 	}
-
-	eth.bloomIndexer.Start(eth.blockchain)
 
 	fmConfig := filtermaps.Config{
 		History:        config.LogHistory,
@@ -755,7 +747,6 @@ func (e *Ethereum) TxPool() *txpool.TxPool             { return e.txPool }
 func (e *Ethereum) EventMux() *event.TypeMux           { return e.eventMux }
 func (e *Ethereum) Engine() consensus.Engine           { return e.engine }
 func (e *Ethereum) ChainDb() ethdb.Database            { return e.chainDb }
-func (e *Ethereum) BloomIndexer() *core.ChainIndexer   { return e.bloomIndexer }
 func (e *Ethereum) IsListening() bool                  { return true } // Always listening
 func (e *Ethereum) EthVersion() int                    { return int(ethproto.ProtocolVersions[0]) }
 func (e *Ethereum) NetVersion() uint64                 { return e.networkId }
@@ -770,9 +761,6 @@ func (e *Ethereum) Protocols() []p2p.Protocol {
 // Ethereum protocol implementation.
 func (e *Ethereum) Start() error {
 	ethproto.StartENRUpdater(e.blockchain, e.p2pServer.LocalNode())
-
-	// Start the bloom bits servicing goroutines
-	e.startBloomHandlers(params.BloomBitsBlocks)
 
 	// Figure out a max peers count based on the server limits
 	maxPeers := e.p2pServer.MaxPeers
@@ -855,10 +843,6 @@ func (e *Ethereum) Stop() error {
 		<-ch
 		e.filterMaps.Stop()
 	}
-
-	log.Info("Stopping Ethereum bloomIndexer start")
-	e.bloomIndexer.Close()
-	log.Info("Ethereum bloomIndexer stopped")
 
 	log.Info("Stopping Ethereum blockchain start")
 	e.blockchain.Stop()

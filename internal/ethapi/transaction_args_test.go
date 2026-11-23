@@ -34,7 +34,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/core"
-	"github.com/XinFinOrg/XDPoSChain/core/bloombits"
 	"github.com/XinFinOrg/XDPoSChain/core/filtermaps"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -394,11 +393,9 @@ func (b *backendMock) BlobBaseFee(ctx context.Context) *big.Int {
 	return new(big.Int)
 }
 
-func (b *backendMock) ChainDb() ethdb.Database                                              { return nil }
-func (b *backendMock) AccountManager() *accounts.Manager                                    { return nil }
-func (b *backendMock) BloomStatus() (uint64, uint64)                                        { return 0, 0 }
-func (b *backendMock) ServiceFilter(ctx context.Context, session *bloombits.MatcherSession) {}
-func (b *backendMock) NewMatcherBackend() filtermaps.MatcherBackend                         { return nil }
+func (b *backendMock) ChainDb() ethdb.Database                      { return nil }
+func (b *backendMock) AccountManager() *accounts.Manager            { return nil }
+func (b *backendMock) NewMatcherBackend() filtermaps.MatcherBackend { return nil }
 
 func (b *backendMock) ExtRPCEnabled() bool          { return false }
 func (b *backendMock) RPCGasCap() uint64            { return 0 }

@@ -41,7 +41,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
-	"github.com/XinFinOrg/XDPoSChain/core/bloombits"
 	"github.com/XinFinOrg/XDPoSChain/core/filtermaps"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
@@ -1364,12 +1363,6 @@ func (fb *filterBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscr
 
 func (fb *filterBackend) SubscribePendingLogsEvent(ch chan<- []*types.Log) event.Subscription {
 	return nullSubscription()
-}
-
-func (fb *filterBackend) BloomStatus() (uint64, uint64) { return 4096, 0 }
-
-func (fb *filterBackend) ServiceFilter(ctx context.Context, ms *bloombits.MatcherSession) {
-	panic("not supported")
 }
 
 func (fb *filterBackend) NewMatcherBackend() filtermaps.MatcherBackend {
