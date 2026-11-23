@@ -33,11 +33,22 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 )
 
+type invalidParamsError struct {
+	err error
+}
+
+func (e invalidParamsError) Error() string  { return e.err.Error() }
+func (e invalidParamsError) ErrorCode() int { return -32602 }
+
+func invalidParamsErr(format string, args ...any) error {
+	return invalidParamsError{fmt.Errorf(format, args...)}
+}
+
 var (
-	errInvalidTopic           = errors.New("invalid topic(s)")
+	errInvalidTopic           = invalidParamsErr("invalid topic(s)")
 	errFilterNotFound         = errors.New("filter not found")
-	errInvalidBlockRange      = errors.New("invalid block range params")
-	errPendingLogsUnsupported = errors.New("pending logs are not supported")
+	errInvalidBlockRange      = invalidParamsErr("invalid block range params")
+	errPendingLogsUnsupported = invalidParamsErr("pending logs are not supported")
 	errExceedMaxTopics        = errors.New("exceed max topics")
 	errExceedLogQueryLimit    = errors.New("exceed max addresses or topics per search position")
 )
@@ -138,6 +149,7 @@ func (api *FilterAPI) NewPendingTransactionFilter(fullTx *bool) rpc.ID {
 	api.filtersMu.Unlock()
 
 	go func() {
+		defer pendingTxSub.Unsubscribe()
 		for {
 			select {
 			case pTx := <-pendingTxs:
@@ -167,11 +179,13 @@ func (api *FilterAPI) NewPendingTransactions(ctx context.Context, fullTx *bool) 
 		return &rpc.Subscription{}, rpc.ErrNotificationsUnsupported
 	}
 
-	rpcSub := notifier.CreateSubscription()
+	var (
+		rpcSub       = notifier.CreateSubscription()
+		txs          = make(chan []*types.Transaction, 128)
+		pendingTxSub = api.events.SubscribePendingTxs(txs)
+	)
 
 	go func() {
-		txs := make(chan []*types.Transaction, 128)
-		pendingTxSub := api.events.SubscribePendingTxs(txs)
 		defer pendingTxSub.Unsubscribe()
 
 		chainConfig := api.sys.backend.ChainConfig()
@@ -212,6 +226,7 @@ func (api *FilterAPI) NewBlockFilter() rpc.ID {
 	api.filtersMu.Unlock()
 
 	go func() {
+		defer headerSub.Unsubscribe()
 		for {
 			select {
 			case h := <-headers:
@@ -239,11 +254,13 @@ func (api *FilterAPI) NewHeads(ctx context.Context) (*rpc.Subscription, error) {
 		return &rpc.Subscription{}, rpc.ErrNotificationsUnsupported
 	}
 
-	rpcSub := notifier.CreateSubscription()
+	var (
+		rpcSub     = notifier.CreateSubscription()
+		headers    = make(chan *types.Header)
+		headersSub = api.events.SubscribeNewHeads(headers)
+	)
 
 	go func() {
-		headers := make(chan *types.Header)
-		headersSub := api.events.SubscribeNewHeads(headers)
 		defer headersSub.Unsubscribe()
 
 		for {
@@ -340,6 +357,7 @@ func (api *FilterAPI) NewFilter(crit FilterCriteria) (rpc.ID, error) {
 	api.filtersMu.Unlock()
 
 	go func() {
+		defer logsSub.Unsubscribe()
 		for {
 			select {
 			case l := <-logs:
@@ -382,7 +400,7 @@ func (api *FilterAPI) GetLogs(ctx context.Context, crit FilterCriteria) ([]*type
 		if crit.ToBlock != nil {
 			end = crit.ToBlock.Int64()
 		}
-		if begin > 0 && end > 0 && begin > end {
+		if begin >= 0 && end >= 0 && begin > end {
 			return nil, errInvalidBlockRange
 		}
 		// Construct the range filter

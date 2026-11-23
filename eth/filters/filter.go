@@ -19,7 +19,6 @@ package filters
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"math/big"
 	"slices"
@@ -96,10 +95,6 @@ func (f *Filter) Logs(ctx context.Context) ([]*types.Log, error) {
 	if f.begin == rpc.PendingBlockNumber.Int64() || f.end == rpc.PendingBlockNumber.Int64() {
 		return nil, errPendingLogsUnsupported
 	}
-	// Reject ranges that exceed the configured limit.
-	if f.rangeLimit != 0 && f.end >= f.begin && uint64(f.end-f.begin) > f.rangeLimit {
-		return nil, fmt.Errorf("exceed maximum block range %d", f.rangeLimit)
-	}
 
 	resolveSpecial := func(number int64) (uint64, error) {
 		switch number {
@@ -130,6 +125,27 @@ func (f *Filter) Logs(ctx context.Context) ([]*types.Log, error) {
 	end, err := resolveSpecial(f.end)
 	if err != nil {
 		return nil, err
+	}
+	// Reject ranges that exceed the configured limit. The "latest" sentinel is
+	// resolved to the current head for the check so that it cannot be used to
+	// bypass the limit; the search itself stays dynamic.
+	if f.rangeLimit != 0 {
+		checkBegin, checkEnd := begin, end
+		if checkBegin == math.MaxUint64 || checkEnd == math.MaxUint64 {
+			var head uint64
+			if hdr := f.sys.backend.CurrentHeader(); hdr != nil {
+				head = hdr.Number.Uint64()
+			}
+			if checkBegin == math.MaxUint64 {
+				checkBegin = head
+			}
+			if checkEnd == math.MaxUint64 {
+				checkEnd = head
+			}
+		}
+		if checkEnd >= checkBegin && checkEnd-checkBegin > f.rangeLimit {
+			return nil, invalidParamsErr("exceed maximum block range %d", f.rangeLimit)
+		}
 	}
 	return f.rangeLogs(ctx, begin, end)
 }
@@ -363,8 +379,21 @@ func (f *Filter) rangeLogs(ctx context.Context, firstBlock, lastBlock uint64) ([
 		}()
 	}
 
-	if firstBlock > lastBlock {
-		return nil, nil
+	// Reject inverted ranges. A "latest" end is always at or after the head, so
+	// only ranges with a concrete end can be inverted; a "latest" start is
+	// resolved to the current head for the check.
+	if lastBlock != math.MaxUint64 {
+		first := firstBlock
+		if first == math.MaxUint64 {
+			var head uint64
+			if hdr := f.sys.backend.CurrentHeader(); hdr != nil {
+				head = hdr.Number.Uint64()
+			}
+			first = head
+		}
+		if first > lastBlock {
+			return nil, errInvalidBlockRange
+		}
 	}
 	mb := f.sys.backend.NewMatcherBackend()
 	defer mb.Close()

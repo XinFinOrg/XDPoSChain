@@ -466,6 +466,50 @@ func TestInvalidGetRangeLogsRequest(t *testing.T) {
 	if _, err := api.GetLogs(context.Background(), FilterCriteria{FromBlock: big.NewInt(2), ToBlock: big.NewInt(1)}); err != errInvalidBlockRange {
 		t.Errorf("Expected Logs for invalid range return error, but got: %v", err)
 	}
+	// A range that starts after genesis but ends at block 0 must be rejected as well.
+	if _, err := api.GetLogs(context.Background(), FilterCriteria{FromBlock: big.NewInt(5), ToBlock: big.NewInt(0)}); err != errInvalidBlockRange {
+		t.Errorf("Expected Logs for range ending at genesis return error, but got: %v", err)
+	}
+}
+
+// TestRangeLimit tests that a range query wider than the configured limit is
+// rejected with the invalid params error code.
+func TestRangeLimit(t *testing.T) {
+	t.Parallel()
+
+	var (
+		db     = rawdb.NewMemoryDatabase()
+		_, sys = newTestFilterSystem(db, Config{RangeLimit: 5})
+		api    = NewFilterAPI(sys)
+	)
+	defer db.Close()
+
+	_, err := api.GetLogs(context.Background(), FilterCriteria{FromBlock: big.NewInt(0), ToBlock: big.NewInt(9)})
+	if err == nil {
+		t.Fatal("expected range limit error, got nil")
+	}
+	var rpcErr rpc.Error
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("expected rpc.Error, got %T", err)
+	}
+	if rpcErr.ErrorCode() != -32602 {
+		t.Fatalf("expected error code -32602, got %d", rpcErr.ErrorCode())
+	}
+
+	// A "latest" end must not bypass the limit: with the head above the limit,
+	// the effective range [0, head] exceeds it.
+	header := &types.Header{Number: big.NewInt(10)}
+	rawdb.WriteHeader(db, header)
+	rawdb.WriteCanonicalHash(db, header.Hash(), 10)
+	rawdb.WriteHeadBlockHash(db, header.Hash())
+
+	_, err = api.GetLogs(context.Background(), FilterCriteria{FromBlock: big.NewInt(0), ToBlock: big.NewInt(int64(rpc.LatestBlockNumber))})
+	if err == nil {
+		t.Fatal("expected range limit error for latest end, got nil")
+	}
+	if !errors.As(err, &rpcErr) || rpcErr.ErrorCode() != -32602 {
+		t.Fatalf("expected error code -32602 for latest end, got %v", err)
+	}
 }
 
 // TestLogFilter tests whether log filters match the correct logs that are posted to the event feed.
@@ -637,6 +681,19 @@ func TestGetLogsStartBeyondHead(t *testing.T) {
 	}
 	if len(logs) != 0 {
 		t.Fatalf("expected no logs for range beyond head, got %d", len(logs))
+	}
+
+	// A "latest" start must be resolved to the head before the range is checked
+	// for inversion, not compared as the MaxUint64 sentinel.
+	logs, err = api.GetLogs(context.Background(), FilterCriteria{FromBlock: big.NewInt(int64(rpc.LatestBlockNumber)), ToBlock: big.NewInt(3)})
+	if err != nil {
+		t.Fatalf("GetLogs [latest, 3] returned error: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("expected 1 log for [latest, 3], got %d", len(logs))
+	}
+	if _, err := api.GetLogs(context.Background(), FilterCriteria{FromBlock: big.NewInt(int64(rpc.LatestBlockNumber)), ToBlock: big.NewInt(2)}); err != errInvalidBlockRange {
+		t.Fatalf("expected invalid block range for [latest, 2], got %v", err)
 	}
 }
 
