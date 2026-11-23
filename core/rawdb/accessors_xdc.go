@@ -64,10 +64,25 @@ func WriteXdposV2Snapshot(db ethdb.KeyValueWriter, hash common.Hash, blob []byte
 }
 
 // ReadXdposV2HighestVotedRound returns the highest XDPoS v2 round this node has
-// voted in, or 0 if it has never voted.
+// voted in, or 0 if it has never voted. A stored round that cannot be read or
+// is malformed also reads as 0, which lets the node vote again in a round it
+// may have voted in, so that case is logged as an error.
 func ReadXdposV2HighestVotedRound(db ethdb.KeyValueReader) uint64 {
-	data, _ := db.Get(xdposV2HighestVotedRoundKey)
+	has, err := db.Has(xdposV2HighestVotedRoundKey)
+	if err != nil {
+		log.Error("Failed to read the highest voted round, assuming none", "err", err)
+		return 0
+	}
+	if !has {
+		return 0
+	}
+	data, err := db.Get(xdposV2HighestVotedRoundKey)
+	if err != nil {
+		log.Error("Failed to read the highest voted round, assuming none", "err", err)
+		return 0
+	}
 	if len(data) != 8 {
+		log.Error("Malformed highest voted round, assuming none", "len", len(data))
 		return 0
 	}
 	return binary.BigEndian.Uint64(data)

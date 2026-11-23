@@ -18,7 +18,12 @@ package rawdb
 
 import (
 	"bytes"
+	"errors"
+	"strings"
 	"testing"
+
+	"github.com/XinFinOrg/XDPoSChain/ethdb"
+	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
 func TestXdposV2HighestVotedRound(t *testing.T) {
@@ -44,5 +49,40 @@ func TestXdposV2HighestVotedRound(t *testing.T) {
 	// The key must stay outside the snapshot prefixes.
 	if bytes.HasPrefix(xdposV2HighestVotedRoundKey, xdposV1Prefix) || bytes.HasPrefix(xdposV2HighestVotedRoundKey, xdposV2Prefix) {
 		t.Fatalf("key %q shares a snapshot prefix", xdposV2HighestVotedRoundKey)
+	}
+}
+
+// TestReadXdposV2HighestVotedRoundLogsBadRead checks that a voted round that
+// exists but cannot be read, or is malformed, is reported instead of silently
+// read as never voted, while a missing round stays silent.
+func TestReadXdposV2HighestVotedRoundLogsBadRead(t *testing.T) {
+	var logBuf bytes.Buffer
+	prevLog := log.Root()
+	log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(&logBuf, log.LevelWarn, false)))
+	defer log.SetDefault(prevLog)
+
+	malformed := NewMemoryDatabase()
+	if err := malformed.Put(xdposV2HighestVotedRoundKey, []byte{1, 2, 3}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name   string
+		db     ethdb.KeyValueReader
+		report bool
+	}{
+		{"missing", NewMemoryDatabase(), false},
+		{"missing, get fails", &errorReader{getErr: errors.New("not found")}, false},
+		{"malformed", malformed, true},
+		{"has fails", &errorReader{hasErr: errors.New("io error")}, true},
+		{"get fails", &errorReader{hasResult: true, getErr: errors.New("io error")}, true},
+	} {
+		logBuf.Reset()
+		if got := ReadXdposV2HighestVotedRound(c.db); got != 0 {
+			t.Errorf("%s: have round %d, want 0", c.name, got)
+		}
+		reported := strings.Contains(logBuf.String(), "highest voted round")
+		if reported != c.report {
+			t.Errorf("%s: reported %v, want %v; log: %q", c.name, reported, c.report, logBuf.String())
+		}
 	}
 }
