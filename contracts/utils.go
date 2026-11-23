@@ -40,7 +40,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/contracts/blocksigner/contract"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
-	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -54,8 +53,17 @@ type RewardLog struct {
 
 var TxSignMu sync.RWMutex
 
+// SignTxPool is the part of the txpool that CreateTransactionSign may use;
+// *txpool.TxPool implements it. It deliberately offers only the on-chain nonce,
+// so the pending nonce (TxPool.PoolNonce) cannot be picked by mistake (#3056).
+type SignTxPool interface {
+	// Nonce returns the account's on-chain nonce, see txpool.TxPool.Nonce.
+	Nonce(addr common.Address) uint64
+	AddLocal(tx *types.Transaction, sync bool) error
+}
+
 // Send tx sign for block number to smart contract blockSigner.
-func CreateTransactionSign(chainConfig *params.ChainConfig, pool *txpool.TxPool, manager *accounts.Manager, block *types.Block, chainDb ethdb.Database, eb common.Address) error {
+func CreateTransactionSign(chainConfig *params.ChainConfig, pool SignTxPool, manager *accounts.Manager, block *types.Block, chainDb ethdb.Database, eb common.Address) error {
 	TxSignMu.Lock()
 	defer TxSignMu.Unlock()
 	if chainConfig.XDPoS != nil {
@@ -78,7 +86,9 @@ func CreateTransactionSign(chainConfig *params.ChainConfig, pool *txpool.TxPool,
 			}
 		}
 
-		nonce := pool.PoolNonce(account.Address)
+		// Sign at the on-chain nonce: a stuck sign tx is then replaced by the fresh
+		// one (see LegacyPool.promoteSpecialTx) instead of queueing behind it.
+		nonce := pool.Nonce(account.Address)
 		tx := CreateTxSign(block.Number(), block.Hash(), nonce, common.BlockSignersBinary)
 		txSigned, err := wallet.SignTx(account, tx, chainConfig.ChainID)
 		if err != nil {

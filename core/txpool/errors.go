@@ -76,8 +76,6 @@ var (
 
 	ErrUnderMinGasPrice = errors.New("under min gas price")
 
-	ErrDuplicateSpecialTransaction = errors.New("duplicate a special transaction")
-
 	ErrSpecialTxCostOverflow = errors.New("special transaction cost overflow")
 
 	// ErrSpecialTxNotFromSigner is returned if a special transaction is submitted
