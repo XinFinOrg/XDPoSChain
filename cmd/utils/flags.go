@@ -449,6 +449,21 @@ var (
 		Value:    ethconfig.Defaults.RangeLimit,
 		Category: flags.APICategory,
 	}
+	HistoryLogsFlag = &cli.Uint64Flag{
+		Name:     "history-logs",
+		Usage:    "Number of recent blocks for which a log search index is maintained (0 = disabled)",
+		Category: flags.EthCategory,
+	}
+	HistoryLogsDisableFlag = &cli.BoolFlag{
+		Name:     "history-logs-disable",
+		Usage:    "Disable the log search index entirely",
+		Category: flags.EthCategory,
+	}
+	HistoryLogsExportFlag = &cli.StringFlag{
+		Name:     "history-logs-export",
+		Usage:    "Export log index checkpoints to the given file",
+		Category: flags.EthCategory,
+	}
 	// Authenticated RPC HTTP settings
 	AuthListenFlag = &cli.StringFlag{
 		Name:     "authrpc-addr",
@@ -1683,6 +1698,16 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	}
 	if ctx.IsSet(RPCGlobalLogQueryLimit.Name) {
 		cfg.LogQueryLimit = ctx.Int(RPCGlobalLogQueryLimit.Name)
+	}
+	if ctx.IsSet(HistoryLogsFlag.Name) {
+		cfg.LogHistory = ctx.Uint64(HistoryLogsFlag.Name)
+		cfg.LogNoHistory = cfg.LogHistory == 0
+	}
+	if ctx.IsSet(HistoryLogsDisableFlag.Name) {
+		cfg.LogNoHistory = ctx.Bool(HistoryLogsDisableFlag.Name)
+	}
+	if ctx.IsSet(HistoryLogsExportFlag.Name) {
+		cfg.LogExportCheckpoints = ctx.String(HistoryLogsExportFlag.Name)
 	}
 	if ctx.IsSet(VMEnableDebugFlag.Name) {
 		// TODO(fjl): force-enable this in --dev mode

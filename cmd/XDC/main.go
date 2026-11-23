@@ -171,6 +171,9 @@ var (
 		utils.BatchRequestLimitFlag,
 		utils.BatchResponseMaxSizeFlag,
 		utils.RPCGlobalRangeLimitFlag,
+		utils.HistoryLogsFlag,
+		utils.HistoryLogsDisableFlag,
+		utils.HistoryLogsExportFlag,
 	}
 
 	metricsFlags = []cli.Flag{

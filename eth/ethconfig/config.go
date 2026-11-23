@@ -56,6 +56,7 @@ var Defaults = Config{
 	GPO:                       FullNodeGPO,
 	RPCTxFeeCap:               50, // 50 ether(XDC)
 	RangeLimit:                5000,
+	LogNoHistory:              true, // the log index is opt-in on XDC
 	ChainConfigMismatchPolicy: core.DefaultChainConfigMismatchPolicy.String(),
 }
 
@@ -131,4 +132,12 @@ type Config struct {
 
 	// RangeLimit restricts the maximum range (end - start) for range queries.
 	RangeLimit uint64 `toml:",omitempty"`
+
+	// LogHistory is the number of recent blocks for which a log search index
+	// is maintained.
+	LogHistory uint64 `toml:",omitempty"`
+	// LogNoHistory disables the log search index entirely.
+	LogNoHistory bool `toml:",omitempty"`
+	// LogExportCheckpoints is a file the log indexer writes checkpoints to.
+	LogExportCheckpoints string `toml:",omitempty"`
 }

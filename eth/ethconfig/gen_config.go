@@ -48,6 +48,9 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		RPCEVMTimeout              time.Duration
 		RPCTxFeeCap                float64
 		RangeLimit                 uint64 `toml:",omitempty"`
+		LogHistory                 uint64 `toml:",omitempty"`
+		LogNoHistory               bool   `toml:",omitempty"`
+		LogExportCheckpoints       string `toml:",omitempty"`
 	}
 	var enc Config
 	enc.Genesis = c.Genesis
@@ -82,6 +85,9 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.RPCEVMTimeout = c.RPCEVMTimeout
 	enc.RPCTxFeeCap = c.RPCTxFeeCap
 	enc.RangeLimit = c.RangeLimit
+	enc.LogHistory = c.LogHistory
+	enc.LogNoHistory = c.LogNoHistory
+	enc.LogExportCheckpoints = c.LogExportCheckpoints
 	return &enc, nil
 }
 
@@ -120,6 +126,9 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		RPCEVMTimeout              *time.Duration
 		RPCTxFeeCap                *float64
 		RangeLimit                 *uint64 `toml:",omitempty"`
+		LogHistory                 *uint64 `toml:",omitempty"`
+		LogNoHistory               *bool   `toml:",omitempty"`
+		LogExportCheckpoints       *string `toml:",omitempty"`
 	}
 	var dec Config
 	if err := unmarshal(&dec); err != nil {
@@ -220,6 +229,15 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	}
 	if dec.RangeLimit != nil {
 		c.RangeLimit = *dec.RangeLimit
+	}
+	if dec.LogHistory != nil {
+		c.LogHistory = *dec.LogHistory
+	}
+	if dec.LogNoHistory != nil {
+		c.LogNoHistory = *dec.LogNoHistory
+	}
+	if dec.LogExportCheckpoints != nil {
+		c.LogExportCheckpoints = *dec.LogExportCheckpoints
 	}
 	return nil
 }
