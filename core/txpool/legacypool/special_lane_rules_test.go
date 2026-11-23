@@ -252,6 +252,45 @@ func TestSpecialLaneDuplicateSignTx(t *testing.T) {
 	}
 }
 
+// TestSpecialLaneReplacesQueuedAtPendingNonce checks that a sign transaction
+// for a newer block replaces a queued one at the same nonce also when that
+// nonce has just become the pending nonce: the newer one must survive the
+// next promotion.
+func TestSpecialLaneReplacesQueuedAtPendingNonce(t *testing.T) {
+	t.Parallel()
+
+	pool, _ := setupPool()
+	defer pool.Close()
+	pool.SetSigner(func(common.Address) bool { return true })
+	<-pool.requestReset(nil, newTestHeader(60))
+
+	key := laneKey(pool)
+	older := laneSignTx(t, key, 1, 15, 1)
+	if err := pool.addRemoteSync(older); err != nil {
+		t.Fatalf("failed to queue the sign tx: %v", err)
+	}
+	// One batch, so no promotion runs between the two: the randomize tx makes
+	// nonce 1 the pending nonce while the older sign tx is still queued there.
+	newer := laneSignTx(t, key, 1, 30, 2)
+	for i, err := range pool.addRemotesSync([]*types.Transaction{laneRandomizeTx(t, key, 0, 1), newer}) {
+		if err != nil {
+			t.Fatalf("tx %d rejected: %v", i, err)
+		}
+	}
+	if pool.all.Get(newer.Hash()) == nil {
+		t.Fatal("the sign tx for the newer block is not pooled")
+	}
+	if pool.all.Get(older.Hash()) != nil {
+		t.Fatal("the sign tx for the older block is still pooled")
+	}
+	if pending, queued := pool.Stats(); pending != 2 || queued != 0 {
+		t.Fatalf("pool stats = (%d pending, %d queued), want (2, 0)", pending, queued)
+	}
+	if err := validatePoolInternals(pool); err != nil {
+		t.Fatalf("pool internal state corrupted: %v", err)
+	}
+}
+
 // TestSpecialLaneSenderCap checks that one sender may pool at most
 // maxSpecialTxsPerAccount special transactions, pending and queued together,
 // that replacing one of them at the same nonce is still accepted at the cap,

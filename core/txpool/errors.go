@@ -76,8 +76,6 @@ var (
 
 	ErrUnderMinGasPrice = errors.New("under min gas price")
 
-	ErrSpecialTxCostOverflow = errors.New("special transaction cost overflow")
-
 	// ErrSpecialTxNotFromSigner is returned if a special transaction is submitted
 	// by an account that is not an authorized signer.
 	ErrSpecialTxNotFromSigner = errors.New("special transaction sender is not a signer")
