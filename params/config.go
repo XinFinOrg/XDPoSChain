@@ -109,6 +109,11 @@ type ChainConfig struct {
 	TIPUpgradePenaltyBlock     *big.Int `json:"tipUpgradePenaltyBlock,omitempty"`
 	TIPEpochHalvingBlock       *big.Int `json:"tipEpochHalvingBlock,omitempty"`
 	TIPProportionalRewardBlock *big.Int `json:"tipProportionalRewardBlock,omitempty"`
+	// TIPRandomizeDisableBlock ends the special treatment of the randomize
+	// contract (0x90). Its secrets and openings are only read by XDPoS v1, so
+	// from this block nodes stop creating randomize txs, and a tx to 0x90 is a
+	// regular contract call that pays gas like any other.
+	TIPRandomizeDisableBlock *big.Int `json:"tipRandomizeDisableBlock,omitempty"`
 
 	TRC21IssuerSMC         common.Address `json:"trc21IssuerSMC,omitempty"`
 	XDCXListingSMC         common.Address `json:"xdcxListingSMC,omitempty"`
@@ -918,6 +923,9 @@ func (c *ChainConfig) String() string {
 	if c.TIPProportionalRewardBlock != nil {
 		result += fmt.Sprintf(", TIPProportionalReward: %v", c.TIPProportionalRewardBlock)
 	}
+	if c.TIPRandomizeDisableBlock != nil {
+		result += fmt.Sprintf(", TIPRandomizeDisable: %v", c.TIPRandomizeDisableBlock)
+	}
 	if !c.TRC21IssuerSMC.IsZero() {
 		result += fmt.Sprintf(", TRC21IssuerSMC: %s", c.TRC21IssuerSMC.Hex())
 	}
@@ -998,6 +1006,7 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - Amsterdam:                   %-8v\n", c.AmsterdamBlock)
 	banner += fmt.Sprintf("  - TIPEpochHalving:             %-8v\n", c.TIPEpochHalvingBlock)
 	banner += fmt.Sprintf("  - TIPProportionalReward:       %-8v\n", c.TIPProportionalRewardBlock)
+	banner += fmt.Sprintf("  - TIPRandomizeDisable:         %-8v\n", c.TIPRandomizeDisableBlock)
 	banner += fmt.Sprintf("  - TRC21IssuerSMC:              %-8s\n", c.TRC21IssuerSMC)
 	banner += fmt.Sprintf("  - XDCXListingSMC:              %-8s\n", c.XDCXListingSMC)
 	banner += fmt.Sprintf("  - RelayerRegistrationSMC:      %-8s\n", c.RelayerRegistrationSMC)
@@ -1118,6 +1127,9 @@ func (c *ChainConfig) ActiveForks(block *big.Int) []string {
 	}
 	if c.IsTIPRandomize(block) {
 		activeForks = append(activeForks, "TIPRandomize")
+	}
+	if c.IsTIPRandomizeDisable(block) {
+		activeForks = append(activeForks, "TIPRandomizeDisable")
 	}
 	if c.IsTIPSigning(block) {
 		activeForks = append(activeForks, "TIPSigning")
