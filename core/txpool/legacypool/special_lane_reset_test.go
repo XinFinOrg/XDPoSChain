@@ -164,3 +164,51 @@ func TestSpecialLaneResetSkipsMinedSignTx(t *testing.T) {
 		t.Fatalf("pool internal state corrupted: %v", err)
 	}
 }
+
+// TestSpecialLaneAbortedResetKeepsSignTxs checks that a reset which cannot
+// open the requested head's state does not re-check the pooled sign
+// transactions: the pool is still on its previous head, so the re-check waits
+// for the next reset that moves it.
+func TestSpecialLaneAbortedResetKeepsSignTxs(t *testing.T) {
+	t.Parallel()
+
+	pool, _ := setupPool()
+	defer pool.Close()
+	var (
+		mu        sync.Mutex
+		candidate = true
+	)
+	pool.SetSigner(func(common.Address) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return candidate
+	})
+	tx := laneSignTx(t, laneKey(pool), 0, 0, 1)
+	if err := pool.addRemoteSync(tx); err != nil {
+		t.Fatalf("failed to add sign tx: %v", err)
+	}
+	mu.Lock()
+	candidate = false
+	mu.Unlock()
+
+	pool.mu.Lock()
+	chain := pool.chain
+	pool.chain = statelessBlockChain{chain}
+	pool.mu.Unlock()
+	<-pool.requestReset(nil, newTestHeader(1))
+
+	if pool.all.Get(tx.Hash()) == nil {
+		t.Fatal("aborted reset re-checked the pooled sign tx")
+	}
+	pool.mu.Lock()
+	pool.chain = chain
+	pool.mu.Unlock()
+	<-pool.requestReset(nil, newTestHeader(1))
+
+	if pool.all.Get(tx.Hash()) != nil {
+		t.Fatal("sign tx from a sender no longer a candidate is still pooled after the reset that moved the pool")
+	}
+	if err := validatePoolInternals(pool); err != nil {
+		t.Fatalf("pool internal state corrupted: %v", err)
+	}
+}

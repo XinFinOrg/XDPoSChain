@@ -1456,8 +1456,10 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 
 		// Sign transactions valid when admitted can stop being valid at a new
 		// head: drop them before promotion, so they cannot sit in the pool.
-		if dropped := pool.dropInvalidSignTxs(); dropped > 0 {
-			log.Debug("Dropped sign transactions no longer valid", "dropped", dropped, "head", newPoolHead.Number)
+		if moved {
+			if dropped := pool.dropInvalidSignTxs(); dropped > 0 {
+				log.Debug("Dropped sign transactions no longer valid", "dropped", dropped, "head", newPoolHead.Number)
+			}
 		}
 
 		// Discard transactions whose gas limit exceeds the cap once the reset
