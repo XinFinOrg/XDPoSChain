@@ -25,6 +25,7 @@ import (
 	"math/rand"
 	"reflect"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -997,6 +998,119 @@ func TestPendingTxSubscriberDoesNotStallFeed(t *testing.T) {
 		case <-live:
 		case <-timeout:
 			t.Fatalf("live subscriber received %d of %d batches", received, batches)
+		}
+	}
+}
+
+// TestLogAndHeadSubscribersDoNotStallTxFeed checks that log and new head
+// subscribers that stop reading cannot block the transaction feed, while live
+// log, head and pending transaction subscribers still receive every event once
+// the stalled subscribers go away.
+func TestLogAndHeadSubscribersDoNotStallTxFeed(t *testing.T) {
+	t.Parallel()
+
+	var (
+		db           = rawdb.NewMemoryDatabase()
+		backend, sys = newTestFilterSystem(t, db, Config{})
+		api          = NewFilterAPI(sys, false)
+
+		// More batches than the event system's txsCh buffer, so the feed
+		// blocks once nothing drains it.
+		batches = txChanSize + 100
+		// Fewer events than the logsCh and chainCh buffers, so their feeds
+		// never block while the stalled subscribers hold up delivery.
+		events = 3
+
+		stuckLogs    = make(chan []*types.Log)  // never read
+		stuckHeaders = make(chan *types.Header) // never read
+		liveLogs     = make(chan []*types.Log, events)
+		liveHeaders  = make(chan *types.Header, events)
+		liveTxs      = make(chan []*types.Transaction, batches)
+	)
+	liveLogSub, err := api.events.SubscribeLogs(ethereum.FilterQuery{}, liveLogs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer liveLogSub.Unsubscribe()
+	liveHeadSub := api.events.SubscribeNewHeads(liveHeaders)
+	defer liveHeadSub.Unsubscribe()
+	liveTxSub := api.events.SubscribePendingTxs(liveTxs)
+	defer liveTxSub.Unsubscribe()
+
+	stuckLogSub, err := api.events.SubscribeLogs(ethereum.FilterQuery{}, stuckLogs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stuckHeadSub := api.events.SubscribeNewHeads(stuckHeaders)
+	// Unsubscribing drains the stalled channels, which releases a blocked
+	// event loop, also when the test fails. Each Unsubscribe drains only its
+	// own channels, so both run at once.
+	unsubscribeStuck := func() {
+		var wg sync.WaitGroup
+		for _, sub := range []*Subscription{stuckLogSub, stuckHeadSub} {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				sub.Unsubscribe()
+			}()
+		}
+		wg.Wait()
+	}
+	defer unsubscribeStuck()
+
+	var (
+		addr = common.HexToAddress("0xb794f5ea0ba39494ce83a213fffba74279579268")
+		tx   = types.NewTransaction(0, addr, new(big.Int), 0, new(big.Int), nil)
+	)
+	for i := 0; i < events; i++ {
+		backend.logsFeed.Send([]*types.Log{{Address: addr, BlockNumber: uint64(i + 1)}})
+		block := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(int64(i + 1))})
+		backend.chainFeed.Send(core.ChainEvent{Block: block, Hash: block.Hash()})
+	}
+
+	sent := make(chan struct{})
+	go func() {
+		defer close(sent)
+		for i := 0; i < batches; i++ {
+			backend.txFeed.Send(core.NewTxsEvent{Txs: []*types.Transaction{tx}})
+		}
+	}()
+	select {
+	case <-sent:
+	case <-time.After(10 * time.Second):
+		t.Fatal("transaction feed blocked by log and head subscribers that do not read")
+	}
+
+	timeout := time.After(10 * time.Second)
+	for received := 0; received < batches; received++ {
+		select {
+		case <-liveTxs:
+		case <-timeout:
+			t.Fatalf("live pending transaction subscriber received %d of %d batches", received, batches)
+		}
+	}
+
+	// Log and head delivery waits for the stalled subscribers, it does not
+	// drop events. Once they leave, the live subscribers get every event.
+	unsubscribeStuck()
+	for i := 0; i < events; i++ {
+		select {
+		case logs := <-liveLogs:
+			if len(logs) != 1 || logs[0].BlockNumber != uint64(i+1) {
+				t.Fatalf("log event %d: unexpected logs %v", i, logs)
+			}
+		case <-timeout:
+			t.Fatalf("live log subscriber received %d of %d events", i, events)
+		}
+	}
+	for i := 0; i < events; i++ {
+		select {
+		case h := <-liveHeaders:
+			if h.Number.Uint64() != uint64(i+1) {
+				t.Fatalf("head event %d: unexpected number %d", i, h.Number)
+			}
+		case <-timeout:
+			t.Fatalf("live head subscriber received %d of %d events", i, events)
 		}
 	}
 }
