@@ -317,7 +317,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 		// cleanup has to skip trie nodes.
 		HashScheme: true,
 	}
-	eth.filterMaps, err = filtermaps.NewFilterMaps(chainDb, eth.newChainView(eth.blockchain.CurrentBlock()), 0, 0, filtermaps.DefaultParams, fmConfig)
+	eth.filterMaps, err = filtermaps.NewFilterMaps(chainDb, eth.newChainView(eth.blockchain.CurrentBlock()), 0, eth.filterMapsFinalizedBlock(), filtermaps.DefaultParams, fmConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -787,6 +787,30 @@ func (e *Ethereum) newChainView(head *types.Header) *filtermaps.ChainView {
 	return filtermaps.NewChainView(e.blockchain, head.Number.Uint64(), head.Hash())
 }
 
+// filterMapsFinalizedBlock returns the highest finalized block number known to
+// the consensus engine. Only XDPoS v2 exposes a committed block; older engines
+// and PoW setups have no finality, so zero is reported and checkpoint export
+// stays disabled.
+func (e *Ethereum) filterMapsFinalizedBlock() uint64 {
+	config := e.blockchain.Config()
+	if config == nil || config.XDPoS == nil {
+		return 0
+	}
+	head := e.blockchain.CurrentBlock()
+	if head == nil || config.XDPoS.BlockConsensusVersion(head.Number) != params.ConsensusEngineVersion2 {
+		return 0
+	}
+	xdcs, ok := e.engine.(*XDPoS.XDPoS)
+	if !ok || xdcs.EngineV2 == nil {
+		return 0
+	}
+	info := xdcs.EngineV2.GetLatestCommittedBlockInfo()
+	if info == nil || info.Number == nil {
+		return 0
+	}
+	return info.Number.Uint64()
+}
+
 // updateFilterMapsHeads keeps the log indexer in sync with the chain head.
 func (e *Ethereum) updateFilterMapsHeads() {
 	headEventCh := make(chan core.ChainEvent, 10)
@@ -816,7 +840,7 @@ func (e *Ethereum) updateFilterMapsHeads() {
 				return
 			}
 			head = newHead
-			e.filterMaps.SetTarget(view, 0, 0)
+			e.filterMaps.SetTarget(view, 0, e.filterMapsFinalizedBlock())
 		}
 	}
 	setHead(e.blockchain.CurrentBlock())
