@@ -58,6 +58,10 @@ func (db *BatchDatabase) Delete(key []byte) error {
 	return db.db.Delete(key)
 }
 
+func (db *BatchDatabase) DeleteRange(start, end []byte) error {
+	return db.db.DeleteRange(start, end)
+}
+
 func (db *BatchDatabase) Has(key []byte) (bool, error) {
 	return db.db.Has(key)
 }

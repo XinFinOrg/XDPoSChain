@@ -18,7 +18,17 @@
 package ethdb
 
 import (
+	"bytes"
+	"errors"
 	"io"
+)
+
+var (
+	// MaximumKey is a special marker representing the largest possible key
+	// in the database.
+	//
+	// All prefixed database entries will be smaller than this marker.
+	MaximumKey = bytes.Repeat([]byte{0xff}, 32)
 )
 
 // KeyValueReader wraps the Has and Get method of a backing data store.
@@ -37,6 +47,24 @@ type KeyValueWriter interface {
 
 	// Delete removes the key from the key-value data store.
 	Delete(key []byte) error
+}
+
+// ErrTooManyKeys is returned by DeleteRange implementations that limit the
+// number of keys deleted in a single call.
+var ErrTooManyKeys = errors.New("too many keys in deleted range")
+
+// KeyValueRangeDeleter wraps the DeleteRange method of a backing data store.
+type KeyValueRangeDeleter interface {
+	// DeleteRange deletes all of the keys (and values) in the range [start,end)
+	// (inclusive on start, exclusive on end).
+	//
+	// A nil start is treated as a key before all keys in the data store; a nil
+	// end is treated as a key after all keys in the data store. If both is nil
+	// then the entire data store will be purged.
+	//
+	// Some implementations of DeleteRange may return ErrTooManyKeys after
+	// partially deleting entries in the given range.
+	DeleteRange(start, end []byte) error
 }
 
 // Stater wraps the Stat method of a backing data store.
@@ -64,6 +92,7 @@ type KeyValueStore interface {
 	KeyValueWriter
 	Batcher
 	Iteratee
+	KeyValueRangeDeleter
 	Stater
 	Compacter
 	io.Closer
@@ -127,6 +156,7 @@ type Database interface {
 	Writer
 	Batcher
 	Iteratee
+	KeyValueRangeDeleter
 	Stater
 	Compacter
 	io.Closer

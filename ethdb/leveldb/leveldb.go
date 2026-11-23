@@ -21,6 +21,7 @@
 package leveldb
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 	"strings"
@@ -202,6 +203,32 @@ func (db *Database) Put(key []byte, value []byte) error {
 // Delete removes the key from the key-value store.
 func (db *Database) Delete(key []byte) error {
 	return db.db.Delete(key, nil)
+}
+
+// DeleteRange deletes all of the keys (and values) in the range [start,end)
+// (inclusive on start, exclusive on end).
+func (db *Database) DeleteRange(start, end []byte) error {
+	batch := db.NewBatch()
+	it := db.NewIterator(nil, start)
+	defer it.Release()
+
+	var count int
+	for it.Next() && (end == nil || bytes.Compare(end, it.Key()) > 0) {
+		count++
+		if count > 10000 { // should not block for more than a second
+			if err := batch.Write(); err != nil {
+				return err
+			}
+			return ethdb.ErrTooManyKeys
+		}
+		if err := batch.Delete(it.Key()); err != nil {
+			return err
+		}
+	}
+	if err := it.Error(); err != nil {
+		return err
+	}
+	return batch.Write()
 }
 
 // NewBatch creates a write-only key-value store that buffers changes to its host
@@ -465,6 +492,32 @@ type batch struct {
 func (b *batch) Put(key, value []byte) error {
 	b.b.Put(key, value)
 	b.size += len(value)
+	return nil
+}
+
+// DeleteRange deletes all of the keys (and values) in the range [start,end)
+// (inclusive on start, exclusive on end).
+func (b *batch) DeleteRange(start, end []byte) error {
+	slice := &util.Range{
+		Start: start,
+		Limit: end,
+	}
+	it := b.db.NewIterator(slice, nil)
+	defer it.Release()
+
+	var count int
+	for it.Next() {
+		count++
+		key := it.Key()
+		if count > 10000 { // should not block for more than a second
+			return ethdb.ErrTooManyKeys
+		}
+		b.b.Delete(key)
+		b.size += len(key)
+	}
+	if err := it.Error(); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -121,6 +121,27 @@ func (db *Database) Delete(key []byte) error {
 	return nil
 }
 
+// DeleteRange deletes all of the keys (and values) in the range [start,end)
+// (inclusive on start, exclusive on end).
+func (db *Database) DeleteRange(start, end []byte) error {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	if db.db == nil {
+		return errMemorydbClosed
+	}
+	for key := range db.db {
+		if start != nil && key < string(start) {
+			continue
+		}
+		if end != nil && key >= string(end) {
+			continue
+		}
+		delete(db.db, key)
+	}
+	return nil
+}
+
 // NewBatch creates a write-only key-value store that buffers changes to its host
 // database until a final write is called.
 func (db *Database) NewBatch() ethdb.Batch {
@@ -198,6 +219,12 @@ type keyvalue struct {
 	key    []byte
 	value  []byte
 	delete bool
+
+	// rangeDelete marks a range deletion. It cannot be inferred from an
+	// empty key, since the empty key is itself a valid key to delete.
+	rangeDelete bool
+	rangeFrom   []byte
+	rangeTo     []byte
 }
 
 // batch is a write-only memory batch that commits changes to its host
@@ -210,15 +237,27 @@ type batch struct {
 
 // Put inserts the given value into the batch for later committing.
 func (b *batch) Put(key, value []byte) error {
-	b.writes = append(b.writes, keyvalue{common.CopyBytes(key), common.CopyBytes(value), false})
+	b.writes = append(b.writes, keyvalue{key: common.CopyBytes(key), value: common.CopyBytes(value)})
 	b.size += len(value)
 	return nil
 }
 
 // Delete inserts the a key removal into the batch for later committing.
 func (b *batch) Delete(key []byte) error {
-	b.writes = append(b.writes, keyvalue{common.CopyBytes(key), nil, true})
+	b.writes = append(b.writes, keyvalue{key: common.CopyBytes(key), delete: true})
 	b.size += 1
+	return nil
+}
+
+// DeleteRange inserts a range removal into the batch for later committing.
+func (b *batch) DeleteRange(start, end []byte) error {
+	b.writes = append(b.writes, keyvalue{
+		rangeDelete: true,
+		rangeFrom:   common.CopyBytes(start),
+		rangeTo:     common.CopyBytes(end),
+		delete:      true,
+	})
+	b.size += len(start) + len(end)
 	return nil
 }
 
@@ -232,12 +271,27 @@ func (b *batch) Write() error {
 	b.db.lock.Lock()
 	defer b.db.lock.Unlock()
 
-	for _, keyvalue := range b.writes {
-		if keyvalue.delete {
-			delete(b.db.db, string(keyvalue.key))
+	if b.db.db == nil {
+		return errMemorydbClosed
+	}
+	for _, entry := range b.writes {
+		if entry.delete {
+			if !entry.rangeDelete {
+				delete(b.db.db, string(entry.key))
+			} else {
+				for key := range b.db.db {
+					if entry.rangeFrom != nil && key < string(entry.rangeFrom) {
+						continue
+					}
+					if entry.rangeTo != nil && key >= string(entry.rangeTo) {
+						continue
+					}
+					delete(b.db.db, key)
+				}
+			}
 			continue
 		}
-		b.db.db[string(keyvalue.key)] = keyvalue.value
+		b.db.db[string(entry.key)] = entry.value
 	}
 	return nil
 }
@@ -250,14 +304,24 @@ func (b *batch) Reset() {
 
 // Replay replays the batch contents.
 func (b *batch) Replay(w ethdb.KeyValueWriter) error {
-	for _, keyvalue := range b.writes {
-		if keyvalue.delete {
-			if err := w.Delete(keyvalue.key); err != nil {
-				return err
+	for _, entry := range b.writes {
+		if entry.delete {
+			if !entry.rangeDelete {
+				if err := w.Delete(entry.key); err != nil {
+					return err
+				}
+			} else {
+				rangeDeleter, ok := w.(ethdb.KeyValueRangeDeleter)
+				if !ok {
+					return errors.New("ethdb.KeyValueWriter does not implement DeleteRange")
+				}
+				if err := rangeDeleter.DeleteRange(entry.rangeFrom, entry.rangeTo); err != nil {
+					return err
+				}
 			}
 			continue
 		}
-		if err := w.Put(keyvalue.key, keyvalue.value); err != nil {
+		if err := w.Put(entry.key, entry.value); err != nil {
 			return err
 		}
 	}

@@ -18,6 +18,7 @@ package dbtest
 
 import (
 	"bytes"
+	"fmt"
 	"reflect"
 	"slices"
 	"testing"
@@ -310,6 +311,48 @@ func TestDatabaseSuite(t *testing.T, New func() ethdb.KeyValueStore) {
 		it := db.NewIterator(nil, nil)
 		if got := iterateKeys(it); !reflect.DeepEqual(got, want) {
 			t.Errorf("got: %s; want: %s", got, want)
+		}
+	})
+
+	t.Run("DeleteRange", func(t *testing.T) {
+		db := New()
+		defer db.Close()
+
+		for i := 0; i < 20; i++ {
+			if err := db.Put([]byte(fmt.Sprintf("key-%02d", i)), []byte("value")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Delete the range [key-05, key-15).
+		if err := db.DeleteRange([]byte("key-05"), []byte("key-15")); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 20; i++ {
+			key := []byte(fmt.Sprintf("key-%02d", i))
+			has, err := db.Has(key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := i < 5 || i >= 15; has != want {
+				t.Fatalf("key %s: has %v, want %v", key, has, want)
+			}
+		}
+		// Batch based range deletion.
+		batch := db.NewBatch()
+		if err := batch.DeleteRange([]byte("key-00"), []byte("key-03")); err != nil {
+			t.Fatal(err)
+		}
+		if err := batch.Write(); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 5; i++ {
+			has, err := db.Has([]byte(fmt.Sprintf("key-%02d", i)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := i >= 3; has != want {
+				t.Fatalf("key %d: has %v, want %v", i, has, want)
+			}
 		}
 	})
 }
